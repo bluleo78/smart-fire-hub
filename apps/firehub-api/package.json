@@ -1,0 +1,13 @@
+{
+  "name": "@smart-fire-hub/firehub-api",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "./gradlew bootRun --args='--spring.profiles.active=local'",
+    "build": "./gradlew build -x test",
+    "test": "./gradlew test",
+    "lint": "echo \"use gradle checkstyle or spotless\"",
+    "typecheck": "echo \"n/a for java\"",
+    "clean": "./gradlew clean"
+  }
+}

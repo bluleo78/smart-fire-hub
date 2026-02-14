@@ -1,0 +1,53 @@
+# Java / Gradle
+**/build/
+**/.gradle/
+*.class
+*.jar
+*.war
+
+# Gradle Wrapper (keep wrapper jar tracked)
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# Node / Frontend
+node_modules/
+dist/
+.cache/
+
+# Turborepo
+.turbo/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OMC
+.omc/
+
+# Claude Code (로컬 설정만 무시, 프로젝트 설정은 유지)
+.claude/settings.local.json
+.claude/plans/
+
+# Gradle bin output
+**/bin/
+
+# OMC generated
+SKILL.md
+
+# Logs
+*.log
