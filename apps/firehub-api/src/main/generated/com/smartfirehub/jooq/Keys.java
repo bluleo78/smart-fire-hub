@@ -5,10 +5,21 @@ package com.smartfirehub.jooq;
 
 
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
+import com.smartfirehub.jooq.tables.Permission;
+import com.smartfirehub.jooq.tables.RefreshToken;
+import com.smartfirehub.jooq.tables.Role;
+import com.smartfirehub.jooq.tables.RolePermission;
 import com.smartfirehub.jooq.tables.User;
+import com.smartfirehub.jooq.tables.UserRole;
 import com.smartfirehub.jooq.tables.records.FlywaySchemaHistoryRecord;
+import com.smartfirehub.jooq.tables.records.PermissionRecord;
+import com.smartfirehub.jooq.tables.records.RefreshTokenRecord;
+import com.smartfirehub.jooq.tables.records.RolePermissionRecord;
+import com.smartfirehub.jooq.tables.records.RoleRecord;
 import com.smartfirehub.jooq.tables.records.UserRecord;
+import com.smartfirehub.jooq.tables.records.UserRoleRecord;
 
+import org.jooq.ForeignKey;
 import org.jooq.TableField;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -27,6 +38,24 @@ public class Keys {
     // -------------------------------------------------------------------------
 
     public static final UniqueKey<FlywaySchemaHistoryRecord> FLYWAY_SCHEMA_HISTORY_PK = Internal.createUniqueKey(FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY, DSL.name("flyway_schema_history_pk"), new TableField[] { FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY.INSTALLED_RANK }, true);
+    public static final UniqueKey<PermissionRecord> PERMISSION_CODE_KEY = Internal.createUniqueKey(Permission.PERMISSION, DSL.name("permission_code_key"), new TableField[] { Permission.PERMISSION.CODE }, true);
+    public static final UniqueKey<PermissionRecord> PERMISSION_PKEY = Internal.createUniqueKey(Permission.PERMISSION, DSL.name("permission_pkey"), new TableField[] { Permission.PERMISSION.ID }, true);
+    public static final UniqueKey<RefreshTokenRecord> REFRESH_TOKEN_PKEY = Internal.createUniqueKey(RefreshToken.REFRESH_TOKEN, DSL.name("refresh_token_pkey"), new TableField[] { RefreshToken.REFRESH_TOKEN.ID }, true);
+    public static final UniqueKey<RefreshTokenRecord> REFRESH_TOKEN_TOKEN_HASH_KEY = Internal.createUniqueKey(RefreshToken.REFRESH_TOKEN, DSL.name("refresh_token_token_hash_key"), new TableField[] { RefreshToken.REFRESH_TOKEN.TOKEN_HASH }, true);
+    public static final UniqueKey<RoleRecord> ROLE_NAME_KEY = Internal.createUniqueKey(Role.ROLE, DSL.name("role_name_key"), new TableField[] { Role.ROLE.NAME }, true);
+    public static final UniqueKey<RoleRecord> ROLE_PKEY = Internal.createUniqueKey(Role.ROLE, DSL.name("role_pkey"), new TableField[] { Role.ROLE.ID }, true);
+    public static final UniqueKey<RolePermissionRecord> ROLE_PERMISSION_PKEY = Internal.createUniqueKey(RolePermission.ROLE_PERMISSION, DSL.name("role_permission_pkey"), new TableField[] { RolePermission.ROLE_PERMISSION.ROLE_ID, RolePermission.ROLE_PERMISSION.PERMISSION_ID }, true);
     public static final UniqueKey<UserRecord> USER_PKEY = Internal.createUniqueKey(User.USER, DSL.name("user_pkey"), new TableField[] { User.USER.ID }, true);
     public static final UniqueKey<UserRecord> USER_USERNAME_KEY = Internal.createUniqueKey(User.USER, DSL.name("user_username_key"), new TableField[] { User.USER.USERNAME }, true);
+    public static final UniqueKey<UserRoleRecord> USER_ROLE_PKEY = Internal.createUniqueKey(UserRole.USER_ROLE, DSL.name("user_role_pkey"), new TableField[] { UserRole.USER_ROLE.USER_ID, UserRole.USER_ROLE.ROLE_ID }, true);
+
+    // -------------------------------------------------------------------------
+    // FOREIGN KEY definitions
+    // -------------------------------------------------------------------------
+
+    public static final ForeignKey<RefreshTokenRecord, UserRecord> REFRESH_TOKEN__REFRESH_TOKEN_USER_ID_FKEY = Internal.createForeignKey(RefreshToken.REFRESH_TOKEN, DSL.name("refresh_token_user_id_fkey"), new TableField[] { RefreshToken.REFRESH_TOKEN.USER_ID }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<RolePermissionRecord, PermissionRecord> ROLE_PERMISSION__ROLE_PERMISSION_PERMISSION_ID_FKEY = Internal.createForeignKey(RolePermission.ROLE_PERMISSION, DSL.name("role_permission_permission_id_fkey"), new TableField[] { RolePermission.ROLE_PERMISSION.PERMISSION_ID }, Keys.PERMISSION_PKEY, new TableField[] { Permission.PERMISSION.ID }, true);
+    public static final ForeignKey<RolePermissionRecord, RoleRecord> ROLE_PERMISSION__ROLE_PERMISSION_ROLE_ID_FKEY = Internal.createForeignKey(RolePermission.ROLE_PERMISSION, DSL.name("role_permission_role_id_fkey"), new TableField[] { RolePermission.ROLE_PERMISSION.ROLE_ID }, Keys.ROLE_PKEY, new TableField[] { Role.ROLE.ID }, true);
+    public static final ForeignKey<UserRoleRecord, RoleRecord> USER_ROLE__USER_ROLE_ROLE_ID_FKEY = Internal.createForeignKey(UserRole.USER_ROLE, DSL.name("user_role_role_id_fkey"), new TableField[] { UserRole.USER_ROLE.ROLE_ID }, Keys.ROLE_PKEY, new TableField[] { Role.ROLE.ID }, true);
+    public static final ForeignKey<UserRoleRecord, UserRecord> USER_ROLE__USER_ROLE_USER_ID_FKEY = Internal.createForeignKey(UserRole.USER_ROLE, DSL.name("user_role_user_id_fkey"), new TableField[] { UserRole.USER_ROLE.USER_ID }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
 }

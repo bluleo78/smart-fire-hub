@@ -5,7 +5,11 @@ package com.smartfirehub.jooq;
 
 
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
+import com.smartfirehub.jooq.tables.Permission;
+import com.smartfirehub.jooq.tables.RefreshToken;
+import com.smartfirehub.jooq.tables.RolePermission;
 import com.smartfirehub.jooq.tables.User;
+import com.smartfirehub.jooq.tables.UserRole;
 
 import org.jooq.Index;
 import org.jooq.OrderField;
@@ -24,6 +28,10 @@ public class Indexes {
     // -------------------------------------------------------------------------
 
     public static final Index FLYWAY_SCHEMA_HISTORY_S_IDX = Internal.createIndex(DSL.name("flyway_schema_history_s_idx"), FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY, new OrderField[] { FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY.SUCCESS }, false);
+    public static final Index IDX_PERMISSION_CATEGORY = Internal.createIndex(DSL.name("idx_permission_category"), Permission.PERMISSION, new OrderField[] { Permission.PERMISSION.CATEGORY }, false);
+    public static final Index IDX_REFRESH_TOKEN_USER_ID = Internal.createIndex(DSL.name("idx_refresh_token_user_id"), RefreshToken.REFRESH_TOKEN, new OrderField[] { RefreshToken.REFRESH_TOKEN.USER_ID }, false);
+    public static final Index IDX_ROLE_PERMISSION_PERMISSION_ID = Internal.createIndex(DSL.name("idx_role_permission_permission_id"), RolePermission.ROLE_PERMISSION, new OrderField[] { RolePermission.ROLE_PERMISSION.PERMISSION_ID }, false);
     public static final Index IDX_USER_EMAIL_UNIQUE = Internal.createIndex(DSL.name("idx_user_email_unique"), User.USER, new OrderField[] { User.USER.EMAIL }, true);
+    public static final Index IDX_USER_ROLE_ROLE_ID = Internal.createIndex(DSL.name("idx_user_role_role_id"), UserRole.USER_ROLE, new OrderField[] { UserRole.USER_ROLE.ROLE_ID }, false);
     public static final Index IDX_USER_USERNAME = Internal.createIndex(DSL.name("idx_user_username"), User.USER, new OrderField[] { User.USER.USERNAME }, false);
 }

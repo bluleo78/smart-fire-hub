@@ -7,6 +7,9 @@ package com.smartfirehub.jooq.tables;
 import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
+import com.smartfirehub.jooq.tables.RefreshToken.RefreshTokenPath;
+import com.smartfirehub.jooq.tables.Role.RolePath;
+import com.smartfirehub.jooq.tables.UserRole.UserRolePath;
 import com.smartfirehub.jooq.tables.records.UserRecord;
 
 import java.time.LocalDateTime;
@@ -16,11 +19,15 @@ import java.util.List;
 
 import org.jooq.Condition;
 import org.jooq.Field;
+import org.jooq.ForeignKey;
 import org.jooq.Identity;
 import org.jooq.Index;
+import org.jooq.InverseForeignKey;
 import org.jooq.Name;
+import org.jooq.Path;
 import org.jooq.PlainSQL;
 import org.jooq.QueryPart;
+import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
 import org.jooq.Select;
@@ -81,9 +88,19 @@ public class User extends TableImpl<UserRecord> {
     public final TableField<UserRecord, String> NAME = createField(DSL.name("name"), SQLDataType.VARCHAR(50).nullable(false), this, "");
 
     /**
+     * The column <code>public.user.is_active</code>.
+     */
+    public final TableField<UserRecord, Boolean> IS_ACTIVE = createField(DSL.name("is_active"), SQLDataType.BOOLEAN.nullable(false).defaultValue(DSL.field(DSL.raw("true"), SQLDataType.BOOLEAN)), this, "");
+
+    /**
      * The column <code>public.user.created_at</code>.
      */
     public final TableField<UserRecord, LocalDateTime> CREATED_AT = createField(DSL.name("created_at"), SQLDataType.LOCALDATETIME(6).nullable(false).defaultValue(DSL.field(DSL.raw("now()"), SQLDataType.LOCALDATETIME)), this, "");
+
+    /**
+     * The column <code>public.user.updated_at</code>.
+     */
+    public final TableField<UserRecord, LocalDateTime> UPDATED_AT = createField(DSL.name("updated_at"), SQLDataType.LOCALDATETIME(6).defaultValue(DSL.field(DSL.raw("now()"), SQLDataType.LOCALDATETIME)), this, "");
 
     private User(Name alias, Table<UserRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
@@ -114,6 +131,37 @@ public class User extends TableImpl<UserRecord> {
         this(DSL.name("user"), null);
     }
 
+    public <O extends Record> User(Table<O> path, ForeignKey<O, UserRecord> childPath, InverseForeignKey<O, UserRecord> parentPath) {
+        super(path, childPath, parentPath, USER);
+    }
+
+    /**
+     * A subtype implementing {@link Path} for simplified path-based joins.
+     */
+    public static class UserPath extends User implements Path<UserRecord> {
+        public <O extends Record> UserPath(Table<O> path, ForeignKey<O, UserRecord> childPath, InverseForeignKey<O, UserRecord> parentPath) {
+            super(path, childPath, parentPath);
+        }
+        private UserPath(Name alias, Table<UserRecord> aliased) {
+            super(alias, aliased);
+        }
+
+        @Override
+        public UserPath as(String alias) {
+            return new UserPath(DSL.name(alias), this);
+        }
+
+        @Override
+        public UserPath as(Name alias) {
+            return new UserPath(alias, this);
+        }
+
+        @Override
+        public UserPath as(Table<?> alias) {
+            return new UserPath(alias.getQualifiedName(), this);
+        }
+    }
+
     @Override
     public Schema getSchema() {
         return aliased() ? null : Public.PUBLIC;
@@ -137,6 +185,40 @@ public class User extends TableImpl<UserRecord> {
     @Override
     public List<UniqueKey<UserRecord>> getUniqueKeys() {
         return Arrays.asList(Keys.USER_USERNAME_KEY);
+    }
+
+    private transient RefreshTokenPath _refreshToken;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.refresh_token</code> table
+     */
+    public RefreshTokenPath refreshToken() {
+        if (_refreshToken == null)
+            _refreshToken = new RefreshTokenPath(this, null, Keys.REFRESH_TOKEN__REFRESH_TOKEN_USER_ID_FKEY.getInverseKey());
+
+        return _refreshToken;
+    }
+
+    private transient UserRolePath _userRole;
+
+    /**
+     * Get the implicit to-many join path to the <code>public.user_role</code>
+     * table
+     */
+    public UserRolePath userRole() {
+        if (_userRole == null)
+            _userRole = new UserRolePath(this, null, Keys.USER_ROLE__USER_ROLE_USER_ID_FKEY.getInverseKey());
+
+        return _userRole;
+    }
+
+    /**
+     * Get the implicit many-to-many join path to the <code>public.role</code>
+     * table
+     */
+    public RolePath role() {
+        return userRole().role();
     }
 
     @Override

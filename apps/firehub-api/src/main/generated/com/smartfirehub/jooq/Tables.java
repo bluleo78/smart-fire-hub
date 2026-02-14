@@ -5,7 +5,12 @@ package com.smartfirehub.jooq;
 
 
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
+import com.smartfirehub.jooq.tables.Permission;
+import com.smartfirehub.jooq.tables.RefreshToken;
+import com.smartfirehub.jooq.tables.Role;
+import com.smartfirehub.jooq.tables.RolePermission;
 import com.smartfirehub.jooq.tables.User;
+import com.smartfirehub.jooq.tables.UserRole;
 
 
 /**
@@ -20,7 +25,32 @@ public class Tables {
     public static final FlywaySchemaHistory FLYWAY_SCHEMA_HISTORY = FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY;
 
     /**
+     * The table <code>public.permission</code>.
+     */
+    public static final Permission PERMISSION = Permission.PERMISSION;
+
+    /**
+     * The table <code>public.refresh_token</code>.
+     */
+    public static final RefreshToken REFRESH_TOKEN = RefreshToken.REFRESH_TOKEN;
+
+    /**
+     * The table <code>public.role</code>.
+     */
+    public static final Role ROLE = Role.ROLE;
+
+    /**
+     * The table <code>public.role_permission</code>.
+     */
+    public static final RolePermission ROLE_PERMISSION = RolePermission.ROLE_PERMISSION;
+
+    /**
      * The table <code>public.user</code>.
      */
     public static final User USER = User.USER;
+
+    /**
+     * The table <code>public.user_role</code>.
+     */
+    public static final UserRole USER_ROLE = UserRole.USER_ROLE;
 }

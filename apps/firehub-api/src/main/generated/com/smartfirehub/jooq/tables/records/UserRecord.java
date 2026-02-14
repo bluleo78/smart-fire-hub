@@ -91,17 +91,45 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
     }
 
     /**
+     * Setter for <code>public.user.is_active</code>.
+     */
+    public void setIsActive(Boolean value) {
+        set(5, value);
+    }
+
+    /**
+     * Getter for <code>public.user.is_active</code>.
+     */
+    public Boolean getIsActive() {
+        return (Boolean) get(5);
+    }
+
+    /**
      * Setter for <code>public.user.created_at</code>.
      */
     public void setCreatedAt(LocalDateTime value) {
-        set(5, value);
+        set(6, value);
     }
 
     /**
      * Getter for <code>public.user.created_at</code>.
      */
     public LocalDateTime getCreatedAt() {
-        return (LocalDateTime) get(5);
+        return (LocalDateTime) get(6);
+    }
+
+    /**
+     * Setter for <code>public.user.updated_at</code>.
+     */
+    public void setUpdatedAt(LocalDateTime value) {
+        set(7, value);
+    }
+
+    /**
+     * Getter for <code>public.user.updated_at</code>.
+     */
+    public LocalDateTime getUpdatedAt() {
+        return (LocalDateTime) get(7);
     }
 
     // -------------------------------------------------------------------------
@@ -127,7 +155,7 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
     /**
      * Create a detached, initialised UserRecord
      */
-    public UserRecord(Long id, String username, String email, String password, String name, LocalDateTime createdAt) {
+    public UserRecord(Long id, String username, String email, String password, String name, Boolean isActive, LocalDateTime createdAt, LocalDateTime updatedAt) {
         super(User.USER);
 
         setId(id);
@@ -135,7 +163,9 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
         setEmail(email);
         setPassword(password);
         setName(name);
+        setIsActive(isActive);
         setCreatedAt(createdAt);
+        setUpdatedAt(updatedAt);
         resetChangedOnNotNull();
     }
 }
