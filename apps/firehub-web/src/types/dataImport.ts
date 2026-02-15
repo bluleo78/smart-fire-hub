@@ -1,14 +1,14 @@
 export interface ImportResponse {
-  id: number;
-  datasetId: number;
+  id: number | null;
+  datasetId: number | null;
   fileName: string;
-  fileSize: number;
-  fileType: 'CSV' | 'XLSX';
+  fileSize: number | null;
+  fileType: string;
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   totalRows: number | null;
   successRows: number | null;
   errorRows: number | null;
-  errorDetails: Record<string, string> | null;
+  errorDetails: Record<string, unknown> | null;
   importedBy: string;
   startedAt: string | null;
   completedAt: string | null;

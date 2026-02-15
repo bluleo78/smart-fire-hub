@@ -37,6 +37,7 @@ export interface DatasetDetailResponse {
   rowCount: number;
   createdAt: string;
   updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 export interface CreateDatasetRequest {

@@ -30,6 +30,7 @@ export interface PipelineDetailResponse {
   steps: PipelineStepResponse[];
   createdAt: string;
   updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 export interface CreatePipelineRequest {

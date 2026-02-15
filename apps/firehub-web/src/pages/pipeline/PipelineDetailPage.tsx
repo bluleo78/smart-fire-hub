@@ -122,6 +122,11 @@ export function PipelineDetailPage() {
           <div>
             <span className="text-muted-foreground">생성일:</span> {formatDate(pipeline.createdAt)}
           </div>
+          {pipeline.updatedBy && (
+            <div>
+              <span className="text-muted-foreground">수정자:</span> {pipeline.updatedBy}
+            </div>
+          )}
         </div>
       </Card>
 

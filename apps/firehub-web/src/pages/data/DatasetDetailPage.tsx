@@ -353,6 +353,12 @@ export function DatasetDetailPage() {
                   <p className="text-sm text-muted-foreground">수정일</p>
                   <p className="text-sm">{formatDate(dataset.updatedAt)}</p>
                 </div>
+                {dataset.updatedBy && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">수정자</p>
+                    <p className="text-sm">{dataset.updatedBy}</p>
+                  </div>
+                )}
               </div>
             )}
           </Card>
@@ -593,7 +599,7 @@ export function DatasetDetailPage() {
                       <div className="mt-2 rounded-md border p-3 text-sm space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="text-muted-foreground">파일:</span>
-                          <span>{imp.fileName} ({formatFileSize(imp.fileSize)})</span>
+                          <span>{imp.fileName} ({imp.fileSize != null ? formatFileSize(imp.fileSize) : '-'})</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-muted-foreground">상태:</span>
