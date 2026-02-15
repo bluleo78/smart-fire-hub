@@ -29,12 +29,14 @@ public class DashboardService {
     private static final Field<String> P_NAME = field(name("pipeline", "name"), String.class);
     private static final Field<Boolean> P_IS_ACTIVE = field(name("pipeline", "is_active"), Boolean.class);
 
-    private static final Table<?> DATA_IMPORT = table(name("data_import"));
-    private static final Field<Long> DI_ID = field(name("data_import", "id"), Long.class);
-    private static final Field<Long> DI_DATASET_ID = field(name("data_import", "dataset_id"), Long.class);
-    private static final Field<String> DI_FILE_NAME = field(name("data_import", "file_name"), String.class);
-    private static final Field<String> DI_STATUS = field(name("data_import", "status"), String.class);
-    private static final Field<LocalDateTime> DI_CREATED_AT = field(name("data_import", "created_at"), LocalDateTime.class);
+    // audit_log constants
+    private static final Table<?> AUDIT_LOG = table(name("audit_log"));
+    private static final Field<Long> AL_ID = field(name("audit_log", "id"), Long.class);
+    private static final Field<String> AL_ACTION_TYPE = field(name("audit_log", "action_type"), String.class);
+    private static final Field<String> AL_RESOURCE = field(name("audit_log", "resource"), String.class);
+    private static final Field<String> AL_RESOURCE_ID = field(name("audit_log", "resource_id"), String.class);
+    private static final Field<String> AL_RESULT = field(name("audit_log", "result"), String.class);
+    private static final Field<LocalDateTime> AL_ACTION_TIME = field(name("audit_log", "action_time"), LocalDateTime.class);
 
     private static final Table<?> PIPELINE_EXECUTION = table(name("pipeline_execution"));
     private static final Field<Long> PE_ID = field(name("pipeline_execution", "id"), Long.class);
@@ -75,25 +77,35 @@ public class DashboardService {
                 .where(P_IS_ACTIVE.eq(true))
                 .fetchOne(0, Long.class);
 
-        // Get recent imports (top 5)
+        // Get recent imports from audit_log (top 5)
+        Field<String> metadataFileName = field("audit_log.metadata->>'fileName'", String.class);
+
         List<RecentImportResponse> recentImports = dsl.select(
-                        DI_ID,
+                        AL_ID,
                         D_NAME,
-                        DI_FILE_NAME,
-                        DI_STATUS,
-                        DI_CREATED_AT
+                        metadataFileName,
+                        AL_RESULT,
+                        AL_ACTION_TIME
                 )
-                .from(DATA_IMPORT)
-                .join(DATASET).on(DI_DATASET_ID.eq(D_ID))
-                .orderBy(DI_CREATED_AT.desc())
+                .from(AUDIT_LOG)
+                .join(DATASET).on(AL_RESOURCE_ID.cast(Long.class).eq(D_ID))
+                .where(AL_ACTION_TYPE.eq("IMPORT").and(AL_RESOURCE.eq("dataset")))
+                .orderBy(AL_ACTION_TIME.desc())
                 .limit(5)
-                .fetch(r -> new RecentImportResponse(
-                        r.get(DI_ID),
-                        r.get(D_NAME),
-                        r.get(DI_FILE_NAME),
-                        r.get(DI_STATUS),
-                        r.get(DI_CREATED_AT)
-                ));
+                .fetch(r -> {
+                    String status = switch (r.get(AL_RESULT)) {
+                        case "SUCCESS" -> "COMPLETED";
+                        case "FAILURE" -> "FAILED";
+                        default -> r.get(AL_RESULT);
+                    };
+                    return new RecentImportResponse(
+                            r.get(AL_ID),
+                            r.get(D_NAME),
+                            r.get(metadataFileName),
+                            status,
+                            r.get(AL_ACTION_TIME)
+                    );
+                });
 
         // Get recent executions (top 5)
         List<RecentExecutionResponse> recentExecutions = dsl.select(

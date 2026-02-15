@@ -1,5 +1,6 @@
 package com.smartfirehub.dataimport.service;
 
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +31,9 @@ class DataImportServiceTest extends IntegrationTestBase {
 
     @Autowired
     private DatasetService datasetService;
+
+    @Autowired
+    private AuditLogService auditLogService;
 
     @Autowired
     private DSLContext dsl;
@@ -68,7 +73,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     }
 
     @Test
-    void importFile_csvWithValidData_success() throws Exception {
+    void importFile_csvWithValidData_returnsResponse() throws Exception {
         // Given
         String csvContent = """
                 name,age,email
@@ -84,21 +89,14 @@ class DataImportServiceTest extends IntegrationTestBase {
         );
 
         // When
-        ImportResponse response = dataImportService.importFile(testDatasetId, file, testUserId);
+        ImportResponse response = dataImportService.importFile(
+                testDatasetId, file, testUserId, "Test User", "127.0.0.1", "TestAgent");
 
         // Then
-        assertThat(response.id()).isNotNull();
         assertThat(response.datasetId()).isEqualTo(testDatasetId);
         assertThat(response.fileName()).isEqualTo("test.csv");
         assertThat(response.fileType()).isEqualTo("CSV");
         assertThat(response.status()).isEqualTo("PENDING");
-
-        // Verify import record created
-        Long importCount = dsl.selectCount()
-                .from(DATA_IMPORT)
-                .where(DATA_IMPORT.ID.eq(response.id()))
-                .fetchOne(0, Long.class);
-        assertThat(importCount).isEqualTo(1);
     }
 
     @Test
@@ -112,7 +110,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         );
 
         // When/Then
-        assertThatThrownBy(() -> dataImportService.importFile(testDatasetId, file, testUserId))
+        assertThatThrownBy(() -> dataImportService.importFile(
+                testDatasetId, file, testUserId, "Test User", null, null))
                 .isInstanceOf(UnsupportedFileTypeException.class)
                 .hasMessageContaining("Unsupported file type");
     }
@@ -128,65 +127,71 @@ class DataImportServiceTest extends IntegrationTestBase {
         );
 
         // When/Then
-        assertThatThrownBy(() -> dataImportService.importFile(testDatasetId, file, testUserId))
+        assertThatThrownBy(() -> dataImportService.importFile(
+                testDatasetId, file, testUserId, "Test User", null, null))
                 .isInstanceOf(UnsupportedFileTypeException.class)
                 .hasMessageContaining("File name is required");
     }
 
     @Test
-    void getImportsByDatasetId_returnsImports() throws Exception {
-        // Given
-        String csvContent = "name,age,email\nAlice,30,alice@example.com";
-        MockMultipartFile file = new MockMultipartFile(
-                "file",
-                "test.csv",
-                "text/csv",
-                csvContent.getBytes(StandardCharsets.UTF_8)
+    void getImportsByDatasetId_withAuditLogs_returnsImports() {
+        // Given - directly log an import audit entry
+        Map<String, Object> metadata = Map.of(
+                "fileName", "test.csv",
+                "fileSize", 1024,
+                "fileType", "CSV",
+                "totalRows", 10,
+                "successRows", 10,
+                "errorRows", 0
         );
 
-        ImportResponse created = dataImportService.importFile(testDatasetId, file, testUserId);
+        auditLogService.log(testUserId, "Test User", "IMPORT", "dataset",
+                String.valueOf(testDatasetId), "파일 임포트: test.csv",
+                null, null, "SUCCESS", null, metadata);
 
         // When
         List<ImportResponse> imports = dataImportService.getImportsByDatasetId(testDatasetId);
 
         // Then
-        assertThat(imports).isNotEmpty();
-        assertThat(imports).anyMatch(imp -> imp.id().equals(created.id()));
+        assertThat(imports).hasSize(1);
+        assertThat(imports.get(0).fileName()).isEqualTo("test.csv");
+        assertThat(imports.get(0).status()).isEqualTo("COMPLETED");
+        assertThat(imports.get(0).successRows()).isEqualTo(10);
     }
 
     @Test
-    void getImportById_returnsImport() throws Exception {
+    void getImportById_returnsImport() {
         // Given
-        String csvContent = "name,age,email\nAlice,30,alice@example.com";
-        MockMultipartFile file = new MockMultipartFile(
-                "file",
-                "test.csv",
-                "text/csv",
-                csvContent.getBytes(StandardCharsets.UTF_8)
+        Map<String, Object> metadata = Map.of(
+                "fileName", "test.csv",
+                "fileSize", 2048,
+                "fileType", "CSV",
+                "totalRows", 5,
+                "successRows", 5,
+                "errorRows", 0
         );
 
-        ImportResponse created = dataImportService.importFile(testDatasetId, file, testUserId);
+        Long auditId = auditLogService.log(testUserId, "Test User", "IMPORT", "dataset",
+                String.valueOf(testDatasetId), "파일 임포트: test.csv",
+                null, null, "SUCCESS", null, metadata);
 
         // When
-        ImportResponse retrieved = dataImportService.getImportById(testDatasetId, created.id());
+        ImportResponse retrieved = dataImportService.getImportById(testDatasetId, auditId);
 
         // Then
-        assertThat(retrieved.id()).isEqualTo(created.id());
+        assertThat(retrieved.id()).isEqualTo(auditId);
         assertThat(retrieved.fileName()).isEqualTo("test.csv");
+        assertThat(retrieved.status()).isEqualTo("COMPLETED");
     }
 
     @Test
-    void getImportById_wrongDataset_throwsException() throws Exception {
+    void getImportById_wrongDataset_throwsException() {
         // Given
-        String csvContent = "name,age,email\nAlice,30,alice@example.com";
-        MockMultipartFile file = new MockMultipartFile(
-                "file",
-                "test.csv",
-                "text/csv",
-                csvContent.getBytes(StandardCharsets.UTF_8)
-        );
+        Map<String, Object> metadata = Map.of("fileName", "test.csv", "fileSize", 100, "fileType", "CSV");
 
-        ImportResponse created = dataImportService.importFile(testDatasetId, file, testUserId);
+        Long auditId = auditLogService.log(testUserId, "Test User", "IMPORT", "dataset",
+                String.valueOf(testDatasetId), "파일 임포트: test.csv",
+                null, null, "SUCCESS", null, metadata);
 
         // Create another dataset
         List<DatasetColumnRequest> columns = List.of(
@@ -202,31 +207,20 @@ class DataImportServiceTest extends IntegrationTestBase {
         ), testUserId);
 
         // When/Then
-        assertThatThrownBy(() -> dataImportService.getImportById(anotherDataset.id(), created.id()))
+        assertThatThrownBy(() -> dataImportService.getImportById(anotherDataset.id(), auditId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("does not belong to this dataset");
     }
 
     @Test
     void exportDatasetCsv_generatesValidCsv() throws Exception {
-        // Given - Import some data first
-        String csvContent = """
-                name,age,email
-                Alice,30,alice@example.com
-                Bob,25,bob@example.com
-                """;
-
-        MockMultipartFile file = new MockMultipartFile(
-                "file",
-                "test.csv",
-                "text/csv",
-                csvContent.getBytes(StandardCharsets.UTF_8)
+        // Given - directly process import synchronously for test
+        dataImportService.processImport(
+                testDatasetId,
+                createTempCsvFile("name,age,email\nAlice,30,alice@example.com\nBob,25,bob@example.com"),
+                "test.csv", 100L, "CSV",
+                testUserId, "Test User", null, null
         );
-
-        dataImportService.importFile(testDatasetId, file, testUserId);
-
-        // Wait a bit for async processing (in real tests, you'd use proper async testing)
-        Thread.sleep(500);
 
         // When
         byte[] csvBytes = dataImportService.exportDatasetCsv(testDatasetId);
@@ -234,10 +228,16 @@ class DataImportServiceTest extends IntegrationTestBase {
         // Then
         assertThat(csvBytes).isNotEmpty();
         String csvOutput = new String(csvBytes, StandardCharsets.UTF_8);
-
-        // CSV should contain BOM + headers
         assertThat(csvOutput).contains("Name");
         assertThat(csvOutput).contains("Age");
         assertThat(csvOutput).contains("Email");
+    }
+
+    private String createTempCsvFile(String content) throws Exception {
+        java.nio.file.Path tempDir = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+        java.nio.file.Files.createDirectories(tempDir);
+        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile(tempDir, "test-", ".csv");
+        java.nio.file.Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+        return tempFile.toString();
     }
 }

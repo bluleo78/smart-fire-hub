@@ -3,6 +3,8 @@ package com.smartfirehub.dataimport.controller;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.user.repository.UserRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,18 +18,27 @@ import java.util.List;
 public class DataImportController {
 
     private final DataImportService importService;
+    private final UserRepository userRepository;
 
-    public DataImportController(DataImportService importService) {
+    public DataImportController(DataImportService importService, UserRepository userRepository) {
         this.importService = importService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping("/imports")
     @RequirePermission("data:import")
     public ResponseEntity<ImportResponse> importFile(
             @PathVariable Long datasetId,
-            @RequestParam("file") MultipartFile file) throws Exception {
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest request) throws Exception {
         Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
-        ImportResponse response = importService.importFile(datasetId, file, userId);
+        String username = userRepository.findById(userId)
+                .map(user -> user.name())
+                .orElse(String.valueOf(userId));
+        String ipAddress = request.getRemoteAddr();
+        String userAgent = request.getHeader("User-Agent");
+
+        ImportResponse response = importService.importFile(datasetId, file, userId, username, ipAddress, userAgent);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
