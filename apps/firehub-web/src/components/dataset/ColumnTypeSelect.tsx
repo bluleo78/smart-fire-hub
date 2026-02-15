@@ -14,6 +14,7 @@ interface ColumnTypeSelectProps {
 
 const DATA_TYPES = [
   { value: 'TEXT', label: '텍스트' },
+  { value: 'VARCHAR', label: '문자열(크기지정)' },
   { value: 'INTEGER', label: '정수' },
   { value: 'DECIMAL', label: '소수' },
   { value: 'BOOLEAN', label: '참/거짓' },

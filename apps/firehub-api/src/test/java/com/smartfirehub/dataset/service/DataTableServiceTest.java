@@ -45,10 +45,10 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("name", "Name", "TEXT", false, true, null),
-                new DatasetColumnRequest("age", "Age", "INTEGER", true, false, null),
-                new DatasetColumnRequest("score", "Score", "DECIMAL", true, false, null),
-                new DatasetColumnRequest("active", "Active", "BOOLEAN", true, false, null)
+                new DatasetColumnRequest("name", "Name", "TEXT", null, false, true, null),
+                new DatasetColumnRequest("age", "Age", "INTEGER", null, true, false, null),
+                new DatasetColumnRequest("score", "Score", "DECIMAL", null, true, false, null),
+                new DatasetColumnRequest("active", "Active", "BOOLEAN", null, true, false, null)
         );
 
         // When
@@ -84,8 +84,8 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("name", "Name", "TEXT", true, false, null),
-                new DatasetColumnRequest("value", "Value", "INTEGER", true, false, null)
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);
@@ -116,7 +116,7 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);
@@ -125,6 +125,7 @@ class DataTableServiceTest extends IntegrationTestBase {
                 "col2",
                 "Col2",
                 "INTEGER",
+                null,
                 true,
                 true,
                 null
@@ -155,7 +156,7 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);
@@ -186,7 +187,7 @@ class DataTableServiceTest extends IntegrationTestBase {
         // Given
         String tableName = "test_drop_table";
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);
@@ -215,7 +216,7 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);
@@ -242,8 +243,8 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("name", "Name", "TEXT", true, false, null),
-                new DatasetColumnRequest("value", "Value", "INTEGER", true, false, null)
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);
@@ -284,7 +285,7 @@ class DataTableServiceTest extends IntegrationTestBase {
         tablesToCleanup.add(tableName);
 
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("name", "Name", "TEXT", true, false, null)
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
         );
 
         dataTableService.createTable(tableName, columns);

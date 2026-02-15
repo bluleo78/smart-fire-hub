@@ -2,18 +2,21 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   useDataset,
   useCategories,
   useUpdateDataset,
   useAddColumn,
+  useDeleteColumn,
   useDatasetData,
   useImports,
   useUploadFile,
 } from '../../hooks/queries/useDatasets';
 import { dataImportsApi } from '../../api/dataImports';
-import { updateDatasetSchema, addColumnSchema } from '../../lib/validations/dataset';
-import type { UpdateDatasetFormData, AddColumnFormData } from '../../lib/validations/dataset';
+import { datasetsApi } from '../../api/datasets';
+import { updateDatasetSchema, addColumnSchema, updateColumnSchema } from '../../lib/validations/dataset';
+import type { UpdateDatasetFormData, AddColumnFormData, UpdateColumnFormData } from '../../lib/validations/dataset';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -44,10 +47,21 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog';
 import { ColumnTypeSelect } from '../../components/dataset/ColumnTypeSelect';
-import { Plus, Edit, ChevronLeft, ChevronRight, Download, Upload, Search } from 'lucide-react';
+import { Plus, Edit, ChevronLeft, ChevronRight, Download, Upload, Search, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
+import type { DatasetColumnResponse } from '../../types/dataset';
 import axios from 'axios';
 import { FileUploadZone } from '../../components/dataset/FileUploadZone';
 import type { ImportResponse } from '../../types/dataImport';
@@ -55,9 +69,13 @@ import type { ImportResponse } from '../../types/dataImport';
 export function DatasetDetailPage() {
   const { id } = useParams();
   const datasetId = Number(id);
+  const queryClient = useQueryClient();
 
   const [isEditing, setIsEditing] = useState(false);
   const [addColumnOpen, setAddColumnOpen] = useState(false);
+  const [editColumnOpen, setEditColumnOpen] = useState(false);
+  const [deleteColumnOpen, setDeleteColumnOpen] = useState(false);
+  const [selectedColumn, setSelectedColumn] = useState<DatasetColumnResponse | null>(null);
   const [dataPage, setDataPage] = useState(0);
   const dataSize = 20;
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -67,15 +85,8 @@ export function DatasetDetailPage() {
   const { data: categoriesData } = useCategories();
   const updateDataset = useUpdateDataset(datasetId);
   const addColumn = useAddColumn(datasetId);
+  const deleteColumn = useDeleteColumn(datasetId);
   const [debouncedSearch, setDebouncedSearch] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(dataSearch);
-      setDataPage(0);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [dataSearch]);
 
   const { data: dataQueryResult } = useDatasetData(datasetId, { search: debouncedSearch || undefined, page: dataPage, size: dataSize });
   const { data: imports } = useImports(datasetId);
@@ -102,11 +113,48 @@ export function DatasetDetailPage() {
       columnName: '',
       displayName: '',
       dataType: 'TEXT',
+      maxLength: undefined,
       isNullable: true,
       isIndexed: false,
       description: '',
     },
   });
+
+  const editForm = useForm<UpdateColumnFormData>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(updateColumnSchema) as any,
+    defaultValues: {
+      columnName: '',
+      displayName: '',
+      dataType: 'TEXT',
+      maxLength: undefined,
+      isNullable: true,
+      isIndexed: false,
+      description: '',
+    },
+  });
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(dataSearch);
+      setDataPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [dataSearch]);
+
+  useEffect(() => {
+    if (selectedColumn && editColumnOpen) {
+      editForm.reset({
+        columnName: selectedColumn.columnName,
+        displayName: selectedColumn.displayName || '',
+        dataType: selectedColumn.dataType as UpdateColumnFormData['dataType'],
+        maxLength: selectedColumn.maxLength,
+        isNullable: selectedColumn.isNullable,
+        isIndexed: selectedColumn.isIndexed,
+        description: selectedColumn.description || '',
+      });
+    }
+  }, [selectedColumn, editColumnOpen, editForm]);
 
   const onInfoSubmit = async (data: UpdateDatasetFormData) => {
     try {
@@ -133,6 +181,7 @@ export function DatasetDetailPage() {
         columnName: data.columnName,
         displayName: data.displayName || undefined,
         dataType: data.dataType,
+        maxLength: data.maxLength || undefined,
         isNullable: data.isNullable,
         isIndexed: data.isIndexed,
         description: data.description || undefined,
@@ -146,6 +195,51 @@ export function DatasetDetailPage() {
         toast.error(errData.message || '필드 추가에 실패했습니다.');
       } else {
         toast.error('필드 추가에 실패했습니다.');
+      }
+    }
+  };
+
+  const onEditColumnSubmit = async (data: UpdateColumnFormData) => {
+    if (!selectedColumn) return;
+
+    try {
+      await datasetsApi.updateColumn(datasetId, selectedColumn.id, {
+        columnName: data.columnName,
+        displayName: data.displayName || undefined,
+        dataType: data.dataType,
+        maxLength: data.maxLength,
+        isNullable: data.isNullable,
+        isIndexed: data.isIndexed,
+        description: data.description || undefined,
+      });
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+      toast.success('필드가 수정되었습니다.');
+      setEditColumnOpen(false);
+      setSelectedColumn(null);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.data) {
+        const errData = error.response.data as ErrorResponse;
+        toast.error(errData.message || '필드 수정에 실패했습니다.');
+      } else {
+        toast.error('필드 수정에 실패했습니다.');
+      }
+    }
+  };
+
+  const handleDeleteColumn = async () => {
+    if (!selectedColumn) return;
+
+    try {
+      await deleteColumn.mutateAsync(selectedColumn.id);
+      toast.success('필드가 삭제되었습니다.');
+      setDeleteColumnOpen(false);
+      setSelectedColumn(null);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.data) {
+        const errData = error.response.data as ErrorResponse;
+        toast.error(errData.message || '필드 삭제에 실패했습니다.');
+      } else {
+        toast.error('필드 삭제에 실패했습니다.');
       }
     }
   };
@@ -212,16 +306,18 @@ export function DatasetDetailPage() {
     return <Badge variant={variantMap[status]}>{labelMap[status]}</Badge>;
   };
 
-  const getDataTypeBadge = (dataType: string) => {
+  const getDataTypeBadge = (dataType: string, maxLength?: number | null) => {
     const colorMap: Record<string, 'default' | 'secondary' | 'outline'> = {
       TEXT: 'default',
+      VARCHAR: 'default',
       INTEGER: 'secondary',
       DECIMAL: 'secondary',
       BOOLEAN: 'outline',
       DATE: 'outline',
       TIMESTAMP: 'outline',
     };
-    return <Badge variant={colorMap[dataType] || 'default'}>{dataType}</Badge>;
+    const displayType = dataType === 'VARCHAR' && maxLength ? `VARCHAR(${maxLength})` : dataType;
+    return <Badge variant={colorMap[dataType] || 'default'}>{displayType}</Badge>;
   };
 
   if (isLoading || !dataset) {
@@ -406,7 +502,7 @@ export function DatasetDetailPage() {
                     <Label htmlFor="dataType">데이터 타입 *</Label>
                     <ColumnTypeSelect
                       value={columnForm.watch('dataType')}
-                      onChange={(value) => columnForm.setValue('dataType', value as 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP')}
+                      onChange={(value) => columnForm.setValue('dataType', value as AddColumnFormData['dataType'])}
                     />
                     {columnForm.formState.errors.dataType && (
                       <p className="text-sm text-destructive">
@@ -414,6 +510,25 @@ export function DatasetDetailPage() {
                       </p>
                     )}
                   </div>
+
+                  {columnForm.watch('dataType') === 'VARCHAR' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="maxLength">최대 길이 *</Label>
+                      <Input
+                        id="maxLength"
+                        type="number"
+                        min={1}
+                        max={10000}
+                        {...columnForm.register('maxLength', { valueAsNumber: true })}
+                        placeholder="예: 255"
+                      />
+                      {columnForm.formState.errors.maxLength && (
+                        <p className="text-sm text-destructive">
+                          {columnForm.formState.errors.maxLength.message}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   <div className="flex items-center space-x-2">
                     <Checkbox
@@ -469,6 +584,7 @@ export function DatasetDetailPage() {
                   <TableHead>NULL</TableHead>
                   <TableHead>인덱스</TableHead>
                   <TableHead>설명</TableHead>
+                  <TableHead>작업</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -477,10 +593,35 @@ export function DatasetDetailPage() {
                     <TableCell>{col.columnOrder}</TableCell>
                     <TableCell className="font-mono text-sm">{col.columnName}</TableCell>
                     <TableCell>{col.displayName || '-'}</TableCell>
-                    <TableCell>{getDataTypeBadge(col.dataType)}</TableCell>
+                    <TableCell>{getDataTypeBadge(col.dataType, col.maxLength)}</TableCell>
                     <TableCell>{col.isNullable ? '허용' : '불허'}</TableCell>
                     <TableCell>{col.isIndexed ? '예' : '아니오'}</TableCell>
                     <TableCell className="max-w-xs truncate">{col.description || '-'}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setSelectedColumn(col);
+                            setEditColumnOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setSelectedColumn(col);
+                            setDeleteColumnOpen(true);
+                          }}
+                          disabled={dataset.columns.length <= 1}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -648,6 +789,152 @@ export function DatasetDetailPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Edit Column Dialog */}
+      <Dialog open={editColumnOpen} onOpenChange={setEditColumnOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>필드 수정</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={editForm.handleSubmit(onEditColumnSubmit)} className="space-y-4">
+            {dataset && dataset.rowCount > 0 && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 p-3">
+                <p className="text-sm text-amber-800">
+                  데이터가 있는 경우 필드명, 데이터 타입, 길이, NULL 허용 여부는 변경할 수 없습니다.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-columnName">필드명 *</Label>
+              <Input
+                id="edit-columnName"
+                {...editForm.register('columnName')}
+                placeholder="예: user_id"
+                disabled={dataset && dataset.rowCount > 0}
+              />
+              {editForm.formState.errors.columnName && (
+                <p className="text-sm text-destructive">
+                  {editForm.formState.errors.columnName.message}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-displayName">표시명</Label>
+              <Input
+                id="edit-displayName"
+                {...editForm.register('displayName')}
+                placeholder="예: 사용자 ID"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-dataType">데이터 타입 *</Label>
+              <ColumnTypeSelect
+                value={editForm.watch('dataType')}
+                onChange={(value) => editForm.setValue('dataType', value as UpdateColumnFormData['dataType'])}
+                disabled={dataset && dataset.rowCount > 0}
+              />
+              {editForm.formState.errors.dataType && (
+                <p className="text-sm text-destructive">
+                  {editForm.formState.errors.dataType.message}
+                </p>
+              )}
+            </div>
+
+            {editForm.watch('dataType') === 'VARCHAR' && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-maxLength">최대 길이 *</Label>
+                <Input
+                  id="edit-maxLength"
+                  type="number"
+                  min={1}
+                  max={10000}
+                  {...editForm.register('maxLength', { valueAsNumber: true })}
+                  placeholder="예: 255"
+                  disabled={dataset && dataset.rowCount > 0}
+                />
+                {editForm.formState.errors.maxLength && (
+                  <p className="text-sm text-destructive">
+                    {editForm.formState.errors.maxLength.message}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="edit-isNullable"
+                checked={editForm.watch('isNullable')}
+                onCheckedChange={(checked) =>
+                  editForm.setValue('isNullable', checked as boolean)
+                }
+                disabled={dataset && dataset.rowCount > 0}
+              />
+              <Label htmlFor="edit-isNullable" className="text-sm font-normal cursor-pointer">
+                NULL 허용
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="edit-isIndexed"
+                checked={editForm.watch('isIndexed')}
+                onCheckedChange={(checked) =>
+                  editForm.setValue('isIndexed', checked as boolean)
+                }
+              />
+              <Label htmlFor="edit-isIndexed" className="text-sm font-normal cursor-pointer">
+                인덱스 생성
+              </Label>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">설명</Label>
+              <Input
+                id="edit-description"
+                {...editForm.register('description')}
+                placeholder="필드 설명"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <Button type="submit" className="flex-1" disabled={editForm.formState.isSubmitting}>
+                {editForm.formState.isSubmitting ? '수정 중...' : '수정'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditColumnOpen(false)}
+              >
+                취소
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Column Confirmation Dialog */}
+      <AlertDialog open={deleteColumnOpen} onOpenChange={setDeleteColumnOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>필드 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              '{selectedColumn?.columnName}' 필드를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteColumn}
+              variant="destructive"
+            >
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Import Dialog */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>

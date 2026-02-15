@@ -21,9 +21,16 @@ public class DataTableService {
         this.dsl = dsl;
     }
 
-    private String mapDataType(String dataType) {
+    private String mapDataType(String dataType, Integer maxLength) {
         return switch (dataType) {
             case "TEXT" -> "TEXT";
+            case "VARCHAR" -> {
+                int len = maxLength != null ? maxLength : 255;
+                if (len < 1 || len > 10000) {
+                    throw new IllegalArgumentException("VARCHAR length must be between 1 and 10000");
+                }
+                yield "VARCHAR(" + len + ")";
+            }
             case "INTEGER" -> "BIGINT";
             case "DECIMAL" -> "NUMERIC(18,6)";
             case "BOOLEAN" -> "BOOLEAN";
@@ -50,7 +57,7 @@ public class DataTableService {
         for (DatasetColumnRequest col : columns) {
             validateName(col.columnName());
             sql.append("\"").append(col.columnName()).append("\" ");
-            sql.append(mapDataType(col.dataType()));
+            sql.append(mapDataType(col.dataType(), col.maxLength()));
             if (!col.isNullable()) {
                 sql.append(" NOT NULL");
             }
@@ -79,7 +86,7 @@ public class DataTableService {
         StringBuilder sql = new StringBuilder();
         sql.append("ALTER TABLE data.\"").append(tableName).append("\" ");
         sql.append("ADD COLUMN \"").append(column.columnName()).append("\" ");
-        sql.append(mapDataType(column.dataType()));
+        sql.append(mapDataType(column.dataType(), column.maxLength()));
         if (!column.isNullable()) {
             sql.append(" NOT NULL");
         }
@@ -242,6 +249,46 @@ public class DataTableService {
     public void truncateTable(String tableName) {
         validateName(tableName);
         String sql = "TRUNCATE TABLE data.\"" + tableName + "\"";
+        dsl.execute(sql);
+    }
+
+    public void renameColumn(String tableName, String oldName, String newName) {
+        validateName(tableName);
+        validateName(oldName);
+        validateName(newName);
+        String sql = "ALTER TABLE data.\"" + tableName + "\" RENAME COLUMN \"" + oldName + "\" TO \"" + newName + "\"";
+        dsl.execute(sql);
+    }
+
+    public void renameIndex(String tableName, String oldColName, String newColName) {
+        validateName(tableName);
+        validateName(oldColName);
+        validateName(newColName);
+        String oldIndex = "idx_" + tableName + "_" + oldColName;
+        String newIndex = "idx_" + tableName + "_" + newColName;
+        String sql = "ALTER INDEX IF EXISTS data.\"" + oldIndex + "\" RENAME TO \"" + newIndex + "\"";
+        dsl.execute(sql);
+    }
+
+    public void alterColumnType(String tableName, String columnName, String dataType, Integer maxLength) {
+        validateName(tableName);
+        validateName(columnName);
+        String newType = mapDataType(dataType, maxLength);
+        String sql = "ALTER TABLE data.\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" TYPE " + newType;
+        dsl.execute(sql);
+    }
+
+    public void setColumnNullable(String tableName, String columnName, boolean nullable) {
+        validateName(tableName);
+        validateName(columnName);
+        String sql = "ALTER TABLE data.\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" " + (nullable ? "DROP NOT NULL" : "SET NOT NULL");
+        dsl.execute(sql);
+    }
+
+    public void dropColumn(String tableName, String columnName) {
+        validateName(tableName);
+        validateName(columnName);
+        String sql = "ALTER TABLE data.\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
         dsl.execute(sql);
     }
 }

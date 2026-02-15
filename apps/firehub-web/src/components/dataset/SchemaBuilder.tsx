@@ -69,23 +69,42 @@ export function SchemaBuilder() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor={`columns.${index}.dataType`}>데이터 타입 *</Label>
+              <ColumnTypeSelect
+                value={watch(`columns.${index}.dataType`)}
+                onChange={(value) => {
+                  setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType']);
+                }}
+              />
+              {errors.columns?.[index]?.dataType && (
+                <p className="text-sm text-destructive">
+                  {errors.columns[index]?.dataType?.message}
+                </p>
+              )}
+            </div>
+
+            {watch(`columns.${index}.dataType`) === 'VARCHAR' && (
               <div className="space-y-2">
-                <Label htmlFor={`columns.${index}.dataType`}>데이터 타입 *</Label>
-                <ColumnTypeSelect
-                  value={watch(`columns.${index}.dataType`)}
-                  onChange={(value) => {
-                    setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType']);
-                  }}
+                <Label htmlFor={`columns.${index}.maxLength`}>최대 길이 *</Label>
+                <Input
+                  id={`columns.${index}.maxLength`}
+                  type="number"
+                  min={1}
+                  max={10000}
+                  {...register(`columns.${index}.maxLength`, { valueAsNumber: true })}
+                  placeholder="예: 255"
                 />
-                {errors.columns?.[index]?.dataType && (
+                {errors.columns?.[index]?.maxLength && (
                   <p className="text-sm text-destructive">
-                    {errors.columns[index]?.dataType?.message}
+                    {errors.columns[index]?.maxLength?.message}
                   </p>
                 )}
               </div>
+            )}
 
-              <div className="space-y-4 pt-7">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id={`columns.${index}.isNullable`}

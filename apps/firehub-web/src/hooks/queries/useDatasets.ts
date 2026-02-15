@@ -68,6 +68,26 @@ export function useAddColumn(datasetId: number) {
   });
 }
 
+export function useUpdateColumn(datasetId: number, columnId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Parameters<typeof datasetsApi.updateColumn>[2]) => datasetsApi.updateColumn(datasetId, columnId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+    },
+  });
+}
+
+export function useDeleteColumn(datasetId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (columnId: number) => datasetsApi.deleteColumn(datasetId, columnId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+    },
+  });
+}
+
 export function useImports(datasetId: number) {
   return useQuery({
     queryKey: ['datasets', datasetId, 'imports'],

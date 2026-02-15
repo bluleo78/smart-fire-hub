@@ -51,7 +51,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
         // Create input dataset
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         DatasetDetailResponse inputDataset = datasetService.createDataset(new CreateDatasetRequest(

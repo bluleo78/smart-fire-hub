@@ -18,7 +18,8 @@ export interface DatasetColumnResponse {
   id: number;
   columnName: string;
   displayName: string | null;
-  dataType: 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  maxLength: number | null;
   isNullable: boolean;
   isIndexed: boolean;
   description: string | null;
@@ -52,7 +53,8 @@ export interface CreateDatasetRequest {
 export interface DatasetColumnRequest {
   columnName: string;
   displayName?: string;
-  dataType: 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  maxLength?: number;
   isNullable: boolean;
   isIndexed: boolean;
   description?: string;
@@ -67,14 +69,19 @@ export interface UpdateDatasetRequest {
 export interface AddColumnRequest {
   columnName: string;
   displayName?: string;
-  dataType: 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  maxLength?: number;
   isNullable: boolean;
   isIndexed: boolean;
   description?: string;
 }
 
 export interface UpdateColumnRequest {
+  columnName?: string;
   displayName?: string;
+  dataType?: string;
+  maxLength?: number | null;
+  isNullable?: boolean;
   isIndexed?: boolean;
   description?: string;
 }

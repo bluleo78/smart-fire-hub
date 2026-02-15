@@ -54,8 +54,8 @@ class DatasetServiceTest extends IntegrationTestBase {
     void createDataset_withColumns_success() {
         // Given
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("name", "Name", "TEXT", false, true, "Name column"),
-                new DatasetColumnRequest("age", "Age", "INTEGER", true, false, "Age column")
+                new DatasetColumnRequest("name", "Name", "TEXT", null, false, true, "Name column"),
+                new DatasetColumnRequest("age", "Age", "INTEGER", null, true, false, "Age column")
         );
 
         CreateDatasetRequest request = new CreateDatasetRequest(
@@ -101,7 +101,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     void createDataset_duplicateName_throwsException() {
         // Given
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         CreateDatasetRequest request1 = new CreateDatasetRequest(
@@ -133,7 +133,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     void getDatasets_withFilters_returnsFilteredList() {
         // Given
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         datasetService.createDataset(new CreateDatasetRequest(
@@ -166,7 +166,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     void updateDataset_success() {
         // Given
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
@@ -199,7 +199,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     void addColumn_toExistingDataset_success() {
         // Given
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
@@ -215,6 +215,7 @@ class DatasetServiceTest extends IntegrationTestBase {
                 "new_column",
                 "New Column",
                 "INTEGER",
+                null,
                 true,
                 false,
                 "New column description"
@@ -235,7 +236,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     void deleteDataset_removesDataAndTable() {
         // Given
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
 
         DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(

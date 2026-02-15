@@ -15,9 +15,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class DatasetService {
+
+    private static final Set<String> VALID_DATA_TYPES = Set.of(
+            "TEXT", "VARCHAR", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP"
+    );
 
     private final DatasetRepository datasetRepository;
     private final DatasetColumnRepository columnRepository;
@@ -167,6 +172,7 @@ public class DatasetService {
                 request.columnName(),
                 request.displayName(),
                 request.dataType(),
+                request.maxLength(),
                 request.isNullable(),
                 request.isIndexed(),
                 request.description()
@@ -181,11 +187,9 @@ public class DatasetService {
 
     @Transactional
     public void updateColumn(Long datasetId, Long columnId, UpdateColumnRequest request) {
-        // Verify dataset exists
         DatasetResponse dataset = datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
-        // Verify column exists and belongs to this dataset
         DatasetColumnResponse column = columnRepository.findById(columnId)
                 .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
 
@@ -196,13 +200,86 @@ public class DatasetService {
             throw new IllegalArgumentException("Column does not belong to this dataset");
         }
 
-        // Update index if changed
-        if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {
-            dataTableService.setColumnIndex(dataset.tableName(), column.columnName(), request.isIndexed());
+        // dataType 유효성 검증
+        if (request.dataType() != null && !VALID_DATA_TYPES.contains(request.dataType())) {
+            throw new ColumnModificationException("Invalid data type: " + request.dataType());
         }
 
-        // Update column metadata
+        long rowCount = dataTableService.countRows(dataset.tableName());
+
+        // columnName 변경
+        if (request.columnName() != null && !request.columnName().equals(column.columnName())) {
+            if (rowCount > 0) {
+                throw new ColumnModificationException("Cannot rename column when dataset has data");
+            }
+            dataTableService.validateName(request.columnName());
+            if (column.isIndexed()) {
+                dataTableService.renameIndex(dataset.tableName(), column.columnName(), request.columnName());
+            }
+            dataTableService.renameColumn(dataset.tableName(), column.columnName(), request.columnName());
+        }
+
+        // dataType 변경
+        if (request.dataType() != null && !request.dataType().equals(column.dataType())) {
+            if (rowCount > 0) {
+                throw new ColumnModificationException("Cannot change data type when dataset has data");
+            }
+            String currentColName = request.columnName() != null ? request.columnName() : column.columnName();
+            dataTableService.alterColumnType(dataset.tableName(), currentColName, request.dataType(), request.maxLength());
+        } else if (request.dataType() != null && "VARCHAR".equals(request.dataType()) && request.maxLength() != null && !request.maxLength().equals(column.maxLength())) {
+            // VARCHAR인데 maxLength만 바뀐 경우
+            if (rowCount > 0) {
+                throw new ColumnModificationException("Cannot change column size when dataset has data");
+            }
+            String currentColName = request.columnName() != null ? request.columnName() : column.columnName();
+            dataTableService.alterColumnType(dataset.tableName(), currentColName, request.dataType(), request.maxLength());
+        }
+
+        // isNullable 변경
+        if (request.isNullable() != null && request.isNullable() != column.isNullable()) {
+            if (rowCount > 0) {
+                throw new ColumnModificationException("Cannot change nullable constraint when dataset has data");
+            }
+            String currentColName = request.columnName() != null ? request.columnName() : column.columnName();
+            dataTableService.setColumnNullable(dataset.tableName(), currentColName, request.isNullable());
+        }
+
+        // isIndexed 변경
+        if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {
+            String currentColName = request.columnName() != null ? request.columnName() : column.columnName();
+            dataTableService.setColumnIndex(dataset.tableName(), currentColName, request.isIndexed());
+        }
+
+        // 메타데이터 업데이트
         columnRepository.update(columnId, request);
+    }
+
+    @Transactional
+    public void deleteColumn(Long datasetId, Long columnId) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        DatasetColumnResponse column = columnRepository.findById(columnId)
+                .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
+
+        Long columnDatasetId = columnRepository.findDatasetIdByColumnId(columnId)
+                .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
+
+        if (!columnDatasetId.equals(datasetId)) {
+            throw new IllegalArgumentException("Column does not belong to this dataset");
+        }
+
+        // 최소 1개 컬럼은 유지해야 함
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+        if (columns.size() <= 1) {
+            throw new ColumnModificationException("Cannot delete the last column of a dataset");
+        }
+
+        // 물리 컬럼 삭제
+        dataTableService.dropColumn(dataset.tableName(), column.columnName());
+
+        // 메타데이터 삭제
+        columnRepository.deleteById(columnId);
     }
 
     public DataQueryResponse getDatasetData(Long datasetId, String search, int page, int size) {

@@ -77,6 +77,13 @@ public class DatasetController {
         return ResponseEntity.noContent().build();
     }
 
+    @DeleteMapping("/{id}/columns/{columnId}")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<Void> deleteColumn(@PathVariable Long id, @PathVariable Long columnId) {
+        datasetService.deleteColumn(id, columnId);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/{id}/data")
     @RequirePermission("data:read")
     public ResponseEntity<DataQueryResponse> getDatasetData(

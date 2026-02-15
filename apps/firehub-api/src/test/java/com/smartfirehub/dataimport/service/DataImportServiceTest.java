@@ -55,9 +55,9 @@ class DataImportServiceTest extends IntegrationTestBase {
 
         // Create test dataset
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("name", "Name", "TEXT", false, false, null),
-                new DatasetColumnRequest("age", "Age", "INTEGER", true, false, null),
-                new DatasetColumnRequest("email", "Email", "TEXT", true, false, null)
+                new DatasetColumnRequest("name", "Name", "TEXT", null, false, false, null),
+                new DatasetColumnRequest("age", "Age", "INTEGER", null, true, false, null),
+                new DatasetColumnRequest("email", "Email", "TEXT", null, true, false, null)
         );
 
         DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
@@ -195,7 +195,7 @@ class DataImportServiceTest extends IntegrationTestBase {
 
         // Create another dataset
         List<DatasetColumnRequest> columns = List.of(
-                new DatasetColumnRequest("col1", "Col1", "TEXT", true, false, null)
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
         );
         DatasetDetailResponse anotherDataset = datasetService.createDataset(new CreateDatasetRequest(
                 "Another Dataset",

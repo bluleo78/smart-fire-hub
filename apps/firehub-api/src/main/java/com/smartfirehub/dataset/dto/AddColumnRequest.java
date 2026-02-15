@@ -4,6 +4,7 @@ public record AddColumnRequest(
     String columnName,
     String displayName,
     String dataType,
+    Integer maxLength,
     boolean isNullable,
     boolean isIndexed,
     String description

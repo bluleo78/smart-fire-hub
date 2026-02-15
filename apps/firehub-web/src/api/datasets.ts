@@ -26,6 +26,8 @@ export const datasetsApi = {
     client.post<DatasetColumnResponse>(`/datasets/${datasetId}/columns`, data),
   updateColumn: (datasetId: number, colId: number, data: UpdateColumnRequest) =>
     client.put(`/datasets/${datasetId}/columns/${colId}`, data),
+  deleteColumn: (datasetId: number, columnId: number) =>
+    client.delete(`/datasets/${datasetId}/columns/${columnId}`),
   getDatasetData: (datasetId: number, params: { search?: string; page?: number; size?: number }) =>
     client.get<DataQueryResponse>(`/datasets/${datasetId}/data`, { params }),
 };

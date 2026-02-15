@@ -25,6 +25,7 @@ public class DatasetColumnRepository {
     private static final Field<String> COL_COLUMN_NAME = field(name("dataset_column", "column_name"), String.class);
     private static final Field<String> COL_DISPLAY_NAME = field(name("dataset_column", "display_name"), String.class);
     private static final Field<String> COL_DATA_TYPE = field(name("dataset_column", "data_type"), String.class);
+    private static final Field<Integer> COL_MAX_LENGTH = field(name("dataset_column", "max_length"), Integer.class);
     private static final Field<Boolean> COL_IS_NULLABLE = field(name("dataset_column", "is_nullable"), Boolean.class);
     private static final Field<Boolean> COL_IS_INDEXED = field(name("dataset_column", "is_indexed"), Boolean.class);
     private static final Field<String> COL_DESCRIPTION = field(name("dataset_column", "description"), String.class);
@@ -40,6 +41,7 @@ public class DatasetColumnRepository {
                 r.get(COL_COLUMN_NAME),
                 r.get(COL_DISPLAY_NAME),
                 r.get(COL_DATA_TYPE),
+                r.get(COL_MAX_LENGTH),
                 r.get(COL_IS_NULLABLE),
                 r.get(COL_IS_INDEXED),
                 r.get(COL_DESCRIPTION),
@@ -48,7 +50,7 @@ public class DatasetColumnRepository {
     }
 
     public List<DatasetColumnResponse> findByDatasetId(Long datasetId) {
-        return dsl.select(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE,
+        return dsl.select(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE, COL_MAX_LENGTH,
                         COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER)
                 .from(DATASET_COLUMN)
                 .where(COL_DATASET_ID.eq(datasetId))
@@ -62,11 +64,12 @@ public class DatasetColumnRepository {
                 .set(COL_COLUMN_NAME, request.columnName())
                 .set(COL_DISPLAY_NAME, request.displayName())
                 .set(COL_DATA_TYPE, request.dataType())
+                .set(COL_MAX_LENGTH, request.maxLength())
                 .set(COL_IS_NULLABLE, request.isNullable())
                 .set(COL_IS_INDEXED, request.isIndexed())
                 .set(COL_DESCRIPTION, request.description())
                 .set(COL_COLUMN_ORDER, columnOrder)
-                .returning(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE,
+                .returning(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE, COL_MAX_LENGTH,
                         COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER)
                 .fetchOne(this::mapToColumnResponse);
     }
@@ -79,6 +82,7 @@ public class DatasetColumnRepository {
                     .set(COL_COLUMN_NAME, col.columnName())
                     .set(COL_DISPLAY_NAME, col.displayName())
                     .set(COL_DATA_TYPE, col.dataType())
+                    .set(COL_MAX_LENGTH, col.maxLength())
                     .set(COL_IS_NULLABLE, col.isNullable())
                     .set(COL_IS_INDEXED, col.isIndexed())
                     .set(COL_DESCRIPTION, col.description())
@@ -88,7 +92,7 @@ public class DatasetColumnRepository {
     }
 
     public Optional<DatasetColumnResponse> findById(Long id) {
-        return dsl.select(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE,
+        return dsl.select(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE, COL_MAX_LENGTH,
                         COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER)
                 .from(DATASET_COLUMN)
                 .where(COL_ID.eq(id))
@@ -96,12 +100,29 @@ public class DatasetColumnRepository {
     }
 
     public void update(Long id, UpdateColumnRequest request) {
-        dsl.update(DATASET_COLUMN)
-                .set(COL_DISPLAY_NAME, request.displayName())
+        var step = dsl.update(DATASET_COLUMN);
+        var set = step.set(COL_DISPLAY_NAME, request.displayName())
                 .set(COL_IS_INDEXED, request.isIndexed())
-                .set(COL_DESCRIPTION, request.description())
-                .where(COL_ID.eq(id))
-                .execute();
+                .set(COL_DESCRIPTION, request.description());
+
+        if (request.columnName() != null) {
+            set = set.set(COL_COLUMN_NAME, request.columnName());
+        }
+        if (request.dataType() != null) {
+            set = set.set(COL_DATA_TYPE, request.dataType());
+        }
+        if (request.maxLength() != null) {
+            set = set.set(COL_MAX_LENGTH, request.maxLength());
+        }
+        // maxLength를 null로 명시적으로 세팅해야 하는 경우 (VARCHAR→TEXT 등)
+        if (request.dataType() != null && !"VARCHAR".equals(request.dataType())) {
+            set = set.setNull(COL_MAX_LENGTH);
+        }
+        if (request.isNullable() != null) {
+            set = set.set(COL_IS_NULLABLE, request.isNullable());
+        }
+
+        set.where(COL_ID.eq(id)).execute();
     }
 
     public int getMaxOrder(Long datasetId) {
@@ -123,5 +144,11 @@ public class DatasetColumnRepository {
                 .from(DATASET_COLUMN)
                 .where(COL_ID.eq(columnId))
                 .fetchOptional(r -> r.get(COL_DATASET_ID));
+    }
+
+    public void deleteById(Long id) {
+        dsl.deleteFrom(DATASET_COLUMN)
+                .where(COL_ID.eq(id))
+                .execute();
     }
 }
