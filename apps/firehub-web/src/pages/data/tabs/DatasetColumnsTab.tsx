@@ -1,5 +1,5 @@
 import React, { useCallback, lazy, Suspense } from 'react';
-import { useDeleteColumn } from '../../../hooks/queries/useDatasets';
+import { useDeleteColumn, useReorderColumns } from '../../../hooks/queries/useDatasets';
 import type { DatasetDetailResponse, DatasetColumnResponse } from '../../../types/dataset';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../../components/ui/alert-dialog';
-import { Pencil, Trash2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../../types/auth';
 import axios from 'axios';
@@ -60,8 +60,40 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
   const [editColumnOpen, setEditColumnOpen] = React.useState(false);
   const [deleteColumnOpen, setDeleteColumnOpen] = React.useState(false);
   const [selectedColumn, setSelectedColumn] = React.useState<DatasetColumnResponse | null>(null);
+  const [localColumns, setLocalColumns] = React.useState<DatasetColumnResponse[] | null>(null);
 
   const deleteColumn = useDeleteColumn(datasetId);
+  const reorderColumns = useReorderColumns(datasetId);
+
+  // Use localColumns for optimistic UI, fall back to dataset.columns
+  const columns = localColumns ?? dataset.columns;
+
+  // Reset local state when dataset changes
+  React.useEffect(() => {
+    setLocalColumns(null);
+  }, [dataset.columns]);
+
+  const handleMoveColumn = useCallback(async (index: number, direction: 'up' | 'down') => {
+    const currentColumns = localColumns ?? dataset.columns;
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= currentColumns.length) return;
+
+    const reordered = [...currentColumns];
+    [reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]];
+    setLocalColumns(reordered);
+
+    try {
+      await reorderColumns.mutateAsync(reordered.map(c => c.id));
+    } catch (error) {
+      setLocalColumns(null);
+      if (axios.isAxiosError(error) && error.response?.data) {
+        const errData = error.response.data as ErrorResponse;
+        toast.error(errData.message || '필드 순서 변경에 실패했습니다.');
+      } else {
+        toast.error('필드 순서 변경에 실패했습니다.');
+      }
+    }
+  }, [localColumns, dataset.columns, reorderColumns]);
 
   const handleDeleteColumn = useCallback(async () => {
     if (!selectedColumn) return;
@@ -124,9 +156,9 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {dataset.columns.map((col) => (
+            {columns.map((col, index) => (
               <TableRow key={col.id}>
-                <TableCell>{col.columnOrder}</TableCell>
+                <TableCell>{index + 1}</TableCell>
                 <TableCell className="font-mono text-sm">{col.columnName}</TableCell>
                 <TableCell>{col.displayName || '-'}</TableCell>
                 <TableCell>{getDataTypeBadge(col.dataType, col.maxLength)}</TableCell>
@@ -134,7 +166,25 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                 <TableCell>{col.isIndexed ? '예' : '아니오'}</TableCell>
                 <TableCell className="max-w-xs truncate">{col.description || '-'}</TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleMoveColumn(index, 'up')}
+                      disabled={index === 0 || reorderColumns.isPending}
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleMoveColumn(index, 'down')}
+                      disabled={index === columns.length - 1 || reorderColumns.isPending}
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -146,7 +196,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                       variant="ghost"
                       size="icon"
                       onClick={() => handleDeleteClick(col)}
-                      disabled={dataset.columns.length <= 1}
+                      disabled={columns.length <= 1}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

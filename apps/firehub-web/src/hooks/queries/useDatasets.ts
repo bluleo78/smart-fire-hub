@@ -78,6 +78,14 @@ export function useUpdateColumn(datasetId: number, columnId: number) {
   });
 }
 
+export function useReorderColumns(datasetId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (columnIds: number[]) => datasetsApi.reorderColumns(datasetId, columnIds),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] }),
+  });
+}
+
 export function useDeleteColumn(datasetId: number) {
   const queryClient = useQueryClient();
   return useMutation({

@@ -233,6 +233,106 @@ class DatasetServiceTest extends IntegrationTestBase {
     }
 
     @Test
+    void reorderColumns_success() {
+        // Given
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col_a", "Column A", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("col_b", "Column B", "INTEGER", null, true, false, null),
+                new DatasetColumnRequest("col_c", "Column C", "BOOLEAN", null, true, false, null)
+        );
+
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Reorder Test",
+                "reorder_test",
+                null,
+                null,
+                "SOURCE",
+                columns
+        ), testUserId);
+
+        // Original order: col_a(0), col_b(1), col_c(2)
+        List<DatasetColumnResponse> originalColumns = dataset.columns();
+        assertThat(originalColumns).hasSize(3);
+        assertThat(originalColumns.get(0).columnName()).isEqualTo("col_a");
+        assertThat(originalColumns.get(1).columnName()).isEqualTo("col_b");
+        assertThat(originalColumns.get(2).columnName()).isEqualTo("col_c");
+
+        // Reorder to: col_c, col_a, col_b
+        List<Long> reorderedIds = List.of(
+                originalColumns.get(2).id(),
+                originalColumns.get(0).id(),
+                originalColumns.get(1).id()
+        );
+
+        // When
+        datasetService.reorderColumns(dataset.id(), new ReorderColumnsRequest(reorderedIds));
+
+        // Then
+        DatasetDetailResponse updated = datasetService.getDatasetById(dataset.id());
+        assertThat(updated.columns().get(0).columnName()).isEqualTo("col_c");
+        assertThat(updated.columns().get(1).columnName()).isEqualTo("col_a");
+        assertThat(updated.columns().get(2).columnName()).isEqualTo("col_b");
+    }
+
+    @Test
+    void reorderColumns_missingColumn_throwsException() {
+        // Given
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col_a", "Column A", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("col_b", "Column B", "INTEGER", null, true, false, null)
+        );
+
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Reorder Fail Test",
+                "reorder_fail_test",
+                null,
+                null,
+                "SOURCE",
+                columns
+        ), testUserId);
+
+        List<Long> incompleteIds = List.of(dataset.columns().get(0).id());
+
+        // When/Then
+        assertThatThrownBy(() -> datasetService.reorderColumns(dataset.id(), new ReorderColumnsRequest(incompleteIds)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column IDs must match exactly");
+    }
+
+    @Test
+    void reorderColumns_duplicateIds_throwsException() {
+        // Given
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col_a", "Column A", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("col_b", "Column B", "INTEGER", null, true, false, null)
+        );
+
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Reorder Dup Test",
+                "reorder_dup_test",
+                null,
+                null,
+                "SOURCE",
+                columns
+        ), testUserId);
+
+        Long firstColId = dataset.columns().get(0).id();
+        List<Long> duplicateIds = List.of(firstColId, firstColId);
+
+        // When/Then
+        assertThatThrownBy(() -> datasetService.reorderColumns(dataset.id(), new ReorderColumnsRequest(duplicateIds)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Duplicate column IDs");
+    }
+
+    @Test
+    void reorderColumns_nonExistentDataset_throwsException() {
+        // When/Then
+        assertThatThrownBy(() -> datasetService.reorderColumns(999999L, new ReorderColumnsRequest(List.of(1L, 2L))))
+                .isInstanceOf(DatasetNotFoundException.class);
+    }
+
+    @Test
     void deleteDataset_removesDataAndTable() {
         // Given
         List<DatasetColumnRequest> columns = List.of(

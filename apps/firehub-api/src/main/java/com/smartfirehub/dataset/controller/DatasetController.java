@@ -84,6 +84,13 @@ public class DatasetController {
         return ResponseEntity.noContent().build();
     }
 
+    @PutMapping("/{id}/columns/reorder")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<Void> reorderColumns(@PathVariable Long id, @RequestBody ReorderColumnsRequest request) {
+        datasetService.reorderColumns(id, request);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/{id}/data")
     @RequirePermission("data:read")
     public ResponseEntity<DataQueryResponse> getDatasetData(

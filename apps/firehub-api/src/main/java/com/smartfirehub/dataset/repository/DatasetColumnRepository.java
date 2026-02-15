@@ -151,4 +151,14 @@ public class DatasetColumnRepository {
                 .where(COL_ID.eq(id))
                 .execute();
     }
+
+    public void updateOrders(Long datasetId, List<Long> columnIds) {
+        for (int i = 0; i < columnIds.size(); i++) {
+            dsl.update(DATASET_COLUMN)
+                    .set(COL_COLUMN_ORDER, i)
+                    .where(COL_ID.eq(columnIds.get(i)))
+                    .and(COL_DATASET_ID.eq(datasetId))
+                    .execute();
+        }
+    }
 }

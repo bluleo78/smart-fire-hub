@@ -282,6 +282,27 @@ public class DatasetService {
         columnRepository.deleteById(columnId);
     }
 
+    @Transactional
+    public void reorderColumns(Long datasetId, ReorderColumnsRequest request) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> existingColumns = columnRepository.findByDatasetId(datasetId);
+        Set<Long> existingIds = existingColumns.stream()
+                .map(DatasetColumnResponse::id)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<Long> requestIds = new java.util.HashSet<>(request.columnIds());
+
+        if (requestIds.size() != request.columnIds().size()) {
+            throw new IllegalArgumentException("Duplicate column IDs in request");
+        }
+        if (!existingIds.equals(requestIds)) {
+            throw new IllegalArgumentException("Column IDs must match exactly with dataset columns");
+        }
+
+        columnRepository.updateOrders(datasetId, request.columnIds());
+    }
+
     public DataQueryResponse getDatasetData(Long datasetId, String search, int page, int size) {
         DatasetResponse dataset = datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
