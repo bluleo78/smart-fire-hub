@@ -142,7 +142,7 @@ export function AppLayout() {
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex flex-1 flex-col min-w-0">
         {/* Header */}
         <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background px-4">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>

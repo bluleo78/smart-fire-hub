@@ -8,8 +8,8 @@ import {
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { PipelineStepResponse } from '../../types/pipeline';
-import type { StepExecutionResponse } from '../../types/pipeline';
+import type { PipelineStepResponse } from '../../../types/pipeline';
+import type { StepExecutionResponse } from '../../../types/pipeline';
 
 interface DagViewerProps {
   steps: PipelineStepResponse[];

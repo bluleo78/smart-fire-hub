@@ -9,13 +9,13 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Card } from '../../components/ui/card';
-import { StepEditor } from '../../components/pipeline/StepEditor';
+import { StepEditor } from './components/StepEditor';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
-export function PipelineCreatePage() {
+export default function PipelineCreatePage() {
   const navigate = useNavigate();
   const { data: datasetsData } = useDatasets({ page: 0, size: 1000 });
   const createPipeline = useCreatePipeline();

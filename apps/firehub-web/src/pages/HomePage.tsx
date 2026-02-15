@@ -5,43 +5,11 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Database, GitBranch, Upload, Play } from 'lucide-react';
+import { getStatusBadgeVariant, getStatusLabel } from '../lib/formatters';
 
-export function HomePage() {
+export default function HomePage() {
   const { user } = useAuth();
   const { data: stats, isLoading } = useDashboardStats();
-
-  const getStatusBadgeVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    switch (status) {
-      case 'COMPLETED':
-        return 'default';
-      case 'FAILED':
-        return 'destructive';
-      case 'RUNNING':
-      case 'PROCESSING':
-        return 'secondary';
-      default:
-        return 'outline';
-    }
-  };
-
-  const getStatusLabel = (status: string): string => {
-    switch (status) {
-      case 'COMPLETED':
-        return '완료';
-      case 'FAILED':
-        return '실패';
-      case 'RUNNING':
-        return '실행중';
-      case 'PROCESSING':
-        return '처리중';
-      case 'PENDING':
-        return '대기';
-      case 'SKIPPED':
-        return '건너뜀';
-      default:
-        return status;
-    }
-  };
 
   return (
     <div className="space-y-6">

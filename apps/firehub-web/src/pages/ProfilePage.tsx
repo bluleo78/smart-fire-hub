@@ -14,7 +14,7 @@ import type { ErrorResponse } from '../types/auth';
 import { toast } from 'sonner';
 import axios from 'axios';
 
-export function ProfilePage() {
+export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
   const [profileError, setProfileError] = useState('');
   const [passwordError, setPasswordError] = useState('');

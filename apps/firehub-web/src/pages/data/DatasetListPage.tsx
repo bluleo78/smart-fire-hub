@@ -35,8 +35,9 @@ import { Plus, Trash2, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
+import { formatDateShort } from '../../lib/formatters';
 
-export function DatasetListPage() {
+export default function DatasetListPage() {
   const navigate = useNavigate();
   const [categoryId, setCategoryId] = useState<number | undefined>();
   const [datasetType, setDatasetType] = useState<string>('');
@@ -70,10 +71,6 @@ export function DatasetListPage() {
         toast.error('데이터셋 삭제에 실패했습니다.');
       }
     }
-  };
-
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('ko-KR');
   };
 
   return (
@@ -174,7 +171,7 @@ export function DatasetListPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>{dataset.category?.name || '-'}</TableCell>
-                  <TableCell>{formatDate(dataset.createdAt)}</TableCell>
+                  <TableCell>{formatDateShort(dataset.createdAt)}</TableCell>
                   <TableCell>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>

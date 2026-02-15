@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
-export function RoleDetailPage() {
+export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [role, setRole] = useState<RoleDetailResponse | null>(null);

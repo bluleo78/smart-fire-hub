@@ -27,8 +27,9 @@ import { Plus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
+import { formatDateShort } from '../../lib/formatters';
 
-export function PipelineListPage() {
+export default function PipelineListPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(0);
   const size = 10;
@@ -51,10 +52,6 @@ export function PipelineListPage() {
         toast.error('파이프라인 삭제에 실패했습니다.');
       }
     }
-  };
-
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('ko-KR');
   };
 
   return (
@@ -108,7 +105,7 @@ export function PipelineListPage() {
                   </TableCell>
                   <TableCell>{pipeline.stepCount}</TableCell>
                   <TableCell>{pipeline.createdBy}</TableCell>
-                  <TableCell>{formatDate(pipeline.createdAt)}</TableCell>
+                  <TableCell>{formatDateShort(pipeline.createdAt)}</TableCell>
                   <TableCell>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
-import { Card } from '../ui/card';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import { Card } from '../../../components/ui/card';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { ExecutionDetailResponse } from '../../types/pipeline';
+import type { ExecutionDetailResponse } from '../../../types/pipeline';
 
 interface ExecutionStatusProps {
   execution: ExecutionDetailResponse;

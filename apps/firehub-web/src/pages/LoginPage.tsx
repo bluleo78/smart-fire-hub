@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import type { ErrorResponse } from '../types/auth';
 import axios from 'axios';
 
-export function LoginPage() {
+export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const [serverError, setServerError] = useState('');
 

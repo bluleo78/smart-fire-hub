@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
-export function UserDetailPage() {
+export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [user, setUser] = useState<UserDetailResponse | null>(null);

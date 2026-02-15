@@ -1,26 +1,21 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { usePipeline, useExecutePipeline, useExecutions } from '../../hooks/queries/usePipelines';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Card } from '../../components/ui/card';
 import { Skeleton } from '../../components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../../components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { DagViewer } from '../../components/pipeline/DagViewer';
+import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { PipelineDagTab } from './tabs/PipelineDagTab';
+import { PipelineStepsTab } from './tabs/PipelineStepsTab';
+import { PipelineExecutionsTab } from './tabs/PipelineExecutionsTab';
 import { Play, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatDate } from '../../lib/formatters';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
-export function PipelineDetailPage() {
+export default function PipelineDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const pipelineId = Number(id);
@@ -31,7 +26,7 @@ export function PipelineDetailPage() {
 
   const [activeTab, setActiveTab] = useState('dag');
 
-  const handleExecute = async () => {
+  const handleExecute = useCallback(async () => {
     try {
       await executePipeline.mutateAsync();
       toast.success('파이프라인 실행이 시작되었습니다.');
@@ -44,29 +39,7 @@ export function PipelineDetailPage() {
         toast.error('파이프라인 실행에 실패했습니다.');
       }
     }
-  };
-
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString('ko-KR');
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-      PENDING: 'outline',
-      RUNNING: 'default',
-      COMPLETED: 'secondary',
-      FAILED: 'destructive',
-      CANCELLED: 'outline',
-    };
-    const labels: Record<string, string> = {
-      PENDING: '대기',
-      RUNNING: '실행중',
-      COMPLETED: '완료',
-      FAILED: '실패',
-      CANCELLED: '취소됨',
-    };
-    return <Badge variant={variants[status] || 'outline'}>{labels[status] || status}</Badge>;
-  };
+  }, [executePipeline, setActiveTab]);
 
   if (isLoading) {
     return (
@@ -137,83 +110,11 @@ export function PipelineDetailPage() {
           <TabsTrigger value="executions">실행</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="dag" className="space-y-4">
-          <Card className="p-4">
-            <DagViewer steps={pipeline.steps} />
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="steps" className="space-y-4">
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>이름</TableHead>
-                  <TableHead>스크립트 타입</TableHead>
-                  <TableHead>출력 데이터셋</TableHead>
-                  <TableHead>의존성</TableHead>
-                  <TableHead>순서</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pipeline.steps.map((step) => (
-                  <TableRow key={step.id}>
-                    <TableCell className="font-medium">{step.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{step.scriptType}</Badge>
-                    </TableCell>
-                    <TableCell>{step.outputDatasetName}</TableCell>
-                    <TableCell>
-                      {step.dependsOnStepNames.length > 0
-                        ? step.dependsOnStepNames.join(', ')
-                        : '-'}
-                    </TableCell>
-                    <TableCell>{step.stepOrder}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="executions" className="space-y-4">
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>상태</TableHead>
-                  <TableHead>실행자</TableHead>
-                  <TableHead>시작</TableHead>
-                  <TableHead>완료</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {executions && executions.length > 0 ? (
-                  executions.map((exec) => (
-                    <TableRow
-                      key={exec.id}
-                      className="cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => navigate(`/pipelines/${pipelineId}/executions/${exec.id}`)}
-                    >
-                      <TableCell className="font-mono">#{exec.id}</TableCell>
-                      <TableCell>{getStatusBadge(exec.status)}</TableCell>
-                      <TableCell>{exec.executedBy}</TableCell>
-                      <TableCell>{exec.startedAt ? formatDate(exec.startedAt) : '-'}</TableCell>
-                      <TableCell>{exec.completedAt ? formatDate(exec.completedAt) : '-'}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
-                      실행 기록이 없습니다.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
+        {activeTab === 'dag' && <PipelineDagTab steps={pipeline.steps} />}
+        {activeTab === 'steps' && <PipelineStepsTab steps={pipeline.steps} />}
+        {activeTab === 'executions' && (
+          <PipelineExecutionsTab executions={executions} pipelineId={pipelineId} />
+        )}
       </Tabs>
     </div>
   );

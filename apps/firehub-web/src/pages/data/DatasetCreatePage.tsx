@@ -15,12 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../components/ui/select';
-import { SchemaBuilder } from '../../components/dataset/SchemaBuilder';
+import { SchemaBuilder } from './components/SchemaBuilder';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
-export function DatasetCreatePage() {
+export default function DatasetCreatePage() {
   const navigate = useNavigate();
   const { data: categoriesData } = useCategories();
   const createDataset = useCreateDataset();
@@ -61,6 +61,7 @@ export function DatasetCreatePage() {
           columnName: col.columnName,
           displayName: col.displayName || undefined,
           dataType: col.dataType,
+          maxLength: col.maxLength ?? undefined,
           isNullable: col.isNullable,
           isIndexed: col.isIndexed,
           description: col.description || undefined,

@@ -1,17 +1,17 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useAddColumn } from '../../hooks/queries/useDatasets';
-import { addColumnSchema } from '../../lib/validations/dataset';
-import type { AddColumnFormData } from '../../lib/validations/dataset';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Checkbox } from '../ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../ui/dialog';
+import { useAddColumn } from '../../../hooks/queries/useDatasets';
+import { addColumnSchema } from '../../../lib/validations/dataset';
+import type { AddColumnFormData } from '../../../lib/validations/dataset';
+import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { Checkbox } from '../../../components/ui/checkbox';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../../components/ui/dialog';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ErrorResponse } from '../../types/auth';
+import type { ErrorResponse } from '../../../types/auth';
 import axios from 'axios';
 
 interface AddColumnDialogProps {

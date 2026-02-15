@@ -1,13 +1,15 @@
+import { lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useExecution, usePipeline } from '../../hooks/queries/usePipelines';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Skeleton } from '../../components/ui/skeleton';
-import { DagViewer } from '../../components/pipeline/DagViewer';
-import { ExecutionStatus } from '../../components/pipeline/ExecutionStatus';
+import { ExecutionStatus } from './components/ExecutionStatus';
 import { ArrowLeft } from 'lucide-react';
 
-export function ExecutionDetailPage() {
+const DagViewer = lazy(() => import('./components/DagViewer').then(m => ({ default: m.DagViewer })));
+
+export default function ExecutionDetailPage() {
   const { id, execId } = useParams<{ id: string; execId: string }>();
   const navigate = useNavigate();
   const pipelineId = Number(id);
@@ -51,10 +53,12 @@ export function ExecutionDetailPage() {
       {pipeline && (
         <Card className="p-4">
           <h2 className="text-lg font-semibold mb-3">실행 DAG</h2>
-          <DagViewer
-            steps={pipeline.steps}
-            stepExecutions={execution.stepExecutions}
-          />
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <DagViewer
+              steps={pipeline.steps}
+              stepExecutions={execution.stepExecutions}
+            />
+          </Suspense>
         </Card>
       )}
 

@@ -42,7 +42,7 @@ import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
-export function RoleListPage() {
+export default function RoleListPage() {
   const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);

@@ -1,19 +1,19 @@
 import { useFormContext } from 'react-hook-form';
-import { Card } from '../ui/card';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Button } from '../ui/button';
+import { Card } from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { Button } from '../../../components/ui/button';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../ui/select';
-import { Checkbox } from '../ui/checkbox';
+} from '../../../components/ui/select';
+import { Checkbox } from '../../../components/ui/checkbox';
 import { Trash2 } from 'lucide-react';
-import type { DatasetResponse } from '../../types/dataset';
-import type { CreatePipelineFormData } from '../../lib/validations/pipeline';
+import type { DatasetResponse } from '../../../types/dataset';
+import type { CreatePipelineFormData } from '../../../lib/validations/pipeline';
 
 interface StepEditorProps {
   index: number;

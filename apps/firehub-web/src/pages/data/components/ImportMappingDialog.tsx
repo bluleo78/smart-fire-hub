@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import axios from 'axios';
-import { usePreviewImport, useValidateImport, useUploadFile } from '../../hooks/queries/useDatasets';
-import type { DatasetColumnResponse } from '../../types/dataset';
-import type { ImportPreviewResponse, ColumnMappingEntry, ImportValidateResponse } from '../../types/dataImport';
-import type { ErrorResponse } from '../../types/auth';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
-import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
-import { Card } from '../../components/ui/card';
+import { usePreviewImport, useValidateImport, useUploadFile } from '../../../hooks/queries/useDatasets';
+import type { DatasetColumnResponse } from '../../../types/dataset';
+import type { ImportPreviewResponse, ColumnMappingEntry, ImportValidateResponse } from '../../../types/dataImport';
+import type { ErrorResponse } from '../../../types/auth';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { Button } from '../../../components/ui/button';
+import { Badge } from '../../../components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Card } from '../../../components/ui/card';
 import { FileUploadZone } from './FileUploadZone';
 import { AlertTriangle, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
 
@@ -36,6 +36,7 @@ export function ImportMappingDialog({ open, onOpenChange, datasetId, datasetColu
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional batch reset on close
       setStep(1);
       setSelectedFile(null);
       setPreviewData(null);
@@ -52,6 +53,7 @@ export function ImportMappingDialog({ open, onOpenChange, datasetId, datasetColu
         fileColumn: sm.fileColumn,
         datasetColumn: sm.datasetColumn,
       }));
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync derived state from preview
       setMappings(initialMappings);
     }
   }, [previewData]);

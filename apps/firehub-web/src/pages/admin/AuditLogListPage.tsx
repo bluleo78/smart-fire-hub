@@ -56,7 +56,7 @@ function formatDateTime(dateStr: string) {
   });
 }
 
-export function AuditLogListPage() {
+export default function AuditLogListPage() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [actionType, setActionType] = useState<string>('');

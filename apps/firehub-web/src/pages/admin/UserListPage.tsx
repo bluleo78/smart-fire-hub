@@ -15,7 +15,7 @@ import {
 } from '../../components/ui/table';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
-export function UserListPage() {
+export default function UserListPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');

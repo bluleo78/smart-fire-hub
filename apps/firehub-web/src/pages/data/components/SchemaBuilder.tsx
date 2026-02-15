@@ -1,12 +1,12 @@
 import { useFieldArray, useFormContext } from 'react-hook-form';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Card } from '../ui/card';
-import { Checkbox } from '../ui/checkbox';
+import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { Card } from '../../../components/ui/card';
+import { Checkbox } from '../../../components/ui/checkbox';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
 import { Plus, X } from 'lucide-react';
-import type { CreateDatasetFormData } from '../../lib/validations/dataset';
+import type { CreateDatasetFormData } from '../../../lib/validations/dataset';
 
 export function SchemaBuilder() {
   const { control, register, setValue, watch, formState: { errors } } = useFormContext<CreateDatasetFormData>();

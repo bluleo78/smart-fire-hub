@@ -274,7 +274,8 @@ public class DataTableService {
         validateName(tableName);
         validateName(columnName);
         String newType = mapDataType(dataType, maxLength);
-        String sql = "ALTER TABLE data.\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" TYPE " + newType;
+        String sql = "ALTER TABLE data.\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" TYPE " + newType
+                + " USING \"" + columnName + "\"::" + newType;
         dsl.execute(sql);
     }
 
