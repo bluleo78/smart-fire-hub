@@ -22,7 +22,6 @@ public class DatasetCategoryRepository {
     private static final Field<Long> DC_ID = field(name("dataset_category", "id"), Long.class);
     private static final Field<String> DC_NAME = field(name("dataset_category", "name"), String.class);
     private static final Field<String> DC_DESCRIPTION = field(name("dataset_category", "description"), String.class);
-    private static final Field<LocalDateTime> DC_CREATED_AT = field(name("dataset_category", "created_at"), LocalDateTime.class);
     private static final Field<LocalDateTime> DC_UPDATED_AT = field(name("dataset_category", "updated_at"), LocalDateTime.class);
 
     public DatasetCategoryRepository(DSLContext dsl) {

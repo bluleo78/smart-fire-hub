@@ -2,7 +2,6 @@ package com.smartfirehub.dataimport.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.dto.ImportResponse;
-import com.smartfirehub.dataimport.exception.ImportValidationException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataimport.repository.DataImportRepository;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;

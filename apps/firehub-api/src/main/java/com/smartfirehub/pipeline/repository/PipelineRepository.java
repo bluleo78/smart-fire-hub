@@ -32,7 +32,6 @@ public class PipelineRepository {
     private static final Field<String> U_NAME = field(name("user", "name"), String.class);
 
     private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
-    private static final Field<Long> PS_ID = field(name("pipeline_step", "id"), Long.class);
     private static final Field<Long> PS_PIPELINE_ID = field(name("pipeline_step", "pipeline_id"), Long.class);
 
     public PipelineRepository(DSLContext dsl) {

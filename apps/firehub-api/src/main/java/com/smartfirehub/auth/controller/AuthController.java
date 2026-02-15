@@ -12,6 +12,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.NonNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -73,7 +74,7 @@ public class AuthController {
         return ResponseEntity.ok(user);
     }
 
-    private void addRefreshTokenCookie(HttpServletResponse response, String refreshToken) {
+    private void addRefreshTokenCookie(HttpServletResponse response, @NonNull String refreshToken) {
         ResponseCookie cookie = ResponseCookie.from(REFRESH_TOKEN_COOKIE, refreshToken)
                 .httpOnly(true)
                 .secure(true)

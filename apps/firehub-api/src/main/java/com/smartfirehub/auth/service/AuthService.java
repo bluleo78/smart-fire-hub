@@ -11,7 +11,6 @@ import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
-import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;

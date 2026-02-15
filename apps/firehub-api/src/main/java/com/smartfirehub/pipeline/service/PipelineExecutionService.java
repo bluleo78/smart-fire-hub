@@ -7,7 +7,6 @@ import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
-import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +21,6 @@ public class PipelineExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(PipelineExecutionService.class);
 
-    private final PipelineRepository pipelineRepository;
     private final PipelineStepRepository stepRepository;
     private final PipelineExecutionRepository executionRepository;
     private final DataTableService dataTableService;
@@ -31,14 +29,12 @@ public class PipelineExecutionService {
     private final PythonScriptExecutor pythonExecutor;
 
     public PipelineExecutionService(
-            PipelineRepository pipelineRepository,
             PipelineStepRepository stepRepository,
             PipelineExecutionRepository executionRepository,
             DataTableService dataTableService,
             DatasetRepository datasetRepository,
             SqlScriptExecutor sqlExecutor,
             PythonScriptExecutor pythonExecutor) {
-        this.pipelineRepository = pipelineRepository;
         this.stepRepository = stepRepository;
         this.executionRepository = executionRepository;
         this.dataTableService = dataTableService;

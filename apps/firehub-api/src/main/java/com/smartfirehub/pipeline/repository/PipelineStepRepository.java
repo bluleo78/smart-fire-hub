@@ -8,7 +8,6 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 import static org.jooq.impl.DSL.*;
 
