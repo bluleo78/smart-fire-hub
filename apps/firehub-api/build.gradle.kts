@@ -32,6 +32,8 @@ dependencies {
     // CSV/Excel 파싱
     implementation("org.apache.poi:poi-ooxml:5.3.0")
     implementation("com.opencsv:opencsv:5.9")
+    // Jobrunr - 비동기 작업 스케줄링
+    implementation("org.jobrunr:jobrunr-spring-boot-3-starter:7.3.2")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
