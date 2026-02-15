@@ -4,15 +4,35 @@
 package com.smartfirehub.jooq;
 
 
+import com.smartfirehub.jooq.tables.DataImport;
+import com.smartfirehub.jooq.tables.Dataset;
+import com.smartfirehub.jooq.tables.DatasetCategory;
+import com.smartfirehub.jooq.tables.DatasetColumn;
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
 import com.smartfirehub.jooq.tables.Permission;
+import com.smartfirehub.jooq.tables.Pipeline;
+import com.smartfirehub.jooq.tables.PipelineExecution;
+import com.smartfirehub.jooq.tables.PipelineStep;
+import com.smartfirehub.jooq.tables.PipelineStepDependency;
+import com.smartfirehub.jooq.tables.PipelineStepExecution;
+import com.smartfirehub.jooq.tables.PipelineStepInput;
 import com.smartfirehub.jooq.tables.RefreshToken;
 import com.smartfirehub.jooq.tables.Role;
 import com.smartfirehub.jooq.tables.RolePermission;
 import com.smartfirehub.jooq.tables.User;
 import com.smartfirehub.jooq.tables.UserRole;
+import com.smartfirehub.jooq.tables.records.DataImportRecord;
+import com.smartfirehub.jooq.tables.records.DatasetCategoryRecord;
+import com.smartfirehub.jooq.tables.records.DatasetColumnRecord;
+import com.smartfirehub.jooq.tables.records.DatasetRecord;
 import com.smartfirehub.jooq.tables.records.FlywaySchemaHistoryRecord;
 import com.smartfirehub.jooq.tables.records.PermissionRecord;
+import com.smartfirehub.jooq.tables.records.PipelineExecutionRecord;
+import com.smartfirehub.jooq.tables.records.PipelineRecord;
+import com.smartfirehub.jooq.tables.records.PipelineStepDependencyRecord;
+import com.smartfirehub.jooq.tables.records.PipelineStepExecutionRecord;
+import com.smartfirehub.jooq.tables.records.PipelineStepInputRecord;
+import com.smartfirehub.jooq.tables.records.PipelineStepRecord;
 import com.smartfirehub.jooq.tables.records.RefreshTokenRecord;
 import com.smartfirehub.jooq.tables.records.RolePermissionRecord;
 import com.smartfirehub.jooq.tables.records.RoleRecord;
@@ -37,9 +57,22 @@ public class Keys {
     // UNIQUE and PRIMARY KEY definitions
     // -------------------------------------------------------------------------
 
+    public static final UniqueKey<DataImportRecord> DATA_IMPORT_PKEY = Internal.createUniqueKey(DataImport.DATA_IMPORT, DSL.name("data_import_pkey"), new TableField[] { DataImport.DATA_IMPORT.ID }, true);
+    public static final UniqueKey<DatasetRecord> DATASET_PKEY = Internal.createUniqueKey(Dataset.DATASET, DSL.name("dataset_pkey"), new TableField[] { Dataset.DATASET.ID }, true);
+    public static final UniqueKey<DatasetCategoryRecord> DATASET_CATEGORY_NAME_KEY = Internal.createUniqueKey(DatasetCategory.DATASET_CATEGORY, DSL.name("dataset_category_name_key"), new TableField[] { DatasetCategory.DATASET_CATEGORY.NAME }, true);
+    public static final UniqueKey<DatasetCategoryRecord> DATASET_CATEGORY_PKEY = Internal.createUniqueKey(DatasetCategory.DATASET_CATEGORY, DSL.name("dataset_category_pkey"), new TableField[] { DatasetCategory.DATASET_CATEGORY.ID }, true);
+    public static final UniqueKey<DatasetColumnRecord> DATASET_COLUMN_DATASET_ID_COLUMN_NAME_KEY = Internal.createUniqueKey(DatasetColumn.DATASET_COLUMN, DSL.name("dataset_column_dataset_id_column_name_key"), new TableField[] { DatasetColumn.DATASET_COLUMN.DATASET_ID, DatasetColumn.DATASET_COLUMN.COLUMN_NAME }, true);
+    public static final UniqueKey<DatasetColumnRecord> DATASET_COLUMN_PKEY = Internal.createUniqueKey(DatasetColumn.DATASET_COLUMN, DSL.name("dataset_column_pkey"), new TableField[] { DatasetColumn.DATASET_COLUMN.ID }, true);
     public static final UniqueKey<FlywaySchemaHistoryRecord> FLYWAY_SCHEMA_HISTORY_PK = Internal.createUniqueKey(FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY, DSL.name("flyway_schema_history_pk"), new TableField[] { FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY.INSTALLED_RANK }, true);
     public static final UniqueKey<PermissionRecord> PERMISSION_CODE_KEY = Internal.createUniqueKey(Permission.PERMISSION, DSL.name("permission_code_key"), new TableField[] { Permission.PERMISSION.CODE }, true);
     public static final UniqueKey<PermissionRecord> PERMISSION_PKEY = Internal.createUniqueKey(Permission.PERMISSION, DSL.name("permission_pkey"), new TableField[] { Permission.PERMISSION.ID }, true);
+    public static final UniqueKey<PipelineRecord> PIPELINE_PKEY = Internal.createUniqueKey(Pipeline.PIPELINE, DSL.name("pipeline_pkey"), new TableField[] { Pipeline.PIPELINE.ID }, true);
+    public static final UniqueKey<PipelineExecutionRecord> PIPELINE_EXECUTION_PKEY = Internal.createUniqueKey(PipelineExecution.PIPELINE_EXECUTION, DSL.name("pipeline_execution_pkey"), new TableField[] { PipelineExecution.PIPELINE_EXECUTION.ID }, true);
+    public static final UniqueKey<PipelineStepRecord> PIPELINE_STEP_PIPELINE_ID_NAME_KEY = Internal.createUniqueKey(PipelineStep.PIPELINE_STEP, DSL.name("pipeline_step_pipeline_id_name_key"), new TableField[] { PipelineStep.PIPELINE_STEP.PIPELINE_ID, PipelineStep.PIPELINE_STEP.NAME }, true);
+    public static final UniqueKey<PipelineStepRecord> PIPELINE_STEP_PKEY = Internal.createUniqueKey(PipelineStep.PIPELINE_STEP, DSL.name("pipeline_step_pkey"), new TableField[] { PipelineStep.PIPELINE_STEP.ID }, true);
+    public static final UniqueKey<PipelineStepDependencyRecord> PIPELINE_STEP_DEPENDENCY_PKEY = Internal.createUniqueKey(PipelineStepDependency.PIPELINE_STEP_DEPENDENCY, DSL.name("pipeline_step_dependency_pkey"), new TableField[] { PipelineStepDependency.PIPELINE_STEP_DEPENDENCY.STEP_ID, PipelineStepDependency.PIPELINE_STEP_DEPENDENCY.DEPENDS_ON_STEP_ID }, true);
+    public static final UniqueKey<PipelineStepExecutionRecord> PIPELINE_STEP_EXECUTION_PKEY = Internal.createUniqueKey(PipelineStepExecution.PIPELINE_STEP_EXECUTION, DSL.name("pipeline_step_execution_pkey"), new TableField[] { PipelineStepExecution.PIPELINE_STEP_EXECUTION.ID }, true);
+    public static final UniqueKey<PipelineStepInputRecord> PIPELINE_STEP_INPUT_PKEY = Internal.createUniqueKey(PipelineStepInput.PIPELINE_STEP_INPUT, DSL.name("pipeline_step_input_pkey"), new TableField[] { PipelineStepInput.PIPELINE_STEP_INPUT.STEP_ID, PipelineStepInput.PIPELINE_STEP_INPUT.DATASET_ID }, true);
     public static final UniqueKey<RefreshTokenRecord> REFRESH_TOKEN_PKEY = Internal.createUniqueKey(RefreshToken.REFRESH_TOKEN, DSL.name("refresh_token_pkey"), new TableField[] { RefreshToken.REFRESH_TOKEN.ID }, true);
     public static final UniqueKey<RefreshTokenRecord> REFRESH_TOKEN_TOKEN_HASH_KEY = Internal.createUniqueKey(RefreshToken.REFRESH_TOKEN, DSL.name("refresh_token_token_hash_key"), new TableField[] { RefreshToken.REFRESH_TOKEN.TOKEN_HASH }, true);
     public static final UniqueKey<RoleRecord> ROLE_NAME_KEY = Internal.createUniqueKey(Role.ROLE, DSL.name("role_name_key"), new TableField[] { Role.ROLE.NAME }, true);
@@ -53,6 +86,22 @@ public class Keys {
     // FOREIGN KEY definitions
     // -------------------------------------------------------------------------
 
+    public static final ForeignKey<DataImportRecord, DatasetRecord> DATA_IMPORT__DATA_IMPORT_DATASET_ID_FKEY = Internal.createForeignKey(DataImport.DATA_IMPORT, DSL.name("data_import_dataset_id_fkey"), new TableField[] { DataImport.DATA_IMPORT.DATASET_ID }, Keys.DATASET_PKEY, new TableField[] { Dataset.DATASET.ID }, true);
+    public static final ForeignKey<DataImportRecord, UserRecord> DATA_IMPORT__DATA_IMPORT_IMPORTED_BY_FKEY = Internal.createForeignKey(DataImport.DATA_IMPORT, DSL.name("data_import_imported_by_fkey"), new TableField[] { DataImport.DATA_IMPORT.IMPORTED_BY }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<DatasetRecord, DatasetCategoryRecord> DATASET__DATASET_CATEGORY_ID_FKEY = Internal.createForeignKey(Dataset.DATASET, DSL.name("dataset_category_id_fkey"), new TableField[] { Dataset.DATASET.CATEGORY_ID }, Keys.DATASET_CATEGORY_PKEY, new TableField[] { DatasetCategory.DATASET_CATEGORY.ID }, true);
+    public static final ForeignKey<DatasetRecord, UserRecord> DATASET__DATASET_CREATED_BY_FKEY = Internal.createForeignKey(Dataset.DATASET, DSL.name("dataset_created_by_fkey"), new TableField[] { Dataset.DATASET.CREATED_BY }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<DatasetColumnRecord, DatasetRecord> DATASET_COLUMN__DATASET_COLUMN_DATASET_ID_FKEY = Internal.createForeignKey(DatasetColumn.DATASET_COLUMN, DSL.name("dataset_column_dataset_id_fkey"), new TableField[] { DatasetColumn.DATASET_COLUMN.DATASET_ID }, Keys.DATASET_PKEY, new TableField[] { Dataset.DATASET.ID }, true);
+    public static final ForeignKey<PipelineRecord, UserRecord> PIPELINE__PIPELINE_CREATED_BY_FKEY = Internal.createForeignKey(Pipeline.PIPELINE, DSL.name("pipeline_created_by_fkey"), new TableField[] { Pipeline.PIPELINE.CREATED_BY }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<PipelineExecutionRecord, UserRecord> PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY = Internal.createForeignKey(PipelineExecution.PIPELINE_EXECUTION, DSL.name("pipeline_execution_executed_by_fkey"), new TableField[] { PipelineExecution.PIPELINE_EXECUTION.EXECUTED_BY }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<PipelineExecutionRecord, PipelineRecord> PIPELINE_EXECUTION__PIPELINE_EXECUTION_PIPELINE_ID_FKEY = Internal.createForeignKey(PipelineExecution.PIPELINE_EXECUTION, DSL.name("pipeline_execution_pipeline_id_fkey"), new TableField[] { PipelineExecution.PIPELINE_EXECUTION.PIPELINE_ID }, Keys.PIPELINE_PKEY, new TableField[] { Pipeline.PIPELINE.ID }, true);
+    public static final ForeignKey<PipelineStepRecord, DatasetRecord> PIPELINE_STEP__PIPELINE_STEP_OUTPUT_DATASET_ID_FKEY = Internal.createForeignKey(PipelineStep.PIPELINE_STEP, DSL.name("pipeline_step_output_dataset_id_fkey"), new TableField[] { PipelineStep.PIPELINE_STEP.OUTPUT_DATASET_ID }, Keys.DATASET_PKEY, new TableField[] { Dataset.DATASET.ID }, true);
+    public static final ForeignKey<PipelineStepRecord, PipelineRecord> PIPELINE_STEP__PIPELINE_STEP_PIPELINE_ID_FKEY = Internal.createForeignKey(PipelineStep.PIPELINE_STEP, DSL.name("pipeline_step_pipeline_id_fkey"), new TableField[] { PipelineStep.PIPELINE_STEP.PIPELINE_ID }, Keys.PIPELINE_PKEY, new TableField[] { Pipeline.PIPELINE.ID }, true);
+    public static final ForeignKey<PipelineStepDependencyRecord, PipelineStepRecord> PIPELINE_STEP_DEPENDENCY__PIPELINE_STEP_DEPENDENCY_DEPENDS_ON_STEP_ID_FKEY = Internal.createForeignKey(PipelineStepDependency.PIPELINE_STEP_DEPENDENCY, DSL.name("pipeline_step_dependency_depends_on_step_id_fkey"), new TableField[] { PipelineStepDependency.PIPELINE_STEP_DEPENDENCY.DEPENDS_ON_STEP_ID }, Keys.PIPELINE_STEP_PKEY, new TableField[] { PipelineStep.PIPELINE_STEP.ID }, true);
+    public static final ForeignKey<PipelineStepDependencyRecord, PipelineStepRecord> PIPELINE_STEP_DEPENDENCY__PIPELINE_STEP_DEPENDENCY_STEP_ID_FKEY = Internal.createForeignKey(PipelineStepDependency.PIPELINE_STEP_DEPENDENCY, DSL.name("pipeline_step_dependency_step_id_fkey"), new TableField[] { PipelineStepDependency.PIPELINE_STEP_DEPENDENCY.STEP_ID }, Keys.PIPELINE_STEP_PKEY, new TableField[] { PipelineStep.PIPELINE_STEP.ID }, true);
+    public static final ForeignKey<PipelineStepExecutionRecord, PipelineExecutionRecord> PIPELINE_STEP_EXECUTION__PIPELINE_STEP_EXECUTION_EXECUTION_ID_FKEY = Internal.createForeignKey(PipelineStepExecution.PIPELINE_STEP_EXECUTION, DSL.name("pipeline_step_execution_execution_id_fkey"), new TableField[] { PipelineStepExecution.PIPELINE_STEP_EXECUTION.EXECUTION_ID }, Keys.PIPELINE_EXECUTION_PKEY, new TableField[] { PipelineExecution.PIPELINE_EXECUTION.ID }, true);
+    public static final ForeignKey<PipelineStepExecutionRecord, PipelineStepRecord> PIPELINE_STEP_EXECUTION__PIPELINE_STEP_EXECUTION_STEP_ID_FKEY = Internal.createForeignKey(PipelineStepExecution.PIPELINE_STEP_EXECUTION, DSL.name("pipeline_step_execution_step_id_fkey"), new TableField[] { PipelineStepExecution.PIPELINE_STEP_EXECUTION.STEP_ID }, Keys.PIPELINE_STEP_PKEY, new TableField[] { PipelineStep.PIPELINE_STEP.ID }, true);
+    public static final ForeignKey<PipelineStepInputRecord, DatasetRecord> PIPELINE_STEP_INPUT__PIPELINE_STEP_INPUT_DATASET_ID_FKEY = Internal.createForeignKey(PipelineStepInput.PIPELINE_STEP_INPUT, DSL.name("pipeline_step_input_dataset_id_fkey"), new TableField[] { PipelineStepInput.PIPELINE_STEP_INPUT.DATASET_ID }, Keys.DATASET_PKEY, new TableField[] { Dataset.DATASET.ID }, true);
+    public static final ForeignKey<PipelineStepInputRecord, PipelineStepRecord> PIPELINE_STEP_INPUT__PIPELINE_STEP_INPUT_STEP_ID_FKEY = Internal.createForeignKey(PipelineStepInput.PIPELINE_STEP_INPUT, DSL.name("pipeline_step_input_step_id_fkey"), new TableField[] { PipelineStepInput.PIPELINE_STEP_INPUT.STEP_ID }, Keys.PIPELINE_STEP_PKEY, new TableField[] { PipelineStep.PIPELINE_STEP.ID }, true);
     public static final ForeignKey<RefreshTokenRecord, UserRecord> REFRESH_TOKEN__REFRESH_TOKEN_USER_ID_FKEY = Internal.createForeignKey(RefreshToken.REFRESH_TOKEN, DSL.name("refresh_token_user_id_fkey"), new TableField[] { RefreshToken.REFRESH_TOKEN.USER_ID }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
     public static final ForeignKey<RolePermissionRecord, PermissionRecord> ROLE_PERMISSION__ROLE_PERMISSION_PERMISSION_ID_FKEY = Internal.createForeignKey(RolePermission.ROLE_PERMISSION, DSL.name("role_permission_permission_id_fkey"), new TableField[] { RolePermission.ROLE_PERMISSION.PERMISSION_ID }, Keys.PERMISSION_PKEY, new TableField[] { Permission.PERMISSION.ID }, true);
     public static final ForeignKey<RolePermissionRecord, RoleRecord> ROLE_PERMISSION__ROLE_PERMISSION_ROLE_ID_FKEY = Internal.createForeignKey(RolePermission.ROLE_PERMISSION, DSL.name("role_permission_role_id_fkey"), new TableField[] { RolePermission.ROLE_PERMISSION.ROLE_ID }, Keys.ROLE_PKEY, new TableField[] { Role.ROLE.ID }, true);

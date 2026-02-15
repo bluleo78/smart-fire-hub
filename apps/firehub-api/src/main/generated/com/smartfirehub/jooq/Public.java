@@ -4,8 +4,18 @@
 package com.smartfirehub.jooq;
 
 
+import com.smartfirehub.jooq.tables.DataImport;
+import com.smartfirehub.jooq.tables.Dataset;
+import com.smartfirehub.jooq.tables.DatasetCategory;
+import com.smartfirehub.jooq.tables.DatasetColumn;
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
 import com.smartfirehub.jooq.tables.Permission;
+import com.smartfirehub.jooq.tables.Pipeline;
+import com.smartfirehub.jooq.tables.PipelineExecution;
+import com.smartfirehub.jooq.tables.PipelineStep;
+import com.smartfirehub.jooq.tables.PipelineStepDependency;
+import com.smartfirehub.jooq.tables.PipelineStepExecution;
+import com.smartfirehub.jooq.tables.PipelineStepInput;
 import com.smartfirehub.jooq.tables.RefreshToken;
 import com.smartfirehub.jooq.tables.Role;
 import com.smartfirehub.jooq.tables.RolePermission;
@@ -34,6 +44,26 @@ public class Public extends SchemaImpl {
     public static final Public PUBLIC = new Public();
 
     /**
+     * The table <code>public.data_import</code>.
+     */
+    public final DataImport DATA_IMPORT = DataImport.DATA_IMPORT;
+
+    /**
+     * The table <code>public.dataset</code>.
+     */
+    public final Dataset DATASET = Dataset.DATASET;
+
+    /**
+     * The table <code>public.dataset_category</code>.
+     */
+    public final DatasetCategory DATASET_CATEGORY = DatasetCategory.DATASET_CATEGORY;
+
+    /**
+     * The table <code>public.dataset_column</code>.
+     */
+    public final DatasetColumn DATASET_COLUMN = DatasetColumn.DATASET_COLUMN;
+
+    /**
      * The table <code>public.flyway_schema_history</code>.
      */
     public final FlywaySchemaHistory FLYWAY_SCHEMA_HISTORY = FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY;
@@ -42,6 +72,36 @@ public class Public extends SchemaImpl {
      * The table <code>public.permission</code>.
      */
     public final Permission PERMISSION = Permission.PERMISSION;
+
+    /**
+     * The table <code>public.pipeline</code>.
+     */
+    public final Pipeline PIPELINE = Pipeline.PIPELINE;
+
+    /**
+     * The table <code>public.pipeline_execution</code>.
+     */
+    public final PipelineExecution PIPELINE_EXECUTION = PipelineExecution.PIPELINE_EXECUTION;
+
+    /**
+     * The table <code>public.pipeline_step</code>.
+     */
+    public final PipelineStep PIPELINE_STEP = PipelineStep.PIPELINE_STEP;
+
+    /**
+     * The table <code>public.pipeline_step_dependency</code>.
+     */
+    public final PipelineStepDependency PIPELINE_STEP_DEPENDENCY = PipelineStepDependency.PIPELINE_STEP_DEPENDENCY;
+
+    /**
+     * The table <code>public.pipeline_step_execution</code>.
+     */
+    public final PipelineStepExecution PIPELINE_STEP_EXECUTION = PipelineStepExecution.PIPELINE_STEP_EXECUTION;
+
+    /**
+     * The table <code>public.pipeline_step_input</code>.
+     */
+    public final PipelineStepInput PIPELINE_STEP_INPUT = PipelineStepInput.PIPELINE_STEP_INPUT;
 
     /**
      * The table <code>public.refresh_token</code>.
@@ -84,8 +144,18 @@ public class Public extends SchemaImpl {
     @Override
     public final List<Table<?>> getTables() {
         return Arrays.asList(
+            DataImport.DATA_IMPORT,
+            Dataset.DATASET,
+            DatasetCategory.DATASET_CATEGORY,
+            DatasetColumn.DATASET_COLUMN,
             FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY,
             Permission.PERMISSION,
+            Pipeline.PIPELINE,
+            PipelineExecution.PIPELINE_EXECUTION,
+            PipelineStep.PIPELINE_STEP,
+            PipelineStepDependency.PIPELINE_STEP_DEPENDENCY,
+            PipelineStepExecution.PIPELINE_STEP_EXECUTION,
+            PipelineStepInput.PIPELINE_STEP_INPUT,
             RefreshToken.REFRESH_TOKEN,
             Role.ROLE,
             RolePermission.ROLE_PERMISSION,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { rolesApi } from '../../api/roles';
@@ -43,6 +43,7 @@ import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
 
 export function RoleListPage() {
+  const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -62,7 +63,7 @@ export function RoleListPage() {
       const { data } = await rolesApi.getRoles();
       setRoles(data);
     } catch {
-      // Error handled silently
+      toast.error('역할 목록을 불러오는데 실패했습니다.');
     } finally {
       setIsLoading(false);
     }
@@ -157,9 +158,9 @@ export function RoleListPage() {
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
-              <TableHead>설명</TableHead>
               <TableHead>유형</TableHead>
-              <TableHead className="w-[140px]">관리</TableHead>
+              <TableHead>설명</TableHead>
+              <TableHead className="w-[60px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -167,16 +168,19 @@ export function RoleListPage() {
               Array.from({ length: 3 }).map((_, i) => (
                 <TableRow key={i}>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-24" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
+                  <TableCell><Skeleton className="h-8 w-8" /></TableCell>
                 </TableRow>
               ))
             ) : roles.length > 0 ? (
               roles.map((role) => (
-                <TableRow key={role.id}>
+                <TableRow
+                  key={role.id}
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => navigate(`/admin/roles/${role.id}`)}
+                >
                   <TableCell className="font-medium">{role.name}</TableCell>
-                  <TableCell>{role.description ?? '-'}</TableCell>
                   <TableCell>
                     {role.isSystem ? (
                       <Badge variant="outline">시스템</Badge>
@@ -184,35 +188,31 @@ export function RoleListPage() {
                       <Badge variant="secondary">사용자 정의</Badge>
                     )}
                   </TableCell>
+                  <TableCell>{role.description ?? '-'}</TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" asChild>
-                        <Link to={`/admin/roles/${role.id}`}>상세</Link>
-                      </Button>
-                      {!role.isSystem && (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="outline" size="sm">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>역할 삭제</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                &quot;{role.name}&quot; 역할을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>취소</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(role)}>
-                                삭제
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      )}
-                    </div>
+                    {!role.isSystem && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="outline" size="sm" onClick={(e) => e.stopPropagation()}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>역할 삭제</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              &quot;{role.name}&quot; 역할을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>취소</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDelete(role)}>
+                              삭제
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

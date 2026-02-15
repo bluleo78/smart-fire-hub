@@ -7,6 +7,10 @@ package com.smartfirehub.jooq.tables;
 import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
+import com.smartfirehub.jooq.tables.DataImport.DataImportPath;
+import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.Pipeline.PipelinePath;
+import com.smartfirehub.jooq.tables.PipelineExecution.PipelineExecutionPath;
 import com.smartfirehub.jooq.tables.RefreshToken.RefreshTokenPath;
 import com.smartfirehub.jooq.tables.Role.RolePath;
 import com.smartfirehub.jooq.tables.UserRole.UserRolePath;
@@ -185,6 +189,58 @@ public class User extends TableImpl<UserRecord> {
     @Override
     public List<UniqueKey<UserRecord>> getUniqueKeys() {
         return Arrays.asList(Keys.USER_USERNAME_KEY);
+    }
+
+    private transient DataImportPath _dataImport;
+
+    /**
+     * Get the implicit to-many join path to the <code>public.data_import</code>
+     * table
+     */
+    public DataImportPath dataImport() {
+        if (_dataImport == null)
+            _dataImport = new DataImportPath(this, null, Keys.DATA_IMPORT__DATA_IMPORT_IMPORTED_BY_FKEY.getInverseKey());
+
+        return _dataImport;
+    }
+
+    private transient DatasetPath _dataset;
+
+    /**
+     * Get the implicit to-many join path to the <code>public.dataset</code>
+     * table
+     */
+    public DatasetPath dataset() {
+        if (_dataset == null)
+            _dataset = new DatasetPath(this, null, Keys.DATASET__DATASET_CREATED_BY_FKEY.getInverseKey());
+
+        return _dataset;
+    }
+
+    private transient PipelinePath _pipeline;
+
+    /**
+     * Get the implicit to-many join path to the <code>public.pipeline</code>
+     * table
+     */
+    public PipelinePath pipeline() {
+        if (_pipeline == null)
+            _pipeline = new PipelinePath(this, null, Keys.PIPELINE__PIPELINE_CREATED_BY_FKEY.getInverseKey());
+
+        return _pipeline;
+    }
+
+    private transient PipelineExecutionPath _pipelineExecution;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.pipeline_execution</code> table
+     */
+    public PipelineExecutionPath pipelineExecution() {
+        if (_pipelineExecution == null)
+            _pipelineExecution = new PipelineExecutionPath(this, null, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY.getInverseKey());
+
+        return _pipelineExecution;
     }
 
     private transient RefreshTokenPath _refreshToken;

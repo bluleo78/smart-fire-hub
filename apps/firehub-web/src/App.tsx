@@ -11,6 +11,14 @@ import { UserListPage } from './pages/admin/UserListPage';
 import { UserDetailPage } from './pages/admin/UserDetailPage';
 import { RoleListPage } from './pages/admin/RoleListPage';
 import { RoleDetailPage } from './pages/admin/RoleDetailPage';
+import { CategoryListPage } from './pages/data/CategoryListPage';
+import { DatasetListPage } from './pages/data/DatasetListPage';
+import { DatasetCreatePage } from './pages/data/DatasetCreatePage';
+import { DatasetDetailPage } from './pages/data/DatasetDetailPage';
+import { PipelineListPage } from './pages/pipeline/PipelineListPage';
+import { PipelineCreatePage } from './pages/pipeline/PipelineCreatePage';
+import { PipelineDetailPage } from './pages/pipeline/PipelineDetailPage';
+import { ExecutionDetailPage } from './pages/pipeline/ExecutionDetailPage';
 import { Toaster } from './components/ui/sonner';
 
 function App() {
@@ -24,6 +32,14 @@ function App() {
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomePage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/data/categories" element={<CategoryListPage />} />
+              <Route path="/data/datasets" element={<DatasetListPage />} />
+              <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
+              <Route path="/data/datasets/:id" element={<DatasetDetailPage />} />
+              <Route path="/pipelines" element={<PipelineListPage />} />
+              <Route path="/pipelines/new" element={<PipelineCreatePage />} />
+              <Route path="/pipelines/:id" element={<PipelineDetailPage />} />
+              <Route path="/pipelines/:id/executions/:execId" element={<ExecutionDetailPage />} />
               <Route element={<AdminRoute />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />

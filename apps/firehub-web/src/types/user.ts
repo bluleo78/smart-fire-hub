@@ -10,13 +10,6 @@ export interface UserDetailResponse {
   roles: RoleResponse[];
 }
 
-export interface PageResponse<T> {
-  content: T[];
-  page: number;
-  size: number;
-  totalElements: number;
-  totalPages: number;
-}
 
 export interface UpdateProfileRequest {
   name: string;

@@ -29,6 +29,10 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     runtimeOnly("org.postgresql:postgresql")
     jooqGenerator("org.postgresql:postgresql")
+    // CSV/Excel 파싱
+    implementation("org.apache.poi:poi-ooxml:5.3.0")
+    implementation("com.opencsv:opencsv:5.9")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
         exclude(group = "net.bytebuddy")
@@ -38,6 +42,7 @@ dependencies {
     testImplementation("net.bytebuddy:byte-buddy:1.17.5")
     testImplementation("net.bytebuddy:byte-buddy-agent:1.17.5")
     testImplementation("org.springframework.security:spring-security-test")
+    testRuntimeOnly("org.postgresql:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

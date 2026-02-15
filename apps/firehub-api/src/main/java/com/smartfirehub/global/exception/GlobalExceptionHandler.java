@@ -4,7 +4,13 @@ import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
+import com.smartfirehub.dataimport.exception.ImportValidationException;
+import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
+import com.smartfirehub.dataset.exception.*;
 import com.smartfirehub.global.dto.ErrorResponse;
+import com.smartfirehub.pipeline.exception.CyclicDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserDeactivatedException;
@@ -18,6 +24,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestControllerAdvice
@@ -84,10 +91,19 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        String message = "Data integrity violation";
+        if (ex.getCause() != null) {
+            String causeMsg = ex.getCause().getMessage();
+            if (causeMsg != null && causeMsg.contains("duplicate key")) {
+                message = "Data integrity violation: duplicate entry";
+            } else if (causeMsg != null && causeMsg.contains("foreign key")) {
+                message = "Data integrity violation: referenced record not found";
+            }
+        }
         ErrorResponse response = new ErrorResponse(
                 HttpStatus.CONFLICT.value(),
                 "Conflict",
-                "Data integrity violation: duplicate entry",
+                message,
                 null
         );
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
@@ -146,5 +162,80 @@ public class GlobalExceptionHandler {
                 null
         );
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+    }
+
+    @ExceptionHandler(DatasetNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleDatasetNotFound(DatasetNotFoundException ex) {
+        ErrorResponse response = new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
+    @ExceptionHandler(CategoryNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleCategoryNotFound(CategoryNotFoundException ex) {
+        ErrorResponse response = new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
+    @ExceptionHandler(DuplicateDatasetNameException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateDatasetName(DuplicateDatasetNameException ex) {
+        ErrorResponse response = new ErrorResponse(HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage(), null);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(InvalidTableNameException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidTableName(InvalidTableNameException ex) {
+        ErrorResponse response = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), null);
+        return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(ColumnModificationException.class)
+    public ResponseEntity<ErrorResponse> handleColumnModification(ColumnModificationException ex) {
+        ErrorResponse response = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), null);
+        return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(ImportValidationException.class)
+    public ResponseEntity<ErrorResponse> handleImportValidation(ImportValidationException ex) {
+        Map<String, String> errorMap = new HashMap<>();
+        List<String> errors = ex.getErrors();
+        for (int i = 0; i < errors.size(); i++) {
+            errorMap.put("error_" + i, errors.get(i));
+        }
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), errorMap
+        );
+        return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(UnsupportedFileTypeException.class)
+    public ResponseEntity<ErrorResponse> handleUnsupportedFileType(UnsupportedFileTypeException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), null
+        );
+        return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(PipelineNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handlePipelineNotFound(PipelineNotFoundException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
+    @ExceptionHandler(CyclicDependencyException.class)
+    public ResponseEntity<ErrorResponse> handleCyclicDependency(CyclicDependencyException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), null
+        );
+        return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(ScriptExecutionException.class)
+    public ResponseEntity<ErrorResponse> handleScriptExecution(ScriptExecutionException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(), "Internal Server Error", ex.getMessage(), null
+        );
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
     }
 }

@@ -4,8 +4,18 @@
 package com.smartfirehub.jooq;
 
 
+import com.smartfirehub.jooq.tables.DataImport;
+import com.smartfirehub.jooq.tables.Dataset;
+import com.smartfirehub.jooq.tables.DatasetCategory;
+import com.smartfirehub.jooq.tables.DatasetColumn;
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
 import com.smartfirehub.jooq.tables.Permission;
+import com.smartfirehub.jooq.tables.Pipeline;
+import com.smartfirehub.jooq.tables.PipelineExecution;
+import com.smartfirehub.jooq.tables.PipelineStep;
+import com.smartfirehub.jooq.tables.PipelineStepDependency;
+import com.smartfirehub.jooq.tables.PipelineStepExecution;
+import com.smartfirehub.jooq.tables.PipelineStepInput;
 import com.smartfirehub.jooq.tables.RefreshToken;
 import com.smartfirehub.jooq.tables.Role;
 import com.smartfirehub.jooq.tables.RolePermission;
@@ -20,6 +30,26 @@ import com.smartfirehub.jooq.tables.UserRole;
 public class Tables {
 
     /**
+     * The table <code>public.data_import</code>.
+     */
+    public static final DataImport DATA_IMPORT = DataImport.DATA_IMPORT;
+
+    /**
+     * The table <code>public.dataset</code>.
+     */
+    public static final Dataset DATASET = Dataset.DATASET;
+
+    /**
+     * The table <code>public.dataset_category</code>.
+     */
+    public static final DatasetCategory DATASET_CATEGORY = DatasetCategory.DATASET_CATEGORY;
+
+    /**
+     * The table <code>public.dataset_column</code>.
+     */
+    public static final DatasetColumn DATASET_COLUMN = DatasetColumn.DATASET_COLUMN;
+
+    /**
      * The table <code>public.flyway_schema_history</code>.
      */
     public static final FlywaySchemaHistory FLYWAY_SCHEMA_HISTORY = FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY;
@@ -28,6 +58,36 @@ public class Tables {
      * The table <code>public.permission</code>.
      */
     public static final Permission PERMISSION = Permission.PERMISSION;
+
+    /**
+     * The table <code>public.pipeline</code>.
+     */
+    public static final Pipeline PIPELINE = Pipeline.PIPELINE;
+
+    /**
+     * The table <code>public.pipeline_execution</code>.
+     */
+    public static final PipelineExecution PIPELINE_EXECUTION = PipelineExecution.PIPELINE_EXECUTION;
+
+    /**
+     * The table <code>public.pipeline_step</code>.
+     */
+    public static final PipelineStep PIPELINE_STEP = PipelineStep.PIPELINE_STEP;
+
+    /**
+     * The table <code>public.pipeline_step_dependency</code>.
+     */
+    public static final PipelineStepDependency PIPELINE_STEP_DEPENDENCY = PipelineStepDependency.PIPELINE_STEP_DEPENDENCY;
+
+    /**
+     * The table <code>public.pipeline_step_execution</code>.
+     */
+    public static final PipelineStepExecution PIPELINE_STEP_EXECUTION = PipelineStepExecution.PIPELINE_STEP_EXECUTION;
+
+    /**
+     * The table <code>public.pipeline_step_input</code>.
+     */
+    public static final PipelineStepInput PIPELINE_STEP_INPUT = PipelineStepInput.PIPELINE_STEP_INPUT;
 
     /**
      * The table <code>public.refresh_token</code>.

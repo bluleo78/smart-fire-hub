@@ -3,14 +3,16 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
+import { UserNav } from './UserNav';
 import {
   Home,
-  User,
   Users,
   Shield,
-  LogOut,
   Menu,
   X,
+  Database,
+  GitBranch,
+  Tag,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -23,7 +25,12 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: '홈', href: '/', icon: <Home className="h-4 w-4" /> },
-  { label: '내 프로필', href: '/profile', icon: <User className="h-4 w-4" /> },
+];
+
+const dataNavItems: NavItem[] = [
+  { label: '카테고리', href: '/data/categories', icon: <Tag className="h-4 w-4" /> },
+  { label: '데이터셋', href: '/data/datasets', icon: <Database className="h-4 w-4" /> },
+  { label: '파이프라인', href: '/pipelines', icon: <GitBranch className="h-4 w-4" /> },
 ];
 
 const adminNavItems: NavItem[] = [
@@ -32,7 +39,7 @@ const adminNavItems: NavItem[] = [
 ];
 
 export function AppLayout() {
-  const { user, isAdmin, logout } = useAuth();
+  const { isAdmin } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -51,6 +58,25 @@ export function AppLayout() {
       <Separator />
       <nav className="flex-1 space-y-1 px-2 py-4">
         {navItems.map((item) => (
+          <Link
+            key={item.href}
+            to={item.href}
+            onClick={() => setSidebarOpen(false)}
+            className={cn(
+              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+              isActive(item.href)
+                ? 'bg-accent text-accent-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+            )}
+          >
+            {item.icon}
+            {item.label}
+          </Link>
+        ))}
+        <div className="px-3 py-2">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">데이터</p>
+        </div>
+        {dataNavItems.map((item) => (
           <Link
             key={item.href}
             to={item.href}
@@ -90,16 +116,6 @@ export function AppLayout() {
           </>
         )}
       </nav>
-      <Separator />
-      <div className="p-4">
-        <div className="mb-2 text-sm text-muted-foreground">
-          {user?.name}
-        </div>
-        <Button variant="outline" size="sm" className="w-full" onClick={logout}>
-          <LogOut className="mr-2 h-4 w-4" />
-          로그아웃
-        </Button>
-      </div>
     </div>
   );
 
@@ -125,12 +141,14 @@ export function AppLayout() {
 
       {/* Main content */}
       <div className="flex flex-1 flex-col">
-        {/* Mobile header */}
-        <header className="flex h-14 items-center border-b px-4 lg:hidden">
-          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
+        {/* Header */}
+        <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background px-4">
+          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
-          <span className="ml-2 text-lg font-semibold">Smart Fire Hub</span>
+          <span className="ml-2 text-lg font-semibold lg:hidden">Smart Fire Hub</span>
+          <div className="flex-1" />
+          <UserNav />
         </header>
 
         {/* Page content */}
