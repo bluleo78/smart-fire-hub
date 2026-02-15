@@ -185,7 +185,7 @@ class DatasetServiceTest extends IntegrationTestBase {
         );
 
         // When
-        datasetService.updateDataset(dataset.id(), updateRequest);
+        datasetService.updateDataset(dataset.id(), updateRequest, testUserId);
 
         // Then
         DatasetDetailResponse updated = datasetService.getDatasetById(dataset.id());

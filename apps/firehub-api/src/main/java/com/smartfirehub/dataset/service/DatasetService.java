@@ -95,6 +95,11 @@ public class DatasetService {
 
         var updatedAt = datasetRepository.findUpdatedAtById(id).orElse(null);
 
+        String updatedByUsername = datasetRepository.findUpdatedByById(id)
+                .flatMap(userRepository::findById)
+                .map(user -> user.name())
+                .orElse(null);
+
         return new DatasetDetailResponse(
                 dataset.id(),
                 dataset.name(),
@@ -106,12 +111,13 @@ public class DatasetService {
                 columns,
                 rowCount,
                 dataset.createdAt(),
-                updatedAt
+                updatedAt,
+                updatedByUsername
         );
     }
 
     @Transactional
-    public void updateDataset(Long id, UpdateDatasetRequest request) {
+    public void updateDataset(Long id, UpdateDatasetRequest request, Long userId) {
         datasetRepository.findById(id)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
 
@@ -121,7 +127,7 @@ public class DatasetService {
                     .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + request.categoryId()));
         }
 
-        datasetRepository.update(id, request);
+        datasetRepository.update(id, request, userId);
     }
 
     @Transactional

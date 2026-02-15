@@ -26,6 +26,7 @@ public class PipelineRepository {
     private static final Field<Long> P_CREATED_BY = field(name("pipeline", "created_by"), Long.class);
     private static final Field<LocalDateTime> P_CREATED_AT = field(name("pipeline", "created_at"), LocalDateTime.class);
     private static final Field<LocalDateTime> P_UPDATED_AT = field(name("pipeline", "updated_at"), LocalDateTime.class);
+    private static final Field<Long> P_UPDATED_BY = field(name("pipeline", "updated_by"), Long.class);
 
     private static final Table<?> USER_TABLE = table(name("user"));
     private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
@@ -132,11 +133,12 @@ public class PipelineRepository {
         );
     }
 
-    public void update(Long id, String name, String description, Boolean isActive) {
+    public void update(Long id, String name, String description, Boolean isActive, Long updatedBy) {
         var query = dsl.update(PIPELINE)
                 .set(P_NAME, name)
                 .set(P_DESCRIPTION, description)
-                .set(P_UPDATED_AT, LocalDateTime.now());
+                .set(P_UPDATED_AT, LocalDateTime.now())
+                .set(P_UPDATED_BY, updatedBy);
 
         if (isActive != null) {
             query = query.set(P_IS_ACTIVE, isActive);
@@ -169,5 +171,12 @@ public class PipelineRepository {
                 .from(PIPELINE)
                 .where(P_ID.eq(id))
                 .fetchOptional(r -> r.get(P_UPDATED_AT));
+    }
+
+    public Optional<Long> findUpdatedByById(Long id) {
+        return dsl.select(P_UPDATED_BY)
+                .from(PIPELINE)
+                .where(P_ID.eq(id))
+                .fetchOptional(r -> r.get(P_UPDATED_BY));
     }
 }

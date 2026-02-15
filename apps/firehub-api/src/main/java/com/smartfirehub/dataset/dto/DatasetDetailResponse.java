@@ -14,5 +14,6 @@ public record DatasetDetailResponse(
     List<DatasetColumnResponse> columns,
     long rowCount,
     LocalDateTime createdAt,
-    LocalDateTime updatedAt
+    LocalDateTime updatedAt,
+    String updatedBy
 ) {}

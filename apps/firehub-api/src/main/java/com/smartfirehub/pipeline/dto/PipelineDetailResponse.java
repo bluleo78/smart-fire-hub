@@ -11,5 +11,6 @@ public record PipelineDetailResponse(
     String createdBy,
     List<PipelineStepResponse> steps,
     LocalDateTime createdAt,
-    LocalDateTime updatedAt
+    LocalDateTime updatedAt,
+    String updatedBy
 ) {}

@@ -108,6 +108,11 @@ public class PipelineService {
 
         var updatedAt = pipelineRepository.findUpdatedAtById(id).orElse(null);
 
+        String updatedByUsername = pipelineRepository.findUpdatedByById(id)
+                .flatMap(userRepository::findById)
+                .map(user -> user.name())
+                .orElse(null);
+
         return new PipelineDetailResponse(
                 pipeline.id(),
                 pipeline.name(),
@@ -116,12 +121,13 @@ public class PipelineService {
                 pipeline.createdBy(),
                 steps,
                 pipeline.createdAt(),
-                updatedAt
+                updatedAt,
+                updatedByUsername
         );
     }
 
     @Transactional
-    public void updatePipeline(Long id, UpdatePipelineRequest request) {
+    public void updatePipeline(Long id, UpdatePipelineRequest request, Long userId) {
         // Verify pipeline exists
         pipelineRepository.findById(id)
                 .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
@@ -132,7 +138,7 @@ public class PipelineService {
         }
 
         // Update pipeline metadata
-        pipelineRepository.update(id, request.name(), request.description(), request.isActive());
+        pipelineRepository.update(id, request.name(), request.description(), request.isActive(), userId);
 
         // Delete old steps and save new ones (full replacement)
         if (request.steps() != null) {

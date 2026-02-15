@@ -246,7 +246,7 @@ class PipelineServiceTest extends IntegrationTestBase {
         );
 
         // When
-        pipelineService.updatePipeline(created.id(), updateRequest);
+        pipelineService.updatePipeline(created.id(), updateRequest, testUserId);
 
         // Then
         PipelineDetailResponse updated = pipelineService.getPipelineById(created.id());
@@ -298,7 +298,7 @@ class PipelineServiceTest extends IntegrationTestBase {
         );
 
         // When
-        pipelineService.updatePipeline(created.id(), updateRequest);
+        pipelineService.updatePipeline(created.id(), updateRequest, testUserId);
 
         // Then
         PipelineDetailResponse updated = pipelineService.getPipelineById(created.id());

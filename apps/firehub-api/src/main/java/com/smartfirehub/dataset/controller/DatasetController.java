@@ -51,7 +51,8 @@ public class DatasetController {
     @PutMapping("/{id}")
     @RequirePermission("dataset:write")
     public ResponseEntity<Void> updateDataset(@PathVariable Long id, @RequestBody UpdateDatasetRequest request) {
-        datasetService.updateDataset(id, request);
+        Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
+        datasetService.updateDataset(id, request, userId);
         return ResponseEntity.noContent().build();
     }
 

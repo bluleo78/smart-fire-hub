@@ -32,6 +32,7 @@ public class DatasetRepository {
     private static final Field<Long> DS_CREATED_BY = field(name("dataset", "created_by"), Long.class);
     private static final Field<LocalDateTime> DS_CREATED_AT = field(name("dataset", "created_at"), LocalDateTime.class);
     private static final Field<LocalDateTime> DS_UPDATED_AT = field(name("dataset", "updated_at"), LocalDateTime.class);
+    private static final Field<Long> DS_UPDATED_BY = field(name("dataset", "updated_by"), Long.class);
 
     private static final Table<?> DATASET_CATEGORY = table(name("dataset_category"));
     private static final Field<Long> DC_ID = field(name("dataset_category", "id"), Long.class);
@@ -154,12 +155,13 @@ public class DatasetRepository {
                 });
     }
 
-    public void update(Long id, UpdateDatasetRequest request) {
+    public void update(Long id, UpdateDatasetRequest request, Long updatedBy) {
         dsl.update(DATASET)
                 .set(DS_NAME, request.name())
                 .set(DS_DESCRIPTION, request.description())
                 .set(DS_CATEGORY_ID, request.categoryId())
                 .set(DS_UPDATED_AT, LocalDateTime.now())
+                .set(DS_UPDATED_BY, updatedBy)
                 .where(DS_ID.eq(id))
                 .execute();
     }
@@ -201,5 +203,12 @@ public class DatasetRepository {
                 .from(DATASET)
                 .where(DS_ID.eq(id))
                 .fetchOptional(r -> r.get(DS_UPDATED_AT));
+    }
+
+    public Optional<Long> findUpdatedByById(Long id) {
+        return dsl.select(DS_UPDATED_BY)
+                .from(DATASET)
+                .where(DS_ID.eq(id))
+                .fetchOptional(r -> r.get(DS_UPDATED_BY));
     }
 }

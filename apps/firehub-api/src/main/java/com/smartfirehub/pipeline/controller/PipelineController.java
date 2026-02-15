@@ -48,7 +48,8 @@ public class PipelineController {
     @PutMapping("/{id}")
     @RequirePermission("pipeline:write")
     public ResponseEntity<Void> updatePipeline(@PathVariable Long id, @RequestBody UpdatePipelineRequest request) {
-        pipelineService.updatePipeline(id, request);
+        Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
+        pipelineService.updatePipeline(id, request, userId);
         return ResponseEntity.noContent().build();
     }
 
