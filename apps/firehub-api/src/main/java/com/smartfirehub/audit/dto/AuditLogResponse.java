@@ -1,5 +1,7 @@
 package com.smartfirehub.audit.dto;
 
+import com.fasterxml.jackson.annotation.JsonRawValue;
+
 import java.time.LocalDateTime;
 
 public record AuditLogResponse(
@@ -15,5 +17,5 @@ public record AuditLogResponse(
     String userAgent,
     String result,
     String errorMessage,
-    Object metadata
+    @JsonRawValue String metadata
 ) {}

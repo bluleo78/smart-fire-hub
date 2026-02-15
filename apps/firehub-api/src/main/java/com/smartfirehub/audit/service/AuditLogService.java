@@ -3,6 +3,7 @@ package com.smartfirehub.audit.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
+import com.smartfirehub.global.dto.PageResponse;
 import org.jooq.JSONB;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,5 +52,11 @@ public class AuditLogService {
 
     public Optional<AuditLogResponse> findById(Long id) {
         return auditLogRepository.findById(id);
+    }
+
+    public PageResponse<AuditLogResponse> getAuditLogs(String search, String actionType,
+                                                         String resource, String result,
+                                                         int page, int size) {
+        return auditLogRepository.findAll(search, actionType, resource, result, page, size);
     }
 }

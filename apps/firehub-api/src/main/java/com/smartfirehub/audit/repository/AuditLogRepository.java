@@ -1,6 +1,8 @@
 package com.smartfirehub.audit.repository;
 
 import com.smartfirehub.audit.dto.AuditLogResponse;
+import com.smartfirehub.global.dto.PageResponse;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -39,6 +41,7 @@ public class AuditLogRepository {
     }
 
     private AuditLogResponse mapToResponse(Record r) {
+        JSONB jsonb = r.get(AL_METADATA);
         return new AuditLogResponse(
                 r.get(AL_ID),
                 r.get(AL_USER_ID),
@@ -52,7 +55,7 @@ public class AuditLogRepository {
                 r.get(AL_USER_AGENT),
                 r.get(AL_RESULT),
                 r.get(AL_ERROR_MESSAGE),
-                r.get(AL_METADATA)
+                jsonb != null ? jsonb.data() : null
         );
     }
 
@@ -104,5 +107,49 @@ public class AuditLogRepository {
                 .where(condition)
                 .orderBy(AL_ACTION_TIME.desc())
                 .fetch(this::mapToResponse);
+    }
+
+    public PageResponse<AuditLogResponse> findAll(String search, String actionType,
+                                                    String resource, String result,
+                                                    int page, int size) {
+        Condition condition = noCondition();
+
+        if (search != null && !search.isBlank()) {
+            String pattern = "%" + search.trim() + "%";
+            condition = condition.and(
+                    AL_USERNAME.likeIgnoreCase(pattern)
+                            .or(AL_DESCRIPTION.likeIgnoreCase(pattern))
+            );
+        }
+
+        if (actionType != null && !actionType.isBlank()) {
+            condition = condition.and(AL_ACTION_TYPE.eq(actionType));
+        }
+
+        if (resource != null && !resource.isBlank()) {
+            condition = condition.and(AL_RESOURCE.eq(resource));
+        }
+
+        if (result != null && !result.isBlank()) {
+            condition = condition.and(AL_RESULT.eq(result));
+        }
+
+        long totalElements = dsl.selectCount()
+                .from(AUDIT_LOG)
+                .where(condition)
+                .fetchOne(0, long.class);
+
+        List<AuditLogResponse> content = dsl.select(AL_ID, AL_USER_ID, AL_USERNAME, AL_ACTION_TYPE, AL_RESOURCE,
+                        AL_RESOURCE_ID, AL_DESCRIPTION, AL_ACTION_TIME, AL_IP_ADDRESS,
+                        AL_USER_AGENT, AL_RESULT, AL_ERROR_MESSAGE, AL_METADATA)
+                .from(AUDIT_LOG)
+                .where(condition)
+                .orderBy(AL_ACTION_TIME.desc())
+                .offset(page * size)
+                .limit(size)
+                .fetch(this::mapToResponse);
+
+        int totalPages = (int) Math.ceil((double) totalElements / size);
+        return new PageResponse<>(content, page, size, totalElements, totalPages);
     }
 }

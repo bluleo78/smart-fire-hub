@@ -11,6 +11,7 @@ import { UserListPage } from './pages/admin/UserListPage';
 import { UserDetailPage } from './pages/admin/UserDetailPage';
 import { RoleListPage } from './pages/admin/RoleListPage';
 import { RoleDetailPage } from './pages/admin/RoleDetailPage';
+import { AuditLogListPage } from './pages/admin/AuditLogListPage';
 import { CategoryListPage } from './pages/data/CategoryListPage';
 import { DatasetListPage } from './pages/data/DatasetListPage';
 import { DatasetCreatePage } from './pages/data/DatasetCreatePage';
@@ -45,6 +46,7 @@ function App() {
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />
                 <Route path="/admin/roles" element={<RoleListPage />} />
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
+                <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
               </Route>
             </Route>
           </Route>

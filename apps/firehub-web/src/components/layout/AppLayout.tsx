@@ -13,6 +13,7 @@ import {
   Database,
   GitBranch,
   Tag,
+  FileText,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -36,6 +37,7 @@ const dataNavItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
   { label: '사용자 관리', href: '/admin/users', icon: <Users className="h-4 w-4" />, adminOnly: true },
   { label: '역할 관리', href: '/admin/roles', icon: <Shield className="h-4 w-4" />, adminOnly: true },
+  { label: '감사 로그', href: '/admin/audit-logs', icon: <FileText className="h-4 w-4" />, adminOnly: true },
 ];
 
 export function AppLayout() {
