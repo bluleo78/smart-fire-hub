@@ -90,7 +90,7 @@ class DataImportServiceTest extends IntegrationTestBase {
 
         // When
         ImportResponse response = dataImportService.importFile(
-                testDatasetId, file, testUserId, "Test User", "127.0.0.1", "TestAgent");
+                testDatasetId, file, null, testUserId, "Test User", "127.0.0.1", "TestAgent");
 
         // Then
         assertThat(response.datasetId()).isEqualTo(testDatasetId);
@@ -111,7 +111,7 @@ class DataImportServiceTest extends IntegrationTestBase {
 
         // When/Then
         assertThatThrownBy(() -> dataImportService.importFile(
-                testDatasetId, file, testUserId, "Test User", null, null))
+                testDatasetId, file, null, testUserId, "Test User", null, null))
                 .isInstanceOf(UnsupportedFileTypeException.class)
                 .hasMessageContaining("Unsupported file type");
     }
@@ -128,7 +128,7 @@ class DataImportServiceTest extends IntegrationTestBase {
 
         // When/Then
         assertThatThrownBy(() -> dataImportService.importFile(
-                testDatasetId, file, testUserId, "Test User", null, null))
+                testDatasetId, file, null, testUserId, "Test User", null, null))
                 .isInstanceOf(UnsupportedFileTypeException.class)
                 .hasMessageContaining("File name is required");
     }
@@ -218,8 +218,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         dataImportService.processImport(
                 testDatasetId,
                 createTempCsvFile("name,age,email\nAlice,30,alice@example.com\nBob,25,bob@example.com"),
-                "test.csv", 100L, "CSV",
-                testUserId, "Test User", null, null
+                "", "test.csv", 100L, "CSV",
+                testUserId, "Test User", "", ""
         );
 
         // When

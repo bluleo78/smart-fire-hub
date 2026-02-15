@@ -14,3 +14,36 @@ export interface ImportResponse {
   completedAt: string | null;
   createdAt: string;
 }
+
+export interface ImportPreviewResponse {
+  fileHeaders: string[];
+  sampleRows: Record<string, string>[];
+  suggestedMappings: ColumnMappingDto[];
+  totalRows: number;
+}
+
+export interface ColumnMappingDto {
+  fileColumn: string;
+  datasetColumn: string | null;
+  matchType: 'EXACT' | 'CASE_INSENSITIVE' | 'DISPLAY_NAME' | 'NORMALIZED' | 'NONE';
+  confidence: number;
+}
+
+export interface ColumnMappingEntry {
+  fileColumn: string;
+  datasetColumn: string | null;
+}
+
+export interface ImportValidateResponse {
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  errors: ValidationErrorDetail[];
+}
+
+export interface ValidationErrorDetail {
+  rowNumber: number;
+  columnName: string;
+  value: string;
+  error: string;
+}

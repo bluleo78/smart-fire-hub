@@ -1,5 +1,7 @@
 package com.smartfirehub.dataimport.service;
 
+import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
+import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import org.springframework.stereotype.Service;
 
@@ -26,7 +28,8 @@ public class DataValidationService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
             DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
             DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss"),
-            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
     );
 
     public ValidationResult validate(List<Map<String, String>> rows, List<DatasetColumnResponse> columns) {
@@ -78,8 +81,17 @@ public class DataValidationService {
             return null;
         }
 
+        // Strip surrounding quotes from CSV parsing
+        if (value.length() >= 2
+                && ((value.startsWith("'") && value.endsWith("'"))
+                    || (value.startsWith("\"") && value.endsWith("\"")))) {
+            value = value.substring(1, value.length() - 1);
+        } else if (value.startsWith("'") || value.startsWith("\"")) {
+            value = value.substring(1);
+        }
+
         return switch (dataType) {
-            case "TEXT" -> value;
+            case "TEXT", "VARCHAR" -> value;
             case "INTEGER" -> {
                 try {
                     yield Long.parseLong(value);
@@ -128,7 +140,7 @@ public class DataValidationService {
                     }
                 }
                 if (timestamp == null) {
-                    throw new Exception("Invalid timestamp value: " + value + " (expected formats: yyyy-MM-dd HH:mm:ss, ISO format)");
+                    throw new Exception("Invalid timestamp value: " + value + " (expected formats: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO format)");
                 }
                 yield timestamp;
             }
@@ -136,9 +148,106 @@ public class DataValidationService {
         };
     }
 
+    public ValidationResultWithDetails validateWithMapping(
+            List<Map<String, String>> rows,
+            List<DatasetColumnResponse> columns,
+            List<ColumnMappingEntry> mappings) {
+
+        // Build mapping lookup: fileColumn -> datasetColumn
+        Map<String, String> columnMapping = new HashMap<>();
+        for (ColumnMappingEntry mapping : mappings) {
+            if (mapping.datasetColumn() != null) {
+                columnMapping.put(mapping.fileColumn(), mapping.datasetColumn());
+            }
+        }
+
+        // Build column lookup by name
+        Map<String, DatasetColumnResponse> columnsByName = new HashMap<>();
+        for (DatasetColumnResponse col : columns) {
+            columnsByName.put(col.columnName(), col);
+        }
+
+        List<List<Object>> validRows = new ArrayList<>();
+        List<ValidationErrorDetail> errors = new ArrayList<>();
+        int rowIndex = 0;
+
+        for (Map<String, String> row : rows) {
+            rowIndex++;
+
+            // Remap row using column mappings
+            Map<String, String> remappedRow = new HashMap<>();
+            for (Map.Entry<String, String> entry : row.entrySet()) {
+                String fileColumn = entry.getKey();
+                String datasetColumn = columnMapping.get(fileColumn);
+                if (datasetColumn != null) {
+                    remappedRow.put(datasetColumn, entry.getValue());
+                }
+            }
+
+            List<Object> convertedRow = new ArrayList<>();
+            boolean rowValid = true;
+
+            for (DatasetColumnResponse column : columns) {
+                String rawValue = remappedRow.get(column.columnName());
+
+                // Check required field
+                if (!column.isNullable() && (rawValue == null || rawValue.trim().isEmpty())) {
+                    errors.add(new ValidationErrorDetail(
+                        rowIndex,
+                        column.columnName(),
+                        rawValue != null ? rawValue : "",
+                        "Required field is empty"
+                    ));
+                    rowValid = false;
+                    continue;
+                }
+
+                // Handle null/empty values
+                if (rawValue == null || rawValue.trim().isEmpty()) {
+                    convertedRow.add(null);
+                    continue;
+                }
+
+                // Convert and validate based on data type
+                try {
+                    Object convertedValue = convertValue(rawValue.trim(), column.dataType());
+                    convertedRow.add(convertedValue);
+                } catch (Exception e) {
+                    errors.add(new ValidationErrorDetail(
+                        rowIndex,
+                        column.columnName(),
+                        rawValue,
+                        e.getMessage()
+                    ));
+                    rowValid = false;
+                }
+            }
+
+            if (rowValid) {
+                validRows.add(convertedRow);
+            }
+        }
+
+        return new ValidationResultWithDetails(
+            validRows,
+            errors,
+            rows.size(),
+            validRows.size(),
+            errors.size()
+        );
+    }
+
     public record ValidationResult(
             List<List<Object>> validRows,
             List<String> errors,
+            int totalRows,
+            int validCount,
+            int errorCount
+    ) {}
+
+    public record ValidationResultWithDetails(
+            List<List<Object>> validRows,
+            List<ValidationErrorDetail> errors,
             int totalRows,
             int validCount,
             int errorCount

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { datasetsApi, categoriesApi } from '../../api/datasets';
 import { dataImportsApi } from '../../api/dataImports';
-import type { ImportResponse } from '../../types/dataImport';
+import type { ImportResponse, ColumnMappingEntry } from '../../types/dataImport';
 
 export function useCategories() {
   return useQuery({
@@ -112,11 +112,25 @@ export function useImport(datasetId: number, importId: number) {
 export function useUploadFile(datasetId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (file: File) => dataImportsApi.uploadFile(datasetId, file),
+    mutationFn: ({ file, mappings }: { file: File; mappings?: ColumnMappingEntry[] }) =>
+      dataImportsApi.uploadFile(datasetId, file, mappings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'imports'] });
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
     },
+  });
+}
+
+export function usePreviewImport(datasetId: number) {
+  return useMutation({
+    mutationFn: (file: File) => dataImportsApi.previewImport(datasetId, file).then(r => r.data),
+  });
+}
+
+export function useValidateImport(datasetId: number) {
+  return useMutation({
+    mutationFn: ({ file, mappings }: { file: File; mappings: ColumnMappingEntry[] }) =>
+      dataImportsApi.validateImport(datasetId, file, mappings).then(r => r.data),
   });
 }
 
