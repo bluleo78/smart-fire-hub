@@ -49,5 +49,8 @@ Thumbs.db
 # OMC generated
 SKILL.md
 
+# jOOQ generated code
+**/src/main/generated/
+
 # Logs
 *.log
