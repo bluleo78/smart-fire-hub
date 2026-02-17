@@ -10,6 +10,16 @@ import { AuthContext } from './auth-context-value';
 
 const AUTH_FLAG_KEY = 'hasSession';
 
+// React StrictMode(dev)에서 useEffect가 두 번 실행되어 refresh API가 중복 호출되는 것을 방지.
+// 동시 호출 시 동일한 Promise를 반환하여 실제 HTTP 요청은 한 번만 발생한다.
+let pendingRefresh: Promise<{ data: { accessToken: string } }> | null = null;
+function deduplicatedRefresh() {
+  if (!pendingRefresh) {
+    pendingRefresh = authApi.refresh().finally(() => { pendingRefresh = null; });
+  }
+  return pendingRefresh;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserResponse | null>(null);
   const [roles, setRoles] = useState<RoleResponse[]>([]);
@@ -33,6 +43,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    let ignore = false;
+
     const initAuth = async () => {
       if (!localStorage.getItem(AUTH_FLAG_KEY)) {
         setIsLoading(false);
@@ -40,18 +52,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const { data: tokens } = await authApi.refresh();
+        const { data: tokens } = await deduplicatedRefresh();
+        if (ignore) return;
         setAccessToken(tokens.accessToken);
         await fetchUserWithRoles();
       } catch {
+        if (ignore) return;
         setAccessToken(null);
         localStorage.removeItem(AUTH_FLAG_KEY);
       } finally {
-        setIsLoading(false);
+        if (!ignore) setIsLoading(false);
       }
     };
 
     initAuth();
+    return () => { ignore = true; };
   }, [fetchUserWithRoles]);
 
   const login = useCallback(async (data: LoginFormData) => {
