@@ -34,6 +34,8 @@ dependencies {
     implementation("com.opencsv:opencsv:5.9")
     // Jobrunr - 비동기 작업 스케줄링
     implementation("org.jobrunr:jobrunr-spring-boot-3-starter:7.3.2")
+    // WebFlux for SSE proxy
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")

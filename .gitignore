@@ -54,3 +54,6 @@ SKILL.md
 
 # Logs
 *.log
+
+# Playwright
+.playwright-mcp

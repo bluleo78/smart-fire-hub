@@ -16,3 +16,7 @@ app:
     secret: dGhpcyBpcyBhIHZlcnkgbG9uZyBzZWNyZXQga2V5IGZvciBIUzI1NiBhbGdvcml0aG0gdGhhdCBpcyBhdCBsZWFzdCAyNTYgYml0cw==
     access-expiration: 1800000
     refresh-expiration: 604800000
+
+agent:
+  url: http://localhost:9999
+  internal-token: test-internal-token

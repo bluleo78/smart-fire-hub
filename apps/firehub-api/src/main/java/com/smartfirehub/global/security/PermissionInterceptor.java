@@ -19,6 +19,11 @@ public class PermissionInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler) {
+        // Skip permission check on async dispatch (e.g., SseEmitter completion)
+        if (request.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC) {
+            return true;
+        }
+
         if (!(handler instanceof HandlerMethod handlerMethod)) {
             return true;
         }

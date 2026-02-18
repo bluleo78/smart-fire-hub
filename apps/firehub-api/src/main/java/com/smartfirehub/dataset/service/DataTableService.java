@@ -49,6 +49,9 @@ public class DataTableService {
     public void createTable(String tableName, List<DatasetColumnRequest> columns) {
         validateName(tableName);
 
+        // Drop orphaned table if it exists (metadata already verified no dataset references it)
+        dsl.execute("DROP TABLE IF EXISTS data.\"" + tableName + "\"");
+
         StringBuilder sql = new StringBuilder();
         sql.append("CREATE TABLE data.\"").append(tableName).append("\" (");
         sql.append("id BIGSERIAL PRIMARY KEY, ");

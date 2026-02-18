@@ -16,6 +16,11 @@ import {
   FileText,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { AIProvider, useAI } from '../ai/AIProvider';
+import { AIToggleButton } from '../ai/AIToggleButton';
+import { AISidePanel } from '../ai/AISidePanel';
+import { AIFloating } from '../ai/AIFloating';
+import { AIFullScreen } from '../ai/AIFullScreen';
 
 interface NavItem {
   label: string;
@@ -40,10 +45,11 @@ const adminNavItems: NavItem[] = [
   { label: '감사 로그', href: '/admin/audit-logs', icon: <FileText className="h-4 w-4" />, adminOnly: true },
 ];
 
-export function AppLayout() {
+function AppLayoutInner() {
   const { isAdmin } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { isOpen: aiOpen, mode: aiMode } = useAI();
 
   const isActive = (href: string) => {
     if (href === '/') return location.pathname === '/';
@@ -121,8 +127,10 @@ export function AppLayout() {
     </div>
   );
 
+  const showFullscreen = aiOpen && aiMode === 'fullscreen';
+
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
@@ -142,7 +150,7 @@ export function AppLayout() {
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col min-w-0">
+      <div className="flex flex-1 flex-col min-w-0 min-h-0">
         {/* Header */}
         <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background px-4">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -150,14 +158,40 @@ export function AppLayout() {
           </Button>
           <span className="ml-2 text-lg font-semibold lg:hidden">Smart Fire Hub</span>
           <div className="flex-1" />
-          <UserNav />
+          <div className="flex items-center gap-2">
+            <AIToggleButton />
+            <UserNav />
+          </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 p-6">
-          <Outlet />
-        </main>
+        {/* Page content + AI panel */}
+        <div className="flex flex-1 min-h-0">
+          {/* Main page content */}
+          {showFullscreen ? (
+            <div className="flex-1 flex">
+              <AIFullScreen />
+            </div>
+          ) : (
+            <main className="flex-1 p-6 overflow-auto min-w-0">
+              <Outlet />
+            </main>
+          )}
+
+          {/* Side panel mode */}
+          {aiMode === 'side' && <AISidePanel />}
+        </div>
       </div>
+
+      {/* Floating mode */}
+      {aiMode === 'floating' && <AIFloating />}
     </div>
+  );
+}
+
+export function AppLayout() {
+  return (
+    <AIProvider>
+      <AppLayoutInner />
+    </AIProvider>
   );
 }

@@ -13,3 +13,7 @@ org:
 app:
   jwt:
     secret: dGhpcyBpcyBhIHZlcnkgbG9uZyBzZWNyZXQga2V5IGZvciBIUzI1NiBhbGdvcml0aG0gdGhhdCBpcyBhdCBsZWFzdCAyNTYgYml0cw==
+
+agent:
+  url: http://127.0.0.1:3001
+  internal-token: firehub-internal-secret-token
