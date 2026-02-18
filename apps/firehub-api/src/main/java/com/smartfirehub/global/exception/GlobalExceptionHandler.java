@@ -5,6 +5,7 @@ import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
 import com.smartfirehub.ai.exception.AiSessionNotFoundException;
+import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.ImportValidationException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.exception.*;
@@ -206,6 +207,14 @@ public class GlobalExceptionHandler {
                 HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), errorMap
         );
         return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(ConcurrentImportException.class)
+    public ResponseEntity<ErrorResponse> handleConcurrentImport(ConcurrentImportException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage(), null
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
     @ExceptionHandler(UnsupportedFileTypeException.class)

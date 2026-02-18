@@ -1,5 +1,5 @@
 import { client } from './client';
-import type { ImportResponse, ImportPreviewResponse, ImportValidateResponse, ColumnMappingEntry } from '../types/dataImport';
+import type { ImportResponse, ImportStartResponse, ImportPreviewResponse, ImportValidateResponse, ColumnMappingEntry } from '../types/dataImport';
 
 export const dataImportsApi = {
   uploadFile: (datasetId: number, file: File, mappings?: ColumnMappingEntry[]) => {
@@ -8,7 +8,7 @@ export const dataImportsApi = {
     if (mappings) {
       formData.append('mappings', JSON.stringify(mappings));
     }
-    return client.post<ImportResponse>(`/datasets/${datasetId}/imports`, formData, {
+    return client.post<ImportStartResponse>(`/datasets/${datasetId}/imports`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },

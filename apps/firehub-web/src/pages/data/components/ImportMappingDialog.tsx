@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import axios from 'axios';
 import { usePreviewImport, useValidateImport, useUploadFile } from '../../../hooks/queries/useDatasets';
+import { useImportProgress } from '../../../hooks/queries/useImportProgress';
+import { useQueryClient } from '@tanstack/react-query';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 import type { ImportPreviewResponse, ColumnMappingEntry, ImportValidateResponse } from '../../../types/dataImport';
 import type { ErrorResponse } from '../../../types/auth';
@@ -12,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Card } from '../../../components/ui/card';
 import { FileUploadZone } from './FileUploadZone';
+import { ImportProgressView } from './ImportProgressView';
 import { AlertTriangle, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
 
 interface ImportMappingDialogProps {
@@ -22,16 +25,28 @@ interface ImportMappingDialogProps {
 }
 
 export function ImportMappingDialog({ open, onOpenChange, datasetId, datasetColumns }: ImportMappingDialogProps) {
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewData, setPreviewData] = useState<ImportPreviewResponse | null>(null);
   const [mappings, setMappings] = useState<ColumnMappingEntry[]>([]);
   const [validationResult, setValidationResult] = useState<ImportValidateResponse | null>(null);
   const [showAllErrors, setShowAllErrors] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const importProgress = useImportProgress(jobId);
+  const queryClient = useQueryClient();
 
   const previewImport = usePreviewImport(datasetId);
   const validateImport = useValidateImport(datasetId);
   const uploadFile = useUploadFile(datasetId);
+
+  // Invalidate queries when import completes
+  useEffect(() => {
+    if (importProgress?.stage === 'COMPLETED') {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'imports'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+    }
+  }, [importProgress?.stage, queryClient, datasetId]);
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -43,6 +58,7 @@ export function ImportMappingDialog({ open, onOpenChange, datasetId, datasetColu
       setMappings([]);
       setValidationResult(null);
       setShowAllErrors(false);
+      setJobId(null);
     }
   }, [open]);
 
@@ -105,17 +121,23 @@ export function ImportMappingDialog({ open, onOpenChange, datasetId, datasetColu
   const handleImport = async () => {
     if (!selectedFile) return;
     try {
-      await uploadFile.mutateAsync({ file: selectedFile, mappings });
-      toast.success('파일 임포트가 시작되었습니다.');
-      onOpenChange(false);
+      const result = await uploadFile.mutateAsync({ file: selectedFile, mappings });
+      setJobId(result.jobId);
+      setStep(3);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
+        toast.error('이미 진행 중인 임포트가 있습니다.');
+      } else if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
         toast.error(errData.message || '임포트에 실패했습니다.');
       } else {
         toast.error('임포트에 실패했습니다.');
       }
     }
+  };
+
+  const handleClose = () => {
+    onOpenChange(false);
   };
 
   const getMatchTypeBadge = (matchType: string) => {
@@ -384,6 +406,10 @@ export function ImportMappingDialog({ open, onOpenChange, datasetId, datasetColu
               </Button>
             </div>
           </div>
+        )}
+
+        {step === 3 && (
+          <ImportProgressView progress={importProgress} onClose={handleClose} />
         )}
       </DialogContent>
     </Dialog>

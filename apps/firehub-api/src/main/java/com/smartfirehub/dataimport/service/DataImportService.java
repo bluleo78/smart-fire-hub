@@ -5,12 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.*;
+import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.job.service.AsyncJobService;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
@@ -20,6 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.opencsv.CSVWriter;
+
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStreamWriter;
@@ -45,6 +49,7 @@ public class DataImportService {
     private final AuditLogService auditLogService;
     private final JobScheduler jobScheduler;
     private final ObjectMapper objectMapper;
+    private final AsyncJobService asyncJobService;
 
     public DataImportService(DatasetRepository datasetRepository,
                              DatasetColumnRepository columnRepository,
@@ -54,7 +59,8 @@ public class DataImportService {
                              ColumnMappingService columnMappingService,
                              AuditLogService auditLogService,
                              JobScheduler jobScheduler,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             AsyncJobService asyncJobService) {
         this.datasetRepository = datasetRepository;
         this.columnRepository = columnRepository;
         this.dataTableService = dataTableService;
@@ -64,6 +70,7 @@ public class DataImportService {
         this.auditLogService = auditLogService;
         this.jobScheduler = jobScheduler;
         this.objectMapper = objectMapper;
+        this.asyncJobService = asyncJobService;
     }
 
     public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
@@ -143,8 +150,8 @@ public class DataImportService {
         );
     }
 
-    public ImportResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
-                                     Long userId, String username, String ipAddress, String userAgent) throws Exception {
+    public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
+                                          Long userId, String username, String ipAddress, String userAgent) throws Exception {
         // Validate dataset exists
         datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
@@ -161,6 +168,17 @@ public class DataImportService {
         }
 
         long fileSize = file.getSize();
+        String upperFileType = fileType.toUpperCase();
+        String safeFileName = originalFilename.length() > 255 ? originalFilename.substring(0, 255) : originalFilename;
+
+        // Create async job — partial unique index enforces one active import per dataset atomically
+        String jobId;
+        try {
+            jobId = asyncJobService.createJob("IMPORT", "dataset", String.valueOf(datasetId), userId,
+                    Map.of("fileName", safeFileName, "fileSize", fileSize, "fileType", upperFileType));
+        } catch (DataIntegrityViolationException e) {
+            throw new ConcurrentImportException("이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도하세요.");
+        }
 
         // Save file to temp location for Jobrunr processing
         Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
@@ -170,7 +188,6 @@ public class DataImportService {
 
         // Extract to local variables for Jobrunr lambda serialization
         String filePath = tempFile.toString();
-        String upperFileType = fileType.toUpperCase();
 
         // Save mappings to temp file if provided
         String mappingsPath = "";
@@ -186,37 +203,31 @@ public class DataImportService {
 
         // Enqueue Jobrunr job
         jobScheduler.enqueue(() -> processImport(
-                datasetId, filePath, finalMappingsPath, originalFilename, fileSize,
+                jobId, datasetId, filePath, finalMappingsPath, originalFilename, fileSize,
                 upperFileType, userId, username, ipAddress, userAgent
         ));
 
-        // Return PENDING response
-        return new ImportResponse(
-                null,
-                datasetId,
-                originalFilename,
-                fileSize,
-                fileType.toUpperCase(),
-                "PENDING",
-                null, null, null, null,
-                username,
-                null, null,
-                LocalDateTime.now()
-        );
+        return new ImportStartResponse(jobId, "PENDING");
     }
 
-    @Job(name = "데이터 임포트: %3 → dataset %0")
-    public void processImport(Long datasetId, String filePath, String mappingsPath, String fileName,
+    @Job(name = "데이터 임포트: %4 → dataset %1")
+    public void processImport(String jobId, Long datasetId, String filePath, String mappingsPath, String fileName,
                               Long fileSize, String fileType,
                               Long userId, String username,
                               String ipAddress, String userAgent) {
         try {
+            asyncJobService.updateProgress(jobId, "PARSING", 10, "파일 파싱 중...",
+                    Map.of("totalRows", 0, "processedRows", 0));
+
             // Read file
             byte[] fileData = Files.readAllBytes(Path.of(filePath));
 
             // Parse file
             log.info("Parsing file for import: {} → dataset {}", fileName, datasetId);
             List<Map<String, String>> parsedRows = fileParserService.parse(fileData, fileType.toLowerCase());
+
+            asyncJobService.updateProgress(jobId, "VALIDATING", 30, "데이터 검증 중...",
+                    Map.of("totalRows", parsedRows.size(), "processedRows", 0));
 
             // Load dataset columns
             List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -246,6 +257,8 @@ public class DataImportService {
 
                 if (validCount == 0 && errorCount > 0) {
                     // All rows failed validation
+                    asyncJobService.failJob(jobId, "All rows failed validation");
+
                     List<ValidationErrorDetail> errors = result.errors();
                     String errorJson = objectMapper.writeValueAsString(Map.of("errors", errors));
 
@@ -275,6 +288,8 @@ public class DataImportService {
 
                 if (validCount == 0 && !result.errors().isEmpty()) {
                     // All rows failed validation
+                    asyncJobService.failJob(jobId, "All rows failed validation");
+
                     String errorJson = objectMapper.writeValueAsString(Map.of("errors", result.errors()));
 
                     Map<String, Object> metadata = Map.of(
@@ -312,7 +327,16 @@ public class DataImportService {
                         })
                         .toList();
 
-                dataTableService.insertBatch(dataset.tableName(), columnNames, rowMaps);
+                int insertTotal = rowMaps.size();
+                asyncJobService.updateProgress(jobId, "INSERTING", 40, "데이터 삽입 중...",
+                        Map.of("totalRows", insertTotal, "processedRows", 0));
+
+                dataTableService.insertBatchWithProgress(dataset.tableName(), columnNames, rowMaps,
+                        (processed, total) -> {
+                            int pct = 40 + (int) ((processed / (double) total) * 60);
+                            asyncJobService.updateProgress(jobId, "INSERTING", pct, "데이터 삽입 중...",
+                                    Map.of("totalRows", total, "processedRows", processed));
+                        });
             }
 
             // Log success to audit_log
@@ -338,6 +362,9 @@ public class DataImportService {
                 metadata.put("errorDetails", errorJson);
             }
 
+            asyncJobService.completeJob(jobId,
+                    Map.of("totalRows", totalRows, "successRows", validCount, "errorRows", errorCount));
+
             auditLogService.log(userId, username, "IMPORT", "dataset",
                     String.valueOf(datasetId), "파일 임포트: " + fileName,
                     ipAddress, userAgent, "SUCCESS", null, metadata);
@@ -347,6 +374,8 @@ public class DataImportService {
 
         } catch (Exception e) {
             log.error("Import failed for dataset {}", datasetId, e);
+
+            asyncJobService.failJob(jobId, e.getMessage());
 
             Map<String, Object> metadata = Map.of(
                     "fileName", fileName, "fileSize", fileSize, "fileType", fileType,

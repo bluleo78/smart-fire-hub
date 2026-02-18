@@ -1,3 +1,8 @@
+export interface ImportStartResponse {
+  jobId: string;
+  status: string;
+}
+
 export interface ImportResponse {
   id: number | null;
   datasetId: number | null;

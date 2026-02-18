@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
 @Service
@@ -246,6 +247,56 @@ public class DataTableService {
                 }
             }
             dsl.execute(sql.toString(), values);
+        }
+    }
+
+    public void insertBatchWithProgress(String tableName, List<String> columns, List<Map<String, Object>> rows,
+                                        BiConsumer<Integer, Integer> progressCallback) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+
+        if (rows.isEmpty()) {
+            return;
+        }
+
+        // Build base INSERT statement once
+        StringBuilder baseSql = new StringBuilder();
+        baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) baseSql.append(", ");
+            baseSql.append("\"").append(columns.get(i)).append("\"");
+        }
+        baseSql.append(") VALUES ");
+
+        String placeholders = "(" + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+
+        int totalRows = rows.size();
+        int batchSize = 500;
+        int processedRows = 0;
+
+        for (int start = 0; start < rows.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, rows.size());
+            List<Map<String, Object>> chunk = rows.subList(start, end);
+
+            StringBuilder sql = new StringBuilder(baseSql);
+            for (int r = 0; r < chunk.size(); r++) {
+                if (r > 0) sql.append(", ");
+                sql.append(placeholders);
+            }
+
+            Object[] values = new Object[chunk.size() * columns.size()];
+            int idx = 0;
+            for (Map<String, Object> row : chunk) {
+                for (String col : columns) {
+                    values[idx++] = row.get(col);
+                }
+            }
+            dsl.execute(sql.toString(), values);
+
+            processedRows += chunk.size();
+            progressCallback.accept(processedRows, totalRows);
         }
     }
 

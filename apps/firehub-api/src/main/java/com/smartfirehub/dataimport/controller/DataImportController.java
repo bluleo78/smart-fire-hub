@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportResponse;
+import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.security.RequirePermission;
@@ -52,7 +53,7 @@ public class DataImportController {
 
     @PostMapping("/imports")
     @RequirePermission("data:import")
-    public ResponseEntity<ImportResponse> importFile(
+    public ResponseEntity<ImportStartResponse> importFile(
             @PathVariable Long datasetId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "mappings", required = false) String mappingsJson,
@@ -69,7 +70,7 @@ public class DataImportController {
             mappings = objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
         }
 
-        ImportResponse response = importService.importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent);
+        ImportStartResponse response = importService.importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
