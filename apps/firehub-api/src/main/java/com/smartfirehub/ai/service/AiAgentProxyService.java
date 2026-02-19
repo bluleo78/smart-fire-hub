@@ -15,6 +15,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 import reactor.netty.http.client.HttpClient;
 
+import com.smartfirehub.settings.service.SettingsService;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
@@ -28,13 +30,15 @@ public class AiAgentProxyService {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    private final SettingsService settingsService;
 
     @Value("${agent.internal-token}")
     private String internalToken;
 
     public AiAgentProxyService(
             @Value("${agent.url}") String agentUrl,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            SettingsService settingsService
     ) {
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofMinutes(5))
@@ -44,6 +48,27 @@ public class AiAgentProxyService {
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
         this.objectMapper = objectMapper;
+        this.settingsService = settingsService;
+    }
+
+    private static int parseIntSafe(String value, int defaultValue) {
+        if (value == null) return defaultValue;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            log.warn("[AI Chat] Invalid int setting value '{}', using default {}", value, defaultValue);
+            return defaultValue;
+        }
+    }
+
+    private static double parseDoubleSafe(String value, double defaultValue) {
+        if (value == null) return defaultValue;
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            log.warn("[AI Chat] Invalid double setting value '{}', using default {}", value, defaultValue);
+            return defaultValue;
+        }
     }
 
     public String getSessionHistory(String sessionId) {
@@ -59,10 +84,17 @@ public class AiAgentProxyService {
         emitter.onTimeout(() -> emitter.completeWithError(new RuntimeException("SSE timeout")));
         emitter.onError(e -> log.error("[AI Chat] SseEmitter error", e));
 
+        Map<String, String> aiSettings = settingsService.getAsMap("ai");
+
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("message", message);
         requestBody.put("sessionId", sessionId != null ? sessionId : "");
         requestBody.put("userId", userId);
+        requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
+        requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
+        requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));
+        requestBody.put("temperature", parseDoubleSafe(aiSettings.get("ai.temperature"), 1.0));
+        requestBody.put("maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), 16384));
 
         // Send initial event to flush response headers and prevent proxy buffering
         try {

@@ -13,7 +13,11 @@ export interface AgentOptions {
   message: string;
   sessionId?: string;
   userId: number;
+  model?: string;
   maxTurns?: number;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
   abortSignal?: AbortSignal;
 }
 
@@ -27,7 +31,11 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     message,
     sessionId,
     userId,
+    model,
     maxTurns = Number(process.env.MAX_TURNS) || 10,
+    systemPrompt,
+    temperature,
+    maxTokens,
     abortSignal,
   } = options;
 
@@ -51,9 +59,11 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: message,
     options: {
-      model: 'claude-sonnet-4-6',
-      systemPrompt: SYSTEM_PROMPT,
+      model: model || 'claude-sonnet-4-6',
+      systemPrompt: systemPrompt || SYSTEM_PROMPT,
       maxTurns,
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
       abortController,
       env: cleanEnv,
       mcpServers: {

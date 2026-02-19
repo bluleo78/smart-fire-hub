@@ -15,7 +15,7 @@ router.get('/health', (req: Request, res: Response) => {
 
 // SSE chat endpoint
 router.post('/chat', internalAuth, async (req: Request, res: Response) => {
-  const { message, sessionId, userId } = req.body;
+  const { message, sessionId, userId, model, maxTurns: reqMaxTurns, systemPrompt, temperature, maxTokens } = req.body;
 
   if (!message || typeof message !== 'string') {
     res.status(400).json({ error: 'message is required and must be a string' });
@@ -49,7 +49,11 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       message,
       sessionId,
       userId,
-      maxTurns: Number(process.env.MAX_TURNS) || 10,
+      model,
+      maxTurns: reqMaxTurns ?? (Number(process.env.MAX_TURNS) || 10),
+      systemPrompt,
+      temperature,
+      maxTokens,
       abortSignal: abortController.signal,
     });
 

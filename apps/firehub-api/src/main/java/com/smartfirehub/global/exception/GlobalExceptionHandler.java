@@ -249,6 +249,14 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage(), null
+        );
+        return ResponseEntity.badRequest().body(response);
+    }
+
     @ExceptionHandler(AiSessionNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleAiSessionNotFound(AiSessionNotFoundException ex) {
         ErrorResponse response = new ErrorResponse(
