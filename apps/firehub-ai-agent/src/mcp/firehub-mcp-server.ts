@@ -1,17 +1,17 @@
 import { z } from 'zod/v4';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance, AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
 import { FireHubApiClient } from './api-client.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
-function safeTool<T>(
+function safeTool<Schema extends AnyZodRawShape>(
   name: string,
   description: string,
-  schema: Record<string, unknown>,
-  handler: (args: T) => Promise<ToolResult>,
+  schema: Schema,
+  handler: (args: InferShape<Schema>) => Promise<ToolResult>,
 ) {
-  return tool(name, description, schema, async (args: T): Promise<ToolResult> => {
+  return tool(name, description, schema, async (args: InferShape<Schema>): Promise<ToolResult> => {
     try {
       return await handler(args);
     } catch (error) {

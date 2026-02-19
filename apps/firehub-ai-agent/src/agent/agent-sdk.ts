@@ -17,6 +17,11 @@ export interface AgentOptions {
   abortSignal?: AbortSignal;
 }
 
+function truncate(text: string, maxLen = 200): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + '...';
+}
+
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
   const {
     message,
@@ -25,6 +30,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     maxTurns = Number(process.env.MAX_TURNS) || 10,
     abortSignal,
   } = options;
+
+  console.log(`[Claude] ▶ User: "${truncate(message, 500)}"`);
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
@@ -44,6 +51,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: message,
     options: {
+      model: 'claude-sonnet-4-6',
       systemPrompt: SYSTEM_PROMPT,
       maxTurns,
       abortController,
@@ -91,6 +99,7 @@ function processMessage(msg: SDKMessage): SSEEvent[] {
   switch (msg.type) {
     case 'system': {
       if (msg.subtype === 'init') {
+        console.log(`[Claude] ● Session init: ${msg.session_id}`);
         events.push({
           type: 'init',
           sessionId: msg.session_id,
@@ -104,11 +113,15 @@ function processMessage(msg: SDKMessage): SSEEvent[] {
       // to avoid content duplication. Only emit tool_use events.
       if (msg.message?.content) {
         for (const block of msg.message.content) {
-          if (block.type === 'tool_use' && 'name' in block) {
+          if (block.type === 'text' && 'text' in block) {
+            console.log(`[Claude] ◀ Text: "${truncate(String(block.text))}"`);
+          } else if (block.type === 'tool_use' && 'name' in block) {
+            const input = 'input' in block ? block.input : {};
+            console.log(`[Claude] ◀ Tool call: ${block.name}(${truncate(JSON.stringify(input))})`);
             events.push({
               type: 'tool_use',
               toolName: block.name,
-              input: 'input' in block ? block.input : {},
+              input,
             });
           }
         }
@@ -131,9 +144,11 @@ function processMessage(msg: SDKMessage): SSEEvent[] {
             } else if (rawContent !== undefined) {
               resultStr = JSON.stringify(rawContent);
             }
+            const toolId = 'tool_use_id' in block ? String(block.tool_use_id) : 'unknown';
+            console.log(`[Claude] ◀ Tool result [${toolId}]: ${truncate(resultStr ?? '(empty)')}`);
             events.push({
               type: 'tool_result',
-              toolName: 'tool_use_id' in block ? String(block.tool_use_id) : 'unknown',
+              toolName: toolId,
               result: resultStr,
             });
           }
@@ -144,14 +159,17 @@ function processMessage(msg: SDKMessage): SSEEvent[] {
 
     case 'result': {
       if (msg.subtype === 'success') {
+        console.log(`[Claude] ✓ Session completed: ${msg.session_id}`);
         events.push({
           type: 'done',
           sessionId: msg.session_id,
         });
       } else {
+        const errorMsg = 'errors' in msg ? msg.errors.join('; ') : 'Agent execution failed';
+        console.error(`[Claude] ✗ Session failed: ${errorMsg}`);
         events.push({
           type: 'error',
-          message: 'errors' in msg ? msg.errors.join('; ') : 'Agent execution failed',
+          message: errorMsg,
         });
       }
       break;
