@@ -93,3 +93,4 @@ Package base: `com.smartfirehub`. Feature-sliced by domain module:
 - 커밋은 반드시 사용자 승인 후 진행한다. 특정 지시가 있는 경우는 반드시 따른다.
 - Backend(firehub-api)와 Frontend(firehub-web)는 Claude 팀으로 분리하여 병렬 작업한다.
 - 팀 내에서도 독립적인 모듈은 SubAgent를 활용하여 최대한 병렬화한다.
+- 스크린샷은 프로젝트 루트의 `snapshots/` 폴더에 저장한다.
