@@ -37,7 +37,7 @@ export default function DatasetDetailPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
+        <TabsList className="border-b justify-start h-10">
           <TabsTrigger value="info">정보</TabsTrigger>
           <TabsTrigger value="columns">필드</TabsTrigger>
           <TabsTrigger value="data">데이터</TabsTrigger>

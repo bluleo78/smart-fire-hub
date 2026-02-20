@@ -23,9 +23,7 @@ const DatasetListPage = lazy(() => import('./pages/data/DatasetListPage'));
 const DatasetCreatePage = lazy(() => import('./pages/data/DatasetCreatePage'));
 const DatasetDetailPage = lazy(() => import('./pages/data/DatasetDetailPage'));
 const PipelineListPage = lazy(() => import('./pages/pipeline/PipelineListPage'));
-const PipelineCreatePage = lazy(() => import('./pages/pipeline/PipelineCreatePage'));
-const PipelineDetailPage = lazy(() => import('./pages/pipeline/PipelineDetailPage'));
-const ExecutionDetailPage = lazy(() => import('./pages/pipeline/ExecutionDetailPage'));
+const PipelineEditorPage = lazy(() => import('./pages/pipeline/PipelineEditorPage'));
 
 function PageSkeleton() {
   return (
@@ -53,9 +51,9 @@ function App() {
                 <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
                 <Route path="/data/datasets/:id" element={<DatasetDetailPage />} />
                 <Route path="/pipelines" element={<PipelineListPage />} />
-                <Route path="/pipelines/new" element={<PipelineCreatePage />} />
-                <Route path="/pipelines/:id" element={<PipelineDetailPage />} />
-                <Route path="/pipelines/:id/executions/:execId" element={<ExecutionDetailPage />} />
+                <Route path="/pipelines/new" element={<PipelineEditorPage />} />
+                <Route path="/pipelines/:id" element={<PipelineEditorPage />} />
+                <Route path="/pipelines/:id/executions/:execId" element={<PipelineEditorPage />} />
                 <Route element={<AdminRoute />}>
                   <Route path="/admin/users" element={<UserListPage />} />
                   <Route path="/admin/users/:id" element={<UserDetailPage />} />

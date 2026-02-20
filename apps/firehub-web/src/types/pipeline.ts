@@ -44,9 +44,16 @@ export interface PipelineStepRequest {
   description?: string;
   scriptType: 'SQL' | 'PYTHON';
   scriptContent: string;
-  outputDatasetId: number;
+  outputDatasetId: number | null;
   inputDatasetIds: number[];
   dependsOnStepNames: string[];
+}
+
+export interface UpdatePipelineRequest {
+  name: string;
+  description?: string;
+  isActive?: boolean;
+  steps: PipelineStepRequest[];
 }
 
 export interface PipelineExecutionResponse {

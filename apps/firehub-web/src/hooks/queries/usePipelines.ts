@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { pipelinesApi } from '../../api/pipelines';
+import type { UpdatePipelineRequest, PipelineExecutionResponse } from '../../types/pipeline';
 
 export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({
@@ -32,6 +33,18 @@ export function useDeletePipeline() {
   });
 }
 
+export function useUpdatePipeline(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdatePipelineRequest) =>
+      pipelinesApi.updatePipeline(pipelineId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+      queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId] });
+    },
+  });
+}
+
 export function useExecutePipeline(pipelineId: number) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -47,6 +60,11 @@ export function useExecutions(pipelineId: number) {
     queryKey: ['pipelines', pipelineId, 'executions'],
     queryFn: () => pipelinesApi.getExecutions(pipelineId).then(r => r.data),
     enabled: !!pipelineId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasActive = data?.some((e: PipelineExecutionResponse) => e.status === 'PENDING' || e.status === 'RUNNING');
+      return hasActive ? 5000 : false;
+    },
   });
 }
 

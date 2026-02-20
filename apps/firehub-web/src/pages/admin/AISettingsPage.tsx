@@ -25,6 +25,7 @@ const MODEL_OPTIONS = [
 ];
 
 interface AISettingsForm {
+  [key: string]: string;
   'ai.model': string;
   'ai.max_turns': string;
   'ai.system_prompt': string;

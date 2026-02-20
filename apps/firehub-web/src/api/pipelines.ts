@@ -1,7 +1,7 @@
 import { client } from './client';
 import type {
   PipelineResponse, PipelineDetailResponse, CreatePipelineRequest,
-  PipelineExecutionResponse, ExecutionDetailResponse,
+  UpdatePipelineRequest, PipelineExecutionResponse, ExecutionDetailResponse,
 } from '../types/pipeline';
 import type { PageResponse } from '../types/common';
 
@@ -12,7 +12,7 @@ export const pipelinesApi = {
     client.get<PipelineDetailResponse>(`/pipelines/${id}`),
   createPipeline: (data: CreatePipelineRequest) =>
     client.post<PipelineDetailResponse>('/pipelines', data),
-  updatePipeline: (id: number, data: { name: string; description?: string }) =>
+  updatePipeline: (id: number, data: UpdatePipelineRequest) =>
     client.put(`/pipelines/${id}`, data),
   deletePipeline: (id: number) =>
     client.delete(`/pipelines/${id}`),

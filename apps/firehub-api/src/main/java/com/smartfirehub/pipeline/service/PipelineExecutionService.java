@@ -288,13 +288,18 @@ public class PipelineExecutionService {
             // Update step status to RUNNING
             executionRepository.updateStepExecution(stepExecId, "RUNNING", null, null, null, stepStartedAt, null);
 
-            // Get output table name
-            String outputTableName = datasetRepository.findTableNameById(step.outputDatasetId())
-                    .orElseThrow(() -> new IllegalArgumentException("Output dataset not found: " + step.outputDatasetId()));
+            // Get output table name (nullable — metadata only)
+            String outputTableName = null;
+            if (step.outputDatasetId() != null) {
+                outputTableName = datasetRepository.findTableNameById(step.outputDatasetId())
+                        .orElse(null);
+            }
 
-            // TRUNCATE output table
-            log.info("Truncating output table: {}", outputTableName);
-            dataTableService.truncateTable(outputTableName);
+            // TRUNCATE output table (if specified)
+            if (outputTableName != null) {
+                log.info("Truncating output table: {}", outputTableName);
+                dataTableService.truncateTable(outputTableName);
+            }
 
             // Execute script based on type
             String executionLog;
@@ -306,14 +311,17 @@ public class PipelineExecutionService {
                 throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
             }
 
-            // Count output rows
-            long outputRows = dataTableService.countRows(outputTableName);
+            // Count output rows (if output dataset specified)
+            Long outputRows = null;
+            if (outputTableName != null) {
+                outputRows = dataTableService.countRows(outputTableName);
+            }
 
             // Update step execution (COMPLETED)
             executionRepository.updateStepExecution(
                     stepExecId,
                     "COMPLETED",
-                    (int) outputRows,
+                    outputRows != null ? outputRows.intValue() : null,
                     executionLog,
                     null,
                     null,
