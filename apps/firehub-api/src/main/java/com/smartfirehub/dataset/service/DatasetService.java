@@ -7,7 +7,9 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetFavoriteRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
@@ -24,35 +26,40 @@ public class DatasetService {
             "TEXT", "VARCHAR", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP"
     );
 
+    private static final Set<String> VALID_STATUSES = Set.of("NONE", "CERTIFIED", "DEPRECATED");
+
     private final DatasetRepository datasetRepository;
     private final DatasetColumnRepository columnRepository;
     private final DatasetCategoryRepository categoryRepository;
     private final DataTableService dataTableService;
     private final UserRepository userRepository;
+    private final DatasetFavoriteRepository favoriteRepository;
+    private final DatasetTagRepository tagRepository;
 
     public DatasetService(DatasetRepository datasetRepository,
                           DatasetColumnRepository columnRepository,
                           DatasetCategoryRepository categoryRepository,
                           DataTableService dataTableService,
-                          UserRepository userRepository) {
+                          UserRepository userRepository,
+                          DatasetFavoriteRepository favoriteRepository,
+                          DatasetTagRepository tagRepository) {
         this.datasetRepository = datasetRepository;
         this.columnRepository = columnRepository;
         this.categoryRepository = categoryRepository;
         this.dataTableService = dataTableService;
         this.userRepository = userRepository;
+        this.favoriteRepository = favoriteRepository;
+        this.tagRepository = tagRepository;
     }
 
     @Transactional
     public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
-        // Validate table name
         dataTableService.validateName(request.tableName());
 
-        // Validate column names
         for (DatasetColumnRequest col : request.columns()) {
             dataTableService.validateName(col.columnName());
         }
 
-        // Check uniqueness
         if (datasetRepository.existsByName(request.name())) {
             throw new DuplicateDatasetNameException("Dataset name already exists: " + request.name());
         }
@@ -60,34 +67,36 @@ public class DatasetService {
             throw new DuplicateDatasetNameException("Table name already exists: " + request.tableName());
         }
 
-        // Verify category exists if provided
         if (request.categoryId() != null) {
             categoryRepository.findById(request.categoryId())
                     .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + request.categoryId()));
         }
 
-        // Save dataset record
         DatasetResponse dataset = datasetRepository.save(request, userId);
-
-        // Save columns
         columnRepository.saveBatch(dataset.id(), request.columns());
-
-        // Create physical table
         dataTableService.createTable(request.tableName(), request.columns());
 
-        // Fetch full detail for response
         return getDatasetById(dataset.id());
     }
 
     public PageResponse<DatasetResponse> getDatasets(Long categoryId, String datasetType, String search, int page, int size) {
-        List<DatasetResponse> content = datasetRepository.findAll(categoryId, datasetType, search, page, size);
-        long totalElements = datasetRepository.count(categoryId, datasetType, search);
+        return getDatasets(categoryId, datasetType, search, page, size, null, null, false);
+    }
+
+    public PageResponse<DatasetResponse> getDatasets(Long categoryId, String datasetType, String search, int page, int size,
+                                                      Long currentUserId, String status, boolean favoriteOnly) {
+        List<DatasetResponse> content = datasetRepository.findAll(categoryId, datasetType, search, page, size, currentUserId, status, favoriteOnly);
+        long totalElements = datasetRepository.count(categoryId, datasetType, search, currentUserId, status, favoriteOnly);
         int totalPages = (int) Math.ceil((double) totalElements / size);
         return new PageResponse<>(content, page, size, totalElements, totalPages);
     }
 
     public DatasetDetailResponse getDatasetById(Long id) {
-        DatasetResponse dataset = datasetRepository.findById(id)
+        return getDatasetById(id, null);
+    }
+
+    public DatasetDetailResponse getDatasetById(Long id, Long currentUserId) {
+        DatasetResponse dataset = datasetRepository.findById(id, currentUserId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
 
         List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(id);
@@ -117,7 +126,13 @@ public class DatasetService {
                 rowCount,
                 dataset.createdAt(),
                 updatedAt,
-                updatedByUsername
+                updatedByUsername,
+                dataset.isFavorite(),
+                dataset.tags(),
+                dataset.status(),
+                dataset.statusNote(),
+                dataset.statusUpdatedBy(),
+                dataset.statusUpdatedAt()
         );
     }
 
@@ -126,7 +141,6 @@ public class DatasetService {
         datasetRepository.findById(id)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
 
-        // Verify new category exists if provided
         if (request.categoryId() != null) {
             categoryRepository.findById(request.categoryId())
                     .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + request.categoryId()));
@@ -140,13 +154,8 @@ public class DatasetService {
         DatasetResponse dataset = datasetRepository.findById(id)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
 
-        // Drop the physical table
         dataTableService.dropTable(dataset.tableName());
-
-        // Delete columns
         columnRepository.deleteByDatasetId(id);
-
-        // Delete dataset record
         datasetRepository.deleteById(id);
     }
 
@@ -155,19 +164,15 @@ public class DatasetService {
         DatasetResponse dataset = datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
-        // Validate column name
         dataTableService.validateName(request.columnName());
 
-        // Check if dataset has data
         long rowCount = dataTableService.countRows(dataset.tableName());
         if (rowCount > 0 && !request.isNullable()) {
             throw new ColumnModificationException("Cannot add non-nullable column to dataset with existing data");
         }
 
-        // Get next column order
         int nextOrder = columnRepository.getMaxOrder(datasetId) + 1;
 
-        // Save column metadata
         DatasetColumnRequest colRequest = new DatasetColumnRequest(
                 request.columnName(),
                 request.displayName(),
@@ -178,8 +183,6 @@ public class DatasetService {
                 request.description()
         );
         DatasetColumnResponse column = columnRepository.save(datasetId, colRequest, nextOrder);
-
-        // Add column to physical table
         dataTableService.addColumn(dataset.tableName(), colRequest);
 
         return column;
@@ -200,14 +203,12 @@ public class DatasetService {
             throw new IllegalArgumentException("Column does not belong to this dataset");
         }
 
-        // dataType 유효성 검증
         if (request.dataType() != null && !VALID_DATA_TYPES.contains(request.dataType())) {
             throw new ColumnModificationException("Invalid data type: " + request.dataType());
         }
 
         long rowCount = dataTableService.countRows(dataset.tableName());
 
-        // columnName 변경
         if (request.columnName() != null && !request.columnName().equals(column.columnName())) {
             if (rowCount > 0) {
                 throw new ColumnModificationException("Cannot rename column when dataset has data");
@@ -219,7 +220,6 @@ public class DatasetService {
             dataTableService.renameColumn(dataset.tableName(), column.columnName(), request.columnName());
         }
 
-        // dataType 변경
         if (request.dataType() != null && !request.dataType().equals(column.dataType())) {
             if (rowCount > 0) {
                 throw new ColumnModificationException("Cannot change data type when dataset has data");
@@ -227,7 +227,6 @@ public class DatasetService {
             String currentColName = request.columnName() != null ? request.columnName() : column.columnName();
             dataTableService.alterColumnType(dataset.tableName(), currentColName, request.dataType(), request.maxLength());
         } else if (request.dataType() != null && "VARCHAR".equals(request.dataType()) && request.maxLength() != null && !request.maxLength().equals(column.maxLength())) {
-            // VARCHAR인데 maxLength만 바뀐 경우
             if (rowCount > 0) {
                 throw new ColumnModificationException("Cannot change column size when dataset has data");
             }
@@ -235,7 +234,6 @@ public class DatasetService {
             dataTableService.alterColumnType(dataset.tableName(), currentColName, request.dataType(), request.maxLength());
         }
 
-        // isNullable 변경
         if (request.isNullable() != null && request.isNullable() != column.isNullable()) {
             if (rowCount > 0) {
                 throw new ColumnModificationException("Cannot change nullable constraint when dataset has data");
@@ -244,13 +242,11 @@ public class DatasetService {
             dataTableService.setColumnNullable(dataset.tableName(), currentColName, request.isNullable());
         }
 
-        // isIndexed 변경
         if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {
             String currentColName = request.columnName() != null ? request.columnName() : column.columnName();
             dataTableService.setColumnIndex(dataset.tableName(), currentColName, request.isIndexed());
         }
 
-        // 메타데이터 업데이트
         columnRepository.update(columnId, request);
     }
 
@@ -269,17 +265,27 @@ public class DatasetService {
             throw new IllegalArgumentException("Column does not belong to this dataset");
         }
 
-        // 최소 1개 컬럼은 유지해야 함
         List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
         if (columns.size() <= 1) {
             throw new ColumnModificationException("Cannot delete the last column of a dataset");
         }
 
-        // 물리 컬럼 삭제
         dataTableService.dropColumn(dataset.tableName(), column.columnName());
-
-        // 메타데이터 삭제
         columnRepository.deleteById(columnId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ColumnStatsResponse> getDatasetStats(Long datasetId) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        long rowCount = dataTableService.countRows(dataset.tableName());
+        if (rowCount == 0) {
+            return List.of();
+        }
+
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+        return dataTableService.getColumnStats(dataset.tableName(), columns);
     }
 
     @Transactional
@@ -303,17 +309,130 @@ public class DatasetService {
         columnRepository.updateOrders(datasetId, request.columnIds());
     }
 
+    @Transactional
+    public DataDeleteResponse deleteDataRows(Long datasetId, List<Long> rowIds) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        int deletedCount = dataTableService.deleteRows(dataset.tableName(), rowIds);
+        return new DataDeleteResponse(deletedCount);
+    }
+
     public DataQueryResponse getDatasetData(Long datasetId, String search, int page, int size) {
+        return getDatasetData(datasetId, search, page, size, null, "ASC", true);
+    }
+
+    public DataQueryResponse getDatasetData(Long datasetId, String search, int page, int size, String sortBy, String sortDir, boolean includeTotalCount) {
         DatasetResponse dataset = datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
         List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
         List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
 
-        List<Map<String, Object>> rows = dataTableService.queryData(dataset.tableName(), columnNames, search, page, size);
-        long totalElements = dataTableService.countRows(dataset.tableName(), columnNames, search);
-        int totalPages = (int) Math.ceil((double) totalElements / size);
+        if (sortBy != null && !sortBy.isBlank()) {
+            if (!columnNames.contains(sortBy)) {
+                throw new IllegalArgumentException("정렬할 수 없는 컬럼입니다: " + sortBy);
+            }
+        } else {
+            sortBy = null;
+        }
+
+        List<Map<String, Object>> rows = dataTableService.queryData(dataset.tableName(), columnNames, search, page, size, sortBy, sortDir);
+
+        long totalElements = -1;
+        int totalPages = -1;
+        if (includeTotalCount) {
+            totalElements = dataTableService.countRows(dataset.tableName(), columnNames, search);
+            totalPages = (int) Math.ceil((double) totalElements / size);
+        }
 
         return new DataQueryResponse(columns, rows, page, size, totalElements, totalPages);
+    }
+
+    // --- Phase 3-3: Favorites ---
+
+    @Transactional
+    public FavoriteToggleResponse toggleFavorite(Long datasetId, Long userId) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        if (favoriteRepository.existsByUserIdAndDatasetId(userId, datasetId)) {
+            favoriteRepository.delete(userId, datasetId);
+            return new FavoriteToggleResponse(false);
+        } else {
+            favoriteRepository.insert(userId, datasetId);
+            return new FavoriteToggleResponse(true);
+        }
+    }
+
+    // --- Phase 4-3: Tags ---
+
+    @Transactional
+    public void addTag(Long datasetId, String tagName, Long userId) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        boolean alreadyExists = tagRepository.findByDatasetId(datasetId).contains(tagName);
+        if (alreadyExists) {
+            throw new IllegalStateException("Tag already exists: " + tagName);
+        }
+        tagRepository.insert(datasetId, tagName, userId);
+    }
+
+    @Transactional
+    public void deleteTag(Long datasetId, String tagName) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        tagRepository.delete(datasetId, tagName);
+    }
+
+    public List<String> getAllDistinctTags() {
+        return tagRepository.findAllDistinctTags();
+    }
+
+    // --- Phase 6-1: Status ---
+
+    @Transactional
+    public DatasetDetailResponse updateStatus(Long id, UpdateStatusRequest request, Long userId) {
+        if (request.status() == null || !VALID_STATUSES.contains(request.status())) {
+            throw new IllegalArgumentException("Invalid status. Must be one of: NONE, CERTIFIED, DEPRECATED");
+        }
+
+        datasetRepository.findById(id)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+
+        datasetRepository.updateStatus(id, request.status(), request.note(), userId);
+        return getDatasetById(id, userId);
+    }
+
+    // --- Phase 6-4: DERIVED Column Description Propagation ---
+
+    @Transactional
+    public void propagateDescriptions(Long datasetId) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> targetColumns = columnRepository.findByDatasetId(datasetId);
+
+        // Collect column names that have empty descriptions
+        List<String> emptyDescCols = targetColumns.stream()
+                .filter(c -> c.description() == null || c.description().isBlank())
+                .map(DatasetColumnResponse::columnName)
+                .toList();
+
+        if (emptyDescCols.isEmpty()) {
+            return;
+        }
+
+        // Find matching column names from ALL other datasets that have descriptions
+        for (DatasetColumnResponse col : targetColumns) {
+            if (col.description() != null && !col.description().isBlank()) {
+                continue;
+            }
+            // Look up source descriptions from other datasets
+            String sourceDesc = columnRepository.findFirstDescriptionByColumnName(col.columnName(), datasetId);
+            if (sourceDesc != null && !sourceDesc.isBlank()) {
+                columnRepository.updateDescription(col.id(), sourceDesc);
+            }
+        }
     }
 }

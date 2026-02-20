@@ -14,12 +14,37 @@ export function formatDateShort(dateStr: string): string {
 
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
-export function formatCellValue(value: unknown): string {
-  if (value === null || value === undefined) return '-';
-  const str = String(value);
-  if (ISO_DATETIME_RE.test(str)) {
-    return new Date(str).toLocaleString('ko-KR');
+export function isNullValue(value: unknown): boolean {
+  return value === null || value === undefined;
+}
+
+export function getRawCellValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+export function formatCellValue(value: unknown, dataType?: string): string {
+  if (value === null || value === undefined) return 'NULL';
+
+  if (dataType === 'BOOLEAN' || typeof value === 'boolean') {
+    const boolVal = typeof value === 'boolean' ? value : value === 'true';
+    return boolVal ? '✓' : '✗';
   }
+
+  const str = String(value);
+
+  if (dataType === 'DATE') {
+    return new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(str));
+  }
+
+  if (dataType === 'TIMESTAMP' || ISO_DATETIME_RE.test(str)) {
+    return new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(str));
+  }
+
+  if (str.length > 200) {
+    return str.slice(0, 200) + '…';
+  }
+
   return str;
 }
 

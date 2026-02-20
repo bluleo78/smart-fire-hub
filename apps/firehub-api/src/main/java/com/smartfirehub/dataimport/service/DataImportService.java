@@ -74,6 +74,10 @@ public class DataImportService {
     }
 
     public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
+        return previewImport(datasetId, file, ParseOptions.defaults());
+    }
+
+    public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file, ParseOptions parseOptions) throws Exception {
         // Validate dataset exists
         datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
@@ -92,13 +96,13 @@ public class DataImportService {
         byte[] fileData = file.getBytes();
 
         // Parse headers
-        List<String> headers = fileParserService.parseHeaders(fileData, fileType);
+        List<String> headers = fileParserService.parseHeaders(fileData, fileType, parseOptions);
 
         // Parse sample rows (5 rows)
-        List<Map<String, String>> sampleRows = fileParserService.parseSampleRows(fileData, fileType, 5);
+        List<Map<String, String>> sampleRows = fileParserService.parseSampleRows(fileData, fileType, 5, parseOptions);
 
         // Count total rows
-        int totalRows = fileParserService.countRows(fileData, fileType);
+        int totalRows = fileParserService.countRows(fileData, fileType, parseOptions);
 
         // Get dataset columns
         List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -110,6 +114,10 @@ public class DataImportService {
     }
 
     public ImportValidateResponse validateImport(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings) throws Exception {
+        return validateImport(datasetId, file, mappings, ParseOptions.defaults());
+    }
+
+    public ImportValidateResponse validateImport(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings, ParseOptions parseOptions) throws Exception {
         // Validate dataset exists
         datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
@@ -128,7 +136,7 @@ public class DataImportService {
         byte[] fileData = file.getBytes();
 
         // Parse all rows
-        List<Map<String, String>> rows = fileParserService.parse(fileData, fileType);
+        List<Map<String, String>> rows = fileParserService.parse(fileData, fileType, parseOptions);
 
         // Get dataset columns
         List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -152,6 +160,12 @@ public class DataImportService {
 
     public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
                                           Long userId, String username, String ipAddress, String userAgent) throws Exception {
+        return importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, ParseOptions.defaults());
+    }
+
+    public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
+                                          Long userId, String username, String ipAddress, String userAgent,
+                                          ParseOptions parseOptions) throws Exception {
         // Validate dataset exists
         datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
@@ -198,21 +212,26 @@ public class DataImportService {
             mappingsPath = mappingsTempFile.toString();
         }
 
-        // Extract mappingsPath to local variable for lambda
+        // Save parseOptions to temp file for Jobrunr serialization
+        Path parseOptsTempFile = Files.createTempFile(tempDir, "parseopts-", ".json");
+        Files.writeString(parseOptsTempFile, objectMapper.writeValueAsString(parseOptions));
+        String parseOptsPath = parseOptsTempFile.toString();
+
+        // Extract to local variables for lambda
         String finalMappingsPath = mappingsPath;
 
         // Enqueue Jobrunr job
         jobScheduler.enqueue(() -> processImport(
-                jobId, datasetId, filePath, finalMappingsPath, originalFilename, fileSize,
+                jobId, datasetId, filePath, finalMappingsPath, parseOptsPath, originalFilename, fileSize,
                 upperFileType, userId, username, ipAddress, userAgent
         ));
 
         return new ImportStartResponse(jobId, "PENDING");
     }
 
-    @Job(name = "데이터 임포트: %4 → dataset %1")
-    public void processImport(String jobId, Long datasetId, String filePath, String mappingsPath, String fileName,
-                              Long fileSize, String fileType,
+    @Job(name = "데이터 임포트: %5 → dataset %1")
+    public void processImport(String jobId, Long datasetId, String filePath, String mappingsPath, String parseOptsPath,
+                              String fileName, Long fileSize, String fileType,
                               Long userId, String username,
                               String ipAddress, String userAgent) {
         try {
@@ -222,9 +241,20 @@ public class DataImportService {
             // Read file
             byte[] fileData = Files.readAllBytes(Path.of(filePath));
 
+            // Load parse options
+            ParseOptions parseOptions = ParseOptions.defaults();
+            if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
+                try {
+                    String optsJson = Files.readString(Path.of(parseOptsPath));
+                    parseOptions = objectMapper.readValue(optsJson, ParseOptions.class);
+                } catch (Exception e) {
+                    log.warn("Failed to read parse options from {}, using defaults", parseOptsPath, e);
+                }
+            }
+
             // Parse file
             log.info("Parsing file for import: {} → dataset {}", fileName, datasetId);
-            List<Map<String, String>> parsedRows = fileParserService.parse(fileData, fileType.toLowerCase());
+            List<Map<String, String>> parsedRows = fileParserService.parse(fileData, fileType.toLowerCase(), parseOptions);
 
             asyncJobService.updateProgress(jobId, "VALIDATING", 30, "데이터 검증 중...",
                     Map.of("totalRows", parsedRows.size(), "processedRows", 0));
@@ -393,6 +423,9 @@ public class DataImportService {
                 Files.deleteIfExists(Path.of(filePath));
                 if (mappingsPath != null && !mappingsPath.isEmpty()) {
                     Files.deleteIfExists(Path.of(mappingsPath));
+                }
+                if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
+                    Files.deleteIfExists(Path.of(parseOptsPath));
                 }
             } catch (Exception e) {
                 log.warn("Failed to delete temp file: {}", filePath, e);

@@ -15,5 +15,11 @@ public record DatasetDetailResponse(
     long rowCount,
     LocalDateTime createdAt,
     LocalDateTime updatedAt,
-    String updatedBy
+    String updatedBy,
+    boolean isFavorite,
+    List<String> tags,
+    String status,
+    String statusNote,
+    String statusUpdatedBy,
+    LocalDateTime statusUpdatedAt
 ) {}

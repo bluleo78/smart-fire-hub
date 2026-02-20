@@ -1,6 +1,8 @@
 package com.smartfirehub.dataset.service;
 
+import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
@@ -9,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
@@ -124,13 +127,20 @@ public class DataTableService {
     }
 
     public List<Map<String, Object>> queryData(String tableName, List<String> columns, String search, int page, int size) {
+        return queryData(tableName, columns, search, page, size, null, "ASC");
+    }
+
+    public List<Map<String, Object>> queryData(String tableName, List<String> columns, String search, int page, int size, String sortBy, String sortDir) {
         validateName(tableName);
         for (String col : columns) {
             validateName(col);
         }
+        if (sortBy != null) {
+            validateName(sortBy);
+        }
 
         StringBuilder sql = new StringBuilder();
-        sql.append("SELECT ");
+        sql.append("SELECT id, ");
         if (columns.isEmpty()) {
             sql.append("*");
         } else {
@@ -143,7 +153,11 @@ public class DataTableService {
 
         Object[] params = buildSearchWhereClause(sql, columns, search);
 
-        sql.append(" ORDER BY id");
+        if (sortBy != null) {
+            sql.append(" ORDER BY \"").append(sortBy).append("\" ").append(sortDir).append(" NULLS LAST, id ASC");
+        } else {
+            sql.append(" ORDER BY id");
+        }
         sql.append(" LIMIT ").append(size);
         sql.append(" OFFSET ").append(page * size);
 
@@ -153,7 +167,12 @@ public class DataTableService {
         for (var record : result) {
             Map<String, Object> row = new HashMap<>();
             for (int i = 0; i < record.size(); i++) {
-                row.put(record.field(i).getName(), record.get(i));
+                String fieldName = record.field(i).getName();
+                if ("id".equals(fieldName)) {
+                    row.put("_id", record.get(i));
+                } else {
+                    row.put(fieldName, record.get(i));
+                }
             }
             rows.add(row);
         }
@@ -300,6 +319,14 @@ public class DataTableService {
         }
     }
 
+    public int deleteRows(String tableName, List<Long> rowIds) {
+        validateName(tableName);
+        if (rowIds == null || rowIds.isEmpty()) return 0;
+        String sql = "DELETE FROM data.\"" + tableName + "\" WHERE id = ANY(?)";
+        Long[] idArray = rowIds.toArray(new Long[0]);
+        return dsl.execute(sql, (Object) idArray);
+    }
+
     public void truncateTable(String tableName) {
         validateName(tableName);
         String sql = "TRUNCATE TABLE data.\"" + tableName + "\"";
@@ -345,5 +372,90 @@ public class DataTableService {
         validateName(columnName);
         String sql = "ALTER TABLE data.\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
         dsl.execute(sql);
+    }
+
+    private static final Set<String> NUMERIC_TYPES = Set.of("INTEGER", "DECIMAL");
+
+    public List<ColumnStatsResponse> getColumnStats(String tableName, List<DatasetColumnResponse> columns) {
+        validateName(tableName);
+
+        // Set statement_timeout to 30 seconds for profiling queries
+        dsl.execute("SET LOCAL statement_timeout = '30s'");
+
+        // Check row count to decide whether to sample
+        long rowCount = countRows(tableName);
+        boolean sampled = rowCount > 100_000;
+        String fromClause = sampled
+                ? "data.\"" + tableName + "\" TABLESAMPLE BERNOULLI(10)"
+                : "data.\"" + tableName + "\"";
+
+        List<ColumnStatsResponse> result = new ArrayList<>();
+
+        for (DatasetColumnResponse col : columns) {
+            validateName(col.columnName());
+            String colName = col.columnName();
+            String dataType = col.dataType();
+
+            // Build aggregate stats query
+            StringBuilder statsSql = new StringBuilder();
+            statsSql.append("SELECT COUNT(*) AS total,")
+                    .append(" COUNT(*) FILTER (WHERE \"").append(colName).append("\" IS NULL) AS null_count,")
+                    .append(" COUNT(DISTINCT \"").append(colName).append("\") AS distinct_count,")
+                    .append(" MIN(\"").append(colName).append("\"::text) AS min_val,")
+                    .append(" MAX(\"").append(colName).append("\"::text) AS max_val");
+
+            if (NUMERIC_TYPES.contains(dataType)) {
+                statsSql.append(", AVG(\"").append(colName).append("\"::numeric) AS avg_val");
+            }
+
+            statsSql.append(" FROM ").append(fromClause);
+
+            var statsRecord = dsl.fetchOne(statsSql.toString());
+
+            long total = statsRecord.get("total", Long.class);
+            long nullCount = statsRecord.get("null_count", Long.class);
+            double nullPercent = total > 0 ? (double) nullCount / total * 100.0 : 0.0;
+            long distinctCount = statsRecord.get("distinct_count", Long.class);
+            String minVal = statsRecord.get("min_val", String.class);
+            String maxVal = statsRecord.get("max_val", String.class);
+            Double avgVal = null;
+            if (NUMERIC_TYPES.contains(dataType)) {
+                Object rawAvg = statsRecord.get("avg_val");
+                if (rawAvg != null) {
+                    avgVal = ((Number) rawAvg).doubleValue();
+                }
+            }
+
+            // Get top 5 values
+            String topSql = "SELECT \"" + colName + "\"::text AS val, COUNT(*) AS cnt"
+                    + " FROM " + fromClause
+                    + " WHERE \"" + colName + "\" IS NOT NULL"
+                    + " GROUP BY \"" + colName + "\""
+                    + " ORDER BY cnt DESC LIMIT 5";
+
+            var topRecords = dsl.fetch(topSql);
+            List<ColumnStatsResponse.ValueCount> topValues = new ArrayList<>();
+            for (var rec : topRecords) {
+                String val = rec.get("val", String.class);
+                long cnt = rec.get("cnt", Long.class);
+                topValues.add(new ColumnStatsResponse.ValueCount(val, cnt));
+            }
+
+            result.add(new ColumnStatsResponse(
+                    colName,
+                    dataType,
+                    total,
+                    nullCount,
+                    nullPercent,
+                    distinctCount,
+                    minVal,
+                    maxVal,
+                    avgVal,
+                    topValues,
+                    sampled
+            ));
+        }
+
+        return result;
     }
 }

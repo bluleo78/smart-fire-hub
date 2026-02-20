@@ -9,6 +9,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v1/datasets")
 public class DatasetController {
@@ -19,6 +21,10 @@ public class DatasetController {
         this.datasetService = datasetService;
     }
 
+    private Long currentUserId() {
+        return Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
+    }
+
     @GetMapping
     @RequirePermission("dataset:read")
     public ResponseEntity<PageResponse<DatasetResponse>> getDatasets(
@@ -26,17 +32,21 @@ public class DatasetController {
             @RequestParam(required = false) String datasetType,
             @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "false") boolean favoriteOnly) {
         page = Math.max(0, page);
         size = Math.max(1, Math.min(size, 100));
-        PageResponse<DatasetResponse> response = datasetService.getDatasets(categoryId, datasetType, search, page, size);
+        Long userId = currentUserId();
+        PageResponse<DatasetResponse> response = datasetService.getDatasets(
+                categoryId, datasetType, search, page, size, userId, status, favoriteOnly);
         return ResponseEntity.ok(response);
     }
 
     @PostMapping
     @RequirePermission("dataset:write")
     public ResponseEntity<DatasetDetailResponse> createDataset(@RequestBody CreateDatasetRequest request) {
-        Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
+        Long userId = currentUserId();
         DatasetDetailResponse dataset = datasetService.createDataset(request, userId);
         return ResponseEntity.status(HttpStatus.CREATED).body(dataset);
     }
@@ -44,14 +54,15 @@ public class DatasetController {
     @GetMapping("/{id}")
     @RequirePermission("dataset:read")
     public ResponseEntity<DatasetDetailResponse> getDatasetById(@PathVariable Long id) {
-        DatasetDetailResponse dataset = datasetService.getDatasetById(id);
+        Long userId = currentUserId();
+        DatasetDetailResponse dataset = datasetService.getDatasetById(id, userId);
         return ResponseEntity.ok(dataset);
     }
 
     @PutMapping("/{id}")
     @RequirePermission("dataset:write")
     public ResponseEntity<Void> updateDataset(@PathVariable Long id, @RequestBody UpdateDatasetRequest request) {
-        Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
+        Long userId = currentUserId();
         datasetService.updateDataset(id, request, userId);
         return ResponseEntity.noContent().build();
     }
@@ -91,17 +102,104 @@ public class DatasetController {
         return ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/{id}/stats")
+    @RequirePermission("data:read")
+    public ResponseEntity<List<ColumnStatsResponse>> getDatasetStats(@PathVariable Long id) {
+        List<ColumnStatsResponse> stats = datasetService.getDatasetStats(id);
+        return ResponseEntity.ok(stats);
+    }
+
+    @PostMapping("/{id}/data/delete")
+    @RequirePermission("data:delete")
+    public ResponseEntity<DataDeleteResponse> deleteDataRows(@PathVariable Long id, @RequestBody DataDeleteRequest request) {
+        if (request.rowIds() == null || request.rowIds().isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (request.rowIds().size() > 1000) {
+            return ResponseEntity.badRequest().build();
+        }
+        DataDeleteResponse response = datasetService.deleteDataRows(id, request.rowIds());
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{id}/data")
     @RequirePermission("data:read")
     public ResponseEntity<DataQueryResponse> getDatasetData(
             @PathVariable Long id,
             @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(defaultValue = "ASC") String sortDir,
+            @RequestParam(defaultValue = "true") boolean includeTotalCount) {
         page = Math.max(0, page);
         size = Math.max(1, Math.min(size, 200));
         String sanitizedSearch = search != null && search.length() > 200 ? search.substring(0, 200) : search;
-        DataQueryResponse response = datasetService.getDatasetData(id, sanitizedSearch, page, size);
+        if (!"ASC".equalsIgnoreCase(sortDir) && !"DESC".equalsIgnoreCase(sortDir)) {
+            sortDir = "ASC";
+        }
+        DataQueryResponse response = datasetService.getDatasetData(id, sanitizedSearch, page, size, sortBy, sortDir.toUpperCase(), includeTotalCount);
         return ResponseEntity.ok(response);
+    }
+
+    // --- Phase 3-3: Favorites ---
+
+    @PostMapping("/{id}/favorite")
+    @RequirePermission("dataset:read")
+    public ResponseEntity<FavoriteToggleResponse> toggleFavorite(@PathVariable Long id) {
+        Long userId = currentUserId();
+        FavoriteToggleResponse response = datasetService.toggleFavorite(id, userId);
+        return ResponseEntity.ok(response);
+    }
+
+    // --- Phase 4-3: Tags ---
+
+    @GetMapping("/tags")
+    @RequirePermission("dataset:read")
+    public ResponseEntity<List<String>> getAllTags() {
+        return ResponseEntity.ok(datasetService.getAllDistinctTags());
+    }
+
+    @PostMapping("/{id}/tags")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<Void> addTag(@PathVariable Long id, @RequestBody AddTagRequest request) {
+        if (request.tagName() == null || request.tagName().isBlank()
+                || request.tagName().length() > 50
+                || !request.tagName().matches("[a-zA-Z0-9가-힣_\\-]+")) {
+            return ResponseEntity.badRequest().build();
+        }
+        Long userId = currentUserId();
+        try {
+            datasetService.addTag(id, request.tagName(), userId);
+            return ResponseEntity.status(HttpStatus.CREATED).build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        }
+    }
+
+    @DeleteMapping("/{id}/tags/{tagName}")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<Void> deleteTag(@PathVariable Long id, @PathVariable String tagName) {
+        datasetService.deleteTag(id, tagName);
+        return ResponseEntity.noContent().build();
+    }
+
+    // --- Phase 6-1: Status ---
+
+    @PutMapping("/{id}/status")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<DatasetDetailResponse> updateStatus(@PathVariable Long id, @RequestBody UpdateStatusRequest request) {
+        Long userId = currentUserId();
+        DatasetDetailResponse response = datasetService.updateStatus(id, request, userId);
+        return ResponseEntity.ok(response);
+    }
+
+    // --- Phase 6-4: Description Propagation ---
+
+    @PostMapping("/{id}/propagate-descriptions")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<Void> propagateDescriptions(@PathVariable Long id) {
+        datasetService.propagateDescriptions(id);
+        return ResponseEntity.noContent().build();
     }
 }

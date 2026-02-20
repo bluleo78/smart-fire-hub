@@ -4,7 +4,8 @@ import type {
   DatasetResponse, DatasetDetailResponse,
   CreateDatasetRequest, UpdateDatasetRequest,
   DatasetColumnResponse, AddColumnRequest, UpdateColumnRequest,
-  DataQueryResponse,
+  DataQueryResponse, DataDeleteResponse, ColumnStatsResponse,
+  FavoriteToggleResponse, UpdateStatusRequest,
 } from '../types/dataset';
 import type { PageResponse } from '../types/common';
 
@@ -16,7 +17,7 @@ export const categoriesApi = {
 };
 
 export const datasetsApi = {
-  getDatasets: (params: { categoryId?: number; datasetType?: string; search?: string; page?: number; size?: number }) =>
+  getDatasets: (params: { categoryId?: number; datasetType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string }) =>
     client.get<PageResponse<DatasetResponse>>('/datasets', { params }),
   getDatasetById: (id: number) => client.get<DatasetDetailResponse>(`/datasets/${id}`),
   createDataset: (data: CreateDatasetRequest) => client.post<DatasetDetailResponse>('/datasets', data),
@@ -30,6 +31,20 @@ export const datasetsApi = {
     client.delete(`/datasets/${datasetId}/columns/${columnId}`),
   reorderColumns: (datasetId: number, columnIds: number[]) =>
     client.put(`/datasets/${datasetId}/columns/reorder`, { columnIds }),
-  getDatasetData: (datasetId: number, params: { search?: string; page?: number; size?: number }) =>
+  getDatasetData: (datasetId: number, params: { search?: string; page?: number; size?: number; sortBy?: string; sortDir?: string; includeTotalCount?: boolean }) =>
     client.get<DataQueryResponse>(`/datasets/${datasetId}/data`, { params }),
+  deleteDataRows: (datasetId: number, rowIds: number[]) =>
+    client.post<DataDeleteResponse>(`/datasets/${datasetId}/data/delete`, { rowIds }),
+  getDatasetStats: (datasetId: number) =>
+    client.get<ColumnStatsResponse[]>(`/datasets/${datasetId}/stats`),
+  toggleFavorite: (id: number) =>
+    client.post<FavoriteToggleResponse>(`/datasets/${id}/favorite`),
+  updateStatus: (id: number, data: UpdateStatusRequest) =>
+    client.put(`/datasets/${id}/status`, data),
+  addTag: (id: number, tagName: string) =>
+    client.post(`/datasets/${id}/tags`, { tagName }),
+  removeTag: (id: number, tagName: string) =>
+    client.delete(`/datasets/${id}/tags/${tagName}`),
+  getAllTags: () =>
+    client.get<string[]>('/datasets/tags'),
 };

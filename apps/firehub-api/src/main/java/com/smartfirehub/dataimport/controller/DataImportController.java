@@ -2,11 +2,13 @@ package com.smartfirehub.dataimport.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
+import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.user.repository.UserRepository;
@@ -17,6 +19,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @RestController
@@ -26,19 +30,26 @@ public class DataImportController {
     private final DataImportService importService;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final DatasetRepository datasetRepository;
 
-    public DataImportController(DataImportService importService, UserRepository userRepository, ObjectMapper objectMapper) {
+    public DataImportController(DataImportService importService, UserRepository userRepository, ObjectMapper objectMapper, DatasetRepository datasetRepository) {
         this.importService = importService;
         this.userRepository = userRepository;
         this.objectMapper = objectMapper;
+        this.datasetRepository = datasetRepository;
     }
 
     @PostMapping("/imports/preview")
     @RequirePermission("data:import")
     public ResponseEntity<ImportPreviewResponse> previewImport(
             @PathVariable Long datasetId,
-            @RequestParam("file") MultipartFile file) throws Exception {
-        return ResponseEntity.ok(importService.previewImport(datasetId, file));
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(defaultValue = ",") String delimiter,
+            @RequestParam(defaultValue = "UTF-8") String encoding,
+            @RequestParam(defaultValue = "true") boolean hasHeader,
+            @RequestParam(defaultValue = "0") int skipRows) throws Exception {
+        ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
+        return ResponseEntity.ok(importService.previewImport(datasetId, file, parseOptions));
     }
 
     @PostMapping("/imports/validate")
@@ -46,9 +57,14 @@ public class DataImportController {
     public ResponseEntity<ImportValidateResponse> validateImport(
             @PathVariable Long datasetId,
             @RequestParam("file") MultipartFile file,
-            @RequestParam("mappings") String mappingsJson) throws Exception {
+            @RequestParam("mappings") String mappingsJson,
+            @RequestParam(defaultValue = ",") String delimiter,
+            @RequestParam(defaultValue = "UTF-8") String encoding,
+            @RequestParam(defaultValue = "true") boolean hasHeader,
+            @RequestParam(defaultValue = "0") int skipRows) throws Exception {
         List<ColumnMappingEntry> mappings = objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
-        return ResponseEntity.ok(importService.validateImport(datasetId, file, mappings));
+        ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
+        return ResponseEntity.ok(importService.validateImport(datasetId, file, mappings, parseOptions));
     }
 
     @PostMapping("/imports")
@@ -57,6 +73,10 @@ public class DataImportController {
             @PathVariable Long datasetId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "mappings", required = false) String mappingsJson,
+            @RequestParam(defaultValue = ",") String delimiter,
+            @RequestParam(defaultValue = "UTF-8") String encoding,
+            @RequestParam(defaultValue = "true") boolean hasHeader,
+            @RequestParam(defaultValue = "0") int skipRows,
             HttpServletRequest request) throws Exception {
         Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
         String username = userRepository.findById(userId)
@@ -70,7 +90,8 @@ public class DataImportController {
             mappings = objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
         }
 
-        ImportStartResponse response = importService.importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent);
+        ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
+        ImportStartResponse response = importService.importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, parseOptions);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -92,9 +113,12 @@ public class DataImportController {
     @RequirePermission("data:export")
     public ResponseEntity<byte[]> exportCsv(@PathVariable Long datasetId) throws Exception {
         byte[] csv = importService.exportDatasetCsv(datasetId);
+        String tableName = datasetRepository.findTableNameById(datasetId).orElse("export");
+        String date = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        String filename = tableName + "_export_" + date + ".csv";
         return ResponseEntity.ok()
                 .header("Content-Type", "text/csv; charset=UTF-8")
-                .header("Content-Disposition", "attachment; filename=\"export.csv\"")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
                 .body(csv);
     }
 }

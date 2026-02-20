@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../components/ui/select';
-import { Edit } from 'lucide-react';
+import { Edit, Database, Columns, Tag, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../../types/auth';
 import axios from 'axios';
@@ -27,6 +27,20 @@ interface DatasetInfoTabProps {
   dataset: DatasetDetailResponse;
   categories: CategoryResponse[];
   datasetId: number;
+}
+
+function getRelativeTime(dateStr: string | null): string {
+  if (!dateStr) return '-';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '방금 전';
+  if (mins < 60) return `${mins}분 전`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}일 전`;
+  const months = Math.floor(days / 30);
+  return `${months}개월 전`;
 }
 
 export const DatasetInfoTab = React.memo(function DatasetInfoTab({
@@ -70,112 +84,158 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   );
 
   return (
-    <Card className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">기본 정보</h2>
-        {!isEditing && (
-          <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-            <Edit className="mr-2 h-4 w-4" />
-            수정
-          </Button>
-        )}
-      </div>
+    <div>
+      {/* Top Stats Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Row Count */}
+        <Card className="p-4">
+          <Database size={20} className="text-muted-foreground mb-2" />
+          <p className="text-2xl font-bold">{dataset.rowCount.toLocaleString()}</p>
+          <p className="text-sm text-muted-foreground">행</p>
+        </Card>
 
-      {isEditing ? (
-        <form onSubmit={infoForm.handleSubmit(onInfoSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">데이터셋 이름 *</Label>
-            <Input id="name" {...infoForm.register('name')} />
-            {infoForm.formState.errors.name && (
-              <p className="text-sm text-destructive">
-                {infoForm.formState.errors.name.message}
-              </p>
-            )}
-          </div>
+        {/* Column Count */}
+        <Card className="p-4">
+          <Columns size={20} className="text-muted-foreground mb-2" />
+          <p className="text-2xl font-bold">{dataset.columns.length}</p>
+          <p className="text-sm text-muted-foreground">개 컬럼</p>
+        </Card>
 
-          <div className="space-y-2">
-            <Label htmlFor="description">설명</Label>
-            <Input id="description" {...infoForm.register('description')} />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="categoryId">카테고리</Label>
-            <Select
-              value={infoForm.watch('categoryId')?.toString() || '__none__'}
-              onValueChange={(value) => {
-                infoForm.setValue('categoryId', value === '__none__' ? undefined : Number(value));
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="카테고리 선택" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">없음</SelectItem>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id.toString()}>
-                    {cat.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex gap-2">
-            <Button type="submit" disabled={infoForm.formState.isSubmitting}>
-              저장
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setIsEditing(false);
-                infoForm.reset();
-              }}
-            >
-              취소
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <div>
-            <p className="text-sm text-muted-foreground">설명</p>
-            <p className="text-sm">{dataset.description || '-'}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">카테고리</p>
-            <p className="text-sm">{dataset.category?.name || '-'}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">유형</p>
+        {/* Type */}
+        <Card className="p-4">
+          <Tag size={20} className="text-muted-foreground mb-2" />
+          <div className="my-1">
             <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-              {dataset.datasetType === 'SOURCE' ? '원본' : '파생'}
+              {dataset.datasetType === 'SOURCE' ? 'SOURCE' : 'DERIVED'}
             </Badge>
           </div>
-          <div>
-            <p className="text-sm text-muted-foreground">생성자</p>
-            <p className="text-sm">{dataset.createdBy}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">행 수</p>
-            <p className="text-sm">{dataset.rowCount.toLocaleString()}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">생성일</p>
-            <p className="text-sm">{formatDate(dataset.createdAt)}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">수정일</p>
-            <p className="text-sm">{formatDate(dataset.updatedAt)}</p>
-          </div>
-          {dataset.updatedBy && (
-            <div>
-              <p className="text-sm text-muted-foreground">수정자</p>
-              <p className="text-sm">{dataset.updatedBy}</p>
-            </div>
+          <p className="text-sm text-muted-foreground">유형</p>
+        </Card>
+
+        {/* Last Modified */}
+        <Card className="p-4">
+          <Clock size={20} className="text-muted-foreground mb-2" />
+          <p className="text-2xl font-bold leading-tight">
+            {getRelativeTime(dataset.updatedAt || dataset.createdAt)}
+          </p>
+          <p className="text-sm text-muted-foreground">최근 수정</p>
+        </Card>
+      </div>
+
+      {/* Bottom Detail Section */}
+      <Card className="p-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">기본 정보</h2>
+          {!isEditing && (
+            <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+              <Edit className="mr-2 h-4 w-4" />
+              수정
+            </Button>
           )}
         </div>
-      )}
-    </Card>
+
+        {isEditing ? (
+          <form onSubmit={infoForm.handleSubmit(onInfoSubmit)} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">데이터셋 이름 *</Label>
+              <Input id="name" {...infoForm.register('name')} />
+              {infoForm.formState.errors.name && (
+                <p className="text-sm text-destructive">
+                  {infoForm.formState.errors.name.message}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description">설명</Label>
+              <Input id="description" {...infoForm.register('description')} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="categoryId">카테고리</Label>
+              <Select
+                value={infoForm.watch('categoryId')?.toString() || '__none__'}
+                onValueChange={(value) => {
+                  infoForm.setValue('categoryId', value === '__none__' ? undefined : Number(value));
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="카테고리 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">없음</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.id} value={cat.id.toString()}>
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-2">
+              <Button type="submit" disabled={infoForm.formState.isSubmitting}>
+                저장
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsEditing(false);
+                  infoForm.reset();
+                }}
+              >
+                취소
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <dl className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div>
+              <dt className="text-sm text-muted-foreground">이름</dt>
+              <dd className="text-sm font-medium">{dataset.name}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">설명</dt>
+              <dd className="text-sm">{dataset.description || '-'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">카테고리</dt>
+              <dd className="text-sm">{dataset.category?.name || '-'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">테이블명</dt>
+              <dd className="text-sm font-mono">{dataset.tableName}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">데이터셋 타입</dt>
+              <dd>
+                <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
+                  {dataset.datasetType === 'SOURCE' ? '원본' : '파생'}
+                </Badge>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">생성자</dt>
+              <dd className="text-sm">{dataset.createdBy}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">생성일</dt>
+              <dd className="text-sm">{formatDate(dataset.createdAt)}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">수정일</dt>
+              <dd className="text-sm">{formatDate(dataset.updatedAt)}</dd>
+            </div>
+            {dataset.updatedBy && (
+              <div>
+                <dt className="text-sm text-muted-foreground">수정자</dt>
+                <dd className="text-sm">{dataset.updatedBy}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+      </Card>
+    </div>
   );
 });

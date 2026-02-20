@@ -161,4 +161,23 @@ public class DatasetColumnRepository {
                     .execute();
         }
     }
+
+    public String findFirstDescriptionByColumnName(String columnName, Long excludeDatasetId) {
+        return dsl.select(COL_DESCRIPTION)
+                .from(DATASET_COLUMN)
+                .where(COL_COLUMN_NAME.eq(columnName))
+                .and(COL_DATASET_ID.ne(excludeDatasetId))
+                .and(COL_DESCRIPTION.isNotNull())
+                .and(COL_DESCRIPTION.ne(""))
+                .limit(1)
+                .fetchOptional(r -> r.get(COL_DESCRIPTION))
+                .orElse(null);
+    }
+
+    public void updateDescription(Long columnId, String description) {
+        dsl.update(DATASET_COLUMN)
+                .set(COL_DESCRIPTION, description)
+                .where(COL_ID.eq(columnId))
+                .execute();
+    }
 }

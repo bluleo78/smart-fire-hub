@@ -12,6 +12,25 @@ export interface DatasetResponse {
   category: CategoryResponse | null;
   datasetType: 'SOURCE' | 'DERIVED';
   createdAt: string;
+  isFavorite: boolean;
+  tags: string[];
+  status: 'NONE' | 'CERTIFIED' | 'DEPRECATED';
+  statusNote: string | null;
+  statusUpdatedBy: string | null;
+  statusUpdatedAt: string | null;
+}
+
+export interface FavoriteToggleResponse {
+  favorited: boolean;
+}
+
+export interface UpdateStatusRequest {
+  status: string;
+  note?: string;
+}
+
+export interface TagRequest {
+  tagName: string;
 }
 
 export interface DatasetColumnResponse {
@@ -39,6 +58,12 @@ export interface DatasetDetailResponse {
   createdAt: string;
   updatedAt: string | null;
   updatedBy: string | null;
+  isFavorite: boolean;
+  tags: string[];
+  status: 'NONE' | 'CERTIFIED' | 'DEPRECATED';
+  statusNote: string | null;
+  statusUpdatedBy: string | null;
+  statusUpdatedAt: string | null;
 }
 
 export interface CreateDatasetRequest {
@@ -98,5 +123,32 @@ export interface DataQueryResponse {
   size: number;
   totalElements: number;
   totalPages: number;
+}
+
+export interface DataDeleteRequest {
+  rowIds: number[];
+}
+
+export interface DataDeleteResponse {
+  deletedCount: number;
+}
+
+export interface ColumnStatsValueCount {
+  value: string;
+  count: number;
+}
+
+export interface ColumnStatsResponse {
+  columnName: string;
+  dataType: string;
+  totalCount: number;
+  nullCount: number;
+  nullPercent: number;
+  distinctCount: number;
+  minValue: string | null;
+  maxValue: string | null;
+  avgValue: number | null;
+  topValues: ColumnStatsValueCount[];
+  sampled: boolean;
 }
 
