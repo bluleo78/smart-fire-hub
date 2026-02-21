@@ -6,6 +6,8 @@ import type {
   DatasetColumnResponse, AddColumnRequest, UpdateColumnRequest,
   DataQueryResponse, DataDeleteResponse, ColumnStatsResponse,
   FavoriteToggleResponse, UpdateStatusRequest,
+  SqlQueryResponse, QueryHistoryResponse,
+  RowDataResponse, CloneDatasetRequest,
 } from '../types/dataset';
 import type { PageResponse } from '../types/common';
 
@@ -47,4 +49,19 @@ export const datasetsApi = {
     client.delete(`/datasets/${id}/tags/${tagName}`),
   getAllTags: () =>
     client.get<string[]>('/datasets/tags'),
+  // Phase 1: SQL Query
+  executeQuery: (datasetId: number, sql: string, maxRows?: number) =>
+    client.post<SqlQueryResponse>(`/datasets/${datasetId}/query`, { sql, maxRows: maxRows ?? 1000 }),
+  getQueryHistory: (datasetId: number, page = 0, size = 20) =>
+    client.get<PageResponse<QueryHistoryResponse>>(`/datasets/${datasetId}/queries`, { params: { page, size } }),
+  // Phase 2: Manual Row Entry
+  addRow: (datasetId: number, data: Record<string, unknown>) =>
+    client.post<RowDataResponse>(`/datasets/${datasetId}/data/rows`, { data }),
+  updateRow: (datasetId: number, rowId: number, data: Record<string, unknown>) =>
+    client.put(`/datasets/${datasetId}/data/rows/${rowId}`, { data }),
+  getRow: (datasetId: number, rowId: number) =>
+    client.get<RowDataResponse>(`/datasets/${datasetId}/data/rows/${rowId}`),
+  // Phase 3: Clone Dataset
+  cloneDataset: (datasetId: number, data: CloneDatasetRequest) =>
+    client.post<DatasetDetailResponse>(`/datasets/${datasetId}/clone`, data),
 };

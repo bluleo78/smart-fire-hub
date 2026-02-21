@@ -2,6 +2,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tansta
 import { datasetsApi, categoriesApi } from '../../api/datasets';
 import { dataImportsApi } from '../../api/dataImports';
 import type { ImportResponse, ImportStartResponse, ColumnMappingEntry, ImportMode } from '../../types/dataImport';
+import type { CloneDatasetRequest } from '../../types/dataset';
 
 export function useCategories() {
   return useQuery({
@@ -251,5 +252,67 @@ export function useTags() {
   return useQuery({
     queryKey: ['tags'],
     queryFn: () => datasetsApi.getAllTags().then(r => r.data),
+  });
+}
+
+// Phase 1: SQL Query hooks
+export function useExecuteQuery(datasetId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sql, maxRows }: { sql: string; maxRows?: number }) =>
+      datasetsApi.executeQuery(datasetId, sql, maxRows).then(r => r.data),
+    onSuccess: (data) => {
+      // Always invalidate query history (all queries are logged)
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'queries'] });
+      if (data.queryType !== 'SELECT') {
+        queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'data'] });
+        queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+      }
+    },
+  });
+}
+
+export function useQueryHistory(datasetId: number, page = 0, size = 20) {
+  return useQuery({
+    queryKey: ['datasets', datasetId, 'queries', { page, size }],
+    queryFn: () => datasetsApi.getQueryHistory(datasetId, page, size).then(r => r.data),
+    enabled: !!datasetId,
+  });
+}
+
+// Phase 2: Manual Row Entry hooks
+export function useAddRow(datasetId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      datasetsApi.addRow(datasetId, data).then(r => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'data'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+    },
+  });
+}
+
+export function useUpdateRow(datasetId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ rowId, data }: { rowId: number; data: Record<string, unknown> }) =>
+      datasetsApi.updateRow(datasetId, rowId, data).then(r => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'data'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+    },
+  });
+}
+
+// Phase 3: Clone Dataset hook
+export function useCloneDataset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ datasetId, data }: { datasetId: number; data: CloneDatasetRequest }) =>
+      datasetsApi.cloneDataset(datasetId, data).then(r => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
   });
 }

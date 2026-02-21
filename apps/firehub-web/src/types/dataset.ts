@@ -137,6 +137,52 @@ export interface DataDeleteResponse {
   deletedCount: number;
 }
 
+// Phase 1: SQL Query
+export interface SqlQueryRequest {
+  sql: string;
+  maxRows?: number;
+}
+
+export interface SqlQueryResponse {
+  queryType: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'OTHER';
+  columns: string[];
+  rows: Record<string, unknown>[];
+  affectedRows: number;
+  executionTimeMs: number;
+  error: string | null;
+}
+
+export interface QueryHistoryResponse {
+  id: number;
+  sql: string;
+  queryType: string;
+  affectedRows: number;
+  executionTimeMs: number;
+  success: boolean;
+  error: string | null;
+  executedAt: string;
+}
+
+// Phase 2: Manual Row Entry
+export interface RowDataRequest {
+  data: Record<string, unknown>;
+}
+
+export interface RowDataResponse {
+  id: number;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+// Phase 3: Clone Dataset
+export interface CloneDatasetRequest {
+  name: string;
+  tableName: string;
+  description?: string;
+  includeData: boolean;
+  includeTags: boolean;
+}
+
 export interface ColumnStatsValueCount {
   value: string;
   count: number;

@@ -10,11 +10,18 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetFavoriteRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
+import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +42,7 @@ public class DatasetService {
     private final UserRepository userRepository;
     private final DatasetFavoriteRepository favoriteRepository;
     private final DatasetTagRepository tagRepository;
+    private final QueryHistoryRepository queryHistoryRepository;
 
     public DatasetService(DatasetRepository datasetRepository,
                           DatasetColumnRepository columnRepository,
@@ -42,7 +50,8 @@ public class DatasetService {
                           DataTableService dataTableService,
                           UserRepository userRepository,
                           DatasetFavoriteRepository favoriteRepository,
-                          DatasetTagRepository tagRepository) {
+                          DatasetTagRepository tagRepository,
+                          QueryHistoryRepository queryHistoryRepository) {
         this.datasetRepository = datasetRepository;
         this.columnRepository = columnRepository;
         this.categoryRepository = categoryRepository;
@@ -50,6 +59,7 @@ public class DatasetService {
         this.userRepository = userRepository;
         this.favoriteRepository = favoriteRepository;
         this.tagRepository = tagRepository;
+        this.queryHistoryRepository = queryHistoryRepository;
     }
 
     @Transactional
@@ -526,5 +536,293 @@ public class DatasetService {
                 columnRepository.updateDescription(col.id(), sourceDesc);
             }
         }
+    }
+
+    // =========================================================================
+    // Phase 1: SQL Query (Ad-hoc)
+    // =========================================================================
+
+    @Transactional
+    public SqlQueryResponse executeQuery(Long datasetId, SqlQueryRequest request, Long userId) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        SqlQueryResponse response = dataTableService.executeQuery(request.sql(), request.maxRows());
+
+        // Save to query history
+        boolean success = response.error() == null;
+        queryHistoryRepository.save(
+                datasetId, userId, request.sql(), response.queryType(),
+                response.affectedRows(), response.executionTimeMs(),
+                success, response.error()
+        );
+
+        // Invalidate caches on DML success (row count may have changed)
+        // No action needed here — dataset detail queries recalculate row count on demand
+
+        return response;
+    }
+
+    public PageResponse<QueryHistoryResponse> getQueryHistory(Long datasetId, int page, int size) {
+        datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<QueryHistoryResponse> content = queryHistoryRepository.findByDatasetId(datasetId, page, size);
+        long totalElements = queryHistoryRepository.countByDatasetId(datasetId);
+        int totalPages = (int) Math.ceil((double) totalElements / size);
+        return new PageResponse<>(content, page, size, totalElements, totalPages);
+    }
+
+    // =========================================================================
+    // Phase 2: Manual Row Entry
+    // =========================================================================
+
+    @Transactional
+    public RowDataResponse addRow(Long datasetId, RowDataRequest request) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+        Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
+
+        List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+        Long newId = dataTableService.insertRow(dataset.tableName(), columnNames, validatedData);
+
+        // Return the newly inserted row
+        Map<String, Object> rowData = dataTableService.getRow(dataset.tableName(), columnNames, newId);
+        Map<String, Object> data = new LinkedHashMap<>();
+        LocalDateTime createdAt = null;
+        for (var entry : rowData.entrySet()) {
+            if ("id".equals(entry.getKey()) || "import_id".equals(entry.getKey())) {
+                continue;
+            }
+            if ("created_at".equals(entry.getKey())) {
+                if (entry.getValue() instanceof LocalDateTime ldt) {
+                    createdAt = ldt;
+                }
+                continue;
+            }
+            data.put(entry.getKey(), entry.getValue());
+        }
+
+        return new RowDataResponse(newId, data, createdAt);
+    }
+
+    @Transactional
+    public void updateRow(Long datasetId, Long rowId, RowDataRequest request) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+        Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
+
+        List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+        dataTableService.updateRow(dataset.tableName(), rowId, columnNames, validatedData);
+    }
+
+    public RowDataResponse getRow(Long datasetId, Long rowId) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+        List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+
+        Map<String, Object> rowData = dataTableService.getRow(dataset.tableName(), columnNames, rowId);
+        Map<String, Object> data = new LinkedHashMap<>();
+        Long id = null;
+        LocalDateTime createdAt = null;
+        for (var entry : rowData.entrySet()) {
+            if ("id".equals(entry.getKey())) {
+                if (entry.getValue() instanceof Number n) {
+                    id = n.longValue();
+                }
+                continue;
+            }
+            if ("import_id".equals(entry.getKey())) {
+                continue;
+            }
+            if ("created_at".equals(entry.getKey())) {
+                if (entry.getValue() instanceof LocalDateTime ldt) {
+                    createdAt = ldt;
+                }
+                continue;
+            }
+            data.put(entry.getKey(), entry.getValue());
+        }
+
+        return new RowDataResponse(id, data, createdAt);
+    }
+
+    private Map<String, Object> validateAndConvertRowData(List<DatasetColumnResponse> columns, Map<String, Object> data) {
+        Map<String, Object> result = new HashMap<>();
+        List<String> errors = new ArrayList<>();
+
+        for (DatasetColumnResponse col : columns) {
+            Object value = data.get(col.columnName());
+
+            if (value == null) {
+                if (!col.isNullable()) {
+                    errors.add("Column '" + col.columnName() + "' cannot be null");
+                }
+                result.put(col.columnName(), null);
+                continue;
+            }
+
+            try {
+                Object converted = convertValue(col, value);
+                result.put(col.columnName(), converted);
+            } catch (Exception e) {
+                errors.add("Column '" + col.columnName() + "': " + e.getMessage());
+            }
+        }
+
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException("Validation errors: " + String.join("; ", errors));
+        }
+
+        return result;
+    }
+
+    private Object convertValue(DatasetColumnResponse col, Object value) {
+        return switch (col.dataType()) {
+            case "TEXT", "VARCHAR" -> {
+                if (!(value instanceof String s)) {
+                    throw new IllegalArgumentException("Expected string value");
+                }
+                if ("VARCHAR".equals(col.dataType()) && col.maxLength() != null && s.length() > col.maxLength()) {
+                    throw new IllegalArgumentException(
+                            "Value exceeds max length " + col.maxLength() + " (actual: " + s.length() + ")");
+                }
+                yield s;
+            }
+            case "INTEGER" -> {
+                if (value instanceof Number n) {
+                    yield n.longValue();
+                }
+                throw new IllegalArgumentException("Expected numeric value");
+            }
+            case "DECIMAL" -> {
+                if (value instanceof Number n) {
+                    yield new BigDecimal(n.toString());
+                }
+                throw new IllegalArgumentException("Expected numeric value");
+            }
+            case "BOOLEAN" -> {
+                if (value instanceof Boolean b) {
+                    yield b;
+                }
+                throw new IllegalArgumentException("Expected boolean value");
+            }
+            case "DATE" -> {
+                if (value instanceof String s) {
+                    try {
+                        yield LocalDate.parse(s);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Expected date format yyyy-MM-dd");
+                    }
+                }
+                throw new IllegalArgumentException("Expected date string in yyyy-MM-dd format");
+            }
+            case "TIMESTAMP" -> {
+                if (value instanceof String s) {
+                    try {
+                        yield LocalDateTime.parse(s);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Expected timestamp format yyyy-MM-ddTHH:mm:ss");
+                    }
+                }
+                throw new IllegalArgumentException("Expected timestamp string");
+            }
+            default -> throw new IllegalArgumentException("Unknown data type: " + col.dataType());
+        };
+    }
+
+    // =========================================================================
+    // Phase 3: Clone/Copy Dataset
+    // =========================================================================
+
+    @Transactional
+    public DatasetDetailResponse cloneDataset(Long sourceId, CloneDatasetRequest request, Long userId) {
+        // 1. Fetch source dataset with columns
+        DatasetResponse sourceDataset = datasetRepository.findById(sourceId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + sourceId));
+
+        List<DatasetColumnResponse> sourceColumns = columnRepository.findByDatasetId(sourceId);
+
+        // 2. Validate new names don't already exist
+        dataTableService.validateName(request.tableName());
+        if (datasetRepository.existsByName(request.name())) {
+            throw new DuplicateDatasetNameException("Dataset name already exists: " + request.name());
+        }
+        if (datasetRepository.existsByTableName(request.tableName())) {
+            throw new DuplicateDatasetNameException("Table name already exists: " + request.tableName());
+        }
+
+        // 3. Create new dataset record
+        String description = request.description() != null ? request.description() : sourceDataset.description();
+        CreateDatasetRequest createRequest = new CreateDatasetRequest(
+                request.name(),
+                request.tableName(),
+                description,
+                sourceDataset.category() != null ? sourceDataset.category().id() : null,
+                sourceDataset.datasetType(),
+                List.of() // columns will be added separately
+        );
+        DatasetResponse newDataset = datasetRepository.save(createRequest, userId);
+
+        // 4. Copy column definitions
+        List<DatasetColumnRequest> columnRequests = new ArrayList<>();
+        for (DatasetColumnResponse col : sourceColumns) {
+            DatasetColumnRequest colReq = new DatasetColumnRequest(
+                    col.columnName(),
+                    col.displayName(),
+                    col.dataType(),
+                    col.maxLength(),
+                    col.isNullable(),
+                    col.isIndexed(),
+                    col.description(),
+                    col.isPrimaryKey()
+            );
+            columnRequests.add(colReq);
+        }
+        columnRepository.saveBatch(newDataset.id(), columnRequests);
+
+        // 5. Clone table data or create empty schema
+        List<String> userColumnNames = sourceColumns.stream()
+                .map(DatasetColumnResponse::columnName)
+                .toList();
+
+        if (request.includeData()) {
+            dataTableService.cloneTable(sourceDataset.tableName(), request.tableName(), userColumnNames, sourceColumns);
+
+            // Recreate indexes
+            for (DatasetColumnResponse col : sourceColumns) {
+                if (col.isIndexed()) {
+                    dataTableService.setColumnIndex(request.tableName(), col.columnName(), true);
+                }
+            }
+
+            // Recreate PK unique index
+            List<String> pkColumnNames = sourceColumns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            if (!pkColumnNames.isEmpty()) {
+                dataTableService.recreatePrimaryKeyIndex(request.tableName(), pkColumnNames);
+            }
+        } else {
+            dataTableService.createTable(request.tableName(), columnRequests);
+        }
+
+        // 6. Copy tags if requested
+        if (request.includeTags()) {
+            List<String> sourceTags = tagRepository.findByDatasetId(sourceId);
+            for (String tag : sourceTags) {
+                tagRepository.insert(newDataset.id(), tag, userId);
+            }
+        }
+
+        // 7. Return full detail response
+        return getDatasetById(newDataset.id(), userId);
     }
 }

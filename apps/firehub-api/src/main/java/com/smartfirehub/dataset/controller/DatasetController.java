@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -201,5 +202,72 @@ public class DatasetController {
     public ResponseEntity<Void> propagateDescriptions(@PathVariable Long id) {
         datasetService.propagateDescriptions(id);
         return ResponseEntity.noContent().build();
+    }
+
+    // =========================================================================
+    // SQL Query (Ad-hoc)
+    // =========================================================================
+
+    @PostMapping("/{id}/query")
+    @RequirePermission("data:import")
+    public ResponseEntity<SqlQueryResponse> executeQuery(@PathVariable Long id,
+                                                          @Valid @RequestBody SqlQueryRequest request) {
+        Long userId = currentUserId();
+        SqlQueryResponse response = datasetService.executeQuery(id, request, userId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{id}/queries")
+    @RequirePermission("data:read")
+    public ResponseEntity<PageResponse<QueryHistoryResponse>> getQueryHistory(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        page = Math.max(0, page);
+        size = Math.max(1, Math.min(size, 100));
+        PageResponse<QueryHistoryResponse> response = datasetService.getQueryHistory(id, page, size);
+        return ResponseEntity.ok(response);
+    }
+
+    // =========================================================================
+    // Manual Row Entry
+    // =========================================================================
+
+    @PostMapping("/{id}/data/rows")
+    @RequirePermission("data:import")
+    public ResponseEntity<RowDataResponse> addRow(@PathVariable Long id,
+                                                   @Valid @RequestBody RowDataRequest request) {
+        RowDataResponse response = datasetService.addRow(id, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PutMapping("/{id}/data/rows/{rowId}")
+    @RequirePermission("data:import")
+    public ResponseEntity<Void> updateRow(@PathVariable Long id,
+                                           @PathVariable Long rowId,
+                                           @Valid @RequestBody RowDataRequest request) {
+        datasetService.updateRow(id, rowId, request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/data/rows/{rowId}")
+    @RequirePermission("data:read")
+    public ResponseEntity<RowDataResponse> getRow(@PathVariable Long id,
+                                                    @PathVariable Long rowId) {
+        RowDataResponse response = datasetService.getRow(id, rowId);
+        return ResponseEntity.ok(response);
+    }
+
+    // =========================================================================
+    // Clone/Copy Dataset
+    // =========================================================================
+
+    @PostMapping("/{id}/clone")
+    @RequirePermission("dataset:write")
+    public ResponseEntity<DatasetDetailResponse> cloneDataset(@PathVariable Long id,
+                                                                @Valid @RequestBody CloneDatasetRequest request) {
+        Long userId = currentUserId();
+        DatasetDetailResponse response = datasetService.cloneDataset(id, request, userId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 }

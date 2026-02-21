@@ -23,7 +23,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../../../components/ui/popover';
-import { Download, Upload, Search, ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from 'lucide-react';
+import { Download, Upload, Search, ArrowUpDown, ArrowUp, ArrowDown, Loader2, Terminal, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCellValue, isNullValue, getRawCellValue } from '../../../lib/formatters';
 import type { ErrorResponse } from '../../../types/auth';
@@ -32,6 +32,10 @@ import axios from 'axios';
 const ImportMappingDialog = lazy(() =>
   import('../components/ImportMappingDialog').then((m) => ({ default: m.ImportMappingDialog }))
 );
+
+import { SqlQueryEditor } from '../components/SqlQueryEditor';
+import { AddRowDialog } from '../components/AddRowDialog';
+import { EditRowDialog } from '../components/EditRowDialog';
 
 interface DatasetDataTabProps {
   dataset: DatasetDetailResponse;
@@ -223,6 +227,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const [selectedRowIds, setSelectedRowIds] = useState<Set<number>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
+  const [addRowOpen, setAddRowOpen] = useState(false);
+  const [editRowState, setEditRowState] = useState<{ open: boolean; rowId: number; data: Record<string, unknown> } | null>(null);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -457,6 +464,17 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
             className="pl-9"
           />
         </div>
+        <Button
+          variant={sqlEditorOpen ? 'default' : 'outline'}
+          onClick={() => setSqlEditorOpen((prev) => !prev)}
+        >
+          <Terminal className="mr-2 h-4 w-4" />
+          SQL
+        </Button>
+        <Button variant="outline" onClick={() => setAddRowOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          행 추가
+        </Button>
         <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
           <Upload className="mr-2 h-4 w-4" />
           임포트
@@ -466,6 +484,11 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           CSV 내보내기
         </Button>
       </div>
+
+      {/* SQL Query Editor */}
+      {sqlEditorOpen && (
+        <SqlQueryEditor datasetId={datasetId} columns={dataset.columns} />
+      )}
 
       {/* Total count */}
       <div className="flex items-center gap-4">
@@ -595,6 +618,13 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                         background: isSelected ? 'hsl(var(--accent))' : undefined,
                       }}
                       className="hover:bg-muted/50 transition-colors"
+                      onDoubleClick={() => {
+                        const rowData: Record<string, unknown> = {};
+                        for (const col of columns) {
+                          rowData[col.columnName] = row[col.columnName ?? ''];
+                        }
+                        setEditRowState({ open: true, rowId, data: rowData });
+                      }}
                     >
                       <td
                         style={{
@@ -604,6 +634,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                           borderBottom: '1px solid hsl(var(--border))',
                           verticalAlign: 'middle',
                         }}
+                        onDoubleClick={(e) => e.stopPropagation()}
                       >
                         <Checkbox
                           checked={isSelected}
@@ -714,6 +745,28 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
             datasetColumns={dataset.columns}
           />
         </Suspense>
+      )}
+
+      {/* Add Row Dialog */}
+      <AddRowDialog
+        open={addRowOpen}
+        onOpenChange={setAddRowOpen}
+        datasetId={datasetId}
+        columns={dataset.columns}
+      />
+
+      {/* Edit Row Dialog */}
+      {editRowState && (
+        <EditRowDialog
+          open={editRowState.open}
+          onOpenChange={(open) => {
+            if (!open) setEditRowState(null);
+          }}
+          datasetId={datasetId}
+          columns={dataset.columns}
+          rowId={editRowState.rowId}
+          initialData={editRowState.data}
+        />
       )}
     </div>
   );

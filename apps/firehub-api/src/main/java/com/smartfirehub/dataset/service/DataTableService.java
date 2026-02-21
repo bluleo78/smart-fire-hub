@@ -3,7 +3,10 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.exception.RowNotFoundException;
+import com.smartfirehub.dataset.exception.SqlQueryException;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
@@ -792,6 +795,246 @@ public class DataTableService {
         validateName(columnName);
         String sql = "ALTER TABLE data.\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
         dsl.execute(sql);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Phase 1: SQL Query execution
+    // ---------------------------------------------------------------------------
+
+    private static final Set<String> ALLOWED_KEYWORDS = Set.of(
+            "SELECT", "INSERT", "UPDATE", "DELETE", "WITH"
+    );
+
+    /**
+     * Execute user-supplied SQL against the data schema.
+     * Security: rejects DDL, multi-statement input, and restricts search_path to data schema.
+     * Must be called within a @Transactional context for SET LOCAL to be effective.
+     */
+    public SqlQueryResponse executeQuery(String sql, int maxRows) {
+        // Strip SQL comments (block and line) to prevent DDL bypass via comment injection
+        // (?s) enables DOTALL mode so .* matches across newlines in block comments
+        String stripped = sql.strip()
+                .replaceAll("(?s)/\\*.*?\\*/", " ")    // block comments (multiline-safe)
+                .replaceAll("--[^\n]*", " ")           // line comments
+                .strip();
+
+        // Reject multi-statement SQL (semicolons not at the very end)
+        String withoutTrailingSemicolon = stripped.replaceAll(";\\s*$", "");
+        if (withoutTrailingSemicolon.contains(";")) {
+            throw new SqlQueryException("Multiple statements are not allowed.");
+        }
+
+        String firstWord = stripped.split("\\s+")[0].toUpperCase();
+
+        if (!ALLOWED_KEYWORDS.contains(firstWord)) {
+            throw new SqlQueryException("Only SELECT, INSERT, UPDATE, DELETE, and WITH statements are allowed.");
+        }
+
+        // WITH (CTE) can precede SELECT, INSERT, UPDATE, DELETE — detect the main verb
+        // Use word boundary (\b) to avoid false positives on column/table names
+        String queryType;
+        if ("WITH".equals(firstWord)) {
+            String upper = withoutTrailingSemicolon.toUpperCase();
+            if (upper.matches("(?s).*\\bINSERT\\b.*")) queryType = "INSERT";
+            else if (upper.matches("(?s).*\\bUPDATE\\b.*")) queryType = "UPDATE";
+            else if (upper.matches("(?s).*\\bDELETE\\b.*")) queryType = "DELETE";
+            else queryType = "SELECT";
+        } else {
+            queryType = firstWord;
+        }
+
+        long startTime = System.currentTimeMillis();
+
+        // Restrict search_path to data schema only — prevents access to public schema tables
+        dsl.execute("SET LOCAL search_path = 'data'");
+        dsl.execute("SET LOCAL statement_timeout = '30s'");
+
+        // Use SAVEPOINT so that SQL errors don't abort the outer transaction.
+        // PostgreSQL marks the entire transaction as aborted on any error,
+        // preventing subsequent commands (like saving query history).
+        // Rolling back to a savepoint clears the error state.
+        dsl.execute("SAVEPOINT user_query");
+
+        try {
+            SqlQueryResponse response;
+            if ("SELECT".equals(queryType)) {
+                // Apply LIMIT for SELECT queries (check for actual LIMIT clause, not substring match)
+                String limitedSql = withoutTrailingSemicolon;
+                if (!limitedSql.toUpperCase().matches("(?s).*\\bLIMIT\\s+\\d+.*")) {
+                    limitedSql = limitedSql + " LIMIT " + maxRows;
+                }
+
+                var result = dsl.fetch(limitedSql);
+                long executionTimeMs = System.currentTimeMillis() - startTime;
+
+                // Filter out system columns (id, import_id, created_at)
+                Set<String> systemColumns = Set.of("id", "import_id", "created_at");
+
+                List<String> columns = new ArrayList<>();
+                List<Integer> visibleIndices = new ArrayList<>();
+                for (int i = 0; i < result.fields().length; i++) {
+                    String colName = result.fields()[i].getName();
+                    if (!systemColumns.contains(colName)) {
+                        columns.add(colName);
+                        visibleIndices.add(i);
+                    }
+                }
+
+                List<Map<String, Object>> rows = new ArrayList<>();
+                for (var record : result) {
+                    Map<String, Object> row = new HashMap<>();
+                    for (int idx : visibleIndices) {
+                        row.put(record.field(idx).getName(), record.get(idx));
+                    }
+                    rows.add(row);
+                }
+
+                response = new SqlQueryResponse(queryType, columns, rows, rows.size(), executionTimeMs, null);
+            } else {
+                // DML: INSERT, UPDATE, DELETE
+                int affectedRows = dsl.execute(withoutTrailingSemicolon);
+                long executionTimeMs = System.currentTimeMillis() - startTime;
+                response = new SqlQueryResponse(queryType, List.of(), List.of(), affectedRows, executionTimeMs, null);
+            }
+            dsl.execute("RELEASE SAVEPOINT user_query");
+            return response;
+        } catch (Exception e) {
+            long executionTimeMs = System.currentTimeMillis() - startTime;
+            // Rollback to savepoint to clear the aborted transaction state
+            dsl.execute("ROLLBACK TO SAVEPOINT user_query");
+            String errorMessage = e.getMessage();
+            return new SqlQueryResponse(queryType, List.of(), List.of(), 0, executionTimeMs, errorMessage);
+        } finally {
+            // Restore search_path so subsequent operations in the same transaction
+            // (e.g. QueryHistoryRepository.save) can access public schema tables
+            try {
+                dsl.execute("SET LOCAL search_path TO public, data");
+            } catch (Exception ignored) {
+                // May fail if connection is broken; non-critical since transaction will end
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Phase 2: Manual Row Entry
+    // ---------------------------------------------------------------------------
+
+    public Long insertRow(String tableName, List<String> columns, Map<String, Object> row) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("INSERT INTO data.\"").append(tableName).append("\" (");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(columns.get(i)).append("\"");
+        }
+        sql.append(") VALUES (");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("?");
+        }
+        sql.append(") RETURNING id");
+
+        Object[] values = new Object[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            values[i] = row.get(columns.get(i));
+        }
+
+        var record = dsl.fetchOne(sql.toString(), values);
+        return record != null ? record.get(0, Long.class) : null;
+    }
+
+    public void updateRow(String tableName, long rowId, List<String> columns, Map<String, Object> row) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("UPDATE data.\"").append(tableName).append("\" SET ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(columns.get(i)).append("\" = ?");
+        }
+        sql.append(" WHERE id = ?");
+
+        Object[] values = new Object[columns.size() + 1];
+        for (int i = 0; i < columns.size(); i++) {
+            values[i] = row.get(columns.get(i));
+        }
+        values[columns.size()] = rowId;
+
+        int affected = dsl.execute(sql.toString(), values);
+        if (affected == 0) {
+            throw new RowNotFoundException("Row not found: " + rowId);
+        }
+    }
+
+    public Map<String, Object> getRow(String tableName, List<String> columns, long rowId) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT id, ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(columns.get(i)).append("\"");
+        }
+        sql.append(", created_at FROM data.\"").append(tableName).append("\" WHERE id = ?");
+
+        var record = dsl.fetchOne(sql.toString(), rowId);
+        if (record == null) {
+            throw new RowNotFoundException("Row not found: " + rowId);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        for (int i = 0; i < record.size(); i++) {
+            result.put(record.field(i).getName(), record.get(i));
+        }
+        return result;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Phase 3: Clone Table
+    // ---------------------------------------------------------------------------
+
+    public void cloneTable(String sourceTable, String targetTable, List<String> userColumns,
+                           List<DatasetColumnResponse> columnDefs) {
+        validateName(sourceTable);
+        validateName(targetTable);
+        for (String col : userColumns) {
+            validateName(col);
+        }
+
+        // Build column list for SELECT
+        StringBuilder colList = new StringBuilder();
+        for (int i = 0; i < userColumns.size(); i++) {
+            if (i > 0) colList.append(", ");
+            colList.append("\"").append(userColumns.get(i)).append("\"");
+        }
+        colList.append(", created_at");
+
+        // CREATE TABLE AS SELECT (copies data + column types, but not constraints)
+        String createSql = "CREATE TABLE data.\"" + targetTable + "\" AS SELECT " + colList
+                + " FROM data.\"" + sourceTable + "\"";
+        dsl.execute(createSql);
+
+        // Add system columns
+        dsl.execute("ALTER TABLE data.\"" + targetTable + "\" ADD COLUMN id BIGSERIAL PRIMARY KEY");
+        dsl.execute("ALTER TABLE data.\"" + targetTable + "\" ADD COLUMN import_id BIGINT");
+
+        // Re-apply NOT NULL constraints (CTAS does not preserve them)
+        for (DatasetColumnResponse col : columnDefs) {
+            if (!col.isNullable()) {
+                dsl.execute("ALTER TABLE data.\"" + targetTable
+                        + "\" ALTER COLUMN \"" + col.columnName() + "\" SET NOT NULL");
+            }
+        }
     }
 
     private static final Set<String> NUMERIC_TYPES = Set.of("INTEGER", "DECIMAL");

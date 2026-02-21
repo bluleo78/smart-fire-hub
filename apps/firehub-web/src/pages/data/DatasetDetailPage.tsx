@@ -32,8 +32,9 @@ import { DatasetInfoTab } from './tabs/DatasetInfoTab';
 import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
 import { DatasetDataTab } from './tabs/DatasetDataTab';
 import { DatasetHistoryTab } from './tabs/DatasetHistoryTab';
-import { Star, X, Plus, Shield } from 'lucide-react';
+import { Star, X, Plus, Shield, Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { CloneDatasetDialog } from './components/CloneDatasetDialog';
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
@@ -56,6 +57,7 @@ export default function DatasetDetailPage() {
   const [statusEditOpen, setStatusEditOpen] = useState(false);
   const [statusValue, setStatusValue] = useState<string>('NONE');
   const [statusNote, setStatusNote] = useState('');
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 
   const categories = categoriesData || [];
 
@@ -164,6 +166,11 @@ export default function DatasetDetailPage() {
                   Deprecated
                 </Badge>
               )}
+              {/* Clone button */}
+              <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
+                <Copy className="h-3 w-3" />
+                복제
+              </Button>
               {/* Admin: status change button */}
               {isAdmin && (
                 <Popover open={statusEditOpen} onOpenChange={setStatusEditOpen}>
@@ -309,6 +316,13 @@ export default function DatasetDetailPage() {
           </div>
         )}
       </Tabs>
+
+      {/* Clone Dataset Dialog */}
+      <CloneDatasetDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        dataset={dataset}
+      />
     </div>
   );
 }
