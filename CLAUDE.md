@@ -94,3 +94,4 @@ Package base: `com.smartfirehub`. Feature-sliced by domain module:
 - Backend(firehub-api)와 Frontend(firehub-web)는 Claude 팀으로 분리하여 병렬 작업한다.
 - 팀 내에서도 독립적인 모듈은 SubAgent를 활용하여 최대한 병렬화한다.
 - 스크린샷은 프로젝트 루트의 `snapshots/` 폴더에 저장한다.
+- **검증 가능한 코드 작성**: 모든 코드는 검증 가능해야 하며, 특히 백엔드(firehub-api)는 반드시 테스트 코드(TC)를 함께 작성한다. 기존 `IntegrationTestBase` 패턴을 따르고, 서비스 레이어 중심으로 정상/예외 케이스를 커버한다.

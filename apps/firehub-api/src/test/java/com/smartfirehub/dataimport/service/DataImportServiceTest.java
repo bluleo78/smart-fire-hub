@@ -2,6 +2,7 @@ package com.smartfirehub.dataimport.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.ImportResponse;
+import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -89,13 +90,11 @@ class DataImportServiceTest extends IntegrationTestBase {
         );
 
         // When
-        ImportResponse response = dataImportService.importFile(
+        ImportStartResponse response = dataImportService.importFile(
                 testDatasetId, file, null, testUserId, "Test User", "127.0.0.1", "TestAgent");
 
         // Then
-        assertThat(response.datasetId()).isEqualTo(testDatasetId);
-        assertThat(response.fileName()).isEqualTo("test.csv");
-        assertThat(response.fileType()).isEqualTo("CSV");
+        assertThat(response.jobId()).isNotNull();
         assertThat(response.status()).isEqualTo("PENDING");
     }
 
@@ -215,11 +214,12 @@ class DataImportServiceTest extends IntegrationTestBase {
     @Test
     void exportDatasetCsv_generatesValidCsv() throws Exception {
         // Given - directly process import synchronously for test
+        String filePath = createTempCsvFile("name,age,email\nAlice,30,alice@example.com\nBob,25,bob@example.com");
         dataImportService.processImport(
-                testDatasetId,
-                createTempCsvFile("name,age,email\nAlice,30,alice@example.com\nBob,25,bob@example.com"),
-                "", "test.csv", 100L, "CSV",
-                testUserId, "Test User", "", ""
+                "test-job-id", testDatasetId,
+                filePath, "", "",
+                "test.csv", 100L, "CSV",
+                testUserId, "Test User", "", "", "APPEND"
         );
 
         // When

@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.*;
+import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.global.dto.PageResponse;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -370,5 +372,372 @@ class DatasetServiceTest extends IntegrationTestBase {
                 .where("table_schema = 'data' AND table_name = 'to_delete'")
                 .fetchOne(0, Long.class);
         assertThat(tableExists).isEqualTo(0);
+    }
+
+    // =========================================================================
+    // Helper
+    // =========================================================================
+
+    private DatasetDetailResponse createTestDatasetWithData(String name, String tableName) {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                name, tableName, null, testCategoryId, "SOURCE", columns
+        ), testUserId);
+
+        datasetService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Alice", "value", 100)));
+        datasetService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Bob", "value", 200)));
+
+        return datasetService.getDatasetById(dataset.id());
+    }
+
+    // =========================================================================
+    // 2-1. SQL Query
+    // =========================================================================
+
+    @Test
+    void executeQuery_selectOnDataset_success() {
+        DatasetDetailResponse dataset = createTestDatasetWithData("Query Test", "query_test");
+        SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM data.query_test", 100);
+
+        SqlQueryResponse response = datasetService.executeQuery(dataset.id(), request, testUserId);
+
+        assertThat(response.queryType()).isEqualTo("SELECT");
+        assertThat(response.error()).isNull();
+        assertThat(response.rows()).hasSize(2);
+    }
+
+    @Test
+    void executeQuery_insertOnDataset_success() {
+        DatasetDetailResponse dataset = createTestDatasetWithData("Insert Query Test", "insert_query_test");
+        SqlQueryRequest request = new SqlQueryRequest(
+                "INSERT INTO data.insert_query_test (name, value) VALUES ('Charlie', 300)", 100);
+
+        SqlQueryResponse response = datasetService.executeQuery(dataset.id(), request, testUserId);
+
+        assertThat(response.queryType()).isEqualTo("INSERT");
+        assertThat(response.affectedRows()).isEqualTo(1);
+        assertThat(response.error()).isNull();
+    }
+
+    @Test
+    void executeQuery_syntaxError_savesHistory() {
+        DatasetDetailResponse dataset = createTestDatasetWithData("Syntax Error Test", "syntax_error_test");
+        SqlQueryRequest request = new SqlQueryRequest("SELECT * FORM syntax_error_test", 100);
+
+        SqlQueryResponse response = datasetService.executeQuery(dataset.id(), request, testUserId);
+
+        assertThat(response.error()).isNotNull();
+
+        PageResponse<QueryHistoryResponse> history = datasetService.getQueryHistory(dataset.id(), 0, 10);
+        assertThat(history.content()).isNotEmpty();
+        boolean foundFailed = history.content().stream().anyMatch(h -> !h.success());
+        assertThat(foundFailed).isTrue();
+    }
+
+    @Test
+    void executeQuery_nonExistentDataset_throwsNotFound() {
+        SqlQueryRequest request = new SqlQueryRequest("SELECT 1", 100);
+
+        assertThatThrownBy(() -> datasetService.executeQuery(999999L, request, testUserId))
+                .isInstanceOf(DatasetNotFoundException.class);
+    }
+
+    @Test
+    void getQueryHistory_returnsPagedResults() {
+        DatasetDetailResponse dataset = createTestDatasetWithData("History Test", "history_test");
+
+        datasetService.executeQuery(dataset.id(), new SqlQueryRequest("SELECT * FROM data.history_test", 100), testUserId);
+        datasetService.executeQuery(dataset.id(), new SqlQueryRequest("SELECT * FROM data.history_test LIMIT 1", 100), testUserId);
+
+        PageResponse<QueryHistoryResponse> history = datasetService.getQueryHistory(dataset.id(), 0, 10);
+
+        assertThat(history.content()).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(history.totalElements()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void getQueryHistory_emptyDataset_returnsEmptyPage() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Empty History", "empty_history", null, null, "SOURCE", columns
+        ), testUserId);
+
+        PageResponse<QueryHistoryResponse> history = datasetService.getQueryHistory(dataset.id(), 0, 10);
+
+        assertThat(history.content()).isEmpty();
+        assertThat(history.totalElements()).isEqualTo(0);
+    }
+
+    // =========================================================================
+    // 2-2. Manual Row Entry
+    // =========================================================================
+
+    @Test
+    void addRow_validData_returnsRowData() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("age", "Age", "INTEGER", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "AddRow Test", "addrow_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        RowDataResponse row = datasetService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Alice", "age", 25)));
+
+        assertThat(row.id()).isNotNull().isPositive();
+        assertThat(row.data().get("name")).isEqualTo("Alice");
+    }
+
+    @Test
+    void addRow_invalidType_throwsException() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("score", "Score", "INTEGER", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "InvalidType Test", "invalidtype_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        assertThatThrownBy(() -> datasetService.addRow(dataset.id(), new RowDataRequest(Map.of("score", "not_a_number"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void updateRow_existingRow_success() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "UpdateRow Test", "updaterow_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        RowDataResponse added = datasetService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Before")));
+
+        datasetService.updateRow(dataset.id(), added.id(), new RowDataRequest(Map.of("name", "After")));
+
+        RowDataResponse updated = datasetService.getRow(dataset.id(), added.id());
+        assertThat(updated.data().get("name")).isEqualTo("After");
+    }
+
+    @Test
+    void getRow_existingRow_returnsData() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "GetRow Test", "getrow_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        RowDataResponse added = datasetService.addRow(dataset.id(), new RowDataRequest(Map.of("title", "Hello World")));
+
+        RowDataResponse row = datasetService.getRow(dataset.id(), added.id());
+
+        assertThat(row.id()).isEqualTo(added.id());
+        assertThat(row.data().get("title")).isEqualTo("Hello World");
+    }
+
+    @Test
+    void addRow_nonExistentDataset_throwsNotFound() {
+        assertThatThrownBy(() -> datasetService.addRow(999999L, new RowDataRequest(Map.of("col1", "value"))))
+                .isInstanceOf(DatasetNotFoundException.class);
+    }
+
+    // =========================================================================
+    // 2-3. Clone Dataset
+    // =========================================================================
+
+    @Test
+    void cloneDataset_withData_success() {
+        DatasetDetailResponse source = createTestDatasetWithData("Clone Source", "clone_source");
+
+        CloneDatasetRequest cloneRequest = new CloneDatasetRequest(
+                "Clone Target", "clone_target", null, true, false);
+
+        DatasetDetailResponse cloned = datasetService.cloneDataset(source.id(), cloneRequest, testUserId);
+
+        assertThat(cloned.name()).isEqualTo("Clone Target");
+        assertThat(cloned.tableName()).isEqualTo("clone_target");
+        assertThat(cloned.rowCount()).isEqualTo(source.rowCount());
+        assertThat(cloned.columns()).hasSameSizeAs(source.columns());
+    }
+
+    @Test
+    void cloneDataset_schemaOnly_success() {
+        DatasetDetailResponse source = createTestDatasetWithData("Clone Schema Src", "clone_schema_src");
+
+        CloneDatasetRequest cloneRequest = new CloneDatasetRequest(
+                "Clone Schema Tgt", "clone_schema_tgt", null, false, false);
+
+        DatasetDetailResponse cloned = datasetService.cloneDataset(source.id(), cloneRequest, testUserId);
+
+        assertThat(cloned.rowCount()).isEqualTo(0);
+        assertThat(cloned.columns()).hasSameSizeAs(source.columns());
+    }
+
+    @Test
+    void cloneDataset_withTags_copiesTags() {
+        DatasetDetailResponse source = createTestDatasetWithData("Clone Tag Src", "clone_tag_src");
+        datasetService.addTag(source.id(), "important", testUserId);
+        datasetService.addTag(source.id(), "production", testUserId);
+
+        CloneDatasetRequest cloneRequest = new CloneDatasetRequest(
+                "Clone Tag Tgt", "clone_tag_tgt", null, false, true);
+
+        DatasetDetailResponse cloned = datasetService.cloneDataset(source.id(), cloneRequest, testUserId);
+
+        assertThat(cloned.tags()).containsExactlyInAnyOrder("important", "production");
+    }
+
+    @Test
+    void cloneDataset_duplicateName_throwsException() {
+        DatasetDetailResponse source = createTestDatasetWithData("Clone Dup Src", "clone_dup_src");
+
+        CloneDatasetRequest clone1 = new CloneDatasetRequest(
+                "Clone Dup Tgt", "clone_dup_tgt", null, false, false);
+        datasetService.cloneDataset(source.id(), clone1, testUserId);
+
+        CloneDatasetRequest clone2 = new CloneDatasetRequest(
+                "Clone Dup Tgt", "clone_dup_tgt2", null, false, false);
+        assertThatThrownBy(() -> datasetService.cloneDataset(source.id(), clone2, testUserId))
+                .isInstanceOf(DuplicateDatasetNameException.class);
+    }
+
+    @Test
+    void cloneDataset_nonExistentSource_throwsNotFound() {
+        CloneDatasetRequest cloneRequest = new CloneDatasetRequest(
+                "No Source Clone", "no_source_clone", null, false, false);
+
+        assertThatThrownBy(() -> datasetService.cloneDataset(999999L, cloneRequest, testUserId))
+                .isInstanceOf(DatasetNotFoundException.class);
+    }
+
+    // =========================================================================
+    // 2-4. Existing untested methods
+    // =========================================================================
+
+    @Test
+    void getDatasetById_success() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse created = datasetService.createDataset(new CreateDatasetRequest(
+                "GetById Test", "getbyid_test", "desc", null, "SOURCE", columns
+        ), testUserId);
+
+        DatasetDetailResponse found = datasetService.getDatasetById(created.id());
+
+        assertThat(found.id()).isEqualTo(created.id());
+        assertThat(found.name()).isEqualTo("GetById Test");
+        assertThat(found.description()).isEqualTo("desc");
+    }
+
+    @Test
+    void getDatasetById_notFound_throwsException() {
+        assertThatThrownBy(() -> datasetService.getDatasetById(999999L))
+                .isInstanceOf(DatasetNotFoundException.class);
+    }
+
+    @Test
+    void deleteColumn_success() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("col2", "Col2", "INTEGER", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "DelCol Test", "delcol_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        Long col2Id = dataset.columns().stream()
+                .filter(c -> c.columnName().equals("col2"))
+                .findFirst().get().id();
+
+        datasetService.deleteColumn(dataset.id(), col2Id);
+
+        DatasetDetailResponse updated = datasetService.getDatasetById(dataset.id());
+        assertThat(updated.columns()).hasSize(1);
+        assertThat(updated.columns().get(0).columnName()).isEqualTo("col1");
+    }
+
+    @Test
+    void deleteColumn_lastColumn_throwsException() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("only_col", "Only Col", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "DelLastCol Test", "dellastcol_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        Long onlyColId = dataset.columns().get(0).id();
+
+        assertThatThrownBy(() -> datasetService.deleteColumn(dataset.id(), onlyColId))
+                .isInstanceOf(ColumnModificationException.class);
+    }
+
+    @Test
+    void toggleFavorite_togglesState() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Favorite Test", "favorite_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        FavoriteToggleResponse result1 = datasetService.toggleFavorite(dataset.id(), testUserId);
+        assertThat(result1.favorited()).isTrue();
+
+        FavoriteToggleResponse result2 = datasetService.toggleFavorite(dataset.id(), testUserId);
+        assertThat(result2.favorited()).isFalse();
+    }
+
+    @Test
+    void addTag_success() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Tag Test", "tag_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        datasetService.addTag(dataset.id(), "test-tag", testUserId);
+
+        DatasetDetailResponse updated = datasetService.getDatasetById(dataset.id());
+        assertThat(updated.tags()).contains("test-tag");
+    }
+
+    @Test
+    void addTag_duplicate_throwsException() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "DupTag Test", "duptag_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        datasetService.addTag(dataset.id(), "dup-tag", testUserId);
+
+        assertThatThrownBy(() -> datasetService.addTag(dataset.id(), "dup-tag", testUserId))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void deleteDataRows_success() {
+        DatasetDetailResponse dataset = createTestDatasetWithData("DelRows Test", "delrows_test");
+
+        DataQueryResponse dataResponse = datasetService.getDatasetData(dataset.id(), null, 0, 10);
+        List<Long> rowIds = dataResponse.rows().stream()
+                .map(r -> ((Number) r.get("_id")).longValue())
+                .toList();
+
+        assertThat(rowIds).isNotEmpty();
+
+        DataDeleteResponse result = datasetService.deleteDataRows(dataset.id(), rowIds);
+        assertThat(result.deletedCount()).isEqualTo(rowIds.size());
+
+        DatasetDetailResponse updated = datasetService.getDatasetById(dataset.id());
+        assertThat(updated.rowCount()).isEqualTo(0);
     }
 }

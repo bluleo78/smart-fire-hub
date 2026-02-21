@@ -1,7 +1,11 @@
 package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.exception.RowNotFoundException;
+import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -328,5 +332,289 @@ class DataTableServiceTest extends IntegrationTestBase {
         dataTableService.validateName("valid_name");
         dataTableService.validateName("validname");
         dataTableService.validateName("valid_name_123");
+    }
+
+    // -------------------------------------------------------------------------
+    // 1-1. executeQuery (SQL Query) — 7 TC
+    // -------------------------------------------------------------------------
+
+    @Test
+    void executeQuery_selectAll_returnsRows() {
+        // Given
+        String tableName = "test_eq_select";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("score", "Score", "INTEGER", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+        dataTableService.insertBatch(tableName, List.of("name", "score"),
+                List.of(Map.of("name", "Alice", "score", 90), Map.of("name", "Bob", "score", 85)));
+
+        // When
+        SqlQueryResponse response = dataTableService.executeQuery("SELECT * FROM " + tableName, 100);
+
+        // Then
+        assertThat(response.queryType()).isEqualTo("SELECT");
+        assertThat(response.error()).isNull();
+        assertThat(response.affectedRows()).isEqualTo(2);
+        assertThat(response.columns()).contains("name", "score");
+        assertThat(response.rows()).hasSize(2);
+    }
+
+    @Test
+    void executeQuery_selectWithLimit_respectsLimit() {
+        String tableName = "test_eq_limit";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("val", "Val", "INTEGER", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+        dataTableService.insertBatch(tableName, List.of("val"),
+                List.of(Map.of("val", 1), Map.of("val", 2), Map.of("val", 3)));
+
+        SqlQueryResponse response = dataTableService.executeQuery("SELECT * FROM " + tableName + " LIMIT 1", 100);
+
+        assertThat(response.rows()).hasSize(1);
+    }
+
+    @Test
+    void executeQuery_selectAutoLimit_appliesMaxRows() {
+        String tableName = "test_eq_autolimit";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("val", "Val", "INTEGER", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+        dataTableService.insertBatch(tableName, List.of("val"),
+                List.of(Map.of("val", 1), Map.of("val", 2), Map.of("val", 3)));
+
+        // maxRows=2, no LIMIT in SQL — auto LIMIT should be applied
+        SqlQueryResponse response = dataTableService.executeQuery("SELECT * FROM " + tableName, 2);
+
+        assertThat(response.rows()).hasSize(2);
+    }
+
+    @Test
+    void executeQuery_insertDml_returnsAffectedRows() {
+        String tableName = "test_eq_insert";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        SqlQueryResponse response = dataTableService.executeQuery(
+                "INSERT INTO " + tableName + " (name) VALUES ('test1'), ('test2')", 100);
+
+        assertThat(response.queryType()).isEqualTo("INSERT");
+        assertThat(response.affectedRows()).isEqualTo(2);
+        assertThat(response.error()).isNull();
+    }
+
+    @Test
+    void executeQuery_syntaxError_returnsErrorMessage() {
+        String tableName = "test_eq_syntax";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        SqlQueryResponse response = dataTableService.executeQuery("SELECT * FORM " + tableName, 100);
+
+        assertThat(response.error()).isNotNull();
+        assertThat(response.rows()).isEmpty();
+    }
+
+    @Test
+    void executeQuery_ddlRejected_throwsSqlQueryException() {
+        assertThatThrownBy(() -> dataTableService.executeQuery("CREATE TABLE test_ddl (id INT)", 100))
+                .isInstanceOf(SqlQueryException.class);
+    }
+
+    @Test
+    void executeQuery_multiStatement_throwsSqlQueryException() {
+        assertThatThrownBy(() -> dataTableService.executeQuery("SELECT 1; SELECT 2", 100))
+                .isInstanceOf(SqlQueryException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // 1-2. insertRow / updateRow / getRow (Manual Row) — 5 TC
+    // -------------------------------------------------------------------------
+
+    @Test
+    void insertRow_validData_returnsId() {
+        String tableName = "test_ir_valid";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("age", "Age", "INTEGER", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        Long id = dataTableService.insertRow(tableName, List.of("name", "age"), Map.of("name", "Alice", "age", 30L));
+
+        assertThat(id).isNotNull().isPositive();
+    }
+
+    @Test
+    void getRow_existingRow_returnsData() {
+        String tableName = "test_gr_existing";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        Long id = dataTableService.insertRow(tableName, List.of("name"), Map.of("name", "Bob"));
+
+        Map<String, Object> row = dataTableService.getRow(tableName, List.of("name"), id);
+
+        assertThat(row.get("name")).isEqualTo("Bob");
+        assertThat(row.get("id")).isEqualTo(id);
+    }
+
+    @Test
+    void updateRow_existingRow_updatesData() {
+        String tableName = "test_ur_update";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        Long id = dataTableService.insertRow(tableName, List.of("name"), Map.of("name", "Before"));
+        dataTableService.updateRow(tableName, id, List.of("name"), Map.of("name", "After"));
+
+        Map<String, Object> row = dataTableService.getRow(tableName, List.of("name"), id);
+        assertThat(row.get("name")).isEqualTo("After");
+    }
+
+    @Test
+    void getRow_nonExistent_throwsException() {
+        String tableName = "test_gr_notfound";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        assertThatThrownBy(() -> dataTableService.getRow(tableName, List.of("col1"), 99999L))
+                .isInstanceOf(RowNotFoundException.class);
+    }
+
+    @Test
+    void insertRow_nullForNotNull_throwsException() {
+        String tableName = "test_ir_notnull";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, false, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("name", null);
+
+        assertThatThrownBy(() -> dataTableService.insertRow(tableName, List.of("name"), data))
+                .isInstanceOf(Exception.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // 1-3. cloneTable — 3 TC
+    // -------------------------------------------------------------------------
+
+    @Test
+    void cloneTable_withData_copiesAllRows() {
+        String sourceTable = "test_clone_src";
+        String targetTable = "test_clone_tgt";
+        tablesToCleanup.add(sourceTable);
+        tablesToCleanup.add(targetTable);
+
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)
+        );
+        dataTableService.createTable(sourceTable, columns);
+        dataTableService.insertBatch(sourceTable, List.of("name", "value"),
+                List.of(Map.of("name", "A", "value", 1), Map.of("name", "B", "value", 2)));
+
+        List<DatasetColumnResponse> columnDefs = List.of(
+                new DatasetColumnResponse(1L, "name", "Name", "TEXT", null, true, false, "desc", 0, false),
+                new DatasetColumnResponse(2L, "value", "Value", "INTEGER", null, true, false, "desc", 1, false)
+        );
+
+        dataTableService.cloneTable(sourceTable, targetTable, List.of("name", "value"), columnDefs);
+
+        long count = dataTableService.countRows(targetTable);
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    void cloneTable_emptySource_createsEmptyTable() {
+        String sourceTable = "test_clone_empty_src";
+        String targetTable = "test_clone_empty_tgt";
+        tablesToCleanup.add(sourceTable);
+        tablesToCleanup.add(targetTable);
+
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(sourceTable, columns);
+
+        List<DatasetColumnResponse> columnDefs = List.of(
+                new DatasetColumnResponse(1L, "name", "Name", "TEXT", null, true, false, null, 0, false)
+        );
+
+        dataTableService.cloneTable(sourceTable, targetTable, List.of("name"), columnDefs);
+
+        long count = dataTableService.countRows(targetTable);
+        assertThat(count).isEqualTo(0);
+    }
+
+    @Test
+    void cloneTable_preservesNotNullConstraints() {
+        String sourceTable = "test_clone_nn_src";
+        String targetTable = "test_clone_nn_tgt";
+        tablesToCleanup.add(sourceTable);
+        tablesToCleanup.add(targetTable);
+
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("required_col", "Required", "TEXT", null, false, false, null)
+        );
+        dataTableService.createTable(sourceTable, columns);
+
+        List<DatasetColumnResponse> columnDefs = List.of(
+                new DatasetColumnResponse(1L, "required_col", "Required", "TEXT", null, false, false, null, 0, false)
+        );
+
+        dataTableService.cloneTable(sourceTable, targetTable, List.of("required_col"), columnDefs);
+
+        // Attempting to insert NULL into the NOT NULL column should fail
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("required_col", null);
+        assertThatThrownBy(() -> dataTableService.insertRow(targetTable, List.of("required_col"), data))
+                .isInstanceOf(Exception.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // 1-4. executeQuery system column filtering — 1 TC
+    // -------------------------------------------------------------------------
+
+    @Test
+    void executeQuery_selectAll_filtersSystemColumns() {
+        String tableName = "test_eq_syscol";
+        tablesToCleanup.add(tableName);
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)
+        );
+        dataTableService.createTable(tableName, columns);
+        dataTableService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "test")));
+
+        SqlQueryResponse response = dataTableService.executeQuery("SELECT * FROM " + tableName, 100);
+
+        // System columns (id, import_id, created_at) should be filtered out
+        assertThat(response.columns()).contains("name");
+        assertThat(response.columns()).doesNotContain("id", "import_id", "created_at");
     }
 }
