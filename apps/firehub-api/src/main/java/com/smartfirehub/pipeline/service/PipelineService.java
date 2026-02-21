@@ -6,7 +6,10 @@ import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
+import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.user.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,23 +20,28 @@ import java.util.Map;
 @Service
 public class PipelineService {
 
+    private static final Logger log = LoggerFactory.getLogger(PipelineService.class);
+
     private final PipelineRepository pipelineRepository;
     private final PipelineStepRepository stepRepository;
     private final PipelineExecutionRepository executionRepository;
     private final PipelineExecutionService executionService;
     private final UserRepository userRepository;
+    private final TriggerRepository triggerRepository;
 
     public PipelineService(
             PipelineRepository pipelineRepository,
             PipelineStepRepository stepRepository,
             PipelineExecutionRepository executionRepository,
             PipelineExecutionService executionService,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            TriggerRepository triggerRepository) {
         this.pipelineRepository = pipelineRepository;
         this.stepRepository = stepRepository;
         this.executionRepository = executionRepository;
         this.executionService = executionService;
         this.userRepository = userRepository;
+        this.triggerRepository = triggerRepository;
     }
 
     @Transactional
@@ -153,6 +161,12 @@ public class PipelineService {
         pipelineRepository.findById(id)
                 .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
 
+        // Disable chain triggers that reference this pipeline as upstream
+        int disabled = triggerRepository.disableByUpstreamPipelineId(id);
+        if (disabled > 0) {
+            log.info("Disabled {} chain triggers referencing pipeline {}", disabled, id);
+        }
+
         // Delete steps (cascade deletes inputs and dependencies)
         stepRepository.deleteByPipelineId(id);
 
@@ -161,6 +175,10 @@ public class PipelineService {
     }
 
     public PipelineExecutionResponse executePipeline(Long pipelineId, Long userId) {
+        return executePipeline(pipelineId, userId, "MANUAL", null);
+    }
+
+    public PipelineExecutionResponse executePipeline(Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
         // Verify pipeline exists
         pipelineRepository.findById(pipelineId)
                 .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
@@ -170,8 +188,8 @@ public class PipelineService {
                 .map(user -> user.name())
                 .orElse(String.valueOf(userId));
 
-        // Start execution
-        Long executionId = executionService.executePipeline(pipelineId, userId);
+        // Start execution with trigger info
+        Long executionId = executionService.executePipeline(pipelineId, userId, triggeredBy, triggerId);
 
         // Return execution response
         return new PipelineExecutionResponse(
@@ -181,7 +199,9 @@ public class PipelineService {
                 username,
                 null,
                 null,
-                java.time.LocalDateTime.now()
+                java.time.LocalDateTime.now(),
+                triggeredBy,
+                null
         );
     }
 

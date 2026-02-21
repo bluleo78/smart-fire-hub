@@ -11,8 +11,10 @@ import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.exception.*;
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
+import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserDeactivatedException;
@@ -279,5 +281,21 @@ public class GlobalExceptionHandler {
                 HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null
         );
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
+    @ExceptionHandler(TriggerNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleTriggerNotFound(TriggerNotFoundException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
+    @ExceptionHandler(CyclicTriggerDependencyException.class)
+    public ResponseEntity<ErrorResponse> handleCyclicTriggerDependency(CyclicTriggerDependencyException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.CONFLICT.value(), "Conflict", ex.getMessage(), null
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 }

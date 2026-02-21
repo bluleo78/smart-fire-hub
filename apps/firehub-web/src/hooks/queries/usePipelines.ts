@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { pipelinesApi } from '../../api/pipelines';
-import type { UpdatePipelineRequest, PipelineExecutionResponse } from '../../types/pipeline';
+import type { UpdatePipelineRequest, PipelineExecutionResponse, CreateTriggerRequest, UpdateTriggerRequest } from '../../types/pipeline';
 
 export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({
@@ -78,5 +78,69 @@ export function useExecution(pipelineId: number, execId: number) {
       if (data && (data.status === 'PENDING' || data.status === 'RUNNING')) return 3000;
       return false;
     },
+  });
+}
+
+// --- Trigger hooks ---
+
+export function useTriggers(pipelineId: number) {
+  return useQuery({
+    queryKey: ['triggers', pipelineId],
+    queryFn: () => pipelinesApi.getTriggers(pipelineId).then(r => r.data),
+    enabled: pipelineId > 0,
+  });
+}
+
+export function useCreateTrigger(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateTriggerRequest) =>
+      pipelinesApi.createTrigger(pipelineId, data).then(r => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+    },
+  });
+}
+
+export function useUpdateTrigger(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ triggerId, data }: { triggerId: number; data: UpdateTriggerRequest }) =>
+      pipelinesApi.updateTrigger(pipelineId, triggerId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
+    },
+  });
+}
+
+export function useDeleteTrigger(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (triggerId: number) =>
+      pipelinesApi.deleteTrigger(pipelineId, triggerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+    },
+  });
+}
+
+export function useToggleTrigger(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (triggerId: number) =>
+      pipelinesApi.toggleTrigger(pipelineId, triggerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['triggers', pipelineId] });
+    },
+  });
+}
+
+export function useTriggerEvents(pipelineId: number) {
+  return useQuery({
+    queryKey: ['trigger-events', pipelineId],
+    queryFn: () => pipelinesApi.getTriggerEvents(pipelineId, 20).then(r => r.data),
+    enabled: pipelineId > 0,
   });
 }

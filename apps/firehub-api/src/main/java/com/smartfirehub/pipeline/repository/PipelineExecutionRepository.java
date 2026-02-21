@@ -28,6 +28,12 @@ public class PipelineExecutionRepository {
     private static final Field<LocalDateTime> PE_STARTED_AT = field(name("pipeline_execution", "started_at"), LocalDateTime.class);
     private static final Field<LocalDateTime> PE_COMPLETED_AT = field(name("pipeline_execution", "completed_at"), LocalDateTime.class);
     private static final Field<LocalDateTime> PE_CREATED_AT = field(name("pipeline_execution", "created_at"), LocalDateTime.class);
+    private static final Field<String> PE_TRIGGERED_BY = field(name("pipeline_execution", "triggered_by"), String.class);
+    private static final Field<Long> PE_TRIGGER_ID = field(name("pipeline_execution", "trigger_id"), Long.class);
+
+    private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
+    private static final Field<Long> PT_ID = field(name("pipeline_trigger", "id"), Long.class);
+    private static final Field<String> PT_NAME = field(name("pipeline_trigger", "name"), String.class);
 
     private static final Table<?> PIPELINE_STEP_EXECUTION = table(name("pipeline_step_execution"));
     private static final Field<Long> PSE_ID = field(name("pipeline_step_execution", "id"), Long.class);
@@ -57,11 +63,21 @@ public class PipelineExecutionRepository {
     }
 
     public Long createExecution(Long pipelineId, Long executedBy) {
-        return dsl.insertInto(PIPELINE_EXECUTION)
+        return createExecution(pipelineId, executedBy, "MANUAL", null);
+    }
+
+    public Long createExecution(Long pipelineId, Long executedBy, String triggeredBy, Long triggerId) {
+        var query = dsl.insertInto(PIPELINE_EXECUTION)
                 .set(PE_PIPELINE_ID, pipelineId)
                 .set(PE_STATUS, "PENDING")
                 .set(PE_EXECUTED_BY, executedBy)
-                .returning(PE_ID)
+                .set(PE_TRIGGERED_BY, triggeredBy != null ? triggeredBy : "MANUAL");
+
+        if (triggerId != null) {
+            query = query.set(PE_TRIGGER_ID, triggerId);
+        }
+
+        return query.returning(PE_ID)
                 .fetchOne(r -> r.get(PE_ID));
     }
 
@@ -125,10 +141,13 @@ public class PipelineExecutionRepository {
                         PE_STARTED_AT,
                         PE_COMPLETED_AT,
                         PE_CREATED_AT,
-                        U_NAME
+                        U_NAME,
+                        PE_TRIGGERED_BY,
+                        PT_NAME
                 )
                 .from(PIPELINE_EXECUTION)
                 .leftJoin(USER_TABLE).on(PE_EXECUTED_BY.eq(U_ID))
+                .leftJoin(PIPELINE_TRIGGER).on(PE_TRIGGER_ID.eq(PT_ID))
                 .where(PE_PIPELINE_ID.eq(pipelineId))
                 .orderBy(PE_ID.desc())
                 .fetch(r -> new PipelineExecutionResponse(
@@ -138,7 +157,9 @@ public class PipelineExecutionRepository {
                         r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(PE_EXECUTED_BY)),
                         r.get(PE_STARTED_AT),
                         r.get(PE_COMPLETED_AT),
-                        r.get(PE_CREATED_AT)
+                        r.get(PE_CREATED_AT),
+                        r.get(PE_TRIGGERED_BY),
+                        r.get(PT_NAME)
                 ));
     }
 

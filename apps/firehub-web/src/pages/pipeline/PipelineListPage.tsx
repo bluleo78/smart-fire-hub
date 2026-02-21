@@ -23,7 +23,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '../../components/ui/alert-dialog';
-import { Plus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../types/auth';
 import axios from 'axios';
@@ -73,6 +73,7 @@ export default function PipelineListPage() {
               <TableHead>이름</TableHead>
               <TableHead>상태</TableHead>
               <TableHead>스텝 수</TableHead>
+              <TableHead>트리거</TableHead>
               <TableHead>생성자</TableHead>
               <TableHead>생성일</TableHead>
               <TableHead className="w-[60px]" />
@@ -84,6 +85,7 @@ export default function PipelineListPage() {
                 <TableRow key={i}>
                   <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-16" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-12" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-12" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
@@ -104,6 +106,14 @@ export default function PipelineListPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>{pipeline.stepCount}</TableCell>
+                  <TableCell>
+                    {pipeline.triggerCount > 0 && (
+                      <Badge variant="outline" className="text-xs gap-1">
+                        <Clock className="h-3 w-3" />
+                        {pipeline.triggerCount}
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{pipeline.createdBy}</TableCell>
                   <TableCell>{formatDateShort(pipeline.createdAt)}</TableCell>
                   <TableCell>
@@ -133,7 +143,7 @@ export default function PipelineListPage() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   파이프라인이 없습니다.
                 </TableCell>
               </TableRow>

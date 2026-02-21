@@ -4,6 +4,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.service.PipelineService;
+import com.smartfirehub.pipeline.service.TriggerService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,9 +17,11 @@ import java.util.List;
 public class PipelineController {
 
     private final PipelineService pipelineService;
+    private final TriggerService triggerService;
 
-    public PipelineController(PipelineService pipelineService) {
+    public PipelineController(PipelineService pipelineService, TriggerService triggerService) {
         this.pipelineService = pipelineService;
+        this.triggerService = triggerService;
     }
 
     @GetMapping
@@ -64,7 +67,7 @@ public class PipelineController {
     @RequirePermission("pipeline:execute")
     public ResponseEntity<PipelineExecutionResponse> executePipeline(@PathVariable Long id) {
         Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
-        PipelineExecutionResponse execution = pipelineService.executePipeline(id, userId);
+        PipelineExecutionResponse execution = pipelineService.executePipeline(id, userId, "MANUAL", null);
         return ResponseEntity.status(HttpStatus.CREATED).body(execution);
     }
 
@@ -82,5 +85,14 @@ public class PipelineController {
             @PathVariable Long execId) {
         ExecutionDetailResponse execution = pipelineService.getExecutionById(id, execId);
         return ResponseEntity.ok(execution);
+    }
+
+    @GetMapping("/{id}/trigger-events")
+    @RequirePermission("trigger:read")
+    public ResponseEntity<List<TriggerEventResponse>> getTriggerEvents(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "20") int limit) {
+        List<TriggerEventResponse> events = triggerService.getTriggerEvents(id, limit);
+        return ResponseEntity.ok(events);
     }
 }

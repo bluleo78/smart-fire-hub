@@ -4,12 +4,14 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +29,7 @@ public class PipelineExecutionService {
     private final DatasetRepository datasetRepository;
     private final SqlScriptExecutor sqlExecutor;
     private final PythonScriptExecutor pythonExecutor;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     public PipelineExecutionService(
             PipelineStepRepository stepRepository,
@@ -34,13 +37,15 @@ public class PipelineExecutionService {
             DataTableService dataTableService,
             DatasetRepository datasetRepository,
             SqlScriptExecutor sqlExecutor,
-            PythonScriptExecutor pythonExecutor) {
+            PythonScriptExecutor pythonExecutor,
+            ApplicationEventPublisher applicationEventPublisher) {
         this.stepRepository = stepRepository;
         this.executionRepository = executionRepository;
         this.dataTableService = dataTableService;
         this.datasetRepository = datasetRepository;
         this.sqlExecutor = sqlExecutor;
         this.pythonExecutor = pythonExecutor;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     /**
@@ -117,11 +122,18 @@ public class PipelineExecutionService {
      * Execute pipeline asynchronously.
      */
     public Long executePipeline(Long pipelineId, Long userId) {
+        return executePipeline(pipelineId, userId, "MANUAL", null);
+    }
+
+    /**
+     * Execute pipeline asynchronously with trigger info.
+     */
+    public Long executePipeline(Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
         // Load pipeline steps and dependencies
         List<PipelineStepResponse> steps = stepRepository.findByPipelineId(pipelineId);
 
         // Create execution record
-        Long executionId = executionRepository.createExecution(pipelineId, userId);
+        Long executionId = executionRepository.createExecution(pipelineId, userId, triggeredBy, triggerId);
 
         // Create step execution records (all PENDING)
         Map<Long, Long> stepIdToStepExecId = new HashMap<>();
@@ -134,7 +146,7 @@ public class PipelineExecutionService {
         Map<Long, List<Long>> stepDependencyMap = buildDependencyMap(steps);
 
         // Execute asynchronously
-        executeAsync(executionId, steps, stepDependencyMap, stepIdToStepExecId);
+        executeAsync(pipelineId, executionId, steps, stepDependencyMap, stepIdToStepExecId);
 
         return executionId;
     }
@@ -163,7 +175,7 @@ public class PipelineExecutionService {
     }
 
     @Async
-    public void executeAsync(Long executionId, List<PipelineStepResponse> steps, Map<Long, List<Long>> stepDependencyMap, Map<Long, Long> stepIdToStepExecId) {
+    public void executeAsync(Long pipelineId, Long executionId, List<PipelineStepResponse> steps, Map<Long, List<Long>> stepDependencyMap, Map<Long, Long> stepIdToStepExecId) {
         LocalDateTime executionStartedAt = LocalDateTime.now();
 
         try {
@@ -220,9 +232,15 @@ public class PipelineExecutionService {
             executionRepository.updateExecutionStatus(executionId, finalStatus, null, LocalDateTime.now());
             log.info("Pipeline execution {} completed with status: {}", executionId, finalStatus);
 
+            // Publish completion event for chain triggers
+            applicationEventPublisher.publishEvent(new PipelineCompletedEvent(pipelineId, executionId, finalStatus));
+
         } catch (Exception e) {
             log.error("Pipeline execution {} failed with exception", executionId, e);
             executionRepository.updateExecutionStatus(executionId, "FAILED", null, LocalDateTime.now());
+
+            // Publish failure event for chain triggers
+            applicationEventPublisher.publishEvent(new PipelineCompletedEvent(pipelineId, executionId, "FAILED"));
         }
     }
 

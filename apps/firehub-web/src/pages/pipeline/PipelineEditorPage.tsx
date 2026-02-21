@@ -20,6 +20,8 @@ import { EditorHeader } from './components/EditorHeader';
 import { PipelineCanvas } from './components/PipelineCanvas';
 import StepConfigPanel from './components/StepConfigPanel';
 import { ExecutionStepPanel } from './components/ExecutionStepPanel';
+import TriggerTab from './components/TriggerTab';
+import { Clock, Code, Link, Globe, Database, User } from 'lucide-react';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
 function formatDuration(startedAt: string | null, completedAt: string | null): string {
@@ -147,6 +149,7 @@ export default function PipelineEditorPage() {
         {pipelineId && (
           <TabsList className="border-b justify-start h-10 px-4 shrink-0">
             <TabsTrigger value="overview">개요</TabsTrigger>
+            <TabsTrigger value="triggers">트리거</TabsTrigger>
             <TabsTrigger
               value="executions"
               onPointerDown={() => {
@@ -181,6 +184,10 @@ export default function PipelineEditorPage() {
           />
         </TabsContent>
 
+        <TabsContent value="triggers" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
+          <TriggerTab pipelineId={pipelineId!} />
+        </TabsContent>
+
         <TabsContent value="executions" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
           {executionId && executionData ? (
             /* 실행 상세 뷰: 캔버스 + 사이드패널 */
@@ -210,6 +217,7 @@ export default function PipelineEditorPage() {
                   <TableRow>
                     <TableHead className="w-16">#ID</TableHead>
                     <TableHead>상태</TableHead>
+                    <TableHead>트리거</TableHead>
                     <TableHead>실행자</TableHead>
                     <TableHead>시작시간</TableHead>
                     <TableHead>소요시간</TableHead>
@@ -227,6 +235,16 @@ export default function PipelineEditorPage() {
                         <Badge variant={getStatusBadgeVariant(exec.status)}>
                           {getStatusLabel(exec.status)}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          {exec.triggeredBy === 'SCHEDULE' && <><Clock className="h-3 w-3" />스케줄</>}
+                          {exec.triggeredBy === 'API' && <><Code className="h-3 w-3" />API</>}
+                          {exec.triggeredBy === 'PIPELINE_CHAIN' && <><Link className="h-3 w-3" />연쇄</>}
+                          {exec.triggeredBy === 'WEBHOOK' && <><Globe className="h-3 w-3" />웹훅</>}
+                          {exec.triggeredBy === 'DATASET_CHANGE' && <><Database className="h-3 w-3" />데이터 변경</>}
+                          {(!exec.triggeredBy || exec.triggeredBy === 'MANUAL') && <><User className="h-3 w-3" />수동</>}
+                        </span>
                       </TableCell>
                       <TableCell className="text-sm">{exec.executedBy}</TableCell>
                       <TableCell className="text-sm">{formatDate(exec.startedAt)}</TableCell>
