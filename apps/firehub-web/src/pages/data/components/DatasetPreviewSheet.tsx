@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,6 @@ import {
 import { Button } from '../../../components/ui/button';
 import { Skeleton } from '../../../components/ui/skeleton';
 import { datasetsApi } from '../../../api/datasets';
-import type { DataQueryResponse } from '../../../types/dataset';
 
 interface DatasetPreviewSheetProps {
   datasetId: number;
@@ -20,17 +19,11 @@ interface DatasetPreviewSheetProps {
 
 export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange }: DatasetPreviewSheetProps) {
   const navigate = useNavigate();
-  const [previewData, setPreviewData] = useState<DataQueryResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!open || !datasetId) return;
-    setIsLoading(true);
-    datasetsApi.getDatasetData(datasetId, { size: 5, page: 0, includeTotalCount: true })
-      .then(r => setPreviewData(r.data))
-      .catch(() => setPreviewData(null))
-      .finally(() => setIsLoading(false));
-  }, [open, datasetId]);
+  const { data: previewData, isLoading } = useQuery({
+    queryKey: ['datasetPreview', datasetId],
+    queryFn: () => datasetsApi.getDatasetData(datasetId, { size: 5, page: 0, includeTotalCount: true }).then(r => r.data),
+    enabled: open && !!datasetId,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

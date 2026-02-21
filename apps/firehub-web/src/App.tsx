@@ -38,34 +38,32 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Suspense fallback={<PageSkeleton />}>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-            <Route element={<ProtectedRoute />}>
-              <Route element={<AppLayout />}>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/profile" element={<ProfilePage />} />
-                <Route path="/data/categories" element={<CategoryListPage />} />
-                <Route path="/data/datasets" element={<DatasetListPage />} />
-                <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
-                <Route path="/data/datasets/:id" element={<DatasetDetailPage />} />
-                <Route path="/pipelines" element={<PipelineListPage />} />
-                <Route path="/pipelines/new" element={<PipelineEditorPage />} />
-                <Route path="/pipelines/:id" element={<PipelineEditorPage />} />
-                <Route path="/pipelines/:id/executions/:execId" element={<PipelineEditorPage />} />
-                <Route element={<AdminRoute />}>
-                  <Route path="/admin/users" element={<UserListPage />} />
-                  <Route path="/admin/users/:id" element={<UserDetailPage />} />
-                  <Route path="/admin/roles" element={<RoleListPage />} />
-                  <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
-                  <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
-                  <Route path="/admin/ai-settings" element={<AISettingsPage />} />
-                </Route>
+        <Routes>
+          <Route path="/login" element={<Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense>} />
+          <Route path="/signup" element={<Suspense fallback={<PageSkeleton />}><SignupPage /></Suspense>} />
+          <Route element={<ProtectedRoute />}>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/data/categories" element={<CategoryListPage />} />
+              <Route path="/data/datasets" element={<DatasetListPage />} />
+              <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
+              <Route path="/data/datasets/:id" element={<DatasetDetailPage />} />
+              <Route path="/pipelines" element={<PipelineListPage />} />
+              <Route path="/pipelines/new" element={<PipelineEditorPage />} />
+              <Route path="/pipelines/:id" element={<PipelineEditorPage />} />
+              <Route path="/pipelines/:id/executions/:execId" element={<PipelineEditorPage />} />
+              <Route element={<AdminRoute />}>
+                <Route path="/admin/users" element={<UserListPage />} />
+                <Route path="/admin/users/:id" element={<UserDetailPage />} />
+                <Route path="/admin/roles" element={<RoleListPage />} />
+                <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
+                <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
+                <Route path="/admin/ai-settings" element={<AISettingsPage />} />
               </Route>
             </Route>
-          </Routes>
-        </Suspense>
+          </Route>
+        </Routes>
         <Toaster />
       </AuthProvider>
     </BrowserRouter>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -40,13 +40,15 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
 
   const updateTrigger = useUpdateTrigger(pipelineId);
 
-  // Reset when trigger changes
-  useEffect(() => {
+  // Reset when trigger changes (render-time state adjustment)
+  const [prevTrigger, setPrevTrigger] = useState(trigger);
+  if (prevTrigger !== trigger) {
+    setPrevTrigger(trigger);
     setName(trigger.name);
     setDescription(trigger.description ?? '');
     setConfig(trigger.config);
     setValidationErrors({});
-  }, [trigger]);
+  }
 
   const validate = (): boolean => {
     const errors: Record<string, string> = {};

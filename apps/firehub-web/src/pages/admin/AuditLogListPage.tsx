@@ -1,9 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuditLogs } from '../../hooks/queries/useAuditLogs';
-import { Input } from '../../components/ui/input';
-import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
 import {
   Select,
   SelectContent,
@@ -19,7 +16,11 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { SimplePagination } from '@/components/ui/simple-pagination';
+import { useDebounceValue } from '@/hooks/useDebounceValue';
 
 const ACTION_TYPES = [
   { value: 'CREATE', label: '생성' },
@@ -58,20 +59,17 @@ function formatDateTime(dateStr: string) {
 
 export default function AuditLogListPage() {
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debouncedSearch = useDebounceValue(search, 300);
   const [actionType, setActionType] = useState<string>('');
   const [resource, setResource] = useState<string>('');
   const [result, setResult] = useState<string>('');
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(0);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    setPage(0);
+  };
 
   const { data: logs, isLoading, isError } = useAuditLogs({
     search: debouncedSearch || undefined,
@@ -92,16 +90,11 @@ export default function AuditLogListPage() {
       <h1 className="text-2xl font-bold">감사 로그</h1>
 
       <div className="flex flex-wrap items-center gap-4">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="사용자명 또는 설명으로 검색..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            maxLength={200}
-            className="pl-9"
-          />
-        </div>
+        <SearchInput
+          placeholder="사용자명 또는 설명으로 검색..."
+          value={search}
+          onChange={handleSearchChange}
+        />
 
         <Select value={actionType || 'all'} onValueChange={handleFilterChange(setActionType)}>
           <SelectTrigger className="w-[140px]">
@@ -155,17 +148,7 @@ export default function AuditLogListPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-5 w-14" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                </TableRow>
-              ))
+              <TableSkeletonRows columns={7} rows={5} />
             ) : isError ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-destructive">
@@ -193,42 +176,20 @@ export default function AuditLogListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  감사 로그가 없습니다.
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={7} message="감사 로그가 없습니다." />
             )}
           </TableBody>
         </Table>
       </div>
 
-      {logs && logs.totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            총 {logs.totalElements}건 중 {page * pageSize + 1}-{Math.min((page + 1) * pageSize, logs.totalElements)}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(p => Math.max(0, p - 1))}
-              disabled={page === 0}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              이전
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(p => p + 1)}
-              disabled={page >= logs.totalPages - 1}
-            >
-              다음
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+      {logs && (
+        <SimplePagination
+          page={page}
+          totalPages={logs.totalPages}
+          onPageChange={setPage}
+          totalElements={logs.totalElements}
+          pageSize={pageSize}
+        />
       )}
     </div>
   );

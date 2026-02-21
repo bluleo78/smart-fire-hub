@@ -6,8 +6,8 @@ import { createDatasetSchema } from '../../lib/validations/dataset';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
 import { Card } from '../../components/ui/card';
+import { FormField } from '../../components/ui/form-field';
 import {
   Select,
   SelectContent,
@@ -17,8 +17,7 @@ import {
 } from '../../components/ui/select';
 import { SchemaBuilder } from './components/SchemaBuilder';
 import { toast } from 'sonner';
-import type { ErrorResponse } from '../../types/auth';
-import axios from 'axios';
+import { handleApiError } from '../../lib/api-error';
 
 export default function DatasetCreatePage() {
   const navigate = useNavigate();
@@ -71,12 +70,7 @@ export default function DatasetCreatePage() {
       toast.success('데이터셋이 생성되었습니다.');
       navigate(`/data/datasets/${result.data.id}`);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '데이터셋 생성에 실패했습니다.');
-      } else {
-        toast.error('데이터셋 생성에 실패했습니다.');
-      }
+      handleApiError(error, '데이터셋 생성에 실패했습니다.');
     }
   };
 
@@ -92,48 +86,44 @@ export default function DatasetCreatePage() {
             <h2 className="text-lg font-semibold mb-4">기본 정보</h2>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">데이터셋 이름 *</Label>
+                <FormField
+                  label="데이터셋 이름"
+                  htmlFor="name"
+                  required
+                  error={form.formState.errors.name?.message}
+                >
                   <Input
                     id="name"
                     {...form.register('name')}
                     placeholder="예: 사용자 데이터"
                   />
-                  {form.formState.errors.name && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.name.message}
-                    </p>
-                  )}
-                </div>
+                </FormField>
 
-                <div className="space-y-2">
-                  <Label htmlFor="tableName">테이블명 *</Label>
+                <FormField
+                  label="테이블명"
+                  htmlFor="tableName"
+                  required
+                  error={form.formState.errors.tableName?.message}
+                >
                   <Input
                     id="tableName"
                     {...form.register('tableName')}
                     placeholder="예: user_data"
                     className="font-mono"
                   />
-                  {form.formState.errors.tableName && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.tableName.message}
-                    </p>
-                  )}
-                </div>
+                </FormField>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="description">설명</Label>
+              <FormField label="설명" htmlFor="description">
                 <Input
                   id="description"
                   {...form.register('description')}
                   placeholder="데이터셋 설명"
                 />
-              </div>
+              </FormField>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="categoryId">카테고리</Label>
+                <FormField label="카테고리" htmlFor="categoryId">
                   <Select
                     value={form.watch('categoryId')?.toString() || ''}
                     onValueChange={(value) => {
@@ -151,10 +141,14 @@ export default function DatasetCreatePage() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </FormField>
 
-                <div className="space-y-2">
-                  <Label htmlFor="datasetType">데이터셋 유형 *</Label>
+                <FormField
+                  label="데이터셋 유형"
+                  htmlFor="datasetType"
+                  required
+                  error={form.formState.errors.datasetType?.message}
+                >
                   <Select
                     value={form.watch('datasetType')}
                     onValueChange={(value) => {
@@ -169,12 +163,7 @@ export default function DatasetCreatePage() {
                       <SelectItem value="DERIVED">파생</SelectItem>
                     </SelectContent>
                   </Select>
-                  {form.formState.errors.datasetType && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.datasetType.message}
-                    </p>
-                  )}
-                </div>
+                </FormField>
               </div>
             </div>
           </Card>

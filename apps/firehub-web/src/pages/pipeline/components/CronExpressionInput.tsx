@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import cronstrue from 'cronstrue/i18n';
 import { CronExpressionParser } from 'cron-parser';
 import { Input } from '@/components/ui/input';
@@ -47,29 +47,20 @@ export default function CronExpressionInput({
   onTimezoneChange,
   error,
 }: CronExpressionInputProps) {
-  const [description, setDescription] = useState('');
-  const [parseError, setParseError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!value.trim()) {
-      setDescription('');
-      setParseError(null);
-      return;
-    }
+  const { description, parseError } = useMemo(() => {
+    if (!value.trim()) return { description: '', parseError: null as string | null };
     try {
       const desc = cronstrue.toString(value, { locale: 'ko', use24HourTimeFormat: true });
-      setDescription(desc);
-      setParseError(null);
+      return { description: desc, parseError: null as string | null };
     } catch {
-      setDescription('');
-      setParseError('유효하지 않은 cron 표현식입니다');
+      return { description: '', parseError: '유효하지 않은 cron 표현식입니다' };
     }
   }, [value]);
 
   const nextExecutions = useMemo(() => {
     if (!value.trim() || parseError) return [];
     try {
-      const interval = CronExpressionParser.parseExpression(value, {
+      const interval = CronExpressionParser.parse(value, {
         tz: timezone,
       });
       const times: string[] = [];

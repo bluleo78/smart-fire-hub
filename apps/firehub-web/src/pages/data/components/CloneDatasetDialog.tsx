@@ -12,8 +12,7 @@ import { Switch } from '../../../components/ui/switch';
 import { Textarea } from '../../../components/ui/textarea';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import axios from 'axios';
-import type { ErrorResponse } from '../../../types/auth';
+import { handleApiError } from '../../../lib/api-error';
 
 interface CloneDatasetDialogProps {
   open: boolean;
@@ -66,12 +65,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
       onOpenChange(false);
       navigate(`/data/datasets/${result.id}`);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '데이터셋 복제에 실패했습니다.');
-      } else {
-        toast.error('데이터셋 복제에 실패했습니다.');
-      }
+      handleApiError(error, '데이터셋 복제에 실패했습니다.');
     }
   };
 

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { Skeleton } from '../ui/skeleton';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import { UserNav } from './UserNav';
@@ -19,9 +20,10 @@ import {
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIToggleButton } from '../ai/AIToggleButton';
-import { AISidePanel } from '../ai/AISidePanel';
-import { AIFloating } from '../ai/AIFloating';
-import { AIFullScreen } from '../ai/AIFullScreen';
+
+const AISidePanel = lazy(() => import('../ai/AISidePanel').then(mod => ({ default: mod.AISidePanel })));
+const AIFloating = lazy(() => import('../ai/AIFloating').then(mod => ({ default: mod.AIFloating })));
+const AIFullScreen = lazy(() => import('../ai/AIFullScreen').then(mod => ({ default: mod.AIFullScreen })));
 
 interface NavItem {
   label: string;
@@ -46,6 +48,15 @@ const adminNavItems: NavItem[] = [
   { label: '감사 로그', href: '/admin/audit-logs', icon: <FileText className="h-4 w-4" />, adminOnly: true },
   { label: 'AI 설정', href: '/admin/ai-settings', icon: <Bot className="h-4 w-4" />, adminOnly: true },
 ];
+
+function PageSkeleton() {
+  return (
+    <div className="space-y-6 p-6">
+      <Skeleton className="h-8 w-64" />
+      <Skeleton className="h-96 w-full" />
+    </div>
+  );
+}
 
 function AppLayoutInner() {
   const { isAdmin } = useAuth();
@@ -171,21 +182,33 @@ function AppLayoutInner() {
           {/* Main page content */}
           {showFullscreen ? (
             <div className="flex-1 flex">
-              <AIFullScreen />
+              <Suspense fallback={<div className="flex-1 bg-background" />}>
+                <AIFullScreen />
+              </Suspense>
             </div>
           ) : (
             <main className="flex-1 p-6 overflow-auto min-w-0">
-              <Outlet />
+              <Suspense fallback={<PageSkeleton />}>
+                <Outlet />
+              </Suspense>
             </main>
           )}
 
           {/* Side panel mode */}
-          {aiMode === 'side' && <AISidePanel />}
+          {aiMode === 'side' && (
+            <Suspense fallback={<div className="w-80 border-l bg-background" />}>
+              <AISidePanel />
+            </Suspense>
+          )}
         </div>
       </div>
 
       {/* Floating mode */}
-      {aiMode === 'floating' && <AIFloating />}
+      {aiMode === 'floating' && (
+        <Suspense fallback={null}>
+          <AIFloating />
+        </Suspense>
+      )}
     </div>
   );
 }

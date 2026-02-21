@@ -10,8 +10,6 @@ import {
 } from '../../hooks/queries/useDatasets';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
-import { Skeleton } from '../../components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -27,22 +25,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '../../components/ui/alert-dialog';
+import { TableSkeletonRows } from '../../components/ui/table-skeleton';
+import { TableEmptyRow } from '../../components/ui/table-empty';
+import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
+import { FormField } from '../../components/ui/form-field';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ErrorResponse } from '../../types/auth';
+import { handleApiError } from '../../lib/api-error';
 import type { CategoryResponse } from '../../types/dataset';
-import axios from 'axios';
 
 const categorySchema = z.object({
   name: z.string().min(1, '카테고리 이름을 입력해주세요.'),
@@ -75,12 +65,7 @@ export default function CategoryListPage() {
       setIsCreateOpen(false);
       createForm.reset();
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '카테고리 생성에 실패했습니다.');
-      } else {
-        toast.error('카테고리 생성에 실패했습니다.');
-      }
+      handleApiError(error, '카테고리 생성에 실패했습니다.');
     }
   };
 
@@ -92,12 +77,7 @@ export default function CategoryListPage() {
       setEditingCategory(null);
       editForm.reset();
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '카테고리 수정에 실패했습니다.');
-      } else {
-        toast.error('카테고리 수정에 실패했습니다.');
-      }
+      handleApiError(error, '카테고리 수정에 실패했습니다.');
     }
   };
 
@@ -106,12 +86,7 @@ export default function CategoryListPage() {
       await deleteCategory.mutateAsync(id);
       toast.success(`카테고리 "${name}"이(가) 삭제되었습니다.`);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '카테고리 삭제에 실패했습니다.');
-      } else {
-        toast.error('카테고리 삭제에 실패했습니다.');
-      }
+      handleApiError(error, '카테고리 삭제에 실패했습니다.');
     }
   };
 
@@ -144,13 +119,7 @@ export default function CategoryListPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-48" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-20" /></TableCell>
-                </TableRow>
-              ))
+              <TableSkeletonRows columns={3} rows={3} />
             ) : categories && categories.length > 0 ? (
               categories.map((category) => (
                 <TableRow key={category.id}>
@@ -161,37 +130,22 @@ export default function CategoryListPage() {
                       <Button variant="outline" size="sm" onClick={() => openEditDialog(category)}>
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
+                      <DeleteConfirmDialog
+                        entityName="카테고리"
+                        itemName={category.name}
+                        onConfirm={() => handleDelete(category.id, category.name)}
+                        trigger={
                           <Button variant="outline" size="sm">
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>카테고리 삭제</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              &quot;{category.name}&quot; 카테고리를 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>취소</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => handleDelete(category.id, category.name)}>
-                              삭제
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                        }
+                      />
                     </div>
                   </TableCell>
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center text-muted-foreground">
-                  카테고리가 없습니다.
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={3} message="카테고리가 없습니다." />
             )}
           </TableBody>
         </Table>
@@ -204,25 +158,24 @@ export default function CategoryListPage() {
             <DialogTitle>카테고리 생성</DialogTitle>
           </DialogHeader>
           <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
-            <div>
-              <Label htmlFor="create-name">이름</Label>
+            <FormField
+              label="이름"
+              htmlFor="create-name"
+              error={createForm.formState.errors.name?.message}
+            >
               <Input
                 id="create-name"
                 {...createForm.register('name')}
                 placeholder="카테고리 이름"
               />
-              {createForm.formState.errors.name && (
-                <p className="text-sm text-destructive mt-1">{createForm.formState.errors.name.message}</p>
-              )}
-            </div>
-            <div>
-              <Label htmlFor="create-description">설명</Label>
+            </FormField>
+            <FormField label="설명" htmlFor="create-description">
               <Input
                 id="create-description"
                 {...createForm.register('description')}
                 placeholder="카테고리 설명 (선택사항)"
               />
-            </div>
+            </FormField>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
                 취소
@@ -242,25 +195,24 @@ export default function CategoryListPage() {
             <DialogTitle>카테고리 수정</DialogTitle>
           </DialogHeader>
           <form onSubmit={editForm.handleSubmit(handleUpdate)} className="space-y-4">
-            <div>
-              <Label htmlFor="edit-name">이름</Label>
+            <FormField
+              label="이름"
+              htmlFor="edit-name"
+              error={editForm.formState.errors.name?.message}
+            >
               <Input
                 id="edit-name"
                 {...editForm.register('name')}
                 placeholder="카테고리 이름"
               />
-              {editForm.formState.errors.name && (
-                <p className="text-sm text-destructive mt-1">{editForm.formState.errors.name.message}</p>
-              )}
-            </div>
-            <div>
-              <Label htmlFor="edit-description">설명</Label>
+            </FormField>
+            <FormField label="설명" htmlFor="edit-description">
               <Input
                 id="edit-description"
                 {...editForm.register('description')}
                 placeholder="카테고리 설명 (선택사항)"
               />
-            </div>
+            </FormField>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditingCategory(null)}>
                 취소

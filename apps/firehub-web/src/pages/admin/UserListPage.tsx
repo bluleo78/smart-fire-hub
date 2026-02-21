@@ -1,10 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUsers } from '../../hooks/queries/useUsers';
-import { Input } from '../../components/ui/input';
-import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -13,22 +10,23 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { SimplePagination } from '@/components/ui/simple-pagination';
+import { useDebounceValue } from '@/hooks/useDebounceValue';
 
 export default function UserListPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debouncedSearch = useDebounceValue(search, 300);
   const [page, setPage] = useState(0);
   const pageSize = 10;
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(0);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    setPage(0);
+  };
 
   const { data: users, isLoading, isError } = useUsers({
     search: debouncedSearch || undefined,
@@ -40,16 +38,11 @@ export default function UserListPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">사용자 관리</h1>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="이름 또는 아이디로 검색..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          maxLength={200}
-          className="pl-9"
-        />
-      </div>
+      <SearchInput
+        placeholder="이름 또는 아이디로 검색..."
+        value={search}
+        onChange={handleSearchChange}
+      />
 
       <div className="rounded-md border">
         <Table>
@@ -63,14 +56,7 @@ export default function UserListPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                </TableRow>
-              ))
+              <TableSkeletonRows columns={4} rows={5} />
             ) : isError ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center text-destructive">
@@ -95,42 +81,20 @@ export default function UserListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  사용자가 없습니다.
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={4} message="사용자가 없습니다." />
             )}
           </TableBody>
         </Table>
       </div>
 
-      {users && users.totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            총 {users.totalElements}명 중 {page * pageSize + 1}-{Math.min((page + 1) * pageSize, users.totalElements)}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(p => Math.max(0, p - 1))}
-              disabled={page === 0}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              이전
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(p => p + 1)}
-              disabled={page >= users.totalPages - 1}
-            >
-              다음
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+      {users && (
+        <SimplePagination
+          page={page}
+          totalPages={users.totalPages}
+          onPageChange={setPage}
+          totalElements={users.totalElements}
+          pageSize={pageSize}
+        />
       )}
     </div>
   );

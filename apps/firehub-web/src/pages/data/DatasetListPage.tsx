@@ -3,9 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useDatasets, useCategories, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
 import {
   Select,
   SelectContent,
@@ -15,27 +13,20 @@ import {
 } from '../../components/ui/select';
 import {
   Table,
-  TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '../../components/ui/alert-dialog';
-import { Plus, Trash2, ChevronLeft, ChevronRight, Search, History, Star, Eye, BarChart3, Download } from 'lucide-react';
+import { SearchInput } from '../../components/ui/search-input';
+import { TableSkeletonRows } from '../../components/ui/table-skeleton';
+import { TableEmptyRow } from '../../components/ui/table-empty';
+import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
+import { SimplePagination } from '../../components/ui/simple-pagination';
+import { Plus, Trash2, History, Star, Eye, BarChart3, Download } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ErrorResponse } from '../../types/auth';
-import axios from 'axios';
+import { handleApiError } from '../../lib/api-error';
+import { downloadCsv } from '../../lib/download';
 import { formatDateShort } from '../../lib/formatters';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { datasetsApi } from '../../api/datasets';
@@ -84,6 +75,7 @@ export default function DatasetListPage() {
   const categories = categoriesData || [];
   const datasets = datasetsData?.content || [];
   const totalPages = datasetsData?.totalPages || 0;
+  const totalElements = datasetsData?.totalElements;
 
   const noFiltersActive = !search && !categoryId && !datasetType && !favoriteOnly && !statusFilter;
 
@@ -92,12 +84,7 @@ export default function DatasetListPage() {
       await deleteDataset.mutateAsync(id);
       toast.success(`데이터셋 "${name}"이(가) 삭제되었습니다.`);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '데이터셋 삭제에 실패했습니다.');
-      } else {
-        toast.error('데이터셋 삭제에 실패했습니다.');
-      }
+      handleApiError(error, '데이터셋 삭제에 실패했습니다.');
     }
   };
 
@@ -127,13 +114,7 @@ export default function DatasetListPage() {
         }).join(',')
       ).join('\n');
       const csv = `${header}\n${body}`;
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${name}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadCsv(`${name}.csv`, csv);
       toast.success(`"${name}" CSV 다운로드 완료`);
     } catch {
       toast.error('CSV 내보내기에 실패했습니다.');
@@ -182,18 +163,14 @@ export default function DatasetListPage() {
       {/* Filters */}
       <div className="space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="데이터셋 검색..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(0);
-              }}
-              className="pl-9"
-            />
-          </div>
+          <SearchInput
+            placeholder="데이터셋 검색..."
+            value={search}
+            onChange={(value) => {
+              setSearch(value);
+              setPage(0);
+            }}
+          />
           <Select
             value={datasetType || '__all__'}
             onValueChange={(value) => {
@@ -286,19 +263,9 @@ export default function DatasetListPage() {
               <TableHead className="w-[60px]" />
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <tbody>
             {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-4" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-8" /></TableCell>
-                </TableRow>
-              ))
+              <TableSkeletonRows columns={7} rows={5} />
             ) : datasets.length > 0 ? (
               datasets.map((dataset) => (
                 <TableRow
@@ -403,8 +370,11 @@ export default function DatasetListPage() {
                     </div>
 
                     {/* Delete button */}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
+                    <DeleteConfirmDialog
+                      entityName="데이터셋"
+                      itemName={dataset.name}
+                      onConfirm={() => handleDelete(dataset.id, dataset.name)}
+                      trigger={
                         <Button
                           variant="ghost"
                           size="sm"
@@ -412,59 +382,25 @@ export default function DatasetListPage() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>데이터셋 삭제</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            &quot;{dataset.name}&quot; 데이터셋을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>취소</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => handleDelete(dataset.id, dataset.name)}>
-                            삭제
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      }
+                    />
                   </TableCell>
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  데이터셋이 없습니다.
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={7} message="데이터셋이 없습니다." />
             )}
-          </TableBody>
+          </tbody>
         </Table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="text-sm">
-            {page + 1} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={page >= totalPages - 1}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+      <SimplePagination
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        totalElements={totalElements}
+        pageSize={size}
+      />
 
       {/* Dataset Preview Dialog */}
       {previewDatasetId !== null && (

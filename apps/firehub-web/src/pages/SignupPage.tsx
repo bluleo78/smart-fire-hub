@@ -7,10 +7,9 @@ import type { SignupFormData } from '../lib/validations/auth';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import type { ErrorResponse } from '../types/auth';
-import axios from 'axios';
+import { FormField } from '@/components/ui/form-field';
+import { extractApiError } from '@/lib/api-error';
 
 export default function SignupPage() {
   const { signup, isAuthenticated } = useAuth();
@@ -33,12 +32,7 @@ export default function SignupPage() {
       setServerError('');
       await signup(data);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        setServerError(errData.message || '회원가입에 실패했습니다.');
-      } else {
-        setServerError('회원가입에 실패했습니다.');
-      }
+      setServerError(extractApiError(error, '회원가입에 실패했습니다.'));
     }
   };
 
@@ -50,52 +44,52 @@ export default function SignupPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="username">아이디 (이메일)</Label>
+            <FormField
+              label="아이디 (이메일)"
+              htmlFor="username"
+              error={errors.username?.message}
+            >
               <Input
                 id="username"
                 type="text"
                 placeholder="email@example.com"
                 {...register('username')}
               />
-              {errors.username && (
-                <p className="text-sm text-destructive">{errors.username.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">비밀번호</Label>
+            </FormField>
+            <FormField
+              label="비밀번호"
+              htmlFor="password"
+              error={errors.password?.message}
+            >
               <Input
                 id="password"
                 type="password"
                 {...register('password')}
               />
-              {errors.password && (
-                <p className="text-sm text-destructive">{errors.password.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="name">이름</Label>
+            </FormField>
+            <FormField
+              label="이름"
+              htmlFor="name"
+              error={errors.name?.message}
+            >
               <Input
                 id="name"
                 type="text"
                 {...register('name')}
               />
-              {errors.name && (
-                <p className="text-sm text-destructive">{errors.name.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">이메일 (선택)</Label>
+            </FormField>
+            <FormField
+              label="이메일 (선택)"
+              htmlFor="email"
+              error={errors.email?.message}
+            >
               <Input
                 id="email"
                 type="email"
                 placeholder="email@example.com"
                 {...register('email')}
               />
-              {errors.email && (
-                <p className="text-sm text-destructive">{errors.email.message}</p>
-              )}
-            </div>
+            </FormField>
             {serverError && (
               <p className="text-sm text-destructive">{serverError}</p>
             )}

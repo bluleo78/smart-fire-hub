@@ -8,13 +8,10 @@ import { createRoleSchema } from '../../lib/validations/role';
 import type { CreateRoleFormData } from '../../lib/validations/role';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
 import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -26,21 +23,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../../components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '../../components/ui/alert-dialog';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { FormField } from '@/components/ui/form-field';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ErrorResponse } from '../../types/auth';
-import axios from 'axios';
+import { extractApiError, handleApiError } from '@/lib/api-error';
 
 export default function RoleListPage() {
   const navigate = useNavigate();
@@ -85,12 +74,7 @@ export default function RoleListPage() {
       form.reset();
       fetchRoles();
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        setCreateError(errData.message || '역할 생성에 실패했습니다.');
-      } else {
-        setCreateError('역할 생성에 실패했습니다.');
-      }
+      setCreateError(extractApiError(error, '역할 생성에 실패했습니다.'));
     }
   };
 
@@ -100,12 +84,7 @@ export default function RoleListPage() {
       toast.success(`역할 "${role.name}"이(가) 삭제되었습니다.`);
       fetchRoles();
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '역할 삭제에 실패했습니다.');
-      } else {
-        toast.error('역할 삭제에 실패했습니다.');
-      }
+      handleApiError(error, '역할 삭제에 실패했습니다.');
     }
   };
 
@@ -125,23 +104,25 @@ export default function RoleListPage() {
               <DialogTitle>새 역할 생성</DialogTitle>
             </DialogHeader>
             <form onSubmit={form.handleSubmit(onCreateSubmit)} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="role-name">역할 이름</Label>
+              <FormField
+                label="역할 이름"
+                htmlFor="role-name"
+                error={form.formState.errors.name?.message}
+              >
                 <Input
                   id="role-name"
                   {...form.register('name')}
                 />
-                {form.formState.errors.name && (
-                  <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role-description">설명 (선택)</Label>
+              </FormField>
+              <FormField
+                label="설명 (선택)"
+                htmlFor="role-description"
+              >
                 <Input
                   id="role-description"
                   {...form.register('description')}
                 />
-              </div>
+              </FormField>
               {createError && (
                 <p className="text-sm text-destructive">{createError}</p>
               )}
@@ -165,14 +146,7 @@ export default function RoleListPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-8" /></TableCell>
-                </TableRow>
-              ))
+              <TableSkeletonRows columns={4} rows={3} />
             ) : roles.length > 0 ? (
               roles.map((role) => (
                 <TableRow
@@ -180,48 +154,33 @@ export default function RoleListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/admin/roles/${role.id}`)}
                 >
-                  <TableCell className="font-medium">{role.name}</TableCell>
-                  <TableCell>
+                  <td className="p-4 font-medium">{role.name}</td>
+                  <td className="p-4">
                     {role.isSystem ? (
                       <Badge variant="outline">시스템</Badge>
                     ) : (
                       <Badge variant="secondary">사용자 정의</Badge>
                     )}
-                  </TableCell>
-                  <TableCell>{role.description ?? '-'}</TableCell>
-                  <TableCell>
+                  </td>
+                  <td className="p-4">{role.description ?? '-'}</td>
+                  <td className="p-4">
                     {!role.isSystem && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="outline" size="sm" onClick={(e) => e.stopPropagation()}>
+                      <DeleteConfirmDialog
+                        entityName="역할"
+                        itemName={role.name}
+                        onConfirm={() => handleDelete(role)}
+                        trigger={
+                          <Button variant="outline" size="sm">
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>역할 삭제</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              &quot;{role.name}&quot; 역할을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>취소</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => handleDelete(role)}>
-                              삭제
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                        }
+                      />
                     )}
-                  </TableCell>
+                  </td>
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  역할이 없습니다.
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={4} message="역할이 없습니다." />
             )}
           </TableBody>
         </Table>

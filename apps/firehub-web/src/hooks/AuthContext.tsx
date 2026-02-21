@@ -107,19 +107,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchUserWithRoles();
   }, [fetchUserWithRoles]);
 
+  const ctxValue = useMemo(
+    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser }),
+    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser]
+  );
+
   return (
-    <AuthContext value={{
-      user,
-      roles,
-      isLoading,
-      isAuthenticated,
-      login,
-      signup,
-      logout,
-      hasRole,
-      isAdmin,
-      refreshUser,
-    }}>
+    <AuthContext value={ctxValue}>
       {children}
     </AuthContext>
   );

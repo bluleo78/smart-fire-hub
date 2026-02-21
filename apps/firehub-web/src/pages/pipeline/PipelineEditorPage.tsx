@@ -50,13 +50,15 @@ export default function PipelineEditorPage() {
   // 실행 상세 진입 시 실행 이력 탭, 그 외 개요 탭
   const [activeTab, setActiveTab] = useState(executionId ? 'executions' : 'overview');
 
-  // 실행 상세 진입 시 수정 모드 해제
-  useEffect(() => {
+  // 실행 상세 진입 시 수정 모드 해제 (render-time state adjustment)
+  const [prevExecutionId, setPrevExecutionId] = useState(executionId);
+  if (prevExecutionId !== executionId) {
+    setPrevExecutionId(executionId);
     if (executionId) {
       setIsEditing(false);
       setActiveTab('executions');
     }
-  }, [executionId]);
+  }
 
   const { state, dispatch, save, loadFromApi, cancelEdit, isSaving } = usePipelineEditor(pipelineId);
 

@@ -3,30 +3,20 @@ import { Link, useNavigate } from 'react-router-dom';
 import { usePipelines, useDeletePipeline } from '../../hooks/queries/usePipelines';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '../../components/ui/alert-dialog';
-import { Plus, Trash2, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { SimplePagination } from '@/components/ui/simple-pagination';
+import { Plus, Trash2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ErrorResponse } from '../../types/auth';
-import axios from 'axios';
+import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 
 export default function PipelineListPage() {
@@ -45,12 +35,7 @@ export default function PipelineListPage() {
       await deletePipeline.mutateAsync(id);
       toast.success(`파이프라인 "${name}"이(가) 삭제되었습니다.`);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '파이프라인 삭제에 실패했습니다.');
-      } else {
-        toast.error('파이프라인 삭제에 실패했습니다.');
-      }
+      handleApiError(error, '파이프라인 삭제에 실패했습니다.');
     }
   };
 
@@ -81,17 +66,7 @@ export default function PipelineListPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-8" /></TableCell>
-                </TableRow>
-              ))
+              <TableSkeletonRows columns={7} rows={5} />
             ) : pipelines.length > 0 ? (
               pipelines.map((pipeline) => (
                 <TableRow
@@ -99,82 +74,45 @@ export default function PipelineListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/pipelines/${pipeline.id}`)}
                 >
-                  <TableCell className="font-medium">{pipeline.name}</TableCell>
-                  <TableCell>
+                  <td className="p-4 font-medium">{pipeline.name}</td>
+                  <td className="p-4">
                     <Badge variant={pipeline.isActive ? 'default' : 'secondary'}>
                       {pipeline.isActive ? '활성' : '비활성'}
                     </Badge>
-                  </TableCell>
-                  <TableCell>{pipeline.stepCount}</TableCell>
-                  <TableCell>
+                  </td>
+                  <td className="p-4">{pipeline.stepCount}</td>
+                  <td className="p-4">
                     {pipeline.triggerCount > 0 && (
                       <Badge variant="outline" className="text-xs gap-1">
                         <Clock className="h-3 w-3" />
                         {pipeline.triggerCount}
                       </Badge>
                     )}
-                  </TableCell>
-                  <TableCell>{pipeline.createdBy}</TableCell>
-                  <TableCell>{formatDateShort(pipeline.createdAt)}</TableCell>
-                  <TableCell>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="outline" size="sm" onClick={(e) => e.stopPropagation()}>
+                  </td>
+                  <td className="p-4">{pipeline.createdBy}</td>
+                  <td className="p-4">{formatDateShort(pipeline.createdAt)}</td>
+                  <td className="p-4">
+                    <DeleteConfirmDialog
+                      entityName="파이프라인"
+                      itemName={pipeline.name}
+                      onConfirm={() => handleDelete(pipeline.id, pipeline.name)}
+                      trigger={
+                        <Button variant="outline" size="sm">
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>파이프라인 삭제</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            &quot;{pipeline.name}&quot; 파이프라인을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>취소</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => handleDelete(pipeline.id, pipeline.name)}>
-                            삭제
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
+                      }
+                    />
+                  </td>
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  파이프라인이 없습니다.
-                </TableCell>
-              </TableRow>
+              <TableEmptyRow colSpan={7} message="파이프라인이 없습니다." />
             )}
           </TableBody>
         </Table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="text-sm">
-            {page + 1} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={page >= totalPages - 1}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+      <SimplePagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

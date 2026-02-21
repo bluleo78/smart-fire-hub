@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type { AIMode, AIMessage } from '../../types/ai';
 import { useAIChat } from '../../hooks/queries/useAIChat';
@@ -24,6 +24,7 @@ interface AIContextValue {
 
 const AICtx = createContext<AIContextValue | null>(null);
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAI() {
   const ctx = useContext(AICtx);
   if (!ctx) throw new Error('useAI must be used within AIProvider');
@@ -84,27 +85,47 @@ export function AIProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const ctxValue = useMemo(
+    () => ({
+      isOpen,
+      mode,
+      currentSessionId,
+      messages,
+      isStreaming,
+      isLoadingHistory,
+      streamingMessage,
+      pendingUserMessage,
+      openAI,
+      closeAI,
+      toggleAI,
+      setMode,
+      sendMessage,
+      stopStreaming,
+      startNewSession,
+      loadSession,
+    }),
+    [
+      isOpen,
+      mode,
+      currentSessionId,
+      messages,
+      isStreaming,
+      isLoadingHistory,
+      streamingMessage,
+      pendingUserMessage,
+      openAI,
+      closeAI,
+      toggleAI,
+      setMode,
+      sendMessage,
+      stopStreaming,
+      startNewSession,
+      loadSession,
+    ]
+  );
+
   return (
-    <AICtx.Provider
-      value={{
-        isOpen,
-        mode,
-        currentSessionId,
-        messages,
-        isStreaming,
-        isLoadingHistory,
-        streamingMessage,
-        pendingUserMessage,
-        openAI,
-        closeAI,
-        toggleAI,
-        setMode,
-        sendMessage,
-        stopStreaming,
-        startNewSession,
-        loadSession,
-      }}
-    >
+    <AICtx.Provider value={ctxValue}>
       {children}
     </AICtx.Provider>
   );
