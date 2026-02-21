@@ -152,4 +152,30 @@ export class FireHubApiClient {
     const response = await this.client.get('/dashboard/stats');
     return response.data;
   }
+
+  // Dataset Data Manipulation
+  async executeQuery(datasetId: number, sql: string, maxRows?: number): Promise<any> {
+    const response = await this.client.post(`/datasets/${datasetId}/query`, { sql, maxRows });
+    return response.data;
+  }
+
+  async addRow(datasetId: number, data: Record<string, unknown>): Promise<any> {
+    const response = await this.client.post(`/datasets/${datasetId}/data/rows`, { data });
+    return response.data;
+  }
+
+  async addRowsBatch(datasetId: number, rows: Record<string, unknown>[]): Promise<any> {
+    const response = await this.client.post(`/datasets/${datasetId}/data/rows/batch`, { rows });
+    return response.data;
+  }
+
+  async updateRow(datasetId: number, rowId: number, data: Record<string, unknown>): Promise<any> {
+    await this.client.put(`/datasets/${datasetId}/data/rows/${rowId}`, { data });
+    return { success: true };
+  }
+
+  async deleteRows(datasetId: number, rowIds: number[]): Promise<any> {
+    const response = await this.client.post(`/datasets/${datasetId}/data/delete`, { rowIds });
+    return response.data;
+  }
 }

@@ -241,6 +241,14 @@ public class DatasetController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    @PostMapping("/{id}/data/rows/batch")
+    @RequirePermission("data:import")
+    public ResponseEntity<BatchRowDataResponse> addRowsBatch(@PathVariable Long id,
+                                                              @Valid @RequestBody BatchRowDataRequest request) {
+        BatchRowDataResponse response = datasetService.addRowsBatch(id, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
     @PutMapping("/{id}/data/rows/{rowId}")
     @RequirePermission("data:import")
     public ResponseEntity<Void> updateRow(@PathVariable Long id,

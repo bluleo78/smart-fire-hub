@@ -609,6 +609,31 @@ public class DatasetService {
     }
 
     @Transactional
+    public BatchRowDataResponse addRowsBatch(Long datasetId, BatchRowDataRequest request) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+
+        List<Map<String, Object>> validatedRows = new ArrayList<>();
+        for (int i = 0; i < request.rows().size(); i++) {
+            try {
+                validatedRows.add(validateAndConvertRowData(columns, request.rows().get(i)));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Row " + i + ": " + e.getMessage());
+            }
+        }
+
+        List<String> columnNames = columns.stream()
+                .map(DatasetColumnResponse::columnName)
+                .toList();
+
+        dataTableService.insertBatch(dataset.tableName(), columnNames, validatedRows);
+
+        return new BatchRowDataResponse(validatedRows.size());
+    }
+
+    @Transactional
     public void updateRow(Long datasetId, Long rowId, RowDataRequest request) {
         DatasetResponse dataset = datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));

@@ -723,6 +723,60 @@ class DatasetServiceTest extends IntegrationTestBase {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    // =========================================================================
+    // 2-5. Batch Row Entry
+    // =========================================================================
+
+    @Test
+    void addRowsBatch_multipleRows_success() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "Batch Test", "batch_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        List<Map<String, Object>> rows = List.of(
+                Map.of("name", "Alice", "value", 100),
+                Map.of("name", "Bob", "value", 200),
+                Map.of("name", "Charlie", "value", 300)
+        );
+
+        BatchRowDataResponse response = datasetService.addRowsBatch(dataset.id(), new BatchRowDataRequest(rows));
+
+        assertThat(response.insertedCount()).isEqualTo(3);
+
+        DatasetDetailResponse updated = datasetService.getDatasetById(dataset.id());
+        assertThat(updated.rowCount()).isEqualTo(3);
+    }
+
+    @Test
+    void addRowsBatch_invalidDataType_throwsException() {
+        List<DatasetColumnRequest> columns = List.of(
+                new DatasetColumnRequest("score", "Score", "INTEGER", null, true, false, null)
+        );
+        DatasetDetailResponse dataset = datasetService.createDataset(new CreateDatasetRequest(
+                "BatchInvalid Test", "batchinvalid_test", null, null, "SOURCE", columns
+        ), testUserId);
+
+        List<Map<String, Object>> rows = List.of(
+                Map.of("score", 100),
+                Map.of("score", "not_a_number")
+        );
+
+        assertThatThrownBy(() -> datasetService.addRowsBatch(dataset.id(), new BatchRowDataRequest(rows)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void addRowsBatch_nonExistentDataset_throwsNotFound() {
+        List<Map<String, Object>> rows = List.of(Map.of("col1", "value"));
+
+        assertThatThrownBy(() -> datasetService.addRowsBatch(999999L, new BatchRowDataRequest(rows)))
+                .isInstanceOf(DatasetNotFoundException.class);
+    }
+
     @Test
     void deleteDataRows_success() {
         DatasetDetailResponse dataset = createTestDatasetWithData("DelRows Test", "delrows_test");
