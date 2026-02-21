@@ -1,3 +1,5 @@
+export type ImportMode = 'APPEND' | 'UPSERT' | 'REPLACE';
+
 export interface ImportStartResponse {
   jobId: string;
   status: string;

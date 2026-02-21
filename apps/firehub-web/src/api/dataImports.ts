@@ -2,11 +2,14 @@ import { client } from './client';
 import type { ImportResponse, ImportStartResponse, ImportPreviewResponse, ImportValidateResponse, ColumnMappingEntry } from '../types/dataImport';
 
 export const dataImportsApi = {
-  uploadFile: (datasetId: number, file: File, mappings?: ColumnMappingEntry[]) => {
+  uploadFile: (datasetId: number, file: File, mappings?: ColumnMappingEntry[], importMode?: string) => {
     const formData = new FormData();
     formData.append('file', file);
     if (mappings) {
       formData.append('mappings', JSON.stringify(mappings));
+    }
+    if (importMode) {
+      formData.append('importMode', importMode);
     }
     return client.post<ImportStartResponse>(`/datasets/${datasetId}/imports`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

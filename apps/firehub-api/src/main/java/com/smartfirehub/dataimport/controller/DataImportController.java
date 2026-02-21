@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
+import com.smartfirehub.dataimport.dto.ImportMode;
 import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
@@ -77,6 +78,7 @@ public class DataImportController {
             @RequestParam(defaultValue = "UTF-8") String encoding,
             @RequestParam(defaultValue = "true") boolean hasHeader,
             @RequestParam(defaultValue = "0") int skipRows,
+            @RequestParam(defaultValue = "APPEND") String importMode,
             HttpServletRequest request) throws Exception {
         Long userId = Long.parseLong(SecurityContextHolder.getContext().getAuthentication().getName());
         String username = userRepository.findById(userId)
@@ -85,13 +87,20 @@ public class DataImportController {
         String ipAddress = request.getRemoteAddr();
         String userAgent = request.getHeader("User-Agent");
 
+        ImportMode resolvedImportMode;
+        try {
+            resolvedImportMode = ImportMode.valueOf(importMode.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+
         List<ColumnMappingEntry> mappings = null;
         if (mappingsJson != null && !mappingsJson.isEmpty()) {
             mappings = objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
         }
 
         ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
-        ImportStartResponse response = importService.importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, parseOptions);
+        ImportStartResponse response = importService.importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, parseOptions, resolvedImportMode);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

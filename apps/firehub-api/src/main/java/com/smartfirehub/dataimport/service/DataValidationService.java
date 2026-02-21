@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.HashSet;
 
 @Service
 public class DataValidationService {
@@ -236,6 +237,53 @@ public class DataValidationService {
             errors.size()
         );
     }
+
+    public PkValidationResult validatePrimaryKeys(List<Map<String, String>> rows, List<String> pkColumns) {
+        List<String> warnings = new ArrayList<>();
+        List<ValidationErrorDetail> errors = new ArrayList<>();
+
+        // Track composite keys seen so far to detect duplicates within the file
+        Set<String> seenKeys = new HashSet<>();
+
+        int rowIndex = 0;
+        for (Map<String, String> row : rows) {
+            rowIndex++;
+
+            // Check for NULL or empty PK values
+            for (String pkCol : pkColumns) {
+                String value = row.get(pkCol);
+                if (value == null || value.trim().isEmpty()) {
+                    errors.add(new ValidationErrorDetail(
+                            rowIndex, pkCol, value != null ? value : "",
+                            "Primary key column cannot be null or empty"
+                    ));
+                }
+            }
+
+            // Build composite key string using null-byte as separator (safe since values are trimmed strings)
+            StringBuilder keyBuilder = new StringBuilder();
+            for (int i = 0; i < pkColumns.size(); i++) {
+                if (i > 0) keyBuilder.append("\0");
+                String value = row.get(pkColumns.get(i));
+                keyBuilder.append(value != null ? value : "");
+            }
+            String compositeKey = keyBuilder.toString();
+
+            // Detect duplicate keys within the file — last-write-wins in UPSERT mode
+            if (!seenKeys.add(compositeKey)) {
+                warnings.add("Row " + rowIndex + ": duplicate key value (" +
+                        String.join(", ", pkColumns) + ") = (" + compositeKey.replace("\0", ", ") +
+                        ") — last-write-wins in UPSERT mode");
+            }
+        }
+
+        return new PkValidationResult(errors, warnings);
+    }
+
+    public record PkValidationResult(
+            List<ValidationErrorDetail> errors,
+            List<String> warnings
+    ) {}
 
     public record ValidationResult(
             List<List<Object>> validRows,

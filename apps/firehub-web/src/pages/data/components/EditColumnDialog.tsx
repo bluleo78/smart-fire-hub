@@ -12,6 +12,7 @@ import { Label } from '../../../components/ui/label';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
+import { KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../../types/auth';
 import axios from 'axios';
@@ -37,6 +38,7 @@ export function EditColumnDialog({ open, onOpenChange, datasetId, column, hasDat
       maxLength: undefined,
       isNullable: true,
       isIndexed: false,
+      isPrimaryKey: false,
       description: '',
     },
   });
@@ -50,6 +52,7 @@ export function EditColumnDialog({ open, onOpenChange, datasetId, column, hasDat
         maxLength: column.maxLength,
         isNullable: column.isNullable,
         isIndexed: column.isIndexed,
+        isPrimaryKey: column.isPrimaryKey,
         description: column.description || '',
       });
     }
@@ -66,6 +69,7 @@ export function EditColumnDialog({ open, onOpenChange, datasetId, column, hasDat
         maxLength: data.maxLength,
         isNullable: data.isNullable,
         isIndexed: data.isIndexed,
+        isPrimaryKey: data.isPrimaryKey,
         description: data.description || undefined,
       });
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
@@ -156,12 +160,30 @@ export function EditColumnDialog({ open, onOpenChange, datasetId, column, hasDat
 
           <div className="flex items-center space-x-2">
             <Checkbox
+              id="edit-isPrimaryKey"
+              checked={editForm.watch('isPrimaryKey')}
+              onCheckedChange={(checked) => {
+                editForm.setValue('isPrimaryKey', checked as boolean);
+                if (checked) {
+                  editForm.setValue('isNullable', false);
+                }
+              }}
+              disabled={hasData}
+            />
+            <Label htmlFor="edit-isPrimaryKey" className="text-sm font-normal cursor-pointer flex items-center gap-1">
+              <KeyRound className="h-3 w-3" />
+              기본 키
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Checkbox
               id="edit-isNullable"
               checked={editForm.watch('isNullable')}
               onCheckedChange={(checked) =>
                 editForm.setValue('isNullable', checked as boolean)
               }
-              disabled={hasData}
+              disabled={hasData || editForm.watch('isPrimaryKey')}
             />
             <Label htmlFor="edit-isNullable" className="text-sm font-normal cursor-pointer">
               NULL 허용

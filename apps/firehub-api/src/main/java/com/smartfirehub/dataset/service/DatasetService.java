@@ -60,6 +60,14 @@ public class DatasetService {
             dataTableService.validateName(col.columnName());
         }
 
+        // Validate PK columns: must be NOT NULL
+        for (DatasetColumnRequest col : request.columns()) {
+            if (col.isPrimaryKey() && col.isNullable()) {
+                throw new ColumnModificationException(
+                        "Primary key column '" + col.columnName() + "' cannot be nullable");
+            }
+        }
+
         if (datasetRepository.existsByName(request.name())) {
             throw new DuplicateDatasetNameException("Dataset name already exists: " + request.name());
         }
@@ -171,6 +179,16 @@ public class DatasetService {
             throw new ColumnModificationException("Cannot add non-nullable column to dataset with existing data");
         }
 
+        // PK validation
+        if (request.isPrimaryKey() && rowCount > 0) {
+            throw new ColumnModificationException(
+                    "Cannot add primary key column to dataset with existing data. " +
+                    "Add the column first, populate it, then designate it as primary key.");
+        }
+        if (request.isPrimaryKey() && request.isNullable()) {
+            throw new ColumnModificationException("Primary key column cannot be nullable");
+        }
+
         int nextOrder = columnRepository.getMaxOrder(datasetId) + 1;
 
         DatasetColumnRequest colRequest = new DatasetColumnRequest(
@@ -180,10 +198,20 @@ public class DatasetService {
                 request.maxLength(),
                 request.isNullable(),
                 request.isIndexed(),
-                request.description()
+                request.description(),
+                request.isPrimaryKey()
         );
         DatasetColumnResponse column = columnRepository.save(datasetId, colRequest, nextOrder);
         dataTableService.addColumn(dataset.tableName(), colRequest);
+
+        if (request.isPrimaryKey()) {
+            List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
+            List<String> pkColumnNames = allColumns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
+        }
 
         return column;
     }
@@ -247,7 +275,61 @@ public class DatasetService {
             dataTableService.setColumnIndex(dataset.tableName(), currentColName, request.isIndexed());
         }
 
+        // Prevent making PK column nullable
+        if (request.isNullable() != null && request.isNullable() &&
+                (request.isPrimaryKey() != null ? request.isPrimaryKey() : column.isPrimaryKey())) {
+            throw new ColumnModificationException("Primary key column cannot be nullable");
+        }
+
+        // Handle primary key changes
+        if (request.isPrimaryKey() != null && request.isPrimaryKey() != column.isPrimaryKey()) {
+            if (request.isPrimaryKey()) {
+                // Setting as PK: validate NOT NULL
+                boolean nullable = request.isNullable() != null ? request.isNullable() : column.isNullable();
+                if (nullable) {
+                    throw new ColumnModificationException("Primary key column cannot be nullable");
+                }
+                // Check data uniqueness if dataset has data
+                if (rowCount > 0) {
+                    List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
+                    String colName = request.columnName() != null ? request.columnName() : column.columnName();
+                    List<String> pkColNames = new java.util.ArrayList<>();
+                    for (DatasetColumnResponse c : allColumns) {
+                        if (c.isPrimaryKey() || c.id().equals(columnId)) {
+                            String name = c.id().equals(columnId) ? colName : c.columnName();
+                            if (!pkColNames.contains(name)) {
+                                pkColNames.add(name);
+                            }
+                        }
+                    }
+                    if (!pkColNames.contains(colName)) pkColNames.add(colName);
+
+                    if (!dataTableService.checkDataUniqueness(dataset.tableName(), pkColNames)) {
+                        throw new ColumnModificationException(
+                                "Cannot set as primary key: duplicate values exist in the data");
+                    }
+                }
+            }
+        }
+
         columnRepository.update(columnId, request);
+
+        // Recreate PK index if PK flag changed
+        if (request.isPrimaryKey() != null && request.isPrimaryKey() != column.isPrimaryKey()) {
+            List<DatasetColumnResponse> updatedColumns = columnRepository.findByDatasetId(datasetId);
+            List<String> pkColumnNames = updatedColumns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            if (rowCount > 0 && request.isPrimaryKey()) {
+                // Use regular (non-concurrent) index creation here because updateColumn() is @Transactional.
+                // CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
+                // The regular CREATE UNIQUE INDEX will briefly lock the table but is safe within the transaction.
+                dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
+            } else {
+                dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
+            }
+        }
     }
 
     @Transactional
@@ -272,6 +354,16 @@ public class DatasetService {
 
         dataTableService.dropColumn(dataset.tableName(), column.columnName());
         columnRepository.deleteById(columnId);
+
+        // Recreate PK index if deleted column was a PK column
+        if (column.isPrimaryKey()) {
+            List<DatasetColumnResponse> remainingColumns = columnRepository.findByDatasetId(datasetId);
+            List<String> pkColumnNames = remainingColumns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
+        }
     }
 
     @Transactional(readOnly = true)

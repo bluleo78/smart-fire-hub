@@ -8,6 +8,7 @@ export const pipelineStepSchema = z.object({
   outputDatasetId: z.number({ message: '출력 데이터셋을 선택하세요' }),
   inputDatasetIds: z.array(z.number()).default([]),
   dependsOnStepNames: z.array(z.string()).default([]),
+  loadStrategy: z.enum(['REPLACE', 'APPEND']).default('REPLACE'),
 });
 
 export const createPipelineSchema = z.object({
@@ -27,6 +28,7 @@ export const editorStepSchema = z.object({
   scriptContent: z.string().min(1, '스크립트를 입력하세요'),
   outputDatasetId: z.number().nullable(),
   inputDatasetIds: z.array(z.number()).default([]),
+  loadStrategy: z.enum(['REPLACE', 'APPEND']).default('REPLACE'),
 });
 
 export const editorPipelineSchema = z.object({

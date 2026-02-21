@@ -9,5 +9,14 @@ public record PipelineStepRequest(
     String scriptContent,
     Long outputDatasetId,
     List<Long> inputDatasetIds,
-    List<String> dependsOnStepNames  // reference other steps by name
-) {}
+    List<String> dependsOnStepNames,  // reference other steps by name
+    String loadStrategy
+) {
+    public PipelineStepRequest(
+            String name, String description, String scriptType,
+            String scriptContent, Long outputDatasetId,
+            List<Long> inputDatasetIds, List<String> dependsOnStepNames) {
+        this(name, description, scriptType, scriptContent, outputDatasetId,
+             inputDatasetIds, dependsOnStepNames, "REPLACE");
+    }
+}

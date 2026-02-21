@@ -26,6 +26,7 @@ public class PipelineStepRepository {
     private static final Field<String> PS_SCRIPT_CONTENT = field(name("pipeline_step", "script_content"), String.class);
     private static final Field<Long> PS_OUTPUT_DATASET_ID = field(name("pipeline_step", "output_dataset_id"), Long.class);
     private static final Field<Integer> PS_STEP_ORDER = field(name("pipeline_step", "step_order"), Integer.class);
+    private static final Field<String> PS_LOAD_STRATEGY = field(name("pipeline_step", "load_strategy"), String.class);
 
     private static final Table<?> PIPELINE_STEP_INPUT = table(name("pipeline_step_input"));
     private static final Field<Long> PSI_STEP_ID = field(name("pipeline_step_input", "step_id"), Long.class);
@@ -53,6 +54,7 @@ public class PipelineStepRepository {
                         PS_SCRIPT_CONTENT,
                         PS_OUTPUT_DATASET_ID,
                         PS_STEP_ORDER,
+                        PS_LOAD_STRATEGY,
                         D_NAME
                 )
                 .from(PIPELINE_STEP)
@@ -111,7 +113,8 @@ public class PipelineStepRepository {
                     r.get(D_NAME),
                     inputDatasetMap.getOrDefault(stepId, List.of()),
                     dependencyMap.getOrDefault(stepId, List.of()),
-                    r.get(PS_STEP_ORDER)
+                    r.get(PS_STEP_ORDER),
+                    r.get(PS_LOAD_STRATEGY) != null ? r.get(PS_LOAD_STRATEGY) : "REPLACE"
             );
         }).toList();
     }
@@ -125,6 +128,7 @@ public class PipelineStepRepository {
                 .set(PS_SCRIPT_CONTENT, request.scriptContent())
                 .set(PS_OUTPUT_DATASET_ID, request.outputDatasetId())
                 .set(PS_STEP_ORDER, stepOrder)
+                .set(PS_LOAD_STRATEGY, request.loadStrategy() != null ? request.loadStrategy() : "REPLACE")
                 .returning(PS_ID)
                 .fetchOne(r -> r.get(PS_ID));
     }

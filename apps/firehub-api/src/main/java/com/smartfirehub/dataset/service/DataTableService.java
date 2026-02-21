@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +21,13 @@ public class DataTableService {
 
     private final DSLContext dsl;
     private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
+
+    /**
+     * Result of an upsert batch operation.
+     * inserted: number of rows newly inserted (xmax = 0 in PostgreSQL means the row was just inserted).
+     * updated: number of rows that already existed and were updated.
+     */
+    public record UpsertResult(int inserted, int updated) {}
 
     public DataTableService(DSLContext dsl) {
         this.dsl = dsl;
@@ -84,6 +92,22 @@ public class DataTableService {
                 dsl.execute(indexSql);
             }
         }
+
+        // Create unique index for primary key columns
+        List<DatasetColumnRequest> pkColumns = columns.stream()
+                .filter(DatasetColumnRequest::isPrimaryKey)
+                .toList();
+        if (!pkColumns.isEmpty()) {
+            StringBuilder uniqueSql = new StringBuilder();
+            uniqueSql.append("CREATE UNIQUE INDEX \"ux_").append(tableName).append("_pk\" ON data.\"")
+                    .append(tableName).append("\" (");
+            for (int i = 0; i < pkColumns.size(); i++) {
+                if (i > 0) uniqueSql.append(", ");
+                uniqueSql.append("\"").append(pkColumns.get(i).columnName()).append("\"");
+            }
+            uniqueSql.append(")");
+            dsl.execute(uniqueSql.toString());
+        }
     }
 
     public void addColumn(String tableName, DatasetColumnRequest column) {
@@ -118,6 +142,97 @@ public class DataTableService {
             String sql = "DROP INDEX IF EXISTS data.\"" + indexName + "\"";
             dsl.execute(sql);
         }
+    }
+
+    public void recreatePrimaryKeyIndex(String tableName, List<String> pkColumnNames) {
+        validateName(tableName);
+        for (String col : pkColumnNames) {
+            validateName(col);
+        }
+        // Drop existing PK index if exists
+        String dropSql = "DROP INDEX IF EXISTS data.\"ux_" + tableName + "_pk\"";
+        dsl.execute(dropSql);
+
+        // Create new index if there are PK columns
+        if (!pkColumnNames.isEmpty()) {
+            StringBuilder sql = new StringBuilder();
+            sql.append("CREATE UNIQUE INDEX \"ux_").append(tableName).append("_pk\" ON data.\"")
+                    .append(tableName).append("\" (");
+            for (int i = 0; i < pkColumnNames.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append("\"").append(pkColumnNames.get(i)).append("\"");
+            }
+            sql.append(")");
+            dsl.execute(sql.toString());
+        }
+    }
+
+    public void createPrimaryKeyIndexConcurrently(String tableName, List<String> pkColumnNames) {
+        validateName(tableName);
+        for (String col : pkColumnNames) {
+            validateName(col);
+        }
+        if (pkColumnNames.isEmpty()) return;
+
+        // Drop existing PK index if exists
+        String dropSql = "DROP INDEX IF EXISTS data.\"ux_" + tableName + "_pk\"";
+        dsl.execute(dropSql);
+
+        // CREATE INDEX CONCURRENTLY cannot run inside a transaction
+        StringBuilder sql = new StringBuilder();
+        sql.append("CREATE UNIQUE INDEX CONCURRENTLY \"ux_").append(tableName).append("_pk\" ON data.\"")
+                .append(tableName).append("\" (");
+        for (int i = 0; i < pkColumnNames.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(pkColumnNames.get(i)).append("\"");
+        }
+        sql.append(")");
+        dsl.execute(sql.toString());
+    }
+
+    public boolean checkDataUniqueness(String tableName, List<String> pkColumnNames) {
+        validateName(tableName);
+        for (String col : pkColumnNames) {
+            validateName(col);
+        }
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT COUNT(*) = COUNT(DISTINCT (");
+        for (int i = 0; i < pkColumnNames.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(pkColumnNames.get(i)).append("\"");
+        }
+        sql.append(")) AS is_unique FROM data.\"").append(tableName).append("\"");
+        return Boolean.TRUE.equals(dsl.fetchOne(sql.toString()).get(0, Boolean.class));
+    }
+
+    public List<Map<String, Object>> findDuplicateRows(String tableName, List<String> pkColumnNames, int limit) {
+        validateName(tableName);
+        for (String col : pkColumnNames) {
+            validateName(col);
+        }
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT ");
+        for (int i = 0; i < pkColumnNames.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(pkColumnNames.get(i)).append("\"");
+        }
+        sql.append(", COUNT(*) AS duplicate_count FROM data.\"").append(tableName).append("\" GROUP BY ");
+        for (int i = 0; i < pkColumnNames.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("\"").append(pkColumnNames.get(i)).append("\"");
+        }
+        sql.append(" HAVING COUNT(*) > 1 LIMIT ").append(limit);
+
+        var result = dsl.fetch(sql.toString());
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (var record : result) {
+            Map<String, Object> row = new HashMap<>();
+            for (int i = 0; i < record.size(); i++) {
+                row.put(record.field(i).getName(), record.get(i));
+            }
+            rows.add(row);
+        }
+        return rows;
     }
 
     public void dropTable(String tableName) {
@@ -317,6 +432,311 @@ public class DataTableService {
             processedRows += chunk.size();
             progressCallback.accept(processedRows, totalRows);
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Overloaded insertBatch / insertBatchWithProgress that also populate import_id
+    // ---------------------------------------------------------------------------
+
+    public void insertBatch(String tableName, List<String> columns, List<Map<String, Object>> rows, Long importId) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+
+        if (rows.isEmpty()) {
+            return;
+        }
+
+        // Build base INSERT statement with import_id prepended
+        StringBuilder baseSql = new StringBuilder();
+        baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (import_id, ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) baseSql.append(", ");
+            baseSql.append("\"").append(columns.get(i)).append("\"");
+        }
+        baseSql.append(") VALUES ");
+
+        // import_id placeholder + column placeholders
+        String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+
+        int batchSize = 500;
+        for (int start = 0; start < rows.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, rows.size());
+            List<Map<String, Object>> chunk = rows.subList(start, end);
+
+            StringBuilder sql = new StringBuilder(baseSql);
+            for (int r = 0; r < chunk.size(); r++) {
+                if (r > 0) sql.append(", ");
+                sql.append(placeholders);
+            }
+
+            Object[] values = new Object[chunk.size() * (columns.size() + 1)];
+            int idx = 0;
+            for (Map<String, Object> row : chunk) {
+                values[idx++] = importId;
+                for (String col : columns) {
+                    values[idx++] = row.get(col);
+                }
+            }
+            dsl.execute(sql.toString(), values);
+        }
+    }
+
+    public void insertBatchWithProgress(String tableName, List<String> columns, List<Map<String, Object>> rows,
+                                        Long importId, BiConsumer<Integer, Integer> progressCallback) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+
+        if (rows.isEmpty()) {
+            return;
+        }
+
+        // Build base INSERT statement with import_id prepended
+        StringBuilder baseSql = new StringBuilder();
+        baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (import_id, ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) baseSql.append(", ");
+            baseSql.append("\"").append(columns.get(i)).append("\"");
+        }
+        baseSql.append(") VALUES ");
+
+        // import_id placeholder + column placeholders
+        String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+
+        int totalRows = rows.size();
+        int batchSize = 500;
+        int processedRows = 0;
+
+        for (int start = 0; start < rows.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, rows.size());
+            List<Map<String, Object>> chunk = rows.subList(start, end);
+
+            StringBuilder sql = new StringBuilder(baseSql);
+            for (int r = 0; r < chunk.size(); r++) {
+                if (r > 0) sql.append(", ");
+                sql.append(placeholders);
+            }
+
+            Object[] values = new Object[chunk.size() * (columns.size() + 1)];
+            int idx = 0;
+            for (Map<String, Object> row : chunk) {
+                values[idx++] = importId;
+                for (String col : columns) {
+                    values[idx++] = row.get(col);
+                }
+            }
+            dsl.execute(sql.toString(), values);
+
+            processedRows += chunk.size();
+            progressCallback.accept(processedRows, totalRows);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // upsertBatch / upsertBatchWithProgress
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Upsert a batch of rows using PostgreSQL's ON CONFLICT DO UPDATE.
+     *
+     * The conflict target is the unique index on pkColumns (ux_{tableName}_pk).
+     * created_at is intentionally excluded from DO UPDATE SET to preserve the
+     * original creation timestamp on subsequent updates.
+     *
+     * PostgreSQL xmax trick: when a row is freshly inserted, its xmax system
+     * column is 0. When it is updated (DELETE + re-insert under the hood),
+     * xmax holds the transaction ID of the deleting transaction (non-zero).
+     * By returning (xmax = 0) AS was_insert we can distinguish inserts from
+     * updates without a separate SELECT.
+     */
+    public UpsertResult upsertBatch(String tableName, List<String> columns, List<String> pkColumns,
+                                    List<Map<String, Object>> rows, Long importId) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+        for (String pkCol : pkColumns) {
+            validateName(pkCol);
+        }
+
+        if (rows.isEmpty()) {
+            return new UpsertResult(0, 0);
+        }
+
+        if (pkColumns.isEmpty()) {
+            throw new IllegalStateException("UPSERT mode requires at least one primary key column");
+        }
+
+        // Columns that go in DO UPDATE SET: import_id + non-PK data columns (exclude created_at)
+        Set<String> pkSet = new HashSet<>(pkColumns);
+        List<String> updateCols = columns.stream()
+                .filter(c -> !pkSet.contains(c))
+                .toList();
+
+        // Build conflict target: (pkCol1, pkCol2, ...)
+        StringBuilder conflictTarget = new StringBuilder("(");
+        for (int i = 0; i < pkColumns.size(); i++) {
+            if (i > 0) conflictTarget.append(", ");
+            conflictTarget.append("\"").append(pkColumns.get(i)).append("\"");
+        }
+        conflictTarget.append(")");
+
+        // Build DO UPDATE SET clause: import_id, then non-PK cols (created_at excluded)
+        StringBuilder updateSet = new StringBuilder("import_id = EXCLUDED.import_id");
+        for (String col : updateCols) {
+            updateSet.append(", \"").append(col).append("\" = EXCLUDED.\"").append(col).append("\"");
+        }
+
+        // INSERT columns: import_id + all data columns
+        StringBuilder insertCols = new StringBuilder("import_id, ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) insertCols.append(", ");
+            insertCols.append("\"").append(columns.get(i)).append("\"");
+        }
+
+        // Placeholders: import_id + columns
+        String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+
+        String sqlTemplate = "INSERT INTO data.\"" + tableName + "\" (" + insertCols + ") VALUES "
+                + "%ROWS%"
+                + " ON CONFLICT " + conflictTarget
+                + " DO UPDATE SET " + updateSet
+                + " RETURNING (xmax = 0) AS was_insert";
+
+        int totalInserted = 0;
+        int totalUpdated = 0;
+        int batchSize = 500;
+
+        for (int start = 0; start < rows.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, rows.size());
+            List<Map<String, Object>> chunk = rows.subList(start, end);
+
+            StringBuilder rowsFragment = new StringBuilder();
+            for (int r = 0; r < chunk.size(); r++) {
+                if (r > 0) rowsFragment.append(", ");
+                rowsFragment.append(placeholders);
+            }
+
+            String sql = sqlTemplate.replace("%ROWS%", rowsFragment.toString());
+
+            Object[] values = new Object[chunk.size() * (columns.size() + 1)];
+            int idx = 0;
+            for (Map<String, Object> row : chunk) {
+                values[idx++] = importId;
+                for (String col : columns) {
+                    values[idx++] = row.get(col);
+                }
+            }
+
+            var result = dsl.fetch(sql, values);
+            for (var record : result) {
+                Boolean wasInsert = record.get("was_insert", Boolean.class);
+                if (Boolean.TRUE.equals(wasInsert)) {
+                    totalInserted++;
+                } else {
+                    totalUpdated++;
+                }
+            }
+        }
+
+        return new UpsertResult(totalInserted, totalUpdated);
+    }
+
+    public UpsertResult upsertBatchWithProgress(String tableName, List<String> columns, List<String> pkColumns,
+                                                List<Map<String, Object>> rows, Long importId,
+                                                BiConsumer<Integer, Integer> progressCallback) {
+        validateName(tableName);
+        for (String col : columns) {
+            validateName(col);
+        }
+        for (String pkCol : pkColumns) {
+            validateName(pkCol);
+        }
+
+        if (rows.isEmpty()) {
+            return new UpsertResult(0, 0);
+        }
+
+        if (pkColumns.isEmpty()) {
+            throw new IllegalStateException("UPSERT mode requires at least one primary key column");
+        }
+
+        Set<String> pkSet = new HashSet<>(pkColumns);
+        List<String> updateCols = columns.stream()
+                .filter(c -> !pkSet.contains(c))
+                .toList();
+
+        StringBuilder conflictTarget = new StringBuilder("(");
+        for (int i = 0; i < pkColumns.size(); i++) {
+            if (i > 0) conflictTarget.append(", ");
+            conflictTarget.append("\"").append(pkColumns.get(i)).append("\"");
+        }
+        conflictTarget.append(")");
+
+        StringBuilder updateSet = new StringBuilder("import_id = EXCLUDED.import_id");
+        for (String col : updateCols) {
+            updateSet.append(", \"").append(col).append("\" = EXCLUDED.\"").append(col).append("\"");
+        }
+
+        StringBuilder insertCols = new StringBuilder("import_id, ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) insertCols.append(", ");
+            insertCols.append("\"").append(columns.get(i)).append("\"");
+        }
+
+        String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+
+        String sqlTemplate = "INSERT INTO data.\"" + tableName + "\" (" + insertCols + ") VALUES "
+                + "%ROWS%"
+                + " ON CONFLICT " + conflictTarget
+                + " DO UPDATE SET " + updateSet
+                + " RETURNING (xmax = 0) AS was_insert";
+
+        int totalInserted = 0;
+        int totalUpdated = 0;
+        int totalRows = rows.size();
+        int batchSize = 500;
+        int processedRows = 0;
+
+        for (int start = 0; start < rows.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, rows.size());
+            List<Map<String, Object>> chunk = rows.subList(start, end);
+
+            StringBuilder rowsFragment = new StringBuilder();
+            for (int r = 0; r < chunk.size(); r++) {
+                if (r > 0) rowsFragment.append(", ");
+                rowsFragment.append(placeholders);
+            }
+
+            String sql = sqlTemplate.replace("%ROWS%", rowsFragment.toString());
+
+            Object[] values = new Object[chunk.size() * (columns.size() + 1)];
+            int idx = 0;
+            for (Map<String, Object> row : chunk) {
+                values[idx++] = importId;
+                for (String col : columns) {
+                    values[idx++] = row.get(col);
+                }
+            }
+
+            var result = dsl.fetch(sql, values);
+            for (var record : result) {
+                Boolean wasInsert = record.get("was_insert", Boolean.class);
+                if (Boolean.TRUE.equals(wasInsert)) {
+                    totalInserted++;
+                } else {
+                    totalUpdated++;
+                }
+            }
+
+            processedRows += chunk.size();
+            progressCallback.accept(processedRows, totalRows);
+        }
+
+        return new UpsertResult(totalInserted, totalUpdated);
     }
 
     public int deleteRows(String tableName, List<Long> rowIds) {

@@ -295,10 +295,25 @@ public class PipelineExecutionService {
                         .orElse(null);
             }
 
-            // TRUNCATE output table (if specified)
-            if (outputTableName != null) {
-                log.info("Truncating output table: {}", outputTableName);
-                dataTableService.truncateTable(outputTableName);
+            // Apply load strategy before script execution
+            String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
+
+            switch (loadStrategy) {
+                case "REPLACE":
+                    if (outputTableName != null) {
+                        log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
+                        dataTableService.truncateTable(outputTableName);
+                    }
+                    break;
+                case "APPEND":
+                    log.info("APPEND strategy: Skipping truncation for output table: {}", outputTableName);
+                    break;
+                default:
+                    log.warn("Unknown load strategy '{}', falling back to REPLACE", loadStrategy);
+                    if (outputTableName != null) {
+                        dataTableService.truncateTable(outputTableName);
+                    }
+                    break;
             }
 
             // Execute script based on type

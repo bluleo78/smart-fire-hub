@@ -30,6 +30,7 @@ public class DatasetColumnRepository {
     private static final Field<Boolean> COL_IS_INDEXED = field(name("dataset_column", "is_indexed"), Boolean.class);
     private static final Field<String> COL_DESCRIPTION = field(name("dataset_column", "description"), String.class);
     private static final Field<Integer> COL_COLUMN_ORDER = field(name("dataset_column", "column_order"), Integer.class);
+    private static final Field<Boolean> COL_IS_PRIMARY_KEY = field(name("dataset_column", "is_primary_key"), Boolean.class);
 
     public DatasetColumnRepository(DSLContext dsl) {
         this.dsl = dsl;
@@ -45,13 +46,14 @@ public class DatasetColumnRepository {
                 r.get(COL_IS_NULLABLE),
                 r.get(COL_IS_INDEXED),
                 r.get(COL_DESCRIPTION),
-                r.get(COL_COLUMN_ORDER)
+                r.get(COL_COLUMN_ORDER),
+                Boolean.TRUE.equals(r.get(COL_IS_PRIMARY_KEY))
         );
     }
 
     public List<DatasetColumnResponse> findByDatasetId(Long datasetId) {
         return dsl.select(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE, COL_MAX_LENGTH,
-                        COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER)
+                        COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER, COL_IS_PRIMARY_KEY)
                 .from(DATASET_COLUMN)
                 .where(COL_DATASET_ID.eq(datasetId))
                 .orderBy(COL_COLUMN_ORDER.asc())
@@ -69,8 +71,9 @@ public class DatasetColumnRepository {
                 .set(COL_IS_INDEXED, request.isIndexed())
                 .set(COL_DESCRIPTION, request.description())
                 .set(COL_COLUMN_ORDER, columnOrder)
+                .set(COL_IS_PRIMARY_KEY, request.isPrimaryKey())
                 .returning(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE, COL_MAX_LENGTH,
-                        COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER)
+                        COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER, COL_IS_PRIMARY_KEY)
                 .fetchOne(this::mapToColumnResponse);
     }
 
@@ -87,13 +90,14 @@ public class DatasetColumnRepository {
                     .set(COL_IS_INDEXED, col.isIndexed())
                     .set(COL_DESCRIPTION, col.description())
                     .set(COL_COLUMN_ORDER, i)
+                    .set(COL_IS_PRIMARY_KEY, col.isPrimaryKey())
                     .execute();
         }
     }
 
     public Optional<DatasetColumnResponse> findById(Long id) {
         return dsl.select(COL_ID, COL_COLUMN_NAME, COL_DISPLAY_NAME, COL_DATA_TYPE, COL_MAX_LENGTH,
-                        COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER)
+                        COL_IS_NULLABLE, COL_IS_INDEXED, COL_DESCRIPTION, COL_COLUMN_ORDER, COL_IS_PRIMARY_KEY)
                 .from(DATASET_COLUMN)
                 .where(COL_ID.eq(id))
                 .fetchOptional(this::mapToColumnResponse);
@@ -120,6 +124,9 @@ public class DatasetColumnRepository {
         }
         if (request.isNullable() != null) {
             set = set.set(COL_IS_NULLABLE, request.isNullable());
+        }
+        if (request.isPrimaryKey() != null) {
+            set = set.set(COL_IS_PRIMARY_KEY, request.isPrimaryKey());
         }
 
         set.where(COL_ID.eq(id)).execute();

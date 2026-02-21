@@ -35,6 +35,7 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronRight,
+  KeyRound,
   Pencil,
   Trash2,
   Loader2,
@@ -472,7 +473,17 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                       </Button>
                     </TableCell>
                     <TableCell>{index + 1}</TableCell>
-                    <TableCell className="font-mono text-sm">{col.columnName}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      <div className="flex items-center gap-1.5">
+                        {col.isPrimaryKey && (
+                          <span className="inline-flex items-center gap-0.5 text-amber-600" title="기본 키">
+                            <KeyRound className="h-3 w-3" />
+                            <span className="text-xs font-semibold">PK</span>
+                          </span>
+                        )}
+                        {col.columnName}
+                      </div>
+                    </TableCell>
                     <TableCell>{col.displayName || '-'}</TableCell>
                     <TableCell>{getDataTypeBadge(col.dataType, col.maxLength)}</TableCell>
                     <TableCell>{col.isNullable ? '허용' : '불허'}</TableCell>

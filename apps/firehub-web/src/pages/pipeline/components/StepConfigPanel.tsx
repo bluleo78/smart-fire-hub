@@ -261,6 +261,31 @@ export default function StepConfigPanel({
 
           <Separator />
 
+          {/* Load strategy */}
+          <div className="space-y-1.5">
+            <Label>로드 전략</Label>
+            <Select
+              value={step.loadStrategy ?? 'REPLACE'}
+              disabled={readOnly}
+              onValueChange={(value) => handleUpdateStep({ loadStrategy: value })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="REPLACE">교체 (Replace)</SelectItem>
+                <SelectItem value="APPEND">추가 (Append)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {(step.loadStrategy ?? 'REPLACE') === 'REPLACE'
+                ? '출력 테이블을 비운 후 새로 생성합니다'
+                : '기존 데이터에 새 데이터를 추가합니다'}
+            </p>
+          </div>
+
+          <Separator />
+
           {/* Input datasets */}
           <div className="space-y-1.5">
             <Label>입력 데이터셋</Label>

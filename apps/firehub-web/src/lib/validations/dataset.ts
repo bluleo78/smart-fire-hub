@@ -15,10 +15,14 @@ export const datasetColumnSchema = z.object({
   maxLength: z.number().int().min(1, '최소 1').max(10000, '최대 10000').optional().nullable(),
   isNullable: z.boolean(),
   isIndexed: z.boolean(),
+  isPrimaryKey: z.boolean(),
   description: z.string().max(255).optional().or(z.literal('')),
 }).refine(
   (data) => data.dataType !== 'VARCHAR' || (data.maxLength != null && data.maxLength > 0),
   { message: 'VARCHAR 타입은 길이를 입력해야 합니다', path: ['maxLength'] }
+).refine(
+  (data) => !data.isPrimaryKey || !data.isNullable,
+  { message: '기본 키 칼럼은 NULL을 허용할 수 없습니다', path: ['isNullable'] }
 );
 
 export const createDatasetSchema = z.object({
@@ -55,10 +59,14 @@ export const updateColumnSchema = z.object({
   maxLength: z.number().int().min(1, '최소 1').max(10000, '최대 10000').optional().nullable(),
   isNullable: z.boolean(),
   isIndexed: z.boolean(),
+  isPrimaryKey: z.boolean().optional(),
   description: z.string().max(255).optional().or(z.literal('')),
 }).refine(
   (data) => data.dataType !== 'VARCHAR' || (data.maxLength != null && data.maxLength > 0),
   { message: 'VARCHAR 타입은 길이를 입력해야 합니다', path: ['maxLength'] }
+).refine(
+  (data) => !data.isPrimaryKey || !data.isNullable,
+  { message: '기본 키 칼럼은 NULL을 허용할 수 없습니다', path: ['isNullable'] }
 );
 
 export const categorySchema = z.object({

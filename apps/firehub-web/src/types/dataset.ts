@@ -41,6 +41,7 @@ export interface DatasetColumnResponse {
   maxLength: number | null;
   isNullable: boolean;
   isIndexed: boolean;
+  isPrimaryKey: boolean;
   description: string | null;
   columnOrder: number;
 }
@@ -82,6 +83,7 @@ export interface DatasetColumnRequest {
   maxLength?: number;
   isNullable: boolean;
   isIndexed: boolean;
+  isPrimaryKey: boolean;
   description?: string;
 }
 
@@ -98,6 +100,7 @@ export interface AddColumnRequest {
   maxLength?: number;
   isNullable: boolean;
   isIndexed: boolean;
+  isPrimaryKey: boolean;
   description?: string;
 }
 
@@ -108,6 +111,7 @@ export interface UpdateColumnRequest {
   maxLength?: number | null;
   isNullable?: boolean;
   isIndexed?: boolean;
+  isPrimaryKey?: boolean;
   description?: string;
 }
 

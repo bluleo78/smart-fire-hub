@@ -19,6 +19,7 @@ export interface PipelineStepResponse {
   inputDatasetIds: number[];
   dependsOnStepNames: string[];
   stepOrder: number;
+  loadStrategy: string;
 }
 
 export interface PipelineDetailResponse {
@@ -47,6 +48,7 @@ export interface PipelineStepRequest {
   outputDatasetId: number | null;
   inputDatasetIds: number[];
   dependsOnStepNames: string[];
+  loadStrategy?: string;
 }
 
 export interface UpdatePipelineRequest {

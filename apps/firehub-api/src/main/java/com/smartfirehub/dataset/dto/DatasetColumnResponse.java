@@ -9,5 +9,6 @@ public record DatasetColumnResponse(
     boolean isNullable,
     boolean isIndexed,
     String description,
-    int columnOrder
+    int columnOrder,
+    boolean isPrimaryKey
 ) {}

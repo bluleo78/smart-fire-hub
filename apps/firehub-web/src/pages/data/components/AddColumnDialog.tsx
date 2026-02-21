@@ -9,7 +9,7 @@ import { Label } from '../../../components/ui/label';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../../components/ui/dialog';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
-import { Plus } from 'lucide-react';
+import { KeyRound, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ErrorResponse } from '../../../types/auth';
 import axios from 'axios';
@@ -33,6 +33,7 @@ export function AddColumnDialog({ open, onOpenChange, datasetId }: AddColumnDial
       maxLength: undefined,
       isNullable: true,
       isIndexed: false,
+      isPrimaryKey: false,
       description: '',
     },
   });
@@ -46,6 +47,7 @@ export function AddColumnDialog({ open, onOpenChange, datasetId }: AddColumnDial
         maxLength: data.maxLength || undefined,
         isNullable: data.isNullable,
         isIndexed: data.isIndexed,
+        isPrimaryKey: data.isPrimaryKey,
         description: data.description || undefined,
       });
       toast.success('필드가 추가되었습니다.');
@@ -131,8 +133,26 @@ export function AddColumnDialog({ open, onOpenChange, datasetId }: AddColumnDial
 
           <div className="flex items-center space-x-2">
             <Checkbox
+              id="isPrimaryKey"
+              checked={columnForm.watch('isPrimaryKey')}
+              onCheckedChange={(checked) => {
+                columnForm.setValue('isPrimaryKey', checked as boolean);
+                if (checked) {
+                  columnForm.setValue('isNullable', false);
+                }
+              }}
+            />
+            <Label htmlFor="isPrimaryKey" className="text-sm font-normal cursor-pointer flex items-center gap-1">
+              <KeyRound className="h-3 w-3" />
+              기본 키
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Checkbox
               id="isNullable"
               checked={columnForm.watch('isNullable')}
+              disabled={columnForm.watch('isPrimaryKey')}
               onCheckedChange={(checked) =>
                 columnForm.setValue('isNullable', checked as boolean)
               }

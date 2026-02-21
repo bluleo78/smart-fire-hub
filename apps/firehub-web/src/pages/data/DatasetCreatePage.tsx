@@ -64,6 +64,7 @@ export default function DatasetCreatePage() {
           maxLength: col.maxLength ?? undefined,
           isNullable: col.isNullable,
           isIndexed: col.isIndexed,
+          isPrimaryKey: col.isPrimaryKey,
           description: col.description || undefined,
         })),
       });

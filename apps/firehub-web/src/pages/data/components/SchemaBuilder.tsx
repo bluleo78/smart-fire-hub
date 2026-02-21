@@ -5,7 +5,7 @@ import { Label } from '../../../components/ui/label';
 import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
-import { Plus, X } from 'lucide-react';
+import { KeyRound, Plus, X } from 'lucide-react';
 import type { CreateDatasetFormData } from '../../../lib/validations/dataset';
 
 export function SchemaBuilder() {
@@ -22,6 +22,7 @@ export function SchemaBuilder() {
       dataType: 'TEXT',
       isNullable: true,
       isIndexed: false,
+      isPrimaryKey: false,
       description: '',
     });
   };
@@ -107,8 +108,29 @@ export function SchemaBuilder() {
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Checkbox
+                    id={`columns.${index}.isPrimaryKey`}
+                    checked={watch(`columns.${index}.isPrimaryKey`)}
+                    onCheckedChange={(checked) => {
+                      setValue(`columns.${index}.isPrimaryKey`, checked as boolean);
+                      if (checked) {
+                        setValue(`columns.${index}.isNullable`, false);
+                      }
+                    }}
+                  />
+                  <Label
+                    htmlFor={`columns.${index}.isPrimaryKey`}
+                    className="text-sm font-normal cursor-pointer flex items-center gap-1"
+                  >
+                    <KeyRound className="h-3 w-3" />
+                    기본 키
+                  </Label>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <Checkbox
                     id={`columns.${index}.isNullable`}
                     checked={watch(`columns.${index}.isNullable`)}
+                    disabled={watch(`columns.${index}.isPrimaryKey`)}
                     onCheckedChange={(checked) => {
                       setValue(`columns.${index}.isNullable`, checked as boolean);
                     }}

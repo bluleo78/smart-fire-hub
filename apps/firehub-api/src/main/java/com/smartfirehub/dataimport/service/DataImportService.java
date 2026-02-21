@@ -19,6 +19,7 @@ import org.jooq.JSONB;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.opencsv.CSVWriter;
@@ -50,6 +51,7 @@ public class DataImportService {
     private final JobScheduler jobScheduler;
     private final ObjectMapper objectMapper;
     private final AsyncJobService asyncJobService;
+    private final TransactionTemplate transactionTemplate;
 
     public DataImportService(DatasetRepository datasetRepository,
                              DatasetColumnRepository columnRepository,
@@ -60,7 +62,8 @@ public class DataImportService {
                              AuditLogService auditLogService,
                              JobScheduler jobScheduler,
                              ObjectMapper objectMapper,
-                             AsyncJobService asyncJobService) {
+                             AsyncJobService asyncJobService,
+                             TransactionTemplate transactionTemplate) {
         this.datasetRepository = datasetRepository;
         this.columnRepository = columnRepository;
         this.dataTableService = dataTableService;
@@ -71,6 +74,7 @@ public class DataImportService {
         this.jobScheduler = jobScheduler;
         this.objectMapper = objectMapper;
         this.asyncJobService = asyncJobService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
@@ -160,12 +164,18 @@ public class DataImportService {
 
     public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
                                           Long userId, String username, String ipAddress, String userAgent) throws Exception {
-        return importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, ParseOptions.defaults());
+        return importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, ParseOptions.defaults(), ImportMode.APPEND);
     }
 
     public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
                                           Long userId, String username, String ipAddress, String userAgent,
                                           ParseOptions parseOptions) throws Exception {
+        return importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, parseOptions, ImportMode.APPEND);
+    }
+
+    public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
+                                          Long userId, String username, String ipAddress, String userAgent,
+                                          ParseOptions parseOptions, ImportMode importMode) throws Exception {
         // Validate dataset exists
         datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
@@ -189,7 +199,8 @@ public class DataImportService {
         String jobId;
         try {
             jobId = asyncJobService.createJob("IMPORT", "dataset", String.valueOf(datasetId), userId,
-                    Map.of("fileName", safeFileName, "fileSize", fileSize, "fileType", upperFileType));
+                    Map.of("fileName", safeFileName, "fileSize", fileSize, "fileType", upperFileType,
+                           "importMode", importMode.name()));
         } catch (DataIntegrityViolationException e) {
             throw new ConcurrentImportException("이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도하세요.");
         }
@@ -219,11 +230,13 @@ public class DataImportService {
 
         // Extract to local variables for lambda
         String finalMappingsPath = mappingsPath;
+        // Use String for importMode so Jobrunr can serialize it without enum class issues
+        String importModeName = importMode.name();
 
         // Enqueue Jobrunr job
         jobScheduler.enqueue(() -> processImport(
                 jobId, datasetId, filePath, finalMappingsPath, parseOptsPath, originalFilename, fileSize,
-                upperFileType, userId, username, ipAddress, userAgent
+                upperFileType, userId, username, ipAddress, userAgent, importModeName
         ));
 
         return new ImportStartResponse(jobId, "PENDING");
@@ -233,7 +246,7 @@ public class DataImportService {
     public void processImport(String jobId, Long datasetId, String filePath, String mappingsPath, String parseOptsPath,
                               String fileName, Long fileSize, String fileType,
                               Long userId, String username,
-                              String ipAddress, String userAgent) {
+                              String ipAddress, String userAgent, String importModeName) {
         try {
             asyncJobService.updateProgress(jobId, "PARSING", 10, "파일 파싱 중...",
                     Map.of("totalRows", 0, "processedRows", 0));
@@ -340,12 +353,13 @@ public class DataImportService {
                 }
             }
 
-            // Insert valid rows
+            // Route by import mode and insert/upsert/replace valid rows
+            ImportMode importMode = ImportMode.valueOf(
+                    importModeName != null && !importModeName.isEmpty() ? importModeName : ImportMode.APPEND.name());
+
             if (validCount > 0) {
                 DatasetResponse dataset = datasetRepository.findById(datasetId).orElseThrow();
                 List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
-
-                log.info("Inserting {} valid rows", validCount);
 
                 List<Map<String, Object>> rowMaps = validRows.stream()
                         .map(row -> {
@@ -358,15 +372,85 @@ public class DataImportService {
                         .toList();
 
                 int insertTotal = rowMaps.size();
-                asyncJobService.updateProgress(jobId, "INSERTING", 40, "데이터 삽입 중...",
-                        Map.of("totalRows", insertTotal, "processedRows", 0));
 
-                dataTableService.insertBatchWithProgress(dataset.tableName(), columnNames, rowMaps,
-                        (processed, total) -> {
-                            int pct = 40 + (int) ((processed / (double) total) * 60);
-                            asyncJobService.updateProgress(jobId, "INSERTING", pct, "데이터 삽입 중...",
-                                    Map.of("totalRows", total, "processedRows", processed));
+                switch (importMode) {
+                    case APPEND -> {
+                        log.info("APPEND mode: inserting {} valid rows", validCount);
+                        asyncJobService.updateProgress(jobId, "INSERTING", 40, "데이터 삽입 중...",
+                                Map.of("totalRows", insertTotal, "processedRows", 0));
+                        dataTableService.insertBatchWithProgress(dataset.tableName(), columnNames, rowMaps,
+                                (processed, total) -> {
+                                    int pct = 40 + (int) ((processed / (double) total) * 60);
+                                    asyncJobService.updateProgress(jobId, "INSERTING", pct, "데이터 삽입 중...",
+                                            Map.of("totalRows", total, "processedRows", processed));
+                                });
+                    }
+                    case UPSERT -> {
+                        List<String> pkColumns = columns.stream()
+                                .filter(DatasetColumnResponse::isPrimaryKey)
+                                .map(DatasetColumnResponse::columnName)
+                                .toList();
+                        if (pkColumns.isEmpty()) {
+                            throw new IllegalStateException("UPSERT mode requires at least one primary key column");
+                        }
+
+                        // Validate PK values in import data (NULL checks + within-file duplicate warnings)
+                        // Use rowMaps which already have dataset column names as keys
+                        List<Map<String, String>> rowMapsAsStrings = rowMaps.stream()
+                                .map(row -> {
+                                    Map<String, String> strRow = new HashMap<>();
+                                    for (var entry : row.entrySet()) {
+                                        strRow.put(entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : null);
+                                    }
+                                    return strRow;
+                                })
+                                .toList();
+                        DataValidationService.PkValidationResult pkValidation =
+                                validationService.validatePrimaryKeys(rowMapsAsStrings, pkColumns);
+                        if (!pkValidation.errors().isEmpty()) {
+                            // NULL PK values found — fail the import
+                            asyncJobService.failJob(jobId, "Primary key validation failed: NULL values in PK columns");
+                            String pkErrorJson = objectMapper.writeValueAsString(
+                                    Map.of("errors", pkValidation.errors()));
+                            auditLogService.log(userId, username, "IMPORT", "dataset",
+                                    String.valueOf(datasetId), "파일 임포트: " + fileName,
+                                    ipAddress, userAgent, "FAILURE",
+                                    "Primary key columns contain NULL values", Map.of(
+                                            "fileName", fileName, "fileSize", fileSize, "fileType", fileType,
+                                            "importMode", importModeName,
+                                            "errorDetails", pkErrorJson));
+                            return;
+                        }
+                        if (!pkValidation.warnings().isEmpty()) {
+                            log.warn("UPSERT PK warnings (within-file duplicates): {}", pkValidation.warnings().size());
+                        }
+
+                        log.info("UPSERT mode: upserting {} valid rows on PK columns {}", validCount, pkColumns);
+                        asyncJobService.updateProgress(jobId, "INSERTING", 40, "데이터 업서트 중...",
+                                Map.of("totalRows", insertTotal, "processedRows", 0));
+                        dataTableService.upsertBatchWithProgress(dataset.tableName(), columnNames, pkColumns, rowMaps, null,
+                                (processed, total) -> {
+                                    int pct = 40 + (int) ((processed / (double) total) * 60);
+                                    asyncJobService.updateProgress(jobId, "INSERTING", pct, "데이터 업서트 중...",
+                                            Map.of("totalRows", total, "processedRows", processed));
+                                });
+                    }
+                    case REPLACE -> {
+                        log.info("REPLACE mode: truncating table then inserting {} valid rows", validCount);
+                        asyncJobService.updateProgress(jobId, "INSERTING", 40, "테이블 교체 중...",
+                                Map.of("totalRows", insertTotal, "processedRows", 0));
+                        // Wrap truncate + insert in a single transaction for atomicity
+                        transactionTemplate.executeWithoutResult(status -> {
+                            dataTableService.truncateTable(dataset.tableName());
+                            dataTableService.insertBatchWithProgress(dataset.tableName(), columnNames, rowMaps,
+                                    (processed, total) -> {
+                                        int pct = 40 + (int) ((processed / (double) total) * 60);
+                                        asyncJobService.updateProgress(jobId, "INSERTING", pct, "테이블 교체 중...",
+                                                Map.of("totalRows", total, "processedRows", processed));
+                                    });
                         });
+                    }
+                }
             }
 
             // Log success to audit_log
@@ -385,6 +469,7 @@ public class DataImportService {
             metadata.put("fileName", fileName);
             metadata.put("fileSize", fileSize);
             metadata.put("fileType", fileType);
+            metadata.put("importMode", importMode.name());
             metadata.put("totalRows", totalRows);
             metadata.put("successRows", validCount);
             metadata.put("errorRows", errorCount);

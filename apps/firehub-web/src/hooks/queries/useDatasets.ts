@@ -1,7 +1,7 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { datasetsApi, categoriesApi } from '../../api/datasets';
 import { dataImportsApi } from '../../api/dataImports';
-import type { ImportResponse, ImportStartResponse, ColumnMappingEntry } from '../../types/dataImport';
+import type { ImportResponse, ImportStartResponse, ColumnMappingEntry, ImportMode } from '../../types/dataImport';
 
 export function useCategories() {
   return useQuery({
@@ -159,9 +159,9 @@ export function useImport(datasetId: number, importId: number) {
 
 export function useUploadFile(datasetId: number) {
   const queryClient = useQueryClient();
-  return useMutation<ImportStartResponse, unknown, { file: File; mappings?: ColumnMappingEntry[] }>({
-    mutationFn: ({ file, mappings }) =>
-      dataImportsApi.uploadFile(datasetId, file, mappings).then(r => r.data),
+  return useMutation<ImportStartResponse, unknown, { file: File; mappings?: ColumnMappingEntry[]; importMode?: ImportMode }>({
+    mutationFn: ({ file, mappings, importMode }) =>
+      dataImportsApi.uploadFile(datasetId, file, mappings, importMode).then(r => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'imports'] });
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });

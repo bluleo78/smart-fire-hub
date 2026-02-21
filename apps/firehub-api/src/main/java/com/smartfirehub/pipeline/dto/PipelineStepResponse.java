@@ -12,5 +12,6 @@ public record PipelineStepResponse(
     String outputDatasetName,
     List<Long> inputDatasetIds,
     List<String> dependsOnStepNames,
-    int stepOrder
+    int stepOrder,
+    String loadStrategy
 ) {}

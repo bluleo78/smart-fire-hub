@@ -19,6 +19,7 @@ export interface EditorStep {
   inputDatasetIds: number[];
   dependsOnTempIds: string[];
   position: { x: number; y: number };
+  loadStrategy: string;
 }
 
 export interface ValidationError {
@@ -82,6 +83,7 @@ function createDefaultStep(position: { x: number; y: number }): EditorStep {
     inputDatasetIds: [],
     dependsOnTempIds: [],
     position,
+    loadStrategy: 'REPLACE',
   };
 }
 
@@ -287,6 +289,7 @@ function pipelineEditorReducer(
           inputDatasetIds: step.inputDatasetIds,
           dependsOnTempIds: [], // 2차 패스에서 설정
           position: { x: 0, y: 0 }, // auto-layout에서 설정
+          loadStrategy: step.loadStrategy ?? 'REPLACE',
         };
       });
 
@@ -381,6 +384,7 @@ export function usePipelineEditor(pipelineId?: number) {
         scriptContent: step.scriptContent,
         outputDatasetId: step.outputDatasetId,
         inputDatasetIds: step.inputDatasetIds,
+        loadStrategy: step.loadStrategy,
       });
 
       if (!result.success) {
@@ -438,6 +442,7 @@ export function usePipelineEditor(pipelineId?: number) {
       dependsOnStepNames: step.dependsOnTempIds
         .map((tempId) => state.steps.find((s) => s.tempId === tempId)?.name.trim())
         .filter((name): name is string => !!name),
+      loadStrategy: step.loadStrategy,
     }));
 
     try {
