@@ -189,6 +189,127 @@ export function createFireHubMcpServer(apiClient: FireHubApiClient): McpSdkServe
       ),
 
       safeTool(
+        'create_pipeline',
+        '새 파이프라인을 생성합니다. 스텝(SQL/PYTHON/API_CALL)과 DAG 의존성을 포함합니다.',
+        {
+          name: z.string().describe('파이프라인 이름'),
+          description: z.string().optional().describe('파이프라인 설명'),
+          steps: z.array(z.object({
+            name: z.string().describe('스텝 이름 (의존성 참조에 사용)'),
+            description: z.string().optional().describe('스텝 설명'),
+            scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL']).describe('스텝 유형'),
+            scriptContent: z.string().optional().describe('SQL 또는 Python 스크립트 (API_CALL은 불필요)'),
+            outputDatasetId: z.number().optional().describe('출력 데이터셋 ID'),
+            inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
+            dependsOnStepNames: z.array(z.string()).optional().describe('의존하는 스텝 이름 목록 (DAG)'),
+            loadStrategy: z.enum(['REPLACE', 'APPEND']).optional().describe('적재 전략 (기본: REPLACE)'),
+            apiConfig: z.object({
+              url: z.string().describe('API 엔드포인트 URL'),
+              method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).describe('HTTP 메서드'),
+              headers: z.record(z.string(), z.string()).optional().describe('커스텀 헤더'),
+              queryParams: z.record(z.string(), z.string()).optional().describe('쿼리 파라미터'),
+              body: z.string().optional().describe('요청 본문 (POST/PUT)'),
+              responseFormat: z.string().optional().describe('응답 형식 (기본: JSON)'),
+              dataPath: z.string().describe('JSONPath로 데이터 배열 추출 (예: $.items)'),
+              fieldMappings: z.array(z.object({
+                sourceField: z.string().describe('소스 필드명'),
+                targetColumn: z.string().describe('대상 컬럼명'),
+                dataType: z.string().optional().describe('데이터 타입'),
+                dateFormat: z.string().optional().describe('날짜 형식'),
+              })).optional().describe('필드 매핑 목록'),
+              sourceTimezone: z.string().optional().describe('소스 타임존'),
+              pagination: z.object({
+                type: z.enum(['OFFSET']).describe('페이지네이션 유형'),
+                pageSize: z.number().describe('페이지 크기'),
+                offsetParam: z.string().optional().describe('오프셋 파라미터명'),
+                limitParam: z.string().optional().describe('리밋 파라미터명'),
+                totalPath: z.string().optional().describe('전체 수 JSONPath'),
+              }).optional().describe('페이지네이션 설정'),
+              retry: z.object({
+                maxRetries: z.number().optional().describe('최대 재시도 횟수'),
+                initialBackoffMs: z.number().optional().describe('초기 백오프(ms)'),
+                maxBackoffMs: z.number().optional().describe('최대 백오프(ms)'),
+              }).optional().describe('재시도 설정'),
+              timeoutMs: z.number().optional().describe('요청 타임아웃(ms)'),
+              maxDurationMs: z.number().optional().describe('최대 실행 시간(ms)'),
+              maxResponseSizeMb: z.number().optional().describe('최대 응답 크기(MB)'),
+              inlineAuth: z.record(z.string(), z.string()).optional().describe('인라인 인증 정보'),
+            }).optional().describe('API_CALL 스텝 설정'),
+            apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
+          })).describe('파이프라인 스텝 목록'),
+        },
+        async (args) => {
+          const result = await apiClient.createPipeline(args as any);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'update_pipeline',
+        '파이프라인을 수정합니다. steps를 제공하면 전체 스텝이 교체됩니다.',
+        {
+          id: z.number().describe('파이프라인 ID'),
+          name: z.string().optional().describe('파이프라인 이름'),
+          description: z.string().optional().describe('파이프라인 설명'),
+          isActive: z.boolean().optional().describe('활성화 여부'),
+          steps: z.array(z.object({
+            name: z.string().describe('스텝 이름'),
+            description: z.string().optional().describe('스텝 설명'),
+            scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL']).describe('스텝 유형'),
+            scriptContent: z.string().optional().describe('스크립트'),
+            outputDatasetId: z.number().optional().describe('출력 데이터셋 ID'),
+            inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
+            dependsOnStepNames: z.array(z.string()).optional().describe('의존 스텝 이름 목록'),
+            loadStrategy: z.enum(['REPLACE', 'APPEND']).optional().describe('적재 전략'),
+            apiConfig: z.record(z.string(), z.unknown()).optional().describe('API_CALL 설정'),
+            apiConnectionId: z.number().optional().describe('API 연결 ID'),
+          })).optional().describe('스텝 목록 (전체 교체)'),
+        },
+        async (args) => {
+          const { id, ...data } = args;
+          const result = await apiClient.updatePipeline(id, data as any);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'delete_pipeline',
+        '파이프라인을 삭제합니다. 연결된 체인 트리거도 비활성화됩니다.',
+        {
+          id: z.number().describe('파이프라인 ID'),
+        },
+        async (args: { id: number }) => {
+          const result = await apiClient.deletePipeline(args.id);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'preview_api_call',
+        'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다.',
+        {
+          url: z.string().describe('API 엔드포인트 URL'),
+          method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).describe('HTTP 메서드'),
+          headers: z.record(z.string(), z.string()).optional().describe('커스텀 헤더'),
+          queryParams: z.record(z.string(), z.string()).optional().describe('쿼리 파라미터'),
+          body: z.string().optional().describe('요청 본문'),
+          dataPath: z.string().describe('JSONPath로 데이터 배열 추출 (예: $.data)'),
+          fieldMappings: z.array(z.object({
+            sourceField: z.string().describe('소스 필드명'),
+            targetColumn: z.string().describe('대상 컬럼명'),
+            dataType: z.string().optional().describe('데이터 타입'),
+          })).optional().describe('필드 매핑'),
+          apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
+          inlineAuth: z.record(z.string(), z.string()).optional().describe('인라인 인증 정보'),
+          timeoutMs: z.number().optional().describe('타임아웃(ms)'),
+        },
+        async (args) => {
+          const result = await apiClient.previewApiCall(args as any);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
         'execute_pipeline',
         '파이프라인을 실행합니다',
         {
@@ -209,6 +330,134 @@ export function createFireHubMcpServer(apiClient: FireHubApiClient): McpSdkServe
         },
         async (args: { pipelineId: number; executionId: number }) => {
           const result = await apiClient.getExecutionStatus(args.pipelineId, args.executionId);
+          return jsonResult(result);
+        }
+      ),
+
+      // Triggers
+      safeTool(
+        'list_triggers',
+        '파이프라인의 트리거 목록을 조회합니다',
+        {
+          pipelineId: z.number().describe('파이프라인 ID'),
+        },
+        async (args: { pipelineId: number }) => {
+          const result = await apiClient.listTriggers(args.pipelineId);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'create_trigger',
+        '파이프라인 트리거를 생성합니다. 유형: SCHEDULE(크론), API(토큰), PIPELINE_CHAIN(연쇄), WEBHOOK(웹훅), DATASET_CHANGE(데이터 변경)',
+        {
+          pipelineId: z.number().describe('파이프라인 ID'),
+          name: z.string().describe('트리거 이름'),
+          triggerType: z.enum(['SCHEDULE', 'API', 'PIPELINE_CHAIN', 'WEBHOOK', 'DATASET_CHANGE']).describe('트리거 유형'),
+          description: z.string().optional().describe('트리거 설명'),
+          config: z.record(z.string(), z.unknown()).describe('트리거 설정. SCHEDULE: {cronExpression}, API: {}, PIPELINE_CHAIN: {upstreamPipelineId}, WEBHOOK: {secret?}, DATASET_CHANGE: {datasetId}'),
+        },
+        async (args) => {
+          const { pipelineId, ...data } = args;
+          const result = await apiClient.createTrigger(pipelineId, data as any);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'update_trigger',
+        '파이프라인 트리거를 수정합니다',
+        {
+          pipelineId: z.number().describe('파이프라인 ID'),
+          triggerId: z.number().describe('트리거 ID'),
+          name: z.string().optional().describe('트리거 이름'),
+          isEnabled: z.boolean().optional().describe('활성화 여부'),
+          description: z.string().optional().describe('트리거 설명'),
+          config: z.record(z.string(), z.unknown()).optional().describe('트리거 설정'),
+        },
+        async (args) => {
+          const { pipelineId, triggerId, ...data } = args;
+          const result = await apiClient.updateTrigger(pipelineId, triggerId, data as any);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'delete_trigger',
+        '파이프라인 트리거를 삭제합니다',
+        {
+          pipelineId: z.number().describe('파이프라인 ID'),
+          triggerId: z.number().describe('트리거 ID'),
+        },
+        async (args: { pipelineId: number; triggerId: number }) => {
+          const result = await apiClient.deleteTrigger(args.pipelineId, args.triggerId);
+          return jsonResult(result);
+        }
+      ),
+
+      // API Connections
+      safeTool(
+        'list_api_connections',
+        '저장된 API 연결 목록을 조회합니다',
+        {},
+        async () => {
+          const result = await apiClient.listApiConnections();
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'get_api_connection',
+        'API 연결 상세 정보를 조회합니다 (인증 값은 마스킹됨)',
+        {
+          id: z.number().describe('API 연결 ID'),
+        },
+        async (args: { id: number }) => {
+          const result = await apiClient.getApiConnection(args.id);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'create_api_connection',
+        '새 API 연결을 생성합니다. 인증 정보는 암호화되어 저장됩니다.',
+        {
+          name: z.string().describe('연결 이름'),
+          description: z.string().optional().describe('연결 설명'),
+          authType: z.enum(['API_KEY', 'BEARER']).describe('인증 유형'),
+          authConfig: z.record(z.string(), z.string()).describe('인증 설정. API_KEY: {placement, headerName/paramName, apiKey}, BEARER: {token}'),
+        },
+        async (args) => {
+          const result = await apiClient.createApiConnection(args);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'update_api_connection',
+        'API 연결을 수정합니다. authConfig를 제공하면 인증 정보가 갱신됩니다.',
+        {
+          id: z.number().describe('API 연결 ID'),
+          name: z.string().optional().describe('연결 이름'),
+          description: z.string().optional().describe('연결 설명'),
+          authType: z.string().optional().describe('인증 유형 (API_KEY 또는 BEARER)'),
+          authConfig: z.record(z.string(), z.string()).optional().describe('인증 설정'),
+        },
+        async (args) => {
+          const { id, ...data } = args;
+          const result = await apiClient.updateApiConnection(id, data);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'delete_api_connection',
+        'API 연결을 삭제합니다',
+        {
+          id: z.number().describe('API 연결 ID'),
+        },
+        async (args: { id: number }) => {
+          const result = await apiClient.deleteApiConnection(args.id);
           return jsonResult(result);
         }
       ),

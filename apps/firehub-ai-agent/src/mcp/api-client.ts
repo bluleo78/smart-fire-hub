@@ -125,6 +125,68 @@ export class FireHubApiClient {
     return response.data;
   }
 
+  async createPipeline(data: {
+    name: string;
+    description?: string;
+    steps: Array<{
+      name: string;
+      description?: string;
+      scriptType: string;
+      scriptContent?: string;
+      outputDatasetId?: number;
+      inputDatasetIds?: number[];
+      dependsOnStepNames?: string[];
+      loadStrategy?: string;
+      apiConfig?: Record<string, unknown>;
+      apiConnectionId?: number;
+    }>;
+  }): Promise<any> {
+    const response = await this.client.post('/pipelines', data);
+    return response.data;
+  }
+
+  async updatePipeline(id: number, data: {
+    name?: string;
+    description?: string;
+    isActive?: boolean;
+    steps?: Array<{
+      name: string;
+      description?: string;
+      scriptType: string;
+      scriptContent?: string;
+      outputDatasetId?: number;
+      inputDatasetIds?: number[];
+      dependsOnStepNames?: string[];
+      loadStrategy?: string;
+      apiConfig?: Record<string, unknown>;
+      apiConnectionId?: number;
+    }>;
+  }): Promise<any> {
+    await this.client.put(`/pipelines/${id}`, data);
+    return { success: true };
+  }
+
+  async deletePipeline(id: number): Promise<any> {
+    await this.client.delete(`/pipelines/${id}`);
+    return { success: true };
+  }
+
+  async previewApiCall(data: {
+    url: string;
+    method: string;
+    headers?: Record<string, string>;
+    queryParams?: Record<string, string>;
+    body?: string;
+    dataPath: string;
+    fieldMappings?: Array<{ sourceField: string; targetColumn: string; dataType?: string }>;
+    apiConnectionId?: number;
+    inlineAuth?: Record<string, string>;
+    timeoutMs?: number;
+  }): Promise<any> {
+    const response = await this.client.post('/pipelines/api-call/preview', data);
+    return response.data;
+  }
+
   async executePipeline(id: number): Promise<any> {
     const response = await this.client.post(`/pipelines/${id}/execute`);
     return response.data;
@@ -133,6 +195,73 @@ export class FireHubApiClient {
   async getExecutionStatus(pipelineId: number, executionId: number): Promise<any> {
     const response = await this.client.get(`/pipelines/${pipelineId}/executions/${executionId}`);
     return response.data;
+  }
+
+  // Triggers
+  async listTriggers(pipelineId: number): Promise<any> {
+    const response = await this.client.get(`/pipelines/${pipelineId}/triggers`);
+    return response.data;
+  }
+
+  async createTrigger(pipelineId: number, data: {
+    name: string;
+    triggerType: string;
+    description?: string;
+    config: Record<string, unknown>;
+  }): Promise<any> {
+    const response = await this.client.post(`/pipelines/${pipelineId}/triggers`, data);
+    return response.data;
+  }
+
+  async updateTrigger(pipelineId: number, triggerId: number, data: {
+    name?: string;
+    isEnabled?: boolean;
+    description?: string;
+    config?: Record<string, unknown>;
+  }): Promise<any> {
+    await this.client.put(`/pipelines/${pipelineId}/triggers/${triggerId}`, data);
+    return { success: true };
+  }
+
+  async deleteTrigger(pipelineId: number, triggerId: number): Promise<any> {
+    await this.client.delete(`/pipelines/${pipelineId}/triggers/${triggerId}`);
+    return { success: true };
+  }
+
+  // API Connections
+  async listApiConnections(): Promise<any> {
+    const response = await this.client.get('/api-connections');
+    return response.data;
+  }
+
+  async getApiConnection(id: number): Promise<any> {
+    const response = await this.client.get(`/api-connections/${id}`);
+    return response.data;
+  }
+
+  async createApiConnection(data: {
+    name: string;
+    description?: string;
+    authType: string;
+    authConfig: Record<string, string>;
+  }): Promise<any> {
+    const response = await this.client.post('/api-connections', data);
+    return response.data;
+  }
+
+  async updateApiConnection(id: number, data: {
+    name?: string;
+    description?: string;
+    authType?: string;
+    authConfig?: Record<string, string>;
+  }): Promise<any> {
+    const response = await this.client.put(`/api-connections/${id}`, data);
+    return response.data;
+  }
+
+  async deleteApiConnection(id: number): Promise<any> {
+    await this.client.delete(`/api-connections/${id}`);
+    return { success: true };
   }
 
   // Data Imports
