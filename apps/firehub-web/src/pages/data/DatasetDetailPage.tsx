@@ -35,6 +35,7 @@ import { DatasetHistoryTab } from './tabs/DatasetHistoryTab';
 import { Star, X, Plus, Shield, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
+import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
@@ -230,6 +231,9 @@ export default function DatasetDetailPage() {
                   </button>
                 </Badge>
               ))}
+
+              {/* Linked pipelines */}
+              <LinkedPipelineStatus pipelines={dataset.linkedPipelines ?? []} />
 
               {/* Add tag popover */}
               <Popover open={tagInputOpen} onOpenChange={setTagInputOpen}>

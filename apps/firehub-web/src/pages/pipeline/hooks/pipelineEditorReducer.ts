@@ -8,13 +8,15 @@ export interface EditorStep {
   tempId: string;
   name: string;
   description: string;
-  scriptType: 'SQL' | 'PYTHON';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
   scriptContent: string;
   outputDatasetId: number | null;
   inputDatasetIds: number[];
   dependsOnTempIds: string[];
   position: { x: number; y: number };
   loadStrategy: string;
+  apiConfig?: Record<string, unknown>;
+  apiConnectionId?: number | null;
 }
 
 export interface ValidationError {
@@ -278,13 +280,15 @@ export function pipelineEditorReducer(
           tempId,
           name: step.name,
           description: step.description ?? '',
-          scriptType: step.scriptType,
-          scriptContent: step.scriptContent,
+          scriptType: step.scriptType as EditorStep['scriptType'],
+          scriptContent: step.scriptContent ?? '',
           outputDatasetId: step.outputDatasetId,
           inputDatasetIds: step.inputDatasetIds,
           dependsOnTempIds: [],
           position: { x: 0, y: 0 },
           loadStrategy: step.loadStrategy ?? 'REPLACE',
+          apiConfig: step.apiConfig ?? undefined,
+          apiConnectionId: step.apiConnectionId ?? undefined,
         };
       });
 

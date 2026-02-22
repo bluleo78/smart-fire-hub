@@ -1,5 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
@@ -9,6 +11,8 @@ import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
+import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
+import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -30,6 +34,9 @@ public class PipelineExecutionService {
     private final SqlScriptExecutor sqlExecutor;
     private final PythonScriptExecutor pythonExecutor;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final ApiCallExecutor apiCallExecutor;
+    private final ApiConnectionService apiConnectionService;
+    private final ObjectMapper objectMapper;
 
     public PipelineExecutionService(
             PipelineStepRepository stepRepository,
@@ -38,7 +45,10 @@ public class PipelineExecutionService {
             DatasetRepository datasetRepository,
             SqlScriptExecutor sqlExecutor,
             PythonScriptExecutor pythonExecutor,
-            ApplicationEventPublisher applicationEventPublisher) {
+            ApplicationEventPublisher applicationEventPublisher,
+            ApiCallExecutor apiCallExecutor,
+            ApiConnectionService apiConnectionService,
+            ObjectMapper objectMapper) {
         this.stepRepository = stepRepository;
         this.executionRepository = executionRepository;
         this.dataTableService = dataTableService;
@@ -46,6 +56,9 @@ public class PipelineExecutionService {
         this.sqlExecutor = sqlExecutor;
         this.pythonExecutor = pythonExecutor;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.apiCallExecutor = apiCallExecutor;
+        this.apiConnectionService = apiConnectionService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -174,7 +187,7 @@ public class PipelineExecutionService {
         return dependencyMap;
     }
 
-    @Async
+    @Async("pipelineExecutor")
     public void executeAsync(Long pipelineId, Long executionId, List<PipelineStepResponse> steps, Map<Long, List<Long>> stepDependencyMap, Map<Long, Long> stepIdToStepExecId) {
         LocalDateTime executionStartedAt = LocalDateTime.now();
 
@@ -314,24 +327,27 @@ public class PipelineExecutionService {
             }
 
             // Apply load strategy before script execution
+            // API_CALL skips this block — the executor handles load strategy internally
             String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
 
-            switch (loadStrategy) {
-                case "REPLACE":
-                    if (outputTableName != null) {
-                        log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
-                        dataTableService.truncateTable(outputTableName);
-                    }
-                    break;
-                case "APPEND":
-                    log.info("APPEND strategy: Skipping truncation for output table: {}", outputTableName);
-                    break;
-                default:
-                    log.warn("Unknown load strategy '{}', falling back to REPLACE", loadStrategy);
-                    if (outputTableName != null) {
-                        dataTableService.truncateTable(outputTableName);
-                    }
-                    break;
+            if (!"API_CALL".equals(step.scriptType())) {
+                switch (loadStrategy) {
+                    case "REPLACE":
+                        if (outputTableName != null) {
+                            log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
+                            dataTableService.truncateTable(outputTableName);
+                        }
+                        break;
+                    case "APPEND":
+                        log.info("APPEND strategy: Skipping truncation for output table: {}", outputTableName);
+                        break;
+                    default:
+                        log.warn("Unknown load strategy '{}', falling back to REPLACE", loadStrategy);
+                        if (outputTableName != null) {
+                            dataTableService.truncateTable(outputTableName);
+                        }
+                        break;
+                }
             }
 
             // Execute script based on type
@@ -340,6 +356,17 @@ public class PipelineExecutionService {
                 executionLog = sqlExecutor.execute(step.scriptContent());
             } else if ("PYTHON".equals(step.scriptType())) {
                 executionLog = pythonExecutor.execute(step.scriptContent());
+            } else if ("API_CALL".equals(step.scriptType())) {
+                ApiCallConfig apiCallConfig = objectMapper.convertValue(step.apiConfig(), ApiCallConfig.class);
+
+                Map<String, String> decryptedAuth = null;
+                if (step.apiConnectionId() != null) {
+                    decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
+                }
+
+                ApiCallExecutor.ApiCallResult result = apiCallExecutor.execute(
+                        apiCallConfig, outputTableName, decryptedAuth, loadStrategy);
+                executionLog = result.log();
             } else {
                 throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
             }

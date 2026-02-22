@@ -756,6 +756,44 @@ public class DataTableService {
         dsl.execute(sql);
     }
 
+    /**
+     * Creates a temporary staging table {@code data."{tableName}_tmp"} with the same
+     * structure as the original table (using PostgreSQL's LIKE ... INCLUDING ALL).
+     * Used by the REPLACE load strategy to safely stage new data before swapping.
+     */
+    public void createTempTable(String tableName) {
+        validateName(tableName);
+        String tmpName = tableName + "_tmp";
+        // Drop any leftover temp table from a previous failed run
+        dsl.execute("DROP TABLE IF EXISTS data.\"" + tmpName + "\"");
+        dsl.execute("CREATE TABLE data.\"" + tmpName + "\" (LIKE data.\"" + tableName + "\" INCLUDING ALL)");
+    }
+
+    /**
+     * Atomically replaces {@code data."{tableName}"} with {@code data."{tableName}_tmp"}
+     * by dropping the original and renaming the tmp table inside a single transaction.
+     * Called only after all data has been successfully inserted into the tmp table.
+     */
+    public void swapTable(String tableName) {
+        validateName(tableName);
+        String tmpName = tableName + "_tmp";
+        dsl.transaction(cfg -> {
+            var txDsl = org.jooq.impl.DSL.using(cfg);
+            txDsl.execute("DROP TABLE data.\"" + tableName + "\"");
+            txDsl.execute("ALTER TABLE data.\"" + tmpName + "\" RENAME TO \"" + tableName + "\"");
+        });
+    }
+
+    /**
+     * Drops the temporary staging table {@code data."{tableName}_tmp"} if it exists.
+     * Called on failure to preserve the original table's data.
+     */
+    public void dropTempTable(String tableName) {
+        validateName(tableName);
+        String tmpName = tableName + "_tmp";
+        dsl.execute("DROP TABLE IF EXISTS data.\"" + tmpName + "\"");
+    }
+
     public void renameColumn(String tableName, String oldName, String newName) {
         validateName(tableName);
         validateName(oldName);

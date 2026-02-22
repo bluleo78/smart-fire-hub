@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.controller;
 
 import com.smartfirehub.dataset.dto.*;
+import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
@@ -17,9 +18,11 @@ import java.util.List;
 public class DatasetController {
 
     private final DatasetService datasetService;
+    private final ApiImportService apiImportService;
 
-    public DatasetController(DatasetService datasetService) {
+    public DatasetController(DatasetService datasetService, ApiImportService apiImportService) {
         this.datasetService = datasetService;
+        this.apiImportService = apiImportService;
     }
 
     private Long currentUserId() {
@@ -286,6 +289,18 @@ public class DatasetController {
                                                     @PathVariable Long rowId) {
         RowDataResponse response = datasetService.getRow(id, rowId);
         return ResponseEntity.ok(response);
+    }
+
+    // --- API Import ---
+
+    @PostMapping("/{id}/api-import")
+    @RequirePermission("pipeline:write")
+    public ResponseEntity<ApiImportResponse> createApiImport(
+            @PathVariable Long id,
+            @RequestBody ApiImportRequest request) {
+        Long userId = currentUserId();
+        ApiImportResponse response = apiImportService.createApiImport(id, request, userId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     // =========================================================================

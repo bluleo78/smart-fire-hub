@@ -21,5 +21,12 @@ public record DatasetDetailResponse(
     String status,
     String statusNote,
     String statusUpdatedBy,
-    LocalDateTime statusUpdatedAt
-) {}
+    LocalDateTime statusUpdatedAt,
+    List<LinkedPipelineInfo> linkedPipelines
+) {
+    public record LinkedPipelineInfo(
+        Long id,
+        String name,
+        boolean isActive
+    ) {}
+}

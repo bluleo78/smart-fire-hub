@@ -31,6 +31,10 @@ const ImportMappingDialog = lazy(() =>
   import('../components/ImportMappingDialog').then((m) => ({ default: m.ImportMappingDialog }))
 );
 
+const ApiImportWizard = lazy(() =>
+  import('../components/ApiImportWizard').then((m) => ({ default: m.ApiImportWizard }))
+);
+
 import { SqlQueryEditor } from '../components/SqlQueryEditor';
 import { AddRowDialog } from '../components/AddRowDialog';
 import { EditRowDialog } from '../components/EditRowDialog';
@@ -48,6 +52,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const [dataSearch, setDataSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [apiWizardOpen, setApiWizardOpen] = useState(false);
   const [sort, setSort] = useState<{ by: string; dir: 'ASC' | 'DESC' } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
@@ -171,6 +176,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         onAddRow={() => setAddRowOpen(true)}
         onImport={() => setImportDialogOpen(true)}
         onExport={handleExport}
+        onApiImport={() => setApiWizardOpen(true)}
       />
 
       {sqlEditorOpen && (
@@ -398,6 +404,18 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           rowId={editRowState.rowId}
           initialData={editRowState.data}
         />
+      )}
+
+      {apiWizardOpen && (
+        <Suspense fallback={null}>
+          <ApiImportWizard
+            open={apiWizardOpen}
+            onOpenChange={setApiWizardOpen}
+            datasetId={datasetId}
+            datasetName={dataset.name}
+            datasetColumns={dataset.columns}
+          />
+        </Suspense>
       )}
     </div>
   );

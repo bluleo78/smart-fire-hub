@@ -37,4 +37,25 @@ export const pipelinesApi = {
     client.patch(`/pipelines/${pipelineId}/triggers/${triggerId}/toggle`),
   getTriggerEvents: (pipelineId: number, limit?: number) =>
     client.get<TriggerEventResponse[]>(`/pipelines/${pipelineId}/trigger-events`, { params: { limit } }),
+
+  previewApiCall: (data: {
+    url: string;
+    method: string;
+    headers?: Record<string, string>;
+    queryParams?: Record<string, string>;
+    body?: string;
+    dataPath?: string;
+    fieldMappings?: Array<{ sourceField: string; targetColumn: string; dataType?: string }>;
+    apiConnectionId?: number | null;
+    inlineAuth?: Record<string, string>;
+    timeoutMs?: number;
+  }) =>
+    client.post<{
+      success: boolean;
+      rawJson: string | null;
+      rows: Array<Record<string, unknown>>;
+      columns: string[];
+      totalExtractedRows: number;
+      errorMessage: string | null;
+    }>('/pipelines/api-call/preview', data),
 };

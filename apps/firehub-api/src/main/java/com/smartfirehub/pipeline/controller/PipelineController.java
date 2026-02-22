@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.controller;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.service.ApiCallPreviewService;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import org.springframework.http.HttpStatus;
@@ -18,10 +19,13 @@ public class PipelineController {
 
     private final PipelineService pipelineService;
     private final TriggerService triggerService;
+    private final ApiCallPreviewService apiCallPreviewService;
 
-    public PipelineController(PipelineService pipelineService, TriggerService triggerService) {
+    public PipelineController(PipelineService pipelineService, TriggerService triggerService,
+                              ApiCallPreviewService apiCallPreviewService) {
         this.pipelineService = pipelineService;
         this.triggerService = triggerService;
+        this.apiCallPreviewService = apiCallPreviewService;
     }
 
     @GetMapping
@@ -94,5 +98,12 @@ public class PipelineController {
             @RequestParam(defaultValue = "20") int limit) {
         List<TriggerEventResponse> events = triggerService.getTriggerEvents(id, limit);
         return ResponseEntity.ok(events);
+    }
+
+    @PostMapping("/api-call/preview")
+    @RequirePermission("pipeline:write")
+    public ResponseEntity<ApiCallPreviewResponse> previewApiCall(@RequestBody ApiCallPreviewRequest request) {
+        ApiCallPreviewResponse response = apiCallPreviewService.preview(request);
+        return ResponseEntity.ok(response);
     }
 }

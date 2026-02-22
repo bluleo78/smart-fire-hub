@@ -74,6 +74,16 @@ public class PipelineService {
         for (int i = 0; i < stepRequests.size(); i++) {
             PipelineStepRequest stepRequest = stepRequests.get(i);
 
+            // Validate API_CALL step requirements
+            if ("API_CALL".equals(stepRequest.scriptType())) {
+                if (stepRequest.outputDatasetId() == null) {
+                    throw new IllegalArgumentException("API_CALL step '" + stepRequest.name() + "' requires outputDatasetId");
+                }
+                if (stepRequest.apiConfig() == null || stepRequest.apiConfig().isEmpty()) {
+                    throw new IllegalArgumentException("API_CALL step '" + stepRequest.name() + "' requires apiConfig");
+                }
+            }
+
             // Save step
             Long stepId = stepRepository.saveStep(pipelineId, stepRequest, i);
             stepNameToId.put(stepRequest.name(), stepId);

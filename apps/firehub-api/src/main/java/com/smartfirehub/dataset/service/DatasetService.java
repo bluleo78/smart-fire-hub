@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.user.repository.UserRepository;
+import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import static org.jooq.impl.DSL.*;
 
 @Service
 public class DatasetService {
@@ -43,6 +46,7 @@ public class DatasetService {
     private final DatasetFavoriteRepository favoriteRepository;
     private final DatasetTagRepository tagRepository;
     private final QueryHistoryRepository queryHistoryRepository;
+    private final DSLContext dsl;
 
     public DatasetService(DatasetRepository datasetRepository,
                           DatasetColumnRepository columnRepository,
@@ -51,7 +55,8 @@ public class DatasetService {
                           UserRepository userRepository,
                           DatasetFavoriteRepository favoriteRepository,
                           DatasetTagRepository tagRepository,
-                          QueryHistoryRepository queryHistoryRepository) {
+                          QueryHistoryRepository queryHistoryRepository,
+                          DSLContext dsl) {
         this.datasetRepository = datasetRepository;
         this.columnRepository = columnRepository;
         this.categoryRepository = categoryRepository;
@@ -60,6 +65,7 @@ public class DatasetService {
         this.favoriteRepository = favoriteRepository;
         this.tagRepository = tagRepository;
         this.queryHistoryRepository = queryHistoryRepository;
+        this.dsl = dsl;
     }
 
     @Transactional
@@ -132,6 +138,22 @@ public class DatasetService {
                 .map(user -> user.name())
                 .orElse(null);
 
+        List<DatasetDetailResponse.LinkedPipelineInfo> linkedPipelines = dsl.selectDistinct(
+                        field(name("pipeline", "id"), Long.class),
+                        field(name("pipeline", "name"), String.class),
+                        field(name("pipeline", "is_active"), Boolean.class)
+                )
+                .from(table(name("pipeline_step")))
+                .join(table(name("pipeline")))
+                .on(field(name("pipeline_step", "pipeline_id"), Long.class)
+                        .eq(field(name("pipeline", "id"), Long.class)))
+                .where(field(name("pipeline_step", "output_dataset_id"), Long.class).eq(id))
+                .fetch(r -> new DatasetDetailResponse.LinkedPipelineInfo(
+                        r.get(field(name("pipeline", "id"), Long.class)),
+                        r.get(field(name("pipeline", "name"), String.class)),
+                        Boolean.TRUE.equals(r.get(field(name("pipeline", "is_active"), Boolean.class)))
+                ));
+
         return new DatasetDetailResponse(
                 dataset.id(),
                 dataset.name(),
@@ -150,7 +172,8 @@ public class DatasetService {
                 dataset.status(),
                 dataset.statusNote(),
                 dataset.statusUpdatedBy(),
-                dataset.statusUpdatedAt()
+                dataset.statusUpdatedAt(),
+                linkedPipelines
         );
     }
 

@@ -1,6 +1,6 @@
 import { Button } from '../../../components/ui/button';
 import { SearchInput } from '../../../components/ui/search-input';
-import { Download, Upload, Terminal, Plus } from 'lucide-react';
+import { Download, Upload, Terminal, Plus, Globe } from 'lucide-react';
 
 interface DataTableToolbarProps {
   dataSearch: string;
@@ -10,6 +10,7 @@ interface DataTableToolbarProps {
   onAddRow: () => void;
   onImport: () => void;
   onExport: () => void;
+  onApiImport?: () => void;
 }
 
 export function DataTableToolbar({
@@ -20,6 +21,7 @@ export function DataTableToolbar({
   onAddRow,
   onImport,
   onExport,
+  onApiImport,
 }: DataTableToolbarProps) {
   return (
     <div className="flex items-center gap-3">
@@ -43,6 +45,12 @@ export function DataTableToolbar({
         <Upload className="mr-2 h-4 w-4" />
         임포트
       </Button>
+      {onApiImport && (
+        <Button variant="outline" onClick={onApiImport}>
+          <Globe className="mr-2 h-4 w-4" />
+          API 가져오기
+        </Button>
+      )}
       <Button variant="outline" onClick={onExport}>
         <Download className="mr-2 h-4 w-4" />
         CSV 내보내기

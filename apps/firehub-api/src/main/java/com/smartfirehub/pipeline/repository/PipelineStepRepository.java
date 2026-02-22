@@ -1,9 +1,13 @@
 package com.smartfirehub.pipeline.repository;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.JSONB;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
@@ -15,6 +19,7 @@ import static org.jooq.impl.DSL.*;
 public class PipelineStepRepository {
 
     private final DSLContext dsl;
+    private final ObjectMapper objectMapper;
 
     // Table constants
     private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
@@ -27,6 +32,8 @@ public class PipelineStepRepository {
     private static final Field<Long> PS_OUTPUT_DATASET_ID = field(name("pipeline_step", "output_dataset_id"), Long.class);
     private static final Field<Integer> PS_STEP_ORDER = field(name("pipeline_step", "step_order"), Integer.class);
     private static final Field<String> PS_LOAD_STRATEGY = field(name("pipeline_step", "load_strategy"), String.class);
+    private static final Field<JSONB> PS_API_CONFIG = field(name("pipeline_step", "api_config"), JSONB.class);
+    private static final Field<Long> PS_API_CONNECTION_ID = field(name("pipeline_step", "api_connection_id"), Long.class);
 
     private static final Table<?> PIPELINE_STEP_INPUT = table(name("pipeline_step_input"));
     private static final Field<Long> PSI_STEP_ID = field(name("pipeline_step_input", "step_id"), Long.class);
@@ -40,8 +47,9 @@ public class PipelineStepRepository {
     private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
     private static final Field<String> D_NAME = field(name("dataset", "name"), String.class);
 
-    public PipelineStepRepository(DSLContext dsl) {
+    public PipelineStepRepository(DSLContext dsl, ObjectMapper objectMapper) {
         this.dsl = dsl;
+        this.objectMapper = objectMapper;
     }
 
     public List<PipelineStepResponse> findByPipelineId(Long pipelineId) {
@@ -55,6 +63,8 @@ public class PipelineStepRepository {
                         PS_OUTPUT_DATASET_ID,
                         PS_STEP_ORDER,
                         PS_LOAD_STRATEGY,
+                        PS_API_CONFIG,
+                        PS_API_CONNECTION_ID,
                         D_NAME
                 )
                 .from(PIPELINE_STEP)
@@ -103,6 +113,16 @@ public class PipelineStepRepository {
         // Build response
         return steps.stream().map(r -> {
             Long stepId = r.get(PS_ID);
+            Map<String, Object> apiConfigMap = null;
+            JSONB apiConfigJsonb = r.get(PS_API_CONFIG);
+            if (apiConfigJsonb != null && apiConfigJsonb.data() != null) {
+                try {
+                    apiConfigMap = objectMapper.readValue(apiConfigJsonb.data(),
+                            new TypeReference<Map<String, Object>>() {});
+                } catch (JsonProcessingException e) {
+                    throw new RuntimeException("Failed to parse api_config JSON", e);
+                }
+            }
             return new PipelineStepResponse(
                     stepId,
                     r.get(PS_NAME),
@@ -114,13 +134,25 @@ public class PipelineStepRepository {
                     inputDatasetMap.getOrDefault(stepId, List.of()),
                     dependencyMap.getOrDefault(stepId, List.of()),
                     r.get(PS_STEP_ORDER),
-                    r.get(PS_LOAD_STRATEGY) != null ? r.get(PS_LOAD_STRATEGY) : "REPLACE"
+                    r.get(PS_LOAD_STRATEGY) != null ? r.get(PS_LOAD_STRATEGY) : "REPLACE",
+                    apiConfigMap,
+                    r.get(PS_API_CONNECTION_ID)
             );
         }).toList();
     }
 
     public Long saveStep(Long pipelineId, PipelineStepRequest request, int stepOrder) {
-        return dsl.insertInto(PIPELINE_STEP)
+        JSONB apiConfigJsonb = null;
+        if (request.apiConfig() != null) {
+            try {
+                String json = objectMapper.writeValueAsString(request.apiConfig());
+                apiConfigJsonb = JSONB.jsonb(json);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException("Failed to serialize apiConfig", e);
+            }
+        }
+
+        var insert = dsl.insertInto(PIPELINE_STEP)
                 .set(PS_PIPELINE_ID, pipelineId)
                 .set(PS_NAME, request.name())
                 .set(PS_DESCRIPTION, request.description())
@@ -129,7 +161,10 @@ public class PipelineStepRepository {
                 .set(PS_OUTPUT_DATASET_ID, request.outputDatasetId())
                 .set(PS_STEP_ORDER, stepOrder)
                 .set(PS_LOAD_STRATEGY, request.loadStrategy() != null ? request.loadStrategy() : "REPLACE")
-                .returning(PS_ID)
+                .set(PS_API_CONFIG, apiConfigJsonb)
+                .set(PS_API_CONNECTION_ID, request.apiConnectionId());
+
+        return insert.returning(PS_ID)
                 .fetchOne(r -> r.get(PS_ID));
     }
 

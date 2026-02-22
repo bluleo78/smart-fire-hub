@@ -1,5 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { X, Trash2 } from 'lucide-react';
+
+const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -211,7 +213,7 @@ export default function StepConfigPanel({
               value={step.scriptType}
               disabled={readOnly}
               onValueChange={(value) =>
-                handleUpdateStep({ scriptType: value as 'SQL' | 'PYTHON' })
+                handleUpdateStep({ scriptType: value as EditorStep['scriptType'] })
               }
             >
               <SelectTrigger className="w-full">
@@ -220,27 +222,44 @@ export default function StepConfigPanel({
               <SelectContent>
                 <SelectItem value="SQL">SQL</SelectItem>
                 <SelectItem value="PYTHON">PYTHON</SelectItem>
+                <SelectItem value="API_CALL">API 호출</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          <Separator />
-
-          {/* Script content */}
-          <div className="space-y-1.5">
-            <Label>스크립트</Label>
-            <Suspense fallback={<Skeleton className="h-[200px]" />}>
-              <ScriptEditor
-                value={step.scriptContent}
-                onChange={(value) => handleUpdateStep({ scriptContent: value })}
-                language={step.scriptType}
-                readOnly={readOnly}
-              />
-            </Suspense>
-            {scriptContentError && (
-              <p className="text-sm text-destructive">{scriptContentError}</p>
-            )}
-          </div>
+          {/* Script content or API Config */}
+          {step.scriptType === 'API_CALL' ? (
+            <>
+              <Separator />
+              <Suspense fallback={<Skeleton className="h-[200px]" />}>
+                <ApiCallStepConfig
+                  apiConfig={(step.apiConfig ?? {}) as Record<string, unknown>}
+                  apiConnectionId={step.apiConnectionId ?? null}
+                  onChange={(config) => handleUpdateStep({ apiConfig: config })}
+                  onConnectionChange={(id) => handleUpdateStep({ apiConnectionId: id })}
+                  readOnly={readOnly}
+                />
+              </Suspense>
+            </>
+          ) : (
+            <>
+              <Separator />
+              <div className="space-y-1.5">
+                <Label>스크립트</Label>
+                <Suspense fallback={<Skeleton className="h-[200px]" />}>
+                  <ScriptEditor
+                    value={step.scriptContent}
+                    onChange={(value) => handleUpdateStep({ scriptContent: value })}
+                    language={step.scriptType}
+                    readOnly={readOnly}
+                  />
+                </Suspense>
+                {scriptContentError && (
+                  <p className="text-sm text-destructive">{scriptContentError}</p>
+                )}
+              </div>
+            </>
+          )}
 
           <Separator />
 
@@ -284,19 +303,23 @@ export default function StepConfigPanel({
             </p>
           </div>
 
-          <Separator />
+          {step.scriptType !== 'API_CALL' && (
+            <>
+              <Separator />
 
-          {/* Input datasets */}
-          <div className="space-y-1.5">
-            <Label>입력 데이터셋</Label>
-            <DatasetCombobox
-              mode="multi"
-              datasets={datasets}
-              value={step.inputDatasetIds}
-              disabled={readOnly}
-              onChange={(value) => handleUpdateStep({ inputDatasetIds: value })}
-            />
-          </div>
+              {/* Input datasets */}
+              <div className="space-y-1.5">
+                <Label>입력 데이터셋</Label>
+                <DatasetCombobox
+                  mode="multi"
+                  datasets={datasets}
+                  value={step.inputDatasetIds}
+                  disabled={readOnly}
+                  onChange={(value) => handleUpdateStep({ inputDatasetIds: value })}
+                />
+              </div>
+            </>
+          )}
 
           <Separator />
 

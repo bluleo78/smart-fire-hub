@@ -8,6 +8,7 @@ import type {
   FavoriteToggleResponse, UpdateStatusRequest,
   SqlQueryResponse, QueryHistoryResponse,
   RowDataResponse, CloneDatasetRequest,
+  ApiImportRequest, ApiImportResponse,
 } from '../types/dataset';
 import type { PageResponse } from '../types/common';
 
@@ -64,4 +65,7 @@ export const datasetsApi = {
   // Phase 3: Clone Dataset
   cloneDataset: (datasetId: number, data: CloneDatasetRequest) =>
     client.post<DatasetDetailResponse>(`/datasets/${datasetId}/clone`, data),
+  // Phase 3: API Import
+  createApiImport: (datasetId: number, data: ApiImportRequest) =>
+    client.post<ApiImportResponse>(`/datasets/${datasetId}/api-import`, data),
 };

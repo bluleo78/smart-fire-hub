@@ -65,6 +65,7 @@ export interface DatasetDetailResponse {
   statusNote: string | null;
   statusUpdatedBy: string | null;
   statusUpdatedAt: string | null;
+  linkedPipelines: LinkedPipelineInfo[];
 }
 
 export interface CreateDatasetRequest {
@@ -200,5 +201,32 @@ export interface ColumnStatsResponse {
   avgValue: number | null;
   topValues: ColumnStatsValueCount[];
   sampled: boolean;
+}
+
+// Phase 3: API Import
+export interface LinkedPipelineInfo {
+  id: number;
+  name: string;
+  isActive: boolean;
+}
+
+export interface ApiImportRequest {
+  pipelineName?: string;
+  pipelineDescription?: string;
+  apiConfig: Record<string, unknown>;
+  apiConnectionId?: number | null;
+  loadStrategy?: string;
+  executeImmediately: boolean;
+  schedule?: {
+    cronExpression: string;
+    name?: string;
+    description?: string;
+  } | null;
+}
+
+export interface ApiImportResponse {
+  pipelineId: number;
+  executionId: number | null;
+  triggerId: number | null;
 }
 

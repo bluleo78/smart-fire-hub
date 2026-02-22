@@ -13,7 +13,7 @@ export interface PipelineStepResponse {
   id: number;
   name: string;
   description: string | null;
-  scriptType: 'SQL' | 'PYTHON';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
   scriptContent: string;
   outputDatasetId: number;
   outputDatasetName: string;
@@ -21,6 +21,8 @@ export interface PipelineStepResponse {
   dependsOnStepNames: string[];
   stepOrder: number;
   loadStrategy: string;
+  apiConfig: Record<string, unknown> | null;
+  apiConnectionId: number | null;
 }
 
 export interface PipelineDetailResponse {
@@ -44,12 +46,14 @@ export interface CreatePipelineRequest {
 export interface PipelineStepRequest {
   name: string;
   description?: string;
-  scriptType: 'SQL' | 'PYTHON';
-  scriptContent: string;
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
+  scriptContent?: string;
   outputDatasetId: number | null;
   inputDatasetIds: number[];
   dependsOnStepNames: string[];
   loadStrategy?: string;
+  apiConfig?: Record<string, unknown>;
+  apiConnectionId?: number | null;
 }
 
 export interface UpdatePipelineRequest {

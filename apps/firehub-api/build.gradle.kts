@@ -34,8 +34,10 @@ dependencies {
     implementation("com.opencsv:opencsv:5.9")
     // Jobrunr - 비동기 작업 스케줄링
     implementation("org.jobrunr:jobrunr-spring-boot-3-starter:7.3.2")
-    // WebFlux for SSE proxy
+    // WebFlux for SSE proxy + WebClient for API calls
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    // JSONPath for API response parsing
+    implementation("com.jayway.jsonpath:json-path:2.9.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
@@ -46,6 +48,8 @@ dependencies {
     testImplementation("net.bytebuddy:byte-buddy:1.17.5")
     testImplementation("net.bytebuddy:byte-buddy-agent:1.17.5")
     testImplementation("org.springframework.security:spring-security-test")
+    // WireMock for API call integration tests
+    testImplementation("org.wiremock:wiremock-standalone:3.10.0")
     testRuntimeOnly("org.postgresql:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

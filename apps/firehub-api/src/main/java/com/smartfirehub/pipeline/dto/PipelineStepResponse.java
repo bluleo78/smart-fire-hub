@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.dto;
 
 import java.util.List;
+import java.util.Map;
 
 public record PipelineStepResponse(
     Long id,
@@ -13,5 +14,7 @@ public record PipelineStepResponse(
     List<Long> inputDatasetIds,
     List<String> dependsOnStepNames,
     int stepOrder,
-    String loadStrategy
+    String loadStrategy,
+    Map<String, Object> apiConfig,
+    Long apiConnectionId
 ) {}

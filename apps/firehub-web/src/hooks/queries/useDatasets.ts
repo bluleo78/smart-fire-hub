@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tansta
 import { datasetsApi, categoriesApi } from '../../api/datasets';
 import { dataImportsApi } from '../../api/dataImports';
 import type { ImportResponse, ImportStartResponse, ColumnMappingEntry, ImportMode } from '../../types/dataImport';
-import type { CloneDatasetRequest } from '../../types/dataset';
+import type { CloneDatasetRequest, ApiImportRequest } from '../../types/dataset';
 
 export function useCategories() {
   return useQuery({
@@ -301,6 +301,18 @@ export function useUpdateRow(datasetId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'data'] });
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+    },
+  });
+}
+
+// Phase 3: API Import hook
+export function useCreateApiImport(datasetId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: ApiImportRequest) => datasetsApi.createApiImport(datasetId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] });
     },
   });
 }

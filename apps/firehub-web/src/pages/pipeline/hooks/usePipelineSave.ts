@@ -30,13 +30,15 @@ export function usePipelineSave({
       name: step.name.trim(),
       description: step.description || undefined,
       scriptType: step.scriptType,
-      scriptContent: step.scriptContent,
+      scriptContent: step.scriptType === 'API_CALL' ? undefined : step.scriptContent,
       outputDatasetId: step.outputDatasetId,
       inputDatasetIds: step.inputDatasetIds,
       dependsOnStepNames: step.dependsOnTempIds
         .map((tempId) => state.steps.find((s) => s.tempId === tempId)?.name.trim())
         .filter((name): name is string => !!name),
       loadStrategy: step.loadStrategy,
+      apiConfig: step.apiConfig,
+      apiConnectionId: step.apiConnectionId,
     }));
 
     try {

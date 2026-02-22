@@ -1,11 +1,11 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { X, FileCode, Terminal, Plus, Loader2, CheckCircle2, XCircle, SkipForward, Clock } from 'lucide-react';
+import { X, FileCode, Terminal, Globe, Plus, Loader2, CheckCircle2, XCircle, SkipForward, Clock } from 'lucide-react';
 
 export interface StepNodeData extends Record<string, unknown> {
   label: string;
   description?: string;
-  scriptType: 'SQL' | 'PYTHON';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
   isSelected: boolean;
   hasError: boolean;
   hasOutgoingEdge: boolean;
@@ -31,6 +31,13 @@ const TYPE_CONFIG = {
     bgHeaderSelected: 'rgba(75,85,99,0.12)',
     label: 'Python',
     Icon: Terminal,
+  },
+  API_CALL: {
+    color: '#0369a1',       // sky-700
+    bgHeader: 'rgba(3,105,161,0.06)',
+    bgHeaderSelected: 'rgba(3,105,161,0.12)',
+    label: 'API',
+    Icon: Globe,
   },
 } as const;
 

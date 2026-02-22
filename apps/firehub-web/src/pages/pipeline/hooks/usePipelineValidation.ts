@@ -31,6 +31,8 @@ export function usePipelineValidation(
         outputDatasetId: step.outputDatasetId,
         inputDatasetIds: step.inputDatasetIds,
         loadStrategy: step.loadStrategy,
+        apiConfig: step.apiConfig,
+        apiConnectionId: step.apiConnectionId,
       });
 
       if (!result.success) {
