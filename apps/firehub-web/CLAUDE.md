@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+See also the root [CLAUDE.md](../../CLAUDE.md) for monorepo-level commands and cross-app architecture.
+
 ## Commands
 
 ```bash
