@@ -29,7 +29,7 @@ export function DeleteConfirmDialog({
       <AlertDialogTrigger asChild onClick={(e) => e.stopPropagation()}>
         {trigger}
       </AlertDialogTrigger>
-      <AlertDialogContent>
+      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
         <AlertDialogHeader>
           <AlertDialogTitle>{entityName} 삭제</AlertDialogTitle>
           <AlertDialogDescription>
