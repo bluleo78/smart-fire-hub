@@ -102,6 +102,10 @@ public class GlobalExceptionHandler {
                 message = "Data integrity violation: duplicate entry";
             } else if (causeMsg != null && causeMsg.contains("foreign key")) {
                 message = "Data integrity violation: referenced record not found";
+            } else if (causeMsg != null && causeMsg.contains("check constraint")) {
+                message = "Data integrity violation: constraint check failed - " + causeMsg;
+            } else if (causeMsg != null) {
+                message = "Data integrity violation: " + causeMsg;
             }
         }
         ErrorResponse response = new ErrorResponse(

@@ -27,6 +27,7 @@ export default function DatasetCreatePage() {
   const categories = categoriesData || [];
 
   const form = useForm<CreateDatasetFormData>({
+    mode: 'onSubmit',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(createDatasetSchema) as any,
     defaultValues: {
@@ -42,6 +43,7 @@ export default function DatasetCreatePage() {
           dataType: 'TEXT',
           isNullable: true,
           isIndexed: false,
+          isPrimaryKey: false,
           description: '',
         },
       ],
@@ -81,7 +83,9 @@ export default function DatasetCreatePage() {
       </div>
 
       <FormProvider {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <form onSubmit={form.handleSubmit(onSubmit, () => {
+          toast.error('입력값을 확인해주세요. 필수 항목이 누락되었거나 형식이 올바르지 않습니다.');
+        })} className="space-y-6">
           <Card className="p-6">
             <h2 className="text-lg font-semibold mb-4">기본 정보</h2>
             <div className="space-y-4">
@@ -125,15 +129,16 @@ export default function DatasetCreatePage() {
               <div className="grid grid-cols-2 gap-4">
                 <FormField label="카테고리" htmlFor="categoryId">
                   <Select
-                    value={form.watch('categoryId')?.toString() || ''}
+                    value={form.watch('categoryId')?.toString() || '__none__'}
                     onValueChange={(value) => {
-                      form.setValue('categoryId', value ? Number(value) : undefined);
+                      form.setValue('categoryId', value === '__none__' ? undefined : Number(value));
                     }}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="카테고리 선택" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="__none__">선택 안 함</SelectItem>
                       {categories.map((cat) => (
                         <SelectItem key={cat.id} value={cat.id.toString()}>
                           {cat.name}

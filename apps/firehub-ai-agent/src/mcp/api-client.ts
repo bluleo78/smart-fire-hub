@@ -55,6 +55,8 @@ export class FireHubApiClient {
     categoryId?: number;
     datasetType?: string;
     search?: string;
+    status?: string;
+    favoriteOnly?: boolean;
     page?: number;
     size?: number;
   }): Promise<any> {
@@ -69,15 +71,13 @@ export class FireHubApiClient {
 
   async queryDatasetData(id: number, params?: {
     search?: string;
+    sortBy?: string;
+    sortDir?: string;
+    includeTotalCount?: boolean;
     page?: number;
     size?: number;
   }): Promise<any> {
     const response = await this.client.get(`/datasets/${id}/data`, { params });
-    return response.data;
-  }
-
-  async getDatasetColumns(id: number): Promise<any> {
-    const response = await this.client.get(`/datasets/${id}/columns`);
     return response.data;
   }
 
@@ -87,13 +87,14 @@ export class FireHubApiClient {
     description?: string;
     categoryId?: number;
     datasetType?: string;
-    columns?: Array<{
+    columns: Array<{
       columnName: string;
       displayName: string;
       dataType: string;
       maxLength?: number;
       isNullable?: boolean;
       isIndexed?: boolean;
+      isPrimaryKey?: boolean;
       description?: string;
     }>;
   }): Promise<any> {
@@ -112,8 +113,6 @@ export class FireHubApiClient {
 
   // Pipelines
   async listPipelines(params?: {
-    search?: string;
-    isActive?: boolean;
     page?: number;
     size?: number;
   }): Promise<any> {
@@ -131,19 +130,14 @@ export class FireHubApiClient {
     return response.data;
   }
 
-  async getExecutionStatus(id: number): Promise<any> {
-    const response = await this.client.get(`/pipelines/executions/${id}`);
+  async getExecutionStatus(pipelineId: number, executionId: number): Promise<any> {
+    const response = await this.client.get(`/pipelines/${pipelineId}/executions/${executionId}`);
     return response.data;
   }
 
   // Data Imports
-  async listImports(params?: {
-    datasetId?: number;
-    status?: string;
-    page?: number;
-    size?: number;
-  }): Promise<any> {
-    const response = await this.client.get('/data-imports', { params });
+  async listImports(datasetId: number): Promise<any> {
+    const response = await this.client.get(`/datasets/${datasetId}/imports`);
     return response.data;
   }
 

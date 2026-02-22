@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 public class SettingsService {
 
     private static final Set<String> ALLOWED_AI_KEYS = Set.of(
-            "ai.model", "ai.max_turns", "ai.system_prompt", "ai.temperature", "ai.max_tokens"
+            "ai.model", "ai.max_turns", "ai.system_prompt", "ai.temperature", "ai.max_tokens", "ai.session_max_tokens"
     );
 
     private final SettingsRepository settingsRepository;
@@ -60,6 +60,10 @@ public class SettingsService {
                 case "ai.max_tokens" -> {
                     int v = Integer.parseInt(value);
                     if (v < 1 || v > 65536) throw new IllegalArgumentException("최대 토큰 수는 1~65536 사이여야 합니다");
+                }
+                case "ai.session_max_tokens" -> {
+                    int v = Integer.parseInt(value);
+                    if (v < 1000 || v > 200000) throw new IllegalArgumentException("세션 최대 토큰 수는 1000~200000 사이여야 합니다");
                 }
                 case "ai.system_prompt" -> {
                     if (value == null || value.isBlank()) throw new IllegalArgumentException("시스템 프롬프트는 비어있을 수 없습니다");

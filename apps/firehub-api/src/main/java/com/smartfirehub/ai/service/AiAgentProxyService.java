@@ -145,10 +145,11 @@ public class AiAgentProxyService {
                             }
                             case "error" -> {
                                 completed[0] = true;
-                                String errorMsg = node.has("message") ? node.get("message").asText() : "Unknown error";
+                                String rawMsg = node.has("message") ? node.get("message").asText() : "";
+                                String errorMsg = (rawMsg == null || rawMsg.isBlank()) ? "AI 에이전트 처리 중 오류가 발생했습니다 (최대 턴 수 초과 등)" : rawMsg;
                                 log.error("[AI Chat] Agent error: {}", errorMsg);
                                 emitter.send(SseEmitter.event().data(data));
-                                emitter.completeWithError(new RuntimeException(errorMsg));
+                                emitter.complete();
                             }
                         }
                     } catch (IOException e) {
