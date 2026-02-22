@@ -16,5 +16,4 @@ public record DatasetResponse(
     String status,
     String statusNote,
     String statusUpdatedBy,
-    LocalDateTime statusUpdatedAt
-) {}
+    LocalDateTime statusUpdatedAt) {}

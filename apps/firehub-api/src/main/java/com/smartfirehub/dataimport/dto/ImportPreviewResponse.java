@@ -7,5 +7,4 @@ public record ImportPreviewResponse(
     List<String> fileHeaders,
     List<Map<String, String>> sampleRows,
     List<ColumnMappingDto> suggestedMappings,
-    int totalRows
-) {}
+    int totalRows) {}

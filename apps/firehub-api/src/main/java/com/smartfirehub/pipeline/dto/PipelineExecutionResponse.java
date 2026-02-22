@@ -11,14 +11,16 @@ public record PipelineExecutionResponse(
     LocalDateTime completedAt,
     LocalDateTime createdAt,
     String triggeredBy,
-    String triggerName
-) {
-    /**
-     * Backward-compatible constructor without trigger fields.
-     */
-    public PipelineExecutionResponse(
-            Long id, Long pipelineId, String status, String executedBy,
-            LocalDateTime startedAt, LocalDateTime completedAt, LocalDateTime createdAt) {
-        this(id, pipelineId, status, executedBy, startedAt, completedAt, createdAt, "MANUAL", null);
-    }
+    String triggerName) {
+  /** Backward-compatible constructor without trigger fields. */
+  public PipelineExecutionResponse(
+      Long id,
+      Long pipelineId,
+      String status,
+      String executedBy,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt,
+      LocalDateTime createdAt) {
+    this(id, pipelineId, status, executedBy, startedAt, completedAt, createdAt, "MANUAL", null);
+  }
 }

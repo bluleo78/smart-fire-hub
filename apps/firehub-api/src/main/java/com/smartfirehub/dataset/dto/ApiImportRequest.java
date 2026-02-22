@@ -9,11 +9,6 @@ public record ApiImportRequest(
     Long apiConnectionId,
     String loadStrategy,
     boolean executeImmediately,
-    ScheduleConfig schedule
-) {
-    public record ScheduleConfig(
-        String cronExpression,
-        String name,
-        String description
-    ) {}
+    ScheduleConfig schedule) {
+  public record ScheduleConfig(String cronExpression, String name, String description) {}
 }

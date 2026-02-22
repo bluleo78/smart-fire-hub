@@ -1,10 +1,10 @@
 package com.smartfirehub.apiconnection.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import java.util.Map;
 
 public record UpdateApiConnectionRequest(
-        String name,
-        String description,
-        String authType,
-        Map<String, String> authConfig
-) {}
+    @NotBlank String name,
+    String description,
+    @NotBlank String authType,
+    Map<String, String> authConfig) {}

@@ -12,5 +12,4 @@ public record ExecutionDetailResponse(
     List<StepExecutionResponse> stepExecutions,
     LocalDateTime startedAt,
     LocalDateTime completedAt,
-    LocalDateTime createdAt
-) {}
+    LocalDateTime createdAt) {}

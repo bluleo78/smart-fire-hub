@@ -9,5 +9,4 @@ public record ApiCallPreviewResponse(
     List<Map<String, Object>> rows,
     List<String> columns,
     int totalExtractedRows,
-    String errorMessage
-) {}
+    String errorMessage) {}

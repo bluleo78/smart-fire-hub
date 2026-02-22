@@ -13,5 +13,4 @@ public record TriggerResponse(
     Map<String, Object> config,
     Map<String, Object> triggerState,
     Long createdBy,
-    LocalDateTime createdAt
-) {}
+    LocalDateTime createdAt) {}

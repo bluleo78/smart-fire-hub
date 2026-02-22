@@ -10,5 +10,4 @@ public record QueryHistoryResponse(
     long executionTimeMs,
     boolean success,
     String error,
-    LocalDateTime executedAt
-) {}
+    LocalDateTime executedAt) {}

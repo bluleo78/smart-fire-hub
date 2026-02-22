@@ -9,21 +9,21 @@ import org.springframework.stereotype.Service;
 @Service
 public class SqlScriptExecutor {
 
-    private static final Logger log = LoggerFactory.getLogger(SqlScriptExecutor.class);
-    private final DSLContext dsl;
+  private static final Logger log = LoggerFactory.getLogger(SqlScriptExecutor.class);
+  private final DSLContext dsl;
 
-    public SqlScriptExecutor(DSLContext dsl) {
-        this.dsl = dsl;
-    }
+  public SqlScriptExecutor(DSLContext dsl) {
+    this.dsl = dsl;
+  }
 
-    public String execute(String scriptContent) {
-        try {
-            log.info("Executing SQL script");
-            dsl.execute(scriptContent);
-            return "SQL executed successfully";
-        } catch (Exception e) {
-            log.error("SQL execution failed", e);
-            throw new ScriptExecutionException("SQL execution failed: " + e.getMessage(), e);
-        }
+  public String execute(String scriptContent) {
+    try {
+      log.info("Executing SQL script");
+      dsl.execute(scriptContent);
+      return "SQL executed successfully";
+    } catch (Exception e) {
+      log.error("SQL execution failed", e);
+      throw new ScriptExecutionException("SQL execution failed: " + e.getMessage(), e);
     }
+  }
 }

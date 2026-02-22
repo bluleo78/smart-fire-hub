@@ -6,675 +6,859 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.*;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
+import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.job.service.AsyncJobService;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.opencsv.CSVWriter;
-
-import org.springframework.dao.DataIntegrityViolationException;
-
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 @Service
 public class DataImportService {
 
-    private static final Logger log = LoggerFactory.getLogger(DataImportService.class);
+  private static final Logger log = LoggerFactory.getLogger(DataImportService.class);
 
-    private final DatasetRepository datasetRepository;
-    private final DatasetColumnRepository columnRepository;
-    private final DataTableService dataTableService;
-    private final FileParserService fileParserService;
-    private final DataValidationService validationService;
-    private final ColumnMappingService columnMappingService;
-    private final AuditLogService auditLogService;
-    private final JobScheduler jobScheduler;
-    private final ObjectMapper objectMapper;
-    private final AsyncJobService asyncJobService;
-    private final TransactionTemplate transactionTemplate;
+  private final DatasetRepository datasetRepository;
+  private final DatasetColumnRepository columnRepository;
+  private final DataTableService dataTableService;
+  private final DataTableRowService dataTableRowService;
+  private final FileParserService fileParserService;
+  private final DataValidationService validationService;
+  private final ColumnMappingService columnMappingService;
+  private final AuditLogService auditLogService;
+  private final JobScheduler jobScheduler;
+  private final ObjectMapper objectMapper;
+  private final AsyncJobService asyncJobService;
+  private final TransactionTemplate transactionTemplate;
 
-    public DataImportService(DatasetRepository datasetRepository,
-                             DatasetColumnRepository columnRepository,
-                             DataTableService dataTableService,
-                             FileParserService fileParserService,
-                             DataValidationService validationService,
-                             ColumnMappingService columnMappingService,
-                             AuditLogService auditLogService,
-                             JobScheduler jobScheduler,
-                             ObjectMapper objectMapper,
-                             AsyncJobService asyncJobService,
-                             TransactionTemplate transactionTemplate) {
-        this.datasetRepository = datasetRepository;
-        this.columnRepository = columnRepository;
-        this.dataTableService = dataTableService;
-        this.fileParserService = fileParserService;
-        this.validationService = validationService;
-        this.columnMappingService = columnMappingService;
-        this.auditLogService = auditLogService;
-        this.jobScheduler = jobScheduler;
-        this.objectMapper = objectMapper;
-        this.asyncJobService = asyncJobService;
-        this.transactionTemplate = transactionTemplate;
+  public DataImportService(
+      DatasetRepository datasetRepository,
+      DatasetColumnRepository columnRepository,
+      DataTableService dataTableService,
+      DataTableRowService dataTableRowService,
+      FileParserService fileParserService,
+      DataValidationService validationService,
+      ColumnMappingService columnMappingService,
+      AuditLogService auditLogService,
+      JobScheduler jobScheduler,
+      ObjectMapper objectMapper,
+      AsyncJobService asyncJobService,
+      TransactionTemplate transactionTemplate) {
+    this.datasetRepository = datasetRepository;
+    this.columnRepository = columnRepository;
+    this.dataTableService = dataTableService;
+    this.dataTableRowService = dataTableRowService;
+    this.fileParserService = fileParserService;
+    this.validationService = validationService;
+    this.columnMappingService = columnMappingService;
+    this.auditLogService = auditLogService;
+    this.jobScheduler = jobScheduler;
+    this.objectMapper = objectMapper;
+    this.asyncJobService = asyncJobService;
+    this.transactionTemplate = transactionTemplate;
+  }
+
+  public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
+    return previewImport(datasetId, file, ParseOptions.defaults());
+  }
+
+  public ImportPreviewResponse previewImport(
+      Long datasetId, MultipartFile file, ParseOptions parseOptions) throws Exception {
+    // Validate dataset exists
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+
+    // Validate file type
+    String originalFilename = file.getOriginalFilename();
+    if (originalFilename == null || originalFilename.isEmpty()) {
+      throw new UnsupportedFileTypeException("File name is required");
     }
 
-    public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
-        return previewImport(datasetId, file, ParseOptions.defaults());
+    String fileType = getFileType(originalFilename);
+    if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
+      throw new UnsupportedFileTypeException(
+          "Unsupported file type. Only CSV and XLSX are supported.");
     }
 
-    public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file, ParseOptions parseOptions) throws Exception {
-        // Validate dataset exists
-        datasetRepository.findById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+    byte[] fileData = file.getBytes();
 
-        // Validate file type
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null || originalFilename.isEmpty()) {
-            throw new UnsupportedFileTypeException("File name is required");
-        }
+    // Parse headers
+    List<String> headers = fileParserService.parseHeaders(fileData, fileType, parseOptions);
 
-        String fileType = getFileType(originalFilename);
-        if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
-            throw new UnsupportedFileTypeException("Unsupported file type. Only CSV and XLSX are supported.");
-        }
+    // Parse sample rows (5 rows)
+    List<Map<String, String>> sampleRows =
+        fileParserService.parseSampleRows(fileData, fileType, 5, parseOptions);
 
-        byte[] fileData = file.getBytes();
+    // Count total rows
+    int totalRows = fileParserService.countRows(fileData, fileType, parseOptions);
 
-        // Parse headers
-        List<String> headers = fileParserService.parseHeaders(fileData, fileType, parseOptions);
+    // Get dataset columns
+    List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
 
-        // Parse sample rows (5 rows)
-        List<Map<String, String>> sampleRows = fileParserService.parseSampleRows(fileData, fileType, 5, parseOptions);
+    // Suggest mappings
+    List<ColumnMappingDto> suggestedMappings =
+        columnMappingService.suggestMappings(headers, columns);
 
-        // Count total rows
-        int totalRows = fileParserService.countRows(fileData, fileType, parseOptions);
+    return new ImportPreviewResponse(headers, sampleRows, suggestedMappings, totalRows);
+  }
 
-        // Get dataset columns
-        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+  public ImportValidateResponse validateImport(
+      Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings) throws Exception {
+    return validateImport(datasetId, file, mappings, ParseOptions.defaults());
+  }
 
-        // Suggest mappings
-        List<ColumnMappingDto> suggestedMappings = columnMappingService.suggestMappings(headers, columns);
+  public ImportValidateResponse validateImport(
+      Long datasetId,
+      MultipartFile file,
+      List<ColumnMappingEntry> mappings,
+      ParseOptions parseOptions)
+      throws Exception {
+    // Validate dataset exists
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
 
-        return new ImportPreviewResponse(headers, sampleRows, suggestedMappings, totalRows);
+    // Validate file type
+    String originalFilename = file.getOriginalFilename();
+    if (originalFilename == null || originalFilename.isEmpty()) {
+      throw new UnsupportedFileTypeException("File name is required");
     }
 
-    public ImportValidateResponse validateImport(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings) throws Exception {
-        return validateImport(datasetId, file, mappings, ParseOptions.defaults());
+    String fileType = getFileType(originalFilename);
+    if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
+      throw new UnsupportedFileTypeException(
+          "Unsupported file type. Only CSV and XLSX are supported.");
     }
 
-    public ImportValidateResponse validateImport(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings, ParseOptions parseOptions) throws Exception {
-        // Validate dataset exists
-        datasetRepository.findById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+    byte[] fileData = file.getBytes();
 
-        // Validate file type
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null || originalFilename.isEmpty()) {
-            throw new UnsupportedFileTypeException("File name is required");
-        }
+    // Parse all rows
+    List<Map<String, String>> rows = fileParserService.parse(fileData, fileType, parseOptions);
 
-        String fileType = getFileType(originalFilename);
-        if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
-            throw new UnsupportedFileTypeException("Unsupported file type. Only CSV and XLSX are supported.");
-        }
+    // Get dataset columns
+    List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
 
-        byte[] fileData = file.getBytes();
+    // Validate with mappings
+    DataValidationService.ValidationResultWithDetails validationResult =
+        validationService.validateWithMapping(rows, columns, mappings);
 
-        // Parse all rows
-        List<Map<String, String>> rows = fileParserService.parse(fileData, fileType, parseOptions);
+    // Limit errors to first 100 for performance
+    List<ValidationErrorDetail> limitedErrors =
+        validationResult.errors().stream().limit(100).toList();
 
-        // Get dataset columns
-        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+    return new ImportValidateResponse(
+        validationResult.totalRows(),
+        validationResult.validCount(),
+        validationResult.errorCount(),
+        limitedErrors);
+  }
 
-        // Validate with mappings
-        DataValidationService.ValidationResultWithDetails validationResult =
-            validationService.validateWithMapping(rows, columns, mappings);
+  public ImportStartResponse importFile(
+      Long datasetId,
+      MultipartFile file,
+      List<ColumnMappingEntry> mappings,
+      Long userId,
+      String username,
+      String ipAddress,
+      String userAgent)
+      throws Exception {
+    return importFile(
+        datasetId,
+        file,
+        mappings,
+        userId,
+        username,
+        ipAddress,
+        userAgent,
+        ParseOptions.defaults(),
+        ImportMode.APPEND);
+  }
 
-        // Limit errors to first 100 for performance
-        List<ValidationErrorDetail> limitedErrors = validationResult.errors().stream()
-                .limit(100)
-                .toList();
+  public ImportStartResponse importFile(
+      Long datasetId,
+      MultipartFile file,
+      List<ColumnMappingEntry> mappings,
+      Long userId,
+      String username,
+      String ipAddress,
+      String userAgent,
+      ParseOptions parseOptions)
+      throws Exception {
+    return importFile(
+        datasetId,
+        file,
+        mappings,
+        userId,
+        username,
+        ipAddress,
+        userAgent,
+        parseOptions,
+        ImportMode.APPEND);
+  }
 
-        return new ImportValidateResponse(
-            validationResult.totalRows(),
-            validationResult.validCount(),
-            validationResult.errorCount(),
-            limitedErrors
-        );
+  public ImportStartResponse importFile(
+      Long datasetId,
+      MultipartFile file,
+      List<ColumnMappingEntry> mappings,
+      Long userId,
+      String username,
+      String ipAddress,
+      String userAgent,
+      ParseOptions parseOptions,
+      ImportMode importMode)
+      throws Exception {
+    // Validate dataset exists
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+
+    // Validate file type
+    String originalFilename = file.getOriginalFilename();
+    if (originalFilename == null || originalFilename.isEmpty()) {
+      throw new UnsupportedFileTypeException("File name is required");
     }
 
-    public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
-                                          Long userId, String username, String ipAddress, String userAgent) throws Exception {
-        return importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, ParseOptions.defaults(), ImportMode.APPEND);
+    String fileType = getFileType(originalFilename);
+    if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
+      throw new UnsupportedFileTypeException(
+          "Unsupported file type. Only CSV and XLSX are supported.");
     }
 
-    public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
-                                          Long userId, String username, String ipAddress, String userAgent,
-                                          ParseOptions parseOptions) throws Exception {
-        return importFile(datasetId, file, mappings, userId, username, ipAddress, userAgent, parseOptions, ImportMode.APPEND);
+    long fileSize = file.getSize();
+    String upperFileType = fileType.toUpperCase();
+    String safeFileName =
+        originalFilename.length() > 255 ? originalFilename.substring(0, 255) : originalFilename;
+
+    // Create async job — partial unique index enforces one active import per dataset atomically
+    String jobId;
+    try {
+      jobId =
+          asyncJobService.createJob(
+              "IMPORT",
+              "dataset",
+              String.valueOf(datasetId),
+              userId,
+              Map.of(
+                  "fileName",
+                  safeFileName,
+                  "fileSize",
+                  fileSize,
+                  "fileType",
+                  upperFileType,
+                  "importMode",
+                  importMode.name()));
+    } catch (DataIntegrityViolationException e) {
+      throw new ConcurrentImportException(
+          "An import is already in progress. Please wait for it to complete and try again.");
     }
 
-    public ImportStartResponse importFile(Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings,
-                                          Long userId, String username, String ipAddress, String userAgent,
-                                          ParseOptions parseOptions, ImportMode importMode) throws Exception {
-        // Validate dataset exists
-        datasetRepository.findById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+    // Save file to temp location for Jobrunr processing
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
+    Files.createDirectories(tempDir);
+    Path tempFile = Files.createTempFile(tempDir, "import-", "." + fileType);
+    file.transferTo(tempFile.toFile());
 
-        // Validate file type
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null || originalFilename.isEmpty()) {
-            throw new UnsupportedFileTypeException("File name is required");
-        }
+    // Extract to local variables for Jobrunr lambda serialization
+    String filePath = tempFile.toString();
 
-        String fileType = getFileType(originalFilename);
-        if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
-            throw new UnsupportedFileTypeException("Unsupported file type. Only CSV and XLSX are supported.");
-        }
-
-        long fileSize = file.getSize();
-        String upperFileType = fileType.toUpperCase();
-        String safeFileName = originalFilename.length() > 255 ? originalFilename.substring(0, 255) : originalFilename;
-
-        // Create async job — partial unique index enforces one active import per dataset atomically
-        String jobId;
-        try {
-            jobId = asyncJobService.createJob("IMPORT", "dataset", String.valueOf(datasetId), userId,
-                    Map.of("fileName", safeFileName, "fileSize", fileSize, "fileType", upperFileType,
-                           "importMode", importMode.name()));
-        } catch (DataIntegrityViolationException e) {
-            throw new ConcurrentImportException("이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도하세요.");
-        }
-
-        // Save file to temp location for Jobrunr processing
-        Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
-        Files.createDirectories(tempDir);
-        Path tempFile = Files.createTempFile(tempDir, "import-", "." + fileType);
-        file.transferTo(tempFile.toFile());
-
-        // Extract to local variables for Jobrunr lambda serialization
-        String filePath = tempFile.toString();
-
-        // Save mappings to temp file if provided
-        String mappingsPath = "";
-        if (mappings != null && !mappings.isEmpty()) {
-            Path mappingsTempFile = Files.createTempFile(tempDir, "mappings-", ".json");
-            String mappingsJson = objectMapper.writeValueAsString(mappings);
-            Files.writeString(mappingsTempFile, mappingsJson);
-            mappingsPath = mappingsTempFile.toString();
-        }
-
-        // Save parseOptions to temp file for Jobrunr serialization
-        Path parseOptsTempFile = Files.createTempFile(tempDir, "parseopts-", ".json");
-        Files.writeString(parseOptsTempFile, objectMapper.writeValueAsString(parseOptions));
-        String parseOptsPath = parseOptsTempFile.toString();
-
-        // Extract to local variables for lambda
-        String finalMappingsPath = mappingsPath;
-        // Use String for importMode so Jobrunr can serialize it without enum class issues
-        String importModeName = importMode.name();
-
-        // Enqueue Jobrunr job
-        jobScheduler.enqueue(() -> processImport(
-                jobId, datasetId, filePath, finalMappingsPath, parseOptsPath, originalFilename, fileSize,
-                upperFileType, userId, username, ipAddress, userAgent, importModeName
-        ));
-
-        return new ImportStartResponse(jobId, "PENDING");
+    // Save mappings to temp file if provided
+    String mappingsPath = "";
+    if (mappings != null && !mappings.isEmpty()) {
+      Path mappingsTempFile = Files.createTempFile(tempDir, "mappings-", ".json");
+      String mappingsJson = objectMapper.writeValueAsString(mappings);
+      Files.writeString(mappingsTempFile, mappingsJson);
+      mappingsPath = mappingsTempFile.toString();
     }
 
-    @Job(name = "데이터 임포트: %5 → dataset %1")
-    public void processImport(String jobId, Long datasetId, String filePath, String mappingsPath, String parseOptsPath,
-                              String fileName, Long fileSize, String fileType,
-                              Long userId, String username,
-                              String ipAddress, String userAgent, String importModeName) {
-        try {
-            asyncJobService.updateProgress(jobId, "PARSING", 10, "파일 파싱 중...",
-                    Map.of("totalRows", 0, "processedRows", 0));
+    // Save parseOptions to temp file for Jobrunr serialization
+    Path parseOptsTempFile = Files.createTempFile(tempDir, "parseopts-", ".json");
+    Files.writeString(parseOptsTempFile, objectMapper.writeValueAsString(parseOptions));
+    String parseOptsPath = parseOptsTempFile.toString();
 
-            // Read file
-            byte[] fileData = Files.readAllBytes(Path.of(filePath));
+    // Extract to local variables for lambda
+    String finalMappingsPath = mappingsPath;
+    // Use String for importMode so Jobrunr can serialize it without enum class issues
+    String importModeName = importMode.name();
 
-            // Load parse options
-            ParseOptions parseOptions = ParseOptions.defaults();
-            if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
-                try {
-                    String optsJson = Files.readString(Path.of(parseOptsPath));
-                    parseOptions = objectMapper.readValue(optsJson, ParseOptions.class);
-                } catch (Exception e) {
-                    log.warn("Failed to read parse options from {}, using defaults", parseOptsPath, e);
-                }
-            }
-
-            // Parse file
-            log.info("Parsing file for import: {} → dataset {}", fileName, datasetId);
-            List<Map<String, String>> parsedRows = fileParserService.parse(fileData, fileType.toLowerCase(), parseOptions);
-
-            asyncJobService.updateProgress(jobId, "VALIDATING", 30, "데이터 검증 중...",
-                    Map.of("totalRows", parsedRows.size(), "processedRows", 0));
-
-            // Load dataset columns
-            List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
-
-            // Load mappings if provided
-            List<ColumnMappingEntry> mappings = null;
-            if (mappingsPath != null && !mappingsPath.isEmpty()) {
-                String mappingsJson = Files.readString(Path.of(mappingsPath));
-                mappings = objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
-            }
-
-            // Validate data
-            log.info("Validating {} rows for import", parsedRows.size());
-
-            Object validationResult;
-            int totalRows, validCount, errorCount;
-            List<List<Object>> validRows;
-
-            if (mappings != null && !mappings.isEmpty()) {
-                DataValidationService.ValidationResultWithDetails result =
-                    validationService.validateWithMapping(parsedRows, columns, mappings);
-                validationResult = result;
-                totalRows = result.totalRows();
-                validCount = result.validCount();
-                errorCount = result.errorCount();
-                validRows = result.validRows();
-
-                if (validCount == 0 && errorCount > 0) {
-                    // All rows failed validation
-                    asyncJobService.failJob(jobId, "All rows failed validation");
-
-                    List<ValidationErrorDetail> errors = result.errors();
-                    String errorJson = objectMapper.writeValueAsString(Map.of("errors", errors));
-
-                    Map<String, Object> metadata = Map.of(
-                            "fileName", fileName, "fileSize", fileSize, "fileType", fileType,
-                            "totalRows", totalRows,
-                            "successRows", 0,
-                            "errorRows", errorCount,
-                            "errorDetails", errorJson
-                    );
-
-                    auditLogService.log(userId, username, "IMPORT", "dataset",
-                            String.valueOf(datasetId), "파일 임포트: " + fileName,
-                            ipAddress, userAgent, "FAILURE",
-                            "All rows failed validation", metadata);
-
-                    log.error("Import failed: all rows invalid for dataset {}", datasetId);
-                    return;
-                }
-            } else {
-                DataValidationService.ValidationResult result = validationService.validate(parsedRows, columns);
-                validationResult = result;
-                totalRows = result.totalRows();
-                validCount = result.validCount();
-                errorCount = result.errorCount();
-                validRows = result.validRows();
-
-                if (validCount == 0 && !result.errors().isEmpty()) {
-                    // All rows failed validation
-                    asyncJobService.failJob(jobId, "All rows failed validation");
-
-                    String errorJson = objectMapper.writeValueAsString(Map.of("errors", result.errors()));
-
-                    Map<String, Object> metadata = Map.of(
-                            "fileName", fileName, "fileSize", fileSize, "fileType", fileType,
-                            "totalRows", totalRows,
-                            "successRows", 0,
-                            "errorRows", errorCount,
-                            "errorDetails", errorJson
-                    );
-
-                    auditLogService.log(userId, username, "IMPORT", "dataset",
-                            String.valueOf(datasetId), "파일 임포트: " + fileName,
-                            ipAddress, userAgent, "FAILURE",
-                            "All rows failed validation", metadata);
-
-                    log.error("Import failed: all rows invalid for dataset {}", datasetId);
-                    return;
-                }
-            }
-
-            // Route by import mode and insert/upsert/replace valid rows
-            ImportMode importMode = ImportMode.valueOf(
-                    importModeName != null && !importModeName.isEmpty() ? importModeName : ImportMode.APPEND.name());
-
-            if (validCount > 0) {
-                DatasetResponse dataset = datasetRepository.findById(datasetId).orElseThrow();
-                List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
-
-                List<Map<String, Object>> rowMaps = validRows.stream()
-                        .map(row -> {
-                            Map<String, Object> rowMap = new HashMap<>();
-                            for (int i = 0; i < columnNames.size() && i < row.size(); i++) {
-                                rowMap.put(columnNames.get(i), row.get(i));
-                            }
-                            return rowMap;
-                        })
-                        .toList();
-
-                int insertTotal = rowMaps.size();
-
-                switch (importMode) {
-                    case APPEND -> {
-                        log.info("APPEND mode: inserting {} valid rows", validCount);
-                        asyncJobService.updateProgress(jobId, "INSERTING", 40, "데이터 삽입 중...",
-                                Map.of("totalRows", insertTotal, "processedRows", 0));
-                        dataTableService.insertBatchWithProgress(dataset.tableName(), columnNames, rowMaps,
-                                (processed, total) -> {
-                                    int pct = 40 + (int) ((processed / (double) total) * 60);
-                                    asyncJobService.updateProgress(jobId, "INSERTING", pct, "데이터 삽입 중...",
-                                            Map.of("totalRows", total, "processedRows", processed));
-                                });
-                    }
-                    case UPSERT -> {
-                        List<String> pkColumns = columns.stream()
-                                .filter(DatasetColumnResponse::isPrimaryKey)
-                                .map(DatasetColumnResponse::columnName)
-                                .toList();
-                        if (pkColumns.isEmpty()) {
-                            throw new IllegalStateException("UPSERT mode requires at least one primary key column");
-                        }
-
-                        // Validate PK values in import data (NULL checks + within-file duplicate warnings)
-                        // Use rowMaps which already have dataset column names as keys
-                        List<Map<String, String>> rowMapsAsStrings = rowMaps.stream()
-                                .map(row -> {
-                                    Map<String, String> strRow = new HashMap<>();
-                                    for (var entry : row.entrySet()) {
-                                        strRow.put(entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : null);
-                                    }
-                                    return strRow;
-                                })
-                                .toList();
-                        DataValidationService.PkValidationResult pkValidation =
-                                validationService.validatePrimaryKeys(rowMapsAsStrings, pkColumns);
-                        if (!pkValidation.errors().isEmpty()) {
-                            // NULL PK values found — fail the import
-                            asyncJobService.failJob(jobId, "Primary key validation failed: NULL values in PK columns");
-                            String pkErrorJson = objectMapper.writeValueAsString(
-                                    Map.of("errors", pkValidation.errors()));
-                            auditLogService.log(userId, username, "IMPORT", "dataset",
-                                    String.valueOf(datasetId), "파일 임포트: " + fileName,
-                                    ipAddress, userAgent, "FAILURE",
-                                    "Primary key columns contain NULL values", Map.of(
-                                            "fileName", fileName, "fileSize", fileSize, "fileType", fileType,
-                                            "importMode", importModeName,
-                                            "errorDetails", pkErrorJson));
-                            return;
-                        }
-                        if (!pkValidation.warnings().isEmpty()) {
-                            log.warn("UPSERT PK warnings (within-file duplicates): {}", pkValidation.warnings().size());
-                        }
-
-                        log.info("UPSERT mode: upserting {} valid rows on PK columns {}", validCount, pkColumns);
-                        asyncJobService.updateProgress(jobId, "INSERTING", 40, "데이터 업서트 중...",
-                                Map.of("totalRows", insertTotal, "processedRows", 0));
-                        dataTableService.upsertBatchWithProgress(dataset.tableName(), columnNames, pkColumns, rowMaps, null,
-                                (processed, total) -> {
-                                    int pct = 40 + (int) ((processed / (double) total) * 60);
-                                    asyncJobService.updateProgress(jobId, "INSERTING", pct, "데이터 업서트 중...",
-                                            Map.of("totalRows", total, "processedRows", processed));
-                                });
-                    }
-                    case REPLACE -> {
-                        log.info("REPLACE mode: truncating table then inserting {} valid rows", validCount);
-                        asyncJobService.updateProgress(jobId, "INSERTING", 40, "테이블 교체 중...",
-                                Map.of("totalRows", insertTotal, "processedRows", 0));
-                        // Wrap truncate + insert in a single transaction for atomicity
-                        transactionTemplate.executeWithoutResult(status -> {
-                            dataTableService.truncateTable(dataset.tableName());
-                            dataTableService.insertBatchWithProgress(dataset.tableName(), columnNames, rowMaps,
-                                    (processed, total) -> {
-                                        int pct = 40 + (int) ((processed / (double) total) * 60);
-                                        asyncJobService.updateProgress(jobId, "INSERTING", pct, "테이블 교체 중...",
-                                                Map.of("totalRows", total, "processedRows", processed));
-                                    });
-                        });
-                    }
-                }
-            }
-
-            // Log success to audit_log
-            String errorJson = null;
-            if (validationResult instanceof DataValidationService.ValidationResultWithDetails detailedResult) {
-                if (!detailedResult.errors().isEmpty()) {
-                    errorJson = objectMapper.writeValueAsString(Map.of("errors", detailedResult.errors()));
-                }
-            } else if (validationResult instanceof DataValidationService.ValidationResult simpleResult) {
-                if (!simpleResult.errors().isEmpty()) {
-                    errorJson = objectMapper.writeValueAsString(Map.of("errors", simpleResult.errors()));
-                }
-            }
-
-            Map<String, Object> metadata = new HashMap<>();
-            metadata.put("fileName", fileName);
-            metadata.put("fileSize", fileSize);
-            metadata.put("fileType", fileType);
-            metadata.put("importMode", importMode.name());
-            metadata.put("totalRows", totalRows);
-            metadata.put("successRows", validCount);
-            metadata.put("errorRows", errorCount);
-            if (errorJson != null) {
-                metadata.put("errorDetails", errorJson);
-            }
-
-            asyncJobService.completeJob(jobId,
-                    Map.of("totalRows", totalRows, "successRows", validCount, "errorRows", errorCount));
-
-            auditLogService.log(userId, username, "IMPORT", "dataset",
-                    String.valueOf(datasetId), "파일 임포트: " + fileName,
-                    ipAddress, userAgent, "SUCCESS", null, metadata);
-
-            log.info("Import completed for dataset {}. Valid: {}, Errors: {}",
-                    datasetId, validCount, errorCount);
-
-        } catch (Exception e) {
-            log.error("Import failed for dataset {}", datasetId, e);
-
-            asyncJobService.failJob(jobId, e.getMessage());
-
-            Map<String, Object> metadata = Map.of(
-                    "fileName", fileName, "fileSize", fileSize, "fileType", fileType,
-                    "error", e.getMessage() != null ? e.getMessage() : "Unknown error"
-            );
-
-            auditLogService.log(userId, username, "IMPORT", "dataset",
-                    String.valueOf(datasetId), "파일 임포트: " + fileName,
-                    ipAddress, userAgent, "FAILURE", e.getMessage(), metadata);
-
-            throw new RuntimeException("Import failed: " + e.getMessage(), e);
-        } finally {
-            // Clean up temp files
-            try {
-                Files.deleteIfExists(Path.of(filePath));
-                if (mappingsPath != null && !mappingsPath.isEmpty()) {
-                    Files.deleteIfExists(Path.of(mappingsPath));
-                }
-                if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
-                    Files.deleteIfExists(Path.of(parseOptsPath));
-                }
-            } catch (Exception e) {
-                log.warn("Failed to delete temp file: {}", filePath, e);
-            }
-        }
-    }
-
-    public List<ImportResponse> getImportsByDatasetId(Long datasetId) {
-        datasetRepository.findById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
-
-        List<AuditLogResponse> auditLogs = auditLogService.findByResource("IMPORT", "dataset", String.valueOf(datasetId));
-        return auditLogs.stream()
-                .map(this::mapToImportResponse)
-                .toList();
-    }
-
-    public ImportResponse getImportById(Long datasetId, Long importId) {
-        datasetRepository.findById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
-
-        AuditLogResponse auditLog = auditLogService.findById(importId)
-                .orElseThrow(() -> new IllegalArgumentException("Import not found: " + importId));
-
-        if (!String.valueOf(datasetId).equals(auditLog.resourceId())) {
-            throw new IllegalArgumentException("Import does not belong to this dataset");
-        }
-
-        return mapToImportResponse(auditLog);
-    }
-
-    private ImportResponse mapToImportResponse(AuditLogResponse auditLog) {
-        Map<String, Object> meta = parseMetadata(auditLog.metadata());
-
-        String status = switch (auditLog.result()) {
-            case "SUCCESS" -> "COMPLETED";
-            case "FAILURE" -> "FAILED";
-            default -> auditLog.result();
-        };
-
-        Long datasetId = null;
-        if (auditLog.resourceId() != null) {
-            try {
-                datasetId = Long.parseLong(auditLog.resourceId());
-            } catch (NumberFormatException ignored) {}
-        }
-
-        return new ImportResponse(
-                auditLog.id(),
+    // Enqueue Jobrunr job
+    jobScheduler.enqueue(
+        () ->
+            processImport(
+                jobId,
                 datasetId,
-                getMetaString(meta, "fileName"),
-                getMetaLong(meta, "fileSize"),
-                getMetaString(meta, "fileType"),
-                status,
-                getMetaInteger(meta, "totalRows"),
-                getMetaInteger(meta, "successRows"),
-                getMetaInteger(meta, "errorRows"),
-                meta.get("errorDetails"),
-                auditLog.username(),
-                null,
-                auditLog.actionTime(),
-                auditLog.actionTime()
-        );
-    }
+                filePath,
+                finalMappingsPath,
+                parseOptsPath,
+                originalFilename,
+                fileSize,
+                upperFileType,
+                userId,
+                username,
+                ipAddress,
+                userAgent,
+                importModeName));
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> parseMetadata(Object metadata) {
-        if (metadata == null) {
-            return Map.of();
-        }
+    return new ImportStartResponse(jobId, "PENDING");
+  }
+
+  @Job(name = "Data import: %5 → dataset %1")
+  public void processImport(
+      String jobId,
+      Long datasetId,
+      String filePath,
+      String mappingsPath,
+      String parseOptsPath,
+      String fileName,
+      Long fileSize,
+      String fileType,
+      Long userId,
+      String username,
+      String ipAddress,
+      String userAgent,
+      String importModeName) {
+    try {
+      asyncJobService.updateProgress(
+          jobId, "PARSING", 10, "Parsing file...", Map.of("totalRows", 0, "processedRows", 0));
+
+      // Read file
+      byte[] fileData = Files.readAllBytes(Path.of(filePath));
+
+      // Load parse options
+      ParseOptions parseOptions = ParseOptions.defaults();
+      if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
         try {
-            String json;
-            if (metadata instanceof JSONB jsonb) {
-                json = jsonb.data();
-            } else {
-                json = metadata.toString();
-            }
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+          String optsJson = Files.readString(Path.of(parseOptsPath));
+          parseOptions = objectMapper.readValue(optsJson, ParseOptions.class);
         } catch (Exception e) {
-            log.warn("Failed to parse audit log metadata", e);
-            return Map.of();
+          log.warn("Failed to read parse options from {}, using defaults", parseOptsPath, e);
         }
-    }
+      }
 
-    private String getMetaString(Map<String, Object> meta, String key) {
-        Object value = meta.get(key);
-        return value != null ? value.toString() : null;
-    }
+      // Parse file
+      log.info("Parsing file for import: {} → dataset {}", fileName, datasetId);
+      List<Map<String, String>> parsedRows =
+          fileParserService.parse(fileData, fileType.toLowerCase(), parseOptions);
 
-    private Long getMetaLong(Map<String, Object> meta, String key) {
-        Object value = meta.get(key);
-        if (value instanceof Number n) return n.longValue();
-        if (value != null) {
-            try { return Long.parseLong(value.toString()); } catch (NumberFormatException ignored) {}
+      asyncJobService.updateProgress(
+          jobId,
+          "VALIDATING",
+          30,
+          "Validating data...",
+          Map.of("totalRows", parsedRows.size(), "processedRows", 0));
+
+      // Load dataset columns
+      List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+
+      // Load mappings if provided
+      List<ColumnMappingEntry> mappings = null;
+      if (mappingsPath != null && !mappingsPath.isEmpty()) {
+        String mappingsJson = Files.readString(Path.of(mappingsPath));
+        mappings =
+            objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
+      }
+
+      // Validate data
+      log.info("Validating {} rows for import", parsedRows.size());
+
+      Object validationResult;
+      int totalRows, validCount, errorCount;
+      List<List<Object>> validRows;
+
+      if (mappings != null && !mappings.isEmpty()) {
+        DataValidationService.ValidationResultWithDetails result =
+            validationService.validateWithMapping(parsedRows, columns, mappings);
+        validationResult = result;
+        totalRows = result.totalRows();
+        validCount = result.validCount();
+        errorCount = result.errorCount();
+        validRows = result.validRows();
+
+        if (validCount == 0 && errorCount > 0) {
+          // All rows failed validation
+          asyncJobService.failJob(jobId, "All rows failed validation");
+
+          List<ValidationErrorDetail> errors = result.errors();
+          String errorJson = objectMapper.writeValueAsString(Map.of("errors", errors));
+
+          Map<String, Object> metadata =
+              Map.of(
+                  "fileName",
+                  fileName,
+                  "fileSize",
+                  fileSize,
+                  "fileType",
+                  fileType,
+                  "totalRows",
+                  totalRows,
+                  "successRows",
+                  0,
+                  "errorRows",
+                  errorCount,
+                  "errorDetails",
+                  errorJson);
+
+          auditLogService.log(
+              userId,
+              username,
+              "IMPORT",
+              "dataset",
+              String.valueOf(datasetId),
+              "File import: " + fileName,
+              ipAddress,
+              userAgent,
+              "FAILURE",
+              "All rows failed validation",
+              metadata);
+
+          log.error("Import failed: all rows invalid for dataset {}", datasetId);
+          return;
         }
-        return null;
-    }
+      } else {
+        DataValidationService.ValidationResult result =
+            validationService.validate(parsedRows, columns);
+        validationResult = result;
+        totalRows = result.totalRows();
+        validCount = result.validCount();
+        errorCount = result.errorCount();
+        validRows = result.validRows();
 
-    private Integer getMetaInteger(Map<String, Object> meta, String key) {
-        Object value = meta.get(key);
-        if (value instanceof Number n) return n.intValue();
-        if (value != null) {
-            try { return Integer.parseInt(value.toString()); } catch (NumberFormatException ignored) {}
+        if (validCount == 0 && !result.errors().isEmpty()) {
+          // All rows failed validation
+          asyncJobService.failJob(jobId, "All rows failed validation");
+
+          String errorJson = objectMapper.writeValueAsString(Map.of("errors", result.errors()));
+
+          Map<String, Object> metadata =
+              Map.of(
+                  "fileName",
+                  fileName,
+                  "fileSize",
+                  fileSize,
+                  "fileType",
+                  fileType,
+                  "totalRows",
+                  totalRows,
+                  "successRows",
+                  0,
+                  "errorRows",
+                  errorCount,
+                  "errorDetails",
+                  errorJson);
+
+          auditLogService.log(
+              userId,
+              username,
+              "IMPORT",
+              "dataset",
+              String.valueOf(datasetId),
+              "File import: " + fileName,
+              ipAddress,
+              userAgent,
+              "FAILURE",
+              "All rows failed validation",
+              metadata);
+
+          log.error("Import failed: all rows invalid for dataset {}", datasetId);
+          return;
         }
-        return null;
-    }
+      }
 
-    public byte[] exportDatasetCsv(Long datasetId) throws Exception {
-        DatasetResponse dataset = datasetRepository.findById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+      // Route by import mode and insert/upsert/replace valid rows
+      ImportMode importMode =
+          ImportMode.valueOf(
+              importModeName != null && !importModeName.isEmpty()
+                  ? importModeName
+                  : ImportMode.APPEND.name());
 
-        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+      if (validCount > 0) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId).orElseThrow();
         List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
 
-        int pageSize = 1000;
-        int page = 0;
-        List<Map<String, Object>> allRows = new java.util.ArrayList<>();
+        List<Map<String, Object>> rowMaps =
+            validRows.stream()
+                .map(
+                    row -> {
+                      Map<String, Object> rowMap = new HashMap<>();
+                      for (int i = 0; i < columnNames.size() && i < row.size(); i++) {
+                        rowMap.put(columnNames.get(i), row.get(i));
+                      }
+                      return rowMap;
+                    })
+                .toList();
 
-        while (true) {
-            List<Map<String, Object>> pageRows = dataTableService.queryData(dataset.tableName(), columnNames, null, page, pageSize);
-            if (pageRows.isEmpty()) {
-                break;
-            }
-            allRows.addAll(pageRows);
-            page++;
+        int insertTotal = rowMaps.size();
 
-            if (allRows.size() > 100000) {
-                break;
+        switch (importMode) {
+          case APPEND -> {
+            log.info("APPEND mode: inserting {} valid rows", validCount);
+            asyncJobService.updateProgress(
+                jobId,
+                "INSERTING",
+                40,
+                "Inserting data...",
+                Map.of("totalRows", insertTotal, "processedRows", 0));
+            dataTableRowService.insertBatchWithProgress(
+                dataset.tableName(),
+                columnNames,
+                rowMaps,
+                (processed, total) -> {
+                  int pct = 40 + (int) ((processed / (double) total) * 60);
+                  asyncJobService.updateProgress(
+                      jobId,
+                      "INSERTING",
+                      pct,
+                      "Inserting data...",
+                      Map.of("totalRows", total, "processedRows", processed));
+                });
+          }
+          case UPSERT -> {
+            List<String> pkColumns =
+                columns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            if (pkColumns.isEmpty()) {
+              throw new IllegalStateException(
+                  "UPSERT mode requires at least one primary key column");
             }
+
+            // Validate PK values in import data (NULL checks + within-file duplicate warnings)
+            // Use rowMaps which already have dataset column names as keys
+            List<Map<String, String>> rowMapsAsStrings =
+                rowMaps.stream()
+                    .map(
+                        row -> {
+                          Map<String, String> strRow = new HashMap<>();
+                          for (var entry : row.entrySet()) {
+                            strRow.put(
+                                entry.getKey(),
+                                entry.getValue() != null ? entry.getValue().toString() : null);
+                          }
+                          return strRow;
+                        })
+                    .toList();
+            DataValidationService.PkValidationResult pkValidation =
+                validationService.validatePrimaryKeys(rowMapsAsStrings, pkColumns);
+            if (!pkValidation.errors().isEmpty()) {
+              // NULL PK values found — fail the import
+              asyncJobService.failJob(
+                  jobId, "Primary key validation failed: NULL values in PK columns");
+              String pkErrorJson =
+                  objectMapper.writeValueAsString(Map.of("errors", pkValidation.errors()));
+              auditLogService.log(
+                  userId,
+                  username,
+                  "IMPORT",
+                  "dataset",
+                  String.valueOf(datasetId),
+                  "File import: " + fileName,
+                  ipAddress,
+                  userAgent,
+                  "FAILURE",
+                  "Primary key columns contain NULL values",
+                  Map.of(
+                      "fileName",
+                      fileName,
+                      "fileSize",
+                      fileSize,
+                      "fileType",
+                      fileType,
+                      "importMode",
+                      importModeName,
+                      "errorDetails",
+                      pkErrorJson));
+              return;
+            }
+            if (!pkValidation.warnings().isEmpty()) {
+              log.warn(
+                  "UPSERT PK warnings (within-file duplicates): {}",
+                  pkValidation.warnings().size());
+            }
+
+            log.info(
+                "UPSERT mode: upserting {} valid rows on PK columns {}", validCount, pkColumns);
+            asyncJobService.updateProgress(
+                jobId,
+                "INSERTING",
+                40,
+                "Upserting data...",
+                Map.of("totalRows", insertTotal, "processedRows", 0));
+            dataTableRowService.upsertBatchWithProgress(
+                dataset.tableName(),
+                columnNames,
+                pkColumns,
+                rowMaps,
+                null,
+                (processed, total) -> {
+                  int pct = 40 + (int) ((processed / (double) total) * 60);
+                  asyncJobService.updateProgress(
+                      jobId,
+                      "INSERTING",
+                      pct,
+                      "Upserting data...",
+                      Map.of("totalRows", total, "processedRows", processed));
+                });
+          }
+          case REPLACE -> {
+            log.info("REPLACE mode: truncating table then inserting {} valid rows", validCount);
+            asyncJobService.updateProgress(
+                jobId,
+                "INSERTING",
+                40,
+                "Replacing table...",
+                Map.of("totalRows", insertTotal, "processedRows", 0));
+            // Wrap truncate + insert in a single transaction for atomicity
+            transactionTemplate.executeWithoutResult(
+                status -> {
+                  dataTableRowService.truncateTable(dataset.tableName());
+                  dataTableRowService.insertBatchWithProgress(
+                      dataset.tableName(),
+                      columnNames,
+                      rowMaps,
+                      (processed, total) -> {
+                        int pct = 40 + (int) ((processed / (double) total) * 60);
+                        asyncJobService.updateProgress(
+                            jobId,
+                            "INSERTING",
+                            pct,
+                            "Replacing table...",
+                            Map.of("totalRows", total, "processedRows", processed));
+                      });
+                });
+          }
         }
+      }
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        baos.write(0xEF);
-        baos.write(0xBB);
-        baos.write(0xBF);
-
-        try (OutputStreamWriter osw = new OutputStreamWriter(baos, StandardCharsets.UTF_8);
-             CSVWriter writer = new CSVWriter(osw)) {
-
-            String[] headers = columns.stream()
-                    .map(col -> col.displayName() != null && !col.displayName().isEmpty()
-                            ? col.displayName()
-                            : col.columnName())
-                    .toArray(String[]::new);
-            writer.writeNext(headers);
-
-            for (Map<String, Object> row : allRows) {
-                String[] rowData = new String[columnNames.size()];
-                for (int i = 0; i < columnNames.size(); i++) {
-                    Object value = row.get(columnNames.get(i));
-                    rowData[i] = value != null ? value.toString() : "";
-                }
-                writer.writeNext(rowData);
-            }
+      // Log success to audit_log
+      String errorJson = null;
+      if (validationResult
+          instanceof DataValidationService.ValidationResultWithDetails detailedResult) {
+        if (!detailedResult.errors().isEmpty()) {
+          errorJson = objectMapper.writeValueAsString(Map.of("errors", detailedResult.errors()));
         }
+      } else if (validationResult instanceof DataValidationService.ValidationResult simpleResult) {
+        if (!simpleResult.errors().isEmpty()) {
+          errorJson = objectMapper.writeValueAsString(Map.of("errors", simpleResult.errors()));
+        }
+      }
 
-        return baos.toByteArray();
+      Map<String, Object> metadata = new HashMap<>();
+      metadata.put("fileName", fileName);
+      metadata.put("fileSize", fileSize);
+      metadata.put("fileType", fileType);
+      metadata.put("importMode", importMode.name());
+      metadata.put("totalRows", totalRows);
+      metadata.put("successRows", validCount);
+      metadata.put("errorRows", errorCount);
+      if (errorJson != null) {
+        metadata.put("errorDetails", errorJson);
+      }
+
+      asyncJobService.completeJob(
+          jobId,
+          Map.of("totalRows", totalRows, "successRows", validCount, "errorRows", errorCount));
+
+      auditLogService.log(
+          userId,
+          username,
+          "IMPORT",
+          "dataset",
+          String.valueOf(datasetId),
+          "File import: " + fileName,
+          ipAddress,
+          userAgent,
+          "SUCCESS",
+          null,
+          metadata);
+
+      log.info(
+          "Import completed for dataset {}. Valid: {}, Errors: {}",
+          datasetId,
+          validCount,
+          errorCount);
+
+    } catch (Exception e) {
+      log.error("Import failed for dataset {}", datasetId, e);
+
+      asyncJobService.failJob(jobId, e.getMessage());
+
+      Map<String, Object> metadata =
+          Map.of(
+              "fileName",
+              fileName,
+              "fileSize",
+              fileSize,
+              "fileType",
+              fileType,
+              "error",
+              e.getMessage() != null ? e.getMessage() : "Unknown error");
+
+      auditLogService.log(
+          userId,
+          username,
+          "IMPORT",
+          "dataset",
+          String.valueOf(datasetId),
+          "File import: " + fileName,
+          ipAddress,
+          userAgent,
+          "FAILURE",
+          e.getMessage(),
+          metadata);
+
+      throw new ImportProcessingException("Import failed: " + e.getMessage(), e);
+    } finally {
+      // Clean up temp files
+      try {
+        Files.deleteIfExists(Path.of(filePath));
+        if (mappingsPath != null && !mappingsPath.isEmpty()) {
+          Files.deleteIfExists(Path.of(mappingsPath));
+        }
+        if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
+          Files.deleteIfExists(Path.of(parseOptsPath));
+        }
+      } catch (Exception e) {
+        log.warn("Failed to delete temp file: {}", filePath, e);
+      }
+    }
+  }
+
+  public List<ImportResponse> getImportsByDatasetId(Long datasetId) {
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+
+    List<AuditLogResponse> auditLogs =
+        auditLogService.findByResource("IMPORT", "dataset", String.valueOf(datasetId));
+    return auditLogs.stream().map(this::mapToImportResponse).toList();
+  }
+
+  public ImportResponse getImportById(Long datasetId, Long importId) {
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+
+    AuditLogResponse auditLog =
+        auditLogService
+            .findById(importId)
+            .orElseThrow(() -> new IllegalArgumentException("Import not found: " + importId));
+
+    if (!String.valueOf(datasetId).equals(auditLog.resourceId())) {
+      throw new IllegalArgumentException("Import does not belong to this dataset");
     }
 
-    private String getFileType(String filename) {
-        int lastDot = filename.lastIndexOf('.');
-        if (lastDot > 0 && lastDot < filename.length() - 1) {
-            return filename.substring(lastDot + 1).toLowerCase();
-        }
-        return "";
+    return mapToImportResponse(auditLog);
+  }
+
+  private ImportResponse mapToImportResponse(AuditLogResponse auditLog) {
+    Map<String, Object> meta = parseMetadata(auditLog.metadata());
+
+    String status =
+        switch (auditLog.result()) {
+          case "SUCCESS" -> "COMPLETED";
+          case "FAILURE" -> "FAILED";
+          default -> auditLog.result();
+        };
+
+    Long datasetId = null;
+    if (auditLog.resourceId() != null) {
+      try {
+        datasetId = Long.parseLong(auditLog.resourceId());
+      } catch (NumberFormatException ignored) {
+        // Value is not a valid number; skip numeric detection
+      }
     }
+
+    return new ImportResponse(
+        auditLog.id(),
+        datasetId,
+        getMetaString(meta, "fileName"),
+        getMetaLong(meta, "fileSize"),
+        getMetaString(meta, "fileType"),
+        status,
+        getMetaInteger(meta, "totalRows"),
+        getMetaInteger(meta, "successRows"),
+        getMetaInteger(meta, "errorRows"),
+        meta.get("errorDetails"),
+        auditLog.username(),
+        null,
+        auditLog.actionTime(),
+        auditLog.actionTime());
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> parseMetadata(Object metadata) {
+    if (metadata == null) {
+      return Map.of();
+    }
+    try {
+      String json;
+      if (metadata instanceof JSONB jsonb) {
+        json = jsonb.data();
+      } else {
+        json = metadata.toString();
+      }
+      return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+    } catch (Exception e) {
+      log.warn("Failed to parse audit log metadata", e);
+      return Map.of();
+    }
+  }
+
+  private String getMetaString(Map<String, Object> meta, String key) {
+    Object value = meta.get(key);
+    return value != null ? value.toString() : null;
+  }
+
+  private Long getMetaLong(Map<String, Object> meta, String key) {
+    Object value = meta.get(key);
+    if (value instanceof Number n) return n.longValue();
+    if (value != null) {
+      try {
+        return Long.parseLong(value.toString());
+      } catch (NumberFormatException ignored) {
+        // Value is not parseable as Long; try next type
+      }
+    }
+    return null;
+  }
+
+  private Integer getMetaInteger(Map<String, Object> meta, String key) {
+    Object value = meta.get(key);
+    if (value instanceof Number n) return n.intValue();
+    if (value != null) {
+      try {
+        return Integer.parseInt(value.toString());
+      } catch (NumberFormatException ignored) {
+        // Value is not parseable as Integer; fall through to return null
+      }
+    }
+    return null;
+  }
+
+  private String getFileType(String filename) {
+    int lastDot = filename.lastIndexOf('.');
+    if (lastDot > 0 && lastDot < filename.length() - 1) {
+      return filename.substring(lastDot + 1).toLowerCase();
+    }
+    return "";
+  }
 }

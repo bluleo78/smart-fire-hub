@@ -9,5 +9,4 @@ public record SqlQueryResponse(
     List<Map<String, Object>> rows,
     int affectedRows,
     long executionTimeMs,
-    String error
-) {}
+    String error) {}

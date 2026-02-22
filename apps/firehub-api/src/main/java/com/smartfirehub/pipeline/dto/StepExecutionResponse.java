@@ -11,5 +11,4 @@ public record StepExecutionResponse(
     String log,
     String errorMessage,
     LocalDateTime startedAt,
-    LocalDateTime completedAt
-) {}
+    LocalDateTime completedAt) {}

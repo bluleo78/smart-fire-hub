@@ -13,7 +13,6 @@ public record ColumnStatsResponse(
     String maxValue,
     Double avgValue,
     List<ValueCount> topValues,
-    boolean sampled
-) {
-    public record ValueCount(String value, long count) {}
+    boolean sampled) {
+  public record ValueCount(String value, long count) {}
 }

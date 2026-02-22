@@ -10,5 +10,4 @@ public record DatasetColumnResponse(
     boolean isIndexed,
     String description,
     int columnOrder,
-    boolean isPrimaryKey
-) {}
+    boolean isPrimaryKey) {}

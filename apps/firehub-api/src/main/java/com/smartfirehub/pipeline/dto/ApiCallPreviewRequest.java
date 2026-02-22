@@ -13,11 +13,6 @@ public record ApiCallPreviewRequest(
     List<FieldMappingPreview> fieldMappings,
     Long apiConnectionId,
     Map<String, String> inlineAuth,
-    Integer timeoutMs
-) {
-    public record FieldMappingPreview(
-        String sourceField,
-        String targetColumn,
-        String dataType
-    ) {}
+    Integer timeoutMs) {
+  public record FieldMappingPreview(String sourceField, String targetColumn, String dataType) {}
 }

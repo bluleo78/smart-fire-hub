@@ -1,10 +1,12 @@
 package com.smartfirehub.pipeline.dto;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 
 public record UpdatePipelineRequest(
-    String name,
+    @NotBlank String name,
     String description,
     Boolean isActive,
-    List<PipelineStepRequest> steps  // full replacement
-) {}
+    @Valid List<PipelineStepRequest> steps // full replacement
+    ) {}

@@ -12,15 +12,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/dashboard")
 public class DashboardController {
 
-    private final DashboardService dashboardService;
+  private final DashboardService dashboardService;
 
-    public DashboardController(DashboardService dashboardService) {
-        this.dashboardService = dashboardService;
-    }
+  public DashboardController(DashboardService dashboardService) {
+    this.dashboardService = dashboardService;
+  }
 
-    @GetMapping("/stats")
-    @RequirePermission("dataset:read")
-    public ResponseEntity<DashboardStatsResponse> getStats() {
-        return ResponseEntity.ok(dashboardService.getStats());
-    }
+  @GetMapping("/stats")
+  @RequirePermission("dataset:read")
+  public ResponseEntity<DashboardStatsResponse> getStats() {
+    return ResponseEntity.ok(dashboardService.getStats());
+  }
 }

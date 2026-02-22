@@ -10,20 +10,19 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
-    private final PermissionInterceptor permissionInterceptor;
+  private final PermissionInterceptor permissionInterceptor;
 
-    public WebMvcConfig(PermissionInterceptor permissionInterceptor) {
-        this.permissionInterceptor = permissionInterceptor;
-    }
+  public WebMvcConfig(PermissionInterceptor permissionInterceptor) {
+    this.permissionInterceptor = permissionInterceptor;
+  }
 
-    @Override
-    public void addInterceptors(@NonNull InterceptorRegistry registry) {
-        registry.addInterceptor(permissionInterceptor)
-                .addPathPatterns("/api/v1/**");
-    }
+  @Override
+  public void addInterceptors(@NonNull InterceptorRegistry registry) {
+    registry.addInterceptor(permissionInterceptor).addPathPatterns("/api/v1/**");
+  }
 
-    @Override
-    public void configureAsyncSupport(@NonNull AsyncSupportConfigurer configurer) {
-        configurer.setDefaultTimeout(300_000L);
-    }
+  @Override
+  public void configureAsyncSupport(@NonNull AsyncSupportConfigurer configurer) {
+    configurer.setDefaultTimeout(300_000L);
+  }
 }

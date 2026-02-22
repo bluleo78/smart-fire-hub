@@ -15,23 +15,23 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RequestMapping("/api/v1/jobs")
 public class AsyncJobController {
 
-    private final AsyncJobService asyncJobService;
+  private final AsyncJobService asyncJobService;
 
-    public AsyncJobController(AsyncJobService asyncJobService) {
-        this.asyncJobService = asyncJobService;
-    }
+  public AsyncJobController(AsyncJobService asyncJobService) {
+    this.asyncJobService = asyncJobService;
+  }
 
-    @GetMapping(value = "/{jobId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @RequirePermission("data:read")
-    public SseEmitter streamProgress(@PathVariable String jobId, Authentication auth) {
-        Long userId = (Long) auth.getPrincipal();
-        return asyncJobService.subscribe(jobId, userId);
-    }
+  @GetMapping(value = "/{jobId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+  @RequirePermission("data:read")
+  public SseEmitter streamProgress(@PathVariable String jobId, Authentication auth) {
+    Long userId = (Long) auth.getPrincipal();
+    return asyncJobService.subscribe(jobId, userId);
+  }
 
-    @GetMapping("/{jobId}/status")
-    @RequirePermission("data:read")
-    public AsyncJobStatusResponse getJobStatus(@PathVariable String jobId, Authentication auth) {
-        Long userId = (Long) auth.getPrincipal();
-        return asyncJobService.getJobStatus(jobId, userId);
-    }
+  @GetMapping("/{jobId}/status")
+  @RequirePermission("data:read")
+  public AsyncJobStatusResponse getJobStatus(@PathVariable String jobId, Authentication auth) {
+    Long userId = (Long) auth.getPrincipal();
+    return asyncJobService.getJobStatus(jobId, userId);
+  }
 }

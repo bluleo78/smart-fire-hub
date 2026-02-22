@@ -1,10 +1,11 @@
 package com.smartfirehub.pipeline.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.util.Map;
 
 public record CreateTriggerRequest(
-    String name,
-    TriggerType triggerType,
+    @NotBlank String name,
+    @NotNull TriggerType triggerType,
     String description,
-    Map<String, Object> config
-) {}
+    Map<String, Object> config) {}

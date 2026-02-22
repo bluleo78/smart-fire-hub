@@ -10,5 +10,4 @@ public record TriggerEventResponse(
     String eventType,
     Long executionId,
     Map<String, Object> detail,
-    LocalDateTime createdAt
-) {}
+    LocalDateTime createdAt) {}

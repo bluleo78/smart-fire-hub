@@ -3,6 +3,7 @@ plugins {
     id("org.springframework.boot") version "3.4.1"
     id("io.spring.dependency-management") version "1.1.7"
     id("nu.studer.jooq") version "9.0"
+    id("com.diffplug.spotless") version "6.25.0"
 }
 
 group = "com.smartfirehub"
@@ -85,6 +86,13 @@ jooq {
                 }
             }
         }
+    }
+}
+
+spotless {
+    java {
+        target("src/main/java/**/*.java", "src/test/java/**/*.java")
+        googleJavaFormat("1.34.1")
     }
 }
 

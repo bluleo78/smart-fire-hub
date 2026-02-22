@@ -16,5 +16,4 @@ public record ImportResponse(
     String importedBy,
     LocalDateTime startedAt,
     LocalDateTime completedAt,
-    LocalDateTime createdAt
-) {}
+    LocalDateTime createdAt) {}

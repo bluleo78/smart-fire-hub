@@ -9,5 +9,4 @@ public record PipelineResponse(
     boolean isActive,
     String createdBy,
     int stepCount,
-    LocalDateTime createdAt
-) {}
+    LocalDateTime createdAt) {}

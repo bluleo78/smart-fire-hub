@@ -8,5 +8,4 @@ public record CloneDatasetRequest(
     @NotBlank @Pattern(regexp = "^[a-z][a-z0-9_]*$") String tableName,
     String description,
     boolean includeData,
-    boolean includeTags
-) {}
+    boolean includeTags) {}
