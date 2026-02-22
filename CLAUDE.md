@@ -91,7 +91,7 @@ Package base: `com.smartfirehub`. Feature-sliced by domain module:
 - Backend 프로파일: `local` (로컬 개발), `test` (테스트)
 - 작업은 명확한 단위로 구분하고, 각 작업 단위별로 검증 후 커밋한다.
 - 커밋은 반드시 사용자 승인 후 진행한다. 특정 지시가 있는 경우는 반드시 따른다.
-- Backend(firehub-api)와 Frontend(firehub-web)는 Claude 팀으로 분리하여 병렬 작업한다.
+- Backend(firehub-api), Frontend(firehub-web), AI Agent(firehub-ai-agent)는 Claude 팀으로 분리하여 병렬 작업한다.
 - 팀 내에서도 독립적인 모듈은 SubAgent를 활용하여 최대한 병렬화한다.
 - 스크린샷은 프로젝트 루트의 `snapshots/` 폴더에 저장한다.
 - **검증 가능한 코드 작성**: 모든 코드는 검증 가능해야 하며, 특히 백엔드(firehub-api)는 반드시 테스트 코드(TC)를 함께 작성한다. 기존 `IntegrationTestBase` 패턴을 따르고, 서비스 레이어 중심으로 정상/예외 케이스를 커버한다.
