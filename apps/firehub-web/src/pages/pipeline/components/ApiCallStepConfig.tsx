@@ -27,7 +27,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { client } from '@/api/client';
+import { useApiConnections } from '@/hooks/queries/useApiConnections';
 import ApiCallPreview from './ApiCallPreview';
 
 interface FieldMapping {
@@ -188,11 +190,16 @@ function KvEditor({
 
 export default function ApiCallStepConfig({
   apiConfig,
+  apiConnectionId,
   onChange,
+  onConnectionChange,
   readOnly,
 }: ApiCallStepConfigProps) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const { data: savedConnections } = useApiConnections();
+
+  const authMode = apiConnectionId ? 'saved' : 'inline';
 
   const update = (key: string, value: unknown) => onChange({ ...apiConfig, [key]: value });
 
@@ -361,95 +368,133 @@ export default function ApiCallStepConfig({
 
       {/* Authentication */}
       <Section title="인증" icon={<Key className="h-3.5 w-3.5" />} defaultOpen={true}>
-        <div className="space-y-1.5">
-          <Label className="text-xs">인증 유형</Label>
-          <Select
-            value={inlineAuth.authType}
-            disabled={readOnly}
-            onValueChange={(v) => {
-              const patch: Partial<InlineAuth> = { authType: v };
-              if (v === 'API_KEY' && !inlineAuth.placement) {
-                patch.placement = 'header';
-              }
-              handleAuthChange(patch);
-            }}
-          >
-            <SelectTrigger className="h-8 text-xs w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="NONE">없음</SelectItem>
-              <SelectItem value="API_KEY">API Key</SelectItem>
-              <SelectItem value="BEARER">Bearer Token</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {inlineAuth.authType === 'API_KEY' && (
-          <>
-            <div className="space-y-1.5">
-              <Label className="text-xs">위치</Label>
-              <Select
-                value={inlineAuth.placement ?? 'header'}
-                disabled={readOnly}
-                onValueChange={(v) => handleAuthChange({ placement: v })}
-              >
-                <SelectTrigger className="h-8 text-xs w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="header">Header</SelectItem>
-                  <SelectItem value="query">Query Parameter</SelectItem>
-                </SelectContent>
-              </Select>
+        <RadioGroup
+          value={authMode}
+          onValueChange={(v) => {
+            if (v === 'saved') {
+              handleAuthChange({ authType: 'NONE' });
+            } else {
+              onConnectionChange(null);
+            }
+          }}
+          disabled={readOnly}
+          className="space-y-3"
+        >
+          {/* Saved connection */}
+          <div className="flex items-start gap-2">
+            <RadioGroupItem value="saved" id="auth-saved" className="mt-0.5" />
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="auth-saved" className="text-xs font-medium">저장된 연결 사용</Label>
+              {authMode === 'saved' && (
+                <Select
+                  value={apiConnectionId ? String(apiConnectionId) : ''}
+                  disabled={readOnly}
+                  onValueChange={(v) => onConnectionChange(Number(v))}
+                >
+                  <SelectTrigger className="h-8 text-xs w-full">
+                    <SelectValue placeholder="연결을 선택하세요" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {savedConnections?.map((conn) => (
+                      <SelectItem key={conn.id} value={String(conn.id)}>
+                        {conn.name} ({conn.authType === 'BEARER' ? 'Bearer' : 'API Key'})
+                      </SelectItem>
+                    ))}
+                    {(!savedConnections || savedConnections.length === 0) && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        저장된 연결이 없습니다. 관리 &gt; API 연결에서 추가하세요.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">
-                {inlineAuth.placement === 'query' ? '파라미터 이름' : '헤더 이름'}
-              </Label>
-              <Input
-                className="h-7 text-xs"
-                placeholder={inlineAuth.placement === 'query' ? 'api_key' : 'X-API-Key'}
-                value={
-                  inlineAuth.placement === 'query'
-                    ? (inlineAuth.paramName ?? '')
-                    : (inlineAuth.headerName ?? '')
-                }
-                disabled={readOnly}
-                onChange={(e) =>
-                  inlineAuth.placement === 'query'
-                    ? handleAuthChange({ paramName: e.target.value })
-                    : handleAuthChange({ headerName: e.target.value })
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">키 값</Label>
-              <Input
-                className="h-7 text-xs"
-                type="password"
-                placeholder="API 키를 입력하세요"
-                value={inlineAuth.apiKey ?? ''}
-                disabled={readOnly}
-                onChange={(e) => handleAuthChange({ apiKey: e.target.value })}
-              />
-            </div>
-          </>
-        )}
-
-        {inlineAuth.authType === 'BEARER' && (
-          <div className="space-y-1.5">
-            <Label className="text-xs">Bearer Token</Label>
-            <Input
-              className="h-7 text-xs"
-              type="password"
-              placeholder="토큰을 입력하세요"
-              value={inlineAuth.token ?? ''}
-              disabled={readOnly}
-              onChange={(e) => handleAuthChange({ token: e.target.value })}
-            />
           </div>
-        )}
+
+          {/* Inline auth */}
+          <div className="flex items-start gap-2">
+            <RadioGroupItem value="inline" id="auth-inline" className="mt-0.5" />
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="auth-inline" className="text-xs font-medium">직접 입력</Label>
+              {authMode === 'inline' && (
+                <div className="space-y-2">
+                  <Select
+                    value={inlineAuth.authType}
+                    disabled={readOnly}
+                    onValueChange={(v) => {
+                      const patch: Partial<InlineAuth> = { authType: v };
+                      if (v === 'API_KEY' && !inlineAuth.placement) {
+                        patch.placement = 'header';
+                      }
+                      handleAuthChange(patch);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NONE">없음</SelectItem>
+                      <SelectItem value="API_KEY">API Key</SelectItem>
+                      <SelectItem value="BEARER">Bearer Token</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {inlineAuth.authType === 'API_KEY' && (
+                    <>
+                      <Select
+                        value={inlineAuth.placement ?? 'header'}
+                        disabled={readOnly}
+                        onValueChange={(v) => handleAuthChange({ placement: v })}
+                      >
+                        <SelectTrigger className="h-8 text-xs w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="header">Header</SelectItem>
+                          <SelectItem value="query">Query Parameter</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        className="h-7 text-xs"
+                        placeholder={inlineAuth.placement === 'query' ? 'api_key' : 'X-API-Key'}
+                        value={
+                          inlineAuth.placement === 'query'
+                            ? (inlineAuth.paramName ?? '')
+                            : (inlineAuth.headerName ?? '')
+                        }
+                        disabled={readOnly}
+                        onChange={(e) =>
+                          inlineAuth.placement === 'query'
+                            ? handleAuthChange({ paramName: e.target.value })
+                            : handleAuthChange({ headerName: e.target.value })
+                        }
+                      />
+                      <Input
+                        className="h-7 text-xs"
+                        type="password"
+                        placeholder="API 키를 입력하세요"
+                        value={inlineAuth.apiKey ?? ''}
+                        disabled={readOnly}
+                        onChange={(e) => handleAuthChange({ apiKey: e.target.value })}
+                      />
+                    </>
+                  )}
+
+                  {inlineAuth.authType === 'BEARER' && (
+                    <Input
+                      className="h-7 text-xs"
+                      type="password"
+                      placeholder="토큰을 입력하세요"
+                      value={inlineAuth.token ?? ''}
+                      disabled={readOnly}
+                      onChange={(e) => handleAuthChange({ token: e.target.value })}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </RadioGroup>
       </Section>
 
       <Separator />

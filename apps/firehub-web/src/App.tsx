@@ -18,6 +18,8 @@ const RoleListPage = lazy(() => import('./pages/admin/RoleListPage'));
 const RoleDetailPage = lazy(() => import('./pages/admin/RoleDetailPage'));
 const AuditLogListPage = lazy(() => import('./pages/admin/AuditLogListPage'));
 const AISettingsPage = lazy(() => import('./pages/admin/AISettingsPage'));
+const ApiConnectionListPage = lazy(() => import('./pages/admin/ApiConnectionListPage'));
+const ApiConnectionDetailPage = lazy(() => import('./pages/admin/ApiConnectionDetailPage'));
 const CategoryListPage = lazy(() => import('./pages/data/CategoryListPage'));
 const DatasetListPage = lazy(() => import('./pages/data/DatasetListPage'));
 const DatasetCreatePage = lazy(() => import('./pages/data/DatasetCreatePage'));
@@ -60,6 +62,8 @@ function App() {
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
                 <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
                 <Route path="/admin/ai-settings" element={<AISettingsPage />} />
+                <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
+                <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />
               </Route>
             </Route>
           </Route>

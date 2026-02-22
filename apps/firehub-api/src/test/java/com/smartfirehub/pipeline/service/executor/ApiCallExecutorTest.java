@@ -96,7 +96,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
     }
 
@@ -159,7 +160,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         ApiCallExecutor.ApiCallResult result = executor.execute(config, "out_table", null, "APPEND", null);
@@ -263,7 +265,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         ApiCallExecutor.ApiCallResult result = executor.execute(config, "paged_table", null, "APPEND", null);
@@ -306,7 +309,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         ApiCallExecutor.ApiCallResult result = executor.execute(config, "partial_table", null, "APPEND", null);
@@ -371,7 +375,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(3, 50, 200),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         ApiCallExecutor.ApiCallResult result = executor.execute(config, "flaky_table", null, "APPEND", null);
@@ -404,7 +409,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(2, 50, 200),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
@@ -440,7 +446,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
@@ -481,7 +488,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         executor.execute(config, "native_table", null, "APPEND", null);
@@ -538,7 +546,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         // Column type map from dataset metadata
@@ -594,7 +603,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         ApiCallExecutor.ApiCallResult result = executor.execute(config, "rep_table", null, "REPLACE", null);
@@ -642,7 +652,8 @@ class ApiCallExecutorTest {
                 new ApiCallConfig.RetryConfig(0, 100, 1000),
                 5000,
                 60000,
-                100
+                100,
+                null
         );
 
         assertThatThrownBy(() -> executor.execute(config, "rep_fail_table", null, "REPLACE", null))

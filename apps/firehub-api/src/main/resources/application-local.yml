@@ -14,7 +14,7 @@ app:
   jwt:
     secret: dGhpcyBpcyBhIHZlcnkgbG9uZyBzZWNyZXQga2V5IGZvciBIUzI1NiBhbGdvcml0aG0gdGhhdCBpcyBhdCBsZWFzdCAyNTYgYml0cw==
   encryption:
-    master-key: bG9jYWwtZGV2LW1hc3Rlci1rZXktZm9yLWVuY3J5cHRpb24=
+    master-key: bG9jYWwtZGV2LW1hc3Rlci1rZXktZm9yLWVuY3J5cHQ=
 
 agent:
   url: http://127.0.0.1:3001

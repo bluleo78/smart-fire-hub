@@ -16,6 +16,7 @@ import {
   Tag,
   FileText,
   Bot,
+  Plug,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
@@ -47,6 +48,7 @@ const adminNavItems: NavItem[] = [
   { label: '역할 관리', href: '/admin/roles', icon: <Shield className="h-4 w-4" />, adminOnly: true },
   { label: '감사 로그', href: '/admin/audit-logs', icon: <FileText className="h-4 w-4" />, adminOnly: true },
   { label: 'AI 설정', href: '/admin/ai-settings', icon: <Bot className="h-4 w-4" />, adminOnly: true },
+  { label: 'API 연결', href: '/admin/api-connections', icon: <Plug className="h-4 w-4" />, adminOnly: true },
 ];
 
 function PageSkeleton() {
