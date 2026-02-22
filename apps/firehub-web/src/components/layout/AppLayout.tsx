@@ -62,17 +62,24 @@ function AppLayoutInner() {
   const { isAdmin } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { isOpen: aiOpen, mode: aiMode } = useAI();
+  const { isOpen: aiOpen, mode: aiMode, setMode: setAIMode } = useAI();
 
   const isActive = (href: string) => {
     if (href === '/') return location.pathname === '/';
     return location.pathname.startsWith(href);
   };
 
+  const handleNavClick = () => {
+    setSidebarOpen(false);
+    if (aiOpen && aiMode === 'fullscreen') {
+      setAIMode('side');
+    }
+  };
+
   const sidebarContent = (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center px-4">
-        <Link to="/" className="text-lg font-semibold" onClick={() => setSidebarOpen(false)}>
+        <Link to="/" className="text-lg font-semibold" onClick={handleNavClick}>
           Smart Fire Hub
         </Link>
       </div>
@@ -82,7 +89,7 @@ function AppLayoutInner() {
           <Link
             key={item.href}
             to={item.href}
-            onClick={() => setSidebarOpen(false)}
+            onClick={handleNavClick}
             className={cn(
               'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
               isActive(item.href)
@@ -101,7 +108,7 @@ function AppLayoutInner() {
           <Link
             key={item.href}
             to={item.href}
-            onClick={() => setSidebarOpen(false)}
+            onClick={handleNavClick}
             className={cn(
               'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
               isActive(item.href)
