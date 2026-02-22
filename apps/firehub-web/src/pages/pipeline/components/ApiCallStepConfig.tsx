@@ -366,7 +366,13 @@ export default function ApiCallStepConfig({
           <Select
             value={inlineAuth.authType}
             disabled={readOnly}
-            onValueChange={(v) => handleAuthChange({ authType: v })}
+            onValueChange={(v) => {
+              const patch: Partial<InlineAuth> = { authType: v };
+              if (v === 'API_KEY' && !inlineAuth.placement) {
+                patch.placement = 'header';
+              }
+              handleAuthChange(patch);
+            }}
           >
             <SelectTrigger className="h-8 text-xs w-full">
               <SelectValue />

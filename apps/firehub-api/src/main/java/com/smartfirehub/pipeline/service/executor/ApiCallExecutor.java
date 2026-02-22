@@ -454,7 +454,8 @@ public class ApiCallExecutor {
         // Auth headers
         if (decryptedAuthConfig != null) {
             String authType = decryptedAuthConfig.get("authType");
-            if ("API_KEY".equals(authType) && "header".equals(decryptedAuthConfig.get("placement"))) {
+            String placement = decryptedAuthConfig.getOrDefault("placement", "header");
+            if ("API_KEY".equals(authType) && "header".equals(placement)) {
                 String headerName = decryptedAuthConfig.get("headerName");
                 String apiKey     = decryptedAuthConfig.get("apiKey");
                 if (headerName != null && apiKey != null) {

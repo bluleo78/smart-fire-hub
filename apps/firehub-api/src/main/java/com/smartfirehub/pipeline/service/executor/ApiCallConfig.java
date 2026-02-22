@@ -17,7 +17,8 @@ public record ApiCallConfig(
         RetryConfig retry,
         Integer timeoutMs,
         Integer maxDurationMs,
-        Integer maxResponseSizeMb
+        Integer maxResponseSizeMb,
+        Map<String, String> inlineAuth
 ) {
     public record FieldMapping(
             String sourceField,

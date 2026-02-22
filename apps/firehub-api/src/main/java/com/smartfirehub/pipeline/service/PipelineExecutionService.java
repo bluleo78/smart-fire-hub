@@ -367,6 +367,8 @@ public class PipelineExecutionService {
                 Map<String, String> decryptedAuth = null;
                 if (step.apiConnectionId() != null) {
                     decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
+                } else if (apiCallConfig.inlineAuth() != null) {
+                    decryptedAuth = apiCallConfig.inlineAuth();
                 }
 
                 // Build column type map from dataset metadata for accurate type conversion

@@ -156,7 +156,8 @@ public class ApiCallPreviewService {
 
         if (authConfig != null) {
             String authType = authConfig.get("authType");
-            if ("API_KEY".equals(authType) && "header".equals(authConfig.get("placement"))) {
+            String placement = authConfig.getOrDefault("placement", "header");
+            if ("API_KEY".equals(authType) && "header".equals(placement)) {
                 String headerName = authConfig.get("headerName");
                 String apiKey     = authConfig.get("apiKey");
                 if (headerName != null && apiKey != null) {
