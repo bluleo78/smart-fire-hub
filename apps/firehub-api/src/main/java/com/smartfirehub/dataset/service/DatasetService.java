@@ -412,6 +412,50 @@ public class DatasetService {
     }
 
     @Transactional
+    public DataDeleteResponse truncateDatasetData(Long datasetId) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        long rowCount = dataTableService.countRows(dataset.tableName());
+        dataTableService.truncateTable(dataset.tableName());
+        return new DataDeleteResponse((int) rowCount);
+    }
+
+    @Transactional(readOnly = true)
+    public RowCountResponse getRowCount(Long datasetId) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+        long rowCount = dataTableService.countRows(dataset.tableName());
+        return new RowCountResponse(rowCount);
+    }
+
+    @Transactional
+    public BatchRowDataResponse replaceDatasetData(Long datasetId, BatchRowDataRequest request) {
+        DatasetResponse dataset = datasetRepository.findById(datasetId)
+                .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+        List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
+
+        List<Map<String, Object>> validatedRows = new ArrayList<>();
+        for (int i = 0; i < request.rows().size(); i++) {
+            try {
+                validatedRows.add(validateAndConvertRowData(columns, request.rows().get(i)));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Row " + i + ": " + e.getMessage());
+            }
+        }
+
+        List<String> columnNames = columns.stream()
+                .map(DatasetColumnResponse::columnName)
+                .toList();
+
+        // Atomic: truncate then insert in same transaction
+        dataTableService.truncateTable(dataset.tableName());
+        dataTableService.insertBatch(dataset.tableName(), columnNames, validatedRows);
+
+        return new BatchRowDataResponse(validatedRows.size());
+    }
+
+    @Transactional
     public DataDeleteResponse deleteDataRows(Long datasetId, List<Long> rowIds) {
         DatasetResponse dataset = datasetRepository.findById(datasetId)
                 .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));

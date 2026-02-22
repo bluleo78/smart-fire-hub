@@ -311,6 +311,43 @@ export function createFireHubMcpServer(apiClient: FireHubApiClient): McpSdkServe
           return jsonResult(result);
         }
       ),
+
+      safeTool(
+        'truncate_dataset',
+        '데이터셋의 모든 데이터를 삭제합니다. 테이블 구조(스키마)는 유지됩니다. 전체 삭제 시 delete_rows 대신 이 도구를 사용하세요.',
+        {
+          datasetId: z.number().describe('대상 데이터셋 ID'),
+        },
+        async (args: { datasetId: number }) => {
+          const result = await apiClient.truncateDataset(args.datasetId);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'get_row_count',
+        '데이터셋의 행 수를 조회합니다. 데이터를 조회하지 않고 빠르게 행 수만 확인할 때 사용합니다.',
+        {
+          datasetId: z.number().describe('대상 데이터셋 ID'),
+        },
+        async (args: { datasetId: number }) => {
+          const result = await apiClient.getRowCount(args.datasetId);
+          return jsonResult(result);
+        }
+      ),
+
+      safeTool(
+        'replace_dataset_data',
+        '데이터셋의 모든 데이터를 새 데이터로 교체합니다. 기존 데이터 전체 삭제 후 새 데이터를 삽입합니다 (원자적 트랜잭션). 최대 100행.',
+        {
+          datasetId: z.number().describe('대상 데이터셋 ID'),
+          rows: z.array(z.record(z.string(), z.unknown())).min(1).max(100).describe('새로 삽입할 행 배열. 각 항목은 컬럼명-값 쌍'),
+        },
+        async (args: { datasetId: number; rows: Record<string, unknown>[] }) => {
+          const result = await apiClient.replaceDatasetData(args.datasetId, args.rows);
+          return jsonResult(result);
+        }
+      ),
     ],
   });
 }

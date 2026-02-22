@@ -178,4 +178,19 @@ export class FireHubApiClient {
     const response = await this.client.post(`/datasets/${datasetId}/data/delete`, { rowIds });
     return response.data;
   }
+
+  async truncateDataset(datasetId: number): Promise<any> {
+    const response = await this.client.post(`/datasets/${datasetId}/data/truncate`);
+    return response.data;
+  }
+
+  async getRowCount(datasetId: number): Promise<any> {
+    const response = await this.client.get(`/datasets/${datasetId}/data/count`);
+    return response.data;
+  }
+
+  async replaceDatasetData(datasetId: number, rows: Record<string, unknown>[]): Promise<any> {
+    const response = await this.client.post(`/datasets/${datasetId}/data/replace`, { rows });
+    return response.data;
+  }
 }

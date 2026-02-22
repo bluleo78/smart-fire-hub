@@ -123,6 +123,28 @@ public class DatasetController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/{id}/data/truncate")
+    @RequirePermission("data:delete")
+    public ResponseEntity<DataDeleteResponse> truncateDatasetData(@PathVariable Long id) {
+        DataDeleteResponse response = datasetService.truncateDatasetData(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{id}/data/count")
+    @RequirePermission("data:read")
+    public ResponseEntity<RowCountResponse> getRowCount(@PathVariable Long id) {
+        RowCountResponse response = datasetService.getRowCount(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{id}/data/replace")
+    @RequirePermission("data:import")
+    public ResponseEntity<BatchRowDataResponse> replaceDatasetData(@PathVariable Long id,
+                                                                     @Valid @RequestBody BatchRowDataRequest request) {
+        BatchRowDataResponse response = datasetService.replaceDatasetData(id, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
     @GetMapping("/{id}/data")
     @RequirePermission("data:read")
     public ResponseEntity<DataQueryResponse> getDatasetData(
