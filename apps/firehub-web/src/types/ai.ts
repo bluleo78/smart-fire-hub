@@ -10,7 +10,7 @@ export interface AISession {
 
 export interface AIMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   toolCalls?: AIToolCall[];
   timestamp: string;
@@ -23,7 +23,7 @@ export interface AIToolCall {
 }
 
 export interface AIStreamEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'done' | 'error';
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error';
   sessionId?: string;
   content?: string;
   toolName?: string;

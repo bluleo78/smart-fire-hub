@@ -31,6 +31,7 @@ interface AISettingsForm {
   'ai.system_prompt': string;
   'ai.temperature': string;
   'ai.max_tokens': string;
+  'ai.session_max_tokens': string;
 }
 
 const DEFAULT_VALUES: AISettingsForm = {
@@ -39,6 +40,7 @@ const DEFAULT_VALUES: AISettingsForm = {
   'ai.system_prompt': '',
   'ai.temperature': '1.0',
   'ai.max_tokens': '16384',
+  'ai.session_max_tokens': '50000',
 };
 
 export default function AISettingsPage() {
@@ -87,6 +89,11 @@ export default function AISettingsPage() {
     const maxTokens = Number(form['ai.max_tokens']);
     if (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 65536 || !Number.isInteger(maxTokens)) {
       newErrors['ai.max_tokens'] = '1~65536 사이의 정수를 입력하세요';
+    }
+
+    const sessionMaxTokens = Number(form['ai.session_max_tokens']);
+    if (isNaN(sessionMaxTokens) || sessionMaxTokens < 10000 || sessionMaxTokens > 200000 || !Number.isInteger(sessionMaxTokens)) {
+      newErrors['ai.session_max_tokens'] = '10,000~200,000 사이의 정수를 입력하세요';
     }
 
     if (!form['ai.system_prompt'].trim()) {
@@ -231,6 +238,29 @@ export default function AISettingsPage() {
               <p className="text-sm text-destructive">{errors['ai.max_tokens']}</p>
             )}
             <p className="text-sm text-muted-foreground">AI 응답의 최대 토큰 수 (1~65536)</p>
+          </div>
+
+          <Separator />
+
+          {/* Session Max Tokens */}
+          <div className="space-y-2">
+            <Label htmlFor="ai-session-max-tokens">세션 최대 토큰</Label>
+            <Input
+              id="ai-session-max-tokens"
+              type="number"
+              min={10000}
+              max={200000}
+              step={10000}
+              className="w-full max-w-md"
+              value={form['ai.session_max_tokens']}
+              onChange={(e) => updateField('ai.session_max_tokens', e.target.value)}
+            />
+            {errors['ai.session_max_tokens'] && (
+              <p className="text-sm text-destructive">{errors['ai.session_max_tokens']}</p>
+            )}
+            <p className="text-sm text-muted-foreground">
+              세션의 입력 토큰이 이 값을 초과하면 대화를 자동 요약하고 새 세션으로 전환합니다 (10,000~200,000)
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -17,7 +17,11 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, pendingUserMessage, streamingMessage, isStreaming]);
 
-  const showThinking = isStreaming && (!streamingMessage?.content);
+  // 도구 실행 중(마지막 toolCall에 result 없음)이면 ThinkingIndicator 표시
+  const lastToolPending = streamingMessage?.toolCalls?.length
+    ? !streamingMessage.toolCalls[streamingMessage.toolCalls.length - 1].result
+    : false;
+  const showThinking = isStreaming && (!streamingMessage?.content || lastToolPending);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -28,8 +32,8 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
         {pendingUserMessage && (
           <MessageBubble message={{ role: 'user', content: pendingUserMessage, timestamp: new Date().toISOString() }} />
         )}
+        {(streamingMessage?.content || streamingMessage?.toolCalls?.length) && <MessageBubble message={streamingMessage} />}
         {showThinking && <ThinkingIndicator />}
-        {streamingMessage?.content && <MessageBubble message={streamingMessage} />}
         <div ref={bottomRef} />
       </div>
     </div>

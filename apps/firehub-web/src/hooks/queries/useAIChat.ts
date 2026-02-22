@@ -40,6 +40,8 @@ export function useAIChat() {
       timestamp: new Date().toISOString(),
     };
 
+    let userMessageCommitted = false;
+
     const assistantId = `assistant-${Date.now()}`;
     const assistantTimestamp = new Date().toISOString();
 
@@ -53,20 +55,58 @@ export function useAIChat() {
     };
     setStreamingMessage(streamingContentRef.current);
 
+    const commitTurn = () => {
+      if (messagesCommittedRef.current) return;
+      const current = streamingContentRef.current;
+      if (!current?.content && (!current?.toolCalls || current.toolCalls.length === 0)) return;
+
+      const turnMsg: AIMessage = {
+        id: current.id || `assistant-turn-${Date.now()}`,
+        role: 'assistant',
+        content: current.content || '',
+        toolCalls: current.toolCalls,
+        timestamp: current.timestamp || new Date().toISOString(),
+      };
+
+      if (!userMessageCommitted) {
+        userMessageCommitted = true;
+        setMessages(prev => [...prev, userMessage, turnMsg]);
+        setPendingUserMessage(null);
+      } else {
+        setMessages(prev => [...prev, turnMsg]);
+      }
+
+      // Start new streaming message for next turn
+      const newId = `assistant-${Date.now()}`;
+      streamingContentRef.current = {
+        id: newId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+      };
+      setStreamingMessage(streamingContentRef.current);
+    };
+
     const commitMessages = () => {
       if (messagesCommittedRef.current) return;
       messagesCommittedRef.current = true;
       const current = streamingContentRef.current;
-      const assistantMsg: AIMessage | null = current?.content ? {
+      const assistantMsg: AIMessage | null = (current?.content || (current?.toolCalls && current.toolCalls.length > 0)) ? {
         id: current.id || assistantId,
         role: 'assistant',
-        content: current.content,
+        content: current.content || '',
         toolCalls: current.toolCalls,
         timestamp: current.timestamp || assistantTimestamp,
       } : null;
-      setMessages(prev =>
-        assistantMsg ? [...prev, userMessage, assistantMsg] : [...prev, userMessage]
-      );
+
+      if (!userMessageCommitted) {
+        setMessages(prev =>
+          assistantMsg ? [...prev, userMessage, assistantMsg] : [...prev, userMessage]
+        );
+      } else if (assistantMsg) {
+        setMessages(prev => [...prev, assistantMsg]);
+      }
+
       setStreamingMessage(null);
       setPendingUserMessage(null);
       setIsStreaming(false);
@@ -80,12 +120,23 @@ export function useAIChat() {
         switch (event.type) {
           case 'init':
             if (event.sessionId) {
+              const isNewSession = !currentSessionId;
+              const isCompacted = !!currentSessionId && currentSessionId !== event.sessionId;
               setCurrentSessionId(event.sessionId);
-              // 새 세션일 때만 DB 저장 (기존 세션 재개 시 currentSessionId가 이미 있으므로 skip)
-              if (!currentSessionId) {
+              // DB에 세션 생성: 새 세션이거나 컴팩션으로 세션이 변경된 경우
+              if (isNewSession || isCompacted) {
                 aiApi.createSession({ sessionId: event.sessionId, title: content })
                   .then(() => queryClient.invalidateQueries({ queryKey: ['ai-sessions'] }))
                   .catch(() => {}); // 실패해도 채팅 흐름 유지
+              }
+              // 컴팩션으로 세션 전환 시 구분 메시지 삽입
+              if (isCompacted) {
+                setMessages(prev => [...prev, {
+                  id: `system-compaction-${Date.now()}`,
+                  role: 'system' as const,
+                  content: '대화가 길어져 이전 내용을 요약하고 새 세션으로 전환되었습니다.',
+                  timestamp: new Date().toISOString(),
+                }]);
               }
             }
             break;
@@ -134,6 +185,9 @@ export function useAIChat() {
               }
               return { ...prev, toolCalls };
             });
+            break;
+          case 'turn':
+            commitTurn();
             break;
           case 'done':
             commitMessages();

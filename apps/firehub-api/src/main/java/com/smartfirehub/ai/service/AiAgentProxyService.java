@@ -95,6 +95,7 @@ public class AiAgentProxyService {
         requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));
         requestBody.put("temperature", parseDoubleSafe(aiSettings.get("ai.temperature"), 1.0));
         requestBody.put("maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), 16384));
+        requestBody.put("sessionMaxTokens", parseIntSafe(aiSettings.get("ai.session_max_tokens"), 50000));
 
         // Send initial event to flush response headers and prevent proxy buffering
         try {
@@ -132,9 +133,9 @@ public class AiAgentProxyService {
 
                         // Pass through events from firehub-ai to frontend as-is
                         // firehub-ai format matches frontend expectations:
-                        // init, text, tool_use, tool_result, done, error
+                        // init, text, tool_use, tool_result, turn, done, error
                         switch (type) {
-                            case "init", "text", "tool_use", "tool_result" -> {
+                            case "init", "text", "tool_use", "tool_result", "turn" -> {
                                 emitter.send(SseEmitter.event().data(data));
                             }
                             case "done" -> {
