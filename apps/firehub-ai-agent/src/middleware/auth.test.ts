@@ -10,8 +10,14 @@ function mockReq(authHeader?: string): Partial<Request> {
 
 function mockRes(): Partial<Response> & { statusCode?: number; body?: unknown } {
   const res: Partial<Response> & { statusCode?: number; body?: unknown } = {};
-  res.status = vi.fn((code: number) => { res.statusCode = code; return res as Response; });
-  res.json = vi.fn((data: unknown) => { res.body = data; return res as Response; });
+  res.status = vi.fn((code: number) => {
+    res.statusCode = code;
+    return res as Response;
+  });
+  res.json = vi.fn((data: unknown) => {
+    res.body = data;
+    return res as Response;
+  });
   return res;
 }
 

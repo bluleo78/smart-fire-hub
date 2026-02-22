@@ -2,20 +2,25 @@ import { stat } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { readSessionTranscript } from './transcript-reader.js';
-
-const DEFAULT_COMPACTION_THRESHOLD = 50_000;
-// JSONL file size proxy for token estimation.
-// JSONL stores only conversation messages; system prompt + MCP tool schemas
-// are added at query time and inflate actual token count significantly.
-// Measured ratio: ~475KB file ≈ 327K tokens (~1.45 KB per 1K tokens).
-const BYTES_PER_TOKEN = 1.45;
+import {
+  DEFAULT_COMPACTION_THRESHOLD,
+  BYTES_PER_TOKEN,
+  COMPACTION_RECENT_MESSAGES,
+  COMPACTION_CONTENT_MAX_LENGTH,
+  COMPACTION_SUMMARY_MAX_TOKENS,
+  COMPACTION_MODEL,
+} from '../constants.js';
 
 function getSessionFilePath(sessionId: string): string {
   const projectId = process.cwd().replace(/\//g, '-');
   return path.join(os.homedir(), '.claude', 'projects', projectId, `${sessionId}.jsonl`);
 }
 
-export async function shouldCompact(sessionId: string, tokenStore: Map<string, number>, threshold?: number): Promise<boolean> {
+export async function shouldCompact(
+  sessionId: string,
+  tokenStore: Map<string, number>,
+  threshold?: number,
+): Promise<boolean> {
   const tokenThreshold = threshold ?? DEFAULT_COMPACTION_THRESHOLD;
   const fileSizeThreshold = tokenThreshold * BYTES_PER_TOKEN;
 
@@ -30,7 +35,9 @@ export async function shouldCompact(sessionId: string, tokenStore: Map<string, n
     const filePath = getSessionFilePath(sessionId);
     const stats = await stat(filePath);
     if (stats.size > fileSizeThreshold) {
-      console.log(`[Compaction] Session file ${sessionId} is ${(stats.size / 1024).toFixed(0)}KB (threshold: ${(fileSizeThreshold / 1024).toFixed(0)}KB, tokenThreshold: ${tokenThreshold})`);
+      console.log(
+        `[Compaction] Session file ${sessionId} is ${(stats.size / 1024).toFixed(0)}KB (threshold: ${(fileSizeThreshold / 1024).toFixed(0)}KB, tokenThreshold: ${tokenThreshold})`,
+      );
       return true;
     }
   } catch {
@@ -44,10 +51,10 @@ export async function generateSummary(sessionId: string): Promise<string> {
   const messages = await readSessionTranscript(sessionId);
   if (messages.length === 0) return '';
 
-  // Build transcript (truncate to last 20 messages to keep summary prompt small)
-  const recent = messages.slice(-20);
+  // Build transcript (truncate to last N messages to keep summary prompt small)
+  const recent = messages.slice(-COMPACTION_RECENT_MESSAGES);
   const transcript = recent
-    .map(m => `[${m.role}]: ${m.content.slice(0, 500)}`)
+    .map((m) => `[${m.role}]: ${m.content.slice(0, COMPACTION_CONTENT_MAX_LENGTH)}`)
     .join('\n\n');
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -65,11 +72,12 @@ export async function generateSummary(sessionId: string): Promise<string> {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        messages: [{
-          role: 'user',
-          content: `다음은 AI 어시스턴트와 사용자의 대화 기록입니다. 간결하게 요약하세요.
+        model: COMPACTION_MODEL,
+        max_tokens: COMPACTION_SUMMARY_MAX_TOKENS,
+        messages: [
+          {
+            role: 'user',
+            content: `다음은 AI 어시스턴트와 사용자의 대화 기록입니다. 간결하게 요약하세요.
 
 요약에 반드시 포함할 내용:
 - 사용자가 다루고 있던 데이터셋 이름과 ID
@@ -84,7 +92,8 @@ ${transcript}
 ---
 
 요약:`,
-        }],
+          },
+        ],
       }),
     });
 
@@ -93,8 +102,8 @@ ${transcript}
       return buildFallbackSummary(messages);
     }
 
-    const data = await response.json() as { content: Array<{ type: string; text?: string }> };
-    const textBlock = data.content?.find(b => b.type === 'text');
+    const data = (await response.json()) as { content: Array<{ type: string; text?: string }> };
+    const textBlock = data.content?.find((b) => b.type === 'text');
     return textBlock?.text ?? buildFallbackSummary(messages);
   } catch (error) {
     console.error('[Compaction] Summary generation failed:', error);
@@ -104,8 +113,8 @@ ${transcript}
 
 function buildFallbackSummary(messages: Array<{ role: string; content: string }>): string {
   // Template-based fallback: extract last user message and last assistant response
-  const lastUser = [...messages].reverse().find(m => m.role === 'user');
-  const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
   const parts: string[] = [];
   if (lastUser) parts.push(`마지막 사용자 요청: ${lastUser.content.slice(0, 300)}`);
   if (lastAssistant) parts.push(`마지막 응답: ${lastAssistant.content.slice(0, 300)}`);

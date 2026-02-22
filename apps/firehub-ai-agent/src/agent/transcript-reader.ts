@@ -75,7 +75,12 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
           const content = pending.textParts.join('');
           // Only include assistant messages that have text content
           if (content) {
-            messages.push({ id: pending.id, role: 'assistant', content, timestamp: pending.timestamp });
+            messages.push({
+              id: pending.id,
+              role: 'assistant',
+              content,
+              timestamp: pending.timestamp,
+            });
           }
         }
         assistantByMsgId.clear();
@@ -84,7 +89,7 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
 
       // Skip user messages that contain any tool_result block
       const hasToolResult = contentBlocks.some(
-        (block) => (block as Record<string, unknown>).type === 'tool_result'
+        (block) => (block as Record<string, unknown>).type === 'tool_result',
       );
       if (hasToolResult) continue;
 

@@ -1,11 +1,12 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import chatRouter from './routes/chat.js';
+import { DEFAULT_PORT } from './constants.js';
 
 dotenv.config({ path: '.env.local' });
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || DEFAULT_PORT;
 
 app.use(express.json());
 

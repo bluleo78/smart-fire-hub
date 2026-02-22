@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
-import request from 'supertest';
 import chatRouter from './chat.js';
 
 // We need supertest for HTTP-level integration tests
@@ -107,9 +106,15 @@ describe('Chat routes — integration tests', () => {
 
   it('POST /agent/chat with auth but missing message should return 400', async () => {
     const app = createApp();
-    const res = await makeRequest(app, 'POST', '/agent/chat', { userId: 1 }, {
-      Authorization: `Internal ${VALID_TOKEN}`,
-    });
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { userId: 1 },
+      {
+        Authorization: `Internal ${VALID_TOKEN}`,
+      },
+    );
 
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('error');
@@ -117,9 +122,15 @@ describe('Chat routes — integration tests', () => {
 
   it('POST /agent/chat with auth but missing userId should return 400', async () => {
     const app = createApp();
-    const res = await makeRequest(app, 'POST', '/agent/chat', { message: 'Hello' }, {
-      Authorization: `Internal ${VALID_TOKEN}`,
-    });
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { message: 'Hello' },
+      {
+        Authorization: `Internal ${VALID_TOKEN}`,
+      },
+    );
 
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('error');

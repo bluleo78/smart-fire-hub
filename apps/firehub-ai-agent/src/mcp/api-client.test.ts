@@ -103,7 +103,10 @@ describe('FireHubApiClient', () => {
     const mockResp = { id: 10, ...body };
 
     nock(BASE_URL)
-      .post('/pipelines/1/triggers', (reqBody: Record<string, unknown>) => reqBody.name === body.name)
+      .post(
+        '/pipelines/1/triggers',
+        (reqBody: Record<string, unknown>) => reqBody.name === body.name,
+      )
       .reply(201, mockResp);
 
     const result = await client.createTrigger(1, body);
@@ -144,7 +147,10 @@ describe('FireHubApiClient', () => {
     const mockResp = { preview: [{ name: 'item1' }] };
 
     nock(BASE_URL)
-      .post('/pipelines/api-call/preview', (reqBody: Record<string, unknown>) => reqBody.url === body.url)
+      .post(
+        '/pipelines/api-call/preview',
+        (reqBody: Record<string, unknown>) => reqBody.url === body.url,
+      )
       .reply(200, mockResp);
 
     const result = await client.previewApiCall(body);
@@ -156,5 +162,66 @@ describe('FireHubApiClient', () => {
     nock(BASE_URL).get('/dataset-categories').reply(404, { message: 'Not found' });
 
     await expect(client.listCategories()).rejects.toThrow('API 오류 (404)');
+  });
+
+  // --- executeQuery ---
+  it('should execute SQL query via POST /datasets/:id/query', async () => {
+    const mockResp = { columns: ['id'], rows: [[1]], rowCount: 1 };
+    nock(BASE_URL)
+      .post(
+        '/datasets/1/query',
+        (body: Record<string, unknown>) =>
+          body.sql === 'SELECT * FROM data."test"' && body.maxRows === 100,
+      )
+      .reply(200, mockResp);
+
+    const result = await client.executeQuery(1, 'SELECT * FROM data."test"', 100);
+    expect(result).toEqual(mockResp);
+  });
+
+  // --- addRowsBatch ---
+  it('should add rows batch via POST /datasets/:id/data/rows/batch', async () => {
+    const rows = [{ name: 'a' }, { name: 'b' }];
+    const mockResp = { insertedCount: 2 };
+    nock(BASE_URL)
+      .post(
+        '/datasets/1/data/rows/batch',
+        (body: Record<string, unknown>) => Array.isArray(body.rows) && body.rows.length === 2,
+      )
+      .reply(201, mockResp);
+
+    const result = await client.addRowsBatch(1, rows);
+    expect(result).toEqual(mockResp);
+  });
+
+  // --- replaceDatasetData ---
+  it('should replace dataset data via POST /datasets/:id/data/replace', async () => {
+    const rows = [{ col1: 'val1' }];
+    const mockResp = { insertedCount: 1 };
+    nock(BASE_URL)
+      .post(
+        '/datasets/1/data/replace',
+        (body: Record<string, unknown>) => Array.isArray(body.rows) && body.rows.length === 1,
+      )
+      .reply(201, mockResp);
+
+    const result = await client.replaceDatasetData(1, rows);
+    expect(result).toEqual(mockResp);
+  });
+
+  // --- truncateDataset ---
+  it('should truncate dataset via POST /datasets/:id/data/truncate', async () => {
+    const mockResp = { deletedCount: 50 };
+    nock(BASE_URL).post('/datasets/1/data/truncate').reply(200, mockResp);
+
+    const result = await client.truncateDataset(1);
+    expect(result).toEqual(mockResp);
+  });
+
+  // --- Error message format ---
+  it('should format error message as "API 오류 (status): message"', async () => {
+    nock(BASE_URL).get('/datasets').reply(500, { message: 'Internal Server Error' });
+
+    await expect(client.listDatasets()).rejects.toThrow(/API 오류 \(500\): Internal Server Error/);
   });
 });

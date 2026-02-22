@@ -1,57 +1,80 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { API_ERROR_PREFIX } from '../constants.js';
+import { createCategoryApi } from './api-client/category-api.js';
+import { createDatasetApi } from './api-client/dataset-api.js';
+import { createDataApi } from './api-client/data-api.js';
+import { createPipelineApi } from './api-client/pipeline-api.js';
+import { createTriggerApi } from './api-client/trigger-api.js';
+import { createConnectionApi } from './api-client/connection-api.js';
+import { createMiscApi } from './api-client/misc-api.js';
 
 export class FireHubApiClient {
   private client: AxiosInstance;
+  private _categories: ReturnType<typeof createCategoryApi>;
+  private _datasets: ReturnType<typeof createDatasetApi>;
+  private _data: ReturnType<typeof createDataApi>;
+  private _pipelines: ReturnType<typeof createPipelineApi>;
+  private _triggers: ReturnType<typeof createTriggerApi>;
+  private _connections: ReturnType<typeof createConnectionApi>;
+  private _misc: ReturnType<typeof createMiscApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
       baseURL,
       headers: {
-        'Authorization': `Internal ${internalToken}`,
+        Authorization: `Internal ${internalToken}`,
         'X-On-Behalf-Of': String(userId),
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
     });
 
     // Request/Response logging & error extraction
     this.client.interceptors.request.use((config) => {
-      console.log(`[MCP API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.params ? `params=${JSON.stringify(config.params)}` : '');
+      console.log(
+        `[MCP API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`,
+        config.params ? `params=${JSON.stringify(config.params)}` : '',
+      );
       return config;
     });
 
     this.client.interceptors.response.use(
       (response) => {
-        console.log(`[MCP API] ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`);
+        console.log(
+          `[MCP API] ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`,
+        );
         return response;
       },
       (error: AxiosError) => {
         const status = error.response?.status;
         const data = error.response?.data as Record<string, unknown> | undefined;
         const apiMessage = data?.message || data?.error || error.message;
-        console.error(`[MCP API] ${status || 'NETWORK_ERROR'} ${error.config?.method?.toUpperCase()} ${error.config?.url} - ${apiMessage}`);
-        throw new Error(`API 오류 (${status}): ${apiMessage}`);
-      }
+        console.error(
+          `[MCP API] ${status || 'NETWORK_ERROR'} ${error.config?.method?.toUpperCase()} ${error.config?.url} - ${apiMessage}`,
+        );
+        throw new Error(`${API_ERROR_PREFIX} (${status}): ${apiMessage}`);
+      },
     );
+
+    this._categories = createCategoryApi(this.client);
+    this._datasets = createDatasetApi(this.client);
+    this._data = createDataApi(this.client);
+    this._pipelines = createPipelineApi(this.client);
+    this._triggers = createTriggerApi(this.client);
+    this._connections = createConnectionApi(this.client);
+    this._misc = createMiscApi(this.client);
   }
 
-  // Categories
-  async listCategories(): Promise<any> {
-    const response = await this.client.get('/dataset-categories');
-    return response.data;
+  listCategories() {
+    return this._categories.listCategories();
+  }
+  createCategory(data: { name: string; description?: string }) {
+    return this._categories.createCategory(data);
+  }
+  updateCategory(id: number, data: { name: string; description?: string }) {
+    return this._categories.updateCategory(id, data);
   }
 
-  async createCategory(data: { name: string; description?: string }): Promise<any> {
-    const response = await this.client.post('/dataset-categories', data);
-    return response.data;
-  }
-
-  async updateCategory(id: number, data: { name: string; description?: string }): Promise<any> {
-    const response = await this.client.put(`/dataset-categories/${id}`, data);
-    return response.data;
-  }
-
-  // Datasets
-  async listDatasets(params?: {
+  listDatasets(params?: {
     categoryId?: number;
     datasetType?: string;
     search?: string;
@@ -59,29 +82,26 @@ export class FireHubApiClient {
     favoriteOnly?: boolean;
     page?: number;
     size?: number;
-  }): Promise<any> {
-    const response = await this.client.get('/datasets', { params });
-    return response.data;
+  }) {
+    return this._datasets.listDatasets(params);
   }
-
-  async getDataset(id: number): Promise<any> {
-    const response = await this.client.get(`/datasets/${id}`);
-    return response.data;
+  getDataset(id: number) {
+    return this._datasets.getDataset(id);
   }
-
-  async queryDatasetData(id: number, params?: {
-    search?: string;
-    sortBy?: string;
-    sortDir?: string;
-    includeTotalCount?: boolean;
-    page?: number;
-    size?: number;
-  }): Promise<any> {
-    const response = await this.client.get(`/datasets/${id}/data`, { params });
-    return response.data;
+  queryDatasetData(
+    id: number,
+    params?: {
+      search?: string;
+      sortBy?: string;
+      sortDir?: string;
+      includeTotalCount?: boolean;
+      page?: number;
+      size?: number;
+    },
+  ) {
+    return this._datasets.queryDatasetData(id, params);
   }
-
-  async createDataset(data: {
+  createDataset(data: {
     name: string;
     tableName: string;
     description?: string;
@@ -97,35 +117,27 @@ export class FireHubApiClient {
       isPrimaryKey?: boolean;
       description?: string;
     }>;
-  }): Promise<any> {
-    const response = await this.client.post('/datasets', data);
-    return response.data;
+  }) {
+    return this._datasets.createDataset(data);
+  }
+  updateDataset(
+    id: number,
+    data: {
+      name?: string;
+      description?: string;
+      categoryId?: number;
+    },
+  ) {
+    return this._datasets.updateDataset(id, data);
   }
 
-  async updateDataset(id: number, data: {
-    name?: string;
-    description?: string;
-    categoryId?: number;
-  }): Promise<any> {
-    const response = await this.client.put(`/datasets/${id}`, data);
-    return response.data;
+  listPipelines(params?: { page?: number; size?: number }) {
+    return this._pipelines.listPipelines(params);
   }
-
-  // Pipelines
-  async listPipelines(params?: {
-    page?: number;
-    size?: number;
-  }): Promise<any> {
-    const response = await this.client.get('/pipelines', { params });
-    return response.data;
+  getPipeline(id: number) {
+    return this._pipelines.getPipeline(id);
   }
-
-  async getPipeline(id: number): Promise<any> {
-    const response = await this.client.get(`/pipelines/${id}`);
-    return response.data;
-  }
-
-  async createPipeline(data: {
+  createPipeline(data: {
     name: string;
     description?: string;
     steps: Array<{
@@ -140,38 +152,35 @@ export class FireHubApiClient {
       apiConfig?: Record<string, unknown>;
       apiConnectionId?: number;
     }>;
-  }): Promise<any> {
-    const response = await this.client.post('/pipelines', data);
-    return response.data;
+  }) {
+    return this._pipelines.createPipeline(data);
   }
-
-  async updatePipeline(id: number, data: {
-    name?: string;
-    description?: string;
-    isActive?: boolean;
-    steps?: Array<{
-      name: string;
+  updatePipeline(
+    id: number,
+    data: {
+      name?: string;
       description?: string;
-      scriptType: string;
-      scriptContent?: string;
-      outputDatasetId?: number;
-      inputDatasetIds?: number[];
-      dependsOnStepNames?: string[];
-      loadStrategy?: string;
-      apiConfig?: Record<string, unknown>;
-      apiConnectionId?: number;
-    }>;
-  }): Promise<any> {
-    await this.client.put(`/pipelines/${id}`, data);
-    return { success: true };
+      isActive?: boolean;
+      steps?: Array<{
+        name: string;
+        description?: string;
+        scriptType: string;
+        scriptContent?: string;
+        outputDatasetId?: number;
+        inputDatasetIds?: number[];
+        dependsOnStepNames?: string[];
+        loadStrategy?: string;
+        apiConfig?: Record<string, unknown>;
+        apiConnectionId?: number;
+      }>;
+    },
+  ) {
+    return this._pipelines.updatePipeline(id, data);
   }
-
-  async deletePipeline(id: number): Promise<any> {
-    await this.client.delete(`/pipelines/${id}`);
-    return { success: true };
+  deletePipeline(id: number) {
+    return this._pipelines.deletePipeline(id);
   }
-
-  async previewApiCall(data: {
+  previewApiCall(data: {
     url: string;
     method: string;
     headers?: Record<string, string>;
@@ -182,138 +191,105 @@ export class FireHubApiClient {
     apiConnectionId?: number;
     inlineAuth?: Record<string, string>;
     timeoutMs?: number;
-  }): Promise<any> {
-    const response = await this.client.post('/pipelines/api-call/preview', data);
-    return response.data;
+  }) {
+    return this._pipelines.previewApiCall(data);
+  }
+  executePipeline(id: number) {
+    return this._pipelines.executePipeline(id);
+  }
+  getExecutionStatus(pipelineId: number, executionId: number) {
+    return this._pipelines.getExecutionStatus(pipelineId, executionId);
   }
 
-  async executePipeline(id: number): Promise<any> {
-    const response = await this.client.post(`/pipelines/${id}/execute`);
-    return response.data;
+  listTriggers(pipelineId: number) {
+    return this._triggers.listTriggers(pipelineId);
+  }
+  createTrigger(
+    pipelineId: number,
+    data: {
+      name: string;
+      triggerType: string;
+      description?: string;
+      config: Record<string, unknown>;
+    },
+  ) {
+    return this._triggers.createTrigger(pipelineId, data);
+  }
+  updateTrigger(
+    pipelineId: number,
+    triggerId: number,
+    data: {
+      name?: string;
+      isEnabled?: boolean;
+      description?: string;
+      config?: Record<string, unknown>;
+    },
+  ) {
+    return this._triggers.updateTrigger(pipelineId, triggerId, data);
+  }
+  deleteTrigger(pipelineId: number, triggerId: number) {
+    return this._triggers.deleteTrigger(pipelineId, triggerId);
   }
 
-  async getExecutionStatus(pipelineId: number, executionId: number): Promise<any> {
-    const response = await this.client.get(`/pipelines/${pipelineId}/executions/${executionId}`);
-    return response.data;
+  listApiConnections() {
+    return this._connections.listApiConnections();
   }
-
-  // Triggers
-  async listTriggers(pipelineId: number): Promise<any> {
-    const response = await this.client.get(`/pipelines/${pipelineId}/triggers`);
-    return response.data;
+  getApiConnection(id: number) {
+    return this._connections.getApiConnection(id);
   }
-
-  async createTrigger(pipelineId: number, data: {
-    name: string;
-    triggerType: string;
-    description?: string;
-    config: Record<string, unknown>;
-  }): Promise<any> {
-    const response = await this.client.post(`/pipelines/${pipelineId}/triggers`, data);
-    return response.data;
-  }
-
-  async updateTrigger(pipelineId: number, triggerId: number, data: {
-    name?: string;
-    isEnabled?: boolean;
-    description?: string;
-    config?: Record<string, unknown>;
-  }): Promise<any> {
-    await this.client.put(`/pipelines/${pipelineId}/triggers/${triggerId}`, data);
-    return { success: true };
-  }
-
-  async deleteTrigger(pipelineId: number, triggerId: number): Promise<any> {
-    await this.client.delete(`/pipelines/${pipelineId}/triggers/${triggerId}`);
-    return { success: true };
-  }
-
-  // API Connections
-  async listApiConnections(): Promise<any> {
-    const response = await this.client.get('/api-connections');
-    return response.data;
-  }
-
-  async getApiConnection(id: number): Promise<any> {
-    const response = await this.client.get(`/api-connections/${id}`);
-    return response.data;
-  }
-
-  async createApiConnection(data: {
+  createApiConnection(data: {
     name: string;
     description?: string;
     authType: string;
     authConfig: Record<string, string>;
-  }): Promise<any> {
-    const response = await this.client.post('/api-connections', data);
-    return response.data;
+  }) {
+    return this._connections.createApiConnection(data);
+  }
+  updateApiConnection(
+    id: number,
+    data: {
+      name?: string;
+      description?: string;
+      authType?: string;
+      authConfig?: Record<string, string>;
+    },
+  ) {
+    return this._connections.updateApiConnection(id, data);
+  }
+  deleteApiConnection(id: number) {
+    return this._connections.deleteApiConnection(id);
   }
 
-  async updateApiConnection(id: number, data: {
-    name?: string;
-    description?: string;
-    authType?: string;
-    authConfig?: Record<string, string>;
-  }): Promise<any> {
-    const response = await this.client.put(`/api-connections/${id}`, data);
-    return response.data;
+  listImports(datasetId: number) {
+    return this._misc.listImports(datasetId);
   }
 
-  async deleteApiConnection(id: number): Promise<any> {
-    await this.client.delete(`/api-connections/${id}`);
-    return { success: true };
+  getDashboard() {
+    return this._misc.getDashboard();
   }
 
-  // Data Imports
-  async listImports(datasetId: number): Promise<any> {
-    const response = await this.client.get(`/datasets/${datasetId}/imports`);
-    return response.data;
+  executeQuery(datasetId: number, sql: string, maxRows?: number) {
+    return this._data.executeQuery(datasetId, sql, maxRows);
   }
-
-  // Dashboard
-  async getDashboard(): Promise<any> {
-    const response = await this.client.get('/dashboard/stats');
-    return response.data;
+  addRow(datasetId: number, data: Record<string, unknown>) {
+    return this._data.addRow(datasetId, data);
   }
-
-  // Dataset Data Manipulation
-  async executeQuery(datasetId: number, sql: string, maxRows?: number): Promise<any> {
-    const response = await this.client.post(`/datasets/${datasetId}/query`, { sql, maxRows });
-    return response.data;
+  addRowsBatch(datasetId: number, rows: Record<string, unknown>[]) {
+    return this._data.addRowsBatch(datasetId, rows);
   }
-
-  async addRow(datasetId: number, data: Record<string, unknown>): Promise<any> {
-    const response = await this.client.post(`/datasets/${datasetId}/data/rows`, { data });
-    return response.data;
+  updateRow(datasetId: number, rowId: number, data: Record<string, unknown>) {
+    return this._data.updateRow(datasetId, rowId, data);
   }
-
-  async addRowsBatch(datasetId: number, rows: Record<string, unknown>[]): Promise<any> {
-    const response = await this.client.post(`/datasets/${datasetId}/data/rows/batch`, { rows });
-    return response.data;
+  deleteRows(datasetId: number, rowIds: number[]) {
+    return this._data.deleteRows(datasetId, rowIds);
   }
-
-  async updateRow(datasetId: number, rowId: number, data: Record<string, unknown>): Promise<any> {
-    await this.client.put(`/datasets/${datasetId}/data/rows/${rowId}`, { data });
-    return { success: true };
+  truncateDataset(datasetId: number) {
+    return this._data.truncateDataset(datasetId);
   }
-
-  async deleteRows(datasetId: number, rowIds: number[]): Promise<any> {
-    const response = await this.client.post(`/datasets/${datasetId}/data/delete`, { rowIds });
-    return response.data;
+  getRowCount(datasetId: number) {
+    return this._data.getRowCount(datasetId);
   }
-
-  async truncateDataset(datasetId: number): Promise<any> {
-    const response = await this.client.post(`/datasets/${datasetId}/data/truncate`);
-    return response.data;
-  }
-
-  async getRowCount(datasetId: number): Promise<any> {
-    const response = await this.client.get(`/datasets/${datasetId}/data/count`);
-    return response.data;
-  }
-
-  async replaceDatasetData(datasetId: number, rows: Record<string, unknown>[]): Promise<any> {
-    const response = await this.client.post(`/datasets/${datasetId}/data/replace`, { rows });
-    return response.data;
+  replaceDatasetData(datasetId: number, rows: Record<string, unknown>[]) {
+    return this._data.replaceDatasetData(datasetId, rows);
   }
 }
