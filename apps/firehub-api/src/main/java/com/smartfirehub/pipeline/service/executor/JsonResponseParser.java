@@ -35,7 +35,8 @@ public class JsonResponseParser {
     public List<Map<String, Object>> parseAndMap(
             String jsonResponse,
             String dataPath,
-            List<ApiCallConfig.FieldMapping> fieldMappings) {
+            List<ApiCallConfig.FieldMapping> fieldMappings,
+            Map<String, String> columnTypeMap) {
 
         Object extracted;
         try {
@@ -56,7 +57,7 @@ public class JsonResponseParser {
 
         for (Object item : rawList) {
             try {
-                Map<String, Object> row = mapItem(item, fieldMappings);
+                Map<String, Object> row = mapItem(item, fieldMappings, columnTypeMap);
                 result.add(row);
             } catch (Exception e) {
                 skipped++;
@@ -72,37 +73,42 @@ public class JsonResponseParser {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> mapItem(Object item, List<ApiCallConfig.FieldMapping> fieldMappings) {
+    private Map<String, Object> mapItem(Object item, List<ApiCallConfig.FieldMapping> fieldMappings, Map<String, String> columnTypeMap) {
         Map<String, Object> sourceMap = item instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
         Map<String, Object> row = new LinkedHashMap<>();
 
         for (ApiCallConfig.FieldMapping mapping : fieldMappings) {
             Object rawValue = sourceMap.get(mapping.sourceField());
-            Object converted = convertValue(rawValue, mapping);
+            // Use actual column type from dataset metadata; fall back to mapping.dataType() for backward compat
+            String resolvedType = columnTypeMap != null
+                    ? columnTypeMap.getOrDefault(mapping.targetColumn(), mapping.dataType())
+                    : mapping.dataType();
+            Object converted = convertValue(rawValue, resolvedType, mapping);
             row.put(mapping.targetColumn(), converted);
         }
 
         return row;
     }
 
-    private Object convertValue(Object rawValue, ApiCallConfig.FieldMapping mapping) {
+    private Object convertValue(Object rawValue, String dataType, ApiCallConfig.FieldMapping mapping) {
         if (rawValue == null) {
             return null;
         }
 
-        String dataType = mapping.dataType();
         if (dataType == null) {
-            return rawValue.toString();
+            // No type info available — preserve Jackson's native types (Integer, Long, Double, Boolean, String)
+            // so JDBC can correctly bind them to PostgreSQL column types.
+            return rawValue;
         }
 
         return switch (dataType.toUpperCase()) {
-            case "TEXT" -> rawValue.toString();
+            case "TEXT", "VARCHAR" -> rawValue.toString();
             case "INTEGER" -> toLong(rawValue, mapping);
             case "DECIMAL" -> toBigDecimal(rawValue, mapping);
             case "BOOLEAN" -> toBoolean(rawValue);
             case "DATE" -> toLocalDate(rawValue, mapping);
             case "TIMESTAMP" -> toLocalDateTime(rawValue, mapping);
-            default -> rawValue.toString();
+            default -> rawValue;
         };
     }
 

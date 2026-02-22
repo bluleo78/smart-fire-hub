@@ -2,6 +2,8 @@ package com.smartfirehub.pipeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
@@ -31,6 +33,7 @@ public class PipelineExecutionService {
     private final PipelineExecutionRepository executionRepository;
     private final DataTableService dataTableService;
     private final DatasetRepository datasetRepository;
+    private final DatasetColumnRepository columnRepository;
     private final SqlScriptExecutor sqlExecutor;
     private final PythonScriptExecutor pythonExecutor;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -43,6 +46,7 @@ public class PipelineExecutionService {
             PipelineExecutionRepository executionRepository,
             DataTableService dataTableService,
             DatasetRepository datasetRepository,
+            DatasetColumnRepository columnRepository,
             SqlScriptExecutor sqlExecutor,
             PythonScriptExecutor pythonExecutor,
             ApplicationEventPublisher applicationEventPublisher,
@@ -53,6 +57,7 @@ public class PipelineExecutionService {
         this.executionRepository = executionRepository;
         this.dataTableService = dataTableService;
         this.datasetRepository = datasetRepository;
+        this.columnRepository = columnRepository;
         this.sqlExecutor = sqlExecutor;
         this.pythonExecutor = pythonExecutor;
         this.applicationEventPublisher = applicationEventPublisher;
@@ -364,8 +369,18 @@ public class PipelineExecutionService {
                     decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
                 }
 
+                // Build column type map from dataset metadata for accurate type conversion
+                Map<String, String> columnTypeMap = null;
+                if (step.outputDatasetId() != null) {
+                    List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(step.outputDatasetId());
+                    columnTypeMap = new HashMap<>();
+                    for (DatasetColumnResponse col : columns) {
+                        columnTypeMap.put(col.columnName(), col.dataType());
+                    }
+                }
+
                 ApiCallExecutor.ApiCallResult result = apiCallExecutor.execute(
-                        apiCallConfig, outputTableName, decryptedAuth, loadStrategy);
+                        apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap);
                 executionLog = result.log();
             } else {
                 throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());

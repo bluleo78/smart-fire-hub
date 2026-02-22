@@ -80,7 +80,7 @@ public class ApiCallPreviewService {
 
             // 8. Parse response
             List<Map<String, Object>> allRows = jsonResponseParser.parseAndMap(
-                    responseBody, request.dataPath(), fieldMappings);
+                    responseBody, request.dataPath(), fieldMappings, null);
 
             List<String> columns = request.fieldMappings() != null
                     ? request.fieldMappings().stream()

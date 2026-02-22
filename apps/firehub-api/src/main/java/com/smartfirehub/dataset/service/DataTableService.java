@@ -767,6 +767,12 @@ public class DataTableService {
         // Drop any leftover temp table from a previous failed run
         dsl.execute("DROP TABLE IF EXISTS data.\"" + tmpName + "\"");
         dsl.execute("CREATE TABLE data.\"" + tmpName + "\" (LIKE data.\"" + tableName + "\" INCLUDING ALL)");
+        // LIKE INCLUDING ALL shares the original SERIAL sequence, creating a dependency
+        // that blocks DROP TABLE on the original. Give the temp table its own sequence.
+        String tmpSeq = tmpName + "_id_seq";
+        dsl.execute("DROP SEQUENCE IF EXISTS data.\"" + tmpSeq + "\"");
+        dsl.execute("CREATE SEQUENCE data.\"" + tmpSeq + "\" OWNED BY data.\"" + tmpName + "\".id");
+        dsl.execute("ALTER TABLE data.\"" + tmpName + "\" ALTER COLUMN id SET DEFAULT nextval('data.\"" + tmpSeq + "\"')");
     }
 
     /**
@@ -781,6 +787,10 @@ public class DataTableService {
             var txDsl = org.jooq.impl.DSL.using(cfg);
             txDsl.execute("DROP TABLE data.\"" + tableName + "\"");
             txDsl.execute("ALTER TABLE data.\"" + tmpName + "\" RENAME TO \"" + tableName + "\"");
+            // Rename the temp sequence to match the canonical naming convention
+            String tmpSeq = tmpName + "_id_seq";
+            String seq = tableName + "_id_seq";
+            txDsl.execute("ALTER SEQUENCE IF EXISTS data.\"" + tmpSeq + "\" RENAME TO \"" + seq + "\"");
         });
     }
 

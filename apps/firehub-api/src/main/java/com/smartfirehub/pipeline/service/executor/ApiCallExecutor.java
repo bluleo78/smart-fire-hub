@@ -77,7 +77,8 @@ public class ApiCallExecutor {
             ApiCallConfig config,
             String outputTableName,
             Map<String, String> decryptedAuthConfig,
-            String loadStrategy) {
+            String loadStrategy,
+            Map<String, String> columnTypeMap) {
 
         // 1. SSRF guard on the initial URL
         ssrfProtectionService.validateUrl(config.url());
@@ -123,7 +124,7 @@ public class ApiCallExecutor {
 
                     // Parse data
                     List<Map<String, Object>> rows = jsonResponseParser.parseAndMap(
-                            responseBody, config.dataPath(), config.fieldMappings());
+                            responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
 
                     // Extract totalCount from response if configured (only needed on first page)
                     if (totalCount == null && pag.totalPath() != null && !pag.totalPath().isBlank()) {
@@ -167,7 +168,7 @@ public class ApiCallExecutor {
                 // Single request (no pagination)
                 String responseBody = executeRequest(config, decryptedAuthConfig, Map.of(), timeoutMs);
                 List<Map<String, Object>> rows = jsonResponseParser.parseAndMap(
-                        responseBody, config.dataPath(), config.fieldMappings());
+                        responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
 
                 if (!rows.isEmpty()) {
                     List<String> columns = extractColumns(rows);

@@ -33,7 +33,6 @@ import ApiCallPreview from './ApiCallPreview';
 interface FieldMapping {
   sourceField: string;
   targetColumn: string;
-  dataType: string;
 }
 
 interface InlineAuth {
@@ -251,7 +250,7 @@ export default function ApiCallStepConfig({
   const handleAddMapping = () => {
     update('fieldMappings', [
       ...fieldMappings,
-      { sourceField: '', targetColumn: '', dataType: 'TEXT' },
+      { sourceField: '', targetColumn: '' },
     ]);
   };
 
@@ -289,7 +288,6 @@ export default function ApiCallStepConfig({
         const autoMappings: FieldMapping[] = data.columns.map((col) => ({
           sourceField: col,
           targetColumn: col,
-          dataType: 'TEXT',
         }));
         update('fieldMappings', autoMappings);
       }
@@ -503,7 +501,7 @@ export default function ApiCallStepConfig({
             <div className="grid grid-cols-[1fr_1fr_auto] gap-1 text-xs text-muted-foreground px-0.5">
               <span>소스 필드</span>
               <span>대상 컬럼</span>
-              <span>타입</span>
+              <span></span>
             </div>
           )}
           {fieldMappings.map((mapping, i) => (
@@ -522,35 +520,16 @@ export default function ApiCallStepConfig({
                 disabled={readOnly}
                 onChange={(e) => handleMappingChange(i, 'targetColumn', e.target.value)}
               />
-              <div className="flex items-center gap-1">
-                <Select
-                  value={mapping.dataType}
-                  disabled={readOnly}
-                  onValueChange={(v) => handleMappingChange(i, 'dataType', v)}
+              {!readOnly && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => handleRemoveMapping(i)}
                 >
-                  <SelectTrigger className="h-7 text-xs w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="TEXT">TEXT</SelectItem>
-                    <SelectItem value="INTEGER">INTEGER</SelectItem>
-                    <SelectItem value="DECIMAL">DECIMAL</SelectItem>
-                    <SelectItem value="BOOLEAN">BOOLEAN</SelectItem>
-                    <SelectItem value="DATE">DATE</SelectItem>
-                    <SelectItem value="TIMESTAMP">TIMESTAMP</SelectItem>
-                  </SelectContent>
-                </Select>
-                {!readOnly && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    onClick={() => handleRemoveMapping(i)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </div>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
             </div>
           ))}
           {!readOnly && (

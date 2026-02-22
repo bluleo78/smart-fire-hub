@@ -115,7 +115,7 @@ class ApiCallExecutorTest {
                                 """)));
 
         ApiCallExecutor.ApiCallResult result = executor.execute(
-                simpleGetConfig("/api/items"), "test_table", null, "APPEND");
+                simpleGetConfig("/api/items"), "test_table", null, "APPEND", null);
 
         assertThat(result.totalRows()).isEqualTo(2);
 
@@ -162,7 +162,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        ApiCallExecutor.ApiCallResult result = executor.execute(config, "out_table", null, "APPEND");
+        ApiCallExecutor.ApiCallResult result = executor.execute(config, "out_table", null, "APPEND", null);
 
         assertThat(result.totalRows()).isEqualTo(1);
         verify(dataTableService).insertBatch(eq("out_table"), anyList(), anyList());
@@ -189,7 +189,7 @@ class ApiCallExecutorTest {
                 "apiKey",      "secret-key"
         );
 
-        ApiCallExecutor.ApiCallResult result = executor.execute(config, "t", auth, "APPEND");
+        ApiCallExecutor.ApiCallResult result = executor.execute(config, "t", auth, "APPEND", null);
 
         assertThat(result.totalRows()).isEqualTo(0);
         wireMock.verify(getRequestedFor(urlEqualTo("/api/secure"))
@@ -215,7 +215,7 @@ class ApiCallExecutorTest {
                 "token",    "my-token"
         );
 
-        executor.execute(config, "t", auth, "APPEND");
+        executor.execute(config, "t", auth, "APPEND", null);
 
         wireMock.verify(getRequestedFor(urlEqualTo("/api/bearer"))
                 .withHeader("Authorization", equalTo("Bearer my-token")));
@@ -266,7 +266,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        ApiCallExecutor.ApiCallResult result = executor.execute(config, "paged_table", null, "APPEND");
+        ApiCallExecutor.ApiCallResult result = executor.execute(config, "paged_table", null, "APPEND", null);
 
         assertThat(result.totalRows()).isEqualTo(6);
         verify(dataTableService, times(3)).insertBatch(eq("paged_table"), anyList(), anyList());
@@ -309,7 +309,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        ApiCallExecutor.ApiCallResult result = executor.execute(config, "partial_table", null, "APPEND");
+        ApiCallExecutor.ApiCallResult result = executor.execute(config, "partial_table", null, "APPEND", null);
 
         assertThat(result.totalRows()).isEqualTo(3);
         verify(dataTableService, times(2)).insertBatch(eq("partial_table"), anyList(), anyList());
@@ -326,7 +326,7 @@ class ApiCallExecutorTest {
 
         ApiCallConfig config = simpleGetConfig("/api/auth-fail");
 
-        assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND"))
+        assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
                 .isInstanceOf(ApiCallException.class)
                 .hasMessageContaining("401");
 
@@ -374,7 +374,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        ApiCallExecutor.ApiCallResult result = executor.execute(config, "flaky_table", null, "APPEND");
+        ApiCallExecutor.ApiCallResult result = executor.execute(config, "flaky_table", null, "APPEND", null);
 
         assertThat(result.totalRows()).isEqualTo(1);
         // 2 total requests: 1 failure + 1 success
@@ -407,7 +407,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND"))
+        assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
                 .isInstanceOf(ApiCallException.class)
                 .hasMessageContaining("retries");
 
@@ -443,13 +443,128 @@ class ApiCallExecutorTest {
                 100
         );
 
-        assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND"))
+        assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
                 .isInstanceOf(ApiCallException.class)
                 .hasMessageContaining("Data path not found");
     }
 
     // -------------------------------------------------------------------------
-    // Test 11: REPLACE strategy — uses temp-table swap, not truncate
+    // Test 11: null dataType preserves native Jackson types (Integer, Boolean, String)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void execute_nullDataType_preservesNativeJacksonTypes() {
+        wireMock.stubFor(get(urlEqualTo("/api/native-types"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"items":[{"user_id":12345,"name":"Alice","active":true,"score":3.14}]}
+                                """)));
+
+        ApiCallConfig config = new ApiCallConfig(
+                baseUrl() + "/api/native-types",
+                "GET",
+                null,
+                null,
+                null,
+                "JSON",
+                "$.items",
+                List.of(
+                        new ApiCallConfig.FieldMapping("user_id", "user_id", null, null, null, null),
+                        new ApiCallConfig.FieldMapping("name",    "name",    null, null, null, null),
+                        new ApiCallConfig.FieldMapping("active",  "active",  null, null, null, null),
+                        new ApiCallConfig.FieldMapping("score",   "score",   null, null, null, null)
+                ),
+                "UTC",
+                null,
+                new ApiCallConfig.RetryConfig(0, 100, 1000),
+                5000,
+                60000,
+                100
+        );
+
+        executor.execute(config, "native_table", null, "APPEND", null);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Map<String, Object>>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(dataTableService).insertBatch(eq("native_table"), anyList(), rowsCaptor.capture());
+
+        Map<String, Object> row = rowsCaptor.getValue().get(0);
+        // Integer values must remain Integer (not String "12345")
+        assertThat(row.get("user_id")).isInstanceOf(Integer.class);
+        assertThat(row.get("user_id")).isEqualTo(12345);
+        // String values stay as String
+        assertThat(row.get("name")).isEqualTo("Alice");
+        // Boolean values must remain Boolean (not String "true")
+        assertThat(row.get("active")).isInstanceOf(Boolean.class);
+        assertThat(row.get("active")).isEqualTo(true);
+        // Double values must remain Double (not String "3.14")
+        assertThat(row.get("score")).isInstanceOf(Double.class);
+        assertThat(row.get("score")).isEqualTo(3.14);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 11b: columnTypeMap overrides mapping.dataType — metadata-based conversion
+    // -------------------------------------------------------------------------
+
+    @Test
+    void execute_columnTypeMap_convertsBasedOnDatasetMetadata() {
+        wireMock.stubFor(get(urlEqualTo("/api/typed"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"items":[{"user_id":"999","name":"Bob","active":"true","score":"2.5"}]}
+                                """)));
+
+        // Field mappings have no dataType (simulating new frontend behavior)
+        ApiCallConfig config = new ApiCallConfig(
+                baseUrl() + "/api/typed",
+                "GET",
+                null,
+                null,
+                null,
+                "JSON",
+                "$.items",
+                List.of(
+                        new ApiCallConfig.FieldMapping("user_id", "user_id", null, null, null, null),
+                        new ApiCallConfig.FieldMapping("name",    "name",    null, null, null, null),
+                        new ApiCallConfig.FieldMapping("active",  "active",  null, null, null, null),
+                        new ApiCallConfig.FieldMapping("score",   "score",   null, null, null, null)
+                ),
+                "UTC",
+                null,
+                new ApiCallConfig.RetryConfig(0, 100, 1000),
+                5000,
+                60000,
+                100
+        );
+
+        // Column type map from dataset metadata
+        Map<String, String> columnTypeMap = Map.of(
+                "user_id", "INTEGER",
+                "name",    "TEXT",
+                "active",  "BOOLEAN",
+                "score",   "DECIMAL"
+        );
+
+        executor.execute(config, "typed_table", null, "APPEND", columnTypeMap);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Map<String, Object>>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(dataTableService).insertBatch(eq("typed_table"), anyList(), rowsCaptor.capture());
+
+        Map<String, Object> row = rowsCaptor.getValue().get(0);
+        // String "999" must be converted to Long via INTEGER type from metadata
+        assertThat(row.get("user_id")).isEqualTo(999L);
+        assertThat(row.get("name")).isEqualTo("Bob");
+        assertThat(row.get("active")).isEqualTo(true);
+        assertThat(row.get("score")).isEqualTo(new java.math.BigDecimal("2.5"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 12: REPLACE strategy — uses temp-table swap, not truncate
     // -------------------------------------------------------------------------
 
     @Test
@@ -482,7 +597,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        ApiCallExecutor.ApiCallResult result = executor.execute(config, "rep_table", null, "REPLACE");
+        ApiCallExecutor.ApiCallResult result = executor.execute(config, "rep_table", null, "REPLACE", null);
 
         assertThat(result.totalRows()).isEqualTo(2);
 
@@ -530,7 +645,7 @@ class ApiCallExecutorTest {
                 100
         );
 
-        assertThatThrownBy(() -> executor.execute(config, "rep_fail_table", null, "REPLACE"))
+        assertThatThrownBy(() -> executor.execute(config, "rep_fail_table", null, "REPLACE", null))
                 .isInstanceOf(ApiCallException.class);
 
         // Temp table must be created and then dropped on failure
