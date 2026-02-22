@@ -150,13 +150,30 @@ export default function PipelineEditorPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         {pipelineId && (
           <TabsList className="border-b justify-start h-10 px-4 shrink-0">
-            <TabsTrigger value="overview">개요</TabsTrigger>
-            <TabsTrigger value="triggers">트리거</TabsTrigger>
+            <TabsTrigger
+              value="overview"
+              onPointerDown={() => {
+                if (executionId) {
+                  navigate(`/pipelines/${pipelineId}`);
+                }
+              }}
+            >
+              개요
+            </TabsTrigger>
+            <TabsTrigger
+              value="triggers"
+              onPointerDown={() => {
+                if (executionId) {
+                  navigate(`/pipelines/${pipelineId}`);
+                }
+              }}
+            >
+              트리거
+            </TabsTrigger>
             <TabsTrigger
               value="executions"
               onPointerDown={() => {
                 if (executionId) {
-                  // 실행 상세에서 실행 이력 탭 클릭 시 실행 목록으로 복귀
                   navigate(`/pipelines/${pipelineId}`);
                 }
               }}
