@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://db:5432/${POSTGRES_DB:smartfirehub}
+    username: ${POSTGRES_USER:app}
+    password: ${POSTGRES_PASSWORD}
+
+org:
+  jobrunr:
+    dashboard:
+      enabled: false
+
+agent:
+  url: http://ai-agent:3001
+  internal-token: ${AGENT_INTERNAL_TOKEN}

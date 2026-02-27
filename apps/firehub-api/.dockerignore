@@ -1,0 +1,8 @@
+.gradle/
+build/
+.idea/
+*.iml
+.env*
+*.log
+
+# Keep src/main/generated/ — jOOQ generated sources are needed for build

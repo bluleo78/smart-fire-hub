@@ -1,0 +1,84 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smartfirehub}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - firehub-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-smartfirehub}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./apps/firehub-api
+      dockerfile: Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      POSTGRES_DB: ${POSTGRES_DB:-smartfirehub}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:?ENCRYPTION_MASTER_KEY is required}
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - firehub-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    restart: unless-stopped
+
+  ai-agent:
+    build:
+      context: .
+      dockerfile: apps/firehub-ai-agent/Dockerfile
+    environment:
+      PORT: "3001"
+      INTERNAL_SERVICE_TOKEN: ${AGENT_INTERNAL_TOKEN}
+      API_BASE_URL: http://api:8080/api/v1
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      MAX_TURNS: ${MAX_TURNS:-10}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - firehub-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001/agent/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/firehub-web/Dockerfile
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - firehub-net
+    restart: unless-stopped
+
+networks:
+  firehub-net:
+    driver: bridge
+
+volumes:
+  pgdata:
