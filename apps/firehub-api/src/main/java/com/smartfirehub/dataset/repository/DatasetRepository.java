@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.repository;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dataset.dto.CategoryResponse;
+import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
@@ -166,16 +167,16 @@ public class DatasetRepository {
       condition = condition.and(DS_STATUS.eq(status));
     }
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search.toLowerCase() + "%";
+      String pattern = LikePatternUtils.containsPattern(search);
       condition =
           condition.and(
               DS_NAME
-                  .likeIgnoreCase(pattern)
-                  .or(DS_DESCRIPTION.likeIgnoreCase(pattern))
-                  .or(DS_TABLE_NAME.likeIgnoreCase(pattern))
-                  .or(COL_COLUMN_NAME.likeIgnoreCase(pattern))
-                  .or(COL_DISPLAY_NAME.likeIgnoreCase(pattern))
-                  .or(COL_DESCRIPTION.likeIgnoreCase(pattern)));
+                  .likeIgnoreCase(pattern, '\\')
+                  .or(DS_DESCRIPTION.likeIgnoreCase(pattern, '\\'))
+                  .or(DS_TABLE_NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(COL_COLUMN_NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(COL_DISPLAY_NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(COL_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
     return condition;
   }

@@ -87,11 +87,14 @@ public class RoleRepository {
   public void setPermissions(Long roleId, List<Long> permissionIds) {
     dsl.deleteFrom(ROLE_PERMISSION).where(ROLE_PERMISSION.ROLE_ID.eq(roleId)).execute();
 
-    for (Long permissionId : permissionIds) {
-      dsl.insertInto(ROLE_PERMISSION)
-          .set(ROLE_PERMISSION.ROLE_ID, roleId)
-          .set(ROLE_PERMISSION.PERMISSION_ID, permissionId)
-          .execute();
+    if (!permissionIds.isEmpty()) {
+      var insert =
+          dsl.insertInto(
+              ROLE_PERMISSION, ROLE_PERMISSION.ROLE_ID, ROLE_PERMISSION.PERMISSION_ID);
+      for (Long permissionId : permissionIds) {
+        insert = insert.values(roleId, permissionId);
+      }
+      insert.execute();
     }
   }
 

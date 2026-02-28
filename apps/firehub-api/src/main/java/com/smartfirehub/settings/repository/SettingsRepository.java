@@ -2,6 +2,7 @@ package com.smartfirehub.settings.repository;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.settings.dto.SettingResponse;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,7 +35,7 @@ public class SettingsRepository {
   public List<SettingResponse> findByPrefix(String prefix) {
     return dsl.select(KEY, VALUE, DESCRIPTION, UPDATED_AT)
         .from(SYSTEM_SETTINGS)
-        .where(KEY.like(prefix + ".%"))
+        .where(KEY.like(LikePatternUtils.escape(prefix) + ".%", '\\'))
         .orderBy(KEY)
         .fetch(
             r ->

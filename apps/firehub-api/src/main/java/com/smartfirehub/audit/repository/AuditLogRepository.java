@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -152,10 +153,12 @@ public class AuditLogRepository {
     Condition condition = noCondition();
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search.trim() + "%";
+      String pattern = LikePatternUtils.containsPattern(search.trim());
       condition =
           condition.and(
-              AL_USERNAME.likeIgnoreCase(pattern).or(AL_DESCRIPTION.likeIgnoreCase(pattern)));
+              AL_USERNAME
+                  .likeIgnoreCase(pattern, '\\')
+                  .or(AL_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     if (actionType != null && !actionType.isBlank()) {

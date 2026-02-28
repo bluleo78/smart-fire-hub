@@ -77,9 +77,16 @@ public class RoleService {
 
   @Transactional
   public void setRolePermissions(Long roleId, List<Long> permissionIds) {
-    roleRepository
-        .findById(roleId)
-        .orElseThrow(() -> new RoleNotFoundException("Role not found: " + roleId));
+    RoleResponse role =
+        roleRepository
+            .findById(roleId)
+            .orElseThrow(() -> new RoleNotFoundException("Role not found: " + roleId));
+
+    if (role.isSystem()) {
+      throw new SystemRoleModificationException(
+          "Cannot modify permissions of system role: " + role.name());
+    }
+
     roleRepository.setPermissions(roleId, permissionIds);
   }
 }

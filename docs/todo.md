@@ -5,48 +5,45 @@
 
 ## P0 - 즉시 (24시간 이내)
 
-- [ ] **[Security/CRITICAL]** JWT Secret Key Git 노출 제거 및 키 재발급
-  - `application-local.yml:9` - 하드코딩된 JWT secret 제거
-  - Git history에서 secret 제거 (BFG Repo-Cleaner 권장)
-  - 환경변수(`JWT_SECRET`)로 이동
-  - 새로운 256-bit 이상 랜덤 키 생성: `openssl rand -base64 64`
+- [x] **[Security/CRITICAL]** JWT Secret Key Git 노출 제거 및 키 재발급
+  - `application-local.yml` — 환경변수 참조 + 개발용 기본값으로 변경 완료
+  - Git history 클린업(BFG)은 별도 작업
 
 ## P1 - 1주 이내
 
-- [ ] **[Security/HIGH]** CORS 설정 추가
-  - `SecurityConfig.java`에 `CorsConfigurationSource` 빈 추가
-  - 프로덕션 도메인만 허용하도록 설정
+- [x] **[Security/HIGH]** CORS 설정 추가
+  - `SecurityConfig.java`에 `CorsConfigurationSource` 빈 + `CorsProperties` 추가 완료
+  - 환경변수 `CORS_ALLOWED_ORIGINS`로 프로덕션 도메인 설정
 
-- [ ] **[Security/HIGH]** 로그인 실패 제한 구현 (Brute Force 방어)
-  - `LoginAttemptService` 생성 (5회 실패 시 15분 차단)
-  - Guava `LoadingCache` 또는 Bucket4j 사용
+- [x] **[Security/HIGH]** 로그인 실패 제한 구현 (Brute Force 방어)
+  - `LoginAttemptService` 생성 완료 (Caffeine 캐시, 5회 실패 시 15분 차단)
+  - `AccountLockedException` → HTTP 429 응답
 
 - [ ] **[Security/HIGH]** Refresh Token Rotation 구현
   - `AuthService.java:104-126`
   - Token family 관리 및 재사용 감지 시 전체 세션 폐기
   - `RefreshTokenRepository`에 `isTokenReused()`, `revokeTokenFamily()` 추가
 
-- [ ] **[Quality/HIGH]** 토큰 갱신 시 사용자 활성 상태 확인
-  - `AuthService.refresh()` 메서드에 `isActive` 체크 추가
+- [x] **[Quality/HIGH]** 토큰 갱신 시 사용자 활성 상태 확인
+  - `AuthService.refresh()`에 `isActive` 체크 추가 완료
   - 비활성 사용자는 `UserDeactivatedException` throw
 
 ## P2 - 2주 이내
 
-- [ ] **[Quality/CRITICAL]** 회원가입 Race Condition 수정
-  - `AuthService.java:62` - `countAll(null) == 0` 동시 가입 시 다수 ADMIN 생성 가능
-  - DB 제약조건 또는 비관적 락 사용
+- [x] **[Quality/CRITICAL]** 회원가입 Race Condition 수정
+  - PostgreSQL advisory lock (`pg_advisory_xact_lock`)으로 첫 사용자 판단 직렬화 완료
 
-- [ ] **[Quality/CRITICAL]** N+1 쿼리 성능 개선
-  - `UserRepository.setRoles()` (line 176-187) - 배치 INSERT로 변경
-  - `RoleRepository.setPermissions()` (line 95-106) - 배치 INSERT로 변경
+- [x] **[Quality/CRITICAL]** N+1 쿼리 성능 개선
+  - `UserRepository.setRoles()` — jOOQ multi-row INSERT로 변경 완료
+  - `RoleRepository.setPermissions()` — jOOQ multi-row INSERT로 변경 완료
 
-- [ ] **[Security/MEDIUM]** LIKE 패턴 이스케이프 처리
-  - `UserRepository.java:99-117`
-  - `%`, `_` 특수문자 이스케이프 메서드 추가
+- [x] **[Security/MEDIUM]** LIKE 패턴 이스케이프 처리
+  - `LikePatternUtils` 유틸리티 생성, 7개 레포지토리에 적용 완료
+  - `%`, `_`, `\` 특수문자 이스케이프 + jOOQ escape char 파라미터 사용
 
-- [ ] **[API/MEDIUM]** GlobalExceptionHandler에 일반 예외 핸들러 추가
-  - `Exception.class` catch-all 핸들러 추가
-  - 로깅 추가 (`LoggerFactory`)
+- [x] **[API/MEDIUM]** GlobalExceptionHandler에 일반 예외 핸들러 추가
+  - `Exception.class` catch-all 핸들러 추가 완료
+  - SLF4J Logger 추가, 고정 메시지로 내부 정보 미노출
 
 - [ ] **[API/MEDIUM]** ErrorResponse 강화
   - `ErrorResponse.java` - `timestamp`, `path` 필드 추가
@@ -61,8 +58,8 @@
 - [ ] **[Quality/MEDIUM]** AuthContext 무한 재렌더링 방지
   - `AuthContext.tsx:35-55` - cleanup 로직 추가, 의존성 배열 수정
 
-- [ ] **[Quality/MEDIUM]** 시스템 역할 권한 변경 보호
-  - `RoleService.java:46-55` - `setRolePermissions()`에 시스템 역할 체크 추가
+- [x] **[Quality/MEDIUM]** 시스템 역할 권한 변경 보호
+  - `RoleService.setRolePermissions()`에 `isSystem()` 가드 추가 완료
 
 - [ ] **[Quality/HIGH]** failedQueue 메모리 누수 방지
   - `client.ts:28-43` - 큐 크기 제한, 타임아웃 추가
@@ -106,10 +103,8 @@
   - 현재 min 8자만 요구
   - 대소문자, 숫자, 특수문자 포함 검증 추가
 
-- [ ] **[Security]** 보안 헤더 추가
-  - `X-Content-Type-Options: nosniff`
-  - `X-Frame-Options: DENY`
-  - `Strict-Transport-Security`
+- [x] **[Security]** 보안 헤더 추가
+  - `SecurityConfig.java`에 X-Content-Type-Options, X-Frame-Options, HSTS 설정 완료
 
 - [ ] **[Quality]** 만료된 Refresh Token 정리 배치 작업 구현
 

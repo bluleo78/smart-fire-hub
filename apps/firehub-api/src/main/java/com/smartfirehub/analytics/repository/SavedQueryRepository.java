@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.repository;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
+import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.analytics.dto.SavedQueryListResponse;
 import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
@@ -84,8 +85,11 @@ public class SavedQueryRepository {
     }
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search + "%";
-      conditions.add(SQ_NAME.likeIgnoreCase(pattern).or(SQ_DESCRIPTION.likeIgnoreCase(pattern)));
+      String pattern = LikePatternUtils.containsPattern(search);
+      conditions.add(
+          SQ_NAME
+              .likeIgnoreCase(pattern, '\\')
+              .or(SQ_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     if (folder != null && !folder.isBlank()) {
@@ -147,8 +151,11 @@ public class SavedQueryRepository {
     }
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search + "%";
-      conditions.add(SQ_NAME.likeIgnoreCase(pattern).or(SQ_DESCRIPTION.likeIgnoreCase(pattern)));
+      String pattern = LikePatternUtils.containsPattern(search);
+      conditions.add(
+          SQ_NAME
+              .likeIgnoreCase(pattern, '\\')
+              .or(SQ_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     if (folder != null && !folder.isBlank()) {

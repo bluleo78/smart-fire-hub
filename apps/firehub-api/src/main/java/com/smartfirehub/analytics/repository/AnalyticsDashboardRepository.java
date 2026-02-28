@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.repository;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
+import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import java.time.LocalDateTime;
@@ -55,8 +56,9 @@ public class AnalyticsDashboardRepository {
     conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search + "%";
-      conditions.add(D_NAME.likeIgnoreCase(pattern).or(D_DESCRIPTION.likeIgnoreCase(pattern)));
+      String pattern = LikePatternUtils.containsPattern(search);
+      conditions.add(
+          D_NAME.likeIgnoreCase(pattern, '\\').or(D_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     Condition combined = conditions.stream().reduce(Condition::and).orElse(trueCondition());
@@ -93,8 +95,9 @@ public class AnalyticsDashboardRepository {
     conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search + "%";
-      conditions.add(D_NAME.likeIgnoreCase(pattern).or(D_DESCRIPTION.likeIgnoreCase(pattern)));
+      String pattern = LikePatternUtils.containsPattern(search);
+      conditions.add(
+          D_NAME.likeIgnoreCase(pattern, '\\').or(D_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     Condition combined = conditions.stream().reduce(Condition::and).orElse(trueCondition());

@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.repository;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.analytics.dto.ChartResponse;
+import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import java.time.LocalDateTime;
@@ -74,8 +75,9 @@ public class ChartRepository {
     conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search + "%";
-      conditions.add(C_NAME.likeIgnoreCase(pattern).or(C_DESCRIPTION.likeIgnoreCase(pattern)));
+      String pattern = LikePatternUtils.containsPattern(search);
+      conditions.add(
+          C_NAME.likeIgnoreCase(pattern, '\\').or(C_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     if (chartType != null && !chartType.isBlank()) {
@@ -126,8 +128,9 @@ public class ChartRepository {
     conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search + "%";
-      conditions.add(C_NAME.likeIgnoreCase(pattern).or(C_DESCRIPTION.likeIgnoreCase(pattern)));
+      String pattern = LikePatternUtils.containsPattern(search);
+      conditions.add(
+          C_NAME.likeIgnoreCase(pattern, '\\').or(C_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
     if (chartType != null && !chartType.isBlank()) {

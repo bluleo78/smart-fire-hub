@@ -12,6 +12,8 @@ import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.user.dto.UserResponse;
+import com.smartfirehub.user.exception.UserDeactivatedException;
+import com.smartfirehub.user.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 class AuthServiceTest extends IntegrationTestBase {
 
   @Autowired private AuthService authService;
+
+  @Autowired private UserRepository userRepository;
 
   @Test
   void signup_firstUser_assignsAdminAndUserRoles() {
@@ -159,6 +163,21 @@ class AuthServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))
         .isInstanceOf(InvalidTokenException.class);
+  }
+
+  @Test
+  void refresh_deactivatedUser_throws() {
+    UserResponse user =
+        authService.signup(
+            new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+    TokenResponse loginResult =
+        authService.login(new LoginRequest("test@example.com", "password123"));
+
+    userRepository.setActive(user.id(), false);
+
+    assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))
+        .isInstanceOf(UserDeactivatedException.class)
+        .hasMessage("User account is deactivated");
   }
 
   @Test

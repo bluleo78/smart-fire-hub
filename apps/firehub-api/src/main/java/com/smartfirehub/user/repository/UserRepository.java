@@ -3,7 +3,9 @@ package com.smartfirehub.user.repository;
 import static com.smartfirehub.jooq.Tables.*;
 import static org.jooq.impl.DSL.count;
 import static org.jooq.impl.DSL.trueCondition;
+import static org.jooq.impl.DSL.val;
 
+import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -79,6 +81,15 @@ public class UserRepository {
     return dsl.fetchExists(dsl.selectOne().from(USER).where(USER.ID.eq(id)));
   }
 
+  /**
+   * Acquire a transaction-scoped advisory lock for first-user detection. Serializes concurrent
+   * signup requests that might race for ADMIN role assignment. The lock is automatically released
+   * when the transaction ends.
+   */
+  public void acquireFirstUserLock() {
+    dsl.execute("SELECT pg_advisory_xact_lock({0})", val(1L));
+  }
+
   public UserResponse save(String username, String email, String password, String name) {
     return dsl.insertInto(USER)
         .set(USER.USERNAME, username)
@@ -93,13 +104,13 @@ public class UserRepository {
     Condition condition = trueCondition();
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search.toLowerCase() + "%";
+      String pattern = LikePatternUtils.containsPattern(search);
       condition =
           condition.and(
               USER.USERNAME
-                  .likeIgnoreCase(pattern)
-                  .or(USER.NAME.likeIgnoreCase(pattern))
-                  .or(USER.EMAIL.likeIgnoreCase(pattern)));
+                  .likeIgnoreCase(pattern, '\\')
+                  .or(USER.NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(USER.EMAIL.likeIgnoreCase(pattern, '\\')));
     }
 
     return dsl.select(
@@ -116,13 +127,13 @@ public class UserRepository {
     Condition condition = trueCondition();
 
     if (search != null && !search.isBlank()) {
-      String pattern = "%" + search.toLowerCase() + "%";
+      String pattern = LikePatternUtils.containsPattern(search);
       condition =
           condition.and(
               USER.USERNAME
-                  .likeIgnoreCase(pattern)
-                  .or(USER.NAME.likeIgnoreCase(pattern))
-                  .or(USER.EMAIL.likeIgnoreCase(pattern)));
+                  .likeIgnoreCase(pattern, '\\')
+                  .or(USER.NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(USER.EMAIL.likeIgnoreCase(pattern, '\\')));
     }
 
     return dsl.select(count()).from(USER).where(condition).fetchOne(0, Long.class);
@@ -169,11 +180,12 @@ public class UserRepository {
   public void setRoles(Long userId, List<Long> roleIds) {
     dsl.deleteFrom(USER_ROLE).where(USER_ROLE.USER_ID.eq(userId)).execute();
 
-    for (Long roleId : roleIds) {
-      dsl.insertInto(USER_ROLE)
-          .set(USER_ROLE.USER_ID, userId)
-          .set(USER_ROLE.ROLE_ID, roleId)
-          .execute();
+    if (!roleIds.isEmpty()) {
+      var insert = dsl.insertInto(USER_ROLE, USER_ROLE.USER_ID, USER_ROLE.ROLE_ID);
+      for (Long roleId : roleIds) {
+        insert = insert.values(userId, roleId);
+      }
+      insert.execute();
     }
   }
 }

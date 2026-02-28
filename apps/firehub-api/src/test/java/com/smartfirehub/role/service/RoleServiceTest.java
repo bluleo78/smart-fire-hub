@@ -104,7 +104,23 @@ class RoleServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void setRolePermissions_success() {
+  void setRolePermissions_customRole_success() {
+    RoleResponse customRole = roleService.createRole("CUSTOM_ROLE", "Custom role for test");
+
+    List<Long> permissionIds =
+        dsl.select(PERMISSION.ID)
+            .from(PERMISSION)
+            .where(PERMISSION.CATEGORY.eq("user"))
+            .fetch(PERMISSION.ID);
+
+    roleService.setRolePermissions(customRole.id(), permissionIds);
+
+    RoleDetailResponse detail = roleService.getRoleById(customRole.id());
+    assertThat(detail.permissions()).hasSize(permissionIds.size());
+  }
+
+  @Test
+  void setRolePermissions_systemRole_throwsException() {
     Long adminRoleId =
         dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
 
@@ -114,9 +130,8 @@ class RoleServiceTest extends IntegrationTestBase {
             .where(PERMISSION.CATEGORY.eq("user"))
             .fetch(PERMISSION.ID);
 
-    roleService.setRolePermissions(adminRoleId, permissionIds);
-
-    RoleDetailResponse detail = roleService.getRoleById(adminRoleId);
-    assertThat(detail.permissions()).hasSize(permissionIds.size());
+    assertThatThrownBy(() -> roleService.setRolePermissions(adminRoleId, permissionIds))
+        .isInstanceOf(SystemRoleModificationException.class)
+        .hasMessageContaining("Cannot modify permissions of system role");
   }
 }

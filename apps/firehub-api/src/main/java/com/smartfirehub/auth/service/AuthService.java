@@ -64,6 +64,7 @@ public class AuthService {
       throw new EmailAlreadyExistsException("Email already exists: " + request.email());
     }
 
+    userRepository.acquireFirstUserLock();
     boolean isFirstUser = userRepository.countAll(null) == 0;
 
     String encodedPassword = passwordEncoder.encode(request.password());
@@ -146,6 +147,10 @@ public class AuthService {
         userRepository
             .findById(userId)
             .orElseThrow(() -> new InvalidTokenException("User not found for token"));
+
+    if (!user.isActive()) {
+      throw new UserDeactivatedException("User account is deactivated");
+    }
 
     String accessToken = jwtTokenProvider.generateAccessToken(user.id(), user.username());
     String newRefreshToken = jwtTokenProvider.generateRefreshToken(user.id());
