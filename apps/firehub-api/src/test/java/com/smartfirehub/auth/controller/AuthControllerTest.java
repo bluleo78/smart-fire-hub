@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
+import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -116,6 +117,25 @@ class AuthControllerTest {
   @Test
   void refresh_withoutCookie_returnsUnauthorized() throws Exception {
     mockMvc.perform(post("/api/v1/auth/refresh")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void login_accountLocked_returns429() throws Exception {
+    LoginRequest request = new LoginRequest("locked@example.com", "password123");
+
+    when(authService.login(any(LoginRequest.class)))
+        .thenThrow(
+            new AccountLockedException(
+                "Too many failed login attempts. Please try again later."));
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(jsonPath("$.status").value(429))
+        .andExpect(jsonPath("$.error").value("Too Many Requests"));
   }
 
   @Test

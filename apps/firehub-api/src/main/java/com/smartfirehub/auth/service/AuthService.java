@@ -3,6 +3,7 @@ package com.smartfirehub.auth.service;
 import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
+import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
@@ -33,6 +34,7 @@ public class AuthService {
   private final JwtTokenProvider jwtTokenProvider;
   private final JwtProperties jwtProperties;
   private final RefreshTokenRepository refreshTokenRepository;
+  private final LoginAttemptService loginAttemptService;
 
   public AuthService(
       UserRepository userRepository,
@@ -40,13 +42,15 @@ public class AuthService {
       PasswordEncoder passwordEncoder,
       JwtTokenProvider jwtTokenProvider,
       JwtProperties jwtProperties,
-      RefreshTokenRepository refreshTokenRepository) {
+      RefreshTokenRepository refreshTokenRepository,
+      LoginAttemptService loginAttemptService) {
     this.userRepository = userRepository;
     this.roleRepository = roleRepository;
     this.passwordEncoder = passwordEncoder;
     this.jwtTokenProvider = jwtTokenProvider;
     this.jwtProperties = jwtProperties;
     this.refreshTokenRepository = refreshTokenRepository;
+    this.loginAttemptService = loginAttemptService;
   }
 
   @Transactional
@@ -82,23 +86,38 @@ public class AuthService {
 
   @Transactional
   public TokenResponse login(LoginRequest request) {
+    if (loginAttemptService.isBlocked(request.username())) {
+      throw new AccountLockedException("Too many failed login attempts. Please try again later.");
+    }
+
     UserResponse user =
         userRepository
             .findByUsername(request.username())
-            .orElseThrow(() -> new InvalidCredentialsException("Invalid username or password"));
+            .orElseThrow(
+                () -> {
+                  loginAttemptService.loginFailed(request.username());
+                  return new InvalidCredentialsException("Invalid username or password");
+                });
 
     String storedPassword =
         userRepository
             .findPasswordByUsername(request.username())
-            .orElseThrow(() -> new InvalidCredentialsException("Invalid username or password"));
+            .orElseThrow(
+                () -> {
+                  loginAttemptService.loginFailed(request.username());
+                  return new InvalidCredentialsException("Invalid username or password");
+                });
 
     if (!passwordEncoder.matches(request.password(), storedPassword)) {
+      loginAttemptService.loginFailed(request.username());
       throw new InvalidCredentialsException("Invalid username or password");
     }
 
     if (!user.isActive()) {
       throw new UserDeactivatedException("User account is deactivated");
     }
+
+    loginAttemptService.loginSucceeded(request.username());
 
     String accessToken = jwtTokenProvider.generateAccessToken(user.id(), user.username());
     String refreshToken = jwtTokenProvider.generateRefreshToken(user.id());

@@ -1,6 +1,7 @@
 package com.smartfirehub.global.exception;
 
 import com.smartfirehub.ai.exception.AiSessionNotFoundException;
+import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
@@ -115,6 +116,16 @@ public class ExceptionStubController {
   @GetMapping("/data-integrity-violation")
   public void dataIntegrityViolation() {
     throw new DataIntegrityViolationException("Integrity error");
+  }
+
+  @GetMapping("/account-locked")
+  public void accountLocked() {
+    throw new AccountLockedException("Too many failed login attempts. Please try again later.");
+  }
+
+  @GetMapping("/unexpected-error")
+  public void unexpectedError() {
+    throw new RuntimeException("Something unexpected happened");
   }
 
   @PostMapping("/method-argument-not-valid")

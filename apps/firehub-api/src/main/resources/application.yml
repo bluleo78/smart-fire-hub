@@ -29,3 +29,5 @@ app:
     refresh-expiration: 604800000
   encryption:
     master-key: ${ENCRYPTION_MASTER_KEY}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}

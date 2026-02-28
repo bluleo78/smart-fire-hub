@@ -218,4 +218,26 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.message").value("Validation failed"))
         .andExpect(jsonPath("$.errors.name").isNotEmpty());
   }
+
+  @Test
+  void accountLocked_returns429() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/account-locked"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(jsonPath("$.status").value(429))
+        .andExpect(jsonPath("$.error").value("Too Many Requests"))
+        .andExpect(
+            jsonPath("$.message")
+                .value("Too many failed login attempts. Please try again later."));
+  }
+
+  @Test
+  void unexpectedError_returns500_withGenericMessage() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/unexpected-error"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.status").value(500))
+        .andExpect(jsonPath("$.error").value("Internal Server Error"))
+        .andExpect(jsonPath("$.message").value("An unexpected error occurred"));
+  }
 }

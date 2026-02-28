@@ -2,6 +2,7 @@ package com.smartfirehub.global.exception;
 
 import com.smartfirehub.ai.exception.AiSessionNotFoundException;
 import com.smartfirehub.analytics.exception.ChartNotFoundException;
+import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
@@ -27,6 +28,8 @@ import com.smartfirehub.user.exception.UserNotFoundException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,6 +40,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+  private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<ErrorResponse> handleValidationExceptions(
@@ -335,5 +340,25 @@ public class GlobalExceptionHandler {
     ErrorResponse response =
         new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  @ExceptionHandler(AccountLockedException.class)
+  public ResponseEntity<ErrorResponse> handleAccountLocked(AccountLockedException ex) {
+    ErrorResponse response =
+        new ErrorResponse(
+            HttpStatus.TOO_MANY_REQUESTS.value(), "Too Many Requests", ex.getMessage(), null);
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+  }
+
+  @ExceptionHandler(Exception.class)
+  public ResponseEntity<ErrorResponse> handleException(Exception ex) {
+    log.error("Unhandled exception", ex);
+    ErrorResponse response =
+        new ErrorResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            "Internal Server Error",
+            "An unexpected error occurred",
+            null);
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 }

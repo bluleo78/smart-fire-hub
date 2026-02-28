@@ -12,10 +12,12 @@ org:
 
 app:
   jwt:
-    secret: dGhpcyBpcyBhIHZlcnkgbG9uZyBzZWNyZXQga2V5IGZvciBIUzI1NiBhbGdvcml0aG0gdGhhdCBpcyBhdCBsZWFzdCAyNTYgYml0cw==
+    secret: ${JWT_SECRET:ZGV2LW9ubHktand0LXNlY3JldC1rZXktdGhpcy1pcy1ub3QtZm9yLXByb2R1Y3Rpb24tdXNl}
   encryption:
-    master-key: bG9jYWwtZGV2LW1hc3Rlci1rZXktZm9yLWVuY3J5cHQ=
+    master-key: ${ENCRYPTION_MASTER_KEY:bG9jYWwtZGV2LW1hc3Rlci1rZXktZm9yLWVuY3J5cHQ=}
+  cors:
+    allowed-origins: http://localhost:5173,http://localhost:3001
 
 agent:
   url: http://127.0.0.1:3001
-  internal-token: firehub-internal-secret-token
+  internal-token: ${AGENT_INTERNAL_TOKEN:firehub-local-dev-internal-token}

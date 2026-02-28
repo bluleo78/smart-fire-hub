@@ -18,6 +18,8 @@ app:
     refresh-expiration: 604800000
   encryption:
     master-key: dGVzdC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzLWhlcmU=
+  cors:
+    allowed-origins: http://localhost:5173
 
 agent:
   url: http://localhost:9999
