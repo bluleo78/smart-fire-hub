@@ -13,6 +13,7 @@ import { registerPipelineTools } from './tools/pipeline-tools.js';
 import { registerTriggerTools } from './tools/trigger-tools.js';
 import { registerApiConnectionTools } from './tools/api-connection-tools.js';
 import { registerMiscTools } from './tools/misc-tools.js';
+import { registerAnalyticsTools } from './tools/analytics-tools.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -54,6 +55,7 @@ export function createFireHubMcpServer(
       ...registerTriggerTools(apiClient, safeTool, jsonResult),
       ...registerApiConnectionTools(apiClient, safeTool, jsonResult),
       ...registerMiscTools(apiClient, safeTool, jsonResult),
+      ...registerAnalyticsTools(apiClient, safeTool, jsonResult),
     ],
   });
 }

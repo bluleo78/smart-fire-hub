@@ -208,9 +208,9 @@ public class DataTableService {
   }
 
   /**
-   * Creates a temporary staging table {@code data."{tableName}_tmp"} with the same structure as
-   * the original table (using PostgreSQL's LIKE ... INCLUDING ALL). Used by the REPLACE load
-   * strategy to safely stage new data before swapping.
+   * Creates a temporary staging table {@code data."{tableName}_tmp"} with the same structure as the
+   * original table (using PostgreSQL's LIKE ... INCLUDING ALL). Used by the REPLACE load strategy
+   * to safely stage new data before swapping.
    */
   public void createTempTable(String tableName) {
     validateName(tableName);

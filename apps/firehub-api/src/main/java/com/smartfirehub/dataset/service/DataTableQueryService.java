@@ -1,7 +1,7 @@
 package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
-import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.util.SqlValidationUtils;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -15,9 +15,6 @@ public class DataTableQueryService {
 
   private final DSLContext dsl;
 
-  private static final Set<String> ALLOWED_KEYWORDS =
-      Set.of("SELECT", "INSERT", "UPDATE", "DELETE", "WITH");
-
   public DataTableQueryService(DSLContext dsl) {
     this.dsl = dsl;
   }
@@ -28,39 +25,10 @@ public class DataTableQueryService {
    * for SET LOCAL to be effective.
    */
   public SqlQueryResponse executeQuery(String sql, int maxRows) {
-    // Strip SQL comments (block and line) to prevent DDL bypass via comment injection
-    // (?s) enables DOTALL mode so .* matches across newlines in block comments
-    String stripped =
-        sql.strip()
-            .replaceAll("(?s)/\\*.*?\\*/", " ") // block comments (multiline-safe)
-            .replaceAll("--[^\n]*", " ") // line comments
-            .strip();
-
-    // Reject multi-statement SQL (semicolons not at the very end)
-    String withoutTrailingSemicolon = stripped.replaceAll(";\\s*$", "");
-    if (withoutTrailingSemicolon.contains(";")) {
-      throw new SqlQueryException("Multiple statements are not allowed.");
-    }
-
-    String firstWord = stripped.split("\\s+")[0].toUpperCase();
-
-    if (!ALLOWED_KEYWORDS.contains(firstWord)) {
-      throw new SqlQueryException(
-          "Only SELECT, INSERT, UPDATE, DELETE, and WITH statements are allowed.");
-    }
-
-    // WITH (CTE) can precede SELECT, INSERT, UPDATE, DELETE — detect the main verb
-    // Use word boundary (\b) to avoid false positives on column/table names
-    String queryType;
-    if ("WITH".equals(firstWord)) {
-      String upper = withoutTrailingSemicolon.toUpperCase();
-      if (upper.matches("(?s).*\\bINSERT\\b.*")) queryType = "INSERT";
-      else if (upper.matches("(?s).*\\bUPDATE\\b.*")) queryType = "UPDATE";
-      else if (upper.matches("(?s).*\\bDELETE\\b.*")) queryType = "DELETE";
-      else queryType = "SELECT";
-    } else {
-      queryType = firstWord;
-    }
+    // Delegate comment stripping and keyword validation to SqlValidationUtils
+    String stripped = SqlValidationUtils.stripAndValidate(sql);
+    String queryType = SqlValidationUtils.detectQueryType(stripped);
+    String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
 
     long startTime = System.currentTimeMillis();
 
@@ -78,7 +46,7 @@ public class DataTableQueryService {
       SqlQueryResponse response;
       if ("SELECT".equals(queryType)) {
         // Apply LIMIT for SELECT queries (check for actual LIMIT clause, not substring match)
-        String limitedSql = withoutTrailingSemicolon;
+        String limitedSql = cleanSql;
         if (!limitedSql.toUpperCase().matches("(?s).*\\bLIMIT\\s+\\d+.*")) {
           limitedSql = limitedSql + " LIMIT " + maxRows;
         }
@@ -112,7 +80,7 @@ public class DataTableQueryService {
             new SqlQueryResponse(queryType, columns, rows, rows.size(), executionTimeMs, null);
       } else {
         // DML: INSERT, UPDATE, DELETE
-        int affectedRows = dsl.execute(withoutTrailingSemicolon);
+        int affectedRows = dsl.execute(cleanSql);
         long executionTimeMs = System.currentTimeMillis() - startTime;
         response =
             new SqlQueryResponse(

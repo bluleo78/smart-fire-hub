@@ -26,6 +26,12 @@ const DatasetCreatePage = lazy(() => import('./pages/data/DatasetCreatePage'));
 const DatasetDetailPage = lazy(() => import('./pages/data/DatasetDetailPage'));
 const PipelineListPage = lazy(() => import('./pages/pipeline/PipelineListPage'));
 const PipelineEditorPage = lazy(() => import('./pages/pipeline/PipelineEditorPage'));
+const QueryListPage = lazy(() => import('./pages/analytics/QueryListPage'));
+const QueryEditorPage = lazy(() => import('./pages/analytics/QueryEditorPage'));
+const ChartListPage = lazy(() => import('./pages/analytics/ChartListPage'));
+const ChartBuilderPage = lazy(() => import('./pages/analytics/ChartBuilderPage'));
+const DashboardListPage = lazy(() => import('./pages/analytics/DashboardListPage'));
+const DashboardEditorPage = lazy(() => import('./pages/analytics/DashboardEditorPage'));
 
 function PageSkeleton() {
   return (
@@ -55,6 +61,14 @@ function App() {
               <Route path="/pipelines/new" element={<PipelineEditorPage />} />
               <Route path="/pipelines/:id" element={<PipelineEditorPage />} />
               <Route path="/pipelines/:id/executions/:execId" element={<PipelineEditorPage />} />
+              <Route path="/analytics/queries" element={<QueryListPage />} />
+              <Route path="/analytics/queries/new" element={<QueryEditorPage />} />
+              <Route path="/analytics/queries/:id" element={<QueryEditorPage />} />
+              <Route path="/analytics/charts" element={<ChartListPage />} />
+              <Route path="/analytics/charts/new" element={<ChartBuilderPage />} />
+              <Route path="/analytics/charts/:id" element={<ChartBuilderPage />} />
+              <Route path="/analytics/dashboards" element={<DashboardListPage />} />
+              <Route path="/analytics/dashboards/:id" element={<DashboardEditorPage />} />
               <Route element={<AdminRoute />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />

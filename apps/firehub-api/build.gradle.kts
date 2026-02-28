@@ -39,6 +39,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     // JSONPath for API response parsing
     implementation("com.jayway.jsonpath:json-path:2.9.0")
+    // Caffeine cache — analytics dashboard query result caching
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")

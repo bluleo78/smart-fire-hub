@@ -1,6 +1,9 @@
 package com.smartfirehub.global.exception;
 
 import com.smartfirehub.ai.exception.AiSessionNotFoundException;
+import com.smartfirehub.analytics.exception.ChartNotFoundException;
+import com.smartfirehub.analytics.exception.DashboardNotFoundException;
+import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
@@ -270,7 +273,10 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleCrypto(CryptoException ex) {
     ErrorResponse response =
         new ErrorResponse(
-            HttpStatus.INTERNAL_SERVER_ERROR.value(), "Internal Server Error", ex.getMessage(), null);
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            "Internal Server Error",
+            ex.getMessage(),
+            null);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 
@@ -278,15 +284,17 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleSerialization(SerializationException ex) {
     ErrorResponse response =
         new ErrorResponse(
-            HttpStatus.INTERNAL_SERVER_ERROR.value(), "Internal Server Error", ex.getMessage(), null);
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            "Internal Server Error",
+            ex.getMessage(),
+            null);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 
   @ExceptionHandler(ExternalServiceException.class)
   public ResponseEntity<ErrorResponse> handleExternalService(ExternalServiceException ex) {
     ErrorResponse response =
-        new ErrorResponse(
-            HttpStatus.BAD_GATEWAY.value(), "Bad Gateway", ex.getMessage(), null);
+        new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), "Bad Gateway", ex.getMessage(), null);
     return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
   }
 
@@ -294,12 +302,36 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleImportProcessing(ImportProcessingException ex) {
     ErrorResponse response =
         new ErrorResponse(
-            HttpStatus.INTERNAL_SERVER_ERROR.value(), "Internal Server Error", ex.getMessage(), null);
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            "Internal Server Error",
+            ex.getMessage(),
+            null);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 
   @ExceptionHandler(ApiConnectionException.class)
   public ResponseEntity<ErrorResponse> handleApiConnectionNotFound(ApiConnectionException ex) {
+    ErrorResponse response =
+        new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  @ExceptionHandler(SavedQueryNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleSavedQueryNotFound(SavedQueryNotFoundException ex) {
+    ErrorResponse response =
+        new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  @ExceptionHandler(ChartNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleChartNotFound(ChartNotFoundException ex) {
+    ErrorResponse response =
+        new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  @ExceptionHandler(DashboardNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleDashboardNotFound(DashboardNotFoundException ex) {
     ErrorResponse response =
         new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), null);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);

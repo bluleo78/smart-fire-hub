@@ -215,9 +215,7 @@ public class DatasetController {
   @PostMapping("/{id}/tags")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> addTag(
-      @PathVariable Long id,
-      @RequestBody AddTagRequest request,
-      Authentication authentication) {
+      @PathVariable Long id, @RequestBody AddTagRequest request, Authentication authentication) {
     if (request.tagName() == null
         || request.tagName().isBlank()
         || request.tagName().length() > 50
@@ -285,7 +283,8 @@ public class DatasetController {
       @RequestParam(defaultValue = "20") int size) {
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 100));
-    PageResponse<QueryHistoryResponse> response = datasetDataService.getQueryHistory(id, page, size);
+    PageResponse<QueryHistoryResponse> response =
+        datasetDataService.getQueryHistory(id, page, size);
     return ResponseEntity.ok(response);
   }
 
@@ -329,9 +328,7 @@ public class DatasetController {
   @PostMapping("/{id}/api-import")
   @RequirePermission("pipeline:write")
   public ResponseEntity<ApiImportResponse> createApiImport(
-      @PathVariable Long id,
-      @RequestBody ApiImportRequest request,
-      Authentication authentication) {
+      @PathVariable Long id, @RequestBody ApiImportRequest request, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     ApiImportResponse response = apiImportService.createApiImport(id, request, userId);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);

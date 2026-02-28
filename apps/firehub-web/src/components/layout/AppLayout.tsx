@@ -32,6 +32,10 @@ import {
   ChevronDown,
   ChevronRight,
   Flame,
+  Search,
+  BarChart3,
+  LayoutDashboard,
+  Settings,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -59,9 +63,19 @@ const navItems: NavItem[] = [
 ];
 
 const dataNavItems: NavItem[] = [
-  { label: '카테고리', href: '/data/categories', icon: Tag },
   { label: '데이터셋', href: '/data/datasets', icon: Database },
+  { label: '카테고리', href: '/data/categories', icon: Tag },
+];
+
+const analyticsNavItems: NavItem[] = [
+  { label: '쿼리', href: '/analytics/queries', icon: Search },
+  { label: '차트', href: '/analytics/charts', icon: BarChart3 },
+  { label: '대시보드', href: '/analytics/dashboards', icon: LayoutDashboard },
+];
+
+const automationNavItems: NavItem[] = [
   { label: '파이프라인', href: '/pipelines', icon: GitBranch },
+  { label: 'API 연결', href: '/admin/api-connections', icon: Plug },
 ];
 
 const adminNavItems: NavItem[] = [
@@ -69,7 +83,7 @@ const adminNavItems: NavItem[] = [
   { label: '역할 관리', href: '/admin/roles', icon: Shield },
   { label: '감사 로그', href: '/admin/audit-logs', icon: FileText },
   { label: 'AI 설정', href: '/admin/ai-settings', icon: Bot },
-  { label: 'API 연결', href: '/admin/api-connections', icon: Plug },
+  { label: '설정', href: '/admin/settings', icon: Settings },
 ];
 
 function PageSkeleton() {
@@ -195,6 +209,8 @@ function AppLayoutInner() {
     return localStorage.getItem('sidebar-collapsed') === 'true';
   });
   const [dataOpen, setDataOpen] = useState(true);
+  const [analyticsOpen, setAnalyticsOpen] = useState(true);
+  const [automationOpen, setAutomationOpen] = useState(true);
   const [adminOpen, setAdminOpen] = useState(true);
 
   const toggleCollapsed = () => {
@@ -306,6 +322,26 @@ function AppLayoutInner() {
                 onClick={handleNavClick}
                 open={dataOpen}
                 onOpenChange={setDataOpen}
+              />
+
+              <NavSection
+                label="분석"
+                items={analyticsNavItems}
+                isActive={isActive}
+                collapsed={collapsed}
+                onClick={handleNavClick}
+                open={analyticsOpen}
+                onOpenChange={setAnalyticsOpen}
+              />
+
+              <NavSection
+                label="자동화"
+                items={automationNavItems}
+                isActive={isActive}
+                collapsed={collapsed}
+                onClick={handleNavClick}
+                open={automationOpen}
+                onOpenChange={setAutomationOpen}
               />
 
               {isAdmin && (

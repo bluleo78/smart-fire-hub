@@ -3,6 +3,8 @@ spring:
     name: smart-fire-hub
   flyway:
     enabled: true
+    baseline-on-migrate: true
+    baseline-version: 27
   servlet:
     multipart:
       max-file-size: 50MB

@@ -340,8 +340,10 @@ class DatasetServiceTest extends IntegrationTestBase {
             new CreateDatasetRequest(name, tableName, null, testCategoryId, "SOURCE", columns),
             testUserId);
 
-    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Alice", "value", 100)));
-    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Bob", "value", 200)));
+    datasetDataService.addRow(
+        dataset.id(), new RowDataRequest(Map.of("name", "Alice", "value", 100)));
+    datasetDataService.addRow(
+        dataset.id(), new RowDataRequest(Map.of("name", "Bob", "value", 200)));
 
     return datasetService.getDatasetById(dataset.id());
   }
@@ -453,7 +455,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             testUserId);
 
     RowDataResponse row =
-        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Alice", "age", 25)));
+        datasetDataService.addRow(
+            dataset.id(), new RowDataRequest(Map.of("name", "Alice", "age", 25)));
 
     assertThat(row.id()).isNotNull().isPositive();
     assertThat(row.data().get("name")).isEqualTo("Alice");
@@ -489,7 +492,8 @@ class DatasetServiceTest extends IntegrationTestBase {
     RowDataResponse added =
         datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Before")));
 
-    datasetDataService.updateRow(dataset.id(), added.id(), new RowDataRequest(Map.of("name", "After")));
+    datasetDataService.updateRow(
+        dataset.id(), added.id(), new RowDataRequest(Map.of("name", "After")));
 
     RowDataResponse updated = datasetDataService.getRow(dataset.id(), added.id());
     assertThat(updated.data().get("name")).isEqualTo("After");
@@ -671,10 +675,12 @@ class DatasetServiceTest extends IntegrationTestBase {
                 "Favorite Test", "favorite_test", null, null, "SOURCE", columns),
             testUserId);
 
-    FavoriteToggleResponse result1 = datasetFavoriteService.toggleFavorite(dataset.id(), testUserId);
+    FavoriteToggleResponse result1 =
+        datasetFavoriteService.toggleFavorite(dataset.id(), testUserId);
     assertThat(result1.favorited()).isTrue();
 
-    FavoriteToggleResponse result2 = datasetFavoriteService.toggleFavorite(dataset.id(), testUserId);
+    FavoriteToggleResponse result2 =
+        datasetFavoriteService.toggleFavorite(dataset.id(), testUserId);
     assertThat(result2.favorited()).isFalse();
   }
 
@@ -759,7 +765,8 @@ class DatasetServiceTest extends IntegrationTestBase {
   void addRowsBatch_nonExistentDataset_throwsNotFound() {
     List<Map<String, Object>> rows = List.of(Map.of("col1", "value"));
 
-    assertThatThrownBy(() -> datasetDataService.addRowsBatch(999999L, new BatchRowDataRequest(rows)))
+    assertThatThrownBy(
+            () -> datasetDataService.addRowsBatch(999999L, new BatchRowDataRequest(rows)))
         .isInstanceOf(DatasetNotFoundException.class);
   }
 

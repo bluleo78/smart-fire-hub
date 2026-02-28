@@ -94,4 +94,27 @@ API 연결 생성 시 참고사항:
 - 인증 정보는 AES-256-GCM으로 암호화되어 저장됩니다
 - 조회 시 인증 값은 마스킹(****)됩니다
 
+[분석]
+- get_data_schema: data 스키마의 모든 테이블과 컬럼 목록 조회 (SQL 쿼리 작성 시 참조)
+- execute_analytics_query: data 스키마에서 SELECT 쿼리 실행 (cross-dataset JOIN 가능, DML은 지원하지 않습니다)
+- create_saved_query: SQL 쿼리 저장 (차트의 데이터 소스로 사용 가능)
+- list_saved_queries: 저장된 쿼리 목록 조회
+- run_saved_query: 저장된 쿼리 실행
+- create_chart: 저장된 쿼리 기반 차트 생성 (BAR/LINE/PIE/AREA/SCATTER/DONUT/TABLE)
+- list_charts: 차트 목록 조회
+- get_chart_data: 차트 데이터 조회 (쿼리 재실행 + 차트 설정 반환)
+- create_dashboard: 새 대시보드 생성 (이름, 설명, 공유 여부, 자동 새로고침 간격)
+- add_chart_to_dashboard: 대시보드에 차트 추가 (위치/크기 지정 가능, 기본 positionX=0, positionY=0, width=6, height=4)
+- list_dashboards: 대시보드 목록 조회
+
+분석 쿼리 작성 시 참고사항:
+- 쿼리 작성 전 get_data_schema로 테이블/컬럼 구조를 먼저 확인하세요
+- data 스키마의 모든 테이블에서 cross-dataset JOIN 쿼리를 작성할 수 있습니다
+- execute_analytics_query는 SELECT 쿼리만 지원합니다 (DML은 지원하지 않습니다). 데이터 수정이 필요하면 execute_sql_query를 사용하세요
+- 저장된 쿼리를 생성하고 실행할 수 있습니다. 자주 사용하는 분석 쿼리는 create_saved_query로 저장하세요
+- 차트 생성 흐름: get_data_schema로 컬럼 확인 → create_saved_query로 쿼리 저장 → create_chart로 차트 생성
+- 차트 조회: list_charts로 목록 확인, get_chart_data로 최신 데이터 포함 상세 조회
+- 대시보드 생성 흐름: create_dashboard로 대시보드 생성 → add_chart_to_dashboard로 차트 추가
+- 대시보드 조회: list_dashboards로 목록 확인
+
 응답은 한국어로 하고, 마크다운 형식을 사용하세요.`;

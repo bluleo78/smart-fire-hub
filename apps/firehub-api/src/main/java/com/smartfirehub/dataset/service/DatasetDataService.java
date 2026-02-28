@@ -178,7 +178,8 @@ public class DatasetDataService {
         .findById(datasetId)
         .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
-    SqlQueryResponse response = dataTableQueryService.executeQuery(request.sql(), request.maxRows());
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(request.sql(), request.maxRows());
 
     // Save to query history
     boolean success = response.error() == null;
@@ -222,7 +223,8 @@ public class DatasetDataService {
     Long newId = dataTableRowService.insertRow(dataset.tableName(), columnNames, validatedData);
 
     // Return the newly inserted row
-    Map<String, Object> rowData = dataTableRowService.getRow(dataset.tableName(), columnNames, newId);
+    Map<String, Object> rowData =
+        dataTableRowService.getRow(dataset.tableName(), columnNames, newId);
     Map<String, Object> data = new LinkedHashMap<>();
     LocalDateTime createdAt = null;
     for (var entry : rowData.entrySet()) {
@@ -290,7 +292,8 @@ public class DatasetDataService {
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
 
-    Map<String, Object> rowData = dataTableRowService.getRow(dataset.tableName(), columnNames, rowId);
+    Map<String, Object> rowData =
+        dataTableRowService.getRow(dataset.tableName(), columnNames, rowId);
     Map<String, Object> data = new LinkedHashMap<>();
     Long id = null;
     LocalDateTime createdAt = null;

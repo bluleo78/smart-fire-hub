@@ -374,7 +374,8 @@ class DataTableServiceTest extends IntegrationTestBase {
         List.of(Map.of("name", "Alice", "score", 90), Map.of("name", "Bob", "score", 85)));
 
     // When
-    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT * FROM " + tableName, 100);
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery("SELECT * FROM " + tableName, 100);
 
     // Then
     assertThat(response.queryType()).isEqualTo("SELECT");
@@ -506,8 +507,7 @@ class DataTableServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
-    Long id =
-        dataTableRowService.insertRow(tableName, List.of("name"), Map.of("name", "Before"));
+    Long id = dataTableRowService.insertRow(tableName, List.of("name"), Map.of("name", "Before"));
     dataTableRowService.updateRow(tableName, id, List.of("name"), Map.of("name", "After"));
 
     Map<String, Object> row = dataTableRowService.getRow(tableName, List.of("name"), id);

@@ -7,6 +7,23 @@ import { createPipelineApi } from './api-client/pipeline-api.js';
 import { createTriggerApi } from './api-client/trigger-api.js';
 import { createConnectionApi } from './api-client/connection-api.js';
 import { createMiscApi } from './api-client/misc-api.js';
+import {
+  createAnalyticsApi,
+  type CreateSavedQueryParams,
+  type CreateChartParams,
+  type AnalyticsQueryResult,
+  type SavedQuery,
+  type SavedQueryList,
+  type Chart,
+  type ChartList,
+  type ChartData,
+  type SchemaInfo,
+  type CreateDashboardParams,
+  type Dashboard,
+  type DashboardList,
+  type AddDashboardWidgetParams,
+  type DashboardWidget,
+} from './api-client/analytics-api.js';
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -17,6 +34,7 @@ export class FireHubApiClient {
   private _triggers: ReturnType<typeof createTriggerApi>;
   private _connections: ReturnType<typeof createConnectionApi>;
   private _misc: ReturnType<typeof createMiscApi>;
+  private _analytics: ReturnType<typeof createAnalyticsApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -62,6 +80,7 @@ export class FireHubApiClient {
     this._triggers = createTriggerApi(this.client);
     this._connections = createConnectionApi(this.client);
     this._misc = createMiscApi(this.client);
+    this._analytics = createAnalyticsApi(this.client);
   }
 
   listCategories() {
@@ -291,5 +310,49 @@ export class FireHubApiClient {
   }
   replaceDatasetData(datasetId: number, rows: Record<string, unknown>[]) {
     return this._data.replaceDatasetData(datasetId, rows);
+  }
+
+  executeAnalyticsQuery(sql: string, maxRows?: number): Promise<AnalyticsQueryResult> {
+    return this._analytics.executeAnalyticsQuery(sql, maxRows);
+  }
+
+  createSavedQuery(data: CreateSavedQueryParams): Promise<SavedQuery> {
+    return this._analytics.createSavedQuery(data);
+  }
+
+  listSavedQueries(params?: { search?: string; folder?: string }): Promise<SavedQueryList> {
+    return this._analytics.listSavedQueries(params);
+  }
+
+  executeSavedQuery(id: number): Promise<AnalyticsQueryResult> {
+    return this._analytics.executeSavedQuery(id);
+  }
+
+  getDataSchema(): Promise<SchemaInfo> {
+    return this._analytics.getDataSchema();
+  }
+
+  createChart(data: CreateChartParams): Promise<Chart> {
+    return this._analytics.createChart(data);
+  }
+
+  listCharts(params?: { search?: string }): Promise<ChartList> {
+    return this._analytics.listCharts(params);
+  }
+
+  getChartData(id: number): Promise<ChartData> {
+    return this._analytics.getChartData(id);
+  }
+
+  createDashboard(data: CreateDashboardParams): Promise<Dashboard> {
+    return this._analytics.createDashboard(data);
+  }
+
+  listDashboards(params?: { search?: string }): Promise<DashboardList> {
+    return this._analytics.listDashboards(params);
+  }
+
+  addDashboardWidget(dashboardId: number, data: AddDashboardWidgetParams): Promise<DashboardWidget> {
+    return this._analytics.addDashboardWidget(dashboardId, data);
   }
 }

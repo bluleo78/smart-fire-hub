@@ -1,10 +1,11 @@
 import { useState, useCallback, Suspense, lazy } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useExecuteQuery } from '../../../hooks/queries/useDatasets';
 import type { DatasetColumnResponse, SqlQueryResponse } from '../../../types/dataset';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
-import { Play, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Play, Loader2, AlertCircle, CheckCircle2, ExternalLink, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 import type { ErrorResponse } from '../../../types/auth';
@@ -21,6 +22,7 @@ interface SqlQueryEditorProps {
 }
 
 export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
+  const navigate = useNavigate();
   const [sql, setSql] = useState('');
   const [result, setResult] = useState<SqlQueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +176,35 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
               </span>
             </div>
           )}
+
+          <div className="flex gap-2 mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                navigate(
+                  `/analytics/queries/new?datasetId=${datasetId}&sql=${encodeURIComponent(sql)}`
+                )
+              }
+            >
+              <ExternalLink size={14} className="mr-1" />
+              분석 쿼리로 열기
+            </Button>
+            {result.queryType === 'SELECT' && result.rows.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(
+                    `/analytics/charts/new?queryId=adhoc&sql=${encodeURIComponent(sql)}&datasetId=${datasetId}`
+                  )
+                }
+              >
+                <BarChart3 size={14} className="mr-1" />
+                차트로 만들기
+              </Button>
+            )}
+          </div>
         </>
       )}
     </Card>

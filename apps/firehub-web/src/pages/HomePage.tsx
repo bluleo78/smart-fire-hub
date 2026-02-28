@@ -1,15 +1,21 @@
 import { useDashboardStats } from '../hooks/queries/useDashboard';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { useDashboards } from '../hooks/queries/useAnalytics';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { Database, GitBranch, Upload, Play } from 'lucide-react';
+import { Database, GitBranch, Upload, Play, LayoutDashboard } from 'lucide-react';
 import { getStatusBadgeVariant, getStatusLabel } from '../lib/formatters';
 
 export default function HomePage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { data: stats, isLoading } = useDashboardStats();
+  const { data: dashboardsData, isLoading: isDashboardsLoading } = useDashboards({
+    page: 0,
+    size: 4,
+  });
 
   return (
     <div className="space-y-6">
@@ -92,6 +98,49 @@ export default function HomePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* My dashboards section */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-base font-semibold">내 대시보드</h3>
+          <Link
+            to="/analytics/dashboards"
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            전체 보기
+          </Link>
+        </div>
+        {isDashboardsLoading ? (
+          <div className="grid grid-cols-2 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} className="h-20 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : dashboardsData?.content && dashboardsData.content.length > 0 ? (
+          <div className="grid grid-cols-2 gap-4">
+            {dashboardsData.content.map((dashboard) => (
+              <Card
+                key={dashboard.id}
+                className="cursor-pointer transition-colors hover:bg-accent"
+                onClick={() => navigate(`/analytics/dashboards/${dashboard.id}`)}
+              >
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">{dashboard.name}</CardTitle>
+                  <CardDescription>위젯 {dashboard.widgetCount}개</CardDescription>
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            대시보드가 없습니다.{' '}
+            <Link to="/analytics/dashboards" className="underline hover:text-foreground">
+              대시보드 만들기
+            </Link>
+          </p>
+        )}
+      </section>
 
       {/* Recent activity grid */}
       <div className="grid gap-4 md:grid-cols-2">

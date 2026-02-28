@@ -60,8 +60,7 @@ public class SettingsService {
           switch (key) {
             case "ai.max_turns" -> {
               int v = Integer.parseInt(value);
-              if (v < 1 || v > 50)
-                throw new IllegalArgumentException("최대 턴 수는 1에서 50 사이여야 합니다");
+              if (v < 1 || v > 50) throw new IllegalArgumentException("최대 턴 수는 1에서 50 사이여야 합니다");
             }
             case "ai.temperature" -> {
               double v = Double.parseDouble(value);
@@ -76,8 +75,7 @@ public class SettingsService {
             case "ai.session_max_tokens" -> {
               int v = Integer.parseInt(value);
               if (v < 1000 || v > 200000)
-                throw new IllegalArgumentException(
-                    "세션 최대 토큰 수는 1000에서 200000 사이여야 합니다");
+                throw new IllegalArgumentException("세션 최대 토큰 수는 1000에서 200000 사이여야 합니다");
             }
             case "ai.system_prompt" -> {
               if (value == null || value.isBlank())
