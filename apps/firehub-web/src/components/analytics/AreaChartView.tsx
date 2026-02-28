@@ -1,13 +1,14 @@
 import {
-  AreaChart,
   Area,
-  XAxis,
-  YAxis,
+  AreaChart,
   CartesianGrid,
-  Tooltip,
   Legend,
   ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
+
 import type { ChartConfig } from '../../types/analytics';
 
 const DEFAULT_COLORS = [

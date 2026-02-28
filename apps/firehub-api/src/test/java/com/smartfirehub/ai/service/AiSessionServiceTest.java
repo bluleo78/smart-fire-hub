@@ -26,7 +26,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void getSessions_returnsSessionsForUser() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("testuser", "test@example.com", "password123", "Test User"));
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
     Long userId = user.id();
 
     aiSessionService.createSession(
@@ -43,7 +43,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void createSession_success() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("testuser", "test@example.com", "password123", "Test User"));
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
     Long userId = user.id();
 
     AiSessionResponse result =
@@ -64,7 +64,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void verifySessionOwnership_ownSession_noException() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("testuser", "test@example.com", "password123", "Test User"));
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
     Long userId = user.id();
 
     aiSessionService.createSession(
@@ -78,10 +78,10 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void verifySessionOwnership_otherUser_throwsAccessDenied() {
     UserResponse user1 =
         authService.signup(
-            new SignupRequest("user1", "user1@example.com", "password123", "User 1"));
+            new SignupRequest("user1", "user1@example.com", "Password123", "User 1"));
     UserResponse user2 =
         authService.signup(
-            new SignupRequest("user2", "user2@example.com", "password123", "User 2"));
+            new SignupRequest("user2", "user2@example.com", "Password123", "User 2"));
 
     aiSessionService.createSession(
         user1.id(), new CreateAiSessionRequest("session-u1", null, null, "User1 Session"));
@@ -94,7 +94,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void updateSessionTitle_ownSession_success() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("testuser", "test@example.com", "password123", "Test User"));
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
     Long userId = user.id();
 
     AiSessionResponse created =
@@ -112,10 +112,10 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void updateSessionTitle_otherUser_throwsAccessDenied() {
     UserResponse user1 =
         authService.signup(
-            new SignupRequest("user1", "user1@example.com", "password123", "User 1"));
+            new SignupRequest("user1", "user1@example.com", "Password123", "User 1"));
     UserResponse user2 =
         authService.signup(
-            new SignupRequest("user2", "user2@example.com", "password123", "User 2"));
+            new SignupRequest("user2", "user2@example.com", "Password123", "User 2"));
 
     AiSessionResponse created =
         aiSessionService.createSession(
@@ -130,7 +130,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void deleteSession_ownSession_success() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("testuser", "test@example.com", "password123", "Test User"));
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
     Long userId = user.id();
 
     AiSessionResponse created =
@@ -147,10 +147,10 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void deleteSession_otherUser_throwsAccessDenied() {
     UserResponse user1 =
         authService.signup(
-            new SignupRequest("user1", "user1@example.com", "password123", "User 1"));
+            new SignupRequest("user1", "user1@example.com", "Password123", "User 1"));
     UserResponse user2 =
         authService.signup(
-            new SignupRequest("user2", "user2@example.com", "password123", "User 2"));
+            new SignupRequest("user2", "user2@example.com", "Password123", "User 2"));
 
     AiSessionResponse created =
         aiSessionService.createSession(

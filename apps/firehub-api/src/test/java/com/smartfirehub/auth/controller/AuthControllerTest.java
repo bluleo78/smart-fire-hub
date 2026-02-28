@@ -49,7 +49,7 @@ class AuthControllerTest {
   @Test
   void signup_returnsCreated() throws Exception {
     SignupRequest request =
-        new SignupRequest("test@example.com", "test@example.com", "password123", "Test User");
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User");
     UserResponse response =
         new UserResponse(
             1L, "test@example.com", "test@example.com", "Test User", true, LocalDateTime.now());
@@ -68,7 +68,7 @@ class AuthControllerTest {
 
   @Test
   void signup_invalidEmail_returnsBadRequest() throws Exception {
-    SignupRequest request = new SignupRequest("not-email", "not-email", "password123", "Test User");
+    SignupRequest request = new SignupRequest("not-email", "not-email", "Password123", "Test User");
 
     mockMvc
         .perform(
@@ -80,7 +80,7 @@ class AuthControllerTest {
 
   @Test
   void login_returnsOkWithCookie() throws Exception {
-    LoginRequest request = new LoginRequest("test@example.com", "password123");
+    LoginRequest request = new LoginRequest("test@example.com", "Password123");
     TokenResponse tokenResponse =
         new TokenResponse("access-token", "refresh-token", "Bearer", 1800);
 
@@ -121,7 +121,7 @@ class AuthControllerTest {
 
   @Test
   void login_accountLocked_returns429() throws Exception {
-    LoginRequest request = new LoginRequest("locked@example.com", "password123");
+    LoginRequest request = new LoginRequest("locked@example.com", "Password123");
 
     when(authService.login(any(LoginRequest.class)))
         .thenThrow(

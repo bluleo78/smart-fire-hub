@@ -1,10 +1,11 @@
 import React from 'react';
-import type { ColumnStatsResponse } from '../../../types/dataset';
+
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '../../../components/ui/popover';
+import type { ColumnStatsResponse } from '../../../types/dataset';
 
 // Mini histogram for numeric columns
 export function NumericMiniChart({ stats }: { stats: ColumnStatsResponse }) {

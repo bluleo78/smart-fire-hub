@@ -1,20 +1,22 @@
+import { ArrowLeft, Pencil, Play, Save, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Play, Save, Pencil, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+
 import {
   AlertDialog,
-  AlertDialogTrigger,
+  AlertDialogAction,
+  AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { PipelineEditorState, EditorAction } from '../hooks/usePipelineEditor';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
+import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
 
 interface EditorHeaderProps {
   state: PipelineEditorState;

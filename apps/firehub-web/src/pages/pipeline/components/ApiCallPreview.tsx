@@ -1,6 +1,7 @@
+import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 

@@ -1,6 +1,6 @@
 import { AIChatPanel } from './AIChatPanel';
-import { AISessionSidebar } from './AISessionSidebar';
 import { useAI } from './AIProvider';
+import { AISessionSidebar } from './AISessionSidebar';
 
 export function AIFullScreen() {
   const { isOpen } = useAI();

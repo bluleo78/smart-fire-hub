@@ -1,9 +1,10 @@
-import { Badge } from '../../../components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
+
+import { Badge } from '../../../components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import type { ColumnMappingDto,ColumnMappingEntry } from '../../../types/dataImport';
 import type { DatasetColumnResponse } from '../../../types/dataset';
-import type { ColumnMappingEntry, ColumnMappingDto } from '../../../types/dataImport';
 
 interface ImportMappingTableProps {
   suggestedMappings: ColumnMappingDto[];

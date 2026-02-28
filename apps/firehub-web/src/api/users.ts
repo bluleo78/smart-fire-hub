@@ -1,7 +1,7 @@
-import { client } from './client';
-import type { UserDetailResponse, UpdateProfileRequest, ChangePasswordRequest, SetRolesRequest, SetActiveRequest } from '../types/user';
 import type { UserResponse } from '../types/auth';
 import type { PageResponse } from '../types/common';
+import type { ChangePasswordRequest, SetActiveRequest,SetRolesRequest, UpdateProfileRequest, UserDetailResponse } from '../types/user';
+import { client } from './client';
 
 export const usersApi = {
   getMe: () => client.get<UserDetailResponse>('/users/me'),

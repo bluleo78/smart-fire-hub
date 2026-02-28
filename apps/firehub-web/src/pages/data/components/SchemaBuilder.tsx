@@ -1,12 +1,13 @@
+import { KeyRound, Plus, X } from 'lucide-react';
 import { useFieldArray, useFormContext } from 'react-hook-form';
+
 import { Button } from '../../../components/ui/button';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
 import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
-import { ColumnTypeSelect } from './ColumnTypeSelect';
-import { KeyRound, Plus, X } from 'lucide-react';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
 import type { CreateDatasetFormData } from '../../../lib/validations/dataset';
+import { ColumnTypeSelect } from './ColumnTypeSelect';
 
 export function SchemaBuilder() {
   const { control, register, setValue, watch, formState: { errors } } = useFormContext<CreateDatasetFormData>();

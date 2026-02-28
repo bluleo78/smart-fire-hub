@@ -1,5 +1,6 @@
-import { Button } from '../ui/button';
 import { Sparkles } from 'lucide-react';
+
+import { Button } from '../ui/button';
 import { useAI } from './AIProvider';
 
 export function AIToggleButton() {

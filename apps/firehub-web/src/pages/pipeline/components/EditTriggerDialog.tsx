@@ -1,21 +1,23 @@
-import { useState } from 'react';
+import axios from 'axios';
 import { Loader2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useState } from 'react';
+import { toast } from 'sonner';
+
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { toast } from 'sonner';
-import axios from 'axios';
+import { useUpdateTrigger } from '@/hooks/queries/usePipelines';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse } from '@/types/pipeline';
-import { useUpdateTrigger } from '@/hooks/queries/usePipelines';
-import ScheduleTriggerForm from './ScheduleTriggerForm';
+
 import ApiTriggerForm from './ApiTriggerForm';
-import PipelineChainForm from './PipelineChainForm';
-import WebhookTriggerForm from './WebhookTriggerForm';
 import DatasetChangeTriggerForm from './DatasetChangeTriggerForm';
+import PipelineChainForm from './PipelineChainForm';
+import ScheduleTriggerForm from './ScheduleTriggerForm';
+import WebhookTriggerForm from './WebhookTriggerForm';
 
 const TRIGGER_TYPE_LABELS: Record<string, string> = {
   SCHEDULE: '스케줄',

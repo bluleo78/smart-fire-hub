@@ -1,3 +1,5 @@
+import type { ChartConfig, ChartType } from '../../types/analytics';
+import { Checkbox } from '../ui/checkbox';
 import { Label } from '../ui/label';
 import {
   Select,
@@ -7,8 +9,6 @@ import {
   SelectValue,
 } from '../ui/select';
 import { Switch } from '../ui/switch';
-import { Checkbox } from '../ui/checkbox';
-import type { ChartConfig, ChartType } from '../../types/analytics';
 
 interface AxisConfigPanelProps {
   chartType: ChartType;

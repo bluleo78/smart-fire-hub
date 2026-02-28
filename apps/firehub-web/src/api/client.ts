@@ -31,6 +31,8 @@ let failedQueue: Array<{
   reject: (error: unknown) => void;
 }> = [];
 
+const MAX_QUEUE_SIZE = 100;
+
 function processQueue(error: unknown, token: string | null = null) {
   failedQueue.forEach((prom) => {
     if (error) {
@@ -49,6 +51,9 @@ client.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
+        if (failedQueue.length >= MAX_QUEUE_SIZE) {
+          return Promise.reject(new Error('Too many queued requests'));
+        }
         return new Promise<string>((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         }).then((token) => {

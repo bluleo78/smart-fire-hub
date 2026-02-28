@@ -1,7 +1,8 @@
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
-import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import type { ImportValidateResponse, ValidationErrorDetail } from '../../../types/dataImport';
 
 interface ImportValidationSectionProps {

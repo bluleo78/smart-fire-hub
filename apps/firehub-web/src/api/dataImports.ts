@@ -1,5 +1,5 @@
+import type { ColumnMappingEntry,ImportPreviewResponse, ImportResponse, ImportStartResponse, ImportValidateResponse } from '../types/dataImport';
 import { client } from './client';
-import type { ImportResponse, ImportStartResponse, ImportPreviewResponse, ImportValidateResponse, ColumnMappingEntry } from '../types/dataImport';
 
 export const dataImportsApi = {
   uploadFile: (datasetId: number, file: File, mappings?: ColumnMappingEntry[], importMode?: string) => {

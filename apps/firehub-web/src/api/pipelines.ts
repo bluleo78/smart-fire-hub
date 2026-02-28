@@ -1,10 +1,10 @@
-import { client } from './client';
-import type {
-  PipelineResponse, PipelineDetailResponse, CreatePipelineRequest,
-  UpdatePipelineRequest, PipelineExecutionResponse, ExecutionDetailResponse,
-  TriggerResponse, TriggerEventResponse, CreateTriggerRequest, UpdateTriggerRequest,
-} from '../types/pipeline';
 import type { PageResponse } from '../types/common';
+import type {
+CreatePipelineRequest,
+CreateTriggerRequest, ExecutionDetailResponse,
+PipelineDetailResponse, PipelineExecutionResponse,   PipelineResponse, TriggerEventResponse,   TriggerResponse,   UpdatePipelineRequest, UpdateTriggerRequest,
+} from '../types/pipeline';
+import { client } from './client';
 
 export const pipelinesApi = {
   getPipelines: (params: { page?: number; size?: number }) =>

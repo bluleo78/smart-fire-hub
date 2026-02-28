@@ -1,11 +1,11 @@
-import { useRef, useEffect } from 'react';
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
-import { sql, PostgreSQL } from '@codemirror/lang-sql';
-import { oneDark } from '@codemirror/theme-one-dark';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { searchKeymap } from '@codemirror/search';
 import { autocompletion } from '@codemirror/autocomplete';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { PostgreSQL,sql } from '@codemirror/lang-sql';
+import { searchKeymap } from '@codemirror/search';
+import { EditorState } from '@codemirror/state';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorView, keymap } from '@codemirror/view';
+import { useEffect,useRef } from 'react';
 
 interface CodeMirrorEditorProps {
   value: string;

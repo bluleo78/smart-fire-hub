@@ -1,6 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { pipelinesApi } from '../../api/pipelines';
-import type { UpdatePipelineRequest, PipelineExecutionResponse, CreateTriggerRequest, UpdateTriggerRequest } from '../../types/pipeline';
+import type { CreateTriggerRequest, PipelineExecutionResponse, UpdatePipelineRequest, UpdateTriggerRequest } from '../../types/pipeline';
 
 export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({

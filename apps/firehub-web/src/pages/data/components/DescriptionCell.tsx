@@ -1,10 +1,11 @@
+import { Loader2,Pencil } from 'lucide-react';
 import React, { useCallback } from 'react';
-import { useUpdateColumn } from '../../../hooks/queries/useDatasets';
-import type { DatasetColumnResponse } from '../../../types/dataset';
-import { Input } from '../../../components/ui/input';
-import { Pencil, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+
+import { Input } from '../../../components/ui/input';
+import { useUpdateColumn } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
+import type { DatasetColumnResponse } from '../../../types/dataset';
 
 interface DescriptionCellProps {
   col: DatasetColumnResponse;

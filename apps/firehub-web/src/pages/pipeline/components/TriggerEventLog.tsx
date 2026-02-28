@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -8,8 +9,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { formatDate } from '@/lib/formatters';
 import { useTriggerEvents } from '@/hooks/queries/usePipelines';
+import { formatDate } from '@/lib/formatters';
 import type { TriggerEventResponse } from '@/types/pipeline';
 
 function getEventBadgeVariant(eventType: TriggerEventResponse['eventType']) {

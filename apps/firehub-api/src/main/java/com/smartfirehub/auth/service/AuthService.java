@@ -12,6 +12,7 @@ import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
@@ -21,6 +22,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.UUID;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -72,14 +74,20 @@ public class AuthService {
         userRepository.save(request.username(), request.email(), encodedPassword, request.name());
 
     // Assign roles: first user gets ADMIN + USER, subsequent users get USER only
-    roleRepository
-        .findByName("USER")
-        .ifPresent(role -> userRepository.addRole(user.id(), role.id()));
+    Long userRoleId =
+        roleRepository
+            .findByName("USER")
+            .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
+            .id();
+    userRepository.addRole(user.id(), userRoleId);
 
     if (isFirstUser) {
-      roleRepository
-          .findByName("ADMIN")
-          .ifPresent(role -> userRepository.addRole(user.id(), role.id()));
+      Long adminRoleId =
+          roleRepository
+              .findByName("ADMIN")
+              .orElseThrow(() -> new RoleNotFoundException("System role not found: ADMIN"))
+              .id();
+      userRepository.addRole(user.id(), adminRoleId);
     }
 
     return user;
@@ -123,7 +131,8 @@ public class AuthService {
     String accessToken = jwtTokenProvider.generateAccessToken(user.id(), user.username());
     String refreshToken = jwtTokenProvider.generateRefreshToken(user.id());
 
-    storeRefreshToken(user.id(), refreshToken);
+    UUID familyId = UUID.randomUUID();
+    storeRefreshToken(user.id(), refreshToken, familyId);
 
     return new TokenResponse(
         accessToken, refreshToken, "Bearer", jwtProperties.accessExpiration() / 1000);
@@ -136,9 +145,25 @@ public class AuthService {
     }
 
     String tokenHash = hashToken(rawRefreshToken);
+
+    // Token reuse detection: if the token was already revoked, an attacker may have
+    // stolen a previously used token. Revoke the entire token family for safety.
+    if (refreshTokenRepository.isTokenRevoked(tokenHash)) {
+      refreshTokenRepository
+          .findFamilyIdByTokenHash(tokenHash)
+          .ifPresent(refreshTokenRepository::revokeByFamilyId);
+      throw new InvalidTokenException("Refresh token reuse detected");
+    }
+
     if (!refreshTokenRepository.existsValidToken(tokenHash)) {
       throw new InvalidTokenException("Refresh token has been revoked");
     }
+
+    // Look up the family before revoking the current token
+    UUID familyId =
+        refreshTokenRepository
+            .findFamilyIdByTokenHash(tokenHash)
+            .orElseThrow(() -> new InvalidTokenException("Token family not found"));
 
     refreshTokenRepository.revokeByTokenHash(tokenHash);
 
@@ -155,7 +180,7 @@ public class AuthService {
     String accessToken = jwtTokenProvider.generateAccessToken(user.id(), user.username());
     String newRefreshToken = jwtTokenProvider.generateRefreshToken(user.id());
 
-    storeRefreshToken(user.id(), newRefreshToken);
+    storeRefreshToken(user.id(), newRefreshToken, familyId);
 
     return new TokenResponse(
         accessToken, newRefreshToken, "Bearer", jwtProperties.accessExpiration() / 1000);
@@ -173,11 +198,11 @@ public class AuthService {
         .orElseThrow(() -> new InvalidTokenException("User not found"));
   }
 
-  private void storeRefreshToken(Long userId, String refreshToken) {
+  private void storeRefreshToken(Long userId, String refreshToken, UUID familyId) {
     String tokenHash = hashToken(refreshToken);
     LocalDateTime expiresAt =
         LocalDateTime.now().plusSeconds(jwtProperties.refreshExpiration() / 1000);
-    refreshTokenRepository.save(userId, tokenHash, expiresAt);
+    refreshTokenRepository.save(userId, tokenHash, expiresAt, familyId);
   }
 
   private String hashToken(String token) {

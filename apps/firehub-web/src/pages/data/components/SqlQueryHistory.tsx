@@ -1,12 +1,13 @@
-import { useQueryHistory } from '../../../hooks/queries/useDatasets';
-import { Button } from '../../../components/ui/button';
+import { History, Loader2 } from 'lucide-react';
+
 import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '../../../components/ui/popover';
-import { History, Loader2 } from 'lucide-react';
+import { useQueryHistory } from '../../../hooks/queries/useDatasets';
 import { formatDate } from '../../../lib/formatters';
 
 interface SqlQueryHistoryProps {

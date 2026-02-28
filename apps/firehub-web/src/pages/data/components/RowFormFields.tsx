@@ -1,9 +1,10 @@
-import { Controller } from 'react-hook-form';
 import type { UseFormReturn } from 'react-hook-form';
-import type { DatasetColumnResponse } from '../../../types/dataset';
+import { Controller } from 'react-hook-form';
+
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Switch } from '../../../components/ui/switch';
+import type { DatasetColumnResponse } from '../../../types/dataset';
 
 interface RowFormFieldsProps {
   columns: DatasetColumnResponse[];

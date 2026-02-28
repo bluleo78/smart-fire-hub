@@ -1,14 +1,15 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { analyticsApi } from '../../api/analytics';
 import type {
-  CreateSavedQueryRequest,
-  UpdateSavedQueryRequest,
+  AddWidgetRequest,
   AnalyticsQueryRequest,
   CreateChartRequest,
-  UpdateChartRequest,
   CreateDashboardRequest,
+  CreateSavedQueryRequest,
+  UpdateChartRequest,
   UpdateDashboardRequest,
-  AddWidgetRequest,
+  UpdateSavedQueryRequest,
   UpdateWidgetRequest,
 } from '../../types/analytics';
 

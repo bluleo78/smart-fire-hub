@@ -1,25 +1,26 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { rolesApi } from '../../api/roles';
+import axios from 'axios';
+import { ArrowLeft } from 'lucide-react';
+import { useEffect, useMemo,useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { useNavigate,useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+
 import { permissionsApi } from '../../api/permissions';
-import type { RoleDetailResponse } from '../../types/role';
-import type { PermissionResponse } from '../../types/role';
-import { updateRoleSchema } from '../../lib/validations/role';
-import type { UpdateRoleFormData } from '../../lib/validations/role';
+import { rolesApi } from '../../api/roles';
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
-import { Badge } from '../../components/ui/badge';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
-import { ArrowLeft } from 'lucide-react';
-import { toast } from 'sonner';
+import type { UpdateRoleFormData } from '../../lib/validations/role';
+import { updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
-import axios from 'axios';
+import type { RoleDetailResponse } from '../../types/role';
+import type { PermissionResponse } from '../../types/role';
 
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();

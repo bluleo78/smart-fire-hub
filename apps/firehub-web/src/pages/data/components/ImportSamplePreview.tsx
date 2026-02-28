@@ -1,6 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import type { ColumnMappingEntry,ImportPreviewResponse } from '../../../types/dataImport';
 import type { DatasetColumnResponse } from '../../../types/dataset';
-import type { ImportPreviewResponse, ColumnMappingEntry } from '../../../types/dataImport';
 
 interface ImportSamplePreviewProps {
   previewData: ImportPreviewResponse;

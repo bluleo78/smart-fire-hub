@@ -1,12 +1,16 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useApiConnection, useUpdateApiConnection, useDeleteApiConnection } from '../../hooks/queries/useApiConnections';
-import type { UpdateApiConnectionRequest } from '../../types/api-connection';
+import { ArrowLeft } from 'lucide-react';
+import { useEffect,useState } from 'react';
+import { useNavigate,useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { handleApiError } from '@/lib/api-error';
+
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { Badge } from '../../components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   Select,
   SelectContent,
@@ -16,10 +20,8 @@ import {
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
-import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
-import { ArrowLeft } from 'lucide-react';
-import { toast } from 'sonner';
-import { handleApiError } from '@/lib/api-error';
+import { useApiConnection, useDeleteApiConnection,useUpdateApiConnection } from '../../hooks/queries/useApiConnections';
+import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 
 export default function ApiConnectionDetailPage() {
   const { id } = useParams<{ id: string }>();

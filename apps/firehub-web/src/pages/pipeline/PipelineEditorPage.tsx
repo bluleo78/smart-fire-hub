@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Clock, Code, Database, Globe, Link, User } from 'lucide-react';
+import { useEffect, useMemo,useRef, useState } from 'react';
+import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -12,17 +13,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { usePipelineEditor } from './hooks/usePipelineEditor';
-import { usePipeline, useExecution, useExecutePipeline, useExecutions } from '@/hooks/queries/usePipelines';
+import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDatasets } from '@/hooks/queries/useDatasets';
+import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
+import type { PipelineExecutionResponse } from '@/types/pipeline';
+
 import { EditorHeader } from './components/EditorHeader';
+import { ExecutionStepPanel } from './components/ExecutionStepPanel';
 import { PipelineCanvas } from './components/PipelineCanvas';
 import StepConfigPanel from './components/StepConfigPanel';
-import { ExecutionStepPanel } from './components/ExecutionStepPanel';
 import TriggerTab from './components/TriggerTab';
-import { Clock, Code, Link, Globe, Database, User } from 'lucide-react';
-import type { PipelineExecutionResponse } from '@/types/pipeline';
+import { usePipelineEditor } from './hooks/usePipelineEditor';
 
 function formatDuration(startedAt: string | null, completedAt: string | null): string {
   if (!startedAt) return '-';

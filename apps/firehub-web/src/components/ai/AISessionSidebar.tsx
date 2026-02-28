@@ -1,9 +1,10 @@
+import { MessageSquare,Plus, Trash2 } from 'lucide-react';
+
+import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat';
+import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
-import { Plus, Trash2, MessageSquare } from 'lucide-react';
-import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat';
 import { useAI } from './AIProvider';
-import { cn } from '../../lib/utils';
 
 export function AISessionSidebar() {
   const { currentSessionId, startNewSession, loadSession } = useAI();

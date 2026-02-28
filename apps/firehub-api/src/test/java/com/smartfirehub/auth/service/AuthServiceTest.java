@@ -28,7 +28,7 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void signup_firstUser_assignsAdminAndUserRoles() {
     SignupRequest request =
-        new SignupRequest("test@example.com", "test@example.com", "password123", "Test User");
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User");
 
     UserResponse result = authService.signup(request);
 
@@ -39,10 +39,10 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void signup_subsequentUser_assignsUserRoleOnly() {
     authService.signup(
-        new SignupRequest("first@example.com", "first@example.com", "password123", "First User"));
+        new SignupRequest("first@example.com", "first@example.com", "Password123", "First User"));
 
     SignupRequest request =
-        new SignupRequest("second@example.com", "second@example.com", "password123", "Second User");
+        new SignupRequest("second@example.com", "second@example.com", "Password123", "Second User");
     UserResponse result = authService.signup(request);
 
     assertThat(result.username()).isEqualTo("second@example.com");
@@ -51,32 +51,32 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void signup_duplicateUsername_throws() {
     authService.signup(
-        new SignupRequest("test@example.com", "test1@example.com", "password123", "Test User"));
+        new SignupRequest("test@example.com", "test1@example.com", "Password123", "Test User"));
 
     assertThatThrownBy(
             () ->
                 authService.signup(
                     new SignupRequest(
-                        "test@example.com", "test2@example.com", "password123", "Test User 2")))
+                        "test@example.com", "test2@example.com", "Password123", "Test User 2")))
         .isInstanceOf(UsernameAlreadyExistsException.class);
   }
 
   @Test
   void signup_duplicateEmail_throws() {
     authService.signup(
-        new SignupRequest("user1@example.com", "same@example.com", "password123", "User 1"));
+        new SignupRequest("user1@example.com", "same@example.com", "Password123", "User 1"));
 
     assertThatThrownBy(
             () ->
                 authService.signup(
                     new SignupRequest(
-                        "user2@example.com", "same@example.com", "password123", "User 2")))
+                        "user2@example.com", "same@example.com", "Password123", "User 2")))
         .isInstanceOf(EmailAlreadyExistsException.class);
   }
 
   @Test
   void signup_nullEmail_success() {
-    SignupRequest request = new SignupRequest("test@example.com", null, "password123", "Test User");
+    SignupRequest request = new SignupRequest("test@example.com", null, "Password123", "Test User");
 
     UserResponse result = authService.signup(request);
 
@@ -86,9 +86,9 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void login_success() {
     authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
 
-    TokenResponse result = authService.login(new LoginRequest("test@example.com", "password123"));
+    TokenResponse result = authService.login(new LoginRequest("test@example.com", "Password123"));
 
     assertThat(result.accessToken()).isNotBlank();
     assertThat(result.refreshToken()).isNotBlank();
@@ -99,7 +99,7 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void login_wrongPassword_throws() {
     authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
 
     assertThatThrownBy(
             () -> authService.login(new LoginRequest("test@example.com", "wrongpassword")))
@@ -115,9 +115,9 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void refresh_success() throws InterruptedException {
     authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     TokenResponse loginResult =
-        authService.login(new LoginRequest("test@example.com", "password123"));
+        authService.login(new LoginRequest("test@example.com", "Password123"));
 
     Thread.sleep(1100); // JWT uses second-precision timestamps; ensure new token differs
 
@@ -138,26 +138,52 @@ class AuthServiceTest extends IntegrationTestBase {
   void refresh_revokedToken_throws() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     TokenResponse loginResult =
-        authService.login(new LoginRequest("test@example.com", "password123"));
+        authService.login(new LoginRequest("test@example.com", "Password123"));
 
     // Logout revokes all tokens
     authService.logout(user.id());
 
-    // Try to use the revoked refresh token
+    // Try to use the revoked refresh token — reuse detection kicks in
     assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))
         .isInstanceOf(InvalidTokenException.class)
-        .hasMessage("Refresh token has been revoked");
+        .hasMessage("Refresh token reuse detected");
+  }
+
+  @Test
+  void refresh_reusedToken_revokesEntireFamily() throws InterruptedException {
+    authService.signup(
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    TokenResponse loginResult =
+        authService.login(new LoginRequest("test@example.com", "Password123"));
+
+    String firstRefreshToken = loginResult.refreshToken();
+
+    Thread.sleep(1100);
+
+    // Normal rotation: use first token to get second token
+    TokenResponse secondResult = authService.refresh(firstRefreshToken);
+    String secondRefreshToken = secondResult.refreshToken();
+
+    // Simulate attacker reusing the first (already rotated) token
+    // This should revoke the entire token family, including the second token
+    assertThatThrownBy(() -> authService.refresh(firstRefreshToken))
+        .isInstanceOf(InvalidTokenException.class)
+        .hasMessage("Refresh token reuse detected");
+
+    // The legitimate second token should also be revoked (family revocation)
+    assertThatThrownBy(() -> authService.refresh(secondRefreshToken))
+        .isInstanceOf(InvalidTokenException.class);
   }
 
   @Test
   void logout_revokesAllTokens() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     TokenResponse loginResult =
-        authService.login(new LoginRequest("test@example.com", "password123"));
+        authService.login(new LoginRequest("test@example.com", "Password123"));
 
     authService.logout(user.id());
 
@@ -169,9 +195,9 @@ class AuthServiceTest extends IntegrationTestBase {
   void refresh_deactivatedUser_throws() {
     UserResponse user =
         authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     TokenResponse loginResult =
-        authService.login(new LoginRequest("test@example.com", "password123"));
+        authService.login(new LoginRequest("test@example.com", "Password123"));
 
     userRepository.setActive(user.id(), false);
 
@@ -184,7 +210,7 @@ class AuthServiceTest extends IntegrationTestBase {
   void getCurrentUser_success() {
     UserResponse created =
         authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "password123", "Test User"));
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
 
     UserResponse result = authService.getCurrentUser(created.id());
 

@@ -1,11 +1,24 @@
+import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApiConnections, useCreateApiConnection, useDeleteApiConnection } from '../../hooks/queries/useApiConnections';
-import type { CreateApiConnectionRequest } from '../../types/api-connection';
+import { toast } from 'sonner';
+
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { handleApiError } from '@/lib/api-error';
+
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { Badge } from '../../components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -20,19 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '../../components/ui/dialog';
-import { TableSkeletonRows } from '@/components/ui/table-skeleton';
-import { TableEmptyRow } from '@/components/ui/table-empty';
-import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
-import { Plus, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { handleApiError } from '@/lib/api-error';
+import { useApiConnections, useCreateApiConnection, useDeleteApiConnection } from '../../hooks/queries/useApiConnections';
+import type { CreateApiConnectionRequest } from '../../types/api-connection';
 
 export default function ApiConnectionListPage() {
   const navigate = useNavigate();

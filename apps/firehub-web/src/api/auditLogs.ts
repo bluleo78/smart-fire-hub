@@ -1,6 +1,6 @@
-import { client } from './client';
 import type { AuditLogResponse } from '../types/auditLog';
 import type { PageResponse } from '../types/common';
+import { client } from './client';
 
 export const auditLogsApi = {
   getAuditLogs: (params: {

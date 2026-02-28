@@ -34,7 +34,7 @@ class UserServiceTest extends IntegrationTestBase {
     testUserId =
         dsl.insertInto(USER)
             .set(USER.USERNAME, "testuser@example.com")
-            .set(USER.PASSWORD, passwordEncoder.encode("password123"))
+            .set(USER.PASSWORD, passwordEncoder.encode("Password123"))
             .set(USER.NAME, "Test User")
             .set(USER.EMAIL, "test@example.com")
             .returning(USER.ID)
@@ -101,7 +101,7 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void changePassword_success() {
-    userService.changePassword(testUserId, "password123", "newpassword");
+    userService.changePassword(testUserId, "Password123", "newpassword");
 
     String storedPassword =
         dsl.select(USER.PASSWORD).from(USER).where(USER.ID.eq(testUserId)).fetchOne(USER.PASSWORD);

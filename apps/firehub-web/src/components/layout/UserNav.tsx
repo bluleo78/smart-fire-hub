@@ -1,6 +1,8 @@
+import { ChevronsUpDown,LogOut, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { User, LogOut, ChevronsUpDown } from 'lucide-react';
+
 import { useAuth } from '../../hooks/useAuth';
+import { cn } from '../../lib/utils';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import {
   DropdownMenu,
@@ -10,7 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { cn } from '../../lib/utils';
 
 function getInitials(name: string): string {
   return name.charAt(0).toUpperCase();

@@ -1,11 +1,12 @@
-import { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './hooks/AuthContext';
-import { ProtectedRoute } from './components/ProtectedRoute';
+import { lazy,Suspense } from 'react';
+import { BrowserRouter, Route,Routes } from 'react-router-dom';
+
 import { AdminRoute } from './components/AdminRoute';
 import { AppLayout } from './components/layout/AppLayout';
-import { Toaster } from './components/ui/sonner';
+import { ProtectedRoute } from './components/ProtectedRoute';
 import { Skeleton } from './components/ui/skeleton';
+import { Toaster } from './components/ui/sonner';
+import { AuthProvider } from './hooks/AuthContext';
 
 // Lazy-loaded pages
 const LoginPage = lazy(() => import('./pages/LoginPage'));

@@ -1,16 +1,8 @@
+import axios from 'axios';
+import { Clock, Code, Database, Globe, Link, MoreHorizontal, Pencil, Plus, Power,Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { Clock, Code, Link, Globe, Database, Plus, MoreHorizontal, Pencil, Trash2, Power } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,12 +13,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { toast } from 'sonner';
-import axios from 'axios';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import { useDeleteTrigger, useToggleTrigger,useTriggers } from '@/hooks/queries/usePipelines';
+import { formatDate } from '@/lib/formatters';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse, TriggerType } from '@/types/pipeline';
-import { useTriggers, useDeleteTrigger, useToggleTrigger } from '@/hooks/queries/usePipelines';
-import { formatDate } from '@/lib/formatters';
+
 import { AddTriggerDialog } from './AddTriggerDialog';
 import { EditTriggerDialog } from './EditTriggerDialog';
 import TriggerEventLog from './TriggerEventLog';

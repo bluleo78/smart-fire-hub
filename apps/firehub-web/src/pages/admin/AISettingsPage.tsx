@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Bot, RotateCcw,Save } from 'lucide-react';
+import { useCallback,useEffect, useState } from 'react';
+import { toast } from 'sonner';
+
+import { settingsApi } from '../../api/settings';
 import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { Textarea } from '../../components/ui/textarea';
-import { Skeleton } from '../../components/ui/skeleton';
-import { Separator } from '../../components/ui/separator';
 import {
   Select,
   SelectContent,
@@ -13,9 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../components/ui/select';
-import { toast } from 'sonner';
-import { settingsApi } from '../../api/settings';
-import { Bot, Save, RotateCcw } from 'lucide-react';
+import { Separator } from '../../components/ui/separator';
+import { Skeleton } from '../../components/ui/skeleton';
+import { Textarea } from '../../components/ui/textarea';
 import type { SettingResponse } from '../../types/settings';
 
 const MODEL_OPTIONS = [

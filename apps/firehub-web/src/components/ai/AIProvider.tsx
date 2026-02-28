@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
-import type { AIMode, AIMessage } from '../../types/ai';
+import { createContext, useCallback, useContext, useEffect, useMemo,useState } from 'react';
+
 import { useAIChat } from '../../hooks/queries/useAIChat';
+import type { AIMessage,AIMode } from '../../types/ai';
 
 interface AIContextValue {
   isOpen: boolean;

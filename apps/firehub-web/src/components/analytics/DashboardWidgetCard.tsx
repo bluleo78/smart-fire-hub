@@ -1,10 +1,11 @@
-import { X, Loader2 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Loader2,X } from 'lucide-react';
+
+import { useChart,useChartData } from '../../hooks/queries/useAnalytics';
+import type { DashboardWidget } from '../../types/analytics';
 import { Button } from '../ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { ChartRenderer } from './ChartRenderer';
 import { WidgetErrorBoundary } from './WidgetErrorBoundary';
-import { useChartData, useChart } from '../../hooks/queries/useAnalytics';
-import type { DashboardWidget } from '../../types/analytics';
 
 interface DashboardWidgetCardProps {
   widget: DashboardWidget;

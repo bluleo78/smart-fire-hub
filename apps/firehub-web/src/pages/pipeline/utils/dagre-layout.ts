@@ -1,5 +1,5 @@
 import dagre from '@dagrejs/dagre';
-import type { Node, Edge } from '@xyflow/react';
+import type { Edge,Node } from '@xyflow/react';
 
 export function getLayoutedElements(
   nodes: Node[],

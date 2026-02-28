@@ -1,5 +1,5 @@
-import { client } from './client';
 import type { JobStatusResponse } from '../types/job';
+import { client } from './client';
 
 export const jobsApi = {
   getJobStatus: (jobId: string) =>

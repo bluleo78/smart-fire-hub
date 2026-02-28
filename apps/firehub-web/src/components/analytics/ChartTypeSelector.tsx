@@ -1,12 +1,15 @@
 import {
+  AreaChart,
   BarChart2,
+  Donut,
   LineChart,
   PieChart,
-  AreaChart,
   ScatterChart,
   Table2,
-  Donut,
 } from 'lucide-react';
+
+import { cn } from '../../lib/utils';
+import type { ChartType } from '../../types/analytics';
 import { Button } from '../ui/button';
 import {
   Tooltip,
@@ -14,8 +17,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../ui/tooltip';
-import type { ChartType } from '../../types/analytics';
-import { cn } from '../../lib/utils';
 
 // Lucide doesn't have a Donut icon — reuse PieChart with a label
 // We'll use a custom approach with existing icons

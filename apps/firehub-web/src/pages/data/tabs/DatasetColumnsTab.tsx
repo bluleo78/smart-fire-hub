@@ -1,19 +1,13 @@
-import React, { lazy, Suspense } from 'react';
-import type { DatasetDetailResponse, DatasetColumnResponse } from '../../../types/dataset';
-import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
-import { useColumnManager } from '../hooks/useColumnManager';
-import { DescriptionCell } from '../components/DescriptionCell';
-import { DataTypeBadge } from '../components/DataTypeBadge';
-import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../../../components/ui/table';
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  KeyRound,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
+import React, { lazy, Suspense } from 'react';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,15 +18,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../../components/ui/alert-dialog';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
 import {
-  ChevronUp,
-  ChevronDown,
-  ChevronRight,
-  KeyRound,
-  Pencil,
-  Trash2,
-} from 'lucide-react';
-import { NullProgressBar, ColumnExpandedStats } from '../components/ColumnStats';
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
+import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
+import type { DatasetColumnResponse,DatasetDetailResponse } from '../../../types/dataset';
+import { ColumnExpandedStats,NullProgressBar } from '../components/ColumnStats';
+import { DataTypeBadge } from '../components/DataTypeBadge';
+import { DescriptionCell } from '../components/DescriptionCell';
+import { useColumnManager } from '../hooks/useColumnManager';
 
 const ColumnDialog = lazy(() =>
   import('../components/ColumnDialog').then((m) => ({ default: m.ColumnDialog }))

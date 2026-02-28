@@ -1,46 +1,47 @@
-import { useState, lazy, Suspense } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
-import { Skeleton } from '../ui/skeleton';
-import { Button } from '../ui/button';
-import { Separator } from '../ui/separator';
+import type { LucideIcon } from 'lucide-react';
 import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-  TooltipProvider,
-} from '../ui/tooltip';
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from '../ui/collapsible';
-import { UserNav } from './UserNav';
-import {
-  Home,
-  Users,
-  Shield,
-  Menu,
-  X,
-  Database,
-  GitBranch,
-  Tag,
-  FileText,
+  BarChart3,
   Bot,
-  Plug,
-  ChevronsLeft,
   ChevronDown,
   ChevronRight,
+  ChevronsLeft,
+  Database,
+  FileText,
   Flame,
-  Search,
-  BarChart3,
+  GitBranch,
+  Home,
   LayoutDashboard,
+  Menu,
+  Plug,
+  Search,
   Settings,
+  Shield,
+  Tag,
+  Users,
+  X,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { lazy, Suspense,useState } from 'react';
+import { Link, Outlet, useLocation } from 'react-router-dom';
+
+import { useAuth } from '../../hooks/useAuth';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIToggleButton } from '../ai/AIToggleButton';
+import { Button } from '../ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../ui/collapsible';
+import { Separator } from '../ui/separator';
+import { Skeleton } from '../ui/skeleton';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../ui/tooltip';
+import { UserNav } from './UserNav';
 
 const AISidePanel = lazy(() =>
   import('../ai/AISidePanel').then((mod) => ({ default: mod.AISidePanel }))

@@ -1,11 +1,12 @@
 import {
-  PieChart,
-  Pie,
   Cell,
-  Tooltip,
   Legend,
+  Pie,
+  PieChart,
   ResponsiveContainer,
+  Tooltip,
 } from 'recharts';
+
 import type { ChartConfig, ChartType } from '../../types/analytics';
 
 const DEFAULT_COLORS = [

@@ -81,7 +81,7 @@ public class AuthController {
         ResponseCookie.from(REFRESH_TOKEN_COOKIE, refreshToken)
             .httpOnly(true)
             .secure(true)
-            .sameSite("Strict")
+            .sameSite("Lax")
             .path(REFRESH_TOKEN_PATH)
             .maxAge(jwtProperties.refreshExpiration() / 1000)
             .build();
@@ -93,7 +93,7 @@ public class AuthController {
         ResponseCookie.from(REFRESH_TOKEN_COOKIE, "")
             .httpOnly(true)
             .secure(true)
-            .sameSite("Strict")
+            .sameSite("Lax")
             .path(REFRESH_TOKEN_PATH)
             .maxAge(0)
             .build();

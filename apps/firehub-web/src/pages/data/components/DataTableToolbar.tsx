@@ -1,6 +1,7 @@
+import { Download, Globe,Plus, Terminal, Upload } from 'lucide-react';
+
 import { Button } from '../../../components/ui/button';
 import { SearchInput } from '../../../components/ui/search-input';
-import { Download, Upload, Terminal, Plus, Globe } from 'lucide-react';
 
 interface DataTableToolbarProps {
   dataSearch: string;

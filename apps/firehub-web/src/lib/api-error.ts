@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { toast } from 'sonner';
+
 import type { ErrorResponse } from '@/types/auth';
 
 export function extractApiError(error: unknown, fallback: string): string {

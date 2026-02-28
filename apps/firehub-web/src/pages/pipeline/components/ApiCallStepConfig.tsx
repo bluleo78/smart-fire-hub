@@ -1,20 +1,26 @@
-import { useState } from 'react';
 import {
-  Globe,
-  Plus,
-  Trash2,
-  Play,
   ChevronDown,
   ChevronRight,
+  Globe,
   Key,
+  Play,
+  Plus,
   Settings2,
+  Trash2,
 } from 'lucide-react';
+import { useState } from 'react';
 import { toast } from 'sonner';
+
+import { client } from '@/api/client';
 import { Button } from '@/components/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Separator } from '@/components/ui/separator';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -22,14 +28,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { client } from '@/api/client';
+import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import { useApiConnections } from '@/hooks/queries/useApiConnections';
+
 import ApiCallPreview from './ApiCallPreview';
 
 interface FieldMapping {

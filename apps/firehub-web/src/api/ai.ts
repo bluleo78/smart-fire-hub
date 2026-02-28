@@ -1,5 +1,5 @@
+import type { AIMessage, AISession, AIStreamEvent } from '../types/ai';
 import { client, getAccessToken } from './client';
-import type { AISession, AIMessage, AIStreamEvent } from '../types/ai';
 
 export const aiApi = {
   getSessions: (params?: { page?: number; size?: number }) =>

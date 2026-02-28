@@ -1,22 +1,34 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  useSavedQuery,
-  useCreateSavedQuery,
-  useUpdateSavedQuery,
-  useExecuteAnalyticsQuery,
-  useSchemaInfo,
-  useQueryFolders,
-} from '../../hooks/queries/useAnalytics';
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
-import { sql, PostgreSQL } from '@codemirror/lang-sql';
-import { oneDark } from '@codemirror/theme-one-dark';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { searchKeymap } from '@codemirror/search';
 import { autocompletion } from '@codemirror/autocomplete';
-import { Button } from '../../components/ui/button';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { PostgreSQL,sql } from '@codemirror/lang-sql';
+import { searchKeymap } from '@codemirror/search';
+import { EditorState } from '@codemirror/state';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorView, keymap } from '@codemirror/view';
+import {
+  ArrowLeft,
+  BarChart2,
+  ChevronDown,
+  ChevronRight,
+  Columns,
+  Loader2,
+  Play,
+  Save,
+  Table2,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
+
 import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -26,30 +38,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '../../components/ui/dialog';
-import { Switch } from '../../components/ui/switch';
 import { Skeleton } from '../../components/ui/skeleton';
+import { Switch } from '../../components/ui/switch';
 import {
-  ArrowLeft,
-  Play,
-  Save,
-  ChevronRight,
-  ChevronDown,
-  BarChart2,
-  Loader2,
-  Table2,
-  Columns,
-} from 'lucide-react';
-import { toast } from 'sonner';
+  useCreateSavedQuery,
+  useExecuteAnalyticsQuery,
+  useQueryFolders,
+  useSavedQuery,
+  useSchemaInfo,
+  useUpdateSavedQuery,
+} from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
-import type { AnalyticsQueryResult, SchemaTable } from '../../types/analytics';
 import { cn } from '../../lib/utils';
+import type { AnalyticsQueryResult, SchemaTable } from '../../types/analytics';
 
 // ============================================================
 // Inline SQL Editor with schema-aware autocomplete

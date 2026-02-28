@@ -1,14 +1,15 @@
 import {
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
   CartesianGrid,
-  Tooltip,
   Legend,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
   ZAxis,
 } from 'recharts';
+
 import type { ChartConfig } from '../../types/analytics';
 
 const DEFAULT_COLORS = [

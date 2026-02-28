@@ -1,42 +1,43 @@
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
-import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout';
 import {
-  useDashboard,
-  useAddWidget,
-  useRemoveWidget,
-  useUpdateWidget,
-  useCharts,
-} from '../../hooks/queries/useAnalytics';
-import { Button } from '../../components/ui/button';
+  ArrowLeft,
+  Check,
+  LayoutDashboard,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef,useState } from 'react';
+import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout';
+import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
+import { useNavigate,useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+
+import { DashboardWidgetCard } from '../../components/analytics/DashboardWidgetCard';
 import { Badge } from '../../components/ui/badge';
-import { Skeleton } from '../../components/ui/skeleton';
+import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '../../components/ui/dialog';
+import { Skeleton } from '../../components/ui/skeleton';
 import {
-  ArrowLeft,
-  Pencil,
-  Check,
-  X,
-  Plus,
-  Maximize2,
-  Minimize2,
-  RefreshCw,
-  Loader2,
-  LayoutDashboard,
-} from 'lucide-react';
-import { toast } from 'sonner';
+  useAddWidget,
+  useCharts,
+  useDashboard,
+  useRemoveWidget,
+  useUpdateWidget,
+} from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
-import { DashboardWidgetCard } from '../../components/analytics/DashboardWidgetCard';
 import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
 // Sub-component that owns width measurement for ResponsiveGridLayout

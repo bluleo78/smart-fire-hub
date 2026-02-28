@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef,useState } from 'react';
+
+import { cn } from '../../lib/utils';
 import { AIChatPanel } from './AIChatPanel';
 import { useAI } from './AIProvider';
-import { cn } from '../../lib/utils';
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 600;

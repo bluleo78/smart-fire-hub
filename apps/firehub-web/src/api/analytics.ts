@@ -1,26 +1,26 @@
-import { client } from './client';
 import type {
-  SavedQuery,
-  SavedQueryListItem,
-  CreateSavedQueryRequest,
-  UpdateSavedQueryRequest,
+  AddWidgetRequest,
   AnalyticsQueryRequest,
   AnalyticsQueryResult,
-  SchemaInfo,
   Chart,
+  ChartDataResponse,
   ChartListItem,
   CreateChartRequest,
-  UpdateChartRequest,
-  ChartDataResponse,
+  CreateDashboardRequest,
+  CreateSavedQueryRequest,
   Dashboard,
   DashboardListItem,
-  CreateDashboardRequest,
-  UpdateDashboardRequest,
-  AddWidgetRequest,
-  UpdateWidgetRequest,
   DashboardWidget,
+  SavedQuery,
+  SavedQueryListItem,
+  SchemaInfo,
+  UpdateChartRequest,
+  UpdateDashboardRequest,
+  UpdateSavedQueryRequest,
+  UpdateWidgetRequest,
 } from '../types/analytics';
 import type { PageResponse } from '../types/common';
+import { client } from './client';
 
 export const analyticsApi = {
   // ============================================================

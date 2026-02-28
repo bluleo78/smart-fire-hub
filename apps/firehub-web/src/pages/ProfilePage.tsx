@@ -1,17 +1,19 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useAuth } from '../hooks/useAuth';
-import { usersApi } from '../api/users';
-import { updateProfileSchema, changePasswordSchema } from '../lib/validations/user';
-import type { UpdateProfileFormData, ChangePasswordFormData } from '../lib/validations/user';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Separator } from '../components/ui/separator';
-import { FormField } from '@/components/ui/form-field';
 import { toast } from 'sonner';
+
+import { FormField } from '@/components/ui/form-field';
 import { extractApiError } from '@/lib/api-error';
+
+import { usersApi } from '../api/users';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Input } from '../components/ui/input';
+import { Separator } from '../components/ui/separator';
+import { useAuth } from '../hooks/useAuth';
+import type { ChangePasswordFormData,UpdateProfileFormData } from '../lib/validations/user';
+import { changePasswordSchema,updateProfileSchema } from '../lib/validations/user';
 
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth();

@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUsers } from '../../hooks/queries/useUsers';
+
+import { SearchInput } from '@/components/ui/search-input';
+import { SimplePagination } from '@/components/ui/simple-pagination';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { useDebounceValue } from '@/hooks/useDebounceValue';
+
 import { Badge } from '../../components/ui/badge';
 import {
   Table,
@@ -10,11 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { SearchInput } from '@/components/ui/search-input';
-import { TableSkeletonRows } from '@/components/ui/table-skeleton';
-import { TableEmptyRow } from '@/components/ui/table-empty';
-import { SimplePagination } from '@/components/ui/simple-pagination';
-import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { useUsers } from '../../hooks/queries/useUsers';
 
 export default function UserListPage() {
   const navigate = useNavigate();

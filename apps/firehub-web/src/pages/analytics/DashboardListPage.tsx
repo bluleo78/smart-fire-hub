@@ -1,10 +1,29 @@
+import {
+  LayoutDashboard,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Share2,
+  Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDashboards, useDeleteDashboard } from '../../hooks/queries/useAnalytics';
-import { useCreateDashboard } from '../../hooks/queries/useAnalytics';
-import { Button } from '../../components/ui/button';
+import { toast } from 'sonner';
+
 import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { SimplePagination } from '../../components/ui/simple-pagination';
+import { Switch } from '../../components/ui/switch';
 import {
   Table,
   TableCell,
@@ -12,30 +31,12 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { TableEmptyRow } from '../../components/ui/table-empty';
-import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
-import { SimplePagination } from '../../components/ui/simple-pagination';
+import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '../../components/ui/dialog';
-import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
-import { Switch } from '../../components/ui/switch';
-import {
-  Plus,
-  Trash2,
-  Pencil,
-  LayoutDashboard,
-  Share2,
-  RefreshCw,
-} from 'lucide-react';
-import { toast } from 'sonner';
+import { useDashboards, useDeleteDashboard } from '../../hooks/queries/useAnalytics';
+import { useCreateDashboard } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 import type { CreateDashboardRequest } from '../../types/analytics';

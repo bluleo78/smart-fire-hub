@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useRef,useState } from 'react';
+
 import { aiApi, streamAIChat } from '../../api/ai';
 import type { AIMessage, AIStreamEvent } from '../../types/ai';
 

@@ -1,5 +1,5 @@
-import { client } from './client';
 import type { SettingResponse, UpdateSettingsRequest } from '../types/settings';
+import { client } from './client';
 
 export const settingsApi = {
   getByPrefix: (prefix: string) =>

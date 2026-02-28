@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { Check, ChevronsUpDown } from 'lucide-react';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
 import {
   Command,
   CommandEmpty,
@@ -11,9 +10,11 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { usePipelines } from '@/hooks/queries/usePipelines';
+import { cn } from '@/lib/utils';
 import type { TriggerCondition } from '@/types/pipeline';
 
 interface PipelineChainFormProps {

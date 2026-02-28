@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
+
+import type { AIMessage } from '../../types/ai';
 import { MessageBubble } from './MessageBubble';
 import { ThinkingIndicator } from './ThinkingIndicator';
-import type { AIMessage } from '../../types/ai';
 
 interface MessageListProps {
   messages: AIMessage[];

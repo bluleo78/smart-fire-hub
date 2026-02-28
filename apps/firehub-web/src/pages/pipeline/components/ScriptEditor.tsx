@@ -1,10 +1,10 @@
-import { useEffect, useRef } from 'react';
-import { EditorView, lineNumbers, keymap } from '@codemirror/view';
-import { EditorState, Compartment } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { bracketMatching } from '@codemirror/language';
-import { sql } from '@codemirror/lang-sql';
 import { python } from '@codemirror/lang-python';
+import { sql } from '@codemirror/lang-sql';
+import { bracketMatching } from '@codemirror/language';
+import { Compartment,EditorState } from '@codemirror/state';
+import { EditorView, keymap,lineNumbers } from '@codemirror/view';
+import { useEffect, useRef } from 'react';
 
 interface ScriptEditorProps {
   value: string;

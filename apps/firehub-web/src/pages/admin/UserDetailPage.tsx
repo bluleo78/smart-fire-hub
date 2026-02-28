@@ -1,21 +1,22 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { usersApi } from '../../api/users';
+import axios from 'axios';
+import { ArrowLeft } from 'lucide-react';
+import { useEffect,useState } from 'react';
+import { useNavigate,useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+
 import { rolesApi } from '../../api/roles';
-import type { UserDetailResponse } from '../../types/user';
-import type { RoleResponse } from '../../types/role';
+import { usersApi } from '../../api/users';
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Badge } from '../../components/ui/badge';
-import { Switch } from '../../components/ui/switch';
 import { Checkbox } from '../../components/ui/checkbox';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
-import { ArrowLeft } from 'lucide-react';
-import { toast } from 'sonner';
+import { Switch } from '../../components/ui/switch';
 import type { ErrorResponse } from '../../types/auth';
-import axios from 'axios';
+import type { RoleResponse } from '../../types/role';
+import type { UserDetailResponse } from '../../types/user';
 
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();

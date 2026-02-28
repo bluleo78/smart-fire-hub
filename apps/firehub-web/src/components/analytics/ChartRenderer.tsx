@@ -1,7 +1,7 @@
-import type { ChartType, ChartConfig } from '../../types/analytics';
+import type { ChartConfig,ChartType } from '../../types/analytics';
+import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
 import { LineChartView } from './LineChartView';
-import { AreaChartView } from './AreaChartView';
 import { PieChartView } from './PieChartView';
 import { ScatterChartView } from './ScatterChartView';
 import { TableView } from './TableView';

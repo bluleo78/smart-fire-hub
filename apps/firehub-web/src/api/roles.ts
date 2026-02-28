@@ -1,5 +1,5 @@
+import type { CreateRoleRequest, RoleDetailResponse, RoleResponse, SetPermissionsRequest,UpdateRoleRequest } from '../types/role';
 import { client } from './client';
-import type { RoleResponse, RoleDetailResponse, CreateRoleRequest, UpdateRoleRequest, SetPermissionsRequest } from '../types/role';
 
 export const rolesApi = {
   getRoles: () => client.get<RoleResponse[]>('/roles'),

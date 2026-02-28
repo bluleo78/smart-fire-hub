@@ -1,7 +1,8 @@
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import CronExpressionInput from './CronExpressionInput';
 import type { ConcurrencyPolicy } from '@/types/pipeline';
+
+import CronExpressionInput from './CronExpressionInput';
 
 interface ScheduleTriggerFormProps {
   config: {

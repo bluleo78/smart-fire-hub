@@ -1,8 +1,19 @@
+import {
+  BarChart2,
+  Pencil,
+  Plus,
+  Share2,
+  Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
-import { Button } from '../../components/ui/button';
+import { toast } from 'sonner';
+
 import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
+import { SearchInput } from '../../components/ui/search-input';
+import { SimplePagination } from '../../components/ui/simple-pagination';
 import {
   Table,
   TableCell,
@@ -10,20 +21,10 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { SearchInput } from '../../components/ui/search-input';
-import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { TableEmptyRow } from '../../components/ui/table-empty';
-import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
-import { SimplePagination } from '../../components/ui/simple-pagination';
+import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import {
-  Plus,
-  Trash2,
-  Pencil,
-  BarChart2,
-  Share2,
-} from 'lucide-react';
-import { toast } from 'sonner';
+import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 import type { ChartType } from '../../types/analytics';

@@ -1,4 +1,9 @@
+import { ChevronDown, MessageSquare,Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+
+import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat';
+import { cn } from '../../lib/utils';
+import type { AISession } from '../../types/ai';
 import { Button } from '../ui/button';
 import {
   DropdownMenu,
@@ -7,10 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { Plus, ChevronDown, Trash2, MessageSquare } from 'lucide-react';
-import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat';
-import { cn } from '../../lib/utils';
-import type { AISession } from '../../types/ai';
 
 interface SessionSwitcherProps {
   currentSessionId?: string | null;

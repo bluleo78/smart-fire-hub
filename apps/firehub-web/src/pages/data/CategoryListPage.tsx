@@ -1,14 +1,20 @@
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
 import { z } from 'zod';
-import {
-  useCategories,
-  useCreateCategory,
-  useUpdateCategory,
-  useDeleteCategory,
-} from '../../hooks/queries/useDatasets';
+
 import { Button } from '../../components/ui/button';
+import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
+import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import {
   Table,
@@ -18,19 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../../components/ui/dialog';
-import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { TableEmptyRow } from '../../components/ui/table-empty';
-import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
-import { FormField } from '../../components/ui/form-field';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { TableSkeletonRows } from '../../components/ui/table-skeleton';
+import {
+  useCategories,
+  useCreateCategory,
+  useDeleteCategory,
+  useUpdateCategory,
+} from '../../hooks/queries/useDatasets';
 import { handleApiError } from '../../lib/api-error';
 import type { CategoryResponse } from '../../types/dataset';
 

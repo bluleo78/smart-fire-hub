@@ -1,5 +1,5 @@
-import { client } from './client';
 import type { PermissionResponse } from '../types/role';
+import { client } from './client';
 
 export const permissionsApi = {
   getPermissions: (category?: string) =>

@@ -1,14 +1,15 @@
-import { useState, useCallback, Suspense, lazy } from 'react';
+import axios from 'axios';
+import { AlertCircle, BarChart3,CheckCircle2, ExternalLink, Loader2, Play } from 'lucide-react';
+import { lazy,Suspense, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useExecuteQuery } from '../../../hooks/queries/useDatasets';
-import type { DatasetColumnResponse, SqlQueryResponse } from '../../../types/dataset';
+import { toast } from 'sonner';
+
+import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
-import { Badge } from '../../../components/ui/badge';
-import { Play, Loader2, AlertCircle, CheckCircle2, ExternalLink, BarChart3 } from 'lucide-react';
-import { toast } from 'sonner';
-import axios from 'axios';
+import { useExecuteQuery } from '../../../hooks/queries/useDatasets';
 import type { ErrorResponse } from '../../../types/auth';
+import type { DatasetColumnResponse, SqlQueryResponse } from '../../../types/dataset';
 import { SqlQueryHistory } from './SqlQueryHistory';
 
 // Lazy-loaded CodeMirror wrapper for code splitting

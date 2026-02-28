@@ -1,13 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
+import { ArrowLeft, Loader2, Play,Save } from 'lucide-react';
+import { useCallback,useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  useSavedQueries,
-  useExecuteSavedQuery,
-  useChart,
-  useCreateChart,
-  useUpdateChart,
-} from '../../hooks/queries/useAnalytics';
+import { toast } from 'sonner';
+
+import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
+import { ChartRenderer } from '../../components/analytics/ChartRenderer';
+import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
 import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -17,24 +24,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../components/ui/select';
-import { Switch } from '../../components/ui/switch';
-import { Skeleton } from '../../components/ui/skeleton';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '../../components/ui/dialog';
 import { Separator } from '../../components/ui/separator';
-import { ArrowLeft, Save, Loader2, Play } from 'lucide-react';
-import { toast } from 'sonner';
+import { Skeleton } from '../../components/ui/skeleton';
+import { Switch } from '../../components/ui/switch';
+import {
+  useChart,
+  useCreateChart,
+  useExecuteSavedQuery,
+  useSavedQueries,
+  useUpdateChart,
+} from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
-import type { ChartType, ChartConfig } from '../../types/analytics';
-import { ChartRenderer } from '../../components/analytics/ChartRenderer';
-import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
-import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
+import type { ChartConfig,ChartType } from '../../types/analytics';
 
 // ============================================================
 // Auto chart type recommendation

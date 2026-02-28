@@ -1,15 +1,17 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, Navigate } from 'react-router-dom';
-import { signupSchema } from '../lib/validations/auth';
-import type { SignupFormData } from '../lib/validations/auth';
-import { useAuth } from '../hooks/useAuth';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+
 import { FormField } from '@/components/ui/form-field';
 import { extractApiError } from '@/lib/api-error';
+
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Input } from '../components/ui/input';
+import { useAuth } from '../hooks/useAuth';
+import type { SignupFormData } from '../lib/validations/auth';
+import { signupSchema } from '../lib/validations/auth';
 
 export default function SignupPage() {
   const { signup, isAuthenticated } = useAuth();

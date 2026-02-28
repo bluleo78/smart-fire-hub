@@ -89,7 +89,7 @@ class UserControllerTest {
   @Test
   void changePassword_authenticated_returnsNoContent() throws Exception {
     mockAuthentication("user:write:self");
-    ChangePasswordRequest request = new ChangePasswordRequest("oldpassword", "newpassword123");
+    ChangePasswordRequest request = new ChangePasswordRequest("oldpassword", "newPassword123");
 
     mockMvc
         .perform(
@@ -99,7 +99,7 @@ class UserControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent());
 
-    verify(userService).changePassword(1L, "oldpassword", "newpassword123");
+    verify(userService).changePassword(1L, "oldpassword", "newPassword123");
   }
 
   @Test

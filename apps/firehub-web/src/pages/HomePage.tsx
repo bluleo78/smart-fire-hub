@@ -1,11 +1,12 @@
-import { useDashboardStats } from '../hooks/queries/useDashboard';
-import { useDashboards } from '../hooks/queries/useAnalytics';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
-import { Badge } from '../components/ui/badge';
-import { Skeleton } from '../components/ui/skeleton';
+import { Database, GitBranch, LayoutDashboard,Play, Upload } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+
+import { Badge } from '../components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Skeleton } from '../components/ui/skeleton';
+import { useDashboards } from '../hooks/queries/useAnalytics';
+import { useDashboardStats } from '../hooks/queries/useDashboard';
 import { useAuth } from '../hooks/useAuth';
-import { Database, GitBranch, Upload, Play, LayoutDashboard } from 'lucide-react';
 import { getStatusBadgeVariant, getStatusLabel } from '../lib/formatters';
 
 export default function HomePage() {

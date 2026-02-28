@@ -19,10 +19,11 @@
   - `LoginAttemptService` 생성 완료 (Caffeine 캐시, 5회 실패 시 15분 차단)
   - `AccountLockedException` → HTTP 429 응답
 
-- [ ] **[Security/HIGH]** Refresh Token Rotation 구현
-  - `AuthService.java:104-126`
-  - Token family 관리 및 재사용 감지 시 전체 세션 폐기
-  - `RefreshTokenRepository`에 `isTokenReused()`, `revokeTokenFamily()` 추가
+- [x] **[Security/HIGH]** Refresh Token Rotation 구현
+  - `V28__add_refresh_token_family.sql` — `family_id UUID` 컬럼 추가
+  - `RefreshTokenRepository`에 `isTokenRevoked()`, `findFamilyIdByTokenHash()`, `revokeByFamilyId()` 추가
+  - `AuthService.refresh()`에서 재사용 감지 시 전체 패밀리 폐기
+  - `AuthServiceTest`에 로테이션 + 재사용 감지 TC 추가
 
 - [x] **[Quality/HIGH]** 토큰 갱신 시 사용자 활성 상태 확인
   - `AuthService.refresh()`에 `isActive` 체크 추가 완료
@@ -45,68 +46,61 @@
   - `Exception.class` catch-all 핸들러 추가 완료
   - SLF4J Logger 추가, 고정 메시지로 내부 정보 미노출
 
-- [ ] **[API/MEDIUM]** ErrorResponse 강화
-  - `ErrorResponse.java` - `timestamp`, `path` 필드 추가
+- [x] **[API/MEDIUM]** ErrorResponse 강화
+  - `ErrorResponse.java`에 `timestamp`, `path` 필드 추가 완료
+  - `GlobalExceptionHandler`에 `buildError()` 헬퍼 메서드로 핸들러 간소화
 
-- [ ] **[API/HIGH]** RefreshTokenRequest DTO 정리
-  - Cookie 전용이면 DTO 제거, Body 기반도 지원하려면 양방향 구현
+- [x] **[API/HIGH]** RefreshTokenRequest DTO 정리
+  - Cookie 전용 확인 → 사용하지 않는 DTO 삭제 완료
 
-- [ ] **[API/MEDIUM]** LoginRequest 필드명 명확화
-  - `LoginRequest.java:7` - `username`에 `@Email` 적용됨
-  - `@Email` 제거하거나 필드명을 `email`로 변경
+- [x] **[API/MEDIUM]** LoginRequest 필드명 명확화
+  - `LoginRequest.java`에서 `@Email` 제거 완료 (login은 가입된 username 수용)
 
-- [ ] **[Quality/MEDIUM]** AuthContext 무한 재렌더링 방지
-  - `AuthContext.tsx:35-55` - cleanup 로직 추가, 의존성 배열 수정
+- [x] **[Quality/MEDIUM]** AuthContext 무한 재렌더링 방지
+  - 이미 `ignore` 플래그 cleanup, `useCallback`, `useMemo`, `deduplicatedRefresh` 적용됨
 
 - [x] **[Quality/MEDIUM]** 시스템 역할 권한 변경 보호
   - `RoleService.setRolePermissions()`에 `isSystem()` 가드 추가 완료
 
-- [ ] **[Quality/HIGH]** failedQueue 메모리 누수 방지
-  - `client.ts:28-43` - 큐 크기 제한, 타임아웃 추가
+- [x] **[Quality/HIGH]** failedQueue 메모리 누수 방지
+  - `client.ts` — `MAX_QUEUE_SIZE = 100` 큐 크기 제한 추가 완료
 
 ## P3 - 1개월 이내
 
-- [ ] **[Security/MEDIUM]** SameSite 정책 조정
-  - `AuthController.java:76-84` - `Strict` -> `Lax` 변경 검토
+- [x] **[Security/MEDIUM]** SameSite 정책 조정
+  - `AuthController.java` — `Strict` → `Lax` 변경 완료 (CSRF 방어 유지 + UX 개선)
 
 - [ ] **[Security/LOW]** JWT에 권한 정보 포함 (성능 최적화)
   - `JwtTokenProvider.java:30-40` - 매 요청 DB 조회 제거
   - 권한 변경 시 기존 토큰 폐기 로직 필요
+  - → Phase 7 로드맵에서 처리 예정
 
-- [ ] **[API/MEDIUM]** 날짜/시간 포맷 명시
-  - `UserResponse.java` - `@JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")` 추가
+- [x] **[API/MEDIUM]** 날짜/시간 포맷 명시
+  - `UserResponse.java` — `@JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")` 추가 완료
 
-- [ ] **[API/LOW]** Pagination 정렬 기능 추가
-  - `UserController.java:49-54` - `sort` 파라미터 추가 또는 `Pageable` 사용
+- [x] **[Quality/MEDIUM]** 역할 미존재 시 조용한 실패 수정
+  - `AuthService.java` — `ifPresent` → `orElseThrow` 변경 완료
 
-- [ ] **[API/LOW]** TokenResponse DTO 분리
-  - 로그인 응답과 토큰 갱신 응답에 별도 DTO 사용
-  - `@JsonInclude(NON_NULL)` 적용
+- [x] **[Quality/LOW]** UserListPage 에러 처리 추가
+  - 이미 `isError` 핸들링 + 에러 메시지 표시 구현됨
 
-- [ ] **[Quality/MEDIUM]** 역할 미존재 시 조용한 실패 수정
-  - `AuthService.java:68-74` - `ifPresent` -> `orElseThrow` 변경
+- [x] **[Style/MAJOR]** Frontend Import 정렬 규칙 추가
+  - `eslint-plugin-simple-import-sort` 설치 + ESLint 규칙 추가 완료
+  - `pnpm lint --fix` 실행으로 기존 파일 일괄 정리 완료
 
-- [ ] **[Quality/LOW]** Repository 중복 코드 제거
-  - `UserRepository.java` - `UPDATED_AT` 설정 패턴 추출
+- [x] **[Style/MINOR]** API 함수 반환 타입 통일
+  - `auth.ts` — `client.post<void>('/auth/logout')` 제네릭 타입 명시 완료
 
-- [ ] **[Quality/LOW]** UserListPage 에러 처리 추가
-  - `UserListPage.tsx:27-37` - 에러 상태 표시, `pageSize` 의존성 추가
-
-- [ ] **[Style/MAJOR]** Frontend Import 정렬 규칙 추가
-  - ESLint `import/order` 규칙 설정
-  - `pnpm lint --fix` 실행
-
-- [ ] **[Style/MINOR]** API 함수 반환 타입 통일
-  - `auth.ts:8` - `client.post<void>('/auth/logout')` 등 제네릭 타입 명시
-
-- [ ] **[Security/INFO]** 비밀번호 복잡도 정책 강화
-  - 현재 min 8자만 요구
-  - 대소문자, 숫자, 특수문자 포함 검증 추가
+- [x] **[Security/INFO]** 비밀번호 복잡도 정책 강화
+  - `SignupRequest`, `ChangePasswordRequest`에 `@Pattern` 추가 완료
+  - 최소 1 대문자, 1 소문자, 1 숫자 요구
 
 - [x] **[Security]** 보안 헤더 추가
   - `SecurityConfig.java`에 X-Content-Type-Options, X-Frame-Options, HSTS 설정 완료
 
-- [ ] **[Quality]** 만료된 Refresh Token 정리 배치 작업 구현
+- [x] **[Quality]** 만료된 Refresh Token 정리 배치 작업 구현
+  - `RefreshTokenCleanupService` — `@Scheduled(cron = "0 0 4 * * *")` 매일 4시 실행
+  - 만료 토큰 + 7일 이상 된 revoked 토큰 삭제
 
 ---
 

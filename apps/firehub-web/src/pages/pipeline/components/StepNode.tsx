@@ -1,6 +1,6 @@
+import { Handle, type Node,type NodeProps, Position } from '@xyflow/react';
+import { CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
 import { memo } from 'react';
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { X, FileCode, Terminal, Globe, Plus, Loader2, CheckCircle2, XCircle, SkipForward, Clock } from 'lucide-react';
 
 export interface StepNodeData extends Record<string, unknown> {
   label: string;

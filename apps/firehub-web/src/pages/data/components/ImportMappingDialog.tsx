@@ -1,12 +1,13 @@
-import { useImportDialog } from '../hooks/useImportDialog';
-import type { DatasetColumnResponse } from '../../../types/dataset';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
-import { Button } from '../../../components/ui/button';
 import { Loader2 } from 'lucide-react';
+
+import { Button } from '../../../components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import type { DatasetColumnResponse } from '../../../types/dataset';
+import { useImportDialog } from '../hooks/useImportDialog';
 import { FileUploadZone } from './FileUploadZone';
-import { ImportProgressView } from './ImportProgressView';
 import { ImportMappingTable } from './ImportMappingTable';
 import { ImportModeSelector } from './ImportModeSelector';
+import { ImportProgressView } from './ImportProgressView';
 import { ImportSamplePreview } from './ImportSamplePreview';
 import { ImportValidationSection } from './ImportValidationSection';
 

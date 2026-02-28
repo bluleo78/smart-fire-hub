@@ -1,15 +1,11 @@
+import { Trash2,X } from 'lucide-react';
 import { lazy, Suspense } from 'react';
-import { X, Trash2 } from 'lucide-react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -17,9 +13,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import DatasetCombobox from './DatasetCombobox';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { formatDate } from '@/lib/formatters';
-import type { PipelineEditorState, EditorAction, EditorStep } from '../hooks/usePipelineEditor';
+
+import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
+import DatasetCombobox from './DatasetCombobox';
 
 const ScriptEditor = lazy(() => import('./ScriptEditor'));
 

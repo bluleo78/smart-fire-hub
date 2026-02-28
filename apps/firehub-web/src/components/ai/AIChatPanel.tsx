@@ -1,10 +1,11 @@
-import { useAI } from './AIProvider';
-import { MessageList } from './MessageList';
-import { ChatInput } from './ChatInput';
-import { SessionSwitcher } from './SessionSwitcher';
-import { Button } from '../ui/button';
-import { PanelRight, MessageCircle, Monitor, X, Sparkles } from 'lucide-react';
+import { MessageCircle, Monitor, PanelRight, Sparkles,X } from 'lucide-react';
+
 import type { AIMode } from '../../types/ai';
+import { Button } from '../ui/button';
+import { useAI } from './AIProvider';
+import { ChatInput } from './ChatInput';
+import { MessageList } from './MessageList';
+import { SessionSwitcher } from './SessionSwitcher';
 
 interface AIChatPanelProps {
   showModeSwitch?: boolean;

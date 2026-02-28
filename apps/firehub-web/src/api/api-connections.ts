@@ -1,9 +1,9 @@
-import { client } from './client';
 import type {
   ApiConnectionResponse,
   CreateApiConnectionRequest,
   UpdateApiConnectionRequest,
 } from '../types/api-connection';
+import { client } from './client';
 
 export const apiConnectionsApi = {
   getAll: () =>
