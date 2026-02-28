@@ -1,5 +1,5 @@
 import { ArrowLeft } from 'lucide-react';
-import { useEffect,useState } from 'react';
+import { useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -42,18 +42,19 @@ export default function ApiConnectionDetailPage() {
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
 
-  useEffect(() => {
-    if (connection) {
-      setName(connection.name);
-      setDescription(connection.description ?? '');
-      setAuthType(connection.authType);
-      // Restore non-sensitive fields from masked config
-      const mc = connection.maskedAuthConfig;
-      setPlacement(mc.placement ?? 'header');
-      setHeaderName(mc.headerName ?? '');
-      setParamName(mc.paramName ?? '');
-    }
-  }, [connection]);
+  // Sync server data to form state (state-based tracking, no refs during render)
+  const [syncedConnectionId, setSyncedConnectionId] = useState<number | null>(null);
+  if (connection && connection.id !== syncedConnectionId) {
+    setSyncedConnectionId(connection.id);
+    setName(connection.name);
+    setDescription(connection.description ?? '');
+    setAuthType(connection.authType);
+    // Restore non-sensitive fields from masked config
+    const mc = connection.maskedAuthConfig;
+    setPlacement(mc.placement ?? 'header');
+    setHeaderName(mc.headerName ?? '');
+    setParamName(mc.paramName ?? '');
+  }
 
   const handleSaveInfo = async () => {
     if (!id || !name.trim()) return;

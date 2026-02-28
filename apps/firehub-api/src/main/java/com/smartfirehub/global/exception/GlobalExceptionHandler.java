@@ -2,10 +2,10 @@ package com.smartfirehub.global.exception;
 
 import com.smartfirehub.ai.exception.AiSessionNotFoundException;
 import com.smartfirehub.analytics.exception.ChartNotFoundException;
-import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
@@ -46,11 +46,14 @@ public class GlobalExceptionHandler {
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
   private ErrorResponse buildError(
-      HttpStatus status, String message, Map<String, String> errors,
-      HttpServletRequest request) {
+      HttpStatus status, String message, Map<String, String> errors, HttpServletRequest request) {
     return new ErrorResponse(
-        status.value(), status.getReasonPhrase(), message, errors,
-        Instant.now().toString(), request.getRequestURI());
+        status.value(),
+        status.getReasonPhrase(),
+        message,
+        errors,
+        Instant.now().toString(),
+        request.getRequestURI());
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -191,8 +194,7 @@ public class GlobalExceptionHandler {
     for (int i = 0; i < errors.size(); i++) {
       errorMap.put("error_" + i, errors.get(i));
     }
-    ErrorResponse response =
-        buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), errorMap, request);
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), errorMap, request);
     return ResponseEntity.badRequest().body(response);
   }
 
@@ -342,12 +344,10 @@ public class GlobalExceptionHandler {
   }
 
   @ExceptionHandler(Exception.class)
-  public ResponseEntity<ErrorResponse> handleException(
-      Exception ex, HttpServletRequest request) {
+  public ResponseEntity<ErrorResponse> handleException(Exception ex, HttpServletRequest request) {
     log.error("Unhandled exception", ex);
     ErrorResponse response =
-        buildError(
-            HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", null, request);
+        buildError(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", null, request);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 }

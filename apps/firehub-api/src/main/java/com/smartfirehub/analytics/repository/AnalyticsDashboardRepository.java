@@ -3,9 +3,9 @@ package com.smartfirehub.analytics.repository;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
-import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
+import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;

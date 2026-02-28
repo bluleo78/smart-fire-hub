@@ -4,6 +4,7 @@ import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.servlet.http.HttpServletRequest;
+import java.time.Instant;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +37,14 @@ public class ExternalTriggerController {
     if (trigger == null) {
       log.warn("Invalid API trigger token from IP: {}", sourceIp);
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-          .body(new ErrorResponse(401, "Unauthorized", "Invalid token", null));
+          .body(
+              new ErrorResponse(
+                  401,
+                  "Unauthorized",
+                  "Invalid token",
+                  null,
+                  Instant.now().toString(),
+                  request.getRequestURI()));
     }
 
     Map<String, Object> fireParams = params != null ? params : Map.of();
@@ -66,7 +74,14 @@ public class ExternalTriggerController {
     if (trigger == null) {
       log.warn("Invalid webhook ID {} from IP: {}", webhookId, sourceIp);
       return ResponseEntity.status(HttpStatus.NOT_FOUND)
-          .body(new ErrorResponse(404, "Not Found", "Webhook not found", null));
+          .body(
+              new ErrorResponse(
+                  404,
+                  "Not Found",
+                  "Webhook not found",
+                  null,
+                  Instant.now().toString(),
+                  request.getRequestURI()));
     }
 
     // Verify signature if secret is configured
@@ -74,12 +89,26 @@ public class ExternalTriggerController {
     if (secretEncrypted != null && !secretEncrypted.isEmpty()) {
       if (signature == null || signature.isEmpty()) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-            .body(new ErrorResponse(401, "Unauthorized", "Missing X-Hub-Signature header", null));
+            .body(
+                new ErrorResponse(
+                    401,
+                    "Unauthorized",
+                    "Missing X-Hub-Signature header",
+                    null,
+                    Instant.now().toString(),
+                    request.getRequestURI()));
       }
       if (!triggerService.verifyWebhookSignature(webhookId, body != null ? body : "", signature)) {
         log.warn("Invalid webhook signature for {} from IP: {}", webhookId, sourceIp);
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-            .body(new ErrorResponse(401, "Unauthorized", "Invalid signature", null));
+            .body(
+                new ErrorResponse(
+                    401,
+                    "Unauthorized",
+                    "Invalid signature",
+                    null,
+                    Instant.now().toString(),
+                    request.getRequestURI()));
       }
     }
 

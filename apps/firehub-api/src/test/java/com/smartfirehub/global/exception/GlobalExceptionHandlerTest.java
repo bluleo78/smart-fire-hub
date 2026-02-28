@@ -227,8 +227,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.status").value(429))
         .andExpect(jsonPath("$.error").value("Too Many Requests"))
         .andExpect(
-            jsonPath("$.message")
-                .value("Too many failed login attempts. Please try again later."));
+            jsonPath("$.message").value("Too many failed login attempts. Please try again later."));
   }
 
   @Test

@@ -13,7 +13,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef,useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import { useNavigate,useParams } from 'react-router-dom';
@@ -189,13 +189,13 @@ export default function DashboardEditorPage() {
   const [localLayouts, setLocalLayouts] = useState<ResponsiveLayouts>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync layout from server data when not editing
-  useEffect(() => {
-    if (dashboard && !isEditing) {
-      const items = widgetsToLayoutItems(dashboard.widgets);
-      setLocalLayouts({ lg: items, md: items, sm: items });
-    }
-  }, [dashboard, isEditing]);
+  // Sync layout from server data when not editing (state-based tracking)
+  const [syncedDashboardId, setSyncedDashboardId] = useState<number | null>(null);
+  if (dashboard && !isEditing && dashboard.id !== syncedDashboardId) {
+    setSyncedDashboardId(dashboard.id);
+    const items = widgetsToLayoutItems(dashboard.widgets);
+    setLocalLayouts({ lg: items, md: items, sm: items });
+  }
 
   // Auto-refresh
   useEffect(() => {

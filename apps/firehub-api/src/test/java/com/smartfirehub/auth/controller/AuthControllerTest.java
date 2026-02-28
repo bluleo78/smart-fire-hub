@@ -125,8 +125,7 @@ class AuthControllerTest {
 
     when(authService.login(any(LoginRequest.class)))
         .thenThrow(
-            new AccountLockedException(
-                "Too many failed login attempts. Please try again later."));
+            new AccountLockedException("Too many failed login attempts. Please try again later."));
 
     mockMvc
         .perform(

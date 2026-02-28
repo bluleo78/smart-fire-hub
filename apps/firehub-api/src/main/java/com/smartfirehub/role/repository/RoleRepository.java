@@ -89,8 +89,7 @@ public class RoleRepository {
 
     if (!permissionIds.isEmpty()) {
       var insert =
-          dsl.insertInto(
-              ROLE_PERMISSION, ROLE_PERMISSION.ROLE_ID, ROLE_PERMISSION.PERMISSION_ID);
+          dsl.insertInto(ROLE_PERMISSION, ROLE_PERMISSION.ROLE_ID, ROLE_PERMISSION.PERMISSION_ID);
       for (Long permissionId : permissionIds) {
         insert = insert.values(roleId, permissionId);
       }

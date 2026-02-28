@@ -39,14 +39,12 @@ class RefreshTokenCleanupServiceTest extends IntegrationTestBase {
         .set(REFRESH_TOKEN.EXPIRES_AT, LocalDateTime.now().minusDays(1))
         .execute();
 
-    int before =
-        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int before = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
     assertThat(before).isGreaterThan(0);
 
     cleanupService.cleanupExpiredTokens();
 
-    int after =
-        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int after = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
     assertThat(after).isEqualTo(0);
   }
 
@@ -64,8 +62,7 @@ class RefreshTokenCleanupServiceTest extends IntegrationTestBase {
 
     cleanupService.cleanupExpiredTokens();
 
-    int after =
-        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int after = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
     assertThat(after).isEqualTo(0);
   }
 
@@ -75,13 +72,11 @@ class RefreshTokenCleanupServiceTest extends IntegrationTestBase {
         new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     authService.login(new LoginRequest("test@example.com", "Password123"));
 
-    int before =
-        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int before = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
 
     cleanupService.cleanupExpiredTokens();
 
-    int after =
-        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int after = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
     assertThat(after).isEqualTo(before);
   }
 }
