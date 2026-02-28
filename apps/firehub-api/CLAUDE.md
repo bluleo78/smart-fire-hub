@@ -135,9 +135,66 @@ class MyServiceTest extends IntegrationTestBase {
 - JVM args (`--add-opens`)는 `build.gradle.kts`에 설정됨
 - 서비스 레이어 중심으로 정상/예외 케이스 커버
 
+## Local DB Access
+
+로컬 개발 DB는 Docker Compose로 관리된다. 컨테이너 이름과 접속 정보를 정확히 사용할 것.
+
+```bash
+# 컨테이너 이름: smart-fire-hub-db-1 (docker-compose.yml의 서비스명 "db")
+# DB User: app / Password: app (POSTGRES_USER/POSTGRES_PASSWORD)
+# DB Name: smartfirehub
+
+# DB 접속 (psql)
+docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub -c "SELECT ..."
+
+# 테이블 조회 (public 스키마)
+docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"
+
+# 테이블명이 예약어인 경우 반드시 큰따옴표 사용 (예: "user" 테이블)
+docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub -c 'SELECT * FROM "user";'
+```
+
+**주의사항:**
+- DB 유저는 `app`이다. `postgres`, `smartfirehub` 등 다른 이름으로 접속하면 `role does not exist` 에러 발생
+- `user` 테이블은 PostgreSQL 예약어이므로 반드시 `"user"` (큰따옴표)로 감싸야 한다
+- `pnpm db:reset`은 모든 데이터를 삭제하므로, 데이터 보존이 필요한 경우 절대 사용하지 않는다
+
+## Flyway Migration Rules
+
+Flyway는 DB 스키마 버전 관리 도구이다. 아래 규칙을 반드시 준수할 것.
+
+### 마이그레이션 파일
+- 경로: `src/main/resources/db/migration/V{n}__*.sql`
+- 현재 최신: V27 (analytics 테이블)
+- 새 마이그레이션 추가 시 번호를 순차 증가 (V28, V29, ...)
+
+### baseline-on-migrate 설정 (중요)
+```yaml
+# application.yml
+spring:
+  flyway:
+    enabled: true
+    baseline-on-migrate: true    # 기존 DB에 flyway_schema_history가 없을 때 자동 baseline 생성
+    baseline-version: 27         # 현재 최신 마이그레이션 버전과 일치시킬 것
+```
+
+**이 설정이 필요한 이유:**
+- 로컬 DB에 이미 테이블이 존재하지만 `flyway_schema_history` 테이블이 없는 경우, Flyway가 `Found non-empty schema(s) "public" but no schema history table` 에러를 발생시킨다
+- `baseline-on-migrate: true`는 이 상황에서 자동으로 baseline 레코드를 생성하여 정상 기동되도록 한다
+- **기존 데이터를 건드리지 않는다** — flyway_schema_history에 마커만 추가할 뿐이다
+
+### 절대 하지 말 것
+- `pnpm db:reset`으로 로컬 DB를 날리지 않는다 (사용자 데이터 손실)
+- `flyway clean`을 실행하지 않는다 (모든 스키마 삭제)
+- `baseline-version`을 실제 최신 마이그레이션보다 낮게 설정하지 않는다 (이미 적용된 마이그레이션을 재실행하려 시도)
+
+### 새 마이그레이션 추가 시 체크리스트
+1. `baseline-version`을 새 마이그레이션 버전으로 업데이트 (예: V28 추가 시 `baseline-version: 28`)
+2. 마이그레이션 SQL에 `IF NOT EXISTS` 사용 권장 (멱등성 보장)
+3. 새 권한 추가 시 seed INSERT 포함
+
 ## Key Conventions
 
-- 새 권한 추가 시 Flyway 마이그레이션에 seed INSERT 포함
 - 새 모듈은 기존 모듈 구조를 따름: `controller/` → `service/` → `repository/` + `dto/`, `exception/`
 - 동적 테이블 관련 DDL은 반드시 `DataTableService`를 통해 실행 (SQL injection 방지)
 - `@RequirePermission`은 메서드/클래스 레벨 모두 지원
