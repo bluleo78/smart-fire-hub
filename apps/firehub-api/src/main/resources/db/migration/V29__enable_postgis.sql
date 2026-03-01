@@ -1,0 +1,3 @@
+-- PostGIS 공간 데이터 확장 활성화
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS postgis_topology;
