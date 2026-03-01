@@ -169,7 +169,6 @@
 |------|------|
 | `docs/research/gis-deep-analysis.md` | GIS 심층 분석 (경쟁사, 도입 사례, 유저스토리, 공공데이터) |
 | `docs/research/gis-spatial-research.md` | GIS 기술 스택 비교 |
-| `docs/planning/data-platform-roadmap.md` | 데이터 플랫폼 로드맵 상세 |
 
 ---
 
