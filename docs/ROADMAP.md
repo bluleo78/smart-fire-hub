@@ -35,15 +35,22 @@
 
 > 데이터 플랫폼에 공간 데이터(GEOMETRY) 지원을 추가한다.
 > **의존**: Phase 0 완료
+>
+> **실행 순서**: 1-0과 1-3은 병렬 시작. 1-4와 1-5는 1-2 완료 후 병렬 실행.
+> ```
+> Backend:   1-0 → 1-1 → 1-2 ──┬── 1-4 (Backend + Frontend)
+> Frontend:  1-3 ───────────────┘    │
+> AI Agent:                          └── 1-5 (병렬)
+> ```
 
-| # | 작업 | 상태 | 범위 | 검증 기준 |
-|---|------|------|------|----------|
-| 1-0 | PostGIS 인프라 (Docker, Flyway, jOOQ 바인딩, GeoJsonUtil) | ⬜ | Backend | PostGIS 확장 활성화 + jOOQ Geometry 바인딩 + GeoJSON ↔ JTS 변환 유틸. PoC 테스트 통과. |
-| 1-1 | DataTableService GEOMETRY 타입 CRUD | ⬜ | Backend | GEOMETRY 컬럼이 있는 테이블 생성/조회/삽입/수정이 동작한다. GeoJSON 입력 → DB 저장 → GeoJSON 출력 왕복. |
-| 1-2 | 공간 쿼리 API (nearby, bbox, geojson) | ⬜ | Backend | 좌표+반경 검색, 바운딩박스 검색, GeoJSON FeatureCollection 응답 API 3개 동작. |
-| 1-3 | MapLibre 지도 컴포넌트 | ⬜ | Frontend | OSM 배경지도 위에 GeoJSON 데이터를 마커/폴리곤으로 렌더링. 마커 클릭 팝업. |
-| 1-4 | MAP 차트 타입 | ⬜ | Frontend | 대시보드에서 MAP 차트 위젯을 생성하고 GEOMETRY 데이터를 지도에 표시할 수 있다. |
-| 1-5 | 공간 쿼리 MCP 도구 | ⬜ | AI Agent | AI 채팅에서 "강남역 500m 이내 데이터 찾아줘" 같은 공간 쿼리 실행 가능. |
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 1-0 | PostGIS 인프라 (Docker, Flyway, jOOQ 바인딩, GeoJsonUtil) | ⬜ | Backend | 없음 | PostGIS 확장 활성화 + jOOQ Geometry 바인딩 + GeoJSON ↔ JTS 변환 유틸. PoC 테스트 통과. |
+| 1-1 | DataTableService GEOMETRY 타입 CRUD | ⬜ | Backend | 1-0 | GEOMETRY 컬럼이 있는 테이블 생성/조회/삽입/수정이 동작한다. GeoJSON 입력 → DB 저장 → GeoJSON 출력 왕복. |
+| 1-2 | 공간 쿼리 API (nearby, bbox, geojson) | ⬜ | Backend | 1-1 | 좌표+반경 검색, 바운딩박스 검색, GeoJSON FeatureCollection 응답 API 3개 동작. |
+| 1-3 | MapLibre 지도 컴포넌트 | ⬜ | Frontend | 없음 | OSM 배경지도 위에 GeoJSON 데이터를 마커/폴리곤으로 렌더링. 마커 클릭 팝업. |
+| 1-4 | MAP 차트 타입 | ⬜ | Backend + Frontend | 1-2, 1-3 | 대시보드에서 MAP 차트 위젯을 생성하고 GEOMETRY 데이터를 지도에 표시할 수 있다. |
+| 1-5 | 공간 쿼리 MCP 도구 | ⬜ | AI Agent | 1-2 | AI 채팅에서 "강남역 500m 이내 데이터 찾아줘" 같은 공간 쿼리 실행 가능. |
 
 ---
 

@@ -63,6 +63,24 @@ pnpm db:reset                   # PostgreSQL 볼륨 삭제 후 재시작
 - **Database**: PostgreSQL 16 (Docker), `public` 스키마(메타데이터) + `data` 스키마(동적 사용자 테이블)
 - **Monorepo**: pnpm workspaces + Turborepo
 
+## Roadmap
+
+이 프로젝트는 `docs/ROADMAP.md`를 기반으로 개발이 진행된다.
+
+- 작업을 시작하기 전에 반드시 `docs/ROADMAP.md`를 읽고, 현재 진행 중인 항목이 무엇인지 파악한다.
+- 진행 중인 항목이 있으면 해당 항목을 이어서 작업한다.
+- 진행 중인 항목이 없으면, 사용자에게 어떤 항목을 진행할지 반드시 물어본 후 작업을 시작한다.
+- ROADMAP.md의 항목 상태 업데이트(완료 표시 등)는 사용자 확인 후 진행한다.
+
+### Project Manager 에이전트
+
+로드맵 작업은 **Project Manager 에이전트** (`.claude/agents/project-manager.md`)가 조율한다.
+
+- **계획 단계**: PM이 Explore, Architect, Executor 등 전문 에이전트의 의견을 수렴하여 실행 계획을 수립한다.
+- **사용자 승인**: 작업 범위, 기술 접근, 순서 등은 반드시 사용자 승인 후 진행한다.
+- **실행 단계**: 승인된 계획에 따라 Backend/Frontend/AI Agent 팀을 병렬 배치한다.
+- **완료 단계**: 검증 기준 충족 확인 후 사용자에게 로드맵 상태 업데이트를 요청한다.
+
 ## Conventions
 
 - 작업은 명확한 단위로 구분하고, 각 작업 단위별로 검증 후 커밋한다.
