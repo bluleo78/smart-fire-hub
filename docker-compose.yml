@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgis/postgis:16-3.5
+    image: postgres:16
     environment:
       POSTGRES_DB: smartfirehub
       POSTGRES_USER: app

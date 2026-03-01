@@ -30,8 +30,6 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     runtimeOnly("org.postgresql:postgresql")
     jooqGenerator("org.postgresql:postgresql")
-    jooqGenerator("net.postgis:postgis-jdbc:2024.1.0")
-    jooqGenerator("org.locationtech.jts:jts-core:1.20.0")
     // CSV/Excel 파싱
     implementation("org.apache.poi:poi-ooxml:5.3.0")
     implementation("com.opencsv:opencsv:5.9")
@@ -43,10 +41,6 @@ dependencies {
     implementation("com.jayway.jsonpath:json-path:2.9.0")
     // Caffeine cache — analytics dashboard query result caching
     implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
-    // PostGIS: JTS Geometry 타입 + GeoJSON 직렬화
-    implementation("org.locationtech.jts:jts-core:1.20.0")
-    implementation("org.locationtech.jts.io:jts-io-common:1.20.0")
-    implementation("net.postgis:postgis-jdbc:2024.1.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
@@ -85,21 +79,7 @@ jooq {
                     name = "org.jooq.codegen.DefaultGenerator"
                     database.apply {
                         name = "org.jooq.meta.postgres.PostgresDatabase"
-                        // 멀티스키마: public + fire
-                        withSchemata(
-                            org.jooq.meta.jaxb.SchemaMappingType()
-                                .withInputSchema("public")
-                                .withOutputSchemaToDefault(true),
-                            org.jooq.meta.jaxb.SchemaMappingType()
-                                .withInputSchema("fire")
-                        )
-                        // PostGIS geometry 컬럼에 커스텀 바인딩 적용
-                        withForcedTypes(
-                            org.jooq.meta.jaxb.ForcedType()
-                                .withUserType("org.locationtech.jts.geom.Geometry")
-                                .withBinding("com.smartfirehub.global.jooq.PostgisGeometryBinding")
-                                .withIncludeTypes("geometry.*")
-                        )
+                        inputSchema = "public"
                     }
                     target.apply {
                         packageName = "com.smartfirehub.jooq"

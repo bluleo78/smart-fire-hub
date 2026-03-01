@@ -47,23 +47,19 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 | `settings` | 시스템 설정 (AI 설정: model, max_turns, temperature 등) |
 | `global` | SecurityConfig, JwtAuthenticationFilter, GlobalExceptionHandler, `@RequirePermission`, 공통 DTO |
 
-### Three-Schema Database Design
+### Two-Schema Database Design
 
 - **`public` 스키마**: 메타데이터 (user, role, pipeline, dataset 정의, audit_log 등)
 - **`data` 스키마**: 동적 사용자 테이블. 데이터셋 생성 시 `DataTableService`가 DDL 실행
-- **`fire` 스키마**: 소방 도메인 전용 (organization, district, incident, incident_type, incident_type_mapping, dispatch, hydrant). PostGIS GEOMETRY 컬럼 포함
 
 `DataTableService`는 raw SQL로 `data` 스키마를 관리. 테이블/컬럼명은 `[a-z][a-z0-9_]*` 패턴만 허용. 지원 타입: TEXT, VARCHAR(n), BIGINT, NUMERIC(18,6), BOOLEAN, DATE, TIMESTAMP.
 
 ### Data Access: jOOQ (not JPA)
 
 - Repository 레이어는 `DSLContext`로 type-safe SQL 작성
-- jOOQ 코드젠 결과: `src/main/generated/` (멀티스키마: `public` + `fire`)
-- `fire` 스키마: 소방 도메인 전용 테이블 (organization, incident, hydrant 등). jOOQ 코드젠 패키지: `com.smartfirehub.jooq.fire`
+- jOOQ 코드젠 결과: `src/main/generated/` (public 스키마 전용)
 - `data` 스키마의 동적 테이블은 `DataTableService`에서 raw SQL로 관리
-- PostGIS Geometry 타입: `PostgisGeometryBinding` 커스텀 바인딩으로 JTS Geometry ↔ DB 변환
-- GeoJSON 변환: `GeoJsonUtil` 유틸리티 (`global/util/`)
-- Flyway 마이그레이션: `src/main/resources/db/migration/V{n}__*.sql` (V1~V30)
+- Flyway 마이그레이션: `src/main/resources/db/migration/V{n}__*.sql` (V1~V26)
 
 ### Pipeline Execution Engine
 
@@ -169,8 +165,8 @@ Flyway는 DB 스키마 버전 관리 도구이다. 아래 규칙을 반드시 �
 
 ### 마이그레이션 파일
 - 경로: `src/main/resources/db/migration/V{n}__*.sql`
-- 현재 최신: V30 (fire 스키마)
-- 새 마이그레이션 추가 시 번호를 순차 증가 (V31, V32, ...)
+- 현재 최신: V27 (analytics 테이블)
+- 새 마이그레이션 추가 시 번호를 순차 증가 (V28, V29, ...)
 
 ### baseline-on-migrate 설정 (중요)
 ```yaml
@@ -193,7 +189,7 @@ spring:
 - `baseline-version`을 실제 최신 마이그레이션보다 낮게 설정하지 않는다 (이미 적용된 마이그레이션을 재실행하려 시도)
 
 ### 새 마이그레이션 추가 시 체크리스트
-1. `baseline-version`을 새 마이그레이션 버전으로 업데이트 (예: V31 추가 시 `baseline-version: 31`)
+1. `baseline-version`을 새 마이그레이션 버전으로 업데이트 (예: V28 추가 시 `baseline-version: 28`)
 2. 마이그레이션 SQL에 `IF NOT EXISTS` 사용 권장 (멱등성 보장)
 3. 새 권한 추가 시 seed INSERT 포함
 
@@ -202,4 +198,4 @@ spring:
 - 새 모듈은 기존 모듈 구조를 따름: `controller/` → `service/` → `repository/` + `dto/`, `exception/`
 - 동적 테이블 관련 DDL은 반드시 `DataTableService`를 통해 실행 (SQL injection 방지)
 - `@RequirePermission`은 메서드/클래스 레벨 모두 지원
-- jOOQ 코드젠은 `public` + `fire` 스키마 대상 (멀티스키마). `data` 스키마는 런타임 동적 관리
+- jOOQ 코드젠은 `public` 스키마만 대상. `data` 스키마는 런타임 동적 관리

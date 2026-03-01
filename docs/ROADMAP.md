@@ -11,8 +11,8 @@
 
 | Phase | 상태 | 진행률 | 설명 |
 |-------|------|--------|------|
-| [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질, PostGIS 인프라 |
-| [Phase 1](#phase-1-gis-범용-기반) | **진행 중** | 1/5 | GEOMETRY 지원 + 지도 + 공간 쿼리 |
+| [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질 |
+| [Phase 1](#phase-1-gis-범용-기반) | **진행 중** | 0/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 |
 | [Phase 2](#phase-2-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 3](#phase-3-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
 | [Phase 4](#phase-4-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
@@ -22,23 +22,23 @@
 
 ## Phase 0: 기반 정비 ✅
 
-> **완료** — 보안, 코드 품질, PostGIS 인프라 구축
+> **완료** — 보안, 코드 품질
 
 | # | 작업 | 상태 | 검증 |
 |---|------|------|------|
 | 0-1 | 보안 강화 (JWT 환경변수, CORS, brute-force, Security 헤더, Refresh token rotation) | ✅ | 기존 테스트 통과 |
 | 0-2 | 코드 품질 (P1~P3 코드 리뷰, ErrorResponse 수정) | ✅ | 기존 테스트 통과 |
-| 0-3 | PostGIS 인프라 + fire 스키마 + jOOQ 바인딩 PoC | ✅ | PoC 통합 테스트 8개 + 단위 테스트 10개 |
 
 ---
 
 ## Phase 1: GIS 범용 기반
 
 > 데이터 플랫폼에 공간 데이터(GEOMETRY) 지원을 추가한다.
-> **의존**: Phase 0-3 완료
+> **의존**: Phase 0 완료
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
+| 1-0 | PostGIS 인프라 (Docker, Flyway, jOOQ 바인딩, GeoJsonUtil) | ⬜ | Backend | PostGIS 확장 활성화 + jOOQ Geometry 바인딩 + GeoJSON ↔ JTS 변환 유틸. PoC 테스트 통과. |
 | 1-1 | DataTableService GEOMETRY 타입 CRUD | ⬜ | Backend | GEOMETRY 컬럼이 있는 테이블 생성/조회/삽입/수정이 동작한다. GeoJSON 입력 → DB 저장 → GeoJSON 출력 왕복. |
 | 1-2 | 공간 쿼리 API (nearby, bbox, geojson) | ⬜ | Backend | 좌표+반경 검색, 바운딩박스 검색, GeoJSON FeatureCollection 응답 API 3개 동작. |
 | 1-3 | MapLibre 지도 컴포넌트 | ⬜ | Frontend | OSM 배경지도 위에 GeoJSON 데이터를 마커/폴리곤으로 렌더링. 마커 클릭 팝업. |
@@ -149,13 +149,14 @@
 | Backend | Spring Boot 3.4 + Java 21, jOOQ, Flyway, Spring Security + JWT |
 | Frontend | Vite + React 19 + TypeScript, TanStack Query, React Router v7, shadcn/ui, Tailwind CSS v4 |
 | AI Agent | Node.js + TypeScript, Express 4, Claude Agent SDK, MCP 도구 36종 |
-| Database | PostgreSQL 16 + PostGIS 3.5, public/data/fire 3스키마 |
+| Database | PostgreSQL 16, public/data 2스키마 |
 | Monorepo | pnpm workspaces + Turborepo |
 
 ### Phase별 추가 예정
 
 | 기술 | Phase | 용도 |
 |------|-------|------|
+| PostGIS 3.5 + JTS | 1-0 | 공간 데이터 저장/쿼리 |
 | MapLibre GL JS | 1-3, 1-4 | 프론트엔드 지도 렌더링 |
 | deck.gl | 5-3 | 대규모 데이터 시각화 (히트맵) |
 | V-World WMTS | 5-3 | 한국 배경지도 |
@@ -176,5 +177,6 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-01 | Phase 0-3(PostGIS+fire) 롤백. PostGIS 인프라를 Phase 1-0으로 이동. fire 스키마는 Phase 5로 이동. |
 | 2026-03-01 | 작업 단위 레벨로 재구성. Phase별 아이템을 독립 계획/검증 가능한 단위로 조정. 백로그 21건으로 정리. |
 | 2026-03-01 | 초안 작성. Phase 0~5 + 백로그 정리. |
