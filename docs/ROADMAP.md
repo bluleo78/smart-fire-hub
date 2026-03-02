@@ -13,10 +13,11 @@
 |-------|------|--------|------|
 | [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질 |
 | [Phase 1](#phase-1-gis-범용-기반) | **완료** | 6/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 + MAP 차트 |
-| [Phase 2](#phase-2-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
-| [Phase 3](#phase-3-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
-| [Phase 4](#phase-4-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
-| [Phase 5](#phase-5-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
+| [Phase 2](#phase-2-디자인-시스템) | 진행중 | 7/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
+| [Phase 3](#phase-3-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
+| [Phase 4](#phase-4-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
+| [Phase 5](#phase-5-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
+| [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
 
@@ -54,54 +55,83 @@
 
 ---
 
-## Phase 2: AI Text-to-SQL
+## Phase 2: 디자인 시스템 ⬜
+
+> UI 일관성을 위한 디자인 시스템 가이드라인 수립 + 코드 적용.
+> **의존**: Phase 1 완료
+> **참조**: shadcn/ui 공식 + Vercel Geist Design System
+> **산출물**: `docs/design-system/` 디렉토리 (14개 마크다운 파일) + 코드 적용
+>
+> **실행 순서**: 2-1~2-7 (가이드라인 문서) 완료 후 2-8~2-11 (코드 적용) 순차 진행.
+> ```
+> 가이드라인:  2-1 ~ 2-7 (문서만, 코드 변경 없음) ✅
+> 코드 적용:   2-8 → 2-9 → 2-10 → 2-11
+> ```
+
+| # | 작업 | 상태 | 범위 | 검증 기준 |
+|---|------|------|------|----------|
+| 2-1 | Design Tokens (색상/반경/그림자/Z-Index) | ✅ | 문서 | index.css 30+ 토큰 전수 문서화. 하드코딩 색상 43건 감사. 시맨틱 Status 토큰 제안. |
+| 2-2 | Typography Scale | ✅ | 문서 | 13단계 시맨틱 스케일 정의. As-Is/To-Be 매핑. font-mono 규칙. |
+| 2-3 | Spacing & Layout | ✅ | 문서 | 7단계 스페이싱 스케일. AppLayout 골격. 그리드 패턴 5종. |
+| 2-4 | Components + Page Patterns | ✅ | 문서 | 24 shadcn + 6 커스텀 가이드. 5개 페이지 템플릿 (TSX 스켈레톤). |
+| 2-5 | UX Patterns (Feedback/Icon/Animation/Form) | ✅ | 문서 | Loading/Empty/Error/Toast + 아이콘 규칙 + 모션 가이드 + 폼 패턴. |
+| 2-6 | Accessibility + Dark Mode + Responsive | ✅ | 문서 | WCAG 2.2 AA 기준. 다크모드 갭 분석. 반응형 현황. |
+| 2-7 | Index + Migration Backlog | ✅ | 문서 | Quick Reference Card. P0~P3 마이그레이션 작업 목록. |
+| 2-8 | 시맨틱 Status 토큰 + Badge variant 확장 | ⬜ | Frontend | success/warning/info CSS 변수 + Badge variant 추가. 빌드 + 타입체크 통과. |
+| 2-9 | 하드코딩 색상 마이그레이션 | ⬜ | Frontend | 43건 시맨틱 토큰으로 교체. 다크모드 정상 동작. 스크린샷 비교. |
+| 2-10 | Typography 통일 | ⬜ | Frontend | 전체 페이지 As-Is→To-Be 리팩터링. 스크린샷 비교. |
+| 2-11 | 접근성 + 다크모드 개선 | ⬜ | Frontend | ARIA 속성 추가. 다크모드 페이지별 검증. |
+
+---
+
+## Phase 3: AI Text-to-SQL
 
 > 비개발자가 자연어로 데이터를 조회/분석할 수 있다.
 > **의존**: 없음 (Phase 1과 병렬 가능)
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 2-1 | Text-to-SQL MCP 도구 (스키마 조회 + SQL 생성/실행) | ⬜ | AI Agent | "매출 상위 10개 보여줘" → SQL 자동 생성 → 실행 → 결과 반환. DDL/DML 거부. |
-| 2-2 | 차트 자동 추천 | ⬜ | AI Agent + Frontend | SQL 결과 기반 차트 타입+설정 자동 추천. GEOMETRY 포함 시 MAP 추천. |
+| 3-1 | Text-to-SQL MCP 도구 (스키마 조회 + SQL 생성/실행) | ⬜ | AI Agent | "매출 상위 10개 보여줘" → SQL 자동 생성 → 실행 → 결과 반환. DDL/DML 거부. |
+| 3-2 | 차트 자동 추천 | ⬜ | AI Agent + Frontend | SQL 결과 기반 차트 타입+설정 자동 추천. GEOMETRY 포함 시 MAP 추천. |
 
 ---
 
-## Phase 3: 대시보드 실시간 갱신
+## Phase 4: 대시보드 실시간 갱신
 
 > 운영 모니터링이 가능한 라이브 대시보드.
 > **의존**: Phase 1 (지도 위젯)
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 3-1 | 대시보드 위젯 자동 갱신 | ⬜ | Frontend | 위젯별 갱신 주기 설정(10초~5분). 갱신 중 기존 데이터 유지 + 로딩 인디케이터. |
-| 3-2 | SSE 이벤트 기반 알림 + 자동 갱신 | ⬜ | Backend + Frontend | 파이프라인 완료/실패 시 토스트 알림. 데이터셋 변경 → 관련 차트 자동 갱신. |
+| 4-1 | 대시보드 위젯 자동 갱신 | ⬜ | Frontend | 위젯별 갱신 주기 설정(10초~5분). 갱신 중 기존 데이터 유지 + 로딩 인디케이터. |
+| 4-2 | SSE 이벤트 기반 알림 + 자동 갱신 | ⬜ | Backend + Frontend | 파이프라인 완료/실패 시 토스트 알림. 데이터셋 변경 → 관련 차트 자동 갱신. |
 
 ---
 
-## Phase 4: 데이터 내보내기
+## Phase 5: 데이터 내보내기
 
 > 분석 결과를 외부로 가져갈 수 있다.
 > **의존**: 없음 (독립적)
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 4-1 | 내보내기 API (CSV/Excel/GeoJSON) | ⬜ | Backend | 데이터셋/쿼리 결과를 CSV(스트리밍), Excel, GeoJSON으로 다운로드. 대용량 지원. |
-| 4-2 | 내보내기 UI | ⬜ | Frontend | 데이터셋/쿼리 결과에 "내보내기" 버튼 + 포맷 선택. 대용량은 백그라운드 작업. |
+| 5-1 | 내보내기 API (CSV/Excel/GeoJSON) | ⬜ | Backend | 데이터셋/쿼리 결과를 CSV(스트리밍), Excel, GeoJSON으로 다운로드. 대용량 지원. |
+| 5-2 | 내보내기 UI | ⬜ | Frontend | 데이터셋/쿼리 결과에 "내보내기" 버튼 + 포맷 선택. 대용량은 백그라운드 작업. |
 
 ---
 
-## Phase 5: 소방 도메인 특화
+## Phase 6: 소방 도메인 특화
 
-> Phase 1~4의 범용 플랫폼 위에 소방 전문 기능을 올린다.
-> **의존**: Phase 1 (GIS), Phase 2 (Text-to-SQL)
+> Phase 1~5의 범용 플랫폼 위에 소방 전문 기능을 올린다.
+> **의존**: Phase 1 (GIS), Phase 3 (Text-to-SQL)
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 5-1 | 소방 도메인 CRUD API | ⬜ | Backend | 조직/사건/소방용수/출동 REST API + 권한. 시드 데이터 생성. TC 20개+. |
-| 5-2 | 소방 KPI 대시보드 | ⬜ | Frontend | 응답시간, 출동 건수, 사건 유형 분포, 소방서별 성과 비교 위젯. |
-| 5-3 | 소방 전용 지도 | ⬜ | Frontend | V-World 배경지도 + 소방서/소화전/사건 레이어 + 관할구역 경계 + 히트맵. |
-| 5-4 | AI 소방 분석 도구 | ⬜ | AI Agent | 소방 MCP 도구 + 소방 특화 프롬프트 + fire 스키마 Text-to-SQL. |
-| 5-5 | 공공데이터 ETL 연동 | ⬜ | Backend | 소방용수/소방서 좌표(data.go.kr), 행정경계(V-World), 지오코딩(Kakao). |
+| 6-1 | 소방 도메인 CRUD API | ⬜ | Backend | 조직/사건/소방용수/출동 REST API + 권한. 시드 데이터 생성. TC 20개+. |
+| 6-2 | 소방 KPI 대시보드 | ⬜ | Frontend | 응답시간, 출동 건수, 사건 유형 분포, 소방서별 성과 비교 위젯. |
+| 6-3 | 소방 전용 지도 | ⬜ | Frontend | V-World 배경지도 + 소방서/소화전/사건 레이어 + 관할구역 경계 + 히트맵. |
+| 6-4 | AI 소방 분석 도구 | ⬜ | AI Agent | 소방 MCP 도구 + 소방 특화 프롬프트 + fire 스키마 Text-to-SQL. |
+| 6-5 | 공공데이터 ETL 연동 | ⬜ | Backend | 소방용수/소방서 좌표(data.go.kr), 행정경계(V-World), 지오코딩(Kakao). |
 
 ---
 
@@ -165,8 +195,8 @@
 |------|-------|------|
 | PostGIS 3.5 (SQL 함수 기반, JTS 미사용) | 1-0 ✅ | 공간 데이터 저장/쿼리 |
 | MapLibre GL JS | 1-3, 1-4 | 프론트엔드 지도 렌더링 |
-| deck.gl | 5-3 | 대규모 데이터 시각화 (히트맵) |
-| V-World WMTS | 5-3 | 한국 배경지도 |
+| deck.gl | 6-3 | 대규모 데이터 시각화 (히트맵) |
+| V-World WMTS | 6-3 | 한국 배경지도 |
 
 ---
 
@@ -183,6 +213,8 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-02 | Phase D-1/D-2를 Phase 2 (디자인 시스템)로 통합. Phase 번호 재부여 (기존 2→3, 3→4, 4→5, 5→6). |
+| 2026-03-02 | Phase D-1 (디자인 시스템 가이드라인), D-2 (코드 적용) 추가. Phase 1과 Phase 2 사이에 삽입. |
 | 2026-03-02 | Phase 1-4, 1-5 완료. MAP 차트 타입 (V30 마이그레이션, MapChartView, 자동추천, GEOMETRY→GeoJSON 자동변환). 공간 쿼리 AI 가이드. Phase 1 전체 완료. |
 | 2026-03-02 | Phase 1-0, 1-1 완료. PostGIS 인프라 + GEOMETRY CRUD 구현 (PostGIS SQL 함수 기반, JTS 미사용). |
 | 2026-03-01 | Phase 0-3(PostGIS+fire) 롤백. PostGIS 인프라를 Phase 1-0으로 이동. fire 스키마는 Phase 5로 이동. |
