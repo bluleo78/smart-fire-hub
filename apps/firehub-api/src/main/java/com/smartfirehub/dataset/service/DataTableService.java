@@ -466,7 +466,8 @@ public class DataTableService {
       String dataType = col.dataType();
 
       if ("GEOMETRY".equalsIgnoreCase(dataType)) {
-        // GEOMETRY-specific stats: count, null count, bbox via ST_Extent, geometry type distribution
+        // GEOMETRY-specific stats: count, null count, bbox via ST_Extent, geometry type
+        // distribution
         String geoStatsSql =
             "SELECT COUNT(*) AS total,"
                 + " COUNT(*) FILTER (WHERE \""

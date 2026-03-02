@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.service;
 
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,12 +33,12 @@ public class DataTableRowService {
 
   // --- GEOMETRY helpers ---
 
-  private static boolean isGeometry(String colName, Map<String, String> columnTypes) {
+  static boolean isGeometry(String colName, Map<String, String> columnTypes) {
     return columnTypes != null && "GEOMETRY".equalsIgnoreCase(columnTypes.get(colName));
   }
 
   /** Returns ST_AsGeoJSON("col") AS "col" for GEOMETRY, otherwise "col". */
-  private static String selectExpr(String colName, Map<String, String> columnTypes) {
+  static String selectExpr(String colName, Map<String, String> columnTypes) {
     if (isGeometry(colName, columnTypes)) {
       return "ST_AsGeoJSON(\"" + colName + "\") AS \"" + colName + "\"";
     }
@@ -132,6 +134,265 @@ public class DataTableRowService {
     }
 
     return rows;
+  }
+
+  // --- Spatial query overloads ---
+
+  /**
+   * GEOMETRY 컬럼 이름 해결. geometryColumn이 null이면 첫 번째 GEOMETRY 컬럼 자동 선택.
+   *
+   * @throws IllegalArgumentException GEOMETRY 컬럼이 없거나 지정 컬럼이 GEOMETRY가 아닌 경우
+   */
+  static String resolveGeometryColumn(
+      List<DatasetColumnResponse> columns, Map<String, String> columnTypes, String geometryColumn) {
+    if (geometryColumn != null) {
+      if (!isGeometry(geometryColumn, columnTypes)) {
+        throw new IllegalArgumentException("컬럼 '" + geometryColumn + "'은 GEOMETRY 타입이 아닙니다.");
+      }
+      return geometryColumn;
+    }
+    // auto-select first GEOMETRY column
+    for (DatasetColumnResponse col : columns) {
+      if (isGeometry(col.columnName(), columnTypes)) {
+        return col.columnName();
+      }
+    }
+    throw new IllegalArgumentException("데이터셋에 GEOMETRY 컬럼이 없습니다.");
+  }
+
+  /** 기존 시그니처 유지 (하위 호환) */
+  public List<Map<String, Object>> queryData(
+      String tableName,
+      List<DatasetColumnResponse> columns,
+      Map<String, String> columnTypes,
+      String search,
+      String sortBy,
+      String sortDir,
+      int page,
+      int size) {
+    return queryData(tableName, columns, columnTypes, search, sortBy, sortDir, page, size, null);
+  }
+
+  /** 공간 필터를 포함한 queryData 오버로드 */
+  public List<Map<String, Object>> queryData(
+      String tableName,
+      List<DatasetColumnResponse> columns,
+      Map<String, String> columnTypes,
+      String search,
+      String sortBy,
+      String sortDir,
+      int page,
+      int size,
+      SpatialFilter spatialFilter) {
+    List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+    dataTableService.validateName(tableName);
+    for (String col : columnNames) {
+      dataTableService.validateName(col);
+    }
+    if (sortBy != null) {
+      dataTableService.validateName(sortBy);
+    }
+
+    // Resolve geometry column if spatial filter present
+    String geomCol = null;
+    if (spatialFilter != null) {
+      geomCol = resolveGeometryColumn(columns, columnTypes, spatialFilter.geometryColumn());
+    }
+
+    StringBuilder sql = new StringBuilder();
+    sql.append("SELECT id, ");
+    if (columnNames.isEmpty()) {
+      sql.append("*");
+    } else {
+      for (int i = 0; i < columnNames.size(); i++) {
+        if (i > 0) sql.append(", ");
+        sql.append(selectExpr(columnNames.get(i), columnTypes));
+      }
+    }
+    // For Nearby: append distance column
+    if (spatialFilter instanceof SpatialFilter.Nearby nearby) {
+      sql.append(", ST_Distance(\"")
+          .append(geomCol)
+          .append("\"::geography, ST_SetSRID(ST_MakePoint(")
+          .append(nearby.longitude())
+          .append(", ")
+          .append(nearby.latitude())
+          .append("), 4326)::geography)::double precision AS \"_distance\"");
+    }
+    sql.append(" FROM data.\"").append(tableName).append("\"");
+
+    // Build WHERE clause: search + spatial
+    List<Object> paramList = new ArrayList<>();
+    boolean hasWhere = false;
+
+    // text search conditions
+    List<String> searchableColumns = new ArrayList<>();
+    if (search != null && !search.isBlank() && !columnNames.isEmpty()) {
+      for (String col : columnNames) {
+        if (!isGeometry(col, columnTypes)) {
+          searchableColumns.add(col);
+        }
+      }
+    }
+
+    if (!searchableColumns.isEmpty()) {
+      sql.append(" WHERE (");
+      for (int i = 0; i < searchableColumns.size(); i++) {
+        if (i > 0) sql.append(" OR ");
+        sql.append("CAST(\"")
+            .append(searchableColumns.get(i))
+            .append("\" AS TEXT) ILIKE ? ESCAPE '\\'");
+      }
+      sql.append(")");
+      String pattern = "%" + escapeIlike(search) + "%";
+      for (int i = 0; i < searchableColumns.size(); i++) {
+        paramList.add(pattern);
+      }
+      hasWhere = true;
+    }
+
+    // spatial conditions
+    if (spatialFilter instanceof SpatialFilter.Nearby nearby) {
+      sql.append(hasWhere ? " AND " : " WHERE ");
+      sql.append("ST_DWithin(\"")
+          .append(geomCol)
+          .append("\"::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)");
+      paramList.add(nearby.longitude());
+      paramList.add(nearby.latitude());
+      paramList.add(nearby.radiusMeters());
+    } else if (spatialFilter instanceof SpatialFilter.Bbox bbox) {
+      sql.append(hasWhere ? " AND " : " WHERE ");
+      sql.append("ST_Intersects(\"")
+          .append(geomCol)
+          .append("\", ST_MakeEnvelope(?, ?, ?, ?, 4326))");
+      paramList.add(bbox.minLongitude());
+      paramList.add(bbox.minLatitude());
+      paramList.add(bbox.maxLongitude());
+      paramList.add(bbox.maxLatitude());
+    }
+
+    // ORDER BY
+    if (spatialFilter instanceof SpatialFilter.Nearby) {
+      sql.append(" ORDER BY \"_distance\"");
+    } else if (sortBy != null) {
+      if (isGeometry(sortBy, columnTypes)) {
+        sql.append(" ORDER BY id");
+      } else {
+        sql.append(" ORDER BY \"")
+            .append(sortBy)
+            .append("\" ")
+            .append(sortDir)
+            .append(" NULLS LAST, id ASC");
+      }
+    } else {
+      sql.append(" ORDER BY id");
+    }
+    sql.append(" LIMIT ").append(size);
+    sql.append(" OFFSET ").append(page * size);
+
+    Object[] params = paramList.toArray();
+    var result = params.length > 0 ? dsl.fetch(sql.toString(), params) : dsl.fetch(sql.toString());
+    List<Map<String, Object>> rows = new ArrayList<>();
+
+    for (var record : result) {
+      Map<String, Object> row = new HashMap<>();
+      for (int i = 0; i < record.size(); i++) {
+        String fieldName = record.field(i).getName();
+        if ("id".equals(fieldName)) {
+          row.put("_id", record.get(i));
+        } else {
+          row.put(fieldName, record.get(i));
+        }
+      }
+      rows.add(row);
+    }
+
+    return rows;
+  }
+
+  /** 기존 시그니처 유지 (하위 호환) */
+  public long countRows(
+      String tableName,
+      List<DatasetColumnResponse> columns,
+      Map<String, String> columnTypes,
+      String search) {
+    return countRows(tableName, columns, columnTypes, search, null);
+  }
+
+  /** 공간 필터를 포함한 countRows 오버로드 */
+  public long countRows(
+      String tableName,
+      List<DatasetColumnResponse> columns,
+      Map<String, String> columnTypes,
+      String search,
+      SpatialFilter spatialFilter) {
+    List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+    dataTableService.validateName(tableName);
+
+    // Resolve geometry column if spatial filter present
+    String geomCol = null;
+    if (spatialFilter != null) {
+      geomCol = resolveGeometryColumn(columns, columnTypes, spatialFilter.geometryColumn());
+    }
+
+    StringBuilder sql = new StringBuilder();
+    sql.append("SELECT COUNT(*) FROM data.\"").append(tableName).append("\"");
+
+    List<Object> paramList = new ArrayList<>();
+    boolean hasWhere = false;
+
+    // text search conditions
+    List<String> searchableColumns = new ArrayList<>();
+    if (search != null && !search.isBlank() && !columnNames.isEmpty()) {
+      for (String col : columnNames) {
+        if (!isGeometry(col, columnTypes)) {
+          searchableColumns.add(col);
+        }
+      }
+    }
+
+    if (!searchableColumns.isEmpty()) {
+      sql.append(" WHERE (");
+      for (int i = 0; i < searchableColumns.size(); i++) {
+        if (i > 0) sql.append(" OR ");
+        sql.append("CAST(\"")
+            .append(searchableColumns.get(i))
+            .append("\" AS TEXT) ILIKE ? ESCAPE '\\'");
+      }
+      sql.append(")");
+      String pattern = "%" + escapeIlike(search) + "%";
+      for (int i = 0; i < searchableColumns.size(); i++) {
+        paramList.add(pattern);
+      }
+      hasWhere = true;
+    }
+
+    // spatial conditions
+    if (spatialFilter instanceof SpatialFilter.Nearby nearby) {
+      sql.append(hasWhere ? " AND " : " WHERE ");
+      sql.append("ST_DWithin(\"")
+          .append(geomCol)
+          .append("\"::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)");
+      paramList.add(nearby.longitude());
+      paramList.add(nearby.latitude());
+      paramList.add(nearby.radiusMeters());
+    } else if (spatialFilter instanceof SpatialFilter.Bbox bbox) {
+      sql.append(hasWhere ? " AND " : " WHERE ");
+      sql.append("ST_Intersects(\"")
+          .append(geomCol)
+          .append("\", ST_MakeEnvelope(?, ?, ?, ?, 4326))");
+      paramList.add(bbox.minLongitude());
+      paramList.add(bbox.minLatitude());
+      paramList.add(bbox.maxLongitude());
+      paramList.add(bbox.maxLatitude());
+    }
+
+    Object[] params = paramList.toArray();
+    Long count =
+        params.length > 0
+            ? dsl.fetchOne(sql.toString(), params).get(0, Long.class)
+            : dsl.fetchOne(sql.toString()).get(0, Long.class);
+    return count != null ? count : 0L;
   }
 
   public long countRows(String tableName) {
@@ -833,7 +1094,9 @@ public class DataTableRowService {
     sql.append("UPDATE data.\"").append(tableName).append("\" SET ");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) sql.append(", ");
-      sql.append("\"").append(columns.get(i)).append("\" = ")
+      sql.append("\"")
+          .append(columns.get(i))
+          .append("\" = ")
           .append(insertPlaceholder(columns.get(i), columnTypes));
     }
     sql.append(" WHERE id = ?");

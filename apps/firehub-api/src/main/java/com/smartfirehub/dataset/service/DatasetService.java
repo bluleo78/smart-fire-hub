@@ -363,8 +363,7 @@ public class DatasetService {
     if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
-      String resolvedType =
-          request.dataType() != null ? request.dataType() : column.dataType();
+      String resolvedType = request.dataType() != null ? request.dataType() : column.dataType();
       dataTableService.setColumnIndex(
           dataset.tableName(), currentColName, request.isIndexed(), resolvedType);
     }

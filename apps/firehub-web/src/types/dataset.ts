@@ -37,7 +37,7 @@ export interface DatasetColumnResponse {
   id: number;
   columnName: string;
   displayName: string | null;
-  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP' | 'GEOMETRY';
   maxLength: number | null;
   isNullable: boolean;
   isIndexed: boolean;
@@ -80,7 +80,7 @@ export interface CreateDatasetRequest {
 export interface DatasetColumnRequest {
   columnName: string;
   displayName?: string;
-  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP' | 'GEOMETRY';
   maxLength?: number;
   isNullable: boolean;
   isIndexed: boolean;
@@ -97,7 +97,7 @@ export interface UpdateDatasetRequest {
 export interface AddColumnRequest {
   columnName: string;
   displayName?: string;
-  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
+  dataType: 'TEXT' | 'VARCHAR' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP' | 'GEOMETRY';
   maxLength?: number;
   isNullable: boolean;
   isIndexed: boolean;
@@ -228,5 +228,17 @@ export interface ApiImportResponse {
   pipelineId: number;
   executionId: number | null;
   triggerId: number | null;
+}
+
+// Phase 1-3: GeoJSON types (frontend conversion)
+export interface GeoJsonFeature {
+  type: 'Feature';
+  geometry: Record<string, unknown>;
+  properties: Record<string, unknown>;
+}
+
+export interface GeoJsonFeatureCollection {
+  type: 'FeatureCollection';
+  features: GeoJsonFeature[];
 }
 

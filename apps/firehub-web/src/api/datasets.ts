@@ -34,7 +34,14 @@ export const datasetsApi = {
     client.delete(`/datasets/${datasetId}/columns/${columnId}`),
   reorderColumns: (datasetId: number, columnIds: number[]) =>
     client.put(`/datasets/${datasetId}/columns/reorder`, { columnIds }),
-  getDatasetData: (datasetId: number, params: { search?: string; page?: number; size?: number; sortBy?: string; sortDir?: string; includeTotalCount?: boolean }) =>
+  getDatasetData: (datasetId: number, params: {
+    search?: string; page?: number; size?: number;
+    sortBy?: string; sortDir?: string; includeTotalCount?: boolean;
+    // Phase 1-2: spatial filter (optional)
+    spatialColumn?: string;
+    nearbyLon?: number; nearbyLat?: number; nearbyRadius?: number;
+    bboxMinLon?: number; bboxMinLat?: number; bboxMaxLon?: number; bboxMaxLat?: number;
+  }) =>
     client.get<DataQueryResponse>(`/datasets/${datasetId}/data`, { params }),
   deleteDataRows: (datasetId: number, rowIds: number[]) =>
     client.post<DataDeleteResponse>(`/datasets/${datasetId}/data/delete`, { rowIds }),

@@ -1,5 +1,8 @@
 package com.smartfirehub.dataset.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.BatchRowDataRequest;
 import com.smartfirehub.dataset.dto.BatchRowDataResponse;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
@@ -11,6 +14,7 @@ import com.smartfirehub.dataset.dto.QueryHistoryResponse;
 import com.smartfirehub.dataset.dto.RowCountResponse;
 import com.smartfirehub.dataset.dto.RowDataRequest;
 import com.smartfirehub.dataset.dto.RowDataResponse;
+import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.dto.SqlQueryRequest;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
@@ -18,9 +22,6 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -150,6 +151,19 @@ public class DatasetDataService {
       String sortBy,
       String sortDir,
       boolean includeTotalCount) {
+    return getDatasetData(datasetId, search, page, size, sortBy, sortDir, includeTotalCount, null);
+  }
+
+  @Transactional(readOnly = true)
+  public DataQueryResponse getDatasetData(
+      Long datasetId,
+      String search,
+      int page,
+      int size,
+      String sortBy,
+      String sortDir,
+      boolean includeTotalCount,
+      SpatialFilter spatialFilter) {
     DatasetResponse dataset =
         datasetRepository
             .findById(datasetId)
@@ -170,13 +184,22 @@ public class DatasetDataService {
 
     List<Map<String, Object>> rows =
         dataTableRowService.queryData(
-            dataset.tableName(), columnNames, search, page, size, sortBy, sortDir, columnTypes);
+            dataset.tableName(),
+            columns,
+            columnTypes,
+            search,
+            sortBy,
+            sortDir,
+            page,
+            size,
+            spatialFilter);
 
     long totalElements = -1;
     int totalPages = -1;
     if (includeTotalCount) {
       totalElements =
-          dataTableRowService.countRows(dataset.tableName(), columnNames, search, columnTypes);
+          dataTableRowService.countRows(
+              dataset.tableName(), columns, columnTypes, search, spatialFilter);
       totalPages = (int) Math.ceil((double) totalElements / size);
     }
 
@@ -474,8 +497,13 @@ public class DatasetDataService {
 
   private static final Set<String> VALID_GEOJSON_TYPES =
       Set.of(
-          "Point", "LineString", "Polygon",
-          "MultiPoint", "MultiLineString", "MultiPolygon", "GeometryCollection");
+          "Point",
+          "LineString",
+          "Polygon",
+          "MultiPoint",
+          "MultiLineString",
+          "MultiPolygon",
+          "GeometryCollection");
 
   private void validateGeoJson(String value) {
     if (value == null || value.isBlank()) return;

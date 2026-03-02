@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.controller;
 
 import com.smartfirehub.dataset.dto.*;
+import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetFavoriteService;
@@ -179,7 +180,16 @@ public class DatasetController {
       @RequestParam(defaultValue = "50") int size,
       @RequestParam(required = false) String sortBy,
       @RequestParam(defaultValue = "ASC") String sortDir,
-      @RequestParam(defaultValue = "true") boolean includeTotalCount) {
+      @RequestParam(defaultValue = "true") boolean includeTotalCount,
+      // ---- Phase 1-2: 공간 필터 (모두 선택적) ----
+      @RequestParam(required = false) String spatialColumn,
+      @RequestParam(required = false) Double nearbyLon,
+      @RequestParam(required = false) Double nearbyLat,
+      @RequestParam(required = false) Double nearbyRadius,
+      @RequestParam(required = false) Double bboxMinLon,
+      @RequestParam(required = false) Double bboxMinLat,
+      @RequestParam(required = false) Double bboxMaxLon,
+      @RequestParam(required = false) Double bboxMaxLat) {
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 200));
     String sanitizedSearch =
@@ -187,9 +197,31 @@ public class DatasetController {
     if (!"ASC".equalsIgnoreCase(sortDir) && !"DESC".equalsIgnoreCase(sortDir)) {
       sortDir = "ASC";
     }
+
+    // SpatialFilter 조립
+    SpatialFilter spatialFilter = null;
+    if (nearbyLon != null && nearbyLat != null && nearbyRadius != null) {
+      spatialFilter =
+          new SpatialFilter.Nearby(
+              spatialColumn, nearbyLon, nearbyLat, Math.max(1, Math.min(nearbyRadius, 100000)));
+    } else if (bboxMinLon != null
+        && bboxMinLat != null
+        && bboxMaxLon != null
+        && bboxMaxLat != null) {
+      spatialFilter =
+          new SpatialFilter.Bbox(spatialColumn, bboxMinLon, bboxMinLat, bboxMaxLon, bboxMaxLat);
+    }
+
     DataQueryResponse response =
         datasetDataService.getDatasetData(
-            id, sanitizedSearch, page, size, sortBy, sortDir.toUpperCase(), includeTotalCount);
+            id,
+            sanitizedSearch,
+            page,
+            size,
+            sortBy,
+            sortDir.toUpperCase(),
+            includeTotalCount,
+            spatialFilter);
     return ResponseEntity.ok(response);
   }
 

@@ -37,6 +37,7 @@ import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
 import { DatasetDataTab } from './tabs/DatasetDataTab';
 import { DatasetHistoryTab } from './tabs/DatasetHistoryTab';
 import { DatasetInfoTab } from './tabs/DatasetInfoTab';
+import { DatasetMapTab } from './tabs/DatasetMapTab';
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
@@ -126,6 +127,8 @@ export default function DatasetDetailPage() {
   const filteredTagSuggestions = allTags.filter(
     (t) => t.toLowerCase().includes(tagInput.toLowerCase()) && !dataset?.tags?.includes(t)
   );
+
+  const hasGeometry = dataset?.columns.some(c => c.dataType === 'GEOMETRY') ?? false;
 
   if (isLoading || !dataset) {
     return (
@@ -297,6 +300,7 @@ export default function DatasetDetailPage() {
           <TabsTrigger value="info">정보</TabsTrigger>
           <TabsTrigger value="columns">필드</TabsTrigger>
           <TabsTrigger value="data">데이터</TabsTrigger>
+          {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
           <TabsTrigger value="history">이력</TabsTrigger>
         </TabsList>
 
@@ -313,6 +317,11 @@ export default function DatasetDetailPage() {
         {activeTab === 'data' && (
           <div className="mt-6">
             <DatasetDataTab dataset={dataset} datasetId={datasetId} />
+          </div>
+        )}
+        {activeTab === 'map' && hasGeometry && (
+          <div className="mt-6">
+            <DatasetMapTab dataset={dataset} datasetId={datasetId} />
           </div>
         )}
         {activeTab === 'history' && (

@@ -27,10 +27,16 @@ export function useDataset(id: number) {
   });
 }
 
-export function useDatasetData(datasetId: number, params: { search?: string; size?: number; sortBy?: string; sortDir?: string }) {
-  const { search, size = 50, sortBy, sortDir } = params;
+export function useDatasetData(datasetId: number, params: {
+  search?: string; size?: number; sortBy?: string; sortDir?: string;
+  // Phase 1-2: spatial filter (optional)
+  spatialColumn?: string;
+  nearbyLon?: number; nearbyLat?: number; nearbyRadius?: number;
+  bboxMinLon?: number; bboxMinLat?: number; bboxMaxLon?: number; bboxMaxLat?: number;
+}) {
+  const { search, size = 50, sortBy, sortDir, spatialColumn, nearbyLon, nearbyLat, nearbyRadius, bboxMinLon, bboxMinLat, bboxMaxLon, bboxMaxLat } = params;
   return useInfiniteQuery({
-    queryKey: ['datasets', datasetId, 'data', { search, size, sortBy, sortDir }],
+    queryKey: ['datasets', datasetId, 'data', { search, size, sortBy, sortDir, spatialColumn, nearbyLon, nearbyLat, nearbyRadius, bboxMinLon, bboxMinLat, bboxMaxLon, bboxMaxLat }],
     queryFn: ({ pageParam = 0 }) =>
       datasetsApi.getDatasetData(datasetId, {
         search,
@@ -39,6 +45,14 @@ export function useDatasetData(datasetId: number, params: { search?: string; siz
         sortBy,
         sortDir,
         includeTotalCount: pageParam === 0,
+        spatialColumn,
+        nearbyLon,
+        nearbyLat,
+        nearbyRadius,
+        bboxMinLon,
+        bboxMinLat,
+        bboxMaxLon,
+        bboxMaxLat,
       }).then(r => r.data),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {

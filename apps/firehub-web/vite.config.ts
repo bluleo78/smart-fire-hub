@@ -49,6 +49,7 @@ export default defineConfig({
           ],
           'vendor-xyflow': ['@xyflow/react', '@dagrejs/dagre'],
           'vendor-markdown': ['react-markdown', 'remark-gfm'],
+          'vendor-maplibre': ['maplibre-gl'],
         },
       },
     },

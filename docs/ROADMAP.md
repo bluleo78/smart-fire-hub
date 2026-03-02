@@ -12,7 +12,7 @@
 | Phase | 상태 | 진행률 | 설명 |
 |-------|------|--------|------|
 | [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질 |
-| [Phase 1](#phase-1-gis-범용-기반) | **진행 중** | 2/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 |
+| [Phase 1](#phase-1-gis-범용-기반) | **진행 중** | 4/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 |
 | [Phase 2](#phase-2-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 3](#phase-3-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
 | [Phase 4](#phase-4-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
@@ -47,8 +47,8 @@
 |---|------|------|------|------|----------|
 | 1-0 | PostGIS 인프라 (Docker, Flyway, GEOMETRY CRUD) | ✅ | Backend | 없음 | PostGIS 확장 활성화 + GEOMETRY(Geometry,4326) 컬럼 CRUD + GeoJSON 입출력 + GiST 인덱스. 통합 테스트 20개 통과. |
 | 1-1 | DataTableService GEOMETRY 타입 CRUD | ✅ | Backend | 1-0 | GEOMETRY 컬럼이 있는 테이블 생성/조회/삽입/수정이 동작한다. GeoJSON 입력 → DB 저장 → GeoJSON 출력 왕복. (1-0에서 함께 구현) |
-| 1-2 | 공간 쿼리 API (nearby, bbox, geojson) | ⬜ | Backend | 1-1 | 좌표+반경 검색, 바운딩박스 검색, GeoJSON FeatureCollection 응답 API 3개 동작. |
-| 1-3 | MapLibre 지도 컴포넌트 | ⬜ | Frontend | 없음 | OSM 배경지도 위에 GeoJSON 데이터를 마커/폴리곤으로 렌더링. 마커 클릭 팝업. |
+| 1-2 | 공간 쿼리 API (nearby, bbox) | ✅ | Backend | 1-1 | 기존 GET /data에 spatialColumn/nearby/bbox 파라미터 통합. SpatialFilter sealed interface. SpatialQueryTest 14개 통과. |
+| 1-3 | MapLibre 지도 컴포넌트 | ✅ | Frontend | 없음 | OpenFreeMap Liberty 타일 + MapView/GeoJsonLayer/FeaturePopup 컴포넌트. 데이터셋 상세 "지도" 탭. 마커 클릭 팝업. E2E 검증 완료. |
 | 1-4 | MAP 차트 타입 | ⬜ | Backend + Frontend | 1-2, 1-3 | 대시보드에서 MAP 차트 위젯을 생성하고 GEOMETRY 데이터를 지도에 표시할 수 있다. |
 | 1-5 | 공간 쿼리 MCP 도구 | ⬜ | AI Agent | 1-2 | AI 채팅에서 "강남역 500m 이내 데이터 찾아줘" 같은 공간 쿼리 실행 가능. |
 

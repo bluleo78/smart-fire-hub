@@ -3,9 +3,9 @@ package com.smartfirehub.dataset.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
-import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -58,7 +58,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
 
     dataTableService.createTable(tableName, columns);
 
@@ -89,7 +90,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
 
     dataTableService.createTable(tableName, columns);
 
@@ -147,12 +149,12 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     assertThatThrownBy(
-            () ->
-                dataTableService.alterColumnType(tableName, "location", "TEXT", null, "GEOMETRY"))
+            () -> dataTableService.alterColumnType(tableName, "location", "TEXT", null, "GEOMETRY"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("GEOMETRY");
   }
@@ -167,16 +169,14 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
     Long id =
         dataTableRowService.insertRow(
-            tableName,
-            List.of("location"),
-            Map.of("location", GEOJSON_POINT),
-            columnTypes);
+            tableName, List.of("location"), Map.of("location", GEOJSON_POINT), columnTypes);
 
     assertThat(id).isNotNull().isPositive();
     long count = dataTableRowService.countRows(tableName);
@@ -195,10 +195,7 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     Map<String, String> columnTypes = Map.of("area", "GEOMETRY");
     Long id =
         dataTableRowService.insertRow(
-            tableName,
-            List.of("area"),
-            Map.of("area", GEOJSON_POLYGON),
-            columnTypes);
+            tableName, List.of("area"), Map.of("area", GEOJSON_POLYGON), columnTypes);
 
     assertThat(id).isNotNull().isPositive();
   }
@@ -215,10 +212,7 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     Map<String, String> columnTypes = Map.of("route", "GEOMETRY");
     Long id =
         dataTableRowService.insertRow(
-            tableName,
-            List.of("route"),
-            Map.of("route", GEOJSON_LINESTRING),
-            columnTypes);
+            tableName, List.of("route"), Map.of("route", GEOJSON_LINESTRING), columnTypes);
 
     assertThat(id).isNotNull().isPositive();
   }
@@ -229,18 +223,17 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
     dataTableRowService.insertRow(
-        tableName,
-        List.of("location"),
-        Map.of("location", GEOJSON_POINT),
-        columnTypes);
+        tableName, List.of("location"), Map.of("location", GEOJSON_POINT), columnTypes);
 
     List<Map<String, Object>> rows =
-        dataTableRowService.queryData(tableName, List.of("location"), null, 0, 10, null, "ASC", columnTypes);
+        dataTableRowService.queryData(
+            tableName, List.of("location"), null, 0, 10, null, "ASC", columnTypes);
 
     assertThat(rows).hasSize(1);
     Object locationValue = rows.get(0).get("location");
@@ -258,18 +251,17 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
     Long id =
         dataTableRowService.insertRow(
-            tableName,
-            List.of("location"),
-            Map.of("location", GEOJSON_POINT),
-            columnTypes);
+            tableName, List.of("location"), Map.of("location", GEOJSON_POINT), columnTypes);
 
-    Map<String, Object> row = dataTableRowService.getRow(tableName, List.of("location"), id, columnTypes);
+    Map<String, Object> row =
+        dataTableRowService.getRow(tableName, List.of("location"), id, columnTypes);
 
     String stored = (String) row.get("location");
     assertThat(stored).isNotNull();
@@ -284,23 +276,22 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
     Long id =
         dataTableRowService.insertRow(
-            tableName,
-            List.of("location"),
-            Map.of("location", GEOJSON_POINT),
-            columnTypes);
+            tableName, List.of("location"), Map.of("location", GEOJSON_POINT), columnTypes);
 
     // Update to polygon
     Map<String, Object> updateData = new HashMap<>();
     updateData.put("location", GEOJSON_POLYGON);
     dataTableRowService.updateRow(tableName, id, List.of("location"), updateData, columnTypes);
 
-    Map<String, Object> row = dataTableRowService.getRow(tableName, List.of("location"), id, columnTypes);
+    Map<String, Object> row =
+        dataTableRowService.getRow(tableName, List.of("location"), id, columnTypes);
     String stored = (String) row.get("location");
     assertThat(stored).isNotNull();
     assertThat(stored).contains("Polygon");
@@ -312,7 +303,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
@@ -333,18 +325,19 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
     Map<String, Object> rowData = new HashMap<>();
     rowData.put("location", null);
 
-    Long id =
-        dataTableRowService.insertRow(tableName, List.of("location"), rowData, columnTypes);
+    Long id = dataTableRowService.insertRow(tableName, List.of("location"), rowData, columnTypes);
     assertThat(id).isNotNull().isPositive();
 
-    Map<String, Object> row = dataTableRowService.getRow(tableName, List.of("location"), id, columnTypes);
+    Map<String, Object> row =
+        dataTableRowService.getRow(tableName, List.of("location"), id, columnTypes);
     assertThat(row.get("location")).isNull();
   }
 
@@ -370,8 +363,7 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
             Map.of("name", "Gwanghwamun", "location", GEOJSON_POINT),
             Map.of("name", "Area", "location", GEOJSON_POLYGON));
 
-    dataTableRowService.insertBatch(
-        tableName, List.of("name", "location"), rows, columnTypes);
+    dataTableRowService.insertBatch(tableName, List.of("name", "location"), rows, columnTypes);
 
     long count = dataTableRowService.countRows(tableName);
     assertThat(count).isEqualTo(2);
@@ -384,14 +376,14 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
 
     List<DatasetColumnRequest> columns =
         List.of(
-            new DatasetColumnRequest("place_id", "Place ID", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest(
+                "place_id", "Place ID", "TEXT", null, false, false, null, true),
             new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
 
-    List<Map<String, Object>> rows =
-        List.of(Map.of("place_id", "P001", "location", GEOJSON_POINT));
+    List<Map<String, Object>> rows = List.of(Map.of("place_id", "P001", "location", GEOJSON_POINT));
 
     DataTableRowService.UpsertResult result =
         dataTableRowService.upsertBatch(
@@ -466,21 +458,21 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     Map<String, String> columnTypes = Map.of("location", "GEOMETRY");
     dataTableRowService.insertBatch(
         tableName,
         List.of("location"),
-        List.of(
-            Map.of("location", GEOJSON_POINT),
-            Map.of("location", GEOJSON_POLYGON)),
+        List.of(Map.of("location", GEOJSON_POINT), Map.of("location", GEOJSON_POLYGON)),
         Map.of("location", "GEOMETRY"));
 
     List<DatasetColumnResponse> columnDefs =
         List.of(
-            new DatasetColumnResponse(1L, "location", "Location", "GEOMETRY", null, true, false, null, 0, false));
+            new DatasetColumnResponse(
+                1L, "location", "Location", "GEOMETRY", null, true, false, null, 0, false));
 
     List<ColumnStatsResponse> stats = dataTableService.getColumnStats(tableName, columnDefs);
 
@@ -521,8 +513,10 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
 
     List<DatasetColumnResponse> columnDefs =
         List.of(
-            new DatasetColumnResponse(1L, "name", "Name", "TEXT", null, true, false, null, 0, false),
-            new DatasetColumnResponse(2L, "location", "Location", "GEOMETRY", null, true, false, null, 1, false));
+            new DatasetColumnResponse(
+                1L, "name", "Name", "TEXT", null, true, false, null, 0, false),
+            new DatasetColumnResponse(
+                2L, "location", "Location", "GEOMETRY", null, true, false, null, 1, false));
 
     dataTableService.cloneTable(sourceTable, targetTable, List.of("name", "location"), columnDefs);
 
@@ -589,7 +583,8 @@ class DataTableServiceGeometryTest extends IntegrationTestBase {
     tablesToCleanup.add(tableName);
 
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
+        List.of(
+            new DatasetColumnRequest("location", "Location", "GEOMETRY", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
     dataTableRowService.insertBatch(
