@@ -15,7 +15,7 @@ interface MapChartViewProps {
   height?: number;
 }
 
-export function MapChartView({ config, data, height = 400 }: MapChartViewProps) {
+export function MapChartView({ config, data, height }: MapChartViewProps) {
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [selectedFeature, setSelectedFeature] = useState<GeoJsonFeature | null>(null);
 
@@ -32,7 +32,7 @@ export function MapChartView({ config, data, height = 400 }: MapChartViewProps) 
     return (
       <div
         className="flex items-center justify-center text-muted-foreground text-sm"
-        style={{ height }}
+        style={{ height: height ?? '100%' }}
       >
         공간 컬럼을 설정하세요.
       </div>
@@ -43,7 +43,7 @@ export function MapChartView({ config, data, height = 400 }: MapChartViewProps) 
     return (
       <div
         className="flex items-center justify-center text-muted-foreground text-sm"
-        style={{ height }}
+        style={{ height: height ?? '100%' }}
       >
         데이터가 없습니다.
       </div>
@@ -51,7 +51,7 @@ export function MapChartView({ config, data, height = 400 }: MapChartViewProps) 
   }
 
   return (
-    <div className="relative rounded-lg overflow-hidden" style={{ height }}>
+    <div className="relative rounded-lg overflow-hidden" style={{ height: height ?? '100%' }}>
       <MapView className="w-full h-full" onMapReady={setMapInstance} />
       {mapInstance && (
         <>

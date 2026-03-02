@@ -26,7 +26,7 @@ interface ScatterChartViewProps {
   height?: number;
 }
 
-export function ScatterChartView({ config, data, height = 300 }: ScatterChartViewProps) {
+export function ScatterChartView({ config, data, height }: ScatterChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, colors } = config;
   const palette = colors?.length ? colors : DEFAULT_COLORS;
 
@@ -60,7 +60,7 @@ export function ScatterChartView({ config, data, height = 300 }: ScatterChartVie
   }
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <ScatterChart margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
         {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
         <XAxis

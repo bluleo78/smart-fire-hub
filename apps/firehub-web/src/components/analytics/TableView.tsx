@@ -4,9 +4,9 @@ interface TableViewProps {
   height?: number;
 }
 
-export function TableView({ columns, data, height = 300 }: TableViewProps) {
+export function TableView({ columns, data, height }: TableViewProps) {
   return (
-    <div className="rounded-md border overflow-auto" style={{ maxHeight: height }}>
+    <div className="rounded-md border overflow-auto" style={{ maxHeight: height ?? '100%' }}>
       <table className="w-full text-sm border-collapse">
         <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
           <tr>

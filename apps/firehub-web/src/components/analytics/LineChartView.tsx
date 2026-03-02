@@ -28,12 +28,12 @@ interface LineChartViewProps {
   height?: number;
 }
 
-export function LineChartView({ config, data, height = 300 }: LineChartViewProps) {
+export function LineChartView({ config, data, height }: LineChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, colors } = config;
   const palette = colors?.length ? colors : DEFAULT_COLORS;
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
         {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
         <XAxis

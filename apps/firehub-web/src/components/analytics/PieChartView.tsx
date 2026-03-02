@@ -27,18 +27,19 @@ interface PieChartViewProps {
   height?: number;
 }
 
-export function PieChartView({ chartType, config, data, height = 300 }: PieChartViewProps) {
+export function PieChartView({ chartType, config, data, height }: PieChartViewProps) {
   const { xAxis, yAxis, showLegend = true, colors } = config;
   const palette = colors?.length ? colors : DEFAULT_COLORS;
 
   // Use first yAxis value as the value key; xAxis as name key
   const valueKey = yAxis[0] ?? '';
+  const numericHeight = typeof height === 'number' ? height : 300;
   const nameKey = xAxis;
 
   const isDonut = chartType === 'DONUT';
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <PieChart margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
         <Pie
           data={data}
@@ -47,7 +48,7 @@ export function PieChartView({ chartType, config, data, height = 300 }: PieChart
           cx="50%"
           cy="50%"
           innerRadius={isDonut ? 60 : 0}
-          outerRadius={Math.min(height / 2 - 40, 120)}
+          outerRadius={Math.min(numericHeight / 2 - 40, 120)}
           paddingAngle={2}
           label={({ name, percent }: { name?: string; percent?: number }) =>
             (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''

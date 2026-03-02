@@ -66,32 +66,44 @@ public class AnalyticsQueryExecutionService {
           limitedSql = limitedSql + " LIMIT " + maxRows;
         }
 
-        var result = dsl.fetch(limitedSql);
+        org.jooq.Result<?> result;
+        try {
+          result = dsl.fetch(limitedSql);
+        } catch (Exception fetchEx) {
+          // jOOQ/JDBC may fail to read raw GEOMETRY/GEOGRAPHY binary data.
+          // Rollback to savepoint, detect geometry columns via JDBC metadata, wrap with
+          // ST_AsGeoJSON, and retry.
+          dsl.execute("ROLLBACK TO SAVEPOINT analytics_query");
+          dsl.execute("SAVEPOINT analytics_query");
 
-        // Detect GEOMETRY/GEOGRAPHY columns and re-execute with ST_AsGeoJSON wrapping
+          List<ColumnMeta> columnMetas;
+          try {
+            columnMetas = detectColumnsViaMetadata(cleanSql);
+          } catch (Exception metaEx) {
+            throw fetchEx; // Metadata detection also failed — rethrow original
+          }
+
+          boolean hasGeometry = columnMetas.stream().anyMatch(ColumnMeta::isGeometry);
+          if (!hasGeometry) {
+            throw fetchEx; // Not a geometry issue — rethrow original
+          }
+
+          String wrappedSql = buildGeoJsonWrappedSql(cleanSql, columnMetas);
+          if (!cleanSql.toUpperCase().matches("(?s).*\\bLIMIT\\s+\\d+.*")) {
+            wrappedSql = wrappedSql + " LIMIT " + maxRows;
+          }
+          result = dsl.fetch(wrappedSql);
+        }
+
+        // Detect GEOMETRY/GEOGRAPHY columns from successfully fetched PGobject data
+        // (covers cases where JDBC read succeeded but data is raw binary)
         Set<String> geomColumns = detectGeometryColumns(result);
         if (!geomColumns.isEmpty()) {
-          StringBuilder sb = new StringBuilder("WITH _src AS (");
-          sb.append(cleanSql);
-          sb.append(") SELECT ");
-          boolean first = true;
+          List<ColumnMeta> metas = new ArrayList<>();
           for (var field : result.fields()) {
-            if (!first) sb.append(", ");
-            first = false;
-            String escaped = field.getName().replace("\"", "\"\"");
-            if (geomColumns.contains(field.getName())) {
-              // Qualify with public schema — search_path is set to 'data' only
-              sb.append("public.ST_AsGeoJSON(\"")
-                  .append(escaped)
-                  .append("\") AS \"")
-                  .append(escaped)
-                  .append("\"");
-            } else {
-              sb.append("\"").append(escaped).append("\"");
-            }
+            metas.add(new ColumnMeta(field.getName(), geomColumns.contains(field.getName())));
           }
-          sb.append(" FROM _src");
-          String wrappedSql = sb.toString();
+          String wrappedSql = buildGeoJsonWrappedSql(cleanSql, metas);
           if (!cleanSql.toUpperCase().matches("(?s).*\\bLIMIT\\s+\\d+.*")) {
             wrappedSql = wrappedSql + " LIMIT " + maxRows;
           }
@@ -226,6 +238,61 @@ public class AnalyticsQueryExecutionService {
       }
     }
     return geomColumns;
+  }
+
+  /** Column name + whether it is a GEOMETRY/GEOGRAPHY type. */
+  private record ColumnMeta(String name, boolean isGeometry) {}
+
+  /**
+   * Detect column names and geometry types via JDBC ResultSetMetaData using a LIMIT 0 query. This
+   * avoids reading actual row data, which can fail for GEOMETRY columns.
+   */
+  private List<ColumnMeta> detectColumnsViaMetadata(String sql) {
+    List<ColumnMeta> columns = new ArrayList<>();
+    String metaSql = "SELECT * FROM (" + sql + ") _geom_detect LIMIT 0";
+    dsl.connection(
+        conn -> {
+          try (var ps = conn.prepareStatement(metaSql);
+              var rs = ps.executeQuery()) {
+            var meta = rs.getMetaData();
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+              String typeName = meta.getColumnTypeName(i);
+              boolean isGeom =
+                  typeName != null
+                      && (typeName.equalsIgnoreCase("geometry")
+                          || typeName.equalsIgnoreCase("geography"));
+              columns.add(new ColumnMeta(meta.getColumnLabel(i), isGeom));
+            }
+          }
+        });
+    return columns;
+  }
+
+  /**
+   * Build a CTE-wrapped SQL that replaces GEOMETRY columns with public.ST_AsGeoJSON() calls. Does
+   * NOT append LIMIT — caller adds it if needed.
+   */
+  private String buildGeoJsonWrappedSql(String originalSql, List<ColumnMeta> columns) {
+    StringBuilder sb = new StringBuilder("WITH _src AS (");
+    sb.append(originalSql);
+    sb.append(") SELECT ");
+    boolean first = true;
+    for (var col : columns) {
+      if (!first) sb.append(", ");
+      first = false;
+      String escaped = col.name().replace("\"", "\"\"");
+      if (col.isGeometry()) {
+        sb.append("public.ST_AsGeoJSON(\"")
+            .append(escaped)
+            .append("\") AS \"")
+            .append(escaped)
+            .append("\"");
+      } else {
+        sb.append("\"").append(escaped).append("\"");
+      }
+    }
+    sb.append(" FROM _src");
+    return sb.toString();
   }
 
   private AnalyticsQueryResponse errorResponse(String message) {

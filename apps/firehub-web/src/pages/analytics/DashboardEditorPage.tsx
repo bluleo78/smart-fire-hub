@@ -66,10 +66,7 @@ function GridArea({ widgets, isEditing, layouts, onLayoutChange, onRemove }: Gri
         margin={[8, 8]}
       >
         {widgets.map((widget) => (
-          <div key={String(widget.id)} className="relative overflow-hidden">
-            {isEditing && (
-              <div className="drag-handle absolute top-0 left-0 right-8 h-8 cursor-grab active:cursor-grabbing z-10 bg-transparent" />
-            )}
+          <div key={String(widget.id)}>
             <DashboardWidgetCard
               widget={widget}
               isEditing={isEditing}
@@ -98,7 +95,7 @@ function widgetsToLayoutItems(widgets: DashboardWidget[]): LayoutItem[] {
 interface AddWidgetDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdd: (chartId: number) => void;
+  onAdd: (chartId: number, chartType?: string) => void;
   isPending: boolean;
 }
 
@@ -110,7 +107,8 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
 
   const handleConfirm = () => {
     if (selected !== null) {
-      onAdd(selected);
+      const selectedChart = charts.find((c) => c.id === selected);
+      onAdd(selected, selectedChart?.chartType);
     }
   };
 
@@ -177,7 +175,6 @@ export default function DashboardEditorPage() {
   const navigate = useNavigate();
 
   const { data: dashboard, isLoading, refetch } = useDashboard(dashboardId);
-  const { data: chartsData } = useCharts({ size: 100 });
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
@@ -262,23 +259,28 @@ export default function DashboardEditorPage() {
       try {
         await removeWidgetMutation.mutateAsync(widgetId);
         toast.success('위젯이 제거되었습니다.');
+        // Force layout sync after removal
+        const { data: updated } = await refetch();
+        if (updated) {
+          const items = widgetsToLayoutItems(updated.widgets);
+          setLocalLayouts({ lg: items, md: items, sm: items });
+        }
       } catch (error) {
         handleApiError(error, '위젯 제거에 실패했습니다.');
       }
     },
-    [removeWidgetMutation]
+    [removeWidgetMutation, refetch]
   );
 
   const handleAddWidget = useCallback(
-    async (chartId: number) => {
+    async (chartId: number, chartType?: string) => {
       if (!dashboard) return;
       const maxY = dashboard.widgets.reduce(
         (acc, w) => Math.max(acc, w.positionY + w.height),
         0
       );
       // MAP 차트는 전체 폭, 큰 높이로 배치
-      const selectedChart = chartsData?.content?.find((c) => c.id === chartId);
-      const isMapChart = selectedChart?.chartType === 'MAP';
+      const isMapChart = chartType === 'MAP';
       try {
         await addWidgetMutation.mutateAsync({
           chartId,
@@ -289,11 +291,18 @@ export default function DashboardEditorPage() {
         });
         toast.success('차트가 대시보드에 추가되었습니다.');
         setAddWidgetOpen(false);
+        // Force layout sync from server — in edit mode the automatic sync is skipped,
+        // so new widget dimensions wouldn't be picked up by react-grid-layout.
+        const { data: updated } = await refetch();
+        if (updated) {
+          const items = widgetsToLayoutItems(updated.widgets);
+          setLocalLayouts({ lg: items, md: items, sm: items });
+        }
       } catch (error) {
         handleApiError(error, '위젯 추가에 실패했습니다.');
       }
     },
-    [dashboard, chartsData, addWidgetMutation]
+    [dashboard, addWidgetMutation, refetch]
   );
 
   const handleExitEdit = () => {

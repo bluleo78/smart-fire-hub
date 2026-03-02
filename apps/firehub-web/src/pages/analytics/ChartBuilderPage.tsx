@@ -426,15 +426,15 @@ export default function ChartBuilderPage() {
       </div>
 
       {/* Main layout: config panel (left) + preview (right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 items-start">
         {/* Left: Config panel */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Query selection */}
-          <Card>
-            <CardHeader className="pb-3">
+          <Card className="py-3 gap-2">
+            <CardHeader className="px-4 pb-0">
               <CardTitle className="text-sm">데이터 소스</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="px-4 space-y-3">
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">저장된 쿼리</Label>
                 <Select
@@ -445,7 +445,7 @@ export default function ChartBuilderPage() {
                     setQueryRows([]);
                   }}
                 >
-                  <SelectTrigger className="h-8 text-sm">
+                  <SelectTrigger className="h-8 text-sm w-full truncate">
                     <SelectValue placeholder="쿼리 선택" />
                   </SelectTrigger>
                   <SelectContent>
@@ -480,21 +480,21 @@ export default function ChartBuilderPage() {
           </Card>
 
           {/* Chart type */}
-          <Card>
-            <CardHeader className="pb-3">
+          <Card className="py-3 gap-2">
+            <CardHeader className="px-4 pb-0">
               <CardTitle className="text-sm">차트 타입</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-4">
               <ChartTypeSelector value={chartType} onChange={handleChartTypeChange} />
             </CardContent>
           </Card>
 
           {/* Axis config */}
-          <Card>
-            <CardHeader className="pb-3">
+          <Card className="py-3 gap-2">
+            <CardHeader className="px-4 pb-0">
               <CardTitle className="text-sm">축 설정</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-4">
               {queryColumns.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   먼저 쿼리를 실행하여 컬럼을 불러오세요.
@@ -511,9 +511,9 @@ export default function ChartBuilderPage() {
           </Card>
         </div>
 
-        {/* Right: Preview */}
-        <Card className="min-h-[420px]">
-          <CardHeader className="pb-3">
+        {/* Right: Preview — sticky so it stays visible while scrolling config */}
+        <Card className="py-3 gap-2 overflow-hidden lg:sticky lg:top-4">
+          <CardHeader className="px-4 pb-0">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm">미리보기</CardTitle>
               {queryRows.length > 0 && (
@@ -524,23 +524,25 @@ export default function ChartBuilderPage() {
             </div>
           </CardHeader>
           <Separator />
-          <CardContent className="pt-4">
+          <CardContent className="px-0 pt-0">
             {queryColumns.length === 0 ? (
               <div
-                className="flex flex-col items-center justify-center text-muted-foreground gap-2"
-                style={{ height: 360 }}
+                className="flex flex-col items-center justify-center text-muted-foreground gap-2 px-4"
+                style={{ height: 400 }}
               >
                 <Play className="h-8 w-8 opacity-30" />
                 <p className="text-sm">쿼리를 실행하면 차트가 표시됩니다.</p>
               </div>
             ) : (
-              <ChartRenderer
-                chartType={chartType}
-                config={config}
-                data={queryRows}
-                columns={queryColumns}
-                height={360}
-              />
+              <div className="px-4 pt-3" style={{ height: 460 }}>
+                <ChartRenderer
+                  chartType={chartType}
+                  config={config}
+                  data={queryRows}
+                  columns={queryColumns}
+                  fillParent
+                />
+              </div>
             )}
           </CardContent>
         </Card>

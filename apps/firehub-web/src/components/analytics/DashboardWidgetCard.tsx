@@ -1,9 +1,10 @@
-import { Loader2,X } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 
-import { useChart,useChartData } from '../../hooks/queries/useAnalytics';
+import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import type { DashboardWidget } from '../../types/analytics';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Separator } from '../ui/separator';
 import { ChartRenderer } from './ChartRenderer';
 import { WidgetErrorBoundary } from './WidgetErrorBoundary';
 
@@ -41,29 +42,35 @@ function WidgetContent({ widget }: { widget: DashboardWidget }) {
       config={chartData.chart.config}
       data={chartData.queryResult.rows}
       columns={chartData.queryResult.columns}
-      height={undefined}
+      fillParent
     />
   );
 }
 
 export function DashboardWidgetCard({ widget, isEditing, onRemove }: DashboardWidgetCardProps) {
   return (
-    <Card className="h-full flex flex-col overflow-hidden">
-      <CardHeader className="py-2 px-3 shrink-0 flex-row items-center justify-between space-y-0 border-b">
-        <CardTitle className="text-sm font-medium truncate">{widget.chartName}</CardTitle>
-        {isEditing && onRemove && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0 ml-2 text-muted-foreground hover:text-destructive"
-            onClick={() => onRemove(widget.id)}
-            title="위젯 제거"
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        )}
+    <Card className="h-full py-2 gap-1 overflow-hidden">
+      <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-xs font-medium truncate">{widget.chartName}</CardTitle>
+          {isEditing && onRemove && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(widget.id);
+              }}
+              title="위젯 제거"
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
       </CardHeader>
-      <CardContent className="flex-1 p-2 min-h-0">
+      <Separator />
+      <CardContent className="px-3 pt-1 flex-1 min-h-0">
         <WidgetErrorBoundary widgetName={widget.chartName}>
           <WidgetContent widget={widget} />
         </WidgetErrorBoundary>

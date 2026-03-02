@@ -28,12 +28,12 @@ interface AreaChartViewProps {
   height?: number;
 }
 
-export function AreaChartView({ config, data, height = 300 }: AreaChartViewProps) {
+export function AreaChartView({ config, data, height }: AreaChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, stacked = false, colors } = config;
   const palette = colors?.length ? colors : DEFAULT_COLORS;
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <AreaChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
         {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
         <XAxis
