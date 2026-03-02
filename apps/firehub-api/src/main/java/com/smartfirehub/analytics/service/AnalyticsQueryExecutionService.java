@@ -52,7 +52,7 @@ public class AnalyticsQueryExecutionService {
 
     long startTime = System.currentTimeMillis();
 
-    dsl.execute("SET LOCAL search_path = 'data'");
+    dsl.execute("SET LOCAL search_path = 'data', 'public'");
     dsl.execute("SET LOCAL statement_timeout = '30s'");
     dsl.execute("SAVEPOINT analytics_query");
 
@@ -200,8 +200,8 @@ public class AnalyticsQueryExecutionService {
   }
 
   /**
-   * Detect GEOMETRY/GEOGRAPHY columns by inspecting PGobject type via reflection.
-   * PostgreSQL driver is runtime-only, so we cannot import PGobject directly.
+   * Detect GEOMETRY/GEOGRAPHY columns by inspecting PGobject type via reflection. PostgreSQL driver
+   * is runtime-only, so we cannot import PGobject directly.
    */
   private Set<String> detectGeometryColumns(org.jooq.Result<?> result) {
     Set<String> geomColumns = new LinkedHashSet<>();
@@ -213,7 +213,8 @@ public class AnalyticsQueryExecutionService {
       if (val != null && "org.postgresql.util.PGobject".equals(val.getClass().getName())) {
         try {
           String pgType = (String) val.getClass().getMethod("getType").invoke(val);
-          // PostGIS type can be "geometry", "geography", or schema-qualified like "public"."geometry"
+          // PostGIS type can be "geometry", "geography", or schema-qualified like
+          // "public"."geometry"
           if (pgType != null
               && (pgType.toLowerCase().contains("geometry")
                   || pgType.toLowerCase().contains("geography"))) {
