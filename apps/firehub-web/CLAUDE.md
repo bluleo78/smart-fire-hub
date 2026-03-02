@@ -38,7 +38,7 @@ src/
   pages/        # Route pages organized by domain
     data/       # Dataset CRUD, categories, import, SQL query
     pipeline/   # Pipeline editor (DAG canvas), triggers, executions
-    admin/      # User/role management, audit logs, AI settings, API connections
+    admin/      # User/role management, audit logs, settings, API connections
 ```
 
 ### Key Patterns
@@ -69,3 +69,7 @@ src/
 - Toast notifications via Sonner (`toast.success()`, `toast.error()`)
 - ESLint flat config with `typescript-eslint`, `react-hooks`, `react-refresh` plugins
 - Vite proxy forwards `/api` requests to backend at `localhost:8080` with SSE buffering disabled
+
+## Design System
+
+UI 작업(새 페이지, 컴포넌트 생성, 기존 UI 수정) 시 반드시 [`docs/design-system/`](../../docs/design-system/index.md)의 디자인 가이드라인을 참조하여 구현한다. 타이포그래피, 간격, 페이지 패턴, 폼 패턴, 피드백 상태, 색상 토큰 등 모든 UI 규칙은 해당 문서가 단일 원본(Single Source of Truth)이다.

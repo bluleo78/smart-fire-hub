@@ -1,5 +1,5 @@
 import { lazy,Suspense } from 'react';
-import { BrowserRouter, Route,Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
 import { AdminRoute } from './components/AdminRoute';
 import { AppLayout } from './components/layout/AppLayout';
@@ -18,7 +18,7 @@ const UserDetailPage = lazy(() => import('./pages/admin/UserDetailPage'));
 const RoleListPage = lazy(() => import('./pages/admin/RoleListPage'));
 const RoleDetailPage = lazy(() => import('./pages/admin/RoleDetailPage'));
 const AuditLogListPage = lazy(() => import('./pages/admin/AuditLogListPage'));
-const AISettingsPage = lazy(() => import('./pages/admin/AISettingsPage'));
+const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
 const ApiConnectionListPage = lazy(() => import('./pages/admin/ApiConnectionListPage'));
 const ApiConnectionDetailPage = lazy(() => import('./pages/admin/ApiConnectionDetailPage'));
 const CategoryListPage = lazy(() => import('./pages/data/CategoryListPage'));
@@ -76,7 +76,8 @@ function App() {
                 <Route path="/admin/roles" element={<RoleListPage />} />
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
                 <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
-                <Route path="/admin/ai-settings" element={<AISettingsPage />} />
+                <Route path="/admin/settings" element={<SettingsPage />} />
+                <Route path="/admin/ai-settings" element={<Navigate to="/admin/settings" replace />} />
                 <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
                 <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />
               </Route>
