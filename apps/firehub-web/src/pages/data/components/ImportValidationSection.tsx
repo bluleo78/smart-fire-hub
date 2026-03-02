@@ -50,9 +50,9 @@ export function ImportValidationSection({
           <div className="flex items-start gap-2">
             {validationResult.errorRows === 0 ? (
               <>
-                <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <CheckCircle2 className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
                 <div className="text-sm">
-                  <p className="font-medium text-green-600">검증 성공</p>
+                  <p className="font-medium text-success">검증 성공</p>
                   <p className="text-muted-foreground">
                     전체 {validationResult.totalRows.toLocaleString()}행 / 유효{' '}
                     {validationResult.validRows.toLocaleString()}행
@@ -61,9 +61,9 @@ export function ImportValidationSection({
               </>
             ) : (
               <>
-                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <AlertTriangle className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
                 <div className="text-sm">
-                  <p className="font-medium text-amber-600">검증 오류 발견</p>
+                  <p className="font-medium text-warning">검증 오류 발견</p>
                   <p className="text-muted-foreground">
                     전체 {validationResult.totalRows.toLocaleString()}행 / 유효{' '}
                     {validationResult.validRows.toLocaleString()}행 / 오류{' '}

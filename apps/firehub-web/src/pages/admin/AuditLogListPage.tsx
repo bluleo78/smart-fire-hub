@@ -89,7 +89,7 @@ export default function AuditLogListPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">감사 로그</h1>
+      <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">감사 로그</h1>
 
       <div className="flex flex-wrap items-center gap-4">
         <SearchInput
@@ -136,7 +136,7 @@ export default function AuditLogListPage() {
       </div>
 
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="감사 로그">
           <TableHeader>
             <TableRow>
               <TableHead>시간</TableHead>

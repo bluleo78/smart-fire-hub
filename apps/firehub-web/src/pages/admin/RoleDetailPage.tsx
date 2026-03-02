@@ -152,7 +152,7 @@ export default function RoleDetailPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/admin/roles')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-2xl font-bold">역할 상세</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">역할 상세</h1>
         {role.isSystem && (
           <Badge variant="outline">시스템 역할</Badge>
         )}

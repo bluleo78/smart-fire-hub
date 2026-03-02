@@ -123,8 +123,8 @@ export function ColumnDialog({
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           {mode === 'edit' && hasData && (
-            <div className="rounded-md bg-amber-50 border border-amber-200 p-3">
-              <p className="text-sm text-amber-800">
+            <div className="rounded-md bg-warning-subtle border border-warning/20 p-3">
+              <p className="text-sm text-warning">
                 데이터가 있는 경우 필드명, 데이터 타입, 길이, NULL 허용 여부는 변경할 수 없습니다.
               </p>
             </div>

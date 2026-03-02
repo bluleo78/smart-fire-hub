@@ -293,6 +293,7 @@ function AppLayoutInner() {
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground"
+                    aria-label="사이드바 접기"
                     onClick={toggleCollapsed}
                   >
                     <ChevronsLeft className="h-4 w-4" />
@@ -374,6 +375,7 @@ function AppLayoutInner() {
             variant="ghost"
             size="icon"
             className="lg:hidden"
+            aria-label={sidebarOpen ? '메뉴 닫기' : '메뉴 열기'}
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             {sidebarOpen ? (

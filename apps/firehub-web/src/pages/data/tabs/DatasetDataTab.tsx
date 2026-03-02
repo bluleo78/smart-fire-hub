@@ -185,7 +185,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
       )}
 
       <div className="flex items-center gap-4">
-        <h2 className="text-lg font-semibold">데이터 ({totalElements.toLocaleString()}행)</h2>
+        <h2 className="text-xl leading-7 font-semibold">데이터 ({totalElements.toLocaleString()}행)</h2>
       </div>
 
       <SelectionActionBar

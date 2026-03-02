@@ -125,7 +125,7 @@ export default function DatasetListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">데이터셋 관리</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">데이터셋 관리</h1>
         <Button asChild>
           <Link to="/data/datasets/new">
             <Plus className="mr-2 h-4 w-4" />
@@ -252,7 +252,7 @@ export default function DatasetListPage() {
       </div>
 
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="데이터셋 목록">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[32px]" />
@@ -278,6 +278,7 @@ export default function DatasetListPage() {
                   <TableCell onClick={(e) => e.stopPropagation()} className="pr-0">
                     <button
                       className="p-1 rounded hover:bg-muted transition-colors"
+                      aria-label={dataset.isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
                       onClick={(e) => handleToggleFavorite(e, dataset.id, dataset.name, dataset.isFavorite)}
                     >
                       <Star
@@ -295,12 +296,12 @@ export default function DatasetListPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span>{dataset.name}</span>
                       {dataset.status === 'CERTIFIED' && (
-                        <Badge className="bg-green-100 text-green-800 text-xs border-0">
+                        <Badge variant="success" className="text-xs">
                           ✓ Certified
                         </Badge>
                       )}
                       {dataset.status === 'DEPRECATED' && (
-                        <Badge className="bg-red-100 text-red-800 text-xs border-0">
+                        <Badge variant="destructive" className="text-xs">
                           Deprecated
                         </Badge>
                       )}
@@ -338,6 +339,7 @@ export default function DatasetListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="미리보기"
+                        aria-label="미리보기"
                         onClick={(e) => {
                           e.stopPropagation();
                           setPreviewDatasetId(dataset.id);
@@ -352,6 +354,7 @@ export default function DatasetListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="프로파일"
+                        aria-label="프로파일"
                         onClick={(e) => {
                           e.stopPropagation();
                           navigate(`/data/datasets/${dataset.id}?tab=data`);
@@ -364,6 +367,7 @@ export default function DatasetListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="CSV 내보내기"
+                        aria-label="CSV 내보내기"
                         onClick={(e) => handleExport(e, dataset.id, dataset.name)}
                       >
                         <Download size={14} />
@@ -379,6 +383,7 @@ export default function DatasetListPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          aria-label="삭제"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <Trash2 className="h-4 w-4" />

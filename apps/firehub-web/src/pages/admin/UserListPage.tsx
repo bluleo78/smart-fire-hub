@@ -38,7 +38,7 @@ export default function UserListPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">사용자 관리</h1>
+      <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">사용자 관리</h1>
 
       <SearchInput
         placeholder="이름 또는 아이디로 검색..."
@@ -47,7 +47,7 @@ export default function UserListPage() {
       />
 
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="사용자 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>

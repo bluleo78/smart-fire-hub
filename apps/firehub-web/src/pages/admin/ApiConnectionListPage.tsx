@@ -124,7 +124,7 @@ export default function ApiConnectionListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">API 연결 관리</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">API 연결 관리</h1>
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button>

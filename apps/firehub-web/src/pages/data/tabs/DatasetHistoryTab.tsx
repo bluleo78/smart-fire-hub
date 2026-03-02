@@ -23,7 +23,7 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">변경 이력</h2>
+      <h2 className="text-xl leading-7 font-semibold">변경 이력</h2>
       <div className="space-y-6">
         {sortedImports.length > 0 &&
           sortedImports.map((imp) => (

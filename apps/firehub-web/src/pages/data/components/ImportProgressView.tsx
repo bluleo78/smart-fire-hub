@@ -54,9 +54,9 @@ function StepIndicator({ stage, label, currentStage }: StepIndicatorProps) {
       <div
         className={[
           'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0',
-          state === 'done' ? 'bg-green-100 text-green-600' : '',
-          state === 'active' && !isFailed ? 'bg-blue-100 text-blue-600' : '',
-          state === 'active' && isFailed ? 'bg-red-100 text-red-600' : '',
+          state === 'done' ? 'bg-success-subtle text-success' : '',
+          state === 'active' && !isFailed ? 'bg-info-subtle text-info' : '',
+          state === 'active' && isFailed ? 'bg-destructive/10 text-destructive' : '',
           state === 'pending' ? 'bg-muted text-muted-foreground' : '',
         ].join(' ')}
       >
@@ -67,9 +67,9 @@ function StepIndicator({ stage, label, currentStage }: StepIndicatorProps) {
       </div>
       <span className={[
         'text-xs',
-        state === 'done' ? 'text-green-600 font-medium' : '',
-        state === 'active' && !isFailed ? 'text-blue-600 font-medium' : '',
-        state === 'active' && isFailed ? 'text-red-600 font-medium' : '',
+        state === 'done' ? 'text-success font-medium' : '',
+        state === 'active' && !isFailed ? 'text-info font-medium' : '',
+        state === 'active' && isFailed ? 'text-destructive font-medium' : '',
         state === 'pending' ? 'text-muted-foreground' : '',
       ].join(' ')}>
         {label}
@@ -87,7 +87,7 @@ function ProgressBar({ value }: ProgressBarProps) {
   return (
     <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
       <div
-        className="bg-blue-500 h-2.5 rounded-full transition-all duration-300"
+        className="bg-info h-2.5 rounded-full transition-all duration-300"
         style={{ width: `${clamped}%` }}
       />
     </div>
@@ -111,7 +111,7 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
   if (isPending || !progress) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-10">
-        <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+        <Loader2 className="w-10 h-10 animate-spin text-info" />
         <p className="text-sm text-muted-foreground">작업 대기 중...</p>
         <Button variant="outline" size="sm" onClick={onClose}>
           닫기
@@ -146,8 +146,8 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
 
       {/* Status message */}
       {stage === 'COMPLETED' && (
-        <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-green-700 font-medium">
+        <div className="rounded-md border border-success/20 bg-success-subtle p-4 space-y-2">
+          <div className="flex items-center gap-2 text-success font-medium">
             <CheckCircle2 className="w-5 h-5" />
             <span>임포트 완료</span>
           </div>
@@ -156,7 +156,7 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
               <p>전체: {progress.totalRows.toLocaleString()}행</p>
             )}
             {progress.successRows !== undefined && (
-              <p>성공: <span className="text-green-700 font-medium">{progress.successRows.toLocaleString()}행</span></p>
+              <p>성공: <span className="text-success font-medium">{progress.successRows.toLocaleString()}행</span></p>
             )}
             {progress.errorRows !== undefined && progress.errorRows > 0 && (
               <p>오류: <span className="text-destructive font-medium">{progress.errorRows.toLocaleString()}행</span></p>
@@ -166,13 +166,13 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
       )}
 
       {stage === 'FAILED' && (
-        <div className="rounded-md border border-red-200 bg-red-50 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-red-700 font-medium">
+        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-4 space-y-2">
+          <div className="flex items-center gap-2 text-destructive font-medium">
             <XCircle className="w-5 h-5" />
             <span>임포트 실패</span>
           </div>
           {progress.errorMessage && (
-            <p className="text-sm text-red-600 pl-7">{progress.errorMessage}</p>
+            <p className="text-sm text-destructive pl-7">{progress.errorMessage}</p>
           )}
         </div>
       )}

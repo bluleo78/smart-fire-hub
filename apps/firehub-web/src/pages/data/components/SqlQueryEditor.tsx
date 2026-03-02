@@ -169,7 +169,7 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2 p-3 rounded-md bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 text-sm">
+            <div className="flex items-center gap-2 p-3 rounded-md bg-success-subtle text-success text-sm">
               <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
               <span>
                 {result.affectedRows}행이 영향 받았습니다.

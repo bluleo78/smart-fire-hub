@@ -93,7 +93,7 @@ export default function RoleListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">역할 관리</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">역할 관리</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -137,7 +137,7 @@ export default function RoleListPage() {
       </div>
 
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="역할 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>

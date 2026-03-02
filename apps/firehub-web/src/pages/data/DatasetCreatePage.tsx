@@ -80,7 +80,7 @@ export default function DatasetCreatePage() {
   return (
     <div className="max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">데이터셋 생성</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">데이터셋 생성</h1>
       </div>
 
       <FormProvider {...form}>
@@ -88,7 +88,7 @@ export default function DatasetCreatePage() {
           toast.error('입력값을 확인해주세요. 필수 항목이 누락되었거나 형식이 올바르지 않습니다.');
         })} className="space-y-6">
           <Card className="p-6">
-            <h2 className="text-lg font-semibold mb-4">기본 정보</h2>
+            <h2 className="text-xl leading-7 font-semibold mb-4">기본 정보</h2>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <FormField
@@ -175,7 +175,7 @@ export default function DatasetCreatePage() {
           </Card>
 
           <Card className="p-6">
-            <h2 className="text-lg font-semibold mb-4">칼럼 정의</h2>
+            <h2 className="text-xl leading-7 font-semibold mb-4">칼럼 정의</h2>
             <SchemaBuilder />
           </Card>
 

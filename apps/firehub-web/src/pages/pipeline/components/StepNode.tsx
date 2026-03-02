@@ -166,7 +166,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             }}
             aria-label="다음 스텝 추가"
             title="다음 스텝 추가"
-            className="absolute -right-9 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-white text-gray-400 shadow-sm transition-colors hover:border-transparent hover:bg-gray-900 hover:text-white"
+            className="absolute -right-9 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-white text-muted-foreground shadow-sm transition-colors hover:border-transparent hover:bg-accent hover:text-accent-foreground"
           >
             <Plus className="h-3 w-3" />
           </button>
@@ -215,7 +215,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
                 }}
                 aria-label="스텝 삭제"
                 title="스텝 삭제"
-                className="flex h-5 w-5 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <X className="h-3 w-3" />
               </button>

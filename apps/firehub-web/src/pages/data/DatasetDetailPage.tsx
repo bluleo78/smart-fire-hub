@@ -159,15 +159,15 @@ export default function DatasetDetailPage() {
           </button>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold">{dataset.name}</h1>
+              <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">{dataset.name}</h1>
               {/* Status badge */}
               {dataset.status === 'CERTIFIED' && (
-                <Badge className="bg-green-100 text-green-800 border-0">
+                <Badge variant="success">
                   ✓ Certified
                 </Badge>
               )}
               {dataset.status === 'DEPRECATED' && (
-                <Badge className="bg-red-100 text-red-800 border-0">
+                <Badge variant="destructive">
                   Deprecated
                 </Badge>
               )}

@@ -20,7 +20,7 @@ export function LinkedPipelineStatus({ pipelines }: LinkedPipelineStatusProps) {
           >
             <span
               className={`inline-block w-1.5 h-1.5 rounded-full ${
-                pipeline.isActive ? 'bg-green-400' : 'bg-gray-400'
+                pipeline.isActive ? 'bg-success' : 'bg-muted-foreground'
               }`}
             />
             {pipeline.name}

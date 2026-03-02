@@ -180,7 +180,7 @@ export default function DashboardListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">대시보드</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">대시보드</h1>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           새 대시보드
@@ -215,7 +215,7 @@ export default function DashboardListPage() {
       </div>
 
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="대시보드 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -289,6 +289,7 @@ export default function DashboardListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="편집"
+                        aria-label="편집"
                         onClick={(e) => {
                           e.stopPropagation();
                           navigate(`/analytics/dashboards/${dashboard.id}`);
@@ -305,6 +306,7 @@ export default function DashboardListPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
+                            aria-label="삭제"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

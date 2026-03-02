@@ -73,7 +73,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">필드 목록 ({dataset.columns.length}개)</h2>
+        <h2 className="text-xl leading-7 font-semibold">필드 목록 ({dataset.columns.length}개)</h2>
         <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>
       </div>
 
@@ -123,7 +123,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                       <div className="flex items-center gap-1.5">
                         {col.isPrimaryKey && (
                           <span
-                            className="inline-flex items-center gap-0.5 text-amber-600"
+                            className="inline-flex items-center gap-0.5 text-warning"
                             title="기본 키"
                           >
                             <KeyRound className="h-3 w-3" />

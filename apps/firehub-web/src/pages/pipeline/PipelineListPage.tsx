@@ -44,7 +44,7 @@ export default function PipelineListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">파이프라인 관리</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">파이프라인 관리</h1>
         <Button asChild>
           <Link to="/pipelines/new">
             <Plus className="mr-2 h-4 w-4" />
@@ -54,7 +54,7 @@ export default function PipelineListPage() {
       </div>
 
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="파이프라인 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -99,7 +99,7 @@ export default function PipelineListPage() {
                       itemName={pipeline.name}
                       onConfirm={() => handleDelete(pipeline.id, pipeline.name)}
                       trigger={
-                        <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" aria-label="삭제">
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       }

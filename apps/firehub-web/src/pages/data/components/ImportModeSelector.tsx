@@ -48,7 +48,7 @@ export function ImportModeSelector({ importMode, hasPrimaryKey, onModeChange }: 
         </div>
       </RadioGroup>
       {importMode === 'REPLACE' && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle p-3 text-sm text-warning">
           <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
           <p className="text-xs">기존 데이터가 모두 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</p>
         </div>

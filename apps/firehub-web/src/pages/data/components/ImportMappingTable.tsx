@@ -39,7 +39,7 @@ export function ImportMappingTable({
     <div className="space-y-2">
       <h3 className="text-sm font-semibold">컬럼 매핑</h3>
       {hasUnmappedRequired && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle p-3 text-sm text-warning">
           <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
           <div>
             <p className="font-medium">필수 필드가 매핑되지 않았습니다:</p>

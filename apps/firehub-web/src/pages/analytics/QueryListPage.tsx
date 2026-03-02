@@ -106,7 +106,7 @@ export default function QueryListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">저장된 쿼리</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">저장된 쿼리</h1>
         <Button onClick={() => navigate('/analytics/queries/new')}>
           <Plus className="mr-2 h-4 w-4" />
           새 쿼리
@@ -160,7 +160,7 @@ export default function QueryListPage() {
 
       {/* Table */}
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="저장된 쿼리 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -247,6 +247,7 @@ export default function QueryListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="실행"
+                        aria-label="실행"
                         onClick={(e) => handleRun(e, query.id, query.name)}
                       >
                         <Play size={13} />
@@ -256,6 +257,7 @@ export default function QueryListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="편집"
+                        aria-label="편집"
                         onClick={(e) => {
                           e.stopPropagation();
                           navigate(`/analytics/queries/${query.id}`);
@@ -272,6 +274,7 @@ export default function QueryListPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
+                            aria-label="삭제"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

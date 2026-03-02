@@ -151,7 +151,7 @@ export default function AISettingsPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-center gap-3">
         <Bot className="h-6 w-6" />
-        <h1 className="text-2xl font-bold">AI 설정</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">AI 설정</h1>
       </div>
 
       <Card>

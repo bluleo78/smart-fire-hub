@@ -105,12 +105,12 @@ function ToolCallDisplay({ toolCall }: { toolCall: AIToolCall }) {
       <span className="font-medium">{label}</span>
       {detail && <span className="text-muted-foreground truncate">{detail}</span>}
       {hasResult && (
-        <span className="ml-auto shrink-0 text-green-600 dark:text-green-400">
+        <span className="ml-auto shrink-0 text-success">
           {resultSummary ?? '\u2713 \uC644\uB8CC'}
         </span>
       )}
       {!hasResult && (
-        <span className="ml-auto shrink-0 animate-pulse text-yellow-600 dark:text-yellow-400">
+        <span className="ml-auto shrink-0 animate-pulse text-warning">
           \uC2E4\uD589 \uC911...
         </span>
       )}

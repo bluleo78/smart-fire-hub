@@ -112,7 +112,7 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
       <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">트리거</h3>
+          <h3 className="text-xl leading-7 font-semibold">트리거</h3>
           <Button size="sm" onClick={() => setAddDialogOpen(true)}>
             <Plus className="mr-1 h-4 w-4" />
             트리거 추가

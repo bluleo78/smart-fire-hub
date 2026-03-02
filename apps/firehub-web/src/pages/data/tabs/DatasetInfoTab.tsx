@@ -126,7 +126,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       {/* Bottom Detail Section */}
       <Card className="p-6 mt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">기본 정보</h2>
+          <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
           {!isEditing && (
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Edit className="mr-2 h-4 w-4" />

@@ -13,7 +13,7 @@
 |-------|------|--------|------|
 | [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질 |
 | [Phase 1](#phase-1-gis-범용-기반) | **완료** | 6/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 + MAP 차트 |
-| [Phase 2](#phase-2-디자인-시스템) | 진행중 | 7/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
+| [Phase 2](#phase-2-디자인-시스템) | **완료** | 11/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
 | [Phase 3](#phase-3-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 4](#phase-4-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
@@ -55,7 +55,7 @@
 
 ---
 
-## Phase 2: 디자인 시스템 ⬜
+## Phase 2: 디자인 시스템 ✅
 
 > UI 일관성을 위한 디자인 시스템 가이드라인 수립 + 코드 적용.
 > **의존**: Phase 1 완료
@@ -77,10 +77,10 @@
 | 2-5 | UX Patterns (Feedback/Icon/Animation/Form) | ✅ | 문서 | Loading/Empty/Error/Toast + 아이콘 규칙 + 모션 가이드 + 폼 패턴. |
 | 2-6 | Accessibility + Dark Mode + Responsive | ✅ | 문서 | WCAG 2.2 AA 기준. 다크모드 갭 분석. 반응형 현황. |
 | 2-7 | Index + Migration Backlog | ✅ | 문서 | Quick Reference Card. P0~P3 마이그레이션 작업 목록. |
-| 2-8 | 시맨틱 Status 토큰 + Badge variant 확장 | ⬜ | Frontend | success/warning/info CSS 변수 + Badge variant 추가. 빌드 + 타입체크 통과. |
-| 2-9 | 하드코딩 색상 마이그레이션 | ⬜ | Frontend | 43건 시맨틱 토큰으로 교체. 다크모드 정상 동작. 스크린샷 비교. |
-| 2-10 | Typography 통일 | ⬜ | Frontend | 전체 페이지 As-Is→To-Be 리팩터링. 스크린샷 비교. |
-| 2-11 | 접근성 + 다크모드 개선 | ⬜ | Frontend | ARIA 속성 추가. 다크모드 페이지별 검증. |
+| 2-8 | 시맨틱 Status 토큰 + Badge variant 확장 | ✅ | Frontend | success/warning/info CSS 변수 9개 (Light+Dark). Badge variant 3종 추가. 빌드 + 타입체크 통과. |
+| 2-9 | 하드코딩 색상 마이그레이션 | ✅ | Frontend | 46건 시맨틱 토큰 교체 (16개 파일). 다크모드 정상. Playwright Light/Dark 스크린샷 검증. |
+| 2-10 | Typography 통일 | ✅ | Frontend | 페이지 타이틀 18개 + 섹션 헤더 7개 리팩터링. 빌드 + 스크린샷 검증. |
+| 2-11 | 접근성 + 다크모드 개선 | ✅ | Frontend | icon-only 버튼 aria-label 12건 + Table aria-label 8건. 다크모드 잔여 dark: 정리 확인. |
 
 ---
 
@@ -213,6 +213,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-02 | Phase 2 코드 적용 완료 (2-8~2-11). 시맨틱 Status 토큰 + 색상 마이그레이션 46건 + Typography 통일 25건 + 접근성 aria-label 20건. 41개 파일 변경. Phase 2 전체 완료. |
 | 2026-03-02 | Phase D-1/D-2를 Phase 2 (디자인 시스템)로 통합. Phase 번호 재부여 (기존 2→3, 3→4, 4→5, 5→6). |
 | 2026-03-02 | Phase D-1 (디자인 시스템 가이드라인), D-2 (코드 적용) 추가. Phase 1과 Phase 2 사이에 삽입. |
 | 2026-03-02 | Phase 1-4, 1-5 완료. MAP 차트 타입 (V30 마이그레이션, MapChartView, 자동추천, GEOMETRY→GeoJSON 자동변환). 공간 쿼리 AI 가이드. Phase 1 전체 완료. |

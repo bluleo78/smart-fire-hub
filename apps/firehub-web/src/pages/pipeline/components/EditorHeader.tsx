@@ -90,7 +90,7 @@ export function EditorHeader({
         )}
         {state.isDirty && (
           <span className="text-xs text-muted-foreground flex items-center gap-1 px-2">
-            <span className="text-gray-500">●</span>
+            <span className="text-muted-foreground">●</span>
             미저장 변경사항
           </span>
         )}

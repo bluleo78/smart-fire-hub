@@ -54,9 +54,9 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
       <div className="space-y-1.5">
         <Label>시크릿 키 (선택)</Label>
         {!isEditMode && (
-          <div className="rounded-md bg-amber-50 border border-amber-200 p-3 flex items-start gap-2 mb-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-            <p className="text-sm text-amber-800">
+          <div className="rounded-md bg-warning-subtle border border-warning/20 p-3 flex items-start gap-2 mb-2">
+            <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+            <p className="text-sm text-warning">
               시크릿 키는 생성 시 한 번만 설정할 수 있습니다. 이후에는 다시 볼 수 없습니다.
             </p>
           </div>

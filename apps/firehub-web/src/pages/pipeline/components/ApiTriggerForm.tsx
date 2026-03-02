@@ -47,9 +47,9 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
     <div className="space-y-4">
       {generatedToken && (
         <div className="space-y-2">
-          <div className="rounded-md bg-amber-50 border border-amber-200 p-3 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-            <div className="text-sm text-amber-800">
+          <div className="rounded-md bg-warning-subtle border border-warning/20 p-3 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+            <div className="text-sm text-warning">
               <p className="font-medium">이 토큰은 다시 볼 수 없습니다</p>
               <p className="mt-1">안전한 곳에 복사하여 저장하세요.</p>
             </div>

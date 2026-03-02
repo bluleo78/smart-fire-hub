@@ -87,7 +87,7 @@ export default function ChartListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">차트</h1>
+        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">차트</h1>
         <Button onClick={() => navigate('/analytics/charts/new')}>
           <Plus className="mr-2 h-4 w-4" />
           새 차트
@@ -122,7 +122,7 @@ export default function ChartListPage() {
 
       {/* Table */}
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="차트 목록">
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -191,6 +191,7 @@ export default function ChartListPage() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         title="편집"
+                        aria-label="편집"
                         onClick={(e) => {
                           e.stopPropagation();
                           navigate(`/analytics/charts/${chart.id}`);
@@ -207,6 +208,7 @@ export default function ChartListPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
+                            aria-label="삭제"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

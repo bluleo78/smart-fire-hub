@@ -142,30 +142,30 @@ function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse })
             <p className="text-muted-foreground text-xs font-medium">스텝 현황</p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-gray-900" />
+                <span className="h-2 w-2 rounded-full bg-foreground" />
                 <span>완료 {completed}/{total}</span>
               </div>
               {failed > 0 && (
                 <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-gray-500" />
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground" />
                   <span>실패 {failed}</span>
                 </div>
               )}
               {running > 0 && (
                 <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-gray-700" />
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/80" />
                   <span>실행 중 {running}</span>
                 </div>
               )}
               {pending > 0 && (
                 <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-gray-300" />
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
                   <span>대기 {pending}</span>
                 </div>
               )}
               {skipped > 0 && (
                 <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-gray-400" />
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/60" />
                   <span>건너뜀 {skipped}</span>
                 </div>
               )}
