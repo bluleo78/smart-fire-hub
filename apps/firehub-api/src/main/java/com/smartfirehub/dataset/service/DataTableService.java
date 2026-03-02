@@ -36,6 +36,7 @@ public class DataTableService {
       case "BOOLEAN" -> "BOOLEAN";
       case "DATE" -> "DATE";
       case "TIMESTAMP" -> "TIMESTAMP";
+      case "GEOMETRY" -> "GEOMETRY(Geometry, 4326)";
       default -> throw new IllegalArgumentException("Unknown data type: " + dataType);
     };
   }
@@ -75,16 +76,14 @@ public class DataTableService {
     // Create indexes for indexed columns
     for (DatasetColumnRequest col : columns) {
       if (col.isIndexed()) {
-        String indexName = "idx_" + tableName + "_" + col.columnName();
-        String indexSql =
-            "CREATE INDEX \""
-                + indexName
-                + "\" ON data.\""
-                + tableName
-                + "\" (\""
-                + col.columnName()
-                + "\")";
-        dsl.execute(indexSql);
+        createColumnIndex(tableName, col.columnName(), col.dataType());
+      }
+    }
+
+    // Auto-create GiST index for all GEOMETRY columns (even if not marked indexed)
+    for (DatasetColumnRequest col : columns) {
+      if ("GEOMETRY".equalsIgnoreCase(col.dataType()) && !col.isIndexed()) {
+        createGistIndex(tableName, col.columnName());
       }
     }
 
@@ -123,17 +122,52 @@ public class DataTableService {
     dsl.execute(sql.toString());
 
     if (column.isIndexed()) {
-      setColumnIndex(tableName, column.columnName(), true);
+      createColumnIndex(tableName, column.columnName(), column.dataType());
+    }
+
+    // Auto-create GiST index for GEOMETRY columns even if not explicitly indexed
+    if ("GEOMETRY".equalsIgnoreCase(column.dataType()) && !column.isIndexed()) {
+      createGistIndex(tableName, column.columnName());
     }
   }
 
   public void setColumnIndex(String tableName, String columnName, boolean indexed) {
+    setColumnIndex(tableName, columnName, indexed, null);
+  }
+
+  public void setColumnIndex(
+      String tableName, String columnName, boolean indexed, String columnType) {
     validateName(tableName);
     validateName(columnName);
 
     String indexName = "idx_" + tableName + "_" + columnName;
 
     if (indexed) {
+      if ("GEOMETRY".equalsIgnoreCase(columnType)) {
+        createGistIndex(tableName, columnName);
+      } else {
+        String sql =
+            "CREATE INDEX IF NOT EXISTS \""
+                + indexName
+                + "\" ON data.\""
+                + tableName
+                + "\" (\""
+                + columnName
+                + "\")";
+        dsl.execute(sql);
+      }
+    } else {
+      // Drop both B-tree and GiST index variants
+      dsl.execute("DROP INDEX IF EXISTS data.\"" + indexName + "\"");
+      dsl.execute("DROP INDEX IF EXISTS data.\"" + indexName + "_gist\"");
+    }
+  }
+
+  private void createColumnIndex(String tableName, String columnName, String dataType) {
+    if ("GEOMETRY".equalsIgnoreCase(dataType)) {
+      createGistIndex(tableName, columnName);
+    } else {
+      String indexName = "idx_" + tableName + "_" + columnName;
       String sql =
           "CREATE INDEX IF NOT EXISTS \""
               + indexName
@@ -143,10 +177,20 @@ public class DataTableService {
               + columnName
               + "\")";
       dsl.execute(sql);
-    } else {
-      String sql = "DROP INDEX IF EXISTS data.\"" + indexName + "\"";
-      dsl.execute(sql);
     }
+  }
+
+  private void createGistIndex(String tableName, String columnName) {
+    String indexName = "idx_" + tableName + "_" + columnName + "_gist";
+    String sql =
+        "CREATE INDEX IF NOT EXISTS \""
+            + indexName
+            + "\" ON data.\""
+            + tableName
+            + "\" USING GIST (\""
+            + columnName
+            + "\")";
+    dsl.execute(sql);
   }
 
   public void recreatePrimaryKeyIndex(String tableName, List<String> pkColumnNames) {
@@ -290,8 +334,24 @@ public class DataTableService {
 
   public void alterColumnType(
       String tableName, String columnName, String dataType, Integer maxLength) {
+    alterColumnType(tableName, columnName, dataType, maxLength, null);
+  }
+
+  public void alterColumnType(
+      String tableName,
+      String columnName,
+      String dataType,
+      Integer maxLength,
+      String currentDataType) {
     validateName(tableName);
     validateName(columnName);
+
+    // Block conversion to/from GEOMETRY (PostgreSQL cannot CAST to/from GEOMETRY)
+    if ("GEOMETRY".equalsIgnoreCase(dataType) || "GEOMETRY".equalsIgnoreCase(currentDataType)) {
+      throw new IllegalArgumentException(
+          "Cannot convert column type to/from GEOMETRY. Drop and recreate the column instead.");
+    }
+
     String newType = mapDataType(dataType, maxLength);
     String sql =
         "ALTER TABLE data.\""
@@ -372,6 +432,13 @@ public class DataTableService {
                 + "\" SET NOT NULL");
       }
     }
+
+    // Recreate GiST indexes for GEOMETRY columns (CTAS does not copy indexes)
+    for (DatasetColumnResponse col : columnDefs) {
+      if ("GEOMETRY".equalsIgnoreCase(col.dataType())) {
+        createGistIndex(targetTable, col.columnName());
+      }
+    }
   }
 
   private static final Set<String> NUMERIC_TYPES = Set.of("INTEGER", "DECIMAL");
@@ -397,6 +464,67 @@ public class DataTableService {
       validateName(col.columnName());
       String colName = col.columnName();
       String dataType = col.dataType();
+
+      if ("GEOMETRY".equalsIgnoreCase(dataType)) {
+        // GEOMETRY-specific stats: count, null count, bbox via ST_Extent, geometry type distribution
+        String geoStatsSql =
+            "SELECT COUNT(*) AS total,"
+                + " COUNT(*) FILTER (WHERE \""
+                + colName
+                + "\" IS NULL) AS null_count,"
+                + " COUNT(\""
+                + colName
+                + "\") AS non_null_count,"
+                + " ST_AsText(ST_Extent(\""
+                + colName
+                + "\")) AS bbox"
+                + " FROM "
+                + fromClause;
+        var geoRecord = dsl.fetchOne(geoStatsSql);
+
+        long total = geoRecord.get("total", Long.class);
+        long nullCount = geoRecord.get("null_count", Long.class);
+        double nullPercent = total > 0 ? (double) nullCount / total * 100.0 : 0.0;
+        long nonNullCount = geoRecord.get("non_null_count", Long.class);
+        String bbox = geoRecord.get("bbox", String.class);
+
+        // Get geometry type distribution as top values
+        String geoTypeSql =
+            "SELECT GeometryType(\""
+                + colName
+                + "\") AS val, COUNT(*) AS cnt"
+                + " FROM "
+                + fromClause
+                + " WHERE \""
+                + colName
+                + "\" IS NOT NULL"
+                + " GROUP BY GeometryType(\""
+                + colName
+                + "\")"
+                + " ORDER BY cnt DESC LIMIT 5";
+        var geoTopRecords = dsl.fetch(geoTypeSql);
+        List<ColumnStatsResponse.ValueCount> topValues = new ArrayList<>();
+        for (var rec : geoTopRecords) {
+          String val = rec.get("val", String.class);
+          long cnt = rec.get("cnt", Long.class);
+          topValues.add(new ColumnStatsResponse.ValueCount(val, cnt));
+        }
+
+        result.add(
+            new ColumnStatsResponse(
+                colName,
+                dataType,
+                total,
+                nullCount,
+                nullPercent,
+                nonNullCount,
+                bbox,
+                null,
+                null,
+                topValues,
+                sampled));
+        continue;
+      }
 
       // Build aggregate stats query
       StringBuilder statsSql = new StringBuilder();

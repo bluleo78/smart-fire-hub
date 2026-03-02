@@ -155,6 +155,10 @@ public class DataValidationService {
         }
         yield timestamp;
       }
+      case "GEOMETRY" -> {
+        // GeoJSON string — pass through as-is (PostGIS will validate on INSERT)
+        yield value;
+      }
       default -> throw new Exception("Unknown data type: " + dataType);
     };
   }

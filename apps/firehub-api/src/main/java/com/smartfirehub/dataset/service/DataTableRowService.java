@@ -29,9 +29,31 @@ public class DataTableRowService {
     this.dataTableService = dataTableService;
   }
 
+  // --- GEOMETRY helpers ---
+
+  private static boolean isGeometry(String colName, Map<String, String> columnTypes) {
+    return columnTypes != null && "GEOMETRY".equalsIgnoreCase(columnTypes.get(colName));
+  }
+
+  /** Returns ST_AsGeoJSON("col") AS "col" for GEOMETRY, otherwise "col". */
+  private static String selectExpr(String colName, Map<String, String> columnTypes) {
+    if (isGeometry(colName, columnTypes)) {
+      return "ST_AsGeoJSON(\"" + colName + "\") AS \"" + colName + "\"";
+    }
+    return "\"" + colName + "\"";
+  }
+
+  /** Returns ST_SetSRID(ST_GeomFromGeoJSON(?), 4326) for GEOMETRY, otherwise ?. */
+  private static String insertPlaceholder(String colName, Map<String, String> columnTypes) {
+    if (isGeometry(colName, columnTypes)) {
+      return "ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)";
+    }
+    return "?";
+  }
+
   public List<Map<String, Object>> queryData(
       String tableName, List<String> columns, String search, int page, int size) {
-    return queryData(tableName, columns, search, page, size, null, "ASC");
+    return queryData(tableName, columns, search, page, size, null, "ASC", null);
   }
 
   public List<Map<String, Object>> queryData(
@@ -42,6 +64,18 @@ public class DataTableRowService {
       int size,
       String sortBy,
       String sortDir) {
+    return queryData(tableName, columns, search, page, size, sortBy, sortDir, null);
+  }
+
+  public List<Map<String, Object>> queryData(
+      String tableName,
+      List<String> columns,
+      String search,
+      int page,
+      int size,
+      String sortBy,
+      String sortDir,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -57,19 +91,24 @@ public class DataTableRowService {
     } else {
       for (int i = 0; i < columns.size(); i++) {
         if (i > 0) sql.append(", ");
-        sql.append("\"").append(columns.get(i)).append("\"");
+        sql.append(selectExpr(columns.get(i), columnTypes));
       }
     }
     sql.append(" FROM data.\"").append(tableName).append("\"");
 
-    Object[] params = buildSearchWhereClause(sql, columns, search);
+    Object[] params = buildSearchWhereClause(sql, columns, search, columnTypes);
 
     if (sortBy != null) {
-      sql.append(" ORDER BY \"")
-          .append(sortBy)
-          .append("\" ")
-          .append(sortDir)
-          .append(" NULLS LAST, id ASC");
+      // Skip sorting on GEOMETRY columns (not orderable)
+      if (isGeometry(sortBy, columnTypes)) {
+        sql.append(" ORDER BY id");
+      } else {
+        sql.append(" ORDER BY \"")
+            .append(sortBy)
+            .append("\" ")
+            .append(sortDir)
+            .append(" NULLS LAST, id ASC");
+      }
     } else {
       sql.append(" ORDER BY id");
     }
@@ -100,12 +139,17 @@ public class DataTableRowService {
   }
 
   public long countRows(String tableName, List<String> columns, String search) {
+    return countRows(tableName, columns, search, null);
+  }
+
+  public long countRows(
+      String tableName, List<String> columns, String search, Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
 
     StringBuilder sql = new StringBuilder();
     sql.append("SELECT COUNT(*) FROM data.\"").append(tableName).append("\"");
 
-    Object[] params = buildSearchWhereClause(sql, columns, search);
+    Object[] params = buildSearchWhereClause(sql, columns, search, columnTypes);
 
     Long count =
         params.length > 0
@@ -114,21 +158,36 @@ public class DataTableRowService {
     return count != null ? count : 0L;
   }
 
-  private Object[] buildSearchWhereClause(StringBuilder sql, List<String> columns, String search) {
+  private Object[] buildSearchWhereClause(
+      StringBuilder sql, List<String> columns, String search, Map<String, String> columnTypes) {
     if (search == null || search.isBlank() || columns.isEmpty()) {
       return new Object[0];
     }
 
+    // Filter out GEOMETRY columns (not searchable via ILIKE)
+    List<String> searchableColumns = new ArrayList<>();
+    for (String col : columns) {
+      if (!isGeometry(col, columnTypes)) {
+        searchableColumns.add(col);
+      }
+    }
+
+    if (searchableColumns.isEmpty()) {
+      return new Object[0];
+    }
+
     sql.append(" WHERE (");
-    for (int i = 0; i < columns.size(); i++) {
+    for (int i = 0; i < searchableColumns.size(); i++) {
       if (i > 0) sql.append(" OR ");
-      sql.append("CAST(\"").append(columns.get(i)).append("\" AS TEXT) ILIKE ? ESCAPE '\\'");
+      sql.append("CAST(\"")
+          .append(searchableColumns.get(i))
+          .append("\" AS TEXT) ILIKE ? ESCAPE '\\'");
     }
     sql.append(")");
 
     String pattern = "%" + escapeIlike(search) + "%";
-    Object[] params = new Object[columns.size()];
-    for (int i = 0; i < columns.size(); i++) {
+    Object[] params = new Object[searchableColumns.size()];
+    for (int i = 0; i < searchableColumns.size(); i++) {
       params[i] = pattern;
     }
     return params;
@@ -187,6 +246,14 @@ public class DataTableRowService {
   }
 
   public void insertBatch(String tableName, List<String> columns, List<Map<String, Object>> rows) {
+    insertBatch(tableName, columns, rows, (Map<String, String>) null);
+  }
+
+  public void insertBatch(
+      String tableName,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -205,7 +272,14 @@ public class DataTableRowService {
     }
     baseSql.append(") VALUES ");
 
-    String placeholders = "(" + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+    // Build placeholders with GEOMETRY-aware expressions
+    StringBuilder ph = new StringBuilder("(");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
 
     // Batch in chunks of 500 rows
     int batchSize = 500;
@@ -235,6 +309,15 @@ public class DataTableRowService {
       List<String> columns,
       List<Map<String, Object>> rows,
       BiConsumer<Integer, Integer> progressCallback) {
+    insertBatchWithProgress(tableName, columns, rows, progressCallback, null);
+  }
+
+  public void insertBatchWithProgress(
+      String tableName,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      BiConsumer<Integer, Integer> progressCallback,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -253,7 +336,13 @@ public class DataTableRowService {
     }
     baseSql.append(") VALUES ");
 
-    String placeholders = "(" + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+    StringBuilder ph = new StringBuilder("(");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
 
     int totalRows = rows.size();
     int batchSize = 500;
@@ -289,6 +378,15 @@ public class DataTableRowService {
 
   public void insertBatch(
       String tableName, List<String> columns, List<Map<String, Object>> rows, Long importId) {
+    insertBatch(tableName, columns, rows, importId, null);
+  }
+
+  public void insertBatch(
+      String tableName,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      Long importId,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -307,8 +405,14 @@ public class DataTableRowService {
     }
     baseSql.append(") VALUES ");
 
-    // import_id placeholder + column placeholders
-    String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+    // import_id placeholder + column placeholders (GEOMETRY-aware)
+    StringBuilder ph = new StringBuilder("(?, ");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
 
     int batchSize = 500;
     for (int start = 0; start < rows.size(); start += batchSize) {
@@ -339,6 +443,16 @@ public class DataTableRowService {
       List<Map<String, Object>> rows,
       Long importId,
       BiConsumer<Integer, Integer> progressCallback) {
+    insertBatchWithProgress(tableName, columns, rows, importId, progressCallback, null);
+  }
+
+  public void insertBatchWithProgress(
+      String tableName,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      Long importId,
+      BiConsumer<Integer, Integer> progressCallback,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -357,8 +471,13 @@ public class DataTableRowService {
     }
     baseSql.append(") VALUES ");
 
-    // import_id placeholder + column placeholders
-    String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+    StringBuilder ph = new StringBuilder("(?, ");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
 
     int totalRows = rows.size();
     int batchSize = 500;
@@ -411,6 +530,16 @@ public class DataTableRowService {
       List<String> pkColumns,
       List<Map<String, Object>> rows,
       Long importId) {
+    return upsertBatch(tableName, columns, pkColumns, rows, importId, null);
+  }
+
+  public UpsertResult upsertBatch(
+      String tableName,
+      List<String> columns,
+      List<String> pkColumns,
+      List<Map<String, Object>> rows,
+      Long importId,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -452,8 +581,14 @@ public class DataTableRowService {
       insertCols.append("\"").append(columns.get(i)).append("\"");
     }
 
-    // Placeholders: import_id + columns
-    String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+    // Placeholders: import_id + columns (GEOMETRY-aware)
+    StringBuilder ph = new StringBuilder("(?, ");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
 
     String sqlTemplate =
         "INSERT INTO data.\""
@@ -514,6 +649,18 @@ public class DataTableRowService {
       List<Map<String, Object>> rows,
       Long importId,
       BiConsumer<Integer, Integer> progressCallback) {
+    return upsertBatchWithProgress(
+        tableName, columns, pkColumns, rows, importId, progressCallback, null);
+  }
+
+  public UpsertResult upsertBatchWithProgress(
+      String tableName,
+      List<String> columns,
+      List<String> pkColumns,
+      List<Map<String, Object>> rows,
+      Long importId,
+      BiConsumer<Integer, Integer> progressCallback,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -551,7 +698,13 @@ public class DataTableRowService {
       insertCols.append("\"").append(columns.get(i)).append("\"");
     }
 
-    String placeholders = "(?, " + "?, ".repeat(Math.max(0, columns.size() - 1)) + "?)";
+    StringBuilder ph = new StringBuilder("(?, ");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
 
     String sqlTemplate =
         "INSERT INTO data.\""
@@ -625,6 +778,14 @@ public class DataTableRowService {
   }
 
   public Long insertRow(String tableName, List<String> columns, Map<String, Object> row) {
+    return insertRow(tableName, columns, row, null);
+  }
+
+  public Long insertRow(
+      String tableName,
+      List<String> columns,
+      Map<String, Object> row,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -639,7 +800,7 @@ public class DataTableRowService {
     sql.append(") VALUES (");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) sql.append(", ");
-      sql.append("?");
+      sql.append(insertPlaceholder(columns.get(i), columnTypes));
     }
     sql.append(") RETURNING id");
 
@@ -654,6 +815,15 @@ public class DataTableRowService {
 
   public void updateRow(
       String tableName, long rowId, List<String> columns, Map<String, Object> row) {
+    updateRow(tableName, rowId, columns, row, null);
+  }
+
+  public void updateRow(
+      String tableName,
+      long rowId,
+      List<String> columns,
+      Map<String, Object> row,
+      Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -663,7 +833,8 @@ public class DataTableRowService {
     sql.append("UPDATE data.\"").append(tableName).append("\" SET ");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) sql.append(", ");
-      sql.append("\"").append(columns.get(i)).append("\" = ?");
+      sql.append("\"").append(columns.get(i)).append("\" = ")
+          .append(insertPlaceholder(columns.get(i), columnTypes));
     }
     sql.append(" WHERE id = ?");
 
@@ -680,6 +851,11 @@ public class DataTableRowService {
   }
 
   public Map<String, Object> getRow(String tableName, List<String> columns, long rowId) {
+    return getRow(tableName, columns, rowId, null);
+  }
+
+  public Map<String, Object> getRow(
+      String tableName, List<String> columns, long rowId, Map<String, String> columnTypes) {
     dataTableService.validateName(tableName);
     for (String col : columns) {
       dataTableService.validateName(col);
@@ -689,7 +865,7 @@ public class DataTableRowService {
     sql.append("SELECT id, ");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) sql.append(", ");
-      sql.append("\"").append(columns.get(i)).append("\"");
+      sql.append(selectExpr(columns.get(i), columnTypes));
     }
     sql.append(", created_at FROM data.\"").append(tableName).append("\" WHERE id = ?");
 

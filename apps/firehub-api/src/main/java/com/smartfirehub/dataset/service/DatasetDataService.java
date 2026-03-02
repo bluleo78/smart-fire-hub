@@ -18,6 +18,9 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,6 +29,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +42,7 @@ public class DatasetDataService {
   private final DataTableRowService dataTableRowService;
   private final DataTableQueryService dataTableQueryService;
   private final QueryHistoryRepository queryHistoryRepository;
+  private final ObjectMapper objectMapper;
 
   public DatasetDataService(
       DatasetRepository datasetRepository,
@@ -45,13 +50,15 @@ public class DatasetDataService {
       DataTableService dataTableService,
       DataTableRowService dataTableRowService,
       DataTableQueryService dataTableQueryService,
-      QueryHistoryRepository queryHistoryRepository) {
+      QueryHistoryRepository queryHistoryRepository,
+      ObjectMapper objectMapper) {
     this.datasetRepository = datasetRepository;
     this.columnRepository = columnRepository;
     this.dataTableService = dataTableService;
     this.dataTableRowService = dataTableRowService;
     this.dataTableQueryService = dataTableQueryService;
     this.queryHistoryRepository = queryHistoryRepository;
+    this.objectMapper = objectMapper;
   }
 
   @Transactional(readOnly = true)
@@ -110,10 +117,11 @@ public class DatasetDataService {
     }
 
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+    Map<String, String> columnTypes = buildColumnTypes(columns);
 
     // Atomic: truncate then insert in same transaction
     dataTableRowService.truncateTable(dataset.tableName());
-    dataTableRowService.insertBatch(dataset.tableName(), columnNames, validatedRows);
+    dataTableRowService.insertBatch(dataset.tableName(), columnNames, validatedRows, columnTypes);
 
     return new BatchRowDataResponse(validatedRows.size());
   }
@@ -158,14 +166,17 @@ public class DatasetDataService {
       sortBy = null;
     }
 
+    Map<String, String> columnTypes = buildColumnTypes(columns);
+
     List<Map<String, Object>> rows =
         dataTableRowService.queryData(
-            dataset.tableName(), columnNames, search, page, size, sortBy, sortDir);
+            dataset.tableName(), columnNames, search, page, size, sortBy, sortDir, columnTypes);
 
     long totalElements = -1;
     int totalPages = -1;
     if (includeTotalCount) {
-      totalElements = dataTableRowService.countRows(dataset.tableName(), columnNames, search);
+      totalElements =
+          dataTableRowService.countRows(dataset.tableName(), columnNames, search, columnTypes);
       totalPages = (int) Math.ceil((double) totalElements / size);
     }
 
@@ -220,11 +231,13 @@ public class DatasetDataService {
     Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
 
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
-    Long newId = dataTableRowService.insertRow(dataset.tableName(), columnNames, validatedData);
+    Map<String, String> columnTypes = buildColumnTypes(columns);
+    Long newId =
+        dataTableRowService.insertRow(dataset.tableName(), columnNames, validatedData, columnTypes);
 
     // Return the newly inserted row
     Map<String, Object> rowData =
-        dataTableRowService.getRow(dataset.tableName(), columnNames, newId);
+        dataTableRowService.getRow(dataset.tableName(), columnNames, newId, columnTypes);
     Map<String, Object> data = new LinkedHashMap<>();
     LocalDateTime createdAt = null;
     for (var entry : rowData.entrySet()) {
@@ -262,8 +275,9 @@ public class DatasetDataService {
     }
 
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+    Map<String, String> columnTypes = buildColumnTypes(columns);
 
-    dataTableRowService.insertBatch(dataset.tableName(), columnNames, validatedRows);
+    dataTableRowService.insertBatch(dataset.tableName(), columnNames, validatedRows, columnTypes);
 
     return new BatchRowDataResponse(validatedRows.size());
   }
@@ -279,7 +293,9 @@ public class DatasetDataService {
     Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
 
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
-    dataTableRowService.updateRow(dataset.tableName(), rowId, columnNames, validatedData);
+    Map<String, String> columnTypes = buildColumnTypes(columns);
+    dataTableRowService.updateRow(
+        dataset.tableName(), rowId, columnNames, validatedData, columnTypes);
   }
 
   @Transactional(readOnly = true)
@@ -291,9 +307,10 @@ public class DatasetDataService {
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+    Map<String, String> columnTypes = buildColumnTypes(columns);
 
     Map<String, Object> rowData =
-        dataTableRowService.getRow(dataset.tableName(), columnNames, rowId);
+        dataTableRowService.getRow(dataset.tableName(), columnNames, rowId, columnTypes);
     Map<String, Object> data = new LinkedHashMap<>();
     Long id = null;
     LocalDateTime createdAt = null;
@@ -435,7 +452,47 @@ public class DatasetDataService {
         }
         throw new IllegalArgumentException("Expected timestamp string");
       }
+      case "GEOMETRY" -> {
+        if (!(value instanceof String s)) {
+          throw new IllegalArgumentException("Expected GeoJSON string");
+        }
+        validateGeoJson(s);
+        yield s;
+      }
       default -> throw new IllegalArgumentException("Unknown data type: " + col.dataType());
     };
+  }
+
+  /** Builds a column name → data type map from column metadata. */
+  private static Map<String, String> buildColumnTypes(List<DatasetColumnResponse> columns) {
+    Map<String, String> types = new HashMap<>();
+    for (DatasetColumnResponse col : columns) {
+      types.put(col.columnName(), col.dataType());
+    }
+    return types;
+  }
+
+  private static final Set<String> VALID_GEOJSON_TYPES =
+      Set.of(
+          "Point", "LineString", "Polygon",
+          "MultiPoint", "MultiLineString", "MultiPolygon", "GeometryCollection");
+
+  private void validateGeoJson(String value) {
+    if (value == null || value.isBlank()) return;
+    try {
+      JsonNode node = objectMapper.readTree(value);
+      if (!node.has("type")) {
+        throw new IllegalArgumentException("Invalid GeoJSON: 'type' field is required");
+      }
+      String type = node.get("type").asText();
+      if (!VALID_GEOJSON_TYPES.contains(type)) {
+        throw new IllegalArgumentException("Unsupported GeoJSON type: " + type);
+      }
+      if (!"GeometryCollection".equals(type) && !node.has("coordinates")) {
+        throw new IllegalArgumentException("Invalid GeoJSON: 'coordinates' field is required");
+      }
+    } catch (JsonProcessingException e) {
+      throw new IllegalArgumentException("Invalid GeoJSON: " + e.getMessage());
+    }
   }
 }

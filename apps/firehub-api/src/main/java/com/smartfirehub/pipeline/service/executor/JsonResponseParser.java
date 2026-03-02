@@ -118,6 +118,7 @@ public class JsonResponseParser {
       case "BOOLEAN" -> toBoolean(rawValue);
       case "DATE" -> toLocalDate(rawValue, mapping);
       case "TIMESTAMP" -> toLocalDateTime(rawValue, mapping);
+      case "GEOMETRY" -> rawValue instanceof String ? rawValue : rawValue.toString();
       default -> rawValue;
     };
   }

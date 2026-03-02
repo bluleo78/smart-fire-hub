@@ -34,7 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DatasetService {
 
   private static final Set<String> VALID_DATA_TYPES =
-      Set.of("TEXT", "VARCHAR", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP");
+      Set.of("TEXT", "VARCHAR", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP", "GEOMETRY");
 
   private static final Set<String> VALID_STATUSES = Set.of("NONE", "CERTIFIED", "DEPRECATED");
 
@@ -328,7 +328,11 @@ public class DatasetService {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
       dataTableService.alterColumnType(
-          dataset.tableName(), currentColName, request.dataType(), request.maxLength());
+          dataset.tableName(),
+          currentColName,
+          request.dataType(),
+          request.maxLength(),
+          column.dataType());
     } else if (request.dataType() != null
         && "VARCHAR".equals(request.dataType())
         && request.maxLength() != null
@@ -339,7 +343,11 @@ public class DatasetService {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
       dataTableService.alterColumnType(
-          dataset.tableName(), currentColName, request.dataType(), request.maxLength());
+          dataset.tableName(),
+          currentColName,
+          request.dataType(),
+          request.maxLength(),
+          column.dataType());
     }
 
     if (request.isNullable() != null && request.isNullable() != column.isNullable()) {
@@ -355,7 +363,10 @@ public class DatasetService {
     if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
-      dataTableService.setColumnIndex(dataset.tableName(), currentColName, request.isIndexed());
+      String resolvedType =
+          request.dataType() != null ? request.dataType() : column.dataType();
+      dataTableService.setColumnIndex(
+          dataset.tableName(), currentColName, request.isIndexed(), resolvedType);
     }
 
     // Prevent making PK column nullable
@@ -568,7 +579,8 @@ public class DatasetService {
       // Recreate indexes
       for (DatasetColumnResponse col : sourceColumns) {
         if (col.isIndexed()) {
-          dataTableService.setColumnIndex(request.tableName(), col.columnName(), true);
+          dataTableService.setColumnIndex(
+              request.tableName(), col.columnName(), true, col.dataType());
         }
       }
 

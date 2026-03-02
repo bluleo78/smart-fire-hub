@@ -52,7 +52,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 - **`public` 스키마**: 메타데이터 (user, role, pipeline, dataset 정의, audit_log 등)
 - **`data` 스키마**: 동적 사용자 테이블. 데이터셋 생성 시 `DataTableService`가 DDL 실행
 
-`DataTableService`는 raw SQL로 `data` 스키마를 관리. 테이블/컬럼명은 `[a-z][a-z0-9_]*` 패턴만 허용. 지원 타입: TEXT, VARCHAR(n), BIGINT, NUMERIC(18,6), BOOLEAN, DATE, TIMESTAMP.
+`DataTableService`는 raw SQL로 `data` 스키마를 관리. 테이블/컬럼명은 `[a-z][a-z0-9_]*` 패턴만 허용. 지원 타입: TEXT, VARCHAR(n), BIGINT, NUMERIC(18,6), BOOLEAN, DATE, TIMESTAMP, GEOMETRY(Geometry, 4326). GEOMETRY 컬럼은 자동 GiST 인덱스, GeoJSON 문자열 입출력(PostGIS SQL 함수), 타입 변환 차단.
 
 ### Data Access: jOOQ (not JPA)
 
