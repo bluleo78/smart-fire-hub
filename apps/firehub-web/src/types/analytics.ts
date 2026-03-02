@@ -87,7 +87,7 @@ export interface SchemaInfo {
 // Phase 2: Charts
 // ============================================================
 
-export type ChartType = 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE';
+export type ChartType = 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP';
 
 export interface ChartConfig {
   xAxis: string;
@@ -99,6 +99,8 @@ export interface ChartConfig {
   xAxisLabel?: string;
   yAxisLabel?: string;
   stacked?: boolean;
+  spatialColumn?: string;    // MAP 차트: GEOMETRY 컬럼명 (필수)
+  colorByColumn?: string;    // MAP 차트: 색상 기준 컬럼 (선택)
 }
 
 export interface Chart {

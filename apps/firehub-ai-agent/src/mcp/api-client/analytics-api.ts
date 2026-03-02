@@ -73,13 +73,14 @@ export interface SchemaInfo {
   tables: SchemaTable[];
 }
 
-export type ChartType = 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE';
+export type ChartType = 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP';
 
 export interface ChartConfig {
   xAxis: string;
   yAxis: string[];
   groupBy?: string;
   stacked?: boolean;
+  spatialColumn?: string;
 }
 
 export interface CreateChartParams {

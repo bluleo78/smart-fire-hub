@@ -12,7 +12,7 @@
 | Phase | 상태 | 진행률 | 설명 |
 |-------|------|--------|------|
 | [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질 |
-| [Phase 1](#phase-1-gis-범용-기반) | **진행 중** | 4/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 |
+| [Phase 1](#phase-1-gis-범용-기반) | **완료** | 6/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 + MAP 차트 |
 | [Phase 2](#phase-2-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 3](#phase-3-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
 | [Phase 4](#phase-4-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
@@ -31,9 +31,9 @@
 
 ---
 
-## Phase 1: GIS 범용 기반
+## Phase 1: GIS 범용 기반 ✅
 
-> 데이터 플랫폼에 공간 데이터(GEOMETRY) 지원을 추가한다.
+> **완료** — 데이터 플랫폼에 공간 데이터(GEOMETRY) 지원을 추가한다.
 > **의존**: Phase 0 완료
 >
 > **실행 순서**: 1-0과 1-3은 병렬 시작. 1-4와 1-5는 1-2 완료 후 병렬 실행.
@@ -49,8 +49,8 @@
 | 1-1 | DataTableService GEOMETRY 타입 CRUD | ✅ | Backend | 1-0 | GEOMETRY 컬럼이 있는 테이블 생성/조회/삽입/수정이 동작한다. GeoJSON 입력 → DB 저장 → GeoJSON 출력 왕복. (1-0에서 함께 구현) |
 | 1-2 | 공간 쿼리 API (nearby, bbox) | ✅ | Backend | 1-1 | 기존 GET /data에 spatialColumn/nearby/bbox 파라미터 통합. SpatialFilter sealed interface. SpatialQueryTest 14개 통과. |
 | 1-3 | MapLibre 지도 컴포넌트 | ✅ | Frontend | 없음 | OpenFreeMap Liberty 타일 + MapView/GeoJsonLayer/FeaturePopup 컴포넌트. 데이터셋 상세 "지도" 탭. 마커 클릭 팝업. E2E 검증 완료. |
-| 1-4 | MAP 차트 타입 | ⬜ | Backend + Frontend | 1-2, 1-3 | 대시보드에서 MAP 차트 위젯을 생성하고 GEOMETRY 데이터를 지도에 표시할 수 있다. |
-| 1-5 | 공간 쿼리 MCP 도구 | ⬜ | AI Agent | 1-2 | AI 채팅에서 "강남역 500m 이내 데이터 찾아줘" 같은 공간 쿼리 실행 가능. |
+| 1-4 | MAP 차트 타입 | ✅ | Backend + Frontend | 1-2, 1-3 | V30 마이그레이션. ChartService MAP 검증. MapChartView 컴포넌트. 차트 빌더 자동추천. AnalyticsQueryExecutionService GEOMETRY→GeoJSON 자동변환. 대시보드 MAP 위젯 (12x6). E2E 검증 완료. |
+| 1-5 | 공간 쿼리 AI 가이드 | ✅ | AI Agent | 1-2 | 시스템 프롬프트에 PostGIS SQL 가이드 추가 (ST_DWithin, ST_Intersects, ST_Distance 등). AI가 execute_sql_query로 공간 쿼리 실행 가능. analytics-tools에 MAP 차트 생성 지원. |
 
 ---
 
@@ -183,6 +183,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-02 | Phase 1-4, 1-5 완료. MAP 차트 타입 (V30 마이그레이션, MapChartView, 자동추천, GEOMETRY→GeoJSON 자동변환). 공간 쿼리 AI 가이드. Phase 1 전체 완료. |
 | 2026-03-02 | Phase 1-0, 1-1 완료. PostGIS 인프라 + GEOMETRY CRUD 구현 (PostGIS SQL 함수 기반, JTS 미사용). |
 | 2026-03-01 | Phase 0-3(PostGIS+fire) 롤백. PostGIS 인프라를 Phase 1-0으로 이동. fire 스키마는 Phase 5로 이동. |
 | 2026-03-01 | 작업 단위 레벨로 재구성. Phase별 아이템을 독립 계획/검증 가능한 단위로 조정. 백로그 21건으로 정리. |

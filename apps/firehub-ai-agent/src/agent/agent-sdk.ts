@@ -61,7 +61,9 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     prompt: message,
     options: {
       model: model || DEFAULT_MODEL,
-      systemPrompt: systemPrompt || SYSTEM_PROMPT,
+      systemPrompt: systemPrompt
+        ? `${SYSTEM_PROMPT}\n\n[사용자 지시사항]\n${systemPrompt}`
+        : SYSTEM_PROMPT,
       maxTurns,
       ...(temperature !== undefined ? { temperature } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),

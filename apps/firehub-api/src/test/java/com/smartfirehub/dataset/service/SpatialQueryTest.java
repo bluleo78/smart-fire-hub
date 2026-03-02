@@ -364,8 +364,7 @@ class SpatialQueryTest extends IntegrationTestBase {
   /** 13. nearby — spatialColumn=null → 첫 번째 GEOMETRY 컬럼 자동 선택 */
   @Test
   void nearby_auto_selects_geometry_column() {
-    SpatialFilter filter =
-        new SpatialFilter.Nearby(null, GWANGHWAMUN_LON, GWANGHWAMUN_LAT, 2000);
+    SpatialFilter filter = new SpatialFilter.Nearby(null, GWANGHWAMUN_LON, GWANGHWAMUN_LAT, 2000);
 
     List<Map<String, Object>> rows =
         dataTableRowService.queryData(

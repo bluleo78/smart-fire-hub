@@ -177,6 +177,7 @@ export default function DashboardEditorPage() {
   const navigate = useNavigate();
 
   const { data: dashboard, isLoading, refetch } = useDashboard(dashboardId);
+  const { data: chartsData } = useCharts({ size: 100 });
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
@@ -275,13 +276,16 @@ export default function DashboardEditorPage() {
         (acc, w) => Math.max(acc, w.positionY + w.height),
         0
       );
+      // MAP 차트는 전체 폭, 큰 높이로 배치
+      const selectedChart = chartsData?.content?.find((c) => c.id === chartId);
+      const isMapChart = selectedChart?.chartType === 'MAP';
       try {
         await addWidgetMutation.mutateAsync({
           chartId,
           positionX: 0,
           positionY: maxY,
-          width: 6,
-          height: 4,
+          width: isMapChart ? 12 : 6,
+          height: isMapChart ? 6 : 4,
         });
         toast.success('차트가 대시보드에 추가되었습니다.');
         setAddWidgetOpen(false);
@@ -289,7 +293,7 @@ export default function DashboardEditorPage() {
         handleApiError(error, '위젯 추가에 실패했습니다.');
       }
     },
-    [dashboard, addWidgetMutation]
+    [dashboard, chartsData, addWidgetMutation]
   );
 
   const handleExitEdit = () => {

@@ -2,6 +2,7 @@ import type { ChartConfig,ChartType } from '../../types/analytics';
 import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
 import { LineChartView } from './LineChartView';
+import { MapChartView } from './MapChartView';
 import { PieChartView } from './PieChartView';
 import { ScatterChartView } from './ScatterChartView';
 import { TableView } from './TableView';
@@ -16,7 +17,7 @@ export interface ChartRendererProps {
 }
 
 export function ChartRenderer({ chartType, config, data, columns, height = 300 }: ChartRendererProps) {
-  if (!config.xAxis || config.yAxis.length === 0) {
+  if (chartType !== 'MAP' && (!config.xAxis || config.yAxis.length === 0)) {
     return (
       <div className="flex items-center justify-center text-muted-foreground text-sm" style={{ height }}>
         X축과 Y축을 설정하세요.
@@ -46,6 +47,8 @@ export function ChartRenderer({ chartType, config, data, columns, height = 300 }
       return <ScatterChartView config={config} data={data} height={height} />;
     case 'TABLE':
       return <TableView columns={columns} data={data} height={height} />;
+    case 'MAP':
+      return <MapChartView config={config} data={data} height={height} />;
     default:
       return (
         <div className="flex items-center justify-center text-muted-foreground text-sm" style={{ height }}>

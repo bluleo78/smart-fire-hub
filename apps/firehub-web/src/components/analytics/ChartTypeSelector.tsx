@@ -3,6 +3,7 @@ import {
   BarChart2,
   Donut,
   LineChart,
+  MapPin,
   PieChart,
   ScatterChart,
   Table2,
@@ -35,6 +36,7 @@ const CHART_TYPES: ChartTypeMeta[] = [
   { type: 'DONUT', label: '도넛 차트', Icon: Donut },
   { type: 'SCATTER', label: '산점도', Icon: ScatterChart },
   { type: 'TABLE', label: '테이블', Icon: Table2 },
+  { type: 'MAP', label: '지도', Icon: MapPin },
 ];
 
 interface ChartTypeSelectorProps {

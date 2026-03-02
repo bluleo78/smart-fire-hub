@@ -37,6 +37,7 @@ const CHART_TYPE_LABELS: Record<ChartType, string> = {
   DONUT: '도넛',
   SCATTER: '산점도',
   TABLE: '테이블',
+  MAP: '지도',
 };
 
 function getRelativeTime(dateStr: string): string {

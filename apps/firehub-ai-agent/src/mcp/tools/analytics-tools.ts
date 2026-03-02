@@ -100,13 +100,14 @@ export function registerAnalyticsTools(
         name: z.string().describe('차트 이름'),
         savedQueryId: z.number().describe('데이터 소스로 사용할 저장된 쿼리 ID'),
         chartType: z
-          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE'])
+          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP'])
           .describe('차트 유형'),
         config: z.object({
           xAxis: z.string().describe('X축 컬럼명'),
           yAxis: z.array(z.string()).describe('Y축 컬럼명 목록'),
           groupBy: z.string().optional().describe('그룹화 컬럼명 (선택)'),
           stacked: z.boolean().optional().describe('스택형 차트 여부 (선택)'),
+          spatialColumn: z.string().optional().describe('GEOMETRY 컬럼명 (MAP 차트 필수)'),
         }),
         description: z.string().optional().describe('차트 설명'),
         isShared: z.boolean().optional().describe('다른 사용자와 공유 여부 (기본 false)'),
@@ -114,8 +115,8 @@ export function registerAnalyticsTools(
       async (args: {
         name: string;
         savedQueryId: number;
-        chartType: 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE';
-        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean };
+        chartType: 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP';
+        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string };
         description?: string;
         isShared?: boolean;
       }) => {

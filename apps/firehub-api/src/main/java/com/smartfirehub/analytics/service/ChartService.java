@@ -46,6 +46,12 @@ public class ChartService {
         .findById(req.savedQueryId(), userId)
         .orElseThrow(
             () -> new SavedQueryNotFoundException("Saved query not found: " + req.savedQueryId()));
+    if ("MAP".equals(req.chartType())) {
+      Object spatialColumn = req.config() != null ? req.config().get("spatialColumn") : null;
+      if (spatialColumn == null || spatialColumn.toString().isBlank()) {
+        throw new IllegalArgumentException("MAP 차트는 config에 spatialColumn이 필요합니다");
+      }
+    }
     Long id = chartRepository.insert(req, userId);
     return chartRepository
         .findById(id, userId)
@@ -62,9 +68,19 @@ public class ChartService {
   /** Update a chart (owner only). */
   @Transactional
   public ChartResponse update(Long id, UpdateChartRequest req, Long userId) {
-    chartRepository
-        .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+    ChartResponse existing =
+        chartRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+    String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
+    java.util.Map<String, Object> effectiveConfig =
+        req.config() != null ? req.config() : existing.config();
+    if ("MAP".equals(effectiveType)) {
+      Object spatialColumn = effectiveConfig != null ? effectiveConfig.get("spatialColumn") : null;
+      if (spatialColumn == null || spatialColumn.toString().isBlank()) {
+        throw new IllegalArgumentException("MAP 차트는 config에 spatialColumn이 필요합니다");
+      }
+    }
     chartRepository.update(id, req, userId);
     return chartRepository
         .findByIdForOwner(id, userId)

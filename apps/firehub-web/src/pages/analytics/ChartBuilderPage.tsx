@@ -41,11 +41,31 @@ import type { ChartConfig,ChartType } from '../../types/analytics';
 // Auto chart type recommendation
 // ============================================================
 
+function isGeoJsonColumn(col: string, rows: Record<string, unknown>[]): boolean {
+  return rows.slice(0, 5).some((r) => {
+    const v = r[col];
+    // 이미 파싱된 객체 (analytics API 응답)
+    if (v && typeof v === 'object' && 'type' in v && 'coordinates' in v) return true;
+    // JSON 문자열 (dataset data API 응답)
+    if (typeof v !== 'string') return false;
+    try {
+      const parsed = JSON.parse(v);
+      return parsed && typeof parsed === 'object' && 'type' in parsed && 'coordinates' in parsed;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function recommendChartType(
   columns: string[],
   rows: Record<string, unknown>[]
 ): ChartType {
   if (columns.length < 2 || rows.length === 0) return 'TABLE';
+
+  // GeoJSON 감지 → MAP 추천
+  const geoCols = columns.filter((col) => isGeoJsonColumn(col, rows));
+  if (geoCols.length > 0) return 'MAP';
 
   const isNumeric = (col: string): boolean => {
     const sample = rows.slice(0, 20).map((r) => r[col]);
@@ -79,6 +99,12 @@ function buildDefaultConfig(
   rows: Record<string, unknown>[],
   chartType: ChartType
 ): ChartConfig {
+  // MAP 차트: 공간 컬럼 자동 선택
+  if (chartType === 'MAP') {
+    const spatialCol = columns.find((col) => isGeoJsonColumn(col, rows)) ?? columns[0];
+    return { xAxis: '', yAxis: [], spatialColumn: spatialCol };
+  }
+
   const isNumeric = (col: string): boolean => {
     const sample = rows.slice(0, 20).map((r) => r[col]);
     const nums = sample.filter((v) => v != null && !isNaN(Number(v)));
@@ -281,9 +307,11 @@ export default function ChartBuilderPage() {
   }, [selectedQueryId, executeQuery]);
 
   // When chartType changes, rebuild default config if we already have columns but config is empty
+  // MAP ↔ 비MAP 전환 시 항상 config 리빌드 (렌더링 패러다임이 다름)
   const handleChartTypeChange = (type: ChartType) => {
     setChartType(type);
-    if (queryColumns.length > 0 && !config.xAxis) {
+    const switchingToOrFromMap = type === 'MAP' || chartType === 'MAP';
+    if (queryColumns.length > 0 && (!config.xAxis || switchingToOrFromMap)) {
       setConfig(buildDefaultConfig(queryColumns, queryRows, type));
     }
   };
@@ -305,7 +333,12 @@ export default function ChartBuilderPage() {
       toast.error('쿼리를 선택하세요.');
       return;
     }
-    if (!config.xAxis || config.yAxis.length === 0) {
+    if (chartType === 'MAP') {
+      if (!config.spatialColumn) {
+        toast.error('공간 컬럼을 선택하세요.');
+        return;
+      }
+    } else if (!config.xAxis || config.yAxis.length === 0) {
       toast.error('X축과 Y축을 설정하세요.');
       return;
     }

@@ -9,8 +9,10 @@ import com.smartfirehub.global.util.SqlValidationUtils;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -65,6 +67,37 @@ public class AnalyticsQueryExecutionService {
         }
 
         var result = dsl.fetch(limitedSql);
+
+        // Detect GEOMETRY/GEOGRAPHY columns and re-execute with ST_AsGeoJSON wrapping
+        Set<String> geomColumns = detectGeometryColumns(result);
+        if (!geomColumns.isEmpty()) {
+          StringBuilder sb = new StringBuilder("WITH _src AS (");
+          sb.append(cleanSql);
+          sb.append(") SELECT ");
+          boolean first = true;
+          for (var field : result.fields()) {
+            if (!first) sb.append(", ");
+            first = false;
+            String escaped = field.getName().replace("\"", "\"\"");
+            if (geomColumns.contains(field.getName())) {
+              // Qualify with public schema — search_path is set to 'data' only
+              sb.append("public.ST_AsGeoJSON(\"")
+                  .append(escaped)
+                  .append("\") AS \"")
+                  .append(escaped)
+                  .append("\"");
+            } else {
+              sb.append("\"").append(escaped).append("\"");
+            }
+          }
+          sb.append(" FROM _src");
+          String wrappedSql = sb.toString();
+          if (!cleanSql.toUpperCase().matches("(?s).*\\bLIMIT\\s+\\d+.*")) {
+            wrappedSql = wrappedSql + " LIMIT " + maxRows;
+          }
+          result = dsl.fetch(wrappedSql);
+        }
+
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
         List<String> columns = new ArrayList<>();
@@ -164,6 +197,34 @@ public class AnalyticsQueryExecutionService {
     }
 
     return new SchemaInfoResponse(new ArrayList<>(tableMap.values()));
+  }
+
+  /**
+   * Detect GEOMETRY/GEOGRAPHY columns by inspecting PGobject type via reflection.
+   * PostgreSQL driver is runtime-only, so we cannot import PGobject directly.
+   */
+  private Set<String> detectGeometryColumns(org.jooq.Result<?> result) {
+    Set<String> geomColumns = new LinkedHashSet<>();
+    if (result.isEmpty()) return geomColumns;
+
+    var firstRecord = result.get(0);
+    for (var field : result.fields()) {
+      Object val = firstRecord.get(field);
+      if (val != null && "org.postgresql.util.PGobject".equals(val.getClass().getName())) {
+        try {
+          String pgType = (String) val.getClass().getMethod("getType").invoke(val);
+          // PostGIS type can be "geometry", "geography", or schema-qualified like "public"."geometry"
+          if (pgType != null
+              && (pgType.toLowerCase().contains("geometry")
+                  || pgType.toLowerCase().contains("geography"))) {
+            geomColumns.add(field.getName());
+          }
+        } catch (ReflectiveOperationException ignored) {
+          // Not accessible — skip
+        }
+      }
+    }
+    return geomColumns;
   }
 
   private AnalyticsQueryResponse errorResponse(String message) {

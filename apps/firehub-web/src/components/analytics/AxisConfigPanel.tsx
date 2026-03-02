@@ -25,6 +25,61 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
   const showStackOption = chartType === 'BAR' || chartType === 'AREA';
   const showGroupBy = chartType === 'SCATTER';
   const isPieOrDonut = chartType === 'PIE' || chartType === 'DONUT';
+  const isMap = chartType === 'MAP';
+
+  if (isMap) {
+    return (
+      <div className="space-y-4">
+        {/* 공간 컬럼 (필수) */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            공간 컬럼
+          </Label>
+          <Select
+            value={config.spatialColumn || NO_COLUMN}
+            onValueChange={(v) => update({ spatialColumn: v === NO_COLUMN ? undefined : v })}
+          >
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue placeholder="컬럼 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns.map((col) => (
+                <SelectItem key={col} value={col}>
+                  {col}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 색상 기준 (선택) */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            색상 기준 (선택사항)
+          </Label>
+          <Select
+            value={config.colorByColumn || NO_COLUMN}
+            onValueChange={(v) => update({ colorByColumn: v === NO_COLUMN ? undefined : v })}
+          >
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue placeholder="선택 안 함" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns
+                .filter((col) => col !== config.spatialColumn)
+                .map((col) => (
+                  <SelectItem key={col} value={col}>
+                    {col}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
