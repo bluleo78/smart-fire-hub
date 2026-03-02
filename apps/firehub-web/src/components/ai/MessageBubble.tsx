@@ -11,6 +11,8 @@ import remarkGfm from 'remark-gfm';
 
 import { cn } from '../../lib/utils';
 import type { AIMessage, AIToolCall } from '../../types/ai';
+import type { ChartConfig, ChartType } from '../../types/analytics';
+import { InlineChartWidget } from './InlineChartWidget';
 
 SyntaxHighlighter.registerLanguage('sql', sql);
 SyntaxHighlighter.registerLanguage('python', python);
@@ -58,6 +60,19 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   delete_api_connection: { label: 'API 연결 삭제', icon: '\uD83D\uDDD1\uFE0F' },
   list_imports: { label: '임포트 이력 조회', icon: '\uD83D\uDCE5' },
   get_dashboard: { label: '대시보드 통계 조회', icon: '\uD83D\uDCCA' },
+  // Analytics tools
+  show_chart: { label: '차트 표시', icon: '\uD83D\uDCCA' },
+  execute_analytics_query: { label: '분석 쿼리 실행', icon: '\uD83D\uDCCA' },
+  get_data_schema: { label: '스키마 조회', icon: '\uD83D\uDD0D' },
+  create_saved_query: { label: '쿼리 저장', icon: '\uD83D\uDCBE' },
+  list_saved_queries: { label: '저장 쿼리 목록', icon: '\uD83D\uDCCB' },
+  run_saved_query: { label: '저장 쿼리 실행', icon: '\u25B6\uFE0F' },
+  create_chart: { label: '차트 생성', icon: '\uD83D\uDCCA' },
+  list_charts: { label: '차트 목록', icon: '\uD83D\uDCCA' },
+  get_chart_data: { label: '차트 데이터 조회', icon: '\uD83D\uDCCA' },
+  create_dashboard: { label: '대시보드 생성', icon: '\uD83D\uDCCB' },
+  add_chart_to_dashboard: { label: '대시보드에 차트 추가', icon: '\uD83D\uDCCB' },
+  list_dashboards: { label: '대시보드 목록', icon: '\uD83D\uDCCB' },
 };
 
 function getToolDisplay(name: string): { label: string; icon: string } {
@@ -142,7 +157,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
       <div className={cn(
         'rounded-lg px-3 py-2 text-sm',
-        isUser ? 'max-w-[85%] bg-primary text-primary-foreground' : 'max-w-[85%] min-w-0 bg-muted overflow-hidden'
+        isUser ? 'max-w-[85%] bg-primary text-primary-foreground' : cn('max-w-[85%] min-w-0 bg-muted overflow-hidden', hasToolCalls && 'w-full')
       )}>
         {isUser ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
@@ -150,9 +165,22 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <>
             {hasToolCalls && (
               <div className="space-y-0.5">
-                {message.toolCalls!.map((tc, i) => (
-                  <ToolCallDisplay key={i} toolCall={tc} />
-                ))}
+                {message.toolCalls!.map((tc, i) => {
+                  const cleanName = tc.name.replace(/^mcp__firehub__/, '');
+                  if (cleanName === 'show_chart' && tc.input) {
+                    return (
+                      <InlineChartWidget
+                        key={i}
+                        sql={String(tc.input.sql || '')}
+                        chartType={tc.input.chartType as ChartType}
+                        config={tc.input.config as ChartConfig}
+                        columns={(tc.input.columns as string[]) || []}
+                        rows={(tc.input.rows as Record<string, unknown>[]) || []}
+                      />
+                    );
+                  }
+                  return <ToolCallDisplay key={i} toolCall={tc} />;
+                })}
               </div>
             )}
             {hasContent && (

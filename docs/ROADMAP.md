@@ -1,6 +1,6 @@
 # Smart Fire Hub — ROADMAP
 
-> **최종 수정**: 2026-03-02
+> **최종 수정**: 2026-03-03
 > **비전**: AI-First 소방 전문 데이터 플랫폼
 > **전략**: 기초 기술 → 범용 플랫폼 → 도메인 특화 순서로 확장
 > **원칙**: 각 아이템은 독립적으로 계획(Plan) → 구현 → 검증 가능한 작업 단위
@@ -14,7 +14,7 @@
 | [Phase 0](#phase-0-기반-정비) | **완료** | 100% | 보안, 코드 품질 |
 | [Phase 1](#phase-1-gis-범용-기반) | **완료** | 6/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 + MAP 차트 |
 | [Phase 2](#phase-2-디자인-시스템) | **완료** | 11/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
-| [Phase 3](#phase-3-ai-text-to-sql) | 대기 | 0/2 | 자연어 → SQL → 차트 추천 |
+| [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 4](#phase-4-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
@@ -84,15 +84,15 @@
 
 ---
 
-## Phase 3: AI Text-to-SQL
+## Phase 3: AI Text-to-SQL ✅
 
-> 비개발자가 자연어로 데이터를 조회/분석할 수 있다.
+> **완료** — 비개발자가 자연어로 데이터를 조회/분석할 수 있다.
 > **의존**: 없음 (Phase 1과 병렬 가능)
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 3-1 | Text-to-SQL MCP 도구 (스키마 조회 + SQL 생성/실행) | ⬜ | AI Agent | "매출 상위 10개 보여줘" → SQL 자동 생성 → 실행 → 결과 반환. DDL/DML 거부. |
-| 3-2 | 차트 자동 추천 | ⬜ | AI Agent + Frontend | SQL 결과 기반 차트 타입+설정 자동 추천. GEOMETRY 포함 시 MAP 추천. |
+| 3-1 | Text-to-SQL MCP 도구 (스키마 조회 + SQL 생성/실행) | ✅ | AI Agent | get_data_schema + execute_analytics_query + show_chart MCP 도구 11종 추가. 시스템 프롬프트에 Text-to-SQL 가이드 포함. DDL/DML 거부 규칙. TC 31개 통과. |
+| 3-2 | 차트 자동 추천 + 인라인 렌더링 | ✅ | AI Agent + Frontend | show_chart 도구로 SQL 결과 기반 chartType/config 자동 추천. InlineChartWidget으로 채팅 내 차트 인라인 렌더링. SQL 보기 + 차트 저장 다이얼로그. 세션 히스토리 재로드 시 차트 복원. 사이드패널/플로팅/전체화면 3모드 검증. |
 
 ---
 
@@ -213,6 +213,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-03 | Phase 3 완료 (3-1, 3-2). AI Text-to-SQL MCP 도구 11종 + 시스템 프롬프트 + InlineChartWidget 인라인 차트 렌더링 + 세션 히스토리 차트 복원 + 차트 저장. TC 103개 통과. |
 | 2026-03-02 | Phase 2 코드 적용 완료 (2-8~2-11). 시맨틱 Status 토큰 + 색상 마이그레이션 46건 + Typography 통일 25건 + 접근성 aria-label 20건. 41개 파일 변경. Phase 2 전체 완료. |
 | 2026-03-02 | Phase D-1/D-2를 Phase 2 (디자인 시스템)로 통합. Phase 번호 재부여 (기존 2→3, 3→4, 4→5, 5→6). |
 | 2026-03-02 | Phase D-1 (디자인 시스템 가이드라인), D-2 (코드 적용) 추가. Phase 1과 Phase 2 사이에 삽입. |

@@ -203,5 +203,43 @@ export function registerAnalyticsTools(
         return jsonResult(result);
       },
     ),
+
+    // 12. 채팅 인라인 차트 표시 (프론트엔드 전용, 백엔드 호출 없음)
+    safeTool(
+      'show_chart',
+      '채팅에 인라인 차트를 표시합니다. execute_analytics_query로 조회한 데이터를 차트로 시각화할 때 사용합니다.',
+      {
+        sql: z.string().describe('차트 데이터를 조회한 SQL 쿼리 (참조용 표시)'),
+        chartType: z
+          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP'])
+          .describe('차트 유형'),
+        config: z.object({
+          xAxis: z.string().describe('X축 컬럼명'),
+          yAxis: z.array(z.string()).describe('Y축 컬럼명 목록'),
+          groupBy: z.string().optional().describe('그룹화 컬럼명'),
+          stacked: z.boolean().optional().describe('스택형 차트 여부'),
+          spatialColumn: z.string().optional().describe('GEOMETRY 컬럼명 (MAP 차트 필수)'),
+        }),
+        columns: z.array(z.string()).describe('결과 컬럼 목록'),
+        rows: z.array(z.record(z.string(), z.unknown())).max(2000, '최대 2000행까지 지원합니다').describe('결과 데이터 행 배열 (최대 2000행)'),
+      },
+      async (args: {
+        sql: string;
+        chartType: string;
+        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string };
+        columns: string[];
+        rows: Record<string, unknown>[];
+      }) => {
+        // 프론트엔드에서 tool_use 이벤트의 input으로 직접 렌더링.
+        // 명시적 Zod 검증 수행 (SDK가 우회될 경우를 위한 안전망)
+        const chartTypeSchema = z.enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP']);
+        chartTypeSchema.parse(args.chartType);
+        return jsonResult({
+          displayed: true,
+          chartType: args.chartType,
+          rowCount: args.rows.length,
+        });
+      },
+    ),
   ];
 }

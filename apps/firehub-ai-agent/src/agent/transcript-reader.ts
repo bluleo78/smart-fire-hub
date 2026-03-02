@@ -2,10 +2,17 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 
+export interface HistoryToolCall {
+  name: string;
+  input: Record<string, unknown>;
+  result?: string;
+}
+
 export interface HistoryMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  toolCalls?: HistoryToolCall[];
   timestamp: string;
 }
 
@@ -17,6 +24,7 @@ function getProjectId(): string {
 
 interface ParsedAssistant {
   textParts: string[];
+  toolCalls: HistoryToolCall[];
   id: string;
   timestamp: string;
 }
@@ -37,6 +45,8 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
   const assistantByMsgId = new Map<string, ParsedAssistant>();
   // Track insertion order of assistant message IDs
   let lastAssistantMsgId: string | null = null;
+  // Track tool_use_id → toolCall object for attaching tool_result later
+  const toolCallsByUseId = new Map<string, HistoryToolCall>();
 
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
@@ -73,12 +83,13 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
         const pending = assistantByMsgId.get(lastAssistantMsgId);
         if (pending) {
           const content = pending.textParts.join('');
-          // Only include assistant messages that have text content
-          if (content) {
+          const toolCalls = pending.toolCalls.length > 0 ? pending.toolCalls : undefined;
+          if (content || toolCalls) {
             messages.push({
               id: pending.id,
               role: 'assistant',
               content,
+              toolCalls,
               timestamp: pending.timestamp,
             });
           }
@@ -87,11 +98,31 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
         lastAssistantMsgId = null;
       }
 
-      // Skip user messages that contain any tool_result block
+      // Extract tool_result and attach to corresponding toolCall, then skip
       const hasToolResult = contentBlocks.some(
         (block) => (block as Record<string, unknown>).type === 'tool_result',
       );
-      if (hasToolResult) continue;
+      if (hasToolResult) {
+        for (const block of contentBlocks) {
+          const b = block as Record<string, unknown>;
+          if (b.type === 'tool_result') {
+            const toolUseId = b.tool_use_id as string;
+            const tc = toolCallsByUseId.get(toolUseId);
+            if (tc) {
+              const resultContent = b.content;
+              if (typeof resultContent === 'string') {
+                tc.result = resultContent;
+              } else if (Array.isArray(resultContent)) {
+                tc.result = resultContent
+                  .filter((c: unknown) => (c as Record<string, unknown>).type === 'text')
+                  .map((c: unknown) => (c as Record<string, unknown>).text as string)
+                  .join('');
+              }
+            }
+          }
+        }
+        continue;
+      }
 
       const text = contentBlocks
         .filter((block) => (block as Record<string, unknown>).type === 'text')
@@ -112,14 +143,15 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
           const prev = assistantByMsgId.get(lastAssistantMsgId);
           if (prev) {
             const content = prev.textParts.join('');
-            if (content) {
-              messages.push({ id: prev.id, role: 'assistant', content, timestamp: prev.timestamp });
+            const toolCalls = prev.toolCalls.length > 0 ? prev.toolCalls : undefined;
+            if (content || toolCalls) {
+              messages.push({ id: prev.id, role: 'assistant', content, toolCalls, timestamp: prev.timestamp });
             }
           }
           assistantByMsgId.delete(lastAssistantMsgId);
         }
 
-        parsed = { textParts: [], id, timestamp };
+        parsed = { textParts: [], toolCalls: [], id, timestamp };
         assistantByMsgId.set(msgId, parsed);
       }
 
@@ -129,6 +161,14 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
         const b = block as Record<string, unknown>;
         if (b.type === 'text') {
           parsed.textParts.push(b.text as string);
+        } else if (b.type === 'tool_use') {
+          const tc: HistoryToolCall = {
+            name: b.name as string,
+            input: (b.input as Record<string, unknown>) ?? {},
+          };
+          parsed.toolCalls.push(tc);
+          const toolUseId = b.id as string;
+          if (toolUseId) toolCallsByUseId.set(toolUseId, tc);
         }
       }
     }
@@ -139,8 +179,9 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
     const pending = assistantByMsgId.get(lastAssistantMsgId);
     if (pending) {
       const content = pending.textParts.join('');
-      if (content) {
-        messages.push({ id: pending.id, role: 'assistant', content, timestamp: pending.timestamp });
+      const toolCalls = pending.toolCalls.length > 0 ? pending.toolCalls : undefined;
+      if (content || toolCalls) {
+        messages.push({ id: pending.id, role: 'assistant', content, toolCalls, timestamp: pending.timestamp });
       }
     }
   }

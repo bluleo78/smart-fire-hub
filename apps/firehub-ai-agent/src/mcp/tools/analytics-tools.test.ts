@@ -427,8 +427,52 @@ describe('Analytics MCP Tools', () => {
     expect(result.isError).toBe(true);
   });
 
+  // --- show_chart ---
+  describe('show_chart', () => {
+    it('should validate and return displayed result', async () => {
+      // show_chart는 API 호출 없음 — nock 불필요
+      const result = await invokeTool(server, 'show_chart', {
+        sql: 'SELECT name, revenue FROM data."sales" ORDER BY revenue DESC LIMIT 10',
+        chartType: 'BAR',
+        config: { xAxis: 'name', yAxis: ['revenue'] },
+        columns: ['name', 'revenue'],
+        rows: [
+          { name: 'Product A', revenue: 1000 },
+          { name: 'Product B', revenue: 800 },
+        ],
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.chartType).toBe('BAR');
+      expect(parsed.rowCount).toBe(2);
+    });
+
+    it('should validate MAP chart with spatialColumn', async () => {
+      const result = await invokeTool(server, 'show_chart', {
+        sql: 'SELECT geom, name FROM data."locations"',
+        chartType: 'MAP',
+        config: { xAxis: '', yAxis: [], spatialColumn: 'geom' },
+        columns: ['geom', 'name'],
+        rows: [{ geom: '{"type":"Point","coordinates":[127,37]}', name: 'A' }],
+      });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('should reject invalid chartType via Zod validation', async () => {
+      const result = await invokeTool(server, 'show_chart', {
+        sql: 'SELECT 1',
+        chartType: 'INVALID_TYPE',
+        config: { xAxis: 'x', yAxis: ['y'] },
+        columns: ['x', 'y'],
+        rows: [],
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
   // --- tool registration ---
-  it('all 11 analytics tools are registered in the MCP server', () => {
+  it('all 12 analytics tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const registeredTools = Object.keys((server.instance as any)._registeredTools);
     expect(registeredTools).toContain('execute_analytics_query');
@@ -442,5 +486,6 @@ describe('Analytics MCP Tools', () => {
     expect(registeredTools).toContain('create_dashboard');
     expect(registeredTools).toContain('add_chart_to_dashboard');
     expect(registeredTools).toContain('list_dashboards');
+    expect(registeredTools).toContain('show_chart');
   });
 });

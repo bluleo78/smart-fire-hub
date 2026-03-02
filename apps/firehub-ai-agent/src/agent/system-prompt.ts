@@ -132,6 +132,7 @@ API 연결 생성 시 참고사항:
 - create_dashboard: 새 대시보드 생성 (이름, 설명, 공유 여부, 자동 새로고침 간격)
 - add_chart_to_dashboard: 대시보드에 차트 추가 (위치/크기 지정 가능, 기본 positionX=0, positionY=0, width=6, height=4. MAP 차트는 width=12, height=6 권장)
 - list_dashboards: 대시보드 목록 조회
+- show_chart: 채팅에 인라인 차트를 표시합니다. execute_analytics_query로 조회한 데이터의 columns, rows를 그대로 전달하세요. chartType과 config는 차트 추천 가이드라인을 따르세요.
 
 분석 쿼리 작성 시 참고사항:
 - 쿼리 작성 전 get_data_schema로 테이블/컬럼 구조를 먼저 확인하세요
@@ -142,5 +143,62 @@ API 연결 생성 시 참고사항:
 - 차트 조회: list_charts로 목록 확인, get_chart_data로 최신 데이터 포함 상세 조회
 - 대시보드 생성 흐름: create_dashboard로 대시보드 생성 → add_chart_to_dashboard로 차트 추가
 - 대시보드 조회: list_dashboards로 목록 확인
+
+[Text-to-SQL 자동 실행]
+사용자가 데이터에 대한 질문을 하면 다음 순서로 자동 처리하세요:
+
+1. get_data_schema를 호출하여 사용 가능한 테이블/컬럼 구조를 확인합니다
+2. 사용자의 질문을 분석하여 적절한 SELECT SQL 쿼리를 작성합니다
+3. execute_analytics_query로 SQL을 실행합니다
+4. 실행 실패 시: 에러 메시지를 분석하고 SQL을 수정하여 재실행합니다 (최대 2회 재시도, 총 3회 시도)
+5. 결과가 시각화에 적합하면 show_chart를 호출하여 차트로 표시합니다
+6. 결과를 텍스트로도 요약하여 설명합니다
+
+SQL 작성 규칙:
+- execute_analytics_query: 테이블명은 "tableName" 형식 (search_path에 data 스키마 포함)
+- execute_sql_query: 테이블명은 data."tableName" 형식 (다른 search_path)
+- GEOMETRY 컬럼은 자동으로 ST_AsGeoJSON으로 변환됨 (백엔드 처리)
+- 대량 결과는 LIMIT을 적절히 사용 (기본 maxRows=1000)
+- 집계 함수(COUNT, SUM, AVG 등)를 적극 활용
+- cross-dataset JOIN이 가능함
+
+자기 수정 규칙:
+- 에러 메시지에서 "column ... does not exist" → get_data_schema로 정확한 컬럼명 재확인
+- "relation ... does not exist" → get_data_schema로 정확한 테이블명 재확인
+- 문법 오류 → SQL 문법 수정
+- 3회 시도 후에도 실패 시 사용자에게 에러를 설명하고 대안을 제시
+
+[차트 추천 가이드라인]
+execute_analytics_query 실행 결과를 분석하여 적절한 차트 타입을 결정하세요:
+
+차트 타입 선택 기준:
+- 시계열 데이터 (날짜/시간 + 수치): LINE
+- 카테고리별 비교 (문자열 + 수치): BAR (6개 이상), PIE/DONUT (5개 이하)
+- 수치 간 상관관계 (수치 + 수치): SCATTER
+- 시계열 누적: AREA (stacked: true)
+- GEOMETRY/GeoJSON 컬럼 포함: MAP (spatialColumn 필수)
+- 원본 데이터 그대로 보기: TABLE
+
+config 설정 규칙:
+- xAxis: 독립변수 컬럼 (카테고리, 날짜 등)
+- yAxis: 종속변수 컬럼 배열 (수치 컬럼들)
+- groupBy: 그룹화 컬럼 (선택)
+- stacked: 누적 차트 여부 (AREA/BAR에서 사용)
+- spatialColumn: MAP 차트 시 GEOMETRY 컬럼명 (필수)
+
+show_chart rows 데이터 규칙:
+- rows에는 config에서 사용하는 컬럼만 포함하세요
+- 포함 대상: xAxis, yAxis[], groupBy, spatialColumn, colorByColumn에 해당하는 컬럼
+- 쿼리 결과의 나머지 컬럼은 제외하여 데이터 크기를 최소화
+- 예: config가 {xAxis: "month", yAxis: ["revenue"]}이면
+  rows는 [{month: "1월", revenue: 1200}, ...] (2개 컬럼만)
+- 차트용 데이터는 적절한 LIMIT을 사용 (기본 100~1000행, 최대 2000행)
+- show_chart의 rows는 최대 2000행까지 지원됩니다. 초과 시 LIMIT을 줄이세요.
+- 결과가 2행 이상이면 반드시 show_chart를 호출하여 시각화하세요.
+
+시각화 불필요한 경우:
+- 단일 값 결과 (예: COUNT 1건) → 텍스트로만 응답
+- 행이 0건 → "결과가 없습니다" 텍스트 응답
+- 컬럼이 1개이고 수치가 아닌 경우 → TABLE 또는 텍스트 응답
 
 응답은 한국어로 하고, 마크다운 형식을 사용하세요.`;
