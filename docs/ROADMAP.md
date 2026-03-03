@@ -15,7 +15,7 @@
 | [Phase 1](#phase-1-gis-범용-기반) | **완료** | 6/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 + MAP 차트 |
 | [Phase 2](#phase-2-디자인-시스템) | **완료** | 11/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
 | [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
-| [Phase 4](#phase-4-대시보드-전체-개선) | 대기 | 0/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
+| [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
@@ -114,12 +114,12 @@
 
 | # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
 |---|------|------|------|------|----------|
-| 4-1 | 분석 대시보드 자동 갱신 수정 + 배치 최적화 | ⬜ | Frontend | 없음 | autoRefresh 시 차트 데이터 실갱신. 배치 엔드포인트 활용으로 N×2→1건 축소. 빌드 통과. |
-| 4-2 | 홈 대시보드 API — 건강 상태 + 활동 피드 | ⬜ | Backend | 없음 | /health, /attention, /activity 3개 엔드포인트. 심각도 정렬. 필터+페이지네이션. 통합 테스트 통과. |
-| 4-3 | SSE 이벤트 브로드캐스트 인프라 | ⬜ | Backend | 없음 | /notifications/stream SSE 엔드포인트. user-scoped SseEmitter. 파이프라인/임포트 이벤트 브로드캐스트. TC 통과. |
-| 4-4 | 홈 대시보드 UI 리디자인 | ⬜ | Frontend | 4-2 | 5-Zone: 건강 상태바 + 주의 필요 + 퀵 액션 + 최근 사용 + 활동 피드. 다크모드. 반응형. 빌드 통과. |
-| 4-5 | 데이터 신선도 UX + 위젯 성능 최적화 | ⬜ | Frontend | 4-1 | 위젯별 Fresh/Stale/Refreshing 인디케이터. Jitter ±10%. Intersection Observer off-screen 일시정지. 빌드 통과. |
-| 4-6 | SSE 실시간 연동 + 알림 UI | ⬜ | Frontend | 4-3, 4-4, 4-5 | SSE 구독 + 캐시 invalidation + 토스트 (P1 CRITICAL/P2 WARNING만, P3 INFO는 피드만). 빌드 통과. |
+| 4-1 | 분석 대시보드 자동 갱신 수정 + 배치 최적화 | ✅ | Frontend | 없음 | autoRefresh 시 차트 데이터 실갱신. 배치 엔드포인트 활용으로 N×2→1건 축소. useMemo 최적화. 빌드 통과. |
+| 4-2 | 홈 대시보드 API — 건강 상태 + 활동 피드 | ✅ | Backend | 없음 | /health, /attention, /activity 3개 엔드포인트. 심각도 정렬. 필터+페이지네이션. SOURCE 데이터셋 필터. 입력값 검증. 통합 테스트 15개 통과. |
+| 4-3 | SSE 이벤트 브로드캐스트 인프라 | ✅ | Backend | 없음 | /notifications/stream SSE 엔드포인트. user-scoped SseEmitter (유저당 3개 제한). Heartbeat 30초. @RequirePermission. TC 11개 통과. |
+| 4-4 | 홈 대시보드 UI 리디자인 | ✅ | Frontend | 4-2 | 5-Zone: 건강 상태바 + 주의 필요(Card+스크롤) + 퀵 액션 + 최근 사용(총 개수+스크롤) + 활동 피드(고정 높이+필터). 다크모드. 빌드 통과. |
+| 4-5 | 데이터 신선도 UX + 위젯 성능 최적화 | ✅ | Frontend | 4-1 | WidgetFreshnessBar (Fresh/Stale/Refreshing). Jitter ±10%. Intersection Observer off-screen 일시정지. auto-refresh 없을 때 interval 비활성화. 빌드 통과. |
+| 4-6 | SSE 실시간 연동 + 알림 UI | ✅ | Frontend | 4-3, 4-4, 4-5 | useNotificationStream SSE 구독 + exponential backoff + 캐시 invalidation + 토스트 (CRITICAL/WARNING). JSON.parse 안전성. 빌드 통과. |
 
 ---
 
@@ -150,6 +150,22 @@
 
 ---
 
+## Phase 4 후속 과제
+
+> Phase 4에서 식별된 기술 부채 및 개선 항목. 별도 PR로 진행.
+
+| # | 작업 | 우선순위 | 범위 | 설명 |
+|---|------|---------|------|------|
+| 4-F1 | DashboardService 서비스 분리 | P:높음 | Backend | 730줄 단일 클래스 → SystemHealthService + AttentionItemService + ActivityFeedService 3개 분리 (SRP) |
+| 4-F2 | Activity feed SQL UNION ALL 페이지네이션 | P:높음 | Backend | 현재 인메모리 정렬/페이지네이션 (최대 1000건) → DB 레벨 UNION ALL + ORDER BY + LIMIT/OFFSET |
+| 4-F3 | SSE 티켓 기반 인증 | P:보통 | Backend + Frontend | JWT-in-URL → POST /notifications/ticket (30초 TTL 일회용 토큰) → 쿼리파라미터에 티켓 사용 |
+| 4-F4 | 알림 브로드캐스트 스코핑 | P:보통 | Backend | broadcastAll → 데이터셋 소유자/접근 권한자에게만 스코핑 |
+| 4-F5 | 시스템 건강 DB 쿼리 통합 | P:보통 | Backend | getSystemHealth() 9개 순차 쿼리 → FILTER 집계 3-4개로 통합 |
+| 4-F6 | 홈 대시보드 컴포넌트 분리 | P:낮음 | Frontend | HomePage.tsx 560줄 → Zone별 5개 컴포넌트 추출 |
+| 4-F7 | 홈 API 엔드포인트 통합 | P:낮음 | Backend + Frontend | /stats + /health + /attention → /dashboard/summary 단일 엔드포인트 |
+
+---
+
 ## 백로그 (Backlog)
 
 > 우선순위 미정. 아이디어 수집 및 향후 Phase 편입 검토.
@@ -158,7 +174,7 @@
 
 | # | 아이디어 | 우선순위 | 메모 |
 |---|---------|---------|------|
-| BL-01 | 알림 시스템 (인앱 + Webhook + Slack) | P:높음 | LISTEN/NOTIFY + SSE |
+| BL-01 | 알림 시스템 (인앱 + Webhook + Slack) | P:높음 | SSE 인프라 구축 완료 (Phase 4-3). 인앱 알림 히스토리 + 외부 연동 추가 필요. |
 | BL-02 | 데이터 품질 규칙 엔진 | P:보통 | NOT_NULL/RANGE/REGEX/CUSTOM_SQL |
 | BL-03 | 데이터 리니지 시각화 | P:보통 | 파이프라인 input/output 관계 자동 기록 |
 | BL-04 | 파이프라인 조건부 분기 (IF/ELSE) | P:보통 | 이전 스텝 결과 기반 분기 |
@@ -228,6 +244,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-03 | Phase 4 완료 (4-1~4-6). 홈 대시보드 5-Zone 리디자인 + SSE 실시간 알림 + 위젯 신선도 UX. 코드 리뷰(CRITICAL 1 + HIGH 3 + MEDIUM 5) 및 Simplify(9건) 수정 완료. 후속 과제 7건 식별. 전체 테스트 통과. |
 | 2026-03-03 | Phase 4 재설계. 기존 2작업 → 6작업으로 확장 (홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 인프라 + 알림 UI). 리서치: 10개 데이터 플랫폼 분석, 알림 UX 3단계 우선순위 모델, SSE vs WebSocket 비교. |
 | 2026-03-03 | Phase 3 완료 (3-1, 3-2). AI Text-to-SQL MCP 도구 11종 + 시스템 프롬프트 + InlineChartWidget 인라인 차트 렌더링 + 세션 히스토리 차트 복원 + 차트 저장. TC 103개 통과. |
 | 2026-03-02 | Phase 2 코드 적용 완료 (2-8~2-11). 시맨틱 Status 토큰 + 색상 마이그레이션 46건 + Typography 통일 25건 + 접근성 aria-label 20건. 41개 파일 변경. Phase 2 전체 완료. |
