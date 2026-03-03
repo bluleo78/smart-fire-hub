@@ -23,6 +23,7 @@ import { lazy, Suspense,useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../../hooks/useAuth';
+import { useNotificationStream } from '../../hooks/useNotificationStream';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIToggleButton } from '../ai/AIToggleButton';
@@ -200,6 +201,7 @@ function NavSection({
 }
 
 function AppLayoutInner() {
+  useNotificationStream();
   const { isAdmin } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);

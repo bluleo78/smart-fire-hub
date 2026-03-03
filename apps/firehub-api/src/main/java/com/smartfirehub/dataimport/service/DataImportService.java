@@ -15,6 +15,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.job.service.AsyncJobService;
+import com.smartfirehub.notification.service.NotificationService;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -47,6 +48,7 @@ public class DataImportService {
   private final ObjectMapper objectMapper;
   private final AsyncJobService asyncJobService;
   private final TransactionTemplate transactionTemplate;
+  private final NotificationService notificationService;
 
   public DataImportService(
       DatasetRepository datasetRepository,
@@ -60,7 +62,8 @@ public class DataImportService {
       JobScheduler jobScheduler,
       ObjectMapper objectMapper,
       AsyncJobService asyncJobService,
-      TransactionTemplate transactionTemplate) {
+      TransactionTemplate transactionTemplate,
+      NotificationService notificationService) {
     this.datasetRepository = datasetRepository;
     this.columnRepository = columnRepository;
     this.dataTableService = dataTableService;
@@ -73,6 +76,7 @@ public class DataImportService {
     this.objectMapper = objectMapper;
     this.asyncJobService = asyncJobService;
     this.transactionTemplate = transactionTemplate;
+    this.notificationService = notificationService;
   }
 
   public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
@@ -334,6 +338,10 @@ public class DataImportService {
       String ipAddress,
       String userAgent,
       String importModeName) {
+    // Resolve dataset name once for notifications (used in both success and failure paths)
+    String datasetNameForNotification =
+        datasetRepository.findById(datasetId).map(d -> d.name()).orElse(String.valueOf(datasetId));
+
     try {
       asyncJobService.updateProgress(
           jobId, "PARSING", 10, "Parsing file...", Map.of("totalRows", 0, "processedRows", 0));
@@ -676,6 +684,9 @@ public class DataImportService {
           jobId,
           Map.of("totalRows", totalRows, "successRows", validCount, "errorRows", errorCount));
 
+      notificationService.notifyImportCompleted(
+          userId, datasetId, datasetNameForNotification, true);
+
       auditLogService.log(
           userId,
           username,
@@ -699,6 +710,9 @@ public class DataImportService {
       log.error("Import failed for dataset {}", datasetId, e);
 
       asyncJobService.failJob(jobId, e.getMessage());
+
+      notificationService.notifyImportCompleted(
+          userId, datasetId, datasetNameForNotification, false);
 
       Map<String, Object> metadata =
           Map.of(

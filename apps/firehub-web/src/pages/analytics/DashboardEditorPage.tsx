@@ -13,7 +13,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import { useNavigate,useParams } from 'react-router-dom';
@@ -34,11 +34,13 @@ import {
   useAddWidget,
   useCharts,
   useDashboard,
+  useDashboardData,
   useRemoveWidget,
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
-import type { ChartListItem, DashboardWidget } from '../../types/analytics';
+import type { ChartListItem, DashboardWidget, WidgetData } from '../../types/analytics';
+import { useQueryClient } from '@tanstack/react-query';
 
 // Sub-component that owns width measurement for ResponsiveGridLayout
 interface GridAreaProps {
@@ -47,9 +49,25 @@ interface GridAreaProps {
   layouts: ResponsiveLayouts;
   onLayoutChange: (layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => void;
   onRemove: (widgetId: number) => void;
+  batchDataMap: Map<number, WidgetData>;
+  autoRefreshSeconds?: number | null;
+  dataUpdatedAt?: number;
+  isFetching?: boolean;
+  onRefresh?: () => void;
 }
 
-function GridArea({ widgets, isEditing, layouts, onLayoutChange, onRemove }: GridAreaProps) {
+function GridArea({
+  widgets,
+  isEditing,
+  layouts,
+  onLayoutChange,
+  onRemove,
+  batchDataMap,
+  autoRefreshSeconds,
+  dataUpdatedAt,
+  isFetching,
+  onRefresh,
+}: GridAreaProps) {
   const { width, containerRef: gridRef } = useContainerWidth({ initialWidth: 1280 });
 
   return (
@@ -69,8 +87,13 @@ function GridArea({ widgets, isEditing, layouts, onLayoutChange, onRemove }: Gri
           <div key={String(widget.id)}>
             <DashboardWidgetCard
               widget={widget}
+              batchData={batchDataMap.get(widget.id)}
               isEditing={isEditing}
               onRemove={onRemove}
+              autoRefreshSeconds={autoRefreshSeconds}
+              dataUpdatedAt={dataUpdatedAt}
+              isFetching={isFetching}
+              onRefresh={onRefresh}
             />
           </div>
         ))}
@@ -174,10 +197,25 @@ export default function DashboardEditorPage() {
   const dashboardId = id ? parseInt(id, 10) : null;
   const navigate = useNavigate();
 
+  const queryClient = useQueryClient();
   const { data: dashboard, isLoading, refetch } = useDashboard(dashboardId);
+  const {
+    data: dashboardData,
+    dataUpdatedAt: dashboardDataUpdatedAt,
+    isFetching: dashboardDataFetching,
+    refetch: refetchDashboardData,
+  } = useDashboardData(dashboardId ?? undefined);
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
+
+  // Build a map from widgetId → WidgetData for O(1) lookup in GridArea
+  const batchDataMap = useMemo(
+    () => new Map<number, WidgetData>(
+      (dashboardData?.widgets ?? []).map((w) => [w.widgetId, w])
+    ),
+    [dashboardData?.widgets]
+  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -195,14 +233,16 @@ export default function DashboardEditorPage() {
     setLocalLayouts({ lg: items, md: items, sm: items });
   }
 
-  // Auto-refresh
+  // Auto-refresh: invalidate batch data query so all widget data refreshes together
   useEffect(() => {
     if (!dashboard?.autoRefreshSeconds) return;
     const interval = setInterval(() => {
-      void refetch();
+      void queryClient.invalidateQueries({
+        queryKey: ['analytics', 'dashboards', dashboardId, 'data'],
+      });
     }, dashboard.autoRefreshSeconds * 1000);
     return () => clearInterval(interval);
-  }, [dashboard?.autoRefreshSeconds, refetch]);
+  }, [dashboard?.autoRefreshSeconds, dashboardId, queryClient]);
 
   // Fullscreen API
   const containerRef = useRef<HTMLDivElement>(null);
@@ -448,6 +488,11 @@ export default function DashboardEditorPage() {
             layouts={currentLayouts}
             onLayoutChange={handleLayoutChange}
             onRemove={handleRemoveWidget}
+            batchDataMap={batchDataMap}
+            autoRefreshSeconds={dashboard.autoRefreshSeconds}
+            dataUpdatedAt={dashboardDataUpdatedAt}
+            isFetching={dashboardDataFetching}
+            onRefresh={() => void refetchDashboardData()}
           />
         )}
       </div>

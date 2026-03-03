@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
@@ -25,16 +26,19 @@ public class TriggerEventService {
   private final TriggerService triggerService;
   private final DatasetRepository datasetRepository;
   private final DSLContext dsl;
+  private final NotificationService notificationService;
 
   public TriggerEventService(
       TriggerRepository triggerRepository,
       @Lazy TriggerService triggerService,
       DatasetRepository datasetRepository,
-      DSLContext dsl) {
+      DSLContext dsl,
+      NotificationService notificationService) {
     this.triggerRepository = triggerRepository;
     this.triggerService = triggerService;
     this.datasetRepository = datasetRepository;
     this.dsl = dsl;
+    this.notificationService = notificationService;
   }
 
   /**
@@ -142,6 +146,15 @@ public class TriggerEventService {
         log.info("Dataset change detected for trigger {}, datasets: {}", trigger.id(), changedIds);
         triggerService.fireTrigger(trigger.id(), Map.of("changedDatasets", changedIds));
         updatedState.put("lastFiredAt", LocalDateTime.now().toString());
+
+        for (Long changedDatasetId : changedIds) {
+          String datasetName =
+              datasetRepository
+                  .findById(changedDatasetId)
+                  .map(d -> d.name())
+                  .orElse(String.valueOf(changedDatasetId));
+          notificationService.notifyDatasetChanged(changedDatasetId, datasetName);
+        }
       } else {
         log.debug("Dataset change detected for trigger {} but debounce not elapsed", trigger.id());
       }

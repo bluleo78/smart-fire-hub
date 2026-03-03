@@ -41,6 +41,11 @@ public class AnalyticsDashboardRepository {
   private static final Field<LocalDateTime> D_UPDATED_AT =
       field(name("dashboard", "updated_at"), LocalDateTime.class);
 
+  // dashboard_widget table (for count)
+  private static final Table<?> DW = table(name("dashboard_widget"));
+  private static final Field<Long> DW_DASHBOARD_ID =
+      field(name("dashboard_widget", "dashboard_id"), Long.class);
+
   // user table
   private static final Table<?> USER_TABLE = table(name("user"));
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
@@ -63,6 +68,9 @@ public class AnalyticsDashboardRepository {
 
     Condition combined = conditions.stream().reduce(Condition::and).orElse(trueCondition());
 
+    Field<Integer> widgetCountField =
+        field(select(count()).from(DW).where(DW_DASHBOARD_ID.eq(D_ID))).as("widget_count");
+
     var records =
         dsl.select(
                 D_ID,
@@ -73,7 +81,8 @@ public class AnalyticsDashboardRepository {
                 U_NAME_ALIAS,
                 D_CREATED_BY,
                 D_CREATED_AT,
-                D_UPDATED_AT)
+                D_UPDATED_AT,
+                widgetCountField)
             .from(D)
             .join(USER_TABLE)
             .on(D_CREATED_BY.eq(U_ID))
@@ -85,7 +94,8 @@ public class AnalyticsDashboardRepository {
 
     List<DashboardResponse> result = new ArrayList<>();
     for (Record r : records) {
-      result.add(mapToResponse(r, List.of()));
+      int wc = r.get("widget_count", Integer.class);
+      result.add(mapToResponse(r, List.of(), wc));
     }
     return result;
   }
@@ -125,7 +135,7 @@ public class AnalyticsDashboardRepository {
             .fetchOne();
 
     if (r == null) return Optional.empty();
-    return Optional.of(mapToResponse(r, widgets));
+    return Optional.of(mapToResponse(r, widgets, widgets.size()));
   }
 
   public Optional<DashboardResponse> findByIdForOwner(Long id, Long userId) {
@@ -147,7 +157,7 @@ public class AnalyticsDashboardRepository {
             .fetchOne();
 
     if (r == null) return Optional.empty();
-    return Optional.of(mapToResponse(r, List.of()));
+    return Optional.of(mapToResponse(r, List.of(), 0));
   }
 
   public Long insert(CreateDashboardRequest req, Long userId) {
@@ -181,7 +191,7 @@ public class AnalyticsDashboardRepository {
   }
 
   private DashboardResponse mapToResponse(
-      Record r, List<DashboardResponse.DashboardWidgetResponse> widgets) {
+      Record r, List<DashboardResponse.DashboardWidgetResponse> widgets, int widgetCount) {
     return new DashboardResponse(
         r.get(D_ID),
         r.get(D_NAME),
@@ -189,6 +199,7 @@ public class AnalyticsDashboardRepository {
         Boolean.TRUE.equals(r.get(D_IS_SHARED)),
         r.get(D_AUTO_REFRESH_SECONDS),
         widgets,
+        widgetCount,
         r.get("created_by_name", String.class),
         r.get(D_CREATED_BY),
         r.get(D_CREATED_AT),

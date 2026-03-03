@@ -9,6 +9,7 @@ import type {
   CreateDashboardRequest,
   CreateSavedQueryRequest,
   Dashboard,
+  DashboardDataResponse,
   DashboardListItem,
   DashboardWidget,
   SavedQuery,
@@ -120,4 +121,7 @@ export const analyticsApi = {
 
   removeWidget: (dashboardId: number, widgetId: number) =>
     client.delete(`/analytics/dashboards/${dashboardId}/widgets/${widgetId}`),
+
+  getDashboardData: (id: number) =>
+    client.get<DashboardDataResponse>(`/analytics/dashboards/${id}/data`),
 };

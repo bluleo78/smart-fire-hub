@@ -118,7 +118,8 @@ class TriggerEventServiceTest extends IntegrationTestBase {
   @Test
   void onPipelineCompleted_withNoChainTriggers_doesNothing() {
     // No chain triggers exist for this pipeline
-    PipelineCompletedEvent event = new PipelineCompletedEvent(upstreamPipelineId, 4L, "COMPLETED");
+    PipelineCompletedEvent event =
+        new PipelineCompletedEvent(upstreamPipelineId, 4L, "COMPLETED", null);
 
     // Should not throw (async execution won't affect test thread)
     triggerEventService.onPipelineCompleted(event);

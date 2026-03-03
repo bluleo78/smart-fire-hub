@@ -221,3 +221,19 @@ export interface UpdateWidgetRequest {
   width?: number;
   height?: number;
 }
+
+// ============================================================
+// Phase 4: Dashboard Batch Data
+// ============================================================
+
+export interface WidgetData {
+  widgetId: number;
+  chartId: number;
+  queryResult: AnalyticsQueryResult | null;
+  error?: string;
+}
+
+export interface DashboardDataResponse {
+  dashboardId: number;
+  widgets: WidgetData[];
+}

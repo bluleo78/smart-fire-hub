@@ -16,9 +16,11 @@ import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,6 +34,7 @@ class PipelineExecutionServiceTest {
 
   @Mock PipelineStepRepository stepRepository;
   @Mock PipelineExecutionRepository executionRepository;
+  @Mock PipelineRepository pipelineRepository;
   @Mock DataTableService dataTableService;
   @Mock DatasetRepository datasetRepository;
   @Mock DatasetColumnRepository columnRepository;
@@ -127,6 +130,7 @@ class PipelineExecutionServiceTest {
         .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
     when(sqlExecutor.execute("SELECT 1")).thenReturn("1 row affected");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
     // when
     Long result = service.executePipeline(pipelineId, userId);
@@ -158,6 +162,7 @@ class PipelineExecutionServiceTest {
     when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(stepExec1Id);
     when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(stepExec2Id);
     when(sqlExecutor.execute("BAD SQL")).thenThrow(new RuntimeException("SQL error"));
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
     // when
     service.executePipeline(pipelineId, userId);
@@ -184,6 +189,7 @@ class PipelineExecutionServiceTest {
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of());
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
     // when
     Long result = service.executePipeline(pipelineId, userId);
@@ -211,6 +217,7 @@ class PipelineExecutionServiceTest {
         .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
     when(sqlExecutor.execute("SELECT 1")).thenReturn("ok");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
     // when
     service.executePipeline(pipelineId, userId);

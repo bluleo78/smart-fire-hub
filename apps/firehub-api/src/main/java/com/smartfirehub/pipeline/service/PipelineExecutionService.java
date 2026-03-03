@@ -13,6 +13,7 @@ import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
@@ -31,6 +32,7 @@ public class PipelineExecutionService {
 
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
+  private final PipelineRepository pipelineRepository;
   private final DataTableService dataTableService;
   private final DataTableRowService dataTableRowService;
   private final DatasetRepository datasetRepository;
@@ -45,6 +47,7 @@ public class PipelineExecutionService {
   public PipelineExecutionService(
       PipelineStepRepository stepRepository,
       PipelineExecutionRepository executionRepository,
+      PipelineRepository pipelineRepository,
       DataTableService dataTableService,
       DataTableRowService dataTableRowService,
       DatasetRepository datasetRepository,
@@ -57,6 +60,7 @@ public class PipelineExecutionService {
       ObjectMapper objectMapper) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
+    this.pipelineRepository = pipelineRepository;
     this.dataTableService = dataTableService;
     this.dataTableRowService = dataTableRowService;
     this.datasetRepository = datasetRepository;
@@ -200,6 +204,7 @@ public class PipelineExecutionService {
       Map<Long, List<Long>> stepDependencyMap,
       Map<Long, Long> stepIdToStepExecId) {
     LocalDateTime executionStartedAt = LocalDateTime.now();
+    Long pipelineCreatedBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
 
     try {
       // Update execution status to RUNNING
@@ -265,7 +270,7 @@ public class PipelineExecutionService {
 
       // Publish completion event for chain triggers
       applicationEventPublisher.publishEvent(
-          new PipelineCompletedEvent(pipelineId, executionId, finalStatus));
+          new PipelineCompletedEvent(pipelineId, executionId, finalStatus, pipelineCreatedBy));
 
     } catch (Exception e) {
       log.error("Pipeline execution {} failed with exception", executionId, e);
@@ -273,7 +278,7 @@ public class PipelineExecutionService {
 
       // Publish failure event for chain triggers
       applicationEventPublisher.publishEvent(
-          new PipelineCompletedEvent(pipelineId, executionId, "FAILED"));
+          new PipelineCompletedEvent(pipelineId, executionId, "FAILED", pipelineCreatedBy));
     }
   }
 

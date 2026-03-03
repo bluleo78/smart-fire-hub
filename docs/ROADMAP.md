@@ -15,7 +15,7 @@
 | [Phase 1](#phase-1-gis-범용-기반) | **완료** | 6/6 | PostGIS 인프라 + GEOMETRY 지원 + 지도 + 공간 쿼리 + MAP 차트 |
 | [Phase 2](#phase-2-디자인-시스템) | **완료** | 11/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
 | [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
-| [Phase 4](#phase-4-대시보드-실시간-갱신) | 대기 | 0/2 | 자동 갱신 + SSE 알림 |
+| [Phase 4](#phase-4-대시보드-전체-개선) | 대기 | 0/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
@@ -96,15 +96,30 @@
 
 ---
 
-## Phase 4: 대시보드 실시간 갱신
+## Phase 4: 대시보드 전체 개선
 
-> 운영 모니터링이 가능한 라이브 대시보드.
-> **의존**: Phase 1 (지도 위젯)
+> 홈 대시보드 리디자인 (actionable metrics) + 분석 대시보드 실시간 갱신 + SSE 알림 인프라.
+> **의존**: Phase 1 (지도 위젯), Phase 3 (AI Text-to-SQL)
+> **리서치**: `docs/research/phase4-dashboard-research.md`
+> **계획**: `.omc/plans/phase-4-dashboard.md`
+> **목업**: `snapshots/home-dashboard-mockup.html`
+>
+> **실행 순서**:
+> ```
+> Layer 1 (병렬):  4-1 ──┬── 4-5
+>                  4-2 ──┤
+>                  4-3 ──┼── 4-6
+>                        └── 4-4
+> ```
 
-| # | 작업 | 상태 | 범위 | 검증 기준 |
-|---|------|------|------|----------|
-| 4-1 | 대시보드 위젯 자동 갱신 | ⬜ | Frontend | 위젯별 갱신 주기 설정(10초~5분). 갱신 중 기존 데이터 유지 + 로딩 인디케이터. |
-| 4-2 | SSE 이벤트 기반 알림 + 자동 갱신 | ⬜ | Backend + Frontend | 파이프라인 완료/실패 시 토스트 알림. 데이터셋 변경 → 관련 차트 자동 갱신. |
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 4-1 | 분석 대시보드 자동 갱신 수정 + 배치 최적화 | ⬜ | Frontend | 없음 | autoRefresh 시 차트 데이터 실갱신. 배치 엔드포인트 활용으로 N×2→1건 축소. 빌드 통과. |
+| 4-2 | 홈 대시보드 API — 건강 상태 + 활동 피드 | ⬜ | Backend | 없음 | /health, /attention, /activity 3개 엔드포인트. 심각도 정렬. 필터+페이지네이션. 통합 테스트 통과. |
+| 4-3 | SSE 이벤트 브로드캐스트 인프라 | ⬜ | Backend | 없음 | /notifications/stream SSE 엔드포인트. user-scoped SseEmitter. 파이프라인/임포트 이벤트 브로드캐스트. TC 통과. |
+| 4-4 | 홈 대시보드 UI 리디자인 | ⬜ | Frontend | 4-2 | 5-Zone: 건강 상태바 + 주의 필요 + 퀵 액션 + 최근 사용 + 활동 피드. 다크모드. 반응형. 빌드 통과. |
+| 4-5 | 데이터 신선도 UX + 위젯 성능 최적화 | ⬜ | Frontend | 4-1 | 위젯별 Fresh/Stale/Refreshing 인디케이터. Jitter ±10%. Intersection Observer off-screen 일시정지. 빌드 통과. |
+| 4-6 | SSE 실시간 연동 + 알림 UI | ⬜ | Frontend | 4-3, 4-4, 4-5 | SSE 구독 + 캐시 invalidation + 토스트 (P1 CRITICAL/P2 WARNING만, P3 INFO는 피드만). 빌드 통과. |
 
 ---
 
@@ -213,6 +228,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-03 | Phase 4 재설계. 기존 2작업 → 6작업으로 확장 (홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 인프라 + 알림 UI). 리서치: 10개 데이터 플랫폼 분석, 알림 UX 3단계 우선순위 모델, SSE vs WebSocket 비교. |
 | 2026-03-03 | Phase 3 완료 (3-1, 3-2). AI Text-to-SQL MCP 도구 11종 + 시스템 프롬프트 + InlineChartWidget 인라인 차트 렌더링 + 세션 히스토리 차트 복원 + 차트 저장. TC 103개 통과. |
 | 2026-03-02 | Phase 2 코드 적용 완료 (2-8~2-11). 시맨틱 Status 토큰 + 색상 마이그레이션 46건 + Typography 통일 25건 + 접근성 aria-label 20건. 41개 파일 변경. Phase 2 전체 완료. |
 | 2026-03-02 | Phase D-1/D-2를 Phase 2 (디자인 시스템)로 통합. Phase 번호 재부여 (기존 2→3, 3→4, 4→5, 5→6). |

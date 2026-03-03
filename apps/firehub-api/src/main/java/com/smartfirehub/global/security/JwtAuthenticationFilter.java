@@ -43,12 +43,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
     String authHeader = request.getHeader("Authorization");
 
-    if (StringUtils.hasText(authHeader)) {
-      if (authHeader.startsWith("Bearer ")) {
-        authenticateWithJwt(authHeader.substring(7));
-      } else if (authHeader.startsWith("Internal ")) {
-        authenticateWithInternalToken(authHeader.substring(9), request);
-      }
+    String token = null;
+    if (authHeader != null && authHeader.startsWith("Bearer ")) {
+      token = authHeader.substring(7);
+    } else if (request.getRequestURI().equals("/api/v1/notifications/stream")) {
+      token = request.getParameter("token");
+    }
+
+    if (token != null) {
+      authenticateWithJwt(token);
+    } else if (StringUtils.hasText(authHeader) && authHeader.startsWith("Internal ")) {
+      authenticateWithInternalToken(authHeader.substring(9), request);
     }
 
     filterChain.doFilter(request, response);

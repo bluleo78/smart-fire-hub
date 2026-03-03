@@ -1,26 +1,56 @@
 import { Loader2, X } from 'lucide-react';
+import { useRef } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
-import type { DashboardWidget } from '../../types/analytics';
+import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
+import type { DashboardWidget, WidgetData } from '../../types/analytics';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Separator } from '../ui/separator';
 import { ChartRenderer } from './ChartRenderer';
 import { WidgetErrorBoundary } from './WidgetErrorBoundary';
+import { WidgetFreshnessBar } from './WidgetFreshnessBar';
 
 interface DashboardWidgetCardProps {
   widget: DashboardWidget;
+  batchData?: WidgetData;
   isEditing: boolean;
   onRemove?: (widgetId: number) => void;
+  autoRefreshSeconds?: number | null;
+  dataUpdatedAt?: number;
+  isFetching?: boolean;
+  onRefresh?: () => void;
 }
 
-function WidgetContent({ widget }: { widget: DashboardWidget }) {
+interface WidgetContentProps {
+  widget: DashboardWidget;
+  batchData?: WidgetData;
+  autoRefreshSeconds?: number | null;
+  isVisible: boolean;
+}
+
+function WidgetContent({ widget, batchData, autoRefreshSeconds, isVisible }: WidgetContentProps) {
   const { data: chart, isLoading: chartLoading } = useChart(widget.chartId);
-  const { data: chartData, isLoading: dataLoading } = useChartData(widget.chartId);
 
-  const isLoading = chartLoading || dataLoading;
+  // Only fetch individual chart data when no batch data is provided
+  const refetchInterval =
+    !batchData && autoRefreshSeconds && autoRefreshSeconds > 0
+      ? autoRefreshSeconds * 1000
+      : undefined;
 
-  if (isLoading) {
+  const {
+    data: chartData,
+    isLoading: dataLoading,
+    isFetching: chartFetching,
+  } = useChartData(batchData ? undefined : widget.chartId, {
+    refetchInterval,
+    enabled: isVisible,
+  });
+
+  const isInitialLoading = chartLoading || (!batchData && dataLoading && !chartData);
+  const isBackgroundFetching = !isInitialLoading && !batchData && chartFetching;
+
+  if (isInitialLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -28,7 +58,18 @@ function WidgetContent({ widget }: { widget: DashboardWidget }) {
     );
   }
 
-  if (!chart || !chartData) {
+  if (batchData?.error) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+        {batchData.error}
+      </div>
+    );
+  }
+
+  // Use batch query result if available, else fall back to individual fetch
+  const queryResult = batchData?.queryResult ?? chartData?.queryResult ?? null;
+
+  if (!chart || !queryResult) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
         데이터를 불러올 수 없습니다.
@@ -36,20 +77,45 @@ function WidgetContent({ widget }: { widget: DashboardWidget }) {
     );
   }
 
+  const effectiveChart = batchData ? chart : (chartData?.chart ?? chart);
+
   return (
-    <ChartRenderer
-      chartType={chartData.chart.chartType}
-      config={chartData.chart.config}
-      data={chartData.queryResult.rows}
-      columns={chartData.queryResult.columns}
-      fillParent
-    />
+    <div className="relative h-full">
+      <ChartRenderer
+        chartType={effectiveChart.chartType}
+        config={effectiveChart.config}
+        data={queryResult.rows}
+        columns={queryResult.columns}
+        fillParent
+      />
+      {isBackgroundFetching && (
+        <div className="absolute top-1 right-1 pointer-events-none">
+          <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none text-muted-foreground" />
+        </div>
+      )}
+    </div>
   );
 }
 
-export function DashboardWidgetCard({ widget, isEditing, onRemove }: DashboardWidgetCardProps) {
+export function DashboardWidgetCard({
+  widget,
+  batchData,
+  isEditing,
+  onRemove,
+  autoRefreshSeconds,
+  dataUpdatedAt,
+  isFetching,
+  onRefresh,
+}: DashboardWidgetCardProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isVisible = useWidgetVisibility(containerRef);
+
+  const effectiveDataUpdatedAt = dataUpdatedAt ?? 0;
+  const effectiveIsFetching = isFetching ?? false;
+  const effectiveOnRefresh = onRefresh ?? (() => undefined);
+
   return (
-    <Card className="h-full py-2 gap-1 overflow-hidden">
+    <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col">
       <CardHeader className={`px-3 pb-0 ${isEditing ? 'drag-handle cursor-grab active:cursor-grabbing' : ''}`}>
         <div className="flex items-center justify-between">
           <CardTitle className="text-xs font-medium truncate">{widget.chartName}</CardTitle>
@@ -72,9 +138,20 @@ export function DashboardWidgetCard({ widget, isEditing, onRemove }: DashboardWi
       <Separator />
       <CardContent className="px-3 pt-1 flex-1 min-h-0">
         <WidgetErrorBoundary widgetName={widget.chartName}>
-          <WidgetContent widget={widget} />
+          <WidgetContent
+            widget={widget}
+            batchData={batchData}
+            autoRefreshSeconds={autoRefreshSeconds}
+            isVisible={isVisible}
+          />
         </WidgetErrorBoundary>
       </CardContent>
+      <WidgetFreshnessBar
+        dataUpdatedAt={effectiveDataUpdatedAt}
+        isFetching={effectiveIsFetching}
+        refreshSeconds={autoRefreshSeconds ?? undefined}
+        onRefresh={effectiveOnRefresh}
+      />
     </Card>
   );
 }

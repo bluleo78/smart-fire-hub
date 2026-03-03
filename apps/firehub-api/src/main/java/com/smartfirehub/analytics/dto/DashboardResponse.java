@@ -10,6 +10,7 @@ public record DashboardResponse(
     boolean isShared,
     Integer autoRefreshSeconds,
     List<DashboardWidgetResponse> widgets,
+    int widgetCount,
     String createdByName,
     Long createdBy,
     LocalDateTime createdAt,

@@ -138,11 +138,23 @@ export function useChart(id: number | null) {
   });
 }
 
-export function useChartData(id: number | null) {
+export function useChartData(id: number | null | undefined, options?: {
+  refetchInterval?: number;
+  enabled?: boolean;
+}) {
   return useQuery({
     queryKey: ['analytics', 'charts', id, 'data'],
     queryFn: () => analyticsApi.getChartData(id!).then((r) => r.data),
-    enabled: !!id,
+    enabled: options?.enabled !== false && !!id,
+    refetchInterval: options?.refetchInterval
+      ? () => {
+          const base = options.refetchInterval!;
+          const jitter = (Math.random() - 0.5) * 0.2 * base; // ±10%
+          return base + jitter;
+        }
+      : undefined,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -200,6 +212,14 @@ export function useDashboard(id: number | null) {
     queryKey: ['analytics', 'dashboards', id],
     queryFn: () => analyticsApi.getDashboard(id!).then((r) => r.data),
     enabled: !!id,
+  });
+}
+
+export function useDashboardData(dashboardId: number | undefined) {
+  return useQuery({
+    queryKey: ['analytics', 'dashboards', dashboardId, 'data'],
+    queryFn: () => analyticsApi.getDashboardData(dashboardId!).then((r) => r.data),
+    enabled: !!dashboardId,
   });
 }
 

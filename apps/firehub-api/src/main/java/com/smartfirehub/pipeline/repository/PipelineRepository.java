@@ -161,6 +161,13 @@ public class PipelineRepository {
     return dsl.select(P_NAME).from(PIPELINE).where(P_ID.eq(id)).fetchOptional(r -> r.get(P_NAME));
   }
 
+  public Optional<Long> findCreatedByIdById(Long id) {
+    return dsl.select(P_CREATED_BY)
+        .from(PIPELINE)
+        .where(P_ID.eq(id))
+        .fetchOptional(r -> r.get(P_CREATED_BY));
+  }
+
   public Optional<LocalDateTime> findUpdatedAtById(Long id) {
     return dsl.select(P_UPDATED_AT)
         .from(PIPELINE)
