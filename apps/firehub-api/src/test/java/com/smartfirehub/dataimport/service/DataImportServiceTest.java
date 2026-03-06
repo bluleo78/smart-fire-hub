@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.dataimport.dto.ExportFormat;
+import com.smartfirehub.dataimport.dto.ExportRequest;
+import com.smartfirehub.dataimport.dto.ExportResult;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
@@ -237,7 +240,7 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void exportDatasetCsv_generatesValidCsv() throws Exception {
+  void exportDataset_csv_generatesValidCsv() throws Exception {
     // Given - directly process import synchronously for test
     String filePath =
         createTempCsvFile("name,age,email\nAlice,30,alice@example.com\nBob,25,bob@example.com");
@@ -257,11 +260,16 @@ class DataImportServiceTest extends IntegrationTestBase {
         "APPEND");
 
     // When
-    byte[] csvBytes = dataExportService.exportDatasetCsv(testDatasetId);
+    ExportRequest request = new ExportRequest(ExportFormat.CSV, null, null, null);
+    ExportResult result =
+        dataExportService.exportDataset(
+            testDatasetId, request, testUserId, "testuser", "127.0.0.1", "test");
 
     // Then
-    assertThat(csvBytes).isNotEmpty();
-    String csvOutput = new String(csvBytes, StandardCharsets.UTF_8);
+    assertThat(result.streamingBody()).isNotNull();
+    java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+    result.streamingBody().writeTo(baos);
+    String csvOutput = baos.toString(StandardCharsets.UTF_8);
     assertThat(csvOutput).contains("Name");
     assertThat(csvOutput).contains("Age");
     assertThat(csvOutput).contains("Email");

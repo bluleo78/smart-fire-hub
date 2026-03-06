@@ -1,6 +1,6 @@
 # Smart Fire Hub — ROADMAP
 
-> **최종 수정**: 2026-03-03
+> **최종 수정**: 2026-03-07
 > **비전**: AI-First 소방 전문 데이터 플랫폼
 > **전략**: 기초 기술 → 범용 플랫폼 → 도메인 특화 순서로 확장
 > **원칙**: 각 아이템은 독립적으로 계획(Plan) → 구현 → 검증 가능한 작업 단위
@@ -16,7 +16,7 @@
 | [Phase 2](#phase-2-디자인-시스템) | **완료** | 11/11 | 디자인 가이드라인 문서 수립 + 코드 적용 |
 | [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
-| [Phase 5](#phase-5-데이터-내보내기) | 대기 | 0/2 | CSV/Excel/GeoJSON 다운로드 |
+| [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
@@ -123,15 +123,16 @@
 
 ---
 
-## Phase 5: 데이터 내보내기
+## Phase 5: 데이터 내보내기 ✅
 
-> 분석 결과를 외부로 가져갈 수 있다.
+> **완료** — 분석 결과를 외부로 가져갈 수 있다.
 > **의존**: 없음 (독립적)
+> **계획**: `.omc/plans/phase-5-data-export.md`
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 5-1 | 내보내기 API (CSV/Excel/GeoJSON) | ⬜ | Backend | 데이터셋/쿼리 결과를 CSV(스트리밍), Excel, GeoJSON으로 다운로드. 대용량 지원. |
-| 5-2 | 내보내기 UI | ⬜ | Frontend | 데이터셋/쿼리 결과에 "내보내기" 버튼 + 포맷 선택. 대용량은 백그라운드 작업. |
+| 5-1 | 내보내기 API (CSV/Excel/GeoJSON) | ✅ | Backend | ExportWriter 3종 (CSV+BOM/Excel SXSSFWorkbook/GeoJSON FeatureCollection). Sync/Async 이원화 (50K row 기준). 컬럼 선택 + 검색 필터. Rate limiting (3건/분). 감사 로그. 24시간 파일 정리 스케줄러. 통합 테스트 13개 통과. |
+| 5-2 | 내보내기 UI | ✅ | Frontend | ExportDialog (포맷 선택 + 컬럼 선택 + 예상 크기). 비동기 진행률 폴링 UI. 데이터셋 데이터 탭 + 쿼리 에디터 내보내기 통합. downloadBlob 유틸. 빌드 + 타입체크 통과. |
 
 ---
 
@@ -244,6 +245,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-07 | Phase 5 완료 (5-1, 5-2). 데이터 내보내기 CSV/Excel/GeoJSON 3포맷. Sync/Async 이원화 (50K row 기준). ExportDialog + 비동기 진행률 UI. 쿼리 에디터 내보내기 통합. Rate limiting + 감사 로그 + 파일 정리. 통합 테스트 13개 통과. Architect 검증 13/13 PASS. |
 | 2026-03-03 | Phase 4 완료 (4-1~4-6). 홈 대시보드 5-Zone 리디자인 + SSE 실시간 알림 + 위젯 신선도 UX. 코드 리뷰(CRITICAL 1 + HIGH 3 + MEDIUM 5) 및 Simplify(9건) 수정 완료. 후속 과제 7건 식별. 전체 테스트 통과. |
 | 2026-03-03 | Phase 4 재설계. 기존 2작업 → 6작업으로 확장 (홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 인프라 + 알림 UI). 리서치: 10개 데이터 플랫폼 분석, 알림 UX 3단계 우선순위 모델, SSE vs WebSocket 비교. |
 | 2026-03-03 | Phase 3 완료 (3-1, 3-2). AI Text-to-SQL MCP 도구 11종 + 시스템 프롬프트 + InlineChartWidget 인라인 차트 렌더링 + 세션 히스토리 차트 복원 + 차트 저장. TC 103개 통과. |

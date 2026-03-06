@@ -22,4 +22,15 @@ public class AsyncConfig {
     executor.initialize();
     return executor;
   }
+
+  @Bean(name = "exportExecutor")
+  public Executor exportExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(3);
+    executor.setMaxPoolSize(5);
+    executor.setQueueCapacity(10);
+    executor.setThreadNamePrefix("data-export-");
+    executor.initialize();
+    return executor;
+  }
 }

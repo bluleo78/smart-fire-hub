@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { datasetsApi } from '../../api/datasets';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
@@ -28,7 +27,6 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
-import { downloadCsv } from '../../lib/download';
 import { formatDateShort } from '../../lib/formatters';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 
@@ -99,28 +97,6 @@ export default function DatasetListPage() {
     }
   };
 
-  const handleExport = async (e: React.MouseEvent, id: number, name: string) => {
-    e.stopPropagation();
-    try {
-      const response = await datasetsApi.getDatasetData(id, { size: 10000, page: 0 });
-      const { columns, rows } = response.data;
-      const header = columns.map(c => c.displayName || c.columnName).join(',');
-      const body = rows.map(row =>
-        columns.map(c => {
-          const val = row[c.columnName];
-          if (val == null) return '';
-          const str = String(val);
-          return str.includes(',') || str.includes('"') || str.includes('\n')
-            ? `"${str.replace(/"/g, '""')}"` : str;
-        }).join(',')
-      ).join('\n');
-      const csv = `${header}\n${body}`;
-      downloadCsv(`${name}.csv`, csv);
-      toast.success(`"${name}" CSV 다운로드 완료`);
-    } catch {
-      toast.error('CSV 내보내기에 실패했습니다.');
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -366,9 +342,12 @@ export default function DatasetListPage() {
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0"
-                        title="CSV 내보내기"
-                        aria-label="CSV 내보내기"
-                        onClick={(e) => handleExport(e, dataset.id, dataset.name)}
+                        title="내보내기"
+                        aria-label="내보내기"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/data/datasets/${dataset.id}?tab=data`);
+                        }}
                       >
                         <Download size={14} />
                       </Button>

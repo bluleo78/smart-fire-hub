@@ -9,14 +9,10 @@ import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.dto.ParseOptions;
-import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.dataimport.service.DataImportService;
-import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -29,22 +25,14 @@ import org.springframework.web.multipart.MultipartFile;
 public class DataImportController {
 
   private final DataImportService importService;
-  private final DataExportService exportService;
   private final UserRepository userRepository;
   private final ObjectMapper objectMapper;
-  private final DatasetRepository datasetRepository;
 
   public DataImportController(
-      DataImportService importService,
-      DataExportService exportService,
-      UserRepository userRepository,
-      ObjectMapper objectMapper,
-      DatasetRepository datasetRepository) {
+      DataImportService importService, UserRepository userRepository, ObjectMapper objectMapper) {
     this.importService = importService;
-    this.exportService = exportService;
     this.userRepository = userRepository;
     this.objectMapper = objectMapper;
-    this.datasetRepository = datasetRepository;
   }
 
   @PostMapping("/imports/preview")
@@ -137,18 +125,5 @@ public class DataImportController {
   public ResponseEntity<ImportResponse> getImport(
       @PathVariable Long datasetId, @PathVariable Long importId) {
     return ResponseEntity.ok(importService.getImportById(datasetId, importId));
-  }
-
-  @GetMapping("/data/export")
-  @RequirePermission("data:export")
-  public ResponseEntity<byte[]> exportCsv(@PathVariable Long datasetId) throws Exception {
-    byte[] csv = exportService.exportDatasetCsv(datasetId);
-    String tableName = datasetRepository.findTableNameById(datasetId).orElse("export");
-    String date = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
-    String filename = tableName + "_export_" + date + ".csv";
-    return ResponseEntity.ok()
-        .header("Content-Type", "text/csv; charset=UTF-8")
-        .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
-        .body(csv);
   }
 }

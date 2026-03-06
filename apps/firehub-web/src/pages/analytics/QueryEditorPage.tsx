@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Columns,
+  Download,
   Loader2,
   Play,
   Save,
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { exportsApi } from '../../api/exports';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -29,6 +31,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -49,8 +57,10 @@ import {
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
+import { downloadBlob } from '../../lib/download';
 import { cn } from '../../lib/utils';
 import type { AnalyticsQueryResult, SchemaTable } from '../../types/analytics';
+import type { ExportFormat } from '../../types/export';
 
 // ============================================================
 // Inline SQL Editor with schema-aware autocomplete
@@ -559,6 +569,23 @@ export default function QueryEditorPage() {
     }
   };
 
+  const handleQueryExport = async (format: ExportFormat) => {
+    if (!result || result.error || result.columns.length === 0) return;
+    try {
+      const response = await exportsApi.exportQueryResult({
+        columnNames: result.columns,
+        rows: result.rows,
+        format,
+      });
+      const ext = format === 'CSV' ? 'csv' : 'xlsx';
+      const filename = `query_result_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.${ext}`;
+      downloadBlob(filename, response.data as Blob);
+      toast.success('파일이 다운로드되었습니다.');
+    } catch (error) {
+      handleApiError(error, '내보내기에 실패했습니다.');
+    }
+  };
+
   // Insert table name at cursor (append to current sql for simplicity)
   const handleInsertTable = (tableName: string) => {
     setSql((prev) => {
@@ -717,18 +744,40 @@ export default function QueryEditorPage() {
                     </>
                   )}
                 </div>
-                {/* Phase 2: Create Chart button */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  disabled={!queryId}
-                  onClick={() => navigate(`/analytics/charts/new?queryId=${queryId}`)}
-                  title={queryId ? '이 쿼리로 차트 만들기' : '쿼리를 저장한 후 차트를 만들 수 있습니다'}
-                >
-                  <BarChart2 className="h-4 w-4" />
-                  차트로 만들기
-                </Button>
+                <div className="flex items-center gap-2">
+                  {/* Export dropdown */}
+                  {!result.error && result.queryType === 'SELECT' && result.rows.length > 0 && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1.5">
+                          <Download className="h-4 w-4" />
+                          내보내기
+                          <ChevronDown className="h-3 w-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleQueryExport('CSV')}>
+                          CSV로 내보내기
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleQueryExport('EXCEL')}>
+                          Excel로 내보내기
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  {/* Phase 2: Create Chart button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={!queryId}
+                    onClick={() => navigate(`/analytics/charts/new?queryId=${queryId}`)}
+                    title={queryId ? '이 쿼리로 차트 만들기' : '쿼리를 저장한 후 차트를 만들 수 있습니다'}
+                  >
+                    <BarChart2 className="h-4 w-4" />
+                    차트로 만들기
+                  </Button>
+                </div>
               </div>
               <ResultTable result={result} />
             </div>

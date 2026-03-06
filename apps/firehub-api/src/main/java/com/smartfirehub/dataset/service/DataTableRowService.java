@@ -143,7 +143,7 @@ public class DataTableRowService {
    *
    * @throws IllegalArgumentException GEOMETRY 컬럼이 없거나 지정 컬럼이 GEOMETRY가 아닌 경우
    */
-  static String resolveGeometryColumn(
+  public static String resolveGeometryColumn(
       List<DatasetColumnResponse> columns, Map<String, String> columnTypes, String geometryColumn) {
     if (geometryColumn != null) {
       if (!isGeometry(geometryColumn, columnTypes)) {

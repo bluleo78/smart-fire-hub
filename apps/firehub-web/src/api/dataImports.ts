@@ -34,6 +34,4 @@ export const dataImportsApi = {
     client.get<ImportResponse[]>(`/datasets/${datasetId}/imports`),
   getImportById: (datasetId: number, importId: number) =>
     client.get<ImportResponse>(`/datasets/${datasetId}/imports/${importId}`),
-  exportCsv: (datasetId: number) =>
-    client.get(`/datasets/${datasetId}/data/export`, { responseType: 'blob' }),
 };

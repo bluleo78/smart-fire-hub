@@ -180,6 +180,29 @@ public class AsyncJobRepository {
         .fetch(this::mapToResponse);
   }
 
+  public List<AsyncJobStatusResponse> findActiveByUserAndJobType(Long userId, String jobType) {
+    return dsl.select(
+            AJ_ID,
+            AJ_JOB_TYPE,
+            AJ_RESOURCE,
+            AJ_RESOURCE_ID,
+            AJ_USER_ID,
+            AJ_STAGE,
+            AJ_PROGRESS,
+            AJ_MESSAGE,
+            AJ_METADATA,
+            AJ_ERROR_MESSAGE,
+            AJ_CREATED_AT,
+            AJ_UPDATED_AT)
+        .from(ASYNC_JOB)
+        .where(
+            AJ_USER_ID
+                .eq(userId)
+                .and(AJ_JOB_TYPE.eq(jobType))
+                .and(AJ_STAGE.notIn("COMPLETED", "FAILED")))
+        .fetch(this::mapToResponse);
+  }
+
   public List<AsyncJobStatusResponse> findStaleJobs(LocalDateTime before) {
     return dsl.select(
             AJ_ID,

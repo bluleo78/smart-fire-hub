@@ -54,7 +54,7 @@ export function DataTableToolbar({
       )}
       <Button variant="outline" onClick={onExport}>
         <Download className="mr-2 h-4 w-4" />
-        CSV 내보내기
+        내보내기
       </Button>
     </div>
   );

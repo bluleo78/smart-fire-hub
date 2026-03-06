@@ -3,7 +3,6 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Loader2 } from 'lucide-react';
 import React, { lazy, Suspense, useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { dataImportsApi } from '../../../api/dataImports';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,8 +17,6 @@ import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useDatasetData, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
-import { handleApiError } from '../../../lib/api-error';
-import { downloadBlob } from '../../../lib/download';
 import { formatCellValue, getRawCellValue,isNullValue } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DataTableToolbar } from '../components/DataTableToolbar';
@@ -34,6 +31,10 @@ const ImportMappingDialog = lazy(() =>
 
 const ApiImportWizard = lazy(() =>
   import('../components/ApiImportWizard').then((m) => ({ default: m.ApiImportWizard }))
+);
+
+const ExportDialog = lazy(() =>
+  import('../components/ExportDialog').then((m) => ({ default: m.ExportDialog }))
 );
 
 import { AddRowDialog } from '../components/AddRowDialog';
@@ -59,6 +60,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
   const [addRowOpen, setAddRowOpen] = useState(false);
   const [editRowState, setEditRowState] = useState<{ open: boolean; rowId: number; data: Record<string, unknown> } | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -147,17 +149,6 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     });
   }, [selectedRowIds, deleteRows, setSelectedRowIds]);
 
-  const handleExport = async () => {
-    try {
-      const response = await dataImportsApi.exportCsv(datasetId);
-      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' });
-      downloadBlob(`${dataset?.tableName || 'export'}_export.csv`, blob);
-      toast.success('CSV 파일이 다운로드되었습니다.');
-    } catch (error) {
-      handleApiError(error, '내보내기에 실패했습니다.');
-    }
-  };
-
   const getSortIcon = (colName: string) => {
     if (!sort || sort.by !== colName) return <ArrowUpDown size={14} className="text-muted-foreground" />;
     if (sort.dir === 'ASC') return <ArrowUp size={14} />;
@@ -176,7 +167,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         onToggleSqlEditor={() => setSqlEditorOpen((prev) => !prev)}
         onAddRow={() => setAddRowOpen(true)}
         onImport={() => setImportDialogOpen(true)}
-        onExport={handleExport}
+        onExport={() => setExportDialogOpen(true)}
         onApiImport={() => setApiWizardOpen(true)}
       />
 
@@ -415,6 +406,18 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
             datasetId={datasetId}
             datasetName={dataset.name}
             datasetColumns={dataset.columns}
+          />
+        </Suspense>
+      )}
+
+      {exportDialogOpen && (
+        <Suspense fallback={null}>
+          <ExportDialog
+            open={exportDialogOpen}
+            onOpenChange={setExportDialogOpen}
+            datasetId={datasetId}
+            datasetName={dataset.name}
+            search={debouncedSearch || undefined}
           />
         </Suspense>
       )}
