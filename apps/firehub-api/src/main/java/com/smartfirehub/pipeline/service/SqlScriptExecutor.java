@@ -19,11 +19,17 @@ public class SqlScriptExecutor {
   public String execute(String scriptContent) {
     try {
       log.info("Executing SQL script");
+      dsl.execute("SET search_path TO data, public");
       dsl.execute(scriptContent);
       return "SQL executed successfully";
     } catch (Exception e) {
       log.error("SQL execution failed", e);
       throw new ScriptExecutionException("SQL execution failed: " + e.getMessage(), e);
+    } finally {
+      try {
+        dsl.execute("SET search_path TO public");
+      } catch (Exception ignored) {
+      }
     }
   }
 }
