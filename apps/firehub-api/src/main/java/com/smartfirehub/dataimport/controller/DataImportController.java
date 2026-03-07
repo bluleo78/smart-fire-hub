@@ -41,7 +41,7 @@ public class DataImportController {
       @PathVariable Long datasetId,
       @RequestParam("file") MultipartFile file,
       @RequestParam(defaultValue = ",") String delimiter,
-      @RequestParam(defaultValue = "UTF-8") String encoding,
+      @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
       @RequestParam(defaultValue = "0") int skipRows)
       throws Exception {
@@ -56,7 +56,7 @@ public class DataImportController {
       @RequestParam("file") MultipartFile file,
       @RequestParam("mappings") String mappingsJson,
       @RequestParam(defaultValue = ",") String delimiter,
-      @RequestParam(defaultValue = "UTF-8") String encoding,
+      @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
       @RequestParam(defaultValue = "0") int skipRows)
       throws Exception {
@@ -73,7 +73,7 @@ public class DataImportController {
       @RequestParam("file") MultipartFile file,
       @RequestParam(value = "mappings", required = false) String mappingsJson,
       @RequestParam(defaultValue = ",") String delimiter,
-      @RequestParam(defaultValue = "UTF-8") String encoding,
+      @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
       @RequestParam(defaultValue = "0") int skipRows,
       @RequestParam(defaultValue = "APPEND") String importMode,

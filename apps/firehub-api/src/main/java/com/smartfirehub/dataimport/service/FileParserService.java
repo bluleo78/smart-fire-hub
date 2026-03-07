@@ -91,39 +91,35 @@ public class FileParserService {
 
   public List<Map<String, String>> parse(byte[] fileData, String fileType, ParseOptions opts)
       throws Exception {
-    InputStream inputStream = new ByteArrayInputStream(fileData);
     return switch (fileType.toLowerCase()) {
-      case "csv" -> parseCSV(inputStream, opts);
-      case "xlsx", "xls" -> parseExcel(inputStream);
+      case "csv" -> parseCsvFromBytes(fileData, opts);
+      case "xlsx", "xls" -> parseExcel(new ByteArrayInputStream(fileData));
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
 
   public List<String> parseHeaders(byte[] fileData, String fileType, ParseOptions opts)
       throws Exception {
-    InputStream inputStream = new ByteArrayInputStream(fileData);
     return switch (fileType.toLowerCase()) {
-      case "csv" -> parseHeadersCSV(inputStream, opts);
-      case "xlsx", "xls" -> parseHeadersExcel(inputStream);
+      case "csv" -> parseHeadersCsvFromBytes(fileData, opts);
+      case "xlsx", "xls" -> parseHeadersExcel(new ByteArrayInputStream(fileData));
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
 
   public List<Map<String, String>> parseSampleRows(
       byte[] fileData, String fileType, int maxRows, ParseOptions opts) throws Exception {
-    InputStream inputStream = new ByteArrayInputStream(fileData);
     return switch (fileType.toLowerCase()) {
-      case "csv" -> parseSampleRowsCSV(inputStream, maxRows, opts);
-      case "xlsx", "xls" -> parseSampleRowsExcel(inputStream, maxRows);
+      case "csv" -> parseSampleRowsCsvFromBytes(fileData, maxRows, opts);
+      case "xlsx", "xls" -> parseSampleRowsExcel(new ByteArrayInputStream(fileData), maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
 
   public int countRows(byte[] fileData, String fileType, ParseOptions opts) throws Exception {
-    InputStream inputStream = new ByteArrayInputStream(fileData);
     return switch (fileType.toLowerCase()) {
-      case "csv" -> countRowsCSV(inputStream, opts);
-      case "xlsx", "xls" -> countRowsExcel(inputStream);
+      case "csv" -> countRowsCsvFromBytes(fileData, opts);
+      case "xlsx", "xls" -> countRowsExcel(new ByteArrayInputStream(fileData));
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -166,51 +162,18 @@ public class FileParserService {
   // Private CSV helpers with ParseOptions
   // -----------------------------------------------------------------------
 
-  private CSVReader buildCsvReader(InputStream inputStream, ParseOptions opts) {
-    char sep = opts.delimiter().charAt(0);
-    Charset charset = Charset.forName(opts.encoding());
-    CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
-    return new CSVReaderBuilder(new InputStreamReader(inputStream, charset))
-        .withCSVParser(parser)
-        .build();
-  }
+  // -----------------------------------------------------------------------
+  // Private CSV helpers with byte[] (supports AUTO encoding detection)
+  // -----------------------------------------------------------------------
 
-  private List<String> parseHeadersCSV(InputStream inputStream, ParseOptions opts)
+  private List<Map<String, String>> parseCsvFromBytes(byte[] data, ParseOptions opts)
       throws Exception {
-    try (CSVReader reader = buildCsvReader(inputStream, opts)) {
-      // skip rows before header
+    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
       for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return Collections.emptyList();
+        if (reader.readNext() == null) break;
       }
-
-      if (opts.hasHeader()) {
-        String[] headers = reader.readNext();
-        return headers != null ? Arrays.asList(headers) : Collections.emptyList();
-      } else {
-        // peek at first data row to determine column count
-        String[] firstRow = reader.readNext();
-        if (firstRow == null) return Collections.emptyList();
-        List<String> headers = new ArrayList<>();
-        for (int i = 0; i < firstRow.length; i++) {
-          headers.add("column_" + (i + 1));
-        }
-        return headers;
-      }
-    }
-  }
-
-  private List<Map<String, String>> parseSampleRowsCSV(
-      InputStream inputStream, int maxRows, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReader(inputStream, opts)) {
-      for (int s = 0; s < opts.skipRows(); s++) {
-        if (reader.readNext() == null) return Collections.emptyList();
-      }
-
       List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) {
-        return Collections.emptyList();
-      }
-
+      if (allRows.isEmpty()) return Collections.emptyList();
       String[] headers;
       int dataStart;
       if (opts.hasHeader()) {
@@ -222,32 +185,105 @@ public class FileParserService {
         for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
         dataStart = 0;
       }
-
       List<Map<String, String>> result = new ArrayList<>();
-      int limit = Math.min(allRows.size() - dataStart, maxRows);
-      for (int i = dataStart; i < dataStart + limit; i++) {
+      for (int i = dataStart; i < allRows.size(); i++) {
         String[] row = allRows.get(i);
         Map<String, String> rowMap = new HashMap<>();
-        for (int j = 0; j < headers.length && j < row.length; j++) {
-          rowMap.put(headers[j], row[j]);
-        }
+        for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
         result.add(rowMap);
       }
       return result;
     }
   }
 
-  private int countRowsCSV(InputStream inputStream, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReader(inputStream, opts)) {
+  private List<String> parseHeadersCsvFromBytes(byte[] data, ParseOptions opts) throws Exception {
+    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
+      for (int s = 0; s < opts.skipRows(); s++) {
+        if (reader.readNext() == null) return Collections.emptyList();
+      }
+      if (opts.hasHeader()) {
+        String[] headers = reader.readNext();
+        return headers != null ? Arrays.asList(headers) : Collections.emptyList();
+      } else {
+        String[] firstRow = reader.readNext();
+        if (firstRow == null) return Collections.emptyList();
+        List<String> headers = new ArrayList<>();
+        for (int i = 0; i < firstRow.length; i++) headers.add("column_" + (i + 1));
+        return headers;
+      }
+    }
+  }
+
+  private List<Map<String, String>> parseSampleRowsCsvFromBytes(
+      byte[] data, int maxRows, ParseOptions opts) throws Exception {
+    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
+      for (int s = 0; s < opts.skipRows(); s++) {
+        if (reader.readNext() == null) return Collections.emptyList();
+      }
+      List<String[]> allRows = reader.readAll();
+      if (allRows.isEmpty()) return Collections.emptyList();
+      String[] headers;
+      int dataStart;
+      if (opts.hasHeader()) {
+        headers = allRows.get(0);
+        dataStart = 1;
+      } else {
+        int colCount = allRows.get(0).length;
+        headers = new String[colCount];
+        for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
+        dataStart = 0;
+      }
+      List<Map<String, String>> result = new ArrayList<>();
+      int limit = Math.min(allRows.size() - dataStart, maxRows);
+      for (int i = dataStart; i < dataStart + limit; i++) {
+        String[] row = allRows.get(i);
+        Map<String, String> rowMap = new HashMap<>();
+        for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
+        result.add(rowMap);
+      }
+      return result;
+    }
+  }
+
+  private int countRowsCsvFromBytes(byte[] data, ParseOptions opts) throws Exception {
+    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
       for (int s = 0; s < opts.skipRows(); s++) {
         if (reader.readNext() == null) return 0;
       }
-
       List<String[]> allRows = reader.readAll();
       if (allRows.isEmpty()) return 0;
-      // subtract header row if present
       return opts.hasHeader() ? Math.max(0, allRows.size() - 1) : allRows.size();
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Private CSV reader builders
+  // -----------------------------------------------------------------------
+
+  private CSVReader buildCsvReader(InputStream inputStream, ParseOptions opts) {
+    char sep = opts.delimiter().charAt(0);
+    String encoding = opts.encoding();
+    if ("AUTO".equals(encoding)) {
+      encoding = "UTF-8"; // fallback; use buildCsvReaderFromBytes for auto-detect
+    }
+    Charset charset = Charset.forName(encoding);
+    CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
+    return new CSVReaderBuilder(new InputStreamReader(inputStream, charset))
+        .withCSVParser(parser)
+        .build();
+  }
+
+  private CSVReader buildCsvReaderFromBytes(byte[] data, ParseOptions opts) {
+    char sep = opts.delimiter().charAt(0);
+    String encoding = opts.encoding();
+    if ("AUTO".equals(encoding)) {
+      encoding = ParseOptions.detectEncoding(data);
+    }
+    Charset charset = Charset.forName(encoding);
+    CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
+    return new CSVReaderBuilder(new InputStreamReader(new ByteArrayInputStream(data), charset))
+        .withCSVParser(parser)
+        .build();
   }
 
   // -----------------------------------------------------------------------
