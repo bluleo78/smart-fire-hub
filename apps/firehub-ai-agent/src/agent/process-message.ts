@@ -17,6 +17,26 @@ export function processMessage(
           type: 'init',
           sessionId: msg.session_id,
         });
+      } else if (msg.subtype === 'compact_boundary') {
+        const metadata = (msg as { compact_metadata?: { trigger?: string; pre_tokens?: number } }).compact_metadata;
+        console.log(`${tag()} ● Compaction boundary (trigger=${metadata?.trigger}, pre_tokens=${metadata?.pre_tokens})`);
+        events.push({
+          type: 'compaction',
+          status: 'completed',
+          trigger: metadata?.trigger,
+          preTokens: metadata?.pre_tokens,
+        });
+      } else if (msg.subtype === 'status') {
+        const status = (msg as { status?: string }).status;
+        if (status === 'compacting') {
+          console.log(`${tag()} ● Compaction started`);
+          events.push({
+            type: 'compaction',
+            status: 'started',
+          });
+        } else {
+          console.log(`${tag()} ● Status: ${status}`);
+        }
       } else {
         console.log(`${tag()} ● System: ${msg.subtype}`);
       }

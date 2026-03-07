@@ -7,7 +7,7 @@ import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 
 export interface SSEEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error';
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction';
   [key: string]: unknown;
 }
 

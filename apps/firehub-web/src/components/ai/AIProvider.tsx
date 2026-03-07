@@ -14,6 +14,7 @@ interface AIContextValue {
   streamingMessage: Partial<AIMessage> | null;
   pendingUserMessage: string | null;
   contextTokens: number | null;
+  isCompacting: boolean;
   openAI: () => void;
   closeAI: () => void;
   toggleAI: () => void;
@@ -61,6 +62,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     startNewSession,
     loadSession,
     contextTokens,
+    isCompacting,
   } = useAIChat();
 
   const openAI = useCallback(() => setIsOpen(true), []);
@@ -99,6 +101,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       streamingMessage,
       pendingUserMessage,
       contextTokens,
+      isCompacting,
       openAI,
       closeAI,
       toggleAI,
@@ -118,6 +121,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       streamingMessage,
       pendingUserMessage,
       contextTokens,
+      isCompacting,
       openAI,
       closeAI,
       toggleAI,

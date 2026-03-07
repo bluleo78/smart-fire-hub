@@ -36,6 +36,59 @@ describe('processMessage', () => {
     expect(result).toEqual([]);
   });
 
+  // AS-16: system compact_boundary returns compaction completed event
+  it('AS-16: system compact_boundary returns compaction completed event', () => {
+    const msg = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'auto', pre_tokens: 120000 },
+      uuid: 'test-uuid',
+      session_id: 'sess-1',
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, mockTag, false);
+
+    expect(result).toEqual([{
+      type: 'compaction',
+      status: 'completed',
+      trigger: 'auto',
+      preTokens: 120000,
+    }]);
+  });
+
+  // AS-17: system status compacting returns compaction started event
+  it('AS-17: system status compacting returns compaction started event', () => {
+    const msg = {
+      type: 'system',
+      subtype: 'status',
+      status: 'compacting',
+      uuid: 'test-uuid',
+      session_id: 'sess-1',
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, mockTag, false);
+
+    expect(result).toEqual([{
+      type: 'compaction',
+      status: 'started',
+    }]);
+  });
+
+  // AS-18: system status null returns empty array
+  it('AS-18: system status null returns empty array', () => {
+    const msg = {
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      uuid: 'test-uuid',
+      session_id: 'sess-1',
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, mockTag, false);
+
+    expect(result).toEqual([]);
+  });
+
   // AS-03: assistant text block when not streamed
   it('AS-03: assistant text block emits text event when hasStreamedText=false', () => {
     const msg = {
@@ -182,7 +235,7 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    expect(result).toEqual([{ type: 'error', message: 'err1; err2' }]);
+    expect(result).toEqual([{ type: 'error', message: 'err1; err2', sessionId: undefined, inputTokens: 0 }]);
   });
 
   // AS-12: result with modelUsage logs correctly and still returns events

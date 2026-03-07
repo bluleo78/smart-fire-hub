@@ -10,14 +10,34 @@ function formatTokens(tokens: number): string {
 
 interface TokenUsageChipProps {
   tokens: number | null;
+  isCompacting?: boolean;
 }
 
-export function TokenUsageChip({ tokens }: TokenUsageChipProps) {
-  if (tokens === null) return null;
+export function TokenUsageChip({ tokens, isCompacting }: TokenUsageChipProps) {
+  if (tokens === null && !isCompacting) return null;
 
-  const pct = Math.min((tokens / COMPACTION_THRESHOLD) * 100, 100);
-  const isWarning = tokens >= COMPACTION_THRESHOLD * 0.5;
-  const isCritical = tokens >= COMPACTION_THRESHOLD;
+  if (isCompacting) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-1.5 shrink-0 cursor-default text-orange-500">
+              <div className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-orange-500 border-t-transparent" />
+              <span className="text-xs leading-none">요약 중</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            <p>컨텍스트가 길어져 자동으로 요약하는 중입니다</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  const safeTokens = tokens ?? 0;
+  const pct = Math.min((safeTokens / COMPACTION_THRESHOLD) * 100, 100);
+  const isWarning = safeTokens >= COMPACTION_THRESHOLD * 0.5;
+  const isCritical = safeTokens >= COMPACTION_THRESHOLD;
 
   const fillColor = isCritical
     ? 'bg-destructive'
@@ -37,7 +57,7 @@ export function TokenUsageChip({ tokens }: TokenUsageChipProps) {
         <TooltipTrigger asChild>
           <div className={`flex items-center gap-1.5 shrink-0 cursor-default ${textColor}`}>
             <span className="text-xs font-mono tabular-nums leading-none">
-              {formatTokens(tokens)}
+              {formatTokens(safeTokens)}
             </span>
             <div className="w-10 h-1 rounded-full bg-muted overflow-hidden">
               <div
@@ -48,7 +68,7 @@ export function TokenUsageChip({ tokens }: TokenUsageChipProps) {
           </div>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
-          <p>컨텍스트: {tokens.toLocaleString()} / {COMPACTION_THRESHOLD.toLocaleString()} 토큰 ({pct.toFixed(1)}%)</p>
+          <p>컨텍스트: {safeTokens.toLocaleString()} / {COMPACTION_THRESHOLD.toLocaleString()} 토큰 ({pct.toFixed(1)}%)</p>
           {isCritical && <p className="text-destructive">컴팩션이 곧 실행됩니다</p>}
         </TooltipContent>
       </Tooltip>

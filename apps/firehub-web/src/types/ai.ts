@@ -23,7 +23,7 @@ export interface AIToolCall {
 }
 
 export interface AIStreamEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error';
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction';
   sessionId?: string;
   content?: string;
   toolName?: string;
@@ -31,4 +31,6 @@ export interface AIStreamEvent {
   result?: string;
   message?: string;
   inputTokens?: number;
+  status?: 'started' | 'completed';
+  preTokens?: number;
 }

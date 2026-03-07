@@ -42,6 +42,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     startNewSession,
     loadSession,
     contextTokens,
+    isCompacting,
   } = useAI();
 
   const hasMessages = messages.length > 0 || pendingUserMessage || streamingMessage;
@@ -55,7 +56,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           <span className="text-sm font-medium truncate">AI 어시스턴트</span>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          <TokenUsageChip tokens={contextTokens} />
+          <TokenUsageChip tokens={contextTokens} isCompacting={isCompacting} />
           {showModeSwitch && (
             <>
               {(Object.keys(modeIcons) as AIMode[]).map((m) => (

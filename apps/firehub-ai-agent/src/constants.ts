@@ -22,20 +22,3 @@ export const MCP_SERVER_VERSION = '1.0.0';
 /** API error message prefix */
 export const API_ERROR_PREFIX = 'API 오류';
 
-/** Token threshold for compaction (36 MCP tools + system prompt ≈ 30-40K tokens, so 50K is too low) */
-export const DEFAULT_COMPACTION_THRESHOLD = 100_000;
-
-/** Approximate bytes per token for file size estimation */
-export const BYTES_PER_TOKEN = 1.45;
-
-/** Number of recent messages to keep during compaction */
-export const COMPACTION_RECENT_MESSAGES = 20;
-
-/** Max length of content snippet in compaction summary */
-export const COMPACTION_CONTENT_MAX_LENGTH = 500;
-
-/** Max tokens for compaction summary generation */
-export const COMPACTION_SUMMARY_MAX_TOKENS = 1024;
-
-/** Model used for compaction summary */
-export const COMPACTION_MODEL = 'claude-haiku-4-5-20251001';

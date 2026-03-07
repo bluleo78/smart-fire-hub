@@ -29,6 +29,7 @@ export function useAIChat() {
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [contextTokens, setContextTokens] = useState<number | null>(null);
+  const [isCompacting, setIsCompacting] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesCommittedRef = useRef(false);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
@@ -123,22 +124,11 @@ export function useAIChat() {
           case 'init':
             if (event.sessionId) {
               const isNewSession = !currentSessionId;
-              const isCompacted = !!currentSessionId && currentSessionId !== event.sessionId;
               setCurrentSessionId(event.sessionId);
-              // DB에 세션 생성: 새 세션이거나 컴팩션으로 세션이 변경된 경우
-              if (isNewSession || isCompacted) {
+              if (isNewSession) {
                 aiApi.createSession({ sessionId: event.sessionId, title: content })
                   .then(() => queryClient.invalidateQueries({ queryKey: ['ai-sessions'] }))
                   .catch(() => {}); // 실패해도 채팅 흐름 유지
-              }
-              // 컴팩션으로 세션 전환 시 구분 메시지 삽입
-              if (isCompacted) {
-                setMessages(prev => [...prev, {
-                  id: `system-compaction-${Date.now()}`,
-                  role: 'system' as const,
-                  content: '대화가 길어져 이전 내용을 요약하고 새 세션으로 전환되었습니다.',
-                  timestamp: new Date().toISOString(),
-                }]);
               }
             }
             break;
@@ -191,10 +181,28 @@ export function useAIChat() {
           case 'turn':
             commitTurn();
             break;
+          case 'compaction':
+            if (event.status === 'started') {
+              setIsCompacting(true);
+            } else if (event.status === 'completed') {
+              setIsCompacting(false);
+              // After compaction, token count resets significantly
+              if (typeof event.preTokens === 'number') {
+                setContextTokens(null); // Will be updated on next done event
+              }
+              setMessages(prev => [...prev, {
+                id: `system-compaction-${Date.now()}`,
+                role: 'system' as const,
+                content: '컨텍스트가 길어져 자동으로 요약되었습니다.',
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+            break;
           case 'done':
             if (typeof event.inputTokens === 'number') {
               setContextTokens(event.inputTokens);
             }
+            setIsCompacting(false);
             commitMessages();
             break;
           case 'error': {
@@ -254,6 +262,7 @@ export function useAIChat() {
     setPendingUserMessage(null);
     setIsStreaming(false);
     setContextTokens(null);
+    setIsCompacting(false);
   }, []);
 
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -266,6 +275,7 @@ export function useAIChat() {
     setPendingUserMessage(null);
     setIsStreaming(false);
     setContextTokens(null);
+    setIsCompacting(false);
     try {
       const response = await aiApi.getSessionMessages(sessionId);
       setMessages(response.data);
@@ -280,6 +290,7 @@ export function useAIChat() {
     messages,
     isStreaming,
     isLoadingHistory,
+    isCompacting,
     streamingMessage,
     pendingUserMessage,
     currentSessionId,

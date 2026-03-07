@@ -11,11 +11,6 @@ vi.mock('../agent/agent-sdk.js', () => ({
   executeAgent: vi.fn(),
 }));
 
-vi.mock('../agent/compaction.js', () => ({
-  shouldCompact: vi.fn().mockResolvedValue(false),
-  generateSummary: vi.fn().mockResolvedValue(''),
-}));
-
 vi.mock('../agent/transcript-reader.js', () => ({
   readSessionTranscript: vi.fn().mockResolvedValue([]),
 }));
