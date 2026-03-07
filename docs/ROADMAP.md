@@ -17,6 +17,7 @@
 | [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
+| [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 진행중 | 0/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
@@ -133,6 +134,29 @@
 |---|------|------|------|----------|
 | 5-1 | 내보내기 API (CSV/Excel/GeoJSON) | ✅ | Backend | ExportWriter 3종 (CSV+BOM/Excel SXSSFWorkbook/GeoJSON FeatureCollection). Sync/Async 이원화 (50K row 기준). 컬럼 선택 + 검색 필터. Rate limiting (3건/분). 감사 로그. 24시간 파일 정리 스케줄러. 통합 테스트 13개 통과. |
 | 5-2 | 내보내기 UI | ✅ | Frontend | ExportDialog (포맷 선택 + 컬럼 선택 + 예상 크기). 비동기 진행률 폴링 UI. 데이터셋 데이터 탭 + 쿼리 에디터 내보내기 통합. downloadBlob 유틸. 빌드 + 타입체크 통과. |
+
+---
+
+## Phase 5.5: 운영 안정화 + AI 에이전트 개선
+
+> 프로덕션 운영 중 발견된 버그 수정 + AI 에이전트 세션/컴팩션 개선 + 파이프라인 실행 엔진 보강.
+> **의존**: Phase 5 완료
+>
+> **실행 순서**:
+> ```
+> 5.5-1 (AI Agent, 완료) ──┐
+> 5.5-2 (AI Agent)         ├── 5.5-4 (Frontend, 5.5-1+5.5-2 의존)
+> 5.5-3 (Backend)          │
+>                          └── 5.5-5 (Frontend, 5.5-2 의존)
+> ```
+
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 5.5-1 | AI 세션 컴팩션 버그 수정 | ✅ | AI Agent | 없음 | 컴팩션 임계값 50K→150K. error 이벤트에 sessionId+inputTokens 포함. max_turns_exceeded UX 메시지. Dockerfile .claude 사전 생성. 빌드 통과. |
+| 5.5-2 | AI 세션 컴팩션 품질 개선 | ⬜ | AI Agent | 없음 | 요약 모델 Haiku→Sonnet. 요약 max_tokens 1024→4096. 도구 호출 결과 요약 포함. 요약에 데이터셋 ID/컬럼 정보 보존. 압축율 테스트. |
+| 5.5-3 | 파이프라인 SQL SELECT 자동 INSERT 래핑 | ⬜ | Backend | 없음 | output dataset이 있고 SQL이 SELECT로 시작하면 INSERT INTO data."table" (SELECT ...) 자동 래핑. REPLACE/APPEND 모두 정상 동작. 통합 테스트. |
+| 5.5-4 | AI 채팅 컨텍스트 크기 표시 | ⬜ | Frontend | 5.5-1 | 채팅 UI에 현재 세션 토큰 사용량 표시 (예: "15K / 200K"). done/error 이벤트에서 토큰 수 수신. 디자인 시스템 준수. 3모드(사이드/플로팅/전체화면) 검증. |
+| 5.5-5 | AI 채팅 컴팩션 알림 UX | ⬜ | Frontend | 5.5-2 | 컴팩션 발생 시 시스템 메시지 개선. 요약 내용 접기/펼치기. 토큰 바에 컴팩션 지점 표시. |
 
 ---
 

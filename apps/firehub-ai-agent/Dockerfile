@@ -40,6 +40,11 @@ COPY --from=build /app/apps/firehub-ai-agent/dist ./dist
 
 RUN chown -R appuser:appgroup /app
 
+# Pre-create Claude SDK directories (volume mount may override with empty dir)
+RUN mkdir -p /home/appuser/.claude/debug /home/appuser/.claude/projects \
+    && echo '{}' > /home/appuser/.claude/remote-settings.json \
+    && chown -R appuser:appgroup /home/appuser/.claude
+
 USER appuser
 
 EXPOSE 3001

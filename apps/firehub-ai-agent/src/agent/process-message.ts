@@ -128,11 +128,14 @@ export function processMessage(
           inputTokens: totalInputTokens,
         });
       } else {
-        const errorMsg = 'errors' in msg ? msg.errors.join('; ') : 'Agent execution failed';
+        const rawError = 'errors' in msg ? msg.errors.join('; ') : '';
+        const errorMsg = rawError || 'max_turns_exceeded';
         console.error(`${tag()} ✗ Session failed: ${errorMsg}`);
         events.push({
           type: 'error',
           message: errorMsg,
+          sessionId: msg.session_id,
+          inputTokens: totalInputTokens,
         });
       }
       break;

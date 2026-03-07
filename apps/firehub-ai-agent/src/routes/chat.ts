@@ -108,8 +108,8 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     for await (const event of events) {
       if (abortController.signal.aborted) break;
 
-      // Track token usage for compaction decisions
-      if (event.type === 'done' && typeof event.inputTokens === 'number' && event.inputTokens > 0) {
+      // Track token usage for compaction decisions (both done and error events)
+      if ((event.type === 'done' || event.type === 'error') && typeof event.inputTokens === 'number' && event.inputTokens > 0) {
         const sid = event.sessionId as string;
         if (sid) {
           sessionTokens.set(sid, event.inputTokens);

@@ -197,11 +197,14 @@ export function useAIChat() {
             console.error('AI stream error:', event.message);
             if (!messagesCommittedRef.current) {
               messagesCommittedRef.current = true;
-              const errorMsg = event.message || '알 수 없는 오류가 발생했습니다';
+              const isMaxTurns = event.message === 'max_turns_exceeded';
+              const errorMsg = isMaxTurns
+                ? '대화 턴 수가 초과되었습니다. 이어서 대화하시려면 메시지를 보내주세요.'
+                : (event.message || '알 수 없는 오류가 발생했습니다');
               setMessages(prev => [...prev, userMessage, {
                 id: `error-${Date.now()}`,
                 role: 'assistant' as const,
-                content: `오류: ${errorMsg}`,
+                content: isMaxTurns ? errorMsg : `오류: ${errorMsg}`,
                 timestamp: new Date().toISOString(),
               }]);
             }
