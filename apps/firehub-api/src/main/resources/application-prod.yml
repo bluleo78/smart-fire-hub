@@ -16,3 +16,6 @@ app:
 agent:
   url: http://ai-agent:3001
   internal-token: ${AGENT_INTERNAL_TOKEN}
+
+app.cookie:
+  secure: ${COOKIE_SECURE:false}

@@ -25,9 +25,14 @@ public class AuthController {
 
   private final AuthService authService;
   private final JwtProperties jwtProperties;
+  private final boolean cookieSecure;
 
-  public AuthController(AuthService authService, JwtProperties jwtProperties) {
+  public AuthController(
+      AuthService authService,
+      JwtProperties jwtProperties,
+      @org.springframework.beans.factory.annotation.Value("${app.cookie.secure:true}") boolean cookieSecure) {
     this.authService = authService;
+    this.cookieSecure = cookieSecure;
     this.jwtProperties = jwtProperties;
   }
 
@@ -80,7 +85,7 @@ public class AuthController {
     ResponseCookie cookie =
         ResponseCookie.from(REFRESH_TOKEN_COOKIE, refreshToken)
             .httpOnly(true)
-            .secure(true)
+            .secure(cookieSecure)
             .sameSite("Lax")
             .path(REFRESH_TOKEN_PATH)
             .maxAge(jwtProperties.refreshExpiration() / 1000)
@@ -92,7 +97,7 @@ public class AuthController {
     ResponseCookie cookie =
         ResponseCookie.from(REFRESH_TOKEN_COOKIE, "")
             .httpOnly(true)
-            .secure(true)
+            .secure(cookieSecure)
             .sameSite("Lax")
             .path(REFRESH_TOKEN_PATH)
             .maxAge(0)
