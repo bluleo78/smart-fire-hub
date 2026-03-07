@@ -13,7 +13,7 @@ export function registerDatasetTools(
       '데이터셋 목록을 조회합니다',
       {
         categoryId: z.number().optional().describe('카테고리 ID'),
-        datasetType: z.string().optional().describe('데이터셋 타입 (SOURCE 또는 DERIVED)'),
+        datasetType: z.enum(['SOURCE', 'DERIVED']).optional().describe('데이터셋 타입 (SOURCE 또는 DERIVED)'),
         search: z.string().optional().describe('검색어'),
         status: z.string().optional().describe('상태 (NONE, CERTIFIED, DEPRECATED)'),
         favoriteOnly: z.boolean().optional().describe('즐겨찾기만 조회 (기본값: false)'),
@@ -82,7 +82,7 @@ export function registerDatasetTools(
         description: z.string().optional().describe('데이터셋 설명'),
         categoryId: z.number().optional().describe('카테고리 ID'),
         datasetType: z
-          .string()
+          .enum(['SOURCE', 'DERIVED'])
           .optional()
           .describe('데이터셋 타입 (SOURCE 또는 DERIVED, 기본값: SOURCE)'),
         columns: z

@@ -24,6 +24,12 @@ RUN pnpm --filter @smart-fire-hub/firehub-ai-agent deploy --legacy --prod /prod
 # === Stage 2: Runtime ===
 FROM node:22-alpine
 
+# Install Claude Code CLI (required by @anthropic-ai/claude-agent-sdk)
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create non-root user (Claude Code blocks --dangerously-skip-permissions as root)
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
 WORKDIR /app
 
 # Copy production dependencies from deploy
@@ -31,6 +37,10 @@ COPY --from=build /prod ./
 
 # Copy built JavaScript files
 COPY --from=build /app/apps/firehub-ai-agent/dist ./dist
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
 
 EXPOSE 3001
 
