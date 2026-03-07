@@ -56,6 +56,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const cleanEnv = { ...process.env };
   delete cleanEnv.CLAUDECODE;
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+  // Auto-compact at ~60% of effective context window (~108K tokens)
+  cleanEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '60';
 
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: message,
@@ -76,6 +78,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
+      settingSources: ['user'],
       ...(sessionId ? { resume: sessionId } : {}),
     },
   };

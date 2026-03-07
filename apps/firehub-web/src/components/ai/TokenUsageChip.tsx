@@ -1,6 +1,6 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 
-const COMPACTION_THRESHOLD = 100_000;
+const MAX_CONTEXT_TOKENS = 200_000;
 
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return String(tokens);
@@ -35,9 +35,9 @@ export function TokenUsageChip({ tokens, isCompacting }: TokenUsageChipProps) {
   }
 
   const safeTokens = tokens ?? 0;
-  const pct = Math.min((safeTokens / COMPACTION_THRESHOLD) * 100, 100);
-  const isWarning = safeTokens >= COMPACTION_THRESHOLD * 0.5;
-  const isCritical = safeTokens >= COMPACTION_THRESHOLD;
+  const pct = Math.min((safeTokens / MAX_CONTEXT_TOKENS) * 100, 100);
+  const isWarning = safeTokens >= MAX_CONTEXT_TOKENS * 0.5;
+  const isCritical = safeTokens >= MAX_CONTEXT_TOKENS * 0.75;
 
   const fillColor = isCritical
     ? 'bg-destructive'
@@ -68,7 +68,7 @@ export function TokenUsageChip({ tokens, isCompacting }: TokenUsageChipProps) {
           </div>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
-          <p>컨텍스트: {safeTokens.toLocaleString()} / {COMPACTION_THRESHOLD.toLocaleString()} 토큰 ({pct.toFixed(1)}%)</p>
+          <p>컨텍스트: {safeTokens.toLocaleString()} / {MAX_CONTEXT_TOKENS.toLocaleString()} 토큰 ({pct.toFixed(1)}%)</p>
           {isCritical && <p className="text-destructive">컴팩션이 곧 실행됩니다</p>}
         </TooltipContent>
       </Tooltip>
