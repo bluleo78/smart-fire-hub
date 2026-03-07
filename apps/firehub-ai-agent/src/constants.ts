@@ -23,7 +23,7 @@ export const MCP_SERVER_VERSION = '1.0.0';
 export const API_ERROR_PREFIX = 'API 오류';
 
 /** Token threshold for compaction (36 MCP tools + system prompt ≈ 30-40K tokens, so 50K is too low) */
-export const DEFAULT_COMPACTION_THRESHOLD = 150_000;
+export const DEFAULT_COMPACTION_THRESHOLD = 100_000;
 
 /** Approximate bytes per token for file size estimation */
 export const BYTES_PER_TOKEN = 1.45;

@@ -13,6 +13,7 @@ interface AIContextValue {
   isLoadingHistory: boolean;
   streamingMessage: Partial<AIMessage> | null;
   pendingUserMessage: string | null;
+  contextTokens: number | null;
   openAI: () => void;
   closeAI: () => void;
   toggleAI: () => void;
@@ -59,6 +60,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     stopStreaming,
     startNewSession,
     loadSession,
+    contextTokens,
   } = useAIChat();
 
   const openAI = useCallback(() => setIsOpen(true), []);
@@ -96,6 +98,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       isLoadingHistory,
       streamingMessage,
       pendingUserMessage,
+      contextTokens,
       openAI,
       closeAI,
       toggleAI,
@@ -114,6 +117,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       isLoadingHistory,
       streamingMessage,
       pendingUserMessage,
+      contextTokens,
       openAI,
       closeAI,
       toggleAI,

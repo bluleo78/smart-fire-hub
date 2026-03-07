@@ -6,6 +6,7 @@ import { useAI } from './AIProvider';
 import { ChatInput } from './ChatInput';
 import { MessageList } from './MessageList';
 import { SessionSwitcher } from './SessionSwitcher';
+import { TokenUsageChip } from './TokenUsageChip';
 
 interface AIChatPanelProps {
   showModeSwitch?: boolean;
@@ -40,6 +41,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     stopStreaming,
     startNewSession,
     loadSession,
+    contextTokens,
   } = useAI();
 
   const hasMessages = messages.length > 0 || pendingUserMessage || streamingMessage;
@@ -53,6 +55,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           <span className="text-sm font-medium truncate">AI 어시스턴트</span>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
+          <TokenUsageChip tokens={contextTokens} />
           {showModeSwitch && (
             <>
               {(Object.keys(modeIcons) as AIMode[]).map((m) => (

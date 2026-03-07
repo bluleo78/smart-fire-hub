@@ -30,4 +30,5 @@ export interface AIStreamEvent {
   input?: Record<string, unknown>;
   result?: string;
   message?: string;
+  inputTokens?: number;
 }

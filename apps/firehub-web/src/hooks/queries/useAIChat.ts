@@ -28,6 +28,7 @@ export function useAIChat() {
   const [streamingMessage, setStreamingMessage] = useState<Partial<AIMessage> | null>(null);
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [contextTokens, setContextTokens] = useState<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesCommittedRef = useRef(false);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
@@ -191,10 +192,16 @@ export function useAIChat() {
             commitTurn();
             break;
           case 'done':
+            if (typeof event.inputTokens === 'number') {
+              setContextTokens(event.inputTokens);
+            }
             commitMessages();
             break;
           case 'error': {
             console.error('AI stream error:', event.message);
+            if (typeof event.inputTokens === 'number') {
+              setContextTokens(event.inputTokens);
+            }
             if (!messagesCommittedRef.current) {
               messagesCommittedRef.current = true;
               const isMaxTurns = event.message === 'max_turns_exceeded';
@@ -246,6 +253,7 @@ export function useAIChat() {
     setStreamingMessage(null);
     setPendingUserMessage(null);
     setIsStreaming(false);
+    setContextTokens(null);
   }, []);
 
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -257,6 +265,7 @@ export function useAIChat() {
     setStreamingMessage(null);
     setPendingUserMessage(null);
     setIsStreaming(false);
+    setContextTokens(null);
     try {
       const response = await aiApi.getSessionMessages(sessionId);
       setMessages(response.data);
@@ -274,6 +283,7 @@ export function useAIChat() {
     streamingMessage,
     pendingUserMessage,
     currentSessionId,
+    contextTokens,
     sendMessage,
     stopStreaming,
     startNewSession,
