@@ -142,7 +142,7 @@ export function registerPipelineTools(
       '파이프라인을 수정합니다. steps를 제공하면 전체 스텝이 교체됩니다.',
       {
         id: z.number().describe('파이프라인 ID'),
-        name: z.string().optional().describe('파이프라인 이름'),
+        name: z.string().describe('파이프라인 이름 (필수)'),
         description: z.string().optional().describe('파이프라인 설명'),
         isActive: z.boolean().optional().describe('활성화 여부'),
         steps: z
@@ -165,7 +165,7 @@ export function registerPipelineTools(
       },
       async (args: {
         id: number;
-        name?: string;
+        name: string;
         description?: string;
         isActive?: boolean;
         steps?: Array<{

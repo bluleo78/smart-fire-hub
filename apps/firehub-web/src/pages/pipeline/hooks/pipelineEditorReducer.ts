@@ -3,6 +3,11 @@ import type { PipelineDetailResponse } from '@/types/pipeline';
 import { wouldCreateCycle } from '../utils/cycle-detection';
 import { getLayoutedElements } from '../utils/dagre-layout';
 
+const generateId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
 // === 공개 타입 ===
 
 export interface EditorStep {
@@ -72,7 +77,7 @@ export const initialState: PipelineEditorState = {
 
 export function createDefaultStep(position: { x: number; y: number }): EditorStep {
   return {
-    tempId: crypto.randomUUID(),
+    tempId: generateId(),
     name: '',
     description: '',
     scriptType: 'SQL',
@@ -275,7 +280,7 @@ export function pipelineEditorReducer(
       const detail = action.payload;
       const tempIdMap = new Map<string, string>();
       const steps: EditorStep[] = detail.steps.map((step) => {
-        const tempId = crypto.randomUUID();
+        const tempId = generateId();
         tempIdMap.set(step.name, tempId);
         return {
           tempId,

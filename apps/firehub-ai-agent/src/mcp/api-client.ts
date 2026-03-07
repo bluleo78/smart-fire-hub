@@ -65,7 +65,9 @@ export class FireHubApiClient {
       (error: AxiosError) => {
         const status = error.response?.status;
         const data = error.response?.data as Record<string, unknown> | undefined;
-        const apiMessage = data?.message || data?.error || error.message;
+        const details = data?.details || data?.errors;
+        const detailStr = details ? ` — ${JSON.stringify(details)}` : '';
+        const apiMessage = `${data?.message || data?.error || error.message}${detailStr}`;
         console.error(
           `[MCP API] ${status || 'NETWORK_ERROR'} ${error.config?.method?.toUpperCase()} ${error.config?.url} - ${apiMessage}`,
         );
