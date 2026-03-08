@@ -94,6 +94,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   let lastToolName = '';
   let firstTextReceived = false;
   let hasStreamedText = false;
+  let lastTurnContextTokens = 0;
 
   // Heartbeat: log periodically when waiting for Claude API response
   let waitTimer: ReturnType<typeof setInterval> | null = null;
@@ -116,6 +117,19 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   try {
     for await (const msg of agentQuery) {
       stopWaitHeartbeat();
+
+      // Extract per-turn context size from message_start stream events
+      if (msg.type === 'stream_event') {
+        const evt = msg.event as { type: string; message?: { usage?: Record<string, number> } };
+        if (evt.type === 'message_start' && evt.message?.usage) {
+          const u = evt.message.usage;
+          lastTurnContextTokens =
+            (u.input_tokens ?? 0) +
+            (u.cache_read_input_tokens ?? 0) +
+            (u.cache_creation_input_tokens ?? 0);
+        }
+      }
+
       const events = processMessage(msg, tag, hasStreamedText);
       for (const event of events) {
         if (event.type === 'tool_use') {
@@ -137,6 +151,11 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
         }
         if (event.type === 'done' || event.type === 'error') {
           doneEmitted = true;
+          // Override cumulative inputTokens with last turn's actual context size
+          if (lastTurnContextTokens > 0) {
+            console.log(`${tag()} Context: ${lastTurnContextTokens} tokens (cumulative was ${event.inputTokens})`);
+            event.inputTokens = lastTurnContextTokens;
+          }
           console.log(`${tag()} Total ${turnNumber} turn(s)`);
         }
         yield event;
