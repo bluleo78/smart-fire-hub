@@ -199,7 +199,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                   return <col key={key} style={{ width: columnWidths[key] ?? 120 }} />;
                 })}
               </colgroup>
-              <thead className="bg-muted/50 sticky top-0 z-10">
+              <thead className="bg-muted sticky top-0 z-10">
                 <tr>
                   <th style={{ width: 40, padding: '8px', textAlign: 'center', borderBottom: '1px solid hsl(var(--border))' }}>
                     <Checkbox
