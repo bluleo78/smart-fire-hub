@@ -369,29 +369,20 @@ function AppLayoutInner() {
 
       {/* Main content */}
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
-        {/* Header */}
-        <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background px-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="lg:hidden"
-            aria-label={sidebarOpen ? '메뉴 닫기' : '메뉴 열기'}
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            {sidebarOpen ? (
-              <X className="h-5 w-5" />
-            ) : (
-              <Menu className="h-5 w-5" />
-            )}
-          </Button>
-          <span className="ml-2 text-lg font-semibold lg:hidden">
-            Smart Fire Hub
-          </span>
-          <div className="flex-1" />
-          <div className="flex items-center gap-2">
-            <AIToggleButton />
-          </div>
-        </header>
+        {/* Mobile-only hamburger */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="fixed top-3 left-3 z-40 lg:hidden"
+          aria-label={sidebarOpen ? '메뉴 닫기' : '메뉴 열기'}
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+        >
+          {sidebarOpen ? (
+            <X className="h-5 w-5" />
+          ) : (
+            <Menu className="h-5 w-5" />
+          )}
+        </Button>
 
         {/* Page content + AI panel */}
         <div className="flex flex-1 min-h-0">
@@ -426,6 +417,9 @@ function AppLayoutInner() {
           <AIFloating />
         </Suspense>
       )}
+
+      {/* AI ribbon toggle (hidden in fullscreen mode) */}
+      {!showFullscreen && <AIToggleButton />}
     </div>
   );
 }
