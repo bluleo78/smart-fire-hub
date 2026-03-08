@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import chatRouter from './chat.js';
+import type { AgentOptions } from '../agent/agent-sdk.js';
 
 // We need supertest for HTTP-level integration tests
 // Since supertest might not be installed, we'll use raw Node http approach
@@ -129,5 +130,32 @@ describe('Chat routes — integration tests', () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('error');
+  });
+
+  // CR-01: apiKey from request body is forwarded to executeAgent
+  it('CR-01: passes apiKey from request body to executeAgent', async () => {
+    const { executeAgent } = await import('../agent/agent-sdk.js');
+    const mockExecuteAgent = vi.mocked(executeAgent);
+
+    // Return a minimal done event so the SSE stream closes normally
+    async function* fakeStream(): AsyncGenerator<{ type: string; sessionId?: string; inputTokens?: number }> {
+      yield { type: 'done', sessionId: 'sess-1', inputTokens: 0 };
+    }
+    mockExecuteAgent.mockReturnValue(
+      fakeStream() as unknown as ReturnType<typeof executeAgent>,
+    );
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { message: 'Hello', userId: 42, apiKey: 'sk-from-client' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(mockExecuteAgent).toHaveBeenCalledOnce();
+    const calledWith = mockExecuteAgent.mock.calls[0][0] as AgentOptions;
+    expect(calledWith.apiKey).toBe('sk-from-client');
   });
 });

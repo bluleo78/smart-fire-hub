@@ -2,6 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processMessage } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
+// Mock dependencies needed for executeAgent
+vi.mock('@anthropic-ai/claude-agent-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@anthropic-ai/claude-agent-sdk')>();
+  return {
+    ...actual,
+    query: vi.fn(),
+  };
+});
+
+vi.mock('../mcp/api-client.js', () => ({
+  FireHubApiClient: vi.fn().mockImplementation(function () { return {}; }),
+}));
+
+vi.mock('../mcp/firehub-mcp-server.js', () => ({
+  createFireHubMcpServer: vi.fn().mockReturnValue({}),
+}));
+
 const mockTag = () => '[Test]';
 
 // Suppress console output during tests
@@ -302,5 +319,81 @@ describe('processMessage', () => {
     const result = processMessage(msg, mockTag, false);
 
     expect(result).toEqual([]);
+  });
+});
+
+describe('executeAgent', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Reset env
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  // AS-19: apiKey option is written into cleanEnv.ANTHROPIC_API_KEY
+  it('AS-19: sets ANTHROPIC_API_KEY from apiKey option and yields done event', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    // Simulate a minimal successful SDK stream: system init → result success
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-api-key',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: unknown[] = [];
+    for await (const event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      apiKey: 'sk-test-key',
+    })) {
+      events.push(event);
+    }
+
+    // Verify query was called with env containing the provided apiKey
+    expect(mockQuery).toHaveBeenCalledOnce();
+    const callArgs = mockQuery.mock.calls[0][0] as { options?: { env?: Record<string, string> } };
+    expect(callArgs.options?.env?.ANTHROPIC_API_KEY).toBe('sk-test-key');
+
+    // Verify at least a done event was yielded (not an error)
+    expect(events.some((e) => (e as { type: string }).type === 'done')).toBe(true);
+    expect(events.every((e) => (e as { type: string }).type !== 'error')).toBe(true);
+  });
+
+  // AS-20: missing apiKey and no env var yields error event immediately
+  it('AS-20: yields error event when apiKey is missing and ANTHROPIC_API_KEY env var is unset', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: unknown[] = [];
+    for await (const event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      // no apiKey
+    })) {
+      events.push(event);
+    }
+
+    // query should never be called — we bail out before reaching it
+    expect(mockQuery).not.toHaveBeenCalled();
+
+    // Should yield exactly one error event
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'error' });
   });
 });

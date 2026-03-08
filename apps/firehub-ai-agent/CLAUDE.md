@@ -69,7 +69,7 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 - `PORT` — 서버 포트 (기본 3001)
 - `INTERNAL_SERVICE_TOKEN` — firehub-api와 공유하는 내부 인증 토큰
 - `API_BASE_URL` — firehub-api 주소 (기본 `http://localhost:8080/api/v1`)
-- `ANTHROPIC_API_KEY` — Claude API 키 (Agent SDK + 컴팩션 요약)
+- `ANTHROPIC_API_KEY` — (선택) Claude API 키 폴백. 주 설정은 관리페이지(`/admin/settings`)에서 요청별로 전달됨
 - `MAX_TURNS` — 에이전트 최대 턴 수 (기본 10)
 
 ### Agent SDK Integration

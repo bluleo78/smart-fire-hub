@@ -1,4 +1,4 @@
-import { Bot, RotateCcw, Save, Settings } from 'lucide-react';
+import { Bot, Eye, EyeOff, RotateCcw, Save, Settings } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -28,6 +28,7 @@ const MODEL_OPTIONS = [
 
 interface AISettingsForm {
   [key: string]: string;
+  'ai.api_key': string;
   'ai.model': string;
   'ai.max_turns': string;
   'ai.system_prompt': string;
@@ -37,6 +38,7 @@ interface AISettingsForm {
 }
 
 const DEFAULT_VALUES: AISettingsForm = {
+  'ai.api_key': '',
   'ai.model': 'claude-sonnet-4-6',
   'ai.max_turns': '10',
   'ai.system_prompt': '',
@@ -51,6 +53,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState<AISettingsForm>(DEFAULT_VALUES);
   const [original, setOriginal] = useState<AISettingsForm>(DEFAULT_VALUES);
   const [errors, setErrors] = useState<Partial<Record<keyof AISettingsForm, string>>>({});
+  const [showApiKey, setShowApiKey] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -77,6 +80,13 @@ export default function SettingsPage() {
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
+
+    const apiKey = form['ai.api_key'];
+    if (!apiKey.trim()) {
+      newErrors['ai.api_key'] = 'API 키를 입력하세요';
+    } else if (!apiKey.startsWith('****') && apiKey.length < 10) {
+      newErrors['ai.api_key'] = 'API 키는 10자 이상이어야 합니다';
+    }
 
     const maxTurns = Number(form['ai.max_turns']);
     if (isNaN(maxTurns) || maxTurns < 1 || maxTurns > 50 || !Number.isInteger(maxTurns)) {
@@ -111,7 +121,11 @@ export default function SettingsPage() {
 
     setIsSaving(true);
     try {
-      await settingsApi.update({ settings: form });
+      const { 'ai.api_key': apiKey, ...rest } = form;
+      const settingsToSave: Record<string, string> = apiKey?.startsWith('****')
+        ? rest
+        : { ...rest, 'ai.api_key': apiKey };
+      await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
       toast.success('설정이 저장되었습니다.');
     } catch {
@@ -184,6 +198,35 @@ export default function SettingsPage() {
               <CardTitle>모델 설정</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* API 키 */}
+              <div className="space-y-2">
+                <Label htmlFor="ai-api-key">API 키</Label>
+                <div className="relative w-full max-w-md">
+                  <Input
+                    id="ai-api-key"
+                    type={showApiKey ? 'text' : 'password'}
+                    className="pr-10"
+                    value={form['ai.api_key']}
+                    onChange={(e) => updateField('ai.api_key', e.target.value)}
+                    placeholder="sk-ant-..."
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
+                  >
+                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {errors['ai.api_key'] && (
+                  <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
+                )}
+                <p className="text-sm text-muted-foreground">Anthropic API 키 (sk-ant-...)</p>
+              </div>
+
+              <Separator />
+
               {/* 모델 선택 */}
               <div className="space-y-2">
                 <Label htmlFor="ai-model">모델</Label>

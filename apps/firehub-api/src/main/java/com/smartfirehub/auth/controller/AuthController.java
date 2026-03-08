@@ -30,7 +30,8 @@ public class AuthController {
   public AuthController(
       AuthService authService,
       JwtProperties jwtProperties,
-      @org.springframework.beans.factory.annotation.Value("${app.cookie.secure:true}") boolean cookieSecure) {
+      @org.springframework.beans.factory.annotation.Value("${app.cookie.secure:true}")
+          boolean cookieSecure) {
     this.authService = authService;
     this.cookieSecure = cookieSecure;
     this.jwtProperties = jwtProperties;

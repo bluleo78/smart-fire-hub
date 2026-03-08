@@ -1,5 +1,6 @@
 package com.smartfirehub.settings.service;
 
+import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.repository.SettingsRepository;
 import java.util.List;
@@ -20,17 +21,34 @@ public class SettingsService {
           "ai.system_prompt",
           "ai.temperature",
           "ai.max_tokens",
-          "ai.session_max_tokens");
+          "ai.session_max_tokens",
+          "ai.api_key");
 
   private final SettingsRepository settingsRepository;
+  private final EncryptionService encryptionService;
 
-  public SettingsService(SettingsRepository settingsRepository) {
+  public SettingsService(
+      SettingsRepository settingsRepository, EncryptionService encryptionService) {
     this.settingsRepository = settingsRepository;
+    this.encryptionService = encryptionService;
   }
 
   @Transactional(readOnly = true)
   public List<SettingResponse> getByPrefix(String prefix) {
-    return settingsRepository.findByPrefix(prefix);
+    return settingsRepository.findByPrefix(prefix).stream()
+        .map(
+            setting -> {
+              if ("ai.api_key".equals(setting.key())) {
+                String masked =
+                    setting.value() == null || setting.value().isBlank()
+                        ? ""
+                        : encryptionService.maskValue(encryptionService.decrypt(setting.value()));
+                return new SettingResponse(
+                    setting.key(), masked, setting.description(), setting.updatedAt());
+              }
+              return setting;
+            })
+        .collect(Collectors.toList());
   }
 
   @Transactional(readOnly = true)
@@ -50,8 +68,38 @@ public class SettingsService {
         throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
       }
     }
-    validateValues(settings);
-    settingsRepository.updateSettings(settings, userId);
+
+    boolean hasMaskedApiKey = isMaskedApiKey(settings.get("ai.api_key"));
+
+    // Skip validation and save for masked api key (unchanged by user)
+    Map<String, String> filtered =
+        settings.entrySet().stream()
+            .filter(e -> !(hasMaskedApiKey && "ai.api_key".equals(e.getKey())))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    validateValues(filtered);
+
+    Map<String, String> toUpdate =
+        filtered.entrySet().stream()
+            .collect(
+                Collectors.toMap(
+                    Map.Entry::getKey,
+                    e ->
+                        "ai.api_key".equals(e.getKey())
+                            ? encryptionService.encrypt(e.getValue())
+                            : e.getValue()));
+
+    if (!toUpdate.isEmpty()) {
+      settingsRepository.updateSettings(toUpdate, userId);
+    }
+  }
+
+  private static boolean isMaskedApiKey(String value) {
+    return value != null && value.startsWith("****");
+  }
+
+  @Transactional(readOnly = true)
+  public Optional<String> getDecryptedApiKey() {
+    return getValue("ai.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
   private void validateValues(Map<String, String> settings) {
@@ -80,6 +128,10 @@ public class SettingsService {
             case "ai.system_prompt" -> {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("시스템 프롬프트는 비어있을 수 없습니다");
+            }
+            case "ai.api_key" -> {
+              if (value == null || value.isBlank())
+                throw new IllegalArgumentException("API 키는 비어있을 수 없습니다");
             }
             default -> {
               /* ai.model is a free-form string, validated by frontend dropdown */

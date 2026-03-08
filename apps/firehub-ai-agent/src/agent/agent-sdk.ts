@@ -20,6 +20,7 @@ export interface AgentOptions {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  apiKey?: string;
   abortSignal?: AbortSignal;
 }
 
@@ -33,6 +34,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     systemPrompt,
     temperature,
     maxTokens,
+    apiKey,
     abortSignal,
   } = options;
 
@@ -58,6 +60,13 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
   // Auto-compact at ~60% of effective context window (~108K tokens)
   cleanEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '60';
+
+  if (apiKey) {
+    cleanEnv.ANTHROPIC_API_KEY = apiKey;
+  } else if (!cleanEnv.ANTHROPIC_API_KEY) {
+    yield { type: 'error' as const, message: 'API key not provided' };
+    return;
+  }
 
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: message,

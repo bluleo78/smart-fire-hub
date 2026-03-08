@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -83,12 +84,27 @@ public class AiAgentProxyService {
     emitter.onTimeout(() -> emitter.completeWithError(new RuntimeException("SSE timeout")));
     emitter.onError(e -> log.error("[AI Chat] SseEmitter error", e));
 
-    Map<String, String> aiSettings = settingsService.getAsMap("ai");
+    Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
+    if (apiKeyOpt.isEmpty()) {
+      try {
+        String errorPayload =
+            objectMapper.writeValueAsString(
+                Map.of("type", "error", "message", "AI API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 등록하세요."));
+        emitter.send(SseEmitter.event().data(errorPayload));
+        emitter.complete();
+      } catch (IOException ignored) {
+      }
+      return;
+    }
+
+    Map<String, String> aiSettings = new HashMap<>(settingsService.getAsMap("ai"));
+    aiSettings.remove("ai.api_key");
 
     Map<String, Object> requestBody = new HashMap<>();
     requestBody.put("message", message);
     requestBody.put("sessionId", sessionId != null ? sessionId : "");
     requestBody.put("userId", userId);
+    requestBody.put("apiKey", apiKeyOpt.get());
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
     requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));

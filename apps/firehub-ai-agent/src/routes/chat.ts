@@ -24,6 +24,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     systemPrompt,
     temperature,
     maxTokens,
+    apiKey,
   } = req.body;
 
   if (!message || typeof message !== 'string') {
@@ -63,6 +64,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       systemPrompt,
       temperature,
       maxTokens,
+      apiKey,
       abortSignal: abortController.signal,
     });
 
