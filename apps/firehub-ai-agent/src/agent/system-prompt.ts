@@ -132,7 +132,7 @@ API 연결 생성 시 참고사항:
 - create_dashboard: 새 대시보드 생성 (이름, 설명, 공유 여부, 자동 새로고침 간격)
 - add_chart_to_dashboard: 대시보드에 차트 추가 (위치/크기 지정 가능, 기본 positionX=0, positionY=0, width=6, height=4. MAP 차트는 width=12, height=6 권장)
 - list_dashboards: 대시보드 목록 조회
-- show_chart: 채팅에 인라인 차트를 표시합니다. execute_analytics_query로 조회한 데이터의 columns, rows를 그대로 전달하세요. chartType과 config는 차트 추천 가이드라인을 따르세요.
+- show_chart: 채팅에 인라인 차트를 표시합니다. sql 필드에는 반드시 execute_analytics_query에서 실행한 실제 SQL 쿼리문을 그대로 넣으세요 (제목이나 설명이 아닌 SELECT 문). columns, rows는 조회 결과를 그대로 전달하세요. chartType과 config는 차트 추천 가이드라인을 따르세요.
 
 분석 쿼리 작성 시 참고사항:
 - 쿼리 작성 전 get_data_schema로 테이블/컬럼 구조를 먼저 확인하세요
