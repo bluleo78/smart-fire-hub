@@ -20,7 +20,14 @@ RUN ./gradlew bootJar -x test -x generateJooq --no-daemon
 FROM eclipse-temurin:21-jre
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl python3 python3-pip && \
+    pip3 install --no-cache-dir --break-system-packages \
+        psycopg2-binary \
+        requests \
+        pandas \
+        openpyxl \
+        beautifulsoup4 \
+        lxml && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
