@@ -26,6 +26,8 @@ import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -341,6 +343,18 @@ public class GlobalExceptionHandler {
     ErrorResponse response =
         buildError(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+  }
+
+  @ExceptionHandler(IOException.class)
+  public void handleIOException(IOException ex, HttpServletResponse response) {
+    // SSE/streaming connections throw IOException (Broken pipe) when clients disconnect.
+    // If the response is already committed, we cannot write a JSON error body — just log and
+    // return.
+    if (response.isCommitted()) {
+      log.debug("IOException on committed response (client disconnect): {}", ex.getMessage());
+      return;
+    }
+    log.error("Unhandled IOException", ex);
   }
 
   @ExceptionHandler(Exception.class)
