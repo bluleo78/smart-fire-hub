@@ -44,6 +44,7 @@ public class AiAgentProxyService {
         WebClient.builder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
+            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
             .build();
     this.objectMapper = objectMapper;
     this.settingsService = settingsService;
