@@ -12,7 +12,7 @@ export function AIToggleButton() {
       title="AI 어시스턴트 (⌘K)"
       aria-label={isOpen ? 'AI 어시스턴트 닫기' : 'AI 어시스턴트 열기'}
       className={cn(
-        'fixed right-0 bottom-6 z-50',
+        'fixed right-0 bottom-20 z-50',
         'flex items-center gap-1.5 px-3 py-2.5',
         'rounded-l-lg shadow-lg',
         'text-sm font-medium',
