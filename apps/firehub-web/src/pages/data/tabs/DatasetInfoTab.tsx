@@ -85,7 +85,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   );
 
   return (
-    <div>
+    <div className="max-w-4xl space-y-6">
       {/* Top Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Row Count */}
@@ -124,7 +124,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       </div>
 
       {/* Bottom Detail Section */}
-      <Card className="p-6 mt-6">
+      <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
           {!isEditing && (
