@@ -81,6 +81,17 @@ public class AnalyticsDashboardService {
         .findByIdForOwner(id, userId)
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found: " + id));
     dashboardRepository.update(id, req, userId);
+
+    // When sharing a dashboard, auto-share all contained charts
+    if (Boolean.TRUE.equals(req.isShared())) {
+      List<DashboardResponse.DashboardWidgetResponse> currentWidgets =
+          widgetRepository.findByDashboardId(id);
+      List<Long> chartIds = currentWidgets.stream().map(DashboardResponse.DashboardWidgetResponse::chartId).toList();
+      if (!chartIds.isEmpty()) {
+        chartRepository.shareCharts(chartIds);
+      }
+    }
+
     List<DashboardResponse.DashboardWidgetResponse> widgets =
         widgetRepository.findByDashboardId(id);
     return dashboardRepository

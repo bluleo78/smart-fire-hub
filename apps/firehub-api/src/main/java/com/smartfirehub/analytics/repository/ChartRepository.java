@@ -263,6 +263,11 @@ public class ChartRepository {
     update.where(C_ID.eq(id)).execute();
   }
 
+  public void shareCharts(List<Long> chartIds) {
+    if (chartIds.isEmpty()) return;
+    dsl.update(C).set(C_IS_SHARED, true).where(C_ID.in(chartIds)).execute();
+  }
+
   public boolean deleteById(Long id, Long userId) {
     int deleted = dsl.deleteFrom(C).where(C_ID.eq(id).and(C_CREATED_BY.eq(userId))).execute();
     return deleted > 0;
