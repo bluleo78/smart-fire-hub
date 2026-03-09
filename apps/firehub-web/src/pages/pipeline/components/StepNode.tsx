@@ -166,7 +166,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             }}
             aria-label="다음 스텝 추가"
             title="다음 스텝 추가"
-            className="absolute -right-9 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-white text-muted-foreground shadow-sm transition-colors hover:border-transparent hover:bg-accent hover:text-accent-foreground"
+            className="absolute -right-9 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:border-transparent hover:bg-accent hover:text-accent-foreground"
           >
             <Plus className="h-3 w-3" />
           </button>
@@ -193,7 +193,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
           <div className="flex items-center gap-1">
             {statusConfig && StatusIcon && (
               <div
-                className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium border"
+                className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium border"
                 style={{
                   backgroundColor: statusConfig.bg,
                   color: statusConfig.color,

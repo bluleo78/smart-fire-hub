@@ -14,6 +14,7 @@ import { Button } from '../../components/ui/button';
 import {
   Table,
   TableBody,
+  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -44,7 +45,7 @@ export default function PipelineListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">파이프라인 관리</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">파이프라인 관리</h1>
         <Button asChild>
           <Link to="/pipelines/new">
             <Plus className="mr-2 h-4 w-4" />
@@ -76,24 +77,24 @@ export default function PipelineListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/pipelines/${pipeline.id}`)}
                 >
-                  <td className="p-4 font-medium">{pipeline.name}</td>
-                  <td className="p-4">
+                  <TableCell className="font-medium">{pipeline.name}</TableCell>
+                  <TableCell>
                     <Badge variant={pipeline.isActive ? 'default' : 'secondary'}>
                       {pipeline.isActive ? '활성' : '비활성'}
                     </Badge>
-                  </td>
-                  <td className="p-4">{pipeline.stepCount}</td>
-                  <td className="p-4">
+                  </TableCell>
+                  <TableCell>{pipeline.stepCount}</TableCell>
+                  <TableCell>
                     {pipeline.triggerCount > 0 && (
                       <Badge variant="outline" className="text-xs gap-1">
                         <Clock className="h-3 w-3" />
                         {pipeline.triggerCount}
                       </Badge>
                     )}
-                  </td>
-                  <td className="p-4">{pipeline.createdBy}</td>
-                  <td className="p-4">{formatDateShort(pipeline.createdAt)}</td>
-                  <td className="p-4">
+                  </TableCell>
+                  <TableCell>{pipeline.createdBy}</TableCell>
+                  <TableCell>{formatDateShort(pipeline.createdAt)}</TableCell>
+                  <TableCell>
                     <DeleteConfirmDialog
                       entityName="파이프라인"
                       itemName={pipeline.name}
@@ -104,7 +105,7 @@ export default function PipelineListPage() {
                         </Button>
                       }
                     />
-                  </td>
+                  </TableCell>
                 </TableRow>
               ))
             ) : (

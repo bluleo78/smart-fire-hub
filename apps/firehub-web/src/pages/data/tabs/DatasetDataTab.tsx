@@ -242,7 +242,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                         </div>
                         <div
                           style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, cursor: 'col-resize' }}
-                          className="hover:bg-blue-400 active:bg-blue-500"
+                          className="hover:bg-primary/80 active:bg-primary/90"
                           onMouseDown={(e) => startResize(key, e)}
                         />
                       </th>

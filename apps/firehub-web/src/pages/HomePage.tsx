@@ -40,9 +40,9 @@ const THIN_SCROLLBAR =
 function ActivityIcon({ eventType }: { eventType: string }) {
   const t = eventType.toUpperCase();
   if (t.includes('FAIL') || t.includes('ERROR')) return <XCircle className="h-4 w-4 text-destructive shrink-0" />;
-  if (t.includes('WARN')) return <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />;
-  if (t.includes('SUCCESS') || t.includes('COMPLETED')) return <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />;
-  if (t.includes('RUN') || t.includes('START')) return <Terminal className="h-4 w-4 text-blue-500 shrink-0" />;
+  if (t.includes('WARN')) return <AlertTriangle className="h-4 w-4 text-warning shrink-0" />;
+  if (t.includes('SUCCESS') || t.includes('COMPLETED')) return <CheckCircle2 className="h-4 w-4 text-success shrink-0" />;
+  if (t.includes('RUN') || t.includes('START')) return <Terminal className="h-4 w-4 text-info shrink-0" />;
   return <Circle className="h-4 w-4 text-muted-foreground shrink-0" />;
 }
 
@@ -80,10 +80,10 @@ export default function HomePage() {
     && (!attentionItems || attentionItems.length === 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">홈</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">홈</h1>
         <p className="text-muted-foreground mt-1">환영합니다, {user?.name}님!</p>
       </div>
 
@@ -106,13 +106,13 @@ export default function HomePage() {
               {ph && ph.total > 0 ? (
                 <span className="flex items-center gap-1.5 text-sm">
                   {ph.failing > 0 && (
-                    <span className="text-red-600 font-semibold">{ph.failing} 실패</span>
+                    <span className="text-destructive font-semibold">{ph.failing} 실패</span>
                   )}
                   {ph.running > 0 && (
-                    <span className="text-blue-600 font-semibold">{ph.running} 실행중</span>
+                    <span className="text-info font-semibold">{ph.running} 실행중</span>
                   )}
                   {ph.healthy > 0 && (
-                    <span className="text-green-600 font-semibold">{ph.healthy} 정상</span>
+                    <span className="text-success font-semibold">{ph.healthy} 정상</span>
                   )}
                   {ph.disabled > 0 && (
                     <span className="text-muted-foreground">{ph.disabled} 비활성</span>
@@ -135,13 +135,13 @@ export default function HomePage() {
               {dh && dh.total > 0 ? (
                 <span className="flex items-center gap-1.5 text-sm">
                   {dh.empty > 0 && (
-                    <span className="text-red-600 font-semibold">{dh.empty} 빈 데이터</span>
+                    <span className="text-destructive font-semibold">{dh.empty} 빈 데이터</span>
                   )}
                   {dh.stale > 0 && (
-                    <span className="text-orange-600 font-semibold">{dh.stale} 오래됨</span>
+                    <span className="text-warning font-semibold">{dh.stale} 오래됨</span>
                   )}
                   {dh.fresh > 0 && (
-                    <span className="text-green-600 font-semibold">{dh.fresh} 최신</span>
+                    <span className="text-success font-semibold">{dh.fresh} 최신</span>
                   )}
                 </span>
               ) : (
@@ -169,7 +169,7 @@ export default function HomePage() {
 
             {/* 모든 시스템 정상 표시 */}
             {hasNoIssues && (
-              <div className="flex items-center gap-1.5 text-sm text-green-600 ml-auto">
+              <div className="flex items-center gap-1.5 text-sm text-success ml-auto">
                 <CheckCircle2 className="h-4 w-4" />
                 모든 시스템 정상
               </div>
@@ -184,7 +184,7 @@ export default function HomePage() {
           <CardHeader className="px-4 pb-0">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-orange-500" />
+                <AlertTriangle className="h-4 w-4 text-warning" />
                 주의 필요
                 <span className="inline-flex items-center justify-center rounded-full bg-destructive/10 text-destructive text-[11px] font-semibold px-1.5 py-0 min-w-[1.25rem] h-[1.25rem] leading-none">
                   {attentionItems.length}
@@ -212,14 +212,14 @@ export default function HomePage() {
                   <div
                     className={`rounded-lg border cursor-pointer transition-colors hover:bg-accent border-l-4 px-4 py-2.5 flex items-center gap-3 ${
                       item.severity === 'CRITICAL'
-                        ? 'border-l-red-500'
-                        : 'border-l-orange-500'
+                        ? 'border-l-destructive'
+                        : 'border-l-warning'
                     }`}
                   >
                     {item.severity === 'CRITICAL' ? (
                       <XCircle className="h-4 w-4 text-destructive shrink-0" />
                     ) : (
-                      <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />
+                      <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium leading-tight">{item.title}</p>
@@ -260,9 +260,9 @@ export default function HomePage() {
       </div>
 
       {/* ZONE 4 + ZONE 5 — 2컬럼 */}
-      <div className="grid gap-5 lg:grid-cols-5">
+      <div className="grid gap-4 lg:grid-cols-5">
         {/* ZONE 4 — 최근 사용 (좌측 3cols, 2x2 위젯 그리드) */}
-        <div className="lg:col-span-3 grid gap-3 sm:grid-cols-2">
+        <div className="lg:col-span-3 grid gap-4 sm:grid-cols-2">
           {/* 최근 대시보드 */}
           <Card className="py-2 gap-1 flex flex-col">
             <CardHeader className="px-3 pb-0">
@@ -353,7 +353,7 @@ export default function HomePage() {
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm truncate group-hover:text-foreground">{ds.name}</span>
-                        <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">
+                        <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
                           {ds.datasetType === 'SOURCE' ? '소스' : '파생'}
                         </Badge>
                       </div>
@@ -391,7 +391,7 @@ export default function HomePage() {
                         <p className="text-xs text-muted-foreground truncate">{imp.fileName}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                        <Badge variant={getStatusBadgeVariant(imp.status)} className="text-[10px] px-1.5 py-0">
+                        <Badge variant={getStatusBadgeVariant(imp.status)} className="text-xs px-1.5 py-0">
                           {getStatusLabel(imp.status)}
                         </Badge>
                         <span className="text-xs text-muted-foreground">{timeAgo(imp.createdAt)}</span>
@@ -422,7 +422,7 @@ export default function HomePage() {
                     <div key={exec.id} className="flex items-center justify-between py-1.5">
                       <p className="truncate text-sm min-w-0 flex-1">{exec.pipelineName}</p>
                       <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                        <Badge variant={getStatusBadgeVariant(exec.status)} className="text-[10px] px-1.5 py-0">
+                        <Badge variant={getStatusBadgeVariant(exec.status)} className="text-xs px-1.5 py-0">
                           {getStatusLabel(exec.status)}
                         </Badge>
                         <span className="text-xs text-muted-foreground">{timeAgo(exec.createdAt)}</span>
@@ -515,7 +515,7 @@ export default function HomePage() {
                       )}
                       <div className="flex items-center gap-2 mt-1">
                         {!item.isResolved && (
-                          <Badge variant="destructive" className="text-[10px] h-4 px-1.5">미해결</Badge>
+                          <Badge variant="destructive" className="text-xs h-4 px-1.5">미해결</Badge>
                         )}
                         <span className="text-[11px] text-muted-foreground flex items-center gap-1">
                           <Clock className="h-3 w-3" />

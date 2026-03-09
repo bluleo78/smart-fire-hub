@@ -146,7 +146,7 @@ export default function ApiConnectionDetailPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/admin/api-connections')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">API 연결 상세</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">API 연결 상세</h1>
         <Badge variant={connection.authType === 'BEARER' ? 'default' : 'secondary'}>
           {connection.authType === 'BEARER' ? 'Bearer' : 'API Key'}
         </Badge>

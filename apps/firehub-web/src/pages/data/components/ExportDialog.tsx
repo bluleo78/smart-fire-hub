@@ -155,7 +155,7 @@ export function ExportDialog({
             <Skeleton className="h-32 w-full" />
           </div>
         ) : estimate ? (
-          <div className="space-y-5 py-2">
+          <div className="space-y-4 py-2">
             {/* Row count */}
             <p className="text-sm text-muted-foreground">
               총{' '}
@@ -164,7 +164,7 @@ export function ExportDialog({
               </span>
               행
               {estimate.async && (
-                <span className="ml-2 text-xs text-orange-500">
+                <span className="ml-2 text-xs text-warning">
                   (대용량 — 비동기 내보내기)
                 </span>
               )}

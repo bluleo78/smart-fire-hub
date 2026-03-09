@@ -89,7 +89,7 @@ export function DateMiniDisplay({ stats }: { stats: ColumnStatsResponse }) {
   if (!min && !max) return <div style={{ height: 20 }} />;
   return (
     <div style={{ height: 20, display: 'flex', alignItems: 'center' }}>
-      <span className="text-[10px] text-muted-foreground truncate">
+      <span className="text-xs text-muted-foreground truncate">
         {min} ~ {max}
       </span>
     </div>
@@ -186,7 +186,7 @@ export function ColumnMiniChart({
 // Null progress bar colored by percentage
 export function NullProgressBar({ percent }: { percent: number }) {
   const color =
-    percent === 0 ? 'bg-green-500' : percent <= 30 ? 'bg-yellow-500' : 'bg-red-500';
+    percent === 0 ? 'bg-success' : percent <= 30 ? 'bg-warning' : 'bg-destructive';
   return (
     <div className="flex items-center gap-1.5">
       <div className="w-[60px] h-1.5 bg-muted rounded-full overflow-hidden">
@@ -226,10 +226,10 @@ export function ColumnExpandedStats({
           <div
             className={`h-full rounded-full ${
               stats.nullPercent === 0
-                ? 'bg-green-500'
+                ? 'bg-success'
                 : stats.nullPercent <= 30
-                ? 'bg-yellow-500'
-                : 'bg-red-500'
+                ? 'bg-warning'
+                : 'bg-destructive'
             }`}
             style={{ width: `${Math.min(stats.nullPercent, 100)}%` }}
           />
@@ -266,7 +266,7 @@ export function ColumnExpandedStats({
               </span>
               <div className="flex-1 h-4 bg-muted rounded overflow-hidden">
                 <div
-                  className="h-full bg-blue-500 rounded"
+                  className="h-full bg-info rounded"
                   style={{ width: `${(tv.count / maxTopCount) * 100}%` }}
                 />
               </div>
@@ -308,12 +308,12 @@ export function ColumnExpandedStats({
               <div className="flex items-center gap-2">
                 <div className="flex-1 h-4 rounded overflow-hidden flex">
                   <div
-                    className="h-full bg-green-500"
+                    className="h-full bg-success"
                     style={{ width: `${truePct}%` }}
                     title={`true: ${trueCount}`}
                   />
                   <div
-                    className="h-full bg-red-500"
+                    className="h-full bg-destructive"
                     style={{ width: `${falsePct}%` }}
                     title={`false: ${falseCount}`}
                   />

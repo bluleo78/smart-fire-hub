@@ -38,7 +38,7 @@ export default function UserListPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">사용자 관리</h1>
+      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 관리</h1>
 
       <SearchInput
         placeholder="이름 또는 아이디로 검색..."

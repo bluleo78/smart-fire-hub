@@ -30,6 +30,7 @@ import {
 import {
   Table,
   TableBody,
+  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -125,7 +126,7 @@ export default function ApiConnectionListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">API 연결 관리</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">API 연결 관리</h1>
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button>
@@ -250,17 +251,17 @@ export default function ApiConnectionListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/admin/api-connections/${conn.id}`)}
                 >
-                  <td className="p-4 font-medium">{conn.name}</td>
-                  <td className="p-4">
+                  <TableCell className="font-medium">{conn.name}</TableCell>
+                  <TableCell>
                     <Badge variant={conn.authType === 'BEARER' ? 'default' : 'secondary'}>
                       {conn.authType === 'BEARER' ? 'Bearer' : 'API Key'}
                     </Badge>
-                  </td>
-                  <td className="p-4 text-muted-foreground">{conn.description ?? '-'}</td>
-                  <td className="p-4 text-muted-foreground text-sm">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{conn.description ?? '-'}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
                     {formatDateShort(conn.createdAt)}
-                  </td>
-                  <td className="p-4">
+                  </TableCell>
+                  <TableCell>
                     <DeleteConfirmDialog
                       entityName="API 연결"
                       itemName={conn.name}
@@ -271,7 +272,7 @@ export default function ApiConnectionListPage() {
                         </Button>
                       }
                     />
-                  </td>
+                  </TableCell>
                 </TableRow>
               ))
             ) : (

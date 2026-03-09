@@ -216,7 +216,7 @@ function SchemaExplorer({ tables, onInsertTable }: SchemaExplorerProps) {
                 {table.tableName}
               </span>
               <button
-                className="shrink-0 text-muted-foreground hover:text-foreground text-[10px] bg-muted px-1 rounded"
+                className="shrink-0 text-muted-foreground hover:text-foreground text-xs bg-muted px-1 rounded"
                 onClick={(e) => {
                   e.stopPropagation();
                   onInsertTable(table.tableName);
@@ -237,7 +237,7 @@ function SchemaExplorer({ tables, onInsertTable }: SchemaExplorerProps) {
                     <span className="truncate flex-1" title={col.columnName}>
                       {col.displayName || col.columnName}
                     </span>
-                    <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                    <span className="shrink-0 text-xs text-muted-foreground/70">
                       {col.dataType}
                     </span>
                   </div>

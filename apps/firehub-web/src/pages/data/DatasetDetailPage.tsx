@@ -159,7 +159,7 @@ export default function DatasetDetailPage() {
           </button>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">{dataset.name}</h1>
+              <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">{dataset.name}</h1>
               {/* Status badge */}
               {dataset.status === 'CERTIFIED' && (
                 <Badge variant="success">

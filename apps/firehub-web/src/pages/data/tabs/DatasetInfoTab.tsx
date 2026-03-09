@@ -91,14 +91,14 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         {/* Row Count */}
         <Card className="p-4">
           <Database size={20} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-bold">{dataset.rowCount.toLocaleString()}</p>
+          <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.rowCount.toLocaleString()}</p>
           <p className="text-sm text-muted-foreground">행</p>
         </Card>
 
         {/* Column Count */}
         <Card className="p-4">
           <Columns size={20} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-bold">{dataset.columns.length}</p>
+          <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.columns.length}</p>
           <p className="text-sm text-muted-foreground">개 컬럼</p>
         </Card>
 
@@ -116,7 +116,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         {/* Last Modified */}
         <Card className="p-4">
           <Clock size={20} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-bold leading-tight">
+          <p className="text-2xl font-semibold font-mono tabular-nums">
             {getRelativeTime(dataset.updatedAt || dataset.createdAt)}
           </p>
           <p className="text-sm text-muted-foreground">최근 수정</p>

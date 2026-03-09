@@ -25,6 +25,7 @@ import { Input } from '../../components/ui/input';
 import {
   Table,
   TableBody,
+  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -93,7 +94,7 @@ export default function RoleListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">역할 관리</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 관리</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -156,16 +157,16 @@ export default function RoleListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate(`/admin/roles/${role.id}`)}
                 >
-                  <td className="p-4 font-medium">{role.name}</td>
-                  <td className="p-4">
+                  <TableCell className="font-medium">{role.name}</TableCell>
+                  <TableCell>
                     {role.isSystem ? (
                       <Badge variant="outline">시스템</Badge>
                     ) : (
                       <Badge variant="secondary">사용자 정의</Badge>
                     )}
-                  </td>
-                  <td className="p-4">{role.description ?? '-'}</td>
-                  <td className="p-4">
+                  </TableCell>
+                  <TableCell>{role.description ?? '-'}</TableCell>
+                  <TableCell>
                     {!role.isSystem && (
                       <DeleteConfirmDialog
                         entityName="역할"
@@ -178,7 +179,7 @@ export default function RoleListPage() {
                         }
                       />
                     )}
-                  </td>
+                  </TableCell>
                 </TableRow>
               ))
             ) : (

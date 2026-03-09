@@ -80,7 +80,7 @@ export default function DatasetCreatePage() {
   return (
     <div className="max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">데이터셋 생성</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">데이터셋 생성</h1>
       </div>
 
       <FormProvider {...form}>

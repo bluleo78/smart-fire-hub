@@ -36,13 +36,13 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
     return <span className="text-gray-400">null</span>;
   }
   if (typeof value === 'boolean') {
-    return <span className="text-blue-500">{value ? 'true' : 'false'}</span>;
+    return <span className="text-info">{value ? 'true' : 'false'}</span>;
   }
   if (typeof value === 'number') {
-    return <span className="text-green-600">{String(value)}</span>;
+    return <span className="text-success">{String(value)}</span>;
   }
   if (typeof value === 'string') {
-    return <span className="text-amber-600">&quot;{value}&quot;</span>;
+    return <span className="text-warning">&quot;{value}&quot;</span>;
   }
 
   if (Array.isArray(value)) {
@@ -60,7 +60,7 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
             {value.slice(0, 20).map((item, i) => (
               <div key={i} className="flex items-start gap-1">
                 <button
-                  className="text-blue-400 hover:text-blue-600 text-xs shrink-0"
+                  className="text-muted-foreground hover:text-foreground text-xs shrink-0"
                   title={`${path}[${i}] 복사`}
                   onClick={(e) => handleCopyPath(e, `${path}[${i}]`)}
                 >
@@ -99,7 +99,7 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
               return (
                 <div key={key} className="flex items-start gap-1">
                   <button
-                    className="text-blue-400 hover:text-blue-600 text-xs shrink-0"
+                    className="text-muted-foreground hover:text-foreground text-xs shrink-0"
                     title={`${childPath} 복사`}
                     onClick={(e) => handleCopyPath(e, childPath)}
                   >

@@ -41,7 +41,7 @@ export function WidgetFreshnessBar({
         {isFetching ? (
           <Badge
             variant="secondary"
-            className="text-[10px] px-1.5 py-0 h-4 gap-1 bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+            className="text-[10px] px-1.5 py-0 h-4 gap-1 bg-info/10 text-info border-info/20"
           >
             <RefreshCw className="h-2.5 w-2.5 animate-spin motion-reduce:animate-none" />
             갱신 중...
@@ -57,7 +57,7 @@ export function WidgetFreshnessBar({
             </Badge>
           ) : (
             <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Circle className="h-2 w-2 fill-green-500 text-green-500" />
+              <Circle className="h-2 w-2 fill-success text-success" />
               {timeAgoText ?? '-'}
             </span>
           )

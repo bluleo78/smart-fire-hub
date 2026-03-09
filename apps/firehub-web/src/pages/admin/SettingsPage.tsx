@@ -166,7 +166,7 @@ export default function SettingsPage() {
     <div className="max-w-2xl mx-auto space-y-6 p-6">
       <div className="flex items-center gap-3">
         <Settings className="h-6 w-6" />
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">설정</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">설정</h1>
       </div>
 
       <Tabs defaultValue="ai">

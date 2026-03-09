@@ -121,7 +121,7 @@ export default function UserDetailPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/admin/users')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">사용자 상세</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 상세</h1>
       </div>
 
       <Card>

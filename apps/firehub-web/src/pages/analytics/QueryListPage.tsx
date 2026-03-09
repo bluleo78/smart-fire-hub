@@ -106,7 +106,7 @@ export default function QueryListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[32px] leading-[40px] font-semibold tracking-tight">저장된 쿼리</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">저장된 쿼리</h1>
         <Button onClick={() => navigate('/analytics/queries/new')}>
           <Plus className="mr-2 h-4 w-4" />
           새 쿼리

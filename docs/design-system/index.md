@@ -60,7 +60,7 @@
 
 | 용도 | 권장 Tailwind 클래스 | Size |
 |------|---------------------|------|
-| 페이지 타이틀 (H1) | `text-[32px] leading-[40px] font-semibold tracking-tight` | 32px |
+| 페이지 타이틀 (H1) | `text-[28px] leading-[36px] font-semibold tracking-tight` | 28px |
 | 섹션 제목 (H2) | `text-2xl leading-8 font-semibold tracking-tight` | 24px |
 | 카드/다이얼로그 제목 (H3) | `text-xl leading-7 font-semibold` | 20px |
 | 그룹 라벨 (H4) | `text-base leading-6 font-semibold` | 16px |

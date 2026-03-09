@@ -188,13 +188,13 @@ As-Is → To-Be 타이포그래피 매핑을 기존 코드에 적용한다.
 
 ### 영향 범위
 - **파일**: ~30개 페이지 파일
-- **주요 변경**: 페이지 타이틀 `text-2xl font-bold` → `text-[32px] leading-[40px] font-semibold tracking-tight`
+- **주요 변경**: 페이지 타이틀 `text-2xl font-bold` → `text-[28px] leading-[36px] font-semibold tracking-tight`
 
 ### 주요 매핑
 
 | As-Is | To-Be | 영향 범위 |
 |-------|-------|----------|
-| `text-2xl font-bold` (h1) | `text-[32px] leading-[40px] font-semibold tracking-tight` | 22+ 페이지 |
+| `text-2xl font-bold` (h1) | `text-[28px] leading-[36px] font-semibold tracking-tight` | 22+ 페이지 |
 | `text-lg font-semibold` (dialog) | `text-xl leading-7 font-semibold` | ~15 다이얼로그 |
 | `text-base font-semibold` (section) | `text-2xl leading-8 font-semibold tracking-tight` | ~10 섹션 |
 | `text-sm font-medium` (card label) | `text-sm leading-5 font-medium` (유지) | ~50 인스턴스 |

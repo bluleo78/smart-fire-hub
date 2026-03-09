@@ -65,7 +65,7 @@ export function SqlQueryHistory({ datasetId, open, onOpenChange, onSelect }: Sql
                   onClick={() => onSelect(item.sql)}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <Badge variant={queryTypeBadgeVariant(item.queryType) as 'default' | 'secondary' | 'destructive' | 'outline'} className="text-[10px] px-1.5 py-0">
+                    <Badge variant={queryTypeBadgeVariant(item.queryType) as 'default' | 'secondary' | 'destructive' | 'outline'} className="text-xs px-1.5 py-0">
                       {item.queryType}
                     </Badge>
                     {item.success ? (
@@ -75,7 +75,7 @@ export function SqlQueryHistory({ datasetId, open, onOpenChange, onSelect }: Sql
                     ) : (
                       <span className="text-xs text-destructive">실패</span>
                     )}
-                    <span className="text-[10px] text-muted-foreground ml-auto">
+                    <span className="text-xs text-muted-foreground ml-auto">
                       {formatDate(item.executedAt)}
                     </span>
                   </div>
@@ -83,7 +83,7 @@ export function SqlQueryHistory({ datasetId, open, onOpenChange, onSelect }: Sql
                     {item.sql}
                   </p>
                   {item.error && (
-                    <p className="text-[10px] text-destructive truncate mt-0.5">{item.error}</p>
+                    <p className="text-xs text-destructive truncate mt-0.5">{item.error}</p>
                   )}
                 </button>
               ))}
