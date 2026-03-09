@@ -54,8 +54,7 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
   private Long createSavedQuery() {
     var savedQuery =
         savedQueryService.create(
-            new CreateSavedQueryRequest(
-                "Test Query", null, "SELECT 1", null, "test", false),
+            new CreateSavedQueryRequest("Test Query", null, "SELECT 1", null, "test", false),
             ownerUserId);
     return savedQuery.id();
   }
@@ -88,7 +87,9 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
 
     // When: share the dashboard
     dashboardService.update(
-        dashboard.id(), new UpdateDashboardRequest("Test Dashboard", "desc", true, null), ownerUserId);
+        dashboard.id(),
+        new UpdateDashboardRequest("Test Dashboard", "desc", true, null),
+        ownerUserId);
 
     // Then: contained charts should be auto-shared
     var updatedChart1 = chartService.getById(chart1.id(), ownerUserId);

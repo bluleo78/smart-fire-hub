@@ -709,7 +709,8 @@ public class DataImportService {
     } catch (Exception e) {
       log.error("Import failed for dataset {}", datasetId, e);
 
-      asyncJobService.failJob(jobId, e.getMessage());
+      String userMessage = toUserFriendlyMessage(e);
+      asyncJobService.failJob(jobId, userMessage);
 
       notificationService.notifyImportCompleted(
           userId, datasetId, datasetNameForNotification, false);
@@ -723,7 +724,7 @@ public class DataImportService {
               "fileType",
               fileType,
               "error",
-              e.getMessage() != null ? e.getMessage() : "Unknown error");
+              userMessage);
 
       auditLogService.log(
           userId,
@@ -735,7 +736,7 @@ public class DataImportService {
           ipAddress,
           userAgent,
           "FAILURE",
-          e.getMessage(),
+          userMessage,
           metadata);
 
       throw new ImportProcessingException("Import failed: " + e.getMessage(), e);
@@ -875,5 +876,37 @@ public class DataImportService {
       return filename.substring(lastDot + 1).toLowerCase();
     }
     return "";
+  }
+
+  private String toUserFriendlyMessage(Exception e) {
+    String msg = e.getMessage() != null ? e.getMessage() : "";
+
+    // Duplicate key (data table or async_job)
+    if (msg.contains("duplicate key value violates unique constraint")) {
+      if (msg.contains("idx_async_job_active_unique")) {
+        return "이미 진행 중인 임포트가 있습니다. 완료 후 다시 시도해주세요.";
+      }
+      return "중복 데이터가 존재합니다. '업서트(UPSERT)' 모드를 사용하면 기존 데이터를 업데이트할 수 있습니다.";
+    }
+
+    // File not found / upload interrupted
+    if (e instanceof java.nio.file.NoSuchFileException
+        || msg.contains("NoSuchFileException")
+        || msg.contains("Stream ended unexpectedly")) {
+      return "파일 업로드가 중간에 실패했습니다. 다시 시도해주세요.";
+    }
+
+    // CSV/XLSX parse errors
+    if (msg.contains("ArrayIndexOutOfBoundsException") || msg.contains("Cannot parse")) {
+      return "파일 형식이 올바르지 않습니다. CSV 또는 XLSX 파일을 확인해주세요.";
+    }
+
+    // Connection / timeout
+    if (msg.contains("Connection") || msg.contains("Timeout") || msg.contains("timed out")) {
+      return "데이터베이스 연결에 문제가 발생했습니다. 잠시 후 다시 시도해주세요.";
+    }
+
+    // Generic fallback — do not expose raw exception
+    return "임포트 처리 중 오류가 발생했습니다. 관리자에게 문의해주세요.";
   }
 }

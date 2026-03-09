@@ -90,7 +90,8 @@ public class AnalyticsDashboardService {
     if (Boolean.TRUE.equals(req.isShared())) {
       List<DashboardResponse.DashboardWidgetResponse> currentWidgets =
           widgetRepository.findByDashboardId(id);
-      List<Long> chartIds = currentWidgets.stream().map(DashboardResponse.DashboardWidgetResponse::chartId).toList();
+      List<Long> chartIds =
+          currentWidgets.stream().map(DashboardResponse.DashboardWidgetResponse::chartId).toList();
       if (!chartIds.isEmpty()) {
         chartRepository.shareCharts(chartIds);
         List<Long> savedQueryIds = chartRepository.findSavedQueryIdsByChartIds(chartIds);
