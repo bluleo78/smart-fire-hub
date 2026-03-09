@@ -3,13 +3,20 @@
  * 여러 페이지에서 중복 정의되던 함수들을 통합.
  */
 
+/** 서버(UTC)에서 받은 LocalDateTime 문자열에 'Z'를 붙여 UTC로 파싱 */
+function parseUtcDate(dateStr: string): Date {
+  // 이미 타임존 정보가 있으면 그대로, 없으면 UTC로 간주
+  if (/[Z+\-]\d{0,4}$/.test(dateStr)) return new Date(dateStr);
+  return new Date(dateStr + 'Z');
+}
+
 export function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleString('ko-KR');
+  return parseUtcDate(dateStr).toLocaleString('ko-KR');
 }
 
 export function formatDateShort(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('ko-KR');
+  return parseUtcDate(dateStr).toLocaleDateString('ko-KR');
 }
 
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;

@@ -7,6 +7,7 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { handleApiError } from '@/lib/api-error';
+import { formatDateShort } from '@/lib/formatters';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -257,7 +258,7 @@ export default function ApiConnectionListPage() {
                   </td>
                   <td className="p-4 text-muted-foreground">{conn.description ?? '-'}</td>
                   <td className="p-4 text-muted-foreground text-sm">
-                    {new Date(conn.createdAt).toLocaleDateString('ko-KR')}
+                    {formatDateShort(conn.createdAt)}
                   </td>
                   <td className="p-4">
                     <DeleteConfirmDialog

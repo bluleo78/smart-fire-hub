@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { rolesApi } from '../../api/roles';
 import { usersApi } from '../../api/users';
 import { Badge } from '../../components/ui/badge';
+import { formatDateShort } from '../../lib/formatters';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
@@ -136,7 +137,7 @@ export default function UserDetailPage() {
             <span className="text-muted-foreground">이메일</span>
             <span>{user.email ?? '-'}</span>
             <span className="text-muted-foreground">가입일</span>
-            <span>{new Date(user.createdAt).toLocaleDateString('ko-KR')}</span>
+            <span>{formatDateShort(user.createdAt)}</span>
             <span className="text-muted-foreground">상태</span>
             <span>
               <Badge variant={user.isActive ? 'default' : 'secondary'}>

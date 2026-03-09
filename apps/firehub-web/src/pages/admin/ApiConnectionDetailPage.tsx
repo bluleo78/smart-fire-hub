@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { handleApiError } from '@/lib/api-error';
+import { formatDate } from '@/lib/formatters';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -166,8 +167,8 @@ export default function ApiConnectionDetailPage() {
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" />
           </div>
           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
-            <div>생성일: {new Date(connection.createdAt).toLocaleString('ko-KR')}</div>
-            <div>수정일: {new Date(connection.updatedAt).toLocaleString('ko-KR')}</div>
+            <div>생성일: {formatDate(connection.createdAt)}</div>
+            <div>수정일: {formatDate(connection.updatedAt)}</div>
           </div>
           <Button onClick={handleSaveInfo} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? '저장 중...' : '저장'}
