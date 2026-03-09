@@ -16,6 +16,7 @@ import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
+import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +34,7 @@ public class AnalyticsDashboardService {
   private final DashboardWidgetRepository widgetRepository;
   private final ChartService chartService;
   private final ChartRepository chartRepository;
+  private final SavedQueryRepository savedQueryRepository;
 
   // Caffeine cache: TTL 60s, max 200 entries, keyed by saved_query_id
   private final Cache<Long, AnalyticsQueryResponse> queryResultCache =
@@ -42,11 +44,13 @@ public class AnalyticsDashboardService {
       AnalyticsDashboardRepository dashboardRepository,
       DashboardWidgetRepository widgetRepository,
       ChartService chartService,
-      ChartRepository chartRepository) {
+      ChartRepository chartRepository,
+      SavedQueryRepository savedQueryRepository) {
     this.dashboardRepository = dashboardRepository;
     this.widgetRepository = widgetRepository;
     this.chartService = chartService;
     this.chartRepository = chartRepository;
+    this.savedQueryRepository = savedQueryRepository;
   }
 
   public com.smartfirehub.global.dto.PageResponse<DashboardResponse> list(
@@ -89,6 +93,10 @@ public class AnalyticsDashboardService {
       List<Long> chartIds = currentWidgets.stream().map(DashboardResponse.DashboardWidgetResponse::chartId).toList();
       if (!chartIds.isEmpty()) {
         chartRepository.shareCharts(chartIds);
+        List<Long> savedQueryIds = chartRepository.findSavedQueryIdsByChartIds(chartIds);
+        if (!savedQueryIds.isEmpty()) {
+          savedQueryRepository.shareQueries(savedQueryIds);
+        }
       }
     }
 

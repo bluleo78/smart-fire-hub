@@ -261,6 +261,11 @@ public class SavedQueryRepository {
     return Optional.ofNullable(r);
   }
 
+  public void shareQueries(List<Long> queryIds) {
+    if (queryIds.isEmpty()) return;
+    dsl.update(SQ).set(SQ_IS_SHARED, true).where(SQ_ID.in(queryIds)).execute();
+  }
+
   public Long insert(CreateSavedQueryRequest req, Long userId) {
     return dsl.insertInto(SQ)
         .set(SQ_NAME, req.name())

@@ -268,6 +268,14 @@ public class ChartRepository {
     dsl.update(C).set(C_IS_SHARED, true).where(C_ID.in(chartIds)).execute();
   }
 
+  public List<Long> findSavedQueryIdsByChartIds(List<Long> chartIds) {
+    if (chartIds.isEmpty()) return List.of();
+    return dsl.selectDistinct(C_SAVED_QUERY_ID)
+        .from(C)
+        .where(C_ID.in(chartIds).and(C_SAVED_QUERY_ID.isNotNull()))
+        .fetch(C_SAVED_QUERY_ID);
+  }
+
   public boolean deleteById(Long id, Long userId) {
     int deleted = dsl.deleteFrom(C).where(C_ID.eq(id).and(C_CREATED_BY.eq(userId))).execute();
     return deleted > 0;

@@ -96,6 +96,11 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     assertThat(updatedChart1.isShared()).isTrue();
     assertThat(updatedChart2.isShared()).isTrue();
 
+    // And: saved query should also be auto-shared
+    var sharedQuery = savedQueryService.getById(savedQueryId, otherUserId);
+    assertThat(sharedQuery).isNotNull();
+    assertThat(sharedQuery.isShared()).isTrue();
+
     // And: other user can now see the dashboard and charts
     DashboardResponse otherView = dashboardService.getById(dashboard.id(), otherUserId);
     assertThat(otherView).isNotNull();
