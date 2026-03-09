@@ -16,6 +16,7 @@ export interface ImportResponse {
   successRows: number | null;
   errorRows: number | null;
   errorDetails: Record<string, unknown> | null;
+  errorMessage: string | null;
   importedBy: string;
   startedAt: string | null;
   completedAt: string | null;

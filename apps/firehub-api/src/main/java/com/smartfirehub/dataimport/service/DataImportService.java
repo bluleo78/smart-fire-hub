@@ -812,6 +812,7 @@ public class DataImportService {
         getMetaInteger(meta, "successRows"),
         getMetaInteger(meta, "errorRows"),
         meta.get("errorDetails"),
+        auditLog.errorMessage(),
         auditLog.username(),
         null,
         auditLog.actionTime(),

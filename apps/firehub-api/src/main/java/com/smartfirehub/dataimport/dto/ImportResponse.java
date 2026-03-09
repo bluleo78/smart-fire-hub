@@ -13,6 +13,7 @@ public record ImportResponse(
     Integer successRows,
     Integer errorRows,
     Object errorDetails,
+    String errorMessage,
     String importedBy,
     LocalDateTime startedAt,
     LocalDateTime completedAt,

@@ -60,6 +60,12 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
                       </span>
                     </div>
                   )}
+                  {imp.status === 'FAILED' && imp.errorMessage && (
+                    <div className="flex items-start gap-2">
+                      <span className="text-muted-foreground shrink-0">원인:</span>
+                      <span className="text-destructive text-sm">{imp.errorMessage}</span>
+                    </div>
+                  )}
                   {imp.errorDetails && Object.keys(imp.errorDetails).length > 0 && (
                     <details className="mt-2">
                       <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
