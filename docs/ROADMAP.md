@@ -18,6 +18,7 @@
 | [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 진행중 | 0/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
+| [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | 대기 | 0/3 | UI 일관성 수정, SchemaExplorer 리디자인 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
@@ -157,6 +158,27 @@
 | 5.5-3 | 파이프라인 SQL SELECT 자동 INSERT 래핑 | ⬜ | Backend | 없음 | output dataset이 있고 SQL이 SELECT로 시작하면 INSERT INTO data."table" (SELECT ...) 자동 래핑. REPLACE/APPEND 모두 정상 동작. 통합 테스트. |
 | 5.5-4 | AI 채팅 컨텍스트 크기 표시 | ⬜ | Frontend | 5.5-1 | 채팅 UI에 현재 세션 토큰 사용량 표시 (예: "15K / 200K"). done/error 이벤트에서 토큰 수 수신. 디자인 시스템 준수. 3모드(사이드/플로팅/전체화면) 검증. |
 | 5.5-5 | AI 채팅 컴팩션 알림 UX | ⬜ | Frontend | 5.5-2 | 컴팩션 발생 시 시스템 메시지 개선. 요약 내용 접기/펼치기. 토큰 바에 컴팩션 지점 표시. |
+
+---
+
+## Phase 5.6: UI/UX 일관성 강화 + SchemaExplorer 리디자인
+
+> 프론트엔드 UI 일관성 점검에서 발견된 패턴 불일치 수정 + 쿼리 에디터 SchemaExplorer를 업계 표준 수준으로 개선.
+> **의존**: 없음 (독립적)
+> **리서치**: 10개 SQL 에디터 (Metabase, Redash, Superset, DBeaver, DataGrip, Retool, Mode, Looker, BigQuery, Grafana) 스키마 탐색기 UX 분석 완료.
+>
+> **실행 순서**:
+> ```
+> 5.6-1 (UI 일관성) ──┐
+> 5.6-2 (컴포넌트 분리) ──┤
+>                      └── 5.6-3 (SchemaExplorer 리디자인, 5.6-2 의존)
+> ```
+
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 5.6-1 | UI 일관성 수정 (뒤로가기 패턴 + 에디터 타이틀 폰트) | ⬜ | Frontend | 없음 | 모든 상세/에디터 페이지에 아이콘 전용 뒤로가기 버튼. 에디터 페이지 타이틀 text-lg 통일. 빌드+타입체크 통과. |
+| 5.6-2 | SchemaExplorer 별도 컴포넌트 분리 | ⬜ | Frontend | 없음 | QueryEditorPage.tsx 인라인 코드 → 별도 파일 분리. 기존 동작 유지. 빌드+타입체크 통과. |
+| 5.6-3 | SchemaExplorer UX 리디자인 | ⬜ | Frontend | 5.6-2 | P1: 테이블/컬럼 검색 필터. P2: hover-reveal 액션 (삽입 버튼 → 호버 아이콘). P3: 컬럼 타입별 색상 뱃지. P4: 컨텍스트 메뉴 (SELECT * LIMIT 100 등). P5: 테이블별 컬럼 수 뱃지. 커서 위치 삽입. 디자인 시스템 준수. 빌드+타입체크+Playwright 검증. |
 
 ---
 
