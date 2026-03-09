@@ -393,19 +393,17 @@ export default function ChartBuilderPage() {
       <div className="flex items-center gap-3 flex-wrap">
         <Button
           variant="ghost"
-          size="sm"
+          size="icon"
           onClick={() => navigate('/analytics/charts')}
-          className="gap-1.5"
         >
           <ArrowLeft className="h-4 w-4" />
-          목록
         </Button>
 
         <div className="flex-1 min-w-0">
           {existingChart ? (
-            <span className="font-semibold truncate">{existingChart.name}</span>
+            <span className="text-lg font-semibold truncate">{existingChart.name}</span>
           ) : (
-            <span className="font-semibold text-muted-foreground">새 차트</span>
+            <span className="text-lg font-semibold text-muted-foreground">새 차트</span>
           )}
         </div>
 

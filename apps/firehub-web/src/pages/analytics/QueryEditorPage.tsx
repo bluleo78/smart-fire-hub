@@ -612,18 +612,16 @@ export default function QueryEditorPage() {
       <div className="flex items-center gap-3 pb-4 flex-wrap">
         <Button
           variant="ghost"
-          size="sm"
+          size="icon"
           onClick={() => navigate('/analytics/queries')}
-          className="gap-1.5"
         >
           <ArrowLeft className="h-4 w-4" />
-          목록
         </Button>
 
         <div className="flex-1 min-w-0">
           {savedQuery ? (
             <div className="flex items-center gap-2">
-              <span className="font-semibold truncate">{savedQuery.name}</span>
+              <span className="text-lg font-semibold truncate">{savedQuery.name}</span>
               {savedQuery.folder && (
                 <Badge variant="outline" className="text-xs">
                   {savedQuery.folder}

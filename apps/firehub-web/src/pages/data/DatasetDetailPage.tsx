@@ -1,6 +1,6 @@
-import { Copy,Plus, Shield, Star, X } from 'lucide-react';
+import { ArrowLeft, Copy,Plus, Shield, Star, X } from 'lucide-react';
 import { useEffect,useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -41,6 +41,7 @@ import { DatasetMapTab } from './tabs/DatasetMapTab';
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const datasetId = Number(id);
   const [activeTab, setActiveTab] = useState('info');
 
@@ -144,6 +145,9 @@ export default function DatasetDetailPage() {
       <div>
         {/* Header with name and favorite */}
         <div className="flex items-start gap-3">
+          <Button variant="ghost" size="icon" className="mt-0.5 flex-shrink-0" onClick={() => navigate('/data/datasets')}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
           <button
             className="mt-1 p-1 rounded hover:bg-muted transition-colors flex-shrink-0"
             onClick={handleToggleFavorite}
