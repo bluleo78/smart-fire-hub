@@ -20,6 +20,11 @@ app:
     master-key: dGVzdC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzLWhlcmU=
   cors:
     allowed-origins: http://localhost:5173
+  pipeline:
+    datasource:
+      url: jdbc:postgresql://localhost:5432/smartfirehub_test
+      username: pipeline_executor
+      password: pipeline_exec_pwd
 
 agent:
   url: http://localhost:9999

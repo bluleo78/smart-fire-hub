@@ -11,6 +11,7 @@ import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
@@ -44,6 +45,7 @@ class PipelineExecutionServiceTest {
   @Mock ApiCallExecutor apiCallExecutor;
   @Mock ApiConnectionService apiConnectionService;
   @Mock ObjectMapper objectMapper;
+  @Mock PermissionChecker permissionChecker;
 
   @InjectMocks PipelineExecutionService service;
 

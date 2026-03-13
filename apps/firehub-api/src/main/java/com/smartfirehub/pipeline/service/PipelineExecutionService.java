@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
@@ -43,6 +44,7 @@ public class PipelineExecutionService {
   private final ApiCallExecutor apiCallExecutor;
   private final ApiConnectionService apiConnectionService;
   private final ObjectMapper objectMapper;
+  private final PermissionChecker permissionChecker;
 
   public PipelineExecutionService(
       PipelineStepRepository stepRepository,
@@ -57,7 +59,8 @@ public class PipelineExecutionService {
       ApplicationEventPublisher applicationEventPublisher,
       ApiCallExecutor apiCallExecutor,
       ApiConnectionService apiConnectionService,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      PermissionChecker permissionChecker) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -71,6 +74,7 @@ public class PipelineExecutionService {
     this.apiCallExecutor = apiCallExecutor;
     this.apiConnectionService = apiConnectionService;
     this.objectMapper = objectMapper;
+    this.permissionChecker = permissionChecker;
   }
 
   /**
@@ -167,8 +171,9 @@ public class PipelineExecutionService {
     // Build dependency map (stepId -> list of dependent step IDs)
     Map<Long, List<Long>> stepDependencyMap = buildDependencyMap(steps);
 
-    // Execute asynchronously
-    executeAsync(pipelineId, executionId, steps, stepDependencyMap, stepIdToStepExecId);
+    // Execute asynchronously (userId threaded for Python permission check — @Async threads lack
+    // SecurityContext)
+    executeAsync(pipelineId, executionId, steps, stepDependencyMap, stepIdToStepExecId, userId);
 
     return executionId;
   }
@@ -202,7 +207,8 @@ public class PipelineExecutionService {
       Long executionId,
       List<PipelineStepResponse> steps,
       Map<Long, List<Long>> stepDependencyMap,
-      Map<Long, Long> stepIdToStepExecId) {
+      Map<Long, Long> stepIdToStepExecId,
+      Long userId) {
     LocalDateTime executionStartedAt = LocalDateTime.now();
     Long pipelineCreatedBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
 
@@ -246,7 +252,7 @@ public class PipelineExecutionService {
           log.info("Step {} skipped due to failed dependency", step.name());
         } else {
           // Execute step
-          String status = executeStep(stepExecId, step);
+          String status = executeStep(stepExecId, step, userId);
           stepStatuses.put(step.id(), status);
         }
       }
@@ -338,7 +344,7 @@ public class PipelineExecutionService {
     return result;
   }
 
-  private String executeStep(Long stepExecId, PipelineStepResponse step) {
+  private String executeStep(Long stepExecId, PipelineStepResponse step, Long userId) {
     LocalDateTime stepStartedAt = LocalDateTime.now();
 
     try {
@@ -381,6 +387,11 @@ public class PipelineExecutionService {
       if ("SQL".equals(step.scriptType())) {
         executionLog = sqlExecutor.execute(step.scriptContent());
       } else if ("PYTHON".equals(step.scriptType())) {
+        // 인가 게이트: 명시적 python_execute 권한 필요
+        if (!permissionChecker.hasPermission(userId, "pipeline:python_execute")) {
+          throw new ScriptExecutionException(
+              "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. " + "관리자에게 이 기능 활성화를 요청하세요.");
+        }
         executionLog = pythonExecutor.execute(step.scriptContent());
       } else if ("API_CALL".equals(step.scriptType())) {
         ApiCallConfig apiCallConfig =

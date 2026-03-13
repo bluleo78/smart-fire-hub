@@ -12,6 +12,11 @@ org:
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  pipeline:
+    datasource:
+      url: jdbc:postgresql://db:5432/${POSTGRES_DB:smartfirehub}
+      username: pipeline_executor
+      password: ${PIPELINE_EXECUTOR_PASSWORD}
 
 agent:
   url: http://ai-agent:3001

@@ -17,14 +17,14 @@ public class PythonScriptExecutor {
   private static final Logger log = LoggerFactory.getLogger(PythonScriptExecutor.class);
   private static final int TIMEOUT_SECONDS = 300;
 
-  @Value("${spring.datasource.url}")
-  private String dbUrl;
+  @Value("${app.pipeline.datasource.url}")
+  private String pipelineDbUrl;
 
-  @Value("${spring.datasource.username}")
-  private String dbUser;
+  @Value("${app.pipeline.datasource.username}")
+  private String pipelineDbUser;
 
-  @Value("${spring.datasource.password}")
-  private String dbPassword;
+  @Value("${app.pipeline.datasource.password}")
+  private String pipelineDbPassword;
 
   public String execute(String scriptContent) {
     Path tempFile = null;
@@ -38,11 +38,16 @@ public class PythonScriptExecutor {
       // Build process
       ProcessBuilder pb = new ProcessBuilder("python3", tempFile.toString());
 
-      // Set environment variables
-      pb.environment().put("DB_URL", dbUrl);
-      pb.environment().put("DB_USER", dbUser);
-      pb.environment().put("DB_PASSWORD", dbPassword);
+      // 모든 상속된 환경변수 제거 (환경 누출 방어)
+      pb.environment().clear();
+
+      // 파이프라인 전용 자격증명만 설정
+      pb.environment().put("DB_URL", pipelineDbUrl);
+      pb.environment().put("DB_USER", pipelineDbUser);
+      pb.environment().put("DB_PASSWORD", pipelineDbPassword);
       pb.environment().put("DB_SCHEMA", "data");
+      pb.environment().put("PATH", "/usr/bin:/usr/local/bin");
+      pb.environment().put("HOME", "/tmp");
 
       pb.redirectErrorStream(true);
 

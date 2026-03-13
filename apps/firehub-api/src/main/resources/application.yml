@@ -4,7 +4,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-    baseline-version: 31
+    baseline-version: 33
   servlet:
     multipart:
       max-file-size: 50MB
@@ -31,3 +31,8 @@ app:
     master-key: ${ENCRYPTION_MASTER_KEY}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  pipeline:
+    datasource:
+      url: ${spring.datasource.url}
+      username: pipeline_executor
+      password: ${PIPELINE_EXECUTOR_PASSWORD:pipeline_exec_pwd}
