@@ -81,6 +81,36 @@ pnpm db:reset                   # PostgreSQL 볼륨 삭제 후 재시작
 - **실행 단계**: 승인된 계획에 따라 Backend/Frontend/AI Agent 팀을 병렬 배치한다.
 - **완료 단계**: 검증 기준 충족 확인 후 사용자에게 로드맵 상태 업데이트를 요청한다.
 
+## 운영 배포
+
+배포 스크립트: `./scripts/deploy.sh [api|web|ai-agent|all]`
+
+```bash
+./scripts/deploy.sh api        # API만 배포
+./scripts/deploy.sh all        # 전체 배포
+```
+
+### Docker 빌드 규칙 (중요)
+
+각 앱의 Dockerfile은 **서로 다른 build context**를 사용한다. 잘못된 context로 빌드하면 소스가 누락된다.
+
+| App | Build Context | 빌드 명령 |
+|-----|---------------|----------|
+| **firehub-api** | `apps/firehub-api/` (자체 디렉토리) | `docker build apps/firehub-api/` |
+| **firehub-web** | `.` (프로젝트 루트) | `docker build -f apps/firehub-web/Dockerfile .` |
+| **firehub-ai-agent** | `.` (프로젝트 루트) | `docker build -f apps/firehub-ai-agent/Dockerfile .` |
+
+- **firehub-api**는 Dockerfile 내부에서 `COPY src/ src/`로 상대 경로를 사용하므로 context가 `apps/firehub-api/`여야 한다
+- **firehub-web, firehub-ai-agent**는 `COPY apps/firehub-web/ ...` 형태로 절대 경로를 사용하므로 context가 프로젝트 루트(`.`)여야 한다
+- **절대로** `docker build -f apps/firehub-api/Dockerfile .`으로 빌드하지 않는다 (소스 누락)
+- 반드시 `--no-cache` 옵션을 사용하여 캐시로 인한 소스 누락을 방지한다
+
+### 운영 환경
+
+- 이미지 레지스트리: `ghcr.io/bluleo78/smart-fire-hub/{api,web,ai-agent}:latest`
+- 운영 디렉토리: `~/prod/smart-fire-hub/` (docker-compose.yml + nginx.conf + .env)
+- 배포 후 반드시 `docker compose up -d --force-recreate {app}`으로 컨테이너 재생성
+
 ## Conventions
 
 - 작업은 명확한 단위로 구분하고, 각 작업 단위별로 검증 후 커밋한다.
