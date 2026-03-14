@@ -103,7 +103,7 @@ def test_nsjail_command_construction():
 
     call_args = mock_run.call_args[0][0]  # positional first arg = cmd list
 
-    assert call_args[0] == "nsjail"
+    assert call_args[0] == settings.nsjail_path
     assert "--disable_proc" in call_args
     assert "--rlimit_as" in call_args
     rlimit_as_idx = call_args.index("--rlimit_as")
@@ -112,7 +112,7 @@ def test_nsjail_command_construction():
     rlimit_nproc_idx = call_args.index("--rlimit_nproc")
     assert call_args[rlimit_nproc_idx + 1] == "64"
     assert "--time_limit" in call_args
-    assert "python3" in call_args
+    assert "/usr/local/bin/python3" in call_args
     assert "/script.py" in call_args
 
 

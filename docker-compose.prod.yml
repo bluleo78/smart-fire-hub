@@ -42,6 +42,37 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  executor:
+    build:
+      context: ./apps/firehub-executor
+      dockerfile: Dockerfile
+    environment:
+      EXECUTOR_DB_HOST: db
+      EXECUTOR_DB_PORT: "5432"
+      EXECUTOR_DB_NAME: ${POSTGRES_DB:-smartfirehub}
+      EXECUTOR_DB_USER: pipeline_executor
+      EXECUTOR_DB_PASSWORD: ${PIPELINE_EXECUTOR_PASSWORD}
+      EXECUTOR_INTERNAL_SERVICE_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
+      EXECUTOR_NSJAIL_ENABLED: "true"
+      EXECUTOR_NSJAIL_PATH: /usr/sbin/nsjail
+      EXECUTOR_PYTHON_PACKAGES_DIR: /opt/python-packages
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - firehub-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+
   ai-agent:
     build:
       context: .

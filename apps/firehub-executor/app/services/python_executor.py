@@ -27,14 +27,19 @@ def execute_python(
 
         if settings.nsjail_enabled:
             cmd = [
-                "nsjail", "--mode", "o",
+                settings.nsjail_path, "--mode", "o",
                 "--time_limit", str(settings.nsjail_time_limit),
                 "--rlimit_as", str(settings.nsjail_rlimit_as),
                 "--rlimit_nproc", str(settings.nsjail_rlimit_nproc),
                 "--disable_proc",
+                "--really_quiet",
                 "-R", "/usr",
                 "-R", "/lib",
-                "-R", "/lib64",
+            ]
+            # /lib64 exists on x86_64, not on ARM64
+            if os.path.isdir("/lib64"):
+                cmd += ["-R", "/lib64"]
+            cmd += [
                 "-R", "/etc/resolv.conf",
                 "-R", "/etc/hosts",
                 "-R", "/etc/ssl",
@@ -51,7 +56,8 @@ def execute_python(
                 "--env", f"PYTHONPATH=/opt/python-packages",
                 "--env", "PATH=/usr/bin:/usr/local/bin",
                 "--env", "HOME=/tmp",
-                "--", "python3", "/script.py",
+                "--env", "LD_LIBRARY_PATH=/usr/local/lib",
+                "--", "/usr/local/bin/python3", "/script.py",
             ]
             result = subprocess.run(
                 cmd,
