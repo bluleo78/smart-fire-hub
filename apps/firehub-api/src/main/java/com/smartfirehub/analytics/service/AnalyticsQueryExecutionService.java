@@ -45,6 +45,7 @@ public class AnalyticsQueryExecutionService {
    * @param maxRows maximum rows to return (1–10000)
    * @param readOnly if true, only SELECT/WITH is allowed (used by MCP tools)
    */
+  @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
     if (executorEnabled) {
       return executeViaExecutor(sql, maxRows, readOnly);
@@ -73,7 +74,6 @@ public class AnalyticsQueryExecutionService {
     }
   }
 
-  @Transactional
   private AnalyticsQueryResponse executeDirectly(String sql, int maxRows, boolean readOnly) {
     String stripped;
     String queryType;
