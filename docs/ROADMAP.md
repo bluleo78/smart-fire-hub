@@ -1,6 +1,6 @@
 # Smart Fire Hub — ROADMAP
 
-> **최종 수정**: 2026-03-07
+> **최종 수정**: 2026-03-14
 > **비전**: AI-First 소방 전문 데이터 플랫폼
 > **전략**: 기초 기술 → 범용 플랫폼 → 도메인 특화 순서로 확장
 > **원칙**: 각 아이템은 독립적으로 계획(Plan) → 구현 → 검증 가능한 작업 단위
@@ -17,9 +17,11 @@
 | [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
-| [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 진행중 | 0/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
+| [Phase 5.7](#phase-57-firehub-executor-실행-엔진-분리) | **진행중** | 1/7 | 사용자 코드 실행 서비스 분리 (Python/FastAPI + nsjail) |
+| [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 대기 | 1/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | 대기 | 0/3 | UI 일관성 수정, SchemaExplorer 리디자인 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
+| [Phase 7](#phase-7-ai-chat-generative-ui) | 대기 | 0/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, Chat-First |
 
 ---
 
@@ -182,6 +184,49 @@
 
 ---
 
+## Phase 5.7: firehub-executor 실행 엔진 분리
+
+> 사용자가 작성한 코드/쿼리는 전부 격리된 실행 엔진(`firehub-executor`)에서 실행한다.
+> Python/FastAPI 독립 서비스로 구현. nsjail로 Python 스크립트 샌드박싱.
+> **의존**: 없음 (독립적)
+> **계획**: `.omc/plans/pipeline-sandbox-phase2-service-separation.md`
+> **선행 작업**: 파이프라인 샌드박스 Phase 1 완료 (pipeline_executor DB 역할, SqlValidator, PythonScriptExecutor env 격리)
+>
+> **2단계 점진적 마이그레이션**:
+> - Phase 2a: Python 실행 + 분석 쿼리 (DDL 불필요, 가장 가치 높음)
+> - Phase 2b: SQL 실행 + API_CALL 실행 (DDL 권한 문제 해결 후)
+>
+> **아키텍처**:
+> ```
+> firehub-api (오케스트레이터)  ──HTTP──→  firehub-executor (실행 엔진)
+>   • 인증/인가                              • Python 실행 (nsjail)
+>   • 파이프라인 DAG 관리                     • SQL 실행 (psycopg2)
+>   • 실행 상태 관리                          • API_CALL 실행 (httpx)
+>   • 트리거/체인                             • 분석 쿼리 실행
+>                                            • DB: pipeline_executor (data DML만)
+> ```
+>
+> **실행 순서**:
+> ```
+>> Phase 2a:
+>   5.7-1 (완료) ──→ 5.7-2 (프로젝트 + Python) ──→ 5.7-3 (분석 쿼리) ──→ 5.7-4 (API 위임 + 운영 배포)
+>
+> Phase 2b:
+>   5.7-5 (SQL 실행) ──→ 5.7-6 (API_CALL 실행) ──→ 5.7-7 (통합 테스트 + 정리)
+> ```
+
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 5.7-1 | 파이프라인 샌드박스 Phase 1 (DB 역할 + SQL/Python 격리) | ✅ | Backend | 없음 | `pipeline_executor` DB 역할 (data 스키마 DML만). SqlValidator 차단 키워드 검증. PythonScriptExecutor env.clear() + pipeline 자격증명만. PermissionChecker python_execute 권한 게이트. 511 테스트 통과. |
+| 5.7-2 | firehub-executor 프로젝트 + Python 실행 엔드포인트 | ⬜ | Executor | 5.7-1 | FastAPI 프로젝트 스캐폴딩. Internal Auth 미들웨어. psycopg2 커넥션 풀. `POST /execute/python` + nsjail 샌드박스 (--time_limit 1800, --rlimit_as 512, --rlimit_nproc 64, --disable_proc, 네트워크 활성화, --chroot 없이 명시적 마운트만). nsjail 비활성화 폴백. `GET /health`. pytest 통과. |
+| 5.7-3 | 분석 쿼리 실행 엔드포인트 | ⬜ | Executor | 5.7-2 | `POST /execute/query`. SQL 차단 키워드 검증. readOnly 모드. LIMIT 자동 추가. GEOMETRY→GeoJSON 변환 (ST_AsGeoJSON). statement_timeout 30초. SAVEPOINT 복구. V34 마이그레이션 (pipeline_executor에 public 스키마 USAGE + EXECUTE 권한). pytest 통과. |
+| 5.7-4 | firehub-api executor 위임 + 운영 배포 (Phase 2a) | ⬜ | Backend + Docker | 5.7-2, 5.7-3 | ExecutorClient (Python/Query). PipelineExecutionService Python 스텝 → executor 위임. AnalyticsQueryExecutionService → executor 위임. Dockerfile (nsjail 포함). docker-compose.prod.yml executor 서비스 추가. API Dockerfile에서 Python 제거. 기존 511 테스트 통과. 운영 배포 검증. |
+| 5.7-5 | SQL 실행 엔드포인트 | ⬜ | Executor | 5.7-4 | `POST /execute/sql`. SQL 차단 키워드 검증 (심층 방어). SELECT/DML 분기 처리. 커밋/롤백 관리. pytest 통과. |
+| 5.7-6 | API_CALL 실행 엔드포인트 | ⬜ | Executor + Backend | 5.7-5 | `POST /execute/api-call`. SSRF 보호 (Java 구현 1:1 포팅). 페이지네이션 (OFFSET). 필드 매핑 + 타입 변환 (6종). 로드 전략: APPEND (직접 INSERT), REPLACE (API에서 DDL 오케스트레이션). 재시도 (지수 백오프). 인증 (API_KEY, BEARER). pytest 통과. |
+| 5.7-7 | 통합 테스트 + 기존 executor 코드 정리 | ⬜ | 전체 | 5.7-6 | ExecutorClient 4개 엔드포인트 WireMock 테스트. Docker Compose E2E (SQL/Python/API_CALL/분석 쿼리/체인 트리거). 기존 SqlScriptExecutor/PythonScriptExecutor/ApiCallExecutor @Deprecated 마킹. 전체 테스트 통과. |
+
+---
+
 ## Phase 6: 소방 도메인 특화
 
 > Phase 1~5의 범용 플랫폼 위에 소방 전문 기능을 올린다.
@@ -194,6 +239,33 @@
 | 6-3 | 소방 전용 지도 | ⬜ | Frontend | V-World 배경지도 + 소방서/소화전/사건 레이어 + 관할구역 경계 + 히트맵. |
 | 6-4 | AI 소방 분석 도구 | ⬜ | AI Agent | 소방 MCP 도구 + 소방 특화 프롬프트 + fire 스키마 Text-to-SQL. |
 | 6-5 | 공공데이터 ETL 연동 | ⬜ | Backend | 소방용수/소방서 좌표(data.go.kr), 행정경계(V-World), 지오코딩(Kakao). |
+
+---
+
+## Phase 7: AI Chat Generative UI
+
+> AI 챗을 고도화하여 인터랙티브 UI 위젯을 인라인 렌더링하고, 딥링크 네비게이션으로 메인 UI와 연결하며, Chat-First 경험을 달성한다.
+> **의존**: Phase 3 (AI Text-to-SQL), Phase 5.6 (SchemaExplorer 리디자인)
+> **계획**: `.omc/plans/ai-chat-generative-ui.md`
+>
+> **3단계 점진적 확장**:
+> - Phase 7-1: Generative UI + 딥링크 (조회/탐색) — 인라인 위젯 7종 + 위젯 레지스트리
+> - Phase 7-2: 인터랙티브 액션 (생성/수정) — 챗 내 폼/확인 다이얼로그
+> - Phase 7-3: 프로액티브 AI (모니터링/알림) — 별도 아키텍처 필요
+>
+> **Phase 7-1 실행 순서**:
+> ```
+> Layer 0: SchemaExplorer → SchemaTree 분리 리팩터링
+> Layer 1 (병렬): 위젯 인프라(FE) + MCP 도구 7종(BE)
+> Layer 2 (병렬): 위젯 컴포넌트 6종(FE)
+> Layer 3: 시스템 프롬프트 통합 + TOOL_LABELS 정리
+> ```
+
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 7-1 | Generative UI + 딥링크 (조회/탐색) | ⬜ | Frontend + AI Agent | 5.6 | WidgetRegistry 패턴으로 7종 인라인 위젯(show_table, show_schema, show_dataset_preview, show_pipeline_status, show_dashboard, navigate_to + 기존 show_chart 어댑터). Reference 패턴(FE fetch). 딥링크: 메인 뷰 이동 + 사이드 패널 챗 유지. 빌드+타입체크+AI Agent 테스트 통과. |
+| 7-2 | 인터랙티브 액션 (생성/수정) | ⬜ | Frontend + AI Agent | 7-1 | 챗 내 폼(데이터셋 생성, 파이프라인 실행 확인 등). FormWidgetBase/ConfirmWidgetBase 공통 컴포넌트. 파괴적 작업 확인 다이얼로그. 상세 계획은 7-1 완료 후 수립. |
+| 7-3 | 프로액티브 AI (모니터링/알림) | ⬜ | Backend + Frontend + AI Agent | 7-2 | 파이프라인 실패 알림, 데이터 이상 감지, 정기 요약. 백그라운드 스케줄러 + WebSocket/SSE 푸시. 별도 아키텍처 리뷰 필요. 상세 계획은 7-2 완료 후 수립. |
 
 ---
 
@@ -273,6 +345,7 @@
 |------|-------|------|
 | PostGIS 3.5 (SQL 함수 기반, JTS 미사용) | 1-0 ✅ | 공간 데이터 저장/쿼리 |
 | MapLibre GL JS | 1-3, 1-4 | 프론트엔드 지도 렌더링 |
+| Python/FastAPI + nsjail | 5.7 | 사용자 코드 실행 엔진 (firehub-executor) |
 | deck.gl | 6-3 | 대규모 데이터 시각화 (히트맵) |
 | V-World WMTS | 6-3 | 한국 배경지도 |
 
@@ -291,6 +364,8 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-14 | Phase 5.7 (firehub-executor 실행 엔진 분리) 추가. 사용자 코드 실행을 Python/FastAPI 독립 서비스로 분리. Phase 2a (Python+분석쿼리) → Phase 2b (SQL+API_CALL) 단계적 마이그레이션. nsjail 샌드박싱. Architect+Critic 합의 완료. 상세 계획: `.omc/plans/pipeline-sandbox-phase2-service-separation.md` |
+| 2026-03-14 | Phase 7 (AI Chat Generative UI) 추가. AI 챗 인라인 위젯 7종 + 딥링크 네비게이션 + Chat-First 3단계 확장 계획. Tool-to-Component + Reference 패턴. Architect+Critic 합의 완료. 상세 계획: `.omc/plans/ai-chat-generative-ui.md` |
 | 2026-03-07 | Phase 5 완료 (5-1, 5-2). 데이터 내보내기 CSV/Excel/GeoJSON 3포맷. Sync/Async 이원화 (50K row 기준). ExportDialog + 비동기 진행률 UI. 쿼리 에디터 내보내기 통합. Rate limiting + 감사 로그 + 파일 정리. 통합 테스트 13개 통과. Architect 검증 13/13 PASS. |
 | 2026-03-03 | Phase 4 완료 (4-1~4-6). 홈 대시보드 5-Zone 리디자인 + SSE 실시간 알림 + 위젯 신선도 UX. 코드 리뷰(CRITICAL 1 + HIGH 3 + MEDIUM 5) 및 Simplify(9건) 수정 완료. 후속 과제 7건 식별. 전체 테스트 통과. |
 | 2026-03-03 | Phase 4 재설계. 기존 2작업 → 6작업으로 확장 (홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 인프라 + 알림 UI). 리서치: 10개 데이터 플랫폼 분석, 알림 UX 3단계 우선순위 모델, SSE vs WebSocket 비교. |
