@@ -22,6 +22,8 @@ app:
       url: jdbc:postgresql://localhost:5432/smartfirehub
       username: pipeline_executor
       password: pipeline_exec_pwd
+  executor:
+    enabled: false  # local dev: direct execution (no executor service needed)
 
 agent:
   url: http://127.0.0.1:3001

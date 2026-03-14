@@ -25,6 +25,8 @@ app:
       url: jdbc:postgresql://localhost:5432/smartfirehub_test
       username: pipeline_executor
       password: pipeline_exec_pwd
+  executor:
+    enabled: false  # tests use direct execution
 
 agent:
   url: http://localhost:9999

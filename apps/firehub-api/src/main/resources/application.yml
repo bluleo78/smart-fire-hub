@@ -36,3 +36,7 @@ app:
       url: ${spring.datasource.url}
       username: pipeline_executor
       password: ${PIPELINE_EXECUTOR_PASSWORD:pipeline_exec_pwd}
+  executor:
+    enabled: true
+    base-url: ${EXECUTOR_BASE_URL:http://localhost:8000}
+    internal-token: ${EXECUTOR_INTERNAL_TOKEN:dev-executor-token}

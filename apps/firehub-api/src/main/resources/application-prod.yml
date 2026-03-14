@@ -17,6 +17,10 @@ app:
       url: jdbc:postgresql://db:5432/${POSTGRES_DB:smartfirehub}
       username: pipeline_executor
       password: ${PIPELINE_EXECUTOR_PASSWORD}
+  executor:
+    enabled: true
+    base-url: ${EXECUTOR_BASE_URL:http://executor:8000}
+    internal-token: ${EXECUTOR_INTERNAL_TOKEN:executor-token}
 
 agent:
   url: http://ai-agent:3001

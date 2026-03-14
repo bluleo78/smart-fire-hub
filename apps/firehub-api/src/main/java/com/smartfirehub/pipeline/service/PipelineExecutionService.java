@@ -18,10 +18,12 @@ import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import java.time.LocalDateTime;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -45,6 +47,10 @@ public class PipelineExecutionService {
   private final ApiConnectionService apiConnectionService;
   private final ObjectMapper objectMapper;
   private final PermissionChecker permissionChecker;
+  private final ExecutorClient executorClient;
+
+  @Value("${app.executor.enabled:false}")
+  private boolean executorEnabled;
 
   public PipelineExecutionService(
       PipelineStepRepository stepRepository,
@@ -60,7 +66,8 @@ public class PipelineExecutionService {
       ApiCallExecutor apiCallExecutor,
       ApiConnectionService apiConnectionService,
       ObjectMapper objectMapper,
-      PermissionChecker permissionChecker) {
+      PermissionChecker permissionChecker,
+      ExecutorClient executorClient) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -75,6 +82,7 @@ public class PipelineExecutionService {
     this.apiConnectionService = apiConnectionService;
     this.objectMapper = objectMapper;
     this.permissionChecker = permissionChecker;
+    this.executorClient = executorClient;
   }
 
   /**
@@ -390,9 +398,18 @@ public class PipelineExecutionService {
         // 인가 게이트: 명시적 python_execute 권한 필요
         if (!permissionChecker.hasPermission(userId, "pipeline:python_execute")) {
           throw new ScriptExecutionException(
-              "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. " + "관리자에게 이 기능 활성화를 요청하세요.");
+              "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. "
+                  + "관리자에게 이 기능 활성화를 요청하세요.");
         }
-        executionLog = pythonExecutor.execute(step.scriptContent());
+        if (executorEnabled) {
+          var result = executorClient.executePython(step.scriptContent());
+          if (!result.success()) {
+            throw new ScriptExecutionException("Python 실행 실패: " + result.error());
+          }
+          executionLog = result.output();
+        } else {
+          executionLog = pythonExecutor.execute(step.scriptContent());
+        }
       } else if ("API_CALL".equals(step.scriptType())) {
         ApiCallConfig apiCallConfig =
             objectMapper.convertValue(step.apiConfig(), ApiCallConfig.class);

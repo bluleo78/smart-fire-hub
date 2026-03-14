@@ -6,6 +6,7 @@ import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.util.SqlValidationUtils;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -14,27 +15,66 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AnalyticsQueryExecutionService {
 
-  private final DSLContext dsl;
+  private static final Logger log = LoggerFactory.getLogger(AnalyticsQueryExecutionService.class);
 
-  public AnalyticsQueryExecutionService(DSLContext dsl) {
+  private final DSLContext dsl;
+  private final ExecutorClient executorClient;
+
+  @Value("${app.executor.enabled:false}")
+  private boolean executorEnabled;
+
+  public AnalyticsQueryExecutionService(DSLContext dsl, ExecutorClient executorClient) {
     this.dsl = dsl;
+    this.executorClient = executorClient;
   }
 
   /**
-   * Execute SQL against the data schema.
+   * Execute SQL against the data schema. Routes to executor service when executorEnabled=true,
+   * otherwise executes directly via jOOQ.
    *
    * @param sql raw SQL from user
    * @param maxRows maximum rows to return (1–10000)
    * @param readOnly if true, only SELECT/WITH is allowed (used by MCP tools)
    */
-  @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
+    if (executorEnabled) {
+      return executeViaExecutor(sql, maxRows, readOnly);
+    }
+    return executeDirectly(sql, maxRows, readOnly);
+  }
+
+  private AnalyticsQueryResponse executeViaExecutor(String sql, int maxRows, boolean readOnly) {
+    try {
+      var result = executorClient.executeQuery(sql, maxRows, readOnly);
+      if (!result.success()) {
+        return errorResponse(result.error());
+      }
+      return new AnalyticsQueryResponse(
+          result.queryType(),
+          result.columns(),
+          result.rows(),
+          result.rowCount(),
+          result.executionTimeMs(),
+          result.rows().size(),
+          result.truncated(),
+          null);
+    } catch (Exception e) {
+      log.error("Executor query execution failed", e);
+      return errorResponse("Executor 연결 실패: " + e.getMessage());
+    }
+  }
+
+  @Transactional
+  private AnalyticsQueryResponse executeDirectly(String sql, int maxRows, boolean readOnly) {
     String stripped;
     String queryType;
     try {
