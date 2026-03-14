@@ -10,6 +10,7 @@ interface AIContextValue {
   currentSessionId: string | null;
   messages: AIMessage[];
   isStreaming: boolean;
+  isUploading: boolean;
   isLoadingHistory: boolean;
   streamingMessage: Partial<AIMessage> | null;
   pendingUserMessage: string | null;
@@ -19,7 +20,7 @@ interface AIContextValue {
   closeAI: () => void;
   toggleAI: () => void;
   setMode: (mode: AIMode) => void;
-  sendMessage: (content: string) => void;
+  sendMessage: (content: string, files?: File[]) => void;
   stopStreaming: () => void;
   startNewSession: () => void;
   loadSession: (sessionId: string) => void;
@@ -53,6 +54,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
   const {
     messages,
     isStreaming,
+    isUploading,
     isLoadingHistory,
     streamingMessage,
     pendingUserMessage,
@@ -97,6 +99,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       currentSessionId,
       messages,
       isStreaming,
+      isUploading,
       isLoadingHistory,
       streamingMessage,
       pendingUserMessage,
@@ -117,6 +120,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       currentSessionId,
       messages,
       isStreaming,
+      isUploading,
       isLoadingHistory,
       streamingMessage,
       pendingUserMessage,

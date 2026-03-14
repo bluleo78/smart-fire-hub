@@ -8,12 +8,22 @@ export interface AISession {
   updatedAt: string;
 }
 
+export interface AIAttachment {
+  id: number;
+  name: string;
+  mimeType: string;
+  fileSize: number;
+  category: 'IMAGE' | 'PDF' | 'TEXT' | 'DATA';
+  previewUrl?: string;
+}
+
 export interface AIMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   toolCalls?: AIToolCall[];
   timestamp: string;
+  attachments?: AIAttachment[];
 }
 
 export interface AIToolCall {

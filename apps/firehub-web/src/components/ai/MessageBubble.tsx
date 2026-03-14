@@ -9,8 +9,10 @@ import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 
+import { File as FileIcon, Image } from 'lucide-react';
+
 import { cn } from '../../lib/utils';
-import type { AIMessage, AIToolCall } from '../../types/ai';
+import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { InlineChartWidget } from './InlineChartWidget';
 
@@ -133,6 +135,37 @@ function ToolCallDisplay({ toolCall }: { toolCall: AIToolCall }) {
   );
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function AttachmentPreview({ attachment }: { attachment: AIAttachment }) {
+  if (attachment.category === 'IMAGE' && attachment.previewUrl) {
+    return (
+      <img
+        src={attachment.previewUrl}
+        alt={attachment.name}
+        className="max-h-40 max-w-[200px] rounded object-cover"
+      />
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 rounded-md border border-primary-foreground/20 bg-primary-foreground/10 px-2 py-1.5 text-xs">
+      {attachment.category === 'IMAGE' ? (
+        <Image className="h-4 w-4 shrink-0" />
+      ) : (
+        <FileIcon className="h-4 w-4 shrink-0" />
+      )}
+      <div className="flex flex-col min-w-0">
+        <span className="truncate max-w-[150px] font-medium">{attachment.name}</span>
+        <span className="opacity-70">{formatFileSize(attachment.fileSize)}</span>
+      </div>
+    </div>
+  );
+}
+
 interface MessageBubbleProps {
   message: Partial<AIMessage>;
 }
@@ -160,7 +193,16 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         isUser ? 'max-w-[85%] bg-primary text-primary-foreground' : cn('max-w-[85%] min-w-0 bg-muted overflow-hidden', hasToolCalls && 'w-full')
       )}>
         {isUser ? (
-          <p className="whitespace-pre-wrap">{message.content}</p>
+          <>
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {message.attachments.map(att => (
+                  <AttachmentPreview key={att.id} attachment={att} />
+                ))}
+              </div>
+            )}
+            {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
+          </>
         ) : (
           <>
             {hasToolCalls && (

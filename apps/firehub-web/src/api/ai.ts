@@ -17,6 +17,7 @@ export const aiApi = {
 export function streamAIChat(
   message: string,
   sessionId: string | null,
+  fileIds: number[] | null,
   onEvent: (event: AIStreamEvent) => void,
   onError: (error: Error) => void,
   onComplete: () => void
@@ -30,7 +31,11 @@ export function streamAIChat(
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
     },
-    body: JSON.stringify({ message, sessionId }),
+    body: JSON.stringify({
+      message: message || undefined,
+      sessionId,
+      fileIds: fileIds?.length ? fileIds : undefined,
+    }),
     signal: controller.signal,
     credentials: 'include',
   }).then(async (response) => {

@@ -143,4 +143,64 @@ class AiControllerTest {
         .perform(delete("/api/v1/ai/sessions/5").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
   }
+
+  @Test
+  void chat_withMessageOnly_returnsOk() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body = "{\"message\":\"hello\",\"sessionId\":null,\"fileIds\":null}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void chat_withFileIdsOnly_returnsOk() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body = "{\"message\":null,\"sessionId\":null,\"fileIds\":[1,2]}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void chat_withMessageAndFileIds_returnsOk() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body = "{\"message\":\"analyze this\",\"sessionId\":null,\"fileIds\":[3]}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void chat_withNoMessageAndNoFileIds_returnsBadRequest() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body = "{\"message\":\"\",\"sessionId\":null,\"fileIds\":null}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isBadRequest());
+  }
 }

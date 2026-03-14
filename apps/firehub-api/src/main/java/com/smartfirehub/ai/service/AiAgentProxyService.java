@@ -6,6 +6,7 @@ import com.smartfirehub.settings.service.SettingsService;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -81,7 +82,8 @@ public class AiAgentProxyService {
         .block(TIMEOUT);
   }
 
-  public void streamChat(SseEmitter emitter, String message, String sessionId, Long userId) {
+  public void streamChat(
+      SseEmitter emitter, String message, String sessionId, List<Long> fileIds, Long userId) {
     emitter.onTimeout(() -> emitter.completeWithError(new RuntimeException("SSE timeout")));
     emitter.onError(e -> log.error("[AI Chat] SseEmitter error", e));
 
@@ -102,9 +104,12 @@ public class AiAgentProxyService {
     aiSettings.remove("ai.api_key");
 
     Map<String, Object> requestBody = new HashMap<>();
-    requestBody.put("message", message);
+    requestBody.put("message", message != null ? message : "");
     requestBody.put("sessionId", sessionId != null ? sessionId : "");
     requestBody.put("userId", userId);
+    if (fileIds != null && !fileIds.isEmpty()) {
+      requestBody.put("fileIds", fileIds);
+    }
     requestBody.put("apiKey", apiKeyOpt.get());
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));

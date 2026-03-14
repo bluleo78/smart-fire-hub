@@ -72,12 +72,19 @@ public class AiController {
 
   @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   @RequirePermission("ai:write")
-  public SseEmitter chat(Authentication authentication, @Valid @RequestBody ChatRequest request) {
-    Long userId = (Long) authentication.getPrincipal();
+  public SseEmitter chat(Authentication authentication, @RequestBody ChatRequest request) {
+    boolean hasMessage = request.message() != null && !request.message().isBlank();
+    boolean hasFiles = request.fileIds() != null && !request.fileIds().isEmpty();
 
+    if (!hasMessage && !hasFiles) {
+      throw new IllegalArgumentException("message 또는 fileIds 중 하나는 필수입니다");
+    }
+
+    Long userId = (Long) authentication.getPrincipal();
     SseEmitter emitter = new SseEmitter(300_000L); // 5 minutes
 
-    aiAgentProxyService.streamChat(emitter, request.message(), request.sessionId(), userId);
+    aiAgentProxyService.streamChat(
+        emitter, request.message(), request.sessionId(), request.fileIds(), userId);
 
     return emitter;
   }

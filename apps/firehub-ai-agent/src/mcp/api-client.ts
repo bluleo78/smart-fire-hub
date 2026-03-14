@@ -314,6 +314,24 @@ export class FireHubApiClient {
     return this._data.replaceDatasetData(datasetId, rows);
   }
 
+  async getFileInfo(fileId: number): Promise<{
+    id: number;
+    originalName: string;
+    mimeType: string;
+    fileSize: number;
+    fileCategory: string;
+  }> {
+    const { data } = await this.client.get(`/files/${fileId}`);
+    return data;
+  }
+
+  async downloadFile(fileId: number): Promise<Buffer> {
+    const { data } = await this.client.get(`/files/${fileId}/content`, {
+      responseType: 'arraybuffer',
+    });
+    return Buffer.from(data);
+  }
+
   executeAnalyticsQuery(sql: string, maxRows?: number): Promise<AnalyticsQueryResult> {
     return this._analytics.executeAnalyticsQuery(sql, maxRows);
   }

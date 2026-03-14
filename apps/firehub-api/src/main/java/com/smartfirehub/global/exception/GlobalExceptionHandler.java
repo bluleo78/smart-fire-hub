@@ -15,6 +15,9 @@ import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataimport.exception.ImportValidationException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.exception.*;
+import com.smartfirehub.file.exception.FileNotFoundException;
+import com.smartfirehub.file.exception.FileSizeLimitExceededException;
+import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
@@ -335,6 +338,27 @@ public class GlobalExceptionHandler {
       DashboardNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  @ExceptionHandler(FileNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleFileNotFound(
+      FileNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  @ExceptionHandler(UnsupportedUploadFileTypeException.class)
+  public ResponseEntity<ErrorResponse> handleUnsupportedUploadFileType(
+      UnsupportedUploadFileTypeException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  @ExceptionHandler(FileSizeLimitExceededException.class)
+  public ResponseEntity<ErrorResponse> handleFileSizeLimitExceeded(
+      FileSizeLimitExceededException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.badRequest().body(response);
   }
 
   @ExceptionHandler(AccountLockedException.class)

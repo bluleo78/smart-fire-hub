@@ -5,6 +5,7 @@ import { SYSTEM_PROMPT } from './system-prompt.js';
 import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../constants.js';
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
+import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
 
 export interface SSEEvent {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction';
@@ -15,6 +16,7 @@ export interface AgentOptions {
   message: string;
   sessionId?: string;
   userId: number;
+  fileIds?: number[];
   model?: string;
   maxTurns?: number;
   systemPrompt?: string;
@@ -29,6 +31,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     message,
     sessionId,
     userId,
+    fileIds,
     model,
     maxTurns = Number(process.env.MAX_TURNS) || DEFAULT_MAX_TURNS,
     systemPrompt,
@@ -68,8 +71,34 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     return;
   }
 
+  // Download attached files and build enhanced prompt
+  let enhancedMessage = message;
+  const sessionTag = `${userId}-${Date.now()}`;
+
+  if (fileIds?.length) {
+    const { files, failed } = await downloadChatFiles(apiClient, fileIds, sessionTag);
+
+    if (failed > 0) {
+      console.warn(`${tag()} ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
+    }
+
+    if (files.length > 0) {
+      const fileList = files
+        .map(
+          (f) =>
+            `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`,
+        )
+        .join('\n');
+
+      enhancedMessage =
+        `[첨부 파일]\n${fileList}\n\n` +
+        `위 파일들은 Read 도구로 읽을 수 있습니다.\n\n` +
+        (message || '첨부된 파일을 분석해주세요.');
+    }
+  }
+
   const queryOptions: Parameters<typeof query>[0] = {
-    prompt: message,
+    prompt: enhancedMessage,
     options: {
       model: model || DEFAULT_MODEL,
       systemPrompt: systemPrompt
@@ -83,7 +112,20 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       mcpServers: {
         firehub: firehubServer,
       },
-      allowedTools: ['mcp__firehub__*'],
+      allowedTools: [
+        'mcp__firehub__*',
+        'Read',
+        'Write',
+        'Edit',
+        'Glob',
+        'Grep',
+        'Bash',
+        'WebFetch',
+        'WebSearch',
+        'Agent',
+        'NotebookEdit',
+        'TodoWrite',
+      ],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
@@ -194,6 +236,10 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`${tag()} Error: ${errorMessage}`);
     yield { type: 'error', message: errorMessage };
+  } finally {
+    if (fileIds?.length) {
+      await cleanupChatFiles(sessionTag);
+    }
   }
 }
 

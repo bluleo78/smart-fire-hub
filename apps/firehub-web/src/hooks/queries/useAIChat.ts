@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef,useState } from 'react';
+import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
-import type { AIMessage, AIStreamEvent } from '../../types/ai';
+import { uploadFiles } from '../../api/files';
+import type { AIAttachment, AIMessage, AIStreamEvent } from '../../types/ai';
 
 export function useAISessions(page = 0, size = 20) {
   return useQuery({
@@ -34,13 +36,45 @@ export function useAIChat() {
   const messagesCommittedRef = useRef(false);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
 
-  const sendMessage = useCallback((content: string) => {
+  const [isUploading, setIsUploading] = useState(false);
+
+  const sendMessage = useCallback(async (content: string, files?: File[]) => {
     messagesCommittedRef.current = false;
+
+    // Upload files first if any
+    let attachments: AIAttachment[] = [];
+    let fileIds: number[] | null = null;
+
+    if (files && files.length > 0) {
+      setIsUploading(true);
+      try {
+        const uploaded = await uploadFiles(files);
+        fileIds = uploaded.map(f => f.id);
+        attachments = uploaded.map(f => ({
+          id: f.id,
+          name: f.originalName,
+          mimeType: f.mimeType,
+          fileSize: f.fileSize,
+          category: f.fileCategory,
+          previewUrl: f.mimeType.startsWith('image/')
+            ? URL.createObjectURL(files.find(file => file.name === f.originalName) ?? files[0])
+            : undefined,
+        }));
+      } catch {
+        toast.error('파일 업로드에 실패했습니다.');
+        setIsUploading(false);
+        return;
+      } finally {
+        setIsUploading(false);
+      }
+    }
+
     const userMessage: AIMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       content,
       timestamp: new Date().toISOString(),
+      attachments: attachments.length > 0 ? attachments : undefined,
     };
 
     let userMessageCommitted = false;
@@ -119,6 +153,7 @@ export function useAIChat() {
     abortControllerRef.current = streamAIChat(
       content,
       currentSessionId,
+      fileIds,
       (event: AIStreamEvent) => {
         switch (event.type) {
           case 'init':
@@ -126,7 +161,7 @@ export function useAIChat() {
               const isNewSession = !currentSessionId;
               setCurrentSessionId(event.sessionId);
               if (isNewSession) {
-                aiApi.createSession({ sessionId: event.sessionId, title: content })
+                aiApi.createSession({ sessionId: event.sessionId, title: content || '파일 첨부' })
                   .then(() => queryClient.invalidateQueries({ queryKey: ['ai-sessions'] }))
                   .catch(() => {}); // 실패해도 채팅 흐름 유지
               }
@@ -243,7 +278,7 @@ export function useAIChat() {
         commitMessages();
       }
     );
-  }, [currentSessionId, queryClient]);
+  }, [currentSessionId, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
@@ -289,6 +324,7 @@ export function useAIChat() {
   return {
     messages,
     isStreaming,
+    isUploading,
     isLoadingHistory,
     isCompacting,
     streamingMessage,

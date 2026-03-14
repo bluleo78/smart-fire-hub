@@ -4,7 +4,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-    baseline-version: 33
+    baseline-version: 34
   servlet:
     multipart:
       max-file-size: 50MB
@@ -40,3 +40,9 @@ app:
     enabled: true
     base-url: ${EXECUTOR_BASE_URL:http://localhost:8000}
     internal-token: ${EXECUTOR_INTERNAL_TOKEN:dev-executor-token}
+
+firehub:
+  file:
+    upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+    max-files-per-request: 3
+    expiry-hours: 24

@@ -34,6 +34,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     currentSessionId,
     messages,
     isStreaming,
+    isUploading,
     isLoadingHistory,
     streamingMessage,
     pendingUserMessage,
@@ -124,6 +125,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           onSend={sendMessage}
           onStop={stopStreaming}
           isStreaming={isStreaming}
+          isUploading={isUploading}
         />
       </div>
     </div>

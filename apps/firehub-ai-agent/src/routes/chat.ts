@@ -19,6 +19,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     message,
     sessionId,
     userId,
+    fileIds,
     model,
     maxTurns: reqMaxTurns,
     systemPrompt,
@@ -27,8 +28,11 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     apiKey,
   } = req.body;
 
-  if (!message || typeof message !== 'string') {
-    res.status(400).json({ error: 'message is required and must be a string' });
+  const hasMessage = message && typeof message === 'string';
+  const hasFileIds = Array.isArray(fileIds) && fileIds.length > 0;
+
+  if (!hasMessage && !hasFileIds) {
+    res.status(400).json({ error: 'message or fileIds is required' });
     return;
   }
 
@@ -56,9 +60,10 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
 
   try {
     const events = executeAgent({
-      message,
+      message: message || '',
       sessionId: sessionId || undefined,
       userId,
+      fileIds: hasFileIds ? (fileIds as number[]) : undefined,
       model,
       maxTurns: reqMaxTurns ?? (Number(process.env.MAX_TURNS) || 10),
       systemPrompt,
