@@ -10,12 +10,10 @@ import {
   BarChart2,
   ChevronDown,
   ChevronRight,
-  Columns,
   Download,
   Loader2,
   Play,
   Save,
-  Table2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -59,8 +57,9 @@ import {
 import { handleApiError } from '../../lib/api-error';
 import { downloadBlob } from '../../lib/download';
 import { cn } from '../../lib/utils';
-import type { AnalyticsQueryResult, SchemaTable } from '../../types/analytics';
+import type { AnalyticsQueryResult } from '../../types/analytics';
 import type { ExportFormat } from '../../types/export';
+import { SchemaExplorer } from './components/SchemaExplorer';
 
 // ============================================================
 // Inline SQL Editor with schema-aware autocomplete
@@ -71,16 +70,25 @@ interface AnalyticsSqlEditorProps {
   onChange: (value: string) => void;
   onExecute: () => void;
   schema: Record<string, string[]>;
+  onViewReady?: (view: EditorView | null) => void;
 }
 
-function AnalyticsSqlEditor({ value, onChange, onExecute, schema }: AnalyticsSqlEditorProps) {
+function AnalyticsSqlEditor({
+  value,
+  onChange,
+  onExecute,
+  schema,
+  onViewReady,
+}: AnalyticsSqlEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onExecuteRef = useRef(onExecute);
+  const onViewReadyRef = useRef(onViewReady);
 
   onChangeRef.current = onChange;
   onExecuteRef.current = onExecute;
+  onViewReadyRef.current = onViewReady;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -138,8 +146,10 @@ function AnalyticsSqlEditor({ value, onChange, onExecute, schema }: AnalyticsSql
     });
 
     viewRef.current = view;
+    onViewReadyRef.current?.(view);
 
     return () => {
+      onViewReadyRef.current?.(null);
       view.destroy();
       viewRef.current = null;
     };
@@ -159,96 +169,6 @@ function AnalyticsSqlEditor({ value, onChange, onExecute, schema }: AnalyticsSql
   }, [value]);
 
   return <div ref={containerRef} />;
-}
-
-// ============================================================
-// Schema Explorer (left side panel)
-// ============================================================
-
-interface SchemaExplorerProps {
-  tables: SchemaTable[];
-  onInsertTable: (tableName: string) => void;
-}
-
-function SchemaExplorer({ tables, onInsertTable }: SchemaExplorerProps) {
-  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
-
-  const toggleTable = (tableName: string) => {
-    setExpandedTables((prev) => {
-      const next = new Set(prev);
-      if (next.has(tableName)) {
-        next.delete(tableName);
-      } else {
-        next.add(tableName);
-      }
-      return next;
-    });
-  };
-
-  if (tables.length === 0) {
-    return (
-      <div className="p-3 text-xs text-muted-foreground">
-        테이블 정보를 불러오는 중...
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-y-auto h-full">
-      {tables.map((table) => {
-        const isExpanded = expandedTables.has(table.tableName);
-        return (
-          <div key={table.tableName}>
-            <button
-              className="flex items-center gap-1.5 w-full px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors text-left"
-              onClick={() => toggleTable(table.tableName)}
-            >
-              {isExpanded ? (
-                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-              )}
-              <Table2 className="h-3 w-3 shrink-0 text-info" />
-              <span
-                className="font-medium truncate flex-1"
-                title={table.tableName}
-              >
-                {table.tableName}
-              </span>
-              <button
-                className="shrink-0 text-muted-foreground hover:text-foreground text-xs bg-muted px-1 rounded"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onInsertTable(table.tableName);
-                }}
-                title="에디터에 삽입"
-              >
-                삽입
-              </button>
-            </button>
-            {isExpanded && (
-              <div className="pl-7">
-                {table.columns.map((col) => (
-                  <div
-                    key={col.columnName}
-                    className="flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
-                  >
-                    <Columns className="h-3 w-3 shrink-0" />
-                    <span className="truncate flex-1" title={col.columnName}>
-                      {col.displayName || col.columnName}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground/70">
-                      {col.dataType}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 // ============================================================
@@ -455,6 +375,7 @@ export default function QueryEditorPage() {
     folder: '',
     isShared: false,
   });
+  const editorViewRef = useRef<EditorView | null>(null);
 
   // Sidebar panel
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -586,13 +507,23 @@ export default function QueryEditorPage() {
     }
   };
 
-  // Insert table name at cursor (append to current sql for simplicity)
-  const handleInsertTable = (tableName: string) => {
-    setSql((prev) => {
-      const trimmed = prev.trimEnd();
-      return trimmed ? `${trimmed}\n${tableName}` : tableName;
+  const handleInsertAtCursor = useCallback((text: string) => {
+    const view = editorViewRef.current;
+    if (!view) {
+      setSql((prev) => {
+        const trimmed = prev.trimEnd();
+        return trimmed ? `${trimmed}\n${text}` : text;
+      });
+      return;
+    }
+
+    const cursor = view.state.selection.main.head;
+    view.dispatch({
+      changes: { from: cursor, insert: text },
+      selection: { anchor: cursor + text.length },
     });
-  };
+    view.focus();
+  }, []);
 
   if (!isNew && queryLoading) {
     return (
@@ -685,7 +616,7 @@ export default function QueryEditorPage() {
           </div>
           <SchemaExplorer
             tables={tables}
-            onInsertTable={handleInsertTable}
+            onInsertAtCursor={handleInsertAtCursor}
           />
         </div>
 
@@ -722,6 +653,9 @@ export default function QueryEditorPage() {
             onChange={setSql}
             onExecute={handleExecute}
             schema={cmSchema}
+            onViewReady={(view) => {
+              editorViewRef.current = view;
+            }}
           />
 
           {/* Results */}

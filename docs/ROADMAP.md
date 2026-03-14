@@ -19,7 +19,7 @@
 | [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 5.7](#phase-57-firehub-executor-실행-엔진-분리) | **진행중** | 1/7 | 사용자 코드 실행 서비스 분리 (Python/FastAPI + nsjail) |
 | [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 대기 | 1/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
-| [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | 대기 | 0/3 | UI 일관성 수정, SchemaExplorer 리디자인 |
+| [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | 진행중 | 2/3 | UI 일관성 수정 + 컴포넌트 분리 완료, 리디자인 검증 진행중 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 | [Phase 7](#phase-7-ai-chat-generative-ui) | 대기 | 0/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, Chat-First |
 
@@ -178,9 +178,9 @@
 
 | # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
 |---|------|------|------|------|----------|
-| 5.6-1 | UI 일관성 수정 (뒤로가기 패턴 + 에디터 타이틀 폰트) | ⬜ | Frontend | 없음 | 모든 상세/에디터 페이지에 아이콘 전용 뒤로가기 버튼. 에디터 페이지 타이틀 text-lg 통일. 빌드+타입체크 통과. |
-| 5.6-2 | SchemaExplorer 별도 컴포넌트 분리 | ⬜ | Frontend | 없음 | QueryEditorPage.tsx 인라인 코드 → 별도 파일 분리. 기존 동작 유지. 빌드+타입체크 통과. |
-| 5.6-3 | SchemaExplorer UX 리디자인 | ⬜ | Frontend | 5.6-2 | P1: 테이블/컬럼 검색 필터. P2: hover-reveal 액션 (삽입 버튼 → 호버 아이콘). P3: 컬럼 타입별 색상 뱃지. P4: 컨텍스트 메뉴 (SELECT * LIMIT 100 등). P5: 테이블별 컬럼 수 뱃지. 커서 위치 삽입. 디자인 시스템 준수. 빌드+타입체크+Playwright 검증. |
+| 5.6-1 | UI 일관성 수정 (뒤로가기 패턴 + 에디터 타이틀 폰트) | ✅ | Frontend | 없음 | 모든 상세/에디터 페이지에 아이콘 전용 뒤로가기 버튼. 에디터 페이지 타이틀 text-lg 통일. 빌드+타입체크 통과. (commit: `4bd693e`) |
+| 5.6-2 | SchemaExplorer 별도 컴포넌트 분리 | ✅ | Frontend | 없음 | QueryEditorPage.tsx 인라인 코드 → 별도 파일 분리. 기존 동작 유지. 빌드+타입체크 통과. (commit: `7044289`) |
+| 5.6-3 | SchemaExplorer UX 리디자인 | 🟨 | Frontend | 5.6-2 | P1: 테이블/컬럼 검색 필터. P2: hover-reveal 액션 (삽입 버튼 → 호버 아이콘). P3: 컬럼 타입별 색상 뱃지. P4: 컨텍스트 메뉴 (SELECT * LIMIT 100 등). P5: 테이블별 컬럼 수 뱃지. 커서 위치 삽입. 디자인 시스템 준수. 코드 반영 + 빌드/타입체크 완료 (`7044289`), Playwright 검증 대기. |
 
 ---
 
