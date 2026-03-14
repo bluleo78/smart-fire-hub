@@ -32,3 +32,12 @@ class QueryExecuteResponse(BaseModel):
     execution_time_ms: int = 0
     truncated: bool = False
     error: Optional[str] = None
+
+
+class ApiCallExecuteResponse(BaseModel):
+    success: bool
+    rows_loaded: int = 0
+    total_pages: int = 0
+    execution_log: str = ""
+    error: Optional[str] = None
+    execution_time_ms: int = 0

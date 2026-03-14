@@ -11,6 +11,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+/**
+ * @deprecated Use {@link com.smartfirehub.pipeline.service.executor.ExecutorClient#executePython}
+ *     instead.
+ */
+@Deprecated
 @Service
 public class PythonScriptExecutor {
 

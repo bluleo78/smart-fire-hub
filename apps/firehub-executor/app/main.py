@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.db.connection import init_pool, close_pool
-from app.routers import health, sql, python_exec, query
+from app.routers import health, sql, python_exec, query, api_call
 
 
 @asynccontextmanager
@@ -30,3 +30,4 @@ app.include_router(health.router)
 app.include_router(sql.router)
 app.include_router(python_exec.router)
 app.include_router(query.router)
+app.include_router(api_call.router)

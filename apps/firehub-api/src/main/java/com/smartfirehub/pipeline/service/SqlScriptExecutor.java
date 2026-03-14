@@ -8,6 +8,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
+/**
+ * @deprecated Use {@link com.smartfirehub.pipeline.service.executor.ExecutorClient#executeSql}
+ *     instead.
+ */
+@Deprecated
 @Service
 public class SqlScriptExecutor {
 

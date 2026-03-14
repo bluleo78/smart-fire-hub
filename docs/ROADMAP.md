@@ -17,7 +17,7 @@
 | [Phase 3](#phase-3-ai-text-to-sql) | **완료** | 2/2 | 자연어 → SQL → 차트 추천 |
 | [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
-| [Phase 5.7](#phase-57-firehub-executor-실행-엔진-분리) | **진행중** | 1/7 | 사용자 코드 실행 서비스 분리 (Python/FastAPI + nsjail) |
+| [Phase 5.7](#phase-57-firehub-executor-실행-엔진-분리) | **완료** | 7/7 | 사용자 코드 실행 서비스 분리 (Python/FastAPI + nsjail) |
 | [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 대기 | 1/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | 진행중 | 2/3 | UI 일관성 수정 + 컴포넌트 분리 완료, 리디자인 검증 진행중 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
@@ -218,12 +218,12 @@
 | # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
 |---|------|------|------|------|----------|
 | 5.7-1 | 파이프라인 샌드박스 Phase 1 (DB 역할 + SQL/Python 격리) | ✅ | Backend | 없음 | `pipeline_executor` DB 역할 (data 스키마 DML만). SqlValidator 차단 키워드 검증. PythonScriptExecutor env.clear() + pipeline 자격증명만. PermissionChecker python_execute 권한 게이트. 511 테스트 통과. |
-| 5.7-2 | firehub-executor 프로젝트 + Python 실행 엔드포인트 | ⬜ | Executor | 5.7-1 | FastAPI 프로젝트 스캐폴딩. Internal Auth 미들웨어. psycopg2 커넥션 풀. `POST /execute/python` + nsjail 샌드박스 (--time_limit 1800, --rlimit_as 512, --rlimit_nproc 64, --disable_proc, 네트워크 활성화, --chroot 없이 명시적 마운트만). nsjail 비활성화 폴백. `GET /health`. pytest 통과. |
-| 5.7-3 | 분석 쿼리 실행 엔드포인트 | ⬜ | Executor | 5.7-2 | `POST /execute/query`. SQL 차단 키워드 검증. readOnly 모드. LIMIT 자동 추가. GEOMETRY→GeoJSON 변환 (ST_AsGeoJSON). statement_timeout 30초. SAVEPOINT 복구. V34 마이그레이션 (pipeline_executor에 public 스키마 USAGE + EXECUTE 권한). pytest 통과. |
-| 5.7-4 | firehub-api executor 위임 + 운영 배포 (Phase 2a) | ⬜ | Backend + Docker | 5.7-2, 5.7-3 | ExecutorClient (Python/Query). PipelineExecutionService Python 스텝 → executor 위임. AnalyticsQueryExecutionService → executor 위임. Dockerfile (nsjail 포함). docker-compose.prod.yml executor 서비스 추가. API Dockerfile에서 Python 제거. 기존 511 테스트 통과. 운영 배포 검증. |
-| 5.7-5 | SQL 실행 엔드포인트 | ⬜ | Executor | 5.7-4 | `POST /execute/sql`. SQL 차단 키워드 검증 (심층 방어). SELECT/DML 분기 처리. 커밋/롤백 관리. pytest 통과. |
-| 5.7-6 | API_CALL 실행 엔드포인트 | ⬜ | Executor + Backend | 5.7-5 | `POST /execute/api-call`. SSRF 보호 (Java 구현 1:1 포팅). 페이지네이션 (OFFSET). 필드 매핑 + 타입 변환 (6종). 로드 전략: APPEND (직접 INSERT), REPLACE (API에서 DDL 오케스트레이션). 재시도 (지수 백오프). 인증 (API_KEY, BEARER). pytest 통과. |
-| 5.7-7 | 통합 테스트 + 기존 executor 코드 정리 | ⬜ | 전체 | 5.7-6 | ExecutorClient 4개 엔드포인트 WireMock 테스트. Docker Compose E2E (SQL/Python/API_CALL/분석 쿼리/체인 트리거). 기존 SqlScriptExecutor/PythonScriptExecutor/ApiCallExecutor @Deprecated 마킹. 전체 테스트 통과. |
+| 5.7-2 | firehub-executor 프로젝트 + Python 실행 엔드포인트 | ✅ | Executor | 5.7-1 | FastAPI 프로젝트 스캐폴딩. Internal Auth 미들웨어. psycopg2 커넥션 풀. `POST /execute/python` + nsjail 샌드박스. nsjail 비활성화 폴백. `GET /health`. pytest 통과. |
+| 5.7-3 | 분석 쿼리 실행 엔드포인트 | ✅ | Executor | 5.7-2 | `POST /execute/query`. SQL 차단 키워드 검증. readOnly 모드. LIMIT 자동 추가. GEOMETRY→GeoJSON 변환. statement_timeout 30초. SAVEPOINT 복구. pytest 통과. |
+| 5.7-4 | firehub-api executor 위임 + 운영 배포 (Phase 2a) | ✅ | Backend + Docker | 5.7-2, 5.7-3 | ExecutorClient (Python/Query). PipelineExecutionService Python 스텝 → executor 위임. AnalyticsQueryExecutionService → executor 위임. Dockerfile (nsjail 포함). docker-compose.prod.yml executor 서비스 추가. 기존 테스트 통과. 운영 배포 검증. |
+| 5.7-5 | SQL 실행 엔드포인트 | ✅ | Executor | 5.7-4 | `POST /execute/sql`. SQL 차단 키워드 검증 (심층 방어). SELECT/DML 분기 처리. 커밋/롤백 관리. pytest 64개 통과. |
+| 5.7-6 | API_CALL 실행 엔드포인트 | ✅ | Executor + Backend | 5.7-5 | `POST /execute/api-call`. SSRF 보호 (Java 1:1 포팅). 페이지네이션 (OFFSET). 필드 매핑 + 타입 변환 (6종). REPLACE DDL 오케스트레이션 (API측). 재시도 (지수 백오프). 인증 (API_KEY, BEARER). ExecutorClient `executeSql()`/`executeApiCall()` 추가. PipelineExecutionService SQL/API_CALL 위임. pytest 119개 통과. |
+| 5.7-7 | 통합 테스트 + 기존 executor 코드 정리 | ✅ | 전체 | 5.7-6 | ExecutorClient WireMock 테스트 12개. SqlScriptExecutor/PythonScriptExecutor/ApiCallExecutor @Deprecated 마킹. 전체 Java 테스트 통과. |
 
 ---
 

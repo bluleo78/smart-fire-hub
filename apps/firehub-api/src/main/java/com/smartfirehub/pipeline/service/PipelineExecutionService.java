@@ -393,13 +393,20 @@ public class PipelineExecutionService {
       // Execute script based on type
       String executionLog;
       if ("SQL".equals(step.scriptType())) {
-        executionLog = sqlExecutor.execute(step.scriptContent());
+        if (executorEnabled) {
+          var result = executorClient.executeSql(step.scriptContent());
+          if (!result.success()) {
+            throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
+          }
+          executionLog = result.executionLog();
+        } else {
+          executionLog = sqlExecutor.execute(step.scriptContent());
+        }
       } else if ("PYTHON".equals(step.scriptType())) {
         // 인가 게이트: 명시적 python_execute 권한 필요
         if (!permissionChecker.hasPermission(userId, "pipeline:python_execute")) {
           throw new ScriptExecutionException(
-              "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. "
-                  + "관리자에게 이 기능 활성화를 요청하세요.");
+              "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. " + "관리자에게 이 기능 활성화를 요청하세요.");
         }
         if (executorEnabled) {
           var result = executorClient.executePython(step.scriptContent());
@@ -432,10 +439,43 @@ public class PipelineExecutionService {
           }
         }
 
-        ApiCallExecutor.ApiCallResult result =
-            apiCallExecutor.execute(
-                apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap);
-        executionLog = result.log();
+        if (executorEnabled) {
+          // REPLACE: API orchestrates DDL (executor only does INSERT)
+          String targetTable = outputTableName;
+          boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
+          if (isReplace) {
+            dataTableService.createTempTable(outputTableName);
+            targetTable = outputTableName + "_tmp";
+          }
+          try {
+            Map<String, Object> request =
+                buildApiCallExecutorRequest(
+                    apiCallConfig, targetTable, decryptedAuth, columnTypeMap);
+            var result = executorClient.executeApiCall(request);
+            if (!result.success()) {
+              throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
+            }
+            if (isReplace) {
+              dataTableService.swapTable(outputTableName);
+            }
+            executionLog = result.executionLog();
+          } catch (Exception e) {
+            if (isReplace) {
+              try {
+                dataTableService.dropTempTable(outputTableName);
+              } catch (Exception dropEx) {
+                log.warn(
+                    "Failed to drop temp table after API call failure: {}", dropEx.getMessage());
+              }
+            }
+            throw e;
+          }
+        } else {
+          ApiCallExecutor.ApiCallResult result =
+              apiCallExecutor.execute(
+                  apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap);
+          executionLog = result.log();
+        }
       } else {
         throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
       }
@@ -465,5 +505,76 @@ public class PipelineExecutionService {
           stepExecId, "FAILED", null, null, e.getMessage(), null, LocalDateTime.now());
       return "FAILED";
     }
+  }
+
+  private Map<String, Object> buildApiCallExecutorRequest(
+      ApiCallConfig config,
+      String outputTable,
+      Map<String, String> decryptedAuth,
+      Map<String, String> columnTypeMap) {
+    Map<String, Object> request = new LinkedHashMap<>();
+    request.put("url", config.url());
+    request.put("method", config.method() != null ? config.method() : "GET");
+    if (config.headers() != null) request.put("headers", config.headers());
+    if (config.queryParams() != null) request.put("query_params", config.queryParams());
+    if (config.body() != null) request.put("body", config.body());
+    request.put("data_path", config.dataPath());
+
+    // Convert field mappings
+    List<Map<String, Object>> mappings = new ArrayList<>();
+    if (config.fieldMappings() != null) {
+      for (ApiCallConfig.FieldMapping fm : config.fieldMappings()) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("source_field", fm.sourceField());
+        m.put("target_column", fm.targetColumn());
+        if (fm.dataType() != null) m.put("data_type", fm.dataType());
+        if (fm.dateFormat() != null) m.put("date_format", fm.dateFormat());
+        if (fm.numberFormat() != null) m.put("number_format", fm.numberFormat());
+        if (fm.sourceTimezone() != null) m.put("source_timezone", fm.sourceTimezone());
+        mappings.add(m);
+      }
+    }
+    request.put("field_mappings", mappings);
+
+    // Pagination
+    if (config.pagination() != null) {
+      Map<String, Object> pag = new LinkedHashMap<>();
+      pag.put("type", config.pagination().type());
+      if (config.pagination().pageSize() != null)
+        pag.put("page_size", config.pagination().pageSize());
+      if (config.pagination().offsetParam() != null)
+        pag.put("offset_param", config.pagination().offsetParam());
+      if (config.pagination().limitParam() != null)
+        pag.put("limit_param", config.pagination().limitParam());
+      if (config.pagination().totalPath() != null)
+        pag.put("total_path", config.pagination().totalPath());
+      request.put("pagination", pag);
+    }
+
+    // Retry
+    if (config.retry() != null) {
+      Map<String, Object> retry = new LinkedHashMap<>();
+      if (config.retry().maxRetries() != null)
+        retry.put("max_retries", config.retry().maxRetries());
+      if (config.retry().initialBackoffMs() != null)
+        retry.put("initial_backoff_ms", config.retry().initialBackoffMs());
+      if (config.retry().maxBackoffMs() != null)
+        retry.put("max_backoff_ms", config.retry().maxBackoffMs());
+      request.put("retry", retry);
+    }
+
+    if (config.timeoutMs() != null) request.put("timeout_ms", config.timeoutMs());
+    if (config.maxDurationMs() != null) request.put("max_duration_ms", config.maxDurationMs());
+    if (config.maxResponseSizeMb() != null)
+      request.put("max_response_size_mb", config.maxResponseSizeMb());
+
+    request.put("output_table", outputTable);
+    // executor always does APPEND (INSERT only) - load strategy is handled by API
+    request.put("load_strategy", "APPEND");
+
+    if (columnTypeMap != null) request.put("column_type_map", columnTypeMap);
+    if (decryptedAuth != null) request.put("auth", decryptedAuth);
+
+    return request;
   }
 }

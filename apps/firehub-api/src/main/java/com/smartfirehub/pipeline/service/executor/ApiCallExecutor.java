@@ -21,6 +21,11 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.netty.http.client.HttpClient;
 
+/**
+ * @deprecated Use {@link ExecutorClient#executeApiCall} instead. Retained for
+ *     ApiCallPreviewService.
+ */
+@Deprecated
 @Service
 public class ApiCallExecutor {
 
