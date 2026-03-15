@@ -47,11 +47,15 @@ interface AnthropicMessage {
 async function getModelAndApiKey(
   apiBaseUrl: string,
   internalToken: string,
+  userId?: number,
 ): Promise<{ model: string; apiKey: string }> {
-  const headers = {
+  const headers: Record<string, string> = {
     Authorization: `Internal ${internalToken}`,
     'Content-Type': 'application/json',
   };
+  if (userId) {
+    headers['X-On-Behalf-Of'] = String(userId);
+  }
 
   let model = process.env.AI_DEFAULT_MODEL || 'claude-haiku-4-5-20251001';
   let apiKey = process.env.ANTHROPIC_API_KEY || '';
@@ -206,10 +210,11 @@ export async function classifyBatch(
   request: ClassifyRequest,
   apiBaseUrl: string,
   internalToken: string,
+  userId?: number,
 ): Promise<ClassifyResponse> {
   const { rows, labels, promptTemplate } = request;
 
-  const { model, apiKey } = await getModelAndApiKey(apiBaseUrl, internalToken);
+  const { model, apiKey } = await getModelAndApiKey(apiBaseUrl, internalToken, userId);
 
   if (!apiKey) {
     throw new Error(

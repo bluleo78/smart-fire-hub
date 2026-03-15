@@ -34,12 +34,14 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
+  const userId = parseInt(req.headers['x-on-behalf-of'] as string) || 1;
 
   try {
     const result = await classifyBatch(
       { rows, labels, promptTemplate, promptVersion },
       apiBaseUrl,
       internalToken,
+      userId,
     );
     res.json(result);
   } catch (error: unknown) {
