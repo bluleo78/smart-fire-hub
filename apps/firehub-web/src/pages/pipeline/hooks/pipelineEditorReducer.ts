@@ -143,19 +143,44 @@ export function pipelineEditorReducer(
 
     case 'REMOVE_STEP': {
       const { tempId } = action.payload;
+      const removedIndex = state.steps.findIndex((s) => s.tempId === tempId);
       const removedStep = state.steps.find((s) => s.tempId === tempId);
       const removedDeps = removedStep?.dependsOnTempIds ?? [];
-      return {
-        ...state,
-        steps: state.steps
-          .filter((s) => s.tempId !== tempId)
-          .map((s) => {
-            if (!s.dependsOnTempIds.includes(tempId)) return s;
+      const removedNum = removedIndex + 1;
+
+      const remainingSteps = state.steps
+        .filter((s) => s.tempId !== tempId)
+        .map((s) => {
+          // Fix dependsOnTempIds
+          let updated = s;
+          if (s.dependsOnTempIds.includes(tempId)) {
             const newDeps = s.dependsOnTempIds
               .filter((id) => id !== tempId)
               .concat(removedDeps.filter((id) => !s.dependsOnTempIds.includes(id)));
-            return { ...s, dependsOnTempIds: newDeps };
-          }),
+            updated = { ...updated, dependsOnTempIds: newDeps };
+          }
+          // Renumber {{#N}} in scriptContent
+          if (updated.scriptContent) {
+            let content = updated.scriptContent;
+            // Replace deleted step reference with comment
+            content = content.replace(
+              new RegExp(`\\{\\{#${removedNum}\\}\\}`, 'g'),
+              `/* 삭제된 스텝 #${removedNum} */`,
+            );
+            // Decrement references to steps after the removed one
+            content = content.replace(/\{\{#(\d+)\}\}/g, (_match, num) => {
+              const n = parseInt(num, 10);
+              if (n > removedNum) return `{{#${n - 1}}}`;
+              return `{{#${n}}}`;
+            });
+            updated = { ...updated, scriptContent: content };
+          }
+          return updated;
+        });
+
+      return {
+        ...state,
+        steps: remainingSteps,
         selectedStepId: state.selectedStepId === tempId ? null : state.selectedStepId,
         isDirty: true,
         validationErrors: [],

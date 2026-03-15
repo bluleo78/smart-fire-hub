@@ -6,6 +6,7 @@ export interface StepNodeData extends Record<string, unknown> {
   label: string;
   description?: string;
   scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
+  stepNumber: number;
   isSelected: boolean;
   hasError: boolean;
   hasOutgoingEdge: boolean;
@@ -192,6 +193,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             className="flex items-center gap-1.5 text-xs font-semibold"
             style={{ color: typeConfig.color }}
           >
+            <span style={{ opacity: 0.5 }}>#{data.stepNumber}</span>
             <typeConfig.Icon className="h-3.5 w-3.5 shrink-0" />
             <span>{typeConfig.label}</span>
           </div>

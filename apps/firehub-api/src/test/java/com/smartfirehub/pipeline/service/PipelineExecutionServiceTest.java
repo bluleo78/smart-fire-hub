@@ -692,6 +692,278 @@ class PipelineExecutionServiceTest {
   }
 
   // ------------------------------------------------------------------ //
+  // resolveStepReferences tests
+  // ------------------------------------------------------------------ //
+
+  @Test
+  void resolveStepReferences_singleReference_replacedWithTableName() throws Exception {
+    // given: pipeline with 2 steps, step2 SQL references {{#1}}
+    Long pipelineId = 30L;
+    Long userId = 1L;
+    Long executionId = 130L;
+    Long step1Id = 230L;
+    Long step2Id = 231L;
+    Long stepExec1Id = 330L;
+    Long stepExec2Id = 331L;
+    Long outputDatasetId = 50L;
+
+    PipelineStepResponse step1 =
+        stepResponseWithOutput(step1Id, "step1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", outputDatasetId, List.of());
+    PipelineStepResponse step2 =
+        new PipelineStepResponse(step2Id, "step2", null, "SQL", "SELECT * FROM {{#1}}", null, null,
+            List.of(), List.of(), 1, "REPLACE", null, null, null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(stepExec1Id);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(stepExec2Id);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("table1"));
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("ok");
+
+    // step2 SELECT with resolved reference
+    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
+    Long tempDsId = 999L;
+    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
+        .thenReturn(tempDsId);
+    when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_step2"));
+    when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+
+    // capture the SQL passed to sqlExecutor for step2
+    when(sqlExecutor.execute(contains("data.\"table1\""))).thenReturn("1 row");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: step2 SQL had {{#1}} replaced with data."table1"
+    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor, atLeastOnce()).execute(captor.capture());
+    assertThat(captor.getAllValues()).anyMatch(s -> s.contains("data.\"table1\""));
+  }
+
+  @Test
+  void resolveStepReferences_multipleReferences_allReplaced() throws Exception {
+    // given: 3 steps, step3 references {{#1}} and {{#2}}
+    Long pipelineId = 31L;
+    Long userId = 1L;
+    Long executionId = 131L;
+    Long step1Id = 240L;
+    Long step2Id = 241L;
+    Long step3Id = 242L;
+    Long ds1Id = 60L;
+    Long ds2Id = 61L;
+
+    PipelineStepResponse step1 =
+        stepResponseWithOutput(step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
+    PipelineStepResponse step2 =
+        stepResponseWithOutput(step2Id, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", ds2Id, List.of());
+    PipelineStepResponse step3 =
+        new PipelineStepResponse(step3Id, "s3", null, "SQL",
+            "SELECT * FROM {{#1}} JOIN {{#2}} ON {{#1}}.id = {{#2}}.id",
+            null, null, List.of(), List.of(), 2, "REPLACE", null, null, null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(340L);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(341L);
+    when(executionRepository.createStepExecution(executionId, step3Id)).thenReturn(342L);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+    when(datasetRepository.findTableNameById(ds1Id)).thenReturn(Optional.of("tbl1"));
+    when(datasetRepository.findTableNameById(ds2Id)).thenReturn(Optional.of("tbl2"));
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("ok");
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (2)")).thenReturn("ok");
+
+    // step3 is SELECT — probe for column extraction
+    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    Long tempDsId = 998L;
+    when(tempDatasetService.findExistingTempDataset(step3Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step3Id), any(), eq(userId)))
+        .thenReturn(tempDsId);
+    when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_s3"));
+    when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
+    when(sqlExecutor.execute(contains("tbl1"))).thenReturn("ok");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: step3 SQL has both references replaced
+    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor, atLeastOnce()).execute(captor.capture());
+    assertThat(captor.getAllValues()).anyMatch(s -> s.contains("data.\"tbl1\"") && s.contains("data.\"tbl2\""));
+  }
+
+  @Test
+  void resolveStepReferences_nonExistentStepNumber_stepFails() throws Exception {
+    // given: 1 step, SQL references {{#99}} which doesn't exist
+    Long pipelineId = 32L;
+    Long userId = 1L;
+    Long executionId = 132L;
+    Long stepId = 250L;
+    Long stepExecId = 350L;
+
+    PipelineStepResponse step =
+        new PipelineStepResponse(stepId, "step1", null, "SQL", "SELECT * FROM {{#99}}",
+            null, null, List.of(), List.of(), 0, "REPLACE", null, null, null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: step marked FAILED with appropriate message
+    verify(executionRepository).updateStepExecution(
+        eq(stepExecId), eq("FAILED"), isNull(), isNull(),
+        contains("스텝 번호 99"), isNull(), any());
+  }
+
+  @Test
+  void resolveStepReferences_selfReference_stepFails() throws Exception {
+    // given: step3 (stepOrder=2) references {{#3}} (itself)
+    Long pipelineId = 33L;
+    Long userId = 1L;
+    Long executionId = 133L;
+    Long step1Id = 260L;
+    Long step2Id = 261L;
+    Long step3Id = 262L;
+    Long ds1Id = 70L;
+    Long ds2Id = 71L;
+    Long stepExec3Id = 362L;
+
+    PipelineStepResponse step1 =
+        stepResponseWithOutput(step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
+    PipelineStepResponse step2 =
+        stepResponseWithOutput(step2Id, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", ds2Id, List.of());
+    PipelineStepResponse step3 =
+        new PipelineStepResponse(step3Id, "s3", null, "SQL", "SELECT * FROM {{#3}}",
+            null, null, List.of(), List.of(), 2, "REPLACE", null, null, null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(360L);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(361L);
+    when(executionRepository.createStepExecution(executionId, step3Id)).thenReturn(stepExec3Id);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(datasetRepository.findTableNameById(ds1Id)).thenReturn(Optional.of("tbl1"));
+    when(datasetRepository.findTableNameById(ds2Id)).thenReturn(Optional.of("tbl2"));
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("ok");
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (2)")).thenReturn("ok");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: step3 marked FAILED with self-reference message
+    verify(executionRepository).updateStepExecution(
+        eq(stepExec3Id), eq("FAILED"), isNull(), isNull(),
+        contains("자기 자신을 참조"), isNull(), any());
+  }
+
+  @Test
+  void resolveStepReferences_noReference_sqlPassedThrough() throws Exception {
+    // given: SQL with no {{#N}} references — should pass through unchanged
+    Long pipelineId = 34L;
+    Long userId = 1L;
+    Long executionId = 134L;
+    Long stepId = 270L;
+    Long stepExecId = 370L;
+
+    String plainSql = "SELECT 1 AS val";
+    PipelineStepResponse step =
+        new PipelineStepResponse(stepId, "plain", null, "SQL", plainSql,
+            null, null, List.of(), List.of(), 0, "REPLACE", null, null, null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+
+    // SELECT → auto temp dataset
+    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("val"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    Long tempDsId = 997L;
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(stepId), any(), eq(userId)))
+        .thenReturn(tempDsId);
+    when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_plain"));
+    when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("val", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("1 row");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: stepRepository.findByPipelineId called only ONCE (not for resolveStepReferences)
+    // and sqlExecutor receives the unmodified SELECT
+    verify(stepRepository, times(1)).findByPipelineId(pipelineId);
+  }
+
+  @Test
+  void resolveStepReferences_tempDatasetReference_resolvedViaSourcePipelineStepId() throws Exception {
+    // given: step1 has outputDatasetId=null (temp), step2 references {{#1}}
+    Long pipelineId = 35L;
+    Long userId = 1L;
+    Long executionId = 135L;
+    Long step1Id = 280L;
+    Long step2Id = 281L;
+    Long step1ExecId = 380L;
+    Long step2ExecId = 381L;
+    Long tempDsId = 990L;
+
+    // step1: no explicit outputDatasetId (temp dataset created at runtime, stored with source_pipeline_step_id)
+    PipelineStepResponse step1 =
+        new PipelineStepResponse(step1Id, "temp-step", null, "SQL", "SELECT id FROM data.\"src\"",
+            null, null, List.of(), List.of(), 0, "REPLACE", null, null, null);
+    PipelineStepResponse step2 =
+        new PipelineStepResponse(step2Id, "ref-step", null, "SQL", "SELECT * FROM {{#1}}",
+            null, null, List.of(), List.of(), 1, "REPLACE", null, null, null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(step1ExecId);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(step2ExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+
+    // step1 execution: auto-create temp dataset
+    Result<?> step1Result = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
+    doReturn(step1Result).when(pipelineDsl).fetch(anyString());
+    when(tempDatasetService.findExistingTempDataset(step1Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step1Id), any(), eq(userId)))
+        .thenReturn(tempDsId);
+    when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_temp_step"));
+    when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("ok");
+
+    // step2 resolveStepReferences: step1.outputDatasetId=null → findBySourcePipelineStepId
+    when(datasetRepository.findBySourcePipelineStepId(step1Id)).thenReturn(Optional.of(tempDsId));
+
+    // step2 execution: also SELECT → another temp dataset
+    Long tempDs2Id = 991L;
+    when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
+        .thenReturn(tempDs2Id);
+    when(datasetRepository.findTableNameById(tempDs2Id)).thenReturn(Optional.of("ptmp_ref_step"));
+    when(columnRepository.findByDatasetId(tempDs2Id)).thenReturn(List.of(col("id", false)));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: findBySourcePipelineStepId called for step1 during step2's resolveStepReferences
+    verify(datasetRepository).findBySourcePipelineStepId(step1Id);
+    // and step2's SQL used data."ptmp_temp_step"
+    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor, atLeastOnce()).execute(captor.capture());
+    assertThat(captor.getAllValues()).anyMatch(s -> s.contains("data.\"ptmp_temp_step\""));
+  }
+
+  // ------------------------------------------------------------------ //
   // Helpers
   // ------------------------------------------------------------------ //
 

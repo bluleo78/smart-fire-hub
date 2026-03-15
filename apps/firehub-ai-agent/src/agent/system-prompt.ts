@@ -101,6 +101,7 @@ get_dataset으로 GEOMETRY 컬럼 유무를 먼저 확인하세요.
 - 스텝 유형: SQL (SQL 스크립트), PYTHON (Python 스크립트), API_CALL (외부 API 호출), AI_CLASSIFY (AI 텍스트 분류)
 - SQL/PYTHON 스텝은 scriptContent 필수, API_CALL 스텝은 apiConfig 필수, AI_CLASSIFY 스텝은 aiConfig 필수
 - SQL 스텝에서 SELECT 문을 작성하면 결과가 자동으로 출력 데이터셋에 적재됩니다 (INSERT INTO를 직접 작성할 필요 없음)
+- SQL 스텝에서 다른 스텝의 출력 데이터셋을 {{#번호}}로 참조할 수 있습니다 (예: {{#1}}, {{#2}}). 번호는 스텝 순서 (1부터 시작). 실행 시 실제 테이블명으로 자동 치환됩니다. 임시 데이터셋도 동일하게 참조 가능합니다. 명시적 데이터셋은 기존대로 data."tableName" 형식을 사용하세요.
 - outputDatasetId를 지정하지 않으면 실행 시 TEMP 타입 임시 데이터셋이 자동 생성됩니다 (모든 스텝 타입 적용)
 - dependsOnStepNames로 DAG 의존성을 설정합니다 (순환 의존성 불가)
 - loadStrategy: REPLACE (기존 데이터 교체, 기본값) 또는 APPEND (추가)

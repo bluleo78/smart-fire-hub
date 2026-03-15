@@ -3,17 +3,36 @@ import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { bracketMatching } from '@codemirror/language';
 import { Compartment,EditorState } from '@codemirror/state';
-import { EditorView, keymap,lineNumbers } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, keymap,lineNumbers, MatchDecorator, type ViewUpdate, ViewPlugin } from '@codemirror/view';
 import { useEffect, useRef } from 'react';
+
+const stepRefMatcher = new MatchDecorator({
+  regexp: /\{\{#\d+\}\}/g,
+  decoration: Decoration.mark({ class: 'cm-step-ref' }),
+});
+
+const stepRefHighlighter = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = stepRefMatcher.createDeco(view);
+    }
+    update(update: ViewUpdate) {
+      this.decorations = stepRefMatcher.updateDeco(update, this.decorations);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
 
 interface ScriptEditorProps {
   value: string;
   onChange: (value: string) => void;
   language: 'SQL' | 'PYTHON';
   readOnly?: boolean;
+  insertTextRef?: React.MutableRefObject<((text: string) => void) | null>;
 }
 
-export default function ScriptEditor({ value, onChange, language, readOnly = false }: ScriptEditorProps) {
+export default function ScriptEditor({ value, onChange, language, readOnly = false, insertTextRef }: ScriptEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const languageCompartment = useRef(new Compartment());
@@ -41,6 +60,7 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
           EditorView.editable.of(!readOnly),
           EditorState.readOnly.of(!!readOnly),
         ]),
+        stepRefHighlighter,
         EditorView.updateListener.of((update) => {
           if (!readOnly && update.docChanged) {
             onChangeRef.current(update.state.doc.toString());
@@ -50,6 +70,12 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
           '&': { minHeight: '200px', height: '100%' },
           '.cm-scroller': { overflow: 'auto' },
           '.cm-content': { fontFamily: 'monospace', fontSize: '13px' },
+          '.cm-step-ref': {
+            background: 'rgba(124, 58, 237, 0.15)',
+            borderRadius: '3px',
+            padding: '1px 2px',
+            fontWeight: '600',
+          },
         }),
       ],
     });
@@ -63,6 +89,21 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Bind insertText function to ref
+  useEffect(() => {
+    if (!insertTextRef) return;
+    insertTextRef.current = (text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const cursor = view.state.selection.main.head;
+      view.dispatch({ changes: { from: cursor, insert: text } });
+      view.focus();
+    };
+    return () => {
+      if (insertTextRef) insertTextRef.current = null;
+    };
+  }, [insertTextRef]);
 
   // Reconfigure language when it changes
   useEffect(() => {

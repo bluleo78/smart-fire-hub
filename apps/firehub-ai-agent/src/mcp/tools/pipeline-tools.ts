@@ -48,7 +48,7 @@ export function registerPipelineTools(
               scriptContent: z
                 .string()
                 .optional()
-                .describe('SQL 또는 Python 스크립트 (API_CALL, AI_CLASSIFY은 불필요). SQL 스텝에서 SELECT 문을 작성하면 결과가 자동으로 출력 데이터셋에 적재됨 (INSERT INTO 불필요)'),
+                .describe('SQL 또는 Python 스크립트 (API_CALL, AI_CLASSIFY은 불필요). SQL 스텝에서 SELECT 문을 작성하면 결과가 자동으로 출력 데이터셋에 적재됨 (INSERT INTO 불필요). 다른 스텝 출력을 {{#번호}}로 참조 가능 (예: SELECT * FROM {{#1}}). 명시적 데이터셋은 data."tableName" 사용'),
               outputDatasetId: z.number().optional().describe('출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)'),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z
@@ -168,7 +168,7 @@ export function registerPipelineTools(
               name: z.string().describe('스텝 이름'),
               description: z.string().optional().describe('스텝 설명'),
               scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY']).describe('스텝 유형'),
-              scriptContent: z.string().optional().describe('스크립트'),
+              scriptContent: z.string().optional().describe('SQL 또는 Python 스크립트. SQL 스텝에서 다른 스텝 출력을 {{#번호}}로 참조 가능 (예: SELECT * FROM {{#1}}). 명시적 데이터셋은 data."tableName" 사용'),
               outputDatasetId: z.number().optional().describe('출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)'),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z.array(z.string()).optional().describe('의존 스텝 이름 목록'),

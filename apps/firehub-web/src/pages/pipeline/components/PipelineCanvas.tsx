@@ -48,7 +48,7 @@ export function PipelineCanvas({
   }, [state.steps]);
 
   const nodes = useMemo<StepNodeType[]>(() =>
-    state.steps.map((step) => ({
+    state.steps.map((step, index) => ({
       id: step.tempId,
       type: 'step',
       position: step.position,
@@ -56,6 +56,7 @@ export function PipelineCanvas({
         label: step.name || '(이름 없음)',
         description: step.description || undefined,
         scriptType: step.scriptType,
+        stepNumber: index + 1,
         isSelected: step.tempId === state.selectedStepId,
         hasError: state.validationErrors.some((e) => e.stepTempId === step.tempId),
         hasOutgoingEdge: outgoingSet.has(step.tempId),

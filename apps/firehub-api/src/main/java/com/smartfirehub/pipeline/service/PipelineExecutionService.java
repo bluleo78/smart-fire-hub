@@ -22,6 +22,8 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -417,6 +419,7 @@ public class PipelineExecutionService {
       String executionLog;
       if ("SQL".equals(step.scriptType())) {
         String sql = step.scriptContent().trim();
+        sql = resolveStepReferences(sql, pipelineId, step.stepOrder());
         boolean isSelect = isSelectStatement(sql);
 
         // Auto-create temp dataset when SELECT and no outputDatasetId
@@ -799,6 +802,64 @@ public class PipelineExecutionService {
           .forEach(columns::add);
     }
     return columns;
+  }
+
+  private String resolveStepReferences(String sql, Long pipelineId, int currentStepIndex) {
+    Pattern pattern = Pattern.compile("\\{\\{#(\\d+)\\}\\}");
+    Matcher matcher = pattern.matcher(sql);
+    if (!matcher.find()) {
+      return sql;
+    }
+
+    List<PipelineStepResponse> allSteps = stepRepository.findByPipelineId(pipelineId);
+
+    // Reset matcher to start from beginning
+    matcher.reset();
+    StringBuffer result = new StringBuffer();
+    while (matcher.find()) {
+      int stepNumber = Integer.parseInt(matcher.group(1)); // 1-based
+      int stepIndex = stepNumber - 1; // 0-based
+
+      if (stepIndex < 0 || stepIndex >= allSteps.size()) {
+        throw new ScriptExecutionException(
+            "{{#" + stepNumber + "}} 참조 실패: 스텝 번호 " + stepNumber + "이 존재하지 않습니다");
+      }
+
+      if (stepIndex == currentStepIndex) {
+        throw new ScriptExecutionException(
+            "{{#" + stepNumber + "}} 참조 실패: 자기 자신을 참조할 수 없습니다");
+      }
+
+      PipelineStepResponse refStep = allSteps.get(stepIndex);
+      Long datasetId = refStep.outputDatasetId();
+
+      if (datasetId == null) {
+        datasetId =
+            datasetRepository
+                .findBySourcePipelineStepId(refStep.id())
+                .orElseThrow(
+                    () ->
+                        new ScriptExecutionException(
+                            "{{#"
+                                + stepNumber
+                                + "}} 참조 실패: 스텝 '"
+                                + refStep.name()
+                                + "'의 출력 데이터셋이 아직 생성되지 않았습니다"));
+      }
+
+      final Long resolvedDatasetId = datasetId;
+      String tableName =
+          datasetRepository
+              .findTableNameById(resolvedDatasetId)
+              .orElseThrow(
+                  () ->
+                      new ScriptExecutionException(
+                          "{{#" + stepNumber + "}} 참조 실패: 데이터셋 테이블을 찾을 수 없습니다"));
+
+      matcher.appendReplacement(result, Matcher.quoteReplacement("data.\"" + tableName + "\""));
+    }
+    matcher.appendTail(result);
+    return result.toString();
   }
 
   private boolean isSelectStatement(String sql) {

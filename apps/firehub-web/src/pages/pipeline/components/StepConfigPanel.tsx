@@ -1,5 +1,5 @@
 import { Trash2,X } from 'lucide-react';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useRef } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
@@ -56,6 +56,8 @@ export default function StepConfigPanel({
   const step = state.selectedStepId
     ? state.steps.find((s) => s.tempId === state.selectedStepId) ?? null
     : null;
+  const stepIndex = step ? state.steps.findIndex((s) => s.tempId === step.tempId) : -1;
+  const stepNumber = stepIndex + 1;
 
   if (!step) {
     return (
@@ -161,11 +163,17 @@ export default function StepConfigPanel({
   const scriptContentError = getFieldError('scriptContent');
   const outputDatasetIdError = getFieldError('outputDatasetId');
 
+  const insertTextRef = useRef<((text: string) => void) | null>(null);
+
+  const otherSteps = state.steps
+    .map((s, i) => ({ step: s, number: i + 1 }))
+    .filter(({ step: s }) => s.tempId !== step.tempId);
+
   return (
     <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-        <span className="font-medium text-sm truncate">스텝: {step.name || '(이름 없음)'}</span>
+        <span className="font-medium text-sm truncate">스텝 #{stepNumber}: {step.name || '(이름 없음)'}</span>
         <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleClose}>
           <X className="h-4 w-4" />
         </Button>
@@ -261,12 +269,35 @@ export default function StepConfigPanel({
               <Separator />
               <div className="space-y-1.5">
                 <Label>스크립트</Label>
+                {otherSteps.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground shrink-0">스텝 참조:</span>
+                      {otherSteps.map(({ step: s, number }) => (
+                        <button
+                          key={s.tempId}
+                          type="button"
+                          onClick={() => insertTextRef.current?.(`{{#${number}}}`)}
+                          className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-semibold border transition-colors hover:bg-accent"
+                          style={{ background: 'rgba(124,58,237,0.08)', borderColor: 'rgba(124,58,237,0.3)', color: 'rgb(109,40,217)' }}
+                          title={`클릭하여 {{#${number}}} 삽입`}
+                        >
+                          {`{{#${number}}}`} {s.name || '(이름 없음)'}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {'{{#N}}은 해당 스텝의 출력 데이터셋으로 치환됩니다. 명시적 데이터셋은 data."tableName" 형식을 사용하세요.'}
+                    </p>
+                  </div>
+                )}
                 <Suspense fallback={<Skeleton className="h-[200px]" />}>
                   <ScriptEditor
                     value={step.scriptContent}
                     onChange={(value) => handleUpdateStep({ scriptContent: value })}
                     language={step.scriptType}
                     readOnly={readOnly}
+                    insertTextRef={insertTextRef}
                   />
                 </Suspense>
                 {scriptContentError && (
