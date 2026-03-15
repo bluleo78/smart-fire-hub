@@ -124,11 +124,7 @@ public class DataTableRowService {
       Map<String, Object> row = new HashMap<>();
       for (int i = 0; i < record.size(); i++) {
         String fieldName = record.field(i).getName();
-        if ("id".equals(fieldName)) {
-          row.put("_id", record.get(i));
-        } else {
-          row.put(fieldName, record.get(i));
-        }
+        row.put(fieldName, record.get(i));
       }
       rows.add(row);
     }
@@ -298,11 +294,7 @@ public class DataTableRowService {
       Map<String, Object> row = new HashMap<>();
       for (int i = 0; i < record.size(); i++) {
         String fieldName = record.field(i).getName();
-        if ("id".equals(fieldName)) {
-          row.put("_id", record.get(i));
-        } else {
-          row.put(fieldName, record.get(i));
-        }
+        row.put(fieldName, record.get(i));
       }
       rows.add(row);
     }

@@ -40,23 +40,23 @@ public class AiAgentClient {
 
   public record ClassifyRequest(
       List<Map<String, Object>> rows,
-      List<String> labels,
-      String promptTemplate,
-      String promptVersion) {}
+      String prompt,
+      List<Map<String, String>> outputColumns // [{name, type}]
+      ) {}
 
-  public record ClassifyRowResult(String rowId, String label, double confidence, String reason) {}
+  public record ClassifyRowResult(
+      Map<String, Object> values // dynamic column values; includes source_id
+      ) {}
 
-  public record ClassifyResponse(
-      List<ClassifyRowResult> results, int cached, int processed, String model) {}
+  public record ClassifyResponse(List<ClassifyRowResult> results, int processed, String model) {}
 
   public ClassifyResponse classify(ClassifyRequest request, Long userId) {
     try {
       Map<String, Object> body =
           Map.of(
               "rows", request.rows(),
-              "labels", request.labels(),
-              "promptTemplate", request.promptTemplate(),
-              "promptVersion", request.promptVersion());
+              "prompt", request.prompt(),
+              "outputColumns", request.outputColumns());
 
       String responseBody =
           webClient
@@ -77,22 +77,12 @@ public class AiAgentClient {
       List<Map<String, Object>> rawResults =
           objectMapper.convertValue(responseMap.get("results"), new TypeReference<>() {});
 
-      List<ClassifyRowResult> results =
-          rawResults.stream()
-              .map(
-                  r ->
-                      new ClassifyRowResult(
-                          (String) r.get("rowId"),
-                          (String) r.get("label"),
-                          r.get("confidence") instanceof Number n ? n.doubleValue() : 0.0,
-                          (String) r.get("reason")))
-              .toList();
+      List<ClassifyRowResult> results = rawResults.stream().map(ClassifyRowResult::new).toList();
 
-      int cached = responseMap.get("cached") instanceof Number n ? n.intValue() : 0;
       int processed = responseMap.get("processed") instanceof Number n ? n.intValue() : 0;
       String model = (String) responseMap.getOrDefault("model", "unknown");
 
-      return new ClassifyResponse(results, cached, processed, model);
+      return new ClassifyResponse(results, processed, model);
 
     } catch (WebClientResponseException e) {
       throw new RuntimeException(

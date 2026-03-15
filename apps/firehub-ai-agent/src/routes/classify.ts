@@ -8,16 +8,15 @@ const router = Router();
 // 2mb body limit for batch requests (up to 100 rows with long text)
 const jsonParser = express.json({ limit: '2mb' });
 
-const classifyRowSchema = z.object({
-  rowId: z.string().min(1),
-  text: z.string(),
+const outputColumnSchema = z.object({
+  name: z.string().min(1),
+  type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']),
 });
 
 const classifyRequestSchema = z.object({
-  rows: z.array(classifyRowSchema).min(1, 'rows must not be empty'),
-  labels: z.array(z.string().min(1)).min(2, 'at least 2 labels are required'),
-  promptTemplate: z.string().min(1),
-  promptVersion: z.string().min(1),
+  rows: z.array(z.record(z.string(), z.unknown())).min(1, 'rows must not be empty'),
+  prompt: z.string().min(1),
+  outputColumns: z.array(outputColumnSchema).min(1, 'outputColumns must not be empty'),
 });
 
 router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Response) => {
@@ -30,7 +29,7 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
     return;
   }
 
-  const { rows, labels, promptTemplate, promptVersion } = parseResult.data;
+  const { rows, prompt, outputColumns } = parseResult.data;
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
@@ -38,7 +37,7 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
 
   try {
     const result = await classifyBatch(
-      { rows, labels, promptTemplate, promptVersion },
+      { rows, prompt, outputColumns },
       apiBaseUrl,
       internalToken,
       userId,

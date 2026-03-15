@@ -2,9 +2,8 @@ package com.smartfirehub.pipeline.service.executor;
 
 import static org.jooq.impl.DSL.*;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.dataset.dto.DatasetColumnResponse;
-import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -13,16 +12,15 @@ import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.JSONB;
 import org.jooq.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,22 +31,16 @@ public class AiClassifyExecutor {
 
   private static final Logger log = LoggerFactory.getLogger(AiClassifyExecutor.class);
 
-  private static final String DEFAULT_PROMPT_TEMPLATE =
-      "Classify the following text into one of the allowed labels: {labels}. Text: {text}";
-
   private static final Table<?> AI_INFERENCE_CACHE = table(name("ai_inference_cache"));
   private static final Field<String> CACHE_ROW_HASH = field(name("row_hash"), String.class);
   private static final Field<String> CACHE_PROMPT_VERSION =
       field(name("prompt_version"), String.class);
-  private static final Field<String> CACHE_LABEL = field(name("label"), String.class);
-  private static final Field<Double> CACHE_CONFIDENCE = field(name("confidence"), Double.class);
-  private static final Field<String> CACHE_REASON = field(name("reason"), String.class);
+  private static final Field<JSONB> CACHE_RESULT_JSON = field(name("result_json"), JSONB.class);
 
   private final AiAgentClient aiAgentClient;
   private final DataTableRowService dataTableRowService;
   private final DataTableService dataTableService;
   private final DatasetRepository datasetRepository;
-  private final DatasetColumnRepository columnRepository;
   private final ObjectMapper objectMapper;
   private final DSLContext dsl;
 
@@ -57,14 +49,12 @@ public class AiClassifyExecutor {
       DataTableRowService dataTableRowService,
       DataTableService dataTableService,
       DatasetRepository datasetRepository,
-      DatasetColumnRepository columnRepository,
       ObjectMapper objectMapper,
       DSLContext dsl) {
     this.aiAgentClient = aiAgentClient;
     this.dataTableRowService = dataTableRowService;
     this.dataTableService = dataTableService;
     this.datasetRepository = datasetRepository;
-    this.columnRepository = columnRepository;
     this.objectMapper = objectMapper;
     this.dsl = dsl;
   }
@@ -83,24 +73,19 @@ public class AiClassifyExecutor {
                         "Output dataset table not found for dataset ID: "
                             + step.outputDatasetId()));
 
-    // 0. Validate output dataset columns
-    validateOutputColumns(step.outputDatasetId(), config, step.name());
-
-    // Determine promptTemplate and promptVersion
-    String promptTemplate =
-        config.promptTemplate() != null ? config.promptTemplate() : DEFAULT_PROMPT_TEMPLATE;
-    String promptVersion = sha256Prefix8(promptTemplate);
-
-    // Determine targetPrefix
-    String targetPrefix = config.targetPrefix() != null ? config.targetPrefix() : "ai_";
     int batchSize = config.batchSize() != null ? config.batchSize() : 20;
-    double confidenceThreshold =
-        config.confidenceThreshold() != null ? config.confidenceThreshold() : 0.7;
-    String onLowConfidence =
-        config.onLowConfidence() != null ? config.onLowConfidence() : "MARK_UNKNOWN";
     String onError = config.onError() != null ? config.onError() : "CONTINUE";
 
-    // 1. Fetch all rows from input datasets
+    // prompt_hash = SHA-256(prompt + JSON(outputColumns))[:8] — changes when outputColumns change
+    String promptHash = buildPromptHash(config);
+
+    // outputColumns spec for AI agent: [{name, type}, ...]
+    List<Map<String, String>> outputColumnSpecs =
+        config.outputColumns().stream()
+            .map(col -> Map.of("name", col.name(), "type", col.type()))
+            .toList();
+
+    // 1. Fetch input rows (filtered by inputColumns if specified; id always included)
     List<Map<String, Object>> allInputRows = fetchInputRows(step, config);
 
     if (allInputRows.isEmpty()) {
@@ -108,29 +93,9 @@ public class AiClassifyExecutor {
       return new ExecutionResult(0, "No input rows found");
     }
 
-    // 2. Filter out null/empty sourceColumn
-    List<Map<String, Object>> validRows =
-        allInputRows.stream()
-            .filter(
-                r -> {
-                  Object val = r.get(config.sourceColumn());
-                  return val != null && !val.toString().isBlank();
-                })
-            .toList();
+    log.info("[AI_CLASSIFY] Step '{}': {} input rows", step.name(), allInputRows.size());
 
-    log.info(
-        "[AI_CLASSIFY] Step '{}': {} valid rows out of {} total",
-        step.name(),
-        validRows.size(),
-        allInputRows.size());
-
-    // 3. Process in batches
-    List<Map<String, Object>> outputRows = new ArrayList<>();
-    int totalCached = 0;
-    int totalProcessed = 0;
-    int totalErrors = 0;
-
-    // Determine load strategy
+    // 2. Load strategy
     String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
     boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy);
     String targetTable = outputTableName;
@@ -140,8 +105,18 @@ public class AiClassifyExecutor {
       targetTable = outputTableName + "_tmp";
     }
 
+    // 3. Output column names: source_id + each outputColumn
+    List<String> outputColumnNames = new ArrayList<>();
+    outputColumnNames.add("source_id");
+    config.outputColumns().forEach(col -> outputColumnNames.add(col.name()));
+
+    List<Map<String, Object>> outputRows = new ArrayList<>();
+    int totalProcessed = 0;
+    int totalCached = 0;
+    int totalErrors = 0;
+
     try {
-      List<List<Map<String, Object>>> batches = partition(validRows, batchSize);
+      List<List<Map<String, Object>>> batches = partition(allInputRows, batchSize);
 
       for (int batchIdx = 0; batchIdx < batches.size(); batchIdx++) {
         List<Map<String, Object>> batch = batches.get(batchIdx);
@@ -153,26 +128,11 @@ public class AiClassifyExecutor {
             batch.size());
 
         try {
-          List<Map<String, Object>> batchOutput =
-              processBatch(
-                  batch,
-                  config,
-                  promptTemplate,
-                  promptVersion,
-                  targetPrefix,
-                  confidenceThreshold,
-                  onLowConfidence,
-                  userId);
-
-          totalCached +=
-              (int) batchOutput.stream().filter(r -> Boolean.TRUE.equals(r.get("_cached"))).count();
-          totalProcessed +=
-              (int)
-                  batchOutput.stream().filter(r -> !Boolean.TRUE.equals(r.get("_cached"))).count();
-
-          // Remove internal _cached flag before inserting
-          batchOutput.forEach(r -> r.remove("_cached"));
-          outputRows.addAll(batchOutput);
+          BatchResult batchResult =
+              processBatch(batch, config, promptHash, outputColumnSpecs, userId);
+          totalCached += batchResult.cached();
+          totalProcessed += batchResult.processed();
+          outputRows.addAll(batchResult.rows());
 
         } catch (Exception e) {
           totalErrors++;
@@ -181,27 +141,20 @@ public class AiClassifyExecutor {
               step.name(),
               batchIdx + 1,
               e.getMessage());
+
           if ("FAIL_STEP".equals(onError)) {
             throw new RuntimeException(
                 "AI_CLASSIFY batch " + (batchIdx + 1) + " failed: " + e.getMessage(), e);
           } else if ("RETRY_BATCH".equals(onError)) {
-            // Retry once with exponential backoff
             boolean retrySuccess = false;
             for (int retry = 1; retry <= 3; retry++) {
               try {
                 Thread.sleep((long) Math.pow(2, retry) * 1000);
-                List<Map<String, Object>> batchOutput =
-                    processBatch(
-                        batch,
-                        config,
-                        promptTemplate,
-                        promptVersion,
-                        targetPrefix,
-                        confidenceThreshold,
-                        onLowConfidence,
-                        userId);
-                batchOutput.forEach(r -> r.remove("_cached"));
-                outputRows.addAll(batchOutput);
+                BatchResult batchResult =
+                    processBatch(batch, config, promptHash, outputColumnSpecs, userId);
+                totalCached += batchResult.cached();
+                totalProcessed += batchResult.processed();
+                outputRows.addAll(batchResult.rows());
                 retrySuccess = true;
                 break;
               } catch (Exception retryEx) {
@@ -212,20 +165,13 @@ public class AiClassifyExecutor {
               log.error("[AI_CLASSIFY] All retries exhausted for batch {}", batchIdx + 1);
             }
           }
-          // CONTINUE: skip this batch
+          // CONTINUE: skip batch
         }
       }
 
-      // 4. Insert all output rows into target table
+      // 4. Insert all output rows
       if (!outputRows.isEmpty()) {
-        List<String> outputColumns =
-            List.of(
-                config.keyColumn(),
-                targetPrefix + "label",
-                targetPrefix + "confidence",
-                targetPrefix + "reason",
-                targetPrefix + "classified_at");
-        dataTableRowService.insertBatch(targetTable, outputColumns, outputRows);
+        dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows);
       }
 
       if (isReplace) {
@@ -252,39 +198,35 @@ public class AiClassifyExecutor {
     return new ExecutionResult(outputRows.size(), executionLog);
   }
 
-  private List<Map<String, Object>> processBatch(
+  private record BatchResult(List<Map<String, Object>> rows, int cached, int processed) {}
+
+  private BatchResult processBatch(
       List<Map<String, Object>> batch,
       AiClassifyConfig config,
-      String promptTemplate,
-      String promptVersion,
-      String targetPrefix,
-      double confidenceThreshold,
-      String onLowConfidence,
+      String promptHash,
+      List<Map<String, String>> outputColumnSpecs,
       Long userId) {
 
-    // Check cache for each row
     List<Map<String, Object>> cacheHits = new ArrayList<>();
     List<Map<String, Object>> cacheMissRows = new ArrayList<>();
 
     for (Map<String, Object> row : batch) {
-      String text = String.valueOf(row.get(config.sourceColumn()));
-      String rowHash = sha256(text + promptVersion);
+      String rowJson = toJson(row);
+      String rowHash = sha256(rowJson + promptHash);
 
       var cached =
-          dsl.select(CACHE_LABEL, CACHE_CONFIDENCE, CACHE_REASON)
+          dsl.select(CACHE_RESULT_JSON)
               .from(AI_INFERENCE_CACHE)
               .where(CACHE_ROW_HASH.eq(rowHash))
-              .and(CACHE_PROMPT_VERSION.eq(promptVersion))
+              .and(CACHE_PROMPT_VERSION.eq(promptHash))
               .fetchOne();
 
-      if (cached != null) {
-        Map<String, Object> outputRow = new HashMap<>();
-        outputRow.put(config.keyColumn(), row.get(config.keyColumn()));
-        outputRow.put(targetPrefix + "label", cached.get(CACHE_LABEL));
-        outputRow.put(targetPrefix + "confidence", cached.get(CACHE_CONFIDENCE));
-        outputRow.put(targetPrefix + "reason", cached.get(CACHE_REASON));
-        outputRow.put(targetPrefix + "classified_at", LocalDateTime.now());
-        outputRow.put("_cached", true);
+      if (cached != null && cached.get(CACHE_RESULT_JSON) != null) {
+        Map<String, Object> cachedValues = fromJson(cached.get(CACHE_RESULT_JSON).data());
+        Map<String, Object> outputRow = new HashMap<>(cachedValues);
+        if (!outputRow.containsKey("source_id") && row.containsKey("id")) {
+          outputRow.put("source_id", row.get("id"));
+        }
         cacheHits.add(outputRow);
       } else {
         Map<String, Object> missRow = new HashMap<>(row);
@@ -296,67 +238,53 @@ public class AiClassifyExecutor {
     List<Map<String, Object>> results = new ArrayList<>(cacheHits);
 
     if (!cacheMissRows.isEmpty()) {
-      // Build classify request
+      // Strip internal tracking keys before sending to AI agent
       List<Map<String, Object>> requestRows =
           cacheMissRows.stream()
               .map(
                   r -> {
-                    Object keyVal = r.get(config.keyColumn());
-                    String rowId = keyVal != null ? String.valueOf(keyVal) : "";
-                    return Map.<String, Object>of(
-                        "rowId", rowId, "text", String.valueOf(r.get(config.sourceColumn())));
+                    Map<String, Object> clean = new HashMap<>(r);
+                    clean.remove("_rowHash");
+                    return clean;
                   })
               .toList();
 
       AiAgentClient.ClassifyRequest classifyRequest =
-          new AiAgentClient.ClassifyRequest(
-              requestRows, config.labels(), promptTemplate, promptVersion);
+          new AiAgentClient.ClassifyRequest(requestRows, config.prompt(), outputColumnSpecs);
 
       AiAgentClient.ClassifyResponse response = aiAgentClient.classify(classifyRequest, userId);
 
-      // Map results by rowId
-      Map<String, AiAgentClient.ClassifyRowResult> resultByRowId =
+      // Map results by source_id (as String for type-safe matching: Long vs Integer)
+      Map<String, AiAgentClient.ClassifyRowResult> resultBySourceId =
           response.results().stream()
-              .collect(Collectors.toMap(AiAgentClient.ClassifyRowResult::rowId, r -> r));
+              .filter(r -> r.values().containsKey("source_id"))
+              .collect(
+                  Collectors.toMap(
+                      r -> String.valueOf(r.values().get("source_id")), r -> r, (a, b) -> a));
 
       for (Map<String, Object> missRow : cacheMissRows) {
-        String rowId = String.valueOf(missRow.get(config.keyColumn()));
         String rowHash = (String) missRow.get("_rowHash");
-        AiAgentClient.ClassifyRowResult classifyResult = resultByRowId.get(rowId);
+        Object sourceId = missRow.get("id");
+        AiAgentClient.ClassifyRowResult classifyResult =
+            sourceId != null ? resultBySourceId.get(String.valueOf(sourceId)) : null;
 
         if (classifyResult == null) {
-          log.warn("[AI_CLASSIFY] No result for rowId {}", rowId);
+          log.warn("[AI_CLASSIFY] No result for source_id {}", sourceId);
           continue;
         }
 
-        String label = classifyResult.label();
-        double confidence = classifyResult.confidence();
-
-        // Apply low-confidence policy
-        if (confidence < confidenceThreshold) {
-          switch (onLowConfidence) {
-            case "MARK_UNKNOWN" -> label = "UNKNOWN";
-            case "FAIL_STEP" ->
-                throw new RuntimeException(
-                    "Low confidence "
-                        + confidence
-                        + " for rowId "
-                        + rowId
-                        + " (threshold: "
-                        + confidenceThreshold
-                        + ")");
-              // KEEP_BEST_LABEL: keep as-is
-          }
+        Map<String, Object> outputRow = new HashMap<>(classifyResult.values());
+        if (!outputRow.containsKey("source_id") && sourceId != null) {
+          outputRow.put("source_id", sourceId);
         }
 
         // Save to cache
         try {
+          String resultJson = toJson(outputRow);
           dsl.insertInto(AI_INFERENCE_CACHE)
               .set(CACHE_ROW_HASH, rowHash)
-              .set(CACHE_PROMPT_VERSION, promptVersion)
-              .set(CACHE_LABEL, label)
-              .set(CACHE_CONFIDENCE, confidence)
-              .set(CACHE_REASON, classifyResult.reason())
+              .set(CACHE_PROMPT_VERSION, promptHash)
+              .set(CACHE_RESULT_JSON, JSONB.valueOf(resultJson))
               .onConflictDoNothing()
               .execute();
         } catch (Exception e) {
@@ -364,18 +292,11 @@ public class AiClassifyExecutor {
               "[AI_CLASSIFY] Failed to save cache for rowHash {}: {}", rowHash, e.getMessage());
         }
 
-        Map<String, Object> outputRow = new HashMap<>();
-        outputRow.put(config.keyColumn(), missRow.get(config.keyColumn()));
-        outputRow.put(targetPrefix + "label", label);
-        outputRow.put(targetPrefix + "confidence", confidence);
-        outputRow.put(targetPrefix + "reason", classifyResult.reason());
-        outputRow.put(targetPrefix + "classified_at", LocalDateTime.now());
-        outputRow.put("_cached", false);
         results.add(outputRow);
       }
     }
 
-    return results;
+    return new BatchResult(results, cacheHits.size(), cacheMissRows.size());
   }
 
   private List<Map<String, Object>> fetchInputRows(
@@ -386,7 +307,13 @@ public class AiClassifyExecutor {
       return allRows;
     }
 
-    List<String> columnsToFetch = List.of(config.keyColumn(), config.sourceColumn());
+    // queryData always includes "id" (as "_id" in result Map), no need to add it
+    List<String> columnsToFetch = null;
+    if (config.inputColumns() != null && !config.inputColumns().isEmpty()) {
+      List<String> cols = new ArrayList<>(config.inputColumns());
+      cols.remove("id"); // queryData already adds id automatically
+      columnsToFetch = cols;
+    }
 
     for (Long datasetId : step.inputDatasetIds()) {
       String tableName = datasetRepository.findTableNameById(datasetId).orElse(null);
@@ -406,31 +333,29 @@ public class AiClassifyExecutor {
     return allRows;
   }
 
-  private void validateOutputColumns(
-      Long outputDatasetId, AiClassifyConfig config, String stepName) {
-    List<DatasetColumnResponse> cols = columnRepository.findByDatasetId(outputDatasetId);
-    Set<String> colNames =
-        cols.stream().map(DatasetColumnResponse::columnName).collect(Collectors.toSet());
+  private String buildPromptHash(AiClassifyConfig config) {
+    try {
+      String outputColumnsJson = objectMapper.writeValueAsString(config.outputColumns());
+      return sha256Prefix8(config.prompt() + outputColumnsJson);
+    } catch (JsonProcessingException e) {
+      return sha256Prefix8(config.prompt());
+    }
+  }
 
-    String targetPrefix = config.targetPrefix() != null ? config.targetPrefix() : "ai_";
-    List<String> required =
-        List.of(
-            config.keyColumn(),
-            targetPrefix + "label",
-            targetPrefix + "confidence",
-            targetPrefix + "reason",
-            targetPrefix + "classified_at");
+  private String toJson(Map<String, Object> map) {
+    try {
+      return objectMapper.writeValueAsString(map);
+    } catch (JsonProcessingException e) {
+      return "{}";
+    }
+  }
 
-    for (String col : required) {
-      if (!colNames.contains(col)) {
-        throw new RuntimeException(
-            "AI_CLASSIFY step '"
-                + stepName
-                + "': Output dataset is missing required column '"
-                + col
-                + "'. Please create the output dataset with columns: "
-                + required);
-      }
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> fromJson(String json) {
+    try {
+      return objectMapper.readValue(json, Map.class);
+    } catch (JsonProcessingException e) {
+      return new HashMap<>();
     }
   }
 

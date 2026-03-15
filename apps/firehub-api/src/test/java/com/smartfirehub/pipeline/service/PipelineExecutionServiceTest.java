@@ -638,7 +638,12 @@ class PipelineExecutionServiceTest {
     Long tempDatasetId = 421L;
 
     AiClassifyConfig aiConfig =
-        new AiClassifyConfig("text", "id", List.of("A", "B"), null, "ai_", null, null, null, null);
+        new AiClassifyConfig(
+            "Classify into A or B",
+            List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+            List.of("text"),
+            null,
+            null);
 
     PipelineStepResponse aiStep =
         new PipelineStepResponse(

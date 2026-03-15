@@ -113,17 +113,13 @@ export function registerPipelineTools(
                 .describe('API_CALL 스텝 설정'),
               aiConfig: z
                 .object({
-                  sourceColumn: z.string().describe('입력 텍스트 컬럼명'),
-                  keyColumn: z.string().describe('출력에 포함할 키 컬럼명'),
-                  labels: z.array(z.string()).min(2).describe('분류 라벨 목록 (최소 2개)'),
-                  promptTemplate: z.string().optional().describe('프롬프트 템플릿 ({labels}, {text} 플레이스홀더)'),
-                  targetPrefix: z.string().optional().describe('결과 컬럼명 접두사 (기본: ai_)'),
+                  prompt: z.string().min(1).describe('AI 처리 프롬프트. 입력 데이터의 어떤 컬럼을 읽고 어떤 결과를 생성할지 기술'),
+                  outputColumns: z.array(z.object({
+                    name: z.string().min(1).describe('출력 컬럼명'),
+                    type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
+                  })).min(1).describe('출력 컬럼 스키마. source_id(INTEGER)는 자동 추가됨'),
+                  inputColumns: z.array(z.string()).optional().describe('LLM에 전달할 입력 컬럼 필터 (미지정 시 전체 컬럼 전달, 토큰 비용 절감용)'),
                   batchSize: z.number().min(1).max(100).optional().describe('배치 크기 (1~100, 기본: 20)'),
-                  confidenceThreshold: z.number().min(0).max(1).optional().describe('신뢰도 임계값 (0.0~1.0, 기본: 0.7)'),
-                  onLowConfidence: z
-                    .enum(['MARK_UNKNOWN', 'KEEP_BEST_LABEL', 'FAIL_STEP'])
-                    .optional()
-                    .describe('low-confidence 처리 방식 (기본: MARK_UNKNOWN)'),
                   onError: z
                     .enum(['CONTINUE', 'RETRY_BATCH', 'FAIL_STEP'])
                     .optional()
@@ -180,17 +176,13 @@ export function registerPipelineTools(
               apiConfig: z.record(z.string(), z.unknown()).optional().describe('API_CALL 설정'),
               aiConfig: z
                 .object({
-                  sourceColumn: z.string().describe('입력 텍스트 컬럼명'),
-                  keyColumn: z.string().describe('출력에 포함할 키 컬럼명'),
-                  labels: z.array(z.string()).min(2).describe('분류 라벨 목록 (최소 2개)'),
-                  promptTemplate: z.string().optional().describe('프롬프트 템플릿'),
-                  targetPrefix: z.string().optional().describe('결과 컬럼명 접두사'),
+                  prompt: z.string().min(1).describe('AI 처리 프롬프트'),
+                  outputColumns: z.array(z.object({
+                    name: z.string().min(1).describe('출력 컬럼명'),
+                    type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
+                  })).min(1).describe('출력 컬럼 스키마. source_id(INTEGER)는 자동 추가됨'),
+                  inputColumns: z.array(z.string()).optional().describe('LLM에 전달할 입력 컬럼 필터 (미지정 시 전체)'),
                   batchSize: z.number().min(1).max(100).optional().describe('배치 크기'),
-                  confidenceThreshold: z.number().min(0).max(1).optional().describe('신뢰도 임계값'),
-                  onLowConfidence: z
-                    .enum(['MARK_UNKNOWN', 'KEEP_BEST_LABEL', 'FAIL_STEP'])
-                    .optional()
-                    .describe('low-confidence 처리 방식'),
                   onError: z
                     .enum(['CONTINUE', 'RETRY_BATCH', 'FAIL_STEP'])
                     .optional()

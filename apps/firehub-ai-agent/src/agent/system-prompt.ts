@@ -105,7 +105,10 @@ get_dataset으로 GEOMETRY 컬럼 유무를 먼저 확인하세요.
 - dependsOnStepNames로 DAG 의존성을 설정합니다 (순환 의존성 불가)
 - loadStrategy: REPLACE (기존 데이터 교체, 기본값) 또는 APPEND (추가)
 - API_CALL 스텝은 apiConnectionId로 저장된 API 연결을 참조하거나, apiConfig.inlineAuth로 직접 인증 정보를 제공할 수 있습니다
-- AI_CLASSIFY 스텝: aiConfig에 sourceColumn(텍스트 컬럼), keyColumn(키 컬럼), labels(분류 라벨 2개 이상) 필수. 감성 분석 시 labels를 ["positive","neutral","negative"] 등으로 설정
+- AI_CLASSIFY 스텝: aiConfig에 prompt(처리 지시)와 outputColumns(결과 스키마) 필수. prompt에 입력 데이터의 어떤 컬럼을 읽고 어떤 결과를 생성할지 자유롭게 기술. outputColumns는 [{name, type}] 배열로 결과 컬럼 스키마 정의 (type: TEXT/INTEGER/DECIMAL/BOOLEAN/DATE/TIMESTAMP). source_id(INTEGER)는 입력 row 추적용으로 자동 추가됨. inputColumns로 LLM에 전달할 컬럼 필터링 가능 (미지정 시 전체 전달).
+  예시 — 감성 분석: prompt="각 행의 review 컬럼을 읽고 감성을 분류하세요", outputColumns=[{name:"label",type:"TEXT"},{name:"confidence",type:"DECIMAL"},{name:"reason",type:"TEXT"}]
+  예시 — 키워드 추출: prompt="각 행의 content에서 핵심 키워드 3개를 추출하세요", outputColumns=[{name:"keywords",type:"TEXT"}]
+  예시 — 요약: prompt="각 행의 article을 2문장으로 요약하세요", outputColumns=[{name:"summary",type:"TEXT"}]
 - 파이프라인 수정 시 steps를 제공하면 기존 스텝이 전체 교체됩니다
 
 트리거 생성 시 참고사항:

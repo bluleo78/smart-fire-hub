@@ -1,41 +1,29 @@
 import axios from 'axios';
 
-export interface ClassifyRow {
-  rowId: string;
-  text: string;
-}
-
-export interface ClassifyResult {
-  rowId: string;
-  label: string;
-  confidence: number;
-  reason?: string;
-  error?: string;
+export interface OutputColumn {
+  name: string;
+  type: 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP';
 }
 
 export interface ClassifyRequest {
-  rows: ClassifyRow[];
-  labels: string[];
-  promptTemplate: string;
-  promptVersion: string;
+  rows: Record<string, unknown>[];
+  prompt: string;
+  outputColumns: OutputColumn[];
+}
+
+export interface ClassifyRowResult {
+  source_id: number;
+  [key: string]: unknown;
 }
 
 export interface ClassifyResponse {
-  results: ClassifyResult[];
-  cached: number;
+  results: ClassifyRowResult[];
   processed: number;
   model: string;
   usage: {
     promptTokens: number;
     completionTokens: number;
   };
-}
-
-interface LlmClassifyItem {
-  rowId: string;
-  label: string;
-  confidence: number;
-  reason?: string;
 }
 
 interface AnthropicMessage {
@@ -61,7 +49,6 @@ async function getModelAndApiKey(
   let apiKey = process.env.ANTHROPIC_API_KEY || '';
 
   try {
-    // Fetch model from settings
     const settingsResponse = await axios.get(`${apiBaseUrl}/settings`, {
       params: { prefix: 'ai.' },
       headers,
@@ -82,7 +69,6 @@ async function getModelAndApiKey(
 
     model = settings['ai.model'] || settings['ai.default_model'] || model;
 
-    // Fetch decrypted API key from dedicated internal endpoint
     const apiKeyResponse = await axios.get(`${apiBaseUrl}/settings/ai-api-key`, {
       headers,
       timeout: 5000,
@@ -98,37 +84,62 @@ async function getModelAndApiKey(
   return { model, apiKey };
 }
 
-function buildPrompt(rows: ClassifyRow[], labels: string[], promptTemplate: string): string {
-  const labelsStr = labels.join(', ');
-  const rowsText = rows.map((r, i) => `[${i + 1}] rowId="${r.rowId}": ${r.text}`).join('\n');
+function coerceValue(value: unknown, type: OutputColumn['type']): unknown {
+  if (value === null || value === undefined) return null;
 
-  let template = promptTemplate;
-  if (!template.includes('{text}') && !template.includes('{labels}')) {
-    template =
-      'Classify the following text(s) into one of the allowed labels: {labels}.\n\nText(s):\n{text}';
+  switch (type) {
+    case 'TEXT':
+      return String(value);
+    case 'INTEGER': {
+      const n = parseInt(String(value), 10);
+      return isNaN(n) ? null : n;
+    }
+    case 'DECIMAL': {
+      const f = parseFloat(String(value));
+      return isNaN(f) ? null : f;
+    }
+    case 'BOOLEAN':
+      if (typeof value === 'boolean') return value;
+      if (value === 'true' || value === 1) return true;
+      if (value === 'false' || value === 0) return false;
+      return null;
+    case 'DATE':
+    case 'TIMESTAMP':
+      return String(value);
+    default:
+      return value;
   }
-
-  return template.replace('{labels}', labelsStr).replace('{text}', rowsText);
 }
 
-async function callAnthropicBatch(
+async function callAnthropicClassify(
   apiKey: string,
   model: string,
-  rows: ClassifyRow[],
-  labels: string[],
-  promptTemplate: string,
-): Promise<{ items: LlmClassifyItem[]; promptTokens: number; completionTokens: number }> {
-  const userPrompt = buildPrompt(rows, labels, promptTemplate);
-  const labelsStr = JSON.stringify(labels);
+  rows: Record<string, unknown>[],
+  prompt: string,
+  outputColumns: OutputColumn[],
+): Promise<{ items: ClassifyRowResult[]; promptTokens: number; completionTokens: number }> {
+  const outputSchema = outputColumns.map((c) => `"${c.name}" (${c.type})`).join(', ');
+  const columnNames = outputColumns.map((c) => `"${c.name}"`).join(', ');
 
-  const systemPrompt = `You are a text classification assistant. Classify each text item into exactly one of the allowed labels.
+  const systemPrompt = `You are a data processing assistant. Process each input row according to the user's instructions and return structured results.
+
 Always respond with a valid JSON array where each element has:
-- "rowId": the row identifier (string, must match input exactly)
-- "label": one of the allowed labels ${labelsStr}
-- "confidence": a number between 0.0 and 1.0 representing classification confidence
-- "reason": a brief explanation (1-2 sentences)
+- "source_id": the integer value from the row's "id" field (REQUIRED)
+${outputColumns.map((c) => `- "${c.name}": ${c.type} value`).join('\n')}
 
-Return ONLY the JSON array, no other text.`;
+Output schema: source_id (INTEGER), ${outputSchema}
+
+Rules:
+- Return ONLY the JSON array, no other text
+- Each result must have source_id matching the input row's id
+- For INTEGER fields: return integer numbers only
+- For DECIMAL fields: return decimal numbers only
+- For BOOLEAN fields: return true or false only
+- For TEXT/DATE/TIMESTAMP fields: return string values
+- Process every input row — the output array must have the same number of elements as the input
+- Output columns: ${columnNames}`;
+
+  const userMessage = `${prompt}\n\nInput rows (JSON):\n${JSON.stringify(rows, null, 2)}`;
 
   const response = await axios.post<AnthropicMessage>(
     'https://api.anthropic.com/v1/messages',
@@ -136,7 +147,7 @@ Return ONLY the JSON array, no other text.`;
       model,
       max_tokens: 4096,
       system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [{ role: 'user', content: userMessage }],
     },
     {
       headers: {
@@ -176,31 +187,23 @@ Return ONLY the JSON array, no other text.`;
     throw new Error(`LLM response is not an array: ${jsonText.substring(0, 200)}`);
   }
 
-  const items: LlmClassifyItem[] = [];
+  const items: ClassifyRowResult[] = [];
   for (const item of parsed) {
     if (typeof item !== 'object' || item === null) continue;
     const obj = item as Record<string, unknown>;
 
-    const rowId = String(obj.rowId ?? '');
-    const rawLabel = String(obj.label ?? '');
-    const confidence =
-      typeof obj.confidence === 'number'
-        ? obj.confidence
-        : parseFloat(String(obj.confidence ?? '0'));
-    const reason = obj.reason ? String(obj.reason) : undefined;
+    const sourceId =
+      typeof obj.source_id === 'number'
+        ? obj.source_id
+        : parseInt(String(obj.source_id ?? '0'), 10);
 
-    // Validate label is in allowed list (case-insensitive fallback)
-    const validLabel =
-      labels.find((l) => l === rawLabel) ||
-      labels.find((l) => l.toLowerCase() === rawLabel.toLowerCase()) ||
-      labels[0];
+    const result: ClassifyRowResult = { source_id: isNaN(sourceId) ? 0 : sourceId };
 
-    items.push({
-      rowId,
-      label: validLabel,
-      confidence: Math.max(0, Math.min(1, isNaN(confidence) ? 0 : confidence)),
-      reason,
-    });
+    for (const col of outputColumns) {
+      result[col.name] = coerceValue(obj[col.name], col.type);
+    }
+
+    items.push(result);
   }
 
   return { items, promptTokens, completionTokens };
@@ -212,7 +215,7 @@ export async function classifyBatch(
   internalToken: string,
   userId?: number,
 ): Promise<ClassifyResponse> {
-  const { rows, labels, promptTemplate } = request;
+  const { rows, prompt, outputColumns } = request;
 
   const { model, apiKey } = await getModelAndApiKey(apiBaseUrl, internalToken, userId);
 
@@ -222,69 +225,22 @@ export async function classifyBatch(
     );
   }
 
-  const results: ClassifyResult[] = [];
-  let totalPromptTokens = 0;
-  let totalCompletionTokens = 0;
-
-  // Process all rows as a single batch with 30s timeout
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error('Classification batch timeout (30s)')), 30000),
   );
 
-  try {
-    const { items, promptTokens, completionTokens } = await Promise.race([
-      callAnthropicBatch(apiKey, model, rows, labels, promptTemplate),
-      timeoutPromise,
-    ]);
-
-    totalPromptTokens += promptTokens;
-    totalCompletionTokens += completionTokens;
-
-    // Build a map of rowId -> result
-    const resultMap = new Map<string, LlmClassifyItem>();
-    for (const item of items) {
-      resultMap.set(item.rowId, item);
-    }
-
-    // Match results back to input rows
-    for (const row of rows) {
-      const item = resultMap.get(row.rowId);
-      if (item) {
-        results.push({
-          rowId: row.rowId,
-          label: item.label,
-          confidence: item.confidence,
-          reason: item.reason,
-        });
-      } else {
-        results.push({
-          rowId: row.rowId,
-          label: labels[0],
-          confidence: 0,
-          error: 'Row not found in LLM response',
-        });
-      }
-    }
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    for (const row of rows) {
-      results.push({
-        rowId: row.rowId,
-        label: labels[0],
-        confidence: 0,
-        error: errorMsg,
-      });
-    }
-  }
+  const { items, promptTokens, completionTokens } = await Promise.race([
+    callAnthropicClassify(apiKey, model, rows, prompt, outputColumns),
+    timeoutPromise,
+  ]);
 
   return {
-    results,
-    cached: 0,
+    results: items,
     processed: rows.length,
     model,
     usage: {
-      promptTokens: totalPromptTokens,
-      completionTokens: totalCompletionTokens,
+      promptTokens,
+      completionTokens,
     },
   };
 }

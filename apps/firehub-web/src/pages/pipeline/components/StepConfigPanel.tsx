@@ -249,7 +249,7 @@ export default function StepConfigPanel({
               <Separator />
               <Suspense fallback={<Skeleton className="h-[200px]" />}>
                 <AiClassifyStepConfig
-                  aiConfig={step.aiConfig ?? { sourceColumn: '', keyColumn: '', labels: [] }}
+                  aiConfig={step.aiConfig ?? { prompt: '', outputColumns: [] }}
                   inputDatasetIds={step.inputDatasetIds}
                   onChange={(config) => handleUpdateStep({ aiConfig: config })}
                   readOnly={readOnly}

@@ -10,14 +10,10 @@ export interface PipelineResponse {
 }
 
 export interface AiClassifyConfig {
-  sourceColumn: string;
-  keyColumn: string;
-  labels: string[];
-  promptTemplate?: string;
-  targetPrefix?: string;
+  prompt: string;
+  outputColumns: Array<{ name: string; type: string }>;
+  inputColumns?: string[];
   batchSize?: number;
-  confidenceThreshold?: number;
-  onLowConfidence?: 'MARK_UNKNOWN' | 'KEEP_BEST_LABEL' | 'FAIL_STEP';
   onError?: 'CONTINUE' | 'RETRY_BATCH' | 'FAIL_STEP';
 }
 

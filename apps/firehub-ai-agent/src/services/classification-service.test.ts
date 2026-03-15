@@ -21,13 +21,15 @@ describe('classifyBatch', () => {
 
   const validRequest = {
     rows: [
-      { rowId: '1', text: 'This product is amazing!' },
-      { rowId: '2', text: 'Terrible experience.' },
+      { id: 1, name: '홍길동', free_comment: '서비스가 좋았습니다' },
+      { id: 2, name: '김철수', free_comment: '별로였어요' },
     ],
-    labels: ['positive', 'neutral', 'negative'],
-    promptTemplate:
-      'Classify the following text into one of the allowed labels: {labels}. Text: {text}',
-    promptVersion: 'v1',
+    prompt: '각 행의 free_comment를 감성 분류하세요',
+    outputColumns: [
+      { name: 'label', type: 'TEXT' as const },
+      { name: 'confidence', type: 'DECIMAL' as const },
+      { name: 'reason', type: 'TEXT' as const },
+    ],
   };
 
   const anthropicSuccessResponse = {
@@ -36,19 +38,17 @@ describe('classifyBatch', () => {
       {
         type: 'text',
         text: JSON.stringify([
-          { rowId: '1', label: 'positive', confidence: 0.94, reason: 'expresses satisfaction' },
-          { rowId: '2', label: 'negative', confidence: 0.91, reason: 'terrible is negative' },
+          { source_id: 1, label: '긍정', confidence: 0.94, reason: '만족 표현' },
+          { source_id: 2, label: '부정', confidence: 0.91, reason: '불만 표현' },
         ]),
       },
     ],
-    usage: { input_tokens: 150, output_tokens: 80 },
+    usage: { input_tokens: 200, output_tokens: 100 },
   };
 
   it('should classify rows successfully using env API key when settings API fails', async () => {
-    // Settings API fails
     nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
 
-    // Anthropic API succeeds
     nock(ANTHROPIC_API_URL)
       .post('/v1/messages')
       .reply(200, anthropicSuccessResponse);
@@ -56,12 +56,11 @@ describe('classifyBatch', () => {
     const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
 
     expect(result.results).toHaveLength(2);
-    expect(result.results[0]).toMatchObject({ rowId: '1', label: 'positive', confidence: 0.94 });
-    expect(result.results[1]).toMatchObject({ rowId: '2', label: 'negative', confidence: 0.91 });
+    expect(result.results[0]).toMatchObject({ source_id: 1, label: '긍정', confidence: 0.94 });
+    expect(result.results[1]).toMatchObject({ source_id: 2, label: '부정', confidence: 0.91 });
     expect(result.processed).toBe(2);
-    expect(result.cached).toBe(0);
-    expect(result.usage.promptTokens).toBe(150);
-    expect(result.usage.completionTokens).toBe(80);
+    expect(result.usage.promptTokens).toBe(200);
+    expect(result.usage.completionTokens).toBe(100);
   });
 
   it('should use model from settings API when available', async () => {
@@ -87,17 +86,11 @@ describe('classifyBatch', () => {
     expect(result.model).toBe('claude-sonnet-4-6');
   });
 
-  it('should return error results for all rows when Anthropic API fails', async () => {
+  it('should throw when Anthropic API fails', async () => {
     nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
     nock(ANTHROPIC_API_URL).post('/v1/messages').replyWithError('Anthropic API unavailable');
 
-    const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
-
-    expect(result.results).toHaveLength(2);
-    for (const r of result.results) {
-      expect(r).toHaveProperty('error');
-      expect(r.confidence).toBe(0);
-    }
+    await expect(classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN)).rejects.toThrow();
   });
 
   it('should handle LLM response with markdown code blocks', async () => {
@@ -108,10 +101,13 @@ describe('classifyBatch', () => {
       content: [
         {
           type: 'text',
-          text: '```json\n' + JSON.stringify([
-            { rowId: '1', label: 'positive', confidence: 0.9, reason: 'good' },
-            { rowId: '2', label: 'negative', confidence: 0.85, reason: 'bad' },
-          ]) + '\n```',
+          text:
+            '```json\n' +
+            JSON.stringify([
+              { source_id: 1, label: '긍정', confidence: 0.9, reason: '좋음' },
+              { source_id: 2, label: '부정', confidence: 0.85, reason: '나쁨' },
+            ]) +
+            '\n```',
         },
       ],
     };
@@ -120,37 +116,11 @@ describe('classifyBatch', () => {
 
     const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
 
-    expect(result.results[0].label).toBe('positive');
-    expect(result.results[1].label).toBe('negative');
+    expect(result.results[0].label).toBe('긍정');
+    expect(result.results[1].label).toBe('부정');
   });
 
-  it('should handle missing rows in LLM response with error marker', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
-
-    // LLM only returns result for row 1, not row 2
-    nock(ANTHROPIC_API_URL)
-      .post('/v1/messages')
-      .reply(200, {
-        ...anthropicSuccessResponse,
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify([
-              { rowId: '1', label: 'positive', confidence: 0.94, reason: 'good' },
-            ]),
-          },
-        ],
-      });
-
-    const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
-
-    expect(result.results).toHaveLength(2);
-    const row2 = result.results.find((r) => r.rowId === '2');
-    expect(row2).toHaveProperty('error');
-    expect(row2?.confidence).toBe(0);
-  });
-
-  it('should clamp confidence values to 0.0-1.0 range', async () => {
+  it('should apply type coercion: TEXT to string', async () => {
     nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
 
     nock(ANTHROPIC_API_URL)
@@ -161,8 +131,8 @@ describe('classifyBatch', () => {
           {
             type: 'text',
             text: JSON.stringify([
-              { rowId: '1', label: 'positive', confidence: 1.5, reason: 'very good' },
-              { rowId: '2', label: 'negative', confidence: -0.1, reason: 'bad' },
+              { source_id: 1, label: 42, confidence: '0.9', reason: null },
+              { source_id: 2, label: true, confidence: '0.85', reason: 'ok' },
             ]),
           },
         ],
@@ -170,8 +140,73 @@ describe('classifyBatch', () => {
 
     const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
 
-    expect(result.results[0].confidence).toBe(1.0);
-    expect(result.results[1].confidence).toBe(0.0);
+    // label is TEXT → should be string
+    expect(typeof result.results[0].label).toBe('string');
+    expect(result.results[0].label).toBe('42');
+    // confidence is DECIMAL → should be number
+    expect(typeof result.results[0].confidence).toBe('number');
+    expect(result.results[0].confidence).toBe(0.9);
+    // null TEXT → null
+    expect(result.results[0].reason).toBeNull();
+  });
+
+  it('should apply type coercion: INTEGER parsing', async () => {
+    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
+
+    const intRequest = {
+      rows: [{ id: 1, value: '42' }],
+      prompt: 'extract integer',
+      outputColumns: [{ name: 'count', type: 'INTEGER' as const }],
+    };
+
+    nock(ANTHROPIC_API_URL)
+      .post('/v1/messages')
+      .reply(200, {
+        id: 'msg_1',
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify([{ source_id: 1, count: '15' }]),
+          },
+        ],
+        usage: { input_tokens: 50, output_tokens: 20 },
+      });
+
+    const result = await classifyBatch(intRequest, API_BASE_URL, VALID_TOKEN);
+
+    expect(result.results[0].count).toBe(15);
+    expect(typeof result.results[0].count).toBe('number');
+  });
+
+  it('should apply type coercion: BOOLEAN parsing', async () => {
+    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
+
+    const boolRequest = {
+      rows: [{ id: 1, text: 'yes' }, { id: 2, text: 'no' }],
+      prompt: 'classify as true/false',
+      outputColumns: [{ name: 'is_positive', type: 'BOOLEAN' as const }],
+    };
+
+    nock(ANTHROPIC_API_URL)
+      .post('/v1/messages')
+      .reply(200, {
+        id: 'msg_1',
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify([
+              { source_id: 1, is_positive: 'true' },
+              { source_id: 2, is_positive: false },
+            ]),
+          },
+        ],
+        usage: { input_tokens: 50, output_tokens: 20 },
+      });
+
+    const result = await classifyBatch(boolRequest, API_BASE_URL, VALID_TOKEN);
+
+    expect(result.results[0].is_positive).toBe(true);
+    expect(result.results[1].is_positive).toBe(false);
   });
 
   it('should throw when API key is not configured', async () => {
@@ -180,10 +215,9 @@ describe('classifyBatch', () => {
       .get('/settings')
       .query(true)
       .reply(200, [{ key: 'ai.model', value: 'claude-haiku-4-5-20251001' }]);
-    // No api key in settings response
 
-    await expect(
-      classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN),
-    ).rejects.toThrow('API key');
+    nock(API_BASE_URL).get('/settings/ai-api-key').replyWithError('not found');
+
+    await expect(classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN)).rejects.toThrow('API key');
   });
 });

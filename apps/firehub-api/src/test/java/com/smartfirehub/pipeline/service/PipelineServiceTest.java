@@ -310,9 +310,9 @@ class PipelineServiceTest extends IntegrationTestBase {
     // Given
     Map<String, Object> aiConfig =
         Map.of(
-            "sourceColumn", "col1",
-            "keyColumn", "col1",
-            "labels", List.of("positive", "negative"));
+            "prompt", "Classify the sentiment of the text",
+            "outputColumns", List.of(Map.of("name", "sentiment", "type", "TEXT")),
+            "inputColumns", List.of("col1"));
 
     List<PipelineStepRequest> steps =
         List.of(
@@ -340,16 +340,17 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(response.steps()).hasSize(1);
     assertThat(response.steps().get(0).scriptType()).isEqualTo("AI_CLASSIFY");
     assertThat(response.steps().get(0).aiConfig()).isNotNull();
-    assertThat(response.steps().get(0).aiConfig()).containsKey("sourceColumn");
+    assertThat(response.steps().get(0).aiConfig()).containsKey("prompt");
   }
 
   @Test
   void createPipeline_aiClassifyStep_missingOutputDatasetId_throwsException() {
     Map<String, Object> aiConfig =
         Map.of(
-            "sourceColumn", "col1",
-            "keyColumn", "col1",
-            "labels", List.of("positive", "negative"));
+            "prompt",
+            "Classify the sentiment",
+            "outputColumns",
+            List.of(Map.of("name", "sentiment", "type", "TEXT")));
 
     List<PipelineStepRequest> steps =
         List.of(
@@ -398,12 +399,9 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void createPipeline_aiClassifyStep_tooFewLabels_throwsException() {
+  void createPipeline_aiClassifyStep_missingPrompt_throwsException() {
     Map<String, Object> aiConfig =
-        Map.of(
-            "sourceColumn", "col1",
-            "keyColumn", "col1",
-            "labels", List.of("positive")); // only 1 label
+        Map.of("outputColumns", List.of(Map.of("name", "sentiment", "type", "TEXT")));
 
     List<PipelineStepRequest> steps =
         List.of(
@@ -424,19 +422,74 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("labels");
+        .hasMessageContaining("prompt");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_missingOutputColumns_throwsException() {
+    Map<String, Object> aiConfig = Map.of("prompt", "Classify the sentiment");
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
+
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("outputColumn");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_invalidOutputColumnType_throwsException() {
+    Map<String, Object> aiConfig =
+        Map.of(
+            "prompt",
+            "Classify the sentiment",
+            "outputColumns",
+            List.of(Map.of("name", "sentiment", "type", "INVALID_TYPE")));
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
+
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("outputColumn type");
   }
 
   @Test
   void createPipeline_aiClassifyStep_invalidBatchSize_throwsException() {
     Map<String, Object> aiConfig =
         Map.of(
-            "sourceColumn",
-            "col1",
-            "keyColumn",
-            "col1",
-            "labels",
-            List.of("positive", "negative"),
+            "prompt",
+            "Classify the sentiment",
+            "outputColumns",
+            List.of(Map.of("name", "sentiment", "type", "TEXT")),
             "batchSize",
             200); // out of range
 
@@ -463,12 +516,12 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void createPipeline_aiClassifyStep_invalidSourceColumn_throwsException() {
+  void createPipeline_aiClassifyStep_invalidOnError_throwsException() {
     Map<String, Object> aiConfig =
         Map.of(
-            "sourceColumn", "nonexistent_col",
-            "keyColumn", "col1",
-            "labels", List.of("positive", "negative"));
+            "prompt", "Classify the sentiment",
+            "outputColumns", List.of(Map.of("name", "sentiment", "type", "TEXT")),
+            "onError", "INVALID_VALUE");
 
     List<PipelineStepRequest> steps =
         List.of(
@@ -489,6 +542,6 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("sourceColumn");
+        .hasMessageContaining("onError");
   }
 }

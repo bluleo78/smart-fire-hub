@@ -790,13 +790,15 @@ public class PipelineExecutionService {
 
   private List<ColumnInfo> buildAiClassifyColumns(
       com.smartfirehub.pipeline.dto.AiClassifyConfig config) {
-    String prefix = config.targetPrefix() != null ? config.targetPrefix() : "ai_";
-    return List.of(
-        new ColumnInfo(config.keyColumn(), "TEXT"),
-        new ColumnInfo(prefix + "label", "TEXT"),
-        new ColumnInfo(prefix + "confidence", "DECIMAL"),
-        new ColumnInfo(prefix + "reason", "TEXT"),
-        new ColumnInfo(prefix + "classified_at", "TIMESTAMP"));
+    List<ColumnInfo> columns = new ArrayList<>();
+    // source_id is always included first for input row tracking
+    columns.add(new ColumnInfo("source_id", "INTEGER"));
+    if (config.outputColumns() != null) {
+      config.outputColumns().stream()
+          .map(col -> new ColumnInfo(col.name(), col.type()))
+          .forEach(columns::add);
+    }
+    return columns;
   }
 
   private boolean isSelectStatement(String sql) {

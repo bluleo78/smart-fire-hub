@@ -63,29 +63,25 @@ async function makeRequest(
 
 const validBody = {
   rows: [
-    { rowId: '1', text: 'This product is amazing!' },
-    { rowId: '2', text: 'Terrible experience.' },
+    { id: 1, name: '홍길동', free_comment: '서비스가 좋았습니다' },
+    { id: 2, name: '김철수', free_comment: '별로였어요' },
   ],
-  labels: ['positive', 'neutral', 'negative'],
-  promptTemplate:
-    'Classify the following text into one of the allowed labels: {labels}. Text: {text}',
-  promptVersion: 'v1',
+  prompt: '각 행의 free_comment를 감성 분류하세요',
+  outputColumns: [
+    { name: 'label', type: 'TEXT' },
+    { name: 'confidence', type: 'DECIMAL' },
+    { name: 'reason', type: 'TEXT' },
+  ],
 };
 
 const mockResponse = {
   results: [
-    { rowId: '1', label: 'positive', confidence: 0.94, reason: 'customer expresses satisfaction' },
-    {
-      rowId: '2',
-      label: 'negative',
-      confidence: 0.91,
-      reason: 'terrible indicates negative sentiment',
-    },
+    { source_id: 1, label: '긍정', confidence: 0.95, reason: '만족 표현' },
+    { source_id: 2, label: '부정', confidence: 0.88, reason: '불만 표현' },
   ],
-  cached: 0,
   processed: 2,
   model: 'claude-haiku-4-5-20251001',
-  usage: { promptTokens: 150, completionTokens: 80 },
+  usage: { promptTokens: 200, completionTokens: 100 },
 };
 
 describe('POST /agent/classify', () => {
@@ -126,42 +122,47 @@ describe('POST /agent/classify', () => {
     expect(res.body).toHaveProperty('error');
   });
 
-  it('should return 400 when labels has fewer than 2 items', async () => {
+  it('should return 400 when prompt is missing', async () => {
+    const app = createApp();
+    const { prompt: _prompt, ...bodyWithoutPrompt } = validBody;
+    const res = await makeRequest(app, '/agent/classify', bodyWithoutPrompt as Record<string, unknown>, {
+      Authorization: `Internal ${VALID_TOKEN}`,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('should return 400 when outputColumns is missing', async () => {
+    const app = createApp();
+    const { outputColumns: _oc, ...bodyWithoutColumns } = validBody;
+    const res = await makeRequest(app, '/agent/classify', bodyWithoutColumns as Record<string, unknown>, {
+      Authorization: `Internal ${VALID_TOKEN}`,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('should return 400 when outputColumns is empty', async () => {
     const app = createApp();
     const res = await makeRequest(
       app,
       '/agent/classify',
-      { ...validBody, labels: ['positive'] },
+      { ...validBody, outputColumns: [] },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('error');
   });
 
-  it('should return 400 when labels is missing', async () => {
+  it('should return 400 when outputColumn has invalid type', async () => {
     const app = createApp();
-    const { labels: _labels, ...bodyWithoutLabels } = validBody;
-    const res = await makeRequest(app, '/agent/classify', bodyWithoutLabels as Record<string, unknown>, {
-      Authorization: `Internal ${VALID_TOKEN}`,
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('should return 400 when promptTemplate is missing', async () => {
-    const app = createApp();
-    const { promptTemplate: _pt, ...bodyWithoutTemplate } = validBody;
-    const res = await makeRequest(app, '/agent/classify', bodyWithoutTemplate as Record<string, unknown>, {
-      Authorization: `Internal ${VALID_TOKEN}`,
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('should return 400 when promptVersion is missing', async () => {
-    const app = createApp();
-    const { promptVersion: _pv, ...bodyWithoutVersion } = validBody;
-    const res = await makeRequest(app, '/agent/classify', bodyWithoutVersion as Record<string, unknown>, {
-      Authorization: `Internal ${VALID_TOKEN}`,
-    });
+    const res = await makeRequest(
+      app,
+      '/agent/classify',
+      {
+        ...validBody,
+        outputColumns: [{ name: 'label', type: 'INVALID_TYPE' }],
+      },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
     expect(res.status).toBe(400);
   });
 
@@ -179,12 +180,12 @@ describe('POST /agent/classify', () => {
     expect(classifyBatch).toHaveBeenCalledWith(
       {
         rows: validBody.rows,
-        labels: validBody.labels,
-        promptTemplate: validBody.promptTemplate,
-        promptVersion: validBody.promptVersion,
+        prompt: validBody.prompt,
+        outputColumns: validBody.outputColumns,
       },
       'http://localhost:8080/api/v1',
       VALID_TOKEN,
+      1,
     );
   });
 
@@ -200,10 +201,10 @@ describe('POST /agent/classify', () => {
     expect(res.body).toHaveProperty('error');
   });
 
-  it('should accept rows with empty text', async () => {
+  it('should accept rows with free-form object structure', async () => {
     vi.mocked(classifyBatch).mockResolvedValue({
       ...mockResponse,
-      results: [{ rowId: '1', label: 'neutral', confidence: 0.5 }],
+      results: [{ source_id: 1, label: '중립', confidence: 0.5, reason: '판단 불가' }],
       processed: 1,
     });
 
@@ -211,7 +212,7 @@ describe('POST /agent/classify', () => {
     const res = await makeRequest(
       app,
       '/agent/classify',
-      { ...validBody, rows: [{ rowId: '1', text: '' }] },
+      { ...validBody, rows: [{ id: 1, col_a: 'value', col_b: 42, extra: true }] },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
