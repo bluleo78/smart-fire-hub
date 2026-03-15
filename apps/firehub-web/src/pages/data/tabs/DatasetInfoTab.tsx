@@ -106,8 +106,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         <Card className="p-4">
           <Tag size={20} className="text-muted-foreground mb-2" />
           <div className="my-1">
-            <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-              {dataset.datasetType === 'SOURCE' ? 'SOURCE' : 'DERIVED'}
+            <Badge variant="secondary">
+              {dataset.datasetType === 'SOURCE' ? 'SOURCE' : dataset.datasetType === 'DERIVED' ? 'DERIVED' : 'TEMP'}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">유형</p>
@@ -127,13 +127,18 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
-          {!isEditing && (
+          {!isEditing && dataset.datasetType !== 'TEMP' && (
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Edit className="mr-2 h-4 w-4" />
               수정
             </Button>
           )}
         </div>
+        {dataset.datasetType === 'TEMP' && (
+          <p className="text-sm text-muted-foreground mb-4 p-3 rounded-md bg-muted">
+            파이프라인에서 자동 생성된 임시 데이터셋입니다.
+          </p>
+        )}
 
         {isEditing ? (
           <form onSubmit={infoForm.handleSubmit(onInfoSubmit)} className="space-y-4">
@@ -212,7 +217,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
               <dt className="text-sm text-muted-foreground">데이터셋 타입</dt>
               <dd>
                 <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-                  {dataset.datasetType === 'SOURCE' ? '원본' : '파생'}
+                  {dataset.datasetType === 'SOURCE' ? '원본' : dataset.datasetType === 'DERIVED' ? '파생' : '임시'}
                 </Badge>
               </dd>
             </div>

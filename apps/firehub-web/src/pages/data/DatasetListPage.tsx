@@ -162,6 +162,7 @@ export default function DatasetListPage() {
               <SelectItem value="__all__">전체 유형</SelectItem>
               <SelectItem value="SOURCE">원본</SelectItem>
               <SelectItem value="DERIVED">파생</SelectItem>
+              <SelectItem value="TEMP">임시</SelectItem>
             </SelectContent>
           </Select>
 
@@ -302,7 +303,7 @@ export default function DatasetListPage() {
 
                   <TableCell>
                     <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-                      {dataset.datasetType === 'SOURCE' ? '원본' : '파생'}
+                      {dataset.datasetType === 'SOURCE' ? '원본' : dataset.datasetType === 'DERIVED' ? '파생' : '임시'}
                     </Badge>
                   </TableCell>
                   <TableCell>{dataset.category?.name || '-'}</TableCell>

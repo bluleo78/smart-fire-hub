@@ -89,6 +89,7 @@ class DatasetControllerTest {
             "ACTIVE",
             null,
             null,
+            null,
             null);
     PageResponse<DatasetResponse> page = new PageResponse<>(List.of(dataset), 0, 20, 1, 1);
 
@@ -106,7 +107,7 @@ class DatasetControllerTest {
   @Test
   void createDataset_withPermission_returnsCreated() throws Exception {
     CreateDatasetRequest request =
-        new CreateDatasetRequest("Orders", "orders", "Order data", 1L, "CUSTOM", List.of());
+        new CreateDatasetRequest("Orders", "orders", "Order data", 1L, "CUSTOM", List.of(), null);
     DatasetDetailResponse detail =
         new DatasetDetailResponse(
             1L,
@@ -127,7 +128,8 @@ class DatasetControllerTest {
             null,
             null,
             null,
-            List.of());
+            List.of(),
+            null);
 
     when(datasetService.createDataset(any(CreateDatasetRequest.class), anyLong()))
         .thenReturn(detail);
@@ -165,7 +167,8 @@ class DatasetControllerTest {
             null,
             null,
             null,
-            List.of());
+            List.of(),
+            null);
 
     when(datasetService.getDatasetById(1L, 1L)).thenReturn(detail);
 

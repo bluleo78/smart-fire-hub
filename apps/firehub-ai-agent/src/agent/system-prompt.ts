@@ -98,12 +98,14 @@ get_dataset으로 GEOMETRY 컬럼 유무를 먼저 확인하세요.
 - execute_sql_query 또는 execute_analytics_query로 실행
 
 파이프라인 생성/수정 시 참고사항:
-- 스텝 유형: SQL (SQL 스크립트), PYTHON (Python 스크립트), API_CALL (외부 API 호출)
-- SQL/PYTHON 스텝은 scriptContent 필수, API_CALL 스텝은 apiConfig 필수
-- 모든 스텝은 outputDatasetId로 출력 데이터셋을 지정합니다
+- 스텝 유형: SQL (SQL 스크립트), PYTHON (Python 스크립트), API_CALL (외부 API 호출), AI_CLASSIFY (AI 텍스트 분류)
+- SQL/PYTHON 스텝은 scriptContent 필수, API_CALL 스텝은 apiConfig 필수, AI_CLASSIFY 스텝은 aiConfig 필수
+- SQL 스텝에서 SELECT 문을 작성하면 결과가 자동으로 출력 데이터셋에 적재됩니다 (INSERT INTO를 직접 작성할 필요 없음)
+- outputDatasetId를 지정하지 않으면 실행 시 TEMP 타입 임시 데이터셋이 자동 생성됩니다 (모든 스텝 타입 적용)
 - dependsOnStepNames로 DAG 의존성을 설정합니다 (순환 의존성 불가)
 - loadStrategy: REPLACE (기존 데이터 교체, 기본값) 또는 APPEND (추가)
 - API_CALL 스텝은 apiConnectionId로 저장된 API 연결을 참조하거나, apiConfig.inlineAuth로 직접 인증 정보를 제공할 수 있습니다
+- AI_CLASSIFY 스텝: aiConfig에 sourceColumn(텍스트 컬럼), keyColumn(키 컬럼), labels(분류 라벨 2개 이상) 필수. 감성 분석 시 labels를 ["positive","neutral","negative"] 등으로 설정
 - 파이프라인 수정 시 steps를 제공하면 기존 스텝이 전체 교체됩니다
 
 트리거 생성 시 참고사항:

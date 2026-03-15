@@ -10,7 +10,7 @@ export interface DatasetResponse {
   tableName: string;
   description: string | null;
   category: CategoryResponse | null;
-  datasetType: 'SOURCE' | 'DERIVED';
+  datasetType: 'SOURCE' | 'DERIVED' | 'TEMP';
   createdAt: string;
   isFavorite: boolean;
   tags: string[];
@@ -52,7 +52,7 @@ export interface DatasetDetailResponse {
   tableName: string;
   description: string | null;
   category: CategoryResponse | null;
-  datasetType: 'SOURCE' | 'DERIVED';
+  datasetType: 'SOURCE' | 'DERIVED' | 'TEMP';
   createdBy: string;
   columns: DatasetColumnResponse[];
   rowCount: number;
@@ -73,8 +73,9 @@ export interface CreateDatasetRequest {
   tableName: string;
   description?: string;
   categoryId?: number;
-  datasetType: 'SOURCE' | 'DERIVED';
+  datasetType: 'SOURCE' | 'DERIVED' | 'TEMP';
   columns: DatasetColumnRequest[];
+  sourcePipelineStepId?: number;
 }
 
 export interface DatasetColumnRequest {

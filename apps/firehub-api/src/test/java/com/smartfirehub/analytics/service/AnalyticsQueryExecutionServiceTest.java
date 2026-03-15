@@ -47,7 +47,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
             "SOURCE",
             List.of(
                 new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
-                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null))),
+                new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)),
+            null),
         testUserId);
 
     dsl.execute("INSERT INTO data.exec_test (name, value) VALUES ('Alice', 10)");

@@ -80,8 +80,8 @@ class DataExportServiceTest extends IntegrationTestBase {
                     "SOURCE",
                     List.of(
                         new DatasetColumnRequest("name", "이름", "TEXT", null, true, false, null),
-                        new DatasetColumnRequest(
-                            "value", "값", "INTEGER", null, true, false, null))),
+                        new DatasetColumnRequest("value", "값", "INTEGER", null, true, false, null)),
+                    null),
                 userId)
             .id();
 
@@ -98,7 +98,8 @@ class DataExportServiceTest extends IntegrationTestBase {
                     List.of(
                         new DatasetColumnRequest("label", "라벨", "TEXT", null, true, false, null),
                         new DatasetColumnRequest(
-                            "geom", "좌표", "GEOMETRY", null, true, false, null))),
+                            "geom", "좌표", "GEOMETRY", null, true, false, null)),
+                    null),
                 userId)
             .id();
 

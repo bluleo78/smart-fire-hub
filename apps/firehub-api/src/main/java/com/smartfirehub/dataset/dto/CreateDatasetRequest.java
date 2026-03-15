@@ -9,4 +9,5 @@ public record CreateDatasetRequest(
     String description,
     Long categoryId,
     String datasetType,
-    List<DatasetColumnRequest> columns) {}
+    List<DatasetColumnRequest> columns,
+    Long sourcePipelineStepId) {}

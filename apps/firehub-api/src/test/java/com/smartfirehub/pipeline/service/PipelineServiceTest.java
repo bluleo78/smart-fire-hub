@@ -54,7 +54,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     DatasetDetailResponse inputDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Input Dataset", "input_dataset", null, null, "SOURCE", columns),
+                "Input Dataset", "input_dataset", null, null, "SOURCE", columns, null),
             testUserId);
     inputDatasetId = inputDataset.id();
 
@@ -62,7 +62,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     DatasetDetailResponse outputDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Output Dataset", "output_dataset", null, null, "DERIVED", columns),
+                "Output Dataset", "output_dataset", null, null, "DERIVED", columns, null),
             testUserId);
     outputDatasetId = outputDataset.id();
   }
@@ -354,11 +354,19 @@ class PipelineServiceTest extends IntegrationTestBase {
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "ai_step", "AI step", "AI_CLASSIFY", null, null,
-                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                null,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
 
-    CreatePipelineRequest request =
-        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -370,11 +378,19 @@ class PipelineServiceTest extends IntegrationTestBase {
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
-                List.of(inputDatasetId), null, "REPLACE", null, null, null));
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                null,
+                null));
 
-    CreatePipelineRequest request =
-        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -392,11 +408,19 @@ class PipelineServiceTest extends IntegrationTestBase {
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
-                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
 
-    CreatePipelineRequest request =
-        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -407,19 +431,31 @@ class PipelineServiceTest extends IntegrationTestBase {
   void createPipeline_aiClassifyStep_invalidBatchSize_throwsException() {
     Map<String, Object> aiConfig =
         Map.of(
-            "sourceColumn", "col1",
-            "keyColumn", "col1",
-            "labels", List.of("positive", "negative"),
-            "batchSize", 200); // out of range
+            "sourceColumn",
+            "col1",
+            "keyColumn",
+            "col1",
+            "labels",
+            List.of("positive", "negative"),
+            "batchSize",
+            200); // out of range
 
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
-                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
 
-    CreatePipelineRequest request =
-        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -437,11 +473,19 @@ class PipelineServiceTest extends IntegrationTestBase {
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
-                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+                "ai_step",
+                "AI step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
 
-    CreatePipelineRequest request =
-        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+    CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)

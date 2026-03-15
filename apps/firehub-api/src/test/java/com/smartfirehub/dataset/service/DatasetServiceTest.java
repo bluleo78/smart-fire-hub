@@ -64,7 +64,13 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     CreateDatasetRequest request =
         new CreateDatasetRequest(
-            "Test Dataset", "test_dataset", "Test description", testCategoryId, "SOURCE", columns);
+            "Test Dataset",
+            "test_dataset",
+            "Test description",
+            testCategoryId,
+            "SOURCE",
+            columns,
+            null);
 
     // When
     DatasetDetailResponse response = datasetService.createDataset(request, testUserId);
@@ -106,12 +112,12 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
 
     CreateDatasetRequest request1 =
-        new CreateDatasetRequest("Duplicate", "table1", null, null, "SOURCE", columns);
+        new CreateDatasetRequest("Duplicate", "table1", null, null, "SOURCE", columns, null);
 
     datasetService.createDataset(request1, testUserId);
 
     CreateDatasetRequest request2 =
-        new CreateDatasetRequest("Duplicate", "table2", null, null, "SOURCE", columns);
+        new CreateDatasetRequest("Duplicate", "table2", null, null, "SOURCE", columns, null);
 
     // When/Then
     assertThatThrownBy(() -> datasetService.createDataset(request2, testUserId))
@@ -125,11 +131,12 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
 
     datasetService.createDataset(
-        new CreateDatasetRequest("Dataset A", "dataset_a", null, testCategoryId, "SOURCE", columns),
+        new CreateDatasetRequest(
+            "Dataset A", "dataset_a", null, testCategoryId, "SOURCE", columns, null),
         testUserId);
 
     datasetService.createDataset(
-        new CreateDatasetRequest("Dataset B", "dataset_b", null, null, "DERIVED", columns),
+        new CreateDatasetRequest("Dataset B", "dataset_b", null, null, "DERIVED", columns, null),
         testUserId);
 
     // When
@@ -150,7 +157,13 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Original Name", "original_table", "Original description", null, "SOURCE", columns),
+                "Original Name",
+                "original_table",
+                "Original description",
+                null,
+                "SOURCE",
+                columns,
+                null),
             testUserId);
 
     UpdateDatasetRequest updateRequest =
@@ -175,7 +188,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Test Dataset", "test_table", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "Test Dataset", "test_table", null, null, "SOURCE", columns, null),
             testUserId);
 
     AddColumnRequest addColumnRequest =
@@ -204,7 +218,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Reorder Test", "reorder_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "Reorder Test", "reorder_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     // Original order: col_a(0), col_b(1), col_c(2)
@@ -240,7 +255,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Reorder Fail Test", "reorder_fail_test", null, null, "SOURCE", columns),
+                "Reorder Fail Test", "reorder_fail_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     List<Long> incompleteIds = List.of(dataset.columns().get(0).id());
@@ -265,7 +280,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Reorder Dup Test", "reorder_dup_test", null, null, "SOURCE", columns),
+                "Reorder Dup Test", "reorder_dup_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     Long firstColId = dataset.columns().get(0).id();
@@ -297,7 +312,7 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("To Delete", "to_delete", null, null, "SOURCE", columns),
+            new CreateDatasetRequest("To Delete", "to_delete", null, null, "SOURCE", columns, null),
             testUserId);
 
     Long datasetId = dataset.id();
@@ -337,7 +352,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest(name, tableName, null, testCategoryId, "SOURCE", columns),
+            new CreateDatasetRequest(
+                name, tableName, null, testCategoryId, "SOURCE", columns, null),
             testUserId);
 
     datasetDataService.addRow(
@@ -429,7 +445,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Empty History", "empty_history", null, null, "SOURCE", columns),
+                "Empty History", "empty_history", null, null, "SOURCE", columns, null),
             testUserId);
 
     PageResponse<QueryHistoryResponse> history =
@@ -451,7 +467,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("age", "Age", "INTEGER", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("AddRow Test", "addrow_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "AddRow Test", "addrow_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     RowDataResponse row =
@@ -469,7 +486,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "InvalidType Test", "invalidtype_test", null, null, "SOURCE", columns),
+                "InvalidType Test", "invalidtype_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     assertThatThrownBy(
@@ -486,7 +503,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "UpdateRow Test", "updaterow_test", null, null, "SOURCE", columns),
+                "UpdateRow Test", "updaterow_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     RowDataResponse added =
@@ -505,7 +522,8 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("GetRow Test", "getrow_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "GetRow Test", "getrow_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     RowDataResponse added =
@@ -608,7 +626,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse created =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "GetById Test", "getbyid_test", "desc", null, "SOURCE", columns),
+                "GetById Test", "getbyid_test", "desc", null, "SOURCE", columns, null),
             testUserId);
 
     DatasetDetailResponse found = datasetService.getDatasetById(created.id());
@@ -632,7 +650,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("col2", "Col2", "INTEGER", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("DelCol Test", "delcol_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "DelCol Test", "delcol_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     Long col2Id =
@@ -656,7 +675,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "DelLastCol Test", "dellastcol_test", null, null, "SOURCE", columns),
+                "DelLastCol Test", "dellastcol_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     Long onlyColId = dataset.columns().get(0).id();
@@ -672,7 +691,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Favorite Test", "favorite_test", null, null, "SOURCE", columns),
+                "Favorite Test", "favorite_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     FavoriteToggleResponse result1 =
@@ -690,7 +709,7 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Tag Test", "tag_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest("Tag Test", "tag_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     datasetTagService.addTag(dataset.id(), "test-tag", testUserId);
@@ -705,7 +724,8 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("DupTag Test", "duptag_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "DupTag Test", "duptag_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     datasetTagService.addTag(dataset.id(), "dup-tag", testUserId);
@@ -726,7 +746,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Batch Test", "batch_test", null, null, "SOURCE", columns),
+            new CreateDatasetRequest(
+                "Batch Test", "batch_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     List<Map<String, Object>> rows =
@@ -751,7 +772,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "BatchInvalid Test", "batchinvalid_test", null, null, "SOURCE", columns),
+                "BatchInvalid Test", "batchinvalid_test", null, null, "SOURCE", columns, null),
             testUserId);
 
     List<Map<String, Object>> rows = List.of(Map.of("score", 100), Map.of("score", "not_a_number"));

@@ -288,6 +288,21 @@ export default function StepConfigPanel({
               disabled={readOnly}
               onChange={(value) => handleUpdateStep({ outputDatasetId: value })}
             />
+            {step.outputDatasetId ? (
+              !readOnly && (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => handleUpdateStep({ outputDatasetId: null })}
+                >
+                  선택 해제 (실행 시 임시 데이터셋 자동 생성)
+                </button>
+              )
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                미지정 시 실행할 때 임시 데이터셋이 자동 생성됩니다
+              </p>
+            )}
             {outputDatasetIdError && (
               <p className="text-sm text-destructive">{outputDatasetIdError}</p>
             )}

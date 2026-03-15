@@ -52,6 +52,8 @@ public class DatasetRepository {
       field(name("dataset", "status_updated_by"), Long.class);
   private static final Field<LocalDateTime> DS_STATUS_UPDATED_AT =
       field(name("dataset", "status_updated_at"), LocalDateTime.class);
+  private static final Field<Long> DS_SOURCE_PIPELINE_STEP_ID =
+      field(name("dataset", "source_pipeline_step_id"), Long.class);
 
   private static final Table<?> DATASET_CATEGORY = table(name("dataset_category"));
   private static final Field<Long> DC_ID = field(name("dataset_category", "id"), Long.class);
@@ -125,7 +127,8 @@ public class DatasetRepository {
         r.get(DS_STATUS) != null ? r.get(DS_STATUS) : "NONE",
         r.get(DS_STATUS_NOTE),
         statusUpdatedByName,
-        r.get(DS_STATUS_UPDATED_AT));
+        r.get(DS_STATUS_UPDATED_AT),
+        r.get(DS_SOURCE_PIPELINE_STEP_ID));
   }
 
   private Map<Long, List<String>> fetchTagsByDatasetIds(List<Long> datasetIds) {
@@ -237,6 +240,7 @@ public class DatasetRepository {
             DS_STATUS_NOTE,
             DS_STATUS_UPDATED_BY,
             DS_STATUS_UPDATED_AT,
+            DS_SOURCE_PIPELINE_STEP_ID,
             DC_ID,
             DC_NAME,
             DC_DESCRIPTION)
@@ -297,6 +301,7 @@ public class DatasetRepository {
             DS_STATUS_NOTE,
             DS_STATUS_UPDATED_BY,
             DS_STATUS_UPDATED_AT,
+            DS_SOURCE_PIPELINE_STEP_ID,
             DC_ID,
             DC_NAME,
             DC_DESCRIPTION)
@@ -308,13 +313,18 @@ public class DatasetRepository {
   }
 
   public DatasetResponse save(CreateDatasetRequest request, Long createdBy) {
-    return dsl.insertInto(DATASET)
-        .set(DS_NAME, request.name())
-        .set(DS_TABLE_NAME, request.tableName())
-        .set(DS_DESCRIPTION, request.description())
-        .set(DS_CATEGORY_ID, request.categoryId())
-        .set(DS_DATASET_TYPE, request.datasetType())
-        .set(DS_CREATED_BY, createdBy)
+    var insert =
+        dsl.insertInto(DATASET)
+            .set(DS_NAME, request.name())
+            .set(DS_TABLE_NAME, request.tableName())
+            .set(DS_DESCRIPTION, request.description())
+            .set(DS_CATEGORY_ID, request.categoryId())
+            .set(DS_DATASET_TYPE, request.datasetType())
+            .set(DS_CREATED_BY, createdBy);
+    if (request.sourcePipelineStepId() != null) {
+      insert = insert.set(DS_SOURCE_PIPELINE_STEP_ID, request.sourcePipelineStepId());
+    }
+    return insert
         .returning(
             DS_ID,
             DS_NAME,
@@ -326,6 +336,7 @@ public class DatasetRepository {
             DS_STATUS_NOTE,
             DS_STATUS_UPDATED_BY,
             DS_STATUS_UPDATED_AT,
+            DS_SOURCE_PIPELINE_STEP_ID,
             DS_CATEGORY_ID)
         .fetchOne(
             r -> {
@@ -352,8 +363,17 @@ public class DatasetRepository {
                   r.get(DS_STATUS) != null ? r.get(DS_STATUS) : "NONE",
                   r.get(DS_STATUS_NOTE),
                   null,
-                  r.get(DS_STATUS_UPDATED_AT));
+                  r.get(DS_STATUS_UPDATED_AT),
+                  r.get(DS_SOURCE_PIPELINE_STEP_ID));
             });
+  }
+
+  public Optional<Long> findBySourcePipelineStepId(Long stepId) {
+    return dsl.select(DS_ID)
+        .from(DATASET)
+        .where(DS_SOURCE_PIPELINE_STEP_ID.eq(stepId))
+        .limit(1)
+        .fetchOptional(r -> r.get(DS_ID));
   }
 
   public void update(Long id, UpdateDatasetRequest request, Long updatedBy) {

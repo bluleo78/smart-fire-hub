@@ -14,19 +14,21 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
+import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
-import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
+import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
+import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.Result;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
@@ -52,9 +54,11 @@ class PipelineExecutionServiceTest {
   @Mock PythonScriptExecutor pythonExecutor;
   @Mock ApplicationEventPublisher applicationEventPublisher;
   @Mock ApiCallExecutor apiCallExecutor;
+  @Mock AiClassifyExecutor aiClassifyExecutor;
   @Mock ApiConnectionService apiConnectionService;
   @Mock ObjectMapper objectMapper;
   @Mock PermissionChecker permissionChecker;
+  @Mock TempDatasetService tempDatasetService;
 
   @InjectMocks PipelineExecutionService service;
 
@@ -134,13 +138,13 @@ class PipelineExecutionServiceTest {
     Long stepExecId = 200L;
 
     PipelineStepResponse sqlStep =
-        stepResponse(stepId, "step1", "SQL", "SELECT 1", null, List.of());
+        stepResponse(stepId, "step1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
-    when(sqlExecutor.execute("SELECT 1")).thenReturn("1 row affected");
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("1 row affected");
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
     // when
@@ -221,13 +225,14 @@ class PipelineExecutionServiceTest {
     Long stepExecId = 210L;
 
     PipelineStepResponse sqlStep =
-        stepResponse(stepId, "publish-step", "SQL", "SELECT 1", null, List.of());
+        stepResponse(
+            stepId, "publish-step", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
-    when(sqlExecutor.execute("SELECT 1")).thenReturn("ok");
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("ok");
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
     // when
@@ -268,15 +273,11 @@ class PipelineExecutionServiceTest {
         .thenReturn(Optional.of("output_table"));
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(
-            List.of(
-                col("pk_id", true),
-                col("id", false),
-                col("name", false),
-                col("extra", false)));
+            List.of(col("pk_id", true), col("id", false), col("name", false), col("extra", false)));
 
     // pipelineDsl.fetch(probeSql) → Result with fields [id, name]
-    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(
-        DSL.field("id"), DSL.field("name"));
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"), DSL.field("name"));
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
 
     when(sqlExecutor.execute(anyString())).thenReturn("2 rows affected");
@@ -317,11 +318,9 @@ class PipelineExecutionServiceTest {
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
     when(datasetRepository.findTableNameById(outputDatasetId))
         .thenReturn(Optional.of("output_cte"));
-    when(columnRepository.findByDatasetId(outputDatasetId))
-        .thenReturn(List.of(col("val", false)));
+    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("val", false)));
 
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("val"));
+    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("val"));
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
 
     when(sqlExecutor.execute(anyString())).thenReturn("1 row affected");
@@ -340,15 +339,16 @@ class PipelineExecutionServiceTest {
   }
 
   @Test
-  void executeStep_selectWithoutOutputDataset_executesAsIs() throws Exception {
-    // given: SELECT but no outputDatasetId → execute as-is (no wrapping)
+  void executeStep_selectWithoutOutputDataset_createsTempDataset() throws Exception {
+    // given: SELECT but no outputDatasetId → auto-create temp dataset
     Long pipelineId = 12L;
     Long userId = 1L;
     Long executionId = 102L;
     Long stepId = 202L;
     Long stepExecId = 302L;
+    Long tempDatasetId = 999L;
 
-    String selectSql = "SELECT id FROM data.\"source\"";
+    String selectSql = "SELECT id, name FROM data.\"source\"";
     PipelineStepResponse sqlStep =
         stepResponse(stepId, "plain-select", "SQL", selectSql, null, List.of());
 
@@ -356,15 +356,127 @@ class PipelineExecutionServiceTest {
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
-    when(sqlExecutor.execute(selectSql)).thenReturn("ok");
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("Test Pipeline"));
+
+    // extractSelectColumnsWithTypes probe
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"), DSL.field("name"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    // TempDatasetService: no existing temp dataset → create new
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
+        .thenReturn(tempDatasetId);
+    when(datasetRepository.findTableNameById(tempDatasetId))
+        .thenReturn(Optional.of("ptmp_12_plain_select_abcd"));
+
+    // columns for INSERT INTO wrapping
+    when(columnRepository.findByDatasetId(tempDatasetId))
+        .thenReturn(List.of(col("id", false), col("name", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("2 rows affected");
 
     // when
     service.executePipeline(pipelineId, userId);
 
-    // then: called exactly with the original SQL (no wrapping)
-    verify(sqlExecutor).execute(selectSql);
-    verify(pipelineDsl, never()).fetch(anyString());
+    // then: temp dataset was created and INSERT INTO wrapping used
+    verify(tempDatasetService)
+        .createTempDataset(any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId));
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    assertThat(sqlCaptor.getValue()).startsWith("INSERT INTO data.\"ptmp_12_plain_select_abcd\"");
+  }
+
+  @Test
+  void executeStep_selectWithoutOutputDataset_reusesTempDatasetWhenSchemaUnchanged()
+      throws Exception {
+    Long pipelineId = 15L;
+    Long userId = 1L;
+    Long executionId = 105L;
+    Long stepId = 205L;
+    Long stepExecId = 305L;
+    Long existingTempDatasetId = 888L;
+
+    String selectSql = "SELECT id FROM data.\"source\"";
+    PipelineStepResponse sqlStep =
+        stepResponse(stepId, "reuse-step", "SQL", selectSql, null, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("Test Pipeline"));
+
+    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    // Existing temp dataset found, schema unchanged
+    when(tempDatasetService.findExistingTempDataset(stepId))
+        .thenReturn(Optional.of(existingTempDatasetId));
+    when(tempDatasetService.hasSchemaChanged(eq(existingTempDatasetId), any())).thenReturn(false);
+    when(datasetRepository.findTableNameById(existingTempDatasetId))
+        .thenReturn(Optional.of("ptmp_15_reuse_step_1234"));
+    when(columnRepository.findByDatasetId(existingTempDatasetId))
+        .thenReturn(List.of(col("id", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("1 row affected");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: no new temp dataset created
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+  }
+
+  @Test
+  void executeStep_selectWithoutOutputDataset_recreatesTempDatasetWhenSchemaChanged()
+      throws Exception {
+    Long pipelineId = 16L;
+    Long userId = 1L;
+    Long executionId = 106L;
+    Long stepId = 206L;
+    Long stepExecId = 306L;
+    Long oldTempDatasetId = 777L;
+    Long newTempDatasetId = 778L;
+
+    String selectSql = "SELECT id, name, extra FROM data.\"source\"";
+    PipelineStepResponse sqlStep =
+        stepResponse(stepId, "schema-change-step", "SQL", selectSql, null, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("Test Pipeline"));
+
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES)
+            .newResult(DSL.field("id"), DSL.field("name"), DSL.field("extra"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    // Existing dataset found, schema changed
+    when(tempDatasetService.findExistingTempDataset(stepId))
+        .thenReturn(Optional.of(oldTempDatasetId));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTempDatasetId), any())).thenReturn(true);
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
+        .thenReturn(newTempDatasetId);
+    when(datasetRepository.findTableNameById(newTempDatasetId))
+        .thenReturn(Optional.of("ptmp_16_schema_change_step_5678"));
+    when(columnRepository.findByDatasetId(newTempDatasetId))
+        .thenReturn(List.of(col("id", false), col("name", false), col("extra", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("3 rows affected");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: old dataset deleted, new one created
+    verify(tempDatasetService).deleteTempDataset(oldTempDatasetId);
+    verify(tempDatasetService)
+        .createTempDataset(any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId));
   }
 
   @Test
@@ -385,8 +497,7 @@ class PipelineExecutionServiceTest {
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
-    when(datasetRepository.findTableNameById(outputDatasetId))
-        .thenReturn(Optional.of("target"));
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("target"));
     when(sqlExecutor.execute(insertSql)).thenReturn("1 row affected");
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
@@ -423,8 +534,7 @@ class PipelineExecutionServiceTest {
 
     // SELECT returns [foo, bar] but output has only [name] (non-PK)
     Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(
-            DSL.field("foo"), DSL.field("bar"));
+        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("foo"), DSL.field("bar"));
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
 
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
@@ -442,6 +552,138 @@ class PipelineExecutionServiceTest {
             contains("SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다"),
             isNull(),
             any());
+  }
+
+  @Test
+  void executeStep_apiCallWithoutOutputDataset_createsTempDataset() throws Exception {
+    // given: API_CALL step with no outputDatasetId → auto-create temp dataset from fieldMappings
+    Long pipelineId = 20L;
+    Long userId = 1L;
+    Long executionId = 120L;
+    Long stepId = 220L;
+    Long stepExecId = 320L;
+    Long tempDatasetId = 420L;
+
+    ApiCallConfig.FieldMapping fm =
+        new ApiCallConfig.FieldMapping("src_name", "name", "TEXT", null, null, null);
+    ApiCallConfig apiCallConfig =
+        new ApiCallConfig(
+            "http://api.example.com",
+            "GET",
+            null,
+            null,
+            null,
+            null,
+            "$.data",
+            List.of(fm),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+    PipelineStepResponse apiStep =
+        new PipelineStepResponse(
+            stepId,
+            "api-step",
+            null,
+            "API_CALL",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "APPEND",
+            Map.of(),
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(apiStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(apiCallConfig);
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("api-step"), eq(userId)))
+        .thenReturn(tempDatasetId);
+    when(datasetRepository.findTableNameById(tempDatasetId)).thenReturn(Optional.of("ptmp_api"));
+    when(columnRepository.findByDatasetId(tempDatasetId)).thenReturn(List.of(col("name", false)));
+    when(apiCallExecutor.execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any()))
+        .thenReturn(new ApiCallExecutor.ApiCallResult(5, "log"));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: temp dataset created and apiCallExecutor called with resolved table name
+    verify(tempDatasetService)
+        .createTempDataset(
+            any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("api-step"), eq(userId));
+    verify(apiCallExecutor).execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any());
+  }
+
+  @Test
+  void executeStep_aiClassifyWithoutOutputDataset_createsTempDataset() throws Exception {
+    // given: AI_CLASSIFY step with no outputDatasetId → auto-create temp dataset with fixed schema
+    Long pipelineId = 21L;
+    Long userId = 1L;
+    Long executionId = 121L;
+    Long stepId = 221L;
+    Long stepExecId = 321L;
+    Long tempDatasetId = 421L;
+
+    AiClassifyConfig aiConfig =
+        new AiClassifyConfig("text", "id", List.of("A", "B"), null, "ai_", null, null, null, null);
+
+    PipelineStepResponse aiStep =
+        new PipelineStepResponse(
+            stepId,
+            "ai-step",
+            null,
+            "AI_CLASSIFY",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            Map.of(),
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(aiStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class))).thenReturn(aiConfig);
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("ai-step"), eq(userId)))
+        .thenReturn(tempDatasetId);
+    when(datasetRepository.findTableNameById(tempDatasetId)).thenReturn(Optional.of("ptmp_ai"));
+    when(aiClassifyExecutor.execute(
+            argThat(s -> tempDatasetId.equals(s.outputDatasetId())), eq(stepExecId), eq(userId)))
+        .thenReturn(new AiClassifyExecutor.ExecutionResult(10L, "ai log"));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: temp dataset created, aiClassifyExecutor called with resolved outputDatasetId
+    verify(tempDatasetService)
+        .createTempDataset(
+            any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("ai-step"), eq(userId));
+    verify(aiClassifyExecutor)
+        .execute(
+            argThat(s -> tempDatasetId.equals(s.outputDatasetId())), eq(stepExecId), eq(userId));
   }
 
   // ------------------------------------------------------------------ //

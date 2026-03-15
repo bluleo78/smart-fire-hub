@@ -198,7 +198,8 @@ public class DatasetService {
         dataset.statusNote(),
         dataset.statusUpdatedBy(),
         dataset.statusUpdatedAt(),
-        linkedPipelines);
+        linkedPipelines,
+        dataset.sourcePipelineStepId());
   }
 
   @Transactional
@@ -546,7 +547,8 @@ public class DatasetService {
             description,
             sourceDataset.category() != null ? sourceDataset.category().id() : null,
             sourceDataset.datasetType(),
-            List.of() // columns will be added separately
+            List.of(), // columns will be added separately
+            null // sourcePipelineStepId — cloned datasets are not auto-generated
             );
     DatasetResponse newDataset = datasetRepository.save(createRequest, userId);
 

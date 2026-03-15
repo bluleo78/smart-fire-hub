@@ -70,7 +70,8 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "Dataset for import testing",
                 null,
                 "SOURCE",
-                columns),
+                columns,
+                null),
             testUserId);
 
     testDatasetId = dataset.id();
@@ -230,7 +231,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     DatasetDetailResponse anotherDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Another Dataset", "another_dataset", null, null, "SOURCE", columns),
+                "Another Dataset", "another_dataset", null, null, "SOURCE", columns, null),
             testUserId);
 
     // When/Then

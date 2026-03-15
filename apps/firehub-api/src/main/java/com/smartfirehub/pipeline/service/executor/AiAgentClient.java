@@ -27,8 +27,7 @@ public class AiAgentClient {
   @Value("${agent.internal-token}")
   private String internalToken;
 
-  public AiAgentClient(
-      @Value("${agent.url}") String agentUrl, ObjectMapper objectMapper) {
+  public AiAgentClient(@Value("${agent.url}") String agentUrl, ObjectMapper objectMapper) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
         WebClient.builder()
@@ -45,8 +44,7 @@ public class AiAgentClient {
       String promptTemplate,
       String promptVersion) {}
 
-  public record ClassifyRowResult(
-      String rowId, String label, double confidence, String reason) {}
+  public record ClassifyRowResult(String rowId, String label, double confidence, String reason) {}
 
   public record ClassifyResponse(
       List<ClassifyRowResult> results, int cached, int processed, String model) {}
@@ -98,7 +96,11 @@ public class AiAgentClient {
 
     } catch (WebClientResponseException e) {
       throw new RuntimeException(
-          "AI agent classify failed with status " + e.getStatusCode() + ": " + e.getResponseBodyAsString(), e);
+          "AI agent classify failed with status "
+              + e.getStatusCode()
+              + ": "
+              + e.getResponseBodyAsString(),
+          e);
     } catch (Exception e) {
       throw new RuntimeException("AI agent classify request failed: " + e.getMessage(), e);
     }

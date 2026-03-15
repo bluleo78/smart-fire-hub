@@ -197,8 +197,7 @@ public class PipelineService {
           "AI_CLASSIFY step '" + stepName + "' requires outputDatasetId");
     }
     if (step.aiConfig() == null || step.aiConfig().isEmpty()) {
-      throw new IllegalArgumentException(
-          "AI_CLASSIFY step '" + stepName + "' requires aiConfig");
+      throw new IllegalArgumentException("AI_CLASSIFY step '" + stepName + "' requires aiConfig");
     }
 
     AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
@@ -234,10 +233,7 @@ public class PipelineService {
     }
     if (config.onError() != null && !VALID_ON_ERROR.contains(config.onError())) {
       throw new IllegalArgumentException(
-          "AI_CLASSIFY step '"
-              + stepName
-              + "' onError must be one of: "
-              + VALID_ON_ERROR);
+          "AI_CLASSIFY step '" + stepName + "' onError must be one of: " + VALID_ON_ERROR);
     }
 
     // Validate sourceColumn and keyColumn exist in input datasets

@@ -33,7 +33,7 @@ export const createDatasetSchema = z.object({
     .regex(tableNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
   description: z.string().optional().or(z.literal('')),
   categoryId: z.number().optional(),
-  datasetType: z.enum(['SOURCE', 'DERIVED'], {
+  datasetType: z.enum(['SOURCE', 'DERIVED', 'TEMP'], {
     message: '데이터셋 유형을 선택하세요',
   }),
   columns: z.array(datasetColumnSchema).min(1, '최소 1개의 칼럼을 정의하세요'),

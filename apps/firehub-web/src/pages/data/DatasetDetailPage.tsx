@@ -175,6 +175,10 @@ export default function DatasetDetailPage() {
                   Deprecated
                 </Badge>
               )}
+              {/* TEMP badge */}
+              {dataset.datasetType === 'TEMP' && (
+                <Badge variant="secondary" className="text-xs">임시</Badge>
+              )}
               {/* Clone button */}
               <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
                 <Copy className="h-3 w-3" />

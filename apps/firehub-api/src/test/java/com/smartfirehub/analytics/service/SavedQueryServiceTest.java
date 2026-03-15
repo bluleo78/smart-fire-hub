@@ -77,7 +77,8 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     List<DatasetColumnRequest> columns =
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns), ownerUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null),
+        ownerUserId);
   }
 
   // =========================================================================

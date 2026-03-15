@@ -55,6 +55,7 @@ public class PipelineExecutionService {
   private final PermissionChecker permissionChecker;
   private final ExecutorClient executorClient;
   private final AiClassifyExecutor aiClassifyExecutor;
+  private final TempDatasetService tempDatasetService;
 
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
@@ -76,7 +77,8 @@ public class PipelineExecutionService {
       ObjectMapper objectMapper,
       PermissionChecker permissionChecker,
       ExecutorClient executorClient,
-      AiClassifyExecutor aiClassifyExecutor) {
+      AiClassifyExecutor aiClassifyExecutor,
+      TempDatasetService tempDatasetService) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -94,6 +96,7 @@ public class PipelineExecutionService {
     this.permissionChecker = permissionChecker;
     this.executorClient = executorClient;
     this.aiClassifyExecutor = aiClassifyExecutor;
+    this.tempDatasetService = tempDatasetService;
   }
 
   /**
@@ -230,6 +233,7 @@ public class PipelineExecutionService {
       Long userId) {
     LocalDateTime executionStartedAt = LocalDateTime.now();
     Long pipelineCreatedBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
+    String pipelineName = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
 
     try {
       // Update execution status to RUNNING
@@ -271,7 +275,7 @@ public class PipelineExecutionService {
           log.info("Step {} skipped due to failed dependency", step.name());
         } else {
           // Execute step
-          String status = executeStep(stepExecId, step, userId);
+          String status = executeStep(stepExecId, step, pipelineId, pipelineName, userId);
           stepStatuses.put(step.id(), status);
         }
       }
@@ -363,7 +367,12 @@ public class PipelineExecutionService {
     return result;
   }
 
-  private String executeStep(Long stepExecId, PipelineStepResponse step, Long userId) {
+  private String executeStep(
+      Long stepExecId,
+      PipelineStepResponse step,
+      Long pipelineId,
+      String pipelineName,
+      Long userId) {
     LocalDateTime stepStartedAt = LocalDateTime.now();
 
     try {
@@ -371,10 +380,13 @@ public class PipelineExecutionService {
       executionRepository.updateStepExecution(
           stepExecId, "RUNNING", null, null, null, stepStartedAt, null);
 
+      // Get output dataset ID (may be resolved to a temp dataset)
+      Long outputDatasetId = step.outputDatasetId();
+
       // Get output table name (nullable — metadata only)
       String outputTableName = null;
-      if (step.outputDatasetId() != null) {
-        outputTableName = datasetRepository.findTableNameById(step.outputDatasetId()).orElse(null);
+      if (outputDatasetId != null) {
+        outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElse(null);
       }
 
       // Apply load strategy before script execution
@@ -407,12 +419,40 @@ public class PipelineExecutionService {
         String sql = step.scriptContent().trim();
         boolean isSelect = isSelectStatement(sql);
 
-        if (isSelect && outputTableName != null && step.outputDatasetId() != null) {
+        // Auto-create temp dataset when SELECT and no outputDatasetId
+        if (isSelect && outputDatasetId == null) {
+          Long stepId = step.id();
+          List<ColumnInfo> selectColumns = extractSelectColumnsWithTypes(sql);
+
+          Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
+          if (existingDatasetId.isPresent()) {
+            Long dsId = existingDatasetId.get();
+            if (tempDatasetService.hasSchemaChanged(dsId, selectColumns)) {
+              log.info("Schema changed for step {}, recreating temp dataset", step.name());
+              tempDatasetService.deleteTempDataset(dsId);
+              outputDatasetId =
+                  tempDatasetService.createTempDataset(
+                      selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+            } else {
+              log.info("Reusing existing temp dataset {} for step {}", dsId, step.name());
+              outputDatasetId = dsId;
+            }
+          } else {
+            log.info("Creating new temp dataset for step {}", step.name());
+            outputDatasetId =
+                tempDatasetService.createTempDataset(
+                    selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+          }
+          outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
+          dataTableRowService.truncateTable(outputTableName);
+        }
+
+        if (isSelect && outputTableName != null && outputDatasetId != null) {
           // SELECT 자동 적재: 컬럼 추출 → 매칭 → INSERT INTO ... SELECT 래핑
           List<String> selectColumns = extractSelectColumns(sql);
 
           Set<String> outputColumnNames =
-              columnRepository.findByDatasetId(step.outputDatasetId()).stream()
+              columnRepository.findByDatasetId(outputDatasetId).stream()
                   .filter(col -> !col.isPrimaryKey())
                   .map(DatasetColumnResponse::columnName)
                   .collect(Collectors.toSet());
@@ -464,6 +504,9 @@ public class PipelineExecutionService {
           throw new ScriptExecutionException(
               "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. " + "관리자에게 이 기능 활성화를 요청하세요.");
         }
+        if (outputDatasetId == null) {
+          log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
+        }
         if (executorEnabled) {
           var result = executorClient.executePython(step.scriptContent());
           if (!result.success()) {
@@ -484,11 +527,37 @@ public class PipelineExecutionService {
           decryptedAuth = apiCallConfig.inlineAuth();
         }
 
+        // Auto-create temp dataset when outputDatasetId is null
+        if (outputDatasetId == null) {
+          List<ColumnInfo> apiColumns = inferApiCallColumns(apiCallConfig);
+          Long stepId = step.id();
+          Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
+          if (existingDatasetId.isPresent()) {
+            Long dsId = existingDatasetId.get();
+            if (tempDatasetService.hasSchemaChanged(dsId, apiColumns)) {
+              log.info("Schema changed for API_CALL step {}, recreating temp dataset", step.name());
+              tempDatasetService.deleteTempDataset(dsId);
+              outputDatasetId =
+                  tempDatasetService.createTempDataset(
+                      apiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+            } else {
+              log.info("Reusing existing temp dataset {} for API_CALL step {}", dsId, step.name());
+              outputDatasetId = dsId;
+            }
+          } else {
+            log.info("Creating new temp dataset for API_CALL step {}", step.name());
+            outputDatasetId =
+                tempDatasetService.createTempDataset(
+                    apiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+          }
+          outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
+          dataTableRowService.truncateTable(outputTableName);
+        }
+
         // Build column type map from dataset metadata for accurate type conversion
         Map<String, String> columnTypeMap = null;
-        if (step.outputDatasetId() != null) {
-          List<DatasetColumnResponse> columns =
-              columnRepository.findByDatasetId(step.outputDatasetId());
+        if (outputDatasetId != null) {
+          List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(outputDatasetId);
           columnTypeMap = new HashMap<>();
           for (DatasetColumnResponse col : columns) {
             columnTypeMap.put(col.columnName(), col.dataType());
@@ -537,15 +606,67 @@ public class PipelineExecutionService {
           throw new ScriptExecutionException(
               "AI 분류 스텝 실행에는 'pipeline:ai_execute' 권한이 필요합니다. 관리자에게 이 기능 활성화를 요청하세요.");
         }
+
+        // Auto-create temp dataset when outputDatasetId is null
+        PipelineStepResponse resolvedStep = step;
+        if (outputDatasetId == null) {
+          com.smartfirehub.pipeline.dto.AiClassifyConfig aiClassifyConfig =
+              objectMapper.convertValue(
+                  step.aiConfig(), com.smartfirehub.pipeline.dto.AiClassifyConfig.class);
+          List<ColumnInfo> aiColumns = buildAiClassifyColumns(aiClassifyConfig);
+          Long stepId = step.id();
+          Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
+          if (existingDatasetId.isPresent()) {
+            Long dsId = existingDatasetId.get();
+            if (tempDatasetService.hasSchemaChanged(dsId, aiColumns)) {
+              log.info(
+                  "Schema changed for AI_CLASSIFY step {}, recreating temp dataset", step.name());
+              tempDatasetService.deleteTempDataset(dsId);
+              outputDatasetId =
+                  tempDatasetService.createTempDataset(
+                      aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+            } else {
+              log.info(
+                  "Reusing existing temp dataset {} for AI_CLASSIFY step {}", dsId, step.name());
+              outputDatasetId = dsId;
+            }
+          } else {
+            log.info("Creating new temp dataset for AI_CLASSIFY step {}", step.name());
+            outputDatasetId =
+                tempDatasetService.createTempDataset(
+                    aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+          }
+          outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
+          dataTableRowService.truncateTable(outputTableName);
+          // Wrap step with resolved outputDatasetId for AiClassifyExecutor
+          final Long resolvedOutputDatasetId = outputDatasetId;
+          resolvedStep =
+              new PipelineStepResponse(
+                  step.id(),
+                  step.name(),
+                  step.description(),
+                  step.scriptType(),
+                  step.scriptContent(),
+                  resolvedOutputDatasetId,
+                  step.outputDatasetName(),
+                  step.inputDatasetIds(),
+                  step.dependsOnStepNames(),
+                  step.stepOrder(),
+                  step.loadStrategy(),
+                  step.apiConfig(),
+                  step.aiConfig(),
+                  step.apiConnectionId());
+        }
+
         AiClassifyExecutor.ExecutionResult aiResult =
-            aiClassifyExecutor.execute(step, stepExecId, userId);
+            aiClassifyExecutor.execute(resolvedStep, stepExecId, userId);
         executionLog = aiResult.executionLog();
         // AI_CLASSIFY manages its own output row counting
       } else {
         throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
       }
 
-      // Count output rows (if output dataset specified)
+      // Count output rows (if output table resolved)
       Long outputRows = null;
       if (outputTableName != null) {
         outputRows = dataTableRowService.countRows(outputTableName);
@@ -643,6 +764,41 @@ public class PipelineExecutionService {
     return request;
   }
 
+  private List<ColumnInfo> inferApiCallColumns(ApiCallConfig config) {
+    if (config.fieldMappings() == null || config.fieldMappings().isEmpty()) {
+      return List.of();
+    }
+    return config.fieldMappings().stream()
+        .map(
+            fm -> {
+              String appType = "TEXT";
+              if (fm.dataType() != null) {
+                String dt = fm.dataType().toUpperCase();
+                if (dt.contains("INT")) appType = "INTEGER";
+                else if (dt.contains("NUMERIC")
+                    || dt.contains("DECIMAL")
+                    || dt.contains("FLOAT")
+                    || dt.contains("DOUBLE")) appType = "DECIMAL";
+                else if (dt.contains("BOOL")) appType = "BOOLEAN";
+                else if (dt.equals("DATE")) appType = "DATE";
+                else if (dt.contains("TIMESTAMP")) appType = "TIMESTAMP";
+              }
+              return new ColumnInfo(fm.targetColumn(), appType);
+            })
+        .collect(Collectors.toList());
+  }
+
+  private List<ColumnInfo> buildAiClassifyColumns(
+      com.smartfirehub.pipeline.dto.AiClassifyConfig config) {
+    String prefix = config.targetPrefix() != null ? config.targetPrefix() : "ai_";
+    return List.of(
+        new ColumnInfo(config.keyColumn(), "TEXT"),
+        new ColumnInfo(prefix + "label", "TEXT"),
+        new ColumnInfo(prefix + "confidence", "DECIMAL"),
+        new ColumnInfo(prefix + "reason", "TEXT"),
+        new ColumnInfo(prefix + "classified_at", "TIMESTAMP"));
+  }
+
   private boolean isSelectStatement(String sql) {
     String upper = sql.stripLeading().toUpperCase();
     return upper.startsWith("SELECT") || upper.startsWith("WITH");
@@ -657,5 +813,32 @@ public class PipelineExecutionService {
     } catch (Exception e) {
       throw new ScriptExecutionException("SQL 컬럼 분석 실패: " + e.getMessage(), e);
     }
+  }
+
+  private List<ColumnInfo> extractSelectColumnsWithTypes(String sql) {
+    try {
+      String probeSql = "SELECT * FROM (" + sql + ") AS _probe LIMIT 0";
+      var result = pipelineDsl.fetch(probeSql);
+      return Arrays.stream(result.fields())
+          .map(f -> new ColumnInfo(f.getName(), mapJooqTypeToAppType(f.getDataType())))
+          .collect(Collectors.toList());
+    } catch (Exception e) {
+      throw new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + e.getMessage(), e);
+    }
+  }
+
+  private String mapJooqTypeToAppType(org.jooq.DataType<?> dataType) {
+    String sqlType = dataType.getTypeName().toUpperCase();
+    if (sqlType.contains("VARCHAR") || sqlType.contains("TEXT") || sqlType.contains("CHAR"))
+      return "TEXT";
+    if (sqlType.contains("INT") || sqlType.contains("SERIAL")) return "INTEGER";
+    if (sqlType.contains("NUMERIC")
+        || sqlType.contains("DECIMAL")
+        || sqlType.contains("FLOAT")
+        || sqlType.contains("DOUBLE")) return "DECIMAL";
+    if (sqlType.contains("BOOL")) return "BOOLEAN";
+    if (sqlType.equals("DATE")) return "DATE";
+    if (sqlType.contains("TIMESTAMP")) return "TIMESTAMP";
+    return "TEXT";
   }
 }
