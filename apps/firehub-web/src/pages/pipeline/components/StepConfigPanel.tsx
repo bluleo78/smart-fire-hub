@@ -4,6 +4,7 @@ import { lazy, Suspense } from 'react';
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -281,26 +282,49 @@ export default function StepConfigPanel({
           {/* Output dataset */}
           <div className="space-y-1.5">
             <Label>출력 데이터셋</Label>
-            <DatasetCombobox
-              mode="single"
-              datasets={datasets}
-              value={step.outputDatasetId}
-              disabled={readOnly}
-              onChange={(value) => handleUpdateStep({ outputDatasetId: value })}
-            />
-            {step.outputDatasetId ? (
-              !readOnly && (
+            {!readOnly && (
+              <div className="flex gap-1.5 mb-1">
                 <button
                   type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  className={cn(
+                    'text-xs px-2 py-1 rounded-md border transition-colors',
+                    step.outputDatasetId === null
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background text-muted-foreground border-border hover:text-foreground',
+                  )}
                   onClick={() => handleUpdateStep({ outputDatasetId: null })}
                 >
-                  선택 해제 (실행 시 임시 데이터셋 자동 생성)
+                  자동 생성 (임시)
                 </button>
-              )
+                <button
+                  type="button"
+                  className={cn(
+                    'text-xs px-2 py-1 rounded-md border transition-colors',
+                    step.outputDatasetId !== null
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background text-muted-foreground border-border hover:text-foreground',
+                  )}
+                  onClick={() => {
+                    if (step.outputDatasetId === null && datasets.length > 0) {
+                      handleUpdateStep({ outputDatasetId: datasets[0].id });
+                    }
+                  }}
+                >
+                  데이터셋 선택
+                </button>
+              </div>
+            )}
+            {step.outputDatasetId !== null ? (
+              <DatasetCombobox
+                mode="single"
+                datasets={datasets}
+                value={step.outputDatasetId}
+                disabled={readOnly}
+                onChange={(value) => handleUpdateStep({ outputDatasetId: value })}
+              />
             ) : (
               <p className="text-xs text-muted-foreground">
-                미지정 시 실행할 때 임시 데이터셋이 자동 생성됩니다
+                실행 시 스텝 결과에 맞는 임시 데이터셋이 자동 생성됩니다
               </p>
             )}
             {outputDatasetIdError && (
