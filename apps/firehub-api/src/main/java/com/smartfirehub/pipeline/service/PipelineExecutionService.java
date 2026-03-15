@@ -16,6 +16,7 @@ import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
+import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
@@ -48,6 +49,7 @@ public class PipelineExecutionService {
   private final ObjectMapper objectMapper;
   private final PermissionChecker permissionChecker;
   private final ExecutorClient executorClient;
+  private final AiClassifyExecutor aiClassifyExecutor;
 
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
@@ -67,7 +69,8 @@ public class PipelineExecutionService {
       ApiConnectionService apiConnectionService,
       ObjectMapper objectMapper,
       PermissionChecker permissionChecker,
-      ExecutorClient executorClient) {
+      ExecutorClient executorClient,
+      AiClassifyExecutor aiClassifyExecutor) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -83,6 +86,7 @@ public class PipelineExecutionService {
     this.objectMapper = objectMapper;
     this.permissionChecker = permissionChecker;
     this.executorClient = executorClient;
+    this.aiClassifyExecutor = aiClassifyExecutor;
   }
 
   /**
@@ -370,7 +374,7 @@ public class PipelineExecutionService {
       // API_CALL skips this block — the executor handles load strategy internally
       String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
 
-      if (!"API_CALL".equals(step.scriptType())) {
+      if (!"API_CALL".equals(step.scriptType()) && !"AI_CLASSIFY".equals(step.scriptType())) {
         switch (loadStrategy) {
           case "REPLACE":
             if (outputTableName != null) {
@@ -476,6 +480,15 @@ public class PipelineExecutionService {
                   apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap);
           executionLog = result.log();
         }
+      } else if ("AI_CLASSIFY".equals(step.scriptType())) {
+        if (!permissionChecker.hasPermission(userId, "pipeline:ai_execute")) {
+          throw new ScriptExecutionException(
+              "AI 분류 스텝 실행에는 'pipeline:ai_execute' 권한이 필요합니다. 관리자에게 이 기능 활성화를 요청하세요.");
+        }
+        AiClassifyExecutor.ExecutionResult aiResult =
+            aiClassifyExecutor.execute(step, stepExecId, userId);
+        executionLog = aiResult.executionLog();
+        // AI_CLASSIFY manages its own output row counting
       } else {
         throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
       }

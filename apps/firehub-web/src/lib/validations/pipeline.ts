@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const pipelineStepSchema = z.object({
   name: z.string().min(1, '스텝 이름을 입력하세요').max(100),
   description: z.string().optional().or(z.literal('')),
-  scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL'], { message: '스크립트 타입을 선택하세요' }),
+  scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY'], { message: '스크립트 타입을 선택하세요' }),
   scriptContent: z.string().optional().or(z.literal('')),
   outputDatasetId: z.number({ message: '출력 데이터셋을 선택하세요' }),
   inputDatasetIds: z.array(z.number()).default([]),
@@ -13,8 +13,8 @@ export const pipelineStepSchema = z.object({
   apiConnectionId: z.number().nullable().optional(),
 }).refine(
   (data) => {
-    if (data.scriptType === 'API_CALL') {
-      return !!data.apiConfig;
+    if (data.scriptType === 'API_CALL' || data.scriptType === 'AI_CLASSIFY') {
+      return true;
     }
     return !!data.scriptContent;
   },
@@ -37,7 +37,7 @@ export type PipelineStepFormData = z.infer<typeof pipelineStepSchema>;
 export const editorStepSchema = z.object({
   name: z.string().min(1, '스텝 이름을 입력하세요').max(100),
   description: z.string().optional().or(z.literal('')),
-  scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL'], { message: '스크립트 타입을 선택하세요' }),
+  scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY'], { message: '스크립트 타입을 선택하세요' }),
   scriptContent: z.string().optional().or(z.literal('')),
   outputDatasetId: z.number().nullable(),
   inputDatasetIds: z.array(z.number()).default([]),
@@ -46,8 +46,8 @@ export const editorStepSchema = z.object({
   apiConnectionId: z.number().nullable().optional(),
 }).refine(
   (data) => {
-    if (data.scriptType === 'API_CALL') {
-      return true; // apiConfig validated in UI component
+    if (data.scriptType === 'API_CALL' || data.scriptType === 'AI_CLASSIFY') {
+      return true; // apiConfig/aiConfig validated in UI component
     }
     return !!data.scriptContent;
   },

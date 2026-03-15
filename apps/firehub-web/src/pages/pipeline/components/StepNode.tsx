@@ -1,11 +1,11 @@
 import { Handle, type Node,type NodeProps, Position } from '@xyflow/react';
-import { CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
+import { Brain, CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
 import { memo } from 'react';
 
 export interface StepNodeData extends Record<string, unknown> {
   label: string;
   description?: string;
-  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
   isSelected: boolean;
   hasError: boolean;
   hasOutgoingEdge: boolean;
@@ -38,6 +38,13 @@ const TYPE_CONFIG = {
     bgHeaderSelected: 'rgba(3,105,161,0.12)',
     label: 'API',
     Icon: Globe,
+  },
+  AI_CLASSIFY: {
+    color: '#7c3aed',       // violet-600
+    bgHeader: 'rgba(124,58,237,0.06)',
+    bgHeaderSelected: 'rgba(124,58,237,0.12)',
+    label: 'AI 분류',
+    Icon: Brain,
   },
 } as const;
 

@@ -9,11 +9,23 @@ export interface PipelineResponse {
   createdAt: string;
 }
 
+export interface AiClassifyConfig {
+  sourceColumn: string;
+  keyColumn: string;
+  labels: string[];
+  promptTemplate?: string;
+  targetPrefix?: string;
+  batchSize?: number;
+  confidenceThreshold?: number;
+  onLowConfidence?: 'MARK_UNKNOWN' | 'KEEP_BEST_LABEL' | 'FAIL_STEP';
+  onError?: 'CONTINUE' | 'RETRY_BATCH' | 'FAIL_STEP';
+}
+
 export interface PipelineStepResponse {
   id: number;
   name: string;
   description: string | null;
-  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
   scriptContent: string;
   outputDatasetId: number;
   outputDatasetName: string;
@@ -22,6 +34,7 @@ export interface PipelineStepResponse {
   stepOrder: number;
   loadStrategy: string;
   apiConfig: Record<string, unknown> | null;
+  aiConfig?: Record<string, unknown>;
   apiConnectionId: number | null;
 }
 
@@ -46,13 +59,14 @@ export interface CreatePipelineRequest {
 export interface PipelineStepRequest {
   name: string;
   description?: string;
-  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
   scriptContent?: string;
   outputDatasetId: number | null;
   inputDatasetIds: number[];
   dependsOnStepNames: string[];
   loadStrategy?: string;
   apiConfig?: Record<string, unknown>;
+  aiConfig?: AiClassifyConfig;
   apiConnectionId?: number | null;
 }
 

@@ -1,4 +1,4 @@
-import type { PipelineDetailResponse } from '@/types/pipeline';
+import type { AiClassifyConfig, PipelineDetailResponse } from '@/types/pipeline';
 
 import { wouldCreateCycle } from '../utils/cycle-detection';
 import { getLayoutedElements } from '../utils/dagre-layout';
@@ -14,7 +14,7 @@ export interface EditorStep {
   tempId: string;
   name: string;
   description: string;
-  scriptType: 'SQL' | 'PYTHON' | 'API_CALL';
+  scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
   scriptContent: string;
   outputDatasetId: number | null;
   inputDatasetIds: number[];
@@ -22,6 +22,7 @@ export interface EditorStep {
   position: { x: number; y: number };
   loadStrategy: string;
   apiConfig?: Record<string, unknown>;
+  aiConfig?: AiClassifyConfig;
   apiConnectionId?: number | null;
 }
 
@@ -294,6 +295,7 @@ export function pipelineEditorReducer(
           position: { x: 0, y: 0 },
           loadStrategy: step.loadStrategy ?? 'REPLACE',
           apiConfig: step.apiConfig ?? undefined,
+          aiConfig: step.aiConfig as AiClassifyConfig | undefined,
           apiConnectionId: step.apiConnectionId ?? undefined,
         };
       });

@@ -261,6 +261,7 @@ class PipelineExecutionServiceTest {
         0,
         "REPLACE",
         null,
+        null,
         null);
   }
 }

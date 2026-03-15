@@ -6,13 +6,14 @@ import java.util.Map;
 public record PipelineStepRequest(
     String name,
     String description,
-    String scriptType, // "SQL", "PYTHON", or "API_CALL"
-    String scriptContent, // nullable for API_CALL
+    String scriptType, // "SQL", "PYTHON", "API_CALL", or "AI_CLASSIFY"
+    String scriptContent, // nullable for API_CALL and AI_CLASSIFY
     Long outputDatasetId,
     List<Long> inputDatasetIds,
     List<String> dependsOnStepNames, // reference other steps by name
     String loadStrategy,
     Map<String, Object> apiConfig, // API_CALL configuration (JSON object)
+    Map<String, Object> aiConfig, // AI_CLASSIFY configuration (JSON object)
     Long apiConnectionId // FK to api_connection
     ) {
   public PipelineStepRequest(
@@ -32,6 +33,7 @@ public record PipelineStepRequest(
         inputDatasetIds,
         dependsOnStepNames,
         "REPLACE",
+        null,
         null,
         null);
   }
@@ -54,6 +56,7 @@ public record PipelineStepRequest(
         inputDatasetIds,
         dependsOnStepNames,
         loadStrategy,
+        null,
         null,
         null);
   }

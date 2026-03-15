@@ -16,4 +16,5 @@ public record PipelineStepResponse(
     int stepOrder,
     String loadStrategy,
     Map<String, Object> apiConfig,
+    Map<String, Object> aiConfig,
     Long apiConnectionId) {}

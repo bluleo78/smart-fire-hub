@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import chatRouter from './routes/chat.js';
+import classifyRouter from './routes/classify.js';
 import { DEFAULT_PORT } from './constants.js';
 
 dotenv.config({ path: '.env.local' });
@@ -11,6 +12,7 @@ const PORT = process.env.PORT || DEFAULT_PORT;
 app.use(express.json());
 
 app.use('/agent', chatRouter);
+app.use('/agent', classifyRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err);

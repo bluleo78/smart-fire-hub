@@ -1,5 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
@@ -11,6 +13,8 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,12 +25,18 @@ public class PipelineService {
 
   private static final Logger log = LoggerFactory.getLogger(PipelineService.class);
 
+  private static final Set<String> VALID_ON_LOW_CONFIDENCE =
+      Set.of("MARK_UNKNOWN", "KEEP_BEST_LABEL", "FAIL_STEP");
+  private static final Set<String> VALID_ON_ERROR = Set.of("CONTINUE", "RETRY_BATCH", "FAIL_STEP");
+
   private final PipelineRepository pipelineRepository;
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
   private final PipelineExecutionService executionService;
   private final UserRepository userRepository;
   private final TriggerRepository triggerRepository;
+  private final DatasetColumnRepository datasetColumnRepository;
+  private final ObjectMapper objectMapper;
 
   public PipelineService(
       PipelineRepository pipelineRepository,
@@ -34,13 +44,17 @@ public class PipelineService {
       PipelineExecutionRepository executionRepository,
       PipelineExecutionService executionService,
       UserRepository userRepository,
-      TriggerRepository triggerRepository) {
+      TriggerRepository triggerRepository,
+      DatasetColumnRepository datasetColumnRepository,
+      ObjectMapper objectMapper) {
     this.pipelineRepository = pipelineRepository;
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.executionService = executionService;
     this.userRepository = userRepository;
     this.triggerRepository = triggerRepository;
+    this.datasetColumnRepository = datasetColumnRepository;
+    this.objectMapper = objectMapper;
   }
 
   @Transactional
@@ -80,6 +94,11 @@ public class PipelineService {
           throw new IllegalArgumentException(
               "API_CALL step '" + stepRequest.name() + "' requires apiConfig");
         }
+      }
+
+      // Validate AI_CLASSIFY step requirements
+      if ("AI_CLASSIFY".equals(stepRequest.scriptType())) {
+        validateAiClassifyStep(stepRequest);
       }
 
       // Save step
@@ -167,6 +186,86 @@ public class PipelineService {
     if (request.steps() != null) {
       stepRepository.deleteByPipelineId(id);
       saveSteps(id, request.steps());
+    }
+  }
+
+  private void validateAiClassifyStep(PipelineStepRequest step) {
+    String stepName = step.name();
+
+    if (step.outputDatasetId() == null) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' requires outputDatasetId");
+    }
+    if (step.aiConfig() == null || step.aiConfig().isEmpty()) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' requires aiConfig");
+    }
+
+    AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
+
+    if (config.sourceColumn() == null || config.sourceColumn().isBlank()) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' requires aiConfig.sourceColumn");
+    }
+    if (config.keyColumn() == null || config.keyColumn().isBlank()) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' requires aiConfig.keyColumn");
+    }
+    if (config.labels() == null || config.labels().size() < 2) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' requires at least 2 labels");
+    }
+    if (config.batchSize() != null && (config.batchSize() < 1 || config.batchSize() > 100)) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' batchSize must be between 1 and 100");
+    }
+    if (config.confidenceThreshold() != null
+        && (config.confidenceThreshold() < 0.0 || config.confidenceThreshold() > 1.0)) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '" + stepName + "' confidenceThreshold must be between 0.0 and 1.0");
+    }
+    if (config.onLowConfidence() != null
+        && !VALID_ON_LOW_CONFIDENCE.contains(config.onLowConfidence())) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '"
+              + stepName
+              + "' onLowConfidence must be one of: "
+              + VALID_ON_LOW_CONFIDENCE);
+    }
+    if (config.onError() != null && !VALID_ON_ERROR.contains(config.onError())) {
+      throw new IllegalArgumentException(
+          "AI_CLASSIFY step '"
+              + stepName
+              + "' onError must be one of: "
+              + VALID_ON_ERROR);
+    }
+
+    // Validate sourceColumn and keyColumn exist in input datasets
+    if (step.inputDatasetIds() != null && !step.inputDatasetIds().isEmpty()) {
+      Set<String> allColumnNames =
+          step.inputDatasetIds().stream()
+              .flatMap(
+                  datasetId ->
+                      datasetColumnRepository.findByDatasetId(datasetId).stream()
+                          .map(col -> col.columnName()))
+              .collect(Collectors.toSet());
+
+      if (!allColumnNames.contains(config.sourceColumn())) {
+        throw new IllegalArgumentException(
+            "AI_CLASSIFY step '"
+                + stepName
+                + "' sourceColumn '"
+                + config.sourceColumn()
+                + "' not found in input datasets");
+      }
+      if (!allColumnNames.contains(config.keyColumn())) {
+        throw new IllegalArgumentException(
+            "AI_CLASSIFY step '"
+                + stepName
+                + "' keyColumn '"
+                + config.keyColumn()
+                + "' not found in input datasets");
+      }
     }
   }
 

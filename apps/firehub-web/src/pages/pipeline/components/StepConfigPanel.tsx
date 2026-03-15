@@ -2,6 +2,7 @@ import { Trash2,X } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
+const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -224,11 +225,12 @@ export default function StepConfigPanel({
                 <SelectItem value="SQL">SQL</SelectItem>
                 <SelectItem value="PYTHON">PYTHON</SelectItem>
                 <SelectItem value="API_CALL">API 호출</SelectItem>
+                <SelectItem value="AI_CLASSIFY">AI 분류</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Script content or API Config */}
+          {/* Script content or API Config or AI Classify Config */}
           {step.scriptType === 'API_CALL' ? (
             <>
               <Separator />
@@ -238,6 +240,18 @@ export default function StepConfigPanel({
                   apiConnectionId={step.apiConnectionId ?? null}
                   onChange={(config) => handleUpdateStep({ apiConfig: config })}
                   onConnectionChange={(id) => handleUpdateStep({ apiConnectionId: id })}
+                  readOnly={readOnly}
+                />
+              </Suspense>
+            </>
+          ) : step.scriptType === 'AI_CLASSIFY' ? (
+            <>
+              <Separator />
+              <Suspense fallback={<Skeleton className="h-[200px]" />}>
+                <AiClassifyStepConfig
+                  aiConfig={step.aiConfig ?? { sourceColumn: '', keyColumn: '', labels: [] }}
+                  inputDatasetIds={step.inputDatasetIds}
+                  onChange={(config) => handleUpdateStep({ aiConfig: config })}
                   readOnly={readOnly}
                 />
               </Suspense>

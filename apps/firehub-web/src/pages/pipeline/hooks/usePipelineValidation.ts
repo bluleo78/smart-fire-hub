@@ -37,6 +37,20 @@ export function usePipelineValidation(
         apiConnectionId: step.apiConnectionId,
       });
 
+      // AI_CLASSIFY specific validation
+      if (step.scriptType === 'AI_CLASSIFY') {
+        const cfg = step.aiConfig;
+        if (!cfg || !cfg.sourceColumn) {
+          errors.push({ stepTempId: step.tempId, field: 'aiConfig.sourceColumn', message: '소스 컬럼을 선택하세요' });
+        }
+        if (!cfg || !cfg.keyColumn) {
+          errors.push({ stepTempId: step.tempId, field: 'aiConfig.keyColumn', message: '키 컬럼을 선택하세요' });
+        }
+        if (!cfg || !cfg.labels || cfg.labels.length < 2) {
+          errors.push({ stepTempId: step.tempId, field: 'aiConfig.labels', message: '라벨을 최소 2개 입력하세요' });
+        }
+      }
+
       if (!result.success) {
         for (const issue of result.error.issues) {
           errors.push({

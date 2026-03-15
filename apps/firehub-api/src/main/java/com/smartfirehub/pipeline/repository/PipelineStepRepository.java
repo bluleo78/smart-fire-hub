@@ -41,6 +41,8 @@ public class PipelineStepRepository {
       field(name("pipeline_step", "load_strategy"), String.class);
   private static final Field<JSONB> PS_API_CONFIG =
       field(name("pipeline_step", "api_config"), JSONB.class);
+  private static final Field<JSONB> PS_AI_CONFIG =
+      field(name("pipeline_step", "ai_config"), JSONB.class);
   private static final Field<Long> PS_API_CONNECTION_ID =
       field(name("pipeline_step", "api_connection_id"), Long.class);
 
@@ -78,6 +80,7 @@ public class PipelineStepRepository {
                 PS_STEP_ORDER,
                 PS_LOAD_STRATEGY,
                 PS_API_CONFIG,
+                PS_AI_CONFIG,
                 PS_API_CONNECTION_ID,
                 D_NAME)
             .from(PIPELINE_STEP)
@@ -142,6 +145,17 @@ public class PipelineStepRepository {
                   throw new SerializationException("Failed to parse api_config JSON", e);
                 }
               }
+              Map<String, Object> aiConfigMap = null;
+              JSONB aiConfigJsonb = r.get(PS_AI_CONFIG);
+              if (aiConfigJsonb != null && aiConfigJsonb.data() != null) {
+                try {
+                  aiConfigMap =
+                      objectMapper.readValue(
+                          aiConfigJsonb.data(), new TypeReference<Map<String, Object>>() {});
+                } catch (JsonProcessingException e) {
+                  throw new SerializationException("Failed to parse ai_config JSON", e);
+                }
+              }
               return new PipelineStepResponse(
                   stepId,
                   r.get(PS_NAME),
@@ -155,6 +169,7 @@ public class PipelineStepRepository {
                   r.get(PS_STEP_ORDER),
                   r.get(PS_LOAD_STRATEGY) != null ? r.get(PS_LOAD_STRATEGY) : "REPLACE",
                   apiConfigMap,
+                  aiConfigMap,
                   r.get(PS_API_CONNECTION_ID));
             })
         .toList();
@@ -171,6 +186,16 @@ public class PipelineStepRepository {
       }
     }
 
+    JSONB aiConfigJsonb = null;
+    if (request.aiConfig() != null) {
+      try {
+        String json = objectMapper.writeValueAsString(request.aiConfig());
+        aiConfigJsonb = JSONB.jsonb(json);
+      } catch (JsonProcessingException e) {
+        throw new SerializationException("Failed to serialize aiConfig", e);
+      }
+    }
+
     var insert =
         dsl.insertInto(PIPELINE_STEP)
             .set(PS_PIPELINE_ID, pipelineId)
@@ -184,6 +209,7 @@ public class PipelineStepRepository {
                 PS_LOAD_STRATEGY,
                 request.loadStrategy() != null ? request.loadStrategy() : "REPLACE")
             .set(PS_API_CONFIG, apiConfigJsonb)
+            .set(PS_AI_CONFIG, aiConfigJsonb)
             .set(PS_API_CONNECTION_ID, request.apiConnectionId());
 
     return insert.returning(PS_ID).fetchOne(r -> r.get(PS_ID));

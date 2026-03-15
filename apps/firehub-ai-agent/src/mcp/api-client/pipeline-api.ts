@@ -23,6 +23,7 @@ export function createPipelineApi(client: AxiosInstance) {
         dependsOnStepNames?: string[];
         loadStrategy?: string;
         apiConfig?: Record<string, unknown>;
+        aiConfig?: Record<string, unknown>;
         apiConnectionId?: number;
       }>;
     }): Promise<unknown> {
@@ -45,6 +46,7 @@ export function createPipelineApi(client: AxiosInstance) {
           dependsOnStepNames?: string[];
           loadStrategy?: string;
           apiConfig?: Record<string, unknown>;
+          aiConfig?: Record<string, unknown>;
           apiConnectionId?: number;
         }>;
       },

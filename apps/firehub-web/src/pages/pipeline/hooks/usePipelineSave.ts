@@ -32,7 +32,7 @@ export function usePipelineSave({
       name: step.name.trim(),
       description: step.description || undefined,
       scriptType: step.scriptType,
-      scriptContent: step.scriptType === 'API_CALL' ? undefined : step.scriptContent,
+      scriptContent: (step.scriptType === 'API_CALL' || step.scriptType === 'AI_CLASSIFY') ? undefined : step.scriptContent,
       outputDatasetId: step.outputDatasetId,
       inputDatasetIds: step.inputDatasetIds,
       dependsOnStepNames: step.dependsOnTempIds
@@ -40,6 +40,7 @@ export function usePipelineSave({
         .filter((name): name is string => !!name),
       loadStrategy: step.loadStrategy,
       apiConfig: step.apiConfig,
+      aiConfig: step.aiConfig,
       apiConnectionId: step.apiConnectionId,
     }));
 

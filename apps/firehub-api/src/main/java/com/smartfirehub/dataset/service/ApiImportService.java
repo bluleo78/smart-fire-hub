@@ -65,6 +65,7 @@ public class ApiImportService {
             List.of(),
             loadStrategy,
             request.apiConfig(),
+            null,
             request.apiConnectionId());
 
     // 4. Create pipeline via PipelineService

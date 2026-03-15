@@ -171,6 +171,7 @@ export class FireHubApiClient {
       dependsOnStepNames?: string[];
       loadStrategy?: string;
       apiConfig?: Record<string, unknown>;
+      aiConfig?: Record<string, unknown>;
       apiConnectionId?: number;
     }>;
   }) {
@@ -192,6 +193,7 @@ export class FireHubApiClient {
         dependsOnStepNames?: string[];
         loadStrategy?: string;
         apiConfig?: Record<string, unknown>;
+        aiConfig?: Record<string, unknown>;
         apiConnectionId?: number;
       }>;
     },

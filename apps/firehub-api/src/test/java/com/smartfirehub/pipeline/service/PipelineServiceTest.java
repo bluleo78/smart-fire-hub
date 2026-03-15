@@ -14,6 +14,7 @@ import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
+import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -302,5 +303,148 @@ class PipelineServiceTest extends IntegrationTestBase {
     // Then
     assertThat(executions).isNotEmpty();
     assertThat(executions).anyMatch(exec -> exec.id().equals(execution.id()));
+  }
+
+  @Test
+  void createPipeline_withValidAiClassifyStep_success() {
+    // Given
+    Map<String, Object> aiConfig =
+        Map.of(
+            "sourceColumn", "col1",
+            "keyColumn", "col1",
+            "labels", List.of("positive", "negative"));
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step",
+                "AI classify step",
+                "AI_CLASSIFY",
+                null,
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null,
+                "REPLACE",
+                null,
+                aiConfig,
+                null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("AI Pipeline", "AI pipeline description", steps);
+
+    // When
+    PipelineDetailResponse response = pipelineService.createPipeline(request, testUserId);
+
+    // Then
+    assertThat(response.id()).isNotNull();
+    assertThat(response.steps()).hasSize(1);
+    assertThat(response.steps().get(0).scriptType()).isEqualTo("AI_CLASSIFY");
+    assertThat(response.steps().get(0).aiConfig()).isNotNull();
+    assertThat(response.steps().get(0).aiConfig()).containsKey("sourceColumn");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_missingOutputDatasetId_throwsException() {
+    Map<String, Object> aiConfig =
+        Map.of(
+            "sourceColumn", "col1",
+            "keyColumn", "col1",
+            "labels", List.of("positive", "negative"));
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step", "AI step", "AI_CLASSIFY", null, null,
+                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("outputDatasetId");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_missingAiConfig_throwsException() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
+                List.of(inputDatasetId), null, "REPLACE", null, null, null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("aiConfig");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_tooFewLabels_throwsException() {
+    Map<String, Object> aiConfig =
+        Map.of(
+            "sourceColumn", "col1",
+            "keyColumn", "col1",
+            "labels", List.of("positive")); // only 1 label
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
+                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("labels");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_invalidBatchSize_throwsException() {
+    Map<String, Object> aiConfig =
+        Map.of(
+            "sourceColumn", "col1",
+            "keyColumn", "col1",
+            "labels", List.of("positive", "negative"),
+            "batchSize", 200); // out of range
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
+                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("batchSize");
+  }
+
+  @Test
+  void createPipeline_aiClassifyStep_invalidSourceColumn_throwsException() {
+    Map<String, Object> aiConfig =
+        Map.of(
+            "sourceColumn", "nonexistent_col",
+            "keyColumn", "col1",
+            "labels", List.of("positive", "negative"));
+
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "ai_step", "AI step", "AI_CLASSIFY", null, outputDatasetId,
+                List.of(inputDatasetId), null, "REPLACE", null, aiConfig, null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("AI Pipeline", "Description", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("sourceColumn");
   }
 }

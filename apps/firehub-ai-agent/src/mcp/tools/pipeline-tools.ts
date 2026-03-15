@@ -44,11 +44,11 @@ export function registerPipelineTools(
             z.object({
               name: z.string().describe('스텝 이름 (의존성 참조에 사용)'),
               description: z.string().optional().describe('스텝 설명'),
-              scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL']).describe('스텝 유형'),
+              scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY']).describe('스텝 유형'),
               scriptContent: z
                 .string()
                 .optional()
-                .describe('SQL 또는 Python 스크립트 (API_CALL은 불필요)'),
+                .describe('SQL 또는 Python 스크립트 (API_CALL, AI_CLASSIFY은 불필요)'),
               outputDatasetId: z.number().optional().describe('출력 데이터셋 ID'),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z
@@ -111,6 +111,26 @@ export function registerPipelineTools(
                 })
                 .optional()
                 .describe('API_CALL 스텝 설정'),
+              aiConfig: z
+                .object({
+                  sourceColumn: z.string().describe('입력 텍스트 컬럼명'),
+                  keyColumn: z.string().describe('출력에 포함할 키 컬럼명'),
+                  labels: z.array(z.string()).min(2).describe('분류 라벨 목록 (최소 2개)'),
+                  promptTemplate: z.string().optional().describe('프롬프트 템플릿 ({labels}, {text} 플레이스홀더)'),
+                  targetPrefix: z.string().optional().describe('결과 컬럼명 접두사 (기본: ai_)'),
+                  batchSize: z.number().min(1).max(100).optional().describe('배치 크기 (1~100, 기본: 20)'),
+                  confidenceThreshold: z.number().min(0).max(1).optional().describe('신뢰도 임계값 (0.0~1.0, 기본: 0.7)'),
+                  onLowConfidence: z
+                    .enum(['MARK_UNKNOWN', 'KEEP_BEST_LABEL', 'FAIL_STEP'])
+                    .optional()
+                    .describe('low-confidence 처리 방식 (기본: MARK_UNKNOWN)'),
+                  onError: z
+                    .enum(['CONTINUE', 'RETRY_BATCH', 'FAIL_STEP'])
+                    .optional()
+                    .describe('에러 처리 방식 (기본: CONTINUE)'),
+                })
+                .optional()
+                .describe('AI_CLASSIFY 스텝 설정'),
               apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
             }),
           )
@@ -129,6 +149,7 @@ export function registerPipelineTools(
           dependsOnStepNames?: string[];
           loadStrategy?: string;
           apiConfig?: Record<string, unknown>;
+          aiConfig?: Record<string, unknown>;
           apiConnectionId?: number;
         }>;
       }) => {
@@ -150,13 +171,33 @@ export function registerPipelineTools(
             z.object({
               name: z.string().describe('스텝 이름'),
               description: z.string().optional().describe('스텝 설명'),
-              scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL']).describe('스텝 유형'),
+              scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY']).describe('스텝 유형'),
               scriptContent: z.string().optional().describe('스크립트'),
               outputDatasetId: z.number().optional().describe('출력 데이터셋 ID'),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z.array(z.string()).optional().describe('의존 스텝 이름 목록'),
               loadStrategy: z.enum(['REPLACE', 'APPEND']).optional().describe('적재 전략'),
               apiConfig: z.record(z.string(), z.unknown()).optional().describe('API_CALL 설정'),
+              aiConfig: z
+                .object({
+                  sourceColumn: z.string().describe('입력 텍스트 컬럼명'),
+                  keyColumn: z.string().describe('출력에 포함할 키 컬럼명'),
+                  labels: z.array(z.string()).min(2).describe('분류 라벨 목록 (최소 2개)'),
+                  promptTemplate: z.string().optional().describe('프롬프트 템플릿'),
+                  targetPrefix: z.string().optional().describe('결과 컬럼명 접두사'),
+                  batchSize: z.number().min(1).max(100).optional().describe('배치 크기'),
+                  confidenceThreshold: z.number().min(0).max(1).optional().describe('신뢰도 임계값'),
+                  onLowConfidence: z
+                    .enum(['MARK_UNKNOWN', 'KEEP_BEST_LABEL', 'FAIL_STEP'])
+                    .optional()
+                    .describe('low-confidence 처리 방식'),
+                  onError: z
+                    .enum(['CONTINUE', 'RETRY_BATCH', 'FAIL_STEP'])
+                    .optional()
+                    .describe('에러 처리 방식'),
+                })
+                .optional()
+                .describe('AI_CLASSIFY 스텝 설정'),
               apiConnectionId: z.number().optional().describe('API 연결 ID'),
             }),
           )
@@ -178,6 +219,7 @@ export function registerPipelineTools(
           dependsOnStepNames?: string[];
           loadStrategy?: string;
           apiConfig?: Record<string, unknown>;
+          aiConfig?: Record<string, unknown>;
           apiConnectionId?: number;
         }>;
       }) => {
