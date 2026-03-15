@@ -8,20 +8,27 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import java.util.List;
 import java.util.Optional;
+import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.Result;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -37,8 +44,10 @@ class PipelineExecutionServiceTest {
   @Mock PipelineExecutionRepository executionRepository;
   @Mock PipelineRepository pipelineRepository;
   @Mock DataTableService dataTableService;
+  @Mock DataTableRowService dataTableRowService;
   @Mock DatasetRepository datasetRepository;
   @Mock DatasetColumnRepository columnRepository;
+  @Mock DSLContext pipelineDsl;
   @Mock SqlScriptExecutor sqlExecutor;
   @Mock PythonScriptExecutor pythonExecutor;
   @Mock ApplicationEventPublisher applicationEventPublisher;
@@ -234,6 +243,208 @@ class PipelineExecutionServiceTest {
   }
 
   // ------------------------------------------------------------------ //
+  // SQL 자동 적재 테스트
+  // ------------------------------------------------------------------ //
+
+  @Test
+  void executeStep_selectWithOutputDataset_wrapsAsInsertIntoSelect() throws Exception {
+    // given
+    Long pipelineId = 10L;
+    Long userId = 1L;
+    Long executionId = 100L;
+    Long stepId = 200L;
+    Long stepExecId = 300L;
+    Long outputDatasetId = 50L;
+
+    String selectSql = "SELECT id, name FROM data.\"source\"";
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "sql-step", "SQL", selectSql, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_table"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(
+            List.of(
+                col("pk_id", true),
+                col("id", false),
+                col("name", false),
+                col("extra", false)));
+
+    // pipelineDsl.fetch(probeSql) → Result with fields [id, name]
+    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(
+        DSL.field("id"), DSL.field("name"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    when(sqlExecutor.execute(anyString())).thenReturn("2 rows affected");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: sqlExecutor called with wrapped INSERT INTO ... SELECT
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+    assertThat(executedSql).startsWith("INSERT INTO data.\"output_table\"");
+    assertThat(executedSql).contains("\"id\"");
+    assertThat(executedSql).contains("\"name\"");
+    assertThat(executedSql).doesNotContain("\"pk_id\"");
+    assertThat(executedSql).doesNotContain("\"extra\"");
+    assertThat(executedSql).endsWith(selectSql);
+  }
+
+  @Test
+  void executeStep_withCteAndOutputDataset_wrapsAsInsertIntoSelect() throws Exception {
+    // given
+    Long pipelineId = 11L;
+    Long userId = 1L;
+    Long executionId = 101L;
+    Long stepId = 201L;
+    Long stepExecId = 301L;
+    Long outputDatasetId = 51L;
+
+    String cteSql = "WITH t AS (SELECT 1 AS val) SELECT val FROM t";
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "cte-step", "SQL", cteSql, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_cte"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("val", false)));
+
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("val"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    when(sqlExecutor.execute(anyString())).thenReturn("1 row affected");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+    assertThat(executedSql).startsWith("INSERT INTO data.\"output_cte\"");
+    assertThat(executedSql).contains("\"val\"");
+    assertThat(executedSql).endsWith(cteSql);
+  }
+
+  @Test
+  void executeStep_selectWithoutOutputDataset_executesAsIs() throws Exception {
+    // given: SELECT but no outputDatasetId → execute as-is (no wrapping)
+    Long pipelineId = 12L;
+    Long userId = 1L;
+    Long executionId = 102L;
+    Long stepId = 202L;
+    Long stepExecId = 302L;
+
+    String selectSql = "SELECT id FROM data.\"source\"";
+    PipelineStepResponse sqlStep =
+        stepResponse(stepId, "plain-select", "SQL", selectSql, null, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(sqlExecutor.execute(selectSql)).thenReturn("ok");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: called exactly with the original SQL (no wrapping)
+    verify(sqlExecutor).execute(selectSql);
+    verify(pipelineDsl, never()).fetch(anyString());
+  }
+
+  @Test
+  void executeStep_insertSqlWithOutputDataset_executesAsIs() throws Exception {
+    // given: INSERT SQL with outputDatasetId → NOT wrapped (not a SELECT)
+    Long pipelineId = 13L;
+    Long userId = 1L;
+    Long executionId = 103L;
+    Long stepId = 203L;
+    Long stepExecId = 303L;
+    Long outputDatasetId = 53L;
+
+    String insertSql = "INSERT INTO data.\"target\" (val) VALUES (1)";
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "insert-step", "SQL", insertSql, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("target"));
+    when(sqlExecutor.execute(insertSql)).thenReturn("1 row affected");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: called with original INSERT (no wrapping)
+    verify(sqlExecutor).execute(insertSql);
+    verify(pipelineDsl, never()).fetch(anyString());
+  }
+
+  @Test
+  void executeStep_selectNoMatchingColumns_throwsScriptExecutionException() throws Exception {
+    // given: SELECT columns don't match output dataset columns
+    Long pipelineId = 14L;
+    Long userId = 1L;
+    Long executionId = 104L;
+    Long stepId = 204L;
+    Long stepExecId = 304L;
+    Long outputDatasetId = 54L;
+
+    String selectSql = "SELECT foo, bar FROM data.\"source\"";
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "no-match", "SQL", selectSql, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_nomatch"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("id", true), col("name", false)));
+
+    // SELECT returns [foo, bar] but output has only [name] (non-PK)
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(
+            DSL.field("foo"), DSL.field("bar"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: step marked FAILED with ScriptExecutionException message
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다"),
+            isNull(),
+            any());
+  }
+
+  // ------------------------------------------------------------------ //
   // Helpers
   // ------------------------------------------------------------------ //
 
@@ -263,5 +474,34 @@ class PipelineExecutionServiceTest {
         null,
         null,
         null);
+  }
+
+  private PipelineStepResponse stepResponseWithOutput(
+      Long id,
+      String name,
+      String scriptType,
+      String scriptContent,
+      Long outputDatasetId,
+      List<String> dependsOnStepNames) {
+    return new PipelineStepResponse(
+        id,
+        name,
+        null,
+        scriptType,
+        scriptContent,
+        outputDatasetId,
+        null,
+        List.of(),
+        dependsOnStepNames,
+        0,
+        "APPEND",
+        null,
+        null,
+        null);
+  }
+
+  private DatasetColumnResponse col(String columnName, boolean isPrimaryKey) {
+    return new DatasetColumnResponse(
+        null, columnName, null, "TEXT", null, true, false, null, 0, isPrimaryKey);
   }
 }

@@ -22,8 +22,12 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
+import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
@@ -41,6 +45,7 @@ public class PipelineExecutionService {
   private final DataTableRowService dataTableRowService;
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
+  private final DSLContext pipelineDsl;
   private final SqlScriptExecutor sqlExecutor;
   private final PythonScriptExecutor pythonExecutor;
   private final ApplicationEventPublisher applicationEventPublisher;
@@ -62,6 +67,7 @@ public class PipelineExecutionService {
       DataTableRowService dataTableRowService,
       DatasetRepository datasetRepository,
       DatasetColumnRepository columnRepository,
+      @Qualifier("pipelineDslContext") DSLContext pipelineDsl,
       SqlScriptExecutor sqlExecutor,
       PythonScriptExecutor pythonExecutor,
       ApplicationEventPublisher applicationEventPublisher,
@@ -78,6 +84,7 @@ public class PipelineExecutionService {
     this.dataTableRowService = dataTableRowService;
     this.datasetRepository = datasetRepository;
     this.columnRepository = columnRepository;
+    this.pipelineDsl = pipelineDsl;
     this.sqlExecutor = sqlExecutor;
     this.pythonExecutor = pythonExecutor;
     this.applicationEventPublisher = applicationEventPublisher;
@@ -397,14 +404,59 @@ public class PipelineExecutionService {
       // Execute script based on type
       String executionLog;
       if ("SQL".equals(step.scriptType())) {
-        if (executorEnabled) {
-          var result = executorClient.executeSql(step.scriptContent());
-          if (!result.success()) {
-            throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
+        String sql = step.scriptContent().trim();
+        boolean isSelect = isSelectStatement(sql);
+
+        if (isSelect && outputTableName != null && step.outputDatasetId() != null) {
+          // SELECT 자동 적재: 컬럼 추출 → 매칭 → INSERT INTO ... SELECT 래핑
+          List<String> selectColumns = extractSelectColumns(sql);
+
+          Set<String> outputColumnNames =
+              columnRepository.findByDatasetId(step.outputDatasetId()).stream()
+                  .filter(col -> !col.isPrimaryKey())
+                  .map(DatasetColumnResponse::columnName)
+                  .collect(Collectors.toSet());
+
+          List<String> matchedColumns =
+              selectColumns.stream().filter(outputColumnNames::contains).toList();
+
+          if (matchedColumns.isEmpty()) {
+            throw new ScriptExecutionException(
+                "SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다. "
+                    + "SELECT alias를 출력 테이블 컬럼명과 맞춰주세요. "
+                    + "SELECT 컬럼: "
+                    + selectColumns
+                    + ", 출력 테이블 컬럼: "
+                    + outputColumnNames);
           }
-          executionLog = result.executionLog();
+
+          String columnList =
+              matchedColumns.stream()
+                  .map(col -> "\"" + col + "\"")
+                  .collect(Collectors.joining(", "));
+          String wrappedSql =
+              "INSERT INTO data.\"" + outputTableName + "\" (" + columnList + ") " + sql;
+
+          if (executorEnabled) {
+            var result = executorClient.executeSql(wrappedSql);
+            if (!result.success()) {
+              throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
+            }
+            executionLog = result.executionLog();
+          } else {
+            executionLog = sqlExecutor.execute(wrappedSql);
+          }
         } else {
-          executionLog = sqlExecutor.execute(step.scriptContent());
+          // 기존 INSERT/UPDATE/DELETE는 그대로 실행
+          if (executorEnabled) {
+            var result = executorClient.executeSql(sql);
+            if (!result.success()) {
+              throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
+            }
+            executionLog = result.executionLog();
+          } else {
+            executionLog = sqlExecutor.execute(sql);
+          }
         }
       } else if ("PYTHON".equals(step.scriptType())) {
         // 인가 게이트: 명시적 python_execute 권한 필요
@@ -589,5 +641,21 @@ public class PipelineExecutionService {
     if (decryptedAuth != null) request.put("auth", decryptedAuth);
 
     return request;
+  }
+
+  private boolean isSelectStatement(String sql) {
+    String upper = sql.stripLeading().toUpperCase();
+    return upper.startsWith("SELECT") || upper.startsWith("WITH");
+  }
+
+  private List<String> extractSelectColumns(String sql) {
+    try {
+      String probeSql = "SELECT * FROM (" + sql + ") AS _probe LIMIT 0";
+      return Arrays.stream(pipelineDsl.fetch(probeSql).fields())
+          .map(Field::getName)
+          .collect(Collectors.toList());
+    } catch (Exception e) {
+      throw new ScriptExecutionException("SQL 컬럼 분석 실패: " + e.getMessage(), e);
+    }
   }
 }
