@@ -26,6 +26,15 @@ public class SettingsController {
     return ResponseEntity.ok(settingsService.getByPrefix(prefix));
   }
 
+  @GetMapping("/ai-api-key")
+  @RequirePermission("ai:settings")
+  public ResponseEntity<java.util.Map<String, String>> getDecryptedAiApiKey() {
+    return settingsService
+        .getDecryptedApiKey()
+        .map(key -> ResponseEntity.ok(java.util.Map.of("apiKey", key)))
+        .orElse(ResponseEntity.ok(java.util.Map.of("apiKey", "")));
+  }
+
   @PutMapping
   @RequirePermission("ai:settings")
   public ResponseEntity<Void> updateSettings(

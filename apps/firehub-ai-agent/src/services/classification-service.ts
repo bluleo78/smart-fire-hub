@@ -48,18 +48,24 @@ async function getModelAndApiKey(
   apiBaseUrl: string,
   internalToken: string,
 ): Promise<{ model: string; apiKey: string }> {
+  const headers = {
+    Authorization: `Internal ${internalToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  let model = process.env.AI_DEFAULT_MODEL || 'claude-haiku-4-5-20251001';
+  let apiKey = process.env.ANTHROPIC_API_KEY || '';
+
   try {
-    const response = await axios.get(`${apiBaseUrl}/settings`, {
+    // Fetch model from settings
+    const settingsResponse = await axios.get(`${apiBaseUrl}/settings`, {
       params: { prefix: 'ai.' },
-      headers: {
-        Authorization: `Internal ${internalToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       timeout: 5000,
     });
 
+    const data = settingsResponse.data;
     const settings: Record<string, string> = {};
-    const data = response.data;
     if (Array.isArray(data)) {
       for (const item of data) {
         if (item.key && item.value) {
@@ -70,20 +76,22 @@ async function getModelAndApiKey(
       Object.assign(settings, data);
     }
 
-    const model =
-      settings['ai.model'] || settings['ai.default_model'] || 'claude-haiku-4-5-20251001';
-    const apiKey =
-      settings['ai.api_key'] ||
-      settings['ai.anthropic_api_key'] ||
-      process.env.ANTHROPIC_API_KEY ||
-      '';
+    model = settings['ai.model'] || settings['ai.default_model'] || model;
 
-    return { model, apiKey };
+    // Fetch decrypted API key from dedicated internal endpoint
+    const apiKeyResponse = await axios.get(`${apiBaseUrl}/settings/ai-api-key`, {
+      headers,
+      timeout: 5000,
+    });
+
+    if (apiKeyResponse.data?.apiKey) {
+      apiKey = apiKeyResponse.data.apiKey;
+    }
   } catch {
-    const model = process.env.AI_DEFAULT_MODEL || 'claude-haiku-4-5-20251001';
-    const apiKey = process.env.ANTHROPIC_API_KEY || '';
-    return { model, apiKey };
+    // Fallback to env vars
   }
+
+  return { model, apiKey };
 }
 
 function buildPrompt(rows: ClassifyRow[], labels: string[], promptTemplate: string): string {
