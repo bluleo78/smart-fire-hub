@@ -18,7 +18,7 @@
 | [Phase 4](#phase-4-대시보드-전체-개선) | **완료** | 6/6 | 홈 대시보드 리디자인 + 분석 대시보드 갱신 수정 + SSE 실시간 알림 |
 | [Phase 5](#phase-5-데이터-내보내기) | **완료** | 2/2 | CSV/Excel/GeoJSON 다운로드 |
 | [Phase 5.7](#phase-57-firehub-executor-실행-엔진-분리) | **완료** | 7/7 | 사용자 코드 실행 서비스 분리 (Python/FastAPI + nsjail) |
-| [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | 진행중 | 3/5 | 컨텍스트 표시, 컴팩션 개선, 파이프라인 SQL 래핑 |
+| [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | **완료** | 4/4 | 컨텍스트 표시, 컴팩션 알림, 파이프라인 SQL 래핑 |
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | 진행중 | 2/3 | UI 일관성 수정 + 컴포넌트 분리 완료, 리디자인 검증 진행중 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 | [Phase 7](#phase-7-ai-chat-generative-ui) | 대기 | 0/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, Chat-First |
@@ -147,19 +147,17 @@
 >
 > **실행 순서**:
 > ```
-> 5.5-1 (AI Agent, 완료) ──┐
-> 5.5-2 (AI Agent)         ├── 5.5-4 (Frontend, 5.5-1+5.5-2 의존)
-> 5.5-3 (Backend)          │
->                          └── 5.5-5 (Frontend, 5.5-2 의존)
+> 5.5-1 (AI Agent, 완료) ──→ 5.5-4 (Frontend, 완료)
+> 5.5-3 (Backend, 완료)      5.5-5 (Frontend, 완료)
 > ```
 
 | # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
 |---|------|------|------|------|----------|
 | 5.5-1 | AI 세션 컴팩션 버그 수정 | ✅ | AI Agent | 없음 | 컴팩션 임계값 50K→150K. error 이벤트에 sessionId+inputTokens 포함. max_turns_exceeded UX 메시지. Dockerfile .claude 사전 생성. 빌드 통과. |
-| 5.5-2 | AI 세션 컴팩션 품질 개선 | ⬜ | AI Agent | 없음 | 요약 모델 Haiku→Sonnet. 요약 max_tokens 1024→4096. 도구 호출 결과 요약 포함. 요약에 데이터셋 ID/컬럼 정보 보존. 압축율 테스트. |
+| 5.5-2 | ~~AI 세션 컴팩션 품질 개선~~ | 삭제 | AI Agent | 없음 | SDK 내장 컴팩션 사용으로 불필요. |
 | 5.5-3 | 파이프라인 SQL SELECT 자동 INSERT 래핑 | ✅ | Backend | 없음 | output dataset이 있고 SQL이 SELECT로 시작하면 INSERT INTO data."table" (SELECT ...) 자동 래핑. REPLACE/APPEND 모두 정상 동작. CTE(WITH) 지원. 임시 데이터셋 자동 생성. 컬럼 매칭 검증. 통합 테스트 4건 통과. |
 | 5.5-4 | AI 채팅 컨텍스트 크기 표시 | ✅ | Frontend | 5.5-1 | TokenUsageChip 컴포넌트. "15K / 200K" 형태 토큰 사용량 표시. 프로그레스 바 (50%→경고, 75%→위험 색상). done/error 이벤트에서 토큰 수 수신. 3모드(사이드/플로팅/전체화면) 통합. 빌드+타입체크 통과. |
-| 5.5-5 | AI 채팅 컴팩션 알림 UX | 🟨 | Frontend | 5.5-2 | ✅ 컴팩션 시스템 메시지 ("자동 요약됨"). ✅ TokenUsageChip "요약 중" 스피너 표시. ⬜ 요약 내용 접기/펼치기. ⬜ 토큰 바에 컴팩션 지점 표시. |
+| 5.5-5 | AI 채팅 컴팩션 알림 UX | ✅ | Frontend | 없음 | 컴팩션 시스템 메시지 ("자동 요약됨"). TokenUsageChip "요약 중" 스피너 표시. SDK 내장 컴팩션 사용으로 접기/펼치기·컴팩션 지점 표시는 스코프 아웃. |
 
 ---
 
