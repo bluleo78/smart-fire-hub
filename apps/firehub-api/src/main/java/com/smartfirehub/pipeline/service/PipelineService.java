@@ -86,10 +86,6 @@ public class PipelineService {
 
       // Validate API_CALL step requirements
       if ("API_CALL".equals(stepRequest.scriptType())) {
-        if (stepRequest.outputDatasetId() == null) {
-          throw new IllegalArgumentException(
-              "API_CALL step '" + stepRequest.name() + "' requires outputDatasetId");
-        }
         if (stepRequest.apiConfig() == null || stepRequest.apiConfig().isEmpty()) {
           throw new IllegalArgumentException(
               "API_CALL step '" + stepRequest.name() + "' requires apiConfig");
@@ -192,10 +188,6 @@ public class PipelineService {
   private void validateAiClassifyStep(PipelineStepRequest step) {
     String stepName = step.name();
 
-    if (step.outputDatasetId() == null) {
-      throw new IllegalArgumentException(
-          "AI_CLASSIFY step '" + stepName + "' requires outputDatasetId");
-    }
     if (step.aiConfig() == null || step.aiConfig().isEmpty()) {
       throw new IllegalArgumentException("AI_CLASSIFY step '" + stepName + "' requires aiConfig");
     }

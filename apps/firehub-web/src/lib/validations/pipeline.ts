@@ -5,7 +5,7 @@ export const pipelineStepSchema = z.object({
   description: z.string().optional().or(z.literal('')),
   scriptType: z.enum(['SQL', 'PYTHON', 'API_CALL', 'AI_CLASSIFY'], { message: '스크립트 타입을 선택하세요' }),
   scriptContent: z.string().optional().or(z.literal('')),
-  outputDatasetId: z.number({ message: '출력 데이터셋을 선택하세요' }),
+  outputDatasetId: z.number().nullable().default(null),
   inputDatasetIds: z.array(z.number()).default([]),
   dependsOnStepNames: z.array(z.string()).default([]),
   loadStrategy: z.enum(['REPLACE', 'APPEND']).default('REPLACE'),

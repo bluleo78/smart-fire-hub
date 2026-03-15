@@ -4,7 +4,6 @@ import { lazy, Suspense } from 'react';
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -282,47 +281,28 @@ export default function StepConfigPanel({
           {/* Output dataset */}
           <div className="space-y-1.5">
             <Label>출력 데이터셋</Label>
-            {!readOnly && (
-              <div className="flex gap-1.5 mb-1">
-                <button
-                  type="button"
-                  className={cn(
-                    'text-xs px-2 py-1 rounded-md border transition-colors',
-                    step.outputDatasetId === null
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-background text-muted-foreground border-border hover:text-foreground',
-                  )}
-                  onClick={() => handleUpdateStep({ outputDatasetId: null })}
-                >
-                  자동 생성 (임시)
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    'text-xs px-2 py-1 rounded-md border transition-colors',
-                    step.outputDatasetId !== null
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-background text-muted-foreground border-border hover:text-foreground',
-                  )}
-                  onClick={() => {
-                    if (step.outputDatasetId === null && datasets.length > 0) {
-                      handleUpdateStep({ outputDatasetId: datasets[0].id });
-                    }
-                  }}
-                >
-                  데이터셋 선택
-                </button>
-              </div>
-            )}
-            {step.outputDatasetId !== null ? (
-              <DatasetCombobox
-                mode="single"
-                datasets={datasets}
-                value={step.outputDatasetId}
-                disabled={readOnly}
-                onChange={(value) => handleUpdateStep({ outputDatasetId: value })}
-              />
-            ) : (
+            <Select
+              value={step.outputDatasetId?.toString() ?? '__auto__'}
+              onValueChange={(value) =>
+                handleUpdateStep({
+                  outputDatasetId: value === '__auto__' ? null : Number(value),
+                })
+              }
+              disabled={readOnly}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__auto__">자동 생성 (임시)</SelectItem>
+                {datasets.map((ds) => (
+                  <SelectItem key={ds.id} value={ds.id.toString()}>
+                    {ds.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {step.outputDatasetId === null && (
               <p className="text-xs text-muted-foreground">
                 실행 시 스텝 결과에 맞는 임시 데이터셋이 자동 생성됩니다
               </p>
