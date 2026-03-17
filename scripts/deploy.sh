@@ -35,8 +35,12 @@ build_image() {
       log "Building $app (context: project root)"
       docker build --no-cache -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile .
       ;;
+    executor)
+      log "Building $app (context: apps/firehub-executor/)"
+      docker build --no-cache -t "$REGISTRY/executor:latest" apps/firehub-executor/
+      ;;
     *)
-      error "Unknown app: $app (valid: api, web, ai-agent)"
+      error "Unknown app: $app (valid: api, web, ai-agent, executor)"
       ;;
   esac
 }
@@ -79,7 +83,7 @@ if ! docker info 2>/dev/null | grep -q "ghcr.io"; then
 fi
 
 if [ "$TARGET" = "all" ]; then
-  APPS=("api" "web" "ai-agent")
+  APPS=("api" "executor" "web" "ai-agent")
 else
   APPS=("$TARGET")
 fi

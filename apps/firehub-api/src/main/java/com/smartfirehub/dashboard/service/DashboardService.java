@@ -545,10 +545,10 @@ public class DashboardService {
       String pipelineName = r.get(P_NAME);
       LocalDateTime occurredAt = r.get(PE_CREATED_AT);
 
-      // isResolved: a FAILED execution is resolved if the latest execution for that pipeline is
-      // COMPLETED
+      // isResolved: non-FAILED executions are always resolved;
+      // FAILED is resolved only if the latest execution for that pipeline is COMPLETED
       boolean isResolved =
-          "FAILED".equals(status) && "COMPLETED".equals(latestStatusByPipeline.get(pipelineId));
+          !"FAILED".equals(status) || "COMPLETED".equals(latestStatusByPipeline.get(pipelineId));
 
       String description =
           buildPipelineDescription(status, r.get(PE_STARTED_AT), r.get(PE_COMPLETED_AT));
