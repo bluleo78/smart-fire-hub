@@ -3,6 +3,7 @@ import { lazy, Suspense, useRef } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
+const PythonOutputColumns = lazy(() => import('./PythonOutputColumns'));
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -342,6 +343,24 @@ export default function StepConfigPanel({
               <p className="text-sm text-destructive">{outputDatasetIdError}</p>
             )}
           </div>
+
+          {/* Python output columns (only for PYTHON steps without an output dataset) */}
+          {step.scriptType === 'PYTHON' && step.outputDatasetId === null && (
+            <>
+              <Separator />
+              <Suspense fallback={<Skeleton className="h-[120px]" />}>
+                <PythonOutputColumns
+                  columns={step.pythonConfig?.outputColumns ?? []}
+                  onChange={(cols) =>
+                    handleUpdateStep({
+                      pythonConfig: { ...step.pythonConfig, outputColumns: cols },
+                    })
+                  }
+                  readOnly={readOnly}
+                />
+              </Suspense>
+            </>
+          )}
 
           <Separator />
 

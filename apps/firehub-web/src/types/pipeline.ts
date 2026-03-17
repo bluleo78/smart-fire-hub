@@ -17,6 +17,10 @@ export interface AiClassifyConfig {
   onError?: 'CONTINUE' | 'RETRY_BATCH' | 'FAIL_STEP';
 }
 
+export interface PythonStepConfig {
+  outputColumns?: Array<{ name: string; type: string }>;
+}
+
 export interface PipelineStepResponse {
   id: number;
   name: string;
@@ -31,6 +35,7 @@ export interface PipelineStepResponse {
   loadStrategy: string;
   apiConfig: Record<string, unknown> | null;
   aiConfig?: Record<string, unknown>;
+  pythonConfig?: PythonStepConfig;
   apiConnectionId: number | null;
 }
 
@@ -63,6 +68,7 @@ export interface PipelineStepRequest {
   loadStrategy?: string;
   apiConfig?: Record<string, unknown>;
   aiConfig?: AiClassifyConfig;
+  pythonConfig?: PythonStepConfig;
   apiConnectionId?: number | null;
 }
 

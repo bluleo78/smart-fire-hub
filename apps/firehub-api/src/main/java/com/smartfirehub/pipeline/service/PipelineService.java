@@ -92,6 +92,11 @@ public class PipelineService {
         validateAiClassifyStep(stepRequest);
       }
 
+      // Validate PYTHON step outputColumns
+      if ("PYTHON".equals(stepRequest.scriptType()) && stepRequest.pythonConfig() != null) {
+        validatePythonStep(stepRequest);
+      }
+
       // Save step
       Long stepId = stepRepository.saveStep(pipelineId, stepRequest, i);
       stepNameToId.put(stepRequest.name(), stepId);
@@ -213,6 +218,22 @@ public class PipelineService {
     if (config.onError() != null && !VALID_ON_ERROR.contains(config.onError())) {
       throw new IllegalArgumentException(
           "AI_CLASSIFY step '" + stepName + "' onError must be one of: " + VALID_ON_ERROR);
+    }
+  }
+
+  private void validatePythonStep(PipelineStepRequest step) {
+    PythonStepConfig config =
+        objectMapper.convertValue(step.pythonConfig(), PythonStepConfig.class);
+    if (config.outputColumns() != null) {
+      for (PythonStepConfig.OutputColumn col : config.outputColumns()) {
+        if (col.type() == null || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type().toUpperCase())) {
+          throw new IllegalArgumentException(
+              "Python step '"
+                  + step.name()
+                  + "' outputColumn type must be one of: "
+                  + VALID_OUTPUT_COLUMN_TYPES);
+        }
+      }
     }
   }
 

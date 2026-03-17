@@ -127,6 +127,15 @@ export function registerPipelineTools(
                 })
                 .optional()
                 .describe('AI_CLASSIFY 스텝 설정'),
+              pythonConfig: z
+                .object({
+                  outputColumns: z.array(z.object({
+                    name: z.string().describe('컬럼명 (snake_case)'),
+                    type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
+                  })).optional().describe('출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용'),
+                })
+                .optional()
+                .describe('Python 스텝 설정'),
               apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
             }),
           )
@@ -146,6 +155,7 @@ export function registerPipelineTools(
           loadStrategy?: string;
           apiConfig?: Record<string, unknown>;
           aiConfig?: Record<string, unknown>;
+          pythonConfig?: Record<string, unknown>;
           apiConnectionId?: number;
         }>;
       }) => {
@@ -190,6 +200,15 @@ export function registerPipelineTools(
                 })
                 .optional()
                 .describe('AI_CLASSIFY 스텝 설정'),
+              pythonConfig: z
+                .object({
+                  outputColumns: z.array(z.object({
+                    name: z.string().describe('컬럼명 (snake_case)'),
+                    type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
+                  })).optional().describe('출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용'),
+                })
+                .optional()
+                .describe('Python 스텝 설정'),
               apiConnectionId: z.number().optional().describe('API 연결 ID'),
             }),
           )
@@ -212,6 +231,7 @@ export function registerPipelineTools(
           loadStrategy?: string;
           apiConfig?: Record<string, unknown>;
           aiConfig?: Record<string, unknown>;
+          pythonConfig?: Record<string, unknown>;
           apiConnectionId?: number;
         }>;
       }) => {

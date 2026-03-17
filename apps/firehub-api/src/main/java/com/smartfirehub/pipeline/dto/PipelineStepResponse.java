@@ -17,4 +17,5 @@ public record PipelineStepResponse(
     String loadStrategy,
     Map<String, Object> apiConfig,
     Map<String, Object> aiConfig,
+    Map<String, Object> pythonConfig,
     Long apiConnectionId) {}

@@ -602,6 +602,7 @@ class PipelineExecutionServiceTest {
             "APPEND",
             Map.of(),
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(apiStep));
@@ -663,6 +664,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             Map.of(),
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(aiStep));
@@ -733,6 +735,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
@@ -801,6 +804,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
@@ -862,6 +866,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step));
@@ -919,6 +924,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
@@ -961,7 +967,7 @@ class PipelineExecutionServiceTest {
     PipelineStepResponse step =
         new PipelineStepResponse(
             stepId, "plain", null, "SQL", plainSql, null, null, List.of(), List.of(), 0, "REPLACE",
-            null, null, null);
+            null, null, null, null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step));
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
@@ -1020,6 +1026,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             null,
+            null,
             null);
     PipelineStepResponse step2 =
         new PipelineStepResponse(
@@ -1034,6 +1041,7 @@ class PipelineExecutionServiceTest {
             List.of(),
             1,
             "REPLACE",
+            null,
             null,
             null,
             null);
@@ -1109,6 +1117,7 @@ class PipelineExecutionServiceTest {
             "APPEND",
             null,
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(pythonStep));
@@ -1168,6 +1177,7 @@ class PipelineExecutionServiceTest {
             "REPLACE",
             null,
             null,
+            null,
             null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(pythonStep));
@@ -1220,6 +1230,7 @@ class PipelineExecutionServiceTest {
             List.of(),
             0,
             "REPLACE",
+            null,
             null,
             null,
             null);
@@ -1319,6 +1330,7 @@ class PipelineExecutionServiceTest {
         "REPLACE",
         null,
         null,
+        null,
         null);
   }
 
@@ -1341,6 +1353,7 @@ class PipelineExecutionServiceTest {
         dependsOnStepNames,
         0,
         "APPEND",
+        null,
         null,
         null,
         null);

@@ -14,6 +14,7 @@ public record PipelineStepRequest(
     String loadStrategy,
     Map<String, Object> apiConfig, // API_CALL configuration (JSON object)
     Map<String, Object> aiConfig, // AI_CLASSIFY configuration (JSON object)
+    Map<String, Object> pythonConfig, // PYTHON configuration (JSON object)
     Long apiConnectionId // FK to api_connection
     ) {
   public PipelineStepRequest(
@@ -33,6 +34,7 @@ public record PipelineStepRequest(
         inputDatasetIds,
         dependsOnStepNames,
         "REPLACE",
+        null,
         null,
         null,
         null);
@@ -56,6 +58,7 @@ public record PipelineStepRequest(
         inputDatasetIds,
         dependsOnStepNames,
         loadStrategy,
+        null,
         null,
         null,
         null);

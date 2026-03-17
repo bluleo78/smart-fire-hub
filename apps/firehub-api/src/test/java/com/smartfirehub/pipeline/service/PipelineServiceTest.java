@@ -327,6 +327,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request =
@@ -365,6 +366,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
@@ -387,6 +389,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 List.of(inputDatasetId),
                 null,
                 "REPLACE",
+                null,
                 null,
                 null,
                 null));
@@ -416,6 +419,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
@@ -442,6 +446,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
@@ -473,6 +478,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
@@ -506,6 +512,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
@@ -536,6 +543,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "REPLACE",
                 null,
                 aiConfig,
+                null,
                 null));
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);

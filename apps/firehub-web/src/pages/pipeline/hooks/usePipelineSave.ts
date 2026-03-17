@@ -41,6 +41,7 @@ export function usePipelineSave({
       loadStrategy: step.loadStrategy,
       apiConfig: step.apiConfig,
       aiConfig: step.aiConfig,
+      pythonConfig: step.pythonConfig,
       apiConnectionId: step.apiConnectionId,
     }));
 

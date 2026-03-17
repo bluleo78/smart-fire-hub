@@ -509,6 +509,40 @@ public class PipelineExecutionService {
           throw new ScriptExecutionException(
               "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. " + "관리자에게 이 기능 활성화를 요청하세요.");
         }
+        // Auto-create temp dataset when outputDatasetId is null and outputColumns defined
+        if (outputDatasetId == null && step.pythonConfig() != null) {
+          com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
+              objectMapper.convertValue(
+                  step.pythonConfig(), com.smartfirehub.pipeline.dto.PythonStepConfig.class);
+          if (pythonStepConfig.outputColumns() != null
+              && !pythonStepConfig.outputColumns().isEmpty()) {
+            List<ColumnInfo> pythonColumns =
+                pythonStepConfig.outputColumns().stream()
+                    .map(col -> new ColumnInfo(col.name(), col.type()))
+                    .toList();
+            Long stepId = step.id();
+            Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
+            if (existingDatasetId.isPresent()) {
+              Long dsId = existingDatasetId.get();
+              if (tempDatasetService.hasSchemaChanged(dsId, pythonColumns)) {
+                log.info("Schema changed for Python step {}, recreating temp dataset", step.name());
+                tempDatasetService.deleteTempDataset(dsId);
+                outputDatasetId =
+                    tempDatasetService.createTempDataset(
+                        pythonColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+              } else {
+                log.info("Reusing existing temp dataset {} for Python step {}", dsId, step.name());
+                outputDatasetId = dsId;
+              }
+            } else {
+              log.info("Creating new temp dataset for Python step {}", step.name());
+              outputDatasetId =
+                  tempDatasetService.createTempDataset(
+                      pythonColumns, pipelineId, pipelineName, stepId, step.name(), userId);
+            }
+            outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
+          }
+        }
         if (outputDatasetId == null) {
           log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
         }
@@ -705,6 +739,7 @@ public class PipelineExecutionService {
                   step.loadStrategy(),
                   step.apiConfig(),
                   step.aiConfig(),
+                  step.pythonConfig(),
                   step.apiConnectionId());
         }
 
