@@ -166,7 +166,7 @@ public class AiAgentProxyService {
             // firehub-ai format matches frontend expectations:
             // init, text, tool_use, tool_result, turn, done, error
             switch (type) {
-              case "init", "text", "tool_use", "tool_result", "turn" -> {
+              case "init", "text", "tool_use", "tool_result", "turn", "ping" -> {
                 emitter.send(SseEmitter.event().data(data));
               }
               case "done" -> {

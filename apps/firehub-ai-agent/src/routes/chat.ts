@@ -50,13 +50,24 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
 
   res.write(':ok\n\n');
 
-  const abortController = new AbortController();
-
+  // 클라이언트 연결 끊김 감지 (abort 하지 않음 — Claude 작업은 계속 진행)
+  let clientDisconnected = false;
   res.on('close', () => {
     if (!res.writableFinished) {
-      abortController.abort();
+      clientDisconnected = true;
+      console.log('[Agent] Client disconnected, Claude work continues');
     }
   });
+
+  // 30초마다 ping 이벤트 전송 — Spring Boot 프록시 타임아웃 방지
+  const PING_INTERVAL_MS = 30_000;
+  const pingTimer = setInterval(() => {
+    if (!clientDisconnected && !res.writableFinished) {
+      res.write(
+        `event: ping\ndata: ${JSON.stringify({ type: 'ping', timestamp: Date.now() })}\n\n`,
+      );
+    }
+  }, PING_INTERVAL_MS);
 
   try {
     const events = executeAgent({
@@ -70,11 +81,10 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       temperature,
       maxTokens,
       apiKey,
-      abortSignal: abortController.signal,
     });
 
     for await (const event of events) {
-      if (abortController.signal.aborted) break;
+      if (clientDisconnected) continue;
 
       const eventType = event.type;
       const eventData = JSON.stringify(event);
@@ -82,10 +92,14 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       res.write(`data: ${eventData}\n\n`);
     }
 
-    res.end();
+    if (!clientDisconnected) {
+      res.end();
+    }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] Chat error:', errorMessage);
+
+    if (clientDisconnected) return;
 
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });
@@ -96,6 +110,8 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       );
       res.end();
     }
+  } finally {
+    clearInterval(pingTimer);
   }
 });
 

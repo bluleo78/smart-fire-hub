@@ -39,3 +39,14 @@ function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
+// Claude Agent SDK 내부에서 abort 시 unhandled rejection이 발생하여
+// 프로세스 전체가 크래시되는 것을 방지
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  if (message.includes('aborted') || message.includes('Operation aborted')) {
+    console.warn('[Process] Suppressed SDK abort rejection:', message);
+  } else {
+    console.error('[Process] Unhandled rejection:', reason);
+  }
+});
