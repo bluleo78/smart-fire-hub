@@ -10,11 +10,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from jsonpath_ng import parse as jsonpath_parse
-from psycopg2 import sql as pgsql
-from psycopg2.extras import execute_values
-
 from app.schemas.requests import ApiCallExecuteRequest, FieldMapping
 from app.schemas.responses import ApiCallExecuteResponse
+from app.services.db_utils import insert_batch
 from app.validators.ssrf_protection import SsrfException, validate_url
 
 logger = logging.getLogger(__name__)
@@ -81,7 +79,7 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
                             total_count = None
 
                 if rows:
-                    _insert_batch(conn, request.output_table, rows)
+                    insert_batch(conn, request.output_table, rows)
                     total_rows += len(rows)
                 total_pages += 1
 
@@ -108,7 +106,7 @@ def execute_api_call(request: ApiCallExecuteRequest, conn) -> ApiCallExecuteResp
                 request.column_type_map,
             )
             if rows:
-                _insert_batch(conn, request.output_table, rows)
+                insert_batch(conn, request.output_table, rows)
                 total_rows += len(rows)
             total_pages = 1
 
@@ -454,24 +452,3 @@ def _has_next_page(
     return True
 
 
-# ---------------------------------------------------------------------------
-# DB insert
-# ---------------------------------------------------------------------------
-
-def _insert_batch(conn, table_name: str, rows: List[Dict[str, Any]]) -> None:
-    """Batch-insert rows into target table using execute_values."""
-    if not rows:
-        return
-
-    columns = list(rows[0].keys())
-    col_identifiers = [pgsql.Identifier(c) for c in columns]
-
-    query = pgsql.SQL("INSERT INTO {table} ({cols}) VALUES %s").format(
-        table=pgsql.Identifier(table_name),
-        cols=pgsql.SQL(", ").join(col_identifiers),
-    )
-
-    values = [tuple(row[c] for c in columns) for row in rows]
-
-    with conn.cursor() as cur:
-        execute_values(cur, query.as_string(cur), values)

@@ -15,4 +15,10 @@ async def execute_python(
     _user: str = Depends(verify_internal_auth),
     settings: Settings = Depends(get_settings),
 ) -> PythonExecuteResponse:
-    return python_executor.execute_python(request.script, request.timeout, settings)
+    return python_executor.execute_python(
+        request.script,
+        request.timeout,
+        settings,
+        output_table=request.output_table,
+        column_type_map=request.column_type_map,
+    )

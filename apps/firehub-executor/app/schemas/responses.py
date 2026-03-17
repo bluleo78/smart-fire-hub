@@ -20,6 +20,7 @@ class PythonExecuteResponse(BaseModel):
     exit_code: int
     error: Optional[str] = None
     execution_time_ms: int
+    rows_loaded: int = 0
 
 
 class QueryExecuteResponse(BaseModel):

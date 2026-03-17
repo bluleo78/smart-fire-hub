@@ -25,6 +25,8 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +61,7 @@ class PipelineExecutionServiceTest {
   @Mock ObjectMapper objectMapper;
   @Mock PermissionChecker permissionChecker;
   @Mock TempDatasetService tempDatasetService;
+  @Mock ExecutorClient executorClient;
 
   @InjectMocks PipelineExecutionService service;
 
@@ -1075,6 +1078,216 @@ class PipelineExecutionServiceTest {
     ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
     verify(sqlExecutor, atLeastOnce()).execute(captor.capture());
     assertThat(captor.getAllValues()).anyMatch(s -> s.contains("data.\"ptmp_temp_step\""));
+  }
+
+  // ------------------------------------------------------------------ //
+  // Python 스텝 executor 테스트
+  // ------------------------------------------------------------------ //
+
+  @Test
+  void executeStep_pythonWithExecutorEnabled_sendsMapRequestWithOutputTable() throws Exception {
+    // given
+    Long pipelineId = 40L;
+    Long userId = 1L;
+    Long executionId = 140L;
+    Long stepId = 240L;
+    Long stepExecId = 340L;
+    Long outputDatasetId = 80L;
+
+    PipelineStepResponse pythonStep =
+        new PipelineStepResponse(
+            stepId,
+            "py-step",
+            null,
+            "PYTHON",
+            "print('hello')",
+            outputDatasetId,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "APPEND",
+            null,
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(pythonStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("output_py"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("col1", false), col("col2", false)));
+    when(executorClient.executePython(any()))
+        .thenReturn(new ExecutorClient.PythonExecuteResult(true, "hello\n", 0, null, 100L, 0));
+
+    // enable executor
+    setExecutorEnabled(true);
+    try {
+      // when
+      service.executePipeline(pipelineId, userId);
+
+      // then: executorClient.executePython called with map containing script + output_table
+      ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+      verify(executorClient).executePython(captor.capture());
+      Map<String, Object> sentRequest = captor.getValue();
+      assertThat(sentRequest).containsKey("script");
+      assertThat(sentRequest).containsKey("output_table");
+      assertThat(sentRequest.get("output_table")).isEqualTo("output_py");
+      assertThat(sentRequest).containsKey("column_type_map");
+    } finally {
+      setExecutorEnabled(false);
+    }
+  }
+
+  @Test
+  void executeStep_pythonWithExecutorEnabled_replaceStrategy_swapsTableWhenRowsLoaded()
+      throws Exception {
+    // given
+    Long pipelineId = 41L;
+    Long userId = 1L;
+    Long executionId = 141L;
+    Long stepId = 241L;
+    Long stepExecId = 341L;
+    Long outputDatasetId = 81L;
+
+    PipelineStepResponse pythonStep =
+        new PipelineStepResponse(
+            stepId,
+            "py-replace",
+            null,
+            "PYTHON",
+            "print('rows')",
+            outputDatasetId,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(pythonStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_replace"));
+    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("val", false)));
+    when(executorClient.executePython(any()))
+        .thenReturn(new ExecutorClient.PythonExecuteResult(true, "done", 0, null, 200L, 10));
+
+    setExecutorEnabled(true);
+    try {
+      // when
+      service.executePipeline(pipelineId, userId);
+
+      // then: createTempTable + swapTable called (rows_loaded=10 > 0)
+      verify(dataTableService).createTempTable("output_replace");
+      verify(dataTableService).swapTable("output_replace");
+      verify(dataTableService, never()).dropTempTable(any());
+    } finally {
+      setExecutorEnabled(false);
+    }
+  }
+
+  @Test
+  void executeStep_pythonWithExecutorEnabled_replaceStrategy_dropsTableWhenNoRows()
+      throws Exception {
+    // given
+    Long pipelineId = 42L;
+    Long userId = 1L;
+    Long executionId = 142L;
+    Long stepId = 242L;
+    Long stepExecId = 342L;
+    Long outputDatasetId = 82L;
+
+    PipelineStepResponse pythonStep =
+        new PipelineStepResponse(
+            stepId,
+            "py-norows",
+            null,
+            "PYTHON",
+            "# no output",
+            outputDatasetId,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(pythonStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_norows"));
+    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("val", false)));
+    when(executorClient.executePython(any()))
+        .thenReturn(new ExecutorClient.PythonExecuteResult(true, "", 0, null, 100L, 0));
+
+    setExecutorEnabled(true);
+    try {
+      // when
+      service.executePipeline(pipelineId, userId);
+
+      // then: createTempTable called, but rows_loaded=0 → dropTempTable (no swap)
+      verify(dataTableService).createTempTable("output_norows");
+      verify(dataTableService).dropTempTable("output_norows");
+      verify(dataTableService, never()).swapTable(any());
+    } finally {
+      setExecutorEnabled(false);
+    }
+  }
+
+  @Test
+  void executeStep_pythonWithoutPermission_stepFails() throws Exception {
+    Long pipelineId = 43L;
+    Long userId = 1L;
+    Long executionId = 143L;
+    Long stepId = 243L;
+    Long stepExecId = 343L;
+
+    PipelineStepResponse pythonStep =
+        stepResponse(stepId, "py-denied", "PYTHON", "print('x')", null, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(pythonStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(false);
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: step marked FAILED with permission error
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("pipeline:python_execute"),
+            isNull(),
+            any());
+  }
+
+  /** Utility to set the private executorEnabled field via reflection. */
+  private void setExecutorEnabled(boolean value) throws Exception {
+    Field field = PipelineExecutionService.class.getDeclaredField("executorEnabled");
+    field.setAccessible(true);
+    field.set(service, value);
   }
 
   // ------------------------------------------------------------------ //

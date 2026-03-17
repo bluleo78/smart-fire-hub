@@ -4,7 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import Settings
-from app.services.python_executor import execute_python
+from app.services.python_executor import (
+    _parse_stdout_json,
+    execute_python,
+)
 
 
 def make_settings(**kwargs) -> Settings:
@@ -197,3 +200,169 @@ def test_execution_time_measurement():
         result = execute_python("pass", None, settings)
 
     assert result.execution_time_ms >= 0
+
+
+# ---------------------------------------------------------------------------
+# test_stdout_json_auto_insert
+# ---------------------------------------------------------------------------
+def test_stdout_json_auto_insert():
+    settings = make_settings(nsjail_enabled=False)
+    rows_json = '[{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]'
+
+    mock_conn = MagicMock()
+
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.insert_batch") as mock_insert, \
+         patch("app.services.python_executor.get_connection") as mock_get_conn:
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_run.return_value = make_completed_process(stdout=rows_json, returncode=0)
+        result = execute_python(
+            "print('[...]')", None, settings,
+            output_table="my_table",
+        )
+
+    assert result.success is True
+    assert result.rows_loaded == 2
+    mock_conn.commit.assert_called_once()
+    mock_insert.assert_called_once_with(mock_conn, "my_table", [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}])
+
+
+# ---------------------------------------------------------------------------
+# test_stdout_non_json_no_error
+# ---------------------------------------------------------------------------
+def test_stdout_non_json_no_error():
+    settings = make_settings(nsjail_enabled=False)
+
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.return_value = make_completed_process(stdout="plain text output\n", returncode=0)
+        result = execute_python(
+            "print('plain text output')", None, settings,
+            output_table="my_table",
+        )
+
+    assert result.success is True
+    assert result.rows_loaded == 0
+
+
+# ---------------------------------------------------------------------------
+# test_stdout_json_no_output_table
+# ---------------------------------------------------------------------------
+def test_stdout_json_no_output_table():
+    settings = make_settings(nsjail_enabled=False)
+    rows_json = '[{"id": 1}]'
+
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.return_value = make_completed_process(stdout=rows_json, returncode=0)
+        result = execute_python("print('[...]')", None, settings)
+
+    assert result.success is True
+    assert result.rows_loaded == 0
+    # Legacy behavior: stdout included in output
+    assert rows_json in result.output
+
+
+# ---------------------------------------------------------------------------
+# test_stderr_as_execution_log
+# ---------------------------------------------------------------------------
+def test_stderr_as_execution_log():
+    settings = make_settings(nsjail_enabled=False)
+    mock_conn = MagicMock()
+
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.insert_batch"), \
+         patch("app.services.python_executor.get_connection") as mock_get_conn:
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_run.return_value = make_completed_process(
+            stdout='[{"x": 1}]',
+            stderr="step 1 done\nstep 2 done\n",
+            returncode=0,
+        )
+        result = execute_python(
+            "...", None, settings,
+            output_table="tbl",
+        )
+
+    assert result.success is True
+    assert "step 1 done" in result.output
+    assert "step 2 done" in result.output
+
+
+# ---------------------------------------------------------------------------
+# test_script_failure_no_insert
+# ---------------------------------------------------------------------------
+def test_script_failure_no_insert():
+    settings = make_settings(nsjail_enabled=False)
+
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.return_value = make_completed_process(
+            stdout='[{"id": 1}]',
+            stderr="SyntaxError: invalid syntax",
+            returncode=1,
+        )
+        result = execute_python(
+            "bad script", None, settings,
+            output_table="tbl",
+        )
+
+    assert result.success is False
+    assert result.rows_loaded == 0
+
+
+# ---------------------------------------------------------------------------
+# test_insert_failure_returns_error
+# ---------------------------------------------------------------------------
+def test_insert_failure_returns_error():
+    settings = make_settings(nsjail_enabled=False)
+
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.insert_batch", side_effect=Exception("relation does not exist")), \
+         patch("app.services.python_executor.get_connection") as mock_get_conn:
+        mock_conn = MagicMock()
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_run.return_value = make_completed_process(
+            stdout='[{"id": 1}]',
+            stderr="",
+            returncode=0,
+        )
+        result = execute_python(
+            "...", None, settings,
+            output_table="nonexistent_table",
+        )
+
+    assert result.success is False
+    assert result.rows_loaded == 0
+    assert "Script succeeded but data insert failed" in result.error
+    assert "relation does not exist" in result.error
+
+
+# ---------------------------------------------------------------------------
+# test_parse_stdout_json_unit
+# ---------------------------------------------------------------------------
+def test_parse_stdout_json_valid():
+    data = _parse_stdout_json('[{"a": 1}, {"a": 2}]')
+    assert data == [{"a": 1}, {"a": 2}]
+
+
+def test_parse_stdout_json_empty_string():
+    assert _parse_stdout_json("") is None
+
+
+def test_parse_stdout_json_plain_text():
+    assert _parse_stdout_json("hello world") is None
+
+
+def test_parse_stdout_json_empty_array():
+    assert _parse_stdout_json("[]") is None
+
+
+def test_parse_stdout_json_non_dict_items():
+    assert _parse_stdout_json('[1, 2, 3]') is None

@@ -395,7 +395,9 @@ public class PipelineExecutionService {
       // API_CALL skips this block — the executor handles load strategy internally
       String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
 
-      if (!"API_CALL".equals(step.scriptType()) && !"AI_CLASSIFY".equals(step.scriptType())) {
+      if (!"API_CALL".equals(step.scriptType())
+          && !"AI_CLASSIFY".equals(step.scriptType())
+          && !(executorEnabled && "PYTHON".equals(step.scriptType()))) {
         switch (loadStrategy) {
           case "REPLACE":
             if (outputTableName != null) {
@@ -510,12 +512,57 @@ public class PipelineExecutionService {
         if (outputDatasetId == null) {
           log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
         }
+
         if (executorEnabled) {
-          var result = executorClient.executePython(step.scriptContent());
-          if (!result.success()) {
-            throw new ScriptExecutionException("Python 실행 실패: " + result.error());
+          // Build column type map (API_CALL 블록과 동일 패턴)
+          Map<String, String> columnTypeMap = null;
+          if (outputDatasetId != null) {
+            List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(outputDatasetId);
+            columnTypeMap = new HashMap<>();
+            for (DatasetColumnResponse col : columns) {
+              columnTypeMap.put(col.columnName(), col.dataType());
+            }
           }
-          executionLog = result.output();
+
+          // REPLACE: temp table + swap (API_CALL 패턴과 동일)
+          String targetTable = outputTableName;
+          boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
+          if (isReplace) {
+            dataTableService.createTempTable(outputTableName);
+            targetTable = outputTableName + "_tmp";
+          }
+          try {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("script", step.scriptContent());
+            if (targetTable != null) {
+              request.put("output_table", targetTable);
+            }
+            if (columnTypeMap != null) {
+              request.put("column_type_map", columnTypeMap);
+            }
+            var result = executorClient.executePython(request);
+            if (!result.success()) {
+              throw new ScriptExecutionException("Python 실행 실패: " + result.error());
+            }
+            if (isReplace && result.rowsLoaded() > 0) {
+              dataTableService.swapTable(outputTableName);
+            } else if (isReplace) {
+              // stdout에 JSON 없거나 0행 → temp table 삭제, 원본 유지
+              dataTableService.dropTempTable(outputTableName);
+            }
+            executionLog = result.output();
+          } catch (Exception e) {
+            if (isReplace) {
+              try {
+                dataTableService.dropTempTable(outputTableName);
+              } catch (Exception dropEx) {
+                log.warn(
+                    "Failed to drop temp table after Python execution failure: {}",
+                    dropEx.getMessage());
+              }
+            }
+            throw e;
+          }
         } else {
           executionLog = pythonExecutor.execute(step.scriptContent());
         }

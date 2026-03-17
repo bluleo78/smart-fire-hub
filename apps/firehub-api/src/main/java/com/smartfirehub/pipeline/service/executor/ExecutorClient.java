@@ -28,11 +28,11 @@ public class ExecutorClient {
    * Python 실행 요청. POST /execute/python Timeout: 1890s (30분 nsjail + 60s subprocess + 30s HTTP
    * buffer)
    */
-  public PythonExecuteResult executePython(String script) {
+  public PythonExecuteResult executePython(Map<String, Object> request) {
     return webClient
         .post()
         .uri("/execute/python")
-        .bodyValue(Map.of("script", script))
+        .bodyValue(request)
         .retrieve()
         .bodyToMono(PythonExecuteResult.class)
         .timeout(Duration.ofSeconds(1890))
@@ -80,7 +80,8 @@ public class ExecutorClient {
       String output,
       @JsonProperty("exit_code") int exitCode,
       String error,
-      @JsonProperty("execution_time_ms") long executionTimeMs) {}
+      @JsonProperty("execution_time_ms") long executionTimeMs,
+      @JsonProperty("rows_loaded") int rowsLoaded) {}
 
   public record QueryExecuteResult(
       boolean success,

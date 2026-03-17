@@ -13,6 +13,8 @@ class SqlExecuteRequest(BaseModel):
 class PythonExecuteRequest(BaseModel):
     script: str
     timeout: Optional[int] = None
+    output_table: Optional[str] = None
+    column_type_map: Optional[dict] = None
 
 
 class QueryExecuteRequest(BaseModel):

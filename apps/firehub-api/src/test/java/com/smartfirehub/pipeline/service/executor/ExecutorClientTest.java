@@ -128,17 +128,82 @@ class ExecutorClientTest {
                             "output": "hello\\n",
                             "exit_code": 0,
                             "error": null,
-                            "execution_time_ms": 150
+                            "execution_time_ms": 150,
+                            "rows_loaded": 0
                         }
                         """)));
 
-    var result = executorClient().executePython("print('hello')");
+    var result = executorClient().executePython(Map.of("script", "print('hello')"));
 
     assertThat(result.success()).isTrue();
     assertThat(result.output()).isEqualTo("hello\n");
     assertThat(result.exitCode()).isEqualTo(0);
     assertThat(result.executionTimeMs()).isEqualTo(150);
     assertThat(result.error()).isNull();
+    assertThat(result.rowsLoaded()).isEqualTo(0);
+  }
+
+  @Test
+  void executePython_withMapRequest_sendsCorrectBody() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/python"))
+            .withHeader("Authorization", equalTo("Internal test-token"))
+            .withRequestBody(matchingJsonPath("$.script"))
+            .withRequestBody(matchingJsonPath("$.output_table"))
+            .withRequestBody(matchingJsonPath("$.column_type_map"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {
+                            "success": true,
+                            "output": "",
+                            "exit_code": 0,
+                            "error": null,
+                            "execution_time_ms": 200,
+                            "rows_loaded": 5
+                        }
+                        """)));
+
+    var result =
+        executorClient()
+            .executePython(
+                Map.of(
+                    "script", "print('done')",
+                    "output_table", "my_table_tmp",
+                    "column_type_map", Map.of("col1", "TEXT", "col2", "INTEGER")));
+
+    assertThat(result.success()).isTrue();
+    assertThat(result.rowsLoaded()).isEqualTo(5);
+  }
+
+  @Test
+  void executePython_returnsRowsLoaded() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/python"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {
+                            "success": true,
+                            "output": "loaded 42 rows",
+                            "exit_code": 0,
+                            "error": null,
+                            "execution_time_ms": 300,
+                            "rows_loaded": 42
+                        }
+                        """)));
+
+    var result =
+        executorClient().executePython(Map.of("script", "import json; print(json.dumps([]))"));
+
+    assertThat(result.success()).isTrue();
+    assertThat(result.rowsLoaded()).isEqualTo(42);
   }
 
   @Test
@@ -156,11 +221,12 @@ class ExecutorClientTest {
                             "output": "",
                             "exit_code": 1,
                             "error": "SyntaxError: invalid syntax",
-                            "execution_time_ms": 50
+                            "execution_time_ms": 50,
+                            "rows_loaded": 0
                         }
                         """)));
 
-    var result = executorClient().executePython("invalid python !!!@#");
+    var result = executorClient().executePython(Map.of("script", "invalid python !!!@#"));
 
     assertThat(result.success()).isFalse();
     assertThat(result.exitCode()).isEqualTo(1);
@@ -173,7 +239,7 @@ class ExecutorClientTest {
         post(urlEqualTo("/execute/python"))
             .willReturn(aResponse().withStatus(500).withBody("Internal Server Error")));
 
-    assertThatThrownBy(() -> executorClient().executePython("print('hello')"))
+    assertThatThrownBy(() -> executorClient().executePython(Map.of("script", "print('hello')")))
         .isInstanceOf(Exception.class);
   }
 

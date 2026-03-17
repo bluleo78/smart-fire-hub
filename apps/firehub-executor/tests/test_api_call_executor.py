@@ -19,10 +19,10 @@ from app.services.api_call_executor import (
     _apply_auth,
     _convert_value,
     _has_next_page,
-    _insert_batch,
     _parse_and_map,
     execute_api_call,
 )
+from app.services.db_utils import insert_batch
 from app.validators.ssrf_protection import SsrfException
 
 
@@ -90,7 +90,7 @@ def test_single_page_fetch_and_insert():
 
     with patch("app.services.api_call_executor.validate_url"):
         with patch("app.services.api_call_executor._do_request", return_value=body):
-            with patch("app.services.api_call_executor._insert_batch") as mock_insert:
+            with patch("app.services.api_call_executor.insert_batch") as mock_insert:
                 result = execute_api_call(req, conn)
 
     assert result.success is True
@@ -142,7 +142,7 @@ def test_offset_pagination_multiple_pages():
 
     with patch("app.services.api_call_executor.validate_url"):
         with patch("app.services.api_call_executor._do_request", side_effect=fake_do_request):
-            with patch("app.services.api_call_executor._insert_batch"):
+            with patch("app.services.api_call_executor.insert_batch"):
                 result = execute_api_call(req, conn)
 
     assert result.success is True
@@ -174,7 +174,7 @@ def test_offset_pagination_stops_on_partial_page():
 
     with patch("app.services.api_call_executor.validate_url"):
         with patch("app.services.api_call_executor._do_request", side_effect=fake_do_request):
-            with patch("app.services.api_call_executor._insert_batch"):
+            with patch("app.services.api_call_executor.insert_batch"):
                 result = execute_api_call(req, conn)
 
     assert result.success is True
@@ -204,7 +204,7 @@ def test_offset_pagination_stops_when_total_reached():
 
     with patch("app.services.api_call_executor.validate_url"):
         with patch("app.services.api_call_executor._do_request", side_effect=fake_do_request):
-            with patch("app.services.api_call_executor._insert_batch"):
+            with patch("app.services.api_call_executor.insert_batch"):
                 result = execute_api_call(req, conn)
 
     assert result.success is True
@@ -232,7 +232,7 @@ def test_max_duration_exceeded_partial_result():
 
     with patch("app.services.api_call_executor.validate_url"):
         with patch("app.services.api_call_executor._do_request", return_value=body):
-            with patch("app.services.api_call_executor._insert_batch"):
+            with patch("app.services.api_call_executor.insert_batch"):
                 result = execute_api_call(req, conn)
 
     assert result.success is True
