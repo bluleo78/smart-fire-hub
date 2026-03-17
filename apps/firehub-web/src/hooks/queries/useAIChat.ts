@@ -32,6 +32,7 @@ export function useAIChat() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [contextTokens, setContextTokens] = useState<number | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesCommittedRef = useRef(false);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
@@ -84,6 +85,7 @@ export function useAIChat() {
 
     setPendingUserMessage(content);
     setIsStreaming(true);
+    setIsThinking(true);
     streamingContentRef.current = {
       id: assistantId,
       role: 'assistant',
@@ -122,6 +124,7 @@ export function useAIChat() {
         timestamp: new Date().toISOString(),
       };
       setStreamingMessage(streamingContentRef.current);
+      setIsThinking(true);
     };
 
     const commitMessages = () => {
@@ -147,6 +150,7 @@ export function useAIChat() {
       setStreamingMessage(null);
       setPendingUserMessage(null);
       setIsStreaming(false);
+      setIsThinking(false);
       streamingContentRef.current = null;
     };
 
@@ -168,6 +172,7 @@ export function useAIChat() {
             }
             break;
           case 'text':
+            setIsThinking(false);
             if (streamingContentRef.current) {
               streamingContentRef.current = {
                 ...streamingContentRef.current,
@@ -180,6 +185,7 @@ export function useAIChat() {
             }));
             break;
           case 'tool_use':
+            setIsThinking(true);
             if (streamingContentRef.current) {
               streamingContentRef.current = {
                 ...streamingContentRef.current,
@@ -259,6 +265,7 @@ export function useAIChat() {
               }]);
             }
             setIsStreaming(false);
+            setIsThinking(false);
             setStreamingMessage(null);
             setPendingUserMessage(null);
             streamingContentRef.current = null;
@@ -269,6 +276,7 @@ export function useAIChat() {
       (error) => {
         console.error('AI stream error:', error);
         setIsStreaming(false);
+        setIsThinking(false);
         setStreamingMessage(null);
         setPendingUserMessage(null);
         streamingContentRef.current = null;
@@ -286,6 +294,7 @@ export function useAIChat() {
       abortControllerRef.current = null;
     }
     setIsStreaming(false);
+    setIsThinking(false);
     setStreamingMessage(null);
     setPendingUserMessage(null);
   }, []);
@@ -296,6 +305,7 @@ export function useAIChat() {
     setStreamingMessage(null);
     setPendingUserMessage(null);
     setIsStreaming(false);
+    setIsThinking(false);
     setContextTokens(null);
     setIsCompacting(false);
   }, []);
@@ -309,6 +319,7 @@ export function useAIChat() {
     setStreamingMessage(null);
     setPendingUserMessage(null);
     setIsStreaming(false);
+    setIsThinking(false);
     setContextTokens(null);
     setIsCompacting(false);
     try {
@@ -324,6 +335,7 @@ export function useAIChat() {
   return {
     messages,
     isStreaming,
+    isThinking,
     isUploading,
     isLoadingHistory,
     isCompacting,

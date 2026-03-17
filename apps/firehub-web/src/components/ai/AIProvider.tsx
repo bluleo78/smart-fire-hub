@@ -10,6 +10,7 @@ interface AIContextValue {
   currentSessionId: string | null;
   messages: AIMessage[];
   isStreaming: boolean;
+  isThinking: boolean;
   isUploading: boolean;
   isLoadingHistory: boolean;
   streamingMessage: Partial<AIMessage> | null;
@@ -54,6 +55,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
   const {
     messages,
     isStreaming,
+    isThinking,
     isUploading,
     isLoadingHistory,
     streamingMessage,
@@ -99,6 +101,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       currentSessionId,
       messages,
       isStreaming,
+      isThinking,
       isUploading,
       isLoadingHistory,
       streamingMessage,
@@ -120,6 +123,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       currentSessionId,
       messages,
       isStreaming,
+      isThinking,
       isUploading,
       isLoadingHistory,
       streamingMessage,
