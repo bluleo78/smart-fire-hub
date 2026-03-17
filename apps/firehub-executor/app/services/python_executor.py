@@ -32,6 +32,7 @@ def execute_python(
                 "--rlimit_as", str(settings.nsjail_rlimit_as),
                 "--rlimit_nproc", str(settings.nsjail_rlimit_nproc),
                 "--disable_proc",
+                "--disable_clone_newnet",
                 "--really_quiet",
                 "-R", "/usr",
                 "-R", "/lib",
