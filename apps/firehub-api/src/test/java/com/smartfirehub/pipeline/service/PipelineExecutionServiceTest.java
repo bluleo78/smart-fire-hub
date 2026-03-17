@@ -708,13 +708,33 @@ class PipelineExecutionServiceTest {
     Long outputDatasetId = 50L;
 
     PipelineStepResponse step1 =
-        stepResponseWithOutput(step1Id, "step1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", outputDatasetId, List.of());
+        stepResponseWithOutput(
+            step1Id,
+            "step1",
+            "SQL",
+            "INSERT INTO data.\"t\" VALUES (1)",
+            outputDatasetId,
+            List.of());
     PipelineStepResponse step2 =
-        new PipelineStepResponse(step2Id, "step2", null, "SQL", "SELECT * FROM {{#1}}", null, null,
-            List.of(), List.of(), 1, "REPLACE", null, null, null);
+        new PipelineStepResponse(
+            step2Id,
+            "step2",
+            null,
+            "SQL",
+            "SELECT * FROM {{#1}}",
+            null,
+            null,
+            List.of(),
+            List.of(),
+            1,
+            "REPLACE",
+            null,
+            null,
+            null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
-    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(stepExec1Id);
     when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(stepExec2Id);
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
@@ -726,7 +746,8 @@ class PipelineExecutionServiceTest {
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
     when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
     Long tempDsId = 999L;
-    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
         .thenReturn(tempDsId);
     when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_step2"));
     when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
@@ -757,16 +778,31 @@ class PipelineExecutionServiceTest {
     Long ds2Id = 61L;
 
     PipelineStepResponse step1 =
-        stepResponseWithOutput(step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
+        stepResponseWithOutput(
+            step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
     PipelineStepResponse step2 =
-        stepResponseWithOutput(step2Id, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", ds2Id, List.of());
+        stepResponseWithOutput(
+            step2Id, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", ds2Id, List.of());
     PipelineStepResponse step3 =
-        new PipelineStepResponse(step3Id, "s3", null, "SQL",
+        new PipelineStepResponse(
+            step3Id,
+            "s3",
+            null,
+            "SQL",
             "SELECT * FROM {{#1}} JOIN {{#2}} ON {{#1}}.id = {{#2}}.id",
-            null, null, List.of(), List.of(), 2, "REPLACE", null, null, null);
+            null,
+            null,
+            List.of(),
+            List.of(),
+            2,
+            "REPLACE",
+            null,
+            null,
+            null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
-    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(340L);
     when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(341L);
     when(executionRepository.createStepExecution(executionId, step3Id)).thenReturn(342L);
@@ -782,7 +818,8 @@ class PipelineExecutionServiceTest {
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
     Long tempDsId = 998L;
     when(tempDatasetService.findExistingTempDataset(step3Id)).thenReturn(Optional.empty());
-    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step3Id), any(), eq(userId)))
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step3Id), any(), eq(userId)))
         .thenReturn(tempDsId);
     when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_s3"));
     when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
@@ -794,7 +831,8 @@ class PipelineExecutionServiceTest {
     // then: step3 SQL has both references replaced
     ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
     verify(sqlExecutor, atLeastOnce()).execute(captor.capture());
-    assertThat(captor.getAllValues()).anyMatch(s -> s.contains("data.\"tbl1\"") && s.contains("data.\"tbl2\""));
+    assertThat(captor.getAllValues())
+        .anyMatch(s -> s.contains("data.\"tbl1\"") && s.contains("data.\"tbl2\""));
   }
 
   @Test
@@ -807,11 +845,25 @@ class PipelineExecutionServiceTest {
     Long stepExecId = 350L;
 
     PipelineStepResponse step =
-        new PipelineStepResponse(stepId, "step1", null, "SQL", "SELECT * FROM {{#99}}",
-            null, null, List.of(), List.of(), 0, "REPLACE", null, null, null);
+        new PipelineStepResponse(
+            stepId,
+            "step1",
+            null,
+            "SQL",
+            "SELECT * FROM {{#99}}",
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step));
-    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
 
@@ -819,9 +871,15 @@ class PipelineExecutionServiceTest {
     service.executePipeline(pipelineId, userId);
 
     // then: step marked FAILED with appropriate message
-    verify(executionRepository).updateStepExecution(
-        eq(stepExecId), eq("FAILED"), isNull(), isNull(),
-        contains("스텝 번호 99"), isNull(), any());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("스텝 번호 99"),
+            isNull(),
+            any());
   }
 
   @Test
@@ -838,15 +896,31 @@ class PipelineExecutionServiceTest {
     Long stepExec3Id = 362L;
 
     PipelineStepResponse step1 =
-        stepResponseWithOutput(step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
+        stepResponseWithOutput(
+            step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
     PipelineStepResponse step2 =
-        stepResponseWithOutput(step2Id, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", ds2Id, List.of());
+        stepResponseWithOutput(
+            step2Id, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", ds2Id, List.of());
     PipelineStepResponse step3 =
-        new PipelineStepResponse(step3Id, "s3", null, "SQL", "SELECT * FROM {{#3}}",
-            null, null, List.of(), List.of(), 2, "REPLACE", null, null, null);
+        new PipelineStepResponse(
+            step3Id,
+            "s3",
+            null,
+            "SQL",
+            "SELECT * FROM {{#3}}",
+            null,
+            null,
+            List.of(),
+            List.of(),
+            2,
+            "REPLACE",
+            null,
+            null,
+            null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
-    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(360L);
     when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(361L);
     when(executionRepository.createStepExecution(executionId, step3Id)).thenReturn(stepExec3Id);
@@ -860,9 +934,15 @@ class PipelineExecutionServiceTest {
     service.executePipeline(pipelineId, userId);
 
     // then: step3 marked FAILED with self-reference message
-    verify(executionRepository).updateStepExecution(
-        eq(stepExec3Id), eq("FAILED"), isNull(), isNull(),
-        contains("자기 자신을 참조"), isNull(), any());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExec3Id),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("자기 자신을 참조"),
+            isNull(),
+            any());
   }
 
   @Test
@@ -876,11 +956,13 @@ class PipelineExecutionServiceTest {
 
     String plainSql = "SELECT 1 AS val";
     PipelineStepResponse step =
-        new PipelineStepResponse(stepId, "plain", null, "SQL", plainSql,
-            null, null, List.of(), List.of(), 0, "REPLACE", null, null, null);
+        new PipelineStepResponse(
+            stepId, "plain", null, "SQL", plainSql, null, null, List.of(), List.of(), 0, "REPLACE",
+            null, null, null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step));
-    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
@@ -890,7 +972,8 @@ class PipelineExecutionServiceTest {
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
     Long tempDsId = 997L;
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
-    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(stepId), any(), eq(userId)))
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(stepId), any(), eq(userId)))
         .thenReturn(tempDsId);
     when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_plain"));
     when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("val", false)));
@@ -905,7 +988,8 @@ class PipelineExecutionServiceTest {
   }
 
   @Test
-  void resolveStepReferences_tempDatasetReference_resolvedViaSourcePipelineStepId() throws Exception {
+  void resolveStepReferences_tempDatasetReference_resolvedViaSourcePipelineStepId()
+      throws Exception {
     // given: step1 has outputDatasetId=null (temp), step2 references {{#1}}
     Long pipelineId = 35L;
     Long userId = 1L;
@@ -916,16 +1000,44 @@ class PipelineExecutionServiceTest {
     Long step2ExecId = 381L;
     Long tempDsId = 990L;
 
-    // step1: no explicit outputDatasetId (temp dataset created at runtime, stored with source_pipeline_step_id)
+    // step1: no explicit outputDatasetId (temp dataset created at runtime, stored with
+    // source_pipeline_step_id)
     PipelineStepResponse step1 =
-        new PipelineStepResponse(step1Id, "temp-step", null, "SQL", "SELECT id FROM data.\"src\"",
-            null, null, List.of(), List.of(), 0, "REPLACE", null, null, null);
+        new PipelineStepResponse(
+            step1Id,
+            "temp-step",
+            null,
+            "SQL",
+            "SELECT id FROM data.\"src\"",
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            null);
     PipelineStepResponse step2 =
-        new PipelineStepResponse(step2Id, "ref-step", null, "SQL", "SELECT * FROM {{#1}}",
-            null, null, List.of(), List.of(), 1, "REPLACE", null, null, null);
+        new PipelineStepResponse(
+            step2Id,
+            "ref-step",
+            null,
+            "SQL",
+            "SELECT * FROM {{#1}}",
+            null,
+            null,
+            List.of(),
+            List.of(),
+            1,
+            "REPLACE",
+            null,
+            null,
+            null);
 
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
-    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null)).thenReturn(executionId);
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
     when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(step1ExecId);
     when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(step2ExecId);
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
@@ -935,7 +1047,8 @@ class PipelineExecutionServiceTest {
     Result<?> step1Result = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
     doReturn(step1Result).when(pipelineDsl).fetch(anyString());
     when(tempDatasetService.findExistingTempDataset(step1Id)).thenReturn(Optional.empty());
-    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step1Id), any(), eq(userId)))
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step1Id), any(), eq(userId)))
         .thenReturn(tempDsId);
     when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_temp_step"));
     when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
@@ -947,7 +1060,8 @@ class PipelineExecutionServiceTest {
     // step2 execution: also SELECT → another temp dataset
     Long tempDs2Id = 991L;
     when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
-    when(tempDatasetService.createTempDataset(any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
         .thenReturn(tempDs2Id);
     when(datasetRepository.findTableNameById(tempDs2Id)).thenReturn(Optional.of("ptmp_ref_step"));
     when(columnRepository.findByDatasetId(tempDs2Id)).thenReturn(List.of(col("id", false)));

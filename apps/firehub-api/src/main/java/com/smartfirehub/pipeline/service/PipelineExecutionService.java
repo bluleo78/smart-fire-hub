@@ -826,8 +826,7 @@ public class PipelineExecutionService {
       }
 
       if (stepIndex == currentStepIndex) {
-        throw new ScriptExecutionException(
-            "{{#" + stepNumber + "}} 참조 실패: 자기 자신을 참조할 수 없습니다");
+        throw new ScriptExecutionException("{{#" + stepNumber + "}} 참조 실패: 자기 자신을 참조할 수 없습니다");
       }
 
       PipelineStepResponse refStep = allSteps.get(stepIndex);
