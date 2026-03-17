@@ -297,14 +297,16 @@ export default function ChartBuilderPage() {
       setQueryRows(result.rows);
       toast.success(`${result.rows.length}행 로드됨 (${result.executionTimeMs}ms)`);
 
-      // Auto-recommend chart type and config only when first loading data
-      const recommended = recommendChartType(result.columns, result.rows);
-      setChartType(recommended);
-      setConfig(buildDefaultConfig(result.columns, result.rows, recommended));
+      // Auto-recommend chart type and config only for new charts
+      if (isNew) {
+        const recommended = recommendChartType(result.columns, result.rows);
+        setChartType(recommended);
+        setConfig(buildDefaultConfig(result.columns, result.rows, recommended));
+      }
     } catch (error) {
       handleApiError(error, '쿼리 실행에 실패했습니다.');
     }
-  }, [selectedQueryId, executeQuery]);
+  }, [selectedQueryId, executeQuery, isNew]);
 
   // When chartType changes, rebuild default config if we already have columns but config is empty
   // MAP ↔ 비MAP 전환 시 항상 config 리빌드 (렌더링 패러다임이 다름)
