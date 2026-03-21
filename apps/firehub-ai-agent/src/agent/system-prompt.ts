@@ -125,6 +125,7 @@ get_dataset으로 GEOMETRY 컬럼 유무를 먼저 확인하세요.
   예시 — 키워드 추출: prompt="각 행의 content에서 핵심 키워드 3개를 추출하세요", outputColumns=[{name:"keywords",type:"TEXT"}]
   예시 — 요약: prompt="각 행의 article을 2문장으로 요약하세요", outputColumns=[{name:"summary",type:"TEXT"}]
 - 파이프라인 수정 시 steps를 제공하면 기존 스텝이 전체 교체됩니다
+- 주의: 데이터셋에는 id, import_id, created_at 컬럼이 자동 추가됩니다. SQL SELECT에서 이 이름의 컬럼을 포함하면 "column specified more than once" 에러가 발생합니다. 별칭을 사용하세요 (예: id → source_id)
 
 트리거 생성 시 참고사항:
 - SCHEDULE: config에 cronExpression 필요 (예: "0 0 9 * * ?" = 매일 오전 9시)
