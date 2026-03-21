@@ -14,6 +14,9 @@ export const settingsApi = {
   startCliLogin: () =>
     client.post<{ success: boolean; message: string; authUrl?: string }>('/ai/cli-auth/login'),
 
+  submitCliAuthCode: (code: string) =>
+    client.post<{ success: boolean; message: string }>('/ai/cli-auth/code', { code }),
+
   cliLogout: () =>
     client.post<{ success: boolean }>('/ai/cli-auth/logout'),
 };

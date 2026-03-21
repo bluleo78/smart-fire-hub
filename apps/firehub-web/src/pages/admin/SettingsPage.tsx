@@ -75,6 +75,9 @@ export default function SettingsPage() {
   const [isCliAuthLoading, setIsCliAuthLoading] = useState(false);
   const [isCliLoginPending, setIsCliLoginPending] = useState(false);
   const [isCliLogoutPending, setIsCliLogoutPending] = useState(false);
+  const [showCodeInput, setShowCodeInput] = useState(false);
+  const [authCode, setAuthCode] = useState('');
+  const [isSubmittingCode, setIsSubmittingCode] = useState(false);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 컴포넌트 언마운트 시 폴링 정리
@@ -129,60 +132,48 @@ export default function SettingsPage() {
 
   const handleCliLogin = async () => {
     setIsCliLoginPending(true);
-    // 팝업 차단 방지: 사용자 클릭 컨텍스트에서 미리 빈 탭을 열어둠
     const authWindow = window.open('about:blank', '_blank');
     try {
       const { data: loginResult } = await settingsApi.startCliLogin();
-      if (loginResult.authUrl && authWindow) {
-        // redirect_uri를 우리 도메인으로 치환하여 콜백을 수신
-        const ourCallback = `${window.location.origin}/oauth/callback`;
-        const modifiedUrl = loginResult.authUrl.replace(
-          /redirect_uri=[^&]+/,
-          `redirect_uri=${encodeURIComponent(ourCallback)}`,
-        );
-        authWindow.location.href = modifiedUrl;
-        toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
-      } else if (loginResult.authUrl) {
-        const ourCallback = `${window.location.origin}/oauth/callback`;
-        const modifiedUrl = loginResult.authUrl.replace(
-          /redirect_uri=[^&]+/,
-          `redirect_uri=${encodeURIComponent(ourCallback)}`,
-        );
-        window.open(modifiedUrl, '_blank');
-        toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
+      if (loginResult.authUrl) {
+        if (authWindow) {
+          authWindow.location.href = loginResult.authUrl;
+        } else {
+          window.open(loginResult.authUrl, '_blank');
+        }
+        // 코드 입력 필드 표시
+        setShowCodeInput(true);
+        setAuthCode('');
+        toast.info('새 탭에서 인증 후 표시되는 코드를 아래에 입력하세요.');
       } else {
         authWindow?.close();
-        toast.info('브라우저에서 인증을 완료하세요. 인증 후 자동으로 상태가 갱신됩니다.');
+        toast.error('인증 URL을 가져오지 못했습니다.');
       }
-      // 브라우저 인증 완료를 감지하기 위해 5초 간격으로 최대 12회(60초) 폴링
-      let attempts = 0;
-      const maxAttempts = 12;
-      pollIntervalRef.current = setInterval(async () => {
-        attempts++;
-        try {
-          const { data } = await settingsApi.getCliAuthStatus();
-          if (data.loggedIn) {
-            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setCliAuthStatus(data);
-            setIsCliLoginPending(false);
-            toast.success('로그인이 완료되었습니다.');
-          } else if (attempts >= maxAttempts) {
-            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsCliLoginPending(false);
-          }
-        } catch {
-          if (attempts >= maxAttempts) {
-            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsCliLoginPending(false);
-          }
-        }
-      }, 5000);
     } catch {
+      authWindow?.close();
       toast.error('로그인 요청에 실패했습니다.');
+    } finally {
       setIsCliLoginPending(false);
+    }
+  };
+
+  const handleSubmitCode = async () => {
+    if (!authCode.trim()) return;
+    setIsSubmittingCode(true);
+    try {
+      const { data } = await settingsApi.submitCliAuthCode(authCode.trim());
+      if (data.success) {
+        toast.success(data.message);
+        setShowCodeInput(false);
+        setAuthCode('');
+        await fetchCliAuthStatus();
+      } else {
+        toast.error(data.message);
+      }
+    } catch {
+      toast.error('코드 전송에 실패했습니다.');
+    } finally {
+      setIsSubmittingCode(false);
     }
   };
 
@@ -396,31 +387,62 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
-                      <div className="flex items-center gap-3">
-                        <AlertCircle className="h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
-                        <div className="space-y-0.5">
-                          <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
-                            Claude Code에 로그인이 필요합니다
-                          </p>
-                          {cliAuthStatus?.error && (
-                            <p className="text-xs text-orange-700 dark:text-orange-300">
-                              {cliAuthStatus.error}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
+                        <div className="flex items-center gap-3">
+                          <AlertCircle className="h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
+                          <div className="space-y-0.5">
+                            <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
+                              Claude Code에 로그인이 필요합니다
                             </p>
-                          )}
+                            {cliAuthStatus?.error && (
+                              <p className="text-xs text-orange-700 dark:text-orange-300">
+                                {cliAuthStatus.error}
+                              </p>
+                            )}
+                          </div>
                         </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleCliLogin}
+                          disabled={isCliLoginPending}
+                        >
+                          {isCliLoginPending ? (
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          ) : null}
+                          {showCodeInput ? '다시 인증' : 'Claude Code 로그인'}
+                        </Button>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={handleCliLogin}
-                        disabled={isCliLoginPending}
-                      >
-                        {isCliLoginPending ? (
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        ) : null}
-                        Claude Code 로그인
-                      </Button>
+
+                      {showCodeInput && (
+                        <div className="rounded-lg border px-4 py-3 space-y-2">
+                          <p className="text-sm font-medium">인증 코드 입력</p>
+                          <p className="text-xs text-muted-foreground">
+                            새 탭에서 인증 완료 후 표시된 코드를 아래에 붙여넣으세요.
+                          </p>
+                          <div className="flex gap-2">
+                            <Input
+                              value={authCode}
+                              onChange={(e) => setAuthCode(e.target.value)}
+                              placeholder="인증 코드를 붙여넣으세요"
+                              className="font-mono text-sm"
+                              disabled={isSubmittingCode}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={handleSubmitCode}
+                              disabled={isSubmittingCode || !authCode.trim()}
+                            >
+                              {isSubmittingCode ? (
+                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ) : null}
+                              확인
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

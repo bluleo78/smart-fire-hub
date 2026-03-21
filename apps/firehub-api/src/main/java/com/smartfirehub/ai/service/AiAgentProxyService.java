@@ -94,6 +94,18 @@ public class AiAgentProxyService {
         .block(SHORT_TIMEOUT);
   }
 
+  public String submitCliAuthCode(String code) {
+    return webClient
+        .post()
+        .uri("/agent/cli-auth/code")
+        .header("Authorization", "Internal " + internalToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue("{\"code\":\"" + code.replace("\"", "\\\"") + "\"}")
+        .retrieve()
+        .bodyToMono(String.class)
+        .block(SHORT_TIMEOUT);
+  }
+
   public String cliLogout() {
     return webClient
         .post()
