@@ -129,12 +129,19 @@ export default function SettingsPage() {
 
   const handleCliLogin = async () => {
     setIsCliLoginPending(true);
+    // 팝업 차단 방지: 사용자 클릭 컨텍스트에서 미리 빈 탭을 열어둠
+    const authWindow = window.open('about:blank', '_blank');
     try {
       const { data: loginResult } = await settingsApi.startCliLogin();
-      if (loginResult.authUrl) {
+      if (loginResult.authUrl && authWindow) {
+        authWindow.location.href = loginResult.authUrl;
+        toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
+      } else if (loginResult.authUrl) {
+        // 팝업이 차단된 경우 fallback
         window.open(loginResult.authUrl, '_blank');
         toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
       } else {
+        authWindow?.close();
         toast.info('브라우저에서 인증을 완료하세요. 인증 후 자동으로 상태가 갱신됩니다.');
       }
       // 브라우저 인증 완료를 감지하기 위해 5초 간격으로 최대 12회(60초) 폴링
