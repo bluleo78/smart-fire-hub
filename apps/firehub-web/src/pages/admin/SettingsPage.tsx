@@ -134,11 +134,21 @@ export default function SettingsPage() {
     try {
       const { data: loginResult } = await settingsApi.startCliLogin();
       if (loginResult.authUrl && authWindow) {
-        authWindow.location.href = loginResult.authUrl;
+        // redirect_uri를 우리 도메인으로 치환하여 콜백을 수신
+        const ourCallback = `${window.location.origin}/oauth/callback`;
+        const modifiedUrl = loginResult.authUrl.replace(
+          /redirect_uri=[^&]+/,
+          `redirect_uri=${encodeURIComponent(ourCallback)}`,
+        );
+        authWindow.location.href = modifiedUrl;
         toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
       } else if (loginResult.authUrl) {
-        // 팝업이 차단된 경우 fallback
-        window.open(loginResult.authUrl, '_blank');
+        const ourCallback = `${window.location.origin}/oauth/callback`;
+        const modifiedUrl = loginResult.authUrl.replace(
+          /redirect_uri=[^&]+/,
+          `redirect_uri=${encodeURIComponent(ourCallback)}`,
+        );
+        window.open(modifiedUrl, '_blank');
         toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
       } else {
         authWindow?.close();
