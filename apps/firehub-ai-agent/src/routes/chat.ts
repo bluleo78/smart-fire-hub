@@ -168,33 +168,13 @@ router.get('/cli-auth', internalAuth, async (_req: Request, res: Response) => {
 // Claude Code CLI 로그인 시작 — 인증 URL을 캡처하여 반환
 router.post('/cli-auth/login', internalAuth, async (_req: Request, res: Response) => {
   try {
-    const child = spawn('claude', ['auth', 'login', '--claudeai'], {
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    child.unref();
+    // sh -c로 실행하여 stdout+stderr를 합쳐서 캡처 (claude가 stderr로 출력할 수 있음)
+    const { stdout } = await execFileAsync(
+      'sh', ['-c', 'timeout 10 claude auth login --claudeai 2>&1 || true'],
+      { timeout: 15000 },
+    );
 
-    // stdout + stderr에서 인증 URL 캡처 (최대 10초 대기)
-    let output = '';
-    const collectOutput = (stream: NodeJS.ReadableStream | null) => {
-      stream?.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-    };
-    collectOutput(child.stdout);
-    collectOutput(child.stderr);
-
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 10000);
-      const check = setInterval(() => {
-        if (output.includes('https://')) {
-          clearInterval(check);
-          clearTimeout(timeout);
-          resolve();
-        }
-      }, 200);
-    });
-
-    // URL 추출
-    const urlMatch = output.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
+    const urlMatch = stdout.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
     if (urlMatch) {
       res.json({
         success: true,
@@ -204,7 +184,7 @@ router.post('/cli-auth/login', internalAuth, async (_req: Request, res: Response
     } else {
       res.json({
         success: true,
-        message: '로그인 프로세스가 시작되었습니다. 브라우저에서 인증을 완료하세요.',
+        message: '로그인 프로세스가 시작되었습니다.',
       });
     }
   } catch (error: unknown) {
