@@ -166,27 +166,56 @@ router.get('/cli-auth', internalAuth, async (_req: Request, res: Response) => {
 });
 
 // Claude Code CLI 로그인 시작 — 인증 URL을 캡처하여 반환
-router.post('/cli-auth/login', internalAuth, async (_req: Request, res: Response) => {
+// 프로세스는 백그라운드에서 계속 실행되어 OAuth 콜백을 수신
+router.post('/cli-auth/login', internalAuth, (_req: Request, res: Response) => {
   try {
-    // sh -c로 실행하여 stdout+stderr를 합쳐서 캡처 (claude가 stderr로 출력할 수 있음)
-    const { stdout } = await execFileAsync(
-      'sh', ['-c', 'timeout 5 claude auth login --claudeai 2>&1 || true'],
-      { timeout: 10000 },
-    );
+    const child = spawn('claude', ['auth', 'login', '--claudeai'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-    const urlMatch = stdout.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
-    if (urlMatch) {
-      res.json({
-        success: true,
-        authUrl: urlMatch[1],
-        message: '아래 URL을 브라우저에서 열어 인증을 완료하세요.',
-      });
-    } else {
-      res.json({
-        success: true,
-        message: '로그인 프로세스가 시작되었습니다.',
-      });
-    }
+    let output = '';
+    let responded = false;
+
+    const collectOutput = (stream: NodeJS.ReadableStream | null) => {
+      stream?.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    };
+    collectOutput(child.stdout);
+    collectOutput(child.stderr);
+
+    // URL이 출력되면 즉시 응답 (프로세스는 계속 실행)
+    const check = setInterval(() => {
+      const urlMatch = output.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
+      if (urlMatch && !responded) {
+        responded = true;
+        clearInterval(check);
+        clearTimeout(timeout);
+        res.json({
+          success: true,
+          authUrl: urlMatch[1],
+          message: '브라우저에서 인증을 완료하세요. 프로세스가 대기 중입니다.',
+        });
+      }
+    }, 200);
+
+    // 10초 안에 URL이 안 나오면 타임아웃 응답
+    const timeout = setTimeout(() => {
+      if (!responded) {
+        responded = true;
+        clearInterval(check);
+        child.kill('SIGTERM');
+        res.json({ success: false, message: '인증 URL을 가져오지 못했습니다.' });
+      }
+    }, 10000);
+
+    // 프로세스가 종료되면 정리 (인증 완료 또는 타임아웃)
+    child.on('exit', () => {
+      clearInterval(check);
+      clearTimeout(timeout);
+      if (!responded) {
+        responded = true;
+        res.json({ success: false, message: '로그인 프로세스가 종료되었습니다.' });
+      }
+    });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] CLI auth login error:', errorMessage);
