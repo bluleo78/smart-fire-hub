@@ -130,8 +130,13 @@ export default function SettingsPage() {
   const handleCliLogin = async () => {
     setIsCliLoginPending(true);
     try {
-      await settingsApi.startCliLogin();
-      toast.info('브라우저에서 인증을 완료하세요. 인증 후 자동으로 상태가 갱신됩니다.');
+      const { data: loginResult } = await settingsApi.startCliLogin();
+      if (loginResult.authUrl) {
+        window.open(loginResult.authUrl, '_blank');
+        toast.info('새 탭에서 인증을 완료하세요. 완료 후 자동으로 상태가 갱신됩니다.');
+      } else {
+        toast.info('브라우저에서 인증을 완료하세요. 인증 후 자동으로 상태가 갱신됩니다.');
+      }
       // 브라우저 인증 완료를 감지하기 위해 5초 간격으로 최대 12회(60초) 폴링
       let attempts = 0;
       const maxAttempts = 12;

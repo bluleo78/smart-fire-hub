@@ -165,15 +165,48 @@ router.get('/cli-auth', internalAuth, async (_req: Request, res: Response) => {
   }
 });
 
-// Claude Code CLI 로그인 시작
-router.post('/cli-auth/login', internalAuth, (_req: Request, res: Response) => {
+// Claude Code CLI 로그인 시작 — 인증 URL을 캡처하여 반환
+router.post('/cli-auth/login', internalAuth, async (_req: Request, res: Response) => {
   try {
     const child = spawn('claude', ['auth', 'login', '--claudeai'], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.unref();
-    res.json({ success: true, message: '로그인 페이지가 열렸습니다. 브라우저에서 인증을 완료하세요.' });
+
+    // stdout + stderr에서 인증 URL 캡처 (최대 10초 대기)
+    let output = '';
+    const collectOutput = (stream: NodeJS.ReadableStream | null) => {
+      stream?.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    };
+    collectOutput(child.stdout);
+    collectOutput(child.stderr);
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 10000);
+      const check = setInterval(() => {
+        if (output.includes('https://')) {
+          clearInterval(check);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 200);
+    });
+
+    // URL 추출
+    const urlMatch = output.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
+    if (urlMatch) {
+      res.json({
+        success: true,
+        authUrl: urlMatch[1],
+        message: '아래 URL을 브라우저에서 열어 인증을 완료하세요.',
+      });
+    } else {
+      res.json({
+        success: true,
+        message: '로그인 프로세스가 시작되었습니다. 브라우저에서 인증을 완료하세요.',
+      });
+    }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] CLI auth login error:', errorMessage);

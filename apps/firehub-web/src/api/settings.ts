@@ -12,7 +12,7 @@ export const settingsApi = {
     client.get<{ loggedIn: boolean; email?: string; subscriptionType?: string; error?: string }>('/ai/cli-auth'),
 
   startCliLogin: () =>
-    client.post<{ success: boolean; message: string }>('/ai/cli-auth/login'),
+    client.post<{ success: boolean; message: string; authUrl?: string }>('/ai/cli-auth/login'),
 
   cliLogout: () =>
     client.post<{ success: boolean }>('/ai/cli-auth/logout'),
