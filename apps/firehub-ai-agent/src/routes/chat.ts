@@ -148,7 +148,7 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
   }
 });
 
-// API 키 유효성 검증
+// API 키 유효성 검증 — 실제 API 호출로 확인
 router.post('/api-key/verify', internalAuth, async (req: Request, res: Response) => {
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
@@ -156,18 +156,19 @@ router.post('/api-key/verify', internalAuth, async (req: Request, res: Response)
     return;
   }
   try {
-    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
-      timeout: 5000,
-      env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
-    });
+    const { stdout } = await execFileAsync(
+      'claude',
+      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku'],
+      { timeout: 15000, env: { ...process.env, ANTHROPIC_API_KEY: apiKey } },
+    );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
-    res.json({ valid: parsed.loggedIn === true });
+    res.json({ valid: parsed.is_error !== true });
   } catch {
     res.json({ valid: false });
   }
 });
 
-// CLI OAuth 토큰 유효성 검증
+// CLI OAuth 토큰 유효성 검증 — 실제 API 호출로 확인
 router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response) => {
   const { token } = req.body;
   if (!token || typeof token !== 'string') {
@@ -175,16 +176,15 @@ router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response
     return;
   }
   try {
-    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
-      timeout: 5000,
-      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token },
-    });
+    const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token };
+    delete env.ANTHROPIC_API_KEY;
+    const { stdout } = await execFileAsync(
+      'claude',
+      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku'],
+      { timeout: 15000, env },
+    );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
-    res.json({
-      valid: parsed.loggedIn === true,
-      email: typeof parsed.email === 'string' ? parsed.email : undefined,
-      subscriptionType: typeof parsed.subscriptionType === 'string' ? parsed.subscriptionType : undefined,
-    });
+    res.json({ valid: parsed.is_error !== true });
   } catch {
     res.json({ valid: false });
   }
