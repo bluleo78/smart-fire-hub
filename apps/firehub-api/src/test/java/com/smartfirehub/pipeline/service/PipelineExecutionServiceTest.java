@@ -696,6 +696,310 @@ class PipelineExecutionServiceTest {
             argThat(s -> tempDatasetId.equals(s.outputDatasetId())), eq(stepExecId), eq(userId));
   }
 
+  @Test
+  void executeStep_aiClassifyWithDependencyAndNoInputDatasetIds_autoResolvesInputFromDepStep()
+      throws Exception {
+    // given: SQL step (step1) produces a real outputDatasetId; AI_CLASSIFY step (step2) has
+    // empty inputDatasetIds but depends on step1 → backend should auto-resolve step1's output
+    Long pipelineId = 22L;
+    Long userId = 1L;
+    Long executionId = 122L;
+    Long step1Id = 222L;
+    Long step2Id = 223L;
+    Long stepExec1Id = 322L;
+    Long stepExec2Id = 323L;
+    Long step1OutputDatasetId = 501L;
+    Long aiTempDatasetId = 502L;
+
+    AiClassifyConfig aiConfig =
+        new AiClassifyConfig(
+            "Classify",
+            List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+            List.of("text"),
+            null,
+            null);
+
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(
+            step1Id,
+            "sql-source",
+            "SQL",
+            "INSERT INTO data.\"src\" VALUES (1)",
+            step1OutputDatasetId,
+            List.of());
+
+    // AI_CLASSIFY step: no inputDatasetIds, but dependsOn sql-source
+    PipelineStepResponse aiStep =
+        new PipelineStepResponse(
+            step2Id,
+            "ai-classify",
+            null,
+            "AI_CLASSIFY",
+            null,
+            null,
+            null,
+            List.of(), // empty inputDatasetIds
+            List.of("sql-source"), // depends on sql-source
+            1,
+            "REPLACE",
+            null,
+            Map.of(),
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep, aiStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(stepExec1Id);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(stepExec2Id);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(step1OutputDatasetId))
+        .thenReturn(Optional.of("src_table"));
+    when(sqlExecutor.execute("INSERT INTO data.\"src\" VALUES (1)")).thenReturn("ok");
+
+    when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class))).thenReturn(aiConfig);
+    when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), eq("TestPipeline"), eq(step2Id), eq("ai-classify"), eq(userId)))
+        .thenReturn(aiTempDatasetId);
+    when(datasetRepository.findTableNameById(aiTempDatasetId))
+        .thenReturn(Optional.of("ptmp_ai_classify"));
+    when(aiClassifyExecutor.execute(
+            argThat(
+                s ->
+                    s.inputDatasetIds() != null
+                        && s.inputDatasetIds().contains(step1OutputDatasetId)),
+            eq(stepExec2Id),
+            eq(userId)))
+        .thenReturn(new AiClassifyExecutor.ExecutionResult(5L, "ok log"));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: aiClassifyExecutor was called with inputDatasetIds containing step1's output
+    verify(aiClassifyExecutor)
+        .execute(
+            argThat(
+                s ->
+                    s.inputDatasetIds() != null
+                        && s.inputDatasetIds().contains(step1OutputDatasetId)),
+            eq(stepExec2Id),
+            eq(userId));
+  }
+
+  @Test
+  void executeStep_aiClassifyWithDependencyOnTempStep_autoResolvesInputViaSourcePipelineStepId()
+      throws Exception {
+    // given: SQL step (step1) has no outputDatasetId (temp); AI_CLASSIFY step (step2) depends
+    // on step1 with empty inputDatasetIds → should resolve via findBySourcePipelineStepId
+    Long pipelineId = 23L;
+    Long userId = 1L;
+    Long executionId = 123L;
+    Long step1Id = 224L;
+    Long step2Id = 225L;
+    Long stepExec1Id = 324L;
+    Long stepExec2Id = 325L;
+    Long tempStep1DatasetId = 601L;
+    Long aiTempDatasetId = 602L;
+
+    AiClassifyConfig aiConfig =
+        new AiClassifyConfig(
+            "Classify",
+            List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+            List.of("text"),
+            null,
+            null);
+
+    // SQL step with no outputDatasetId → temp dataset
+    PipelineStepResponse sqlStep =
+        new PipelineStepResponse(
+            step1Id,
+            "temp-sql",
+            null,
+            "SQL",
+            "SELECT id, text FROM data.\"src\"",
+            null, // no explicit outputDatasetId
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            null,
+            null);
+
+    // AI_CLASSIFY step: no inputDatasetIds, depends on temp-sql
+    PipelineStepResponse aiStep =
+        new PipelineStepResponse(
+            step2Id,
+            "ai-on-temp",
+            null,
+            "AI_CLASSIFY",
+            null,
+            null,
+            null,
+            List.of(), // empty inputDatasetIds
+            List.of("temp-sql"), // depends on temp step
+            1,
+            "REPLACE",
+            null,
+            Map.of(),
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep, aiStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(stepExec1Id);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(stepExec2Id);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+
+    // step1 SQL execution → auto creates temp dataset
+    Result<?> step1Result =
+        org.jooq
+            .impl
+            .DSL
+            .using(org.jooq.SQLDialect.POSTGRES)
+            .newResult(org.jooq.impl.DSL.field("id"), org.jooq.impl.DSL.field("text"));
+    doReturn(step1Result).when(pipelineDsl).fetch(anyString());
+    when(tempDatasetService.findExistingTempDataset(step1Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step1Id), any(), eq(userId)))
+        .thenReturn(tempStep1DatasetId);
+    when(datasetRepository.findTableNameById(tempStep1DatasetId))
+        .thenReturn(Optional.of("ptmp_temp_sql"));
+    when(columnRepository.findByDatasetId(tempStep1DatasetId))
+        .thenReturn(List.of(col("id", false), col("text", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("2 rows");
+
+    // AI_CLASSIFY auto-resolve: step1.outputDatasetId=null → findBySourcePipelineStepId
+    when(datasetRepository.findBySourcePipelineStepId(step1Id))
+        .thenReturn(Optional.of(tempStep1DatasetId));
+
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class))).thenReturn(aiConfig);
+    when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
+        .thenReturn(aiTempDatasetId);
+    when(datasetRepository.findTableNameById(aiTempDatasetId))
+        .thenReturn(Optional.of("ptmp_ai_on_temp"));
+    when(aiClassifyExecutor.execute(
+            argThat(
+                s ->
+                    s.inputDatasetIds() != null
+                        && s.inputDatasetIds().contains(tempStep1DatasetId)),
+            eq(stepExec2Id),
+            eq(userId)))
+        .thenReturn(new AiClassifyExecutor.ExecutionResult(3L, "ok"));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: findBySourcePipelineStepId called to resolve temp step's output
+    verify(datasetRepository).findBySourcePipelineStepId(step1Id);
+    // and aiClassifyExecutor called with the resolved temp dataset id in inputDatasetIds
+    verify(aiClassifyExecutor)
+        .execute(
+            argThat(
+                s ->
+                    s.inputDatasetIds() != null
+                        && s.inputDatasetIds().contains(tempStep1DatasetId)),
+            eq(stepExec2Id),
+            eq(userId));
+  }
+
+  @Test
+  void executeStep_aiClassifyWithExistingInputDatasetIds_doesNotOverride() throws Exception {
+    // given: AI_CLASSIFY step already has inputDatasetIds set → should NOT auto-resolve
+    Long pipelineId = 24L;
+    Long userId = 1L;
+    Long executionId = 124L;
+    Long step1Id = 226L;
+    Long step2Id = 227L;
+    Long stepExec1Id = 326L;
+    Long stepExec2Id = 327L;
+    Long explicitInputDatasetId = 701L;
+    Long step1OutputDatasetId = 702L;
+    Long aiTempDatasetId = 703L;
+
+    AiClassifyConfig aiConfig =
+        new AiClassifyConfig(
+            "Classify",
+            List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+            List.of("text"),
+            null,
+            null);
+
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(
+            step1Id,
+            "sql-step",
+            "SQL",
+            "INSERT INTO data.\"t\" VALUES (1)",
+            step1OutputDatasetId,
+            List.of());
+
+    // AI_CLASSIFY step with explicit inputDatasetIds AND dependsOn
+    PipelineStepResponse aiStep =
+        new PipelineStepResponse(
+            step2Id,
+            "ai-explicit",
+            null,
+            "AI_CLASSIFY",
+            null,
+            null,
+            null,
+            List.of(explicitInputDatasetId), // already set
+            List.of("sql-step"),
+            1,
+            "REPLACE",
+            null,
+            Map.of(),
+            null,
+            null);
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep, aiStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(stepExec1Id);
+    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(stepExec2Id);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(step1OutputDatasetId))
+        .thenReturn(Optional.of("sql_out"));
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("ok");
+
+    when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class))).thenReturn(aiConfig);
+    when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
+    when(tempDatasetService.createTempDataset(
+            any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
+        .thenReturn(aiTempDatasetId);
+    when(datasetRepository.findTableNameById(aiTempDatasetId))
+        .thenReturn(Optional.of("ptmp_ai_explicit"));
+    when(aiClassifyExecutor.execute(any(), eq(stepExec2Id), eq(userId)))
+        .thenReturn(new AiClassifyExecutor.ExecutionResult(2L, "ok"));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: aiClassifyExecutor called with the ORIGINAL explicitInputDatasetId (not overridden)
+    verify(aiClassifyExecutor)
+        .execute(
+            argThat(
+                s ->
+                    s.inputDatasetIds() != null
+                        && s.inputDatasetIds().contains(explicitInputDatasetId)
+                        && !s.inputDatasetIds().contains(step1OutputDatasetId)),
+            eq(stepExec2Id),
+            eq(userId));
+  }
+
   // ------------------------------------------------------------------ //
   // resolveStepReferences tests
   // ------------------------------------------------------------------ //

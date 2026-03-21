@@ -1,5 +1,5 @@
 import { Trash2,X } from 'lucide-react';
-import { lazy, Suspense, useRef } from 'react';
+import { lazy, Suspense, useMemo, useRef } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
@@ -169,6 +169,33 @@ export default function StepConfigPanel({
   const otherSteps = state.steps
     .map((s, i) => ({ step: s, number: i + 1 }))
     .filter(({ step: s }) => s.tempId !== step.tempId);
+
+  // Previous step output datasets available as input options
+  const inputDatasetOptions = useMemo<DatasetOption[]>(() => {
+    const prevStepDatasets: DatasetOption[] = [];
+    const prevStepDatasetIds = new Set<number>();
+
+    for (const { step: s, number } of otherSteps) {
+      if (number < stepNumber && s.outputDatasetId != null) {
+        const ds = datasets.find((d) => d.id === s.outputDatasetId);
+        if (ds) {
+          prevStepDatasets.push({ ...ds, name: `[스텝${number}] ${ds.name}` });
+          prevStepDatasetIds.add(ds.id);
+        }
+      }
+    }
+
+    // Append regular datasets, deduplicating any that already appear as step outputs
+    const regularDatasets = datasets.filter((d) => !prevStepDatasetIds.has(d.id));
+    return [...prevStepDatasets, ...regularDatasets];
+  }, [otherSteps, stepNumber, datasets]);
+
+  // Steps that this step depends on but have no persistent output dataset (temp output)
+  const tempDependencySteps = useMemo(() => {
+    return state.steps.filter(
+      (s) => step.dependsOnTempIds.includes(s.tempId) && s.outputDatasetId === null,
+    );
+  }, [state.steps, step.dependsOnTempIds]);
 
   return (
     <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
@@ -396,11 +423,17 @@ export default function StepConfigPanel({
                 <Label>입력 데이터셋</Label>
                 <DatasetCombobox
                   mode="multi"
-                  datasets={datasets}
+                  datasets={inputDatasetOptions}
                   value={step.inputDatasetIds}
                   disabled={readOnly}
                   onChange={(value) => handleUpdateStep({ inputDatasetIds: value })}
                 />
+                {step.scriptType === 'AI_CLASSIFY' && tempDependencySteps.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    이전 스텝의 임시 출력 데이터셋은 실행 시 자동으로 입력됩니다:
+                    {' '}{tempDependencySteps.map((s) => s.name).join(', ')}
+                  </p>
+                )}
               </div>
             </>
           )}

@@ -691,8 +691,40 @@ public class PipelineExecutionService {
               "AI 분류 스텝 실행에는 'pipeline:ai_execute' 권한이 필요합니다. 관리자에게 이 기능 활성화를 요청하세요.");
         }
 
+        // Auto-resolve inputDatasetIds from dependency steps when not explicitly set
+        List<Long> resolvedInputDatasetIds = step.inputDatasetIds();
+        if ((resolvedInputDatasetIds == null || resolvedInputDatasetIds.isEmpty())
+            && step.dependsOnStepNames() != null
+            && !step.dependsOnStepNames().isEmpty()) {
+
+          List<PipelineStepResponse> allSteps = stepRepository.findByPipelineId(pipelineId);
+          Map<String, PipelineStepResponse> stepByName =
+              allSteps.stream().collect(Collectors.toMap(PipelineStepResponse::name, s -> s));
+
+          resolvedInputDatasetIds = new ArrayList<>();
+          for (String depName : step.dependsOnStepNames()) {
+            PipelineStepResponse depStep = stepByName.get(depName);
+            if (depStep == null) continue;
+
+            Long depOutputId = depStep.outputDatasetId();
+            if (depOutputId == null) {
+              depOutputId = datasetRepository.findBySourcePipelineStepId(depStep.id()).orElse(null);
+            }
+            if (depOutputId != null) {
+              resolvedInputDatasetIds.add(depOutputId);
+            }
+          }
+
+          if (!resolvedInputDatasetIds.isEmpty()) {
+            log.info(
+                "[AI_CLASSIFY] Step '{}': Auto-resolved {} input dataset(s) from dependencies: {}",
+                step.name(),
+                resolvedInputDatasetIds.size(),
+                resolvedInputDatasetIds);
+          }
+        }
+
         // Auto-create temp dataset when outputDatasetId is null
-        PipelineStepResponse resolvedStep = step;
         if (outputDatasetId == null) {
           com.smartfirehub.pipeline.dto.AiClassifyConfig aiClassifyConfig =
               objectMapper.convertValue(
@@ -722,26 +754,28 @@ public class PipelineExecutionService {
           }
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           dataTableRowService.truncateTable(outputTableName);
-          // Wrap step with resolved outputDatasetId for AiClassifyExecutor
-          final Long resolvedOutputDatasetId = outputDatasetId;
-          resolvedStep =
-              new PipelineStepResponse(
-                  step.id(),
-                  step.name(),
-                  step.description(),
-                  step.scriptType(),
-                  step.scriptContent(),
-                  resolvedOutputDatasetId,
-                  step.outputDatasetName(),
-                  step.inputDatasetIds(),
-                  step.dependsOnStepNames(),
-                  step.stepOrder(),
-                  step.loadStrategy(),
-                  step.apiConfig(),
-                  step.aiConfig(),
-                  step.pythonConfig(),
-                  step.apiConnectionId());
         }
+
+        // Always wrap step with resolved outputDatasetId and inputDatasetIds for AiClassifyExecutor
+        final Long resolvedOutputDatasetId = outputDatasetId;
+        final List<Long> finalInputDatasetIds = resolvedInputDatasetIds;
+        PipelineStepResponse resolvedStep =
+            new PipelineStepResponse(
+                step.id(),
+                step.name(),
+                step.description(),
+                step.scriptType(),
+                step.scriptContent(),
+                resolvedOutputDatasetId,
+                step.outputDatasetName(),
+                finalInputDatasetIds,
+                step.dependsOnStepNames(),
+                step.stepOrder(),
+                step.loadStrategy(),
+                step.apiConfig(),
+                step.aiConfig(),
+                step.pythonConfig(),
+                step.apiConnectionId());
 
         AiClassifyExecutor.ExecutionResult aiResult =
             aiClassifyExecutor.execute(resolvedStep, stepExecId, userId);
