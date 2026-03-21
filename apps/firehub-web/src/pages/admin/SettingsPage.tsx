@@ -65,6 +65,20 @@ export default function SettingsPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof AISettingsForm, string>>>({});
   const [showApiKey, setShowApiKey] = useState(false);
   const [showCliOauthToken, setShowCliOauthToken] = useState(false);
+  const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  const verifyAuth = useCallback(async () => {
+    setIsVerifying(true);
+    try {
+      const { data } = await settingsApi.verifyAuthStatus();
+      setAuthStatus(data);
+    } catch {
+      setAuthStatus(null);
+    } finally {
+      setIsVerifying(false);
+    }
+  }, []);
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -86,8 +100,8 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+    fetchSettings().then(() => verifyAuth());
+  }, [fetchSettings, verifyAuth]);
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
@@ -143,6 +157,7 @@ export default function SettingsPage() {
       await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
       toast.success('설정이 저장되었습니다.');
+      verifyAuth();
     } catch {
       toast.error('설정 저장에 실패했습니다.');
     } finally {
@@ -260,6 +275,16 @@ export default function SettingsPage() {
                   </div>
                   <p className="text-sm text-muted-foreground">
                     로컬에서 claude setup-token으로 발급받은 OAuth 토큰
+                    {authStatus && (
+                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                        {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
+                        {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
+                        {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
+                      </span>
+                    )}
+                    {isVerifying && (
+                      <span className="ml-2 text-xs text-muted-foreground">검증 중...</span>
+                    )}
                   </p>
                 </div>
               ) : (
@@ -286,7 +311,19 @@ export default function SettingsPage() {
                   {errors['ai.api_key'] && (
                     <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
                   )}
-                  <p className="text-sm text-muted-foreground">Anthropic API 키 (sk-ant-...)</p>
+                  <p className="text-sm text-muted-foreground">
+                    Anthropic API 키 (sk-ant-...)
+                    {authStatus && (
+                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                        {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
+                        {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
+                        {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
+                      </span>
+                    )}
+                    {isVerifying && (
+                      <span className="ml-2 text-xs text-muted-foreground">검증 중...</span>
+                    )}
+                  </p>
                 </div>
               )}
 

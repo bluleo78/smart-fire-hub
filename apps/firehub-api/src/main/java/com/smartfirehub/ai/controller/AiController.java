@@ -4,8 +4,10 @@ import com.smartfirehub.ai.dto.*;
 import com.smartfirehub.ai.service.AiAgentProxyService;
 import com.smartfirehub.ai.service.AiSessionService;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.settings.service.SettingsService;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -19,10 +21,15 @@ public class AiController {
 
   private final AiSessionService aiSessionService;
   private final AiAgentProxyService aiAgentProxyService;
+  private final SettingsService settingsService;
 
-  public AiController(AiSessionService aiSessionService, AiAgentProxyService aiAgentProxyService) {
+  public AiController(
+      AiSessionService aiSessionService,
+      AiAgentProxyService aiAgentProxyService,
+      SettingsService settingsService) {
     this.aiSessionService = aiSessionService;
     this.aiAgentProxyService = aiAgentProxyService;
+    this.settingsService = settingsService;
   }
 
   @GetMapping("/sessions")
@@ -68,6 +75,20 @@ public class AiController {
     aiSessionService.verifySessionOwnership(userId, sessionId);
     String history = aiAgentProxyService.getSessionHistory(sessionId);
     return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(history);
+  }
+
+  @GetMapping("/auth-status")
+  @RequirePermission("ai:settings")
+  public ResponseEntity<String> getAuthStatus() {
+    Map<String, String> aiSettings = settingsService.getAsMap("ai");
+    String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+    String result;
+    if ("cli".equals(agentType)) {
+      result = aiAgentProxyService.verifyCliToken();
+    } else {
+      result = aiAgentProxyService.verifyApiKey();
+    }
+    return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
   }
 
   @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

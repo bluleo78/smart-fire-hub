@@ -72,6 +72,38 @@ public class AiAgentProxyService {
     }
   }
 
+  public String verifyCliToken() {
+    Optional<String> tokenOpt = settingsService.getDecryptedCliOauthToken();
+    if (tokenOpt.isEmpty() || tokenOpt.get().isBlank()) {
+      return "{\"valid\":false}";
+    }
+    return webClient
+        .post()
+        .uri("/agent/cli-auth/verify")
+        .header("Authorization", "Internal " + internalToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue("{\"token\":\"" + tokenOpt.get().replace("\"", "\\\"") + "\"}")
+        .retrieve()
+        .bodyToMono(String.class)
+        .block(Duration.ofSeconds(20));
+  }
+
+  public String verifyApiKey() {
+    Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
+    if (apiKeyOpt.isEmpty() || apiKeyOpt.get().isBlank()) {
+      return "{\"valid\":false}";
+    }
+    return webClient
+        .post()
+        .uri("/agent/api-key/verify")
+        .header("Authorization", "Internal " + internalToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue("{\"apiKey\":\"" + apiKeyOpt.get().replace("\"", "\\\"") + "\"}")
+        .retrieve()
+        .bodyToMono(String.class)
+        .block(Duration.ofSeconds(20));
+  }
+
   public String getSessionHistory(String sessionId) {
     return webClient
         .get()

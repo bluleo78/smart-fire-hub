@@ -7,4 +7,7 @@ export const settingsApi = {
 
   update: (data: UpdateSettingsRequest) =>
     client.put('/settings', data),
+
+  verifyAuthStatus: () =>
+    client.get<{ valid: boolean; email?: string; subscriptionType?: string }>('/ai/auth-status'),
 };

@@ -1,8 +1,12 @@
 import { Router, Request, Response } from 'express';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { executeAgent } from '../agent/agent-sdk.js';
 import { executeCliAgent } from '../agent/agent-cli.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
+
+const execFileAsync = promisify(execFile);
 
 const router = Router();
 
@@ -141,6 +145,48 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] History error:', errorMessage);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// API 키 유효성 검증
+router.post('/api-key/verify', internalAuth, async (req: Request, res: Response) => {
+  const { apiKey } = req.body;
+  if (!apiKey || typeof apiKey !== 'string') {
+    res.json({ valid: false });
+    return;
+  }
+  try {
+    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
+      timeout: 5000,
+      env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+    });
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    res.json({ valid: parsed.loggedIn === true });
+  } catch {
+    res.json({ valid: false });
+  }
+});
+
+// CLI OAuth 토큰 유효성 검증
+router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response) => {
+  const { token } = req.body;
+  if (!token || typeof token !== 'string') {
+    res.json({ valid: false });
+    return;
+  }
+  try {
+    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
+      timeout: 5000,
+      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token },
+    });
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    res.json({
+      valid: parsed.loggedIn === true,
+      email: typeof parsed.email === 'string' ? parsed.email : undefined,
+      subscriptionType: typeof parsed.subscriptionType === 'string' ? parsed.subscriptionType : undefined,
+    });
+  } catch {
+    res.json({ valid: false });
   }
 });
 
