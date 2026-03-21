@@ -16,7 +16,13 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
+import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
+
+/** CLI 트랜스크립트 저장 경로 */
+export function getTranscriptDir(): string {
+  return join(homedir(), '.firehub', 'transcripts');
+}
 
 /** Resolve MCP stdio server command + args for the current runtime.
  *  - Production (dist/): `node dist/mcp/stdio-server.js`
@@ -98,6 +104,36 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
   const sessionId = `cli-${randomUUID()}`;
   yield { type: 'init', sessionId };
+
+  // 트랜스크립트 수집 — 세션 히스토리 복원용
+  const transcript: HistoryMessage[] = [];
+  const now = () => new Date().toISOString();
+  let assistantText = '';
+  let assistantToolCalls: HistoryToolCall[] = [];
+
+  // 사용자 메시지 기록
+  transcript.push({ id: `user-${Date.now()}`, role: 'user', content: message || '', timestamp: now() });
+
+  const commitAssistant = () => {
+    if (!assistantText && assistantToolCalls.length === 0) return;
+    transcript.push({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: assistantText,
+      toolCalls: assistantToolCalls.length > 0 ? assistantToolCalls : undefined,
+      timestamp: now(),
+    });
+    assistantText = '';
+    assistantToolCalls = [];
+  };
+
+  const saveTranscript = async () => {
+    commitAssistant();
+    if (transcript.length <= 1) return; // 사용자 메시지만 있으면 저장 불필요
+    const dir = getTranscriptDir();
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${sessionId}.json`), JSON.stringify(transcript));
+  };
 
   // 사용자별 격리된 작업 디렉토리 (세션 간 파일 유지, 소스 코드 접근 차단)
   const userWorkDir = join(homedir(), '.firehub', 'workspaces', String(userId));
@@ -183,6 +219,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
       // Stream text deltas
       if (msg.type === 'stream_event' && msg.delta?.type === 'text_delta' && msg.delta.text) {
+        assistantText += msg.delta.text;
         yield { type: 'text', content: msg.delta.text };
         continue;
       }
@@ -191,12 +228,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       if (msg.type === 'assistant' && msg.message?.content) {
         for (const block of msg.message.content) {
           if (block.type === 'tool_use') {
+            assistantToolCalls.push({
+              name: block.name ?? '',
+              input: (block.input as Record<string, unknown>) ?? {},
+            });
             yield {
               type: 'tool_use',
               toolName: block.name ?? '',
               input: block.input,
             };
           } else if (block.type === 'text' && block.text) {
+            assistantText += block.text;
             yield { type: 'text', content: block.text };
           }
         }
@@ -213,6 +255,10 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
                 : Array.isArray(block.content)
                   ? block.content.map((c) => c.text ?? '').join('')
                   : '';
+            // 마지막 tool call에 결과 첨부
+            if (assistantToolCalls.length > 0) {
+              assistantToolCalls[assistantToolCalls.length - 1].result = resultText;
+            }
             yield {
               type: 'tool_result',
               toolName: '',
@@ -220,6 +266,12 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             };
           }
         }
+        continue;
+      }
+
+      // Turn boundary — commit current assistant message, start new one
+      if (msg.type === 'turn') {
+        commitAssistant();
         continue;
       }
 
@@ -235,6 +287,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             outputTokens,
           };
         } else {
+          await saveTranscript();
           yield { type: 'done', inputTokens, outputTokens };
         }
       }

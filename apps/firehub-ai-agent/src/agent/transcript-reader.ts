@@ -1,4 +1,5 @@
 import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 
@@ -30,6 +31,18 @@ interface ParsedAssistant {
 }
 
 export async function readSessionTranscript(sessionId: string): Promise<HistoryMessage[]> {
+  // CLI 에이전트 트랜스크립트 확인 (cli- 접두사 세션)
+  const cliTranscriptPath = path.join(os.homedir(), '.firehub', 'transcripts', `${sessionId}.json`);
+  if (existsSync(cliTranscriptPath)) {
+    try {
+      const data = await readFile(cliTranscriptPath, 'utf-8');
+      return JSON.parse(data) as HistoryMessage[];
+    } catch {
+      return [];
+    }
+  }
+
+  // SDK 에이전트 JSONL 트랜스크립트
   const projectId = getProjectId();
   const filePath = path.join(os.homedir(), '.claude', 'projects', projectId, `${sessionId}.jsonl`);
 
