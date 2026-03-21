@@ -83,24 +83,13 @@ public class AiAgentProxyService {
         .block(SHORT_TIMEOUT);
   }
 
-  public String startCliLogin() {
+  public String setCliToken(String token) {
     return webClient
         .post()
-        .uri("/agent/cli-auth/login")
+        .uri("/agent/cli-auth/token")
         .header("Authorization", "Internal " + internalToken)
         .contentType(MediaType.APPLICATION_JSON)
-        .retrieve()
-        .bodyToMono(String.class)
-        .block(SHORT_TIMEOUT);
-  }
-
-  public String submitCliAuthCode(String code) {
-    return webClient
-        .post()
-        .uri("/agent/cli-auth/code")
-        .header("Authorization", "Internal " + internalToken)
-        .contentType(MediaType.APPLICATION_JSON)
-        .bodyValue("{\"code\":\"" + code.replace("\"", "\\\"") + "\"}")
+        .bodyValue("{\"token\":\"" + token.replace("\"", "\\\"") + "\"}")
         .retrieve()
         .bodyToMono(String.class)
         .block(SHORT_TIMEOUT);

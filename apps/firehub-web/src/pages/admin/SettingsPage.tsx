@@ -1,5 +1,5 @@
 import { AlertCircle, Bot, CheckCircle, Eye, EyeOff, Loader2, RefreshCw, RotateCcw, Save, Settings } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
@@ -73,19 +73,9 @@ export default function SettingsPage() {
 
   const [cliAuthStatus, setCliAuthStatus] = useState<CliAuthStatus | null>(null);
   const [isCliAuthLoading, setIsCliAuthLoading] = useState(false);
-  const [isCliLoginPending, setIsCliLoginPending] = useState(false);
   const [isCliLogoutPending, setIsCliLogoutPending] = useState(false);
-  const [showCodeInput, setShowCodeInput] = useState(false);
-  const [authCode, setAuthCode] = useState('');
-  const [isSubmittingCode, setIsSubmittingCode] = useState(false);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // 컴포넌트 언마운트 시 폴링 정리
-  useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
-  }, []);
+  const [cliToken, setCliToken] = useState('');
+  const [isSettingToken, setIsSettingToken] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -130,50 +120,22 @@ export default function SettingsPage() {
     }
   }, [form['ai.agent_type'], fetchCliAuthStatus]);
 
-  const handleCliLogin = async () => {
-    setIsCliLoginPending(true);
-    const authWindow = window.open('about:blank', '_blank');
+  const handleSetToken = async () => {
+    if (!cliToken.trim()) return;
+    setIsSettingToken(true);
     try {
-      const { data: loginResult } = await settingsApi.startCliLogin();
-      if (loginResult.authUrl) {
-        if (authWindow) {
-          authWindow.location.href = loginResult.authUrl;
-        } else {
-          window.open(loginResult.authUrl, '_blank');
-        }
-        // 코드 입력 필드 표시
-        setShowCodeInput(true);
-        setAuthCode('');
-        toast.info('새 탭에서 인증 후 표시되는 코드를 아래에 입력하세요.');
-      } else {
-        authWindow?.close();
-        toast.error('인증 URL을 가져오지 못했습니다.');
-      }
-    } catch {
-      authWindow?.close();
-      toast.error('로그인 요청에 실패했습니다.');
-    } finally {
-      setIsCliLoginPending(false);
-    }
-  };
-
-  const handleSubmitCode = async () => {
-    if (!authCode.trim()) return;
-    setIsSubmittingCode(true);
-    try {
-      const { data } = await settingsApi.submitCliAuthCode(authCode.trim());
+      const { data } = await settingsApi.setCliToken(cliToken.trim());
       if (data.success) {
         toast.success(data.message);
-        setShowCodeInput(false);
-        setAuthCode('');
+        setCliToken('');
         await fetchCliAuthStatus();
       } else {
         toast.error(data.message);
       }
     } catch {
-      toast.error('코드 전송에 실패했습니다.');
+      toast.error('토큰 설정에 실패했습니다.');
     } finally {
-      setIsSubmittingCode(false);
+      setIsSettingToken(false);
     }
   };
 
@@ -388,12 +350,12 @@ export default function SettingsPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
-                        <div className="flex items-center gap-3">
+                      <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
+                        <div className="flex items-center gap-3 mb-3">
                           <AlertCircle className="h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
                           <div className="space-y-0.5">
                             <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
-                              Claude Code에 로그인이 필요합니다
+                              Claude Code 토큰 설정이 필요합니다
                             </p>
                             {cliAuthStatus?.error && (
                               <p className="text-xs text-orange-700 dark:text-orange-300">
@@ -402,47 +364,31 @@ export default function SettingsPage() {
                             )}
                           </div>
                         </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={handleCliLogin}
-                          disabled={isCliLoginPending}
-                        >
-                          {isCliLoginPending ? (
-                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          ) : null}
-                          {showCodeInput ? '다시 인증' : 'Claude Code 로그인'}
-                        </Button>
-                      </div>
-
-                      {showCodeInput && (
-                        <div className="rounded-lg border px-4 py-3 space-y-2">
-                          <p className="text-sm font-medium">인증 코드 입력</p>
-                          <p className="text-xs text-muted-foreground">
-                            새 탭에서 인증 완료 후 표시된 코드를 아래에 붙여넣으세요.
-                          </p>
-                          <div className="flex gap-2">
-                            <Input
-                              value={authCode}
-                              onChange={(e) => setAuthCode(e.target.value)}
-                              placeholder="인증 코드를 붙여넣으세요"
-                              className="font-mono text-sm"
-                              disabled={isSubmittingCode}
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={handleSubmitCode}
-                              disabled={isSubmittingCode || !authCode.trim()}
-                            >
-                              {isSubmittingCode ? (
-                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                              ) : null}
-                              확인
-                            </Button>
-                          </div>
+                        <p className="text-xs text-orange-700 dark:text-orange-300 mb-2">
+                          로컬 터미널에서 <code className="font-mono bg-orange-100 dark:bg-orange-900 px-1 rounded">claude setup-token</code> 명령을 실행하여 토큰을 발급받으세요.
+                        </p>
+                        <div className="flex gap-2">
+                          <Input
+                            type="password"
+                            value={cliToken}
+                            onChange={(e) => setCliToken(e.target.value)}
+                            placeholder="sk-ant-oat01-..."
+                            className="font-mono text-sm"
+                            disabled={isSettingToken}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleSetToken}
+                            disabled={isSettingToken || !cliToken.trim()}
+                          >
+                            {isSettingToken ? (
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            ) : null}
+                            토큰 설정
+                          </Button>
                         </div>
-                      )}
+                      </div>
                     </div>
                   )}
 
