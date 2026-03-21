@@ -1,4 +1,4 @@
-import { Bot, Eye, EyeOff, RotateCcw, Save, Settings } from 'lucide-react';
+import { Bot, Eye, EyeOff, RotateCcw, Save, Settings, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -100,8 +100,8 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    fetchSettings().then(() => verifyAuth());
-  }, [fetchSettings, verifyAuth]);
+    fetchSettings();
+  }, [fetchSettings]);
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
@@ -466,6 +466,10 @@ export default function SettingsPage() {
             <Button variant="outline" onClick={handleReset} disabled={!hasChanges}>
               <RotateCcw className="mr-2 h-4 w-4" />
               되돌리기
+            </Button>
+            <Button variant="outline" onClick={verifyAuth} disabled={isVerifying || hasChanges}>
+              <ShieldCheck className="mr-2 h-4 w-4" />
+              {isVerifying ? '검증 중...' : '인증 확인'}
             </Button>
           </div>
         </TabsContent>
