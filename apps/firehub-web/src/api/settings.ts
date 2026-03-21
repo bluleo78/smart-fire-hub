@@ -7,10 +7,4 @@ export const settingsApi = {
 
   update: (data: UpdateSettingsRequest) =>
     client.put('/settings', data),
-
-  getCliAuthStatus: () =>
-    client.get<{ loggedIn: boolean; email?: string; subscriptionType?: string; error?: string }>('/ai/cli-auth'),
-
-  cliLogout: () =>
-    client.post<{ success: boolean }>('/ai/cli-auth/logout'),
 };

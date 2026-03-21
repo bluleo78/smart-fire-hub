@@ -27,7 +27,6 @@ public class AiAgentProxyService {
 
   private static final Logger log = LoggerFactory.getLogger(AiAgentProxyService.class);
   private static final Duration TIMEOUT = Duration.ofMinutes(5);
-  private static final Duration SHORT_TIMEOUT = Duration.ofSeconds(20);
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
@@ -71,32 +70,6 @@ public class AiAgentProxyService {
           "[AI Chat] Invalid double setting value '{}', using default {}", value, defaultValue);
       return defaultValue;
     }
-  }
-
-  public String getCliAuthStatus() {
-    Optional<String> tokenOpt = settingsService.getDecryptedCliOauthToken();
-    String uri =
-        tokenOpt.isPresent() && !tokenOpt.get().isBlank()
-            ? "/agent/cli-auth?cliOauthToken=" + tokenOpt.get()
-            : "/agent/cli-auth";
-    return webClient
-        .get()
-        .uri(uri)
-        .header("Authorization", "Internal " + internalToken)
-        .retrieve()
-        .bodyToMono(String.class)
-        .block(SHORT_TIMEOUT);
-  }
-
-  public String cliLogout() {
-    return webClient
-        .post()
-        .uri("/agent/cli-auth/logout")
-        .header("Authorization", "Internal " + internalToken)
-        .contentType(MediaType.APPLICATION_JSON)
-        .retrieve()
-        .bodyToMono(String.class)
-        .block(SHORT_TIMEOUT);
   }
 
   public String getSessionHistory(String sessionId) {

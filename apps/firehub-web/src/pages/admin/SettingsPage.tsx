@@ -1,9 +1,8 @@
-import { AlertCircle, Bot, CheckCircle, Eye, EyeOff, Loader2, RefreshCw, RotateCcw, Save, Settings } from 'lucide-react';
+import { Bot, Eye, EyeOff, RotateCcw, Save, Settings } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
-import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -20,13 +19,6 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import type { SettingResponse } from '../../types/settings';
-
-interface CliAuthStatus {
-  loggedIn: boolean;
-  email?: string;
-  subscriptionType?: string;
-  error?: string;
-}
 
 const AGENT_TYPE_OPTIONS = [
   { value: 'sdk', label: 'AI Agent (SDK)' },
@@ -74,9 +66,6 @@ export default function SettingsPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showCliOauthToken, setShowCliOauthToken] = useState(false);
 
-  const [cliAuthStatus, setCliAuthStatus] = useState<CliAuthStatus | null>(null);
-  const [isCliAuthLoading, setIsCliAuthLoading] = useState(false);
-  const [isCliLogoutPending, setIsCliLogoutPending] = useState(false);
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -99,39 +88,6 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
-
-  const fetchCliAuthStatus = useCallback(async () => {
-    setIsCliAuthLoading(true);
-    try {
-      const { data } = await settingsApi.getCliAuthStatus();
-      setCliAuthStatus(data);
-    } catch {
-      setCliAuthStatus({ loggedIn: false, error: '인증 상태를 확인하는데 실패했습니다.' });
-    } finally {
-      setIsCliAuthLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (form['ai.agent_type'] === 'cli') {
-      fetchCliAuthStatus();
-    } else {
-      setCliAuthStatus(null);
-    }
-  }, [form['ai.agent_type'], fetchCliAuthStatus]);
-
-  const handleCliLogout = async () => {
-    setIsCliLogoutPending(true);
-    try {
-      await settingsApi.cliLogout();
-      toast.success('로그아웃되었습니다.');
-      await fetchCliAuthStatus();
-    } catch {
-      toast.error('로그아웃에 실패했습니다.');
-    } finally {
-      setIsCliLogoutPending(false);
-    }
-  };
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
@@ -280,109 +236,30 @@ export default function SettingsPage() {
 
               <Separator />
 
-              {/* CLI 인증 상태 또는 API 키 */}
+              {/* CLI OAuth 토큰 또는 API 키 */}
               {form['ai.agent_type'] === 'cli' ? (
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Claude Code 인증</Label>
+                  <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
+                  <div className="relative w-full max-w-md">
+                    <Input
+                      id="ai-cli-oauth-token"
+                      type={showCliOauthToken ? 'text' : 'password'}
+                      className="pr-10"
+                      value={form['ai.cli_oauth_token']}
+                      onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
+                      placeholder="sk-ant-oat01-..."
+                    />
                     <button
                       type="button"
-                      className="text-muted-foreground hover:text-foreground transition-colors"
-                      onClick={fetchCliAuthStatus}
-                      disabled={isCliAuthLoading}
-                      aria-label="인증 상태 새로고침"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowCliOauthToken(!showCliOauthToken)}
+                      aria-label={showCliOauthToken ? '토큰 숨기기' : '토큰 보기'}
                     >
-                      <RefreshCw className={`h-4 w-4 ${isCliAuthLoading ? 'animate-spin' : ''}`} />
+                      {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
-
-                  {isCliAuthLoading ? (
-                    <div className="flex items-center gap-2 rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>인증 상태 확인 중...</span>
-                    </div>
-                  ) : cliAuthStatus?.loggedIn ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-3 dark:border-green-900 dark:bg-green-950/30">
-                        <div className="flex items-center gap-3">
-                          <CheckCircle className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-                          <div className="space-y-0.5">
-                            <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                              {cliAuthStatus.email ?? '로그인됨'}
-                            </p>
-                            {cliAuthStatus.subscriptionType && (
-                              <Badge variant="secondary" className="text-xs">
-                                {cliAuthStatus.subscriptionType}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
-                          onClick={handleCliLogout}
-                          disabled={isCliLogoutPending}
-                        >
-                          {isCliLogoutPending ? (
-                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          ) : null}
-                          로그아웃
-                        </Button>
-                      </div>
-                      {form['ai.cli_oauth_token']?.startsWith('****') && (
-                        <p className="text-xs text-muted-foreground">
-                          현재 설정된 OAuth 토큰: <span className="font-mono">{form['ai.cli_oauth_token']}</span>
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
-                        <div className="flex items-center gap-3 mb-2">
-                          <AlertCircle className="h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
-                          <div className="space-y-0.5">
-                            <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
-                              Claude Code 토큰 설정이 필요합니다
-                            </p>
-                            {cliAuthStatus?.error && (
-                              <p className="text-xs text-orange-700 dark:text-orange-300">
-                                {cliAuthStatus.error}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-xs text-orange-700 dark:text-orange-300">
-                          로컬에서 <code className="font-mono bg-orange-100 dark:bg-orange-900 px-1 rounded">claude setup-token</code>을 실행하여 토큰을 발급받으세요.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
-                        <div className="relative w-full max-w-md">
-                          <Input
-                            id="ai-cli-oauth-token"
-                            type={showCliOauthToken ? 'text' : 'password'}
-                            className="pr-10 font-mono text-sm"
-                            value={form['ai.cli_oauth_token']}
-                            onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
-                            placeholder="sk-ant-oat01-..."
-                          />
-                          <button
-                            type="button"
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                            onClick={() => setShowCliOauthToken(!showCliOauthToken)}
-                            aria-label={showCliOauthToken ? 'OAuth 토큰 숨기기' : 'OAuth 토큰 보기'}
-                          >
-                            {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
                   <p className="text-sm text-muted-foreground">
-                    Claude Code (구독) 모드에서는 API 키 대신 로컬 CLI 인증을 사용합니다
+                    로컬에서 claude setup-token으로 발급받은 OAuth 토큰
                   </p>
                 </div>
               ) : (

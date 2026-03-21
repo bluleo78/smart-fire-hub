@@ -1,8 +1,4 @@
 import { Router, Request, Response } from 'express';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
-const execFileAsync = promisify(execFile);
 import { executeAgent } from '../agent/agent-sdk.js';
 import { executeCliAgent } from '../agent/agent-cli.js';
 import { internalAuth } from '../middleware/auth.js';
@@ -145,44 +141,6 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] History error:', errorMessage);
     res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Claude Code CLI 인증 상태 확인
-router.get('/cli-auth', internalAuth, async (req: Request, res: Response) => {
-  try {
-    // DB에서 전달된 토큰이 있으면 환경변수에 설정하여 확인
-    const cliOauthToken = req.query.cliOauthToken as string | undefined;
-    const env = { ...process.env };
-    if (cliOauthToken) {
-      env.CLAUDE_CODE_OAUTH_TOKEN = cliOauthToken;
-    }
-    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
-      timeout: 5000,
-      env,
-    });
-    const parsed = JSON.parse(stdout) as Record<string, unknown>;
-    res.json({
-      loggedIn: parsed.loggedIn === true,
-      email: typeof parsed.email === 'string' ? parsed.email : undefined,
-      subscriptionType:
-        typeof parsed.subscriptionType === 'string' ? parsed.subscriptionType : undefined,
-      authMethod: typeof parsed.authMethod === 'string' ? parsed.authMethod : undefined,
-    });
-  } catch {
-    res.json({ loggedIn: false });
-  }
-});
-
-// Claude Code CLI 로그아웃
-router.post('/cli-auth/logout', internalAuth, async (_req: Request, res: Response) => {
-  try {
-    await execFileAsync('claude', ['auth', 'logout'], { timeout: 5000 });
-    res.json({ success: true });
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[Agent] CLI auth logout error:', errorMessage);
-    res.status(500).json({ error: errorMessage });
   }
 });
 

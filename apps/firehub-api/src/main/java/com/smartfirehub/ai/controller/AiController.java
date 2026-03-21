@@ -70,20 +70,6 @@ public class AiController {
     return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(history);
   }
 
-  @GetMapping("/cli-auth")
-  @RequirePermission("ai:settings")
-  public ResponseEntity<String> getCliAuthStatus() {
-    String result = aiAgentProxyService.getCliAuthStatus();
-    return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
-  }
-
-  @PostMapping("/cli-auth/logout")
-  @RequirePermission("ai:settings")
-  public ResponseEntity<String> cliLogout() {
-    String result = aiAgentProxyService.cliLogout();
-    return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
-  }
-
   @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   @RequirePermission("ai:write")
   public SseEmitter chat(Authentication authentication, @RequestBody ChatRequest request) {
