@@ -157,9 +157,9 @@ router.post('/api-key/verify', internalAuth, async (req: Request, res: Response)
   }
   try {
     const { stdout } = await execFileAsync(
-      'claude',
-      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
-      { timeout: 30000, env: { ...process.env, ANTHROPIC_API_KEY: apiKey } },
+      'sh',
+      ['-c', `ANTHROPIC_API_KEY='${apiKey.replace(/'/g, "\\'")}' claude -p hi --output-format json --no-session-persistence --model haiku --disable-slash-commands 2>/dev/null`],
+      { timeout: 30000 },
     );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     res.json({ valid: parsed.is_error !== true });
@@ -176,12 +176,10 @@ router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response
     return;
   }
   try {
-    const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token };
-    delete env.ANTHROPIC_API_KEY;
     const { stdout } = await execFileAsync(
-      'claude',
-      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
-      { timeout: 30000, env },
+      'sh',
+      ['-c', `CLAUDE_CODE_OAUTH_TOKEN='${token.replace(/'/g, "\\'")}' claude -p hi --output-format json --no-session-persistence --model haiku --disable-slash-commands 2>/dev/null`],
+      { timeout: 30000 },
     );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     res.json({ valid: parsed.is_error !== true });
