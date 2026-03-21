@@ -279,7 +279,7 @@ export default function SettingsPage() {
                       variant="outline"
                       size="sm"
                       onClick={verifyAuth}
-                      disabled={isVerifying}
+                      disabled={isVerifying || hasChanges}
                       className="shrink-0"
                     >
                       <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
@@ -324,7 +324,7 @@ export default function SettingsPage() {
                       variant="outline"
                       size="sm"
                       onClick={verifyAuth}
-                      disabled={isVerifying}
+                      disabled={isVerifying || hasChanges}
                       className="shrink-0"
                     >
                       <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
