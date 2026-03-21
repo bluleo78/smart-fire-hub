@@ -1,7 +1,8 @@
 import { readFile } from 'fs/promises';
-import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { getTranscriptPath } from './agent-cli.js';
+import type { CliTranscript } from './agent-cli.js';
 
 export interface HistoryToolCall {
   name: string;
@@ -31,15 +32,13 @@ interface ParsedAssistant {
 }
 
 export async function readSessionTranscript(sessionId: string): Promise<HistoryMessage[]> {
-  // CLI 에이전트 트랜스크립트 확인 (cli- 접두사 세션)
-  const cliTranscriptPath = path.join(os.homedir(), '.firehub', 'transcripts', `${sessionId}.json`);
-  if (existsSync(cliTranscriptPath)) {
-    try {
-      const data = await readFile(cliTranscriptPath, 'utf-8');
-      return JSON.parse(data) as HistoryMessage[];
-    } catch {
-      return [];
-    }
+  // CLI 에이전트 트랜스크립트 시도
+  try {
+    const data = await readFile(getTranscriptPath(sessionId), 'utf-8');
+    const parsed = JSON.parse(data) as CliTranscript | HistoryMessage[];
+    return Array.isArray(parsed) ? parsed : (parsed.messages ?? []);
+  } catch {
+    // 파일 없으면 SDK JSONL 경로로 폴백
   }
 
   // SDK 에이전트 JSONL 트랜스크립트

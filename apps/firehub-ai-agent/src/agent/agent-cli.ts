@@ -7,7 +7,7 @@
  */
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, readFile, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 import { createInterface } from 'readline';
@@ -19,9 +19,23 @@ import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
 
-/** CLI 트랜스크립트 저장 경로 */
+/** CLI 트랜스크립트 파일 형식 */
+export interface CliTranscript {
+  claudeSessionId?: string;
+  messages: HistoryMessage[];
+}
+
+const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+
 export function getTranscriptDir(): string {
   return join(homedir(), '.firehub', 'transcripts');
+}
+
+export function getTranscriptPath(sessionId: string): string {
+  if (!SAFE_SESSION_ID.test(sessionId)) {
+    throw new Error(`Invalid sessionId: ${sessionId}`);
+  }
+  return join(getTranscriptDir(), `${sessionId}.json`);
 }
 
 /** Resolve MCP stdio server command + args for the current runtime.
@@ -78,6 +92,7 @@ interface StreamJsonMessage {
   delta?: { type?: string; text?: string };
   subtype?: string;
   cost_usd?: number;
+  session_id?: string;
 }
 
 interface CliAgentOptions extends AgentOptions {
@@ -102,11 +117,22 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
 
-  const sessionId = `cli-${randomUUID()}`;
+  // 세션 재개 또는 새 세션 생성
+  const isResume = !!options.sessionId;
+  const sessionId = options.sessionId ?? `cli-${randomUUID()}`;
   yield { type: 'init', sessionId };
 
-  // 트랜스크립트 수집 — 세션 히스토리 복원용
-  const transcript: HistoryMessage[] = [];
+  const transcriptPath = getTranscriptPath(sessionId);
+
+  let saved: CliTranscript = { messages: [] };
+  if (isResume) {
+    try {
+      saved = JSON.parse(await readFile(transcriptPath, 'utf-8')) as CliTranscript;
+    } catch { /* 파일 없으면 새로 시작 */ }
+  }
+
+  const transcript = saved.messages;
+  let claudeSessionId = saved.claudeSessionId;
   const now = () => new Date().toISOString();
   let assistantText = '';
   let assistantToolCalls: HistoryToolCall[] = [];
@@ -129,10 +155,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
   const saveTranscript = async () => {
     commitAssistant();
-    if (transcript.length <= 1) return; // 사용자 메시지만 있으면 저장 불필요
-    const dir = getTranscriptDir();
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${sessionId}.json`), JSON.stringify(transcript));
+    if (transcript.length <= 1) return;
+    await mkdir(getTranscriptDir(), { recursive: true });
+    await writeFile(transcriptPath, JSON.stringify({ claudeSessionId, messages: transcript }));
   };
 
   // 사용자별 격리된 작업 디렉토리 (세션 간 파일 유지, 소스 코드 접근 차단)
@@ -157,9 +182,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     '--strict-mcp-config',
     '--system-prompt', effectiveSystemPrompt,
     '--permission-mode', 'bypassPermissions',
-    '--no-session-persistence',
     '--model', effectiveModel,
   ];
+
+  // 세션 재개: Claude Code의 내부 session ID로 이전 컨텍스트 복원
+  if (isResume && claudeSessionId) {
+    cliArgs.push('--resume', claudeSessionId);
+  }
 
   const childEnv = { ...process.env };
   if (useSubscription) {
@@ -275,8 +304,10 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         continue;
       }
 
-      // Final result
+      // Final result — Claude session ID는 result 메시지에서만 캡처 (가장 신뢰)
       if (msg.type === 'result') {
+        if (msg.session_id) claudeSessionId = msg.session_id;
+        await saveTranscript();
         const inputTokens = msg.usage?.input_tokens ?? 0;
         const outputTokens = msg.usage?.output_tokens ?? 0;
         if (msg.subtype === 'error') {
@@ -287,7 +318,6 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             outputTokens,
           };
         } else {
-          await saveTranscript();
           yield { type: 'done', inputTokens, outputTokens };
         }
       }
@@ -295,8 +325,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   } finally {
     rl.close();
     child.kill('SIGTERM');
+    await saveTranscript().catch(() => {});
 
-    // If the process exited with error and we collected stderr, emit it
     const stderr = stderrChunks.join('');
     if (stderr) {
       console.error('[CLI Agent] stderr:', stderr);
