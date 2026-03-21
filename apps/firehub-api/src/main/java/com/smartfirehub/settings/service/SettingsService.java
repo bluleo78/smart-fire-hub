@@ -23,7 +23,8 @@ public class SettingsService {
           "ai.max_tokens",
           "ai.session_max_tokens",
           "ai.api_key",
-          "ai.agent_type");
+          "ai.agent_type",
+          "ai.cli_oauth_token");
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
@@ -39,7 +40,8 @@ public class SettingsService {
     return settingsRepository.findByPrefix(prefix).stream()
         .map(
             setting -> {
-              if ("ai.api_key".equals(setting.key())) {
+              if ("ai.api_key".equals(setting.key())
+                  || "ai.cli_oauth_token".equals(setting.key())) {
                 String masked =
                     setting.value() == null || setting.value().isBlank()
                         ? ""
@@ -71,11 +73,13 @@ public class SettingsService {
     }
 
     boolean hasMaskedApiKey = isMaskedApiKey(settings.get("ai.api_key"));
+    boolean hasMaskedCliToken = isMaskedApiKey(settings.get("ai.cli_oauth_token"));
 
-    // Skip validation and save for masked api key (unchanged by user)
+    // Skip validation and save for masked values (unchanged by user)
     Map<String, String> filtered =
         settings.entrySet().stream()
             .filter(e -> !(hasMaskedApiKey && "ai.api_key".equals(e.getKey())))
+            .filter(e -> !(hasMaskedCliToken && "ai.cli_oauth_token".equals(e.getKey())))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     validateValues(filtered);
 
@@ -85,7 +89,7 @@ public class SettingsService {
                 Collectors.toMap(
                     Map.Entry::getKey,
                     e ->
-                        "ai.api_key".equals(e.getKey())
+                        ("ai.api_key".equals(e.getKey()) || "ai.cli_oauth_token".equals(e.getKey()))
                             ? encryptionService.encrypt(e.getValue())
                             : e.getValue()));
 
@@ -101,6 +105,11 @@ public class SettingsService {
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedApiKey() {
     return getValue("ai.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
+  }
+
+  @Transactional(readOnly = true)
+  public Optional<String> getDecryptedCliOauthToken() {
+    return getValue("ai.cli_oauth_token").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
   private void validateValues(Map<String, String> settings) {
@@ -133,6 +142,9 @@ public class SettingsService {
             case "ai.api_key" -> {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("API 키는 비어있을 수 없습니다");
+            }
+            case "ai.cli_oauth_token" -> {
+              /* CLI OAuth 토큰은 비어있을 수 있음 (구독 미사용 시) */
             }
             case "ai.agent_type" -> {
               if (!Set.of("sdk", "cli", "cli-api").contains(value))

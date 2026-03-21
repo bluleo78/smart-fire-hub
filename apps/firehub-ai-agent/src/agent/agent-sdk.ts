@@ -24,6 +24,7 @@ export interface AgentOptions {
   temperature?: number;
   maxTokens?: number;
   apiKey?: string;
+  cliOauthToken?: string;
   abortSignal?: AbortSignal;
 }
 

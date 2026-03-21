@@ -83,18 +83,6 @@ public class AiAgentProxyService {
         .block(SHORT_TIMEOUT);
   }
 
-  public String setCliToken(String token) {
-    return webClient
-        .post()
-        .uri("/agent/cli-auth/token")
-        .header("Authorization", "Internal " + internalToken)
-        .contentType(MediaType.APPLICATION_JSON)
-        .bodyValue("{\"token\":\"" + token.replace("\"", "\\\"") + "\"}")
-        .retrieve()
-        .bodyToMono(String.class)
-        .block(SHORT_TIMEOUT);
-  }
-
   public String cliLogout() {
     return webClient
         .post()
@@ -145,7 +133,13 @@ public class AiAgentProxyService {
       requestBody.put("fileIds", fileIds);
     }
     requestBody.put("apiKey", apiKeyOpt.get());
-    requestBody.put("agentType", aiSettings.getOrDefault("ai.agent_type", "sdk"));
+    String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+    requestBody.put("agentType", agentType);
+    if ("cli".equals(agentType)) {
+      settingsService
+          .getDecryptedCliOauthToken()
+          .ifPresent(token -> requestBody.put("cliOauthToken", token));
+    }
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
     requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));

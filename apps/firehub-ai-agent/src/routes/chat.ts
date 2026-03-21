@@ -31,6 +31,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     temperature,
     maxTokens,
     apiKey,
+    cliOauthToken,
     agentType = 'sdk',
   } = req.body;
 
@@ -87,6 +88,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       temperature,
       maxTokens,
       apiKey,
+      cliOauthToken: typeof cliOauthToken === 'string' ? cliOauthToken : undefined,
     };
 
     const events =
@@ -162,32 +164,6 @@ router.get('/cli-auth', internalAuth, async (_req: Request, res: Response) => {
     });
   } catch {
     res.json({ loggedIn: false });
-  }
-});
-
-// OAuth 토큰 저장 — CLAUDE_CODE_OAUTH_TOKEN 환경변수에 설정
-router.post('/cli-auth/token', internalAuth, async (req: Request, res: Response) => {
-  const { token } = req.body;
-
-  if (!token || typeof token !== 'string') {
-    res.status(400).json({ error: '토큰을 입력하세요.' });
-    return;
-  }
-
-  process.env.CLAUDE_CODE_OAUTH_TOKEN = token;
-
-  try {
-    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], { timeout: 5000 });
-    const parsed = JSON.parse(stdout) as Record<string, unknown>;
-    if (parsed.loggedIn === true) {
-      res.json({ success: true, message: '토큰이 설정되었습니다.' });
-    } else {
-      delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-      res.json({ success: false, message: '유효하지 않은 토큰입니다.' });
-    }
-  } catch {
-    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    res.json({ success: false, message: '유효하지 않은 토큰입니다.' });
   }
 });
 

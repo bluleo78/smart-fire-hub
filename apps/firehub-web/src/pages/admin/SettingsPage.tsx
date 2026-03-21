@@ -43,6 +43,7 @@ const MODEL_OPTIONS = [
 interface AISettingsForm {
   [key: string]: string;
   'ai.api_key': string;
+  'ai.cli_oauth_token': string;
   'ai.agent_type': string;
   'ai.model': string;
   'ai.max_turns': string;
@@ -54,6 +55,7 @@ interface AISettingsForm {
 
 const DEFAULT_VALUES: AISettingsForm = {
   'ai.api_key': '',
+  'ai.cli_oauth_token': '',
   'ai.agent_type': 'sdk',
   'ai.model': 'claude-sonnet-4-6',
   'ai.max_turns': '10',
@@ -70,13 +72,11 @@ export default function SettingsPage() {
   const [original, setOriginal] = useState<AISettingsForm>(DEFAULT_VALUES);
   const [errors, setErrors] = useState<Partial<Record<keyof AISettingsForm, string>>>({});
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showCliOauthToken, setShowCliOauthToken] = useState(false);
 
   const [cliAuthStatus, setCliAuthStatus] = useState<CliAuthStatus | null>(null);
   const [isCliAuthLoading, setIsCliAuthLoading] = useState(false);
   const [isCliLogoutPending, setIsCliLogoutPending] = useState(false);
-  const [cliToken, setCliToken] = useState('');
-  const [isSettingToken, setIsSettingToken] = useState(false);
-
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -120,25 +120,6 @@ export default function SettingsPage() {
     }
   }, [form['ai.agent_type'], fetchCliAuthStatus]);
 
-  const handleSetToken = async () => {
-    if (!cliToken.trim()) return;
-    setIsSettingToken(true);
-    try {
-      const { data } = await settingsApi.setCliToken(cliToken.trim());
-      if (data.success) {
-        toast.success(data.message);
-        setCliToken('');
-        await fetchCliAuthStatus();
-      } else {
-        toast.error(data.message);
-      }
-    } catch {
-      toast.error('토큰 설정에 실패했습니다.');
-    } finally {
-      setIsSettingToken(false);
-    }
-  };
-
   const handleCliLogout = async () => {
     setIsCliLogoutPending(true);
     try {
@@ -164,6 +145,7 @@ export default function SettingsPage() {
         newErrors['ai.api_key'] = 'API 키는 10자 이상이어야 합니다';
       }
     }
+    // cli 모드에서 oauth 토큰이 없어도 저장 가능 (로그인 안 된 상태일 수 있음)
 
     const maxTurns = Number(form['ai.max_turns']);
     if (isNaN(maxTurns) || maxTurns < 1 || maxTurns > 50 || !Number.isInteger(maxTurns)) {
@@ -198,10 +180,10 @@ export default function SettingsPage() {
 
     setIsSaving(true);
     try {
-      const { 'ai.api_key': apiKey, ...rest } = form;
-      const settingsToSave: Record<string, string> = apiKey?.startsWith('****')
-        ? rest
-        : { ...rest, 'ai.api_key': apiKey };
+      const { 'ai.api_key': apiKey, 'ai.cli_oauth_token': cliOauthToken, ...rest } = form;
+      const settingsToSave: Record<string, string> = { ...rest };
+      if (apiKey && !apiKey.startsWith('****')) settingsToSave['ai.api_key'] = apiKey;
+      if (cliOauthToken && !cliOauthToken.startsWith('****')) settingsToSave['ai.cli_oauth_token'] = cliOauthToken;
       await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
       toast.success('설정이 저장되었습니다.');
@@ -320,38 +302,45 @@ export default function SettingsPage() {
                       <span>인증 상태 확인 중...</span>
                     </div>
                   ) : cliAuthStatus?.loggedIn ? (
-                    <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-3 dark:border-green-900 dark:bg-green-950/30">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-                        <div className="space-y-0.5">
-                          <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                            {cliAuthStatus.email ?? '로그인됨'}
-                          </p>
-                          {cliAuthStatus.subscriptionType && (
-                            <Badge variant="secondary" className="text-xs">
-                              {cliAuthStatus.subscriptionType}
-                            </Badge>
-                          )}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-3 dark:border-green-900 dark:bg-green-950/30">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
+                          <div className="space-y-0.5">
+                            <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                              {cliAuthStatus.email ?? '로그인됨'}
+                            </p>
+                            {cliAuthStatus.subscriptionType && (
+                              <Badge variant="secondary" className="text-xs">
+                                {cliAuthStatus.subscriptionType}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                          onClick={handleCliLogout}
+                          disabled={isCliLogoutPending}
+                        >
+                          {isCliLogoutPending ? (
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          ) : null}
+                          로그아웃
+                        </Button>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
-                        onClick={handleCliLogout}
-                        disabled={isCliLogoutPending}
-                      >
-                        {isCliLogoutPending ? (
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        ) : null}
-                        로그아웃
-                      </Button>
+                      {form['ai.cli_oauth_token']?.startsWith('****') && (
+                        <p className="text-xs text-muted-foreground">
+                          현재 설정된 OAuth 토큰: <span className="font-mono">{form['ai.cli_oauth_token']}</span>
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-3">
                       <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
-                        <div className="flex items-center gap-3 mb-3">
+                        <div className="flex items-center gap-3 mb-2">
                           <AlertCircle className="h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
                           <div className="space-y-0.5">
                             <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
@@ -364,29 +353,29 @@ export default function SettingsPage() {
                             )}
                           </div>
                         </div>
-                        <p className="text-xs text-orange-700 dark:text-orange-300 mb-2">
-                          로컬 터미널에서 <code className="font-mono bg-orange-100 dark:bg-orange-900 px-1 rounded">claude setup-token</code> 명령을 실행하여 토큰을 발급받으세요.
+                        <p className="text-xs text-orange-700 dark:text-orange-300">
+                          로컬에서 <code className="font-mono bg-orange-100 dark:bg-orange-900 px-1 rounded">claude setup-token</code>을 실행하여 토큰을 발급받으세요.
                         </p>
-                        <div className="flex gap-2">
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
+                        <div className="relative w-full max-w-md">
                           <Input
-                            type="password"
-                            value={cliToken}
-                            onChange={(e) => setCliToken(e.target.value)}
+                            id="ai-cli-oauth-token"
+                            type={showCliOauthToken ? 'text' : 'password'}
+                            className="pr-10 font-mono text-sm"
+                            value={form['ai.cli_oauth_token']}
+                            onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
                             placeholder="sk-ant-oat01-..."
-                            className="font-mono text-sm"
-                            disabled={isSettingToken}
                           />
-                          <Button
+                          <button
                             type="button"
-                            size="sm"
-                            onClick={handleSetToken}
-                            disabled={isSettingToken || !cliToken.trim()}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            onClick={() => setShowCliOauthToken(!showCliOauthToken)}
+                            aria-label={showCliOauthToken ? 'OAuth 토큰 숨기기' : 'OAuth 토큰 보기'}
                           >
-                            {isSettingToken ? (
-                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                            ) : null}
-                            토큰 설정
-                          </Button>
+                            {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
                         </div>
                       </div>
                     </div>

@@ -77,14 +77,6 @@ public class AiController {
     return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
   }
 
-  @PostMapping("/cli-auth/token")
-  @RequirePermission("ai:settings")
-  public ResponseEntity<String> setCliToken(@RequestBody java.util.Map<String, String> body) {
-    String token = body.get("token");
-    String result = aiAgentProxyService.setCliToken(token);
-    return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
-  }
-
   @PostMapping("/cli-auth/logout")
   @RequirePermission("ai:settings")
   public ResponseEntity<String> cliLogout() {

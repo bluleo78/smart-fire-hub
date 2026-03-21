@@ -11,9 +11,6 @@ export const settingsApi = {
   getCliAuthStatus: () =>
     client.get<{ loggedIn: boolean; email?: string; subscriptionType?: string; error?: string }>('/ai/cli-auth'),
 
-  setCliToken: (token: string) =>
-    client.post<{ success: boolean; message: string }>('/ai/cli-auth/token', { token }),
-
   cliLogout: () =>
     client.post<{ success: boolean }>('/ai/cli-auth/logout'),
 };
