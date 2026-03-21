@@ -149,10 +149,17 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
 });
 
 // Claude Code CLI 인증 상태 확인
-router.get('/cli-auth', internalAuth, async (_req: Request, res: Response) => {
+router.get('/cli-auth', internalAuth, async (req: Request, res: Response) => {
   try {
+    // DB에서 전달된 토큰이 있으면 환경변수에 설정하여 확인
+    const cliOauthToken = req.query.cliOauthToken as string | undefined;
+    const env = { ...process.env };
+    if (cliOauthToken) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = cliOauthToken;
+    }
     const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
       timeout: 5000,
+      env,
     });
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     res.json({

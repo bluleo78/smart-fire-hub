@@ -74,9 +74,14 @@ public class AiAgentProxyService {
   }
 
   public String getCliAuthStatus() {
+    Optional<String> tokenOpt = settingsService.getDecryptedCliOauthToken();
+    String uri =
+        tokenOpt.isPresent() && !tokenOpt.get().isBlank()
+            ? "/agent/cli-auth?cliOauthToken=" + tokenOpt.get()
+            : "/agent/cli-auth";
     return webClient
         .get()
-        .uri("/agent/cli-auth")
+        .uri(uri)
         .header("Authorization", "Internal " + internalToken)
         .retrieve()
         .bodyToMono(String.class)
