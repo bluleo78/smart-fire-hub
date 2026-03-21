@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { FireHubApiClient } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
+import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../constants.js';
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
@@ -97,13 +98,18 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     }
   }
 
+  // Load subagents and build dynamic delegation guide
+  const subagents = loadSubagents();
+  const subagentGuide = buildSubagentGuide(subagents);
+  const basePrompt = `${SYSTEM_PROMPT}${subagentGuide}`;
+
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: enhancedMessage,
     options: {
       model: model || DEFAULT_MODEL,
       systemPrompt: systemPrompt
-        ? `${SYSTEM_PROMPT}\n\n[사용자 지시사항]\n${systemPrompt}`
-        : SYSTEM_PROMPT,
+        ? `${basePrompt}\n\n[사용자 지시사항]\n${systemPrompt}`
+        : basePrompt,
       maxTurns,
       ...(temperature !== undefined ? { temperature } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
@@ -130,6 +136,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
       settingSources: ['user'],
+      ...(Object.keys(subagents).length > 0 && { agents: subagents }),
       ...(sessionId ? { resume: sessionId } : {}),
     },
   };
