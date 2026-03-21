@@ -148,7 +148,7 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
   }
 });
 
-// API 키 유효성 검증 — 실제 API 호출로 확인
+// API 키 유효성 검증 — Claude CLI로 실제 호출
 router.post('/api-key/verify', internalAuth, async (req: Request, res: Response) => {
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
@@ -158,8 +158,8 @@ router.post('/api-key/verify', internalAuth, async (req: Request, res: Response)
   try {
     const { stdout } = await execFileAsync(
       'claude',
-      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku'],
-      { timeout: 15000, env: { ...process.env, ANTHROPIC_API_KEY: apiKey } },
+      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
+      { timeout: 30000, env: { ...process.env, ANTHROPIC_API_KEY: apiKey } },
     );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     res.json({ valid: parsed.is_error !== true });
@@ -168,7 +168,7 @@ router.post('/api-key/verify', internalAuth, async (req: Request, res: Response)
   }
 });
 
-// CLI OAuth 토큰 유효성 검증 — 실제 API 호출로 확인
+// CLI OAuth 토큰 유효성 검증 — Claude CLI로 실제 호출
 router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response) => {
   const { token } = req.body;
   if (!token || typeof token !== 'string') {
@@ -180,8 +180,8 @@ router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response
     delete env.ANTHROPIC_API_KEY;
     const { stdout } = await execFileAsync(
       'claude',
-      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku'],
-      { timeout: 15000, env },
+      ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
+      { timeout: 30000, env },
     );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     res.json({ valid: parsed.is_error !== true });

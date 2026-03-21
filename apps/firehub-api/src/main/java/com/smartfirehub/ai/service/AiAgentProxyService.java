@@ -85,7 +85,7 @@ public class AiAgentProxyService {
         .bodyValue("{\"token\":\"" + tokenOpt.get().replace("\"", "\\\"") + "\"}")
         .retrieve()
         .bodyToMono(String.class)
-        .block(Duration.ofSeconds(20));
+        .block(Duration.ofSeconds(40));
   }
 
   public String verifyApiKey() {
@@ -101,7 +101,7 @@ public class AiAgentProxyService {
         .bodyValue("{\"apiKey\":\"" + apiKeyOpt.get().replace("\"", "\\\"") + "\"}")
         .retrieve()
         .bodyToMono(String.class)
-        .block(Duration.ofSeconds(20));
+        .block(Duration.ofSeconds(40));
   }
 
   public String getSessionHistory(String sessionId) {
