@@ -27,7 +27,7 @@ public class AiAgentProxyService {
 
   private static final Logger log = LoggerFactory.getLogger(AiAgentProxyService.class);
   private static final Duration TIMEOUT = Duration.ofMinutes(5);
-  private static final Duration SHORT_TIMEOUT = Duration.ofSeconds(10);
+  private static final Duration SHORT_TIMEOUT = Duration.ofSeconds(20);
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;

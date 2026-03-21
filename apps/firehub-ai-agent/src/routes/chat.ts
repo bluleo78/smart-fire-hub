@@ -170,8 +170,8 @@ router.post('/cli-auth/login', internalAuth, async (_req: Request, res: Response
   try {
     // sh -c로 실행하여 stdout+stderr를 합쳐서 캡처 (claude가 stderr로 출력할 수 있음)
     const { stdout } = await execFileAsync(
-      'sh', ['-c', 'timeout 10 claude auth login --claudeai 2>&1 || true'],
-      { timeout: 15000 },
+      'sh', ['-c', 'timeout 5 claude auth login --claudeai 2>&1 || true'],
+      { timeout: 10000 },
     );
 
     const urlMatch = stdout.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
