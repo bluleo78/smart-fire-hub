@@ -178,7 +178,8 @@ router.post('/cli-auth/login', internalAuth, (_req: Request, res: Response) => {
   }
 
   try {
-    const child = spawn('claude', ['auth', 'login', '--claudeai'], {
+    // sh -c로 감싸서 실행 — claude의 Ink TUI가 직접 pipe stdin에서 멈추는 문제 회피
+    const child = spawn('sh', ['-c', 'claude auth login --claudeai 2>&1'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     pendingLoginProcess = child;
