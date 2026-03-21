@@ -104,6 +104,7 @@ export function useAIChat() {
         role: 'assistant',
         content: current.content || '',
         toolCalls: current.toolCalls,
+        contentBlocks: current.contentBlocks,
         timestamp: current.timestamp || new Date().toISOString(),
       };
 
@@ -136,6 +137,7 @@ export function useAIChat() {
         role: 'assistant',
         content: current.content || '',
         toolCalls: current.toolCalls,
+        contentBlocks: current.contentBlocks,
         timestamp: current.timestamp || assistantTimestamp,
       } : null;
 
@@ -171,38 +173,41 @@ export function useAIChat() {
               }
             }
             break;
-          case 'text':
+          case 'text': {
             setIsThinking(false);
             if (streamingContentRef.current) {
+              const blocks = streamingContentRef.current.contentBlocks || [];
+              const lastBlock = blocks[blocks.length - 1];
               streamingContentRef.current = {
                 ...streamingContentRef.current,
                 content: (streamingContentRef.current.content || '') + (event.content || ''),
+                contentBlocks: lastBlock?.type === 'text'
+                  ? blocks
+                  : [...blocks, { type: 'text' }],
               };
+              setStreamingMessage({ ...streamingContentRef.current });
             }
-            setStreamingMessage(prev => ({
-              ...prev,
-              content: (prev?.content || '') + (event.content || ''),
-            }));
             break;
-          case 'tool_use':
+          }
+          case 'tool_use': {
             setIsThinking(true);
             if (streamingContentRef.current) {
+              const newToolCalls = [
+                ...(streamingContentRef.current.toolCalls || []),
+                { name: event.toolName || '', input: event.input || {} },
+              ];
               streamingContentRef.current = {
                 ...streamingContentRef.current,
-                toolCalls: [
-                  ...(streamingContentRef.current.toolCalls || []),
-                  { name: event.toolName || '', input: event.input || {} },
+                toolCalls: newToolCalls,
+                contentBlocks: [
+                  ...(streamingContentRef.current.contentBlocks || []),
+                  { type: 'tool_use' as const, toolCallIndex: newToolCalls.length - 1 },
                 ],
               };
+              setStreamingMessage({ ...streamingContentRef.current });
             }
-            setStreamingMessage(prev => ({
-              ...prev,
-              toolCalls: [
-                ...(prev?.toolCalls || []),
-                { name: event.toolName || '', input: event.input || {} },
-              ],
-            }));
             break;
+          }
           case 'tool_result':
             if (streamingContentRef.current) {
               const toolCalls = [...(streamingContentRef.current.toolCalls || [])];
@@ -210,14 +215,8 @@ export function useAIChat() {
                 toolCalls[toolCalls.length - 1].result = event.result;
               }
               streamingContentRef.current = { ...streamingContentRef.current, toolCalls };
+              setStreamingMessage({ ...streamingContentRef.current });
             }
-            setStreamingMessage(prev => {
-              const toolCalls = [...(prev?.toolCalls || [])];
-              if (toolCalls.length > 0) {
-                toolCalls[toolCalls.length - 1].result = event.result;
-              }
-              return { ...prev, toolCalls };
-            });
             break;
           case 'turn':
             commitTurn();

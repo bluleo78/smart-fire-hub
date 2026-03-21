@@ -19,11 +19,16 @@ export interface AIAttachment {
   previewUrl?: string;
 }
 
+export type ContentBlock =
+  | { type: 'text' }
+  | { type: 'tool_use'; toolCallIndex: number };
+
 export interface AIMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   toolCalls?: AIToolCall[];
+  contentBlocks?: ContentBlock[];
   timestamp: string;
   attachments?: AIAttachment[];
 }

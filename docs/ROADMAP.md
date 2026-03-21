@@ -1,6 +1,6 @@
 # Smart Fire Hub — ROADMAP
 
-> **최종 수정**: 2026-03-14
+> **최종 수정**: 2026-03-21
 > **비전**: AI-First 소방 전문 데이터 플랫폼
 > **전략**: 기초 기술 → 범용 플랫폼 → 도메인 특화 순서로 확장
 > **원칙**: 각 아이템은 독립적으로 계획(Plan) → 구현 → 검증 가능한 작업 단위
@@ -20,6 +20,7 @@
 | [Phase 5.7](#phase-57-firehub-executor-실행-엔진-분리) | **완료** | 7/7 | 사용자 코드 실행 서비스 분리 (Python/FastAPI + nsjail) |
 | [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | **완료** | 4/4 | 컨텍스트 표시, 컴팩션 알림, 파이프라인 SQL 래핑 |
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | **완료** | 3/3 | UI 일관성 수정 + 컴포넌트 분리 + SchemaExplorer UX 리디자인 |
+| [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 | [Phase 7](#phase-7-ai-chat-generative-ui) | 대기 | 0/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, Chat-First |
 
@@ -222,6 +223,26 @@
 | 5.7-5 | SQL 실행 엔드포인트 | ✅ | Executor | 5.7-4 | `POST /execute/sql`. SQL 차단 키워드 검증 (심층 방어). SELECT/DML 분기 처리. 커밋/롤백 관리. pytest 64개 통과. |
 | 5.7-6 | API_CALL 실행 엔드포인트 | ✅ | Executor + Backend | 5.7-5 | `POST /execute/api-call`. SSRF 보호 (Java 1:1 포팅). 페이지네이션 (OFFSET). 필드 매핑 + 타입 변환 (6종). REPLACE DDL 오케스트레이션 (API측). 재시도 (지수 백오프). 인증 (API_KEY, BEARER). ExecutorClient `executeSql()`/`executeApiCall()` 추가. PipelineExecutionService SQL/API_CALL 위임. pytest 119개 통과. |
 | 5.7-7 | 통합 테스트 + 기존 executor 코드 정리 | ✅ | 전체 | 5.7-6 | ExecutorClient WireMock 테스트 12개. SqlScriptExecutor/PythonScriptExecutor/ApiCallExecutor @Deprecated 마킹. 전체 Java 테스트 통과. |
+
+---
+
+## Phase 5.8: 파이프라인 Python 고도화 + AI 에이전트 확장
+
+> 파이프라인 Python 스텝의 자동 적재 패턴 완성 + AI 에이전트 확장성(서브에이전트, CLI 에이전트) + 인증 관리 UX 개선.
+> **의존**: Phase 5.7 (firehub-executor)
+>
+> **실행 순서**:
+> ```
+> 5.8-1 (Backend+Executor, 독립) ──→ 5.8-2 (Backend+Frontend)
+> 5.8-3 (AI Agent, 독립) ──→ 5.8-4 (AI Agent+Frontend+Backend)
+> ```
+
+| # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
+|---|------|------|------|------|----------|
+| 5.8-1 | Python 스텝 자동 적재 패턴 완성 | ✅ | Backend + Executor | 없음 | Python 스텝 stdout JSON 자동 적재 (SQL/API_CALL과 동일 패턴). outputColumns 기반 자동 temp 데이터셋 생성. 스텝 입력 데이터셋 UX 개선. 파이프라인 실행 서비스 리팩터링. |
+| 5.8-2 | 홈 대시보드 버그 수정 + AI UI 개선 | ✅ | Frontend | 5.8-1 | 완료된 파이프라인 실행이 미해결로 표시되는 버그 수정. AI 버튼을 사이드바 상단으로 이동 (FAB 제거). AI 채팅 멀티스텝 thinking 상태 표시 수정. SSE 연결 안정성 개선 (ping 이벤트 + 크래시 방어). |
+| 5.8-3 | 서브에이전트 동적 로딩 + Claude Code CLI 에이전트 | ✅ | AI Agent | 없음 | 서브에이전트 동적 로딩 시스템 추가. Claude Code CLI 에이전트 유형 추가 (구독/API 키 모드 선택). 시스템 프롬프트 자동 컬럼 충돌 주의사항 추가. |
+| 5.8-4 | AI 에이전트 인증 관리 UX | ✅ | AI Agent + Frontend + Backend | 5.8-3 | CLI OAuth 토큰 DB 암호화 저장. 토큰/API 키 유효성 실제 API 호출 검증. 인증 확인 버튼 + 자동 검증 제거. 설정 페이지 CLI 인증 UI 단순화 (토큰 입력 필드). 미저장 상태 인증 확인 비활성화. |
 
 ---
 
