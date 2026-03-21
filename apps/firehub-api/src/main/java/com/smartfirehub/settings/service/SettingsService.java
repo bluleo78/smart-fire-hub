@@ -22,7 +22,8 @@ public class SettingsService {
           "ai.temperature",
           "ai.max_tokens",
           "ai.session_max_tokens",
-          "ai.api_key");
+          "ai.api_key",
+          "ai.agent_type");
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
@@ -132,6 +133,10 @@ public class SettingsService {
             case "ai.api_key" -> {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("API 키는 비어있을 수 없습니다");
+            }
+            case "ai.agent_type" -> {
+              if (!Set.of("sdk", "cli", "cli-api").contains(value))
+                throw new IllegalArgumentException("에이전트 유형은 sdk, cli, cli-api 중 하나여야 합니다");
             }
             default -> {
               /* ai.model is a free-form string, validated by frontend dropdown */

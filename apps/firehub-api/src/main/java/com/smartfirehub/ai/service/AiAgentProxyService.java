@@ -27,6 +27,7 @@ public class AiAgentProxyService {
 
   private static final Logger log = LoggerFactory.getLogger(AiAgentProxyService.class);
   private static final Duration TIMEOUT = Duration.ofMinutes(5);
+  private static final Duration SHORT_TIMEOUT = Duration.ofSeconds(10);
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
@@ -72,6 +73,38 @@ public class AiAgentProxyService {
     }
   }
 
+  public String getCliAuthStatus() {
+    return webClient
+        .get()
+        .uri("/agent/cli-auth")
+        .header("Authorization", "Internal " + internalToken)
+        .retrieve()
+        .bodyToMono(String.class)
+        .block(SHORT_TIMEOUT);
+  }
+
+  public String startCliLogin() {
+    return webClient
+        .post()
+        .uri("/agent/cli-auth/login")
+        .header("Authorization", "Internal " + internalToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .retrieve()
+        .bodyToMono(String.class)
+        .block(SHORT_TIMEOUT);
+  }
+
+  public String cliLogout() {
+    return webClient
+        .post()
+        .uri("/agent/cli-auth/logout")
+        .header("Authorization", "Internal " + internalToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .retrieve()
+        .bodyToMono(String.class)
+        .block(SHORT_TIMEOUT);
+  }
+
   public String getSessionHistory(String sessionId) {
     return webClient
         .get()
@@ -111,6 +144,7 @@ public class AiAgentProxyService {
       requestBody.put("fileIds", fileIds);
     }
     requestBody.put("apiKey", apiKeyOpt.get());
+    requestBody.put("agentType", aiSettings.getOrDefault("ai.agent_type", "sdk"));
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
     requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));

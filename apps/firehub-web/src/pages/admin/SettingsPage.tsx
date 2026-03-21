@@ -1,8 +1,9 @@
-import { Bot, Eye, EyeOff, RotateCcw, Save, Settings } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { AlertCircle, Bot, CheckCircle, Eye, EyeOff, Loader2, RefreshCw, RotateCcw, Save, Settings } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -20,6 +21,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { Textarea } from '../../components/ui/textarea';
 import type { SettingResponse } from '../../types/settings';
 
+interface CliAuthStatus {
+  loggedIn: boolean;
+  email?: string;
+  subscriptionType?: string;
+  error?: string;
+}
+
+const AGENT_TYPE_OPTIONS = [
+  { value: 'sdk', label: 'AI Agent (SDK)' },
+  { value: 'cli', label: 'Claude Code (구독)' },
+  { value: 'cli-api', label: 'Claude Code (API)' },
+];
+
 const MODEL_OPTIONS = [
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
   { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
@@ -29,6 +43,7 @@ const MODEL_OPTIONS = [
 interface AISettingsForm {
   [key: string]: string;
   'ai.api_key': string;
+  'ai.agent_type': string;
   'ai.model': string;
   'ai.max_turns': string;
   'ai.system_prompt': string;
@@ -39,6 +54,7 @@ interface AISettingsForm {
 
 const DEFAULT_VALUES: AISettingsForm = {
   'ai.api_key': '',
+  'ai.agent_type': 'sdk',
   'ai.model': 'claude-sonnet-4-6',
   'ai.max_turns': '10',
   'ai.system_prompt': '',
@@ -54,6 +70,19 @@ export default function SettingsPage() {
   const [original, setOriginal] = useState<AISettingsForm>(DEFAULT_VALUES);
   const [errors, setErrors] = useState<Partial<Record<keyof AISettingsForm, string>>>({});
   const [showApiKey, setShowApiKey] = useState(false);
+
+  const [cliAuthStatus, setCliAuthStatus] = useState<CliAuthStatus | null>(null);
+  const [isCliAuthLoading, setIsCliAuthLoading] = useState(false);
+  const [isCliLoginPending, setIsCliLoginPending] = useState(false);
+  const [isCliLogoutPending, setIsCliLogoutPending] = useState(false);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 컴포넌트 언마운트 시 폴링 정리
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -78,14 +107,87 @@ export default function SettingsPage() {
     fetchSettings();
   }, [fetchSettings]);
 
+  const fetchCliAuthStatus = useCallback(async () => {
+    setIsCliAuthLoading(true);
+    try {
+      const { data } = await settingsApi.getCliAuthStatus();
+      setCliAuthStatus(data);
+    } catch {
+      setCliAuthStatus({ loggedIn: false, error: '인증 상태를 확인하는데 실패했습니다.' });
+    } finally {
+      setIsCliAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (form['ai.agent_type'] === 'cli') {
+      fetchCliAuthStatus();
+    } else {
+      setCliAuthStatus(null);
+    }
+  }, [form['ai.agent_type'], fetchCliAuthStatus]);
+
+  const handleCliLogin = async () => {
+    setIsCliLoginPending(true);
+    try {
+      await settingsApi.startCliLogin();
+      toast.info('브라우저에서 인증을 완료하세요. 인증 후 자동으로 상태가 갱신됩니다.');
+      // 브라우저 인증 완료를 감지하기 위해 5초 간격으로 최대 12회(60초) 폴링
+      let attempts = 0;
+      const maxAttempts = 12;
+      pollIntervalRef.current = setInterval(async () => {
+        attempts++;
+        try {
+          const { data } = await settingsApi.getCliAuthStatus();
+          if (data.loggedIn) {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+            setCliAuthStatus(data);
+            setIsCliLoginPending(false);
+            toast.success('로그인이 완료되었습니다.');
+          } else if (attempts >= maxAttempts) {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+            setIsCliLoginPending(false);
+          }
+        } catch {
+          if (attempts >= maxAttempts) {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+            setIsCliLoginPending(false);
+          }
+        }
+      }, 5000);
+    } catch {
+      toast.error('로그인 요청에 실패했습니다.');
+      setIsCliLoginPending(false);
+    }
+  };
+
+  const handleCliLogout = async () => {
+    setIsCliLogoutPending(true);
+    try {
+      await settingsApi.cliLogout();
+      toast.success('로그아웃되었습니다.');
+      await fetchCliAuthStatus();
+    } catch {
+      toast.error('로그아웃에 실패했습니다.');
+    } finally {
+      setIsCliLogoutPending(false);
+    }
+  };
+
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
 
-    const apiKey = form['ai.api_key'];
-    if (!apiKey.trim()) {
-      newErrors['ai.api_key'] = 'API 키를 입력하세요';
-    } else if (!apiKey.startsWith('****') && apiKey.length < 10) {
-      newErrors['ai.api_key'] = 'API 키는 10자 이상이어야 합니다';
+    // API 키 검증은 sdk 또는 cli-api 모드에서만 필요
+    if (form['ai.agent_type'] !== 'cli') {
+      const apiKey = form['ai.api_key'];
+      if (!apiKey.trim()) {
+        newErrors['ai.api_key'] = 'API 키를 입력하세요';
+      } else if (!apiKey.startsWith('****') && apiKey.length < 10) {
+        newErrors['ai.api_key'] = 'API 키는 10자 이상이어야 합니다';
+      }
     }
 
     const maxTurns = Number(form['ai.max_turns']);
@@ -198,32 +300,139 @@ export default function SettingsPage() {
               <CardTitle>모델 설정</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* API 키 */}
+              {/* 에이전트 유형 */}
               <div className="space-y-2">
-                <Label htmlFor="ai-api-key">API 키</Label>
-                <div className="relative w-full max-w-md">
-                  <Input
-                    id="ai-api-key"
-                    type={showApiKey ? 'text' : 'password'}
-                    className="pr-10"
-                    value={form['ai.api_key']}
-                    onChange={(e) => updateField('ai.api_key', e.target.value)}
-                    placeholder="sk-ant-..."
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
-                  >
-                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {errors['ai.api_key'] && (
-                  <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
-                )}
-                <p className="text-sm text-muted-foreground">Anthropic API 키 (sk-ant-...)</p>
+                <Label htmlFor="ai-agent-type">에이전트 유형</Label>
+                <Select
+                  value={form['ai.agent_type']}
+                  onValueChange={(value) => updateField('ai.agent_type', value)}
+                >
+                  <SelectTrigger id="ai-agent-type" className="w-full max-w-md">
+                    <SelectValue placeholder="에이전트 유형을 선택하세요" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AGENT_TYPE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">AI 채팅에 사용할 에이전트 유형</p>
               </div>
+
+              <Separator />
+
+              {/* CLI 인증 상태 또는 API 키 */}
+              {form['ai.agent_type'] === 'cli' ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Claude Code 인증</Label>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={fetchCliAuthStatus}
+                      disabled={isCliAuthLoading}
+                      aria-label="인증 상태 새로고침"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isCliAuthLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+
+                  {isCliAuthLoading ? (
+                    <div className="flex items-center gap-2 rounded-lg border px-4 py-3 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>인증 상태 확인 중...</span>
+                    </div>
+                  ) : cliAuthStatus?.loggedIn ? (
+                    <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-3 dark:border-green-900 dark:bg-green-950/30">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
+                        <div className="space-y-0.5">
+                          <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                            {cliAuthStatus.email ?? '로그인됨'}
+                          </p>
+                          {cliAuthStatus.subscriptionType && (
+                            <Badge variant="secondary" className="text-xs">
+                              {cliAuthStatus.subscriptionType}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                        onClick={handleCliLogout}
+                        disabled={isCliLogoutPending}
+                      >
+                        {isCliLogoutPending ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : null}
+                        로그아웃
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900 dark:bg-orange-950/30">
+                      <div className="flex items-center gap-3">
+                        <AlertCircle className="h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
+                        <div className="space-y-0.5">
+                          <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
+                            Claude Code에 로그인이 필요합니다
+                          </p>
+                          {cliAuthStatus?.error && (
+                            <p className="text-xs text-orange-700 dark:text-orange-300">
+                              {cliAuthStatus.error}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleCliLogin}
+                        disabled={isCliLoginPending}
+                      >
+                        {isCliLoginPending ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : null}
+                        Claude Code 로그인
+                      </Button>
+                    </div>
+                  )}
+
+                  <p className="text-sm text-muted-foreground">
+                    Claude Code (구독) 모드에서는 API 키 대신 로컬 CLI 인증을 사용합니다
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="ai-api-key">API 키</Label>
+                  <div className="relative w-full max-w-md">
+                    <Input
+                      id="ai-api-key"
+                      type={showApiKey ? 'text' : 'password'}
+                      className="pr-10"
+                      value={form['ai.api_key']}
+                      onChange={(e) => updateField('ai.api_key', e.target.value)}
+                      placeholder="sk-ant-..."
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
+                    >
+                      {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {errors['ai.api_key'] && (
+                    <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
+                  )}
+                  <p className="text-sm text-muted-foreground">Anthropic API 키 (sk-ant-...)</p>
+                </div>
+              )}
 
               <Separator />
 

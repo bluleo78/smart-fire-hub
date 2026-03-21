@@ -1,4 +1,4 @@
-import { MessageCircle, Monitor, PanelRight, Sparkles,X } from 'lucide-react';
+import { MessageCircle, Monitor, PanelRight, Sparkles, X } from 'lucide-react';
 
 import type { AIMode } from '../../types/ai';
 import { Button } from '../ui/button';
@@ -52,11 +52,12 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
   return (
     <div className={`flex flex-col h-full bg-background ${className || ''}`}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b">
+      <div className="flex items-center justify-between px-3 py-2 border-b gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <Sparkles className="h-4 w-4 text-primary shrink-0" />
           <span className="text-sm font-medium truncate">AI 어시스턴트</span>
         </div>
+
         <div className="flex items-center gap-0.5 shrink-0">
           <TokenUsageChip tokens={contextTokens} isCompacting={isCompacting} />
           {showModeSwitch && (

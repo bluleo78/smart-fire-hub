@@ -1,5 +1,10 @@
 import { Router, Request, Response } from 'express';
+import { execFile, spawn } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 import { executeAgent } from '../agent/agent-sdk.js';
+import { executeCliAgent } from '../agent/agent-cli.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 
@@ -26,6 +31,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     temperature,
     maxTokens,
     apiKey,
+    agentType = 'sdk',
   } = req.body;
 
   const hasMessage = message && typeof message === 'string';
@@ -70,7 +76,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
   }, PING_INTERVAL_MS);
 
   try {
-    const events = executeAgent({
+    const agentOptions = {
       message: message || '',
       sessionId: sessionId || undefined,
       userId,
@@ -81,7 +87,12 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       temperature,
       maxTokens,
       apiKey,
-    });
+    };
+
+    const events =
+      agentType === 'cli' || agentType === 'cli-api'
+        ? executeCliAgent({ ...agentOptions, useSubscription: agentType === 'cli' })
+        : executeAgent(agentOptions);
 
     for await (const event of events) {
       if (clientDisconnected) continue;
@@ -132,6 +143,53 @@ router.get('/history/:sessionId', internalAuth, async (req: Request, res: Respon
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] History error:', errorMessage);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Claude Code CLI 인증 상태 확인
+router.get('/cli-auth', internalAuth, async (_req: Request, res: Response) => {
+  try {
+    const { stdout } = await execFileAsync('claude', ['auth', 'status', '--json'], {
+      timeout: 5000,
+    });
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    res.json({
+      loggedIn: parsed.loggedIn === true,
+      email: typeof parsed.email === 'string' ? parsed.email : undefined,
+      subscriptionType:
+        typeof parsed.subscriptionType === 'string' ? parsed.subscriptionType : undefined,
+      authMethod: typeof parsed.authMethod === 'string' ? parsed.authMethod : undefined,
+    });
+  } catch {
+    res.json({ loggedIn: false });
+  }
+});
+
+// Claude Code CLI 로그인 시작
+router.post('/cli-auth/login', internalAuth, (_req: Request, res: Response) => {
+  try {
+    const child = spawn('claude', ['auth', 'login', '--claudeai'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    res.json({ success: true, message: '로그인 페이지가 열렸습니다. 브라우저에서 인증을 완료하세요.' });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[Agent] CLI auth login error:', errorMessage);
+    res.status(500).json({ error: errorMessage });
+  }
+});
+
+// Claude Code CLI 로그아웃
+router.post('/cli-auth/logout', internalAuth, async (_req: Request, res: Response) => {
+  try {
+    await execFileAsync('claude', ['auth', 'logout'], { timeout: 5000 });
+    res.json({ success: true });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[Agent] CLI auth logout error:', errorMessage);
+    res.status(500).json({ error: errorMessage });
   }
 });
 

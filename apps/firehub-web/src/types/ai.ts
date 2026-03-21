@@ -1,5 +1,7 @@
 export type AIMode = 'side' | 'floating' | 'fullscreen';
 
+export type AgentType = 'sdk' | 'cli' | 'cli-api';
+
 export interface AISession {
   id: number;
   sessionId: string;
