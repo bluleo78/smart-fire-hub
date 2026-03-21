@@ -255,23 +255,36 @@ export default function SettingsPage() {
               {form['ai.agent_type'] === 'cli' ? (
                 <div className="space-y-2">
                   <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
-                  <div className="relative w-full max-w-md">
-                    <Input
-                      id="ai-cli-oauth-token"
-                      type={showCliOauthToken ? 'text' : 'password'}
-                      className="pr-10"
-                      value={form['ai.cli_oauth_token']}
-                      onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
-                      placeholder="sk-ant-oat01-..."
-                    />
-                    <button
+                  <div className="flex gap-2 max-w-md">
+                    <div className="relative flex-1">
+                      <Input
+                        id="ai-cli-oauth-token"
+                        type={showCliOauthToken ? 'text' : 'password'}
+                        className="pr-10"
+                        value={form['ai.cli_oauth_token']}
+                        onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
+                        placeholder="sk-ant-oat01-..."
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowCliOauthToken(!showCliOauthToken)}
+                        aria-label={showCliOauthToken ? '토큰 숨기기' : '토큰 보기'}
+                      >
+                        {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <Button
                       type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowCliOauthToken(!showCliOauthToken)}
-                      aria-label={showCliOauthToken ? '토큰 숨기기' : '토큰 보기'}
+                      variant="outline"
+                      size="sm"
+                      onClick={verifyAuth}
+                      disabled={isVerifying}
+                      className="shrink-0"
                     >
-                      {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
+                      <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                      {isVerifying ? '검증 중...' : '인증 확인'}
+                    </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     로컬에서 claude setup-token으로 발급받은 OAuth 토큰
@@ -282,31 +295,41 @@ export default function SettingsPage() {
                         {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
                       </span>
                     )}
-                    {isVerifying && (
-                      <span className="ml-2 text-xs text-muted-foreground">검증 중...</span>
-                    )}
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
                   <Label htmlFor="ai-api-key">API 키</Label>
-                  <div className="relative w-full max-w-md">
-                    <Input
-                      id="ai-api-key"
-                      type={showApiKey ? 'text' : 'password'}
-                      className="pr-10"
-                      value={form['ai.api_key']}
-                      onChange={(e) => updateField('ai.api_key', e.target.value)}
-                      placeholder="sk-ant-..."
-                    />
-                    <button
+                  <div className="flex gap-2 max-w-md">
+                    <div className="relative flex-1">
+                      <Input
+                        id="ai-api-key"
+                        type={showApiKey ? 'text' : 'password'}
+                        className="pr-10"
+                        value={form['ai.api_key']}
+                        onChange={(e) => updateField('ai.api_key', e.target.value)}
+                        placeholder="sk-ant-..."
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
+                      >
+                        {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <Button
                       type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
+                      variant="outline"
+                      size="sm"
+                      onClick={verifyAuth}
+                      disabled={isVerifying}
+                      className="shrink-0"
                     >
-                      {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
+                      <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                      {isVerifying ? '검증 중...' : '인증 확인'}
+                    </Button>
                   </div>
                   {errors['ai.api_key'] && (
                     <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
@@ -319,9 +342,6 @@ export default function SettingsPage() {
                         {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
                         {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
                       </span>
-                    )}
-                    {isVerifying && (
-                      <span className="ml-2 text-xs text-muted-foreground">검증 중...</span>
                     )}
                   </p>
                 </div>
@@ -466,10 +486,6 @@ export default function SettingsPage() {
             <Button variant="outline" onClick={handleReset} disabled={!hasChanges}>
               <RotateCcw className="mr-2 h-4 w-4" />
               되돌리기
-            </Button>
-            <Button variant="outline" onClick={verifyAuth} disabled={isVerifying || hasChanges}>
-              <ShieldCheck className="mr-2 h-4 w-4" />
-              {isVerifying ? '검증 중...' : '인증 확인'}
             </Button>
           </div>
         </TabsContent>
