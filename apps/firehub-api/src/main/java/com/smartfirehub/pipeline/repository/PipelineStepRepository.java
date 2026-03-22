@@ -70,7 +70,16 @@ public class PipelineStepRepository {
   }
 
   public List<PipelineStepResponse> findByPipelineId(Long pipelineId) {
-    // Get all steps
+    // output_dataset_id가 null이면 source_pipeline_step_id로 임시 데이터셋 폴백
+    var resolvedOutputExpr =
+        coalesce(
+            PS_OUTPUT_DATASET_ID,
+            field(
+                select(D_ID)
+                    .from(DATASET)
+                    .where(field(name("dataset", "source_pipeline_step_id"), Long.class).eq(PS_ID))
+                    .limit(1)));
+
     var steps =
         dsl.select(
                 PS_ID,
@@ -78,7 +87,7 @@ public class PipelineStepRepository {
                 PS_DESCRIPTION,
                 PS_SCRIPT_TYPE,
                 PS_SCRIPT_CONTENT,
-                PS_OUTPUT_DATASET_ID,
+                resolvedOutputExpr.as("resolved_output_dataset_id"),
                 PS_STEP_ORDER,
                 PS_LOAD_STRATEGY,
                 PS_API_CONFIG,
@@ -88,7 +97,7 @@ public class PipelineStepRepository {
                 D_NAME)
             .from(PIPELINE_STEP)
             .leftJoin(DATASET)
-            .on(PS_OUTPUT_DATASET_ID.eq(D_ID))
+            .on(resolvedOutputExpr.eq(D_ID))
             .where(PS_PIPELINE_ID.eq(pipelineId))
             .orderBy(PS_STEP_ORDER.asc())
             .fetch();
@@ -176,7 +185,7 @@ public class PipelineStepRepository {
                   r.get(PS_DESCRIPTION),
                   r.get(PS_SCRIPT_TYPE),
                   r.get(PS_SCRIPT_CONTENT),
-                  r.get(PS_OUTPUT_DATASET_ID),
+                  r.get("resolved_output_dataset_id", Long.class),
                   r.get(D_NAME),
                   inputDatasetMap.getOrDefault(stepId, List.of()),
                   dependencyMap.getOrDefault(stepId, List.of()),

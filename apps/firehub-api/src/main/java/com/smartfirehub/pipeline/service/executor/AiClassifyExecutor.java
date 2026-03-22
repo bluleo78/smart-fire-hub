@@ -9,9 +9,11 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -169,11 +171,15 @@ public class AiClassifyExecutor {
         }
       }
 
-      // 4. Insert all output rows (columnTypes로 타입 캐스팅: AI는 모든 값을 문자열로 반환)
+      // 4. Insert all output rows (AI는 모든 값을 문자열/숫자로 반환 → Java 타입 변환 후 삽입)
       if (!outputRows.isEmpty()) {
         Map<String, String> columnTypes = new HashMap<>();
         columnTypes.put("source_id", "BIGINT");
         config.outputColumns().forEach(col -> columnTypes.put(col.name(), col.type()));
+
+        for (Map<String, Object> row : outputRows) {
+          coerceRowValues(row, columnTypes);
+        }
         dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows, columnTypes);
       }
 
@@ -382,5 +388,50 @@ public class AiClassifyExecutor {
 
   private static String sha256Prefix8(String input) {
     return sha256(input).substring(0, 8);
+  }
+
+  private static final java.util.regex.Pattern DIGITS_ONLY =
+      java.util.regex.Pattern.compile("\\d+");
+
+  /** AI 반환값을 DB 컬럼 타입에 맞는 Java 타입으로 변환 (epoch millis → Timestamp 등) */
+  private static void coerceRowValues(Map<String, Object> row, Map<String, String> columnTypes) {
+    for (Map.Entry<String, String> entry : columnTypes.entrySet()) {
+      String col = entry.getKey();
+      Object value = row.get(col);
+      if (value == null) continue;
+
+      String type = entry.getValue().toUpperCase();
+      try {
+        if (type.contains("TIMESTAMP")) {
+          if (value instanceof Number n) {
+            row.put(col, new Timestamp(n.longValue()));
+          } else if (value instanceof String s && DIGITS_ONLY.matcher(s).matches()) {
+            row.put(col, new Timestamp(Long.parseLong(s)));
+          }
+        } else if (type.contains("BOOLEAN")) {
+          if (value instanceof String s) {
+            row.put(col, Boolean.parseBoolean(s));
+          }
+        } else if (type.equals("BIGINT") || type.equals("BIGSERIAL")) {
+          if (value instanceof String s) {
+            row.put(col, Long.parseLong(s));
+          } else if (value instanceof Number n) {
+            row.put(col, n.longValue());
+          }
+        } else if (type.equals("INTEGER") || type.equals("INT") || type.equals("SMALLINT")) {
+          if (value instanceof String s) {
+            row.put(col, Integer.parseInt(s));
+          } else if (value instanceof Number n) {
+            row.put(col, n.intValue());
+          }
+        } else if (type.contains("NUMERIC") || type.contains("DECIMAL")) {
+          if (value instanceof String s) {
+            row.put(col, new BigDecimal(s));
+          }
+        }
+      } catch (NumberFormatException e) {
+        log.warn("[AI_CLASSIFY] Failed to coerce column '{}' value '{}' to {}", col, value, type);
+      }
+    }
   }
 }

@@ -345,7 +345,8 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void createPipeline_aiClassifyStep_missingOutputDatasetId_throwsException() {
+  void createPipeline_aiClassifyStep_withoutOutputDatasetId_succeeds() {
+    // AI_CLASSIFY는 outputColumns로 임시 데이터셋을 자동 생성하므로 outputDatasetId 없이도 생성 가능
     Map<String, Object> aiConfig =
         Map.of(
             "prompt",
@@ -371,9 +372,10 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     CreatePipelineRequest request = new CreatePipelineRequest("AI Pipeline", "Description", steps);
 
-    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("outputDatasetId");
+    PipelineDetailResponse response = pipelineService.createPipeline(request, testUserId);
+    assertThat(response.id()).isNotNull();
+    assertThat(response.steps()).hasSize(1);
+    assertThat(response.steps().get(0).scriptType()).isEqualTo("AI_CLASSIFY");
   }
 
   @Test

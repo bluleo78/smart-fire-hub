@@ -428,9 +428,9 @@ export default function StepConfigPanel({
                   disabled={readOnly}
                   onChange={(value) => handleUpdateStep({ inputDatasetIds: value })}
                 />
-                {step.scriptType === 'AI_CLASSIFY' && tempDependencySteps.length > 0 && (
+                {tempDependencySteps.length > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    이전 스텝의 임시 출력 데이터셋은 실행 시 자동으로 입력됩니다:
+                    이전 스텝의 출력 데이터셋이 실행 시 자동으로 입력됩니다:
                     {' '}{tempDependencySteps.map((s) => s.name).join(', ')}
                   </p>
                 )}
