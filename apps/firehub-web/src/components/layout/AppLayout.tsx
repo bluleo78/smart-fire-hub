@@ -15,7 +15,6 @@ import {
   Search,
   Settings,
   Shield,
-  Sparkles,
   Tag,
   Users,
   X,
@@ -45,9 +44,6 @@ import { UserNav } from './UserNav';
 
 const AISidePanel = lazy(() =>
   import('../ai/AISidePanel').then((mod) => ({ default: mod.AISidePanel }))
-);
-const AIFloating = lazy(() =>
-  import('../ai/AIFloating').then((mod) => ({ default: mod.AIFloating }))
 );
 const AIFullScreen = lazy(() =>
   import('../ai/AIFullScreen').then((mod) => ({ default: mod.AIFullScreen }))
@@ -200,47 +196,6 @@ function NavSection({
   );
 }
 
-function AINavButton({ collapsed }: { collapsed: boolean }) {
-  const { isOpen, toggleAI } = useAI();
-
-  const button = (
-    <button
-      onClick={toggleAI}
-      aria-label={isOpen ? 'AI 어시스턴트 닫기' : 'AI 어시스턴트 열기'}
-      className={cn(
-        'flex w-full items-center rounded-md text-[13px] font-medium transition-all duration-150',
-        isOpen
-          ? 'border-l-2 border-primary bg-accent text-accent-foreground [&_svg]:text-primary'
-          : 'border-l-2 border-transparent text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground',
-        collapsed ? 'justify-center px-2 py-2.5 mx-1' : 'gap-3 px-3 py-1.5'
-      )}
-    >
-      <Sparkles className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-4 w-4')} />
-      {!collapsed && (
-        <>
-          <span className="flex-1 text-left">AI 어시스턴트</span>
-          <kbd className="hidden sm:inline-flex items-center rounded border border-border px-1 py-0.5 text-[10px] font-mono text-muted-foreground">
-            ⌘K
-          </kbd>
-        </>
-      )}
-    </button>
-  );
-
-  if (collapsed) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{button}</TooltipTrigger>
-        <TooltipContent side="right" sideOffset={8}>
-          AI 어시스턴트 ⌘K
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return button;
-}
-
 function AppLayoutInner() {
   useNotificationStream();
   const { isAdmin } = useAuth();
@@ -341,12 +296,6 @@ function AppLayoutInner() {
                   </Button>
                 </>
               )}
-            </div>
-
-            {/* AI Nav Button */}
-            <div className={cn('shrink-0 py-2', collapsed ? 'px-0' : 'px-2')}>
-              <AINavButton collapsed={collapsed} />
-              <Separator className="mt-2" />
             </div>
 
             {/* Navigation */}
@@ -457,13 +406,6 @@ function AppLayoutInner() {
           )}
         </div>
       </div>
-
-      {/* Floating mode */}
-      {aiMode === 'floating' && (
-        <Suspense fallback={null}>
-          <AIFloating />
-        </Suspense>
-      )}
 
     </div>
   );

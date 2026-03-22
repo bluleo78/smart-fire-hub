@@ -1,4 +1,4 @@
-export type AIMode = 'side' | 'floating' | 'fullscreen';
+export type AIMode = 'side' | 'fullscreen';
 
 export type AgentType = 'sdk' | 'cli' | 'cli-api';
 
