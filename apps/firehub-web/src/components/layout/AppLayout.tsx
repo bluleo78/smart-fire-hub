@@ -26,6 +26,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useNotificationStream } from '../../hooks/useNotificationStream';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
+import { AIStatusChip } from '../ai/AIStatusChip';
 import { Button } from '../ui/button';
 import {
   Collapsible,
@@ -381,7 +382,12 @@ function AppLayoutInner() {
         </Button>
 
         {/* Page content + AI panel */}
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
+          {/* AI Status Chip */}
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
+            <AIStatusChip />
+          </div>
+
           {showFullscreen ? (
             <div className="flex-1 flex">
               <Suspense fallback={<div className="flex-1 bg-background" />}>
