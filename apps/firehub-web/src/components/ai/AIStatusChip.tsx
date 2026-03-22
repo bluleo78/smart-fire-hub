@@ -1,5 +1,7 @@
+import { useState, useRef, useCallback } from 'react';
 import type { AIMode } from '../../types/ai';
 import { useAI } from './AIProvider';
+import { AIStatusChipDropdown } from './AIStatusChipDropdown';
 
 type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'fullscreen';
 
@@ -173,7 +175,31 @@ export function AIStatusChip() {
     currentSessionId,
     messages,
     streamingMessage,
+    sendMessage,
+    startNewSession,
+    contextTokens,
   } = useAI();
+
+  const [showDropdown, setShowDropdown] = useState(false);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const inputFocusedRef = useRef(false);
+
+  const handleMouseEnter = useCallback(() => {
+    clearTimeout(closeTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setShowDropdown(true), 200);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    clearTimeout(hoverTimerRef.current);
+    if (!inputFocusedRef.current) {
+      closeTimerRef.current = setTimeout(() => setShowDropdown(false), 300);
+    }
+  }, []);
+
+  const handleCloseDropdown = useCallback(() => {
+    setShowDropdown(false);
+  }, []);
 
   const state = getChipState({ isStreaming, isThinking, isOpen, mode });
   const showProgressBar = state === 'streaming' || state === 'thinking';
@@ -214,7 +240,11 @@ export function AIStatusChip() {
   };
 
   return (
-    <>
+    <div
+      className="relative z-20"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -224,15 +254,38 @@ export function AIStatusChip() {
             e.preventDefault();
             handleClick();
           }
+          if (e.key === 'Escape' && showDropdown) {
+            e.preventDefault();
+            setShowDropdown(false);
+          }
         }}
         style={style}
-        className="z-20"
         aria-label={`AI 상태: ${label}`}
+        aria-haspopup="true"
+        aria-expanded={showDropdown}
       >
         <ChipIcon state={state} />
         <span>{label}</span>
         {showProgressBar && <ProgressBar />}
       </div>
-    </>
+      {showDropdown && (
+        <AIStatusChipDropdown
+          isAIOpen={isOpen}
+          mode={mode}
+          onModeChange={setMode}
+          onOpen={openAI}
+          onClose={closeAI}
+          onNewSession={startNewSession}
+          onSendMessage={sendMessage}
+          messages={messages}
+          isStreaming={isStreaming}
+          isThinking={isThinking}
+          contextTokens={contextTokens}
+          currentSessionId={currentSessionId}
+          inputFocusedRef={inputFocusedRef}
+          onCloseDropdown={handleCloseDropdown}
+        />
+      )}
+    </div>
   );
 }
