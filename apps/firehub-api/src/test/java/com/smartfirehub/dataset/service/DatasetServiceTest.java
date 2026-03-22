@@ -797,7 +797,7 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     DataQueryResponse dataResponse = datasetDataService.getDatasetData(dataset.id(), null, 0, 10);
     List<Long> rowIds =
-        dataResponse.rows().stream().map(r -> ((Number) r.get("_id")).longValue()).toList();
+        dataResponse.rows().stream().map(r -> ((Number) r.get("id")).longValue()).toList();
 
     assertThat(rowIds).isNotEmpty();
 

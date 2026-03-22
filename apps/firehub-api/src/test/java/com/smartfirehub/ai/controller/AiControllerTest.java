@@ -42,6 +42,8 @@ class AiControllerTest {
 
   @MockitoBean private AiAgentProxyService aiAgentProxyService;
 
+  @MockitoBean private com.smartfirehub.settings.service.SettingsService settingsService;
+
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
 
   @MockitoBean private JwtProperties jwtProperties;
