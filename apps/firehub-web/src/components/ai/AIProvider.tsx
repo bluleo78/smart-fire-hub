@@ -39,7 +39,7 @@ export function useAI() {
 function getStoredMode(): AIMode {
   try {
     const stored = localStorage.getItem('ai-mode');
-    if (stored === 'side' || stored === 'fullscreen') {
+    if (stored === 'side' || stored === 'floating' || stored === 'fullscreen') {
       return stored;
     }
   } catch {

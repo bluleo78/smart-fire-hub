@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type MutableRefObject } from 'react';
 import type { AIMode, AIMessage } from '../../types/ai';
-import { SideIcon, FullscreenIcon } from './AIChipIcons';
+import { SideIcon, FloatingIcon, FullscreenIcon } from './AIChipIcons';
 
 interface AIStatusChipDropdownProps {
   isAIOpen: boolean;
@@ -245,33 +245,42 @@ export function AIStatusChipDropdown({
 
         {/* Action buttons */}
         {!isAIOpen ? (
-          /* Closed: 2x2 grid */
-          <div className="grid grid-cols-2 gap-1.5">
-            <ActionButton
-              icon={<SideIcon />}
-              label="사이드 열기"
-              onClick={() => { onModeChange('side'); onOpen(); }}
-            />
-            <ActionButton
-              icon={<FullscreenIcon />}
-              label="풀스크린"
-              onClick={() => { onModeChange('fullscreen'); onOpen(); }}
-            />
-            <ActionButton
-              icon={<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" /></svg>}
-              label="새 세션"
-              onClick={onNewSession}
-            />
-            <ActionButton
-              icon={<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="8" r="6" /><polyline points="8 4 8 8 11 10" /></svg>}
-              label="세션 목록"
-              onClick={onOpen}
-            />
+          /* Closed: grid */
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
+              <ActionButton
+                icon={<SideIcon />}
+                label="사이드 열기"
+                onClick={() => { onModeChange('side'); onOpen(); }}
+              />
+              <ActionButton
+                icon={<FloatingIcon />}
+                label="플로팅"
+                onClick={() => { onModeChange('floating'); onOpen(); }}
+              />
+              <ActionButton
+                icon={<FullscreenIcon />}
+                label="풀스크린"
+                onClick={() => { onModeChange('fullscreen'); onOpen(); }}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <ActionButton
+                icon={<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" /></svg>}
+                label="새 세션"
+                onClick={onNewSession}
+              />
+              <ActionButton
+                icon={<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="8" r="6" /><polyline points="8 4 8 8 11 10" /></svg>}
+                label="세션 목록"
+                onClick={onOpen}
+              />
+            </div>
           </div>
         ) : (
           /* Open: mode switch 3-col + 2-col */
           <div className="space-y-1.5">
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               <ActionButton
                 icon={<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="4" y1="4" x2="12" y2="12" /><line x1="12" y1="4" x2="4" y2="12" /></svg>}
                 label="닫기"
@@ -282,6 +291,12 @@ export function AIStatusChipDropdown({
                 label="사이드"
                 onClick={() => onModeChange('side')}
                 highlighted={mode === 'side'}
+              />
+              <ActionButton
+                icon={<FloatingIcon />}
+                label="플로팅"
+                onClick={() => onModeChange('floating')}
+                highlighted={mode === 'floating'}
               />
               <ActionButton
                 icon={<FullscreenIcon />}

@@ -46,6 +46,9 @@ import { UserNav } from './UserNav';
 const AISidePanel = lazy(() =>
   import('../ai/AISidePanel').then((mod) => ({ default: mod.AISidePanel }))
 );
+const AIFloating = lazy(() =>
+  import('../ai/AIFloating').then((mod) => ({ default: mod.AIFloating }))
+);
 const AIFullScreen = lazy(() =>
   import('../ai/AIFullScreen').then((mod) => ({ default: mod.AIFullScreen }))
 );
@@ -382,20 +385,23 @@ function AppLayoutInner() {
         </Button>
 
         {/* Page content + AI panel */}
-        <div className="relative flex flex-1 min-h-0">
-          {/* AI Status Chip */}
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
-            <AIStatusChip />
-          </div>
-
+        <div className="flex flex-1 min-h-0">
           {showFullscreen ? (
-            <div className="flex-1 flex">
+            <div className="relative flex-1 flex">
+              {/* AI Status Chip */}
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
+                <AIStatusChip />
+              </div>
               <Suspense fallback={<div className="flex-1 bg-background" />}>
                 <AIFullScreen />
               </Suspense>
             </div>
           ) : (
-            <main className="flex-1 p-6 overflow-auto min-w-0">
+            <main className="relative flex-1 p-6 overflow-auto min-w-0">
+              {/* AI Status Chip */}
+              <div className="sticky top-0 left-1/2 -translate-x-1/2 z-20 w-fit mx-auto">
+                <AIStatusChip />
+              </div>
               <Suspense fallback={<PageSkeleton />}>
                 <Outlet />
               </Suspense>
@@ -411,6 +417,13 @@ function AppLayoutInner() {
             </Suspense>
           )}
         </div>
+
+        {/* Floating panel mode */}
+        {aiOpen && aiMode === 'floating' && (
+          <Suspense fallback={null}>
+            <AIFloating />
+          </Suspense>
+        )}
       </div>
 
     </div>

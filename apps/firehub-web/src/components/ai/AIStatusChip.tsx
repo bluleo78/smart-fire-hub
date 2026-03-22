@@ -2,9 +2,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { AIMode } from '../../types/ai';
 import { useAI } from './AIProvider';
 import { AIStatusChipDropdown } from './AIStatusChipDropdown';
-import { SideIcon, FullscreenIcon } from './AIChipIcons';
+import { SideIcon, FloatingIcon, FullscreenIcon } from './AIChipIcons';
 
-type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'fullscreen';
+type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'floating' | 'fullscreen';
 
 function getChipState(ctx: {
   isStreaming: boolean;
@@ -16,6 +16,7 @@ function getChipState(ctx: {
   if (ctx.isStreaming) return 'streaming';
   if (ctx.isThinking) return 'thinking';
   if (ctx.isOpen && ctx.mode === 'fullscreen') return 'fullscreen';
+  if (ctx.isOpen && ctx.mode === 'floating') return 'floating';
   if (ctx.isOpen && ctx.mode === 'side') return 'side';
   return 'idle';
 }
@@ -46,6 +47,12 @@ const chipStyles: Record<ChipState, React.CSSProperties> = {
     background: 'rgba(129,140,248,0.3)',
     border: '1px solid #818cf8',
     color: '#818cf8',
+  },
+  floating: {
+    background: 'rgba(129,140,248,0.2)',
+    border: '1px solid rgba(129,140,248,0.6)',
+    color: '#818cf8',
+    boxShadow: '0 1px 6px rgba(129,140,248,0.15)',
   },
   fullscreen: {
     background: 'linear-gradient(135deg, #818cf8, #6366f1)',
@@ -128,6 +135,8 @@ function ChipIcon({ state }: { state: ChipState }) {
       return <ErrorIcon />;
     case 'side':
       return <SideIcon />;
+    case 'floating':
+      return <FloatingIcon />;
     case 'fullscreen':
       return <FullscreenIcon />;
   }
@@ -207,6 +216,8 @@ export function AIStatusChip() {
       setMode('side');
       openAI();
     } else if (mode === 'side') {
+      setMode('floating');
+    } else if (mode === 'floating') {
       setMode('fullscreen');
     } else {
       // fullscreen -> close

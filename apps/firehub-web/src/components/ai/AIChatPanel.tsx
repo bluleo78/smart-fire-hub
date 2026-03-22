@@ -1,4 +1,4 @@
-import { Monitor, PanelRight, Sparkles, X } from 'lucide-react';
+import { MessageCircle, Monitor, PanelRight, Sparkles, X } from 'lucide-react';
 
 import type { AIMode } from '../../types/ai';
 import { Button } from '../ui/button';
@@ -16,11 +16,13 @@ interface AIChatPanelProps {
 
 const modeIcons: Record<AIMode, React.ReactNode> = {
   side: <PanelRight className="h-3.5 w-3.5" />,
+  floating: <MessageCircle className="h-3.5 w-3.5" />,
   fullscreen: <Monitor className="h-3.5 w-3.5" />,
 };
 
 const modeLabels: Record<AIMode, string> = {
   side: '사이드 패널',
+  floating: '플로팅',
   fullscreen: '전체 화면',
 };
 
