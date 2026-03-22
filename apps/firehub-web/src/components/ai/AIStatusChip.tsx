@@ -1,3 +1,4 @@
+import type { AIMode } from '../../types/ai';
 import { useAI } from './AIProvider';
 
 type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'fullscreen';
@@ -6,7 +7,7 @@ function getChipState(ctx: {
   isStreaming: boolean;
   isThinking: boolean;
   isOpen: boolean;
-  mode: string;
+  mode: AIMode;
 }): ChipState {
   // error state reserved for future use
   if (ctx.isStreaming) return 'streaming';
@@ -214,17 +215,6 @@ export function AIStatusChip() {
 
   return (
     <>
-      {/* Keyframe animations */}
-      <style>{`
-        @keyframes ai-chip-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-        @keyframes ai-chip-slide {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(300%); }
-        }
-      `}</style>
       <div
         role="button"
         tabIndex={0}
