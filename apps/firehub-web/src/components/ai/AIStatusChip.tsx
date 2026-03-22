@@ -23,40 +23,54 @@ function getChipState(ctx: {
 
 const chipStyles: Record<ChipState, React.CSSProperties> = {
   idle: {
-    background: 'rgba(129,140,248,0.15)',
-    border: '1px solid rgba(129,140,248,0.3)',
-    color: 'rgba(129,140,248,1)',
+    background: 'color-mix(in oklch, var(--primary) 15%, transparent)',
+    border: '1px solid color-mix(in oklch, var(--primary) 30%, transparent)',
+    color: 'var(--primary)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   streaming: {
-    background: 'rgba(129,140,248,0.25)',
-    border: '1px solid rgba(129,140,248,0.5)',
-    color: 'rgba(129,140,248,1)',
-    boxShadow: '0 0 12px rgba(129,140,248,0.2)',
+    background: 'color-mix(in oklch, var(--primary) 25%, transparent)',
+    border: '1px solid color-mix(in oklch, var(--primary) 50%, transparent)',
+    color: 'var(--primary)',
+    boxShadow: '0 0 12px color-mix(in oklch, var(--primary) 20%, transparent)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   thinking: {
-    background: 'rgba(251,191,36,0.15)',
-    border: '1px solid rgba(251,191,36,0.3)',
-    color: 'rgba(251,191,36,1)',
+    background: 'color-mix(in oklch, var(--warning) 15%, transparent)',
+    border: '1px solid color-mix(in oklch, var(--warning) 30%, transparent)',
+    color: 'var(--warning)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   error: {
-    background: 'rgba(239,68,68,0.2)',
-    border: '1px solid rgba(239,68,68,0.4)',
-    color: 'rgba(239,68,68,1)',
+    background: 'color-mix(in oklch, var(--destructive) 20%, transparent)',
+    border: '1px solid color-mix(in oklch, var(--destructive) 40%, transparent)',
+    color: 'var(--destructive)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   side: {
-    background: 'rgba(129,140,248,0.3)',
-    border: '1px solid #818cf8',
-    color: '#818cf8',
+    background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
+    border: '1px solid var(--primary)',
+    color: 'var(--primary)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   floating: {
-    background: 'rgba(129,140,248,0.3)',
-    border: '1px solid #818cf8',
-    color: '#818cf8',
+    background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
+    border: '1px solid var(--primary)',
+    color: 'var(--primary)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   fullscreen: {
-    background: 'rgba(129,140,248,0.3)',
-    border: '1px solid #818cf8',
-    color: '#818cf8',
+    background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
+    border: '1px solid var(--primary)',
+    color: 'var(--primary)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
 };
 
@@ -64,7 +78,7 @@ function StatusDot() {
   return (
     <span
       className="shrink-0 rounded-full"
-      style={{ width: 6, height: 6, backgroundColor: '#4ade80' }}
+      style={{ width: 6, height: 6, backgroundColor: 'oklch(0.7 0.2 149)' }}
     />
   );
 }
@@ -303,7 +317,7 @@ export function AIStatusChip() {
             <div
               className="h-full rounded-full"
               style={{
-                backgroundColor: '#818cf8',
+                backgroundColor: 'var(--primary)',
                 animation: 'ai-chip-hover-progress 3s linear forwards',
               }}
             />

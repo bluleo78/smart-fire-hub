@@ -232,7 +232,7 @@ export default function DashboardListPage() {
               dashboards.map((dashboard) => (
                 <TableRow
                   key={dashboard.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors group"
+                  className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
                   onClick={() => navigate(`/analytics/dashboards/${dashboard.id}`)}
                 >
                   <TableCell className="font-medium">
@@ -260,7 +260,7 @@ export default function DashboardListPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className="text-sm text-muted-foreground">
+                    <span className="text-sm text-muted-foreground tabular-nums">
                       {dashboard.widgetCount}개
                     </span>
                   </TableCell>

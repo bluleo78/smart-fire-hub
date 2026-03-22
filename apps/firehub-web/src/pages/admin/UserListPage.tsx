@@ -69,7 +69,7 @@ export default function UserListPage() {
               users.content.map((u) => (
                 <TableRow
                   key={u.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/admin/users/${u.id}`)}
                 >
                   <TableCell>{u.name}</TableCell>

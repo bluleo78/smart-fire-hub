@@ -19,6 +19,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { FreshnessBar } from '../components/ui/freshness-bar';
+import { Sparkline } from '../components/ui/sparkline';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Separator } from '../components/ui/separator';
 import { Skeleton } from '../components/ui/skeleton';
@@ -101,10 +103,10 @@ export default function HomePage() {
               className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
               onClick={() => navigate('/pipelines')}
             >
-              <GitBranch className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">파이프라인</span>
+              <GitBranch className="h-4 w-4 text-pipeline" />
+              <span className="text-sm font-medium text-pipeline">파이프라인</span>
               {ph && ph.total > 0 ? (
-                <span className="flex items-center gap-1.5 text-sm">
+                <span className="flex items-center gap-1.5 text-sm tabular-nums">
                   {ph.failing > 0 && (
                     <span className="text-destructive font-semibold">{ph.failing} 실패</span>
                   )}
@@ -119,8 +121,9 @@ export default function HomePage() {
                   )}
                 </span>
               ) : (
-                <span className="text-sm text-muted-foreground">0개</span>
+                <span className="text-sm text-muted-foreground tabular-nums">0개</span>
               )}
+              <Sparkline data={[3, 5, 2, 8, 4, 6, 9]} color="pipeline" className="mt-1" />
             </button>
 
             <div className="h-4 w-px bg-border" />
@@ -130,10 +133,10 @@ export default function HomePage() {
               className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
               onClick={() => navigate('/data/datasets')}
             >
-              <Database className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">데이터셋</span>
+              <Database className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium text-primary">데이터셋</span>
               {dh && dh.total > 0 ? (
-                <span className="flex items-center gap-1.5 text-sm">
+                <span className="flex items-center gap-1.5 text-sm tabular-nums">
                   {dh.empty > 0 && (
                     <span className="text-destructive font-semibold">{dh.empty} 빈 데이터</span>
                   )}
@@ -145,16 +148,17 @@ export default function HomePage() {
                   )}
                 </span>
               ) : (
-                <span className="text-sm text-muted-foreground">0개</span>
+                <span className="text-sm text-muted-foreground tabular-nums">0개</span>
               )}
+              <Sparkline data={[8, 10, 6, 4, 7, 9, 5]} color="dataset" className="mt-1" />
             </button>
 
             <div className="h-4 w-px bg-border" />
 
             {/* Quick counts */}
-            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-sm text-dashboard-accent">
               <LayoutDashboard className="h-3.5 w-3.5" />
-              대시보드 {dashboardsData?.totalElements ?? 0}
+              대시보드 <span className="tabular-nums">{dashboardsData?.totalElements ?? 0}</span>
             </div>
 
             {stats && stats.recentImports.length > 0 && (
@@ -180,7 +184,7 @@ export default function HomePage() {
 
       {/* ZONE 2 — 주의 필요 (이슈가 있을 때만 표시) */}
       {attentionItems && attentionItems.length > 0 && (
-        <Card className="py-2 gap-1 flex flex-col">
+        <Card className="py-2 gap-1 flex flex-col card-hover">
           <CardHeader className="px-4 pb-0">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -264,7 +268,7 @@ export default function HomePage() {
         {/* ZONE 4 — 최근 사용 (좌측 3cols, 2x2 위젯 그리드) */}
         <div className="lg:col-span-3 grid gap-4 sm:grid-cols-2">
           {/* 최근 대시보드 */}
-          <Card className="py-2 gap-1 flex flex-col">
+          <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -315,7 +319,7 @@ export default function HomePage() {
           </Card>
 
           {/* 최근 데이터셋 */}
-          <Card className="py-2 gap-1 flex flex-col">
+          <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -353,6 +357,7 @@ export default function HomePage() {
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm truncate group-hover:text-foreground">{ds.name}</span>
+                        <FreshnessBar lastUpdated={ds.createdAt} className="ml-2" />
                         <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
                           {ds.datasetType === 'SOURCE' ? '소스' : '파생'}
                         </Badge>
@@ -371,7 +376,7 @@ export default function HomePage() {
 
           {/* 최근 임포트 */}
           {stats && stats.recentImports.length > 0 && (
-            <Card className="py-2 gap-1 flex flex-col">
+            <Card className="py-2 gap-1 flex flex-col card-hover">
               <CardHeader className="px-3 pb-0">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -405,7 +410,7 @@ export default function HomePage() {
 
           {/* 최근 실행 */}
           {stats && stats.recentExecutions.length > 0 && (
-            <Card className="py-2 gap-1 flex flex-col">
+            <Card className="py-2 gap-1 flex flex-col card-hover">
               <CardHeader className="px-3 pb-0">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -436,7 +441,7 @@ export default function HomePage() {
         </div>
 
         {/* ZONE 5 — 활동 피드 (우측 2cols) */}
-        <Card className="lg:col-span-2 py-2 gap-1 flex flex-col">
+        <Card className="lg:col-span-2 py-2 gap-1 flex flex-col card-hover">
           <CardHeader className="px-3 pb-0">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -501,7 +506,7 @@ export default function HomePage() {
                 {activityFeed.items.map((item) => (
                   <div
                     key={item.id}
-                    className={`flex items-start gap-2.5 py-2 border-b last:border-0 ${
+                    className={`flex items-start gap-2.5 py-2 border-b last:border-0 row-hover ${
                       !item.isResolved ? 'border-l-2 border-l-destructive pl-2.5' : 'pl-[12px]'
                     }`}
                   >

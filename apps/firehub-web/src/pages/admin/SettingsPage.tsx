@@ -210,7 +210,7 @@ export default function SettingsPage() {
 
         {/* 일반 탭 */}
         <TabsContent value="general" className="mt-6">
-          <Card>
+          <Card className="card-hover">
             <CardContent className="flex flex-col items-center justify-center py-16">
               <Settings className="h-12 w-12 text-muted-foreground mb-4" />
               <p className="text-base leading-6 font-semibold">일반 설정</p>
@@ -223,7 +223,7 @@ export default function SettingsPage() {
 
         {/* AI 에이전트 탭 */}
         <TabsContent value="ai" className="mt-6 space-y-6">
-          <Card>
+          <Card className="card-hover">
             <CardHeader>
               <CardTitle>모델 설정</CardTitle>
             </CardHeader>
@@ -456,7 +456,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="card-hover">
             <CardHeader>
               <CardTitle>시스템 프롬프트</CardTitle>
             </CardHeader>

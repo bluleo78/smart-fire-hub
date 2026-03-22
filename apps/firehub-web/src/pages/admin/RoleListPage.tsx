@@ -154,7 +154,7 @@ export default function RoleListPage() {
               roles.map((role) => (
                 <TableRow
                   key={role.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/admin/roles/${role.id}`)}
                 >
                   <TableCell className="font-medium">{role.name}</TableCell>

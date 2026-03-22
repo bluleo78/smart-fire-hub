@@ -248,7 +248,7 @@ export default function DatasetListPage() {
               datasets.map((dataset) => (
                 <TableRow
                   key={dataset.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors group relative"
+                  className="row-hover cursor-pointer hover:bg-muted/50 transition-colors group relative"
                   onClick={() => navigate(`/data/datasets/${dataset.id}`)}
                 >
                   {/* Favorite star */}
@@ -302,12 +302,18 @@ export default function DatasetListPage() {
                   </TableCell>
 
                   <TableCell>
-                    <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-                      {dataset.datasetType === 'SOURCE' ? '원본' : dataset.datasetType === 'DERIVED' ? '파생' : '임시'}
-                    </Badge>
+                    {dataset.datasetType === 'SOURCE' && (
+                      <Badge className="bg-primary/10 text-primary border-0">원본</Badge>
+                    )}
+                    {dataset.datasetType === 'DERIVED' && (
+                      <Badge className="bg-success/10 text-success border-0">파생</Badge>
+                    )}
+                    {dataset.datasetType === 'TEMP' && (
+                      <Badge className="bg-muted text-muted-foreground border-0">임시</Badge>
+                    )}
                   </TableCell>
                   <TableCell>{dataset.category?.name || '-'}</TableCell>
-                  <TableCell>{formatDateShort(dataset.createdAt)}</TableCell>
+                  <TableCell className="tabular-nums">{formatDateShort(dataset.createdAt)}</TableCell>
                   <TableCell className="relative">
                     {/* Hover action buttons */}
                     <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">

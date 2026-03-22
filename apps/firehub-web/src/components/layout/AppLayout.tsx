@@ -115,8 +115,8 @@ function NavItemLink({
       className={cn(
         'flex items-center rounded-md text-[13px] font-medium transition-colors',
         active
-          ? 'bg-accent text-accent-foreground [&_svg]:text-primary'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground',
+          ? 'bg-accent text-accent-foreground [&_svg]:text-primary nav-active-indicator'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground hover:scale-[1.02]',
         collapsed ? 'justify-center px-2 py-2.5 mx-1' : 'gap-3 px-3 py-1.5'
       )}
     >
@@ -272,7 +272,7 @@ function AppLayoutInner() {
                       onClick={toggleCollapsed}
                       className="h-8 w-8"
                     >
-                      <Flame className="h-5 w-5 text-primary" />
+                      <Flame className="h-5 w-5 text-primary logo-pulse rounded" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="right" sideOffset={8}>
@@ -286,7 +286,7 @@ function AppLayoutInner() {
                     className="flex items-center gap-2 text-base font-semibold"
                     onClick={handleNavClick}
                   >
-                    <Flame className="h-5 w-5 shrink-0 text-primary" />
+                    <Flame className="h-5 w-5 shrink-0 text-primary logo-pulse rounded" />
                     <span className="truncate">Smart Fire Hub</span>
                   </Link>
                   <Button
@@ -385,7 +385,7 @@ function AppLayoutInner() {
         </Button>
 
         {/* Page content + AI panel */}
-        <div className="relative flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0 bg-gradient-main">
           {/* AI Status Chip — 메인 콘텐츠 영역 상단 중앙 */}
           <div className="absolute top-2 left-0 right-0 z-30 flex justify-center pointer-events-none">
             <div className="pointer-events-auto">

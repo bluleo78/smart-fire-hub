@@ -1,4 +1,5 @@
 import { lazy,Suspense } from 'react';
+import { ThemeProvider } from 'next-themes';
 import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
 import { AdminRoute } from './components/AdminRoute';
@@ -45,7 +46,8 @@ function PageSkeleton() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <BrowserRouter>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense>} />
@@ -87,6 +89,7 @@ function App() {
         <Toaster />
       </AuthProvider>
     </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

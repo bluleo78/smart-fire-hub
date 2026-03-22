@@ -178,7 +178,7 @@ export default function QueryListPage() {
               queries.map((query) => (
                 <TableRow
                   key={query.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors group"
+                  className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
                   onClick={() => navigate(`/analytics/queries/${query.id}`)}
                 >
                   <TableCell className="font-medium">
@@ -226,7 +226,7 @@ export default function QueryListPage() {
                   </TableCell>
                   <TableCell>
                     {query.chartCount > 0 ? (
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-1 text-sm text-muted-foreground tabular-nums">
                         <BarChart2 className="h-3.5 w-3.5" />
                         {query.chartCount}개
                       </div>

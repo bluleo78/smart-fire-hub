@@ -1,4 +1,5 @@
-import { ChevronsUpDown,LogOut, User } from 'lucide-react';
+import { ChevronsUpDown, LogOut, Moon, Sun, User } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../../hooks/useAuth';
@@ -24,6 +25,7 @@ interface UserNavProps {
 export function UserNav({ collapsed = false }: UserNavProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { resolvedTheme, setTheme } = useTheme();
 
   if (!user) {
     return null;
@@ -43,11 +45,13 @@ export function UserNav({ collapsed = false }: UserNavProps) {
           collapsed ? 'justify-center' : 'px-3'
         )}
       >
-        <Avatar className={cn('shrink-0', collapsed ? 'h-7 w-7' : 'h-8 w-8')}>
-          <AvatarFallback className="text-xs">
-            {getInitials(user.name || 'U')}
-          </AvatarFallback>
-        </Avatar>
+        <div className="relative status-online">
+          <Avatar className={cn('shrink-0', collapsed ? 'h-7 w-7' : 'h-8 w-8')}>
+            <AvatarFallback className="text-xs bg-primary/10 text-primary font-semibold">
+              {getInitials(user.name || 'U')}
+            </AvatarFallback>
+          </Avatar>
+        </div>
         {!collapsed && (
           <>
             <div className="flex-1 text-left min-w-0">
@@ -77,6 +81,10 @@ export function UserNav({ collapsed = false }: UserNavProps) {
         <DropdownMenuItem onClick={() => navigate('/profile')}>
           <User />
           프로필
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>
+          {resolvedTheme === 'dark' ? <Sun /> : <Moon />}
+          {resolvedTheme === 'dark' ? '라이트 모드' : '다크 모드'}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={handleLogout}>

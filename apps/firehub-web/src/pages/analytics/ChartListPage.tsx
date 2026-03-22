@@ -139,7 +139,7 @@ export default function ChartListPage() {
               charts.map((chart) => (
                 <TableRow
                   key={chart.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors group"
+                  className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
                   onClick={() => navigate(`/analytics/charts/${chart.id}`)}
                 >
                   <TableCell className="font-medium">

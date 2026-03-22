@@ -74,16 +74,16 @@ export default function PipelineListPage() {
               pipelines.map((pipeline) => (
                 <TableRow
                   key={pipeline.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/pipelines/${pipeline.id}`)}
                 >
                   <TableCell className="font-medium">{pipeline.name}</TableCell>
                   <TableCell>
-                    <Badge variant={pipeline.isActive ? 'default' : 'secondary'}>
+                    <Badge variant={pipeline.isActive ? 'default' : 'secondary'} className={pipeline.isActive ? 'text-pipeline' : ''}>
                       {pipeline.isActive ? '활성' : '비활성'}
                     </Badge>
                   </TableCell>
-                  <TableCell>{pipeline.stepCount}</TableCell>
+                  <TableCell className="tabular-nums">{pipeline.stepCount}</TableCell>
                   <TableCell>
                     {pipeline.triggerCount > 0 && (
                       <Badge variant="outline" className="text-xs gap-1">

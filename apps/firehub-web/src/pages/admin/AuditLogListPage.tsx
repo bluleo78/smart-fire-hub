@@ -159,7 +159,7 @@ export default function AuditLogListPage() {
               </TableRow>
             ) : logs && logs.content.length > 0 ? (
               logs.content.map((log) => (
-                <TableRow key={log.id}>
+                <TableRow key={log.id} className="row-hover">
                   <TableCell className="whitespace-nowrap text-sm">
                     {formatDateTime(log.actionTime)}
                   </TableCell>
