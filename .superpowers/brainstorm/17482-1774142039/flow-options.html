@@ -1,0 +1,151 @@
+<h2>메시지 전송 후 — 어떻게 될까?</h2>
+<p class="subtitle">하단 AI 바에서 질문을 입력하고 Enter를 누른 후의 흐름</p>
+
+<div class="section">
+  <h3>공통: 하단 바 (대기 상태)</h3>
+  <div class="mockup">
+    <div class="mockup-header">평소 화면 — 하단 AI 바</div>
+    <div class="mockup-body" style="position:relative; height:280px; background:#1a1a2e;">
+      <!-- Main content area -->
+      <div style="padding:16px; color:#ccc; font-size:13px;">
+        <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 데이터셋: 서울시 화재통계 (2,340건)</div>
+        <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 데이터셋: 소방서 출동현황 (5,120건)</div>
+        <div style="background:#252540; border-radius:8px; padding:12px;">📊 데이터셋: 건축물 안전등급 (890건)</div>
+      </div>
+      <!-- AI Bar -->
+      <div style="position:absolute; bottom:0; left:0; right:0; background:#252540; border-top:1px solid #3a3a5c; padding:8px 16px; display:flex; align-items:center; gap:8px;">
+        <span style="color:#818cf8;">✦</span>
+        <span style="color:#666; font-size:13px; flex:1;">AI에게 무엇이든 물어보세요... (⌘K)</span>
+        <span style="color:#555; font-size:11px;">↵</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin: 1.5rem 0;">↓ 사용자가 "화재통계 데이터셋 요약해줘"를 입력하고 Enter ↓</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>인라인 확장 (위로 밀어올림)</h3>
+      <p>하단 바가 위로 확장되어 대화 패널이 됨. 메인 콘텐츠는 위로 밀리거나 줄어듦.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">전송 후 — 하단에서 위로 확장</div>
+        <div class="mockup-body" style="position:relative; height:320px; background:#1a1a2e;">
+          <!-- Shrunk main content -->
+          <div style="padding:12px; color:#ccc; font-size:12px; height:100px; overflow:hidden; opacity:0.6;">
+            <div style="background:#252540; border-radius:6px; padding:8px; margin-bottom:6px;">📊 서울시 화재통계</div>
+            <div style="background:#252540; border-radius:6px; padding:8px;">📊 소방서 출동현황</div>
+          </div>
+          <!-- Expanded AI panel from bottom -->
+          <div style="position:absolute; bottom:0; left:0; right:0; background:#1e1e36; border-top:2px solid #818cf8; border-radius:12px 12px 0 0;">
+            <div style="padding:8px 16px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3a3a5c;">
+              <span style="color:#818cf8; font-size:13px; font-weight:600;">✦ AI 어시스턴트</span>
+              <div style="display:flex; gap:8px;">
+                <span style="color:#666; font-size:11px; cursor:pointer;">↗ 확장</span>
+                <span style="color:#666; font-size:11px; cursor:pointer;">✕</span>
+              </div>
+            </div>
+            <div style="padding:12px 16px;">
+              <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:8px; font-size:12px; color:#ccc;">
+                <span style="color:#818cf8;">나:</span> 화재통계 데이터셋 요약해줘
+              </div>
+              <div style="background:#2a2a4a; border-radius:8px; padding:10px; margin-bottom:8px; font-size:12px; color:#ddd; border-left:2px solid #818cf8;">
+                <span style="color:#818cf8;">AI:</span> 서울시 화재통계 데이터셋은 2,340건의 레코드로 구성되어 있으며...
+              </div>
+            </div>
+            <div style="padding:8px 16px; border-top:1px solid #3a3a5c; display:flex; gap:8px; align-items:center;">
+              <span style="color:#818cf8;">✦</span>
+              <div style="flex:1; background:#252540; border-radius:6px; padding:8px; font-size:12px; color:#888;">이어서 질문하세요...</div>
+              <span style="color:#818cf8; font-size:12px;">↵</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top:8px; font-size:13px; color:#999;">💬 짧은 대화는 여기서 해결. 길어지면 "↗ 확장" 버튼으로 풀스크린 전환.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>우측 사이드 패널 오픈</h3>
+      <p>메시지를 보내면 우측에 사이드 패널이 열리며, 거기서 대화가 이어짐. 하단 바는 "대화 중..." 상태로 변경.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">전송 후 — 우측 사이드 패널</div>
+        <div class="mockup-body" style="position:relative; height:320px; background:#1a1a2e; display:flex;">
+          <!-- Main content (narrowed) -->
+          <div style="flex:1; padding:12px; color:#ccc; font-size:12px;">
+            <div style="background:#252540; border-radius:6px; padding:8px; margin-bottom:6px;">📊 서울시 화재통계</div>
+            <div style="background:#252540; border-radius:6px; padding:8px; margin-bottom:6px;">📊 소방서 출동현황</div>
+            <div style="background:#252540; border-radius:6px; padding:8px;">📊 건축물 안전등급</div>
+            <!-- Bottom bar shows active state -->
+            <div style="position:absolute; bottom:0; left:0; right:340px; background:#252540; border-top:1px solid #818cf8; padding:8px 16px; display:flex; align-items:center; gap:8px;">
+              <span style="color:#818cf8;">✦</span>
+              <span style="color:#818cf8; font-size:12px;">대화 중 — 우측 패널에서 이어가는 중</span>
+            </div>
+          </div>
+          <!-- Side panel -->
+          <div style="width:340px; background:#1e1e36; border-left:2px solid #818cf8;">
+            <div style="padding:10px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3a3a5c;">
+              <span style="color:#818cf8; font-size:13px; font-weight:600;">✦ AI 어시스턴트</span>
+              <span style="color:#666; font-size:11px; cursor:pointer;">✕</span>
+            </div>
+            <div style="padding:12px 14px;">
+              <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:8px; font-size:12px; color:#ccc;">
+                <span style="color:#818cf8;">나:</span> 화재통계 데이터셋 요약해줘
+              </div>
+              <div style="background:#2a2a4a; border-radius:8px; padding:10px; font-size:12px; color:#ddd; border-left:2px solid #818cf8;">
+                <span style="color:#818cf8;">AI:</span> 서울시 화재통계 데이터셋은 2,340건의 레코드로 구성되어 있으며...
+              </div>
+            </div>
+            <div style="position:absolute; bottom:0; right:0; width:340px; padding:8px 14px; border-top:1px solid #3a3a5c; background:#1e1e36; display:flex; gap:8px; align-items:center;">
+              <div style="flex:1; background:#252540; border-radius:6px; padding:8px; font-size:12px; color:#888;">이어서 질문하세요...</div>
+              <span style="color:#818cf8; font-size:12px;">↵</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top:8px; font-size:13px; color:#999;">📋 기존 사이드 패널 활용. 작업 화면을 보면서 대화 가능. 하단 바는 상태 표시.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>하단 바 + 상황별 자동 전환</h3>
+      <p>짧은 응답(1-2문장)은 하단 바 위에 <strong>토스트/말풍선</strong>으로 표시. 긴 응답이면 자동으로 사이드 패널이 열림. 대화 복잡도에 따라 적응.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">짧은 응답 — 말풍선으로 인라인 표시</div>
+        <div class="mockup-body" style="position:relative; height:160px; background:#1a1a2e;">
+          <div style="padding:12px; color:#ccc; font-size:12px;">
+            <div style="background:#252540; border-radius:6px; padding:8px; margin-bottom:6px;">📊 서울시 화재통계 (2,340건)</div>
+            <div style="background:#252540; border-radius:6px; padding:8px;">📊 소방서 출동현황 (5,120건)</div>
+          </div>
+          <!-- Toast/bubble response -->
+          <div style="position:absolute; bottom:52px; left:16px; right:16px; background:#2a2a4a; border:1px solid #818cf8; border-radius:10px; padding:10px 14px; font-size:12px; color:#ddd; box-shadow:0 -4px 20px rgba(129,140,248,0.15);">
+            <span style="color:#818cf8;">✦</span> 2,340건, 기간 2019-2024, 주요 컬럼: 발생일시, 화재유형, 피해규모, 관할서
+            <span style="color:#666; font-size:11px; float:right; cursor:pointer;">↗ 대화 열기</span>
+          </div>
+          <div style="position:absolute; bottom:0; left:0; right:0; background:#252540; border-top:1px solid #3a3a5c; padding:8px 16px; display:flex; align-items:center; gap:8px;">
+            <span style="color:#818cf8;">✦</span>
+            <div style="flex:1; background:#1e1e36; border-radius:6px; padding:8px; font-size:12px; color:#888;">이어서 질문하세요...</div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup" style="margin-top:8px;">
+        <div class="mockup-header">긴 응답 — 자동으로 사이드 패널 전환</div>
+        <div class="mockup-body" style="position:relative; height:100px; background:#1a1a2e; display:flex; align-items:center; justify-content:center;">
+          <p style="color:#666; font-size:13px;">→ 긴 분석 결과는 B안처럼 사이드 패널이 자동으로 열림</p>
+        </div>
+      </div>
+      <p style="margin-top:8px; font-size:13px; color:#999;">🎯 가장 스마트하지만 구현 복잡도 높음. "자동 전환" 기준 설정 필요.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem; padding: 1.2rem; border-radius: 8px; background: rgba(99,102,241,0.08); border-left: 3px solid rgba(99,102,241,0.5);">
+  <h3 style="margin-top:0;">💡 추천: A (인라인 확장)</h3>
+  <p style="margin:0;">가장 직관적이고 자연스러운 흐름입니다. 하단 바에서 시작한 대화가 같은 위치에서 확장되므로 시선 이동이 최소화됩니다. 길어지면 "↗ 확장" 버튼으로 풀스크린 전환할 수 있어 유연성도 확보됩니다. C는 매력적이지만 "자동 전환" 기준이 모호해서 사용자가 혼란스러울 수 있습니다.</p>
+</div>

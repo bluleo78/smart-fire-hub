@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type { AIMode } from '../../types/ai';
 import { useAI } from './AIProvider';
 import { AIStatusChipDropdown } from './AIStatusChipDropdown';
+import { SideIcon, FullscreenIcon } from './AIChipIcons';
 
 type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'fullscreen';
 
@@ -53,23 +54,6 @@ const chipStyles: Record<ChipState, React.CSSProperties> = {
     boxShadow: '0 2px 8px rgba(129,140,248,0.3)',
   },
 };
-
-function SideIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="shrink-0">
-      <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-      <line x1="10" y1="1" x2="10" y2="15" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function FullscreenIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="shrink-0">
-      <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.15" />
-    </svg>
-  );
-}
 
 function StatusDot() {
   return (
@@ -185,6 +169,13 @@ export function AIStatusChip() {
   const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputFocusedRef = useRef(false);
 
+  useEffect(() => {
+    return () => {
+      clearTimeout(hoverTimerRef.current);
+      clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
   const handleMouseEnter = useCallback(() => {
     clearTimeout(closeTimerRef.current);
     hoverTimerRef.current = setTimeout(() => setShowDropdown(true), 200);
@@ -268,6 +259,7 @@ export function AIStatusChip() {
         <span>{label}</span>
         {showProgressBar && <ProgressBar />}
       </div>
+      <span className="sr-only" aria-live="polite">{label}</span>
       {showDropdown && (
         <AIStatusChipDropdown
           isAIOpen={isOpen}

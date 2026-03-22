@@ -1,0 +1,133 @@
+<h2>최소 공간 + 항상 보이는 AI 진입점</h2>
+<p class="subtitle">공간은 거의 차지하지 않으면서 존재감을 유지하는 방법들</p>
+
+<div class="options">
+  <!-- Option A -->
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Edge Tab (화면 가장자리 탭)</h3>
+      <p>화면 우측 또는 하단 가장자리에 붙은 <strong>반원형 탭</strong>. 클릭하면 사이드 패널이 열림. 3~4px만 차지.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">우측 가장자리 AI 탭</div>
+        <div class="mockup-body" style="position:relative; height:250px; background:#1a1a2e; overflow:hidden;">
+          <div style="padding:16px; color:#ccc; font-size:13px;">
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 서울시 화재통계 (2,340건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 소방서 출동현황 (5,120건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px;">📊 건축물 안전등급 (890건)</div>
+          </div>
+          <!-- Edge tab -->
+          <div style="position:absolute; right:0; top:50%; transform:translateY(-50%); width:28px; height:80px; background:linear-gradient(135deg, #818cf8, #6366f1); border-radius:12px 0 0 12px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:-2px 0 12px rgba(129,140,248,0.3);">
+            <span style="color:white; font-size:14px; writing-mode:vertical-rl;">✦ AI</span>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:13px; color:#999; margin-top:8px;">차지 공간: ~28px 폭. 콘텐츠를 가리지 않음. 단, 시각적 임팩트가 약할 수 있음.</p>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Smart Mini FAB (컨텍스트 인식 미니 버튼)</h3>
+      <p>기존 FAB보다 훨씬 작은 <strong>미니 아이콘(36px)</strong>이 우하단에 위치. 스크롤/페이지 전환에 따라 <strong>위치가 스마트하게 조정</strong>되어 콘텐츠를 가리지 않음. 펄스 애니메이션으로 생동감.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">스마트 미니 FAB — 평상시</div>
+        <div class="mockup-body" style="position:relative; height:250px; background:#1a1a2e;">
+          <div style="padding:16px; color:#ccc; font-size:13px;">
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 서울시 화재통계 (2,340건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 소방서 출동현황 (5,120건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px;">📊 건축물 안전등급 (890건)</div>
+          </div>
+          <!-- Mini FAB -->
+          <div style="position:absolute; right:16px; bottom:16px; width:36px; height:36px; background:linear-gradient(135deg, #818cf8, #6366f1); border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 2px 12px rgba(129,140,248,0.4); animation: pulse 2s infinite;">
+            <span style="color:white; font-size:16px;">✦</span>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:13px; color:#999; margin-top:8px;">차지 공간: 36x36px. 이전 FAB 문제 해결: 크기 축소 + 콘텐츠 감지로 위치 자동 조정.</p>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Header AI Chip (헤더 내 AI 칩)</h3>
+      <p>메인 콘텐츠 영역의 <strong>페이지 헤더/브레드크럼 옆</strong>에 AI 칩 배지를 배치. 기존 헤더 공간을 활용하므로 추가 영역 불필요. 클릭하면 사이드 패널 오픈.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">페이지 헤더에 AI 칩</div>
+        <div class="mockup-body" style="position:relative; height:250px; background:#1a1a2e;">
+          <!-- Page header with AI chip -->
+          <div style="padding:12px 16px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #3a3a5c;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="color:#999; font-size:13px;">데이터셋</span>
+              <span style="color:#666;">›</span>
+              <span style="color:#eee; font-size:14px; font-weight:600;">서울시 화재통계</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <!-- AI Chip -->
+              <div style="display:flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.15), rgba(99,102,241,0.1)); border:1px solid rgba(129,140,248,0.3); border-radius:20px; padding:5px 12px; cursor:pointer;">
+                <span style="color:#818cf8; font-size:12px;">✦</span>
+                <span style="color:#818cf8; font-size:12px; font-weight:500;">AI</span>
+                <span style="background:#818cf8; color:white; font-size:9px; padding:1px 5px; border-radius:8px;">⌘K</span>
+              </div>
+              <!-- Other header actions -->
+              <span style="color:#666; font-size:13px;">⚙</span>
+            </div>
+          </div>
+          <div style="padding:16px; color:#ccc; font-size:13px;">
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 서울시 화재통계 (2,340건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 소방서 출동현황 (5,120건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px;">📊 건축물 안전등급 (890건)</div>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:13px; color:#999; margin-top:8px;">차지 공간: 0px 추가 (기존 헤더 활용). 가장 절약적이지만 존재감이 상대적으로 약할 수 있음.</p>
+    </div>
+  </div>
+
+  <!-- Option D -->
+  <div class="option" data-choice="d" onclick="toggleSelect(this)">
+    <div class="letter">D</div>
+    <div class="content">
+      <h3>Glow Strip (하단 빛나는 라인)</h3>
+      <p>화면 최하단에 <strong>2~3px 높이의 그라데이션 라인</strong>. AI가 대기 중임을 암시하는 은은한 빛 효과. 클릭하면 입력 바가 위로 올라오고, 다시 클릭하면 라인으로 축소.</p>
+      <div class="mockup" style="margin-top:12px;">
+        <div class="mockup-header">하단 Glow Strip — 대기 상태</div>
+        <div class="mockup-body" style="position:relative; height:250px; background:#1a1a2e;">
+          <div style="padding:16px; color:#ccc; font-size:13px;">
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 서울시 화재통계 (2,340건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px;">📊 소방서 출동현황 (5,120건)</div>
+            <div style="background:#252540; border-radius:8px; padding:12px;">📊 건축물 안전등급 (890건)</div>
+          </div>
+          <!-- Glow strip -->
+          <div style="position:absolute; bottom:0; left:0; right:0; height:3px; background:linear-gradient(90deg, transparent, #818cf8, #6366f1, #818cf8, transparent); cursor:pointer; box-shadow:0 0 8px rgba(129,140,248,0.4), 0 0 20px rgba(129,140,248,0.15);"></div>
+        </div>
+      </div>
+      <div class="mockup" style="margin-top:8px;">
+        <div class="mockup-header">클릭 후 — 입력 바 확장</div>
+        <div class="mockup-body" style="position:relative; height:100px; background:#1a1a2e;">
+          <div style="padding:12px; color:#ccc; font-size:12px; opacity:0.5;">
+            <div style="background:#252540; border-radius:6px; padding:8px;">📊 건축물 안전등급 (890건)</div>
+          </div>
+          <!-- Expanded input bar -->
+          <div style="position:absolute; bottom:0; left:0; right:0; background:#1e1e36; border-top:2px solid #818cf8; padding:10px 16px; display:flex; align-items:center; gap:8px; box-shadow:0 -4px 20px rgba(129,140,248,0.15);">
+            <span style="color:#818cf8; font-size:14px;">✦</span>
+            <div style="flex:1; background:#252540; border-radius:8px; padding:8px 12px; font-size:13px; color:#888;">AI에게 질문하세요...</div>
+            <span style="color:#666; font-size:11px;">ESC로 닫기</span>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:13px; color:#999; margin-top:8px;">차지 공간: 3px. 존재감은 빛으로 표현. 클릭하면 입력 바로 확장 → 전송하면 사이드 패널 오픈.</p>
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 2px 12px rgba(129,140,248,0.4); }
+  50% { box-shadow: 0 2px 20px rgba(129,140,248,0.7); }
+}
+</style>

@@ -169,9 +169,12 @@ public class AiClassifyExecutor {
         }
       }
 
-      // 4. Insert all output rows
+      // 4. Insert all output rows (columnTypes로 타입 캐스팅: AI는 모든 값을 문자열로 반환)
       if (!outputRows.isEmpty()) {
-        dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows);
+        Map<String, String> columnTypes = new HashMap<>();
+        columnTypes.put("source_id", "BIGINT");
+        config.outputColumns().forEach(col -> columnTypes.put(col.name(), col.type()));
+        dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows, columnTypes);
       }
 
       if (isReplace) {

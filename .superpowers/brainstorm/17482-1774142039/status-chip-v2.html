@@ -1,0 +1,233 @@
+<h2>AI 상태 칩 — 2단계 인터랙션</h2>
+<p class="subtitle">호버 = 상태 확인 / 클릭 = AI 모드 진입</p>
+
+<div class="section">
+  <h3>1. 기본 상태 — 칩만 보임</h3>
+  <div class="mockup">
+    <div class="mockup-header">AI 대기 중 — 상단 상태 칩</div>
+    <div class="mockup-body" style="position:relative; height:280px; background:#1a1a2e; display:flex;">
+      <!-- Sidebar -->
+      <div style="width:48px; background:#151528; border-right:1px solid #3a3a5c; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:16px;">
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px;">🔥</div>
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#666;">📊</div>
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#666;">⚡</div>
+      </div>
+      <!-- Main content -->
+      <div style="flex:1; position:relative;">
+        <!-- STATUS CHIP - floating, not edge-attached -->
+        <div style="position:absolute; top:8px; left:50%; transform:translateX(-50%); display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.15), rgba(99,102,241,0.1)); border:1px solid rgba(129,140,248,0.3); border-radius:20px; padding:5px 14px; cursor:pointer; backdrop-filter:blur(8px); z-index:10;">
+          <span style="color:#818cf8; font-size:11px;">✦</span>
+          <span style="color:#a5b4fc; font-size:11px; font-weight:500;">AI</span>
+          <div style="width:6px; height:6px; background:#4ade80; border-radius:50%;"></div>
+        </div>
+        <!-- Page content -->
+        <div style="padding:36px 16px 16px;">
+          <div style="color:#999; font-size:12px; margin-bottom:12px;">데이터셋 › 전체 목록</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px; color:#ccc; font-size:13px;">📊 서울시 화재통계 (2,340건)</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px; color:#ccc; font-size:13px;">📊 소방서 출동현황 (5,120건)</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; color:#ccc; font-size:13px;">📊 건축물 안전등급 (890건)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="color:#999; font-size:12px; margin-top:4px;">칩 크기: ~80x28px. 녹색 점 = AI 대기 중.</p>
+</div>
+
+<div class="section">
+  <h3>2. 칩 상태 변화 (AI 모드/작업별)</h3>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+    <div class="mockup">
+      <div class="mockup-header">대기 중</div>
+      <div class="mockup-body" style="height:50px; background:#1a1a2e; display:flex; align-items:center; justify-content:center;">
+        <div style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.15), rgba(99,102,241,0.1)); border:1px solid rgba(129,140,248,0.3); border-radius:20px; padding:5px 14px;">
+          <span style="color:#818cf8; font-size:11px;">✦</span>
+          <span style="color:#a5b4fc; font-size:11px;">AI</span>
+          <div style="width:6px; height:6px; background:#4ade80; border-radius:50%;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">응답 생성 중</div>
+      <div class="mockup-body" style="height:50px; background:#1a1a2e; display:flex; align-items:center; justify-content:center;">
+        <div style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.25), rgba(99,102,241,0.2)); border:1px solid rgba(129,140,248,0.5); border-radius:20px; padding:5px 14px; box-shadow:0 0 12px rgba(129,140,248,0.2);">
+          <span style="color:#818cf8; font-size:11px; animation:pulse-icon 1.5s ease-in-out infinite;">✦</span>
+          <span style="color:#c7d2fe; font-size:11px;">생성 중</span>
+          <div style="width:20px; height:3px; background:rgba(129,140,248,0.3); border-radius:2px; overflow:hidden;">
+            <div style="width:50%; height:100%; background:#818cf8; border-radius:2px; animation:slide 1s ease-in-out infinite;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">사이드 패널 열림</div>
+      <div class="mockup-body" style="height:50px; background:#1a1a2e; display:flex; align-items:center; justify-content:center;">
+        <div style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.3), rgba(99,102,241,0.25)); border:1px solid #818cf8; border-radius:20px; padding:5px 14px;">
+          <span style="color:#818cf8; font-size:11px;">✦</span>
+          <span style="color:#e0e7ff; font-size:11px;">사이드</span>
+          <span style="color:rgba(129,140,248,0.5); font-size:10px;">·</span>
+          <span style="color:#a5b4fc; font-size:10px;">3건</span>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">풀스크린 모드</div>
+      <div class="mockup-body" style="height:50px; background:#1a1a2e; display:flex; align-items:center; justify-content:center;">
+        <div style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, #818cf8, #6366f1); border:1px solid #818cf8; border-radius:20px; padding:5px 14px; box-shadow:0 2px 8px rgba(129,140,248,0.3);">
+          <span style="color:white; font-size:11px;">✦</span>
+          <span style="color:white; font-size:11px;">풀스크린</span>
+          <span style="color:rgba(255,255,255,0.5); font-size:10px;">·</span>
+          <span style="color:rgba(255,255,255,0.7); font-size:10px;">3건</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>3. 호버 — 상태 정보 확장 (읽기 전용)</h3>
+  <div class="mockup">
+    <div class="mockup-header">마우스 호버 시 — 상태 카드 드롭다운</div>
+    <div class="mockup-body" style="position:relative; height:280px; background:#1a1a2e; display:flex;">
+      <!-- Sidebar -->
+      <div style="width:48px; background:#151528; border-right:1px solid #3a3a5c; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:16px;">
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px;">🔥</div>
+      </div>
+      <div style="flex:1; position:relative;">
+        <!-- Chip (hover state) -->
+        <div style="position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:20;">
+          <div style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.25), rgba(99,102,241,0.2)); border:1px solid rgba(129,140,248,0.5); border-radius:20px; padding:5px 14px;">
+            <span style="color:#818cf8; font-size:11px;">✦</span>
+            <span style="color:#c7d2fe; font-size:11px;">AI</span>
+            <div style="width:6px; height:6px; background:#4ade80; border-radius:50%;"></div>
+          </div>
+          <!-- Dropdown status card -->
+          <div style="position:absolute; top:32px; left:50%; transform:translateX(-50%); width:260px; background:#1e1e36; border:1px solid rgba(129,140,248,0.3); border-radius:12px; padding:14px; box-shadow:0 8px 32px rgba(0,0,0,0.4); backdrop-filter:blur(12px);">
+            <!-- Status -->
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+              <span style="color:#a5b4fc; font-size:12px; font-weight:600;">AI 상태</span>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <div style="width:6px; height:6px; background:#4ade80; border-radius:50%;"></div>
+                <span style="color:#4ade80; font-size:11px;">대기 중</span>
+              </div>
+            </div>
+            <!-- Session info -->
+            <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:8px;">
+              <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                <span style="color:#888; font-size:10px;">현재 세션</span>
+                <span style="color:#ccc; font-size:10px;">화재통계 분석</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                <span style="color:#888; font-size:10px;">대화 수</span>
+                <span style="color:#ccc; font-size:10px;">3건</span>
+              </div>
+              <div style="display:flex; justify-content:space-between;">
+                <span style="color:#888; font-size:10px;">토큰 사용</span>
+                <span style="color:#ccc; font-size:10px;">2.1k / 200k</span>
+              </div>
+            </div>
+            <!-- Quick hint -->
+            <div style="display:flex; align-items:center; justify-content:center; gap:6px; padding:6px; color:#666; font-size:10px;">
+              <span>클릭하여 대화 열기</span>
+              <span style="background:#3a3a5c; padding:1px 5px; border-radius:3px; font-size:9px;">⌘K</span>
+            </div>
+          </div>
+        </div>
+        <!-- Dimmed content behind -->
+        <div style="padding:36px 16px 16px; opacity:0.5;">
+          <div style="color:#999; font-size:12px; margin-bottom:12px;">데이터셋 › 전체 목록</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px; color:#ccc; font-size:13px;">📊 서울시 화재통계 (2,340건)</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px; color:#ccc; font-size:13px;">📊 소방서 출동현황 (5,120건)</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; color:#ccc; font-size:13px;">📊 건축물 안전등급 (890건)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>4. 클릭 — 사이드 패널 오픈</h3>
+  <div class="mockup">
+    <div class="mockup-header">칩 클릭 → 사이드 패널에서 대화</div>
+    <div class="mockup-body" style="position:relative; height:280px; background:#1a1a2e; display:flex;">
+      <!-- Sidebar -->
+      <div style="width:48px; background:#151528; border-right:1px solid #3a3a5c; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:16px;">
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px;">🔥</div>
+      </div>
+      <!-- Main -->
+      <div style="flex:1; position:relative;">
+        <!-- Chip - active state -->
+        <div style="position:absolute; top:8px; left:35%; transform:translateX(-50%); display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(129,140,248,0.3), rgba(99,102,241,0.25)); border:1px solid #818cf8; border-radius:20px; padding:5px 14px; z-index:10;">
+          <span style="color:#818cf8; font-size:11px;">✦</span>
+          <span style="color:#e0e7ff; font-size:11px;">사이드</span>
+          <span style="color:rgba(129,140,248,0.5); font-size:10px;">·</span>
+          <span style="color:#a5b4fc; font-size:10px;">3건</span>
+        </div>
+        <div style="padding:36px 16px 16px;">
+          <div style="color:#999; font-size:12px; margin-bottom:12px;">데이터셋 › 전체 목록</div>
+          <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:6px; color:#ccc; font-size:12px;">📊 서울시 화재통계</div>
+          <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:6px; color:#ccc; font-size:12px;">📊 소방서 출동현황</div>
+        </div>
+      </div>
+      <!-- Side panel -->
+      <div style="width:320px; background:#1e1e36; border-left:1px solid rgba(129,140,248,0.3);">
+        <div style="padding:10px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3a3a5c;">
+          <span style="color:#818cf8; font-size:13px; font-weight:600;">✦ AI 어시스턴트</span>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <span style="color:#666; font-size:10px; cursor:pointer; background:#252540; padding:2px 6px; border-radius:4px;">↗</span>
+          </div>
+        </div>
+        <div style="padding:12px 14px;">
+          <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:8px; font-size:12px; color:#ccc;">
+            <span style="color:#818cf8;">나:</span> 화재통계 데이터셋 요약해줘
+          </div>
+          <div style="background:#2a2a4a; border-radius:8px; padding:10px; font-size:12px; color:#ddd; border-left:2px solid #818cf8;">
+            <span style="color:#818cf8;">AI:</span> 서울시 화재통계 데이터셋은 2,340건의 레코드로 구성...
+          </div>
+        </div>
+        <div style="position:absolute; bottom:0; right:0; width:320px; padding:10px 14px; border-top:1px solid #3a3a5c; background:#1e1e36;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <div style="flex:1; background:#252540; border:1px solid #3a3a5c; border-radius:8px; padding:8px 12px; font-size:12px; color:#888;">메시지를 입력하세요...</div>
+            <div style="width:28px; height:28px; background:#818cf8; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; color:white;">↵</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem; padding: 1.2rem; border-radius: 8px; background: rgba(99,102,241,0.08); border-left: 3px solid rgba(99,102,241,0.5);">
+  <h3 style="margin-top:0;">💡 인터랙션 요약</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:13px; color:#ccc;">
+    <tr style="border-bottom:1px solid #3a3a5c;">
+      <th style="text-align:left; padding:8px; color:#818cf8;">동작</th>
+      <th style="text-align:left; padding:8px; color:#818cf8;">결과</th>
+    </tr>
+    <tr style="border-bottom:1px solid #2a2a4a;">
+      <td style="padding:8px;">그냥 보기</td>
+      <td style="padding:8px;">칩으로 AI 상태 확인 (대기/응답 중/모드)</td>
+    </tr>
+    <tr style="border-bottom:1px solid #2a2a4a;">
+      <td style="padding:8px;">호버</td>
+      <td style="padding:8px;">상태 카드 드롭다운 — 세션명, 대화 수, 토큰 사용량</td>
+    </tr>
+    <tr style="border-bottom:1px solid #2a2a4a;">
+      <td style="padding:8px;">클릭 (또는 ⌘K)</td>
+      <td style="padding:8px;">사이드 패널 열기/닫기 토글</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;">패널 내 ↗ 버튼</td>
+      <td style="padding:8px;">풀스크린 모드 전환</td>
+    </tr>
+  </table>
+</div>
+
+<style>
+@keyframes pulse-icon {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+</style>

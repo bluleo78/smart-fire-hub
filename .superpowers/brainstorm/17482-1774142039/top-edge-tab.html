@@ -1,0 +1,172 @@
+<h2>상단 Edge Tab — AI 상태 표시 + 모드 전환</h2>
+<p class="subtitle">메인 콘텐츠 영역 상단에 붙은 탭. 상태 표시 + 클릭으로 AI 모드 전환.</p>
+
+<div class="section">
+  <h3>1. 대기 상태 — 슬림 탭</h3>
+  <div class="mockup">
+    <div class="mockup-header">AI 대기 중 — 상단 탭이 은근히 존재</div>
+    <div class="mockup-body" style="position:relative; height:300px; background:#1a1a2e; display:flex;">
+      <!-- Sidebar hint -->
+      <div style="width:48px; background:#151528; border-right:1px solid #3a3a5c; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:16px;">
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px;">🔥</div>
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#666;">📊</div>
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#666;">⚡</div>
+      </div>
+      <!-- Main content -->
+      <div style="flex:1; position:relative;">
+        <!-- TOP EDGE TAB -->
+        <div style="position:absolute; top:0; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:8px; background:linear-gradient(135deg, #818cf8, #6366f1); border-radius:0 0 12px 12px; padding:4px 16px; cursor:pointer; box-shadow:0 2px 12px rgba(129,140,248,0.3); z-index:10;">
+          <span style="color:white; font-size:12px;">✦</span>
+          <span style="color:white; font-size:11px; font-weight:500;">AI 대기 중</span>
+          <span style="color:rgba(255,255,255,0.5); font-size:10px;">⌘K</span>
+        </div>
+        <!-- Page content -->
+        <div style="padding:28px 16px 16px;">
+          <div style="color:#999; font-size:12px; margin-bottom:12px;">데이터셋 › 전체 목록</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px; color:#ccc; font-size:13px;">📊 서울시 화재통계 (2,340건)</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; margin-bottom:8px; color:#ccc; font-size:13px;">📊 소방서 출동현황 (5,120건)</div>
+          <div style="background:#252540; border-radius:8px; padding:12px; color:#ccc; font-size:13px;">📊 건축물 안전등급 (890건)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>2. AI 활성 상태들</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">AI 응답 중 (스트리밍)</div>
+      <div class="mockup-body" style="position:relative; height:60px; background:#1a1a2e; display:flex; align-items:flex-start; justify-content:center;">
+        <div style="display:flex; align-items:center; gap:8px; background:linear-gradient(135deg, #818cf8, #6366f1); border-radius:0 0 12px 12px; padding:5px 16px; box-shadow:0 2px 16px rgba(129,140,248,0.4);">
+          <span style="color:white; font-size:12px; animation:spin 1s linear infinite;">✦</span>
+          <span style="color:white; font-size:11px; font-weight:500;">AI 응답 중...</span>
+          <div style="width:24px; height:3px; background:rgba(255,255,255,0.2); border-radius:2px; overflow:hidden;">
+            <div style="width:60%; height:100%; background:white; border-radius:2px; animation:progress 1.5s ease-in-out infinite;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">대화 세션 활성</div>
+      <div class="mockup-body" style="position:relative; height:60px; background:#1a1a2e; display:flex; align-items:flex-start; justify-content:center;">
+        <div style="display:flex; align-items:center; gap:8px; background:linear-gradient(135deg, #818cf8, #6366f1); border-radius:0 0 12px 12px; padding:5px 16px; box-shadow:0 2px 12px rgba(129,140,248,0.3);">
+          <span style="color:white; font-size:12px;">✦</span>
+          <span style="color:white; font-size:11px; font-weight:500;">대화 3건</span>
+          <span style="color:rgba(255,255,255,0.6); font-size:10px;">|</span>
+          <span style="color:rgba(255,255,255,0.7); font-size:10px;">열기</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>3. 클릭 시 — 사이드 패널 오픈 + 탭 상태 변경</h3>
+  <div class="mockup">
+    <div class="mockup-header">탭 클릭 → 우측 사이드 패널 오픈</div>
+    <div class="mockup-body" style="position:relative; height:300px; background:#1a1a2e; display:flex;">
+      <!-- Sidebar -->
+      <div style="width:48px; background:#151528; border-right:1px solid #3a3a5c; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:16px;">
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px;">🔥</div>
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#666;">📊</div>
+      </div>
+      <!-- Main (narrowed) -->
+      <div style="flex:1; position:relative;">
+        <!-- Tab changes to active state -->
+        <div style="position:absolute; top:0; left:40%; transform:translateX(-50%); display:flex; align-items:center; gap:8px; background:linear-gradient(135deg, #818cf8, #6366f1); border-radius:0 0 12px 12px; padding:5px 16px; cursor:pointer; box-shadow:0 2px 12px rgba(129,140,248,0.3); z-index:10;">
+          <span style="color:white; font-size:12px;">✦</span>
+          <span style="color:white; font-size:11px; font-weight:500;">AI 대화 중</span>
+          <span style="color:rgba(255,255,255,0.6); font-size:10px;">✕ 닫기</span>
+        </div>
+        <div style="padding:28px 16px 16px;">
+          <div style="color:#999; font-size:12px; margin-bottom:12px;">데이터셋 › 전체 목록</div>
+          <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:6px; color:#ccc; font-size:12px;">📊 서울시 화재통계 (2,340건)</div>
+          <div style="background:#252540; border-radius:8px; padding:10px; margin-bottom:6px; color:#ccc; font-size:12px;">📊 소방서 출동현황 (5,120건)</div>
+          <div style="background:#252540; border-radius:8px; padding:10px; color:#ccc; font-size:12px;">📊 건축물 안전등급 (890건)</div>
+        </div>
+      </div>
+      <!-- AI Side panel -->
+      <div style="width:320px; background:#1e1e36; border-left:2px solid #818cf8;">
+        <div style="padding:10px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3a3a5c;">
+          <span style="color:#818cf8; font-size:13px; font-weight:600;">✦ AI 어시스턴트</span>
+          <div style="display:flex; gap:8px;">
+            <span style="color:#666; font-size:10px; cursor:pointer;">↗ 풀스크린</span>
+          </div>
+        </div>
+        <div style="padding:12px 14px; display:flex; flex-direction:column; justify-content:center; align-items:center; height:180px; color:#666;">
+          <span style="font-size:24px; margin-bottom:8px;">✦</span>
+          <span style="font-size:13px;">무엇이든 물어보세요</span>
+          <span style="font-size:11px; margin-top:4px; color:#555;">데이터 분석, 요약, 질문...</span>
+        </div>
+        <div style="position:absolute; bottom:0; right:0; width:320px; padding:10px 14px; border-top:1px solid #3a3a5c; background:#1e1e36;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <div style="flex:1; background:#252540; border:1px solid #3a3a5c; border-radius:8px; padding:8px 12px; font-size:12px; color:#888;">메시지를 입력하세요...</div>
+            <div style="width:28px; height:28px; background:#818cf8; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; color:white; cursor:pointer;">↵</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>4. 풀스크린 AI 모드</h3>
+  <div class="mockup">
+    <div class="mockup-header">풀스크린 전환 시 — 탭이 "돌아가기" 역할</div>
+    <div class="mockup-body" style="position:relative; height:280px; background:#1a1a2e; display:flex;">
+      <!-- Sidebar -->
+      <div style="width:48px; background:#151528; border-right:1px solid #3a3a5c; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:16px;">
+        <div style="width:28px; height:28px; background:#252540; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px;">🔥</div>
+      </div>
+      <!-- Fullscreen AI -->
+      <div style="flex:1; position:relative;">
+        <!-- Tab becomes "back" -->
+        <div style="position:absolute; top:0; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:8px; background:#3a3a5c; border-radius:0 0 12px 12px; padding:5px 16px; cursor:pointer; z-index:10;">
+          <span style="color:#ccc; font-size:11px;">← 작업 화면으로</span>
+        </div>
+        <div style="max-width:600px; margin:32px auto 0; padding:0 16px;">
+          <div style="text-align:center; margin-bottom:16px;">
+            <span style="color:#818cf8; font-size:28px;">✦</span>
+            <h3 style="color:#eee; font-size:16px; margin:8px 0 4px;">AI 어시스턴트</h3>
+            <span style="color:#666; font-size:12px;">Smart Fire Hub의 데이터를 함께 탐색하세요</span>
+          </div>
+          <div style="background:#252540; border-radius:8px; padding:10px 14px; margin-bottom:8px; font-size:12px; color:#ccc;">
+            <span style="color:#818cf8;">나:</span> 화재통계 데이터셋 요약해줘
+          </div>
+          <div style="background:#2a2a4a; border-radius:8px; padding:10px 14px; font-size:12px; color:#ddd; border-left:2px solid #818cf8;">
+            <span style="color:#818cf8;">AI:</span> 서울시 화재통계 데이터셋은 2,340건의 레코드로 구성되어 있습니다...
+          </div>
+        </div>
+        <div style="position:absolute; bottom:0; left:0; right:0; padding:12px; max-width:600px; margin:0 auto;">
+          <div style="display:flex; gap:8px; align-items:center; background:#1e1e36; border:1px solid #3a3a5c; border-radius:10px; padding:10px 14px;">
+            <div style="flex:1; font-size:12px; color:#888;">이어서 질문하세요...</div>
+            <div style="width:28px; height:28px; background:#818cf8; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; color:white;">↵</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem; padding: 1.2rem; border-radius: 8px; background: rgba(99,102,241,0.08); border-left: 3px solid rgba(99,102,241,0.5);">
+  <h3 style="margin-top:0;">💡 이 접근법의 매력</h3>
+  <ul style="color:#ccc; font-size:13px; margin:0; padding-left:20px;">
+    <li><strong>공간: ~24px 높이</strong> — 거의 안 먹으면서 항상 보임</li>
+    <li><strong>상태 표시</strong> — 대기/응답 중/대화 N건 등 AI 상태를 실시간 반영</li>
+    <li><strong>모드 전환 허브</strong> — 클릭으로 사이드 패널, 풀스크린 등 자유 전환</li>
+    <li><strong>위치</strong> — 상단 중앙이라 시선이 자연스럽게 감 (브라우저 탭과 유사한 멘탈 모델)</li>
+    <li><strong>AI-First 전환</strong> — 탭이 점점 커지면서 메인 인터페이스로 진화 가능</li>
+  </ul>
+</div>
+
+<style>
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+</style>

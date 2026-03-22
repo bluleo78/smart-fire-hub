@@ -45,11 +45,19 @@ public class DataTableRowService {
     return "\"" + colName + "\"";
   }
 
-  /** Returns ST_SetSRID(ST_GeomFromGeoJSON(?), 4326) for GEOMETRY, otherwise ?. */
+  /** Returns type-casting placeholder: ?::timestamp, ?::boolean, ST_GeomFromGeoJSON(?), etc. */
   private static String insertPlaceholder(String colName, Map<String, String> columnTypes) {
-    if (isGeometry(colName, columnTypes)) {
-      return "ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)";
-    }
+    if (columnTypes == null) return "?";
+    String type = columnTypes.get(colName);
+    if (type == null) return "?";
+    String upper = type.toUpperCase();
+    if (upper.contains("GEOMETRY")) return "ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)";
+    if (upper.contains("TIMESTAMP")) return "?::timestamp";
+    if (upper.contains("BOOLEAN")) return "?::boolean";
+    if (upper.contains("BIGINT")) return "?::bigint";
+    if (upper.contains("INTEGER") || upper.contains("INT")) return "?::integer";
+    if (upper.contains("NUMERIC")) return "?::numeric";
+    if (upper.contains("DATE")) return "?::date";
     return "?";
   }
 

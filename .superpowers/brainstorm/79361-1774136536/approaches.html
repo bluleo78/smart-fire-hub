@@ -1,0 +1,93 @@
+<h2>AI 어시스턴트 진입점 — 3가지 접근법</h2>
+<p class="subtitle">각 레이아웃을 비교하고, 마음에 드는 방향을 클릭하세요</p>
+
+<div class="options">
+  <!-- Option A -->
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Command Bar 중심 (Spotlight 패턴)</h3>
+      <p>사이드바 버튼 대신 <strong>Cmd+K 커맨드 바</strong>를 AI의 주 진입점으로 승격. 화면 중앙 상단에 검색/AI 통합 입력창이 뜨고, 자연어로 질문하면 바로 AI 대화로 전환됨.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>장점</h4>
+          <ul>
+            <li>키보드 중심 — 파워유저 친화적</li>
+            <li>컨텐츠를 가리지 않음 (오버레이 방식)</li>
+            <li>검색 + AI 통합으로 자연스러운 발견</li>
+            <li>AI-First 전환 시 메인 인터페이스가 될 수 있음</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>단점</h4>
+          <ul>
+            <li>키보드 단축키를 모르면 발견성이 떨어짐</li>
+            <li>긴 대화에는 별도 패널이 여전히 필요</li>
+            <li>구현 복잡도가 높음</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Ambient AI Bar (하단 상시 바)</h3>
+      <p>화면 하단에 <strong>항상 보이는 슬림 AI 입력 바</strong>를 배치. 평소에는 한 줄 입력창 + AI 아이콘으로 존재감을 유지하고, 입력을 시작하면 위로 확장되어 대화 패널이 열림. 터미널의 프롬프트처럼 항상 "대기 중"인 느낌.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>장점</h4>
+          <ul>
+            <li>항상 보여서 존재감 최고 — 발견성 완벽</li>
+            <li>"AI가 곁에 있다"는 동반자 느낌 강함</li>
+            <li>클릭 한 번으로 즉시 입력 가능</li>
+            <li>AI-First 전환 시 자연스럽게 확장 가능</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>단점</h4>
+          <ul>
+            <li>하단 공간을 상시 차지 (~40px)</li>
+            <li>모바일에서 키보드와 충돌 가능성</li>
+            <li>기존 레이아웃 변경 필요</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid: 상단 AI 바 + 컨텍스트 인라인</h3>
+      <p>메인 콘텐츠 영역 상단에 <strong>AI 입력 바</strong>를 배치하고, 각 페이지의 데이터/차트 옆에 <strong>컨텍스트 AI 버튼</strong>을 함께 제공. 상단 바로 자유 질문, 인라인 버튼으로 "이 데이터셋 분석해줘" 같은 맥락 질문을 분리.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>장점</h4>
+          <ul>
+            <li>발견성 + 맥락 연속성 모두 확보</li>
+            <li>작업 흐름에 AI가 자연스럽게 녹아듦</li>
+            <li>AI-First 전환 시 인라인 AI가 각 기능을 대체 가능</li>
+            <li>점진적 확장에 유리 (페이지별로 AI 연동 추가)</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>단점</h4>
+          <ul>
+            <li>구현 범위가 가장 넓음 (진입점이 여러 곳)</li>
+            <li>일관성 유지가 어려울 수 있음</li>
+            <li>AI 버튼이 산재하면 오히려 복잡해질 수 있음</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem; padding: 1.2rem; border-radius: 8px; background: rgba(99,102,241,0.08); border-left: 3px solid rgba(99,102,241,0.5);">
+  <h3 style="margin-top:0;">💡 추천: B (Ambient AI Bar)</h3>
+  <p style="margin:0;">AI를 "핵심 동반자 → AI-First"로 전환하려는 방향과 가장 잘 맞습니다. 항상 보이는 AI 바는 사용자에게 "이 플랫폼은 AI와 함께 쓰는 것"이라는 메시지를 자연스럽게 전달합니다. 구현 난이도도 C보다 낮고, 키보드 단축키를 몰라도 되므로 A보다 접근성이 좋습니다.</p>
+</div>

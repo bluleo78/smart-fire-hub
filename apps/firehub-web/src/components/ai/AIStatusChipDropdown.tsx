@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type MutableRefObject } from 'react';
 import type { AIMode, AIMessage } from '../../types/ai';
+import { SideIcon, FullscreenIcon } from './AIChipIcons';
 
 interface AIStatusChipDropdownProps {
   isAIOpen: boolean;
@@ -16,23 +17,6 @@ interface AIStatusChipDropdownProps {
   currentSessionId: string | null;
   inputFocusedRef: MutableRefObject<boolean>;
   onCloseDropdown: () => void;
-}
-
-function SideIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="shrink-0">
-      <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-      <line x1="10" y1="1" x2="10" y2="15" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function FullscreenIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" className="shrink-0">
-      <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.15" />
-    </svg>
-  );
 }
 
 function StatusIndicator({ isStreaming, isThinking }: { isStreaming: boolean; isThinking: boolean }) {
@@ -206,7 +190,7 @@ export function AIStatusChipDropdown({
       ref={dropdownRef}
       role="menu"
       aria-label="AI 상태 및 제어"
-      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl transition-all duration-150"
+      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl transition-all duration-150"
       style={{
         opacity: visible ? 1 : 0,
         transform: `translateX(-50%) translateY(${visible ? '0' : '4px'})`,
