@@ -7,7 +7,6 @@ interface AIStatusChipDropdownProps {
   mode: AIMode;
   onModeChange: (mode: AIMode) => void;
   onOpen: () => void;
-  onClose: () => void;
   onNewSession: () => void;
   onSendMessage: (content: string) => void;
   messages: AIMessage[];
@@ -160,7 +159,6 @@ export function AIStatusChipDropdown({
   mode,
   onModeChange,
   onOpen,
-  onClose,
   onNewSession,
   onSendMessage,
   messages,
@@ -190,8 +188,11 @@ export function AIStatusChipDropdown({
       ref={dropdownRef}
       role="menu"
       aria-label="AI 상태 및 제어"
-      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl transition-all duration-150"
+      className="absolute w-80 rounded-xl border border-primary/30 bg-popover shadow-2xl backdrop-blur-xl transition-all duration-150"
       style={{
+        top: '100%',
+        left: '50%',
+        marginTop: 8,
         opacity: visible ? 1 : 0,
         transform: `translateX(-50%) translateY(${visible ? '0' : '4px'})`,
       }}
@@ -280,12 +281,7 @@ export function AIStatusChipDropdown({
         ) : (
           /* Open: mode switch 3-col + 2-col */
           <div className="space-y-1.5">
-            <div className="grid grid-cols-4 gap-1.5">
-              <ActionButton
-                icon={<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="4" y1="4" x2="12" y2="12" /><line x1="12" y1="4" x2="4" y2="12" /></svg>}
-                label="닫기"
-                onClick={onClose}
-              />
+            <div className="grid grid-cols-3 gap-1.5">
               <ActionButton
                 icon={<SideIcon />}
                 label="사이드"

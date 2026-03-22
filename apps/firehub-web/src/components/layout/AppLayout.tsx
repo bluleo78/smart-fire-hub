@@ -385,23 +385,20 @@ function AppLayoutInner() {
         </Button>
 
         {/* Page content + AI panel */}
-        <div className="flex flex-1 min-h-0">
-          {showFullscreen ? (
-            <div className="relative flex-1 flex">
-              {/* AI Status Chip */}
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20">
-                <AIStatusChip />
-              </div>
-              <Suspense fallback={<div className="flex-1 bg-background" />}>
-                <AIFullScreen />
-              </Suspense>
+        <div className="relative flex flex-1 min-h-0">
+          {/* AI Status Chip — 메인 콘텐츠 영역 상단 중앙 */}
+          <div className="absolute top-2 left-0 right-0 z-30 flex justify-center pointer-events-none">
+            <div className="pointer-events-auto">
+              <AIStatusChip />
             </div>
+          </div>
+
+          {showFullscreen ? (
+            <Suspense fallback={<div className="flex-1 bg-background" />}>
+              <AIFullScreen />
+            </Suspense>
           ) : (
-            <main className="relative flex-1 p-6 overflow-auto min-w-0">
-              {/* AI Status Chip */}
-              <div className="sticky top-0 left-1/2 -translate-x-1/2 z-20 w-fit mx-auto">
-                <AIStatusChip />
-              </div>
+            <main className="flex-1 p-6 pt-10 overflow-auto min-w-0">
               <Suspense fallback={<PageSkeleton />}>
                 <Outlet />
               </Suspense>

@@ -49,16 +49,14 @@ const chipStyles: Record<ChipState, React.CSSProperties> = {
     color: '#818cf8',
   },
   floating: {
-    background: 'rgba(129,140,248,0.2)',
-    border: '1px solid rgba(129,140,248,0.6)',
+    background: 'rgba(129,140,248,0.3)',
+    border: '1px solid #818cf8',
     color: '#818cf8',
-    boxShadow: '0 1px 6px rgba(129,140,248,0.15)',
   },
   fullscreen: {
-    background: 'linear-gradient(135deg, #818cf8, #6366f1)',
-    border: '1px solid transparent',
-    color: '#ffffff',
-    boxShadow: '0 2px 8px rgba(129,140,248,0.3)',
+    background: 'rgba(129,140,248,0.3)',
+    border: '1px solid #818cf8',
+    color: '#818cf8',
   },
 };
 
@@ -174,6 +172,7 @@ export function AIStatusChip() {
   } = useAI();
 
   const [showDropdown, setShowDropdown] = useState(false);
+  const [isHovering, setIsHovering] = useState(false); // hover wait animation
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputFocusedRef = useRef(false);
@@ -187,11 +186,18 @@ export function AIStatusChip() {
 
   const handleMouseEnter = useCallback(() => {
     clearTimeout(closeTimerRef.current);
-    hoverTimerRef.current = setTimeout(() => setShowDropdown(true), 200);
-  }, []);
+    if (!showDropdown) {
+      setIsHovering(true); // start border animation
+    }
+    hoverTimerRef.current = setTimeout(() => {
+      setIsHovering(false);
+      setShowDropdown(true);
+    }, 3000);
+  }, [showDropdown]);
 
   const handleMouseLeave = useCallback(() => {
     clearTimeout(hoverTimerRef.current);
+    setIsHovering(false); // stop border animation
     if (!inputFocusedRef.current) {
       closeTimerRef.current = setTimeout(() => setShowDropdown(false), 300);
     }
@@ -212,6 +218,10 @@ export function AIStatusChip() {
   const label = getChipLabel(state, currentSessionId, messages.length, currentToolName);
 
   const handleClick = () => {
+    // When dropdown is visible, ignore chip click (use dropdown buttons instead)
+    if (showDropdown) return;
+
+    // Mode rotation: closed → side → floating → fullscreen → closed
     if (!isOpen) {
       setMode('side');
       openAI();
@@ -220,9 +230,20 @@ export function AIStatusChip() {
     } else if (mode === 'floating') {
       setMode('fullscreen');
     } else {
-      // fullscreen -> close
       closeAI();
     }
+
+    // Reset hover animation and restart 2s timer
+    clearTimeout(hoverTimerRef.current);
+    setIsHovering(false);
+    // Brief delay to restart animation (allows CSS to reset)
+    requestAnimationFrame(() => {
+      setIsHovering(true);
+      hoverTimerRef.current = setTimeout(() => {
+        setIsHovering(false);
+        setShowDropdown(true);
+      }, 3000);
+    });
   };
 
   const style: React.CSSProperties = {
@@ -230,6 +251,8 @@ export function AIStatusChip() {
     borderRadius: 20,
     padding: '6px 16px',
     fontSize: 12,
+    minWidth: 140,
+    justifyContent: 'center',
     transition: 'all 200ms ease',
     cursor: 'pointer',
     userSelect: 'none',
@@ -243,11 +266,13 @@ export function AIStatusChip() {
 
   return (
     <div
-      className="relative z-20"
+      className="relative z-20 inline-flex flex-col items-center"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
+      {/* Chip trigger */}
       <div
+        className="relative overflow-hidden"
         role="button"
         tabIndex={0}
         onClick={handleClick}
@@ -269,15 +294,30 @@ export function AIStatusChip() {
         <ChipIcon state={state} />
         <span>{label}</span>
         {showProgressBar && <ProgressBar />}
+        {/* Hover progress bar — bottom of chip */}
+        {isHovering && (
+          <div
+            className="absolute bottom-0 left-2 right-2 overflow-hidden rounded-full"
+            style={{ height: 2 }}
+          >
+            <div
+              className="h-full rounded-full"
+              style={{
+                backgroundColor: '#818cf8',
+                animation: 'ai-chip-hover-progress 3s linear forwards',
+              }}
+            />
+          </div>
+        )}
       </div>
       <span className="sr-only" aria-live="polite">{label}</span>
+      {/* Dropdown — positioned relative to chip */}
       {showDropdown && (
         <AIStatusChipDropdown
           isAIOpen={isOpen}
           mode={mode}
           onModeChange={setMode}
           onOpen={openAI}
-          onClose={closeAI}
           onNewSession={startNewSession}
           onSendMessage={sendMessage}
           messages={messages}

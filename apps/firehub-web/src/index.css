@@ -159,3 +159,7 @@
   0% { transform: translateX(-100%); }
   100% { transform: translateX(300%); }
 }
+@keyframes ai-chip-hover-progress {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}
