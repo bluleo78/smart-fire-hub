@@ -8,6 +8,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Skeleton } from './components/ui/skeleton';
 import { Toaster } from './components/ui/sonner';
 import { AuthProvider } from './hooks/AuthContext';
+import { ThemeColorProvider } from './hooks/useThemeColor';
 
 // Lazy-loaded pages
 const LoginPage = lazy(() => import('./pages/LoginPage'));
@@ -47,6 +48,7 @@ function PageSkeleton() {
 function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <ThemeColorProvider>
       <BrowserRouter>
       <AuthProvider>
         <Routes>
@@ -89,6 +91,7 @@ function App() {
         <Toaster />
       </AuthProvider>
     </BrowserRouter>
+    </ThemeColorProvider>
     </ThemeProvider>
   );
 }

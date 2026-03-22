@@ -169,6 +169,54 @@
   }
 }
 
+/* ===== OCEAN THEME ===== */
+.theme-ocean {
+  --primary: oklch(0.52 0.14 195);
+  --ring: oklch(0.52 0.14 195);
+  --sidebar-primary: oklch(0.52 0.14 195);
+  --sidebar-ring: oklch(0.52 0.14 195);
+  --chart-1: oklch(0.52 0.14 195);
+  --accent: oklch(0.96 0.01 195);
+  --sidebar-accent: oklch(0.96 0.01 195);
+}
+.theme-ocean.dark, .dark .theme-ocean {
+  --primary: oklch(0.75 0.12 195);
+  --ring: oklch(0.75 0.12 195);
+  --background: oklch(0.12 0.015 210);
+  --card: oklch(0.75 0.12 195 / 3%);
+  --popover: oklch(0.17 0.015 210);
+  --sidebar: oklch(0.13 0.02 210);
+  --sidebar-primary: oklch(0.75 0.12 195);
+  --sidebar-ring: oklch(0.75 0.12 195);
+  --sidebar-accent: oklch(0.75 0.12 195 / 7%);
+  --chart-1: oklch(0.75 0.12 195);
+  --accent: oklch(0.75 0.12 195 / 7%);
+}
+
+/* ===== SUNSET THEME ===== */
+.theme-sunset {
+  --primary: oklch(0.55 0.18 50);
+  --ring: oklch(0.55 0.18 50);
+  --sidebar-primary: oklch(0.55 0.18 50);
+  --sidebar-ring: oklch(0.55 0.18 50);
+  --chart-1: oklch(0.55 0.18 50);
+  --accent: oklch(0.96 0.01 50);
+  --sidebar-accent: oklch(0.96 0.01 50);
+}
+.theme-sunset.dark, .dark .theme-sunset {
+  --primary: oklch(0.72 0.15 50);
+  --ring: oklch(0.72 0.15 50);
+  --background: oklch(0.12 0.015 40);
+  --card: oklch(0.72 0.15 50 / 3%);
+  --popover: oklch(0.17 0.015 40);
+  --sidebar: oklch(0.13 0.02 40);
+  --sidebar-primary: oklch(0.72 0.15 50);
+  --sidebar-ring: oklch(0.72 0.15 50);
+  --sidebar-accent: oklch(0.72 0.15 50 / 7%);
+  --chart-1: oklch(0.72 0.15 50);
+  --accent: oklch(0.72 0.15 50 / 7%);
+}
+
 /* Background gradient */
 .bg-gradient-main {
   background: radial-gradient(ellipse at top center, var(--background), var(--background));
@@ -178,6 +226,18 @@
 }
 .dark .bg-gradient-main {
   background: radial-gradient(ellipse at top center, oklch(0.16 0.02 280), oklch(0.11 0.015 280));
+}
+.theme-ocean .bg-gradient-main {
+  background: radial-gradient(ellipse at top center, oklch(1 0 0), oklch(0.97 0.005 195));
+}
+.dark .theme-ocean .bg-gradient-main, .theme-ocean.dark .bg-gradient-main {
+  background: radial-gradient(ellipse at top center, oklch(0.15 0.02 210), oklch(0.10 0.015 210));
+}
+.theme-sunset .bg-gradient-main {
+  background: radial-gradient(ellipse at top center, oklch(1 0 0), oklch(0.97 0.005 50));
+}
+.dark .theme-sunset .bg-gradient-main, .theme-sunset.dark .bg-gradient-main {
+  background: radial-gradient(ellipse at top center, oklch(0.15 0.02 40), oklch(0.10 0.015 40));
 }
 
 /* Card hover effect */
@@ -227,6 +287,28 @@
 .dark .logo-pulse {
   animation: logo-pulse-dark 3s ease-in-out infinite;
 }
+
+@keyframes logo-pulse-ocean {
+  0%, 100% { box-shadow: 0 3px 10px oklch(0.52 0.14 195 / 30%); }
+  50% { box-shadow: 0 3px 20px oklch(0.52 0.14 195 / 50%); }
+}
+@keyframes logo-pulse-ocean-dark {
+  0%, 100% { box-shadow: 0 3px 12px oklch(0.75 0.12 195 / 30%); }
+  50% { box-shadow: 0 3px 24px oklch(0.75 0.12 195 / 50%); }
+}
+.theme-ocean .logo-pulse { animation: logo-pulse-ocean 3s ease-in-out infinite; }
+.dark .theme-ocean .logo-pulse, .theme-ocean.dark .logo-pulse { animation: logo-pulse-ocean-dark 3s ease-in-out infinite; }
+
+@keyframes logo-pulse-sunset {
+  0%, 100% { box-shadow: 0 3px 10px oklch(0.55 0.18 50 / 30%); }
+  50% { box-shadow: 0 3px 20px oklch(0.55 0.18 50 / 50%); }
+}
+@keyframes logo-pulse-sunset-dark {
+  0%, 100% { box-shadow: 0 3px 12px oklch(0.72 0.15 50 / 30%); }
+  50% { box-shadow: 0 3px 24px oklch(0.72 0.15 50 / 50%); }
+}
+.theme-sunset .logo-pulse { animation: logo-pulse-sunset 3s ease-in-out infinite; }
+.dark .theme-sunset .logo-pulse, .theme-sunset.dark .logo-pulse { animation: logo-pulse-sunset-dark 3s ease-in-out infinite; }
 
 /* Tabular numbers */
 .tabular-nums {
