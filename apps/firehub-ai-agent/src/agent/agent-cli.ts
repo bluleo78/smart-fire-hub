@@ -18,6 +18,8 @@ import { SYSTEM_PROMPT } from './system-prompt.js';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
+import { FireHubApiClient } from '../mcp/api-client.js';
+import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
 
 /** CLI 트랜스크립트 파일 형식 */
 export interface CliTranscript {
@@ -106,6 +108,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const {
     message,
     userId,
+    fileIds,
     model,
     systemPrompt,
     apiKey,
@@ -121,6 +124,33 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const isResume = !!options.sessionId;
   const sessionId = options.sessionId ?? `cli-${randomUUID()}`;
   yield { type: 'init', sessionId };
+
+  // 첨부 파일 다운로드 및 메시지 변환
+  let enhancedMessage = message || '';
+  const sessionTag = `cli-${userId}-${Date.now()}`;
+
+  if (fileIds?.length) {
+    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
+    const { files, failed } = await downloadChatFiles(apiClient, fileIds, sessionTag);
+
+    if (failed > 0) {
+      console.warn(`[CLI Agent] ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
+    }
+
+    if (files.length > 0) {
+      const fileList = files
+        .map(
+          (f) =>
+            `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`,
+        )
+        .join('\n');
+
+      enhancedMessage =
+        `[첨부 파일]\n${fileList}\n\n` +
+        `위 파일들은 Read 도구로 읽을 수 있습니다.\n\n` +
+        (message || '첨부된 파일을 분석해주세요.');
+    }
+  }
 
   const transcriptPath = getTranscriptPath(sessionId);
 
@@ -138,7 +168,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   let assistantToolCalls: HistoryToolCall[] = [];
 
   // 사용자 메시지 기록
-  transcript.push({ id: `user-${Date.now()}`, role: 'user', content: message || '', timestamp: now() });
+  transcript.push({ id: `user-${Date.now()}`, role: 'user', content: enhancedMessage, timestamp: now() });
 
   const commitAssistant = () => {
     if (!assistantText && assistantToolCalls.length === 0) return;
@@ -174,7 +204,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     : SYSTEM_PROMPT;
 
   const cliArgs = [
-    '-p', message || '',
+    '-p', enhancedMessage,
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
@@ -326,6 +356,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     rl.close();
     child.kill('SIGTERM');
     await saveTranscript().catch(() => {});
+    if (fileIds?.length) {
+      await cleanupChatFiles(sessionTag).catch(() => {});
+    }
 
     const stderr = stderrChunks.join('');
     if (stderr) {
