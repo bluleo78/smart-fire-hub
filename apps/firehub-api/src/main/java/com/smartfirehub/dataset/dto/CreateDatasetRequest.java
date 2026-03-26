@@ -10,4 +10,11 @@ public record CreateDatasetRequest(
     Long categoryId,
     String datasetType,
     List<DatasetColumnRequest> columns,
-    Long sourcePipelineStepId) {}
+    Long sourcePipelineStepId) {
+
+  public CreateDatasetRequest {
+    if (datasetType == null) {
+      datasetType = "SOURCE";
+    }
+  }
+}
