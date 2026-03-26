@@ -25,7 +25,10 @@ export async function downloadChatFiles(
     fileIds.map(async (fileId) => {
       const info = await apiClient.getFileInfo(fileId);
       const content = await apiClient.downloadFile(fileId);
-      const localPath = path.join(sessionDir, info.originalName);
+      // Use safe ASCII filename to avoid Claude CLI Read tool issues with non-ASCII characters
+      const ext = path.extname(info.originalName) || '.bin';
+      const safeName = `file-${fileId}${ext}`;
+      const localPath = path.join(sessionDir, safeName);
       await fs.writeFile(localPath, content);
       return {
         originalName: info.originalName,
