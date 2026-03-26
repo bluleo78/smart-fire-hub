@@ -19,7 +19,7 @@ public class SseEmitterRegistry {
 
   private static final Logger log = LoggerFactory.getLogger(SseEmitterRegistry.class);
 
-  private static final long EMITTER_TIMEOUT = 300_000L;
+  private static final long EMITTER_TIMEOUT = 3_600_000L; // 1 hour (safety net; heartbeat detects dead connections every 30s)
   private static final int MAX_EMITTERS_PER_USER = 3;
 
   private final ConcurrentHashMap<Long, CopyOnWriteArrayList<SseEmitter>> emitters =

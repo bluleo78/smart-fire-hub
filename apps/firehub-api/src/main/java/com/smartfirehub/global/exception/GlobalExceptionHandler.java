@@ -31,6 +31,7 @@ import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -44,6 +45,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -379,6 +381,28 @@ public class GlobalExceptionHandler {
       return;
     }
     log.error("Unhandled IOException", ex);
+  }
+
+  @ExceptionHandler(AsyncRequestTimeoutException.class)
+  public void handleAsyncTimeout(
+      AsyncRequestTimeoutException ex, HttpServletRequest request, HttpServletResponse response) {
+    // SSE/streaming endpoints: response is already committed with text/event-stream,
+    // so we cannot write a JSON ErrorResponse. Just complete silently.
+    if (response.isCommitted()) {
+      log.debug("Async timeout on committed response (SSE disconnect): {}", request.getRequestURI());
+      return;
+    }
+    // Non-SSE async timeout: return 503
+    log.warn("Async request timeout: {}", request.getRequestURI());
+    response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+    response.setContentType("application/json");
+    try {
+      PrintWriter writer = response.getWriter();
+      writer.write("{\"status\":503,\"error\":\"Service Unavailable\",\"message\":\"Request timed out\"}");
+      writer.flush();
+    } catch (IOException e) {
+      log.debug("Failed to write timeout response: {}", e.getMessage());
+    }
   }
 
   @ExceptionHandler(Exception.class)
