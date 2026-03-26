@@ -127,11 +127,14 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
   // 첨부 파일 다운로드 및 메시지 변환
   let enhancedMessage = message || '';
-  const sessionTag = `cli-${userId}-${Date.now()}`;
+  // 사용자별 격리된 작업 디렉토리 (세션 간 파일 유지, 소스 코드 접근 차단)
+  const userWorkDir = join(homedir(), '.firehub', 'workspaces', String(userId));
+  await mkdir(userWorkDir, { recursive: true });
+  const chatFilesDir = join(userWorkDir, 'chat-files', String(Date.now()));
 
   if (fileIds?.length) {
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
-    const { files, failed } = await downloadChatFiles(apiClient, fileIds, sessionTag);
+    const { files, failed } = await downloadChatFiles(apiClient, fileIds, chatFilesDir);
 
     if (failed > 0) {
       console.warn(`[CLI Agent] ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
@@ -189,10 +192,6 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     await mkdir(getTranscriptDir(), { recursive: true });
     await writeFile(transcriptPath, JSON.stringify({ claudeSessionId, messages: transcript }));
   };
-
-  // 사용자별 격리된 작업 디렉토리 (세션 간 파일 유지, 소스 코드 접근 차단)
-  const userWorkDir = join(homedir(), '.firehub', 'workspaces', String(userId));
-  await mkdir(userWorkDir, { recursive: true });
 
   // 환경변수(API_BASE_URL, INTERNAL_SERVICE_TOKEN) 변경 시에도 최신 상태 유지
   const mcpConfigPath = join(userWorkDir, 'mcp.json');
@@ -357,7 +356,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     child.kill('SIGTERM');
     await saveTranscript().catch(() => {});
     if (fileIds?.length) {
-      await cleanupChatFiles(sessionTag).catch(() => {});
+      await cleanupChatFiles(chatFilesDir).catch(() => {});
     }
 
     const stderr = stderrChunks.join('');

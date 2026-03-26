@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
-import os from 'os';
 
 // Mock fs/promises
 vi.mock('fs/promises', () => ({
@@ -15,7 +14,7 @@ import fs from 'fs/promises';
 import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
 import type { FireHubApiClient } from '../mcp/api-client.js';
 
-const CHAT_FILES_DIR = path.join(os.tmpdir(), 'firehub-chat-files');
+const TEST_DIR = '/tmp/test-chat-files';
 
 function makeApiClient(overrides: Partial<FireHubApiClient> = {}): FireHubApiClient {
   return {
@@ -44,7 +43,7 @@ describe('downloadChatFiles', () => {
   // FD-01: successfully downloads files and returns DownloadedFile list
   it('FD-01: downloads files and returns correct DownloadedFile entries', async () => {
     const apiClient = makeApiClient();
-    const result = await downloadChatFiles(apiClient, [1], 'user1-123');
+    const result = await downloadChatFiles(apiClient, [1], TEST_DIR);
 
     expect(result.files).toHaveLength(1);
     expect(result.failed).toBe(0);
@@ -53,19 +52,16 @@ describe('downloadChatFiles', () => {
       mimeType: 'text/plain',
       fileCategory: 'TEXT',
       fileSize: 1024,
-      localPath: path.join(CHAT_FILES_DIR, 'user1-123', 'test.txt'),
+      localPath: path.join(TEST_DIR, 'test.txt'),
     });
   });
 
-  // FD-02: creates the session directory
-  it('FD-02: creates session directory with recursive option', async () => {
+  // FD-02: creates the download directory
+  it('FD-02: creates download directory with recursive option', async () => {
     const apiClient = makeApiClient();
-    await downloadChatFiles(apiClient, [1], 'user1-456');
+    await downloadChatFiles(apiClient, [1], TEST_DIR);
 
-    expect(fs.mkdir).toHaveBeenCalledWith(
-      path.join(CHAT_FILES_DIR, 'user1-456'),
-      { recursive: true },
-    );
+    expect(fs.mkdir).toHaveBeenCalledWith(TEST_DIR, { recursive: true });
   });
 
   // FD-03: writes file content to local path
@@ -75,12 +71,30 @@ describe('downloadChatFiles', () => {
       downloadFile: vi.fn().mockResolvedValue(fileContent),
     } as Partial<FireHubApiClient>);
 
-    await downloadChatFiles(apiClient, [1], 'user1-789');
+    await downloadChatFiles(apiClient, [1], TEST_DIR);
 
     expect(fs.writeFile).toHaveBeenCalledWith(
-      path.join(CHAT_FILES_DIR, 'user1-789', 'test.txt'),
+      path.join(TEST_DIR, 'test.txt'),
       fileContent,
     );
+  });
+
+  // FD-03b: sanitizes spaces in filenames
+  it('FD-03b: replaces spaces in filenames with underscores', async () => {
+    const apiClient = makeApiClient({
+      getFileInfo: vi.fn().mockResolvedValue({
+        id: 1,
+        originalName: '면담 노트.txt',
+        mimeType: 'text/plain',
+        fileCategory: 'TEXT',
+        fileSize: 1024,
+      }),
+    } as Partial<FireHubApiClient>);
+
+    const result = await downloadChatFiles(apiClient, [1], TEST_DIR);
+
+    expect(result.files[0].localPath).toBe(path.join(TEST_DIR, '면담_노트.txt'));
+    expect(result.files[0].originalName).toBe('면담 노트.txt');
   });
 
   // FD-04: handles partial failures with Promise.allSettled
@@ -99,7 +113,7 @@ describe('downloadChatFiles', () => {
       downloadFile: vi.fn().mockResolvedValue(Buffer.from('content')),
     } as Partial<FireHubApiClient>);
 
-    const result = await downloadChatFiles(apiClient, [1, 2], 'user1-partial');
+    const result = await downloadChatFiles(apiClient, [1, 2], TEST_DIR);
 
     expect(result.files).toHaveLength(1);
     expect(result.failed).toBe(1);
@@ -112,7 +126,7 @@ describe('downloadChatFiles', () => {
       getFileInfo: vi.fn().mockRejectedValue(new Error('Network error')),
     } as Partial<FireHubApiClient>);
 
-    const result = await downloadChatFiles(apiClient, [1, 2, 3], 'user1-allfail');
+    const result = await downloadChatFiles(apiClient, [1, 2, 3], TEST_DIR);
 
     expect(result.files).toHaveLength(0);
     expect(result.failed).toBe(3);
@@ -121,7 +135,7 @@ describe('downloadChatFiles', () => {
   // FD-06: empty fileIds returns empty results
   it('FD-06: empty fileIds returns empty files with zero failed', async () => {
     const apiClient = makeApiClient();
-    const result = await downloadChatFiles(apiClient, [], 'user1-empty');
+    const result = await downloadChatFiles(apiClient, [], TEST_DIR);
 
     expect(result.files).toHaveLength(0);
     expect(result.failed).toBe(0);
@@ -149,7 +163,7 @@ describe('downloadChatFiles', () => {
       downloadFile: vi.fn().mockResolvedValue(Buffer.from('binary')),
     } as Partial<FireHubApiClient>);
 
-    const result = await downloadChatFiles(apiClient, [1, 2], 'user1-multi');
+    const result = await downloadChatFiles(apiClient, [1, 2], TEST_DIR);
 
     expect(result.files).toHaveLength(2);
     expect(result.failed).toBe(0);
@@ -163,7 +177,7 @@ describe('downloadChatFiles', () => {
       getFileInfo: vi.fn().mockRejectedValue(new Error('403 Forbidden')),
     } as Partial<FireHubApiClient>);
 
-    await downloadChatFiles(apiClient, [1], 'user1-warn');
+    await downloadChatFiles(apiClient, [1], TEST_DIR);
 
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringContaining('1 file(s) failed'),
@@ -177,12 +191,12 @@ describe('cleanupChatFiles', () => {
     vi.clearAllMocks();
   });
 
-  // FD-09: removes session directory
-  it('FD-09: removes session directory recursively and forcefully', async () => {
-    await cleanupChatFiles('user1-cleanup');
+  // FD-09: removes directory
+  it('FD-09: removes directory recursively and forcefully', async () => {
+    await cleanupChatFiles(TEST_DIR);
 
     expect(fs.rm).toHaveBeenCalledWith(
-      path.join(CHAT_FILES_DIR, 'user1-cleanup'),
+      TEST_DIR,
       { recursive: true, force: true },
     );
   });
@@ -191,6 +205,6 @@ describe('cleanupChatFiles', () => {
   it('FD-10: silently succeeds even if directory does not exist', async () => {
     (fs.rm as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('ENOENT'));
 
-    await expect(cleanupChatFiles('user1-missing')).resolves.toBeUndefined();
+    await expect(cleanupChatFiles('/tmp/nonexistent')).resolves.toBeUndefined();
   });
 });

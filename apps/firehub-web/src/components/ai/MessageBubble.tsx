@@ -110,7 +110,10 @@ function formatToolDetail(input: Record<string, unknown>): string | null {
   if (input.rowIds && Array.isArray(input.rowIds)) parts.push(`${input.rowIds.length}건`);
   // Claude Code CLI tools
   if (input.command) parts.push(truncate(String(input.command), 80));
-  if (input.file_path) parts.push(truncate(String(input.file_path), 80));
+  if (input.file_path) {
+    const filePath = String(input.file_path);
+    parts.push(truncate(filePath.split('/').pop() || filePath, 80));
+  }
   if (input.pattern) parts.push(truncate(String(input.pattern), 60));
   if (input.description) parts.push(truncate(String(input.description), 80));
   if (input.prompt && !input.description) parts.push(truncate(String(input.prompt), 80));

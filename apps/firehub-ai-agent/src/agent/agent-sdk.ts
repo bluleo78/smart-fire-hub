@@ -1,4 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import os from 'os';
+import path from 'path';
 import { FireHubApiClient } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
@@ -75,10 +77,10 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
   // Download attached files and build enhanced prompt
   let enhancedMessage = message;
-  const sessionTag = `${userId}-${Date.now()}`;
+  const chatFilesDir = path.join(os.tmpdir(), 'firehub-chat-files', `${userId}-${Date.now()}`);
 
   if (fileIds?.length) {
-    const { files, failed } = await downloadChatFiles(apiClient, fileIds, sessionTag);
+    const { files, failed } = await downloadChatFiles(apiClient, fileIds, chatFilesDir);
 
     if (failed > 0) {
       console.warn(`${tag()} ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
@@ -246,7 +248,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     yield { type: 'error', message: errorMessage };
   } finally {
     if (fileIds?.length) {
-      await cleanupChatFiles(sessionTag);
+      await cleanupChatFiles(chatFilesDir);
     }
   }
 }

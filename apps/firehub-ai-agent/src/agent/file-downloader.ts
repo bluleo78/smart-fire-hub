@@ -1,9 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import { FireHubApiClient } from '../mcp/api-client.js';
-
-const CHAT_FILES_DIR = path.join(os.tmpdir(), 'firehub-chat-files');
 
 export interface DownloadedFile {
   originalName: string;
@@ -13,22 +10,24 @@ export interface DownloadedFile {
   fileSize: number;
 }
 
+/** Replace characters that break Claude CLI's Read tool (spaces, etc.) */
+function sanitizeFilename(name: string): string {
+  return name.replace(/\s+/g, '_');
+}
+
 export async function downloadChatFiles(
   apiClient: FireHubApiClient,
   fileIds: number[],
-  sessionTag: string,
+  downloadDir: string,
 ): Promise<{ files: DownloadedFile[]; failed: number }> {
-  const sessionDir = path.join(CHAT_FILES_DIR, sessionTag);
-  await fs.mkdir(sessionDir, { recursive: true });
+  await fs.mkdir(downloadDir, { recursive: true });
 
   const results = await Promise.allSettled(
     fileIds.map(async (fileId) => {
       const info = await apiClient.getFileInfo(fileId);
       const content = await apiClient.downloadFile(fileId);
-      // Use safe ASCII filename to avoid Claude CLI Read tool issues with non-ASCII characters
-      const ext = path.extname(info.originalName) || '.bin';
-      const safeName = `file-${fileId}${ext}`;
-      const localPath = path.join(sessionDir, safeName);
+      const safeName = sanitizeFilename(info.originalName);
+      const localPath = path.join(downloadDir, safeName);
       await fs.writeFile(localPath, content);
       return {
         originalName: info.originalName,
@@ -55,7 +54,6 @@ export async function downloadChatFiles(
   return { files, failed };
 }
 
-export async function cleanupChatFiles(sessionTag: string): Promise<void> {
-  const sessionDir = path.join(CHAT_FILES_DIR, sessionTag);
-  await fs.rm(sessionDir, { recursive: true, force: true }).catch(() => {});
+export async function cleanupChatFiles(dir: string): Promise<void> {
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 }
