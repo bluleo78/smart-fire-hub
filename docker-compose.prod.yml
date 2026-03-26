@@ -107,6 +107,16 @@ services:
       - firehub-net
     restart: unless-stopped
 
+  dozzle:
+    image: amir20/dozzle:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "${DOZZLE_PORT:-9998}:8080"
+    networks:
+      - firehub-net
+    restart: unless-stopped
+
 networks:
   firehub-net:
     driver: bridge
