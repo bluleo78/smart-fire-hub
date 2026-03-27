@@ -33,7 +33,7 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
   };
 
   if (value === null) {
-    return <span className="text-gray-400">null</span>;
+    return <span className="text-muted-foreground">null</span>;
   }
   if (typeof value === 'boolean') {
     return <span className="text-info">{value ? 'true' : 'false'}</span>;
@@ -46,11 +46,11 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
   }
 
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-gray-500">[]</span>;
+    if (value.length === 0) return <span className="text-muted-foreground">[]</span>;
     return (
       <span>
         <button
-          className="text-gray-500 hover:text-foreground cursor-pointer"
+          className="text-muted-foreground hover:text-foreground cursor-pointer"
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? '▼' : '▶'} [{value.length}]
@@ -66,12 +66,12 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
                 >
                   <Copy className="h-3 w-3" />
                 </button>
-                <span className="text-gray-400 shrink-0">[{i}]:</span>
+                <span className="text-muted-foreground shrink-0">[{i}]:</span>
                 <JsonTreeNode value={item} path={`${path}[${i}]`} depth={depth + 1} />
               </div>
             ))}
             {value.length > 20 && (
-              <div className="text-gray-400 text-xs">... {value.length - 20}개 더</div>
+              <div className="text-muted-foreground text-xs">... {value.length - 20}개 더</div>
             )}
           </div>
         )}
@@ -81,11 +81,11 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
 
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) return <span className="text-gray-500">{'{}'}</span>;
+    if (entries.length === 0) return <span className="text-muted-foreground">{'{}'}</span>;
     return (
       <span>
         <button
-          className="text-gray-500 hover:text-foreground cursor-pointer"
+          className="text-muted-foreground hover:text-foreground cursor-pointer"
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? '▼' : '▶'} {'{'}
@@ -105,8 +105,8 @@ function JsonTreeNode({ value, path, depth }: JsonTreeNodeProps) {
                   >
                     <Copy className="h-3 w-3" />
                   </button>
-                  <span className="text-purple-600 shrink-0">&quot;{key}&quot;</span>
-                  <span className="text-gray-400 shrink-0">:</span>
+                  <span className="text-primary shrink-0">&quot;{key}&quot;</span>
+                  <span className="text-muted-foreground shrink-0">:</span>
                   <JsonTreeNode value={val} path={childPath} depth={depth + 1} />
                 </div>
               );

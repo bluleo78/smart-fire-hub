@@ -1,6 +1,7 @@
 import { Handle, type Node,type NodeProps, Position } from '@xyflow/react';
 import { Brain, CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
 import { memo } from 'react';
+import { useTheme } from 'next-themes';
 
 export interface StepNodeData extends Record<string, unknown> {
   label: string;
@@ -18,7 +19,7 @@ export interface StepNodeData extends Record<string, unknown> {
 
 export type StepNodeType = Node<StepNodeData, 'step'>;
 
-const TYPE_CONFIG = {
+const TYPE_CONFIG_LIGHT = {
   SQL: {
     color: '#1f2937',       // gray-800
     bgHeader: 'rgba(17,24,39,0.06)',
@@ -49,6 +50,41 @@ const TYPE_CONFIG = {
   },
 } as const;
 
+const TYPE_CONFIG_DARK = {
+  SQL: {
+    color: 'oklch(0.72 0 0)',
+    bgHeader: 'oklch(1 0 0 / 5%)',
+    bgHeaderSelected: 'oklch(1 0 0 / 10%)',
+    label: 'SQL',
+    Icon: FileCode,
+  },
+  PYTHON: {
+    color: 'oklch(0.65 0 0)',
+    bgHeader: 'oklch(1 0 0 / 4%)',
+    bgHeaderSelected: 'oklch(1 0 0 / 8%)',
+    label: 'Python',
+    Icon: Terminal,
+  },
+  API_CALL: {
+    color: 'oklch(0.72 0.12 225)',
+    bgHeader: 'oklch(0.45 0.08 225 / 12%)',
+    bgHeaderSelected: 'oklch(0.45 0.08 225 / 20%)',
+    label: 'API',
+    Icon: Globe,
+  },
+  AI_CLASSIFY: {
+    color: 'oklch(0.75 0.14 285)',
+    bgHeader: 'oklch(0.45 0.10 285 / 12%)',
+    bgHeaderSelected: 'oklch(0.45 0.10 285 / 20%)',
+    label: 'AI 분류',
+    Icon: Brain,
+  },
+} as const;
+
+function getTypeConfig(isDark: boolean) {
+  return isDark ? TYPE_CONFIG_DARK : TYPE_CONFIG_LIGHT;
+}
+
 interface StatusStyle {
   label: string;
   Icon: React.ElementType;
@@ -57,7 +93,7 @@ interface StatusStyle {
   border: string;
 }
 
-const STATUS_CONFIG: Record<NonNullable<StepNodeData['executionStatus']>, StatusStyle> = {
+const STATUS_CONFIG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>, StatusStyle> = {
   PENDING: {
     label: '대기',
     Icon: Clock,
@@ -95,8 +131,46 @@ const STATUS_CONFIG: Record<NonNullable<StepNodeData['executionStatus']>, Status
   },
 };
 
+const STATUS_CONFIG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, StatusStyle> = {
+  PENDING: {
+    label: '대기',
+    Icon: Clock,
+    bg: 'oklch(1 0 0 / 5%)',
+    color: 'oklch(0.6 0 0)',
+    border: 'oklch(1 0 0 / 6%)',
+  },
+  RUNNING: {
+    label: '실행 중',
+    Icon: Loader2,
+    bg: 'oklch(0.2 0.04 240)',
+    color: 'oklch(0.7 0.13 240)',
+    border: 'oklch(0.7 0.13 240 / 30%)',
+  },
+  COMPLETED: {
+    label: '완료',
+    Icon: CheckCircle2,
+    bg: 'oklch(0.2 0.04 149.5)',
+    color: 'oklch(0.65 0.15 149.5)',
+    border: 'oklch(0.65 0.15 149.5 / 30%)',
+  },
+  FAILED: {
+    label: '실패',
+    Icon: XCircle,
+    bg: 'oklch(0.704 0.191 22.216 / 12%)',
+    color: 'oklch(0.704 0.191 22.216)',
+    border: 'oklch(0.704 0.191 22.216 / 30%)',
+  },
+  SKIPPED: {
+    label: '건너뜀',
+    Icon: SkipForward,
+    bg: 'oklch(0.2 0.04 84)',
+    color: 'oklch(0.76 0.14 84)',
+    border: 'oklch(0.76 0.14 84 / 30%)',
+  },
+};
+
 // Execution status → card background tint (monochrome)
-const STATUS_CARD_BG: Record<NonNullable<StepNodeData['executionStatus']>, string> = {
+const STATUS_CARD_BG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>, string> = {
   PENDING: 'rgba(249,250,251,0.6)',
   RUNNING: 'rgba(243,244,246,0.6)',
   COMPLETED: 'rgba(243,244,246,0.6)',
@@ -104,26 +178,41 @@ const STATUS_CARD_BG: Record<NonNullable<StepNodeData['executionStatus']>, strin
   SKIPPED: 'rgba(249,250,251,0.6)',
 };
 
+const STATUS_CARD_BG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, string> = {
+  PENDING: 'oklch(1 0 0 / 3%)',
+  RUNNING: 'oklch(1 0 0 / 3%)',
+  COMPLETED: 'oklch(1 0 0 / 3%)',
+  FAILED: 'oklch(1 0 0 / 3%)',
+  SKIPPED: 'oklch(1 0 0 / 3%)',
+};
+
 export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
+
   const showDelete = !data.readOnly && !data.executionStatus;
   const showAddAfter = !data.readOnly && !data.executionStatus && !data.hasOutgoingEdge;
 
-  const typeConfig = TYPE_CONFIG[data.scriptType];
-  const statusConfig = data.executionStatus ? STATUS_CONFIG[data.executionStatus] : null;
+  const typeConfig = getTypeConfig(isDark)[data.scriptType];
+  const statusConfig = data.executionStatus
+    ? (isDark ? STATUS_CONFIG_DARK : STATUS_CONFIG_LIGHT)[data.executionStatus]
+    : null;
   const StatusIcon = statusConfig?.Icon;
 
+  const statusCardBg = isDark ? STATUS_CARD_BG_DARK : STATUS_CARD_BG_LIGHT;
+
   const cardBg = data.executionStatus
-    ? STATUS_CARD_BG[data.executionStatus]
-    : 'oklch(1 0 0)';
+    ? statusCardBg[data.executionStatus]
+    : isDark ? 'oklch(1 0 0 / 3%)' : 'oklch(1 0 0)';
 
   const borderColor = data.hasError
-    ? 'oklch(0.45 0 0)'
+    ? (isDark ? 'oklch(0.704 0.191 22.216)' : 'oklch(0.45 0 0)')
     : data.isSelected
       ? typeConfig.color
-      : 'oklch(0.9 0 0)';
+      : (isDark ? 'oklch(1 0 0 / 6%)' : 'oklch(0.9 0 0)');
 
   const outlineStyle: React.CSSProperties = data.hasError
-    ? { outline: `2px solid oklch(0.45 0 0)`, outlineOffset: '2px' }
+    ? { outline: `2px solid ${isDark ? 'oklch(0.704 0.191 22.216)' : 'oklch(0.45 0 0)'}`, outlineOffset: '2px' }
     : data.isSelected
       ? { outline: `2px solid ${typeConfig.color}`, outlineOffset: '2px' }
       : {};
@@ -147,9 +236,9 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             width: 8,
             height: 8,
             backgroundColor: typeConfig.color,
-            border: '2px solid oklch(1 0 0)',
+            border: `2px solid ${isDark ? 'oklch(0.13 0.015 280)' : 'oklch(1 0 0)'}`,
             left: -5,
-            boxShadow: '0 0 0 1px oklch(0.85 0 0)',
+            boxShadow: `0 0 0 1px ${isDark ? 'oklch(1 0 0 / 10%)' : 'oklch(0.85 0 0)'}`,
           }}
         />
         <Handle
@@ -159,9 +248,9 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             width: 8,
             height: 8,
             backgroundColor: typeConfig.color,
-            border: '2px solid oklch(1 0 0)',
+            border: `2px solid ${isDark ? 'oklch(0.13 0.015 280)' : 'oklch(1 0 0)'}`,
             right: -5,
-            boxShadow: '0 0 0 1px oklch(0.85 0 0)',
+            boxShadow: `0 0 0 1px ${isDark ? 'oklch(1 0 0 / 10%)' : 'oklch(0.85 0 0)'}`,
           }}
         />
 
@@ -185,7 +274,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
           className="flex items-center justify-between gap-1 px-3 py-1.5"
           style={{
             backgroundColor: data.isSelected ? typeConfig.bgHeaderSelected : typeConfig.bgHeader,
-            borderBottom: `1px solid ${data.isSelected ? `${typeConfig.color}33` : 'oklch(0.93 0 0)'}`,
+            borderBottom: `1px solid ${data.isSelected ? `${typeConfig.color}33` : (isDark ? 'oklch(1 0 0 / 8%)' : 'oklch(0.93 0 0)')}`,
           }}
         >
           {/* Type icon + label */}
@@ -239,8 +328,8 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             className="truncate text-sm font-medium leading-snug"
             style={{
               color: data.label && data.label !== '(이름 없음)'
-                ? 'oklch(0.145 0 0)'
-                : 'oklch(0.556 0 0)',
+                ? (isDark ? 'oklch(0.93 0 0)' : 'oklch(0.145 0 0)')
+                : (isDark ? 'oklch(0.6 0 0)' : 'oklch(0.556 0 0)'),
             }}
             title={data.label || '(이름 없음)'}
           >
@@ -250,7 +339,12 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
           {/* Description — 2 lines reserved */}
           <p
             className="mt-1 line-clamp-2 text-xs leading-normal"
-            style={{ color: data.description ? 'oklch(0.45 0 0)' : 'oklch(0.72 0 0)', minHeight: 32 }}
+            style={{
+              color: data.description
+                ? (isDark ? 'oklch(0.65 0 0)' : 'oklch(0.45 0 0)')
+                : (isDark ? 'oklch(0.45 0 0)' : 'oklch(0.72 0 0)'),
+              minHeight: 32,
+            }}
             title={data.description || ''}
           >
             {data.description || '\u00A0'}

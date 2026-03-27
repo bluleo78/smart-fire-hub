@@ -5,6 +5,7 @@ import { bracketMatching } from '@codemirror/language';
 import { Compartment,EditorState } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, keymap,lineNumbers, MatchDecorator, type ViewUpdate, ViewPlugin } from '@codemirror/view';
 import { useEffect, useRef } from 'react';
+import { useTheme } from 'next-themes';
 
 const stepRefMatcher = new MatchDecorator({
   regexp: /\{\{#\d+\}\}/g,
@@ -32,12 +33,31 @@ interface ScriptEditorProps {
   insertTextRef?: React.MutableRefObject<((text: string) => void) | null>;
 }
 
+function buildStepRefTheme(isDark: boolean) {
+  return EditorView.theme({
+    '&': { minHeight: '200px', height: '100%', ...(isDark ? { backgroundColor: 'oklch(0.13 0.015 280)' } : {}) },
+    '.cm-scroller': { overflow: 'auto' },
+    '.cm-content': { fontFamily: 'monospace', fontSize: '13px' },
+    '.cm-gutters': isDark ? { backgroundColor: 'oklch(0.15 0.015 280)' } : {},
+    '.cm-activeLineGutter': isDark ? { backgroundColor: 'oklch(1 0 0 / 5%)' } : {},
+    '.cm-activeLine': isDark ? { backgroundColor: 'oklch(1 0 0 / 5%)' } : {},
+    '.cm-step-ref': {
+      background: isDark ? 'rgba(167, 139, 250, 0.22)' : 'rgba(124, 58, 237, 0.15)',
+      borderRadius: '3px',
+      padding: '1px 2px',
+      fontWeight: '600',
+    },
+  });
+}
+
 export default function ScriptEditor({ value, onChange, language, readOnly = false, insertTextRef }: ScriptEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const languageCompartment = useRef(new Compartment());
   const readOnlyCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
+  const { resolvedTheme } = useTheme();
 
   // Keep onChange ref current without recreating editor
   onChangeRef.current = onChange;
@@ -66,17 +86,7 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
             onChangeRef.current(update.state.doc.toString());
           }
         }),
-        EditorView.theme({
-          '&': { minHeight: '200px', height: '100%' },
-          '.cm-scroller': { overflow: 'auto' },
-          '.cm-content': { fontFamily: 'monospace', fontSize: '13px' },
-          '.cm-step-ref': {
-            background: 'rgba(124, 58, 237, 0.15)',
-            borderRadius: '3px',
-            padding: '1px 2px',
-            fontWeight: '600',
-          },
-        }),
+        themeCompartment.current.of(buildStepRefTheme(resolvedTheme === 'dark')),
       ],
     });
 
@@ -124,6 +134,13 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
       ]),
     });
   }, [readOnly]);
+
+  // Reconfigure theme when dark/light changes
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: themeCompartment.current.reconfigure(buildStepRefTheme(resolvedTheme === 'dark')) });
+  }, [resolvedTheme]);
 
   // Sync external value changes
   useEffect(() => {

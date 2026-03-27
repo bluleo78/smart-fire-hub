@@ -71,7 +71,7 @@ interface CollapsibleSectionProps {
   icon?: React.ReactNode;
   defaultOpen?: boolean;
   children: React.ReactNode;
-  accentColor?: string;
+  accentClassName?: string;
 }
 
 function CollapsibleSection({
@@ -79,15 +79,14 @@ function CollapsibleSection({
   icon,
   defaultOpen = false,
   children,
-  accentColor,
+  accentClassName,
 }: CollapsibleSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
         <button
-          className="flex w-full items-center justify-between py-1.5 text-sm font-medium hover:text-foreground/80 transition-colors"
-          style={accentColor ? { color: accentColor } : undefined}
+          className={`flex w-full items-center justify-between py-1.5 text-sm font-medium hover:text-foreground/80 transition-colors${accentClassName ? ` ${accentClassName}` : ''}`}
         >
           <span className="flex items-center gap-1.5">
             {icon}
@@ -165,12 +164,7 @@ export default function AiClassifyStepConfig({
     <div className="space-y-3">
       {/* Header banner */}
       <div
-        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium"
-        style={{
-          background: 'rgba(124,58,237,0.06)',
-          color: '#7c3aed',
-          border: '1px solid rgba(124,58,237,0.2)',
-        }}
+        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-500/20"
       >
         <Brain className="h-4 w-4 shrink-0" />
         <span>AI 분류 스텝</span>
@@ -178,7 +172,7 @@ export default function AiClassifyStepConfig({
 
       {/* === 1. 프롬프트 (메인 영역) === */}
       <div className="space-y-2">
-        <div className="flex items-center gap-1.5 text-sm font-medium" style={{ color: '#7c3aed' }}>
+        <div className="flex items-center gap-1.5 text-sm font-medium text-violet-600 dark:text-violet-400">
           <MessageSquare className="h-3.5 w-3.5" />
           프롬프트 <span className="text-destructive ml-0.5">*</span>
         </div>
@@ -217,7 +211,7 @@ export default function AiClassifyStepConfig({
       {/* === 2. 출력 컬럼 정의 === */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium" style={{ color: '#7c3aed' }}>
+          <div className="text-sm font-medium text-violet-600 dark:text-violet-400">
             출력 컬럼 정의 <span className="text-destructive">*</span>
           </div>
           {!readOnly && (
@@ -240,7 +234,7 @@ export default function AiClassifyStepConfig({
 
         {outputColumns.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-4 border border-dashed border-violet-200 dark:border-violet-800 rounded-md text-xs text-muted-foreground gap-1">
-            <Plus className="h-4 w-4 text-violet-300" />
+            <Plus className="h-4 w-4 text-violet-400 dark:text-violet-500" />
             <span>출력 컬럼을 추가하거나 프리셋을 선택하세요</span>
           </div>
         ) : (
@@ -299,10 +293,10 @@ export default function AiClassifyStepConfig({
         title="입력 컬럼 필터 (선택)"
         icon={<Brain className="h-3.5 w-3.5" />}
         defaultOpen={false}
-        accentColor="#7c3aed"
+        accentClassName="text-violet-600 dark:text-violet-400"
       >
         {inputDatasetIds.length === 0 ? (
-          <p className="text-xs text-amber-600">입력 데이터셋을 먼저 선택하세요</p>
+          <p className="text-xs text-warning">입력 데이터셋을 먼저 선택하세요</p>
         ) : columnsLoading ? (
           <div className="space-y-1.5">
             <Skeleton className="h-5 w-full" />
@@ -321,7 +315,7 @@ export default function AiClassifyStepConfig({
                     checked={inputColumns.includes(col.columnName)}
                     disabled={readOnly}
                     onCheckedChange={() => toggleInputColumn(col.columnName)}
-                    className="h-3.5 w-3.5 border-violet-300 data-[state=checked]:bg-violet-600 data-[state=checked]:border-violet-600"
+                    className="h-3.5 w-3.5 border-violet-300 dark:border-violet-600 data-[state=checked]:bg-violet-600 data-[state=checked]:border-violet-600"
                   />
                   <label
                     htmlFor={`col-${col.columnName}`}
@@ -349,7 +343,7 @@ export default function AiClassifyStepConfig({
         title="고급 설정"
         icon={<Settings2 className="h-3.5 w-3.5" />}
         defaultOpen={false}
-        accentColor="#7c3aed"
+        accentClassName="text-violet-600 dark:text-violet-400"
       >
         <div className="space-y-2">
           <div className="space-y-1.5">

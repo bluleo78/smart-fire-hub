@@ -127,8 +127,8 @@
   --accent: oklch(1 0 0 / 7%);
   --accent-foreground: oklch(0.93 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 6%);
-  --input: oklch(1 0 0 / 10%);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 12%);
   --ring: oklch(0.65 0.2 264);
   --chart-1: oklch(0.65 0.2 264);
   --chart-2: oklch(0.7 0.15 195);
@@ -141,7 +141,7 @@
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(1 0 0 / 7%);
   --sidebar-accent-foreground: oklch(0.93 0 0);
-  --sidebar-border: oklch(1 0 0 / 6%);
+  --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.65 0.2 264);
   --success: oklch(0.65 0.15 149.5);
   --success-foreground: oklch(0.985 0 0);
@@ -351,6 +351,28 @@
 }
 .dark .status-online::after {
   box-shadow: 0 0 6px oklch(0.7 0.2 149 / 40%);
+}
+
+/* ===== React Flow dark mode ===== */
+.dark .react-flow__edge-path {
+  stroke: oklch(1 0 0 / 20%);
+}
+.dark .react-flow {
+  --xy-controls-button-background-color-default: oklch(0.18 0.015 280);
+  --xy-controls-button-background-color-hover-default: oklch(0.25 0.015 280);
+  --xy-controls-button-color-default: oklch(0.7 0 0);
+  --xy-controls-button-color-hover-default: oklch(0.9 0 0);
+  --xy-controls-button-border-color-default: oklch(1 0 0 / 10%);
+  --xy-controls-box-shadow-default: 0 2px 8px rgba(0,0,0,0.3);
+}
+.dark .react-flow__minimap {
+  background: oklch(0.15 0.015 280);
+}
+.dark .react-flow__attribution {
+  background: oklch(0 0 0 / 30%);
+}
+.dark .react-flow__attribution a {
+  color: oklch(0.5 0 0);
 }
 
 /* AIStatusChip animations */

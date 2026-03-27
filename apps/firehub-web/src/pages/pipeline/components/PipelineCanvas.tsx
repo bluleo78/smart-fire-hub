@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react';
 import { LayoutGrid, Pencil,Plus } from 'lucide-react';
 import { useCallback,useMemo } from 'react';
+import { useTheme } from 'next-themes';
 
 import { Button } from '@/components/ui/button';
 import type { ExecutionDetailResponse } from '@/types/pipeline';
@@ -33,6 +34,7 @@ export function PipelineCanvas({
   readOnly,
   executionData,
 }: PipelineCanvasProps) {
+  const { resolvedTheme } = useTheme();
   const nodeTypes = useMemo(() => ({ step: StepNode }), []);
   const edgeTypes = useMemo(() => ({ addStep: AddStepEdge }), []);
 
@@ -179,7 +181,7 @@ export function PipelineCanvas({
         fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
         proOptions={{ hideAttribution: true }}
       >
-        <Background />
+        <Background color={resolvedTheme === 'dark' ? 'oklch(1 0 0 / 8%)' : undefined} />
         <Controls showInteractive={!readOnly} />
       </ReactFlow>
 
