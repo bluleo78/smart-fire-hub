@@ -10,10 +10,8 @@ import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
 
-export interface SSEEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction';
-  [key: string]: unknown;
-}
+import type { SSEEvent } from '../providers/types.js';
+export type { SSEEvent } from '../providers/types.js';
 
 export interface AgentOptions {
   message: string;

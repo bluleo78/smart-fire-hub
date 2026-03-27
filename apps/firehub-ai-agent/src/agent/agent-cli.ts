@@ -97,7 +97,7 @@ interface StreamJsonMessage {
   session_id?: string;
 }
 
-interface CliAgentOptions extends AgentOptions {
+export interface CliAgentOptions extends AgentOptions {
   /** true = 구독 인증 사용 (ANTHROPIC_API_KEY 제거), false = API 키 사용 */
   useSubscription?: boolean;
   /** DB에서 복호화된 CLI OAuth 토큰 (구독 모드에서 CLAUDE_CODE_OAUTH_TOKEN으로 설정) */

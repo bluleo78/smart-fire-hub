@@ -2,11 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import classifyRouter from './classify.js';
 
-vi.mock('../services/classification-service.js', () => ({
-  classifyBatch: vi.fn(),
-}));
+const mockClassify = vi.fn();
+const mockClassifyProvider = { name: 'mock-classify', classify: mockClassify };
 
-import { classifyBatch } from '../services/classification-service.js';
+vi.mock('../providers/index.js', () => ({
+  ProviderFactory: {
+    createClassifyProvider: vi.fn(() => mockClassifyProvider),
+  },
+}));
 
 const VALID_TOKEN = 'test-internal-token-12345';
 
@@ -167,7 +170,8 @@ describe('POST /agent/classify', () => {
   });
 
   it('should classify successfully with valid request', async () => {
-    vi.mocked(classifyBatch).mockResolvedValue(mockResponse);
+    const { ProviderFactory } = await import('../providers/index.js');
+    mockClassify.mockResolvedValue(mockResponse);
 
     const app = createApp();
     const res = await makeRequest(app, '/agent/classify', validBody, {
@@ -176,21 +180,19 @@ describe('POST /agent/classify', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(mockResponse);
-    expect(classifyBatch).toHaveBeenCalledOnce();
-    expect(classifyBatch).toHaveBeenCalledWith(
-      {
+    expect(ProviderFactory.createClassifyProvider).toHaveBeenCalledOnce();
+    expect(mockClassify).toHaveBeenCalledOnce();
+    expect(mockClassify).toHaveBeenCalledWith(
+      expect.objectContaining({
         rows: validBody.rows,
         prompt: validBody.prompt,
         outputColumns: validBody.outputColumns,
-      },
-      'http://localhost:8080/api/v1',
-      VALID_TOKEN,
-      1,
+      }),
     );
   });
 
   it('should return 500 when classification service throws', async () => {
-    vi.mocked(classifyBatch).mockRejectedValue(new Error('AI API key is not configured'));
+    mockClassify.mockRejectedValue(new Error('AI API key is not configured'));
 
     const app = createApp();
     const res = await makeRequest(app, '/agent/classify', validBody, {
@@ -202,7 +204,7 @@ describe('POST /agent/classify', () => {
   });
 
   it('should accept rows with free-form object structure', async () => {
-    vi.mocked(classifyBatch).mockResolvedValue({
+    mockClassify.mockResolvedValue({
       ...mockResponse,
       results: [{ source_id: 1, label: '중립', confidence: 0.5, reason: '판단 불가' }],
       processed: 1,

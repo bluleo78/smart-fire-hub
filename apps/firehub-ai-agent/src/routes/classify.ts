@@ -1,7 +1,7 @@
 import express, { Router, Request, Response } from 'express';
 import { z } from 'zod/v4';
 import { internalAuth } from '../middleware/auth.js';
-import { classifyBatch } from '../services/classification-service.js';
+import { ProviderFactory } from '../providers/index.js';
 
 const router = Router();
 
@@ -36,12 +36,8 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
   const userId = parseInt(req.headers['x-on-behalf-of'] as string) || 1;
 
   try {
-    const result = await classifyBatch(
-      { rows, prompt, outputColumns },
-      apiBaseUrl,
-      internalToken,
-      userId,
-    );
+    const provider = ProviderFactory.createClassifyProvider(apiBaseUrl, internalToken);
+    const result = await provider.classify({ rows, prompt, outputColumns, userId });
     res.json(result);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);

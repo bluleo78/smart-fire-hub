@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { executeAgent } from '../agent/agent-sdk.js';
-import { executeCliAgent } from '../agent/agent-cli.js';
+import { ProviderFactory } from '../providers/index.js';
+import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 
@@ -77,7 +77,14 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
   }, PING_INTERVAL_MS);
 
   try {
-    const agentOptions = {
+    const providerConfig: ProviderConfig = {
+      agentType: agentType as AgentType,
+      apiKey,
+      cliOauthToken: typeof cliOauthToken === 'string' ? cliOauthToken : undefined,
+      model,
+    };
+    const provider = ProviderFactory.createChatProvider(providerConfig);
+    const events = provider.execute({
       message: message || '',
       sessionId: sessionId || undefined,
       userId,
@@ -87,14 +94,8 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       systemPrompt,
       temperature,
       maxTokens,
-      apiKey,
-      cliOauthToken: typeof cliOauthToken === 'string' ? cliOauthToken : undefined,
-    };
-
-    const events =
-      agentType === 'cli' || agentType === 'cli-api'
-        ? executeCliAgent({ ...agentOptions, useSubscription: agentType === 'cli' })
-        : executeAgent(agentOptions);
+      abortSignal: undefined,
+    });
 
     for await (const event of events) {
       if (clientDisconnected) continue;

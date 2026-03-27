@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import chatRouter from './chat.js';
-import type { AgentOptions } from '../agent/agent-sdk.js';
 
-// We need supertest for HTTP-level integration tests
-// Since supertest might not be installed, we'll use raw Node http approach
-// Actually, let's test with a simpler approach using the express app directly
+// Mock ProviderFactory and transcript-reader to avoid actual Claude API calls
+const mockExecute = vi.fn();
+const mockProvider = { name: 'mock', execute: mockExecute };
 
-// Mock external dependencies to avoid actual Claude API calls
-vi.mock('../agent/agent-sdk.js', () => ({
-  executeAgent: vi.fn(),
+vi.mock('../providers/index.js', () => ({
+  ProviderFactory: {
+    createChatProvider: vi.fn(() => mockProvider),
+  },
 }));
 
 vi.mock('../agent/transcript-reader.js', () => ({
@@ -76,6 +76,7 @@ describe('Chat routes — integration tests', () => {
 
   beforeEach(() => {
     process.env.INTERNAL_SERVICE_TOKEN = VALID_TOKEN;
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -132,18 +133,15 @@ describe('Chat routes — integration tests', () => {
     expect(res.body).toHaveProperty('error');
   });
 
-  // CR-01: apiKey from request body is forwarded to executeAgent
-  it('CR-01: passes apiKey from request body to executeAgent', async () => {
-    const { executeAgent } = await import('../agent/agent-sdk.js');
-    const mockExecuteAgent = vi.mocked(executeAgent);
+  // CR-01: apiKey from request body is forwarded to ProviderFactory
+  it('CR-01: passes apiKey from request body to ProviderFactory.createChatProvider', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
 
-    // Return a minimal done event so the SSE stream closes normally
-    async function* fakeStream(): AsyncGenerator<{ type: string; sessionId?: string; inputTokens?: number }> {
-      yield { type: 'done', sessionId: 'sess-1', inputTokens: 0 };
+    async function* fakeStream() {
+      yield { type: 'done' as const };
     }
-    mockExecuteAgent.mockReturnValue(
-      fakeStream() as unknown as ReturnType<typeof executeAgent>,
-    );
+    mockExecute.mockReturnValue(fakeStream());
 
     const app = createApp();
     await makeRequest(
@@ -154,8 +152,30 @@ describe('Chat routes — integration tests', () => {
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
-    expect(mockExecuteAgent).toHaveBeenCalledOnce();
-    const calledWith = mockExecuteAgent.mock.calls[0][0] as AgentOptions;
+    expect(mockCreateChatProvider).toHaveBeenCalledOnce();
+    const calledWith = mockCreateChatProvider.mock.calls[0][0];
     expect(calledWith.apiKey).toBe('sk-from-client');
+  });
+
+  // CR-02: provider.execute() is called with correct message and userId
+  it('CR-02: provider.execute() is called with message and userId', async () => {
+    async function* fakeStream() {
+      yield { type: 'done' as const };
+    }
+    mockExecute.mockReturnValue(fakeStream());
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { message: 'Hello world', userId: 99, apiKey: 'sk-test' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(mockExecute).toHaveBeenCalledOnce();
+    const calledWith = mockExecute.mock.calls[0][0];
+    expect(calledWith.message).toBe('Hello world');
+    expect(calledWith.userId).toBe(99);
   });
 });
