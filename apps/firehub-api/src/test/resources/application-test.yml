@@ -3,6 +3,8 @@ spring:
     url: jdbc:postgresql://localhost:5432/smartfirehub_test
     username: app
     password: app
+  flyway:
+    validate-on-migrate: false
 
 org:
   jobrunr:

@@ -15,6 +15,7 @@ import { registerApiConnectionTools } from './tools/api-connection-tools.js';
 import { registerMiscTools } from './tools/misc-tools.js';
 import { registerAnalyticsTools } from './tools/analytics-tools.js';
 import { registerUiTools } from './tools/ui-tools.js';
+import { registerProactiveTools } from './tools/proactive-tools.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -60,6 +61,22 @@ export function registerAllTools(
   registerMiscTools(apiClient, safeToolFn, jsonResultFn);
   registerAnalyticsTools(apiClient, safeToolFn, jsonResultFn);
   registerUiTools(safeToolFn, jsonResultFn);
+  registerProactiveTools(apiClient, safeToolFn, jsonResultFn);
+}
+
+export function buildAllMcpTools(apiClient: FireHubApiClient) {
+  return [
+    ...registerCategoryTools(apiClient, safeTool, jsonResult),
+    ...registerDatasetTools(apiClient, safeTool, jsonResult),
+    ...registerDataTools(apiClient, safeTool, jsonResult),
+    ...registerPipelineTools(apiClient, safeTool, jsonResult),
+    ...registerTriggerTools(apiClient, safeTool, jsonResult),
+    ...registerApiConnectionTools(apiClient, safeTool, jsonResult),
+    ...registerMiscTools(apiClient, safeTool, jsonResult),
+    ...registerAnalyticsTools(apiClient, safeTool, jsonResult),
+    ...registerUiTools(safeTool, jsonResult),
+    ...registerProactiveTools(apiClient, safeTool, jsonResult),
+  ];
 }
 
 export function createFireHubMcpServer(
@@ -68,16 +85,6 @@ export function createFireHubMcpServer(
   return createSdkMcpServer({
     name: MCP_SERVER_NAME,
     version: MCP_SERVER_VERSION,
-    tools: [
-      ...registerCategoryTools(apiClient, safeTool, jsonResult),
-      ...registerDatasetTools(apiClient, safeTool, jsonResult),
-      ...registerDataTools(apiClient, safeTool, jsonResult),
-      ...registerPipelineTools(apiClient, safeTool, jsonResult),
-      ...registerTriggerTools(apiClient, safeTool, jsonResult),
-      ...registerApiConnectionTools(apiClient, safeTool, jsonResult),
-      ...registerMiscTools(apiClient, safeTool, jsonResult),
-      ...registerAnalyticsTools(apiClient, safeTool, jsonResult),
-      ...registerUiTools(safeTool, jsonResult),
-    ],
+    tools: buildAllMcpTools(apiClient),
   });
 }

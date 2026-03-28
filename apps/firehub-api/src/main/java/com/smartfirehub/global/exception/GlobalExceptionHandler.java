@@ -24,6 +24,7 @@ import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
+import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserDeactivatedException;
@@ -363,6 +364,13 @@ public class GlobalExceptionHandler {
     return ResponseEntity.badRequest().body(response);
   }
 
+  @ExceptionHandler(ProactiveJobException.class)
+  public ResponseEntity<ErrorResponse> handleProactiveJob(
+      ProactiveJobException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
   @ExceptionHandler(AccountLockedException.class)
   public ResponseEntity<ErrorResponse> handleAccountLocked(
       AccountLockedException ex, HttpServletRequest request) {
@@ -389,7 +397,8 @@ public class GlobalExceptionHandler {
     // SSE/streaming endpoints: response is already committed with text/event-stream,
     // so we cannot write a JSON ErrorResponse. Just complete silently.
     if (response.isCommitted()) {
-      log.debug("Async timeout on committed response (SSE disconnect): {}", request.getRequestURI());
+      log.debug(
+          "Async timeout on committed response (SSE disconnect): {}", request.getRequestURI());
       return;
     }
     // Non-SSE async timeout: return 503
@@ -398,7 +407,8 @@ public class GlobalExceptionHandler {
     response.setContentType("application/json");
     try {
       PrintWriter writer = response.getWriter();
-      writer.write("{\"status\":503,\"error\":\"Service Unavailable\",\"message\":\"Request timed out\"}");
+      writer.write(
+          "{\"status\":503,\"error\":\"Service Unavailable\",\"message\":\"Request timed out\"}");
       writer.flush();
     } catch (IOException e) {
       log.debug("Failed to write timeout response: {}", e.getMessage());

@@ -2,6 +2,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 import chatRouter from './routes/chat.js';
 import classifyRouter from './routes/classify.js';
+import proactiveRouter from './routes/proactive.js';
+import chartRenderRouter from './routes/chart-render.js';
 import { DEFAULT_PORT } from './constants.js';
 
 dotenv.config({ path: '.env.local' });
@@ -13,6 +15,8 @@ app.use(express.json());
 
 app.use('/agent', chatRouter);
 app.use('/agent', classifyRouter);
+app.use('/agent', proactiveRouter);
+app.use('/agent', chartRenderRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err);

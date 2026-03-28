@@ -1,4 +1,4 @@
-import { Bot, Eye, EyeOff, RotateCcw, Save, Settings, ShieldCheck } from 'lucide-react';
+import { Bot, Eye, EyeOff, Mail, RotateCcw, Save, Settings, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -19,6 +19,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import type { SettingResponse } from '../../types/settings';
+import SmtpSettingsTab from './SmtpSettingsTab';
 
 const AGENT_TYPE_OPTIONS = [
   { value: 'sdk', label: 'AI Agent (SDK)' },
@@ -200,11 +201,15 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="ai">
-        <TabsList>
+        <TabsList className="overflow-x-auto flex-nowrap">
           <TabsTrigger value="general">일반</TabsTrigger>
           <TabsTrigger value="ai">
             <Bot className="h-4 w-4" />
             AI 에이전트
+          </TabsTrigger>
+          <TabsTrigger value="email">
+            <Mail className="h-4 w-4" />
+            이메일
           </TabsTrigger>
         </TabsList>
 
@@ -488,6 +493,10 @@ export default function SettingsPage() {
               되돌리기
             </Button>
           </div>
+        </TabsContent>
+        {/* 이메일 탭 */}
+        <TabsContent value="email" className="mt-6">
+          <SmtpSettingsTab />
         </TabsContent>
       </Tabs>
     </div>

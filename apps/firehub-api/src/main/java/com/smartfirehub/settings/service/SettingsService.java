@@ -26,6 +26,15 @@ public class SettingsService {
           "ai.agent_type",
           "ai.cli_oauth_token");
 
+  private static final Set<String> ALLOWED_SMTP_KEYS =
+      Set.of(
+          "smtp.host",
+          "smtp.port",
+          "smtp.username",
+          "smtp.password",
+          "smtp.starttls",
+          "smtp.from_address");
+
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
 
@@ -110,6 +119,70 @@ public class SettingsService {
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedCliOauthToken() {
     return getValue("ai.cli_oauth_token").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
+  }
+
+  @Transactional(readOnly = true)
+  public List<SettingResponse> getSmtpSettings() {
+    return settingsRepository.findByPrefix("smtp").stream()
+        .map(
+            setting -> {
+              if ("smtp.password".equals(setting.key())) {
+                String masked =
+                    setting.value() == null || setting.value().isBlank()
+                        ? ""
+                        : encryptionService.maskValue(encryptionService.decrypt(setting.value()));
+                return new SettingResponse(
+                    setting.key(), masked, setting.description(), setting.updatedAt());
+              }
+              return setting;
+            })
+        .collect(Collectors.toList());
+  }
+
+  @Transactional
+  public void updateSmtpSettings(Map<String, String> settings, Long userId) {
+    for (String key : settings.keySet()) {
+      if (!ALLOWED_SMTP_KEYS.contains(key)) {
+        throw new IllegalArgumentException("허용되지 않는 SMTP 설정 키: " + key);
+      }
+    }
+
+    boolean hasMaskedPassword = isMaskedApiKey(settings.get("smtp.password"));
+
+    Map<String, String> filtered =
+        settings.entrySet().stream()
+            .filter(e -> !(hasMaskedPassword && "smtp.password".equals(e.getKey())))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    Map<String, String> toUpdate =
+        filtered.entrySet().stream()
+            .collect(
+                Collectors.toMap(
+                    Map.Entry::getKey,
+                    e ->
+                        "smtp.password".equals(e.getKey()) && !e.getValue().isBlank()
+                            ? encryptionService.encrypt(e.getValue())
+                            : e.getValue()));
+
+    if (!toUpdate.isEmpty()) {
+      settingsRepository.updateSettings(toUpdate, userId);
+    }
+  }
+
+  @Transactional(readOnly = true)
+  public Map<String, String> getSmtpConfig() {
+    return settingsRepository.findByPrefix("smtp").stream()
+        .collect(
+            Collectors.toMap(
+                SettingResponse::key,
+                setting -> {
+                  if ("smtp.password".equals(setting.key())
+                      && setting.value() != null
+                      && !setting.value().isBlank()) {
+                    return encryptionService.decrypt(setting.value());
+                  }
+                  return setting.value() != null ? setting.value() : "";
+                }));
   }
 
   private void validateValues(Map<String, String> settings) {

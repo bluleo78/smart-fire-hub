@@ -7,6 +7,7 @@ import { createPipelineApi } from './api-client/pipeline-api.js';
 import { createTriggerApi } from './api-client/trigger-api.js';
 import { createConnectionApi } from './api-client/connection-api.js';
 import { createMiscApi } from './api-client/misc-api.js';
+import { createProactiveApi } from './api-client/proactive-api.js';
 import {
   createAnalyticsApi,
   type CreateSavedQueryParams,
@@ -35,6 +36,7 @@ export class FireHubApiClient {
   private _connections: ReturnType<typeof createConnectionApi>;
   private _misc: ReturnType<typeof createMiscApi>;
   private _analytics: ReturnType<typeof createAnalyticsApi>;
+  private _proactive: ReturnType<typeof createProactiveApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -83,6 +85,7 @@ export class FireHubApiClient {
     this._connections = createConnectionApi(this.client);
     this._misc = createMiscApi(this.client);
     this._analytics = createAnalyticsApi(this.client);
+    this._proactive = createProactiveApi(this.client);
   }
 
   listCategories() {
@@ -376,5 +379,57 @@ export class FireHubApiClient {
 
   addDashboardWidget(dashboardId: number, data: AddDashboardWidgetParams): Promise<DashboardWidget> {
     return this._analytics.addDashboardWidget(dashboardId, data);
+  }
+
+  listSmartJobs() {
+    return this._proactive.listSmartJobs();
+  }
+  createSmartJob(data: {
+    name: string;
+    prompt: string;
+    cronExpression: string;
+    timezone?: string;
+    templateId?: number;
+    channels?: string[];
+  }) {
+    return this._proactive.createSmartJob(data);
+  }
+  updateSmartJob(
+    id: number,
+    data: {
+      name?: string;
+      prompt?: string;
+      cronExpression?: string;
+      timezone?: string;
+      templateId?: number;
+      channels?: string[];
+      enabled?: boolean;
+    },
+  ) {
+    return this._proactive.updateSmartJob(id, data);
+  }
+  deleteSmartJob(id: number) {
+    return this._proactive.deleteSmartJob(id);
+  }
+  executeSmartJob(id: number) {
+    return this._proactive.executeSmartJob(id);
+  }
+  listReportTemplates() {
+    return this._proactive.listReportTemplates();
+  }
+  createReportTemplate(data: {
+    name: string;
+    description?: string;
+    structure: {
+      sections: Array<{
+        key: string;
+        label: string;
+        required?: boolean;
+        type?: string;
+      }>;
+      output_format: string;
+    };
+  }) {
+    return this._proactive.createReportTemplate(data);
   }
 }

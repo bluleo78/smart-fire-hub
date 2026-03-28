@@ -19,6 +19,8 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.45",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "axios": "^1.7.9",
+    "chart.js": "^4.5.1",
+    "chartjs-node-canvas": "^5.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

@@ -160,6 +160,22 @@ export const NAVIGABLE_ROUTES: NavigableRoute[] = [
     aiExamples: ['API 연결 관리 열어줘', 'API 키 등록하러 가줘'],
   },
   {
+    type: 'ai_insights_jobs',
+    label: '스마트 작업',
+    icon: '⚡',
+    listPath: '/ai-insights/jobs',
+    aiDescription: 'AI가 자동으로 실행하는 스마트 작업을 관리하려 할 때.',
+    aiExamples: ['스마트 작업 보여줘', 'AI 자동 작업 설정', '예약 분석 관리'],
+  },
+  {
+    type: 'ai_insights_templates',
+    label: '리포트 양식',
+    icon: '📄',
+    listPath: '/ai-insights/templates',
+    aiDescription: 'AI 리포트의 출력 구조(템플릿)를 정의하거나 수정하려 할 때.',
+    aiExamples: ['리포트 양식 보여줘', '리포트 템플릿 관리하고 싶어', 'AI 리포트 형식 설정'],
+  },
+  {
     type: 'profile',
     label: '프로필',
     icon: '👤',

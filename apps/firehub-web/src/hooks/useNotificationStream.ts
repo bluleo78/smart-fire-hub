@@ -83,6 +83,11 @@ function handleNotification(
       queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       break;
+    case 'PROACTIVE_MESSAGE':
+      queryClient.invalidateQueries({ queryKey: ['proactive', 'messages'] });
+      queryClient.invalidateQueries({ queryKey: ['proactive', 'unread-count'] });
+      toast.info(event.title, { description: event.description });
+      break;
   }
 
   if (event.severity === 'CRITICAL') {

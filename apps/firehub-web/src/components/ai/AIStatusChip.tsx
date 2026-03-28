@@ -2,7 +2,10 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { AIMode } from '../../types/ai';
 import { useAI } from './AIProvider';
 import { AIStatusChipDropdown } from './AIStatusChipDropdown';
+import { AINotificationPanel } from './AINotificationPanel';
 import { SideIcon, FloatingIcon, FullscreenIcon } from './AIChipIcons';
+import { Bell } from 'lucide-react';
+import { useUnreadCount } from '../../hooks/queries/useProactiveMessages';
 
 type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'floating' | 'fullscreen';
 
@@ -185,7 +188,10 @@ export function AIStatusChip() {
     contextTokens,
   } = useAI();
 
+  const { data: unreadCount = 0 } = useUnreadCount();
+
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   const [isHovering, setIsHovering] = useState(false); // hover wait animation
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -279,70 +285,108 @@ export function AIStatusChip() {
   };
 
   return (
-    <div
-      className="relative z-20 inline-flex flex-col items-center"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      {/* Chip trigger */}
+    <div className="z-20 inline-flex items-center gap-1.5">
+      {/* AI Status Chip — hover/click/dropdown 전용 */}
       <div
-        className="relative overflow-hidden"
-        role="button"
-        tabIndex={0}
-        onClick={handleClick}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleClick();
-          }
-          if (e.key === 'Escape' && showDropdown) {
-            e.preventDefault();
-            setShowDropdown(false);
-          }
-        }}
-        style={style}
-        aria-label={`AI 상태: ${label}`}
-        aria-haspopup="true"
-        aria-expanded={showDropdown}
+        className="relative inline-flex flex-col items-center"
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
-        <ChipIcon state={state} />
-        <span>{label}</span>
-        {showProgressBar && <ProgressBar />}
-        {/* Hover progress bar — bottom of chip */}
-        {isHovering && (
-          <div
-            className="absolute bottom-0 left-2 right-2 overflow-hidden rounded-full"
-            style={{ height: 2 }}
-          >
+        <div
+          className="relative overflow-hidden"
+          role="button"
+          tabIndex={0}
+          onClick={handleClick}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleClick();
+            }
+            if (e.key === 'Escape' && showDropdown) {
+              e.preventDefault();
+              setShowDropdown(false);
+            }
+          }}
+          style={style}
+          aria-label={`AI 상태: ${label}`}
+          aria-haspopup="true"
+          aria-expanded={showDropdown}
+        >
+          <ChipIcon state={state} />
+          <span>{label}</span>
+          {showProgressBar && <ProgressBar />}
+          {isHovering && (
             <div
-              className="h-full rounded-full"
-              style={{
-                backgroundColor: 'var(--primary)',
-                animation: 'ai-chip-hover-progress 3s linear forwards',
-              }}
-            />
-          </div>
+              className="absolute bottom-0 left-2 right-2 overflow-hidden rounded-full"
+              style={{ height: 2 }}
+            >
+              <div
+                className="h-full rounded-full"
+                style={{
+                  backgroundColor: 'var(--primary)',
+                  animation: 'ai-chip-hover-progress 3s linear forwards',
+                }}
+              />
+            </div>
+          )}
+        </div>
+        <span className="sr-only" aria-live="polite">{label}</span>
+        {showDropdown && (
+          <AIStatusChipDropdown
+            isAIOpen={isOpen}
+            mode={mode}
+            onModeChange={setMode}
+            onOpen={openAI}
+            onNewSession={startNewSession}
+            onSendMessage={sendMessage}
+            messages={messages}
+            isStreaming={isStreaming}
+            isThinking={isThinking}
+            contextTokens={contextTokens}
+            currentSessionId={currentSessionId}
+            inputFocusedRef={inputFocusedRef}
+            onCloseDropdown={handleCloseDropdown}
+          />
         )}
       </div>
-      <span className="sr-only" aria-live="polite">{label}</span>
-      {/* Dropdown — positioned relative to chip */}
-      {showDropdown && (
-        <AIStatusChipDropdown
-          isAIOpen={isOpen}
-          mode={mode}
-          onModeChange={setMode}
-          onOpen={openAI}
-          onNewSession={startNewSession}
-          onSendMessage={sendMessage}
-          messages={messages}
-          isStreaming={isStreaming}
-          isThinking={isThinking}
-          contextTokens={contextTokens}
-          currentSessionId={currentSessionId}
-          inputFocusedRef={inputFocusedRef}
-          onCloseDropdown={handleCloseDropdown}
-        />
-      )}
+
+      {/* Notification Bell — 완전 독립 영역 */}
+      <div className="relative">
+        <button
+          type="button"
+          className="relative flex items-center justify-center h-7 w-7 rounded-full hover:bg-muted/80 transition-colors"
+          aria-label={unreadCount > 0 ? `안 읽은 AI 인사이트 ${unreadCount}개` : 'AI 인사이트 알림'}
+          aria-haspopup="dialog"
+          aria-expanded={showNotificationPanel}
+          onClick={() => {
+            setShowDropdown(false);
+            setShowNotificationPanel((prev) => !prev);
+          }}
+        >
+          <Bell className="h-4 w-4 text-muted-foreground" />
+          {unreadCount > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground"
+              aria-live="polite"
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </button>
+        {showNotificationPanel && (
+          <AINotificationPanel
+            onClose={() => setShowNotificationPanel(false)}
+            onAskAI={(content) => {
+              setShowNotificationPanel(false);
+              if (!isOpen) {
+                setMode('side');
+                openAI();
+              }
+              sendMessage(content);
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

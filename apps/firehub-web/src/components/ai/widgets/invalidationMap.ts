@@ -26,6 +26,11 @@ const TOOL_INVALIDATION_MAP: Record<string, string[][]> = {
   create_api_connection: [['api-connections']],
   update_api_connection: [['api-connections']],
   delete_api_connection: [['api-connections']],
+  create_proactive_job: [['proactive', 'jobs']],
+  update_proactive_job: [['proactive', 'jobs']],
+  delete_proactive_job: [['proactive', 'jobs']],
+  execute_proactive_job: [['proactive', 'jobs']],
+  create_report_template: [['proactive', 'templates']],
 };
 
 export function getInvalidationKeys(toolName: string): string[][] {

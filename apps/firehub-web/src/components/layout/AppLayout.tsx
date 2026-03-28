@@ -18,6 +18,7 @@ import {
   Tag,
   Users,
   X,
+  Zap,
 } from 'lucide-react';
 import { lazy, Suspense,useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
@@ -77,6 +78,11 @@ const analyticsNavItems: NavItem[] = [
 const automationNavItems: NavItem[] = [
   { label: '파이프라인', href: '/pipelines', icon: GitBranch },
   { label: 'API 연결', href: '/admin/api-connections', icon: Plug },
+];
+
+const aiInsightsNavItems: NavItem[] = [
+  { label: '스마트 작업', href: '/ai-insights/jobs', icon: Zap },
+  { label: '리포트 양식', href: '/ai-insights/templates', icon: FileText },
 ];
 
 const adminNavItems: NavItem[] = [
@@ -212,6 +218,7 @@ function AppLayoutInner() {
   const [dataOpen, setDataOpen] = useState(true);
   const [analyticsOpen, setAnalyticsOpen] = useState(true);
   const [automationOpen, setAutomationOpen] = useState(true);
+  const [aiInsightsOpen, setAiInsightsOpen] = useState(true);
   const [adminOpen, setAdminOpen] = useState(true);
 
   const toggleCollapsed = () => {
@@ -346,6 +353,16 @@ function AppLayoutInner() {
                 onOpenChange={setAutomationOpen}
               />
 
+              <NavSection
+                label="AI 인사이트"
+                items={aiInsightsNavItems}
+                isActive={isActive}
+                collapsed={collapsed}
+                onClick={handleNavClick}
+                open={aiInsightsOpen}
+                onOpenChange={setAiInsightsOpen}
+              />
+
               {isAdmin && (
                 <NavSection
                   label="관리"
@@ -386,8 +403,8 @@ function AppLayoutInner() {
 
         {/* Page content + AI panel */}
         <div className="relative flex flex-1 min-h-0 bg-gradient-main">
-          {/* AI Status Chip — 메인 콘텐츠 영역 상단 중앙 */}
-          <div className="absolute top-2 left-0 right-0 z-30 flex justify-center pointer-events-none">
+          {/* AI Status Chip — 전체 뷰포트 가로 중앙 */}
+          <div className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none">
             <div className="pointer-events-auto">
               <AIStatusChip />
             </div>

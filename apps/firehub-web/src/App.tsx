@@ -35,6 +35,8 @@ const ChartListPage = lazy(() => import('./pages/analytics/ChartListPage'));
 const ChartBuilderPage = lazy(() => import('./pages/analytics/ChartBuilderPage'));
 const DashboardListPage = lazy(() => import('./pages/analytics/DashboardListPage'));
 const DashboardEditorPage = lazy(() => import('./pages/analytics/DashboardEditorPage'));
+const AiInsightJobsPage = lazy(() => import('./pages/ai-insights/AiInsightJobsPage'));
+const AiInsightTemplatesPage = lazy(() => import('./pages/ai-insights/AiInsightTemplatesPage'));
 
 function PageSkeleton() {
   return (
@@ -74,6 +76,8 @@ function App() {
               <Route path="/analytics/charts/:id" element={<ChartBuilderPage />} />
               <Route path="/analytics/dashboards" element={<DashboardListPage />} />
               <Route path="/analytics/dashboards/:id" element={<DashboardEditorPage />} />
+              <Route path="/ai-insights/jobs" element={<AiInsightJobsPage />} />
+              <Route path="/ai-insights/templates" element={<AiInsightTemplatesPage />} />
               <Route element={<AdminRoute />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />

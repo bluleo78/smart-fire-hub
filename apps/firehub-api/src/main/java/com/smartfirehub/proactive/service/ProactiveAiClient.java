@@ -1,0 +1,112 @@
+package com.smartfirehub.proactive.service;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.proactive.dto.ProactiveResult;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.netty.http.client.HttpClient;
+
+@Component
+public class ProactiveAiClient {
+
+  private static final Logger log = LoggerFactory.getLogger(ProactiveAiClient.class);
+  private static final Duration TIMEOUT = Duration.ofMinutes(3);
+
+  private final WebClient webClient;
+  private final ObjectMapper objectMapper;
+
+  @Value("${agent.internal-token}")
+  private String internalToken;
+
+  public ProactiveAiClient(@Value("${agent.url}") String agentUrl, ObjectMapper objectMapper) {
+    HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
+    this.webClient =
+        WebClient.builder()
+            .baseUrl(agentUrl)
+            .clientConnector(new ReactorClientHttpConnector(httpClient))
+            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+            .build();
+    this.objectMapper = objectMapper;
+  }
+
+  public ProactiveResult execute(
+      Long userId, String prompt, String context, String apiKey, Map<String, Object> config) {
+    try {
+      Map<String, Object> body =
+          Map.of(
+              "prompt", prompt,
+              "context", context != null ? context : "{}",
+              "apiKey", apiKey != null ? apiKey : "",
+              "config", config != null ? config : Map.of());
+
+      String responseBody =
+          webClient
+              .post()
+              .uri("/agent/proactive")
+              .contentType(MediaType.APPLICATION_JSON)
+              .header("Authorization", "Internal " + internalToken)
+              .header("X-On-Behalf-Of", String.valueOf(userId))
+              .bodyValue(body)
+              .retrieve()
+              .bodyToMono(String.class)
+              .timeout(TIMEOUT)
+              .block();
+
+      return parseResponse(responseBody);
+
+    } catch (WebClientResponseException e) {
+      throw new RuntimeException(
+          "AI agent proactive failed with status "
+              + e.getStatusCode()
+              + ": "
+              + e.getResponseBodyAsString(),
+          e);
+    } catch (Exception e) {
+      throw new RuntimeException("AI agent proactive request failed: " + e.getMessage(), e);
+    }
+  }
+
+  private ProactiveResult parseResponse(String responseBody) throws Exception {
+    Map<String, Object> responseMap =
+        objectMapper.readValue(responseBody, new TypeReference<>() {});
+
+    String title = (String) responseMap.getOrDefault("title", "");
+
+    List<Map<String, Object>> rawSections =
+        objectMapper.convertValue(
+            responseMap.getOrDefault("sections", List.of()), new TypeReference<>() {});
+
+    List<ProactiveResult.Section> sections =
+        rawSections.stream()
+            .map(
+                s ->
+                    new ProactiveResult.Section(
+                        (String) s.get("key"),
+                        (String) s.get("label"),
+                        (String) s.get("content"),
+                        (String) s.get("type"),
+                        s.get("data")))
+            .toList();
+
+    ProactiveResult.Usage usage = null;
+    if (responseMap.get("usage") instanceof Map<?, ?> usageMap) {
+      usage =
+          new ProactiveResult.Usage(
+              usageMap.get("inputTokens") instanceof Number n ? n.intValue() : 0,
+              usageMap.get("outputTokens") instanceof Number n ? n.intValue() : 0,
+              usageMap.get("totalTokens") instanceof Number n ? n.intValue() : 0);
+    }
+
+    return new ProactiveResult(title, sections, usage);
+  }
+}

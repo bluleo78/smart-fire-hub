@@ -41,6 +41,13 @@ dependencies {
     implementation("com.jayway.jsonpath:json-path:2.9.0")
     // Caffeine cache — analytics dashboard query result caching
     implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+    // Email sending
+    implementation("org.springframework.boot:spring-boot-starter-mail")
+    // Thymeleaf email templates
+    implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
+    // Markdown → HTML 변환
+    implementation("org.commonmark:commonmark:0.24.0")
+    implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
