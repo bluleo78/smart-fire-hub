@@ -105,7 +105,12 @@ public class AiController {
     SseEmitter emitter = new SseEmitter(300_000L); // 5 minutes
 
     aiAgentProxyService.streamChat(
-        emitter, request.message(), request.sessionId(), request.fileIds(), userId);
+        emitter,
+        request.message(),
+        request.sessionId(),
+        request.fileIds(),
+        userId,
+        request.navigationContext());
 
     return emitter;
   }

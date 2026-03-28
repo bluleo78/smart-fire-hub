@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
+import { buildNavigationContext } from '../../components/ai/widgets/routes';
 import { uploadFiles } from '../../api/files';
 import type { AIAttachment, AIMessage, AIStreamEvent } from '../../types/ai';
 
@@ -157,6 +158,9 @@ export function useAIChat() {
       streamingContentRef.current = null;
     };
 
+    // 새 세션일 때만 네비게이션 컨텍스트 전달
+    const navContext = !currentSessionId ? buildNavigationContext() : undefined;
+
     abortControllerRef.current = streamAIChat(
       content,
       currentSessionId,
@@ -291,7 +295,8 @@ export function useAIChat() {
       () => {
         // Stream ended - commit if not already done
         commitMessages();
-      }
+      },
+      navContext,
     );
   }, [currentSessionId, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 

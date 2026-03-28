@@ -33,6 +33,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     apiKey,
     cliOauthToken,
     agentType = 'sdk',
+    navigationContext,
   } = req.body;
 
   const hasMessage = message && typeof message === 'string';
@@ -91,7 +92,9 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       fileIds: hasFileIds ? (fileIds as number[]) : undefined,
       model,
       maxTurns: reqMaxTurns ?? (Number(process.env.MAX_TURNS) || 10),
-      systemPrompt,
+      systemPrompt: navigationContext
+        ? (systemPrompt ? `${systemPrompt}\n\n${navigationContext}` : navigationContext)
+        : systemPrompt,
       temperature,
       maxTokens,
       abortSignal: undefined,

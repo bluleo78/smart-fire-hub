@@ -20,7 +20,8 @@ export function streamAIChat(
   fileIds: number[] | null,
   onEvent: (event: AIStreamEvent) => void,
   onError: (error: Error) => void,
-  onComplete: () => void
+  onComplete: () => void,
+  navigationContext?: string,
 ): AbortController {
   const controller = new AbortController();
   const token = getAccessToken();
@@ -35,6 +36,7 @@ export function streamAIChat(
       message: message || undefined,
       sessionId,
       fileIds: fileIds?.length ? fileIds : undefined,
+      ...(navigationContext ? { navigationContext } : {}),
     }),
     signal: controller.signal,
     credentials: 'include',
