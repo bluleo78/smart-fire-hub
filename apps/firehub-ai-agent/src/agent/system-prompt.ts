@@ -157,6 +157,11 @@ API 연결 생성 시 참고사항:
 - show_dataset: 채팅에 데이터셋 정보를 카드로 표시합니다. datasetId를 전달하면 프론트엔드가 메타정보와 샘플 데이터를 카드로 보여줍니다. 데이터셋 정보를 텍스트로 나열하는 대신 이 도구를 사용하세요.
 - show_table: 채팅에 인터랙티브 테이블을 표시합니다. execute_analytics_query 결과를 테이블로 보여줄 때 사용합니다. 정렬/필터/페이지네이션/CSV 내보내기를 지원합니다. columns와 rows는 조회 결과를 그대로 전달하세요.
 - navigate_to: 메인 UI의 특정 페이지로 이동합니다. 데이터셋/파이프라인/대시보드를 생성하거나 수정한 후 해당 페이지로 자동 이동할 때 사용합니다.
+- show_pipeline: 채팅에 파이프라인 실행 상태를 카드로 표시합니다. pipelineId를 전달하면 프론트엔드가 실행 상태와 스텝 진행률을 보여줍니다.
+- show_dataset_list: 채팅에 데이터셋 목록을 카드 리스트로 표시합니다. list_datasets 결과의 items를 전달하세요.
+- show_pipeline_list: 채팅에 파이프라인 목록을 카드 리스트로 표시합니다. list_pipelines 결과의 items를 전달하세요.
+- show_dashboard_summary: 채팅에 시스템 전체 현황 대시보드를 표시합니다. 파라미터 없이 호출하면 프론트엔드가 자동으로 데이터를 조회합니다.
+- show_activity: 채팅에 최근 활동 타임라인을 표시합니다. size로 표시 항목 수를 지정할 수 있습니다 (기본 10).
 
 분석 쿼리 작성 시 참고사항:
 - 쿼리 작성 전 get_data_schema로 테이블/컬럼 구조를 먼저 확인하세요
@@ -233,6 +238,11 @@ show_chart rows 데이터 규칙:
 - 데이터를 원본 테이블로 보여줄 때: show_table
 - 데이터셋 정보(메타+샘플)를 보여줄 때: show_dataset
 - 리소스 생성/수정 후 해당 페이지로 이동: navigate_to
+- 파이프라인 실행 상태를 보여줄 때: show_pipeline
+- 데이터셋 목록을 보여줄 때: show_dataset_list (list_datasets 결과를 items로 전달)
+- 파이프라인 목록을 보여줄 때: show_pipeline_list (list_pipelines 결과를 items로 전달)
+- 시스템 전체 현황/KPI를 보여줄 때: show_dashboard_summary
+- 최근 활동/변경 이력을 보여줄 때: show_activity
 - 텍스트로 나열하는 것보다 위젯 도구를 우선 사용하세요
 
 중요: 사용자가 특정 데이터셋을 조회하거나 "보여줘"라고 요청하면, SQL로 조회해서 show_table로 보여주지 말고 반드시 show_dataset을 먼저 사용하세요. show_dataset은 데이터셋의 메타정보 + 데이터를 정렬/필터/페이지네이션이 가능한 인터랙티브 카드로 보여줍니다. show_table은 SQL 쿼리 결과(집계, JOIN, 분석 등)를 보여줄 때만 사용하세요.

@@ -163,12 +163,113 @@ describe('UI MCP Tools', () => {
     });
   });
 
+  // --- show_pipeline ---
+  describe('show_pipeline', () => {
+    it('returns displayed: true with pipelineId', async () => {
+      const result = await invokeTool(server, 'show_pipeline', { pipelineId: 7 });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.pipelineId).toBe(7);
+    });
+  });
+
+  // --- show_dataset_list ---
+  describe('show_dataset_list', () => {
+    it('returns displayed: true with count', async () => {
+      const result = await invokeTool(server, 'show_dataset_list', {
+        items: [
+          { id: 1, name: '화재 데이터', datasetType: 'TABLE', rowCount: 100 },
+          { id: 2, name: '소방서 위치', datasetType: 'TABLE' },
+        ],
+      });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.count).toBe(2);
+    });
+
+    it('returns count 0 for empty items', async () => {
+      const result = await invokeTool(server, 'show_dataset_list', { items: [] });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.count).toBe(0);
+    });
+  });
+
+  // --- show_pipeline_list ---
+  describe('show_pipeline_list', () => {
+    it('returns displayed: true with count', async () => {
+      const result = await invokeTool(server, 'show_pipeline_list', {
+        items: [
+          { id: 1, name: 'ETL 파이프라인', isActive: true, stepCount: 3 },
+          { id: 2, name: '집계 파이프라인', isActive: false, stepCount: 2, lastStatus: 'SUCCESS' },
+        ],
+      });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.count).toBe(2);
+    });
+
+    it('returns count 0 for empty items', async () => {
+      const result = await invokeTool(server, 'show_pipeline_list', { items: [] });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.count).toBe(0);
+    });
+  });
+
+  // --- show_dashboard_summary ---
+  describe('show_dashboard_summary', () => {
+    it('returns displayed: true with no args', async () => {
+      const result = await invokeTool(server, 'show_dashboard_summary', {});
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+    });
+  });
+
+  // --- show_activity ---
+  describe('show_activity', () => {
+    it('returns displayed: true with default size', async () => {
+      const result = await invokeTool(server, 'show_activity', {});
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.size).toBe(10);
+    });
+
+    it('returns displayed: true with custom size', async () => {
+      const result = await invokeTool(server, 'show_activity', { size: 5 });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.size).toBe(5);
+    });
+  });
+
   // --- tool registration ---
-  it('all 3 UI tools are registered in the MCP server', () => {
+  it('all 8 UI tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const registeredTools = Object.keys((server.instance as any)._registeredTools);
     expect(registeredTools).toContain('show_dataset');
     expect(registeredTools).toContain('show_table');
     expect(registeredTools).toContain('navigate_to');
+    expect(registeredTools).toContain('show_pipeline');
+    expect(registeredTools).toContain('show_dataset_list');
+    expect(registeredTools).toContain('show_pipeline_list');
+    expect(registeredTools).toContain('show_dashboard_summary');
+    expect(registeredTools).toContain('show_activity');
   });
 });

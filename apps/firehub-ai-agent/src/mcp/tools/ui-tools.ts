@@ -57,5 +57,76 @@ export function registerUiTools(
         return jsonResult({ navigated: true, type: args.type, id: args.id });
       },
     ),
+
+    // 4. 파이프라인 실행 상태 (Reference pattern)
+    safeTool(
+      'show_pipeline',
+      '채팅에 파이프라인 실행 상태를 카드로 표시합니다. 실행 상태, 스텝 진행률, 소요 시간을 보여줍니다.',
+      {
+        pipelineId: z.coerce.number().describe('파이프라인 ID'),
+      },
+      async (args: { pipelineId: number }) => {
+        return jsonResult({ displayed: true, pipelineId: args.pipelineId });
+      },
+    ),
+
+    // 5. 데이터셋 목록 (Passthrough — AI가 list_datasets 결과 전달)
+    safeTool(
+      'show_dataset_list',
+      '채팅에 데이터셋 목록을 카드 리스트로 표시합니다. list_datasets로 조회한 결과를 전달하세요.',
+      {
+        items: z.array(z.object({
+          id: z.coerce.number(),
+          name: z.string(),
+          datasetType: z.string().optional(),
+          rowCount: z.coerce.number().optional(),
+          updatedAt: z.string().optional(),
+        })).describe('데이터셋 목록'),
+      },
+      async (args: { items: Array<Record<string, unknown>> }) => {
+        return jsonResult({ displayed: true, count: args.items.length });
+      },
+    ),
+
+    // 6. 파이프라인 목록 (Passthrough)
+    safeTool(
+      'show_pipeline_list',
+      '채팅에 파이프라인 목록을 카드 리스트로 표시합니다. list_pipelines로 조회한 결과를 전달하세요.',
+      {
+        items: z.array(z.object({
+          id: z.coerce.number(),
+          name: z.string(),
+          isActive: z.boolean().optional(),
+          stepCount: z.coerce.number().optional(),
+          triggerCount: z.coerce.number().optional(),
+          lastStatus: z.string().optional(),
+        })).describe('파이프라인 목록'),
+      },
+      async (args: { items: Array<Record<string, unknown>> }) => {
+        return jsonResult({ displayed: true, count: args.items.length });
+      },
+    ),
+
+    // 7. 대시보드 KPI 요약 (Reference pattern — FE가 dashboard API fetch)
+    safeTool(
+      'show_dashboard_summary',
+      '채팅에 시스템 전체 현황 대시보드를 표시합니다. 데이터셋/파이프라인 수, 건강 상태, 주의 필요 항목 등 KPI를 보여줍니다.',
+      {},
+      async () => {
+        return jsonResult({ displayed: true });
+      },
+    ),
+
+    // 8. 최근 활동 피드 (Reference pattern — FE가 activity API fetch)
+    safeTool(
+      'show_activity',
+      '채팅에 최근 활동 타임라인을 표시합니다. 파이프라인 실행, 데이터셋 변경, 오류 등 최근 이벤트를 시간순으로 보여줍니다.',
+      {
+        size: z.coerce.number().optional().describe('표시할 항목 수 (기본 10)'),
+      },
+      async (args: { size?: number }) => {
+        return jsonResult({ displayed: true, size: args.size ?? 10 });
+      },
+    ),
   ];
 }

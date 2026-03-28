@@ -29,6 +29,31 @@ const WIDGET_REGISTRY: Record<string, WidgetEntry> = {
     label: '페이지 이동',
     icon: '🔗',
   },
+  show_pipeline: {
+    component: lazy(() => import('./PipelineStatusWidget')),
+    label: '파이프라인 상태',
+    icon: '⚙️',
+  },
+  show_dataset_list: {
+    component: lazy(() => import('./DatasetListWidget')),
+    label: '데이터셋 목록',
+    icon: '📦',
+  },
+  show_pipeline_list: {
+    component: lazy(() => import('./PipelineListWidget')),
+    label: '파이프라인 목록',
+    icon: '⚙️',
+  },
+  show_dashboard_summary: {
+    component: lazy(() => import('./DashboardWidget')),
+    label: '대시보드 현황',
+    icon: '📈',
+  },
+  show_activity: {
+    component: lazy(() => import('./ActivityWidget')),
+    label: '최근 활동',
+    icon: '🕐',
+  },
 };
 
 export function getWidget(toolName: string): WidgetEntry | undefined {
