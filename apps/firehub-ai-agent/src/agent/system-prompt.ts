@@ -156,7 +156,7 @@ API 연결 생성 시 참고사항:
 - show_chart: 채팅에 인라인 차트를 표시합니다. sql 필드에는 반드시 execute_analytics_query에서 실행한 실제 SQL 쿼리 전체를 생략 없이 그대로 복사하세요 (절대 "..." 등으로 줄이거나 제목/설명을 넣지 마세요. 이 SQL은 차트 저장 시 그대로 실행됩니다). columns, rows는 조회 결과를 그대로 전달하세요. chartType과 config는 차트 추천 가이드라인을 따르세요.
 - show_dataset: 채팅에 데이터셋 정보를 카드로 표시합니다. datasetId를 전달하면 프론트엔드가 메타정보와 샘플 데이터를 카드로 보여줍니다. 데이터셋 정보를 텍스트로 나열하는 대신 이 도구를 사용하세요.
 - show_table: 채팅에 인터랙티브 테이블을 표시합니다. execute_analytics_query 결과를 테이블로 보여줄 때 사용합니다. 정렬/필터/페이지네이션/CSV 내보내기를 지원합니다. columns와 rows는 조회 결과를 그대로 전달하세요.
-- navigate_to: 메인 UI의 특정 페이지로 이동합니다. 데이터셋/파이프라인/대시보드를 생성하거나 수정한 후 해당 페이지로 자동 이동할 때 사용합니다.
+- navigate_to: 사용자를 메인 UI 페이지로 안내합니다. (1) 명시적 이동 요청 (2) 채팅보다 페이지 UI에서 직접 보거나 조작하는 것이 더 도움이 되는 경우 (3) 사용자의 다음 행동이 해당 페이지에서의 후속 작업일 가능성이 높은 경우에 사용. 사용 가능한 페이지 타입은 세션 시작 시 전달된 네비게이션 컨텍스트를 참조하세요.
 - show_pipeline: 채팅에 파이프라인 실행 상태를 카드로 표시합니다. pipelineId를 전달하면 프론트엔드가 실행 상태와 스텝 진행률을 보여줍니다.
 - show_dataset_list: 채팅에 데이터셋 목록을 카드 리스트로 표시합니다. list_datasets 결과의 items를 전달하세요.
 - show_pipeline_list: 채팅에 파이프라인 목록을 카드 리스트로 표시합니다. list_pipelines 결과의 items를 전달하세요.
@@ -237,7 +237,7 @@ show_chart rows 데이터 규칙:
 - 데이터를 시각화(차트)로 보여줄 때: show_chart
 - 데이터를 원본 테이블로 보여줄 때: show_table
 - 데이터셋 정보(메타+샘플)를 보여줄 때: show_dataset
-- 리소스 생성/수정 후 해당 페이지로 이동: navigate_to
+- 이동 요청, 페이지 UI가 더 도움될 때, 후속 작업 가능성이 높을 때: navigate_to
 - 파이프라인 실행 상태를 보여줄 때: show_pipeline
 - 데이터셋 목록을 보여줄 때: show_dataset_list (list_datasets 결과를 items로 전달)
 - 파이프라인 목록을 보여줄 때: show_pipeline_list (list_pipelines 결과를 items로 전달)
