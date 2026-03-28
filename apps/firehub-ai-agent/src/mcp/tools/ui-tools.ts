@@ -49,12 +49,7 @@ export function registerUiTools(
       'navigate_to',
       '메인 UI의 특정 페이지로 이동합니다. 데이터셋, 파이프라인, 대시보드를 생성하거나 수정한 후 해당 페이지로 자동 이동할 때 사용합니다.',
       {
-        type: z.enum([
-          'home', 'dataset', 'dataset_new', 'category',
-          'pipeline', 'pipeline_new',
-          'query', 'query_new', 'chart', 'chart_new', 'dashboard',
-          'settings', 'users', 'roles', 'audit_logs', 'api_connections', 'profile',
-        ]).describe('이동할 페이지 타입 (목록: type만, 상세: type+id)'),
+        type: z.string().describe('이동할 페이지 타입 (예: home, dataset, pipeline, dashboard, chart, query, category, settings, users, roles, audit_logs, api_connections, profile). 목록: type만, 상세: type+id. _new 접미사로 생성 페이지 (예: dataset_new)'),
         id: z.coerce.number().optional().describe('리소스 ID (생략 시 목록 페이지로 이동)'),
         label: z.string().describe('표시할 이름 (예: "데이터셋 목록", "소방장비 현황")'),
       },
