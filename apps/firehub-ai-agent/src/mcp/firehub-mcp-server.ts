@@ -14,6 +14,7 @@ import { registerTriggerTools } from './tools/trigger-tools.js';
 import { registerApiConnectionTools } from './tools/api-connection-tools.js';
 import { registerMiscTools } from './tools/misc-tools.js';
 import { registerAnalyticsTools } from './tools/analytics-tools.js';
+import { registerUiTools } from './tools/ui-tools.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -41,6 +42,26 @@ export function jsonResult(data: unknown): ToolResult {
 export type SafeToolFn = typeof safeTool;
 export type JsonResultFn = typeof jsonResult;
 
+/**
+ * 모든 FireHub MCP 도구를 등록합니다.
+ * firehub-mcp-server (SDK 모드)와 stdio-server (CLI 모드) 양쪽에서 공통 사용.
+ */
+export function registerAllTools(
+  apiClient: FireHubApiClient,
+  safeToolFn: SafeToolFn,
+  jsonResultFn: JsonResultFn,
+): void {
+  registerCategoryTools(apiClient, safeToolFn, jsonResultFn);
+  registerDatasetTools(apiClient, safeToolFn, jsonResultFn);
+  registerDataTools(apiClient, safeToolFn, jsonResultFn);
+  registerPipelineTools(apiClient, safeToolFn, jsonResultFn);
+  registerTriggerTools(apiClient, safeToolFn, jsonResultFn);
+  registerApiConnectionTools(apiClient, safeToolFn, jsonResultFn);
+  registerMiscTools(apiClient, safeToolFn, jsonResultFn);
+  registerAnalyticsTools(apiClient, safeToolFn, jsonResultFn);
+  registerUiTools(safeToolFn, jsonResultFn);
+}
+
 export function createFireHubMcpServer(
   apiClient: FireHubApiClient,
 ): McpSdkServerConfigWithInstance {
@@ -56,6 +77,7 @@ export function createFireHubMcpServer(
       ...registerApiConnectionTools(apiClient, safeTool, jsonResult),
       ...registerMiscTools(apiClient, safeTool, jsonResult),
       ...registerAnalyticsTools(apiClient, safeTool, jsonResult),
+      ...registerUiTools(safeTool, jsonResult),
     ],
   });
 }

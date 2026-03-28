@@ -12,14 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { FireHubApiClient } from './api-client.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
-import { registerCategoryTools } from './tools/category-tools.js';
-import { registerDatasetTools } from './tools/dataset-tools.js';
-import { registerDataTools } from './tools/data-tools.js';
-import { registerPipelineTools } from './tools/pipeline-tools.js';
-import { registerTriggerTools } from './tools/trigger-tools.js';
-import { registerApiConnectionTools } from './tools/api-connection-tools.js';
-import { registerMiscTools } from './tools/misc-tools.js';
-import { registerAnalyticsTools } from './tools/analytics-tools.js';
+import { registerAllTools } from './firehub-mcp-server.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
@@ -92,15 +85,8 @@ async function main(): Promise<void> {
 
   const safeTool = createMcpSafeTool(server);
 
-  // Register all FireHub tools
-  registerCategoryTools(apiClient, safeTool, jsonResult);
-  registerDatasetTools(apiClient, safeTool, jsonResult);
-  registerDataTools(apiClient, safeTool, jsonResult);
-  registerPipelineTools(apiClient, safeTool, jsonResult);
-  registerTriggerTools(apiClient, safeTool, jsonResult);
-  registerApiConnectionTools(apiClient, safeTool, jsonResult);
-  registerMiscTools(apiClient, safeTool, jsonResult);
-  registerAnalyticsTools(apiClient, safeTool, jsonResult);
+  // Register all FireHub tools (공통 함수 사용)
+  registerAllTools(apiClient, safeTool, jsonResult);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -1,6 +1,6 @@
 # Smart Fire Hub — ROADMAP
 
-> **최종 수정**: 2026-03-21
+> **최종 수정**: 2026-03-28
 > **비전**: AI-First 소방 전문 데이터 플랫폼
 > **전략**: 기초 기술 → 범용 플랫폼 → 도메인 특화 순서로 확장
 > **원칙**: 각 아이템은 독립적으로 계획(Plan) → 구현 → 검증 가능한 작업 단위
@@ -21,8 +21,9 @@
 | [Phase 5.5](#phase-55-운영-안정화--ai-에이전트-개선) | **완료** | 4/4 | 컨텍스트 표시, 컴팩션 알림, 파이프라인 SQL 래핑 |
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | **완료** | 3/3 | UI 일관성 수정 + 컴포넌트 분리 + SchemaExplorer UX 리디자인 |
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
-| [Phase 6](#phase-6-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
-| [Phase 7](#phase-7-ai-chat-generative-ui) | 대기 | 0/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, Chat-First |
+| [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
+| [Phase 6](#phase-6-ai-chat-generative-ui) | **진행중** | 1/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, Chat-First |
+| [Phase 7](#phase-7-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
 
@@ -246,33 +247,32 @@
 
 ---
 
-## Phase 6: 소방 도메인 특화
+## Phase 5.9: UI/UX 개선 + 멀티 AI 프로바이더
 
-> Phase 1~5의 범용 플랫폼 위에 소방 전문 기능을 올린다.
-> **의존**: Phase 1 (GIS), Phase 3 (Text-to-SQL)
+> AI 상태 칩 UX, 멀티 테마 지원, 멀티 AI 프로바이더 리팩터링, 운영 안정화 버그 수정.
+> **의존**: Phase 5.8 완료
 
 | # | 작업 | 상태 | 범위 | 검증 기준 |
 |---|------|------|------|----------|
-| 6-1 | 소방 도메인 CRUD API | ⬜ | Backend | 조직/사건/소방용수/출동 REST API + 권한. 시드 데이터 생성. TC 20개+. |
-| 6-2 | 소방 KPI 대시보드 | ⬜ | Frontend | 응답시간, 출동 건수, 사건 유형 분포, 소방서별 성과 비교 위젯. |
-| 6-3 | 소방 전용 지도 | ⬜ | Frontend | V-World 배경지도 + 소방서/소화전/사건 레이어 + 관할구역 경계 + 히트맵. |
-| 6-4 | AI 소방 분석 도구 | ⬜ | AI Agent | 소방 MCP 도구 + 소방 특화 프롬프트 + fire 스키마 Text-to-SQL. |
-| 6-5 | 공공데이터 ETL 연동 | ⬜ | Backend | 소방용수/소방서 좌표(data.go.kr), 행정경계(V-World), 지오코딩(Kakao). |
+| 5.9-1 | AI 상태 칩 (AIStatusChip) | ✅ | Frontend | 상태 표시 칩 (연결/대화중/오류). 호버 드롭다운 (세션 정보). 클릭 모드 전환 (사이드패널/플로팅/전체화면). 글로벌 CSS + 타입 안전성. 빌드+타입체크 통과. |
+| 5.9-2 | 멀티 테마 지원 | ✅ | Frontend | Enhanced Theme 듀얼 테마 + 7가지 디자인 개선. Indigo/Ocean/Sunset 3종 추가 테마. 셀렉트 박스 UI로 테마 전환. 빌드+타입체크 통과. |
+| 5.9-3 | 멀티 AI 프로바이더 리팩터링 | ✅ | AI Agent | Provider 패턴으로 공통 인터페이스 도입. 프로바이더별 구현 분리. 확장 가능한 멀티 AI 아키텍처. |
+| 5.9-4 | 운영 안정화 + 버그 수정 | ✅ | 전체 | SSE 알림 스트림 타임아웃 해결. 파일 첨부 한글/공백 처리. 데이터셋 생성 datasetType null 방지. 파이프라인 다크 테마 적용 (7개 컴포넌트). AI_CLASSIFY 타입 캐스팅. 브라우저 탭 제목 수정. Dozzle 로그 뷰어 추가. |
 
 ---
 
-## Phase 7: AI Chat Generative UI
+## Phase 6: AI Chat Generative UI
 
 > AI 챗을 고도화하여 인터랙티브 UI 위젯을 인라인 렌더링하고, 딥링크 네비게이션으로 메인 UI와 연결하며, Chat-First 경험을 달성한다.
 > **의존**: Phase 3 (AI Text-to-SQL), Phase 5.6 (SchemaExplorer 리디자인)
 > **계획**: `.omc/plans/ai-chat-generative-ui.md`
 >
 > **3단계 점진적 확장**:
-> - Phase 7-1: Generative UI + 딥링크 (조회/탐색) — 인라인 위젯 7종 + 위젯 레지스트리
-> - Phase 7-2: 인터랙티브 액션 (생성/수정) — 챗 내 폼/확인 다이얼로그
-> - Phase 7-3: 프로액티브 AI (모니터링/알림) — 별도 아키텍처 필요
+> - Phase 6-1: Generative UI + 딥링크 (조회/탐색) — 인라인 위젯 7종 + 위젯 레지스트리
+> - Phase 6-2: 인터랙티브 액션 (생성/수정) — 챗 내 폼/확인 다이얼로그
+> - Phase 6-3: 프로액티브 AI (모니터링/알림) — 별도 아키텍처 필요
 >
-> **Phase 7-1 실행 순서**:
+> **Phase 6-1 실행 순서**:
 > ```
 > Layer 0: SchemaExplorer → SchemaTree 분리 리팩터링
 > Layer 1 (병렬): 위젯 인프라(FE) + MCP 도구 7종(BE)
@@ -282,9 +282,24 @@
 
 | # | 작업 | 상태 | 범위 | 의존 | 검증 기준 |
 |---|------|------|------|------|----------|
-| 7-1 | Generative UI + 딥링크 (조회/탐색) | ⬜ | Frontend + AI Agent | 5.6 | WidgetRegistry 패턴으로 7종 인라인 위젯(show_table, show_schema, show_dataset_preview, show_pipeline_status, show_dashboard, navigate_to + 기존 show_chart 어댑터). Reference 패턴(FE fetch). 딥링크: 메인 뷰 이동 + 사이드 패널 챗 유지. 빌드+타입체크+AI Agent 테스트 통과. |
-| 7-2 | 인터랙티브 액션 (생성/수정) | ⬜ | Frontend + AI Agent | 7-1 | 챗 내 폼(데이터셋 생성, 파이프라인 실행 확인 등). FormWidgetBase/ConfirmWidgetBase 공통 컴포넌트. 파괴적 작업 확인 다이얼로그. 상세 계획은 7-1 완료 후 수립. |
-| 7-3 | 프로액티브 AI (모니터링/알림) | ⬜ | Backend + Frontend + AI Agent | 7-2 | 파이프라인 실패 알림, 데이터 이상 감지, 정기 요약. 백그라운드 스케줄러 + WebSocket/SSE 푸시. 별도 아키텍처 리뷰 필요. 상세 계획은 7-2 완료 후 수립. |
+| 6-1 | Generative UI + 딥링크 (조회/탐색) | ✅ | Frontend + AI Agent | 5.6 | WidgetRegistry 패턴으로 4종 위젯 (show_dataset, show_table, navigate_to + 기존 show_chart 어댑터). Reference 패턴(FE fetch). 테이블 공통 서브 컴포넌트 (CellRenderer, ColumnFilterDropdown, ActiveFilterChips, Pagination, ExportDropdown). 데이터 타입별 렌더링 + 컬럼 드롭다운 필터 + 번호 페이지네이션 + CSV/JSON 내보내기. 딥링크: 메인 뷰 이동 + 사이드 패널 챗 유지. 쿼리 캐시 자동 갱신 (도구 실행 후 TanStack Query invalidation). 빌드+타입체크+AI Agent 테스트 189개 통과. |
+| 6-2 | 인터랙티브 액션 (생성/수정) | ⬜ | Frontend + AI Agent | 6-1 | 챗 내 폼(데이터셋 생성, 파이프라인 실행 확인 등). FormWidgetBase/ConfirmWidgetBase 공통 컴포넌트. 파괴적 작업 확인 다이얼로그. 상세 계획은 6-1 완료 후 수립. |
+| 6-3 | 프로액티브 AI (모니터링/알림) | ⬜ | Backend + Frontend + AI Agent | 6-2 | 파이프라인 실패 알림, 데이터 이상 감지, 정기 요약. 백그라운드 스케줄러 + WebSocket/SSE 푸시. 별도 아키텍처 리뷰 필요. 상세 계획은 6-2 완료 후 수립. |
+
+---
+
+## Phase 7: 소방 도메인 특화
+
+> Phase 1~5의 범용 플랫폼 위에 소방 전문 기능을 올린다.
+> **의존**: Phase 1 (GIS), Phase 3 (Text-to-SQL)
+
+| # | 작업 | 상태 | 범위 | 검증 기준 |
+|---|------|------|------|----------|
+| 7-1 | 소방 도메인 CRUD API | ⬜ | Backend | 조직/사건/소방용수/출동 REST API + 권한. 시드 데이터 생성. TC 20개+. |
+| 7-2 | 소방 KPI 대시보드 | ⬜ | Frontend | 응답시간, 출동 건수, 사건 유형 분포, 소방서별 성과 비교 위젯. |
+| 7-3 | 소방 전용 지도 | ⬜ | Frontend | V-World 배경지도 + 소방서/소화전/사건 레이어 + 관할구역 경계 + 히트맵. |
+| 7-4 | AI 소방 분석 도구 | ⬜ | AI Agent | 소방 MCP 도구 + 소방 특화 프롬프트 + fire 스키마 Text-to-SQL. |
+| 7-5 | 공공데이터 ETL 연동 | ⬜ | Backend | 소방용수/소방서 좌표(data.go.kr), 행정경계(V-World), 지오코딩(Kakao). |
 
 ---
 
@@ -383,6 +398,9 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-03-28 | Phase 6-1 (Generative UI + 딥링크) 완료. WidgetRegistry 패턴 + 4종 위젯 (show_dataset, show_table, navigate_to, show_chart 어댑터). 테이블 UX 개선 (타입별 렌더링, 컬럼 드롭다운 필터, 번호 페이지네이션, CSV/JSON 내보내기). 쿼리 캐시 자동 갱신. MCP 도구 등록 공통화 (registerAllTools). 디자인 시스템 가이드라인 업데이트. |
+| 2026-03-28 | Phase 6 ↔ Phase 7 교체. AI Chat Generative UI를 Phase 6으로, 소방 도메인 특화를 Phase 7로 순서 변경. 작업 번호 재부여 (6-1~6-3, 7-1~7-5). |
+| 2026-03-28 | Phase 5.9 (UI/UX 개선 + 멀티 AI 프로바이더) 추가 및 완료. AI 상태 칩 + 멀티 테마 (Indigo/Ocean/Sunset) + Provider 패턴 멀티 AI 프로바이더 리팩터링 + 운영 안정화 버그 수정 다수 (SSE 타임아웃, 파일 첨부, 다크 테마 등). |
 | 2026-03-14 | Phase 5.7 (firehub-executor 실행 엔진 분리) 추가. 사용자 코드 실행을 Python/FastAPI 독립 서비스로 분리. Phase 2a (Python+분석쿼리) → Phase 2b (SQL+API_CALL) 단계적 마이그레이션. nsjail 샌드박싱. Architect+Critic 합의 완료. 상세 계획: `.omc/plans/pipeline-sandbox-phase2-service-separation.md` |
 | 2026-03-14 | Phase 7 (AI Chat Generative UI) 추가. AI 챗 인라인 위젯 7종 + 딥링크 네비게이션 + Chat-First 3단계 확장 계획. Tool-to-Component + Reference 패턴. Architect+Critic 합의 완료. 상세 계획: `.omc/plans/ai-chat-generative-ui.md` |
 | 2026-03-07 | Phase 5 완료 (5-1, 5-2). 데이터 내보내기 CSV/Excel/GeoJSON 3포맷. Sync/Async 이원화 (50K row 기준). ExportDialog + 비동기 진행률 UI. 쿼리 에디터 내보내기 통합. Rate limiting + 감사 로그 + 파일 정리. 통합 테스트 13개 통과. Architect 검증 13/13 PASS. |

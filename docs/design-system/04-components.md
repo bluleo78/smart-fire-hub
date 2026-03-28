@@ -329,7 +329,84 @@ Button의 `variant`는 사용 맥락에 따라 엄격히 구분한다.
 
 ---
 
-## E. 아직 구현되지 않은 확장 항목 (To-Be)
+## E. AI 위젯 컴포넌트 (`components/ai/widgets/`)
+
+AI 챗에서 인터랙티브 데이터를 렌더링하는 위젯 시스템. WidgetRegistry 패턴으로 MCP 도구명 → React 컴포넌트를 매핑한다.
+
+### 1. 위젯 인프라
+
+| Component | File | 역할 |
+|-----------|------|------|
+| WidgetRegistry | `widgets/WidgetRegistry.ts` | 도구명 → lazy 컴포넌트 매핑 |
+| WidgetShell | `widgets/WidgetShell.tsx` | 공통 카드 래퍼 (헤더/액션/딥링크/반응형 높이) |
+| WidgetErrorBoundary | `widgets/WidgetErrorBoundary.tsx` | 렌더링 실패 폴백 UI |
+| WidgetSkeleton | `widgets/WidgetSkeleton.tsx` | 로딩 스켈레톤 |
+
+**WidgetProps 인터페이스** (모든 위젯 공통):
+```typescript
+interface WidgetProps<T> {
+  input: T;                          // MCP 도구 입력 데이터
+  onNavigate?: (path: string) => void; // 딥링크 이동 콜백
+  displayMode: AIMode;               // 'side' | 'floating' | 'fullscreen'
+}
+```
+
+**반응형 높이** (WidgetShell):
+- side / floating: `max-h-[250px]` (내부 스크롤)
+- fullscreen: `max-h-[450px]`
+
+### 2. 위젯 목록
+
+| Widget | 도구명 | 데이터 패턴 | 설명 |
+|--------|--------|------------|------|
+| DatasetWidget | `show_dataset` | Reference (FE fetch) | 데이터셋 메타 + 데이터 테이블 |
+| TableWidget | `show_table` | Passthrough (AI 전달) | SQL 쿼리 결과 리치 테이블 |
+| ChartWidgetAdapter | `show_chart` | Passthrough | 기존 InlineChartWidget 어댑터 |
+| NavigateToWidget | `navigate_to` | — | 딥링크 자동 이동 카드 |
+
+### 3. 테이블 공통 서브 컴포넌트 (`widgets/table/`)
+
+DatasetWidget과 TableWidget이 공유하는 테이블 UI 컴포넌트.
+
+| Component | File | 역할 |
+|-----------|------|------|
+| CellRenderer | `table/CellRenderer.tsx` | 데이터 타입별 셀 렌더링 |
+| ColumnFilterDropdown | `table/ColumnFilterDropdown.tsx` | 컬럼 헤더 필터 드롭다운 |
+| ActiveFilterChips | `table/ActiveFilterChips.tsx` | 활성 필터 칩 표시 |
+| Pagination | `table/Pagination.tsx` | 번호 기반 페이지네이션 |
+| ExportDropdown | `table/ExportDropdown.tsx` | CSV/JSON 내보내기 드롭다운 |
+
+### 4. 테이블 UX 규칙
+
+**데이터 타입별 렌더링** (CellRenderer):
+- 숫자: `text-right font-medium` + `font-variant-numeric: tabular-nums`
+- 상태 키워드: 컬러 도트 `●` + 색상 텍스트 (정상=green, 점검중=yellow, 오류=red)
+- null/undefined: `—` (`text-muted-foreground/50`)
+- 긴 텍스트: `max-w-[160px] truncate`
+
+**컬럼 헤더**:
+- 컬럼명 클릭 → 정렬 토글 (asc → desc → none)
+- ▼ 아이콘 클릭 → 필터 드롭다운 (텍스트 검색 + 유니크 값 체크박스)
+- 활성 필터는 테이블 위에 pill 칩으로 표시
+
+**페이지네이션**:
+- 번호 버튼 (`w-6 h-6 rounded text-xs`)
+- 현재 페이지: `bg-primary text-primary-foreground`
+- 5페이지 초과: `‹ 1 ... 4 [5] 6 ... 10 ›` 말줄임
+
+**행 스타일**:
+- 패딩: `py-2` (8px)
+- hover: `hover:bg-muted/20 transition-colors duration-150`
+- 구분선: `border-border/50`
+
+**내보내기**:
+- 헤더 액션 영역에 다운로드 아이콘 → CSV / JSON 드롭다운
+- CSV: BOM(`\uFEFF`) + 콤마 구분, 따옴표/줄바꿈 이스케이프
+- JSON: `JSON.stringify(data, null, 2)`
+
+---
+
+## F. 아직 구현되지 않은 확장 항목 (To-Be)
 
 아래 항목은 현재(As-Is) 코드베이스에 없으며, 향후 구현이 권장된다.
 
@@ -339,4 +416,4 @@ Button의 `variant`는 사용 맥락에 따라 엄격히 구분한다.
 | Badge `warning` variant | 높음 | 동일 |
 | Badge `info` variant | 중간 | 정보성 상태 표시 |
 | Toast 유틸 함수 표준화 | 중간 | `toast.success()`, `toast.error()` 래퍼 |
-| DataTable 공통 컴포넌트 | 낮음 | 정렬/페이지네이션 통합 테이블 |
+| ~~DataTable 공통 컴포넌트~~ | ~~낮음~~ | ~~정렬/페이지네이션 통합 테이블~~ → **완료** (AI 위젯 `table/` 서브 컴포넌트로 구현) |

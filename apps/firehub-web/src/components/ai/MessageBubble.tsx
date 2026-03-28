@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
 import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
@@ -8,13 +9,16 @@ import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typesc
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
+import { useNavigate } from 'react-router-dom';
 
 import { File as FileIcon, Image } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
-import type { ChartConfig, ChartType } from '../../types/analytics';
-import { InlineChartWidget } from './InlineChartWidget';
+import { useAI } from './AIProvider';
+import { getWidget } from './widgets/WidgetRegistry';
+import { WidgetErrorBoundary } from './widgets/WidgetErrorBoundary';
+import { WidgetSkeleton } from './widgets/WidgetSkeleton';
 
 SyntaxHighlighter.registerLanguage('sql', sql);
 SyntaxHighlighter.registerLanguage('python', python);
@@ -65,6 +69,9 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   get_dashboard: { label: '대시보드 통계 조회', icon: '📊' },
   // Analytics tools
   show_chart: { label: '차트 표시', icon: '📊' },
+  show_dataset: { label: '데이터셋 표시', icon: '📦' },
+  show_table: { label: '테이블 표시', icon: '📋' },
+  navigate_to: { label: '페이지 이동', icon: '🔗' },
   execute_analytics_query: { label: '분석 쿼리 실행', icon: '📊' },
   get_data_schema: { label: '스키마 조회', icon: '🔍' },
   create_saved_query: { label: '쿼리 저장', icon: '💾' },
@@ -233,21 +240,31 @@ function MarkdownContent({ content, hasNeighbor }: { content: string; hasNeighbo
   );
 }
 
-function renderToolCall(tc: AIToolCall, index: number) {
-  const cleanName = tc.name.replace(/^mcp__firehub__/, '');
-  if (cleanName === 'show_chart' && tc.input) {
+function RenderToolCall({ tc }: { tc: AIToolCall }) {
+  const widget = getWidget(tc.name);
+  const navigate = useNavigate();
+  const { mode, setMode } = useAI();
+
+  const handleNavigate = (path: string) => {
+    if (mode === 'fullscreen') setMode('side');
+    navigate(path);
+  };
+
+  if (widget && tc.input) {
+    const WidgetComponent = widget.component;
     return (
-      <InlineChartWidget
-        key={`tool-${index}`}
-        sql={String(tc.input.sql || '')}
-        chartType={tc.input.chartType as ChartType}
-        config={tc.input.config as ChartConfig}
-        columns={(tc.input.columns as string[]) || []}
-        rows={(tc.input.rows as Record<string, unknown>[]) || []}
-      />
+      <Suspense fallback={<WidgetSkeleton label={widget.label} />}>
+        <WidgetErrorBoundary>
+          <WidgetComponent
+            input={tc.input}
+            onNavigate={handleNavigate}
+            displayMode={mode}
+          />
+        </WidgetErrorBoundary>
+      </Suspense>
     );
   }
-  return <ToolCallDisplay key={`tool-${index}`} toolCall={tc} />;
+  return <ToolCallDisplay toolCall={tc} />;
 }
 
 function AssistantContent({ message }: { message: Partial<AIMessage> }) {
@@ -268,7 +285,7 @@ function AssistantContent({ message }: { message: Partial<AIMessage> }) {
             if (!tc) return null;
             return (
               <div key={`block-${idx}`} className={cn(idx > 0 && 'mt-1')}>
-                {renderToolCall(tc, block.toolCallIndex)}
+                <RenderToolCall tc={tc} />
               </div>
             );
           }
@@ -283,7 +300,7 @@ function AssistantContent({ message }: { message: Partial<AIMessage> }) {
     <>
       {hasToolCalls && (
         <div className="space-y-0.5">
-          {message.toolCalls!.map((tc, i) => renderToolCall(tc, i))}
+          {message.toolCalls!.map((tc, i) => (<RenderToolCall key={`tool-${i}`} tc={tc} />))}
         </div>
       )}
       {hasContent && (

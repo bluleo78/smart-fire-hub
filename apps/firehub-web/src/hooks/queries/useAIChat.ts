@@ -3,6 +3,7 @@ import { useCallback, useRef,useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
+import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { uploadFiles } from '../../api/files';
 import type { AIAttachment, AIMessage, AIStreamEvent } from '../../types/ai';
 
@@ -212,7 +213,14 @@ export function useAIChat() {
             if (streamingContentRef.current) {
               const toolCalls = [...(streamingContentRef.current.toolCalls || [])];
               if (toolCalls.length > 0) {
-                toolCalls[toolCalls.length - 1].result = event.result;
+                const lastTool = toolCalls[toolCalls.length - 1];
+                lastTool.result = event.result;
+
+                // Auto-invalidate TanStack Query cache
+                const keys = getInvalidationKeys(lastTool.name);
+                for (const key of keys) {
+                  queryClient.invalidateQueries({ queryKey: key });
+                }
               }
               streamingContentRef.current = { ...streamingContentRef.current, toolCalls };
               setStreamingMessage({ ...streamingContentRef.current });
