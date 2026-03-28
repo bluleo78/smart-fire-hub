@@ -29,6 +29,19 @@ def close_pool() -> None:
         _pool = None
 
 
+def _is_conn_alive(conn) -> bool:
+    """Check if a pooled connection is still usable."""
+    try:
+        if conn.closed:
+            return False
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 @contextmanager
 def get_connection() -> Generator:
     if _pool is None:
@@ -39,6 +52,9 @@ def get_connection() -> Generator:
         conn = _pool.getconn()
         if conn is None:
             raise RuntimeError("Connection pool exhausted — no available connections")
+        if not _is_conn_alive(conn):
+            _pool.putconn(conn, close=True)
+            conn = _pool.getconn()
         with conn.cursor() as cur:
             cur.execute("SET search_path TO data")
         yield conn
