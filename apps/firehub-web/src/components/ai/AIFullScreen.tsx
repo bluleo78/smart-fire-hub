@@ -10,7 +10,7 @@ export function AIFullScreen() {
   return (
     <div className="flex-1 flex h-full w-full">
       <AISessionSidebar />
-      <div className="flex-1 h-full max-w-3xl mx-auto w-full">
+      <div className="flex-1 h-full w-full">
         <AIChatPanel showSessionSwitcher={false} />
       </div>
     </div>
