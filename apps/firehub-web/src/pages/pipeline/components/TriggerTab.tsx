@@ -114,7 +114,7 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
         <div className="flex items-center justify-between">
           <h3 className="text-xl leading-7 font-semibold">트리거</h3>
           <Button size="sm" onClick={() => setAddDialogOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" />
+            <Plus className="h-4 w-4" />
             트리거 추가
           </Button>
         </div>
@@ -175,18 +175,18 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => setEditTrigger(trigger)}>
-                        <Pencil className="mr-2 h-4 w-4" />
+                        <Pencil className="h-4 w-4" />
                         편집
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleToggle(trigger)}>
-                        <Power className="mr-2 h-4 w-4" />
+                        <Power className="h-4 w-4" />
                         {trigger.isEnabled ? '비활성화' : '활성화'}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-destructive"
                         onClick={() => setDeletingTrigger(trigger)}
                       >
-                        <Trash2 className="mr-2 h-4 w-4" />
+                        <Trash2 className="h-4 w-4" />
                         삭제
                       </DropdownMenuItem>
                     </DropdownMenuContent>

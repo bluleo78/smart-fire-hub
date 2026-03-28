@@ -80,9 +80,9 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
           disabled={executeQuery.isPending || !sql.trim()}
         >
           {executeQuery.isPending ? (
-            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <Play className="mr-1 h-4 w-4" />
+            <Play className="h-4 w-4" />
           )}
           실행
         </Button>
@@ -188,7 +188,7 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
                 )
               }
             >
-              <ExternalLink size={14} className="mr-1" />
+              <ExternalLink size={14} className="" />
               분석 쿼리로 열기
             </Button>
             {result.queryType === 'SELECT' && result.rows.length > 0 && (
@@ -201,7 +201,7 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
                   )
                 }
               >
-                <BarChart3 size={14} className="mr-1" />
+                <BarChart3 size={14} className="" />
                 차트로 만들기
               </Button>
             )}

@@ -46,7 +46,7 @@ export class WidgetErrorBoundary extends Component<Props, State> {
             </p>
           </div>
           <Button size="sm" variant="outline" onClick={this.handleRetry}>
-            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            <RefreshCw className="h-3.5 w-3.5" />
             다시 시도
           </Button>
         </div>

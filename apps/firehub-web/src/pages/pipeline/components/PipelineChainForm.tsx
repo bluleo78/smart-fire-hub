@@ -72,7 +72,7 @@ export default function PipelineChainForm({ pipelineId, config, onChange, errors
                     >
                       <Check
                         className={cn(
-                          'mr-2 h-4 w-4',
+                          'h-4 w-4',
                           config.upstreamPipelineId === p.id ? 'opacity-100' : 'opacity-0',
                         )}
                       />

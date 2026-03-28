@@ -157,7 +157,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
           <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 복제 중...
               </>
             ) : (

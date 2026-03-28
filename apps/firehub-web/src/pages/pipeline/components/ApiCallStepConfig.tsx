@@ -182,7 +182,7 @@ function KvEditor({
       ))}
       {!readOnly && (
         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleAdd}>
-          <Plus className="h-3 w-3 mr-1" />
+          <Plus className="h-3 w-3" />
           추가
         </Button>
       )}
@@ -592,7 +592,7 @@ export default function ApiCallStepConfig({
               className="h-7 text-xs"
               onClick={handleAddMapping}
             >
-              <Plus className="h-3 w-3 mr-1" />
+              <Plus className="h-3 w-3" />
               매핑 추가
             </Button>
           )}

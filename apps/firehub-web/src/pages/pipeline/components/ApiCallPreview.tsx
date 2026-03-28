@@ -152,9 +152,9 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs w-full justify-start">
             {jsonOpen ? (
-              <ChevronDown className="h-3 w-3 mr-1" />
+              <ChevronDown className="h-3 w-3" />
             ) : (
-              <ChevronRight className="h-3 w-3 mr-1" />
+              <ChevronRight className="h-3 w-3" />
             )}
             원본 JSON 보기
           </Button>

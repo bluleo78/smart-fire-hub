@@ -201,7 +201,7 @@ function SaveDialog({
             취소
           </Button>
           <Button onClick={onSave} disabled={!name.trim() || isSaving}>
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? '수정' : '저장'}
           </Button>
         </DialogFooter>

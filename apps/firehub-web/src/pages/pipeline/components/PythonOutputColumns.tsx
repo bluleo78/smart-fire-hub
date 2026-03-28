@@ -78,7 +78,7 @@ export default function PythonOutputColumns({
             onClick={addColumn}
             aria-label="출력 컬럼 추가"
           >
-            <Plus className="h-3 w-3 mr-1" aria-hidden="true" />
+            <Plus className="h-3 w-3" aria-hidden="true" />
             컬럼 추가
           </Button>
         )}

@@ -110,7 +110,7 @@ export function EditorHeader({
                   disabled={isExecuting}
                   onClick={handleExecuteClick}
                 >
-                  <Play className="h-4 w-4 mr-1" />
+                  <Play className="h-4 w-4" />
                   실행
                 </Button>
               </AlertDialogTrigger>
@@ -135,7 +135,7 @@ export function EditorHeader({
               disabled={isExecuting}
               onClick={onExecute}
             >
-              <Play className="h-4 w-4 mr-1" />
+              <Play className="h-4 w-4" />
               실행
             </Button>
           )}
@@ -145,7 +145,7 @@ export function EditorHeader({
       {/* 수정 버튼 — 조회 모드에서만 표시 (실행 상세에서는 숨김) */}
       {!isEditing && !isExecutionMode && pipelineId !== null && (
         <Button variant="outline" onClick={onEdit}>
-          <Pencil className="h-4 w-4 mr-1" />
+          <Pencil className="h-4 w-4" />
           수정
         </Button>
       )}
@@ -158,14 +158,14 @@ export function EditorHeader({
             onClick={onCancelEdit}
             disabled={isSaving}
           >
-            <X className="h-4 w-4 mr-1" />
+            <X className="h-4 w-4" />
             취소
           </Button>
           <Button
             onClick={onSave}
             disabled={!state.isDirty || isSaving}
           >
-            <Save className="h-4 w-4 mr-1" />
+            <Save className="h-4 w-4" />
             저장
           </Button>
         </>

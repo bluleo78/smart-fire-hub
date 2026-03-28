@@ -340,7 +340,7 @@ function SaveDialog({
             취소
           </Button>
           <Button onClick={onSave} disabled={!name.trim() || isSaving}>
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? '수정' : '저장'}
           </Button>
         </DialogFooter>
@@ -632,12 +632,12 @@ export default function QueryEditorPage() {
             >
               {sidebarOpen ? (
                 <>
-                  <ChevronDown className="h-3 w-3 mr-1" />
+                  <ChevronDown className="h-3 w-3" />
                   테이블 숨기기
                 </>
               ) : (
                 <>
-                  <ChevronRight className="h-3 w-3 mr-1" />
+                  <ChevronRight className="h-3 w-3" />
                   테이블 보기
                 </>
               )}

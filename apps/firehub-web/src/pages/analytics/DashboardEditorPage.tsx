@@ -183,7 +183,7 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
             취소
           </Button>
           <Button onClick={handleConfirm} disabled={selected === null || isPending}>
-            {isPending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             추가
           </Button>
         </DialogFooter>
@@ -438,11 +438,11 @@ export default function DashboardEditorPage() {
                 onClick={() => setAddWidgetOpen(true)}
                 className="h-8"
               >
-                <Plus className="h-3.5 w-3.5 mr-1.5" />
+                <Plus className="h-3.5 w-3.5" />
                 차트 추가
               </Button>
               <Button size="sm" onClick={handleExitEdit} className="h-8">
-                <Check className="h-3.5 w-3.5 mr-1.5" />
+                <Check className="h-3.5 w-3.5" />
                 완료
               </Button>
               <Button size="sm" variant="ghost" onClick={handleExitEdit} className="h-8">
@@ -456,7 +456,7 @@ export default function DashboardEditorPage() {
               onClick={() => setIsEditing(true)}
               className="h-8"
             >
-              <Pencil className="h-3.5 w-3.5 mr-1.5" />
+              <Pencil className="h-3.5 w-3.5" />
               편집
             </Button>
           )}

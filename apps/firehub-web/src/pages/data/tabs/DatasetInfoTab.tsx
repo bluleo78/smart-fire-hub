@@ -129,7 +129,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
           {!isEditing && dataset.datasetType !== 'TEMP' && (
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-              <Edit className="mr-2 h-4 w-4" />
+              <Edit className="h-4 w-4" />
               수정
             </Button>
           )}

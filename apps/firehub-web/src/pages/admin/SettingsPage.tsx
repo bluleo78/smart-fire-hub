@@ -282,7 +282,7 @@ export default function SettingsPage() {
                       disabled={isVerifying || hasChanges}
                       className="shrink-0"
                     >
-                      <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                      <ShieldCheck className="h-3.5 w-3.5" />
                       {isVerifying ? '검증 중...' : '인증 확인'}
                     </Button>
                   </div>
@@ -327,7 +327,7 @@ export default function SettingsPage() {
                       disabled={isVerifying || hasChanges}
                       className="shrink-0"
                     >
-                      <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                      <ShieldCheck className="h-3.5 w-3.5" />
                       {isVerifying ? '검증 중...' : '인증 확인'}
                     </Button>
                   </div>
@@ -480,11 +480,11 @@ export default function SettingsPage() {
 
           <div className="flex items-center gap-3">
             <Button onClick={handleSave} disabled={isSaving || !hasChanges}>
-              <Save className="mr-2 h-4 w-4" />
+              <Save className="h-4 w-4" />
               {isSaving ? '저장 중...' : '저장'}
             </Button>
             <Button variant="outline" onClick={handleReset} disabled={!hasChanges}>
-              <RotateCcw className="mr-2 h-4 w-4" />
+              <RotateCcw className="h-4 w-4" />
               되돌리기
             </Button>
           </div>

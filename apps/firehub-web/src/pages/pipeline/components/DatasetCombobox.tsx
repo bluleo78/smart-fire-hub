@@ -87,7 +87,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
                   >
                     <Check
                       className={cn(
-                        'mr-2 h-4 w-4',
+                        'h-4 w-4',
                         value === ds.id ? 'opacity-100' : 'opacity-0',
                       )}
                     />
@@ -173,7 +173,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
                 >
                   <Check
                     className={cn(
-                      'mr-2 h-4 w-4',
+                      'h-4 w-4',
                       value.includes(ds.id) ? 'opacity-100' : 'opacity-0',
                     )}
                   />

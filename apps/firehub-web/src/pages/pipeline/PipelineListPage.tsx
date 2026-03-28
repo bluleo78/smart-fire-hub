@@ -48,7 +48,7 @@ export default function PipelineListPage() {
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">파이프라인 관리</h1>
         <Button asChild>
           <Link to="/pipelines/new">
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="h-4 w-4" />
             파이프라인 추가
           </Link>
         </Button>
@@ -79,7 +79,7 @@ export default function PipelineListPage() {
                 >
                   <TableCell className="font-medium">{pipeline.name}</TableCell>
                   <TableCell>
-                    <Badge variant={pipeline.isActive ? 'default' : 'secondary'} className={pipeline.isActive ? 'text-pipeline' : ''}>
+                    <Badge variant={pipeline.isActive ? 'default' : 'secondary'}>
                       {pipeline.isActive ? '활성' : '비활성'}
                     </Badge>
                   </TableCell>

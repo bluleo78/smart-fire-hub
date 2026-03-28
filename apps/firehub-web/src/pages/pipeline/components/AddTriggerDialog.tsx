@@ -171,7 +171,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
               onClick={handleBack}
               disabled={!!createdTrigger}
             >
-              <ArrowLeft className="mr-1 h-4 w-4" />
+              <ArrowLeft className="h-4 w-4" />
               유형 선택으로 돌아가기
             </Button>
 
@@ -253,7 +253,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
               >
                 {createTrigger.isPending ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     생성 중...
                   </>
                 ) : (

@@ -41,7 +41,7 @@ export function SqlQueryHistory({ datasetId, open, onOpenChange, onSelect }: Sql
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm">
-          <History className="mr-1 h-4 w-4" />
+          <History className="h-4 w-4" />
           이력
         </Button>
       </PopoverTrigger>

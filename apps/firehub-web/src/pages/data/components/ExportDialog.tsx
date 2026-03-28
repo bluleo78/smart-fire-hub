@@ -187,7 +187,7 @@ export function ExportDialog({
                       onClick={() => setFormat(opt.value)}
                       className="flex-1"
                     >
-                      <opt.icon className="mr-1.5 h-4 w-4" />
+                      <opt.icon className="h-4 w-4" />
                       {opt.label}
                     </Button>
                   );
@@ -253,7 +253,7 @@ export function ExportDialog({
             onClick={handleExport}
             disabled={isLoading || isExporting || !estimate}
           >
-            <Download className="mr-2 h-4 w-4" />
+            <Download className="h-4 w-4" />
             {isExporting ? '내보내는 중...' : '내보내기'}
           </Button>
         </DialogFooter>

@@ -179,7 +179,7 @@ export function SchemaBuilder() {
       )}
 
       <Button type="button" variant="outline" onClick={addColumn} className="w-full">
-        <Plus className="mr-2 h-4 w-4" />
+        <Plus className="h-4 w-4" />
         칼럼 추가
       </Button>
     </div>

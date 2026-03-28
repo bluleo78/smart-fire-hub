@@ -104,7 +104,7 @@ export default function DatasetListPage() {
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">데이터셋 관리</h1>
         <Button asChild>
           <Link to="/data/datasets/new">
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="h-4 w-4" />
             데이터셋 추가
           </Link>
         </Button>

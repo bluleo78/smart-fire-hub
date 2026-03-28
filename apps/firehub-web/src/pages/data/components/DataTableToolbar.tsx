@@ -35,25 +35,25 @@ export function DataTableToolbar({
         variant={sqlEditorOpen ? 'default' : 'outline'}
         onClick={onToggleSqlEditor}
       >
-        <Terminal className="mr-2 h-4 w-4" />
+        <Terminal className="h-4 w-4" />
         SQL
       </Button>
       <Button variant="outline" onClick={onAddRow}>
-        <Plus className="mr-2 h-4 w-4" />
+        <Plus className="h-4 w-4" />
         행 추가
       </Button>
       <Button variant="outline" onClick={onImport}>
-        <Upload className="mr-2 h-4 w-4" />
+        <Upload className="h-4 w-4" />
         임포트
       </Button>
       {onApiImport && (
         <Button variant="outline" onClick={onApiImport}>
-          <Globe className="mr-2 h-4 w-4" />
+          <Globe className="h-4 w-4" />
           API 가져오기
         </Button>
       )}
       <Button variant="outline" onClick={onExport}>
-        <Download className="mr-2 h-4 w-4" />
+        <Download className="h-4 w-4" />
         내보내기
       </Button>
     </div>

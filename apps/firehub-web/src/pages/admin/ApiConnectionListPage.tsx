@@ -130,7 +130,7 @@ export default function ApiConnectionListPage() {
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
             <Button>
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="h-4 w-4" />
               새 연결
             </Button>
           </DialogTrigger>

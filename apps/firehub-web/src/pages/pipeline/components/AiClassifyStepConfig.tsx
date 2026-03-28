@@ -221,7 +221,7 @@ export default function AiClassifyStepConfig({
               className="h-7 text-xs px-2 border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-950"
               onClick={addOutputColumn}
             >
-              <Plus className="h-3 w-3 mr-1" />
+              <Plus className="h-3 w-3" />
               컬럼 추가
             </Button>
           )}

@@ -98,7 +98,7 @@ export default function RoleListPage() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button>
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="h-4 w-4" />
               역할 추가
             </Button>
           </DialogTrigger>

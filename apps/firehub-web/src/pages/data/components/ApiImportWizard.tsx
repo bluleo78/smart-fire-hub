@@ -397,7 +397,7 @@ export function ApiImportWizard({
                 </div>
               ))}
               <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => addKv(setHeaders)}>
-                <Plus className="h-3 w-3 mr-1" />
+                <Plus className="h-3 w-3" />
                 헤더 추가
               </Button>
             </div>
@@ -430,7 +430,7 @@ export function ApiImportWizard({
                 </div>
               ))}
               <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => addKv(setQueryParams)}>
-                <Plus className="h-3 w-3 mr-1" />
+                <Plus className="h-3 w-3" />
                 파라미터 추가
               </Button>
             </div>
@@ -570,7 +570,7 @@ export function ApiImportWizard({
                   ])
                 }
               >
-                <Plus className="h-3 w-3 mr-1" />
+                <Plus className="h-3 w-3" />
                 매핑 추가
               </Button>
             </div>

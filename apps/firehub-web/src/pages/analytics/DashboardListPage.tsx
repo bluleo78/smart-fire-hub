@@ -182,7 +182,7 @@ export default function DashboardListPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">대시보드</h1>
         <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
+          <Plus className="h-4 w-4" />
           새 대시보드
         </Button>
       </div>

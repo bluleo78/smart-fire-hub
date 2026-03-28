@@ -89,7 +89,7 @@ export default function ChartListPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">차트</h1>
         <Button onClick={() => navigate('/analytics/charts/new')}>
-          <Plus className="mr-2 h-4 w-4" />
+          <Plus className="h-4 w-4" />
           새 차트
         </Button>
       </div>
