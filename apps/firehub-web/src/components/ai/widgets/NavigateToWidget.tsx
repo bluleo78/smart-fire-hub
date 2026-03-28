@@ -3,35 +3,81 @@ import { ExternalLink } from 'lucide-react';
 import type { WidgetProps } from './types';
 
 interface NavigateToInput {
-  type: 'dataset' | 'pipeline' | 'dashboard';
-  id: number;
+  type: string;
+  id?: number;
   label: string;
 }
 
-const ROUTE_MAP: Record<string, (id: number) => string> = {
-  dataset: (id) => `/data/datasets/${id}`,
-  pipeline: (id) => `/pipelines/${id}`,
-  dashboard: (id) => `/analytics/dashboards/${id}`,
+const ROUTE_MAP: Record<string, { detail?: (id: number) => string; list: string }> = {
+  // 데이터
+  home: { list: '/' },
+  dataset: { detail: (id) => `/data/datasets/${id}`, list: '/data/datasets' },
+  dataset_new: { list: '/data/datasets/new' },
+  category: { list: '/data/categories' },
+  // 파이프라인
+  pipeline: { detail: (id) => `/pipelines/${id}`, list: '/pipelines' },
+  pipeline_new: { list: '/pipelines/new' },
+  // 분석
+  query: { detail: (id) => `/analytics/queries/${id}`, list: '/analytics/queries' },
+  query_new: { list: '/analytics/queries/new' },
+  chart: { detail: (id) => `/analytics/charts/${id}`, list: '/analytics/charts' },
+  chart_new: { list: '/analytics/charts/new' },
+  dashboard: { detail: (id) => `/analytics/dashboards/${id}`, list: '/analytics/dashboards' },
+  // 관리
+  settings: { list: '/admin/settings' },
+  users: { detail: (id) => `/admin/users/${id}`, list: '/admin/users' },
+  roles: { detail: (id) => `/admin/roles/${id}`, list: '/admin/roles' },
+  audit_logs: { list: '/admin/audit-logs' },
+  api_connections: { detail: (id) => `/admin/api-connections/${id}`, list: '/admin/api-connections' },
+  profile: { list: '/profile' },
 };
 
 const TYPE_LABELS: Record<string, string> = {
+  home: '홈',
   dataset: '데이터셋',
+  dataset_new: '데이터셋 생성',
+  category: '카테고리',
   pipeline: '파이프라인',
+  pipeline_new: '파이프라인 생성',
+  query: '쿼리',
+  query_new: '쿼리 생성',
+  chart: '차트',
+  chart_new: '차트 생성',
   dashboard: '대시보드',
+  settings: '설정',
+  users: '사용자',
+  roles: '역할',
+  audit_logs: '감사 로그',
+  api_connections: 'API 연결',
+  profile: '프로필',
 };
 
 const TYPE_ICONS: Record<string, string> = {
+  home: '🏠',
   dataset: '📦',
+  dataset_new: '📦',
+  category: '📂',
   pipeline: '⚙️',
+  pipeline_new: '⚙️',
+  query: '🔍',
+  query_new: '🔍',
+  chart: '📈',
+  chart_new: '📈',
   dashboard: '📊',
+  settings: '⚙️',
+  users: '👥',
+  roles: '🔐',
+  audit_logs: '📋',
+  api_connections: '🔌',
+  profile: '👤',
 };
 
 export default function NavigateToWidget({ input, onNavigate }: WidgetProps<NavigateToInput>) {
   const { type, id, label } = input;
-  const path = ROUTE_MAP[type]?.(id);
+  const route = ROUTE_MAP[type];
+  const path = route ? (id && route.detail ? route.detail(id) : route.list) : null;
   const navigated = useRef(false);
 
-  // Auto-navigate on mount (once)
   useEffect(() => {
     if (path && onNavigate && !navigated.current) {
       navigated.current = true;
