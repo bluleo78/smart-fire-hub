@@ -19,8 +19,6 @@ type SlideDirection = 'left' | 'right' | 'none';
 
 export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidget }: CanvasAreaProps) {
   const {
-    mode,
-    setMode,
     closeAI,
     currentSessionId,
     startNewSession,

@@ -93,7 +93,7 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
         <ZAxis range={[40, 40]} />
         <Tooltip
           cursor={{ strokeDasharray: '3 3', stroke: 'hsl(var(--muted-foreground))' }}
-          contentStyle={TOOLTIP_CONTENT_STYLE}}
+          contentStyle={TOOLTIP_CONTENT_STYLE}
         />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {scatterGroups.map((g) => (
