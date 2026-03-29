@@ -20,35 +20,40 @@ error() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 # 각 앱의 빌드 context와 Dockerfile 경로
 # API: context = apps/firehub-api/ (Dockerfile이 상대경로 COPY 사용)
 # WEB, AI-AGENT: context = . (프로젝트 루트, Dockerfile이 apps/ 절대경로 COPY 사용)
-build_image() {
+PLATFORM="linux/amd64,linux/arm64"
+
+ensure_builder() {
+  if ! docker buildx inspect multiplatform &>/dev/null; then
+    log "Creating multiplatform builder"
+    docker buildx create --name multiplatform --use
+  else
+    docker buildx use multiplatform
+  fi
+}
+
+build_and_push() {
   local app=$1
   case $app in
     api)
-      log "Building $app (context: apps/firehub-api/)"
-      docker build --no-cache -t "$REGISTRY/api:latest" apps/firehub-api/
+      log "Building + pushing $app (context: apps/firehub-api/)"
+      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/api:latest" --push apps/firehub-api/
       ;;
     web)
-      log "Building $app (context: project root)"
-      docker build --no-cache -t "$REGISTRY/web:latest" -f apps/firehub-web/Dockerfile .
+      log "Building + pushing $app (context: project root)"
+      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/web:latest" -f apps/firehub-web/Dockerfile --push .
       ;;
     ai-agent)
-      log "Building $app (context: project root)"
-      docker build --no-cache -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile .
+      log "Building + pushing $app (context: project root)"
+      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile --push .
       ;;
     executor)
-      log "Building $app (context: apps/firehub-executor/)"
-      docker build --no-cache -t "$REGISTRY/executor:latest" apps/firehub-executor/
+      log "Building + pushing $app (context: apps/firehub-executor/)"
+      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
       ;;
     *)
       error "Unknown app: $app (valid: api, web, ai-agent, executor)"
       ;;
   esac
-}
-
-push_image() {
-  local app=$1
-  log "Pushing $app"
-  docker push "$REGISTRY/$app:latest"
 }
 
 deploy_app() {
@@ -88,16 +93,11 @@ else
   APPS=("$TARGET")
 fi
 
-# 1. Build
-log "=== Build Phase ==="
+# 1. Build + Push (multiplatform)
+log "=== Build + Push Phase ==="
+ensure_builder
 for app in "${APPS[@]}"; do
-  build_image "$app"
-done
-
-# 2. Push
-log "=== Push Phase ==="
-for app in "${APPS[@]}"; do
-  push_image "$app"
+  build_and_push "$app"
 done
 
 # 3. Deploy
