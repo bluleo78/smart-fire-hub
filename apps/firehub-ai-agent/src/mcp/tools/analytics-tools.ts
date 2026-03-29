@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { canvasSchema } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
@@ -222,6 +223,7 @@ export function registerAnalyticsTools(
         }),
         columns: z.array(z.string()).describe('결과 컬럼 목록'),
         rows: z.array(z.record(z.string(), z.unknown())).max(2000, '최대 2000행까지 지원합니다').describe('결과 데이터 행 배열 (최대 2000행)'),
+        canvas: canvasSchema,
       },
       async (args: {
         sql: string;

@@ -388,3 +388,25 @@
   0% { width: 0%; }
   100% { width: 100%; }
 }
+
+/* Canvas animations */
+@keyframes canvas-widget-in {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes canvas-widget-out {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(20px); opacity: 0; }
+}
+@keyframes canvas-page-slide-in-left {
+  from { transform: translateX(40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes canvas-page-slide-in-right {
+  from { transform: translateX(-40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes canvas-dim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

@@ -16,6 +16,7 @@ import { File as FileIcon, Image } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
 import { useAI } from './AIProvider';
+import { CanvasPlaceholderCard } from './canvas/CanvasPlaceholderCard';
 import { getWidget } from './widgets/WidgetRegistry';
 import { WidgetErrorBoundary } from './widgets/WidgetErrorBoundary';
 import { WidgetSkeleton } from './widgets/WidgetSkeleton';
@@ -256,6 +257,10 @@ function RenderToolCall({ tc }: { tc: AIToolCall }) {
   };
 
   if (widget && tc.input) {
+    // In native mode, all widgets are placed on canvas — show placeholder in chat
+    if (mode === 'native') {
+      return <CanvasPlaceholderCard label={widget.label} icon={widget.icon} />;
+    }
     const WidgetComponent = widget.component;
     return (
       <Suspense fallback={<WidgetSkeleton label={widget.label} />}>

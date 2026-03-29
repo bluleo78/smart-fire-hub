@@ -259,6 +259,67 @@ describe('UI MCP Tools', () => {
     });
   });
 
+  // --- canvas field (optional) ---
+  describe('canvas field support', () => {
+    it('show_dataset accepts optional canvas field', async () => {
+      const result = await invokeTool(server, 'show_dataset', {
+        datasetId: 42,
+        canvas: { width: 'half', height: 'full', page: 'current' },
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+    });
+
+    it('show_table accepts optional canvas field', async () => {
+      const result = await invokeTool(server, 'show_table', {
+        sql: 'SELECT id FROM t',
+        columns: ['id'],
+        rows: [{ id: 1 }],
+        canvas: { width: 'full', height: 'half', page: 'new', pageLabel: '분석 결과' },
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+    });
+
+    it('navigate_to accepts optional canvas field', async () => {
+      const result = await invokeTool(server, 'navigate_to', {
+        type: 'dataset',
+        id: 1,
+        label: '테스트',
+        canvas: { width: 'third', height: 'third' },
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.navigated).toBe(true);
+    });
+
+    it('show_pipeline accepts optional canvas field', async () => {
+      const result = await invokeTool(server, 'show_pipeline', {
+        pipelineId: 1,
+        canvas: { width: 'full', height: 'full', replace: 'old-widget-id' },
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+    });
+
+    it('all UI tools work without canvas field (backward compat)', async () => {
+      const r1 = await invokeTool(server, 'show_dataset', { datasetId: 1 });
+      const r2 = await invokeTool(server, 'show_table', { sql: 'SELECT 1', columns: ['x'], rows: [] });
+      const r3 = await invokeTool(server, 'navigate_to', { type: 'dashboard', label: 'D' });
+      const r4 = await invokeTool(server, 'show_pipeline', { pipelineId: 1 });
+      const r5 = await invokeTool(server, 'show_dataset_list', { items: [] });
+      const r6 = await invokeTool(server, 'show_pipeline_list', { items: [] });
+      const r7 = await invokeTool(server, 'show_dashboard_summary', {});
+      const r8 = await invokeTool(server, 'show_activity', {});
+      for (const r of [r1, r2, r3, r4, r5, r6, r7, r8]) {
+        expect(r.isError).toBeFalsy();
+      }
+    });
+  });
+
   // --- tool registration ---
   it('all 8 UI tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

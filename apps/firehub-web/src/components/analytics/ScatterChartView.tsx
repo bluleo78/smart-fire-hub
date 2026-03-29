@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
+import { TOOLTIP_CONTENT_STYLE } from './chart-styles';
 
 const DEFAULT_COLORS = [
   '#8884d8',
@@ -91,13 +92,8 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
         />
         <ZAxis range={[40, 40]} />
         <Tooltip
-          cursor={{ strokeDasharray: '3 3' }}
-          contentStyle={{
-            background: 'hsl(var(--popover))',
-            border: '1px solid hsl(var(--border))',
-            borderRadius: 6,
-            fontSize: 12,
-          }}
+          cursor={{ strokeDasharray: '3 3', stroke: 'hsl(var(--muted-foreground))' }}
+          contentStyle={TOOLTIP_CONTENT_STYLE}}
         />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {scatterGroups.map((g) => (

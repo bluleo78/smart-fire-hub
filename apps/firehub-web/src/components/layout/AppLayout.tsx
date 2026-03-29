@@ -53,6 +53,9 @@ const AIFloating = lazy(() =>
 const AIFullScreen = lazy(() =>
   import('../ai/AIFullScreen').then((mod) => ({ default: mod.AIFullScreen }))
 );
+const AINativeMode = lazy(() =>
+  import('../ai/AINativeMode').then((mod) => ({ default: mod.AINativeMode }))
+);
 
 interface NavItem {
   label: string;
@@ -235,12 +238,13 @@ function AppLayoutInner() {
 
   const handleNavClick = () => {
     setSidebarOpen(false);
-    if (aiOpen && aiMode === 'fullscreen') {
+    if (aiOpen && (aiMode === 'fullscreen' || aiMode === 'native')) {
       setAIMode('side');
     }
   };
 
   const showFullscreen = aiOpen && aiMode === 'fullscreen';
+  const showNative = aiOpen && aiMode === 'native';
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -410,7 +414,11 @@ function AppLayoutInner() {
             </div>
           </div>
 
-          {showFullscreen ? (
+          {showNative ? (
+            <Suspense fallback={<div className="flex-1 bg-background" />}>
+              <AINativeMode />
+            </Suspense>
+          ) : showFullscreen ? (
             <Suspense fallback={<div className="flex-1 bg-background" />}>
               <AIFullScreen />
             </Suspense>

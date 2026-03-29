@@ -6,6 +6,7 @@ const MAX_HEIGHT: Record<string, string> = {
   side: 'max-h-[250px]',
   floating: 'max-h-[250px]',
   fullscreen: 'max-h-[450px]',
+  native: 'max-h-none',
 };
 
 export function WidgetShell({

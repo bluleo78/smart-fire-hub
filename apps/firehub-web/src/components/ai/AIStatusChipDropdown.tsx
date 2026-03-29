@@ -251,7 +251,7 @@ export function AIStatusChipDropdown({
             <div className="grid grid-cols-3 gap-1.5">
               <ActionButton
                 icon={<SideIcon />}
-                label="사이드 열기"
+                label="사이드"
                 onClick={() => { onModeChange('side'); onOpen(); }}
               />
               <ActionButton
@@ -279,7 +279,7 @@ export function AIStatusChipDropdown({
             </div>
           </div>
         ) : (
-          /* Open: mode switch 3-col + 2-col */
+          /* Open: mode switch 4-col + 2-col */
           <div className="space-y-1.5">
             <div className="grid grid-cols-3 gap-1.5">
               <ActionButton

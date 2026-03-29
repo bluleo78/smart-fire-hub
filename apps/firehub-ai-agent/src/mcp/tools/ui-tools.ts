@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import { canvasSchema } from './shared-schemas.js';
 
 export function registerUiTools(
   safeTool: SafeToolFn,
@@ -12,6 +13,7 @@ export function registerUiTools(
       '채팅에 데이터셋 정보를 카드로 표시합니다. 메타정보와 샘플 데이터를 인터랙티브 카드로 보여줍니다.',
       {
         datasetId: z.coerce.number().describe('표시할 데이터셋 ID'),
+        canvas: canvasSchema,
       },
       async (args: { datasetId: number }) => {
         return jsonResult({ displayed: true, datasetId: args.datasetId });
@@ -28,6 +30,7 @@ export function registerUiTools(
         columns: z.array(z.string()).describe('컬럼 목록'),
         rows: z.array(z.record(z.string(), z.unknown())).max(2000, '최대 2000행까지 지원합니다').describe('데이터 행 배열'),
         totalRows: z.number().optional().describe('전체 행 수 (표시용)'),
+        canvas: canvasSchema,
       },
       async (args: {
         title?: string;
@@ -52,6 +55,7 @@ export function registerUiTools(
         type: z.string().describe('이동할 페이지 타입. 사용 가능한 타입은 세션 시작 시 전달된 네비게이션 컨텍스트를 참조하세요. 목록: type만, 상세: type+id'),
         id: z.coerce.number().optional().describe('리소스 ID (생략 시 목록 페이지로 이동)'),
         label: z.string().describe('표시할 이름 (예: "데이터셋 목록", "소방장비 현황")'),
+        canvas: canvasSchema,
       },
       async (args: { type: string; id?: number; label: string }) => {
         return jsonResult({ navigated: true, type: args.type, id: args.id });
@@ -64,6 +68,7 @@ export function registerUiTools(
       '채팅에 파이프라인 실행 상태를 카드로 표시합니다. 실행 상태, 스텝 진행률, 소요 시간을 보여줍니다.',
       {
         pipelineId: z.coerce.number().describe('파이프라인 ID'),
+        canvas: canvasSchema,
       },
       async (args: { pipelineId: number }) => {
         return jsonResult({ displayed: true, pipelineId: args.pipelineId });
@@ -82,6 +87,7 @@ export function registerUiTools(
           rowCount: z.coerce.number().optional(),
           updatedAt: z.string().optional(),
         })).describe('데이터셋 목록'),
+        canvas: canvasSchema,
       },
       async (args: { items: Array<Record<string, unknown>> }) => {
         return jsonResult({ displayed: true, count: args.items.length });
@@ -101,6 +107,7 @@ export function registerUiTools(
           triggerCount: z.coerce.number().optional(),
           lastStatus: z.string().optional(),
         })).describe('파이프라인 목록'),
+        canvas: canvasSchema,
       },
       async (args: { items: Array<Record<string, unknown>> }) => {
         return jsonResult({ displayed: true, count: args.items.length });
@@ -123,6 +130,7 @@ export function registerUiTools(
       '채팅에 최근 활동 타임라인을 표시합니다. 파이프라인 실행, 데이터셋 변경, 오류 등 최근 이벤트를 시간순으로 보여줍니다.',
       {
         size: z.coerce.number().optional().describe('표시할 항목 수 (기본 10)'),
+        canvas: canvasSchema,
       },
       async (args: { size?: number }) => {
         return jsonResult({ displayed: true, size: args.size ?? 10 });

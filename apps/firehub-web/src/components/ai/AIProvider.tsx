@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
-import { createContext, useCallback, useContext, useEffect, useMemo,useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAIChat } from '../../hooks/queries/useAIChat';
-import type { AIMessage,AIMode } from '../../types/ai';
+import { useCanvasState } from '../../hooks/useCanvasState';
+import type { AIMessage, AIMode, CanvasLayout } from '../../types/ai';
+import { getWidget } from './widgets/WidgetRegistry';
 
 interface AIContextValue {
   isOpen: boolean;
@@ -25,6 +27,8 @@ interface AIContextValue {
   stopStreaming: () => void;
   startNewSession: () => void;
   loadSession: (sessionId: string) => void;
+  // Canvas state (native mode) -- grouped to prevent AIContextValue bloat
+  canvas: ReturnType<typeof useCanvasState>;
 }
 
 const AICtx = createContext<AIContextValue | null>(null);
@@ -39,7 +43,7 @@ export function useAI() {
 function getStoredMode(): AIMode {
   try {
     const stored = localStorage.getItem('ai-mode');
-    if (stored === 'side' || stored === 'floating' || stored === 'fullscreen') {
+    if (stored === 'side' || stored === 'floating' || stored === 'fullscreen' || stored === 'native') {
       return stored;
     }
   } catch {
@@ -52,6 +56,27 @@ export function AIProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setModeState] = useState<AIMode>(getStoredMode);
 
+  const canvas = useCanvasState();
+  const modeRef = useRef<AIMode>(getStoredMode());
+
+  // Keep modeRef in sync so handleCanvasWidget doesn't capture stale mode
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  const handleCanvasWidget = useCallback((widget: { id: string; toolName: string; input: Record<string, unknown>; canvas?: CanvasLayout }) => {
+    if (modeRef.current !== 'native') return;
+    // Only place widgets that have a registered widget component
+    if (!getWidget(widget.toolName)) return;
+    canvas.addWidget({
+      id: widget.id,
+      toolName: widget.toolName,
+      input: widget.input,
+      layout: widget.canvas || { width: 'full', height: 'full' },
+      timestamp: new Date().toISOString(),
+    });
+  }, [canvas]);
+
   const {
     messages,
     isStreaming,
@@ -63,11 +88,11 @@ export function AIProvider({ children }: { children: ReactNode }) {
     currentSessionId,
     sendMessage,
     stopStreaming,
-    startNewSession,
-    loadSession,
+    startNewSession: startNewSessionBase,
+    loadSession: loadSessionBase,
     contextTokens,
     isCompacting,
-  } = useAIChat();
+  } = useAIChat({ onCanvasWidget: handleCanvasWidget });
 
   const openAI = useCallback(() => setIsOpen(true), []);
   const closeAI = useCallback(() => setIsOpen(false), []);
@@ -82,10 +107,22 @@ export function AIProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const startNewSession = useCallback(() => {
+    canvas.resetCanvas();
+    startNewSessionBase();
+  }, [canvas, startNewSessionBase]);
+
+  const loadSession = useCallback(async (sessionId: string) => {
+    canvas.resetCanvas();
+    await loadSessionBase(sessionId);
+  }, [canvas, loadSessionBase]);
+
   // Keyboard shortcut: Cmd/Ctrl+K
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        // Native mode handles its own Cmd/Ctrl+K for chat overlay toggle
+        if (modeRef.current === 'native') return;
         e.preventDefault();
         setIsOpen(prev => !prev);
       }
@@ -116,6 +153,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       stopStreaming,
       startNewSession,
       loadSession,
+      canvas,
     }),
     [
       isOpen,
@@ -138,6 +176,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       stopStreaming,
       startNewSession,
       loadSession,
+      canvas,
     ]
   );
 

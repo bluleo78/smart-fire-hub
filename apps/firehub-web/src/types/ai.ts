@@ -1,4 +1,29 @@
-export type AIMode = 'side' | 'floating' | 'fullscreen';
+export type AIMode = 'side' | 'floating' | 'fullscreen' | 'native';
+
+export type CanvasWidth = 'full' | 'half' | 'third';
+export type CanvasHeight = 'full' | 'half' | 'third';
+
+export interface CanvasLayout {
+  width: CanvasWidth;
+  height: CanvasHeight;
+  page?: 'new' | 'current';
+  pageLabel?: string;
+  replace?: string;
+}
+
+export interface CanvasWidget {
+  id: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  layout: CanvasLayout;
+  timestamp: string;
+}
+
+export interface CanvasPage {
+  id: string;
+  label: string;
+  widgets: CanvasWidget[];
+}
 
 export type AgentType = 'sdk' | 'cli' | 'cli-api';
 
@@ -34,6 +59,7 @@ export interface AIMessage {
 }
 
 export interface AIToolCall {
+  id?: string;
   name: string;
   input: Record<string, unknown>;
   result?: string;

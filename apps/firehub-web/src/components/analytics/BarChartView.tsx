@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
+import { TOOLTIP_CONTENT_STYLE, BAR_CURSOR_STYLE } from './chart-styles';
 
 const DEFAULT_COLORS = [
   '#8884d8',
@@ -57,14 +58,7 @@ export function BarChartView({ config, data, height }: BarChartViewProps) {
               : undefined
           }
         />
-        <Tooltip
-          contentStyle={{
-            background: 'hsl(var(--popover))',
-            border: '1px solid hsl(var(--border))',
-            borderRadius: 6,
-            fontSize: 12,
-          }}
-        />
+        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} cursor={BAR_CURSOR_STYLE} />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {yAxis.map((col, i) => (
           <Bar

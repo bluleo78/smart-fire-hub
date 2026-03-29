@@ -6,7 +6,7 @@ import { aiApi, streamAIChat } from '../../api/ai';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
 import { uploadFiles } from '../../api/files';
-import type { AIAttachment, AIMessage, AIStreamEvent } from '../../types/ai';
+import type { AIAttachment, AIMessage, AIStreamEvent, CanvasLayout } from '../../types/ai';
 
 export function useAISessions(page = 0, size = 20) {
   return useQuery({
@@ -25,7 +25,9 @@ export function useDeleteAISession() {
   });
 }
 
-export function useAIChat() {
+export function useAIChat(options?: {
+  onCanvasWidget?: (widget: { id: string; toolName: string; input: Record<string, unknown>; canvas?: CanvasLayout }) => void;
+}) {
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -219,6 +221,18 @@ export function useAIChat() {
               if (toolCalls.length > 0) {
                 const lastTool = toolCalls[toolCalls.length - 1];
                 lastTool.result = event.result;
+
+                // Canvas widget placement: fire callback at tool_result time (idempotent, no useEffect)
+                // Fires for ALL tool results — AIProvider decides whether to place on canvas based on mode
+                if (options?.onCanvasWidget) {
+                  const canvasLayout = lastTool.input?.canvas as CanvasLayout | undefined;
+                  options.onCanvasWidget({
+                    id: lastTool.id || `tc-${lastTool.name}-${toolCalls.length}`,
+                    toolName: lastTool.name,
+                    input: lastTool.input || {},
+                    canvas: canvasLayout,
+                  });
+                }
 
                 // Auto-invalidate TanStack Query cache
                 const keys = getInvalidationKeys(lastTool.name);

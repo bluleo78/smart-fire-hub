@@ -18,14 +18,29 @@ export interface ChartRendererProps {
   fillParent?: boolean;
 }
 
-export function ChartRenderer({ chartType, config, data, columns, height = 300, fillParent }: ChartRendererProps) {
-  if (chartType !== 'MAP' && (!config.xAxis || config.yAxis.length === 0)) {
+export function ChartRenderer({ chartType, config: rawConfig, data, columns, height = 300, fillParent }: ChartRendererProps) {
+  // Auto-infer xAxis/yAxis from columns when not provided
+  const config = { ...rawConfig };
+  if ((!config.xAxis || config.yAxis.length === 0) && columns.length >= 2) {
+    if (!config.xAxis) {
+      config.xAxis = columns[0];
+    }
+    if (!config.yAxis || config.yAxis.length === 0) {
+      // For numeric columns, use remaining columns as yAxis
+      const remaining = columns.filter(c => c !== config.xAxis);
+      config.yAxis = remaining.length > 0 ? remaining : [columns[1]];
+    }
+  }
+
+  if (chartType !== 'MAP' && chartType !== 'TABLE' && (!config.xAxis || config.yAxis.length === 0)) {
     return (
       <div
         className={`flex items-center justify-center text-muted-foreground text-sm ${fillParent ? 'h-full' : ''}`}
         style={fillParent ? undefined : { height }}
       >
-        X축과 Y축을 설정하세요.
+        {chartType === 'PIE' || chartType === 'DONUT'
+          ? '데이터 필드를 설정하세요.'
+          : 'X축과 Y축을 설정하세요.'}
       </div>
     );
   }

@@ -3,11 +3,11 @@ import type { AIMode } from '../../types/ai';
 import { useAI } from './AIProvider';
 import { AIStatusChipDropdown } from './AIStatusChipDropdown';
 import { AINotificationPanel } from './AINotificationPanel';
-import { SideIcon, FloatingIcon, FullscreenIcon } from './AIChipIcons';
+import { SideIcon, FloatingIcon, FullscreenIcon, NativeIcon } from './AIChipIcons';
 import { Bell } from 'lucide-react';
 import { useUnreadCount } from '../../hooks/queries/useProactiveMessages';
 
-type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'floating' | 'fullscreen';
+type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'floating' | 'fullscreen' | 'native';
 
 function getChipState(ctx: {
   isStreaming: boolean;
@@ -18,6 +18,7 @@ function getChipState(ctx: {
   // error state reserved for future use
   if (ctx.isStreaming) return 'streaming';
   if (ctx.isThinking) return 'thinking';
+  if (ctx.isOpen && ctx.mode === 'native') return 'native';
   if (ctx.isOpen && ctx.mode === 'fullscreen') return 'fullscreen';
   if (ctx.isOpen && ctx.mode === 'floating') return 'floating';
   if (ctx.isOpen && ctx.mode === 'side') return 'side';
@@ -71,6 +72,13 @@ const chipStyles: Record<ChipState, React.CSSProperties> = {
   fullscreen: {
     background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
     border: '1px solid var(--primary)',
+    color: 'var(--primary)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+  },
+  native: {
+    background: 'color-mix(in oklch, var(--primary) 20%, transparent)',
+    border: '1px solid color-mix(in oklch, var(--primary) 70%, transparent)',
     color: 'var(--primary)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
@@ -154,6 +162,8 @@ function ChipIcon({ state }: { state: ChipState }) {
       return <FloatingIcon />;
     case 'fullscreen':
       return <FullscreenIcon />;
+    case 'native':
+      return <NativeIcon />;
   }
 }
 
@@ -242,6 +252,7 @@ export function AIStatusChip() {
     if (showDropdown) return;
 
     // Mode rotation: closed → side → floating → fullscreen → closed
+    // (native mode is hidden — not yet stable for production)
     if (!isOpen) {
       setMode('side');
       openAI();

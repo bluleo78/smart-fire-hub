@@ -8,6 +8,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
+import { TOOLTIP_CONTENT_STYLE } from './chart-styles';
 
 const DEFAULT_COLORS = [
   '#8884d8',
@@ -60,12 +61,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
           ))}
         </Pie>
         <Tooltip
-          contentStyle={{
-            background: 'hsl(var(--popover))',
-            border: '1px solid hsl(var(--border))',
-            borderRadius: 6,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_CONTENT_STYLE}
           formatter={(value, name) => [value, name]}
         />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
