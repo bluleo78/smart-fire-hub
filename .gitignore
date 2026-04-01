@@ -55,6 +55,9 @@ SKILL.md
 # Logs
 *.log
 
+# Superpowers
+.superpowers/
+
 # Playwright
 .playwright-mcp
 snapshots/
