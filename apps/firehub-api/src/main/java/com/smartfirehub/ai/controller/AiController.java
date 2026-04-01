@@ -103,7 +103,8 @@ public class AiController {
         request.sessionId(),
         request.fileIds(),
         userId,
-        request.navigationContext());
+        request.navigationContext(),
+        request.screenContext());
 
     return emitter;
   }

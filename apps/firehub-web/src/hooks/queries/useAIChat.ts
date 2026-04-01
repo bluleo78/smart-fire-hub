@@ -3,6 +3,7 @@ import { useCallback, useRef,useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
+import { buildScreenContext } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
 import { uploadFiles } from '../../api/files';
@@ -162,6 +163,8 @@ export function useAIChat(options?: {
 
     // 새 세션일 때만 네비게이션 컨텍스트 전달
     const navContext = !currentSessionId ? buildNavigationContext() : undefined;
+    // 매 메시지마다 현재 화면 컨텍스트 전달 (useLocation 대신 직접 읽어 불필요한 리렌더 방지)
+    const screen = buildScreenContext(window.location.pathname);
 
     abortControllerRef.current = streamAIChat(
       content,
@@ -311,6 +314,7 @@ export function useAIChat(options?: {
         commitMessages();
       },
       navContext,
+      screen,
     );
   }, [currentSessionId, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -7,4 +7,5 @@ public record ChatRequest(
     String sessionId,
     List<Long> fileIds,
     String agentType,
-    String navigationContext) {}
+    String navigationContext,
+    String screenContext) {}

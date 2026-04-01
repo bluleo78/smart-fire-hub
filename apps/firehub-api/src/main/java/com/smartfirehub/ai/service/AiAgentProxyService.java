@@ -119,7 +119,8 @@ public class AiAgentProxyService {
       String sessionId,
       List<Long> fileIds,
       Long userId,
-      String navigationContext) {
+      String navigationContext,
+      String screenContext) {
     emitter.onTimeout(() -> emitter.completeWithError(new RuntimeException("SSE timeout")));
     emitter.onError(e -> log.error("[AI Chat] SseEmitter error", e));
 
@@ -163,6 +164,9 @@ public class AiAgentProxyService {
         "sessionMaxTokens", parseIntSafe(aiSettings.get("ai.session_max_tokens"), 50000));
     if (navigationContext != null && !navigationContext.isEmpty()) {
       requestBody.put("navigationContext", navigationContext);
+    }
+    if (screenContext != null && !screenContext.isEmpty()) {
+      requestBody.put("screenContext", screenContext);
     }
 
     // Send initial event to flush response headers and prevent proxy buffering

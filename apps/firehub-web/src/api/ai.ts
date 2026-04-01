@@ -22,6 +22,7 @@ export function streamAIChat(
   onError: (error: Error) => void,
   onComplete: () => void,
   navigationContext?: string,
+  screenContext?: string,
 ): AbortController {
   const controller = new AbortController();
   const token = getAccessToken();
@@ -37,6 +38,7 @@ export function streamAIChat(
       sessionId,
       fileIds: fileIds?.length ? fileIds : undefined,
       ...(navigationContext ? { navigationContext } : {}),
+      ...(screenContext ? { screenContext } : {}),
     }),
     signal: controller.signal,
     credentials: 'include',

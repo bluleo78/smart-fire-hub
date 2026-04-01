@@ -22,7 +22,7 @@
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | **완료** | 3/3 | UI 일관성 수정 + 컴포넌트 분리 + SchemaExplorer UX 리디자인 |
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
-| [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 2/2 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI |
+| [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
 | [Phase 7](#phase-7-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
@@ -283,7 +283,7 @@
 |---|------|------|------|------|----------|
 | 6-1 | Generative UI + 딥링크 (조회/탐색) | ✅ | Frontend + AI Agent | 5.6 | WidgetRegistry 패턴으로 4종 위젯 (show_dataset, show_table, navigate_to + 기존 show_chart 어댑터). Reference 패턴(FE fetch). 테이블 공통 서브 컴포넌트 (CellRenderer, ColumnFilterDropdown, ActiveFilterChips, Pagination, ExportDropdown). 데이터 타입별 렌더링 + 컬럼 드롭다운 필터 + 번호 페이지네이션 + CSV/JSON 내보내기. 딥링크: 메인 뷰 이동 + 사이드 패널 챗 유지. 쿼리 캐시 자동 갱신 (도구 실행 후 TanStack Query invalidation). 빌드+타입체크+AI Agent 테스트 189개 통과. |
 | 6-2 | 프로액티브 AI (AI 인사이트) | ✅ | Backend + Frontend + AI Agent | 6-1 | 프롬프트 기반 스마트 작업 + cron 스케줄 자동 실행 + 리포트 템플릿 시스템 (빌트인 3종). 전달 채널 2종 (AI 챗 알림 + SMTP 이메일 리포트). MCP 도구 7종 (proactive_job CRUD + report_template). AI 인사이트 LNB 섹션 + 알림 패널. 이메일 마크다운→HTML + 차트 이미지 서버 렌더링. |
-| 6-3 | AI 화면 컨텍스트 전달 | ⬜ | Frontend + AI Agent | 6-1 | 현재 화면(페이지, 선택된 데이터셋, 필터 상태 등)의 정보를 AI 채팅 컨텍스트로 자동 전달. AI가 사용자의 현재 작업 맥락을 이해하고 더 정확한 응답 제공. 상세 계획 별도 수립. |
+| 6-3 | AI 화면 컨텍스트 전달 | ✅ | Frontend + Backend + AI Agent | 6-1 | 매 메시지마다 현재 화면 정보(페이지명, 리소스 ID)를 AI에게 자동 전달. URL 패턴 매칭(24종) → 한국어 설명 생성. Spring Boot 프록시 screenContext 필드 추가. 시스템 프롬프트 화면 컨텍스트 활용 가이드. 빌드+테스트 통과. |
 
 ---
 
