@@ -5,19 +5,17 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.user.dto.*;
 import com.smartfirehub.user.service.UserService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/users")
+@RequiredArgsConstructor
 public class UserController {
 
   private final UserService userService;
-
-  public UserController(UserService userService) {
-    this.userService = userService;
-  }
 
   @GetMapping("/me")
   public ResponseEntity<UserDetailResponse> getMyProfile(Authentication authentication) {

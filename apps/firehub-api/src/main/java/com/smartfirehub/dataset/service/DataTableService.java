@@ -8,18 +8,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class DataTableService {
 
   private final DSLContext dsl;
   private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
-
-  public DataTableService(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private String mapDataType(String dataType, Integer maxLength) {
     return switch (dataType) {

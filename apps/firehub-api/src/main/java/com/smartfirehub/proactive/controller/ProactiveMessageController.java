@@ -5,19 +5,17 @@ import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/proactive/messages")
+@RequiredArgsConstructor
 public class ProactiveMessageController {
 
   private final ProactiveMessageRepository messageRepository;
-
-  public ProactiveMessageController(ProactiveMessageRepository messageRepository) {
-    this.messageRepository = messageRepository;
-  }
 
   @GetMapping
   @RequirePermission("proactive:read")

@@ -8,19 +8,17 @@ import com.smartfirehub.pipeline.repository.TriggerRepository;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class TriggerEventService {
-
-  private static final Logger log = LoggerFactory.getLogger(TriggerEventService.class);
 
   private final TriggerRepository triggerRepository;
   private final TriggerService triggerService;

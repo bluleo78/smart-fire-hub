@@ -11,6 +11,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/datasets")
+@RequiredArgsConstructor
 public class DatasetController {
 
   private final DatasetService datasetService;
@@ -25,19 +27,6 @@ public class DatasetController {
   private final DatasetFavoriteService datasetFavoriteService;
   private final DatasetTagService datasetTagService;
   private final ApiImportService apiImportService;
-
-  public DatasetController(
-      DatasetService datasetService,
-      DatasetDataService datasetDataService,
-      DatasetFavoriteService datasetFavoriteService,
-      DatasetTagService datasetTagService,
-      ApiImportService apiImportService) {
-    this.datasetService = datasetService;
-    this.datasetDataService = datasetDataService;
-    this.datasetFavoriteService = datasetFavoriteService;
-    this.datasetTagService = datasetTagService;
-    this.apiImportService = apiImportService;
-  }
 
   @GetMapping
   @RequirePermission("dataset:read")

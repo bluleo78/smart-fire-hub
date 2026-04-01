@@ -7,6 +7,7 @@ import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.service.ReportTemplateService;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -14,13 +15,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/proactive/templates")
+@RequiredArgsConstructor
 public class ReportTemplateController {
 
   private final ReportTemplateService reportTemplateService;
-
-  public ReportTemplateController(ReportTemplateService reportTemplateService) {
-    this.reportTemplateService = reportTemplateService;
-  }
 
   @GetMapping
   @RequirePermission("proactive:read")

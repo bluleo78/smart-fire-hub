@@ -2,9 +2,8 @@ package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -13,10 +12,10 @@ import org.springframework.stereotype.Service;
  *     instead.
  */
 @Deprecated
+@Slf4j
 @Service
 public class SqlScriptExecutor {
 
-  private static final Logger log = LoggerFactory.getLogger(SqlScriptExecutor.class);
   private final DSLContext pipelineDsl;
   private final SqlValidator sqlValidator;
 

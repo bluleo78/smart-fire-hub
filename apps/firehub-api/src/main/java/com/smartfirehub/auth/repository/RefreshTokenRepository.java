@@ -6,20 +6,18 @@ import static org.jooq.impl.DSL.field;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class RefreshTokenRepository {
 
   private static final Field<UUID> FAMILY_ID = field("family_id", UUID.class);
 
   private final DSLContext dsl;
-
-  public RefreshTokenRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public void save(Long userId, String tokenHash, LocalDateTime expiresAt, UUID familyId) {
     dsl.insertInto(REFRESH_TOKEN)

@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.security.core.Authentication;
@@ -15,13 +16,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/settings")
+@RequiredArgsConstructor
 public class SettingsController {
 
   private final SettingsService settingsService;
-
-  public SettingsController(SettingsService settingsService) {
-    this.settingsService = settingsService;
-  }
 
   @GetMapping
   @RequirePermission("ai:settings")

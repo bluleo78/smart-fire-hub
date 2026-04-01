@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -15,6 +16,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class ProactiveMessageRepository {
 
   private final DSLContext dsl;
@@ -48,11 +50,6 @@ public class ProactiveMessageRepository {
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
   private static final Field<Long> PJ_ID = field(name("proactive_job", "id"), Long.class);
   private static final Field<String> PJ_NAME = field(name("proactive_job", "name"), String.class);
-
-  public ProactiveMessageRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   public Long create(
       Long userId,

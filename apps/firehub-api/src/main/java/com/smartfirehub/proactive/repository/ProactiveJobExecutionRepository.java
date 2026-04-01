@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -16,6 +17,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class ProactiveJobExecutionRepository {
 
   private final DSLContext dsl;
@@ -38,11 +40,6 @@ public class ProactiveJobExecutionRepository {
       field(name("proactive_job_execution", "result"), JSONB.class);
   private static final Field<LocalDateTime> PJE_CREATED_AT =
       field(name("proactive_job_execution", "created_at"), LocalDateTime.class);
-
-  public ProactiveJobExecutionRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   public Long create(Long jobId) {
     return dsl.insertInto(PROACTIVE_JOB_EXECUTION)

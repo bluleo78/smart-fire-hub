@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -16,6 +17,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class TriggerEventRepository {
 
   private final DSLContext dsl;
@@ -38,11 +40,6 @@ public class TriggerEventRepository {
   private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
   private static final Field<Long> T_ID = field(name("pipeline_trigger", "id"), Long.class);
   private static final Field<String> T_NAME = field(name("pipeline_trigger", "name"), String.class);
-
-  public TriggerEventRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   private Map<String, Object> parseJsonb(JSONB jsonb) {
     if (jsonb == null || jsonb.data() == null) {

@@ -5,6 +5,7 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -12,13 +13,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/pipelines/{pipelineId}/triggers")
+@RequiredArgsConstructor
 public class TriggerController {
 
   private final TriggerService triggerService;
-
-  public TriggerController(TriggerService triggerService) {
-    this.triggerService = triggerService;
-  }
 
   @GetMapping
   @RequirePermission("trigger:read")

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -24,6 +25,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class DatasetRepository {
 
   private final DSLContext dsl;
@@ -87,10 +89,6 @@ public class DatasetRepository {
   private static final Table<?> USER_TABLE = table(name("user"));
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
   private static final Field<String> U_NAME = field(name("user", "name"), String.class);
-
-  public DatasetRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private DatasetResponse mapToDatasetResponse(
       Record r, Set<Long> favoriteIds, Map<Long, List<String>> tagsByDatasetId) {

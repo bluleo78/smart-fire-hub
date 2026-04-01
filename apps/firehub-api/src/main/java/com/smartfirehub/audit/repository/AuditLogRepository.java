@@ -8,6 +8,7 @@ import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -17,6 +18,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class AuditLogRepository {
 
   private final DSLContext dsl;
@@ -44,10 +46,6 @@ public class AuditLogRepository {
   private static final Field<String> AL_ERROR_MESSAGE =
       field(name("audit_log", "error_message"), String.class);
   private static final Field<JSONB> AL_METADATA = field(name("audit_log", "metadata"), JSONB.class);
-
-  public AuditLogRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private AuditLogResponse mapToResponse(Record r) {
     JSONB jsonb = r.get(AL_METADATA);

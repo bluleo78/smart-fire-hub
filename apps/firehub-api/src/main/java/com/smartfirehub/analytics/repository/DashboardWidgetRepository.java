@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -17,6 +18,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class DashboardWidgetRepository {
 
   private final DSLContext dsl;
@@ -48,10 +50,6 @@ public class DashboardWidgetRepository {
       field(name("chart", "name"), String.class).as("chart_name");
   private static final Field<String> C_CHART_TYPE =
       field(name("chart", "chart_type"), String.class).as("chart_type");
-
-  public DashboardWidgetRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<DashboardResponse.DashboardWidgetResponse> findByDashboardId(Long dashboardId) {
     var records =

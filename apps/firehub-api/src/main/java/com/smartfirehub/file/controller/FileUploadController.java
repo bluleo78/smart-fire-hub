@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -18,13 +19,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/files")
+@RequiredArgsConstructor
 public class FileUploadController {
 
   private final FileUploadService fileUploadService;
-
-  public FileUploadController(FileUploadService fileUploadService) {
-    this.fileUploadService = fileUploadService;
-  }
 
   @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   @RequirePermission("ai:write")

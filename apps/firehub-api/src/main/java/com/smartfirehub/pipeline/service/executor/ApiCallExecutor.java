@@ -10,8 +10,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -26,10 +26,10 @@ import reactor.netty.http.client.HttpClient;
  *     ApiCallPreviewService.
  */
 @Deprecated
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class ApiCallExecutor {
-
-  private static final Logger log = LoggerFactory.getLogger(ApiCallExecutor.class);
 
   private static final int DEFAULT_TIMEOUT_MS = 30_000;
   private static final int DEFAULT_MAX_DURATION_MS = 3_600_000;
@@ -46,22 +46,6 @@ public class ApiCallExecutor {
   private final DataTableService dataTableService;
   private final DataTableRowService dataTableRowService;
   private final WebClient.Builder webClientBuilder;
-
-  public ApiCallExecutor(
-      SsrfProtectionService ssrfProtectionService,
-      JsonResponseParser jsonResponseParser,
-      OffsetPaginationHandler offsetPaginationHandler,
-      DataTableService dataTableService,
-      DataTableRowService dataTableRowService,
-      WebClient.Builder webClientBuilder) {
-
-    this.ssrfProtectionService = ssrfProtectionService;
-    this.jsonResponseParser = jsonResponseParser;
-    this.offsetPaginationHandler = offsetPaginationHandler;
-    this.dataTableService = dataTableService;
-    this.dataTableRowService = dataTableRowService;
-    this.webClientBuilder = webClientBuilder;
-  }
 
   // -------------------------------------------------------------------------
   // Result type

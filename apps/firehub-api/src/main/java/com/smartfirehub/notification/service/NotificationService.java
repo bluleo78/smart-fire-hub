@@ -5,22 +5,18 @@ import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class NotificationService {
 
-  private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
-
   private final SseEmitterRegistry registry;
-
-  public NotificationService(SseEmitterRegistry registry) {
-    this.registry = registry;
-  }
 
   @Async
   @EventListener

@@ -7,8 +7,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
@@ -16,9 +15,8 @@ import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Service;
 
 @Service
+@Slf4j
 public class ProactiveJobSchedulerService {
-
-  private static final Logger log = LoggerFactory.getLogger(ProactiveJobSchedulerService.class);
 
   private final TaskScheduler taskScheduler;
   private final ProactiveJobRepository proactiveJobRepository;

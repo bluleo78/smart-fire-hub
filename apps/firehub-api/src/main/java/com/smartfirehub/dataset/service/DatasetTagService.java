@@ -4,20 +4,16 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class DatasetTagService {
 
   private final DatasetRepository datasetRepository;
   private final DatasetTagRepository tagRepository;
-
-  public DatasetTagService(
-      DatasetRepository datasetRepository, DatasetTagRepository tagRepository) {
-    this.datasetRepository = datasetRepository;
-    this.tagRepository = tagRepository;
-  }
 
   @Transactional
   public void addTag(Long datasetId, String tagName, Long userId) {

@@ -1,21 +1,17 @@
 package com.smartfirehub.auth.service;
 
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class RefreshTokenCleanupService {
 
-  private static final Logger log = LoggerFactory.getLogger(RefreshTokenCleanupService.class);
-
   private final RefreshTokenRepository refreshTokenRepository;
-
-  public RefreshTokenCleanupService(RefreshTokenRepository refreshTokenRepository) {
-    this.refreshTokenRepository = refreshTokenRepository;
-  }
 
   /** Delete expired tokens and revoked tokens older than 7 days. Runs daily at 4 AM. */
   @Scheduled(cron = "0 0 4 * * *")

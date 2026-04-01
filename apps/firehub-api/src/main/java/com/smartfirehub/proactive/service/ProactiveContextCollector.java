@@ -7,24 +7,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class ProactiveContextCollector {
 
-  private static final Logger log = LoggerFactory.getLogger(ProactiveContextCollector.class);
   private static final int MAX_ATTENTION_ITEMS = 50;
   private static final int MAX_CONTEXT_LENGTH = 50_000;
 
   private final DashboardService dashboardService;
   private final ObjectMapper objectMapper;
-
-  public ProactiveContextCollector(DashboardService dashboardService, ObjectMapper objectMapper) {
-    this.dashboardService = dashboardService;
-    this.objectMapper = objectMapper;
-  }
 
   public String collectContext(Map<String, Object> config) {
     try {

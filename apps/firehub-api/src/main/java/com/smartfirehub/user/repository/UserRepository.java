@@ -10,19 +10,17 @@ import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class UserRepository {
 
   private final DSLContext dsl;
-
-  public UserRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private UserResponse mapToUserResponse(Record r) {
     return new UserResponse(

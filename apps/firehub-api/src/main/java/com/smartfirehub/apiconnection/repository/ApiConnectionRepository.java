@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -12,6 +13,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class ApiConnectionRepository {
 
   private final DSLContext dsl;
@@ -31,10 +33,6 @@ public class ApiConnectionRepository {
       field(name("api_connection", "created_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> AC_UPDATED_AT =
       field(name("api_connection", "updated_at"), LocalDateTime.class);
-
-  public ApiConnectionRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<Record> findAll() {
     return dsl

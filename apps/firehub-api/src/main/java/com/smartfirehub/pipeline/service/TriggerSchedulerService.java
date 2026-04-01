@@ -12,18 +12,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class TriggerSchedulerService {
-
-  private static final Logger log = LoggerFactory.getLogger(TriggerSchedulerService.class);
 
   private final TaskScheduler taskScheduler;
   private final TriggerRepository triggerRepository;

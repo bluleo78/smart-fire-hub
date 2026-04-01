@@ -22,10 +22,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class AnalyticsDashboardService {
 
   private static final int MAX_WIDGETS_PER_DASHBOARD = 20;
@@ -39,19 +41,6 @@ public class AnalyticsDashboardService {
   // Caffeine cache: TTL 60s, max 200 entries, keyed by saved_query_id
   private final Cache<Long, AnalyticsQueryResponse> queryResultCache =
       Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(200).build();
-
-  public AnalyticsDashboardService(
-      AnalyticsDashboardRepository dashboardRepository,
-      DashboardWidgetRepository widgetRepository,
-      ChartService chartService,
-      ChartRepository chartRepository,
-      SavedQueryRepository savedQueryRepository) {
-    this.dashboardRepository = dashboardRepository;
-    this.widgetRepository = widgetRepository;
-    this.chartService = chartService;
-    this.chartRepository = chartRepository;
-    this.savedQueryRepository = savedQueryRepository;
-  }
 
   public com.smartfirehub.global.dto.PageResponse<DashboardResponse> list(
       String search, Long userId, int page, int size) {

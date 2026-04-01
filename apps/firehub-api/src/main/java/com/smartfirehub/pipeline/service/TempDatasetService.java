@@ -8,23 +8,16 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DatasetService;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class TempDatasetService {
 
   private final DatasetRepository datasetRepository;
   private final DatasetService datasetService;
   private final DatasetColumnRepository columnRepository;
-
-  public TempDatasetService(
-      DatasetRepository datasetRepository,
-      DatasetService datasetService,
-      DatasetColumnRepository columnRepository) {
-    this.datasetRepository = datasetRepository;
-    this.datasetService = datasetService;
-    this.columnRepository = columnRepository;
-  }
 
   /** Find the dataset ID for an existing temp dataset linked to the given pipeline step (FK). */
   public Optional<Long> findExistingTempDataset(Long stepId) {

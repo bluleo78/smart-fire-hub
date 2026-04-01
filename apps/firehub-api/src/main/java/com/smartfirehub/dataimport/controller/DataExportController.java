@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -25,20 +26,12 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 
 @RestController
 @RequestMapping("/api/v1")
+@RequiredArgsConstructor
 public class DataExportController {
 
   private final DataExportService exportService;
   private final AsyncJobService asyncJobService;
   private final UserRepository userRepository;
-
-  public DataExportController(
-      DataExportService exportService,
-      AsyncJobService asyncJobService,
-      UserRepository userRepository) {
-    this.exportService = exportService;
-    this.asyncJobService = asyncJobService;
-    this.userRepository = userRepository;
-  }
 
   @GetMapping("/datasets/{datasetId}/export/estimate")
   @RequirePermission("data:export")

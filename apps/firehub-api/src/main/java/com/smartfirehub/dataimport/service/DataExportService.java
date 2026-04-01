@@ -30,17 +30,17 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class DataExportService {
-
-  private static final Logger log = LoggerFactory.getLogger(DataExportService.class);
 
   static final int SYNC_THRESHOLD = 50_000;
   private static final int PAGE_SIZE = 1000;
@@ -52,21 +52,6 @@ public class DataExportService {
   private final AsyncJobService asyncJobService;
   private final AsyncJobRepository asyncJobRepository;
   private final AuditLogService auditLogService;
-
-  public DataExportService(
-      DatasetRepository datasetRepository,
-      DatasetColumnRepository columnRepository,
-      DataTableRowService dataTableRowService,
-      AsyncJobService asyncJobService,
-      AsyncJobRepository asyncJobRepository,
-      AuditLogService auditLogService) {
-    this.datasetRepository = datasetRepository;
-    this.columnRepository = columnRepository;
-    this.dataTableRowService = dataTableRowService;
-    this.asyncJobService = asyncJobService;
-    this.asyncJobRepository = asyncJobRepository;
-    this.auditLogService = auditLogService;
-  }
 
   @Transactional(readOnly = true)
   public ExportEstimate estimateExport(Long datasetId, ExportRequest request) {

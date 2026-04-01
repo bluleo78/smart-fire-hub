@@ -23,11 +23,13 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class AuthService {
 
   private final UserRepository userRepository;
@@ -37,23 +39,6 @@ public class AuthService {
   private final JwtProperties jwtProperties;
   private final RefreshTokenRepository refreshTokenRepository;
   private final LoginAttemptService loginAttemptService;
-
-  public AuthService(
-      UserRepository userRepository,
-      RoleRepository roleRepository,
-      PasswordEncoder passwordEncoder,
-      JwtTokenProvider jwtTokenProvider,
-      JwtProperties jwtProperties,
-      RefreshTokenRepository refreshTokenRepository,
-      LoginAttemptService loginAttemptService) {
-    this.userRepository = userRepository;
-    this.roleRepository = roleRepository;
-    this.passwordEncoder = passwordEncoder;
-    this.jwtTokenProvider = jwtTokenProvider;
-    this.jwtProperties = jwtProperties;
-    this.refreshTokenRepository = refreshTokenRepository;
-    this.loginAttemptService = loginAttemptService;
-  }
 
   @Transactional
   public UserResponse signup(SignupRequest request) {

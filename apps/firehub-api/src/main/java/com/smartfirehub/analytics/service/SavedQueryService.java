@@ -10,26 +10,19 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@RequiredArgsConstructor
 public class SavedQueryService {
 
   private final SavedQueryRepository savedQueryRepository;
   private final DatasetRepository datasetRepository;
   private final AnalyticsQueryExecutionService executionService;
-
-  public SavedQueryService(
-      SavedQueryRepository savedQueryRepository,
-      DatasetRepository datasetRepository,
-      AnalyticsQueryExecutionService executionService) {
-    this.savedQueryRepository = savedQueryRepository;
-    this.datasetRepository = datasetRepository;
-    this.executionService = executionService;
-  }
 
   /** List saved queries with optional filters and pagination. */
   public PageResponse<SavedQueryListResponse> list(

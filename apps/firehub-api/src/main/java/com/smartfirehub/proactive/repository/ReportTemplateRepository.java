@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -16,6 +17,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class ReportTemplateRepository {
 
   private final DSLContext dsl;
@@ -34,11 +36,6 @@ public class ReportTemplateRepository {
       field(name("report_template", "created_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> RT_UPDATED_AT =
       field(name("report_template", "updated_at"), LocalDateTime.class);
-
-  public ReportTemplateRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   public List<ReportTemplateResponse> findAllForUser(Long userId) {
     return dsl.select(

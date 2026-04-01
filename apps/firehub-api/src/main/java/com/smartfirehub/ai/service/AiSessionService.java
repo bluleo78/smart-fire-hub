@@ -6,19 +6,17 @@ import com.smartfirehub.ai.exception.AiSessionNotFoundException;
 import com.smartfirehub.ai.repository.AiSessionRepository;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Transactional(readOnly = true)
+@RequiredArgsConstructor
 public class AiSessionService {
 
   private final AiSessionRepository aiSessionRepository;
-
-  public AiSessionService(AiSessionRepository aiSessionRepository) {
-    this.aiSessionRepository = aiSessionRepository;
-  }
 
   public List<AiSessionResponse> getSessions(Long userId) {
     return aiSessionRepository.findByUserId(userId);

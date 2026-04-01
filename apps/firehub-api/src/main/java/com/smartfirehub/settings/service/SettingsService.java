@@ -8,10 +8,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class SettingsService {
 
   private static final Set<String> ALLOWED_AI_KEYS =
@@ -37,12 +39,6 @@ public class SettingsService {
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
-
-  public SettingsService(
-      SettingsRepository settingsRepository, EncryptionService encryptionService) {
-    this.settingsRepository = settingsRepository;
-    this.encryptionService = encryptionService;
-  }
 
   @Transactional(readOnly = true)
   public List<SettingResponse> getByPrefix(String prefix) {

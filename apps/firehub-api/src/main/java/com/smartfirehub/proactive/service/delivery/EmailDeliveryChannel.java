@@ -15,12 +15,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import lombok.extern.slf4j.Slf4j;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.Node;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -34,9 +33,9 @@ import org.thymeleaf.context.Context;
 import reactor.netty.http.client.HttpClient;
 
 @Service
+@Slf4j
 public class EmailDeliveryChannel implements DeliveryChannel {
 
-  private static final Logger log = LoggerFactory.getLogger(EmailDeliveryChannel.class);
   private static final DateTimeFormatter DISPLAY_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
   private static final Duration CHART_TIMEOUT = Duration.ofSeconds(30);

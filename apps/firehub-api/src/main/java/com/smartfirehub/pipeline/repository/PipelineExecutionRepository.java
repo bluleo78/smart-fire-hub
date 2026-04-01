@@ -8,12 +8,14 @@ import com.smartfirehub.pipeline.dto.StepExecutionResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class PipelineExecutionRepository {
 
   private final DSLContext dsl;
@@ -74,10 +76,6 @@ public class PipelineExecutionRepository {
   private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
   private static final Field<Long> PS_ID = field(name("pipeline_step", "id"), Long.class);
   private static final Field<String> PS_NAME = field(name("pipeline_step", "name"), String.class);
-
-  public PipelineExecutionRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public Long createExecution(Long pipelineId, Long executedBy) {
     return createExecution(pipelineId, executedBy, "MANUAL", null);

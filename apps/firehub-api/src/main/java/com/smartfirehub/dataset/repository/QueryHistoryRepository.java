@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.dataset.dto.QueryHistoryResponse;
 import java.time.LocalDateTime;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -12,6 +13,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class QueryHistoryRepository {
 
   private final DSLContext dsl;
@@ -35,10 +37,6 @@ public class QueryHistoryRepository {
       field(name("query_history", "error_message"), String.class);
   private static final Field<LocalDateTime> QH_EXECUTED_AT =
       field(name("query_history", "executed_at"), LocalDateTime.class);
-
-  public QueryHistoryRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public void save(
       Long datasetId,

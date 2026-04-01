@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -22,18 +23,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/datasets/{datasetId}")
+@RequiredArgsConstructor
 public class DataImportController {
 
   private final DataImportService importService;
   private final UserRepository userRepository;
   private final ObjectMapper objectMapper;
-
-  public DataImportController(
-      DataImportService importService, UserRepository userRepository, ObjectMapper objectMapper) {
-    this.importService = importService;
-    this.userRepository = userRepository;
-    this.objectMapper = objectMapper;
-  }
 
   @PostMapping("/imports/preview")
   @RequirePermission("data:import")

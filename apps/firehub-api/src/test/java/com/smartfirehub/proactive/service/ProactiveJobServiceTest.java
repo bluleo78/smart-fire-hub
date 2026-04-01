@@ -24,6 +24,7 @@ import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 class ProactiveJobServiceTest extends IntegrationTestBase {
 
   @Autowired private ProactiveJobService proactiveJobService;
+  private ProactiveJobService rawJobService;
   @Autowired private ProactiveJobExecutionRepository executionRepository;
   @Autowired private DSLContext dsl;
 
@@ -43,6 +45,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
   @BeforeEach
   void setUp() {
+    rawJobService = (ProactiveJobService) AopProxyUtils.getSingletonTarget(proactiveJobService);
     testUserId =
         dsl.insertInto(USER)
             .set(USER.USERNAME, "proactive_test_user")
@@ -133,7 +136,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
     // when — executeJob is not transactional so we call it directly
-    proactiveJobService.executeJob(created.id(), testUserId);
+    rawJobService.executeJob(created.id(), testUserId);
 
     // then: execution row should exist and be COMPLETED
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
@@ -155,7 +158,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
     // when / then
-    assertThatThrownBy(() -> proactiveJobService.executeJob(created.id(), testUserId))
+    assertThatThrownBy(() -> rawJobService.executeJob(created.id(), testUserId))
         .isInstanceOf(ProactiveJobException.class)
         .hasMessageContaining("Job 실행 실패");
 
@@ -180,7 +183,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
     // when
-    proactiveJobService.executeJob(created.id(), testUserId);
+    rawJobService.executeJob(created.id(), testUserId);
 
     // then: ChatDeliveryChannel.deliver() was called once
     verify(chatDeliveryChannel, times(1)).deliver(any(), anyLong(), any());
@@ -201,7 +204,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .deliver(any(), anyLong(), any());
 
     // when — should NOT throw despite channel failure
-    proactiveJobService.executeJob(created.id(), testUserId);
+    rawJobService.executeJob(created.id(), testUserId);
 
     // then: execution is still COMPLETED
     var executions = executionRepository.findByJobId(created.id(), 10, 0);

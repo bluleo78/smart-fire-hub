@@ -7,15 +7,13 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
+@Slf4j
 public class ExportFileCleanupService {
-
-  private static final Logger log = LoggerFactory.getLogger(ExportFileCleanupService.class);
   private static final Path EXPORT_DIR =
       Path.of(System.getProperty("java.io.tmpdir"), "firehub-exports");
   private static final long RETENTION_HOURS = 24;

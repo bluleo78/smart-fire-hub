@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -15,13 +16,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/proactive/jobs")
+@RequiredArgsConstructor
 public class ProactiveJobController {
 
   private final ProactiveJobService proactiveJobService;
-
-  public ProactiveJobController(ProactiveJobService proactiveJobService) {
-    this.proactiveJobService = proactiveJobService;
-  }
 
   @GetMapping
   @RequirePermission("proactive:read")

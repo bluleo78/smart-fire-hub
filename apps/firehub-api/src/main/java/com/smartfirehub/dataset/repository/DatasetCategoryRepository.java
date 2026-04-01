@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.dto.CategoryResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -13,6 +14,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class DatasetCategoryRepository {
 
   private final DSLContext dsl;
@@ -25,10 +27,6 @@ public class DatasetCategoryRepository {
       field(name("dataset_category", "description"), String.class);
   private static final Field<LocalDateTime> DC_UPDATED_AT =
       field(name("dataset_category", "updated_at"), LocalDateTime.class);
-
-  public DatasetCategoryRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private CategoryResponse mapToCategoryResponse(Record r) {
     return new CategoryResponse(r.get(DC_ID), r.get(DC_NAME), r.get(DC_DESCRIPTION));

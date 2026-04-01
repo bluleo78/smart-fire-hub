@@ -4,17 +4,15 @@ import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.repository.PermissionRepository;
 import java.util.List;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class PermissionService {
 
   private final PermissionRepository permissionRepository;
-
-  public PermissionService(PermissionRepository permissionRepository) {
-    this.permissionRepository = permissionRepository;
-  }
 
   @Transactional(readOnly = true)
   public List<PermissionResponse> getAllPermissions() {

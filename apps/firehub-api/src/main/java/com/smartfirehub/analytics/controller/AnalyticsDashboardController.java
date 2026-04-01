@@ -11,6 +11,7 @@ import com.smartfirehub.analytics.service.AnalyticsDashboardService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -26,13 +27,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/analytics/dashboards")
+@RequiredArgsConstructor
 public class AnalyticsDashboardController {
 
   private final AnalyticsDashboardService dashboardService;
-
-  public AnalyticsDashboardController(AnalyticsDashboardService dashboardService) {
-    this.dashboardService = dashboardService;
-  }
 
   @GetMapping
   @RequirePermission("analytics:read")

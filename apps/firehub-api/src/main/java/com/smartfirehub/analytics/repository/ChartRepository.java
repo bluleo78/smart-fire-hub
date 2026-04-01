@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -20,6 +21,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class ChartRepository {
 
   private final DSLContext dsl;
@@ -60,10 +62,6 @@ public class ChartRepository {
   private static final Table<?> DW = table(name("dashboard_widget"));
   private static final Field<Long> DW_CHART_ID =
       field(name("dashboard_widget", "chart_id"), Long.class);
-
-  public ChartRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<ChartResponse> findAll(
       String search, String chartType, Long savedQueryId, Long userId, int page, int size) {

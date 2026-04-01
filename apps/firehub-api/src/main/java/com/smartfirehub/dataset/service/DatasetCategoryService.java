@@ -7,20 +7,17 @@ import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class DatasetCategoryService {
 
   private final DatasetCategoryRepository categoryRepository;
   private final DSLContext dsl;
-
-  public DatasetCategoryService(DatasetCategoryRepository categoryRepository, DSLContext dsl) {
-    this.categoryRepository = categoryRepository;
-    this.dsl = dsl;
-  }
 
   public List<CategoryResponse> getAllCategories() {
     return categoryRepository.findAll();

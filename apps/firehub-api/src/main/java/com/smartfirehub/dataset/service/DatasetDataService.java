@@ -31,10 +31,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class DatasetDataService {
 
   private final DatasetRepository datasetRepository;
@@ -44,23 +46,6 @@ public class DatasetDataService {
   private final DataTableQueryService dataTableQueryService;
   private final QueryHistoryRepository queryHistoryRepository;
   private final ObjectMapper objectMapper;
-
-  public DatasetDataService(
-      DatasetRepository datasetRepository,
-      DatasetColumnRepository columnRepository,
-      DataTableService dataTableService,
-      DataTableRowService dataTableRowService,
-      DataTableQueryService dataTableQueryService,
-      QueryHistoryRepository queryHistoryRepository,
-      ObjectMapper objectMapper) {
-    this.datasetRepository = datasetRepository;
-    this.columnRepository = columnRepository;
-    this.dataTableService = dataTableService;
-    this.dataTableRowService = dataTableRowService;
-    this.dataTableQueryService = dataTableQueryService;
-    this.queryHistoryRepository = queryHistoryRepository;
-    this.objectMapper = objectMapper;
-  }
 
   @Transactional(readOnly = true)
   public List<ColumnStatsResponse> getDatasetStats(Long datasetId) {

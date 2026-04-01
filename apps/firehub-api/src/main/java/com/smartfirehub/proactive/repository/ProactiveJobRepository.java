@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -16,6 +17,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class ProactiveJobRepository {
 
   private final DSLContext dsl;
@@ -48,11 +50,6 @@ public class ProactiveJobRepository {
   private static final Table<?> REPORT_TEMPLATE = table(name("report_template"));
   private static final Field<Long> RT_ID = field(name("report_template", "id"), Long.class);
   private static final Field<String> RT_NAME = field(name("report_template", "name"), String.class);
-
-  public ProactiveJobRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   public List<ProactiveJobResponse> findByUserId(Long userId) {
     return dsl.select(

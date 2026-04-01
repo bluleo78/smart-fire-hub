@@ -9,25 +9,18 @@ import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class UserService {
 
   private final UserRepository userRepository;
   private final RoleRepository roleRepository;
   private final PasswordEncoder passwordEncoder;
-
-  public UserService(
-      UserRepository userRepository,
-      RoleRepository roleRepository,
-      PasswordEncoder passwordEncoder) {
-    this.userRepository = userRepository;
-    this.roleRepository = roleRepository;
-    this.passwordEncoder = passwordEncoder;
-  }
 
   @Transactional(readOnly = true)
   public PageResponse<UserResponse> getUsers(String search, int page, int size) {

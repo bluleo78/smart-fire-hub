@@ -6,8 +6,7 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -16,10 +15,9 @@ import org.springframework.stereotype.Service;
  *     instead.
  */
 @Deprecated
+@Slf4j
 @Service
 public class PythonScriptExecutor {
-
-  private static final Logger log = LoggerFactory.getLogger(PythonScriptExecutor.class);
   private static final int TIMEOUT_SECONDS = 300;
 
   @Value("${app.pipeline.datasource.url}")

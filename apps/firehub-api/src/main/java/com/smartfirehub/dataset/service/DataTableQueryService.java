@@ -7,17 +7,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class DataTableQueryService {
 
   private final DSLContext dsl;
-
-  public DataTableQueryService(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   /**
    * Execute user-supplied SQL against the data schema. Security: rejects DDL, multi-statement

@@ -5,19 +5,17 @@ import com.smartfirehub.dataset.dto.CategoryResponse;
 import com.smartfirehub.dataset.service.DatasetCategoryService;
 import com.smartfirehub.global.security.RequirePermission;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/dataset-categories")
+@RequiredArgsConstructor
 public class DatasetCategoryController {
 
   private final DatasetCategoryService categoryService;
-
-  public DatasetCategoryController(DatasetCategoryService categoryService) {
-    this.categoryService = categoryService;
-  }
 
   @GetMapping
   @RequirePermission("dataset:read")

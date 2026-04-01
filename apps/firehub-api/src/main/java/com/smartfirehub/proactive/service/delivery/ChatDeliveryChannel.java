@@ -10,27 +10,18 @@ import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class ChatDeliveryChannel implements DeliveryChannel {
-
-  private static final Logger log = LoggerFactory.getLogger(ChatDeliveryChannel.class);
 
   private final ProactiveMessageRepository messageRepository;
   private final SseEmitterRegistry sseRegistry;
   private final ObjectMapper objectMapper;
-
-  public ChatDeliveryChannel(
-      ProactiveMessageRepository messageRepository,
-      SseEmitterRegistry sseRegistry,
-      ObjectMapper objectMapper) {
-    this.messageRepository = messageRepository;
-    this.sseRegistry = sseRegistry;
-    this.objectMapper = objectMapper;
-  }
 
   @Override
   public String type() {

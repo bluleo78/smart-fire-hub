@@ -4,12 +4,14 @@ import static org.jooq.impl.DSL.*;
 
 import java.util.HashSet;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class DatasetFavoriteRepository {
 
   private final DSLContext dsl;
@@ -19,10 +21,6 @@ public class DatasetFavoriteRepository {
       field(name("dataset_favorite", "user_id"), Long.class);
   private static final Field<Long> DF_DATASET_ID =
       field(name("dataset_favorite", "dataset_id"), Long.class);
-
-  public DatasetFavoriteRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public boolean existsByUserIdAndDatasetId(Long userId, Long datasetId) {
     return dsl.fetchExists(

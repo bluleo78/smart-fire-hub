@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -18,6 +19,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class AnalyticsDashboardRepository {
 
   private final DSLContext dsl;
@@ -51,10 +53,6 @@ public class AnalyticsDashboardRepository {
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
-
-  public AnalyticsDashboardRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<DashboardResponse> findAll(String search, Long userId, int page, int size) {
     List<Condition> conditions = new ArrayList<>();

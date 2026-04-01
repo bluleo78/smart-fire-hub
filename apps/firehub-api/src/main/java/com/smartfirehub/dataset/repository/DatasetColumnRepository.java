@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -14,6 +15,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class DatasetColumnRepository {
 
   private final DSLContext dsl;
@@ -40,10 +42,6 @@ public class DatasetColumnRepository {
       field(name("dataset_column", "column_order"), Integer.class);
   private static final Field<Boolean> COL_IS_PRIMARY_KEY =
       field(name("dataset_column", "is_primary_key"), Boolean.class);
-
-  public DatasetColumnRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private DatasetColumnResponse mapToColumnResponse(Record r) {
     return new DatasetColumnResponse(

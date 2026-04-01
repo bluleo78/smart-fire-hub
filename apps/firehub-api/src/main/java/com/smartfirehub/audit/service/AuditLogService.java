@@ -6,24 +6,19 @@ import com.smartfirehub.audit.repository.AuditLogRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.JSONB;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class AuditLogService {
-
-  private static final Logger log = LoggerFactory.getLogger(AuditLogService.class);
 
   private final AuditLogRepository auditLogRepository;
   private final ObjectMapper objectMapper;
-
-  public AuditLogService(AuditLogRepository auditLogRepository, ObjectMapper objectMapper) {
-    this.auditLogRepository = auditLogRepository;
-    this.objectMapper = objectMapper;
-  }
 
   public Long log(
       Long userId,

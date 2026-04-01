@@ -7,6 +7,7 @@ import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.global.security.RequirePermission;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -14,13 +15,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/api-connections")
+@RequiredArgsConstructor
 public class ApiConnectionController {
 
   private final ApiConnectionService apiConnectionService;
-
-  public ApiConnectionController(ApiConnectionService apiConnectionService) {
-    this.apiConnectionService = apiConnectionService;
-  }
 
   @GetMapping
   @RequirePermission("apiconnection:read")

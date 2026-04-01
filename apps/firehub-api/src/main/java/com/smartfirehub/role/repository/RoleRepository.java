@@ -6,18 +6,16 @@ import com.smartfirehub.role.dto.RoleResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class RoleRepository {
 
   private final DSLContext dsl;
-
-  public RoleRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private RoleResponse mapToRoleResponse(Record r) {
     return new RoleResponse(

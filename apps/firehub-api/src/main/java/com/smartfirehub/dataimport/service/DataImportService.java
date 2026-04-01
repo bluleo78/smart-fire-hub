@@ -21,20 +21,20 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class DataImportService {
-
-  private static final Logger log = LoggerFactory.getLogger(DataImportService.class);
 
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
@@ -49,35 +49,6 @@ public class DataImportService {
   private final AsyncJobService asyncJobService;
   private final TransactionTemplate transactionTemplate;
   private final NotificationService notificationService;
-
-  public DataImportService(
-      DatasetRepository datasetRepository,
-      DatasetColumnRepository columnRepository,
-      DataTableService dataTableService,
-      DataTableRowService dataTableRowService,
-      FileParserService fileParserService,
-      DataValidationService validationService,
-      ColumnMappingService columnMappingService,
-      AuditLogService auditLogService,
-      JobScheduler jobScheduler,
-      ObjectMapper objectMapper,
-      AsyncJobService asyncJobService,
-      TransactionTemplate transactionTemplate,
-      NotificationService notificationService) {
-    this.datasetRepository = datasetRepository;
-    this.columnRepository = columnRepository;
-    this.dataTableService = dataTableService;
-    this.dataTableRowService = dataTableRowService;
-    this.fileParserService = fileParserService;
-    this.validationService = validationService;
-    this.columnMappingService = columnMappingService;
-    this.auditLogService = auditLogService;
-    this.jobScheduler = jobScheduler;
-    this.objectMapper = objectMapper;
-    this.asyncJobService = asyncJobService;
-    this.transactionTemplate = transactionTemplate;
-    this.notificationService = notificationService;
-  }
 
   public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
     return previewImport(datasetId, file, ParseOptions.defaults());

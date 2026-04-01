@@ -4,20 +4,16 @@ import com.smartfirehub.dataset.dto.FavoriteToggleResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetFavoriteRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class DatasetFavoriteService {
 
   private final DatasetRepository datasetRepository;
   private final DatasetFavoriteRepository favoriteRepository;
-
-  public DatasetFavoriteService(
-      DatasetRepository datasetRepository, DatasetFavoriteRepository favoriteRepository) {
-    this.datasetRepository = datasetRepository;
-    this.favoriteRepository = favoriteRepository;
-  }
 
   @Transactional
   public FavoriteToggleResponse toggleFavorite(Long datasetId, Long userId) {

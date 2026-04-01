@@ -6,12 +6,14 @@ import com.smartfirehub.pipeline.dto.PipelineResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class PipelineRepository {
 
   private final DSLContext dsl;
@@ -38,10 +40,6 @@ public class PipelineRepository {
   private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
   private static final Field<Long> PS_PIPELINE_ID =
       field(name("pipeline_step", "pipeline_id"), Long.class);
-
-  public PipelineRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<PipelineResponse> findAll(int page, int size) {
     Field<Integer> stepCountField =

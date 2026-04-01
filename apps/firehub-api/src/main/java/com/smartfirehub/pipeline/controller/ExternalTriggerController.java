@@ -6,23 +6,19 @@ import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/triggers")
+@RequiredArgsConstructor
 public class ExternalTriggerController {
 
-  private static final Logger log = LoggerFactory.getLogger(ExternalTriggerController.class);
-
   private final TriggerService triggerService;
-
-  public ExternalTriggerController(TriggerService triggerService) {
-    this.triggerService = triggerService;
-  }
 
   /** API trigger: authenticate via SHA-256 token hash matching. */
   @PostMapping("/api/{token}")

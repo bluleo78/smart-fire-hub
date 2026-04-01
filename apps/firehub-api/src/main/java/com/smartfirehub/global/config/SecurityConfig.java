@@ -4,6 +4,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import jakarta.servlet.DispatcherType;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,16 +23,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration
 @EnableWebSecurity
 @EnableConfigurationProperties({JwtProperties.class, CorsProperties.class})
+@RequiredArgsConstructor
 public class SecurityConfig {
 
   private final JwtAuthenticationFilter jwtAuthenticationFilter;
   private final CorsProperties corsProperties;
-
-  public SecurityConfig(
-      JwtAuthenticationFilter jwtAuthenticationFilter, CorsProperties corsProperties) {
-    this.jwtAuthenticationFilter = jwtAuthenticationFilter;
-    this.corsProperties = corsProperties;
-  }
 
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {

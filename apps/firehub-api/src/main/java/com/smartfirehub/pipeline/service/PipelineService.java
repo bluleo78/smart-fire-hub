@@ -13,15 +13,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class PipelineService {
-
-  private static final Logger log = LoggerFactory.getLogger(PipelineService.class);
 
   private static final Set<String> VALID_OUTPUT_COLUMN_TYPES =
       Set.of("TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP");
@@ -34,23 +34,6 @@ public class PipelineService {
   private final UserRepository userRepository;
   private final TriggerRepository triggerRepository;
   private final ObjectMapper objectMapper;
-
-  public PipelineService(
-      PipelineRepository pipelineRepository,
-      PipelineStepRepository stepRepository,
-      PipelineExecutionRepository executionRepository,
-      PipelineExecutionService executionService,
-      UserRepository userRepository,
-      TriggerRepository triggerRepository,
-      ObjectMapper objectMapper) {
-    this.pipelineRepository = pipelineRepository;
-    this.stepRepository = stepRepository;
-    this.executionRepository = executionRepository;
-    this.executionService = executionService;
-    this.userRepository = userRepository;
-    this.triggerRepository = triggerRepository;
-    this.objectMapper = objectMapper;
-  }
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {

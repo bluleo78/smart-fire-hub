@@ -4,18 +4,16 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.service.PermissionService;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/permissions")
+@RequiredArgsConstructor
 public class PermissionController {
 
   private final PermissionService permissionService;
-
-  public PermissionController(PermissionService permissionService) {
-    this.permissionService = permissionService;
-  }
 
   @GetMapping
   @RequirePermission("permission:read")

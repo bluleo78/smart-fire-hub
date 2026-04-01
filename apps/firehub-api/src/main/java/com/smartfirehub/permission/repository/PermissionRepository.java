@@ -7,18 +7,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class PermissionRepository {
 
   private final DSLContext dsl;
-
-  public PermissionRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   private PermissionResponse mapToPermissionResponse(Record r) {
     return new PermissionResponse(

@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -19,6 +20,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class SavedQueryRepository {
 
   private final DSLContext dsl;
@@ -65,10 +67,6 @@ public class SavedQueryRepository {
       field(name("dataset", "name"), String.class).as("dataset_name");
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
-
-  public SavedQueryRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<SavedQueryListResponse> findAll(
       String search, String folder, Boolean sharedOnly, Long userId, int page, int size) {

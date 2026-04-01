@@ -15,24 +15,17 @@ import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class ApiImportService {
 
   private final DatasetRepository datasetRepository;
   private final PipelineService pipelineService;
   private final TriggerService triggerService;
-
-  public ApiImportService(
-      DatasetRepository datasetRepository,
-      PipelineService pipelineService,
-      TriggerService triggerService) {
-    this.datasetRepository = datasetRepository;
-    this.pipelineService = pipelineService;
-    this.triggerService = triggerService;
-  }
 
   @Transactional
   public ApiImportResponse createApiImport(Long datasetId, ApiImportRequest request, Long userId) {

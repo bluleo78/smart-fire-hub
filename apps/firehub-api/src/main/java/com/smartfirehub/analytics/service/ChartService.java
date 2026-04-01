@@ -10,24 +10,17 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class ChartService {
 
   private final ChartRepository chartRepository;
   private final SavedQueryRepository savedQueryRepository;
   private final AnalyticsQueryExecutionService executionService;
-
-  public ChartService(
-      ChartRepository chartRepository,
-      SavedQueryRepository savedQueryRepository,
-      AnalyticsQueryExecutionService executionService) {
-    this.chartRepository = chartRepository;
-    this.savedQueryRepository = savedQueryRepository;
-    this.executionService = executionService;
-  }
 
   /** List charts with optional filters and pagination. */
   public PageResponse<ChartResponse> list(

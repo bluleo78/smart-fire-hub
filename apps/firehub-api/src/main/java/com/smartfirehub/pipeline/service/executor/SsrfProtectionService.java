@@ -4,14 +4,12 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class SsrfProtectionService {
-
-  private static final Logger log = LoggerFactory.getLogger(SsrfProtectionService.class);
 
   /**
    * Validates a URL string for SSRF safety. Checks scheme, then resolves all DNS addresses for the

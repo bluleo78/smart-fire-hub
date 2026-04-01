@@ -9,6 +9,7 @@ import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import java.util.*;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -16,6 +17,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class PipelineStepRepository {
 
   private final DSLContext dsl;
@@ -63,11 +65,6 @@ public class PipelineStepRepository {
   private static final Table<?> DATASET = table(name("dataset"));
   private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
   private static final Field<String> D_NAME = field(name("dataset", "name"), String.class);
-
-  public PipelineStepRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   public List<PipelineStepResponse> findByPipelineId(Long pipelineId) {
     // output_dataset_id가 null이면 source_pipeline_step_id로 임시 데이터셋 폴백

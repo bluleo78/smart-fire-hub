@@ -6,17 +6,15 @@ import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class ReportTemplateService {
 
   private final ReportTemplateRepository reportTemplateRepository;
-
-  public ReportTemplateService(ReportTemplateRepository reportTemplateRepository) {
-    this.reportTemplateRepository = reportTemplateRepository;
-  }
 
   @Transactional(readOnly = true)
   public List<ReportTemplateResponse> getTemplates(Long userId) {

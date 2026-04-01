@@ -10,10 +10,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class DataTableRowService {
 
   private final DSLContext dsl;
@@ -25,11 +27,6 @@ public class DataTableRowService {
    * were updated.
    */
   public record UpsertResult(int inserted, int updated) {}
-
-  public DataTableRowService(DSLContext dsl, DataTableService dataTableService) {
-    this.dsl = dsl;
-    this.dataTableService = dataTableService;
-  }
 
   // --- GEOMETRY helpers ---
 

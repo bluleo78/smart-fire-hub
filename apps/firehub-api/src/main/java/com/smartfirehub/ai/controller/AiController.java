@@ -8,6 +8,7 @@ import com.smartfirehub.settings.service.SettingsService;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -17,20 +18,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/v1/ai")
+@RequiredArgsConstructor
 public class AiController {
 
   private final AiSessionService aiSessionService;
   private final AiAgentProxyService aiAgentProxyService;
   private final SettingsService settingsService;
-
-  public AiController(
-      AiSessionService aiSessionService,
-      AiAgentProxyService aiAgentProxyService,
-      SettingsService settingsService) {
-    this.aiSessionService = aiSessionService;
-    this.aiAgentProxyService = aiAgentProxyService;
-    this.settingsService = settingsService;
-  }
 
   @GetMapping("/sessions")
   @RequirePermission("ai:read")

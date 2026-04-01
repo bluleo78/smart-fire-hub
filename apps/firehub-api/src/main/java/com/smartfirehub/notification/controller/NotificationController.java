@@ -2,6 +2,7 @@ package com.smartfirehub.notification.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,13 +12,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/v1/notifications")
+@RequiredArgsConstructor
 public class NotificationController {
 
   private final SseEmitterRegistry registry;
-
-  public NotificationController(SseEmitterRegistry registry) {
-    this.registry = registry;
-  }
 
   // NOTE: EventSource API does not support custom headers, so the JWT token is passed
   // as a query parameter (?token=...). This is a known security tradeoff — the token may

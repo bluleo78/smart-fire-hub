@@ -2,9 +2,11 @@ package com.smartfirehub.pipeline.service.executor;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class OffsetPaginationHandler {
 
   /** Safety cap: stop after fetching this many pages regardless of totalCount. */

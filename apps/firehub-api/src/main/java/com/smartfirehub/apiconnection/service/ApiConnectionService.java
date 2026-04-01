@@ -15,11 +15,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.jooq.Record;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class ApiConnectionService {
 
   private static final Set<String> SENSITIVE_KEY_PARTS =
@@ -28,15 +30,6 @@ public class ApiConnectionService {
   private final ApiConnectionRepository repository;
   private final EncryptionService encryptionService;
   private final ObjectMapper objectMapper;
-
-  public ApiConnectionService(
-      ApiConnectionRepository repository,
-      EncryptionService encryptionService,
-      ObjectMapper objectMapper) {
-    this.repository = repository;
-    this.encryptionService = encryptionService;
-    this.objectMapper = objectMapper;
-  }
 
   @Transactional
   public ApiConnectionResponse create(CreateApiConnectionRequest request, Long userId) {

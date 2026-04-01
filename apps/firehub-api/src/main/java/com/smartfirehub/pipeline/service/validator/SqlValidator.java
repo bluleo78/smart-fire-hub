@@ -2,14 +2,12 @@ package com.smartfirehub.pipeline.service.validator;
 
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 public class SqlValidator {
-
-  private static final Logger log = LoggerFactory.getLogger(SqlValidator.class);
 
   private static final Set<String> BLOCKED_KEYWORDS =
       Set.of(

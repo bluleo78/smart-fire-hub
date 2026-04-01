@@ -8,19 +8,16 @@ import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.role.repository.RoleRepository;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class RoleService {
 
   private final RoleRepository roleRepository;
   private final PermissionRepository permissionRepository;
-
-  public RoleService(RoleRepository roleRepository, PermissionRepository permissionRepository) {
-    this.roleRepository = roleRepository;
-    this.permissionRepository = permissionRepository;
-  }
 
   @Transactional(readOnly = true)
   public List<RoleResponse> getAllRoles() {

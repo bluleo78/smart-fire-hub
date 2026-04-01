@@ -8,12 +8,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class SettingsRepository {
 
   private final DSLContext dsl;
@@ -27,10 +29,6 @@ public class SettingsRepository {
       field(name("system_settings", "updated_at"), LocalDateTime.class);
   private static final Field<Long> UPDATED_BY =
       field(name("system_settings", "updated_by"), Long.class);
-
-  public SettingsRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<SettingResponse> findByPrefix(String prefix) {
     return dsl.select(KEY, VALUE, DESCRIPTION, UPDATED_AT)

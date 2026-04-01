@@ -8,6 +8,7 @@ import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -15,20 +16,12 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/pipelines")
+@RequiredArgsConstructor
 public class PipelineController {
 
   private final PipelineService pipelineService;
   private final TriggerService triggerService;
   private final ApiCallPreviewService apiCallPreviewService;
-
-  public PipelineController(
-      PipelineService pipelineService,
-      TriggerService triggerService,
-      ApiCallPreviewService apiCallPreviewService) {
-    this.pipelineService = pipelineService;
-    this.triggerService = triggerService;
-    this.apiCallPreviewService = apiCallPreviewService;
-  }
 
   @GetMapping
   @RequirePermission("pipeline:read")

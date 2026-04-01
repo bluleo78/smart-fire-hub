@@ -5,19 +5,17 @@ import com.smartfirehub.role.dto.*;
 import com.smartfirehub.role.service.RoleService;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/roles")
+@RequiredArgsConstructor
 public class RoleController {
 
   private final RoleService roleService;
-
-  public RoleController(RoleService roleService) {
-    this.roleService = roleService;
-  }
 
   @GetMapping
   @RequirePermission("role:read")

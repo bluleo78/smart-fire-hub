@@ -4,24 +4,18 @@ import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import java.time.LocalDateTime;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class AsyncJobCleanupService {
-
-  private static final Logger log = LoggerFactory.getLogger(AsyncJobCleanupService.class);
 
   private final AsyncJobRepository asyncJobRepository;
   private final AsyncJobService asyncJobService;
-
-  public AsyncJobCleanupService(
-      AsyncJobRepository asyncJobRepository, AsyncJobService asyncJobService) {
-    this.asyncJobRepository = asyncJobRepository;
-    this.asyncJobService = asyncJobService;
-  }
 
   /** Every 10 minutes: fail jobs that haven't been updated in 30+ minutes. */
   @Scheduled(fixedRate = 600_000)

@@ -3,6 +3,7 @@ package com.smartfirehub.job.controller;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.service.AsyncJobService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -13,13 +14,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/v1/jobs")
+@RequiredArgsConstructor
 public class AsyncJobController {
 
   private final AsyncJobService asyncJobService;
-
-  public AsyncJobController(AsyncJobService asyncJobService) {
-    this.asyncJobService = asyncJobService;
-  }
 
   @GetMapping(value = "/{jobId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   @RequirePermission("data:read")

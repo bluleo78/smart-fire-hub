@@ -7,12 +7,14 @@ import com.smartfirehub.ai.dto.CreateAiSessionRequest;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class AiSessionRepository {
 
   private final DSLContext dsl;
@@ -31,10 +33,6 @@ public class AiSessionRepository {
       field(name("ai_session", "created_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> UPDATED_AT =
       field(name("ai_session", "updated_at"), LocalDateTime.class);
-
-  public AiSessionRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<AiSessionResponse> findByUserId(Long userId) {
     return dsl.select(

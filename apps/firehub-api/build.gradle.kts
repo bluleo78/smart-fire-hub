@@ -19,6 +19,13 @@ repositories {
 }
 
 dependencies {
+    compileOnly("org.projectlombok:lombok:1.18.44")
+    compileOnly("org.jetbrains:annotations:26.0.2")
+    annotationProcessor("org.projectlombok:lombok:1.18.44")
+    annotationProcessor("org.jetbrains:annotations:26.0.2")
+    testCompileOnly("org.projectlombok:lombok:1.18.44")
+    testAnnotationProcessor("org.projectlombok:lombok:1.18.44")
+
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-jooq")

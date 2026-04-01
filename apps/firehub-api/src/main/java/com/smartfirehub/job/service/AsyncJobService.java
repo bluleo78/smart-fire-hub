@@ -13,8 +13,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,9 +25,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * 폴백(/jobs/{id}/status)이 대체합니다.
  */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class AsyncJobService {
-
-  private static final Logger log = LoggerFactory.getLogger(AsyncJobService.class);
 
   private static final long EMITTER_TIMEOUT_MS = 300_000L;
   private static final int MAX_SUBSCRIBERS_PER_JOB = 5;
@@ -45,11 +45,6 @@ public class AsyncJobService {
 
   // jobId -> last persisted stage (force DB write on stage change)
   private final ConcurrentHashMap<String, String> lastPersistedStage = new ConcurrentHashMap<>();
-
-  public AsyncJobService(AsyncJobRepository asyncJobRepository, ObjectMapper objectMapper) {
-    this.asyncJobRepository = asyncJobRepository;
-    this.objectMapper = objectMapper;
-  }
 
   public String createJob(
       String jobType,

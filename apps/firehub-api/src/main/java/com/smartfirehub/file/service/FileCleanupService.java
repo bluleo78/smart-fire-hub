@@ -9,22 +9,18 @@ import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class FileCleanupService {
 
-  private static final Logger log = LoggerFactory.getLogger(FileCleanupService.class);
-
   private final DSLContext dsl;
-
-  public FileCleanupService(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   @PostConstruct
   public void cleanupOnStartup() {

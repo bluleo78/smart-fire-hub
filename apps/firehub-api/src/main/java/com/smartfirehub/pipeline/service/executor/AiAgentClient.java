@@ -5,8 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -15,10 +14,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
 
+@Slf4j
 @Component
 public class AiAgentClient {
 
-  private static final Logger log = LoggerFactory.getLogger(AiAgentClient.class);
   private static final Duration TIMEOUT = Duration.ofSeconds(60);
 
   private final WebClient webClient;

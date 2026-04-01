@@ -14,18 +14,17 @@ import java.util.*;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+@Slf4j
 @Service
 public class TriggerService {
 
-  private static final Logger log = LoggerFactory.getLogger(TriggerService.class);
   private static final int MAX_CHAIN_DEPTH = 10;
 
   private final TriggerRepository triggerRepository;

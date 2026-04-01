@@ -3,12 +3,14 @@ package com.smartfirehub.dataset.repository;
 import static org.jooq.impl.DSL.*;
 
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class DatasetTagRepository {
 
   private final DSLContext dsl;
@@ -20,10 +22,6 @@ public class DatasetTagRepository {
       field(name("dataset_tag", "tag_name"), String.class);
   private static final Field<Long> DT_CREATED_BY =
       field(name("dataset_tag", "created_by"), Long.class);
-
-  public DatasetTagRepository(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   public List<String> findByDatasetId(Long datasetId) {
     return dsl.select(DT_TAG_NAME)

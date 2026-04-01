@@ -11,11 +11,13 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
+@RequiredArgsConstructor
 public class ApiCallPreviewService {
 
   private static final int DEFAULT_TIMEOUT_MS = 30_000;
@@ -26,17 +28,6 @@ public class ApiCallPreviewService {
   private final JsonResponseParser jsonResponseParser;
   private final ApiConnectionService apiConnectionService;
   private final WebClient.Builder webClientBuilder;
-
-  public ApiCallPreviewService(
-      SsrfProtectionService ssrfProtectionService,
-      JsonResponseParser jsonResponseParser,
-      ApiConnectionService apiConnectionService,
-      WebClient.Builder webClientBuilder) {
-    this.ssrfProtectionService = ssrfProtectionService;
-    this.jsonResponseParser = jsonResponseParser;
-    this.apiConnectionService = apiConnectionService;
-    this.webClientBuilder = webClientBuilder;
-  }
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
     try {

@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -19,6 +20,7 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
 public class TriggerRepository {
 
   private final DSLContext dsl;
@@ -47,11 +49,6 @@ public class TriggerRepository {
       field(name("pipeline_trigger", "created_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> T_UPDATED_AT =
       field(name("pipeline_trigger", "updated_at"), LocalDateTime.class);
-
-  public TriggerRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   private Map<String, Object> parseJsonb(JSONB jsonb) {
     if (jsonb == null || jsonb.data() == null) {

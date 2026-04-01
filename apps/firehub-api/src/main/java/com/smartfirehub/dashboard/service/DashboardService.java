@@ -17,6 +17,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class DashboardService {
 
   private final DSLContext dsl;
@@ -73,10 +75,6 @@ public class DashboardService {
       field(name("pipeline_execution", "started_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> PE_COMPLETED_AT =
       field(name("pipeline_execution", "completed_at"), LocalDateTime.class);
-
-  public DashboardService(DSLContext dsl) {
-    this.dsl = dsl;
-  }
 
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats() {

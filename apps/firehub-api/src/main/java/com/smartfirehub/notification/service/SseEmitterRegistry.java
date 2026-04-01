@@ -8,16 +8,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class SseEmitterRegistry {
-
-  private static final Logger log = LoggerFactory.getLogger(SseEmitterRegistry.class);
 
   private static final long EMITTER_TIMEOUT =
       3_600_000L; // 1 hour (safety net; heartbeat detects dead connections every 30s)
@@ -27,10 +27,6 @@ public class SseEmitterRegistry {
       new ConcurrentHashMap<>();
 
   private final ObjectMapper objectMapper;
-
-  public SseEmitterRegistry(ObjectMapper objectMapper) {
-    this.objectMapper = objectMapper;
-  }
 
   public SseEmitter register(Long userId) {
     CopyOnWriteArrayList<SseEmitter> list =

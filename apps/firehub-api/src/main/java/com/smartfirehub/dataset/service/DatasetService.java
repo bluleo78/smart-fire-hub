@@ -26,11 +26,13 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class DatasetService {
 
   private static final Set<String> VALID_DATA_TYPES =
@@ -46,25 +48,6 @@ public class DatasetService {
   private final UserRepository userRepository;
   private final DatasetTagRepository tagRepository;
   private final DSLContext dsl;
-
-  public DatasetService(
-      DatasetRepository datasetRepository,
-      DatasetColumnRepository columnRepository,
-      DatasetCategoryRepository categoryRepository,
-      DataTableService dataTableService,
-      DataTableRowService dataTableRowService,
-      UserRepository userRepository,
-      DatasetTagRepository tagRepository,
-      DSLContext dsl) {
-    this.datasetRepository = datasetRepository;
-    this.columnRepository = columnRepository;
-    this.categoryRepository = categoryRepository;
-    this.dataTableService = dataTableService;
-    this.dataTableRowService = dataTableRowService;
-    this.userRepository = userRepository;
-    this.tagRepository = tagRepository;
-    this.dsl = dsl;
-  }
 
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {

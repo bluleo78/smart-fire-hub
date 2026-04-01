@@ -13,19 +13,19 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Record;
 import org.jooq.Table;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@RequiredArgsConstructor
+@Slf4j
 public class AsyncJobRepository {
-
-  private static final Logger log = LoggerFactory.getLogger(AsyncJobRepository.class);
 
   private final DSLContext dsl;
   private final ObjectMapper objectMapper;
@@ -50,11 +50,6 @@ public class AsyncJobRepository {
       field(name("async_job", "created_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> AJ_UPDATED_AT =
       field(name("async_job", "updated_at"), LocalDateTime.class);
-
-  public AsyncJobRepository(DSLContext dsl, ObjectMapper objectMapper) {
-    this.dsl = dsl;
-    this.objectMapper = objectMapper;
-  }
 
   private AsyncJobStatusResponse mapToResponse(Record r) {
     JSONB jsonb = r.get(AJ_METADATA);

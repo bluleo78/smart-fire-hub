@@ -20,18 +20,18 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Table;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class AiClassifyExecutor {
-
-  private static final Logger log = LoggerFactory.getLogger(AiClassifyExecutor.class);
 
   private static final Table<?> AI_INFERENCE_CACHE = table(name("ai_inference_cache"));
   private static final Field<String> CACHE_ROW_HASH = field(name("row_hash"), String.class);
@@ -45,21 +45,6 @@ public class AiClassifyExecutor {
   private final DatasetRepository datasetRepository;
   private final ObjectMapper objectMapper;
   private final DSLContext dsl;
-
-  public AiClassifyExecutor(
-      AiAgentClient aiAgentClient,
-      DataTableRowService dataTableRowService,
-      DataTableService dataTableService,
-      DatasetRepository datasetRepository,
-      ObjectMapper objectMapper,
-      DSLContext dsl) {
-    this.aiAgentClient = aiAgentClient;
-    this.dataTableRowService = dataTableRowService;
-    this.dataTableService = dataTableService;
-    this.datasetRepository = datasetRepository;
-    this.objectMapper = objectMapper;
-    this.dsl = dsl;
-  }
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
