@@ -1,4 +1,4 @@
-import { Mail, MessageSquare } from 'lucide-react';
+import { FileDown, Mail, MessageSquare } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -122,6 +122,25 @@ export default function ChannelRecipientEditor({
                 onChange={(emails) => updateChannel('EMAIL', { recipientEmails: emails })}
                 disabled={disabled}
               />
+            </div>
+
+            {/* PDF 첨부 옵션 */}
+            <div className="flex items-center gap-2 pt-1 border-t">
+              <Checkbox
+                id="attach-pdf"
+                checked={emailChannel!.attachPdf ?? false}
+                disabled={disabled}
+                onCheckedChange={(checked) =>
+                  updateChannel('EMAIL', { attachPdf: !!checked })
+                }
+              />
+              <Label
+                htmlFor="attach-pdf"
+                className="flex items-center gap-1.5 text-xs cursor-pointer"
+              >
+                <FileDown className="h-3.5 w-3.5" />
+                리포트를 PDF로 첨부
+              </Label>
             </div>
           </div>
         )}

@@ -18,12 +18,11 @@ import java.util.regex.Pattern;
 public class ProactiveConfigParser {
 
   // RFC 5322 간략 검증 패턴
-  private static final Pattern EMAIL_PATTERN =
-      Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+  private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
   /** 채널별 수신자 설정 레코드. */
   public record ChannelConfig(
-      String type, List<Long> recipientUserIds, List<String> recipientEmails) {}
+      String type, List<Long> recipientUserIds, List<String> recipientEmails, boolean attachPdf) {}
 
   /**
    * config JSONB에서 채널 설정 목록 파싱.
@@ -44,11 +43,11 @@ public class ProactiveConfigParser {
       // 구 형식: ["CHAT", "EMAIL"]
       for (Object element : list) {
         if (element instanceof String type) {
-          result.add(new ChannelConfig(type, List.of(), List.of()));
+          result.add(new ChannelConfig(type, List.of(), List.of(), false));
         }
       }
     } else if (first instanceof Map) {
-      // 신 형식: [{ type: "CHAT", recipientUserIds: [...], recipientEmails: [...] }]
+      // 신 형식: [{ type: "CHAT", recipientUserIds: [...], recipientEmails: [...], attachPdf: true }]
       for (Object element : list) {
         if (element instanceof Map<?, ?> map) {
           String type = map.get("type") != null ? map.get("type").toString() : null;
@@ -56,7 +55,8 @@ public class ProactiveConfigParser {
 
           List<Long> userIds = parseUserIds((List<?>) map.get("recipientUserIds"));
           List<String> emails = parseEmails((List<?>) map.get("recipientEmails"));
-          result.add(new ChannelConfig(type, userIds, emails));
+          boolean attachPdf = Boolean.TRUE.equals(map.get("attachPdf"));
+          result.add(new ChannelConfig(type, userIds, emails, attachPdf));
         }
       }
     }
@@ -64,27 +64,18 @@ public class ProactiveConfigParser {
     return Collections.unmodifiableList(result);
   }
 
-  /**
-   * 특정 채널 타입의 설정을 반환. 없으면 Optional.empty().
-   */
+  /** 특정 채널 타입의 설정을 반환. 없으면 Optional.empty(). */
   public static Optional<ChannelConfig> getChannelConfig(
       Map<String, Object> config, String channelType) {
-    return parseChannels(config).stream()
-        .filter(ch -> ch.type().equals(channelType))
-        .findFirst();
+    return parseChannels(config).stream().filter(ch -> ch.type().equals(channelType)).findFirst();
   }
 
-  /**
-   * 채널 타입 문자열 목록 반환. 기존 getConfigChannels() 대체.
-   * 구/신 형식 모두 처리.
-   */
+  /** 채널 타입 문자열 목록 반환. 기존 getConfigChannels() 대체. 구/신 형식 모두 처리. */
   public static List<String> getChannelTypes(Map<String, Object> config) {
     return parseChannels(config).stream().map(ChannelConfig::type).toList();
   }
 
-  /**
-   * 이메일 형식 검증. 잘못된 형식이 있으면 IllegalArgumentException 발생.
-   */
+  /** 이메일 형식 검증. 잘못된 형식이 있으면 IllegalArgumentException 발생. */
   public static void validateEmails(List<String> emails) {
     if (emails == null) return;
     for (String email : emails) {
@@ -92,9 +83,7 @@ public class ProactiveConfigParser {
     }
   }
 
-  /**
-   * 단일 이메일 형식 검증. 잘못된 형식이면 IllegalArgumentException 발생.
-   */
+  /** 단일 이메일 형식 검증. 잘못된 형식이면 IllegalArgumentException 발생. */
   public static void validateEmail(String email) {
     if (email == null || !EMAIL_PATTERN.matcher(email).matches()) {
       throw new IllegalArgumentException("잘못된 이메일 형식입니다: " + email);

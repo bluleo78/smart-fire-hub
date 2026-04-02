@@ -55,6 +55,8 @@ dependencies {
     // Markdown → HTML 변환
     implementation("org.commonmark:commonmark:0.24.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
+    // PDF 생성 (Flying Saucer — HTML/CSS → PDF)
+    implementation("org.xhtmlrenderer:flying-saucer-pdf-openpdf:9.4.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")

@@ -71,14 +71,12 @@ public class ChatDeliveryChannel implements DeliveryChannel {
               userId,
               job.id());
         } catch (Exception e) {
-          log.error(
-              "ChatDeliveryChannel failed for userId {}: {}", userId, e.getMessage());
+          log.error("ChatDeliveryChannel failed for userId {}: {}", userId, e.getMessage());
           // 개별 전달 실패는 다른 수신자에게 영향을 주지 않도록 continue
         }
       }
     } catch (Exception e) {
-      log.error(
-          "ChatDeliveryChannel delivery failed for job {}: {}", job.id(), e.getMessage(), e);
+      log.error("ChatDeliveryChannel delivery failed for job {}: {}", job.id(), e.getMessage(), e);
       throw new RuntimeException("Chat delivery failed: " + e.getMessage(), e);
     }
   }

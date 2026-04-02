@@ -1,9 +1,11 @@
-import { Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { FileDown, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { toast } from 'sonner';
 
 import type { ProactiveJobExecution } from '@/api/proactive';
+import { proactiveApi } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,6 +19,7 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
+import { downloadBlob } from '@/lib/download';
 import { classifyError } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { getSections } from '@/lib/proactive-utils';
@@ -32,7 +35,21 @@ function calcDuration(startedAt: string, completedAt: string): string {
   return `${Math.floor(s / 60)}분 ${s % 60}초`;
 }
 
-function ExecutionResultView({ execution }: { execution: ProactiveJobExecution }) {
+function ExecutionResultView({ execution, jobId }: { execution: ProactiveJobExecution; jobId: number }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadPdf = useCallback(async () => {
+    setDownloading(true);
+    try {
+      const response = await proactiveApi.downloadExecutionPdf(jobId, execution.id);
+      downloadBlob(`report-${execution.id}.pdf`, response.data as Blob);
+    } catch {
+      toast.error('PDF 다운로드에 실패했습니다.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [jobId, execution.id]);
+
   if (execution.status === 'RUNNING') {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
@@ -80,6 +97,21 @@ function ExecutionResultView({ execution }: { execution: ProactiveJobExecution }
 
   return (
     <div className="p-4 space-y-4">
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDownloadPdf}
+          disabled={downloading}
+        >
+          {downloading ? (
+            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+          ) : (
+            <FileDown className="h-3.5 w-3.5 mr-1" />
+          )}
+          PDF
+        </Button>
+      </div>
       {sections.map((section) => (
         <div key={section.key}>
           {sections.length > 1 && (
@@ -186,7 +218,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       {/* 하단: 결과 뷰 */}
       <div className="flex-1 overflow-auto border rounded-md mt-3">
         {selected ? (
-          <ExecutionResultView execution={selected} />
+          <ExecutionResultView execution={selected} jobId={jobId} />
         ) : (
           <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
             실행을 선택하면 결과를 확인할 수 있습니다

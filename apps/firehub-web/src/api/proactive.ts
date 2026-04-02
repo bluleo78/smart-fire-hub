@@ -152,6 +152,12 @@ export const proactiveApi = {
   deleteTemplate: (id: number) =>
     client.delete(`/proactive/templates/${id}`),
 
+  // Executions
+  downloadExecutionPdf: (jobId: number, executionId: number) =>
+    client.get(`/proactive/jobs/${jobId}/executions/${executionId}/pdf`, {
+      responseType: 'blob',
+    }),
+
   // SMTP (3 methods)
   getSmtpSettings: () =>
     client.get<Array<{ key: string; value: string; description: string | null; updatedAt: string }>>(

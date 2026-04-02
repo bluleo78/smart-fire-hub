@@ -4,6 +4,7 @@ export const channelConfigSchema = z.object({
   type: z.enum(['CHAT', 'EMAIL']),
   recipientUserIds: z.array(z.number()),
   recipientEmails: z.array(z.string().email('올바른 이메일 형식이 아닙니다')),
+  attachPdf: z.boolean().optional(),
 });
 
 export const proactiveJobSchema = z.object({

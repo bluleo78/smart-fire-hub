@@ -9,6 +9,8 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.service.PdfExportService;
+import com.smartfirehub.proactive.service.ReportRenderUtils;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.user.dto.UserResponse;
@@ -20,8 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.thymeleaf.spring6.SpringTemplateEngine;
 import org.thymeleaf.context.IContext;
+import org.thymeleaf.spring6.SpringTemplateEngine;
 
 class EmailDeliveryChannelTest extends IntegrationTestBase {
 
@@ -30,11 +32,16 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
   @MockitoBean private SettingsService settingsService;
   @MockitoBean private UserRepository userRepository;
   @MockitoBean private SpringTemplateEngine templateEngine;
+  @MockitoBean private ReportRenderUtils reportRenderUtils;
+  @MockitoBean private PdfExportService pdfExportService;
 
   @BeforeEach
   void setup() {
     // Default: SMTP not configured -> deliver() returns early
     when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", ""));
+    // Default: return empty lists so deliver() doesn't NPE when SMTP is configured
+    when(reportRenderUtils.buildTemplateSections(any())).thenReturn(List.of());
+    when(reportRenderUtils.renderChartImages(any())).thenReturn(List.of());
   }
 
   private ProactiveResult makeResult() {
@@ -43,9 +50,21 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
 
   private ProactiveJobResponse makeJob(Long userId, Map<String, Object> config) {
     return new ProactiveJobResponse(
-        1L, userId, null, null, "Test Job", "prompt",
-        "0 9 * * *", "Asia/Seoul", true, config,
-        null, null, null, null, null);
+        1L,
+        userId,
+        null,
+        null,
+        "Test Job",
+        "prompt",
+        "0 9 * * *",
+        "Asia/Seoul",
+        true,
+        config,
+        null,
+        null,
+        null,
+        null,
+        null);
   }
 
   private UserResponse makeUser(Long id, String name, String email) {
@@ -66,18 +85,23 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
   @Test
   void deliver_noRecipients_defaultsToJobOwner() {
     // SMTP configured, no recipientUserIds -> falls back to job owner
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of(
-        "smtp.host", "smtp.example.com",
-        "smtp.port", "587"));
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
     when(userRepository.findById(1L))
         .thenReturn(Optional.of(makeUser(1L, "Owner", "owner@example.com")));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
-    Map<String, Object> config = Map.of(
-        "channels", List.of(
-            Map.of("type", "EMAIL",
-                   "recipientUserIds", List.of(),
-                   "recipientEmails", List.of())));
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(),
+                    "recipientEmails", List.of())));
     ProactiveJobResponse job = makeJob(1L, config);
 
     // Will try to send but fail (no real SMTP) — the exception is caught internally
@@ -89,20 +113,25 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
 
   @Test
   void deliver_withRecipientUserIds_loadsEachUserEmail() {
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of(
-        "smtp.host", "smtp.example.com",
-        "smtp.port", "587"));
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
     when(userRepository.findById(10L))
         .thenReturn(Optional.of(makeUser(10L, "Alice", "alice@example.com")));
     when(userRepository.findById(20L))
         .thenReturn(Optional.of(makeUser(20L, "Bob", "bob@example.com")));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
-    Map<String, Object> config = Map.of(
-        "channels", List.of(
-            Map.of("type", "EMAIL",
-                   "recipientUserIds", List.of(10, 20),
-                   "recipientEmails", List.of())));
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(10, 20),
+                    "recipientEmails", List.of())));
     ProactiveJobResponse job = makeJob(99L, config);
 
     // Will try to send but SMTP will fail internally (caught)
@@ -116,16 +145,21 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
 
   @Test
   void deliver_withRecipientEmails_usesExternalEmailsDirectly() {
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of(
-        "smtp.host", "smtp.example.com",
-        "smtp.port", "587"));
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
-    Map<String, Object> config = Map.of(
-        "channels", List.of(
-            Map.of("type", "EMAIL",
-                   "recipientUserIds", List.of(),
-                   "recipientEmails", List.of("external@example.com"))));
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(),
+                    "recipientEmails", List.of("external@example.com"))));
     ProactiveJobResponse job = makeJob(99L, config);
 
     emailDeliveryChannel.deliver(job, 1L, makeResult());
@@ -136,18 +170,23 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
 
   @Test
   void deliver_withMixedRecipients_combinesBoth() {
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of(
-        "smtp.host", "smtp.example.com",
-        "smtp.port", "587"));
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
     when(userRepository.findById(10L))
         .thenReturn(Optional.of(makeUser(10L, "Alice", "alice@example.com")));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
-    Map<String, Object> config = Map.of(
-        "channels", List.of(
-            Map.of("type", "EMAIL",
-                   "recipientUserIds", List.of(10),
-                   "recipientEmails", List.of("external@example.com"))));
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(10),
+                    "recipientEmails", List.of("external@example.com"))));
     ProactiveJobResponse job = makeJob(99L, config);
 
     emailDeliveryChannel.deliver(job, 1L, makeResult());
@@ -156,5 +195,65 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
     verify(userRepository).findById(10L);
     // Owner not involved
     verify(userRepository, never()).findById(99L);
+  }
+
+  @Test
+  void deliver_attaches_pdf_when_attachPdf_is_true() {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
+    when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
+    when(pdfExportService.generatePdf(any(ProactiveResult.class), anyString()))
+        .thenReturn(new byte[] {1, 2, 3});
+
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type",
+                    "EMAIL",
+                    "recipientUserIds",
+                    List.of(),
+                    "recipientEmails",
+                    List.of("pdf@example.com"),
+                    "attachPdf",
+                    true)));
+    ProactiveJobResponse job = makeJob(99L, config);
+
+    emailDeliveryChannel.deliver(job, 1L, makeResult());
+
+    verify(pdfExportService).generatePdf(any(ProactiveResult.class), anyString());
+  }
+
+  @Test
+  void deliver_skips_pdf_when_attachPdf_is_false() {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
+    when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
+
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type",
+                    "EMAIL",
+                    "recipientUserIds",
+                    List.of(),
+                    "recipientEmails",
+                    List.of("nopdf@example.com"),
+                    "attachPdf",
+                    false)));
+    ProactiveJobResponse job = makeJob(99L, config);
+
+    emailDeliveryChannel.deliver(job, 1L, makeResult());
+
+    verify(pdfExportService, never()).generatePdf(any(), anyString());
   }
 }

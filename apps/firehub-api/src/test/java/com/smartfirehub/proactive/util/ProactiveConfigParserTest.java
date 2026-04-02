@@ -46,12 +46,7 @@ class ProactiveConfigParserTest {
         Map.of("type", "CHAT", "recipientUserIds", List.of(1, 2, 3), "recipientEmails", List.of());
     Map<String, Object> emailChannel =
         Map.of(
-            "type",
-            "EMAIL",
-            "recipientUserIds",
-            List.of(),
-            "recipientEmails",
-            List.of("a@b.com"));
+            "type", "EMAIL", "recipientUserIds", List.of(), "recipientEmails", List.of("a@b.com"));
     Map<String, Object> config = Map.of("channels", List.of(chatChannel, emailChannel));
 
     List<ChannelConfig> result = ProactiveConfigParser.parseChannels(config);
@@ -132,7 +127,8 @@ class ProactiveConfigParserTest {
     Map<String, Object> chat =
         Map.of("type", "CHAT", "recipientUserIds", List.of(1), "recipientEmails", List.of());
     Map<String, Object> email =
-        Map.of("type", "EMAIL", "recipientUserIds", List.of(), "recipientEmails", List.of("a@b.com"));
+        Map.of(
+            "type", "EMAIL", "recipientUserIds", List.of(), "recipientEmails", List.of("a@b.com"));
     Map<String, Object> config = Map.of("channels", List.of(chat, email));
 
     List<String> types = ProactiveConfigParser.getChannelTypes(config);
@@ -155,14 +151,59 @@ class ProactiveConfigParserTest {
 
   @Test
   void getRecipientUserIds_emptyArray_returnsEmpty() {
-    ChannelConfig cfg = new ChannelConfig("CHAT", List.of(), List.of());
-    assertThat(ProactiveConfigParser.getRecipientUserIds(cfg)).isEmpty();
+    ChannelConfig cfg = new ChannelConfig("CHAT", List.of(), List.of(), false);
+    assertThat(cfg.recipientUserIds()).isEmpty();
   }
 
   @Test
   void getRecipientEmails_returnsEmails() {
-    ChannelConfig cfg = new ChannelConfig("EMAIL", List.of(), List.of("a@b.com", "c@d.com"));
-    assertThat(ProactiveConfigParser.getRecipientEmails(cfg)).containsExactly("a@b.com", "c@d.com");
+    ChannelConfig cfg = new ChannelConfig("EMAIL", List.of(), List.of("a@b.com", "c@d.com"), false);
+    assertThat(cfg.recipientEmails()).containsExactly("a@b.com", "c@d.com");
+  }
+
+  // ---------------------------------------------------------------------------
+  // attachPdf
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void parseChannels_reads_attachPdf_true() {
+    Map<String, Object> emailChannel = new HashMap<>();
+    emailChannel.put("type", "EMAIL");
+    emailChannel.put("recipientUserIds", List.of());
+    emailChannel.put("recipientEmails", List.of("a@b.com"));
+    emailChannel.put("attachPdf", true);
+    Map<String, Object> config = Map.of("channels", List.of(emailChannel));
+
+    List<ChannelConfig> result = ProactiveConfigParser.parseChannels(config);
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).attachPdf()).isTrue();
+  }
+
+  @Test
+  void parseChannels_defaults_attachPdf_to_false() {
+    Map<String, Object> emailChannel = new HashMap<>();
+    emailChannel.put("type", "EMAIL");
+    emailChannel.put("recipientUserIds", List.of());
+    emailChannel.put("recipientEmails", List.of("a@b.com"));
+    // attachPdf absent
+    Map<String, Object> config = Map.of("channels", List.of(emailChannel));
+
+    List<ChannelConfig> result = ProactiveConfigParser.parseChannels(config);
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).attachPdf()).isFalse();
+  }
+
+  @Test
+  void parseChannels_old_format_attachPdf_false() {
+    Map<String, Object> config = Map.of("channels", List.of("CHAT", "EMAIL"));
+
+    List<ChannelConfig> result = ProactiveConfigParser.parseChannels(config);
+
+    assertThat(result).hasSize(2);
+    assertThat(result.get(0).attachPdf()).isFalse();
+    assertThat(result.get(1).attachPdf()).isFalse();
   }
 
   // ---------------------------------------------------------------------------
@@ -172,7 +213,8 @@ class ProactiveConfigParserTest {
   @Test
   void validateEmails_validFormat_noException() {
     assertThatNoException()
-        .isThrownBy(() -> ProactiveConfigParser.validateEmails(List.of("user@example.com", "a@b.co")));
+        .isThrownBy(
+            () -> ProactiveConfigParser.validateEmails(List.of("user@example.com", "a@b.co")));
   }
 
   @Test

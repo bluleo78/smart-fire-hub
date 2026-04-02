@@ -147,6 +147,13 @@ public class ProactiveJobService {
     return executionRepository.findByJobId(jobId, limit, offset);
   }
 
+  @Transactional(readOnly = true)
+  public ProactiveJobExecutionResponse getExecution(Long executionId) {
+    return executionRepository
+        .findById(executionId)
+        .orElseThrow(() -> new ProactiveJobException("Execution을 찾을 수 없습니다: " + executionId));
+  }
+
   @Async("pipelineExecutor")
   public void executeJob(Long jobId, Long userId) {
     AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));

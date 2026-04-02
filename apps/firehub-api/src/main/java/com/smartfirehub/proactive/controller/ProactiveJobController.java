@@ -1,17 +1,24 @@
 package com.smartfirehub.proactive.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
+import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import jakarta.validation.Valid;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +29,8 @@ import org.springframework.web.bind.annotation.*;
 public class ProactiveJobController {
 
   private final ProactiveJobService proactiveJobService;
+  private final PdfExportService pdfExportService;
+  private final ObjectMapper objectMapper;
 
   @GetMapping
   @RequirePermission("proactive:read")
@@ -83,6 +92,41 @@ public class ProactiveJobController {
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(proactiveJobService.getExecutions(id, userId, limit, offset));
+  }
+
+  @GetMapping("/{jobId}/executions/{executionId}/pdf")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<byte[]> downloadExecutionPdf(
+      @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+
+    // Validate job ownership
+    ProactiveJobResponse job = proactiveJobService.getJob(jobId, userId);
+
+    // Validate execution
+    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
+    if (!jobId.equals(execution.jobId())) {
+      return ResponseEntity.badRequest().build();
+    }
+    if (!"COMPLETED".equals(execution.status()) || execution.result() == null) {
+      return ResponseEntity.badRequest().build();
+    }
+
+    // Convert result map to ProactiveResult
+    ProactiveResult result = objectMapper.convertValue(execution.result(), ProactiveResult.class);
+
+    // Generate PDF
+    byte[] pdfBytes = pdfExportService.generatePdf(result, job.name());
+
+    // Encode filename for Content-Disposition
+    String encodedName =
+        URLEncoder.encode(result.title() + ".pdf", StandardCharsets.UTF_8).replace("+", "%20");
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_PDF);
+    headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedName);
+
+    return ResponseEntity.ok().headers(headers).body(pdfBytes);
   }
 
   @GetMapping("/recipients")
