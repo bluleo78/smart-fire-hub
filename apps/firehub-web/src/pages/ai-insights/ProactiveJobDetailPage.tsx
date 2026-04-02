@@ -1,14 +1,15 @@
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ArrowLeft, Copy } from 'lucide-react';
 import { useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft } from 'lucide-react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  useCloneProactiveJob,
   useCreateProactiveJob,
   useDeleteProactiveJob,
   useExecuteProactiveJob,
@@ -17,10 +18,10 @@ import {
   useUpdateProactiveJob,
 } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError } from '@/lib/api-error';
-import { proactiveJobSchema, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
+import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
-import JobOverviewTab from './tabs/JobOverviewTab';
 import JobExecutionsTab from './tabs/JobExecutionsTab';
+import JobOverviewTab from './tabs/JobOverviewTab';
 
 function buildDefaultValues(job?: {
   name: string;
@@ -88,6 +89,7 @@ export default function ProactiveJobDetailPage() {
   const updateMutation = useUpdateProactiveJob();
   const deleteMutation = useDeleteProactiveJob();
   const executeMutation = useExecuteProactiveJob();
+  const cloneMutation = useCloneProactiveJob();
 
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab });
@@ -153,6 +155,18 @@ export default function ProactiveJobDetailPage() {
     });
   };
 
+  const handleClone = () => {
+    if (!job) return;
+    cloneMutation.mutate(job, {
+      onSuccess: (created) => {
+        toast.success(`"${created.name}" 작업이 복제되었습니다.`);
+        navigate(`/ai-insights/jobs/${created.id}?tab=overview`);
+        setIsEditing(true);
+      },
+      onError: (err) => handleApiError(err, '작업 복제에 실패했습니다.'),
+    });
+  };
+
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
   if (!isNew && isLoading) {
@@ -195,6 +209,15 @@ export default function ProactiveJobDetailPage() {
         <div className="flex items-center gap-2">
           {!isNew && !isEditing && (
             <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClone}
+                disabled={cloneMutation.isPending}
+              >
+                <Copy className="h-3.5 w-3.5 mr-1" />
+                복제
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

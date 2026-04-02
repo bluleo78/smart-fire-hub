@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 
+import type { ProactiveJob, ReportTemplate } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,17 +15,23 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import type { ProactiveJob, ReportTemplate } from '@/api/proactive';
 import { cronToLabel } from '@/lib/cron-label';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
+import { formatNextRun,getNextRunDate } from '@/lib/next-run';
+import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import type { ProactiveJobFormValues } from '@/lib/validations/proactive-job';
+
 import ChannelRecipientEditor from '../components/ChannelRecipientEditor';
 
 const CRON_PRESETS = [
-  { label: '매일 오전 9시', value: '0 9 * * *' },
-  { label: '매일 오전 8시', value: '0 8 * * *' },
-  { label: '매주 월요일 오전 9시', value: '0 9 * * 1' },
   { label: '매시간', value: '0 * * * *' },
+  { label: '매 30분', value: '*/30 * * * *' },
+  { label: '매일 오전 8시', value: '0 8 * * *' },
+  { label: '매일 오전 9시', value: '0 9 * * *' },
+  { label: '매일 오후 6시', value: '0 18 * * *' },
+  { label: '매주 월요일 오전 9시', value: '0 9 * * 1' },
+  { label: '매주 금요일 오전 9시', value: '0 9 * * 5' },
+  { label: '매월 1일 오전 9시', value: '0 9 1 * *' },
   { label: '직접 입력', value: '__custom__' },
 ];
 
@@ -48,10 +56,22 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
   const { register, watch, setValue, formState: { errors } } = form;
   const channels = watch('config.channels');
   const cronExpression = watch('cronExpression');
+  const timezone = watch('timezone');
 
   const cronPreset = CRON_PRESETS.find((p) => p.value !== '__custom__' && p.value === cronExpression)
     ? cronExpression
     : '__custom__';
+
+  const nextRunInfo = useMemo(() => {
+    if (!cronExpression || cronExpression === '__custom__') return null;
+    const nextDate = getNextRunDate(cronExpression, timezone);
+    if (!nextDate) return null;
+    const tzOption = TIMEZONE_OPTIONS.find((t) => t.value === timezone);
+    return {
+      text: formatNextRun(nextDate, timezone),
+      abbr: tzOption?.abbr ?? '',
+    };
+  }, [cronExpression, timezone]);
 
   if (!isEditing && !isNew && job) {
     // Read-only view
@@ -237,12 +257,30 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
       {/* 타임존 */}
       <div className="space-y-2">
         <Label htmlFor="job-timezone">타임존</Label>
-        <Input
-          id="job-timezone"
-          placeholder="Asia/Seoul"
-          {...register('timezone')}
-        />
+        <Select
+          value={timezone}
+          onValueChange={(v) => setValue('timezone', v)}
+        >
+          <SelectTrigger id="job-timezone">
+            <SelectValue placeholder="타임존 선택" />
+          </SelectTrigger>
+          <SelectContent>
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <SelectItem key={tz.value} value={tz.value}>
+                {tz.value} ({tz.abbr}, {tz.offset})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {/* 다음 실행 시간 */}
+      {nextRunInfo && (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-300">
+          <span>📅</span>
+          <span>다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong></span>
+        </div>
+      )}
 
       <Separator />
 

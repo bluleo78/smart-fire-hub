@@ -1,12 +1,11 @@
+import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Loader2 } from 'lucide-react';
 
+import type { ProactiveJobExecution } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { TableEmptyRow } from '@/components/ui/table-empty';
-import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import {
   Table,
   TableBody,
@@ -15,10 +14,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { ProactiveJobExecution } from '@/api/proactive';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
-import { getSections } from '@/lib/proactive-utils';
+import { classifyError } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { getSections } from '@/lib/proactive-utils';
 import { cn } from '@/lib/utils';
 
 const REMARK_PLUGINS = [remarkGfm];
@@ -42,10 +43,21 @@ function ExecutionResultView({ execution }: { execution: ProactiveJobExecution }
   }
 
   if (execution.status === 'FAILED') {
+    const classified = classifyError(execution.errorMessage);
     return (
       <div className="p-4">
-        <p className="text-sm font-medium text-destructive mb-2">실행 실패</p>
-        <p className="text-sm text-muted-foreground">{execution.errorMessage ?? '알 수 없는 오류가 발생했습니다.'}</p>
+        <div className="rounded-lg border border-destructive/50 p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span>{classified.icon}</span>
+            <span className="text-sm font-semibold text-destructive">{classified.label}</span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {execution.errorMessage ?? '알 수 없는 오류가 발생했습니다.'}
+          </p>
+          <p className="text-xs text-muted-foreground/70 border-t pt-2">
+            💡 {classified.guide}
+          </p>
+        </div>
       </div>
     );
   }

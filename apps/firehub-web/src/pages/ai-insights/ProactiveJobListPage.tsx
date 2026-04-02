@@ -1,12 +1,13 @@
-import { Play, Plus, Zap } from 'lucide-react';
+import { Copy, Play, Plus, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { handleApiError } from '@/lib/api-error';
+
+import type { ProactiveJob } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { TableEmptyRow } from '@/components/ui/table-empty';
-import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import {
   Table,
   TableBody,
@@ -15,14 +16,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { ProactiveJob } from '@/api/proactive';
+import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import {
+  useCloneProactiveJob,
   useExecuteProactiveJob,
   useProactiveJobs,
   useUpdateProactiveJob,
 } from '@/hooks/queries/useProactiveMessages';
 import { cronToLabel } from '@/lib/cron-label';
 import { timeAgo } from '@/lib/formatters';
+import { formatNextRunShort } from '@/lib/next-run';
 
 function channelSummary(config: Record<string, unknown>): string {
   const channels = config?.channels;
@@ -73,12 +77,24 @@ export default function ProactiveJobListPage() {
   const { data: jobs = [], isLoading } = useProactiveJobs();
   const updateMutation = useUpdateProactiveJob();
   const executeMutation = useExecuteProactiveJob();
+  const cloneMutation = useCloneProactiveJob();
 
   const handleToggle = (job: ProactiveJob, enabled: boolean) => {
     updateMutation.mutate(
       { id: job.id, data: { enabled } },
       { onError: () => toast.error('상태 변경에 실패했습니다.') },
     );
+  };
+
+  const handleClone = (e: React.MouseEvent, job: ProactiveJob) => {
+    e.stopPropagation();
+    cloneMutation.mutate(job, {
+      onSuccess: (created) => {
+        toast.success(`"${created.name}" 작업이 복제되었습니다.`);
+        navigate(`/ai-insights/jobs/${created.id}?tab=overview`);
+      },
+      onError: (err) => handleApiError(err, '작업 복제에 실패했습니다.'),
+    });
   };
 
   const handleExecute = (e: React.MouseEvent, job: ProactiveJob) => {
@@ -133,14 +149,15 @@ export default function ProactiveJobListPage() {
               <TableHead>작업명</TableHead>
               <TableHead>실행 주기</TableHead>
               <TableHead>마지막 실행</TableHead>
+              <TableHead>다음 실행</TableHead>
               <TableHead>상태</TableHead>
               <TableHead>활성</TableHead>
-              <TableHead className="w-[60px]" />
+              <TableHead className="w-[80px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableSkeletonRows columns={6} rows={5} />
+              <TableSkeletonRows columns={7} rows={5} />
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
                 <TableRow
@@ -160,6 +177,11 @@ export default function ProactiveJobListPage() {
                   <TableCell className="text-sm text-muted-foreground">
                     {job.lastExecutedAt ? timeAgo(job.lastExecutedAt) : '-'}
                   </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {job.enabled && job.nextExecuteAt
+                      ? formatNextRunShort(new Date(job.nextExecuteAt), job.timezone)
+                      : '-'}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={jobStatusVariant(job)}>{jobStatusLabel(job)}</Badge>
                   </TableCell>
@@ -172,21 +194,33 @@ export default function ProactiveJobListPage() {
                     />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      aria-label="지금 실행"
-                      onClick={(e) => handleExecute(e, job)}
-                      disabled={executeMutation.isPending}
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        aria-label="복제"
+                        onClick={(e) => handleClone(e, job)}
+                        disabled={cloneMutation.isPending}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        aria-label="지금 실행"
+                        onClick={(e) => handleExecute(e, job)}
+                        disabled={executeMutation.isPending}
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
             ) : (
-              <TableEmptyRow colSpan={6} message="스마트 작업이 없습니다." />
+              <TableEmptyRow colSpan={7} message="스마트 작업이 없습니다." />
             )}
           </TableBody>
         </Table>

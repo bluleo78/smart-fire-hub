@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { proactiveApi } from '../../api/proactive';
 import type {
   CreateProactiveJobRequest,
   CreateReportTemplateRequest,
+  ProactiveJob,
   SmtpSettingsRequest,
   UpdateProactiveJobRequest,
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
+import { proactiveApi } from '../../api/proactive';
 
 const KEYS = {
   jobs: ['proactive', 'jobs'] as const,
@@ -75,6 +76,24 @@ export function useExecuteProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => proactiveApi.executeJob(id).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: KEYS.jobs });
+    },
+  });
+}
+
+export function useCloneProactiveJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (job: Pick<ProactiveJob, 'name' | 'prompt' | 'templateId' | 'cronExpression' | 'timezone' | 'config'>) =>
+      proactiveApi.createJob({
+        name: `${job.name} (복사본)`,
+        prompt: job.prompt,
+        templateId: job.templateId,
+        cronExpression: job.cronExpression,
+        timezone: job.timezone,
+        config: job.config,
+      }).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
     },
