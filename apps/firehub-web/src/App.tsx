@@ -1,5 +1,5 @@
-import { lazy,Suspense } from 'react';
 import { ThemeProvider } from 'next-themes';
+import { lazy,Suspense } from 'react';
 import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
 import { AdminRoute } from './components/AdminRoute';
@@ -38,6 +38,7 @@ const DashboardEditorPage = lazy(() => import('./pages/analytics/DashboardEditor
 const AiInsightJobsPage = lazy(() => import('./pages/ai-insights/AiInsightJobsPage'));
 const AiInsightTemplatesPage = lazy(() => import('./pages/ai-insights/AiInsightTemplatesPage'));
 const ProactiveJobDetailPage = lazy(() => import('./pages/ai-insights/ProactiveJobDetailPage'));
+const ReportTemplateDetailPage = lazy(() => import('./pages/ai-insights/ReportTemplateDetailPage'));
 
 function PageSkeleton() {
   return (
@@ -81,6 +82,8 @@ function App() {
               <Route path="/ai-insights/jobs/new" element={<ProactiveJobDetailPage />} />
               <Route path="/ai-insights/jobs/:id" element={<ProactiveJobDetailPage />} />
               <Route path="/ai-insights/templates" element={<AiInsightTemplatesPage />} />
+              <Route path="/ai-insights/templates/new" element={<ReportTemplateDetailPage />} />
+              <Route path="/ai-insights/templates/:id" element={<ReportTemplateDetailPage />} />
               <Route element={<AdminRoute />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />
