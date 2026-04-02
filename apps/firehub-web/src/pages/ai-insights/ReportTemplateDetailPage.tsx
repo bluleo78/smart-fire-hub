@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import type { TemplateSection } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,11 +18,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { TemplateSection } from '@/api/proactive';
 import {
   useCreateProactiveTemplate,
   useDeleteProactiveTemplate,
   useProactiveTemplate,
+  useProactiveTemplates,
   useUpdateProactiveTemplate,
 } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError } from '@/lib/api-error';
@@ -48,7 +49,11 @@ export default function ReportTemplateDetailPage() {
   const isNew = !id || id === 'new';
   const templateId = isNew ? 0 : Number(id);
 
-  const { data: template, isLoading } = useProactiveTemplate(templateId);
+  const { data: templateDirect, isLoading: isLoadingDirect } = useProactiveTemplate(templateId);
+  const { data: templates = [], isLoading: isLoadingList } = useProactiveTemplates();
+  // Fallback: use list data if single-item API fails
+  const template = templateDirect ?? templates.find((t) => t.id === templateId);
+  const isLoading = isLoadingDirect && isLoadingList;
   const createMutation = useCreateProactiveTemplate();
   const updateMutation = useUpdateProactiveTemplate();
   const deleteMutation = useDeleteProactiveTemplate();
