@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   useCreateProactiveTemplate,
   useDeleteProactiveTemplate,
@@ -50,6 +51,7 @@ export default function ReportTemplateDetailPage() {
 
   const [isEditing, setIsEditing] = useState(isNew);
   const [structureJson, setStructureJson] = useState(DEFAULT_STRUCTURE);
+  const [styleText, setStyleText] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const form = useForm<ReportTemplateFormValues>({
@@ -57,12 +59,13 @@ export default function ReportTemplateDetailPage() {
     values: template ? { name: template.name, description: template.description ?? '' } : { name: '', description: '' },
   });
 
-  // Sync template structure to JSON editor when template loads
+  // Sync template structure to JSON editor when template loads (skip during editing)
   useEffect(() => {
-    if (template) {
+    if (template && !isEditing) {
       setStructureJson(JSON.stringify(template.structure, null, 2));
+      setStyleText(template.style ?? '');
     }
-  }, [template]);
+  }, [template, isEditing]);
 
   const handleSave = form.handleSubmit((values) => {
     let parsed: Record<string, unknown>;
@@ -77,6 +80,7 @@ export default function ReportTemplateDetailPage() {
       name: values.name,
       description: values.description || undefined,
       structure: parsed,
+      style: styleText.trim() || undefined,
     };
 
     if (isNew) {
@@ -119,6 +123,7 @@ export default function ReportTemplateDetailPage() {
         name: `${template.name} (사본)`,
         description: template.description ?? undefined,
         structure: template.structure,
+        style: template.style ?? undefined,
       },
       {
         onSuccess: (created) => {
@@ -134,6 +139,7 @@ export default function ReportTemplateDetailPage() {
     if (template) {
       form.reset({ name: template.name, description: template.description ?? '' });
       setStructureJson(JSON.stringify(template.structure, null, 2));
+      setStyleText(template.style ?? '');
     }
     setIsEditing(false);
   };
@@ -220,10 +226,18 @@ export default function ReportTemplateDetailPage() {
 
       {/* 메타 정보 (읽기 모드) */}
       {!isNew && !isEditing && template && (
-        <div className="text-sm text-muted-foreground flex gap-4">
-          {template.description && <span>{template.description}</span>}
-          <span>생성: {new Date(template.createdAt).toLocaleDateString('ko-KR')}</span>
-          <span>수정: {new Date(template.updatedAt).toLocaleDateString('ko-KR')}</span>
+        <div className="space-y-1">
+          <div className="text-sm text-muted-foreground flex gap-4">
+            {template.description && <span>{template.description}</span>}
+            <span>생성: {new Date(template.createdAt).toLocaleDateString('ko-KR')}</span>
+            <span>수정: {new Date(template.updatedAt).toLocaleDateString('ko-KR')}</span>
+          </div>
+          {template.style && (
+            <div className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">스타일: </span>
+              {template.style}
+            </div>
+          )}
         </div>
       )}
 
@@ -249,6 +263,16 @@ export default function ReportTemplateDetailPage() {
                   id="tpl-desc"
                   {...form.register('description')}
                   placeholder="템플릿 설명을 입력하세요"
+                />
+              </div>
+              <div className="col-span-2 space-y-2">
+                <Label htmlFor="tpl-style">작성 스타일 (선택)</Label>
+                <Textarea
+                  id="tpl-style"
+                  value={styleText}
+                  onChange={(e) => setStyleText(e.target.value)}
+                  placeholder="AI가 리포트를 작성할 때의 스타일을 기술하세요 (예: 경영진 보고서 스타일, 기술 분석 스타일 등)"
+                  rows={2}
                 />
               </div>
             </div>

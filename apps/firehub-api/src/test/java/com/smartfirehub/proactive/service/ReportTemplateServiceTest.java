@@ -54,7 +54,7 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
             Map.of("key", "summary", "label", "요약", "required", true),
             Map.of("key", "details", "label", "상세"));
     CreateReportTemplateRequest request =
-        new CreateReportTemplateRequest("테스트 템플릿", "테스트 설명", sections);
+        new CreateReportTemplateRequest("테스트 템플릿", "테스트 설명", sections, null);
 
     // when
     ReportTemplateResponse created = reportTemplateService.createTemplate(request, testUserId);
@@ -75,7 +75,7 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     // given: create custom template
     CreateReportTemplateRequest createReq =
         new CreateReportTemplateRequest(
-            "수정 전 이름", null, List.of(Map.of("key", "summary", "label", "요약")));
+            "수정 전 이름", null, List.of(Map.of("key", "summary", "label", "요약")), null);
     ReportTemplateResponse created = reportTemplateService.createTemplate(createReq, testUserId);
 
     // when: update
@@ -84,7 +84,8 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
             "수정 후 이름",
             "새 설명",
             List.of(
-                Map.of("key", "summary", "label", "요약"), Map.of("key", "detail", "label", "상세")));
+                Map.of("key", "summary", "label", "요약"), Map.of("key", "detail", "label", "상세")),
+            null);
     reportTemplateService.updateTemplate(created.id(), updateReq, testUserId);
 
     // then
@@ -97,7 +98,8 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
   void deleteTemplate_customTemplate_success() {
     // given: create custom template
     CreateReportTemplateRequest createReq =
-        new CreateReportTemplateRequest("삭제될 템플릿", null, List.of(Map.of("key", "s", "label", "S")));
+        new CreateReportTemplateRequest(
+            "삭제될 템플릿", null, List.of(Map.of("key", "s", "label", "S")), null);
     ReportTemplateResponse created = reportTemplateService.createTemplate(createReq, testUserId);
     Long id = created.id();
 
@@ -127,7 +129,8 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     ReportTemplateResponse builtin =
         templates.stream().filter(ReportTemplateResponse::builtin).findFirst().orElseThrow();
 
-    UpdateReportTemplateRequest updateReq = new UpdateReportTemplateRequest("수정 시도", null, null);
+    UpdateReportTemplateRequest updateReq =
+        new UpdateReportTemplateRequest("수정 시도", null, null, null);
 
     assertThatThrownBy(
             () -> reportTemplateService.updateTemplate(builtin.id(), updateReq, testUserId))

@@ -130,7 +130,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("실행 테스트 작업"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), anyString(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -153,7 +153,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("실패 테스트 작업"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), anyString(), any()))
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
@@ -177,7 +177,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("채널 테스트 작업"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), anyString(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -195,7 +195,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("채널 오류 내성 테스트"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), anyString(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");

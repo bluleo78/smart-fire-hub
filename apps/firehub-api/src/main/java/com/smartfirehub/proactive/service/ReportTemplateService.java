@@ -32,7 +32,7 @@ public class ReportTemplateService {
   public ReportTemplateResponse createTemplate(CreateReportTemplateRequest request, Long userId) {
     Long id =
         reportTemplateRepository.create(
-            request.name(), request.description(), request.sections(), userId);
+            request.name(), request.description(), request.sections(), request.style(), userId);
     return reportTemplateRepository
         .findById(id)
         .orElseThrow(() -> new ProactiveJobException("템플릿 생성 실패"));
@@ -45,7 +45,7 @@ public class ReportTemplateService {
       throw new ProactiveJobException("빌트인 템플릿은 수정할 수 없습니다");
     }
     reportTemplateRepository.update(
-        id, userId, request.name(), request.description(), request.sections());
+        id, userId, request.name(), request.description(), request.sections(), request.style());
   }
 
   @Transactional

@@ -2,6 +2,8 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dashboard.service.DashboardService;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
+import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -21,8 +23,9 @@ public class ProactiveContextCollector {
 
   private final DashboardService dashboardService;
   private final ObjectMapper objectMapper;
+  private final ProactiveJobExecutionRepository executionRepository;
 
-  public String collectContext(Map<String, Object> config) {
+  public String collectContext(Map<String, Object> config, Long jobId) {
     try {
       Map<String, Object> context = new HashMap<>();
 
@@ -85,6 +88,24 @@ public class ProactiveContextCollector {
         context.put("activityFeed", Map.of("error", e.getMessage()));
       }
 
+      // 5. Previous executions (last 3 COMPLETED)
+      if (jobId != null) {
+        try {
+          List<ProactiveJobExecutionResponse> recentExecutions =
+              executionRepository.findByJobId(jobId, 10, 0).stream()
+                  .filter(e -> "COMPLETED".equals(e.status()) && e.result() != null)
+                  .limit(3)
+                  .toList();
+          if (!recentExecutions.isEmpty()) {
+            List<Map<String, Object>> prevExecs =
+                recentExecutions.stream().map(this::summarizeExecution).toList();
+            context.put("previousExecutions", prevExecs);
+          }
+        } catch (Exception e) {
+          log.warn("Failed to collect previous executions for job {}", jobId, e);
+        }
+      }
+
       // config.targets 기반 필터링 (scope: ALL/SELECTED)
       applyTargetFilter(context, config);
 
@@ -111,5 +132,32 @@ public class ProactiveContextCollector {
 
     // scope=SELECTED이면 targets에 명시된 키만 남김
     context.keySet().removeIf(key -> !targets.contains(key));
+  }
+
+  private Map<String, Object> summarizeExecution(ProactiveJobExecutionResponse exec) {
+    Map<String, Object> entry = new HashMap<>();
+    entry.put("completedAt", exec.completedAt() != null ? exec.completedAt().toString() : "");
+    Object sectionsObj = exec.result().get("sections");
+    if (sectionsObj instanceof List<?> sectionsList) {
+      List<Map<String, String>> summarySections =
+          sectionsList.stream()
+              .filter(s -> s instanceof Map)
+              .map(
+                  s -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> sec = (Map<String, Object>) s;
+                    String content = sec.get("content") instanceof String c ? c : "";
+                    if (content.length() > 2000) {
+                      content = content.substring(0, 2000) + "...[truncated]";
+                    }
+                    return Map.of(
+                        "key", String.valueOf(sec.getOrDefault("key", "")),
+                        "label", String.valueOf(sec.getOrDefault("label", "")),
+                        "content", content);
+                  })
+              .toList();
+      entry.put("sections", summarySections);
+    }
+    return entry;
   }
 }

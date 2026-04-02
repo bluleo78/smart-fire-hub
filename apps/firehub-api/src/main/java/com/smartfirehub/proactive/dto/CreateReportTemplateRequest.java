@@ -6,4 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 public record CreateReportTemplateRequest(
-    @NotBlank String name, String description, @NotNull List<Map<String, Object>> sections) {}
+    @NotBlank String name,
+    String description,
+    @NotNull List<Map<String, Object>> sections,
+    String style) {}

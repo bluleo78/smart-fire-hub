@@ -5,6 +5,7 @@ export interface ReportTemplate {
   name: string;
   description: string | null;
   structure: Record<string, unknown>;
+  style: string | null;
   builtin: boolean;
   createdAt: string;
   updatedAt: string;
@@ -99,12 +100,14 @@ export interface CreateReportTemplateRequest {
   name: string;
   description?: string;
   structure: Record<string, unknown>;
+  style?: string;
 }
 
 export interface UpdateReportTemplateRequest {
   name?: string;
   description?: string;
   structure?: Record<string, unknown>;
+  style?: string;
 }
 
 export interface SmtpSettingsRequest {

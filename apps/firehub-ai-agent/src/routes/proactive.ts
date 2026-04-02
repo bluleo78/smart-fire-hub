@@ -17,6 +17,7 @@ interface TemplateSection {
 interface Template {
   sections: TemplateSection[];
   output_format: string;
+  style?: string;
 }
 
 interface ProactiveRequest {
@@ -129,24 +130,66 @@ function buildProactiveSystemPrompt(template?: Template): string {
     '데이터셋 데이터 조회: query_dataset_data, 데이터 스키마 조회: get_data_schema,\n' +
     '데이터셋 목록 조회: list_datasets, 데이터셋 상세 조회: get_dataset.\n\n';
 
+  prompt +=
+    '## 분석 원칙\n' +
+    '- 데이터 나열이 아닌 인사이트 중심으로 서술하세요.\n' +
+    '- "왜 이 수치가 변했는가"를 파악하고, 가능한 원인을 제시하세요.\n' +
+    '- 컨텍스트에 previousExecutions(이전 실행 결과)가 있으면 비교하여 변화 추이를 언급하세요.\n' +
+    '- 변화를 언급할 때는 절대값과 변화율(%)을 함께 제시하세요.\n' +
+    '- 확신이 낮으면 "~로 보입니다", "확인이 필요합니다" 등으로 표현하세요.\n' +
+    '- 권고사항은 "무엇을 해야 하는가"를 구체적으로 제시하세요.\n\n';
+
   if (template) {
+    if (template.style) {
+      prompt += `## 작성 스타일\n${template.style}\n\n`;
+    }
+
     prompt += `출력 형식: ${template.output_format}\n\n`;
     prompt += '다음 섹션 구조에 따라 응답을 작성하세요. 각 섹션은 ## 헤더로 구분합니다:\n\n';
 
     for (const section of template.sections) {
       prompt += `## ${section.label}\n`;
       if (section.required !== false) {
-        prompt += `(필수 섹션)\n`;
+        prompt += '(필수 섹션)\n';
       }
-      if (section.type === 'cards') {
-        prompt += `이 섹션은 카드 형식으로 출력합니다. 텍스트 설명 후 반드시 다음과 같이 JSON 코드 블록을 포함하세요:\n`;
-        prompt += '```json\n[{"title": "...", "value": "...", "description": "..."}]\n```\n';
+      const typeGuide = getSectionTypeGuide(section.type);
+      if (typeGuide) {
+        prompt += typeGuide + '\n';
       }
       prompt += '\n';
     }
   }
 
   return prompt;
+}
+
+function getSectionTypeGuide(type?: string): string | null {
+  switch (type) {
+    case 'text':
+      return '마크다운 서술. 핵심 발견(key finding)을 먼저 쓰고 근거를 뒤에 배치하세요.';
+    case 'cards':
+      return (
+        '카드 형식으로 출력합니다. 텍스트 설명 후 반드시 다음과 같이 JSON 코드 블록을 포함하세요:\n' +
+        '```json\n[{"title": "...", "value": "...", "description": "..."}]\n```\n' +
+        '가능하면 이전 값 대비 변화를 description에 포함하세요.'
+      );
+    case 'list':
+      return '중요도/심각도 순으로 정렬하세요. 각 항목에 맥락(왜 중요한지) 한 줄을 추가하세요.';
+    case 'table':
+      return '마크다운 테이블 형식. 비교 항목이 있으면 변화율 컬럼을 추가하세요.';
+    case 'comparison':
+      return '"이번 기간 vs 이전 기간: +N% (절대값)" 패턴으로 기간 비교를 작성하세요.';
+    case 'alert':
+      return '심각도 순(CRITICAL → WARNING → INFO)으로 정렬. 각 알림에 권장 조치를 포함하세요.';
+    case 'timeline':
+      return '시간순으로 나열. 각 이벤트에 영향도 설명을 한 줄 추가하세요.';
+    case 'chart':
+      return '차트/그래프에 대한 해석을 서술하세요. 추세, 이상값, 패턴을 자연어로 설명하세요.';
+    case 'recommendation':
+      return '구체적 액션 + 기대 효과 + 우선순위를 기술하세요. 실행 가능한 단계로 작성하세요.';
+    default:
+      return null;
+  }
 }
 
 function parseSections(text: string, template?: Template): OutputSection[] {

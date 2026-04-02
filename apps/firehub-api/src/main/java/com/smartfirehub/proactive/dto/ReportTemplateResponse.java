@@ -9,6 +9,7 @@ public record ReportTemplateResponse(
     String name,
     String description,
     List<Map<String, Object>> sections,
+    String style,
     Long userId,
     boolean builtin,
     LocalDateTime createdAt,

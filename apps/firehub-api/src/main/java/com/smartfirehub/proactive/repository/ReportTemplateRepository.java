@@ -34,12 +34,21 @@ public class ReportTemplateRepository {
       field(name("report_template", "user_id"), Long.class);
   private static final Field<LocalDateTime> RT_CREATED_AT =
       field(name("report_template", "created_at"), LocalDateTime.class);
+  private static final Field<String> RT_STYLE =
+      field(name("report_template", "style"), String.class);
   private static final Field<LocalDateTime> RT_UPDATED_AT =
       field(name("report_template", "updated_at"), LocalDateTime.class);
 
   public List<ReportTemplateResponse> findAllForUser(Long userId) {
     return dsl.select(
-            RT_ID, RT_NAME, RT_DESCRIPTION, RT_SECTIONS, RT_USER_ID, RT_CREATED_AT, RT_UPDATED_AT)
+            RT_ID,
+            RT_NAME,
+            RT_DESCRIPTION,
+            RT_SECTIONS,
+            RT_STYLE,
+            RT_USER_ID,
+            RT_CREATED_AT,
+            RT_UPDATED_AT)
         .from(REPORT_TEMPLATE)
         .where(RT_USER_ID.isNull().or(RT_USER_ID.eq(userId)))
         .orderBy(RT_ID.asc())
@@ -50,6 +59,7 @@ public class ReportTemplateRepository {
                     r.get(RT_NAME),
                     r.get(RT_DESCRIPTION),
                     r.get(RT_SECTIONS),
+                    r.get(RT_STYLE),
                     r.get(RT_USER_ID),
                     r.get(RT_CREATED_AT),
                     r.get(RT_UPDATED_AT)));
@@ -57,7 +67,14 @@ public class ReportTemplateRepository {
 
   public Optional<ReportTemplateResponse> findById(Long id) {
     return dsl.select(
-            RT_ID, RT_NAME, RT_DESCRIPTION, RT_SECTIONS, RT_USER_ID, RT_CREATED_AT, RT_UPDATED_AT)
+            RT_ID,
+            RT_NAME,
+            RT_DESCRIPTION,
+            RT_SECTIONS,
+            RT_STYLE,
+            RT_USER_ID,
+            RT_CREATED_AT,
+            RT_UPDATED_AT)
         .from(REPORT_TEMPLATE)
         .where(RT_ID.eq(id))
         .fetchOptional(
@@ -67,19 +84,25 @@ public class ReportTemplateRepository {
                     r.get(RT_NAME),
                     r.get(RT_DESCRIPTION),
                     r.get(RT_SECTIONS),
+                    r.get(RT_STYLE),
                     r.get(RT_USER_ID),
                     r.get(RT_CREATED_AT),
                     r.get(RT_UPDATED_AT)));
   }
 
   public Long create(
-      String name, String description, List<Map<String, Object>> sections, Long userId) {
+      String name,
+      String description,
+      List<Map<String, Object>> sections,
+      String style,
+      Long userId) {
     try {
       String sectionsJson = objectMapper.writeValueAsString(sections);
       return dsl.insertInto(REPORT_TEMPLATE)
           .set(RT_NAME, name)
           .set(RT_DESCRIPTION, description)
           .set(RT_SECTIONS, JSONB.valueOf(sectionsJson))
+          .set(RT_STYLE, style)
           .set(RT_USER_ID, userId)
           .returning(RT_ID)
           .fetchOne(r -> r.get(RT_ID));
@@ -89,7 +112,12 @@ public class ReportTemplateRepository {
   }
 
   public void update(
-      Long id, Long userId, String name, String description, List<Map<String, Object>> sections) {
+      Long id,
+      Long userId,
+      String name,
+      String description,
+      List<Map<String, Object>> sections,
+      String style) {
     // 빌트인 템플릿(user_id IS NULL)은 수정 불가
     try {
       var query = dsl.update(REPORT_TEMPLATE);
@@ -100,6 +128,7 @@ public class ReportTemplateRepository {
         String sectionsJson = objectMapper.writeValueAsString(sections);
         step = step.set(RT_SECTIONS, JSONB.valueOf(sectionsJson));
       }
+      if (style != null) step = step.set(RT_STYLE, style);
       step.where(RT_ID.eq(id).and(RT_USER_ID.eq(userId))).execute();
     } catch (Exception e) {
       throw new RuntimeException("Failed to serialize sections", e);
@@ -116,6 +145,7 @@ public class ReportTemplateRepository {
       String name,
       String description,
       JSONB sections,
+      String style,
       Long userId,
       LocalDateTime createdAt,
       LocalDateTime updatedAt) {
@@ -125,7 +155,7 @@ public class ReportTemplateRepository {
               ? objectMapper.readValue(sections.data(), new TypeReference<>() {})
               : List.of();
       return new ReportTemplateResponse(
-          id, name, description, sectionList, userId, userId == null, createdAt, updatedAt);
+          id, name, description, sectionList, style, userId, userId == null, createdAt, updatedAt);
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize sections", e);
     }

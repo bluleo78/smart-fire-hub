@@ -4,4 +4,4 @@ import java.util.List;
 import java.util.Map;
 
 public record UpdateReportTemplateRequest(
-    String name, String description, List<Map<String, Object>> sections) {}
+    String name, String description, List<Map<String, Object>> sections, String style) {}

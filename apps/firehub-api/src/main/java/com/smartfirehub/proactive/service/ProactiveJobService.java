@@ -171,7 +171,7 @@ public class ProactiveJobService {
               .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
 
       // 컨텍스트 수집
-      String context = contextCollector.collectContext(job.config());
+      String context = contextCollector.collectContext(job.config(), jobId);
 
       // AI API 키 조회
       String apiKey = settingsService.getDecryptedApiKey().orElse("");

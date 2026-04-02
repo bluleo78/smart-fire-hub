@@ -23,7 +23,7 @@
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
 | [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
-| [Phase 7](#phase-7-ai-리포트-고도화) | **진행 중** | 4/10 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, 이상 탐지, 비주얼 빌더, 목표 기반 생성, 역할별 개인화, KPI 팔로우 |
+| [Phase 7](#phase-7-ai-리포트-고도화) | **진행 중** | 5/10 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, 이상 탐지, 비주얼 빌더, 목표 기반 생성, 역할별 개인화, KPI 팔로우 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
@@ -315,7 +315,7 @@
 | 7-0b | 스마트 작업 UX 개선 | ✅ | Frontend | 6-2 | 작업 복제 버튼. Cron 프리셋 확대 + 타임존 셀렉터 + 다음 실행 시간 표시. 상세 에러 메시지. |
 | 7-0c | 리포트 템플릿 UX 개선 | ✅ | Frontend + Backend | 6-2 | 템플릿 상세 페이지 도입 (읽기/편집 모드). CodeMirror JSON 에디터 (구문 강조 + 실시간 검증). 9가지 섹션 타입 가이드 + 삽입 툴바. 사이드패널 (가이드/미리보기 탭). 빌트인 템플릿 복제. 백엔드 단건 조회 API 추가. 설계: `docs/superpowers/specs/2026-04-02-phase-7-0c-report-template-ux-design.md` |
 | 7-1 | PDF 리포트 내보내기 | ✅ | Backend + Frontend | 7-0a | Flying Saucer HTML→PDF 변환. ReportRenderUtils 공통 추출. PDF 다운로드 API + 프론트엔드 버튼. 이메일 PDF 첨부 옵션 (attachPdf). NanumGothic 한글 폰트. 설계: `docs/superpowers/specs/2026-04-02-phase-7-1-pdf-export-design.md` |
-| 7-3 | 리포트 내러티브 강화 | ⬜ | AI Agent | 7-0a | 단순 나열 → 인사이트 중심 자연어 서술. "왜 이 수치가 변했는가" 원인 분석 포함. 이전 실행 결과 비교 (전주/전일 대비 변화율). 시스템 프롬프트 + 컨텍스트 수집 개선. 상세 계획 별도 수립. |
+| 7-3 | 리포트 내러티브 강화 | ✅ | AI Agent + Backend + Frontend | 7-0a | 시스템 프롬프트 강화 (내러티브 가이드 + 9가지 섹션 타입별 작성 지침). 이전 실행 결과 3건 컨텍스트 전달. 템플릿 style 필드 추가 (DB 컬럼 + DTO + UI). 빌트인 템플릿 기본 스타일 설정. 설계: `docs/superpowers/specs/2026-04-02-phase-7-3-narrative-enhancement-design.md` |
 | 7-4 | 이상 탐지 + 자동 알림 | ⬜ | Backend + AI Agent | 7-1, 7-3 | 데이터셋 메트릭 모니터링 등록. 패턴 기반 이상 감지 (계절성/추세 고려, 고정 임계값 아님). 이탈 시 AI가 원인 분석 후 자동 알림. Datadog Watchdog 패턴 참조. 상세 계획 별도 수립. |
 | 7-5 | 비주얼 리포트 빌더 | ⬜ | Frontend | 7-1, 7-3 | JSON 수동 입력 → 드래그앤드롭 섹션 편집기. 빌트인 템플릿 복제 → 커스터마이징. 섹션 타입별 설정 (text/cards/list/chart). 실시간 미리보기. 상세 계획 별도 수립. |
 | 7-6 | 목표 기반 리포트 생성 | ⬜ | Frontend + AI Agent | 7-4 | "매출이 왜 떨어졌는지 분석해줘" → AI가 분석 계획 수립 → 관련 데이터셋 자동 탐색 → 리포트 생성. 쿼리가 아닌 비즈니스 질문에서 출발. Akkio Generative Reports 패턴 참조. 상세 계획 별도 수립. |
@@ -434,6 +434,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-04-02 | Phase 7-3 (리포트 내러티브 강화) 완료. 시스템 프롬프트 강화 (분석 원칙 + 섹션 타입별 가이드). 이전 실행 결과 3건 컨텍스트 전달. 템플릿 style 필드 (DB 컬럼 + DTO + 프론트엔드 입력란). Layer 1 완료. |
 | 2026-04-02 | Phase 7-1 (PDF 리포트 내보내기) 완료. Flying Saucer HTML→PDF. ReportRenderUtils 공통 추출. PDF 다운로드 API + 버튼. 이메일 PDF 첨부(attachPdf). NanumGothic 한글 폰트. 7-2 Slack/Webhook 제거. |
 | 2026-04-02 | Phase 7 Layer 0 전체 완료 (7-0a, 7-0b, 7-0c). 7-0a: 채널별 수신자 지정 + 스마트 작업 상세 페이지. 7-0b: 작업 복제/Cron 프리셋/타임존/에러 메시지 개선. |
 | 2026-04-02 | Phase 7-0c (리포트 템플릿 UX 개선) 완료. 템플릿 상세 페이지 도입 (읽기/편집 모드 전환), CodeMirror JSON 에디터 (구문 강조 + 실시간 검증 + 삽입 툴바), 9가지 섹션 타입 가이드, 사이드패널 (가이드/미리보기), 빌트인 복제, 백엔드 단건 조회 API 추가. |
