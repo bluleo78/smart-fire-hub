@@ -1,11 +1,9 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-
-import type { TemplateSection } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,6 +24,7 @@ import {
   useUpdateProactiveTemplate,
 } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError } from '@/lib/api-error';
+import { parseTemplateSections } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
 import { SectionPreview } from './components/SectionPreview';
@@ -33,15 +32,6 @@ import { TemplateJsonEditor } from './components/TemplateJsonEditor';
 import { TemplateSidePanel } from './components/TemplateSidePanel';
 
 const DEFAULT_STRUCTURE = JSON.stringify({ sections: [] }, null, 2);
-
-function parseSections(json: string): TemplateSection[] {
-  try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed?.sections) ? parsed.sections : [];
-  } catch {
-    return [];
-  }
-}
 
 export default function ReportTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -60,7 +50,6 @@ export default function ReportTemplateDetailPage() {
 
   const [isEditing, setIsEditing] = useState(isNew);
   const [structureJson, setStructureJson] = useState(DEFAULT_STRUCTURE);
-  const [jsonInitialized, setJsonInitialized] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const form = useForm<ReportTemplateFormValues>({
@@ -68,11 +57,12 @@ export default function ReportTemplateDetailPage() {
     values: template ? { name: template.name, description: template.description ?? '' } : { name: '', description: '' },
   });
 
-  // Sync template structure to JSON editor when loaded
-  if (template && !jsonInitialized) {
-    setStructureJson(JSON.stringify(template.structure, null, 2));
-    setJsonInitialized(true);
-  }
+  // Sync template structure to JSON editor when template loads
+  useEffect(() => {
+    if (template) {
+      setStructureJson(JSON.stringify(template.structure, null, 2));
+    }
+  }, [template]);
 
   const handleSave = form.handleSubmit((values) => {
     let parsed: Record<string, unknown>;
@@ -160,7 +150,7 @@ export default function ReportTemplateDetailPage() {
   }
 
   const isBuiltin = template?.builtin ?? false;
-  const sections = parseSections(structureJson);
+  const sections = useMemo(() => parseTemplateSections(structureJson) ?? [], [structureJson]);
 
   return (
     <div className="space-y-6">

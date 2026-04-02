@@ -1,4 +1,4 @@
-import type { SectionType } from '../api/proactive';
+import type { SectionType, TemplateSection } from '../api/proactive';
 
 export interface SectionTypeDefinition {
   type: SectionType;
@@ -91,4 +91,14 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
 
 export function getSectionTypeDef(type: string): SectionTypeDefinition | undefined {
   return SECTION_TYPES.find((s) => s.type === type);
+}
+
+/** Parse JSON string into TemplateSection[]. Returns null on invalid JSON, [] on valid but empty. */
+export function parseTemplateSections(json: string): TemplateSection[] | null {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed?.sections) ? (parsed.sections as TemplateSection[]) : [];
+  } catch {
+    return null;
+  }
 }

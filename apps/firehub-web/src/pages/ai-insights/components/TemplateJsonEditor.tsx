@@ -1,15 +1,15 @@
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
-import { linter, type Diagnostic } from '@codemirror/lint';
+import { type Diagnostic,linter } from '@codemirror/lint';
 import { searchKeymap } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { useEffect, useRef } from 'react';
 
-import { Button } from '@/components/ui/button';
-import { SECTION_TYPES } from '@/lib/template-section-types';
 import type { TemplateSection } from '@/api/proactive';
+import { Button } from '@/components/ui/button';
+import { type SectionTypeDefinition, SECTION_TYPES } from '@/lib/template-section-types';
 
 interface TemplateJsonEditorProps {
   value: string;
@@ -104,7 +104,7 @@ export function TemplateJsonEditor({ value, onChange, readonly = false }: Templa
     }
   }, [value]);
 
-  const handleInsertSection = (snippet: { key: string; type: string; label: string; description: string }) => {
+  const handleInsertSection = (snippet: SectionTypeDefinition['snippet']) => {
     const view = viewRef.current;
     if (!view || readonly) return;
 
@@ -121,9 +121,9 @@ export function TemplateJsonEditor({ value, onChange, readonly = false }: Templa
 
       sections.push({ ...snippet, key });
       const newDoc = JSON.stringify({ ...parsed, sections }, null, 2);
-      onChange(newDoc);
+      onChangeRef.current(newDoc);
     } catch {
-      // If JSON is invalid, can't insert
+      // JSON invalid — user should fix before inserting
     }
   };
 

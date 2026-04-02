@@ -6,17 +6,17 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { useProactiveTemplates } from '../../hooks/queries/useProactiveMessages';
 
+function sectionCount(structure: Record<string, unknown>): number {
+  const sections = (structure as { sections?: unknown[] })?.sections;
+  return Array.isArray(sections) ? sections.length : 0;
+}
+
 export default function ReportTemplatesTab() {
   const { data: templates = [], isLoading } = useProactiveTemplates();
   const navigate = useNavigate();
 
   const builtins = templates.filter((t) => t.builtin);
   const customs = templates.filter((t) => !t.builtin);
-
-  const sectionCount = (structure: Record<string, unknown>) =>
-    Array.isArray((structure as { sections?: unknown[] })?.sections)
-      ? (structure as { sections: unknown[] }).sections.length
-      : 0;
 
   if (isLoading) {
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;

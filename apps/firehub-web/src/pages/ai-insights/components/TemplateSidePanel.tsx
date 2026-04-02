@@ -1,8 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { TemplateSection } from '@/api/proactive';
-import { SECTION_TYPES } from '@/lib/template-section-types';
+import { parseTemplateSections, SECTION_TYPES } from '@/lib/template-section-types';
 
 import { SectionPreview } from './SectionPreview';
 
@@ -38,20 +37,8 @@ function GuideTab() {
   );
 }
 
-function parseSections(jsonValue: string): TemplateSection[] | null {
-  try {
-    const parsed = JSON.parse(jsonValue);
-    if (Array.isArray(parsed?.sections)) {
-      return parsed.sections as TemplateSection[];
-    }
-    return [];
-  } catch {
-    return null;
-  }
-}
-
 export function TemplateSidePanel({ jsonValue }: TemplateSidePanelProps) {
-  const sections = parseSections(jsonValue);
+  const sections = useMemo(() => parseTemplateSections(jsonValue), [jsonValue]);
 
   return (
     <Tabs defaultValue="guide" className="h-full flex flex-col">
