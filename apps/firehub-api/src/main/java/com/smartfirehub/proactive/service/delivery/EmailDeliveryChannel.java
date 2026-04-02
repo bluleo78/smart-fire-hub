@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.util.ProactiveConfigParser;
+import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.Duration;
@@ -14,6 +16,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import lombok.extern.slf4j.Slf4j;
 import org.commonmark.ext.gfm.tables.TablesExtension;
@@ -38,6 +41,7 @@ public class EmailDeliveryChannel implements DeliveryChannel {
 
   private static final DateTimeFormatter DISPLAY_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+  private static final String DEFAULT_FROM = "noreply@smartfirehub.io";
   private static final Duration CHART_TIMEOUT = Duration.ofSeconds(30);
   private static final List<String> CHART_COLORS =
       List.of("#228be6", "#40c057", "#fab005", "#fa5252", "#868e96");
@@ -90,43 +94,75 @@ public class EmailDeliveryChannel implements DeliveryChannel {
         return;
       }
 
-      String toAddress = userRepository.findById(job.userId()).map(u -> u.email()).orElse(null);
+      // config에서 EMAIL 채널의 수신자 목록 구성
+      List<String> toAddresses = new ArrayList<>();
 
-      if (toAddress == null || toAddress.isBlank()) {
-        log.warn("EmailDeliveryChannel skipped: no email for userId {}", job.userId());
-        return;
+      Optional<ChannelConfig> emailConfig =
+          ProactiveConfigParser.getChannelConfig(job.config(), "EMAIL");
+
+      if (emailConfig.isPresent()) {
+        ChannelConfig cfg = emailConfig.get();
+
+        // 등록 사용자 이메일 조회
+        for (Long userId : cfg.recipientUserIds()) {
+          userRepository
+              .findById(userId)
+              .map(u -> u.email())
+              .filter(e -> e != null && !e.isBlank())
+              .ifPresent(toAddresses::add);
+        }
+
+        // 외부 이메일 추가
+        toAddresses.addAll(cfg.recipientEmails());
       }
 
+      // 미지정 시 생성자 이메일 (기존 동작)
+      if (toAddresses.isEmpty()) {
+        String ownerEmail =
+            userRepository.findById(job.userId()).map(u -> u.email()).orElse(null);
+        if (ownerEmail == null || ownerEmail.isBlank()) {
+          log.warn("EmailDeliveryChannel skipped: no email for userId {}", job.userId());
+          return;
+        }
+        toAddresses.add(ownerEmail);
+      }
+
+      // 이메일 공통 준비 (SMTP, 템플릿, 차트) - 루프 밖에서 1회 수행
       JavaMailSenderImpl mailSender = buildMailSender(smtp);
       List<Map<String, Object>> templateSections = buildTemplateSections(result.sections());
       List<ChartImage> chartImages = renderChartImages(templateSections);
       String html = renderTemplate(job, result, templateSections);
+      String fromAddress = smtp.getOrDefault("smtp.from_address", DEFAULT_FROM);
+      if (fromAddress.isBlank()) fromAddress = DEFAULT_FROM;
 
-      var message = mailSender.createMimeMessage();
-      boolean multipart = !chartImages.isEmpty();
-      MimeMessageHelper helper = new MimeMessageHelper(message, multipart, "UTF-8");
+      // 각 수신자에게 개별 발송
+      for (String toAddress : toAddresses) {
+        try {
+          var message = mailSender.createMimeMessage();
+          boolean multipart = !chartImages.isEmpty();
+          MimeMessageHelper helper = new MimeMessageHelper(message, multipart, "UTF-8");
+          helper.setFrom(fromAddress);
+          helper.setTo(toAddress);
+          helper.setSubject("[Smart Fire Hub] " + result.title());
+          helper.setText(html, true);
 
-      String fromAddress = smtp.getOrDefault("smtp.from_address", "noreply@smartfirehub.io");
-      if (fromAddress.isBlank()) {
-        fromAddress = "noreply@smartfirehub.io";
+          for (ChartImage chart : chartImages) {
+            byte[] imageBytes = Base64.getDecoder().decode(chart.base64());
+            helper.addInline(chart.cid(), new ByteArrayResource(imageBytes), "image/png");
+          }
+
+          mailSender.send(message);
+          log.info(
+              "EmailDeliveryChannel sent report '{}' to {} for job {}",
+              result.title(),
+              toAddress,
+              job.id());
+        } catch (Exception e) {
+          log.error(
+              "EmailDeliveryChannel failed to send to {}: {}", toAddress, e.getMessage());
+          // 개별 발송 실패는 다른 수신자에게 영향을 주지 않도록 continue
+        }
       }
-      helper.setFrom(fromAddress);
-      helper.setTo(toAddress);
-      helper.setSubject("[Smart Fire Hub] " + result.title());
-      helper.setText(html, true);
-
-      for (ChartImage chart : chartImages) {
-        byte[] imageBytes = Base64.getDecoder().decode(chart.base64());
-        helper.addInline(chart.cid(), new ByteArrayResource(imageBytes), "image/png");
-      }
-
-      mailSender.send(message);
-      log.info(
-          "EmailDeliveryChannel sent report '{}' to {} for job {} (charts: {})",
-          result.title(),
-          toAddress,
-          job.id(),
-          chartImages.size());
     } catch (Exception e) {
       log.error("EmailDeliveryChannel delivery failed for job {}: {}", job.id(), e.getMessage(), e);
     }

@@ -51,6 +51,12 @@ export interface ProactiveMessage {
   createdAt: string;
 }
 
+export interface RecipientResponse {
+  userId: number;
+  name: string;
+  email: string;
+}
+
 export interface CreateProactiveJobRequest {
   name: string;
   prompt: string;
@@ -102,6 +108,10 @@ export const proactiveApi = {
   deleteJob: (id: number) => client.delete(`/proactive/jobs/${id}`),
   executeJob: (id: number) =>
     client.post<ProactiveJobExecution>(`/proactive/jobs/${id}/execute`),
+  getJobExecutions: (jobId: number, params?: { limit?: number; offset?: number }) =>
+    client.get<ProactiveJobExecution[]>(`/proactive/jobs/${jobId}/executions`, { params }),
+  searchRecipients: (search?: string) =>
+    client.get<RecipientResponse[]>('/proactive/jobs/recipients', { params: { search } }),
 
   // Messages (3 methods)
   getMessages: (params?: { limit?: number; offset?: number }) =>

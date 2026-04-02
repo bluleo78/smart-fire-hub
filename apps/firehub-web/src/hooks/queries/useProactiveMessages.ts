@@ -12,6 +12,8 @@ import type {
 const KEYS = {
   jobs: ['proactive', 'jobs'] as const,
   job: (id: number) => ['proactive', 'jobs', id] as const,
+  executions: (jobId: number) => ['proactive', 'executions', jobId] as const,
+  recipients: (search: string) => ['proactive', 'recipients', search] as const,
   messages: ['proactive', 'messages'] as const,
   unreadCount: ['proactive', 'unread-count'] as const,
   templates: ['proactive', 'templates'] as const,
@@ -76,6 +78,27 @@ export function useExecuteProactiveJob() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
     },
+  });
+}
+
+export function useJobExecutions(
+  jobId: number,
+  params?: { limit?: number; offset?: number },
+  options?: { refetchInterval?: number | false },
+) {
+  return useQuery({
+    queryKey: [...KEYS.executions(jobId), params],
+    queryFn: () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
+    enabled: !!jobId,
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+export function useRecipientSearch(search: string) {
+  return useQuery({
+    queryKey: KEYS.recipients(search),
+    queryFn: () => proactiveApi.searchRecipients(search).then((r) => r.data),
+    enabled: search.length > 0,
   });
 }
 

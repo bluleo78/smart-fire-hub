@@ -1,6 +1,6 @@
 import { Zap } from 'lucide-react';
 
-import ProactiveJobsTab from '../admin/ProactiveJobsTab';
+import ProactiveJobListPage from './ProactiveJobListPage';
 
 export default function AiInsightJobsPage() {
   return (
@@ -12,7 +12,7 @@ export default function AiInsightJobsPage() {
           <p className="text-sm text-muted-foreground mt-0.5">AI가 자동으로 실행하는 분석/요약 작업을 관리합니다</p>
         </div>
       </div>
-      <ProactiveJobsTab />
+      <ProactiveJobListPage />
     </div>
   );
 }

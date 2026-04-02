@@ -6,14 +6,18 @@ import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
+import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,6 +41,7 @@ public class ProactiveJobService {
   private final ObjectMapper objectMapper;
   private final ProactiveJobSchedulerService schedulerService;
   private final List<DeliveryChannel> deliveryChannels;
+  private final UserRepository userRepository;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -50,7 +55,8 @@ public class ProactiveJobService {
       SettingsService settingsService,
       ObjectMapper objectMapper,
       @Lazy ProactiveJobSchedulerService schedulerService,
-      List<DeliveryChannel> deliveryChannels) {
+      List<DeliveryChannel> deliveryChannels,
+      UserRepository userRepository) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.messageRepository = messageRepository;
@@ -60,6 +66,7 @@ public class ProactiveJobService {
     this.objectMapper = objectMapper;
     this.schedulerService = schedulerService;
     this.deliveryChannels = deliveryChannels;
+    this.userRepository = userRepository;
   }
 
   @Transactional(readOnly = true)
@@ -171,8 +178,8 @@ public class ProactiveJobService {
       executionRepository.updateResult(executionId, "COMPLETED", resultMap, LocalDateTime.now());
 
       // DeliveryChannel 호출 (config.channels 필터링)
-      List<String> configChannels = getConfigChannels(job.config());
-      List<String> deliveredChannels = new java.util.ArrayList<>();
+      List<String> configChannels = ProactiveConfigParser.getChannelTypes(job.config());
+      List<String> deliveredChannels = new ArrayList<>();
       for (DeliveryChannel channel : deliveryChannels) {
         if (configChannels.isEmpty() || configChannels.contains(channel.type())) {
           try {
@@ -199,13 +206,10 @@ public class ProactiveJobService {
     }
   }
 
-  @SuppressWarnings("unchecked")
-  private List<String> getConfigChannels(Map<String, Object> config) {
-    if (config == null) return List.of();
-    Object channels = config.get("channels");
-    if (channels instanceof List<?> list) {
-      return list.stream().filter(String.class::isInstance).map(String.class::cast).toList();
-    }
-    return List.of();
+  @Transactional(readOnly = true)
+  public List<RecipientResponse> searchRecipients(String search) {
+    return userRepository.findAllPaginated(search, 0, 20).stream()
+        .map(u -> new RecipientResponse(u.id(), u.name(), u.email()))
+        .toList();
   }
 }

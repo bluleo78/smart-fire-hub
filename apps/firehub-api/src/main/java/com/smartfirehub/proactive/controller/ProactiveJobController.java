@@ -4,8 +4,10 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
+import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.service.ProactiveJobService;
+import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,9 @@ public class ProactiveJobController {
   public ResponseEntity<ProactiveJobResponse> createJob(
       @Valid @RequestBody CreateProactiveJobRequest request, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
+    ProactiveConfigParser.parseChannels(request.config()).stream()
+        .flatMap(ch -> ch.recipientEmails().stream())
+        .forEach(ProactiveConfigParser::validateEmail);
     ProactiveJobResponse response = proactiveJobService.createJob(request, userId);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
@@ -44,6 +49,11 @@ public class ProactiveJobController {
       @RequestBody UpdateProactiveJobRequest request,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
+    if (request.config() != null) {
+      ProactiveConfigParser.parseChannels(request.config()).stream()
+          .flatMap(ch -> ch.recipientEmails().stream())
+          .forEach(ProactiveConfigParser::validateEmail);
+    }
     proactiveJobService.updateJob(id, request, userId);
     return ResponseEntity.noContent().build();
   }
@@ -73,5 +83,12 @@ public class ProactiveJobController {
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(proactiveJobService.getExecutions(id, userId, limit, offset));
+  }
+
+  @GetMapping("/recipients")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<List<RecipientResponse>> searchRecipients(
+      @RequestParam(required = false, defaultValue = "") String search) {
+    return ResponseEntity.ok(proactiveJobService.searchRecipients(search));
   }
 }
