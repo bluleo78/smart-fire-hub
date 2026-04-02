@@ -10,6 +10,25 @@ export interface ReportTemplate {
   updatedAt: string;
 }
 
+export type SectionType =
+  | 'text'
+  | 'cards'
+  | 'list'
+  | 'table'
+  | 'comparison'
+  | 'alert'
+  | 'timeline'
+  | 'chart'
+  | 'recommendation';
+
+export interface TemplateSection {
+  key: string;
+  type: SectionType;
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
 export interface ProactiveJobExecution {
   id: number;
   jobId: number;

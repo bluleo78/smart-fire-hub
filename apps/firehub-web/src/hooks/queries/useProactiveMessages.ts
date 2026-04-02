@@ -169,6 +169,14 @@ export function useProactiveTemplates() {
   });
 }
 
+export function useProactiveTemplate(id: number) {
+  return useQuery({
+    queryKey: KEYS.template(id),
+    queryFn: () => proactiveApi.getTemplate(id).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
 export function useCreateProactiveTemplate() {
   const queryClient = useQueryClient();
   return useMutation({

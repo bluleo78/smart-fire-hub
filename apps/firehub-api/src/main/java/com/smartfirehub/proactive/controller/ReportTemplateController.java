@@ -27,6 +27,12 @@ public class ReportTemplateController {
     return ResponseEntity.ok(reportTemplateService.getTemplates(userId));
   }
 
+  @GetMapping("/{id}")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<ReportTemplateResponse> getTemplate(@PathVariable Long id) {
+    return ResponseEntity.ok(reportTemplateService.getTemplate(id));
+  }
+
   @PostMapping
   @RequirePermission("proactive:write")
   public ResponseEntity<ReportTemplateResponse> createTemplate(
