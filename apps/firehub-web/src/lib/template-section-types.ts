@@ -87,6 +87,22 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
     color: 'border-l-emerald-500',
     snippet: { key: 'new_recommendation', type: 'recommendation', label: '권고사항', description: 'AI가 제안하는 조치 사항' },
   },
+  {
+    type: 'group',
+    icon: '📁',
+    label: 'Group',
+    description: '섹션 그룹/챕터. 하위 섹션을 묶는 컨테이너.',
+    color: 'border-l-violet-500',
+    snippet: { key: 'new_group', type: 'group', label: '새 그룹', description: '관련 섹션을 그룹으로 묶습니다' },
+  },
+  {
+    type: 'divider',
+    icon: '➖',
+    label: 'Divider',
+    description: '구분선. 섹션 간 시각적 구분.',
+    color: 'border-l-gray-500',
+    snippet: { key: 'new_divider', type: 'divider', label: '구분선', description: '' },
+  },
 ];
 
 export function getSectionTypeDef(type: string): SectionTypeDefinition | undefined {
@@ -101,4 +117,32 @@ export function parseTemplateSections(json: string): TemplateSection[] | null {
   } catch {
     return null;
   }
+}
+
+/** Validate that section nesting depth does not exceed maxDepth (default 3). */
+export function validateSectionDepth(
+  sections: TemplateSection[],
+  maxDepth = 3,
+  currentDepth = 1,
+): boolean {
+  for (const section of sections) {
+    if (currentDepth > maxDepth) return false;
+    if (section.children && section.children.length > 0) {
+      if (section.type !== 'group') return false;
+      if (!validateSectionDepth(section.children, maxDepth, currentDepth + 1)) return false;
+    }
+  }
+  return true;
+}
+
+/** Flatten nested sections into a flat array (for counting, iterating). */
+export function flattenSections(sections: TemplateSection[]): TemplateSection[] {
+  const result: TemplateSection[] = [];
+  for (const section of sections) {
+    result.push(section);
+    if (section.children) {
+      result.push(...flattenSections(section.children));
+    }
+  }
+  return result;
 }

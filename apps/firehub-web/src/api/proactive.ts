@@ -20,14 +20,20 @@ export type SectionType =
   | 'alert'
   | 'timeline'
   | 'chart'
-  | 'recommendation';
+  | 'recommendation'
+  | 'group'
+  | 'divider';
 
 export interface TemplateSection {
   key: string;
   type: SectionType;
   label: string;
-  description?: string;
+  description?: string;     // UI 가이드용 (AI에 미전달)
+  instruction?: string;     // AI에 전달되는 섹션별 지시
   required?: boolean;
+  static?: boolean;         // true이면 AI가 채우지 않는 정적 콘텐츠
+  content?: string;         // 정적 섹션의 고정 텍스트 (변수 치환 지원)
+  children?: TemplateSection[];  // 하위 섹션 (group 타입만)
 }
 
 export interface ProactiveJobExecution {
