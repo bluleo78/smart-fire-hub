@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
-import proactiveRouter from './proactive.js';
+import proactiveRouter, { buildSectionPrompt, parseSections } from './proactive.js';
 
 const mockAxiosPost = vi.hoisted(() => vi.fn());
 const mockAxiosInstance = vi.hoisted(() => ({
@@ -201,5 +201,124 @@ describe('Proactive routes — integration tests', () => {
     expect(body.rawText).toBe(freeText);
     expect(body.usage.inputTokens).toBe(50);
     expect(body.usage.outputTokens).toBe(80);
+  });
+});
+
+describe('buildSectionPrompt', () => {
+  it('should include instruction in section prompt', () => {
+    const sections = [
+      { key: 'summary', label: '요약', type: 'text', instruction: '핵심 지표를 요약하세요.' },
+    ];
+    const result = buildSectionPrompt(sections);
+    expect(result).toContain('지시: 핵심 지표를 요약하세요.');
+    expect(result).toContain('## 요약');
+  });
+
+  it('should skip static sections with note', () => {
+    const sections = [
+      { key: 'disclaimer', label: '면책조항', type: 'text', static: true, content: '고정 텍스트' },
+    ];
+    const result = buildSectionPrompt(sections);
+    expect(result).toContain('정적 섹션');
+    expect(result).not.toContain('고정 텍스트');
+  });
+
+  it('should handle nested group sections with correct header depth', () => {
+    const sections = [
+      {
+        key: 'ops', label: '운영 현황', type: 'group',
+        instruction: '시스템 운영 상태를 분석하세요.',
+        children: [
+          { key: 'kpi', label: '핵심 지표', type: 'cards', instruction: 'KPI 카드를 표시하세요.' },
+        ],
+      },
+    ];
+    const result = buildSectionPrompt(sections);
+    expect(result).toContain('## 운영 현황');
+    expect(result).toContain('### 핵심 지표');
+    expect(result).toContain('지시: 시스템 운영 상태를 분석하세요.');
+    expect(result).toContain('지시: KPI 카드를 표시하세요.');
+  });
+
+  it('should skip divider sections entirely', () => {
+    const sections = [
+      { key: 'div1', label: '구분선', type: 'divider' },
+    ];
+    const result = buildSectionPrompt(sections);
+    expect(result).toBe('');
+  });
+
+  it('should include type guide for non-group sections', () => {
+    const sections = [
+      { key: 'cards1', label: '지표', type: 'cards' },
+    ];
+    const result = buildSectionPrompt(sections);
+    expect(result).toContain('카드 형식으로 출력합니다');
+  });
+});
+
+describe('parseSections', () => {
+  it('should parse flat sections from AI response', () => {
+    const text = '## 요약\n내용입니다.\n\n## 상세\n상세 내용.';
+    const template = {
+      sections: [
+        { key: 'summary', label: '요약', type: 'text' },
+        { key: 'detail', label: '상세', type: 'text' },
+      ],
+      output_format: 'markdown',
+    };
+    const result = parseSections(text, template as any);
+    expect(result).toHaveLength(2);
+    expect(result[0].key).toBe('summary');
+    expect(result[0].content).toContain('내용입니다');
+  });
+
+  it('should skip static sections in parsing', () => {
+    const text = '## 요약\n내용입니다.';
+    const template = {
+      sections: [
+        { key: 'disclaimer', label: '면책조항', type: 'text', static: true },
+        { key: 'summary', label: '요약', type: 'text' },
+      ],
+      output_format: 'markdown',
+    };
+    const result = parseSections(text, template as any);
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('summary');
+  });
+
+  it('should flatten group children in output', () => {
+    const text = '## 운영 현황\n\n### 핵심 지표\nKPI 내용';
+    const template = {
+      sections: [
+        {
+          key: 'ops', label: '운영 현황', type: 'group',
+          children: [
+            { key: 'kpi', label: '핵심 지표', type: 'text' },
+          ],
+        },
+      ],
+      output_format: 'markdown',
+    };
+    const result = parseSections(text, template as any);
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('kpi');
+    expect(result[0].content).toContain('KPI 내용');
+  });
+
+  it('should return single section when no template', () => {
+    const result = parseSections('some text');
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe('content');
+  });
+
+  it('should extract cards JSON data', () => {
+    const text = '## 지표\n설명\n```json\n[{"title":"A","value":"1","description":"d"}]\n```';
+    const template = {
+      sections: [{ key: 'stats', label: '지표', type: 'cards' }],
+      output_format: 'markdown',
+    };
+    const result = parseSections(text, template as any);
+    expect(result[0].data).toEqual([{ title: 'A', value: '1', description: 'd' }]);
   });
 });

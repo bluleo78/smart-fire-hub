@@ -12,6 +12,10 @@ interface TemplateSection {
   label: string;
   required?: boolean;
   type?: string;
+  instruction?: string;
+  static?: boolean;
+  content?: string;
+  children?: TemplateSection[];
 }
 
 interface Template {
@@ -122,6 +126,50 @@ async function executeMcpTool(
   }
 }
 
+export function buildSectionPrompt(sections: TemplateSection[], depth = 1): string {
+  let prompt = '';
+  const headerPrefix = '#'.repeat(depth + 1); // ## for depth 1, ### for depth 2
+
+  for (const section of sections) {
+    if (section.static) {
+      prompt += `${headerPrefix} ${section.label}\n`;
+      prompt += '(정적 섹션 — 이 섹션은 생성하지 마세요. 시스템이 자동으로 채웁니다.)\n\n';
+      continue;
+    }
+
+    if (section.type === 'divider') {
+      continue;
+    }
+
+    if (section.type === 'group') {
+      prompt += `${headerPrefix} ${section.label}\n`;
+      if (section.instruction) {
+        prompt += `지시: ${section.instruction}\n`;
+      }
+      if (section.children && section.children.length > 0) {
+        prompt += buildSectionPrompt(section.children, depth + 1);
+      }
+      prompt += '\n';
+      continue;
+    }
+
+    prompt += `${headerPrefix} ${section.label}\n`;
+    if (section.required !== false) {
+      prompt += '(필수 섹션)\n';
+    }
+    if (section.instruction) {
+      prompt += `지시: ${section.instruction}\n`;
+    }
+    const typeGuide = getSectionTypeGuide(section.type);
+    if (typeGuide) {
+      prompt += typeGuide + '\n';
+    }
+    prompt += '\n';
+  }
+
+  return prompt;
+}
+
 function buildProactiveSystemPrompt(template?: Template): string {
   let prompt =
     '당신은 프로액티브 AI 분석가입니다. 주어진 컨텍스트와 데이터를 분석하여 인사이트를 제공합니다.\n' +
@@ -145,19 +193,9 @@ function buildProactiveSystemPrompt(template?: Template): string {
     }
 
     prompt += `출력 형식: ${template.output_format}\n\n`;
-    prompt += '다음 섹션 구조에 따라 응답을 작성하세요. 각 섹션은 ## 헤더로 구분합니다:\n\n';
+    prompt += '다음 섹션 구조에 따라 응답을 작성하세요. 각 섹션은 헤더(##, ###, ####)로 구분합니다:\n\n';
 
-    for (const section of template.sections) {
-      prompt += `## ${section.label}\n`;
-      if (section.required !== false) {
-        prompt += '(필수 섹션)\n';
-      }
-      const typeGuide = getSectionTypeGuide(section.type);
-      if (typeGuide) {
-        prompt += typeGuide + '\n';
-      }
-      prompt += '\n';
-    }
+    prompt += buildSectionPrompt(template.sections);
   }
 
   return prompt;
@@ -187,60 +225,68 @@ function getSectionTypeGuide(type?: string): string | null {
       return '차트/그래프에 대한 해석을 서술하세요. 추세, 이상값, 패턴을 자연어로 설명하세요.';
     case 'recommendation':
       return '구체적 액션 + 기대 효과 + 우선순위를 기술하세요. 실행 가능한 단계로 작성하세요.';
+    case 'group':
+      return null;
+    case 'divider':
+      return null;
     default:
       return null;
   }
 }
 
-function parseSections(text: string, template?: Template): OutputSection[] {
+export function parseSections(text: string, template?: Template): OutputSection[] {
   if (!template) {
-    return [
-      {
-        key: 'content',
-        label: '분석 결과',
-        content: text.trim(),
-      },
-    ];
+    return [{ key: 'content', label: '분석 결과', content: text.trim() }];
   }
 
-  const sections: OutputSection[] = [];
-  const parts = text.split(/^##\s+/m);
-
-  for (const section of template.sections) {
+  function findContentForLabel(label: string): string {
+    const parts = text.split(/^#{2,4}\s+/m);
     const matchingPart = parts.find((part) => {
       const firstLine = part.split('\n')[0].trim();
-      return firstLine === section.label;
+      return firstLine === label;
     });
-
-    if (!matchingPart) {
-      continue;
-    }
-
+    if (!matchingPart) return '';
     const lines = matchingPart.split('\n');
     lines.shift();
-    const content = lines.join('\n').trim();
-
-    const outputSection: OutputSection = {
-      key: section.key,
-      label: section.label,
-      content,
-    };
-
-    if (section.type === 'cards') {
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        try {
-          outputSection.data = JSON.parse(jsonMatch[1].trim());
-        } catch {
-          // Keep data undefined if parsing fails
-        }
-      }
-    }
-
-    sections.push(outputSection);
+    return lines.join('\n').trim();
   }
 
-  return sections;
+  function processSections(templateSections: TemplateSection[]): OutputSection[] {
+    const result: OutputSection[] = [];
+    for (const section of templateSections) {
+      if (section.static || section.type === 'divider') continue;
+
+      if (section.type === 'group') {
+        if (section.children) {
+          result.push(...processSections(section.children));
+        }
+        continue;
+      }
+
+      const content = findContentForLabel(section.label);
+      if (!content) continue;
+
+      const outputSection: OutputSection = {
+        key: section.key,
+        label: section.label,
+        content,
+      };
+
+      if (section.type === 'cards') {
+        const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          try {
+            outputSection.data = JSON.parse(jsonMatch[1].trim());
+          } catch { /* keep data undefined */ }
+        }
+      }
+
+      result.push(outputSection);
+    }
+    return result;
+  }
+
+  return processSections(template.sections);
 }
 
 router.post('/proactive', express.json(), internalAuth, async (req: Request, res: Response) => {
