@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,6 +60,24 @@ public class ReportRenderUtils {
     return htmlRenderer.render(document);
   }
 
+  public String substituteVariables(String content, Map<String, String> variables) {
+    if (content == null || content.isBlank()) return "";
+    String result = content;
+    for (Map.Entry<String, String> entry : variables.entrySet()) {
+      result = result.replace("{{" + entry.getKey() + "}}", entry.getValue());
+    }
+    return result;
+  }
+
+  public Map<String, String> buildVariables(String jobName, String author, String templateName) {
+    Map<String, String> vars = new HashMap<>();
+    vars.put("date", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+    vars.put("jobName", jobName != null ? jobName : "");
+    vars.put("author", author != null ? author : "");
+    vars.put("templateName", templateName != null ? templateName : "");
+    return vars;
+  }
+
   public List<Map<String, Object>> buildTemplateSections(List<ProactiveResult.Section> sections) {
     List<Map<String, Object>> templateSections = new ArrayList<>();
     for (ProactiveResult.Section section : sections) {
@@ -75,6 +95,94 @@ public class ReportRenderUtils {
       templateSections.add(map);
     }
     return templateSections;
+  }
+
+  public List<Map<String, Object>> buildTemplateSections(
+      List<ProactiveResult.Section> aiSections,
+      List<Map<String, Object>> templateStructure,
+      Map<String, String> variables) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    processTemplateSections(templateStructure, aiSections, variables, result, 1);
+    return result;
+  }
+
+  @SuppressWarnings("unchecked")
+  private void processTemplateSections(
+      List<Map<String, Object>> templateSections,
+      List<ProactiveResult.Section> aiSections,
+      Map<String, String> variables,
+      List<Map<String, Object>> result,
+      int depth) {
+    if (templateSections == null) return;
+    for (Map<String, Object> tmplSection : templateSections) {
+      String type = (String) tmplSection.get("type");
+      String label = (String) tmplSection.get("label");
+      String key = (String) tmplSection.get("key");
+      Boolean isStatic = (Boolean) tmplSection.get("static");
+
+      if ("divider".equals(type)) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("type", "divider");
+        map.put("label", "");
+        map.put("content", "");
+        map.put("depth", depth);
+        result.add(map);
+        continue;
+      }
+
+      if (Boolean.TRUE.equals(isStatic)) {
+        String content = (String) tmplSection.get("content");
+        String rendered = substituteVariables(content, variables);
+        Map<String, Object> map = new HashMap<>();
+        map.put("label", label);
+        map.put("content", markdownToHtml(rendered));
+        map.put("static", true);
+        map.put("depth", depth);
+        result.add(map);
+        continue;
+      }
+
+      if ("group".equals(type)) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("label", label);
+        map.put("type", "group");
+        map.put("content", "");
+        map.put("depth", depth);
+        result.add(map);
+
+        List<Map<String, Object>> children =
+            (List<Map<String, Object>>) tmplSection.get("children");
+        if (children != null) {
+          processTemplateSections(children, aiSections, variables, result, depth + 1);
+        }
+        continue;
+      }
+
+      // AI-generated section: match by key
+      ProactiveResult.Section aiSection =
+          aiSections.stream()
+              .filter(s -> key != null && key.equals(s.key()))
+              .findFirst()
+              .orElse(null);
+
+      Map<String, Object> map = new HashMap<>();
+      map.put("label", label != null ? label : "");
+      map.put("depth", depth);
+
+      if (aiSection != null) {
+        map.put("content", aiSection.content() != null ? markdownToHtml(aiSection.content()) : "");
+        if (aiSection.data() instanceof Map<?, ?> dataMap) {
+          Object cards = dataMap.get("cards");
+          if (cards instanceof List<?> cardList) {
+            map.put("cards", cardList);
+          }
+        }
+      } else {
+        map.put("content", "");
+      }
+
+      result.add(map);
+    }
   }
 
   public List<ChartImage> renderChartImages(List<Map<String, Object>> templateSections) {

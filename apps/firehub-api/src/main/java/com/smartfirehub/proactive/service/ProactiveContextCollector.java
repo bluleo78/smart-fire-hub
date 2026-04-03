@@ -2,10 +2,12 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dashboard.service.DashboardService;
+import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -120,6 +122,25 @@ public class ProactiveContextCollector {
       log.error("Failed to collect proactive context", e);
       return "{}";
     }
+  }
+
+  /**
+   * Add anomaly context to the collected data. Called when a job is triggered by anomaly detection.
+   */
+  public void addAnomalyContext(Map<String, Object> context, AnomalyEvent event) {
+    if (event == null) return;
+
+    Map<String, Object> anomalyInfo = new LinkedHashMap<>();
+    anomalyInfo.put("metricName", event.metricName());
+    anomalyInfo.put("metricId", event.metricId());
+    anomalyInfo.put("currentValue", event.currentValue());
+    anomalyInfo.put("expectedRange", Map.of("mean", event.mean(), "stddev", event.stddev()));
+    anomalyInfo.put("deviation", String.format("%.2fσ", event.deviation()));
+    anomalyInfo.put("sensitivity", event.sensitivity());
+    anomalyInfo.put("recentHistory", event.recentHistory());
+    anomalyInfo.put("triggerReason", "이 리포트는 메트릭 이상 감지에 의해 자동 생성되었습니다.");
+
+    context.put("anomaly", anomalyInfo);
   }
 
   private void applyTargetFilter(Map<String, Object> context, Map<String, Object> config) {

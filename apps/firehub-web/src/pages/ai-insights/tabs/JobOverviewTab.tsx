@@ -1,10 +1,18 @@
-import { useMemo } from 'react';
+import { ChevronDown, Sparkles } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 
-import type { ProactiveJob, ReportTemplate } from '@/api/proactive';
+import type { ProactiveJob, ReportTemplate, TemplateSection, TriggerType } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -13,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { cronToLabel } from '@/lib/cron-label';
@@ -22,6 +31,9 @@ import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import type { ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
 import ChannelRecipientEditor from '../components/ChannelRecipientEditor';
+import { SectionPreview } from '../components/SectionPreview';
+
+type CreationMode = 'manual' | 'goal';
 
 const CRON_PRESETS = [
   { label: '매시간', value: '0 * * * *' },
@@ -52,11 +64,72 @@ function ReadonlyCard({ label, value }: { label: string; value: React.ReactNode 
   );
 }
 
+function generateAutoTemplate(question: string): TemplateSection[] {
+  return [
+    {
+      key: 'summary',
+      label: '요약',
+      type: 'text',
+      required: true,
+      instruction: `"${question}"에 대한 핵심 발견사항을 요약하세요.`,
+    },
+    {
+      key: 'analysis',
+      label: '상세 분석',
+      type: 'text',
+      instruction: `"${question}"에 대해 데이터를 기반으로 상세 분석하세요.`,
+    },
+    {
+      key: 'metrics',
+      label: '주요 지표',
+      type: 'cards',
+      instruction: '관련 핵심 지표를 카드로 표시하세요.',
+    },
+    {
+      key: 'recommendation',
+      label: '권고사항',
+      type: 'recommendation',
+      instruction: '분석 결과를 바탕으로 구체적 조치를 제안하세요.',
+    },
+  ];
+}
+
 export default function JobOverviewTab({ job, isNew, isEditing, form, templates }: JobOverviewTabProps) {
   const { register, watch, setValue, formState: { errors } } = form;
   const channels = watch('config.channels');
   const cronExpression = watch('cronExpression');
   const timezone = watch('timezone');
+
+  // Goal-based mode state
+  const [creationMode, setCreationMode] = useState<CreationMode>('manual');
+  const [businessQuestion, setBusinessQuestion] = useState('');
+  const [autoSections, setAutoSections] = useState<TemplateSection[] | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(true);
+
+  const handleGenerateTemplate = useCallback(async () => {
+    if (!businessQuestion.trim()) return;
+    setIsGenerating(true);
+    setAutoSections(null);
+
+    // Simulate brief delay for UX feedback
+    await new Promise((r) => setTimeout(r, 600));
+
+    const sections = generateAutoTemplate(businessQuestion.trim());
+    setAutoSections(sections);
+    setIsGenerating(false);
+    setPreviewOpen(true);
+
+    // Auto-fill form fields
+    setValue('prompt', businessQuestion.trim());
+    if (!watch('name')) {
+      // Generate a name from the question (first 30 chars)
+      const autoName = businessQuestion.trim().slice(0, 30) + (businessQuestion.trim().length > 30 ? '...' : '');
+      setValue('name', autoName);
+    }
+    // Clear template selection since we're using auto-generated structure
+    setValue('templateId', null);
+  }, [businessQuestion, setValue, watch]);
 
   const cronPreset = CRON_PRESETS.find((p) => p.value !== '__custom__' && p.value === cronExpression)
     ? cronExpression
@@ -95,6 +168,14 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
               value={
                 <Badge variant={job.enabled ? 'default' : 'secondary'}>
                   {job.enabled ? '활성' : '비활성'}
+                </Badge>
+              }
+            />
+            <ReadonlyCard
+              label="트리거 유형"
+              value={
+                <Badge variant="outline">
+                  {job.triggerType === 'ANOMALY' ? '이상 탐지' : job.triggerType === 'BOTH' ? '스케줄 + 이상 탐지' : '스케줄'}
                 </Badge>
               }
             />
@@ -177,6 +258,92 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
   // Edit / Create mode
   return (
     <div className="space-y-6 pt-4 max-w-2xl">
+      {/* 작성 모드 선택 (신규 생성 시에만) */}
+      {isNew && (
+        <div className="space-y-3">
+          <Label>작성 모드</Label>
+          <RadioGroup
+            value={creationMode}
+            onValueChange={(v) => setCreationMode(v as CreationMode)}
+            className="flex gap-4"
+          >
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="manual" id="mode-manual" />
+              <Label htmlFor="mode-manual" className="font-normal cursor-pointer">
+                직접 설정
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="goal" id="mode-goal" />
+              <Label htmlFor="mode-goal" className="font-normal cursor-pointer">
+                목표 기반
+              </Label>
+            </div>
+          </RadioGroup>
+          <p className="text-xs text-muted-foreground">
+            {creationMode === 'manual'
+              ? '템플릿과 프롬프트를 직접 구성합니다.'
+              : '비즈니스 질문을 입력하면 AI가 리포트 템플릿을 자동으로 생성합니다.'}
+          </p>
+        </div>
+      )}
+
+      {/* 목표 기반 모드 UI */}
+      {isNew && creationMode === 'goal' && (
+        <div className="space-y-4 rounded-lg border p-4 bg-muted/30">
+          <div className="space-y-2">
+            <Label htmlFor="business-question">비즈니스 질문</Label>
+            <Textarea
+              id="business-question"
+              rows={3}
+              placeholder="예: 이번 달 매출 하락의 원인을 분석하고 싶습니다"
+              value={businessQuestion}
+              onChange={(e) => setBusinessQuestion(e.target.value)}
+            />
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleGenerateTemplate}
+            disabled={!businessQuestion.trim() || isGenerating}
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+            {isGenerating ? '생성 중...' : '템플릿 자동 생성'}
+          </Button>
+
+          {/* 생성 중 스켈레톤 */}
+          {isGenerating && (
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-3/4" />
+            </div>
+          )}
+
+          {/* 생성된 템플릿 프리뷰 */}
+          {autoSections && !isGenerating && (
+            <Collapsible open={previewOpen} onOpenChange={setPreviewOpen}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1.5 px-2 -ml-2">
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${previewOpen ? '' : '-rotate-90'}`}
+                  />
+                  자동 생성된 템플릿 ({autoSections.length}개 섹션)
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="rounded-lg border p-3 mt-2 bg-background">
+                  <SectionPreview sections={autoSections} />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+        </div>
+      )}
+
       {/* 작업명 */}
       <div className="space-y-2">
         <Label htmlFor="job-name">작업 이름 *</Label>
@@ -188,38 +355,70 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
         {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
       </div>
 
-      {/* 템플릿 */}
+      {/* 수동 모드 전용 필드 (템플릿, 프롬프트) */}
+      {(creationMode === 'manual' || !isNew) && (
+        <>
+          {/* 템플릿 */}
+          <div className="space-y-2">
+            <Label htmlFor="job-template">리포트 템플릿 (선택)</Label>
+            <Select
+              value={watch('templateId') ? String(watch('templateId')) : 'none'}
+              onValueChange={(v) => setValue('templateId', v === 'none' ? null : Number(v))}
+            >
+              <SelectTrigger id="job-template">
+                <SelectValue placeholder="템플릿 선택 (없으면 기본)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">기본 (선택 안 함)</SelectItem>
+                {templates.map((t) => (
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.name}{t.builtin && ' (기본)'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
+
+      {/* 트리거 유형 */}
       <div className="space-y-2">
-        <Label htmlFor="job-template">리포트 템플릿 (선택)</Label>
+        <Label htmlFor="job-trigger-type">트리거 유형</Label>
         <Select
-          value={watch('templateId') ? String(watch('templateId')) : 'none'}
-          onValueChange={(v) => setValue('templateId', v === 'none' ? null : Number(v))}
+          value={watch('triggerType') ?? 'SCHEDULE'}
+          onValueChange={(v) => setValue('triggerType', v as TriggerType)}
         >
-          <SelectTrigger id="job-template">
-            <SelectValue placeholder="템플릿 선택 (없으면 기본)" />
+          <SelectTrigger id="job-trigger-type">
+            <SelectValue placeholder="트리거 유형 선택" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">기본 (선택 안 함)</SelectItem>
-            {templates.map((t) => (
-              <SelectItem key={t.id} value={String(t.id)}>
-                {t.name}{t.builtin && ' (기본)'}
-              </SelectItem>
-            ))}
+            <SelectItem value="SCHEDULE">스케줄 (정기 실행)</SelectItem>
+            <SelectItem value="ANOMALY">이상 탐지 (이벤트 기반)</SelectItem>
+            <SelectItem value="BOTH">스케줄 + 이상 탐지</SelectItem>
           </SelectContent>
         </Select>
+        <p className="text-xs text-muted-foreground">
+          {watch('triggerType') === 'ANOMALY'
+            ? '이상 탐지 시에만 실행됩니다. 모니터링 탭에서 메트릭을 설정하세요.'
+            : watch('triggerType') === 'BOTH'
+              ? '정기 스케줄과 이상 탐지 모두에 의해 실행됩니다.'
+              : '설정된 스케줄에 따라 정기적으로 실행됩니다.'}
+        </p>
       </div>
 
-      {/* 프롬프트 */}
-      <div className="space-y-2">
-        <Label htmlFor="job-prompt">분석 프롬프트 *</Label>
-        <Textarea
-          id="job-prompt"
-          rows={4}
-          placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
-          {...register('prompt')}
-        />
-        {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
-      </div>
+      {/* 프롬프트 — 수동 모드에서만 직접 편집, 목표 모드에서는 자동 채워짐 */}
+      {(creationMode === 'manual' || !isNew) && (
+        <div className="space-y-2">
+          <Label htmlFor="job-prompt">분석 프롬프트 *</Label>
+          <Textarea
+            id="job-prompt"
+            rows={4}
+            placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
+            {...register('prompt')}
+          />
+          {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
+        </div>
+      )}
 
       {/* 실행 주기 */}
       <div className="space-y-2">

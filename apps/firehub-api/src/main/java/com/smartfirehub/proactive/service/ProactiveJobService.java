@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
@@ -24,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,9 @@ public class ProactiveJobService {
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
+
+  // 이상 탐지 쿨다운: jobId -> 마지막 이상 탐지 실행 시각
+  private final Map<Long, LocalDateTime> lastAnomalyExecution = new ConcurrentHashMap<>();
 
   public ProactiveJobService(
       ProactiveJobRepository proactiveJobRepository,
@@ -218,5 +223,63 @@ public class ProactiveJobService {
     return userRepository.findAllPaginated(search, 0, 20).stream()
         .map(u -> new RecipientResponse(u.id(), u.name(), u.email()))
         .toList();
+  }
+
+  // ── 이상 탐지 이벤트 처리 ──
+
+  @EventListener
+  @Async("pipelineExecutor")
+  public void onAnomalyDetected(AnomalyEvent event) {
+    if (isInCooldown(event.jobId())) {
+      log.info(
+          "Anomaly detected for job {} but in cooldown, skipping (metric={})",
+          event.jobId(),
+          event.metricName());
+      return;
+    }
+
+    log.info(
+        "Anomaly detected for job {}, executing with anomaly context"
+            + " (metric={}, value={}, deviation={})",
+        event.jobId(),
+        event.metricName(),
+        event.currentValue(),
+        event.deviation());
+    try {
+      executeJob(event.jobId(), event.userId());
+      recordCooldown(event.jobId());
+    } catch (Exception e) {
+      log.warn("Anomaly-triggered execution failed for job {}: {}", event.jobId(), e.getMessage());
+    }
+  }
+
+  private boolean isInCooldown(Long jobId) {
+    LocalDateTime lastExec = lastAnomalyExecution.get(jobId);
+    if (lastExec == null) return false;
+
+    int cooldownMinutes = getCooldownMinutes(jobId);
+    return LocalDateTime.now().isBefore(lastExec.plusMinutes(cooldownMinutes));
+  }
+
+  private void recordCooldown(Long jobId) {
+    lastAnomalyExecution.put(jobId, LocalDateTime.now());
+  }
+
+  private int getCooldownMinutes(Long jobId) {
+    try {
+      ProactiveJobResponse job = proactiveJobRepository.findById(jobId).orElse(null);
+      if (job != null && job.config() != null) {
+        Object anomalyConfig = job.config().get("anomaly");
+        if (anomalyConfig instanceof Map<?, ?> anomalyMap) {
+          Object cooldown = anomalyMap.get("cooldownMinutes");
+          if (cooldown instanceof Number n) {
+            return n.intValue();
+          }
+        }
+      }
+    } catch (Exception e) {
+      log.debug("Failed to read cooldown config for job {}: {}", jobId, e.getMessage());
+    }
+    return 60; // 기본 쿨다운: 60분
   }
 }

@@ -47,6 +47,7 @@ export function createProactiveApi(client: AxiosInstance) {
     async createReportTemplate(data: {
       name: string;
       description?: string;
+      style?: string;
       structure: {
         sections: Array<{
           key: string;
@@ -59,6 +60,53 @@ export function createProactiveApi(client: AxiosInstance) {
     }): Promise<unknown> {
       const response = await client.post('/proactive/templates', data);
       return response.data;
+    },
+    async createSmartJobWithTemplate(data: {
+      name: string;
+      prompt: string;
+      cronExpression?: string;
+      timezone?: string;
+      channels?: string[];
+      templateName: string;
+      templateStructure: {
+        sections: Array<{
+          key: string;
+          label: string;
+          required?: boolean;
+          type?: string;
+          instruction?: string;
+          children?: unknown[];
+        }>;
+        output_format: string;
+      };
+      templateStyle?: string;
+    }): Promise<unknown> {
+      // 1. Create template
+      const template = await client.post('/proactive/templates', {
+        name: data.templateName,
+        description: `AI 자동 생성 — "${data.prompt}"`,
+        style: data.templateStyle,
+        structure: data.templateStructure,
+      });
+      const templateId = (template.data as { id: number }).id;
+      // 2. Create smart job
+      const jobPayload: Record<string, unknown> = {
+        name: data.name,
+        prompt: data.prompt,
+        templateId,
+        cronExpression: data.cronExpression ?? '0 9 * * *',
+        timezone: data.timezone ?? 'Asia/Seoul',
+        config: {
+          channels: (data.channels ?? ['CHAT']).map((ch) => ({
+            type: ch,
+            recipientUserIds: [],
+            recipientEmails: [],
+          })),
+        },
+      };
+      if (!data.cronExpression) jobPayload.enabled = false;
+      const job = await client.post('/proactive/jobs', jobPayload);
+      return { template: template.data, job: job.data };
     },
   };
 }

@@ -147,5 +147,117 @@ export function registerProactiveTools(
         return jsonResult(result);
       },
     ),
+
+    safeTool(
+      'generate_report',
+      '비즈니스 질문을 기반으로 데이터를 탐색하고 구조화된 리포트 섹션을 생성합니다. 사용자가 분석 요청을 하면 이 도구를 사용하세요.',
+      {
+        question: z.string().describe('비즈니스 질문'),
+        datasetIds: z
+          .array(z.number())
+          .optional()
+          .describe('분석 대상 데이터셋 ID 목록'),
+        templateStructure: z
+          .object({
+            sections: z.array(
+              z.object({
+                key: z.string(),
+                label: z.string(),
+                type: z.string(),
+                instruction: z.string().optional(),
+                required: z.boolean().optional(),
+              }),
+            ),
+            output_format: z.string().optional(),
+          })
+          .describe('리포트 구조'),
+        sectionContents: z
+          .record(z.string(), z.string())
+          .describe('각 섹션의 분석 결과'),
+        style: z.string().optional().describe('작성 스타일'),
+      },
+      async (args: {
+        question: string;
+        datasetIds?: number[];
+        templateStructure: {
+          sections: Array<{
+            key: string;
+            label: string;
+            type: string;
+            instruction?: string;
+            required?: boolean;
+          }>;
+          output_format?: string;
+        };
+        sectionContents: Record<string, string>;
+        style?: string;
+      }) => {
+        return jsonResult({
+          displayed: true,
+          question: args.question,
+          datasetIds: args.datasetIds ?? [],
+          templateStructure: args.templateStructure,
+          sectionContents: args.sectionContents,
+          style: args.style,
+        });
+      },
+    ),
+
+    safeTool(
+      'save_as_smart_job',
+      '챗에서 생성한 분석을 스마트 작업 + 리포트 양식으로 저장합니다.',
+      {
+        name: z.string().describe('스마트 작업 이름'),
+        templateStructure: z
+          .object({
+            sections: z.array(
+              z.object({
+                key: z.string(),
+                label: z.string(),
+                type: z.string(),
+                instruction: z.string().optional(),
+                required: z.boolean().optional(),
+              }),
+            ),
+            output_format: z.string().optional(),
+          })
+          .describe('리포트 양식 구조'),
+        prompt: z.string().describe('AI 분석 프롬프트'),
+        style: z.string().optional(),
+        cronExpression: z.string().optional().describe('Cron 표현식'),
+        channels: z.array(z.string()).optional(),
+      },
+      async (args: {
+        name: string;
+        templateStructure: {
+          sections: Array<{
+            key: string;
+            label: string;
+            type: string;
+            instruction?: string;
+            required?: boolean;
+          }>;
+          output_format?: string;
+        };
+        prompt: string;
+        style?: string;
+        cronExpression?: string;
+        channels?: string[];
+      }) => {
+        const result = await apiClient.createSmartJobWithTemplate({
+          name: args.name,
+          prompt: args.prompt,
+          cronExpression: args.cronExpression,
+          channels: args.channels,
+          templateName: `${args.name} 양식`,
+          templateStructure: {
+            sections: args.templateStructure.sections,
+            output_format: args.templateStructure.output_format ?? 'markdown',
+          },
+          templateStyle: args.style,
+        });
+        return jsonResult(result);
+      },
+    ),
   ];
 }

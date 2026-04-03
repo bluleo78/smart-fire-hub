@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useCreateProactiveTemplate,
@@ -29,8 +30,10 @@ import { parseTemplateSections } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
 import { SectionPreview } from './components/SectionPreview';
+import { SectionPropertyEditor } from './components/SectionPropertyEditor';
+import { SectionTreeBuilder } from './components/SectionTreeBuilder';
 import { TemplateJsonEditor } from './components/TemplateJsonEditor';
-import { TemplateSidePanel } from './components/TemplateSidePanel';
+import { useSectionTree } from './hooks/useSectionTree';
 
 const DEFAULT_STRUCTURE = JSON.stringify({ sections: [] }, null, 2);
 
@@ -53,6 +56,12 @@ export default function ReportTemplateDetailPage() {
   const [structureJson, setStructureJson] = useState(DEFAULT_STRUCTURE);
   const [styleText, setStyleText] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'builder' | 'json'>('builder');
+
+  const tree = useSectionTree([]);
+
+  // Track whether tree sync should be suppressed (to avoid loop)
+  const suppressTreeSync = useRef(false);
 
   const form = useForm<ReportTemplateFormValues>({
     resolver: zodResolver(reportTemplateSchema),
@@ -62,24 +71,47 @@ export default function ReportTemplateDetailPage() {
   // Sync template structure to JSON editor when template loads (skip during editing)
   useEffect(() => {
     if (template && !isEditing) {
-      setStructureJson(JSON.stringify(template.structure, null, 2));
+      const sections = Array.isArray(template.sections) ? template.sections : [];
+      const json = JSON.stringify({ sections, output_format: 'markdown' }, null, 2);
+      setStructureJson(json);
       setStyleText(template.style ?? '');
+      tree.setSections(sections);
     }
-  }, [template, isEditing]);
+  }, [template, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSave = form.handleSubmit((values) => {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(structureJson);
-    } catch {
-      toast.error('JSON 형식이 올바르지 않습니다.');
+  // Sync tree.sections -> structureJson (builder -> JSON)
+  useEffect(() => {
+    if (suppressTreeSync.current) {
+      suppressTreeSync.current = false;
       return;
     }
+    const json = JSON.stringify({ sections: tree.sections, output_format: 'markdown' }, null, 2);
+    setStructureJson(json);
+  }, [tree.sections]);
 
+  // Handle tab switching with JSON -> builder sync
+  const handleTabChange = useCallback(
+    (tab: string) => {
+      if (tab === 'builder' && activeTab === 'json') {
+        const parsed = parseTemplateSections(structureJson);
+        if (parsed) {
+          suppressTreeSync.current = true;
+          tree.setSections(parsed);
+        } else {
+          toast.error('JSON 파싱 실패. 유효한 JSON을 입력하세요.');
+          return;
+        }
+      }
+      setActiveTab(tab as 'builder' | 'json');
+    },
+    [activeTab, structureJson, tree],
+  );
+
+  const handleSave = form.handleSubmit((values) => {
     const payload = {
       name: values.name,
       description: values.description || undefined,
-      structure: parsed,
+      sections: tree.sections,
       style: styleText.trim() || undefined,
     };
 
@@ -122,7 +154,7 @@ export default function ReportTemplateDetailPage() {
       {
         name: `${template.name} (사본)`,
         description: template.description ?? undefined,
-        structure: template.structure,
+        sections: Array.isArray(template.sections) ? template.sections : [],
         style: template.style ?? undefined,
       },
       {
@@ -138,9 +170,13 @@ export default function ReportTemplateDetailPage() {
   const handleCancelEdit = () => {
     if (template) {
       form.reset({ name: template.name, description: template.description ?? '' });
-      setStructureJson(JSON.stringify(template.structure, null, 2));
+      const sections = Array.isArray(template.sections) ? template.sections : [];
+      const json = JSON.stringify({ sections, output_format: 'markdown' }, null, 2);
+      setStructureJson(json);
       setStyleText(template.style ?? '');
+      tree.setSections(sections);
     }
+    setActiveTab('builder');
     setIsEditing(false);
   };
 
@@ -212,11 +248,11 @@ export default function ReportTemplateDetailPage() {
           {isEditing && (
             <>
               {!isNew && (
-                <Button variant="outline" size="sm" onClick={handleCancelEdit}>
+                <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
                   취소
                 </Button>
               )}
-              <Button size="sm" onClick={handleSave} disabled={isSaving}>
+              <Button variant="default" size="sm" onClick={handleSave} disabled={isSaving}>
                 {isSaving ? '저장 중...' : isNew ? '생성' : '저장'}
               </Button>
             </>
@@ -280,38 +316,84 @@ export default function ReportTemplateDetailPage() {
         </Card>
       )}
 
-      {/* 본문: 에디터 + 사이드패널 */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        <div className="lg:col-span-3">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">섹션 구조</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <TemplateJsonEditor
-                value={structureJson}
-                onChange={setStructureJson}
-                readonly={!isEditing}
+      {/* 본문: 편집 모드 = 빌더 2-column, 읽기 모드 = 미리보기 */}
+      {isEditing ? (
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Left column: meta + tree builder */}
+          <div className="lg:col-span-2 space-y-4">
+            <Card className="h-[calc(100vh-320px)] min-h-[400px]">
+              <SectionTreeBuilder
+                sections={tree.sections}
+                selectedKey={tree.selectedKey}
+                collapsedKeys={tree.collapsedKeys}
+                flatItems={tree.flatItems}
+                onSelect={tree.setSelectedKey}
+                onMove={tree.moveSection}
+                onAdd={tree.addSection}
+                onRemove={tree.removeSection}
+                onToggleCollapse={tree.toggleCollapsed}
               />
-            </CardContent>
-          </Card>
-        </div>
+            </Card>
+          </div>
 
-        <div className="lg:col-span-2">
-          <Card className="h-full">
-            <CardContent className="pt-6 h-full">
-              {isEditing ? (
-                <TemplateSidePanel jsonValue={structureJson} />
-              ) : (
-                <div>
-                  <h3 className="text-sm font-medium mb-4">섹션 구조 미리보기</h3>
-                  <SectionPreview sections={sections} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Right column: Builder/JSON tabs */}
+          <div className="lg:col-span-3">
+            <Tabs value={activeTab} onValueChange={handleTabChange}>
+              <TabsList>
+                <TabsTrigger value="builder">빌더</TabsTrigger>
+                <TabsTrigger value="json">JSON</TabsTrigger>
+              </TabsList>
+              <TabsContent value="builder" className="mt-4">
+                <SectionPropertyEditor
+                  section={tree.selectedSection}
+                  onUpdate={(patch) => {
+                    if (tree.selectedKey) tree.updateSection(tree.selectedKey, patch);
+                  }}
+                />
+              </TabsContent>
+              <TabsContent value="json" className="mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">섹션 구조 (JSON)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <TemplateJsonEditor
+                      value={structureJson}
+                      onChange={setStructureJson}
+                      readonly={false}
+                    />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          <div className="lg:col-span-3">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">섹션 구조</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TemplateJsonEditor
+                  value={structureJson}
+                  onChange={setStructureJson}
+                  readonly
+                />
+              </CardContent>
+            </Card>
+          </div>
+          <div className="lg:col-span-2">
+            <Card className="h-full">
+              <CardContent className="pt-6 h-full">
+                <h3 className="text-sm font-medium mb-4">섹션 구조 미리보기</h3>
+                <SectionPreview sections={sections} />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
 
       {/* 삭제 확인 다이얼로그 */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

@@ -4,7 +4,7 @@ export interface ReportTemplate {
   id: number;
   name: string;
   description: string | null;
-  structure: Record<string, unknown>;
+  sections: TemplateSection[];
   style: string | null;
   builtin: boolean;
   createdAt: string;
@@ -36,6 +36,37 @@ export interface TemplateSection {
   children?: TemplateSection[];  // 하위 섹션 (group 타입만)
 }
 
+// === Anomaly Detection Types ===
+
+export type TriggerType = 'SCHEDULE' | 'ANOMALY' | 'BOTH';
+
+export type MetricSource = 'system' | 'dataset';
+export type Sensitivity = 'low' | 'medium' | 'high';
+
+export interface AnomalyMetricConfig {
+  id: string;
+  name: string;
+  source: MetricSource;
+  metricKey?: string;       // for system metrics
+  datasetId?: number;       // for dataset metrics
+  query?: string;           // for dataset metrics
+  pollingInterval: number;  // seconds
+}
+
+export interface AnomalyConfig {
+  enabled: boolean;
+  metrics: AnomalyMetricConfig[];
+  sensitivity: Sensitivity;
+  cooldownMinutes: number;
+}
+
+export const SYSTEM_METRICS = [
+  { key: 'pipeline_failure_rate', label: '파이프라인 실패율' },
+  { key: 'pipeline_execution_count', label: '파이프라인 실행 건수' },
+  { key: 'dataset_total_count', label: '데이터셋 수' },
+  { key: 'active_user_count', label: '활성 사용자 수' },
+] as const;
+
 export interface ProactiveJobExecution {
   id: number;
   jobId: number;
@@ -57,6 +88,7 @@ export interface ProactiveJob {
   cronExpression: string;
   timezone: string;
   enabled: boolean;
+  triggerType?: TriggerType;
   config: Record<string, unknown>;
   lastExecutedAt: string | null;
   nextExecuteAt: string | null;
@@ -89,6 +121,7 @@ export interface CreateProactiveJobRequest {
   templateId?: number | null;
   cronExpression: string;
   timezone?: string;
+  triggerType?: TriggerType;
   config?: Record<string, unknown>;
 }
 
@@ -99,20 +132,21 @@ export interface UpdateProactiveJobRequest {
   cronExpression?: string;
   timezone?: string;
   enabled?: boolean;
+  triggerType?: TriggerType;
   config?: Record<string, unknown>;
 }
 
 export interface CreateReportTemplateRequest {
   name: string;
   description?: string;
-  structure: Record<string, unknown>;
+  sections: TemplateSection[];
   style?: string;
 }
 
 export interface UpdateReportTemplateRequest {
   name?: string;
   description?: string;
-  structure?: Record<string, unknown>;
+  sections?: TemplateSection[];
   style?: string;
 }
 

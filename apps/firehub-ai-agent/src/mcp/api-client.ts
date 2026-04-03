@@ -420,6 +420,7 @@ export class FireHubApiClient {
   createReportTemplate(data: {
     name: string;
     description?: string;
+    style?: string;
     structure: {
       sections: Array<{
         key: string;
@@ -431,5 +432,27 @@ export class FireHubApiClient {
     };
   }) {
     return this._proactive.createReportTemplate(data);
+  }
+  createSmartJobWithTemplate(data: {
+    name: string;
+    prompt: string;
+    cronExpression?: string;
+    timezone?: string;
+    channels?: string[];
+    templateName: string;
+    templateStructure: {
+      sections: Array<{
+        key: string;
+        label: string;
+        required?: boolean;
+        type?: string;
+        instruction?: string;
+        children?: unknown[];
+      }>;
+      output_format: string;
+    };
+    templateStyle?: string;
+  }) {
+    return this._proactive.createSmartJobWithTemplate(data);
   }
 }

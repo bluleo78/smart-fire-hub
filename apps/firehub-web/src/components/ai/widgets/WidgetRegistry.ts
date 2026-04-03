@@ -54,6 +54,11 @@ const WIDGET_REGISTRY: Record<string, WidgetEntry> = {
     label: '최근 활동',
     icon: '🕐',
   },
+  show_report_builder: {
+    component: lazy(() => import('./ReportBuilderWidget')),
+    label: '리포트 빌더',
+    icon: '📝',
+  },
 };
 
 export function getWidget(toolName: string): WidgetEntry | undefined {

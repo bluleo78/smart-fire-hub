@@ -136,5 +136,53 @@ export function registerUiTools(
         return jsonResult({ displayed: true, size: args.size ?? 10 });
       },
     ),
+
+    // 9. 리포트 빌더 위젯 (Passthrough — AI가 generate_report 결과 전달)
+    safeTool(
+      'show_report_builder',
+      '생성된 리포트를 챗에 인라인 위젯으로 표시합니다. generate_report 결과를 사용자에게 보여줄 때 사용합니다.',
+      {
+        title: z.string().describe('리포트 제목'),
+        question: z.string().describe('원래 비즈니스 질문'),
+        templateStructure: z.object({
+          sections: z.array(z.object({
+            key: z.string(),
+            label: z.string(),
+            type: z.string(),
+            instruction: z.string().optional(),
+            required: z.boolean().optional(),
+          })),
+          output_format: z.string().optional(),
+        }).describe('리포트 구조'),
+        sectionContents: z.record(z.string(), z.string()).describe('각 섹션의 분석 결과'),
+        style: z.string().optional(),
+        canvas: canvasSchema,
+      },
+      async (args: {
+        title: string;
+        question: string;
+        templateStructure: {
+          sections: Array<{
+            key: string;
+            label: string;
+            type: string;
+            instruction?: string;
+            required?: boolean;
+          }>;
+          output_format?: string;
+        };
+        sectionContents: Record<string, string>;
+        style?: string;
+      }) => {
+        return jsonResult({
+          widgetType: 'report_builder',
+          title: args.title,
+          question: args.question,
+          templateStructure: args.templateStructure,
+          sectionContents: args.sectionContents,
+          style: args.style,
+        });
+      },
+    ),
   ];
 }

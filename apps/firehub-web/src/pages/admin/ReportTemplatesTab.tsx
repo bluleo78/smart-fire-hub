@@ -6,8 +6,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { useProactiveTemplates } from '../../hooks/queries/useProactiveMessages';
 
-function sectionCount(structure: Record<string, unknown>): number {
-  const sections = (structure as { sections?: unknown[] })?.sections;
+function sectionCount(sections: unknown): number {
   return Array.isArray(sections) ? sections.length : 0;
 }
 
@@ -47,7 +46,7 @@ export default function ReportTemplatesTab() {
                 )}
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.structure)}개</p>
+                <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.sections)}개</p>
               </CardContent>
             </Card>
           ))}
@@ -98,7 +97,7 @@ export default function ReportTemplatesTab() {
                   )}
                 </CardHeader>
                 <CardContent>
-                  <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.structure)}개</p>
+                  <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.sections)}개</p>
                 </CardContent>
               </Card>
             ))}

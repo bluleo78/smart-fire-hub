@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ArrowLeft, Copy } from 'lucide-react';
+import { Activity, ArrowLeft, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -21,6 +21,7 @@ import { handleApiError } from '@/lib/api-error';
 import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import JobExecutionsTab from './tabs/JobExecutionsTab';
+import JobMonitoringTab from './tabs/JobMonitoringTab';
 import JobOverviewTab from './tabs/JobOverviewTab';
 
 function buildDefaultValues(job?: {
@@ -29,6 +30,7 @@ function buildDefaultValues(job?: {
   templateId: number | null;
   cronExpression: string;
   timezone: string;
+  triggerType?: string;
   config: Record<string, unknown>;
 }): ProactiveJobFormValues {
   if (!job) {
@@ -38,6 +40,7 @@ function buildDefaultValues(job?: {
       templateId: null,
       cronExpression: '0 9 * * *',
       timezone: 'Asia/Seoul',
+      triggerType: 'SCHEDULE',
       config: { channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }] },
     };
   }
@@ -56,13 +59,25 @@ function buildDefaultValues(job?: {
     };
   });
 
+  // Normalize anomaly config
+  const rawAnomaly = job.config?.anomaly as Record<string, unknown> | undefined;
+  const anomaly = rawAnomaly
+    ? {
+        enabled: (rawAnomaly.enabled as boolean) ?? false,
+        metrics: Array.isArray(rawAnomaly.metrics) ? rawAnomaly.metrics : [],
+        sensitivity: ((rawAnomaly.sensitivity as string) ?? 'medium') as 'low' | 'medium' | 'high',
+        cooldownMinutes: (rawAnomaly.cooldownMinutes as number) ?? 30,
+      }
+    : undefined;
+
   return {
     name: job.name,
     prompt: job.prompt,
     templateId: job.templateId ?? null,
     cronExpression: job.cronExpression,
     timezone: job.timezone ?? 'Asia/Seoul',
-    config: { channels },
+    triggerType: (job.triggerType as 'SCHEDULE' | 'ANOMALY' | 'BOTH') ?? 'SCHEDULE',
+    config: { channels, anomaly },
   };
 }
 
@@ -102,6 +117,7 @@ export default function ProactiveJobDetailPage() {
       templateId: values.templateId ?? null,
       cronExpression: values.cronExpression,
       timezone: values.timezone,
+      triggerType: values.triggerType,
       config: values.config,
     };
 
@@ -258,6 +274,10 @@ export default function ProactiveJobDetailPage() {
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="overview">개요</TabsTrigger>
+          <TabsTrigger value="monitoring">
+            <Activity className="h-3.5 w-3.5 mr-1.5" />
+            모니터링
+          </TabsTrigger>
           {!isNew && <TabsTrigger value="executions">실행 이력</TabsTrigger>}
         </TabsList>
 
@@ -268,6 +288,13 @@ export default function ProactiveJobDetailPage() {
             isEditing={isEditing}
             form={form}
             templates={templates}
+          />
+        </TabsContent>
+
+        <TabsContent value="monitoring">
+          <JobMonitoringTab
+            form={form}
+            isEditing={isEditing}
           />
         </TabsContent>
 
