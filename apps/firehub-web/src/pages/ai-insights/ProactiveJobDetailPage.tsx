@@ -125,6 +125,7 @@ export default function ProactiveJobDetailPage() {
       createMutation.mutate(payload, {
         onSuccess: (created) => {
           toast.success('작업이 생성되었습니다.');
+          setIsEditing(false);
           navigate(`/ai-insights/jobs/${created.id}`);
         },
         onError: (err) => handleApiError(err, '작업 생성에 실패했습니다.'),

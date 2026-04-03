@@ -119,6 +119,7 @@ export default function ReportTemplateDetailPage() {
       createMutation.mutate(payload, {
         onSuccess: (created) => {
           toast.success('템플릿이 생성되었습니다.');
+          setIsEditing(false);
           navigate(`/ai-insights/templates/${created.id}`);
         },
         onError: (err) => handleApiError(err, '템플릿 생성에 실패했습니다.'),
