@@ -1,11 +1,17 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import { GripVertical, ChevronRight, ChevronDown, Trash2, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import type { TemplateSection } from '@/api/proactive';
-import { getSectionTypeDef } from '@/lib/template-section-types';
+import type { TemplateSection, SectionType } from '@/api/proactive';
+import { getSectionTypeDef, SECTION_TYPES } from '@/lib/template-section-types';
 
 interface SectionTreeItemProps {
   section: TemplateSection;
@@ -16,6 +22,7 @@ interface SectionTreeItemProps {
   onSelect: () => void;
   onRemove: () => void;
   onToggleCollapse: () => void;
+  onAddChild?: (type: SectionType) => void;
 }
 
 export function SectionTreeItem({
@@ -27,6 +34,7 @@ export function SectionTreeItem({
   onSelect,
   onRemove,
   onToggleCollapse,
+  onAddChild,
 }: SectionTreeItemProps) {
   const {
     attributes,
@@ -110,6 +118,37 @@ export function SectionTreeItem({
       <Badge variant="outline" className="text-[10px]">
         {section.type}
       </Badge>
+
+      {/* Add child button for groups */}
+      {isGroup && onAddChild && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 opacity-0 group-hover:opacity-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Plus className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {SECTION_TYPES
+              .filter(t => t.type !== 'group' && t.type !== 'divider')
+              .map(t => (
+                <DropdownMenuItem
+                  key={t.type}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddChild(t.type as SectionType);
+                  }}
+                >
+                  <span className="mr-2">{t.icon}</span> {t.label}
+                </DropdownMenuItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {/* Delete button - visible on hover */}
       <Button

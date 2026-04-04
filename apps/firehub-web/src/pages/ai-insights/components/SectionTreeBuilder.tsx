@@ -36,7 +36,7 @@ interface SectionTreeBuilderProps {
   flatItems: FlatItem[];
   onSelect: (key: string) => void;
   onMove: (activeId: string, overId: string) => void;
-  onAdd: (type: SectionType) => void;
+  onAdd: (type: SectionType, parentKey?: string) => void;
   onRemove: (key: string) => void;
   onToggleCollapse: (key: string) => void;
 }
@@ -107,6 +107,7 @@ export function SectionTreeBuilder({
                   onSelect={() => onSelect(section.key)}
                   onRemove={() => onRemove(section.key)}
                   onToggleCollapse={() => onToggleCollapse(section.key)}
+                  onAddChild={section.type === 'group' ? (type) => onAdd(type, section.key) : undefined}
                 />
               ))}
             </SortableContext>
