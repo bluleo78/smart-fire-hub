@@ -4,6 +4,10 @@ import java.util.List;
 
 public record ProactiveResult(String title, List<Section> sections, Usage usage) {
 
+  public String effectiveTitle(String fallback) {
+    return title != null && !title.isBlank() ? title : fallback;
+  }
+
   public record Section(String key, String label, String content, String type, Object data) {}
 
   public record Usage(int inputTokens, int outputTokens, int totalTokens) {}

@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { SYSTEM_PROMPT } from './system-prompt.js';
+import { resolveSystemPrompt } from './prompt-utils.js';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
@@ -199,11 +200,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   await writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig(userId, apiBaseUrl, internalToken), null, 2));
 
   const effectiveModel = model ?? DEFAULT_MODEL;
-  const effectiveSystemPrompt = overrideSystemPrompt && systemPrompt
-    ? systemPrompt
-    : systemPrompt
-      ? `${SYSTEM_PROMPT}\n\n[사용자 지시사항]\n${systemPrompt}`
-      : SYSTEM_PROMPT;
+  const effectiveSystemPrompt = resolveSystemPrompt(SYSTEM_PROMPT, systemPrompt, overrideSystemPrompt);
 
   const cliArgs = [
     '-p', enhancedMessage,

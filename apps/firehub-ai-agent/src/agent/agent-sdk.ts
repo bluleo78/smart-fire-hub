@@ -8,6 +8,7 @@ import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../constants.js';
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
+import { resolveSystemPrompt } from './prompt-utils.js';
 import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
 
 import type { SSEEvent } from '../providers/types.js';
@@ -107,11 +108,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const subagentGuide = buildSubagentGuide(subagents);
   const basePrompt = `${SYSTEM_PROMPT}${subagentGuide}`;
 
-  const effectiveSystemPrompt = overrideSystemPrompt && systemPrompt
-    ? systemPrompt
-    : systemPrompt
-      ? `${basePrompt}\n\n[사용자 지시사항]\n${systemPrompt}`
-      : basePrompt;
+  const effectiveSystemPrompt = resolveSystemPrompt(basePrompt, systemPrompt, overrideSystemPrompt);
 
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: enhancedMessage,

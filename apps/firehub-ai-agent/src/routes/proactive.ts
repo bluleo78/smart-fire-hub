@@ -50,7 +50,7 @@ interface ProactiveResponse {
   };
 }
 
-const MAX_TOOL_TURNS = 10;
+const MAX_AGENT_TURNS = 15;
 
 export function buildSectionPrompt(sections: TemplateSection[], depth = 1): string {
   let prompt = '';
@@ -274,7 +274,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
   const reportFilePath = `/tmp/proactive-report-${Date.now()}-${userId}.md`;
   const systemPrompt = buildProactiveSystemPrompt(body.template, reportFilePath);
-  const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context, null, 2)}`;
+  const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 
   const providerConfig: ProviderConfig = {
     agentType,
@@ -290,7 +290,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     model,
     systemPrompt: systemPrompt,
     overrideSystemPrompt: true,
-    maxTurns: 15,
+    maxTurns: MAX_AGENT_TURNS,
   });
 
   let rawText = '';
@@ -310,7 +310,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       }
     }
 
-    // report-writer가 생성한 파일에서 리포트 내용 읽기
+    // Subagent writes to disk; read the file to get clean report content without rawText noise
     let reportContent = '';
     let fromFile = false;
     try {

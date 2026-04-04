@@ -189,11 +189,12 @@ public class ProactiveJobService {
       if (job.templateId() != null) {
         var tmpl = reportTemplateRepository.findById(job.templateId());
         if (tmpl.isPresent()) {
+          var t = tmpl.get();
           template = new HashMap<>();
-          template.put("sections", tmpl.get().sections());
+          template.put("sections", t.sections());
           template.put("output_format", "structured");
-          if (tmpl.get().style() != null) {
-            template.put("style", tmpl.get().style());
+          if (t.style() != null) {
+            template.put("style", t.style());
           }
         }
       }
