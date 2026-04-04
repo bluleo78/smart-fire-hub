@@ -21,6 +21,8 @@ export interface AgentOptions {
   model?: string;
   maxTurns?: number;
   systemPrompt?: string;
+  /** true이면 systemPrompt가 기본 SYSTEM_PROMPT를 완전히 대체한다 */
+  overrideSystemPrompt?: boolean;
   temperature?: number;
   maxTokens?: number;
   apiKey?: string;
@@ -37,6 +39,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     model,
     maxTurns = Number(process.env.MAX_TURNS) || DEFAULT_MAX_TURNS,
     systemPrompt,
+    overrideSystemPrompt,
     temperature,
     maxTokens,
     apiKey,
@@ -104,13 +107,17 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const subagentGuide = buildSubagentGuide(subagents);
   const basePrompt = `${SYSTEM_PROMPT}${subagentGuide}`;
 
+  const effectiveSystemPrompt = overrideSystemPrompt && systemPrompt
+    ? systemPrompt
+    : systemPrompt
+      ? `${basePrompt}\n\n[사용자 지시사항]\n${systemPrompt}`
+      : basePrompt;
+
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: enhancedMessage,
     options: {
       model: model || DEFAULT_MODEL,
-      systemPrompt: systemPrompt
-        ? `${basePrompt}\n\n[사용자 지시사항]\n${systemPrompt}`
-        : basePrompt,
+      systemPrompt: effectiveSystemPrompt,
       maxTurns,
       ...(temperature !== undefined ? { temperature } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),

@@ -111,6 +111,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     fileIds,
     model,
     systemPrompt,
+    overrideSystemPrompt,
     apiKey,
     cliOauthToken,
     abortSignal,
@@ -198,9 +199,11 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   await writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig(userId, apiBaseUrl, internalToken), null, 2));
 
   const effectiveModel = model ?? DEFAULT_MODEL;
-  const effectiveSystemPrompt = systemPrompt
-    ? `${SYSTEM_PROMPT}\n\n[사용자 지시사항]\n${systemPrompt}`
-    : SYSTEM_PROMPT;
+  const effectiveSystemPrompt = overrideSystemPrompt && systemPrompt
+    ? systemPrompt
+    : systemPrompt
+      ? `${SYSTEM_PROMPT}\n\n[사용자 지시사항]\n${systemPrompt}`
+      : SYSTEM_PROMPT;
 
   const cliArgs = [
     '-p', enhancedMessage,

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -39,14 +40,27 @@ public class ProactiveAiClient {
   }
 
   public ProactiveResult execute(
-      Long userId, String prompt, String context, String apiKey, Map<String, Object> config) {
+      Long userId,
+      String prompt,
+      String context,
+      String apiKey,
+      String agentType,
+      String cliOauthToken,
+      Map<String, Object> template,
+      Map<String, Object> config) {
     try {
-      Map<String, Object> body =
-          Map.of(
-              "prompt", prompt,
-              "context", context != null ? context : "{}",
-              "apiKey", apiKey != null ? apiKey : "",
-              "config", config != null ? config : Map.of());
+      Map<String, Object> body = new HashMap<>();
+      body.put("prompt", prompt);
+      body.put("context", context != null ? context : "{}");
+      body.put("apiKey", apiKey != null ? apiKey : "");
+      body.put("agentType", agentType != null ? agentType : "sdk");
+      body.put("config", config != null ? config : Map.of());
+      if (cliOauthToken != null) {
+        body.put("cliOauthToken", cliOauthToken);
+      }
+      if (template != null) {
+        body.put("template", template);
+      }
 
       String responseBody =
           webClient
@@ -79,7 +93,7 @@ public class ProactiveAiClient {
     Map<String, Object> responseMap =
         objectMapper.readValue(responseBody, new TypeReference<>() {});
 
-    String title = (String) responseMap.getOrDefault("title", "");
+    String title = (String) responseMap.getOrDefault("title", null);
 
     List<Map<String, Object>> rawSections =
         objectMapper.convertValue(

@@ -51,11 +51,12 @@ function buildDefaultValues(job?: {
     if (typeof ch === 'string') {
       return { type: ch as 'CHAT' | 'EMAIL', recipientUserIds: [], recipientEmails: [] };
     }
-    const c = ch as { type?: string; recipientUserIds?: number[]; recipientEmails?: string[] };
+    const c = ch as { type?: string; recipientUserIds?: number[]; recipientEmails?: string[]; attachPdf?: boolean };
     return {
       type: (c.type ?? 'CHAT') as 'CHAT' | 'EMAIL',
       recipientUserIds: c.recipientUserIds ?? [],
       recipientEmails: c.recipientEmails ?? [],
+      ...(c.attachPdf !== undefined && { attachPdf: c.attachPdf }),
     };
   });
 

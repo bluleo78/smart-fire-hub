@@ -34,7 +34,7 @@ public class PdfExportService {
         reportRenderUtils.renderChartImages(templateSections);
     reportRenderUtils.convertChartCidsToDataUris(templateSections, chartImages);
 
-    String title = result.title() != null ? result.title() : jobName;
+    String title = result.title() != null && !result.title().isBlank() ? result.title() : jobName;
 
     Context ctx = new Context();
     ctx.setVariable("title", title);

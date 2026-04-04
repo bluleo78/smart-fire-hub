@@ -22,6 +22,7 @@ export class ClaudeCliChatProvider implements ChatProvider {
       model: options.model,
       maxTurns: options.maxTurns,
       systemPrompt: options.systemPrompt,
+      overrideSystemPrompt: options.overrideSystemPrompt,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
       useSubscription: this.useSubscription,

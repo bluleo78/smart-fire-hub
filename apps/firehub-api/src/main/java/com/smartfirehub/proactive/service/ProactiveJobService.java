@@ -8,17 +8,20 @@ import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
+import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
+import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,6 +40,7 @@ public class ProactiveJobService {
   private final ProactiveJobRepository proactiveJobRepository;
   private final ProactiveJobExecutionRepository executionRepository;
   private final ProactiveMessageRepository messageRepository;
+  private final ReportTemplateRepository reportTemplateRepository;
   private final ProactiveContextCollector contextCollector;
   private final ProactiveAiClient aiClient;
   private final SettingsService settingsService;
@@ -55,6 +59,7 @@ public class ProactiveJobService {
       ProactiveJobRepository proactiveJobRepository,
       ProactiveJobExecutionRepository executionRepository,
       ProactiveMessageRepository messageRepository,
+      ReportTemplateRepository reportTemplateRepository,
       ProactiveContextCollector contextCollector,
       ProactiveAiClient aiClient,
       SettingsService settingsService,
@@ -65,6 +70,7 @@ public class ProactiveJobService {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.messageRepository = messageRepository;
+    this.reportTemplateRepository = reportTemplateRepository;
     this.contextCollector = contextCollector;
     this.aiClient = aiClient;
     this.settingsService = settingsService;
@@ -178,12 +184,32 @@ public class ProactiveJobService {
       // 컨텍스트 수집
       String context = contextCollector.collectContext(job.config(), jobId);
 
-      // AI API 키 조회
+      // 템플릿 조회 (templateId가 있으면 sections/style 포함)
+      Map<String, Object> template = null;
+      if (job.templateId() != null) {
+        var tmpl = reportTemplateRepository.findById(job.templateId());
+        if (tmpl.isPresent()) {
+          template = new HashMap<>();
+          template.put("sections", tmpl.get().sections());
+          template.put("output_format", "structured");
+          if (tmpl.get().style() != null) {
+            template.put("style", tmpl.get().style());
+          }
+        }
+      }
+
+      // AI 설정 조회
+      Map<String, String> aiSettings = settingsService.getAsMap("ai.");
       String apiKey = settingsService.getDecryptedApiKey().orElse("");
+      String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+      String cliOauthToken = null;
+      if ("cli".equals(agentType)) {
+        cliOauthToken = settingsService.getDecryptedCliOauthToken().orElse(null);
+      }
 
       // AI 실행
       ProactiveResult result =
-          aiClient.execute(userId, job.prompt(), context, apiKey, job.config());
+          aiClient.execute(userId, job.prompt(), context, apiKey, agentType, cliOauthToken, template, job.config());
 
       // 결과 저장
       Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});

@@ -13,6 +13,8 @@ export interface ChatProviderOptions {
   model?: string;
   maxTurns?: number;
   systemPrompt?: string;
+  /** true이면 systemPrompt가 기본 SYSTEM_PROMPT를 완전히 대체한다 (프로액티브 등 전용 프롬프트용) */
+  overrideSystemPrompt?: boolean;
   temperature?: number;
   maxTokens?: number;
   abortSignal?: AbortSignal;

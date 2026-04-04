@@ -117,7 +117,8 @@ public class EmailDeliveryChannel implements DeliveryChannel {
           MimeMessageHelper helper = new MimeMessageHelper(message, multipart, "UTF-8");
           helper.setFrom(fromAddress);
           helper.setTo(toAddress);
-          helper.setSubject("[Smart Fire Hub] " + result.title());
+          String emailTitle = result.title() != null && !result.title().isBlank() ? result.title() : job.name();
+          helper.setSubject("[Smart Fire Hub] " + emailTitle);
           helper.setText(html, true);
 
           for (ChartImage chart : chartImages) {
@@ -126,7 +127,7 @@ public class EmailDeliveryChannel implements DeliveryChannel {
           }
 
           if (finalPdfBytes != null) {
-            String pdfName = (result.title() != null ? result.title() : job.name()) + ".pdf";
+            String pdfName = (result.title() != null && !result.title().isBlank() ? result.title() : job.name()) + ".pdf";
             helper.addAttachment(pdfName, new ByteArrayResource(finalPdfBytes), "application/pdf");
           }
 

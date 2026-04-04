@@ -39,6 +39,14 @@ public class ProactiveJobController {
     return ResponseEntity.ok(proactiveJobService.getJobs(userId));
   }
 
+  @GetMapping("/{id}")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<ProactiveJobResponse> getJob(
+      @PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(proactiveJobService.getJob(id, userId));
+  }
+
   @PostMapping
   @RequirePermission("proactive:write")
   public ResponseEntity<ProactiveJobResponse> createJob(

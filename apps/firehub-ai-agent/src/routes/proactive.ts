@@ -1,9 +1,8 @@
 import express, { Router, Request, Response } from 'express';
-import axios from 'axios';
-import { z } from 'zod/v4';
+import fs from 'fs/promises';
+import { ProviderFactory } from '../providers/index.js';
+import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { internalAuth } from '../middleware/auth.js';
-import { FireHubApiClient } from '../mcp/api-client.js';
-import { buildAllMcpTools } from '../mcp/firehub-mcp-server.js';
 
 const router = Router();
 
@@ -31,6 +30,8 @@ interface ProactiveRequest {
   model?: string;
   apiKey?: string;
   userId?: number;
+  agentType?: string;
+  cliOauthToken?: string;
 }
 
 interface OutputSection {
@@ -49,82 +50,7 @@ interface ProactiveResponse {
   };
 }
 
-interface AnthropicTextBlock {
-  type: 'text';
-  text: string;
-}
-
-interface AnthropicToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock;
-
-interface AnthropicToolResultBlock {
-  type: 'tool_result';
-  tool_use_id: string;
-  content: string;
-}
-
-interface AnthropicResponse {
-  content: AnthropicContentBlock[];
-  stop_reason: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
-}
-
-interface AnthropicToolDefinition {
-  name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-}
-
 const MAX_TOOL_TURNS = 10;
-
-interface McpTool {
-  name: string;
-  description: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: Record<string, any>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handler: (args: any, extra: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }>;
-}
-
-function buildToolDefinitions(tools: McpTool[]): AnthropicToolDefinition[] {
-  return tools.map((t) => {
-    const schema = z.toJSONSchema(z.object(t.inputSchema)) as Record<string, unknown>;
-    // Remove $schema field not accepted by Anthropic API
-    delete schema['$schema'];
-    return {
-      name: t.name,
-      description: t.description,
-      input_schema: schema,
-    };
-  });
-}
-
-async function executeMcpTool(
-  tools: McpTool[],
-  name: string,
-  input: Record<string, unknown>,
-): Promise<string> {
-  const tool = tools.find((t) => t.name === name);
-  if (!tool) {
-    return JSON.stringify({ error: `Tool '${name}' not found` });
-  }
-  try {
-    const result = await tool.handler(input as never, {});
-    return result.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return JSON.stringify({ error: message });
-  }
-}
 
 export function buildSectionPrompt(sections: TemplateSection[], depth = 1): string {
   let prompt = '';
@@ -170,33 +96,51 @@ export function buildSectionPrompt(sections: TemplateSection[], depth = 1): stri
   return prompt;
 }
 
-function buildProactiveSystemPrompt(template?: Template): string {
+function buildProactiveSystemPrompt(template: Template | undefined, reportFilePath: string): string {
   let prompt =
-    '당신은 프로액티브 AI 분석가입니다. 주어진 컨텍스트와 데이터를 분석하여 인사이트를 제공합니다.\n' +
-    '응답은 반드시 한국어로 작성하세요.\n\n' +
-    '필요한 데이터가 컨텍스트에 없으면 도구를 사용하여 직접 조회하세요.\n' +
-    '데이터셋 데이터 조회: query_dataset_data, 데이터 스키마 조회: get_data_schema,\n' +
-    '데이터셋 목록 조회: list_datasets, 데이터셋 상세 조회: get_dataset.\n\n';
-
-  prompt +=
-    '## 분석 원칙\n' +
-    '- 데이터 나열이 아닌 인사이트 중심으로 서술하세요.\n' +
-    '- "왜 이 수치가 변했는가"를 파악하고, 가능한 원인을 제시하세요.\n' +
-    '- 컨텍스트에 previousExecutions(이전 실행 결과)가 있으면 비교하여 변화 추이를 언급하세요.\n' +
-    '- 변화를 언급할 때는 절대값과 변화율(%)을 함께 제시하세요.\n' +
-    '- 확신이 낮으면 "~로 보입니다", "확인이 필요합니다" 등으로 표현하세요.\n' +
-    '- 권고사항은 "무엇을 해야 하는가"를 구체적으로 제시하세요.\n\n';
+    '당신은 프로액티브 AI 분석가입니다. 응답은 반드시 한국어로 작성하세요.\n\n' +
+    '## 작업 절차\n\n' +
+    '1. **분석**: 컨텍스트 데이터를 분석하세요. 필요하면 도구로 추가 데이터를 수집하세요.\n' +
+    '   - 데이터셋 조회: query_dataset_data, get_data_schema, list_datasets, get_dataset\n' +
+    '   - 웹 검색: WebSearch\n' +
+    '2. **리포트 작성 위임**: 분석이 완료되면 **report-writer** 에이전트에게 리포트 작성을 위임하세요.\n\n' +
+    '## report-writer 위임 방법\n\n' +
+    'Agent 도구로 report-writer를 호출하세요. 프롬프트에 다음을 **모두** 포함하세요:\n\n' +
+    '1. **분석 결과**: 수집/분석한 데이터와 인사이트\n' +
+    '2. **리포트 양식**: 아래 제공되는 섹션 구조와 지시문\n' +
+    `3. **파일 저장 경로**: ${reportFilePath}\n\n` +
+    '**중요**: generate_report, show_chart 등 UI 도구를 호출하지 마세요. 리포트 생성은 반드시 report-writer에게 위임하세요.\n\n';
 
   if (template) {
+    prompt += '## 리포트 양식 (report-writer에게 전달할 것)\n\n';
     if (template.style) {
-      prompt += `## 작성 스타일\n${template.style}\n\n`;
+      prompt += `작성 스타일: ${template.style}\n\n`;
     }
-
-    prompt += `출력 형식: ${template.output_format}\n\n`;
-    prompt += '다음 섹션 구조에 따라 응답을 작성하세요. 각 섹션은 헤더(##, ###, ####)로 구분합니다:\n\n';
-
-    prompt += buildSectionPrompt(template.sections);
+    prompt += '섹션 구조:\n';
+    for (const section of template.sections) {
+      if (section.static || section.type === 'divider') continue;
+      if (section.type === 'group') {
+        prompt += `\n### ${section.label}\n`;
+        if (section.instruction) prompt += `  지시: ${section.instruction}\n`;
+        if (section.children) {
+          for (const child of section.children) {
+            prompt += `  - ${child.label} (key: ${child.key}, type: ${child.type || 'text'})`;
+            if (child.instruction) prompt += `: ${child.instruction}`;
+            prompt += '\n';
+          }
+        }
+        continue;
+      }
+      prompt += `- ${section.label} (key: ${section.key}, type: ${section.type || 'text'})`;
+      if (section.instruction) prompt += `: ${section.instruction}`;
+      prompt += '\n';
+    }
+  } else {
+    prompt += '## 리포트 양식\n\n';
+    prompt += '양식 없음. 자유 형식으로 분석 결과 리포트를 작성하도록 위임하세요.\n';
   }
+
+  prompt += `\n리포트 파일 경로: ${reportFilePath}\n`;
 
   return prompt;
 }
@@ -240,15 +184,35 @@ export function parseSections(text: string, template?: Template): OutputSection[
   }
 
   function findContentForLabel(label: string): string {
-    const parts = text.split(/^#{2,4}\s+/m);
-    const matchingPart = parts.find((part) => {
-      const firstLine = part.split('\n')[0].trim();
-      return firstLine === label;
-    });
-    if (!matchingPart) return '';
-    const lines = matchingPart.split('\n');
-    lines.shift();
-    return lines.join('\n').trim();
+    // 헤더(##, ###, ####)와 그 레벨을 찾아서 매칭
+    const headerRegex = /^(#{2,4})\s+(.+)$/gm;
+    let matchStart = -1;
+    let matchLevel = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = headerRegex.exec(text)) !== null) {
+      const level = match[1].length;
+      const headerLabel = match[2].trim();
+
+      if (matchStart === -1) {
+        // 라벨 매칭 (정확 일치 또는 포함 매칭)
+        if (headerLabel === label || headerLabel.replace(/[^\w가-힣\s]/g, '').trim() === label) {
+          matchStart = match.index + match[0].length;
+          matchLevel = level;
+        }
+      } else {
+        // 같은 레벨 이상의 다음 헤더를 만나면 종료
+        if (level <= matchLevel) {
+          return text.substring(matchStart, match.index).trim();
+        }
+      }
+    }
+
+    // 마지막 섹션인 경우
+    if (matchStart !== -1) {
+      return text.substring(matchStart).trim();
+    }
+    return '';
   }
 
   function processSections(templateSections: TemplateSection[]): OutputSection[] {
@@ -297,93 +261,77 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     return;
   }
 
-  const apiKey = body.apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const agentType = (body.agentType || 'sdk') as AgentType;
+  const apiKey = body.apiKey || process.env.ANTHROPIC_API_KEY || '';
+
+  // SDK/cli-api 모드에서는 API 키 필수, CLI 모드에서는 불필요 (구독 인증 사용)
+  if (agentType !== 'cli' && !apiKey) {
     res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' });
     return;
   }
 
   const model = body.model || 'claude-haiku-4-5-20251001';
-  const systemPrompt = buildProactiveSystemPrompt(body.template);
+  const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
+  const reportFilePath = `/tmp/proactive-report-${Date.now()}-${userId}.md`;
+  const systemPrompt = buildProactiveSystemPrompt(body.template, reportFilePath);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context, null, 2)}`;
 
-  // Build MCP tools for this request
-  const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
-  const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-  const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
-  const mcpTools: McpTool[] = buildAllMcpTools(apiClient);
-  const toolDefinitions = buildToolDefinitions(mcpTools);
+  const providerConfig: ProviderConfig = {
+    agentType,
+    apiKey: apiKey || undefined,
+    cliOauthToken: body.cliOauthToken || undefined,
+    model: model,
+  };
+  const provider = ProviderFactory.createChatProvider(providerConfig);
 
-  type MessageParam =
-    | { role: 'user'; content: string | AnthropicToolResultBlock[] }
-    | { role: 'assistant'; content: AnthropicContentBlock[] };
+  const events = provider.execute({
+    message: initialUserMessage,
+    userId,
+    model,
+    systemPrompt: systemPrompt,
+    overrideSystemPrompt: true,
+    maxTurns: 15,
+  });
 
-  const messages: MessageParam[] = [{ role: 'user', content: initialUserMessage }];
+  let rawText = '';
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  let rawText = '';
 
   try {
-    for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-      const response = await axios.post<AnthropicResponse>(
-        'https://api.anthropic.com/v1/messages',
-        {
-          model,
-          max_tokens: 4096,
-          system: systemPrompt,
-          messages,
-          tools: toolDefinitions,
-        },
-        {
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-        },
-      );
-
-      totalInputTokens += response.data.usage.input_tokens;
-      totalOutputTokens += response.data.usage.output_tokens;
-
-      if (response.data.stop_reason === 'end_turn') {
-        rawText = response.data.content
-          .filter((block): block is AnthropicTextBlock => block.type === 'text')
-          .map((block) => block.text)
-          .join('');
-        break;
-      }
-
-      if (response.data.stop_reason === 'tool_use') {
-        messages.push({ role: 'assistant', content: response.data.content });
-
-        const toolUseBlocks = response.data.content.filter(
-          (block): block is AnthropicToolUseBlock => block.type === 'tool_use',
-        );
-        const toolResults: AnthropicToolResultBlock[] = await Promise.all(
-          toolUseBlocks.map(async (block) => ({
-            type: 'tool_result' as const,
-            tool_use_id: block.id,
-            content: await executeMcpTool(mcpTools, block.name, block.input),
-          })),
-        );
-        messages.push({ role: 'user', content: toolResults });
-      } else {
-        // Unexpected stop reason — extract text and stop
-        rawText = response.data.content
-          .filter((block): block is AnthropicTextBlock => block.type === 'text')
-          .map((block) => block.text)
-          .join('');
-        break;
+    for await (const event of events) {
+      if (event.type === 'text') {
+        rawText += event.content;
+      } else if (event.type === 'done' || event.type === 'error') {
+        totalInputTokens = (event.inputTokens as number) || 0;
+        totalOutputTokens = (event.outputTokens as number) || 0;
+        if (event.type === 'error') {
+          throw new Error((event.message as string) || 'Agent execution failed');
+        }
       }
     }
 
-    const sections = parseSections(rawText, body.template);
+    // report-writer가 생성한 파일에서 리포트 내용 읽기
+    let reportContent = '';
+    let fromFile = false;
+    try {
+      reportContent = await fs.readFile(reportFilePath, 'utf-8');
+      fromFile = true;
+      console.log(`[Proactive] Report file read: ${reportFilePath} (${reportContent.length} bytes)`);
+    } catch {
+      console.warn(`[Proactive] Report file not found: ${reportFilePath}, falling back to rawText`);
+      reportContent = rawText;
+    }
+
+    // 파일에서 읽은 경우 파일 내용을 그대로 단일 섹션으로 반환 (HTML/마크다운 등 에이전트가 결정한 포맷)
+    // rawText 폴백인 경우 기존 parseSections 사용
+    const sections = fromFile
+      ? [{ key: 'content', label: body.template?.sections?.[0]?.label || '분석 결과', content: reportContent }]
+      : parseSections(reportContent, body.template);
+    console.log(`[Proactive] ${fromFile ? 'file' : 'rawText'} → ${sections.length} sections`);
 
     const result: ProactiveResponse = {
       sections,
-      rawText,
+      rawText: reportContent,
       usage: {
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
@@ -394,7 +342,10 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Proactive] Error:', errorMessage);
-    res.status(500).json({ error: 'Claude API call failed', details: errorMessage });
+    res.status(500).json({ error: 'Agent execution failed', details: errorMessage });
+  } finally {
+    // 임시 파일 정리
+    fs.unlink(reportFilePath).catch(() => {});
   }
 });
 

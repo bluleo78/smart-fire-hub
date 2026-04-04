@@ -2,23 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import proactiveRouter, { buildSectionPrompt, parseSections } from './proactive.js';
 
-const mockAxiosPost = vi.hoisted(() => vi.fn());
-const mockAxiosInstance = vi.hoisted(() => ({
-  get: vi.fn(),
-  post: vi.fn(),
-  put: vi.fn(),
-  patch: vi.fn(),
-  delete: vi.fn(),
-  interceptors: {
-    request: { use: vi.fn() },
-    response: { use: vi.fn() },
-  },
-}));
+const mockExecute = vi.hoisted(() => vi.fn());
 
-vi.mock('axios', () => ({
-  default: {
-    post: mockAxiosPost,
-    create: vi.fn(() => mockAxiosInstance),
+vi.mock('../providers/index.js', () => ({
+  ProviderFactory: {
+    createChatProvider: vi.fn(() => ({
+      execute: mockExecute,
+    })),
   },
 }));
 
@@ -124,12 +114,13 @@ describe('Proactive routes — integration tests', () => {
       JSON.stringify(cardsData) +
       '\n```\n';
 
-    mockAxiosPost.mockResolvedValue({
-      data: {
-        content: [{ type: 'text', text: rawText }],
-        usage: { input_tokens: 100, output_tokens: 200 },
-      },
-    });
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'text', content: rawText };
+        yield { type: 'done', inputTokens: 100, outputTokens: 200 };
+      })(),
+    );
 
     const app = createApp();
     const res = await makeRequest(
@@ -170,12 +161,13 @@ describe('Proactive routes — integration tests', () => {
   it('TC4: POST /agent/proactive without template returns free-form response', async () => {
     const freeText = '자유 형식의 분석 결과입니다. 데이터를 바탕으로 인사이트를 제공합니다.';
 
-    mockAxiosPost.mockResolvedValue({
-      data: {
-        content: [{ type: 'text', text: freeText }],
-        usage: { input_tokens: 50, output_tokens: 80 },
-      },
-    });
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'text', content: freeText };
+        yield { type: 'done', inputTokens: 50, outputTokens: 80 };
+      })(),
+    );
 
     const app = createApp();
     const res = await makeRequest(
