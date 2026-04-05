@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bot, ExternalLink } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import ReportModal from '@/components/ai/ReportModal';
 import type { ProactiveMessage as ProactiveMessageType } from '../../api/proactive';
 import { getSections } from '../../lib/proactive-utils';
 
@@ -17,6 +18,8 @@ interface ProactiveMessageProps {
 const REMARK_PLUGINS = [remarkGfm];
 
 export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveMessageProps) {
+  // 리포트 모달 열림 상태
+  const [reportModalOpen, setReportModalOpen] = useState(false);
   const isUnread = !message.read;
   const sections = getSections(message.content);
   // ChatDeliveryChannel이 저장한 jobId/executionId — 리포트 보기 링크 생성에 사용
@@ -86,18 +89,26 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
       {/* Footer — 리포트 보기 링크 (jobId/executionId가 있을 때) + 자세히 분석하기 */}
       <div className="px-3 pb-3 flex gap-2">
         {jobId && executionId && (
-          <Button
-            variant="default"
-            size="sm"
-            className="h-7 text-xs"
-            asChild
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Link to={`/ai-insights/jobs/${jobId}/executions/${executionId}/report`}>
+          <>
+            <Button
+              variant="default"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                setReportModalOpen(true);
+              }}
+            >
               <ExternalLink className="h-3 w-3 mr-1" />
               리포트 보기
-            </Link>
-          </Button>
+            </Button>
+            <ReportModal
+              open={reportModalOpen}
+              onClose={() => setReportModalOpen(false)}
+              jobId={Number(jobId)}
+              executionId={Number(executionId)}
+            />
+          </>
         )}
         <Button
           variant="outline"
