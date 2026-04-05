@@ -262,9 +262,9 @@ export default function ExecutionDetailPage() {
               </div>
             </div>
 
-            {/* 흰색 배경 위에 iframe 렌더링 */}
-            <div className="bg-white" style={{ minHeight: '500px' }}>
-              <ReportIframe ref={iframeRef} html={rawHtml} className="min-h-[500px]" />
+            {/* 흰색 배경 위에 iframe 렌더링 — 콘텐츠 높이에 맞춰 자동 조절 */}
+            <div className="bg-white">
+              <ReportIframe ref={iframeRef} html={rawHtml} autoHeight />
             </div>
           </div>
         </>
