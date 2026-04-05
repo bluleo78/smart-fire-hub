@@ -172,6 +172,9 @@ export const proactiveApi = {
     client.post<ProactiveJobExecution>(`/proactive/jobs/${id}/execute`),
   getJobExecutions: (jobId: number, params?: { limit?: number; offset?: number }) =>
     client.get<ProactiveJobExecution[]>(`/proactive/jobs/${jobId}/executions`, { params }),
+  /** 단건 실행 조회 — 실행 상세 페이지용 */
+  getExecution: (jobId: number, executionId: number) =>
+    client.get<ProactiveJobExecution>(`/proactive/jobs/${jobId}/executions/${executionId}`),
   searchRecipients: (search?: string) =>
     client.get<RecipientResponse[]>('/proactive/jobs/recipients', { params: { search } }),
 

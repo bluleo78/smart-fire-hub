@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type {
@@ -113,6 +114,27 @@ export function useJobExecutions(
     enabled: !!jobId,
     refetchInterval: options?.refetchInterval,
   });
+}
+
+/**
+ * 단건 실행 조회 훅 — 실행 상세 페이지에서 사용.
+ * RUNNING 상태일 때 5초 간격으로 자동 폴링하여 완료를 감지한다.
+ */
+export function useExecution(jobId: number, executionId: number) {
+  const [refetchInterval, setRefetchInterval] = useState<number | false>(false);
+
+  const result = useQuery({
+    queryKey: [...KEYS.executions(jobId), executionId],
+    queryFn: () => proactiveApi.getExecution(jobId, executionId).then((r) => r.data),
+    enabled: !!jobId && !!executionId,
+    refetchInterval,
+  });
+
+  useEffect(() => {
+    setRefetchInterval(result.data?.status === 'RUNNING' ? 5000 : false);
+  }, [result.data?.status]);
+
+  return result;
 }
 
 export function useRecipientSearch(search: string) {
