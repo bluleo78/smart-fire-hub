@@ -238,6 +238,11 @@ public class ProactiveJobService {
         }
       }
 
+      // 실제 전달된 채널 목록을 DB에 저장
+      if (!deliveredChannels.isEmpty()) {
+        executionRepository.updateDeliveredChannels(executionId, deliveredChannels);
+      }
+
       // 마지막 실행 시간 업데이트
       proactiveJobRepository.updateLastExecuted(jobId, LocalDateTime.now(), null);
 

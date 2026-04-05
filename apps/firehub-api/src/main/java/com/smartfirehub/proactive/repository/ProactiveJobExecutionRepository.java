@@ -41,6 +41,10 @@ public class ProactiveJobExecutionRepository {
   private static final Field<LocalDateTime> PJE_CREATED_AT =
       field(name("proactive_job_execution", "created_at"), LocalDateTime.class);
 
+  /** 실제 전달된 채널 목록 (쉼표 구분 문자열, 예: "CHAT,EMAIL") */
+  private static final Field<String> PJE_DELIVERED_CHANNELS =
+      field(name("proactive_job_execution", "delivered_channels"), String.class);
+
   public Long create(Long jobId) {
     return dsl.insertInto(PROACTIVE_JOB_EXECUTION)
         .set(PJE_JOB_ID, jobId)
@@ -90,6 +94,7 @@ public class ProactiveJobExecutionRepository {
             PJE_COMPLETED_AT,
             PJE_ERROR_MESSAGE,
             PJE_RESULT,
+            PJE_DELIVERED_CHANNELS,
             PJE_CREATED_AT)
         .from(PROACTIVE_JOB_EXECUTION)
         .where(PJE_JOB_ID.eq(jobId))
@@ -108,10 +113,20 @@ public class ProactiveJobExecutionRepository {
             PJE_COMPLETED_AT,
             PJE_ERROR_MESSAGE,
             PJE_RESULT,
+            PJE_DELIVERED_CHANNELS,
             PJE_CREATED_AT)
         .from(PROACTIVE_JOB_EXECUTION)
         .where(PJE_ID.eq(id))
         .fetchOptional(r -> toResponse(r));
+  }
+
+  /** 실행 완료 후 실제 전달된 채널 목록을 DB에 저장한다. 쉼표 구분 문자열로 저장 (예: "CHAT,EMAIL"). */
+  public void updateDeliveredChannels(Long executionId, List<String> channels) {
+    String value = (channels != null && !channels.isEmpty()) ? String.join(",", channels) : null;
+    dsl.update(PROACTIVE_JOB_EXECUTION)
+        .set(PJE_DELIVERED_CHANNELS, value)
+        .where(PJE_ID.eq(executionId))
+        .execute();
   }
 
   private ProactiveJobExecutionResponse toResponse(org.jooq.Record r) {
@@ -121,6 +136,10 @@ public class ProactiveJobExecutionRepository {
           resultJsonb != null
               ? objectMapper.readValue(resultJsonb.data(), new TypeReference<>() {})
               : null;
+      // deliveredChannels: 쉼표로 구분된 문자열을 리스트로 변환
+      String channelsStr = r.get(PJE_DELIVERED_CHANNELS);
+      List<String> channels =
+          (channelsStr != null && !channelsStr.isBlank()) ? List.of(channelsStr.split(",")) : null;
       return new ProactiveJobExecutionResponse(
           r.get(PJE_ID),
           r.get(PJE_JOB_ID),
@@ -129,7 +148,7 @@ public class ProactiveJobExecutionRepository {
           r.get(PJE_COMPLETED_AT),
           r.get(PJE_ERROR_MESSAGE),
           result,
-          null,
+          channels,
           r.get(PJE_CREATED_AT));
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize result", e);
