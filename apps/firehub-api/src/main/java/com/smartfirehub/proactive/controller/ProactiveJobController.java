@@ -102,6 +102,22 @@ public class ProactiveJobController {
     return ResponseEntity.ok(proactiveJobService.getExecutions(id, userId, limit, offset));
   }
 
+  /** 단건 실행 조회 — 실행 상세 페이지에서 사용. jobId와 executionId의 소속 관계를 검증한 뒤 반환한다. */
+  @GetMapping("/{jobId}/executions/{executionId}")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<ProactiveJobExecutionResponse> getExecution(
+      @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    // Job 소유권 검증
+    proactiveJobService.getJob(jobId, userId);
+    // 실행 조회 + jobId 소속 검증
+    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
+    if (!jobId.equals(execution.jobId())) {
+      return ResponseEntity.notFound().build();
+    }
+    return ResponseEntity.ok(execution);
+  }
+
   @GetMapping("/{jobId}/executions/{executionId}/pdf")
   @RequirePermission("proactive:read")
   public ResponseEntity<byte[]> downloadExecutionPdf(

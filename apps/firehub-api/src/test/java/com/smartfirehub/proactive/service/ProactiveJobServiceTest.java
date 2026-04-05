@@ -66,7 +66,9 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     return new ProactiveResult(
         "테스트 리포트",
         List.of(new ProactiveResult.Section("summary", "요약", "요약 내용", null, null)),
-        new ProactiveResult.Usage(100, 50, 150));
+        new ProactiveResult.Usage(100, 50, 150),
+        null,
+        null);
   }
 
   // ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -214,5 +216,39 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
     assertThat(executions).hasSize(1);
     assertThat(executions.get(0).status()).isEqualTo("COMPLETED");
+  }
+
+  // ── 단건 실행 조회 ──────────────────────────────────────────────────────────────
+
+  /** 단건 실행 조회 — 정상 케이스 */
+  @Test
+  void getExecution_returns_single_execution() {
+    ProactiveJobResponse job =
+        proactiveJobService.createJob(buildCreateRequest("단건조회테스트"), testUserId);
+
+    Long execId =
+        dsl.insertInto(PROACTIVE_JOB_EXECUTION)
+            .set(PROACTIVE_JOB_EXECUTION.JOB_ID, job.id())
+            .set(PROACTIVE_JOB_EXECUTION.STATUS, "COMPLETED")
+            .set(PROACTIVE_JOB_EXECUTION.STARTED_AT, java.time.LocalDateTime.now().minusMinutes(5))
+            .set(PROACTIVE_JOB_EXECUTION.COMPLETED_AT, java.time.LocalDateTime.now())
+            .returning(PROACTIVE_JOB_EXECUTION.ID)
+            .fetchOne()
+            .getId();
+
+    var result = proactiveJobService.getExecution(execId);
+
+    assertThat(result).isNotNull();
+    assertThat(result.id()).isEqualTo(execId);
+    assertThat(result.jobId()).isEqualTo(job.id());
+    assertThat(result.status()).isEqualTo("COMPLETED");
+  }
+
+  /** 단건 실행 조회 — 존재하지 않는 ID */
+  @Test
+  void getExecution_throws_when_not_found() {
+    assertThatThrownBy(() -> proactiveJobService.getExecution(999999L))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("999999");
   }
 }

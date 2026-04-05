@@ -45,7 +45,7 @@ class EmailDeliveryChannelTest extends IntegrationTestBase {
   }
 
   private ProactiveResult makeResult() {
-    return new ProactiveResult("Test Report", List.of(), null);
+    return new ProactiveResult("Test Report", List.of(), null, null, null);
   }
 
   private ProactiveJobResponse makeJob(Long userId, Map<String, Object> config) {

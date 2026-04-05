@@ -36,7 +36,9 @@ class PdfExportServiceTest extends IntegrationTestBase {
         new ProactiveResult(
             "테스트 리포트",
             List.of(new ProactiveResult.Section("summary", "요약", "테스트 내용입니다.", "text", null)),
-            new ProactiveResult.Usage(100, 200, 300));
+            new ProactiveResult.Usage(100, 200, 300),
+            null,
+            null);
 
     // when
     byte[] pdf = pdfExportService.generatePdf(result, "테스트 Job");
@@ -70,7 +72,9 @@ class PdfExportServiceTest extends IntegrationTestBase {
         new ProactiveResult(
             "통계 리포트",
             List.of(new ProactiveResult.Section("stats", "통계", null, "cards", null)),
-            new ProactiveResult.Usage(50, 100, 150));
+            new ProactiveResult.Usage(50, 100, 150),
+            null,
+            null);
 
     // when
     byte[] pdf = pdfExportService.generatePdf(result, "통계 Job");
@@ -87,7 +91,7 @@ class PdfExportServiceTest extends IntegrationTestBase {
     when(reportRenderUtils.renderChartImages(anyList())).thenReturn(List.of());
 
     ProactiveResult result =
-        new ProactiveResult("빈 리포트", List.of(), new ProactiveResult.Usage(10, 20, 30));
+        new ProactiveResult("빈 리포트", List.of(), new ProactiveResult.Usage(10, 20, 30), null, null);
 
     // when
     byte[] pdf = pdfExportService.generatePdf(result, "빈 Job");

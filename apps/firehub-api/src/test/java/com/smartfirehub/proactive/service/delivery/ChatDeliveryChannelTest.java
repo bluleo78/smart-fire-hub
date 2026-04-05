@@ -28,7 +28,7 @@ class ChatDeliveryChannelTest extends IntegrationTestBase {
   @MockitoBean private SseEmitterRegistry sseRegistry;
 
   private ProactiveResult makeResult() {
-    return new ProactiveResult("Test Report", List.of(), null);
+    return new ProactiveResult("Test Report", List.of(), null, null, null);
   }
 
   /**
