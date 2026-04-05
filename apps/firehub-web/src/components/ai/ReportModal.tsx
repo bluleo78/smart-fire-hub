@@ -6,7 +6,7 @@
  * 하단에 "실행 상세 보기" 링크로 상세 페이지 진입 가능.
  */
 
-import { ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
+import { ExternalLink, FileDown, Loader2, Printer, XIcon } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate } from 'react-router-dom';
@@ -136,7 +136,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-5xl h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="sm:max-w-5xl h-[85vh] flex flex-col p-0 gap-0" showCloseButton={false}>
         {/* 헤더 — 제목, 상태 뱃지, 시간, 액션 버튼 */}
         <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b shrink-0 space-y-0">
           <div className="flex items-center gap-3">
@@ -189,6 +189,17 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
               >
                 <ExternalLink className="h-4 w-4" />
               </Link>
+            </Button>
+            {/* 닫기 — p-0 레이아웃에서 기본 close 버튼이 겹치므로 헤더에 배치 */}
+            <div className="w-px h-5 bg-border mx-1" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              title="닫기"
+              className="h-8 w-8"
+            >
+              <XIcon className="h-4 w-4" />
             </Button>
           </div>
         </DialogHeader>
