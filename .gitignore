@@ -53,6 +53,7 @@ SKILL.md
 **/src/main/generated/
 
 # Logs
+logs/
 *.log
 
 # Superpowers

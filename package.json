@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "lsof -ti:8080,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev",
+    "dev": "mkdir -p logs && lsof -ti:8080,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev 2>&1 | tee logs/dev-server.log",
+    "dev:full": "pnpm db:up && mkdir -p logs && lsof -ti:8080,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev 2>&1 | tee logs/dev-server.log",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
@@ -12,8 +13,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d",
-    "db:logs": "docker compose logs -f db",
-    "dev:full": "pnpm db:up && lsof -ti:8080,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev"
+    "db:logs": "docker compose logs -f db"
   },
   "devDependencies": {
     "turbo": "^2.5.0"
