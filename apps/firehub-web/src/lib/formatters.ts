@@ -91,6 +91,25 @@ export function getStatusLabel(status: string): string {
 }
 
 /**
+ * 두 시점 사이의 경과 시간을 사람이 읽기 쉬운 형태로 반환한다.
+ * completedAt이 null이면 "-"를 반환한다.
+ * 예: "45초", "2분 30초", "1시간 5분"
+ */
+export function formatDuration(startedAt: string, completedAt: string | null): string {
+  if (!completedAt) return '-';
+  const diffMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (diffMs < 0) return '-';
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  const remainSec = seconds % 60;
+  if (minutes < 60) return remainSec > 0 ? `${minutes}분 ${remainSec}초` : `${minutes}분`;
+  const hours = Math.floor(minutes / 60);
+  const remainMin = minutes % 60;
+  return remainMin > 0 ? `${hours}시간 ${remainMin}분` : `${hours}시간`;
+}
+
+/**
  * 상대 시간 포맷 (date string → "N분 전")
  */
 export function timeAgo(dateStr: string): string {

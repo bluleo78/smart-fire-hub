@@ -11,51 +11,30 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate, useParams } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
-import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { downloadBlob } from '@/lib/download';
-import { classifyError } from '@/lib/error-classifier';
-import { formatDate, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { getSections } from '@/lib/proactive-utils';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
+import { useReportActions } from '@/hooks/useReportActions';
+import { classifyError } from '@/lib/error-classifier';
+import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { getSections } from '@/lib/proactive-utils';
 
 /** 마크다운 렌더링용 prose 클래스 */
 const PROSE_CLASSES = 'prose prose-sm dark:prose-invert max-w-none';
 const REMARK_PLUGINS = [remarkGfm];
 
-/**
- * 두 날짜 문자열 사이의 경과 시간을 사람이 읽기 쉬운 형태로 반환한다.
- * 예: "2분 30초", "1시간 5분"
- */
-function formatDuration(startedAt: string, completedAt: string | null): string {
-  if (!completedAt) return '-';
-  const diffMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
-  if (diffMs < 0) return '-';
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds}초`;
-  const minutes = Math.floor(seconds / 60);
-  const remainSec = seconds % 60;
-  if (minutes < 60) return remainSec > 0 ? `${minutes}분 ${remainSec}초` : `${minutes}분`;
-  const hours = Math.floor(minutes / 60);
-  const remainMin = minutes % 60;
-  return remainMin > 0 ? `${hours}시간 ${remainMin}분` : `${hours}시간`;
-}
-
 export default function ExecutionDetailPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
   const navigate = useNavigate();
-  const [downloading, setDownloading] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // URL params를 숫자로 변환
   const jobIdNum = Number(jobId);
   const executionIdNum = Number(executionId);
 
@@ -71,28 +50,12 @@ export default function ExecutionDetailPage() {
 
   const rawHtml = htmlResponse?.data ?? null;
 
-  // PDF 다운로드 핸들러
-  const handleDownloadPdf = useCallback(async () => {
-    setDownloading(true);
-    try {
-      const response = await proactiveApi.downloadExecutionPdf(jobIdNum, executionIdNum);
-      downloadBlob(`report-${executionIdNum}.pdf`, response.data as Blob);
-    } catch {
-      toast.error('PDF 다운로드에 실패했습니다.');
-    } finally {
-      setDownloading(false);
-    }
-  }, [jobIdNum, executionIdNum]);
-
-  // 인쇄 핸들러 — iframe 내부 문서를 인쇄한다
-  const handlePrint = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.print();
-    } else {
-      window.print();
-    }
-  }, []);
+  // PDF 다운로드 + 인쇄 공통 훅
+  const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
+    jobId: jobIdNum,
+    executionId: executionIdNum,
+    iframeRef,
+  });
 
   // 로딩 상태
   if (isLoading) {

@@ -7,11 +7,10 @@
  */
 
 import { ExternalLink, FileDown, Loader2, Printer, XIcon } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
-import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
@@ -24,7 +23,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { downloadBlob } from '@/lib/download';
+import { useExecution } from '@/hooks/queries/useProactiveMessages';
+import { useReportActions } from '@/hooks/useReportActions';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { getSections } from '@/lib/proactive-utils';
 import { useQuery } from '@tanstack/react-query';
@@ -52,56 +52,26 @@ interface ReportModalProps {
 export default function ReportModal({ open, onClose, jobId, executionId }: ReportModalProps) {
   const navigate = useNavigate();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [downloading, setDownloading] = useState(false);
 
   // HTML 리포트 조회 — 모달이 열려 있고 유효한 ID일 때만 fetch
-  const {
-    data: htmlResponse,
-    isLoading: htmlLoading,
-  } = useQuery({
+  const { data: htmlResponse, isLoading: htmlLoading } = useQuery({
     queryKey: ['execution-html', jobId, executionId],
     queryFn: () => proactiveApi.getExecutionHtml(jobId, executionId),
     enabled: open && !!jobId && !!executionId,
   });
 
-  // 실행 메타데이터 조회 — 상태 뱃지, 시간 표시에 사용
-  const {
-    data: execution,
-    isLoading: metaLoading,
-  } = useQuery({
-    queryKey: ['proactive', 'executions', jobId, executionId],
-    queryFn: () => proactiveApi.getExecution(jobId, executionId).then((r) => r.data),
-    enabled: open && !!jobId && !!executionId,
-  });
+  // 실행 메타데이터 조회 — useExecution 훅으로 통일 (RUNNING 시 폴링 포함)
+  const { data: execution, isLoading: metaLoading } = useExecution(jobId, executionId);
 
-  /** HTML 문자열 추출 (axios response.data) */
   const rawHtml = htmlResponse?.data ?? null;
-
-  /** 전체 로딩 상태 — HTML과 메타 둘 다 로딩 중이면 true */
   const isLoading = htmlLoading || metaLoading;
 
-  // PDF 다운로드 핸들러 — ReportViewerPage와 동일한 패턴
-  const handleDownloadPdf = useCallback(async () => {
-    setDownloading(true);
-    try {
-      const response = await proactiveApi.downloadExecutionPdf(jobId, executionId);
-      downloadBlob(`report-${executionId}.pdf`, response.data as Blob);
-    } catch {
-      toast.error('PDF 다운로드에 실패했습니다.');
-    } finally {
-      setDownloading(false);
-    }
-  }, [jobId, executionId]);
-
-  // 인쇄 핸들러 — iframe 내부 문서를 인쇄한다
-  const handlePrint = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.print();
-    } else {
-      window.print();
-    }
-  }, []);
+  // PDF 다운로드 + 인쇄 공통 훅
+  const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
+    jobId,
+    executionId,
+    iframeRef,
+  });
 
   // 실행 상세 페이지로 이동 — 모달을 닫고 navigate
   const handleGoToDetail = useCallback(() => {

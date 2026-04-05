@@ -8,23 +8,20 @@
  */
 
 import { ArrowLeft, ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
-import { downloadBlob } from '@/lib/download';
+import { useReportActions } from '@/hooks/useReportActions';
 import { useQuery } from '@tanstack/react-query';
 
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
   const navigate = useNavigate();
-  const [downloading, setDownloading] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // URL params를 숫자로 변환 — URL params는 항상 string으로 온다
   const jobIdNum = Number(jobId);
   const executionIdNum = Number(executionId);
 
@@ -35,31 +32,14 @@ export default function ReportViewerPage() {
     enabled: !isNaN(jobIdNum) && !isNaN(executionIdNum),
   });
 
-  // 백엔드 응답에서 HTML 문자열 추출 (axios response.data)
   const rawHtml = htmlResponse?.data ?? null;
 
-  // PDF 다운로드 핸들러
-  const handleDownloadPdf = useCallback(async () => {
-    setDownloading(true);
-    try {
-      const response = await proactiveApi.downloadExecutionPdf(jobIdNum, executionIdNum);
-      downloadBlob(`report-${executionIdNum}.pdf`, response.data as Blob);
-    } catch {
-      toast.error('PDF 다운로드에 실패했습니다.');
-    } finally {
-      setDownloading(false);
-    }
-  }, [jobIdNum, executionIdNum]);
-
-  // 인쇄 핸들러 — iframe 내부 문서를 인쇄한다
-  const handlePrint = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.print();
-    } else {
-      window.print();
-    }
-  }, []);
+  // PDF 다운로드 + 인쇄 공통 훅
+  const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
+    jobId: jobIdNum,
+    executionId: executionIdNum,
+    iframeRef,
+  });
 
   return (
     <div className="flex flex-col h-screen bg-background">

@@ -21,16 +21,7 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
-import { formatDate, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-
-/** 실행 시간과 완료 시간 사이 소요 시간을 계산한다 */
-function calcDuration(startedAt: string, completedAt: string): string {
-  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
-  if (ms < 1000) return `${ms}ms`;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}초`;
-  return `${Math.floor(s / 60)}분 ${s % 60}초`;
-}
+import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 
 interface JobExecutionsTabProps {
   jobId: number;
@@ -84,7 +75,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm text-center">
-                    {exec.completedAt ? calcDuration(exec.startedAt, exec.completedAt) : (
+                    {exec.completedAt ? formatDuration(exec.startedAt, exec.completedAt) : (
                       exec.status === 'RUNNING' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin inline" />
                       ) : '-'
