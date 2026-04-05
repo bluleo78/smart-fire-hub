@@ -175,7 +175,7 @@ export default function ExecutionDetailPage() {
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">전달 채널</p>
           <div className="flex flex-wrap gap-1">
-            {execution.deliveredChannels.length > 0
+            {execution.deliveredChannels?.length > 0
               ? execution.deliveredChannels.map((ch) => (
                   <Badge key={ch} variant="outline" className="text-xs">
                     {ch}
