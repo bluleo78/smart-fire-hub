@@ -13,6 +13,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
+import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
 import { downloadBlob } from '@/lib/download';
 import { useQuery } from '@tanstack/react-query';
@@ -140,20 +141,9 @@ export default function ReportViewerPage() {
           </div>
         )}
 
+        {/* HTML 리포트를 공통 ReportIframe 컴포넌트로 렌더링 */}
         {rawHtml && (
-          /**
-           * iframe srcdoc으로 전체 HTML 문서를 격리 렌더링한다.
-           * sandbox 속성으로 스크립트 실행을 완전히 차단하여 XSS를 방지하면서도
-           * CSS, SVG 차트 등은 정상 렌더링된다.
-           * allow-same-origin: 인쇄(window.print) 접근에 필요
-           */
-          <iframe
-            ref={iframeRef}
-            srcDoc={rawHtml}
-            sandbox="allow-same-origin"
-            title="리포트"
-            className="w-full h-full border-0"
-          />
+          <ReportIframe ref={iframeRef} html={rawHtml} />
         )}
       </div>
     </div>
