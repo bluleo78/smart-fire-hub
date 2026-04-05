@@ -6,7 +6,7 @@
  * 하단에 "실행 상세 보기" 링크로 상세 페이지 진입 가능.
  */
 
-import { ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
+import { ExternalLink, FileDown, Loader2, Printer, XIcon } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate } from 'react-router-dom';
@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -135,9 +136,9 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0 gap-0">
+      <DialogContent className="sm:max-w-5xl h-[85vh] flex flex-col p-0 gap-0" showCloseButton={false}>
         {/* 헤더 — 제목, 상태 뱃지, 시간, 액션 버튼 */}
-        <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b shrink-0">
+        <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b shrink-0 space-y-0">
           <div className="flex items-center gap-3">
             <DialogTitle className="text-base font-semibold">
               리포트 #{executionId}
@@ -155,8 +156,8 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
             )}
           </div>
 
-          {/* 액션 버튼 그룹 — 인쇄, PDF, 새 탭 */}
-          <div className="flex items-center gap-2">
+          {/* 액션 버튼 그룹 — 인쇄, PDF, 새 탭, 닫기 */}
+          <div className="flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
@@ -189,6 +190,16 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
                 <ExternalLink className="h-4 w-4" />
               </Link>
             </Button>
+            {/* 닫기 버튼 */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              title="닫기"
+              className="h-8 w-8"
+            >
+              <XIcon className="h-4 w-4" />
+            </Button>
           </div>
         </DialogHeader>
 
@@ -220,7 +231,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
         </div>
 
         {/* 푸터 — 실행 상세 페이지로 이동 */}
-        <div className="border-t bg-muted/30 px-6 py-3 shrink-0">
+        <DialogFooter className="border-t px-6 py-3 shrink-0 sm:justify-start">
           <Button
             variant="ghost"
             size="sm"
@@ -229,7 +240,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
           >
             실행 상세 보기 →
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
