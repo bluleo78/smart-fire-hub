@@ -455,4 +455,35 @@ export class FireHubApiClient {
   }) {
     return this._proactive.createSmartJobWithTemplate(data);
   }
+  getReportTemplate(id: number) {
+    return this._proactive.getReportTemplate(id);
+  }
+  updateReportTemplate(
+    id: number,
+    data: {
+      name?: string;
+      description?: string;
+      style?: string;
+      structure?: {
+        sections?: Array<{
+          key: string;
+          label: string;
+          required?: boolean;
+          type?: string;
+        }>;
+        output_format?: string;
+      };
+    },
+  ) {
+    return this._proactive.updateReportTemplate(id, data);
+  }
+  deleteReportTemplate(id: number) {
+    return this._proactive.deleteReportTemplate(id);
+  }
+  listJobExecutions(jobId: number, params?: { limit?: number; offset?: number }) {
+    return this._proactive.listJobExecutions(jobId, params);
+  }
+  getExecution(jobId: number, executionId: number) {
+    return this._proactive.getExecution(jobId, executionId);
+  }
 }

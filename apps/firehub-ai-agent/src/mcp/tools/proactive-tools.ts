@@ -204,6 +204,101 @@ export function registerProactiveTools(
     ),
 
     safeTool(
+      'get_report_template',
+      '리포트 양식의 상세 정보(섹션 구조 포함)를 조회합니다',
+      {
+        id: z.number().describe('리포트 양식 ID'),
+      },
+      async (args: { id: number }) => {
+        const result = await apiClient.getReportTemplate(args.id);
+        return jsonResult(result);
+      },
+    ),
+
+    safeTool(
+      'update_report_template',
+      '리포트 양식을 수정합니다. 이름, 설명, 스타일, 섹션 구조를 변경할 수 있습니다.',
+      {
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        style: z.string().optional(),
+        structure: z
+          .object({
+            sections: z.array(
+              z.object({
+                key: z.string().describe('섹션 키 (영문, 고유 식별자)'),
+                label: z.string().describe('섹션 레이블 (표시 이름)'),
+                required: z.boolean().optional().describe('필수 여부'),
+                type: z.string().optional().describe('섹션 타입'),
+              }),
+            ),
+            output_format: z.string().describe('출력 형식'),
+          })
+          .optional(),
+      },
+      async (args: {
+        id: number;
+        name?: string;
+        description?: string;
+        style?: string;
+        structure?: {
+          sections: Array<{
+            key: string;
+            label: string;
+            required?: boolean;
+            type?: string;
+          }>;
+          output_format: string;
+        };
+      }) => {
+        const { id, ...data } = args;
+        const result = await apiClient.updateReportTemplate(id, data);
+        return jsonResult(result);
+      },
+    ),
+
+    safeTool(
+      'delete_report_template',
+      '리포트 양식을 삭제합니다',
+      {
+        id: z.number().describe('리포트 양식 ID'),
+      },
+      async (args: { id: number }) => {
+        const result = await apiClient.deleteReportTemplate(args.id);
+        return jsonResult(result);
+      },
+    ),
+
+    safeTool(
+      'list_job_executions',
+      '스마트 작업의 실행 이력 목록을 조회합니다. 최근 실행 결과, 상태, 소요 시간을 확인할 수 있습니다.',
+      {
+        jobId: z.number(),
+        limit: z.number().optional().describe('조회 개수 (기본 10)'),
+        offset: z.number().optional().describe('건너뛸 개수'),
+      },
+      async (args: { jobId: number; limit?: number; offset?: number }) => {
+        const { jobId, ...params } = args;
+        const result = await apiClient.listJobExecutions(jobId, params);
+        return jsonResult(result);
+      },
+    ),
+
+    safeTool(
+      'get_execution',
+      '특정 실행의 상세 결과를 조회합니다. 분석 결과, 상태, 전달 채널 등을 확인할 수 있습니다.',
+      {
+        jobId: z.number(),
+        executionId: z.number(),
+      },
+      async (args: { jobId: number; executionId: number }) => {
+        const result = await apiClient.getExecution(args.jobId, args.executionId);
+        return jsonResult(result);
+      },
+    ),
+
+    safeTool(
       'save_as_smart_job',
       '챗에서 생성한 분석을 스마트 작업 + 리포트 양식으로 저장합니다.',
       {
