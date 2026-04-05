@@ -1,0 +1,161 @@
+/**
+ * ReportViewerPage — HTML 리포트 전체 화면 뷰어
+ *
+ * URL: /ai-insights/jobs/:jobId/executions/:executionId/report
+ * 백엔드가 반환하는 HTML 리포트를 iframe srcdoc으로 렌더링한다.
+ * sandbox 속성으로 스크립트 실행을 차단하여 XSS를 방지한다.
+ * 상단 바에 뒤로가기, PDF 다운로드, 인쇄 버튼을 제공한다.
+ */
+
+import { ArrowLeft, ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+
+import { proactiveApi } from '@/api/proactive';
+import { Button } from '@/components/ui/button';
+import { downloadBlob } from '@/lib/download';
+import { useQuery } from '@tanstack/react-query';
+
+export default function ReportViewerPage() {
+  const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
+  const navigate = useNavigate();
+  const [downloading, setDownloading] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // URL params를 숫자로 변환 — URL params는 항상 string으로 온다
+  const jobIdNum = Number(jobId);
+  const executionIdNum = Number(executionId);
+
+  // HTML 리포트 조회
+  const { data: htmlResponse, isLoading, isError } = useQuery({
+    queryKey: ['execution-html', jobIdNum, executionIdNum],
+    queryFn: () => proactiveApi.getExecutionHtml(jobIdNum, executionIdNum),
+    enabled: !isNaN(jobIdNum) && !isNaN(executionIdNum),
+  });
+
+  // 백엔드 응답에서 HTML 문자열 추출 (axios response.data)
+  const rawHtml = htmlResponse?.data ?? null;
+
+  // PDF 다운로드 핸들러
+  const handleDownloadPdf = useCallback(async () => {
+    setDownloading(true);
+    try {
+      const response = await proactiveApi.downloadExecutionPdf(jobIdNum, executionIdNum);
+      downloadBlob(`report-${executionIdNum}.pdf`, response.data as Blob);
+    } catch {
+      toast.error('PDF 다운로드에 실패했습니다.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [jobIdNum, executionIdNum]);
+
+  // 인쇄 핸들러 — iframe 내부 문서를 인쇄한다
+  const handlePrint = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (iframe?.contentWindow) {
+      iframe.contentWindow.print();
+    } else {
+      window.print();
+    }
+  }, []);
+
+  return (
+    <div className="flex flex-col h-screen bg-background">
+      {/* 상단 고정 헤더 바 — 네비게이션 + 액션 버튼들 */}
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-background print:hidden">
+        {/* 왼쪽: 뒤로가기 + 제목 */}
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(-1)}
+            className="gap-1.5"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            뒤로
+          </Button>
+          <div className="h-5 w-px bg-border" />
+          <h1 className="text-sm font-semibold text-foreground">
+            리포트 #{executionIdNum}
+          </h1>
+        </div>
+
+        {/* 오른쪽: 액션 버튼들 */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePrint}
+            className="gap-1.5"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            인쇄
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadPdf}
+            disabled={downloading}
+            className="gap-1.5"
+          >
+            {downloading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileDown className="h-3.5 w-3.5" />
+            )}
+            PDF
+          </Button>
+        </div>
+      </div>
+
+      {/* 본문 영역 — 상태에 따라 로딩/에러/빈 상태/리포트를 렌더링 */}
+      <div className="flex-1 overflow-hidden">
+        {isLoading && (
+          <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">리포트를 불러오는 중...</span>
+          </div>
+        )}
+
+        {isError && !isLoading && (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
+            <p className="text-sm">리포트를 불러올 수 없습니다.</p>
+            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              돌아가기
+            </Button>
+          </div>
+        )}
+
+        {!isLoading && !isError && !rawHtml && (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
+            <p className="text-sm">리포트가 없습니다.</p>
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/ai-insights/jobs/${jobIdNum}`}>
+                <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                작업 상세 보기
+              </Link>
+            </Button>
+          </div>
+        )}
+
+        {rawHtml && (
+          /**
+           * iframe srcdoc으로 전체 HTML 문서를 격리 렌더링한다.
+           * sandbox 속성으로 스크립트 실행을 완전히 차단하여 XSS를 방지하면서도
+           * CSS, SVG 차트 등은 정상 렌더링된다.
+           * allow-same-origin: 인쇄(window.print) 접근에 필요
+           */
+          <iframe
+            ref={iframeRef}
+            srcDoc={rawHtml}
+            sandbox="allow-same-origin"
+            title="리포트"
+            className="w-full h-full border-0"
+          />
+        )}
+      </div>
+    </div>
+  );
+}

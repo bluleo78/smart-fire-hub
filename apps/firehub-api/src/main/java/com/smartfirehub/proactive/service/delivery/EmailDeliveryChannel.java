@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.Properties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -40,6 +41,10 @@ public class EmailDeliveryChannel implements DeliveryChannel {
   private final TemplateEngine templateEngine;
   private final ReportRenderUtils reportRenderUtils;
   private final PdfExportService pdfExportService;
+
+  /** 이메일 내 "웹에서 보기" 링크 생성에 사용할 앱 기본 URL. application.yml에서 app.base-url로 설정하며, 없으면 빈 링크로 처리한다. */
+  @Value("${app.base-url:}")
+  private String appBaseUrl;
 
   @Override
   public String type() {
@@ -88,12 +93,25 @@ public class EmailDeliveryChannel implements DeliveryChannel {
         toAddresses.add(ownerEmail);
       }
 
-      // 이메일 공통 준비 (SMTP, 템플릿, 차트) - 루프 밖에서 1회 수행
+      // 이메일 공통 준비 (SMTP, 템플릿) - 루프 밖에서 1회 수행
+      // htmlContent가 있으면 요약(summary) 기반 이메일을 보내고, PDF에 전체 리포트를 첨부한다.
+      // htmlContent가 없으면 기존 sections 기반 전체 내용을 이메일 본문에 포함한다.
       JavaMailSenderImpl mailSender = buildMailSender(smtp);
-      List<Map<String, Object>> templateSections =
-          reportRenderUtils.buildTemplateSections(result.sections());
-      List<ChartImage> chartImages = reportRenderUtils.renderChartImages(templateSections);
-      String html = renderTemplate(job, result, templateSections);
+      List<Map<String, Object>> templateSections;
+      List<ChartImage> chartImages;
+
+      boolean hasHtmlReport = result.htmlContent() != null && !result.htmlContent().isBlank();
+      if (hasHtmlReport) {
+        // 요약은 Thymeleaf 템플릿의 summary 박스에 이미 표시되므로 sections는 비운다
+        // 전체 리포트는 PDF 첨부 + "웹에서 보기" 링크로 제공
+        templateSections = List.of();
+        chartImages = List.of();
+      } else {
+        // 기존 경로: sections 전체를 이메일 본문에 포함
+        templateSections = reportRenderUtils.buildTemplateSections(result.sections());
+        chartImages = reportRenderUtils.renderChartImages(templateSections);
+      }
+      String html = renderTemplate(job, executionId, result, templateSections);
       String fromAddress = smtp.getOrDefault("smtp.from_address", DEFAULT_FROM);
       if (fromAddress.isBlank()) fromAddress = DEFAULT_FROM;
 
@@ -133,7 +151,7 @@ public class EmailDeliveryChannel implements DeliveryChannel {
           mailSender.send(message);
           log.info(
               "EmailDeliveryChannel sent report '{}' to {} for job {}",
-              result.title(),
+              result.effectiveTitle(job.name()),
               toAddress,
               job.id());
         } catch (Exception e) {
@@ -178,15 +196,32 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     return sender;
   }
 
+  /**
+   * 이메일 본문 HTML을 Thymeleaf 템플릿으로 렌더링한다.
+   *
+   * <p>summary 텍스트를 본문 상단에 표시하고, "웹에서 보기" 링크(reportUrl)를 포함한다. reportUrl은 appBaseUrl이 설정된 경우에만
+   * 생성된다.
+   */
   private String renderTemplate(
       ProactiveJobResponse job,
+      Long executionId,
       ProactiveResult result,
       List<Map<String, Object>> templateSections) {
+    // "웹에서 보기" URL 구성: baseUrl이 없으면 빈 문자열(템플릿에서 조건부 표시)
+    String reportUrl = "";
+    if (appBaseUrl != null && !appBaseUrl.isBlank()) {
+      reportUrl =
+          appBaseUrl + "/ai-insights/jobs/" + job.id() + "/executions/" + executionId + "/report";
+    }
+
     Context ctx = new Context();
-    ctx.setVariable("title", result.title());
+    ctx.setVariable("title", result.effectiveTitle(job.name()));
     ctx.setVariable("jobName", job.name());
     ctx.setVariable("generatedAt", LocalDateTime.now().format(DISPLAY_FORMATTER));
     ctx.setVariable("sections", templateSections);
+    // summary 마크다운을 HTML로 변환하여 이메일에서 굵게, 목록 등이 렌더링되도록 한다
+    ctx.setVariable("summary", reportRenderUtils.markdownToHtml(result.effectiveSummary()));
+    ctx.setVariable("reportUrl", reportUrl);
     return templateEngine.process("proactive-report", ctx);
   }
 }

@@ -20,7 +20,8 @@ import reactor.netty.http.client.HttpClient;
 @Slf4j
 public class ProactiveAiClient {
 
-  private static final Duration TIMEOUT = Duration.ofMinutes(3);
+  // HTML 리포트 생성은 SVG 차트/카드 레이아웃 등 복잡한 작업이므로 충분한 시간 필요
+  private static final Duration TIMEOUT = Duration.ofMinutes(5);
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
@@ -120,6 +121,12 @@ public class ProactiveAiClient {
               usageMap.get("totalTokens") instanceof Number n ? n.intValue() : 0);
     }
 
-    return new ProactiveResult(title, sections, usage);
+    // AI 에이전트가 반환하는 HTML 리포트 전문 (없으면 null — 기존 sections 경로 유지)
+    String htmlContent = (String) responseMap.getOrDefault("htmlContent", null);
+
+    // 리포트 요약 텍스트 (채팅/이메일 미리보기에 사용)
+    String summary = (String) responseMap.getOrDefault("summary", null);
+
+    return new ProactiveResult(title, sections, usage, htmlContent, summary);
   }
 }

@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot } from 'lucide-react';
+import { Bot, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -18,6 +19,9 @@ const REMARK_PLUGINS = [remarkGfm];
 export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveMessageProps) {
   const isUnread = !message.read;
   const sections = getSections(message.content);
+  // ChatDeliveryChannel이 저장한 jobId/executionId — 리포트 보기 링크 생성에 사용
+  const jobId = message.content.jobId as string | undefined;
+  const executionId = message.content.executionId as string | undefined;
   const time = new Date(message.createdAt).toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -79,8 +83,22 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
         </div>
       )}
 
-      {/* Footer */}
-      <div className="px-3 pb-3">
+      {/* Footer — 리포트 보기 링크 (jobId/executionId가 있을 때) + 자세히 분석하기 */}
+      <div className="px-3 pb-3 flex gap-2">
+        {jobId && executionId && (
+          <Button
+            variant="default"
+            size="sm"
+            className="h-7 text-xs"
+            asChild
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Link to={`/ai-insights/jobs/${jobId}/executions/${executionId}/report`}>
+              <ExternalLink className="h-3 w-3 mr-1" />
+              리포트 보기
+            </Link>
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"

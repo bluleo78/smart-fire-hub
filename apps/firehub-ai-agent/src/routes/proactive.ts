@@ -41,8 +41,11 @@ interface OutputSection {
   data?: unknown;
 }
 
+/** AI 에이전트가 반환하는 프로액티브 실행 결과 */
 interface ProactiveResponse {
-  sections: OutputSection[];
+  htmlContent: string;           // HTML 리포트 전문 (report-writer가 생성한 report.html)
+  summary: string;               // 요약 텍스트 (report-writer가 생성한 summary.md)
+  sections: OutputSection[];     // 하위 호환용 (deprecated, htmlContent가 없을 때 사용)
   rawText: string;
   usage: {
     inputTokens: number;
@@ -96,7 +99,7 @@ export function buildSectionPrompt(sections: TemplateSection[], depth = 1): stri
   return prompt;
 }
 
-function buildProactiveSystemPrompt(template: Template | undefined, reportFilePath: string): string {
+function buildProactiveSystemPrompt(template: Template | undefined, reportDir: string): string {
   let prompt =
     '당신은 프로액티브 AI 분석가입니다. 응답은 반드시 한국어로 작성하세요.\n\n' +
     '## 작업 절차\n\n' +
@@ -108,7 +111,10 @@ function buildProactiveSystemPrompt(template: Template | undefined, reportFilePa
     'Agent 도구로 report-writer를 호출하세요. 프롬프트에 다음을 **모두** 포함하세요:\n\n' +
     '1. **분석 결과**: 수집/분석한 데이터와 인사이트\n' +
     '2. **리포트 양식**: 아래 제공되는 섹션 구조와 지시문\n' +
-    `3. **파일 저장 경로**: ${reportFilePath}\n\n` +
+    `3. **파일 저장 디렉토리**: ${reportDir}\n` +
+    `   - HTML 리포트: ${reportDir}/report.html (웹 뷰어용)\n` +
+    `   - 마크다운 리포트: ${reportDir}/report.md (PDF/이메일용, HTML과 동일 내용)\n` +
+    `   - 요약 텍스트: ${reportDir}/summary.md (채팅 알림용, 3~5줄)\n\n` +
     '**중요**: generate_report, show_chart 등 UI 도구를 호출하지 마세요. 리포트 생성은 반드시 report-writer에게 위임하세요.\n\n';
 
   if (template) {
@@ -140,7 +146,7 @@ function buildProactiveSystemPrompt(template: Template | undefined, reportFilePa
     prompt += '양식 없음. 자유 형식으로 분석 결과 리포트를 작성하도록 위임하세요.\n';
   }
 
-  prompt += `\n리포트 파일 경로: ${reportFilePath}\n`;
+  prompt += `\n리포트 저장 디렉토리: ${reportDir}\n`;
 
   return prompt;
 }
@@ -272,8 +278,9 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
 
   const model = body.model || 'claude-haiku-4-5-20251001';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
-  const reportFilePath = `/tmp/proactive-report-${Date.now()}-${userId}.md`;
-  const systemPrompt = buildProactiveSystemPrompt(body.template, reportFilePath);
+  // report-writer가 HTML 리포트 + 요약을 저장할 임시 디렉토리
+  const reportDir = `/tmp/proactive-report-${Date.now()}-${userId}`;
+  const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 
   const providerConfig: ProviderConfig = {
@@ -310,28 +317,39 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       }
     }
 
-    // Subagent writes to disk; read the file to get clean report content without rawText noise
-    let reportContent = '';
-    let fromFile = false;
-    try {
-      reportContent = await fs.readFile(reportFilePath, 'utf-8');
-      fromFile = true;
-      console.log(`[Proactive] Report file read: ${reportFilePath} (${reportContent.length} bytes)`);
-    } catch {
-      console.warn(`[Proactive] Report file not found: ${reportFilePath}, falling back to rawText`);
-      reportContent = rawText;
-    }
+    // report-writer가 디렉토리에 3개 파일을 생성:
+    //   report.html — 웹 뷰어용 HTML 리포트
+    //   report.md   — PDF/이메일용 마크다운 리포트 (HTML과 동일 내용)
+    //   summary.md  — 채팅 알림용 요약
+    const [htmlResult, mdResult, summaryResult] = await Promise.allSettled([
+      fs.readFile(`${reportDir}/report.html`, 'utf-8'),
+      fs.readFile(`${reportDir}/report.md`, 'utf-8'),
+      fs.readFile(`${reportDir}/summary.md`, 'utf-8'),
+    ]);
 
-    // 파일에서 읽은 경우 파일 내용을 그대로 단일 섹션으로 반환 (HTML/마크다운 등 에이전트가 결정한 포맷)
-    // rawText 폴백인 경우 기존 parseSections 사용
-    const sections = fromFile
-      ? [{ key: 'content', label: body.template?.sections?.[0]?.label || '분석 결과', content: reportContent }]
-      : parseSections(reportContent, body.template);
-    console.log(`[Proactive] ${fromFile ? 'file' : 'rawText'} → ${sections.length} sections`);
+    const htmlContent = htmlResult.status === 'fulfilled' ? htmlResult.value : '';
+    const mdContent = mdResult.status === 'fulfilled' ? mdResult.value : '';
+    const summary = summaryResult.status === 'fulfilled' ? summaryResult.value : '';
+    const fromFile = htmlResult.status === 'fulfilled' || mdResult.status === 'fulfilled';
+
+    if (htmlContent) console.log(`[Proactive] HTML report: ${htmlContent.length} bytes`);
+    if (mdContent) console.log(`[Proactive] MD report: ${mdContent.length} bytes`);
+    if (summary) console.log(`[Proactive] Summary: ${summary.length} bytes`);
+    if (!fromFile) console.warn(`[Proactive] No report files found in ${reportDir}, falling back to rawText`);
+
+    // sections: PDF/이메일에서 사용. report.md → parseSections, 없으면 rawText 폴백
+    const sections = mdContent
+      ? parseSections(mdContent, body.template)
+      : fromFile
+        ? [{ key: 'content', label: body.template?.sections?.[0]?.label || '분석 결과', content: summary }]
+        : parseSections(rawText, body.template);
+    console.log(`[Proactive] sections=${sections.length}, htmlContent=${htmlContent.length}B`);
 
     const result: ProactiveResponse = {
+      htmlContent,
+      summary,
       sections,
-      rawText: reportContent,
+      rawText: htmlContent || rawText,
       usage: {
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
@@ -344,8 +362,8 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     console.error('[Proactive] Error:', errorMessage);
     res.status(500).json({ error: 'Agent execution failed', details: errorMessage });
   } finally {
-    // 임시 파일 정리
-    fs.unlink(reportFilePath).catch(() => {});
+    // 임시 디렉토리 정리 (report.html + report.md + summary.md)
+    fs.rm(reportDir, { recursive: true }).catch(() => {});
   }
 });
 

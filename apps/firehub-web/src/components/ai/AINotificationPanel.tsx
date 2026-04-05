@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bell, Bot, CheckCheck, ChevronLeft, MessageCircle, X } from 'lucide-react';
+import { Bell, Bot, CheckCheck, ChevronLeft, ExternalLink, MessageCircle, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import type { ProactiveMessage } from '../../api/proactive';
 import {
@@ -128,13 +129,18 @@ function DetailView({
   message,
   onBack,
   onAskAI,
+  onClose,
 }: {
   message: ProactiveMessage;
   onBack: () => void;
   onAskAI: (msg: ProactiveMessage) => void;
+  onClose: () => void;
 }) {
   const sections = getSections(message.content);
   const relTime = getRelativeTime(message.createdAt);
+  // 리포트 보기 링크 생성용 메타데이터
+  const jobId = message.content.jobId as string | undefined;
+  const executionId = message.content.executionId as string | undefined;
 
   return (
     <div className="flex flex-col h-full">
@@ -183,8 +189,22 @@ function DetailView({
         )}
       </div>
 
-      {/* Ask AI button */}
-      <div className="px-3 py-2.5 border-t border-border/40">
+      {/* Footer — 리포트 보기 + AI에게 물어보기 */}
+      <div className="px-3 py-2.5 border-t border-border/40 space-y-1.5">
+        {jobId && executionId && (
+          <Link
+            to={`/ai-insights/jobs/${jobId}/executions/${executionId}/report`}
+            onClick={onClose}
+            className="flex items-center justify-center gap-1.5 w-full rounded-lg py-2 text-xs font-medium transition-colors hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            style={{
+              background: 'var(--primary)',
+              color: 'var(--primary-foreground)',
+            }}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            리포트 보기
+          </Link>
+        )}
         <button
           type="button"
           onClick={() => onAskAI(message)}
@@ -284,6 +304,7 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
           message={selectedMessage}
           onBack={() => setSelectedMessage(null)}
           onAskAI={handleAskAI}
+          onClose={onClose}
         />
       ) : (
         // List view

@@ -107,34 +107,61 @@ public class ProactiveJobController {
   public ResponseEntity<byte[]> downloadExecutionPdf(
       @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-
-    // Validate job ownership
     ProactiveJobResponse job = proactiveJobService.getJob(jobId, userId);
-
-    // Validate execution
-    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
-    if (!jobId.equals(execution.jobId())) {
-      return ResponseEntity.badRequest().build();
-    }
-    if (!"COMPLETED".equals(execution.status()) || execution.result() == null) {
+    ProactiveResult result = getValidatedResult(jobId, executionId);
+    if (result == null) {
       return ResponseEntity.badRequest().build();
     }
 
-    // Convert result map to ProactiveResult
-    ProactiveResult result = objectMapper.convertValue(execution.result(), ProactiveResult.class);
-
-    // Generate PDF
     byte[] pdfBytes = pdfExportService.generatePdf(result, job.name());
-
-    // Encode filename for Content-Disposition
     String encodedName =
-        URLEncoder.encode(result.title() + ".pdf", StandardCharsets.UTF_8).replace("+", "%20");
+        URLEncoder.encode(result.effectiveTitle(job.name()) + ".pdf", StandardCharsets.UTF_8)
+            .replace("+", "%20");
 
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_PDF);
     headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedName);
 
     return ResponseEntity.ok().headers(headers).body(pdfBytes);
+  }
+
+  /**
+   * 실행 결과의 HTML 리포트를 반환한다. htmlContent가 없으면 404를 반환한다. 프론트엔드 ReportViewerPage에서 DOMPurify를 거쳐 렌더링에
+   * 사용한다.
+   */
+  @GetMapping("/{jobId}/executions/{executionId}/html")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<String> getExecutionHtml(
+      @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    proactiveJobService.getJob(jobId, userId);
+    ProactiveResult result = getValidatedResult(jobId, executionId);
+    if (result == null) {
+      return ResponseEntity.badRequest().build();
+    }
+
+    if (result.htmlContent() == null || result.htmlContent().isBlank()) {
+      return ResponseEntity.notFound().build();
+    }
+
+    return ResponseEntity.ok()
+        .contentType(new MediaType("text", "html", java.nio.charset.StandardCharsets.UTF_8))
+        .body(result.htmlContent());
+  }
+
+  /**
+   * execution이 해당 job에 속하고 COMPLETED 상태인지 검증한 후 ProactiveResult를 반환한다. 검증 실패 시 null을 반환하며, 호출측에서
+   * badRequest 등으로 처리한다.
+   */
+  private ProactiveResult getValidatedResult(Long jobId, Long executionId) {
+    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
+    if (!jobId.equals(execution.jobId())) {
+      return null;
+    }
+    if (!"COMPLETED".equals(execution.status()) || execution.result() == null) {
+      return null;
+    }
+    return objectMapper.convertValue(execution.result(), ProactiveResult.class);
   }
 
   @GetMapping("/recipients")

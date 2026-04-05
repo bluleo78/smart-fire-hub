@@ -1,6 +1,7 @@
-import { FileDown, Loader2 } from 'lucide-react';
+import { ExternalLink, FileDown, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Link } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 
@@ -26,6 +27,9 @@ import { getSections } from '@/lib/proactive-utils';
 import { cn } from '@/lib/utils';
 
 const REMARK_PLUGINS = [remarkGfm];
+
+/** 마크다운 렌더링 공통 prose 스타일 클래스 */
+const PROSE_CLASSES = 'prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 text-sm leading-relaxed';
 
 function calcDuration(startedAt: string, completedAt: string): string {
   const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
@@ -87,6 +91,54 @@ function ExecutionResultView({ execution, jobId }: { execution: ProactiveJobExec
     );
   }
 
+  // htmlContent가 있으면 HTML 리포트 기반 뷰를 표시한다.
+  // summary는 마크다운 요약, htmlContent는 전체 리포트 페이지로 연결된다.
+  const htmlContent = execution.result.htmlContent as string | undefined;
+  const summary = execution.result.summary as string | undefined;
+
+  if (htmlContent) {
+    return (
+      <div className="p-4 space-y-4">
+        {/* 액션 버튼 영역 — HTML 리포트 보기 + PDF 다운로드 */}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="default"
+            size="sm"
+            asChild
+          >
+            <Link to={`/ai-insights/jobs/${jobId}/executions/${execution.id}/report`}>
+              <ExternalLink className="h-3.5 w-3.5 mr-1" />
+              리포트 보기
+            </Link>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadPdf}
+            disabled={downloading}
+          >
+            {downloading ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            ) : (
+              <FileDown className="h-3.5 w-3.5 mr-1" />
+            )}
+            PDF
+          </Button>
+        </div>
+
+        {/* 요약 텍스트 — summary가 있으면 마크다운으로 표시 */}
+        {summary && (
+          <div className={PROSE_CLASSES}>
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
+              {summary}
+            </ReactMarkdown>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // htmlContent가 없는 경우 — 기존 sections 기반 렌더링 유지
   const sections = getSections(execution.result);
 
   if (sections.length === 0) {
@@ -119,7 +171,7 @@ function ExecutionResultView({ execution, jobId }: { execution: ProactiveJobExec
               {section.label}
             </p>
           )}
-          <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 text-sm leading-relaxed">
+          <div className={PROSE_CLASSES}>
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
               {section.content}
             </ReactMarkdown>
@@ -159,10 +211,10 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>실행 시간</TableHead>
-              <TableHead>상태</TableHead>
-              <TableHead>소요 시간</TableHead>
-              <TableHead>전달 채널</TableHead>
+              <TableHead className="w-[45%]">실행 시간</TableHead>
+              <TableHead className="w-[12%] text-center">상태</TableHead>
+              <TableHead className="w-[18%] text-center">소요 시간</TableHead>
+              <TableHead className="w-[25%] text-center">전달 채널</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -181,16 +233,16 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                   <TableCell className="text-sm">
                     {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-center">
                     <Badge variant={getStatusBadgeVariant(exec.status)}>
                       {getStatusLabel(exec.status)}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm">
+                  <TableCell className="text-sm text-center">
                     {exec.completedAt ? calcDuration(exec.startedAt, exec.completedAt) : '-'}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-1 flex-wrap">
+                    <div className="flex gap-1 flex-wrap justify-center">
                       {exec.deliveredChannels?.map((ch) => (
                         <Badge key={ch} variant="outline" className="text-xs">
                           {ch}

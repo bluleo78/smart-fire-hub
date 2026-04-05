@@ -76,8 +76,10 @@ export function useExecuteProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => proactiveApi.executeJob(id).then((r) => r.data),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
+      // 실행 직후 실행 이력 목록을 즉시 갱신하여 "실행 중" 상태가 바로 보이도록 한다
+      queryClient.invalidateQueries({ queryKey: KEYS.executions(id) });
     },
   });
 }

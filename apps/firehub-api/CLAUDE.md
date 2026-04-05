@@ -195,6 +195,7 @@ spring:
 
 ## Key Conventions
 
+- **코드 주석 필수**: 클래스, 메서드, 주요 로직 블록에 한국어 Javadoc/주석을 작성한다. "무엇을 하는지"와 "왜 이렇게 하는지"를 설명하여 코드 이해를 돕는다.
 - 새 모듈은 기존 모듈 구조를 따름: `controller/` → `service/` → `repository/` + `dto/`, `exception/`
 - 동적 테이블 관련 DDL은 반드시 `DataTableService`를 통해 실행 (SQL injection 방지)
 - `@RequirePermission`은 메서드/클래스 레벨 모두 지원

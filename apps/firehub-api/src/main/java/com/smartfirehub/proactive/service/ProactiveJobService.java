@@ -8,7 +8,6 @@ import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
-import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
@@ -210,7 +209,15 @@ public class ProactiveJobService {
 
       // AI 실행
       ProactiveResult result =
-          aiClient.execute(userId, job.prompt(), context, apiKey, agentType, cliOauthToken, template, job.config());
+          aiClient.execute(
+              userId,
+              job.prompt(),
+              context,
+              apiKey,
+              agentType,
+              cliOauthToken,
+              template,
+              job.config());
 
       // 결과 저장
       Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});

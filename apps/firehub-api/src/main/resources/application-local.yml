@@ -11,6 +11,7 @@ org:
       port: 8000
 
 app:
+  base-url: http://localhost:5173
   jwt:
     secret: ${JWT_SECRET:ZGV2LW9ubHktand0LXNlY3JldC1rZXktdGhpcy1pcy1ub3QtZm9yLXByb2R1Y3Rpb24tdXNl}
   encryption:

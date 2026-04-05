@@ -200,6 +200,9 @@ export const proactiveApi = {
     client.get(`/proactive/jobs/${jobId}/executions/${executionId}/pdf`, {
       responseType: 'blob',
     }),
+  // HTML 리포트 조회 — 뷰어 페이지에서 sanitize 후 렌더링
+  getExecutionHtml: (jobId: number, executionId: number) =>
+    client.get<string>(`/proactive/jobs/${jobId}/executions/${executionId}/html`),
 
   // SMTP (3 methods)
   getSmtpSettings: () =>

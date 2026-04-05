@@ -63,6 +63,7 @@ src/
 
 ### Conventions
 
+- **코드 주석 필수**: 컴포넌트, 훅, 주요 로직 블록에 한국어 주석(JSDoc/인라인)을 작성한다. "무엇을 하는지"와 "왜 이렇게 하는지"를 설명하여 코드 이해를 돕는다.
 - shadcn/ui components in `src/components/ui/` are generated via `npx shadcn` CLI; do not manually edit them
 - shadcn config: new-york style, neutral base color, Lucide icons, CSS variables enabled
 - Theming via `next-themes` (dark/light/system)

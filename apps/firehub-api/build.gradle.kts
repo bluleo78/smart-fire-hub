@@ -57,6 +57,8 @@ dependencies {
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
     // PDF 생성 (Flying Saucer — HTML/CSS → PDF)
     implementation("org.xhtmlrenderer:flying-saucer-pdf-openpdf:9.4.0")
+    // HTML5 → XHTML 변환 (AI 생성 HTML을 Flying Saucer에 전달하기 위함)
+    implementation("org.jsoup:jsoup:1.18.3")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")

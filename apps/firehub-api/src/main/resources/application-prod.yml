@@ -10,6 +10,7 @@ org:
       enabled: false
 
 app:
+  base-url: ${APP_BASE_URL:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
   pipeline:

@@ -82,6 +82,7 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 
 ## Conventions
 
+- **코드 주석 필수**: 함수, 클래스, 주요 로직 블록에 한국어 주석(JSDoc/인라인)을 작성한다. "무엇을 하는지"와 "왜 이렇게 하는지"를 설명하여 코드 이해를 돕는다.
 - **코드 수정 시 반드시 테스트 작성**: 모든 코드 변경은 대응하는 테스트 코드를 함께 작성하거나 업데이트한다. 테스트 없이 코드만 수정하지 않는다.
 - **테스트 패턴**: Vitest + nock. HTTP 호출은 nock으로 모킹, 파일 I/O는 `vi.mock`으로 모킹한다.
 - **테스트 파일 위치**: 소스 파일과 같은 디렉토리에 `*.test.ts`로 배치한다. (예: `auth.ts` → `auth.test.ts`)
