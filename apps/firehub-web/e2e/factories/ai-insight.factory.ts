@@ -5,6 +5,7 @@
  */
 
 import type {
+  AnomalyEventRecord,
   ProactiveJob,
   ProactiveJobExecution,
   ProactiveMessage,
@@ -111,6 +112,23 @@ export function createJobs(count: number): ProactiveJob[] {
       name: `잡 ${i + 1}`,
     }),
   );
+}
+
+/** 이상 탐지 이벤트 이력(AnomalyEventRecord) 객체 생성 */
+export function createAnomalyEvent(overrides: Partial<AnomalyEventRecord> = {}): AnomalyEventRecord {
+  return {
+    id: 1,
+    jobId: 1,
+    metricId: 'pipeline_failure_rate',
+    metricName: '파이프라인 실패율',
+    currentValue: 45.5,
+    mean: 12.3,
+    stddev: 5.2,
+    deviation: 6.38,
+    sensitivity: 'medium',
+    detectedAt: '2026-04-06T10:30:00',
+    ...overrides,
+  };
 }
 
 /** 기본 리포트 템플릿 목록 2개 생성 */

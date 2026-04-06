@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import {
+  createAnomalyEvent,
   createJob,
   createJobExecution,
   createJobs,
@@ -37,6 +38,23 @@ export async function setupJobDetailMocks(page: Page, jobId = 1) {
   await mockApi(page, 'GET', `/api/v1/proactive/jobs/${jobId}/executions`, []);
   await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+  // 이상 탐지 이력 API 모킹 — 모니터링 탭의 AnomalyHistorySection에서 사용
+  await mockApi(
+    page,
+    'GET',
+    `/api/v1/proactive/jobs/${jobId}/anomaly-events`,
+    [
+      createAnomalyEvent(),
+      createAnomalyEvent({
+        id: 2,
+        metricName: '데이터셋 수',
+        currentValue: 150,
+        mean: 100,
+        deviation: 3.2,
+        detectedAt: '2026-04-06T09:15:00',
+      }),
+    ],
+  );
 }
 
 /**

@@ -297,6 +297,7 @@ export default function ProactiveJobDetailPage() {
           <JobMonitoringTab
             form={form}
             isEditing={isEditing}
+            jobId={jobId}
           />
         </TabsContent>
 

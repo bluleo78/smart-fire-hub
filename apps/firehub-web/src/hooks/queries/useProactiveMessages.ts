@@ -20,6 +20,7 @@ const KEYS = {
   templates: ['proactive', 'templates'] as const,
   template: (id: number) => ['proactive', 'templates', id] as const,
   smtp: ['proactive', 'smtp'] as const,
+  anomalyEvents: (jobId: number) => ['proactive', 'anomaly-events', jobId] as const,
 };
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
@@ -133,6 +134,15 @@ export function useRecipientSearch(search: string) {
     queryKey: KEYS.recipients(search),
     queryFn: () => proactiveApi.searchRecipients(search).then((r) => r.data),
     enabled: search.length > 0,
+  });
+}
+
+/** 특정 작업의 이상 탐지 이벤트 이력을 조회한다 */
+export function useAnomalyEvents(jobId: number) {
+  return useQuery({
+    queryKey: KEYS.anomalyEvents(jobId),
+    queryFn: () => proactiveApi.getAnomalyEvents(jobId).then((r) => r.data),
+    enabled: !!jobId,
   });
 }
 

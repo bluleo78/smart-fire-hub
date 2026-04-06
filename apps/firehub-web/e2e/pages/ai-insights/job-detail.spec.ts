@@ -1,10 +1,11 @@
-import { createJob, createJobExecution } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution, createTemplates } from '../../factories/ai-insight.factory';
+import { createDataset } from '../../factories/dataset.factory';
 import {
   setupJobDetailMocks,
   setupJobDetailWithExecutionsMocks,
   setupNewJobMocks,
 } from '../../fixtures/ai-insight.fixture';
-import { mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -141,6 +142,25 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page).toHaveURL('/ai-insights/jobs/1/executions/5');
   });
 
+  test('모니터링 탭에 이상 탐지 이력이 표시된다', async ({ authenticatedPage: page }) => {
+    // setupJobDetailMocks에 이상 탐지 이벤트 2건이 모킹되어 있다
+    await setupJobDetailMocks(page, 1);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 모니터링 탭 클릭
+    await page.getByRole('tab', { name: /모니터링/ }).click();
+
+    // 이상 탐지 이력 섹션 헤더 확인
+    await expect(page.getByText('최근 이상 탐지')).toBeVisible();
+
+    // 팩토리 기본값 metricName '파이프라인 실패율'이 테이블에 표시되는지 확인
+    await expect(page.getByText('파이프라인 실패율')).toBeVisible();
+
+    // deviation 6.38 값이 "+6.38σ" 형식으로 표시되는지 확인
+    await expect(page.getByText('+6.38σ')).toBeVisible();
+  });
+
   test('비활성 작업에는 "비활성" 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
     // enabled: false 작업 모킹
     const disabledJob = createJob({ id: 2, enabled: false, name: '비활성 작업' });
@@ -154,5 +174,171 @@ test.describe('스마트 작업 상세 페이지', () => {
     // 헤더 영역 내 비활성 뱃지 확인
     // header와 overview 탭 두 곳에 모두 표시될 수 있으므로 header로 범위를 좁힌다
     await expect(page.locator('header').locator('[data-slot="badge"]').filter({ hasText: '비활성' })).toBeVisible();
+  });
+
+  test('이상 탐지 이력 셀 수준 검증', async ({ authenticatedPage: page }) => {
+    // 이상 탐지 이벤트 2건을 포함하는 setupJobDetailMocks 사용
+    // 팩토리 기본값: metricName='파이프라인 실패율', currentValue=45.5, mean=12.3, deviation=6.38, sensitivity='medium'
+    // 두 번째 이벤트: metricName='데이터셋 수', currentValue=150, mean=100, deviation=3.2, sensitivity='medium'
+    await setupJobDetailMocks(page, 1);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 모니터링 탭으로 이동
+    await page.getByRole('tab', { name: /모니터링/ }).click();
+
+    // 이상 탐지 이력 테이블 헤더 확인
+    await expect(page.getByRole('columnheader', { name: '메트릭' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '현재 값' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '평균' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '편차(σ)' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '민감도' })).toBeVisible();
+
+    // 첫 번째 이벤트: 메트릭명 '파이프라인 실패율' 확인
+    await expect(page.getByRole('cell', { name: '파이프라인 실패율' })).toBeVisible();
+
+    // 첫 번째 이벤트: currentValue 45.5 → '45.50' 형식으로 표시
+    await expect(page.getByRole('cell', { name: '45.50' })).toBeVisible();
+
+    // 첫 번째 이벤트: mean 12.3 → '12.30' 형식으로 표시
+    await expect(page.getByRole('cell', { name: '12.30' })).toBeVisible();
+
+    // 첫 번째 이벤트: deviation 6.38 → '+6.38σ' 배지 형식으로 표시
+    await expect(page.getByText('+6.38σ')).toBeVisible();
+
+    // 두 번째 이벤트: deviation 3.2 → '+3.20σ' 배지 형식으로 표시
+    await expect(page.getByText('+3.20σ')).toBeVisible();
+
+    // sensitivity 'medium' → '보통' 레이블로 변환 표시 (두 행 모두 '보통')
+    const sensitivityCells = page.getByRole('cell', { name: '보통' });
+    await expect(sensitivityCells).toHaveCount(2);
+
+    // 두 번째 이벤트: 메트릭명 '데이터셋 수' 확인
+    await expect(page.getByRole('cell', { name: '데이터셋 수' })).toBeVisible();
+
+    // 두 번째 이벤트: currentValue 150 → '150.00' 형식으로 표시
+    await expect(page.getByRole('cell', { name: '150.00' })).toBeVisible();
+
+    // 두 번째 이벤트: mean 100 → '100.00' 형식으로 표시
+    await expect(page.getByRole('cell', { name: '100.00' })).toBeVisible();
+  });
+
+  test('커스텀 메트릭 모달 열기/입력 후 목록에 "데이터셋" 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
+    // 이상 탐지 활성화된 작업 설정 — config.anomaly.enabled: true 로 모킹
+    const jobWithAnomaly = createJob({
+      id: 1,
+      config: {
+        channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }],
+        anomaly: { enabled: true, metrics: [], sensitivity: 'medium', cooldownMinutes: 30 },
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', jobWithAnomaly);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+
+    // 커스텀 메트릭 모달의 데이터셋 Select에 사용할 데이터셋 목록 모킹
+    const datasetsResponse = createPageResponse(
+      [
+        createDataset({ id: 1, name: '소방 데이터셋', tableName: 'fire_dataset' }),
+        createDataset({ id: 2, name: '통계 데이터셋', tableName: 'stats_dataset' }),
+      ],
+    );
+    await mockApi(page, 'GET', '/api/v1/datasets', datasetsResponse);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 편집 버튼 클릭으로 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 모니터링 탭으로 이동
+    await page.getByRole('tab', { name: /모니터링/ }).click();
+
+    // "커스텀 메트릭" 버튼 클릭 — 모달 열기
+    await page.getByRole('button', { name: /커스텀 메트릭/ }).click();
+
+    // 커스텀 메트릭 추가 모달이 열렸는지 확인
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('커스텀 메트릭 추가')).toBeVisible();
+
+    // 모달 내 필드 확인: 메트릭 이름, 데이터셋, SQL 쿼리, 폴링 주기
+    await expect(page.getByLabel('메트릭 이름')).toBeVisible();
+    await expect(page.getByLabel('데이터셋')).toBeVisible();
+    await expect(page.getByLabel('집계 쿼리')).toBeVisible();
+    await expect(page.getByLabel('폴링 주기 (초)')).toBeVisible();
+
+    // 메트릭 이름 입력
+    await page.getByLabel('메트릭 이름').fill('신규 주문 건수');
+
+    // 데이터셋 선택 — '소방 데이터셋' 선택
+    await page.getByLabel('데이터셋').click();
+    await page.getByRole('option', { name: '소방 데이터셋' }).click();
+
+    // SQL 쿼리 입력
+    await page.getByLabel('집계 쿼리').fill('SELECT COUNT(*) FROM fire_orders WHERE created_at > NOW() - INTERVAL 1 DAY');
+
+    // 추가 버튼 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // 모달이 닫혔는지 확인
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+
+    // 추가된 메트릭이 목록에 표시되는지 확인 — 메트릭 이름 표시
+    await expect(page.getByText('신규 주문 건수')).toBeVisible();
+
+    // 커스텀 메트릭은 "데이터셋" 뱃지로 표시된다 (source: 'dataset')
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '데이터셋' })).toBeVisible();
+  });
+
+  test('시스템 메트릭 추가 동작 검증', async ({ authenticatedPage: page }) => {
+    // 이상 탐지 활성화된 작업 설정
+    const jobWithAnomaly = createJob({
+      id: 1,
+      config: {
+        channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }],
+        anomaly: { enabled: true, metrics: [], sensitivity: 'medium', cooldownMinutes: 30 },
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', jobWithAnomaly);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    // 데이터셋 목록 모킹 (커스텀 메트릭 모달용)
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]));
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 편집 버튼 클릭으로 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 모니터링 탭으로 이동
+    await page.getByRole('tab', { name: /모니터링/ }).click();
+
+    // "시스템 메트릭 추가" Select Trigger 클릭
+    // SYSTEM_METRICS 중 아직 추가되지 않은 항목이 표시된다 (현재 metrics: [] 이므로 전체 4개 표시)
+    await page.getByText('시스템 메트릭 추가').click();
+
+    // 드롭다운에 시스템 메트릭 항목이 표시되는지 확인
+    // SYSTEM_METRICS: 파이프라인 실패율, 파이프라인 실행 건수, 데이터셋 수, 활성 사용자 수
+    await expect(page.getByRole('option', { name: '파이프라인 실패율' })).toBeVisible();
+    await expect(page.getByRole('option', { name: '파이프라인 실행 건수' })).toBeVisible();
+
+    // '파이프라인 실패율' 선택
+    // Radix Select 드롭다운 팝오버가 뷰포트 밖에 렌더링될 수 있으므로
+    // dispatchEvent로 포인터 이벤트를 직접 발생시킨다
+    await page.getByRole('option', { name: '파이프라인 실패율' }).dispatchEvent('click');
+
+    // 선택한 메트릭이 모니터링 메트릭 목록에 추가되었는지 확인 — 메트릭 이름 표시
+    await expect(page.getByText('파이프라인 실패율')).toBeVisible();
+
+    // 시스템 메트릭은 "시스템" 뱃지로 표시된다 (source: 'system')
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '시스템' })).toBeVisible();
+
+    // 추가된 후 '파이프라인 실패율'은 드롭다운에서 사라진다 (중복 방지)
+    // selectKey 증가로 Select가 리마운트되어 다시 열면 해당 항목이 없다
+    await page.getByText('시스템 메트릭 추가').click();
+    await expect(page.getByRole('option', { name: '파이프라인 실패율' })).not.toBeVisible();
   });
 });

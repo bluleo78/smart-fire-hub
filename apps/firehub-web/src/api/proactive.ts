@@ -67,6 +67,20 @@ export const SYSTEM_METRICS = [
   { key: 'active_user_count', label: '활성 사용자 수' },
 ] as const;
 
+/** 이상 탐지 이벤트 이력 레코드 — 백엔드 /proactive/jobs/:id/anomaly-events 응답 */
+export interface AnomalyEventRecord {
+  id: number;
+  jobId: number;
+  metricId: string;
+  metricName: string;
+  currentValue: number;
+  mean: number;
+  stddev: number;
+  deviation: number;
+  sensitivity: string;
+  detectedAt: string;
+}
+
 export interface ProactiveJobExecution {
   id: number;
   jobId: number;
@@ -172,6 +186,11 @@ export const proactiveApi = {
     client.post<ProactiveJobExecution>(`/proactive/jobs/${id}/execute`),
   getJobExecutions: (jobId: number, params?: { limit?: number; offset?: number }) =>
     client.get<ProactiveJobExecution[]>(`/proactive/jobs/${jobId}/executions`, { params }),
+  /** 특정 작업의 이상 탐지 이벤트 이력 조회 */
+  getAnomalyEvents: (jobId: number, limit = 20) =>
+    client.get<AnomalyEventRecord[]>(`/proactive/jobs/${jobId}/anomaly-events`, {
+      params: { limit },
+    }),
   /** 단건 실행 조회 — 실행 상세 페이지용 */
   getExecution: (jobId: number, executionId: number) =>
     client.get<ProactiveJobExecution>(`/proactive/jobs/${jobId}/executions/${executionId}`),

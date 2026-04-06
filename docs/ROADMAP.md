@@ -443,6 +443,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-04-06 | Playwright E2E 테스트 강화 완료. 177개 테스트를 smoke-test에서 비즈니스 로직 검증 수준으로 전면 강화. mockApi 캡처 인프라 구축, 7개 도메인 31개 spec 파일에 payload 캡처/셀 수준 검증/필터 param/에러 상태/Zod 유효성 패턴 적용. 설계: `docs/superpowers/specs/2026-04-06-e2e-test-strengthening-design.md` |
 | 2026-04-06 | Phase 7-2b (AI 스킬 + MCP 도구 확장) 완료. MCP 도구 5개 추가 (템플릿 get/update/delete + 실행 이력 list/get). template-builder 스킬 (양식 설계 5단계 워크플로, 11종 섹션 타입). smart-job-manager 스킬 (4종 워크플로). 시스템 프롬프트 업데이트. |
 | 2026-04-05 | Phase 7-2a (실행 상세 페이지 + 리포트 모달) 완료. 실행 이력 클릭 → 전용 상세 페이지 (카드형 메타 + 요약 + 리포트 인라인). AI 챗/알림 → 리포트 모달. 이메일/외부 → ReportViewerPage 유지. 단건 조회 API + ReportIframe + useReportActions 공통 훅. deliveredChannels DB 저장. 코드 리뷰 반영 (중복 제거). |
 | 2026-04-05 | Phase 7-2a (실행 상세 페이지 + 리포트 모달) 설계 완료. 실행 이력 → 전용 상세 페이지 (카드형 메타 + 요약 + 리포트 인라인). AI 챗/알림 → 리포트 모달 (오버레이). 이메일/외부 → ReportViewerPage 유지. 단건 실행 조회 API + ReportIframe 공통 컴포넌트. 설계: `docs/superpowers/specs/2026-04-05-execution-detail-page-design.md` |
