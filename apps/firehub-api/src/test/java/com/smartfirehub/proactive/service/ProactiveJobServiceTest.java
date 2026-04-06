@@ -40,6 +40,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @MockitoBean private ProactiveAiClient proactiveAiClient;
   @MockitoBean private ProactiveContextCollector proactiveContextCollector;
   @MockitoBean private DeliveryChannel chatDeliveryChannel;
+  @MockitoBean private com.smartfirehub.proactive.repository.AnomalyEventRepository anomalyEventRepository;
+  @MockitoBean private com.smartfirehub.notification.service.SseEmitterRegistry sseEmitterRegistry;
 
   private Long testUserId;
 
