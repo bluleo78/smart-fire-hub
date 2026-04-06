@@ -1,9 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,34 +61,36 @@ export default function ReportTemplateDetailPage() {
 
   const tree = useSectionTree([]);
 
-  // Track whether tree sync should be suppressed (to avoid loop)
-  const suppressTreeSync = useRef(false);
+  // 이전 값 추적용 state (React 19 권장: 렌더링 중 state 조정 시 ref 대신 state 사용)
+  const [prevTemplate, setPrevTemplate] = useState(template);
+  const [prevTreeSections, setPrevTreeSections] = useState(tree.sections);
+  const [suppressTreeSync, setSuppressTreeSync] = useState(false);
 
   const form = useForm<ReportTemplateFormValues>({
     resolver: zodResolver(reportTemplateSchema),
     values: template ? { name: template.name, description: template.description ?? '' } : { name: '', description: '' },
   });
 
-  // Sync template structure to JSON editor when template loads (skip during editing)
-  useEffect(() => {
-    if (template && !isEditing) {
-      const sections = Array.isArray(template.sections) ? template.sections : [];
-      const json = JSON.stringify({ sections, output_format: 'markdown' }, null, 2);
-      setStructureJson(json);
-      setStyleText(template.style ?? '');
-      tree.setSections(sections);
-    }
-  }, [template, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Sync tree.sections -> structureJson (builder -> JSON)
-  useEffect(() => {
-    if (suppressTreeSync.current) {
-      suppressTreeSync.current = false;
-      return;
-    }
-    const json = JSON.stringify({ sections: tree.sections, output_format: 'markdown' }, null, 2);
+  // 템플릿 로드 시 구조/스타일 동기화 — 렌더링 중 state 조정 (React 권장 패턴)
+  if (template && template !== prevTemplate && !isEditing) {
+    setPrevTemplate(template);
+    const sections = Array.isArray(template.sections) ? template.sections : [];
+    const json = JSON.stringify({ sections, output_format: 'markdown' }, null, 2);
     setStructureJson(json);
-  }, [tree.sections]);
+    setStyleText(template.style ?? '');
+    tree.setSections(sections);
+  }
+
+  // tree.sections → structureJson 동기화 — 렌더링 중 state 조정
+  if (tree.sections !== prevTreeSections) {
+    setPrevTreeSections(tree.sections);
+    if (!suppressTreeSync) {
+      const json = JSON.stringify({ sections: tree.sections, output_format: 'markdown' }, null, 2);
+      setStructureJson(json);
+    } else {
+      setSuppressTreeSync(false);
+    }
+  }
 
   // Handle tab switching with JSON -> builder sync
   const handleTabChange = useCallback(
@@ -95,7 +98,7 @@ export default function ReportTemplateDetailPage() {
       if (tab === 'builder' && activeTab === 'json') {
         const parsed = parseTemplateSections(structureJson);
         if (parsed) {
-          suppressTreeSync.current = true;
+          setSuppressTreeSync(true);
           tree.setSections(parsed);
         } else {
           toast.error('JSON 파싱 실패. 유효한 JSON을 입력하세요.');
@@ -183,6 +186,10 @@ export default function ReportTemplateDetailPage() {
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
+  // 훅은 조건부 return 이전에 반드시 호출해야 한다 (Rules of Hooks 준수)
+  const isBuiltin = template?.builtin ?? false;
+  const sections = useMemo(() => parseTemplateSections(structureJson) ?? [], [structureJson]);
+
   if (!isNew && isLoading) {
     return (
       <div className="space-y-6">
@@ -191,9 +198,6 @@ export default function ReportTemplateDetailPage() {
       </div>
     );
   }
-
-  const isBuiltin = template?.builtin ?? false;
-  const sections = useMemo(() => parseTemplateSections(structureJson) ?? [], [structureJson]);
 
   return (
     <div className="space-y-6">
