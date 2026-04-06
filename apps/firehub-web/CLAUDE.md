@@ -19,11 +19,24 @@ pnpm test:e2e:ui      # Playwright UI 모드 (인터랙티브 디버깅)
 
 ### E2E 테스트 (Playwright)
 
-- 설정: `playwright.config.ts`, 테스트 디렉토리: `e2e/`
+- 설정: `playwright.config.ts`, 테스트 디렉토리: `e2e/`, 176개 테스트
 - API 모킹 기반 — `page.route()`로 백엔드 API를 모킹하므로 백엔드(Spring Boot + PostgreSQL) 불필요
 - 모킹 데이터는 `src/types/`의 타입을 적용하여 API 스펙 변경 시 컴파일 에러로 감지
-- 인증 fixture: `e2e/fixtures/auth.fixture.ts` — `authMockedPage`(로그인 전), `authenticatedPage`(로그인 완료) 제공
-- 새 테스트 추가 시 `e2e/fixtures/auth.fixture.ts`에서 `test`, `expect`를 import하여 사용
+- 타입 체크: `npx tsc -p tsconfig.e2e.json --noEmit`
+
+#### 디렉토리 구조
+- `e2e/factories/` — 모킹 데이터 팩토리 (auth, dataset, pipeline, analytics, ai-insight, admin)
+- `e2e/fixtures/` — API 모킹 헬퍼 + 인증/도메인별 fixture (auth, base, dataset, pipeline, analytics, ai-insight, admin)
+- `e2e/flows/` — 유저 플로우 시나리오 (해피 패스 연속 시나리오)
+- `e2e/pages/` — 개별 페이지 상세 테스트 (유효성 검사, 엣지 케이스)
+
+#### 새 테스트 추가 시
+1. 팩토리: `e2e/factories/`에서 모킹 데이터 생성 함수 추가 (타입 필수 적용)
+2. Fixture: `e2e/fixtures/`에서 도메인 API 모킹 헬퍼 추가
+3. 테스트: `e2e/flows/` (해피 패스) 또는 `e2e/pages/` (상세)에 spec 파일 추가
+4. `auth.fixture.ts`의 `test`, `expect`를 import하여 인증 fixture 사용
+5. 셀렉터: `getByRole`/`getByLabel`/`getByText` 우선, `data-testid`는 필요한 곳만
+6. 관리자 페이지: `setupAdminAuth(page)` 호출 필요 (AdminRoute 우회)
 
 ## Architecture
 
