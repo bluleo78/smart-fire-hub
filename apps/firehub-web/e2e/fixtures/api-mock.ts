@@ -32,7 +32,11 @@ export async function mockApi(
 ) {
   const { status = 200, headers = {} } = options;
 
-  await page.route(`**${path}`, (route) => {
+  // URL 함수 매처를 사용하여 경로(pathname)만 비교한다.
+  // 글로브 패턴 대신 함수를 사용하면:
+  // 1) 쿼리스트링이 있는 요청도 매칭 (예: /api/v1/datasets?page=0&size=10)
+  // 2) 하위 경로와 혼동 없이 정확한 pathname 일치 (예: /api/v1/datasets/1 ≠ /api/v1/datasets)
+  await page.route((url) => url.pathname === path, (route) => {
     // 지정된 HTTP 메서드만 가로채고, 나머지는 통과시킨다
     if (route.request().method() === method) {
       return route.fulfill({
