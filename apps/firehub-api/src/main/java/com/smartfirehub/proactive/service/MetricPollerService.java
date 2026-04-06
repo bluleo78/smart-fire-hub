@@ -32,6 +32,8 @@ public class MetricPollerService {
   private final AnomalyDetector anomalyDetector;
   private final ApplicationEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
+  // 데이터셋 메트릭 수집을 위한 SQL 실행 클라이언트
+  private final com.smartfirehub.pipeline.service.executor.ExecutorClient executorClient;
 
   // Track last poll time per job+metric to respect pollingInterval
   private final Map<String, LocalDateTime> lastPollTime = new ConcurrentHashMap<>();
@@ -136,11 +138,33 @@ public class MetricPollerService {
       String metricKey = (String) metric.getOrDefault("metricKey", metricId);
       value = collectSystemMetric(metricKey);
     } else if ("dataset".equals(source)) {
-      // Dataset metrics require executor integration — log TODO and skip
-      log.debug(
-          "MetricPollerService: dataset metric '{}' skipped (executor integration pending)",
-          metricId);
-      return;
+      // 데이터셋 메트릭: 사용자 정의 SQL을 executor를 통해 실행하여 숫자 1개를 수집한다
+      String query = (String) metric.get("query");
+      if (query == null || query.isBlank()) {
+        log.warn("MetricPollerService: dataset metric '{}' has no query, skipping", metricId);
+        return;
+      }
+      try {
+        // readOnly=true로 SELECT 쿼리만 허용하고, 결과 행 수를 1로 제한한다
+        var result = executorClient.executeQuery(query, 1, true);
+        if (result.rows() != null
+            && !result.rows().isEmpty()
+            && result.rows().get(0) != null
+            && !result.rows().get(0).isEmpty()) {
+          // 첫 번째 행의 첫 번째 컬럼 값을 double로 변환하여 메트릭 값으로 사용한다
+          Object firstCell = result.rows().get(0).values().iterator().next();
+          value =
+              firstCell instanceof Number n
+                  ? n.doubleValue()
+                  : Double.parseDouble(String.valueOf(firstCell));
+        } else {
+          log.warn("MetricPollerService: dataset metric '{}' returned no data", metricId);
+          return;
+        }
+      } catch (Exception e) {
+        log.error("MetricPollerService: failed to collect dataset metric '{}'", metricId, e);
+        return;
+      }
     } else {
       log.warn("MetricPollerService: unknown metric source '{}' for metric '{}'", source, metricId);
       return;
