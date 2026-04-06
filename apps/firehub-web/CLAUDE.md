@@ -30,6 +30,48 @@ pnpm test:e2e:ui      # Playwright UI 모드 (인터랙티브 디버깅)
 - `e2e/flows/` — 유저 플로우 시나리오 (해피 패스 연속 시나리오)
 - `e2e/pages/` — 개별 페이지 상세 테스트 (유효성 검사, 엣지 케이스)
 
+#### E2E 테스트 작성 의무 (중요)
+
+**프론트엔드 코드를 수정하거나 새 기능을 추가할 때, 반드시 해당 UI 및 로직에 대한 E2E 회귀 테스트를 함께 작성한다.** 테스트 없는 프론트엔드 변경은 완료로 간주하지 않는다.
+
+#### 테스트 품질 기준 — "요소가 보이는가?"만으로는 부족하다
+
+E2E 테스트는 **입력 → 처리 → 출력** 전체 파이프라인을 검증해야 한다:
+
+1. **폼 입력 → API payload 검증**: 사용자가 입력한 값이 정확한 형태로 API에 전달되는지 `route.request().postDataJSON()`으로 캡처하여 검증
+2. **API 응답 → UI 반영 검증**: 모킹 API의 응답 데이터가 화면의 테이블/카드/라벨에 정확히 렌더링되는지 셀 단위로 검증
+3. **필터/검색 → API 파라미터 검증**: 필터 변경 시 API가 올바른 query param으로 재호출되는지, 결과가 화면에 반영되는지 검증
+4. **상태 변경 → UI 즉시 반영**: 토글, 선택, 삭제 등 이벤트 후 컴포넌트 상태가 변경되는지 검증
+5. **에러 처리**: 서버 에러(400/404/500) 시 에러 메시지가 올바르게 표시되는지 검증
+6. **유효성 검사**: Zod 스키마의 모든 규칙이 UI에 에러 메시지로 반영되는지 검증
+
+```typescript
+// 나쁜 예 — 요소 존재만 확인 (스모크 테스트)
+await expect(page.getByText('데이터셋 1')).toBeVisible();
+
+// 좋은 예 — 입력→API→결과 전체 검증
+let capturedPayload: unknown;
+await page.route((url) => url.pathname === '/api/v1/datasets', (route) => {
+  if (route.request().method() === 'POST') {
+    capturedPayload = route.request().postDataJSON();
+    return route.fulfill({ status: 200, body: JSON.stringify(mockResponse) });
+  }
+  return route.continue();
+});
+
+await page.getByLabel('이름').fill('새 데이터셋');
+await page.getByLabel('테이블명').fill('new_dataset');
+await page.getByRole('button', { name: '저장' }).click();
+
+// API payload 검증
+expect(capturedPayload).toMatchObject({
+  name: '새 데이터셋',
+  tableName: 'new_dataset',
+});
+// 저장 후 UI 반영 검증
+await expect(page.getByText('새 데이터셋')).toBeVisible();
+```
+
 #### 새 테스트 추가 시
 1. 팩토리: `e2e/factories/`에서 모킹 데이터 생성 함수 추가 (타입 필수 적용)
 2. Fixture: `e2e/fixtures/`에서 도메인 API 모킹 헬퍼 추가

@@ -122,7 +122,7 @@ pnpm db:reset                   # PostgreSQL 볼륨 삭제 후 재시작
 - Backend(firehub-api), Frontend(firehub-web), AI Agent(firehub-ai-agent)는 Claude 팀으로 분리하여 병렬 작업한다.
 - 팀 내에서도 독립적인 모듈은 SubAgent를 활용하여 최대한 병렬화한다.
 - 스크린샷은 프로젝트 루트의 `snapshots/` 폴더에 저장한다.
-- **검증 가능한 코드 작성**: 모든 코드는 검증 가능해야 하며, 백엔드(firehub-api)와 AI 에이전트(firehub-ai-agent)는 반드시 테스트 코드(TC)를 함께 작성한다.
+- **검증 가능한 코드 작성**: 모든 코드는 검증 가능해야 하며, 백엔드(firehub-api)와 AI 에이전트(firehub-ai-agent)는 반드시 테스트 코드(TC)를 함께 작성한다. 프론트엔드(firehub-web)는 반드시 Playwright E2E 회귀 테스트를 함께 작성한다 — 입력→API payload→응답→UI 반영 전체 파이프라인을 검증하는 수준이어야 한다.
 - 각 앱의 상세 아키텍처와 규칙은 해당 모듈의 CLAUDE.md를 참조한다.
 
 ### 계획 수립 원칙
