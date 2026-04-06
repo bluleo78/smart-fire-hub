@@ -1,7 +1,8 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useMemo,useState } from 'react';
 import { toast } from 'sonner';
-import type { TemplateSection, SectionType } from '@/api/proactive';
-import { validateSectionDepth, flattenSections } from '@/lib/template-section-types';
+
+import type { SectionType,TemplateSection } from '@/api/proactive';
+import { flattenSections,validateSectionDepth } from '@/lib/template-section-types';
 
 export interface FlatItem {
   section: TemplateSection;
@@ -86,10 +87,23 @@ export function useSectionTree(initialSections: TemplateSection[]) {
   }, []);
 
   // Move section (for dnd-kit onDragEnd)
+  // flatItems를 현재 sections 기반으로 재계산하여 그룹 간 이동도 지원
   const moveSection = useCallback((activeId: string, overId: string) => {
     if (activeId === overId) return;
     setSections((prev) => {
-      const moved = moveSectionInTree(prev, activeId, overId);
+      // collapsed 상태와 무관하게 전체 트리를 순회하여 flatItems 재계산
+      const currentFlat: FlatItem[] = [];
+      function walkForFlat(items: TemplateSection[], depth: number, parentKey: string | null) {
+        for (const item of items) {
+          currentFlat.push({ section: item, depth, parentKey });
+          if (item.type === 'group' && item.children) {
+            walkForFlat(item.children, depth + 1, item.key);
+          }
+        }
+      }
+      walkForFlat(prev, 0, null);
+
+      const moved = moveSectionInTree(prev, activeId, overId, currentFlat);
       if (!validateSectionDepth(moved)) {
         toast.error('최대 3단계까지 중첩 가능합니다');
         return prev;
@@ -160,40 +174,111 @@ function updateInTree(
   });
 }
 
+/**
+ * 섹션을 트리 내에서 이동한다.
+ * - 같은 부모 내: 순서 변경
+ * - 다른 부모로: 원래 위치에서 제거 → 대상 위치에 삽입
+ * - 그룹 위에 드롭: 해당 그룹의 children 마지막에 추가
+ */
 function moveSectionInTree(
   sections: TemplateSection[],
   activeId: string,
   overId: string,
+  flatItems: FlatItem[],
 ): TemplateSection[] {
-  // 1. Find the active section from the tree
-  const found = flattenSections(sections).find((s) => s.key === activeId);
-  if (!found) return sections;
-  const active: TemplateSection = found;
+  const activeFlat = flatItems.find((f) => f.section.key === activeId);
+  const overFlat = flatItems.find((f) => f.section.key === overId);
+  if (!activeFlat || !overFlat) return sections;
 
-  // 2. Remove it from current position
-  const withoutActive = removeFromTree(sections, activeId);
+  const activeSection = activeFlat.section;
+  const activeParent = activeFlat.parentKey;
+  const overParent = overFlat.parentKey;
 
-  // 3. Insert before the overId at the same level
-  function insertBefore(items: TemplateSection[]): TemplateSection[] {
-    const result: TemplateSection[] = [];
-    for (const item of items) {
-      if (item.key === overId) {
-        result.push(active);
-      }
-      result.push(
-        item.children ? { ...item, children: insertBefore(item.children) } : item,
-      );
+  // over가 group이고 active가 group이 아니면 → 그룹 children 마지막에 추가
+  if (overFlat.section.type === 'group' && activeSection.type !== 'group') {
+    const withoutActive = removeFromTree(sections, activeId);
+    return addToParent(withoutActive, overId, { ...activeSection });
+  }
+
+  // 같은 부모 내 이동
+  if (activeParent === overParent) {
+    if (activeParent === null) {
+      return reorderInArray(sections, activeId, overId);
+    } else {
+      return reorderInParent(sections, activeParent, activeId, overId);
     }
-    return result;
   }
 
-  const moved = insertBefore(withoutActive);
-
-  // If overId was not found in the tree (e.g. it was a child of active that got removed),
-  // fall back to appending at root level
-  if (flattenSections(moved).every((s) => s.key !== activeId)) {
-    return [...withoutActive, active];
+  // 다른 부모 간 이동
+  const withoutActive = removeFromTree(sections, activeId);
+  if (overParent === null) {
+    return insertBeforeInArray(withoutActive, overId, activeSection);
+  } else {
+    return insertBeforeInParent(withoutActive, overParent, overId, activeSection);
   }
+}
 
-  return moved;
+/** 배열 내에서 activeId를 overId 앞으로 이동 */
+function reorderInArray(items: TemplateSection[], activeId: string, overId: string): TemplateSection[] {
+  const activeIdx = items.findIndex((s) => s.key === activeId);
+  const overIdx = items.findIndex((s) => s.key === overId);
+  if (activeIdx === -1 || overIdx === -1) return items;
+
+  const result = [...items];
+  const [moved] = result.splice(activeIdx, 1);
+  const newOverIdx = result.findIndex((s) => s.key === overId);
+  result.splice(newOverIdx, 0, moved);
+  return result;
+}
+
+/** 특정 부모 그룹의 children 내에서 순서 변경 */
+function reorderInParent(
+  sections: TemplateSection[],
+  parentKey: string,
+  activeId: string,
+  overId: string,
+): TemplateSection[] {
+  return sections.map((s) => {
+    if (s.key === parentKey && s.children) {
+      return { ...s, children: reorderInArray(s.children, activeId, overId) };
+    }
+    if (s.children) {
+      return { ...s, children: reorderInParent(s.children, parentKey, activeId, overId) };
+    }
+    return s;
+  });
+}
+
+/** 배열에서 overId 앞에 section 삽입 */
+function insertBeforeInArray(
+  items: TemplateSection[],
+  overId: string,
+  section: TemplateSection,
+): TemplateSection[] {
+  const result: TemplateSection[] = [];
+  for (const item of items) {
+    if (item.key === overId) result.push(section);
+    result.push(item);
+  }
+  // overId를 찾지 못한 경우 마지막에 추가 (방어 코드)
+  if (!result.some((s) => s.key === section.key)) result.push(section);
+  return result;
+}
+
+/** 특정 부모 그룹의 children에서 overId 앞에 section 삽입 */
+function insertBeforeInParent(
+  sections: TemplateSection[],
+  parentKey: string,
+  overId: string,
+  section: TemplateSection,
+): TemplateSection[] {
+  return sections.map((s) => {
+    if (s.key === parentKey && s.children) {
+      return { ...s, children: insertBeforeInArray(s.children, overId, section) };
+    }
+    if (s.children) {
+      return { ...s, children: insertBeforeInParent(s.children, parentKey, overId, section) };
+    }
+    return s;
+  });
 }
