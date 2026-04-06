@@ -16,13 +16,26 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d",
-    "db:logs": "docker compose logs -f db"
+    "db:logs": "docker compose logs -f db",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "turbo": "^2.5.0"
+  },
+  "lint-staged": {
+    "apps/firehub-web/{src,e2e}/**/*.{ts,tsx}": [
+      "eslint --no-warn-ignored"
+    ],
+    "apps/firehub-ai-agent/src/**/*.ts": [
+      "eslint --no-warn-ignored"
+    ]
   },
   "packageManager": "pnpm@10.11.0",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
