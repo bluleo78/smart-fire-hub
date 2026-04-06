@@ -1,0 +1,2 @@
+pnpm test:e2e
+cd apps/firehub-api && ./gradlew test
