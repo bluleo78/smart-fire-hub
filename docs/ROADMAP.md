@@ -23,7 +23,7 @@
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
 | [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
-| [Phase 7](#phase-7-ai-리포트-고도화) | **진행 중** | 10✅+1🔄/13 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성, 역할별 개인화, KPI 팔로우 |
+| [Phase 7](#phase-7-ai-리포트-고도화) | **진행 중** | 11✅/13 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성, 역할별 개인화, KPI 팔로우 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 
 ---
@@ -327,7 +327,7 @@
 | 7-2b | AI 스킬 + MCP 도구 확장 | ✅ | AI Agent | 7-2a | MCP 도구 5개 추가 (템플릿 get/update/delete + 실행 이력 list/get). template-builder 스킬 (양식 설계 워크플로 5단계, 11종 섹션 타입). smart-job-manager 스킬 (작업 관리 4종 워크플로: 생성/이력분석/진단/수정삭제). 시스템 프롬프트 도구 설명 + 사용 예시 추가. |
 | 7-4 | 이상 탐지 + 자동 알림 | ✅ | Backend + Frontend | 7-1, 7-3 | AnomalyDetector (표준편차, 감도 3단계). MetricPollerService (30초 폴링, 시스템+데이터셋 메트릭). anomaly_event 테이블 (V47). AnomalyEvent→DB 저장+SSE 알림 연결. 커스텀 메트릭 모달 (데이터셋 선택+SQL). 이상 탐지 이력 테이블. 시스템 메트릭 Select 버그 수정. 설계: `docs/superpowers/specs/2026-04-06-phase-7-4-7-5-completion-design.md` |
 | 7-5 | 비주얼 리포트 빌더 | ✅ | Frontend | 7-1, 7-3 | @dnd-kit SectionTreeBuilder (그룹 간 자유 정렬 + 깊이 검증). SectionPropertyEditor (11종 타입). JSON↔빌더 양방향 동기화. 구조+가이드 미리보기 (타입별 레이아웃 플레이스홀더). 빌트인 복제. 설계: `docs/superpowers/specs/2026-04-06-phase-7-4-7-5-completion-design.md` |
-| 7-6 | 목표 기반 리포트 생성 | 🔄 | Frontend + AI Agent | 7-4 | **구현 완료(80%)**: generate_report MCP 도구, save_as_smart_job 도구, ReportBuilderWidget (인라인 위젯), 시스템 프롬프트 워크플로 가이드 (데이터 탐색→분석→리포트→저장). **미완료**: AI 자동 섹션 콘텐츠 생성, 리포트 초안 미리보기. |
+| 7-6 | 목표 기반 리포트 생성 | ✅ | Frontend + AI Agent | 7-4 | generate_report MCP 도구 (title 필수, templateStructure optional+기본 프리셋 4종 자동 적용, widgetType 반환). save_as_smart_job 도구. 시스템 프롬프트 5단계 워크플로 (탐색→템플릿 결정→섹션 작성→표시→후속). 섹션 타입별 렌더러 (cards 카드 그리드, list/recommendation/comparison). ReportPreviewDialog 풀스크린 미리보기. WidgetRegistry generate_report 등록. E2E 테스트 5개. |
 | 7-7 | 역할별 리포트 개인화 | ⬜ | Backend + AI Agent | 7-4~7-6 | 같은 리포트 → 경영진(핵심 요약)/분석가(상세 데이터)/운영자(액션 아이템) 버전 자동 생성. 사용자 역할 기반 뷰 분기. Wordsmith NLG 패턴 참조. (역할 시스템은 존재하나 리포트와 미연결) |
 | 7-8 | KPI 팔로우 + 프로액티브 푸시 | ⬜ | Full Stack | 7-7 | 사용자가 관심 지표 "팔로우" → AI가 주기적 모니터링 → 유의미한 변화 감지 시 개인화된 인사이트 푸시. Tableau Pulse 패턴 참조. (구독/팔로우 스키마 미구현) |
 

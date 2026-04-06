@@ -2,6 +2,19 @@ import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
+/** 기본 "일반 분석" 리포트 템플릿 프리셋
+ * templateStructure를 생략한 경우 자동으로 적용됩니다.
+ */
+const DEFAULT_ANALYSIS_TEMPLATE = {
+  sections: [
+    { key: 'executive_summary', label: '핵심 요약', type: 'text', required: true },
+    { key: 'data_analysis', label: '데이터 분석', type: 'text', required: true },
+    { key: 'key_metrics', label: '주요 지표', type: 'cards', required: true },
+    { key: 'recommendations', label: '권장 사항', type: 'recommendation' },
+  ],
+  output_format: 'markdown',
+};
+
 export function registerProactiveTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
@@ -150,13 +163,18 @@ export function registerProactiveTools(
 
     safeTool(
       'generate_report',
-      '비즈니스 질문을 기반으로 데이터를 탐색하고 구조화된 리포트 섹션을 생성합니다. 사용자가 분석 요청을 하면 이 도구를 사용하세요.',
+      '분석 결과를 구조화된 리포트로 생성하고 인라인 위젯으로 표시합니다. templateStructure를 생략하면 기본 "일반 분석" 프리셋이 자동 적용됩니다.',
       {
+        // 리포트 제목 (필수)
+        title: z.string().describe('리포트 제목'),
+        // 원래 비즈니스 질문
         question: z.string().describe('비즈니스 질문'),
+        // 분석에 사용한 데이터셋 ID 목록 (선택)
         datasetIds: z
           .array(z.number())
           .optional()
           .describe('분석 대상 데이터셋 ID 목록'),
+        // 리포트 구조 — 생략 시 DEFAULT_ANALYSIS_TEMPLATE 자동 적용
         templateStructure: z
           .object({
             sections: z.array(
@@ -170,16 +188,20 @@ export function registerProactiveTools(
             ),
             output_format: z.string().optional(),
           })
-          .describe('리포트 구조'),
+          .optional()
+          .describe('리포트 구조 (생략 시 일반 분석 프리셋 적용)'),
+        // 각 섹션의 분석 결과 콘텐츠
         sectionContents: z
           .record(z.string(), z.string())
           .describe('각 섹션의 분석 결과'),
+        // 작성 스타일 (선택)
         style: z.string().optional().describe('작성 스타일'),
       },
       async (args: {
+        title: string;
         question: string;
         datasetIds?: number[];
-        templateStructure: {
+        templateStructure?: {
           sections: Array<{
             key: string;
             label: string;
@@ -192,11 +214,15 @@ export function registerProactiveTools(
         sectionContents: Record<string, string>;
         style?: string;
       }) => {
+        // templateStructure가 없으면 기본 "일반 분석" 프리셋을 적용합니다
+        const template = args.templateStructure ?? DEFAULT_ANALYSIS_TEMPLATE;
         return jsonResult({
-          displayed: true,
+          // widgetType을 통해 프론트엔드에서 ReportBuilderWidget으로 렌더링됩니다
+          widgetType: 'report_builder',
+          title: args.title,
           question: args.question,
           datasetIds: args.datasetIds ?? [],
-          templateStructure: args.templateStructure,
+          templateStructure: template,
           sectionContents: args.sectionContents,
           style: args.style,
         });

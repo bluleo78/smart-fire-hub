@@ -1,8 +1,10 @@
-import { lazy } from 'react';
 import type { ComponentType } from 'react';
+import { lazy } from 'react';
+
 import type { WidgetProps } from './types';
 
 interface WidgetEntry {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 위젯마다 입력 타입이 다르므로 제네릭 any 허용
   component: React.LazyExoticComponent<ComponentType<WidgetProps<any>>>;
   label: string;
   icon: string;
@@ -57,6 +59,12 @@ const WIDGET_REGISTRY: Record<string, WidgetEntry> = {
   show_report_builder: {
     component: lazy(() => import('./ReportBuilderWidget')),
     label: '리포트 빌더',
+    icon: '📝',
+  },
+  /** AI가 생성한 리포트 초안 표시 — generate_report 도구 결과용 */
+  generate_report: {
+    component: lazy(() => import('./ReportBuilderWidget')),
+    label: 'AI 리포트',
     icon: '📝',
   },
 };

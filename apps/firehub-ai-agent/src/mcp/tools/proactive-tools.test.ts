@@ -36,7 +36,9 @@ describe('Proactive MCP Tools', () => {
 
   // --- generate_report ---
   describe('generate_report', () => {
+    // title 필드가 추가된 기본 인수
     const baseArgs = {
+      title: '월별 화재 발생 추이 분석',
       question: '월별 화재 발생 추이는?',
       templateStructure: {
         sections: [
@@ -51,15 +53,64 @@ describe('Proactive MCP Tools', () => {
       },
     };
 
-    it('returns displayed: true with question and template structure', async () => {
+    it('returns widgetType report_builder with question and template structure', async () => {
       const result = await invokeTool(server, 'generate_report', baseArgs);
 
       expect(result.isError).toBeFalsy();
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.displayed).toBe(true);
+      // widgetType이 report_builder로 반환되어야 프론트엔드에서 위젯으로 렌더링됩니다
+      expect(parsed.widgetType).toBe('report_builder');
       expect(parsed.question).toBe('월별 화재 발생 추이는?');
       expect(parsed.templateStructure).toEqual(baseArgs.templateStructure);
       expect(parsed.sectionContents).toEqual(baseArgs.sectionContents);
+    });
+
+    it('includes title field in response', async () => {
+      const result = await invokeTool(server, 'generate_report', baseArgs);
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      // title 필드가 응답에 포함되어야 합니다
+      expect(parsed.title).toBe('월별 화재 발생 추이 분석');
+    });
+
+    it('applies default preset when templateStructure is not provided', async () => {
+      // templateStructure를 생략하면 기본 "일반 분석" 프리셋이 적용되어야 합니다
+      const argsWithoutTemplate = {
+        title: '기본 프리셋 테스트',
+        question: '데이터를 분석해줘',
+        sectionContents: {
+          executive_summary: '핵심 요약 내용',
+          data_analysis: '분석 내용',
+          key_metrics: '지표 내용',
+        },
+      };
+
+      const result = await invokeTool(server, 'generate_report', argsWithoutTemplate);
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      // 기본 프리셋이 적용되어 4개 섹션이 반환되어야 합니다
+      expect(parsed.templateStructure.sections).toHaveLength(4);
+    });
+
+    it('default preset has correct section keys and types', async () => {
+      const argsWithoutTemplate = {
+        title: '기본 프리셋 섹션 검증',
+        question: '데이터를 분석해줘',
+        sectionContents: {},
+      };
+
+      const result = await invokeTool(server, 'generate_report', argsWithoutTemplate);
+
+      const parsed = JSON.parse(result.content[0].text);
+      const sections = parsed.templateStructure.sections;
+
+      // 기본 프리셋의 각 섹션 key/label/type 검증
+      expect(sections[0]).toMatchObject({ key: 'executive_summary', label: '핵심 요약', type: 'text', required: true });
+      expect(sections[1]).toMatchObject({ key: 'data_analysis', label: '데이터 분석', type: 'text', required: true });
+      expect(sections[2]).toMatchObject({ key: 'key_metrics', label: '주요 지표', type: 'cards', required: true });
+      expect(sections[3]).toMatchObject({ key: 'recommendations', label: '권장 사항', type: 'recommendation' });
     });
 
     it('includes datasetIds when provided', async () => {
@@ -95,7 +146,7 @@ describe('Proactive MCP Tools', () => {
     it('does not call apiClient (pure passthrough)', async () => {
       await invokeTool(server, 'generate_report', baseArgs);
 
-      // generate_report is a passthrough tool — no API calls
+      // generate_report는 패스스루 도구 — API 호출 없음
       const methodNames = Object.getOwnPropertyNames(FireHubApiClient.prototype).filter(
         (name) => name !== 'constructor',
       );
