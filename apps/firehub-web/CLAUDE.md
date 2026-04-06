@@ -12,9 +12,18 @@ pnpm build            # TypeScript check + Vite production build
 pnpm lint             # ESLint (flat config, ignores dist and src/components/ui)
 pnpm typecheck        # tsc -b --noEmit
 pnpm preview          # Preview production build locally
+pnpm test:e2e         # Playwright E2E 테스트 (Vite dev 서버 자동 기동)
+pnpm test:e2e:headed  # 브라우저 창을 띄워서 E2E 테스트 실행
+pnpm test:e2e:ui      # Playwright UI 모드 (인터랙티브 디버깅)
 ```
 
-No test framework is configured for this package.
+### E2E 테스트 (Playwright)
+
+- 설정: `playwright.config.ts`, 테스트 디렉토리: `e2e/`
+- API 모킹 기반 — `page.route()`로 백엔드 API를 모킹하므로 백엔드(Spring Boot + PostgreSQL) 불필요
+- 모킹 데이터는 `src/types/`의 타입을 적용하여 API 스펙 변경 시 컴파일 에러로 감지
+- 인증 fixture: `e2e/fixtures/auth.fixture.ts` — `authMockedPage`(로그인 전), `authenticatedPage`(로그인 완료) 제공
+- 새 테스트 추가 시 `e2e/fixtures/auth.fixture.ts`에서 `test`, `expect`를 import하여 사용
 
 ## Architecture
 
