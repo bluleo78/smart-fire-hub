@@ -10,5 +10,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["e2e", "src/types"]
+  "include": ["e2e", "src/types"],
+  "exclude": ["src/types/react-syntax-highlighter.d.ts"]
 }

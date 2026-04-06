@@ -1,9 +1,10 @@
-import { test as base, type Page } from '@playwright/test';
+import { type Page,test as base } from '@playwright/test';
 
 import type { TokenResponse, UserResponse } from '../../src/types/auth';
 import type { RoleResponse } from '../../src/types/role';
 import type { UserDetailResponse } from '../../src/types/user';
 import { mockApi } from './api-mock';
+import { setupHomeMocks } from './base.fixture';
 
 /**
  * 인증 모킹 테스트 fixture
@@ -22,8 +23,8 @@ export const MOCK_USER: UserResponse = {
   createdAt: '2026-01-01T00:00:00',
 };
 
-/** 모킹용 토큰 응답 — TokenResponse 타입으로 API 스펙 정합성 보장 */
-const MOCK_TOKEN_RESPONSE: TokenResponse = {
+/** 모킹용 토큰 응답 — TokenResponse 타입으로 API 스펙 정합성 보장 / 다른 테스트에서 재사용 가능하도록 export */
+export const MOCK_TOKEN_RESPONSE: TokenResponse = {
   accessToken: 'mock-jwt-access-token',
   tokenType: 'Bearer',
   expiresIn: 3600,
@@ -48,11 +49,14 @@ const MOCK_USER_DETAIL: UserDetailResponse = {
  * - POST /api/v1/auth/login → 토큰 응답
  * - POST /api/v1/auth/refresh → 토큰 갱신 응답
  * - GET /api/v1/users/me → 사용자 상세 정보
+ * - 홈 대시보드 API도 함께 모킹 — 로그인 성공 후 '/'로 리다이렉트 시 필요
  */
 async function setupAuthMocks(page: Page) {
   await mockApi(page, 'POST', '/api/v1/auth/login', MOCK_TOKEN_RESPONSE);
   await mockApi(page, 'POST', '/api/v1/auth/refresh', MOCK_TOKEN_RESPONSE);
   await mockApi(page, 'GET', '/api/v1/users/me', MOCK_USER_DETAIL);
+  // 로그인 후 홈으로 리다이렉트될 때 대시보드 API 호출을 모킹
+  await setupHomeMocks(page);
 }
 
 /**
@@ -81,6 +85,7 @@ type AuthFixtures = {
  * - authMockedPage: 인증 API만 모킹 (로그인 페이지 테스트용)
  * - authenticatedPage: 로그인까지 완료 (인증이 필요한 페이지 테스트용)
  */
+/* eslint-disable react-hooks/rules-of-hooks -- Playwright fixture의 use()는 React Hook이 아님 */
 export const test = base.extend<AuthFixtures>({
   authMockedPage: async ({ page }, use) => {
     await setupAuthMocks(page);

@@ -47,6 +47,33 @@ export async function mockApi(
 }
 
 /**
+ * Spring Boot PageResponse 형태의 페이지네이션 응답 객체를 생성한다.
+ * - 백엔드 PageResponse<T> DTO와 동일한 구조를 반환하여 목록 API 모킹에 활용한다.
+ * @param content - 페이지 내 항목 배열
+ * @param overrides - page, size, totalElements, totalPages 기본값 오버라이드
+ */
+export function createPageResponse<T>(
+  content: T[],
+  overrides?: {
+    page?: number;
+    size?: number;
+    totalElements?: number;
+    totalPages?: number;
+  },
+) {
+  const totalElements = overrides?.totalElements ?? content.length;
+  const size = overrides?.size ?? 20;
+  return {
+    content,
+    page: overrides?.page ?? 0,
+    size,
+    totalElements,
+    // totalPages를 명시하지 않으면 totalElements / size 올림으로 자동 계산
+    totalPages: overrides?.totalPages ?? Math.ceil(totalElements / size),
+  };
+}
+
+/**
  * 여러 API 엔드포인트를 한 번에 모킹한다.
  * @param page - Playwright Page 객체
  * @param mocks - 모킹할 API 목록

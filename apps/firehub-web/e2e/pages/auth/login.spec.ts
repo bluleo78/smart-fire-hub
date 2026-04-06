@@ -1,5 +1,5 @@
-import { mockApi } from './fixtures/api-mock';
-import { expect, MOCK_USER, test } from './fixtures/auth.fixture';
+import { mockApi } from '../../fixtures/api-mock';
+import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
  * 로그인 페이지 E2E 테스트
