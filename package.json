@@ -26,10 +26,10 @@
   },
   "lint-staged": {
     "apps/firehub-web/{src,e2e}/**/*.{ts,tsx}": [
-      "eslint --no-warn-ignored"
+      "eslint --no-warn-ignored --config apps/firehub-web/eslint.config.js"
     ],
     "apps/firehub-ai-agent/src/**/*.ts": [
-      "eslint --no-warn-ignored"
+      "eslint --no-warn-ignored --config apps/firehub-ai-agent/eslint.config.js"
     ]
   },
   "packageManager": "pnpm@10.11.0",
