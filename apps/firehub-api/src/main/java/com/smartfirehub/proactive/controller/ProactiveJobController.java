@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
@@ -178,6 +179,20 @@ public class ProactiveJobController {
       return null;
     }
     return objectMapper.convertValue(execution.result(), ProactiveResult.class);
+  }
+
+  /**
+   * 특정 작업의 이상 탐지 이벤트 이력을 조회한다. 최근 순으로 limit 건을 반환하며, 기본값은 20건이다.
+   *
+   * @param id proactive_job ID
+   * @param limit 최대 반환 건수 (기본값: 20)
+   * @return 이상 탐지 이벤트 목록
+   */
+  @GetMapping("/{id}/anomaly-events")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<List<AnomalyEventRepository.AnomalyEventRecord>> getAnomalyEvents(
+      @PathVariable Long id, @RequestParam(defaultValue = "20") int limit) {
+    return ResponseEntity.ok(proactiveJobService.getAnomalyEvents(id, limit));
   }
 
   @GetMapping("/recipients")
