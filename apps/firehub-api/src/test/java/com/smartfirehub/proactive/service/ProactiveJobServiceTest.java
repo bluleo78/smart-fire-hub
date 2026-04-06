@@ -253,4 +253,64 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .isInstanceOf(ProactiveJobException.class)
         .hasMessageContaining("999999");
   }
+
+  // ── 이상 탐지 이벤트 테스트 ──
+
+  /** onAnomalyDetected 호출 시 이벤트가 DB에 저장되고 SSE 알림이 전송되는지 검증 */
+  @Test
+  void onAnomalyDetected_saves_event_and_sends_sse_notification() {
+    var job = proactiveJobService.createJob(buildCreateRequest("이상탐지 알림 테스트"), testUserId);
+    var event =
+        new com.smartfirehub.proactive.dto.AnomalyEvent(
+            job.id(), testUserId, "metric1", "테스트 메트릭",
+            50.0, 10.0, 3.0, 13.33, "medium", List.of(8.0, 10.0, 12.0));
+
+    rawJobService.onAnomalyDetected(event);
+
+    verify(anomalyEventRepository).save(event);
+    verify(sseEmitterRegistry)
+        .broadcast(
+            org.mockito.ArgumentMatchers.eq(testUserId),
+            org.mockito.ArgumentMatchers.argThat(
+                n ->
+                    "ANOMALY_DETECTED".equals(n.eventType())
+                        && "WARNING".equals(n.severity())));
+  }
+
+  /** 쿨다운 내 재호출 시 save/broadcast가 1번만 호출되는지 검증 */
+  @Test
+  void onAnomalyDetected_respects_cooldown_on_second_call() {
+    var job = proactiveJobService.createJob(buildCreateRequest("쿨다운 테스트"), testUserId);
+    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveAiClient.execute(
+            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
+        .thenReturn(buildMockResult());
+    when(chatDeliveryChannel.type()).thenReturn("CHAT");
+
+    var event =
+        new com.smartfirehub.proactive.dto.AnomalyEvent(
+            job.id(), testUserId, "metric_cd", "쿨다운 메트릭",
+            100.0, 20.0, 5.0, 16.0, "high", List.of(15.0, 18.0));
+
+    rawJobService.onAnomalyDetected(event);
+    rawJobService.onAnomalyDetected(event);
+
+    verify(anomalyEventRepository, times(1)).save(event);
+    verify(sseEmitterRegistry, times(1)).broadcast(anyLong(), any());
+  }
+
+  /** getAnomalyEvents가 저장된 이벤트를 반환하는지 검증 */
+  @Test
+  void getAnomalyEvents_returns_events() {
+    var record1 =
+        new com.smartfirehub.proactive.repository.AnomalyEventRepository.AnomalyEventRecord(
+            1L, 1L, "m1", "메트릭1", 30.0, 10.0, 2.0, 10.0, "low",
+            java.time.LocalDateTime.now());
+    when(anomalyEventRepository.findByJobId(1L, 10)).thenReturn(List.of(record1));
+
+    var results = proactiveJobService.getAnomalyEvents(1L, 10);
+
+    assertThat(results).hasSize(1);
+    assertThat(results.get(0).metricName()).isEqualTo("메트릭1");
+  }
 }
