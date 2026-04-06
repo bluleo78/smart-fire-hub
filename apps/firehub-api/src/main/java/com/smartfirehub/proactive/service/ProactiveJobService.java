@@ -2,6 +2,8 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.notification.dto.NotificationEvent;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
@@ -10,6 +12,7 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
@@ -23,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +51,10 @@ public class ProactiveJobService {
   private final ProactiveJobSchedulerService schedulerService;
   private final List<DeliveryChannel> deliveryChannels;
   private final UserRepository userRepository;
+  // 이상 탐지 이벤트 저장 Repository — anomaly_event 테이블에 이벤트 이력을 영속화한다
+  private final AnomalyEventRepository anomalyEventRepository;
+  // SSE 에미터 레지스트리 — 사용자에게 실시간 이상 탐지 알림을 전송한다
+  private final SseEmitterRegistry sseEmitterRegistry;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -65,7 +73,9 @@ public class ProactiveJobService {
       ObjectMapper objectMapper,
       @Lazy ProactiveJobSchedulerService schedulerService,
       List<DeliveryChannel> deliveryChannels,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      AnomalyEventRepository anomalyEventRepository,
+      SseEmitterRegistry sseEmitterRegistry) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.messageRepository = messageRepository;
@@ -77,6 +87,8 @@ public class ProactiveJobService {
     this.schedulerService = schedulerService;
     this.deliveryChannels = deliveryChannels;
     this.userRepository = userRepository;
+    this.anomalyEventRepository = anomalyEventRepository;
+    this.sseEmitterRegistry = sseEmitterRegistry;
   }
 
   @Transactional(readOnly = true)
@@ -264,6 +276,18 @@ public class ProactiveJobService {
         .toList();
   }
 
+  /**
+   * 특정 작업의 이상 탐지 이벤트 이력을 조회한다. 최근 순(detected_at DESC)으로 limit 건을 반환한다.
+   *
+   * @param jobId 조회할 proactive_job ID
+   * @param limit 최대 반환 건수
+   * @return 이상 탐지 이벤트 목록
+   */
+  @Transactional(readOnly = true)
+  public List<AnomalyEventRepository.AnomalyEventRecord> getAnomalyEvents(Long jobId, int limit) {
+    return anomalyEventRepository.findByJobId(jobId, limit);
+  }
+
   // ── 이상 탐지 이벤트 처리 ──
 
   @EventListener
@@ -284,6 +308,42 @@ public class ProactiveJobService {
         event.metricName(),
         event.currentValue(),
         event.deviation());
+
+    // 이상 탐지 이벤트를 DB에 영속화한다 — 이력 조회 API에서 활용된다
+    // 저장 실패가 job 실행을 막지 않도록 예외를 포획한다
+    try {
+      anomalyEventRepository.save(event);
+    } catch (Exception e) {
+      log.warn("Failed to save anomaly event for job {}: {}", event.jobId(), e.getMessage());
+    }
+
+    // 해당 사용자에게 SSE를 통해 실시간 이상 탐지 알림을 전송한다
+    // 연결이 없거나 전송 실패해도 job 실행에는 영향을 주지 않는다
+    try {
+      var notification =
+          new NotificationEvent(
+              UUID.randomUUID().toString(),
+              "ANOMALY_DETECTED",
+              "WARNING",
+              "이상 탐지",
+              String.format(
+                  "메트릭 '%s'에서 이상이 감지되었습니다 (%.2fσ 편차)", event.metricName(), event.deviation()),
+              "PROACTIVE_JOB",
+              event.jobId(),
+              Map.of(
+                  "metricId", event.metricId(),
+                  "metricName", event.metricName(),
+                  "currentValue", event.currentValue(),
+                  "deviation", event.deviation()),
+              LocalDateTime.now());
+      sseEmitterRegistry.broadcast(event.userId(), notification);
+    } catch (Exception e) {
+      log.warn(
+          "Failed to send SSE notification for anomaly event (job={}): {}",
+          event.jobId(),
+          e.getMessage());
+    }
+
     try {
       executeJob(event.jobId(), event.userId());
       recordCooldown(event.jobId());
