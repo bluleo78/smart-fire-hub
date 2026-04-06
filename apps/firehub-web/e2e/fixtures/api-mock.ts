@@ -6,7 +6,6 @@ import type { Page } from '@playwright/test';
  * - 실제 백엔드(Spring Boot + PostgreSQL) 없이 프론트엔드 E2E 테스트 가능
  */
 
-/** 지원하는 HTTP 메서드 */
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 interface MockApiOptions {
