@@ -16,7 +16,8 @@ test.describe('AI 인사이트 플로우', () => {
   test('작업 목록 → 작업 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     // 작업 목록 페이지 모킹
     await setupJobListMocks(page, 3);
-    // 작업 상세 페이지 모킹
+    // 작업 상세 페이지 모킹 — createJob({ id:1 }) 기본값:
+    //   name:'매일 현황 리포트', cronExpression:'0 9 * * *', templateName:'기본 리포트 템플릿'
     await setupJobDetailMocks(page, 1);
 
     // 작업 목록 페이지 접근
@@ -33,10 +34,20 @@ test.describe('AI 인사이트 플로우', () => {
 
     // 작업 상세에서 작업명이 표시되는지 확인 (팩토리 기본값: "매일 현황 리포트")
     await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+
+    // 팩토리 기본값 cronExpression '0 9 * * *' 또는 스케줄 설명이 상세 페이지에 표시되는지 확인
+    const cronText = page.getByText('0 9 * * *');
+    const scheduleDesc = page.getByText(/매일|오전 9시|09:00|스케줄/);
+    const hasCron = (await cronText.count()) > 0 || (await scheduleDesc.count()) > 0;
+    expect(hasCron).toBe(true);
+
+    // 팩토리 기본값 templateName '기본 리포트 템플릿'이 상세 페이지에 표시되는지 확인
+    await expect(page.getByText('기본 리포트 템플릿')).toBeVisible();
   });
 
   test('템플릿 목록에서 기본/커스텀 템플릿을 확인한다', async ({ authenticatedPage: page }) => {
     // 기본 + 커스텀 템플릿 포함 목록 모킹
+    // createTemplates() → [{id:1, name:'일일 현황 리포트', builtin:true}, {id:2, name:'주간 통계 리포트', builtin:false}]
     await setupTemplateListMocks(page);
 
     await page.goto('/ai-insights/templates');
@@ -52,6 +63,12 @@ test.describe('AI 인사이트 플로우', () => {
 
     // 기본 템플릿의 "기본" 뱃지 확인
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '기본' })).toBeVisible();
+
+    // createTemplates() 팩토리 실제 이름 확인 — 기본 템플릿
+    await expect(page.getByText('일일 현황 리포트')).toBeVisible();
+
+    // createTemplates() 팩토리 실제 이름 확인 — 커스텀 템플릿
+    await expect(page.getByText('주간 통계 리포트')).toBeVisible();
   });
 
   test('새 작업 버튼 → 생성 폼 → 목록으로 이동하는 플로우', async ({ authenticatedPage: page }) => {

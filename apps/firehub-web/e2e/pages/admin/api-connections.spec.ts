@@ -32,6 +32,14 @@ test.describe('API 연결 페이지', () => {
     // 팩토리로 생성된 연결 목록 확인
     await expect(page.getByRole('cell', { name: '공공 데이터 API' })).toBeVisible();
     await expect(page.getByRole('cell', { name: '내부 서비스 API' })).toBeVisible();
+
+    // 행 개수 확인: 헤더 1행 + 데이터 2행 = 3행
+    await expect(page.getByRole('row')).toHaveCount(3);
+
+    // 인증 유형 배지 확인 — UI에서 API_KEY는 'API Key', BEARER는 'Bearer'로 렌더링된다
+    const rows = page.getByRole('row');
+    await expect(rows.filter({ hasText: '공공 데이터 API' }).getByText('API Key')).toBeVisible();
+    await expect(rows.filter({ hasText: '내부 서비스 API' }).getByText('Bearer')).toBeVisible();
   });
 
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
@@ -43,6 +51,16 @@ test.describe('API 연결 페이지', () => {
 
   test('새 연결 버튼 클릭 시 생성 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     await setupApiConnectionListMocks(page);
+
+    // 연결 생성 POST API 캡처 설정 — goto 이전에 등록해야 한다
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections',
+      { id: 10, name: '새 API 연결', authType: 'API_KEY' },
+      { capture: true },
+    );
+
     await page.goto('/admin/api-connections');
 
     // "새 연결" 버튼 클릭
@@ -52,8 +70,25 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByText('새 API 연결 생성')).toBeVisible();
 
-    // 폼 필드 확인 — Label에 htmlFor가 없으므로 placeholder로 접근
-    await expect(page.getByPlaceholder('예: Make.com API')).toBeVisible();
+    // 이름 필드 확인 및 입력 — placeholder로 접근
+    const nameInput = page.getByPlaceholder('예: Make.com API');
+    await expect(nameInput).toBeVisible();
+    await nameInput.fill('새 API 연결');
+
+    // API_KEY 인증 유형(기본값): 헤더 이름과 키 값도 필수 입력
+    // placeholder='Authorization' → 헤더 이름 필드
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    // placeholder='API 키를 입력하세요' → 키 값 필드
+    await page.getByPlaceholder('API 키를 입력하세요').fill('test-api-key-12345');
+
+    // 생성 버튼 클릭 → POST /api/v1/api-connections 호출
+    await page.getByRole('button', { name: '생성' }).click();
+
+    // API payload 검증 — 입력한 이름과 authType이 전달되어야 한다
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '새 API 연결' });
+    // authType은 기본값(API_KEY)이 전달된다
+    expect((req.payload as Record<string, unknown>).authType).toBeTruthy();
   });
 
   test('생성 다이얼로그에서 API Key 인증 유형 선택 시 관련 필드가 표시된다', async ({
@@ -95,6 +130,12 @@ test.describe('API 연결 페이지', () => {
 
     // 저장 버튼 확인
     await expect(page.getByRole('button', { name: '저장' })).toBeVisible();
+
+    // setupApiConnectionDetailMocks(1)은 createApiConnections()[0]을 반환 — name='공공 데이터 API'
+    // <Label>연결 이름</Label>에 htmlFor가 없으므로, 기본 정보 카드 첫 번째 textbox로 검증한다
+    // 기본 정보 카드 내 첫 번째 Input이 연결 이름 필드이다
+    const nameInput = page.getByRole('textbox').first();
+    await expect(nameInput).toHaveValue('공공 데이터 API');
   });
 
   test('API 연결 상세 페이지에서 인증 정보 변경 버튼이 표시된다', async ({
@@ -114,6 +155,10 @@ test.describe('API 연결 페이지', () => {
     authenticatedPage: page,
   }) => {
     await setupApiConnectionListMocks(page);
+
+    // 첫 번째 연결(id=1) 삭제 DELETE API 캡처 설정
+    const capture = await mockApi(page, 'DELETE', '/api/v1/api-connections/1', {}, { capture: true });
+
     await page.goto('/admin/api-connections');
 
     // 테이블 행의 삭제 트리거 버튼 클릭 — Outline + sm size 버튼
@@ -124,5 +169,13 @@ test.describe('API 연결 페이지', () => {
 
     // 삭제 확인 다이얼로그 열림 확인
     await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 확인 버튼 클릭 → DELETE API 호출 검증
+    const confirmButton = page.getByRole('alertdialog').getByRole('button', { name: /삭제|확인/ });
+    await confirmButton.click();
+
+    // DELETE API가 실제로 호출되었는지 확인
+    const req = await capture.waitForRequest();
+    expect(req).toBeTruthy();
   });
 });

@@ -24,12 +24,29 @@ test.describe('로그인 페이지', () => {
   test('로그인 성공 시 홈 페이지로 이동한다', async ({ authMockedPage: page }) => {
     await page.goto('/login');
 
+    // fixture가 이미 POST /api/v1/auth/login을 모킹하고 있으므로,
+    // goto() 이후에 capture: true로 재등록하여 fixture 모킹을 덮어쓴다 (나중에 등록된 route가 우선 적용됨)
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/auth/login',
+      { accessToken: 'mock-jwt-access-token', tokenType: 'Bearer', expiresIn: 3600 },
+      { capture: true },
+    );
+
     // 자격증명 입력
     await page.getByLabel('아이디 (이메일)').fill('test@example.com');
     await page.getByLabel('비밀번호').fill('testpassword123');
 
     // 로그인 버튼 클릭
     await page.getByRole('button', { name: '로그인' }).click();
+
+    // 로그인 API에 전달된 payload 검증 — username/password가 정확히 전달되는지 확인
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      username: 'test@example.com',
+      password: 'testpassword123',
+    });
 
     // 홈 페이지('/')로 리다이렉트 확인
     await page.waitForURL('/');

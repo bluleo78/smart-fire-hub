@@ -39,7 +39,7 @@ test.describe('파이프라인 에디터 페이지', () => {
   });
 
   test('실행 이력 탭을 클릭하면 실행 목록이 표시된다', async ({ authenticatedPage: page }) => {
-    // 에디터 API 모킹 (실행 이력 2개 포함)
+    // 에디터 API 모킹 (실행 이력 2개 포함: COMPLETED id:1, FAILED id:2)
     await setupPipelineEditorMocks(page, 1);
 
     await page.goto('/pipelines/1');
@@ -50,6 +50,22 @@ test.describe('파이프라인 에디터 페이지', () => {
     // 실행 이력 테이블 헤더 확인
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '실행자' })).toBeVisible();
+
+    // 헤더 1행 + 데이터 2행 = 총 3행 확인
+    await expect(page.getByRole('row')).toHaveCount(3);
+
+    // 첫 번째 실행 행: COMPLETED 또는 '완료' 상태 표시 확인
+    const firstRow = page.getByRole('row').nth(1);
+    await expect(firstRow.locator('[data-slot="badge"]').filter({ hasText: /COMPLETED|완료/ })).toBeVisible();
+
+    // 두 번째 실행 행: FAILED 또는 '실패' 상태 표시 확인
+    const secondRow = page.getByRole('row').nth(2);
+    await expect(secondRow.locator('[data-slot="badge"]').filter({ hasText: /FAILED|실패/ })).toBeVisible();
+
+    // 첫 번째 실행의 소요 시간 확인
+    // createExecution defaults: startedAt='2024-01-01T00:00:00Z', completedAt='2024-01-01T00:01:00Z'
+    // formatDuration(00:00:00 → 00:01:00) = '1m 0s'
+    await expect(firstRow.getByText('1m 0s')).toBeVisible();
   });
 
   test('실행 이력이 없을 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
@@ -102,6 +118,9 @@ test.describe('파이프라인 에디터 페이지', () => {
 
     // 트리거 이름이 표시되는지 확인
     await expect(page.getByText('매일 실행')).toBeVisible();
+
+    // 트리거 타입 'SCHEDULE' 또는 '스케줄' 배지가 표시되는지 확인
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: /SCHEDULE|스케줄/ })).toBeVisible();
   });
 
   test('존재하지 않는 파이프라인(404) 접근 시 에러 상태가 된다', async ({

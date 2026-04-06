@@ -24,6 +24,11 @@ test.describe('파이프라인 워크플로우', () => {
 
     // 에디터 페이지(/pipelines/1)로 이동 확인
     await expect(page).toHaveURL(/\/pipelines\/1/);
+
+    // 에디터 페이지 헤더에 파이프라인 이름이 표시되는지 확인
+    // setupPipelineEditorMocks → createPipelineDetail defaults: name='테스트 파이프라인'
+    // 헤더 영역으로 범위를 좁혀 strict mode 위반 방지 (개요 탭 안에도 동일 텍스트가 있을 수 있음)
+    await expect(page.getByText('테스트 파이프라인').first()).toBeVisible();
   });
 
   test('파이프라인 추가 버튼 클릭 시 신규 에디터 페이지로 이동한다', async ({
@@ -56,18 +61,24 @@ test.describe('파이프라인 워크플로우', () => {
     // 에디터 API 모킹
     await setupPipelineEditorMocks(page, 1);
 
-    // 파이프라인 실행 API 모킹 (실행 성공 응답)
-    await mockApi(page, 'POST', '/api/v1/pipelines/1/execute', {
-      id: 10,
-      pipelineId: 1,
-      status: 'RUNNING',
-      executedBy: 'testuser',
-      triggeredBy: 'MANUAL',
-      triggerName: null,
-      startedAt: '2024-01-01T00:00:00Z',
-      completedAt: null,
-      createdAt: '2024-01-01T00:00:00Z',
-    });
+    // 파이프라인 실행 API 캡처 모킹 (실행 성공 응답)
+    const executeCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines/1/execute',
+      {
+        id: 10,
+        pipelineId: 1,
+        status: 'RUNNING',
+        executedBy: 'testuser',
+        triggeredBy: 'MANUAL',
+        triggerName: null,
+        startedAt: '2024-01-01T00:00:00Z',
+        completedAt: null,
+        createdAt: '2024-01-01T00:00:00Z',
+      },
+      { capture: true },
+    );
 
     await page.goto('/pipelines/1');
 
@@ -77,6 +88,10 @@ test.describe('파이프라인 워크플로우', () => {
 
     // 실행 버튼 클릭
     await runButton.click();
+
+    // POST /api/v1/pipelines/1/execute 가 실제로 호출되었는지 확인
+    const req = await executeCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/pipelines/1/execute');
 
     // 성공 토스트 메시지 확인
     await expect(page.getByText('파이프라인 실행이 시작되었습니다')).toBeVisible();
@@ -94,6 +109,9 @@ test.describe('파이프라인 워크플로우', () => {
       totalPages: 1,
     });
 
+    // DELETE API 캡처 모킹: 삭제 확인 후 실제 API 호출 여부를 검증한다
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
     await page.goto('/pipelines');
 
     // 삭제 버튼 클릭 (aria-label="삭제")
@@ -101,5 +119,12 @@ test.describe('파이프라인 워크플로우', () => {
 
     // 삭제 확인 다이얼로그가 열리는지 확인
     await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 다이얼로그의 확인 버튼 클릭 → DELETE API 호출 검증
+    await page.getByRole('alertdialog').getByRole('button', { name: /확인|삭제/ }).click();
+
+    // DELETE /api/v1/pipelines/1 이 실제로 호출되었는지 확인
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/pipelines/1');
   });
 });

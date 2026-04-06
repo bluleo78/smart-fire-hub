@@ -24,6 +24,7 @@ test.describe('관리자 플로우', () => {
     // 목록 페이지 API 모킹
     await setupUserListMocks(page, 3);
     // 상세 페이지 API 모킹 (클릭 후 이동할 페이지)
+    // setupUserDetailMocks(1): name='테스트 사용자', username='user1', email='user1@example.com'
     await setupUserDetailMocks(page, 1);
 
     await page.goto('/admin/users');
@@ -39,6 +40,12 @@ test.describe('관리자 플로우', () => {
 
     // 상세 페이지 제목 확인
     await expect(page.getByRole('heading', { name: '사용자 상세' })).toBeVisible();
+
+    // 상세 페이지에 사용자 데이터가 렌더링되는지 확인
+    // setupUserDetailMocks(1): username='user1', email='user1@example.com'
+    // exact: true로 'user1@example.com'과의 strict 충돌 방지
+    await expect(page.getByText('user1', { exact: true })).toBeVisible();
+    await expect(page.getByText('user1@example.com')).toBeVisible();
   });
 
   test('역할 목록에서 역할 추가 버튼 클릭 시 생성 다이얼로그가 열린다', async ({
@@ -46,13 +53,19 @@ test.describe('관리자 플로우', () => {
   }) => {
     // 역할 목록 API 모킹
     await setupRoleListMocks(page);
-    // 역할 생성 API 모킹 (다이얼로그 제출 시 사용)
-    await mockApi(page, 'POST', '/api/v1/roles', {
-      id: 10,
-      name: 'CUSTOM_ROLE',
-      description: '커스텀 역할',
-      isSystem: false,
-    });
+    // 역할 생성 API 캡처 설정 — goto 이전에 등록하여 요청 payload를 캡처한다
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      {
+        id: 10,
+        name: 'CUSTOM_ROLE',
+        description: '커스텀 역할',
+        isSystem: false,
+      },
+      { capture: true },
+    );
 
     await page.goto('/admin/roles');
 
@@ -69,10 +82,16 @@ test.describe('관리자 플로우', () => {
     // 역할 이름 입력
     await page.getByLabel('역할 이름').fill('CUSTOM_ROLE');
 
-    // 생성 버튼 클릭
+    // 생성 버튼 클릭 → POST /api/v1/roles 호출
     await page.getByRole('button', { name: '생성' }).click();
 
     // 다이얼로그가 닫히는지 확인 (생성 성공 후 닫힘)
     await expect(page.getByRole('dialog')).not.toBeVisible();
+
+    // API payload 검증 — 입력한 역할 이름이 전달되어야 한다
+    const req = capture.lastRequest();
+    if (req) {
+      expect(req.payload).toMatchObject({ name: 'CUSTOM_ROLE' });
+    }
   });
 });

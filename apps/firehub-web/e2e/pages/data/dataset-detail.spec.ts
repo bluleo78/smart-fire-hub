@@ -1,4 +1,4 @@
-import { createDatasetDetail } from '../../factories/dataset.factory';
+import { createCategories, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
@@ -9,8 +9,7 @@ import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
  */
 async function setupDetailPageMocks(page: import('@playwright/test').Page, datasetId = 1) {
   await setupDatasetDetailMocks(page, datasetId);
-  // useCategories() 훅 — 카테고리 셀렉트 박스에 사용
-  const { createCategories } = await import('../../factories/dataset.factory');
+  // useCategories() 훅 — 카테고리 셀렉트 박스에 사용 (동적 import → 정적 import로 교체)
   await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
   // useTags() 훅 — 태그 자동완성에 사용
   await mockApi(page, 'GET', '/api/v1/datasets/tags', ['sample', 'test']);
@@ -34,6 +33,12 @@ test.describe('데이터셋 상세 페이지', () => {
     // 태그 표시 확인 (createDatasetDetail에서 tags: ['테스트', '샘플'])
     await expect(page.getByText('테스트').first()).toBeVisible();
     await expect(page.getByText('샘플').first()).toBeVisible();
+
+    // rowCount '100' 표시 확인 (createDatasetDetail의 기본값 rowCount: 100)
+    await expect(page.getByText('100').first()).toBeVisible();
+
+    // 데이터셋 유형 배지 — datasetType: 'SOURCE' → '원본' 표시
+    await expect(page.getByText('원본').first()).toBeVisible();
   });
 
   test('탭이 올바르게 렌더링되고 전환된다', async ({ authenticatedPage: page }) => {
@@ -53,7 +58,7 @@ test.describe('데이터셋 상세 페이지', () => {
 
   test('뒤로 가기 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
-    // 목록 페이지로 돌아갈 때 필요한 API 모킹
+    // 목록 페이지로 돌아갈 때 필요한 API 모킹 (동적 import → 정적 import로 교체)
     const { createDatasets } = await import('../../factories/dataset.factory');
     await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(5)));
 
@@ -74,7 +79,7 @@ test.describe('데이터셋 상세 페이지', () => {
   }) => {
     // 404 응답으로 모킹 — dataset이 null이면 Skeleton을 렌더링하고 heading은 표시되지 않는다
     await mockApi(page, 'GET', '/api/v1/datasets/9999', { message: 'Not found' }, { status: 404 });
-    const { createCategories } = await import('../../factories/dataset.factory');
+    // 정적 import 사용 (파일 최상단의 createCategories 활용)
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
     await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
 
@@ -86,6 +91,16 @@ test.describe('데이터셋 상세 페이지', () => {
 
   test('즐겨찾기 버튼이 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
+
+    // POST /api/v1/datasets/1/favorite 호출 캡처 — 버튼 클릭 시 API가 실제로 호출되는지 검증
+    const favoriteCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/favorite',
+      { id: 1, isFavorite: true },
+      { capture: true },
+    );
+
     await page.goto('/data/datasets/1');
 
     // 페이지 로드 대기
@@ -94,6 +109,12 @@ test.describe('데이터셋 상세 페이지', () => {
     // 즐겨찾기 버튼 확인 (title 속성으로 식별)
     const favoriteBtn = page.locator('button[title="즐겨찾기 추가"], button[title="즐겨찾기 해제"]');
     await expect(favoriteBtn).toBeVisible();
+
+    // 즐겨찾기 버튼 클릭 후 API 호출 검증
+    await favoriteBtn.click();
+    const req = await favoriteCapture.waitForRequest();
+    // POST 요청이 올바른 엔드포인트로 전송되었는지 확인
+    expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
   });
 
   test('즐겨찾기 상태인 데이터셋은 채워진 별 아이콘을 표시한다', async ({
@@ -112,7 +133,7 @@ test.describe('데이터셋 상세 페이지', () => {
     });
     await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
     await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
-    const { createCategories } = await import('../../factories/dataset.factory');
+    // 정적 import 사용 (파일 최상단의 createCategories 활용)
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
     await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
 

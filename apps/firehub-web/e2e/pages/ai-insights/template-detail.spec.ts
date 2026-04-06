@@ -11,6 +11,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
 test.describe('리포트 템플릿 상세 페이지', () => {
   test('커스텀 템플릿 상세가 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
     // 커스텀 템플릿(builtin: false)으로 모킹
+    // createTemplate 기본값 sections: [{key:'summary', label:'요약'}, {key:'details', label:'상세 내용'}]
     const template = createTemplate({ id: 1, name: '기본 리포트 템플릿', builtin: false });
     await mockApi(page, 'GET', '/api/v1/proactive/templates/1', template);
     await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
@@ -23,6 +24,12 @@ test.describe('리포트 템플릿 상세 페이지', () => {
 
     // "커스텀" 뱃지 확인 (builtin: false)
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '커스텀' })).toBeVisible();
+
+    // 팩토리 sections의 레이블 '요약', '상세 내용'이 JSON 구조 뷰 또는 섹션 미리보기에 표시되는지 확인
+    // TemplateJsonEditor(CodeMirror)가 JSON을 렌더링하면 section label이 텍스트로 포함된다
+    // 여러 요소에 매칭될 수 있으므로 .first()를 사용해 strict mode 위반을 방지한다
+    await expect(page.getByText('요약').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('상세 내용').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('빌트인 템플릿에는 "기본" 뱃지가 표시되고 편집/삭제 버튼이 없다', async ({ authenticatedPage: page }) => {
@@ -74,6 +81,12 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     // 이름 입력 필드 확인
     await expect(page.locator('#tpl-name')).toBeVisible();
 
+    // 설명 입력 필드 확인 (id="tpl-desc")
+    await expect(page.locator('#tpl-desc')).toBeVisible();
+
+    // 작성 스타일 입력 필드 확인 (id="tpl-style")
+    await expect(page.locator('#tpl-style')).toBeVisible();
+
     // "생성" 버튼 확인
     await expect(page.getByRole('button', { name: '생성' })).toBeVisible();
   });
@@ -84,6 +97,9 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/templates/3', template);
     await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    // DELETE API 캡처 — 다이얼로그 확인 버튼 클릭 시 호출되는지 검증
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/proactive/templates/3', {}, { capture: true });
 
     await page.goto('/ai-insights/templates/3');
 
@@ -96,5 +112,13 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     // 삭제 확인 다이얼로그 확인
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByText('템플릿 삭제')).toBeVisible();
+
+    // 다이얼로그 내 확인(삭제) 버튼 클릭 — 역할/텍스트 기반으로 탐색
+    const confirmButton = page.getByRole('dialog').getByRole('button', { name: /삭제|확인/ }).last();
+    await confirmButton.click();
+
+    // DELETE /api/v1/proactive/templates/3 가 실제로 호출되었는지 확인
+    const deletedReq = await deleteCapture.waitForRequest();
+    expect(deletedReq).toBeDefined();
   });
 });

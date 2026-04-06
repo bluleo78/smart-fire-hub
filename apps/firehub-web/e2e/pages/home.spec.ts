@@ -36,6 +36,10 @@ test.describe('홈 페이지', () => {
 
     // 활동 피드 카드 제목 확인
     await expect(page.getByText('활동 피드')).toBeVisible();
+
+    // 인라인 통계 — setupHomeMocks 기본값: analytics/dashboards totalElements=0 → '대시보드 0'
+    // 건강 상태바 하단 퀵 카운트 영역에 대시보드 수가 표시된다
+    await expect(page.getByText(/대시보드\s*0/)).toBeVisible();
   });
 
   /**
@@ -91,13 +95,16 @@ test.describe('홈 페이지', () => {
     // 항목 개수 배지(2) 확인
     await expect(page.getByText('2')).toBeVisible();
 
-    // CRITICAL 항목 — 긴급 뱃지와 제목
+    // CRITICAL 항목 — 긴급 뱃지, 제목, 설명
     await expect(page.getByText('파이프라인 실행 실패')).toBeVisible();
     await expect(page.getByText('긴급')).toBeVisible();
+    // description 필드가 항목 카드 하단에 렌더링된다
+    await expect(page.getByText('3회 연속 실패하였습니다.')).toBeVisible();
 
-    // WARNING 항목 — 경고 뱃지와 제목
+    // WARNING 항목 — 경고 뱃지, 제목, 설명
     await expect(page.getByText('데이터셋 데이터 없음')).toBeVisible();
     await expect(page.getByText('경고')).toBeVisible();
+    await expect(page.getByText('마지막 업데이트로부터 7일이 지났습니다.')).toBeVisible();
   });
 
   /**
@@ -195,8 +202,10 @@ test.describe('홈 페이지', () => {
     // 총 건수 확인
     await expect(page.getByText('총 2건')).toBeVisible();
 
-    // 성공 항목 확인
+    // 성공 항목 확인 + 설명 텍스트
     await expect(page.getByText('파이프라인 실행 성공')).toBeVisible();
+    // description 필드가 제목 하단에 truncate 스타일로 렌더링된다
+    await expect(page.getByText('소방 데이터 수집 파이프라인이 완료됐습니다.')).toBeVisible();
 
     // 실패 항목 확인 + 미해결 뱃지
     await expect(page.getByText('파이프라인 실행 실패')).toBeVisible();
@@ -263,8 +272,9 @@ test.describe('홈 페이지', () => {
     // 최근 대시보드 카드 — 항목 이름 확인
     await expect(page.getByText('소방 현황 대시보드')).toBeVisible();
     await expect(page.getByText('기상 분석 대시보드')).toBeVisible();
-    // 위젯 수 표시 확인
+    // 두 대시보드의 위젯 수가 각각 표시된다
     await expect(page.getByText('위젯 5개')).toBeVisible();
+    await expect(page.getByText('위젯 3개')).toBeVisible();
 
     // 최근 데이터셋 카드 — 항목 이름 확인
     await expect(page.getByText('소방서 위치 데이터')).toBeVisible();

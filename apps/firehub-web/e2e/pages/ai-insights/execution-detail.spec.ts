@@ -10,6 +10,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
 test.describe('실행 상세 페이지', () => {
   test('완료된 실행의 메타 정보가 올바르게 표시된다', async ({ authenticatedPage: page }) => {
     // COMPLETED 상태 실행 모킹
+    // 팩토리 기본값: deliveredChannels:['email'], startedAt:'2024-01-01T09:00:00Z'
     await setupExecutionDetailMocks(page, 1, 1, 'COMPLETED');
 
     await page.goto('/ai-insights/jobs/1/executions/1');
@@ -25,6 +26,17 @@ test.describe('실행 상세 페이지', () => {
 
     // 실행 시각 카드 확인
     await expect(page.getByText('실행 시각')).toBeVisible();
+
+    // 실행 시각 값이 렌더링되는지 확인 — startedAt '2024-01-01T09:00:00Z' 기반으로 날짜 텍스트가 표시되어야 한다
+    // UI에서 날짜 포맷이 다양할 수 있으므로 연도 '2024' 또는 '01' 등 날짜 관련 텍스트 존재 여부로 검증
+    const timeText = page.getByText(/2024|1월|Jan/);
+    await expect(timeText.first()).toBeVisible();
+
+    // deliveredChannels 'email' 채널 정보가 어딘가에 표시되는지 확인
+    // UI에 따라 'email', '이메일', 또는 관련 아이콘 레이블로 표시될 수 있다
+    const emailChannel = page.getByText(/email|이메일/i);
+    const hasEmailInfo = (await emailChannel.count()) > 0;
+    expect(hasEmailInfo).toBe(true);
   });
 
   test('실패한 실행에서 에러 정보가 표시된다', async ({ authenticatedPage: page }) => {

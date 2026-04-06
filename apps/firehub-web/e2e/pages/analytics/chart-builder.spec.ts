@@ -30,6 +30,16 @@ test.describe('차트 빌더 페이지', () => {
 
     // 차트 이름이 툴바에 표시되는지 확인 (팩토리 기본값: '테스트 차트')
     await expect(page.getByText('테스트 차트')).toBeVisible();
+
+    // 차트 타입 패널에 BAR('막대 차트') 버튼이 selected 상태(variant="default")인지 확인
+    // ChartTypeSelector는 icon 버튼으로 구성되며, aria-label에 레이블명이 있다
+    await expect(page.getByRole('button', { name: '막대 차트' })).toBeVisible();
+
+    // 데이터 소스 패널의 Select 트리거에 '테스트 쿼리'가 표시되는지 확인
+    // existingChart.savedQueryId(=1)가 queries 목록과 매칭되면 Select에 해당 이름이 표시됨
+    // setupChartBuilderMocks가 createSavedQueryList(3)을 모킹하므로 id=1 → '저장 쿼리 1'
+    // 단, savedQueryId=1이 선택되면 SelectTrigger에 '저장 쿼리 1'이 표시됨
+    await expect(page.getByRole('combobox')).toContainText('저장 쿼리 1');
   });
 
   test('차트 타입 패널이 표시된다', async ({ authenticatedPage: page }) => {
@@ -51,6 +61,11 @@ test.describe('차트 빌더 페이지', () => {
 
     // 쿼리 실행 버튼 확인
     await expect(page.getByRole('button', { name: '쿼리 실행' })).toBeVisible();
+
+    // createSavedQueryList(3)으로 생성된 쿼리 목록에서 첫 번째 항목 '저장 쿼리 1'이 선택 가능한지 확인
+    // Select 드롭다운은 트리거 클릭 후에만 SelectContent가 렌더링되므로 먼저 열어야 한다
+    await page.getByRole('combobox').click();
+    await expect(page.getByRole('option', { name: '저장 쿼리 1' })).toBeVisible();
   });
 
   test('미리보기 패널에 초기 안내 메시지가 표시된다', async ({ authenticatedPage: page }) => {

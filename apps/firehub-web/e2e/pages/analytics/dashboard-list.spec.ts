@@ -1,4 +1,4 @@
-import { createDashboardListItem } from '../../factories/analytics.factory';
+import { createDashboard, createDashboardListItem } from '../../factories/analytics.factory';
 import { setupDashboardListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -25,6 +25,15 @@ test.describe('대시보드 목록 페이지', () => {
     // 셀 내부는 복합 구조이므로 getByText로 확인
     await expect(page.getByText('테스트 대시보드 1')).toBeVisible();
     await expect(page.getByText('테스트 대시보드 3')).toBeVisible();
+
+    // 행 수 확인: 헤더 1개 + 데이터 3개 = 총 4개 행
+    await expect(page.getByRole('row')).toHaveCount(4);
+
+    // 첫 번째 데이터 행에 위젯 수 '1개'가 표시되는지 확인
+    // DashboardListPage는 widgetCount를 "{widgetCount}개" 형식의 plain text로 렌더링함
+    // createDashboardListItem 기본값: widgetCount: 1
+    const firstRow = page.getByRole('row').nth(1);
+    await expect(firstRow.getByText('1개')).toBeVisible();
   });
 
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
@@ -46,9 +55,24 @@ test.describe('대시보드 목록 페이지', () => {
     await expect(page.getByRole('tab', { name: '공유됨' })).toBeVisible();
   });
 
-  test('새 대시보드 버튼 클릭 시 생성 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
+  test('새 대시보드 버튼 클릭 시 생성 다이얼로그가 열리고 POST payload가 전달된다', async ({ authenticatedPage: page }) => {
     await setupDashboardListMocks(page, 2);
     await page.goto('/analytics/dashboards');
+
+    // POST /api/v1/analytics/dashboards 캡처 모킹
+    const newDashboard = createDashboard({ id: 10, name: '테스트 대시보드' });
+    const postCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/dashboards',
+      newDashboard,
+      { capture: true },
+    );
+
+    // 생성 후 에디터 이동을 위한 추가 API 모킹
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10', newDashboard);
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10/data', { dashboardId: 10, widgets: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
 
     // "새 대시보드" 버튼 클릭
     await page.getByRole('button', { name: '새 대시보드' }).click();
@@ -56,6 +80,16 @@ test.describe('대시보드 목록 페이지', () => {
     // 생성 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('heading', { name: '새 대시보드' })).toBeVisible();
+
+    // 이름 입력 필드에 '테스트 대시보드' 입력
+    await page.getByLabel('이름 *').fill('테스트 대시보드');
+
+    // "생성" 버튼 클릭
+    await page.getByRole('button', { name: '생성' }).click();
+
+    // POST API가 호출되었는지, payload에 name이 포함되었는지 검증
+    const captured = await postCapture.waitForRequest();
+    expect(captured.payload).toMatchObject({ name: '테스트 대시보드' });
   });
 
   test('대시보드 생성 다이얼로그에 이름 입력 필드가 있다', async ({ authenticatedPage: page }) => {
@@ -68,9 +102,18 @@ test.describe('대시보드 목록 페이지', () => {
     await expect(page.getByLabel('이름 *')).toBeVisible();
   });
 
-  test('삭제 버튼 클릭 시 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
+  test('삭제 버튼 클릭 시 확인 다이얼로그가 열리고 DELETE API가 호출된다', async ({ authenticatedPage: page }) => {
     await setupDashboardListMocks(page, 2);
     await page.goto('/analytics/dashboards');
+
+    // DELETE /api/v1/analytics/dashboards/1 캡처 모킹
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/analytics/dashboards/1',
+      {},
+      { capture: true },
+    );
 
     // 첫 번째 행의 삭제 버튼 클릭 (aria-label="삭제")
     const deleteButtons = page.getByRole('button', { name: '삭제' });
@@ -78,6 +121,13 @@ test.describe('대시보드 목록 페이지', () => {
 
     // 삭제 확인 다이얼로그가 열리는지 확인
     await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 다이얼로그의 확인(삭제) 버튼 클릭
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    // DELETE API가 실제로 호출되었는지 검증
+    const captured = await deleteCapture.waitForRequest();
+    expect(captured).toBeDefined();
   });
 
   test('공유 대시보드에 공유 뱃지가 표시된다', async ({ authenticatedPage: page }) => {

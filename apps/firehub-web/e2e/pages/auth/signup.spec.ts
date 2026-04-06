@@ -21,9 +21,9 @@ test.describe('회원가입 페이지', () => {
   });
 
   test('회원가입 성공 시 홈 페이지로 이동한다', async ({ authMockedPage: page }) => {
-    // 회원가입 API 성공 응답 모킹
+    // 회원가입 API 성공 응답 모킹 — capture: true로 요청 payload를 캡처한다
     // signup()은 내부적으로 login()을 자동 호출하므로 회원가입 성공 시 '/'로 이동한다
-    await mockApi(page, 'POST', '/api/v1/auth/signup', createUser());
+    const capture = await mockApi(page, 'POST', '/api/v1/auth/signup', createUser(), { capture: true });
 
     await page.goto('/signup');
 
@@ -34,6 +34,14 @@ test.describe('회원가입 페이지', () => {
 
     // 회원가입 버튼 클릭
     await page.getByRole('button', { name: '회원가입' }).click();
+
+    // 회원가입 API에 전달된 payload 검증 — 폼 입력값이 정확히 전달되는지 확인
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      username: 'newuser@example.com',
+      password: 'password123',
+      name: '새 사용자',
+    });
 
     // signup() 내부에서 login()이 자동 호출되어 홈('/')으로 이동 확인
     await page.waitForURL('/');

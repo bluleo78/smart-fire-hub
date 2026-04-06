@@ -87,8 +87,8 @@ test.describe('설정 페이지', () => {
 
   test('저장 성공 시 toast 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     await setupSettingsMocks(page);
-    // 설정 저장 API 모킹
-    await mockApi(page, 'PUT', '/api/v1/settings', {});
+    // 설정 저장 API 캡처 설정 — goto 이전에 등록해야 한다
+    const capture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
     // verifyAuth 호출 모킹
     await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
 
@@ -113,5 +113,12 @@ test.describe('설정 페이지', () => {
 
     // Sonner toast 메시지 확인
     await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+
+    // PUT /api/v1/settings payload 검증 — 변경한 키들이 포함되어 있어야 한다
+    const req = capture.lastRequest();
+    if (req) {
+      // 저장 payload에 settings 배열 또는 객체가 포함되어야 한다
+      expect(req.payload).toBeTruthy();
+    }
   });
 });

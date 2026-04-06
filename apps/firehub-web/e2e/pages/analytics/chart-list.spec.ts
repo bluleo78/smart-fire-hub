@@ -25,6 +25,17 @@ test.describe('차트 목록 페이지', () => {
     // 셀 내부는 복합 구조이므로 getByText로 확인
     await expect(page.getByText('테스트 차트 1')).toBeVisible();
     await expect(page.getByText('테스트 차트 3')).toBeVisible();
+
+    // 행 수 확인: 헤더 1개 + 데이터 3개 = 총 4개 행
+    await expect(page.getByRole('row')).toHaveCount(4);
+
+    // 첫 번째 데이터 행에 BAR 타입 뱃지 '막대'가 표시되는지 확인
+    // setupChartListMocks는 기본적으로 chartType: 'BAR'로 생성하므로 '막대' 뱃지 검증
+    const firstRow = page.getByRole('row').nth(1);
+    await expect(firstRow.locator('[data-slot="badge"]').filter({ hasText: '막대' })).toBeVisible();
+
+    // 첫 번째 데이터 행에 쿼리 이름 '테스트 쿼리'가 표시되는지 확인
+    await expect(firstRow.getByText('테스트 쿼리')).toBeVisible();
   });
 
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
@@ -63,9 +74,18 @@ test.describe('차트 목록 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '막대' })).toBeVisible();
   });
 
-  test('삭제 버튼 클릭 시 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
+  test('삭제 버튼 클릭 시 확인 다이얼로그가 열리고 DELETE API가 호출된다', async ({ authenticatedPage: page }) => {
     await setupChartListMocks(page, 2);
     await page.goto('/analytics/charts');
+
+    // DELETE /api/v1/analytics/charts/1 API 캡처 모킹
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/analytics/charts/1',
+      {},
+      { capture: true },
+    );
 
     // 첫 번째 행의 삭제 버튼 클릭 (aria-label="삭제")
     const deleteButtons = page.getByRole('button', { name: '삭제' });
@@ -73,5 +93,12 @@ test.describe('차트 목록 페이지', () => {
 
     // 삭제 확인 다이얼로그가 열리는지 확인
     await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 다이얼로그의 확인(삭제) 버튼 클릭
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    // DELETE API가 실제로 호출되었는지 검증
+    const captured = await deleteCapture.waitForRequest();
+    expect(captured).toBeDefined();
   });
 });

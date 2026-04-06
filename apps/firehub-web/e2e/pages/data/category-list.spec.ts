@@ -25,6 +25,15 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(page.getByRole('cell', { name: '통계 데이터' })).toBeVisible();
     // exact: true 로 "기타 데이터 카테고리" 설명 셀과 구분
     await expect(page.getByRole('cell', { name: '기타', exact: true })).toBeVisible();
+
+    // 설명 셀 렌더링 확인 — API 응답의 description 필드가 화면에 표시되는지 검증
+    await expect(page.getByRole('cell', { name: '소방 관련 데이터 카테고리' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '통계 분석용 데이터 카테고리' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '기타 데이터 카테고리' })).toBeVisible();
+
+    // 행 수 확인 — 헤더 행 1개 + 데이터 행 3개 = 총 4행
+    const rows = page.getByRole('row');
+    await expect(rows).toHaveCount(4);
   });
 
   test('카테고리가 없을 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
@@ -42,6 +51,15 @@ test.describe('카테고리 관리 페이지', () => {
   }) => {
     await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
 
+    // POST /api/v1/dataset-categories 호출 캡처 — 생성 폼 제출 시 payload 검증에 사용
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/dataset-categories',
+      { id: 10, name: '신규 카테고리', description: '테스트 설명' },
+      { capture: true },
+    );
+
     await page.goto('/data/categories');
 
     // "새 카테고리" 버튼 클릭
@@ -50,6 +68,20 @@ test.describe('카테고리 관리 페이지', () => {
     // 카테고리 생성 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('heading', { name: '카테고리 생성' })).toBeVisible();
+
+    // 폼 입력 — 이름 및 설명 필드 채우기
+    await page.getByLabel('이름').fill('신규 카테고리');
+    await page.getByLabel('설명').fill('테스트 설명');
+
+    // 생성 버튼 클릭 (다이얼로그 내 submit 버튼)
+    await page.getByRole('dialog').getByRole('button', { name: '생성' }).click();
+
+    // POST API 호출 및 payload 검증
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '신규 카테고리',
+      description: '테스트 설명',
+    });
   });
 
   test('카테고리 생성 다이얼로그에서 취소 시 다이얼로그가 닫힌다', async ({

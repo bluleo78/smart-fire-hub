@@ -41,9 +41,15 @@ test.describe('분석 플로우', () => {
     // 대시보드 목록 모킹
     await setupDashboardListMocks(page, 2);
 
-    // 대시보드 생성 API 응답 모킹 (POST /api/v1/analytics/dashboards)
+    // 대시보드 생성 API 응답 모킹 (POST /api/v1/analytics/dashboards) — payload 캡처 포함
     const newDashboard = createDashboard({ id: 99, name: '새 테스트 대시보드' });
-    await mockApi(page, 'POST', '/api/v1/analytics/dashboards', newDashboard);
+    const postCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/dashboards',
+      newDashboard,
+      { capture: true },
+    );
 
     // 생성 후 에디터 페이지 모킹
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/99', newDashboard);
@@ -76,6 +82,10 @@ test.describe('분석 플로우', () => {
 
     // "생성" 버튼 클릭
     await page.getByRole('button', { name: '생성' }).click();
+
+    // POST payload 검증 — 입력한 이름이 API에 정확히 전달되었는지 확인
+    const captured = await postCapture.waitForRequest();
+    expect(captured.payload).toMatchObject({ name: '새 테스트 대시보드' });
 
     // 대시보드 에디터 페이지로 이동했는지 확인
     await expect(page).toHaveURL('/analytics/dashboards/99');

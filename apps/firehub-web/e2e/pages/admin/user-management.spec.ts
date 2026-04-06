@@ -31,6 +31,13 @@ test.describe('사용자 관리 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '이메일' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
 
+    // 행 개수 확인: 헤더 1행 + 데이터 3행 = 4행
+    await expect(page.getByRole('row')).toHaveCount(4);
+
+    // 첫 번째 데이터 행의 셀 내용 확인 — 아이디(username), 이메일이 올바르게 렌더링되는지 검증
+    await expect(page.getByRole('cell', { name: 'user1', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'user1@example.com', exact: true })).toBeVisible();
+
     // 사용자 행이 렌더링되는지 확인
     await expect(page.getByRole('cell', { name: '사용자 1', exact: true })).toBeVisible();
     await expect(page.getByRole('cell', { name: '사용자 3', exact: true })).toBeVisible();
@@ -46,16 +53,33 @@ test.describe('사용자 관리 페이지', () => {
   });
 
   test('검색 입력 필드가 렌더링된다', async ({ authenticatedPage: page }) => {
-    await setupUserListMocks(page);
+    // 검색 요청 캡처를 위해 goto 이전에 mockApi capture 설정
+    const capture = await mockApi(page, 'GET', '/api/v1/users', createPageResponse(
+      Array.from({ length: 3 }, (_, i) => ({
+        id: i + 1,
+        name: `사용자 ${i + 1}`,
+        username: `user${i + 1}`,
+        email: `user${i + 1}@example.com`,
+        active: true,
+        roles: [],
+      })),
+    ), { capture: true });
+
     await page.goto('/admin/users');
 
     // 검색 입력 필드 확인
     const searchInput = page.getByPlaceholder('이름 또는 아이디로 검색...');
     await expect(searchInput).toBeVisible();
 
-    // 검색어 입력
+    // 검색어 입력 후 debounce 대기
     await searchInput.fill('사용자');
     await page.waitForTimeout(400);
+
+    // 검색 파라미터가 API에 전달되는지 확인
+    const req = capture.lastRequest();
+    if (req) {
+      expect(req.searchParams.get('search')).toBe('사용자');
+    }
 
     // 검색 필드에 입력값 유지 확인
     await expect(searchInput).toHaveValue('사용자');
@@ -73,6 +97,12 @@ test.describe('사용자 관리 페이지', () => {
 
     // 상세 페이지로 이동 확인
     await expect(page).toHaveURL(/\/admin\/users\/1/);
+
+    // 상세 페이지에 사용자 정보가 표시되는지 확인 — 이름과 아이디가 렌더링되어야 한다
+    await expect(page.getByRole('heading', { name: '사용자 상세' })).toBeVisible();
+    // setupUserDetailMocks는 name='테스트 사용자', username='user1'을 반환한다
+    // exact: true로 'user1@example.com'과의 strict 충돌 방지
+    await expect(page.getByText('user1', { exact: true })).toBeVisible();
   });
 
   test('사용자 상세 페이지에서 기본 정보가 표시된다', async ({ authenticatedPage: page }) => {
@@ -82,6 +112,11 @@ test.describe('사용자 관리 페이지', () => {
     // 상세 페이지 제목 및 기본 정보 카드 확인
     await expect(page.getByRole('heading', { name: '사용자 상세' })).toBeVisible();
     await expect(page.getByText('기본 정보')).toBeVisible();
+
+    // 팩토리 데이터 검증 — setupUserDetailMocks(1): username='user1', email='user1@example.com'
+    // exact: true로 'user1@example.com'과의 strict 충돌 방지
+    await expect(page.getByText('user1', { exact: true })).toBeVisible();
+    await expect(page.getByText('user1@example.com')).toBeVisible();
   });
 
   test('사용자 상세 페이지에서 역할 할당 섹션이 표시된다', async ({ authenticatedPage: page }) => {
@@ -93,6 +128,11 @@ test.describe('사용자 관리 페이지', () => {
 
     // 역할 저장 버튼 확인
     await expect(page.getByRole('button', { name: '역할 저장' })).toBeVisible();
+
+    // setupUserDetailMocks는 USER, ADMIN 역할 2개를 반환한다 — 역할 체크박스로 확인
+    // 역할 이름은 <Label htmlFor="role-N">에 포함되어 있어 체크박스 accessible name으로 검색한다
+    await expect(page.getByRole('checkbox', { name: /USER/ })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /ADMIN/ })).toBeVisible();
   });
 
   test('사용자 상세 페이지에서 뒤로 가기 버튼이 동작한다', async ({ authenticatedPage: page }) => {
@@ -116,12 +156,22 @@ test.describe('사용자 관리 페이지', () => {
 
   test('활성 상태 토글 스위치가 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupUserDetailMocks(page, 1);
+
+    // 활성 상태 변경 PUT API 캡처 설정 — goto 이전에 등록해야 한다
+    const capture = await mockApi(page, 'PUT', '/api/v1/users/1/active', {}, { capture: true });
+
     await page.goto('/admin/users/1');
 
     // 활성 상태 카드 확인
     await expect(page.getByText('활성 상태')).toBeVisible();
 
     // Switch 컴포넌트가 렌더링되는지 확인 (role="switch")
-    await expect(page.getByRole('switch')).toBeVisible();
+    const toggle = page.getByRole('switch');
+    await expect(toggle).toBeVisible();
+
+    // 스위치 클릭 → PUT /api/v1/users/1/active 호출 확인
+    await toggle.click();
+    const req = await capture.waitForRequest();
+    expect(req).toBeTruthy();
   });
 });
