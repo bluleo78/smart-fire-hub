@@ -143,7 +143,7 @@ class PipelineControllerTest {
   }
 
   @Test
-  void getPipelines_withoutAuth_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/pipelines")).andExpect(status().isForbidden());
+  void getPipelines_withoutAuth_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/pipelines")).andExpect(status().isUnauthorized());
   }
 }

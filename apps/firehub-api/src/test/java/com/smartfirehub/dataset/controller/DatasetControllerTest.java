@@ -205,7 +205,7 @@ class DatasetControllerTest {
   }
 
   @Test
-  void getDatasets_withoutAuth_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/datasets")).andExpect(status().isForbidden());
+  void getDatasets_withoutAuth_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/datasets")).andExpect(status().isUnauthorized());
   }
 }

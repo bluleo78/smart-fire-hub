@@ -3,6 +3,7 @@ package com.smartfirehub.global.config;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -55,6 +56,15 @@ public class SecurityConfig {
                     .authenticated()
                     .anyRequest()
                     .permitAll())
+        // 인증 실패 시 403 대신 401을 반환하여 프론트엔드의 토큰 갱신 인터셉터가 동작하도록 한다.
+        // Spring Security 기본 EntryPoint는 403을 반환하여, 만료된 JWT로 접근 시
+        // 프론트엔드가 refresh를 시도하지 못하는 문제가 있었다.
+        .exceptionHandling(ex -> ex
+            .authenticationEntryPoint((request, response, authException) -> {
+              response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+              response.setContentType("application/json");
+              response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"" + authException.getMessage() + "\"}");
+            }))
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
     return http.build();

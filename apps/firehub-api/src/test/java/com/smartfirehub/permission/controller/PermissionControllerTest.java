@@ -70,7 +70,7 @@ class PermissionControllerTest {
   }
 
   @Test
-  void getPermissions_unauthenticated_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/permissions")).andExpect(status().isForbidden());
+  void getPermissions_unauthenticated_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/permissions")).andExpect(status().isUnauthorized());
   }
 }

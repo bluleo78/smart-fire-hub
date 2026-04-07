@@ -143,7 +143,7 @@ class RoleControllerTest {
   }
 
   @Test
-  void getRoles_unauthenticated_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/roles")).andExpect(status().isForbidden());
+  void getRoles_unauthenticated_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/roles")).andExpect(status().isUnauthorized());
   }
 }

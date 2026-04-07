@@ -176,7 +176,7 @@ class UserControllerTest {
   }
 
   @Test
-  void getUsers_unauthenticated_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/users")).andExpect(status().isForbidden());
+  void getUsers_unauthenticated_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/users")).andExpect(status().isUnauthorized());
   }
 }

@@ -107,7 +107,7 @@ class ApiConnectionControllerTest {
   }
 
   @Test
-  void getAll_withoutAuth_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/api-connections")).andExpect(status().isForbidden());
+  void getAll_withoutAuth_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/api-connections")).andExpect(status().isUnauthorized());
   }
 }

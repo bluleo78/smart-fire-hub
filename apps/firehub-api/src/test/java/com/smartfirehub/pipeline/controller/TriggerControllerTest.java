@@ -125,7 +125,7 @@ class TriggerControllerTest {
   }
 
   @Test
-  void getTriggers_withoutAuth_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/pipelines/1/triggers")).andExpect(status().isForbidden());
+  void getTriggers_withoutAuth_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/pipelines/1/triggers")).andExpect(status().isUnauthorized());
   }
 }

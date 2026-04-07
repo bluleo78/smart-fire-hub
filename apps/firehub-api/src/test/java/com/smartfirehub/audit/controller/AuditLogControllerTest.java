@@ -141,8 +141,8 @@ class AuditLogControllerTest {
   }
 
   @Test
-  void getAuditLogs_unauthenticated_returnsForbidden() throws Exception {
-    mockMvc.perform(get("/api/v1/admin/audit-logs")).andExpect(status().isForbidden());
+  void getAuditLogs_unauthenticated_returnsUnauthorized() throws Exception {
+    mockMvc.perform(get("/api/v1/admin/audit-logs")).andExpect(status().isUnauthorized());
   }
 
   @Test
