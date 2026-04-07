@@ -72,14 +72,33 @@ pnpm db:reset                   # PostgreSQL 볼륨 삭제 후 재시작
 - 진행 중인 항목이 없으면, 사용자에게 어떤 항목을 진행할지 반드시 물어본 후 작업을 시작한다.
 - ROADMAP.md의 항목 상태 업데이트(완료 표시 등)는 사용자 확인 후 진행한다.
 
-### Project Manager 에이전트
+### 에이전트 팀 구성
 
-로드맵 작업은 **Project Manager 에이전트** (`.claude/agents/project-manager.md`)가 조율한다.
+모든 업무 지시는 **Project Leader** (`.claude/agents/project-leader.md`)에게 내린다. Project Leader가 업무 규모를 판단하여 적절한 에이전트를 투입하고 전체 흐름을 오케스트레이션한다.
 
-- **계획 단계**: PM이 Explore, Architect, Executor 등 전문 에이전트의 의견을 수렴하여 실행 계획을 수립한다.
-- **사용자 승인**: 작업 범위, 기술 접근, 순서 등은 반드시 사용자 승인 후 진행한다.
-- **실행 단계**: 승인된 계획에 따라 Backend/Frontend/AI Agent 팀을 병렬 배치한다.
-- **완료 단계**: 검증 기준 충족 확인 후 사용자에게 로드맵 상태 업데이트를 요청한다.
+| 에이전트 | 역할 |
+|---------|------|
+| **Project Leader** | 업무 총괄 — 분석→설계→구현→검증→완료 전체 오케스트레이션 |
+| **Analyst** | 업무 분석/조사/기획 — 요구사항 추출, 영향 범위, 수용 기준 |
+| **Architect** | 아키텍처 설계 리드 — 앱 간 연동, API 스펙, 코드 리뷰 |
+| **Backend Developer** | firehub-api 구현 — Java/Spring Boot/jOOQ |
+| **Frontend Developer** | firehub-web 구현 — React/TypeScript/Playwright |
+| **AI Agent Developer** | firehub-ai-agent 구현 — Node.js/Claude SDK/MCP |
+| **UI/UX Designer** | 화면 설계 리드 — 디자인 시스템, UI/UX, 접근성 |
+| **QA Tester** | 통합 검증 리드 — 빌드/테스트/회귀, 앱 간 연동 검증 |
+| **Project Manager** | 로드맵 관리 — 상태 추적, 사용자 승인, 완료 기록 |
+
+**업무 흐름** (각 단계마다 리드 + 전원 참여):
+```
+사용자 지시 → Project Leader
+  → Phase 1: 분석 (Analyst 리드)
+  → Phase 2a: 아키텍처 설계 (Architect 리드)
+  → Phase 2b: 화면 설계 (Designer 리드, 병렬)
+  → Phase 3: 계획 (Project Leader 리드)
+  → Phase 4: 구현 (각 Developer 리드, 병렬)
+  → Phase 5: 검증 (QA Tester 리드)
+  → Phase 6: 완료 (Project Leader → PM 로드맵 업데이트)
+```
 
 ## 운영 배포
 
