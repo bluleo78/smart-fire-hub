@@ -66,8 +66,14 @@ public class SettingsService {
 
   @Transactional(readOnly = true)
   public Map<String, String> getAsMap(String prefix) {
+    // system_settings.value 컬럼은 nullable이므로 null value가 있으면 Collectors.toMap이 NPE를 발생시킨다.
+    // null value는 빈 문자열로 대체하고, 중복 키 발생 시 나중 값(b)을 사용하는 merge function을 지정한다.
     return settingsRepository.findByPrefix(prefix).stream()
-        .collect(Collectors.toMap(SettingResponse::key, SettingResponse::value));
+        .collect(
+            Collectors.toMap(
+                SettingResponse::key,
+                s -> s.value() != null ? s.value() : "",
+                (a, b) -> b));
   }
 
   public void updateSettings(Map<String, String> settings, Long userId) {
