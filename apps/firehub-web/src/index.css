@@ -59,6 +59,19 @@
   --color-dataset-foreground: var(--dataset-foreground);
   --color-dashboard-accent: var(--dashboard-accent);
   --color-dashboard-accent-foreground: var(--dashboard-accent-foreground);
+  --color-ai-accent: var(--ai-accent);
+  --color-ai-accent-foreground: var(--ai-accent-foreground);
+  --color-ai-accent-subtle: var(--ai-accent-subtle);
+  --color-caution: var(--caution);
+  --color-caution-foreground: var(--caution-foreground);
+  --color-caution-subtle: var(--caution-subtle);
+  --color-dtype-text: var(--dtype-text);
+  --color-dtype-number: var(--dtype-number);
+  --color-dtype-date: var(--dtype-date);
+  --color-dtype-boolean: var(--dtype-boolean);
+  --color-dtype-json: var(--dtype-json);
+  --color-dtype-geometry: var(--dtype-geometry);
+  --color-dtype-uuid: var(--dtype-uuid);
 }
 
 :root {
@@ -109,6 +122,20 @@
   --dataset-foreground: oklch(0.985 0 0);
   --dashboard-accent: oklch(0.48 0.2 300);
   --dashboard-accent-foreground: oklch(0.985 0 0);
+  --ai-accent: oklch(0.52 0.18 293);
+  --ai-accent-foreground: oklch(0.985 0 0);
+  --ai-accent-subtle: oklch(0.96 0.03 293);
+  --caution: oklch(0.7 0.15 55);
+  --caution-foreground: oklch(0.2 0 0);
+  --caution-subtle: oklch(0.96 0.04 55);
+  /* 데이터 타입 시각화 토큰 — 스키마 탐색기에서 SQL 데이터 타입을 구분하는 색상 */
+  --dtype-text: oklch(0.55 0.15 240);
+  --dtype-number: oklch(0.55 0.16 160);
+  --dtype-date: oklch(0.65 0.15 80);
+  --dtype-boolean: oklch(0.55 0.18 300);
+  --dtype-json: oklch(0.6 0.16 50);
+  --dtype-geometry: oklch(0.55 0.2 15);
+  --dtype-uuid: oklch(0.55 0.12 200);
 }
 
 .dark {
@@ -158,6 +185,20 @@
   --dataset-foreground: oklch(0.985 0 0);
   --dashboard-accent: oklch(0.7 0.18 300);
   --dashboard-accent-foreground: oklch(0.985 0 0);
+  --ai-accent: oklch(0.72 0.15 293);
+  --ai-accent-foreground: oklch(0.985 0 0);
+  --ai-accent-subtle: oklch(0.2 0.04 293);
+  --caution: oklch(0.78 0.13 55);
+  --caution-foreground: oklch(0.985 0 0);
+  --caution-subtle: oklch(0.2 0.04 55);
+  /* 데이터 타입 시각화 토큰 (다크 모드) */
+  --dtype-text: oklch(0.7 0.13 240);
+  --dtype-number: oklch(0.7 0.14 160);
+  --dtype-date: oklch(0.75 0.13 80);
+  --dtype-boolean: oklch(0.7 0.16 300);
+  --dtype-json: oklch(0.72 0.14 50);
+  --dtype-geometry: oklch(0.7 0.18 15);
+  --dtype-uuid: oklch(0.7 0.1 200);
 }
 
 @layer base {

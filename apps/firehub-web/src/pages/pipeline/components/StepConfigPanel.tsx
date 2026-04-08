@@ -306,7 +306,7 @@ export default function StepConfigPanel({
                           key={s.tempId}
                           type="button"
                           onClick={() => insertTextRef.current?.(`{{#${number}}}`)}
-                          className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-semibold border transition-colors hover:bg-accent bg-violet-50 dark:bg-violet-500/10 border-violet-300 dark:border-violet-500/30 text-violet-700 dark:text-violet-400"
+                          className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-semibold border transition-colors hover:bg-accent bg-ai-accent-subtle border-ai-accent/30 text-ai-accent"
                           title={`클릭하여 {{#${number}}} 삽입`}
                         >
                           {`{{#${number}}}`} {s.name || '(이름 없음)'}

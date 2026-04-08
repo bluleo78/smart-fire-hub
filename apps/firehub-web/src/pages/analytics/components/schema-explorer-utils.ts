@@ -10,26 +10,27 @@ interface Snippet {
   sql: string;
 }
 
+/* SQL 데이터 타입별 배지 — 시맨틱 dtype 토큰 사용 (index.css에 정의) */
 const TYPE_BADGE_MAP: Record<string, TypeBadge> = {
-  TEXT: { letter: 'T', color: 'text-blue-500' },
-  VARCHAR: { letter: 'T', color: 'text-blue-500' },
-  CHAR: { letter: 'T', color: 'text-blue-500' },
-  INTEGER: { letter: '#', color: 'text-emerald-500' },
-  BIGINT: { letter: '#', color: 'text-emerald-500' },
-  SMALLINT: { letter: '#', color: 'text-emerald-500' },
-  NUMERIC: { letter: '#', color: 'text-emerald-500' },
-  DECIMAL: { letter: '#', color: 'text-emerald-500' },
-  DOUBLE: { letter: '#', color: 'text-emerald-500' },
-  FLOAT: { letter: '#', color: 'text-emerald-500' },
-  REAL: { letter: '#', color: 'text-emerald-500' },
-  TIMESTAMP: { letter: 'D', color: 'text-amber-500' },
-  DATE: { letter: 'D', color: 'text-amber-500' },
-  TIME: { letter: 'D', color: 'text-amber-500' },
-  BOOLEAN: { letter: 'B', color: 'text-purple-500' },
-  JSON: { letter: '{}', color: 'text-orange-500' },
-  JSONB: { letter: '{}', color: 'text-orange-500' },
-  GEOMETRY: { letter: 'G', color: 'text-rose-500' },
-  UUID: { letter: 'U', color: 'text-cyan-500' },
+  TEXT: { letter: 'T', color: 'text-dtype-text' },
+  VARCHAR: { letter: 'T', color: 'text-dtype-text' },
+  CHAR: { letter: 'T', color: 'text-dtype-text' },
+  INTEGER: { letter: '#', color: 'text-dtype-number' },
+  BIGINT: { letter: '#', color: 'text-dtype-number' },
+  SMALLINT: { letter: '#', color: 'text-dtype-number' },
+  NUMERIC: { letter: '#', color: 'text-dtype-number' },
+  DECIMAL: { letter: '#', color: 'text-dtype-number' },
+  DOUBLE: { letter: '#', color: 'text-dtype-number' },
+  FLOAT: { letter: '#', color: 'text-dtype-number' },
+  REAL: { letter: '#', color: 'text-dtype-number' },
+  TIMESTAMP: { letter: 'D', color: 'text-dtype-date' },
+  DATE: { letter: 'D', color: 'text-dtype-date' },
+  TIME: { letter: 'D', color: 'text-dtype-date' },
+  BOOLEAN: { letter: 'B', color: 'text-dtype-boolean' },
+  JSON: { letter: '{}', color: 'text-dtype-json' },
+  JSONB: { letter: '{}', color: 'text-dtype-json' },
+  GEOMETRY: { letter: 'G', color: 'text-dtype-geometry' },
+  UUID: { letter: 'U', color: 'text-dtype-uuid' },
 };
 
 export function quoteIdentifier(name: string): string {

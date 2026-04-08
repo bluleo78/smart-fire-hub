@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+
 import { dashboardApi } from '../../../api/dashboard';
 import type { WidgetProps } from './types';
 import { WidgetShell } from './WidgetShell';
@@ -53,17 +54,17 @@ export default function DashboardWidget({ input: _input, onNavigate, displayMode
     {
       label: '데이터셋 수',
       value: stats.totalDatasets,
-      colorClass: 'text-indigo-400',
+      colorClass: 'text-dataset',
     },
     {
       label: '파이프라인 수',
       value: stats.totalPipelines,
-      colorClass: 'text-green-400',
+      colorClass: 'text-pipeline',
     },
     {
       label: '주의 필요',
       value: attentionCount,
-      colorClass: attentionCount === 0 ? 'text-muted-foreground' : hasCritical ? 'text-red-400' : 'text-yellow-400',
+      colorClass: attentionCount === 0 ? 'text-muted-foreground' : hasCritical ? 'text-destructive' : 'text-warning',
     },
     {
       label: '성공률',

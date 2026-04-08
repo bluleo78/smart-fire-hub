@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+
 import { dashboardApi } from '../../../api/dashboard';
 import type { WidgetProps } from './types';
 import { WidgetShell } from './WidgetShell';
@@ -9,10 +10,11 @@ interface ShowActivityInput {
 
 type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 
+/* 심각도별 도트 색상 — 시맨틱 토큰 사용 */
 const SEVERITY_DOT_CLASS: Record<Severity, string> = {
-  INFO: 'bg-indigo-400',
-  WARNING: 'bg-yellow-400',
-  CRITICAL: 'bg-red-400',
+  INFO: 'bg-info',
+  WARNING: 'bg-warning',
+  CRITICAL: 'bg-destructive',
 };
 
 const ENTITY_ICON: Record<string, string> = {

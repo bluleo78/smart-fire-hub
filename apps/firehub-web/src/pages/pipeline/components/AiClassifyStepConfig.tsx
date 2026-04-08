@@ -164,7 +164,7 @@ export default function AiClassifyStepConfig({
     <div className="space-y-3">
       {/* Header banner */}
       <div
-        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-500/20"
+        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-ai-accent-subtle text-ai-accent border border-ai-accent/20"
       >
         <Brain className="h-4 w-4 shrink-0" />
         <span>AI 분류 스텝</span>
@@ -172,7 +172,7 @@ export default function AiClassifyStepConfig({
 
       {/* === 1. 프롬프트 (메인 영역) === */}
       <div className="space-y-2">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-violet-600 dark:text-violet-400">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-ai-accent">
           <MessageSquare className="h-3.5 w-3.5" />
           프롬프트 <span className="text-destructive ml-0.5">*</span>
         </div>
@@ -186,7 +186,7 @@ export default function AiClassifyStepConfig({
                 key={preset.label}
                 variant="outline"
                 size="sm"
-                className="h-7 text-xs px-2.5 border-violet-300 text-violet-700 hover:bg-violet-50 hover:border-violet-400 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-950 gap-1"
+                className="h-7 text-xs px-2.5 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle hover:border-ai-accent/40 gap-1"
                 onClick={() => applyPreset(preset)}
               >
                 <Sparkles className="h-3 w-3" />
@@ -211,14 +211,14 @@ export default function AiClassifyStepConfig({
       {/* === 2. 출력 컬럼 정의 === */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium text-violet-600 dark:text-violet-400">
+          <div className="text-sm font-medium text-ai-accent">
             출력 컬럼 정의 <span className="text-destructive">*</span>
           </div>
           {!readOnly && (
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs px-2 border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-950"
+              className="h-7 text-xs px-2 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle"
               onClick={addOutputColumn}
             >
               <Plus className="h-3 w-3" />
@@ -233,8 +233,8 @@ export default function AiClassifyStepConfig({
         </p>
 
         {outputColumns.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-4 border border-dashed border-violet-200 dark:border-violet-800 rounded-md text-xs text-muted-foreground gap-1">
-            <Plus className="h-4 w-4 text-violet-400 dark:text-violet-500" />
+          <div className="flex flex-col items-center justify-center py-4 border border-dashed border-ai-accent/20 rounded-md text-xs text-muted-foreground gap-1">
+            <Plus className="h-4 w-4 text-ai-accent" />
             <span>출력 컬럼을 추가하거나 프리셋을 선택하세요</span>
           </div>
         ) : (
@@ -293,7 +293,7 @@ export default function AiClassifyStepConfig({
         title="입력 컬럼 필터 (선택)"
         icon={<Brain className="h-3.5 w-3.5" />}
         defaultOpen={false}
-        accentClassName="text-violet-600 dark:text-violet-400"
+        accentClassName="text-ai-accent"
       >
         {inputDatasetIds.length === 0 ? (
           <p className="text-xs text-warning">입력 데이터셋을 먼저 선택하세요</p>
@@ -315,7 +315,7 @@ export default function AiClassifyStepConfig({
                     checked={inputColumns.includes(col.columnName)}
                     disabled={readOnly}
                     onCheckedChange={() => toggleInputColumn(col.columnName)}
-                    className="h-3.5 w-3.5 border-violet-300 dark:border-violet-600 data-[state=checked]:bg-violet-600 data-[state=checked]:border-violet-600"
+                    className="h-3.5 w-3.5 border-ai-accent/30 data-[state=checked]:bg-ai-accent data-[state=checked]:border-ai-accent"
                   />
                   <label
                     htmlFor={`col-${col.columnName}`}
@@ -343,7 +343,7 @@ export default function AiClassifyStepConfig({
         title="고급 설정"
         icon={<Settings2 className="h-3.5 w-3.5" />}
         defaultOpen={false}
-        accentClassName="text-violet-600 dark:text-violet-400"
+        accentClassName="text-ai-accent"
       >
         <div className="space-y-2">
           <div className="space-y-1.5">

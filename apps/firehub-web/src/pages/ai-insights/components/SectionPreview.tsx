@@ -112,9 +112,9 @@ function renderContentPlaceholder(section: TemplateSection) {
     case 'alert':
       // 알림 섹션 — 앰버 경고 배너 플레이스홀더
       return (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded p-2 flex items-center gap-2">
-          <span className="text-amber-500 text-sm">⚠️</span>
-          <div className="h-2 bg-amber-500/20 rounded w-3/4" />
+        <div className="bg-warning-subtle border border-warning/30 rounded p-2 flex items-center gap-2">
+          <span className="text-warning text-sm">⚠️</span>
+          <div className="h-2 bg-warning/20 rounded w-3/4" />
         </div>
       );
 
@@ -155,11 +155,11 @@ function renderContentPlaceholder(section: TemplateSection) {
     case 'recommendation':
       // 권고사항 섹션 — 💡 카드 플레이스홀더
       return (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded p-2 flex items-start gap-2">
+        <div className="bg-success-subtle border border-success/30 rounded p-2 flex items-start gap-2">
           <span className="text-sm mt-0.5">💡</span>
           <div className="space-y-1.5 flex-1">
-            <div className="h-2 bg-emerald-500/20 rounded w-full" />
-            <div className="h-2 bg-emerald-500/20 rounded w-4/5" />
+            <div className="h-2 bg-success/20 rounded w-full" />
+            <div className="h-2 bg-success/20 rounded w-4/5" />
           </div>
         </div>
       );
@@ -193,7 +193,7 @@ function renderSection(section: TemplateSection, index: number, depth = 0): Reac
         <div className={`flex items-center gap-2 py-1.5 px-2 rounded border-l-3 ${def?.color ?? 'border-l-violet-500'} bg-muted/30 mb-2`}>
           <span className="text-sm">{def?.icon}</span>
           <span className="text-sm font-semibold flex-1">{section.label || '그룹'}</span>
-          {section.required && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="필수 섹션" />}
+          {section.required && <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" title="필수 섹션" />}
           <Badge variant="outline" className="text-[10px]">group</Badge>
         </div>
         {/* AI 지시사항 — 이탤릭 안내 텍스트 */}
@@ -222,7 +222,7 @@ function renderSection(section: TemplateSection, index: number, depth = 0): Reac
         <span className="text-sm">{def?.icon}</span>
         <span className="text-sm flex-1 font-medium">{section.label}</span>
         {section.required && (
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="필수 섹션" />
+          <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" title="필수 섹션" />
         )}
         {section.static && (
           <Badge variant="secondary" className="text-[10px]">정적</Badge>

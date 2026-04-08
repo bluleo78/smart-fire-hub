@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, type MutableRefObject } from 'react';
-import type { AIMode, AIMessage } from '../../types/ai';
-import { SideIcon, FloatingIcon, FullscreenIcon } from './AIChipIcons';
+import { type MutableRefObject,useEffect, useRef, useState } from 'react';
+
+import type { AIMessage,AIMode } from '../../types/ai';
+import { FloatingIcon, FullscreenIcon,SideIcon } from './AIChipIcons';
 
 interface AIStatusChipDropdownProps {
   isAIOpen: boolean;
@@ -21,23 +22,23 @@ interface AIStatusChipDropdownProps {
 function StatusIndicator({ isStreaming, isThinking }: { isStreaming: boolean; isThinking: boolean }) {
   if (isStreaming) {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-indigo-400">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400" style={{ animation: 'ai-chip-pulse 1.5s ease-in-out infinite' }} />
+      <span className="flex items-center gap-1.5 text-xs text-ai-accent">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-ai-accent" style={{ animation: 'ai-chip-pulse 1.5s ease-in-out infinite' }} />
         응답 중
       </span>
     );
   }
   if (isThinking) {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-amber-400">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400" style={{ animation: 'ai-chip-pulse 1.5s ease-in-out infinite' }} />
+      <span className="flex items-center gap-1.5 text-xs text-warning">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning" style={{ animation: 'ai-chip-pulse 1.5s ease-in-out infinite' }} />
         도구 실행 중
       </span>
     );
   }
   return (
-    <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+    <span className="flex items-center gap-1.5 text-xs text-success">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-success" />
       대기 중
     </span>
   );
@@ -60,7 +61,7 @@ function TokenProgressBar({ contextTokens }: { contextTokens: number | null }) {
           className="h-full rounded-full transition-all duration-300"
           style={{
             width: `${percent}%`,
-            backgroundColor: ratio > 0.8 ? '#ef4444' : ratio > 0.5 ? '#f59e0b' : '#818cf8',
+            backgroundColor: ratio > 0.8 ? 'var(--destructive)' : ratio > 0.5 ? 'var(--caution)' : 'var(--ai-accent)',
           }}
         />
       </div>
@@ -207,7 +208,7 @@ export function AIStatusChipDropdown({
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-sm" style={{ color: '#818cf8' }}>✦</span>
+            <span className="text-sm text-ai-accent">✦</span>
             <span className="text-sm font-medium text-foreground">AI 어시스턴트</span>
           </div>
           <StatusIndicator isStreaming={isStreaming} isThinking={isThinking} />

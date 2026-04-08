@@ -19,10 +19,11 @@ const TYPE_LABEL: Record<string, string> = {
   TEMP: '임시',
 };
 
+/* 데이터셋 타입별 배지 색상 — 시맨틱 토큰 사용 */
 const TYPE_CLASS: Record<string, string> = {
-  SOURCE: 'bg-indigo-500/20 text-indigo-400',
-  DERIVED: 'bg-green-500/20 text-green-400',
-  TEMP: 'bg-yellow-500/20 text-yellow-400',
+  SOURCE: 'bg-info/10 text-info',
+  DERIVED: 'bg-success/10 text-success',
+  TEMP: 'bg-warning/10 text-warning',
 };
 
 function formatDate(dateStr: string | undefined): string {

@@ -294,7 +294,7 @@ export default function SettingsPage() {
                   <p className="text-sm text-muted-foreground">
                     로컬에서 claude setup-token으로 발급받은 OAuth 토큰
                     {authStatus && (
-                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
                         {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
                         {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
                         {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
@@ -342,7 +342,7 @@ export default function SettingsPage() {
                   <p className="text-sm text-muted-foreground">
                     Anthropic API 키 (sk-ant-...)
                     {authStatus && (
-                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
                         {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
                         {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
                         {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}

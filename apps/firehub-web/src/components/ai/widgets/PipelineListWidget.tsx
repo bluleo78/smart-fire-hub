@@ -14,11 +14,12 @@ interface ShowPipelineListInput {
   items: PipelineListItem[];
 }
 
+/* 실행 상태별 도트 색상 — 시맨틱 토큰 사용 */
 const STATUS_DOT_CLASS: Record<string, string> = {
-  COMPLETED: 'bg-green-400',
-  FAILED: 'bg-red-400',
-  RUNNING: 'bg-blue-400 animate-pulse',
-  PENDING: 'bg-yellow-400',
+  COMPLETED: 'bg-success',
+  FAILED: 'bg-destructive',
+  RUNNING: 'bg-info animate-pulse',
+  PENDING: 'bg-warning',
   CANCELLED: 'bg-muted-foreground',
 };
 
@@ -45,7 +46,7 @@ export default function PipelineListWidget({ input, onNavigate, displayMode }: W
             >
               <div className="flex items-center gap-2">
                 <span className="flex-1 truncate text-sm font-medium">{item.name}</span>
-                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${item.isActive ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${item.isActive ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
                   {item.isActive ? '활성' : '비활성'}
                 </span>
               </div>

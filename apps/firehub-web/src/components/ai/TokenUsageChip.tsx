@@ -21,8 +21,8 @@ export function TokenUsageChip({ tokens, isCompacting }: TokenUsageChipProps) {
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="flex items-center gap-1.5 shrink-0 cursor-default text-orange-500">
-              <div className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-orange-500 border-t-transparent" />
+            <div className="flex items-center gap-1.5 shrink-0 cursor-default text-caution">
+              <div className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-caution border-t-transparent" />
               <span className="text-xs leading-none">요약 중</span>
             </div>
           </TooltipTrigger>
@@ -42,13 +42,13 @@ export function TokenUsageChip({ tokens, isCompacting }: TokenUsageChipProps) {
   const fillColor = isCritical
     ? 'bg-destructive'
     : isWarning
-      ? 'bg-orange-500'
+      ? 'bg-caution'
       : 'bg-primary/40';
 
   const textColor = isCritical
     ? 'text-destructive'
     : isWarning
-      ? 'text-orange-500'
+      ? 'text-caution'
       : 'text-muted-foreground';
 
   return (

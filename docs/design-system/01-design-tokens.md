@@ -184,14 +184,14 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 
 ---
 
-### 1-4. 권장: Semantic Status Tokens (To-Be)
+### 1-4. Semantic Status Tokens (구현 완료)
 
-**권장(To-Be)** Phase D-2에서 다음 시맨틱 상태 토큰을 `index.css`에 추가한다.
+Phase D-2에서 추가된 시맨틱 상태 토큰. `index.css`에 Light/Dark 모두 정의되어 있다.
 
-#### 추가할 토큰 정의
+#### 토큰 정의
 
 ```css
-/* ===== Semantic Status Tokens (Phase D-2 추가 예정) ===== */
+/* ===== Semantic Status Tokens ===== */
 
 :root {
   /* Success */
@@ -258,12 +258,93 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 
 이후 `bg-success`, `text-warning`, `border-info-subtle` 등의 유틸리티 클래스를 사용할 수 있다.
 
+### 1-5. Domain & Accent Tokens (구현 완료)
+
+도메인 엔티티와 AI 관련 기능의 시각적 구분을 위한 시맨틱 토큰.
+
+#### Domain Tokens
+
+| Token | Light 값 | Dark 값 | 용도 |
+|-------|----------|---------|------|
+| `--pipeline` | `oklch(0.52 0.14 195)` | `oklch(0.75 0.12 195)` | 파이프라인 엔티티 색상 |
+| `--pipeline-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | Pipeline 위 텍스트 |
+| `--dataset` | `oklch(0.45 0.2 264)` | `oklch(0.7 0.17 264)` | 데이터셋 엔티티 색상 |
+| `--dataset-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | Dataset 위 텍스트 |
+| `--dashboard-accent` | `oklch(0.48 0.2 300)` | `oklch(0.7 0.18 300)` | 대시보드 강조 색상 |
+| `--dashboard-accent-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | Dashboard accent 위 텍스트 |
+
+#### AI Accent Tokens
+
+AI 관련 UI 요소(AI 분류 스텝, AI 상태 칩, AI 패널 등)에 사용하는 보라색 계열 토큰.
+
+| Token | Light 값 | Dark 값 | 용도 |
+|-------|----------|---------|------|
+| `--ai-accent` | `oklch(0.52 0.18 293)` | `oklch(0.72 0.15 293)` | AI 기능 강조 색상 (보라색) |
+| `--ai-accent-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | AI accent 위 텍스트 |
+| `--ai-accent-subtle` | `oklch(0.96 0.03 293)` | `oklch(0.2 0.04 293)` | AI 기능 연한 배경 |
+
+사용 예:
+```tsx
+{/* AI 분류 스텝 헤더 */}
+<div className="bg-ai-accent-subtle text-ai-accent border border-ai-accent/20">
+  AI 분류 스텝
+</div>
+
+{/* AI 상태 칩 */}
+<span className="text-ai-accent">응답 중</span>
+```
+
+#### Caution Tokens
+
+orange 계열 주의/경고 색상. warning(amber)보다 강한 주의를 표현한다.
+
+| Token | Light 값 | Dark 값 | 용도 |
+|-------|----------|---------|------|
+| `--caution` | `oklch(0.7 0.15 55)` | `oklch(0.78 0.13 55)` | 주의 색상 (오렌지) |
+| `--caution-foreground` | `oklch(0.2 0 0)` | `oklch(0.985 0 0)` | Caution 위 텍스트 |
+| `--caution-subtle` | `oklch(0.96 0.04 55)` | `oklch(0.2 0.04 55)` | 주의 연한 배경 |
+
+사용 예:
+```tsx
+{/* 토큰 사용량 경고 */}
+<span className="text-caution">토큰 50% 초과</span>
+
+{/* 데이터 갱신 경과 표시 */}
+<Badge className="bg-caution-subtle text-caution">5분 전</Badge>
+```
+
+#### Data Type Visualization Tokens
+
+스키마 탐색기(Schema Explorer)에서 SQL 데이터 타입을 시각적으로 구분하기 위한 토큰. 7가지 데이터 타입 카테고리에 각각 고유 색상을 부여한다.
+
+| Token | Light 값 | Dark 값 | 데이터 타입 |
+|-------|----------|---------|------------|
+| `--dtype-text` | `oklch(0.55 0.15 240)` | `oklch(0.7 0.13 240)` | TEXT, VARCHAR, CHAR |
+| `--dtype-number` | `oklch(0.55 0.16 160)` | `oklch(0.7 0.14 160)` | INTEGER, BIGINT, NUMERIC, FLOAT 등 |
+| `--dtype-date` | `oklch(0.65 0.15 80)` | `oklch(0.75 0.13 80)` | TIMESTAMP, DATE, TIME |
+| `--dtype-boolean` | `oklch(0.55 0.18 300)` | `oklch(0.7 0.16 300)` | BOOLEAN |
+| `--dtype-json` | `oklch(0.6 0.16 50)` | `oklch(0.72 0.14 50)` | JSON, JSONB |
+| `--dtype-geometry` | `oklch(0.55 0.2 15)` | `oklch(0.7 0.18 15)` | GEOMETRY (PostGIS) |
+| `--dtype-uuid` | `oklch(0.55 0.12 200)` | `oklch(0.7 0.1 200)` | UUID |
+
+사용 예:
+```tsx
+{/* 스키마 탐색기 컬럼 타입 배지 */}
+<span className="text-dtype-text">T</span>   {/* TEXT 계열 */}
+<span className="text-dtype-number">#</span> {/* 숫자 계열 */}
+<span className="text-dtype-date">D</span>   {/* 날짜/시간 */}
+```
+
 ---
 
 ## 2. Hard-coded Color Audit — 하드코딩 색상 감사
 
-**현재(As-Is)** 아래 파일들에서 시맨틱 토큰 대신 Tailwind 유틸리티 색상 클래스가 직접 사용되고 있다.
-**권장(To-Be)** Phase D-2에서 시맨틱 상태 토큰 도입 후 이를 단계적으로 교체한다.
+> **상태**: ✅ 대부분 완료 (2026-04-08 감사 기준)
+> 원래 43건 하드코딩 중 `bg-green-*`, `bg-red-*`, `bg-amber-*`, `bg-blue-*`, `border-*-*`, `text-gray-*` 패턴이 모두 시맨틱 토큰으로 교체됨.
+> 아래 목록은 **원본 기록**으로 유지하며, 현재 잔여 항목은 섹션 2-6 참조.
+
+**원래(As-Is)** 아래 파일들에서 시맨틱 토큰 대신 Tailwind 유틸리티 색상 클래스가 직접 사용되었다.
+**결과** 시맨틱 상태 토큰 도입 및 교체 완료.
 
 ### 2-1. Green — 성공·활성 패턴
 
@@ -334,13 +415,30 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 | `EditorHeader.tsx:93` | `text-gray-500` | 구분선 텍스트 | `text-muted-foreground` |
 | `ApiCallPreview.tsx:36,49,53,69,74,84,88` | `text-gray-400/500` | JSON 포매팅 기호 | `text-muted-foreground` |
 
-### 2-6. 교체 우선순위
+### 2-6. Tailwind 클래스 교체 현황 (2026-04-08)
 
-Phase D-2 작업 시 다음 순서로 교체를 권장한다:
+위 목록(2-1~2-5)의 Tailwind 하드코딩 색상은 **대부분 시맨틱 토큰으로 교체 완료**. 잔여 항목:
 
-1. **즉시 교체 (High)**: `ImportProgressView.tsx` — 상태 전환(active/done/failed)이 많아 다크 모드 버그가 가장 빈번하게 발생
-2. **다음 교체 (Medium)**: `DatasetListPage.tsx`, `DatasetDetailPage.tsx` — 배지 패턴이 반복되어 `<Badge variant>` 통합으로 효율화 가능
-3. **이후 교체 (Low)**: `ApiCallPreview.tsx`, `ColumnStats.tsx` — JSON 뷰어·차트 전용이므로 독립적인 리팩토링 가능
+| 파일 | 클래스 | 상태 | 비고 |
+|------|--------|------|------|
+| `DatasetListPage.tsx` | `fill-yellow-400 text-yellow-400` | 유지 | 즐겨찾기 별 (관용적 패턴) |
+| `DatasetDetailPage.tsx` | `fill-yellow-400 text-yellow-400` | 유지 | 즐겨찾기 별 (관용적 패턴) |
+| `schema-explorer-utils.ts` | ~~`text-blue-500` 등 7종~~ | ✅ 교체 완료 | `--dtype-*` 시맨틱 토큰으로 교체 |
+
+### 2-7. Hex/RGB 인라인 스타일 잔여 (2026-04-08 감사)
+
+Tailwind 클래스 외에 **인라인 스타일의 hex/rgb 하드코딩**이 잔존한다. 라이브러리 제약으로 Tailwind 클래스를 사용할 수 없는 영역이지만, 대부분 CSS 변수 `var(--*)` 사용은 가능하다.
+
+| 영역 | 파일 | 건수 | 교체 | 비고 |
+|------|------|------|------|------|
+| DAG 노드 | `StepNode.tsx` | ~36건 | **P2** | 스텝 타입 color/bg (hex 16건), 실행 상태 (rgb 15건), 오버레이 (rgba 5건) |
+| 차트 palette | `*ChartView.tsx` (5개) | ~40건 | P2 검토 | Recharts hex — `getComputedStyle` 변환 가능 |
+| 지도 팝업 | `FeaturePopup.tsx` | ~12건 | P2 | Mapbox 팝업 CSS, 다크모드 미지원 |
+| 코드 에디터 | `ScriptEditor.tsx` | 2건 | P3 | CodeMirror 현재 줄 하이라이트 rgba |
+| 지도 레이어 | `GeoJsonLayer.tsx` | 4건 | 예외 | Mapbox GL paint 스펙 — CSS 변수 미지원 |
+| 테마 프리뷰 | `UserNav.tsx` | 3건 | 예외 | 테마 셀렉터 미리보기 (의도적) |
+
+> 상세 교체 계획은 [13-migration-backlog.md](./13-migration-backlog.md)의 "P2: Hex/RGB 하드코딩 마이그레이션" 참조.
 
 ---
 

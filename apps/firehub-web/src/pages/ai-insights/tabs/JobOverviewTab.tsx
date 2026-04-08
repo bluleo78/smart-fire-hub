@@ -475,7 +475,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
 
       {/* 다음 실행 시간 */}
       {nextRunInfo && (
-        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-300">
+        <div className="flex items-center gap-2 rounded-lg border border-info/20 bg-info-subtle p-3 text-sm text-info">
           <span>📅</span>
           <span>다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong></span>
         </div>

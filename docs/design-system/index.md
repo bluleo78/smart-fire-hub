@@ -1,10 +1,10 @@
 # Smart Fire Hub — 디자인 시스템 가이드라인
 
-> **버전**: 1.0.0
-> **최종 검증**: 2026-03-02
+> **버전**: 1.1.0
+> **최종 검증**: 2026-04-08
 > **참조 시스템**: [shadcn/ui](https://ui.shadcn.com) (new-york) + [Vercel Geist](https://vercel.com/geist)
 > **대상 독자**: 개발자 + AI 에이전트 (Claude Code)
-> **범위**: 문서만 (코드 적용은 Phase D-2에서 진행)
+> **범위**: 가이드라인 + 코드 적용 (P0/P1 완료, P2/P3 잔여)
 
 ---
 
@@ -27,7 +27,7 @@
 | 스타일링 | Tailwind CSS v4 (CSS-based config, no tailwind.config.js) |
 | 컴포넌트 라이브러리 | shadcn/ui (new-york style, neutral base, Lucide icons) |
 | 테마 | next-themes (dark/light/system) |
-| 폰트 | 시스템 폰트 스택 (Geist 도입 검토 중) |
+| 폰트 | Inter + 시스템 폰트 스택 (Geist 도입 검토 중) |
 | 아이콘 | Lucide React (단독 사용) |
 
 ---
@@ -111,7 +111,7 @@
 | hover 배경 | `bg-accent` / `bg-muted/50` |
 | Focus ring | `ring-ring/50` |
 
-### Status Colors (권장 — Phase D-2)
+### Status Colors (구현 완료)
 
 | 상태 | 배경 | 텍스트 | Badge variant |
 |------|------|--------|---------------|
@@ -119,6 +119,16 @@
 | 경고/주의 | `bg-warning-subtle` | `text-warning` | `variant="warning"` |
 | 정보/진행중 | `bg-info-subtle` | `text-info` | `variant="info"` |
 | 오류/위험 | `bg-destructive/10` | `text-destructive` | `variant="destructive"` |
+| AI 기능 | `bg-ai-accent-subtle` | `text-ai-accent` | — |
+| 주의(강) | `bg-caution-subtle` | `text-caution` | — |
+
+### Domain Colors
+
+| 도메인 | 배경 | 텍스트 |
+|--------|------|--------|
+| 파이프라인 | `bg-pipeline` | `text-pipeline` |
+| 데이터셋 | `bg-dataset` | `text-dataset` |
+| 대시보드 | `bg-dashboard-accent` | `text-dashboard-accent` |
 
 ### Icons (Lucide)
 

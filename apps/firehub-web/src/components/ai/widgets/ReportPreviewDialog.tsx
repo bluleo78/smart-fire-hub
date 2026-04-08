@@ -83,7 +83,7 @@ export default function ReportPreviewDialog({
                       {section.type}
                     </Badge>
                     {section.required && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-warning" />
                     )}
                   </div>
 

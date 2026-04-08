@@ -50,9 +50,9 @@ export function WidgetFreshnessBar({
           isStale ? (
             <Badge
               variant="secondary"
-              className="text-[10px] px-1.5 py-0 h-4 gap-1 bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20"
+              className="text-[10px] px-1.5 py-0 h-4 gap-1 bg-caution-subtle text-caution border-caution/20"
             >
-              <Circle className="h-2 w-2 fill-orange-500 text-orange-500" />
+              <Circle className="h-2 w-2 fill-caution text-caution" />
               {timeAgoText ?? '-'}
             </Badge>
           ) : (

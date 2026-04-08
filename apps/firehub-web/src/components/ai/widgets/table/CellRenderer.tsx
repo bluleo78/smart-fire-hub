@@ -1,23 +1,24 @@
 import { cn } from '../../../../lib/utils';
 
+/* 셀 상태 표시 색상 — 시맨틱 토큰 사용 */
 const STATUS_COLORS: Record<string, { dot: string; text: string }> = {
-  정상: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
-  활성: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
-  완료: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
-  SUCCESS: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
-  ACTIVE: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
-  COMPLETED: { dot: 'bg-emerald-400', text: 'text-emerald-400' },
-  점검중: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
-  경고: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
-  대기: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
-  PENDING: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
-  WARNING: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
-  수리중: { dot: 'bg-red-400', text: 'text-red-400' },
-  오류: { dot: 'bg-red-400', text: 'text-red-400' },
-  실패: { dot: 'bg-red-400', text: 'text-red-400' },
-  FAILED: { dot: 'bg-red-400', text: 'text-red-400' },
-  ERROR: { dot: 'bg-red-400', text: 'text-red-400' },
-  INACTIVE: { dot: 'bg-red-400', text: 'text-red-400' },
+  정상: { dot: 'bg-success', text: 'text-success' },
+  활성: { dot: 'bg-success', text: 'text-success' },
+  완료: { dot: 'bg-success', text: 'text-success' },
+  SUCCESS: { dot: 'bg-success', text: 'text-success' },
+  ACTIVE: { dot: 'bg-success', text: 'text-success' },
+  COMPLETED: { dot: 'bg-success', text: 'text-success' },
+  점검중: { dot: 'bg-warning', text: 'text-warning' },
+  경고: { dot: 'bg-warning', text: 'text-warning' },
+  대기: { dot: 'bg-warning', text: 'text-warning' },
+  PENDING: { dot: 'bg-warning', text: 'text-warning' },
+  WARNING: { dot: 'bg-warning', text: 'text-warning' },
+  수리중: { dot: 'bg-destructive', text: 'text-destructive' },
+  오류: { dot: 'bg-destructive', text: 'text-destructive' },
+  실패: { dot: 'bg-destructive', text: 'text-destructive' },
+  FAILED: { dot: 'bg-destructive', text: 'text-destructive' },
+  ERROR: { dot: 'bg-destructive', text: 'text-destructive' },
+  INACTIVE: { dot: 'bg-destructive', text: 'text-destructive' },
 };
 
 interface CellRendererProps {

@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+
 import { pipelinesApi } from '../../../api/pipelines';
 import type { WidgetProps } from './types';
 import { WidgetShell } from './WidgetShell';
@@ -17,11 +18,12 @@ const STATUS_LABEL: Record<ExecutionStatus, string> = {
   CANCELLED: '취소됨',
 };
 
+/* 실행 상태별 배지 색상 — 시맨틱 토큰 사용 */
 const STATUS_CLASS: Record<ExecutionStatus, string> = {
-  PENDING: 'bg-yellow-500/20 text-yellow-400',
-  RUNNING: 'bg-blue-500/20 text-blue-400',
-  COMPLETED: 'bg-green-500/20 text-green-400',
-  FAILED: 'bg-red-500/20 text-red-400',
+  PENDING: 'bg-warning/10 text-warning',
+  RUNNING: 'bg-info/10 text-info',
+  COMPLETED: 'bg-success/10 text-success',
+  FAILED: 'bg-destructive/10 text-destructive',
   CANCELLED: 'bg-muted text-muted-foreground',
 };
 

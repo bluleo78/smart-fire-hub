@@ -1,6 +1,8 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, ChevronRight, ChevronDown, Trash2, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, GripVertical, Plus,Trash2 } from 'lucide-react';
+
+import type { SectionType,TemplateSection } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,9 +11,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
-import type { TemplateSection, SectionType } from '@/api/proactive';
 import { getSectionTypeDef, SECTION_TYPES } from '@/lib/template-section-types';
+import { cn } from '@/lib/utils';
 
 interface SectionTreeItemProps {
   section: TemplateSection;
@@ -106,7 +107,7 @@ export function SectionTreeItem({
       {/* Badges */}
       {section.required && (
         <span
-          className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0"
+          className="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0"
           title="필수"
         />
       )}

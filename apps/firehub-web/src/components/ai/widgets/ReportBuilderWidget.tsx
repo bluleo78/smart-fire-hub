@@ -142,7 +142,7 @@ function RecommendationSectionRenderer({ content }: { content: string }) {
  */
 function ListSectionRenderer({ content }: { content: string }) {
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none text-sm [&_ul]:marker:text-amber-500 [&_ol]:marker:text-amber-500">
+    <div className="prose prose-sm dark:prose-invert max-w-none text-sm [&_ul]:marker:text-warning [&_ol]:marker:text-warning">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
@@ -238,7 +238,7 @@ export default function ReportBuilderWidget({
                       {section.type}
                     </Badge>
                     {section.required && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-warning" />
                     )}
                   </div>
                   {/* 섹션 내용 — 타입별 렌더러 또는 빈 상태 */}

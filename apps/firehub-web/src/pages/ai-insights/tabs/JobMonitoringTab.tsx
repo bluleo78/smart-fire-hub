@@ -79,7 +79,7 @@ function AnomalyHistorySection({ jobId }: { jobId: number }) {
   return (
     <div className="rounded-lg border p-4 space-y-4">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="h-4 w-4 text-amber-500" />
+        <AlertTriangle className="h-4 w-4 text-warning" />
         <h3 className="text-sm font-semibold">최근 이상 탐지</h3>
         {/* 감지 건수 배지 */}
         <Badge variant="secondary">{events.length}</Badge>
