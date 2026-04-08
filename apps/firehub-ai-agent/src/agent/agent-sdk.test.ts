@@ -238,8 +238,8 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    // totalInputTokens = 100 + 10 + 5 = 115
-    expect(result).toEqual([{ type: 'done', sessionId: 'sess-1', inputTokens: 115 }]);
+    // totalInputTokens = 100 + 10 + 5 = 115, totalOutputTokens = 50
+    expect(result).toEqual([{ type: 'done', sessionId: 'sess-1', inputTokens: 115, outputTokens: 50 }]);
   });
 
   // AS-11: result error returns error event with joined messages
@@ -252,7 +252,7 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    expect(result).toEqual([{ type: 'error', message: 'err1; err2', sessionId: undefined, inputTokens: 0 }]);
+    expect(result).toEqual([{ type: 'error', message: 'err1; err2', sessionId: undefined, inputTokens: 0, outputTokens: 0 }]);
   });
 
   // AS-12: result with modelUsage logs correctly and still returns events
@@ -279,8 +279,8 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    // totalInputTokens = 200 + 20 + 0 = 220
-    expect(result).toEqual([{ type: 'done', sessionId: 'sess-2', inputTokens: 220 }]);
+    // totalInputTokens = 200 + 20 + 0 = 220, totalOutputTokens = 80
+    expect(result).toEqual([{ type: 'done', sessionId: 'sess-2', inputTokens: 220, outputTokens: 80 }]);
   });
 
   // AS-13: stream_event text_delta returns text event

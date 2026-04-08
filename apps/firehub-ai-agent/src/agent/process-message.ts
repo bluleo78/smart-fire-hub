@@ -123,14 +123,16 @@ export function processMessage(
         >;
       };
       let totalInputTokens = 0;
+      let totalOutputTokens = 0;
       if (resultMsg.usage) {
         const u = resultMsg.usage;
         totalInputTokens =
           (u.input_tokens ?? 0) +
           (u.cache_read_input_tokens ?? 0) +
           (u.cache_creation_input_tokens ?? 0);
+        totalOutputTokens = u.output_tokens ?? 0;
         console.log(
-          `${tag()} 📊 Total tokens — input: ${u.input_tokens ?? 0}, output: ${u.output_tokens ?? 0}, cache_read: ${u.cache_read_input_tokens ?? 0}, cache_create: ${u.cache_creation_input_tokens ?? 0} (total_input: ${totalInputTokens})`,
+          `${tag()} 📊 Total tokens — input: ${u.input_tokens ?? 0}, output: ${totalOutputTokens}, cache_read: ${u.cache_read_input_tokens ?? 0}, cache_create: ${u.cache_creation_input_tokens ?? 0} (total_input: ${totalInputTokens})`,
         );
       }
       if (resultMsg.modelUsage) {
@@ -146,6 +148,7 @@ export function processMessage(
           type: 'done',
           sessionId: msg.session_id,
           inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
         });
       } else {
         const rawError = 'errors' in msg ? msg.errors.join('; ') : '';
@@ -156,6 +159,7 @@ export function processMessage(
           message: errorMsg,
           sessionId: msg.session_id,
           inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
         });
       }
       break;
