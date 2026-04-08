@@ -141,9 +141,18 @@ public class AsyncJobRepository {
         .execute();
   }
 
-  public void updateStageAndError(String id, String stage, String errorMessage) {
+  /**
+   * 작업 실패 상태로 업데이트. progress도 함께 저장하여 UI에서 마지막 진행률을 표시할 수 있도록 한다.
+   *
+   * @param id 작업 ID
+   * @param stage 새 단계 (예: "FAILED")
+   * @param progress 마지막으로 알려진 진행률 (0~100)
+   * @param errorMessage 오류 메시지
+   */
+  public void updateStageAndError(String id, String stage, int progress, String errorMessage) {
     dsl.update(ASYNC_JOB)
         .set(AJ_STAGE, stage)
+        .set(AJ_PROGRESS, progress)
         .set(AJ_ERROR_MESSAGE, errorMessage)
         .set(AJ_UPDATED_AT, LocalDateTime.now())
         .where(AJ_ID.eq(id))

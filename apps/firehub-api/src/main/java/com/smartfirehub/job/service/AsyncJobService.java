@@ -105,7 +105,8 @@ public class AsyncJobService {
     // Preserve last known progress for UI display
     int lastProgress =
         asyncJobRepository.findById(jobId).map(AsyncJobStatusResponse::progress).orElse(0);
-    asyncJobRepository.updateStageAndError(jobId, "FAILED", errorMessage);
+    // lastProgress를 DB에도 persist하여 SSE 이벤트와 REST 폴백 응답이 일치하도록 한다
+    asyncJobRepository.updateStageAndError(jobId, "FAILED", lastProgress, errorMessage);
     updateCounters.remove(jobId);
     lastPersistedStage.remove(jobId);
 
