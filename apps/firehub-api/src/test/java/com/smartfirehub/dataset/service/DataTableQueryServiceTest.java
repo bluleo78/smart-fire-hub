@@ -17,17 +17,12 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * DataTableQueryService 통합 테스트.
  *
- * <p>사용자 SQL 실행 보안 로직을 중점적으로 검증한다:
- * - SAVEPOINT 트랜잭션 격리: SQL 오류 후에도 외부 트랜잭션이 계속 동작해야 함
- * - search_path 제한: data 스키마만 접근 가능, public 스키마 테이블 접근 차단
- * - SELECT 자동 LIMIT 주입: LIMIT 없는 SELECT에 maxRows 적용
- * - 기존 LIMIT 보존: 사용자가 지정한 LIMIT보다 maxRows가 크더라도 사용자 LIMIT 유지
- * - DDL 차단: SqlValidationUtils를 통한 키워드 필터링
- * - 멀티스테이트먼트 차단: 세미콜론으로 구분된 복수 쿼리 거부
- * - 시스템 컬럼 필터링: id, import_id, created_at 컬럼 응답에서 제외
- * - DML 실행: INSERT, UPDATE, DELETE affectedRows 반환
- * - CTE(WITH) 쿼리 지원
- * - SQL 문법 오류: error 필드에 메시지 기록, 트랜잭션 계속 진행
+ * <p>사용자 SQL 실행 보안 로직을 중점적으로 검증한다: - SAVEPOINT 트랜잭션 격리: SQL 오류 후에도 외부 트랜잭션이 계속 동작해야 함 - search_path
+ * 제한: data 스키마만 접근 가능, public 스키마 테이블 접근 차단 - SELECT 자동 LIMIT 주입: LIMIT 없는 SELECT에 maxRows 적용 - 기존
+ * LIMIT 보존: 사용자가 지정한 LIMIT보다 maxRows가 크더라도 사용자 LIMIT 유지 - DDL 차단: SqlValidationUtils를 통한 키워드 필터링 -
+ * 멀티스테이트먼트 차단: 세미콜론으로 구분된 복수 쿼리 거부 - 시스템 컬럼 필터링: id, import_id, created_at 컬럼 응답에서 제외 - DML 실행:
+ * INSERT, UPDATE, DELETE affectedRows 반환 - CTE(WITH) 쿼리 지원 - SQL 문법 오류: error 필드에 메시지 기록, 트랜잭션 계속
+ * 진행
  */
 @Transactional
 class DataTableQueryServiceTest extends IntegrationTestBase {
@@ -39,8 +34,10 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
 
   /** 테스트용 사용자 ID */
   private Long testUserId;
+
   /** 테스트용 데이터 테이블명 */
   private String testTableName;
+
   /** 테스트용 데이터셋 ID */
   private Long testDatasetId;
 
@@ -77,9 +74,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     // 샘플 데이터 3건 삽입
     for (int i = 1; i <= 3; i++) {
       datasetDataService.addRow(
-          testDatasetId,
-          new RowDataRequest(
-              java.util.Map.of("name", "Row" + i, "value", i * 10)));
+          testDatasetId, new RowDataRequest(java.util.Map.of("name", "Row" + i, "value", i * 10)));
     }
   }
 
@@ -91,8 +86,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_select_returnsRowsAndColumns() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName, 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName, 100);
 
     assertThat(response.queryType()).isEqualTo("SELECT");
     assertThat(response.error()).isNull();
@@ -104,8 +98,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_select_filtersSystemColumns() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName, 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName, 100);
 
     assertThat(response.columns()).doesNotContain("id", "import_id", "created_at");
     assertThat(response.columns()).contains("name", "value");
@@ -116,8 +109,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   void executeQuery_select_withoutLimit_injectsMaxRows() {
     // 3건 데이터가 있고 maxRows=2로 요청 → 2건만 반환
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName, 2);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName, 2);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(2);
@@ -128,8 +120,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   void executeQuery_select_withExplicitLimit_preservesUserLimit() {
     // 3건 데이터, 사용자가 LIMIT 1 지정, maxRows=100이지만 사용자 LIMIT 유지
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName + " LIMIT 1", 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName + " LIMIT 1", 100);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(1);
@@ -139,8 +130,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_select_withMixedCaseLimit_preservesUserLimit() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName + " limit 2", 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName + " limit 2", 100);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(2);
@@ -162,8 +152,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_select_withTrailingSemicolon_success() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName + ";", 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName + ";", 100);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(3);
@@ -173,8 +162,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_select_withBlockComment_success() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "/* 데이터 조회 */ SELECT * FROM " + testTableName, 100);
+        dataTableQueryService.executeQuery("/* 데이터 조회 */ SELECT * FROM " + testTableName, 100);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(3);
@@ -184,8 +172,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_select_withLineComment_success() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName + " -- 전체 조회\n", 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName + " -- 전체 조회\n", 100);
 
     assertThat(response.error()).isNull();
   }
@@ -254,23 +241,18 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   /**
    * 보안: search_path가 data로 제한되므로 public 스키마의 "user" 테이블에 스키마 없이 접근하면 실패한다.
    *
-   * <p>SET LOCAL search_path = 'data' 로 인해 public."user" 테이블을
-   * 단순히 "user" 로만 참조하면 테이블을 찾지 못해야 한다.
+   * <p>SET LOCAL search_path = 'data' 로 인해 public."user" 테이블을 단순히 "user" 로만 참조하면 테이블을 찾지 못해야 한다.
    */
   @Test
   void executeQuery_select_publicSchemaWithoutPrefix_accessDenied() {
     // "user"는 public 스키마에 있으므로 search_path=data 상태에서 접근 불가
-    SqlQueryResponse response =
-        dataTableQueryService.executeQuery("SELECT * FROM \"user\"", 10);
+    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT * FROM \"user\"", 10);
 
     // error가 null이 아니어야 한다 (테이블 not found)
     assertThat(response.error()).isNotNull();
   }
 
-  /**
-   * 보안: 실행 후 search_path가 public, data로 복원되어
-   * 이후 public 스키마 접근이 정상 동작해야 한다 (FINALLY 블록 검증).
-   */
+  /** 보안: 실행 후 search_path가 public, data로 복원되어 이후 public 스키마 접근이 정상 동작해야 한다 (FINALLY 블록 검증). */
   @Test
   void executeQuery_afterExecution_searchPathRestored() {
     // 일단 쿼리 실행 (성공이든 실패든)
@@ -278,10 +260,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
 
     // search_path 복원 후 public 스키마의 user 테이블 접근 가능
     // DSLContext는 동일 트랜잭션을 사용하므로 복원된 search_path 확인 가능
-    Long count =
-        dsl.selectCount()
-            .from(USER)
-            .fetchOne(0, Long.class);
+    Long count = dsl.selectCount().from(USER).fetchOne(0, Long.class);
     assertThat(count).isGreaterThanOrEqualTo(0); // 접근 가능하면 예외 없이 실행됨
   }
 
@@ -290,8 +269,8 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * 보안/트랜잭션: SQL 문법 오류가 발생해도 SAVEPOINT 롤백으로 외부 트랜잭션이 중단되지 않는다.
-   * 오류 응답 반환 후 동일 트랜잭션에서 추가 쿼리를 실행할 수 있어야 한다.
+   * 보안/트랜잭션: SQL 문법 오류가 발생해도 SAVEPOINT 롤백으로 외부 트랜잭션이 중단되지 않는다. 오류 응답 반환 후 동일 트랜잭션에서 추가 쿼리를 실행할 수
+   * 있어야 한다.
    */
   @Test
   void executeQuery_sqlError_savepointRollback_transactionContinues() {
@@ -319,8 +298,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
 
     // 이후 정상 쿼리 실행 가능
     SqlQueryResponse okResponse =
-        dataTableQueryService.executeQuery(
-            "SELECT * FROM " + testTableName + " LIMIT 1", 100);
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName + " LIMIT 1", 100);
 
     assertThat(okResponse.error()).isNull();
   }
@@ -334,8 +312,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   void executeQuery_createTable_throwsSqlQueryException() {
     assertThatThrownBy(
             () ->
-                dataTableQueryService.executeQuery(
-                    "CREATE TABLE data.hack_table (id BIGINT)", 100))
+                dataTableQueryService.executeQuery("CREATE TABLE data.hack_table (id BIGINT)", 100))
         .isInstanceOf(SqlQueryException.class);
   }
 
@@ -343,9 +320,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_dropTable_throwsSqlQueryException() {
     assertThatThrownBy(
-            () ->
-                dataTableQueryService.executeQuery(
-                    "DROP TABLE data." + testTableName, 100))
+            () -> dataTableQueryService.executeQuery("DROP TABLE data." + testTableName, 100))
         .isInstanceOf(SqlQueryException.class);
   }
 
@@ -395,8 +370,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   /** SQL 문법 오류는 SqlQueryException이 아니라 error 필드로 반환된다 */
   @Test
   void executeQuery_syntaxError_returnsErrorField() {
-    SqlQueryResponse response =
-        dataTableQueryService.executeQuery("SELECT * FORM broken_sql", 100);
+    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT * FORM broken_sql", 100);
 
     assertThat(response.error()).isNotNull();
     assertThat(response.rows()).isEmpty();
@@ -407,8 +381,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_unknownColumn_returnsErrorField() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "SELECT non_existent_col FROM " + testTableName, 100);
+        dataTableQueryService.executeQuery("SELECT non_existent_col FROM " + testTableName, 100);
 
     assertThat(response.error()).isNotNull();
   }
@@ -430,8 +403,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   /** SELECT 쿼리의 queryType은 "SELECT" */
   @Test
   void executeQuery_queryType_select() {
-    SqlQueryResponse response =
-        dataTableQueryService.executeQuery("SELECT 1 AS num", 100);
+    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT 1 AS num", 100);
     assertThat(response.queryType()).isEqualTo("SELECT");
   }
 
@@ -457,8 +429,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_queryType_delete() {
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(
-            "DELETE FROM " + testTableName + " WHERE 1=0", 100);
+        dataTableQueryService.executeQuery("DELETE FROM " + testTableName + " WHERE 1=0", 100);
     assertThat(response.queryType()).isEqualTo("DELETE");
   }
 
@@ -469,7 +440,9 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     SqlQueryResponse response =
         dataTableQueryService.executeQuery(
             "WITH src AS (SELECT 'CTE' AS name, 42 AS value) "
-                + "INSERT INTO " + testTableName + " (name, value) SELECT name, value FROM src",
+                + "INSERT INTO "
+                + testTableName
+                + " (name, value) SELECT name, value FROM src",
             100);
     assertThat(response.queryType()).isEqualTo("INSERT");
   }
@@ -485,8 +458,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
         dataTableQueryService.executeQuery("SELECT * FROM " + testTableName, 100);
     assertThat(success.executionTimeMs()).isGreaterThanOrEqualTo(0);
 
-    SqlQueryResponse error =
-        dataTableQueryService.executeQuery("SELECT * FORM broken_query", 100);
+    SqlQueryResponse error = dataTableQueryService.executeQuery("SELECT * FORM broken_query", 100);
     assertThat(error.executionTimeMs()).isGreaterThanOrEqualTo(0);
   }
 }

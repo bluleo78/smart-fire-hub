@@ -13,7 +13,6 @@ import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,18 +25,12 @@ import org.springframework.web.reactive.function.client.WebClient;
 /**
  * ApiCallPreviewService 통합 테스트.
  *
- * <p>핵심 검증 항목:
- * 1. UTF-8 멀티바이트 문자(한글 등) 안전 절단 — 버그 C1 수정 검증
- *    - 바이트 경계에서 문자 중간을 자를 경우 깨진 문자(\uFFFD) 생성 방지
- *    - 선행 바이트 위치까지 후퇴하여 완전한 문자만 포함
- * 2. ASCII 전용 문자열 truncate 정상 동작
- * 3. maxBytes 이내 문자열은 그대로 반환
- * 4. 정상 API 호출 성공 케이스
- * 5. SSRF 방어 — 사설 IP 접근 차단
- * 6. 연결 오류 시 에러 응답 반환
+ * <p>핵심 검증 항목: 1. UTF-8 멀티바이트 문자(한글 등) 안전 절단 — 버그 C1 수정 검증 - 바이트 경계에서 문자 중간을 자를 경우 깨진 문자(\uFFFD) 생성
+ * 방지 - 선행 바이트 위치까지 후퇴하여 완전한 문자만 포함 2. ASCII 전용 문자열 truncate 정상 동작 3. maxBytes 이내 문자열은 그대로 반환 4. 정상
+ * API 호출 성공 케이스 5. SSRF 방어 — 사설 IP 접근 차단 6. 연결 오류 시 에러 응답 반환
  *
- * <p>WireMock으로 외부 HTTP 서버를 모킹하고, SsrfProtectionService는 테스트용 no-op으로 대체한다.
- * dataPath는 JSONPath 표현식이므로 null이면 예외가 발생한다 — 테스트에서는 반드시 "$"를 전달한다.
+ * <p>WireMock으로 외부 HTTP 서버를 모킹하고, SsrfProtectionService는 테스트용 no-op으로 대체한다. dataPath는 JSONPath
+ * 표현식이므로 null이면 예외가 발생한다 — 테스트에서는 반드시 "$"를 전달한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ApiCallPreviewServiceTest {
@@ -61,8 +54,7 @@ class ApiCallPreviewServiceTest {
     wireMock.resetAll();
   }
 
-  @Mock
-  ApiConnectionService apiConnectionService;
+  @Mock ApiConnectionService apiConnectionService;
 
   /** 테스트 대상 서비스 인스턴스 */
   ApiCallPreviewService service;
@@ -81,10 +73,7 @@ class ApiCallPreviewServiceTest {
 
     service =
         new ApiCallPreviewService(
-            noOpSsrf,
-            new JsonResponseParser(),
-            apiConnectionService,
-            WebClient.builder());
+            noOpSsrf, new JsonResponseParser(), apiConnectionService, WebClient.builder());
   }
 
   // =========================================================================
@@ -97,8 +86,8 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 주어진 응답 바디를 반환하는 WireMock stub을 등록하고 preview를 실행한다.
-   * dataPath="$" 로 루트 배열을 지정하므로 responseBody는 JSON 배열이어야 한다.
+   * 주어진 응답 바디를 반환하는 WireMock stub을 등록하고 preview를 실행한다. dataPath="$" 로 루트 배열을 지정하므로 responseBody는
+   * JSON 배열이어야 한다.
    *
    * <p>rawJson truncate 검증이 목적이므로 rows 파싱 결과는 검증하지 않는다.
    *
@@ -116,22 +105,10 @@ class ApiCallPreviewServiceTest {
 
     return service.preview(
         new ApiCallPreviewRequest(
-            baseUrl() + "/test",
-            "GET",
-            null,
-            null,
-            null,
-            dataPath,
-            null,
-            null,
-            null,
-            5000));
+            baseUrl() + "/test", "GET", null, null, null, dataPath, null, null, null, 5000));
   }
 
-  /**
-   * rawJson truncate 검증 전용 헬퍼.
-   * 응답 바디는 배열로 감싸고 dataPath="$"를 사용한다.
-   */
+  /** rawJson truncate 검증 전용 헬퍼. 응답 바디는 배열로 감싸고 dataPath="$"를 사용한다. */
   private ApiCallPreviewResponse doPreviewForTruncate(String largeString) {
     // 큰 문자열을 JSON 배열 원소로 감싸서 전송
     // rawJson은 전체 응답 바이트를 10KB로 절단한 결과
@@ -169,8 +146,8 @@ class ApiCallPreviewServiceTest {
   /**
    * 버그 C1 수정 검증: 한글 문자열이 10KB를 초과할 때 rawJson에 깨진 문자(\uFFFD)가 없어야 한다.
    *
-   * <p>수정 전: new String(bytes, 0, maxBytes, UTF_8) → 멀티바이트 문자 중간 절단 → \uFFFD 생성
-   * 수정 후: maxBytes에서 뒤로 이동하며 UTF-8 선행 바이트 위치까지 후퇴 → 완전한 문자만 포함
+   * <p>수정 전: new String(bytes, 0, maxBytes, UTF_8) → 멀티바이트 문자 중간 절단 → \uFFFD 생성 수정 후: maxBytes에서 뒤로
+   * 이동하며 UTF-8 선행 바이트 위치까지 후퇴 → 완전한 문자만 포함
    *
    * <p>한글 1글자 = UTF-8 3바이트이므로 10KB 경계에서 3의 배수가 아닌 위치로 잘리면 버그 발생.
    */
@@ -196,10 +173,7 @@ class ApiCallPreviewServiceTest {
     assertThat(reDecoded).isEqualTo(rawJson);
   }
 
-  /**
-   * 버그 C1 수정 검증: 일본어(히라가나)도 3바이트 UTF-8 문자이므로 동일한 버그에 노출됨.
-   * 절단 후 깨진 문자가 없어야 한다.
-   */
+  /** 버그 C1 수정 검증: 일본어(히라가나)도 3바이트 UTF-8 문자이므로 동일한 버그에 노출됨. 절단 후 깨진 문자가 없어야 한다. */
   @Test
   void preview_rawJson_japaneseText_noMojibake() {
     String japaneseContent = "あいうえおかきくけこさしすせそたちつてとなにぬねの".repeat(150);
@@ -212,9 +186,7 @@ class ApiCallPreviewServiceTest {
     assertThat(rawJson).doesNotContain("\uFFFD");
   }
 
-  /**
-   * 버그 C1 수정 검증: 이모지(4바이트 UTF-8 문자)도 경계에서 안전하게 절단되어야 한다.
-   */
+  /** 버그 C1 수정 검증: 이모지(4바이트 UTF-8 문자)도 경계에서 안전하게 절단되어야 한다. */
   @Test
   void preview_rawJson_emoji_noMojibake() {
     // 이모지 1자 = 4바이트, 충분히 쌓아서 10KB 초과
@@ -229,8 +201,7 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 정상: ASCII 전용 문자열은 1바이트이므로 후퇴 없이 maxBytes에서 정확히 절단된다.
-   * 절단 후 rawJson의 UTF-8 바이트 크기는 10KB 이하여야 한다.
+   * 정상: ASCII 전용 문자열은 1바이트이므로 후퇴 없이 maxBytes에서 정확히 절단된다. 절단 후 rawJson의 UTF-8 바이트 크기는 10KB 이하여야 한다.
    */
   @Test
   void preview_rawJson_asciiOnly_truncatesAtExactByte() {
@@ -247,9 +218,7 @@ class ApiCallPreviewServiceTest {
     assertThat(rawJson).doesNotContain("\uFFFD");
   }
 
-  /**
-   * 정상: 응답 바디가 10KB 이내이면 truncate 없이 원본 그대로 반환된다.
-   */
+  /** 정상: 응답 바디가 10KB 이내이면 truncate 없이 원본 그대로 반환된다. */
   @Test
   void preview_rawJson_withinMaxBytes_returnsOriginal() {
     String shortJson = "[{\"message\":\"안녕하세요\",\"status\":\"ok\"}]";
@@ -261,9 +230,7 @@ class ApiCallPreviewServiceTest {
     assertThat(response.rawJson()).doesNotContain("\uFFFD");
   }
 
-  /**
-   * 정상: 한글이 10KB를 초과하지 않으면 원본 그대로 반환된다.
-   */
+  /** 정상: 한글이 10KB를 초과하지 않으면 원본 그대로 반환된다. */
   @Test
   void preview_rawJson_koreanWithinLimit_returnsOriginal() {
     String koreanJson = "[{\"name\":\"홍길동\",\"city\":\"서울특별시\"}]";
@@ -405,8 +372,8 @@ class ApiCallPreviewServiceTest {
   // =========================================================================
 
   /**
-   * 보안: 실제 SsrfProtectionService를 사용하면 사설 IP(127.0.0.1)가 차단된다.
-   * success=false, errorMessage가 non-null이어야 한다.
+   * 보안: 실제 SsrfProtectionService를 사용하면 사설 IP(127.0.0.1)가 차단된다. success=false, errorMessage가
+   * non-null이어야 한다.
    */
   @Test
   void preview_privateIp_ssrfBlocked_returnsError() {

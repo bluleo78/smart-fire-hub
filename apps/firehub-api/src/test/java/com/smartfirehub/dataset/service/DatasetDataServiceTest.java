@@ -18,15 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * DatasetDataService 통합 테스트.
  *
- * <p>DatasetServiceTest에서 커버하지 않는 핵심 비즈니스 로직을 전담 검증한다:
- * - getDatasetStats (빈 테이블 / 데이터 있음)
- * - truncateDatasetData / getRowCount
- * - replaceDatasetData (atomic truncate+insert)
- * - getDatasetData (검색, 정렬, 페이징, includeTotalCount)
- * - validateAndConvertRowData 타입별 분기 로직
- *   (TEXT, VARCHAR maxLength, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, GEOMETRY)
- * - propagateDescriptions
- * - 존재하지 않는 데이터셋에 대한 예외 처리
+ * <p>DatasetServiceTest에서 커버하지 않는 핵심 비즈니스 로직을 전담 검증한다: - getDatasetStats (빈 테이블 / 데이터 있음) -
+ * truncateDatasetData / getRowCount - replaceDatasetData (atomic truncate+insert) - getDatasetData
+ * (검색, 정렬, 페이징, includeTotalCount) - validateAndConvertRowData 타입별 분기 로직 (TEXT, VARCHAR maxLength,
+ * INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, GEOMETRY) - propagateDescriptions - 존재하지 않는 데이터셋에 대한
+ * 예외 처리
  */
 @Transactional
 class DatasetDataServiceTest extends IntegrationTestBase {
@@ -72,8 +68,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
             new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null),
-        testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null), testUserId);
   }
 
   /**
@@ -88,7 +83,9 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   private DatasetDetailResponse createSingleColumnDataset(
       String tableName, String colName, String dataType, Integer maxLength, boolean isNullable) {
     List<DatasetColumnRequest> columns =
-        List.of(new DatasetColumnRequest(colName, colName, dataType, maxLength, isNullable, false, null));
+        List.of(
+            new DatasetColumnRequest(
+                colName, colName, dataType, maxLength, isNullable, false, null));
     return datasetService.createDataset(
         new CreateDatasetRequest(tableName, tableName, null, null, "SOURCE", columns, null),
         testUserId);
@@ -142,12 +139,9 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   @Test
   void getRowCount_afterInsert_returnsCorrectCount() {
     DatasetDetailResponse dataset = createSimpleDataset("RowCount Test", "rowcount_test");
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "A", "value", 1)));
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "B", "value", 2)));
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "C", "value", 3)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "A", "value", 1)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "B", "value", 2)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "C", "value", 3)));
 
     RowCountResponse result = datasetDataService.getRowCount(dataset.id());
 
@@ -158,10 +152,8 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   @Test
   void truncateDatasetData_removesAllRows_returnsDeletedCount() {
     DatasetDetailResponse dataset = createSimpleDataset("Truncate Test", "truncate_test");
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "X", "value", 10)));
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "Y", "value", 20)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "X", "value", 10)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Y", "value", 20)));
 
     DataDeleteResponse result = datasetDataService.truncateDatasetData(dataset.id());
 
@@ -201,13 +193,10 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   /** 정상: replaceDatasetData는 기존 데이터를 원자적으로 교체한다 */
   @Test
   void replaceDatasetData_replacesExistingData_atomically() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Replace Test", "replace_test");
+    DatasetDetailResponse dataset = createSimpleDataset("Replace Test", "replace_test");
     // 기존 데이터 2건 삽입
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "Old1", "value", 1)));
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "Old2", "value", 2)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Old1", "value", 1)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Old2", "value", 2)));
 
     // 새 데이터 3건으로 교체
     List<Map<String, Object>> newRows =
@@ -223,17 +212,14 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     assertThat(datasetDataService.getRowCount(dataset.id()).rowCount()).isEqualTo(3);
     // 교체된 데이터 내용 확인
     DataQueryResponse data = datasetDataService.getDatasetData(dataset.id(), null, 0, 10);
-    List<String> names = data.rows().stream()
-        .map(r -> (String) r.get("name"))
-        .toList();
+    List<String> names = data.rows().stream().map(r -> (String) r.get("name")).toList();
     assertThat(names).containsExactlyInAnyOrder("New1", "New2", "New3");
   }
 
   /** 정상: replaceDatasetData — 빈 행 리스트로 교체하면 테이블이 비워진다 */
   @Test
   void replaceDatasetData_withEmptyRows_clearsTable() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Replace Empty", "replace_empty");
+    DatasetDetailResponse dataset = createSimpleDataset("Replace Empty", "replace_empty");
     datasetDataService.addRow(
         dataset.id(), new RowDataRequest(Map.of("name", "Existing", "value", 1)));
 
@@ -247,15 +233,13 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   /** 예외: replaceDatasetData — 잘못된 타입이 포함된 경우 IllegalArgumentException */
   @Test
   void replaceDatasetData_withInvalidType_throwsIllegalArgument() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Replace Invalid", "replace_invalid");
+    DatasetDetailResponse dataset = createSimpleDataset("Replace Invalid", "replace_invalid");
 
     List<Map<String, Object>> rows = List.of(Map.of("name", "Valid", "value", "not_a_number"));
 
     assertThatThrownBy(
             () ->
-                datasetDataService.replaceDatasetData(
-                    dataset.id(), new BatchRowDataRequest(rows)))
+                datasetDataService.replaceDatasetData(dataset.id(), new BatchRowDataRequest(rows)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -264,8 +248,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   void replaceDatasetData_nonExistentDataset_throwsNotFound() {
     assertThatThrownBy(
             () ->
-                datasetDataService.replaceDatasetData(
-                    999999L, new BatchRowDataRequest(List.of())))
+                datasetDataService.replaceDatasetData(999999L, new BatchRowDataRequest(List.of())))
         .isInstanceOf(DatasetNotFoundException.class);
   }
 
@@ -276,8 +259,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   /** 정상: 검색어 없이 전체 데이터를 페이징하여 반환한다 */
   @Test
   void getDatasetData_noFilter_returnsPaginatedData() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Query Paging Test", "query_paging_test");
+    DatasetDetailResponse dataset = createSimpleDataset("Query Paging Test", "query_paging_test");
     for (int i = 1; i <= 5; i++) {
       datasetDataService.addRow(
           dataset.id(), new RowDataRequest(Map.of("name", "Item" + i, "value", i * 10)));
@@ -297,8 +279,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   /** 정상: 검색어로 필터링하면 일치하는 행만 반환한다 */
   @Test
   void getDatasetData_withSearch_returnsMatchingRows() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Search Filter Test", "search_filter_test");
+    DatasetDetailResponse dataset = createSimpleDataset("Search Filter Test", "search_filter_test");
     datasetDataService.addRow(
         dataset.id(), new RowDataRequest(Map.of("name", "Apple", "value", 1)));
     datasetDataService.addRow(
@@ -306,51 +287,41 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     datasetDataService.addRow(
         dataset.id(), new RowDataRequest(Map.of("name", "Apricot", "value", 3)));
 
-    DataQueryResponse result =
-        datasetDataService.getDatasetData(dataset.id(), "Ap", 0, 10);
+    DataQueryResponse result = datasetDataService.getDatasetData(dataset.id(), "Ap", 0, 10);
 
     // "Apple"과 "Apricot" 2건만 반환
     assertThat(result.rows()).hasSize(2);
-    List<String> names = result.rows().stream()
-        .map(r -> (String) r.get("name"))
-        .toList();
+    List<String> names = result.rows().stream().map(r -> (String) r.get("name")).toList();
     assertThat(names).containsExactlyInAnyOrder("Apple", "Apricot");
   }
 
   /** 정상: sortBy + sortDir로 정렬 결과를 검증한다 */
   @Test
   void getDatasetData_withSort_returnsSortedData() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Sort Test", "sort_test");
+    DatasetDetailResponse dataset = createSimpleDataset("Sort Test", "sort_test");
     datasetDataService.addRow(
         dataset.id(), new RowDataRequest(Map.of("name", "Charlie", "value", 30)));
     datasetDataService.addRow(
         dataset.id(), new RowDataRequest(Map.of("name", "Alice", "value", 10)));
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "Bob", "value", 20)));
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Bob", "value", 20)));
 
     // name ASC 정렬
     DataQueryResponse ascResult =
         datasetDataService.getDatasetData(dataset.id(), null, 0, 10, "name", "ASC", true);
-    List<String> ascNames = ascResult.rows().stream()
-        .map(r -> (String) r.get("name"))
-        .toList();
+    List<String> ascNames = ascResult.rows().stream().map(r -> (String) r.get("name")).toList();
     assertThat(ascNames).containsExactly("Alice", "Bob", "Charlie");
 
     // name DESC 정렬
     DataQueryResponse descResult =
         datasetDataService.getDatasetData(dataset.id(), null, 0, 10, "name", "DESC", true);
-    List<String> descNames = descResult.rows().stream()
-        .map(r -> (String) r.get("name"))
-        .toList();
+    List<String> descNames = descResult.rows().stream().map(r -> (String) r.get("name")).toList();
     assertThat(descNames).containsExactly("Charlie", "Bob", "Alice");
   }
 
   /** 예외: 존재하지 않는 컬럼명으로 정렬 시 IllegalArgumentException */
   @Test
   void getDatasetData_invalidSortColumn_throwsIllegalArgument() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("Invalid Sort", "invalid_sort");
+    DatasetDetailResponse dataset = createSimpleDataset("Invalid Sort", "invalid_sort");
 
     assertThatThrownBy(
             () ->
@@ -363,10 +334,8 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   /** 정상: includeTotalCount=false 이면 totalElements와 totalPages가 -1 */
   @Test
   void getDatasetData_withoutTotalCount_returnsMinus1() {
-    DatasetDetailResponse dataset =
-        createSimpleDataset("No Count Test", "no_count_test");
-    datasetDataService.addRow(
-        dataset.id(), new RowDataRequest(Map.of("name", "X", "value", 1)));
+    DatasetDetailResponse dataset = createSimpleDataset("No Count Test", "no_count_test");
+    datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "X", "value", 1)));
 
     DataQueryResponse result =
         datasetDataService.getDatasetData(dataset.id(), null, 0, 10, null, "ASC", false);
@@ -567,8 +536,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
     RowDataResponse row =
         datasetDataService.addRow(
-            dataset.id(),
-            new RowDataRequest(Map.of("event_time", "2024-01-15T10:30:00")));
+            dataset.id(), new RowDataRequest(Map.of("event_time", "2024-01-15T10:30:00")));
 
     assertThat(row.data().get("event_time")).isNotNull();
   }
@@ -609,8 +577,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
     String pointGeoJson = "{\"type\":\"Point\",\"coordinates\":[127.0,37.5]}";
     RowDataResponse row =
-        datasetDataService.addRow(
-            dataset.id(), new RowDataRequest(Map.of("geom", pointGeoJson)));
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("geom", pointGeoJson)));
 
     assertThat(row.data().get("geom")).isNotNull();
   }
@@ -624,8 +591,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     String polygonGeoJson =
         "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
     RowDataResponse row =
-        datasetDataService.addRow(
-            dataset.id(), new RowDataRequest(Map.of("geom", polygonGeoJson)));
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("geom", polygonGeoJson)));
 
     assertThat(row.data().get("geom")).isNotNull();
   }
@@ -710,8 +676,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     // null 값은 Map.of()로 표현할 수 없으므로 HashMap 사용
     Map<String, Object> data = new java.util.HashMap<>();
     data.put("opt", null);
-    RowDataResponse row =
-        datasetDataService.addRow(dataset.id(), new RowDataRequest(data));
+    RowDataResponse row = datasetDataService.addRow(dataset.id(), new RowDataRequest(data));
 
     assertThat(row.id()).isNotNull();
     assertThat(row.data().get("opt")).isNull();
@@ -725,8 +690,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
     Map<String, Object> data = new java.util.HashMap<>();
     data.put("required_col", null);
-    assertThatThrownBy(
-            () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(data)))
+    assertThatThrownBy(() -> datasetDataService.addRow(dataset.id(), new RowDataRequest(data)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("cannot be null");
   }
@@ -739,14 +703,11 @@ class DatasetDataServiceTest extends IntegrationTestBase {
 
     List<Map<String, Object>> rows =
         List.of(
-            Map.of("num", 1),
-            Map.of("num", 2),
-            Map.of("num", "invalid") // Row 2에서 오류
-        );
+            Map.of("num", 1), Map.of("num", 2), Map.of("num", "invalid") // Row 2에서 오류
+            );
 
     assertThatThrownBy(
-            () ->
-                datasetDataService.addRowsBatch(dataset.id(), new BatchRowDataRequest(rows)))
+            () -> datasetDataService.addRowsBatch(dataset.id(), new BatchRowDataRequest(rows)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Row 2:");
   }
@@ -760,20 +721,20 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   void propagateDescriptions_copiesFromOtherDataset() {
     // 소스 데이터셋: "email" 컬럼에 description 있음
     List<DatasetColumnRequest> sourceColumns =
-        List.of(
-            new DatasetColumnRequest("email", "Email", "TEXT", null, true, false, "이메일 주소"));
+        List.of(new DatasetColumnRequest("email", "Email", "TEXT", null, true, false, "이메일 주소"));
     DatasetDetailResponse sourceDataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Source DS", "source_ds", null, null, "SOURCE", sourceColumns, null),
+            new CreateDatasetRequest(
+                "Source DS", "source_ds", null, null, "SOURCE", sourceColumns, null),
             testUserId);
 
     // 대상 데이터셋: "email" 컬럼에 description 없음
     List<DatasetColumnRequest> targetColumns =
-        List.of(
-            new DatasetColumnRequest("email", "Email", "TEXT", null, true, false, null));
+        List.of(new DatasetColumnRequest("email", "Email", "TEXT", null, true, false, null));
     DatasetDetailResponse targetDataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Target DS", "target_ds", null, null, "SOURCE", targetColumns, null),
+            new CreateDatasetRequest(
+                "Target DS", "target_ds", null, null, "SOURCE", targetColumns, null),
             testUserId);
 
     // description 전파 실행
@@ -794,20 +755,20 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   void propagateDescriptions_doesNotOverwriteExistingDescription() {
     // 소스: "title" 컬럼에 description 있음
     List<DatasetColumnRequest> sourceColumns =
-        List.of(
-            new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, "소스 설명"));
+        List.of(new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, "소스 설명"));
     DatasetDetailResponse sourceDataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Prop Source", "prop_source", null, null, "SOURCE", sourceColumns, null),
+            new CreateDatasetRequest(
+                "Prop Source", "prop_source", null, null, "SOURCE", sourceColumns, null),
             testUserId);
 
     // 대상: "title" 컬럼에 기존 description 있음
     List<DatasetColumnRequest> targetColumns =
-        List.of(
-            new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, "기존 설명"));
+        List.of(new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, "기존 설명"));
     DatasetDetailResponse targetDataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Prop Target", "prop_target", null, null, "SOURCE", targetColumns, null),
+            new CreateDatasetRequest(
+                "Prop Target", "prop_target", null, null, "SOURCE", targetColumns, null),
             testUserId);
 
     datasetDataService.propagateDescriptions(targetDataset.id());

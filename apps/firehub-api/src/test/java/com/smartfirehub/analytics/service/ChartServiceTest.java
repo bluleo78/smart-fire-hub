@@ -23,9 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * ChartService 통합 테스트.
  *
- * <p>list, create, getById, update, delete, getChartData 핵심 메서드 전체 커버.
- * MAP 차트 spatialColumn 검증 엣지 케이스 포함.
- * 정상/예외 케이스 모두 검증한다.
+ * <p>list, create, getById, update, delete, getChartData 핵심 메서드 전체 커버. MAP 차트 spatialColumn 검증 엣지
+ * 케이스 포함. 정상/예외 케이스 모두 검증한다.
  */
 @Transactional
 class ChartServiceTest extends IntegrationTestBase {
@@ -35,10 +34,13 @@ class ChartServiceTest extends IntegrationTestBase {
 
   /** 테스트 소유자 userId */
   private Long ownerUserId;
+
   /** 다른 사용자 userId */
   private Long otherUserId;
+
   /** 테스트용 saved_query id */
   private Long savedQueryId;
+
   /** 다른 사용자 소유 saved_query id */
   private Long otherSavedQueryId;
 
@@ -154,12 +156,7 @@ class ChartServiceTest extends IntegrationTestBase {
             () ->
                 chartService.create(
                     new CreateChartRequest(
-                        "Invalid Chart",
-                        null,
-                        999999L,
-                        "BAR",
-                        Map.of("xAxis", "col1"),
-                        false),
+                        "Invalid Chart", null, 999999L, "BAR", Map.of("xAxis", "col1"), false),
                     ownerUserId))
         .isInstanceOf(SavedQueryNotFoundException.class);
   }
@@ -195,8 +192,7 @@ class ChartServiceTest extends IntegrationTestBase {
   /** 예외: MAP 차트 — spatialColumn 누락 시 IllegalArgumentException */
   @Test
   void create_mapChart_withoutSpatialColumn_throwsIllegalArgument() {
-    assertThatThrownBy(
-            () -> createMapChart("Bad Map", Map.of("color", "#FF0000"), ownerUserId))
+    assertThatThrownBy(() -> createMapChart("Bad Map", Map.of("color", "#FF0000"), ownerUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("spatialColumn");
   }
@@ -364,8 +360,7 @@ class ChartServiceTest extends IntegrationTestBase {
             .fetchOne()
             .get(DSL.field(DSL.name("chart", "id"), Long.class));
 
-    PageResponse<ChartResponse> result =
-        chartService.list(null, null, null, ownerUserId, 0, 10);
+    PageResponse<ChartResponse> result = chartService.list(null, null, null, ownerUserId, 0, 10);
 
     List<String> names = result.content().stream().map(ChartResponse::name).toList();
     assertThat(names).contains("My Private", "Other Shared Chart");
@@ -385,8 +380,7 @@ class ChartServiceTest extends IntegrationTestBase {
         .set(DSL.field(DSL.name("chart", "created_by"), Long.class), ownerUserId)
         .execute();
 
-    PageResponse<ChartResponse> result =
-        chartService.list(null, "BAR", null, ownerUserId, 0, 10);
+    PageResponse<ChartResponse> result = chartService.list(null, "BAR", null, ownerUserId, 0, 10);
 
     assertThat(result.content()).allMatch(c -> "BAR".equals(c.chartType()));
     List<String> names = result.content().stream().map(ChartResponse::name).toList();
@@ -400,8 +394,7 @@ class ChartServiceTest extends IntegrationTestBase {
     createChart("Alpha Chart", false, ownerUserId);
     createChart("Beta Chart", false, ownerUserId);
 
-    PageResponse<ChartResponse> result =
-        chartService.list("Alpha", null, null, ownerUserId, 0, 10);
+    PageResponse<ChartResponse> result = chartService.list("Alpha", null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("Alpha Chart");
