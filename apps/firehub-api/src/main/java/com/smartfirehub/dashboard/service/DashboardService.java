@@ -63,6 +63,18 @@ public class DashboardService {
   private static final Field<String> AL_DESCRIPTION =
       field(name("audit_log", "description"), String.class);
 
+  /**
+   * audit_log.resource_id(VARCHAR)를 BIGINT로 안전하게 캐스트하는 jOOQ 필드 표현식.
+   *
+   * <p>PostgreSQL의 단순 CAST는 숫자가 아닌 문자열 입력 시 DataException을 발생시킨다. 이를 방지하기 위해 CASE WHEN 정규식 조건으로 숫자
+   * 패턴 여부를 확인한 후에만 캐스트하고, 그렇지 않으면 NULL을 반환한다. 이렇게 하면 비숫자 resource_id가 있어도 쿼리가 정상 실행된다.
+   */
+  private static final Field<Long> AL_RESOURCE_ID_AS_LONG =
+      field(
+          "CASE WHEN audit_log.resource_id ~ '^[0-9]+$'"
+              + " THEN audit_log.resource_id::BIGINT ELSE NULL END",
+          Long.class);
+
   private static final Table<?> PIPELINE_EXECUTION = table(name("pipeline_execution"));
   private static final Field<Long> PE_ID = field(name("pipeline_execution", "id"), Long.class);
   private static final Field<Long> PE_PIPELINE_ID =
@@ -103,7 +115,7 @@ public class DashboardService {
         dsl.select(AL_ID, D_NAME, metadataFileName, AL_RESULT, AL_ACTION_TIME)
             .from(AUDIT_LOG)
             .join(DATASET)
-            .on(AL_RESOURCE_ID.cast(Long.class).eq(D_ID))
+            .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
             .where(AL_ACTION_TYPE.eq("IMPORT").and(AL_RESOURCE.eq("dataset")))
             .orderBy(AL_ACTION_TIME.desc())
             .limit(5)
@@ -449,7 +461,7 @@ public class DashboardService {
         dsl.select(AL_ID, D_ID, D_NAME, AL_ACTION_TIME)
             .from(AUDIT_LOG)
             .join(DATASET)
-            .on(AL_RESOURCE_ID.cast(Long.class).eq(D_ID))
+            .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
             .where(
                 AL_ACTION_TYPE
                     .eq("IMPORT")
@@ -578,7 +590,7 @@ public class DashboardService {
                 D_ID)
             .from(AUDIT_LOG)
             .leftJoin(DATASET)
-            .on(AL_RESOURCE.eq("dataset").and(AL_RESOURCE_ID.cast(Long.class).eq(D_ID)))
+            .on(AL_RESOURCE.eq("dataset").and(AL_RESOURCE_ID_AS_LONG.eq(D_ID)))
             .where(
                 AL_ACTION_TYPE.in("IMPORT", "CREATE").and(AL_RESOURCE.in("dataset", "dashboard")))
             .orderBy(AL_ACTION_TIME.desc())
