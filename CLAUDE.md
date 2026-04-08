@@ -74,7 +74,7 @@ pnpm db:reset                   # PostgreSQL 볼륨 삭제 후 재시작
 
 ### 에이전트 팀 구성
 
-모든 업무 지시는 **Project Leader** (`.claude/agents/project-leader.md`)에게 내린다. Project Leader가 업무 규모를 판단하여 적절한 에이전트를 투입하고 전체 흐름을 오케스트레이션한다.
+업무 지시 시 `/task-start` 스킬을 실행한다. 이 스킬이 업무 규모를 판단하여 `TeamCreate`로 팀을 구성하고, 전문 에이전트에게 태스크를 배분한 뒤, 팀원이 자율 진행하도록 한다. 워크플로 정의는 `.claude/agents/project-leader.md`를 참조.
 
 | 에이전트 | 역할 |
 |---------|------|
