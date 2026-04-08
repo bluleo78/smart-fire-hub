@@ -205,26 +205,26 @@ Phase D-2에서 추가된 시맨틱 상태 토큰. `index.css`에 Light/Dark 모
   --warning-subtle: oklch(0.97 0.04 84);         /* 연한 황색 배경 */
 
   /* Info */
-  --info: oklch(0.6 0.15 240);                  /* 청색 */
+  --info: oklch(0.55 0.15 240);                  /* 청색 */
   --info-foreground: oklch(0.985 0 0);           /* Near-white */
   --info-subtle: oklch(0.95 0.04 240);           /* 연한 청색 배경 */
 }
 
 .dark {
   /* Success (Dark) */
-  --success: oklch(0.65 0.18 149.5);            /* 더 밝은 녹색 */
-  --success-foreground: oklch(0.1 0 0);          /* Near-black */
-  --success-subtle: oklch(0.2 0.06 149.5);       /* 어두운 녹색 배경 */
+  --success: oklch(0.65 0.15 149.5);            /* 더 밝은 녹색 */
+  --success-foreground: oklch(0.985 0 0);        /* Near-white */
+  --success-subtle: oklch(0.2 0.04 149.5);       /* 어두운 녹색 배경 */
 
   /* Warning (Dark) */
-  --warning: oklch(0.78 0.14 84);               /* 더 밝은 앰버 */
-  --warning-foreground: oklch(0.1 0 0);          /* Near-black */
-  --warning-subtle: oklch(0.22 0.05 84);         /* 어두운 황색 배경 */
+  --warning: oklch(0.76 0.14 84);               /* 더 밝은 앰버 */
+  --warning-foreground: oklch(0.985 0 0);        /* Near-white */
+  --warning-subtle: oklch(0.2 0.04 84);          /* 어두운 황색 배경 */
 
   /* Info (Dark) */
-  --info: oklch(0.72 0.16 240);                 /* 더 밝은 청색 */
-  --info-foreground: oklch(0.1 0 0);             /* Near-black */
-  --info-subtle: oklch(0.2 0.05 240);            /* 어두운 청색 배경 */
+  --info: oklch(0.7 0.13 240);                  /* 더 밝은 청색 */
+  --info-foreground: oklch(0.985 0 0);           /* Near-white */
+  --info-subtle: oklch(0.2 0.04 240);            /* 어두운 청색 배경 */
 }
 ```
 
