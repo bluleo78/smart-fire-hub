@@ -40,7 +40,10 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @MockitoBean private ProactiveAiClient proactiveAiClient;
   @MockitoBean private ProactiveContextCollector proactiveContextCollector;
   @MockitoBean private DeliveryChannel chatDeliveryChannel;
-  @MockitoBean private com.smartfirehub.proactive.repository.AnomalyEventRepository anomalyEventRepository;
+
+  @MockitoBean
+  private com.smartfirehub.proactive.repository.AnomalyEventRepository anomalyEventRepository;
+
   @MockitoBean private com.smartfirehub.notification.service.SseEmitterRegistry sseEmitterRegistry;
 
   private Long testUserId;
@@ -262,8 +265,16 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     var job = proactiveJobService.createJob(buildCreateRequest("이상탐지 알림 테스트"), testUserId);
     var event =
         new com.smartfirehub.proactive.dto.AnomalyEvent(
-            job.id(), testUserId, "metric1", "테스트 메트릭",
-            50.0, 10.0, 3.0, 13.33, "medium", List.of(8.0, 10.0, 12.0));
+            job.id(),
+            testUserId,
+            "metric1",
+            "테스트 메트릭",
+            50.0,
+            10.0,
+            3.0,
+            13.33,
+            "medium",
+            List.of(8.0, 10.0, 12.0));
 
     rawJobService.onAnomalyDetected(event);
 
@@ -272,9 +283,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .broadcast(
             org.mockito.ArgumentMatchers.eq(testUserId),
             org.mockito.ArgumentMatchers.argThat(
-                n ->
-                    "ANOMALY_DETECTED".equals(n.eventType())
-                        && "WARNING".equals(n.severity())));
+                n -> "ANOMALY_DETECTED".equals(n.eventType()) && "WARNING".equals(n.severity())));
   }
 
   /** 쿨다운 내 재호출 시 save/broadcast가 1번만 호출되는지 검증 */
@@ -289,8 +298,16 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     var event =
         new com.smartfirehub.proactive.dto.AnomalyEvent(
-            job.id(), testUserId, "metric_cd", "쿨다운 메트릭",
-            100.0, 20.0, 5.0, 16.0, "high", List.of(15.0, 18.0));
+            job.id(),
+            testUserId,
+            "metric_cd",
+            "쿨다운 메트릭",
+            100.0,
+            20.0,
+            5.0,
+            16.0,
+            "high",
+            List.of(15.0, 18.0));
 
     rawJobService.onAnomalyDetected(event);
     rawJobService.onAnomalyDetected(event);
@@ -304,8 +321,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   void getAnomalyEvents_returns_events() {
     var record1 =
         new com.smartfirehub.proactive.repository.AnomalyEventRepository.AnomalyEventRecord(
-            1L, 1L, "m1", "메트릭1", 30.0, 10.0, 2.0, 10.0, "low",
-            java.time.LocalDateTime.now());
+            1L, 1L, "m1", "메트릭1", 30.0, 10.0, 2.0, 10.0, "low", java.time.LocalDateTime.now());
     when(anomalyEventRepository.findByJobId(1L, 10)).thenReturn(List.of(record1));
 
     var results = proactiveJobService.getAnomalyEvents(1L, 10);
