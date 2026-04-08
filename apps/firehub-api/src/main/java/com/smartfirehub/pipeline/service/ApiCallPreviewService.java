@@ -168,10 +168,35 @@ public class ApiCallPreviewService {
         .toList();
   }
 
+  /**
+   * UTF-8 바이트 경계에서 안전하게 문자열을 자른다.
+   *
+   * <p>단순히 maxBytes 위치에서 자르면 한글 등 멀티바이트 문자의 중간을 잘라
+   * 깨진 문자(\uFFFD)가 생성될 수 있다. 이를 방지하기 위해 maxBytes 위치부터
+   * 뒤로 이동하여 UTF-8 선행 바이트(문자 시작점, 0x80~0xBF 범위가 아닌 바이트)를
+   * 찾아 그 직전까지만 포함한다.
+   *
+   * <p>UTF-8 인코딩 규칙:
+   * - 1바이트 문자: 0x00~0x7F (ASCII)
+   * - 멀티바이트 연속 바이트: 0x80~0xBF (선행 바이트가 아님, 중간/끝 바이트)
+   * - 멀티바이트 선행 바이트: 0xC0~0xFF (문자 시작점)
+   *
+   * @param s 원본 문자열 (null 허용)
+   * @param maxBytes 최대 바이트 크기
+   * @return maxBytes 이내로 안전하게 잘린 UTF-8 문자열
+   */
   private String truncate(String s, int maxBytes) {
     if (s == null) return null;
     byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     if (bytes.length <= maxBytes) return s;
-    return new String(bytes, 0, maxBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+    // maxBytes 위치에서 뒤로 이동하며 UTF-8 문자 시작점을 찾는다.
+    // 0x80~0xBF 범위의 바이트는 멀티바이트 문자의 연속 바이트이므로 건너뛴다.
+    int end = maxBytes;
+    while (end > 0 && (bytes[end] & 0xC0) == 0x80) {
+      end--;
+    }
+
+    return new String(bytes, 0, end, java.nio.charset.StandardCharsets.UTF_8);
   }
 }
