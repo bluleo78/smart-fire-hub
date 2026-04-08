@@ -42,6 +42,12 @@ public class DatasetCategoryService {
     categoryRepository
         .findById(id)
         .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + id));
+
+    // 자기 자신을 제외한 다른 카테고리에 동일 이름이 존재하는지 확인
+    if (categoryRepository.existsByNameExcludingId(name, id)) {
+      throw new DuplicateDatasetNameException("Category name already exists: " + name);
+    }
+
     categoryRepository.update(id, name, description);
   }
 
