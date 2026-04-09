@@ -29,10 +29,11 @@ export default defineConfig({
     },
   ],
 
-  /* Vite dev 서버 자동 기동 */
+  /* Vite dev 서버 자동 기동 — 없으면 기동, 있으면 재사용 */
   webServer: {
     command: 'pnpm dev',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
+    timeout: 120_000, // Vite 기동 대기 최대 2분
   },
 });

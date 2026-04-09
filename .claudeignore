@@ -1,0 +1,43 @@
+# Build outputs
+**/build/
+**/dist/
+**/.gradle/
+**/bin/
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Generated code
+**/src/main/generated/
+
+# Cache & temp
+**/.cache/
+**/.turbo/
+.omc/
+
+# Logs & test artifacts
+logs/
+*.log
+snapshots/
+test_complaints.csv
+test_survey.csv
+
+# Lock files (너무 큼)
+pnpm-lock.yaml
+
+# Source maps & minified
+*.min.js
+*.map
+
+# Test coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+
+# Binary / compiled
+*.class
+*.jar
+*.war
