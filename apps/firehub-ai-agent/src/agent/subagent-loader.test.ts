@@ -459,6 +459,25 @@ describe('SL-15: buildSubagentGuide', () => {
   });
 });
 
+// ── SL-17: dataset-manager subagent integration ─────────────────────────────
+
+describe('SL-17: dataset-manager subagent is loaded from real subagents dir', () => {
+  it('loads dataset-manager subagent', () => {
+    // 실제 subagents/ 디렉토리(default path)를 스캔해 dataset-manager가 올바르게
+    // 로드되는지 확인하는 통합성 테스트. agent.md와 knowledge 파일이 모두 반영돼야 한다.
+    const agents = loadSubagents();
+    const ds = agents['dataset-manager'];
+
+    expect(ds).toBeDefined();
+    // description: 위임 금지 규칙과 도메인(데이터셋) 명시
+    expect(ds.description).toContain('데이터셋');
+    expect(ds.description).toContain('위임하지 마세요');
+    // prompt(= systemPrompt): agent.md 본문의 파괴 작업 체크리스트 + GEOMETRY 감지 규칙
+    expect(ds.prompt).toContain('GEOMETRY');
+    expect(ds.prompt).toContain('파괴 작업 체크리스트');
+  });
+});
+
 // ── SL-16: Graceful degradation across multiple subagents ────────────────────
 
 describe('SL-16: graceful degradation', () => {
