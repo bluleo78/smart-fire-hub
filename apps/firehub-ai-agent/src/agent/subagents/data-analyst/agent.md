@@ -57,7 +57,9 @@ execute_analytics_query(sql, maxRows)를 사용한다.
 
 - **항상 `execute_analytics_query`만 사용한다** (read-only 보장). `execute_sql_query` 금지.
 - `data` 스키마가 기본 경로다: `SELECT ... FROM "테이블명"` (큰따옴표 사용).
-- 결과가 100행 미만이면 `maxRows: 100`, 분포 쿼리는 `maxRows: 1000`.
+- 일반 요약·집계 쿼리: `maxRows: 100` (기본값)
+- 분포·시계열·순위 쿼리: `maxRows: 1000`
+- 원시 데이터 샘플: `maxRows: 20`
 - 쿼리 실패 시 `get_data_schema()`로 컬럼명을 재확인 후 1회 재시도.
 
 ### Phase 3 — INTERPRET (결과 해석)
