@@ -178,4 +178,151 @@ test.describe('AI 챗 dataset-manager', () => {
       fullPage: true,
     });
   });
+
+  /**
+   * 삭제 확인 게이팅 플로우 — dataset-manager 서브에이전트 안전장치 검증.
+   *
+   * 소방 도메인 특성상 과거 화재 이력/출동 기록이 담긴 데이터셋의 우발적 삭제는
+   * 복구 불가능한 치명적 사고이므로, 서브에이전트는 반드시 다음 3단계 게이팅을 거쳐야 한다.
+   *   1) 참조 고지(파이프라인/대시보드 의존성 명시 + 복구 불가 경고)
+   *   2) 평문 확인 문구("네, 삭제하세요") 강제 — "그래/응" 같은 약한 승인은 거절
+   *   3) 정확한 문구 입력 시에만 실행
+   * 본 테스트는 위 3단계가 UI에 올바르게 렌더링되는지 SSE 모킹으로 검증한다.
+   */
+  test('데이터셋 삭제 — 참조 고지 + 평문 확인 게이팅', async ({ authenticatedPage: page }) => {
+    // 1차: 참조 고지 + 평문 확인 요구
+    const REFERENCE_NOTICE_EVENTS = [
+      sseEvent({ type: 'init', sessionId: 'dataset-manager-delete-session' }),
+      sseEvent({
+        type: 'text',
+        content:
+          '삭제 대상 확인:\n- e2e_delete_target (행 12,453개)\n- 참조: 파이프라인 2개(daily_summary, heatmap_refresh), 대시보드 1개(소방 현황)\n- 복구 불가\n\n"네, 삭제하세요"라고 정확히 답해주세요.',
+      }),
+      sseEvent({ type: 'done', inputTokens: 280 }),
+    ];
+
+    // 2차: 약한 승인("그래")을 받은 경우 — 재확인 요구
+    const WEAK_APPROVAL_REJECT_EVENTS = [
+      sseEvent({ type: 'init', sessionId: 'dataset-manager-delete-session' }),
+      sseEvent({
+        type: 'text',
+        content:
+          '"네, 삭제하세요"라고 정확히 답해주세요. "그래"만으로는 실행하지 않습니다.',
+      }),
+      sseEvent({ type: 'done', inputTokens: 120 }),
+    ];
+
+    // 3차: 정확한 평문 확인을 받은 경우 — 삭제 실행 + 완료 응답
+    const DELETED_EVENTS = [
+      sseEvent({ type: 'init', sessionId: 'dataset-manager-delete-session' }),
+      sseEvent({
+        type: 'tool_use',
+        toolName: 'mcp__firehub__delete_dataset',
+        input: { datasetName: 'e2e_delete_target' },
+        status: 'started',
+      }),
+      sseEvent({
+        type: 'tool_result',
+        toolName: 'mcp__firehub__delete_dataset',
+        result: JSON.stringify({ deleted: true, datasetName: 'e2e_delete_target' }),
+        status: 'completed',
+      }),
+      sseEvent({
+        type: 'text',
+        content: 'e2e_delete_target 삭제 완료 (2026-04-11 18:30).',
+      }),
+      sseEvent({ type: 'done', inputTokens: 320 }),
+    ];
+
+    // 삭제 플로우 전용 SSE 모킹 — 호출 횟수에 따라 3종 응답을 순차 반환한다.
+    // T13의 `mockChatSSESequence` 대신 본 테스트 내부에 직접 route 등록하여
+    // 테스트 간 상태 오염을 방지한다.
+    let deleteCallCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        deleteCallCount += 1;
+        let events: string[];
+        if (deleteCallCount === 1) events = REFERENCE_NOTICE_EVENTS;
+        else if (deleteCallCount === 2) events = WEAK_APPROVAL_REJECT_EVENTS;
+        else events = DELETED_EVENTS;
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          },
+          body: events.join(''),
+        });
+      },
+    );
+    await mockAiSessions(page);
+
+    // 1. 패널 열기 (T13 헬퍼 재사용)
+    await openChatPanel(page);
+
+    // 2. 사용자: 삭제 요청
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('e2e_delete_target 데이터셋 삭제해줘');
+    await chatInput.press('Enter');
+
+    // 3. 1차 응답 — 참조 고지 + 복구 불가 + 평문 확인 키워드 검증
+    await expect(page.getByText(/삭제 대상 확인/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/참조.*파이프라인 2개/)).toBeVisible();
+    await expect(page.getByText(/대시보드 1개/)).toBeVisible();
+    await expect(page.getByText(/복구 불가/)).toBeVisible();
+    await expect(page.getByText(/"네, 삭제하세요"라고 정확히 답해주세요/)).toBeVisible();
+
+    // 4. 스크린샷 — 참조 고지 단계
+    await page.screenshot({
+      path: path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        '..',
+        '..',
+        'snapshots',
+        'dataset-manager-delete-confirm.png',
+      ),
+      fullPage: true,
+    });
+
+    // 5. 사용자: 약한 승인 "그래" — 게이팅에 막혀야 한다
+    await chatInput.fill('그래');
+    await chatInput.press('Enter');
+
+    // 6. 2차 응답 — "그래만으로는 실행하지 않습니다" 재확인 요구 검증
+    await expect(page.getByText(/"그래"만으로는 실행하지 않습니다/)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // 7. 사용자: 정확한 평문 확인 문구
+    await chatInput.fill('네, 삭제하세요');
+    await chatInput.press('Enter');
+
+    // 8. 3차 응답 — 삭제 완료 확인
+    await expect(page.getByText(/삭제 완료/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/e2e_delete_target/)).toBeVisible();
+
+    // 9. 스크린샷 — 삭제 완료 단계
+    await page.screenshot({
+      path: path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        '..',
+        '..',
+        'snapshots',
+        'dataset-manager-deleted.png',
+      ),
+      fullPage: true,
+    });
+
+    // 10. 호출 횟수 검증 — 게이팅이 실제로 3회(고지→재확인→실행) 발생했는지 확인
+    expect(deleteCallCount).toBe(3);
+  });
 });
