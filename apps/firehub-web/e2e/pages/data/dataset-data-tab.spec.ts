@@ -215,6 +215,52 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await expect(page.getByText('데이터가 없습니다.')).toBeVisible();
   });
 
+  test('컬럼 헤더 미니 차트 클릭 시 ColumnStats Popover 가 열린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              { _id: 101, id: 1, name: 'Alice', amount: 10 },
+              { _id: 102, id: 2, name: 'Bob', amount: 20 },
+              { _id: 103, id: 3, name: 'Carol', amount: 30 },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 3,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // 컬럼 헤더의 ColumnMiniChart 는 th 내부 svg(title="클릭하여 통계 보기")를 통해 클릭 가능.
+    // Playwright 의 getByTitle 로 첫 미니차트(name 컬럼 TEXT)를 찾아 클릭한다.
+    await page.getByTitle('클릭하여 통계 보기').first().click();
+
+    // Popover 내용: 컬럼명 + Top values 라벨이 렌더링된다
+    await expect(page.getByText('Top values')).toBeVisible();
+    // Top value 중 Alice/Bob/Carol 중 최소 하나가 렌더링됨
+    await expect(
+      page.getByRole('dialog').getByText(/Alice|Bob|Carol/).first(),
+    ).toBeVisible();
+
+    // Escape 키로 닫기
+    await page.keyboard.press('Escape');
+    await expect(page.getByText('Top values')).not.toBeVisible();
+  });
+
   test('SQL 버튼 토글 시 SqlQueryEditor가 표시된다', async ({ authenticatedPage: page }) => {
     await setupDataTabMocks(page);
 
