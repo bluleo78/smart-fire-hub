@@ -43,13 +43,13 @@ const COUNT_RESPONSE_EVENTS = [
   sseEvent({ type: 'init', sessionId: 'data-analyst-session-2' }),
   sseEvent({
     type: 'tool_use',
-    toolName: 'mcp__firehub__execute_query',
+    toolName: 'mcp__firehub__execute_analytics_query',
     input: { query: "SELECT COUNT(*) FROM fire_incidents WHERE occurred_at >= '2026-01-01'" },
     status: 'started',
   }),
   sseEvent({
     type: 'tool_result',
-    toolName: 'mcp__firehub__execute_query',
+    toolName: 'mcp__firehub__execute_analytics_query',
     result: JSON.stringify({ rows: [{ count: 3_241 }] }),
     status: 'completed',
   }),
@@ -107,10 +107,14 @@ test.describe('AI 챗 data-analyst', () => {
    */
   test('DA-01: 분석 요청 → 응답에 분석 관련 키워드 포함', async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'data-analyst-session-1');
+
+    // POST body 캡처 — 사용자 메시지가 AI 챗 API에 정확히 전달되는지 검증한다.
+    let capturedPayload: Record<string, unknown> | null = null;
     await page.route(
       (url) => url.pathname === '/api/v1/ai/chat',
       async (route) => {
         if (route.request().method() !== 'POST') return route.fallback();
+        capturedPayload = route.request().postDataJSON() as Record<string, unknown>;
         await route.fulfill({
           status: 200,
           headers: {
@@ -131,12 +135,18 @@ test.describe('AI 챗 data-analyst', () => {
     await chatInput.fill('화재 데이터셋 분석해줘');
     await chatInput.press('Enter');
 
-    // 3. 응답에 분석 관련 키워드 포함 확인 — 테이블|컬럼|분석|쿼리|데이터셋 중 하나 이상
+    // 3. API payload 검증 — message 필드에 입력한 메시지가 포함되어야 한다.
+    await expect
+      .poll(() => capturedPayload, { timeout: 5000 })
+      .not.toBeNull();
+    expect(capturedPayload).toMatchObject({ message: '화재 데이터셋 분석해줘' });
+
+    // 4. 응답에 분석 관련 키워드 포함 확인 — 테이블|컬럼|분석|쿼리|데이터셋 중 하나 이상
     await expect(
       page.getByText(/테이블|컬럼|분석|쿼리|데이터셋/).first(),
     ).toBeVisible({ timeout: 30_000 });
 
-    // 4. 스크린샷 — 분석 결과 단계
+    // 5. 스크린샷 — 분석 결과 단계
     await page.screenshot({
       path: path.resolve(
         __dirname,
@@ -158,10 +168,14 @@ test.describe('AI 챗 data-analyst', () => {
    */
   test('DA-02: 건수 조회 요청 → 응답에 코드 블록 또는 숫자 포함', async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'data-analyst-session-2');
+
+    // POST body 캡처 — 사용자 메시지가 AI 챗 API에 정확히 전달되는지 검증한다.
+    let capturedPayload: Record<string, unknown> | null = null;
     await page.route(
       (url) => url.pathname === '/api/v1/ai/chat',
       async (route) => {
         if (route.request().method() !== 'POST') return route.fallback();
+        capturedPayload = route.request().postDataJSON() as Record<string, unknown>;
         await route.fulfill({
           status: 200,
           headers: {
@@ -182,13 +196,19 @@ test.describe('AI 챗 data-analyst', () => {
     await chatInput.fill('2026년 화재 발생 건수 알려줘');
     await chatInput.press('Enter');
 
-    // 3. 응답에 코드 블록(pre/code 요소) 또는 숫자 패턴 포함 확인
+    // 3. API payload 검증 — message 필드에 입력한 메시지가 포함되어야 한다.
+    await expect
+      .poll(() => capturedPayload, { timeout: 5000 })
+      .not.toBeNull();
+    expect(capturedPayload).toMatchObject({ message: '2026년 화재 발생 건수 알려줘' });
+
+    // 4. 응답에 코드 블록(pre/code 요소) 또는 숫자 패턴 포함 확인
     // 마크다운 렌더러가 ```sql 블록을 <code> 요소로 변환하거나, 숫자(예: 3,241)가 텍스트로 노출된다.
     await expect(
       page.getByText(/\d[\d,]+/).first(),
     ).toBeVisible({ timeout: 30_000 });
 
-    // 4. 스크린샷 — 건수 조회 결과 단계
+    // 5. 스크린샷 — 건수 조회 결과 단계
     await page.screenshot({
       path: path.resolve(
         __dirname,
