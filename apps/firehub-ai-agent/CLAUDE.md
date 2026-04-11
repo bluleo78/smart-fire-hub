@@ -80,11 +80,32 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 - `mcpServers: { firehub }` — 인메모리 MCP 서버 (네트워크 없이 직접 호출)
 - 환경변수에서 `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` 제거하여 중첩 세션 방지
 
+## Testing
+
+테스트 작성 원칙과 커버리지 관리는 [루트 가이드라인](../../docs/testing-guidelines.md) 참고.
+
+- **테스트 패턴**: Vitest + nock. HTTP 호출은 nock으로 모킹, 파일 I/O는 `vi.mock`으로 모킹한다.
+- **테스트 파일 위치**: 소스 파일과 같은 디렉토리에 `*.test.ts`로 배치한다. (예: `auth.ts` → `auth.test.ts`)
+- **코드 수정 시 반드시 테스트 작성**: 모든 코드 변경은 대응하는 테스트 코드를 함께 작성하거나 업데이트한다.
+
+### 이 앱의 테스트 명령어
+
+```bash
+pnpm test                          # 전체 테스트
+pnpm test -- --coverage            # 테스트 + 커버리지
+pnpm test:watch                    # watch 모드
+```
+
+리포트: `coverage/index.html`
+
+### 커버리지 현황 (2026-04-11)
+
+- Lines: **72.79%**
+- 목표: 신규 80% / 전체 70% (가이드라인 참조)
+- api-client 테스트 보강 (proactive, analytics) 완료
+
 ## Conventions
 
 - **코드 주석 필수**: 함수, 클래스, 주요 로직 블록에 한국어 주석(JSDoc/인라인)을 작성한다. "무엇을 하는지"와 "왜 이렇게 하는지"를 설명하여 코드 이해를 돕는다.
-- **코드 수정 시 반드시 테스트 작성**: 모든 코드 변경은 대응하는 테스트 코드를 함께 작성하거나 업데이트한다. 테스트 없이 코드만 수정하지 않는다.
-- **테스트 패턴**: Vitest + nock. HTTP 호출은 nock으로 모킹, 파일 I/O는 `vi.mock`으로 모킹한다.
-- **테스트 파일 위치**: 소스 파일과 같은 디렉토리에 `*.test.ts`로 배치한다. (예: `auth.ts` → `auth.test.ts`)
 - **MCP 도구 추가 시**: `firehub-mcp-server.ts`에 `safeTool()` 래퍼로 등록하고, `api-client.ts`에 대응 메서드 추가, `system-prompt.ts`에 도구 설명 추가.
 - **SSE 이벤트 타입**: `init`, `text`, `tool_use`, `tool_result`, `turn`, `done`, `error` — 프론트엔드와의 계약.

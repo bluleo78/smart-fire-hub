@@ -120,6 +120,8 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 
 ## Testing
 
+테스트 작성 원칙과 커버리지 관리는 [루트 가이드라인](../../docs/testing-guidelines.md) 참고.
+
 모든 테스트는 `IntegrationTestBase`를 상속하는 `@SpringBootTest` + `@ActiveProfiles("test")` 통합 테스트.
 
 ```java
@@ -134,6 +136,22 @@ class MyServiceTest extends IntegrationTestBase {
 - WireMock: API_CALL 관련 HTTP mock (`wiremock-standalone:3.10.0`)
 - JVM args (`--add-opens`)는 `build.gradle.kts`에 설정됨
 - 서비스 레이어 중심으로 정상/예외 케이스 커버
+
+### 이 앱의 테스트 명령어
+
+```bash
+./gradlew test                                       # 전체 테스트
+./gradlew test jacocoTestReport                      # 테스트 + 커버리지 리포트
+./gradlew test --tests "com.smartfirehub.dataset.*"  # 패키지 와일드카드
+```
+
+리포트: `build/reports/jacoco/test/html/index.html`
+
+### 커버리지 현황 (2026-04-11)
+
+- Lines: **73.02%** (LINE, jOOQ 코드젠 제외)
+- 목표: 신규 80% / 전체 70% (가이드라인 참조)
+- FileParserService 93%, AiClassifyExecutor 87% 등 서비스 테스트 보강 완료
 
 ## Local DB Access
 

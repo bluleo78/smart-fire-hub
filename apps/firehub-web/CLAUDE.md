@@ -135,6 +135,28 @@ src/
 - ESLint flat config with `typescript-eslint`, `react-hooks`, `react-refresh` plugins
 - Vite proxy forwards `/api` requests to backend at `localhost:8080` with SSE buffering disabled
 
+## Testing
+
+테스트 작성 원칙과 커버리지 관리는 [루트 가이드라인](../../docs/testing-guidelines.md) 참고.
+
+### 이 앱의 테스트 명령어
+
+```bash
+# 단위 테스트 (Vitest + React Testing Library)
+pnpm test:unit                     # 단위 테스트 + 커버리지 (reports: coverage/unit/)
+
+# E2E 테스트 (Playwright + monocart-coverage-reports)
+pnpm test:e2e                      # E2E 전체
+pnpm exec playwright test --project=chromium  # 직접 실행
+# 리포트: coverage/e2e/index.html
+```
+
+### 커버리지 현황 (2026-04-11)
+
+- Lines (E2E 기준): **70.27%**
+- 목표: 신규 80% / 전체 70% (가이드라인 참조)
+- E2E가 주 측정 채널. 단위 테스트는 pure-logic 파일(훅/리듀서/유틸) 대상으로 추가 중.
+
 ## Design System
 
 UI 작업(새 페이지, 컴포넌트 생성, 기존 UI 수정) 시 반드시 [`docs/design-system/`](../../docs/design-system/index.md)의 디자인 가이드라인을 참조하여 구현한다. 타이포그래피, 간격, 페이지 패턴, 폼 패턴, 피드백 상태, 색상 토큰 등 모든 UI 규칙은 해당 문서가 단일 원본(Single Source of Truth)이다.
