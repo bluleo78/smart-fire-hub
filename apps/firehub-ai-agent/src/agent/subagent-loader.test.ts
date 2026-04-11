@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
+import { loadSubagents, buildSubagentGuide, resetSubagentCache } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 
 // Helpers
@@ -475,6 +475,44 @@ describe('SL-17: dataset-manager subagent is loaded from real subagents dir', ()
     // prompt(= systemPrompt): agent.md 본문의 파괴 작업 체크리스트 + GEOMETRY 감지 규칙
     expect(ds.prompt).toContain('GEOMETRY');
     expect(ds.prompt).toContain('파괴 작업 체크리스트');
+  });
+});
+
+// ── SL-DA: data-analyst subagent integration ─────────────────────────────────
+
+describe('SL-DA: data-analyst subagent integration', () => {
+  it('loads data-analyst from real subagents directory', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    expect(agents['data-analyst']).toBeDefined();
+    expect(agents['data-analyst'].description).toContain('SQL 분석');
+    expect(agents['data-analyst'].tools).toContain('mcp__firehub__execute_analytics_query');
+    expect(agents['data-analyst'].tools).toContain('mcp__firehub__get_data_schema');
+    expect(agents['data-analyst'].tools).toContain('mcp__firehub__create_chart');
+  });
+
+  it('data-analyst prompt includes workflow phases', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['data-analyst'].prompt;
+    expect(prompt).toContain('EXPLORE');
+    expect(prompt).toContain('ANALYZE');
+    expect(prompt).toContain('PERSIST');
+    expect(prompt).toContain('VISUALIZE');
+  });
+
+  it('data-analyst rules.md is inlined into prompt', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['data-analyst'].prompt;
+    expect(prompt).toContain('execute_analytics_query');
+    expect(prompt).toContain('EDA SQL');
   });
 });
 
