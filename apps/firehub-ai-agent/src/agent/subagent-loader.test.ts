@@ -536,3 +536,39 @@ describe('SL-16: graceful degradation', () => {
     expect(agents['bad-agent']).toBeUndefined();
   });
 });
+
+describe('SL-ACM: api-connection-manager subagent integration', () => {
+  it('loads api-connection-manager from real subagents directory', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    expect(agents['api-connection-manager']).toBeDefined();
+    expect(agents['api-connection-manager'].description).toContain('API 연결');
+    expect(agents['api-connection-manager'].tools).toContain('mcp__firehub__create_api_connection');
+    expect(agents['api-connection-manager'].tools).toContain('mcp__firehub__delete_api_connection');
+  });
+
+  it('api-connection-manager prompt includes 4-phase workflow', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['api-connection-manager'].prompt;
+    expect(prompt).toContain('IDENTIFY');
+    expect(prompt).toContain('DESIGN');
+    expect(prompt).toContain('EXECUTE');
+    expect(prompt).toContain('CONFIRM');
+  });
+
+  it('api-connection-manager rules.md is inlined with authType info', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['api-connection-manager'].prompt;
+    expect(prompt).toContain('API_KEY');
+    expect(prompt).toContain('BEARER');
+    expect(prompt).toContain('authConfig');
+  });
+});
