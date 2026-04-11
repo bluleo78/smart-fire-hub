@@ -268,7 +268,7 @@
 > **의존**: Phase 5.8 (서브에이전트 시스템), Phase 5.9 완료
 > **목표**: AI 챗 한 곳에서 데이터셋·분석·연동·트리거·대시보드·운영 전부 제어 가능
 
-- ⬜ **5.10.1 dataset-manager 서브에이전트** — 데이터셋 생성/수정/삭제/컬럼/CSV 임포트 + GIS 자동 감지 (본 계획)
+- ✅ **5.10.1 dataset-manager 서브에이전트** — 데이터셋 생성/수정/삭제/컬럼/CSV 임포트 + GIS 자동 감지
 - ⬜ 5.10.2 data-analyst 서브에이전트 — 자연어 → SQL 분석/EDA/해석 (별도 스펙)
 - ⬜ 5.10.3 api-connection-manager 서브에이전트 — 외부 API 커넥션 설계/등록/테스트
 - ⬜ 5.10.4 trigger-manager (또는 pipeline-builder 확장) — 스케줄/웹훅/체인 트리거 대화형 설정
@@ -455,6 +455,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-04-11 | Phase 5.10 시작 및 dataset-manager 서브에이전트(5.10.1) 완료. 데이터셋 삭제/컬럼 변경/CSV 임포트 MCP 도구 8종 + 권한 기반 파괴 도구 필터링 + dataset-manager 서브에이전트(GIS 자동 감지) + 참조 집계 API + E2E 시나리오 2종. 스펙: docs/superpowers/specs/2026-04-11-dataset-manager-subagent-design.md, 플랜: docs/superpowers/plans/2026-04-11-dataset-manager-subagent.md. |
 | 2026-04-06 | Phase 7-4 (이상 탐지) + 7-5 (비주얼 빌더) 완료. 7-4: anomaly_event 테이블(V47), 이벤트→DB 저장+SSE 알림, dataset 메트릭 executor 연동, 커스텀 메트릭 모달, 이상 탐지 이력 UI, 시스템 메트릭 버그 수정. 7-5: 그룹 간 자유 DnD 정렬, 11종 타입별 구조+가이드 미리보기. E2E 184개 + BE 669개 전체 통과. |
 | 2026-04-06 | Playwright E2E 테스트 강화 완료. 177개 테스트를 smoke-test에서 비즈니스 로직 검증 수준으로 전면 강화. mockApi 캡처 인프라 구축, 7개 도메인 31개 spec 파일에 payload 캡처/셀 수준 검증/필터 param/에러 상태/Zod 유효성 패턴 적용. 설계: `docs/superpowers/specs/2026-04-06-e2e-test-strengthening-design.md` |
 | 2026-04-06 | Phase 7-2b (AI 스킬 + MCP 도구 확장) 완료. MCP 도구 5개 추가 (템플릿 get/update/delete + 실행 이력 list/get). template-builder 스킬 (양식 설계 5단계 워크플로, 11종 섹션 타입). smart-job-manager 스킬 (4종 워크플로). 시스템 프롬프트 업데이트. |
