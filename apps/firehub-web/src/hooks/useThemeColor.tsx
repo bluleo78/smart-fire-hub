@@ -35,6 +35,9 @@ export function ThemeColorProvider({ children }: { children: React.ReactNode }) 
   );
 }
 
+// Fast refresh는 컴포넌트만 export하는 파일에서만 동작한다. 훅 export는 별도 파일로 분리하거나
+// 이 경계 규칙을 비활성화해야 한다. 현재 파일은 Provider + 훅을 함께 유지하기 위해 비활성화.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useThemeColor() {
   return useContext(ThemeColorContext);
 }

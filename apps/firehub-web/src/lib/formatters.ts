@@ -6,7 +6,7 @@
 /** 서버(UTC)에서 받은 LocalDateTime 문자열에 'Z'를 붙여 UTC로 파싱 */
 function parseUtcDate(dateStr: string): Date {
   // 이미 타임존 정보가 있으면 그대로, 없으면 UTC로 간주
-  if (/[Z+\-]\d{0,4}$/.test(dateStr)) return new Date(dateStr);
+  if (/[Z+-]\d{0,4}$/.test(dateStr)) return new Date(dateStr);
   return new Date(dateStr + 'Z');
 }
 

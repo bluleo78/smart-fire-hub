@@ -1,33 +1,35 @@
-import { useState } from 'react';
 import {
-  DndContext,
   closestCenter,
+  DndContext,
+  type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
-  DragOverlay,
-  type DragStartEvent,
-  type DragEndEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { Plus } from 'lucide-react';
+import { useState } from 'react';
+
+import type { SectionType,TemplateSection } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import type { TemplateSection, SectionType } from '@/api/proactive';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { SECTION_TYPES } from '@/lib/template-section-types';
-import { SectionTreeItem } from './SectionTreeItem';
+
 import type { FlatItem } from '../hooks/useSectionTree';
+import { SectionTreeItem } from './SectionTreeItem';
 
 interface SectionTreeBuilderProps {
   sections: TemplateSection[];
@@ -42,7 +44,6 @@ interface SectionTreeBuilderProps {
 }
 
 export function SectionTreeBuilder({
-  sections: _sections,
   selectedKey,
   collapsedKeys,
   flatItems,

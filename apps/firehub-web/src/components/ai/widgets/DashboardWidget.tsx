@@ -7,7 +7,7 @@ import { WidgetShell } from './WidgetShell';
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 interface ShowDashboardSummaryInput {}
 
-export default function DashboardWidget({ input: _input, onNavigate, displayMode }: WidgetProps<ShowDashboardSummaryInput>) {
+export default function DashboardWidget({ onNavigate, displayMode }: WidgetProps<ShowDashboardSummaryInput>) {
   const { data: health, isLoading: healthLoading } = useQuery({
     queryKey: ['dashboard-health'],
     queryFn: () => dashboardApi.getHealth().then(r => r.data),
