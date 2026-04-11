@@ -12,7 +12,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async (importOriginal) => {
 });
 
 vi.mock('../mcp/api-client.js', () => ({
-  FireHubApiClient: vi.fn().mockImplementation(function () { return {}; }),
+  FireHubApiClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    this.getSessionPermissions = vi.fn().mockResolvedValue([]);
+    return this;
+  }),
 }));
 
 vi.mock('../mcp/firehub-mcp-server.js', () => ({
@@ -395,5 +398,92 @@ describe('executeAgent', () => {
     // Should yield exactly one error event
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'error' });
+  });
+});
+
+/**
+ * Task 9: 세션 사용자 권한 조회 → MCP 도구 필터링 연동 테스트.
+ *
+ * fetchSessionPermissionsFailClosed 가 성공 시 권한 배열을 그대로 반환하고,
+ * 실패 시 `[]` 로 폴백(fail-closed)하는지 검증한다. 또한 executeAgent 실행 경로에서
+ * 권한 조회가 실패해도 에이전트가 정상 기동하고, createFireHubMcpServer 에
+ * `userPermissions: []` 가 전달되어 T8 필터가 파괴 도구를 차단하도록 한다.
+ */
+describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('AS-T9-1: returns permission codes on success', async () => {
+    const { fetchSessionPermissionsFailClosed } = await import('./agent-sdk.js');
+    const apiClient = {
+      getSessionPermissions: vi.fn().mockResolvedValue(['dataset:read', 'dataset:delete']),
+    } as unknown as import('../mcp/api-client.js').FireHubApiClient;
+
+    const result = await fetchSessionPermissionsFailClosed(apiClient);
+    expect(result).toEqual(['dataset:read', 'dataset:delete']);
+  });
+
+  it('AS-T9-2: returns [] (fail-closed) when backend errors', async () => {
+    const { fetchSessionPermissionsFailClosed } = await import('./agent-sdk.js');
+    const apiClient = {
+      getSessionPermissions: vi.fn().mockRejectedValue(new Error('API 오류 (500): boom')),
+    } as unknown as import('../mcp/api-client.js').FireHubApiClient;
+
+    const result = await fetchSessionPermissionsFailClosed(apiClient);
+    // 중요: undefined 가 아닌 빈 배열이어야 T8 필터가 파괴 도구를 차단(fail-closed)한다
+    expect(result).toEqual([]);
+    expect(result).not.toBeUndefined();
+  });
+
+  it('AS-T9-3: executeAgent still runs and passes userPermissions=[] to MCP server on permission fetch failure', async () => {
+    const { FireHubApiClient } = await import('../mcp/api-client.js');
+    const { createFireHubMcpServer } = await import('../mcp/firehub-mcp-server.js');
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+    // FireHubApiClient 인스턴스의 getSessionPermissions 가 500 으로 실패하도록 재구성
+    vi.mocked(FireHubApiClient).mockImplementationOnce(function (this: Record<string, unknown>) {
+      this.getSessionPermissions = vi.fn().mockRejectedValue(new Error('API 오류 (500): boom'));
+      return this as unknown as import('../mcp/api-client.js').FireHubApiClient;
+    } as unknown as typeof FireHubApiClient);
+
+    // 최소한의 성공 스트림
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-t9',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: unknown[] = [];
+    for await (const event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      apiKey: 'sk-test',
+    })) {
+      events.push(event);
+    }
+
+    // 에이전트는 여전히 실행되어 done 이벤트를 방출해야 한다 (권한 조회 실패가 치명적이지 않음)
+    expect(events.some((e) => (e as { type: string }).type === 'done')).toBe(true);
+    expect(events.every((e) => (e as { type: string }).type !== 'error')).toBe(true);
+
+    // createFireHubMcpServer 는 userPermissions: [] 로 호출되어야 한다 (fail-closed)
+    expect(createFireHubMcpServer).toHaveBeenCalled();
+    const callArgs = vi.mocked(createFireHubMcpServer).mock.calls.at(-1);
+    expect(callArgs).toBeDefined();
+    // 두 번째 인자는 { userPermissions: [] } 여야 한다
+    const options = callArgs?.[1] as { userPermissions?: string[] } | undefined;
+    expect(options?.userPermissions).toEqual([]);
   });
 });

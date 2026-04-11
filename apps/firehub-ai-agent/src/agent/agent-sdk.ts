@@ -31,6 +31,31 @@ export interface AgentOptions {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * 세션 사용자 권한 조회 — fail-closed 래퍼.
+ *
+ * 백엔드 `/auth/me/permissions` 호출에 실패하면 빈 배열(`[]`)로 폴백한다.
+ * T8의 필터는 `undefined`를 "전부 허용(permissive)"으로, `[]`를 "요구 권한 있는
+ * 파괴 도구 전부 차단(fail-closed)"으로 해석하므로, 실패 경로에서는 반드시 `[]` 를
+ * 반환해야 기본 차단이 유지된다.
+ *
+ * 단위 테스트 가능하도록 executeAgent 바깥에 정의한다.
+ */
+export async function fetchSessionPermissionsFailClosed(
+  apiClient: FireHubApiClient,
+  tag: () => string = () => '[Claude]',
+): Promise<string[]> {
+  try {
+    return await apiClient.getSessionPermissions();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `${tag()} [AI Chat] failed to fetch session permissions, defaulting to [] (fail-closed): ${message}`,
+    );
+    return [];
+  }
+}
+
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
   const {
     message,
@@ -56,7 +81,12 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
   const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
-  const firehubServer = createFireHubMcpServer(apiClient);
+
+  // 세션 사용자 권한 조회 (Task 9):
+  // MCP 서버 빌드 전에 사용자 권한을 받아와, 파괴적 도구(delete_dataset 등)를
+  // 사용자 권한에 따라 필터링한다. 실패 시 빈 배열로 폴백하여 기본 차단(fail-closed).
+  const userPermissions = await fetchSessionPermissionsFailClosed(apiClient, tag);
+  const firehubServer = createFireHubMcpServer(apiClient, { userPermissions });
 
   const abortController = new AbortController();
   if (abortSignal) {

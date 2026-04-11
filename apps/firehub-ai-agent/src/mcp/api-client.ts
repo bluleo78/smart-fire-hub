@@ -423,6 +423,16 @@ export class FireHubApiClient {
     return this._data.replaceDatasetData(datasetId, rows);
   }
 
+  /**
+   * 현재 세션 사용자의 권한 코드 목록을 조회한다.
+   * MCP 파괴적 도구(delete_dataset 등) 필터링(fail-closed)에 사용되며,
+   * 호출부에서 실패 시 빈 배열로 폴백하여 도구가 기본 차단되도록 한다.
+   */
+  async getSessionPermissions(): Promise<string[]> {
+    const { data } = await this.client.get<string[]>('/auth/me/permissions');
+    return data;
+  }
+
   async getFileInfo(fileId: number): Promise<{
     id: number;
     originalName: string;

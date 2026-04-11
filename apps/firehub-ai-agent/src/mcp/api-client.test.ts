@@ -383,6 +383,31 @@ describe('FireHubApiClient', () => {
     });
   });
 
+  // --- Session permissions (Task 9) ---
+  describe('getSessionPermissions', () => {
+    it('should GET /auth/me/permissions with Internal auth headers and return codes', async () => {
+      const codes = ['dataset:read', 'dataset:delete'];
+      const scope = nock(BASE_URL, {
+        reqheaders: {
+          authorization: `Internal ${TOKEN}`,
+          'x-on-behalf-of': String(USER_ID),
+        },
+      })
+        .get('/auth/me/permissions')
+        .reply(200, codes);
+
+      const result = await client.getSessionPermissions();
+      expect(result).toEqual(codes);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('should propagate error on 500 so caller can fail-closed to []', async () => {
+      nock(BASE_URL).get('/auth/me/permissions').reply(500, { message: 'boom' });
+
+      await expect(client.getSessionPermissions()).rejects.toThrow(/API 오류 \(500\)/);
+    });
+  });
+
   // --- Error message format ---
   it('should format error message as "API 오류 (status): message"', async () => {
     nock(BASE_URL).get('/datasets').reply(500, { message: 'Internal Server Error' });
