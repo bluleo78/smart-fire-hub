@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -10,7 +12,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 test.describe('리포트 템플릿 섹션 트리 빌더', () => {
   /** 공통 모킹 헬퍼 — 커스텀 템플릿 + 업데이트 API 캡처 */
-  async function setupEditableTemplate(page: Parameters<Parameters<typeof test>[1]>[0]['authenticatedPage']) {
+  async function setupEditableTemplate(page: Page) {
     const template = createTemplate({
       id: 10,
       name: '섹션 트리 편집 템플릿',
