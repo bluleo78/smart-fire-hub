@@ -90,6 +90,35 @@ async function mockChatSSESequence(page: Page) {
   );
 }
 
+/**
+ * 파일 업로드 API 모킹 — ChatInput이 파일 첨부 시 `/api/v1/files`로 multipart POST를 보내고
+ * 반환된 file id 를 저장했다가 chat 요청 시 `fileIds` 배열로 포함시킨다.
+ * 업로드 모킹이 없으면 업로드가 hang되어 `/ai/chat` 요청 자체가 나가지 않으므로
+ * SSE 응답이 UI에 반영되지 않는다.
+ */
+async function mockFileUpload(page: Page) {
+  await page.route(
+    (url) => url.pathname === '/api/v1/files',
+    (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 7001,
+            originalName: 'fire-incidents-sample.csv',
+            mimeType: 'text/csv',
+            fileSize: 1024,
+            fileCategory: 'DATA',
+            createdAt: '2026-04-11T00:00:00Z',
+          },
+        ]),
+      });
+    },
+  );
+}
+
 /** AI 세션 목록/생성 API 모킹 — ai-report-builder.spec.ts 패턴 재사용. */
 async function mockAiSessions(page: Page) {
   await page.route(
@@ -135,6 +164,7 @@ test.describe('AI 챗 dataset-manager', () => {
   test('CSV 첨부 → GIS 감지 → 신규 데이터셋 생성', async ({ authenticatedPage: page }) => {
     await mockChatSSESequence(page);
     await mockAiSessions(page);
+    await mockFileUpload(page);
 
     // 1. 패널 열기
     await openChatPanel(page);
@@ -157,9 +187,10 @@ test.describe('AI 챗 dataset-manager', () => {
     await chatInput.press('Enter');
 
     // 4. GIS 감지 응답 대기 — GEOMETRY / 공간 데이터 / 4326 키워드 확인
+    // GEOMETRY / 4326 은 본문 문단과 스키마 리스트 2곳에 노출되므로 first() 로 스코프한다.
     await expect(page.getByText(/공간 데이터\(GIS\) 감지/)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/GEOMETRY/)).toBeVisible();
-    await expect(page.getByText(/4326/)).toBeVisible();
+    await expect(page.getByText(/GEOMETRY/).first()).toBeVisible();
+    await expect(page.getByText(/4326/).first()).toBeVisible();
 
     // 5. 스크린샷 — GIS 감지 단계
     await page.screenshot({
@@ -263,6 +294,7 @@ test.describe('AI 챗 dataset-manager', () => {
       },
     );
     await mockAiSessions(page);
+    await mockFileUpload(page);
 
     // 1. 패널 열기
     await openChatPanel(page);
@@ -309,7 +341,9 @@ test.describe('AI 챗 dataset-manager', () => {
 
     // 8. 3차 응답 — 삭제 완료 확인
     await expect(page.getByText(/삭제 완료/)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/e2e_delete_target/)).toBeVisible();
+    // e2e_delete_target 문자열은 사용자 메시지/1차 고지/완료 응답 3곳에 노출되므로
+    // strict-mode 위반을 피하기 위해 first() 로 명시적으로 스코프한다.
+    await expect(page.getByText(/e2e_delete_target/).first()).toBeVisible();
 
     // 9. 스크린샷 — 삭제 완료 단계
     await page.screenshot({
