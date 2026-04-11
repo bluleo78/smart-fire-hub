@@ -5,7 +5,7 @@
  * RUNNING 상태의 실행이 있으면 5초 간격으로 자동 폴링한다.
  */
 import { Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
@@ -31,17 +31,17 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   const navigate = useNavigate();
   const [limit, setLimit] = useState(20);
 
-  const [refetchInterval, setRefetchInterval] = useState<number | false>(false);
+  // RUNNING 상태 실행이 있으면 5초 폴링, 아니면 비활성화 — state 없이 직접 유도
   const { data: executions = [], isLoading } = useJobExecutions(
     jobId,
     { limit, offset: 0 },
-    { refetchInterval },
+    {
+      refetchInterval: (query) => {
+        const data = query.state.data as typeof executions | undefined;
+        return data?.some((e) => e.status === 'RUNNING') ? 5000 : false;
+      },
+    },
   );
-
-  const hasRunning = executions.some((e) => e.status === 'RUNNING');
-  useEffect(() => {
-    setRefetchInterval(hasRunning ? 5000 : false);
-  }, [hasRunning]);
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>

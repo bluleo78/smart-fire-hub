@@ -1,9 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 
 import type {
   CreateProactiveJobRequest,
   CreateReportTemplateRequest,
   ProactiveJob,
+  ProactiveJobExecution,
   SmtpSettingsRequest,
   UpdateProactiveJobRequest,
   UpdateReportTemplateRequest,
@@ -106,9 +107,12 @@ export function useCloneProactiveJob() {
 export function useJobExecutions(
   jobId: number,
   params?: { limit?: number; offset?: number },
-  options?: { refetchInterval?: number | false },
+  options?: {
+    // number | false | 함수형 모두 수용 — RUNNING 상태 기반 동적 폴링 지원
+    refetchInterval?: UseQueryOptions<ProactiveJobExecution[]>['refetchInterval'];
+  },
 ) {
-  return useQuery({
+  return useQuery<ProactiveJobExecution[]>({
     queryKey: [...KEYS.executions(jobId), params],
     queryFn: () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
     enabled: !!jobId,

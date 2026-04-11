@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+
 import type { CanvasPage as CanvasPageType } from '../../../types/ai';
-import { useAI } from '../AIProvider';
 import { Button } from '../../ui/button';
-import { TokenUsageChip } from '../TokenUsageChip';
+import { useAI } from '../AIProvider';
 import { SessionSwitcher } from '../SessionSwitcher';
+import { TokenUsageChip } from '../TokenUsageChip';
 import { CanvasPage } from './CanvasPage';
 import { PageIndicator } from './PageIndicator';
 
@@ -31,12 +32,16 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
   const [direction, setDirection] = useState<SlideDirection>('none');
   const [displayIndex, setDisplayIndex] = useState(activePageIndex);
 
+  // 페이지 인덱스 변화 감지 시 슬라이드 방향 전이 — 상태 전이 감지 패턴
   useEffect(() => {
     if (activePageIndex !== prevIndexRef.current) {
       const dir = activePageIndex > prevIndexRef.current ? 'left' : 'right';
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDirection(dir);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDisplayIndex(activePageIndex);
       prevIndexRef.current = activePageIndex;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       const timer = setTimeout(() => setDirection('none'), 350);
       return () => clearTimeout(timer);
     }

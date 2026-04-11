@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, X } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { RecipientResponse } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
@@ -33,15 +33,22 @@ export default function UserCombobox({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounceValue(search, 300);
-  // 선택된 사용자 정보를 캐시하여 검색 결과가 바뀌어도 Badge 유지
-  const userCacheRef = useRef<Map<number, RecipientResponse>>(new Map());
+  // 선택된 사용자 정보를 캐시하여 검색 결과가 바뀌어도 Badge 유지.
+  // useState로 관리해 렌더 단계에서 ref를 변경하는 패턴을 제거한다.
+  const [userCache, setUserCache] = useState<Map<number, RecipientResponse>>(new Map());
 
   const { data: users = [] } = useRecipientSearch(debouncedSearch);
 
-  // 검색 결과에서 캐시 업데이트
-  for (const u of users) {
-    userCacheRef.current.set(u.userId, u);
-  }
+  // 검색 결과가 바뀌면 캐시에 새 사용자를 병합 (effect로 격리하여 렌더 단계 ref 변이를 방지)
+  useEffect(() => {
+    if (users.length === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUserCache((prev) => {
+      const next = new Map(prev);
+      for (const u of users) next.set(u.userId, u);
+      return next;
+    });
+  }, [users]);
 
   const handleToggle = useCallback((userId: number) => {
     if (selectedUserIds.includes(userId)) {
@@ -57,7 +64,7 @@ export default function UserCombobox({
   };
 
   const selectedUsers = selectedUserIds
-    .map((id) => userCacheRef.current.get(id))
+    .map((id) => userCache.get(id))
     .filter((u): u is RecipientResponse => u != null);
 
   return (

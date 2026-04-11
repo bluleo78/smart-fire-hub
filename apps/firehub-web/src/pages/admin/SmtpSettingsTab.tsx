@@ -41,6 +41,7 @@ export default function SmtpSettingsTab() {
   const [original, setOriginal] = useState<SmtpForm>(DEFAULT);
   const [showPassword, setShowPassword] = useState(false);
 
+  // 서버에서 settings가 로드되면 폼 상태에 반영 — 서버 데이터 → 폼 state 초기화 패턴
   useEffect(() => {
     if (!settings) return;
     const values = { ...DEFAULT };
@@ -48,7 +49,9 @@ export default function SmtpSettingsTab() {
       const key = s.key as keyof SmtpForm;
       if (key in values) values[key] = s.value ?? '';
     });
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm(values);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOriginal(values);
   }, [settings]);
 

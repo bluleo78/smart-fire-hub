@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { useAI } from './AIProvider';
 import { CanvasArea } from './canvas/CanvasArea';
 import { ChatInput } from './ChatInput';
@@ -35,10 +36,11 @@ export function AINativeMode() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Auto-collapse when streaming ends
+  // 스트리밍이 끝나면 자동으로 축소 — 상태 전이 감지 패턴이므로 effect 안 setState가 필수적
   const prevStreamingRef = useRef(isStreaming);
   useEffect(() => {
     if (prevStreamingRef.current && !isStreaming && isExpanded) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       handleCollapse();
     }
     prevStreamingRef.current = isStreaming;
