@@ -18,6 +18,21 @@ tasks.jacocoTestReport {
         xml.required.set(true)
         html.required.set(true)
     }
+    // 제외: jOOQ 코드젠 결과물 — 테스트 대상이 아니며 리포트 수치를 왜곡함
+    // 제외: 단순 DTO/예외 클래스 — 엔트리/생성자 중심이라 의미 있는 로직 없음
+    classDirectories.setFrom(
+        files(
+            classDirectories.files.map {
+                fileTree(it) {
+                    exclude(
+                        "com/smartfirehub/jooq/**",
+                        "**/dto/**",
+                        "**/*Exception.class",
+                    )
+                }
+            }
+        )
+    )
 }
 
 group = "com.smartfirehub"
