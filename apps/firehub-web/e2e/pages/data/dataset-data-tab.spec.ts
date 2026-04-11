@@ -1,0 +1,247 @@
+import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
+import { expect, test } from '../../fixtures/auth.fixture';
+
+/**
+ * DatasetDataTab(데이터 탭) E2E 테스트
+ * - 데이터 그리드 렌더링, 검색, 정렬, 행 선택 등 전체 상호작용 커버.
+ * - DatasetDataTab.tsx / DataTableToolbar / SelectionActionBar 라인 커버리지 증가가 목표.
+ */
+test.describe('데이터셋 상세 — 데이터 탭', () => {
+  /** 데이터셋 상세 응답 — 숫자/텍스트/불리언 컬럼 혼합으로 구성 */
+  const datasetDetail = createDatasetDetail({
+    id: 1,
+    rowCount: 3,
+    columns: [
+      createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+      createColumn({
+        id: 2,
+        columnName: 'name',
+        displayName: '이름',
+        dataType: 'TEXT',
+        isPrimaryKey: false,
+        columnOrder: 1,
+      }),
+      createColumn({
+        id: 3,
+        columnName: 'amount',
+        displayName: '금액',
+        dataType: 'INTEGER',
+        isPrimaryKey: false,
+        columnOrder: 2,
+      }),
+    ],
+  });
+
+  /**
+   * 데이터 탭 공통 모킹 — infinite 쿼리 + 통계 + 카테고리 + 태그.
+   */
+  async function setupDataTabMocks(page: import('@playwright/test').Page) {
+    await mockApi(page, 'GET', '/api/v1/datasets/1', datasetDetail);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    // 통계 응답 — 비어있어도 데이터 탭 렌더링 자체는 가능
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', [
+      {
+        columnName: 'name',
+        dataType: 'TEXT',
+        totalCount: 3,
+        nullCount: 0,
+        nullPercent: 0,
+        distinctCount: 3,
+        minValue: null,
+        maxValue: null,
+        avgValue: null,
+        topValues: [
+          { value: 'Alice', count: 1 },
+          { value: 'Bob', count: 1 },
+          { value: 'Carol', count: 1 },
+        ],
+        sampled: false,
+      },
+      {
+        columnName: 'amount',
+        dataType: 'INTEGER',
+        totalCount: 3,
+        nullCount: 0,
+        nullPercent: 0,
+        distinctCount: 3,
+        minValue: '10',
+        maxValue: '30',
+        avgValue: 20,
+        topValues: [
+          { value: '10', count: 1 },
+          { value: '20', count: 1 },
+          { value: '30', count: 1 },
+        ],
+        sampled: false,
+      },
+    ]);
+  }
+
+  test('데이터 탭 전환 시 행이 렌더링되고 행 수가 헤더에 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+
+    // /data 엔드포인트는 infinite query로 호출됨 — page=0만 모킹해도 totalPages=1이면 추가 호출 없음
+    let dataCallCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) => {
+        dataCallCount += 1;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              { _id: 101, id: 1, name: 'Alice', amount: 10 },
+              { _id: 102, id: 2, name: 'Bob', amount: 20 },
+              { _id: 103, id: 3, name: 'Carol', amount: 30 },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 3,
+            totalPages: 1,
+          }),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // "데이터" 탭 클릭
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByRole('tab', { name: '데이터' })).toHaveAttribute('data-state', 'active');
+
+    // 데이터 탭 헤더: "데이터 (3행)"
+    await expect(page.getByRole('heading', { name: /데이터 \(3행\)/ })).toBeVisible();
+
+    // 데이터 검색 입력, SQL 버튼, 행 추가 버튼 등 툴바 엘리먼트 표시
+    await expect(page.getByPlaceholder('데이터 검색...')).toBeVisible();
+    await expect(page.getByRole('button', { name: /SQL/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: '행 추가' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '임포트' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '내보내기' })).toBeVisible();
+
+    // 행 렌더링 확인 — Alice 셀이 화면에 표시되어야 함
+    await expect(page.getByText('Alice')).toBeVisible();
+    await expect(page.getByText('Bob')).toBeVisible();
+    await expect(page.getByText('Carol')).toBeVisible();
+
+    // 최소 1회는 /data API 호출
+    expect(dataCallCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test('데이터 검색 입력 시 /data 에 search 파라미터가 전달된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+
+    const searchCalls: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) => {
+        const url = new URL(route.request().url());
+        const search = url.searchParams.get('search') ?? '';
+        searchCalls.push(search);
+        const rows =
+          search === 'Alice'
+            ? [{ _id: 101, id: 1, name: 'Alice', amount: 10 }]
+            : [
+                { _id: 101, id: 1, name: 'Alice', amount: 10 },
+                { _id: 102, id: 2, name: 'Bob', amount: 20 },
+                { _id: 103, id: 3, name: 'Carol', amount: 30 },
+              ];
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows,
+            page: 0,
+            size: 50,
+            totalElements: rows.length,
+            totalPages: 1,
+          }),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // 검색어 입력 — 300ms 디바운스 후 API 호출
+    await page.getByPlaceholder('데이터 검색...').fill('Alice');
+
+    // 디바운스 이후 검색 결과로 좁혀진다
+    await expect(page.getByText('Bob')).not.toBeVisible();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // 최소 1번은 search=Alice 로 호출되어야 함
+    expect(searchCalls.some((s) => s === 'Alice')).toBe(true);
+  });
+
+  test('빈 데이터일 때 빈 상태 메시지가 표시된다', async ({ authenticatedPage: page }) => {
+    await setupDataTabMocks(page);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [],
+            page: 0,
+            size: 50,
+            totalElements: 0,
+            totalPages: 0,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    // rowCount=3 이므로 기존 heading "데이터 (3행)"이 아닌 totalElements=0 기반으로 렌더링
+    await expect(page.getByText('데이터가 없습니다.')).toBeVisible();
+  });
+
+  test('SQL 버튼 토글 시 SqlQueryEditor가 표시된다', async ({ authenticatedPage: page }) => {
+    await setupDataTabMocks(page);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [{ _id: 101, id: 1, name: 'Alice', amount: 10 }],
+            page: 0,
+            size: 50,
+            totalElements: 1,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // SQL 버튼 클릭 → SqlQueryEditor 토글
+    await page.getByRole('button', { name: /SQL/ }).click();
+    // SqlQueryEditor 내부에는 쿼리 입력 area / 실행 버튼이 들어있음 — "쿼리 실행" 버튼 기준으로 확인
+    await expect(page.getByRole('button', { name: /실행|Run/ }).first()).toBeVisible();
+  });
+});
