@@ -13,10 +13,14 @@
  */
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { Page } from '@playwright/test';
 
 import { expect, test } from '../../fixtures/auth.fixture';
+
+// ESM 환경에서는 `__dirname`이 없으므로 `import.meta.url`로 현재 파일 디렉토리 경로를 계산한다.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** SSE 이벤트 직렬화 — "data: {json}\n\n" 형태로 변환 */
 function sseEvent(data: Record<string, unknown>): string {
