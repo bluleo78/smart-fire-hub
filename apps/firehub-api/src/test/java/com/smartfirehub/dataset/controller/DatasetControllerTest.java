@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
+import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetFavoriteService;
@@ -207,5 +208,41 @@ class DatasetControllerTest {
   @Test
   void getDatasets_withoutAuth_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/datasets")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void getReferences_returnsAggregatedCounts() throws Exception {
+    DatasetReferencesResponse response =
+        new DatasetReferencesResponse(
+            1L,
+            List.of(new DatasetReferencesResponse.ReferenceItem(10L, "Pipeline A")),
+            List.of(new DatasetReferencesResponse.ReferenceItem(20L, "Dashboard B")),
+            List.of(),
+            2);
+
+    when(datasetService.getReferences(1L)).thenReturn(response);
+
+    mockMvc
+        .perform(
+            get("/api/v1/datasets/1/references").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.datasetId").value(1))
+        .andExpect(jsonPath("$.pipelines[0].id").value(10))
+        .andExpect(jsonPath("$.pipelines[0].name").value("Pipeline A"))
+        .andExpect(jsonPath("$.dashboards[0].id").value(20))
+        .andExpect(jsonPath("$.dashboards[0].name").value("Dashboard B"))
+        .andExpect(jsonPath("$.proactiveJobs").isArray())
+        .andExpect(jsonPath("$.totalCount").value(2));
+  }
+
+  @Test
+  void getReferences_nonexistentDataset_returns404() throws Exception {
+    when(datasetService.getReferences(999L))
+        .thenThrow(new DatasetNotFoundException("Dataset not found: 999"));
+
+    mockMvc
+        .perform(
+            get("/api/v1/datasets/999/references").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound());
   }
 }
