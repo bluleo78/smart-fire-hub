@@ -42,6 +42,7 @@ Thumbs.db
 # Claude Code (로컬 설정만 무시, 프로젝트 설정은 유지)
 .claude/settings.local.json
 .claude/plans/
+.claude/projects/
 
 # Gradle bin output
 **/bin/

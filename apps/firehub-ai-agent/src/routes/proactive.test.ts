@@ -259,7 +259,7 @@ describe('parseSections', () => {
       ],
       output_format: 'markdown',
     };
-    const result = parseSections(text, template as any);
+    const result = parseSections(text, template as Parameters<typeof parseSections>[1]);
     expect(result).toHaveLength(2);
     expect(result[0].key).toBe('summary');
     expect(result[0].content).toContain('내용입니다');
@@ -274,7 +274,7 @@ describe('parseSections', () => {
       ],
       output_format: 'markdown',
     };
-    const result = parseSections(text, template as any);
+    const result = parseSections(text, template as Parameters<typeof parseSections>[1]);
     expect(result).toHaveLength(1);
     expect(result[0].key).toBe('summary');
   });
@@ -292,7 +292,7 @@ describe('parseSections', () => {
       ],
       output_format: 'markdown',
     };
-    const result = parseSections(text, template as any);
+    const result = parseSections(text, template as Parameters<typeof parseSections>[1]);
     expect(result).toHaveLength(1);
     expect(result[0].key).toBe('kpi');
     expect(result[0].content).toContain('KPI 내용');
@@ -310,7 +310,7 @@ describe('parseSections', () => {
       sections: [{ key: 'stats', label: '지표', type: 'cards' }],
       output_format: 'markdown',
     };
-    const result = parseSections(text, template as any);
+    const result = parseSections(text, template as Parameters<typeof parseSections>[1]);
     expect(result[0].data).toEqual([{ title: 'A', value: '1', description: 'd' }]);
   });
 });
