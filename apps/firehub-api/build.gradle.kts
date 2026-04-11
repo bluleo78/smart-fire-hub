@@ -4,6 +4,20 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
     id("nu.studer.jooq") version "9.0"
     id("com.diffplug.spotless") version "6.25.0"
+    jacoco
+}
+
+// JaCoCo 커버리지 설정 — 로컬 리포트 전용 (CI 연동 없음)
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
 }
 
 group = "com.smartfirehub"
@@ -124,4 +138,6 @@ tasks.withType<Test> {
         "--add-opens", "java.base/java.util=ALL-UNNAMED",
         "-Dnet.bytebuddy.experimental=true"
     )
+    // 테스트 완료 후 JaCoCo 리포트 자동 생성
+    finalizedBy(tasks.jacocoTestReport)
 }
