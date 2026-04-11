@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
+import com.smartfirehub.dataset.dto.DatasetReferencesResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.ReorderColumnsRequest;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
@@ -477,6 +478,101 @@ public class DatasetService {
     }
 
     columnRepository.updateOrders(datasetId, request.columnIds());
+  }
+
+  // =========================================================================
+  // Phase 5.10: Dataset References (dataset-manager subagent 지원)
+  // =========================================================================
+
+  /**
+   * 주어진 데이터셋을 참조하는 자원(파이프라인/대시보드/Proactive Job)을 집계한다.
+   *
+   * <p>삭제 전 영향 범위 확인 용도로 사용된다. 각 카테고리별로 다음과 같이 참조를 판정한다.
+   *
+   * <ul>
+   *   <li><b>Pipelines</b>: {@code pipeline_step.output_dataset_id} 또는 {@code
+   *       pipeline_step_input.dataset_id} 가 주어진 datasetId 인 파이프라인. 동일 파이프라인이 양쪽에 등장해도 중복 제거된다.
+   *   <li><b>Dashboards</b>: {@code dashboard_widget → chart → saved_query.dataset_id} 경로로 연결된
+   *       대시보드. 현재 스키마상 dashboard/widget 자체에는 datasetId 가 없고, widget이 참조하는 chart의 saved_query를 통해
+   *       간접적으로만 데이터셋과 연결된다.
+   *   <li><b>Proactive Jobs</b>: 현재 {@code proactive_job} 스키마는 datasetId 를 저장하지 않는다(채널/수신자/템플릿만 저장).
+   *       따라서 이 메서드는 항상 빈 리스트를 반환한다. 추후 스키마가 datasetId 를 포함하게 되면 업데이트 필요.
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public DatasetReferencesResponse getReferences(Long datasetId) {
+    // 1. 데이터셋 존재 검증 (다른 메서드들과 동일한 패턴)
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+    // 2. Pipelines: output_dataset_id 또는 pipeline_step_input.dataset_id 기준으로 조회. DISTINCT 로 중복 제거.
+    List<DatasetReferencesResponse.ReferenceItem> pipelines =
+        dsl.selectDistinct(
+                field(name("pipeline", "id"), Long.class),
+                field(name("pipeline", "name"), String.class))
+            .from(table(name("pipeline")))
+            .where(
+                field(name("pipeline", "id"), Long.class)
+                    .in(
+                        dsl.select(field(name("pipeline_step", "pipeline_id"), Long.class))
+                            .from(table(name("pipeline_step")))
+                            .where(
+                                field(name("pipeline_step", "output_dataset_id"), Long.class)
+                                    .eq(datasetId))))
+            .or(
+                field(name("pipeline", "id"), Long.class)
+                    .in(
+                        dsl.select(field(name("pipeline_step", "pipeline_id"), Long.class))
+                            .from(table(name("pipeline_step")))
+                            .join(table(name("pipeline_step_input")))
+                            .on(
+                                field(name("pipeline_step", "id"), Long.class)
+                                    .eq(
+                                        field(
+                                            name("pipeline_step_input", "step_id"), Long.class)))
+                            .where(
+                                field(name("pipeline_step_input", "dataset_id"), Long.class)
+                                    .eq(datasetId))))
+            .orderBy(field(name("pipeline", "id"), Long.class))
+            .fetch(
+                r ->
+                    new DatasetReferencesResponse.ReferenceItem(
+                        r.get(field(name("pipeline", "id"), Long.class)),
+                        r.get(field(name("pipeline", "name"), String.class))));
+
+    // 3. Dashboards: dashboard → dashboard_widget → chart → saved_query.dataset_id 경로로 조회.
+    List<DatasetReferencesResponse.ReferenceItem> dashboards =
+        dsl.selectDistinct(
+                field(name("dashboard", "id"), Long.class),
+                field(name("dashboard", "name"), String.class))
+            .from(table(name("dashboard")))
+            .join(table(name("dashboard_widget")))
+            .on(
+                field(name("dashboard", "id"), Long.class)
+                    .eq(field(name("dashboard_widget", "dashboard_id"), Long.class)))
+            .join(table(name("chart")))
+            .on(
+                field(name("dashboard_widget", "chart_id"), Long.class)
+                    .eq(field(name("chart", "id"), Long.class)))
+            .join(table(name("saved_query")))
+            .on(
+                field(name("chart", "saved_query_id"), Long.class)
+                    .eq(field(name("saved_query", "id"), Long.class)))
+            .where(field(name("saved_query", "dataset_id"), Long.class).eq(datasetId))
+            .orderBy(field(name("dashboard", "id"), Long.class))
+            .fetch(
+                r ->
+                    new DatasetReferencesResponse.ReferenceItem(
+                        r.get(field(name("dashboard", "id"), Long.class)),
+                        r.get(field(name("dashboard", "name"), String.class))));
+
+    // 4. Proactive Jobs: 현재 스키마상 datasetId 연결이 없음 → 빈 리스트. (Phase 5.10 설계 문서 참조)
+    List<DatasetReferencesResponse.ReferenceItem> proactiveJobs = List.of();
+
+    int totalCount = pipelines.size() + dashboards.size() + proactiveJobs.size();
+    return new DatasetReferencesResponse(
+        datasetId, pipelines, dashboards, proactiveJobs, totalCount);
   }
 
   // --- Phase 6-1: Status ---
