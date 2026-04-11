@@ -3,3 +3,4 @@ dist/
 .env
 *.log
 temp-mcp-config-*.json
+coverage/
