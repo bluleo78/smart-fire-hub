@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -21,6 +22,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.user.dto.UserResponse;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -148,5 +150,23 @@ class AuthControllerTest {
         .andExpect(header().exists("Set-Cookie"));
 
     verify(authService).logout(1L);
+  }
+
+  /**
+   * /me/permissions 는 세션 사용자의 권한 코드 목록을 반환한다. ai-agent 가 MCP 파괴 도구 필터링에
+   * 사용하는 경로이므로 JWT/Internal 인증 어느 쪽에서도 동작해야 한다. 여기서는 JWT 경로를 검증한다.
+   */
+  @Test
+  void getMyPermissions_returnsCodes() throws Exception {
+    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
+    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(42L);
+    when(permissionService.getUserPermissions(42L))
+        .thenReturn(Set.of("dataset:read", "dataset:delete"));
+
+    mockMvc
+        .perform(get("/api/v1/auth/me/permissions").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray())
+        .andExpect(jsonPath("$.length()").value(2));
   }
 }

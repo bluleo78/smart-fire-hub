@@ -5,9 +5,12 @@ import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.security.JwtProperties;
+import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.user.dto.UserResponse;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Set;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -25,16 +28,19 @@ public class AuthController {
 
   private final AuthService authService;
   private final JwtProperties jwtProperties;
+  private final PermissionService permissionService;
   private final boolean cookieSecure;
 
   public AuthController(
       AuthService authService,
       JwtProperties jwtProperties,
+      PermissionService permissionService,
       @org.springframework.beans.factory.annotation.Value("${app.cookie.secure:true}")
           boolean cookieSecure) {
     this.authService = authService;
     this.cookieSecure = cookieSecure;
     this.jwtProperties = jwtProperties;
+    this.permissionService = permissionService;
   }
 
   @PostMapping("/signup")
@@ -80,6 +86,21 @@ public class AuthController {
     Long userId = (Long) authentication.getPrincipal();
     UserResponse user = authService.getCurrentUser(userId);
     return ResponseEntity.ok(user);
+  }
+
+  /**
+   * 현재 세션 사용자에게 부여된 권한 코드 목록을 반환한다.
+   *
+   * <p>ai-agent 가 MCP 파괴적 도구(delete_dataset 등)를 사용자 권한 기준으로
+   * 필터링(fail-closed)하기 위해 사용한다. 내부 서비스 통신 경로에서도
+   * `Authorization: Internal <token>` + `X-On-Behalf-Of: userId` 헤더로 호출되며,
+   * JwtAuthenticationFilter 가 해당 헤더를 처리하여 Authentication 에 userId 를 주입한다.
+   */
+  @GetMapping("/me/permissions")
+  public ResponseEntity<List<String>> getMyPermissions(Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    Set<String> codes = permissionService.getUserPermissions(userId);
+    return ResponseEntity.ok(List.copyOf(codes));
   }
 
   private void addRefreshTokenCookie(HttpServletResponse response, @NonNull String refreshToken) {
