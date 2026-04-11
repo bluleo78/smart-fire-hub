@@ -63,5 +63,10 @@ export function createDatasetApi(client: AxiosInstance) {
       const response = await client.put(`/datasets/${id}`, data);
       return response.data;
     },
+    /** 데이터셋 삭제. data 스키마의 물리 테이블도 함께 DROP된다. */
+    async deleteDataset(id: number): Promise<{ success: true }> {
+      await client.delete(`/datasets/${id}`);
+      return { success: true };
+    },
   };
 }

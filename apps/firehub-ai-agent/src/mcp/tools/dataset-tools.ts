@@ -146,5 +146,17 @@ export function registerDatasetTools(
         return jsonResult(result);
       },
     ),
+
+    safeTool(
+      'delete_dataset',
+      '데이터셋을 삭제합니다. 물리 테이블과 모든 데이터가 영구 제거됩니다. 사용자의 명시적 평문 확인 없이는 호출하지 마세요.',
+      {
+        id: z.number().describe('삭제할 데이터셋 ID'),
+      },
+      async (args: { id: number }) => {
+        await apiClient.deleteDataset(args.id);
+        return jsonResult({ success: true, datasetId: args.id });
+      },
+    ),
   ];
 }

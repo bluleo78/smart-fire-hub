@@ -93,6 +93,16 @@ describe('FireHubApiClient', () => {
     expect(result).toEqual({ success: true });
   });
 
+  // --- Dataset deletion ---
+  describe('deleteDataset', () => {
+    it('calls DELETE /datasets/:id', async () => {
+      nock(BASE_URL).delete('/datasets/42').reply(204);
+
+      const result = await client.deleteDataset(42);
+      expect(result).toEqual({ success: true });
+    });
+  });
+
   // --- Triggers ---
   it('should create trigger via POST /pipelines/:id/triggers', async () => {
     const body = {

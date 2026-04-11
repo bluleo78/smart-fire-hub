@@ -154,6 +154,10 @@ export class FireHubApiClient {
   ) {
     return this._datasets.updateDataset(id, data);
   }
+  /** 데이터셋 삭제. data 스키마의 물리 테이블도 함께 DROP된다. */
+  deleteDataset(id: number) {
+    return this._datasets.deleteDataset(id);
+  }
 
   listPipelines(params?: { page?: number; size?: number }) {
     return this._pipelines.listPipelines(params);
