@@ -14,6 +14,16 @@ import { createConnectionApi } from './api-client/connection-api.js';
 import { createMiscApi } from './api-client/misc-api.js';
 import { createProactiveApi } from './api-client/proactive-api.js';
 import {
+  createDataImportApi,
+  type ImportParseOptions,
+  type ColumnMappingEntry,
+  type ImportMode,
+  type ImportPreviewResponse,
+  type ImportValidateResponse,
+  type ImportStartResponse,
+  type ImportResponse,
+} from './api-client/dataimport-api.js';
+import {
   createAnalyticsApi,
   type CreateSavedQueryParams,
   type CreateChartParams,
@@ -42,6 +52,7 @@ export class FireHubApiClient {
   private _misc: ReturnType<typeof createMiscApi>;
   private _analytics: ReturnType<typeof createAnalyticsApi>;
   private _proactive: ReturnType<typeof createProactiveApi>;
+  private _dataImport: ReturnType<typeof createDataImportApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -91,6 +102,7 @@ export class FireHubApiClient {
     this._misc = createMiscApi(this.client);
     this._analytics = createAnalyticsApi(this.client);
     this._proactive = createProactiveApi(this.client);
+    this._dataImport = createDataImportApi(this.client);
   }
 
   listCategories() {
@@ -309,6 +321,77 @@ export class FireHubApiClient {
 
   listImports(datasetId: number) {
     return this._misc.listImports(datasetId);
+  }
+
+  /**
+   * CSV/XLSX 임포트 미리보기. fileId 로 첨부 파일을 다운로드하여 multipart 로
+   * 백엔드에 전달하고, 헤더/샘플/추론 매핑을 반환한다.
+   */
+  async previewImport(
+    datasetId: number,
+    fileId: number,
+    parseOptions?: ImportParseOptions,
+  ): Promise<ImportPreviewResponse> {
+    const { fileBytes, fileName } = await this.fetchChatFile(fileId);
+    return this._dataImport.previewImport({ datasetId, fileBytes, fileName, parseOptions });
+  }
+
+  /** 임포트 전 검증. 파일 + 컬럼 매핑으로 각 행의 유효성을 검사한다. */
+  async validateImport(
+    datasetId: number,
+    fileId: number,
+    mappings: ColumnMappingEntry[],
+    parseOptions?: ImportParseOptions,
+  ): Promise<ImportValidateResponse> {
+    const { fileBytes, fileName } = await this.fetchChatFile(fileId);
+    return this._dataImport.validateImport({
+      datasetId,
+      fileBytes,
+      fileName,
+      mappings,
+      parseOptions,
+    });
+  }
+
+  /** 실제 임포트 시작. Jobrunr 백그라운드 작업의 jobId 를 반환한다. */
+  async startImport(
+    datasetId: number,
+    fileId: number,
+    options: {
+      mappings?: ColumnMappingEntry[];
+      importMode?: ImportMode;
+      parseOptions?: ImportParseOptions;
+    } = {},
+  ): Promise<ImportStartResponse> {
+    const { fileBytes, fileName } = await this.fetchChatFile(fileId);
+    return this._dataImport.startImport({
+      datasetId,
+      fileBytes,
+      fileName,
+      mappings: options.mappings,
+      importMode: options.importMode,
+      parseOptions: options.parseOptions,
+    });
+  }
+
+  /** 임포트 상태 조회. 진행률/실패 행 수 등을 확인할 때 사용. */
+  getImportStatus(datasetId: number, importId: number): Promise<ImportResponse> {
+    return this._dataImport.getImportStatus(datasetId, importId);
+  }
+
+  /**
+   * 채팅에 첨부된 fileId 로부터 파일 바이트와 원본 이름을 가져온다.
+   * 백엔드 임포트 API 가 multipart 를 요구하므로 ai-agent 가 먼저 파일을 다운로드한 뒤
+   * 다시 multipart 로 업로드하는 브리지 용도.
+   */
+  private async fetchChatFile(
+    fileId: number,
+  ): Promise<{ fileBytes: Buffer; fileName: string }> {
+    const [info, fileBytes] = await Promise.all([
+      this.getFileInfo(fileId),
+      this.downloadFile(fileId),
+    ]);
+    return { fileBytes, fileName: info.originalName };
   }
 
   getDashboard() {

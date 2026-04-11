@@ -16,6 +16,7 @@ import { registerMiscTools } from './tools/misc-tools.js';
 import { registerAnalyticsTools } from './tools/analytics-tools.js';
 import { registerUiTools } from './tools/ui-tools.js';
 import { registerProactiveTools } from './tools/proactive-tools.js';
+import { registerDataImportTools } from './tools/dataimport-tools.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -54,6 +55,7 @@ export function registerAllTools(
 ): void {
   registerCategoryTools(apiClient, safeToolFn, jsonResultFn);
   registerDatasetTools(apiClient, safeToolFn, jsonResultFn);
+  registerDataImportTools(apiClient, safeToolFn, jsonResultFn);
   registerDataTools(apiClient, safeToolFn, jsonResultFn);
   registerPipelineTools(apiClient, safeToolFn, jsonResultFn);
   registerTriggerTools(apiClient, safeToolFn, jsonResultFn);
@@ -68,6 +70,7 @@ export function buildAllMcpTools(apiClient: FireHubApiClient) {
   return [
     ...registerCategoryTools(apiClient, safeTool, jsonResult),
     ...registerDatasetTools(apiClient, safeTool, jsonResult),
+    ...registerDataImportTools(apiClient, safeTool, jsonResult),
     ...registerDataTools(apiClient, safeTool, jsonResult),
     ...registerPipelineTools(apiClient, safeTool, jsonResult),
     ...registerTriggerTools(apiClient, safeTool, jsonResult),

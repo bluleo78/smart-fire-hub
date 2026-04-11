@@ -278,6 +278,111 @@ describe('FireHubApiClient', () => {
     expect(result).toEqual(mockResp);
   });
 
+  // --- Data import (multipart) ---
+  describe('data import multipart endpoints', () => {
+    // 공통: fileId -> /files/{id} 정보 + /files/{id}/content 다운로드 모킹
+    function mockFileDownload(fileId: number, originalName: string, content = 'a,b\n1,2') {
+      nock(BASE_URL)
+        .get(`/files/${fileId}`)
+        .reply(200, {
+          id: fileId,
+          originalName,
+          mimeType: 'text/csv',
+          fileSize: content.length,
+          fileCategory: 'CSV',
+        });
+      nock(BASE_URL).get(`/files/${fileId}/content`).reply(200, Buffer.from(content));
+    }
+
+    it('previewImport POSTs multipart to /datasets/:id/imports/preview', async () => {
+      mockFileDownload(11, 'sales.csv');
+
+      const mockResp = {
+        fileHeaders: ['a', 'b'],
+        sampleRows: [{ a: '1', b: '2' }],
+        suggestedMappings: [
+          { fileColumn: 'a', datasetColumn: 'a', matchType: 'EXACT', confidence: 1.0 },
+        ],
+        totalRows: 1,
+      };
+      nock(BASE_URL)
+        .post('/datasets/7/imports/preview', (body) => {
+          // multipart body 는 문자열로 들어오며, file 파트와 원본 파일명이 포함되어야 한다
+          return typeof body === 'string' && body.includes('name="file"') && body.includes('sales.csv');
+        })
+        .reply(200, mockResp);
+
+      const result = await client.previewImport(7, 11, { delimiter: ',', hasHeader: true });
+      expect(result).toEqual(mockResp);
+    });
+
+    it('validateImport POSTs multipart with mappings JSON to /datasets/:id/imports/validate', async () => {
+      mockFileDownload(12, 'data.csv');
+
+      const mockResp = { totalRows: 3, validRows: 2, errorRows: 1, errors: [] };
+      nock(BASE_URL)
+        .post('/datasets/7/imports/validate', (body) => {
+          return (
+            typeof body === 'string' &&
+            body.includes('name="mappings"') &&
+            body.includes('fileColumn') &&
+            body.includes('datasetColumn')
+          );
+        })
+        .reply(200, mockResp);
+
+      const result = await client.validateImport(7, 12, [
+        { fileColumn: 'a', datasetColumn: 'col_a' },
+      ]);
+      expect(result).toEqual(mockResp);
+    });
+
+    it('startImport POSTs multipart with importMode to /datasets/:id/imports', async () => {
+      mockFileDownload(13, 'load.csv');
+
+      const mockResp = { jobId: 'job-abc', status: 'QUEUED' };
+      nock(BASE_URL)
+        .post('/datasets/7/imports', (body) => {
+          return (
+            typeof body === 'string' &&
+            body.includes('name="importMode"') &&
+            body.includes('REPLACE')
+          );
+        })
+        .reply(201, mockResp);
+
+      const result = await client.startImport(7, 13, {
+        mappings: [{ fileColumn: 'a', datasetColumn: 'col_a' }],
+        importMode: 'REPLACE',
+      });
+      expect(result).toEqual(mockResp);
+    });
+
+    it('getImportStatus calls GET /datasets/:id/imports/:importId', async () => {
+      const mockResp = {
+        id: 99,
+        datasetId: 7,
+        fileName: 'load.csv',
+        fileSize: 1024,
+        fileType: 'CSV',
+        status: 'SUCCESS',
+        totalRows: 10,
+        successRows: 10,
+        errorRows: 0,
+        errorDetails: null,
+        errorMessage: null,
+        importedBy: 'alice',
+        startedAt: '2026-04-11T10:00:00',
+        completedAt: '2026-04-11T10:00:05',
+        createdAt: '2026-04-11T10:00:00',
+      };
+      nock(BASE_URL).get('/datasets/7/imports/99').reply(200, mockResp);
+
+      const result = await client.getImportStatus(7, 99);
+      expect(result).toEqual(mockResp);
+    });
+  });
+
   // --- Error message format ---
   it('should format error message as "API 오류 (status): message"', async () => {
     nock(BASE_URL).get('/datasets').reply(500, { message: 'Internal Server Error' });
