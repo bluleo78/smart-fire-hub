@@ -149,6 +149,42 @@ describe('Dataset MCP Tools', () => {
     });
   });
 
+  describe('get_dataset_references', () => {
+    it('calls apiClient.getDatasetReferences with the provided id', async () => {
+      const mockResp = {
+        datasetId: 42,
+        pipelines: [{ id: 1, name: 'daily_import' }],
+        dashboards: [{ id: 2, name: 'ops_overview' }],
+        proactiveJobs: [],
+        totalCount: 2,
+      };
+      (client.getDatasetReferences as ReturnType<typeof vi.fn>).mockResolvedValue(mockResp);
+
+      const result = await invokeTool(server, 'get_dataset_references', { id: 42 });
+
+      // 올바른 id로 API 클라이언트가 호출되었는지 확인
+      expect(client.getDatasetReferences).toHaveBeenCalledWith(42);
+      expect(result.isError).toBeFalsy();
+
+      // 응답은 DatasetReferencesResponse 형태 그대로 반환되어야 한다
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.totalCount).toBe(2);
+      expect(parsed.pipelines[0].name).toBe('daily_import');
+      expect(parsed.dashboards[0].name).toBe('ops_overview');
+    });
+
+    it('returns isError on API failure', async () => {
+      (client.getDatasetReferences as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('API 오류 (404): Dataset not found'),
+      );
+
+      const result = await invokeTool(server, 'get_dataset_references', { id: 999 });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Dataset not found');
+    });
+  });
+
   // --- tool registration ---
   it('dataset tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -161,5 +197,6 @@ describe('Dataset MCP Tools', () => {
     expect(registeredTools).toContain('delete_dataset');
     expect(registeredTools).toContain('add_dataset_column');
     expect(registeredTools).toContain('drop_dataset_column');
+    expect(registeredTools).toContain('get_dataset_references');
   });
 });

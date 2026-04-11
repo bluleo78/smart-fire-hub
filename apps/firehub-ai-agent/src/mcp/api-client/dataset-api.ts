@@ -32,6 +32,19 @@ export interface DatasetColumnResponse {
   isPrimaryKey: boolean;
 }
 
+/**
+ * 백엔드 `DatasetReferencesResponse` 레코드의 TypeScript 미러.
+ * 데이터셋을 참조하는 파이프라인/대시보드/스마트잡 정보를 반환한다.
+ * 삭제 전 영향 범위 확인용.
+ */
+export interface DatasetReferences {
+  datasetId: number;
+  pipelines: Array<{ id: number; name: string }>;
+  dashboards: Array<{ id: number; name: string }>;
+  proactiveJobs: Array<{ id: number; name: string }>;
+  totalCount: number;
+}
+
 export function createDatasetApi(client: AxiosInstance) {
   return {
     async listDatasets(params?: {
@@ -118,6 +131,14 @@ export function createDatasetApi(client: AxiosInstance) {
     async dropDatasetColumn(datasetId: number, columnId: number): Promise<{ success: true }> {
       await client.delete(`/datasets/${datasetId}/columns/${columnId}`);
       return { success: true };
+    },
+    /**
+     * 데이터셋을 참조하는 파이프라인/대시보드/스마트잡 목록을 조회한다.
+     * 데이터셋 삭제 전 영향 범위를 확인하는 용도로 사용한다.
+     */
+    async getDatasetReferences(id: number): Promise<DatasetReferences> {
+      const { data } = await client.get(`/datasets/${id}/references`);
+      return data;
     },
   };
 }

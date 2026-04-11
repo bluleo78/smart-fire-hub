@@ -204,5 +204,15 @@ export function registerDatasetTools(
         return jsonResult({ success: true });
       },
     ),
+
+    safeTool(
+      'get_dataset_references',
+      '데이터셋을 참조하는 파이프라인/대시보드/스마트잡을 조회합니다. 삭제 전 영향 범위 확인 필수.',
+      { id: z.number().describe('데이터셋 ID') },
+      async (args: { id: number }) => {
+        const result = await apiClient.getDatasetReferences(args.id);
+        return jsonResult(result);
+      },
+    ),
   ];
 }

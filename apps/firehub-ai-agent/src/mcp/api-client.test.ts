@@ -134,6 +134,25 @@ describe('FireHubApiClient', () => {
     });
   });
 
+  // --- Dataset references ---
+  describe('getDatasetReferences', () => {
+    it('getDatasetReferences calls GET /datasets/{id}/references', async () => {
+      nock(BASE_URL)
+        .get('/datasets/42/references')
+        .reply(200, {
+          datasetId: 42,
+          pipelines: [{ id: 1, name: 'daily_import' }],
+          dashboards: [],
+          proactiveJobs: [],
+          totalCount: 1,
+        });
+
+      const result = await client.getDatasetReferences(42);
+      expect(result.totalCount).toBe(1);
+      expect(result.pipelines[0].name).toBe('daily_import');
+    });
+  });
+
   // --- Triggers ---
   it('should create trigger via POST /pipelines/:id/triggers', async () => {
     const body = {

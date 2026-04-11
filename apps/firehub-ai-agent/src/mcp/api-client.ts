@@ -5,6 +5,7 @@ import {
   createDatasetApi,
   type DatasetColumnInput,
   type DatasetColumnResponse,
+  type DatasetReferences,
 } from './api-client/dataset-api.js';
 import { createDataApi } from './api-client/data-api.js';
 import { createPipelineApi } from './api-client/pipeline-api.js';
@@ -169,6 +170,10 @@ export class FireHubApiClient {
   /** 데이터셋 컬럼 제거. 물리 테이블에 ALTER TABLE DROP COLUMN이 수행된다 (파괴 작업). */
   dropDatasetColumn(datasetId: number, columnId: number) {
     return this._datasets.dropDatasetColumn(datasetId, columnId);
+  }
+  /** 데이터셋을 참조하는 파이프라인/대시보드/스마트잡을 조회. 삭제 전 영향 범위 확인용. */
+  getDatasetReferences(id: number): Promise<DatasetReferences> {
+    return this._datasets.getDatasetReferences(id);
   }
 
   listPipelines(params?: { page?: number; size?: number }) {
