@@ -1,7 +1,11 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { API_ERROR_PREFIX } from '../constants.js';
 import { createCategoryApi } from './api-client/category-api.js';
-import { createDatasetApi } from './api-client/dataset-api.js';
+import {
+  createDatasetApi,
+  type DatasetColumnInput,
+  type DatasetColumnResponse,
+} from './api-client/dataset-api.js';
 import { createDataApi } from './api-client/data-api.js';
 import { createPipelineApi } from './api-client/pipeline-api.js';
 import { createTriggerApi } from './api-client/trigger-api.js';
@@ -157,6 +161,14 @@ export class FireHubApiClient {
   /** 데이터셋 삭제. data 스키마의 물리 테이블도 함께 DROP된다. */
   deleteDataset(id: number) {
     return this._datasets.deleteDataset(id);
+  }
+  /** 데이터셋에 컬럼 추가. 물리 테이블에 ALTER TABLE ADD COLUMN이 수행된다. */
+  addDatasetColumn(datasetId: number, column: DatasetColumnInput): Promise<DatasetColumnResponse> {
+    return this._datasets.addDatasetColumn(datasetId, column);
+  }
+  /** 데이터셋 컬럼 제거. 물리 테이블에 ALTER TABLE DROP COLUMN이 수행된다 (파괴 작업). */
+  dropDatasetColumn(datasetId: number, columnId: number) {
+    return this._datasets.dropDatasetColumn(datasetId, columnId);
   }
 
   listPipelines(params?: { page?: number; size?: number }) {

@@ -1,5 +1,37 @@
 import type { AxiosInstance } from 'axios';
 
+/**
+ * 데이터셋 컬럼 추가/조회용 입력 타입.
+ * 백엔드 `AddColumnRequest` 레코드와 동일한 필드 셋을 사용한다.
+ */
+export interface DatasetColumnInput {
+  columnName: string;
+  displayName: string;
+  dataType: string;
+  maxLength?: number;
+  isNullable?: boolean;
+  isIndexed?: boolean;
+  isPrimaryKey?: boolean;
+  description?: string;
+}
+
+/**
+ * 백엔드 `DatasetColumnResponse` 레코드의 TypeScript 미러.
+ * addColumn 응답 및 기타 컬럼 조회 응답의 형태.
+ */
+export interface DatasetColumnResponse {
+  id: number;
+  columnName: string;
+  displayName: string;
+  dataType: string;
+  maxLength?: number | null;
+  isNullable: boolean;
+  isIndexed: boolean;
+  description?: string | null;
+  columnOrder: number;
+  isPrimaryKey: boolean;
+}
+
 export function createDatasetApi(client: AxiosInstance) {
   return {
     async listDatasets(params?: {
@@ -66,6 +98,25 @@ export function createDatasetApi(client: AxiosInstance) {
     /** 데이터셋 삭제. data 스키마의 물리 테이블도 함께 DROP된다. */
     async deleteDataset(id: number): Promise<{ success: true }> {
       await client.delete(`/datasets/${id}`);
+      return { success: true };
+    },
+    /**
+     * 데이터셋에 컬럼을 추가한다.
+     * 백엔드는 201 + DatasetColumnResponse 를 반환한다.
+     */
+    async addDatasetColumn(
+      datasetId: number,
+      column: DatasetColumnInput,
+    ): Promise<DatasetColumnResponse> {
+      const { data } = await client.post(`/datasets/${datasetId}/columns`, column);
+      return data;
+    },
+    /**
+     * 데이터셋에서 컬럼을 제거한다. 실제 data 스키마 테이블의 컬럼도
+     * 함께 DROP되므로 파괴 작업이다. 호출자는 사용자 확인 후 호출해야 한다.
+     */
+    async dropDatasetColumn(datasetId: number, columnId: number): Promise<{ success: true }> {
+      await client.delete(`/datasets/${datasetId}/columns/${columnId}`);
       return { success: true };
     },
   };

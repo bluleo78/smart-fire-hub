@@ -103,6 +103,37 @@ describe('FireHubApiClient', () => {
     });
   });
 
+  // --- Dataset column add/drop ---
+  describe('addDatasetColumn / dropDatasetColumn', () => {
+    it('POSTs /datasets/:id/columns', async () => {
+      nock(BASE_URL)
+        .post('/datasets/42/columns')
+        .reply(201, {
+          id: 99,
+          columnName: 'lat',
+          displayName: '위도',
+          dataType: 'DECIMAL',
+          isNullable: true,
+          isIndexed: false,
+          columnOrder: 5,
+          isPrimaryKey: false,
+        });
+      const result = await client.addDatasetColumn(42, {
+        columnName: 'lat',
+        displayName: '위도',
+        dataType: 'DECIMAL',
+        isNullable: true,
+      });
+      expect(result.id).toBe(99);
+      expect(result.columnName).toBe('lat');
+    });
+
+    it('DELETEs /datasets/:id/columns/:columnId', async () => {
+      nock(BASE_URL).delete('/datasets/42/columns/99').reply(204);
+      await expect(client.dropDatasetColumn(42, 99)).resolves.toEqual({ success: true });
+    });
+  });
+
   // --- Triggers ---
   it('should create trigger via POST /pipelines/:id/triggers', async () => {
     const body = {

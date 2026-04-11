@@ -68,6 +68,87 @@ describe('Dataset MCP Tools', () => {
     });
   });
 
+  describe('add_dataset_column', () => {
+    it('calls apiClient.addDatasetColumn with column payload extracted from args', async () => {
+      const mockResp = {
+        id: 99,
+        columnName: 'lat',
+        displayName: '위도',
+        dataType: 'DECIMAL',
+        isNullable: true,
+        isIndexed: false,
+        columnOrder: 5,
+        isPrimaryKey: false,
+      };
+      (client.addDatasetColumn as ReturnType<typeof vi.fn>).mockResolvedValue(mockResp);
+
+      const result = await invokeTool(server, 'add_dataset_column', {
+        datasetId: 42,
+        columnName: 'lat',
+        displayName: '위도',
+        dataType: 'DECIMAL',
+        isNullable: true,
+      });
+
+      // datasetId는 추출되고 나머지는 column payload로 전달된다
+      expect(client.addDatasetColumn).toHaveBeenCalledWith(42, {
+        columnName: 'lat',
+        displayName: '위도',
+        dataType: 'DECIMAL',
+        isNullable: true,
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.id).toBe(99);
+    });
+
+    it('returns isError on API failure', async () => {
+      (client.addDatasetColumn as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('API 오류 (400): Invalid column name'),
+      );
+
+      const result = await invokeTool(server, 'add_dataset_column', {
+        datasetId: 42,
+        columnName: 'Bad Name',
+        displayName: 'X',
+        dataType: 'TEXT',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Invalid column name');
+    });
+  });
+
+  describe('drop_dataset_column', () => {
+    it('calls apiClient.dropDatasetColumn with datasetId and columnId', async () => {
+      (client.dropDatasetColumn as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+
+      const result = await invokeTool(server, 'drop_dataset_column', {
+        datasetId: 42,
+        columnId: 99,
+      });
+
+      expect(client.dropDatasetColumn).toHaveBeenCalledWith(42, 99);
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toEqual({ success: true });
+    });
+
+    it('returns isError on API failure', async () => {
+      (client.dropDatasetColumn as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('API 오류 (404): Column not found'),
+      );
+
+      const result = await invokeTool(server, 'drop_dataset_column', {
+        datasetId: 42,
+        columnId: 999,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Column not found');
+    });
+  });
+
   // --- tool registration ---
   it('dataset tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -78,5 +159,7 @@ describe('Dataset MCP Tools', () => {
     expect(registeredTools).toContain('create_dataset');
     expect(registeredTools).toContain('update_dataset');
     expect(registeredTools).toContain('delete_dataset');
+    expect(registeredTools).toContain('add_dataset_column');
+    expect(registeredTools).toContain('drop_dataset_column');
   });
 });

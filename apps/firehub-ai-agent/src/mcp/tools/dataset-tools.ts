@@ -158,5 +158,51 @@ export function registerDatasetTools(
         return jsonResult({ success: true, datasetId: args.id });
       },
     ),
+
+    safeTool(
+      'add_dataset_column',
+      '데이터셋에 컬럼을 추가합니다. GEOMETRY 컬럼의 경우 SRID 4326을 권장합니다.',
+      {
+        datasetId: z.number().describe('데이터셋 ID'),
+        columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴)'),
+        displayName: z.string().describe('표시 이름'),
+        dataType: z
+          .string()
+          .describe(
+            '데이터 타입 (TEXT, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, VARCHAR, GEOMETRY)',
+          ),
+        maxLength: z.number().optional().describe('VARCHAR 최대 길이'),
+        isNullable: z.boolean().optional().describe('NULL 허용 여부 (기본값: true)'),
+        isIndexed: z.boolean().optional().describe('인덱스 생성 여부'),
+        description: z.string().optional().describe('컬럼 설명'),
+      },
+      async (args: {
+        datasetId: number;
+        columnName: string;
+        displayName: string;
+        dataType: string;
+        maxLength?: number;
+        isNullable?: boolean;
+        isIndexed?: boolean;
+        description?: string;
+      }) => {
+        const { datasetId, ...column } = args;
+        const result = await apiClient.addDatasetColumn(datasetId, column);
+        return jsonResult(result);
+      },
+    ),
+
+    safeTool(
+      'drop_dataset_column',
+      '데이터셋에서 컬럼을 제거합니다. 해당 컬럼의 모든 데이터가 영구 삭제됩니다. 사용자의 명시적 평문 확인 없이 호출하지 마세요.',
+      {
+        datasetId: z.number().describe('데이터셋 ID'),
+        columnId: z.number().describe('컬럼 ID'),
+      },
+      async (args: { datasetId: number; columnId: number }) => {
+        await apiClient.dropDatasetColumn(args.datasetId, args.columnId);
+        return jsonResult({ success: true });
+      },
+    ),
   ];
 }
