@@ -22,7 +22,7 @@
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | **완료** | 3/3 | UI 일관성 수정 + 컴포넌트 분리 + SchemaExplorer UX 리디자인 |
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
-| [Phase 5.10](#phase-510-ai-챗-데이터-플랫폼-전면-제어) | **진행 중** | 1/7 | 데이터셋 전담 서브에이전트 + 후속 에이전트 로드맵 |
+| [Phase 5.10](#phase-510-ai-챗-데이터-플랫폼-전면-제어) | **진행 중** | 2/7 | 데이터셋 전담 서브에이전트 + data-analyst 서브에이전트 |
 | [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
 | [Phase 7](#phase-7-ai-리포트-고도화) | **완료** | 11/11 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
@@ -269,7 +269,7 @@
 > **목표**: AI 챗 한 곳에서 데이터셋·분석·연동·트리거·대시보드·운영 전부 제어 가능
 
 - ✅ **5.10.1 dataset-manager 서브에이전트** — 데이터셋 생성/수정/삭제/컬럼/CSV 임포트 + GIS 자동 감지
-- ⬜ 5.10.2 data-analyst 서브에이전트 — 자연어 → SQL 분석/EDA/해석 (별도 스펙)
+- ✅ **5.10.2 data-analyst 서브에이전트** — 자연어 → SQL 분석/EDA/해석. 5단계 워크플로(EXPLORE→ANALYZE→INTERPRET→PERSIST→VISUALIZE). EDA SQL 패턴 10종(통계·분포·시계열·상관관계·이상탐지·GIS). 차트 타입 선택 기준. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ⬜ 5.10.3 api-connection-manager 서브에이전트 — 외부 API 커넥션 설계/등록/테스트
 - ⬜ 5.10.4 trigger-manager (또는 pipeline-builder 확장) — 스케줄/웹훅/체인 트리거 대화형 설정
 - ⬜ 5.10.5 dashboard-builder 서브에이전트 — 대시보드/위젯/필터 대화형 구성
