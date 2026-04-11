@@ -12,7 +12,6 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ReportRenderUtils;
 import com.smartfirehub.settings.service.SettingsService;
-import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
@@ -20,20 +19,30 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.thymeleaf.context.IContext;
 import org.thymeleaf.spring6.SpringTemplateEngine;
 
-class EmailDeliveryChannelTest extends IntegrationTestBase {
+/**
+ * EmailDeliveryChannel 단위 테스트. Spring 컨텍스트 없이 순수 Mockito로 실행한다. 통합 테스트로 돌리면 테스트마다 Hikari 풀이 생성되어
+ * Postgres `too many clients` 에러를 유발하므로, 의존성 전부 Mock으로 충분한 이 테스트는 단위 테스트 범주로 유지한다.
+ */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class EmailDeliveryChannelTest {
 
-  @Autowired private EmailDeliveryChannel emailDeliveryChannel;
+  @Mock private SettingsService settingsService;
+  @Mock private UserRepository userRepository;
+  @Mock private SpringTemplateEngine templateEngine;
+  @Mock private ReportRenderUtils reportRenderUtils;
+  @Mock private PdfExportService pdfExportService;
 
-  @MockitoBean private SettingsService settingsService;
-  @MockitoBean private UserRepository userRepository;
-  @MockitoBean private SpringTemplateEngine templateEngine;
-  @MockitoBean private ReportRenderUtils reportRenderUtils;
-  @MockitoBean private PdfExportService pdfExportService;
+  @InjectMocks private EmailDeliveryChannel emailDeliveryChannel;
 
   @BeforeEach
   void setup() {
