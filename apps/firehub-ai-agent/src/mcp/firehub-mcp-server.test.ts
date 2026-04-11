@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createFireHubMcpServer } from './firehub-mcp-server.js';
+import {
+  createFireHubMcpServer,
+  buildAllMcpTools,
+  filterToolsByPermissions,
+} from './firehub-mcp-server.js';
 import { FireHubApiClient } from './api-client.js';
 
 function createMockClient(): FireHubApiClient {
@@ -247,5 +251,67 @@ describe('MCP Tool Handlers', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed).toEqual(mockData);
     expect(result.content[0].text).toBe(JSON.stringify(mockData, null, 2));
+  });
+});
+
+/**
+ * 파괴적 도구 권한 기반 필터링 테스트.
+ *
+ * 권한 매개변수의 3가지 상태:
+ * - undefined: 후방호환, 모든 도구 허용
+ * - []: fail-closed, 권한 요구가 있는 도구는 전부 제외
+ * - 배열: 해당 권한에 매칭되는 도구만 허용
+ */
+describe('destructive tool filtering', () => {
+  let client: FireHubApiClient;
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    client = createMockClient();
+  });
+
+  it('excludes delete_dataset and drop_dataset_column when user lacks dataset:delete permission', () => {
+    const tools = buildAllMcpTools(client, {
+      userPermissions: ['dataset:read', 'dataset:update'],
+    });
+    expect(tools.find((t) => t.name === 'delete_dataset')).toBeUndefined();
+    expect(tools.find((t) => t.name === 'drop_dataset_column')).toBeUndefined();
+    // sanity: 비파괴 도구는 여전히 존재
+    expect(tools.find((t) => t.name === 'list_datasets')).toBeDefined();
+  });
+
+  it('includes destructive tools when user has dataset:delete permission', () => {
+    const tools = buildAllMcpTools(client, {
+      userPermissions: ['dataset:read', 'dataset:delete'],
+    });
+    expect(tools.find((t) => t.name === 'delete_dataset')).toBeDefined();
+    expect(tools.find((t) => t.name === 'drop_dataset_column')).toBeDefined();
+  });
+
+  it('includes all tools when userPermissions is undefined (backwards compat)', () => {
+    const tools = buildAllMcpTools(client);
+    expect(tools.find((t) => t.name === 'delete_dataset')).toBeDefined();
+    expect(tools.find((t) => t.name === 'drop_dataset_column')).toBeDefined();
+  });
+
+  it('excludes destructive tools when userPermissions is empty array (fail-closed)', () => {
+    const tools = buildAllMcpTools(client, { userPermissions: [] });
+    expect(tools.find((t) => t.name === 'delete_dataset')).toBeUndefined();
+    expect(tools.find((t) => t.name === 'drop_dataset_column')).toBeUndefined();
+    // 비파괴 도구는 fail-closed에서도 유지되어야 함
+    expect(tools.find((t) => t.name === 'list_datasets')).toBeDefined();
+  });
+
+  // 필터 유틸 단위 테스트 (맵 직접 검증)
+  it('filterToolsByPermissions: unknown tool names pass through', () => {
+    const fake = [
+      { name: 'delete_dataset' },
+      { name: 'list_datasets' },
+      { name: 'drop_dataset_column' },
+      { name: 'some_other_tool' },
+    ];
+    const filtered = filterToolsByPermissions(fake, ['dataset:read']);
+    expect(filtered.map((t) => t.name)).toEqual(['list_datasets', 'some_other_tool']);
   });
 });
