@@ -3,10 +3,10 @@ import { useCallback, useRef,useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
+import { uploadFiles } from '../../api/files';
 import { buildScreenContext } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
-import { uploadFiles } from '../../api/files';
 import type { AIAttachment, AIMessage, AIStreamEvent, CanvasLayout } from '../../types/ai';
 
 export function useAISessions(page = 0, size = 20) {

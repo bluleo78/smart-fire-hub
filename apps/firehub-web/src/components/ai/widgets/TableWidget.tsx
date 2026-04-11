@@ -1,16 +1,17 @@
-import { useState, useMemo } from 'react';
-import { ChevronUp, ChevronDown, ChevronsUpDown, Code2 } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown, ChevronUp, Code2 } from 'lucide-react';
+import { useMemo,useState } from 'react';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
 import { downloadBlob, downloadCsv } from '../../../lib/download';
-import { WidgetShell } from './WidgetShell';
-import type { WidgetProps } from './types';
-import { CellRenderer } from './table/CellRenderer';
 import { ActiveFilterChips } from './table/ActiveFilterChips';
+import { CellRenderer } from './table/CellRenderer';
 import { ColumnFilterDropdown } from './table/ColumnFilterDropdown';
-import { Pagination } from './table/Pagination';
 import { ExportDropdown } from './table/ExportDropdown';
+import { Pagination } from './table/Pagination';
+import type { WidgetProps } from './types';
+import { WidgetShell } from './WidgetShell';
 
 SyntaxHighlighter.registerLanguage('sql', sql);
 

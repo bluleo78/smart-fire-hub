@@ -1,5 +1,7 @@
+import { File as FileIcon, Image } from 'lucide-react';
 import { Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { useNavigate } from 'react-router-dom';
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
 import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
 import json from 'react-syntax-highlighter/dist/esm/languages/prism/json';
@@ -9,16 +11,13 @@ import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typesc
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
-import { useNavigate } from 'react-router-dom';
-
-import { File as FileIcon, Image } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
 import { useAI } from './AIProvider';
 import { CanvasPlaceholderCard } from './canvas/CanvasPlaceholderCard';
-import { getWidget } from './widgets/WidgetRegistry';
 import { WidgetErrorBoundary } from './widgets/WidgetErrorBoundary';
+import { getWidget } from './widgets/WidgetRegistry';
 import { WidgetSkeleton } from './widgets/WidgetSkeleton';
 
 SyntaxHighlighter.registerLanguage('sql', sql);

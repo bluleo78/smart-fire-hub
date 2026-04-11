@@ -3,9 +3,9 @@ import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { bracketMatching } from '@codemirror/language';
 import { Compartment,EditorState } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, keymap,lineNumbers, MatchDecorator, type ViewUpdate, ViewPlugin } from '@codemirror/view';
-import { useEffect, useRef } from 'react';
+import { Decoration, type DecorationSet, EditorView, keymap,lineNumbers, MatchDecorator, ViewPlugin,type ViewUpdate } from '@codemirror/view';
 import { useTheme } from 'next-themes';
+import { useEffect, useRef } from 'react';
 
 const stepRefMatcher = new MatchDecorator({
   regexp: /\{\{#\d+\}\}/g,

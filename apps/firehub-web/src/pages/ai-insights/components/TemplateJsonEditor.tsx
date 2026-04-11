@@ -9,7 +9,7 @@ import { useEffect, useRef } from 'react';
 
 import type { TemplateSection } from '@/api/proactive';
 import { Button } from '@/components/ui/button';
-import { type SectionTypeDefinition, SECTION_TYPES } from '@/lib/template-section-types';
+import { SECTION_TYPES,type SectionTypeDefinition } from '@/lib/template-section-types';
 
 interface TemplateJsonEditorProps {
   value: string;

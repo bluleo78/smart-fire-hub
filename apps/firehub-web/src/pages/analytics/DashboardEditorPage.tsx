@@ -1,6 +1,7 @@
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Check,
@@ -40,7 +41,6 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import type { ChartListItem, DashboardWidget, WidgetData } from '../../types/analytics';
-import { useQueryClient } from '@tanstack/react-query';
 
 // Sub-component that owns width measurement for ResponsiveGridLayout
 interface GridAreaProps {

@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
+
 import type { CanvasPage } from '../../../types/ai';
 
 interface PageIndicatorProps {

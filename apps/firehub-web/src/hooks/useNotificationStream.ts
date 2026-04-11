@@ -1,5 +1,5 @@
+import { type QueryClient,useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { getAccessToken } from '../api/client';

@@ -1,15 +1,16 @@
-import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown,ChevronUp } from 'lucide-react';
+import { useMemo, useState } from 'react';
+
 import { datasetsApi } from '../../../api/datasets';
 import { downloadBlob, downloadCsv } from '../../../lib/download';
+import { ActiveFilterChips } from './table/ActiveFilterChips';
+import { CellRenderer } from './table/CellRenderer';
+import { ColumnFilterDropdown } from './table/ColumnFilterDropdown';
+import { ExportDropdown } from './table/ExportDropdown';
+import { Pagination } from './table/Pagination';
 import type { WidgetProps } from './types';
 import { WidgetShell } from './WidgetShell';
-import { CellRenderer } from './table/CellRenderer';
-import { ActiveFilterChips } from './table/ActiveFilterChips';
-import { ColumnFilterDropdown } from './table/ColumnFilterDropdown';
-import { Pagination } from './table/Pagination';
-import { ExportDropdown } from './table/ExportDropdown';
 
 interface ShowDatasetInput {
   datasetId: number;

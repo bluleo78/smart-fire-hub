@@ -1,17 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
+import { Bell, Bot, CheckCheck, ChevronLeft, ExternalLink, MessageCircle, X } from 'lucide-react';
+import { useEffect, useRef,useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bell, Bot, CheckCheck, ChevronLeft, ExternalLink, MessageCircle, X } from 'lucide-react';
+
+import ReportModal from '@/components/ai/ReportModal';
 
 import type { ProactiveMessage } from '../../api/proactive';
-import ReportModal from '@/components/ai/ReportModal';
 import {
-  useProactiveMessages,
-  useMarkAsRead,
   useMarkAllAsRead,
+  useMarkAsRead,
+  useProactiveMessages,
 } from '../../hooks/queries/useProactiveMessages';
-import { getSections } from '../../lib/proactive-utils';
 import { timeAgo } from '../../lib/formatters';
+import { getSections } from '../../lib/proactive-utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

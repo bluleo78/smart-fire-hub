@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { TOOLTIP_CONTENT_STYLE, LINE_CURSOR_STYLE } from './chart-styles';
+import { LINE_CURSOR_STYLE,TOOLTIP_CONTENT_STYLE } from './chart-styles';
 
 const DEFAULT_COLORS = [
   '#8884d8',

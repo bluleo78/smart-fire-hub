@@ -2,6 +2,7 @@ import { Pencil, Play, Plus, Trash2, Zap } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import type { ProactiveJob } from '../../api/proactive';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Checkbox } from '../../components/ui/checkbox';
@@ -31,7 +32,6 @@ import {
   TableRow,
 } from '../../components/ui/table';
 import { Textarea } from '../../components/ui/textarea';
-import type { ProactiveJob } from '../../api/proactive';
 import {
   useCreateProactiveJob,
   useDeleteProactiveJob,

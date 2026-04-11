@@ -20,18 +20,18 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { FreshnessBar } from '../components/ui/freshness-bar';
-import { Sparkline } from '../components/ui/sparkline';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Separator } from '../components/ui/separator';
 import { Skeleton } from '../components/ui/skeleton';
+import { Sparkline } from '../components/ui/sparkline';
 import { useDashboards } from '../hooks/queries/useAnalytics';
-import { useDatasets } from '../hooks/queries/useDatasets';
 import {
   useActivityFeed,
   useAttentionItems,
   useDashboardStats,
   useSystemHealth,
 } from '../hooks/queries/useDashboard';
+import { useDatasets } from '../hooks/queries/useDatasets';
 import { useAuth } from '../hooks/useAuth';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
 import type { ActivityFeedParams } from '../types/dashboard';

@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
 import { ExternalLink } from 'lucide-react';
-import type { WidgetProps } from './types';
+import { useEffect, useRef } from 'react';
+
 import { NAVIGABLE_ROUTES, resolveNavigationPath } from './routes';
+import type { WidgetProps } from './types';
 
 interface NavigateToInput {
   type: string;

@@ -1,9 +1,8 @@
+import type { SectionType,TemplateSection } from '@/api/proactive';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
 import {
   Select,
   SelectContent,
@@ -11,9 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
-import type { TemplateSection, SectionType } from '@/api/proactive';
-import { SECTION_TYPES, getSectionTypeDef } from '@/lib/template-section-types';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
+import { getSectionTypeDef,SECTION_TYPES } from '@/lib/template-section-types';
 
 const TEMPLATE_VARIABLES = [
   { key: 'date', label: '실행 일시' },

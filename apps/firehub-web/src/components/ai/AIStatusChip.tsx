@@ -1,11 +1,12 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { Bell } from 'lucide-react';
+import { useCallback, useEffect,useRef, useState } from 'react';
+
+import { useUnreadCount } from '../../hooks/queries/useProactiveMessages';
 import type { AIMode } from '../../types/ai';
+import { FloatingIcon, FullscreenIcon, NativeIcon,SideIcon } from './AIChipIcons';
+import { AINotificationPanel } from './AINotificationPanel';
 import { useAI } from './AIProvider';
 import { AIStatusChipDropdown } from './AIStatusChipDropdown';
-import { AINotificationPanel } from './AINotificationPanel';
-import { SideIcon, FloatingIcon, FullscreenIcon, NativeIcon } from './AIChipIcons';
-import { Bell } from 'lucide-react';
-import { useUnreadCount } from '../../hooks/queries/useProactiveMessages';
 
 type ChipState = 'idle' | 'streaming' | 'thinking' | 'error' | 'side' | 'floating' | 'fullscreen' | 'native';
 

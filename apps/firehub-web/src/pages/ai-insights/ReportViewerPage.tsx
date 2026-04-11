@@ -7,6 +7,7 @@
  * 상단 바에 뒤로가기, PDF 다운로드, 인쇄 버튼을 제공한다.
  */
 
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ExternalLink, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -15,7 +16,6 @@ import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
 import { useReportActions } from '@/hooks/useReportActions';
-import { useQuery } from '@tanstack/react-query';
 
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();

@@ -1,13 +1,14 @@
+import { Bot, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, ExternalLink } from 'lucide-react';
 
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
 import ReportModal from '@/components/ai/ReportModal';
+
 import type { ProactiveMessage as ProactiveMessageType } from '../../api/proactive';
 import { getSections } from '../../lib/proactive-utils';
+import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
 
 interface ProactiveMessageProps {
   message: ProactiveMessageType;

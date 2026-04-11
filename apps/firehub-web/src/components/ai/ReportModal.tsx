@@ -6,6 +6,7 @@
  * 하단에 "실행 상세 보기" 링크로 상세 페이지 진입 가능.
  */
 
+import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, FileDown, Loader2, Printer, XIcon } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -27,7 +28,6 @@ import { useExecution } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { getSections } from '@/lib/proactive-utils';
-import { useQuery } from '@tanstack/react-query';
 
 /** ReactMarkdown remark 플러그인 — GFM(테이블, 취소선 등) 지원 */
 const REMARK_PLUGINS = [remarkGfm];

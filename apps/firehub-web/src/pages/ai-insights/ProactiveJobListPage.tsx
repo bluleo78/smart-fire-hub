@@ -2,8 +2,6 @@ import { Copy, Play, Plus, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { handleApiError } from '@/lib/api-error';
-
 import type { ProactiveJob } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,6 +22,7 @@ import {
   useProactiveJobs,
   useUpdateProactiveJob,
 } from '@/hooks/queries/useProactiveMessages';
+import { handleApiError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';

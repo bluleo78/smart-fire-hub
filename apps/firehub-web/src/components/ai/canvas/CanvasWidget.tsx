@@ -1,9 +1,10 @@
-import { Suspense, useState } from 'react';
 import { X } from 'lucide-react';
-import type { CanvasWidget as CanvasWidgetType } from '../../../types/ai';
-import { getWidget } from '../widgets/WidgetRegistry';
-import { WidgetErrorBoundary } from '../widgets/WidgetErrorBoundary';
+import { Suspense, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
+import type { CanvasWidget as CanvasWidgetType } from '../../../types/ai';
+import { WidgetErrorBoundary } from '../widgets/WidgetErrorBoundary';
+import { getWidget } from '../widgets/WidgetRegistry';
 
 interface CanvasWidgetProps {
   widget: CanvasWidgetType;

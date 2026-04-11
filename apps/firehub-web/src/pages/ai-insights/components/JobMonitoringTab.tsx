@@ -1,13 +1,13 @@
-import { useState } from 'react';
 import { BarChart3, Plus, X } from 'lucide-react';
+import { useState } from 'react';
+
+import type { AnomalyConfig, AnomalyMetricConfig, Sensitivity } from '@/api/proactive';
+import { SYSTEM_METRICS } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -15,8 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { AnomalyConfig, AnomalyMetricConfig, Sensitivity } from '@/api/proactive';
-import { SYSTEM_METRICS } from '@/api/proactive';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 
 interface JobMonitoringTabProps {
   config: Record<string, unknown>;
