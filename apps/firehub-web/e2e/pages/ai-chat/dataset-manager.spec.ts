@@ -126,7 +126,7 @@ async function openChatPanel(page: Page) {
 }
 
 test.describe('AI 챗 dataset-manager', () => {
-  // TODO(Task 13): 실제 AI 백엔드와 드래그&드롭 파일 업로드 훅 통합 이후 flakiness를 재확인한다.
+  // TODO: 실제 AI 백엔드와 드래그&드롭 파일 업로드 훅 통합 이후 flakiness를 재확인한다.
   // 본 테스트는 SSE 응답을 모킹하므로 AI API 키나 ai-agent 프로세스가 없어도 동작한다.
   test('CSV 첨부 → GIS 감지 → 신규 데이터셋 생성', async ({ authenticatedPage: page }) => {
     await mockChatSSESequence(page);
@@ -235,7 +235,7 @@ test.describe('AI 챗 dataset-manager', () => {
     ];
 
     // 삭제 플로우 전용 SSE 모킹 — 호출 횟수에 따라 3종 응답을 순차 반환한다.
-    // T13의 `mockChatSSESequence` 대신 본 테스트 내부에 직접 route 등록하여
+    // 공용 `mockChatSSESequence` 대신 본 테스트 내부에 직접 route 등록하여
     // 테스트 간 상태 오염을 방지한다.
     let deleteCallCount = 0;
     await page.route(
@@ -260,7 +260,7 @@ test.describe('AI 챗 dataset-manager', () => {
     );
     await mockAiSessions(page);
 
-    // 1. 패널 열기 (T13 헬퍼 재사용)
+    // 1. 패널 열기
     await openChatPanel(page);
 
     // 2. 사용자: 삭제 요청

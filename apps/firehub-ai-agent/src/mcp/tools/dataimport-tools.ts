@@ -7,24 +7,35 @@ import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
  * 미리보기 -> 매핑 -> 검증 -> 적재 -> 상태확인 흐름을 주도할 때 사용한다.
  * 백엔드는 multipart 업로드를 요구하므로 facade 에서 fileId -> Buffer 브리지를 수행한다.
  */
+// 공통 파스 옵션 스키마/타입 — 모든 도구(preview/validate/start)가 동일 옵션 셋을 공유하므로
+// 여기에서 한 번만 정의하고, 각 도구의 스키마·핸들러 인자 타입에서 재사용한다.
+const parseOptionsSchema = {
+  delimiter: z
+    .string()
+    .optional()
+    .describe('CSV 구분자 (",", "\\t", ";", "|"). 기본값: ","'),
+  encoding: z
+    .enum(['AUTO', 'UTF-8', 'EUC-KR', 'CP949'])
+    .optional()
+    .describe('파일 인코딩. 기본값: AUTO'),
+  hasHeader: z.boolean().optional().describe('첫 행이 헤더인지 여부. 기본값: true'),
+  skipRows: z.number().optional().describe('헤더 전 건너뛸 행 수. 기본값: 0'),
+} as const;
+
+// 위 parseOptionsSchema 와 동일한 필드 셋의 TS 타입.
+// z.infer 를 사용하면 const assertion 과 조합이 번거로우므로 수동으로 선언한다.
+type ParseOptionsArgs = {
+  delimiter?: string;
+  encoding?: 'AUTO' | 'UTF-8' | 'EUC-KR' | 'CP949';
+  hasHeader?: boolean;
+  skipRows?: number;
+};
+
 export function registerDataImportTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
 ) {
-  // 공통 파스 옵션 스키마. 모든 도구가 동일한 옵션 셋을 공유한다.
-  const parseOptionsSchema = {
-    delimiter: z
-      .string()
-      .optional()
-      .describe('CSV 구분자 (",", "\\t", ";", "|"). 기본값: ","'),
-    encoding: z
-      .enum(['AUTO', 'UTF-8', 'EUC-KR', 'CP949'])
-      .optional()
-      .describe('파일 인코딩. 기본값: AUTO'),
-    hasHeader: z.boolean().optional().describe('첫 행이 헤더인지 여부. 기본값: true'),
-    skipRows: z.number().optional().describe('헤더 전 건너뛸 행 수. 기본값: 0'),
-  } as const;
 
   // 매핑 엔트리 스키마. validate/start 에서 공통 사용.
   const mappingSchema = z
@@ -45,14 +56,7 @@ export function registerDataImportTools(
         fileId: z.number().describe('채팅에 첨부된 파일 ID'),
         ...parseOptionsSchema,
       },
-      async (args: {
-        datasetId: number;
-        fileId: number;
-        delimiter?: string;
-        encoding?: 'AUTO' | 'UTF-8' | 'EUC-KR' | 'CP949';
-        hasHeader?: boolean;
-        skipRows?: number;
-      }) => {
+      async (args: { datasetId: number; fileId: number } & ParseOptionsArgs) => {
         const { datasetId, fileId, ...parseOptions } = args;
         const result = await apiClient.previewImport(datasetId, fileId, parseOptions);
         return jsonResult(result);
@@ -68,15 +72,13 @@ export function registerDataImportTools(
         mappings: mappingSchema,
         ...parseOptionsSchema,
       },
-      async (args: {
-        datasetId: number;
-        fileId: number;
-        mappings: Array<{ fileColumn: string; datasetColumn: string }>;
-        delimiter?: string;
-        encoding?: 'AUTO' | 'UTF-8' | 'EUC-KR' | 'CP949';
-        hasHeader?: boolean;
-        skipRows?: number;
-      }) => {
+      async (
+        args: {
+          datasetId: number;
+          fileId: number;
+          mappings: Array<{ fileColumn: string; datasetColumn: string }>;
+        } & ParseOptionsArgs,
+      ) => {
         const { datasetId, fileId, mappings, ...parseOptions } = args;
         const result = await apiClient.validateImport(datasetId, fileId, mappings, parseOptions);
         return jsonResult(result);
@@ -96,16 +98,14 @@ export function registerDataImportTools(
           .describe('적재 전략. APPEND(기본)/UPSERT/REPLACE'),
         ...parseOptionsSchema,
       },
-      async (args: {
-        datasetId: number;
-        fileId: number;
-        mappings?: Array<{ fileColumn: string; datasetColumn: string }>;
-        importMode?: 'APPEND' | 'UPSERT' | 'REPLACE';
-        delimiter?: string;
-        encoding?: 'AUTO' | 'UTF-8' | 'EUC-KR' | 'CP949';
-        hasHeader?: boolean;
-        skipRows?: number;
-      }) => {
+      async (
+        args: {
+          datasetId: number;
+          fileId: number;
+          mappings?: Array<{ fileColumn: string; datasetColumn: string }>;
+          importMode?: 'APPEND' | 'UPSERT' | 'REPLACE';
+        } & ParseOptionsArgs,
+      ) => {
         const { datasetId, fileId, mappings, importMode, ...parseOptions } = args;
         const result = await apiClient.startImport(datasetId, fileId, {
           mappings,

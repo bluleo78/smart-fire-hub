@@ -45,6 +45,13 @@ export type SafeToolFn = typeof safeTool;
 export type JsonResultFn = typeof jsonResult;
 
 /**
+ * 권한 코드 상수. raw 문자열 리터럴 대신 이 상수를 참조해 오타·리팩토링 누락을 방지한다.
+ */
+const PERMISSIONS = {
+  DATASET_DELETE: 'dataset:delete',
+} as const;
+
+/**
  * 도구별 필수 권한 맵.
  * 해당 권한이 세션 사용자에게 없으면 도구가 빌드 결과에서 제외되고,
  * 결과적으로 Claude Agent SDK의 allowedTools 목록에도 포함되지 않아
@@ -53,18 +60,18 @@ export type JsonResultFn = typeof jsonResult;
  * 파괴적 도구만 등록하며, 맵에 없는 도구는 기본 허용이다.
  */
 const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
-  delete_dataset: 'dataset:delete',
-  drop_dataset_column: 'dataset:delete',
+  delete_dataset: PERMISSIONS.DATASET_DELETE,
+  drop_dataset_column: PERMISSIONS.DATASET_DELETE,
 };
 
 /**
  * 사용자 권한 목록에 따라 도구 배열을 필터링한다.
  *
- * 권한 매개변수의 3가지 상태 해석 (Task 9 연동):
+ * 권한 매개변수의 3가지 상태 해석:
  * - `undefined`: 권한 정보 자체가 전달되지 않음 → 후방호환을 위해 전부 허용(permissive).
  *   기존에 권한 주입 로직이 없는 호출 경로에서 안전하게 동작하도록 한다.
  * - `[]` (빈 배열): 권한 조회는 수행되었으나 사용자에게 권한이 전혀 없음 → fail-closed.
- *   파괴적 도구는 제외된다. 권한 조회 실패 시에도 Task 9는 이 값을 사용해 안전 측면으로 동작한다.
+ *   파괴적 도구는 제외된다. 권한 조회 실패 시에도 빈 배열을 사용해 안전 측면으로 동작한다.
  * - 비어있지 않은 배열: 해당 권한을 가진 도구만 허용.
  */
 export function filterToolsByPermissions<T extends { name: string }>(
