@@ -124,21 +124,32 @@ public class AiAgentProxyService {
     emitter.onTimeout(() -> emitter.completeWithError(new RuntimeException("SSE timeout")));
     emitter.onError(e -> log.error("[AI Chat] SseEmitter error", e));
 
+    Map<String, String> aiSettings = new HashMap<>(settingsService.getAsMap("ai"));
+    aiSettings.remove("ai.api_key");
+    String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+
+    // 인증 수단 검증: cli 모드는 OAuth 토큰, sdk 모드는 API 키가 필요
     Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
-    if (apiKeyOpt.isEmpty()) {
+    Optional<String> cliTokenOpt =
+        "cli".equals(agentType) ? settingsService.getDecryptedCliOauthToken() : Optional.empty();
+    boolean missingCredential =
+        "cli".equals(agentType)
+            ? (cliTokenOpt.isEmpty() || cliTokenOpt.get().isBlank())
+            : apiKeyOpt.isEmpty();
+    if (missingCredential) {
       try {
+        String errorMessage =
+            "cli".equals(agentType)
+                ? "Claude CLI OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 토큰을 등록하세요."
+                : "AI API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 등록하세요.";
         String errorPayload =
-            objectMapper.writeValueAsString(
-                Map.of("type", "error", "message", "AI API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 등록하세요."));
+            objectMapper.writeValueAsString(Map.of("type", "error", "message", errorMessage));
         emitter.send(SseEmitter.event().data(errorPayload));
         emitter.complete();
       } catch (IOException ignored) {
       }
       return;
     }
-
-    Map<String, String> aiSettings = new HashMap<>(settingsService.getAsMap("ai"));
-    aiSettings.remove("ai.api_key");
 
     Map<String, Object> requestBody = new HashMap<>();
     requestBody.put("message", message != null ? message : "");
@@ -147,13 +158,10 @@ public class AiAgentProxyService {
     if (fileIds != null && !fileIds.isEmpty()) {
       requestBody.put("fileIds", fileIds);
     }
-    requestBody.put("apiKey", apiKeyOpt.get());
-    String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+    apiKeyOpt.ifPresent(key -> requestBody.put("apiKey", key));
     requestBody.put("agentType", agentType);
     if ("cli".equals(agentType)) {
-      settingsService
-          .getDecryptedCliOauthToken()
-          .ifPresent(token -> requestBody.put("cliOauthToken", token));
+      cliTokenOpt.ifPresent(token -> requestBody.put("cliOauthToken", token));
     }
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
