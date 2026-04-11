@@ -183,12 +183,29 @@ function loadSubagentDir(dirPath: string, dirName: string): AgentDefinition | nu
   return agentDef;
 }
 
+// 기본 subagents 디렉터리 로드 결과를 모듈 수준에서 메모이즈한다.
+// 서브에이전트 정의는 런타임에 변경되지 않으므로 매 채팅 턴마다 디스크 I/O를
+// 반복할 필요가 없다. 명시적 경로로 호출되는 경우(테스트 등)는 캐시 우회.
+let cachedDefaultSubagents: Record<string, AgentDefinition> | null = null;
+
+/**
+ * 테스트에서 기본 경로 캐시를 초기화할 때 사용한다.
+ */
+export function resetSubagentCache(): void {
+  cachedDefaultSubagents = null;
+}
+
 /**
  * Scan the subagents directory and load all valid subagent definitions.
  * Returns a Record<name, AgentDefinition>.
  * Individual load failures do not crash the entire loader.
  */
 export function loadSubagents(subagentsDir?: string): Record<string, AgentDefinition> {
+  // 기본 디렉터리 호출(인자 없음)에 대해서만 모듈 캐시를 사용한다.
+  if (subagentsDir === undefined && cachedDefaultSubagents) {
+    return cachedDefaultSubagents;
+  }
+
   const dir = subagentsDir ?? path.join(__dirname, 'subagents');
 
   if (!fs.existsSync(dir)) {
@@ -226,6 +243,11 @@ export function loadSubagents(subagentsDir?: string): Record<string, AgentDefini
     } catch (err) {
       console.error(`[subagent-loader] Unexpected error loading subagent "${entry}":`, err);
     }
+  }
+
+  // 기본 경로 호출 결과는 이후 호출을 위해 캐시한다.
+  if (subagentsDir === undefined) {
+    cachedDefaultSubagents = result;
   }
 
   return result;

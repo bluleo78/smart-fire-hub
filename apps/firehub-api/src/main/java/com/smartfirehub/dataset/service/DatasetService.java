@@ -501,10 +501,14 @@ public class DatasetService {
    */
   @Transactional(readOnly = true)
   public DatasetReferencesResponse getReferences(Long datasetId) {
-    // 1. 데이터셋 존재 검증 (다른 메서드들과 동일한 패턴)
-    datasetRepository
-        .findById(datasetId)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    // 1. 데이터셋 존재 검증: 참조 집계 쿼리 3개를 실행하기 전에 404 조기 반환을 위해
+    //    가벼운 EXISTS 체크만 수행한다(행 전체 로드 회피).
+    boolean exists =
+        dsl.fetchExists(
+            dsl.selectOne().from(table(name("dataset"))).where(field(name("dataset", "id"), Long.class).eq(datasetId)));
+    if (!exists) {
+      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+    }
 
     // 2. Pipelines: output_dataset_id 또는 pipeline_step_input.dataset_id 기준으로 조회. DISTINCT 로 중복 제거.
     List<DatasetReferencesResponse.ReferenceItem> pipelines =
