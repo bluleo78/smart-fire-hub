@@ -74,6 +74,42 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
   });
 
+  test('이름 미입력 상태로 저장 클릭 시 usePipelineValidation 이 실패한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 스텝 추가 먼저 (steps.length === 0 분기 대신 name.trim() 분기를 타게)
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+
+    // 이름 미입력 상태에서 저장 버튼 클릭 → usePipelineValidation → name.trim() === ''
+    // 이름 입력 필드는 비워둔 채 저장 버튼 클릭
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // 실패 토스트(sonner)가 렌더되는지 — "파이프라인 이름을 입력하세요"
+    // sonner 토스트는 role=status / role=list 내부 텍스트로 표시된다
+    await expect(page.getByText('파이프라인 이름을 입력하세요')).toBeVisible();
+  });
+
+  test('스텝 없이 저장 클릭 시 "최소 1개의 스텝" 에러가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 스텝 없이 이름만 입력
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    await nameInput.fill('이름만 있는 파이프라인');
+
+    // 저장 버튼이 "저장" text 를 가진 버튼 — EditorHeader 의 Save 아이콘 버튼
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // usePipelineValidation: steps.length === 0 → "최소 1개의 스텝을 정의하세요"
+    await expect(page.getByText('최소 1개의 스텝을 정의하세요')).toBeVisible();
+  });
+
   test('신규 파이프라인 에디터에 탭 메뉴가 표시되지 않는다', async ({
     authenticatedPage: page,
   }) => {
