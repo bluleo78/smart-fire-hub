@@ -19,7 +19,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
-      reportsDirectory: './coverage',
+      // 단위 테스트는 coverage/unit, Playwright E2E는 coverage/e2e로 분리
+      reportsDirectory: './coverage/unit',
       exclude: [
         'dist/**',
         'node_modules/**',

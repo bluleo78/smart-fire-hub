@@ -1,6 +1,8 @@
 import { type Page,test as base } from '@playwright/test';
+import MCR from 'monocart-coverage-reports';
 
 import type { TokenResponse, UserResponse } from '../../src/types/auth';
+import { coverageOptions } from '../coverage-config';
 import type { RoleResponse } from '../../src/types/role';
 import type { UserDetailResponse } from '../../src/types/user';
 import { mockApi } from './api-mock';
@@ -78,6 +80,13 @@ type AuthFixtures = {
   authMockedPage: Page;
   /** 로그인까지 완료된 인증 상태의 page */
   authenticatedPage: Page;
+  /**
+   * V8 JS 커버리지 자동 수집 fixture
+   * - auto: true로 모든 테스트에서 활성화
+   * - Chromium에서만 동작 (page.coverage API는 Chromium 전용)
+   * - 테스트 종료 시 monocart-coverage-reports로 누적 merge
+   */
+  autoCoverage: void;
 };
 
 /**
@@ -97,6 +106,31 @@ export const test = base.extend<AuthFixtures>({
     await performLogin(page);
     await use(page);
   },
+
+  /**
+   * 모든 테스트에 자동 적용되는 V8 커버리지 수집기
+   * - Chromium 프로젝트에서만 동작하며, 그 외 브라우저는 no-op
+   * - 테스트 시작 시 JS 커버리지 수집 시작, 종료 시 monocart에 add + generate
+   */
+  autoCoverage: [
+    async ({ page, browserName }, use) => {
+      const isChromium = browserName === 'chromium';
+      if (isChromium) {
+        // resetOnNavigation: false — 페이지 이동해도 누적 수집
+        await page.coverage.startJSCoverage({ resetOnNavigation: false });
+      }
+      await use();
+      if (isChromium) {
+        const coverageEntries = await page.coverage.stopJSCoverage();
+        // add 만 호출 — 실제 리포트 생성은 globalTeardown 에서 수행한다.
+        // 이렇게 해야 여러 테스트/워커의 데이터가 outputDir/.cache 에 누적되어 merge 된다.
+        const mcr = MCR(coverageOptions);
+        await mcr.add(coverageEntries);
+      }
+    },
+    { auto: true },
+  ],
 });
+/* eslint-enable react-hooks/rules-of-hooks */
 
 export { expect } from '@playwright/test';

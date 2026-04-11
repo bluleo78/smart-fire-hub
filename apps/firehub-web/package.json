@@ -76,6 +76,7 @@
     "eslint-plugin-simple-import-sort": "^12.1.1",
     "globals": "^16.5.0",
     "jsdom": "^29.0.2",
+    "monocart-coverage-reports": "^2.12.9",
     "rollup-plugin-visualizer": "^7.0.0",
     "shadcn": "^3.8.4",
     "tailwindcss": "^4.1.18",
