@@ -63,3 +63,6 @@ logs/
 # Playwright
 .playwright-mcp
 snapshots/
+
+# Local DB bind mount (Postgres data)
+db-data/
