@@ -60,6 +60,49 @@ export default function StepConfigPanel({
   const stepIndex = step ? state.steps.findIndex((s) => s.tempId === step.tempId) : -1;
   const stepNumber = stepIndex + 1;
 
+  // 훅은 early return 이전에 호출되어야 한다 (rules-of-hooks). step이 없을 때는 fallback 값 사용.
+  const insertTextRef = useRef<((text: string) => void) | null>(null);
+
+  const inputDatasetOptions = useMemo<DatasetOption[]>(() => {
+    if (!step) return [];
+    const prevStepDatasets: DatasetOption[] = [];
+    const prevStepDatasetIds = new Set<number>();
+
+    const otherSteps = state.steps
+      .map((s, i) => ({ step: s, number: i + 1 }))
+      .filter(({ step: s }) => s.tempId !== step.tempId);
+
+    for (const { step: s, number } of otherSteps) {
+      if (number < stepNumber && s.outputDatasetId != null) {
+        const ds = datasets.find((d) => d.id === s.outputDatasetId);
+        if (ds) {
+          prevStepDatasets.push({ ...ds, name: `[스텝${number}] ${ds.name}` });
+          prevStepDatasetIds.add(ds.id);
+        }
+      }
+    }
+
+    // 이미 이전 스텝 출력으로 등장한 데이터셋은 중복 제외하고 일반 데이터셋을 추가
+    const regularDatasets = datasets.filter((d) => !prevStepDatasetIds.has(d.id));
+    return [...prevStepDatasets, ...regularDatasets];
+  }, [step, state.steps, stepNumber, datasets]);
+
+  // 이 스텝이 의존하는 스텝 중 영구 출력 데이터셋이 없는 (임시 출력) 스텝들
+  const tempDependencySteps = useMemo(() => {
+    if (!step) return [];
+    return state.steps.filter(
+      (s) => step.dependsOnTempIds.includes(s.tempId) && s.outputDatasetId === null,
+    );
+  }, [state.steps, step]);
+
+  // 현재 선택된 스텝을 제외한 나머지 스텝들 — 스크립트 내 스텝 참조 UI에서 사용
+  const otherSteps = useMemo(() => {
+    if (!step) return [];
+    return state.steps
+      .map((s, i) => ({ step: s, number: i + 1 }))
+      .filter(({ step: s }) => s.tempId !== step.tempId);
+  }, [state.steps, step]);
+
   if (!step) {
     return (
       <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
@@ -163,39 +206,6 @@ export default function StepConfigPanel({
   const nameError = getFieldError('name');
   const scriptContentError = getFieldError('scriptContent');
   const outputDatasetIdError = getFieldError('outputDatasetId');
-
-  const insertTextRef = useRef<((text: string) => void) | null>(null);
-
-  const otherSteps = state.steps
-    .map((s, i) => ({ step: s, number: i + 1 }))
-    .filter(({ step: s }) => s.tempId !== step.tempId);
-
-  // Previous step output datasets available as input options
-  const inputDatasetOptions = useMemo<DatasetOption[]>(() => {
-    const prevStepDatasets: DatasetOption[] = [];
-    const prevStepDatasetIds = new Set<number>();
-
-    for (const { step: s, number } of otherSteps) {
-      if (number < stepNumber && s.outputDatasetId != null) {
-        const ds = datasets.find((d) => d.id === s.outputDatasetId);
-        if (ds) {
-          prevStepDatasets.push({ ...ds, name: `[스텝${number}] ${ds.name}` });
-          prevStepDatasetIds.add(ds.id);
-        }
-      }
-    }
-
-    // Append regular datasets, deduplicating any that already appear as step outputs
-    const regularDatasets = datasets.filter((d) => !prevStepDatasetIds.has(d.id));
-    return [...prevStepDatasets, ...regularDatasets];
-  }, [otherSteps, stepNumber, datasets]);
-
-  // Steps that this step depends on but have no persistent output dataset (temp output)
-  const tempDependencySteps = useMemo(() => {
-    return state.steps.filter(
-      (s) => step.dependsOnTempIds.includes(s.tempId) && s.outputDatasetId === null,
-    );
-  }, [state.steps, step.dependsOnTempIds]);
 
   return (
     <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
