@@ -218,13 +218,15 @@ PR을 올리기 전에 **스스로** 다음을 확인한다.
 
 ## Baseline (2026-04-11)
 
-커버리지 도구 최초 도입 시점의 측정치이다.
+최초 도구 도입 시점의 수치와 가이드라인 시행 직후 수치:
 
-| App | Lines | Branches | Functions | Note |
-|-----|-------|----------|-----------|------|
-| firehub-api (JaCoCo) | 10.87% | 14.48% | 6.24% | `dataset.*` 한정. 전체 스위트 측정은 pre-existing 실패 해결 후 갱신 예정 |
-| firehub-ai-agent (v8) | 67.47% | 57.43% | 58.84% | 전체 307 테스트 기준 |
-| firehub-web (E2E) | 59.27% | 37.13% | 40.92% | 189/191 E2E 시나리오 (2개 실패는 `__dirname` 버그로 기존부터 존재, 본 측정과 무관) |
+| App | 초기 | 현재 | 비고 |
+|-----|------|------|------|
+| firehub-api | 14.69% (dataset 한정) → 69.22% (jOOQ 제외 기준 전체) | **73.02%** | jOOQ/dto/exception 제외. FileParserService 93%, AiClassifyExecutor 87% 등 서비스 테스트 보강 |
+| firehub-ai-agent | 67.47% | **72.79%** | api-client 테스트 보강 (proactive, analytics) |
+| firehub-web (E2E) | 60.42% | **70.27%** | Playwright monocart. Round 1 3개 + Round 2 5개 + Round 3 6개 시나리오 추가. Vitest+RTL 단위 테스트 프레임워크 도입 |
+
+**전체 3앱 ≥70% 라인 커버리지 달성 (2026-04-11)**.
 
 이후 변경 이력은 아래 섹션에 추가한다.
 
@@ -233,3 +235,4 @@ PR을 올리기 전에 **스스로** 다음을 확인한다.
 | 일자 | 변경 | 작성자 |
 |------|-----|--------|
 | 2026-04-11 | 가이드라인 최초 작성 및 커버리지 도구 도입 | Claude + DongHee |
+| 2026-04-11 | 3앱 커버리지 도구 도입 + TC 보강으로 전원 70% 돌파 | Claude + DongHee |
