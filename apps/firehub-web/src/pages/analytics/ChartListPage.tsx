@@ -27,27 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
-import type { ChartType } from '../../types/analytics';
-
-const CHART_TYPE_LABELS: Record<ChartType, string> = {
-  BAR: '막대',
-  LINE: '선',
-  AREA: '영역',
-  PIE: '파이',
-  DONUT: '도넛',
-  SCATTER: '산점도',
-  TABLE: '테이블',
-  MAP: '지도',
-  HISTOGRAM: '히스토그램',
-  BOXPLOT: '박스플롯',
-  HEATMAP: '히트맵',
-  TREEMAP: '트리맵',
-  FUNNEL: '퍼널',
-  RADAR: '레이더',
-  WATERFALL: '워터폴',
-  GAUGE: '게이지',
-  CANDLESTICK: '캔들스틱',
-};
+import { CHART_TYPE_LABELS } from '../../types/analytics';
 
 function getRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();

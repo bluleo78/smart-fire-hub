@@ -40,6 +40,15 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
   const plotH = containerH - MARGIN.top - MARGIN.bottom;
 
   const allVals = candles.flatMap(c => [c.high, c.low]);
+  // 빈 데이터: Math.min(...[]) = Infinity 로 SVG 좌표가 NaN이 되는 것을 방지
+  if (allVals.length === 0) {
+    return (
+      <div ref={containerRef} style={{ width: '100%', height: containerH }}
+        className="flex items-center justify-center text-sm text-muted-foreground">
+        데이터 없음
+      </div>
+    );
+  }
   const yMin = Math.min(...allVals);
   const yMax = Math.max(...allVals);
   const yRange = yMax - yMin || 1;
@@ -83,7 +92,7 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
                   <rect
                     x={cx - candleW / 2} y={bodyTop}
                     width={candleW} height={bodyH}
-                    fill={bullish ? color : color}
+                    fill={color}
                     stroke={color}
                     strokeWidth={1}
                     fillOpacity={bullish ? 0.2 : 1}

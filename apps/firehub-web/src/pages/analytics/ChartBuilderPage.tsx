@@ -85,6 +85,29 @@ function recommendChartType(
   const dateCols = columns.filter(isDate);
   const categoryCols = columns.filter((c) => !isNumeric(c) && !isDate(c));
 
+  // CANDLESTICK: open/high/low/close 컬럼 존재 여부로 감지
+  const lowerCols = columns.map((c) => c.toLowerCase());
+  const hasCandlestickCols = ['open', 'high', 'low', 'close'].some((k) => lowerCols.includes(k));
+  if (hasCandlestickCols) return 'CANDLESTICK';
+
+  // BOXPLOT: 통계 컬럼(q1/q3/median/min/max) 존재 여부로 감지
+  const hasBoxplotCols = ['q1', 'q3', 'median', 'min', 'max'].some((k) => lowerCols.includes(k));
+  if (hasBoxplotCols) return 'BOXPLOT';
+
+  // HEATMAP: 카테고리 2개 + 수치 1개 정확히 일치
+  if (categoryCols.length === 2 && numericCols.length === 1) return 'HEATMAP';
+
+  // HISTOGRAM: 수치 컬럼 1개만 있는 경우 — 단일 값 분포
+  if (numericCols.length === 1 && categoryCols.length === 0 && dateCols.length === 0) return 'HISTOGRAM';
+
+  // WATERFALL: 카테고리 1개 + 수치 1개이며 수치에 양수/음수 모두 존재
+  if (categoryCols.length === 1 && numericCols.length === 1) {
+    const vals = rows.map((r) => Number(r[numericCols[0]])).filter((v) => !isNaN(v));
+    const hasPositive = vals.some((v) => v > 0);
+    const hasNegative = vals.some((v) => v < 0);
+    if (hasPositive && hasNegative) return 'WATERFALL';
+  }
+
   if (dateCols.length > 0 && numericCols.length > 0) return 'LINE';
   if (numericCols.length >= 2) return 'SCATTER';
   if (categoryCols.length > 0 && numericCols.length > 0) {
@@ -113,6 +136,47 @@ function buildDefaultConfig(
 
   const numericCols = columns.filter(isNumeric);
   const nonNumericCols = columns.filter((c) => !isNumeric(c));
+  const categoryCols = nonNumericCols; // 날짜 포함 비수치 컬럼
+
+  // CANDLESTICK: 시가/고가/저가/종가 컬럼을 자동 매핑
+  if (chartType === 'CANDLESTICK') {
+    const lowerMap = Object.fromEntries(columns.map((c) => [c.toLowerCase(), c]));
+    return {
+      xAxis: nonNumericCols[0] ?? columns[0] ?? '',
+      yAxis: [],
+      open: lowerMap['open'],
+      high: lowerMap['high'],
+      low: lowerMap['low'],
+      close: lowerMap['close'],
+    };
+  }
+
+  // BOXPLOT: xAxis만 설정, 나머지 컬럼은 컴포넌트가 직접 읽음
+  if (chartType === 'BOXPLOT') {
+    return { xAxis: nonNumericCols[0] ?? columns[0] ?? '', yAxis: [] };
+  }
+
+  // HEATMAP: x=카테고리[0], y=카테고리[1], valueColumn=수치[0]
+  if (chartType === 'HEATMAP') {
+    return {
+      xAxis: categoryCols[0] ?? columns[0] ?? '',
+      yAxis: categoryCols[1] ? [categoryCols[1]] : [],
+      valueColumn: numericCols[0],
+    };
+  }
+
+  // HISTOGRAM: x=수치 컬럼, yAxis 없음
+  if (chartType === 'HISTOGRAM') {
+    return { xAxis: numericCols[0] ?? columns[0] ?? '', yAxis: [] };
+  }
+
+  // WATERFALL: x=카테고리, y=수치 1개
+  if (chartType === 'WATERFALL') {
+    return {
+      xAxis: nonNumericCols[0] ?? columns[0] ?? '',
+      yAxis: numericCols[0] ? [numericCols[0]] : [],
+    };
+  }
 
   const xAxis = nonNumericCols[0] ?? columns[0] ?? '';
   const yAxis =

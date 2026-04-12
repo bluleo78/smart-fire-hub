@@ -3,6 +3,13 @@ import { canvasSchema } from './shared-schemas.js';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
+// 17종 차트 타입 상수 — z.enum 세 곳에서 공유하여 중복 방지
+const CHART_TYPE_VALUES = [
+  'BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
+  'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK',
+] as const;
+type ChartTypeValue = typeof CHART_TYPE_VALUES[number];
+
 export function registerAnalyticsTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
@@ -100,10 +107,7 @@ export function registerAnalyticsTools(
       {
         name: z.string().describe('차트 이름'),
         savedQueryId: z.number().describe('데이터 소스로 사용할 저장된 쿼리 ID'),
-        chartType: z
-          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
-            'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK'])
-          .describe('차트 유형'),
+        chartType: z.enum(CHART_TYPE_VALUES).describe('차트 유형'),
         config: z.object({
           xAxis: z.string().describe('X축 컬럼명'),
           yAxis: z.array(z.string()).describe('Y축 컬럼명 목록'),
@@ -117,8 +121,7 @@ export function registerAnalyticsTools(
       async (args: {
         name: string;
         savedQueryId: number;
-        chartType: 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP'
-          | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL' | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
+        chartType: ChartTypeValue;
         config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string };
         description?: string;
         isShared?: boolean;
@@ -213,10 +216,7 @@ export function registerAnalyticsTools(
       '채팅에 인라인 차트를 표시합니다. execute_analytics_query로 조회한 데이터를 차트로 시각화할 때 사용합니다.',
       {
         sql: z.string().describe('차트 데이터를 조회한 SQL 쿼리 (참조용 표시)'),
-        chartType: z
-          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
-            'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK'])
-          .describe('차트 유형'),
+        chartType: z.enum(CHART_TYPE_VALUES).describe('차트 유형'),
         config: z.object({
           xAxis: z.string().describe('X축 컬럼명'),
           yAxis: z.array(z.string()).describe('Y축 컬럼명 목록'),
@@ -237,8 +237,7 @@ export function registerAnalyticsTools(
       }) => {
         // 프론트엔드에서 tool_use 이벤트의 input으로 직접 렌더링.
         // 명시적 Zod 검증 수행 (SDK가 우회될 경우를 위한 안전망)
-        const chartTypeSchema = z.enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
-          'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK']);
+        const chartTypeSchema = z.enum(CHART_TYPE_VALUES);
         chartTypeSchema.parse(args.chartType);
         return jsonResult({
           displayed: true,

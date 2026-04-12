@@ -234,7 +234,7 @@ API 연결 생성 시 참고사항:
 - create_saved_query: SQL 쿼리 저장 (차트의 데이터 소스로 사용 가능)
 - list_saved_queries: 저장된 쿼리 목록 조회
 - run_saved_query: 저장된 쿼리 실행
-- create_chart: 저장된 쿼리 기반 차트 생성 (BAR/LINE/PIE/AREA/SCATTER/DONUT/TABLE/MAP). MAP 타입은 config에 spatialColumn(GEOMETRY 컬럼명) 필수
+- create_chart: 저장된 쿼리 기반 차트 생성 (BAR/LINE/PIE/AREA/SCATTER/DONUT/TABLE/MAP/HISTOGRAM/BOXPLOT/HEATMAP/TREEMAP/FUNNEL/RADAR/WATERFALL/GAUGE/CANDLESTICK). MAP 타입은 config에 spatialColumn(GEOMETRY 컬럼명) 필수
 - list_charts: 차트 목록 조회
 - get_chart_data: 차트 데이터 조회 (쿼리 재실행 + 차트 설정 반환)
 - create_dashboard: 새 대시보드 생성 (이름, 설명, 공유 여부, 자동 새로고침 간격)

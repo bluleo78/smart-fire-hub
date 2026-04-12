@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 
 import { analyticsApi } from '../../api/analytics';
 import type { ChartConfig, ChartType } from '../../types/analytics';
+import { CHART_TYPE_LABELS } from '../../types/analytics';
 import { ChartRenderer } from '../analytics/ChartRenderer';
 import { Button } from '../ui/button';
 import {
@@ -169,25 +170,6 @@ interface InlineChartWidgetProps {
   rows: Record<string, unknown>[];
 }
 
-const CHART_TYPE_LABELS: Record<ChartType, string> = {
-  BAR: '막대 차트',
-  LINE: '꺾은선 차트',
-  AREA: '영역 차트',
-  PIE: '파이 차트',
-  DONUT: '도넛 차트',
-  SCATTER: '산점도',
-  TABLE: '테이블',
-  MAP: '지도',
-  HISTOGRAM: '히스토그램',
-  BOXPLOT: '박스플롯',
-  HEATMAP: '히트맵',
-  TREEMAP: '트리맵',
-  FUNNEL: '퍼널',
-  RADAR: '레이더',
-  WATERFALL: '워터폴',
-  GAUGE: '게이지',
-  CANDLESTICK: '캔들스틱',
-};
 
 export function InlineChartWidget({
   sql: sqlText,

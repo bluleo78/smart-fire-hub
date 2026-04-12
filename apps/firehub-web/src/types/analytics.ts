@@ -92,6 +92,16 @@ export type ChartType =
   | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL'
   | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
 
+/** 차트 타입 → 한국어 레이블 매핑. 단일 원본으로 InlineChartWidget, ChartListPage 등에서 공유. */
+export const CHART_TYPE_LABELS: Record<ChartType, string> = {
+  BAR: '막대 차트', LINE: '꺾은선 차트', AREA: '영역 차트',
+  PIE: '파이 차트', DONUT: '도넛 차트', SCATTER: '산점도',
+  TABLE: '테이블', MAP: '지도',
+  HISTOGRAM: '히스토그램', BOXPLOT: '박스플롯', HEATMAP: '히트맵',
+  TREEMAP: '트리맵', FUNNEL: '퍼널', RADAR: '레이더',
+  WATERFALL: '워터폴', GAUGE: '게이지', CANDLESTICK: '캔들스틱',
+};
+
 export interface ChartConfig {
   xAxis: string;
   yAxis: string[];

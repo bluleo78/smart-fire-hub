@@ -49,6 +49,15 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
 
   // Y 스케일
   const allVals = stats.flatMap(s => [s.min, s.max]);
+  // 빈 데이터: Math.min(...[]) = Infinity 로 SVG 좌표가 NaN이 되는 것을 방지
+  if (allVals.length === 0) {
+    return (
+      <div ref={containerRef} style={{ width: '100%', height: containerH }}
+        className="flex items-center justify-center text-sm text-muted-foreground">
+        데이터 없음
+      </div>
+    );
+  }
   const yMin = Math.min(...allVals);
   const yMax = Math.max(...allVals);
   const yRange = yMax - yMin || 1;
