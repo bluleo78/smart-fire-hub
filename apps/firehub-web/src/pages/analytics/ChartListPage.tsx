@@ -38,6 +38,15 @@ const CHART_TYPE_LABELS: Record<ChartType, string> = {
   SCATTER: '산점도',
   TABLE: '테이블',
   MAP: '지도',
+  HISTOGRAM: '히스토그램',
+  BOXPLOT: '박스플롯',
+  HEATMAP: '히트맵',
+  TREEMAP: '트리맵',
+  FUNNEL: '퍼널',
+  RADAR: '레이더',
+  WATERFALL: '워터폴',
+  GAUGE: '게이지',
+  CANDLESTICK: '캔들스틱',
 };
 
 function getRelativeTime(dateStr: string): string {

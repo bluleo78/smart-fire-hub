@@ -87,7 +87,10 @@ export interface SchemaInfo {
 // Phase 2: Charts
 // ============================================================
 
-export type ChartType = 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP';
+export type ChartType =
+  | 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP'
+  | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL'
+  | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
 
 export interface ChartConfig {
   xAxis: string;
@@ -101,6 +104,19 @@ export interface ChartConfig {
   stacked?: boolean;
   spatialColumn?: string;    // MAP 차트: GEOMETRY 컬럼명 (필수)
   colorByColumn?: string;    // MAP 차트: 색상 기준 컬럼 (선택)
+  // HISTOGRAM: 구간 수 (기본 20)
+  bins?: number;
+  // HEATMAP: 셀 색상 기준 컬럼 (xAxis=행, yAxis[0]=열)
+  valueColumn?: string;
+  // GAUGE: 값 범위 및 목표
+  min?: number;
+  max?: number;
+  target?: number;
+  // CANDLESTICK: 시가/고가/저가/종가 컬럼명
+  open?: string;
+  high?: string;
+  low?: string;
+  close?: string;
 }
 
 export interface Chart {
