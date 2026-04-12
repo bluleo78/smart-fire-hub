@@ -240,4 +240,74 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await expect(page.getByText('트리거 이름을 입력하세요')).toBeVisible();
   });
+
+  test('API 트리거 추가 — 생성 후 one-time 토큰이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    // API 트리거 생성 응답 — config.rawToken에 one-time 토큰 포함
+    const created = createTrigger({
+      id: 12,
+      name: '외부 시스템 API 트리거',
+      triggerType: 'API',
+      config: { allowedIps: ['10.0.0.1/24'], rawToken: 'api-token-abc123' },
+    });
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines/1/triggers',
+      created,
+      { capture: true },
+    );
+
+    await gotoTriggerTab(page);
+
+    // 트리거 추가 → API 유형 선택
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /API.*외부 API/ }).click();
+
+    // 이름 입력
+    await page.getByLabel(/^이름/).fill('외부 시스템 API 트리거');
+
+    // IP 제한 추가
+    await page.getByPlaceholder('192.168.1.0/24').fill('10.0.0.1/24');
+    await page.getByRole('button', { name: '추가' }).click();
+
+    // IP 배지가 표시되어야 함
+    await expect(page.getByText('10.0.0.1/24')).toBeVisible();
+
+    // 트리거 생성
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    // POST payload 검증
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '외부 시스템 API 트리거',
+      triggerType: 'API',
+      config: { allowedIps: ['10.0.0.1/24'] },
+    });
+
+    // API 타입은 창을 닫지 않고 one-time 토큰을 표시해야 함
+    await expect(page.getByText('이 토큰은 다시 볼 수 없습니다')).toBeVisible();
+    await expect(page.getByText('api-token-abc123', { exact: true })).toBeVisible();
+  });
+
+  test('DATASET_CHANGE 트리거 추가 — 데이터셋 선택 없이 생성 시 에러가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /데이터셋 변경/ }).click();
+
+    await page.getByLabel(/^이름/).fill('데이터셋 변경 트리거');
+
+    // 데이터셋 선택 없이 생성 시도
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    await expect(page.getByText('감시 대상 데이터셋을 선택하세요')).toBeVisible();
+  });
 });

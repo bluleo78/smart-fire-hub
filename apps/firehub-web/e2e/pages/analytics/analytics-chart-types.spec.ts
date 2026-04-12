@@ -136,4 +136,95 @@ test.describe('신규 차트 타입 선택 — ChartBuilderPage', () => {
       'outline',
     );
   });
+
+  test('BOXPLOT: 박스 플롯 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '박스 플롯');
+
+    await expect(page.getByRole('button', { name: '박스 플롯' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
+  test('HEATMAP: 히트맵 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '히트맵');
+
+    await expect(page.getByRole('button', { name: '히트맵' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
+  test('RADAR: 레이더 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '레이더');
+
+    await expect(page.getByRole('button', { name: '레이더' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
+  test('GAUGE: 게이지 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '게이지');
+
+    await expect(page.getByRole('button', { name: '게이지' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
+  test('CANDLESTICK: 캔들스틱 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '캔들스틱');
+
+    await expect(page.getByRole('button', { name: '캔들스틱' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
+  test('SCATTER: 산점도 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '산점도');
+
+    await expect(page.getByRole('button', { name: '산점도' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
+  test('AREA: 영역 차트 타입 선택 시 버튼이 활성 상태가 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    await page.goto('/analytics/charts/new');
+    await selectChartType(page, '영역 차트');
+
+    await expect(page.getByRole('button', { name: '영역 차트' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
 });
