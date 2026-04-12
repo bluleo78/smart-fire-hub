@@ -82,9 +82,7 @@ export function registerAdminTools(
         category: z.string().optional().describe('권한 카테고리 (예: user, role, dataset, pipeline, trigger)'),
       },
       async (args) => {
-        const result = await apiClient.listPermissions(
-          args.category ? { category: args.category } : undefined,
-        );
+        const result = await apiClient.listPermissions(args);
         return jsonResult(result);
       },
     ),
