@@ -274,7 +274,7 @@
 - ✅ **5.10.4 trigger-manager 서브에이전트** — SCHEDULE/API/PIPELINE_CHAIN/WEBHOOK/DATASET_CHANGE 5가지 트리거 유형 대화형 설계·생성·수정·삭제. 5단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM→VERIFY). cron 자연어 변환. 보안 원칙(API 토큰·웹훅 시크릿 비노출). 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ✅ **5.10.5 dashboard-builder 서브에이전트** — 대시보드 생성·차트 위젯 추가·그리드 레이아웃 안내. 4단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM). 12열 그리드 자동 배치. 차트 타입별 권장 크기. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ✅ **5.10.6 admin-manager 서브에이전트** — 사용자 목록·상세 조회, 역할 교체, 계정 활성화/비활성화. 4단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM). MCP 도구 6개. 권한 게이팅 강화(user:read/role:assign/user:write). API 서브모듈 nock 테스트 7종. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
-- ⬜ 5.10.7 audit-analyst 서브에이전트 — 감사 로그/운영 모니터링/이상 탐지
+- ✅ **5.10.7 audit-analyst 서브에이전트** — 감사 로그 조회·분석·이상 탐지. 4단계 워크플로(IDENTIFY→QUERY→ANALYZE→REPORT). MCP 도구 1개(list_audit_logs, audit:read 권한 게이팅). API 서브모듈 nock 테스트 4종. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 
 ---
 
