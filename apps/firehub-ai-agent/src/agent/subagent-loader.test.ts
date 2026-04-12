@@ -649,3 +649,44 @@ describe('SL-DB: dashboard-builder subagent integration', () => {
     expect(prompt).toContain('Phase 3 — EXECUTE');
   });
 });
+
+describe('SL-AM: admin-manager subagent integration', () => {
+  it('SL-AM-01: loads admin-manager from real subagents directory', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    expect(agents['admin-manager']).toBeDefined();
+    expect(agents['admin-manager'].description).toContain('사용자');
+    expect(agents['admin-manager'].tools).toContain('mcp__firehub__list_users');
+    expect(agents['admin-manager'].tools).toContain('mcp__firehub__set_user_roles');
+  });
+
+  it('SL-AM-02: admin-manager tools include all 6 MCP tools', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const tools = agents['admin-manager'].tools;
+    expect(tools).toContain('mcp__firehub__list_users');
+    expect(tools).toContain('mcp__firehub__get_user');
+    expect(tools).toContain('mcp__firehub__set_user_roles');
+    expect(tools).toContain('mcp__firehub__set_user_active');
+    expect(tools).toContain('mcp__firehub__list_roles');
+    expect(tools).toContain('mcp__firehub__list_permissions');
+  });
+
+  it('SL-AM-03: admin-manager prompt inlines rules.md and examples.md content', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['admin-manager'].prompt;
+    // rules.md 핵심 키워드 — 권한 게이팅 표 + set_user_roles 동작 설명
+    expect(prompt).toContain('role:assign');
+    expect(prompt).toContain('교체(replace)');
+    // examples.md 핵심 키워드 — 대화 예시 + Phase 라벨
+    expect(prompt).toContain('김철수');
+    expect(prompt).toContain('Phase 3 — EXECUTE');
+  });
+});
