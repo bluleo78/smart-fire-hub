@@ -101,7 +101,8 @@ export function registerAnalyticsTools(
         name: z.string().describe('차트 이름'),
         savedQueryId: z.number().describe('데이터 소스로 사용할 저장된 쿼리 ID'),
         chartType: z
-          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP'])
+          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
+            'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK'])
           .describe('차트 유형'),
         config: z.object({
           xAxis: z.string().describe('X축 컬럼명'),
@@ -116,7 +117,8 @@ export function registerAnalyticsTools(
       async (args: {
         name: string;
         savedQueryId: number;
-        chartType: 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP';
+        chartType: 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP'
+          | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL' | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
         config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string };
         description?: string;
         isShared?: boolean;
@@ -212,7 +214,8 @@ export function registerAnalyticsTools(
       {
         sql: z.string().describe('차트 데이터를 조회한 SQL 쿼리 (참조용 표시)'),
         chartType: z
-          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP'])
+          .enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
+            'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK'])
           .describe('차트 유형'),
         config: z.object({
           xAxis: z.string().describe('X축 컬럼명'),
@@ -234,7 +237,8 @@ export function registerAnalyticsTools(
       }) => {
         // 프론트엔드에서 tool_use 이벤트의 input으로 직접 렌더링.
         // 명시적 Zod 검증 수행 (SDK가 우회될 경우를 위한 안전망)
-        const chartTypeSchema = z.enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP']);
+        const chartTypeSchema = z.enum(['BAR', 'LINE', 'PIE', 'AREA', 'SCATTER', 'DONUT', 'TABLE', 'MAP',
+          'HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK']);
         chartTypeSchema.parse(args.chartType);
         return jsonResult({
           displayed: true,

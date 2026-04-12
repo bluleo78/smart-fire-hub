@@ -73,7 +73,10 @@ export interface SchemaInfo {
   tables: SchemaTable[];
 }
 
-export type ChartType = 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP';
+export type ChartType =
+  | 'BAR' | 'LINE' | 'PIE' | 'AREA' | 'SCATTER' | 'DONUT' | 'TABLE' | 'MAP'
+  | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL'
+  | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
 
 export interface ChartConfig {
   xAxis: string;

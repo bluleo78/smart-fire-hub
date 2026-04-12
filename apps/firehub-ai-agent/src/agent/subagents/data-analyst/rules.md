@@ -151,10 +151,22 @@ LIMIT 50
 | 두 수치 관계 | 수치 + 수치 | `SCATTER` |
 | 지리 분포 | geom + 수치 | `MAP` |
 | 순위 | 정렬된 카테고리 + 수치 | `BAR` (가로) |
+| **수치 분포** | 단일 수치 컬럼, 행 다수 | `HISTOGRAM` |
+| **이상치·IQR** | 카테고리 + min/q1/median/q3/max | `BOXPLOT` |
+| **2차원 패턴** | 행 카테고리 × 열 카테고리 × 수치 | `HEATMAP` |
+| **계층 비율** | name + size (계층) | `TREEMAP` |
+| **전환율** | 단계명 + 감소 수치 | `FUNNEL` |
+| **다차원 비교** | 카테고리 × 여러 지표 | `RADAR` |
+| **누적 증감** | 카테고리 + 양수/음수 수치 | `WATERFALL` |
+| **단일 KPI** | 단일 퍼센트/달성률 | `GAUGE` |
+| **OHLC 시계열** | 날짜 + open/high/low/close | `CANDLESTICK` |
 
 추가 기준:
 - 범주가 **6개 이상**이면 상위 5개 + "기타"로 집계한다.
 - 시계열 데이터가 **90일 이상**이면 `AREA`가 `LINE`보다 가독성이 좋다.
+- BOXPLOT 사용 시: SQL에서 `PERCENTILE_CONT(0.25)`, `PERCENTILE_CONT(0.5)`, `PERCENTILE_CONT(0.75)` 로 사전 집계 필요.
+- HEATMAP 사용 시: config에 `valueColumn`(색상 기준 컬럼명) 명시 필요.
+- CANDLESTICK 사용 시: config에 `open`, `high`, `low`, `close` 컬럼명 명시 필요.
 
 ## 4. 저장 쿼리 폴더 명명 규칙
 

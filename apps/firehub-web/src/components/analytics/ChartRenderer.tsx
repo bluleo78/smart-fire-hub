@@ -3,7 +3,16 @@ import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
 import { LineChartView } from './LineChartView';
 import { MapChartView } from './MapChartView';
+import { HeatmapChartView } from './nivo/HeatmapChartView';
 import { PieChartView } from './PieChartView';
+import { BoxPlotChartView } from './recharts/BoxPlotChartView';
+import { CandlestickChartView } from './recharts/CandlestickChartView';
+import { FunnelChartView } from './recharts/FunnelChartView';
+import { GaugeChartView } from './recharts/GaugeChartView';
+import { HistogramChartView } from './recharts/HistogramChartView';
+import { RadarChartView } from './recharts/RadarChartView';
+import { TreemapChartView } from './recharts/TreemapChartView';
+import { WaterfallChartView } from './recharts/WaterfallChartView';
 import { ScatterChartView } from './ScatterChartView';
 import { TableView } from './TableView';
 
@@ -80,6 +89,33 @@ export function ChartRenderer({ chartType, config: rawConfig, data, columns, hei
       break;
     case 'MAP':
       chart = <MapChartView config={config} data={data} height={fillParent ? undefined : height} />;
+      break;
+    case 'HISTOGRAM':
+      chart = <HistogramChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'BOXPLOT':
+      chart = <BoxPlotChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'HEATMAP':
+      chart = <HeatmapChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'TREEMAP':
+      chart = <TreemapChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'FUNNEL':
+      chart = <FunnelChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'RADAR':
+      chart = <RadarChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'WATERFALL':
+      chart = <WaterfallChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'GAUGE':
+      chart = <GaugeChartView data={data} config={config} height={fillParent ? undefined : height} />;
+      break;
+    case 'CANDLESTICK':
+      chart = <CandlestickChartView data={data} config={config} height={fillParent ? undefined : height} />;
       break;
     default:
       return (

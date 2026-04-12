@@ -1,12 +1,20 @@
 import {
   AreaChart,
   BarChart2,
+  BoxSelect,
+  CandlestickChart,
   Donut,
+  Filter,
+  Gauge,
+  Grid3X3,
+  LayoutGrid,
   LineChart,
   MapPin,
   PieChart,
+  Radar,
   ScatterChart,
   Table2,
+  TrendingDown,
 } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
@@ -37,6 +45,15 @@ const CHART_TYPES: ChartTypeMeta[] = [
   { type: 'SCATTER', label: '산점도', Icon: ScatterChart },
   { type: 'TABLE', label: '테이블', Icon: Table2 },
   { type: 'MAP', label: '지도', Icon: MapPin },
+  { type: 'HISTOGRAM', label: '히스토그램', Icon: BarChart2 },
+  { type: 'BOXPLOT', label: '박스 플롯', Icon: BoxSelect },
+  { type: 'HEATMAP', label: '히트맵', Icon: Grid3X3 },
+  { type: 'TREEMAP', label: '트리맵', Icon: LayoutGrid },
+  { type: 'FUNNEL', label: '퍼널', Icon: Filter },
+  { type: 'RADAR', label: '레이더', Icon: Radar },
+  { type: 'WATERFALL', label: '폭포 차트', Icon: TrendingDown },
+  { type: 'GAUGE', label: '게이지', Icon: Gauge },
+  { type: 'CANDLESTICK', label: '캔들스틱', Icon: CandlestickChart },
 ];
 
 interface ChartTypeSelectorProps {
