@@ -271,7 +271,7 @@
 - ✅ **5.10.1 dataset-manager 서브에이전트** — 데이터셋 생성/수정/삭제/컬럼/CSV 임포트 + GIS 자동 감지
 - ✅ **5.10.2 data-analyst 서브에이전트** — 자연어 → SQL 분석/EDA/해석. 5단계 워크플로(EXPLORE→ANALYZE→INTERPRET→PERSIST→VISUALIZE). EDA SQL 패턴 10종(통계·분포·시계열·상관관계·이상탐지·GIS). 차트 타입 선택 기준. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ✅ **5.10.3 api-connection-manager 서브에이전트** — API_KEY·BEARER 인증 방식 연결 생성·수정·삭제. 4단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM). 삭제 확인 체크리스트. 인증 값 보안 원칙. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
-- ⬜ 5.10.4 trigger-manager (또는 pipeline-builder 확장) — 스케줄/웹훅/체인 트리거 대화형 설정
+- ✅ **5.10.4 trigger-manager 서브에이전트** — SCHEDULE/API/PIPELINE_CHAIN/WEBHOOK/DATASET_CHANGE 5가지 트리거 유형 대화형 설계·생성·수정·삭제. 5단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM→VERIFY). cron 자연어 변환. 보안 원칙(API 토큰·웹훅 시크릿 비노출). 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ⬜ 5.10.5 dashboard-builder 서브에이전트 — 대시보드/위젯/필터 대화형 구성
 - ⬜ 5.10.6 admin-manager 서브에이전트 — 사용자/권한 관리(권한 게이팅 강화)
 - ⬜ 5.10.7 audit-analyst 서브에이전트 — 감사 로그/운영 모니터링/이상 탐지
