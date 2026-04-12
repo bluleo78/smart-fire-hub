@@ -40,6 +40,14 @@ import {
   type AddDashboardWidgetParams,
   type DashboardWidget,
 } from './api-client/analytics-api.js';
+import {
+  createAdminApi,
+  type UserResponse,
+  type UserDetailResponse,
+  type RoleResponse,
+  type PermissionResponse,
+  type UserPage,
+} from './api-client/admin-api.js';
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -53,6 +61,7 @@ export class FireHubApiClient {
   private _analytics: ReturnType<typeof createAnalyticsApi>;
   private _proactive: ReturnType<typeof createProactiveApi>;
   private _dataImport: ReturnType<typeof createDataImportApi>;
+  private _admin: ReturnType<typeof createAdminApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -103,6 +112,7 @@ export class FireHubApiClient {
     this._analytics = createAnalyticsApi(this.client);
     this._proactive = createProactiveApi(this.client);
     this._dataImport = createDataImportApi(this.client);
+    this._admin = createAdminApi(this.client);
   }
 
   listCategories() {
@@ -421,6 +431,36 @@ export class FireHubApiClient {
   }
   replaceDatasetData(datasetId: number, rows: Record<string, unknown>[]) {
     return this._data.replaceDatasetData(datasetId, rows);
+  }
+
+  /** 사용자 목록 조회 */
+  listUsers(params?: { search?: string; page?: number; size?: number }): Promise<UserPage> {
+    return this._admin.listUsers(params);
+  }
+
+  /** 사용자 상세 조회 */
+  getUser(id: number): Promise<UserDetailResponse> {
+    return this._admin.getUser(id);
+  }
+
+  /** 사용자 역할 교체 */
+  setUserRoles(userId: number, roleIds: number[]): Promise<void> {
+    return this._admin.setUserRoles(userId, roleIds);
+  }
+
+  /** 사용자 활성화 상태 변경 */
+  setUserActive(userId: number, active: boolean): Promise<void> {
+    return this._admin.setUserActive(userId, active);
+  }
+
+  /** 역할 목록 조회 */
+  listRoles(): Promise<RoleResponse[]> {
+    return this._admin.listRoles();
+  }
+
+  /** 권한 목록 조회 */
+  listPermissions(params?: { category?: string }): Promise<PermissionResponse[]> {
+    return this._admin.listPermissions(params);
   }
 
   /**
