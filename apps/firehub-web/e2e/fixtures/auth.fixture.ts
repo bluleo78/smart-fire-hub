@@ -2,9 +2,9 @@ import { type Page,test as base } from '@playwright/test';
 import MCR from 'monocart-coverage-reports';
 
 import type { TokenResponse, UserResponse } from '../../src/types/auth';
-import { coverageOptions } from '../coverage-config';
 import type { RoleResponse } from '../../src/types/role';
 import type { UserDetailResponse } from '../../src/types/user';
+import { coverageOptions } from '../coverage-config';
 import { mockApi } from './api-mock';
 import { setupHomeMocks } from './base.fixture';
 
@@ -62,16 +62,18 @@ async function setupAuthMocks(page: Page) {
 }
 
 /**
- * 로그인 플로우를 실행하여 인증 상태를 만든다.
- * - 로그인 페이지 방문 → 자격증명 입력 → 로그인 버튼 클릭 → 홈 리다이렉트 대기
+ * localStorage 플래그 주입으로 로그인 UI 없이 인증 상태를 만든다.
+ *
+ * AuthContext는 localStorage의 'hasSession' 플래그가 있을 때만 refresh를 시도한다.
+ * addInitScript로 페이지 로드 전에 플래그를 주입하면, 앱이 마운트될 때 refresh 모킹을
+ * 통해 토큰을 획득하여 UI 로그인 플로우 없이 인증 상태 진입이 가능하다.
  */
-async function performLogin(page: Page) {
-  await page.goto('/login');
-  await page.getByLabel('아이디 (이메일)').fill('test@example.com');
-  await page.getByLabel('비밀번호').fill('testpassword123');
-  await page.getByRole('button', { name: '로그인' }).click();
-  // 로그인 성공 후 홈('/')으로 리다이렉트 대기
-  await page.waitForURL('/');
+async function enterAuthenticatedState(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem('hasSession', 'true');
+  });
+  // addInitScript는 모든 navigation에 적용되므로 별도 이동 불필요.
+  // 각 테스트가 자신의 타겟 페이지로 이동할 때 hasSession 플래그가 주입된다.
 }
 
 /** 커스텀 fixture 타입 정의 */
@@ -103,7 +105,7 @@ export const test = base.extend<AuthFixtures>({
 
   authenticatedPage: async ({ page }, use) => {
     await setupAuthMocks(page);
-    await performLogin(page);
+    await enterAuthenticatedState(page);
     await use(page);
   },
 

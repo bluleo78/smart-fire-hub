@@ -13,6 +13,11 @@ import { expect, test } from '../../fixtures/auth.fixture';
  *   홈 페이지 내에서 종 아이콘을 눌러 패널을 연다. (unreadCount 는 0이어도 상관없음)
  */
 test.describe('AI 인사이트 알림 패널', () => {
+  // 종 아이콘은 AppLayout 헤더에 있으므로 홈 페이지로 이동 후 테스트
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await page.goto('/', { waitUntil: 'commit' });
+  });
+
   /** 프로액티브 메시지 목록 모킹 데이터 — read/unread 혼합 */
   const messages = [
     {

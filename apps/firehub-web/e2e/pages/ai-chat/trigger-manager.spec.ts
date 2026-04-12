@@ -129,6 +129,8 @@ async function mockAiSessions(page: Page, sessionId: string) {
 
 /** AI 챗 사이드 패널 열기 */
 async function openChatPanel(page: Page) {
+  // AI 패널은 모든 인증 페이지에서 접근 가능 — 홈으로 이동 후 패널 열기
+  await page.goto("/", { waitUntil: "commit" });
   await page.getByText('AI 어시스턴트').first().click();
   await page
     .getByPlaceholder('메시지를 입력하세요...')

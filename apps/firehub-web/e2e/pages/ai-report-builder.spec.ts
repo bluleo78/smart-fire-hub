@@ -110,6 +110,8 @@ async function openChatAndSend(page: import('@playwright/test').Page, message: s
     },
   );
 
+  // AI 패널은 모든 인증 페이지에서 접근 가능 — 홈으로 이동 후 패널 열기
+  await page.goto('/', { waitUntil: 'commit' });
   // AI 어시스턴트 칩 클릭으로 사이드 패널 열기 (칩 label과 sr-only 2개 매치되므로 first)
   await page.getByText('AI 어시스턴트').first().click();
 
