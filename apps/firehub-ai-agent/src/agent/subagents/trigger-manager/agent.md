@@ -65,6 +65,8 @@ maxTurns: 20
 생성: create_trigger(pipelineId, name, triggerType, description?, config)
 수정: update_trigger(pipelineId, triggerId, name?, isEnabled?, description?, config?)
 
+**단순 isEnabled 토글은 Phase 2를 생략하고 바로 update_trigger를 호출한다.**
+
 삭제 시:
 1. list_triggers(pipelineId)로 해당 트리거 확인
 2. **사용자에게 트리거 이름과 함께 삭제 의사 재확인**: "'{name}' 트리거를 삭제합니다. 삭제 후 이 트리거로는 파이프라인이 실행되지 않습니다. 계속할까요?"
