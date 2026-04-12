@@ -572,3 +572,40 @@ describe('SL-ACM: api-connection-manager subagent integration', () => {
     expect(prompt).toContain('authConfig');
   });
 });
+
+describe('SL-TM: trigger-manager subagent integration', () => {
+  it('SL-TM-01: loads trigger-manager from real subagents directory', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    expect(agents['trigger-manager']).toBeDefined();
+    expect(agents['trigger-manager'].description).toContain('트리거');
+    expect(agents['trigger-manager'].tools).toContain('mcp__firehub__list_triggers');
+    expect(agents['trigger-manager'].tools).toContain('mcp__firehub__delete_trigger');
+  });
+
+  it('SL-TM-02: trigger-manager tools include all 4 MCP trigger tools', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const tools = agents['trigger-manager'].tools;
+    expect(tools).toContain('mcp__firehub__list_triggers');
+    expect(tools).toContain('mcp__firehub__create_trigger');
+    expect(tools).toContain('mcp__firehub__update_trigger');
+    expect(tools).toContain('mcp__firehub__delete_trigger');
+  });
+
+  it('SL-TM-03: trigger-manager prompt inlines rules.md and examples.md content', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['trigger-manager'].prompt;
+    // rules.md 핵심 키워드
+    expect(prompt).toContain('cronExpression');
+    // examples.md 핵심 키워드
+    expect(prompt).toContain('새벽 집계');
+  });
+});
