@@ -459,6 +459,21 @@ describe('Analytics MCP Tools', () => {
       expect(result.isError).toBeFalsy();
     });
 
+    it('should accept new chart types (HISTOGRAM, BOXPLOT, TREEMAP, FUNNEL, RADAR, WATERFALL, GAUGE, CANDLESTICK, HEATMAP)', async () => {
+      // 9종 신규 차트 타입이 Zod 검증을 통과하는지 확인
+      const newTypes = ['HISTOGRAM', 'BOXPLOT', 'HEATMAP', 'TREEMAP', 'FUNNEL', 'RADAR', 'WATERFALL', 'GAUGE', 'CANDLESTICK'] as const;
+      for (const chartType of newTypes) {
+        const result = await invokeTool(server, 'show_chart', {
+          sql: 'SELECT x, y FROM data."test"',
+          chartType,
+          config: { xAxis: 'x', yAxis: ['y'] },
+          columns: ['x', 'y'],
+          rows: [{ x: 'A', y: 100 }],
+        });
+        expect(result.isError, `chartType=${chartType} should not be an error`).toBeFalsy();
+      }
+    });
+
     it('should reject invalid chartType via Zod validation', async () => {
       const result = await invokeTool(server, 'show_chart', {
         sql: 'SELECT 1',
