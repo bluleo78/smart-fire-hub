@@ -221,9 +221,9 @@ test.describe('AI 챗 dashboard-builder', () => {
       .not.toBeNull();
     expect(capturedPayload).toMatchObject({ message: '대시보드 3번에 월별 피해액 차트 추가해줘' });
 
-    // 4. 응답에 차트/추가 관련 키워드 확인
+    // 4. 응답에 위젯 배치 정보 포함 확인 (차트명 + 크기 정보 검증)
     await expect(
-      page.getByText(/차트|추가|위젯|월별/).first(),
+      page.getByText(/월별 피해액 추이|6×4/).first(),
     ).toBeVisible({ timeout: 30_000 });
 
     // 5. 스크린샷

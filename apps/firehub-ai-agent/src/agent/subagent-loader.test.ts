@@ -641,9 +641,11 @@ describe('SL-DB: dashboard-builder subagent integration', () => {
     const agents = loadSubagents(realSubagentsDir);
 
     const prompt = agents['dashboard-builder'].prompt;
-    // rules.md 핵심 키워드
+    // rules.md 핵심 키워드 — 그리드 레이아웃 파라미터 + 12열 그리드 설명
     expect(prompt).toContain('positionX');
-    // examples.md 핵심 키워드
+    expect(prompt).toContain('12열 그리드');
+    // examples.md 핵심 키워드 — 대화 예시 + Phase 라벨
     expect(prompt).toContain('화재 현황 대시보드');
+    expect(prompt).toContain('Phase 3 — EXECUTE');
   });
 });
