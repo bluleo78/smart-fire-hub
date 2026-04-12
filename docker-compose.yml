@@ -14,3 +14,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # 테스트 전용 DB — 로컬 개발 DB(5432)와 분리하여 테스트 격리 보장
+  db-test:
+    image: imresamu/postgis:16-3.5
+    environment:
+      POSTGRES_DB: smartfirehub_test
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d smartfirehub_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

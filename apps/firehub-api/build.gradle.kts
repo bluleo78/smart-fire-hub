@@ -118,7 +118,7 @@ jooq {
             jooqConfiguration.apply {
                 jdbc.apply {
                     driver = "org.postgresql.Driver"
-                    url = "jdbc:postgresql://localhost:5432/smartfirehub"
+                    url = "jdbc:postgresql://smart-fire-hub-db-1.orb.local:5432/smartfirehub"
                     user = "app"
                     password = "app"
                 }

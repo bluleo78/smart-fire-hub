@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/smartfirehub_test
+    url: jdbc:postgresql://localhost:5433/smartfirehub_test
     username: app
     password: app
   flyway:
@@ -24,7 +24,7 @@ app:
     allowed-origins: http://localhost:5173
   pipeline:
     datasource:
-      url: jdbc:postgresql://localhost:5432/smartfirehub_test
+      url: jdbc:postgresql://localhost:5433/smartfirehub_test
       username: pipeline_executor
       password: pipeline_exec_pwd
   executor:

@@ -1,4 +1,4 @@
 npx lint-staged
 pnpm typecheck
 pnpm test:e2e
-cd apps/firehub-api && ./gradlew test
+cd apps/firehub-api && ./gradlew test -x generateJooq
