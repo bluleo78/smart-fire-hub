@@ -304,6 +304,10 @@ config 설정 규칙:
 - groupBy: 그룹화 컬럼 (선택)
 - stacked: 누적 차트 여부 (AREA/BAR에서 사용)
 - spatialColumn: MAP 차트 시 GEOMETRY 컬럼명 (필수)
+- bins: HISTOGRAM 구간 수 (기본 20)
+- valueColumn: HEATMAP 셀 색상 기준 컬럼명 (필수)
+- min/max/target: GAUGE 범위 및 목표값
+- open/high/low/close: CANDLESTICK 컬럼명 (기본 'open'/'high'/'low'/'close')
 
 show_chart rows 데이터 규칙:
 - rows에는 config에서 사용하는 컬럼만 포함하세요

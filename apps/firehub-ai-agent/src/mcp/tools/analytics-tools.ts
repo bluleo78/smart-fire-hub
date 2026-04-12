@@ -114,6 +114,16 @@ export function registerAnalyticsTools(
           groupBy: z.string().optional().describe('그룹화 컬럼명 (선택)'),
           stacked: z.boolean().optional().describe('스택형 차트 여부 (선택)'),
           spatialColumn: z.string().optional().describe('GEOMETRY 컬럼명 (MAP 차트 필수)'),
+          // 신규 차트 타입용 선택 필드
+          bins: z.number().optional().describe('HISTOGRAM: 구간 수 (기본 20)'),
+          valueColumn: z.string().optional().describe('HEATMAP: 셀 색상 기준 컬럼명'),
+          min: z.number().optional().describe('GAUGE: 최솟값'),
+          max: z.number().optional().describe('GAUGE: 최댓값'),
+          target: z.number().optional().describe('GAUGE: 목표값'),
+          open: z.string().optional().describe('CANDLESTICK: 시가 컬럼명'),
+          high: z.string().optional().describe('CANDLESTICK: 고가 컬럼명'),
+          low: z.string().optional().describe('CANDLESTICK: 저가 컬럼명'),
+          close: z.string().optional().describe('CANDLESTICK: 종가 컬럼명'),
         }),
         description: z.string().optional().describe('차트 설명'),
         isShared: z.boolean().optional().describe('다른 사용자와 공유 여부 (기본 false)'),
@@ -122,7 +132,9 @@ export function registerAnalyticsTools(
         name: string;
         savedQueryId: number;
         chartType: ChartTypeValue;
-        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string };
+        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string;
+          bins?: number; valueColumn?: string; min?: number; max?: number; target?: number;
+          open?: string; high?: string; low?: string; close?: string };
         description?: string;
         isShared?: boolean;
       }) => {
@@ -223,6 +235,16 @@ export function registerAnalyticsTools(
           groupBy: z.string().optional().describe('그룹화 컬럼명'),
           stacked: z.boolean().optional().describe('스택형 차트 여부'),
           spatialColumn: z.string().optional().describe('GEOMETRY 컬럼명 (MAP 차트 필수)'),
+          // 신규 차트 타입용 선택 필드
+          bins: z.number().optional().describe('HISTOGRAM: 구간 수 (기본 20)'),
+          valueColumn: z.string().optional().describe('HEATMAP: 셀 색상 기준 컬럼명'),
+          min: z.number().optional().describe('GAUGE: 최솟값'),
+          max: z.number().optional().describe('GAUGE: 최댓값'),
+          target: z.number().optional().describe('GAUGE: 목표값'),
+          open: z.string().optional().describe('CANDLESTICK: 시가 컬럼명'),
+          high: z.string().optional().describe('CANDLESTICK: 고가 컬럼명'),
+          low: z.string().optional().describe('CANDLESTICK: 저가 컬럼명'),
+          close: z.string().optional().describe('CANDLESTICK: 종가 컬럼명'),
         }),
         columns: z.array(z.string()).describe('결과 컬럼 목록'),
         rows: z.array(z.record(z.string(), z.unknown())).max(2000, '최대 2000행까지 지원합니다').describe('결과 데이터 행 배열 (최대 2000행)'),
@@ -231,7 +253,9 @@ export function registerAnalyticsTools(
       async (args: {
         sql: string;
         chartType: string;
-        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string };
+        config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string;
+          bins?: number; valueColumn?: string; min?: number; max?: number; target?: number;
+          open?: string; high?: string; low?: string; close?: string };
         columns: string[];
         rows: Record<string, unknown>[];
       }) => {
