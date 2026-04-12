@@ -48,6 +48,11 @@ import {
   type PermissionResponse,
   type UserPage,
 } from './api-client/admin-api.js';
+import {
+  createAuditApi,
+  type AuditLogResponse,
+  type AuditLogPage,
+} from './api-client/audit-api.js';
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -62,6 +67,7 @@ export class FireHubApiClient {
   private _proactive: ReturnType<typeof createProactiveApi>;
   private _dataImport: ReturnType<typeof createDataImportApi>;
   private _admin: ReturnType<typeof createAdminApi>;
+  private _audit: ReturnType<typeof createAuditApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -113,6 +119,7 @@ export class FireHubApiClient {
     this._proactive = createProactiveApi(this.client);
     this._dataImport = createDataImportApi(this.client);
     this._admin = createAdminApi(this.client);
+    this._audit = createAuditApi(this.client);
   }
 
   listCategories() {
@@ -461,6 +468,18 @@ export class FireHubApiClient {
   /** 권한 목록 조회 */
   listPermissions(params?: { category?: string }): Promise<PermissionResponse[]> {
     return this._admin.listPermissions(params);
+  }
+
+  /** 감사 로그 목록 조회 */
+  listAuditLogs(params?: {
+    search?: string;
+    actionType?: string;
+    resource?: string;
+    result?: string;
+    page?: number;
+    size?: number;
+  }): Promise<AuditLogPage> {
+    return this._audit.listAuditLogs(params);
   }
 
   /**
