@@ -18,6 +18,7 @@ import { registerUiTools } from './tools/ui-tools.js';
 import { registerProactiveTools } from './tools/proactive-tools.js';
 import { registerDataImportTools } from './tools/dataimport-tools.js';
 import { registerAdminTools } from './tools/admin-tools.js';
+import { registerAuditTools } from './tools/audit-tools.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -55,6 +56,7 @@ const PERMISSIONS = {
   ROLE_READ: 'role:read',
   ROLE_ASSIGN: 'role:assign',
   PERMISSION_READ: 'permission:read',
+  AUDIT_READ: 'audit:read',
 } as const;
 
 /**
@@ -74,6 +76,7 @@ const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   set_user_active: PERMISSIONS.USER_WRITE,
   list_roles: PERMISSIONS.ROLE_READ,
   list_permissions: PERMISSIONS.PERMISSION_READ,
+  list_audit_logs: PERMISSIONS.AUDIT_READ,
 };
 
 /**
@@ -135,6 +138,7 @@ export function registerAllTools(
     ...registerUiTools(safeToolFn, jsonResultFn),
     ...registerProactiveTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAdminTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerAuditTools(apiClient, safeToolFn, jsonResultFn),
   ];
   return filterToolsByPermissions(allTools, options.userPermissions);
 }
