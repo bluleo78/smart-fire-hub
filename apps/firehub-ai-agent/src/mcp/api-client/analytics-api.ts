@@ -84,6 +84,16 @@ export interface ChartConfig {
   groupBy?: string;
   stacked?: boolean;
   spatialColumn?: string;
+  // 신규 차트 타입용 선택 필드
+  bins?: number;           // HISTOGRAM: 구간 수
+  valueColumn?: string;    // HEATMAP: 셀 색상 기준 컬럼
+  min?: number;            // GAUGE: 최솟값
+  max?: number;            // GAUGE: 최댓값
+  target?: number;         // GAUGE: 목표값
+  open?: string;           // CANDLESTICK: 시가 컬럼
+  high?: string;           // CANDLESTICK: 고가 컬럼
+  low?: string;            // CANDLESTICK: 저가 컬럼
+  close?: string;          // CANDLESTICK: 종가 컬럼
 }
 
 export interface CreateChartParams {
