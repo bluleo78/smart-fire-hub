@@ -22,7 +22,7 @@
 | [Phase 5.6](#phase-56-uiux-일관성-강화--schemaexplorer-리디자인) | **완료** | 3/3 | UI 일관성 수정 + 컴포넌트 분리 + SchemaExplorer UX 리디자인 |
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
-| [Phase 5.10](#phase-510-ai-챗-데이터-플랫폼-전면-제어) | **진행 중** | 3/7 | 데이터셋 전담 서브에이전트 + data-analyst 서브에이전트 |
+| [Phase 5.10](#phase-510-ai-챗-데이터-플랫폼-전면-제어) | **완료** | 8/8 | 데이터셋·분석·연동·트리거·대시보드·운영 서브에이전트 7종 + 차트 타입 17종 확장 |
 | [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
 | [Phase 7](#phase-7-ai-리포트-고도화) | **완료** | 11/11 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
@@ -275,6 +275,7 @@
 - ✅ **5.10.5 dashboard-builder 서브에이전트** — 대시보드 생성·차트 위젯 추가·그리드 레이아웃 안내. 4단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM). 12열 그리드 자동 배치. 차트 타입별 권장 크기. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ✅ **5.10.6 admin-manager 서브에이전트** — 사용자 목록·상세 조회, 역할 교체, 계정 활성화/비활성화. 4단계 워크플로(IDENTIFY→DESIGN→EXECUTE→CONFIRM). MCP 도구 6개. 권한 게이팅 강화(user:read/role:assign/user:write). API 서브모듈 nock 테스트 7종. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
 - ✅ **5.10.7 audit-analyst 서브에이전트** — 감사 로그 조회·분석·이상 탐지. 4단계 워크플로(IDENTIFY→QUERY→ANALYZE→REPORT). MCP 도구 1개(list_audit_logs, audit:read 권한 게이팅). API 서브모듈 nock 테스트 4종. 서브에이전트 로더 테스트 3종. Playwright E2E 2종.
+- ✅ **5.10.8 차트 타입 17종 확장** — 9종 신규 차트(HISTOGRAM/BOXPLOT/HEATMAP/TREEMAP/FUNNEL/RADAR/WATERFALL/GAUGE/CANDLESTICK) 추가. Recharts 8종 + @nivo/heatmap 1종. ChartViewProps 공통 인터페이스. ChartBuilderPage 자동 추천 로직 확장(5종 휴리스틱). CHART_TYPE_LABELS 공유 상수화. analytics-tools.ts CHART_TYPE_VALUES 단일 상수화. 빈 데이터 가드(BoxPlot·Candlestick). data-analyst rules.md 차트 선택 기준 9종 추가. system-prompt 업데이트. Vitest TC 9종 + Playwright E2E 4종.
 
 ---
 
@@ -455,6 +456,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-04-12 | Phase 5.10 완료(8/8). 5.10.8 차트 타입 17종 확장: 9종 신규 차트 컴포넌트(Recharts 8 + @nivo/heatmap 1), ChartBuilderPage 자동 추천 5종 휴리스틱, CHART_TYPE_LABELS 공유 상수화, analytics-tools z.enum 중복 제거, 빈 데이터 가드, data-analyst 차트 선택 기준 확장, Vitest TC 9종 + Playwright E2E 4종. 스펙: docs/superpowers/specs/2026-04-12-chart-types-expansion-design.md, 플랜: docs/superpowers/plans/2026-04-12-chart-types-expansion.md. |
 | 2026-04-11 | Phase 5.10 시작 및 dataset-manager 서브에이전트(5.10.1) 완료. 데이터셋 삭제/컬럼 변경/CSV 임포트 MCP 도구 8종 + 권한 기반 파괴 도구 필터링 + dataset-manager 서브에이전트(GIS 자동 감지) + 참조 집계 API + E2E 시나리오 2종. 스펙: docs/superpowers/specs/2026-04-11-dataset-manager-subagent-design.md, 플랜: docs/superpowers/plans/2026-04-11-dataset-manager-subagent.md. |
 | 2026-04-06 | Phase 7-4 (이상 탐지) + 7-5 (비주얼 빌더) 완료. 7-4: anomaly_event 테이블(V47), 이벤트→DB 저장+SSE 알림, dataset 메트릭 executor 연동, 커스텀 메트릭 모달, 이상 탐지 이력 UI, 시스템 메트릭 버그 수정. 7-5: 그룹 간 자유 DnD 정렬, 11종 타입별 구조+가이드 미리보기. E2E 184개 + BE 669개 전체 통과. |
 | 2026-04-06 | Playwright E2E 테스트 강화 완료. 177개 테스트를 smoke-test에서 비즈니스 로직 검증 수준으로 전면 강화. mockApi 캡처 인프라 구축, 7개 도메인 31개 spec 파일에 payload 캡처/셀 수준 검증/필터 param/에러 상태/Zod 유효성 패턴 적용. 설계: `docs/superpowers/specs/2026-04-06-e2e-test-strengthening-design.md` |
