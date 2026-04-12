@@ -42,17 +42,12 @@ import {
 } from './api-client/analytics-api.js';
 import {
   createAdminApi,
-  type UserResponse,
   type UserDetailResponse,
   type RoleResponse,
   type PermissionResponse,
   type UserPage,
 } from './api-client/admin-api.js';
-import {
-  createAuditApi,
-  type AuditLogResponse,
-  type AuditLogPage,
-} from './api-client/audit-api.js';
+import { createAuditApi, type AuditLogPage } from './api-client/audit-api.js';
 
 export class FireHubApiClient {
   private client: AxiosInstance;
