@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "mkdir -p logs && lsof -ti:8080,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev 2>&1 | tee logs/dev-server.log",
-    "dev:full": "pnpm db:up && mkdir -p logs && lsof -ti:8080,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev 2>&1 | tee logs/dev-server.log",
+    "dev": "mkdir -p logs && lsof -ti:8090,8000,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev 2>&1 | tee logs/dev-server.log",
+    "dev:full": "pnpm db:up && mkdir -p logs && lsof -ti:8090,8000,3001,5173 | xargs kill -9 2>/dev/null; turbo run dev 2>&1 | tee logs/dev-server.log",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",

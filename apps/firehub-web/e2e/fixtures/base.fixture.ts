@@ -57,6 +57,13 @@ export async function setupHomeMocks(page: Page) {
   // 읽지 않은 AI 프로액티브 메시지 수 (0으로 모킹)
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+  // AI 세션 목록 — AppLayout이 항상 조회하므로 abort()로 proxy ECONNREFUSED 경고 억제
+  // mockApi로 성공 응답을 주면 AppLayout 리렌더링이 발생해 다른 테스트가 불안정해질 수 있음
+  await page.route(
+    (url) => url.pathname === '/api/v1/ai/sessions',
+    (route) => route.abort(),
+  );
+
   // 알림 SSE 스트림 — 백엔드 없이 테스트 시 proxy 에러 방지
   // abort()로 처리하면 EventSource가 지수 백오프로 재연결(빠른 루프 없음)
   await page.route(
