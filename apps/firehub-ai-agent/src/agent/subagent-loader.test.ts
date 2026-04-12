@@ -609,3 +609,41 @@ describe('SL-TM: trigger-manager subagent integration', () => {
     expect(prompt).toContain('새벽 집계');
   });
 });
+
+describe('SL-DB: dashboard-builder subagent integration', () => {
+  it('SL-DB-01: loads dashboard-builder from real subagents directory', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    expect(agents['dashboard-builder']).toBeDefined();
+    expect(agents['dashboard-builder'].description).toContain('대시보드');
+    expect(agents['dashboard-builder'].tools).toContain('mcp__firehub__create_dashboard');
+    expect(agents['dashboard-builder'].tools).toContain('mcp__firehub__add_chart_to_dashboard');
+  });
+
+  it('SL-DB-02: dashboard-builder tools include all 5 MCP tools', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const tools = agents['dashboard-builder'].tools;
+    expect(tools).toContain('mcp__firehub__create_dashboard');
+    expect(tools).toContain('mcp__firehub__list_dashboards');
+    expect(tools).toContain('mcp__firehub__list_charts');
+    expect(tools).toContain('mcp__firehub__add_chart_to_dashboard');
+    expect(tools).toContain('mcp__firehub__navigate_to');
+  });
+
+  it('SL-DB-03: dashboard-builder prompt inlines rules.md and examples.md content', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['dashboard-builder'].prompt;
+    // rules.md 핵심 키워드
+    expect(prompt).toContain('positionX');
+    // examples.md 핵심 키워드
+    expect(prompt).toContain('화재 현황 대시보드');
+  });
+});
