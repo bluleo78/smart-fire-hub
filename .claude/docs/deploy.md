@@ -20,5 +20,25 @@
 ## 운영 환경
 
 - 이미지 레지스트리: `ghcr.io/bluleo78/smart-fire-hub/{api,web,ai-agent}:latest`
-- 운영 디렉토리: `~/prod/smart-fire-hub/` (docker-compose.yml + nginx.conf + .env)
+- 운영 디렉토리: `~/prod/smart-fire-hub/` — **로컬 머신** (`$HOME/prod/smart-fire-hub/`). SSH 불필요.
 - 배포 후: `docker compose up -d --force-recreate {app}`
+
+### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
+
+```bash
+cd ~/prod/smart-fire-hub
+docker compose pull ai-agent web      # 이미지 갱신
+docker compose up -d --force-recreate ai-agent web
+docker compose ps                      # 상태 확인
+```
+
+### deploy.sh 사용 (빌드+push+배포 한번에)
+
+```bash
+./scripts/deploy.sh ai-agent   # ai-agent만
+./scripts/deploy.sh web        # web만
+./scripts/deploy.sh all        # 전체 (api 포함)
+```
+
+> **주의**: deploy.sh는 `--no-cache` multiplatform 빌드를 수행하므로 시간이 오래 걸린다.
+> 이미 이미지를 push한 경우 위의 부분 배포 방식이 더 빠르다.
