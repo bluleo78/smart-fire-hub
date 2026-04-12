@@ -151,7 +151,7 @@ test.describe('AI 챗 admin-manager', () => {
     expect(capturedPayload).toMatchObject({ message: '현재 등록된 사용자 목록 보여줘' });
 
     // 응답에 사용자 이름 표시 확인
-    await expect(page.getByText(/홍길동|김철수|사용자/).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/총 2명|홍길동/).first()).toBeVisible({ timeout: 30_000 });
 
     await page.screenshot({
       path: path.resolve(__dirname, '..', '..', '..', '..', '..', 'snapshots', 'admin-manager-user-list.png'),
@@ -189,7 +189,7 @@ test.describe('AI 챗 admin-manager', () => {
     expect(capturedPayload).toMatchObject({ message: '김철수를 ADMIN으로 바꿔줘' });
 
     // 응답에 역할 변경 결과 확인
-    await expect(page.getByText(/김철수|ADMIN|역할|변경/).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/ADMIN으로 변경|USER.*ADMIN/).first()).toBeVisible({ timeout: 30_000 });
 
     await page.screenshot({
       path: path.resolve(__dirname, '..', '..', '..', '..', '..', 'snapshots', 'admin-manager-role-change.png'),
