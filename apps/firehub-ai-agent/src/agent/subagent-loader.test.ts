@@ -690,3 +690,39 @@ describe('SL-AM: admin-manager subagent integration', () => {
     expect(prompt).toContain('Phase 3 — EXECUTE');
   });
 });
+
+describe('SL-AA: audit-analyst subagent integration', () => {
+  it('SL-AA-01: loads audit-analyst from real subagents directory', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    expect(agents['audit-analyst']).toBeDefined();
+    expect(agents['audit-analyst'].description).toContain('감사 로그');
+    expect(agents['audit-analyst'].tools).toContain('mcp__firehub__list_audit_logs');
+  });
+
+  it('SL-AA-02: audit-analyst tools include list_audit_logs', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const tools = agents['audit-analyst'].tools;
+    expect(tools).toContain('mcp__firehub__list_audit_logs');
+    expect(tools).toHaveLength(1);
+  });
+
+  it('SL-AA-03: audit-analyst prompt inlines rules.md and examples.md content', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['audit-analyst'].prompt;
+    // rules.md 핵심 키워드 — 권한 게이팅 표 + 이상 탐지 패턴
+    expect(prompt).toContain('audit:read');
+    expect(prompt).toContain('FAILURE');
+    // examples.md 핵심 키워드 — 대화 예시 + Phase 라벨
+    expect(prompt).toContain('홍길동');
+    expect(prompt).toContain('Phase 3 — ANALYZE');
+  });
+});
