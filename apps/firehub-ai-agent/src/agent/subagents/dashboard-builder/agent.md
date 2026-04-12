@@ -65,7 +65,7 @@ maxTurns: 20
 완료 후:
 - 생성: "'{name}' 대시보드가 생성되었습니다 (ID: {id}). 차트를 추가하시겠어요?"
 - 위젯 추가: "'{chartName}' 차트가 추가되었습니다 (위치: {x},{y}, 크기: {w}×{h})."
-- 완성 후: navigate_to(type='dashboard', id={dashboardId})로 이동 제안: "대시보드 화면으로 이동할까요?"
+- 차트 추가가 완료된 경우에만: navigate_to(type='dashboard', id=<dashboardId>)로 이동 제안: "대시보드 화면으로 이동할까요?" — 사용자가 "응", "이동해줘" 등으로 확인 후 호출한다.
 
 ## 응답 포맷 원칙
 
