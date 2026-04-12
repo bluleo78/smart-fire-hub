@@ -33,7 +33,7 @@ export function registerAdminTools(
       {
         userId: z.number().describe('사용자 ID'),
       },
-      async (args: { userId: number }) => {
+      async (args) => {
         const result = await apiClient.getUser(args.userId);
         return jsonResult(result);
       },
@@ -46,7 +46,7 @@ export function registerAdminTools(
         userId: z.number().describe('사용자 ID'),
         roleIds: z.array(z.number()).describe('할당할 역할 ID 목록 (기존 역할 전부 교체)'),
       },
-      async (args: { userId: number; roleIds: number[] }) => {
+      async (args) => {
         await apiClient.setUserRoles(args.userId, args.roleIds);
         return jsonResult({ success: true, userId: args.userId, roleIds: args.roleIds });
       },
@@ -59,7 +59,7 @@ export function registerAdminTools(
         userId: z.number().describe('사용자 ID'),
         active: z.boolean().describe('true: 활성화, false: 비활성화'),
       },
-      async (args: { userId: number; active: boolean }) => {
+      async (args) => {
         await apiClient.setUserActive(args.userId, args.active);
         return jsonResult({ success: true, userId: args.userId, active: args.active });
       },
@@ -81,7 +81,7 @@ export function registerAdminTools(
       {
         category: z.string().optional().describe('권한 카테고리 (예: user, role, dataset, pipeline, trigger)'),
       },
-      async (args: { category?: string }) => {
+      async (args) => {
         const result = await apiClient.listPermissions(
           args.category ? { category: args.category } : undefined,
         );
