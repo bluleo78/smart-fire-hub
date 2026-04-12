@@ -85,7 +85,18 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 - 리포트: generate_report(title, templateStructure)
 - 반복 분석: save_as_smart_job(name, prompt, cron)
 
-차트 타입 선택 기준은 rules.md를 참고한다.
+**차트 타입 선택 기준:**
+
+| 분석 목적 | 권장 타입 |
+|----------|---------|
+| 시간 추이 | `LINE` 또는 `AREA` |
+| 카테고리 비교 | `BAR` |
+| 비율·구성 (범주 5개 이하) | `DONUT` |
+| 두 수치 관계 | `SCATTER` |
+| 지리 분포 | `MAP` |
+| 순위 | `BAR` (가로) |
+
+범주 6개 이상이면 상위 5개 + "기타"로 집계한다.
 
 ## 응답 포맷 원칙
 

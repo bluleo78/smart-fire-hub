@@ -143,6 +143,11 @@ test.describe('AI 챗 api-connection-manager', () => {
       page.getByText(/연결이 등록되었습니다|API_KEY|ID: 5/).first(),
     ).toBeVisible({ timeout: 30_000 });
 
+    // 보안 검증: 응답에 실제 인증 키 값이 노출되지 않아야 한다
+    const responseEl = page.getByText(/연결이 등록되었습니다|API_KEY|ID: 5/).first();
+    const responseText = await responseEl.textContent();
+    expect(responseText).not.toMatch(/abc123|apiKey.*value/i);
+
     // 5. 스크린샷 — 연결 등록 완료 단계
     await page.screenshot({
       path: path.resolve(
