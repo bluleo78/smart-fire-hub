@@ -245,6 +245,78 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
   });
 });
 
+test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
+  test('임포트 API 409 충돌 — "이미 진행 중인 임포트가 있습니다." 토스트가 표시된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+
+    // 임포트 시작 API → 409 Conflict 반환
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports` && !url.pathname.includes('/preview') && !url.pathname.includes('/validate'),
+      (route) => {
+        if (route.request().method() === 'POST') {
+          return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'Import already in progress' }) });
+        }
+        return route.continue();
+      },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeEnabled({ timeout: 10_000 });
+
+    // 409 응답 수신 후 토스트 노출을 대기한다
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes(`/datasets/${DATASET_ID}/imports`) && r.status() === 409),
+      importBtn.click(),
+    ]);
+
+    // handleImport catch → axios.isAxiosError && status === 409 → toast.error
+    await expect(page.getByText('이미 진행 중인 임포트가 있습니다.')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('검증 결과 errorRows > 0 — 경고 토스트가 표시된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+    // 검증 API → errorRows: 2 반환
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      { totalRows: 2, validRows: 0, errorRows: 2, errors: [{ row: 1, message: '형식 오류' }] },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const validateBtn = page.getByRole('dialog').getByRole('button', { name: '검증' });
+    await expect(validateBtn).toBeVisible({ timeout: 10_000 });
+
+    // 검증 API 응답 후 경고 토스트를 대기한다
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/validate') && r.status() === 200),
+      validateBtn.click(),
+    ]);
+
+    // handleValidate → result.errorRows > 0 → toast.warning
+    await expect(page.getByText(/검증 완료.*2개의 오류/)).toBeVisible({ timeout: 5000 });
+  });
+});
+
 test.describe('데이터셋 변경 이력 탭', () => {
   test('임포트 이력이 있으면 이력 탭에 파일명과 상태가 표시된다', async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
