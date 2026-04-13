@@ -111,6 +111,60 @@ test.describe('AI 인사이트 알림 패널', () => {
     expect(req.url.pathname).toBe('/api/v1/proactive/messages/read-all');
   });
 
+  test('ESC 키로 패널이 닫힌다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/messages', []);
+
+    await page.getByRole('button', { name: bellSelector }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
+    await expect(dialog).toBeVisible();
+
+    // Escape 키 → onClose 호출 → 패널 닫힘
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test('상세 보기에서 ESC 키로 목록으로 돌아간다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+    await mockApi(page, 'PUT', '/api/v1/proactive/messages/1/read', {});
+
+    await page.getByRole('button', { name: bellSelector }).first().click();
+    await expect(page.getByText('데이터 품질 이상 감지')).toBeVisible();
+
+    // 첫 번째 메시지 클릭 → 상세 보기로 이동
+    await page.getByRole('button', { name: /데이터 품질 이상 감지/ }).click();
+    await expect(page.getByRole('button', { name: '목록으로 돌아가기' })).toBeVisible();
+
+    // 상세 보기 상태에서 Escape → 목록으로 복귀 (onClose 대신 setSelectedMessage(null))
+    await page.keyboard.press('Escape');
+    await expect(page.getByText('주간 데이터 요약 리포트')).toBeVisible({ timeout: 3000 });
+  });
+
+  test('읽음 메시지는 왼쪽 테두리 없이 표시된다', async ({ authenticatedPage: page }) => {
+    // read: true 메시지만 포함
+    const readMessages = [
+      {
+        id: 3,
+        userId: 1,
+        executionId: 200,
+        jobName: '주간 요약',
+        title: '읽은 알림 제목',
+        content: { summary: '이미 읽은 알림입니다.' },
+        messageType: 'PROACTIVE_INSIGHT',
+        read: true,
+        createdAt: new Date(Date.now() - 86400_000).toISOString(),
+      },
+    ];
+    await mockApi(page, 'GET', '/api/v1/proactive/messages', readMessages);
+
+    await page.getByRole('button', { name: bellSelector }).first().click();
+
+    // 읽음 알림 제목이 표시된다
+    await expect(page.getByText('읽은 알림 제목')).toBeVisible();
+
+    // read: true → unreadCount = 0 → "전체 읽음 처리" 버튼이 표시되지 않아야 한다
+    await expect(page.getByRole('button', { name: '전체 읽음 처리' })).not.toBeVisible();
+  });
+
   test('알림이 없으면 빈 상태 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/messages', []);
 

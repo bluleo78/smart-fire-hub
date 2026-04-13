@@ -117,6 +117,105 @@ test.describe('리포트 템플릿 섹션 트리 빌더', () => {
     expect(labelInput).toBeTruthy();
   });
 
+  test('섹션 삭제 버튼 클릭 시 해당 섹션이 트리에서 제거된다', async ({ authenticatedPage: page }) => {
+    await setupEditableTemplate(page);
+
+    await page.goto('/ai-insights/templates/10');
+    await expect(page.getByRole('heading', { name: '섹션 트리 편집 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 초기 섹션 카운트 2개 확인
+    await expect(page.getByText('2개', { exact: true }).first()).toBeVisible({ timeout: 10000 });
+
+    // "요약 섹션" 행을 hover 하여 삭제 버튼(Trash2) 클릭 (opacity-0 → force: true 필요)
+    const summaryItem = page.getByText('요약 섹션', { exact: true }).first();
+    await summaryItem.hover();
+    // 삭제 버튼은 Trash2 아이콘을 담은 ghost Button — 같은 행의 마지막 버튼
+    const summaryRow = summaryItem.locator('xpath=ancestor::div[contains(@class,"group")]').first();
+    await summaryRow.getByRole('button').last().click({ force: true });
+
+    // 카운트가 1개로 감소하고 "요약 섹션" 텍스트가 사라진다
+    await expect(page.getByText('1개', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('요약 섹션', { exact: true })).toHaveCount(0);
+  });
+
+  test('그룹 추가 후 접기/펴기 버튼으로 그룹 내 섹션이 숨겨지고 다시 표시된다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({
+      id: 10,
+      name: '섹션 트리 편집 템플릿',
+      builtin: false,
+      sections: [
+        createTemplateSection({ key: 'grp1', type: 'group', label: '분석 그룹', children: [
+          createTemplateSection({ key: 'child1', type: 'text', label: '자식 섹션' }),
+        ]}),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/10', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'PUT', '/api/v1/proactive/templates/10', { ...template });
+
+    await page.goto('/ai-insights/templates/10');
+    await expect(page.getByRole('heading', { name: '섹션 트리 편집 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 초기에 그룹과 자식 섹션이 모두 표시된다 (flatItems 2개)
+    await expect(page.getByText('분석 그룹').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('자식 섹션').first()).toBeVisible();
+    await expect(page.getByText('2개', { exact: true }).first()).toBeVisible();
+
+    // 그룹 행의 ChevronDown 버튼(접기 토글)을 클릭
+    const groupRow = page.getByText('분석 그룹').first().locator('xpath=ancestor::div[contains(@class,"group")]').first();
+    await groupRow.getByRole('button').first().click({ force: true });
+
+    // 접힌 상태 — 자식 섹션이 flatItems 에서 제거되어 "1개" 로 줄고 자식 텍스트가 사라진다
+    await expect(page.getByText('1개', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('자식 섹션', { exact: true })).toHaveCount(0);
+
+    // 다시 클릭하면 펼쳐진다
+    await groupRow.getByRole('button').first().click({ force: true });
+    await expect(page.getByText('2개', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('자식 섹션').first()).toBeVisible();
+  });
+
+  test('그룹에 자식 섹션 추가 시 그룹 안에 새 섹션이 생성된다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({
+      id: 10,
+      name: '섹션 트리 편집 템플릿',
+      builtin: false,
+      sections: [
+        createTemplateSection({ key: 'grp1', type: 'group', label: '분석 그룹', children: [] }),
+        createTemplateSection({ key: 'summary', type: 'text', label: '요약 섹션' }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/10', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'PUT', '/api/v1/proactive/templates/10', { ...template });
+
+    await page.goto('/ai-insights/templates/10');
+    await expect(page.getByRole('heading', { name: '섹션 트리 편집 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 초기 flatItems 2개 (그룹 + 요약 섹션)
+    await expect(page.getByText('2개', { exact: true }).first()).toBeVisible({ timeout: 10000 });
+
+    // 그룹 행의 "+" add-child 드롭다운 버튼 클릭 (opacity-0 → force)
+    const groupRow = page.getByText('분석 그룹').first().locator('xpath=ancestor::div[contains(@class,"group")]').first();
+    // + 버튼은 삭제 버튼 바로 앞의 버튼
+    const addChildBtn = groupRow.getByRole('button').nth(1);
+    await addChildBtn.click({ force: true });
+
+    // 드롭다운 메뉴에서 Text 선택
+    await page.getByRole('menuitem', { name: /Text/ }).click();
+
+    // flatItems 3개로 증가 (그룹 + 자식1 + 요약)
+    await expect(page.getByText('3개', { exact: true }).first()).toBeVisible();
+
+    // 새 자식 섹션이 트리에 표시된다
+    await expect(page.getByText('새 text 섹션').first()).toBeVisible();
+  });
+
   test('저장 시 편집한 sections 가 PUT payload 에 반영된다', async ({ authenticatedPage: page }) => {
     const { updateCapture } = await setupEditableTemplate(page);
 

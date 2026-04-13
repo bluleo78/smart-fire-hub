@@ -1,4 +1,5 @@
-import { createCategories, createDatasetDetail } from '../../factories/dataset.factory';
+import { createAdminUserDetail } from '../../factories/auth.factory';
+import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
@@ -156,5 +157,300 @@ test.describe('데이터셋 상세 페이지', () => {
 
     // 태그 추가 버튼(+ 아이콘 버튼, title="태그 추가") 확인
     await expect(page.locator('button[title="태그 추가"]')).toBeVisible();
+  });
+
+  test('GEOMETRY 컬럼이 있는 데이터셋은 "지도" 탭을 표시한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // GEOMETRY 타입 컬럼을 포함하는 데이터셋 모킹
+    const detail = createDatasetDetail({
+      id: 1,
+      columns: [
+        createColumn(),
+        createColumn({
+          id: 99,
+          columnName: 'geom',
+          displayName: 'Geometry',
+          dataType: 'GEOMETRY',
+          isPrimaryKey: false,
+          columnOrder: 1,
+        }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // hasGeometry=true → "지도" 탭이 표시되어야 한다
+    await expect(page.getByRole('tab', { name: '지도' })).toBeVisible();
+  });
+
+  test('GEOMETRY 컬럼 없는 데이터셋은 "지도" 탭을 표시하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // hasGeometry=false → "지도" 탭 없음
+    await expect(page.getByRole('tab', { name: '지도' })).not.toBeVisible();
+  });
+
+  test('CERTIFIED 상태 데이터셋은 인증 배지를 표시한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail = createDatasetDetail({
+      id: 1,
+      status: 'CERTIFIED',
+      statusNote: '공식 인증 데이터셋',
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // CERTIFIED 뱃지 확인 (소스: "✓ Certified")
+    await expect(page.getByText(/Certified/)).toBeVisible();
+    // statusNote 표시 확인
+    await expect(page.getByText('공식 인증 데이터셋')).toBeVisible();
+  });
+
+  test('DEPRECATED 상태 데이터셋은 사용 중단 배지를 표시한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail = createDatasetDetail({
+      id: 1,
+      status: 'DEPRECATED',
+      statusNote: '더 이상 사용되지 않는 데이터셋',
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // DEPRECATED 뱃지 확인 (소스: "Deprecated")
+    await expect(page.getByText('Deprecated')).toBeVisible();
+  });
+
+  test('태그 추가 — POST payload 검증', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+
+    const addTagCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/tags',
+      { id: 1, tags: ['테스트', '샘플', '신규태그'] },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 태그 추가 버튼(+) 클릭 → Popover 열기
+    await page.locator('button[title="태그 추가"]').click();
+
+    // 태그 입력 (Popover 내 input)
+    const tagInput = page.getByPlaceholder(/태그 입력|새 태그/);
+    await tagInput.fill('신규태그');
+
+    // Enter로 태그 추가 제출
+    await tagInput.press('Enter');
+
+    // POST payload 검증
+    const req = await addTagCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ tagName: '신규태그' });
+  });
+
+  test('기존 태그 X 버튼 클릭 — DELETE 호출 검증', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+
+    let removeTagCalled = false;
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/datasets/1/tags/'),
+      (route) => {
+        if (route.request().method() === 'DELETE') {
+          removeTagCalled = true;
+          return route.fulfill({ status: 204, body: '' });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // "테스트" 태그의 X 버튼 클릭 (태그 badge 내 X 아이콘)
+    const testTagBadge = page.locator('[data-slot="badge"]').filter({ hasText: '테스트' });
+    await testTagBadge.getByRole('button').click();
+
+    await expect.poll(() => removeTagCalled).toBe(true);
+  });
+
+  test('관리자는 상태 변경 버튼을 볼 수 있고 CERTIFIED로 변경할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 관리자 계정으로 users/me 오버라이드
+    await mockApi(page, 'GET', '/api/v1/users/me', createAdminUserDetail());
+    await setupDetailPageMocks(page, 1);
+
+    // PUT /api/v1/datasets/1/status 캡처
+    const statusCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/1/status',
+      { id: 1, status: 'CERTIFIED', statusNote: '공식 데이터셋' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 관리자에게만 보이는 "상태 변경" 버튼 확인
+    await expect(page.getByRole('button', { name: '상태 변경' })).toBeVisible();
+
+    // Popover 열기
+    await page.getByRole('button', { name: '상태 변경' }).click();
+
+    // CERTIFIED 선택
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: /인증됨|CERTIFIED/ }).click();
+
+    // 상태 노트 입력
+    await page.getByPlaceholder('상태 노트 (선택)').fill('공식 데이터셋');
+
+    // 저장 버튼 클릭
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // PUT payload 검증
+    const req = await statusCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ status: 'CERTIFIED' });
+  });
+
+  test('복제 버튼 클릭 시 복제 다이얼로그가 열리고 POST payload가 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+
+    // POST /api/v1/datasets/1/clone 모킹
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/clone',
+      createDatasetDetail({ id: 2, name: '테스트 데이터셋_copy', tableName: 'test_dataset_copy' }),
+      { capture: true },
+    );
+    // 복제 후 이동할 상세 페이지 모킹
+    await mockApi(page, 'GET', '/api/v1/datasets/2', createDatasetDetail({ id: 2, name: '테스트 데이터셋_copy', tableName: 'test_dataset_copy' }));
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 복제 버튼 클릭
+    await page.getByRole('button', { name: '복제' }).click();
+
+    // 복제 다이얼로그가 열려야 한다
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '데이터셋 복제' })).toBeVisible();
+
+    // 기본값 확인 — 이름에 "_copy" 접미사
+    const nameInput = page.getByLabel('데이터셋 이름 *');
+    await expect(nameInput).toHaveValue('테스트 데이터셋_copy');
+
+    // 복제 버튼 클릭 → POST 호출
+    await page.getByRole('dialog').getByRole('button', { name: '복제' }).click();
+
+    // payload 검증
+    const req = await cloneCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '테스트 데이터셋_copy',
+      tableName: 'test_dataset_copy',
+    });
+  });
+
+  test('복제 다이얼로그 — 테이블명 유효성 검사: 대문자 입력 시 에러 표시', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 복제 버튼 클릭
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 테이블명에 대문자 입력 (유효성 검사 실패 케이스)
+    const tableNameInput = page.getByLabel('테이블 이름 *');
+    await tableNameInput.clear();
+    await tableNameInput.fill('InvalidTable');
+
+    // 복제 버튼 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '복제' }).click();
+
+    // 유효성 에러 메시지 표시 확인
+    await expect(page.getByText(/영소문자로 시작/)).toBeVisible();
+  });
+
+  test('TEMP 타입 데이터셋은 임시 배지를 표시한다', async ({ authenticatedPage: page }) => {
+    const detail = createDatasetDetail({ id: 1, datasetType: 'TEMP' });
+    await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // TEMP 뱃지 확인 — 헤더의 text-xs 뱃지 (strict 모드: .first() 사용)
+    await expect(page.getByText('임시').first()).toBeVisible();
   });
 });

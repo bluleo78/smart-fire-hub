@@ -102,6 +102,65 @@ async function openChatPanel(page: Page) {
     .waitFor({ state: 'visible', timeout: 5000 });
 }
 
+/** SSE error 이벤트 시퀀스 */
+const ERROR_RESPONSE_EVENTS = [
+  sseEvent({ type: 'init', sessionId: 'data-analyst-session-err' }),
+  sseEvent({ type: 'error', message: '서버 내부 오류가 발생했습니다.' }),
+];
+
+/** compaction 이벤트 시퀀스 — started → completed → text */
+const COMPACTION_RESPONSE_EVENTS = [
+  sseEvent({ type: 'init', sessionId: 'data-analyst-session-compact' }),
+  sseEvent({ type: 'compaction', status: 'started' }),
+  sseEvent({ type: 'compaction', status: 'completed', preTokens: 45000 }),
+  sseEvent({
+    type: 'text',
+    content: '이전 대화를 요약한 후 분석을 재개합니다. 화재 데이터 분석 결과입니다.',
+  }),
+  sseEvent({ type: 'done', inputTokens: 5000 }),
+];
+
+/**
+ * tool_use → tool_result 이벤트 시퀀스
+ * MessageBubble의 ToolCallDisplay: hasResult=false → "실행 중...", hasResult=true → "✓ 완료"
+ */
+const TOOL_RESULT_RESPONSE_EVENTS = [
+  sseEvent({ type: 'init', sessionId: 'data-analyst-session-tool' }),
+  sseEvent({
+    type: 'tool_use',
+    toolName: 'mcp__firehub__get_row_count',
+    input: { datasetId: 5 },
+  }),
+  sseEvent({
+    type: 'tool_result',
+    toolName: 'mcp__firehub__get_row_count',
+    result: JSON.stringify({ totalRows: 8421 }),
+  }),
+  sseEvent({ type: 'text', content: '데이터셋에는 총 **8,421행**이 있습니다.' }),
+  sseEvent({ type: 'done', inputTokens: 150 }),
+];
+
+/**
+ * turn 이벤트 시퀀스 — commitTurn() 경로
+ * text → turn → text → done
+ */
+const TURN_RESPONSE_EVENTS = [
+  sseEvent({ type: 'init', sessionId: 'data-analyst-session-turn' }),
+  sseEvent({ type: 'text', content: '첫 번째 응답 내용입니다.' }),
+  sseEvent({ type: 'turn' }),
+  sseEvent({ type: 'text', content: '두 번째 응답 내용입니다.' }),
+  sseEvent({ type: 'done', inputTokens: 200 }),
+];
+
+/**
+ * max_turns_exceeded 오류 이벤트 시퀀스
+ * useAIChat error case: isMaxTurns → 별도 메시지 포맷
+ */
+const MAX_TURNS_RESPONSE_EVENTS = [
+  sseEvent({ type: 'init', sessionId: 'data-analyst-session-maxturn' }),
+  sseEvent({ type: 'error', message: 'max_turns_exceeded' }),
+];
+
 test.describe('AI 챗 data-analyst', () => {
   /**
    * DA-01: 분석 요청 → 응답에 분석 관련 키워드 포함 확인
@@ -224,5 +283,207 @@ test.describe('AI 챗 data-analyst', () => {
       ),
       fullPage: true,
     });
+  });
+
+  /**
+   * DA-03: SSE error 이벤트 수신 → 채팅창에 오류 메시지가 표시된다
+   * useAIChat의 'error' case: 오류 메시지를 assistant 메시지로 추가한다.
+   */
+  test('DA-03: SSE error 이벤트 → 오류 메시지가 채팅창에 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-err');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          },
+          body: ERROR_RESPONSE_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('오류 유발 테스트');
+    await chatInput.press('Enter');
+
+    // useAIChat error case: "오류: {message}" 형태로 assistant 메시지가 추가된다
+    await expect(
+      page.getByText(/오류|서버 내부 오류/).first(),
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
+  /**
+   * DA-04: compaction 이벤트 수신 → '자동으로 요약되었습니다' 시스템 메시지가 표시된다
+   * useAIChat의 compaction completed case: 시스템 메시지를 추가한다.
+   */
+  test('DA-04: compaction 완료 이벤트 → 요약 시스템 메시지가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-compact');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          },
+          body: COMPACTION_RESPONSE_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('긴 대화 후 컴팩션 테스트');
+    await chatInput.press('Enter');
+
+    // compaction completed → '컨텍스트가 길어져 자동으로 요약되었습니다.' 시스템 메시지
+    await expect(
+      page.getByText(/자동으로 요약/).first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    // compaction 후 이어지는 텍스트 응답도 표시되어야 한다
+    await expect(
+      page.getByText(/분석을 재개합니다/).first(),
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
+  /**
+   * DA-05-tool: tool_use → tool_result 이벤트 수신 흐름
+   * ToolCallDisplay: result 있을 때 완료 표시, tool label("행 수 조회") 렌더링.
+   * MessageBubble AssistantContent의 tool_use contentBlock 렌더링 경로를 커버한다.
+   */
+  test('DA-05-tool: tool_use → tool_result 이벤트 → 도구 호출 결과 표시', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-tool');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: TOOL_RESULT_RESPONSE_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('데이터셋 행 수 알려줘');
+    await chatInput.press('Enter');
+
+    // tool_use 이벤트 → ToolCallDisplay: TOOL_LABELS['get_row_count'] = '행 수 조회' 라벨 표시
+    await expect(page.getByText('행 수 조회').first()).toBeVisible({ timeout: 10_000 });
+
+    // 이어지는 텍스트 응답도 렌더링된다
+    await expect(page.getByText(/8,421행|8421/).first()).toBeVisible({ timeout: 10_000 });
+  });
+
+  /**
+   * DA-06-turn: turn 이벤트 수신 → commitTurn() 경로
+   * 두 번의 텍스트 응답이 모두 채팅창에 표시되어야 한다.
+   */
+  test('DA-06-turn: turn 이벤트 수신 → 멀티턴 응답이 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-turn');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: TURN_RESPONSE_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('멀티턴 테스트');
+    await chatInput.press('Enter');
+
+    // 첫 번째 턴과 두 번째 턴 텍스트가 모두 표시된다
+    await expect(page.getByText('첫 번째 응답 내용입니다.').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('두 번째 응답 내용입니다.').first()).toBeVisible({ timeout: 10_000 });
+  });
+
+  /**
+   * DA-07-maxturn: max_turns_exceeded 오류 이벤트
+   * useAIChat error case의 isMaxTurns 분기: 전용 메시지 텍스트 표시
+   */
+  test('DA-07-maxturn: max_turns_exceeded 오류 → 전용 안내 메시지가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-maxturn');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: MAX_TURNS_RESPONSE_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('턴 초과 테스트');
+    await chatInput.press('Enter');
+
+    // max_turns_exceeded → "대화 턴 수가 초과되었습니다..." 안내 메시지
+    await expect(
+      page.getByText(/턴 수가 초과|이어서 대화/).first(),
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
+
+  /**
+   * DA-05: 새 세션 시작 → 메시지 목록이 초기화되고 빈 상태 문구가 표시된다
+   * useAIChat.startNewSession(): messages/currentSessionId/streamingMessage를 모두 초기화한다.
+   */
+  test('DA-05: 새 세션 시작 → 채팅 내용이 초기화된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-1');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: ANALYSIS_RESPONSE_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+
+    // 메시지 전송하여 내용을 쌓는다
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('초기화 전 메시지');
+    await chatInput.press('Enter');
+    // 응답이 표시될 때까지 대기
+    await expect(page.getByText(/테이블|컬럼|분석|쿼리|데이터셋/).first()).toBeVisible({ timeout: 15_000 });
+
+    // AIChatPanel 헤더의 SessionSwitcher "새 대화" 버튼 클릭 (Plus 아이콘 + "새 대화" 텍스트)
+    await page.getByRole('button', { name: '새 대화' }).click();
+
+    // 새 세션 후 빈 상태 메시지가 표시되어야 한다
+    await expect(page.getByText('AI 어시스턴트에게 물어보세요')).toBeVisible({ timeout: 3000 });
   });
 });

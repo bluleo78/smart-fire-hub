@@ -151,4 +151,188 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     // TextStats 의 경우 top values 표시 (Alice 등장 횟수 20)
     await expect(page.getByText('Alice').first()).toBeVisible();
   });
+
+  test('숫자 컬럼 확장 시 최솟값/최댓값/평균값이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // amount 컬럼(INTEGER, stats 있음) 행의 확장 버튼 클릭
+    const rows = page.getByRole('row');
+    const amountRow = rows.filter({ hasText: 'amount' }).first();
+    await amountRow.getByRole('button').first().click();
+
+    // ColumnExpandedStats — 숫자 컬럼의 최솟값/최댓값/평균값 카드 확인
+    await expect(page.getByText('최솟값').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('최댓값').first()).toBeVisible();
+    await expect(page.getByText('평균값').first()).toBeVisible();
+
+    // stats mock: minValue='10', maxValue='1000', avgValue=305.5
+    await expect(page.getByText('10').first()).toBeVisible();
+    await expect(page.getByText('1000').first()).toBeVisible();
+    await expect(page.getByText('305.50').first()).toBeVisible();
+  });
+
+  test('NullProgressBar — nullPercent 가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // name 컬럼 stats: nullPercent=5 → "5.0%" 텍스트가 NullProgressBar 에 표시된다
+    await expect(page.getByText('5.0%')).toBeVisible({ timeout: 5000 });
+    // amount 컬럼 stats: nullPercent=0 → "0.0%"
+    await expect(page.getByText('0.0%').first()).toBeVisible();
+  });
+
+  test('필드 순서 위로 이동 버튼 클릭 시 reorder API 가 호출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    // 컬럼 순서 변경 API 캡처 모킹
+    const reorderCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/5/columns/reorder',
+      {},
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // "name" 행(index=1) 의 위로 이동 버튼(ChevronUp) — 행 내 두 번째 버튼
+    // 버튼 순서: expand(0), ChevronUp(1), ChevronDown(2), Pencil(3), Trash2(4)
+    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
+    const upBtn = nameRow.getByRole('button').nth(1); // ChevronUp
+    await upBtn.click();
+
+    // reorder PUT 이 호출되는지 검증
+    const req = await reorderCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/datasets/5/columns/reorder');
+  });
+
+  test('필드 삭제 버튼 클릭 시 삭제 확인 다이얼로그가 열린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // "amount" 행(index=2, ChevronDown 비활성화)의 Trash2 버튼
+    // 버튼 순서: expand(0), ChevronUp(1), ChevronDown(2), Pencil(3), Trash2(4)
+    const amountRow = page.getByRole('row').filter({ hasText: 'amount' }).first();
+    const deleteBtn = amountRow.getByRole('button').nth(4); // Trash2
+    await deleteBtn.click();
+
+    // 삭제 확인 AlertDialog 가 열린다 (role="alertdialog")
+    await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('필드 삭제')).toBeVisible();
+  });
+
+  test('필드 추가 다이얼로그 — VARCHAR 타입 선택 시 최대 길이 입력 필드가 나타난다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: '필드 추가' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 기본 타입(TEXT)에서는 최대 길이 필드가 없다
+    await expect(page.getByLabel('최대 길이 *')).not.toBeVisible();
+
+    // ColumnTypeSelect — combobox 클릭 후 VARCHAR 선택
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '문자열(크기지정)' }).click();
+
+    // VARCHAR 선택 후 최대 길이 필드가 나타난다
+    await expect(page.getByLabel('최대 길이 *')).toBeVisible();
+  });
+
+  test('필드 추가 — POST payload 검증 (필드명·타입·nullable)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    // POST /api/v1/datasets/5/columns 캡처 모킹
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/5/columns',
+      { id: 10, columnName: 'score', displayName: '점수', dataType: 'INTEGER',
+        maxLength: null, isNullable: true, isIndexed: false, isPrimaryKey: false,
+        description: null, columnOrder: 3 },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: '필드 추가' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 필드명 입력
+    await page.getByLabel('필드명 *').fill('score');
+    // 표시명 입력
+    await page.getByLabel('표시명').fill('점수');
+    // 타입 변경 — INTEGER 선택
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '정수' }).click();
+
+    // 추가 버튼 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // POST payload 검증
+    const req = await addCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      columnName: 'score',
+      displayName: '점수',
+      dataType: 'INTEGER',
+    });
+  });
+
+  test('필드 편집 버튼 클릭 시 ColumnDialog(edit) 가 열리고 기존 값이 채워진다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // "name" 행의 Pencil(편집) 버튼 — 버튼 순서: expand(0), Up(1), Down(2), Pencil(3), Trash(4)
+    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
+    const editBtn = nameRow.getByRole('button').nth(3); // Pencil
+    await editBtn.click();
+
+    // 편집 다이얼로그가 열린다
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '필드 수정' })).toBeVisible();
+
+    // 기존 필드명이 입력 필드에 채워져 있다
+    await expect(page.getByLabel('필드명 *')).toHaveValue('name');
+  });
 });

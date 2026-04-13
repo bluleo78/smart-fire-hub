@@ -244,6 +244,166 @@ describe('pipelineEditorReducer', () => {
     });
   });
 
+  describe('INSERT_STEP_BETWEEN', () => {
+    it('두 스텝 사이에 새 스텝을 삽입하고 의존성을 재연결한다', () => {
+      const a = createDefaultStep({ x: 0, y: 0 });
+      const b = createDefaultStep({ x: 400, y: 0 });
+      b.dependsOnTempIds = [a.tempId];
+      state = { ...state, steps: [a, b] };
+
+      const next = dispatch(state, {
+        type: 'INSERT_STEP_BETWEEN',
+        payload: { sourceTempId: a.tempId, targetTempId: b.tempId },
+      });
+
+      expect(next.steps).toHaveLength(3);
+      const inserted = next.steps.find(
+        (s) => s.tempId !== a.tempId && s.tempId !== b.tempId,
+      )!;
+      expect(inserted).toBeDefined();
+      expect(inserted.dependsOnTempIds).toContain(a.tempId);
+
+      const updatedB = next.steps.find((s) => s.tempId === b.tempId)!;
+      expect(updatedB.dependsOnTempIds).toContain(inserted.tempId);
+      expect(updatedB.dependsOnTempIds).not.toContain(a.tempId);
+
+      expect(next.selectedStepId).toBe(inserted.tempId);
+      expect(next.isDirty).toBe(true);
+    });
+
+    it('source 또는 target이 존재하지 않으면 state 변경 없음', () => {
+      const a = createDefaultStep({ x: 0, y: 0 });
+      state = { ...state, steps: [a] };
+
+      const next = dispatch(state, {
+        type: 'INSERT_STEP_BETWEEN',
+        payload: { sourceTempId: a.tempId, targetTempId: 'missing' },
+      });
+      expect(next).toBe(state);
+
+      const next2 = dispatch(state, {
+        type: 'INSERT_STEP_BETWEEN',
+        payload: { sourceTempId: 'missing', targetTempId: a.tempId },
+      });
+      expect(next2).toBe(state);
+    });
+  });
+
+  describe('AUTO_LAYOUT', () => {
+    it('스텝이 없으면 state 변경 없음', () => {
+      const next = dispatch(state, { type: 'AUTO_LAYOUT' });
+      expect(next).toBe(state);
+    });
+
+    it('스텝이 있으면 레이아웃이 적용된다', () => {
+      const a = createDefaultStep({ x: 0, y: 0 });
+      const b = createDefaultStep({ x: 0, y: 0 });
+      b.dependsOnTempIds = [a.tempId];
+      state = { ...state, steps: [a, b] };
+
+      const next = dispatch(state, { type: 'AUTO_LAYOUT' });
+      // dagre mock은 index * 100 으로 x 위치를 설정한다
+      expect(next.steps[0].position.x).toBe(0);
+      expect(next.steps[1].position.x).toBe(100);
+    });
+  });
+
+  describe('LOAD_FROM_API', () => {
+    it('API 응답에서 상태를 로드하고 의존성 매핑이 올바르다', () => {
+      const payload = {
+        id: 5,
+        name: '로드 테스트 파이프라인',
+        description: '설명',
+        isActive: true,
+        steps: [
+          {
+            name: 'step-a',
+            description: 'A 설명',
+            scriptType: 'SQL' as const,
+            scriptContent: 'SELECT 1',
+            outputDatasetId: null,
+            inputDatasetIds: [],
+            dependsOnStepNames: [],
+            loadStrategy: 'REPLACE',
+            apiConfig: undefined,
+            aiConfig: undefined,
+            pythonConfig: undefined,
+            apiConnectionId: null,
+          },
+          {
+            name: 'step-b',
+            description: 'B 설명',
+            scriptType: 'PYTHON' as const,
+            scriptContent: 'print(1)',
+            outputDatasetId: 10,
+            inputDatasetIds: [1],
+            dependsOnStepNames: ['step-a'],
+            loadStrategy: 'APPEND',
+            apiConfig: undefined,
+            aiConfig: undefined,
+            pythonConfig: { requirements: 'pandas' },
+            apiConnectionId: null,
+          },
+        ],
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        createdBy: '테스트 사용자',
+        updatedBy: '테스트 사용자',
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const next = dispatch(state, { type: 'LOAD_FROM_API', payload: payload as any });
+
+      expect(next.name).toBe('로드 테스트 파이프라인');
+      expect(next.pipelineId).toBe(5);
+      expect(next.isDirty).toBe(false);
+      expect(next.steps).toHaveLength(2);
+
+      const stepA = next.steps.find((s) => s.name === 'step-a')!;
+      const stepB = next.steps.find((s) => s.name === 'step-b')!;
+      expect(stepA).toBeDefined();
+      expect(stepB).toBeDefined();
+      expect(stepB.dependsOnTempIds).toContain(stepA.tempId);
+      expect(stepB.pythonConfig).toEqual({ requirements: 'pandas' });
+    });
+
+    it('API_CALL 스텝 타입도 올바르게 로드된다', () => {
+      const payload = {
+        id: 6,
+        name: 'API 파이프라인',
+        description: '',
+        isActive: false,
+        steps: [
+          {
+            name: 'api-step',
+            description: '',
+            scriptType: 'API_CALL' as const,
+            scriptContent: '',
+            outputDatasetId: null,
+            inputDatasetIds: [],
+            dependsOnStepNames: [],
+            loadStrategy: 'REPLACE',
+            apiConfig: { url: 'https://example.com', method: 'GET' },
+            aiConfig: undefined,
+            pythonConfig: undefined,
+            apiConnectionId: 3,
+          },
+        ],
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        createdBy: '테스트 사용자',
+        updatedBy: '테스트 사용자',
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const next = dispatch(state, { type: 'LOAD_FROM_API', payload: payload as any });
+      expect(next.isActive).toBe(false);
+      expect(next.steps[0].scriptType).toBe('API_CALL');
+      expect(next.steps[0].apiConfig).toEqual({ url: 'https://example.com', method: 'GET' });
+      expect(next.steps[0].apiConnectionId).toBe(3);
+    });
+  });
+
   describe('default case', () => {
     it('알 수 없는 액션은 state 그대로', () => {
       // @ts-expect-error - intentional unknown action

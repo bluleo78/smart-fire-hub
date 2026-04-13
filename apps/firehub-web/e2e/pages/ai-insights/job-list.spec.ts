@@ -103,6 +103,60 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '비활성' })).toBeVisible();
   });
 
+  test('작업 활성/비활성 토글 — PUT payload 검증', async ({ authenticatedPage: page }) => {
+    // enabled: true 인 작업으로 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 1, name: '잡 1', enabled: true }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    // PUT /api/v1/proactive/jobs/1 캡처 설정 — goto 이전에 등록해야 한다
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/proactive/jobs/1',
+      createJob({ id: 1, name: '잡 1', enabled: false }),
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs');
+
+    // 활성화 스위치 클릭 (현재 enabled=true → false 로 전환)
+    const toggle = page.getByRole('switch', { name: '잡 1 활성화' });
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+
+    // PUT API payload 검증 — enabled: false 가 전달되어야 한다
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ enabled: false });
+  });
+
+  test('작업 실행 — POST API 호출 검증', async ({ authenticatedPage: page }) => {
+    // 작업 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 1, name: '잡 1', enabled: true }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    // POST /api/v1/proactive/jobs/1/execute 캡처 설정
+    const executeCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs/1/execute',
+      {},
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs');
+
+    // 지금 실행 버튼(aria-label="지금 실행") 클릭
+    await page.getByRole('button', { name: '지금 실행' }).click();
+
+    // POST API가 실제로 호출되었는지 확인
+    const req = await executeCapture.waitForRequest();
+    expect(req).toBeTruthy();
+  });
+
   test('작업 행 클릭 시 작업 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupJobListMocks(page, 2);
     // 작업 상세 페이지에서 필요한 API 모킹 — createJob({ id: 1 }) 기본값: name='매일 현황 리포트'
@@ -120,5 +174,61 @@ test.describe('스마트 작업 목록 페이지', () => {
 
     // 상세 페이지에서 팩토리 기본값 작업명 '매일 현황 리포트'가 표시되는지 확인
     await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+  });
+
+  test('작업 복제 버튼 클릭 시 POST /jobs API 가 호출된다 (createJob 으로 복제)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 1, name: '잡 1', enabled: true }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    // useCloneProactiveJob 은 proactiveApi.createJob(POST /proactive/jobs) 를 호출한다
+    const clonedJob = createJob({ id: 2, name: '잡 1 (복사본)' });
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      clonedJob,
+      { capture: true },
+    );
+    // 복제 후 이동하는 상세 페이지 API 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2', clonedJob);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+
+    await page.goto('/ai-insights/jobs');
+
+    // 복제 버튼 클릭 (aria-label="복제")
+    await page.getByRole('button', { name: '복제' }).click();
+
+    // POST API 호출 확인 — 이름에 "(복사본)" 포함
+    const req = await cloneCapture.waitForRequest();
+    expect((req.payload as { name?: string })?.name).toContain('복사본');
+  });
+
+  test('FAILED 상태 작업에 "실패" 배지가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({
+        id: 1,
+        name: '실패 작업',
+        enabled: true,
+        lastExecution: {
+          id: 1,
+          jobId: 1,
+          status: 'FAILED',
+          result: null,
+          deliveredChannels: [],
+          errorMessage: '오류 발생',
+          startedAt: '2024-01-01T09:00:00Z',
+          completedAt: '2024-01-01T09:00:10Z',
+        },
+      }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    // "실패" 배지 확인
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toBeVisible();
   });
 });

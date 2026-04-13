@@ -155,4 +155,99 @@ test.describe('역할 관리 페이지', () => {
     // 권한 저장 버튼 확인
     await expect(page.getByRole('button', { name: '권한 저장' })).toBeVisible();
   });
+
+  test('권한 토글 — 퍼미션 체크박스 클릭 시 권한 목록이 업데이트된다', async ({ authenticatedPage: page }) => {
+    // isSystem=false 역할(EDITOR)의 상세 모킹 — 초기 권한: DATASET_READ(id=1), DATASET_WRITE(id=2)
+    await setupRoleDetailMocks(page, 3, false);
+    await page.goto('/admin/roles/3');
+
+    // DATASET_READ 권한 체크박스 확인 — 초기 체크 상태 (createRoleDetail 기본값 포함)
+    // 체크박스 id는 perm-{permId} 형식이며, Label의 htmlFor로 연결된다
+    const datasetReadCheckbox = page.getByRole('checkbox', { name: /DATASET_READ/ });
+    await expect(datasetReadCheckbox).toBeVisible();
+
+    // PIPELINE_READ 권한은 초기에 체크되지 않은 상태여야 한다 (역할에 미포함)
+    const pipelineReadCheckbox = page.getByRole('checkbox', { name: /PIPELINE_READ/ });
+    await expect(pipelineReadCheckbox).not.toBeChecked();
+
+    // PIPELINE_READ 체크박스 클릭 → 선택 상태로 변경
+    await pipelineReadCheckbox.click();
+
+    // 클릭 후 체크 상태로 변경되었는지 확인
+    await expect(pipelineReadCheckbox).toBeChecked();
+  });
+
+  test('권한 저장 — PUT payload 검증', async ({ authenticatedPage: page }) => {
+    // isSystem=false 역할(EDITOR) 상세 모킹
+    await setupRoleDetailMocks(page, 3, false);
+
+    // PUT /api/v1/roles/3/permissions 캡처 설정 — goto 이전에 등록해야 한다
+    const saveCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3/permissions',
+      { id: 3, name: 'EDITOR', permissions: [] },
+      { capture: true },
+    );
+    // 저장 후 역할 재조회 모킹 — handleSavePermissions에서 getRoleById 재호출
+    await setupRoleDetailMocks(page, 3, false);
+
+    await page.goto('/admin/roles/3');
+
+    // 권한 저장 버튼 클릭 → PUT /api/v1/roles/3/permissions 호출
+    await page.getByRole('button', { name: '권한 저장' }).click();
+
+    // API payload 검증 — permissionIds 배열이 전달되어야 한다
+    const req = await saveCapture.waitForRequest();
+    expect(req.payload).toHaveProperty('permissionIds');
+    expect(Array.isArray((req.payload as { permissionIds: number[] }).permissionIds)).toBe(true);
+
+    // 성공 토스트 확인 — handleSavePermissions 성공 경로 (lines 118-120)
+    await expect(page.getByText('권한이 저장되었습니다.')).toBeVisible({ timeout: 3000 });
+  });
+
+  test('역할 정보 저장 — PUT payload 및 성공 토스트 검증', async ({ authenticatedPage: page }) => {
+    // isSystem=false 역할(EDITOR) 상세 모킹
+    await setupRoleDetailMocks(page, 3, false);
+
+    // PUT /api/v1/roles/3 캡처 설정
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3',
+      { id: 3, name: 'EDITOR_NEW', description: '편집자 역할', isSystem: false, permissions: [] },
+      { capture: true },
+    );
+
+    await page.goto('/admin/roles/3');
+    await expect(page.getByRole('heading', { name: '역할 상세' })).toBeVisible();
+
+    // 역할 이름 변경
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.clear();
+    await nameInput.fill('EDITOR_NEW');
+
+    // 저장 버튼(type=submit) 클릭 — onRoleSubmit 실행 (lines 89-99)
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // PUT payload 검증
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: 'EDITOR_NEW' });
+
+    // 성공 토스트 확인 (line 99)
+    await expect(page.getByText('역할 정보가 업데이트되었습니다.')).toBeVisible({ timeout: 3000 });
+  });
+
+  test('역할 정보 로드 실패 시 에러 토스트가 표시된다', async ({ authenticatedPage: page }) => {
+    // 역할 API 500 에러 → fetchData catch 분기 (lines 61-62)
+    await mockApi(page, 'GET', '/api/v1/roles/1', { message: '서버 오류' }, { status: 500 });
+    await mockApi(page, 'GET', '/api/v1/permissions', []);
+    // 에러 후 /admin/roles 로 이동하므로 역할 목록도 모킹
+    await setupRoleListMocks(page);
+
+    await page.goto('/admin/roles/1');
+
+    // 에러 토스트 확인 (line 61) — Sonner는 동일 메시지 토스트를 중복 렌더링할 수 있으므로 first() 사용
+    await expect(page.getByText('역할 정보를 불러오는데 실패했습니다.').first()).toBeVisible({ timeout: 5000 });
+  });
 });

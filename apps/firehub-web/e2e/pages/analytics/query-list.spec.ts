@@ -131,4 +131,75 @@ test.describe('쿼리 목록 페이지', () => {
     // "공유" 뱃지 확인
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: /^공유$/ })).toBeVisible();
   });
+
+  test('검색 입력 시 API가 search 파라미터와 함께 재호출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryListMocks(page, 3);
+    await page.goto('/analytics/queries');
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+
+    // 검색 결과 API 캡처 (search param 포함)
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([createSavedQueryListItem({ id: 1, name: '화재 분석 쿼리' })]),
+      { capture: true },
+    );
+
+    // 검색창에 텍스트 입력
+    await page.getByPlaceholder(/검색|search/i).fill('화재');
+
+    // API 재호출 확인 (검색 파라미터 포함)
+    const req = await capture.waitForRequest();
+    expect(req.url.searchParams.get('search')).toBe('화재');
+  });
+
+  test('폴더 필터 선택 시 API가 folder 파라미터와 함께 재호출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 폴더 목록이 있는 설정
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([createSavedQueryListItem({ id: 1, folder: '분석' })]),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['분석', '보고서']);
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+
+    // 폴더 필터 드롭다운 캡처
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([]),
+      { capture: true },
+    );
+
+    // 폴더 선택 드롭다운 클릭
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '분석' }).click();
+
+    // API 재호출 확인 (folder 파라미터 포함)
+    const req = await capture.waitForRequest();
+    expect(req.url.searchParams.get('folder')).toBe('분석');
+  });
+
+  test('쿼리 이름 클릭 시 에디터 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 2);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQueryListItem({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByText('저장 쿼리 1')).toBeVisible();
+
+    // 쿼리 이름 클릭 → 에디터 페이지로 이동
+    await page.getByText('저장 쿼리 1').click();
+
+    await expect(page).toHaveURL(/\/analytics\/queries\/1/);
+  });
 });

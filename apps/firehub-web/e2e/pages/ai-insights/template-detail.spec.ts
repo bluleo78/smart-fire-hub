@@ -198,6 +198,109 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await expect(page.getByText('2개 섹션')).toBeVisible({ timeout: 10000 });
   });
 
+  test('편집 모드 → JSON 탭으로 전환 시 CodeMirror 에디터가 렌더링된다', async ({ authenticatedPage: page }) => {
+    // builtin: false 커스텀 템플릿으로 모킹 — 편집 버튼이 표시되어야 한다
+    const template = createTemplate({ id: 5, name: 'JSON 탭 테스트 템플릿', builtin: false });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/5', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates/5');
+    await expect(page.getByRole('heading', { name: 'JSON 탭 테스트 템플릿' })).toBeVisible({ timeout: 10000 });
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // JSON 탭 클릭
+    await expect(page.getByRole('tab', { name: 'JSON' })).toBeVisible();
+    await page.getByRole('tab', { name: 'JSON' }).click();
+
+    // TemplateJsonEditor(CodeMirror)가 렌더링되어야 한다 — cm-editor 클래스 확인
+    await expect(page.locator('.cm-editor').first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('편집 모드 JSON 탭 → 빌더 탭 전환 시 섹션이 동기화된다', async ({ authenticatedPage: page }) => {
+    // 섹션이 있는 커스텀 템플릿 모킹
+    const template = createTemplate({
+      id: 6,
+      name: '빌더-JSON 동기화 테스트',
+      builtin: false,
+      sections: [
+        createTemplateSection({ key: 'summary', label: '요약 섹션' }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/6', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates/6');
+    await expect(page.getByRole('heading', { name: '빌더-JSON 동기화 테스트' })).toBeVisible({ timeout: 10000 });
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // JSON 탭으로 전환
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    await expect(page.locator('.cm-editor').first()).toBeVisible({ timeout: 5000 });
+
+    // 빌더 탭으로 돌아가기 — handleTabChange에서 JSON→builder 동기화 로직 실행
+    await page.getByRole('tab', { name: '빌더' }).click();
+
+    // 빌더 탭이 활성화되어야 한다
+    await expect(page.getByRole('tab', { name: '빌더' })).toHaveAttribute('data-state', 'active');
+    // 섹션 이름이 여전히 표시되어야 한다
+    await expect(page.getByText('요약 섹션').first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('JSON 탭에서 섹션 추가 버튼이 표시된다', async ({ authenticatedPage: page }) => {
+    // 커스텀 템플릿으로 모킹
+    const template = createTemplate({ id: 7, name: '섹션 추가 테스트', builtin: false });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/7', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates/7');
+    await expect(page.getByRole('heading', { name: '섹션 추가 테스트' })).toBeVisible({ timeout: 10000 });
+
+    // 편집 모드 진입 → JSON 탭 이동
+    await page.getByRole('button', { name: '편집' }).click();
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    await expect(page.locator('.cm-editor').first()).toBeVisible({ timeout: 5000 });
+
+    // TemplateJsonEditor 에디터 헤더에 "섹션 추가:" 텍스트와 섹션 타입 버튼이 표시된다
+    await expect(page.getByText('섹션 추가:')).toBeVisible();
+    // SECTION_TYPES 버튼 레이블은 영문 — Text, Cards, List, Table 등
+    // 최소 하나 이상의 섹션 추가 버튼이 있어야 한다
+    const sectionAddBtns = page.locator('button').filter({ hasText: /Text|Cards|List|Table/ });
+    await expect(sectionAddBtns.first()).toBeVisible({ timeout: 3000 });
+  });
+
+  test('복제 버튼 클릭 시 새 템플릿이 생성된다', async ({ authenticatedPage: page }) => {
+    // builtin: true 빌트인 템플릿 — 복제 버튼은 빌트인도 표시된다
+    await setupTemplateDetailMocks(page, 1);
+
+    // POST /api/v1/proactive/templates 복제 호출 모킹 (사본 반환)
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/templates',
+      createTemplate({ id: 10, name: '기본 리포트 템플릿 (사본)', builtin: false }),
+      { capture: true },
+    );
+    // 복제 후 이동할 새 템플릿 상세 페이지 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/10', createTemplate({ id: 10, name: '기본 리포트 템플릿 (사본)', builtin: false }));
+
+    await page.goto('/ai-insights/templates/1');
+    await expect(page.getByRole('heading', { name: '기본 리포트 템플릿' })).toBeVisible({ timeout: 10000 });
+
+    // 복제 버튼 클릭
+    await page.getByRole('button', { name: '복제' }).click();
+
+    // POST API 호출 확인 — 이름에 "(사본)" 포함
+    const req = await cloneCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '기본 리포트 템플릿 (사본)' });
+  });
+
   test('삭제 버튼 클릭 시 삭제 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     // builtin: false 커스텀 템플릿으로 모킹
     const template = createTemplate({ id: 3, name: '삭제 대상 템플릿', builtin: false });

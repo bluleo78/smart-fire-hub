@@ -101,4 +101,75 @@ test.describe('카테고리 관리 페이지', () => {
     // 다이얼로그가 닫히는지 확인
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
+
+  test('카테고리 수정 — 수정 다이얼로그에서 PUT payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 목록 모킹 (첫 번째 카테고리 id=1)
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    // PUT /api/v1/dataset-categories/1 캡처 설정 — goto 이전에 등록해야 한다
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/dataset-categories/1',
+      { id: 1, name: '수정된 소방 데이터', description: '수정된 설명' },
+      { capture: true },
+    );
+
+    await page.goto('/data/categories');
+
+    // 첫 번째 행의 편집(Pencil) 버튼 클릭
+    const firstRow = page.getByRole('row').nth(1);
+    await firstRow.getByRole('button').first().click();
+
+    // 수정 다이얼로그가 열리는지 확인
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '카테고리 수정' })).toBeVisible();
+
+    // 이름 필드 수정
+    const nameInput = page.locator('#edit-name');
+    await nameInput.clear();
+    await nameInput.fill('수정된 소방 데이터');
+
+    // 수정 버튼 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+    // PUT API 호출 및 payload 검증
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '수정된 소방 데이터' });
+  });
+
+  test('카테고리 삭제 — 삭제 확인 후 DELETE API 호출', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 목록 모킹 (첫 번째 카테고리 id=1)
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    // DELETE /api/v1/dataset-categories/1 캡처 설정
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/dataset-categories/1',
+      {},
+      { capture: true },
+    );
+
+    await page.goto('/data/categories');
+
+    // 첫 번째 행의 삭제(Trash2) 버튼 클릭 — 편집 버튼 다음 버튼
+    const firstRow = page.getByRole('row').nth(1);
+    await firstRow.getByRole('button').nth(1).click();
+
+    // AlertDialog 삭제 확인 다이얼로그가 열리는지 확인
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 확인 버튼 클릭 → DELETE API 호출
+    const confirmButton = page.getByRole('alertdialog').getByRole('button', { name: /삭제|확인/ });
+    await confirmButton.click();
+
+    // DELETE API가 실제로 호출되었는지 확인
+    const req = await deleteCapture.waitForRequest();
+    expect(req).toBeTruthy();
+  });
 });

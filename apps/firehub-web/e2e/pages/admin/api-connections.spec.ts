@@ -178,4 +178,214 @@ test.describe('API 연결 페이지', () => {
     const req = await capture.waitForRequest();
     expect(req).toBeTruthy();
   });
+
+  test('상세 페이지에서 인증 정보 변경 — API_KEY PUT payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT /api/v1/api-connections/1 캡처
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // "인증 정보 변경" 버튼 클릭 → 편집 모드 진입
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    // 헤더 이름 입력 (placeholder="Authorization")
+    await page.getByPlaceholder('Authorization').fill('X-Custom-Key');
+    // 새 API 키 입력 (type="password", placeholder="새 API 키를 입력하세요")
+    await page.getByPlaceholder('새 API 키를 입력하세요').fill('super-secret-key');
+
+    // 인증 저장
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    // PUT payload 검증
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: expect.objectContaining({
+        headerName: 'X-Custom-Key',
+        apiKey: 'super-secret-key',
+      }),
+    });
+  });
+
+  test('상세 페이지에서 인증 유형을 BEARER로 변경 — token PUT payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'BEARER' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 인증 정보 변경 모드 진입
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    // 인증 유형을 BEARER로 변경
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+
+    // 토큰 입력 (placeholder="새 토큰을 입력하세요")
+    await page.getByPlaceholder('새 토큰을 입력하세요').fill('my-bearer-token-xyz');
+
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'BEARER',
+      authConfig: expect.objectContaining({ token: 'my-bearer-token-xyz' }),
+    });
+  });
+
+  test('상세 페이지에서 연결 삭제 — DELETE 호출 후 목록으로 이동', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await setupApiConnectionListMocks(page);
+
+    let deleteCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      (route) => {
+        if (route.request().method() === 'DELETE') {
+          deleteCalled = true;
+          return route.fulfill({ status: 204, body: '' });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // "이 연결 삭제" 버튼 클릭
+    await page.getByRole('button', { name: '이 연결 삭제' }).click();
+
+    // 삭제 확인 다이얼로그
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('alertdialog').getByRole('button', { name: /삭제|확인/ }).click();
+
+    await expect.poll(() => deleteCalled).toBe(true);
+  });
+
+  test('인증 정보 변경 취소 — 편집 모드가 닫힌다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeVisible();
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByRole('button', { name: '인증 저장' })).toBeVisible();
+
+    // 취소 클릭 → 읽기 전용 뷰로 복귀
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '인증 저장' })).not.toBeVisible();
+  });
+
+  test('기본 정보 저장 — 이름·설명 PUT payload 검증', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '수정된 API 이름', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 연결 이름 수정 — 첫 번째 textbox가 이름 필드
+    const nameInput = page.getByRole('textbox').first();
+    await nameInput.clear();
+    await nameInput.fill('수정된 API 이름');
+
+    // 설명 수정 — placeholder="설명 (선택)" 필드
+    const descInput = page.getByPlaceholder('설명 (선택)');
+    await descInput.clear();
+    await descInput.fill('새 설명 텍스트');
+
+    // 저장 버튼 클릭 → PUT /api/v1/api-connections/1 호출
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '수정된 API 이름',
+      description: '새 설명 텍스트',
+    });
+  });
+
+  test('인증 유형 API_KEY + query placement → paramName PUT payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '공공 데이터 API', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 인증 정보 변경 모드 진입
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+
+    // 위치(placement)를 "Query Parameter"로 변경 — 두 번째 combobox가 placement select
+    const combos = page.getByRole('combobox');
+    await combos.nth(1).click();
+    await page.getByRole('option', { name: 'Query Parameter' }).click();
+
+    // 파라미터 이름 입력 (placeholder="api_key")
+    await page.getByPlaceholder('api_key').fill('my_api_key_param');
+    // 키 값 입력 (type="password")
+    await page.getByPlaceholder('새 API 키를 입력하세요').fill('secret-value-789');
+
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: expect.objectContaining({
+        placement: 'query',
+        paramName: 'my_api_key_param',
+        apiKey: 'secret-value-789',
+      }),
+    });
+  });
+
+  test('뒤로가기 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // ArrowLeft ghost icon 버튼 — variant="ghost" size="icon", 헤딩 바로 왼쪽에 위치
+    // 'API 연결 상세' 헤딩 컨테이너의 첫 번째 버튼
+    const headerRow = page.locator('div.flex.items-center.gap-4').first();
+    await headerRow.getByRole('button').first().click();
+
+    await expect(page).toHaveURL(/\/admin\/api-connections$/);
+  });
 });

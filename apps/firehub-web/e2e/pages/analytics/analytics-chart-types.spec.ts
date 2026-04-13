@@ -227,4 +227,109 @@ test.describe('신규 차트 타입 선택 — ChartBuilderPage', () => {
     await expect(page.getByRole('button', { name: '영역 차트' })).toHaveAttribute('data-variant', 'default');
     await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'outline');
   });
+
+  test('LINE: 날짜+수치 컬럼 구성으로 쿼리 실행 시 LINE 타입이 자동 추천된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    // 날짜 컬럼 + 수치 컬럼 → recommendChartType이 LINE 추천
+    const lineQueryResult = createQueryResult({
+      columns: ['date', 'value'],
+      rows: [
+        { date: '2024-01-01', value: 100 },
+        { date: '2024-01-02', value: 150 },
+      ],
+      totalRows: 2,
+    });
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', lineQueryResult);
+
+    await page.goto('/analytics/charts/new');
+
+    // 쿼리 선택 후 실행
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+
+    await expect(page.getByText('2개 컬럼, 2개 행 로드됨')).toBeVisible();
+
+    // LINE 차트가 자동 추천되어 활성 상태가 되어야 한다
+    await expect(page.getByRole('button', { name: '선 차트' })).toHaveAttribute('data-variant', 'default');
+  });
+
+  test('TABLE: 컬럼 1개만 있는 경우 TABLE 타입이 자동 추천된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    // 컬럼 1개 → columns.length < 2 → TABLE 추천
+    const tableQueryResult = createQueryResult({
+      columns: ['id'],
+      rows: [{ id: 1 }, { id: 2 }],
+      totalRows: 2,
+    });
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', tableQueryResult);
+
+    await page.goto('/analytics/charts/new');
+
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+
+    await expect(page.getByText('1개 컬럼, 2개 행 로드됨')).toBeVisible();
+
+    // TABLE 차트가 자동 추천되어 활성 상태가 되어야 한다
+    await expect(page.getByRole('button', { name: '테이블' })).toHaveAttribute('data-variant', 'default');
+  });
+
+  test('새 차트 저장 다이얼로그 — 공유 토글 포함 POST payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', queryResult);
+
+    const cap = await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/charts',
+      {
+        id: 99,
+        name: '공유 차트',
+        description: '',
+        savedQueryId: 1,
+        savedQueryName: '저장 쿼리 1',
+        chartType: 'BAR',
+        config: { xAxis: 'category', yAxis: ['value'] },
+        isShared: true,
+        createdByName: '테스트',
+        createdBy: 1,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+      },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/charts/new');
+
+    // 쿼리 선택 후 실행
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByText(/컬럼.*행 로드됨/)).toBeVisible();
+
+    // 저장 버튼 → 다이얼로그 열기
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름 변경
+    await page.getByLabel('이름 *').clear();
+    await page.getByLabel('이름 *').fill('공유 차트');
+
+    // 공유 토글 ON
+    await page.getByLabel('공유 차트').click();
+
+    // 다이얼로그 저장 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+
+    const req = await cap.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '공유 차트', isShared: true });
+  });
 });

@@ -290,4 +290,95 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     // SqlQueryEditor 내부에는 쿼리 입력 area / 실행 버튼이 들어있음 — "쿼리 실행" 버튼 기준으로 확인
     await expect(page.getByRole('button', { name: /실행|Run/ }).first()).toBeVisible();
   });
+
+  test('행 선택 후 SelectionActionBar 의 삭제 버튼 클릭 시 AlertDialog 가 열린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              { _id: 101, id: 1, name: 'Alice', amount: 10 },
+              { _id: 102, id: 2, name: 'Bob', amount: 20 },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 2,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // 첫 번째 행의 체크박스 선택 (aria-label="행 1 선택")
+    await page.getByRole('checkbox', { name: '행 1 선택' }).click();
+
+    // SelectionActionBar — "N개 행 선택됨" 텍스트와 함께 "삭제" 버튼이 표시된다
+    await expect(page.getByText(/개 행 선택됨/)).toBeVisible({ timeout: 5000 });
+    const deleteBtn = page.getByText(/개 행 선택됨/).locator('..').getByRole('button', { name: '삭제' });
+    await expect(deleteBtn).toBeVisible();
+
+    // 삭제 버튼 클릭 → AlertDialog 열림
+    await deleteBtn.click();
+    await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('행 삭제 확인')).toBeVisible();
+  });
+
+  test('컬럼 헤더 정렬 버튼 클릭 시 sortBy 파라미터가 API 에 전달된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+
+    const sortCalls: { sortBy: string | null; sortDir: string | null }[] = [];
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) => {
+        const url = new URL(route.request().url());
+        sortCalls.push({
+          sortBy: url.searchParams.get('sortBy'),
+          sortDir: url.searchParams.get('sortDir'),
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              { _id: 101, id: 1, name: 'Alice', amount: 10 },
+              { _id: 102, id: 2, name: 'Bob', amount: 20 },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 2,
+            totalPages: 1,
+          }),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // 컬럼 헤더 버튼(name 컬럼 정렬) 클릭 — th 안의 button
+    // "이름" 컬럼 헤더 버튼을 클릭한다 (displayName='이름')
+    await page.getByRole('button', { name: /이름/ }).first().click();
+
+    // sortBy=name 으로 API 가 재호출되어야 한다
+    await page.waitForTimeout(300);
+    const sortedCall = sortCalls.find((c) => c.sortBy === 'name');
+    expect(sortedCall).toBeDefined();
+    expect(sortedCall?.sortDir).toBe('ASC');
+  });
 });

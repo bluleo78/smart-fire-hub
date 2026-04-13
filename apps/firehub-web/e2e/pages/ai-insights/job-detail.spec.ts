@@ -291,6 +291,224 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '데이터셋' })).toBeVisible();
   });
 
+  test('EmailTagInput — 유효하지 않은 이메일 입력 시 에러 메시지가 표시된다', async ({ authenticatedPage: page }) => {
+    // 이메일 채널이 포함된 작업 모킹
+    const jobWithEmail = createJob({
+      id: 1,
+      config: {
+        channels: [{ type: 'EMAIL', recipientUserIds: [], recipientEmails: [] }],
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', jobWithEmail);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    await mockApi(page, 'GET', '/api/v1/users', { content: [], totalElements: 0, totalPages: 0, page: 0, size: 20 });
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 알림 탭으로 이동 (채널 설정이 있는 탭)
+    const notifyTab = page.getByRole('tab', { name: /알림|채널|전달/ });
+    if (await notifyTab.isVisible()) {
+      await notifyTab.click();
+    }
+
+    // 외부 이메일 입력란 확인
+    const emailInput = page.getByPlaceholder('이메일 입력 후 Enter');
+    await expect(emailInput).toBeVisible({ timeout: 5000 });
+
+    // 잘못된 이메일 형식 입력 후 Enter
+    await emailInput.fill('not-an-email');
+    await emailInput.press('Enter');
+
+    // 에러 메시지가 표시되어야 한다
+    await expect(page.getByText('올바른 이메일 형식이 아닙니다')).toBeVisible({ timeout: 3000 });
+  });
+
+  test('EmailTagInput — 유효한 이메일 입력 시 태그가 추가된다', async ({ authenticatedPage: page }) => {
+    // 이메일 채널이 포함된 작업 모킹
+    const jobWithEmail = createJob({
+      id: 1,
+      config: {
+        channels: [{ type: 'EMAIL', recipientUserIds: [], recipientEmails: [] }],
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', jobWithEmail);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    await mockApi(page, 'GET', '/api/v1/users', { content: [], totalElements: 0, totalPages: 0, page: 0, size: 20 });
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 알림 탭으로 이동
+    const notifyTab = page.getByRole('tab', { name: /알림|채널|전달/ });
+    if (await notifyTab.isVisible()) {
+      await notifyTab.click();
+    }
+
+    // 외부 이메일 입력란에 유효한 이메일 입력 후 Enter
+    const emailInput = page.getByPlaceholder('이메일 입력 후 Enter');
+    await expect(emailInput).toBeVisible({ timeout: 5000 });
+    await emailInput.fill('test@example.com');
+    await emailInput.press('Enter');
+
+    // 이메일 태그(Badge)가 추가되어야 한다
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: 'test@example.com' })).toBeVisible({ timeout: 3000 });
+
+    // 에러 메시지는 표시되지 않아야 한다
+    await expect(page.getByText('올바른 이메일 형식이 아닙니다')).not.toBeVisible();
+  });
+
+  test('작업 삭제 — DELETE API 호출 검증', async ({ authenticatedPage: page }) => {
+    await setupJobDetailMocks(page, 1);
+
+    // DELETE /api/v1/proactive/jobs/1 캡처 설정 — goto 이전에 등록해야 한다
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/proactive/jobs/1',
+      {},
+      { capture: true },
+    );
+    // 삭제 후 목록 페이지로 이동하므로 목록 API도 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 삭제 버튼 클릭 (destructive 버튼) — 별도 확인 다이얼로그 없이 바로 API 호출
+    await page.getByRole('button', { name: '삭제' }).click();
+
+    // DELETE API가 실제로 호출되었는지 확인
+    const req = await deleteCapture.waitForRequest();
+    expect(req).toBeTruthy();
+  });
+
+  test('작업 실행 — POST API 호출 검증', async ({ authenticatedPage: page }) => {
+    await setupJobDetailMocks(page, 1);
+
+    // POST /api/v1/proactive/jobs/1/execute 캡처 설정
+    const executeCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs/1/execute',
+      {},
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 지금 실행 버튼 클릭
+    await page.getByRole('button', { name: '지금 실행' }).click();
+
+    // POST API가 실제로 호출되었는지 확인
+    const req = await executeCapture.waitForRequest();
+    expect(req).toBeTruthy();
+  });
+
+  test('작업 복제 — POST API 호출 및 새 작업으로 이동', async ({ authenticatedPage: page }) => {
+    await setupJobDetailMocks(page, 1);
+
+    // 복제는 useCloneProactiveJob → proactiveApi.createJob (POST /api/v1/proactive/jobs) 호출
+    // 복제된 새 작업(id=99) 반환을 모킹한다
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 99, name: '매일 현황 리포트 (복사본)' }),
+      { capture: true },
+    );
+    // 복제 후 새 작업 상세 페이지로 이동하므로 해당 API도 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99', createJob({ id: 99, name: '매일 현황 리포트 (복사본)' }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 복제 버튼 클릭
+    await page.getByRole('button', { name: '복제' }).click();
+
+    // POST /api/v1/proactive/jobs API가 호출되었는지 확인 (복사본 이름 포함)
+    const req = await cloneCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '매일 현황 리포트 (복사본)' });
+
+    // 새 작업 상세 페이지(id=99)로 이동 확인
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/99/);
+  });
+
+  test('개요 탭 — triggerType ANOMALY 작업에 "이상 탐지" 배지가 표시된다', async ({ authenticatedPage: page }) => {
+    // triggerType: ANOMALY 작업 모킹
+    const anomalyJob = createJob({ id: 1, triggerType: 'ANOMALY', name: '이상 탐지 작업' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', anomalyJob);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+    await expect(page.getByRole('heading', { name: '이상 탐지 작업' })).toBeVisible();
+
+    // 개요 탭이 기본 활성 — 트리거 유형 섹션의 "이상 탐지" 배지 확인
+    // JobOverviewTab 읽기 모드: triggerType === 'ANOMALY' → Badge에 '이상 탐지' 렌더링
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '이상 탐지' })).toBeVisible({ timeout: 5000 });
+  });
+
+  test('개요 탭 — lastExecution이 있는 작업에 마지막 실행 상태가 표시된다', async ({ authenticatedPage: page }) => {
+    // lastExecution 포함 작업 모킹 (FAILED 상태, 에러 메시지 포함)
+    const jobWithLastExec = createJob({
+      id: 1,
+      lastExecution: createJobExecution({
+        id: 10,
+        jobId: 1,
+        status: 'FAILED',
+        errorMessage: '파이프라인 연결 오류',
+      }),
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', jobWithLastExec);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    // 개요 탭에 "마지막 실행 상태" 섹션이 표시된다
+    await expect(page.getByText('마지막 실행 상태')).toBeVisible({ timeout: 5000 });
+
+    // FAILED 상태 배지 확인
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' }).first()).toBeVisible();
+
+    // 에러 메시지 확인
+    await expect(page.getByText('파이프라인 연결 오류')).toBeVisible();
+  });
+
+  test('편집 모드 — 트리거 유형 ANOMALY 선택 시 설명 텍스트가 변경된다', async ({ authenticatedPage: page }) => {
+    await setupJobDetailMocks(page, 1);
+
+    await page.goto('/ai-insights/jobs/1');
+    await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 트리거 유형 Select — id="job-trigger-type"
+    await page.locator('#job-trigger-type').click();
+
+    // '이상 탐지 (이벤트 기반)' 선택
+    await page.getByRole('option', { name: '이상 탐지 (이벤트 기반)' }).click();
+
+    // triggerType === 'ANOMALY' 분기 설명 텍스트 확인
+    await expect(page.getByText(/이상 탐지 시에만 실행됩니다/)).toBeVisible();
+  });
+
   test('시스템 메트릭 추가 동작 검증', async ({ authenticatedPage: page }) => {
     // 이상 탐지 활성화된 작업 설정
     const jobWithAnomaly = createJob({

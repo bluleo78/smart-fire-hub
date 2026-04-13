@@ -146,4 +146,77 @@ test.describe('대시보드 목록 페이지', () => {
     // "공유" 뱃지 확인
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: /^공유$/ })).toBeVisible();
   });
+
+  test('대시보드 검색 시 search 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
+    const searchCalls: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/dashboards',
+      (route) => {
+        const url = new URL(route.request().url());
+        searchCalls.push(url.searchParams.get('search') ?? '');
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createPageResponse([
+              createDashboardListItem({ id: 1, name: '검색된 대시보드' }),
+            ]),
+          ),
+        });
+      },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await expect(page.getByRole('heading', { name: '대시보드' })).toBeVisible();
+
+    // 검색어 입력
+    await page.getByPlaceholder('대시보드 검색...').fill('검색된');
+
+    // 검색 결과 반영 대기
+    await expect(page.getByText('검색된 대시보드')).toBeVisible();
+
+    // search 파라미터가 전달되었는지 확인
+    expect(searchCalls.some((s) => s.includes('검색된'))).toBe(true);
+  });
+
+  test('자동 갱신 초가 설정된 대시보드에 갱신 배지가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/dashboards',
+      createPageResponse([
+        createDashboardListItem({ id: 1, name: '자동갱신 대시보드', autoRefreshSeconds: 30 }),
+      ]),
+    );
+
+    await page.goto('/analytics/dashboards');
+
+    // autoRefreshSeconds=30 → "30초" 배지가 표시된다
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '30초' })).toBeVisible();
+  });
+
+  test('공유됨 탭 전환 시 sharedOnly 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
+    const tabCalls: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/dashboards',
+      (route) => {
+        const url = new URL(route.request().url());
+        tabCalls.push(url.searchParams.get('sharedOnly') ?? '');
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse([])),
+        });
+      },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await expect(page.getByRole('heading', { name: '대시보드' })).toBeVisible();
+
+    // "공유됨" 탭 클릭
+    await page.getByRole('tab', { name: '공유됨' }).click();
+
+    await page.waitForTimeout(300);
+    expect(tabCalls.some((v) => v === 'true')).toBe(true);
+  });
 });

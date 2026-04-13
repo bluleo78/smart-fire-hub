@@ -121,4 +121,96 @@ test.describe('설정 페이지', () => {
       expect(req.payload).toBeTruthy();
     }
   });
+
+  test('이메일 탭 — SMTP 설정 폼이 렌더링된다', async ({ authenticatedPage: page }) => {
+    await setupSettingsMocks(page);
+    // SMTP 설정 API 모킹 — 이메일 탭 진입 시 호출
+    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
+      { key: 'smtp.host', value: 'smtp.gmail.com', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.username', value: 'user@example.com', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.password', value: '****masked****', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.from_address', value: 'noreply@example.com', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
+    ]);
+
+    await page.goto('/admin/settings');
+
+    // 이메일 탭 클릭
+    await page.getByRole('tab', { name: '이메일' }).click();
+
+    // SMTP 서버 설정 카드 제목 확인
+    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+
+    // 폼 필드가 서버 데이터로 채워졌는지 확인
+    await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+    await expect(page.locator('#smtp-port')).toHaveValue('587');
+    await expect(page.locator('#smtp-username')).toHaveValue('user@example.com');
+    await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
+  });
+
+  test('이메일 탭 — SMTP 설정 저장 시 PUT /api/v1/settings/smtp 가 호출된다', async ({ authenticatedPage: page }) => {
+    await setupSettingsMocks(page);
+    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
+      { key: 'smtp.host', value: '', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.username', value: '', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.password', value: '', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.from_address', value: '', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
+    ]);
+    // PUT 캡처 — goto 이전에 등록
+    const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings/smtp', {}, { capture: true });
+
+    await page.goto('/admin/settings');
+    await page.getByRole('tab', { name: '이메일' }).click();
+    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+
+    // 호스트 입력 → 변경 감지로 저장 버튼 활성화
+    await page.locator('#smtp-host').fill('smtp.example.com');
+
+    // 저장 버튼 활성화 후 클릭 (SMTP 탭 내 저장 버튼)
+    const saveBtn = page.getByRole('button', { name: '저장' }).first();
+    await expect(saveBtn).toBeEnabled({ timeout: 3000 });
+    await saveBtn.click();
+
+    // PUT API 호출 검증
+    const req = await saveCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/settings/smtp');
+    // payload에 smtp.host 키가 포함되어 있어야 한다
+    expect(req.payload).toMatchObject({ 'smtp.host': 'smtp.example.com' });
+
+    // toast 성공 메시지 확인
+    await expect(page.getByText('SMTP 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('이메일 탭 — 테스트 발송 버튼 클릭 시 POST /api/v1/settings/smtp/test 가 호출된다', async ({ authenticatedPage: page }) => {
+    await setupSettingsMocks(page);
+    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
+      { key: 'smtp.host', value: 'smtp.example.com', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.username', value: 'user@example.com', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.password', value: '****masked****', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.from_address', value: 'noreply@example.com', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
+    ]);
+    // POST 캡처
+    const testCapture = await mockApi(page, 'POST', '/api/v1/settings/smtp/test', {}, { capture: true });
+
+    await page.goto('/admin/settings');
+    await page.getByRole('tab', { name: '이메일' }).click();
+    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+
+    // 변경 없는 상태에서 "테스트 발송" 버튼이 활성화됨
+    const testBtn = page.getByRole('button', { name: '테스트 발송' });
+    await expect(testBtn).toBeEnabled({ timeout: 3000 });
+    await testBtn.click();
+
+    // POST /api/v1/settings/smtp/test 가 호출되었는지 검증
+    const req = await testCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/settings/smtp/test');
+
+    // toast 성공 메시지 확인
+    await expect(page.getByText('테스트 이메일이 발송되었습니다.')).toBeVisible({ timeout: 5000 });
+  });
 });

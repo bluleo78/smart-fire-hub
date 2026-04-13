@@ -174,4 +174,58 @@ test.describe('사용자 관리 페이지', () => {
     const req = await capture.waitForRequest();
     expect(req).toBeTruthy();
   });
+
+  test('사용자 활성 상태 토글 — PUT payload 검증', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+
+    // PUT /api/v1/users/1/active 캡처 설정 — goto 이전에 등록해야 한다
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/users/1/active',
+      { id: 1, isActive: false },
+      { capture: true },
+    );
+
+    await page.goto('/admin/users/1');
+
+    // 활성 상태 스위치 클릭 — 현재 active=true 이므로 비활성화로 전환
+    const toggle = page.getByRole('switch');
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+
+    // PUT API payload 검증 — active: false 가 전달되어야 한다 (현재 isActive=true → 반전)
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ active: false });
+  });
+
+  test('사용자 역할 저장 — PUT payload 검증', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+
+    // PUT /api/v1/users/1/roles 캡처 설정 — goto 이전에 등록해야 한다
+    const saveCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/users/1/roles',
+      { id: 1, roles: [] },
+      { capture: true },
+    );
+    // 저장 후 사용자 재조회 모킹
+    await setupUserDetailMocks(page, 1);
+
+    await page.goto('/admin/users/1');
+
+    // 역할 할당 섹션에서 USER 체크박스 토글 (현재 체크 상태 → 해제)
+    const userRoleCheckbox = page.getByRole('checkbox', { name: /USER/ });
+    await expect(userRoleCheckbox).toBeVisible();
+    await userRoleCheckbox.click();
+
+    // 역할 저장 버튼 클릭 → PUT /api/v1/users/1/roles 호출
+    await page.getByRole('button', { name: '역할 저장' }).click();
+
+    // API payload 검증 — roleIds 배열이 전달되어야 한다
+    const req = await saveCapture.waitForRequest();
+    expect(req.payload).toHaveProperty('roleIds');
+    expect(Array.isArray((req.payload as { roleIds: number[] }).roleIds)).toBe(true);
+  });
 });

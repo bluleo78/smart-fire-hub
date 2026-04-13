@@ -101,4 +101,77 @@ test.describe('차트 목록 페이지', () => {
     const captured = await deleteCapture.waitForRequest();
     expect(captured).toBeDefined();
   });
+
+  test('차트 검색 시 search 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
+    // 검색어 포함 호출 캡처를 위해 route 직접 등록
+    const searchCalls: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/charts',
+      (route) => {
+        const url = new URL(route.request().url());
+        searchCalls.push(url.searchParams.get('search') ?? '');
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createPageResponse([
+              createChartListItem({ id: 1, name: '검색된 차트' }),
+            ]),
+          ),
+        });
+      },
+    );
+
+    await page.goto('/analytics/charts');
+    await expect(page.getByRole('heading', { name: '차트' })).toBeVisible();
+
+    // 검색어 입력
+    await page.getByPlaceholder('차트 검색...').fill('검색된');
+
+    // 검색 결과 반영 대기
+    await expect(page.getByText('검색된 차트')).toBeVisible();
+
+    // search 파라미터가 전달되었는지 확인
+    expect(searchCalls.some((s) => s.includes('검색된'))).toBe(true);
+  });
+
+  test('공유됨 탭 전환 시 sharedOnly 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
+    const tabCalls: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/charts',
+      (route) => {
+        const url = new URL(route.request().url());
+        tabCalls.push(url.searchParams.get('sharedOnly') ?? '');
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse([])),
+        });
+      },
+    );
+
+    await page.goto('/analytics/charts');
+    await expect(page.getByRole('heading', { name: '차트' })).toBeVisible();
+
+    // "공유됨" 탭 클릭
+    await page.getByRole('tab', { name: '공유됨' }).click();
+
+    // sharedOnly=true 가 전달되는지 확인
+    await page.waitForTimeout(300);
+    expect(tabCalls.some((v) => v === 'true')).toBe(true);
+  });
+
+  test('새 차트 버튼 클릭 시 /analytics/charts/new 로 이동한다', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 1);
+    // 새 차트 빌더 페이지 모킹
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+
+    await page.goto('/analytics/charts');
+    await expect(page.getByRole('heading', { name: '차트' })).toBeVisible();
+
+    await page.getByRole('button', { name: '새 차트' }).click();
+
+    await expect(page).toHaveURL('/analytics/charts/new');
+  });
 });

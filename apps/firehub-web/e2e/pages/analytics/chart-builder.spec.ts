@@ -1,7 +1,9 @@
+import { createQueryResult } from '../../factories/analytics.factory';
 import {
   setupChartBuilderMocks,
   setupNewChartBuilderMocks,
 } from '../../fixtures/analytics.fixture';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -75,5 +77,86 @@ test.describe('차트 빌더 페이지', () => {
 
     // 쿼리 실행 전 미리보기 안내 문구 확인
     await expect(page.getByText('쿼리를 실행하면 차트가 표시됩니다.')).toBeVisible();
+  });
+
+  test('새 차트 저장 — 저장 다이얼로그에서 POST payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    // 쿼리 실행 API 모킹: columns=['id','name','value'] → xAxis='name', yAxis=['id'] 자동 설정
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/1/execute',
+      createQueryResult(),
+    );
+
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/charts',
+      { id: 99, name: '화재 현황 차트', chartType: 'BAR' },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/charts/new');
+    await expect(page.getByText('쿼리를 실행하면 차트가 표시됩니다.')).toBeVisible();
+
+    // 쿼리 선택
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+
+    // 쿼리 실행 → axis 자동 설정
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByText(/행 로드됨/).first()).toBeVisible();
+
+    // 저장 버튼 클릭 → 저장 다이얼로그 열기
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('차트 저장')).toBeVisible();
+
+    // 차트 이름 입력
+    await page.getByPlaceholder('차트 이름을 입력하세요').fill('화재 현황 차트');
+
+    // 저장 버튼 클릭 (다이얼로그 내)
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+
+    // POST payload 검증
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '화재 현황 차트' });
+  });
+
+  test('기존 차트 수정 저장 — 수정 다이얼로그에서 PUT payload 검증', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChartBuilderMocks(page, 1);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/charts/1',
+      { id: 1, name: '수정된 차트', chartType: 'BAR' },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/charts/1');
+    await expect(page.getByText('테스트 차트')).toBeVisible();
+
+    // 저장 버튼 클릭 → 차트 수정 다이얼로그 열기
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('차트 수정')).toBeVisible();
+
+    // 이름 변경
+    const nameInput = page.getByLabel('이름');
+    await nameInput.clear();
+    await nameInput.fill('수정된 차트');
+
+    // 수정 버튼 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+    // PUT payload 검증
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '수정된 차트' });
   });
 });

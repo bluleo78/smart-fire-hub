@@ -173,6 +173,60 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page).toHaveURL(/\/data\/datasets\/1/);
   });
 
+  test('유형 필터 선택 시 datasetType 파라미터가 반영된다', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
+
+    // 유형 필터 재요청 캡처
+    const capture = await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]), { capture: true });
+
+    // "원본" 유형 선택
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: '원본' }).click();
+
+    // API 요청에 datasetType=SOURCE 가 전달되는지 검증
+    const req = await capture.waitForRequest();
+    expect(req.searchParams.get('datasetType')).toBe('SOURCE');
+  });
+
+  test('삭제 버튼 클릭 시 삭제 확인 AlertDialog가 열린다', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
+
+    // 첫 번째 데이터 행의 삭제 트리거 버튼 클릭 (aria-label="삭제", Trash2 아이콘)
+    // DeleteConfirmDialog는 AlertDialogTrigger로 구현되어 있어 항상 visible
+    const firstRow = page.getByRole('row', { name: /데이터셋 1/ });
+    const deleteBtn = firstRow.getByRole('button', { name: '삭제' });
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 });
+    await deleteBtn.click();
+
+    // AlertDialog 열림 확인 — role="alertdialog"
+    await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3000 });
+    await expect(page.getByText('데이터셋 삭제')).toBeVisible();
+  });
+
+  test('상태 필터 선택 시 status 파라미터가 반영된다', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
+
+    // 상태 필터 재요청 캡처
+    const capture = await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]), { capture: true });
+
+    // 두 번째 combobox 가 상태 필터 (유형/상태 순서)
+    const statusCombobox = page.getByRole('combobox').nth(1);
+    await statusCombobox.click();
+    await page.getByRole('option', { name: '인증됨' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.searchParams.get('status')).toBe('CERTIFIED');
+  });
+
   test('데이터셋 목록에 페이지네이션이 렌더링된다', async ({ authenticatedPage: page }) => {
     // 총 25개 항목 → 3페이지 (size=10)로 모킹, 현재 페이지는 10개 행 렌더링
     await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
@@ -193,5 +247,23 @@ test.describe('데이터셋 목록 페이지', () => {
     // 페이지네이션 버튼(다음/이전)이 렌더링되는지 확인
     await expect(page.getByRole('button', { name: /다음/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /이전/ })).toBeVisible();
+  });
+
+  test('최근 접근 데이터셋에 상대적 시간이 표시된다 (getRelativeTime)', async ({ authenticatedPage: page }) => {
+    // 60일 전 날짜를 localStorage에 주입 → getRelativeTime 실행 (lines 33-43 커버)
+    // 60일 = 2개월 → '2개월 전' 텍스트가 표시되어야 한다
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    await page.addInitScript((date: string) => {
+      localStorage.setItem(
+        'sfh-recent-datasets',
+        JSON.stringify([{ id: 99, name: '최근 접근 데이터셋', tableName: 'recent_ds', accessedAt: date }]),
+      );
+    }, oldDate);
+
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    // 최근 접근 데이터셋 카드의 상대 시간 확인 — getRelativeTime이 60일 전 날짜를 '2개월 전'으로 표시
+    await expect(page.getByText(/개월 전/).first()).toBeVisible({ timeout: 5000 });
   });
 });
