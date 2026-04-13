@@ -29,7 +29,7 @@ test.describe('회원가입 페이지', () => {
 
     // 필드 채우기
     await page.getByLabel('아이디 (이메일)').fill('newuser@example.com');
-    await page.getByLabel('비밀번호').fill('password123');
+    await page.getByLabel('비밀번호').fill('Password123');
     await page.getByLabel('이름').fill('새 사용자');
 
     // 회원가입 버튼 클릭
@@ -39,7 +39,7 @@ test.describe('회원가입 페이지', () => {
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({
       username: 'newuser@example.com',
-      password: 'password123',
+      password: 'Password123',
       name: '새 사용자',
     });
 
@@ -84,7 +84,7 @@ test.describe('회원가입 페이지', () => {
 
     // 필드 채우기
     await page.getByLabel('아이디 (이메일)').fill('existing@example.com');
-    await page.getByLabel('비밀번호').fill('password123');
+    await page.getByLabel('비밀번호').fill('Password123');
     await page.getByLabel('이름').fill('기존 사용자');
 
     // 회원가입 버튼 클릭
@@ -94,6 +94,53 @@ test.describe('회원가입 페이지', () => {
     await expect(page.getByText('이미 사용 중인 아이디입니다.')).toBeVisible();
 
     // 여전히 회원가입 페이지에 머물러 있는지 확인
+    await expect(page).toHaveURL(/\/signup/);
+  });
+
+  test('비밀번호에 대문자/숫자 없으면 형식 에러를 표시한다', async ({ authMockedPage: page }) => {
+    await page.goto('/signup');
+
+    // 소문자만 8자 이상 — 대문자·숫자 미포함 → regex 실패
+    await page.getByLabel('비밀번호').fill('alllowercase');
+    await page.getByRole('button', { name: '회원가입' }).click();
+
+    // Zod regex 에러 메시지가 비밀번호 필드 아래에 표시되어야 한다
+    await expect(
+      page.getByText('비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다'),
+    ).toBeVisible();
+  });
+
+  test('서버 errors.password 반환 시 비밀번호 필드에 인라인 에러를 표시한다', async ({
+    authMockedPage: page,
+  }) => {
+    // 서버가 400 + errors.password 를 반환하도록 모킹 (Zod를 우회하는 케이스)
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/auth/signup',
+      {
+        status: 400,
+        error: 'Bad Request',
+        message: 'Validation failed',
+        errors: { password: '비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다' },
+      },
+      { status: 400 },
+    );
+
+    await page.goto('/signup');
+
+    // 프론트 Zod를 통과하는 올바른 형식 입력 — 서버 측 에러만 테스트
+    await page.getByLabel('아이디 (이메일)').fill('user@example.com');
+    await page.getByLabel('비밀번호').fill('Password123');
+    await page.getByLabel('이름').fill('테스트');
+    await page.getByRole('button', { name: '회원가입' }).click();
+
+    // 서버 errors.password가 비밀번호 필드 아래에 인라인으로 표시되어야 한다
+    await expect(
+      page.getByText('비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다'),
+    ).toBeVisible();
+
+    // 일반 serverError 단락이 아닌 폼 필드 에러로 표시 — 여전히 signup 페이지에 머무름
     await expect(page).toHaveURL(/\/signup/);
   });
 

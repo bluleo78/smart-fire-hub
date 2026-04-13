@@ -15,7 +15,7 @@ test.describe('인증 전체 플로우', () => {
     // 회원가입 페이지에서 가입
     await page.goto('/signup');
     await page.getByLabel('아이디 (이메일)').fill('newuser@example.com');
-    await page.getByLabel('비밀번호').fill('password123');
+    await page.getByLabel('비밀번호').fill('Password123');
     await page.getByLabel('이름').fill('새 사용자');
     await page.getByRole('button', { name: '회원가입' }).click();
 
@@ -23,7 +23,7 @@ test.describe('인증 전체 플로우', () => {
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({
       username: 'newuser@example.com',
-      password: 'password123',
+      password: 'Password123',
       name: '새 사용자',
     });
 

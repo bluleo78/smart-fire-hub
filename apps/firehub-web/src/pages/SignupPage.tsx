@@ -1,10 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import axios from 'axios';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Navigate } from 'react-router-dom';
 
 import { FormField } from '@/components/ui/form-field';
 import { extractApiError } from '@/lib/api-error';
+import type { ErrorResponse } from '@/types/auth';
 
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -20,6 +22,7 @@ export default function SignupPage() {
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
@@ -34,6 +37,14 @@ export default function SignupPage() {
       setServerError('');
       await signup(data);
     } catch (error) {
+      // 필드별 유효성 오류가 있으면 해당 필드에 인라인으로 표시 (e.g. 비밀번호 형식 오류)
+      if (axios.isAxiosError(error) && error.response?.data) {
+        const errData = error.response.data as ErrorResponse;
+        if (errData.errors?.password) {
+          setError('password', { message: errData.errors.password });
+          return;
+        }
+      }
       setServerError(extractApiError(error, '회원가입에 실패했습니다.'));
     }
   };
