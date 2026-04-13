@@ -50,19 +50,18 @@
 - `Read`, `Grep`, `Glob` — 기존 유지
 - `mcp__firehub__*` 와일드카드 → 명시적 도구 목록으로 교체
 
-**명시적 MCP 도구 목록 (pipeline-builder):**
-(구현 시 `firehub-api`의 실제 등록 도구명 확인 후 확정)
-- mcp__firehub__get_data_schema
-- mcp__firehub__get_dataset
-- mcp__firehub__list_datasets
+**명시적 MCP 도구 목록 (pipeline-builder, 실제 등록명 확인 완료):**
+- mcp__firehub__list_pipelines
+- mcp__firehub__get_pipeline
 - mcp__firehub__create_pipeline
 - mcp__firehub__update_pipeline
 - mcp__firehub__delete_pipeline
-- mcp__firehub__list_pipelines
-- mcp__firehub__get_pipeline
+- mcp__firehub__preview_api_call
 - mcp__firehub__execute_pipeline
 - mcp__firehub__get_execution_status
-- mcp__firehub__list_executions
+- mcp__firehub__get_data_schema
+- mcp__firehub__get_dataset
+- mcp__firehub__list_datasets
 
 ### 그룹 2 — 분석형 (데이터·로그 조회)
 
