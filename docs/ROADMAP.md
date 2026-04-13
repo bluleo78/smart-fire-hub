@@ -23,6 +23,7 @@
 | [Phase 5.8](#phase-58-파이프라인-python-고도화--ai-에이전트-확장) | **완료** | 4/4 | Python 스텝 자동 적재 + 서브에이전트 시스템 + Claude Code CLI 에이전트 + AI 인증 관리 |
 | [Phase 5.9](#phase-59-uiux-개선--멀티-ai-프로바이더) | **완료** | 4/4 | AI 상태 칩 + 멀티 테마 + 멀티 AI 프로바이더 + 운영 안정화 |
 | [Phase 5.10](#phase-510-ai-챗-데이터-플랫폼-전면-제어) | **완료** | 8/8 | 데이터셋·분석·연동·트리거·대시보드·운영 서브에이전트 7종 + 차트 타입 17종 확장 |
+| [Phase 5.11](#phase-511-전체-서브에이전트-고도화) | **완료** | 1/1 | 11개 서브에이전트 품질 통일 — 담당/비담당·보안 원칙·워크플로 표준화 |
 | [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
 | [Phase 7](#phase-7-ai-리포트-고도화) | **완료** | 11/11 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
@@ -279,6 +280,14 @@
 
 ---
 
+## Phase 5.11: 전체 서브에이전트 고도화
+
+> 초기 구현된 4개 에이전트(pipeline-builder·report-writer·smart-job-manager·template-builder)와 최근 구현된 7개 에이전트 간 품질 격차를 해소하여 11개 전체를 동일한 기준으로 통일한다.
+
+- ✅ **5.11.1 전체 서브에이전트 고도화** — 11개 agent.md 표준 구조 통일(담당/비담당·보안 원칙·응답 포맷 원칙). pipeline-builder: 7단계 워크플로(LOCAL_TEST 추가)+Bash/Write/WebSearch+명시적 MCP 11종. report-writer: 4단계 워크플로(VERIFY 단계)+담당/비담당. data-analyst/audit-analyst: WebSearch 추가+보안 원칙 보완. smart-job-manager/template-builder: 역할·담당/비담당 표준화. dataset-manager/api-connection-manager/trigger-manager/dashboard-builder/admin-manager: 보안 원칙·응답 포맷 원칙 추가. dataset-manager frontmatter 완성(tools 12종). 스펙: docs/superpowers/specs/2026-04-13-agent-upgrade-design.md, 플랜: docs/superpowers/plans/2026-04-13-agent-upgrade.md.
+
+---
+
 ## Phase 6: AI Chat Generative UI
 
 > AI 챗을 고도화하여 인터랙티브 UI 위젯을 인라인 렌더링하고, 딥링크 네비게이션으로 메인 UI와 연결하며, Chat-First 경험을 달성한다.
@@ -456,6 +465,7 @@
 
 | 날짜 | 변경 내용 |
 |------|---------|
+| 2026-04-13 | Phase 5.11 완료(1/1). 전체 서브에이전트 고도화: 11개 agent.md 품질 통일. pipeline-builder 7단계 워크플로(LOCAL_TEST)+Bash/Write/WebSearch+MCP 11종 명시. report-writer 4단계 VERIFY. data-analyst/audit-analyst WebSearch 추가. smart-job-manager/template-builder 역할·담당/비담당. dataset-manager 표준화+frontmatter 완성. api-connection-manager/dashboard-builder/admin-manager 보안·응답포맷 추가. 스펙: docs/superpowers/specs/2026-04-13-agent-upgrade-design.md |
 | 2026-04-12 | Phase 5.10 완료(8/8). 5.10.8 차트 타입 17종 확장: 9종 신규 차트 컴포넌트(Recharts 8 + @nivo/heatmap 1), ChartBuilderPage 자동 추천 5종 휴리스틱, CHART_TYPE_LABELS 공유 상수화, analytics-tools z.enum 중복 제거, 빈 데이터 가드, data-analyst 차트 선택 기준 확장, Vitest TC 9종 + Playwright E2E 4종. 스펙: docs/superpowers/specs/2026-04-12-chart-types-expansion-design.md, 플랜: docs/superpowers/plans/2026-04-12-chart-types-expansion.md. |
 | 2026-04-11 | Phase 5.10 시작 및 dataset-manager 서브에이전트(5.10.1) 완료. 데이터셋 삭제/컬럼 변경/CSV 임포트 MCP 도구 8종 + 권한 기반 파괴 도구 필터링 + dataset-manager 서브에이전트(GIS 자동 감지) + 참조 집계 API + E2E 시나리오 2종. 스펙: docs/superpowers/specs/2026-04-11-dataset-manager-subagent-design.md, 플랜: docs/superpowers/plans/2026-04-11-dataset-manager-subagent.md. |
 | 2026-04-06 | Phase 7-4 (이상 탐지) + 7-5 (비주얼 빌더) 완료. 7-4: anomaly_event 테이블(V47), 이벤트→DB 저장+SSE 알림, dataset 메트릭 executor 연동, 커스텀 메트릭 모달, 이상 탐지 이력 UI, 시스템 메트릭 버그 수정. 7-5: 그룹 간 자유 DnD 정렬, 11종 타입별 구조+가이드 미리보기. E2E 184개 + BE 669개 전체 통과. |
