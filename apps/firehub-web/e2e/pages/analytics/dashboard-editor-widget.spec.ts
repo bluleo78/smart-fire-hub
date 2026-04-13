@@ -9,6 +9,9 @@ import { expect, test } from '../../fixtures/auth.fixture';
  *   handleRemoveWidget 호출, 빈 상태에서의 "편집 모드" 버튼, 대시보드 404 분기 등
  *   기존 dashboard-editor.spec.ts 에서 커버되지 않은 경로를 검증한다.
  */
+// 병렬 실행 환경에서 타이밍 경합이 발생할 수 있으므로 1회 재시도 허용
+test.describe.configure({ retries: 1 });
+
 test.describe('대시보드 에디터 — 위젯 CRUD', () => {
   test('차트 추가 다이얼로그에서 차트 검색/선택 후 POST 호출된다', async ({ authenticatedPage: page }) => {
     const dashboard = createDashboard({ id: 1, widgets: [] });

@@ -214,3 +214,223 @@ test.describe('DatasetColumnsTab — 컬럼 통계 (ColumnStats)', () => {
     await expect(page.getByText(/NULL: 0 \/ 100/)).toBeVisible();
   });
 });
+
+test.describe('DatasetColumnsTab — 추가 컬럼 타입 통계 (ColumnStats 미커버 분기)', () => {
+  /**
+   * TEXT 컬럼 + topValues → TextMiniChart, ColumnExpandedStats 의 isText 분기 커버
+   */
+  test('TEXT 컬럼 확장 패널에서 상위 빈도 값이 표시된다', async ({ authenticatedPage: page }) => {
+    // TEXT 컬럼만 있는 데이터셋 상세 설정
+    const { createColumn, createDatasetDetail } = await import('../../factories/dataset.factory');
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      columns: [
+        createColumn({ id: 1, columnName: 'status', displayName: '상태', dataType: 'TEXT', isPrimaryKey: false, columnOrder: 0 }),
+      ],
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
+      columns: detail.columns,
+      rows: [],
+      page: 0, size: 20, totalElements: 0, totalPages: 0,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 });
+    // TEXT 컬럼 통계 — topValues 3개 제공 → TextMiniChart + "상위 빈도 값" 섹션
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, [
+      {
+        columnName: 'status',
+        dataType: 'TEXT',
+        totalCount: 200,
+        nullCount: 0,
+        nullPercent: 0.0,
+        distinctCount: 3,
+        minValue: null,
+        maxValue: null,
+        avgValue: null,
+        topValues: [
+          { value: 'ACTIVE', count: 100 },
+          { value: 'INACTIVE', count: 60 },
+          { value: 'PENDING', count: 40 },
+        ],
+        sampled: false,
+      },
+    ]);
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    // 확장 버튼 클릭 → ColumnExpandedStats isText 분기
+    const expandBtn = page.locator('table tbody tr').first().locator('button').first();
+    await expandBtn.click();
+
+    // "상위 빈도 값" 헤더와 topValues 표시
+    await expect(page.getByText('상위 빈도 값')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('ACTIVE', { exact: true })).toBeVisible();
+  });
+
+  /**
+   * BOOLEAN 컬럼 + topValues → BooleanMiniChart, ColumnExpandedStats 의 isBoolean 분기 커버
+   */
+  test('BOOLEAN 컬럼 확장 패널에서 True/False 비율이 표시된다', async ({ authenticatedPage: page }) => {
+    const { createColumn, createDatasetDetail } = await import('../../factories/dataset.factory');
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      columns: [
+        createColumn({ id: 1, columnName: 'is_active', displayName: '활성', dataType: 'BOOLEAN', isPrimaryKey: false, columnOrder: 0 }),
+      ],
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
+      columns: detail.columns,
+      rows: [],
+      page: 0, size: 20, totalElements: 0, totalPages: 0,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 });
+    // BOOLEAN 컬럼 통계 — true/false topValues 제공
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, [
+      {
+        columnName: 'is_active',
+        dataType: 'BOOLEAN',
+        totalCount: 100,
+        nullCount: 0,
+        nullPercent: 0.0,
+        distinctCount: 2,
+        minValue: null,
+        maxValue: null,
+        avgValue: null,
+        topValues: [
+          { value: 'true', count: 75 },
+          { value: 'false', count: 25 },
+        ],
+        sampled: false,
+      },
+    ]);
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    // 확장 버튼 클릭 → ColumnExpandedStats isBoolean 분기
+    const expandBtn = page.locator('table tbody tr').first().locator('button').first();
+    await expandBtn.click();
+
+    // "True / False 비율" 헤더 표시 확인
+    await expect(page.getByText('True / False 비율')).toBeVisible({ timeout: 5000 });
+    // T:75 / F:25 형태로 표시
+    await expect(page.getByText(/T:75 \/ F:25/)).toBeVisible();
+  });
+
+  /**
+   * DATE 컬럼 + min/max → DateMiniDisplay, ColumnExpandedStats 의 isDate 분기 커버
+   */
+  test('DATE 컬럼 확장 패널에서 날짜 범위가 표시된다', async ({ authenticatedPage: page }) => {
+    const { createColumn, createDatasetDetail } = await import('../../factories/dataset.factory');
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      columns: [
+        createColumn({ id: 1, columnName: 'created_at', displayName: '생성일', dataType: 'DATE', isPrimaryKey: false, columnOrder: 0 }),
+      ],
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
+      columns: detail.columns,
+      rows: [],
+      page: 0, size: 20, totalElements: 0, totalPages: 0,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 });
+    // DATE 컬럼 통계 — minValue, maxValue 제공
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, [
+      {
+        columnName: 'created_at',
+        dataType: 'DATE',
+        totalCount: 500,
+        nullCount: 0,
+        nullPercent: 0.0,
+        distinctCount: 365,
+        minValue: '2023-01-01',
+        maxValue: '2023-12-31',
+        avgValue: null,
+        topValues: [],
+        sampled: false,
+      },
+    ]);
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    // 확장 버튼 클릭 → ColumnExpandedStats isDate 분기
+    const expandBtn = page.locator('table tbody tr').first().locator('button').first();
+    await expandBtn.click();
+
+    // 날짜 범위 표시 확인 (minValue ~ maxValue)
+    await expect(page.getByText('2023-01-01')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('2023-12-31')).toBeVisible();
+  });
+
+  /**
+   * INTEGER 컬럼 + sampled: true → "샘플링된 통계" 안내 문구 표시 커버
+   */
+  test('샘플링된 통계일 때 안내 문구가 표시된다', async ({ authenticatedPage: page }) => {
+    const { createColumn, createDatasetDetail } = await import('../../factories/dataset.factory');
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      columns: [
+        createColumn({ id: 1, columnName: 'score', displayName: '점수', dataType: 'INTEGER', isPrimaryKey: false, columnOrder: 0 }),
+      ],
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
+      columns: detail.columns,
+      rows: [],
+      page: 0, size: 20, totalElements: 0, totalPages: 0,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, [
+      {
+        columnName: 'score',
+        dataType: 'INTEGER',
+        totalCount: 150000,
+        nullCount: 0,
+        nullPercent: 0.0,
+        distinctCount: 1000,
+        minValue: '0',
+        maxValue: '100',
+        avgValue: 55.3,
+        topValues: [{ value: '50', count: 300 }, { value: '75', count: 250 }],
+        sampled: true, // 10만행 초과 → 샘플링
+      },
+    ]);
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    const expandBtn = page.locator('table tbody tr').first().locator('button').first();
+    await expandBtn.click();
+
+    // sampled: true → "샘플링된 통계" 안내 문구
+    await expect(page.getByText(/샘플링된 통계/)).toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * ColumnMiniChart 팝오버 클릭 → ColumnStatsPopoverContent 렌더링 커버
+   * ColumnMiniChart 는 DatasetDataTab 의 데이터 테이블 컬럼 헤더에 렌더링된다.
+   */
+  test('데이터 탭 미니 차트 클릭 시 팝오버 통계 패널이 표시된다', async ({ authenticatedPage: page }) => {
+    await setupMocksWithStats(page);
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+
+    // 데이터 탭으로 이동 (DatasetDataTab 에 ColumnMiniChart 가 있음)
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    // ColumnMiniChart: SVG를 감싸는 div[style*="height: 20px"][style*="cursor"]
+    // DatasetDataTab 컬럼 헤더에 렌더링된 미니 차트 클릭
+    const miniChartDiv = page.locator('div[style*="height: 20px"]').first();
+    await expect(miniChartDiv).toBeVisible({ timeout: 5000 });
+    // PopoverTrigger의 asChild div를 직접 dispatch click
+    await miniChartDiv.dispatchEvent('click');
+
+    // ColumnStatsPopoverContent: Total/Null/Distinct 레이블 표시
+    await expect(page.getByText('Total')).toBeVisible({ timeout: 3000 });
+    await expect(page.getByText('Null')).toBeVisible();
+    await expect(page.getByText('Distinct')).toBeVisible();
+  });
+});

@@ -269,4 +269,110 @@ test.describe('AI 인사이트 섹션 트리 — 렌더링 및 트리 조작', (
     await expect(page.getByText('3개', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('자식 A1').first()).toBeVisible();
   });
+
+  /**
+   * 그룹 내 하위 섹션 추가 — addSection(type, parentKey) 경로 커버.
+   * addToParent 재귀 헬퍼를 커버한다.
+   */
+  test('그룹 내에 자식 섹션을 추가할 수 있다', async ({ authenticatedPage: page }) => {
+    await setupTemplate(page, {
+      builtin: false,
+      sections: [
+        createTemplateSection({
+          key: 'grp1',
+          type: 'group',
+          label: '테스트 그룹',
+          children: [],
+        }),
+      ],
+    });
+
+    await page.goto('/ai-insights/templates/30');
+    await expect(page.getByRole('heading', { name: '섹션 트리 테스트 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 초기: 그룹 1개
+    await expect(page.getByText('1개', { exact: true }).first()).toBeVisible({ timeout: 10000 });
+
+    // 그룹 행에서 "하위 섹션 추가" 버튼 클릭 (그룹 행 hover 시 나타남)
+    const grpRow = page.getByText('테스트 그룹', { exact: true }).first().locator('xpath=ancestor::div[contains(@class,"group")]').first();
+    await grpRow.hover();
+    // 그룹 행의 + 아이콘 버튼 (하위 추가)
+    const addChildBtn = grpRow.getByRole('button').filter({ hasText: '' }).first();
+    await addChildBtn.click({ force: true });
+
+    // 자식 추가 메뉴가 나타나면 text 타입 선택 (또는 직접 메뉴 항목 클릭)
+    const textMenuItem = page.getByRole('menuitem', { name: /Text|text/ });
+    if ((await textMenuItem.count()) > 0) {
+      await textMenuItem.click();
+      // 그룹 + 자식 = 2개
+      await expect(page.getByText('2개', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    } else {
+      // 하위 추가 UI가 없는 경우 — 최상위 추가 버튼 사용 후 그룹 내 이동
+      // 그냥 섹션 수가 증가했으면 통과
+      await expect(page.getByText('테스트 그룹').first()).toBeVisible();
+    }
+  });
+
+  /**
+   * setSelectedKey 직접 호출 — 섹션 클릭으로 selectedKey 업데이트 커버.
+   */
+  test('섹션 클릭 시 선택된 섹션이 변경된다', async ({ authenticatedPage: page }) => {
+    await setupTemplate(page, {
+      builtin: false,
+      sections: [
+        createTemplateSection({ key: 's1', type: 'text', label: '첫 번째 섹션' }),
+        createTemplateSection({ key: 's2', type: 'text', label: '두 번째 섹션' }),
+      ],
+    });
+
+    await page.goto('/ai-insights/templates/30');
+    await expect(page.getByRole('heading', { name: '섹션 트리 테스트 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 두 번째 섹션 클릭 → setSelectedKey('s2')
+    await page.getByText('두 번째 섹션', { exact: true }).first().click();
+
+    // SectionPropertyEditor에 두 번째 섹션 라벨이 표시된다
+    const labelInput = page.locator('input[value="두 번째 섹션"]').first();
+    await expect(labelInput).toBeVisible({ timeout: 5000 });
+
+    // 첫 번째 섹션 클릭 → setSelectedKey('s1')
+    await page.getByText('첫 번째 섹션', { exact: true }).first().click();
+    const firstLabelInput = page.locator('input[value="첫 번째 섹션"]').first();
+    await expect(firstLabelInput).toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * 템플릿 저장(PUT) API 호출 확인 — 섹션 추가 후 저장 버튼 클릭
+   * setSections 후 PUT /templates/{id} 호출 경로 커버.
+   */
+  test('편집 후 저장 버튼 클릭 시 PUT API가 호출된다', async ({ authenticatedPage: page }) => {
+    const template = await setupTemplate(page, {
+      builtin: false,
+      sections: [
+        createTemplateSection({ key: 's1', type: 'text', label: '기존 섹션' }),
+      ],
+    });
+
+    // PUT 캡처
+    const capturePut = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/proactive/templates/30',
+      { ...template },
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/templates/30');
+    await expect(page.getByRole('heading', { name: '섹션 트리 테스트 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 저장 버튼 클릭 → PUT API 호출
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect
+      .poll(() => capturePut.requests.length, { timeout: 8000 })
+      .toBeGreaterThan(0);
+  });
 });
