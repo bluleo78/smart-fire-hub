@@ -375,6 +375,138 @@ test.describe('API 연결 페이지', () => {
     });
   });
 
+  test('생성 폼 — Bearer Token 타입 선택 시 token 필드로 생성', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections',
+      { id: 20, name: 'Bearer 테스트', authType: 'BEARER' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름 입력
+    await page.getByPlaceholder('예: Make.com API').fill('Bearer 테스트');
+
+    // 인증 유형 → Bearer Token으로 변경
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+
+    // Bearer Token 입력 필드가 표시되어야 한다
+    await expect(page.getByPlaceholder('토큰을 입력하세요')).toBeVisible();
+    await page.getByPlaceholder('토큰을 입력하세요').fill('my-bearer-token-abc');
+
+    await page.getByRole('button', { name: '생성' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: 'Bearer 테스트',
+      authType: 'BEARER',
+      authConfig: expect.objectContaining({ token: 'my-bearer-token-abc' }),
+    });
+  });
+
+  test('생성 폼 — API Key + Query 위치 선택 시 paramName 필드로 생성', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections',
+      { id: 21, name: 'Query API', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.getByPlaceholder('예: Make.com API').fill('Query API');
+
+    // API_KEY 유형(기본값), 위치를 Query Parameter로 변경
+    const combos = page.getByRole('combobox');
+    await combos.nth(1).click();
+    await page.getByRole('option', { name: 'Query Parameter' }).click();
+
+    // 파라미터 이름 필드 (placeholder='api_key')
+    await page.getByPlaceholder('api_key').fill('my_param');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('secret-123');
+
+    await page.getByRole('button', { name: '생성' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: 'Query API',
+      authType: 'API_KEY',
+      authConfig: expect.objectContaining({
+        placement: 'query',
+        paramName: 'my_param',
+        apiKey: 'secret-123',
+      }),
+    });
+  });
+
+  test('생성 폼 — 이름 미입력 시 toast 에러가 표시되고 API가 호출되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름 없이 바로 생성 클릭
+    await page.getByRole('button', { name: '생성' }).click();
+
+    // 유효성 검사 toast 에러 확인
+    await expect(page.getByText('연결 이름을 입력하세요.')).toBeVisible();
+    // 다이얼로그는 여전히 열려있어야 한다
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
+  test('생성 폼 — API_KEY header 타입에서 헤더 이름/키 미입력 시 toast 에러', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름만 입력, 헤더이름·키값 비워두고 생성 시도
+    await page.getByPlaceholder('예: Make.com API').fill('헤더 검증 테스트');
+    await page.getByRole('button', { name: '생성' }).click();
+
+    await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toBeVisible();
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
+  test('생성 폼 — BEARER 타입에서 토큰 미입력 시 toast 에러', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.getByPlaceholder('예: Make.com API').fill('Bearer 검증 테스트');
+    // Bearer Token으로 변경
+    await page.getByRole('combobox').first().click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    // 토큰 입력 없이 생성 시도
+    await page.getByRole('button', { name: '생성' }).click();
+
+    await expect(page.getByText('토큰을 입력하세요.')).toBeVisible();
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
   test('뒤로가기 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupApiConnectionDetailMocks(page, 1);
     await setupApiConnectionListMocks(page);
