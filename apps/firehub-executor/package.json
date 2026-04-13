@@ -1,0 +1,7 @@
+{
+  "name": "@smart-fire-hub/firehub-executor",
+  "version": "0.1.0",
+  "scripts": {
+    "test": "python3 -m pytest tests/ -q"
+  }
+}
