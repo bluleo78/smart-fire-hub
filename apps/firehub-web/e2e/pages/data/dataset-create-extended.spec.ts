@@ -87,11 +87,11 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
     // 컬럼 정의 — SchemaBuilder 첫 번째 행에 필수 columnName 입력
     await page.getByPlaceholder('예: user_id').first().fill('id');
 
-    // 생성 버튼 클릭
-    await page.getByRole('button', { name: '생성' }).click();
-
-    // payload 검증
-    await page.waitForTimeout(500);
+    // 생성 버튼 클릭 — POST 응답을 기다려 payload가 캡처된 이후에 검증한다
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
+      page.getByRole('button', { name: '생성' }).click(),
+    ]);
     expect(capturedPayload).toMatchObject({
       name: '새 소방 데이터',
       tableName: 'new_fire_data',
@@ -193,9 +193,10 @@ test.describe('DatasetCreatePage — 카테고리 선택 (useCategories)', () =>
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: '소방 데이터' }).click();
 
-    await page.getByRole('button', { name: '생성' }).click();
-
-    await page.waitForTimeout(500);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
+      page.getByRole('button', { name: '생성' }).click(),
+    ]);
     // categoryId: 1 이 payload에 포함되어야 함
     expect(capturedPayload.categoryId).toBe(1);
   });
@@ -229,9 +230,10 @@ test.describe('DatasetCreatePage — 카테고리 선택 (useCategories)', () =>
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: '선택 안 함' }).click();
 
-    await page.getByRole('button', { name: '생성' }).click();
-
-    await page.waitForTimeout(500);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
+      page.getByRole('button', { name: '생성' }).click(),
+    ]);
     // categoryId가 undefined → JSON 직렬화 시 누락됨
     expect(capturedPayload.categoryId).toBeUndefined();
   });
@@ -330,9 +332,10 @@ test.describe('DatasetCreatePage — 데이터셋 유형 선택', () => {
     await selects.nth(1).click();
     await page.getByRole('option', { name: '파생' }).click();
 
-    await page.getByRole('button', { name: '생성' }).click();
-
-    await page.waitForTimeout(500);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
+      page.getByRole('button', { name: '생성' }).click(),
+    ]);
     expect(capturedPayload.datasetType).toBe('DERIVED');
   });
 });

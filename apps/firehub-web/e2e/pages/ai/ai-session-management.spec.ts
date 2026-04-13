@@ -151,10 +151,11 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
     await trigger.click();
 
     // "이전 대화 1" 세션 클릭 → onSelectSession → loadSession('session-1')
-    await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
-
-    // loadSession이 API를 호출했는지 확인
-    await page.waitForTimeout(500);
+    // messages API 응답을 대기하여 API 호출이 완료된 후 검증한다
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/sessions/session-1/messages') && r.status() === 200),
+      page.getByRole('menuitem', { name: /이전 대화 1/ }).click(),
+    ]);
     expect(messagesApiCalled).toBe(true);
   });
 
@@ -249,10 +250,11 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     await expect(menuItem1).toBeVisible({ timeout: 3000 });
     // 삭제 버튼: menuitem 내 size="icon" 버튼
     const deleteBtn = menuItem1.getByRole('button');
-    await deleteBtn.click();
-
-    // DELETE API 호출 확인
-    await page.waitForTimeout(500);
+    // DELETE API 응답을 대기하여 호출 완료 후 검증한다
+    await Promise.all([
+      page.waitForResponse((r) => /\/ai\/sessions\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
+      deleteBtn.click(),
+    ]);
     expect(deletedId).toBe(1); // MOCK_SESSIONS[0].id === 1
   });
 });

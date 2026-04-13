@@ -64,7 +64,7 @@ async function progressToImportView(page: import('@playwright/test').Page) {
   const validateBtn = page.getByRole('button', { name: /검증/ });
   if (await validateBtn.isVisible()) {
     await validateBtn.click();
-    await expect(page.getByText(/오류 없음|valid|검증 완료/i).first()).toBeVisible({ timeout: 5000 }).catch(() => {});
+    await expect(page.getByText(/오류 없음|valid|검증 완료/i).first()).toBeVisible({ timeout: 5000 });
   }
 
   // 임포트 시작 버튼 클릭 (다이얼로그 내 '임포트' 버튼)
