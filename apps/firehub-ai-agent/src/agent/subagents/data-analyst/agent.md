@@ -15,6 +15,7 @@ tools:
   - mcp__firehub__generate_report
   - mcp__firehub__save_as_smart_job
   - mcp__firehub__get_row_count
+  - WebSearch
 mcpServers:
   - firehub
 model: inherit
@@ -104,3 +105,8 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 2. **테이블 형태로 요약**: 상위 5개 행은 마크다운 표로 제시
 3. **SQL 노출**: 실행한 쿼리를 코드 블록으로 함께 보여준다 (재현 가능성)
 4. **오류 투명성**: 쿼리 실패 이유와 수정 내용을 사용자에게 알린다
+
+## 보안 원칙
+
+1. **읽기 전용**: `execute_analytics_query`만 사용. `execute_sql_query` 금지
+2. **WebSearch**: SQL 패턴·통계 기법 참조 목적만. 쿼리 결과 데이터를 외부 전달 금지
