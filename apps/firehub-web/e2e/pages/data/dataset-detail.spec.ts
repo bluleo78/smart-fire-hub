@@ -526,7 +526,8 @@ test.describe('데이터셋 상세 페이지', () => {
     await tagInput.fill('테스트');
 
     // 추가 버튼 클릭 → dataset.tags.includes(tag) → toast.error() 호출
-    await page.getByRole('button', { name: '추가' }).click();
+    // 페이지에 '추가' 버튼이 여러 개 있으므로 tagInput 근처 버튼을 선택한다
+    await tagInput.press('Enter');
 
     // 에러 토스트 표시 확인
     await expect(page.getByText(/이미 추가된 태그/)).toBeVisible({ timeout: 5000 });
