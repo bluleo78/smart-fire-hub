@@ -37,11 +37,13 @@ export default function SignupPage() {
       setServerError('');
       await signup(data);
     } catch (error) {
-      // 필드별 유효성 오류가 있으면 해당 필드에 인라인으로 표시 (e.g. 비밀번호 형식 오류)
+      // 서버가 필드별 errors 맵을 반환하면 각 필드에 인라인으로 표시
       if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
-        if (errData.errors?.password) {
-          setError('password', { message: errData.errors.password });
+        if (errData.errors && Object.keys(errData.errors).length > 0) {
+          Object.entries(errData.errors).forEach(([field, message]) => {
+            setError(field as keyof SignupFormData, { message });
+          });
           return;
         }
       }

@@ -100,14 +100,19 @@ test.describe('회원가입 페이지', () => {
   test('비밀번호에 대문자/숫자 없으면 형식 에러를 표시한다', async ({ authMockedPage: page }) => {
     await page.goto('/signup');
 
+    // 다른 필드는 유효한 값으로 채워 비밀번호 regex 오류만 격리한다
+    await page.getByLabel('아이디 (이메일)').fill('user@example.com');
     // 소문자만 8자 이상 — 대문자·숫자 미포함 → regex 실패
     await page.getByLabel('비밀번호').fill('alllowercase');
+    await page.getByLabel('이름').fill('테스트');
     await page.getByRole('button', { name: '회원가입' }).click();
 
     // Zod regex 에러 메시지가 비밀번호 필드 아래에 표시되어야 한다
     await expect(
       page.getByText('비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다'),
     ).toBeVisible();
+    // API 호출 없이 클라이언트 Zod에서 차단되었는지 확인 — 여전히 signup 페이지에 머무름
+    await expect(page).toHaveURL(/\/signup/);
   });
 
   test('서버 errors.password 반환 시 비밀번호 필드에 인라인 에러를 표시한다', async ({
