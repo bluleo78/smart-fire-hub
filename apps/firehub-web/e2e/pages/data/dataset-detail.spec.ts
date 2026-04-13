@@ -453,4 +453,113 @@ test.describe('데이터셋 상세 페이지', () => {
     // TEMP 뱃지 확인 — 헤더의 text-xs 뱃지 (strict 모드: .first() 사용)
     await expect(page.getByText('임시').first()).toBeVisible();
   });
+
+  /**
+   * 태그 자동완성 제안 목록에서 항목 클릭 시 addTag.mutateAsync(suggestion) 경로 커버.
+   * DatasetDetailPage.tsx line 276-289: filteredTagSuggestions 클릭 핸들러
+   */
+  test('태그 자동완성 제안 클릭 시 POST API가 호출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 현재 데이터셋에 없는 태그를 제안 목록에 포함 (filteredTagSuggestions 필터 통과)
+    const detail = createDatasetDetail({ id: 1, tags: ['테스트'] });
+    await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets/1/stats', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    // 제안 목록에 '샘플' 포함 — 현재 tags에 없으므로 filteredTagSuggestions에 표시된다
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', ['샘플', 'production']);
+
+    const addTagCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/tags',
+      { id: 1, tags: ['테스트', '샘플'] },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 태그 추가 버튼(+) 클릭 → Popover 열기
+    await page.locator('button[title="태그 추가"]').click();
+
+    // 입력 필드에 '샘' 입력 → '샘플' 제안 항목이 필터링되어 표시된다
+    const tagInput = page.getByPlaceholder(/태그 입력/);
+    await tagInput.fill('샘');
+
+    // 자동완성 제안 목록에서 '샘플' 버튼 클릭 → suggestion 클릭 핸들러 실행
+    const suggestionBtn = page.getByRole('button', { name: '샘플' });
+    await expect(suggestionBtn).toBeVisible({ timeout: 3000 });
+    await suggestionBtn.click();
+
+    // POST payload 검증 — suggestion 클릭 시 addTag.mutateAsync(suggestion) 호출
+    const req = await addTagCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ tagName: '샘플' });
+  });
+
+  /**
+   * 이미 추가된 태그를 다시 입력하면 에러 토스트가 표시된다.
+   * DatasetDetailPage.tsx line 95-98: handleAddTag → tags.includes(tag) 분기
+   */
+  test('이미 추가된 태그 입력 시 에러 메시지가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 태그 추가 버튼(+) 클릭 → Popover 열기
+    await page.locator('button[title="태그 추가"]').click();
+
+    // 이미 존재하는 태그 '테스트' 입력 (createDatasetDetail tags: ['테스트', '샘플'])
+    const tagInput = page.getByPlaceholder(/태그 입력/);
+    await tagInput.fill('테스트');
+
+    // 추가 버튼 클릭 → dataset.tags.includes(tag) → toast.error() 호출
+    await page.getByRole('button', { name: '추가' }).click();
+
+    // 에러 토스트 표시 확인
+    await expect(page.getByText(/이미 추가된 태그/)).toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * 관리자 상태 변경 Popover에서 취소 버튼 클릭 시 Popover가 닫힌다.
+   * DatasetDetailPage.tsx line 217-220: 취소 버튼 → setStatusEditOpen(false) 분기
+   */
+  test('관리자 상태 변경 팝오버에서 취소 버튼 클릭 시 팝오버가 닫힌다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { createAdminUserDetail } = await import('../../factories/auth.factory');
+    // 관리자 계정으로 users/me 오버라이드
+    await mockApi(page, 'GET', '/api/v1/users/me', createAdminUserDetail());
+    await setupDetailPageMocks(page, 1);
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 관리자에게만 보이는 "상태 변경" 버튼 확인
+    await expect(page.getByRole('button', { name: '상태 변경' })).toBeVisible();
+
+    // Popover 열기
+    await page.getByRole('button', { name: '상태 변경' }).click();
+
+    // Popover 콘텐츠가 열려야 한다
+    await expect(page.getByText('데이터셋 상태 변경')).toBeVisible({ timeout: 3000 });
+
+    // 취소 버튼 클릭 → setStatusEditOpen(false) 호출
+    await page.getByRole('button', { name: '취소' }).click();
+
+    // Popover가 닫혀야 한다 (콘텐츠 비표시)
+    await expect(page.getByText('데이터셋 상태 변경')).not.toBeVisible({ timeout: 3000 });
+  });
 });

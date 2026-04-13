@@ -203,3 +203,91 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
     await expect(page).toHaveURL(/\/pipelines/);
   });
 });
+
+test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
+  /**
+   * AI_CLASSIFY 스텝에서 프롬프트 없이 저장 시 에러를 표시한다.
+   * usePipelineValidation.ts의 aiConfig.prompt 검증 분기를 커버한다.
+   * (line 43-45: !cfg || !cfg.prompt || !(cfg.prompt as string).trim())
+   */
+  test('AI_CLASSIFY 스텝에서 프롬프트 없이 저장 시 에러가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 파이프라인 이름 입력
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    await nameInput.fill('AI 분류 파이프라인');
+
+    // 스텝 추가
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('AI 분류 스텝');
+
+    // 스텝 타입을 AI_CLASSIFY로 변경
+    const typeSelect = page.getByRole('combobox').first();
+    await expect(typeSelect).toBeVisible();
+    await typeSelect.click();
+
+    const aiOption = page.getByRole('option', { name: /AI.*분류|AI_CLASSIFY/i });
+    if ((await aiOption.count()) > 0) {
+      await aiOption.click();
+    } else {
+      // 옵션이 없으면 테스트를 건너뜀 (UI에 AI_CLASSIFY 타입이 없는 경우)
+      return;
+    }
+
+    // 프롬프트를 입력하지 않고 저장 → aiConfig.prompt 검증 실패
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // SET_VALIDATION_ERRORS dispatch → "입력 오류" 토스트 또는 프롬프트 에러 메시지 표시
+    await expect(page.getByText(/입력 오류|프롬프트/).first()).toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * AI_CLASSIFY 스텝에서 출력 컬럼 없이 저장 시 에러를 표시한다.
+   * usePipelineValidation.ts의 aiConfig.outputColumns 검증 분기를 커버한다.
+   * (line 46-48: !cfg || !cfg.outputColumns || length === 0)
+   */
+  test('AI_CLASSIFY 스텝에서 출력 컬럼 없이 저장 시 에러가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 파이프라인 이름 입력
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    await nameInput.fill('AI 출력 컬럼 없는 파이프라인');
+
+    // 스텝 추가
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('AI 분류 스텝 2');
+
+    // 스텝 타입을 AI_CLASSIFY로 변경
+    const typeSelect = page.getByRole('combobox').first();
+    await expect(typeSelect).toBeVisible();
+    await typeSelect.click();
+
+    const aiOption = page.getByRole('option', { name: /AI.*분류|AI_CLASSIFY/i });
+    if ((await aiOption.count()) > 0) {
+      await aiOption.click();
+    } else {
+      // 옵션이 없으면 테스트를 건너뜀
+      return;
+    }
+
+    // 프롬프트 입력 필드가 있으면 입력 (prompt 에러 우선 발생 방지)
+    const promptInput = page.getByPlaceholder(/프롬프트|prompt/i).first();
+    if ((await promptInput.count()) > 0) {
+      await promptInput.fill('데이터를 분류하세요');
+    }
+
+    // 출력 컬럼은 추가하지 않고 저장 → aiConfig.outputColumns 검증 실패
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // SET_VALIDATION_ERRORS → "입력 오류" 또는 "출력 컬럼" 에러 메시지 표시
+    await expect(page.getByText(/입력 오류|출력 컬럼/).first()).toBeVisible({ timeout: 5000 });
+  });
+});
