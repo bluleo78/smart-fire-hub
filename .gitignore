@@ -63,6 +63,11 @@ logs/
 # Playwright
 .playwright-mcp
 snapshots/
+test-results/
+playwright-report/
+
+# Claude internal
+.claude/scheduled_tasks.lock
 
 # Local DB bind mount (Postgres data)
 db-data/
