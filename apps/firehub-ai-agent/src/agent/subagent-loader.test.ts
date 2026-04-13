@@ -709,7 +709,8 @@ describe('SL-AA: audit-analyst subagent integration', () => {
 
     const tools = agents['audit-analyst'].tools;
     expect(tools).toContain('mcp__firehub__list_audit_logs');
-    expect(tools).toHaveLength(1);
+    expect(tools).toContain('WebSearch');
+    expect(tools).toHaveLength(2);
   });
 
   it('SL-AA-03: audit-analyst prompt inlines rules.md and examples.md content', () => {
