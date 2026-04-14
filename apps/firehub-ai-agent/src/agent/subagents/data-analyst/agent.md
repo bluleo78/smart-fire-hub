@@ -96,8 +96,31 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 | 두 수치 관계 | `SCATTER` |
 | 지리 분포 | `MAP` |
 | 순위 | `BAR` (가로) |
+| 다차원 지표 비교 (3개 이상 축) | `RADAR` |
 
 범주 6개 이상이면 상위 5개 + "기타"로 집계한다.
+
+**RADAR 차트 데이터 형태 (중요)**:
+- PolarAngleAxis(각도 축) = `xAxis` → 항목 수가 많을수록 다각형이 잘 그려짐. **3개 이상 필수**.
+- `yAxis` = 시리즈(비교 대상, 예: 기간·그룹)
+- 데이터 행(row) = 각도 축 항목 1개
+
+예: 만족도 항목(신속성·적절성·전문성·친절도)을 월별로 비교할 때:
+```sql
+-- 잘못된 형태: month가 2개뿐 → 직선만 표시됨
+SELECT month, 신속성, 적절성, 전문성, 친절도 FROM ...
+-- config: xAxis="month"  ← 2개뿐이라 레이더가 선이 됨
+
+-- 올바른 형태: 항목을 행으로 PIVOT
+SELECT '신속성' AS category, AVG(CASE WHEN month='2월' THEN 신속성 END) AS "2월", AVG(CASE WHEN month='3월' THEN 신속성 END) AS "3월" FROM ...
+UNION ALL SELECT '적절성', ... UNION ALL SELECT '전문성', ... UNION ALL SELECT '친절도', ...
+-- config: xAxis="category", yAxis=["2월", "3월"]  ← 4개 꼭짓점 다각형
+```
+
+**값 범위가 좁을 때 비교 차트 (중요)**:
+- 값 차이가 전체 범위의 20% 미만이면 Y축 0 기준 막대 차트는 차이가 보이지 않음.
+- 이 경우 `BAR` 대신 `LINE` 차트를 사용하면 recharts가 Y축을 자동으로 데이터 범위에 맞게 설정해 차이가 잘 보임.
+- 예: 4.5~5.0 범위의 만족도 점수 월별 비교 → `LINE` 권장 (`BAR`는 모든 막대가 비슷해 보임)
 
 ## 응답 포맷 원칙
 
