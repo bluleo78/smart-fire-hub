@@ -1,4 +1,4 @@
-import { readFile } from 'fs/promises';
+import { readFile, readdir, access } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { getTranscriptPath } from './agent-cli.js';
@@ -18,10 +18,30 @@ export interface HistoryMessage {
   timestamp: string;
 }
 
-function getProjectId(): string {
-  const cwd = process.cwd();
-  // Replace all `/` with `-` (keeps leading dash, matching Claude's convention)
-  return cwd.replace(/\//g, '-');
+/**
+ * sessionId에 해당하는 JSONL 트랜스크립트 파일 경로를 탐색한다.
+ * Claude SDK는 실행 시 cwd를 기반으로 프로젝트 디렉터리를 결정하는데,
+ * Node.js 프로세스의 cwd(/app)와 다를 수 있다. 따라서 모든 프로젝트
+ * 디렉터리를 스캔하여 sessionId와 일치하는 파일을 찾는다.
+ */
+async function findTranscriptFilePath(sessionId: string): Promise<string | null> {
+  const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+  let projectDirs: string[];
+  try {
+    projectDirs = await readdir(projectsDir);
+  } catch {
+    return null;
+  }
+  for (const dir of projectDirs) {
+    const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 interface ParsedAssistant {
@@ -41,9 +61,9 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
     // 파일 없으면 SDK JSONL 경로로 폴백
   }
 
-  // SDK 에이전트 JSONL 트랜스크립트
-  const projectId = getProjectId();
-  const filePath = path.join(os.homedir(), '.claude', 'projects', projectId, `${sessionId}.jsonl`);
+  // SDK 에이전트 JSONL 트랜스크립트 — 모든 프로젝트 디렉터리에서 탐색
+  const filePath = await findTranscriptFilePath(sessionId);
+  if (!filePath) return [];
 
   let raw: string;
   try {
