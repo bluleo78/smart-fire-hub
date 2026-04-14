@@ -129,7 +129,7 @@ export function useAIChat(options?: {
         content: '',
         timestamp: new Date().toISOString(),
       };
-      setStreamingMessage(streamingContentRef.current);
+      setStreamingMessage({ ...streamingContentRef.current });
       setIsThinking(true);
     };
 
