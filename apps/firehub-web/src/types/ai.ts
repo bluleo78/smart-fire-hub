@@ -45,7 +45,7 @@ export interface AIAttachment {
 }
 
 export type ContentBlock =
-  | { type: 'text' }
+  | { type: 'text'; textStart: number }
   | { type: 'tool_use'; toolCallIndex: number };
 
 export interface AIMessage {

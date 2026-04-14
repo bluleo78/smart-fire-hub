@@ -281,13 +281,19 @@ function AssistantContent({ message }: { message: Partial<AIMessage> }) {
   const hasToolCalls = !!(message.toolCalls && message.toolCalls.length > 0);
   const hasBlocks = !!(message.contentBlocks && message.contentBlocks.length > 0);
 
-  // contentBlocks가 있으면 도착 순서대로 렌더링
+  // contentBlocks가 있으면 도착 순서대로 렌더링 (각 text 블록은 자기 구간만 표시)
   if (hasBlocks) {
     return (
       <>
         {message.contentBlocks!.map((block, idx) => {
           if (block.type === 'text' && hasContent) {
-            return <MarkdownContent key={`block-${idx}`} content={message.content!} hasNeighbor={idx > 0} />;
+            // textStart ~ 다음 text 블록의 textStart까지 슬라이스
+            const start = block.textStart ?? 0;
+            const nextTextBlock = message.contentBlocks!.slice(idx + 1).find(b => b.type === 'text');
+            const end = (nextTextBlock?.type === 'text' ? nextTextBlock.textStart : undefined) ?? message.content!.length;
+            const blockContent = message.content!.slice(start, end);
+            if (!blockContent) return null;
+            return <MarkdownContent key={`block-${idx}`} content={blockContent} hasNeighbor={idx > 0} />;
           }
           if (block.type === 'tool_use' && message.toolCalls) {
             const tc = message.toolCalls[block.toolCallIndex];

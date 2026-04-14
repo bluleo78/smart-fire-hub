@@ -188,12 +188,14 @@ export function useAIChat(options?: {
             if (streamingContentRef.current) {
               const blocks = streamingContentRef.current.contentBlocks || [];
               const lastBlock = blocks[blocks.length - 1];
+              // 새 text 블록 생성 시 현재 content 길이를 시작 오프셋으로 기록
+              const textStart = (streamingContentRef.current.content || '').length;
               streamingContentRef.current = {
                 ...streamingContentRef.current,
                 content: (streamingContentRef.current.content || '') + (event.content || ''),
                 contentBlocks: lastBlock?.type === 'text'
                   ? blocks
-                  : [...blocks, { type: 'text' }],
+                  : [...blocks, { type: 'text' as const, textStart }],
               };
               setStreamingMessage({ ...streamingContentRef.current });
             }
