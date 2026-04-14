@@ -3,6 +3,7 @@ import { useCallback, useRef,useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
+import { client as apiClient } from '../../api/client';
 import { uploadFiles } from '../../api/files';
 import { buildScreenContext } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
@@ -356,21 +357,23 @@ export function useAIChat(options?: {
     setIsCompacting(false);
     try {
       const response = await aiApi.getSessionMessages(sessionId);
-      // 히스토리의 이미지 첨부에 API 기반 previewUrl 설정
-      const msgs = (response.data as AIMessage[]).map((msg) => {
-        if (msg.attachments?.length) {
-          return {
-            ...msg,
-            attachments: msg.attachments.map((att) => ({
-              ...att,
-              previewUrl: att.mimeType.startsWith('image/')
-                ? `/api/v1/files/${att.id}/content`
-                : undefined,
-            })),
-          };
+      // 히스토리의 이미지 첨부에 인증된 blob URL 생성 (img 태그는 JWT 헤더를 보낼 수 없으므로)
+      const msgs = response.data as AIMessage[];
+      const blobPromises: Promise<void>[] = [];
+      for (const msg of msgs) {
+        if (!msg.attachments?.length) continue;
+        for (const att of msg.attachments) {
+          if (att.mimeType.startsWith('image/')) {
+            blobPromises.push(
+              apiClient.get(`/files/${att.id}/content`, { responseType: 'blob' })
+              .then((res) => {
+                att.previewUrl = URL.createObjectURL(res.data as Blob);
+              }).catch(() => {}),
+            );
+          }
         }
-        return msg;
-      });
+      }
+      if (blobPromises.length > 0) await Promise.all(blobPromises);
       setMessages(msgs);
     } catch (error) {
       console.error('Failed to load session history:', error);
