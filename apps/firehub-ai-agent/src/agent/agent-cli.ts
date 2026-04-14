@@ -133,10 +133,12 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const userWorkDir = join(homedir(), '.firehub', 'workspaces', String(userId));
   await mkdir(userWorkDir, { recursive: true });
   const chatFilesDir = join(userWorkDir, 'chat-files', String(Date.now()));
+  let downloadedFiles: Awaited<ReturnType<typeof downloadChatFiles>>['files'] = [];
 
   if (fileIds?.length) {
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
     const { files, failed } = await downloadChatFiles(apiClient, fileIds, chatFilesDir);
+    downloadedFiles = files;
 
     if (failed > 0) {
       console.warn(`[CLI Agent] ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
@@ -184,8 +186,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   let assistantText = '';
   let assistantToolCalls: HistoryToolCall[] = [];
 
-  // 사용자 메시지 기록 — 원본 메시지만 저장 (파일 경로 메타데이터는 AI에게만 전달)
-  transcript.push({ id: `user-${Date.now()}`, role: 'user', content: message || '첨부된 파일을 분석해주세요.', timestamp: now() });
+  // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
+  const userMsg: HistoryMessage = {
+    id: `user-${Date.now()}`,
+    role: 'user',
+    content: message || '첨부된 파일을 분석해주세요.',
+    timestamp: now(),
+  };
+  if (downloadedFiles.length > 0) {
+    userMsg.attachments = toAttachmentMeta(downloadedFiles);
+  }
+  transcript.push(userMsg);
 
   const commitAssistant = () => {
     if (!assistantText && assistantToolCalls.length === 0) return;

@@ -76,9 +76,13 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
   // 사이드카에서 첨부 파일 메타데이터 로드
   const attachments = await loadSessionAttachments(sessionId);
 
-  /** 첫 번째 user 메시지에 첨부 정보를 병합하는 헬퍼 */
+  /** 사이드카 첨부 정보를 메시지에 병합 — 이미 attachments가 있는 메시지는 건너뜀 (CLI transcript 직접 저장분) */
   const mergeAttachments = (messages: HistoryMessage[]): HistoryMessage[] => {
     if (attachments.length === 0) return messages;
+    // 이미 개별 메시지에 attachments가 있으면 사이드카 병합 불필요
+    const hasInlineAttachments = messages.some((m) => m.attachments?.length);
+    if (hasInlineAttachments) return messages;
+    // SDK 모드: 사이드카로만 첨부 정보 전달 → 첫 user 메시지에 병합
     const firstUser = messages.find((m) => m.role === 'user');
     if (firstUser) {
       firstUser.attachments = attachments as HistoryAttachment[];
