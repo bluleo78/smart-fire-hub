@@ -356,7 +356,22 @@ export function useAIChat(options?: {
     setIsCompacting(false);
     try {
       const response = await aiApi.getSessionMessages(sessionId);
-      setMessages(response.data);
+      // 히스토리의 이미지 첨부에 API 기반 previewUrl 설정
+      const msgs = (response.data as AIMessage[]).map((msg) => {
+        if (msg.attachments?.length) {
+          return {
+            ...msg,
+            attachments: msg.attachments.map((att) => ({
+              ...att,
+              previewUrl: att.mimeType.startsWith('image/')
+                ? `/api/v1/files/${att.id}/content`
+                : undefined,
+            })),
+          };
+        }
+        return msg;
+      });
+      setMessages(msgs);
     } catch (error) {
       console.error('Failed to load session history:', error);
     } finally {

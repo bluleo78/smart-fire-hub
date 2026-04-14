@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { getTranscriptPath } from './agent-cli.js';
 import type { CliTranscript } from './agent-cli.js';
+import { loadSessionAttachments } from './file-downloader.js';
 
 export interface HistoryToolCall {
   name: string;
@@ -10,11 +11,20 @@ export interface HistoryToolCall {
   result?: string;
 }
 
+export interface HistoryAttachment {
+  id: number;
+  name: string;
+  mimeType: string;
+  fileSize: number;
+  category: string;
+}
+
 export interface HistoryMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   toolCalls?: HistoryToolCall[];
+  attachments?: HistoryAttachment[];
   timestamp: string;
 }
 
@@ -63,11 +73,25 @@ function stripFileMetadata(text: string): string {
 }
 
 export async function readSessionTranscript(sessionId: string): Promise<HistoryMessage[]> {
+  // 사이드카에서 첨부 파일 메타데이터 로드
+  const attachments = await loadSessionAttachments(sessionId);
+
+  /** 첫 번째 user 메시지에 첨부 정보를 병합하는 헬퍼 */
+  const mergeAttachments = (messages: HistoryMessage[]): HistoryMessage[] => {
+    if (attachments.length === 0) return messages;
+    const firstUser = messages.find((m) => m.role === 'user');
+    if (firstUser) {
+      firstUser.attachments = attachments as HistoryAttachment[];
+    }
+    return messages;
+  };
+
   // CLI 에이전트 트랜스크립트 시도
   try {
     const data = await readFile(getTranscriptPath(sessionId), 'utf-8');
     const parsed = JSON.parse(data) as CliTranscript | HistoryMessage[];
-    return Array.isArray(parsed) ? parsed : (parsed.messages ?? []);
+    const msgs = Array.isArray(parsed) ? parsed : (parsed.messages ?? []);
+    return mergeAttachments(msgs);
   } catch {
     // 파일 없으면 SDK JSONL 경로로 폴백
   }
@@ -231,5 +255,5 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
     }
   }
 
-  return messages;
+  return mergeAttachments(messages);
 }

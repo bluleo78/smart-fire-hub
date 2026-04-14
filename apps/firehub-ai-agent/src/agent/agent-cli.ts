@@ -20,7 +20,7 @@ import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
-import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
+import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttachments } from './file-downloader.js';
 
 /** CLI 트랜스크립트 파일 형식 */
 export interface CliTranscript {
@@ -142,7 +142,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       console.warn(`[CLI Agent] ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
     }
 
+    // 첨부 파일 메타데이터 사이드카 저장 (히스토리에서 첨부 표시용)
     if (files.length > 0) {
+      saveSessionAttachments(sessionId, toAttachmentMeta(files)).catch(() => {});
       const imageFiles = files.filter((f) => f.mimeType.startsWith('image/'));
       const nonImageFiles = files.filter((f) => !f.mimeType.startsWith('image/'));
 

@@ -11,7 +11,7 @@ import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../cons
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
-import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
+import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttachments } from './file-downloader.js';
 
 import type { SSEEvent } from '../providers/types.js';
 export type { SSEEvent } from '../providers/types.js';
@@ -285,6 +285,13 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
             console.log(`${tag()} Tool ${lastToolName} completed in ${toolDuration}s`);
             toolCallStart = 0;
           }
+        }
+        // init 이벤트에서 sessionId 확보 → 첨부 파일 메타데이터 사이드카 저장
+        if (event.type === 'init' && event.sessionId && downloadResult?.files.length) {
+          saveSessionAttachments(
+            String(event.sessionId),
+            toAttachmentMeta(downloadResult.files),
+          ).catch((err) => console.warn(`${tag()} 첨부 메타 저장 실패:`, err));
         }
         if (event.type === 'text' && !firstTextReceived) {
           firstTextReceived = true;
