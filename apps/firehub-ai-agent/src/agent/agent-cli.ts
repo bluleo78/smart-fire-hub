@@ -182,8 +182,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   let assistantText = '';
   let assistantToolCalls: HistoryToolCall[] = [];
 
-  // 사용자 메시지 기록
-  transcript.push({ id: `user-${Date.now()}`, role: 'user', content: enhancedMessage, timestamp: now() });
+  // 사용자 메시지 기록 — 원본 메시지만 저장 (파일 경로 메타데이터는 AI에게만 전달)
+  transcript.push({ id: `user-${Date.now()}`, role: 'user', content: message || '첨부된 파일을 분석해주세요.', timestamp: now() });
 
   const commitAssistant = () => {
     if (!assistantText && assistantToolCalls.length === 0) return;

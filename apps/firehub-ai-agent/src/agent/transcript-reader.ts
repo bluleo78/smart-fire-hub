@@ -51,6 +51,17 @@ interface ParsedAssistant {
   timestamp: string;
 }
 
+/**
+ * AI에게 전달되는 첨부 파일 메타데이터 prefix를 제거하여 원본 사용자 메시지만 반환한다.
+ * 패턴: "[첨부 파일]\n..." 로 시작하는 텍스트에서 파일 안내 부분을 제거.
+ */
+function stripFileMetadata(text: string): string {
+  if (!text.startsWith('[첨부 파일]')) return text;
+  // 마지막 "...수 있습니다.\n\n" 또는 "...분석하세요.\n\n" 이후의 원본 메시지 추출
+  const match = text.match(/(?:읽을 수 있습니다\.|분석하세요\.)\s*\n\n([\s\S]+)$/);
+  return match?.[1]?.trim() || text;
+}
+
 export async function readSessionTranscript(sessionId: string): Promise<HistoryMessage[]> {
   // CLI 에이전트 트랜스크립트 시도
   try {
@@ -156,13 +167,15 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
         continue;
       }
 
-      const text = contentBlocks
+      const rawText = contentBlocks
         .filter((block) => (block as Record<string, unknown>).type === 'text')
         .map((block) => (block as Record<string, unknown>).text as string)
         .join('');
 
-      if (!text) continue;
+      if (!rawText) continue;
 
+      // AI용 첨부 파일 메타데이터 prefix 제거 → 원본 사용자 메시지만 표시
+      const text = stripFileMetadata(rawText);
       messages.push({ id, role: 'user', content: text, timestamp });
     } else {
       // assistant — merge lines with the same API message ID
