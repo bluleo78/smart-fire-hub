@@ -1,4 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { FireHubApiClient } from '../mcp/api-client.js';
@@ -114,7 +116,10 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   }
 
   // Build enhanced prompt from parallel-downloaded files (see Promise.all above).
+  // 이미지 파일은 base64 content block으로 직접 전달하여 Claude가 시각적으로 분석 가능하게 한다.
+  // 비이미지 파일은 경로를 텍스트로 안내하여 Read 도구로 접근하도록 한다.
   let enhancedMessage = message;
+  let imageContentBlocks: SDKUserMessage['message']['content'] | null = null;
 
   if (fileIds?.length && downloadResult) {
     const { files, failed } = downloadResult;
@@ -124,17 +129,44 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     }
 
     if (files.length > 0) {
-      const fileList = files
-        .map(
-          (f) =>
-            `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`,
-        )
-        .join('\n');
+      const imageFiles = files.filter((f) => f.mimeType.startsWith('image/'));
+      const nonImageFiles = files.filter((f) => !f.mimeType.startsWith('image/'));
 
-      enhancedMessage =
-        `[첨부 파일]\n${fileList}\n\n` +
-        `위 파일들은 Read 도구로 읽을 수 있습니다.\n\n` +
-        (message || '첨부된 파일을 분석해주세요.');
+      // 이미지 파일: base64로 읽어 image content block 생성
+      if (imageFiles.length > 0) {
+        const blocks: Extract<SDKUserMessage['message']['content'], Array<unknown>> = [];
+        for (const img of imageFiles) {
+          const data = await fs.readFile(img.localPath);
+          blocks.push({
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+              data: data.toString('base64'),
+            },
+          });
+        }
+
+        // 비이미지 파일 안내 + 사용자 메시지를 text block으로 추가
+        let textContent = message || '첨부된 파일을 분석해주세요.';
+        if (nonImageFiles.length > 0) {
+          const fileList = nonImageFiles
+            .map((f) => `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
+            .join('\n');
+          textContent = `[첨부 파일]\n${fileList}\nRead 도구로 읽을 수 있습니다.\n\n` + textContent;
+        }
+        blocks.push({ type: 'text' as const, text: textContent });
+        imageContentBlocks = blocks;
+      } else {
+        // 비이미지 파일만 있는 경우: 기존 텍스트 방식
+        const fileList = nonImageFiles
+          .map((f) => `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
+          .join('\n');
+        enhancedMessage =
+          `[첨부 파일]\n${fileList}\n\n` +
+          `위 파일들은 Read 도구로 읽을 수 있습니다.\n\n` +
+          (message || '첨부된 파일을 분석해주세요.');
+      }
     }
   }
 
@@ -145,8 +177,20 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
   const effectiveSystemPrompt = resolveSystemPrompt(basePrompt, systemPrompt, overrideSystemPrompt);
 
+  // 이미지가 있으면 AsyncIterable<SDKUserMessage>로, 없으면 string으로 전달
+  const prompt: Parameters<typeof query>[0]['prompt'] = imageContentBlocks
+    ? (async function* () {
+        yield {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: imageContentBlocks! },
+          parent_tool_use_id: null,
+          session_id: '',
+        } satisfies SDKUserMessage;
+      })()
+    : enhancedMessage;
+
   const queryOptions: Parameters<typeof query>[0] = {
-    prompt: enhancedMessage,
+    prompt,
     options: {
       model: model || DEFAULT_MODEL,
       systemPrompt: effectiveSystemPrompt,

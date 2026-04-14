@@ -143,17 +143,27 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     }
 
     if (files.length > 0) {
-      const fileList = files
-        .map(
-          (f) =>
-            `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`,
-        )
-        .join('\n');
+      const imageFiles = files.filter((f) => f.mimeType.startsWith('image/'));
+      const nonImageFiles = files.filter((f) => !f.mimeType.startsWith('image/'));
 
-      enhancedMessage =
-        `[첨부 파일]\n${fileList}\n\n` +
-        `위 파일들은 Read 도구로 읽을 수 있습니다.\n\n` +
-        (message || '첨부된 파일을 분석해주세요.');
+      const parts: string[] = ['[첨부 파일]'];
+
+      // 이미지 파일: Read 도구가 이미지를 시각적으로 표시할 수 있음을 명시
+      if (imageFiles.length > 0) {
+        const imgList = imageFiles
+          .map((f) => `- ${f.originalName} (${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
+          .join('\n');
+        parts.push(`[이미지]\n${imgList}\n→ Read 도구로 열면 이미지를 직접 볼 수 있습니다. 반드시 Read로 열어서 시각적으로 분석하세요.`);
+      }
+
+      if (nonImageFiles.length > 0) {
+        const fileList = nonImageFiles
+          .map((f) => `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
+          .join('\n');
+        parts.push(`[파일]\n${fileList}\n→ Read 도구로 읽을 수 있습니다.`);
+      }
+
+      enhancedMessage = parts.join('\n\n') + '\n\n' + (message || '첨부된 파일을 분석해주세요.');
     }
   }
 
