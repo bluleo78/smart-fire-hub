@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
-import { useApiConnections } from '@/hooks/queries/useApiConnections';
+import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 
 import ApiCallPreview from './ApiCallPreview';
 
@@ -199,13 +199,21 @@ export default function ApiCallStepConfig({
 }: ApiCallStepConfigProps) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
-  const { data: savedConnections } = useApiConnections();
+  // selectable 엔드포인트: 일반 사용자도 접근 가능 (파이프라인 에디터 권한)
+  const { data: savedConnections } = useApiConnectionsSelectable();
 
   const authMode = apiConnectionId ? 'saved' : 'inline';
 
   const update = (key: string, value: unknown) => onChange({ ...apiConfig, [key]: value });
 
-  const url = getConfig<string>(apiConfig, 'url', '');
+  // saved 모드: path (apiConnectionId + path → 백엔드에서 baseUrl + path 조합)
+  const path = getConfig<string>(apiConfig, 'path', '');
+  // inline 모드: customUrl (full URL)
+  const customUrl = getConfig<string>(apiConfig, 'customUrl', '');
+  // 선택된 연결 정보 (baseUrl prefix 표시용)
+  const selectedConn = apiConnectionId
+    ? (savedConnections?.find((c) => c.id === apiConnectionId) ?? null)
+    : null;
   const method = getConfig<string>(apiConfig, 'method', 'GET');
   const dataPath = getConfig<string>(apiConfig, 'dataPath', '');
   const body = getConfig<string>(apiConfig, 'body', '');
@@ -239,6 +247,19 @@ export default function ApiCallStepConfig({
     update('queryParams', kvPairsToRecord(pairs));
   };
 
+  /**
+   * 연결 모드 전환 시 기존 url/path/customUrl 필드를 초기화한다.
+   * - 과거 'url' 필드도 함께 제거해 레거시 데이터를 정리한다.
+   */
+  const handleConnectionChange = (id: number | null) => {
+    onConnectionChange(id);
+    const cleaned = { ...apiConfig };
+    delete cleaned['url'];       // 과거 필드 제거
+    delete cleaned['path'];
+    delete cleaned['customUrl'];
+    onChange(cleaned);
+  };
+
   const handleAuthChange = (partial: Partial<InlineAuth>) => {
     update('inlineAuth', { ...inlineAuth, ...partial });
   };
@@ -268,15 +289,23 @@ export default function ApiCallStepConfig({
   };
 
   const handlePreview = async () => {
-    if (!url) {
+    // saved 모드: path 필요, inline 모드: customUrl 필요
+    if (apiConnectionId !== null && !path) {
+      toast.error('경로(Path)를 입력하세요');
+      return;
+    }
+    if (apiConnectionId === null && !customUrl) {
       toast.error('URL을 입력하세요');
       return;
     }
     setPreviewLoading(true);
     setPreviewResult(null);
     try {
+      // 백엔드 ApiCallPreviewService: apiConnectionId + path 또는 customUrl로 URL 계산
       const payload = {
-        url,
+        apiConnectionId: apiConnectionId ?? undefined,
+        path: apiConnectionId !== null ? path : undefined,
+        customUrl: apiConnectionId === null ? customUrl : undefined,
         method,
         headers: kvPairsToRecord(headerPairs),
         queryParams: kvPairsToRecord(queryParamPairs),
@@ -326,16 +355,38 @@ export default function ApiCallStepConfig({
           기본 설정
         </div>
 
-        <div className="space-y-1.5">
-          <Label className="text-xs">URL *</Label>
-          <Input
-            placeholder="https://api.example.com/v1/data"
-            value={url}
-            disabled={readOnly}
-            onChange={(e) => update('url', e.target.value)}
-            className="text-xs h-8"
-          />
-        </div>
+        {/* saved 모드: baseUrl prefix + path 입력 */}
+        {apiConnectionId !== null && selectedConn && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">경로(Path) *</Label>
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded shrink-0 border">
+                {selectedConn.baseUrl}
+              </span>
+              <Input
+                placeholder="/v1/data"
+                value={path}
+                disabled={readOnly}
+                onChange={(e) => update('path', e.target.value)}
+                className="text-xs h-8"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* inline 모드(저장된 연결 없음): full URL 직접 입력 */}
+        {apiConnectionId === null && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">URL *</Label>
+            <Input
+              placeholder="https://api.example.com/v1/data"
+              value={customUrl}
+              disabled={readOnly}
+              onChange={(e) => update('customUrl', e.target.value)}
+              className="text-xs h-8"
+            />
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1.5">
@@ -376,7 +427,7 @@ export default function ApiCallStepConfig({
             if (v === 'saved') {
               handleAuthChange({ authType: 'NONE' });
             } else {
-              onConnectionChange(null);
+              handleConnectionChange(null);
             }
           }}
           disabled={readOnly}
@@ -391,7 +442,7 @@ export default function ApiCallStepConfig({
                 <Select
                   value={apiConnectionId ? String(apiConnectionId) : ''}
                   disabled={readOnly}
-                  onValueChange={(v) => onConnectionChange(Number(v))}
+                  onValueChange={(v) => handleConnectionChange(Number(v))}
                 >
                   <SelectTrigger className="h-8 text-xs w-full">
                     <SelectValue placeholder="연결을 선택하세요" />

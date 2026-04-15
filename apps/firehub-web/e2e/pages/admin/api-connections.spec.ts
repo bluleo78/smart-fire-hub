@@ -75,6 +75,9 @@ test.describe('API 연결 페이지', () => {
     await expect(nameInput).toBeVisible();
     await nameInput.fill('새 API 연결');
 
+    // Base URL 입력 — Phase 9에서 추가된 필수 필드
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+
     // API_KEY 인증 유형(기본값): 헤더 이름과 키 값도 필수 입력
     // placeholder='Authorization' → 헤더 이름 필드
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
@@ -395,6 +398,9 @@ test.describe('API 연결 페이지', () => {
     // 이름 입력
     await page.getByPlaceholder('예: Make.com API').fill('Bearer 테스트');
 
+    // Base URL 입력 — Phase 9에서 추가된 필수 필드
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+
     // 인증 유형 → Bearer Token으로 변경
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();
@@ -431,6 +437,9 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     await page.getByPlaceholder('예: Make.com API').fill('Query API');
+
+    // Base URL 입력 — Phase 9에서 추가된 필수 필드
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
 
     // API_KEY 유형(기본값), 위치를 Query Parameter로 변경
     const combos = page.getByRole('combobox');
@@ -480,11 +489,170 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('button', { name: '새 연결' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
-    // 이름만 입력, 헤더이름·키값 비워두고 생성 시도
+    // 이름과 baseUrl 입력, 헤더이름·키값 비워두고 생성 시도
     await page.getByPlaceholder('예: Make.com API').fill('헤더 검증 테스트');
+    // Base URL 입력 — 없으면 baseUrl 검증이 먼저 실패하여 헤더 검증까지 도달하지 못한다
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
     await page.getByRole('button', { name: '생성' }).click();
 
     await expect(page.getByText('헤더 이름과 키 값을 입력하세요.')).toBeVisible();
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
+  test('생성 시 baseUrl을 포함하여 API에 전달된다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+
+    let capturedBody: unknown;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections',
+      (route) => {
+        if (route.request().method() === 'POST') {
+          capturedBody = route.request().postDataJSON();
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ ...capturedBody as object, id: 99 }),
+          });
+        }
+        return route.continue();
+      },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.getByPlaceholder('예: Make.com API').fill('Test Connection');
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder('/health').fill('/health');
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('test-key-123');
+
+    await page.getByRole('button', { name: '생성' }).click();
+    await page.waitForTimeout(300);
+
+    expect(capturedBody).toMatchObject({
+      name: 'Test Connection',
+      baseUrl: 'https://api.example.com',
+      healthCheckPath: '/health',
+    });
+  });
+
+  test('리스트에 Base URL 컬럼과 상태 배지가 표시된다', async ({ authenticatedPage: page }) => {
+    // DOWN 상태 연결 포함해 모킹
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      {
+        id: 1,
+        name: '정상 연결',
+        authType: 'API_KEY',
+        baseUrl: 'https://api.example.com',
+        healthCheckPath: '/health',
+        lastStatus: 'UP',
+        lastCheckedAt: '2026-04-15T10:00:00Z',
+        lastLatencyMs: 100,
+        lastErrorMessage: null,
+        maskedAuthConfig: {},
+        description: null,
+        createdBy: 1,
+        createdAt: '2026-04-15T09:00:00Z',
+        updatedAt: '2026-04-15T09:00:00Z',
+      },
+      {
+        id: 2,
+        name: '이상 연결',
+        authType: 'BEARER',
+        baseUrl: 'https://broken.example.com',
+        healthCheckPath: '/health',
+        lastStatus: 'DOWN',
+        lastCheckedAt: '2026-04-15T10:00:00Z',
+        lastLatencyMs: null,
+        lastErrorMessage: 'Connection refused',
+        maskedAuthConfig: {},
+        description: null,
+        createdBy: 1,
+        createdAt: '2026-04-15T09:00:00Z',
+        updatedAt: '2026-04-15T09:00:00Z',
+      },
+    ]);
+
+    await page.goto('/admin/api-connections');
+
+    // Base URL 컬럼 데이터 표시 확인
+    await expect(page.getByText('https://api.example.com')).toBeVisible();
+    // DOWN 상태 배지 확인 — "이상 연결" 셀과 구분하기 위해 badge role로 한정
+    const rows = page.getByRole('row');
+    await expect(rows.filter({ hasText: '이상 연결' }).getByText('이상', { exact: true })).toBeVisible();
+    // UP 상태 배지 확인
+    await expect(rows.filter({ hasText: '정상 연결' }).getByText('정상', { exact: true })).toBeVisible();
+  });
+
+  test('전체 갱신 버튼 클릭 시 refresh-all API가 호출된다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+
+    let called = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/refresh-all',
+      (route) => {
+        called = true;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ jobId: 'test-job-abc' }),
+        });
+      },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '전체 갱신' }).click();
+    await page.waitForTimeout(300);
+
+    expect(called).toBe(true);
+  });
+
+  test('상세 페이지에서 지금 확인 버튼 클릭 시 test API가 호출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    let testCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1/test',
+      (route) => {
+        if (route.request().method() === 'POST') {
+          testCalled = true;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true, status: 200, latencyMs: 80, errorMessage: null }),
+          });
+        }
+        return route.continue();
+      },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 연결 상태 카드의 "지금 확인" 버튼
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    await page.waitForTimeout(300);
+
+    expect(testCalled).toBe(true);
+  });
+
+  test('baseUrl 미입력 시 toast 에러가 표시된다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름만 입력하고 baseUrl 없이 생성 시도
+    await page.getByPlaceholder('예: Make.com API').fill('URL 없는 연결');
+    await page.getByPlaceholder('Authorization').fill('X-Key');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('key-value');
+    await page.getByRole('button', { name: '생성' }).click();
+
+    await expect(page.getByText('Base URL은 http 또는 https로 시작해야 합니다')).toBeVisible();
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
@@ -497,6 +665,8 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     await page.getByPlaceholder('예: Make.com API').fill('Bearer 검증 테스트');
+    // Base URL 입력 — 없으면 baseUrl 검증이 먼저 실패하여 토큰 검증까지 도달하지 못한다
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
     // Bearer Token으로 변경
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();

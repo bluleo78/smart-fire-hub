@@ -1,6 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate,useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -21,18 +21,57 @@ import {
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
-import { useApiConnection, useDeleteApiConnection,useUpdateApiConnection } from '../../hooks/queries/useApiConnections';
+import {
+  useApiConnection,
+  useDeleteApiConnection,
+  useTestApiConnection,
+  useUpdateApiConnection,
+} from '../../hooks/queries/useApiConnections';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 
+/**
+ * 연결 상태 배지
+ * - UP: 정상, DOWN: 이상, null: 미확인
+ */
+function StatusBadge({
+  status,
+  checkedAt,
+}: {
+  status: 'UP' | 'DOWN' | null;
+  checkedAt: string | null;
+}) {
+  if (!status) return <Badge variant="outline">미확인</Badge>;
+  const title = checkedAt
+    ? `${new Date(checkedAt).toLocaleString('ko-KR')} 확인`
+    : undefined;
+  if (status === 'UP') {
+    return (
+      <Badge className="bg-success text-success-foreground hover:bg-success/80" title={title}>
+        정상
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive" title={title}>
+      이상
+    </Badge>
+  );
+}
+
+/** API 연결 상세 페이지 — 기본 정보/인증/연결 상태 확인/삭제 */
 export default function ApiConnectionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: connection, isLoading } = useApiConnection(Number(id));
   const updateMutation = useUpdateApiConnection();
   const deleteMutation = useDeleteApiConnection();
+  const testMutation = useTestApiConnection();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  // 신규 필드: baseUrl, healthCheckPath
+  const [baseUrl, setBaseUrl] = useState('');
+  const [healthCheckPath, setHealthCheckPath] = useState('');
 
   // Auth edit state
   const [isEditingAuth, setIsEditingAuth] = useState(false);
@@ -43,26 +82,34 @@ export default function ApiConnectionDetailPage() {
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
 
-  // Sync server data to form state (state-based tracking, no refs during render)
+  // 서버 데이터 → 폼 동기화 (렌더 중 setState, syncedConnectionId로 중복 방지)
   const [syncedConnectionId, setSyncedConnectionId] = useState<number | null>(null);
   if (connection && connection.id !== syncedConnectionId) {
     setSyncedConnectionId(connection.id);
     setName(connection.name);
     setDescription(connection.description ?? '');
+    setBaseUrl(connection.baseUrl);
+    setHealthCheckPath(connection.healthCheckPath ?? '');
     setAuthType(connection.authType);
-    // Restore non-sensitive fields from masked config
+    // 마스킹된 설정에서 비민감 필드 복원
     const mc = connection.maskedAuthConfig;
     setPlacement(mc.placement ?? 'header');
     setHeaderName(mc.headerName ?? '');
     setParamName(mc.paramName ?? '');
   }
 
+  /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
   const handleSaveInfo = async () => {
     if (!id || !name.trim()) return;
     try {
       await updateMutation.mutateAsync({
         id: Number(id),
-        data: { name: name.trim(), description: description.trim() || undefined },
+        data: {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          baseUrl: baseUrl.trim() || undefined,
+          healthCheckPath: healthCheckPath.trim() || undefined,
+        },
       });
       toast.success('연결 정보가 업데이트되었습니다.');
     } catch (error) {
@@ -70,6 +117,7 @@ export default function ApiConnectionDetailPage() {
     }
   };
 
+  /** 인증 설정 저장 */
   const handleSaveAuth = async () => {
     if (!id) return;
 
@@ -108,6 +156,21 @@ export default function ApiConnectionDetailPage() {
       setToken('');
     } catch (error) {
       handleApiError(error, '인증 정보 업데이트에 실패했습니다.');
+    }
+  };
+
+  /** 연결 즉시 테스트 */
+  const handleTest = async () => {
+    if (!connection) return;
+    try {
+      const result = await testMutation.mutateAsync(connection.id);
+      if (result.ok) {
+        toast.success(`연결 정상 (${result.latencyMs}ms)`);
+      } else {
+        toast.error(`연결 이상: ${result.errorMessage ?? '알 수 없는 오류'}`);
+      }
+    } catch (error) {
+      handleApiError(error, '연결 테스트에 실패했습니다.');
     }
   };
 
@@ -152,6 +215,32 @@ export default function ApiConnectionDetailPage() {
         </Badge>
       </div>
 
+      {/* 연결 상태 카드: lastStatus/latency/error 표시 + 즉시 테스트 버튼 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>연결 상태</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <StatusBadge status={connection.lastStatus} checkedAt={connection.lastCheckedAt} />
+            {connection.lastLatencyMs !== null && (
+              <p className="text-sm text-muted-foreground">지연: {connection.lastLatencyMs}ms</p>
+            )}
+          </div>
+          {connection.lastErrorMessage && (
+            <p className="text-sm text-destructive">{connection.lastErrorMessage}</p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleTest}
+            disabled={testMutation.isPending}
+          >
+            {testMutation.isPending ? '확인 중...' : '지금 확인'}
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Basic Info */}
       <Card>
         <CardHeader>
@@ -165,6 +254,27 @@ export default function ApiConnectionDetailPage() {
           <div className="space-y-2">
             <Label>설명</Label>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" />
+          </div>
+          {/* Base URL: 외부 API 기본 주소 */}
+          <div className="space-y-2">
+            <Label>Base URL</Label>
+            <Input
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://api.example.com"
+            />
+          </div>
+          {/* 헬스체크 경로 */}
+          <div className="space-y-2">
+            <Label>헬스체크 경로</Label>
+            <Input
+              value={healthCheckPath}
+              onChange={(e) => setHealthCheckPath(e.target.value)}
+              placeholder="/health (선택)"
+            />
+            <p className="text-xs text-muted-foreground">
+              10분마다 자동 상태 점검. 비워두면 점검 안 함.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
             <div>생성일: {formatDate(connection.createdAt)}</div>
@@ -192,7 +302,7 @@ export default function ApiConnectionDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {!isEditingAuth ? (
-            /* Read-only masked view */
+            /* 읽기 전용 마스킹 뷰 */
             <div className="space-y-3">
               <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
                 <span className="text-muted-foreground">인증 유형</span>
@@ -222,7 +332,7 @@ export default function ApiConnectionDetailPage() {
               )}
             </div>
           ) : (
-            /* Edit mode */
+            /* 편집 모드 */
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>인증 유형</Label>

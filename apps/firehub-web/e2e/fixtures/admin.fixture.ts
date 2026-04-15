@@ -121,15 +121,25 @@ export async function setupSettingsMocks(page: Page) {
 
 /**
  * API 연결 목록 페이지 API 모킹
- * - API 연결 목록을 모킹한다.
+ * - API 연결 목록 + selectable 슬림 목록을 모킹한다.
  */
 export async function setupApiConnectionListMocks(page: Page) {
-  await mockApi(page, 'GET', '/api/v1/api-connections', createApiConnections());
+  const connections = createApiConnections();
+  await mockApi(page, 'GET', '/api/v1/api-connections', connections);
+  // selectable: 파이프라인 스텝 및 일반 사용자용 슬림 목록
+  await mockApi(
+    page,
+    'GET',
+    '/api/v1/api-connections/selectable',
+    connections.map(({ id, name, authType, baseUrl }) => ({ id, name, authType, baseUrl })),
+  );
+  // refresh-all: 전체 갱신 트리거
+  await mockApi(page, 'POST', '/api/v1/api-connections/refresh-all', { jobId: 'test-job-id' });
 }
 
 /**
  * API 연결 상세 페이지 API 모킹
- * - 단일 API 연결 상세 정보를 모킹한다.
+ * - 단일 API 연결 상세 정보와 연결 테스트 엔드포인트를 모킹한다.
  * @param connectionId - 모킹할 API 연결 ID (기본값: 1)
  */
 export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1) {
@@ -137,5 +147,12 @@ export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1
   await mockApi(page, 'GET', `/api/v1/api-connections/${connectionId}`, {
     ...connection,
     id: connectionId,
+  });
+  // 연결 즉시 테스트 응답 모킹
+  await mockApi(page, 'POST', `/api/v1/api-connections/${connectionId}/test`, {
+    ok: true,
+    status: 200,
+    latencyMs: 120,
+    errorMessage: null,
   });
 }
