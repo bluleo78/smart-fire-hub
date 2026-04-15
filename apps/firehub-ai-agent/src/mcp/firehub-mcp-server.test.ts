@@ -216,6 +216,24 @@ describe('MCP Tool Handlers', () => {
     expect(client.deleteApiConnection).toHaveBeenCalledWith(5);
   });
 
+  // MCP-17b: test_api_connection
+  it('test_api_connection calls apiClient.testApiConnection', async () => {
+    (client.testApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      latencyMs: 120,
+      errorMessage: null,
+    });
+
+    const result = await invokeTool(server, 'test_api_connection', { id: 3 });
+
+    expect(client.testApiConnection).toHaveBeenCalledWith(3);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.latencyMs).toBe(120);
+  });
+
   // MCP-18: get_dashboard
   it('get_dashboard calls apiClient.getDashboard', async () => {
     const mockData = { datasets: 5, pipelines: 3 };

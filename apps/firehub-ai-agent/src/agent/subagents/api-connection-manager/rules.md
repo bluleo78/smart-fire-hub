@@ -1,5 +1,18 @@
 # api-connection-manager — 연결 규칙
 
+## 0. 필수 입력 및 생성 워크플로
+
+API 연결 생성 시 다음 순서로 정보를 수집한다:
+
+1. **연결 이름** — 서비스명 + 목적 (예: `"Make.com API"`)
+2. **Base URL** — 서비스의 기본 URL (예: `https://api.make.com/v2`). trailing slash 제거 필수.
+3. **인증 유형** — API_KEY / BEARER / OAUTH2
+4. **authConfig** — 인증 유형별 설정 (아래 섹션 참조)
+5. **헬스체크 경로** (선택) — `/health`, `/status` 등. 생략 시 주기적 점검 미수행.
+
+**URL 정규화 규칙**: baseUrl에 trailing slash가 있으면 제거한다.
+예: `https://api.example.com/` → `https://api.example.com`
+
 ## 1. authType별 authConfig 구조
 
 ### API_KEY 방식
@@ -57,10 +70,15 @@ authConfig 구조:
 - 인증 갱신(키 로테이션): `authConfig` 전체 재제공 필수 — 부분 갱신 불가
 - authType 변경: 기존 authConfig는 새 authType의 필드 구조로 완전히 교체해야 함
 
-## 5. 현재 미지원 기능
+## 5. test_api_connection 사용법
+
+`test_api_connection(id)` 도구를 사용하면 저장된 연결을 즉시 테스트할 수 있다.
+- 생성 직후 사용자가 확인을 요청하거나, "연결이 잘 되는지 확인해줘" 같은 요청에 사용.
+- healthCheckPath가 설정된 경우 해당 경로로 GET 요청, 없으면 baseUrl로 요청.
+- 결과: `{ ok, status, latencyMs, errorMessage }` — DB에도 반영되어 목록에 lastStatus로 표시됨.
+
+## 6. 현재 미지원 기능
 
 다음 기능은 현재 지원되지 않으며, 사용자가 요청하면 솔직하게 안내한다:
 
-- **연결 테스트**: 등록된 연결로 실제 API 호출을 테스트하는 단독 기능 없음
-  → 대안: 파이프라인 API_CALL 스텝을 만들어 **pipeline-builder**로 테스트 가능
 - **OAuth2 토큰 자동 갱신**: 현재 만료 처리 없음, 수동으로 `update_api_connection()`으로 갱신 필요

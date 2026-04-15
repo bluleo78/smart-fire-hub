@@ -80,25 +80,30 @@
 - apiConfig: API 호출 설정 객체
 
 **apiConfig 핵심 필드**:
-- url: API 엔드포인트 (SSRF 보호: 사설 IP 차단)
+- path: apiConnectionId가 있을 때 사용. baseUrl 뒤에 결합됨 (예: `/v1/users`, `/15085601/v1/uddi`)
+- customUrl: apiConnectionId 없이 호출할 때의 full URL (예: `https://api.example.com/data`)
 - method: GET/POST/PUT/DELETE
 - dataPath: JSONPath로 데이터 배열 추출 (예: "$.data", "$.items")
 - fieldMappings: 소스 필드 → 대상 컬럼 매핑 (선택)
 
+**URL 조합 규칙**:
+- apiConnectionId 있음 → `baseUrl(연결에 저장) + path` 로 최종 URL 조합. `path`는 `/`로 시작해야 함.
+- apiConnectionId 없음 → `customUrl`을 그대로 사용.
+
 **인증**:
-- apiConnectionId: 저장된 API 연결 참조
+- apiConnectionId: 저장된 API 연결 참조 (권장 — 인증 정보 암호화 저장)
 - 또는 inlineAuth: 직접 인증 정보 (일회성)
 
 **페이지네이션**:
 - pagination: { type: "OFFSET", pageSize: N, offsetParam, limitParam, totalPath }
 
-**예시**:
+**예시 1 — 저장된 연결 사용 (apiConnectionId + path)**:
 ```json
 {
   "name": "fetch_users",
   "scriptType": "API_CALL",
   "apiConfig": {
-    "url": "https://api.example.com/users",
+    "path": "/v1/users",
     "method": "GET",
     "dataPath": "$.data",
     "fieldMappings": [
@@ -115,6 +120,19 @@
     }
   },
   "apiConnectionId": 1
+}
+```
+
+**예시 2 — 저장된 연결 없이 인라인 URL 사용 (customUrl)**:
+```json
+{
+  "name": "fetch_public_data",
+  "scriptType": "API_CALL",
+  "apiConfig": {
+    "customUrl": "https://api.example.com/public/data",
+    "method": "GET",
+    "dataPath": "$.items"
+  }
 }
 ```
 

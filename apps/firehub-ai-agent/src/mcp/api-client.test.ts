@@ -179,6 +179,7 @@ describe('FireHubApiClient', () => {
       name: 'Test API',
       authType: 'BEARER',
       authConfig: { token: 'abc123' },
+      baseUrl: 'https://api.test.com',
     };
     const mockResp = { id: 1, ...body };
 
@@ -197,10 +198,64 @@ describe('FireHubApiClient', () => {
     expect(result).toEqual({ success: true });
   });
 
+  it('should create API connection with baseUrl and healthCheckPath', async () => {
+    const body = {
+      name: 'Make.com API',
+      authType: 'BEARER',
+      authConfig: { token: 'tok123' },
+      baseUrl: 'https://api.make.com/v2',
+      healthCheckPath: '/health',
+    };
+    const mockResp = { id: 2, ...body };
+
+    nock(BASE_URL)
+      .post('/api-connections', (reqBody: Record<string, unknown>) =>
+        reqBody.baseUrl === body.baseUrl && reqBody.healthCheckPath === body.healthCheckPath,
+      )
+      .reply(201, mockResp);
+
+    const result = await client.createApiConnection(body);
+    expect(result).toEqual(mockResp);
+  });
+
+  // --- testApiConnection ---
+  it('should test API connection via POST /api-connections/:id/test', async () => {
+    const mockResp = { ok: true, status: 200, latencyMs: 142, errorMessage: null };
+
+    nock(BASE_URL).post('/api-connections/3/test').reply(200, mockResp);
+
+    const result = await client.testApiConnection(3);
+    expect(result).toEqual(mockResp);
+  });
+
+  it('should handle DOWN status in testApiConnection', async () => {
+    const mockResp = { ok: false, status: 401, latencyMs: 50, errorMessage: 'Unauthorized' };
+
+    nock(BASE_URL).post('/api-connections/5/test').reply(200, mockResp);
+
+    const result = await client.testApiConnection(5);
+    expect(result.ok).toBe(false);
+    expect(result.errorMessage).toBe('Unauthorized');
+  });
+
+  // --- listSelectableConnections ---
+  it('should list selectable connections via GET /api-connections/selectable', async () => {
+    const mockResp = [
+      { id: 1, name: 'Make.com API', authType: 'BEARER', baseUrl: 'https://api.make.com/v2' },
+      { id: 2, name: '공공데이터포털', authType: 'API_KEY', baseUrl: 'https://api.odcloud.kr/api' },
+    ];
+
+    nock(BASE_URL).get('/api-connections/selectable').reply(200, mockResp);
+
+    const result = await client.listSelectableConnections();
+    expect(result).toEqual(mockResp);
+    expect(result[0].baseUrl).toBe('https://api.make.com/v2');
+  });
+
   // --- Preview API Call ---
   it('should preview API call via POST /pipelines/api-call/preview', async () => {
     const body = {
-      url: 'https://api.example.com/data',
+      customUrl: 'https://api.example.com/data',
       method: 'GET',
       dataPath: '$.items',
     };
@@ -209,7 +264,7 @@ describe('FireHubApiClient', () => {
     nock(BASE_URL)
       .post(
         '/pipelines/api-call/preview',
-        (reqBody: Record<string, unknown>) => reqBody.url === body.url,
+        (reqBody: Record<string, unknown>) => reqBody.customUrl === body.customUrl,
       )
       .reply(200, mockResp);
 

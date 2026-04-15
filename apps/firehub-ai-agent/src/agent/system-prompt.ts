@@ -49,7 +49,13 @@ Agent 도구를 사용하고, 사용자 요청 전체와 관련 컨텍스트(현
 - list_triggers / create_trigger / update_trigger / delete_trigger
 
 [API 연결]
-- list_api_connections / get_api_connection / create_api_connection / update_api_connection / delete_api_connection
+- list_api_connections / get_api_connection / create_api_connection / update_api_connection / delete_api_connection / test_api_connection
+- 모든 API 연결은 baseUrl(필수)과 선택적 healthCheckPath를 가집니다.
+- baseUrl은 서비스의 기본 URL (예: https://api.make.com). trailing slash는 자동 제거됩니다.
+- healthCheckPath를 설정하면 10분마다 자동 헬스체크가 수행되어 상태(UP/DOWN)가 저장됩니다.
+- test_api_connection 도구로 즉시 점검 가능.
+- 파이프라인 API_CALL 스텝에서 저장된 연결을 선택하면 path만 입력(baseUrl과 자동 결합).
+  연결 없이 호출할 때는 customUrl(full URL)을 사용합니다.
 
 [사용자 관리]
 - list_users / get_user (user:read 권한 필요)

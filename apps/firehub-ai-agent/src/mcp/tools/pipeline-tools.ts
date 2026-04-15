@@ -61,7 +61,16 @@ export function registerPipelineTools(
                 .describe('적재 전략 (기본: REPLACE)'),
               apiConfig: z
                 .object({
-                  url: z.string().describe('API 엔드포인트 URL'),
+                  path: z
+                    .string()
+                    .regex(/^\//)
+                    .optional()
+                    .describe('apiConnectionId 설정 시 사용. baseUrl 뒤에 결합됨 (예: /v1/scenarios/123/run)'),
+                  customUrl: z
+                    .string()
+                    .url()
+                    .optional()
+                    .describe('apiConnectionId 없이 호출할 때의 full URL'),
                   method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).describe('HTTP 메서드'),
                   headers: z.record(z.string(), z.string()).optional().describe('커스텀 헤더'),
                   queryParams: z
@@ -255,9 +264,18 @@ export function registerPipelineTools(
 
     safeTool(
       'preview_api_call',
-      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다.',
+      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다.',
       {
-        url: z.string().describe('API 엔드포인트 URL'),
+        path: z
+          .string()
+          .regex(/^\//)
+          .optional()
+          .describe('apiConnectionId 설정 시 사용. baseUrl 뒤에 결합됨 (예: /v1/users)'),
+        customUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe('apiConnectionId 없이 호출할 때의 full URL'),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).describe('HTTP 메서드'),
         headers: z.record(z.string(), z.string()).optional().describe('커스텀 헤더'),
         queryParams: z.record(z.string(), z.string()).optional().describe('쿼리 파라미터'),
@@ -278,7 +296,8 @@ export function registerPipelineTools(
         timeoutMs: z.number().optional().describe('타임아웃(ms)'),
       },
       async (args: {
-        url: string;
+        path?: string;
+        customUrl?: string;
         method: string;
         headers?: Record<string, string>;
         queryParams?: Record<string, string>;

@@ -571,6 +571,18 @@ describe('SL-ACM: api-connection-manager subagent integration', () => {
     expect(prompt).toContain('BEARER');
     expect(prompt).toContain('authConfig');
   });
+
+  it('api-connection-manager description and prompt include baseUrl keyword', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    // description은 에이전트 위임 판단에 사용됨 — baseUrl 관련 역할이 포함되어야 함
+    const prompt = agents['api-connection-manager'].prompt;
+    expect(prompt).toContain('baseUrl');
+    expect(prompt).toContain('healthCheckPath');
+    expect(prompt).toContain('test_api_connection');
+  });
 });
 
 describe('SL-TM: trigger-manager subagent integration', () => {

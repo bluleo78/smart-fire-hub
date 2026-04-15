@@ -1,6 +1,8 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
+import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewRequest;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
@@ -31,13 +33,16 @@ public class ApiCallPreviewService {
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
     try {
-      // 1. SSRF guard
-      ssrfProtectionService.validateUrl(request.url());
+      // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
+      String resolvedUrl = resolvePreviewUrl(request);
 
-      // 2. Resolve auth config
+      // 2. SSRF guard
+      ssrfProtectionService.validateUrl(resolvedUrl);
+
+      // 3. Resolve auth config
       Map<String, String> authConfig = resolveAuthConfig(request);
 
-      // 3. Build query params (static + auth query-param)
+      // 4. Build query params (static + auth query-param)
       Map<String, String> allQueryParams = new LinkedHashMap<>();
       if (request.queryParams() != null) {
         allQueryParams.putAll(request.queryParams());
@@ -53,22 +58,22 @@ public class ApiCallPreviewService {
         }
       }
 
-      // 4. Build URI
-      UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(request.url());
+      // 5. Build URI
+      UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(resolvedUrl);
       allQueryParams.forEach(uriBuilder::queryParam);
       URI requestUri = uriBuilder.build(true).toUri();
 
-      // 5. Execute HTTP request
+      // 6. Execute HTTP request
       int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
       String responseBody = executeRequest(requestUri, request, authConfig, timeoutMs);
 
-      // 6. Truncate raw JSON
+      // 7. Truncate raw JSON
       String rawJson = truncate(responseBody, MAX_RAW_JSON_BYTES);
 
-      // 7. Convert field mappings
+      // 8. Convert field mappings
       List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
 
-      // 8. Parse response
+      // 9. Parse response
       List<Map<String, Object>> allRows =
           jsonResponseParser.parseAndMap(responseBody, request.dataPath(), fieldMappings, null);
 
@@ -90,6 +95,21 @@ public class ApiCallPreviewService {
   }
 
   // ── private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * 프리뷰 요청의 최종 URL을 결정한다.
+   *
+   * <p>apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 결합한다.
+   * 없으면 request.url()을 그대로 사용한다.
+   */
+  private String resolvePreviewUrl(ApiCallPreviewRequest request) {
+    if (request.apiConnectionId() != null) {
+      ApiConnectionResponse conn =
+          apiConnectionService.getById(request.apiConnectionId());
+      return UrlUtils.joinUrl(conn.baseUrl(), request.url());
+    }
+    return request.url();
+  }
 
   private Map<String, String> resolveAuthConfig(ApiCallPreviewRequest request) {
     if (request.apiConnectionId() != null) {

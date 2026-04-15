@@ -1,5 +1,7 @@
 package com.smartfirehub.pipeline.service.executor;
 
+import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
+import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.exception.ExternalServiceException;
@@ -64,6 +66,7 @@ public class ApiCallExecutor {
    * @param outputTableName target data-schema table name
    * @param decryptedAuthConfig auth key/value pairs (already decrypted), may be null
    * @param loadStrategy "APPEND" or "REPLACE" (REPLACE truncates first)
+   * @param conn API 연결 엔티티 (apiConnectionId 설정 시 baseUrl 제공용). null이면 customUrl 또는 레거시 url 사용.
    * @return result with total rows inserted and an execution log string
    */
   public ApiCallResult execute(
@@ -71,10 +74,14 @@ public class ApiCallExecutor {
       String outputTableName,
       Map<String, String> decryptedAuthConfig,
       String loadStrategy,
-      Map<String, String> columnTypeMap) {
+      Map<String, String> columnTypeMap,
+      ApiConnectionResponse conn) {
 
-    // 1. SSRF guard on the initial URL
-    ssrfProtectionService.validateUrl(config.url());
+    // 1. URL 결정: apiConnectionId → baseUrl+path, customUrl, 또는 레거시 url 순으로 해석
+    String resolvedUrl = resolveTargetUrl(config, conn);
+
+    // 2. SSRF guard on the initial URL
+    ssrfProtectionService.validateUrl(resolvedUrl);
 
     // 2. Apply load strategy — for REPLACE create a temp table and insert there;
     //    swap into place only after all pages succeed.
@@ -115,7 +122,7 @@ public class ApiCallExecutor {
                   pag.offsetParam(), pag.limitParam(), offset, pageSize);
 
           // Fetch page
-          String responseBody = executeRequest(config, decryptedAuthConfig, pagParams, timeoutMs);
+          String responseBody = executeRequest(config, resolvedUrl, decryptedAuthConfig, pagParams, timeoutMs);
 
           // Parse data
           List<Map<String, Object>> rows =
@@ -168,7 +175,7 @@ public class ApiCallExecutor {
 
       } else {
         // Single request (no pagination)
-        String responseBody = executeRequest(config, decryptedAuthConfig, Map.of(), timeoutMs);
+        String responseBody = executeRequest(config, resolvedUrl, decryptedAuthConfig, Map.of(), timeoutMs);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
                 responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
@@ -204,7 +211,7 @@ public class ApiCallExecutor {
     executionLog.insert(
         0,
         "url="
-            + config.url()
+            + resolvedUrl
             + " method="
             + config.method()
             + " pages="
@@ -224,6 +231,7 @@ public class ApiCallExecutor {
 
   private String executeRequest(
       ApiCallConfig config,
+      String resolvedUrl,
       Map<String, String> decryptedAuthConfig,
       Map<String, String> paginationParams,
       int timeoutMs) {
@@ -245,7 +253,7 @@ public class ApiCallExecutor {
 
     while (attempt <= maxRetries) {
       try {
-        return doHttpRequest(config, decryptedAuthConfig, paginationParams, timeoutMs);
+        return doHttpRequest(config, resolvedUrl, decryptedAuthConfig, paginationParams, timeoutMs);
       } catch (ApiCallException e) {
         // Non-retryable: propagate immediately
         throw e;
@@ -278,6 +286,7 @@ public class ApiCallExecutor {
 
   private String doHttpRequest(
       ApiCallConfig config,
+      String resolvedUrl,
       Map<String, String> decryptedAuthConfig,
       Map<String, String> paginationParams,
       int timeoutMs) {
@@ -303,8 +312,8 @@ public class ApiCallExecutor {
       }
     }
 
-    // Build the full URI with query params
-    UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(config.url());
+    // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
+    UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(resolvedUrl);
     allQueryParams.forEach(uriBuilder::queryParam);
     URI requestUri = uriBuilder.build(true).toUri();
 
@@ -335,20 +344,20 @@ public class ApiCallExecutor {
 
     try {
       return executeWithRedirects(
-          client, method, requestUri, config, decryptedAuthConfig, timeoutMs, 0);
+          client, method, requestUri, config, resolvedUrl, decryptedAuthConfig, timeoutMs, 0);
     } catch (DataBufferLimitException e) {
       throw new ApiCallException(
           "Response exceeded maxResponseSizeMb limit ("
               + maxResponseSizeMb
               + " MB) for: "
-              + config.url(),
+              + resolvedUrl,
           e);
     } catch (ApiCallException e) {
       throw e;
     } catch (Exception e) {
       // timeout, connection refused, etc. — retryable
       throw new ExternalServiceException(
-          "Request error for " + config.url() + ": " + e.getMessage(), e);
+          "Request error for " + resolvedUrl + ": " + e.getMessage(), e);
     }
   }
 
@@ -367,13 +376,14 @@ public class ApiCallExecutor {
       String method,
       URI requestUri,
       ApiCallConfig config,
+      String resolvedUrl,
       Map<String, String> decryptedAuthConfig,
       int timeoutMs,
       int redirectCount) {
 
     if (redirectCount > MAX_REDIRECTS) {
       throw new ApiCallException(
-          "Too many redirects (max " + MAX_REDIRECTS + ") for: " + config.url());
+          "Too many redirects (max " + MAX_REDIRECTS + ") for: " + resolvedUrl);
     }
 
     WebClient.RequestHeadersSpec<?> requestSpec =
@@ -454,7 +464,7 @@ public class ApiCallExecutor {
       URI redirectUri = URI.create(location);
       // Redirects always use GET (standard 301/302/303 behaviour)
       return executeWithRedirects(
-          client, "GET", redirectUri, config, decryptedAuthConfig, timeoutMs, redirectCount + 1);
+          client, "GET", redirectUri, config, resolvedUrl, decryptedAuthConfig, timeoutMs, redirectCount + 1);
     }
 
     return body;
@@ -524,6 +534,60 @@ public class ApiCallExecutor {
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * 하위 호환용 오버로드 — conn 없이 호출하면 customUrl 또는 레거시 url 필드를 사용한다.
+   * ApiCallPreviewService 등 conn 정보가 없는 호출부에서 사용.
+   */
+  public ApiCallResult execute(
+      ApiCallConfig config,
+      String outputTableName,
+      Map<String, String> decryptedAuthConfig,
+      String loadStrategy,
+      Map<String, String> columnTypeMap) {
+    return execute(config, outputTableName, decryptedAuthConfig, loadStrategy, columnTypeMap, null);
+  }
+
+  /**
+   * API_CALL 스텝의 호출 대상 URL을 계산한다.
+   *
+   * <p>우선순위:
+   * <ol>
+   *   <li>conn != null → conn.baseUrl() + config.path() (path 필수)
+   *   <li>config.customUrl() → customUrl 그대로 사용
+   *   <li>하위 호환: config.url() (deprecated, 이전 설정 호환)
+   * </ol>
+   *
+   * @param config API_CALL 스텝 설정
+   * @param conn API 연결 정보 (null이면 customUrl 또는 레거시 url 사용)
+   * @throws ApiCallException 필수 파라미터 누락 시
+   */
+  private String resolveTargetUrl(ApiCallConfig config, ApiConnectionResponse conn) {
+    if (conn != null) {
+      // apiConnectionId 기반: connection.baseUrl + path
+      String path = config.path();
+      if (path == null || path.isBlank()) {
+        throw new ApiCallException(
+            "API_CALL: apiConnectionId 설정 시 path가 필수입니다");
+      }
+      return UrlUtils.joinUrl(conn.baseUrl(), path);
+    }
+
+    // customUrl 우선 사용 (Phase 9 신규 필드)
+    String customUrl = config.customUrl();
+    if (customUrl != null && !customUrl.isBlank()) {
+      return customUrl;
+    }
+
+    // 하위 호환: 레거시 url 필드
+    String legacyUrl = config.url();
+    if (legacyUrl != null && !legacyUrl.isBlank()) {
+      return legacyUrl;
+    }
+
+    throw new ApiCallException(
+        "API_CALL: apiConnectionId 없이 호출하려면 customUrl(또는 레거시 url)이 필수입니다");
+  }
 
   private List<String> extractColumns(List<Map<String, Object>> rows) {
     if (rows.isEmpty()) return List.of();

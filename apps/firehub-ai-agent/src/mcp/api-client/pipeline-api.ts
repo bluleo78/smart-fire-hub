@@ -58,8 +58,10 @@ export function createPipelineApi(client: AxiosInstance) {
       await client.delete(`/pipelines/${id}`);
       return { success: true };
     },
+    /** API 호출 미리보기. apiConnectionId 있으면 path, 없으면 customUrl 사용. */
     async previewApiCall(data: {
-      url: string;
+      path?: string;
+      customUrl?: string;
       method: string;
       headers?: Record<string, string>;
       queryParams?: Record<string, string>;

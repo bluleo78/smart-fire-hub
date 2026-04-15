@@ -251,8 +251,10 @@ export class FireHubApiClient {
   deletePipeline(id: number) {
     return this._pipelines.deletePipeline(id);
   }
+  /** API 호출 미리보기. apiConnectionId 있으면 path, 없으면 customUrl 사용. */
   previewApiCall(data: {
-    url: string;
+    path?: string;
+    customUrl?: string;
     method: string;
     headers?: Record<string, string>;
     queryParams?: Record<string, string>;
@@ -313,6 +315,8 @@ export class FireHubApiClient {
     description?: string;
     authType: string;
     authConfig: Record<string, string>;
+    baseUrl: string;
+    healthCheckPath?: string;
   }) {
     return this._connections.createApiConnection(data);
   }
@@ -323,12 +327,22 @@ export class FireHubApiClient {
       description?: string;
       authType?: string;
       authConfig?: Record<string, string>;
+      baseUrl?: string;
+      healthCheckPath?: string;
     },
   ) {
     return this._connections.updateApiConnection(id, data);
   }
   deleteApiConnection(id: number) {
     return this._connections.deleteApiConnection(id);
+  }
+  /** 저장된 API 연결을 즉시 테스트하고 UP/DOWN 결과를 반환한다. */
+  testApiConnection(id: number) {
+    return this._connections.testApiConnection(id);
+  }
+  /** 파이프라인 스텝 참조용 slim 연결 목록을 반환한다. */
+  listSelectableConnections() {
+    return this._connections.listSelectableConnections();
   }
 
   listImports(datasetId: number) {

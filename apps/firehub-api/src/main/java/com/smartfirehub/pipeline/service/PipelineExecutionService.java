@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
@@ -602,8 +603,11 @@ public class PipelineExecutionService {
         ApiCallConfig apiCallConfig =
             objectMapper.convertValue(step.apiConfig(), ApiCallConfig.class);
 
+        // apiConnectionId가 있으면 connection 정보 로드 (baseUrl + auth)
+        ApiConnectionResponse apiConn = null;
         Map<String, String> decryptedAuth = null;
         if (step.apiConnectionId() != null) {
+          apiConn = apiConnectionService.getById(step.apiConnectionId());
           decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
         } else if (apiCallConfig.inlineAuth() != null) {
           decryptedAuth = apiCallConfig.inlineAuth();
@@ -657,7 +661,7 @@ public class PipelineExecutionService {
           try {
             Map<String, Object> request =
                 buildApiCallExecutorRequest(
-                    apiCallConfig, targetTable, decryptedAuth, columnTypeMap);
+                    apiCallConfig, targetTable, decryptedAuth, columnTypeMap, apiConn);
             var result = executorClient.executeApiCall(request);
             if (!result.success()) {
               throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
@@ -680,7 +684,7 @@ public class PipelineExecutionService {
         } else {
           ApiCallExecutor.ApiCallResult result =
               apiCallExecutor.execute(
-                  apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap);
+                  apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap, apiConn);
           executionLog = result.log();
         }
       } else if ("AI_CLASSIFY".equals(step.scriptType())) {
@@ -810,13 +814,36 @@ public class PipelineExecutionService {
     }
   }
 
+  /**
+   * 외부 executor(Python 기반)로 전달할 API 호출 요청 Map을 구성한다.
+   * Phase 9: apiConn이 있으면 baseUrl+path로 최종 URL을 계산하여 "url" 필드에 설정.
+   */
   private Map<String, Object> buildApiCallExecutorRequest(
       ApiCallConfig config,
       String outputTable,
       Map<String, String> decryptedAuth,
       Map<String, String> columnTypeMap) {
+    return buildApiCallExecutorRequest(config, outputTable, decryptedAuth, columnTypeMap, null);
+  }
+
+  private Map<String, Object> buildApiCallExecutorRequest(
+      ApiCallConfig config,
+      String outputTable,
+      Map<String, String> decryptedAuth,
+      Map<String, String> columnTypeMap,
+      ApiConnectionResponse apiConn) {
+    // URL 결정: apiConn.baseUrl+path → customUrl → 레거시 url 순서
+    String resolvedUrl;
+    if (apiConn != null && config.path() != null && !config.path().isBlank()) {
+      resolvedUrl = com.smartfirehub.apiconnection.service.UrlUtils.joinUrl(apiConn.baseUrl(), config.path());
+    } else if (config.customUrl() != null && !config.customUrl().isBlank()) {
+      resolvedUrl = config.customUrl();
+    } else {
+      resolvedUrl = config.url();
+    }
+
     Map<String, Object> request = new LinkedHashMap<>();
-    request.put("url", config.url());
+    request.put("url", resolvedUrl);
     request.put("method", config.method() != null ? config.method() : "GET");
     if (config.headers() != null) request.put("headers", config.headers());
     if (config.queryParams() != null) request.put("query_params", config.queryParams());

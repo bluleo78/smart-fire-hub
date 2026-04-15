@@ -429,6 +429,42 @@ class ApiCallPreviewServiceTest {
     assertThat(response.errorMessage()).isNotNull();
   }
 
+  // =========================================================================
+  // Phase 9: apiConnectionId 기반 URL 해석
+  // =========================================================================
+
+  /**
+   * apiConnectionId가 설정된 경우: connection.baseUrl + request.url(path)로 URL을 구성한다.
+   * request.url()에 path만 넣으면 baseUrl과 결합되어야 한다.
+   */
+  @Test
+  void preview_apiConnectionId_joinsBaseUrlAndPath() {
+    // apiConnectionService.getById()가 baseUrl을 가진 connection을 반환
+    com.smartfirehub.apiconnection.dto.ApiConnectionResponse mockConn =
+        new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
+            1L, "Test API", null, "BEARER", java.util.Map.of(),
+            "http://localhost:" + wireMock.port(), null, null, null, null, null,
+            1L, null, null);
+    when(apiConnectionService.getById(1L)).thenReturn(mockConn);
+
+    wireMock.stubFor(
+        get(urlEqualTo("/v1/data"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    // request.url()에 path만 설정, apiConnectionId로 baseUrl 제공
+    com.smartfirehub.pipeline.dto.ApiCallPreviewResponse response =
+        service.preview(
+            new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest(
+                "/v1/data", "GET", null, null, null, "$", null, 1L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
   /** 오류: 잘못된 dataPath는 success=false, errorMessage 반환 */
   @Test
   void preview_invalidDataPath_returnsError() {

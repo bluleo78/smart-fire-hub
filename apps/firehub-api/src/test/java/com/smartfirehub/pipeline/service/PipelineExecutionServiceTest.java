@@ -585,7 +585,7 @@ class PipelineExecutionServiceTest {
             null,
             null,
             null,
-            null);
+            null, null, null, null);
 
     PipelineStepResponse apiStep =
         new PipelineStepResponse(
@@ -618,7 +618,7 @@ class PipelineExecutionServiceTest {
         .thenReturn(tempDatasetId);
     when(datasetRepository.findTableNameById(tempDatasetId)).thenReturn(Optional.of("ptmp_api"));
     when(columnRepository.findByDatasetId(tempDatasetId)).thenReturn(List.of(col("name", false)));
-    when(apiCallExecutor.execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any()))
+    when(apiCallExecutor.execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any()))
         .thenReturn(new ApiCallExecutor.ApiCallResult(5, "log"));
 
     // when
@@ -628,7 +628,7 @@ class PipelineExecutionServiceTest {
     verify(tempDatasetService)
         .createTempDataset(
             any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("api-step"), eq(userId));
-    verify(apiCallExecutor).execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any());
+    verify(apiCallExecutor).execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any());
   }
 
   @Test

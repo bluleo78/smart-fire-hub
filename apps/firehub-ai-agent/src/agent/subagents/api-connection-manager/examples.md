@@ -1,6 +1,6 @@
 # api-connection-manager — 대화 예시
 
-## 예시 1: API_KEY 방식 연결 생성
+## 예시 1: API_KEY 방식 연결 생성 (baseUrl 포함)
 
 **사용자**: 공공데이터포털 API 연결 등록해줘. API 키 방식이야.
 
@@ -10,9 +10,9 @@
 
 [Phase 2 — DESIGN] 연결 설계 대화
 
-연결 이름을 알려주세요. (예: `"공공데이터포털 소방용수"`)
+연결 이름과 기본 URL을 알려주세요. (예: 이름 `"공공데이터포털 소방용수"`, URL `https://api.odcloud.kr/api`)
 
-**사용자**: "공공데이터포털 소방용수"로 해줘. 헤더명은 `Authorization`이고 키는 `abc123xyz`야.
+**사용자**: "공공데이터포털 소방용수"로 해줘. URL은 `https://api.odcloud.kr/api`, 헤더명은 `Authorization`이고 키는 `abc123xyz`야.
 
 **에이전트**:
 
@@ -25,20 +25,22 @@
   "authConfig": {
     "apiKey": "abc123xyz",
     "headerName": "Authorization"
-  }
+  },
+  "baseUrl": "https://api.odcloud.kr/api",
+  "healthCheckPath": "/health"
 }
 ```
 
 [Phase 4 — CONFIRM] 결과 요약
 
 '공공데이터포털 소방용수' 연결이 등록되었습니다 (ID: 3, 인증방식: API_KEY).
-파이프라인 API_CALL 스텝에서 이 연결을 선택하면 API 호출 시 `Authorization` 헤더에 인증 키가 자동으로 추가됩니다 (키 값은 마스킹되어 표시됩니다).
+파이프라인 API_CALL 스텝에서 이 연결을 선택하면 path(`/15085601/v1/uddi`)만 입력하면 `baseUrl + path`로 자동 조합됩니다.
 
 > **보안**: 인증 키는 AES-256-GCM으로 암호화되어 저장되며, 조회 시 마스킹 처리됩니다.
 
 ---
 
-## 예시 2: BEARER 방식 연결 생성
+## 예시 2: BEARER 방식 연결 생성 + 즉시 테스트
 
 **사용자**: Kakao Mobility API Bearer 토큰 연결 만들어줘
 
@@ -48,17 +50,43 @@
 
 BEARER 방식으로 연결하겠습니다. `Authorization: Bearer {토큰}` 헤더가 자동으로 추가됩니다.
 
-Bearer 토큰 값을 알려주세요.
+기본 URL과 Bearer 토큰 값을 알려주세요.
 
-**사용자**: `eyJhbGciOiJIUzI1NiJ9.abc123`
+**사용자**: URL은 `https://apis.openapi.sk.com/tmap`이고 토큰은 `eyJhbGciOiJIUzI1NiJ9.abc123`이야.
 
 **에이전트**:
 
 [Phase 3 — EXECUTE] create_api_connection 호출 (토큰 값은 응답에 출력하지 않음)
 
+```json
+{
+  "name": "Kakao Mobility API",
+  "authType": "BEARER",
+  "authConfig": { "token": "eyJhbGciOiJIUzI1NiJ9.abc123" },
+  "baseUrl": "https://apis.openapi.sk.com/tmap"
+}
+```
+
 [Phase 4 — CONFIRM] 결과 요약
 
 'Kakao Mobility API' 연결이 등록되었습니다 (ID: 4, 인증방식: BEARER).
+
+---
+
+## 예시 5: 연결 즉시 테스트
+
+**사용자**: 방금 만든 공공데이터포털 소방용수 연결 테스트해줘.
+
+**에이전트**:
+
+[Phase 3 — EXECUTE] test_api_connection(3) 호출
+
+[Phase 4 — CONFIRM] 결과 요약
+
+테스트 결과: **UP** ✓ (HTTP 200, 응답 시간 142ms)
+연결이 정상 동작합니다. 파이프라인 API_CALL 스텝에서 바로 사용 가능합니다.
+
+*테스트 실패 예시*: `{ ok: false, status: 401, errorMessage: "Unauthorized" }` → API 키를 확인하고 update_api_connection으로 갱신하세요.
 
 ---
 
