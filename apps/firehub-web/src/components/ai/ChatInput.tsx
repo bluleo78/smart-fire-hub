@@ -6,19 +6,23 @@ import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 
-const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv';
+const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv,.docx';
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 const SIZE_LIMITS: Record<string, number> = {
   IMAGE: 5 * 1024 * 1024,
   PDF: 10 * 1024 * 1024,
   TEXT: 1 * 1024 * 1024,
   DATA: 5 * 1024 * 1024,
+  DOCUMENT: 10 * 1024 * 1024,
 };
 
-function getCategory(mimeType: string): 'IMAGE' | 'PDF' | 'TEXT' | 'DATA' | null {
+function getCategory(mimeType: string): 'IMAGE' | 'PDF' | 'TEXT' | 'DATA' | 'DOCUMENT' | null {
   if (mimeType.startsWith('image/')) return 'IMAGE';
   if (mimeType === 'application/pdf') return 'PDF';
   if (mimeType === 'text/csv') return 'DATA';
+  if (mimeType === DOCX_MIME) return 'DOCUMENT';
   if (
     mimeType.startsWith('text/') ||
     mimeType === 'application/json' ||
@@ -37,7 +41,7 @@ function formatFileSize(bytes: number): string {
 interface PendingFile {
   file: File;
   previewUrl?: string;
-  category: 'IMAGE' | 'PDF' | 'TEXT' | 'DATA';
+  category: 'IMAGE' | 'PDF' | 'TEXT' | 'DATA' | 'DOCUMENT';
 }
 
 interface ChatInputProps {

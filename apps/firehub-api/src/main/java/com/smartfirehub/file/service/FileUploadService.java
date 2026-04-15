@@ -44,7 +44,8 @@ public class FileUploadService {
           "text/yaml",
           "application/x-yaml",
           "text/csv",
-          "application/csv");
+          "application/csv",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
   private static final Map<String, String> MIME_TO_CATEGORY =
       Map.ofEntries(
@@ -61,7 +62,10 @@ public class FileUploadService {
           Map.entry("text/yaml", "TEXT"),
           Map.entry("application/x-yaml", "TEXT"),
           Map.entry("text/csv", "DATA"),
-          Map.entry("application/csv", "DATA"));
+          Map.entry("application/csv", "DATA"),
+          Map.entry(
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "DOCUMENT"));
 
   // Category size limits in bytes
   private static final Map<String, Long> CATEGORY_SIZE_LIMITS =
@@ -69,7 +73,8 @@ public class FileUploadService {
           "IMAGE", 5L * 1024 * 1024,
           "PDF", 10L * 1024 * 1024,
           "TEXT", 1L * 1024 * 1024,
-          "DATA", 5L * 1024 * 1024);
+          "DATA", 5L * 1024 * 1024,
+          "DOCUMENT", 10L * 1024 * 1024);
 
   private final DSLContext dsl;
   private final String uploadDir;
