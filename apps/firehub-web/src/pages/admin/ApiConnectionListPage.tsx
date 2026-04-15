@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
@@ -42,38 +43,6 @@ import {
   useRefreshAllApiConnections,
 } from '../../hooks/queries/useApiConnections';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
-
-/**
- * 연결 상태 배지 컴포넌트
- * - UP: 정상(초록), DOWN: 이상(빨강), null: 미확인(회색 outline)
- * - checkedAt이 있으면 title tooltip으로 확인 시각을 표시한다.
- */
-function StatusBadge({
-  status,
-  checkedAt,
-}: {
-  status: 'UP' | 'DOWN' | null;
-  checkedAt: string | null;
-}) {
-  if (!status) return <Badge variant="outline">미확인</Badge>;
-
-  const title = checkedAt
-    ? `${new Date(checkedAt).toLocaleString('ko-KR')} 확인`
-    : undefined;
-
-  if (status === 'UP') {
-    return (
-      <Badge className="bg-success text-success-foreground hover:bg-success/80" title={title}>
-        정상
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="destructive" title={title}>
-      이상
-    </Badge>
-  );
-}
 
 /** API 연결 목록 페이지 — 생성/삭제/상태 확인 기능 포함 */
 export default function ApiConnectionListPage() {

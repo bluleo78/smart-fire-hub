@@ -35,8 +35,8 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 /**
  * API 연결(ApiConnection) 비즈니스 로직 서비스.
- * Phase 9: baseUrl 정규화/SSRF 검증, 헬스체크(testConnection), slim 목록(findSelectable) 추가.
- * Task 9-1-6: refreshAllAsync — pipelineExecutor + AsyncJobService로 전체 헬스체크 비동기 실행.
+ * Phase 9: baseUrl 정규화/SSRF 검증, 헬스체크(testConnection), slim 목록(findSelectable),
+ * 전체 헬스체크 비동기 Job(refreshAllAsync) 제공.
  */
 @Service
 @RequiredArgsConstructor
@@ -72,7 +72,7 @@ public class ApiConnectionService {
             encryptedConfig,
             userId,
             normalizedBaseUrl,
-            request.healthCheckPath());
+            normalizeHealthCheckPath(request.healthCheckPath()));
 
     return getById(id);
   }
@@ -129,7 +129,7 @@ public class ApiConnectionService {
         authType,
         encryptedConfig,
         normalizedBaseUrl,
-        request.healthCheckPath());
+        normalizeHealthCheckPath(request.healthCheckPath()));
 
     return getById(id);
   }
@@ -162,9 +162,9 @@ public class ApiConnectionService {
   /**
    * 저장된 API 연결의 헬스체크 경로로 GET 호출하여 상태를 반환하고 DB에 반영한다.
    * healthCheckPath가 없으면 baseUrl 자체를 GET.
-   * 5초 타임아웃 적용. 결과는 last_status, last_checked_at 등에 저장된다.
+   * 5초 타임아웃. DB 쓰기(updateHealthStatus)는 내부적으로 자체 트랜잭션을 사용하므로
+   * 본 메서드는 트랜잭션 밖에서 HTTP를 수행하여 커넥션 풀 점유를 피한다.
    */
-  @Transactional
   public TestConnectionResponse testConnection(Long id) {
     ApiConnectionResponse conn = getById(id);
     Map<String, String> rawConfig = getDecryptedAuthConfig(id);
@@ -268,6 +268,15 @@ public class ApiConnectionService {
    *
    * @throws ApiConnectionException URL이 유효하지 않거나 내부 네트워크로의 요청인 경우
    */
+  /**
+   * healthCheckPath를 정규화한다. 빈 문자열이나 공백만 있는 값은 null로 치환하여
+   * 스케줄러의 {@code findHealthCheckable} 대상에서 제외되도록 한다.
+   */
+  private String normalizeHealthCheckPath(String raw) {
+    if (raw == null || raw.isBlank()) return null;
+    return raw;
+  }
+
   private String validateAndNormalizeBaseUrl(String raw) {
     if (raw == null || raw.isBlank()) {
       throw new ApiConnectionException("baseUrl은 필수입니다");

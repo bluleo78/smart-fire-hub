@@ -125,23 +125,7 @@ public class ApiConnectionRepository {
   }
 
   /**
-   * 기존 호환 save — baseUrl을 빈 문자열로 저장한다.
-   * 기존 Service 호출부를 건드리지 않기 위해 유지. 다음 Task에서 제거 예정.
-   */
-  public Long save(
-      String name,
-      String description,
-      String authType,
-      String encryptedAuthConfig,
-      Long createdBy) {
-    return save(name, description, authType, encryptedAuthConfig, createdBy, "", null);
-  }
-
-  /**
-   * Phase 9 신규 save — baseUrl과 healthCheckPath를 함께 저장한다.
-   *
-   * @param baseUrl         API 기본 URL (필수)
-   * @param healthCheckPath 헬스체크 경로 (선택, null 허용)
+   * API 연결을 저장한다. baseUrl은 필수, healthCheckPath는 선택.
    */
   public Long save(
       String name,
@@ -164,17 +148,7 @@ public class ApiConnectionRepository {
   }
 
   /**
-   * 기존 호환 update — baseUrl/healthCheckPath 미변경.
-   * Phase 9 이전 호출부 호환을 위해 유지.
-   */
-  public void update(
-      Long id, String name, String description, String authType, String encryptedAuthConfig) {
-    update(id, name, description, authType, encryptedAuthConfig, null, null);
-  }
-
-  /**
-   * Phase 9 확장 update — baseUrl, healthCheckPath도 함께 갱신한다.
-   * null인 항목은 Map에서 제외하여 기존 값을 보존한다.
+   * API 연결을 갱신한다. null인 항목은 Map에서 제외하여 기존 값을 보존한다.
    *
    * @param baseUrl         변경할 Base URL (null이면 미변경)
    * @param healthCheckPath 변경할 헬스체크 경로 (null이면 미변경)
@@ -240,7 +214,7 @@ public class ApiConnectionRepository {
             AC_LAST_LATENCY_MS,
             AC_LAST_ERROR_MESSAGE)
         .from(API_CONNECTION)
-        .where(AC_HEALTH_CHECK_PATH.isNotNull())
+        .where(AC_HEALTH_CHECK_PATH.isNotNull().and(AC_HEALTH_CHECK_PATH.ne("")))
         .fetch()
         .stream()
         .map(r -> (Record) r)

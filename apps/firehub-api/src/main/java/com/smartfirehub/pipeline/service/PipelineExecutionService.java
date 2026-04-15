@@ -832,14 +832,23 @@ public class PipelineExecutionService {
       Map<String, String> decryptedAuth,
       Map<String, String> columnTypeMap,
       ApiConnectionResponse apiConn) {
-    // URL 결정: apiConn.baseUrl+path → customUrl → 레거시 url 순서
+    // URL 결정: ApiCallExecutor.resolveTargetUrl 규칙과 정확히 일치시킨다.
+    // apiConn 설정 시 path 필수 — customUrl/url 폴백 금지(baseUrl 우회 방지).
     String resolvedUrl;
-    if (apiConn != null && config.path() != null && !config.path().isBlank()) {
-      resolvedUrl = com.smartfirehub.apiconnection.service.UrlUtils.joinUrl(apiConn.baseUrl(), config.path());
+    if (apiConn != null) {
+      if (config.path() == null || config.path().isBlank()) {
+        throw new ScriptExecutionException(
+            "API_CALL: apiConnectionId 설정 시 path가 필수입니다");
+      }
+      resolvedUrl = com.smartfirehub.apiconnection.service.UrlUtils.joinUrl(
+          apiConn.baseUrl(), config.path());
     } else if (config.customUrl() != null && !config.customUrl().isBlank()) {
       resolvedUrl = config.customUrl();
-    } else {
+    } else if (config.url() != null && !config.url().isBlank()) {
       resolvedUrl = config.url();
+    } else {
+      throw new ScriptExecutionException(
+          "API_CALL: apiConnectionId 없이 호출하려면 customUrl(또는 레거시 url)이 필수입니다");
     }
 
     Map<String, Object> request = new LinkedHashMap<>();

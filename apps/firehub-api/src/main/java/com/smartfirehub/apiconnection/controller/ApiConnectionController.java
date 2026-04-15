@@ -86,7 +86,7 @@ public class ApiConnectionController {
 
   /**
    * 모든 헬스체크 가능 연결을 즉시 갱신하는 비동기 Job을 시작한다.
-   * 응답은 jobId를 반환하며, 진행률은 SSE로 확인 가능. (실제 구현은 Task 9-1-6)
+   * 응답은 jobId를 반환하며, 진행률은 SSE로 확인 가능하다.
    */
   @PostMapping("/refresh-all")
   @RequirePermission("apiconnection:write")

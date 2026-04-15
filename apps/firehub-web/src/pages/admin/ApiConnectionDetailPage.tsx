@@ -1,8 +1,9 @@
 import { ArrowLeft } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
@@ -29,35 +30,6 @@ import {
 } from '../../hooks/queries/useApiConnections';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 
-/**
- * 연결 상태 배지
- * - UP: 정상, DOWN: 이상, null: 미확인
- */
-function StatusBadge({
-  status,
-  checkedAt,
-}: {
-  status: 'UP' | 'DOWN' | null;
-  checkedAt: string | null;
-}) {
-  if (!status) return <Badge variant="outline">미확인</Badge>;
-  const title = checkedAt
-    ? `${new Date(checkedAt).toLocaleString('ko-KR')} 확인`
-    : undefined;
-  if (status === 'UP') {
-    return (
-      <Badge className="bg-success text-success-foreground hover:bg-success/80" title={title}>
-        정상
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="destructive" title={title}>
-      이상
-    </Badge>
-  );
-}
-
 /** API 연결 상세 페이지 — 기본 정보/인증/연결 상태 확인/삭제 */
 export default function ApiConnectionDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -82,21 +54,20 @@ export default function ApiConnectionDetailPage() {
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
 
-  // 서버 데이터 → 폼 동기화 (렌더 중 setState, syncedConnectionId로 중복 방지)
-  const [syncedConnectionId, setSyncedConnectionId] = useState<number | null>(null);
-  if (connection && connection.id !== syncedConnectionId) {
-    setSyncedConnectionId(connection.id);
+  /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 라우트/리패치 변경 시에만 발생. */
+  useEffect(() => {
+    if (!connection) return;
     setName(connection.name);
     setDescription(connection.description ?? '');
     setBaseUrl(connection.baseUrl);
     setHealthCheckPath(connection.healthCheckPath ?? '');
     setAuthType(connection.authType);
-    // 마스킹된 설정에서 비민감 필드 복원
     const mc = connection.maskedAuthConfig;
     setPlacement(mc.placement ?? 'header');
     setHeaderName(mc.headerName ?? '');
     setParamName(mc.paramName ?? '');
-  }
+  }, [connection]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
   const handleSaveInfo = async () => {
