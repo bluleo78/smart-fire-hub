@@ -27,6 +27,7 @@
 | [Phase 6](#phase-6-ai-chat-generative-ui) | **완료** | 3/3 | AI 챗 인라인 위젯, 딥링크 네비게이션, 프로액티브 AI, 화면 컨텍스트 |
 | [Phase 7](#phase-7-ai-리포트-고도화) | **완료** | 11/11 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
+| [Phase 9](#phase-9-api-연결-리디자인) | **완료** | 9/9 | Base URL 필수화, path/customUrl 분리, 10분 헬스체크 + 상태 알림 |
 
 ---
 
@@ -352,6 +353,34 @@
 | 7-4 | 이상 탐지 + 자동 알림 | ✅ | Backend + Frontend | 7-1, 7-3 | AnomalyDetector (표준편차, 감도 3단계). MetricPollerService (30초 폴링, 시스템+데이터셋 메트릭). anomaly_event 테이블 (V47). AnomalyEvent→DB 저장+SSE 알림 연결. 커스텀 메트릭 모달 (데이터셋 선택+SQL). 이상 탐지 이력 테이블. 시스템 메트릭 Select 버그 수정. 설계: `docs/superpowers/specs/2026-04-06-phase-7-4-7-5-completion-design.md` |
 | 7-5 | 비주얼 리포트 빌더 | ✅ | Frontend | 7-1, 7-3 | @dnd-kit SectionTreeBuilder (그룹 간 자유 정렬 + 깊이 검증). SectionPropertyEditor (11종 타입). JSON↔빌더 양방향 동기화. 구조+가이드 미리보기 (타입별 레이아웃 플레이스홀더). 빌트인 복제. 설계: `docs/superpowers/specs/2026-04-06-phase-7-4-7-5-completion-design.md` |
 | 7-6 | 목표 기반 리포트 생성 | ✅ | Frontend + AI Agent | 7-4 | generate_report MCP 도구 (title 필수, templateStructure optional+기본 프리셋 4종 자동 적용, widgetType 반환). save_as_smart_job 도구. 시스템 프롬프트 5단계 워크플로 (탐색→템플릿 결정→섹션 작성→표시→후속). 섹션 타입별 렌더러 (cards 카드 그리드, list/recommendation/comparison). ReportPreviewDialog 풀스크린 미리보기. WidgetRegistry generate_report 등록. E2E 테스트 5개. |
+
+---
+
+## Phase 9: API 연결 리디자인 ✅
+
+> Base URL 필수화, 파이프라인 API_CALL 스텝 path/customUrl 분리, 10분 주기 헬스체크 + 상태 알림.
+> **의존**: Phase 5.10 (API 연결 관리 기반)
+> **선행 문서**: `docs/superpowers/specs/2026-04-15-api-connection-redesign-design.md` · `docs/superpowers/plans/2026-04-15-api-connection-redesign.md`
+
+| # | 작업 | 상태 | 범위 | 검증 |
+|---|------|------|------|------|
+| 9-1-1 | V49 마이그레이션 + Repository | ✅ | Backend | Repository 테스트 3종 |
+| 9-1-2 | DTO 확장 + Slim DTO | ✅ | Backend | 컴파일 |
+| 9-1-3 | Service 확장 (baseUrl 검증, test, selectable) | ✅ | Backend | Service 테스트 13종 |
+| 9-1-4 | Controller 엔드포인트 (test, selectable, refresh-all) | ✅ | Backend | Controller 테스트 8종 |
+| 9-1-5 | Pipeline Executor 리팩터 (path/customUrl) | ✅ | Backend | ApiCall 테스트 23종 |
+| 9-1-6 | 헬스체크 스케줄러 + 알림 | ✅ | Backend | Notifier/Scheduler 테스트 10종 |
+| 9-2 | AI Agent MCP 도구 + 서브에이전트 | ✅ | AI Agent | Vitest 365 passed |
+| 9-3~6 | Frontend 타입/페이지/스텝 config | ✅ | Frontend | typecheck + E2E |
+| 9-7 | 통합 E2E 라이프사이클 | ✅ | Frontend | Playwright |
+
+**핵심 변경**
+- `api_connection` 테이블에 `base_url`, `health_check_path`, `last_status`, `last_checked_at`, `last_latency_ms`, `last_error_message` 컬럼 추가 (V49)
+- 파이프라인 API_CALL 스텝 `apiConfig.url` 제거 → saved 모드는 `path`, inline 모드는 `customUrl`
+- `GET /api/v1/api-connections/selectable` (로그인만), `POST /{id}/test`, `POST /refresh-all` (관리자) 엔드포인트 추가
+- `ApiConnectionHealthCheckScheduler`: 10분 주기 헬스체크, 상태 전환 시 `ApiConnectionNotifier`로 대시보드/Chat/감사 로그 디스패치
+- AI 서브에이전트 `api-connection-manager`에 baseUrl/헬스체크 워크플로 반영
+- 관리자 페이지 상태 배지(정상/이상/미확인) + "지금 확인"/"전체 갱신" 버튼
 
 ---
 
