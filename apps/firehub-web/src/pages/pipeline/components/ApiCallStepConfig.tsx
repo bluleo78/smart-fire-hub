@@ -348,34 +348,80 @@ export default function ApiCallStepConfig({
 
   return (
     <div className="space-y-3">
-      {/* Basic Settings - always visible */}
+      {/* 기본 설정: 연결 방식 → URL/Path → 메서드 */}
       <div className="space-y-2">
         <div className="flex items-center gap-1.5 text-sm font-medium">
           <Globe className="h-3.5 w-3.5" />
           기본 설정
         </div>
 
-        {/* saved 모드: baseUrl prefix + path 입력 */}
-        {apiConnectionId !== null && selectedConn && (
-          <div className="space-y-1.5">
-            <Label className="text-xs">경로(Path) *</Label>
-            <div className="flex items-center gap-1">
-              <span className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded shrink-0 border">
-                {selectedConn.baseUrl}
-              </span>
-              <Input
-                placeholder="/v1/data"
-                value={path}
-                disabled={readOnly}
-                onChange={(e) => update('path', e.target.value)}
-                className="text-xs h-8"
-              />
-            </div>
+        {/* 연결 방식 선택 */}
+        <RadioGroup
+          value={authMode}
+          onValueChange={(v) => {
+            if (v === 'saved') {
+              handleAuthChange({ authType: 'NONE' });
+            } else {
+              handleConnectionChange(null);
+            }
+          }}
+          disabled={readOnly}
+          className="space-y-2"
+        >
+          <div className="flex items-center gap-2">
+            <RadioGroupItem value="saved" id="auth-saved" />
+            <Label htmlFor="auth-saved" className="text-xs font-medium">저장된 연결 사용</Label>
+            <RadioGroupItem value="inline" id="auth-inline" className="ml-4" />
+            <Label htmlFor="auth-inline" className="text-xs font-medium">직접 입력</Label>
+          </div>
+        </RadioGroup>
+
+        {/* saved 모드: 연결 드롭다운 + baseUrl prefix + path */}
+        {authMode === 'saved' && (
+          <div className="space-y-2">
+            <Select
+              value={apiConnectionId ? String(apiConnectionId) : ''}
+              disabled={readOnly}
+              onValueChange={(v) => handleConnectionChange(Number(v))}
+            >
+              <SelectTrigger className="h-8 text-xs w-full">
+                <SelectValue placeholder="연결을 선택하세요" />
+              </SelectTrigger>
+              <SelectContent>
+                {savedConnections?.map((conn) => (
+                  <SelectItem key={conn.id} value={String(conn.id)}>
+                    {conn.name} ({conn.authType === 'BEARER' ? 'Bearer' : 'API Key'}) — {conn.baseUrl}
+                  </SelectItem>
+                ))}
+                {(!savedConnections || savedConnections.length === 0) && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    저장된 연결이 없습니다. 관리 &gt; API 연결에서 추가하세요.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+            {selectedConn && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">경로(Path) *</Label>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded shrink-0 border">
+                    {selectedConn.baseUrl}
+                  </span>
+                  <Input
+                    placeholder="/v1/data"
+                    value={path}
+                    disabled={readOnly}
+                    onChange={(e) => update('path', e.target.value)}
+                    className="text-xs h-8"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* inline 모드(저장된 연결 없음): full URL 직접 입력 */}
-        {apiConnectionId === null && (
+        {/* inline 모드: full URL 직접 입력 */}
+        {authMode === 'inline' && (
           <div className="space-y-1.5">
             <Label className="text-xs">URL *</Label>
             <Input
@@ -419,136 +465,85 @@ export default function ApiCallStepConfig({
 
       <Separator />
 
-      {/* Authentication */}
-      <Section title="인증" icon={<Key className="h-3.5 w-3.5" />} defaultOpen={true}>
-        <RadioGroup
-          value={authMode}
-          onValueChange={(v) => {
-            if (v === 'saved') {
-              handleAuthChange({ authType: 'NONE' });
-            } else {
-              handleConnectionChange(null);
-            }
-          }}
-          disabled={readOnly}
-          className="space-y-3"
-        >
-          {/* Saved connection */}
-          <div className="flex items-start gap-2">
-            <RadioGroupItem value="saved" id="auth-saved" className="mt-0.5" />
-            <div className="flex-1 space-y-1.5">
-              <Label htmlFor="auth-saved" className="text-xs font-medium">저장된 연결 사용</Label>
-              {authMode === 'saved' && (
+      {/* 인증 — inline 모드일 때만 표시 (saved 연결은 인증 정보 포함) */}
+      {authMode === 'inline' && (
+        <Section title="인증" icon={<Key className="h-3.5 w-3.5" />} defaultOpen={true}>
+          <div className="space-y-2">
+            <Select
+              value={inlineAuth.authType}
+              disabled={readOnly}
+              onValueChange={(v) => {
+                const patch: Partial<InlineAuth> = { authType: v };
+                if (v === 'API_KEY' && !inlineAuth.placement) {
+                  patch.placement = 'header';
+                }
+                handleAuthChange(patch);
+              }}
+            >
+              <SelectTrigger className="h-8 text-xs w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="NONE">없음</SelectItem>
+                <SelectItem value="API_KEY">API Key</SelectItem>
+                <SelectItem value="BEARER">Bearer Token</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {inlineAuth.authType === 'API_KEY' && (
+              <>
                 <Select
-                  value={apiConnectionId ? String(apiConnectionId) : ''}
+                  value={inlineAuth.placement ?? 'header'}
                   disabled={readOnly}
-                  onValueChange={(v) => handleConnectionChange(Number(v))}
+                  onValueChange={(v) => handleAuthChange({ placement: v })}
                 >
                   <SelectTrigger className="h-8 text-xs w-full">
-                    <SelectValue placeholder="연결을 선택하세요" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {savedConnections?.map((conn) => (
-                      <SelectItem key={conn.id} value={String(conn.id)}>
-                        {conn.name} ({conn.authType === 'BEARER' ? 'Bearer' : 'API Key'})
-                      </SelectItem>
-                    ))}
-                    {(!savedConnections || savedConnections.length === 0) && (
-                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                        저장된 연결이 없습니다. 관리 &gt; API 연결에서 추가하세요.
-                      </div>
-                    )}
+                    <SelectItem value="header">Header</SelectItem>
+                    <SelectItem value="query">Query Parameter</SelectItem>
                   </SelectContent>
                 </Select>
-              )}
-            </div>
+                <Input
+                  className="h-7 text-xs"
+                  placeholder={inlineAuth.placement === 'query' ? 'api_key' : 'X-API-Key'}
+                  value={
+                    inlineAuth.placement === 'query'
+                      ? (inlineAuth.paramName ?? '')
+                      : (inlineAuth.headerName ?? '')
+                  }
+                  disabled={readOnly}
+                  onChange={(e) =>
+                    inlineAuth.placement === 'query'
+                      ? handleAuthChange({ paramName: e.target.value })
+                      : handleAuthChange({ headerName: e.target.value })
+                  }
+                />
+                <Input
+                  className="h-7 text-xs"
+                  type="password"
+                  placeholder="API 키를 입력하세요"
+                  value={inlineAuth.apiKey ?? ''}
+                  disabled={readOnly}
+                  onChange={(e) => handleAuthChange({ apiKey: e.target.value })}
+                />
+              </>
+            )}
+
+            {inlineAuth.authType === 'BEARER' && (
+              <Input
+                className="h-7 text-xs"
+                type="password"
+                placeholder="토큰을 입력하세요"
+                value={inlineAuth.token ?? ''}
+                disabled={readOnly}
+                onChange={(e) => handleAuthChange({ token: e.target.value })}
+              />
+            )}
           </div>
-
-          {/* Inline auth */}
-          <div className="flex items-start gap-2">
-            <RadioGroupItem value="inline" id="auth-inline" className="mt-0.5" />
-            <div className="flex-1 space-y-1.5">
-              <Label htmlFor="auth-inline" className="text-xs font-medium">직접 입력</Label>
-              {authMode === 'inline' && (
-                <div className="space-y-2">
-                  <Select
-                    value={inlineAuth.authType}
-                    disabled={readOnly}
-                    onValueChange={(v) => {
-                      const patch: Partial<InlineAuth> = { authType: v };
-                      if (v === 'API_KEY' && !inlineAuth.placement) {
-                        patch.placement = 'header';
-                      }
-                      handleAuthChange(patch);
-                    }}
-                  >
-                    <SelectTrigger className="h-8 text-xs w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NONE">없음</SelectItem>
-                      <SelectItem value="API_KEY">API Key</SelectItem>
-                      <SelectItem value="BEARER">Bearer Token</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {inlineAuth.authType === 'API_KEY' && (
-                    <>
-                      <Select
-                        value={inlineAuth.placement ?? 'header'}
-                        disabled={readOnly}
-                        onValueChange={(v) => handleAuthChange({ placement: v })}
-                      >
-                        <SelectTrigger className="h-8 text-xs w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="header">Header</SelectItem>
-                          <SelectItem value="query">Query Parameter</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        className="h-7 text-xs"
-                        placeholder={inlineAuth.placement === 'query' ? 'api_key' : 'X-API-Key'}
-                        value={
-                          inlineAuth.placement === 'query'
-                            ? (inlineAuth.paramName ?? '')
-                            : (inlineAuth.headerName ?? '')
-                        }
-                        disabled={readOnly}
-                        onChange={(e) =>
-                          inlineAuth.placement === 'query'
-                            ? handleAuthChange({ paramName: e.target.value })
-                            : handleAuthChange({ headerName: e.target.value })
-                        }
-                      />
-                      <Input
-                        className="h-7 text-xs"
-                        type="password"
-                        placeholder="API 키를 입력하세요"
-                        value={inlineAuth.apiKey ?? ''}
-                        disabled={readOnly}
-                        onChange={(e) => handleAuthChange({ apiKey: e.target.value })}
-                      />
-                    </>
-                  )}
-
-                  {inlineAuth.authType === 'BEARER' && (
-                    <Input
-                      className="h-7 text-xs"
-                      type="password"
-                      placeholder="토큰을 입력하세요"
-                      value={inlineAuth.token ?? ''}
-                      disabled={readOnly}
-                      onChange={(e) => handleAuthChange({ token: e.target.value })}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </RadioGroup>
-      </Section>
+        </Section>
+      )}
 
       <Separator />
 
