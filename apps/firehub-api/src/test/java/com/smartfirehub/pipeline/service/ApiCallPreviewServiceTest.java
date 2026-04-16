@@ -465,6 +465,230 @@ class ApiCallPreviewServiceTest {
     assertThat(response.totalExtractedRows()).isEqualTo(1);
   }
 
+  // =========================================================================
+  // Auth 헤더 적용 검증
+  // =========================================================================
+
+  /**
+   * BEARER 인증: inlineAuth에 authType=BEARER, token 설정 시 Authorization: Bearer {token} 헤더가 전달되어야 한다.
+   * WireMock에서 해당 헤더가 있어야만 200을 반환하도록 stub을 설정하여 검증한다.
+   */
+  @Test
+  void preview_bearerAuth_appliesAuthorizationHeader() {
+    wireMock.stubFor(
+        get(urlEqualTo("/secure"))
+            .withHeader("Authorization", equalTo("Bearer my-secret-token"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/secure",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of("authType", "BEARER", "token", "my-secret-token"),
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
+  /**
+   * API_KEY 헤더 방식: inlineAuth에 authType=API_KEY, placement=header, headerName, apiKey 설정 시
+   * 지정한 헤더명으로 API 키가 전달되어야 한다.
+   */
+  @Test
+  void preview_apiKeyHeaderAuth_appliesCustomHeaderName() {
+    wireMock.stubFor(
+        get(urlEqualTo("/api-key-header"))
+            .withHeader("X-Api-Key", equalTo("key-abc-123"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"result\":\"ok\"}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/api-key-header",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of(
+                    "authType", "API_KEY",
+                    "placement", "header",
+                    "headerName", "X-Api-Key",
+                    "apiKey", "key-abc-123"),
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
+  // =========================================================================
+  // Query Params 병합 검증
+  // =========================================================================
+
+  /**
+   * Query Params 병합: request.queryParams(static)와 inlineAuth의 API_KEY(query placement)가
+   * 합쳐져서 URL 쿼리스트링에 포함되어야 한다.
+   */
+  @Test
+  void preview_queryParams_mergesStaticAndDynamic() {
+    // static param(page=1)과 auth param(api_key=secret) 모두 있어야 200 반환
+    wireMock.stubFor(
+        get(urlPathEqualTo("/data"))
+            .withQueryParam("page", equalTo("1"))
+            .withQueryParam("api_key", equalTo("secret"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":10}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/data",
+                "GET",
+                null,
+                java.util.Map.of("page", "1"),
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of(
+                    "authType", "API_KEY",
+                    "placement", "query",
+                    "paramName", "api_key",
+                    "apiKey", "secret"),
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
+  /**
+   * API_KEY 쿼리파라미터 방식: inlineAuth에 authType=API_KEY, placement=query 설정 시
+   * 지정한 파라미터명으로 API 키가 URL 쿼리스트링에 포함되어야 한다.
+   */
+  @Test
+  void preview_apiKeyQueryAuth_appendsToQueryString() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/search"))
+            .withQueryParam("token", equalTo("qparam-key"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"name\":\"foo\"}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/search",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of(
+                    "authType", "API_KEY",
+                    "placement", "query",
+                    "paramName", "token",
+                    "apiKey", "qparam-key"),
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
+  // =========================================================================
+  // 타임아웃 검증
+  // =========================================================================
+
+  /**
+   * 타임아웃 적용: timeoutMs가 설정된 경우 그 시간 내에 응답이 오면 성공한다.
+   * 여유 있는 타임아웃(5000ms)으로 정상 응답을 받는 케이스 검증.
+   */
+  @Test
+  void preview_customTimeoutMs_appliedToRequest() {
+    wireMock.stubFor(
+        get(urlEqualTo("/timeout-ok"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"status\":\"ok\"}]")
+                    .withFixedDelay(100))); // 100ms 지연, 5000ms timeout 이내
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/timeout-ok",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
+  /**
+   * 타임아웃 초과: 서버 응답이 timeoutMs를 초과하면 success=false, errorMessage 반환.
+   * WireMock으로 응답을 늦게 반환하도록 설정하여 타임아웃 동작을 검증한다.
+   */
+  @Test
+  void preview_requestTimeout_returnsErrorMessage() {
+    wireMock.stubFor(
+        get(urlEqualTo("/slow"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")
+                    .withFixedDelay(2000))); // 2초 지연
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/slow",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                500)); // 500ms timeout → 초과 발생
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isNotNull();
+  }
+
   /** 오류: 잘못된 dataPath는 success=false, errorMessage 반환 */
   @Test
   void preview_invalidDataPath_returnsError() {

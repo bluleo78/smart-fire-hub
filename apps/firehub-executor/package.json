@@ -2,6 +2,7 @@
   "name": "@smart-fire-hub/firehub-executor",
   "version": "0.1.0",
   "scripts": {
+    "build": "echo 'no build step'",
     "test": "python3 -m pytest tests/ -q"
   }
 }
