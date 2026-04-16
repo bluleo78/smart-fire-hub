@@ -20,13 +20,13 @@ export function usePipelineSave({
   validate,
   pipelineId,
   dispatch,
-}: UsePipelineSaveOptions): { save: () => Promise<void>; isSaving: boolean } {
+}: UsePipelineSaveOptions): { save: () => Promise<boolean>; isSaving: boolean } {
   const navigate = useNavigate();
   const createMutation = useCreatePipeline();
   const updateMutation = useUpdatePipeline(pipelineId ?? 0);
 
-  const save = useCallback(async () => {
-    if (!validate()) return;
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!validate()) return false;
 
     const stepsRequest: PipelineStepRequest[] = state.steps.map((step) => ({
       name: step.name.trim(),
@@ -65,8 +65,10 @@ export function usePipelineSave({
         dispatch({ type: 'MARK_SAVED' });
         toast.success('파이프라인이 저장되었습니다');
       }
+      return true;
     } catch {
       toast.error('파이프라인 저장에 실패했습니다');
+      return false;
     }
   }, [state, validate, createMutation, updateMutation, navigate, dispatch]);
 

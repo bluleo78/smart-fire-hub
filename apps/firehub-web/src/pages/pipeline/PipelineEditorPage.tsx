@@ -89,8 +89,8 @@ export default function PipelineEditorPage() {
   }, [state.isDirty]);
 
   const handleSave = async () => {
-    await save();
-    setIsEditing(false);
+    const ok = await save();
+    if (ok) setIsEditing(false);
   };
 
   const handleCancelEdit = () => {
