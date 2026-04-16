@@ -447,14 +447,19 @@ export default function ApiCallStepConfig({
 
         {/* saved 모드: baseUrl prefix + path */}
         {selectedConn && (
-          <div className="space-y-1.5">
-            <Label className="text-xs">경로(Path) *</Label>
-            <div className="flex items-center gap-1">
-              <span className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded shrink-0 border">
-                {selectedConn.baseUrl}
-              </span>
+          <div className="space-y-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Base URL (연결에서 가져옴)</Label>
               <Input
-                placeholder="/v1/data"
+                value={selectedConn.baseUrl}
+                disabled
+                className="text-xs h-8 font-mono bg-muted"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">경로(Path)</Label>
+              <Input
+                placeholder="/v1/data (선택)"
                 value={path}
                 disabled={readOnly}
                 onChange={(e) => update('path', e.target.value)}
