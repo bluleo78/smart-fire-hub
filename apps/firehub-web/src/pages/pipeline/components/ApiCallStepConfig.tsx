@@ -449,7 +449,7 @@ export default function ApiCallStepConfig({
         {selectedConn && (
           <div className="space-y-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">Base URL (연결에서 가져옴)</Label>
+              <Label className="text-xs">URL *</Label>
               <Input
                 value={selectedConn.baseUrl}
                 disabled
@@ -457,7 +457,7 @@ export default function ApiCallStepConfig({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">경로(Path)</Label>
+              <Label className="text-xs">추가 경로</Label>
               <Input
                 placeholder="/v1/data (선택)"
                 value={path}
