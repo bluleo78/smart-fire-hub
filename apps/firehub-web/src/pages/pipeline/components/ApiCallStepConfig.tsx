@@ -1,6 +1,8 @@
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
   Globe,
   Key,
   Play,
@@ -18,9 +20,17 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -31,6 +41,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
+import { cn } from '@/lib/utils';
 
 import ApiCallPreview from './ApiCallPreview';
 
@@ -187,6 +198,70 @@ function KvEditor({
         </Button>
       )}
     </div>
+  );
+}
+
+/** API 연결 선택 Combobox — 첫 항목 "직접 입력", 나머지 저장된 연결 */
+function ConnectionCombobox({
+  connections,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  connections: { id: number; name: string; authType: string; baseUrl: string }[];
+  value: number | null;
+  onChange: (id: number | null) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value !== null ? connections.find((c) => c.id === value) : null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full justify-between font-normal h-8 text-xs"
+        >
+          <span className={cn('truncate', !selected && 'text-muted-foreground')}>
+            {selected ? `${selected.name} — ${selected.baseUrl}` : '직접 입력'}
+          </span>
+          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="연결 검색..." className="text-xs" />
+          <CommandList>
+            <CommandEmpty>연결을 찾을 수 없습니다.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="__inline__"
+                onSelect={() => { onChange(null); setOpen(false); }}
+              >
+                <Check className={cn('h-3.5 w-3.5', value === null ? 'opacity-100' : 'opacity-0')} />
+                <span className="font-medium">직접 입력</span>
+                <span className="ml-auto text-muted-foreground text-xs">URL + 인증 수동</span>
+              </CommandItem>
+              {connections.map((conn) => (
+                <CommandItem
+                  key={conn.id}
+                  value={`${conn.name} ${conn.baseUrl}`}
+                  onSelect={() => { onChange(conn.id); setOpen(false); }}
+                >
+                  <Check className={cn('h-3.5 w-3.5', value === conn.id ? 'opacity-100' : 'opacity-0')} />
+                  <span className="font-medium">{conn.name}</span>
+                  <span className="ml-auto text-muted-foreground text-xs truncate max-w-[200px]">{conn.baseUrl}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -348,80 +423,49 @@ export default function ApiCallStepConfig({
 
   return (
     <div className="space-y-3">
-      {/* 기본 설정: 연결 방식 → URL/Path → 메서드 */}
+      {/* 기본 설정: API 연결 → URL/Path → 메서드 */}
       <div className="space-y-2">
         <div className="flex items-center gap-1.5 text-sm font-medium">
           <Globe className="h-3.5 w-3.5" />
           기본 설정
         </div>
 
-        {/* 연결 방식 선택 */}
-        <RadioGroup
-          value={authMode}
-          onValueChange={(v) => {
-            if (v === 'saved') {
-              handleAuthChange({ authType: 'NONE' });
-            } else {
+        {/* API 연결 선택 (검색 가능 Combobox) */}
+        <ConnectionCombobox
+          connections={savedConnections ?? []}
+          value={apiConnectionId}
+          onChange={(id) => {
+            if (id === null) {
               handleConnectionChange(null);
+            } else {
+              handleAuthChange({ authType: 'NONE' });
+              handleConnectionChange(id);
             }
           }}
           disabled={readOnly}
-          className="space-y-2"
-        >
-          <div className="flex items-center gap-2">
-            <RadioGroupItem value="saved" id="auth-saved" />
-            <Label htmlFor="auth-saved" className="text-xs font-medium">저장된 연결 사용</Label>
-            <RadioGroupItem value="inline" id="auth-inline" className="ml-4" />
-            <Label htmlFor="auth-inline" className="text-xs font-medium">직접 입력</Label>
-          </div>
-        </RadioGroup>
+        />
 
-        {/* saved 모드: 연결 드롭다운 + baseUrl prefix + path */}
-        {authMode === 'saved' && (
-          <div className="space-y-2">
-            <Select
-              value={apiConnectionId ? String(apiConnectionId) : ''}
-              disabled={readOnly}
-              onValueChange={(v) => handleConnectionChange(Number(v))}
-            >
-              <SelectTrigger className="h-8 text-xs w-full">
-                <SelectValue placeholder="연결을 선택하세요" />
-              </SelectTrigger>
-              <SelectContent>
-                {savedConnections?.map((conn) => (
-                  <SelectItem key={conn.id} value={String(conn.id)}>
-                    {conn.name} ({conn.authType === 'BEARER' ? 'Bearer' : 'API Key'}) — {conn.baseUrl}
-                  </SelectItem>
-                ))}
-                {(!savedConnections || savedConnections.length === 0) && (
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                    저장된 연결이 없습니다. 관리 &gt; API 연결에서 추가하세요.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
-            {selectedConn && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">경로(Path) *</Label>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded shrink-0 border">
-                    {selectedConn.baseUrl}
-                  </span>
-                  <Input
-                    placeholder="/v1/data"
-                    value={path}
-                    disabled={readOnly}
-                    onChange={(e) => update('path', e.target.value)}
-                    className="text-xs h-8"
-                  />
-                </div>
-              </div>
-            )}
+        {/* saved 모드: baseUrl prefix + path */}
+        {selectedConn && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">경로(Path) *</Label>
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded shrink-0 border">
+                {selectedConn.baseUrl}
+              </span>
+              <Input
+                placeholder="/v1/data"
+                value={path}
+                disabled={readOnly}
+                onChange={(e) => update('path', e.target.value)}
+                className="text-xs h-8"
+              />
+            </div>
           </div>
         )}
 
         {/* inline 모드: full URL 직접 입력 */}
-        {authMode === 'inline' && (
+        {apiConnectionId === null && (
           <div className="space-y-1.5">
             <Label className="text-xs">URL *</Label>
             <Input
