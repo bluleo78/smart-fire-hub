@@ -71,4 +71,4 @@ playwright-report/
 
 # Local DB bind mount (Postgres data)
 db-data/
-db-test-data/
+db-test-data/.worktrees/
