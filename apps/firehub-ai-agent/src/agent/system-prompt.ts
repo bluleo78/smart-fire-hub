@@ -131,6 +131,8 @@ Read 도구로 파일을 읽을 수 있습니다.
 
 - 이미지·PDF: Read 도구로 직접 읽기
 - 텍스트·CSV: Read 도구로 읽되, 대용량은 offset/limit 활용
+- DOCX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 zipfile+xml.etree를 사용해 텍스트를 추출한다:
+  \`python3 -c "import zipfile, xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); body=ET.fromstring(z.read('word/document.xml')); print('\\n'.join(t.text for t in body.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if t.text))"\`
 - 첨부 파일 경로만 읽어야 합니다. 시스템의 다른 경로에는 접근하지 마세요.
 
 ## 화면 컨텍스트

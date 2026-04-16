@@ -162,11 +162,11 @@ public class ApiConnectionRepository {
       String encryptedAuthConfig,
       String baseUrl,
       String healthCheckPath) {
-    // jOOQ Map 기반 SET으로 조건부 필드 업데이트
+    // null인 항목은 Map에서 제외하여 기존 DB 값을 보존한다 (부분 수정 지원).
     java.util.Map<Field<?>, Object> values = new java.util.LinkedHashMap<>();
-    values.put(AC_NAME, name);
-    values.put(AC_DESCRIPTION, description);
-    values.put(AC_AUTH_TYPE, authType);
+    if (name != null) values.put(AC_NAME, name);
+    if (description != null) values.put(AC_DESCRIPTION, description);
+    if (authType != null) values.put(AC_AUTH_TYPE, authType);
     values.put(AC_UPDATED_AT, LocalDateTime.now());
 
     if (encryptedAuthConfig != null) values.put(AC_AUTH_CONFIG, encryptedAuthConfig);
