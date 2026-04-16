@@ -10,6 +10,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
+import org.jooq.UpdateSetMoreStep;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class ApiConnectionRepository {
 
   private final DSLContext dsl;
@@ -153,7 +155,6 @@ public class ApiConnectionRepository {
    * @param baseUrl         변경할 Base URL (null이면 미변경)
    * @param healthCheckPath 변경할 헬스체크 경로 (null이면 미변경)
    */
-  @SuppressWarnings({"unchecked", "rawtypes"})
   public void update(
       Long id,
       String name,
@@ -162,21 +163,21 @@ public class ApiConnectionRepository {
       String encryptedAuthConfig,
       String baseUrl,
       String healthCheckPath) {
-    // null인 항목은 Map에서 제외하여 기존 DB 값을 보존한다 (부분 수정 지원).
-    java.util.Map<Field<?>, Object> values = new java.util.LinkedHashMap<>();
-    if (name != null) values.put(AC_NAME, name);
-    if (description != null) values.put(AC_DESCRIPTION, description);
-    if (authType != null) values.put(AC_AUTH_TYPE, authType);
-    values.put(AC_UPDATED_AT, LocalDateTime.now());
+    // null인 항목은 스킵하여 기존 DB 값을 보존한다 (부분 수정 지원).
+    // raw Map 캐스트 대신 명시적 체인으로 null 필드 누락 방지.
+    log.info("[ApiConnection.update] id={} name={} description={} authType={} hasAuthConfig={} baseUrl={} healthCheckPath={}",
+        id, name, description, authType, encryptedAuthConfig != null, baseUrl, healthCheckPath);
+    UpdateSetMoreStep<?> step = dsl.update(API_CONNECTION)
+        .set(AC_UPDATED_AT, LocalDateTime.now());
 
-    if (encryptedAuthConfig != null) values.put(AC_AUTH_CONFIG, encryptedAuthConfig);
-    if (baseUrl != null) values.put(AC_BASE_URL, baseUrl);
-    if (healthCheckPath != null) values.put(AC_HEALTH_CHECK_PATH, healthCheckPath);
+    if (name != null) step = step.set(AC_NAME, name);
+    if (description != null) step = step.set(AC_DESCRIPTION, description);
+    if (authType != null) step = step.set(AC_AUTH_TYPE, authType);
+    if (encryptedAuthConfig != null) step = step.set(AC_AUTH_CONFIG, encryptedAuthConfig);
+    if (baseUrl != null) step = step.set(AC_BASE_URL, baseUrl);
+    if (healthCheckPath != null) step = step.set(AC_HEALTH_CHECK_PATH, healthCheckPath);
 
-    dsl.update(API_CONNECTION)
-        .set((java.util.Map) values)
-        .where(AC_ID.eq(id))
-        .execute();
+    step.where(AC_ID.eq(id)).execute();
   }
 
   /**

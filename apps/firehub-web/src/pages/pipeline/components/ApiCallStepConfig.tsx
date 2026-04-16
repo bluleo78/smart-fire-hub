@@ -88,6 +88,7 @@ interface PreviewResult {
   columns: string[];
   totalExtractedRows: number;
   errorMessage: string | null;
+  resolvedUrl: string | null;
 }
 
 type KvPair = { key: string; value: string };
@@ -379,8 +380,7 @@ export default function ApiCallStepConfig({
       // 백엔드 ApiCallPreviewService: apiConnectionId + path 또는 customUrl로 URL 계산
       const payload = {
         apiConnectionId: apiConnectionId ?? undefined,
-        path: apiConnectionId !== null ? path : undefined,
-        customUrl: apiConnectionId === null ? customUrl : undefined,
+        url: apiConnectionId !== null ? path : customUrl,
         method,
         headers: kvPairsToRecord(headerPairs),
         queryParams: kvPairsToRecord(queryParamPairs),
@@ -415,6 +415,7 @@ export default function ApiCallStepConfig({
         columns: [],
         totalExtractedRows: 0,
         errorMessage: message,
+        resolvedUrl: null,
       });
     } finally {
       setPreviewLoading(false);

@@ -9,4 +9,6 @@ public record ApiCallPreviewResponse(
     List<Map<String, Object>> rows,
     List<String> columns,
     int totalExtractedRows,
-    String errorMessage) {}
+    String errorMessage,
+    /** 서버가 실제로 호출한 최종 URL (쿼리 파라미터 포함) */
+    String resolvedUrl) {}

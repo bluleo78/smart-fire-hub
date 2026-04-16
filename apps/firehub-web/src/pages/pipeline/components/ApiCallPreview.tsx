@@ -13,6 +13,7 @@ interface ApiCallPreviewProps {
     columns: string[];
     totalExtractedRows: number;
     errorMessage: string | null;
+    resolvedUrl: string | null;
   };
 }
 
@@ -142,6 +143,13 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
 
   return (
     <div className="mt-3 space-y-3">
+      {/* 실제 호출 URL */}
+      {result.resolvedUrl && (
+        <div className="rounded border bg-muted/30 px-2 py-1.5">
+          <p className="text-xs text-muted-foreground mb-0.5">호출 URL</p>
+          <p className="text-xs font-mono break-all text-foreground">{result.resolvedUrl}</p>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         총 <span className="font-medium text-foreground">{result.totalExtractedRows}</span>개 행
         추출 (최대 5개 표시)

@@ -20,6 +20,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class ApiCallPreviewService {
 
   private static final int DEFAULT_TIMEOUT_MS = 30_000;
@@ -32,6 +33,7 @@ public class ApiCallPreviewService {
   private final WebClient.Builder webClientBuilder;
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
+    String resolvedRequestUrl = null;
     try {
       // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
       String resolvedUrl = resolvePreviewUrl(request);
@@ -62,6 +64,7 @@ public class ApiCallPreviewService {
       UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(resolvedUrl);
       allQueryParams.forEach(uriBuilder::queryParam);
       URI requestUri = uriBuilder.build(true).toUri();
+      resolvedRequestUrl = requestUri.toString();
 
       // 6. Execute HTTP request
       int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
@@ -73,9 +76,11 @@ public class ApiCallPreviewService {
       // 8. Convert field mappings
       List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
 
-      // 9. Parse response
+      // 9. Parse response — dataPath가 비어있으면 루트($)로 대체
+      String effectiveDataPath =
+          (request.dataPath() == null || request.dataPath().isBlank()) ? "$" : request.dataPath();
       List<Map<String, Object>> allRows =
-          jsonResponseParser.parseAndMap(responseBody, request.dataPath(), fieldMappings, null);
+          jsonResponseParser.parseAndMap(responseBody, effectiveDataPath, fieldMappings, null);
 
       List<String> columns =
           request.fieldMappings() != null
@@ -87,10 +92,11 @@ public class ApiCallPreviewService {
       List<Map<String, Object>> previewRows =
           allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows;
 
-      return new ApiCallPreviewResponse(true, rawJson, previewRows, columns, allRows.size(), null);
+      return new ApiCallPreviewResponse(true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
 
     } catch (Exception e) {
-      return new ApiCallPreviewResponse(false, null, List.of(), List.of(), 0, e.getMessage());
+      log.error("[Preview] 실패: {}", e.getMessage(), e);
+      return new ApiCallPreviewResponse(false, null, List.of(), List.of(), 0, e.getMessage(), resolvedRequestUrl);
     }
   }
 

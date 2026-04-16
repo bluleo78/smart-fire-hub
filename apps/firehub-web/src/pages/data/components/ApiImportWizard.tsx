@@ -63,6 +63,7 @@ interface PreviewResult {
   columns: string[];
   totalExtractedRows: number;
   errorMessage: string | null;
+  resolvedUrl: string | null;
 }
 
 function kvPairsToRecord(pairs: KvPair[]): Record<string, string> {
@@ -188,6 +189,7 @@ export function ApiImportWizard({
         columns: [],
         totalExtractedRows: 0,
         errorMessage: message,
+        resolvedUrl: null,
       });
     } finally {
       setPreviewLoading(false);
