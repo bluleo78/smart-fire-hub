@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     db_user: str = "pipeline_executor"
     db_password: str = ""
 
-    # Auth
-    internal_service_token: str = "changeme"
+    # Auth — 기본값 없음: 미설정 시 Pydantic ValidationError로 기동 실패
+    internal_service_token: str
 
     # nsjail
     nsjail_enabled: bool = False

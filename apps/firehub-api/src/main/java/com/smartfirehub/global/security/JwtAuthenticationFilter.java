@@ -71,7 +71,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private void authenticateWithInternalToken(String token, HttpServletRequest request) {
     if (!StringUtils.hasText(internalToken)) return;
 
-    if (!MessageDigest.isEqual(token.getBytes(), internalToken.getBytes())) return;
+    // 길이가 다를 때 즉시 반환하면 타이밍 공격으로 길이를 유추할 수 있으므로
+    // 길이 정규화 후 상수 시간 비교를 수행한다
+    byte[] a = token.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] b = internalToken.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    if (a.length != b.length || !MessageDigest.isEqual(a, b)) return;
 
     String onBehalfOf = request.getHeader("X-On-Behalf-Of");
     if (!StringUtils.hasText(onBehalfOf)) return;
