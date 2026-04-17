@@ -252,14 +252,12 @@ export function AIStatusChip() {
     // When dropdown is visible, ignore chip click (use dropdown buttons instead)
     if (showDropdown) return;
 
-    // Mode rotation: closed → side → floating → fullscreen → closed
-    // (native mode is hidden — not yet stable for production)
+    // Mode rotation: closed → side → fullscreen → closed
+    // (floating/native modes are hidden in UI)
     if (!isOpen) {
       setMode('side');
       openAI();
     } else if (mode === 'side') {
-      setMode('floating');
-    } else if (mode === 'floating') {
       setMode('fullscreen');
     } else {
       closeAI();

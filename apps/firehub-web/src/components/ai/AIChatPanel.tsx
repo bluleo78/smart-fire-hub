@@ -64,7 +64,8 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           <TokenUsageChip tokens={contextTokens} isCompacting={isCompacting} />
           {showModeSwitch && (
             <>
-              {(Object.keys(modeIcons) as AIMode[]).map((m) => (
+              {/* floating/native 모드는 UI에서 일시 숨김 (유용성 부족 / 불안정) */}
+              {(Object.keys(modeIcons) as AIMode[]).filter((m) => m !== 'floating' && m !== 'native').map((m) => (
                 <Button
                   key={m}
                   variant={mode === m ? 'secondary' : 'ghost'}

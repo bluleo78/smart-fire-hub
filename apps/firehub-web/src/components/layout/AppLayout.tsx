@@ -47,9 +47,7 @@ import { UserNav } from './UserNav';
 const AISidePanel = lazy(() =>
   import('../ai/AISidePanel').then((mod) => ({ default: mod.AISidePanel }))
 );
-const AIFloating = lazy(() =>
-  import('../ai/AIFloating').then((mod) => ({ default: mod.AIFloating }))
-);
+// NOTE: floating 모드는 UI에서 일시 숨김 (유용성 부족). 코드·파일은 보존.
 const AIFullScreen = lazy(() =>
   import('../ai/AIFullScreen').then((mod) => ({ default: mod.AIFullScreen }))
 );
@@ -440,12 +438,6 @@ function AppLayoutInner() {
           )}
         </div>
 
-        {/* Floating panel mode */}
-        {aiOpen && aiMode === 'floating' && (
-          <Suspense fallback={null}>
-            <AIFloating />
-          </Suspense>
-        )}
       </div>
 
     </div>

@@ -1,7 +1,7 @@
 import { type MutableRefObject,useEffect, useRef, useState } from 'react';
 
 import type { AIMessage,AIMode } from '../../types/ai';
-import { FloatingIcon, FullscreenIcon,SideIcon } from './AIChipIcons';
+import { FullscreenIcon,SideIcon } from './AIChipIcons';
 
 interface AIStatusChipDropdownProps {
   isAIOpen: boolean;
@@ -247,18 +247,13 @@ export function AIStatusChipDropdown({
 
         {/* Action buttons */}
         {!isAIOpen ? (
-          /* Closed: grid */
+          /* Closed: grid — floating 모드는 UI에서 일시 숨김 */
           <div className="space-y-1.5">
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               <ActionButton
                 icon={<SideIcon />}
                 label="사이드"
                 onClick={() => { onModeChange('side'); onOpen(); }}
-              />
-              <ActionButton
-                icon={<FloatingIcon />}
-                label="플로팅"
-                onClick={() => { onModeChange('floating'); onOpen(); }}
               />
               <ActionButton
                 icon={<FullscreenIcon />}
@@ -280,20 +275,14 @@ export function AIStatusChipDropdown({
             </div>
           </div>
         ) : (
-          /* Open: mode switch 4-col + 2-col */
+          /* Open: mode switch — floating 모드는 UI에서 일시 숨김 */
           <div className="space-y-1.5">
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               <ActionButton
                 icon={<SideIcon />}
                 label="사이드"
                 onClick={() => onModeChange('side')}
                 highlighted={mode === 'side'}
-              />
-              <ActionButton
-                icon={<FloatingIcon />}
-                label="플로팅"
-                onClick={() => onModeChange('floating')}
-                highlighted={mode === 'floating'}
               />
               <ActionButton
                 icon={<FullscreenIcon />}

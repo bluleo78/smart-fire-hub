@@ -289,9 +289,7 @@ test.describe('AISidePanel — 패널 동작', () => {
   test('패널 닫힌 후 입력창이 사라진다', async ({ authenticatedPage: page }) => {
     await openSidePanel(page);
 
-    // side→floating→fullscreen→closed (chip 3번 더 클릭)
-    await chipLocator(page).click(); // floating
-    await page.waitForTimeout(100);
+    // side→fullscreen→closed (chip 2번 더 클릭, floating 모드는 UI에서 숨김)
     await chipLocator(page).click(); // fullscreen
     await page.waitForTimeout(100);
     await chipLocator(page).click(); // closed
@@ -304,9 +302,8 @@ test.describe('AISidePanel — 패널 동작', () => {
   test('AIChatPanel 헤더에 모드 전환 버튼이 표시된다', async ({ authenticatedPage: page }) => {
     await openSidePanel(page);
 
-    // AIChatPanel 헤더의 '플로팅' 또는 '전체화면' 모드 전환 버튼 확인
-    // title 속성으로 접근
-    await expect(page.getByTitle('플로팅').first()).toBeVisible();
+    // AIChatPanel 헤더의 모드 전환 버튼 확인 (floating/native는 UI에서 숨김)
+    await expect(page.getByTitle('사이드 패널').first()).toBeVisible();
     await expect(page.getByTitle('전체 화면').first()).toBeVisible();
   });
 });

@@ -224,21 +224,17 @@ test.describe('AIStatusChipDropdown — 3초 호버 후 드롭다운', () => {
     await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
   });
 
-  test('드롭다운 — "플로팅" 버튼 클릭 시 floating 모드로 AI 패널이 열린다', async ({
+  // floating 모드는 UI에서 일시 숨김 — 드롭다운 플로팅 버튼 스킵, 코드는 보존
+  test.skip('드롭다운 — "플로팅" 버튼 클릭 시 floating 모드로 AI 패널이 열린다', async ({
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
     await page.goto('/', { waitUntil: 'commit' });
 
-    // 호버 → 드롭다운 표시
     await chipLocator(page).hover();
     await page.waitForTimeout(3100);
     await expect(page.getByRole('menu', { name: 'AI 상태 및 제어' })).toBeVisible();
-
-    // "플로팅" 버튼 클릭
     await page.getByRole('menuitem', { name: '플로팅' }).click();
-
-    // AI 패널이 열려야 함
     await expect(chipLocator(page)).toBeVisible();
   });
 

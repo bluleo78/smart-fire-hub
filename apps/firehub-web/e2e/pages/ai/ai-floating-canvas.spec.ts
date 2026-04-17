@@ -36,7 +36,8 @@ async function openSidePanel(page: import('@playwright/test').Page) {
   await page.getByPlaceholder('메시지를 입력하세요...').waitFor({ state: 'visible', timeout: 5000 });
 }
 
-test.describe('AIFloating — 위치 저장 / localStorage', () => {
+// floating 모드는 UI에서 일시 숨김 (유용성 부족) — 관련 테스트 스킵, 코드는 보존
+test.describe.skip('AIFloating — 위치 저장 / localStorage', () => {
   /**
    * AF-01: floating 모드 열기 → 저장된 위치(ai-floating-pos)가 없으면 기본 위치로 렌더링
    * getStoredPosition() → null 경로, savePosition 경로
@@ -72,7 +73,7 @@ test.describe('AIFloating — 위치 저장 / localStorage', () => {
   });
 });
 
-test.describe('AIFloating — 드래그 핸들 (handleDragStart)', () => {
+test.describe.skip('AIFloating — 드래그 핸들 (handleDragStart)', () => {
   /**
    * AF-03: 패널 헤더 영역 mouseDown → 드래그 시작 (handleDragStart)
    * isDragging=true 경로 — 채팅 입력창을 기준으로 패널 컨테이너 찾기
@@ -111,7 +112,7 @@ test.describe('AIFloating — 드래그 핸들 (handleDragStart)', () => {
   });
 });
 
-test.describe('AIFloating — 리사이즈 핸들 (handleResizeStart)', () => {
+test.describe.skip('AIFloating — 리사이즈 핸들 (handleResizeStart)', () => {
   /**
    * AF-05: 동쪽 리사이즈 핸들 mouseDown → 너비 변경 (dir.includes('e') 경로)
    * cursor-e-resize 핸들을 찾아 드래그
@@ -189,10 +190,8 @@ test.describe('AIProvider — Cmd/Ctrl+K 단축키', () => {
     await page.keyboard.press('Control+k');
     await page.getByPlaceholder('메시지를 입력하세요...').waitFor({ state: 'visible', timeout: 5000 });
 
-    // 패널이 열린 상태에서 chip을 클릭하여 닫기 (side→floating→fullscreen→closed 순환)
-    // fullscreen에서 한 번 더 클릭하면 closed
-    await chipLocator(page).click(); // side → floating
-    await chipLocator(page).click(); // floating → fullscreen
+    // 패널이 열린 상태에서 chip을 클릭하여 닫기 (floating 숨김 이후 side→fullscreen→closed 순환)
+    await chipLocator(page).click(); // side → fullscreen
     await chipLocator(page).click(); // fullscreen → closed
     await expect(page.getByPlaceholder('메시지를 입력하세요...')).not.toBeVisible({ timeout: 3000 });
   });

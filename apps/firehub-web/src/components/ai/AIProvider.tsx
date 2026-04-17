@@ -43,7 +43,9 @@ export function useAI() {
 function getStoredMode(): AIMode {
   try {
     const stored = localStorage.getItem('ai-mode');
-    if (stored === 'side' || stored === 'floating' || stored === 'fullscreen' || stored === 'native') {
+    // floating 모드는 UI에서 일시 숨김 — 잔존 값은 side 로 강제 폴백
+    if (stored === 'floating') return 'side';
+    if (stored === 'side' || stored === 'fullscreen' || stored === 'native') {
       return stored;
     }
   } catch {
