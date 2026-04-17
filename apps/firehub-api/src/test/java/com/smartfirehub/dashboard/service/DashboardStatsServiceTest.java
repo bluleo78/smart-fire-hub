@@ -476,7 +476,8 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
         .set(PIPELINE_EXECUTION.CREATED_AT, LocalDateTime.now().minusHours(1))
         .execute();
 
-    ActivityFeedResponse feed = dashboardService.getActivityFeed("PIPELINE", null, 0, 50);
+    // isResolved=true 항목은 정렬 후미로 밀리므로 충분히 큰 size 사용
+    ActivityFeedResponse feed = dashboardService.getActivityFeed("PIPELINE", null, 0, 10000);
 
     // sourcePipeline1의 FAILED 이벤트는 이후 COMPLETED가 있으므로 isResolved=true
     List<ActivityItem> failedItems =
@@ -485,7 +486,8 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
             .filter(i -> sourcePipeline1Id.equals(i.entityId()))
             .toList();
 
-    assertThat(failedItems).isNotEmpty();
+    assertThat(feed.items()).as("total items in feed").isNotEmpty();
+    assertThat(failedItems).as("PIPELINE_FAILED items for pipeline %s", sourcePipeline1Id).isNotEmpty();
     assertThat(failedItems).allMatch(ActivityItem::isResolved);
   }
 

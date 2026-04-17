@@ -321,6 +321,203 @@ describe('Proactive MCP Tools', () => {
     });
   });
 
+  // --- list_proactive_jobs ---
+  describe('list_proactive_jobs', () => {
+    it('calls apiClient.listSmartJobs', async () => {
+      (client.listSmartJobs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      const result = await invokeTool(server, 'list_proactive_jobs');
+      expect(client.listSmartJobs).toHaveBeenCalled();
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.listSmartJobs as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'list_proactive_jobs');
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- create_proactive_job ---
+  describe('create_proactive_job', () => {
+    it('calls apiClient.createSmartJob with args', async () => {
+      const args = { name: '테스트 작업', prompt: '분석 프롬프트', cronExpression: '0 9 * * *' };
+      const result = await invokeTool(server, 'create_proactive_job', args);
+      expect(client.createSmartJob).toHaveBeenCalledWith(args);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.createSmartJob as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'create_proactive_job', {
+        name: '작업', prompt: '프롬프트', cronExpression: '0 9 * * *',
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- update_proactive_job ---
+  describe('update_proactive_job', () => {
+    it('calls apiClient.updateSmartJob with id and data', async () => {
+      const args = { id: 1, name: '수정된 작업', enabled: true };
+      const result = await invokeTool(server, 'update_proactive_job', args);
+      expect(client.updateSmartJob).toHaveBeenCalledWith(1, { name: '수정된 작업', enabled: true });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.updateSmartJob as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'update_proactive_job', { id: 1 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- delete_proactive_job ---
+  describe('delete_proactive_job', () => {
+    it('calls apiClient.deleteSmartJob with id', async () => {
+      const result = await invokeTool(server, 'delete_proactive_job', { id: 5 });
+      expect(client.deleteSmartJob).toHaveBeenCalledWith(5);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.deleteSmartJob as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'delete_proactive_job', { id: 5 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- execute_proactive_job ---
+  describe('execute_proactive_job', () => {
+    it('calls apiClient.executeSmartJob with id', async () => {
+      const result = await invokeTool(server, 'execute_proactive_job', { id: 3 });
+      expect(client.executeSmartJob).toHaveBeenCalledWith(3);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.executeSmartJob as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'execute_proactive_job', { id: 3 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- list_report_templates ---
+  describe('list_report_templates', () => {
+    it('calls apiClient.listReportTemplates', async () => {
+      const result = await invokeTool(server, 'list_report_templates');
+      expect(client.listReportTemplates).toHaveBeenCalled();
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.listReportTemplates as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'list_report_templates');
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- create_report_template ---
+  describe('create_report_template', () => {
+    it('calls apiClient.createReportTemplate with args', async () => {
+      const args = {
+        name: '분석 양식',
+        structure: {
+          sections: [{ key: 'summary', label: '요약', required: true }],
+          output_format: 'markdown',
+        },
+      };
+      const result = await invokeTool(server, 'create_report_template', args);
+      expect(client.createReportTemplate).toHaveBeenCalledWith(args);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.createReportTemplate as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'create_report_template', {
+        name: '양식',
+        structure: { sections: [{ key: 'a', label: 'A' }], output_format: 'markdown' },
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- get_report_template ---
+  describe('get_report_template', () => {
+    it('calls apiClient.getReportTemplate with id', async () => {
+      const result = await invokeTool(server, 'get_report_template', { id: 2 });
+      expect(client.getReportTemplate).toHaveBeenCalledWith(2);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.getReportTemplate as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'get_report_template', { id: 2 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- update_report_template ---
+  describe('update_report_template', () => {
+    it('calls apiClient.updateReportTemplate with id and data', async () => {
+      const args = { id: 4, name: '수정된 양식' };
+      const result = await invokeTool(server, 'update_report_template', args);
+      expect(client.updateReportTemplate).toHaveBeenCalledWith(4, { name: '수정된 양식' });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.updateReportTemplate as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'update_report_template', { id: 4 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- delete_report_template ---
+  describe('delete_report_template', () => {
+    it('calls apiClient.deleteReportTemplate with id', async () => {
+      const result = await invokeTool(server, 'delete_report_template', { id: 7 });
+      expect(client.deleteReportTemplate).toHaveBeenCalledWith(7);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.deleteReportTemplate as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'delete_report_template', { id: 7 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- list_job_executions ---
+  describe('list_job_executions', () => {
+    it('calls apiClient.listJobExecutions with jobId and params', async () => {
+      const args = { jobId: 1, limit: 5 };
+      const result = await invokeTool(server, 'list_job_executions', args);
+      expect(client.listJobExecutions).toHaveBeenCalledWith(1, { limit: 5 });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.listJobExecutions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'list_job_executions', { jobId: 1 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // --- get_execution ---
+  describe('get_execution', () => {
+    it('calls apiClient.getExecution with jobId and executionId', async () => {
+      const result = await invokeTool(server, 'get_execution', { jobId: 1, executionId: 10 });
+      expect(client.getExecution).toHaveBeenCalledWith(1, 10);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.getExecution as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'get_execution', { jobId: 1, executionId: 10 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
   // --- tool registration ---
   it('proactive tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

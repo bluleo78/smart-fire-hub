@@ -144,6 +144,36 @@ class AiSessionServiceTest extends IntegrationTestBase {
   }
 
   @Test
+  void getSessionByContext_existingSession_returnsSession() {
+    UserResponse user =
+        authService.signup(
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+    Long userId = user.id();
+
+    aiSessionService.createSession(
+        userId, new CreateAiSessionRequest("session-ctx", "dataset", 42L, "Context Session"));
+
+    var result = aiSessionService.getSessionByContext(userId, "dataset", 42L);
+
+    assertThat(result).isPresent();
+    assertThat(result.get().sessionId()).isEqualTo("session-ctx");
+    assertThat(result.get().contextType()).isEqualTo("dataset");
+    assertThat(result.get().contextResourceId()).isEqualTo(42L);
+  }
+
+  @Test
+  void getSessionByContext_noMatch_returnsEmpty() {
+    UserResponse user =
+        authService.signup(
+            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+    Long userId = user.id();
+
+    var result = aiSessionService.getSessionByContext(userId, "dataset", 99L);
+
+    assertThat(result).isEmpty();
+  }
+
+  @Test
   void deleteSession_otherUser_throwsAccessDenied() {
     UserResponse user1 =
         authService.signup(

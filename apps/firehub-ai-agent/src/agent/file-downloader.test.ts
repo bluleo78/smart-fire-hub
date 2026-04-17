@@ -11,7 +11,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 import fs from 'fs/promises';
-import { downloadChatFiles, cleanupChatFiles } from './file-downloader.js';
+import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta } from './file-downloader.js';
 import type { FireHubApiClient } from '../mcp/api-client.js';
 
 const TEST_DIR = '/tmp/test-chat-files';
@@ -206,5 +206,40 @@ describe('cleanupChatFiles', () => {
     (fs.rm as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('ENOENT'));
 
     await expect(cleanupChatFiles('/tmp/nonexistent')).resolves.toBeUndefined();
+  });
+});
+
+describe('toAttachmentMeta', () => {
+  it('converts DownloadedFile array to AttachmentMeta array', () => {
+    const files = [
+      {
+        fileId: 'file-1',
+        originalName: 'report.pdf',
+        mimeType: 'application/pdf',
+        fileSize: 1024,
+        fileCategory: 'document',
+        localPath: '/tmp/report.pdf',
+        uploadedAt: new Date().toISOString(),
+      },
+      {
+        fileId: 'file-2',
+        originalName: 'data.csv',
+        mimeType: 'text/csv',
+        fileSize: 512,
+        fileCategory: 'data',
+        localPath: '/tmp/data.csv',
+        uploadedAt: new Date().toISOString(),
+      },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = toAttachmentMeta(files as any);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ id: 'file-1', name: 'report.pdf', mimeType: 'application/pdf', fileSize: 1024, category: 'document' });
+    expect(result[1]).toEqual({ id: 'file-2', name: 'data.csv', mimeType: 'text/csv', fileSize: 512, category: 'data' });
+  });
+
+  it('returns empty array for empty input', () => {
+    const result = toAttachmentMeta([]);
+    expect(result).toEqual([]);
   });
 });

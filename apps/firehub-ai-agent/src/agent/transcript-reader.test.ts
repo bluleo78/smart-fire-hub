@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readSessionTranscript } from './transcript-reader.js';
 
-// Mock fs/promises
+// Mock fs/promises — readdir/access도 포함해야 findTranscriptFilePath가 동작함
 vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
+  readdir: vi.fn().mockResolvedValue(['fake-project']),
+  access: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { readFile } from 'fs/promises';

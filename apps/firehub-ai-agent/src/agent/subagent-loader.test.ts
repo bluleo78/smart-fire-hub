@@ -739,3 +739,31 @@ describe('SL-AA: audit-analyst subagent integration', () => {
     expect(prompt).toContain('Phase 3 — ANALYZE');
   });
 });
+
+describe('loadSubagents error paths', () => {
+  beforeEach(() => {
+    resetSubagentCache();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetSubagentCache();
+  });
+
+  it('returns empty object when directory does not exist', () => {
+    // readdirSync throws when directory is missing — should return {}
+    const result = loadSubagents('/nonexistent-path-xyz-12345');
+    expect(result).toEqual({});
+  });
+
+  it('skips non-directory entries in subagents dir', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-test-'));
+    // Create a file (not a dir) in the subagents dir
+    fs.writeFileSync(path.join(tmpDir, 'readme.txt'), 'not a dir');
+    const result = loadSubagents(tmpDir);
+    // File entry skipped — no agents loaded
+    expect(result).toEqual({});
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+});

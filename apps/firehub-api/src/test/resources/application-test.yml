@@ -3,6 +3,9 @@ spring:
     url: jdbc:postgresql://localhost:5433/smartfirehub_test
     username: app
     password: app
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
   flyway:
     validate-on-migrate: false
 

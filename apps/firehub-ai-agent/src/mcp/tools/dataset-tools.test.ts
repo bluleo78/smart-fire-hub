@@ -185,6 +185,38 @@ describe('Dataset MCP Tools', () => {
     });
   });
 
+  describe('get_dataset', () => {
+    it('calls apiClient.getDataset with id', async () => {
+      const mockData = { id: 1, name: '화재 데이터셋' };
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue(mockData);
+      const result = await invokeTool(server, 'get_dataset', { id: 1 });
+      expect(client.getDataset).toHaveBeenCalledWith(1);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.getDataset as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Not found'));
+      const result = await invokeTool(server, 'get_dataset', { id: 999 });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('update_dataset', () => {
+    it('calls apiClient.updateDataset with id and data', async () => {
+      const args = { id: 2, name: '수정된 데이터셋', description: '설명' };
+      (client.updateDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 2, name: '수정된 데이터셋' });
+      const result = await invokeTool(server, 'update_dataset', args);
+      expect(client.updateDataset).toHaveBeenCalledWith(2, { name: '수정된 데이터셋', description: '설명' });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('returns isError on failure', async () => {
+      (client.updateDataset as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
+      const result = await invokeTool(server, 'update_dataset', { id: 2, name: '데이터셋' });
+      expect(result.isError).toBe(true);
+    });
+  });
+
   // --- tool registration ---
   it('dataset tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
