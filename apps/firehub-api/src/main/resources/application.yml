@@ -46,3 +46,9 @@ firehub:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3
     expiry-hours: 24
+
+notification:
+  kakao:
+    client_id: ${KAKAO_CLIENT_ID:}
+    client_secret: ${KAKAO_CLIENT_SECRET:}
+    redirect_uri: ${KAKAO_REDIRECT_URI:https://app.smartfirehub.com/api/v1/oauth/kakao/callback}
