@@ -56,4 +56,11 @@ class OAuthStateRepositoryImpl implements OAuthStateRepository {
             ));
         });
     }
+
+    @Override
+    public int deleteExpired() {
+        return dsl.deleteFrom(OAUTH_STATE)
+                .where(OAUTH_STATE.EXPIRES_AT.lt(OffsetDateTime.now()))
+                .execute();
+    }
 }

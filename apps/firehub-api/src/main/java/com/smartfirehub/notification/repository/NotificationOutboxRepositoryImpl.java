@@ -125,6 +125,57 @@ class NotificationOutboxRepositoryImpl implements NotificationOutboxRepository {
                 .fetch(NotificationOutboxRepositoryImpl::toRow);
     }
 
+    @Override
+    public long countPending(ChannelType channelType) {
+        Integer count = dsl.selectCount()
+                .from(NOTIFICATION_OUTBOX)
+                .where(NOTIFICATION_OUTBOX.STATUS.eq("PENDING"))
+                .and(NOTIFICATION_OUTBOX.CHANNEL_TYPE.eq(channelType.name()))
+                .fetchOne(0, Integer.class);
+        return count == null ? 0L : count.longValue();
+    }
+
+    @Override
+    public List<NotificationOutboxRow> findStuckPending(Instant olderThan) {
+        return dsl.selectFrom(NOTIFICATION_OUTBOX)
+                .where(NOTIFICATION_OUTBOX.STATUS.eq("PENDING"))
+                .and(NOTIFICATION_OUTBOX.CREATED_AT.lt(olderThan.atOffset(ZoneOffset.UTC)))
+                .orderBy(NOTIFICATION_OUTBOX.CREATED_AT.asc())
+                .limit(200)
+                .fetch(NotificationOutboxRepositoryImpl::toRow);
+    }
+
+    @Override
+    public void requeueForRetry(long id) {
+        dsl.update(NOTIFICATION_OUTBOX)
+                .set(NOTIFICATION_OUTBOX.STATUS, "PENDING")
+                .set(NOTIFICATION_OUTBOX.ATTEMPT_COUNT, 0)
+                .set(NOTIFICATION_OUTBOX.NEXT_ATTEMPT_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .setNull(NOTIFICATION_OUTBOX.CLAIMED_AT)
+                .setNull(NOTIFICATION_OUTBOX.CLAIMED_BY)
+                .setNull(NOTIFICATION_OUTBOX.LAST_ERROR)
+                .setNull(NOTIFICATION_OUTBOX.LAST_ERROR_AT)
+                .setNull(NOTIFICATION_OUTBOX.PERMANENT_FAILURE_REASON)
+                .where(NOTIFICATION_OUTBOX.ID.eq(id))
+                .execute();
+    }
+
+    @Override
+    public int deleteSentOlderThan(Instant cutoff) {
+        return dsl.deleteFrom(NOTIFICATION_OUTBOX)
+                .where(NOTIFICATION_OUTBOX.STATUS.eq("SENT"))
+                .and(NOTIFICATION_OUTBOX.SENT_AT.lt(cutoff.atOffset(ZoneOffset.UTC)))
+                .execute();
+    }
+
+    @Override
+    public int deletePermanentFailureOlderThan(Instant cutoff) {
+        return dsl.deleteFrom(NOTIFICATION_OUTBOX)
+                .where(NOTIFICATION_OUTBOX.STATUS.eq("PERMANENT_FAILURE"))
+                .and(NOTIFICATION_OUTBOX.LAST_ERROR_AT.lt(cutoff.atOffset(ZoneOffset.UTC)))
+                .execute();
+    }
+
     private static NotificationOutboxRow toRow(Record r) {
         return new NotificationOutboxRow(
                 r.get(NOTIFICATION_OUTBOX.ID),

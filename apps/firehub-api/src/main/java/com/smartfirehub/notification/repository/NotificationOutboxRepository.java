@@ -33,6 +33,21 @@ public interface NotificationOutboxRepository {
     /** correlation 묶음 조회 (관측·UI). */
     List<NotificationOutboxRow> findByCorrelation(UUID correlationId);
 
+    /** 관측 — 채널별 PENDING 행 개수 (Micrometer gauge). */
+    long countPending(ChannelType channelType);
+
+    /** 관측 — olderThan 보다 오래된 PENDING 행 목록 (admin stuck 조회). 최대 200건. */
+    List<NotificationOutboxRow> findStuckPending(Instant olderThan);
+
+    /** 관리자 수동 재투입. PENDING으로 되돌리고 attempt_count=0, next_attempt_at=now. */
+    void requeueForRetry(long id);
+
+    /** SENT 행 중 cutoff 이전을 삭제. 반환=삭제 행 수. */
+    int deleteSentOlderThan(Instant cutoff);
+
+    /** PERMANENT_FAILURE 행 중 cutoff 이전을 삭제. 반환=삭제 행 수. */
+    int deletePermanentFailureOlderThan(Instant cutoff);
+
     /** outbox 한 행의 관측·검증용 스냅샷. */
     record NotificationOutboxRow(
             Long id,
