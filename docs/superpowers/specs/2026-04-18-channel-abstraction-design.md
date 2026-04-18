@@ -635,7 +635,73 @@ slack_inbound_unmapped_user_total                      # 카운터
 
 각 Stage는 별도 PR + ROADMAP 항목. Stage 간 회귀 없음을 회귀 테스트로 보장.
 
+## 12.5. 회귀 방어 (Regression Protection) — 필수 조건
+
+**원칙: 기존에 잘 동작하던 기능은 단 하나도 깨지지 않는다. 새 인프라 도입을 위해 기존 사용자 경험을 희생하지 않는다.**
+
+### 기능 동등성 체크리스트 (Stage 1 PR 머지 전 모두 ✅ 필수)
+
+각 항목은 새 시스템 활성 상태 + 비활성 상태(feature flag OFF) 양쪽에서 동작 검증.
+
+| # | 보호 대상 | 검증 방법 | 책임 채널 |
+|---|---|---|---|
+| 1 | ProactiveJob 결과 → 웹 인박스 표시(proactive_message + SSE) | E2E: 잡 실행 → useProactiveMessages 폴링·미읽음 카운트 갱신 | ChatChannel |
+| 2 | ProactiveJob 결과 → 이메일 수신(Thymeleaf HTML + PDF 첨부) | 통합: GreenMail로 SMTP 캡처 → 본문/첨부 검증 | EmailChannel |
+| 3 | ProactiveJob 결과 → 외부 이메일(recipientEmails) 발송 | 통합: 사용자 미연동 외부 주소로 발송 케이스 | EmailChannel |
+| 4 | Anomaly 이벤트 → 사용자 실시간 SSE 알림(ANOMALY_DETECTED) | E2E: anomaly 트리거 → 프론트 useNotificationStream 토스트 표시 | ChatChannel + 신규 Dispatcher.enqueue 경로 |
+| 5 | Pipeline 완료 → SSE 알림(PIPELINE_COMPLETED/FAILED) | E2E: 파이프라인 실행 완료 → 프론트 토스트 + 쿼리 invalidate | (기존 SSE 직접 broadcast 유지) |
+| 6 | useNotificationStream 모든 이벤트 타입 호환 | 단위·E2E: PROACTIVE_MESSAGE/ANOMALY_DETECTED/PIPELINE_COMPLETED 등 기존 이벤트 모두 동일 페이로드 형태 | NotificationEvent 형식 무변경 |
+| 7 | proactive_message 인박스 미읽음 카운트(useProactiveMessages) | 단위: refetchInterval 60초, mark as read mutation | 기존 API/스키마 무변경 |
+| 8 | ProactiveJob.config.channels JSONB 형식(ChannelConfigValues[]) 호환성 | 통합: 기존 잡 row 그대로 새 dispatcher가 해석 | ProactiveConfigParser 확장(기존 형식 100% 호환) |
+| 9 | ProactiveJobService.executeJob 호출 후 deliveredChannels 컬럼 표시 | 통합: outbox aggregation view가 동일 의미 반환 | view 정의 |
+| 10 | ProactiveJob 미연동 사용자 EMAIL 발송 시도 시 에러 처리 | 통합: 기존 try/catch 격리 거동을 PERMANENT_FAILURE로 전환하되 producer 알림 보장 | Dispatcher 분류 |
+
+### Feature Flag 운영 정책
+
+```yaml
+# application.yml
+notification:
+  outbox:
+    enabled: ${NOTIFICATION_OUTBOX_ENABLED:false}   # 기본 OFF
+  worker:
+    mode: ${NOTIFICATION_WORKER_MODE:async}         # async | inline
+    poll_interval_seconds: 30
+    listen_notify: true
+```
+
+- **PR 머지 시**: `notification.outbox.enabled=false` 기본값. 기존 직접 호출 경로가 그대로 동작 (deprecated 경로지만 활성).
+- **검증 단계**: dev/stage 환경에서만 `true`로 토글, 위 체크리스트 10개 모두 통과 확인.
+- **운영 활성화**: 운영에서 `true` 토글 → 1주일 모니터링 → 이슈 없으면 다음 PR에서 flag·구 경로 제거.
+- **이상 발생 시**: 운영 관리자가 즉시 `false`로 토글하여 30초 내 회귀(애플리케이션 재시작 없이 동적 reload).
+
+### 카나리아 배포 (Stage 1 활성화 시)
+
+1. **dev 24시간**: outbox 활성, 모든 트래픽. 메트릭 집계.
+2. **stage 72시간**: 동일.
+3. **운영 단일 인스턴스**: 한 인스턴스만 outbox 활성, 나머지는 OFF. 트래픽 분리는 어려우므로 metric 비교로 회귀 감지.
+4. **운영 전체**: 한 주 정상 운영 후 적용.
+
+### 호환성 보장 사항 (변경 금지)
+
+- `useNotificationStream`이 받는 NotificationEvent JSON 형식
+- `proactive_message` 테이블 스키마 (CRUD API 동일)
+- `GET /api/v1/proactive/messages` 응답 형식
+- `ProactiveJob.config` JSONB 내 channels 배열 형식 (구·신 형식 모두 ProactiveConfigParser가 양방향 호환)
+- `proactive_job_execution.delivered_channels` 컬럼 의미 (실제 저장 위치는 view로 변경되어도 SELECT 결과 동일)
+- SSE 이벤트 타입 enum 값 (`ANOMALY_DETECTED`, `PROACTIVE_MESSAGE`, `PIPELINE_COMPLETED` 등)
+
+### 회귀 발생 시 책임
+
+- 기존 기능 회귀가 1건이라도 발견되면 PR 머지 거부. 회귀 발견 시 즉시 feature flag OFF.
+- 회귀 테스트가 누락되어 운영에서 발견될 경우, 해당 케이스의 회귀 테스트 추가가 다음 PR의 우선순위 1번.
+
 ## 13. 테스트 전략
+
+### 회귀 테스트(필수, 12.5장 체크리스트와 1:1)
+
+- 새 코드 추가 전, 기존 동작에 대한 통합/E2E 회귀 테스트를 먼저 작성한다.
+- 모든 회귀 테스트는 feature flag ON/OFF 양쪽에서 실행 (`@ParameterizedTest` + 환경변수 토글)
+- 회귀 테스트가 빠진 채로 머지된 변경은 즉시 revert.
 
 ### 단위 테스트
 
@@ -699,9 +765,12 @@ slack_inbound_unmapped_user_total                      # 카운터
 
 ## 16. 마이그레이션 위험 · 롤백
 
+12.5장(회귀 방어)과 연계.
+
 - Stage 1에서 `ProactiveJobService` 호출 지점 변경이 회귀 위험 가장 큼. PR 분리·feature flag(`notification.outbox.enabled`)로 즉시 롤백 가능하게 한다.
 - Outbox stuck 시 admin endpoint로 수동 처리, 최악의 경우 `notification.outbox.enabled=false` 토글로 기존 직접 호출 경로로 일시 회귀.
-- KAKAO/SLACK 추가는 새 코드 경로라 기존 EMAIL/CHAT 회귀 없음.
+- 12.5장 회귀 체크리스트 10개를 각 Stage 머지 전 모두 통과한 증거(테스트 결과·스크린샷)를 PR에 첨부.
+- KAKAO/SLACK 추가는 새 코드 경로라 기존 EMAIL/CHAT 회귀 없음 — 단 ChannelRecipientEditor 확장 시 기존 CHAT/EMAIL 선택 UX가 깨지지 않는지 Playwright E2E로 보호.
 
 ## 17. 참조
 
