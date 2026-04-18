@@ -52,3 +52,8 @@ notification:
     client_id: ${KAKAO_CLIENT_ID:}
     client_secret: ${KAKAO_CLIENT_SECRET:}
     redirect_uri: ${KAKAO_REDIRECT_URI:https://app.smartfirehub.com/api/v1/oauth/kakao/callback}
+  slack:
+    client_id: ${SLACK_CLIENT_ID:}
+    client_secret: ${SLACK_CLIENT_SECRET:}
+    redirect_uri: ${SLACK_REDIRECT_URI:https://app.smartfirehub.com/api/v1/oauth/slack/callback}
+    scopes: chat:write,im:write,im:history,users:read,reactions:write,app_mentions:read
