@@ -36,4 +36,17 @@ class UserChannelPreferenceRepositoryImpl implements UserChannelPreferenceReposi
         // row 없으면 기본값 true (사용자가 명시적 off를 한 적이 없으면 허용)
         return enabled == null || enabled;
     }
+
+    @Override
+    public void setEnabled(long userId, ChannelType channelType, boolean enabled) {
+        // ON CONFLICT (user_id, channel_type) DO UPDATE — upsert 방식으로 idempotent 처리
+        dsl.insertInto(USER_CHANNEL_PREFERENCE)
+                .set(USER_CHANNEL_PREFERENCE.USER_ID, userId)
+                .set(USER_CHANNEL_PREFERENCE.CHANNEL_TYPE, channelType.name())
+                .set(USER_CHANNEL_PREFERENCE.ENABLED, enabled)
+                .onConflict(USER_CHANNEL_PREFERENCE.USER_ID, USER_CHANNEL_PREFERENCE.CHANNEL_TYPE)
+                .doUpdate()
+                .set(USER_CHANNEL_PREFERENCE.ENABLED, enabled)
+                .execute();
+    }
 }

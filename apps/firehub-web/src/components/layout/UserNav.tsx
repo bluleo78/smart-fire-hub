@@ -1,4 +1,4 @@
-import { ChevronsUpDown, LogOut, Monitor, Moon, Sun, User } from 'lucide-react';
+import { Bell, ChevronsUpDown, LogOut, Monitor, Moon, Sun, User } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useNavigate } from 'react-router-dom';
 
@@ -105,6 +105,10 @@ export function UserNav({ collapsed = false }: UserNavProps) {
         <DropdownMenuItem onClick={() => navigate('/profile')}>
           <User />
           프로필
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate('/settings/channels')}>
+          <Bell />
+          알림 채널
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {/* Theme section */}

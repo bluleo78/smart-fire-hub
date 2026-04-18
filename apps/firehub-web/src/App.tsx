@@ -41,6 +41,7 @@ const ProactiveJobDetailPage = lazy(() => import('./pages/ai-insights/ProactiveJ
 const ReportTemplateDetailPage = lazy(() => import('./pages/ai-insights/ReportTemplateDetailPage'));
 const ExecutionDetailPage = lazy(() => import('./pages/ai-insights/ExecutionDetailPage'));
 const ReportViewerPage = lazy(() => import('./pages/ai-insights/ReportViewerPage'));
+const ChannelsPage = lazy(() => import('./pages/settings/ChannelsPage'));
 
 function PageSkeleton() {
   return (
@@ -64,6 +65,7 @@ function App() {
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomePage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/settings/channels" element={<ChannelsPage />} />
               <Route path="/data/categories" element={<CategoryListPage />} />
               <Route path="/data/datasets" element={<DatasetListPage />} />
               <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
