@@ -87,12 +87,12 @@ notification/
 ### 신규 생성 (DB 마이그레이션 — `apps/firehub-api/src/main/resources/db/migration/`)
 
 ```
-V48__create_notification_outbox.sql
-V49__create_slack_workspace.sql
-V50__create_user_channel_binding.sql
-V51__create_user_channel_preference.sql
-V52__create_oauth_state.sql
-V52_5__create_outbox_delivered_channels_view.sql
+V50__create_notification_outbox.sql
+V51__create_slack_workspace.sql
+V52__create_user_channel_binding.sql
+V53__create_user_channel_preference.sql
+V54__create_oauth_state.sql
+V54_5__create_outbox_delivered_channels_view.sql
 ```
 
 ### 수정 (백엔드)
@@ -120,15 +120,15 @@ apps/firehub-api/src/test/java/com/smartfirehub/notification/
 
 ---
 
-## Task 1: V48 — `notification_outbox` 마이그레이션
+## Task 1: V50 — `notification_outbox` 마이그레이션
 
 **Files:**
-- Create: `apps/firehub-api/src/main/resources/db/migration/V48__create_notification_outbox.sql`
+- Create: `apps/firehub-api/src/main/resources/db/migration/V50__create_notification_outbox.sql`
 - Test: `apps/firehub-api/src/test/java/com/smartfirehub/notification/repository/NotificationOutboxRepositoryTest.java`
 
-- [ ] **Step 1.1: V48 SQL 작성**
+- [ ] **Step 1.1: V50 SQL 작성**
 
-`apps/firehub-api/src/main/resources/db/migration/V48__create_notification_outbox.sql`:
+`apps/firehub-api/src/main/resources/db/migration/V50__create_notification_outbox.sql`:
 
 ```sql
 -- 알림 발송 작업 큐. 도메인 트랜잭션 후 AFTER_COMMIT 훅으로 INSERT,
@@ -219,9 +219,9 @@ pnpm --filter firehub-api test 2>&1 | tail -5
 - [ ] **Step 1.5: 커밋**
 
 ```bash
-git add apps/firehub-api/src/main/resources/db/migration/V48__create_notification_outbox.sql
+git add apps/firehub-api/src/main/resources/db/migration/V50__create_notification_outbox.sql
 git add apps/firehub-api/src/generated/
-git commit -m "feat(notification): V48 notification_outbox 테이블 추가
+git commit -m "feat(notification): V50 notification_outbox 테이블 추가
 
 Outbox 패턴 기반 알림 발송 큐 + 멱등성 키 + lease 컬럼.
 워커 폴링·좀비 회복·사용자 인박스 조회용 인덱스 동봉."
@@ -229,17 +229,17 @@ Outbox 패턴 기반 알림 발송 큐 + 멱등성 키 + lease 컬럼.
 
 ---
 
-## Task 2: V49~V52 — slack_workspace / user_channel_binding / user_channel_preference / oauth_state
+## Task 2: V51~V54 — slack_workspace / user_channel_binding / user_channel_preference / oauth_state
 
 각 마이그레이션은 spec 4장의 DDL을 그대로 사용. 적용·jOOQ 재생성·기존 테스트 회귀 검증·커밋을 V별로 반복.
 
 **Files:**
-- Create: `apps/firehub-api/src/main/resources/db/migration/V49__create_slack_workspace.sql`
-- Create: `apps/firehub-api/src/main/resources/db/migration/V50__create_user_channel_binding.sql`
-- Create: `apps/firehub-api/src/main/resources/db/migration/V51__create_user_channel_preference.sql`
-- Create: `apps/firehub-api/src/main/resources/db/migration/V52__create_oauth_state.sql`
+- Create: `apps/firehub-api/src/main/resources/db/migration/V51__create_slack_workspace.sql`
+- Create: `apps/firehub-api/src/main/resources/db/migration/V52__create_user_channel_binding.sql`
+- Create: `apps/firehub-api/src/main/resources/db/migration/V53__create_user_channel_preference.sql`
+- Create: `apps/firehub-api/src/main/resources/db/migration/V54__create_oauth_state.sql`
 
-- [ ] **Step 2.1: V49 슬랙 워크스페이스**
+- [ ] **Step 2.1: V51 슬랙 워크스페이스**
 
 ```sql
 CREATE TABLE slack_workspace (
@@ -257,7 +257,7 @@ CREATE TABLE slack_workspace (
 );
 ```
 
-- [ ] **Step 2.2: V50 user_channel_binding**
+- [ ] **Step 2.2: V52 user_channel_binding**
 
 ```sql
 CREATE TABLE user_channel_binding (
@@ -283,7 +283,7 @@ CREATE INDEX idx_binding_external_user
     ON user_channel_binding (channel_type, workspace_id, external_user_id);
 ```
 
-- [ ] **Step 2.3: V51 user_channel_preference (CHAT 안전망 CHECK 포함)**
+- [ ] **Step 2.3: V53 user_channel_preference (CHAT 안전망 CHECK 포함)**
 
 ```sql
 CREATE TABLE user_channel_preference (
@@ -297,7 +297,7 @@ CREATE TABLE user_channel_preference (
 );
 ```
 
-- [ ] **Step 2.4: V52 oauth_state**
+- [ ] **Step 2.4: V54 oauth_state**
 
 ```sql
 CREATE TABLE oauth_state (
@@ -379,13 +379,13 @@ pnpm --filter firehub-api test --tests UserChannelPreferenceConstraintTest
 - [ ] **Step 2.7: 커밋**
 
 ```bash
-git add apps/firehub-api/src/main/resources/db/migration/V49__*.sql \
-        apps/firehub-api/src/main/resources/db/migration/V50__*.sql \
-        apps/firehub-api/src/main/resources/db/migration/V51__*.sql \
+git add apps/firehub-api/src/main/resources/db/migration/V51__*.sql \
         apps/firehub-api/src/main/resources/db/migration/V52__*.sql \
+        apps/firehub-api/src/main/resources/db/migration/V53__*.sql \
+        apps/firehub-api/src/main/resources/db/migration/V54__*.sql \
         apps/firehub-api/src/test/java/com/smartfirehub/notification/repository/UserChannelPreferenceConstraintTest.java \
         apps/firehub-api/src/generated/
-git commit -m "feat(notification): V49~V52 외부 채널 binding/preference/workspace/oauth_state
+git commit -m "feat(notification): V51~V54 외부 채널 binding/preference/workspace/oauth_state
 
 slack_workspace, user_channel_binding, user_channel_preference (CHAT
 안전망 CHECK), oauth_state (CSRF) 테이블 + 인덱스. CHAT 비활성 차단
@@ -1150,7 +1150,7 @@ class NotificationOutboxRepositoryImpl implements NotificationOutboxRepository {
 }
 ```
 
-> 외부 메시지 id를 컬럼으로 보관하려면 V48에 `external_message_id TEXT` 컬럼 추가하는 것을 검토. 본 plan에서는 메트릭/관측 용도로만 활용하고 별도 컬럼 추가는 V53과 묶지 않는다.
+> 외부 메시지 id를 컬럼으로 보관하려면 V50에 `external_message_id TEXT` 컬럼 추가하는 것을 검토. 본 plan에서는 메트릭/관측 용도로만 활용하고 별도 컬럼 추가는 V55과 묶지 않는다.
 
 - [ ] **Step 5.3: Preference/Binding/Workspace/OAuthState 구현체**
 
@@ -2304,12 +2304,12 @@ git commit -m "feat(notification): OutboxSweeper — 좀비 SENDING 행 5분 후
 
 **Files:**
 - Modify: `apps/firehub-api/src/main/java/com/smartfirehub/proactive/service/ProactiveJobService.java`
-- Create: `apps/firehub-api/src/main/resources/db/migration/V52_5__create_outbox_delivered_channels_view.sql`
+- Create: `apps/firehub-api/src/main/resources/db/migration/V54_5__create_outbox_delivered_channels_view.sql`
 - Modify: `apps/firehub-api/src/main/resources/application.yml`
 - Delete: `apps/firehub-api/src/main/java/com/smartfirehub/proactive/service/delivery/{DeliveryChannel,ChatDeliveryChannel,EmailDeliveryChannel}.java`
 - Test: `apps/firehub-api/src/test/java/com/smartfirehub/notification/regression/ProactiveJobNotificationRegressionTest.java`
 
-- [ ] **Step 12.1: V52_5 view 작성**
+- [ ] **Step 12.1: V54_5 view 작성**
 
 ```sql
 -- proactive_job_execution.delivered_channels 컬럼 의미를 outbox aggregation으로 대체.
@@ -2475,7 +2475,7 @@ pnpm dev:full
 ```bash
 git add apps/firehub-api/src/main/java/com/smartfirehub/proactive/service/ProactiveJobService.java \
         apps/firehub-api/src/main/java/com/smartfirehub/proactive/service/ProactiveJobNotificationMapper.java \
-        apps/firehub-api/src/main/resources/db/migration/V52_5__create_outbox_delivered_channels_view.sql \
+        apps/firehub-api/src/main/resources/db/migration/V54_5__create_outbox_delivered_channels_view.sql \
         apps/firehub-api/src/main/resources/application.yml \
         apps/firehub-api/src/test/java/com/smartfirehub/notification/regression/ProactiveJobNotificationRegressionTest.java
 git commit -m "feat(notification): ProactiveJobService → Dispatcher 듀얼 패스 (회귀 안전)
@@ -2633,7 +2633,7 @@ git commit -m "docs: Channel Stage 1 운영 활성화 runbook + ROADMAP 갱신"
 ## Self-Review Checklist (작성자가 수행)
 
 - **Spec coverage:**
-  - 4장 데이터 모델 → Task 1, 2 (V48~V52, V52_5)
+  - 4장 데이터 모델 → Task 1, 2 (V50~V54, V54_5)
   - 5장 Channel SPI → Task 3, 9, 10
   - 6장 라우팅 매트릭스 → Task 4
   - 7장 backoff/rate → Task 6, 8 (rate limit은 Task 8 워커에 인라인, 본격 구현은 Task 13.4 후속 또는 Stage 2에서)

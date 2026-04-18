@@ -96,7 +96,7 @@
 
 ## 4. 데이터 모델
 
-### V48 — `notification_outbox`
+### V50 — `notification_outbox`
 
 ```sql
 CREATE TABLE notification_outbox (
@@ -148,7 +148,7 @@ CREATE INDEX idx_outbox_correlation
     ON notification_outbox (correlation_id);
 ```
 
-### V49 — `slack_workspace`
+### V51 — `slack_workspace`
 
 `user_channel_binding.workspace_id` FK 대상이므로 binding 보다 먼저 생성한다.
 
@@ -170,7 +170,7 @@ CREATE TABLE slack_workspace (
 
 `previous_signing_secret*` 컬럼으로 secret 회전 시 5분 grace window 지원.
 
-### V50 — `user_channel_binding`
+### V52 — `user_channel_binding`
 
 ```sql
 CREATE TABLE user_channel_binding (
@@ -194,7 +194,7 @@ CREATE INDEX idx_binding_external_user
     ON user_channel_binding (channel_type, workspace_id, external_user_id);
 ```
 
-### V51 — `user_channel_preference`
+### V53 — `user_channel_preference`
 
 ```sql
 CREATE TABLE user_channel_preference (
@@ -210,7 +210,7 @@ CREATE TABLE user_channel_preference (
 
 CHAT은 DB CHECK 제약으로 disable 불가능을 강제. 안전망 보장.
 
-### V52 — `oauth_state` (CSRF 방어)
+### V54 — `oauth_state` (CSRF 방어)
 
 ```sql
 CREATE TABLE oauth_state (
@@ -227,7 +227,7 @@ CREATE INDEX idx_oauth_state_expires ON oauth_state (expires_at);
 
 만료된 state는 일일 cleanup 잡으로 삭제.
 
-### V53 — `ai_session` 확장
+### V55 — `ai_session` 확장
 
 ```sql
 ALTER TABLE ai_session
@@ -612,7 +612,7 @@ slack_inbound_unmapped_user_total                      # 카운터
 
 ## 12. 마이그레이션 전략 (점진 전환)
 
-### Stage 1 — 인프라 도입 (V48~V52 + Channel SPI)
+### Stage 1 — 인프라 도입 (V50~V54 + Channel SPI)
 
 - 새 outbox 테이블·디스패처·워커·관측 작성
 - 기존 `EmailDeliveryChannel`/`ChatDeliveryChannel`은 새 `EmailChannel`/`ChatChannel`로 리네이밍 + outbox 진입점 변경 (구현 본문 거의 그대로)
@@ -630,7 +630,7 @@ slack_inbound_unmapped_user_total                      # 카운터
 ### Stage 3 — Slack inbound
 
 - `SlackInboundController` + `SlackInboundService` + `slackInboundExecutor`
-- ai_session 컬럼 ALTER (V53)
+- ai_session 컬럼 ALTER (V55)
 - 인바운드 통합 테스트 (서명 검증, 매핑, 세션 재사용, ai-agent 호출)
 
 각 Stage는 별도 PR + ROADMAP 항목. Stage 간 회귀 없음을 회귀 테스트로 보장.
@@ -739,7 +739,7 @@ notification:
 
 | 순번 | 작업 | 의존 |
 |---|---|---|
-| 1 | V48(outbox)~V52(oauth_state) 마이그레이션 + jOOQ 코드 생성 | - |
+| 1 | V50(outbox)~V54(oauth_state) 마이그레이션 + jOOQ 코드 생성 | - |
 | 2 | Channel/BoundChannel/InboundChannel SPI + AuthStrategy | 1 |
 | 3 | NotificationDispatcher + AFTER_COMMIT 훅 + 라우팅 알고리즘 | 2 |
 | 4 | NotificationDispatchWorker + LISTEN/NOTIFY + lease + sweeper | 3 |
@@ -748,7 +748,7 @@ notification:
 | 7 | 관측성 (Micrometer + admin endpoints + retention 잡) | 4 |
 | 8 | KAKAO 나에게 보내기 OAuth + KakaoChannel | 4 |
 | 9 | SLACK OAuth(워크스페이스) + SlackChannel(outbound) | 4 |
-| 10 | V53(ai_session ALTER) + Slack inbound 컨트롤러·서비스 | 9 |
+| 10 | V55(ai_session ALTER) + Slack inbound 컨트롤러·서비스 | 9 |
 | 11 | 프론트: `/settings/channels` 페이지 | 8, 9 |
 | 12 | 프론트: ChannelRecipientEditor 확장 | 8, 9 |
 | 13 | 통합 테스트 + Playwright E2E | 11, 12 |
