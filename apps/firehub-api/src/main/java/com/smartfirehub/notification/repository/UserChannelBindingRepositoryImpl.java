@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.repository;
 
+import static com.smartfirehub.jooq.Tables.SLACK_WORKSPACE;
 import static com.smartfirehub.jooq.Tables.USER_CHANNEL_BINDING;
 
 import com.smartfirehub.notification.ChannelType;
@@ -111,6 +112,21 @@ class UserChannelBindingRepositoryImpl implements UserChannelBindingRepository {
         .set(USER_CHANNEL_BINDING.UPDATED_AT, OffsetDateTime.now(java.time.ZoneOffset.UTC))
         .where(condition)
         .execute();
+  }
+
+  @Override
+  public Optional<UserChannelBinding> findByExternalId(String teamId, String externalUserId) {
+    // SLACK_WORKSPACE JOIN으로 team_id 기준 워크스페이스 특정 후 외부 사용자 ID 매핑
+    return dsl.select(USER_CHANNEL_BINDING.fields())
+        .from(USER_CHANNEL_BINDING)
+        .join(SLACK_WORKSPACE).on(SLACK_WORKSPACE.ID.eq(USER_CHANNEL_BINDING.WORKSPACE_ID))
+        .where(SLACK_WORKSPACE.TEAM_ID.eq(teamId))
+        .and(USER_CHANNEL_BINDING.CHANNEL_TYPE.eq("SLACK"))
+        .and(USER_CHANNEL_BINDING.EXTERNAL_USER_ID.eq(externalUserId))
+        .and(USER_CHANNEL_BINDING.STATUS.eq("ACTIVE"))
+        .limit(1)
+        .fetchOptionalInto(com.smartfirehub.jooq.tables.records.UserChannelBindingRecord.class)
+        .map(this::toRecord);
   }
 
   /** jOOQ record → UserChannelBinding 도메인 객체 변환. */

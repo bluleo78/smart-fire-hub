@@ -211,6 +211,25 @@ public class SlackChannel implements BoundChannel {
     }
 
     /**
+     * 인바운드 대응용 — thread_ts로 같은 스레드에 텍스트 응답 전송.
+     *
+     * <p>기존 {@link #deliver}는 새 DM 채널을 열어 메시지를 보낸다.
+     * 이 메서드는 이미 열려있는 채널 id를 직접 받아 스레드에 AI 응답을 post한다.
+     *
+     * @param workspaceId Slack 워크스페이스 PK (slack_workspace.id)
+     * @param channel     대상 채널 ID (사용자가 보낸 채널)
+     * @param threadTs    원본 메시지 ts (스레드 루트 타임스탬프)
+     * @param text        전송할 텍스트 (AI 응답)
+     */
+    public void replyTo(long workspaceId, String channel, String threadTs, String text) {
+        // 워크스페이스 조회 → 봇 토큰 복호화 → 스레드 회신
+        var workspace = workspaceRepo.findById(workspaceId)
+                .orElseThrow(() -> new IllegalStateException("workspace not found: " + workspaceId));
+        String botToken = encryptionService.decrypt(workspace.botTokenEnc());
+        slackApiClient.chatPostMessageInThread(botToken, channel, threadTs, null, text);
+    }
+
+    /**
      * Slack 봇 토큰은 워크스페이스 레벨이므로 개별 사용자 refresh 불가.
      *
      * <p>토큰 갱신이 필요하면 워크스페이스 관리자가 OAuth 재설치 필요.
