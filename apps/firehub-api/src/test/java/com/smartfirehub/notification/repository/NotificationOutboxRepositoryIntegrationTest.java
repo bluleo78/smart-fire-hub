@@ -32,7 +32,7 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
         UUID corr = UUID.randomUUID();
         repo.insertIfAbsent(sampleRow("key-claim-" + corr, corr));
 
-        var claimed = repo.claimDue(10, "test-instance");
+        var claimed = repo.claimDue(10_000, "test-instance");
         assertThat(claimed).hasSizeGreaterThanOrEqualTo(1);
         assertThat(claimed.get(0).status()).isEqualTo("SENDING");
     }
@@ -44,8 +44,8 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
 
         var pool = Executors.newFixedThreadPool(2);
         try {
-            var f1 = CompletableFuture.supplyAsync(() -> repo.claimDue(10, "i1"), pool);
-            var f2 = CompletableFuture.supplyAsync(() -> repo.claimDue(10, "i2"), pool);
+            var f1 = CompletableFuture.supplyAsync(() -> repo.claimDue(10_000, "i1"), pool);
+            var f2 = CompletableFuture.supplyAsync(() -> repo.claimDue(10_000, "i2"), pool);
             long thisCorrClaimed = f1.get().stream()
                     .filter(r -> r.correlationId().equals(corr)).count()
                     + f2.get().stream().filter(r -> r.correlationId().equals(corr)).count();
@@ -60,7 +60,7 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
         UUID corr = UUID.randomUUID();
         repo.insertIfAbsent(sampleRow("key-sent-" + corr, corr));
 
-        var claimed = repo.claimDue(10, "i").stream()
+        var claimed = repo.claimDue(10_000, "i").stream()
                 .filter(r -> r.correlationId().equals(corr))
                 .findFirst().orElseThrow();
         repo.markSent(claimed.id(), "ext-123");
@@ -73,7 +73,7 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
     void reclaimZombies_resetsLongClaimedRows() {
         UUID corr = UUID.randomUUID();
         repo.insertIfAbsent(sampleRow("key-zombie-" + corr, corr));
-        repo.claimDue(10, "i");
+        repo.claimDue(10_000, "i");
 
         int reclaimed = repo.reclaimZombies(Instant.now().plusSeconds(60));   // 강제 cutoff 미래
         assertThat(reclaimed).isGreaterThanOrEqualTo(1);
