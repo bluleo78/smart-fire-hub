@@ -94,9 +94,71 @@ WHERE id = <id>;
 | 운영 카나리 1주 | 비교 지표 차이 없음 |
 | 운영 전체 | 1주 추가 안정 관찰 후 구 경로 제거 PR |
 
+## 8. Stage 2 활성화 (KAKAO/SLACK outbound + `/settings/channels`)
+
+Stage 1 Outbox 인프라가 카나리 1주간 안정된 뒤 Stage 2로 진행. Stage 2는 추가 채널(KAKAO/SLACK)과 사용자 연동 UX를 포함하며 외부 OAuth 자격 증명 없이는 활성화되지 않는다.
+
+### 8.1 사전 준비 — 외부 앱 등록
+
+**Kakao Developers:**
+1. https://developers.kakao.com/ → 내 애플리케이션 → 앱 등록
+2. 앱 설정 → 플랫폼 → Web → 사이트 도메인 등록
+3. 카카오 로그인 → Redirect URI: `https://{domain}/api/v1/oauth/kakao/callback`
+4. 동의 항목 → `talk_message`(카카오톡 메시지 전송) 활성화
+5. REST API 키(client_id) + Client Secret(보안 탭에서 생성) 확보
+
+**Slack App:**
+1. https://api.slack.com/apps → Create New App → From scratch
+2. OAuth & Permissions → Bot Token Scopes: `chat:write`, `im:write`, `im:history`, `users:read`, `reactions:write`, `app_mentions:read`
+3. OAuth & Permissions → Redirect URLs: `https://{domain}/api/v1/oauth/slack/callback`
+4. Basic Information → Signing Secret 확보 (Stage 3 inbound 서명 검증용 — Stage 2는 사용하지 않음)
+5. 앱 설치 후 Client ID, Client Secret 확보
+
+### 8.2 환경 변수
+
+```bash
+# Kakao
+KAKAO_CLIENT_ID=<REST API 키>
+KAKAO_CLIENT_SECRET=<Client Secret>
+KAKAO_REDIRECT_URI=https://app.smartfirehub.com/api/v1/oauth/kakao/callback
+
+# Slack
+SLACK_CLIENT_ID=<Client ID>
+SLACK_CLIENT_SECRET=<Client Secret>
+SLACK_REDIRECT_URI=https://app.smartfirehub.com/api/v1/oauth/slack/callback
+```
+
+환경변수 주입 후 `ChannelSettingsService`가 OAuth start URL을 발급하게 된다. Kakao/Slack 미설정 시 `/settings/channels`에서 해당 카드는 "설정 필요" 상태로 표시(관리자 안내).
+
+### 8.3 관리자 Slack 워크스페이스 설치 (1회)
+
+1. ADMIN 사용자로 로그인 → `/api/v1/oauth/slack/start` 호출 (또는 `/settings/channels`에서 Slack 카드 → "워크스페이스 연결" 버튼)
+2. Slack OAuth 승인 → callback → `slack_workspace` 테이블에 bot_token 암호화 저장
+3. DB 확인:
+   ```sql
+   SELECT id, team_id, team_name, bot_user_id, installed_by_user_id FROM slack_workspace;
+   ```
+
+### 8.4 사용자별 연동 (각 수신자)
+
+- Kakao: `/settings/channels` → 카카오 카드 → "연동하기" → Kakao OAuth → `user_channel_binding`(channel_type=KAKAO, access/refresh 암호화)
+- Slack: `/settings/channels` → Slack 카드 → `POST /api/v1/oauth/slack/link-user` `{workspaceId, slackUserId}` → 봇이 DM ping 전송 → `user_channel_binding`(channel_type=SLACK, workspace_id, external_user_id) 생성
+
+### 8.5 dev → stage → 운영 단계
+
+- **dev 48h**: 개발자 본인 Kakao/Slack 연동 후 ProactiveJob 실행 → 카톡/슬랙 수신 확인. `notification_outbox`에 KAKAO/SLACK 행 기록 확인.
+- **stage 1주**: 다수 사용자 연동 + ChannelRecipientEditor에서 4채널 선택 → deliver 성공률/TransientFailure/PermanentFailure 분포 관찰 (Task 13 메트릭).
+- **운영**: Kakao 일일 발송량 제한(앱당 쿼터) 모니터링. Slack rate limit(TIER 3) 주의.
+
+### 8.6 이상 시 회귀
+
+- Kakao `access_token` 대량 만료 → `UserChannelBinding.status=TOKEN_EXPIRED` + `/settings/channels` "재인증 필요" 배지 → 사용자가 재연동. 채널 opt-out 또는 EMAIL/CHAT fallback으로 자동 유지.
+- Slack invalid_auth (봇 토큰 취소) → `slack_workspace` 재설치 필요. 즉시 조치: `DELETE /api/v1/oauth/slack/revoke` 후 관리자가 재설치.
+- 광범위 장애 시 특정 채널만 비활성화: `notification.channels.{kakao|slack}.enabled=false` flag 추가(향후) — 현재는 bindings DELETE + preference false.
+
 ## 관련 문서
 
 - 설계: `docs/superpowers/specs/2026-04-18-channel-abstraction-design.md`
-- 구현 계획: `docs/superpowers/plans/2026-04-18-channel-stage-1-outbox.md`
-- Stage 2(KAKAO/SLACK outbound + `/settings/channels`): 후속 plan
+- Stage 1 계획: `docs/superpowers/plans/2026-04-18-channel-stage-1-outbox.md`
+- Stage 2 계획: `docs/superpowers/plans/2026-04-18-channel-stage-2-external-outbound.md`
 - Stage 3(Slack inbound): 후속 plan
