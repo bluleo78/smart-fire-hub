@@ -60,7 +60,7 @@ class AiControllerTest {
   void getSessions_authenticated_returnsOk() throws Exception {
     mockAuthentication("ai:read");
     AiSessionResponse session =
-        new AiSessionResponse(
+        AiSessionResponse.ofWeb(
             1L,
             1L,
             "session-001",
@@ -84,7 +84,7 @@ class AiControllerTest {
     CreateAiSessionRequest request =
         new CreateAiSessionRequest("session-new", "dataset", 10L, "New Session");
     AiSessionResponse response =
-        new AiSessionResponse(
+        AiSessionResponse.ofWeb(
             2L,
             1L,
             "session-new",
