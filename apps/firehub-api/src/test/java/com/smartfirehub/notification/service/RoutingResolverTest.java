@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
-import com.smartfirehub.notification.AuthStrategy;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.Recipient;
 import com.smartfirehub.notification.repository.UserChannelBinding;
@@ -28,7 +27,6 @@ class RoutingResolverTest {
 
     @Mock private UserChannelPreferenceRepository preferenceRepo;
     @Mock private UserChannelBindingRepository bindingRepo;
-    @Mock private ChannelRegistry channelRegistry;
 
     @InjectMocks private RoutingResolver resolver;
 
@@ -36,12 +34,8 @@ class RoutingResolverTest {
 
     @BeforeEach
     void setUp() {
-        // 디폴트: 모든 채널 enabled, AuthStrategy는 채널마다 매핑
+        // 디폴트: 모든 채널 enabled (AuthStrategy는 ChannelType enum에서 직접 참조하므로 mock 불필요)
         lenient().when(preferenceRepo.isEnabled(eq(USER_ID), any())).thenReturn(true);
-        lenient().when(channelRegistry.authStrategyOf(ChannelType.CHAT)).thenReturn(AuthStrategy.NONE);
-        lenient().when(channelRegistry.authStrategyOf(ChannelType.EMAIL)).thenReturn(AuthStrategy.EMAIL_ADDRESS);
-        lenient().when(channelRegistry.authStrategyOf(ChannelType.KAKAO)).thenReturn(AuthStrategy.OAUTH);
-        lenient().when(channelRegistry.authStrategyOf(ChannelType.SLACK)).thenReturn(AuthStrategy.BOT_TOKEN);
     }
 
     @Test

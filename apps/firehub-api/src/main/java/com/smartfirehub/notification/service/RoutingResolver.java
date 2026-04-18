@@ -1,6 +1,5 @@
 package com.smartfirehub.notification.service;
 
-import com.smartfirehub.notification.AuthStrategy;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.Recipient;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
@@ -17,20 +16,19 @@ import org.springframework.stereotype.Component;
  * - binding 필요한데 없는 채널 skip
  * - 모두 skip되면 CHAT 강제 (안전망)
  * - CHAT은 DB CHECK로 항상 enabled
+ *
+ * <p>authStrategy는 {@link ChannelType} enum 자체에서 읽어 Channel Bean 유무와 무관하게 판단.
  */
 @Component
 public class RoutingResolver {
 
     private final UserChannelPreferenceRepository preferenceRepo;
     private final UserChannelBindingRepository bindingRepo;
-    private final ChannelRegistry channelRegistry;
 
     public RoutingResolver(UserChannelPreferenceRepository preferenceRepo,
-                           UserChannelBindingRepository bindingRepo,
-                           ChannelRegistry channelRegistry) {
+                           UserChannelBindingRepository bindingRepo) {
         this.preferenceRepo = preferenceRepo;
         this.bindingRepo = bindingRepo;
-        this.channelRegistry = channelRegistry;
     }
 
     public ResolvedRouting resolve(Recipient recipient) {
@@ -43,9 +41,7 @@ public class RoutingResolver {
                 skipped.put(ch, "OPTED_OUT");
                 continue;
             }
-            AuthStrategy auth = channelRegistry.authStrategyOf(ch);
-            boolean requiresBinding = auth == AuthStrategy.OAUTH || auth == AuthStrategy.BOT_TOKEN;
-            if (requiresBinding && bindingRepo.findActive(recipient.userId(), ch).isEmpty()) {
+            if (ch.requiresBinding() && bindingRepo.findActive(recipient.userId(), ch).isEmpty()) {
                 skipped.put(ch, "BINDING_MISSING");
                 continue;
             }
