@@ -1,6 +1,9 @@
 package com.smartfirehub.notification.channels.slack;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.HashMap;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -20,16 +23,19 @@ import org.springframework.web.reactive.function.client.WebClient;
 public class SlackApiClient {
 
     private final WebClient webClient;
+    private final ObjectMapper objectMapper;
 
     public SlackApiClient() {
         this.webClient = WebClient.builder()
                 .baseUrl("https://slack.com/api")
                 .build();
+        this.objectMapper = new ObjectMapper();
     }
 
     /** 테스트용 생성자 — WireMock 등 커스텀 baseUrl 주입 가능. */
     SlackApiClient(WebClient webClient) {
         this.webClient = webClient;
+        this.objectMapper = new ObjectMapper();
     }
 
     /**
@@ -129,6 +135,93 @@ public class SlackApiClient {
 
         return webClient.post()
                 .uri("/conversations.open")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + botToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block();
+    }
+
+    /**
+     * reactions.add — 메시지에 리액션 추가.
+     *
+     * <p>inbound 처리 수신 확인용으로 :eyes: 등을 달 때 사용한다.
+     *
+     * @param botToken  워크스페이스 봇 토큰
+     * @param channel   대상 채널 ID
+     * @param timestamp 리액션을 달 메시지의 ts 값
+     * @param name      이모지 이름 (콜론 없이, 예: eyes)
+     * @return Slack API 응답 JSON
+     */
+    public JsonNode reactionsAdd(String botToken, String channel, String timestamp, String name) {
+        var body = new HashMap<String, String>();
+        body.put("channel", channel);
+        body.put("timestamp", timestamp);
+        body.put("name", name);
+        return webClient.post().uri("/reactions.add")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + botToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block();
+    }
+
+    /**
+     * chat.postEphemeral — 특정 사용자에게만 보이는 임시 메시지.
+     *
+     * <p>Slack 워크스페이스 매핑이 없는 사용자에게 안내 메시지를 보낼 때 사용한다.
+     *
+     * @param botToken 워크스페이스 봇 토큰
+     * @param channel  채널 ID
+     * @param user     메시지를 볼 Slack 사용자 ID
+     * @param text     메시지 텍스트
+     * @return Slack API 응답 JSON
+     */
+    public JsonNode postEphemeral(String botToken, String channel, String user, String text) {
+        var body = new HashMap<String, String>();
+        body.put("channel", channel);
+        body.put("user", user);
+        body.put("text", text);
+        return webClient.post().uri("/chat.postEphemeral")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + botToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block();
+    }
+
+    /**
+     * chat.postMessage with thread_ts — 기존 스레드에 AI 응답을 회신.
+     *
+     * <p>inbound 메시지 처리 후 AI 응답을 동일 스레드에 달 때 사용한다.
+     * blocksJson이 null이 아닌 경우 Block Kit으로 렌더링하고, fallbackText는 항상 포함한다.
+     *
+     * @param botToken    워크스페이스 봇 토큰
+     * @param channel     대상 채널 ID
+     * @param threadTs    원본 메시지 ts (스레드 루트)
+     * @param blocksJson  Block Kit JSON 문자열 (null 가능)
+     * @param fallbackText 푸시 알림·접근성용 대체 텍스트
+     * @return Slack API 응답 JSON
+     */
+    public JsonNode chatPostMessageInThread(
+            String botToken, String channel, String threadTs,
+            String blocksJson, String fallbackText) {
+        var body = new HashMap<String, Object>();
+        body.put("channel", channel);
+        body.put("thread_ts", threadTs);
+        body.put("text", fallbackText != null ? fallbackText : "");
+        if (blocksJson != null) {
+            try {
+                body.put("blocks", objectMapper.readTree(blocksJson));
+            } catch (JsonProcessingException e) {
+                // blocks 파싱 실패 시 text 단독 전송으로 폴백
+                throw new IllegalArgumentException("blocksJson 파싱 실패: " + e.getMessage(), e);
+            }
+        }
+        return webClient.post().uri("/chat.postMessage")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + botToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
