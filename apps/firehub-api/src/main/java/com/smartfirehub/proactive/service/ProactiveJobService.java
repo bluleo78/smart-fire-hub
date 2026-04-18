@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.dto.NotificationEvent;
+import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
@@ -55,6 +57,10 @@ public class ProactiveJobService {
   private final AnomalyEventRepository anomalyEventRepository;
   // SSE 에미터 레지스트리 — 사용자에게 실시간 이상 탐지 알림을 전송한다
   private final SseEmitterRegistry sseEmitterRegistry;
+  // Outbox 기반 알림 Dispatcher (feature flag ON일 때 사용)
+  private final NotificationDispatcher notificationDispatcher;
+  // notification.outbox.enabled=true면 Dispatcher 경로, false면 기존 DeliveryChannel 직접 호출
+  private final boolean notificationOutboxEnabled;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -75,7 +81,9 @@ public class ProactiveJobService {
       List<DeliveryChannel> deliveryChannels,
       UserRepository userRepository,
       AnomalyEventRepository anomalyEventRepository,
-      SseEmitterRegistry sseEmitterRegistry) {
+      SseEmitterRegistry sseEmitterRegistry,
+      NotificationDispatcher notificationDispatcher,
+      @Value("${notification.outbox.enabled:false}") boolean notificationOutboxEnabled) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.messageRepository = messageRepository;
@@ -89,6 +97,8 @@ public class ProactiveJobService {
     this.userRepository = userRepository;
     this.anomalyEventRepository = anomalyEventRepository;
     this.sseEmitterRegistry = sseEmitterRegistry;
+    this.notificationDispatcher = notificationDispatcher;
+    this.notificationOutboxEnabled = notificationOutboxEnabled;
   }
 
   @Transactional(readOnly = true)
@@ -237,15 +247,30 @@ public class ProactiveJobService {
 
       // DeliveryChannel 호출 (config.channels 필터링)
       List<String> configChannels = ProactiveConfigParser.getChannelTypes(job.config());
+      // notification.outbox.enabled=true → 새 Dispatcher 경로 (비동기 Outbox + Worker).
+      // false → 기존 직접 호출 경로 유지 (회귀 안전, Stage 1 마이그레이션 중).
       List<String> deliveredChannels = new ArrayList<>();
-      for (DeliveryChannel channel : deliveryChannels) {
-        if (configChannels.isEmpty() || configChannels.contains(channel.type())) {
-          try {
-            channel.deliver(job, executionId, result);
-            deliveredChannels.add(channel.type());
-          } catch (Exception e) {
-            log.warn(
-                "DeliveryChannel {} failed for job {}: {}", channel.type(), jobId, e.getMessage());
+      if (notificationOutboxEnabled) {
+        try {
+          com.smartfirehub.notification.NotificationRequest request =
+              ProactiveJobNotificationMapper.toRequest(job, executionId, result);
+          notificationDispatcher.enqueue(request);
+          // Outbox 경로에서는 즉시 발송 전이라 deliveredChannels를 확정할 수 없음.
+          // 실제 성공 채널 집계는 outbox status aggregation view(Task 13 이후)로 대체.
+          for (String t : configChannels) deliveredChannels.add(t);
+        } catch (Exception e) {
+          log.warn("NotificationDispatcher enqueue failed for job {}: {}", jobId, e.getMessage(), e);
+        }
+      } else {
+        for (DeliveryChannel channel : deliveryChannels) {
+          if (configChannels.isEmpty() || configChannels.contains(channel.type())) {
+            try {
+              channel.deliver(job, executionId, result);
+              deliveredChannels.add(channel.type());
+            } catch (Exception e) {
+              log.warn(
+                  "DeliveryChannel {} failed for job {}: {}", channel.type(), jobId, e.getMessage());
+            }
           }
         }
       }
