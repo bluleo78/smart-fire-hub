@@ -64,7 +64,8 @@ dependencies {
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
-    runtimeOnly("org.postgresql:postgresql")
+    // PG driver — implementation 으로 둬서 OutboxListenerLoop가 PGConnection을 직접 사용할 수 있음
+    implementation("org.postgresql:postgresql")
     jooqGenerator("org.postgresql:postgresql")
     // CSV/Excel 파싱
     implementation("org.apache.poi:poi-ooxml:5.3.0")
