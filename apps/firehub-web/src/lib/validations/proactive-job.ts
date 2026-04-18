@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const channelConfigSchema = z.object({
-  type: z.enum(['CHAT', 'EMAIL']),
+  type: z.enum(['CHAT', 'EMAIL', 'KAKAO', 'SLACK']),
   recipientUserIds: z.array(z.number()),
   recipientEmails: z.array(z.string().email('올바른 이메일 형식이 아닙니다')),
   attachPdf: z.boolean().optional(),
