@@ -42,6 +42,7 @@ public class SlackInboundService {
     private final SlackApiClient slackApiClient;
     private final SlackChannel slackChannel;
     private final EncryptionService encryption;
+    private final SlackInboundMetrics metrics;
 
     public SlackInboundService(
             UserChannelBindingRepository bindingRepo,
@@ -50,7 +51,8 @@ public class SlackInboundService {
             AiAgentBatchClient aiAgentClient,
             SlackApiClient slackApiClient,
             SlackChannel slackChannel,
-            EncryptionService encryption) {
+            EncryptionService encryption,
+            SlackInboundMetrics metrics) {
         this.bindingRepo = bindingRepo;
         this.workspaceRepo = workspaceRepo;
         this.aiSessionRepo = aiSessionRepo;
@@ -58,6 +60,7 @@ public class SlackInboundService {
         this.slackApiClient = slackApiClient;
         this.slackChannel = slackChannel;
         this.encryption = encryption;
+        this.metrics = metrics;
     }
 
     /**
@@ -74,6 +77,10 @@ public class SlackInboundService {
         String ts = event.path("ts").asText();
         // thread_ts가 없으면 이 메시지가 스레드 루트 — ts를 그대로 사용
         String threadTs = event.path("thread_ts").asText(ts);
+
+        // 메트릭: 수신 카운트 증가 + 처리 시간 측정 시작
+        metrics.incrementReceived();
+        long startNanos = System.nanoTime();
 
         // MDC에 correlationId 설정하여 로그 추적성 확보
         MDC.put("correlationId", "slack-" + teamId + "-" + ts);
@@ -99,6 +106,7 @@ public class SlackInboundService {
             var binding = bindingRepo.findByExternalId(teamId, slackUserId);
             if (binding.isEmpty()) {
                 // 연동되지 않은 사용자 → ephemeral 안내 메시지
+                metrics.incrementUnmappedUser();
                 log.info("slack inbound — unmapped user {}/{}", teamId, slackUserId);
                 slackApiClient.postEphemeral(botToken, channel, slackUserId,
                         "Smart Fire Hub 웹에서 먼저 계정 연동을 진행해주세요: "
@@ -154,6 +162,8 @@ public class SlackInboundService {
         } catch (Exception e) {
             log.error("slack inbound dispatch 예상치 못한 오류 (team={}, ts={})", teamId, ts, e);
         } finally {
+            metrics.recordProcessingDuration(
+                    java.time.Duration.ofNanos(System.nanoTime() - startNanos));
             MDC.remove("correlationId");
         }
     }

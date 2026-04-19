@@ -51,6 +51,7 @@ class SlackInboundServiceTest {
     @Mock private SlackApiClient slackApiClient;
     @Mock private SlackChannel slackChannel;
     @Mock private EncryptionService encryption;
+    @Mock private SlackInboundMetrics metrics;
 
     @InjectMocks
     private SlackInboundService service;
