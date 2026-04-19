@@ -28,6 +28,7 @@
 | [Phase 7](#phase-7-ai-리포트-고도화) | **완료** | 11/11 | 사용성 개선 (수신자 지정, 실행 결과, 작업/템플릿 UX) + PDF, 내러티브 강화, HTML 리포트, 실행 상세 UX, 이상 탐지, 비주얼 빌더, 목표 기반 생성 |
 | [Phase 8](#phase-8-소방-도메인-특화) | 대기 | 0/5 | 소방 CRUD, 대시보드, 지도, AI, 공공데이터 |
 | [Phase 9](#phase-9-api-연결-리디자인) | **완료** | 9/9 | Base URL 필수화, path/customUrl 분리, 10분 헬스체크 + 상태 알림 |
+| [Phase 10](#phase-10-channel-추상화--알림-인프라) | **완료** | 3/3 | Outbox 인프라 + KAKAO/SLACK outbound + Slack inbound AI |
 
 ---
 
@@ -381,6 +382,22 @@
 - `ApiConnectionHealthCheckScheduler`: 10분 주기 헬스체크, 상태 전환 시 `ApiConnectionNotifier`로 대시보드/Chat/감사 로그 디스패치
 - AI 서브에이전트 `api-connection-manager`에 baseUrl/헬스체크 워크플로 반영
 - 관리자 페이지 상태 배지(정상/이상/미확인) + "지금 확인"/"전체 갱신" 버튼
+
+---
+
+## Phase 10: Channel 추상화 + 알림 인프라 ✅
+
+> 알림 발송을 채널 추상화 레이어로 분리하고 Slack 양방향 AI 대화를 구현한다.
+> **의존**: Phase 6 (AI Chat/Proactive), Phase 7 (리포트 수신자 지정)
+
+| # | 작업 | 상태 | 범위 | 검증 기준 |
+|---|------|------|------|----------|
+| 10-1 | Stage 1: Outbox 인프라 | ✅ | Backend | V50~V54 마이그레이션. Channel/BoundChannel SPI. Dispatcher + Worker + OutboxSweeper. 백오프 정책(5회). TC 30+건 PASS. |
+| 10-2 | Stage 2: KAKAO/SLACK outbound + 사용자 연동 UX | ✅ | Backend + Frontend | KakaoChannel(나에게 보내기), SlackChannel(DM), OAuth 연동 흐름, `/settings/channels` 4채널 UI, ChannelRecipientEditor 확장. TC 19+건 + E2E 13건 PASS. |
+| 10-3 | Stage 3: Slack Inbound — 양방향 AI | ✅ | Backend | V55(ai_session SLACK 컨텍스트). HMAC-SHA256 서명 검증. @Async slackInboundExecutor. AiAgentBatchClient(non-SSE). SlackInboundService(세션 lookup/create + AI chat + replyTo). Micrometer 메트릭 3종 + MDC. TC 18건 PASS. |
+
+**런북**: `docs/runbooks/notification-outbox-rollout.md`
+**스펙**: `docs/superpowers/specs/2026-04-18-channel-abstraction-design.md`
 
 ---
 
