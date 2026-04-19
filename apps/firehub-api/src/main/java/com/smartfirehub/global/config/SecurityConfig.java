@@ -52,8 +52,8 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers("/api/v1/triggers/api/**", "/api/v1/triggers/webhook/**")
                     .permitAll()
-                    // Slack Events API: Slack 서명이 JWT 인증을 대체하므로 public 처리
-                    .requestMatchers("/api/v1/channels/slack/events")
+                    // firehub-channel → firehub-api Internal 전용 inbound 엔드포인트
+                    .requestMatchers("/api/v1/channels/slack/inbound")
                     .permitAll()
                     .requestMatchers("/api/v1/**")
                     .authenticated()

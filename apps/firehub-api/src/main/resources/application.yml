@@ -47,6 +47,11 @@ firehub:
     max-files-per-request: 3
     expiry-hours: 24
 
+channel:
+  service:
+    url: ${CHANNEL_SERVICE_URL:http://firehub-channel:3002}
+  internal-token: ${CHANNEL_INTERNAL_TOKEN:dev-channel-token}
+
 notification:
   kakao:
     client_id: ${KAKAO_CLIENT_ID:}

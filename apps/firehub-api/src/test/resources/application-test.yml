@@ -36,3 +36,6 @@ app:
 agent:
   url: http://localhost:9999
   internal-token: test-internal-token
+
+channel:
+  internal-token: test-internal-token
