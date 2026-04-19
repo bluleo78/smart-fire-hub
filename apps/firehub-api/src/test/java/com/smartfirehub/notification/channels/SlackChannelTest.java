@@ -4,18 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.quality.Strictness.LENIENT;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
 import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.PermanentFailureReason;
-import com.smartfirehub.notification.channels.slack.SlackApiClient;
 import com.smartfirehub.notification.channels.slack.SlackBlockKitRenderer;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.UserChannelBinding;
@@ -35,13 +35,14 @@ import org.mockito.junit.jupiter.MockitoSettings;
 /**
  * SlackChannel 단위 테스트.
  *
- * <p>실제 Slack API 호출 없이 주요 경로(정상 발송, binding 누락, workspace 누락, 인증 오류, rate limit)를 검증.
+ * <p>SlackApiClient 대신 ChannelHttpClient를 사용하는 새 구현 검증.
+ * 주요 경로: 정상 발송, binding 누락, workspace 누락, 인증 오류(401), rate limit(5xx).
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = LENIENT)
 class SlackChannelTest {
 
-    @Mock private SlackApiClient slackApiClient;
+    @Mock private ChannelHttpClient channelHttpClient;
     @Mock private SlackBlockKitRenderer renderer;
     @Mock private UserChannelBindingRepository bindingRepo;
     @Mock private SlackWorkspaceRepository workspaceRepo;
@@ -49,19 +50,16 @@ class SlackChannelTest {
 
     private SlackChannel channel;
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     private static final long USER_ID = 42L;
     private static final long OUTBOX_ID = 100L;
     private static final long WORKSPACE_ID = 1L;
     private static final String SLACK_USER_ID = "U0123456";
     private static final String BOT_TOKEN_ENC = "enc:xoxb-test-token";
     private static final String BOT_TOKEN = "xoxb-test-token";
-    private static final String DM_CHANNEL_ID = "D0123456";
 
     @BeforeEach
     void setUp() {
-        channel = new SlackChannel(slackApiClient, renderer, bindingRepo, workspaceRepo, encryptionService);
+        channel = new SlackChannel(channelHttpClient, renderer, bindingRepo, workspaceRepo, encryptionService);
 
         // 공통 stub — renderer는 모든 케이스에서 동일하게 동작
         when(renderer.renderBlocksJson(any())).thenReturn("[{\"type\":\"header\"}]");
@@ -95,56 +93,32 @@ class SlackChannelTest {
                 BOT_TOKEN_ENC, null, null, null, 1L);
     }
 
-    /** conversations.open 성공 응답 생성. */
-    private ObjectNode openConvOkResponse() {
-        ObjectNode resp = MAPPER.createObjectNode();
-        resp.put("ok", true);
-        ObjectNode channelNode = MAPPER.createObjectNode();
-        channelNode.put("id", DM_CHANNEL_ID);
-        resp.set("channel", channelNode);
-        return resp;
-    }
-
-    /** chat.postMessage 성공 응답 생성. */
-    private ObjectNode postMessageOkResponse(String ts) {
-        ObjectNode resp = MAPPER.createObjectNode();
-        resp.put("ok", true);
-        resp.put("ts", ts);
-        resp.put("channel", DM_CHANNEL_ID);
-        return resp;
-    }
-
-    /** chat.postMessage 실패 응답 생성. */
-    private ObjectNode postMessageErrorResponse(String error) {
-        ObjectNode resp = MAPPER.createObjectNode();
-        resp.put("ok", false);
-        resp.put("error", error);
-        return resp;
-    }
-
     // ----------------------------------------------------------------
     // 정상 발송
     // ----------------------------------------------------------------
 
     /**
-     * 정상 경로: binding 존재, workspace 존재, conversations.open 성공, chatPostMessage ok=true
-     * → Sent(ts:channel) 반환.
+     * 정상 경로: binding 존재, workspace 존재, channelHttpClient.send 성공
+     * → Sent(slack-{outboxId}) 반환.
      */
     @Test
-    void deliver_success_returnsSent_withTs() {
+    void deliver_success_returnsSent() {
         when(bindingRepo.findActive(USER_ID, ChannelType.SLACK)).thenReturn(Optional.of(activeBinding()));
         when(workspaceRepo.findById(WORKSPACE_ID)).thenReturn(Optional.of(workspace()));
         when(encryptionService.decrypt(BOT_TOKEN_ENC)).thenReturn(BOT_TOKEN);
-        when(slackApiClient.openConversation(eq(BOT_TOKEN), eq(SLACK_USER_ID)))
-                .thenReturn(openConvOkResponse());
-        when(slackApiClient.chatPostMessage(eq(BOT_TOKEN), eq(DM_CHANNEL_ID), anyString(), anyString()))
-                .thenReturn(postMessageOkResponse("1234567890.123456"));
+        // channelHttpClient.send 는 void — 기본적으로 아무것도 안 한다 (정상)
 
         DeliveryResult result = channel.deliver(ctx());
 
         assertThat(result).isInstanceOfSatisfying(DeliveryResult.Sent.class,
-                sent -> assertThat(sent.externalMessageId())
-                        .isEqualTo("1234567890.123456:" + DM_CHANNEL_ID));
+                sent -> assertThat(sent.externalMessageId()).isEqualTo("slack-" + OUTBOX_ID));
+
+        // recipient 맵에 slackBotToken + slackChannelId(== externalUserId) 포함 검증
+        verify(channelHttpClient).send(
+                eq("SLACK"),
+                any(Map.class),
+                any(Map.class),
+                isNull());
     }
 
     // ----------------------------------------------------------------
@@ -183,50 +157,66 @@ class SlackChannelTest {
     }
 
     // ----------------------------------------------------------------
-    // invalid_auth → TOKEN_EXPIRED
+    // ChannelHttpException 401 → TOKEN_EXPIRED
     // ----------------------------------------------------------------
 
     /**
-     * chatPostMessage ok=false + error=invalid_auth → TOKEN_EXPIRED PermanentFailure 반환 검증.
+     * channelHttpClient.send가 ChannelHttpException(401) 던질 때
+     * TOKEN_EXPIRED PermanentFailure 반환 검증.
      */
     @Test
-    void deliver_invalidAuth_returnsPermanentFailureTokenExpired() {
+    void deliver_channelHttp401_returnsPermanentFailureTokenExpired() {
         when(bindingRepo.findActive(USER_ID, ChannelType.SLACK)).thenReturn(Optional.of(activeBinding()));
         when(workspaceRepo.findById(WORKSPACE_ID)).thenReturn(Optional.of(workspace()));
         when(encryptionService.decrypt(BOT_TOKEN_ENC)).thenReturn(BOT_TOKEN);
-        when(slackApiClient.openConversation(eq(BOT_TOKEN), eq(SLACK_USER_ID)))
-                .thenReturn(openConvOkResponse());
-        when(slackApiClient.chatPostMessage(eq(BOT_TOKEN), eq(DM_CHANNEL_ID), anyString(), anyString()))
-                .thenReturn(postMessageErrorResponse("invalid_auth"));
+        doThrow(new ChannelHttpException("auth_error", 401))
+                .when(channelHttpClient).send(anyString(), any(), any(), any());
 
         DeliveryResult result = channel.deliver(ctx());
 
         assertThat(result).isInstanceOfSatisfying(DeliveryResult.PermanentFailure.class,
-                pf -> {
-                    assertThat(pf.reason()).isEqualTo(PermanentFailureReason.TOKEN_EXPIRED);
-                    assertThat(pf.details()).isEqualTo("invalid_auth");
-                });
+                pf -> assertThat(pf.reason()).isEqualTo(PermanentFailureReason.TOKEN_EXPIRED));
     }
 
     // ----------------------------------------------------------------
-    // rate_limited → TransientFailure
+    // ChannelHttpException 5xx → TransientFailure
     // ----------------------------------------------------------------
 
     /**
-     * chatPostMessage ok=false + error=rate_limited → TransientFailure 반환 검증.
+     * channelHttpClient.send가 ChannelHttpException(500) 던질 때
+     * TransientFailure 반환 검증.
      */
     @Test
-    void deliver_rateLimited_returnsTransientFailure() {
+    void deliver_channelHttp5xx_returnsTransientFailure() {
         when(bindingRepo.findActive(USER_ID, ChannelType.SLACK)).thenReturn(Optional.of(activeBinding()));
         when(workspaceRepo.findById(WORKSPACE_ID)).thenReturn(Optional.of(workspace()));
         when(encryptionService.decrypt(BOT_TOKEN_ENC)).thenReturn(BOT_TOKEN);
-        when(slackApiClient.openConversation(eq(BOT_TOKEN), eq(SLACK_USER_ID)))
-                .thenReturn(openConvOkResponse());
-        when(slackApiClient.chatPostMessage(eq(BOT_TOKEN), eq(DM_CHANNEL_ID), anyString(), anyString()))
-                .thenReturn(postMessageErrorResponse("rate_limited"));
+        doThrow(new ChannelHttpException("upstream_error", 500))
+                .when(channelHttpClient).send(anyString(), any(), any(), any());
 
         DeliveryResult result = channel.deliver(ctx());
 
         assertThat(result).isInstanceOf(DeliveryResult.TransientFailure.class);
+    }
+
+    // ----------------------------------------------------------------
+    // replyTo — 스레드 회신
+    // ----------------------------------------------------------------
+
+    /**
+     * replyTo: workspace 조회 → 봇 토큰 복호화 → channelHttpClient.send(threadTs 포함) 호출 검증.
+     */
+    @Test
+    void replyTo_callsChannelHttpClientWithThreadTs() {
+        when(workspaceRepo.findById(WORKSPACE_ID)).thenReturn(Optional.of(workspace()));
+        when(encryptionService.decrypt(BOT_TOKEN_ENC)).thenReturn(BOT_TOKEN);
+
+        channel.replyTo(WORKSPACE_ID, "C123", "1234567890.000100", "AI 응답");
+
+        verify(channelHttpClient).send(
+                eq("SLACK"),
+                any(Map.class),
+                any(Map.class),
+                eq("1234567890.000100"));
     }
 }

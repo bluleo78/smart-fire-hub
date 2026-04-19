@@ -4,18 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
-import com.smartfirehub.notification.BoundChannel;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
 import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.PermanentFailureReason;
-import com.smartfirehub.notification.channels.kakao.KakaoApiClient;
 import com.smartfirehub.notification.channels.kakao.KakaoTextFormatter;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
@@ -27,41 +26,33 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * KakaoChannel 단위 테스트.
  *
- * <p>실제 카카오 API 호출 없이 주요 경로(정상 발송, binding 누락, 토큰 만료, 401 refresh 재시도, 429 rate limit)를 검증.
+ * <p>KakaoApiClient 대신 ChannelHttpClient를 사용하는 새 구현 검증.
+ * 주요 경로: 정상 발송, binding 누락, 토큰 만료 status, 401(TOKEN_EXPIRED), 5xx(TransientFailure).
  */
 @ExtendWith(MockitoExtension.class)
 class KakaoChannelTest {
 
-    @Mock private KakaoApiClient kakaoApiClient;
+    @Mock private ChannelHttpClient channelHttpClient;
     @Mock private KakaoTextFormatter textFormatter;
     @Mock private UserChannelBindingRepository bindingRepo;
     @Mock private EncryptionService encryptionService;
 
-    // @InjectMocks는 @Value 필드를 주입하지 못하므로 직접 생성
     private KakaoChannel channel;
 
     private static final long USER_ID = 42L;
     private static final long OUTBOX_ID = 100L;
     private static final String ACCESS_TOKEN_ENC = "enc-access";
     private static final String ACCESS_TOKEN = "raw-access-token";
-    private static final String REFRESH_TOKEN_ENC = "enc-refresh";
-    private static final String REFRESH_TOKEN = "raw-refresh-token";
 
     @BeforeEach
     void setUp() {
-        // @Value 필드가 있어 직접 생성 — mock은 @Mock으로 선언된 것 그대로 사용
-        channel = new KakaoChannel(
-                kakaoApiClient, textFormatter, bindingRepo, encryptionService,
-                "test-client-id", "test-client-secret");
+        channel = new KakaoChannel(channelHttpClient, textFormatter, bindingRepo, encryptionService);
     }
 
     // ----------------------------------------------------------------
@@ -77,7 +68,7 @@ class KakaoChannelTest {
     private UserChannelBinding activeBinding() {
         return new UserChannelBinding(
                 1L, USER_ID, ChannelType.KAKAO, null, "kakao-user-id",
-                "kakao@example.com", ACCESS_TOKEN_ENC, REFRESH_TOKEN_ENC,
+                "kakao@example.com", ACCESS_TOKEN_ENC, null,
                 Instant.now().plusSeconds(3600), "ACTIVE",
                 Instant.now(), Instant.now(), Instant.now());
     }
@@ -87,10 +78,10 @@ class KakaoChannelTest {
     // ----------------------------------------------------------------
 
     /**
-     * 정상 경로: binding 존재, 토큰 유효 → sendMemoText 호출 → Sent 반환.
+     * 정상 경로: binding 존재, 토큰 유효 → channelHttpClient.send 호출 → Sent 반환.
      */
     @Test
-    void deliver_success_returnsSent() throws Exception {
+    void deliver_success_returnsSent() {
         when(bindingRepo.findActive(USER_ID, ChannelType.KAKAO)).thenReturn(Optional.of(activeBinding()));
         when(encryptionService.decrypt(ACCESS_TOKEN_ENC)).thenReturn(ACCESS_TOKEN);
         when(textFormatter.render(any())).thenReturn("렌더된 텍스트");
@@ -99,7 +90,10 @@ class KakaoChannelTest {
 
         assertThat(result).isInstanceOfSatisfying(DeliveryResult.Sent.class,
                 sent -> assertThat(sent.externalMessageId()).isEqualTo("kakao-" + OUTBOX_ID));
-        verify(kakaoApiClient).sendMemoText(eq(ACCESS_TOKEN), eq("렌더된 텍스트"), anyString());
+        verify(channelHttpClient).send(
+                eq("KAKAO"),
+                any(Map.class),
+                any(Map.class));
     }
 
     // ----------------------------------------------------------------
@@ -117,7 +111,7 @@ class KakaoChannelTest {
 
         assertThat(result).isInstanceOfSatisfying(DeliveryResult.PermanentFailure.class,
                 pf -> assertThat(pf.reason()).isEqualTo(PermanentFailureReason.BINDING_REQUIRED));
-        verify(kakaoApiClient, never()).sendMemoText(anyString(), anyString(), anyString());
+        verify(channelHttpClient, never()).send(anyString(), any(), any());
     }
 
     // ----------------------------------------------------------------
@@ -131,7 +125,7 @@ class KakaoChannelTest {
     void deliver_bindingStatusNotActive_returnsPermanentFailureTokenExpired() {
         UserChannelBinding expiredBinding = new UserChannelBinding(
                 1L, USER_ID, ChannelType.KAKAO, null, "kakao-user-id",
-                "kakao@example.com", ACCESS_TOKEN_ENC, REFRESH_TOKEN_ENC,
+                "kakao@example.com", ACCESS_TOKEN_ENC, null,
                 Instant.now().minusSeconds(100), "TOKEN_EXPIRED",
                 Instant.now(), Instant.now(), Instant.now());
         when(bindingRepo.findActive(USER_ID, ChannelType.KAKAO)).thenReturn(Optional.of(expiredBinding));
@@ -140,59 +134,46 @@ class KakaoChannelTest {
 
         assertThat(result).isInstanceOfSatisfying(DeliveryResult.PermanentFailure.class,
                 pf -> assertThat(pf.reason()).isEqualTo(PermanentFailureReason.TOKEN_EXPIRED));
-        verify(kakaoApiClient, never()).sendMemoText(anyString(), anyString(), anyString());
+        verify(channelHttpClient, never()).send(anyString(), any(), any());
     }
 
     // ----------------------------------------------------------------
-    // HTTP 401 → refresh 후 재시도 (Stage 2 MVP: refresh 실패 → TOKEN_EXPIRED)
+    // ChannelHttpException 401 → TOKEN_EXPIRED + binding 만료 마킹
     // ----------------------------------------------------------------
 
     /**
-     * sendMemoText 호출 시 401 → refreshIfNeeded 호출 후 refresh 실패 → TOKEN_EXPIRED 반환.
-     *
-     * <p>Stage 2 MVP: refresh 자체가 실패하는 경우를 검증. refresh 성공 후 재발송 성공은
-     * 실제 카카오 응답 JsonNode 구성이 필요하므로 통합 테스트 수준에서 검증 예정.
+     * channelHttpClient.send 401 → binding TOKEN_EXPIRED 마킹 + PermanentFailure(TOKEN_EXPIRED) 반환.
      */
     @Test
-    void deliver_http401_refreshFails_returnsPermanentFailureTokenExpired() throws Exception {
+    void deliver_channelHttp401_returnsTokenExpiredAndMarksBinding() {
         when(bindingRepo.findActive(USER_ID, ChannelType.KAKAO)).thenReturn(Optional.of(activeBinding()));
         when(encryptionService.decrypt(ACCESS_TOKEN_ENC)).thenReturn(ACCESS_TOKEN);
-        when(encryptionService.decrypt(REFRESH_TOKEN_ENC)).thenReturn(REFRESH_TOKEN);
         when(textFormatter.render(any())).thenReturn("텍스트");
-
-        // sendMemoText → 401
-        WebClientResponseException ex401 = WebClientResponseException.create(
-                HttpStatus.UNAUTHORIZED.value(), "Unauthorized", null, null, null);
-        org.mockito.Mockito.doThrow(ex401)
-                .when(kakaoApiClient).sendMemoText(anyString(), anyString(), anyString());
-
-        // refresh → 실패 (kakao API 오류)
-        when(kakaoApiClient.refresh(eq(REFRESH_TOKEN), anyString(), anyString()))
-                .thenThrow(new RuntimeException("refresh server error"));
+        doThrow(new ChannelHttpException("auth_error", 401))
+                .when(channelHttpClient).send(anyString(), any(), any());
 
         DeliveryResult result = channel.deliver(ctx());
 
         assertThat(result).isInstanceOfSatisfying(DeliveryResult.PermanentFailure.class,
                 pf -> assertThat(pf.reason()).isEqualTo(PermanentFailureReason.TOKEN_EXPIRED));
+        // binding을 TOKEN_EXPIRED 상태로 upsert 해야 한다
+        verify(bindingRepo).upsert(any(UserChannelBinding.class));
     }
 
     // ----------------------------------------------------------------
-    // HTTP 429 rate limit
+    // ChannelHttpException 5xx → TransientFailure
     // ----------------------------------------------------------------
 
     /**
-     * sendMemoText 호출 시 429 → TransientFailure 반환 검증.
+     * channelHttpClient.send 5xx → TransientFailure 반환 검증.
      */
     @Test
-    void deliver_http429_returnsTransientFailure() throws Exception {
+    void deliver_channelHttp5xx_returnsTransientFailure() {
         when(bindingRepo.findActive(USER_ID, ChannelType.KAKAO)).thenReturn(Optional.of(activeBinding()));
         when(encryptionService.decrypt(ACCESS_TOKEN_ENC)).thenReturn(ACCESS_TOKEN);
         when(textFormatter.render(any())).thenReturn("텍스트");
-
-        WebClientResponseException ex429 = WebClientResponseException.create(
-                HttpStatus.TOO_MANY_REQUESTS.value(), "Too Many Requests", null, null, null);
-        org.mockito.Mockito.doThrow(ex429)
-                .when(kakaoApiClient).sendMemoText(anyString(), anyString(), anyString());
+        doThrow(new ChannelHttpException("upstream_error", 500))
+                .when(channelHttpClient).send(anyString(), any(), any());
 
         DeliveryResult result = channel.deliver(ctx());
 

@@ -9,21 +9,16 @@ import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.PermanentFailureReason;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.user.repository.UserRepository;
-import jakarta.mail.MessagingException;
 import java.util.Map;
-import java.util.Properties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
 /**
  * 이메일 채널 구현.
  *
- * <p>StandardPayload(title + summary)를 간단한 HTML 본문으로 렌더해 SMTP로 발송.
- * 풍부한 Thymeleaf 템플릿·차트 이미지·PDF 첨부는 Task 12에서 ProactiveJobNotificationMapper가
- * payload_ref를 통해 원본 execution을 join해 렌더하도록 확장한다.
+ * <p>firehub-channel 서비스에 이메일 발송을 위임한다 (ChannelHttpClient 경유).
+ * SMTP 설정과 수신자 이메일을 recipient 맵으로 전달하여 firehub-channel이 실제 발송을 처리한다.
  *
  * <p>수신자는 outbox 행 단위로 이미 fan-out되어 있으므로, 본 deliver는 (recipientUserId → email)
  * 또는 recipientAddress 중 하나만 처리하면 된다.
@@ -32,14 +27,18 @@ import org.springframework.stereotype.Component;
 public class EmailChannel implements Channel {
 
     private static final Logger log = LoggerFactory.getLogger(EmailChannel.class);
-    private static final String DEFAULT_FROM = "noreply@smartfirehub.io";
 
     private final SettingsService settingsService;
     private final UserRepository userRepository;
+    private final ChannelHttpClient channelHttpClient;
 
-    public EmailChannel(SettingsService settingsService, UserRepository userRepository) {
+    public EmailChannel(
+            SettingsService settingsService,
+            UserRepository userRepository,
+            ChannelHttpClient channelHttpClient) {
         this.settingsService = settingsService;
         this.userRepository = userRepository;
+        this.channelHttpClient = channelHttpClient;
     }
 
     @Override
@@ -68,25 +67,35 @@ public class EmailChannel implements Channel {
                     "수신 이메일 주소를 확보할 수 없음 (user id=" + ctx.recipientUserId() + ")");
         }
 
+        Payload payload = ctx.payload();
+        String subject = payload.title() == null ? "Smart Fire Hub 알림" : payload.title();
+        String htmlBody = buildHtmlBody(payload);
+
+        // SMTP 설정 맵 구성 — firehub-channel이 사용하는 필드명으로 변환
+        Map<String, Object> smtpConfig = Map.of(
+                "host", host,
+                "port", Integer.parseInt(smtp.getOrDefault("smtp.port", "587")),
+                "secure", Boolean.parseBoolean(smtp.getOrDefault("smtp.starttls", "true")),
+                "user", smtp.getOrDefault("smtp.username", ""),
+                "pass", smtp.getOrDefault("smtp.password", ""));
+
+        Map<String, Object> recipient = Map.of(
+                "emailAddress", toAddress,
+                "smtpConfig", smtpConfig);
+
+        Map<String, Object> message = Map.of(
+                "text", subject,
+                "html", htmlBody);
+
         try {
-            JavaMailSenderImpl sender = buildSender(smtp);
-            var message = sender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-            helper.setFrom(smtp.getOrDefault("smtp.from", DEFAULT_FROM));
-            helper.setTo(toAddress);
-
-            Payload payload = ctx.payload();
-            helper.setSubject(payload.title() == null ? "Smart Fire Hub 알림" : payload.title());
-            helper.setText(buildHtmlBody(payload), true);
-
-            sender.send(message);
+            channelHttpClient.send("EMAIL", recipient, message);
             log.info("EmailChannel sent to {} (outboxId={})", toAddress, ctx.outboxId());
             return new DeliveryResult.Sent("email-" + ctx.outboxId());
-        } catch (MessagingException e) {
-            log.warn("EmailChannel MessagingException: outboxId={}", ctx.outboxId(), e);
-            return new DeliveryResult.TransientFailure("MessagingException", e);
-        } catch (RuntimeException e) {
-            log.warn("EmailChannel RuntimeException: outboxId={}", ctx.outboxId(), e);
+        } catch (ChannelHttpException e) {
+            log.warn("EmailChannel ChannelHttpException {} (outboxId={})", e.getStatusCode(), ctx.outboxId(), e);
+            return new DeliveryResult.TransientFailure("CHANNEL_HTTP_" + e.getStatusCode(), e);
+        } catch (Exception e) {
+            log.warn("EmailChannel 네트워크 오류 (outboxId={})", ctx.outboxId(), e);
             return new DeliveryResult.TransientFailure(e.getClass().getSimpleName(), e);
         }
     }
@@ -104,23 +113,8 @@ public class EmailChannel implements Channel {
         return null;
     }
 
-    private JavaMailSenderImpl buildSender(Map<String, String> smtp) {
-        JavaMailSenderImpl sender = new JavaMailSenderImpl();
-        sender.setHost(smtp.get("smtp.host"));
-        sender.setPort(Integer.parseInt(smtp.getOrDefault("smtp.port", "587")));
-        sender.setUsername(smtp.getOrDefault("smtp.username", ""));
-        sender.setPassword(smtp.getOrDefault("smtp.password", ""));
-        Properties props = sender.getJavaMailProperties();
-        props.put("mail.transport.protocol", "smtp");
-        props.put("mail.smtp.auth", "true");
-        props.put("mail.smtp.starttls.enable",
-                smtp.getOrDefault("smtp.starttls", "true"));
-        return sender;
-    }
-
     /**
      * StandardPayload를 단순 HTML 본문으로 렌더.
-     * Thymeleaf 풍부 템플릿은 Task 12에서 ProactiveJob-specific mapper가 제공.
      */
     private String buildHtmlBody(Payload payload) {
         StringBuilder sb = new StringBuilder();
