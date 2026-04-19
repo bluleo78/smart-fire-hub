@@ -50,8 +50,12 @@ build_and_push() {
       log "Building + pushing $app (context: apps/firehub-executor/)"
       docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
       ;;
+    channel)
+      log "Building + pushing $app (context: apps/firehub-channel/)"
+      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
+      ;;
     *)
-      error "Unknown app: $app (valid: api, web, ai-agent, executor)"
+      error "Unknown app: $app (valid: api, web, ai-agent, executor, channel)"
       ;;
   esac
 }

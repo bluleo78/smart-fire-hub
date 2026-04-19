@@ -4,7 +4,7 @@ import { sendSlackMessage } from '../channels/slack.js';
 import { sendKakaoMessage } from '../channels/kakao.js';
 import { sendEmail } from '../channels/email.js';
 
-export const sendRouter = Router();
+export const sendRouter: Router = Router();
 
 /**
  * POST /send — 채널별 메시지 발송 엔드포인트

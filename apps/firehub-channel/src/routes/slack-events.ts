@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { slackSignature } from '../middleware/slack-signature.js';
 import { forwardSlackInbound } from '../clients/firehub-api.js';
 
-export const slackEventsRouter = Router();
+export const slackEventsRouter: Router = Router();
 
 /**
  * POST /slack/events — Slack Event API 수신 엔드포인트
