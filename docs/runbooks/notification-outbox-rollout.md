@@ -156,6 +156,109 @@ SLACK_REDIRECT_URI=https://app.smartfirehub.com/api/v1/oauth/slack/callback
 - Slack invalid_auth (봇 토큰 취소) → `slack_workspace` 재설치 필요. 즉시 조치: `DELETE /api/v1/oauth/slack/revoke` 후 관리자가 재설치.
 - 광범위 장애 시 특정 채널만 비활성화: `notification.channels.{kakao|slack}.enabled=false` flag 추가(향후) — 현재는 bindings DELETE + preference false.
 
+## 9. Slack Event Subscriptions 활성화 (Stage 3 — Slack Inbound)
+
+Stage 2 Slack outbound가 운영에서 안정된 뒤 Stage 3 inbound를 활성화한다.
+
+### 9.1 사전 준비 — V55 마이그레이션 확인
+
+```bash
+docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub -c \
+  "SELECT version FROM flyway_schema_history WHERE version = '55'"
+```
+
+기대: `55` 1행. `ai_session`에 Slack 컨텍스트 컬럼(`channel_source`, `slack_team_id`, `slack_channel_id`, `slack_thread_ts`) 및 `uk_ai_session_slack_thread` UNIQUE INDEX가 존재해야 한다.
+
+```bash
+docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub -c \
+  "SELECT column_name FROM information_schema.columns WHERE table_name='ai_session' AND column_name LIKE 'slack%'"
+```
+
+### 9.2 Slack App — Event Subscriptions 설정
+
+1. https://api.slack.com/apps → 앱 선택 → **Event Subscriptions** 메뉴
+2. Enable Events: **ON**
+3. Request URL: `https://{domain}/api/v1/channels/slack/events`
+   - Slack이 즉시 `url_verification` challenge를 전송. 서버가 `{"challenge": "..."}` 응답하면 "Verified" 표시.
+4. **Subscribe to bot events** 탭 → 이벤트 추가:
+   - `message.im` — DM 메시지 수신
+   - `app_mention` — 채널 내 @멘션 수신
+5. Save Changes → **Reinstall App** (권한 변경 후 재설치 필요)
+
+### 9.3 환경 변수 — Signing Secret 설정
+
+```bash
+# Basic Information → Signing Secret
+SLACK_SIGNING_SECRET=<Signing Secret>
+
+# (선택) Signing Secret 교체 시 그레이스 기간 지원
+SLACK_PREVIOUS_SIGNING_SECRET=<이전 Signing Secret>
+SLACK_PREVIOUS_SIGNING_SECRET_EXPIRES_AT=<Unix timestamp (epoch seconds)>
+```
+
+`application.yml` 매핑:
+```yaml
+notification:
+  slack:
+    signing_secret: ${SLACK_SIGNING_SECRET}
+    previous_signing_secret: ${SLACK_PREVIOUS_SIGNING_SECRET:}
+    previous_signing_secret_expires_at: ${SLACK_PREVIOUS_SIGNING_SECRET_EXPIRES_AT:0}
+```
+
+### 9.4 동작 확인
+
+**URL Verification:**
+```bash
+# Slack이 challenge를 보낼 때 서버가 200 + challenge JSON을 반환하는지 확인
+curl -s -X POST https://{domain}/api/v1/channels/slack/events \
+  -H "Content-Type: application/json" \
+  -d '{"type":"url_verification","challenge":"test-challenge-value"}'
+# 기대: {"challenge":"test-challenge-value"}
+```
+
+**DM 테스트:**
+1. Slack 워크스페이스에서 봇에게 DM 전송
+2. API 로그에서 다음 항목 확인:
+   ```
+   slack inbound — 응답 완료 (team=T..., ts=..., sessionId=...)
+   ```
+3. Slack DM 스레드에 AI 응답이 도착하는지 확인
+4. 미연동 사용자가 DM 전송 시 ephemeral 안내 메시지(`Smart Fire Hub 웹에서 먼저 계정 연동을 진행해주세요`) 수신 확인
+
+**메트릭 확인:**
+```bash
+curl -s https://{domain}/actuator/prometheus | grep slack_inbound
+# 기대 항목:
+# slack_inbound_received_total
+# slack_inbound_processing_duration_seconds_*
+# slack_inbound_unmapped_user_total
+```
+
+### 9.5 slackInboundExecutor 풀 설정
+
+기본값: core=3, max=5, queue=20, CallerRunsPolicy (queue 초과 시 HTTP 스레드에서 동기 실행).
+AI 호출이 60초 blocking이므로 동시 요청이 많은 경우 풀을 확장할 것:
+
+```yaml
+notification:
+  slack:
+    inbound_executor:
+      core_size: 5     # 기본 3
+      max_size: 10     # 기본 5
+      queue_capacity: 50  # 기본 20
+```
+
+> **참고:** `slack_inbound_processing_duration_seconds_max` 가 30초 이상 지속 상승하면 ai-agent 타임아웃 또는 풀 포화 신호. ai-agent 상태와 풀 크기를 동시에 점검할 것.
+
+### 9.6 이상 시 조치
+
+| 증상 | 원인 | 조치 |
+|------|------|------|
+| 401 응답 | Signing Secret 불일치 또는 타임스탬프 ±5분 초과 | `SLACK_SIGNING_SECRET` 확인, 서버 시각 동기화 (NTP) |
+| 봇 무응답 | ai-agent 다운 또는 60초 타임아웃 | ai-agent 상태 확인, `:warning:` reaction + ephemeral 메시지가 사용자에게 표시되는지 확인 |
+| 미연동 사용자 반복 증가 | `slack_inbound_unmapped_user_total` 급증 | `/settings/channels` 연동 안내, binding 누락 여부 DB 확인 |
+| 세션 중복 충돌 | `uk_ai_session_slack_thread` UNIQUE 위반 | 동시 요청(Slack 재전송)으로 인한 경합 — idempotency key 보강 검토 |
+
 ## 관련 문서
 
 - 설계: `docs/superpowers/specs/2026-04-18-channel-abstraction-design.md`
