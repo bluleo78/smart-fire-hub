@@ -13,6 +13,9 @@
 ## 컬럼명 규칙
 - 패턴: `[a-z][a-z0-9_]*`
 - 예약어(`user`, `order` 등) 감지 시 자동 접두(`t_`) 또는 재명명 제안
+- **시스템 예약 컬럼 (사용 불가)**: `id`, `import_id`, `created_at`
+  - 이 이름을 사용하면 API가 400 에러를 반환함 — 사용자가 요청해도 대안 이름을 제안할 것
+  - 예: `id` → `record_id` 또는 `dataset_id`, `created_at` → `event_created_at`
 
 ## GIS 자동 감지 (GEOMETRY)
 다음 단서를 발견하면 **즉시** GEOMETRY 컬럼을 제안합니다:

@@ -56,7 +56,13 @@ public class DataTableService {
     sql.append("id BIGSERIAL PRIMARY KEY, ");
     sql.append("import_id BIGINT, ");
 
+    // id, import_id, created_at은 시스템 예약 컬럼명 — 사용자 지정 불가
+    Set<String> reserved = Set.of("id", "import_id", "created_at");
     for (DatasetColumnRequest col : columns) {
+      if (reserved.contains(col.columnName().toLowerCase())) {
+        throw new InvalidTableNameException(
+            "컬럼명 '" + col.columnName() + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at)");
+      }
       validateName(col.columnName());
       sql.append("\"").append(col.columnName()).append("\" ");
       sql.append(mapDataType(col.dataType(), col.maxLength()));

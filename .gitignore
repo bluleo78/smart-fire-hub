@@ -1,3 +1,6 @@
+# Test results (AI-driven testing)
+test-results/
+
 # Java / Gradle
 **/build/
 **/.gradle/

@@ -1,0 +1,25 @@
+{
+  "cookies": [
+    {
+      "name": "refreshToken",
+      "value": "eyJhbGciOiJIUzM4NCJ9.eyJzdWIiOiIxIiwidHlwZSI6InJlZnJlc2giLCJpYXQiOjE3NzY4OTMwNDMsImV4cCI6MTc3NzQ5Nzg0M30.HlQ2n7uqqs1xexIJhllbLrSpmld_mHcjqpqrjSag64rUFw9IipnJb6fvTkEAWqHz",
+      "domain": "localhost",
+      "path": "/api/v1/auth",
+      "expires": 1777497843.141257,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "http://localhost:5173",
+      "localStorage": [
+        {
+          "name": "hasSession",
+          "value": "true"
+        }
+      ]
+    }
+  ]
+}
