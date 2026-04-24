@@ -25,6 +25,7 @@ import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -285,6 +286,9 @@ function SaveDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{isEdit ? '쿼리 수정' : '쿼리 저장'}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {isEdit ? '쿼리 설정을 수정하여 저장합니다.' : '쿼리 이름과 설정을 입력하여 저장합니다.'}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">

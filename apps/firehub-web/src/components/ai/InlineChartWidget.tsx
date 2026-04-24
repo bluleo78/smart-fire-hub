@@ -13,6 +13,7 @@ import { Button } from '../ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -116,6 +117,7 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader>
           <DialogTitle>차트로 저장</DialogTitle>
+          <DialogDescription className="sr-only">차트 이름과 공개 여부를 설정하여 저장합니다.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">

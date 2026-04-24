@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { useAddRow } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
@@ -57,6 +57,7 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
       <DialogContent className="max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>행 추가</DialogTitle>
+          <DialogDescription className="sr-only">데이터셋에 새 행을 추가합니다.</DialogDescription>
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <RowFormFields columns={columns} form={form} idPrefix="add" />

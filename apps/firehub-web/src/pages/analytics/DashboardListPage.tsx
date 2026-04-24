@@ -16,6 +16,7 @@ import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -94,6 +95,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>새 대시보드</DialogTitle>
+          <DialogDescription className="sr-only">새 대시보드 이름과 설명을 입력하여 생성합니다.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">

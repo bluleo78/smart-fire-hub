@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -437,6 +438,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0 }: JobMoni
               <Database className="h-4 w-4" />
               커스텀 메트릭 추가
             </DialogTitle>
+            <DialogDescription className="sr-only">모니터링할 커스텀 데이터셋 메트릭을 추가합니다.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">

@@ -10,6 +10,7 @@ import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -157,6 +158,7 @@ export default function CategoryListPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>카테고리 생성</DialogTitle>
+            <DialogDescription className="sr-only">새 데이터셋 카테고리를 생성합니다.</DialogDescription>
           </DialogHeader>
           <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
             <FormField
@@ -194,6 +196,7 @@ export default function CategoryListPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>카테고리 수정</DialogTitle>
+            <DialogDescription className="sr-only">데이터셋 카테고리 정보를 수정합니다.</DialogDescription>
           </DialogHeader>
           <form onSubmit={editForm.handleSubmit(handleUpdate)} className="space-y-4">
             <FormField

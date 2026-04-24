@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 
 import { Button } from '../../../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 import { useImportDialog } from '../hooks/useImportDialog';
 import { FileUploadZone } from './FileUploadZone';
@@ -39,6 +39,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
       <DialogContent className="max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>파일 임포트</DialogTitle>
+          <DialogDescription className="sr-only">파일을 업로드하고 컬럼을 매핑하여 데이터셋에 가져옵니다.</DialogDescription>
         </DialogHeader>
 
         {step === 1 && (

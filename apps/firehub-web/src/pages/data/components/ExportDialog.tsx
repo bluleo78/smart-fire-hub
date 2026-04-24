@@ -9,6 +9,7 @@ import { Checkbox } from '../../../components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -146,6 +147,7 @@ export function ExportDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>데이터 내보내기</DialogTitle>
+          <DialogDescription className="sr-only">데이터셋을 CSV, Excel 등 다양한 형식으로 내보냅니다.</DialogDescription>
         </DialogHeader>
 
         {isLoading ? (

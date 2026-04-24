@@ -17,6 +17,7 @@ import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -105,6 +106,7 @@ export default function RoleListPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>새 역할 생성</DialogTitle>
+              <DialogDescription className="sr-only">새로운 사용자 역할을 생성합니다.</DialogDescription>
             </DialogHeader>
             <form onSubmit={form.handleSubmit(onCreateSubmit)} className="space-y-4">
               <FormField

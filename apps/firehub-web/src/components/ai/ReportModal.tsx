@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -113,6 +114,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
             <DialogTitle className="text-base font-semibold">
               리포트 #{executionId}
             </DialogTitle>
+            <DialogDescription className="sr-only">AI 프로액티브 작업의 리포트 내용을 확인합니다.</DialogDescription>
             {/* 실행 상태 뱃지 */}
             {execution && (
               <>

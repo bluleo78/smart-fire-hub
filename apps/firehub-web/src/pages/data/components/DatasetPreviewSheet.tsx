@@ -6,6 +6,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -31,6 +32,7 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
       <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
         <DialogHeader>
           <DialogTitle>미리보기: {datasetName}</DialogTitle>
+          <DialogDescription className="sr-only">데이터셋의 데이터를 미리봅니다.</DialogDescription>
         </DialogHeader>
 
         {isLoading ? (

@@ -9,6 +9,7 @@ import { Checkbox } from '../../components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -328,6 +329,9 @@ export default function ProactiveJobsTab() {
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{dialog.mode === 'create' ? '작업 추가' : '작업 수정'}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {dialog.mode === 'create' ? '새 프로액티브 작업을 추가합니다.' : '프로액티브 작업 설정을 수정합니다.'}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             {/* Name */}
@@ -470,6 +474,7 @@ export default function ProactiveJobsTab() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>작업 삭제</DialogTitle>
+            <DialogDescription className="sr-only">프로액티브 작업을 삭제합니다. 되돌릴 수 없습니다.</DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">이 작업을 삭제하시겠습니까? 되돌릴 수 없습니다.</p>
           <DialogFooter>

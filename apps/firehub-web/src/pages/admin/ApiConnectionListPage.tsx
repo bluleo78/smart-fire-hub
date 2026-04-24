@@ -15,6 +15,7 @@ import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -183,6 +184,7 @@ export default function ApiConnectionListPage() {
             <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>새 API 연결 생성</DialogTitle>
+                <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="space-y-2">

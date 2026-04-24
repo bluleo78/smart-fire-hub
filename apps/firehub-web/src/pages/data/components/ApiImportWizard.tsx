@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -254,6 +255,7 @@ export function ApiImportWizard({
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>API 가져오기 — {datasetName}</DialogTitle>
+          <DialogDescription className="sr-only">외부 API를 통해 데이터셋에 데이터를 가져옵니다.</DialogDescription>
         </DialogHeader>
 
         {/* Step indicator */}

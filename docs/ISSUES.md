@@ -573,7 +573,8 @@ function josa(word: string, eul: string, reul: string) {
 - **심각도**: UX (접근성)
 - **컴포넌트**: 모든 Dialog 컴포넌트 (`ColumnDialog`, `ExportDialog`, `ImportMappingDialog`, `RowAddDialog` 등)
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트 — 콘솔 경고)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 다이얼로그가 열릴 때마다 콘솔에 `Warning: Missing Description or aria-describedby={undefined} for {DialogContent}` 반복 출력. 스크린리더 사용자가 다이얼로그의 목적을 파악할 수 없음.
 

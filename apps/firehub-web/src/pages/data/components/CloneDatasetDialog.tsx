@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 
 import { Button } from '../../../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Switch } from '../../../components/ui/switch';
@@ -75,6 +75,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
       <DialogContent>
         <DialogHeader>
           <DialogTitle>데이터셋 복제</DialogTitle>
+          <DialogDescription className="sr-only">현재 데이터셋을 새 이름으로 복제합니다.</DialogDescription>
         </DialogHeader>
 
         {/* Source info */}

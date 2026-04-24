@@ -26,6 +26,7 @@ import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -140,6 +141,7 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>차트 추가</DialogTitle>
+          <DialogDescription className="sr-only">대시보드에 추가할 차트를 선택합니다.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <input

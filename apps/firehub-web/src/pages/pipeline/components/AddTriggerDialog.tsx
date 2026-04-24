@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -142,6 +142,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
           <DialogTitle>
             {step === 1 ? '트리거 추가' : `트리거 추가 - ${typeInfo?.label}`}
           </DialogTitle>
+          <DialogDescription className="sr-only">파이프라인에 새 트리거를 추가합니다.</DialogDescription>
         </DialogHeader>
 
         {step === 1 ? (

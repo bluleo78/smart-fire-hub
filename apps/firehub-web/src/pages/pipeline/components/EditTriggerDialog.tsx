@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -104,6 +104,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
             트리거 편집
             <Badge variant="outline">{TRIGGER_TYPE_LABELS[trigger.triggerType]}</Badge>
           </DialogTitle>
+          <DialogDescription className="sr-only">파이프라인 트리거 설정을 수정합니다.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

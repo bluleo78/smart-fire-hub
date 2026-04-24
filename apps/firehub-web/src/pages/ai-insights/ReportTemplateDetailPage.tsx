@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -405,6 +406,7 @@ export default function ReportTemplateDetailPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>템플릿 삭제</DialogTitle>
+            <DialogDescription className="sr-only">리포트 템플릿을 삭제합니다. 되돌릴 수 없습니다.</DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">이 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.</p>
           <DialogFooter>

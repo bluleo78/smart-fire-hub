@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { useUpdateRow } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
@@ -82,6 +82,7 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
       <DialogContent className="max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>행 편집 (ID: {rowId})</DialogTitle>
+          <DialogDescription className="sr-only">선택한 행의 데이터를 편집합니다.</DialogDescription>
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <RowFormFields columns={columns} form={form} idPrefix="edit" changedFields={changedFields} />

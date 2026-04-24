@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -62,6 +63,7 @@ export default function ReportPreviewDialog({
         {/* 헤더 — 리포트 제목과 원본 질문 표시 */}
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">{title}</DialogTitle>
+          <DialogDescription className="sr-only">리포트 초안 전체 내용을 미리봅니다.</DialogDescription>
           {/* 원본 질문 — 이탤릭 muted 텍스트로 표시 */}
           <p className="text-xs text-muted-foreground italic mt-1">"{question}"</p>
         </DialogHeader>
