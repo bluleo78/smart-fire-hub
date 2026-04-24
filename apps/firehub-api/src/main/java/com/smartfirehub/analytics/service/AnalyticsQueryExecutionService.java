@@ -88,9 +88,16 @@ public class AnalyticsQueryExecutionService {
 
     String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
 
+    // public 스키마 직접 참조 차단 (#33/#34 보안: 비밀번호 해시 유출 및 권한 상승 방지)
+    String upperSql = cleanSql.toUpperCase();
+    if (upperSql.contains("PUBLIC.") || upperSql.contains("INFORMATION_SCHEMA") || upperSql.contains("PG_CATALOG")) {
+      return errorResponse("보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
+    }
+
     long startTime = System.currentTimeMillis();
 
-    dsl.execute("SET LOCAL search_path = 'data', 'public'");
+    // search_path를 data 스키마만으로 제한하여 public 스키마 암묵적 접근 차단
+    dsl.execute("SET LOCAL search_path = 'data'");
     dsl.execute("SET LOCAL statement_timeout = '30s'");
     dsl.execute("SAVEPOINT analytics_query");
 
@@ -193,7 +200,7 @@ public class AnalyticsQueryExecutionService {
           queryType, List.of(), List.of(), 0, executionTimeMs, 0, false, e.getMessage());
     } finally {
       try {
-        dsl.execute("SET LOCAL search_path TO public, data");
+        dsl.execute("SET LOCAL search_path TO public");
       } catch (Exception ignored) {
         // May fail if connection is broken; non-critical
       }

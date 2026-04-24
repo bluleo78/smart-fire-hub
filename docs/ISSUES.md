@@ -765,7 +765,8 @@ Frontend → row['_id'] === undefined  ❌
 - **심각도**: Critical (보안)
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/service/AnalyticsQueryExecutionService.java:93`
 - **발견**: 2026-04-23 (API 탐색 테스트 — curl)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 인증된 사용자라면 누구든 Analytics 쿼리 실행 엔드포인트(`POST /api/v1/analytics/queries/{id}/execute`)를 통해 `public` 스키마 전체에 접근 가능. `public."user"` 테이블에서 모든 사용자의 bcrypt 비밀번호 해시를 조회할 수 있고, `public.api_connection` 테이블에서 외부 API 인증정보(AES-256-GCM 암호화)를 추출 가능.
 
@@ -788,7 +789,8 @@ SELECT id, username, password FROM public."user"
 - **심각도**: Critical (보안)
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/service/AnalyticsQueryExecutionService.java:179`
 - **발견**: 2026-04-23 (API 탐색 테스트 — curl)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 인증된 일반 사용자가 Analytics 쿼리 실행을 통해 `public.user_role`에 INSERT하여 자신에게 ADMIN 역할을 부여하는 권한 상승에 성공함 (재현 확인). `SqlValidationUtils`의 허용 키워드에 INSERT/UPDATE/DELETE가 포함되어 있어 `public` 스키마 데이터 변조 가능.
 
@@ -813,7 +815,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/dto/CreateDashboardRequest.java`
 - **발견**: 2026-04-23 (API 탐색 테스트 — curl)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: `autoRefreshSeconds=4`, `autoRefreshSeconds=0`, `autoRefreshSeconds=-1` 모두 API 레벨에서 200/201 반환. 클라이언트의 `min={5}` HTML 속성만으로는 Axios 직접 호출이나 DevTools 조작을 막지 못함. (버그 #19의 API 레벨 확인)
 
@@ -827,7 +830,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor (기존 #29 보완)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/ChartBuilderPage.tsx:407`
 - **발견**: 2026-04-23 (API 탐색 테스트 — curl)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: `POST /api/v1/analytics/charts`에 `chartType=CANDLESTICK, config.yAxis=[]`로 직접 호출 시 201 성공. 백엔드는 빈 yAxis 허용함. 즉 버그 #29는 프론트엔드의 `handleSave` 검증 로직 문제.
 
