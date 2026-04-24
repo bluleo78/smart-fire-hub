@@ -33,6 +33,15 @@ export function HistogramChartView({ data, config, height = 300 }: ChartViewProp
     .filter(v => !isNaN(v));
   const binnedData = binValues(values, bins);
 
+  // 수치 컬럼이 아닌 경우 안내 메시지 표시
+  if (values.length === 0 && data.length > 0) {
+    return (
+      <div style={{ height }} className="flex items-center justify-center text-sm text-muted-foreground">
+        X축은 숫자 컬럼이어야 합니다
+      </div>
+    );
+  }
+
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <BarChart data={binnedData} barCategoryGap={1}>

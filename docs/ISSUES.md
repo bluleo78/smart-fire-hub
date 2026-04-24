@@ -1029,7 +1029,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major (핵심 기능 불가)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/ChartBuilderPage.tsx:407`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 캔들스틱 차트 선택 후 저장 시도 시 "X축과 Y축을 설정하세요" 검증에 걸려 저장 불가. 차트가 미리보기에서는 정상 렌더링되지만 저장 API 호출 자체가 안 됨.
 
@@ -1048,7 +1049,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major (렌더링 오류)
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/recharts/GaugeChartView.tsx:9-10`, `apps/firehub-web/src/components/analytics/AxisConfigPanel.tsx`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 게이지 차트는 `config.min ?? 0`, `config.max ?? 100` 기본값을 사용함. 실제 데이터 값이 182,000,000인 경우에도 범위가 "0 ~ 100"으로 표시되고 바늘은 최대값에 고정됨. AxisConfigPanel에서 min/max를 설정하는 UI가 없음.
 
@@ -1068,7 +1070,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/recharts/HistogramChartView.tsx:31-33`, `apps/firehub-web/src/components/analytics/AxisConfigPanel.tsx`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 히스토그램 차트에서 X축을 날짜/문자열 컬럼(예: `year_month`)으로 선택하면 차트 영역이 텅 빈 상태로 표시되고 아무런 안내 메시지가 없음. 사용자는 데이터가 없는 것인지 설정 오류인지 알 수 없음.
 
@@ -1087,7 +1090,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/ChartBuilderPage.tsx:267`, `apps/firehub-web/src/components/analytics/ChartSaveDialog.tsx`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 차트 저장/수정 다이얼로그의 이름 입력 필드에 `maxLength` 속성이 없어 200자 초과 입력이 가능. 200자 초과로 수정 클릭 시 서버 400 "Validation failed" 토스트가 표시되지만 어떤 필드의 어떤 규칙인지 안내 없음.
 

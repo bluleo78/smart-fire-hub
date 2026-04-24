@@ -242,6 +242,7 @@ function SaveDialog({
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               placeholder="차트 이름을 입력하세요"
+              maxLength={200}
             />
           </div>
           <div className="space-y-1.5">
@@ -406,6 +407,18 @@ export default function ChartBuilderPage() {
     if (chartType === 'MAP') {
       if (!config.spatialColumn) {
         toast.error('공간 컬럼을 선택하세요.');
+        return;
+      }
+    } else if (['CANDLESTICK', 'BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
+      // 이 타입들은 yAxis 대신 전용 컬럼 설정 사용 — xAxis만 필수
+      if (!config.xAxis) {
+        toast.error('X축을 설정하세요.');
+        return;
+      }
+    } else if (chartType === 'GAUGE') {
+      // 게이지는 yAxis[0]만 필수
+      if (config.yAxis.length === 0) {
+        toast.error('Y축(값 컬럼)을 설정하세요.');
         return;
       }
     } else if (!config.xAxis || config.yAxis.length === 0) {

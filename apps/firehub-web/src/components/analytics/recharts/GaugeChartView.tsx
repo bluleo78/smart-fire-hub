@@ -7,7 +7,8 @@ import type { ChartViewProps } from '../chart-view-props';
 export function GaugeChartView({ data, config, height = 280 }: ChartViewProps) {
   const value = Number(data[0]?.[config.yAxis[0]] ?? 0);
   const min = config.min ?? 0;
-  const max = config.max ?? 100;
+  // max 미설정 시 실제 데이터 값의 120%를 기본값으로 사용하여 바늘이 최대값에 고착되지 않도록 함
+  const max = config.max ?? (value > 0 ? Math.ceil(value * 1.2) : 100);
   const pct = Math.min(Math.max((value - min) / (max - min), 0), 1);
 
   // 반원 배경 + 값 호
