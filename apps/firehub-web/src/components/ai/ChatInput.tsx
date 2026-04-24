@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 
-const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv,.docx';
+const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv,.xlsx,.docx';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 const SIZE_LIMITS: Record<string, number> = {
   IMAGE: 5 * 1024 * 1024,
@@ -21,7 +22,7 @@ const SIZE_LIMITS: Record<string, number> = {
 function getCategory(mimeType: string): 'IMAGE' | 'PDF' | 'TEXT' | 'DATA' | 'DOCUMENT' | null {
   if (mimeType.startsWith('image/')) return 'IMAGE';
   if (mimeType === 'application/pdf') return 'PDF';
-  if (mimeType === 'text/csv') return 'DATA';
+  if (mimeType === 'text/csv' || mimeType === XLSX_MIME) return 'DATA';
   if (mimeType === DOCX_MIME) return 'DOCUMENT';
   if (
     mimeType.startsWith('text/') ||

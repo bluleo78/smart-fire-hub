@@ -176,6 +176,26 @@ test.describe('ChatInput — 파일 첨부', () => {
     // Sonner toast 에러 메시지
     await expect(page.getByText(/지원하지 않는 파일 형식/).first()).toBeVisible({ timeout: 5000 });
   });
+
+  test('XLSX 파일 첨부 시 에러 없이 전송 버튼이 활성화된다', async ({ authenticatedPage: page }) => {
+    await openSidePanel(page);
+
+    const fileInput = page.locator('input[type="file"]');
+    // XLSX MIME → getCategory() → 'DATA' → 파일 카드 표시, toast 없음
+    await fileInput.setInputFiles({
+      name: 'report.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: Buffer.from('PK'),
+    });
+
+    // 파일 카드에 파일명이 표시된다
+    await expect(page.getByText('report.xlsx')).toBeVisible({ timeout: 3000 });
+    // 에러 토스트가 표시되지 않아야 한다
+    await expect(page.getByText(/지원하지 않는 파일 형식/)).not.toBeVisible();
+    // 전송 버튼이 활성화된다
+    const sendBtn = page.locator('button:not([disabled])').filter({ has: page.locator('svg') }).last();
+    await expect(sendBtn).toBeEnabled({ timeout: 3000 });
+  });
 });
 
 test.describe('ChatInput — 스트리밍 중 정지 버튼', () => {

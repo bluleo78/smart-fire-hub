@@ -628,7 +628,8 @@ const triggerLabel = currentSession
 - **심각도**: Minor (기능 제한)
 - **컴포넌트**: `apps/firehub-web/src/components/ai/ChatInput.tsx:9` — `ACCEPT_ATTR`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: `.xlsx` 파일 첨부 시 "지원하지 않는 파일 형식입니다: test.xlsx" 토스트 표시. CSV는 지원되나 XLSX는 미지원.
 

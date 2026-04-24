@@ -45,7 +45,8 @@ public class FileUploadService {
           "application/x-yaml",
           "text/csv",
           "application/csv",
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
   private static final Map<String, String> MIME_TO_CATEGORY =
       Map.ofEntries(
@@ -65,7 +66,10 @@ public class FileUploadService {
           Map.entry("application/csv", "DATA"),
           Map.entry(
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-              "DOCUMENT"));
+              "DOCUMENT"),
+          Map.entry(
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "DATA"));
 
   // Category size limits in bytes
   private static final Map<String, Long> CATEGORY_SIZE_LIMITS =
@@ -223,6 +227,7 @@ public class FileUploadService {
         case "xml" -> "text/xml";
         case "yaml", "yml" -> "text/yaml";
         case "csv" -> "text/csv";
+        case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         default -> contentType != null ? contentType : "application/octet-stream";
       };
     }

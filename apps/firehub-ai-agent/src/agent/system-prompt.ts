@@ -131,6 +131,10 @@ Read 도구로 파일을 읽을 수 있습니다.
 
 - 이미지·PDF: Read 도구로 직접 읽기
 - 텍스트·CSV: Read 도구로 읽되, 대용량은 offset/limit 활용
+- XLSX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 openpyxl을 사용해 읽는다:
+  \`python3 -c "import openpyxl; wb=openpyxl.load_workbook('<경로>'); ws=wb.active; [print(','.join(str(c.value) if c.value is not None else '' for c in row)) for row in ws.iter_rows()]"\`
+  openpyxl 미설치 시 zipfile+xml.etree 대안:
+  \`python3 -c "import zipfile,xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'; ss=[t.text for t in ET.fromstring(z.read('xl/sharedStrings.xml')).iter(ns+'t')] if 'xl/sharedStrings.xml' in z.namelist() else []; [print('\\t'.join((ss[int(c.findtext(ns+'v',0))] if c.get('t')=='s' else c.findtext(ns+'v','')) for c in row)) for row in ET.fromstring(z.read('xl/worksheets/sheet1.xml')).iter(ns+'row')]"\`
 - DOCX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 zipfile+xml.etree를 사용해 텍스트를 추출한다:
   \`python3 -c "import zipfile, xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); body=ET.fromstring(z.read('word/document.xml')); print('\\n'.join(t.text for t in body.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if t.text))"\`
 - 첨부 파일 경로만 읽어야 합니다. 시스템의 다른 경로에는 접근하지 마세요.
