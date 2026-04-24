@@ -920,7 +920,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/BarChartView.tsx:51`, `LineChartView.tsx`, `AreaChartView.tsx`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: Y축 레이블이 `80000000` (8000만) 이상 큰 숫자일 때 SVG 영역 밖으로 잘려 앞 자리수가 보이지 않음. `0000000` 형태로 표시됨.
 
@@ -939,7 +940,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/hooks/queries/useAnalytics.ts:218` (useDashboardData), `apps/firehub-web/src/components/analytics/DashboardWidgetCard.tsx:45`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 새로고침 버튼 클릭 시 `GET /dashboards/{id}/data` (배치) 1회 + `GET /charts/{id}/data` N회 동시 호출됨 (위젯 4개 대시보드 → 5회). 배치만 호출되어야 정상.
 
@@ -958,7 +960,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major (시각적 오류)
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/recharts/HistogramChartView.tsx:42`, `BoxPlotChartView.tsx`, `GaugeChartView.tsx`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 히스토그램, 박스 플롯, 게이지 차트가 검은색으로 렌더링됨. 다른 차트는 정상 색상.
 
@@ -976,7 +979,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/DashboardListPage.tsx:90` (이름 input)
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 대시보드 이름 입력 필드에 `maxLength` 없어 303자 이상 입력 가능. 저장 시 DB 제약(`dashboard.name VARCHAR(200)`)에 걸려 400 반환되지만 클라이언트 피드백 없음 (다이얼로그 유지).
 
@@ -990,7 +994,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major (렌더링 깨짐)
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/recharts/FunnelChartView.tsx:30`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 퍼널 차트에서 X축을 문자열 컬럼(예: product_name)으로 설정하면 모든 레이블이 `: NaN`으로 표시됨.
 
@@ -1009,7 +1014,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/HomePage.tsx:260`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 홈페이지 "새 대시보드" 버튼 클릭 시 대시보드 목록 페이지(`/analytics/dashboards`)로만 이동. 생성 다이얼로그가 열리지 않음. 버튼 레이블이 "즉시 생성"을 암시하지만 실제로는 "목록으로 이동" 동작.
 

@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { LINE_CURSOR_STYLE,TOOLTIP_CONTENT_STYLE } from './chart-styles';
+import { formatYAxisTick, LINE_CURSOR_STYLE, TOOLTIP_CONTENT_STYLE } from './chart-styles';
 
 const DEFAULT_COLORS = [
   '#8884d8',
@@ -52,6 +52,8 @@ export function AreaChartView({ config, data, height }: AreaChartViewProps) {
           tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
           tickLine={false}
           axisLine={false}
+          width={80}
+          tickFormatter={formatYAxisTick}
           label={
             config.yAxisLabel
               ? { value: config.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: 12 }

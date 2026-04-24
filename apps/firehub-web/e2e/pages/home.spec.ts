@@ -32,7 +32,7 @@ test.describe('홈 페이지', () => {
     await expect(page.getByRole('button', { name: /새 데이터셋/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /파이프라인 목록/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /SQL 편집기/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: /새 대시보드/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /대시보드 관리/ })).toBeVisible();
 
     // 활동 피드 카드 제목 확인
     await expect(page.getByText('활동 피드')).toBeVisible();
@@ -159,8 +159,8 @@ test.describe('홈 페이지', () => {
     await page.goBack();
     await page.waitForURL('/');
 
-    // "새 대시보드" → /analytics/dashboards
-    await page.getByRole('button', { name: /새 대시보드/ }).click();
+    // "대시보드 관리" → /analytics/dashboards
+    await page.getByRole('button', { name: /대시보드 관리/ }).click();
     await expect(page).toHaveURL('/analytics/dashboards');
   });
 

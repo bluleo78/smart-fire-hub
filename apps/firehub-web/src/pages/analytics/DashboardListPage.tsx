@@ -106,6 +106,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               placeholder="대시보드 이름"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              maxLength={200}
             />
           </div>
           <div className="space-y-1.5">

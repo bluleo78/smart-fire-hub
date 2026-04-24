@@ -8,7 +8,6 @@ import {
   GitBranch,
   LayoutDashboard,
   ListChecks,
-  Plus,
   Terminal,
   Upload,
   XCircle,
@@ -258,8 +257,8 @@ export default function HomePage() {
           SQL 편집기
         </Button>
         <Button variant="outline" size="sm" onClick={() => navigate('/analytics/dashboards')}>
-          <Plus className="h-4 w-4 mr-2" />
-          새 대시보드
+          <LayoutDashboard className="h-4 w-4 mr-2" />
+          대시보드 관리
         </Button>
       </div>
 

@@ -51,7 +51,7 @@ export function HistogramChartView({ data, config, height = 300 }: ChartViewProp
           cursor={BAR_CURSOR_STYLE}
           formatter={(v: number | undefined) => [v ?? 0, '빈도']}
         />
-        <Bar dataKey="count" fill="hsl(var(--chart-1, 220 70% 50%))" radius={[2, 2, 0, 0]} />
+        <Bar dataKey="count" fill="#8884d8" radius={[2, 2, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

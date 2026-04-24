@@ -94,24 +94,24 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
                 <g key={s.category}>
                   {/* 위 수염 (median → max) */}
                   <line x1={cx} y1={toY(s.q3)} x2={cx} y2={toY(s.max)}
-                    stroke="hsl(var(--chart-1, 220 70% 50%))" strokeWidth={1.5} />
+                    stroke="#8884d8" strokeWidth={1.5} />
                   <line x1={x1 + boxW * 0.2} y1={toY(s.max)} x2={x2 - boxW * 0.2} y2={toY(s.max)}
-                    stroke="hsl(var(--chart-1, 220 70% 50%))" strokeWidth={1.5} />
+                    stroke="#8884d8" strokeWidth={1.5} />
                   {/* 아래 수염 (min → q1) */}
                   <line x1={cx} y1={toY(s.q1)} x2={cx} y2={toY(s.min)}
-                    stroke="hsl(var(--chart-1, 220 70% 50%))" strokeWidth={1.5} />
+                    stroke="#8884d8" strokeWidth={1.5} />
                   <line x1={x1 + boxW * 0.2} y1={toY(s.min)} x2={x2 - boxW * 0.2} y2={toY(s.min)}
-                    stroke="hsl(var(--chart-1, 220 70% 50%))" strokeWidth={1.5} />
+                    stroke="#8884d8" strokeWidth={1.5} />
                   {/* IQR 박스 (q1 ~ q3) */}
                   <rect
                     x={x1} y={toY(s.q3)}
                     width={boxW} height={Math.max(toY(s.q1) - toY(s.q3), 1)}
-                    fill="hsl(var(--chart-1, 220 70% 50%))" fillOpacity={0.25}
-                    stroke="hsl(var(--chart-1, 220 70% 50%))" strokeWidth={1.5}
+                    fill="#8884d8" fillOpacity={0.25}
+                    stroke="#8884d8" strokeWidth={1.5}
                   />
                   {/* 중앙값 선 */}
                   <line x1={x1} y1={toY(s.median)} x2={x2} y2={toY(s.median)}
-                    stroke="hsl(var(--chart-1, 220 70% 50%))" strokeWidth={2.5} />
+                    stroke="#8884d8" strokeWidth={2.5} />
                   {/* X축 라벨 */}
                   <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={11}
                     fill="hsl(var(--muted-foreground))">{s.category}</text>

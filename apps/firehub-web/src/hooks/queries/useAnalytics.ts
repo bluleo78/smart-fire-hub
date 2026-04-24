@@ -220,6 +220,8 @@ export function useDashboardData(dashboardId: number | undefined) {
     queryKey: ['analytics', 'dashboards', dashboardId, 'data'],
     queryFn: () => analyticsApi.getDashboardData(dashboardId!).then((r) => r.data),
     enabled: !!dashboardId,
+    // refetch 중 data가 undefined로 초기화되지 않도록 이전 데이터 유지 → N+1 개별 차트 fetch 방지
+    placeholderData: (previousData) => previousData,
   });
 }
 

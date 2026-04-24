@@ -26,14 +26,18 @@ export function FunnelChartView({ data, config, height = 300 }: ChartViewProps) 
             <Cell key={i} fill={entry.fill} />
           ))}
           <LabelList
+            dataKey="value"
             position="center"
             content={(props) => {
+              // dataKey="value"로 props.value를 직접 전달받고, index로 name 조회
+              const entry = funnelData[props.index as number];
+              if (!entry) return null;
               const nx = Number(props.x ?? 0), ny = Number(props.y ?? 0);
               const nw = Number(props.width ?? 0), nh = Number(props.height ?? 0);
               return (
               <text x={nx + nw / 2} y={ny + nh / 2} textAnchor="middle"
                 dominantBaseline="middle" fontSize={12} fill="#fff" fontWeight={500}>
-                {`${String(props.name ?? '')}: ${Number(props.value).toLocaleString()}`}
+                {`${entry.name}: ${entry.value.toLocaleString()}`}
               </text>
               );
             }}
