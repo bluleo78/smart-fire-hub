@@ -81,7 +81,10 @@ export default function ProactiveJobListPage() {
   const handleToggle = (job: ProactiveJob, enabled: boolean) => {
     updateMutation.mutate(
       { id: job.id, data: { enabled } },
-      { onError: () => toast.error('상태 변경에 실패했습니다.') },
+      {
+        onSuccess: () => toast.success(`작업이 ${enabled ? '활성화' : '비활성화'}되었습니다.`),
+        onError: () => toast.error('상태 변경에 실패했습니다.'),
+      },
     );
   };
 

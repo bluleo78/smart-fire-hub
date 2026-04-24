@@ -1160,7 +1160,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/components/SectionPropertyEditor.tsx:47-74`, `ReportTemplateDetailPage.tsx:113-142`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 섹션 Key 필드에 `INVALID KEY WITH SPACES!` 등 snake_case 규칙 위반 값 입력 시 "영문 소문자, 숫자, 밑줄만 사용 가능" 에러가 표시되지만 저장 버튼 클릭 시 정상 저장됨. 백엔드에도 잘못된 키가 실제로 저장되어 AI 리포트 생성 시 키 참조 오류 가능성 있음.
 
@@ -1181,7 +1182,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ReportTemplateDetailPage.tsx:113-142`, `components/TemplateJsonEditor.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: JSON 탭에서 잘못된 JSON (`{INVALID JSON!!!}`)을 입력한 후 저장 버튼 클릭 시 "템플릿이 수정되었습니다." 토스트가 표시되나, 실제로는 JSON 편집 내용이 무시되고 이전 유효한 섹션 상태가 저장됨. 사용자는 자신의 JSON 편집이 저장된 것으로 착각할 수 있음.
 
@@ -1201,7 +1203,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/components/SectionPropertyEditor.tsx`, `ReportTemplateDetailPage.tsx:113-142`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 두 섹션에 동일한 Key (`text_1`)를 설정한 후 저장 시 저장이 성공되고, 백엔드에도 중복 키가 저장됨. 저장 시 6개의 콘솔 에러 발생. AI 리포트 생성 시 어느 섹션 내용인지 구분 불가로 결과 불일치 발생 가능성 있음.
 
@@ -1221,7 +1224,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ProactiveJobListPage.tsx:81-86`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 스마트 작업 목록에서 활성/비활성 토글 스위치를 클릭해 상태 변경이 성공해도 아무 토스트 알림이 표시되지 않음. 실패 시에만 `toast.error` 표시됨. 복제·지금 실행은 성공 토스트가 있어 일관성 없음.
 
@@ -1251,7 +1255,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ReportTemplateDetailPage.tsx:301-308`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 템플릿 설명 필드에 501자 이상 입력 후 저장 클릭 시 `reportTemplateSchema`의 `max(500)` 검증이 실패하여 저장이 차단되지만, UI에 에러 메시지가 표시되지 않음. 사용자는 왜 저장이 안 되는지 알 수 없음.
 

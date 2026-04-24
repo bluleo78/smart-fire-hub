@@ -112,10 +112,38 @@ export default function ReportTemplateDetailPage() {
   );
 
   const handleSave = form.handleSubmit((values) => {
+    // JSON 탭 활성 시 현재 structureJson을 파싱하여 sections 반영 (#37)
+    let resolvedSections = tree.sections;
+    if (activeTab === 'json') {
+      const parsed = parseTemplateSections(structureJson);
+      if (!parsed) {
+        toast.error('JSON이 올바르지 않아 저장할 수 없습니다.');
+        return;
+      }
+      resolvedSections = parsed;
+    }
+
+    // 섹션 Key 유효성 검사 (#36)
+    const invalidKey = resolvedSections.find((s) => !/^[a-z][a-z0-9_]*$/.test(s.key));
+    if (invalidKey) {
+      toast.error(`섹션 Key "${invalidKey.key}"가 올바르지 않습니다. 영문 소문자, 숫자, 밑줄만 사용하세요.`);
+      return;
+    }
+
+    // 섹션 Key 중복 검사 (#38)
+    const keySet = new Set<string>();
+    for (const s of resolvedSections) {
+      if (keySet.has(s.key)) {
+        toast.error(`섹션 Key가 중복되었습니다: "${s.key}"`);
+        return;
+      }
+      keySet.add(s.key);
+    }
+
     const payload = {
       name: values.name,
       description: values.description || undefined,
-      sections: tree.sections,
+      sections: resolvedSections,
       style: styleText.trim() || undefined,
     };
 
@@ -306,6 +334,9 @@ export default function ReportTemplateDetailPage() {
                   {...form.register('description')}
                   placeholder="템플릿 설명을 입력하세요"
                 />
+                {form.formState.errors.description && (
+                  <p className="text-sm text-destructive">{form.formState.errors.description.message}</p>
+                )}
               </div>
               <div className="col-span-2 space-y-2">
                 <Label htmlFor="tpl-style">작성 스타일 (선택)</Label>
