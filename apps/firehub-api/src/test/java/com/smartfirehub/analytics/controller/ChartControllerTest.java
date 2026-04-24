@@ -57,7 +57,7 @@ class ChartControllerTest {
   @Test
   void listCharts_returnsPage() throws Exception {
     mockAuth("analytics:read");
-    when(chartService.list(any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
+    when(chartService.list(any(), any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
         .thenReturn(new PageResponse<>(List.of(), 0, 20, 0L, 0));
 
     mockMvc

@@ -839,7 +839,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/controller/ChartController.java:24`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: "공유됨" 탭 클릭 시 `sharedOnly=true` 파라미터가 API로 전송되지만, 백엔드 Controller가 해당 파라미터를 `@RequestParam`으로 받지 않아 전체 차트가 반환됨. 공유된 차트만 표시되어야 함.
 
@@ -858,7 +859,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/controller/AnalyticsDashboardController.java:37`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: "공유됨" 탭 클릭 시 `?sharedOnly=true` 파라미터로 API 호출하지만, 실제 응답에는 `isShared:false` 대시보드까지 모두 포함됨. "내 대시보드" 탭과 동일한 결과 표시.
 

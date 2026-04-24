@@ -70,7 +70,7 @@ class AnalyticsDashboardControllerTest {
   void listDashboards_withPermission_returnsPage() throws Exception {
     PageResponse<DashboardResponse> page =
         new PageResponse<>(List.of(sampleDashboard()), 0, 20, 1L, 1);
-    when(dashboardService.list(any(), anyLong(), anyInt(), anyInt())).thenReturn(page);
+    when(dashboardService.list(any(), any(), anyLong(), anyInt(), anyInt())).thenReturn(page);
 
     mockMvc
         .perform(

@@ -81,7 +81,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
     dashboardService.create(new CreateDashboardRequest("Beta", null, false, null), ownerUserId);
 
     // When
-    PageResponse<DashboardResponse> result = dashboardService.list(null, ownerUserId, 0, 10);
+    PageResponse<DashboardResponse> result = dashboardService.list(null, null, ownerUserId, 0, 10);
 
     // Then
     assertThat(result.content()).hasSizeGreaterThanOrEqualTo(2);
@@ -94,7 +94,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
     dashboardService.create(new CreateDashboardRequest("UniqueTitle123", null, false, null), ownerUserId);
     dashboardService.create(new CreateDashboardRequest("OtherDash", null, false, null), ownerUserId);
 
-    PageResponse<DashboardResponse> result = dashboardService.list("UniqueTitle123", ownerUserId, 0, 10);
+    PageResponse<DashboardResponse> result = dashboardService.list("UniqueTitle123", null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("UniqueTitle123");
@@ -104,7 +104,7 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   void list_sharedDashboard_visibleToOtherUser() {
     dashboardService.create(new CreateDashboardRequest("PublicDash", null, true, null), ownerUserId);
 
-    PageResponse<DashboardResponse> result = dashboardService.list(null, otherUserId, 0, 10);
+    PageResponse<DashboardResponse> result = dashboardService.list(null, null, otherUserId, 0, 10);
 
     List<String> names = result.content().stream().map(DashboardResponse::name).toList();
     assertThat(names).contains("PublicDash");

@@ -43,9 +43,9 @@ public class AnalyticsDashboardService {
       Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(200).build();
 
   public com.smartfirehub.global.dto.PageResponse<DashboardResponse> list(
-      String search, Long userId, int page, int size) {
-    List<DashboardResponse> content = dashboardRepository.findAll(search, userId, page, size);
-    long total = dashboardRepository.countAll(search, userId);
+      String search, Boolean sharedOnly, Long userId, int page, int size) {
+    List<DashboardResponse> content = dashboardRepository.findAll(search, sharedOnly, userId, page, size);
+    long total = dashboardRepository.countAll(search, sharedOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new com.smartfirehub.global.dto.PageResponse<>(content, page, size, total, totalPages);
   }

@@ -54,9 +54,13 @@ public class AnalyticsDashboardRepository {
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
 
-  public List<DashboardResponse> findAll(String search, Long userId, int page, int size) {
+  public List<DashboardResponse> findAll(String search, Boolean sharedOnly, Long userId, int page, int size) {
     List<Condition> conditions = new ArrayList<>();
-    conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
+    if (Boolean.TRUE.equals(sharedOnly)) {
+      conditions.add(D_IS_SHARED.isTrue());
+    } else {
+      conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
+    }
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -98,9 +102,13 @@ public class AnalyticsDashboardRepository {
     return result;
   }
 
-  public long countAll(String search, Long userId) {
+  public long countAll(String search, Boolean sharedOnly, Long userId) {
     List<Condition> conditions = new ArrayList<>();
-    conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
+    if (Boolean.TRUE.equals(sharedOnly)) {
+      conditions.add(D_IS_SHARED.isTrue());
+    } else {
+      conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
+    }
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);

@@ -36,13 +36,14 @@ public class AnalyticsDashboardController {
   @RequirePermission("analytics:read")
   public ResponseEntity<PageResponse<DashboardResponse>> listDashboards(
       @RequestParam(required = false) String search,
+      @RequestParam(required = false) Boolean sharedOnly,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       Authentication authentication) {
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 100));
     Long userId = (Long) authentication.getPrincipal();
-    return ResponseEntity.ok(dashboardService.list(search, userId, page, size));
+    return ResponseEntity.ok(dashboardService.list(search, sharedOnly, userId, page, size));
   }
 
   @PostMapping

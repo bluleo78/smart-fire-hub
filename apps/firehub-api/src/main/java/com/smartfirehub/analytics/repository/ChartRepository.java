@@ -64,13 +64,18 @@ public class ChartRepository {
       field(name("dashboard_widget", "chart_id"), Long.class);
 
   public List<ChartResponse> findAll(
-      String search, String chartType, Long savedQueryId, Long userId, int page, int size) {
+      String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId, int page, int size) {
 
     var dashboardCountField =
         dsl.selectCount().from(DW).where(DW_CHART_ID.eq(C_ID)).asField("dashboard_count");
 
     List<Condition> conditions = new ArrayList<>();
-    conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
+    // sharedOnly=true이면 공유된 차트만, 아니면 내 차트 + 공유된 차트
+    if (Boolean.TRUE.equals(sharedOnly)) {
+      conditions.add(C_IS_SHARED.isTrue());
+    } else {
+      conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
+    }
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -121,9 +126,13 @@ public class ChartRepository {
     return result;
   }
 
-  public long countAll(String search, String chartType, Long savedQueryId, Long userId) {
+  public long countAll(String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId) {
     List<Condition> conditions = new ArrayList<>();
-    conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
+    if (Boolean.TRUE.equals(sharedOnly)) {
+      conditions.add(C_IS_SHARED.isTrue());
+    } else {
+      conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
+    }
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);

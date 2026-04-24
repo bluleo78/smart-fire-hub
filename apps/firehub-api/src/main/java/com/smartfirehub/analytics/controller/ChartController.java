@@ -27,6 +27,7 @@ public class ChartController {
       @RequestParam(required = false) String search,
       @RequestParam(required = false) String chartType,
       @RequestParam(required = false) Long savedQueryId,
+      @RequestParam(required = false) Boolean sharedOnly,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       Authentication authentication) {
@@ -34,7 +35,7 @@ public class ChartController {
     size = Math.max(1, Math.min(size, 100));
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(
-        chartService.list(search, chartType, savedQueryId, userId, page, size));
+        chartService.list(search, chartType, savedQueryId, sharedOnly, userId, page, size));
   }
 
   @PostMapping

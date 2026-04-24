@@ -360,7 +360,7 @@ class ChartServiceTest extends IntegrationTestBase {
             .fetchOne()
             .get(DSL.field(DSL.name("chart", "id"), Long.class));
 
-    PageResponse<ChartResponse> result = chartService.list(null, null, null, ownerUserId, 0, 10);
+    PageResponse<ChartResponse> result = chartService.list(null, null, null, null, ownerUserId, 0, 10);
 
     List<String> names = result.content().stream().map(ChartResponse::name).toList();
     assertThat(names).contains("My Private", "Other Shared Chart");
@@ -380,7 +380,7 @@ class ChartServiceTest extends IntegrationTestBase {
         .set(DSL.field(DSL.name("chart", "created_by"), Long.class), ownerUserId)
         .execute();
 
-    PageResponse<ChartResponse> result = chartService.list(null, "BAR", null, ownerUserId, 0, 10);
+    PageResponse<ChartResponse> result = chartService.list(null, "BAR", null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).allMatch(c -> "BAR".equals(c.chartType()));
     List<String> names = result.content().stream().map(ChartResponse::name).toList();
@@ -394,7 +394,7 @@ class ChartServiceTest extends IntegrationTestBase {
     createChart("Alpha Chart", false, ownerUserId);
     createChart("Beta Chart", false, ownerUserId);
 
-    PageResponse<ChartResponse> result = chartService.list("Alpha", null, null, ownerUserId, 0, 10);
+    PageResponse<ChartResponse> result = chartService.list("Alpha", null, null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("Alpha Chart");
