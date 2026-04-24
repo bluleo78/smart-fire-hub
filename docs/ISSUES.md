@@ -394,7 +394,8 @@ onValueChange={(v) => {
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/QueryEditorPage.tsx:342` + `apps/firehub-api` saved_query.name
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 분석/쿼리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 쿼리 이름 입력 필드에 `maxLength` 속성이 없어 250자 이상도 입력 가능. 저장 시도 시 백엔드에서 400 반환하지만 클라이언트에서 입력 시점 피드백 없음.
 

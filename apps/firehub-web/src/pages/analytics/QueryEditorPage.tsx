@@ -299,6 +299,7 @@ function SaveDialog({
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               placeholder="쿼리 이름을 입력하세요"
+              maxLength={200}
             />
           </div>
           <div className="space-y-1.5">
