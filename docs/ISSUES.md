@@ -83,7 +83,8 @@
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/dashboard/service/DashboardService.java:568,639` / `apps/firehub-web/src/pages/HomePage.tsx:508`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 홈)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 홈 페이지 활동 피드에서 React 콘솔 경고 발생: "Encountered two children with the same key". `pipeline_execution` 테이블과 `audit_log` 테이블의 id 1이 동시에 존재하여 프론트엔드에서 `key=1`이 중복됨.
 
@@ -102,7 +103,8 @@
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/SmtpSettingsTab.tsx:80`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 관리/설정/이메일)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: SMTP 호스트가 설정되지 않은 상태에서 "테스트 발송" 버튼 클릭 시 서버가 `{success: false, message: "SMTP 호스트가 설정되지 않았습니다"}`를 200 OK로 반환하지만, 프론트엔드는 HTTP 200을 성공으로 처리하여 "테스트 이메일이 발송되었습니다." 토스트를 표시함.
 
@@ -121,7 +123,8 @@
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ReportViewerPage.tsx:68-90`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/실행 이력)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 실행 결과 HTML 로드 실패(`isError=true`) 시에도 "인쇄"/"PDF" 버튼이 활성화 상태로 표시됨. PDF 클릭 시 400 오류 발생.
 
@@ -140,7 +143,8 @@
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ProactiveJobDetailPage.tsx:243`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: "지금 실행" 버튼 더블클릭 시 POST /api/v1/proactive/jobs/:id/execute 요청이 2회 발생하여 동일 작업이 중복 실행됨.
 
@@ -158,7 +162,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ReportTemplateDetailPage.tsx:117`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/리포트 양식, 코드 분석)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: JSON 탭에서 섹션 구조를 수정한 후 빌더 탭으로 전환하지 않고 바로 저장하면, JSON 편집 내용이 무시되고 이전 빌더 상태가 저장됨.
 
@@ -178,7 +183,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ProactiveJobDetailPage.tsx:148-156`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 작업 상세 페이지의 삭제 버튼 클릭 시 확인 없이 즉시 삭제 후 목록으로 이동.
 
@@ -196,7 +202,8 @@
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/tabs/JobOverviewTab.tsx:423-474`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 트리거 유형을 "이상 탐지 (이벤트 기반)"로 선택해도 "실행 주기"/"타임존"/"다음 실행" 필드가 계속 표시됨.
 
@@ -214,7 +221,8 @@
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/tabs/JobMonitoringTab.tsx:330-342`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 쿨다운(분) 필드에 음수 입력 후 저장 시 Zod 검증(`min(1)`)이 실패하여 PATCH 요청이 발생하지 않으나 UI에 에러 메시지가 표시되지 않음. 사용자는 왜 저장이 안 되는지 알 수 없음.
 
@@ -238,7 +246,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ReportTemplateDetailPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 동일한 key값을 가진 섹션을 여러 개 추가해도 저장이 허용됨. 이후 리포트 생성 시 동일 key 섹션 간 충돌 발생 가능.
 
@@ -257,7 +266,8 @@
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-api` proactive jobs controller
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 작업 삭제(DELETE 204) 직후 프론트엔드가 GET /api/v1/proactive/jobs/:id 재조회 시 400 반환. HTTP 표준상 존재하지 않는 리소스는 404 반환이 맞음.
 
@@ -275,7 +285,8 @@
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/ProactiveJobDetailPage.tsx:94`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 존재하지 않는 작업 ID로 접근(예: /ai-insights/jobs/9999)하면 404 처리나 에러 메시지 없이 제목 "-"과 빈 기본값을 가진 편집 폼이 표시됨.
 
@@ -293,7 +304,8 @@
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/AiInsightJobsPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: GET /api/v1/proactive/jobs 에서 500 에러 발생 시 UI가 에러 상태 대신 "스마트 작업 없음" 빈 상태 화면을 표시함. 사용자는 API 실패인지 실제로 작업이 없는지 구분할 수 없음.
 
@@ -312,7 +324,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/components/SectionPropertyEditor.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 섹션 Key에 공백·대문자·특수문자 입력 시 "영문 소문자, 숫자, 밑줄만 사용 가능" 경고가 표시되지만 저장 버튼이 차단되지 않아 유효하지 않은 key값으로 저장됨.
 
@@ -332,7 +345,8 @@
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/tabs/JobMonitoringTab.tsx:519`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 커스텀 메트릭 추가 다이얼로그에서 폴링 주기를 60초 미만으로 입력하고 "추가"를 클릭해도 에러 없이 메트릭이 추가됨.
 
@@ -351,7 +365,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/ai-insights/tabs/JobOverviewTab.tsx:428-441`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 실행 주기 드롭다운에서 "직접 입력"을 선택해도 Cron 표현식 텍스트 입력 필드가 나타나지 않아 커스텀 스케줄을 설정할 수 없음.
 
@@ -376,7 +391,8 @@ onValueChange={(v) => {
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/lib/validations/proactive-job.ts:28` / DB: `V42__create_proactive_tables.sql:6`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 인사이트/스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 작업 이름 입력 필드에 201자 이상 입력 후 저장 시 Zod 검증 없이 PUT 요청 발생, 서버가 DB VARCHAR(200) 제약 위반으로 500 반환.
 

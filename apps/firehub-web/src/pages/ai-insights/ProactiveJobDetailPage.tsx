@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   useCloneProactiveJob,
@@ -91,7 +92,7 @@ export default function ProactiveJobDetailPage() {
 
   const activeTab = searchParams.get('tab') ?? 'overview';
 
-  const { data: job, isLoading } = useProactiveJob(jobId);
+  const { data: job, isLoading, isError } = useProactiveJob(jobId);
   const { data: templates = [] } = useProactiveTemplates();
 
   const [isEditing, setIsEditing] = useState(isNew);
@@ -116,7 +117,7 @@ export default function ProactiveJobDetailPage() {
       name: values.name,
       prompt: values.prompt,
       templateId: values.templateId ?? null,
-      cronExpression: values.cronExpression,
+      cronExpression: values.cronExpression ?? '',
       timezone: values.timezone,
       triggerType: values.triggerType,
       config: values.config,
@@ -186,12 +187,40 @@ export default function ProactiveJobDetailPage() {
   };
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
+  // 더블클릭 중복 실행 방지용 ref — disabled 상태 전파 지연 대응 (#49)
+  const isExecutingRef = useRef(false);
+
+  const handleExecuteSafe = () => {
+    if (isExecutingRef.current) return;
+    isExecutingRef.current = true;
+    handleExecute();
+    setTimeout(() => { isExecutingRef.current = false; }, 1000);
+  };
 
   if (!isNew && isLoading) {
     return (
       <div className="space-y-6">
         <div className="h-8 w-64 bg-muted animate-pulse rounded" />
         <div className="h-96 bg-muted animate-pulse rounded" />
+      </div>
+    );
+  }
+
+  // 존재하지 않는 작업 ID 접근 시 에러 상태 처리 (#47)
+  if (!isNew && isError) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/ai-insights/jobs')} aria-label="목록으로">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">작업을 찾을 수 없습니다</h1>
+        </div>
+        <p className="text-muted-foreground text-sm">요청하신 작업이 존재하지 않거나 삭제되었습니다.</p>
+        <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          목록으로 돌아가기
+        </Button>
       </div>
     );
   }
@@ -239,7 +268,7 @@ export default function ProactiveJobDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleExecute}
+                onClick={handleExecuteSafe}
                 disabled={executeMutation.isPending}
               >
                 지금 실행
@@ -247,14 +276,21 @@ export default function ProactiveJobDetailPage() {
               <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
                 편집
               </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleDelete}
-                disabled={deleteMutation.isPending}
-              >
-                삭제
-              </Button>
+              {/* 삭제 확인 다이얼로그 (#37) */}
+              <DeleteConfirmDialog
+                entityName="스마트 작업"
+                itemName={job?.name ?? ''}
+                onConfirm={handleDelete}
+                trigger={
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleteMutation.isPending}
+                  >
+                    삭제
+                  </Button>
+                }
+              />
             </>
           )}
           {isEditing && (

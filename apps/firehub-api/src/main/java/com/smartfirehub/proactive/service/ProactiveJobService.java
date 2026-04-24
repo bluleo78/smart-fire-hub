@@ -13,6 +13,7 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
@@ -108,9 +109,10 @@ public class ProactiveJobService {
 
   @Transactional(readOnly = true)
   public ProactiveJobResponse getJob(Long id, Long userId) {
+    // 존재하지 않는 Job 조회 시 404 반환 (#41)
     return proactiveJobRepository
         .findById(id, userId)
-        .orElseThrow(() -> new ProactiveJobException("Proactive Job을 찾을 수 없습니다: " + id));
+        .orElseThrow(() -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
   }
 
   @Transactional

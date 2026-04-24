@@ -25,6 +25,7 @@ import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.user.exception.UserDeactivatedException;
@@ -360,6 +361,13 @@ public class GlobalExceptionHandler {
       FileSizeLimitExceededException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
     return ResponseEntity.badRequest().body(response);
+  }
+
+  @ExceptionHandler(ProactiveJobNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleProactiveJobNotFound(
+      ProactiveJobNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }
 
   @ExceptionHandler(ProactiveJobException.class)

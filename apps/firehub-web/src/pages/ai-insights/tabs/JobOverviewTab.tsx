@@ -350,6 +350,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
         <Input
           id="job-name"
           placeholder="일일 파이프라인 리포트"
+          maxLength={200}
           {...register('name')}
         />
         {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
@@ -420,61 +421,67 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
         </div>
       )}
 
-      {/* 실행 주기 */}
-      <div className="space-y-2">
-        <Label htmlFor="job-cron-preset">실행 주기</Label>
-        <Select
-          value={cronPreset}
-          onValueChange={(v) => {
-            if (v !== '__custom__') setValue('cronExpression', v);
-          }}
-        >
-          <SelectTrigger id="job-cron-preset">
-            <SelectValue placeholder="실행 주기 선택" />
-          </SelectTrigger>
-          <SelectContent>
-            {CRON_PRESETS.map((p) => (
-              <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {cronPreset === '__custom__' && (
-          <div className="space-y-1">
-            <Input
-              placeholder="0 9 * * *"
-              className="font-mono text-sm"
-              {...register('cronExpression')}
-            />
-            <p className="text-xs text-muted-foreground">Cron 표현식 (분 시 일 월 요일)</p>
-          </div>
-        )}
-        {errors.cronExpression && (
-          <p className="text-xs text-destructive">{errors.cronExpression.message}</p>
-        )}
-      </div>
+      {/* 실행 주기 — ANOMALY 전용 트리거에서는 불필요 (#38) */}
+      {watch('triggerType') !== 'ANOMALY' && (
+        <div className="space-y-2">
+          <Label htmlFor="job-cron-preset">실행 주기</Label>
+          <Select
+            value={cronPreset}
+            onValueChange={(v) => {
+              // __custom__ 선택 시 cronExpression을 빈 값으로 설정해 커스텀 입력 필드를 표시 (#43)
+              if (v === '__custom__') setValue('cronExpression', '');
+              else setValue('cronExpression', v);
+            }}
+          >
+            <SelectTrigger id="job-cron-preset">
+              <SelectValue placeholder="실행 주기 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              {CRON_PRESETS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {cronPreset === '__custom__' && (
+            <div className="space-y-1">
+              <Input
+                placeholder="0 9 * * *"
+                className="font-mono text-sm"
+                {...register('cronExpression')}
+              />
+              <p className="text-xs text-muted-foreground">Cron 표현식 (분 시 일 월 요일)</p>
+            </div>
+          )}
+          {errors.cronExpression && (
+            <p className="text-xs text-destructive">{errors.cronExpression.message}</p>
+          )}
+        </div>
+      )}
 
-      {/* 타임존 */}
-      <div className="space-y-2">
-        <Label htmlFor="job-timezone">타임존</Label>
-        <Select
-          value={timezone}
-          onValueChange={(v) => setValue('timezone', v)}
-        >
-          <SelectTrigger id="job-timezone">
-            <SelectValue placeholder="타임존 선택" />
-          </SelectTrigger>
-          <SelectContent>
-            {TIMEZONE_OPTIONS.map((tz) => (
-              <SelectItem key={tz.value} value={tz.value}>
-                {tz.value} ({tz.abbr}, {tz.offset})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* 타임존 — ANOMALY 전용 트리거에서는 불필요 (#38) */}
+      {watch('triggerType') !== 'ANOMALY' && (
+        <div className="space-y-2">
+          <Label htmlFor="job-timezone">타임존</Label>
+          <Select
+            value={timezone}
+            onValueChange={(v) => setValue('timezone', v)}
+          >
+            <SelectTrigger id="job-timezone">
+              <SelectValue placeholder="타임존 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <SelectItem key={tz.value} value={tz.value}>
+                  {tz.value} ({tz.abbr}, {tz.offset})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
-      {/* 다음 실행 시간 */}
-      {nextRunInfo && (
+      {/* 다음 실행 시간 — ANOMALY 전용 트리거에서는 불필요 (#38) */}
+      {watch('triggerType') !== 'ANOMALY' && nextRunInfo && (
         <div className="flex items-center gap-2 rounded-lg border border-info/20 bg-info-subtle p-3 text-sm text-info">
           <span>📅</span>
           <span>다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong></span>

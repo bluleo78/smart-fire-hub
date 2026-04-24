@@ -384,8 +384,10 @@ test.describe('스마트 작업 상세 페이지', () => {
 
     await page.goto('/ai-insights/jobs/1');
 
-    // 삭제 버튼 클릭 (destructive 버튼) — 별도 확인 다이얼로그 없이 바로 API 호출
+    // 삭제 버튼 클릭 → 확인 다이얼로그 표시됨 (#37)
     await page.getByRole('button', { name: '삭제' }).click();
+    // AlertDialog에서 "삭제" 확인 버튼 클릭
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
 
     // DELETE API가 실제로 호출되었는지 확인
     const req = await deleteCapture.waitForRequest();

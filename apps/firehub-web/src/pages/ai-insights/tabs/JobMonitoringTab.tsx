@@ -337,6 +337,10 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0 }: JobMoni
                 value={anomalyConfig.cooldownMinutes}
                 onChange={(e) => updateAnomaly({ cooldownMinutes: Number(e.target.value) || 30 })}
               />
+              {/* 쿨다운 음수 입력 시 Zod 에러 메시지 표시 (#39) */}
+              {anomalyConfig.cooldownMinutes < 1 && (
+                <p className="text-xs text-destructive">최소 1분 이상이어야 합니다</p>
+              )}
               <p className="text-xs text-muted-foreground">
                 이상 탐지 후 동일 메트릭에 대해 재실행까지 대기하는 시간
               </p>
@@ -502,6 +506,10 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0 }: JobMoni
                   setCustomForm((f) => ({ ...f, customInterval: Number(e.target.value) || 600 }))
                 }
               />
+              {/* 60초 미만 입력 시 에러 메시지 표시 (#44) */}
+              {customForm.customInterval < 60 && (
+                <p className="text-xs text-destructive">최소 60초 이상이어야 합니다</p>
+              )}
             </div>
           </div>
 
@@ -518,7 +526,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0 }: JobMoni
             </Button>
             <Button
               type="button"
-              disabled={!customForm.customName || !customForm.customDatasetId || !customForm.customQuery}
+              disabled={!customForm.customName || !customForm.customDatasetId || !customForm.customQuery || customForm.customInterval < 60}
               onClick={addCustomMetric}
             >
               추가

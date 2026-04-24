@@ -77,7 +77,15 @@ export default function SmtpSettingsTab() {
 
   const handleTest = () => {
     testMutation.mutate(undefined, {
-      onSuccess: () => toast.success('테스트 이메일이 발송되었습니다.'),
+      onSuccess: (res) => {
+        // 서버가 200 OK라도 success=false면 실패 (비정상 응답 처리)
+        const data = res.data as { success?: boolean; message?: string } | undefined;
+        if (data?.success === false) {
+          toast.error(data.message ?? '테스트 발송에 실패했습니다.');
+        } else {
+          toast.success('테스트 이메일이 발송되었습니다.');
+        }
+      },
       onError: () => toast.error('테스트 발송에 실패했습니다.'),
     });
   };

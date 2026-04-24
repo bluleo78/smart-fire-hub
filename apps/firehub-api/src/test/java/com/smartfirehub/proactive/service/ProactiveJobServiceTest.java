@@ -16,6 +16,7 @@ import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -124,8 +125,9 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     proactiveJobService.deleteJob(id, testUserId);
 
     // then
+    // 삭제된 Job 조회 시 ProactiveJobNotFoundException(404) 발생 (#41)
     assertThatThrownBy(() -> proactiveJobService.getJob(id, testUserId))
-        .isInstanceOf(ProactiveJobException.class)
+        .isInstanceOf(ProactiveJobNotFoundException.class)
         .hasMessageContaining("Proactive Job을 찾을 수 없습니다");
   }
 

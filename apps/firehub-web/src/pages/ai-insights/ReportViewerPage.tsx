@@ -68,6 +68,7 @@ export default function ReportViewerPage() {
             variant="outline"
             size="sm"
             onClick={handlePrint}
+            disabled={isError || isLoading}
             className="gap-1.5"
           >
             <Printer className="h-3.5 w-3.5" />
@@ -77,7 +78,7 @@ export default function ReportViewerPage() {
             variant="outline"
             size="sm"
             onClick={handleDownloadPdf}
-            disabled={downloading}
+            disabled={downloading || isError || isLoading}
             className="gap-1.5"
           >
             {downloading ? (

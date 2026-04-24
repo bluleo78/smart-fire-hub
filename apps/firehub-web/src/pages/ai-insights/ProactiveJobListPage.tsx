@@ -73,7 +73,7 @@ function jobStatusLabel(job: ProactiveJob): string {
 
 export default function ProactiveJobListPage() {
   const navigate = useNavigate();
-  const { data: jobs = [], isLoading } = useProactiveJobs();
+  const { data: jobs = [], isLoading, isError } = useProactiveJobs();
   const updateMutation = useUpdateProactiveJob();
   const executeMutation = useExecuteProactiveJob();
   const cloneMutation = useCloneProactiveJob();
@@ -113,6 +113,19 @@ export default function ProactiveJobListPage() {
       onError: () => toast.error('실행에 실패했습니다.'),
     });
   };
+
+  // API 에러 시 빈 상태 대신 에러 메시지 표시 (#46)
+  if (isError) {
+    return (
+      <div className="rounded-lg border border-dashed flex flex-col items-center justify-center py-16 gap-3 text-center">
+        <Zap className="h-10 w-10 text-muted-foreground" />
+        <div>
+          <p className="text-sm font-medium">작업 목록을 불러오지 못했습니다</p>
+          <p className="text-xs text-muted-foreground mt-1">잠시 후 다시 시도해 주세요.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoading && jobs.length === 0) {
     return (

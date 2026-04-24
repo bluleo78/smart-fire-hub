@@ -504,7 +504,7 @@ export default function HomePage() {
               >
                 {activityFeed.items.map((item) => (
                   <div
-                    key={item.id}
+                    key={`${item.eventType}-${item.id}`}
                     className={`flex items-start gap-2.5 py-2 border-b last:border-0 row-hover ${
                       !item.isResolved ? 'border-l-2 border-l-destructive pl-2.5' : 'pl-[12px]'
                     }`}
