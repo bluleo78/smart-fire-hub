@@ -587,7 +587,8 @@ function josa(word: string, eul: string, reul: string) {
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-web/src/hooks/queries/useAIChat.ts` — `stopStreaming()`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 중단 버튼 클릭 시 사용자 메시지와 부분 AI 응답이 모두 사라짐.
 

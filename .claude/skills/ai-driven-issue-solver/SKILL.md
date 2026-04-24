@@ -52,7 +52,7 @@ docs/ISSUES.md 이슈를 one-shot으로 처리한다.
 
 ## Step 4. 구현
 
-`superpowers:executing-plans` 스킬을 호출하여 계획을 실행한다.
+`superpowers:subagent-driven-development` 스킬을 호출하여 계획을 실행한다. 실행 방식은 항상 Subagent-Driven으로 진행하며 사용자에게 선택을 묻지 않는다.
 
 **프론트엔드 변경 시 필수 사항**:
 - `apps/firehub-web/CLAUDE.md`의 E2E 테스트 작성 원칙에 따라 회귀 테스트를 함께 작성한다

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef,useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
@@ -42,6 +42,8 @@ export function useAIChat(options?: {
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesCommittedRef = useRef(false);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
+  // 스트리밍 중단 시 메시지 유실 방지용 — messages[]에 커밋되기 전 userMessage 보관
+  const pendingUserMessageObjRef = useRef<AIMessage | null>(null);
 
   const [isUploading, setIsUploading] = useState(false);
 
@@ -89,6 +91,7 @@ export function useAIChat(options?: {
     const assistantId = `assistant-${Date.now()}`;
     const assistantTimestamp = new Date().toISOString();
 
+    pendingUserMessageObjRef.current = userMessage;
     setPendingUserMessage(content);
     setIsStreaming(true);
     setIsThinking(true);
@@ -118,6 +121,7 @@ export function useAIChat(options?: {
         userMessageCommitted = true;
         setMessages(prev => [...prev, userMessage, turnMsg]);
         setPendingUserMessage(null);
+        pendingUserMessageObjRef.current = null;
       } else {
         setMessages(prev => [...prev, turnMsg]);
       }
@@ -157,6 +161,7 @@ export function useAIChat(options?: {
 
       setStreamingMessage(null);
       setPendingUserMessage(null);
+      pendingUserMessageObjRef.current = null;
       setIsStreaming(false);
       setIsThinking(false);
       streamingContentRef.current = null;
@@ -326,8 +331,33 @@ export function useAIChat(options?: {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    // abort 직후 플래그를 세워 onEnd 콜백의 이중 커밋 방지
+    messagesCommittedRef.current = true;
     setIsStreaming(false);
     setIsThinking(false);
+
+    // pendingUserMessage가 아직 messages[]에 커밋되지 않은 상태라면 보존
+    const pendingMsg = pendingUserMessageObjRef.current;
+    if (pendingMsg) {
+      const partial = streamingContentRef.current;
+      setMessages(prev => {
+        const msgs: AIMessage[] = [...prev, pendingMsg];
+        // content가 없어도 toolCalls가 있으면 어시스턴트 메시지 보존 (commitMessages와 동일 조건)
+        if (partial?.content || (partial?.toolCalls && partial.toolCalls.length > 0)) {
+          msgs.push({
+            id: partial.id || `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: partial.content || '',
+            toolCalls: partial.toolCalls,
+            contentBlocks: partial.contentBlocks,
+            timestamp: partial.timestamp || new Date().toISOString(),
+          });
+        }
+        return msgs;
+      });
+      pendingUserMessageObjRef.current = null;
+    }
+
     setStreamingMessage(null);
     setPendingUserMessage(null);
   }, []);
@@ -337,6 +367,7 @@ export function useAIChat(options?: {
     setCurrentSessionId(null);
     setStreamingMessage(null);
     setPendingUserMessage(null);
+    pendingUserMessageObjRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);
     setContextTokens(null);
@@ -351,6 +382,7 @@ export function useAIChat(options?: {
     setMessages([]);
     setStreamingMessage(null);
     setPendingUserMessage(null);
+    pendingUserMessageObjRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);
     setContextTokens(null);
