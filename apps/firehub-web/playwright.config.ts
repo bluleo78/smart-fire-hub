@@ -7,6 +7,7 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  outputDir: '../../test-results/e2e',
   /* V8 커버리지 수집 설정 — global setup에서 캐시 정리, teardown에서 리포트 생성 */
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',

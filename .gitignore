@@ -1,4 +1,4 @@
-# Test results (AI-driven testing)
+# Test results (AI-driven testing, Playwright E2E)
 test-results/
 
 # Java / Gradle
@@ -64,10 +64,15 @@ logs/
 .superpowers/
 
 # Playwright
+.playwright-cli/
 .playwright-mcp
-snapshots/
-test-results/
 playwright-report/
+
+# 루트에 생성되는 임시 테스트 산출물
+/*.png
+/*.webm
+/test_*.csv
+/test_*.txt
 
 # Claude internal
 .claude/scheduled_tasks.lock
@@ -75,6 +80,9 @@ playwright-report/
 # Local DB bind mount (Postgres data)
 db-data/
 db-test-data/
+
+# AI 채팅 파일 업로드 (로컬 디스크 저장, 프로덕션에서는 별도 스토리지 사용)
+apps/firehub-api/uploads/
 
 # Git worktrees (로컬 전용)
 .worktrees/

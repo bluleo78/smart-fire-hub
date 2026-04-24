@@ -20,4 +20,4 @@
 - **커밋/배포 금지**: 사용자 명시적 승인 후에만 실행. 배포 시 반드시 `.claude/docs/deploy.md` 먼저 읽고 진행.
 - **완료 시**: ROADMAP.md 상태 업데이트(⬜→✅) 후 커밋.
 - **테스트 필수**: backend/ai-agent → TC, frontend → Playwright E2E.
-- **스크린샷**: `snapshots/` 폴더에 저장.
+- **스크린샷**: 탐색 테스트 → `test-results/exploratory/<기능>/<timestamp>/screenshots/`, TC 테스트 → `test-results/tc/<suite>/`
