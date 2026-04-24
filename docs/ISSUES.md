@@ -507,7 +507,8 @@ onValueChange={(v) => {
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/QueryEditorPage.tsx:355`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 분석/쿼리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: SQL 에디터 하단에 "Ctrl+Enter로 실행" 힌트 텍스트가 표시되지만, macOS에서 실제 단축키는 `Cmd+Enter`임. `Ctrl+Enter`를 누르면 실행되지 않음.
 

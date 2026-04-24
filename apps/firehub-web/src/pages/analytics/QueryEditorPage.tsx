@@ -647,7 +647,7 @@ export default function QueryEditorPage() {
               )}
             </Button>
             <span className="text-xs text-muted-foreground">
-              Ctrl+Enter로 실행
+              {/mac/i.test(navigator.userAgent) ? 'Cmd' : 'Ctrl'}+Enter로 실행
             </span>
           </div>
 
