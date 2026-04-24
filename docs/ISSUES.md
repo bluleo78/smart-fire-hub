@@ -530,7 +530,8 @@ const isMac = navigator.platform.toUpperCase().includes('MAC');
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/components/ui/delete-confirm-dialog.tsx:36`
 - **발견**: 2026-04-23 (Playwright MCP 탐색 테스트 — 카테고리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 삭제 확인 다이얼로그에서 `"카테고리을(를) 정말 삭제하시겠습니까?"` 출력. 카테고리(ㅣ 모음 종성)는 "를" 이어야 하나 "을(를)"로 하드코딩됨.
 
@@ -553,7 +554,8 @@ function josa(word: string, eul: string, reul: string) {
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/data/tabs/DatasetDataTab.tsx`
 - **발견**: 2026-04-23 (Playwright MCP 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료 (#7 수정으로 동시 해결)
 
 **현상**: DataTab에서 임의의 행 체크박스 클릭 시 전체 행이 "checked" 상태로 표시됨. 헤더 "전체 선택" 체크박스는 모든 행이 선택된 상태에서도 "unchecked"로 유지되며 클릭해도 반응 없음.
 

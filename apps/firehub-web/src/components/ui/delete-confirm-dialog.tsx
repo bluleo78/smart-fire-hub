@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,7 +11,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from './alert-dialog';
-import type { ReactNode } from 'react';
+
+/** 마지막 음절 받침 유무에 따라 "을"/"를" 반환 */
+function eulReul(word: string) {
+  const code = word.charCodeAt(word.length - 1) - 0xac00;
+  return code >= 0 && code % 28 > 0 ? '을' : '를';
+}
 
 interface DeleteConfirmDialogProps {
   entityName: string;
@@ -33,7 +40,7 @@ export function DeleteConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{entityName} 삭제</AlertDialogTitle>
           <AlertDialogDescription>
-            &quot;{itemName}&quot; {entityName}을(를) 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            &quot;{itemName}&quot; {entityName}{eulReul(entityName)} 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
