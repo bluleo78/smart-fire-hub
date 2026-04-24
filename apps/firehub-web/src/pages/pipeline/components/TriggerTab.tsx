@@ -26,6 +26,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useDeleteTrigger, useToggleTrigger,useTriggers } from '@/hooks/queries/usePipelines';
 import { formatDate } from '@/lib/formatters';
+import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse, TriggerType } from '@/types/pipeline';
 
@@ -76,7 +77,7 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
     if (!deletingTrigger) return;
     try {
       await deleteTrigger.mutateAsync(deletingTrigger.id);
-      toast.success(`트리거 "${deletingTrigger.name}"이(가) 삭제되었습니다.`);
+      toast.success(`트리거 "${deletingTrigger.name}"${iGa(deletingTrigger.name)} 삭제되었습니다.`);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
@@ -94,8 +95,8 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
       await toggleTrigger.mutateAsync(trigger.id);
       toast.success(
         trigger.isEnabled
-          ? `트리거 "${trigger.name}"이(가) 비활성화되었습니다.`
-          : `트리거 "${trigger.name}"이(가) 활성화되었습니다.`,
+          ? `트리거 "${trigger.name}"${iGa(trigger.name)} 비활성화되었습니다.`
+          : `트리거 "${trigger.name}"${iGa(trigger.name)} 활성화되었습니다.`,
       );
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {

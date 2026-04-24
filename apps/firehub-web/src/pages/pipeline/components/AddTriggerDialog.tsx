@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useCreateTrigger } from '@/hooks/queries/usePipelines';
+import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse,TriggerType } from '@/types/pipeline';
 
@@ -104,7 +105,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
         config,
       });
       setCreatedTrigger(result);
-      toast.success(`트리거 "${name}"이(가) 생성되었습니다.`);
+      toast.success(`트리거 "${name}"${iGa(name)} 생성되었습니다.`);
       // For API type, keep dialog open to show token
       if (selectedType !== 'API') {
         handleClose();

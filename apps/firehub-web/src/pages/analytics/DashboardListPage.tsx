@@ -40,6 +40,7 @@ import { useDashboards, useDeleteDashboard } from '../../hooks/queries/useAnalyt
 import { useCreateDashboard } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { iGa } from '../../lib/utils';
 import type { CreateDashboardRequest } from '../../types/analytics';
 
 function getRelativeTime(dateStr: string): string {
@@ -78,7 +79,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
     };
     try {
       const result = await createDashboard.mutateAsync(req);
-      toast.success(`대시보드 "${result.name}"이(가) 생성되었습니다.`);
+      toast.success(`대시보드 "${result.name}"${iGa(result.name)} 생성되었습니다.`);
       onCreated(result.id);
       onOpenChange(false);
       setName('');
@@ -173,7 +174,7 @@ export default function DashboardListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteDashboard.mutateAsync(id);
-      toast.success(`대시보드 "${name}"이(가) 삭제되었습니다.`);
+      toast.success(`대시보드 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '대시보드 삭제에 실패했습니다.');
     }

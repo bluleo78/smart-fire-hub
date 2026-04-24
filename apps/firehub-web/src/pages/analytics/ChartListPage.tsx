@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { iGa } from '../../lib/utils';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
 
 function getRelativeTime(dateStr: string): string {
@@ -67,7 +68,7 @@ export default function ChartListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteChart.mutateAsync(id);
-      toast.success(`차트 "${name}"이(가) 삭제되었습니다.`);
+      toast.success(`차트 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '차트 삭제에 실패했습니다.');
     }

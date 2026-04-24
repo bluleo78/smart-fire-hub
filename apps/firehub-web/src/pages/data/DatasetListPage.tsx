@@ -28,6 +28,7 @@ import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from 
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { iGa } from '../../lib/utils';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 
 function getRelativeTime(dateStr: string): string {
@@ -81,7 +82,7 @@ export default function DatasetListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteDataset.mutateAsync(id);
-      toast.success(`데이터셋 "${name}"이(가) 삭제되었습니다.`);
+      toast.success(`데이터셋 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '데이터셋 삭제에 실패했습니다.');
     }

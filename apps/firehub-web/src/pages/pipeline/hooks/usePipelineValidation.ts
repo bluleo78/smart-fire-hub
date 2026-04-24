@@ -2,6 +2,7 @@ import type { Dispatch } from 'react';
 import { useCallback } from 'react';
 import { toast } from 'sonner';
 
+import { iGa } from '@/lib/utils';
 import { editorPipelineSchema } from '@/lib/validations/pipeline';
 
 import type { EditorAction, PipelineEditorState, ValidationError } from './pipelineEditorReducer';
@@ -72,7 +73,7 @@ export function usePipelineValidation(
           errors.push({
             stepTempId: tempId,
             field: 'name',
-            message: `스텝 이름 "${name}"이(가) 중복됩니다`,
+            message: `스텝 이름 "${name}"${iGa(name)} 중복됩니다`,
           });
         }
       }

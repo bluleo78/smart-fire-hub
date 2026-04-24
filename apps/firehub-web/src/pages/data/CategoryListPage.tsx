@@ -34,6 +34,7 @@ import {
   useUpdateCategory,
 } from '../../hooks/queries/useDatasets';
 import { handleApiError } from '../../lib/api-error';
+import { iGa } from '../../lib/utils';
 import type { CategoryResponse } from '../../types/dataset';
 
 const categorySchema = z.object({
@@ -86,7 +87,7 @@ export default function CategoryListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteCategory.mutateAsync(id);
-      toast.success(`카테고리 "${name}"이(가) 삭제되었습니다.`);
+      toast.success(`카테고리 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '카테고리 삭제에 실패했습니다.');
     }

@@ -883,7 +883,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/DashboardListPage.tsx:76` + `apps/firehub-api/src/main/java/com/smartfirehub/analytics/dto/CreateDashboardRequest.java`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: autoRefresh 입력 필드에 `min={5}` HTML 속성이 있지만, React 상태를 직접 조작하거나 브라우저 DevTools로 4 이하 값을 입력해도 서버에서 그대로 수용됨. 실제로 "4초" 자동갱신 대시보드 생성 성공.
 
@@ -902,7 +903,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/components/ui/delete-confirm-dialog.tsx:36`, `DashboardListPage.tsx`, `ChartListPage.tsx:70` (토스트)
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드, 차트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 삭제 확인 다이얼로그: `"새 차트" 차트을(를) 정말 삭제하시겠습니까?` / `"대시보드" 대시보드을(를) 정말 삭제하시겠습니까?` → "차트", "대시보드" 모두 받침 없으므로 "를"이 맞지만 "을(를)" 병기 표시. 토스트: `"새 차트"이(가) 삭제되었습니다.` → "이(가)" 병기 (올바른 조사는 "가").
 

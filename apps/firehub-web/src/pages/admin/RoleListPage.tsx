@@ -10,6 +10,7 @@ import { FormField } from '@/components/ui/form-field';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { extractApiError, handleApiError } from '@/lib/api-error';
+import { iGa } from '@/lib/utils';
 
 import { rolesApi } from '../../api/roles';
 import { Badge } from '../../components/ui/badge';
@@ -85,7 +86,7 @@ export default function RoleListPage() {
   const handleDelete = async (role: RoleResponse) => {
     try {
       await rolesApi.deleteRole(role.id);
-      toast.success(`역할 "${role.name}"이(가) 삭제되었습니다.`);
+      toast.success(`역할 "${role.name}"${iGa(role.name)} 삭제되었습니다.`);
       fetchRoles();
     } catch (error) {
       handleApiError(error, '역할 삭제에 실패했습니다.');

@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useUpdateTrigger } from '@/hooks/queries/usePipelines';
+import { iGa } from '@/lib/utils';
 import type { ErrorResponse } from '@/types/auth';
 import type { TriggerResponse } from '@/types/pipeline';
 
@@ -84,7 +85,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
           config,
         },
       });
-      toast.success(`트리거 "${name}"이(가) 수정되었습니다.`);
+      toast.success(`트리거 "${name}"${iGa(name)} 수정되었습니다.`);
       onOpenChange(false);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {

@@ -8,6 +8,7 @@ import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { handleApiError } from '@/lib/api-error';
+import { iGa } from '@/lib/utils';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -36,7 +37,7 @@ export default function PipelineListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deletePipeline.mutateAsync(id);
-      toast.success(`파이프라인 "${name}"이(가) 삭제되었습니다.`);
+      toast.success(`파이프라인 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '파이프라인 삭제에 실패했습니다.');
     }

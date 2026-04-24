@@ -42,6 +42,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { iGa } from '../../lib/utils';
 
 function getRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -86,7 +87,7 @@ export default function QueryListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteQuery.mutateAsync(id);
-      toast.success(`쿼리 "${name}"이(가) 삭제되었습니다.`);
+      toast.success(`쿼리 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '쿼리 삭제에 실패했습니다.');
     }
