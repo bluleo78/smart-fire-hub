@@ -119,6 +119,8 @@ export default function QueryListPage() {
         onValueChange={(v) => {
           setTab(v as 'mine' | 'shared');
           setPage(0);
+          setFolder('');
+          setSearch('');
         }}
       >
         <TabsList>
