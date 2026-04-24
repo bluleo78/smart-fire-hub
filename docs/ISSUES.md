@@ -1110,7 +1110,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major (기능 누락)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/DashboardListPage.tsx`, `apps/firehub-web/src/pages/analytics/DashboardEditorPage.tsx`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 대시보드 생성 후 이름, 설명, 자동갱신 주기를 변경할 UI가 없음. `CreateDashboardDialog`에서만 설정 가능하며, 이후에는 수정 불가.
 
@@ -1129,7 +1130,8 @@ SELECT 2, id FROM public.role WHERE name = 'ADMIN'
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/pipeline/service/PipelineExecutionService.java:235`, `apps/firehub-web/src/lib/formatters.ts:7`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 파이프라인)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 실행 이력에서 시작 시간이 실제보다 9시간 늦게 표시됨. UTC 09:52에 실행했는데 `2026. 4. 24. 오전 3:52:00 (KST)`로 표시 — 실제 KST는 `2026. 4. 23. 오후 6:52:00`.
 

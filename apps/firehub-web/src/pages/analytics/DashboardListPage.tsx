@@ -3,6 +3,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Settings,
   Share2,
   Trash2,
 } from 'lucide-react';
@@ -36,12 +37,16 @@ import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
-import { useDashboards, useDeleteDashboard } from '../../hooks/queries/useAnalytics';
-import { useCreateDashboard } from '../../hooks/queries/useAnalytics';
+import {
+  useCreateDashboard,
+  useDashboards,
+  useDeleteDashboard,
+  useUpdateDashboard,
+} from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 import { iGa } from '../../lib/utils';
-import type { CreateDashboardRequest } from '../../types/analytics';
+import type { CreateDashboardRequest, DashboardListItem } from '../../types/analytics';
 
 function getRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -149,12 +154,115 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   );
 }
 
+/** 대시보드 메타데이터 편집 다이얼로그 */
+interface EditDialogProps {
+  dashboard: DashboardListItem | null;
+  onClose: () => void;
+}
+
+function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
+  const [name, setName] = useState(dashboard?.name ?? '');
+  const [description, setDescription] = useState(dashboard?.description ?? '');
+  const [isShared, setIsShared] = useState(dashboard?.isShared ?? false);
+  const [autoRefresh, setAutoRefresh] = useState(
+    dashboard?.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '',
+  );
+  const updateDashboard = useUpdateDashboard();
+
+  // dashboard prop 변경 시 폼 필드 초기화 (render-time 조정 패턴)
+  const [prevDashboard, setPrevDashboard] = useState(dashboard);
+  if (prevDashboard !== dashboard && dashboard) {
+    setPrevDashboard(dashboard);
+    setName(dashboard.name);
+    setDescription(dashboard.description ?? '');
+    setIsShared(dashboard.isShared);
+    setAutoRefresh(dashboard.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '');
+  }
+
+  const handleSubmit = async () => {
+    if (!dashboard || !name.trim()) return;
+    try {
+      await updateDashboard.mutateAsync({
+        id: dashboard.id,
+        data: {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          isShared,
+          autoRefreshSeconds: autoRefresh ? parseInt(autoRefresh, 10) : null,
+        },
+      });
+      toast.success(`대시보드 "${name}"${iGa(name)} 수정되었습니다.`);
+      onClose();
+    } catch (error) {
+      handleApiError(error, '대시보드 수정에 실패했습니다.');
+    }
+  };
+
+  return (
+    <Dialog open={!!dashboard} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>대시보드 설정</DialogTitle>
+          <DialogDescription className="sr-only">대시보드 이름, 설명, 공개 여부, 자동 새로고침을 수정합니다.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-dash-name">이름 *</Label>
+            <Input
+              id="edit-dash-name"
+              placeholder="대시보드 이름"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={200}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-dash-desc">설명</Label>
+            <Textarea
+              id="edit-dash-desc"
+              placeholder="설명 (선택)"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-dash-refresh">자동 새로고침 (초)</Label>
+            <Input
+              id="edit-dash-refresh"
+              type="number"
+              placeholder="비워두면 수동 새로고침"
+              value={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.value)}
+              min={5}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="edit-dash-shared" checked={isShared} onCheckedChange={setIsShared} />
+            <Label htmlFor="edit-dash-shared">공개 대시보드</Label>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>취소</Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={!name.trim() || updateDashboard.isPending}
+          >
+            저장
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function DashboardListPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'mine' | 'shared'>('mine');
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editDashboard, setEditDashboard] = useState<DashboardListItem | null>(null);
   const size = 10;
 
   const sharedOnly = tab === 'shared';
@@ -301,6 +409,19 @@ export default function DashboardListPage() {
                       >
                         <Pencil size={13} />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        title="설정"
+                        aria-label="설정"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditDashboard(dashboard);
+                        }}
+                      >
+                        <Settings size={13} />
+                      </Button>
                       <DeleteConfirmDialog
                         entityName="대시보드"
                         itemName={dashboard.name}
@@ -343,6 +464,10 @@ export default function DashboardListPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={(id) => navigate(`/analytics/dashboards/${id}`)}
+      />
+      <EditDashboardDialog
+        dashboard={editDashboard}
+        onClose={() => setEditDashboard(null)}
       />
     </div>
   );

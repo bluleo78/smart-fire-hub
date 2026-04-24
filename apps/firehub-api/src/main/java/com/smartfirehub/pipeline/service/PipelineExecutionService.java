@@ -22,6 +22,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -232,7 +233,7 @@ public class PipelineExecutionService {
       Map<Long, List<Long>> stepDependencyMap,
       Map<Long, Long> stepIdToStepExecId,
       Long userId) {
-    LocalDateTime executionStartedAt = LocalDateTime.now();
+    LocalDateTime executionStartedAt = LocalDateTime.now(ZoneOffset.UTC);
     Long pipelineCreatedBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
     String pipelineName = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
 
@@ -271,7 +272,7 @@ public class PipelineExecutionService {
               null,
               "Dependency failed or skipped",
               null,
-              LocalDateTime.now());
+              LocalDateTime.now(ZoneOffset.UTC));
           stepStatuses.put(step.id(), "SKIPPED");
           log.info("Step {} skipped due to failed dependency", step.name());
         } else {
@@ -295,7 +296,7 @@ public class PipelineExecutionService {
       }
 
       executionRepository.updateExecutionStatus(
-          executionId, finalStatus, null, LocalDateTime.now());
+          executionId, finalStatus, null, LocalDateTime.now(ZoneOffset.UTC));
       log.info("Pipeline execution {} completed with status: {}", executionId, finalStatus);
 
       // Publish completion event for chain triggers
@@ -304,7 +305,7 @@ public class PipelineExecutionService {
 
     } catch (Exception e) {
       log.error("Pipeline execution {} failed with exception", executionId, e);
-      executionRepository.updateExecutionStatus(executionId, "FAILED", null, LocalDateTime.now());
+      executionRepository.updateExecutionStatus(executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC));
 
       // Publish failure event for chain triggers
       applicationEventPublisher.publishEvent(
@@ -374,7 +375,7 @@ public class PipelineExecutionService {
       Long pipelineId,
       String pipelineName,
       Long userId) {
-    LocalDateTime stepStartedAt = LocalDateTime.now();
+    LocalDateTime stepStartedAt = LocalDateTime.now(ZoneOffset.UTC);
 
     try {
       // Update step status to RUNNING
@@ -801,7 +802,7 @@ public class PipelineExecutionService {
           executionLog,
           null,
           null,
-          LocalDateTime.now());
+          LocalDateTime.now(ZoneOffset.UTC));
 
       log.info("Step {} completed successfully. Output rows: {}", step.name(), outputRows);
       return "COMPLETED";
@@ -809,7 +810,7 @@ public class PipelineExecutionService {
     } catch (Exception e) {
       log.error("Step {} failed", step.name(), e);
       executionRepository.updateStepExecution(
-          stepExecId, "FAILED", null, null, e.getMessage(), null, LocalDateTime.now());
+          stepExecId, "FAILED", null, null, e.getMessage(), null, LocalDateTime.now(ZoneOffset.UTC));
       return "FAILED";
     }
   }
