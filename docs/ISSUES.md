@@ -608,7 +608,8 @@ function josa(word: string, eul: string, reul: string) {
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/components/ai/SessionSwitcher.tsx:35`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 세션이 존재하지만 선택된 세션이 없을 때, 세션 드롭다운 트리거와 새 세션 액션 버튼이 모두 "새 대화" 텍스트로 표시됨.
 

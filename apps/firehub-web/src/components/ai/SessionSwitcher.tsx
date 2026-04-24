@@ -32,7 +32,7 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
   const currentSession = sessions?.find((s) => s.sessionId === currentSessionId);
   const triggerLabel = currentSession
     ? (currentSession.title || `대화 #${currentSession.id}`)
-    : '새 대화';
+    : '대화 선택';
 
   return (
     <div className="flex items-center justify-between gap-1">

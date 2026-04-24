@@ -84,9 +84,9 @@ test.describe('AI 세션 관리 — SessionSwitcher', () => {
     await openPanelWithSessions(page);
 
     // SessionSwitcher: sessions.length > 0 분기 → DropdownMenuTrigger 렌더링
-    // 트리거 버튼에 MessageSquare 아이콘 + 세션 제목 또는 "새 대화" 텍스트
-    // 현재 세션 없으면 triggerLabel = '새 대화'이지만 드롭다운 트리거 자체는 존재
-    const sessionTrigger = page.getByRole('button', { name: /새 대화|이전 대화/ });
+    // 트리거 버튼에 MessageSquare 아이콘 + 세션 제목 또는 "대화 선택" 텍스트
+    // 현재 세션 없으면 triggerLabel = '대화 선택'이지만 드롭다운 트리거 자체는 존재
+    const sessionTrigger = page.getByRole('button', { name: /대화 선택|이전 대화/ });
     await expect(sessionTrigger.first()).toBeVisible({ timeout: 3000 });
   });
 
@@ -117,7 +117,7 @@ test.describe('AI 세션 관리 — SessionSwitcher', () => {
 
     // DropdownMenuTrigger 클릭 → 세션 목록 열기
     // 트리거 버튼: sessions이 있으면 현재 세션 title 또는 "새 대화"
-    const trigger = page.getByRole('button', { name: /새 대화|이전 대화/ }).first();
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
     // 드롭다운 안에서 세션 제목 표시 확인
@@ -147,7 +147,7 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
     );
 
     // 드롭다운 열기
-    const trigger = page.getByRole('button', { name: /새 대화|이전 대화/ }).first();
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
     // "이전 대화 1" 세션 클릭 → onSelectSession → loadSession('session-1')
@@ -175,7 +175,7 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
     );
 
     // 드롭다운 → 세션 선택
-    const trigger = page.getByRole('button', { name: /새 대화|이전 대화/ }).first();
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
     await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
 
@@ -198,7 +198,7 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
       }),
     );
 
-    const trigger = page.getByRole('button', { name: /새 대화|이전 대화/ }).first();
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
     await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
 
@@ -242,7 +242,7 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     );
 
     // 드롭다운 열기
-    const trigger = page.getByRole('button', { name: /새 대화|이전 대화/ }).first();
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
     // "이전 대화 1" 행의 삭제 버튼 클릭 (Trash2 아이콘 버튼, stopPropagation)
@@ -275,7 +275,7 @@ test.describe('AI 세션 관리 — 새 대화 (startNewSession)', () => {
       }),
     );
 
-    const trigger = page.getByRole('button', { name: /새 대화|이전 대화/ }).first();
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
     await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
     await expect(page.getByText('안녕하세요', { exact: true })).toBeVisible({ timeout: 3000 });
@@ -293,8 +293,7 @@ test.describe('AI 세션 관리 — 새 대화 (startNewSession)', () => {
   }) => {
     await openPanelWithSessions(page);
 
-    // 세션 없는 초기 상태: 드롭다운 트리거가 "새 대화"이고 독립 버튼도 "새 대화"로 2개 존재 → nth(1)
-    // 세션이 있는 상태에서는 트리거가 세션 제목으로 바뀌므로 "새 대화"는 1개 → first()
+    // 트리거 버튼은 "대화 선택"이고 독립 Plus 버튼은 "새 대화"로 별도 존재 → 혼동 없음
     const newSessionBtn = page.getByRole('button', { name: '새 대화' }).first();
     await newSessionBtn.click();
 
