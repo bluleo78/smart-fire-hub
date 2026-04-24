@@ -1,4 +1,4 @@
-import { autocompletion } from '@codemirror/autocomplete';
+import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { PostgreSQL,sql } from '@codemirror/lang-sql';
 import { searchKeymap } from '@codemirror/search';
@@ -102,6 +102,7 @@ function AnalyticsSqlEditor({
         history(),
         autocompletion(),
         keymap.of([
+          ...completionKeymap,
           ...defaultKeymap,
           ...historyKeymap,
           ...searchKeymap,

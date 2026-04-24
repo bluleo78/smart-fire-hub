@@ -413,7 +413,8 @@ onValueChange={(v) => {
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/QueryEditorPage.tsx:103`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 분석/쿼리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: SQL 에디터에서 자동완성 팝업이 표시된 상태에서 Tab 키를 눌러도 선택된 후보가 삽입되지 않음. ArrowDown으로 항목을 이동한 뒤 Enter는 작동하나, Tab은 항상 미작동.
 
