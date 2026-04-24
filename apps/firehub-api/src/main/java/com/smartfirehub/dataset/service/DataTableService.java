@@ -115,6 +115,13 @@ public class DataTableService {
     validateName(tableName);
     validateName(column.columnName());
 
+    // id, import_id, created_at은 시스템 예약 컬럼명 — addColumn 시에도 차단
+    Set<String> reserved = Set.of("id", "import_id", "created_at");
+    if (reserved.contains(column.columnName().toLowerCase())) {
+      throw new InvalidTableNameException(
+          "컬럼명 '" + column.columnName() + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at)");
+    }
+
     StringBuilder sql = new StringBuilder();
     sql.append("ALTER TABLE data.\"").append(tableName).append("\" ");
     sql.append("ADD COLUMN \"").append(column.columnName()).append("\" ");

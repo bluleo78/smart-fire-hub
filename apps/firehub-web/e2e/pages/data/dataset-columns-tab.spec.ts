@@ -313,6 +313,41 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     });
   });
 
+  test('필드 추가 — 예약 컬럼명(id) 제출 시 에러 토스트가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    // POST → 400 예약어 에러 모킹 (백엔드 #5 수정 후 실제로 반환하는 응답)
+    await page.route('**/api/v1/datasets/5/columns', (route) => {
+      if (route.request().method() === 'POST') {
+        return route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: "컬럼명 'id'은 시스템 예약어입니다. (예약어: id, import_id, created_at)" }),
+        });
+      }
+      return route.continue();
+    });
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: '필드 추가' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 예약어 "id" 입력 후 추가
+    await page.getByLabel('필드명 *').fill('id');
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // 에러 토스트가 표시된다 (handleApiError → toast.error)
+    await expect(page.getByText(/예약어/).first()).toBeVisible({ timeout: 5000 });
+    // 다이얼로그가 닫히지 않는다
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
   test('필드 편집 버튼 클릭 시 ColumnDialog(edit) 가 열리고 기존 값이 채워진다', async ({
     authenticatedPage: page,
   }) => {

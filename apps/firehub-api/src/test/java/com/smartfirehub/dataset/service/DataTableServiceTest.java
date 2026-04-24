@@ -625,6 +625,44 @@ class DataTableServiceTest extends IntegrationTestBase {
   }
 
   // -------------------------------------------------------------------------
+  // addColumn reserved name validation — #5 fix
+  // -------------------------------------------------------------------------
+
+  @Test
+  void addColumn_reservedName_id_throwsInvalidTableNameException() {
+    // Given
+    String tableName = "test_reserved_col";
+    tablesToCleanup.add(tableName);
+    List<DatasetColumnRequest> columns =
+        List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null));
+    dataTableService.createTable(tableName, columns);
+
+    DatasetColumnRequest reserved =
+        new DatasetColumnRequest("id", "ID", "BIGINT", null, true, false, null);
+
+    // When / Then — 예약어 id는 거부되어야 한다
+    assertThatThrownBy(() -> dataTableService.addColumn(tableName, reserved))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessageContaining("예약어");
+  }
+
+  @Test
+  void addColumn_reservedName_createdAt_throwsInvalidTableNameException() {
+    String tableName = "test_reserved_col2";
+    tablesToCleanup.add(tableName);
+    List<DatasetColumnRequest> columns =
+        List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null));
+    dataTableService.createTable(tableName, columns);
+
+    DatasetColumnRequest reserved =
+        new DatasetColumnRequest("created_at", "생성일", "TIMESTAMP", null, true, false, null);
+
+    assertThatThrownBy(() -> dataTableService.addColumn(tableName, reserved))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessageContaining("예약어");
+  }
+
+  // -------------------------------------------------------------------------
   // 1-4. executeQuery system column filtering — 1 TC
   // -------------------------------------------------------------------------
 

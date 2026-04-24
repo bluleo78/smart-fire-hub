@@ -650,7 +650,8 @@ const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv,.xlsx,.doc
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/.../DatasetColumnService` / `apps/firehub-web/src/pages/data/components/ColumnDialog.tsx`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 필드 추가 다이얼로그에서 `id` 같은 예약어 컬럼명으로 제출 시 `POST /api/v1/datasets/{id}/columns` → 500 Internal Server Error 반환. UI에는 아무 에러 메시지가 표시되지 않고 다이얼로그만 열려 있음.
 
@@ -720,7 +721,8 @@ Frontend → row['_id'] === undefined  ❌
 - **심각도**: Minor (UX)
 - **컴포넌트**: `apps/firehub-web/src/pages/data/components/ColumnDialog.tsx`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 데이터 타입 드롭다운에 "텍스트" 항목이 2개 표시됨.
 
