@@ -443,7 +443,8 @@ keymap.of([
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/QueryEditorPage.tsx:342,459`
 - **발견**: 2026-04-23 (Playwright 탐색 테스트 — 분석/쿼리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 저장 다이얼로그의 "저장" 버튼을 동일 JS 틱 내에서 두 번 빠르게 클릭하면 POST 요청이 2회 전송됨. `isSaving` 가드(`disabled={!name.trim() || isSaving}`)는 React 리렌더 후에야 `true`가 되므로 동기 이중 클릭을 막지 못함.
 

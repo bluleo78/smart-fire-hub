@@ -391,6 +391,7 @@ export default function QueryEditorPage() {
   const executeQuery = useExecuteAnalyticsQuery();
   const createSavedQuery = useCreateSavedQuery();
   const updateSavedQuery = useUpdateSavedQuery();
+  const savingRef = useRef(false);
 
   const folders = foldersData ?? [];
   const tables = schemaInfo?.tables ?? [];
@@ -461,7 +462,8 @@ export default function QueryEditorPage() {
   };
 
   const handleSave = async () => {
-    if (!saveForm.name.trim()) return;
+    if (savingRef.current || !saveForm.name.trim()) return;
+    savingRef.current = true;
 
     try {
       if (isNew) {
@@ -491,6 +493,8 @@ export default function QueryEditorPage() {
       }
     } catch (error) {
       handleApiError(error, '쿼리 저장에 실패했습니다.');
+    } finally {
+      savingRef.current = false;
     }
   };
 
