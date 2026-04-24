@@ -87,7 +87,7 @@ public class DataExportService {
     return new ExportEstimate(rowCount, rowCount > SYNC_THRESHOLD, hasGeometry, columnInfos);
   }
 
-  @Transactional(readOnly = true)
+  @Transactional
   public ExportResult exportDataset(
       Long datasetId,
       ExportRequest request,

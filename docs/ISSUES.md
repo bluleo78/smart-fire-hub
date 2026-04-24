@@ -700,7 +700,8 @@ Frontend → row['_id'] === undefined  ❌
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/.../DataExportService` / `apps/firehub-web/src/pages/data/components/ExportDialog.tsx`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 내보내기 다이얼로그에서 CSV 포맷 선택 후 "내보내기" 클릭 → `POST /api/v1/datasets/{id}/export` → 500 Internal Server Error. UI에 에러 메시지 없고 다이얼로그만 열린 채 유지됨.
 
