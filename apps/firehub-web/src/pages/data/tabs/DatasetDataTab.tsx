@@ -101,7 +101,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   }, [infiniteData, allRows.length]);
 
   const allRowIds = useMemo(
-    () => allRows.map((row) => row['_id'] as number).filter((id) => typeof id === 'number'),
+    () => allRows.map((row) => row['id'] as number).filter((id) => typeof id === 'number'),
     [allRows]
   );
 
@@ -258,7 +258,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                 )}
                 {virtualItems.map((virtualRow) => {
                   const row = allRows[virtualRow.index];
-                  const rowId = row['_id'] as number;
+                  const rowId = row['id'] as number;
                   const isSelected = selectedRowIds.has(rowId);
                   return (
                     <tr

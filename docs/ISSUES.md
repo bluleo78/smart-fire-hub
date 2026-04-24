@@ -673,7 +673,8 @@ const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv,.xlsx,.doc
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-web/src/pages/data/tabs/DatasetDataTab.tsx:261` / `DataTableRowService.java:203`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 행 더블클릭 시 편집 다이얼로그가 "행 편집 (ID: )" (ID 공백)로 열림. 삭제 시 `rowId = undefined`로 API 호출됨.
 

@@ -52,8 +52,8 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
           body: JSON.stringify({
             columns: datasetDetail.columns,
             rows: [
-              { _id: 101, id: 1, name: 'Alice', amount: 10 },
-              { _id: 102, id: 2, name: 'Bob', amount: 20 },
+              { id: 1, name: 'Alice', amount: 10 },
+              { id: 2, name: 'Bob', amount: 20 },
             ],
             page: 0,
             size: 50,
@@ -75,7 +75,6 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
       'POST',
       '/api/v1/datasets/1/data/rows',
       {
-        _id: 103,
         id: 3,
         name: 'Carol',
         amount: 30,
@@ -119,9 +118,8 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     const updateCapture = await mockApi(
       page,
       'PUT',
-      '/api/v1/datasets/1/data/rows/101',
+      '/api/v1/datasets/1/data/rows/1',
       {
-        _id: 101,
         id: 1,
         name: 'Alice Updated',
         amount: 99,
@@ -141,9 +139,9 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await expect(aliceCell).toBeVisible();
     await aliceCell.dblclick();
 
-    // EditRowDialog — "행 편집 (ID: 101)" 제목 확인
+    // EditRowDialog — "행 편집 (ID: 1)" 제목 확인
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 101\)/ })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
 
     // 기본값 확인 (edit- prefix)
     await expect(page.locator('#edit-name')).toHaveValue('Alice');
@@ -255,7 +253,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
       page,
       'POST',
       '/api/v1/datasets/2/data/rows',
-      { _id: 1, id: 1, is_active: true, label: '테스트' },
+      { id: 1, is_active: true, label: '테스트' },
       { capture: true },
     );
 
