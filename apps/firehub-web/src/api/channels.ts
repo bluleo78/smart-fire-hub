@@ -38,3 +38,11 @@ export async function updateChannelPreference(channel: ChannelType, enabled: boo
 export async function disconnectChannel(channel: ChannelType) {
   return client.delete<void>(`/channels/settings/${channel}`);
 }
+
+/**
+ * OAuth 인증 URL 조회 — 팝업이 Bearer 헤더를 전달할 수 없으므로, 먼저 이 API를 호출하여
+ * 실제 OAuth 인증 URL을 받은 뒤 해당 URL을 팝업으로 직접 연다.
+ */
+export async function getOAuthUrl(path: string) {
+  return client.get<{ url: string }>(path.replace('/api/v1', ''));
+}

@@ -55,6 +55,9 @@ public class SecurityConfig {
                     // firehub-channel → firehub-api Internal 전용 inbound 엔드포인트
                     .requestMatchers("/api/v1/channels/slack/inbound")
                     .permitAll()
+                    // OAuth 콜백은 외부 서비스(Kakao/Slack)에서 리다이렉트되므로 Bearer 헤더 없음
+                    .requestMatchers("/api/v1/oauth/kakao/callback", "/api/v1/oauth/slack/callback")
+                    .permitAll()
                     .requestMatchers("/api/v1/**")
                     .authenticated()
                     .anyRequest()

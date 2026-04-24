@@ -147,7 +147,11 @@ export default function SettingsPage() {
   };
 
   const handleSave = async () => {
-    if (!validate()) return;
+    if (!validate()) {
+      // 검증 실패 시 사용자에게 toast로 알림 (#69)
+      toast.error('입력값을 확인하세요');
+      return;
+    }
 
     setIsSaving(true);
     try {

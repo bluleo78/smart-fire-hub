@@ -75,8 +75,8 @@ class ChannelSettingsControllerTest {
         List<ChannelSettingResponse> mockResponse = List.of(
                 new ChannelSettingResponse("CHAT", true, true, false, "웹 인박스", null),
                 new ChannelSettingResponse("EMAIL", true, true, false, "user@example.com", null),
-                new ChannelSettingResponse("KAKAO", false, false, false, "카카오톡", "/api/v1/oauth/kakao/start"),
-                new ChannelSettingResponse("SLACK", false, false, false, "Slack", "/api/v1/oauth/slack/start")
+                new ChannelSettingResponse("KAKAO", false, false, false, "카카오톡", "/api/v1/oauth/kakao/auth-url"),
+                new ChannelSettingResponse("SLACK", false, false, false, "Slack", "/api/v1/oauth/slack/auth-url")
         );
         when(channelSettingsService.getSettings(TEST_USER_ID)).thenReturn(mockResponse);
 
@@ -90,7 +90,7 @@ class ChannelSettingsControllerTest {
                 .andExpect(jsonPath("$[0].connected").value(true))
                 .andExpect(jsonPath("$[2].channel").value("KAKAO"))
                 .andExpect(jsonPath("$[2].connected").value(false))
-                .andExpect(jsonPath("$[2].oauthStartUrl").value("/api/v1/oauth/kakao/start"));
+                .andExpect(jsonPath("$[2].oauthStartUrl").value("/api/v1/oauth/kakao/auth-url"));
     }
 
     /** 인증 토큰 없이 접근하면 401 반환. */

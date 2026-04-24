@@ -14,6 +14,7 @@ import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
+import { useAuth } from '../../hooks/useAuth';
 import { formatDateShort } from '../../lib/formatters';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleResponse } from '../../types/role';
@@ -22,6 +23,7 @@ import type { UserDetailResponse } from '../../types/user';
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const [user, setUser] = useState<UserDetailResponse | null>(null);
   const [allRoles, setAllRoles] = useState<RoleResponse[]>([]);
   const [selectedRoleIds, setSelectedRoleIds] = useState<number[]>([]);
@@ -81,6 +83,11 @@ export default function UserDetailPage() {
 
   const handleToggleActive = async () => {
     if (!user) return;
+    // 자기 자신의 계정 비활성화 차단 (#73)
+    if (currentUser?.id === user.id && user.isActive) {
+      toast.error('자신의 계정을 비활성화할 수 없습니다');
+      return;
+    }
     setIsTogglingActive(true);
     try {
       await usersApi.setUserActive(user.id, { active: !user.isActive });
@@ -172,11 +179,16 @@ export default function UserDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-3">
-            {allRoles.map((role) => (
+            {allRoles.map((role) => {
+              // 자기 자신의 ADMIN 역할 제거 차단 (#57)
+              const isSelf = currentUser?.id === Number(id);
+              const isOwnAdminRole = isSelf && role.name === 'ADMIN';
+              return (
               <div key={role.id} className="flex items-center gap-3">
                 <Checkbox
                   id={`role-${role.id}`}
                   checked={selectedRoleIds.includes(role.id)}
+                  disabled={isOwnAdminRole}
                   onCheckedChange={(checked) => handleRoleToggle(role.id, checked === true)}
                 />
                 <Label htmlFor={`role-${role.id}`} className="flex items-center gap-2">
@@ -189,7 +201,8 @@ export default function UserDetailPage() {
                   <span className="text-sm text-muted-foreground">{role.description}</span>
                 )}
               </div>
-            ))}
+            );
+            })}
           </div>
           <Button onClick={handleSaveRoles} disabled={isSavingRoles}>
             {isSavingRoles ? '저장 중...' : '역할 저장'}

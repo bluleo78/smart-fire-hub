@@ -1,5 +1,6 @@
 package com.smartfirehub.audit.service;
 
+import static com.smartfirehub.jooq.Tables.AUDIT_LOG;
 import static com.smartfirehub.jooq.Tables.USER;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,6 +29,9 @@ class AuditLogServiceTest extends IntegrationTestBase {
 
   @BeforeEach
   void setUp() {
+    // 다른 테스트 클래스(비트랜잭션)가 커밋한 audit_log 잔류 데이터 제거
+    dsl.deleteFrom(AUDIT_LOG).execute();
+
     adminId =
         dsl.insertInto(USER)
             .set(USER.USERNAME, "admin@example.com")

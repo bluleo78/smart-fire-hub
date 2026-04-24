@@ -13,20 +13,24 @@ export function toFeatureCollection(
     type: 'FeatureCollection',
     features: rows
       .filter(row => row[geometryColumn] != null)
-      .map(row => {
+      .flatMap(row => {
         const rawGeom = row[geometryColumn];
-        // Backend returns geometry as JSON string from ST_AsGeoJSON()
-        const geometry =
-          typeof rawGeom === 'string'
-            ? (JSON.parse(rawGeom) as Record<string, unknown>)
-            : (rawGeom as Record<string, unknown>);
-        return {
-          type: 'Feature' as const,
-          geometry,
-          properties: Object.fromEntries(
-            Object.entries(row).filter(([k]) => k !== geometryColumn),
-          ),
-        };
+        // 비공간 데이터(JSON 파싱 실패)는 피처에서 제외 — 크래시 방지 (#77)
+        try {
+          const geometry =
+            typeof rawGeom === 'string'
+              ? (JSON.parse(rawGeom) as Record<string, unknown>)
+              : (rawGeom as Record<string, unknown>);
+          return [{
+            type: 'Feature' as const,
+            geometry,
+            properties: Object.fromEntries(
+              Object.entries(row).filter(([k]) => k !== geometryColumn),
+            ),
+          }];
+        } catch {
+          return [];
+        }
       }),
   };
 }

@@ -70,7 +70,7 @@ class TriggerServiceTest extends IntegrationTestBase {
     assertThat(response.triggerType()).isEqualTo("SCHEDULE");
     assertThat(response.isEnabled()).isTrue();
     assertThat(response.config()).containsKey("cron");
-    assertThat(response.config().get("cron")).isEqualTo("0 9 * * *");
+    assertThat(response.config().get("cron")).isEqualTo("0 0 9 * * *");
   }
 
   @Test

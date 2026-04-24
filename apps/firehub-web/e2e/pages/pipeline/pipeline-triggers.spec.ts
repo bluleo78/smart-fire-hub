@@ -310,4 +310,36 @@ test.describe('파이프라인 트리거 탭', () => {
 
     await expect(page.getByText('감시 대상 데이터셋을 선택하세요')).toBeVisible();
   });
+
+  test('스케줄 트리거 — 유효하지 않은 cron 표현식 입력 시 에러가 표시되고 생성이 차단된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers', (route) => {
+      if (route.request().method() === 'POST') {
+        apiCalled = true;
+        return route.fulfill({ status: 201, body: JSON.stringify(createTrigger({ id: 99 })) });
+      }
+      return route.continue();
+    });
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
+
+    await page.getByLabel(/^이름/).fill('잘못된 크론 테스트');
+
+    // 유효하지 않은 cron 직접 입력
+    const cronInput = page.locator('input[placeholder*="* * *"]').first();
+    await cronInput.fill('invalid-cron');
+
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    // 에러 메시지 표시, API 미호출
+    await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
+    expect(apiCalled).toBe(false);
+  });
 });

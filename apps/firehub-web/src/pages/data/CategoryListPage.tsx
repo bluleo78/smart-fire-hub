@@ -38,8 +38,8 @@ import { iGa } from '../../lib/utils';
 import type { CategoryResponse } from '../../types/dataset';
 
 const categorySchema = z.object({
-  name: z.string().min(1, '카테고리 이름을 입력해주세요.'),
-  description: z.string().optional(),
+  name: z.string().min(1, '카테고리 이름을 입력해주세요.').max(50, '카테고리 이름은 50자 이하여야 합니다.'),
+  description: z.string().max(255, '설명은 255자 이하여야 합니다.').optional(),
 });
 
 type CategoryFormData = z.infer<typeof categorySchema>;

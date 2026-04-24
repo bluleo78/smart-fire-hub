@@ -171,8 +171,15 @@ export function ApiImportWizard({
       const { data } = await client.post<PreviewResult>('/pipelines/api-call/preview', payload);
       setPreviewResult(data);
 
-      if (data.success && data.columns.length > 0 && fieldMappings.every((m) => !m.sourceField)) {
-        const autoMappings: FieldMapping[] = data.columns.map((col) => ({
+      // 단일 객체 응답 시 columns가 비어있어도 rows[0]의 키로 자동 매핑 (#68)
+      const effectiveColumns =
+        data.columns.length > 0
+          ? data.columns
+          : data.rows.length > 0
+            ? Object.keys(data.rows[0]).filter((k) => typeof k === 'string')
+            : [];
+      if (data.success && effectiveColumns.length > 0 && fieldMappings.every((m) => !m.sourceField)) {
+        const autoMappings: FieldMapping[] = effectiveColumns.map((col) => ({
           sourceField: col,
           targetColumn: col,
           dataType: 'TEXT',
@@ -228,8 +235,26 @@ export function ApiImportWizard({
   };
 
   const handleNext = () => {
-    if (step === 0 && !url) {
-      toast.error('URL을 입력하세요');
+    if (step === 0) {
+      if (!url) {
+        toast.error('URL을 입력하세요');
+        return;
+      }
+      // URL 형식 검증 (#53)
+      try {
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          toast.error('http 또는 https URL을 입력하세요');
+          return;
+        }
+      } catch {
+        toast.error('유효하지 않은 URL 형식입니다');
+        return;
+      }
+    }
+    // 필드 매핑 0개 차단 (#54)
+    if (step === 1 && fieldMappings.length === 0) {
+      toast.error('최소 하나 이상의 필드 매핑을 추가하세요');
       return;
     }
     setStep((s) => s + 1);

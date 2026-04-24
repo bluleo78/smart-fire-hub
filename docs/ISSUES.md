@@ -18,7 +18,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/pipeline/components/AddTriggerDialog.tsx:76-95`, `apps/firehub-api/src/main/java/com/smartfirehub/pipeline/service/TriggerService.java:459-471`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 파이프라인/트리거)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 스케줄 트리거 생성 시 "invalid-cron" 같은 유효하지 않은 Cron 표현식을 입력하면 `CronExpressionInput` 인라인 에러 "유효하지 않은 cron 표현식입니다"가 표시되지만 "트리거 생성" 버튼은 비활성화되지 않고 제출 가능. 백엔드도 검증 없이 저장하여 스케줄러 등록 실패(silent failure).
 
@@ -43,7 +44,8 @@
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/data/components/ApiImportWizard.tsx:229-235`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 데이터셋/API 가져오기)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: API 가져오기 마법사 Step 2(응답 매핑)에서 필드 매핑을 하나도 추가하지 않아도 Step 3(미리보기)와 Step 4(실행 옵션)로 진행 가능하며, "완료" 버튼으로 파이프라인 생성까지 됨. 실제 실행 시 "path can not be null or empty" 에러로 실패하지만 사용자에게 사전 경고 없음.
 
@@ -64,7 +66,8 @@
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/data/components/ApiImportWizard.tsx:229-235`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 데이터셋/API 가져오기)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: API 가져오기 마법사 Step 1에서 "not-a-valid-url" 같은 유효하지 않은 URL 입력 시 toast 없이 Step 2로 이동됨. 빈값만 검증하고 URL 형식(http/https 스킴) 검증 없음. Step 2에서 "테스트 호출" 시 "URL scheme not allowed: null" 에러 발생.
 
@@ -1296,7 +1299,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/pipeline/components/EditorHeader.tsx`, `apps/firehub-api/src/main/java/com/smartfirehub/pipeline/dto/CreatePipelineRequest.java`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 파이프라인)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 파이프라인 이름 입력란에 101자 이상 입력 후 저장 시 "파이프라인 저장에 실패했습니다" 토스트만 표시되고 서버 500 반환. DB `pipeline.name` 컬럼이 `VARCHAR(100)`이나 클라이언트/서버 모두 maxLength 검증 없음.
 
@@ -1314,7 +1318,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Major (보안/운영)
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/UserDetailPage.tsx`, `apps/firehub-api/src/main/java/com/smartfirehub/user/`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 사용자 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 관리자(ADMIN 권한 보유자)가 자신의 사용자 상세 페이지에서 ADMIN 역할 체크박스를 해제하고 "역할 저장" 클릭 시 ADMIN 역할이 실제로 제거됨. 이후 관리자 페이지 접근 불가(403) → 자기 잠금(self-lockout) 발생.
 
@@ -1336,7 +1341,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/role/dto/CreateRoleRequest.java:6`, `apps/firehub-web/src/pages/admin/RoleManagementPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 역할 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 역할 이름에 `<`, `>`, `#` 같은 특수문자 허용. "ROLE_#1<test>"가 성공적으로 생성됨. 백엔드 `@NotBlank @Size(max=50)` 검증만 있고 문자 패턴 검증 없음.
 
@@ -1354,7 +1360,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/apiconnection/service/ApiConnectionService.java:220`, `apps/firehub-api/src/main/resources/db/migration/V13__create_async_job.sql`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — API 연결 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: API 연결 관리 화면에서 "전체 갱신" 버튼 클릭 시 `POST /api/v1/api-connections/refresh-all` → HTTP 500 반환. "An unexpected error occurred" 토스트 표시.
 
@@ -1375,7 +1382,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Major
 - **컴포넌트**: 전반적 (로그인·역할·사용자·파이프라인·데이터셋 등 서비스)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 감사 로그)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (AuthService LOGIN/LOGOUT, DatasetService CREATE/DELETE, PipelineExecutionService EXECUTE 감사 로그 추가)
 
 **현상**: 감사 로그 페이지에서 "생성", "수정", "삭제", "로그인", "로그아웃", "실행" 필터 선택 시 모두 "감사 로그가 없습니다." 표시. 오직 "임포트" 이벤트만 기록됨.
 
@@ -1393,7 +1401,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/SmtpSettingsTab.tsx:80`, `apps/firehub-web/src/hooks/queries/useProactiveMessages.ts:262`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 이메일 설정)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: SMTP 호스트가 미설정(빈 값) 상태에서 "테스트 발송" 클릭 시 "테스트 이메일이 발송되었습니다." 성공 toast 표시. 실제 서버 응답은 `{"success": false, "message": "SMTP 호스트가 설정되지 않았습니다"}`.
 
@@ -1412,7 +1421,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/ReportTemplatesTab.tsx:44-45`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 리포트 양식)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 커스텀 템플릿 카드에 긴 설명(수백 자)이 있는 경우 카드 높이가 과도하게 늘어나 레이아웃이 파괴됨. 다른 카드와 높이가 달라져 그리드 정렬 깨짐.
 
@@ -1431,7 +1441,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/proactive/dto/CreateProactiveJobRequest.java`, DB `proactive_job.name VARCHAR(200)`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 스마트 작업)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 스마트 작업 생성 시 이름을 201자 이상 입력 후 생성 클릭 → "An unexpected error occurred" 토스트, HTTP 500.
 
@@ -1449,7 +1460,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/` (Dashboard 차트 위젯 컴포넌트)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 대시보드)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 대시보드 라인 차트의 Y축 레이블("80000000", "160000000" 등)이 왼쪽 컨테이너 경계에 잘려 "0000000"처럼 보임. 콘솔에 `width(-1) and height(-1) of chart should be greater than 0` 경고 8개 발생.
 
@@ -1467,7 +1479,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/analytics/` (차트 빌더 미리보기 컴포넌트)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 차트 빌더)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 차트 빌더에서 `pg_sleep()` 함수를 포함한 쿼리 실행 시 미리보기 테이블의 셀 값이 "[object Object]"로 표시됨.
 
@@ -1486,7 +1499,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/service/AnalyticsQueryExecutionService.java:184-190`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 저장된 쿼리 / SQL 편집기)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: Analytics SQL 편집기에서 `DELETE FROM customers` 실행 시 전체 6개 행이 영구 삭제됨. `SAVEPOINT`는 오류 시에만 롤백하므로 정상 실행된 DELETE/UPDATE/INSERT는 커밋됨. 실제 운영 데이터 손실 발생.
 
@@ -1507,7 +1521,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/data/components/ApiImportWizard.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — API 임포트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#53 수정에 포함)
 
 **현상**: URL 필드(필수)가 비어있는 상태에서 "다음" 버튼을 클릭해도 에러 메시지 없이 Step 1에 그대로 머문다.
 
@@ -1526,7 +1541,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/data/components/ApiImportWizard.tsx:173-179`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — API 임포트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (columns 빈 경우 rows[0] 키를 fallback으로 사용)
 
 **현상**: JSONPath가 단일 객체(배열이 아닌)를 반환할 때 테스트 호출 후 "자동으로 채워집니다" 안내와 달리 필드 매핑이 자동으로 채워지지 않는다.
 
@@ -1543,7 +1559,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/AiAgentSettingsTab.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 관리자 설정)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: Temperature 필드에 1.0을 초과하는 값(예: 2.0)을 입력 후 "저장" 클릭 시, 저장 성공 토스트도 없고 에러 메시지도 없이 아무런 피드백 없이 종료. 새로고침 시 원래 값으로 복원됨.
 
@@ -1563,7 +1580,8 @@ const handleToggle = (job: ProactiveJob, enabled: boolean) => {
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/analytics/service/AnalyticsQueryExecutionService.java`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — SQL 편집기)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#33/#34 수정에 포함 — public 스키마 접근 차단 이미 적용)
 
 **현상**: Analytics SQL 편집기에서 `SELECT id, username, password FROM public."user" LIMIT 5` 실행 시 시스템 사용자 테이블의 bcrypt 패스워드 해시가 반환됨. 공격자는 이 해시를 오프라인 크래킹 도구로 평문 패스워드 복원 시도 가능.
 
@@ -1593,7 +1611,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/settings/ChannelSettingsPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 알림 채널 설정)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 카카오 알림톡과 Slack 채널이 "미연결" 상태임에도 토글 스위치가 `checked` 상태로 표시됨. 이메일 채널은 "미연결" + unchecked로 정상 표시됨. 카카오/Slack의 기본값이 활성화(checked)로 설정되어 있어 미연결 채널이 활성화된 것처럼 보이는 혼란 발생.
 
@@ -1611,7 +1630,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/oauth/OAuthController.java`, `apps/firehub-web/src/pages/settings/ChannelSettingsPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 알림 채널 설정)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: "연동하기" 클릭 시 `/api/v1/oauth/kakao/start` 새 탭이 열리지만 `401 Unauthorized: Full authentication is required` 에러 반환. OAuth 연동 불가.
 
@@ -1629,7 +1649,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/admin/service/AdminUserService.java`, `apps/firehub-web/src/pages/admin/AdminUserDetailPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 관리자 사용자 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#57 수정에 포함 — UserDetailPage.tsx 동일 파일)
 
 **현상**: 관리자가 본인의 사용자 상세 페이지(/admin/users/:myId)에서 ADMIN 역할을 체크 해제하고 "역할 저장" 클릭 시, 확인 다이얼로그나 경고 없이 즉시 자신의 ADMIN 권한이 제거됨. 이후 모든 /admin/* 경로 접근이 차단되어 관리자 기능 이용 불가 상태가 됨.
 
@@ -1652,7 +1673,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/AdminUserDetailPage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 관리자 사용자 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 관리자가 자신의 사용자 상세 페이지에서 활성화 토글 스위치를 클릭하면, 경고 없이 즉시 본인 계정이 비활성화됨. 비활성화된 계정으로는 로그인이 불가능하여 관리자 접근 불가 상태가 될 수 있음.
 
@@ -1674,7 +1696,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/ProfilePage.tsx`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 프로필)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 프로필 페이지에서 잘못된 현재 비밀번호 입력 후 "비밀번호 변경" 클릭 시, 또는 잘못된 이메일 형식으로 "저장" 클릭 시, 서버 에러 메시지 "Validation failed"가 영문 그대로 표시됨. 한국어 애플리케이션에서 사용자 혼란 유발.
 
@@ -1695,7 +1718,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/App.tsx` (라우터 설정)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 라우팅)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: `/nonexistent-page` 등 정의되지 않은 경로 접근 시 빈 화면이 표시됨. "페이지를 찾을 수 없습니다" 메시지나 홈으로 돌아가는 버튼 등 사용자 안내가 없음.
 
@@ -1713,7 +1737,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/MapChartView.tsx:17`, `apps/firehub-web/src/lib/geo-utils.ts:20`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 차트 빌더)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: 차트 빌더에서 비공간 쿼리(일반 SQL 결과)로 쿼리 실행 후 "지도" 차트 타입을 클릭하면 페이지 전체가 빈 흰 화면으로 크래시. 내비게이션도 사라지며 페이지 복구 불가 (새로고침 필요).
 
@@ -1737,7 +1762,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/SmtpSettingsTab.tsx:79-82`, `apps/firehub-web/src/hooks/queries/useProactiveMessages.ts:262-266`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 관리자 설정)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (SettingsPage.tsx에서 `data?.success === false` 확인 후 `toast.error` 호출로 수정)
 
 **현상**: SMTP 테스트 발송 버튼 클릭 시 실제 이메일 전송 실패(잘못된 SMTP 인증 정보 등)여도 "테스트 이메일이 발송되었습니다." 성공 토스트가 표시됨. API는 HTTP 200으로 `{"success": false, "message": "535-5.7.8 Username and Password not accepted..."}` 반환하지만 프론트엔드는 HTTP 상태만 확인하고 응답 body의 `success` 필드를 무시.
 
@@ -1760,7 +1786,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/components/analytics/` (recharts 차트 컴포넌트들)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 대시보드/차트 빌더)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (`chart-styles.ts`의 `formatYAxisTick` 함수로 만/억 단위 포맷 적용)
 
 **현상**: 금액 데이터(수천만~수억 원) 차트의 Y축 레이블이 "0000000"으로 표시됨. 실제 값은 "80000000", "160000000" 등이나 Y축 레이블 컨테이너 너비 부족으로 선행 숫자가 잘려 모두 동일하게 "0000000"처럼 보임.
 
@@ -1781,7 +1808,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/ApiConnectionDetailPage.tsx:74`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — API 연결 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: API 연결 상세 페이지에서 연결 이름을 비운 후 "저장" 클릭 시 아무 반응 없음. 저장이 취소되지만 사용자에게 오류 메시지나 피드백이 전혀 표시되지 않음.
 
@@ -1800,7 +1828,8 @@ id=1, username=bluleo78@gmail.com, password=$2a$10$f3ZxpFcVXmwKLYBWn2Hf1ud25TMiP
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/apiconnection/service/ApiConnectionService.java:216-218`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — API 연결 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#59 수정에 포함 — refreshAllAsync에 userId 전달)
 
 **현상**: API 연결 관리 페이지의 "전체 갱신" 버튼 클릭 시 항상 500 에러 발생. UI에 "An unexpected error occurred" 토스트 표시.
 
@@ -1828,7 +1857,8 @@ String jobId = asyncJobService.createJob(
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/RoleDetailPage.tsx:207-225`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 역할 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: ADMIN, USER 등 시스템 역할의 권한 체크박스가 비활성화되지 않아 ADMIN 역할에서 모든 권한을 제거하는 것이 가능함.
 
@@ -1847,7 +1877,8 @@ String jobId = asyncJobService.createJob(
 - **심각도**: UX
 - **컴포넌트**: `apps/firehub-web/src/pages/pipeline/components/ExecutionStepPanel.tsx:17-27`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 파이프라인 실행)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 
 **현상**: API 호출 스텝이 790ms~816ms에 완료됐으나 실행 이력 테이블과 스텝 상세 패널 모두 "소요: 0s"로 표시됨.
 
@@ -1866,7 +1897,8 @@ String jobId = asyncJobService.createJob(
 - **심각도**: Critical
 - **컴포넌트**: 백엔드 SQL 실행 서비스 (쿼리 허용 목록 관련)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — SQL 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#33/#34 수정에 포함 — INFORMATION_SCHEMA 문자열 차단 이미 적용)
 
 **현상**: 분석 쿼리 에디터에서 `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' LIMIT 10` 실행 시 10개 테이블명 반환: `user`, `role`, `role_permission`, `permission`, `user_role`, `dataset_category` 등 전체 내부 테이블 스키마 노출.
 
@@ -1885,7 +1917,8 @@ String jobId = asyncJobService.createJob(
 - **심각도**: Critical
 - **컴포넌트**: 백엔드 SQL 실행 서비스 (스키마 접근 제어 미흡)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — SQL 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#33/#34 수정에 포함 — PG_CATALOG 문자열 차단 이미 적용)
 - **증거**: `snapshots/critical-pg-shadow-exposure.png`
 
 **현상**: 분석 쿼리 에디터에서 `SELECT usename, passwd FROM pg_catalog.pg_shadow LIMIT 5` 실행 시 PostgreSQL DB 사용자(`app`, `pipeline_executor`)의 SCRAM-SHA-256 비밀번호 해시 완전 노출.
@@ -1910,7 +1943,8 @@ String jobId = asyncJobService.createJob(
 - **심각도**: Critical
 - **컴포넌트**: 백엔드 SQL 실행 서비스 (PostgreSQL 함수 접근 제어 미흡)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — SQL 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (AnalyticsQueryExecutionService + DataTableQueryService에 PG_READ_FILE 문자열 차단 추가)
 - **증거**: `snapshots/critical-file-read.png`
 
 **현상**: 분석 쿼리 에디터에서 `SELECT pg_read_file('/etc/passwd')` 실행 시 서버의 `/etc/passwd` 내용 전체 반환. 인증된 사용자라면 서버 파일 시스템 읽기 가능.
@@ -1937,7 +1971,8 @@ String jobId = asyncJobService.createJob(
 - **심각도**: Critical
 - **컴포넌트**: Docker/배포 설정 (데이터베이스 사용자 권한 설정)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — SQL 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (V56 Flyway migration으로 app 사용자 NOSUPERUSER 적용)
 
 **현상**: 애플리케이션 DB 사용자 `app`이 `rolsuper=true` (PostgreSQL SUPERUSER) 권한으로 실행됨. 버그 #84~#86의 근본 원인.
 
@@ -1965,7 +2000,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-executor/app/services/python_executor.py:80-99`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — Python 스텝 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료 (부분: nsjail 비활성 시 SECURITY WARNING 로그 추가; 완전한 격리는 운영 환경 nsjail 필수)
 - **증거**: `snapshots/critical-python-os-exec.png`
 
 **현상**: `settings.nsjail_enabled=False` 일 때 Python 스텝이 `subprocess.run(["python3", script_path])` 로 직접 실행됨. `import os; os.popen("id")` 실행 결과: `uid=501(bluleo78) gid=20(staff) groups=...(admin)...` — 호스트 시스템의 실제 사용자 권한으로 OS 명령 실행.
@@ -1995,7 +2031,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-executor/app/services/python_executor.py:80-99`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — Python 스텝 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료 (부분: nsjail 비활성 시 개별 DB_PASSWORD/DB_USER 키 제거, DB_URL만 전달; nsjail 활성 시 변경 없음)
 - **증거**: `snapshots/critical-env-db-credentials-leak.png`
 
 **현상**: Python 파이프라인 스텝에서 `os.environ`을 읽으면 `pipeline_executor` DB 자격증명이 평문으로 노출됨.
@@ -2031,7 +2068,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-ai-agent/` (AI 도구: execute_analytics_query)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — AI 어시스턴트 보안)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 - **증거**: `snapshots/critical-ai-password-leak.png`
 
 **현상**: AI 어시스턴트에 `SELECT id, email, password FROM public."user"` SQL을 직접 입력하면 bcrypt 비밀번호 해시가 AI 채팅 인터페이스에 표시됨.
@@ -2062,7 +2100,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/SmtpSettingsTab.tsx:79-81`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 설정 페이지)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#78 수정에 포함)
 
 **현상**: SMTP 호스트가 비어 있는 상태에서 "테스트 발송" 버튼을 누르면 "테스트 이메일이 발송되었습니다"라는 성공 토스트가 표시됨. 백엔드는 `{ "success": false, "message": "SMTP 호스트가 설정되지 않았습니다" }`를 HTTP 200으로 반환하지만 프론트엔드가 success 필드를 확인하지 않고 onSuccess 콜백에서 무조건 성공 토스트를 표시함.
 
@@ -2081,7 +2120,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/audit/service/AuditLogService.java`
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 감사 로그)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#60 수정에 포함)
 
 **현상**: 감사 로그 페이지 UI에서 로그인/생성/수정/삭제/실행 필터를 제공하지만 실제 DB에는 IMPORT 액션만 기록됨. `auth`, `dataset`, `pipeline`, `user`, `role` 등 핵심 도메인 서비스에 `AuditLogService` 호출이 없음.
 
@@ -2099,7 +2139,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/dataset/` (`POST /api/v1/datasets/{id}/query`)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 데이터셋 데이터 탭)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료
 - **증거**: `snapshots/dataset-sql-crossschema.png`
 
 **현상**: 데이터셋 > 데이터 탭 > SQL 버튼 에디터에서 `SELECT * FROM public.user`를 실행하면 `password` 컬럼의 bcrypt 해시가 그대로 노출됨. Bug #70 (analytics 쿼리 에디터)과 동일한 근본 원인이나 다른 API 경로(`/datasets/{id}/query`)로 재현됨.
@@ -2117,7 +2158,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/` (analytics 쿼리 실행 엔드포인트)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 쿼리 에디터)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#66 수정에 포함 — SavedQueryController에서 readOnly=true 강제, DML 실행 차단)
 
 **현상**: Analytics 쿼리 에디터에서 `DELETE FROM data.customers WHERE 1=0` 실행 시 "0개 행이 처리되었습니다"가 응답됨. SELECT 전용이 아니라 DML(DELETE/UPDATE/INSERT)도 실행 가능. 실제 데이터 삭제/수정 가능.
 
@@ -2135,7 +2177,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Major
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/UserDetailPage.tsx` (활성 상태 스위치)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 사용자 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#73 수정에 포함)
 - **증거**: `snapshots/self-deactivation.png`
 
 **현상**: `/admin/users/{id}` 페이지에서 활성 상태 스위치를 클릭하면 확인 다이얼로그 없이 즉시 비활성화됨. 자신의 계정(현재 로그인한 사용자)도 동일하게 비활성화 가능하여 관리자가 자신을 잠글 수 있음.
@@ -2158,7 +2201,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Critical
 - **컴포넌트**: `apps/firehub-web/src/pages/admin/UserDetailPage.tsx`, `apps/firehub-api/src/main/java/com/smartfirehub/user/` (역할 저장 엔드포인트)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 사용자 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (#71/#57 수정에 포함)
 
 **현상**: 관리자가 `/admin/users/{자신의 id}` 페이지에서 ADMIN 역할 체크박스를 해제하고 "역할 저장"을 누르면 확인 없이 즉시 자신의 ADMIN 역할이 DB에서 제거됨. 백엔드에서 403을 반환하는 것은 후속 GET 요청(토큰 갱신)에서이며 역할 저장 자체는 성공.
 
@@ -2182,7 +2226,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-web/src/pages/data/CategoryPage.tsx` (대략)
 - **발견**: 2026-04-24 (Playwright 탐색 테스트 — 카테고리 관리)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (Zod schema에 max(50) 추가, CategoryRequest에 @Size(max=50) 백엔드 검증 추가)
 
 **현상**: 카테고리 이름을 201자 이상 입력하고 생성 버튼을 클릭하면 서버 500 오류가 발생한다. 입력 필드에 `maxLength` 속성이 없어 클라이언트 검증이 없다.
 
@@ -2199,7 +2244,8 @@ SELECT rolname, rolsuper, rolcreaterole, rolcreatedb FROM pg_catalog.pg_roles WH
 - **심각도**: Minor
 - **컴포넌트**: `apps/firehub-api/src/main/java/com/smartfirehub/global/exception/GlobalExceptionHandler.java:416-423`
 - **발견**: 2026-04-24 (API 접근 제어 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-25
+- **상태**: ✅ 수정 완료 (GlobalExceptionHandler에 NoResourceFoundException 핸들러 추가)
 
 **현상**: 인증된 사용자(유효한 JWT)로 존재하지 않는 API 경로(예: `/api/v1/nonexistent`)에 요청하면 404 대신 500을 반환한다. 미인증 요청은 401을 반환한다.
 

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import cronstrue from 'cronstrue/i18n';
 import { ArrowLeft,Clock, Code, Database, Globe, Link, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -81,7 +82,15 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
     }
     if (selectedType === 'SCHEDULE') {
       const c = config as { cron: string };
-      if (!c.cron?.trim()) errors.cron = 'Cron 표현식을 입력하세요';
+      if (!c.cron?.trim()) {
+        errors.cron = 'Cron 표현식을 입력하세요';
+      } else {
+        try {
+          cronstrue.toString(c.cron, { locale: 'ko' });
+        } catch {
+          errors.cron = '유효하지 않은 Cron 표현식입니다';
+        }
+      }
     }
     if (selectedType === 'PIPELINE_CHAIN') {
       const c = config as { upstreamPipelineId: number | null };

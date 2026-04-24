@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 export const createRoleSchema = z.object({
-  name: z.string().min(1, '역할 이름을 입력하세요').max(50, '역할 이름은 50자 이하여야 합니다'),
+  name: z
+    .string()
+    .min(1, '역할 이름을 입력하세요')
+    .max(50, '역할 이름은 50자 이하여야 합니다')
+    .regex(/^[A-Z][A-Z0-9_]*$/, '역할 이름은 대문자, 숫자, 밑줄만 허용됩니다'),
   description: z.string().optional().or(z.literal('')),
 });
 

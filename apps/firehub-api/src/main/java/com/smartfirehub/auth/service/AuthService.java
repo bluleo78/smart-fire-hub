@@ -1,5 +1,6 @@
 package com.smartfirehub.auth.service;
 
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
@@ -17,6 +18,7 @@ import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -27,6 +29,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +43,7 @@ public class AuthService {
   private final JwtProperties jwtProperties;
   private final RefreshTokenRepository refreshTokenRepository;
   private final LoginAttemptService loginAttemptService;
+  private final AuditLogService auditLogService;
 
   @Transactional
   public UserResponse signup(SignupRequest request) {
@@ -119,6 +124,11 @@ public class AuthService {
     UUID familyId = UUID.randomUUID();
     storeRefreshToken(user.id(), refreshToken, familyId);
 
+    // 로그인 감사 로그 (#60/#92)
+    String[] requestInfo = extractRequestInfo();
+    auditLogService.log(user.id(), user.username(), "LOGIN", "auth", null,
+        "로그인 성공", requestInfo[0], requestInfo[1], "SUCCESS", null, null);
+
     return new TokenResponse(
         accessToken, refreshToken, "Bearer", jwtProperties.accessExpiration() / 1000);
   }
@@ -174,6 +184,12 @@ public class AuthService {
   @Transactional
   public void logout(Long userId) {
     refreshTokenRepository.revokeAllByUserId(userId);
+    // 로그아웃 감사 로그 (#60/#92)
+    userRepository.findById(userId).ifPresent(user -> {
+      String[] requestInfo = extractRequestInfo();
+      auditLogService.log(userId, user.username(), "LOGOUT", "auth", null,
+          "로그아웃", requestInfo[0], requestInfo[1], "SUCCESS", null, null);
+    });
   }
 
   @Transactional(readOnly = true)
@@ -188,6 +204,20 @@ public class AuthService {
     LocalDateTime expiresAt =
         LocalDateTime.now().plusSeconds(jwtProperties.refreshExpiration() / 1000);
     refreshTokenRepository.save(userId, tokenHash, expiresAt, familyId);
+  }
+
+  /** HTTP 요청 컨텍스트에서 IP와 User-Agent를 추출한다. 감사 로그에 사용 */
+  private String[] extractRequestInfo() {
+    var attrs = RequestContextHolder.getRequestAttributes();
+    if (attrs instanceof ServletRequestAttributes sra) {
+      HttpServletRequest req = sra.getRequest();
+      String forwarded = req.getHeader("X-Forwarded-For");
+      String ip = (forwarded != null && !forwarded.isBlank())
+          ? forwarded.split(",")[0].trim()
+          : req.getRemoteAddr();
+      return new String[]{ip, req.getHeader("User-Agent")};
+    }
+    return new String[]{null, null};
   }
 
   private String hashToken(String token) {

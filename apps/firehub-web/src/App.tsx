@@ -12,6 +12,7 @@ import { ThemeColorProvider } from './hooks/useThemeColor';
 
 // Lazy-loaded pages
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 const SignupPage = lazy(() => import('./pages/SignupPage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
@@ -61,6 +62,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense>} />
           <Route path="/signup" element={<Suspense fallback={<PageSkeleton />}><SignupPage /></Suspense>} />
+          <Route path="*" element={<Suspense fallback={<PageSkeleton />}><NotFoundPage /></Suspense>} />
           <Route element={<ProtectedRoute />}>
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomePage />} />

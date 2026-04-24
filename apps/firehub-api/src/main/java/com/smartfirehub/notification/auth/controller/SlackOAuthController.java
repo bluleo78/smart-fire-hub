@@ -4,7 +4,7 @@ import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.OAuthStateService;
 import com.smartfirehub.notification.auth.SlackOAuthService;
 import com.smartfirehub.notification.repository.OAuthStateRepository.ConsumedState;
-import java.net.URI;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -39,23 +39,21 @@ public class SlackOAuthController {
     }
 
     /**
-     * Slack 앱 설치 시작 — 관리자 전용.
+     * Slack OAuth 인증 URL 반환 — 관리자 전용.
      *
-     * <p>CSRF 방어용 state를 발급하고 Slack OAuth 인증 페이지로 302 리다이렉트한다.
-     * state에 userId를 포함하여 콜백에서 설치 주체를 추적한다.
+     * <p>팝업은 Bearer 헤더를 전달할 수 없으므로, 프론트엔드가 이 엔드포인트를 먼저
+     * 호출하여 실제 Slack 인증 URL을 받은 뒤 해당 URL을 팝업으로 직접 연다.
      *
      * @param authentication Spring Security 인증 객체 (principal = userId Long)
-     * @return 302 Redirect to Slack authorize URL
+     * @return {"url": "https://slack.com/oauth/v2/authorize?..."}
      */
-    @GetMapping("/start")
+    @GetMapping("/auth-url")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> start(Authentication authentication) {
+    public ResponseEntity<Map<String, String>> authUrl(Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
         String state = oAuthStateService.issue(userId, ChannelType.SLACK);
         String authorizeUrl = slackOAuthService.authorizeUrl(state);
-        return ResponseEntity.status(302)
-                .location(URI.create(authorizeUrl))
-                .build();
+        return ResponseEntity.ok(Map.of("url", authorizeUrl));
     }
 
     /**

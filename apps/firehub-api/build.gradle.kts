@@ -8,8 +8,9 @@ plugins {
 }
 
 // JaCoCo 커버리지 설정 — 로컬 리포트 전용 (CI 연동 없음)
+// 0.8.13: Java 25(class major version 69) 지원 추가
 jacoco {
-    toolVersion = "0.8.11"
+    toolVersion = "0.8.13"
 }
 
 tasks.jacocoTestReport {

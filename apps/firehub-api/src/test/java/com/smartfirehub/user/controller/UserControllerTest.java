@@ -1,5 +1,6 @@
 package com.smartfirehub.user.controller;
 
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -156,7 +157,7 @@ class UserControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent());
 
-    verify(userService).setUserRoles(2L, List.of(1L, 2L));
+    verify(userService).setUserRoles(eq(2L), eq(List.of(1L, 2L)), any());
   }
 
   @Test

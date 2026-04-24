@@ -71,7 +71,11 @@ export default function ApiConnectionDetailPage() {
 
   /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
   const handleSaveInfo = async () => {
-    if (!id || !name.trim()) return;
+    if (!id) return;
+    if (!name.trim()) {
+      toast.error('연결 이름은 필수입니다.');
+      return;
+    }
     try {
       await updateMutation.mutateAsync({
         id: Number(id),

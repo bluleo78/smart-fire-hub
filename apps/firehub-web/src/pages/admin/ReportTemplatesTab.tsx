@@ -42,7 +42,7 @@ export default function ReportTemplatesTab() {
                   <Badge variant="secondary" className="shrink-0 text-xs">기본</Badge>
                 </div>
                 {t.description && (
-                  <CardDescription className="text-xs">{t.description}</CardDescription>
+                  <CardDescription className="text-xs line-clamp-2">{t.description}</CardDescription>
                 )}
               </CardHeader>
               <CardContent>
@@ -93,7 +93,7 @@ export default function ReportTemplatesTab() {
                     <CardTitle className="text-sm font-medium">{t.name}</CardTitle>
                   </div>
                   {t.description && (
-                    <CardDescription className="text-xs">{t.description}</CardDescription>
+                    <CardDescription className="text-xs line-clamp-2">{t.description}</CardDescription>
                   )}
                 </CardHeader>
                 <CardContent>

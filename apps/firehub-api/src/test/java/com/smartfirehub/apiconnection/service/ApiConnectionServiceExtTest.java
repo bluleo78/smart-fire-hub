@@ -332,7 +332,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Test
   void refreshAllAsync_returnsJobId() {
     // refreshAllAsync는 Job을 생성하고 jobId(UUID 문자열)를 반환해야 한다
-    String jobId = apiConnectionService.refreshAllAsync();
+    String jobId = apiConnectionService.refreshAllAsync(testUserId);
 
     assertThat(jobId).isNotNull();
     assertThat(jobId).isNotEmpty();

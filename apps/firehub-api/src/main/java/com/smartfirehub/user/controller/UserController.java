@@ -62,8 +62,11 @@ public class UserController {
   @PutMapping("/{id}/roles")
   @RequirePermission("role:assign")
   public ResponseEntity<Void> setUserRoles(
-      @PathVariable Long id, @Valid @RequestBody SetRolesRequest request) {
-    userService.setUserRoles(id, request.roleIds());
+      Authentication authentication,
+      @PathVariable Long id,
+      @Valid @RequestBody SetRolesRequest request) {
+    Long callerId = (Long) authentication.getPrincipal();
+    userService.setUserRoles(id, request.roleIds(), callerId);
     return ResponseEntity.noContent().build();
   }
 

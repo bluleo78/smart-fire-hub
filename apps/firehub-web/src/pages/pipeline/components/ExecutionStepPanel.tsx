@@ -20,6 +20,7 @@ function formatDuration(startedAt: string | null, completedAt: string | null, el
     ? Math.floor((new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 1000)
     : elapsed ?? 0;
   if (totalSeconds < 0) return '-';
+  if (totalSeconds === 0) return '< 1s';
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   if (minutes > 0) return `${minutes}m ${seconds}s`;

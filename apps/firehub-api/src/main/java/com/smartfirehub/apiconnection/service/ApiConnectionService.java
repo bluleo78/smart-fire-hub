@@ -211,13 +211,13 @@ public class ApiConnectionService {
    *
    * @return AsyncJob ID (문자열 UUID)
    */
-  public String refreshAllAsync() {
-    // 시스템 기동 Job — userId는 0L(시스템)으로 생성한다
+  public String refreshAllAsync(Long userId) {
+    // 요청자 userId로 AsyncJob 생성 — 0L로 생성 시 user FK 위반 (#59)
     String jobId = asyncJobService.createJob(
         "API_CONNECTION_REFRESH_ALL",
         "api_connection",
         "all",
-        0L,
+        userId,
         null);
 
     pipelineExecutor.execute(() -> {

@@ -209,6 +209,7 @@ export default function RoleDetailPage() {
                       id={`perm-${perm.id}`}
                       checked={selectedPermissionIds.includes(perm.id)}
                       onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked === true)}
+                      disabled={role.isSystem}
                     />
                     <Label htmlFor={`perm-${perm.id}`} className="text-sm">
                       {perm.code}
@@ -224,7 +225,7 @@ export default function RoleDetailPage() {
           {allPermissions.length === 0 && (
             <p className="text-sm text-muted-foreground">등록된 권한이 없습니다.</p>
           )}
-          <Button onClick={handleSavePermissions} disabled={isSavingPermissions}>
+          <Button onClick={handleSavePermissions} disabled={isSavingPermissions || role.isSystem}>
             {isSavingPermissions ? '저장 중...' : '권한 저장'}
           </Button>
         </CardContent>

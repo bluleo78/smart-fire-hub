@@ -20,11 +20,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class ChannelSettingsService {
 
-    /** Kakao OAuth 시작 엔드포인트 — 프론트엔드가 새 창으로 열도록 반환 */
-    private static final String KAKAO_OAUTH_START = "/api/v1/oauth/kakao/start";
+    /** Kakao OAuth URL 반환 엔드포인트 — 인증 후 실제 Kakao 인증 URL을 JSON으로 반환 */
+    private static final String KAKAO_OAUTH_AUTH_URL = "/api/v1/oauth/kakao/auth-url";
 
-    /** Slack OAuth 시작 엔드포인트 */
-    private static final String SLACK_OAUTH_START = "/api/v1/oauth/slack/start";
+    /** Slack OAuth URL 반환 엔드포인트 — 인증 후 실제 Slack 인증 URL을 JSON으로 반환 */
+    private static final String SLACK_OAUTH_AUTH_URL = "/api/v1/oauth/slack/auth-url";
 
     private final UserChannelBindingRepository bindingRepo;
     private final UserChannelPreferenceRepository preferenceRepo;
@@ -102,7 +102,7 @@ public class ChannelSettingsService {
                         connected,
                         needsReauth,
                         displayAddress,
-                        KAKAO_OAUTH_START
+                        KAKAO_OAUTH_AUTH_URL
                 );
             }
 
@@ -123,7 +123,7 @@ public class ChannelSettingsService {
                         connected,
                         needsReauth,
                         displayAddress,
-                        SLACK_OAUTH_START
+                        SLACK_OAUTH_AUTH_URL
                 );
             }
         };

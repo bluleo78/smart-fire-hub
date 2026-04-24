@@ -8,6 +8,8 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
+import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.user.repository.UserRepository;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -62,6 +64,8 @@ class PipelineExecutionServiceTest {
   @Mock PermissionChecker permissionChecker;
   @Mock TempDatasetService tempDatasetService;
   @Mock ExecutorClient executorClient;
+  @Mock AuditLogService auditLogService;
+  @Mock UserRepository userRepository;
 
   @InjectMocks PipelineExecutionService service;
 

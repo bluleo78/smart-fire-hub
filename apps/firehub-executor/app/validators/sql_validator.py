@@ -21,6 +21,11 @@ BLOCKED_KEYWORDS = [
     "DBLINK_CONNECT",
     "DO $$",
     "DO $",
+    # 시스템 스키마 직접 접근 차단 — public."user" 등 메타데이터 테이블 접근 방지 (#90)
+    "PUBLIC.",
+    "INFORMATION_SCHEMA",
+    "PG_CATALOG",
+    "PG_EXECUTE",
 ]
 
 

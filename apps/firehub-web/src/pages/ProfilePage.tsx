@@ -54,8 +54,10 @@ export default function ProfilePage() {
       await refreshUser();
       toast.success('프로필이 업데이트되었습니다.');
     } catch (error) {
+      const msg = extractApiError(error, '');
+      // 서버의 "Validation failed" 영문 메시지를 한국어로 대체 (#72)
       profileForm.setError('root', {
-        message: extractApiError(error, '프로필 업데이트에 실패했습니다.'),
+        message: (msg && msg !== 'Validation failed') ? msg : '입력값을 확인하세요.',
       });
     }
   };
@@ -70,8 +72,10 @@ export default function ProfilePage() {
       passwordForm.reset();
       toast.success('비밀번호가 변경되었습니다.');
     } catch (error) {
+      const msg = extractApiError(error, '');
+      // 서버의 "Validation failed" 영문 메시지를 한국어로 대체 (#72)
       passwordForm.setError('root', {
-        message: extractApiError(error, '비밀번호 변경에 실패했습니다.'),
+        message: (msg && msg !== 'Validation failed') ? msg : '현재 비밀번호가 올바르지 않습니다.',
       });
     }
   };

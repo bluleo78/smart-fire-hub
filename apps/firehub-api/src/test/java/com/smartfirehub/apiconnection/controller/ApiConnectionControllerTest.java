@@ -174,7 +174,7 @@ class ApiConnectionControllerTest {
   @Test
   void postRefreshAll_withPermission_returnsJobId() throws Exception {
     String jobId = java.util.UUID.randomUUID().toString();
-    when(apiConnectionService.refreshAllAsync()).thenReturn(jobId);
+    when(apiConnectionService.refreshAllAsync(any())).thenReturn(jobId);
 
     mockMvc
         .perform(post("/api/v1/api-connections/refresh-all").header("Authorization", "Bearer test-token"))

@@ -39,10 +39,12 @@ export function TableView({ columns, data, height }: TableViewProps) {
                     <td
                       key={col}
                       className="px-3 py-1.5 border-b whitespace-nowrap max-w-[200px] truncate"
-                      title={val != null ? String(val) : undefined}
+                      title={val != null ? (typeof val === 'object' ? JSON.stringify(val) : String(val)) : undefined}
                     >
                       {val == null ? (
                         <span className="text-muted-foreground italic text-xs">NULL</span>
+                      ) : typeof val === 'object' ? (
+                        JSON.stringify(val)
                       ) : (
                         String(val)
                       )}

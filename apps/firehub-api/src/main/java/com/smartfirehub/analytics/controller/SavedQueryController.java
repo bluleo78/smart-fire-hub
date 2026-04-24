@@ -70,8 +70,8 @@ public class SavedQueryController {
   public ResponseEntity<AnalyticsQueryResponse> executeAdHoc(
       @Valid @RequestBody AnalyticsQueryRequest request) {
     int maxRows = request.maxRows() != null ? request.maxRows() : 1000;
-    boolean readOnly = Boolean.TRUE.equals(request.readOnly());
-    return ResponseEntity.ok(executionService.execute(request.sql(), maxRows, readOnly));
+    // Web UI 애드혹 쿼리는 항상 readOnly=true 강제 — DELETE/UPDATE 허용 금지 (#66)
+    return ResponseEntity.ok(executionService.execute(request.sql(), maxRows, true));
   }
 
   @GetMapping("/{id}")

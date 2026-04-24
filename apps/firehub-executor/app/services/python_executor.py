@@ -36,6 +36,14 @@ def execute_python(
             script_path = tmp.name
             tmp.write(script.encode())
 
+        if not settings.nsjail_enabled:
+            # 운영 환경에서 nsjail 비활성화는 보안 취약점 — #88/#89
+            # Python 스크립트가 호스트 OS 명령 및 환경변수(DB 자격증명)에 접근 가능
+            logger.warning(
+                "SECURITY WARNING: nsjail is disabled. Python scripts run with host OS access. "
+                "Set NSJAIL_ENABLED=true in production."
+            )
+
         if settings.nsjail_enabled:
             cmd = [
                 settings.nsjail_path, "--mode", "o",
@@ -78,13 +86,10 @@ def execute_python(
                 timeout=effective_timeout,
             )
         else:
+            # nsjail 비활성 환경. DB_URL만 전달하고 개별 자격증명 키(DB_PASSWORD 등)는 제외.
+            # DB_URL에도 패스워드가 포함되나, 개별 키 노출보다 공격 표면을 최소화. (#89)
             env = {
                 "DB_URL": f"postgresql://{settings.db_user}:{settings.db_password}@{settings.db_host}:{settings.db_port}/{settings.db_name}",
-                "DB_USER": settings.db_user,
-                "DB_PASSWORD": settings.db_password,
-                "DB_HOST": settings.db_host,
-                "DB_PORT": str(settings.db_port),
-                "DB_NAME": settings.db_name,
                 "DB_SCHEMA": "data",
                 "PATH": "/usr/bin:/usr/local/bin",
                 "HOME": "/tmp",

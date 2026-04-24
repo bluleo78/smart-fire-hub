@@ -129,9 +129,9 @@ export function ChannelCard({ setting }: ChannelCardProps) {
               <TooltipTrigger asChild>
                 <div>
                   <Switch
-                    checked={enabled}
+                    checked={connected ? enabled : false}
                     onCheckedChange={handleToggle}
-                    disabled={isChatChannel || updatePreference.isPending}
+                    disabled={isChatChannel || updatePreference.isPending || !connected}
                     aria-label={`${label} 채널 활성화`}
                   />
                 </div>

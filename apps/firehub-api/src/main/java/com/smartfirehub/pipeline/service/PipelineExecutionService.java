@@ -3,6 +3,8 @@ package com.smartfirehub.pipeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
+import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.user.repository.UserRepository;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -62,6 +64,9 @@ public class PipelineExecutionService {
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
 
+  private final AuditLogService auditLogService;
+  private final UserRepository userRepository;
+
   public PipelineExecutionService(
       PipelineStepRepository stepRepository,
       PipelineExecutionRepository executionRepository,
@@ -80,7 +85,9 @@ public class PipelineExecutionService {
       PermissionChecker permissionChecker,
       ExecutorClient executorClient,
       AiClassifyExecutor aiClassifyExecutor,
-      TempDatasetService tempDatasetService) {
+      TempDatasetService tempDatasetService,
+      UserRepository userRepository,
+      AuditLogService auditLogService) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -99,6 +106,8 @@ public class PipelineExecutionService {
     this.executorClient = executorClient;
     this.aiClassifyExecutor = aiClassifyExecutor;
     this.tempDatasetService = tempDatasetService;
+    this.userRepository = userRepository;
+    this.auditLogService = auditLogService;
   }
 
   /**
@@ -198,6 +207,13 @@ public class PipelineExecutionService {
     // Execute asynchronously (userId threaded for Python permission check — @Async threads lack
     // SecurityContext)
     executeAsync(pipelineId, executionId, steps, stepDependencyMap, stepIdToStepExecId, userId);
+
+    // 파이프라인 실행 감사 로그 (#60/#92)
+    String pipelineNameForLog = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
+    String usernameForLog = userRepository.findById(userId).map(u -> u.username()).orElse(null);
+    auditLogService.log(userId, usernameForLog, "EXECUTE", "pipeline",
+        String.valueOf(pipelineId), "파이프라인 실행: " + pipelineNameForLog,
+        null, null, "SUCCESS", null, null);
 
     return executionId;
   }

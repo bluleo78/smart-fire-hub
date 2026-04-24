@@ -78,9 +78,20 @@ public class UserService {
   }
 
   @Transactional
-  public void setUserRoles(Long userId, List<Long> roleIds) {
+  public void setUserRoles(Long userId, List<Long> roleIds, Long callerId) {
     if (!userRepository.existsById(userId)) {
       throw new UserNotFoundException("User not found: " + userId);
+    }
+    // 자기 자신의 ADMIN 역할 제거 차단 — 자기 잠금(self-lockout) 방지 (#57)
+    if (userId.equals(callerId)) {
+      roleRepository.findByName("ADMIN").ifPresent(adminRole -> {
+        List<RoleResponse> currentRoles = roleRepository.findByUserId(userId);
+        boolean hasAdminNow = currentRoles.stream().anyMatch(r -> r.id().equals(adminRole.id()));
+        boolean wouldRemoveAdmin = roleIds == null || !roleIds.contains(adminRole.id());
+        if (hasAdminNow && wouldRemoveAdmin) {
+          throw new IllegalArgumentException("자신의 ADMIN 역할은 제거할 수 없습니다");
+        }
+      });
     }
     userRepository.setRoles(userId, roleIds);
   }

@@ -122,7 +122,8 @@ class UserServiceTest extends IntegrationTestBase {
 
     Long userRoleId = dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("USER")).fetchOne(ROLE.ID);
 
-    userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId));
+    // callerId를 testUserId와 다르게 설정하여 자기 자신 역할 제거 보호 로직 비활성화
+    userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId), testUserId + 1000);
 
     UserDetailResponse detail = userService.getUserById(testUserId);
     assertThat(detail.roles()).hasSize(2);

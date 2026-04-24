@@ -90,8 +90,9 @@ public class ApiConnectionController {
    */
   @PostMapping("/refresh-all")
   @RequirePermission("apiconnection:write")
-  public Map<String, String> refreshAll() {
-    String jobId = apiConnectionService.refreshAllAsync();
+  public Map<String, String> refreshAll(Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    String jobId = apiConnectionService.refreshAllAsync(userId);
     return Map.of("jobId", jobId);
   }
 }

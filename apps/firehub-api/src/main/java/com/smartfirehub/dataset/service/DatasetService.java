@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.service;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataset.dto.AddColumnRequest;
 import com.smartfirehub.dataset.dto.CloneDatasetRequest;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
@@ -49,6 +50,7 @@ public class DatasetService {
   private final UserRepository userRepository;
   private final DatasetTagRepository tagRepository;
   private final DSLContext dsl;
+  private final AuditLogService auditLogService;
 
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
@@ -83,6 +85,12 @@ public class DatasetService {
     DatasetResponse dataset = datasetRepository.save(request, userId);
     columnRepository.saveBatch(dataset.id(), request.columns());
     dataTableService.createTable(request.tableName(), request.columns());
+
+    // 데이터셋 생성 감사 로그 (#60/#92)
+    userRepository.findById(userId).ifPresent(u ->
+        auditLogService.log(userId, u.username(), "CREATE", "dataset",
+            String.valueOf(dataset.id()), "데이터셋 생성: " + dataset.name(),
+            null, null, "SUCCESS", null, null));
 
     return getDatasetById(dataset.id());
   }
@@ -212,6 +220,16 @@ public class DatasetService {
     dataTableService.dropTable(dataset.tableName());
     columnRepository.deleteByDatasetId(id);
     datasetRepository.deleteById(id);
+
+    // 데이터셋 삭제 감사 로그 (#60/#92)
+    var auth = org.springframework.security.core.context.SecurityContextHolder
+        .getContext().getAuthentication();
+    if (auth != null && auth.getPrincipal() instanceof Long userId) {
+      userRepository.findById(userId).ifPresent(u ->
+          auditLogService.log(userId, u.username(), "DELETE", "dataset",
+              String.valueOf(id), "데이터셋 삭제: " + dataset.name(),
+              null, null, "SUCCESS", null, null));
+    }
   }
 
   @Transactional

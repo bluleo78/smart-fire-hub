@@ -34,8 +34,8 @@ export function AreaChartView({ config, data, height }: AreaChartViewProps) {
   const palette = colors?.length ? colors : DEFAULT_COLORS;
 
   return (
-    <ResponsiveContainer width="100%" height={height ?? '100%'}>
-      <AreaChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+    <ResponsiveContainer width="100%" height={height ?? '100%'} minWidth={200}>
+      <AreaChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
         {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
         <XAxis
           dataKey={xAxis}

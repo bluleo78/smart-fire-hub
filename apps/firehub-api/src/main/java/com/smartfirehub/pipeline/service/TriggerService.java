@@ -16,6 +16,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -460,6 +461,15 @@ public class TriggerService {
     if (!config.containsKey("cron") || config.get("cron") == null) {
       throw new IllegalArgumentException("cron expression is required for SCHEDULE trigger");
     }
+    // cron 형식 검증 및 정규화 (#55)
+    // Spring CronExpression은 6필드(초 분 시 일 월 요일) 형식만 수용.
+    // 5필드(Unix 표준: 분 시 일 월 요일) 입력은 앞에 "0 "을 붙여 정규화.
+    String cron = config.get("cron").toString().trim();
+    String normalizedCron = cron.split("\\s+").length == 5 ? "0 " + cron : cron;
+    if (!CronExpression.isValidExpression(normalizedCron)) {
+      throw new IllegalArgumentException("유효하지 않은 cron 표현식입니다: " + cron);
+    }
+    config.put("cron", normalizedCron);
     if (!config.containsKey("timezone")) {
       config.put("timezone", "Asia/Seoul");
     }
