@@ -148,7 +148,9 @@ function formatToolResult(result: string): string | null {
   }
 }
 
-function ToolCallDisplay({ toolCall }: { toolCall: AIToolCall }) {
+// isStreaming: 현재 SSE 스트리밍 중인 메시지의 tool call인지 여부.
+// 스트리밍 완료 후 result가 없는 tool call은 "✓ 완료"로 표시해야 하므로 구분 필요.
+function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isStreaming?: boolean }) {
   const { label, icon } = getToolDisplay(toolCall.name);
   const detail = formatToolDetail(toolCall.input);
   const hasResult = toolCall.result !== undefined;
@@ -159,12 +161,12 @@ function ToolCallDisplay({ toolCall }: { toolCall: AIToolCall }) {
       <span>{icon}</span>
       <span className="font-medium">{label}</span>
       {detail && <span className="text-muted-foreground truncate">{detail}</span>}
-      {hasResult && (
+      {(hasResult || !isStreaming) && (
         <span className="ml-auto shrink-0 text-success">
           {resultSummary ?? '✓ 완료'}
         </span>
       )}
-      {!hasResult && (
+      {!hasResult && isStreaming && (
         <span className="ml-auto shrink-0 animate-pulse text-warning">
           {'실행 중...'}
         </span>
@@ -245,7 +247,7 @@ function MarkdownContent({ content, hasNeighbor }: { content: string; hasNeighbo
   );
 }
 
-function RenderToolCall({ tc }: { tc: AIToolCall }) {
+function RenderToolCall({ tc, isStreaming }: { tc: AIToolCall; isStreaming?: boolean }) {
   const widget = getWidget(tc.name);
   const navigate = useNavigate();
   const { mode, setMode } = useAI();
@@ -273,10 +275,10 @@ function RenderToolCall({ tc }: { tc: AIToolCall }) {
       </Suspense>
     );
   }
-  return <ToolCallDisplay toolCall={tc} />;
+  return <ToolCallDisplay toolCall={tc} isStreaming={isStreaming} />;
 }
 
-function AssistantContent({ message }: { message: Partial<AIMessage> }) {
+function AssistantContent({ message, isStreaming }: { message: Partial<AIMessage>; isStreaming?: boolean }) {
   const hasContent = !!message.content;
   const hasToolCalls = !!(message.toolCalls && message.toolCalls.length > 0);
   const hasBlocks = !!(message.contentBlocks && message.contentBlocks.length > 0);
@@ -300,7 +302,7 @@ function AssistantContent({ message }: { message: Partial<AIMessage> }) {
             if (!tc) return null;
             return (
               <div key={`block-${idx}`} className={cn(idx > 0 && 'mt-1')}>
-                <RenderToolCall tc={tc} />
+                <RenderToolCall tc={tc} isStreaming={isStreaming} />
               </div>
             );
           }
@@ -315,7 +317,7 @@ function AssistantContent({ message }: { message: Partial<AIMessage> }) {
     <>
       {hasToolCalls && (
         <div className="space-y-0.5">
-          {message.toolCalls!.map((tc, i) => (<RenderToolCall key={`tool-${i}`} tc={tc} />))}
+          {message.toolCalls!.map((tc, i) => (<RenderToolCall key={`tool-${i}`} tc={tc} isStreaming={isStreaming} />))}
         </div>
       )}
       {hasContent && (
@@ -327,9 +329,10 @@ function AssistantContent({ message }: { message: Partial<AIMessage> }) {
 
 interface MessageBubbleProps {
   message: Partial<AIMessage>;
+  isStreaming?: boolean;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const hasToolCalls = !!(message.toolCalls && message.toolCalls.length > 0);
@@ -362,7 +365,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
           </>
         ) : (
-          <AssistantContent message={message} />
+          <AssistantContent message={message} isStreaming={isStreaming} />
         )}
         {message.timestamp && (
           <p className="mt-1 text-xs opacity-70">

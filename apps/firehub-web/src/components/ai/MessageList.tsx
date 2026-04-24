@@ -30,7 +30,7 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
         {pendingUserMessage && (
           <MessageBubble message={{ role: 'user', content: pendingUserMessage, timestamp: new Date().toISOString() }} />
         )}
-        {(streamingMessage?.content || streamingMessage?.toolCalls?.length) && <MessageBubble key="streaming" message={streamingMessage} />}
+        {(streamingMessage?.content || streamingMessage?.toolCalls?.length) && <MessageBubble key="streaming" message={streamingMessage} isStreaming={isStreaming} />}
         {showThinking && <ThinkingIndicator />}
         <div ref={bottomRef} />
       </div>

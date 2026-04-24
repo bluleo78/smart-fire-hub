@@ -393,3 +393,45 @@ test.describe('MessageBubble — navigate_to tool (navigate 경로)', () => {
     await expect(page.getByText('페이지 이동').first()).toBeVisible({ timeout: 10_000 });
   });
 });
+
+test.describe('MessageBubble — result 없는 tool call 완료 상태 (#3)', () => {
+  /**
+   * MB-10: 스트리밍 완료 후 result가 없는 tool call은 "실행 중..."이 아닌 "✓ 완료"를 표시한다.
+   * 이슈 #3: list_datasets / 서브에이전트 래퍼처럼 SSE에서 tool_result를 전송하지 않는 도구가
+   * 스트리밍 종료 후에도 "실행 중..." pulsing 상태로 고착되는 버그 수정 검증.
+   */
+  test('MB-10: result 없는 tool call — 스트리밍 완료 후 "✓ 완료" 표시', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-10-session');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-10-session' }),
+            // tool_use만 있고 tool_result 없음 — 서브에이전트/list_datasets 패턴
+            sseEvent({ type: 'tool_use', toolName: 'mcp__firehub__list_datasets', input: {} }),
+            sseEvent({ type: 'text', content: '데이터셋 목록을 확인했습니다.' }),
+            sseEvent({ type: 'done', inputTokens: 30 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('데이터셋 목록 보여줘');
+    await chatInput.press('Enter');
+
+    // 응답 텍스트가 도착하면 스트리밍이 완료된 것
+    await expect(page.getByText('데이터셋 목록을 확인했습니다.').first()).toBeVisible({ timeout: 10_000 });
+
+    // 스트리밍 완료 후 result 없는 tool call은 "✓ 완료"를 표시해야 한다
+    await expect(page.getByText('✓ 완료').first()).toBeVisible({ timeout: 5_000 });
+    // "실행 중..." 이 남아있으면 안 된다
+    await expect(page.getByText('실행 중...').first()).not.toBeVisible();
+  });
+});

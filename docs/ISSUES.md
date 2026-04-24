@@ -735,7 +735,8 @@ Frontend → row['_id'] === undefined  ❌
 - **심각도**: Minor (Visual)
 - **컴포넌트**: `apps/firehub-web/src/components/ai/MessageBubble.tsx` — `ToolCallBubble`
 - **발견**: 2026-04-23 (playwright-cli 탐색 테스트)
-- **상태**: 🔴 미처리
+- **수정**: 2026-04-24
+- **상태**: ✅ 수정 완료
 
 **현상**: 차트 생성 완료 후에도 "에이전트 실행" 컨테이너와 "데이터셋 목록 조회" 단계가 "실행 중..." (pulsing) 상태로 남음. 나머지 단계는 "✓ 완료" 정상 표시.
 
