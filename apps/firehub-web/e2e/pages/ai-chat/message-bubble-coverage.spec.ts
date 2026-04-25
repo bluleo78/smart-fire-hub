@@ -435,3 +435,127 @@ test.describe('MessageBubble — result 없는 tool call 완료 상태 (#3)', ()
     await expect(page.getByText('실행 중...').first()).not.toBeVisible();
   });
 });
+
+test.describe('MessageBubble — 코드블록 언어 레이블 및 복사 버튼 (#10)', () => {
+  /**
+   * MB-11: Python 코드블록 응답 → 언어 레이블과 복사 버튼이 표시된다
+   * 이슈 #10: SyntaxHighlighter에 언어 레이블과 복사 버튼 래퍼가 없어
+   * 사용자가 코드를 복사하려면 드래그 선택해야 했던 버그 수정 검증
+   */
+  test('MB-11: 코드블록 응답 → 언어 레이블과 복사 버튼이 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-11-session');
+
+    // Python 코드블록이 포함된 SSE 응답 모킹
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-11-session' }),
+            sseEvent({ type: 'text', content: '다음은 Python Hello World 코드입니다:\n\n```python\nprint("Hello, World!")\n```\n' }),
+            sseEvent({ type: 'done', inputTokens: 30 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('파이썬으로 Hello World 코드를 보여주세요');
+    await chatInput.press('Enter');
+
+    // AI 응답 대기
+    await expect(page.getByText('다음은 Python Hello World 코드입니다').first()).toBeVisible({ timeout: 10_000 });
+
+    // 언어 레이블 'python'이 표시된다
+    await expect(page.getByText('python').first()).toBeVisible({ timeout: 5_000 });
+
+    // 복사 버튼이 표시된다
+    await expect(page.getByRole('button', { name: '코드 복사' }).first()).toBeVisible({ timeout: 5_000 });
+  });
+
+  /**
+   * MB-12: 복사 버튼 클릭 → 클립보드에 코드가 복사되고 '복사됨' 상태로 전환된다
+   * clipboard permission 없이는 navigator.clipboard.writeText가 실패하므로
+   * grantPermissions로 clipboard-write 권한을 부여한다
+   */
+  test('MB-12: 복사 버튼 클릭 → 클립보드에 코드가 저장된다', async ({ authenticatedPage: page }) => {
+    // 클립보드 권한 부여 — headless Chromium에서 clipboard-write가 기본 차단됨
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    await mockAiSessions(page, 'mb-12-session');
+
+    const expectedCode = 'print("Hello, World!")';
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-12-session' }),
+            sseEvent({ type: 'text', content: `코드입니다:\n\n\`\`\`python\n${expectedCode}\n\`\`\`\n` }),
+            sseEvent({ type: 'done', inputTokens: 25 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('Hello World 코드');
+    await chatInput.press('Enter');
+
+    // 복사 버튼 대기 후 클릭
+    const copyButton = page.getByRole('button', { name: '코드 복사' }).first();
+    await copyButton.waitFor({ state: 'visible', timeout: 10_000 });
+    await copyButton.click();
+
+    // 복사 완료 후 '복사됨' 상태로 전환된다
+    await expect(page.getByText('복사됨').first()).toBeVisible({ timeout: 3_000 });
+
+    // 클립보드에 올바른 코드가 저장된다 (trailing newline 없음)
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboardText).toBe(expectedCode);
+  });
+
+  /**
+   * MB-13: SQL 코드블록 → 'sql' 언어 레이블이 표시된다
+   * 여러 언어 지원 확인
+   */
+  test('MB-13: SQL 코드블록 → sql 언어 레이블이 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-13-session');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-13-session' }),
+            sseEvent({ type: 'text', content: 'SQL 쿼리입니다:\n\n```sql\nSELECT * FROM users;\n```\n' }),
+            sseEvent({ type: 'done', inputTokens: 20 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('SQL 쿼리 예시');
+    await chatInput.press('Enter');
+
+    // 응답 대기
+    await expect(page.getByText('SQL 쿼리입니다').first()).toBeVisible({ timeout: 10_000 });
+
+    // sql 언어 레이블이 표시된다
+    await expect(page.getByText('sql').first()).toBeVisible({ timeout: 5_000 });
+  });
+});

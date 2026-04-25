@@ -1,5 +1,5 @@
-import { File as FileIcon, Image } from 'lucide-react';
-import { Suspense } from 'react';
+import { Check, Copy, File as FileIcon, Image } from 'lucide-react';
+import { Suspense, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
@@ -11,6 +11,7 @@ import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typesc
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
+import { toast } from 'sonner';
 
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
@@ -28,6 +29,53 @@ SyntaxHighlighter.registerLanguage('json', json);
 SyntaxHighlighter.registerLanguage('bash', bash);
 
 const codeStyle = oneDark as Record<string, React.CSSProperties>;
+
+/**
+ * 코드블록 래퍼 컴포넌트
+ * - 언어 레이블과 복사 버튼을 오른쪽 상단에 항상 표시한다
+ * - 복사 완료 시 2초간 체크 아이콘으로 전환하고 toast 피드백을 제공한다
+ */
+function CodeBlock({ language, code }: { language: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      toast.success('코드가 복사되었습니다');
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      toast.error('복사에 실패했습니다');
+    });
+  }, [code]);
+
+  return (
+    <div className="relative my-2">
+      {/* 언어 레이블 + 복사 버튼 — 항상 표시 */}
+      <div className="flex items-center justify-between px-3 py-1 bg-muted/60 rounded-t-md border border-b-0 border-muted">
+        <span className="text-xs text-muted-foreground font-mono">{language}</span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted"
+          aria-label="코드 복사"
+        >
+          {copied ? (
+            <><Check size={12} className="text-green-500" /><span className="text-green-500">복사됨</span></>
+          ) : (
+            <><Copy size={12} /><span>복사</span></>
+          )}
+        </button>
+      </div>
+      <SyntaxHighlighter
+        style={codeStyle}
+        language={language}
+        PreTag="div"
+        customStyle={{ margin: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
 
 const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   // MCP firehub tools
@@ -218,14 +266,12 @@ const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['component
   },
   code({ className, children }) {
     const match = /language-(\w+)/.exec(className || '');
+    // 언어가 감지된 펜스드 코드블록 → CodeBlock 컴포넌트로 언어 레이블과 복사 버튼 제공
     return match ? (
-      <SyntaxHighlighter
-        style={codeStyle}
+      <CodeBlock
         language={match[1]}
-        PreTag="div"
-      >
-        {String(children).replace(/\n$/, '')}
-      </SyntaxHighlighter>
+        code={String(children).replace(/\n$/, '')}
+      />
     ) : (
       <code className={className}>
         {children}
