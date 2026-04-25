@@ -1,4 +1,4 @@
-import { Bell, Mail, Slack } from 'lucide-react';
+import { Bell, Mail, SlackIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import type { ChannelSetting, ChannelType } from '../../../api/channels';
@@ -67,7 +67,7 @@ const CHANNEL_ICONS: Record<ChannelType, React.ElementType> = {
   CHAT: Bell,
   EMAIL: Mail,
   KAKAO: KakaoIcon,  // 카카오 브랜드 커스텀 아이콘 (Lucide에 전용 아이콘 없음)
-  SLACK: Slack,
+  SLACK: SlackIcon,
 };
 
 /**
