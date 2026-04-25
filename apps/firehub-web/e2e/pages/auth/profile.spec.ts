@@ -72,7 +72,7 @@ test.describe('프로필 페이지', () => {
     await page.getByRole('button', { name: '저장' }).first().click();
 
     // PUT payload 검증
-    const captured = await updateCapture.waitForRequest({ timeout: 5000 });
+    const captured = await updateCapture.waitForRequest();
     expect(captured.payload).toMatchObject({ name: '수정된 사용자' });
 
     // toast.success 확인
@@ -124,7 +124,7 @@ test.describe('프로필 페이지', () => {
     await page.getByRole('button', { name: '비밀번호 변경' }).click();
 
     // payload 검증
-    const captured = await pwCapture.waitForRequest({ timeout: 5000 });
+    const captured = await pwCapture.waitForRequest();
     expect(captured.payload).toMatchObject({
       currentPassword: 'OldPass123!',
       newPassword: 'NewPass456!',
