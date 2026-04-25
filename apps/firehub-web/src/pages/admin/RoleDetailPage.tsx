@@ -185,7 +185,8 @@ export default function RoleDetailPage() {
             {roleError && (
               <p className="text-sm text-destructive">{roleError}</p>
             )}
-            <Button type="submit" disabled={isSavingRole}>
+            {/* 시스템 역할은 수정 불가 — isSystem 플래그로 저장 버튼도 비활성화 */}
+            <Button type="submit" disabled={isSavingRole || role.isSystem}>
               {isSavingRole ? '저장 중...' : '저장'}
             </Button>
           </form>

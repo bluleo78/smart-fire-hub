@@ -134,6 +134,17 @@ test.describe('역할 관리 페이지', () => {
     await expect(page.getByLabel('역할 이름')).toBeDisabled();
   });
 
+  test('시스템 역할 상세 페이지에서 저장 버튼은 비활성화된다 (refs #3)', async ({ authenticatedPage: page }) => {
+    // isSystem=true 역할 상세 모킹 — 저장 버튼이 disabled 처리되어야 한다
+    await setupRoleDetailMocks(page, 1, true);
+    await page.goto('/admin/roles/1');
+
+    // 저장 버튼이 비활성화(disabled) 상태인지 확인
+    // 버그: isSavingRole만 체크하고 role.isSystem을 체크하지 않아 활성화된 채로 표시되었음
+    const saveButton = page.getByRole('button', { name: '저장', exact: true });
+    await expect(saveButton).toBeDisabled();
+  });
+
   test('역할 상세 페이지에서 권한 할당 섹션이 카테고리별로 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupRoleDetailMocks(page, 3, false);
     await page.goto('/admin/roles/3');
