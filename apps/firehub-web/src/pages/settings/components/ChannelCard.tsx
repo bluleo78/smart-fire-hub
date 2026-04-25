@@ -1,4 +1,4 @@
-import { Bell, Mail, MessageSquare, Slack } from 'lucide-react';
+import { Bell, Mail, Slack } from 'lucide-react';
 import { toast } from 'sonner';
 
 import type { ChannelSetting, ChannelType } from '../../../api/channels';
@@ -36,12 +36,50 @@ import {
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { OAuthConnectButton } from './OAuthConnectButton';
 
+/**
+ * 카카오 알림톡 브랜드 아이콘 커스텀 SVG 컴포넌트
+ * - Lucide에 카카오 전용 아이콘이 없어 인라인 SVG로 구현
+ * - 카카오톡 특유의 말풍선(speech bubble) 형태를 Lucide stroke 스타일로 표현
+ */
+function KakaoIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {/* 카카오톡 말풍선 — 하단 꼬리가 있는 둥근 말풍선 */}
+      <path d="M12 3C6.477 3 2 6.925 2 11.75c0 3.006 1.738 5.647 4.364 7.24L5.5 21.5l3.636-1.818C10.04 19.888 11 20 12 20c5.523 0 10-3.925 10-8.75S17.523 3 12 3z" />
+      {/* 카카오 두 점 — 카카오 스마일 눈을 연상시키는 구분 점 */}
+      <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** 채널별 아이콘 매핑 */
 const CHANNEL_ICONS: Record<ChannelType, React.ElementType> = {
   CHAT: Bell,
   EMAIL: Mail,
-  KAKAO: MessageSquare,
+  KAKAO: KakaoIcon,  // 카카오 브랜드 커스텀 아이콘 (Lucide에 전용 아이콘 없음)
   SLACK: Slack,
+};
+
+/**
+ * 채널별 아이콘 컨테이너 배경색 — 브랜드 식별 강화
+ * - KAKAO: 카카오 브랜드 색상(노란색 #FEE500)으로 시각적 구분
+ * - 나머지: 기본 muted 배경 사용
+ */
+const CHANNEL_ICON_BG: Record<ChannelType, string> = {
+  CHAT: 'bg-muted',
+  EMAIL: 'bg-muted',
+  KAKAO: 'bg-[#FEE500]',
+  SLACK: 'bg-muted',
 };
 
 /** 채널별 표시 이름 */
@@ -77,6 +115,10 @@ export function ChannelCard({ setting }: ChannelCardProps) {
   const Icon = CHANNEL_ICONS[channel];
   const label = CHANNEL_LABELS[channel];
   const description = CHANNEL_DESCRIPTIONS[channel];
+  /** 채널 아이콘 컨테이너 배경색 (브랜드별 상이) */
+  const iconBg = CHANNEL_ICON_BG[channel];
+  /** 카카오 채널은 노란 배경 위에 어두운 아이콘 색상 적용 */
+  const iconColor = channel === 'KAKAO' ? 'text-[#3C1E1E]' : 'text-muted-foreground';
 
   const updatePreference = useUpdateChannelPreferenceMutation();
   const disconnect = useDisconnectChannelMutation();
@@ -112,8 +154,8 @@ export function ChannelCard({ setting }: ChannelCardProps) {
         <div className="flex items-start justify-between gap-3">
           {/* 아이콘 + 이름 + 상태 배지 */}
           <div className="flex items-center gap-3 min-w-0">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-              <Icon className="h-5 w-5 text-muted-foreground" />
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
+              <Icon className={`h-5 w-5 ${iconColor}`} />
             </div>
             <div className="min-w-0">
               <CardTitle className="text-sm font-semibold">{label}</CardTitle>

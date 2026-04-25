@@ -154,4 +154,36 @@ test.describe('채널 설정 페이지', () => {
     // "연결 해제" 버튼 표시 확인
     await expect(page.getByRole('button', { name: '연결 해제' })).toBeVisible();
   });
+
+  /**
+   * 회귀 테스트: 카카오 알림톡 카드에 브랜드 아이콘이 적용되어야 한다 (#6)
+   * - 일반 채팅 버블(MessageSquare)이 아닌 카카오 브랜드 SVG 아이콘이 렌더링되어야 함
+   * - 아이콘 컨테이너 배경이 카카오 브랜드 색상(#FEE500)이어야 함
+   */
+  test('KAKAO 카드 아이콘 컨테이너에 카카오 브랜드 배경색이 적용된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+
+    await expect(page.getByText('카카오 알림톡', { exact: true })).toBeVisible();
+
+    // 카카오 카드의 아이콘 컨테이너 배경색 검증
+    // CardHeader 내 h-10.w-10 아이콘 컨테이너를 '카카오 알림톡' 텍스트 기준으로 탐색
+    const bgColor = await page.evaluate(() => {
+      // '카카오 알림톡' 텍스트 노드를 포함하는 카드 헤더 내 h-10 w-10 div를 찾는다
+      const allDivs = Array.from(document.querySelectorAll<HTMLElement>('div.h-10.w-10'));
+      const kakaoIconContainer = allDivs.find((div) => {
+        // 같은 카드 헤더 내에 '카카오 알림톡' 텍스트가 있는지 확인
+        const card = div.closest('[data-slot="card-header"], [data-slot="card"], header, .pb-3')
+          ?? div.closest('div');
+        return card?.textContent?.includes('카카오 알림톡');
+      });
+      if (!kakaoIconContainer) return null;
+      return window.getComputedStyle(kakaoIconContainer).backgroundColor;
+    });
+
+    // #FEE500 → rgb(254, 229, 0)
+    expect(bgColor).toBe('rgb(254, 229, 0)');
+  });
 });
