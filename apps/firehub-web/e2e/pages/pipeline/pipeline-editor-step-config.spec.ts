@@ -110,6 +110,42 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(page.getByText('최소 1개의 스텝을 정의하세요')).toBeVisible();
   });
 
+  /**
+   * 스크립트 타입 SelectItem 레이블 언어 일관성 회귀 테스트 (#9)
+   * SQL/Python/API 호출/AI 분류가 일관된 한국어 친화적 포맷으로 표시되는지 확인한다.
+   * PYTHON(영어 대문자)이 Python으로 올바르게 표시되어야 한다.
+   */
+  test('스크립트 타입 드롭다운 레이블이 일관된 포맷으로 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 스텝 추가 → StepConfigPanel 표시
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+
+    // 스크립트 타입 드롭다운 열기
+    const typeSelect = page.getByRole('combobox').first();
+    await typeSelect.click();
+
+    // SQL: 그대로 유지
+    await expect(page.getByRole('option', { name: 'SQL', exact: true })).toBeVisible();
+
+    // Python: 대문자 전체('PYTHON')가 아닌 Python으로 표시되어야 함
+    await expect(page.getByRole('option', { name: 'Python', exact: true })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'PYTHON', exact: true })).not.toBeVisible();
+
+    // API 호출: 한국어 표시 유지
+    await expect(page.getByRole('option', { name: 'API 호출', exact: true })).toBeVisible();
+
+    // AI 분류: 한국어 표시 유지
+    await expect(page.getByRole('option', { name: 'AI 분류', exact: true })).toBeVisible();
+
+    // 드롭다운 닫기
+    await page.keyboard.press('Escape');
+  });
+
   test('신규 파이프라인 에디터에 탭 메뉴가 표시되지 않는다', async ({
     authenticatedPage: page,
   }) => {

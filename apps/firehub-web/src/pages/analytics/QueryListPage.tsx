@@ -185,11 +185,13 @@ export default function QueryListPage() {
                   onClick={() => navigate(`/analytics/queries/${query.id}`)}
                 >
                   <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span>{query.name}</span>
+                      {/* 이름 셀 내부: 긴 텍스트가 truncate되도록 min-w-0 + overflow-hidden 적용 */}
+                      <div className="min-w-0 overflow-hidden">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {/* 긴 쿼리 이름이 테이블 레이아웃을 깨지 않도록 truncate + max-w 적용 */}
+                          <span className="truncate max-w-[300px] block">{query.name}</span>
                           {query.isShared && (
                             <Badge variant="secondary" className="text-xs gap-1 py-0">
                               <Share2 className="h-2.5 w-2.5" />

@@ -268,8 +268,9 @@ export default function StepConfigPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {/* 스크립트 타입 레이블을 한국어 친화적으로 일관 적용 (#9) */}
                 <SelectItem value="SQL">SQL</SelectItem>
-                <SelectItem value="PYTHON">PYTHON</SelectItem>
+                <SelectItem value="PYTHON">Python</SelectItem>
                 <SelectItem value="API_CALL">API 호출</SelectItem>
                 <SelectItem value="AI_CLASSIFY">AI 분류</SelectItem>
               </SelectContent>

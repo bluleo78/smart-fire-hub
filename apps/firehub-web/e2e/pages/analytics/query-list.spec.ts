@@ -202,4 +202,39 @@ test.describe('쿼리 목록 페이지', () => {
 
     await expect(page).toHaveURL(/\/analytics\/queries\/1/);
   });
+
+  test('200자 이상 긴 쿼리 이름이 셀 영역을 벗어나지 않고 truncate된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 200자 이상 이름을 가진 쿼리를 포함한 목록 모킹
+    const longName = 'a'.repeat(250);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([
+        createSavedQueryListItem({ id: 1, name: '정상 쿼리' }),
+        createSavedQueryListItem({ id: 2, name: longName }),
+      ]),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+
+    const table = page.getByRole('table');
+    await expect(table).toBeVisible();
+
+    // 긴 이름이 포함된 행의 이름 span 요소가 max-w-[300px] 제한으로 truncate되는지 확인한다.
+    // span.truncate가 없으면 텍스트가 무한으로 확장되어 다른 컬럼이 밀려난다.
+    const longNameRow = page.getByRole('row').nth(2);
+    const longNameSpan = longNameRow.locator('span.truncate').first();
+    const spanWidth = await longNameSpan.evaluate((el) => el.getBoundingClientRect().width);
+
+    // max-w-[300px]가 적용된 span이 실제로 300px 이하임을 검증 (픽셀 허용 오차 5px)
+    expect(spanWidth).toBeLessThanOrEqual(305);
+
+    // "수정일" 헤더 컬럼이 여전히 뷰포트 내에 있는지 확인 (레이아웃 깨짐 회귀 방지)
+    await expect(page.getByRole('columnheader', { name: '수정일' })).toBeVisible();
+  });
 });
