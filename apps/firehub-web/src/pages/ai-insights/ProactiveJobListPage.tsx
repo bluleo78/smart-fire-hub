@@ -181,9 +181,10 @@ export default function ProactiveJobListPage() {
                   onClick={() => navigate(`/ai-insights/jobs/${job.id}`)}
                 >
                   <TableCell className="font-medium">
-                    <div>
+                    {/* 작업명과 채널 요약을 세로로 분리하여 가독성 개선 (#5) */}
+                    <div className="flex flex-col gap-0.5">
                       <span>{job.name}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {channelSummary(job.config)}
                       </span>
                     </div>

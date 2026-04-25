@@ -206,6 +206,36 @@ test.describe('스마트 작업 목록 페이지', () => {
     expect((req.payload as { name?: string })?.name).toContain('복사본');
   });
 
+  test('작업명과 채널 정보가 세로로 분리되어 표시된다 (레이아웃 회귀 #5)', async ({ authenticatedPage: page }) => {
+    // 채널 정보가 있는 작업 모킹 — 작업명과 채널 요약이 flex-col 으로 분리되는지 검증
+    const longJobName = '일일 매출 분석 리포트 (복사본)';
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({
+        id: 1,
+        name: longJobName,
+        config: { channels: ['CHAT', 'EMAIL'] },
+      }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    // 작업명 span 과 채널 요약 span 이 별도로 DOM 에 존재해야 한다
+    const jobNameSpan = page.locator('td').filter({ hasText: longJobName }).getByText(longJobName);
+    const channelSpan = page.locator('td').filter({ hasText: longJobName }).getByText('채팅 / 이메일');
+
+    await expect(jobNameSpan).toBeVisible();
+    await expect(channelSpan).toBeVisible();
+
+    // 두 요소의 Y 위치를 비교하여 채널 요약이 작업명보다 아래에 있는지 확인 (세로 분리)
+    const nameBox = await jobNameSpan.boundingBox();
+    const channelBox = await channelSpan.boundingBox();
+    expect(nameBox).not.toBeNull();
+    expect(channelBox).not.toBeNull();
+    // 채널 정보의 상단 Y 좌표가 작업명 상단 Y 좌표보다 커야 한다 (아래에 위치)
+    expect(channelBox!.y).toBeGreaterThan(nameBox!.y);
+  });
+
   test('FAILED 상태 작업에 "실패" 배지가 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
       createJob({
