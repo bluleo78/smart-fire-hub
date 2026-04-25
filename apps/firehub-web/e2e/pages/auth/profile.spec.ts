@@ -3,14 +3,17 @@
  *
  * ProfilePage.tsx 커버 경로:
  * - 프로필 정보 폼 표시 및 초기값 로드 (useEffect → profileForm.reset)
+ * - 로그인 계정(username) 읽기 전용 필드 표시
+ * - email이 null일 때 username이 이메일 필드 기본값으로 사용됨 (이슈 #18 회귀 방지)
  * - 프로필 저장 성공 → PUT /api/v1/users/me → toast.success
  * - 프로필 저장 실패 → root 에러 메시지 표시
  * - 비밀번호 변경 성공 → PUT /api/v1/users/me/password → toast.success + form reset
  * - 비밀번호 확인 불일치 → Zod 유효성 에러
  */
 
+import type { UserDetailResponse } from '../../../src/types/user';
 import { mockApi } from '../../fixtures/api-mock';
-import { expect, test } from '../../fixtures/auth.fixture';
+import { expect, MOCK_USER, test } from '../../fixtures/auth.fixture';
 
 test.describe('프로필 페이지', () => {
   /**
@@ -24,9 +27,34 @@ test.describe('프로필 페이지', () => {
     // CardTitle "비밀번호 변경"과 submit 버튼 "비밀번호 변경" 두 곳에 텍스트가 있으므로 first() 사용
     await expect(page.getByText('비밀번호 변경').first()).toBeVisible();
 
-    // MOCK_USER.name = '테스트 사용자', email = 'test@example.com'
+    // MOCK_USER.name = '테스트 사용자', email = 'test@example.com', username = 'test@example.com'
+    await expect(page.locator('#profile-username')).toHaveValue('test@example.com');
     await expect(page.locator('#profile-name')).toHaveValue('테스트 사용자');
     await expect(page.locator('#profile-email')).toHaveValue('test@example.com');
+  });
+
+  /**
+   * 회귀 테스트 (이슈 #18): email이 null인 경우 username이 이메일 필드에 표시된다
+   * - /api/v1/users/me 응답에서 email이 null이어도 username을 통해 로그인 계정을 확인할 수 있어야 한다
+   */
+  test('email이 null인 경우 username이 이메일 필드 기본값으로 표시된다 (이슈 #18)', async ({ authenticatedPage: page }) => {
+    // email이 null인 사용자 응답 모킹 — 실제 운영 환경과 동일한 조건
+    const userWithNullEmail: UserDetailResponse = {
+      ...MOCK_USER,
+      email: null,
+      roles: [{ id: 1, name: 'USER', description: '일반 사용자', isSystem: true }],
+    };
+    await mockApi(page, 'GET', '/api/v1/users/me', userWithNullEmail);
+
+    await page.goto('/profile');
+    await expect(page.getByRole('heading', { name: '내 프로필' })).toBeVisible({ timeout: 5000 });
+
+    // 로그인 계정(username)은 항상 표시된다
+    await expect(page.locator('#profile-username')).toHaveValue('test@example.com');
+    // email이 null이면 username이 이메일 필드 기본값으로 채워진다
+    await expect(page.locator('#profile-email')).toHaveValue('test@example.com');
+    // 로그인 계정 필드는 읽기 전용이다
+    await expect(page.locator('#profile-username')).toBeDisabled();
   });
 
   /**

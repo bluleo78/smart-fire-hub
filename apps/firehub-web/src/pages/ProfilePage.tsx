@@ -37,9 +37,11 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user) {
+      // email 필드가 null인 경우 username(로그인 이메일)으로 초기값을 채운다.
+      // /api/v1/users/me의 email 컬럼이 null이어도 username을 통해 로그인 계정이 표시된다.
       profileForm.reset({
         name: user.name,
-        email: user.email ?? '',
+        email: user.email ?? user.username ?? '',
       });
     }
   }, [user, profileForm]);
@@ -90,6 +92,20 @@ export default function ProfilePage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-4">
+            {/* 로그인 계정(username)은 변경 불가 — 사용자가 자신의 로그인 이메일을 항상 확인할 수 있도록 읽기 전용으로 표시한다 */}
+            <FormField
+              label="로그인 계정"
+              htmlFor="profile-username"
+            >
+              <Input
+                id="profile-username"
+                type="text"
+                value={user?.username ?? ''}
+                readOnly
+                disabled
+                className="bg-muted cursor-not-allowed"
+              />
+            </FormField>
             <FormField
               label="이름"
               htmlFor="profile-name"
