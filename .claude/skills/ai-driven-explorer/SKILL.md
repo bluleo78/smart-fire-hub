@@ -5,19 +5,27 @@ description: >
   기능/페이지를 직접 탐색하며 버그를 발견한다.
   사용자가 "playwright로 테스트해줘", "UI 탐색해줘", "버그 찾아줘", "기능 검증해줘",
   "headed 모드로 테스트", "탐색적 테스트", "exploratory test" 등을 요청할 때 반드시 이 스킬을 사용한다.
-  또한 "크로스 체크해줘", "이슈 수정 검증해줘", "fix 확인해줘", "ISSUES.md 크로스체크",
-  "수정사항 검증해줘" 같이 ai-driven-issue-solver가 처리한 이슈를 재검증하는 요청에도 반드시 이 스킬을 사용한다.
-  TC 기반 자동화 테스트(ai-driven-tc-runner)가 아닌 탐색적/인간적 관점의 자유로운 테스트에 특화되어 있다.
+  또한 "크로스체크해줘", "fix 확인해줘", "이슈 수정 검증해줘",
+  "resolved 라벨 검증" 같이 ai-driven-solver가 resolved 처리한 GitHub Issue를 재검증하는 요청에도 반드시 이 스킬을 사용한다.
+  TC 명세서 기반 자동화 회귀 테스트가 아닌, 탐색적/인간적 관점의 자유로운 테스트에 특화되어 있다.
 ---
 
 # Playwright 탐색적 UI 테스트
 
 이 스킬은 두 가지 모드로 동작한다:
 
-- **탐색 모드** (기본): 사람이 브라우저를 직접 쓰듯이 자유롭게 탐색하며 새 버그를 발견한다.
-- **크로스 체크 모드**: `ai-driven-issue-solver`가 수정한 이슈를 독립 fresh 세션에서 재검증한다.
+- **탐색 모드** (기본): 사람이 브라우저를 직접 쓰듯이 자유롭게 탐색하며 새 버그를 발견하고 GitHub Issues에 등록한다.
+- **크로스 체크 모드**: `ai-driven-solver`가 수정한 이슈를 독립 fresh 세션에서 재검증한다.
 
-**모드 결정**: 사용자 요청에 "크로스 체크", "이슈 검증", "수정 확인", "fix 확인" 키워드가 있으면 크로스 체크 모드로 진입한다. 아니면 탐색 모드.
+**모드 결정**: 사용자 요청에 "크로스체크", "이슈 수정 검증", "fix 확인", "resolved 라벨" 키워드가 있으면 크로스 체크 모드로 진입한다. 아니면 탐색 모드.
+("수정 확인" 같이 solver의 일상 작업과 겹치는 모호한 표현은 트리거에서 제외한다.)
+
+> 이슈 라이프사이클 전체 다이어그램·라벨 정의는 `.claude/docs/issue-lifecycle.md` 참조.
+
+> **[필수 원칙] Explorer는 발견과 등록만 한다.**
+> 버그 발견 → `gh issue create` 등록 → 탐색 계속 → 보고서 작성 → 종료.
+> `ai-driven-solver`는 절대 자동으로 시작하지 않는다. Solver는 사용자가 명시적으로 별도 요청할 때만 독립 실행한다.
+> 이유: 같은 사이클에서 탐색+수정을 섞으면 컨텍스트가 오염되고 하네스 관점(발견 vs 수정)이 무너진다.
 
 > **함정 목록**: playwright-cli 사용 중 막히면 `references/pitfalls.md`를 읽는다.
 
@@ -26,9 +34,13 @@ description: >
 > **도구 선택**: 브라우저 자동화는 반드시 `playwright-cli` CLI를 사용한다.
 > Playwright MCP(`mcp__plugin_playwright_playwright__browser_*`) 도구는 사용하지 않는다.
 
-세션 이름은 매 실행마다 랜덤으로 생성해 기존 세션과 충돌을 방지한다:
+**세션 이름 규약**:
+- 사용자 직접 호출 (탐색 모드): `SESSION="explorer#$(openssl rand -hex 3)"` (random)
+- Pilot subagent 호출 (탐색 모드): `SESSION="pilot-explorer-<rand4>"` (탐색은 이슈 번호 없으니 짧은 rand 사용)
+- 환경변수 `SESSION_NAME`이 있으면 그 값 그대로 사용 (pilot이 전달):
+
 ```bash
-SESSION="explorer#$(openssl rand -hex 3)"
+SESSION="${SESSION_NAME:-explorer#$(openssl rand -hex 3)}"
 ```
 
 이후 모든 명령에 `$SESSION`을 사용한다:
@@ -75,25 +87,7 @@ sleep 1.5
 
 탐색적 테스트는 랜덤 클릭이 아니다. **"어디를 테스트할지"는 계획, "어떻게 테스트할지"는 자유**다.
 
-### 컨텍스트 컴팩션 후 세션 재개
-
-이전 대화가 압축되어 재시작된 경우, 다음 순서로 상태를 복구한다:
-
-```bash
-# 1) playwright-cli 세션 생존 확인
-playwright-cli -s=<SESSION명> snapshot --depth=2 2>&1 | head -5
-# → TimeoutError 또는 오류 시 세션 닫고 재시작:
-# playwright-cli -s=<SESSION명> close 2>/dev/null; SESSION="explorer#$(openssl rand -hex 3)"
-
-# 2) 커버리지 매트릭스에서 마지막 상태 파악
-grep "🔴\|✅\|⬜" test-results/exploratory/.coverage-matrix.md | wc -l
-grep "⬜" test-results/exploratory/.coverage-matrix.md | head -10
-
-# 3) 마지막 버그 번호 확인
-grep "^### \[#" docs/ISSUES.md | tail -3
-```
-
-재개 후에는 ⬜(미시작) 항목부터 이어서 진행한다.
+> 컨텍스트가 컴팩션되어 세션이 재시작된 경우 → `references/session-recovery.md` 참고.
 
 ### 세션 시작 결정 흐름
 
@@ -187,7 +181,7 @@ find . -name "App.tsx" -o -name "App.jsx" | grep src | head -3
 ```bash
 grep -ri "TODO\|hidden\|disabled\|coming soon\|미구현" src/ | head -10
 cat CLAUDE.md
-cat docs/ISSUES.md  # 이미 알려진 이슈 제외
+gh issue list --state open --limit 30 --json number,title,labels  # 이미 알려진 이슈 제외
 ```
 
 ### 탐색 범위 우선순위
@@ -267,7 +261,7 @@ docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub \
 
 > DB 접속 정보(컨테이너명, 유저, DB명)는 앱별 CLAUDE.md에 정의되어 있다.
 
-## 5. 탐색 명령어
+## 4. 탐색 명령어
 
 ### 기본 탐색
 ```bash
@@ -291,7 +285,7 @@ grep "button\|dialog\|alert\|error" /tmp/snap.yml
 playwright-cli -s=$SESSION screenshot
 ls .playwright-cli/page-*.png | tail -1  # 최신 파일 경로 확인
 # 보관이 필요한 스크린샷은 세션 보고서 디렉토리로 복사
-cp .playwright-cli/page-TIMESTAMP.png test-results/exploratory/<기능명>/<timestamp>/screenshots/<설명>.png
+cp .playwright-cli/page-TIMESTAMP.png test-results/exploratory/<YYYY-MM-DDTHH-MM>/screenshots/<설명>.png
 # Read("test-results/exploratory/...") 로 이미지 직접 확인 가능
 ```
 
@@ -324,7 +318,7 @@ playwright-cli -s=$SESSION run-code "
 playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url().includes('/api/')) console.log(r.status(), r.url()) })"
 ```
 
-## 6. 탐색 패턴
+## 5. 탐색 패턴
 
 각 기능을 테스트할 때 이 관점으로 확인한다:
 
@@ -337,79 +331,113 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 
 스냅샷을 자주 찍어서 진행 상황을 기록한다. 버그 발견 시 바로 스크린샷.
 
-## 7. 버그 판정 기준
+## 6. 버그 판정 기준
 
 - **Critical**: 데이터 유실, 기능 완전 불가, 보안 이슈
 - **Major**: 핵심 기능 일부 오동작, 데이터 오류
 - **Minor**: 비핵심 기능 오동작, 처리되지 않는 예외
 - **UX**: 혼란스러운 UI, 잘못된 레이블, 시각적 이상
 
-## 8. 버그 문서화
+## 7. 버그 문서화
 
-발견된 버그는 `docs/ISSUES.md`에 즉시 추가:
+발견된 버그는 GitHub Issues에 즉시 등록한다:
 
-```markdown
-### [#번호] 제목
-- **심각도**: Critical / Major / Minor / UX
+```bash
+gh issue create \
+  --title "컴포넌트명 — 한 줄 요약" \
+  --label "bug,severity:critical" \
+  --body "$(cat <<'EOF'
+## 현상
+한 문장으로 설명.
+
+## 재현
+1. 정확한 URL (예: /pipelines/5/triggers)
+2. 어떤 요소를 클릭/입력
+3. 관찰된 결과
+
+## 원인
+소스코드를 읽어서 근본 원인까지 파악 (파일경로:라인번호).
+
+## 수정 방향
+구체적인 코드 수준 수정 방향.
+
+## 메타
 - **컴포넌트**: `파일경로:라인번호`
 - **발견**: YYYY-MM-DD (playwright 탐색 테스트)
-- **상태**: 🔴 미처리
-
-**현상**: 한 문장으로 설명.
-
-**재현**:
-1. 단계별 재현 절차
-
-**원인**: 소스코드를 읽어서 근본 원인까지 파악.
-
-**수정 방향**: 구체적인 코드 수준 수정 방향.
+EOF
+)"
 ```
 
-## 9. 최종 보고서
+심각도별 라벨: `severity:critical` / `severity:major` / `severity:minor` / `severity:ux`
 
-탐색 완료 후 `test-results/exploratory/<기능명>/<YYYY-MM-DDTHH:MM>/report.md`에 작성.
+**보안 이슈는 `security` 라벨 추가**: SQL/DML 우회, 크로스 스키마 접근, IDOR, 권한 우회, 민감 데이터 노출(비밀번호 해시·토큰 등), XSS, CSRF, 대량 할당 등 Section 3 보안 체크리스트로 발견된 버그는 `bug,severity:critical,security` 형태로 등록한다. `security` 라벨은 pilot의 자율 사이클에서 자동 close 차단 → 사람 결정으로 라우팅되는 트리거다.
+
+커버리지 매트릭스의 🔴 항목에는 `gh issue view <번호> --json number,title`로 확인한 이슈 번호를 기록한다.
+
+## 8. 최종 보고서
+
+탐색 완료 후 `test-results/exploratory/<YYYY-MM-DDTHH-MM>/report.md`에 작성.
+
+> 디렉토리는 **timestamp 중심**이다. 기능명·주제명을 디렉토리에 넣지 않는다 — 한 세션이 여러 기능을 넘나들어도 timestamp 하나로 묶이도록 한다. 콜론(`:`) 대신 하이픈(`-`)을 써서 파일시스템 호환성을 확보한다(예: `2026-04-25T14-30`).
 
 ```
 test-results/
 ├── e2e/                  ← Playwright E2E 자동 생성 (outputDir)
-├── tc/                   ← TC 실행 결과 (ai-driven-tc-runner)
+├── tc/                   ← TC 실행 결과 (TC 명세서 기반)
 │   └── <suite-name>/
 └── exploratory/          ← 탐색적 테스트 (ai-driven-explorer)
     ├── .component-tree.md    ← 앱 전체 트리 (세션 간 재사용)
     ├── .coverage-matrix.md   ← 시나리오 추적표 (세션 간 이어받기)
-    └── <기능명>/<timestamp>/
+    └── <YYYY-MM-DDTHH-MM>/
         ├── report.md
         └── screenshots/
 ```
 
-보고서 작성 후 핵심 버그만 요약해서 사용자에게 보고한다.
+보고서 작성 후 핵심 버그만 요약해서 사용자에게 보고한 뒤 **반드시 세션 close** (leak 방지):
+```bash
+playwright-cli -s=$SESSION close
+```
 
 ## 크로스 체크 모드 — 이슈 수정 검증
 
-> `ai-driven-issue-solver`가 ✅ 수정 완료로 표시한 이슈를 독립적으로 재검증한다.
+> `ai-driven-solver`가 ✅ 수정 완료로 표시한 이슈를 독립적으로 재검증한다.
 > solver의 자체 검증(Step 6)은 수정 직후 같은 컨텍스트에서 실행되어 편향될 수 있다.
 > explorer는 fresh 세션에서 재현 단계를 독립 실행해 실제 fix가 살아있는지 확인한다.
 
 ### Step C1. 검증 대상 선택
 
 ```bash
-grep -n "수정 완료\|✅" docs/ISSUES.md
+# 크로스체크 대기 중인 이슈 조회 (label: resolved, state: open)
+gh issue list --label "resolved" --state open --json number,title
+
+# legacy 호환 (이전 모델로 처리된 이슈도 함께 잡으려면)
+gh issue list --state all --search "(label:resolved state:open) OR (label:crosscheck-pending state:closed)" --json number,title
+
+# 사용자가 번호를 지정한 경우
+gh issue view <번호> --json number,title,body,labels,state
 ```
 
 - 사용자가 번호를 지정하면 해당 이슈만
-- 지정 없으면 모든 `✅ 수정 완료` 이슈를 대상으로 한다
+- 지정 없으면 `resolved` 라벨이 붙은 open 이슈 전체를 대상으로 한다
 
-각 이슈에서 추출할 정보:
-- `**재현**:` 블록 — 브라우저에서 그대로 따라갈 단계
-- `**수정 방향**:` — 무엇이 고쳐졌어야 하는지 (기대 동작 유추)
-- `**컴포넌트**:` — 어느 페이지/기능에서 테스트해야 하는지
+각 이슈에서 추출할 정보 (`gh issue view <번호>`):
+- `## 재현` 섹션 — 브라우저에서 그대로 따라갈 단계
+- `## 수정 방향` 섹션 — 무엇이 고쳐졌어야 하는지 (기대 동작 유추)
+- `## 메타` 섹션의 컴포넌트 — 어느 페이지/기능에서 테스트해야 하는지
 
 ### Step C2. Fresh 세션 열기
 
 기존 탐색 세션과 반드시 **다른 이름**을 사용한다 (상태 오염 방지):
 
+> **환경 헬스체크 (pilot subagent로 호출된 경우 필수)**: 진입 직후 `curl -sf http://localhost:5173 > /dev/null && echo OK || echo NOPE`. NOPE이면 `RESULT: #N / blocked / dev_server_down`으로 즉시 종료.
+
+**세션 이름 규약**:
+- 사용자 직접 호출: `SESSION="crosscheck#$(openssl rand -hex 3)"` (random)
+- Pilot subagent 호출: `pilot-crosscheck-<이슈번호>` (예: `pilot-crosscheck-38`). 이슈 번호가 unique하므로 random 불필요.
+- 환경변수 `SESSION_NAME`이 있으면 그 값 그대로 사용:
+
 ```bash
-SESSION="crosscheck#$(openssl rand -hex 3)"
+SESSION="${SESSION_NAME:-crosscheck#$(openssl rand -hex 3)}"
 playwright-cli -s=$SESSION --headed open http://localhost:5173
 playwright-cli -s=$SESSION state-load .playwright-cli/state.json
 # 로그인 확인 후 필요 시 수동 로그인 (Section 1 참조)
@@ -431,52 +459,37 @@ cp .playwright-cli/page-TIMESTAMP.png test-results/issues/<번호>/crosscheck.pn
 
 ### Step C3b. 크로스체크 중 새 이슈 발견 시
 
-크로스체크 도중 **기존에 없던 버그**를 발견하면 즉시 `docs/ISSUES.md`에 추가한다.
+크로스체크 도중 **기존에 없던 버그**를 발견하면 섹션 7의 `gh issue create` 명령으로 즉시 등록한다.
 **재현 방법이 매우 중요**하다 — 정확한 단계가 없으면 나중에 재현·수정이 불가능하다.
+발견 출처는 `(크로스체크 중 발견)`으로 명시한다.
 
-```markdown
-### [#번호] 컴포넌트명 — 한 줄 요약
-- **심각도**: Critical / Major / Minor / UX
-- **컴포넌트**: `파일경로:라인번호`
-- **발견**: YYYY-MM-DD (크로스체크 중 발견)
-- **상태**: 🔴 미처리
+### Step C4. GitHub Issues 업데이트
 
-**현상**: 무엇이 잘못되었는지 한 문장.
+**수정 확인 (패스)**:
+```bash
+# resolved 라벨 제거 + 이슈 닫기 (정상 최종)
+gh issue edit <번호> --remove-label "resolved"
+gh issue close <번호> --reason completed \
+  --comment "✅ 크로스체크 완료 (YYYY-MM-DD) — 버그 재현 안 됨, 수정 확인됨"
 
-**재현**:
-1. 정확한 URL (예: /ai-insights/jobs)
-2. 어떤 요소를 클릭/입력 (예: ID=5 작업 토글 클릭)
-3. 어떤 값을 입력 (예: 설명 필드에 501자 입력)
-4. 어떤 버튼/이벤트 (예: "저장" 클릭)
-5. 관찰된 결과 (예: 토스트 없음, 화면 변화 없음)
-
-**원인**: 소스코드를 읽어서 근본 원인 파악 (파일경로:라인번호 명시).
-
-**수정 방향**: 구체적인 코드 수준 수정 방향.
+# legacy 호환: closed+crosscheck-pending 이슈는 이렇게 정리
+# gh issue edit <번호> --remove-label "crosscheck-pending" --add-label "crosscheck-passed"
 ```
 
-**번호 부여**: `grep -c "^### \[#" docs/ISSUES.md`로 현재 이슈 수를 확인 후 +1.
-재현 단계를 기술할 때 테스트 데이터(ID, 입력값, URL)를 정확히 명시한다.
+**회귀 발견** (reopen 불필요 — 이슈는 이미 OPEN):
+```bash
+gh issue edit <번호> --remove-label "resolved" --add-label "regression"
+gh issue comment <번호> --body "🔴 회귀 발견 (크로스체크 YYYY-MM-DD)
 
-### Step C4. ISSUES.md 업데이트
+**관찰 결과**: 재현 단계 실행 시 관찰한 내용.
+**solver 검증과의 차이**: 어떤 조건이 달랐는지 명시."
 
-**수정 확인 (패스)** — 크로스체크 날짜를 추가한다:
-```markdown
-- **상태**: ✅ 수정 완료
-- **수정**: YYYY-MM-DD
-- **크로스체크**: YYYY-MM-DD ✅
+# legacy 이슈(closed+crosscheck-pending)에서 회귀가 발견된 경우만 reopen 필요:
+# gh issue reopen <번호>
+# gh issue edit <번호> --remove-label "crosscheck-pending" --add-label "regression"
 ```
 
-**회귀 발견** — 상태를 되돌리고 회귀 상세를 원래 이슈에 추가한다:
-```markdown
-- **상태**: 🔴 회귀 (크로스체크 YYYY-MM-DD)
-
-**회귀 상세**: 재현 단계 실행 시 관찰한 내용. solver가 검증한 조건과 어떻게 다른지 명시.
-**재현**: 회귀 재현에 필요한 정확한 단계 (기존 재현 단계와 달라진 부분 명시).
-```
-새 이슈 번호로 분리하지 말고, 원래 이슈 블록에 직접 추가한다.
-
-### Step C5. 최종 요약 보고
+### Step C5. 최종 요약 보고 + 세션 종료
 
 모든 이슈 검증 완료 후 사용자에게 보고:
 
@@ -489,13 +502,32 @@ cp .playwright-cli/page-TIMESTAMP.png test-results/issues/<번호>/crosscheck.pn
 | #49   | 설명 필드 에러 미표시        | 🔴 회귀    | 수정 코드 미반영     |
 ```
 
+보고 후 **반드시 세션 close** (leak 방지):
+```bash
+playwright-cli -s=$SESSION close
+```
+
+### Pilot subagent 모드 — RESULT 보고 (호출된 경우만)
+
+`ai-driven-pilot`이 자율 사이클로 explorer를 크로스체크 모드 subagent로 호출한 경우, 이슈당 **stdout 마지막 줄**에 정형 RESULT를 출력한다 (pilot이 파싱).
+
+| 결과 | RESULT 라인 |
+|------|-----------|
+| 통과 (close 완료, regression 라벨 유지·resolved 제거) | `RESULT: #<N> / passed / closed` |
+| 회귀 (regression 부착, 회귀 회차 K) | `RESULT: #<N> / regression / <K>` |
+| 진행 불가 (재현 단계 자체가 모호 등) | `RESULT: #<N> / blocked / <사유>` |
+
+`<N>`은 검증한 이슈 번호. 회귀 회차 `<K>`: 이슈 코멘트의 "🔴 회귀 발견" 카운트 + 1.
+
+호출 모드 식별: subagent prompt에 "ai-driven-pilot이 자율 사이클로 호출함" 같은 문구가 있으면 이 모드로 진입.
+
 ---
 
 ## 주의사항
 
-- `docs/ISSUES.md`와 `test-results/` 폴더에만 파일을 생성한다 (소스코드 수정 금지)
+- GitHub Issues(`gh issue create/comment/edit`)와 `test-results/` 폴더에만 변경한다 (소스코드 수정 금지)
 - 스냅샷 파일은 `/tmp/`에 임시 저장 (프로젝트에 커밋하지 않음)
-- 스크린샷은 `test-results/exploratory/<기능명>/<timestamp>/screenshots/` 또는 `test-results/issues/<번호>/`에 저장
+- 스크린샷은 `test-results/exploratory/<YYYY-MM-DDTHH-MM>/screenshots/` 또는 `test-results/issues/<번호>/`에 저장
 - 미구현/숨김 처리된 기능은 CLAUDE.md나 소스코드 주석으로 먼저 확인 후 버그 제외 판단
 - playwright-cli 명령 막히면 → `references/pitfalls.md` 참고
 - 크로스 체크 모드에서 소스 코드를 읽어 "이건 고쳤을 것 같다"고 판단하지 말 것 — 반드시 브라우저에서 직접 재현 단계를 실행해야 한다
