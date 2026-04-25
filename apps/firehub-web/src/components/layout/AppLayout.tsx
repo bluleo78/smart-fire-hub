@@ -428,10 +428,12 @@ function AppLayoutInner() {
             </main>
           )}
 
-          {/* Side panel mode */}
+          {/* Side panel mode
+               모바일에서는 AISidePanel이 fixed overlay로 렌더링되므로
+               Suspense fallback도 lg 이상에서만 너비를 차지하도록 처리 */}
           {aiMode === 'side' && (
             <Suspense
-              fallback={<div className="w-80 border-l bg-background" />}
+              fallback={<div className="hidden lg:block lg:w-80 border-l bg-background" />}
             >
               <AISidePanel />
             </Suspense>
