@@ -156,6 +156,32 @@ test.describe('채널 설정 페이지', () => {
   });
 
   /**
+   * 회귀 테스트: EMAIL 채널 미연결 시 SMTP 안내 툴팁이 표시되어야 한다 (#16)
+   * - 이메일 스위치가 disabled 상태일 때 hover하면 SMTP 설정 안내 툴팁이 나타나야 함
+   */
+  test('EMAIL 채널 미연결 시 스위치 hover로 SMTP 안내 툴팁이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // EMAIL을 미연결 상태로 오버라이드
+    const disconnectedSettings: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'EMAIL'
+        ? { ...s, connected: false, enabled: false }
+        : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', disconnectedSettings);
+    await page.goto('/settings/channels');
+
+    // 이메일 토글이 disabled 상태인지 확인
+    const emailToggle = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(emailToggle).toBeVisible();
+    await expect(emailToggle).toBeDisabled();
+
+    // 이메일 토글 hover → SMTP 안내 툴팁 표시 검증
+    await emailToggle.hover();
+    await expect(page.getByText('이메일 채널을 사용하려면 관리자가 SMTP 설정을 먼저 완료해야 합니다.')).toBeVisible();
+  });
+
+  /**
    * 회귀 테스트: 카카오 알림톡 카드에 브랜드 아이콘이 적용되어야 한다 (#6)
    * - 일반 채팅 버블(MessageSquare)이 아닌 카카오 브랜드 SVG 아이콘이 렌더링되어야 함
    * - 아이콘 컨테이너 배경이 카카오 브랜드 색상(#FEE500)이어야 함

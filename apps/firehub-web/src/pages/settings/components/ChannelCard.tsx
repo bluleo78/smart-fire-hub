@@ -212,6 +212,12 @@ export function ChannelCard({ setting }: ChannelCardProps) {
                   앱 알림은 안전망 채널로 항상 활성화됩니다.
                 </TooltipContent>
               )}
+              {/* EMAIL 채널 미연결 시: SMTP 미설정 안내 툴팁 표시 */}
+              {!isChatChannel && !isOAuthChannel && !connected && (
+                <TooltipContent>
+                  이메일 채널을 사용하려면 관리자가 SMTP 설정을 먼저 완료해야 합니다.
+                </TooltipContent>
+              )}
             </Tooltip>
           </TooltipProvider>
         </div>
