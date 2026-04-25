@@ -11,6 +11,49 @@ GitHub Issues의 버그 이슈를 one-shot으로 처리한다.
 
 ---
 
+## Step 0. Perspective 호환성 사전 확인
+
+이 스킬은 **bug perspective 본문 형식**(`## 메타 / ## 현상 / ## 재현 / ## 원인 / ## 수정 방향`)을 가정한다. 이슈에 다음 라벨이 붙어 있으면 작업 진입 전에 차단한다 (자율 처리 부적합):
+
+| 라벨 | 이유 |
+|------|------|
+| `design` | 본문에 `## 재현` 대신 `## 영향`/`## 비교`. 디자인 토큰 의사결정·시각 캡처가 사람 영역 |
+| `a11y` | WCAG SC 의미 판단·SR 청취·키보드 흐름 검증이 사람 영역. 코드 한 줄 수정으로 안 끝남 |
+| `perf` | 측정값(LCP/INP/CLS)·DevTools 캡처·heap snapshot 비교가 사람 영역 |
+| `security` | 보안 결정은 자동화 부적합 (별도 에스컬레이션 트리거) |
+
+```bash
+# 라벨 조회
+LABELS=$(gh issue view <번호> --json labels -q '.labels[].name' | tr '\n' ' ')
+INCOMPAT_FOUND=""
+for L in design a11y perf security; do
+  echo "$LABELS" | grep -q "$L" && INCOMPAT_FOUND="$L" && break
+done
+```
+
+`$INCOMPAT_FOUND`가 비어있지 않으면 호출 모드별로 다음과 같이 처리:
+
+### Pilot subagent 모드 (subagent prompt에 "ai-driven-pilot이 자율 사이클로 호출함" 포함)
+이슈에 코멘트 남기지 않고(이미 라벨로 분류됨) **stdout 마지막 줄에 `RESULT: #<N> / blocked / non_bug_perspective` 출력 후 작업 종료**. pilot이 받아서 다음 루프 계속(일시정지 X).
+
+### 사용자 직접 호출 모드
+사용자에게 보고 후 진행 여부 확인:
+```
+이슈 #<번호>는 `<INCOMPAT_FOUND>` 라벨 — bug perspective 본문 형식이 아닙니다.
+- design/a11y/perf 이슈는 디자인 토큰 의사결정·시각 캡처·SR 청취·측정값 캡처가 필요해
+  자율 코드 수정 부적합합니다.
+- security 이슈는 사람 결정 후 close 정책입니다.
+
+진행 옵션:
+  (1) 그래도 진행 (사용자가 직접 안내하며 함께 작업)
+  (2) needs-info 라벨 부착 후 종료 (사람 검토 큐에 남김)
+  (3) 작업 취소
+어떻게 할까요?
+```
+사용자가 (1)을 선택하면 Step 1로 진행하되, 본문 형식이 다르니 사용자와 대화하며 한 단계씩 확인. (2)이면 `gh issue edit <N> --add-label needs-info` 후 종료. (3)이면 그대로 종료.
+
+---
+
 ## Step 1. 타겟 이슈 선택
 
 **사용자가 번호를 지정한 경우**: 해당 번호의 이슈를 선택한다.
@@ -264,6 +307,7 @@ skip 대상 확인 단계:
 | Step 2.5 사전 재현 실패 | `RESULT: #<N> / reproduce_failed / <사유>` | **`needs-info` 라벨 부착** + 코멘트 |
 | Step 5 테스트 2회 실패 | `RESULT: #<N> / test_failed_2 / <마지막 실패 메시지>` | 코멘트 |
 | Step 8 pre-commit 훅 2회 실패 | `RESULT: #<N> / hook_failed_2 / <어느 단계>` | 코멘트 |
+| Step 0 perspective 호환성 차단 | `RESULT: #<N> / blocked / non_bug_perspective` | 코멘트 (사람 검토 필요) |
 | 그 외 진행 불가 | `RESULT: #<N> / blocked / <사유>` | 코멘트 |
 
 `<N>`은 처리한 이슈 번호. pilot이 dispatch한 번호와 일치 검증용 sanity check + 로그 추적용.

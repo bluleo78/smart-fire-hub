@@ -5,6 +5,8 @@ description: >
   기능/페이지를 직접 탐색하며 버그를 발견한다.
   사용자가 "playwright로 테스트해줘", "UI 탐색해줘", "버그 찾아줘", "기능 검증해줘",
   "headed 모드로 테스트", "탐색적 테스트", "exploratory test" 등을 요청할 때 반드시 이 스킬을 사용한다.
+  관점(perspective)별 패스도 지원: "디자인 검증/UX 검토" → design, "접근성 검증/a11y" → a11y, "성능 검증/perf" → perf.
+  관점 미지정 시 기본 bug 패스(security/error/async/critical 등).
   또한 "크로스체크해줘", "fix 확인해줘", "이슈 수정 검증해줘",
   "resolved 라벨 검증" 같이 ai-driven-solver가 resolved 처리한 GitHub Issue를 재검증하는 요청에도 반드시 이 스킬을 사용한다.
   TC 명세서 기반 자동화 회귀 테스트가 아닌, 탐색적/인간적 관점의 자유로운 테스트에 특화되어 있다.
@@ -89,21 +91,36 @@ sleep 1.5
 
 > 컨텍스트가 컴팩션되어 세션이 재시작된 경우 → `references/session-recovery.md` 참고.
 
+### 0단계: Perspective 결정
+
+탐색은 **관점(perspective)**별로 분리해 진행한다. 같은 화면도 관점이 다르면 검증할 시나리오가 다르므로, 매트릭스도 관점별로 따로 둔다.
+
+| 사용자 발화 키워드 | perspective | 매트릭스 파일 | 시나리오 가이드 |
+|------|----|----|----|
+| 없음 / "탐색" / "버그 찾아줘" | `bug` (default) | `.coverage-matrix-bug.md` | `references/perspectives/bug.md` |
+| "디자인", "design", "UX 검증" | `design` | `.coverage-matrix-design.md` | `references/perspectives/design.md` |
+| "접근성", "a11y", "스크린리더" | `a11y` | `.coverage-matrix-a11y.md` | `references/perspectives/a11y.md` |
+| "성능", "perf", "느려요" | `perf` | `.coverage-matrix-perf.md` | `references/perspectives/perf.md` |
+
+진입 시 사용자 발화로 perspective 결정 → 해당 perspective 가이드 파일을 먼저 읽고 → 해당 매트릭스만 로드. 다른 perspective의 매트릭스는 건드리지 않는다.
+
 ### 세션 시작 결정 흐름
 
 ```
 세션 시작
-├── test-results/.component-tree.md 있음?
-│   ├── YES → 로드. 테스트 대상 섹션이 트리에 있나?
+├── perspective 결정 (위 표)
+│
+├── test-results/exploratory/.component-tree.md 있음?
+│   ├── YES → 로드 (perspective 무관, 공유). 테스트 대상 섹션이 트리에 있나?
 │   │         ├── YES (상세 내용 있음) → 재사용
 │   │         └── NO (⬜ 미탐색 표시 또는 섹션 자체 없음)
 │   │               → 소스 읽어서 해당 섹션 상세 작성 후 진행
 │   └── NO  → 앱 전체 뼈대 신규 작성 (메뉴 단위 섹션 + ⬜ 미탐색 표시)
 │             그 후 테스트 대상 섹션만 상세 작성
 │
-├── test-results/.coverage-matrix.md 있음?
+├── test-results/exploratory/.coverage-matrix-<perspective>.md 있음?
 │   ├── YES → 로드. ⬜(미시작) 항목만 이번 세션 대상
-│   └── NO  → 트리의 해당 섹션에서 파생해서 신규 생성
+│   └── NO  → 트리의 해당 섹션에서 파생 + perspective 가이드의 시나리오 템플릿으로 신규 생성
 │
 └── 탐색 시작 → ⬜ 항목 순서대로 진행
 ```
@@ -147,7 +164,7 @@ find . -name "App.tsx" -o -name "App.jsx" | grep src | head -3
 
 ### Step 3: 커버리지 매트릭스 (실행 추적)
 
-트리에서 파생. **`test-results/exploratory/.coverage-matrix.md`에 저장**하고 세션을 이어받는다.
+트리에서 파생. **`.coverage-matrix-<perspective>.md`에 저장**하고 세션을 이어받는다 (예: `bug`면 `.coverage-matrix-bug.md`).
 
 **매트릭스는 반드시 시나리오 레벨로 작성한다.** "버튼이 존재하는가"가 아니라 "이 입력을 주면 무슨 일이 벌어지는가"를 열거해야 한다.
 
@@ -156,7 +173,7 @@ find . -name "App.tsx" -o -name "App.jsx" | grep src | head -3
 | DataTab > 버튼    | 행추가/내보내기/삭제 | ⬜ |
 ```
 
-✅ 올바른 예 (시나리오 레벨):
+✅ 올바른 예 (시나리오 레벨, bug perspective):
 ```
 | 저장 > 이름 빈값/공백만      | 저장 버튼 비활성 여부              | ⬜ |
 | 저장 > 이름 특수문자(<>'"&)  | 저장·표시 깨짐 여부, XSS 여부      | ⬜ |
@@ -164,12 +181,7 @@ find . -name "App.tsx" -o -name "App.jsx" | grep src | head -3
 | 저장 > 버튼 중복 클릭        | 중복 요청 방지 (disabled/Loader)  | ⬜ |
 ```
 
-시나리오 뽑는 질문:
-- 빈 값 / 최대 길이 / 특수문자를 넣으면?
-- 오류 시 사용자에게 명확한 피드백이 오는가?
-- 빠르게 두 번 클릭하면 중복 요청이 발생하는가?
-- 비동기 작업 중 버튼 상태는?
-- 필터/탭 전환 시 이전 상태가 남아 있지는 않은가?
+**시나리오 템플릿·질문 리스트는 perspective 가이드 파일에서 가져온다** (Section 0의 표 참조). 같은 화면도 perspective가 다르면 시나리오가 다르다.
 
 매트릭스에 새 항목을 추가할 때는 **반드시 해당 섹션 테이블 안에 삽입**한다.
 파일 하단에 append하면 섹션 구조가 깨져 추적이 어려워진다.
@@ -184,15 +196,14 @@ cat CLAUDE.md
 gh issue list --state open --limit 30 --json number,title,labels  # 이미 알려진 이슈 제외
 ```
 
-### 탐색 범위 우선순위
+### 탐색 범위·우선순위·시나리오 질문
 
-우선순위 기준 (높은 것부터):
-1. **Security** — SQL/DML 실행 허용 여부, 크로스 스키마 접근, IDOR, 권한 우회, 민감 데이터 노출
-2. **Error / Edge path** — 잘못된 입력, 경계값, 특수문자, 빈 상태
-3. **Async / Race condition** — 중복 클릭, 실행 중 상태, 로딩 피드백
-4. **Critical path** — 핵심 CRUD, 저장/삭제 플로우
-5. **State spillover** — 탭/필터 전환 시 이전 상태 잔류 여부
-6. **Accessibility** — 키보드 탐색, aria 속성, 콘솔 경고
+Perspective별로 시나리오 템플릿이 다르다. **Section 0에서 결정한 perspective의 가이드 파일**(`references/perspectives/<perspective>.md`)을 읽어 시나리오 질문과 우선순위를 따른다.
+
+- `bug` (default): Security/Error/Async/Critical/State/A11y(간단) — **개발자 관점의 기능 결함**
+- `design`: 시각 위계/카피/간격/컬러/상태 표현/밀도/모션 — **전문 디자이너 관점**
+- `a11y`: 키보드/포커스/스크린리더/대비/모션 민감성 — **WCAG AA 본격 검증**
+- `perf`: LCP/INP/CLS/메모리/번들 — **체감 성능과 자원**
 
 ## 3. API 직접 테스트 패턴
 
@@ -340,9 +351,22 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 
 ## 7. 버그 문서화
 
-발견된 버그는 GitHub Issues에 즉시 등록 후 **프로젝트 보드에도 추가**한다 (사람이 보드에서 즉시 볼 수 있도록):
+발견된 버그는 GitHub Issues에 즉시 등록 후 **프로젝트 보드에도 추가**한다 (사람이 보드에서 즉시 볼 수 있도록).
+
+**Perspective별 라벨 매핑** (반드시 perspective에 맞는 라벨을 부착해야 pilot이 올바르게 라우팅):
+
+| Perspective | 기본 라벨 (심각도는 케이스별 조정) | 본문 형식 (Section 7 템플릿) |
+|---|---|---|
+| `bug` (default) | `bug,severity:critical\|major\|minor\|ux` | 아래 템플릿 그대로 (현상/재현/원인/수정 방향/메타) |
+| `design` | `bug,severity:ux,design` (또는 `severity:major,design`) | `references/perspectives/design.md` §6 (현상/영향/비교/수정 방향/메타) |
+| `a11y` | `bug,severity:ux,a11y` (또는 `severity:critical,a11y`) | `references/perspectives/a11y.md` §7 (WCAG SC 명시) |
+| `perf` | `bug,severity:major,perf` (또는 `severity:critical,perf`) | `references/perspectives/perf.md` §7 (측정값·DevTools 캡처 첨부) |
+| security 결함 | `bug,severity:critical,security` (perspective와 무관, 발견 즉시 부착) | bug 본문 + 보안 영향 항목 |
+
+> **이 라벨이 pilot 라우팅의 핵심**: design/a11y/perf/security 라벨이 부착되면 pilot 자율 사이클이 자동으로 사람 큐로 빼서 디자인 토큰·SR 청취·측정값 같은 사람 영역 작업을 보호한다.
 
 ```bash
+# bug perspective 기본 템플릿 (다른 perspective는 perspectives/<name>.md 참조)
 ISSUE_URL=$(gh issue create \
   --title "컴포넌트명 — 한 줄 요약" \
   --label "bug,severity:critical" \
@@ -392,8 +416,11 @@ test-results/
 ├── tc/                   ← TC 실행 결과 (TC 명세서 기반)
 │   └── <suite-name>/
 └── exploratory/          ← 탐색적 테스트 (ai-driven-explorer)
-    ├── .component-tree.md    ← 앱 전체 트리 (세션 간 재사용)
-    ├── .coverage-matrix.md   ← 시나리오 추적표 (세션 간 이어받기)
+    ├── .component-tree.md              ← 앱 전체 트리 (perspective 무관, 공유)
+    ├── .coverage-matrix-bug.md         ← bug perspective 추적
+    ├── .coverage-matrix-design.md      ← design perspective 추적 (사용자 요청 시)
+    ├── .coverage-matrix-a11y.md        ← a11y perspective 추적
+    ├── .coverage-matrix-perf.md        ← perf perspective 추적
     └── <YYYY-MM-DDTHH-MM>/
         ├── report.md
         └── screenshots/

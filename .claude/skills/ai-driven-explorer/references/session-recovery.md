@@ -13,9 +13,17 @@ playwright-cli -s=<SESSION명> snapshot --depth=2 2>&1 | head -5
 
 ## 2) 커버리지 매트릭스에서 마지막 상태 파악
 
+진행 중이던 perspective의 매트릭스 파일을 본다 (`bug`/`design`/`a11y`/`perf`). 알 수 없으면 모든 매트릭스를 짧게 훑는다.
+
 ```bash
-grep "🔴\|✅\|⬜" test-results/exploratory/.coverage-matrix.md | wc -l
-grep "⬜" test-results/exploratory/.coverage-matrix.md | head -10
+# perspective가 명확할 때 (예: bug)
+PERSP=bug
+grep "🔴\|✅\|⬜" test-results/exploratory/.coverage-matrix-${PERSP}.md | wc -l
+grep "⬜" test-results/exploratory/.coverage-matrix-${PERSP}.md | head -10
+
+# perspective 불명일 때 — 어느 매트릭스가 진행 중인지 보기
+ls -la test-results/exploratory/.coverage-matrix-*.md
+grep -l "🔄" test-results/exploratory/.coverage-matrix-*.md  # 진행 중 표식 있는 파일
 ```
 
 ## 3) 마지막 버그 번호 확인
