@@ -21,6 +21,16 @@ import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { DashboardWidgetCard } from '../../components/analytics/DashboardWidgetCard';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -223,6 +233,13 @@ export default function DashboardEditorPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [addWidgetOpen, setAddWidgetOpen] = useState(false);
 
+  // 위젯 삭제 확인 다이얼로그 상태 — null이면 닫힘, 숫자면 삭제 대기 중인 widgetId
+  const [deleteConfirmWidgetId, setDeleteConfirmWidgetId] = useState<number | null>(null);
+
+  // 편집 중 로컬 위젯 목록 스냅샷 — 취소 시 롤백에 사용
+  // null이면 편집 중이 아님
+  const [editingWidgets, setEditingWidgets] = useState<DashboardWidget[] | null>(null);
+
   // Local layout state (breakpoint → LayoutItem[])
   const [localLayouts, setLocalLayouts] = useState<ResponsiveLayouts>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -269,55 +286,47 @@ export default function DashboardEditorPage() {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
-  // onLayoutChange: (layout: Layout, layouts: ResponsiveLayouts) => void
-  // Layout = readonly LayoutItem[]
+  // onLayoutChange: 편집 모드에서는 로컬 layouts만 갱신하고 서버에는 즉시 저장하지 않는다.
+  // "완료" 클릭 시 handleSaveEdit에서 일괄 서버 반영.
   const handleLayoutChange = useCallback(
-    (layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => {
+    (_layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => {
       if (!isEditing || !dashboard) return;
       setLocalLayouts(allLayouts);
-
-      // Debounce save: 1 second after last change
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
-        layout.forEach((item) => {
-          const widgetId = parseInt(item.i, 10);
-          updateWidgetMutation.mutate({
-            widgetId,
-            data: {
-              positionX: item.x,
-              positionY: item.y,
-              width: item.w,
-              height: item.h,
-            },
-          });
-        });
-      }, 1000);
     },
-    [isEditing, dashboard, updateWidgetMutation]
+    [isEditing, dashboard]
   );
 
+  // 위젯 삭제 버튼 클릭 시: 즉시 삭제하지 않고 확인 다이얼로그를 표시한다.
   const handleRemoveWidget = useCallback(
-    async (widgetId: number) => {
-      try {
-        await removeWidgetMutation.mutateAsync(widgetId);
-        toast.success('위젯이 제거되었습니다.');
-        // Force layout sync after removal
-        const { data: updated } = await refetch();
-        if (updated) {
-          const items = widgetsToLayoutItems(updated.widgets);
-          setLocalLayouts({ lg: items, md: items, sm: items });
-        }
-      } catch (error) {
-        handleApiError(error, '위젯 제거에 실패했습니다.');
-      }
+    (widgetId: number) => {
+      setDeleteConfirmWidgetId(widgetId);
     },
-    [removeWidgetMutation, refetch]
+    []
   );
+
+  // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 로컬 editingWidgets에서만 제거한다.
+  // 서버에는 "완료" 클릭 시 handleSaveEdit에서 일괄 반영.
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteConfirmWidgetId === null) return;
+    const id = deleteConfirmWidgetId;
+    setDeleteConfirmWidgetId(null);
+    setEditingWidgets((prev) => {
+      if (!prev) return prev;
+      const next = prev.filter((w) => w.id !== id);
+      // 위젯 제거 후 레이아웃도 동기화
+      const items = widgetsToLayoutItems(next);
+      setLocalLayouts({ lg: items, md: items, sm: items });
+      return next;
+    });
+    toast.success('위젯이 제거되었습니다.');
+  }, [deleteConfirmWidgetId]);
 
   const handleAddWidget = useCallback(
     async (chartId: number, chartType?: string) => {
       if (!dashboard) return;
-      const maxY = dashboard.widgets.reduce(
+      // 현재 편집 중인 위젯 목록 기준으로 최대 Y 계산 (로컬 삭제 반영)
+      const currentWidgets = editingWidgets ?? dashboard.widgets;
+      const maxY = currentWidgets.reduce(
         (acc, w) => Math.max(acc, w.positionY + w.height),
         0
       );
@@ -333,10 +342,10 @@ export default function DashboardEditorPage() {
         });
         toast.success('차트가 대시보드에 추가되었습니다.');
         setAddWidgetOpen(false);
-        // Force layout sync from server — in edit mode the automatic sync is skipped,
-        // so new widget dimensions wouldn't be picked up by react-grid-layout.
+        // 서버에서 최신 상태를 가져와 로컬 편집 목록 및 레이아웃 갱신
         const { data: updated } = await refetch();
         if (updated) {
+          setEditingWidgets(updated.widgets);
           const items = widgetsToLayoutItems(updated.widgets);
           setLocalLayouts({ lg: items, md: items, sm: items });
         }
@@ -344,13 +353,81 @@ export default function DashboardEditorPage() {
         handleApiError(error, '위젯 추가에 실패했습니다.');
       }
     },
-    [dashboard, addWidgetMutation, refetch]
+    [dashboard, editingWidgets, addWidgetMutation, refetch]
   );
 
-  const handleExitEdit = () => {
+  /**
+   * 편집 모드 진입: 현재 서버 위젯 목록을 스냅샷으로 저장하여 취소 시 롤백에 사용.
+   */
+  const handleStartEdit = useCallback(() => {
+    if (!dashboard) return;
+    setEditingWidgets([...dashboard.widgets]);
+    const items = widgetsToLayoutItems(dashboard.widgets);
+    setLocalLayouts({ lg: items, md: items, sm: items });
+    setIsEditing(true);
+  }, [dashboard]);
+
+  /**
+   * 편집 취소(X 버튼): 로컬 변경사항(삭제·레이아웃)을 버리고 스냅샷으로 복원.
+   * 서버에는 아무것도 반영하지 않는다.
+   */
+  const handleCancelEdit = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    // editingWidgets를 버리고 서버 원본 상태로 복원
+    if (dashboard) {
+      const items = widgetsToLayoutItems(dashboard.widgets);
+      setLocalLayouts({ lg: items, md: items, sm: items });
+    }
+    setEditingWidgets(null);
     setIsEditing(false);
-  };
+  }, [dashboard]);
+
+  /**
+   * 편집 완료(완료 버튼): 로컬 변경사항을 서버에 일괄 반영한다.
+   * 1. 삭제된 위젯: DELETE 요청 전송
+   * 2. 레이아웃 변경: PATCH 요청 전송
+   */
+  const handleSaveEdit = useCallback(async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (!dashboard || !editingWidgets) {
+      setIsEditing(false);
+      setEditingWidgets(null);
+      return;
+    }
+
+    const originalIds = new Set(dashboard.widgets.map((w) => w.id));
+    const remainingIds = new Set(editingWidgets.map((w) => w.id));
+
+    // 1. 삭제된 위젯 서버에 반영
+    const deletedIds = [...originalIds].filter((id) => !remainingIds.has(id));
+    for (const widgetId of deletedIds) {
+      try {
+        await removeWidgetMutation.mutateAsync(widgetId);
+      } catch (error) {
+        handleApiError(error, '위젯 제거에 실패했습니다.');
+      }
+    }
+
+    // 2. 레이아웃 변경 서버에 반영 (lg 기준)
+    const lgItems = (localLayouts.lg as LayoutItem[] | undefined) ?? [];
+    lgItems.forEach((item) => {
+      const widgetId = parseInt(item.i, 10);
+      // 삭제된 위젯은 건너뜀
+      if (!remainingIds.has(widgetId)) return;
+      updateWidgetMutation.mutate({
+        widgetId,
+        data: {
+          positionX: item.x,
+          positionY: item.y,
+          width: item.w,
+          height: item.h,
+        },
+      });
+    });
+
+    setEditingWidgets(null);
+    setIsEditing(false);
+  }, [dashboard, editingWidgets, localLayouts, removeWidgetMutation, updateWidgetMutation]);
 
   if (isLoading) {
     return (
@@ -373,7 +450,11 @@ export default function DashboardEditorPage() {
     );
   }
 
-  const lgItems = (localLayouts.lg as LayoutItem[] | undefined) ?? widgetsToLayoutItems(dashboard.widgets);
+  // 편집 중에는 로컬 editingWidgets를 렌더링 소스로 사용하고,
+  // 비편집 중에는 서버 원본 dashboard.widgets를 사용한다.
+  const displayWidgets = editingWidgets ?? dashboard.widgets;
+
+  const lgItems = (localLayouts.lg as LayoutItem[] | undefined) ?? widgetsToLayoutItems(displayWidgets);
   const currentLayouts: ResponsiveLayouts = { ...localLayouts, lg: lgItems };
 
   return (
@@ -443,11 +524,19 @@ export default function DashboardEditorPage() {
                 <Plus className="h-3.5 w-3.5" />
                 차트 추가
               </Button>
-              <Button size="sm" onClick={handleExitEdit} className="h-8">
+              {/* 완료: 로컬 변경사항(삭제·레이아웃)을 서버에 일괄 반영 */}
+              <Button size="sm" onClick={() => void handleSaveEdit()} className="h-8">
                 <Check className="h-3.5 w-3.5" />
                 완료
               </Button>
-              <Button size="sm" variant="ghost" onClick={handleExitEdit} className="h-8">
+              {/* 취소: 로컬 변경사항을 버리고 원래 상태로 복원 */}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancelEdit}
+                className="h-8"
+                title="편집 취소"
+              >
                 <X className="h-3.5 w-3.5" />
               </Button>
             </>
@@ -455,7 +544,7 @@ export default function DashboardEditorPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => setIsEditing(true)}
+              onClick={handleStartEdit}
               className="h-8"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -465,9 +554,9 @@ export default function DashboardEditorPage() {
         </div>
       </div>
 
-      {/* Grid */}
+      {/* Grid — 편집 중에는 로컬 displayWidgets로 렌더링하여 즉시 UI 반영 */}
       <div className="flex-1 overflow-auto p-3">
-        {dashboard.widgets.length === 0 ? (
+        {displayWidgets.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
             <LayoutDashboard className="h-12 w-12 text-muted-foreground" />
             <div>
@@ -477,7 +566,7 @@ export default function DashboardEditorPage() {
               </p>
             </div>
             {!isEditing && (
-              <Button variant="outline" onClick={() => setIsEditing(true)}>
+              <Button variant="outline" onClick={handleStartEdit}>
                 <Pencil className="h-4 w-4 mr-2" />
                 편집 모드
               </Button>
@@ -485,7 +574,7 @@ export default function DashboardEditorPage() {
           </div>
         ) : (
           <GridArea
-            widgets={dashboard.widgets}
+            widgets={displayWidgets}
             isEditing={isEditing}
             layouts={currentLayouts}
             onLayoutChange={handleLayoutChange}
@@ -505,6 +594,30 @@ export default function DashboardEditorPage() {
         onAdd={handleAddWidget}
         isPending={addWidgetMutation.isPending}
       />
+
+      {/* 위젯 삭제 확인 다이얼로그 — 실수 삭제 방지 */}
+      <AlertDialog
+        open={deleteConfirmWidgetId !== null}
+        onOpenChange={(open) => { if (!open) setDeleteConfirmWidgetId(null); }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>위젯 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 위젯을 삭제하시겠습니까? "완료" 클릭 전까지는 취소가 가능합니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={handleConfirmDelete}
+            >
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
