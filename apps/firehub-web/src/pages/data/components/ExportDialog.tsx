@@ -16,7 +16,7 @@ import {
 } from '../../../components/ui/dialog';
 import { Skeleton } from '../../../components/ui/skeleton';
 import { useExportJobTracking } from '../../../hooks/useExportJobTracking';
-import { handleApiError } from '../../../lib/api-error';
+import { handleApiError, handleApiErrorAsync } from '../../../lib/api-error';
 import { downloadBlob } from '../../../lib/download';
 import type { ExportFormat } from '../../../types/export';
 
@@ -135,7 +135,9 @@ export function ExportDialog({
         toast.success('파일이 다운로드되었습니다.');
         onOpenChange(false);
       } catch (error) {
-        handleApiError(error, '내보내기에 실패했습니다.');
+        // responseType: 'blob'이므로 에러 응답 body도 Blob으로 전달된다.
+        // 비동기 파싱으로 JSON 에러 메시지를 추출하여 토스트로 표시한다.
+        await handleApiErrorAsync(error, '내보내기에 실패했습니다.');
       } finally {
         setIsExporting(false);
       }

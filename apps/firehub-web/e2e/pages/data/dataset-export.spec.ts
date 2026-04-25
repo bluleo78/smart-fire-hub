@@ -88,8 +88,10 @@ test.describe('데이터셋 상세 — 내보내기 다이얼로그', () => {
     // "내보내기" 실행
     await page.getByRole('dialog').getByRole('button', { name: '내보내기' }).click();
 
-    // 에러 토스트 표시 확인
-    await expect(page.getByText(/내보내기에 실패했습니다/)).toBeVisible({ timeout: 5000 });
+    // 에러 토스트 표시 확인 — 서버 에러 메시지 또는 폴백 메시지 중 하나가 표시된다
+    await expect(
+      page.getByText(/cannot execute INSERT|내보내기에 실패했습니다/)
+    ).toBeVisible({ timeout: 5000 });
 
     // 다이얼로그는 여전히 열려있어야 한다
     await expect(page.getByRole('dialog')).toBeVisible();

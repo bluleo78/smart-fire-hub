@@ -10,6 +10,8 @@ import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -41,13 +43,22 @@ public class DataExportController {
     return ResponseEntity.ok(exportService.estimateExport(datasetId, request));
   }
 
+  /**
+   * 동기/비동기 내보내기 엔드포인트.
+   *
+   * <p>비동기 경로: jobId를 JSON으로 반환. 동기 경로: SpringMVC의 ResponseEntity 반환 방식으로는 ResponseEntity&lt;?&gt;
+   * 제네릭 미지정 시 StreamingResponseBodyReturnValueHandler가 작동하지 않으므로(HttpMessageNotWritableException),
+   * HttpServletResponse에 직접 쓰는 방식으로 처리한다.
+   */
   @PostMapping("/datasets/{datasetId}/export")
   @RequirePermission("data:export")
   public ResponseEntity<?> exportDataset(
       @PathVariable Long datasetId,
       @RequestBody ExportRequest request,
       HttpServletRequest httpRequest,
-      Authentication authentication) {
+      HttpServletResponse httpResponse,
+      Authentication authentication)
+      throws IOException {
 
     Long userId = (Long) authentication.getPrincipal();
     String username =
@@ -60,12 +71,17 @@ public class DataExportController {
 
     if (result.async()) {
       return ResponseEntity.accepted().body(Map.of("jobId", result.jobId()));
-    } else {
-      return ResponseEntity.ok()
-          .header("Content-Type", result.contentType())
-          .header("Content-Disposition", buildContentDisposition(result.filename()))
-          .body(result.streamingBody());
     }
+
+    // 동기 경로: ResponseEntity<?>의 제네릭 소거로 StreamingResponseBodyReturnValueHandler가
+    // 매칭되지 않아 HttpMessageNotWritableException이 발생한다.
+    // HttpServletResponse에 직접 쓰는 방식으로 우회한다.
+    httpResponse.setStatus(HttpServletResponse.SC_OK);
+    httpResponse.setContentType(result.contentType());
+    httpResponse.setHeader("Content-Disposition", buildContentDisposition(result.filename()));
+    result.streamingBody().writeTo(httpResponse.getOutputStream());
+    httpResponse.flushBuffer();
+    return null;
   }
 
   @GetMapping("/exports/{jobId}/file")
