@@ -211,7 +211,62 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
 });
 
 test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
-  test('삭제 버튼 클릭 시 DELETE /ai/sessions/{id} API가 호출된다', async ({
+  test('삭제 버튼 클릭 시 확인 다이얼로그가 표시된다 (#15)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openPanelWithSessions(page);
+
+    // 드롭다운 열기
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
+    await trigger.click();
+
+    // "이전 대화 1" 행의 삭제 버튼 클릭
+    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
+    await expect(menuItem1).toBeVisible({ timeout: 3000 });
+    const deleteBtn = menuItem1.getByRole('button', { name: /삭제/ });
+    await deleteBtn.click();
+
+    // AlertDialog 확인 다이얼로그가 표시되어야 함 (즉시 삭제 방지 #15)
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+    // 다이얼로그 내에 세션명이 포함되어야 함
+    await expect(dialog.getByText(/이전 대화 1/)).toBeVisible({ timeout: 3000 });
+    // 취소 버튼도 표시되어야 함
+    await expect(page.getByRole('button', { name: '취소' })).toBeVisible({ timeout: 3000 });
+  });
+
+  test('확인 다이얼로그에서 취소 클릭 시 API가 호출되지 않는다 (#15)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openPanelWithSessions(page);
+
+    // DELETE API 호출 감시
+    let deleteApiCalled = false;
+    await page.route(
+      (url) => /\/api\/v1\/ai\/sessions\/\d+$/.test(url.pathname),
+      (route) => {
+        if (route.request().method() === 'DELETE') {
+          deleteApiCalled = true;
+          return route.fulfill({ status: 204, body: '' });
+        }
+        return route.continue();
+      },
+    );
+
+    // 드롭다운 열기 → 삭제 버튼 클릭
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
+    await trigger.click();
+    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
+    await expect(menuItem1).toBeVisible({ timeout: 3000 });
+    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+
+    // 다이얼로그에서 취소 → API 미호출 검증
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible({ timeout: 3000 });
+    expect(deleteApiCalled).toBe(false);
+  });
+
+  test('확인 다이얼로그에서 삭제 확인 시 DELETE /ai/sessions/{id} API가 호출된다', async ({
     authenticatedPage: page,
   }) => {
     await openPanelWithSessions(page);
@@ -241,19 +296,17 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
       }),
     );
 
-    // 드롭다운 열기
+    // 드롭다운 열기 → 삭제 버튼 클릭 → 다이얼로그 확인
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-
-    // "이전 대화 1" 행의 삭제 버튼 클릭 (Trash2 아이콘 버튼, stopPropagation)
     const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
     await expect(menuItem1).toBeVisible({ timeout: 3000 });
-    // 삭제 버튼: menuitem 내 size="icon" 버튼
-    const deleteBtn = menuItem1.getByRole('button');
-    // DELETE API 응답을 대기하여 호출 완료 후 검증한다
+    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+
+    // AlertDialog에서 삭제 확인 → DELETE API 호출
     await Promise.all([
       page.waitForResponse((r) => /\/ai\/sessions\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
-      deleteBtn.click(),
+      page.getByRole('button', { name: '삭제' }).click(),
     ]);
     expect(deletedId).toBe(1); // MOCK_SESSIONS[0].id === 1
   });

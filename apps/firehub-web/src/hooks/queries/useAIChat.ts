@@ -23,6 +23,7 @@ export function useDeleteAISession() {
     mutationFn: aiApi.deleteSession,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ai-sessions'] });
+      toast.success('대화가 삭제되었습니다.');
     },
   });
 }

@@ -5,6 +5,7 @@ import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat
 import { cn } from '../../lib/utils';
 import type { AISession } from '../../types/ai';
 import { Button } from '../ui/button';
+import { DeleteConfirmDialog } from '../ui/delete-confirm-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,11 +24,6 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
   const [open, setOpen] = useState(false);
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
-
-  const handleDelete = (e: React.MouseEvent, id: number) => {
-    e.stopPropagation();
-    deleteSession.mutate(id);
-  };
 
   const currentSession = sessions?.find((s) => s.sessionId === currentSessionId);
   const triggerLabel = currentSession
@@ -61,14 +57,22 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
                 <span className="truncate text-xs">
                   {session.title || `대화 #${session.id}`}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5 shrink-0 opacity-50 hover:opacity-100"
-                  onClick={(e) => handleDelete(e, session.id)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
+                {/* 삭제 전 확인 다이얼로그 — 즉시 삭제 방지 (#15) */}
+                <DeleteConfirmDialog
+                  entityName="대화"
+                  itemName={session.title || `대화 #${session.id}`}
+                  onConfirm={() => deleteSession.mutate(session.id)}
+                  trigger={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 shrink-0 opacity-50 hover:opacity-100"
+                      aria-label={`${session.title || `대화 #${session.id}`} 삭제`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  }
+                />
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
