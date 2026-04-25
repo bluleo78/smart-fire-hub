@@ -57,6 +57,59 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByRole('tab', { name: '필드' })).toHaveAttribute('data-state', 'active');
   });
 
+  /**
+   * 회귀 테스트 (issue #14): ?tab=data URL 파라미터가 탭 초기화에 반영되지 않는 버그
+   * - URL에 ?tab=data가 있으면 '데이터' 탭이 활성화되어야 한다
+   * - 직접 URL 접근·새로고침 시에도 올바른 탭이 유지되어야 한다
+   */
+  test('?tab=data URL 파라미터로 직접 접근 시 데이터 탭이 활성화된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    // ?tab=data 파라미터를 포함한 URL로 직접 접근
+    await page.goto('/data/datasets/1?tab=data');
+
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // URL 파라미터에 따라 '데이터' 탭이 선택되어야 한다 (issue #14 회귀 방지)
+    await expect(page.getByRole('tab', { name: '데이터' })).toHaveAttribute('data-state', 'active');
+    // '정보' 탭은 비활성 상태여야 한다
+    await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'inactive');
+  });
+
+  /**
+   * 회귀 테스트 (issue #14): ?tab=columns URL 파라미터로 접근 시 필드 탭이 활성화된다
+   */
+  test('?tab=columns URL 파라미터로 직접 접근 시 필드 탭이 활성화된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    await page.goto('/data/datasets/1?tab=columns');
+
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // '필드' 탭이 활성화되어야 한다
+    await expect(page.getByRole('tab', { name: '필드' })).toHaveAttribute('data-state', 'active');
+  });
+
+  /**
+   * 탭 클릭 시 URL ?tab= 파라미터가 업데이트된다 (링크 공유·뒤로가기 지원)
+   */
+  test('탭 클릭 시 URL ?tab= 파라미터가 동기화된다', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    await page.goto('/data/datasets/1');
+
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // '데이터' 탭 클릭 후 URL 파라미터가 ?tab=data로 업데이트되어야 한다
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page).toHaveURL(/[?&]tab=data/);
+
+    // '정보' 탭 클릭 후 기본 탭이므로 URL에서 tab 파라미터가 제거되어야 한다
+    await page.getByRole('tab', { name: '정보' }).click();
+    await expect(page).not.toHaveURL(/[?&]tab=/);
+  });
+
   test('뒤로 가기 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
     // 목록 페이지로 돌아갈 때 필요한 API 모킹 (동적 import → 정적 import로 교체)

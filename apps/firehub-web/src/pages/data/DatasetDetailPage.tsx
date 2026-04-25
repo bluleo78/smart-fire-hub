@@ -1,6 +1,6 @@
 import { ArrowLeft, Copy,Plus, Shield, Star, X } from 'lucide-react';
 import { useEffect,useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -42,8 +42,14 @@ import { DatasetMapTab } from './tabs/DatasetMapTab';
 export default function DatasetDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const datasetId = Number(id);
-  const [activeTab, setActiveTab] = useState('info');
+
+  // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
+  const validTabs = ['info', 'columns', 'data', 'map', 'history'];
+  const tabParam = searchParams.get('tab');
+  const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   const { data: dataset, isLoading } = useDataset(datasetId);
   const { data: categoriesData } = useCategories();
@@ -303,7 +309,23 @@ export default function DatasetDetailPage() {
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs
+        value={activeTab}
+        onValueChange={(tab) => {
+          // 탭 전환 시 URL ?tab= 파라미터도 동기화 (뒤로 가기·북마크·링크 공유 지원)
+          setActiveTab(tab);
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            if (tab === 'info') {
+              // 기본 탭(info)은 URL에서 파라미터 제거
+              next.delete('tab');
+            } else {
+              next.set('tab', tab);
+            }
+            return next;
+          }, { replace: true });
+        }}
+      >
         <TabsList className="border-b justify-start h-10">
           <TabsTrigger value="info">정보</TabsTrigger>
           <TabsTrigger value="columns">필드</TabsTrigger>
