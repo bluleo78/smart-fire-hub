@@ -36,7 +36,7 @@ description: >
 
 **세션 이름 규약**:
 - 사용자 직접 호출 (탐색 모드): `SESSION="explorer#$(openssl rand -hex 3)"` (random)
-- Pilot subagent 호출 (탐색 모드): `SESSION="pilot-explorer-<rand4>"` (탐색은 이슈 번호 없으니 짧은 rand 사용)
+- Pilot subagent 호출 (탐색 모드): `SESSION="pe$(openssl rand -hex 2)"` (예: `pe1a2b`). 짧게 유지 — 소켓 경로 한도 이유
 - 환경변수 `SESSION_NAME`이 있으면 그 값 그대로 사용 (pilot이 전달):
 
 ```bash
@@ -439,7 +439,7 @@ gh issue view <번호> --json number,title,body,labels,state
 
 **세션 이름 규약**:
 - 사용자 직접 호출: `SESSION="crosscheck#$(openssl rand -hex 3)"` (random)
-- Pilot subagent 호출: `pilot-crosscheck-<이슈번호>` (예: `pilot-crosscheck-38`). 이슈 번호가 unique하므로 random 불필요.
+- Pilot subagent 호출: `pc<이슈번호>` (예: 이슈 #38 → `pc38`). 이슈 번호가 unique하므로 random 불필요. 이름을 짧게 유지하는 이유 — macOS Unix 소켓 경로 한도(104바이트)를 넘기면 socket bind 실패로 좀비 발생.
 - 환경변수 `SESSION_NAME`이 있으면 그 값 그대로 사용:
 
 ```bash

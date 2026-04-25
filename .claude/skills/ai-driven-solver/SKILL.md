@@ -68,7 +68,7 @@ gh issue view <번호> --json number,title,body,labels
 
 **세션 이름 규약**:
 - 사용자 직접 호출: `SESSION="solver#$(openssl rand -hex 3)"` (random)
-- Pilot subagent 호출: pilot이 prompt에 전달한 이름 사용 — `pilot-solver-<이슈번호>` 형태 (예: `pilot-solver-45`). 이슈 번호가 사이클 내에서 unique하므로 random suffix 불필요. pilot 사이클 종료 시 `pilot-*` 접두사로 일괄 정리 가능.
+- Pilot subagent 호출: pilot이 prompt에 전달한 이름 사용 — `ps<이슈번호>` 형태 (예: 이슈 #45 → `ps45`). 이름을 짧게 유지하는 이유: macOS Unix 소켓 경로 한도(104바이트)를 넘기면 socket bind 실패로 좀비 세션 발생. pilot 사이클 종료 시 `p[sce][0-9a-f]+` 패턴으로 일괄 정리.
 
 ```bash
 SESSION="${SESSION_NAME:-solver#$(openssl rand -hex 3)}"

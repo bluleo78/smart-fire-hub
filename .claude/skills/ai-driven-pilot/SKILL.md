@@ -42,9 +42,11 @@ gh issue list --label "pilot:processing" --state open --json number
 # 출력 있으면 사용자에게 "이전 처리 중이던 이슈입니다, 정리하고 시작할까요?"
 
 # 5) 미정리 pilot playwright 세션 잔존 체크 (이전 사이클이 close 안 한 흔적)
-playwright-cli list 2>&1 | grep -E "^- pilot-(solver|crosscheck|explorer)" | head
-# 출력 있으면 사용자에게 알리고, 동의 시 각 세션을 개별 close (kill-all 금지):
-# for s in $(playwright-cli list 2>&1 | grep -oE "pilot-[^:]+"); do playwright-cli -s="$s" close; done
+playwright-cli list 2>&1 | grep -E "browser \"p[sce][0-9a-f]+\"" | head
+# 출력 있으면 사용자에게 알리고, 동의 시 각 세션을 개별 close.
+# 좀비(close해도 'is not open' 응답)가 잡히면, 다른 브라우저 세션이 없는 경우에 한해
+# `playwright-cli kill-all` 사용을 사용자에게 제안. 좀비는 보통 소켓 경로가 길어 발생 →
+# 세션 이름이 짧은 `ps<N>`/`pc<N>`/`pe<rand>` 컨벤션을 따르면 거의 발생하지 않음.
 ```
 
 ---
@@ -138,7 +140,7 @@ Agent(
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- **playwright-cli 세션 이름은 `pilot-solver-N` 사용** (이슈 번호 그대로). 즉 첫 명령은 `SESSION=pilot-solver-N`으로 export 후 진행.
+- **playwright-cli 세션 이름은 `ps<N>` 사용** (예: 이슈 #45 → `ps45`). 짧게 쓰는 이유: macOS Unix 소켓 경로 104바이트 한도 — 이름이 길면 소켓 생성 실패 → 좀비 세션 발생. 첫 명령은 `SESSION=ps<N>`으로 export 후 진행.
 - 작업 종료 시(정상/실패 무관) 반드시 `playwright-cli -s=$SESSION close` 실행해 세션 leak 방지.
 - 처리 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 번호 #N 포함):
   RESULT: #N / success / <커밋해시> / <변경파일수>
@@ -165,7 +167,7 @@ Agent(
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- **playwright-cli 세션 이름은 `pilot-crosscheck-N` 사용** (이슈 번호 그대로). 즉 `SESSION=pilot-crosscheck-N`으로 export 후 진행.
+- **playwright-cli 세션 이름은 `pc<N>` 사용** (예: 이슈 #38 → `pc38`). 짧게 쓰는 이유는 solver와 동일 (소켓 경로 한도). `SESSION=pc<N>`으로 export 후 진행.
 - 작업 종료 시(통과/회귀/blocked 무관) 반드시 `playwright-cli -s=$SESSION close` 실행해 세션 leak 방지.
 - 검증 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 번호 #N 포함):
   RESULT: #N / passed / closed
@@ -189,7 +191,7 @@ Agent(
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- **playwright-cli 세션 이름은 `pilot-explorer-<rand4>` 사용** (탐색은 이슈 번호 없으니 짧은 random suffix). 즉 `SESSION=pilot-explorer-$(openssl rand -hex 2)`로 export 후 진행.
+- **playwright-cli 세션 이름은 `pe<rand4>` 사용** (탐색은 이슈 번호 없으니 짧은 hex suffix). 짧게 쓰는 이유는 동일 (소켓 경로 한도). `SESSION=pe$(openssl rand -hex 2)`로 export 후 진행.
 - 작업 종료 시 반드시 `playwright-cli -s=$SESSION close` 실행해 세션 leak 방지.
 - 발견된 이슈는 `gh issue create` 직후 explorer 스킬의 안내에 따라 `add-to-board.sh`로 보드에 자동 추가됨.
 - 탐색 완료 후 stdout 마지막 줄에 다음 중 하나로 보고:
@@ -273,10 +275,15 @@ for issue in $(gh issue list --label "pilot:processing" --state open --json numb
   gh issue edit $issue --remove-label "pilot:processing"
 done
 
-# 2) pilot-* playwright 세션 잔존 close (subagent가 close 누락한 흔적)
-for s in $(playwright-cli list 2>&1 | grep -oE "pilot-[a-z]+-[0-9]+" | sort -u); do
-  playwright-cli -s="$s" close
+# 2) pilot 관련 playwright 세션 잔존 close (subagent가 close 누락한 흔적)
+# `sort -u` 안 쓰는 이유: 같은 이름 중복 등록 시 모두 닫기 위함.
+for s in $(playwright-cli list 2>&1 | grep -oE 'browser "p[sce][0-9a-f]+"' | sed 's/browser "//; s/"//'); do
+  playwright-cli -s="$s" close 2>/dev/null
 done
+
+# 좀비 감지 — close가 'is not open' 응답하는 entry는 소켓 경로 EINVAL 등으로 비정상 등록된 좀비.
+# 짧은 컨벤션(`ps<N>`/`pc<N>`/`pe<rand>`)이면 거의 발생하지 않지만,
+# 만약 발견되면 다른 브라우저가 없는지 확인 후 사용자 동의 하에 `playwright-cli kill-all` 검토.
 ```
 
 이 cleanup 덕에 다음 사이클 진입 시 사전 점검(Section 1)에서 stale 흔적이 안 잡힘 → 깨끗한 시작.
