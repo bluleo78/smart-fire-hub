@@ -1,4 +1,4 @@
-import { Bell, Mail, SlackIcon } from 'lucide-react';
+import { Bell, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
 import type { ChannelSetting, ChannelType } from '../../../api/channels';
@@ -37,6 +37,35 @@ import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { OAuthConnectButton } from './OAuthConnectButton';
 
 /**
+ * Slack 브랜드 아이콘 커스텀 SVG 컴포넌트
+ * - lucide-react의 브랜드 아이콘이 deprecated되어 인라인 SVG로 구현
+ * - Lucide가 제공하던 Slack 경로 그대로 사용
+ */
+function SlackSvgIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect width="3" height="8" x="13" y="2" rx="1.5" />
+      <path d="M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5" />
+      <rect width="3" height="8" x="8" y="14" rx="1.5" />
+      <path d="M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5" />
+      <rect width="8" height="3" x="14" y="13" rx="1.5" />
+      <path d="M15.5 19H14v1.5a1.5 1.5 0 1 0 1.5-1.5" />
+      <rect width="8" height="3" x="2" y="8" rx="1.5" />
+      <path d="M8.5 5H10V3.5A1.5 1.5 0 1 0 8.5 5" />
+    </svg>
+  );
+}
+
+/**
  * 카카오 알림톡 브랜드 아이콘 커스텀 SVG 컴포넌트
  * - Lucide에 카카오 전용 아이콘이 없어 인라인 SVG로 구현
  * - 카카오톡 특유의 말풍선(speech bubble) 형태를 Lucide stroke 스타일로 표현
@@ -67,7 +96,7 @@ const CHANNEL_ICONS: Record<ChannelType, React.ElementType> = {
   CHAT: Bell,
   EMAIL: Mail,
   KAKAO: KakaoIcon,  // 카카오 브랜드 커스텀 아이콘 (Lucide에 전용 아이콘 없음)
-  SLACK: SlackIcon,
+  SLACK: SlackSvgIcon,
 };
 
 /**
