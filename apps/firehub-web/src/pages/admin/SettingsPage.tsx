@@ -206,7 +206,11 @@ export default function SettingsPage() {
 
       <Tabs defaultValue="ai">
         <TabsList className="overflow-x-auto flex-nowrap">
-          <TabsTrigger value="general">일반</TabsTrigger>
+          {/* 일반 탭 — 다른 탭과 아이콘 일관성 유지 */}
+          <TabsTrigger value="general">
+            <Settings className="h-4 w-4" />
+            일반
+          </TabsTrigger>
           <TabsTrigger value="ai">
             <Bot className="h-4 w-4" />
             AI 에이전트

@@ -26,6 +26,21 @@ test.describe('설정 페이지', () => {
     await expect(page.getByRole('tab', { name: '이메일' })).toBeVisible();
   });
 
+  test('모든 탭에 아이콘이 렌더링된다 (UI 일관성)', async ({ authenticatedPage: page }) => {
+    // 이슈 #4: "일반" 탭만 아이콘이 없어 탭 그룹 내 UI 불일관 — 수정 회귀 방지
+    await setupSettingsMocks(page);
+    await page.goto('/admin/settings');
+
+    // 탭 목록 확인 — 각 탭 내에 svg 아이콘이 있어야 한다
+    const generalTab = page.getByRole('tab', { name: '일반' });
+    const aiTab = page.getByRole('tab', { name: 'AI 에이전트' });
+    const emailTab = page.getByRole('tab', { name: '이메일' });
+
+    await expect(generalTab.locator('svg')).toBeVisible();
+    await expect(aiTab.locator('svg')).toBeVisible();
+    await expect(emailTab.locator('svg')).toBeVisible();
+  });
+
   test('AI 에이전트 탭이 기본으로 선택되고 설정 항목이 렌더링된다', async ({
     authenticatedPage: page,
   }) => {
