@@ -105,7 +105,8 @@ export default function StepConfigPanel({
 
   if (!step) {
     return (
-      <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
+      /* 모바일: 전체 너비 + 상단 보더, lg+: 고정 400px 너비 + 좌측 보더 */
+      <div className="w-full border-t lg:w-[400px] lg:border-l lg:border-t-0 h-full flex flex-col overflow-hidden">
         <div className="flex items-center px-4 py-3 border-b shrink-0">
           <span className="font-medium text-sm">파이프라인 정보</span>
         </div>
@@ -208,7 +209,8 @@ export default function StepConfigPanel({
   const outputDatasetIdError = getFieldError('outputDatasetId');
 
   return (
-    <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
+    /* 모바일: 전체 너비 + 상단 보더, lg+: 고정 400px 너비 + 좌측 보더 */
+    <div className="w-full border-t lg:w-[400px] lg:border-l lg:border-t-0 h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <span className="font-medium text-sm truncate">스텝 #{stepNumber}: {step.name || '(이름 없음)'}</span>

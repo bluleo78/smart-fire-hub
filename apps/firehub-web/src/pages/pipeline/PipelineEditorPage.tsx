@@ -185,9 +185,10 @@ export default function PipelineEditorPage() {
           </TabsList>
         )}
 
-        <TabsContent value="overview" className="flex-1 flex min-h-0 mt-0 border rounded-b-lg">
-          {/* Canvas (takes remaining space) */}
-          <div className="flex-1 min-w-0">
+        {/* 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row) */}
+        <TabsContent value="overview" className="flex-1 flex flex-col lg:flex-row min-h-0 mt-0 border rounded-b-lg">
+          {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 최소 300px 높이 확보 */}
+          <div className="flex-1 min-w-0 min-h-[300px]">
             <PipelineCanvas
               state={state}
               dispatch={dispatch}
