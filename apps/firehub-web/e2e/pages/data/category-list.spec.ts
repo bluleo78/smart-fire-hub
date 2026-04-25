@@ -140,6 +140,76 @@ test.describe('카테고리 관리 페이지', () => {
     expect(req.payload).toMatchObject({ name: '수정된 소방 데이터' });
   });
 
+  test('카테고리 생성 — 중복 이름(409) 시 한국어 오류 토스트 표시', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    // POST → 409 Conflict 응답 모킹 (백엔드 영어 메시지 포함)
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/dataset-categories',
+      { status: 409, error: 'Conflict', message: 'Category name already exists: 행정' },
+      { status: 409 },
+    );
+
+    await page.goto('/data/categories');
+
+    // "새 카테고리" 버튼 클릭 → 다이얼로그 열기
+    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 중복 이름 입력 후 생성 버튼 클릭
+    await page.getByLabel('이름').fill('행정');
+    await page.getByRole('dialog').getByRole('button', { name: '생성' }).click();
+
+    // 한국어 오류 토스트가 표시되어야 한다
+    await expect(page.getByText('이미 사용 중인 카테고리 이름입니다.')).toBeVisible();
+
+    // 백엔드 영어 메시지가 그대로 노출되지 않아야 한다
+    await expect(page.getByText('Category name already exists')).not.toBeVisible();
+  });
+
+  test('카테고리 수정 — 중복 이름(409) 시 한국어 오류 토스트 표시', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    // PUT → 409 Conflict 응답 모킹 (백엔드 영어 메시지 포함)
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/dataset-categories/1',
+      { status: 409, error: 'Conflict', message: 'Category name already exists: 운영' },
+      { status: 409 },
+    );
+
+    await page.goto('/data/categories');
+
+    // 첫 번째 행의 편집(Pencil) 버튼 클릭
+    const firstRow = page.getByRole('row').nth(1);
+    await firstRow.getByRole('button').first().click();
+
+    // 수정 다이얼로그가 열리는지 확인
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '카테고리 수정' })).toBeVisible();
+
+    // 다른 카테고리와 중복되는 이름으로 수정 후 제출
+    const nameInput = page.locator('#edit-name');
+    await nameInput.clear();
+    await nameInput.fill('운영');
+    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+    // 한국어 오류 토스트가 표시되어야 한다
+    await expect(page.getByText('이미 사용 중인 카테고리 이름입니다.')).toBeVisible();
+
+    // 백엔드 영어 메시지가 그대로 노출되지 않아야 한다
+    await expect(page.getByText('Category name already exists')).not.toBeVisible();
+  });
+
   test('카테고리 삭제 — 삭제 확인 후 DELETE API 호출', async ({
     authenticatedPage: page,
   }) => {

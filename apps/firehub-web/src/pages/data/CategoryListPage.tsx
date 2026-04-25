@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import axios from 'axios';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -61,6 +62,11 @@ export default function CategoryListPage() {
     resolver: zodResolver(categorySchema),
   });
 
+  /**
+   * 카테고리 생성 핸들러
+   * - 409 Conflict(중복 이름) 오류 시 한국어 메시지로 안내한다.
+   * - 그 외 오류는 범용 에러 핸들러로 처리한다.
+   */
   const handleCreate = async (data: CategoryFormData) => {
     try {
       await createCategory.mutateAsync(data);
@@ -68,10 +74,19 @@ export default function CategoryListPage() {
       setIsCreateOpen(false);
       createForm.reset();
     } catch (error) {
-      handleApiError(error, '카테고리 생성에 실패했습니다.');
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
+        toast.error('이미 사용 중인 카테고리 이름입니다.');
+      } else {
+        handleApiError(error, '카테고리 생성에 실패했습니다.');
+      }
     }
   };
 
+  /**
+   * 카테고리 수정 핸들러
+   * - 409 Conflict(중복 이름) 오류 시 한국어 메시지로 안내한다.
+   * - 그 외 오류는 범용 에러 핸들러로 처리한다.
+   */
   const handleUpdate = async (data: CategoryFormData) => {
     if (!editingCategory) return;
     try {
@@ -80,7 +95,11 @@ export default function CategoryListPage() {
       setEditingCategory(null);
       editForm.reset();
     } catch (error) {
-      handleApiError(error, '카테고리 수정에 실패했습니다.');
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
+        toast.error('이미 사용 중인 카테고리 이름입니다.');
+      } else {
+        handleApiError(error, '카테고리 수정에 실패했습니다.');
+      }
     }
   };
 
