@@ -63,7 +63,8 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
                       {previewData.columns.map((col) => (
                         <td key={col.columnName} className="px-3 py-2 whitespace-nowrap max-w-[200px] truncate">
                           {row[col.columnName] == null ? (
-                            <span className="text-muted-foreground italic">null</span>
+                            // null 값은 시각적으로 구분되는 dash로 표시 (빈 셀과 달리 null임을 명시)
+                            <span className="text-muted-foreground/50 italic text-xs select-none">-</span>
                           ) : String(row[col.columnName])}
                         </td>
                       ))}

@@ -310,7 +310,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                             }}
                           >
                             {isNull ? (
-                              <span className="text-muted-foreground italic text-xs">NULL</span>
+                              // null 값은 시각적으로 구분되는 dash로 표시 (빈 셀과 달리 null임을 명시)
+                              <span className="text-muted-foreground/50 italic text-xs select-none">-</span>
                             ) : (
                               displayValue
                             )}

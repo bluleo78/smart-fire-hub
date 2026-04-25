@@ -386,4 +386,44 @@ test.describe('쿼리 에디터 페이지', () => {
     // DML 결과: "N개 행이 처리되었습니다." 메시지 확인
     await expect(page.getByText(/5개 행이 처리되었습니다/)).toBeVisible();
   });
+
+  /**
+   * 회귀 테스트: 쿼리 결과 테이블에서 null 값이 'NULL' 텍스트가 아닌 dash('-')로 표시된다 (refs #13)
+   */
+  test('쿼리 결과 테이블에서 null 값은 NULL 텍스트가 아닌 dash(-)로 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryEditorMocks(page, 1);
+
+    // null 값이 포함된 결과 모킹 — ad-hoc execute 엔드포인트 사용 (QueryEditorPage가 executeAdhoc 호출)
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/execute',
+      createQueryResult({
+        queryType: 'SELECT',
+        columns: ['id', 'name', 'value'],
+        rows: [
+          { id: 1, name: null, value: 100 },
+          { id: 2, name: '항목 2', value: null },
+        ],
+        totalRows: 2,
+      }),
+    );
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+
+    await page.getByRole('button', { name: '실행' }).click();
+
+    // null 값이 있는 셀이 렌더링될 때까지 대기
+    await expect(page.getByText('항목 2')).toBeVisible();
+
+    // null 값 셀에 'NULL' 텍스트가 없어야 한다 (회귀 검증)
+    await expect(page.getByText('NULL')).not.toBeVisible();
+
+    // null 값은 dash('-')로 표시되어야 한다
+    const dashCells = page.locator('span.italic.text-xs').filter({ hasText: '-' });
+    await expect(dashCells.first()).toBeVisible();
+  });
 });

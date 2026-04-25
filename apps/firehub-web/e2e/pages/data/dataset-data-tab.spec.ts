@@ -381,4 +381,46 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     expect(sortedCall).toBeDefined();
     expect(sortedCall?.sortDir).toBe('ASC');
   });
+
+  /**
+   * 회귀 테스트: null DB 값이 'NULL' 텍스트 대신 dash('-')로 렌더링되어야 한다 (refs #13)
+   */
+  test('null 값은 NULL 텍스트가 아닌 dash(-)로 표시된다', async ({ authenticatedPage: page }) => {
+    await setupDataTabMocks(page);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              // null 값이 포함된 행 — amount가 null인 경우
+              { _id: 101, id: 1, name: 'Alice', amount: null },
+              // name이 null인 경우
+              { _id: 102, id: 2, name: null, amount: 20 },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 2,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    // null 값이 있는 행 렌더링 대기
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // null 값 셀에 'NULL' 텍스트가 없어야 한다 (회귀 검증)
+    await expect(page.getByText('NULL')).not.toBeVisible();
+
+    // null 값은 dash('-')로 표시되어야 한다
+    const dashCells = page.locator('span.italic.text-xs').filter({ hasText: '-' });
+    await expect(dashCells.first()).toBeVisible();
+  });
 });
