@@ -340,10 +340,10 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 
 ## 7. 버그 문서화
 
-발견된 버그는 GitHub Issues에 즉시 등록한다:
+발견된 버그는 GitHub Issues에 즉시 등록 후 **프로젝트 보드에도 추가**한다 (사람이 보드에서 즉시 볼 수 있도록):
 
 ```bash
-gh issue create \
+ISSUE_URL=$(gh issue create \
   --title "컴포넌트명 — 한 줄 요약" \
   --label "bug,severity:critical" \
   --body "$(cat <<'EOF'
@@ -365,8 +365,14 @@ gh issue create \
 - **컴포넌트**: `파일경로:라인번호`
 - **발견**: YYYY-MM-DD (playwright 탐색 테스트)
 EOF
-)"
+)")
+
+# 이슈 번호 추출 후 보드에 추가 (현재 iteration + Status=ready)
+ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+bash .claude/skills/ai-driven-pilot/scripts/add-to-board.sh "$ISSUE_NUM"
 ```
+
+> 보드 추가 스크립트는 ai-driven-pilot 스킬 소속이지만 발견 직후 가시성을 위해 explorer에서도 호출한다. 스크립트가 idempotent라 중복 호출돼도 안전.
 
 심각도별 라벨: `severity:critical` / `severity:major` / `severity:minor` / `severity:ux`
 
@@ -507,9 +513,15 @@ gh issue comment <번호> --body "🔴 회귀 발견 (크로스체크 YYYY-MM-DD
 playwright-cli -s=$SESSION close
 ```
 
-### Pilot subagent 모드 — RESULT 보고 (호출된 경우만)
+### Pilot subagent 모드 — 정형 보고 (호출된 경우만)
 
-`ai-driven-pilot`이 자율 사이클로 explorer를 크로스체크 모드 subagent로 호출한 경우, 이슈당 **stdout 마지막 줄**에 정형 RESULT를 출력한다 (pilot이 파싱).
+`ai-driven-pilot`이 자율 사이클로 explorer를 subagent로 호출한 경우, **stdout 마지막 줄**에 정형 보고를 출력한다 (pilot이 파싱).
+
+호출 모드 식별: subagent prompt에 "ai-driven-pilot이 자율 사이클로 호출함" 같은 문구가 있으면 이 모드로 진입.
+
+#### 크로스체크 모드 — `RESULT:` 형식
+
+크로스체크는 이슈당 한 건 처리이므로 RESULT 한 줄.
 
 | 결과 | RESULT 라인 |
 |------|-----------|
@@ -519,7 +531,17 @@ playwright-cli -s=$SESSION close
 
 `<N>`은 검증한 이슈 번호. 회귀 회차 `<K>`: 이슈 코멘트의 "🔴 회귀 발견" 카운트 + 1.
 
-호출 모드 식별: subagent prompt에 "ai-driven-pilot이 자율 사이클로 호출함" 같은 문구가 있으면 이 모드로 진입.
+#### 탐색 모드 — `EXPLORER_DONE:` 형식
+
+탐색은 한 세션에서 0~다수 건 발견하므로 발견 번호 목록을 한 줄로 보고. RESULT 형식이 아닌 점에 주의 — pilot이 다른 파싱 분기를 탐.
+
+| 결과 | EXPLORER_DONE 라인 |
+|------|-----------|
+| 1건 이상 발견 (모두 보드에 추가됨) | `EXPLORER_DONE: <N>,<M>,...` |
+| 신규 이슈 없음 (탐색은 했으나 깨끗함) | `EXPLORER_DONE: none` |
+| 진행 불가 (브라우저 기동 실패 등) | `EXPLORER_DONE: blocked: <사유>` |
+
+탐색 모드도 발견된 이슈는 Section 7의 `gh issue create` 직후 `add-to-board.sh`로 보드에 자동 추가되므로, pilot이 다음 사이클 분류 시 신규 솔버 큐에서 즉시 잡을 수 있다.
 
 ---
 
