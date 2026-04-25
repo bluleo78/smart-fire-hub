@@ -88,4 +88,33 @@ test.describe('실행 상세 페이지', () => {
     // "뒤로" 버튼 확인
     await expect(page.getByRole('button', { name: '뒤로' })).toBeVisible();
   });
+
+  test('에러 메시지에 긴 URL이 포함되어도 카드 너비를 초과하지 않는다 (break-words 회귀)', async ({ authenticatedPage: page }) => {
+    // 긴 URL이 포함된 에러 메시지로 overflow 발생 여부를 검증한다
+    // break-words 클래스가 없으면 p 요소의 scrollWidth > clientWidth 가 되어 수평 오버플로가 발생한다
+    const longErrorMessage =
+      'Connection error: https://very-long-url.example.com/api/v1/endpoint?param=value&another=longlonglonglonglonglonglonglongvalue&yet=another_very_long_parameter_that_exceeds_card_width';
+
+    const failedExecution = createJobExecution({
+      id: 4,
+      jobId: 1,
+      status: 'FAILED',
+      errorMessage: longErrorMessage,
+      completedAt: null,
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/4', failedExecution);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs/1/executions/4');
+
+    // 에러 메시지 요소가 렌더링되었는지 확인
+    const errorParagraph = page.locator('.font-mono.whitespace-pre-wrap');
+    await expect(errorParagraph).toBeVisible();
+
+    // overflow 검증: scrollWidth <= clientWidth 이면 텍스트가 카드 내에서 줄바꿈됨
+    const isOverflowing = await errorParagraph.evaluate(
+      (el) => el.scrollWidth > el.clientWidth,
+    );
+    expect(isOverflowing).toBe(false);
+  });
 });

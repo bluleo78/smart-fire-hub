@@ -171,7 +171,8 @@ export default function ExecutionDetailPage() {
               <h3 className="font-semibold text-destructive">{classified.label}</h3>
             </div>
             {execution.errorMessage && (
-              <p className="text-sm text-muted-foreground font-mono whitespace-pre-wrap">
+              // break-words: 긴 URL/JSON/에러코드 포함 시 카드 너비 초과 방지
+              <p className="text-sm text-muted-foreground font-mono whitespace-pre-wrap break-words">
                 {execution.errorMessage}
               </p>
             )}
