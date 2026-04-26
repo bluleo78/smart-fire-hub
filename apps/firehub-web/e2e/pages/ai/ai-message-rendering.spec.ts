@@ -122,6 +122,59 @@ test.describe('MessageBubble — 텍스트 렌더링', () => {
   });
 });
 
+test.describe('MessageBubble — assistant 메시지 액션 (복사)', () => {
+  test('어시스턴트 메시지 복사 버튼 클릭 시 마크다운 원문이 클립보드에 저장된다 (#73)', async ({ authenticatedPage: page, context }) => {
+    // 클립보드 권한 부여 (Chromium)
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    const responseContent = '**중요한 결과**입니다.\n\n- 항목 1\n- 항목 2';
+    await sendMessageWithResponse(
+      page,
+      '복사 테스트',
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        `data: {"type":"text","content":${JSON.stringify(responseContent)}}\n\n`,
+        'data: {"type":"done","inputTokens":10}\n\n',
+      ].join(''),
+    );
+
+    // 응답 렌더링 대기
+    await expect(page.getByText('중요한 결과', { exact: false })).toBeVisible({ timeout: 10_000 });
+
+    // 어시스턴트 액션 바 노출 (group-hover 의존성 회피: opacity가 0이라도 클릭은 가능)
+    const actions = page.getByTestId('assistant-message-actions');
+    await expect(actions).toBeVisible();
+
+    const copyButton = actions.getByRole('button', { name: '메시지 복사' });
+    await copyButton.click();
+
+    // 토스트 + "복사됨" 라벨 확인
+    await expect(page.getByText('복사되었습니다.')).toBeVisible({ timeout: 3000 });
+    await expect(actions.getByText('복사됨')).toBeVisible();
+
+    // 클립보드 내용 검증 — 마크다운 원문 그대로 들어갔는지
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboardText).toBe(responseContent);
+  });
+
+  test('사용자 메시지에는 복사 액션 바가 노출되지 않는다 (#73)', async ({ authenticatedPage: page }) => {
+    await sendMessageWithResponse(
+      page,
+      '사용자 측 메시지',
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        'data: {"type":"text","content":"네, 알겠습니다."}\n\n',
+        'data: {"type":"done","inputTokens":5}\n\n',
+      ].join(''),
+    );
+
+    await expect(page.getByText('네, 알겠습니다.')).toBeVisible({ timeout: 10_000 });
+
+    // 액션 바는 어시스턴트 메시지 1개에만 노출되어야 한다 (사용자 메시지에는 없음)
+    await expect(page.getByTestId('assistant-message-actions')).toHaveCount(1);
+  });
+});
+
 test.describe('MessageBubble — thinking 상태', () => {
   test('thinking 이벤트 후 응답 완료 시 최종 텍스트가 표시된다', async ({ authenticatedPage: page }) => {
     await sendMessageWithResponse(

@@ -378,6 +378,46 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
 }
 
+/**
+ * 어시스턴트 메시지 액션 바
+ * - 메시지 본문 아래에 hover 시 노출되는 액션 영역
+ * - 복사: message.content(마크다운 원문)을 클립보드로 복사하고 toast 피드백 제공
+ * - 스트리밍 중이거나 본문이 비어있으면 노출하지 않는다 (불필요한 빈 복사 방지)
+ */
+function AssistantMessageActions({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      toast.success('복사되었습니다.');
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      toast.error('복사에 실패했습니다.');
+    });
+  }, [content]);
+
+  return (
+    <div
+      className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
+      data-testid="assistant-message-actions"
+    >
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted-foreground/10 hover:text-foreground"
+        aria-label="메시지 복사"
+      >
+        {copied ? (
+          <><Check size={12} className="text-green-500" /><span className="text-green-500">복사됨</span></>
+        ) : (
+          <><Copy size={12} /><span>복사</span></>
+        )}
+      </button>
+    </div>
+  );
+}
+
 export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -393,8 +433,12 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
     );
   }
 
+  // 어시스턴트 메시지는 hover 시 액션 바를 노출하기 위해 group 클래스를 부여한다.
+  // 스트리밍 중이거나 본문이 없으면 액션 바를 숨겨 빈 텍스트 복사를 방지한다.
+  const showAssistantActions = !isUser && !isStreaming && !!message.content;
+
   return (
-    <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
+    <div className={cn('group flex w-full', isUser ? 'justify-end' : 'justify-start')}>
       <div className={cn(
         'rounded-lg px-3 py-2 text-sm',
         isUser ? 'max-w-[85%] bg-primary text-primary-foreground' : cn('max-w-[85%] min-w-0 bg-muted overflow-hidden', hasToolCalls && 'w-full')
@@ -412,6 +456,9 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
           </>
         ) : (
           <AssistantContent message={message} isStreaming={isStreaming} />
+        )}
+        {showAssistantActions && (
+          <AssistantMessageActions content={message.content!} />
         )}
         {message.timestamp && (
           <p className="mt-1 text-xs opacity-70">
