@@ -162,10 +162,12 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText(/wh-test-uuid-1234/)).toBeVisible();
 
     // "닫기" 버튼이 표시되어 수동으로 닫을 수 있어야 함
-    await expect(page.getByRole('button', { name: '닫기' })).toBeVisible();
+    // 푸터의 텍스트 닫기 버튼 (X 아이콘 sr-only 버튼과 구분하기 위해 data-slot="button" 사용)
+    const closeBtn = page.locator('[data-slot="button"]:has-text("닫기")');
+    await expect(closeBtn).toBeVisible();
 
     // 닫기 후 다이얼로그가 사라져야 함
-    await page.getByRole('button', { name: '닫기' }).click();
+    await closeBtn.click();
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 

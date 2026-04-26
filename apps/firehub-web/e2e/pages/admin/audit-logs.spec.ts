@@ -290,4 +290,24 @@ test.describe('감사 로그 페이지', () => {
     // 다이얼로그가 닫히는지 확인
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
+
+  /**
+   * 닫기 버튼 sr-only 텍스트 한국어 검증
+   * - DialogContent의 X 버튼 sr-only 텍스트가 '닫기'(한국어)인지 확인 (이슈 #53)
+   * - 스크린리더 사용자에게 한국어 앱과 일관된 언어 제공
+   */
+  test('상세 보기 다이얼로그 닫기 버튼 sr-only 텍스트가 한국어 "닫기"이다', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page, 1);
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'testuser' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // sr-only span 텍스트가 '닫기'인지 검증 — 영문 'Close'가 아닌지 확인 (이슈 #53)
+    const closeButton = page.getByRole('dialog').getByRole('button');
+    await expect(closeButton).toBeVisible();
+    const srOnlyText = await closeButton.locator('span.sr-only').textContent();
+    expect(srOnlyText).toBe('닫기');
+  });
 });

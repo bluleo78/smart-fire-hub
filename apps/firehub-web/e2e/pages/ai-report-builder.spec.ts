@@ -200,8 +200,8 @@ test.describe('AI 리포트 빌더 위젯', () => {
     // comparison 섹션 콘텐츠 확인 — bg-muted/50 배경으로 구분됨
     await expect(dialog.getByText(/₩5,000만 → ₩4,250만/)).toBeVisible();
 
-    // "닫기" 버튼으로 다이얼로그 닫기
-    await dialog.getByRole('button', { name: '닫기' }).click();
+    // "닫기" 버튼으로 다이얼로그 닫기 — data-slot="button"인 푸터 닫기 버튼 (X sr-only 버튼과 구분)
+    await dialog.locator('[data-slot="button"]:has-text("닫기")').click();
     await expect(dialog).not.toBeVisible();
   });
 
