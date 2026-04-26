@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
 import { AdminRoute } from './components/AdminRoute';
 import { AppLayout } from './components/layout/AppLayout';
+import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Skeleton } from './components/ui/skeleton';
 import { Toaster } from './components/ui/sonner';
@@ -60,11 +61,13 @@ function App() {
       <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/login" element={<Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense>} />
-          <Route path="/signup" element={<Suspense fallback={<PageSkeleton />}><SignupPage /></Suspense>} />
-          <Route path="*" element={<Suspense fallback={<PageSkeleton />}><NotFoundPage /></Suspense>} />
+          {/* 퍼블릭 라우트: 각 페이지를 ErrorBoundary + Suspense로 감싸 렌더링 오류 격리 */}
+          <Route path="/login" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense></PageErrorBoundary>} />
+          <Route path="/signup" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><SignupPage /></Suspense></PageErrorBoundary>} />
+          <Route path="*" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><NotFoundPage /></Suspense></PageErrorBoundary>} />
           <Route element={<ProtectedRoute />}>
-            <Route element={<AppLayout />}>
+            {/* 앱 내부 라우트: AppLayout 전체를 PageErrorBoundary로 감싸 페이지 오류를 흰 화면 대신 폴백 UI로 처리 */}
+            <Route element={<PageErrorBoundary><AppLayout /></PageErrorBoundary>}>
               <Route path="/" element={<HomePage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/settings/channels" element={<ChannelsPage />} />
