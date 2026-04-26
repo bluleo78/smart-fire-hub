@@ -310,6 +310,57 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await expect(page.getByText('차트가 대시보드에 추가되었습니다.')).toBeVisible({ timeout: 5000 });
   });
 
+  test('이미 추가된 차트를 다시 추가하면 중복 허용 없이 에러 토스트가 표시된다 (이슈 #42)', async ({ authenticatedPage: page }) => {
+    // chartId=1 위젯이 이미 포함된 대시보드
+    const existingWidget = createWidget({ id: 1, chartId: 1, chartName: '기존 차트' });
+    const dashboard = createDashboard({ id: 1, widgets: [existingWidget] });
+    // 차트 목록에도 동일한 chartId=1 차트 포함
+    const chart = createChartListItem({ id: 1, name: '기존 차트', chartType: 'BAR' });
+
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
+      dashboardId: 1,
+      widgets: [existingWidget],
+    });
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', {
+      content: [chart],
+      page: 0,
+      size: 20,
+      totalElements: 1,
+      totalPages: 1,
+    });
+
+    // POST 위젯 추가는 호출되면 안 됨 — 감시용 플래그
+    let postCalled = false;
+    await page.route('**/api/v1/analytics/dashboards/1/widgets', (route) => {
+      if (route.request().method() === 'POST') {
+        postCalled = true;
+        return route.fulfill({ status: 200, body: '{}' });
+      }
+      return route.continue();
+    });
+
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText('기존 차트')).toBeVisible();
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 차트 추가 다이얼로그 열기
+    await page.getByRole('button', { name: '차트 추가' }).click();
+    await expect(page.getByRole('dialog').getByText('차트 추가')).toBeVisible();
+
+    // 이미 대시보드에 있는 차트(chartId=1) 선택
+    await page.getByRole('button', { name: /기존 차트/ }).click();
+
+    // 추가 버튼 클릭
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // 에러 토스트가 표시되고 POST는 호출되지 않아야 한다
+    await expect(page.getByText('이미 대시보드에 추가된 차트입니다.')).toBeVisible({ timeout: 5000 });
+    expect(postCalled).toBe(false);
+  });
+
   test('대시보드가 공유 상태일 때 "공유" 뱃지와 autoRefresh 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
     const dashboard = createDashboard({
       id: 2,

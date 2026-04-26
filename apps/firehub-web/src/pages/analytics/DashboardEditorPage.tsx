@@ -326,6 +326,12 @@ export default function DashboardEditorPage() {
       if (!dashboard) return;
       // 현재 편집 중인 위젯 목록 기준으로 최대 Y 계산 (로컬 삭제 반영)
       const currentWidgets = editingWidgets ?? dashboard.widgets;
+
+      // 이미 대시보드에 동일한 chartId의 위젯이 존재하면 중복 추가를 막고 경고 표시
+      if (currentWidgets.some((w) => w.chartId === chartId)) {
+        toast.error('이미 대시보드에 추가된 차트입니다.');
+        return;
+      }
       const maxY = currentWidgets.reduce(
         (acc, w) => Math.max(acc, w.positionY + w.height),
         0
