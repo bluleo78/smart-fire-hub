@@ -245,6 +245,78 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
   });
 });
 
+test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () => {
+  /**
+   * 드래그 앤 드롭으로 지원하지 않는 파일을 떨어뜨렸을 때
+   * "CSV 또는 XLSX 파일만 지원합니다" 토스트가 뜨고, 파일이 선택되지 않음을 검증한다.
+   */
+  test('드래그 앤 드롭으로 .txt 파일 투하 시 에러 토스트가 표시되고 파일이 선택되지 않는다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    // 다이얼로그가 열렸는지 확인
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // DataTransfer를 사용한 synthetic drop 이벤트 — 브라우저 input[accept] 가 적용되지 않는 경로를 재현
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      const file = new File(['invalid content'], 'document.txt', { type: 'text/plain' });
+      dt.items.add(file);
+      const zone = document.querySelector('[role="dialog"] .border-dashed') as HTMLElement;
+      if (!zone) throw new Error('drop zone not found');
+      zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+
+    // 에러 토스트가 표시된다
+    await expect(page.getByText('CSV 또는 XLSX 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
+
+    // 잘못된 파일명이 드롭존에 표시되지 않는다 (setSelectedFile 이 호출되어선 안 됨)
+    await expect(page.getByRole('dialog').getByText('document.txt')).not.toBeVisible();
+  });
+
+  test('드래그 앤 드롭으로 .pdf 파일 투하 시 에러 토스트가 표시된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      const file = new File(['%PDF-1.4'], 'report.pdf', { type: 'application/pdf' });
+      dt.items.add(file);
+      const zone = document.querySelector('[role="dialog"] .border-dashed') as HTMLElement;
+      if (!zone) throw new Error('drop zone not found');
+      zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+
+    await expect(page.getByText('CSV 또는 XLSX 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog').getByText('report.pdf')).not.toBeVisible();
+  });
+
+  test('드래그 앤 드롭으로 .csv 파일 투하 시 에러 없이 파일이 선택된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    // 미리보기 API 모킹 — CSV 파일 투하 시 preview 가 호출됨
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 유효한 CSV 파일 드롭 — input[type=file]을 통해 처리 경로를 검증
+    await page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE);
+
+    // 에러 토스트 없이 미리보기 단계(2단계)로 진행돼야 함
+    await expect(page.getByText('CSV 또는 XLSX 파일만 지원합니다')).not.toBeVisible();
+    await expect(page.getByRole('dialog').getByRole('button', { name: '임포트' })).toBeVisible({ timeout: 10_000 });
+  });
+});
+
 test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
   test('임포트 API 409 충돌 — "이미 진행 중인 임포트가 있습니다." 토스트가 표시된다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
