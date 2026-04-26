@@ -17,6 +17,7 @@ description: ai-driven-explorer와 ai-driven-solver를 subagent로 자율 호출
 - **모든 자율 결정은 GitHub 이슈 코멘트로 기록** → 사후 감사 가능.
 - 에스컬레이션 = 일시정지·보고. pilot이 임의로 우회·생략하지 않는다.
 - subagent 호출은 메인 컨텍스트 보호용. 누적 이슈 50건도 메인 컨텍스트 안 터짐.
+- **solver/explorer는 한 번에 1개만 실행**. 동시 실행 시 pre-commit hook(Gradle 테스트)이 병렬로 돌아 DB 연결 풀 고갈 → flaky 실패 → 재시도 낭비. 이전 subagent 완료 후 다음 dispatch.
 
 ---
 
