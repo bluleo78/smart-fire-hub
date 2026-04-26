@@ -11,12 +11,13 @@ const ACCEPT_ATTR = 'image/*,.pdf,.txt,.md,.json,.xml,.yaml,.yml,.csv,.xlsx,.doc
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+// 파일 타입별 첨부 사이즈 제한 (이슈 #41: 대용량 파일 지원을 위해 상향 조정)
 const SIZE_LIMITS: Record<string, number> = {
-  IMAGE: 5 * 1024 * 1024,
-  PDF: 10 * 1024 * 1024,
-  TEXT: 1 * 1024 * 1024,
-  DATA: 5 * 1024 * 1024,
-  DOCUMENT: 10 * 1024 * 1024,
+  IMAGE: 10 * 1024 * 1024,    // 5MB → 10MB
+  PDF: 20 * 1024 * 1024,      // 10MB → 20MB
+  TEXT: 2 * 1024 * 1024,      // 1MB → 2MB
+  DATA: 256 * 1024 * 1024,    // 5MB → 256MB (대용량 CSV/XLSX 지원)
+  DOCUMENT: 20 * 1024 * 1024, // 10MB → 20MB
 };
 
 function getCategory(mimeType: string): 'IMAGE' | 'PDF' | 'TEXT' | 'DATA' | 'DOCUMENT' | null {
