@@ -34,7 +34,7 @@ import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 export default function ApiConnectionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: connection, isLoading } = useApiConnection(Number(id));
+  const { data: connection, isLoading, isError } = useApiConnection(Number(id));
   const updateMutation = useUpdateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const testMutation = useTestApiConnection();
@@ -53,6 +53,13 @@ export default function ApiConnectionDetailPage() {
   const [paramName, setParamName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
+
+  /** 404 등 오류 응답 시 목록으로 리다이렉트 — UserDetailPage와 동일 패턴 */
+  useEffect(() => {
+    if (!isError) return;
+    toast.error('연결 정보를 불러오는데 실패했습니다.');
+    navigate('/admin/api-connections');
+  }, [isError, navigate]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 라우트/리패치 변경 시에만 발생. */
   useEffect(() => {

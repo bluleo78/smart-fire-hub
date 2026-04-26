@@ -677,6 +677,36 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
+  test('존재하지 않는 ID 접근 시 toast 에러 후 목록으로 이동한다 (refs #37)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록 페이지 모킹 (리다이렉트 목적지)
+    await setupApiConnectionListMocks(page);
+
+    // 존재하지 않는 ID 9999에 대해 404 응답 모킹
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/9999',
+      (route) => {
+        if (route.request().method() === 'GET') {
+          return route.fulfill({
+            status: 404,
+            contentType: 'application/json',
+            body: JSON.stringify({ message: '연결을 찾을 수 없습니다.' }),
+          });
+        }
+        return route.continue();
+      },
+    );
+
+    await page.goto('/admin/api-connections/9999');
+
+    // toast 에러 메시지 확인
+    await expect(page.getByText('연결 정보를 불러오는데 실패했습니다.')).toBeVisible();
+
+    // 목록 페이지로 리다이렉트되어야 한다
+    await expect(page).toHaveURL(/\/admin\/api-connections$/);
+  });
+
   test('뒤로가기 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupApiConnectionDetailMocks(page, 1);
     await setupApiConnectionListMocks(page);
