@@ -84,6 +84,12 @@ export function EditorHeader({
             onChange={(e) =>
               dispatch({ type: 'SET_META', payload: { name: e.target.value } })
             }
+            // Ctrl+A가 ReactFlow 등 부모로 전파되지 않도록 차단 — 인풋 내 텍스트만 선택되게 제한
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+                e.stopPropagation();
+              }
+            }}
             placeholder="파이프라인 이름"
             maxLength={100}
             className="font-semibold text-lg border-transparent hover:border-input focus:border-input min-w-[200px] max-w-[400px] h-8 px-2"
