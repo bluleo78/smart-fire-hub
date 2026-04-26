@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, Play,Save } from 'lucide-react';
+import { ArrowLeft, BarChart2, Loader2, Play,Save } from 'lucide-react';
 import { useCallback,useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -321,8 +321,8 @@ export default function ChartBuilderPage() {
   const { data: queriesData } = useSavedQueries({ size: 100 });
   const queries = queriesData?.content ?? [];
 
-  // Existing chart (edit mode)
-  const { data: existingChart, isLoading: chartLoading } = useChart(chartId);
+  // Existing chart (edit mode) — isError: 존재하지 않는 차트 ID(404 등) 접근 시 에러 감지
+  const { data: existingChart, isLoading: chartLoading, isError: chartError } = useChart(chartId);
 
   const executeQuery = useExecuteSavedQuery();
   const createChart = useCreateChart();
@@ -463,6 +463,19 @@ export default function ChartBuilderPage() {
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  // 존재하지 않는 차트 ID(404 등) 접근 시: 에러 안내 + 목록 이동 버튼 표시
+  if (!isNew && chartError) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20">
+        <BarChart2 className="h-12 w-12 text-muted-foreground" />
+        <p className="text-muted-foreground">차트를 찾을 수 없습니다.</p>
+        <Button variant="outline" onClick={() => navigate('/analytics/charts')}>
+          목록으로
+        </Button>
       </div>
     );
   }

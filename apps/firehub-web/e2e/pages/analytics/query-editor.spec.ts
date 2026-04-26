@@ -426,4 +426,44 @@ test.describe('쿼리 에디터 페이지', () => {
     const dashCells = page.locator('span.italic.text-xs').filter({ hasText: '-' });
     await expect(dashCells.first()).toBeVisible();
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #21
+   * 존재하지 않는 쿼리 ID 접근 시 빈 에디터 대신 에러 안내가 표시되어야 한다.
+   */
+  test('존재하지 않는 쿼리 ID 접근 시 에러 안내와 목록 이동 버튼이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 쿼리 API가 404를 반환하도록 모킹 (스키마·폴더도 필요)
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/99999', { message: 'Not found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+
+    await page.goto('/analytics/queries/99999');
+
+    // 에러 안내 메시지가 표시되어야 한다
+    await expect(page.getByText('쿼리를 찾을 수 없습니다.')).toBeVisible();
+
+    // 목록으로 이동 버튼이 표시되어야 한다
+    await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
+
+    // 빈 쿼리 에디터("새 쿼리")는 표시되지 않아야 한다 (회귀 방지)
+    await expect(page.getByText('새 쿼리')).not.toBeVisible();
+  });
+
+  test('존재하지 않는 쿼리에서 목록으로 버튼 클릭 시 쿼리 목록 페이지로 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/99999', { message: 'Not found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/analytics/queries/99999');
+
+    await page.getByRole('button', { name: '목록으로' }).click();
+
+    // 쿼리 목록 페이지로 이동되어야 한다
+    await expect(page).toHaveURL('/analytics/queries');
+  });
 });

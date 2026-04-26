@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  FileCode2,
   Loader2,
   Play,
   Save,
@@ -389,7 +390,8 @@ export default function QueryEditorPage() {
   // Sidebar panel
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const { data: savedQuery, isLoading: queryLoading } = useSavedQuery(queryId);
+  // isError: 존재하지 않는 쿼리 ID(404 등) 접근 시 에러 상태를 감지한다.
+  const { data: savedQuery, isLoading: queryLoading, isError: queryError } = useSavedQuery(queryId);
   const { data: schemaInfo } = useSchemaInfo();
   const { data: foldersData } = useQueryFolders();
 
@@ -543,6 +545,22 @@ export default function QueryEditorPage() {
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  // 존재하지 않는 쿼리 ID(404 등) 접근 시: 에러 안내 + 목록 이동 버튼 표시
+  if (!isNew && queryError) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20">
+        <FileCode2 className="h-12 w-12 text-muted-foreground" />
+        <p className="text-muted-foreground">쿼리를 찾을 수 없습니다.</p>
+        <Button
+          variant="outline"
+          onClick={() => navigate('/analytics/queries')}
+        >
+          목록으로
+        </Button>
       </div>
     );
   }

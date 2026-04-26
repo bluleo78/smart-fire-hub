@@ -159,4 +159,42 @@ test.describe('차트 빌더 페이지', () => {
     const req = await updateCapture.waitForRequest();
     expect(req.payload).toMatchObject({ name: '수정된 차트' });
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #20
+   * 존재하지 않는 차트 ID 접근 시 빈 빌더 대신 에러 안내가 표시되어야 한다.
+   */
+  test('존재하지 않는 차트 ID 접근 시 에러 안내와 목록 이동 버튼이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 차트 API가 404를 반환하도록 모킹 (쿼리 목록도 필요)
+    await mockApi(page, 'GET', '/api/v1/analytics/charts/99999', { message: 'Not found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', { content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/analytics/charts/99999');
+
+    // 에러 안내 메시지가 표시되어야 한다
+    await expect(page.getByText('차트를 찾을 수 없습니다.')).toBeVisible();
+
+    // 목록으로 이동 버튼이 표시되어야 한다
+    await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
+
+    // 빈 차트 빌더("새 차트")는 표시되지 않아야 한다 (회귀 방지)
+    await expect(page.getByText('새 차트')).not.toBeVisible();
+  });
+
+  test('존재하지 않는 차트에서 목록으로 버튼 클릭 시 차트 목록 페이지로 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/analytics/charts/99999', { message: 'Not found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', { content: [], page: 0, size: 100, totalElements: 0, totalPages: 0 });
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/analytics/charts/99999');
+
+    await page.getByRole('button', { name: '목록으로' }).click();
+
+    // 차트 목록 페이지로 이동되어야 한다
+    await expect(page).toHaveURL('/analytics/charts');
+  });
 });

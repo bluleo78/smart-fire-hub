@@ -1,9 +1,10 @@
-import { Clock, Code, Database, Globe, Link, User } from 'lucide-react';
+import { Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
 import { useEffect, useMemo,useRef, useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Table,
@@ -64,7 +65,8 @@ export default function PipelineEditorPage() {
 
   const { state, dispatch, save, loadFromApi, cancelEdit, isSaving } = usePipelineEditor(pipelineId);
 
-  const { data: pipelineData } = usePipeline(pipelineId!);
+  // isError: 존재하지 않는 파이프라인 ID(404 등) 접근 시 에러 상태를 감지한다.
+  const { data: pipelineData, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(pipelineId!);
   const { data: executionData } = useExecution(pipelineId!, executionId!);
   const executeMutation = useExecutePipeline(pipelineId!);
   const { data: datasetsData } = useDatasets({ size: 1000 });
@@ -129,6 +131,29 @@ export default function PipelineEditorPage() {
         updatedAt: pipelineData.updatedAt,
       }
     : undefined;
+
+  // 기존 파이프라인 ID가 있으나 로딩 중인 경우: 스켈레톤 표시
+  if (pipelineId && pipelineLoading) {
+    return (
+      <div className="space-y-4 p-4">
+        <div className="h-8 w-64 animate-pulse rounded bg-muted" />
+        <div className="h-96 w-full animate-pulse rounded bg-muted" />
+      </div>
+    );
+  }
+
+  // 기존 파이프라인 ID가 있으나 에러(404 등)인 경우: 존재하지 않는 페이지 안내
+  if (pipelineId && pipelineError) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20">
+        <GitBranch className="h-12 w-12 text-muted-foreground" />
+        <p className="text-muted-foreground">파이프라인을 찾을 수 없습니다.</p>
+        <Button variant="outline" onClick={() => navigate('/pipelines')}>
+          목록으로
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">

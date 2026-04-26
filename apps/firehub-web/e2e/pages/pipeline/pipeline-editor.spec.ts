@@ -162,4 +162,46 @@ test.describe('파이프라인 에디터 페이지', () => {
     await expect(page.getByRole('tab', { name: '트리거' })).not.toBeVisible();
     await expect(page.getByRole('tab', { name: '실행 이력' })).not.toBeVisible();
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #19
+   * 존재하지 않는 파이프라인 ID 접근 시 빈 에디터 대신 에러 안내가 표시되어야 한다.
+   */
+  test('존재하지 않는 파이프라인 ID 접근 시 에러 안내와 목록 이동 버튼이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 파이프라인 API가 404를 반환하도록 모킹 (나머지 API도 필요)
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999', { message: 'Not found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/pipelines/99999');
+
+    // 에러 안내 메시지가 표시되어야 한다
+    await expect(page.getByText('파이프라인을 찾을 수 없습니다.')).toBeVisible();
+
+    // 목록으로 이동 버튼이 표시되어야 한다
+    await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
+
+    // 빈 에디터 헤더("파이프라인 이름")는 표시되지 않아야 한다 (회귀 방지)
+    await expect(page.getByText('파이프라인 이름')).not.toBeVisible();
+  });
+
+  test('존재하지 않는 파이프라인에서 목록으로 버튼 클릭 시 파이프라인 목록 페이지로 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999', { message: 'Not found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/99999/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+    await mockApi(page, 'GET', '/api/v1/pipelines', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/pipelines/99999');
+
+    await page.getByRole('button', { name: '목록으로' }).click();
+
+    // 파이프라인 목록 페이지로 이동되어야 한다
+    await expect(page).toHaveURL('/pipelines');
+  });
 });
