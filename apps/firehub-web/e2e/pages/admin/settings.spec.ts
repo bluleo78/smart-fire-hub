@@ -199,6 +199,39 @@ test.describe('설정 페이지', () => {
     await expect(page.getByText('SMTP 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
   });
 
+  test('이메일 탭 — SMTP 호스트 빈값으로 저장 시 에러 toast가 표시되고 API가 호출되지 않는다', async ({ authenticatedPage: page }) => {
+    // 이슈 #46 회귀 방지: smtp.host="" 빈값으로 저장 가능한 버그 수정 검증
+    await setupSettingsMocks(page);
+    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
+      { key: 'smtp.host', value: 'smtp.gmail.com', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.username', value: '', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.password', value: '', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
+      { key: 'smtp.from_address', value: '', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
+    ]);
+    // PUT 캡처 — API가 호출되지 않아야 한다
+    const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings/smtp', {}, { capture: true });
+
+    await page.goto('/admin/settings');
+    await page.getByRole('tab', { name: '이메일' }).click();
+    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+
+    // SMTP 호스트를 빈값으로 지운다
+    await page.locator('#smtp-host').fill('');
+
+    // 저장 버튼 활성화 확인 (변경 사항 있음)
+    const saveBtn = page.getByRole('button', { name: '저장' }).first();
+    await expect(saveBtn).toBeEnabled({ timeout: 3000 });
+    await saveBtn.click();
+
+    // 에러 toast 메시지 확인
+    await expect(page.getByText('SMTP 호스트를 입력하세요.')).toBeVisible({ timeout: 5000 });
+
+    // PUT API 가 호출되지 않아야 한다 (검증 실패로 early return)
+    expect(saveCapture.lastRequest()).toBeUndefined();
+  });
+
   test('이메일 탭 — 테스트 발송 버튼 클릭 시 POST /api/v1/settings/smtp/test 가 호출된다', async ({ authenticatedPage: page }) => {
     await setupSettingsMocks(page);
     await mockApi(page, 'GET', '/api/v1/settings/smtp', [

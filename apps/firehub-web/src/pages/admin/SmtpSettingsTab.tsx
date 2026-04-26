@@ -62,6 +62,12 @@ export default function SmtpSettingsTab() {
   };
 
   const handleSave = async () => {
+    // SMTP 호스트는 필수값 — 빈값으로 저장되는 것을 방지한다 (이슈 #46)
+    if (!form['smtp.host'].trim()) {
+      toast.error('SMTP 호스트를 입력하세요.');
+      return;
+    }
+
     const toSave = { ...form };
     if (toSave['smtp.password'].startsWith('****')) {
       delete (toSave as Partial<SmtpForm>)['smtp.password'];
