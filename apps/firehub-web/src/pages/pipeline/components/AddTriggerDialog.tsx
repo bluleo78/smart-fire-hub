@@ -115,8 +115,15 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
       });
       setCreatedTrigger(result);
       toast.success(`트리거 "${name}"${iGa(name)} 생성되었습니다.`);
-      // For API type, keep dialog open to show token
-      if (selectedType !== 'API') {
+      // API 타입: 다이얼로그 유지 → one-time 토큰 표시
+      // WEBHOOK 타입: 다이얼로그 유지 → webhookId 기반 URL 표시
+      if (selectedType === 'WEBHOOK') {
+        // 생성된 트리거의 webhookId를 config에 반영해 WebhookTriggerForm의 URL 표시 UI를 활성화
+        const webhookId = result.config?.webhookId as string | undefined;
+        if (webhookId) {
+          setConfig((prev) => ({ ...prev, webhookId }));
+        }
+      } else if (selectedType !== 'API') {
         handleClose();
       }
     } catch (error) {

@@ -132,6 +132,43 @@ test.describe('파이프라인 트리거 탭', () => {
     });
   });
 
+  test('웹훅 트리거 추가 — 생성 후 다이얼로그가 유지되고 웹훅 URL이 표시된다 (refs #28)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    // 생성 응답에 webhookId 포함 — WebhookTriggerForm의 URL 표시 UI 활성화 조건
+    const created = createTrigger({
+      id: 13,
+      name: '슬랙 알림 웹훅',
+      triggerType: 'WEBHOOK',
+      config: { webhookId: 'wh-test-uuid-1234', secret: '' },
+    });
+    await mockApi(page, 'POST', '/api/v1/pipelines/1/triggers', created);
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /웹훅.*HTTP POST/ }).click();
+
+    await page.getByLabel(/^이름/).fill('슬랙 알림 웹훅');
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    // 생성 후 다이얼로그가 닫히지 않고 유지되어야 함 (버그 #28 회귀 방지)
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 웹훅 URL이 다이얼로그 내에 표시되어야 함
+    await expect(page.getByText('웹훅 URL')).toBeVisible();
+    await expect(page.getByText(/wh-test-uuid-1234/)).toBeVisible();
+
+    // "닫기" 버튼이 표시되어 수동으로 닫을 수 있어야 함
+    await expect(page.getByRole('button', { name: '닫기' })).toBeVisible();
+
+    // 닫기 후 다이얼로그가 사라져야 함
+    await page.getByRole('button', { name: '닫기' }).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+  });
+
   test('트리거 편집 — 이름 변경 후 PUT payload 검증', async ({ authenticatedPage: page }) => {
     const existing = createTrigger({
       id: 5,
