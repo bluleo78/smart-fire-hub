@@ -6,6 +6,16 @@ import { toast } from 'sonner';
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
@@ -328,6 +338,14 @@ export default function ChartBuilderPage() {
   const createChart = useCreateChart();
   const updateChart = useUpdateChart();
 
+  // 사용자 상호작용 후 변경 여부 추적
+  // - 초기 로드(existingChart로부터 setState)는 변경으로 간주하지 않기 위해 핸들러에서 명시적으로 markDirty()를 호출
+  const [isDirty, setIsDirty] = useState(false);
+  const markDirty = useCallback(() => setIsDirty(true), []);
+
+  // 이탈 확인 다이얼로그 상태 — 뒤로가기 클릭 시 dirty면 오픈
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+
   // Load existing chart into state
   useEffect(() => {
     if (existingChart) {
@@ -339,8 +357,35 @@ export default function ChartBuilderPage() {
         description: existingChart.description ?? '',
         isShared: existingChart.isShared,
       });
+      // 초기 로드는 dirty가 아님
+      setIsDirty(false);
     }
   }, [existingChart]);
+
+  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (PipelineEditorPage와 동일 패턴)
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동
+  const handleBackClick = () => {
+    if (isDirty) {
+      setLeaveDialogOpen(true);
+    } else {
+      navigate('/analytics/charts');
+    }
+  };
+
+  // 다이얼로그에서 '이탈' 클릭 — 변경사항 버리고 목록으로 이동
+  const handleLeaveConfirm = () => {
+    setLeaveDialogOpen(false);
+    setIsDirty(false);
+    navigate('/analytics/charts');
+  };
 
   // Pre-fill save form name for new charts
   useEffect(() => {
@@ -380,11 +425,27 @@ export default function ChartBuilderPage() {
   // When chartType changes, rebuild default config if we already have columns but config is empty
   // MAP ↔ 비MAP 전환 시 항상 config 리빌드 (렌더링 패러다임이 다름)
   const handleChartTypeChange = (type: ChartType) => {
+    if (type !== chartType) markDirty();
     setChartType(type);
     const switchingToOrFromMap = type === 'MAP' || chartType === 'MAP';
     if (queryColumns.length > 0 && (!config.xAxis || switchingToOrFromMap)) {
       setConfig(buildDefaultConfig(queryColumns, queryRows, type));
     }
+  };
+
+  // 축 설정 변경 — AxisConfigPanel에 전달
+  const handleConfigChange = (next: ChartConfig) => {
+    markDirty();
+    setConfig(next);
+  };
+
+  // 쿼리 선택 변경
+  const handleQueryChange = (value: string) => {
+    const nextId = value === NO_QUERY ? null : parseInt(value, 10);
+    if (nextId !== selectedQueryId) markDirty();
+    setSelectedQueryId(nextId);
+    setQueryColumns([]);
+    setQueryRows([]);
   };
 
   const handleSaveClick = () => {
@@ -438,6 +499,8 @@ export default function ChartBuilderPage() {
         });
         toast.success(`차트 "${created.name}" 저장 완료`);
         setSaveDialogOpen(false);
+        // 저장 성공 → dirty 해제 후 신규 차트 상세로 replace
+        setIsDirty(false);
         navigate(`/analytics/charts/${created.id}`, { replace: true });
       } else {
         await updateChart.mutateAsync({
@@ -452,6 +515,8 @@ export default function ChartBuilderPage() {
         });
         toast.success('차트가 수정되었습니다.');
         setSaveDialogOpen(false);
+        // 수정 성공 → dirty 해제 (페이지 이동은 없음)
+        setIsDirty(false);
       }
     } catch (error) {
       handleApiError(error, '차트 저장에 실패했습니다.');
@@ -490,16 +555,24 @@ export default function ChartBuilderPage() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate('/analytics/charts')}
+          aria-label="목록으로 돌아가기"
+          onClick={handleBackClick}
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex flex-col">
           {existingChart ? (
             <span className="text-lg font-semibold truncate">{existingChart.name}</span>
           ) : (
             <span className="text-lg font-semibold text-muted-foreground">새 차트</span>
+          )}
+          {/* 미저장 변경사항 표시 — PipelineEditorPage와 동일한 시각 패턴 */}
+          {isDirty && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <span className="text-muted-foreground">●</span>
+              미저장 변경사항
+            </span>
           )}
         </div>
 
@@ -533,11 +606,7 @@ export default function ChartBuilderPage() {
                 <Label className="text-xs text-muted-foreground">저장된 쿼리</Label>
                 <Select
                   value={selectedQueryId ? String(selectedQueryId) : NO_QUERY}
-                  onValueChange={(v) => {
-                    setSelectedQueryId(v === NO_QUERY ? null : parseInt(v, 10));
-                    setQueryColumns([]);
-                    setQueryRows([]);
-                  }}
+                  onValueChange={handleQueryChange}
                 >
                   <SelectTrigger className="h-8 text-sm w-full truncate">
                     <SelectValue placeholder="쿼리 선택" />
@@ -598,7 +667,7 @@ export default function ChartBuilderPage() {
                   chartType={chartType}
                   columns={queryColumns}
                   config={config}
-                  onChange={setConfig}
+                  onChange={handleConfigChange}
                 />
               )}
             </CardContent>
@@ -656,6 +725,25 @@ export default function ChartBuilderPage() {
         isSaving={isSaving}
         isEdit={!isNew}
       />
+
+      {/*
+        이탈 확인 다이얼로그 — 뒤로가기 클릭 시 dirty면 표시
+        취소 시 머무름, 확인 시 변경사항 버리고 이동
+      */}
+      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLeaveConfirm}>이탈</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

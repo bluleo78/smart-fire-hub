@@ -197,4 +197,146 @@ test.describe('차트 빌더 페이지', () => {
     // 차트 목록 페이지로 이동되어야 한다
     await expect(page).toHaveURL('/analytics/charts');
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #56
+   * 차트 변경 후 뒤로가기 클릭 시 저장 확인 다이얼로그 없이 변경사항이 소실되는 문제.
+   * isDirty 상태 + 뒤로가기 버튼 onClick 인터셉트 + AlertDialog로 이탈 전 사용자 확인.
+   */
+  test.describe('이슈 #56 — 미저장 변경 이탈 가드', () => {
+    test('변경 사항이 없으면 뒤로가기 클릭 시 즉시 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupChartBuilderMocks(page, 1);
+      // 목록 이동 후 렌더링용 빈 차트 목록 응답
+      await mockApi(page, 'GET', '/api/v1/analytics/charts', {
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0,
+      });
+
+      await page.goto('/analytics/charts/1');
+      await expect(page.getByText('테스트 차트')).toBeVisible();
+
+      // 미저장 표시는 없어야 한다
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      // 뒤로가기 버튼 클릭 (aria-label로 안정적으로 식별)
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      // 다이얼로그 없이 즉시 이동
+      await expect(page).toHaveURL('/analytics/charts');
+    });
+
+    test('차트 타입 변경 후 뒤로가기 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupChartBuilderMocks(page, 1);
+
+      await page.goto('/analytics/charts/1');
+      await expect(page.getByText('테스트 차트')).toBeVisible();
+
+      // 차트 타입 변경 (막대 → 선) → isDirty=true 트리거
+      await page.getByRole('button', { name: '선 차트' }).click();
+
+      // 미저장 변경사항 인디케이터 표시
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 뒤로가기 클릭 → AlertDialog 표시
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(
+        page.getByRole('heading', { name: '저장하지 않은 변경사항' }),
+      ).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+
+      // URL이 변경되지 않아야 함 (아직 차단된 상태)
+      await expect(page).toHaveURL('/analytics/charts/1');
+    });
+
+    test('이탈 확인 다이얼로그에서 취소를 누르면 페이지에 머무른다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupChartBuilderMocks(page, 1);
+
+      await page.goto('/analytics/charts/1');
+      await expect(page.getByText('테스트 차트')).toBeVisible();
+
+      await page.getByRole('button', { name: '선 차트' }).click();
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      // AlertDialog 내 '취소' 버튼 클릭
+      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+
+      // 다이얼로그 닫힘 + 페이지 유지 + 변경사항 보존
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL('/analytics/charts/1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    });
+
+    test('이탈 확인 다이얼로그에서 이탈을 누르면 차트 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupChartBuilderMocks(page, 1);
+      await mockApi(page, 'GET', '/api/v1/analytics/charts', {
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0,
+      });
+
+      await page.goto('/analytics/charts/1');
+      await expect(page.getByText('테스트 차트')).toBeVisible();
+
+      await page.getByRole('button', { name: '선 차트' }).click();
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      // '이탈' 버튼 클릭 → blocker.proceed() 호출
+      await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+
+      // 차트 목록으로 이동
+      await expect(page).toHaveURL('/analytics/charts');
+    });
+
+    test('차트 수정 저장 후 뒤로가기 클릭 시 다이얼로그 없이 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupChartBuilderMocks(page, 1);
+      await mockApi(page, 'PUT', '/api/v1/analytics/charts/1', {
+        id: 1,
+        name: '테스트 차트',
+        chartType: 'LINE',
+      });
+      await mockApi(page, 'GET', '/api/v1/analytics/charts', {
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0,
+      });
+
+      await page.goto('/analytics/charts/1');
+      await expect(page.getByText('테스트 차트')).toBeVisible();
+
+      // 변경 → 저장 다이얼로그 → 저장
+      await page.getByRole('button', { name: '선 차트' }).click();
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      await page.getByRole('button', { name: '저장' }).click();
+      await expect(page.getByRole('dialog').getByText('차트 수정')).toBeVisible();
+      await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+      // 저장 후 isDirty=false → 미저장 표시 사라짐
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      // 뒤로가기 → 다이얼로그 없이 이동
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page).toHaveURL('/analytics/charts');
+    });
+  });
 });
