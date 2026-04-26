@@ -86,8 +86,10 @@ export default function ReportTemplateDetailPage() {
   const [prevTreeSections, setPrevTreeSections] = useState(tree.sections);
   const [suppressTreeSync, setSuppressTreeSync] = useState(false);
 
+  // mode: 'onChange' — 이름 필드 실시간 유효성 반영으로 저장 버튼 비활성화 지원
   const form = useForm<ReportTemplateFormValues>({
     resolver: zodResolver(reportTemplateSchema),
+    mode: 'onChange',
     values: template ? { name: template.name, description: template.description ?? '' } : { name: '', description: '' },
   });
 
@@ -305,7 +307,8 @@ export default function ReportTemplateDetailPage() {
                   취소
                 </Button>
               )}
-              <Button variant="default" size="sm" onClick={handleSave} disabled={isSaving}>
+              {/* isValid: 이름 필드가 비어 있으면 생성/저장 버튼 비활성화 */}
+              <Button variant="default" size="sm" onClick={handleSave} disabled={isSaving || !form.formState.isValid}>
                 {isSaving ? '저장 중...' : isNew ? '생성' : '저장'}
               </Button>
             </>

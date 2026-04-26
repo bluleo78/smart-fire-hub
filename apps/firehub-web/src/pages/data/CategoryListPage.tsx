@@ -54,12 +54,16 @@ export default function CategoryListPage() {
   const updateCategory = useUpdateCategory(editingCategory?.id || 0);
   const deleteCategory = useDeleteCategory();
 
+  // mode: 'onChange' — 입력 즉시 isValid 상태가 반영되어 저장 버튼 비활성화 동작에 사용
   const createForm = useForm<CategoryFormData>({
     resolver: zodResolver(categorySchema),
+    mode: 'onChange',
   });
 
+  // mode: 'onChange' — 수정 폼도 동일하게 실시간 유효성 반영
   const editForm = useForm<CategoryFormData>({
     resolver: zodResolver(categorySchema),
+    mode: 'onChange',
   });
 
   /**
@@ -210,7 +214,8 @@ export default function CategoryListPage() {
               <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
                 취소
               </Button>
-              <Button type="submit" disabled={createCategory.isPending}>
+              {/* isValid: 필수 필드(이름)가 비어 있으면 버튼 비활성화 */}
+              <Button type="submit" disabled={createCategory.isPending || !createForm.formState.isValid}>
                 생성
               </Button>
             </DialogFooter>
@@ -248,7 +253,8 @@ export default function CategoryListPage() {
               <Button type="button" variant="outline" onClick={() => setEditingCategory(null)}>
                 취소
               </Button>
-              <Button type="submit" disabled={updateCategory.isPending}>
+              {/* isValid: 필수 필드(이름)가 비어 있으면 수정 버튼 비활성화 */}
+              <Button type="submit" disabled={updateCategory.isPending || !editForm.formState.isValid}>
                 수정
               </Button>
             </DialogFooter>

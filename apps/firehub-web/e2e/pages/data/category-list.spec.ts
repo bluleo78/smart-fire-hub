@@ -241,6 +241,53 @@ test.describe('카테고리 관리 페이지', () => {
     expect(req).toBeTruthy();
   });
 
+  test('생성 다이얼로그 — 이름 비어있을 때 생성 버튼이 비활성화된다 (이슈 #49 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 빈 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+
+    await page.goto('/data/categories');
+
+    // 새 카테고리 다이얼로그 열기
+    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름 필드가 비어있으면 생성 버튼이 비활성화 상태여야 한다
+    const createBtn = page.getByRole('dialog').getByRole('button', { name: '생성' });
+    await expect(createBtn).toBeDisabled();
+
+    // 이름 입력 후 활성화되는지 확인
+    await page.getByLabel('이름').fill('테스트 카테고리');
+    await expect(createBtn).toBeEnabled();
+
+    // 이름을 다시 지우면 비활성화로 돌아와야 한다
+    await page.getByLabel('이름').clear();
+    await expect(createBtn).toBeDisabled();
+  });
+
+  test('수정 다이얼로그 — 이름 지우면 수정 버튼이 비활성화된다 (이슈 #49 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    await page.goto('/data/categories');
+
+    // 첫 번째 카테고리 편집 버튼 클릭
+    await page.getByRole('button', { name: '소방 데이터 편집' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 수정 버튼은 초기에 기존 이름이 있으므로 활성화 상태
+    const editBtn = page.getByRole('dialog').getByRole('button', { name: '수정' });
+    await expect(editBtn).toBeEnabled();
+
+    // 이름 필드를 비우면 수정 버튼이 비활성화되어야 한다
+    const nameInput = page.locator('#edit-name');
+    await nameInput.clear();
+    await expect(editBtn).toBeDisabled();
+  });
+
   test('편집·삭제 버튼에 aria-label이 부여된다 (접근성 회귀)', async ({
     authenticatedPage: page,
   }) => {
