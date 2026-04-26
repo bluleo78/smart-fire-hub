@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -45,11 +45,30 @@ export default function ReportTemplateDetailPage() {
   const isNew = !id || id === 'new';
   const templateId = isNew ? 0 : Number(id);
 
-  const { data: templateDirect, isLoading: isLoadingDirect } = useProactiveTemplate(templateId);
+  const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect } = useProactiveTemplate(templateId);
   const { data: templates = [], isLoading: isLoadingList } = useProactiveTemplates();
   // Fallback: use list data if single-item API fails
   const template = templateDirect ?? templates.find((t) => t.id === templateId);
   const isLoading = isLoadingDirect && isLoadingList;
+
+  // 존재하지 않는 템플릿 ID 접근 시 에러 처리 — toast + 목록 페이지로 이동 (#38)
+  // useEffect를 훅 순서 보장을 위해 조건부 return 이전에 배치한다
+  useEffect(() => {
+    if (isNew) return;
+    if (isErrorDirect) {
+      toast.error('템플릿 정보를 불러오는데 실패했습니다.');
+      navigate('/ai-insights/templates');
+    }
+  }, [isErrorDirect, isNew, navigate]);
+
+  useEffect(() => {
+    if (isNew) return;
+    if (!isLoading && !template) {
+      toast.error('존재하지 않는 템플릿입니다.');
+      navigate('/ai-insights/templates');
+    }
+  }, [isLoading, isNew, navigate, template]);
+
   const createMutation = useCreateProactiveTemplate();
   const updateMutation = useUpdateProactiveTemplate();
   const deleteMutation = useDeleteProactiveTemplate();

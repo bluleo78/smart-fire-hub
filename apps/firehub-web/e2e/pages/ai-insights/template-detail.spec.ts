@@ -301,6 +301,23 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     expect(req.payload).toMatchObject({ name: '기본 리포트 템플릿 (사본)' });
   });
 
+  test('존재하지 않는 템플릿 ID 접근 시 toast.error 후 목록으로 이동한다', async ({ authenticatedPage: page }) => {
+    // 존재하지 않는 템플릿 — 단건 API 404 반환, 목록도 비어 있음 (#38)
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/99999', { message: 'Not Found' }, { status: 404 });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    // 목록 페이지 렌더링을 위한 모킹
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates/99999');
+
+    // toast.error 메시지 확인 — Sonner toast는 [data-sonner-toast] 속성으로 렌더링된다
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: /템플릿/ })).toBeVisible({ timeout: 10000 });
+
+    // 목록 페이지(/ai-insights/templates)로 이동 확인
+    await expect(page).toHaveURL(/\/ai-insights\/templates$/, { timeout: 5000 });
+  });
+
   test('삭제 버튼 클릭 시 삭제 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     // builtin: false 커스텀 템플릿으로 모킹
     const template = createTemplate({ id: 3, name: '삭제 대상 템플릿', builtin: false });
