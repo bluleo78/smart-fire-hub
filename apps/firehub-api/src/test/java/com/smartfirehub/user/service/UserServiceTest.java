@@ -110,9 +110,10 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void changePassword_wrongCurrentPassword_throwsException() {
+    // 현재 비밀번호 불일치 → 400 Bad Request를 위한 IllegalArgumentException (#27)
     assertThatThrownBy(() -> userService.changePassword(testUserId, "wrongpass", "newpass"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("Current password is incorrect");
+        .hasMessage("현재 비밀번호가 올바르지 않습니다");
   }
 
   @Test

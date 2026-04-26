@@ -138,6 +138,92 @@ test.describe('프로필 페이지', () => {
   });
 
   /**
+   * 회귀 테스트 (이슈 #26): 이름 필드 maxLength=100 초과 입력은 브라우저에서 100자로 잘린다
+   * JavaScript로 직접 Zod max() 에러를 유발하여 에러 메시지와 API 미호출을 검증
+   */
+  test('이름 100자 초과 → 유효성 에러 메시지가 표시되고 API 호출이 안 된다 (이슈 #26)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+
+    // PUT API 호출 감지용 — 호출되면 실패
+    let apiCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me' && !url.pathname.includes('password'),
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          apiCalled = true;
+          return route.fulfill({ status: 200, body: '{}' });
+        }
+        return route.fallback();
+      },
+    );
+
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    // maxLength 속성을 우회하여 101자를 직접 주입 — Zod max(100) 검증 트리거 (#26)
+    await page.evaluate(() => {
+      const input = document.querySelector('#profile-name') as HTMLInputElement;
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      nativeInputValueSetter?.call(input, 'A'.repeat(101));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.getByRole('button', { name: '저장' }).first().click();
+
+    // Zod max(100) 에러 메시지 표시
+    await expect(page.getByText('이름은 100자 이하여야 합니다')).toBeVisible({ timeout: 5000 });
+    // API가 호출되지 않아야 한다
+    expect(apiCalled).toBe(false);
+  });
+
+  /**
+   * 회귀 테스트 (이슈 #26): 이름 필드 maxLength 속성 검증 — HTML 레벨 입력 차단
+   */
+  test('이름 필드는 maxLength=100 속성을 가진다 (이슈 #26)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    // input의 maxLength 속성이 100임을 확인
+    await expect(page.locator('#profile-name')).toHaveAttribute('maxlength', '100');
+  });
+
+  /**
+   * 회귀 테스트 (이슈 #27): 잘못된 현재 비밀번호 입력 시 400 응답 → UI 에러 메시지 표시
+   * 서버 500 + UI 피드백 없음 버그 방지
+   */
+  test('잘못된 현재 비밀번호 → 에러 메시지가 폼에 표시된다 (이슈 #27)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+
+    // 서버 400 응답 모킹 (현재 비밀번호 불일치)
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me/password',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 400,
+              error: 'Bad Request',
+              message: '현재 비밀번호가 올바르지 않습니다',
+            }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#current-password').fill('wrongpassword');
+    await page.locator('#new-password').fill('NewPass456!');
+    await page.locator('#confirm-password').fill('NewPass456!');
+
+    await page.getByRole('button', { name: '비밀번호 변경' }).click();
+
+    // onPasswordSubmit catch → passwordForm.setError('root') → 에러 메시지 표시
+    await expect(page.getByText('현재 비밀번호가 올바르지 않습니다').first()).toBeVisible({ timeout: 5000 });
+    // 폼이 리셋되지 않아야 한다 (변경 실패)
+    await expect(page.locator('#current-password')).toHaveValue('wrongpassword');
+  });
+
+  /**
    * 비밀번호 확인 불일치 → Zod confirmPassword 에러 메시지
    */
   test('비밀번호 확인 불일치 → 유효성 에러 메시지가 표시된다', async ({ authenticatedPage: page }) => {

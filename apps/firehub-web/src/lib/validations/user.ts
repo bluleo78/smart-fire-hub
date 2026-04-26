@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 export const updateProfileSchema = z.object({
-  name: z.string().min(1, '이름을 입력하세요'),
+  // 이름은 1자 이상 100자 이하 — DB 컬럼 제약과 일치시켜 서버 500 방지 (#26)
+  name: z.string().min(1, '이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
   email: z.string().email('유효한 이메일을 입력하세요').optional().or(z.literal('')),
 });
 

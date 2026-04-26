@@ -70,8 +70,9 @@ public class UserService {
             .findPasswordById(userId)
             .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
 
+    // 현재 비밀번호 불일치 시 400 Bad Request로 명확한 한국어 메시지 반환 (#27)
     if (!passwordEncoder.matches(currentPassword, storedPassword)) {
-      throw new IllegalArgumentException("Current password is incorrect");
+      throw new IllegalArgumentException("현재 비밀번호가 올바르지 않습니다");
     }
 
     userRepository.updatePassword(userId, passwordEncoder.encode(newPassword));
@@ -84,14 +85,18 @@ public class UserService {
     }
     // 자기 자신의 ADMIN 역할 제거 차단 — 자기 잠금(self-lockout) 방지 (#57)
     if (userId.equals(callerId)) {
-      roleRepository.findByName("ADMIN").ifPresent(adminRole -> {
-        List<RoleResponse> currentRoles = roleRepository.findByUserId(userId);
-        boolean hasAdminNow = currentRoles.stream().anyMatch(r -> r.id().equals(adminRole.id()));
-        boolean wouldRemoveAdmin = roleIds == null || !roleIds.contains(adminRole.id());
-        if (hasAdminNow && wouldRemoveAdmin) {
-          throw new IllegalArgumentException("자신의 ADMIN 역할은 제거할 수 없습니다");
-        }
-      });
+      roleRepository
+          .findByName("ADMIN")
+          .ifPresent(
+              adminRole -> {
+                List<RoleResponse> currentRoles = roleRepository.findByUserId(userId);
+                boolean hasAdminNow =
+                    currentRoles.stream().anyMatch(r -> r.id().equals(adminRole.id()));
+                boolean wouldRemoveAdmin = roleIds == null || !roleIds.contains(adminRole.id());
+                if (hasAdminNow && wouldRemoveAdmin) {
+                  throw new IllegalArgumentException("자신의 ADMIN 역할은 제거할 수 없습니다");
+                }
+              });
     }
     userRepository.setRoles(userId, roleIds);
   }
