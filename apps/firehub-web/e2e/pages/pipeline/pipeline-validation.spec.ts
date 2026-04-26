@@ -349,3 +349,62 @@ test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
     await expect(page.getByText(/입력 오류|출력 컬럼/).first()).toBeVisible({ timeout: 5000 });
   });
 });
+
+test.describe('usePipelineValidation — API_CALL 스텝 URL 검증', () => {
+  /**
+   * API_CALL 스텝에서 URL을 비워둔 채 저장 시 클라이언트 검증 에러를 표시하고 POST API를 호출하지 않는다.
+   * usePipelineValidation.ts의 apiConfig.customUrl 빈값 검증 분기를 커버한다.
+   * 이슈 #44: API_CALL 스텝 URL 빈값 저장 시 generic 에러만 표시되는 버그 회귀 방지.
+   */
+  test('API_CALL 스텝에서 URL이 비어있으면 저장이 차단되고 에러가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 데이터셋 목록 모킹 (파이프라인 에디터 필수)
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [],
+      page: 0,
+      size: 1000,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    // API 연결 선택 목록 모킹 (ApiCallStepConfig의 ConnectionCombobox)
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
+
+    // POST API 호출 캡처 — 저장 차단 시 호출되지 않아야 한다
+    const captureCreate = await mockApi(page, 'POST', '/api/v1/pipelines', {}, { capture: true });
+
+    await page.goto('/pipelines/new');
+
+    // 파이프라인 이름 입력 (name.trim() === '' early-return 우회)
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    await nameInput.fill('API_CALL 빈URL 테스트');
+
+    // 스텝 추가
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('API 스텝');
+
+    // 스텝 타입을 API_CALL로 변경
+    const typeSelect = page.getByRole('combobox').first();
+    await expect(typeSelect).toBeVisible();
+    await typeSelect.click();
+    const apiCallOption = page.getByRole('option', { name: 'API 호출' });
+    if ((await apiCallOption.count()) === 0) {
+      return; // UI에 API 호출 옵션이 없으면 건너뜀
+    }
+    await apiCallOption.click();
+
+    // ApiCallStepConfig 로드 대기 (lazy import)
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+
+    // URL 필드가 비어있는 상태에서 저장 버튼 클릭 (URL 입력 없음)
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // "입력 오류를 확인하세요" toast 또는 URL 에러 메시지 표시 확인
+    await expect(page.getByText(/입력 오류|URL을 입력/).first()).toBeVisible({ timeout: 5000 });
+
+    // POST API가 호출되지 않았음을 확인 (저장 차단 검증)
+    await page.waitForTimeout(500);
+    expect(captureCreate.requests.length).toBe(0);
+  });
+});

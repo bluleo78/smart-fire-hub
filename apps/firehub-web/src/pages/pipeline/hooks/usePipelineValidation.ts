@@ -38,6 +38,25 @@ export function usePipelineValidation(
         apiConnectionId: step.apiConnectionId,
       });
 
+      // API_CALL 스텝 URL 빈값 검증
+      // apiConnectionId가 null(직접 입력 모드)이면 customUrl, 아니면 path를 사용한다.
+      // 빈값이면 서버로 요청하지 않고 클라이언트에서 즉시 차단한다 (이슈 #44).
+      if (step.scriptType === 'API_CALL') {
+        const cfg = step.apiConfig as Record<string, unknown> | undefined;
+        const connectionId = step.apiConnectionId ?? null;
+        const urlValue =
+          connectionId !== null
+            ? (cfg?.['path'] as string | undefined) ?? ''
+            : (cfg?.['customUrl'] as string | undefined) ?? '';
+        if (!urlValue.trim()) {
+          errors.push({
+            stepTempId: step.tempId,
+            field: connectionId !== null ? 'apiConfig.path' : 'apiConfig.customUrl',
+            message: 'URL을 입력하세요',
+          });
+        }
+      }
+
       // AI_CLASSIFY specific validation
       if (step.scriptType === 'AI_CLASSIFY') {
         const cfg = step.aiConfig;
