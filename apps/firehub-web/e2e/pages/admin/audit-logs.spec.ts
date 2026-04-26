@@ -126,8 +126,8 @@ test.describe('감사 로그 페이지', () => {
     // 행 개수 확인: 헤더 1행 + 데이터 20행 = 21행
     await expect(page.getByRole('row')).toHaveCount(21);
 
-    // 페이지네이션 네비게이션이 렌더링되는지 확인
-    await expect(page.getByRole('navigation')).toBeVisible();
+    // 페이지네이션 네비게이션이 렌더링되는지 확인 (사이드바 nav 와 구분하기 위해 aria-label 지정)
+    await expect(page.getByRole('navigation', { name: '페이지네이션' })).toBeVisible();
   });
 
   /**

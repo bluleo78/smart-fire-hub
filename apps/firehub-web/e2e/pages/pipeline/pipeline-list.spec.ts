@@ -166,7 +166,7 @@ test.describe('파이프라인 목록 페이지', () => {
     // 헤더 1행 + 데이터 10행 = 총 11행 확인
     await expect(page.getByRole('row')).toHaveCount(11);
 
-    // 페이지네이션 버튼이 표시되는지 확인 (이전/다음 또는 페이지 번호 버튼)
-    await expect(page.getByRole('navigation')).toBeVisible();
+    // 페이지네이션 버튼이 표시되는지 확인 (사이드바 nav 와 구분하기 위해 aria-label 지정)
+    await expect(page.getByRole('navigation', { name: '페이지네이션' })).toBeVisible();
   });
 });

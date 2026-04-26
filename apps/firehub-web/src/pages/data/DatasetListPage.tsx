@@ -52,7 +52,8 @@ export default function DatasetListPage() {
   const [page, setPage] = useState(0);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('');
-  const size = 10;
+  /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 10) */
+  const [size, setSize] = useState(10);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDatasetId, setPreviewDatasetId] = useState<number | null>(null);
@@ -393,6 +394,10 @@ export default function DatasetListPage() {
         onPageChange={setPage}
         totalElements={totalElements}
         pageSize={size}
+        onPageSizeChange={(newSize) => {
+          setSize(newSize);
+          setPage(0);
+        }}
       />
 
       {/* Dataset Preview Dialog */}

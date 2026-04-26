@@ -168,7 +168,8 @@ export default function AuditLogListPage() {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [page, setPage] = useState(0);
-  const pageSize = 20;
+  /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 20) */
+  const [pageSize, setPageSize] = useState(20);
 
   /** 상세 보기 다이얼로그 상태 */
   const [selectedLog, setSelectedLog] = useState<AuditLogResponse | null>(null);
@@ -338,6 +339,10 @@ export default function AuditLogListPage() {
           onPageChange={setPage}
           totalElements={logs.totalElements}
           pageSize={pageSize}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
         />
       )}
 
