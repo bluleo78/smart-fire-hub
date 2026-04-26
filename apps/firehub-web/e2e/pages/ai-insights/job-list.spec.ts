@@ -236,6 +236,34 @@ test.describe('스마트 작업 목록 페이지', () => {
     expect(channelBox!.y).toBeGreaterThan(nameBox!.y);
   });
 
+  test('복제 버튼 hover 시 툴팁이 표시된다 (이슈 #54)', async ({ authenticatedPage: page }) => {
+    // 툴팁 회귀 테스트 — 복제 아이콘 버튼에 시각적 툴팁이 없던 버그 수정 검증
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 1, name: '잡 1', enabled: true }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    // 복제 버튼에 hover — 툴팁 텍스트가 나타나야 한다
+    await page.getByRole('button', { name: '복제' }).first().hover();
+    await expect(page.getByRole('tooltip', { name: '복제' })).toBeVisible();
+  });
+
+  test('지금 실행 버튼 hover 시 툴팁이 표시된다 (이슈 #54)', async ({ authenticatedPage: page }) => {
+    // 툴팁 회귀 테스트 — 지금 실행 아이콘 버튼에 시각적 툴팁이 없던 버그 수정 검증
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 1, name: '잡 1', enabled: true }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    // 지금 실행 버튼에 hover — 툴팁 텍스트가 나타나야 한다
+    await page.getByRole('button', { name: '지금 실행' }).first().hover();
+    await expect(page.getByRole('tooltip', { name: '지금 실행' })).toBeVisible();
+  });
+
   test('FAILED 상태 작업에 "실패" 배지가 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
       createJob({

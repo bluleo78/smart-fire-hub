@@ -17,6 +17,12 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   useCloneProactiveJob,
   useExecuteProactiveJob,
   useProactiveJobs,
@@ -210,28 +216,41 @@ export default function ProactiveJobListPage() {
                     />
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        aria-label="복제"
-                        onClick={(e) => handleClone(e, job)}
-                        disabled={cloneMutation.isPending}
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        aria-label="지금 실행"
-                        onClick={(e) => handleExecute(e, job)}
-                        disabled={executeMutation.isPending}
-                      >
-                        <Play className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    {/* 아이콘 버튼에 시각적 툴팁 제공 — aria-label만으로는 마우스 사용자가 기능을 파악하기 어려움 */}
+                    <TooltipProvider>
+                      <div className="flex items-center gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              aria-label="복제"
+                              onClick={(e) => handleClone(e, job)}
+                              disabled={cloneMutation.isPending}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>복제</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              aria-label="지금 실행"
+                              onClick={(e) => handleExecute(e, job)}
+                              disabled={executeMutation.isPending}
+                            >
+                              <Play className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>지금 실행</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TooltipProvider>
                   </TableCell>
                 </TableRow>
               ))
