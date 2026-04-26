@@ -34,7 +34,7 @@ ITEM_ID=$(gh api graphql -f query="{
 }" -q '.data.repository.issue.projectItems.nodes[0].id' 2>/dev/null)
 
 # 이슈가 보드에 없으면 조용히 스킵
-[ -z "$ITEM_ID" ] && exit 0
+[ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ] && exit 0
 
 if ! gh api graphql -f query="mutation {
   updateProjectV2ItemFieldValue(input: {
