@@ -40,7 +40,7 @@ export function FileUploadZone({ onFileSelect, accept = '.csv,.xlsx', disabled }
     if (file) {
       // 드래그 앤 드롭은 <input accept> 속성이 적용되지 않으므로 직접 검증한다
       if (!isFileAccepted(file, accept)) {
-        toast.error('CSV 또는 XLSX 파일만 지원합니다');
+        toast.error('CSV 또는 XLSX 파일만 지원합니다.');
         return;
       }
       setSelectedFile(file);
@@ -53,7 +53,7 @@ export function FileUploadZone({ onFileSelect, accept = '.csv,.xlsx', disabled }
     if (file) {
       // 파일 선택 방식에서도 동일하게 검증 (input accept 는 힌트일 뿐, 강제하지 않음)
       if (!isFileAccepted(file, accept)) {
-        toast.error('CSV 또는 XLSX 파일만 지원합니다');
+        toast.error('CSV 또는 XLSX 파일만 지원합니다.');
         // input 을 초기화하여 같은 잘못된 파일을 다시 선택해도 onChange 가 발생하도록 한다
         e.target.value = '';
         return;

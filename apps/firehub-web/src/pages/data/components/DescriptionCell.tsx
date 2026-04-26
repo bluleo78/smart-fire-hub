@@ -36,7 +36,7 @@ export function DescriptionCell({
     setSaving(true);
     try {
       await updateColumn.mutateAsync({ description: value });
-      toast.success('설명이 저장되었습니다');
+      toast.success('설명이 저장되었습니다.');
       onEndEdit();
     } catch (error) {
       handleApiError(error, '설명 저장에 실패했습니다.');

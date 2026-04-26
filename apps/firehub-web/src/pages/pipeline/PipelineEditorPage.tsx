@@ -111,9 +111,9 @@ export default function PipelineEditorPage() {
   const handleExecute = async () => {
     try {
       await executeMutation.mutateAsync();
-      toast.success('파이프라인 실행이 시작되었습니다');
+      toast.success('파이프라인 실행이 시작되었습니다.');
     } catch {
-      toast.error('파이프라인 실행에 실패했습니다');
+      toast.error('파이프라인 실행에 실패했습니다.');
     }
   };
 

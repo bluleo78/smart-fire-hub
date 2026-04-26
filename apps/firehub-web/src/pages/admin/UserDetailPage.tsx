@@ -101,7 +101,7 @@ export default function UserDetailPage() {
     if (!user) return;
     // 자기 자신의 계정 비활성화 차단 (#73)
     if (currentUser?.id === user.id && user.isActive) {
-      toast.error('자신의 계정을 비활성화할 수 없습니다');
+      toast.error('자신의 계정을 비활성화할 수 없습니다.');
       return;
     }
     setIsTogglingActive(true);

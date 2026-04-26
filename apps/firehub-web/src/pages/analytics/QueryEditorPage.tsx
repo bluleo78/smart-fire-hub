@@ -510,7 +510,7 @@ export default function QueryEditorPage() {
       const res = await executeQuery.mutateAsync({ sql, maxRows: 1000 });
       setResult(res);
       if (res.error) {
-        toast.error('쿼리 실행 오류');
+        toast.error('쿼리 실행 오류.');
       } else {
         toast.success(
           res.queryType === 'SELECT'

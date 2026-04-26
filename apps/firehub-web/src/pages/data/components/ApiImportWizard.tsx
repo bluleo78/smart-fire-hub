@@ -141,7 +141,7 @@ export function ApiImportWizard({
 
   const handlePreview = async () => {
     if (!url) {
-      toast.error('URL을 입력하세요');
+      toast.error('URL을 입력하세요.');
       return;
     }
     setPreviewLoading(true);
@@ -206,7 +206,7 @@ export function ApiImportWizard({
 
   const handleComplete = () => {
     if (!url) {
-      toast.error('URL을 입력하세요');
+      toast.error('URL을 입력하세요.');
       setStep(0);
       return;
     }
@@ -237,24 +237,24 @@ export function ApiImportWizard({
   const handleNext = () => {
     if (step === 0) {
       if (!url) {
-        toast.error('URL을 입력하세요');
+        toast.error('URL을 입력하세요.');
         return;
       }
       // URL 형식 검증 (#53)
       try {
         const parsed = new URL(url);
         if (!['http:', 'https:'].includes(parsed.protocol)) {
-          toast.error('http 또는 https URL을 입력하세요');
+          toast.error('http 또는 https URL을 입력하세요.');
           return;
         }
       } catch {
-        toast.error('유효하지 않은 URL 형식입니다');
+        toast.error('유효하지 않은 URL 형식입니다.');
         return;
       }
     }
     // 필드 매핑 0개 차단 (#54)
     if (step === 1 && fieldMappings.length === 0) {
-      toast.error('최소 하나 이상의 필드 매핑을 추가하세요');
+      toast.error('최소 하나 이상의 필드 매핑을 추가하세요.');
       return;
     }
     setStep((s) => s + 1);

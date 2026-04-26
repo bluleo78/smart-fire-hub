@@ -367,11 +367,11 @@ export default function ApiCallStepConfig({
   const handlePreview = async () => {
     // saved 모드: path 필요, inline 모드: customUrl 필요
     if (apiConnectionId !== null && !path) {
-      toast.error('경로(Path)를 입력하세요');
+      toast.error('경로(Path)를 입력하세요.');
       return;
     }
     if (apiConnectionId === null && !customUrl) {
-      toast.error('URL을 입력하세요');
+      toast.error('URL을 입력하세요.');
       return;
     }
     setPreviewLoading(true);

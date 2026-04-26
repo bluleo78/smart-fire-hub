@@ -41,10 +41,10 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
-      toast.success('코드가 복사되었습니다');
+      toast.success('코드가 복사되었습니다.');
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {
-      toast.error('복사에 실패했습니다');
+      toast.error('복사에 실패했습니다.');
     });
   }, [code]);
 

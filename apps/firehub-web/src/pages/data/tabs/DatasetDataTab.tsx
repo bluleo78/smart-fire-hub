@@ -305,7 +305,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                             }}
                             onClick={() => {
                               navigator.clipboard.writeText(getRawCellValue(rawValue)).then(() => {
-                                toast.success('클립보드에 복사됨');
+                                toast.success('클립보드에 복사됨.');
                               });
                             }}
                           >

@@ -15,12 +15,12 @@ export function usePipelineValidation(
     const errors: ValidationError[] = [];
 
     if (!state.name.trim()) {
-      toast.error('파이프라인 이름을 입력하세요');
+      toast.error('파이프라인 이름을 입력하세요.');
       return false;
     }
 
     if (state.steps.length === 0) {
-      toast.error('최소 1개의 스텝을 정의하세요');
+      toast.error('최소 1개의 스텝을 정의하세요.');
       return false;
     }
 
@@ -114,7 +114,7 @@ export function usePipelineValidation(
 
     if (errors.length > 0) {
       dispatch({ type: 'SET_VALIDATION_ERRORS', payload: errors });
-      toast.error('입력 오류를 확인하세요');
+      toast.error('입력 오류를 확인하세요.');
       return false;
     }
 

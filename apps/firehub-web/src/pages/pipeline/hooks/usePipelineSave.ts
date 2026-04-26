@@ -53,7 +53,7 @@ export function usePipelineSave({
           steps: stepsRequest,
         });
         dispatch({ type: 'MARK_SAVED', payload: { pipelineId: result.data.id } });
-        toast.success('파이프라인이 생성되었습니다');
+        toast.success('파이프라인이 생성되었습니다.');
         navigate(`/pipelines/${result.data.id}`, { replace: true });
       } else {
         await updateMutation.mutateAsync({
@@ -63,11 +63,11 @@ export function usePipelineSave({
           steps: stepsRequest,
         });
         dispatch({ type: 'MARK_SAVED' });
-        toast.success('파이프라인이 저장되었습니다');
+        toast.success('파이프라인이 저장되었습니다.');
       }
       return true;
     } catch {
-      toast.error('파이프라인 저장에 실패했습니다');
+      toast.error('파이프라인 저장에 실패했습니다.');
       return false;
     }
   }, [state, validate, createMutation, updateMutation, navigate, dispatch]);

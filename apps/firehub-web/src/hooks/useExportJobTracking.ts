@@ -42,7 +42,7 @@ export function useExportJobTracking() {
         }
       } catch {
         clearInterval(pollInterval);
-        toast.error('내보내기 상태 확인 실패', { id: toastId });
+        toast.error('내보내기 상태 확인 실패.', { id: toastId });
       }
     }, 2000);
   }, []);

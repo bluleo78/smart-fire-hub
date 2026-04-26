@@ -105,7 +105,7 @@ export function useSectionTree(initialSections: TemplateSection[]) {
 
       const moved = moveSectionInTree(prev, activeId, overId, currentFlat);
       if (!validateSectionDepth(moved)) {
-        toast.error('최대 3단계까지 중첩 가능합니다');
+        toast.error('최대 3단계까지 중첩 가능합니다.');
         return prev;
       }
       return moved;

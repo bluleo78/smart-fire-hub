@@ -87,13 +87,13 @@ export default function ApiConnectionListPage() {
 
     // baseUrl 클라이언트 검증: http/https로 시작해야 한다
     if (!/^https?:\/\/.+/.test(baseUrl.trim())) {
-      toast.error('Base URL은 http 또는 https로 시작해야 합니다');
+      toast.error('Base URL은 http 또는 https로 시작해야 합니다.');
       return;
     }
 
     // healthCheckPath 클라이언트 검증: 입력 시 /로 시작해야 한다
     if (healthCheckPath.trim() && !/^\//.test(healthCheckPath.trim())) {
-      toast.error('헬스체크 경로는 /로 시작해야 합니다');
+      toast.error('헬스체크 경로는 /로 시작해야 합니다.');
       return;
     }
 
