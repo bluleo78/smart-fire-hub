@@ -48,12 +48,14 @@ public class AuthService {
   @Transactional
   public UserResponse signup(SignupRequest request) {
     if (userRepository.existsByUsername(request.username())) {
-      throw new UsernameAlreadyExistsException("Username already exists: " + request.username());
+      // 사용자에게 한국어 메시지 반환 — 영문 원문 메시지 노출 방지
+      throw new UsernameAlreadyExistsException("이미 사용 중인 아이디입니다.");
     }
     if (request.email() != null
         && !request.email().isBlank()
         && userRepository.existsByEmail(request.email())) {
-      throw new EmailAlreadyExistsException("Email already exists: " + request.email());
+      // 사용자에게 한국어 메시지 반환 — 영문 원문 메시지 노출 방지
+      throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다.");
     }
 
     userRepository.acquireFirstUserLock();
@@ -126,8 +128,18 @@ public class AuthService {
 
     // 로그인 감사 로그 (#60/#92)
     String[] requestInfo = extractRequestInfo();
-    auditLogService.log(user.id(), user.username(), "LOGIN", "auth", null,
-        "로그인 성공", requestInfo[0], requestInfo[1], "SUCCESS", null, null);
+    auditLogService.log(
+        user.id(),
+        user.username(),
+        "LOGIN",
+        "auth",
+        null,
+        "로그인 성공",
+        requestInfo[0],
+        requestInfo[1],
+        "SUCCESS",
+        null,
+        null);
 
     return new TokenResponse(
         accessToken, refreshToken, "Bearer", jwtProperties.accessExpiration() / 1000);
@@ -185,11 +197,24 @@ public class AuthService {
   public void logout(Long userId) {
     refreshTokenRepository.revokeAllByUserId(userId);
     // 로그아웃 감사 로그 (#60/#92)
-    userRepository.findById(userId).ifPresent(user -> {
-      String[] requestInfo = extractRequestInfo();
-      auditLogService.log(userId, user.username(), "LOGOUT", "auth", null,
-          "로그아웃", requestInfo[0], requestInfo[1], "SUCCESS", null, null);
-    });
+    userRepository
+        .findById(userId)
+        .ifPresent(
+            user -> {
+              String[] requestInfo = extractRequestInfo();
+              auditLogService.log(
+                  userId,
+                  user.username(),
+                  "LOGOUT",
+                  "auth",
+                  null,
+                  "로그아웃",
+                  requestInfo[0],
+                  requestInfo[1],
+                  "SUCCESS",
+                  null,
+                  null);
+            });
   }
 
   @Transactional(readOnly = true)
@@ -212,12 +237,13 @@ public class AuthService {
     if (attrs instanceof ServletRequestAttributes sra) {
       HttpServletRequest req = sra.getRequest();
       String forwarded = req.getHeader("X-Forwarded-For");
-      String ip = (forwarded != null && !forwarded.isBlank())
-          ? forwarded.split(",")[0].trim()
-          : req.getRemoteAddr();
-      return new String[]{ip, req.getHeader("User-Agent")};
+      String ip =
+          (forwarded != null && !forwarded.isBlank())
+              ? forwarded.split(",")[0].trim()
+              : req.getRemoteAddr();
+      return new String[] {ip, req.getHeader("User-Agent")};
     }
-    return new String[]{null, null};
+    return new String[] {null, null};
   }
 
   private String hashToken(String token) {
