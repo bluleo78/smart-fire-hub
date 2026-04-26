@@ -176,7 +176,12 @@ export default function RoleListPage() {
                         itemName={role.name}
                         onConfirm={() => handleDelete(role)}
                         trigger={
-                          <Button variant="outline" size="sm">
+                          /* 삭제 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={`${role.name} 역할 삭제`}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         }

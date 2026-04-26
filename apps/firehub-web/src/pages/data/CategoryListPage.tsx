@@ -149,7 +149,13 @@ export default function CategoryListPage() {
                   <TableCell>{category.description || '-'}</TableCell>
                   <TableCell>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => openEditDialog(category)}>
+                      {/* 편집 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label={`${category.name} 편집`}
+                        onClick={() => openEditDialog(category)}
+                      >
                         <Pencil className="h-4 w-4" />
                       </Button>
                       <DeleteConfirmDialog
@@ -157,7 +163,8 @@ export default function CategoryListPage() {
                         itemName={category.name}
                         onConfirm={() => handleDelete(category.id, category.name)}
                         trigger={
-                          <Button variant="outline" size="sm">
+                          /* 삭제 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */
+                          <Button variant="outline" size="sm" aria-label={`${category.name} 삭제`}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         }

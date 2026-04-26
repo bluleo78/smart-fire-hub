@@ -21,8 +21,9 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '설명' })).toBeVisible();
 
     // createCategories()의 카테고리 이름이 렌더링되는지 확인
-    await expect(page.getByRole('cell', { name: '소방 데이터' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: '통계 데이터' })).toBeVisible();
+    // exact: true — aria-label 추가로 액션 셀 텍스트에 카테고리 이름이 포함되어 중복 매칭 방지
+    await expect(page.getByRole('cell', { name: '소방 데이터', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '통계 데이터', exact: true })).toBeVisible();
     // exact: true 로 "기타 데이터 카테고리" 설명 셀과 구분
     await expect(page.getByRole('cell', { name: '기타', exact: true })).toBeVisible();
 
@@ -119,9 +120,8 @@ test.describe('카테고리 관리 페이지', () => {
 
     await page.goto('/data/categories');
 
-    // 첫 번째 행의 편집(Pencil) 버튼 클릭
-    const firstRow = page.getByRole('row').nth(1);
-    await firstRow.getByRole('button').first().click();
+    // 첫 번째 카테고리(소방 데이터) 편집 버튼 클릭 — aria-label 기반 셀렉터
+    await page.getByRole('button', { name: '소방 데이터 편집' }).click();
 
     // 수정 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -189,9 +189,8 @@ test.describe('카테고리 관리 페이지', () => {
 
     await page.goto('/data/categories');
 
-    // 첫 번째 행의 편집(Pencil) 버튼 클릭
-    const firstRow = page.getByRole('row').nth(1);
-    await firstRow.getByRole('button').first().click();
+    // 첫 번째 카테고리(소방 데이터) 편집 버튼 클릭 — aria-label 기반 셀렉터
+    await page.getByRole('button', { name: '소방 데이터 편집' }).click();
 
     // 수정 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -227,9 +226,8 @@ test.describe('카테고리 관리 페이지', () => {
 
     await page.goto('/data/categories');
 
-    // 첫 번째 행의 삭제(Trash2) 버튼 클릭 — 편집 버튼 다음 버튼
-    const firstRow = page.getByRole('row').nth(1);
-    await firstRow.getByRole('button').nth(1).click();
+    // 첫 번째 카테고리(소방 데이터) 삭제 버튼 클릭 — aria-label 기반 셀렉터
+    await page.getByRole('button', { name: '소방 데이터 삭제' }).click();
 
     // AlertDialog 삭제 확인 다이얼로그가 열리는지 확인
     await expect(page.getByRole('alertdialog')).toBeVisible();
@@ -241,5 +239,22 @@ test.describe('카테고리 관리 페이지', () => {
     // DELETE API가 실제로 호출되었는지 확인
     const req = await deleteCapture.waitForRequest();
     expect(req).toBeTruthy();
+  });
+
+  test('편집·삭제 버튼에 aria-label이 부여된다 (접근성 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 3개 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    await page.goto('/data/categories');
+
+    // 첫 번째 카테고리(소방 데이터)의 편집·삭제 버튼에 aria-label이 있어야 한다
+    await expect(page.getByRole('button', { name: '소방 데이터 편집' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '소방 데이터 삭제' })).toBeVisible();
+
+    // 모든 카테고리에 편집/삭제 버튼 각 3개씩 있어야 한다 (소방 데이터, 통계 데이터, 기타)
+    await expect(page.getByRole('button', { name: /편집$/ })).toHaveCount(3);
+    await expect(page.getByRole('button', { name: /삭제$/ })).toHaveCount(3);
   });
 });

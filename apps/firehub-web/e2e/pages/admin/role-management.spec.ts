@@ -90,8 +90,8 @@ test.describe('역할 관리 페이지', () => {
     await page.goto('/admin/roles');
 
     // 삭제 버튼이 커스텀 역할(EDITOR)에만 1개 있는지 확인 (시스템 역할은 삭제 불가)
-    const trashButtons = page.locator('button').filter({ hasText: '' }).locator('svg.lucide-trash-2');
-    await expect(trashButtons).toHaveCount(1);
+    // aria-label 기반 셀렉터로 버튼 존재 검증
+    await expect(page.getByRole('button', { name: /역할 삭제/ })).toHaveCount(1);
   });
 
   test('커스텀 역할 삭제 버튼 클릭 시 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
@@ -102,10 +102,8 @@ test.describe('역할 관리 페이지', () => {
 
     await page.goto('/admin/roles');
 
-    // EDITOR 행의 삭제 버튼 (Outline 버튼) 클릭
-    // DeleteConfirmDialog trigger 버튼: Outline + sm size
-    const editorRow = page.getByRole('row', { name: /EDITOR/ });
-    await editorRow.getByRole('button').click();
+    // EDITOR 역할 삭제 버튼 클릭 — aria-label 기반 셀렉터로 특정
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
 
     // 삭제 확인 다이얼로그 열림 확인 (AlertDialog)
     await expect(page.getByRole('alertdialog')).toBeVisible();
@@ -260,5 +258,19 @@ test.describe('역할 관리 페이지', () => {
 
     // 에러 토스트 확인 (line 61) — Sonner는 동일 메시지 토스트를 중복 렌더링할 수 있으므로 first() 사용
     await expect(page.getByText('역할 정보를 불러오는데 실패했습니다.').first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('커스텀 역할 삭제 버튼에 aria-label이 부여된다 (접근성 회귀)', async ({ authenticatedPage: page }) => {
+    // 역할 목록 모킹
+    await setupRoleListMocks(page);
+    await page.goto('/admin/roles');
+
+    // aria-label="EDITOR 역할 삭제" 버튼이 렌더링되어야 한다
+    const deleteButton = page.getByRole('button', { name: 'EDITOR 역할 삭제' });
+    await expect(deleteButton).toBeVisible();
+
+    // 시스템 역할(USER, ADMIN)에는 삭제 버튼이 없어야 한다
+    await expect(page.getByRole('button', { name: 'USER 역할 삭제' })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'ADMIN 역할 삭제' })).not.toBeVisible();
   });
 });
