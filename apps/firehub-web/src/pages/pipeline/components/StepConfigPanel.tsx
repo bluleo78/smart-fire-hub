@@ -113,21 +113,11 @@ export default function StepConfigPanel({
         <div className="flex-1 min-h-0">
           <ScrollArea className="h-full">
             <div className="p-4 space-y-4">
-              {/* Name */}
+              {/* Name — 헤더의 Input이 단일 편집 진입점. 우측 패널은 읽기 전용으로만 표시하여
+                  Ctrl+A 등으로 두 Input이 동시에 dispatch하는 중복 문자열 버그(#32) 방지. */}
               <div className="space-y-1.5">
-                <Label htmlFor="pipeline-name">이름</Label>
-                {readOnly ? (
-                  <p className="text-sm">{state.name || '-'}</p>
-                ) : (
-                  <Input
-                    id="pipeline-name"
-                    value={state.name}
-                    onChange={(e) =>
-                      dispatch({ type: 'SET_META', payload: { name: e.target.value } })
-                    }
-                    placeholder="파이프라인 이름"
-                  />
-                )}
+                <Label>이름</Label>
+                <p className="text-sm">{state.name || '-'}</p>
               </div>
 
               <Separator />

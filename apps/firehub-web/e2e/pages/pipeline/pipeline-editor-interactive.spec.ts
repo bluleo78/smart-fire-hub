@@ -7,6 +7,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 에디터 — 상호작용', () => {
   /** 신규 파이프라인 에디터는 /pipelines/new 로 진입한다. 데이터셋 목록만 있으면 된다. */
@@ -181,5 +182,67 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
 
     // 두 개의 ReactFlow 노드가 캔버스에 렌더링되어야 한다
     await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  });
+
+  /**
+   * 회귀 테스트: #32 — 편집 모드에서 파이프라인 이름 Input이 단 하나만 존재해야 한다
+   *
+   * 버그 원인: EditorHeader와 StepConfigPanel 두 곳에 동일 state.name을 바인딩한 Input이 있어
+   * Ctrl+A 후 타이핑 시 두 Input이 각각 dispatch하여 문자열이 concatenate되는 현상.
+   * 수정: StepConfigPanel의 이름 Input을 readOnly <p>로 교체하여 단일 편집 진입점을 EditorHeader로 통일.
+   */
+  test('편집 모드에서 파이프라인 이름 Input이 헤더에 하나만 존재한다 (이중 dispatch 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 기존 파이프라인 에디터 API 모킹
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 수정 버튼 클릭 → 편집 모드 진입
+    await page.getByRole('button', { name: '수정' }).click();
+
+    // 편집 모드에서 파이프라인 이름 textbox는 헤더에 딱 1개만 존재해야 한다
+    // (StepConfigPanel에 동일 Input이 있으면 이중 dispatch → 문자열 concatenation 발생)
+    const nameInputs = page.getByPlaceholder('파이프라인 이름');
+    await expect(nameInputs).toHaveCount(1);
+  });
+
+  test('편집 모드 — 이름 변경 후 저장 API payload에 새 이름만 담겨야 한다 (중복 문자열 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 기존 파이프라인 에디터 모킹 (이름: '테스트 파이프라인')
+    // PUT interceptor를 setupPipelineEditorMocks보다 먼저 등록하여 라우트 순서 충돌 방지
+    let capturedPayload: Record<string, unknown> | null = null;
+    await page.route('**/api/v1/pipelines/1', async (route) => {
+      if (route.request().method() === 'PUT') {
+        capturedPayload = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: 1, name: '새 파이프라인 이름', description: '', isActive: true, steps: [], createdBy: 'test', createdAt: '', updatedBy: null, updatedAt: null }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '수정' }).click();
+
+    // 헤더 이름 Input에 새 이름 입력 (fill = 기존 값 전체 교체)
+    const nameInput = page.getByPlaceholder('파이프라인 이름');
+    await nameInput.fill('새 파이프라인 이름');
+
+    // 저장 버튼 클릭
+    await page.getByRole('button', { name: '저장' }).click();
+
+    // API payload에 중복 없이 정확히 새 이름만 담겨야 한다
+    expect(capturedPayload).not.toBeNull();
+    expect((capturedPayload as unknown as Record<string, unknown>)['name']).toBe('새 파이프라인 이름');
   });
 });
