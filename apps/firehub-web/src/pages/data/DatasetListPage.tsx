@@ -382,7 +382,22 @@ export default function DatasetListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableEmptyRow colSpan={7} message="데이터셋이 없습니다." />
+              <TableEmptyRow
+                colSpan={7}
+                message="데이터셋이 없습니다."
+                searchKeyword={search || undefined}
+                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                emptyAction={
+                  noFiltersActive ? (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to="/data/datasets/new">
+                        <Plus className="h-4 w-4" />
+                        새 데이터셋 만들기
+                      </Link>
+                    </Button>
+                  ) : undefined
+                }
+              />
             )}
           </tbody>
         </Table>

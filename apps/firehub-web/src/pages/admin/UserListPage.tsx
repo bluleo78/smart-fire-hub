@@ -89,7 +89,12 @@ export default function UserListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableEmptyRow colSpan={4} message="사용자가 없습니다." />
+              <TableEmptyRow
+                colSpan={4}
+                message="사용자가 없습니다."
+                searchKeyword={debouncedSearch || undefined}
+                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+              />
             )}
           </TableBody>
         </Table>

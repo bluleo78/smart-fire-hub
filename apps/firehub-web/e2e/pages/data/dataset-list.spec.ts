@@ -249,6 +249,51 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page.getByRole('button', { name: /이전/ })).toBeVisible();
   });
 
+  test('검색 결과 0건일 때 검색어와 검색 초기화 버튼이 노출된다 (#66)', async ({ authenticatedPage: page }) => {
+    // 초기 데이터셋 5건 모킹 + 페이지 로드
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
+
+    // 검색어 입력 시 빈 응답으로 재모킹 (검색 결과 0건 시뮬레이션)
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]));
+    await page.getByPlaceholder('데이터셋 검색...').fill('zzzzznoresult');
+
+    // 검색어가 그대로 EmptyState에 노출되는지 검증
+    await expect(page.getByText("'zzzzznoresult'에 대한 결과가 없습니다.")).toBeVisible();
+    // 도움말 카피 노출
+    await expect(page.getByText('다른 키워드로 검색해 보세요.')).toBeVisible();
+    // "검색 초기화" 버튼 노출
+    const resetBtn = page.getByRole('button', { name: '검색 초기화' });
+    await expect(resetBtn).toBeVisible();
+
+    // 검색 초기화 클릭 → 검색어 비워지고 원본 5건 다시 노출 (재모킹 필요)
+    await setupDatasetMocks(page);
+    await resetBtn.click();
+    await expect(page.getByPlaceholder('데이터셋 검색...')).toHaveValue('');
+    await expect(page.getByRole('row', { name: /데이터셋 1/ })).toBeVisible();
+  });
+
+  test('SearchInput에 값이 있을 때 X(지우기) 버튼이 노출되고 클릭 시 검색어가 비워진다 (#66)', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
+
+    const searchBox = page.getByPlaceholder('데이터셋 검색...');
+    // 초기에는 X 버튼 미노출
+    await expect(page.getByRole('button', { name: '검색어 지우기' })).toHaveCount(0);
+
+    // 검색어 입력 → X 버튼 노출
+    await searchBox.fill('소방');
+    const clearBtn = page.getByRole('button', { name: '검색어 지우기' });
+    await expect(clearBtn).toBeVisible();
+
+    // X 버튼 클릭 → input 값이 비워지고 X 버튼도 사라짐
+    await clearBtn.click();
+    await expect(searchBox).toHaveValue('');
+    await expect(page.getByRole('button', { name: '검색어 지우기' })).toHaveCount(0);
+  });
+
   test('최근 접근 데이터셋에 상대적 시간이 표시된다 (getRelativeTime)', async ({ authenticatedPage: page }) => {
     // 60일 전 날짜를 localStorage에 주입 → getRelativeTime 실행 (lines 33-43 커버)
     // 60일 = 2개월 → '2개월 전' 텍스트가 표시되어야 한다

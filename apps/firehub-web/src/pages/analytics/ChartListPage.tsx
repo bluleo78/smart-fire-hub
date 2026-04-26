@@ -212,7 +212,17 @@ export default function ChartListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={5}
-                message={search ? '검색 결과가 없습니다.' : '차트가 없습니다.'}
+                message="차트가 없습니다."
+                searchKeyword={search || undefined}
+                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                emptyAction={
+                  !search ? (
+                    <Button size="sm" variant="outline" onClick={() => navigate('/analytics/charts/new')}>
+                      <Plus className="h-4 w-4" />
+                      새 차트 만들기
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
           </tbody>

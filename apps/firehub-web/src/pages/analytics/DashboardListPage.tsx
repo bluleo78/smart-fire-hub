@@ -24,6 +24,7 @@ import {
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import { SearchInput } from '../../components/ui/search-input';
 import { SimplePagination } from '../../components/ui/simple-pagination';
 import { Switch } from '../../components/ui/switch';
 import {
@@ -313,17 +314,15 @@ export default function DashboardListPage() {
       </Tabs>
 
       <div className="flex items-center gap-3">
-        <div className="relative">
-          <Input
-            placeholder="대시보드 검색..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(0);
-            }}
-            className="w-64"
-          />
-        </div>
+        <SearchInput
+          placeholder="대시보드 검색..."
+          value={search}
+          onChange={(value) => {
+            setSearch(value);
+            setPage(0);
+          }}
+          className="w-64"
+        />
       </div>
 
       <div className="rounded-md border">
@@ -445,7 +444,17 @@ export default function DashboardListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={5}
-                message={search ? '검색 결과가 없습니다.' : '대시보드가 없습니다.'}
+                message="대시보드가 없습니다."
+                searchKeyword={search || undefined}
+                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                emptyAction={
+                  !search ? (
+                    <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      새 대시보드 만들기
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
           </tbody>

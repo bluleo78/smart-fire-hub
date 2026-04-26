@@ -326,7 +326,24 @@ export default function AuditLogListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableEmptyRow colSpan={7} message="감사 로그가 없습니다." />
+              <TableEmptyRow
+                colSpan={7}
+                message="감사 로그가 없습니다."
+                searchKeyword={debouncedSearch || undefined}
+                onResetSearch={
+                  search || actionType || resource || result || startDate || endDate
+                    ? () => {
+                        setSearch('');
+                        setActionType('');
+                        setResource('');
+                        setResult('');
+                        setStartDate('');
+                        setEndDate('');
+                        setPage(0);
+                      }
+                    : undefined
+                }
+              />
             )}
           </TableBody>
         </Table>

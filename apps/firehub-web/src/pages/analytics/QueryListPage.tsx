@@ -293,7 +293,21 @@ export default function QueryListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={6}
-                message={search || folder ? '검색 결과가 없습니다.' : '저장된 쿼리가 없습니다.'}
+                message="저장된 쿼리가 없습니다."
+                searchKeyword={search || undefined}
+                onResetSearch={
+                  search || folder
+                    ? () => { setSearch(''); setFolder(''); setPage(0); }
+                    : undefined
+                }
+                emptyAction={
+                  !search && !folder ? (
+                    <Button size="sm" variant="outline" onClick={() => navigate('/analytics/queries/new')}>
+                      <Plus className="h-4 w-4" />
+                      새 쿼리 만들기
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
           </tbody>
