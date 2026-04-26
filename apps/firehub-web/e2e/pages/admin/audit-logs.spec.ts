@@ -276,6 +276,105 @@ test.describe('감사 로그 페이지', () => {
     await expect(dialog.getByText('192.168.1.100')).toBeVisible();
   });
 
+  /**
+   * 이슈 #71: metadata(JSON payload) 필드 표시 검증
+   * - metadata 가 있는 경우 JSON.stringify(..., null, 2) 형태로 들여쓰기 렌더되는지 확인
+   */
+  test('상세 보기 다이얼로그에 metadata JSON 이 표시된다', async ({ authenticatedPage: page }) => {
+    const metadata = { before: { name: 'old' }, after: { name: 'new' }, changedFields: ['name'] };
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', metadata }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // Metadata 섹션 라벨이 보이는지
+    await expect(dialog.getByText('Metadata')).toBeVisible();
+    // JSON.stringify(metadata, null, 2) 결과 문자열이 그대로 렌더되는지 검증
+    const expectedJson = JSON.stringify(metadata, null, 2);
+    const pre = dialog.locator('pre');
+    await expect(pre).toBeVisible();
+    await expect(pre).toHaveText(expectedJson);
+  });
+
+  /**
+   * 이슈 #71: metadata 가 null/empty 인 경우 섹션 자체가 숨겨지는지 검증
+   */
+  test('metadata 가 null 인 경우 Metadata 섹션이 표시되지 않는다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', metadata: null }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // Metadata 라벨이 표시되지 않아야 함 (조건부 렌더링)
+    await expect(dialog.getByText('Metadata')).toHaveCount(0);
+  });
+
+  /**
+   * 이슈 #71: userAgent 필드 표시 검증
+   */
+  test('상세 보기 다이얼로그에 User Agent 가 표시된다', async ({ authenticatedPage: page }) => {
+    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0.0.0 Safari/537.36';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', userAgent: ua }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('User Agent')).toBeVisible();
+    await expect(dialog.getByText(ua)).toBeVisible();
+  });
+
+  /**
+   * 이슈 #71: userAgent 가 null 인 경우 섹션 자체가 숨겨지는지 검증
+   */
+  test('userAgent 가 null 인 경우 User Agent 섹션이 표시되지 않는다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', userAgent: null }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('User Agent')).toHaveCount(0);
+  });
+
   test('다이얼로그 닫기 버튼 클릭 시 다이얼로그가 닫힌다', async ({ authenticatedPage: page }) => {
     await setupAuditLogMocks(page, 1);
     await page.goto('/admin/audit-logs');

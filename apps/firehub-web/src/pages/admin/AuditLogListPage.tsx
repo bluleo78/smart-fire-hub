@@ -151,6 +151,37 @@ function AuditLogDetailDialog({
               </p>
             </div>
           )}
+
+          {/*
+            User Agent 표시
+            - 브라우저/OS 추적용 — 누가 어떤 디바이스에서 액션했는지 식별
+            - 긴 문자열을 break-all 로 줄바꿈 처리, monospace 로 가독성 확보
+            - userAgent 가 null/empty 인 경우 섹션 자체를 숨김 (시각 노이즈 방지)
+          */}
+          {log.userAgent && (
+            <div>
+              <p className="text-muted-foreground mb-1 text-xs">User Agent</p>
+              <p className="bg-muted rounded-md p-3 font-mono text-xs break-all">
+                {log.userAgent}
+              </p>
+            </div>
+          )}
+
+          {/*
+            Metadata(JSON payload) 표시
+            - 변경 전/후 값, 요청 파라미터 등 변경 감사의 핵심 데이터
+            - JSON.stringify(..., null, 2) 로 들여쓰기, monospace + 스크롤
+            - max-h-64 + overflow-auto 로 긴 payload 도 다이얼로그를 깨뜨리지 않게 함
+            - metadata 가 null 이거나 빈 객체이면 섹션 자체를 숨김
+          */}
+          {log.metadata && Object.keys(log.metadata).length > 0 && (
+            <div>
+              <p className="text-muted-foreground mb-1 text-xs">Metadata</p>
+              <pre className="bg-muted rounded-md p-3 font-mono text-xs max-h-64 overflow-auto whitespace-pre">
+                {JSON.stringify(log.metadata, null, 2)}
+              </pre>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
