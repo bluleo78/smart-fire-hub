@@ -145,6 +145,50 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
     await expect(page.getByRole('dialog').getByText('id').first()).toBeVisible();
   });
 
+  /**
+   * #40 회귀 방지 — 2단계(컬럼 매핑) 진입 시 취소/임포트 버튼이 뷰포트 내에 보여야 한다.
+   * sticky footer 패턴이 올바르게 적용되어 버튼이 스크롤 밖으로 밀리지 않음을 검증한다.
+   */
+  test('#40 회귀 방지 — 2단계에서 취소/임포트 버튼이 뷰포트 내에 표시된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      createPreviewResponse(),
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    // 파일 선택 후 2단계 진입
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const cancelBtn = page.getByRole('dialog').getByRole('button', { name: '취소' });
+    const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+
+    // 버튼이 뷰포트 내에 보여야 한다 (isIntersectingViewport 기준)
+    await expect(cancelBtn).toBeVisible({ timeout: 10_000 });
+    await expect(importBtn).toBeVisible({ timeout: 10_000 });
+
+    // 버튼이 실제로 뷰포트 안에 위치하는지 확인 (스크롤 없이 접근 가능)
+    const cancelInViewport = await cancelBtn.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= window.innerHeight;
+    });
+    const importInViewport = await importBtn.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= window.innerHeight;
+    });
+
+    expect(cancelInViewport).toBe(true);
+    expect(importInViewport).toBe(true);
+  });
+
   test('2단계에서 임포트 버튼 클릭 시 업로드 API가 호출되고 진행 화면(3단계)으로 이동한다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
     await mockApi(
