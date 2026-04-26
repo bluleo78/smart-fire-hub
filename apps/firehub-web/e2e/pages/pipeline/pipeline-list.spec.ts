@@ -66,7 +66,7 @@ test.describe('파이프라인 목록 페이지', () => {
     await expect(page).toHaveURL('/pipelines/new');
   });
 
-  test('활성 파이프라인에 활성 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
+  test('활성 파이프라인에 활성 뱃지가 표시된다 (status=active, success 색)', async ({ authenticatedPage: page }) => {
     // isActive: true 파이프라인 1개 모킹
     await mockApi(
       page,
@@ -78,10 +78,14 @@ test.describe('파이프라인 목록 페이지', () => {
     await page.goto('/pipelines');
 
     // "활성" 뱃지 확인 — 파이프라인 이름 셀과 구분하기 위해 뱃지 역할(data-slot="badge") 요소를 지정
-    await expect(page.locator('[data-slot="badge"]').filter({ hasText: /^활성$/ })).toBeVisible();
+    const badge = page.locator('[data-slot="badge"]').filter({ hasText: /^활성$/ });
+    await expect(badge).toBeVisible();
+    // 이슈 #68: 의미↔색 매핑 통일 — '활성'은 success(녹색) variant여야 함
+    await expect(badge).toHaveAttribute('data-status', 'active');
+    await expect(badge).toHaveAttribute('data-variant', 'success');
   });
 
-  test('비활성 파이프라인에 비활성 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
+  test('비활성 파이프라인에 비활성 뱃지가 표시된다 (status=inactive, secondary 색)', async ({ authenticatedPage: page }) => {
     // isActive: false 파이프라인 1개 모킹
     await mockApi(
       page,
@@ -93,7 +97,11 @@ test.describe('파이프라인 목록 페이지', () => {
     await page.goto('/pipelines');
 
     // "비활성" 뱃지 확인 — 파이프라인 이름 셀과 구분하기 위해 뱃지 역할(data-slot="badge") 요소를 지정
-    await expect(page.locator('[data-slot="badge"]').filter({ hasText: /^비활성$/ })).toBeVisible();
+    const badge = page.locator('[data-slot="badge"]').filter({ hasText: /^비활성$/ });
+    await expect(badge).toBeVisible();
+    // 이슈 #68: 의미↔색 매핑 통일 — '비활성'은 secondary(회색) variant여야 함
+    await expect(badge).toHaveAttribute('data-status', 'inactive');
+    await expect(badge).toHaveAttribute('data-variant', 'secondary');
   });
 
   test('삭제 버튼 클릭 시 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {

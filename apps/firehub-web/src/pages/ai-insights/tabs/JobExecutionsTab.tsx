@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { StatusBadge } from '@/components/ui/status-badge';
 import {
   Table,
   TableBody,
@@ -21,7 +22,7 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
-import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { formatDate, formatDuration, getExecutionStatusType, getStatusLabel, timeAgo } from '@/lib/formatters';
 
 interface JobExecutionsTabProps {
   jobId: number;
@@ -70,9 +71,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                     {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
                   </TableCell>
                   <TableCell className="text-center">
-                    <Badge variant={getStatusBadgeVariant(exec.status)}>
+                    <StatusBadge type={getExecutionStatusType(exec.status)}>
                       {getStatusLabel(exec.status)}
-                    </Badge>
+                    </StatusBadge>
                   </TableCell>
                   <TableCell className="text-sm text-center">
                     {exec.completedAt ? formatDuration(exec.startedAt, exec.completedAt) : (

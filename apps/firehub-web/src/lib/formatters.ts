@@ -61,16 +61,73 @@ export function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-export type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+export type BadgeVariant =
+  | 'default'
+  | 'secondary'
+  | 'destructive'
+  | 'outline'
+  | 'success'
+  | 'warning'
+  | 'info';
 
+/** StatusBadge type 토큰 (components/ui/status-badge와 동일 정의 — 순환 import 회피용 별칭). */
+export type StatusBadgeType =
+  | 'active'
+  | 'inactive'
+  | 'success'
+  | 'error'
+  | 'warning'
+  | 'info'
+  | 'pending'
+  | 'unknown';
+
+/**
+ * 실행 상태(JobExecution / Pipeline / Import) → StatusBadge type 매핑.
+ * 의미↔색 통일 (이슈 #68): 완료=success, 실패=error, 실행중=info, 취소/건너뜀=inactive, 대기=pending.
+ */
+export function getExecutionStatusType(status: string): StatusBadgeType {
+  switch (status) {
+    case 'COMPLETED':
+      return 'success';
+    case 'FAILED':
+      return 'error';
+    case 'RUNNING':
+    case 'PROCESSING':
+      return 'info';
+    case 'PENDING':
+      return 'pending';
+    case 'CANCELLED':
+    case 'SKIPPED':
+      return 'inactive';
+    default:
+      return 'unknown';
+  }
+}
+
+/**
+ * 실행 상태(JobExecution / Pipeline / Import) → Badge variant 매핑.
+ *
+ * 의미 ↔ 색 매핑은 앱 전체에서 통일되어야 한다 (이슈 #68):
+ * - 완료/성공 → success(녹색)
+ * - 실패/오류 → destructive(빨강)
+ * - 실행중/처리중 → info(파랑)
+ * - 취소/건너뜀 → secondary(회색)
+ * - 대기/그 외 → outline
+ *
+ * 신규 코드는 가능하면 `<StatusBadge type="..." />` (components/ui/status-badge)를 사용한다.
+ * 이 함수는 기존 호출부 backward compat용으로 유지한다.
+ */
 export function getStatusBadgeVariant(status: string): BadgeVariant {
   switch (status) {
     case 'COMPLETED':
-      return 'default';
+      return 'success';
     case 'FAILED':
       return 'destructive';
     case 'RUNNING':
     case 'PROCESSING':
+      return 'info';
+    case 'CANCELLED':
+    case 'SKIPPED':
       return 'secondary';
     default:
       return 'outline';

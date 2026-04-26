@@ -12,6 +12,7 @@ import { iGa } from '@/lib/utils';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { StatusBadge } from '../../components/ui/status-badge';
 import {
   Table,
   TableBody,
@@ -80,9 +81,9 @@ export default function PipelineListPage() {
                 >
                   <TableCell className="font-medium">{pipeline.name}</TableCell>
                   <TableCell>
-                    <Badge variant={pipeline.isActive ? 'default' : 'secondary'}>
+                    <StatusBadge type={pipeline.isActive ? 'active' : 'inactive'}>
                       {pipeline.isActive ? '활성' : '비활성'}
-                    </Badge>
+                    </StatusBadge>
                   </TableCell>
                   <TableCell className="tabular-nums">{pipeline.stepCount}</TableCell>
                   <TableCell>

@@ -129,11 +129,14 @@ describe('formatFileSize', () => {
 });
 
 describe('getStatusBadgeVariant', () => {
+  // 이슈 #68: 의미↔색 매핑 통일 — COMPLETED는 success(녹색), 진행중은 info(파랑)
   it.each([
-    ['COMPLETED', 'default'],
+    ['COMPLETED', 'success'],
     ['FAILED', 'destructive'],
-    ['RUNNING', 'secondary'],
-    ['PROCESSING', 'secondary'],
+    ['RUNNING', 'info'],
+    ['PROCESSING', 'info'],
+    ['CANCELLED', 'secondary'],
+    ['SKIPPED', 'secondary'],
     ['PENDING', 'outline'],
     ['UNKNOWN', 'outline'],
   ])('%s → %s', (status, expected) => {
