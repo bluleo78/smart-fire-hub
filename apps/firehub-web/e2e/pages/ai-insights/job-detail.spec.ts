@@ -100,6 +100,36 @@ test.describe('스마트 작업 상세 페이지', () => {
     expect(hasPrompt || hasTemplate).toBe(true);
   });
 
+  test('새 작업 폼 — 필수 필드(작업 이름·프롬프트)가 비어 있으면 생성 버튼이 비활성화된다 (#52)', async ({ authenticatedPage: page }) => {
+    // 새 작업 페이지 API 모킹
+    await setupNewJobMocks(page);
+
+    await page.goto('/ai-insights/jobs/new');
+
+    // 초기 상태: 작업 이름과 프롬프트 미입력 → 생성 버튼 비활성화 확인
+    const createBtn = page.getByRole('button', { name: '생성' });
+    await expect(createBtn).toBeDisabled();
+
+    // 작업 이름만 입력해도 아직 비활성화 (프롬프트 미입력)
+    await page.locator('#job-name').fill('테스트 작업');
+    // 수동 모드 진입 — 프롬프트 필드 노출을 위해
+    const manualModeBtn = page.getByRole('button', { name: /수동|직접/ });
+    if (await manualModeBtn.isVisible()) {
+      await manualModeBtn.click();
+    }
+
+    // 프롬프트 필드가 보이는 경우만 검증
+    const promptField = page.locator('#job-prompt');
+    if (await promptField.isVisible()) {
+      // 프롬프트 미입력 → 여전히 비활성화
+      await expect(createBtn).toBeDisabled();
+
+      // 프롬프트까지 입력 → 생성 버튼 활성화
+      await promptField.fill('일별 데이터 분석 프롬프트');
+      await expect(createBtn).toBeEnabled();
+    }
+  });
+
   test('목록으로 버튼 클릭 시 작업 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupJobDetailMocks(page, 1);
     // 목록 페이지로 돌아갈 때 필요한 API 모킹

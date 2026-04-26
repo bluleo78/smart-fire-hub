@@ -300,7 +300,8 @@ export default function ProactiveJobDetailPage() {
                   취소
                 </Button>
               )}
-              <Button size="sm" onClick={handleSave} disabled={isSaving}>
+              {/* 폼이 유효하지 않으면(필수 필드 미입력 등) 저장/생성 버튼 비활성화 — #52 */}
+              <Button size="sm" onClick={handleSave} disabled={isSaving || !form.formState.isValid}>
                 {isSaving ? '저장 중...' : isNew ? '생성' : '저장'}
               </Button>
             </>
