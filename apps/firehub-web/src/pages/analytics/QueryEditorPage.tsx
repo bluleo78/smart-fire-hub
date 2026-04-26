@@ -21,6 +21,16 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { exportsApi } from '../../api/exports';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -390,6 +400,20 @@ export default function QueryEditorPage() {
   // Sidebar panel
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // 사용자 상호작용 후 변경 여부 추적 (이슈 #57)
+  // - 초기 로드(savedQuery로부터 setState)는 변경으로 간주하지 않기 위해 핸들러에서 명시적으로 markDirty()를 호출
+  // - SQL 텍스트 변경(에디터 입력) 또는 저장 폼 필드 변경(이름/설명/폴더/공유) 시 dirty=true
+  const [isDirty, setIsDirty] = useState(false);
+  const markDirty = useCallback(() => setIsDirty(true), []);
+
+  // 이탈 확인 다이얼로그 상태 — 뒤로가기 클릭 시 dirty면 오픈
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+
+  // CodeMirror 외부 sync(초기 로드)로 인한 onChange를 사용자 입력과 구분하기 위한 플래그.
+  // - savedQuery 로드 시 setSql → CodeMirror sync useEffect → updateListener → onChange 발화.
+  //   이때 markDirty가 호출되면 안 되므로 ignoreNextChange를 true로 세팅한다.
+  const ignoreNextChangeRef = useRef(false);
+
   // isError: 존재하지 않는 쿼리 ID(404 등) 접근 시 에러 상태를 감지한다.
   const { data: savedQuery, isLoading: queryLoading, isError: queryError } = useSavedQuery(queryId);
   const { data: schemaInfo } = useSchemaInfo();
@@ -416,6 +440,8 @@ export default function QueryEditorPage() {
   // Load saved query into editor when fetched
   useEffect(() => {
     if (savedQuery && !initialSql) {
+      // CodeMirror sync useEffect가 발화시킬 onChange를 무시하도록 플래그 세팅 (이슈 #57)
+      ignoreNextChangeRef.current = true;
       setSql(savedQuery.sqlText);
       setSaveForm({
         name: savedQuery.name,
@@ -423,8 +449,49 @@ export default function QueryEditorPage() {
         folder: savedQuery.folder ?? '',
         isShared: savedQuery.isShared,
       });
+      // 초기 로드는 dirty가 아님 (이슈 #57)
+      setIsDirty(false);
     }
   }, [savedQuery, initialSql]);
+
+  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (이슈 #57 — ChartBuilderPage와 동일 패턴)
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동 (이슈 #57)
+  const handleBackClick = () => {
+    if (isDirty) {
+      setLeaveDialogOpen(true);
+    } else {
+      navigate('/analytics/queries');
+    }
+  };
+
+  // 다이얼로그에서 '이탈' 클릭 — 변경사항 버리고 목록으로 이동 (이슈 #57)
+  const handleLeaveConfirm = () => {
+    setLeaveDialogOpen(false);
+    setIsDirty(false);
+    navigate('/analytics/queries');
+  };
+
+  // SQL 텍스트 변경 핸들러 — CodeMirror onChange에 전달, 사용자 입력 시 dirty 마킹 (이슈 #57)
+  // - ignoreNextChangeRef가 true면 외부 sync(초기 로드)로 인한 onChange이므로 dirty 마킹을 건너뛴다.
+  const handleSqlChange = useCallback(
+    (next: string) => {
+      setSql(next);
+      if (ignoreNextChangeRef.current) {
+        ignoreNextChangeRef.current = false;
+        return;
+      }
+      markDirty();
+    },
+    [markDirty],
+  );
 
   // Pre-fill save form name for new queries
   useEffect(() => {
@@ -483,6 +550,8 @@ export default function QueryEditorPage() {
         });
         toast.success(`쿼리 "${created.name}" 저장 완료`);
         setSaveDialogOpen(false);
+        // 저장 성공 → dirty 해제 후 신규 쿼리 상세로 replace (이슈 #57)
+        setIsDirty(false);
         navigate(`/analytics/queries/${created.id}`, { replace: true });
       } else {
         await updateSavedQuery.mutateAsync({
@@ -497,6 +566,8 @@ export default function QueryEditorPage() {
         });
         toast.success('쿼리가 수정되었습니다.');
         setSaveDialogOpen(false);
+        // 수정 성공 → dirty 해제 (페이지 이동은 없음) (이슈 #57)
+        setIsDirty(false);
       }
     } catch (error) {
       handleApiError(error, '쿼리 저장에 실패했습니다.');
@@ -575,12 +646,13 @@ export default function QueryEditorPage() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate('/analytics/queries')}
+          aria-label="목록으로 돌아가기"
+          onClick={handleBackClick}
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex flex-col">
           {savedQuery ? (
             <div className="flex items-center gap-2">
               <span className="text-lg font-semibold truncate">{savedQuery.name}</span>
@@ -597,6 +669,13 @@ export default function QueryEditorPage() {
             </div>
           ) : (
             <span className="font-semibold text-muted-foreground">새 쿼리</span>
+          )}
+          {/* 미저장 변경사항 표시 — ChartBuilderPage와 동일한 시각 패턴 (이슈 #57) */}
+          {isDirty && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <span className="text-muted-foreground">●</span>
+              미저장 변경사항
+            </span>
           )}
         </div>
 
@@ -681,7 +760,7 @@ export default function QueryEditorPage() {
           {/* CodeMirror Editor */}
           <AnalyticsSqlEditor
             value={sql}
-            onChange={setSql}
+            onChange={handleSqlChange}
             onExecute={handleExecute}
             schema={cmSchema}
             onViewReady={(view) => {
@@ -765,6 +844,25 @@ export default function QueryEditorPage() {
         isSaving={isSaving}
         isEdit={!isNew}
       />
+
+      {/*
+        이탈 확인 다이얼로그 — 뒤로가기 클릭 시 dirty면 표시 (이슈 #57)
+        취소 시 머무름, 확인 시 변경사항 버리고 이동
+      */}
+      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLeaveConfirm}>이탈</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

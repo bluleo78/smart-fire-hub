@@ -466,4 +466,156 @@ test.describe('쿼리 에디터 페이지', () => {
     // 쿼리 목록 페이지로 이동되어야 한다
     await expect(page).toHaveURL('/analytics/queries');
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #57
+   * SQL 입력 후 뒤로가기 클릭 시 저장 확인 다이얼로그 없이 변경사항이 소실되는 문제.
+   * isDirty 상태 + 뒤로가기 버튼 onClick 인터셉트 + AlertDialog로 이탈 전 사용자 확인.
+   *
+   * 주의: CodeMirror 에디터 내부 입력은 .cm-content를 클릭한 뒤 keyboard.type으로 수행한다.
+   * (Playwright의 fill은 contenteditable에 동작하지 않음)
+   */
+  test.describe('이슈 #57 — 미저장 변경 이탈 가드', () => {
+    test('변경 사항이 없으면 뒤로가기 클릭 시 즉시 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupQueryEditorMocks(page, 1);
+      // 목록 이동 후 렌더링용 빈 쿼리 목록 응답
+      await mockApi(page, 'GET', '/api/v1/analytics/queries', {
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0,
+      });
+
+      await page.goto('/analytics/queries/1');
+      await expect(page.getByText('테스트 쿼리')).toBeVisible();
+
+      // 미저장 표시는 없어야 한다 (초기 로드는 dirty가 아님)
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      // 뒤로가기 버튼 클릭 (aria-label로 안정적으로 식별)
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      // 다이얼로그 없이 즉시 이동
+      await expect(page).toHaveURL('/analytics/queries');
+    });
+
+    test('SQL 입력 후 뒤로가기 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      // SQL 입력 → CodeMirror onChange → markDirty
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+
+      // 미저장 변경사항 인디케이터 표시
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 뒤로가기 클릭 → AlertDialog 표시
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(
+        page.getByRole('heading', { name: '저장하지 않은 변경사항' }),
+      ).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+
+      // URL이 변경되지 않아야 함 (아직 차단된 상태)
+      await expect(page).toHaveURL('/analytics/queries/new');
+    });
+
+    test('이탈 확인 다이얼로그에서 취소를 누르면 페이지에 머무른다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      // AlertDialog 내 '취소' 버튼 클릭
+      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+
+      // 다이얼로그 닫힘 + 페이지 유지 + 변경사항 보존
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL('/analytics/queries/new');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    });
+
+    test('이탈 확인 다이얼로그에서 이탈을 누르면 쿼리 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+      await mockApi(page, 'GET', '/api/v1/analytics/queries', {
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0,
+      });
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      // '이탈' 버튼 클릭 → navigate('/analytics/queries')
+      await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+
+      // 쿼리 목록으로 이동
+      await expect(page).toHaveURL('/analytics/queries');
+    });
+
+    test('새 쿼리 저장 후 뒤로가기 클릭 시 다이얼로그 없이 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+      // 저장 성공 후 navigate(`/analytics/queries/${created.id}`) → savedQuery 조회 모킹 필요
+      await mockApi(page, 'POST', '/api/v1/analytics/queries', createSavedQuery({ id: 99, name: '새 쿼리' }));
+      await mockApi(page, 'GET', '/api/v1/analytics/queries/99', createSavedQuery({ id: 99, name: '새 쿼리' }));
+      await mockApi(page, 'GET', '/api/v1/analytics/queries', {
+        content: [],
+        page: 0,
+        size: 20,
+        totalElements: 0,
+        totalPages: 0,
+      });
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      // SQL 입력 → dirty
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 저장 다이얼로그 → 저장
+      await page.getByRole('button', { name: '저장' }).click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+
+      // 저장 후 isDirty=false → 미저장 표시 사라짐
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      // 뒤로가기 → 다이얼로그 없이 이동
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page).toHaveURL('/analytics/queries');
+    });
+  });
 });
