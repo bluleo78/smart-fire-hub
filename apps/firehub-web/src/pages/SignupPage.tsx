@@ -87,9 +87,11 @@ export default function SignupPage() {
               htmlFor="name"
               error={errors.name?.message}
             >
+              {/* maxLength={100}: DB 컬럼 제약과 맞춰 브라우저 레벨에서 입력 자체를 100자로 제한 */}
               <Input
                 id="name"
                 type="text"
+                maxLength={100}
                 {...register('name')}
               />
             </FormField>

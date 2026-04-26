@@ -159,6 +159,10 @@ export function ChannelCard({ setting }: ChannelCardProps) {
     updatePreference.mutate(
       { channel, enabled: checked },
       {
+        onSuccess: () => {
+          // 활성화/비활성화 여부에 따라 적절한 성공 메시지를 표시한다
+          toast.success(checked ? `${label} 채널이 활성화되었습니다.` : `${label} 채널이 비활성화되었습니다.`);
+        },
         onError: () => {
           toast.error('채널 설정 변경에 실패했습니다.');
         },

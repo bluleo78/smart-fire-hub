@@ -106,6 +106,51 @@ test.describe('채널 설정 페이지', () => {
     expect(req.payload).toMatchObject({ enabled: false });
   });
 
+  /**
+   * 회귀 테스트: 채널 토글 성공 시 한국어 성공 토스트가 표시되어야 한다 (#36)
+   * - EMAIL 토글 OFF → "이메일 채널이 비활성화되었습니다." 토스트 표시
+   * - EMAIL 토글 ON → "이메일 채널이 활성화되었습니다." 토스트 표시
+   */
+  test('EMAIL 토글 OFF 성공 → "이메일 채널이 비활성화되었습니다." 토스트 표시 (refs #36)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    // PATCH 성공 응답 모킹 (204 No Content)
+    await mockApi(page, 'PATCH', '/api/v1/channels/settings/EMAIL/preference', {}, { status: 204 });
+
+    await page.goto('/settings/channels');
+    await expect(page.getByText('이메일', { exact: true })).toBeVisible();
+
+    const emailToggle = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(emailToggle).toBeChecked(); // 초기값: enabled=true
+
+    // 토글 OFF → 성공 토스트 검증
+    await emailToggle.click();
+    await expect(page.getByText('이메일 채널이 비활성화되었습니다.')).toBeVisible();
+  });
+
+  test('EMAIL 토글 ON 성공 → "이메일 채널이 활성화되었습니다." 토스트 표시 (refs #36)', async ({
+    authenticatedPage: page,
+  }) => {
+    // EMAIL을 enabled: false 상태로 오버라이드
+    const disabledSettings: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'EMAIL' ? { ...s, enabled: false } : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', disabledSettings);
+    // PATCH 성공 응답 모킹
+    await mockApi(page, 'PATCH', '/api/v1/channels/settings/EMAIL/preference', {}, { status: 204 });
+
+    await page.goto('/settings/channels');
+    await expect(page.getByText('이메일', { exact: true })).toBeVisible();
+
+    const emailToggle = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(emailToggle).not.toBeChecked(); // 초기값: enabled=false
+
+    // 토글 ON → 성공 토스트 검증
+    await emailToggle.click();
+    await expect(page.getByText('이메일 채널이 활성화되었습니다.')).toBeVisible();
+  });
+
   test('SLACK needsReauth 상태 — "재연결" 버튼과 주황 배지가 표시된다', async ({
     authenticatedPage: page,
   }) => {

@@ -149,6 +149,36 @@ test.describe('회원가입 페이지', () => {
     await expect(page).toHaveURL(/\/signup/);
   });
 
+  test('이름 100자 초과 입력 시 클라이언트 유효성 에러를 표시하고 API를 호출하지 않는다', async ({
+    authMockedPage: page,
+  }) => {
+    // API 호출 여부를 감시 — 클라이언트 Zod 검증이 막아야 하므로 호출되면 안 된다
+    let apiCalled = false;
+    await page.route('**/api/v1/auth/signup', (route) => {
+      apiCalled = true;
+      return route.continue();
+    });
+
+    await page.goto('/signup');
+
+    // 유효한 아이디·비밀번호 입력 후 이름에만 101자 초과 값 설정
+    await page.getByLabel('아이디 (이메일)').fill('newtest2@example.com');
+    await page.getByLabel('비밀번호').fill('Password1a');
+    // maxLength=100 속성이 있어 브라우저가 100자로 잘라내므로 먼저 maxlength 제거 후 fill 사용
+    // fill()은 React Hook Form이 감지하는 네이티브 이벤트를 정상적으로 발생시킨다
+    const nameInput = page.getByLabel('이름');
+    await nameInput.evaluate((el: HTMLInputElement) => el.removeAttribute('maxlength'));
+    await nameInput.fill('가'.repeat(101));
+
+    await page.getByRole('button', { name: '회원가입' }).click();
+
+    // Zod max(100) 에러 메시지가 이름 필드 아래에 표시되어야 한다
+    await expect(page.getByText('이름은 100자 이하여야 합니다')).toBeVisible();
+    // 클라이언트 검증으로 차단 — API 미호출, 여전히 회원가입 페이지에 머무름
+    expect(apiCalled).toBe(false);
+    await expect(page).toHaveURL(/\/signup/);
+  });
+
   test('로그인 링크 클릭 시 /login으로 이동한다', async ({ authMockedPage: page }) => {
     await page.goto('/signup');
 
