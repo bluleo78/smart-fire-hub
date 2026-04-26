@@ -127,7 +127,7 @@ export function ChatInput({
     }
   };
 
-  const handleInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
+  const handleInput = (e: React.InputEvent<HTMLTextAreaElement>) => {
     const target = e.currentTarget;
     target.style.height = 'auto';
     target.style.height = `${Math.min(target.scrollHeight, 150)}px`;
