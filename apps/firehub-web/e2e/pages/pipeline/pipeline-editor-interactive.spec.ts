@@ -249,4 +249,35 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     expect(capturedPayload).not.toBeNull();
     expect((capturedPayload as unknown as Record<string, unknown>)['name']).toBe('새 파이프라인 이름');
   });
+
+  /**
+   * @xyflow/react 기본 Controls는 영문 aria-label('Zoom In/Out', 'Fit View',
+   * 'Toggle Interactivity')을 사용한다. ReactFlow의 ariaLabelConfig prop으로
+   * 한국어 라벨을 주입했는지(i18n 일관성) 회귀 검증한다. (#72)
+   */
+  test('DAG 컨트롤 패널 — 4개 버튼 모두 한국어 aria-label로 노출된다 (#72)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 편집 모드 진입 → showInteractive 버튼까지 4개 모두 보이는 상태
+    await page.getByRole('button', { name: '수정' }).click();
+
+    // 컨트롤 컨테이너 자체에 한국어 aria-label
+    await expect(page.getByLabel('다이어그램 컨트롤')).toBeVisible();
+
+    // 4개 버튼 한국어 aria-label
+    await expect(page.getByRole('button', { name: '확대' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '축소' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '전체 보기' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '상호작용 잠금/해제' })).toBeVisible();
+
+    // 회귀 방지: 영문 라벨이 더 이상 노출되지 않아야 한다
+    await expect(page.getByRole('button', { name: 'Zoom In' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Zoom Out' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Fit View' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Toggle Interactivity' })).toHaveCount(0);
+  });
 });

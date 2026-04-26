@@ -180,6 +180,7 @@ export function PipelineCanvas({
         fitView
         fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
         proOptions={{ hideAttribution: true }}
+        ariaLabelConfig={KO_ARIA_LABEL_CONFIG}
       >
         <Background color={resolvedTheme === 'dark' ? 'oklch(1 0 0 / 8%)' : undefined} />
         <Controls showInteractive={!readOnly} />
@@ -211,3 +212,17 @@ export function PipelineCanvas({
     </div>
   );
 }
+
+/**
+ * @xyflow/react 컨트롤 패널/접근성 라벨의 한국어 i18n 설정.
+ * ReactFlow의 ariaLabelConfig prop으로 전달하면 Controls 4개 버튼
+ * (zoomIn/zoomOut/fitView/interactive) 및 컨트롤/노드/엣지 컨테이너의
+ * aria-label/title이 한국어로 노출된다.
+ */
+const KO_ARIA_LABEL_CONFIG = {
+  'controls.ariaLabel': '다이어그램 컨트롤',
+  'controls.zoomIn.ariaLabel': '확대',
+  'controls.zoomOut.ariaLabel': '축소',
+  'controls.fitView.ariaLabel': '전체 보기',
+  'controls.interactive.ariaLabel': '상호작용 잠금/해제',
+} as const;
