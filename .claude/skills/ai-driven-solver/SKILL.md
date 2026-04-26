@@ -126,7 +126,10 @@ playwright-cli -s=$SESSION state-load .playwright-cli/state.json
    → test-results/issues/<이슈번호>/before.png
 ```
 
-playwright-cli 명령이 막히면 explorer 스킬의 `references/pitfalls.md` 참고 (오버레이/Radix UI/React 입력 등 14가지 함정 정리됨).
+playwright-cli 명령이 막히면 explorer 스킬의 `references/pitfalls.md` 참고 (오버레이/Radix UI/React 입력 등 함정 정리됨).
+
+> **함정 #16**: PipelineEditorPage 등 unsaved-change 가드가 있는 페이지에서 이탈 시 `beforeunload` 다이얼로그가 뜨면 이후 모든 명령이 블록된다.
+> 이탈 직전 `playwright-cli -s=$SESSION eval "window.onbeforeunload = null"` 을 실행하여 가드를 해제하라.
 
 **mock 사용 규칙**: 실제 백엔드 없이 특정 SSE 이벤트 시퀀스를 재현해야 하는 경우(예: 서버가 tool_result 없이 done을 보내는 케이스), `page.route()`로 해당 시퀀스를 모킹할 수 있다. 단, **사용자에게 반드시 다음을 명시**해야 한다:
 - mock을 사용하는 이유

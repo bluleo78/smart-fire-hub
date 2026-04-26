@@ -35,8 +35,14 @@ export default function LoginPage() {
       await login(data);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        setServerError(errData.message || '로그인에 실패했습니다.');
+        // 401 응답은 서버 영문 메시지 대신 한국어 고정 메시지로 교체
+        // (서버가 "Invalid username or password" 영문 메시지를 반환하기 때문)
+        if (error.response.status === 401) {
+          setServerError('이메일 또는 비밀번호가 올바르지 않습니다.');
+        } else {
+          const errData = error.response.data as ErrorResponse;
+          setServerError(errData.message || '로그인에 실패했습니다.');
+        }
       } else {
         setServerError('로그인에 실패했습니다.');
       }

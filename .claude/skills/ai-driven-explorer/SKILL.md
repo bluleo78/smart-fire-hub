@@ -85,6 +85,10 @@ playwright-cli -s=$SESSION eval "window.location.href='/target-path'"
 sleep 1.5
 ```
 
+> **함정 #16**: PipelineEditorPage 등 unsaved-change 가드가 있는 페이지에서 이탈 시 `beforeunload` 다이얼로그가 뜨면 이후 모든 명령이 블록된다.
+> 이탈 직전 `playwright-cli -s=$SESSION eval "window.onbeforeunload = null"` 을 실행하여 가드를 해제하라.
+> 자세한 해결법은 `references/pitfalls.md` #16 참조.
+
 ## 2. 테스트 대상 파악 — 컴포넌트 인벤토리 구성
 
 탐색적 테스트는 랜덤 클릭이 아니다. **"어디를 테스트할지"는 계획, "어떻게 테스트할지"는 자유**다.

@@ -54,10 +54,11 @@ test.describe('로그인 페이지', () => {
   });
 
   test('로그인 실패 시 에러 메시지를 표시한다', async ({ authMockedPage: page }) => {
-    // 로그인 API를 401 에러로 오버라이드
+    // 로그인 API를 서버의 실제 영문 메시지가 포함된 401 에러로 오버라이드
+    // 수정 목적: 서버 영문 메시지("Invalid username or password")가 그대로 노출되는 버그 검증 (#31)
     await mockApi(page, 'POST', '/api/v1/auth/login', {
       status: 401,
-      message: '아이디 또는 비밀번호가 올바르지 않습니다.',
+      message: 'Invalid username or password',
     }, { status: 401 });
 
     await page.goto('/login');
@@ -69,10 +70,12 @@ test.describe('로그인 페이지', () => {
     // 로그인 버튼 클릭
     await page.getByRole('button', { name: '로그인' }).click();
 
-    // 에러 메시지 표시 확인
+    // 401 응답 시 서버 영문 메시지 대신 한국어 고정 메시지가 표시되는지 확인
     await expect(
-      page.getByText('아이디 또는 비밀번호가 올바르지 않습니다.'),
+      page.getByText('이메일 또는 비밀번호가 올바르지 않습니다.'),
     ).toBeVisible();
+    // 서버 영문 메시지가 그대로 노출되지 않는지 확인
+    await expect(page.getByText('Invalid username or password')).not.toBeVisible();
 
     // 여전히 로그인 페이지에 머물러 있는지 확인
     await expect(page).toHaveURL(/\/login/);

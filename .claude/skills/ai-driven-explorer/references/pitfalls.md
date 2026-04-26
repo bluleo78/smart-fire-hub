@@ -160,3 +160,27 @@ playwright-cli run-code "await page.goto('http://localhost:5173/pipelines')"
 playwright-cli eval "window.location.href='/pipelines'"
 sleep 1.5  # 라우팅 완료 대기 필수
 ```
+
+## 16. `beforeunload` 다이얼로그가 자동 탐색을 막는 경우
+증상: PipelineEditorPage 등 unsaved-change 가드가 있는 페이지에서 `eval "window.location.href=..."` 실행 시
+브라우저 이탈 확인 다이얼로그("사이트를 새로고침하시겠습니까?")가 떠서 다음 명령이 모두 블록됨.
+
+해결: 세션 오픈 직후 또는 해당 페이지 진입 직전에 `beforeunload` 리스너를 제거한다.
+
+```bash
+# 브라우저 오픈 + 로그인 후 즉시 실행 — beforeunload 가드 전역 해제
+playwright-cli -s=$SESSION run-code "
+  window.addEventListener('beforeunload', (e) => { e.stopImmediatePropagation(); }, true);
+"
+
+# 또는 이미 PipelineEditorPage에 진입한 경우 이탈 직전에 실행
+playwright-cli -s=$SESSION eval "window.onbeforeunload = null"
+playwright-cli -s=$SESSION run-code "
+  window.removeEventListener('beforeunload', window._beforeUnloadHandler);
+"
+# 그래도 안 되면 eval로 직접 제거
+playwright-cli -s=$SESSION eval "(()=>{ const old=window.onbeforeunload; window.onbeforeunload=null; })()"
+```
+
+**중요**: 이 함정은 unsaved-change 가드가 있는 모든 에디터 페이지에서 발생한다.
+PipelineEditorPage, 기타 폼 에디터 등 진입 후 이탈 시 반드시 위 해제 코드를 먼저 실행하라.
