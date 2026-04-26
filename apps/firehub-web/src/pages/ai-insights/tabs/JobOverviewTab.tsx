@@ -53,6 +53,8 @@ interface JobOverviewTabProps {
   isEditing: boolean;
   form: UseFormReturn<ProactiveJobFormValues>;
   templates: ReportTemplate[];
+  /** 사용자 입력으로 폼이 변경됐을 때 호출 — 이탈 가드용 dirty 마킹 (이슈 #59) */
+  onChange?: () => void;
 }
 
 function ReadonlyCard({ label, value }: { label: string; value: React.ReactNode }) {
@@ -94,8 +96,10 @@ function generateAutoTemplate(question: string): TemplateSection[] {
   ];
 }
 
-export default function JobOverviewTab({ job, isNew, isEditing, form, templates }: JobOverviewTabProps) {
+export default function JobOverviewTab({ job, isNew, isEditing, form, templates, onChange }: JobOverviewTabProps) {
   const { register, watch, setValue, formState: { errors } } = form;
+  // dirty 마킹 헬퍼 — onChange가 없으면 no-op (이슈 #59)
+  const markDirty = useCallback(() => onChange?.(), [onChange]);
   const channels = watch('config.channels');
   const cronExpression = watch('cronExpression');
   const timezone = watch('timezone');
@@ -351,7 +355,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
           id="job-name"
           placeholder="일일 파이프라인 리포트"
           maxLength={200}
-          {...register('name')}
+          {...register('name', { onChange: markDirty })}
         />
         {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
       </div>
@@ -364,7 +368,10 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
             <Label htmlFor="job-template">리포트 템플릿 (선택)</Label>
             <Select
               value={watch('templateId') ? String(watch('templateId')) : 'none'}
-              onValueChange={(v) => setValue('templateId', v === 'none' ? null : Number(v))}
+              onValueChange={(v) => {
+                markDirty();
+                setValue('templateId', v === 'none' ? null : Number(v));
+              }}
             >
               <SelectTrigger id="job-template">
                 <SelectValue placeholder="템플릿 선택 (없으면 기본)" />
@@ -387,7 +394,10 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
         <Label htmlFor="job-trigger-type">트리거 유형</Label>
         <Select
           value={watch('triggerType') ?? 'SCHEDULE'}
-          onValueChange={(v) => setValue('triggerType', v as TriggerType)}
+          onValueChange={(v) => {
+            markDirty();
+            setValue('triggerType', v as TriggerType);
+          }}
         >
           <SelectTrigger id="job-trigger-type">
             <SelectValue placeholder="트리거 유형 선택" />
@@ -415,7 +425,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
             id="job-prompt"
             rows={4}
             placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
-            {...register('prompt')}
+            {...register('prompt', { onChange: markDirty })}
           />
           {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
         </div>
@@ -428,6 +438,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
           <Select
             value={cronPreset}
             onValueChange={(v) => {
+              markDirty();
               // __custom__ 선택 시 cronExpression을 빈 값으로 설정해 커스텀 입력 필드를 표시 (#43)
               if (v === '__custom__') setValue('cronExpression', '');
               else setValue('cronExpression', v);
@@ -447,7 +458,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
               <Input
                 placeholder="0 9 * * *"
                 className="font-mono text-sm"
-                {...register('cronExpression')}
+                {...register('cronExpression', { onChange: markDirty })}
               />
               <p className="text-xs text-muted-foreground">Cron 표현식 (분 시 일 월 요일)</p>
             </div>
@@ -464,7 +475,10 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
           <Label htmlFor="job-timezone">타임존</Label>
           <Select
             value={timezone}
-            onValueChange={(v) => setValue('timezone', v)}
+            onValueChange={(v) => {
+              markDirty();
+              setValue('timezone', v);
+            }}
           >
             <SelectTrigger id="job-timezone">
               <SelectValue placeholder="타임존 선택" />
@@ -495,7 +509,10 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates 
         <Label>전달 채널 및 수신자</Label>
         <ChannelRecipientEditor
           channels={channels}
-          onChange={(updated) => setValue('config.channels', updated)}
+          onChange={(updated) => {
+            markDirty();
+            setValue('config.channels', updated);
+          }}
         />
       </div>
 

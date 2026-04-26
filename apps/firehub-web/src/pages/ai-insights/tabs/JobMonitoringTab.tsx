@@ -70,6 +70,8 @@ interface JobMonitoringTabProps {
   isEditing: boolean;
   /** 이상 탐지 이력 조회용 작업 ID (신규 작업이면 0) */
   jobId?: number;
+  /** 사용자 입력으로 폼이 변경됐을 때 호출 — 이탈 가드용 dirty 마킹 (이슈 #59) */
+  onChange?: () => void;
 }
 
 /** 이상 탐지 이력 섹션 컴포넌트 */
@@ -137,7 +139,7 @@ function AnomalyHistorySection({ jobId }: { jobId: number }) {
   );
 }
 
-export default function JobMonitoringTab({ form, isEditing, jobId = 0 }: JobMonitoringTabProps) {
+export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange }: JobMonitoringTabProps) {
   const { watch, setValue } = form;
   const anomalyConfig: AnomalyConfig = (watch('config.anomaly') as AnomalyConfig | undefined) ?? DEFAULT_ANOMALY_CONFIG;
 
@@ -154,6 +156,8 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0 }: JobMoni
   const datasets = datasetsPage?.content ?? [];
 
   const updateAnomaly = (patch: Partial<AnomalyConfig>) => {
+    // 이상 탐지 설정 변경 시 이탈 가드용 dirty 마킹 (이슈 #59)
+    onChange?.();
     setValue('config.anomaly', { ...anomalyConfig, ...patch }, { shouldDirty: true });
   };
 

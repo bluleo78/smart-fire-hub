@@ -591,4 +591,149 @@ test.describe('스마트 작업 상세 페이지', () => {
     await page.getByText('시스템 메트릭 추가').click();
     await expect(page.getByRole('option', { name: '파이프라인 실패율' })).not.toBeVisible();
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #59
+   * 스마트 작업 편집 중 뒤로가기/취소 클릭 시 저장 확인 다이얼로그 없이 변경사항이 소실되는 문제.
+   * isDirty 상태 + 뒤로가기/취소 버튼 onClick 인터셉트 + AlertDialog로 이탈 전 사용자 확인.
+   */
+  test.describe('이슈 #59 — 미저장 변경 이탈 가드', () => {
+    test('편집 모드가 아니면 뒤로가기 클릭 시 즉시 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupJobDetailMocks(page, 1);
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 1 })]);
+
+      await page.goto('/ai-insights/jobs/1');
+      await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+
+      // 편집 모드 진입 안 함 → 미저장 표시 없음
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      // 뒤로가기 클릭 → 다이얼로그 없이 즉시 이동
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+    });
+
+    test('편집 모드에서 작업명 변경 후 뒤로가기 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupJobDetailMocks(page, 1);
+
+      await page.goto('/ai-insights/jobs/1');
+      await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+
+      // 편집 모드 진입
+      await page.getByRole('button', { name: '편집' }).click();
+
+      // 작업명 변경 → isDirty=true 트리거
+      await page.locator('#job-name').fill('수정된 작업명');
+
+      // 미저장 변경사항 인디케이터 표시
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 뒤로가기 클릭 → AlertDialog 표시
+      await page.getByRole('button', { name: '목록으로' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: '저장하지 않은 변경사항' }),
+      ).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+
+      // URL은 아직 변경되지 않아야 함
+      await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);
+    });
+
+    test('이탈 확인 다이얼로그에서 취소를 누르면 페이지에 머무르고 입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupJobDetailMocks(page, 1);
+
+      await page.goto('/ai-insights/jobs/1');
+      await page.getByRole('button', { name: '편집' }).click();
+      await page.locator('#job-name').fill('수정된 작업명');
+      await page.getByRole('button', { name: '목록으로' }).click();
+
+      // AlertDialog 내 '취소' 버튼 클릭
+      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+
+      // 다이얼로그 닫힘 + 페이지 유지 + 입력값 보존 + dirty 표시 유지
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);
+      await expect(page.locator('#job-name')).toHaveValue('수정된 작업명');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    });
+
+    test('이탈 확인 다이얼로그에서 이탈을 누르면 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupJobDetailMocks(page, 1);
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 1 })]);
+
+      await page.goto('/ai-insights/jobs/1');
+      await page.getByRole('button', { name: '편집' }).click();
+      await page.locator('#job-name').fill('수정된 작업명');
+      await page.getByRole('button', { name: '목록으로' }).click();
+
+      // '이탈' 버튼 클릭 → 변경사항 버리고 목록으로 이동
+      await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+    });
+
+    test('편집 모드에서 변경 후 취소 버튼 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupJobDetailMocks(page, 1);
+
+      await page.goto('/ai-insights/jobs/1');
+      await page.getByRole('button', { name: '편집' }).click();
+
+      // 작업명 변경 → dirty 트리거
+      await page.locator('#job-name').fill('수정된 작업명');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 취소 버튼 클릭 → AlertDialog 표시 (페이지 이탈이 아닌 편집 취소도 가드)
+      await page.getByRole('button', { name: '취소' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: '저장하지 않은 변경사항' }),
+      ).toBeVisible();
+
+      // URL은 그대로 유지 (페이지 이탈 아님)
+      await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);
+    });
+
+    test('작업 저장 성공 후 미저장 표시가 사라진다', async ({ authenticatedPage: page }) => {
+      // 작업 수정 모킹 — PUT 응답을 그대로 내려준다
+      const updatedJob = createJob({ id: 1, name: '수정된 매일 현황 리포트' });
+      await setupJobDetailMocks(page, 1);
+      await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', updatedJob);
+
+      await page.goto('/ai-insights/jobs/1');
+      await expect(page.getByRole('heading', { name: '매일 현황 리포트' })).toBeVisible();
+
+      // 편집 모드 진입 + 작업명 변경
+      await page.getByRole('button', { name: '편집' }).click();
+      await page.locator('#job-name').fill('수정된 매일 현황 리포트');
+
+      // 저장 전 dirty 표시 확인
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 저장 버튼 클릭
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 저장 성공 → dirty 해제 → 미저장 표시 사라짐
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible({ timeout: 5000 });
+
+      // 뒤로가기 클릭 시 다이얼로그 없이 즉시 이동 가능 (저장 후이므로)
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs', [updatedJob]);
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+    });
+  });
 });

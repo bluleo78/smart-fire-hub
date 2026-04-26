@@ -1,10 +1,20 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -97,6 +107,17 @@ export default function ProactiveJobDetailPage() {
 
   const [isEditing, setIsEditing] = useState(isNew);
 
+  // 사용자 상호작용 후 변경 여부 추적 (이슈 #59)
+  // - 초기 로드(values 동기화)는 변경으로 간주하지 않기 위해 명시적으로 markDirty()를 호출
+  // - 작업명/프롬프트/템플릿/트리거/주기/타임존/채널/이상 탐지 설정 등 편집 모드 입력 시 dirty=true
+  const [isDirty, setIsDirty] = useState(false);
+  const markDirty = useCallback(() => setIsDirty(true), []);
+
+  // 이탈 확인 다이얼로그 상태 — 뒤로가기/취소 클릭 시 dirty면 오픈 (이슈 #59)
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  // 이탈 다이얼로그 확인 후 실행할 동작 — 'back'(목록 이동) 또는 'cancel-edit'(편집 취소)
+  const [leaveAction, setLeaveAction] = useState<'back' | 'cancel-edit'>('back');
+
   const form = useForm<ProactiveJobFormValues>({
     resolver: zodResolver(proactiveJobSchema),
     values: buildDefaultValues(job),
@@ -110,6 +131,55 @@ export default function ProactiveJobDetailPage() {
 
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab });
+  };
+
+  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (이슈 #59 — #56/#57/#58과 동일 패턴)
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동 (이슈 #59)
+  const handleBackClick = () => {
+    if (isDirty) {
+      setLeaveAction('back');
+      setLeaveDialogOpen(true);
+    } else {
+      navigate('/ai-insights/jobs');
+    }
+  };
+
+  // 편집 취소 본 동작 — 폼 초기화 후 읽기 모드로 복귀 (이슈 #59)
+  const performCancelEdit = useCallback(() => {
+    if (job) {
+      form.reset(buildDefaultValues(job));
+    }
+    setIsEditing(false);
+    setIsDirty(false);
+  }, [form, job]);
+
+  // 취소 버튼 클릭 — dirty면 다이얼로그 표시, 아니면 즉시 취소 (이슈 #59)
+  const handleCancelEdit = () => {
+    if (isDirty) {
+      setLeaveAction('cancel-edit');
+      setLeaveDialogOpen(true);
+    } else {
+      performCancelEdit();
+    }
+  };
+
+  // 다이얼로그에서 '이탈' 클릭 — leaveAction에 따라 분기 (이슈 #59)
+  const handleLeaveConfirm = () => {
+    setLeaveDialogOpen(false);
+    setIsDirty(false);
+    if (leaveAction === 'back') {
+      navigate('/ai-insights/jobs');
+    } else {
+      performCancelEdit();
+    }
   };
 
   const handleSave = form.handleSubmit(async (values) => {
@@ -127,6 +197,8 @@ export default function ProactiveJobDetailPage() {
       createMutation.mutate(payload, {
         onSuccess: (created) => {
           toast.success('작업이 생성되었습니다.');
+          // 저장 성공 → dirty 해제 후 신규 작업 상세로 이동 (이슈 #59)
+          setIsDirty(false);
           setIsEditing(false);
           navigate(`/ai-insights/jobs/${created.id}`);
         },
@@ -138,6 +210,8 @@ export default function ProactiveJobDetailPage() {
         {
           onSuccess: () => {
             toast.success('작업이 저장되었습니다.');
+            // 저장 성공 → dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
+            setIsDirty(false);
             setIsEditing(false);
           },
           onError: (err) => handleApiError(err, '작업 저장에 실패했습니다.'),
@@ -233,7 +307,7 @@ export default function ProactiveJobDetailPage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate('/ai-insights/jobs')}
+            onClick={handleBackClick}
             aria-label="목록으로"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -242,14 +316,20 @@ export default function ProactiveJobDetailPage() {
             <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">
               {isNew ? '새 스마트 작업' : (job?.name ?? '-')}
             </h1>
-            {!isNew && job && (
-              <Badge
-                variant={job.enabled ? 'default' : 'secondary'}
-                className="mt-1"
-              >
-                {job.enabled ? '활성' : '비활성'}
-              </Badge>
-            )}
+            <div className="flex items-center gap-2 mt-1">
+              {!isNew && job && (
+                <Badge variant={job.enabled ? 'default' : 'secondary'}>
+                  {job.enabled ? '활성' : '비활성'}
+                </Badge>
+              )}
+              {/* 미저장 변경사항 표시 — #56/#57/#58과 동일 시각 패턴 (이슈 #59) */}
+              {isDirty && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <span className="text-muted-foreground">●</span>
+                  미저장 변경사항
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -296,7 +376,7 @@ export default function ProactiveJobDetailPage() {
           {isEditing && (
             <>
               {!isNew && (
-                <Button variant="outline" size="sm" onClick={() => setIsEditing(false)}>
+                <Button variant="outline" size="sm" onClick={handleCancelEdit}>
                   취소
                 </Button>
               )}
@@ -327,6 +407,7 @@ export default function ProactiveJobDetailPage() {
             isEditing={isEditing}
             form={form}
             templates={templates}
+            onChange={markDirty}
           />
         </TabsContent>
 
@@ -335,6 +416,7 @@ export default function ProactiveJobDetailPage() {
             form={form}
             isEditing={isEditing}
             jobId={jobId}
+            onChange={markDirty}
           />
         </TabsContent>
 
@@ -344,6 +426,25 @@ export default function ProactiveJobDetailPage() {
           </TabsContent>
         )}
       </Tabs>
+
+      {/*
+        이탈 확인 다이얼로그 — 뒤로가기/취소 클릭 시 dirty면 표시 (이슈 #59)
+        취소 시 머무름, 확인 시 변경사항 버리고 이탈/취소 동작 실행
+      */}
+      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLeaveConfirm}>이탈</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
