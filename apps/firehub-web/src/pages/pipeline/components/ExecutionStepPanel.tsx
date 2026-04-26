@@ -77,8 +77,14 @@ function StepDetails({
         {step.errorMessage && (
           <>
             <Separator />
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-xs font-medium">에러</p>
+            {/* 에러 섹션: 사용자 친화적 안내 + 기술적 원문을 스크롤 영역에 표시 */}
+            <div className="space-y-2">
+              <p className="text-muted-foreground text-xs font-medium">오류 상세</p>
+              {/* 일반 사용자를 위한 친화적 안내 메시지 */}
+              <p className="text-xs text-muted-foreground">
+                스텝 실행 중 오류가 발생했습니다. 아래 오류 정보를 참고하여 스텝 설정을 확인하세요.
+              </p>
+              {/* 개발자 디버깅용 기술적 원문 — 최대 높이 제한 + 스크롤 */}
               <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
                 {step.errorMessage}
               </pre>

@@ -4,7 +4,7 @@
  * ExecutionStepPanel 컴포넌트의 주요 렌더링 경로를 검증한다:
  * - 스텝 미선택 시 ExecutionSummary (실행 전체 정보) 표시
  * - 스텝 클릭 시 StepDetails (스텝별 상세 정보) 표시
- * - FAILED 스텝의 에러 메시지 표시
+ * - FAILED 스텝의 에러 메시지 표시 (사용자 친화적 안내 + "오류 상세" 제목)
  * - 로그가 있는 스텝의 로그 표시
  */
 
@@ -113,5 +113,51 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
 
     // FAILED 스텝이 있으므로 실패 현황이 표시되어야 한다
     await expect(page.getByText(/실패 \d+/)).toBeVisible();
+  });
+
+  test('FAILED 스텝 선택 시 오류 상세 제목과 사용자 친화적 안내 메시지가 표시된다', async ({ authenticatedPage: page }) => {
+    // 기술적 오류 메시지가 "오류 상세" 섹션 제목 + 안내 메시지와 함께 표시되는지 검증 (이슈 #51)
+    await setupPipelineEditorMocks(page, 1);
+
+    // FAILED 스텝 포함 실행 상세
+    const technicalErrorMsg = 'Invalid name: ?column?. Must match [a-z][a-z0-9_]*';
+    const detail = createExecutionDetail({
+      id: 1,
+      pipelineId: 1,
+      status: 'FAILED',
+      stepExecutions: [
+        createStepExecution({
+          id: 1,
+          stepName: '데이터 추출',
+          status: 'FAILED',
+          errorMessage: technicalErrorMsg,
+          completedAt: '2024-01-01T00:00:10Z',
+        }),
+      ],
+      startedAt: '2024-01-01T00:00:00Z',
+      completedAt: '2024-01-01T00:00:10Z',
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+
+    // 실행 행 클릭 → 실행 상세뷰(DAG + 사이드패널) 진입
+    const rows = page.getByRole('row');
+    await rows.nth(1).click();
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+
+    // DAG 노드 클릭 → StepDetails 패널로 전환
+    const stepNode = page.locator('.react-flow__node').first();
+    await stepNode.click();
+
+    // "오류 상세" 섹션 제목이 표시되어야 한다 (이전: "에러")
+    await expect(page.getByText('오류 상세')).toBeVisible({ timeout: 5000 });
+
+    // 사용자 친화적 안내 메시지가 표시되어야 한다
+    await expect(page.getByText(/스텝 실행 중 오류가 발생했습니다/)).toBeVisible();
+
+    // 기술적 원문은 그대로 표시되어야 한다 (개발자 디버깅용, 숨기지 않음)
+    await expect(page.getByText(technicalErrorMsg)).toBeVisible();
   });
 });
