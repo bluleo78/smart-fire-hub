@@ -224,6 +224,25 @@ test.describe('프로필 페이지', () => {
   });
 
   /**
+   * 회귀 테스트 (이슈 #70): 비밀번호 변경 폼이 onChange 모드로 동작하여
+   * 제출 전(입력 도중)에도 새/확인 비밀번호 불일치 에러가 인라인으로 즉시 표시된다.
+   * - mode 옵션이 기본값 'onSubmit' 그대로면 submit 전에는 에러가 표시되지 않아 회귀가 발생한다.
+   */
+  test('비밀번호 확인 불일치 → 제출 전에 인라인 에러가 즉시 표시된다 (이슈 #70)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+
+    await expect(page.locator('#new-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#new-password').fill('NewPass456!');
+    await page.locator('#confirm-password').fill('Different999');
+
+    // 포커스를 다음 요소로 이동시켜 onChange 검증을 트리거하고 잠시 대기 (debounce 안전 마진)
+    await page.locator('#confirm-password').blur();
+
+    // submit 버튼을 누르지 않은 상태에서 에러가 노출되어야 한다
+    await expect(page.getByText('비밀번호가 일치하지 않습니다')).toBeVisible({ timeout: 3000 });
+  });
+
+  /**
    * 비밀번호 확인 불일치 → Zod confirmPassword 에러 메시지
    */
   test('비밀번호 확인 불일치 → 유효성 에러 메시지가 표시된다', async ({ authenticatedPage: page }) => {
