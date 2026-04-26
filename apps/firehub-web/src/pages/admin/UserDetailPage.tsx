@@ -6,6 +6,16 @@ import { toast } from 'sonner';
 
 import { rolesApi } from '../../api/roles';
 import { usersApi } from '../../api/users';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -30,6 +40,8 @@ export default function UserDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRoles, setIsSavingRoles] = useState(false);
   const [isTogglingActive, setIsTogglingActive] = useState(false);
+  // 비활성화 확인 다이얼로그 표시 상태 — 활성→비활성 방향일 때만 열린다
+  const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -81,6 +93,10 @@ export default function UserDetailPage() {
     }
   };
 
+  /**
+   * 활성 상태 토글 실행 — AlertDialog 확인 후 호출되거나, 활성화(비활성→활성) 방향에서 직접 호출된다.
+   * 자기 자신의 계정은 비활성화할 수 없다.
+   */
   const handleToggleActive = async () => {
     if (!user) return;
     // 자기 자신의 계정 비활성화 차단 (#73)
@@ -102,6 +118,21 @@ export default function UserDetailPage() {
       }
     } finally {
       setIsTogglingActive(false);
+    }
+  };
+
+  /**
+   * Switch onCheckedChange 핸들러 — 비활성화 방향(활성→비활성)일 때 AlertDialog를 열고,
+   * 활성화 방향(비활성→활성)일 때는 즉시 API를 호출한다. (#50)
+   */
+  const handleSwitchChange = () => {
+    if (!user) return;
+    if (user.isActive) {
+      // 활성 → 비활성: 파괴적 액션이므로 확인 다이얼로그 표시
+      setIsDeactivateDialogOpen(true);
+    } else {
+      // 비활성 → 활성: 즉시 처리
+      void handleToggleActive();
     }
   };
 
@@ -155,6 +186,30 @@ export default function UserDetailPage() {
         </CardContent>
       </Card>
 
+      {/* 비활성화 확인 AlertDialog — 활성→비활성 방향 토글 시에만 표시된다 (#50) */}
+      <AlertDialog open={isDeactivateDialogOpen} onOpenChange={setIsDeactivateDialogOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>사용자 비활성화</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 사용자를 비활성화하면 로그인이 불가합니다. 계속하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setIsDeactivateDialogOpen(false);
+                void handleToggleActive();
+              }}
+            >
+              비활성화
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Card>
         <CardHeader>
           <CardTitle>활성 상태</CardTitle>
@@ -163,7 +218,7 @@ export default function UserDetailPage() {
           <div className="flex items-center gap-3">
             <Switch
               checked={user.isActive}
-              onCheckedChange={handleToggleActive}
+              onCheckedChange={handleSwitchChange}
               disabled={isTogglingActive}
             />
             <Label>{user.isActive ? '활성' : '비활성'}</Label>

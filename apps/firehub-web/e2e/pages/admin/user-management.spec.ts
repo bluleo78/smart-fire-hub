@@ -158,10 +158,6 @@ test.describe('사용자 관리 페이지', () => {
 
   test('활성 상태 토글 스위치가 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupUserDetailMocks(page, 1);
-
-    // 활성 상태 변경 PUT API 캡처 설정 — goto 이전에 등록해야 한다
-    const capture = await mockApi(page, 'PUT', '/api/v1/users/1/active', {}, { capture: true });
-
     await page.goto('/admin/users/1');
 
     // 활성 상태 카드 확인
@@ -170,11 +166,113 @@ test.describe('사용자 관리 페이지', () => {
     // Switch 컴포넌트가 렌더링되는지 확인 (role="switch")
     const toggle = page.getByRole('switch');
     await expect(toggle).toBeVisible();
+  });
 
-    // 스위치 클릭 → PUT /api/v1/users/1/active 호출 확인
+  // #50: 활성→비활성 방향 토글 시 AlertDialog 확인 다이얼로그가 표시되어야 한다
+  test('활성→비활성 토글 시 확인 다이얼로그가 표시된다 (#50)', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+
+    // 활성 상태 변경 PUT API 캡처 설정 — goto 이전에 등록해야 한다
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/users/1/active',
+      { id: 1, isActive: false },
+      { capture: true },
+    );
+
+    await page.goto('/admin/users/1');
+
+    // 활성 상태 스위치 클릭 — 현재 active=true 이므로 비활성화 방향
+    const toggle = page.getByRole('switch');
+    await expect(toggle).toBeVisible();
     await toggle.click();
+
+    // AlertDialog가 열려야 한다 — 즉시 API가 호출되면 안 된다
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('이 사용자를 비활성화하면 로그인이 불가합니다. 계속하시겠습니까?')).toBeVisible();
+
+    // 확인 버튼 클릭 → PUT /api/v1/users/1/active 호출 확인
+    await page.getByRole('button', { name: '비활성화' }).click();
     const req = await capture.waitForRequest();
-    expect(req).toBeTruthy();
+    expect(req.payload).toMatchObject({ active: false });
+  });
+
+  // #50: 확인 다이얼로그에서 취소 시 API 호출 없이 닫혀야 한다
+  test('활성→비활성 토글 확인 다이얼로그에서 취소 시 API 호출되지 않는다 (#50)', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+
+    // API 캡처 — 취소 시 호출되지 않아야 한다
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/users/1/active',
+      { id: 1, isActive: false },
+      { capture: true },
+    );
+
+    await page.goto('/admin/users/1');
+
+    // 스위치 클릭 → AlertDialog 열림
+    const toggle = page.getByRole('switch');
+    await toggle.click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 취소 버튼 클릭 → 다이얼로그 닫힘, API 미호출
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+    // API가 호출되지 않았는지 확인 — 짧은 대기 후에도 요청 없어야 한다 (lastRequest()는 요청 없을 때 undefined 반환)
+    await page.waitForTimeout(300);
+    expect(capture.lastRequest()).toBeUndefined();
+
+    // 스위치 상태가 변경되지 않았는지 확인 (여전히 checked)
+    await expect(toggle).toBeChecked();
+  });
+
+  // #50: 비활성→활성 방향 토글 시 확인 다이얼로그 없이 즉시 API 호출되어야 한다
+  test('비활성→활성 토글 시 즉시 API가 호출된다 (#50)', async ({ authenticatedPage: page }) => {
+    // 비활성 사용자로 모킹
+    const inactiveUser = {
+      id: 1,
+      name: '테스트 사용자',
+      username: 'user1',
+      email: 'user1@example.com',
+      isActive: false,
+      createdAt: '2024-01-01T00:00:00Z',
+      roles: [
+        { id: 1, name: 'USER', description: '일반 사용자', isSystem: true },
+        { id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true },
+      ],
+    };
+    await mockApi(page, 'GET', '/api/v1/users/1', inactiveUser);
+    await mockApi(page, 'GET', '/api/v1/roles', [
+      { id: 1, name: 'USER', description: '일반 사용자', isSystem: true },
+      { id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true },
+    ]);
+
+    // PUT 활성화 응답 캡처
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/users/1/active',
+      { id: 1, isActive: true },
+      { capture: true },
+    );
+
+    await page.goto('/admin/users/1');
+
+    // 스위치 클릭 — 비활성→활성 방향이므로 다이얼로그 없이 즉시 API 호출
+    const toggle = page.getByRole('switch');
+    await expect(toggle).not.toBeChecked();
+    await toggle.click();
+
+    // AlertDialog가 열리지 않아야 한다
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+    // PUT API payload 검증 — active: true 가 전달되어야 한다
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ active: true });
   });
 
   test('사용자 활성 상태 토글 — PUT payload 검증', async ({ authenticatedPage: page }) => {
@@ -192,9 +290,14 @@ test.describe('사용자 관리 페이지', () => {
     await page.goto('/admin/users/1');
 
     // 활성 상태 스위치 클릭 — 현재 active=true 이므로 비활성화로 전환
+    // #50: 비활성화 방향이므로 AlertDialog 확인이 필요하다
     const toggle = page.getByRole('switch');
     await expect(toggle).toBeVisible();
     await toggle.click();
+
+    // AlertDialog 확인
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: '비활성화' }).click();
 
     // PUT API payload 검증 — active: false 가 전달되어야 한다 (현재 isActive=true → 반전)
     const req = await capture.waitForRequest();
