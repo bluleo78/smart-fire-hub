@@ -67,10 +67,18 @@ export default function PipelineEditorPage() {
 
   // isError: 존재하지 않는 파이프라인 ID(404 등) 접근 시 에러 상태를 감지한다.
   const { data: pipelineData, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(pipelineId!);
-  const { data: executionData } = useExecution(pipelineId!, executionId!);
+  // isError: 존재하지 않는 실행 ID(400 등) 접근 시 에러 상태를 감지한다.
+  const { data: executionData, isError: executionError } = useExecution(pipelineId!, executionId!);
   const executeMutation = useExecutePipeline(pipelineId!);
   const { data: datasetsData } = useDatasets({ size: 1000 });
   const { data: executions } = useExecutions(pipelineId ?? 0);
+
+  /** 존재하지 않는 실행 ID 접근 시 toast 알림 후 파이프라인 페이지로 리다이렉트 — ApiConnectionDetailPage와 동일 패턴 */
+  useEffect(() => {
+    if (!executionError) return;
+    toast.error('실행 정보를 불러오는데 실패했습니다.');
+    navigate(`/pipelines/${pipelineId}`);
+  }, [executionError, navigate, pipelineId]);
 
   // Load pipeline data from API only once
   const loadedRef = useRef(false);
