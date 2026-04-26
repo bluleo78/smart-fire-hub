@@ -64,6 +64,47 @@ test.describe('리포트 양식 목록 페이지', () => {
     await expect(page).toHaveURL('/ai-insights/templates/new');
   });
 
+  test('긴 설명을 가진 커스텀 템플릿 카드가 같은 행의 다른 카드와 동일한 높이를 가진다', async ({ authenticatedPage: page }) => {
+    // 긴 설명(line-clamp-2 적용)과 짧은 설명을 가진 카드가 같은 행에 표시될 때 높이 균일 검증
+    // Card에 flex flex-col, CardContent에 flex-1 적용으로 CSS Grid stretch 동작 보장
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [
+      createTemplate({
+        id: 2,
+        name: '긴 설명 템플릿',
+        description:
+          '이것은 매우 긴 설명입니다. '.repeat(10) + '설명이 끝납니다.',
+        builtin: false,
+      }),
+      createTemplate({ id: 3, name: '짧은 설명 템플릿', description: '짧은 설명', builtin: false }),
+      createTemplate({ id: 4, name: '설명 없는 템플릿', description: undefined, builtin: false }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates');
+
+    // 세 카드 모두 렌더링 확인
+    await expect(page.getByText('긴 설명 템플릿')).toBeVisible();
+    await expect(page.getByText('짧은 설명 템플릿')).toBeVisible();
+    await expect(page.getByText('설명 없는 템플릿')).toBeVisible();
+
+    // 각 카드의 높이를 측정하여 동일한지 검증
+    // CSS Grid의 기본 items-stretch 동작 + Card의 flex flex-col로 높이 균일이 보장됨
+    const cards = page.locator('.card-hover');
+    const cardCount = await cards.count();
+    expect(cardCount).toBeGreaterThanOrEqual(3);
+
+    const heights: number[] = [];
+    for (let i = 0; i < Math.min(cardCount, 3); i++) {
+      const box = await cards.nth(i).boundingBox();
+      if (box) heights.push(Math.round(box.height));
+    }
+
+    // 같은 행의 모든 카드 높이가 동일해야 함 (CSS Grid stretch 보장)
+    const maxHeight = Math.max(...heights);
+    const minHeight = Math.min(...heights);
+    expect(maxHeight).toBe(minHeight);
+  });
+
   test('커스텀 템플릿 카드 클릭 시 템플릿 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     // 커스텀 템플릿 포함 목록 모킹
     await mockApi(page, 'GET', '/api/v1/proactive/templates', [

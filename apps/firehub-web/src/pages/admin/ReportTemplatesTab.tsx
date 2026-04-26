@@ -29,14 +29,15 @@ export default function ReportTemplatesTab() {
           <h3 className="text-base font-semibold">기본 템플릿</h3>
           <p className="text-sm text-muted-foreground mt-1">시스템에서 제공하는 기본 리포트 템플릿입니다.</p>
         </div>
+        {/* 동일 행의 카드 높이를 균일하게 맞추기 위해 items-stretch(기본값) 유지 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {builtins.map((t) => (
             <Card
               key={t.id}
-              className="bg-muted/20 border-dashed cursor-pointer hover:bg-muted/30 transition-colors"
+              className="bg-muted/20 border-dashed cursor-pointer hover:bg-muted/30 transition-colors flex flex-col"
               onClick={() => navigate(`/ai-insights/templates/${t.id}`)}
             >
-              <CardHeader className="pb-2">
+              <CardHeader className="pb-2 flex-shrink-0">
                 <div className="flex items-start justify-between gap-2">
                   <CardTitle className="text-sm font-medium">{t.name}</CardTitle>
                   <Badge variant="secondary" className="shrink-0 text-xs">기본</Badge>
@@ -45,7 +46,8 @@ export default function ReportTemplatesTab() {
                   <CardDescription className="text-xs line-clamp-2">{t.description}</CardDescription>
                 )}
               </CardHeader>
-              <CardContent>
+              {/* flex-1로 설정하여 카드 높이가 늘어날 때 콘텐츠 영역이 확장되도록 함 */}
+              <CardContent className="flex-1">
                 <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.sections)}개</p>
               </CardContent>
             </Card>
@@ -81,14 +83,15 @@ export default function ReportTemplatesTab() {
             </Button>
           </div>
         ) : (
+          /* 동일 행의 카드 높이를 균일하게 맞추기 위해 items-stretch(기본값) 유지 */
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {customs.map((t) => (
               <Card
                 key={t.id}
-                className="card-hover cursor-pointer"
+                className="card-hover cursor-pointer flex flex-col"
                 onClick={() => navigate(`/ai-insights/templates/${t.id}`)}
               >
-                <CardHeader className="pb-2">
+                <CardHeader className="pb-2 flex-shrink-0">
                   <div className="flex items-start justify-between gap-2">
                     <CardTitle className="text-sm font-medium">{t.name}</CardTitle>
                   </div>
@@ -96,7 +99,8 @@ export default function ReportTemplatesTab() {
                     <CardDescription className="text-xs line-clamp-2">{t.description}</CardDescription>
                   )}
                 </CardHeader>
-                <CardContent>
+                {/* flex-1로 설정하여 카드 높이가 늘어날 때 콘텐츠 영역이 확장되도록 함 */}
+                <CardContent className="flex-1">
                   <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.sections)}개</p>
                 </CardContent>
               </Card>
