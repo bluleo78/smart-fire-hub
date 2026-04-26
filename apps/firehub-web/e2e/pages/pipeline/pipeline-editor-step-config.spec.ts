@@ -146,6 +146,52 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.keyboard.press('Escape');
   });
 
+  /**
+   * 스텝 삭제 확인 다이얼로그 회귀 테스트 (#45)
+   * 삭제 버튼 클릭 시 즉시 삭제되지 않고 AlertDialog 확인 후 삭제되어야 한다.
+   */
+  test('스텝 삭제 버튼 클릭 시 확인 다이얼로그가 표시되고 취소하면 스텝이 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 스텝 추가 → StepConfigPanel 표시
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+
+    // 삭제 버튼 클릭 → 확인 다이얼로그 표시 (즉시 삭제 X)
+    await page.getByRole('button', { name: '스텝 삭제' }).last().click();
+
+    // 다이얼로그 제목과 설명이 표시되어야 한다
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('정말 이 스텝을 삭제하시겠습니까?')).toBeVisible();
+
+    // 취소 클릭 → 스텝이 그대로 유지되어야 한다
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.locator('#step-name')).toBeVisible();
+  });
+
+  test('스텝 삭제 확인 다이얼로그에서 삭제 확인 시 스텝이 제거된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 스텝 추가 → StepConfigPanel 표시
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+
+    // 삭제 버튼 클릭 → 확인 다이얼로그 표시
+    await page.getByRole('button', { name: '스텝 삭제' }).last().click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // 삭제 확인 → 스텝이 제거되고 "첫 번째 스텝을 추가하세요" 메시지가 표시된다
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.locator('#step-name')).not.toBeVisible();
+    await expect(page.getByText('첫 번째 스텝을 추가하세요')).toBeVisible();
+  });
+
   test('신규 파이프라인 에디터에 탭 메뉴가 표시되지 않는다', async ({
     authenticatedPage: page,
   }) => {

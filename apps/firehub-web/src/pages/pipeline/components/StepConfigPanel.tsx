@@ -1,9 +1,19 @@
 import { Trash2,X } from 'lucide-react';
-import { lazy, Suspense, useMemo, useRef } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
 const PythonOutputColumns = lazy(() => import('./PythonOutputColumns'));
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -62,6 +72,9 @@ export default function StepConfigPanel({
 
   // 훅은 early return 이전에 호출되어야 한다 (rules-of-hooks). step이 없을 때는 fallback 값 사용.
   const insertTextRef = useRef<((text: string) => void) | null>(null);
+
+  // 스텝 삭제 확인 다이얼로그 표시 여부 — 실수 삭제 방지 (rules-of-hooks: early return 이전 선언)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const inputDatasetOptions = useMemo<DatasetOption[]>(() => {
     if (!step) return [];
@@ -189,7 +202,13 @@ export default function StepConfigPanel({
     dispatch({ type: 'UPDATE_STEP', payload: { tempId: step.tempId, changes } });
   };
 
-  const handleDelete = () => {
+  // 삭제 버튼 클릭 시: 즉시 삭제하지 않고 확인 다이얼로그를 표시한다.
+  const handleDeleteClick = () => {
+    setDeleteDialogOpen(true);
+  };
+
+  // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 실제 스텝을 제거한다.
+  const handleConfirmDelete = () => {
     dispatch({ type: 'REMOVE_STEP', payload: { tempId: step.tempId } });
     dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
   };
@@ -464,7 +483,7 @@ export default function StepConfigPanel({
             </p>
           </div>
 
-          {/* Delete button */}
+          {/* Delete button — 클릭 시 확인 다이얼로그 표시 후 삭제 (실수 삭제 방지) */}
           {!readOnly && (
             <>
               <Separator />
@@ -472,7 +491,7 @@ export default function StepConfigPanel({
                 <Button
                   variant="destructive"
                   className="w-full"
-                  onClick={handleDelete}
+                  onClick={handleDeleteClick}
                 >
                   <Trash2 className="h-4 w-4" />
                   스텝 삭제
@@ -483,6 +502,27 @@ export default function StepConfigPanel({
           </div>
         </ScrollArea>
       </div>
+
+      {/* 스텝 삭제 확인 다이얼로그 — 실수 삭제 방지 */}
+      <AlertDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => { if (!open) setDeleteDialogOpen(false); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>스텝 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              정말 이 스텝을 삭제하시겠습니까? 저장하기 전까지는 취소가 가능합니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={handleConfirmDelete}>
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

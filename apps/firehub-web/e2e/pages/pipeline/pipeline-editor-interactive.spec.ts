@@ -130,10 +130,14 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     // ReactFlow 노드 클릭 → StepConfigPanel 열기
     await page.locator('.react-flow__node').first().click();
 
-    // StepConfigPanel 하단 destructive "스텝 삭제" 버튼 클릭 → REMOVE_STEP dispatch
+    // StepConfigPanel 하단 destructive "스텝 삭제" 버튼 클릭 → AlertDialog 확인 후 REMOVE_STEP dispatch
     // 노드에도 title="스텝 삭제" 아이콘 버튼이 있으므로 .last()로 패널 버튼을 선택한다
     await expect(page.getByRole('button', { name: '스텝 삭제' }).last()).toBeVisible();
     await page.getByRole('button', { name: '스텝 삭제' }).last().click();
+
+    // AlertDialog 확인 버튼 클릭 → REMOVE_STEP dispatch (#45 확인 다이얼로그 추가)
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: '삭제' }).click();
 
     // 스텝이 삭제되어 빈 상태로 복귀
     await expect(page.getByText('첫 번째 스텝을 추가하세요')).toBeVisible();
