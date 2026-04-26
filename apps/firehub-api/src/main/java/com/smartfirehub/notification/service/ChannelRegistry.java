@@ -12,21 +12,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class ChannelRegistry {
 
-    private final Map<ChannelType, Channel> channels = new EnumMap<>(ChannelType.class);
+  private final Map<ChannelType, Channel> channels = new EnumMap<>(ChannelType.class);
 
-    public ChannelRegistry(List<Channel> all) {
-        for (Channel c : all) {
-            channels.put(c.type(), c);
-        }
+  public ChannelRegistry(List<Channel> all) {
+    for (Channel c : all) {
+      channels.put(c.type(), c);
     }
+  }
 
-    public Channel get(ChannelType type) {
-        Channel c = channels.get(type);
-        if (c == null) throw new IllegalStateException("No channel registered: " + type);
-        return c;
-    }
+  public Channel get(ChannelType type) {
+    Channel c = channels.get(type);
+    if (c == null) throw new IllegalStateException("No channel registered: " + type);
+    return c;
+  }
 
-    public AuthStrategy authStrategyOf(ChannelType type) {
-        return get(type).authStrategy();
-    }
+  public AuthStrategy authStrategyOf(ChannelType type) {
+    return get(type).authStrategy();
+  }
 }

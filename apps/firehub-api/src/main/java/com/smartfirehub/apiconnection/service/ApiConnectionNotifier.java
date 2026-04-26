@@ -12,15 +12,15 @@ import org.springframework.stereotype.Service;
  * API 연결 상태 전환 시 알림(대시보드 브로드캐스트) + 감사 로그를 디스패치한다.
  *
  * <p>규칙:
+ *
  * <ul>
- *   <li>최초 체크(prev=null)는 알림 없음 — 초기 상태 설정은 이벤트가 아니다.</li>
- *   <li>상태 동일 전환(UP→UP, DOWN→DOWN)은 알림 없음.</li>
- *   <li>상태 전환 시 대시보드 브로드캐스트 + 감사 로그 기록.</li>
+ *   <li>최초 체크(prev=null)는 알림 없음 — 초기 상태 설정은 이벤트가 아니다.
+ *   <li>상태 동일 전환(UP→UP, DOWN→DOWN)은 알림 없음.
+ *   <li>상태 전환 시 대시보드 브로드캐스트 + 감사 로그 기록.
  * </ul>
  *
- * <p>TODO(proactive-chat): ProactiveJobService에 관리자 대상 단순 메시지 푸시 API가 없어
- * Chat 메시지 디스패치는 미구현 상태다. ProactiveJobService가 "push to admins" 메서드를
- * 지원하면 여기에 추가할 것.
+ * <p>TODO(proactive-chat): ProactiveJobService에 관리자 대상 단순 메시지 푸시 API가 없어 Chat 메시지 디스패치는 미구현 상태다.
+ * ProactiveJobService가 "push to admins" 메서드를 지원하면 여기에 추가할 것.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,10 +33,10 @@ public class ApiConnectionNotifier {
   /**
    * API 연결 상태 변화를 감지하여 알림 및 감사 로그를 디스패치한다.
    *
-   * @param id           API 연결 ID
-   * @param name         API 연결 이름 (알림 메시지에 포함)
-   * @param prev         이전 상태 (null이면 최초 체크 → 알림 없음)
-   * @param curr         현재 상태 ("UP" 또는 "DOWN")
+   * @param id API 연결 ID
+   * @param name API 연결 이름 (알림 메시지에 포함)
+   * @param prev 이전 상태 (null이면 최초 체크 → 알림 없음)
+   * @param curr 현재 상태 ("UP" 또는 "DOWN")
    * @param errorMessage 오류 상세 메시지 (curr="DOWN"일 때 사용)
    */
   public void notifyStatusChange(

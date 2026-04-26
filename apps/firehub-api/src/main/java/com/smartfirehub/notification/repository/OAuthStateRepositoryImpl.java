@@ -15,52 +15,53 @@ import org.springframework.stereotype.Repository;
 @Repository
 class OAuthStateRepositoryImpl implements OAuthStateRepository {
 
-    private final DSLContext dsl;
+  private final DSLContext dsl;
 
-    OAuthStateRepositoryImpl(DSLContext dsl) {
-        this.dsl = dsl;
-    }
+  OAuthStateRepositoryImpl(DSLContext dsl) {
+    this.dsl = dsl;
+  }
 
-    @Override
-    public void create(String state, long userId, ChannelType channelType, Instant expiresAt) {
-        dsl.insertInto(OAUTH_STATE)
-                .set(OAUTH_STATE.STATE, state)
-                .set(OAUTH_STATE.USER_ID, userId)
-                .set(OAUTH_STATE.CHANNEL_TYPE, channelType.name())
-                .set(OAUTH_STATE.EXPIRES_AT, expiresAt.atOffset(ZoneOffset.UTC))
-                .execute();
-    }
+  @Override
+  public void create(String state, long userId, ChannelType channelType, Instant expiresAt) {
+    dsl.insertInto(OAUTH_STATE)
+        .set(OAUTH_STATE.STATE, state)
+        .set(OAUTH_STATE.USER_ID, userId)
+        .set(OAUTH_STATE.CHANNEL_TYPE, channelType.name())
+        .set(OAUTH_STATE.EXPIRES_AT, expiresAt.atOffset(ZoneOffset.UTC))
+        .execute();
+  }
 
-    @Override
-    public Optional<ConsumedState> consume(String state) {
-        return dsl.transactionResult(cfg -> {
-            DSLContext tx = cfg.dsl();
-            Record row = tx
-                    .select(OAUTH_STATE.USER_ID, OAUTH_STATE.CHANNEL_TYPE)
-                    .from(OAUTH_STATE)
-                    .where(OAUTH_STATE.STATE.eq(state))
-                    .and(OAUTH_STATE.CONSUMED_AT.isNull())
-                    .and(OAUTH_STATE.EXPIRES_AT.gt(OffsetDateTime.now()))
-                    .forUpdate()
-                    .fetchOne();
-            if (row == null) return Optional.empty();
+  @Override
+  public Optional<ConsumedState> consume(String state) {
+    return dsl.transactionResult(
+        cfg -> {
+          DSLContext tx = cfg.dsl();
+          Record row =
+              tx.select(OAUTH_STATE.USER_ID, OAUTH_STATE.CHANNEL_TYPE)
+                  .from(OAUTH_STATE)
+                  .where(OAUTH_STATE.STATE.eq(state))
+                  .and(OAUTH_STATE.CONSUMED_AT.isNull())
+                  .and(OAUTH_STATE.EXPIRES_AT.gt(OffsetDateTime.now()))
+                  .forUpdate()
+                  .fetchOne();
+          if (row == null) return Optional.empty();
 
-            tx.update(OAUTH_STATE)
-                    .set(OAUTH_STATE.CONSUMED_AT, OffsetDateTime.now())
-                    .where(OAUTH_STATE.STATE.eq(state))
-                    .execute();
+          tx.update(OAUTH_STATE)
+              .set(OAUTH_STATE.CONSUMED_AT, OffsetDateTime.now())
+              .where(OAUTH_STATE.STATE.eq(state))
+              .execute();
 
-            return Optional.of(new ConsumedState(
-                    row.get(OAUTH_STATE.USER_ID),
-                    ChannelType.valueOf(row.get(OAUTH_STATE.CHANNEL_TYPE))
-            ));
+          return Optional.of(
+              new ConsumedState(
+                  row.get(OAUTH_STATE.USER_ID),
+                  ChannelType.valueOf(row.get(OAUTH_STATE.CHANNEL_TYPE))));
         });
-    }
+  }
 
-    @Override
-    public int deleteExpired() {
-        return dsl.deleteFrom(OAUTH_STATE)
-                .where(OAUTH_STATE.EXPIRES_AT.lt(OffsetDateTime.now()))
-                .execute();
-    }
+  @Override
+  public int deleteExpired() {
+    return dsl.deleteFrom(OAUTH_STATE)
+        .where(OAUTH_STATE.EXPIRES_AT.lt(OffsetDateTime.now()))
+        .execute();
+  }
 }

@@ -20,10 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * FileCleanupService 통합 테스트.
  *
- * <p>jOOQ DSLContext를 실제 DB와 함께 사용하여 만료 파일 정리 로직을 검증한다.
- * UPLOADED_FILES 테이블에 만료된/유효한 레코드를 삽입하고 cleanupExpiredFiles() 호출 후
- * DB 레코드 삭제 여부를 검증한다.
- * 실제 파일 I/O는 @TempDir을 활용하여 격리한다.
+ * <p>jOOQ DSLContext를 실제 DB와 함께 사용하여 만료 파일 정리 로직을 검증한다. UPLOADED_FILES 테이블에 만료된/유효한 레코드를 삽입하고
+ * cleanupExpiredFiles() 호출 후 DB 레코드 삭제 여부를 검증한다. 실제 파일 I/O는 @TempDir을 활용하여 격리한다.
  */
 @Transactional
 class FileCleanupServiceTest extends IntegrationTestBase {
@@ -52,8 +50,8 @@ class FileCleanupServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * 정상: 만료된 파일 레코드가 있으면 DB에서 삭제되어야 한다.
-   * expires_at이 과거인 레코드를 삽입 후 cleanupExpiredFiles() 호출 시 해당 레코드가 삭제된다.
+   * 정상: 만료된 파일 레코드가 있으면 DB에서 삭제되어야 한다. expires_at이 과거인 레코드를 삽입 후 cleanupExpiredFiles() 호출 시 해당 레코드가
+   * 삭제된다.
    */
   @Test
   void cleanupExpiredFiles_expiredRecord_deletedFromDb(@TempDir Path tempDir) throws IOException {
@@ -77,18 +75,15 @@ class FileCleanupServiceTest extends IntegrationTestBase {
     fileCleanupService.cleanupExpiredFiles();
 
     // DB 레코드가 삭제되어야 함
-    int remaining = dsl.fetchCount(UPLOADED_FILES,
-        UPLOADED_FILES.STORAGE_PATH.eq(expiredFile.toString()));
+    int remaining =
+        dsl.fetchCount(UPLOADED_FILES, UPLOADED_FILES.STORAGE_PATH.eq(expiredFile.toString()));
     assertThat(remaining).isEqualTo(0);
 
     // 실제 파일도 삭제되어야 함
     assertThat(expiredFile).doesNotExist();
   }
 
-  /**
-   * 정상: 만료되지 않은 파일 레코드는 삭제되지 않아야 한다.
-   * expires_at이 미래인 레코드는 cleanupExpiredFiles() 호출 후에도 유지된다.
-   */
+  /** 정상: 만료되지 않은 파일 레코드는 삭제되지 않아야 한다. expires_at이 미래인 레코드는 cleanupExpiredFiles() 호출 후에도 유지된다. */
   @Test
   void cleanupExpiredFiles_validRecord_notDeleted(@TempDir Path tempDir) throws IOException {
     Path validFile = tempDir.resolve("valid-upload.csv");
@@ -110,18 +105,15 @@ class FileCleanupServiceTest extends IntegrationTestBase {
     fileCleanupService.cleanupExpiredFiles();
 
     // DB 레코드가 유지되어야 함
-    int remaining = dsl.fetchCount(UPLOADED_FILES,
-        UPLOADED_FILES.STORAGE_PATH.eq(validFile.toString()));
+    int remaining =
+        dsl.fetchCount(UPLOADED_FILES, UPLOADED_FILES.STORAGE_PATH.eq(validFile.toString()));
     assertThat(remaining).isEqualTo(1);
 
     // 실제 파일도 유지되어야 함
     assertThat(validFile).exists();
   }
 
-  /**
-   * 엣지 케이스: 만료된 레코드가 없으면 아무것도 삭제하지 않아야 한다.
-   * 빈 테이블에서 cleanupExpiredFiles() 호출 시 예외 없이 종료된다.
-   */
+  /** 엣지 케이스: 만료된 레코드가 없으면 아무것도 삭제하지 않아야 한다. 빈 테이블에서 cleanupExpiredFiles() 호출 시 예외 없이 종료된다. */
   @Test
   void cleanupExpiredFiles_noExpiredRecords_noException() {
     // UPLOADED_FILES 테이블이 비어있는 상태에서 호출

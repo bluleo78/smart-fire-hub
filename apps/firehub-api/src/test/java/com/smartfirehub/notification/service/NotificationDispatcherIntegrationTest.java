@@ -20,33 +20,39 @@ import org.springframework.test.context.TestPropertySource;
 @TestPropertySource(properties = "notification.outbox.enabled=true")
 class NotificationDispatcherIntegrationTest extends IntegrationTestBase {
 
-    @Autowired private NotificationDispatcher dispatcher;
-    @Autowired private NotificationOutboxRepository repo;
+  @Autowired private NotificationDispatcher dispatcher;
+  @Autowired private NotificationOutboxRepository repo;
 
-    @Test
-    void enqueue_idempotentOnSameRequest() {
-        UUID corr = UUID.randomUUID();
-        NotificationRequest req = chatRequest(corr);
+  @Test
+  void enqueue_idempotentOnSameRequest() {
+    UUID corr = UUID.randomUUID();
+    NotificationRequest req = chatRequest(corr);
 
-        dispatcher.enqueue(req);
-        dispatcher.enqueue(req);   // 같은 correlationId → idempotency_key 동일 → ON CONFLICT DO NOTHING
+    dispatcher.enqueue(req);
+    dispatcher.enqueue(req); // 같은 correlationId → idempotency_key 동일 → ON CONFLICT DO NOTHING
 
-        var rows = repo.findByCorrelation(corr);
-        // CHAT 1건만 존재, advisory 없음 (CHAT 요청이 resolved 이므로 forcedChatFallback=false)
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).channelType()).isEqualTo(ChannelType.CHAT);
-    }
+    var rows = repo.findByCorrelation(corr);
+    // CHAT 1건만 존재, advisory 없음 (CHAT 요청이 resolved 이므로 forcedChatFallback=false)
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).channelType()).isEqualTo(ChannelType.CHAT);
+  }
 
-    private NotificationRequest chatRequest(UUID corr) {
-        return new NotificationRequest(
-                "TEST_INTEGRATION",
-                null,
-                null,
-                corr,
-                new Payload(Payload.PayloadType.STANDARD, "t", "s",
-                        List.of(), List.of(), List.of(), Map.of(), Map.of()),
-                null,
-                List.of(new Recipient(null, null, EnumSet.of(ChannelType.CHAT)))
-        );
-    }
+  private NotificationRequest chatRequest(UUID corr) {
+    return new NotificationRequest(
+        "TEST_INTEGRATION",
+        null,
+        null,
+        corr,
+        new Payload(
+            Payload.PayloadType.STANDARD,
+            "t",
+            "s",
+            List.of(),
+            List.of(),
+            List.of(),
+            Map.of(),
+            Map.of()),
+        null,
+        List.of(new Recipient(null, null, EnumSet.of(ChannelType.CHAT))));
+  }
 }

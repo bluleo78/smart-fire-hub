@@ -16,9 +16,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * NotificationService 단위 테스트.
  *
- * <p>Spring 컨텍스트 없이 Mockito만으로 NotificationService 비즈니스 로직을 검증한다.
- * SseEmitterRegistry를 @Mock으로 주입하고 @InjectMocks로 대상 서비스를 생성한다.
- * @Async 어노테이션은 단위 테스트에서 무시되어 동기적으로 실행되므로 Awaitility 불필요.
+ * <p>Spring 컨텍스트 없이 Mockito만으로 NotificationService 비즈니스 로직을 검증한다. SseEmitterRegistry를 @Mock으로
+ * 주입하고 @InjectMocks로 대상 서비스를 생성한다. @Async 어노테이션은 단위 테스트에서 무시되어 동기적으로 실행되므로 Awaitility 불필요.
  */
 @ExtendWith(MockitoExtension.class)
 class NotificationServiceUnitTest {
@@ -34,8 +33,8 @@ class NotificationServiceUnitTest {
   // =========================================================================
 
   /**
-   * 정상: COMPLETED 상태 이벤트 수신 시 registry.broadcast()가 올바른 인자로 호출되어야 한다.
-   * severity=INFO, eventType=PIPELINE_COMPLETED, title="Pipeline Completed"
+   * 정상: COMPLETED 상태 이벤트 수신 시 registry.broadcast()가 올바른 인자로 호출되어야 한다. severity=INFO,
+   * eventType=PIPELINE_COMPLETED, title="Pipeline Completed"
    */
   @Test
   void onPipelineCompleted_success_broadcastsWithCorrectEvent() {
@@ -62,9 +61,7 @@ class NotificationServiceUnitTest {
   // onPipelineCompleted — FAILED
   // =========================================================================
 
-  /**
-   * 정상: FAILED 상태 이벤트 수신 시 severity=WARNING, eventType=PIPELINE_FAILED여야 한다.
-   */
+  /** 정상: FAILED 상태 이벤트 수신 시 severity=WARNING, eventType=PIPELINE_FAILED여야 한다. */
   @Test
   void onPipelineCompleted_failed_broadcastsWithWarning() {
     PipelineCompletedEvent event = new PipelineCompletedEvent(20L, 200L, "FAILED", 2L);
@@ -84,10 +81,7 @@ class NotificationServiceUnitTest {
   // onPipelineCompleted — createdBy null
   // =========================================================================
 
-  /**
-   * 엣지 케이스: createdBy가 null이면 registry와 상호작용 없이 조기 반환해야 한다.
-   * 사용자 특정 불가로 알림 전송을 스킵한다.
-   */
+  /** 엣지 케이스: createdBy가 null이면 registry와 상호작용 없이 조기 반환해야 한다. 사용자 특정 불가로 알림 전송을 스킵한다. */
   @Test
   void onPipelineCompleted_nullCreatedBy_noRegistryInteraction() {
     PipelineCompletedEvent event = new PipelineCompletedEvent(30L, 300L, "COMPLETED", null);
@@ -101,9 +95,7 @@ class NotificationServiceUnitTest {
   // notifyImportCompleted — success=true
   // =========================================================================
 
-  /**
-   * 정상: 임포트 성공 시 IMPORT_COMPLETED 이벤트 + INFO severity로 broadcast되어야 한다.
-   */
+  /** 정상: 임포트 성공 시 IMPORT_COMPLETED 이벤트 + INFO severity로 broadcast되어야 한다. */
   @Test
   void notifyImportCompleted_success_broadcastsImportCompleted() {
     notificationService.notifyImportCompleted(1L, 100L, "Sales Data", true);
@@ -125,9 +117,7 @@ class NotificationServiceUnitTest {
   // notifyImportCompleted — success=false
   // =========================================================================
 
-  /**
-   * 정상: 임포트 실패 시 IMPORT_FAILED 이벤트 + WARNING severity로 broadcast되어야 한다.
-   */
+  /** 정상: 임포트 실패 시 IMPORT_FAILED 이벤트 + WARNING severity로 broadcast되어야 한다. */
   @Test
   void notifyImportCompleted_failure_broadcastsImportFailed() {
     notificationService.notifyImportCompleted(2L, 200L, "Bad Data", false);
@@ -147,8 +137,7 @@ class NotificationServiceUnitTest {
   // =========================================================================
 
   /**
-   * 정상: 데이터셋 변경 알림은 특정 사용자가 아닌 전체 브로드캐스트여야 한다.
-   * registry.broadcastAll()이 DATASET_CHANGED 이벤트로 호출되고
+   * 정상: 데이터셋 변경 알림은 특정 사용자가 아닌 전체 브로드캐스트여야 한다. registry.broadcastAll()이 DATASET_CHANGED 이벤트로 호출되고
    * registry.broadcast()는 호출되지 않아야 한다.
    */
   @Test
@@ -172,10 +161,7 @@ class NotificationServiceUnitTest {
   // NotificationEvent 구조 검증
   // =========================================================================
 
-  /**
-   * 정상: 각 호출마다 고유한 UUID id가 생성되어야 한다.
-   * 동일 메서드를 두 번 호출해도 id가 서로 달라야 한다.
-   */
+  /** 정상: 각 호출마다 고유한 UUID id가 생성되어야 한다. 동일 메서드를 두 번 호출해도 id가 서로 달라야 한다. */
   @Test
   void notifyImportCompleted_eachCallGeneratesUniqueId() {
     notificationService.notifyImportCompleted(1L, 100L, "Dataset A", true);
@@ -184,7 +170,6 @@ class NotificationServiceUnitTest {
     ArgumentCaptor<NotificationEvent> captor = forClass(NotificationEvent.class);
     verify(registry, times(2)).broadcast(eq(1L), captor.capture());
 
-    assertThat(captor.getAllValues().get(0).id())
-        .isNotEqualTo(captor.getAllValues().get(1).id());
+    assertThat(captor.getAllValues().get(0).id()).isNotEqualTo(captor.getAllValues().get(1).id());
   }
 }

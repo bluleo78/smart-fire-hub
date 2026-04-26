@@ -216,8 +216,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 날짜 범위 필터 — 미래 startDate 지정 시 결과 없음
-   * (setUp에서 삽입된 모든 로그의 actionTime은 현재 시점이므로 미래 날짜로 필터하면 빈 결과)
+   * 날짜 범위 필터 — 미래 startDate 지정 시 결과 없음 (setUp에서 삽입된 모든 로그의 actionTime은 현재 시점이므로 미래 날짜로 필터하면 빈 결과)
    */
   @Test
   void getAuditLogs_startDateInFuture_returnsEmpty() {
@@ -229,10 +228,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
     assertThat(result.totalElements()).isEqualTo(0);
   }
 
-  /**
-   * 날짜 범위 필터 — 과거 endDate 지정 시 결과 없음
-   * (setUp에서 삽입된 모든 로그의 actionTime은 현재 시점이므로 과거 날짜로 필터하면 빈 결과)
-   */
+  /** 날짜 범위 필터 — 과거 endDate 지정 시 결과 없음 (setUp에서 삽입된 모든 로그의 actionTime은 현재 시점이므로 과거 날짜로 필터하면 빈 결과) */
   @Test
   void getAuditLogs_endDateInPast_returnsEmpty() {
     LocalDateTime pastDate = LocalDateTime.now().minusDays(1);
@@ -243,9 +239,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
     assertThat(result.totalElements()).isEqualTo(0);
   }
 
-  /**
-   * 날짜 범위 필터 — 충분히 넓은 범위 지정 시 전체 결과 반환
-   */
+  /** 날짜 범위 필터 — 충분히 넓은 범위 지정 시 전체 결과 반환 */
   @Test
   void getAuditLogs_dateRangeCoveringAll_returnsAll() {
     LocalDateTime startDate = LocalDateTime.now().minusDays(1);

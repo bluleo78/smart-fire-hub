@@ -73,8 +73,7 @@ class AnalyticsDashboardControllerTest {
     when(dashboardService.list(any(), any(), anyLong(), anyInt(), anyInt())).thenReturn(page);
 
     mockMvc
-        .perform(
-            get("/api/v1/analytics/dashboards").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/analytics/dashboards").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].id").value(1))
         .andExpect(jsonPath("$.totalElements").value(1));
@@ -89,8 +88,7 @@ class AnalyticsDashboardControllerTest {
 
   @Test
   void createDashboard_withPermission_returnsCreated() throws Exception {
-    CreateDashboardRequest request =
-        new CreateDashboardRequest("테스트 대시보드", "설명", false, null);
+    CreateDashboardRequest request = new CreateDashboardRequest("테스트 대시보드", "설명", false, null);
     when(dashboardService.create(any(CreateDashboardRequest.class), anyLong()))
         .thenReturn(sampleDashboard());
 
@@ -124,8 +122,7 @@ class AnalyticsDashboardControllerTest {
     when(dashboardService.getById(1L, 1L)).thenReturn(sampleDashboard());
 
     mockMvc
-        .perform(
-            get("/api/v1/analytics/dashboards/1").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/analytics/dashboards/1").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(1))
         .andExpect(jsonPath("$.name").value("테스트 대시보드"));
@@ -135,8 +132,7 @@ class AnalyticsDashboardControllerTest {
 
   @Test
   void updateDashboard_withPermission_returnsUpdated() throws Exception {
-    UpdateDashboardRequest request =
-        new UpdateDashboardRequest("수정된 대시보드", null, null, null);
+    UpdateDashboardRequest request = new UpdateDashboardRequest("수정된 대시보드", null, null, null);
     when(dashboardService.update(anyLong(), any(UpdateDashboardRequest.class), anyLong()))
         .thenReturn(sampleDashboard());
 
@@ -171,8 +167,7 @@ class AnalyticsDashboardControllerTest {
 
     mockMvc
         .perform(
-            get("/api/v1/analytics/dashboards/1/data")
-                .header("Authorization", "Bearer test-token"))
+            get("/api/v1/analytics/dashboards/1/data").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.dashboard.id").value(1));
   }
@@ -200,7 +195,8 @@ class AnalyticsDashboardControllerTest {
   @Test
   void updateWidget_withPermission_returnsUpdated() throws Exception {
     UpdateWidgetRequest request = new UpdateWidgetRequest(1, 1, 8, 6);
-    when(dashboardService.updateWidget(anyLong(), anyLong(), any(UpdateWidgetRequest.class), anyLong()))
+    when(dashboardService.updateWidget(
+            anyLong(), anyLong(), any(UpdateWidgetRequest.class), anyLong()))
         .thenReturn(sampleDashboard());
 
     mockMvc
@@ -242,6 +238,7 @@ class AnalyticsDashboardControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent());
 
-    verify(dashboardService).updateWidgetLayout(anyLong(), any(UpdateWidgetLayoutRequest.class), anyLong());
+    verify(dashboardService)
+        .updateWidgetLayout(anyLong(), any(UpdateWidgetLayoutRequest.class), anyLong());
   }
 }

@@ -20,100 +20,95 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Slack Workspace OAuth 설치 및 사용자 매핑 컨트롤러.
  *
- * <p>/start — 관리자 전용. state 발급 후 Slack 인증 페이지로 리다이렉트.
- * /callback — public (state가 CSRF 방어). 설치 완료 후 닫기 HTML 반환.
- * /link-user — 인증 필요. 사용자가 자신의 Slack user ID를 연동.
+ * <p>/start — 관리자 전용. state 발급 후 Slack 인증 페이지로 리다이렉트. /callback — public (state가 CSRF 방어). 설치 완료 후
+ * 닫기 HTML 반환. /link-user — 인증 필요. 사용자가 자신의 Slack user ID를 연동.
  */
 @RestController
 @RequestMapping("/api/v1/oauth/slack")
 public class SlackOAuthController {
 
-    private final SlackOAuthService slackOAuthService;
-    private final OAuthStateService oAuthStateService;
+  private final SlackOAuthService slackOAuthService;
+  private final OAuthStateService oAuthStateService;
 
-    public SlackOAuthController(
-            SlackOAuthService slackOAuthService,
-            OAuthStateService oAuthStateService) {
-        this.slackOAuthService = slackOAuthService;
-        this.oAuthStateService = oAuthStateService;
+  public SlackOAuthController(
+      SlackOAuthService slackOAuthService, OAuthStateService oAuthStateService) {
+    this.slackOAuthService = slackOAuthService;
+    this.oAuthStateService = oAuthStateService;
+  }
+
+  /**
+   * Slack OAuth 인증 URL 반환 — 관리자 전용.
+   *
+   * <p>팝업은 Bearer 헤더를 전달할 수 없으므로, 프론트엔드가 이 엔드포인트를 먼저 호출하여 실제 Slack 인증 URL을 받은 뒤 해당 URL을 팝업으로 직접 연다.
+   *
+   * @param authentication Spring Security 인증 객체 (principal = userId Long)
+   * @return {"url": "https://slack.com/oauth/v2/authorize?..."}
+   */
+  @GetMapping("/auth-url")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<Map<String, String>> authUrl(Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    String state = oAuthStateService.issue(userId, ChannelType.SLACK);
+    String authorizeUrl = slackOAuthService.authorizeUrl(state);
+    return ResponseEntity.ok(Map.of("url", authorizeUrl));
+  }
+
+  /**
+   * Slack OAuth 콜백 처리 — public.
+   *
+   * <p>state 소비로 CSRF 검증 후 oauth.v2.access를 호출하여 봇 토큰을 저장한다. 완료 후 창을 닫는 HTML 페이지를 반환한다.
+   *
+   * @param code Slack에서 전달한 authorization_code
+   * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)
+   * @return 200 HTML (창 닫기 스크립트 포함) 또는 400 (유효하지 않은 state)
+   */
+  @GetMapping("/callback")
+  public ResponseEntity<String> callback(
+      @RequestParam("code") String code, @RequestParam("state") String state) {
+    // state 소비 — 단일 사용(single-use), 만료 검사 포함
+    Optional<ConsumedState> consumed = oAuthStateService.consume(state);
+    if (consumed.isEmpty()) {
+      return ResponseEntity.badRequest().body("유효하지 않거나 만료된 state입니다.");
+    }
+    if (consumed.get().channelType() != ChannelType.SLACK) {
+      return ResponseEntity.badRequest().body("잘못된 채널 타입의 state입니다.");
     }
 
-    /**
-     * Slack OAuth 인증 URL 반환 — 관리자 전용.
-     *
-     * <p>팝업은 Bearer 헤더를 전달할 수 없으므로, 프론트엔드가 이 엔드포인트를 먼저
-     * 호출하여 실제 Slack 인증 URL을 받은 뒤 해당 URL을 팝업으로 직접 연다.
-     *
-     * @param authentication Spring Security 인증 객체 (principal = userId Long)
-     * @return {"url": "https://slack.com/oauth/v2/authorize?..."}
-     */
-    @GetMapping("/auth-url")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Map<String, String>> authUrl(Authentication authentication) {
-        Long userId = (Long) authentication.getPrincipal();
-        String state = oAuthStateService.issue(userId, ChannelType.SLACK);
-        String authorizeUrl = slackOAuthService.authorizeUrl(state);
-        return ResponseEntity.ok(Map.of("url", authorizeUrl));
-    }
+    long installedByUserId = consumed.get().userId();
+    slackOAuthService.completeAuthorization(code, installedByUserId);
 
-    /**
-     * Slack OAuth 콜백 처리 — public.
-     *
-     * <p>state 소비로 CSRF 검증 후 oauth.v2.access를 호출하여 봇 토큰을 저장한다.
-     * 완료 후 창을 닫는 HTML 페이지를 반환한다.
-     *
-     * @param code  Slack에서 전달한 authorization_code
-     * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)
-     * @return 200 HTML (창 닫기 스크립트 포함) 또는 400 (유효하지 않은 state)
-     */
-    @GetMapping("/callback")
-    public ResponseEntity<String> callback(
-            @RequestParam("code") String code,
-            @RequestParam("state") String state) {
-        // state 소비 — 단일 사용(single-use), 만료 검사 포함
-        Optional<ConsumedState> consumed = oAuthStateService.consume(state);
-        if (consumed.isEmpty()) {
-            return ResponseEntity.badRequest().body("유효하지 않거나 만료된 state입니다.");
-        }
-        if (consumed.get().channelType() != ChannelType.SLACK) {
-            return ResponseEntity.badRequest().body("잘못된 채널 타입의 state입니다.");
-        }
+    // 설치 완료 후 팝업 창 닫기
+    return ResponseEntity.ok()
+        .contentType(MediaType.TEXT_HTML)
+        .body(
+            "<html><body>Slack 워크스페이스 설치 완료."
+                + " 창을 닫아주세요."
+                + "<script>window.close();</script></body></html>");
+  }
 
-        long installedByUserId = consumed.get().userId();
-        slackOAuthService.completeAuthorization(code, installedByUserId);
+  /**
+   * 사용자 Slack user ID 수동 연동 — 인증 필요.
+   *
+   * <p>사용자가 입력한 slackUserId로 DM ping을 전송하고 user_channel_binding에 저장한다. Slack 봇 토큰은 지정된 워크스페이스에서
+   * 조회한다.
+   *
+   * @param request workspaceId + slackUserId
+   * @param authentication Spring Security 인증 객체
+   * @return 204 No Content
+   */
+  @PostMapping("/link-user")
+  public ResponseEntity<Void> linkUser(
+      @RequestBody LinkUserRequest request, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    slackOAuthService.linkUser(userId, request.workspaceId(), request.slackUserId());
+    return ResponseEntity.noContent().build();
+  }
 
-        // 설치 완료 후 팝업 창 닫기
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_HTML)
-                .body("<html><body>Slack 워크스페이스 설치 완료."
-                        + " 창을 닫아주세요."
-                        + "<script>window.close();</script></body></html>");
-    }
-
-    /**
-     * 사용자 Slack user ID 수동 연동 — 인증 필요.
-     *
-     * <p>사용자가 입력한 slackUserId로 DM ping을 전송하고 user_channel_binding에 저장한다.
-     * Slack 봇 토큰은 지정된 워크스페이스에서 조회한다.
-     *
-     * @param request      workspaceId + slackUserId
-     * @param authentication Spring Security 인증 객체
-     * @return 204 No Content
-     */
-    @PostMapping("/link-user")
-    public ResponseEntity<Void> linkUser(
-            @RequestBody LinkUserRequest request,
-            Authentication authentication) {
-        Long userId = (Long) authentication.getPrincipal();
-        slackOAuthService.linkUser(userId, request.workspaceId(), request.slackUserId());
-        return ResponseEntity.noContent().build();
-    }
-
-    /**
-     * 사용자 Slack 연동 요청 바디.
-     *
-     * @param workspaceId 연결할 slack_workspace.id (DB PK)
-     * @param slackUserId 사용자가 입력한 Slack user ID (예: U0123456)
-     */
-    public record LinkUserRequest(long workspaceId, String slackUserId) {}
+  /**
+   * 사용자 Slack 연동 요청 바디.
+   *
+   * @param workspaceId 연결할 slack_workspace.id (DB PK)
+   * @param slackUserId 사용자가 입력한 Slack user ID (예: U0123456)
+   */
+  public record LinkUserRequest(long workspaceId, String slackUserId) {}
 }

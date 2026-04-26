@@ -21,7 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -56,14 +55,10 @@ class FileUploadControllerTest {
     MockMultipartFile file =
         new MockMultipartFile("files", "test.csv", "text/csv", "col1,col2\n1,2".getBytes());
 
-    when(fileUploadService.uploadFiles(anyList(), anyLong()))
-        .thenReturn(List.of(sampleResponse()));
+    when(fileUploadService.uploadFiles(anyList(), anyLong())).thenReturn(List.of(sampleResponse()));
 
     mockMvc
-        .perform(
-            multipart("/api/v1/files")
-                .file(file)
-                .header("Authorization", "Bearer test-token"))
+        .perform(multipart("/api/v1/files").file(file).header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(1))
         .andExpect(jsonPath("$[0].originalName").value("test.csv"));
@@ -104,6 +99,7 @@ class FileUploadControllerTest {
     mockMvc
         .perform(get("/api/v1/files/1/content").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
-        .andExpect(header().string("Content-Type", org.hamcrest.Matchers.containsString("text/csv")));
+        .andExpect(
+            header().string("Content-Type", org.hamcrest.Matchers.containsString("text/csv")));
   }
 }

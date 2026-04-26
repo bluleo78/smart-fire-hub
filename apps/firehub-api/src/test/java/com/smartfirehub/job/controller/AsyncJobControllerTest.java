@@ -52,14 +52,21 @@ class AsyncJobControllerTest {
   void getJobStatus_withPermission_returnsOk() throws Exception {
     AsyncJobStatusResponse response =
         new AsyncJobStatusResponse(
-            JOB_ID, "IMPORT", "DONE", 100, "완료", Map.of(), null,
-            LocalDateTime.now(), LocalDateTime.now(), 1L);
+            JOB_ID,
+            "IMPORT",
+            "DONE",
+            100,
+            "완료",
+            Map.of(),
+            null,
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            1L);
     when(asyncJobService.getJobStatus(anyString(), anyLong())).thenReturn(response);
 
     mockMvc
         .perform(
-            get("/api/v1/jobs/{jobId}/status", JOB_ID)
-                .header("Authorization", "Bearer test-token"))
+            get("/api/v1/jobs/{jobId}/status", JOB_ID).header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.jobId").value(JOB_ID))
         .andExpect(jsonPath("$.progress").value(100));
@@ -68,7 +75,8 @@ class AsyncJobControllerTest {
   /** GET /{jobId}/status — 인증 없으면 401 */
   @Test
   void getJobStatus_withoutAuth_returnsUnauthorized() throws Exception {
-    mockMvc.perform(get("/api/v1/jobs/{jobId}/status", JOB_ID))
+    mockMvc
+        .perform(get("/api/v1/jobs/{jobId}/status", JOB_ID))
         .andExpect(status().isUnauthorized());
   }
 

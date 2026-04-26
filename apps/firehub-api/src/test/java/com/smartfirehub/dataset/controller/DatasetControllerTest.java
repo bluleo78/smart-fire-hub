@@ -223,8 +223,7 @@ class DatasetControllerTest {
     when(datasetService.getReferences(1L)).thenReturn(response);
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/references").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/references").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.datasetId").value(1))
         .andExpect(jsonPath("$.pipelines[0].id").value(10))

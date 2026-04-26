@@ -87,10 +87,22 @@ public class DatasetService {
     dataTableService.createTable(request.tableName(), request.columns());
 
     // 데이터셋 생성 감사 로그 (#60/#92)
-    userRepository.findById(userId).ifPresent(u ->
-        auditLogService.log(userId, u.username(), "CREATE", "dataset",
-            String.valueOf(dataset.id()), "데이터셋 생성: " + dataset.name(),
-            null, null, "SUCCESS", null, null));
+    userRepository
+        .findById(userId)
+        .ifPresent(
+            u ->
+                auditLogService.log(
+                    userId,
+                    u.username(),
+                    "CREATE",
+                    "dataset",
+                    String.valueOf(dataset.id()),
+                    "데이터셋 생성: " + dataset.name(),
+                    null,
+                    null,
+                    "SUCCESS",
+                    null,
+                    null));
 
     return getDatasetById(dataset.id());
   }
@@ -222,13 +234,26 @@ public class DatasetService {
     datasetRepository.deleteById(id);
 
     // 데이터셋 삭제 감사 로그 (#60/#92)
-    var auth = org.springframework.security.core.context.SecurityContextHolder
-        .getContext().getAuthentication();
+    var auth =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
     if (auth != null && auth.getPrincipal() instanceof Long userId) {
-      userRepository.findById(userId).ifPresent(u ->
-          auditLogService.log(userId, u.username(), "DELETE", "dataset",
-              String.valueOf(id), "데이터셋 삭제: " + dataset.name(),
-              null, null, "SUCCESS", null, null));
+      userRepository
+          .findById(userId)
+          .ifPresent(
+              u ->
+                  auditLogService.log(
+                      userId,
+                      u.username(),
+                      "DELETE",
+                      "dataset",
+                      String.valueOf(id),
+                      "데이터셋 삭제: " + dataset.name(),
+                      null,
+                      null,
+                      "SUCCESS",
+                      null,
+                      null));
     }
   }
 
@@ -513,8 +538,8 @@ public class DatasetService {
    *   <li><b>Dashboards</b>: {@code dashboard_widget → chart → saved_query.dataset_id} 경로로 연결된
    *       대시보드. 현재 스키마상 dashboard/widget 자체에는 datasetId 가 없고, widget이 참조하는 chart의 saved_query를 통해
    *       간접적으로만 데이터셋과 연결된다.
-   *   <li><b>Proactive Jobs</b>: 현재 {@code proactive_job} 스키마는 datasetId 를 저장하지 않는다(채널/수신자/템플릿만 저장).
-   *       따라서 이 메서드는 항상 빈 리스트를 반환한다. 추후 스키마가 datasetId 를 포함하게 되면 업데이트 필요.
+   *   <li><b>Proactive Jobs</b>: 현재 {@code proactive_job} 스키마는 datasetId 를 저장하지 않는다(채널/수신자/템플릿만
+   *       저장). 따라서 이 메서드는 항상 빈 리스트를 반환한다. 추후 스키마가 datasetId 를 포함하게 되면 업데이트 필요.
    * </ul>
    */
   @Transactional(readOnly = true)
@@ -523,7 +548,9 @@ public class DatasetService {
     //    가벼운 EXISTS 체크만 수행한다(행 전체 로드 회피).
     boolean exists =
         dsl.fetchExists(
-            dsl.selectOne().from(table(name("dataset"))).where(field(name("dataset", "id"), Long.class).eq(datasetId)));
+            dsl.selectOne()
+                .from(table(name("dataset")))
+                .where(field(name("dataset", "id"), Long.class).eq(datasetId)));
     if (!exists) {
       throw new DatasetNotFoundException("Dataset not found: " + datasetId);
     }
@@ -550,9 +577,7 @@ public class DatasetService {
                             .join(table(name("pipeline_step_input")))
                             .on(
                                 field(name("pipeline_step", "id"), Long.class)
-                                    .eq(
-                                        field(
-                                            name("pipeline_step_input", "step_id"), Long.class)))
+                                    .eq(field(name("pipeline_step_input", "step_id"), Long.class)))
                             .where(
                                 field(name("pipeline_step_input", "dataset_id"), Long.class)
                                     .eq(datasetId))))

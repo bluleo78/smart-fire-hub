@@ -92,11 +92,13 @@ public class ApiCallPreviewService {
       List<Map<String, Object>> previewRows =
           allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows;
 
-      return new ApiCallPreviewResponse(true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
+      return new ApiCallPreviewResponse(
+          true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
 
     } catch (Exception e) {
       log.error("[Preview] 실패: {}", e.getMessage(), e);
-      return new ApiCallPreviewResponse(false, null, List.of(), List.of(), 0, e.getMessage(), resolvedRequestUrl);
+      return new ApiCallPreviewResponse(
+          false, null, List.of(), List.of(), 0, e.getMessage(), resolvedRequestUrl);
     }
   }
 
@@ -105,13 +107,12 @@ public class ApiCallPreviewService {
   /**
    * 프리뷰 요청의 최종 URL을 결정한다.
    *
-   * <p>apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 결합한다.
-   * 없으면 request.url()을 그대로 사용한다.
+   * <p>apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 결합한다. 없으면 request.url()을 그대로
+   * 사용한다.
    */
   private String resolvePreviewUrl(ApiCallPreviewRequest request) {
     if (request.apiConnectionId() != null) {
-      ApiConnectionResponse conn =
-          apiConnectionService.getById(request.apiConnectionId());
+      ApiConnectionResponse conn = apiConnectionService.getById(request.apiConnectionId());
       return UrlUtils.joinUrl(conn.baseUrl(), request.url());
     }
     return request.url();

@@ -1,14 +1,12 @@
 package com.smartfirehub.analytics.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
-import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
-import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
+import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -19,11 +17,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * ChartService 추가 통합 테스트.
- * 기존 ChartServiceTest에서 커버되지 않은 분기:
- * - executeQueryForCache(null) — null SQL → 빈 응답 반환
- * - executeQueryForCache("") — blank SQL → 빈 응답 반환
- * - getChartData: SavedQuerySqlText not found (L123)
+ * ChartService 추가 통합 테스트. 기존 ChartServiceTest에서 커버되지 않은 분기: - executeQueryForCache(null) — null SQL
+ * → 빈 응답 반환 - executeQueryForCache("") — blank SQL → 빈 응답 반환 - getChartData: SavedQuerySqlText not
+ * found (L123)
  */
 @Transactional
 class ChartServiceExtTest extends IntegrationTestBase {
@@ -39,10 +35,14 @@ class ChartServiceExtTest extends IntegrationTestBase {
   void setUp() {
     ownerUserId =
         dsl.insertInto(DSL.table(DSL.name("user")))
-            .set(DSL.field(DSL.name("user", "username"), String.class), "chart_ext_owner_" + System.nanoTime())
+            .set(
+                DSL.field(DSL.name("user", "username"), String.class),
+                "chart_ext_owner_" + System.nanoTime())
             .set(DSL.field(DSL.name("user", "password"), String.class), "password")
             .set(DSL.field(DSL.name("user", "name"), String.class), "Chart Ext Owner")
-            .set(DSL.field(DSL.name("user", "email"), String.class), "chart_ext_" + System.nanoTime() + "@example.com")
+            .set(
+                DSL.field(DSL.name("user", "email"), String.class),
+                "chart_ext_" + System.nanoTime() + "@example.com")
             .returning(DSL.field(DSL.name("user", "id"), Long.class))
             .fetchOne()
             .get(DSL.field(DSL.name("user", "id"), Long.class));
@@ -102,5 +102,4 @@ class ChartServiceExtTest extends IntegrationTestBase {
     assertThat(chart.id()).isNotNull();
     assertThat(chart.name()).isEqualTo("Normal Chart");
   }
-
 }

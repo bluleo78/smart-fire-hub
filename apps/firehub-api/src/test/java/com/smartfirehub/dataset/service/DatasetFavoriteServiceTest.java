@@ -20,8 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * DatasetFavoriteService 통합 테스트.
  *
- * <p>toggleFavorite 핵심 메서드 전체 커버.
- * 즐겨찾기 추가/해제 토글 로직, 멱등성, 예외 케이스를 실제 DB에서 검증한다.
+ * <p>toggleFavorite 핵심 메서드 전체 커버. 즐겨찾기 추가/해제 토글 로직, 멱등성, 예외 케이스를 실제 DB에서 검증한다.
  */
 @Transactional
 class DatasetFavoriteServiceTest extends IntegrationTestBase {
@@ -43,10 +42,7 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
   // Setup
   // =========================================================================
 
-  /**
-   * 각 테스트 전 사용자 2명과 데이터셋 1개를 생성한다.
-   * DatasetService.createDataset()을 사용하여 data 스키마 테이블도 함께 생성한다.
-   */
+  /** 각 테스트 전 사용자 2명과 데이터셋 1개를 생성한다. DatasetService.createDataset()을 사용하여 data 스키마 테이블도 함께 생성한다. */
   @BeforeEach
   void setUp() {
     // 첫 번째 테스트 사용자 생성
@@ -80,8 +76,7 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
                 null,
                 null,
                 "SOURCE",
-                List.of(
-                    new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
+                List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
                 null),
             userId1);
     datasetId = ds.id();
@@ -117,7 +112,8 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
     datasetFavoriteService.toggleFavorite(datasetId, userId1); // 추가 (true)
     datasetFavoriteService.toggleFavorite(datasetId, userId1); // 해제 (false)
     datasetFavoriteService.toggleFavorite(datasetId, userId1); // 추가 (true)
-    FavoriteToggleResponse response = datasetFavoriteService.toggleFavorite(datasetId, userId1); // 해제 (false)
+    FavoriteToggleResponse response =
+        datasetFavoriteService.toggleFavorite(datasetId, userId1); // 해제 (false)
 
     assertThat(response.favorited()).isFalse();
   }
@@ -127,7 +123,8 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
   void toggleFavorite_oddNumberOfToggles_favorited() {
     datasetFavoriteService.toggleFavorite(datasetId, userId1); // 추가 (true)
     datasetFavoriteService.toggleFavorite(datasetId, userId1); // 해제 (false)
-    FavoriteToggleResponse response = datasetFavoriteService.toggleFavorite(datasetId, userId1); // 추가 (true)
+    FavoriteToggleResponse response =
+        datasetFavoriteService.toggleFavorite(datasetId, userId1); // 추가 (true)
 
     assertThat(response.favorited()).isTrue();
   }
@@ -136,24 +133,21 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
   // toggleFavorite — 사용자 격리
   // =========================================================================
 
-  /**
-   * 정상: 한 사용자의 즐겨찾기가 다른 사용자에게 영향을 주지 않아야 한다.
-   * userId1이 즐겨찾기를 추가해도 userId2의 즐겨찾기 상태는 독립적이다.
-   */
+  /** 정상: 한 사용자의 즐겨찾기가 다른 사용자에게 영향을 주지 않아야 한다. userId1이 즐겨찾기를 추가해도 userId2의 즐겨찾기 상태는 독립적이다. */
   @Test
   void toggleFavorite_differentUsers_independentStates() {
     // userId1은 즐겨찾기 추가
-    FavoriteToggleResponse user1Response = datasetFavoriteService.toggleFavorite(datasetId, userId1);
+    FavoriteToggleResponse user1Response =
+        datasetFavoriteService.toggleFavorite(datasetId, userId1);
     assertThat(user1Response.favorited()).isTrue();
 
     // userId2는 아직 즐겨찾기 추가 안 했으므로 true 반환
-    FavoriteToggleResponse user2Response = datasetFavoriteService.toggleFavorite(datasetId, userId2);
+    FavoriteToggleResponse user2Response =
+        datasetFavoriteService.toggleFavorite(datasetId, userId2);
     assertThat(user2Response.favorited()).isTrue();
   }
 
-  /**
-   * 정상: userId1이 즐겨찾기를 해제해도 userId2의 즐겨찾기는 유지되어야 한다.
-   */
+  /** 정상: userId1이 즐겨찾기를 해제해도 userId2의 즐겨찾기는 유지되어야 한다. */
   @Test
   void toggleFavorite_user1Removes_user2Unaffected() {
     // 두 사용자 모두 즐겨찾기 추가

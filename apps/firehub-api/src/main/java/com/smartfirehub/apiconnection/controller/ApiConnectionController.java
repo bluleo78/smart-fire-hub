@@ -65,29 +65,20 @@ public class ApiConnectionController {
     return ResponseEntity.ok(apiConnectionService.getDecryptedAuthConfig(id));
   }
 
-  /**
-   * 파이프라인 스텝에서 사용할 API 연결 slim 목록.
-   * 일반 사용자도 접근 가능하나 민감 필드(authConfig 등)는 제외되어 내려간다.
-   */
+  /** 파이프라인 스텝에서 사용할 API 연결 slim 목록. 일반 사용자도 접근 가능하나 민감 필드(authConfig 등)는 제외되어 내려간다. */
   @GetMapping("/selectable")
   public List<ApiConnectionSelectableResponse> getSelectable() {
     return apiConnectionService.findSelectable();
   }
 
-  /**
-   * 저장된 API 연결의 상태를 즉시 점검한다.
-   * healthCheckPath 기반 GET 요청으로 2xx면 UP, 그 외 DOWN 처리 + DB 반영.
-   */
+  /** 저장된 API 연결의 상태를 즉시 점검한다. healthCheckPath 기반 GET 요청으로 2xx면 UP, 그 외 DOWN 처리 + DB 반영. */
   @PostMapping("/{id}/test")
   @RequirePermission("apiconnection:write")
   public TestConnectionResponse testConnection(@PathVariable Long id) {
     return apiConnectionService.testConnection(id);
   }
 
-  /**
-   * 모든 헬스체크 가능 연결을 즉시 갱신하는 비동기 Job을 시작한다.
-   * 응답은 jobId를 반환하며, 진행률은 SSE로 확인 가능하다.
-   */
+  /** 모든 헬스체크 가능 연결을 즉시 갱신하는 비동기 Job을 시작한다. 응답은 jobId를 반환하며, 진행률은 SSE로 확인 가능하다. */
   @PostMapping("/refresh-all")
   @RequirePermission("apiconnection:write")
   public Map<String, String> refreshAll(Authentication authentication) {

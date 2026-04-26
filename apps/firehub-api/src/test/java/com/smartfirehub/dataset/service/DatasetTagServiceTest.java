@@ -19,8 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * DatasetTagService 통합 테스트.
  *
- * <p>addTag, deleteTag, getAllDistinctTags 핵심 메서드 전체 커버.
- * 실제 DB에 데이터셋을 생성하고 태그 CRUD 및 예외 케이스를 검증한다.
+ * <p>addTag, deleteTag, getAllDistinctTags 핵심 메서드 전체 커버. 실제 DB에 데이터셋을 생성하고 태그 CRUD 및 예외 케이스를 검증한다.
  */
 @Transactional
 class DatasetTagServiceTest extends IntegrationTestBase {
@@ -42,10 +41,7 @@ class DatasetTagServiceTest extends IntegrationTestBase {
   // Setup
   // =========================================================================
 
-  /**
-   * 각 테스트 전 사용자와 데이터셋을 생성한다.
-   * DatasetService.createDataset()을 사용하여 data 스키마 테이블도 함께 생성한다.
-   */
+  /** 각 테스트 전 사용자와 데이터셋을 생성한다. DatasetService.createDataset()을 사용하여 data 스키마 테이블도 함께 생성한다. */
   @BeforeEach
   void setUp() {
     // 테스트 사용자 생성
@@ -68,8 +64,7 @@ class DatasetTagServiceTest extends IntegrationTestBase {
                 null,
                 null,
                 "SOURCE",
-                List.of(
-                    new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
+                List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
                 null),
             testUserId);
     datasetId = ds1.id();
@@ -83,8 +78,7 @@ class DatasetTagServiceTest extends IntegrationTestBase {
                 null,
                 null,
                 "SOURCE",
-                List.of(
-                    new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
+                List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
                 null),
             testUserId);
     datasetId2 = ds2.id();

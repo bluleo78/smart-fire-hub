@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.audit.service.AuditLogService;
-import com.smartfirehub.user.repository.UserRepository;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -23,6 +22,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
@@ -211,9 +211,18 @@ public class PipelineExecutionService {
     // 파이프라인 실행 감사 로그 (#60/#92)
     String pipelineNameForLog = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
     String usernameForLog = userRepository.findById(userId).map(u -> u.username()).orElse(null);
-    auditLogService.log(userId, usernameForLog, "EXECUTE", "pipeline",
-        String.valueOf(pipelineId), "파이프라인 실행: " + pipelineNameForLog,
-        null, null, "SUCCESS", null, null);
+    auditLogService.log(
+        userId,
+        usernameForLog,
+        "EXECUTE",
+        "pipeline",
+        String.valueOf(pipelineId),
+        "파이프라인 실행: " + pipelineNameForLog,
+        null,
+        null,
+        "SUCCESS",
+        null,
+        null);
 
     return executionId;
   }
@@ -321,7 +330,8 @@ public class PipelineExecutionService {
 
     } catch (Exception e) {
       log.error("Pipeline execution {} failed with exception", executionId, e);
-      executionRepository.updateExecutionStatus(executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC));
+      executionRepository.updateExecutionStatus(
+          executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC));
 
       // Publish failure event for chain triggers
       applicationEventPublisher.publishEvent(
@@ -701,7 +711,12 @@ public class PipelineExecutionService {
         } else {
           ApiCallExecutor.ApiCallResult result =
               apiCallExecutor.execute(
-                  apiCallConfig, outputTableName, decryptedAuth, loadStrategy, columnTypeMap, apiConn);
+                  apiCallConfig,
+                  outputTableName,
+                  decryptedAuth,
+                  loadStrategy,
+                  columnTypeMap,
+                  apiConn);
           executionLog = result.log();
         }
       } else if ("AI_CLASSIFY".equals(step.scriptType())) {
@@ -826,14 +841,20 @@ public class PipelineExecutionService {
     } catch (Exception e) {
       log.error("Step {} failed", step.name(), e);
       executionRepository.updateStepExecution(
-          stepExecId, "FAILED", null, null, e.getMessage(), null, LocalDateTime.now(ZoneOffset.UTC));
+          stepExecId,
+          "FAILED",
+          null,
+          null,
+          e.getMessage(),
+          null,
+          LocalDateTime.now(ZoneOffset.UTC));
       return "FAILED";
     }
   }
 
   /**
-   * 외부 executor(Python 기반)로 전달할 API 호출 요청 Map을 구성한다.
-   * Phase 9: apiConn이 있으면 baseUrl+path로 최종 URL을 계산하여 "url" 필드에 설정.
+   * 외부 executor(Python 기반)로 전달할 API 호출 요청 Map을 구성한다. Phase 9: apiConn이 있으면 baseUrl+path로 최종 URL을
+   * 계산하여 "url" 필드에 설정.
    */
   private Map<String, Object> buildApiCallExecutorRequest(
       ApiCallConfig config,
@@ -854,11 +875,10 @@ public class PipelineExecutionService {
     String resolvedUrl;
     if (apiConn != null) {
       if (config.path() == null || config.path().isBlank()) {
-        throw new ScriptExecutionException(
-            "API_CALL: apiConnectionId 설정 시 path가 필수입니다");
+        throw new ScriptExecutionException("API_CALL: apiConnectionId 설정 시 path가 필수입니다");
       }
-      resolvedUrl = com.smartfirehub.apiconnection.service.UrlUtils.joinUrl(
-          apiConn.baseUrl(), config.path());
+      resolvedUrl =
+          com.smartfirehub.apiconnection.service.UrlUtils.joinUrl(apiConn.baseUrl(), config.path());
     } else if (config.customUrl() != null && !config.customUrl().isBlank()) {
       resolvedUrl = config.customUrl();
     } else if (config.url() != null && !config.url().isBlank()) {

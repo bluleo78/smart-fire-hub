@@ -25,91 +25,103 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RoutingResolverTest {
 
-    @Mock private UserChannelPreferenceRepository preferenceRepo;
-    @Mock private UserChannelBindingRepository bindingRepo;
+  @Mock private UserChannelPreferenceRepository preferenceRepo;
+  @Mock private UserChannelBindingRepository bindingRepo;
 
-    @InjectMocks private RoutingResolver resolver;
+  @InjectMocks private RoutingResolver resolver;
 
-    private static final long USER_ID = 100L;
+  private static final long USER_ID = 100L;
 
-    @BeforeEach
-    void setUp() {
-        // 디폴트: 모든 채널 enabled (AuthStrategy는 ChannelType enum에서 직접 참조하므로 mock 불필요)
-        lenient().when(preferenceRepo.isEnabled(eq(USER_ID), any())).thenReturn(true);
-    }
+  @BeforeEach
+  void setUp() {
+    // 디폴트: 모든 채널 enabled (AuthStrategy는 ChannelType enum에서 직접 참조하므로 mock 불필요)
+    lenient().when(preferenceRepo.isEnabled(eq(USER_ID), any())).thenReturn(true);
+  }
 
-    @Test
-    void slackEnabledWithBinding_resolvesSlackOnly() {
-        when(bindingRepo.findActive(USER_ID, ChannelType.SLACK))
-                .thenReturn(Optional.of(stubBinding(ChannelType.SLACK)));
-        Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK));
+  @Test
+  void slackEnabledWithBinding_resolvesSlackOnly() {
+    when(bindingRepo.findActive(USER_ID, ChannelType.SLACK))
+        .thenReturn(Optional.of(stubBinding(ChannelType.SLACK)));
+    Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK));
 
-        ResolvedRouting result = resolver.resolve(r);
+    ResolvedRouting result = resolver.resolve(r);
 
-        assertThat(result.resolvedChannels()).containsExactly(ChannelType.SLACK);
-        assertThat(result.forcedChatFallback()).isFalse();
-        assertThat(result.skippedReasons()).isEmpty();
-    }
+    assertThat(result.resolvedChannels()).containsExactly(ChannelType.SLACK);
+    assertThat(result.forcedChatFallback()).isFalse();
+    assertThat(result.skippedReasons()).isEmpty();
+  }
 
-    @Test
-    void slackOptedOut_forcesChatFallback() {
-        when(preferenceRepo.isEnabled(USER_ID, ChannelType.SLACK)).thenReturn(false);
-        Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK));
+  @Test
+  void slackOptedOut_forcesChatFallback() {
+    when(preferenceRepo.isEnabled(USER_ID, ChannelType.SLACK)).thenReturn(false);
+    Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK));
 
-        ResolvedRouting result = resolver.resolve(r);
+    ResolvedRouting result = resolver.resolve(r);
 
-        assertThat(result.resolvedChannels()).containsExactly(ChannelType.CHAT);
-        assertThat(result.forcedChatFallback()).isTrue();
-        assertThat(result.skippedReasons()).containsEntry(ChannelType.SLACK, "OPTED_OUT");
-    }
+    assertThat(result.resolvedChannels()).containsExactly(ChannelType.CHAT);
+    assertThat(result.forcedChatFallback()).isTrue();
+    assertThat(result.skippedReasons()).containsEntry(ChannelType.SLACK, "OPTED_OUT");
+  }
 
-    @Test
-    void slackEnabledWithoutBinding_forcesChatFallback() {
-        when(bindingRepo.findActive(USER_ID, ChannelType.SLACK)).thenReturn(Optional.empty());
-        Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK));
+  @Test
+  void slackEnabledWithoutBinding_forcesChatFallback() {
+    when(bindingRepo.findActive(USER_ID, ChannelType.SLACK)).thenReturn(Optional.empty());
+    Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK));
 
-        ResolvedRouting result = resolver.resolve(r);
+    ResolvedRouting result = resolver.resolve(r);
 
-        assertThat(result.resolvedChannels()).containsExactly(ChannelType.CHAT);
-        assertThat(result.forcedChatFallback()).isTrue();
-        assertThat(result.skippedReasons()).containsEntry(ChannelType.SLACK, "BINDING_MISSING");
-    }
+    assertThat(result.resolvedChannels()).containsExactly(ChannelType.CHAT);
+    assertThat(result.forcedChatFallback()).isTrue();
+    assertThat(result.skippedReasons()).containsEntry(ChannelType.SLACK, "BINDING_MISSING");
+  }
 
-    @Test
-    void slackOffEmailOn_resolvesEmailOnly() {
-        when(preferenceRepo.isEnabled(USER_ID, ChannelType.SLACK)).thenReturn(false);
-        // EMAIL은 binding 불필요 (AuthStrategy.EMAIL_ADDRESS)
-        Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK, ChannelType.EMAIL));
+  @Test
+  void slackOffEmailOn_resolvesEmailOnly() {
+    when(preferenceRepo.isEnabled(USER_ID, ChannelType.SLACK)).thenReturn(false);
+    // EMAIL은 binding 불필요 (AuthStrategy.EMAIL_ADDRESS)
+    Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.SLACK, ChannelType.EMAIL));
 
-        ResolvedRouting result = resolver.resolve(r);
+    ResolvedRouting result = resolver.resolve(r);
 
-        assertThat(result.resolvedChannels()).containsExactly(ChannelType.EMAIL);
-        assertThat(result.forcedChatFallback()).isFalse();
-        assertThat(result.skippedReasons()).containsEntry(ChannelType.SLACK, "OPTED_OUT");
-    }
+    assertThat(result.resolvedChannels()).containsExactly(ChannelType.EMAIL);
+    assertThat(result.forcedChatFallback()).isFalse();
+    assertThat(result.skippedReasons()).containsEntry(ChannelType.SLACK, "OPTED_OUT");
+  }
 
-    @Test
-    void emptyRequestedChannels_resolvesChatDefault() {
-        Recipient r = new Recipient(USER_ID, null, EnumSet.noneOf(ChannelType.class));
+  @Test
+  void emptyRequestedChannels_resolvesChatDefault() {
+    Recipient r = new Recipient(USER_ID, null, EnumSet.noneOf(ChannelType.class));
 
-        ResolvedRouting result = resolver.resolve(r);
+    ResolvedRouting result = resolver.resolve(r);
 
-        assertThat(result.resolvedChannels()).containsExactly(ChannelType.CHAT);
-        assertThat(result.forcedChatFallback()).isTrue();
-    }
+    assertThat(result.resolvedChannels()).containsExactly(ChannelType.CHAT);
+    assertThat(result.forcedChatFallback()).isTrue();
+  }
 
-    @Test
-    void chatAndEmailRequested_bothResolved() {
-        Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.CHAT, ChannelType.EMAIL));
+  @Test
+  void chatAndEmailRequested_bothResolved() {
+    Recipient r = new Recipient(USER_ID, null, EnumSet.of(ChannelType.CHAT, ChannelType.EMAIL));
 
-        ResolvedRouting result = resolver.resolve(r);
+    ResolvedRouting result = resolver.resolve(r);
 
-        assertThat(result.resolvedChannels())
-                .containsExactlyInAnyOrder(ChannelType.CHAT, ChannelType.EMAIL);
-    }
+    assertThat(result.resolvedChannels())
+        .containsExactlyInAnyOrder(ChannelType.CHAT, ChannelType.EMAIL);
+  }
 
-    private UserChannelBinding stubBinding(ChannelType ch) {
-        return new UserChannelBinding(1L, USER_ID, ch, null, "ext-id", "addr", null, null, null,
-                "ACTIVE", null, Instant.EPOCH, Instant.EPOCH);
-    }
+  private UserChannelBinding stubBinding(ChannelType ch) {
+    return new UserChannelBinding(
+        1L,
+        USER_ID,
+        ch,
+        null,
+        "ext-id",
+        "addr",
+        null,
+        null,
+        null,
+        "ACTIVE",
+        null,
+        Instant.EPOCH,
+        Instant.EPOCH);
+  }
 }

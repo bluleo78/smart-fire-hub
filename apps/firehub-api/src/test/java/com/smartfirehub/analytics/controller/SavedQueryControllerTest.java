@@ -88,14 +88,7 @@ class SavedQueryControllerTest {
   /** 쿼리 실행 응답 샘플 생성 헬퍼. */
   private AnalyticsQueryResponse sampleQueryResult() {
     return new AnalyticsQueryResponse(
-        "SELECT",
-        List.of("col1"),
-        List.of(Map.of("col1", "value")),
-        0,
-        10L,
-        1,
-        false,
-        null);
+        "SELECT", List.of("col1"), List.of(Map.of("col1", "value")), 0, 10L, 1, false, null);
   }
 
   // ── GET /api/v1/analytics/queries ──────────────────────────────────────────
@@ -158,9 +151,7 @@ class SavedQueryControllerTest {
   void getSchema_withPermission_returnsSchema() throws Exception {
     SchemaInfoResponse schema =
         new SchemaInfoResponse(
-            List.of(
-                new SchemaInfoResponse.TableInfo(
-                    "my_table", "My Dataset", 1L, List.of())));
+            List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())));
     when(executionService.getSchemaInfo()).thenReturn(schema);
 
     mockMvc
@@ -210,8 +201,7 @@ class SavedQueryControllerTest {
     when(savedQueryService.getById(1L, 1L)).thenReturn(sampleQuery());
 
     mockMvc
-        .perform(
-            get("/api/v1/analytics/queries/1").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/analytics/queries/1").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(1))
         .andExpect(jsonPath("$.sqlText").value("SELECT 1"));
@@ -241,8 +231,7 @@ class SavedQueryControllerTest {
   @Test
   void deleteQuery_withPermission_returnsNoContent() throws Exception {
     mockMvc
-        .perform(
-            delete("/api/v1/analytics/queries/1").header("Authorization", "Bearer test-token"))
+        .perform(delete("/api/v1/analytics/queries/1").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
 
     verify(savedQueryService).delete(1L, 1L);
@@ -271,8 +260,7 @@ class SavedQueryControllerTest {
 
     mockMvc
         .perform(
-            post("/api/v1/analytics/queries/1/clone")
-                .header("Authorization", "Bearer test-token"))
+            post("/api/v1/analytics/queries/1/clone").header("Authorization", "Bearer test-token"))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(1));
   }

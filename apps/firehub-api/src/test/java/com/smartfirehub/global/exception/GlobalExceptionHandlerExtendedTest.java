@@ -17,8 +17,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * GlobalExceptionHandler 추가 핸들러 커버리지 테스트.
- * ExceptionStubControllerExtended가 던지는 예외를 통해 핸들러 분기를 검증한다.
+ * GlobalExceptionHandler 추가 핸들러 커버리지 테스트. ExceptionStubControllerExtended가 던지는 예외를 통해 핸들러 분기를 검증한다.
  */
 @SuppressWarnings("null")
 @WebMvcTest(controllers = ExceptionStubControllerExtended.class)

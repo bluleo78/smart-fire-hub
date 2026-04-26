@@ -1,7 +1,6 @@
 package com.smartfirehub.dataimport.controller;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -99,13 +98,12 @@ class DataExportControllerTest {
 
     // 컨트롤러 sync 분기 코드 라인 실행이 목표. StreamingResponseBody를 body에 직접 담으면
     // 메시지 컨버터가 500을 내지만 컨트롤러 메서드는 이미 통과한 상태이므로 커버리지 목적에는 충분하다.
-    mockMvc
-        .perform(
-            post("/api/v1/datasets/1/export")
-                .header("Authorization", "Bearer valid-token")
-                .header("User-Agent", "JUnit")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(req)));
+    mockMvc.perform(
+        post("/api/v1/datasets/1/export")
+            .header("Authorization", "Bearer valid-token")
+            .header("User-Agent", "JUnit")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(req)));
   }
 
   @Test
@@ -155,8 +153,7 @@ class DataExportControllerTest {
     when(asyncJobService.getJobStatus("job-xyz", 1L)).thenReturn(job);
 
     mockMvc
-        .perform(
-            get("/api/v1/exports/job-xyz/file").header("Authorization", "Bearer valid-token"))
+        .perform(get("/api/v1/exports/job-xyz/file").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
 
     Files.deleteIfExists(tmp);
@@ -169,14 +166,14 @@ class DataExportControllerTest {
     when(exportService.exportQueryResult(any(), any(), eq(ExportFormat.CSV))).thenReturn(body);
 
     QueryResultExportRequest req =
-        new QueryResultExportRequest(List.of("a", "b"), List.of(Map.of("a", 1, "b", 2)), ExportFormat.CSV);
+        new QueryResultExportRequest(
+            List.of("a", "b"), List.of(Map.of("a", 1, "b", 2)), ExportFormat.CSV);
 
     // 컨트롤러 라인 커버리지 목적 — status 단정은 생략
-    mockMvc
-        .perform(
-            post("/api/v1/query-results/export")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(req)));
+    mockMvc.perform(
+        post("/api/v1/query-results/export")
+            .header("Authorization", "Bearer valid-token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(req)));
   }
 }

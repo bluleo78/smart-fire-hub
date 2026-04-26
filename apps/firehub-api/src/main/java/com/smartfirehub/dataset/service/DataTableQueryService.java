@@ -32,12 +32,13 @@ public class DataTableQueryService {
 
     // public/시스템 스키마 직접 참조 차단 — 비밀번호 해시·시스템 카탈로그 접근 방지 (#95)
     String upperSql = cleanSql.toUpperCase();
-    if (upperSql.contains("PUBLIC.") || upperSql.contains("INFORMATION_SCHEMA")
-        || upperSql.contains("PG_CATALOG") || upperSql.contains("PG_READ_FILE")
+    if (upperSql.contains("PUBLIC.")
+        || upperSql.contains("INFORMATION_SCHEMA")
+        || upperSql.contains("PG_CATALOG")
+        || upperSql.contains("PG_READ_FILE")
         || upperSql.contains("PG_EXECUTE")) {
       return new SqlQueryResponse(
-          "UNKNOWN", List.of(), List.of(), 0, 0,
-          "보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
+          "UNKNOWN", List.of(), List.of(), 0, 0, "보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
     }
 
     // Restrict search_path to data schema only — prevents access to public schema tables

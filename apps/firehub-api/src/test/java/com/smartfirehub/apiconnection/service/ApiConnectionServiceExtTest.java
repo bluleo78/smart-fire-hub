@@ -25,12 +25,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * ApiConnectionService 추가 통합 테스트.
- * 기존 테스트에서 커버되지 않은 분기:
- * - update() 시 baseUrl 변경 (validateAndNormalizeBaseUrl 호출)
- * - validateAndNormalizeBaseUrl: null/blank, 호스트 없음, SsrfException, IllegalArgumentException
- * - validateAuthType: 유효하지 않은 authType
- * - update() 시 authType 없이 authConfig만 변경 (fetchAuthType 경로)
+ * ApiConnectionService 추가 통합 테스트. 기존 테스트에서 커버되지 않은 분기: - update() 시 baseUrl 변경
+ * (validateAndNormalizeBaseUrl 호출) - validateAndNormalizeBaseUrl: null/blank, 호스트 없음,
+ * SsrfException, IllegalArgumentException - validateAuthType: 유효하지 않은 authType - update() 시
+ * authType 없이 authConfig만 변경 (fetchAuthType 경로)
  */
 class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
@@ -125,7 +123,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
         .when(ssrfProtectionService)
         .validateUrl(anyString());
 
-    assertThatThrownBy(() -> apiConnectionService.create(bearerReq("https://192.168.1.1"), testUserId))
+    assertThatThrownBy(
+            () -> apiConnectionService.create(bearerReq("https://192.168.1.1"), testUserId))
         .isInstanceOf(ApiConnectionException.class)
         .hasMessageContaining("SSRF 보호");
   }
@@ -152,8 +151,12 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     // "BASIC" — 지원되지 않는 authType → "Unsupported authType" 예외
     CreateApiConnectionRequest req =
         new CreateApiConnectionRequest(
-            "Bad AuthType", null, "BASIC", Map.of("username", "u", "password", "p"),
-            "https://svc.example.com", null);
+            "Bad AuthType",
+            null,
+            "BASIC",
+            Map.of("username", "u", "password", "p"),
+            "https://svc.example.com",
+            null);
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
@@ -164,8 +167,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   void create_nullAuthType_throwsApiConnectionException() {
     CreateApiConnectionRequest req =
         new CreateApiConnectionRequest(
-            "Null AuthType", null, null, Map.of("token", "tok"),
-            "https://svc.example.com", null);
+            "Null AuthType", null, null, Map.of("token", "tok"), "https://svc.example.com", null);
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
@@ -182,9 +184,11 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest(
-            "Updated Conn", null, "BEARER",
+            "Updated Conn",
+            null,
+            "BEARER",
             Map.of("token", "new-token"),
-            "https://new.example.com/",  // trailing slash → 정규화 후 제거
+            "https://new.example.com/", // trailing slash → 정규화 후 제거
             null);
 
     ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
@@ -200,8 +204,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
         apiConnectionService.create(bearerReq("https://old.example.com"), testUserId);
 
     UpdateApiConnectionRequest updateReq =
-        new UpdateApiConnectionRequest(
-            null, null, null, null, "ftp://bad.scheme.com", null);
+        new UpdateApiConnectionRequest(null, null, null, null, "ftp://bad.scheme.com", null);
 
     assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq))
         .isInstanceOf(ApiConnectionException.class);
@@ -217,9 +220,12 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest(
-            null, null, null,  // authType = null → fetchAuthType
+            null,
+            null,
+            null, // authType = null → fetchAuthType
             Map.of("token", "fetched-type-token"),
-            null, null);
+            null,
+            null);
 
     ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
 
@@ -293,7 +299,9 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     ApiConnectionResponse created =
         apiConnectionService.create(
             new CreateApiConnectionRequest(
-                "HC Test Conn", null, "BEARER",
+                "HC Test Conn",
+                null,
+                "BEARER",
                 Map.of("token", "hc-token"),
                 "https://unreachable-test-host-99999.example.com",
                 "/health"),
@@ -315,7 +323,9 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     ApiConnectionResponse created =
         apiConnectionService.create(
             new CreateApiConnectionRequest(
-                "No HC Path Conn", null, "API_KEY",
+                "No HC Path Conn",
+                null,
+                "API_KEY",
                 Map.of("headerName", "X-API-Key", "apiKey", "test-key"),
                 "https://nohcpath-test-99999.example.com",
                 null),
@@ -347,8 +357,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     // ftp:// → "baseUrl은 http 또는 https 스킴이어야 합니다" 분기 커버
     CreateApiConnectionRequest req =
         new CreateApiConnectionRequest(
-            "FTP Conn", null, "BEARER", Map.of("token", "tok"),
-            "ftp://files.example.com", null);
+            "FTP Conn", null, "BEARER", Map.of("token", "tok"), "ftp://files.example.com", null);
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
@@ -365,9 +374,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest(
-            null, null, "INVALID_TYPE",
-            Map.of("token", "tok"),
-            null, null);
+            null, null, "INVALID_TYPE", Map.of("token", "tok"), null, null);
 
     assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq))
         .isInstanceOf(ApiConnectionException.class)

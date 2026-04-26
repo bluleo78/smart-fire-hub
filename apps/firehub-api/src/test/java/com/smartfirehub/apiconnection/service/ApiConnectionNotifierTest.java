@@ -11,10 +11,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/**
- * ApiConnectionNotifier 단위 테스트.
- * 상태 전환 조건(prev=null, 동일, 전환)에 따른 알림 발송 여부를 검증한다.
- */
+/** ApiConnectionNotifier 단위 테스트. 상태 전환 조건(prev=null, 동일, 전환)에 따른 알림 발송 여부를 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class ApiConnectionNotifierTest {
 
@@ -28,11 +25,21 @@ class ApiConnectionNotifierTest {
   void notifyStatusChange_upToDown_sendsDashboardAndAudit() {
     notifier.notifyStatusChange(1L, "API-X", "UP", "DOWN", "HTTP 500");
 
-    verify(notificationService).broadcastApiConnectionStatus(
-        eq("API_CONNECTION_DOWN"), contains("API-X"), any());
-    verify(auditLogService).log(
-        isNull(), anyString(), anyString(), eq("api_connection"),
-        eq("1"), anyString(), isNull(), isNull(), eq("FAILURE"), eq("HTTP 500"), any());
+    verify(notificationService)
+        .broadcastApiConnectionStatus(eq("API_CONNECTION_DOWN"), contains("API-X"), any());
+    verify(auditLogService)
+        .log(
+            isNull(),
+            anyString(),
+            anyString(),
+            eq("api_connection"),
+            eq("1"),
+            anyString(),
+            isNull(),
+            isNull(),
+            eq("FAILURE"),
+            eq("HTTP 500"),
+            any());
   }
 
   /** DOWN→UP 복구 시 복구 알림이 발송되어야 한다. */
@@ -40,11 +47,21 @@ class ApiConnectionNotifierTest {
   void notifyStatusChange_downToUp_sendsRecovery() {
     notifier.notifyStatusChange(1L, "API-X", "DOWN", "UP", null);
 
-    verify(notificationService).broadcastApiConnectionStatus(
-        eq("API_CONNECTION_UP"), contains("복구"), any());
-    verify(auditLogService).log(
-        isNull(), anyString(), anyString(), eq("api_connection"),
-        eq("1"), anyString(), isNull(), isNull(), eq("SUCCESS"), isNull(), any());
+    verify(notificationService)
+        .broadcastApiConnectionStatus(eq("API_CONNECTION_UP"), contains("복구"), any());
+    verify(auditLogService)
+        .log(
+            isNull(),
+            anyString(),
+            anyString(),
+            eq("api_connection"),
+            eq("1"),
+            anyString(),
+            isNull(),
+            isNull(),
+            eq("SUCCESS"),
+            isNull(),
+            any());
   }
 
   /** 최초 체크(prev=null)는 알림 없음 — 초기 상태 설정은 이벤트가 아니다. */

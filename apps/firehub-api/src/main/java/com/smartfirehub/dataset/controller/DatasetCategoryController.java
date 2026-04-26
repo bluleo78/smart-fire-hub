@@ -4,9 +4,9 @@ import com.smartfirehub.dataset.dto.CategoryRequest;
 import com.smartfirehub.dataset.dto.CategoryResponse;
 import com.smartfirehub.dataset.service.DatasetCategoryService;
 import com.smartfirehub.global.security.RequirePermission;
+import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -27,7 +27,8 @@ public class DatasetCategoryController {
 
   @PostMapping
   @RequirePermission("dataset:write")
-  public ResponseEntity<CategoryResponse> createCategory(@Valid @RequestBody CategoryRequest request) {
+  public ResponseEntity<CategoryResponse> createCategory(
+      @Valid @RequestBody CategoryRequest request) {
     CategoryResponse category =
         categoryService.createCategory(request.name(), request.description());
     return ResponseEntity.status(HttpStatus.CREATED).body(category);

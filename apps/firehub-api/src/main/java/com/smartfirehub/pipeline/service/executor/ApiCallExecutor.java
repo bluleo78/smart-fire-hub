@@ -122,7 +122,8 @@ public class ApiCallExecutor {
                   pag.offsetParam(), pag.limitParam(), offset, pageSize);
 
           // Fetch page
-          String responseBody = executeRequest(config, resolvedUrl, decryptedAuthConfig, pagParams, timeoutMs);
+          String responseBody =
+              executeRequest(config, resolvedUrl, decryptedAuthConfig, pagParams, timeoutMs);
 
           // Parse data
           List<Map<String, Object>> rows =
@@ -175,7 +176,8 @@ public class ApiCallExecutor {
 
       } else {
         // Single request (no pagination)
-        String responseBody = executeRequest(config, resolvedUrl, decryptedAuthConfig, Map.of(), timeoutMs);
+        String responseBody =
+            executeRequest(config, resolvedUrl, decryptedAuthConfig, Map.of(), timeoutMs);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
                 responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
@@ -464,7 +466,14 @@ public class ApiCallExecutor {
       URI redirectUri = URI.create(location);
       // Redirects always use GET (standard 301/302/303 behaviour)
       return executeWithRedirects(
-          client, "GET", redirectUri, config, resolvedUrl, decryptedAuthConfig, timeoutMs, redirectCount + 1);
+          client,
+          "GET",
+          redirectUri,
+          config,
+          resolvedUrl,
+          decryptedAuthConfig,
+          timeoutMs,
+          redirectCount + 1);
     }
 
     return body;
@@ -536,8 +545,8 @@ public class ApiCallExecutor {
   // -------------------------------------------------------------------------
 
   /**
-   * 하위 호환용 오버로드 — conn 없이 호출하면 customUrl 또는 레거시 url 필드를 사용한다.
-   * ApiCallPreviewService 등 conn 정보가 없는 호출부에서 사용.
+   * 하위 호환용 오버로드 — conn 없이 호출하면 customUrl 또는 레거시 url 필드를 사용한다. ApiCallPreviewService 등 conn 정보가 없는
+   * 호출부에서 사용.
    */
   public ApiCallResult execute(
       ApiCallConfig config,
@@ -552,6 +561,7 @@ public class ApiCallExecutor {
    * API_CALL 스텝의 호출 대상 URL을 계산한다.
    *
    * <p>우선순위:
+   *
    * <ol>
    *   <li>conn != null → conn.baseUrl() + config.path() (path 필수)
    *   <li>config.customUrl() → customUrl 그대로 사용
@@ -567,8 +577,7 @@ public class ApiCallExecutor {
       // apiConnectionId 기반: connection.baseUrl + path
       String path = config.path();
       if (path == null || path.isBlank()) {
-        throw new ApiCallException(
-            "API_CALL: apiConnectionId 설정 시 path가 필수입니다");
+        throw new ApiCallException("API_CALL: apiConnectionId 설정 시 path가 필수입니다");
       }
       return UrlUtils.joinUrl(conn.baseUrl(), path);
     }
@@ -585,8 +594,7 @@ public class ApiCallExecutor {
       return legacyUrl;
     }
 
-    throw new ApiCallException(
-        "API_CALL: apiConnectionId 없이 호출하려면 customUrl(또는 레거시 url)이 필수입니다");
+    throw new ApiCallException("API_CALL: apiConnectionId 없이 호출하려면 customUrl(또는 레거시 url)이 필수입니다");
   }
 
   private List<String> extractColumns(List<Map<String, Object>> rows) {

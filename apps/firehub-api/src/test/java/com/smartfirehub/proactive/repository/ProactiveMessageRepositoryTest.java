@@ -14,8 +14,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * ProactiveMessageRepository 통합 테스트.
- * 실제 DB를 사용해 create/findUnread/countUnread/markAsRead/markAllAsRead/findByUserId 메서드를 커버한다.
+ * ProactiveMessageRepository 통합 테스트. 실제 DB를 사용해
+ * create/findUnread/countUnread/markAsRead/markAllAsRead/findByUserId 메서드를 커버한다.
  */
 @Transactional
 class ProactiveMessageRepositoryTest extends IntegrationTestBase {
@@ -75,7 +75,8 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
 
     assertThat(unread).hasSize(2);
     assertThat(unread).allMatch(m -> !m.read());
-    assertThat(unread).extracting(ProactiveMessageResponse::title)
+    assertThat(unread)
+        .extracting(ProactiveMessageResponse::title)
         .containsExactlyInAnyOrder("Unread 1", "Unread 2");
   }
 
@@ -150,7 +151,8 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
     repository.markAsRead(id, userId);
 
     List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0);
-    ProactiveMessageResponse msg = all.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
+    ProactiveMessageResponse msg =
+        all.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
     assertThat(msg.read()).isTrue();
     assertThat(msg.readAt()).isNotNull();
   }
@@ -163,7 +165,7 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
     repository.markAsRead(id, userId + 9999L);
 
     int count = repository.countUnreadByUserId(userId);
-    assertThat(count).isEqualTo(1);  // 여전히 unread
+    assertThat(count).isEqualTo(1); // 여전히 unread
   }
 
   // -----------------------------------------------------------------------
@@ -229,7 +231,8 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
     Long id = repository.create(userId, null, "Rich Content", content, "REPORT");
 
     List<ProactiveMessageResponse> messages = repository.findByUserId(userId, 10, 0);
-    ProactiveMessageResponse msg = messages.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
+    ProactiveMessageResponse msg =
+        messages.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
 
     assertThat(msg.content()).containsKey("summary");
     assertThat(msg.content().get("summary")).isEqualTo("test summary");

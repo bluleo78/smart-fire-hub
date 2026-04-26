@@ -32,10 +32,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * DatasetController 추가 엔드포인트 커버리지 보강 테스트.
- * 컬럼 관리, 데이터 조회/수정/삭제, 태그, 즐겨찾기, 상태 변경 등을 커버한다.
- */
+/** DatasetController 추가 엔드포인트 커버리지 보강 테스트. 컬럼 관리, 데이터 조회/수정/삭제, 태그, 즐겨찾기, 상태 변경 등을 커버한다. */
 @SuppressWarnings("null")
 @WebMvcTest(DatasetController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
@@ -71,20 +68,39 @@ class DatasetControllerExtendedTest {
 
   private DatasetDetailResponse sampleDetail() {
     return new DatasetDetailResponse(
-        1L, "DS", "ds_table", null, null, "CUSTOM", "user", List.of(), 0L,
-        LocalDateTime.now(), LocalDateTime.now(), "user", false, List.of(),
-        "ACTIVE", null, null, null, List.of(), null);
+        1L,
+        "DS",
+        "ds_table",
+        null,
+        null,
+        "CUSTOM",
+        "user",
+        List.of(),
+        0L,
+        LocalDateTime.now(),
+        LocalDateTime.now(),
+        "user",
+        false,
+        List.of(),
+        "ACTIVE",
+        null,
+        null,
+        null,
+        List.of(),
+        null);
   }
 
   private DatasetColumnResponse sampleColumnResponse() {
-    return new DatasetColumnResponse(10L, "new_col", "New Col", "TEXT", null, true, false, null, 1, false);
+    return new DatasetColumnResponse(
+        10L, "new_col", "New Col", "TEXT", null, true, false, null, 1, false);
   }
 
   // ── 컬럼 관리 ────────────────────────────────────────────────────────────────
 
   @Test
   void addColumn_returnsCreated() throws Exception {
-    AddColumnRequest req = new AddColumnRequest("new_col", "New Col", "TEXT", null, true, false, null);
+    AddColumnRequest req =
+        new AddColumnRequest("new_col", "New Col", "TEXT", null, true, false, null);
     when(datasetService.addColumn(eq(1L), any())).thenReturn(sampleColumnResponse());
 
     mockMvc
@@ -99,7 +115,8 @@ class DatasetControllerExtendedTest {
 
   @Test
   void updateColumn_returnsNoContent() throws Exception {
-    UpdateColumnRequest req = new UpdateColumnRequest(null, "New Display", null, null, null, null, null);
+    UpdateColumnRequest req =
+        new UpdateColumnRequest(null, "New Display", null, null, null, null, null);
     doNothing().when(datasetService).updateColumn(anyLong(), anyLong(), any());
 
     mockMvc
@@ -117,8 +134,7 @@ class DatasetControllerExtendedTest {
 
     mockMvc
         .perform(
-            delete("/api/v1/datasets/1/columns/10")
-                .header("Authorization", "Bearer test-token"))
+            delete("/api/v1/datasets/1/columns/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
   }
 
@@ -140,7 +156,9 @@ class DatasetControllerExtendedTest {
 
   @Test
   void getDatasetStats_returnsStatsList() throws Exception {
-    ColumnStatsResponse stat = new ColumnStatsResponse("col1", "TEXT", 100L, 5L, 0.05, 10L, "a", "z", null, List.of(), false);
+    ColumnStatsResponse stat =
+        new ColumnStatsResponse(
+            "col1", "TEXT", 100L, 5L, 0.05, 10L, "a", "z", null, List.of(), false);
     when(datasetDataService.getDatasetStats(1L)).thenReturn(List.of(stat));
 
     mockMvc
@@ -183,8 +201,7 @@ class DatasetControllerExtendedTest {
 
     mockMvc
         .perform(
-            post("/api/v1/datasets/1/data/truncate")
-                .header("Authorization", "Bearer test-token"))
+            post("/api/v1/datasets/1/data/truncate").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.deletedCount").value(50));
   }
@@ -194,30 +211,26 @@ class DatasetControllerExtendedTest {
     when(datasetDataService.getRowCount(1L)).thenReturn(new RowCountResponse(42L));
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/data/count").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/data/count").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.rowCount").value(42));
   }
 
   @Test
   void getData_returnsDataQueryResponse() throws Exception {
-    DataQueryResponse resp =
-        new DataQueryResponse(List.of(), List.of(), 0, 50, 0L, 0);
+    DataQueryResponse resp = new DataQueryResponse(List.of(), List.of(), 0, 50, 0L, 0);
     when(datasetDataService.getDatasetData(
             anyLong(), any(), anyInt(), anyInt(), any(), any(), anyBoolean(), any()))
         .thenReturn(resp);
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/data").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/data").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
   }
 
   @Test
   void getData_withNearbyFilter_passesFilter() throws Exception {
-    DataQueryResponse resp =
-        new DataQueryResponse(List.of(), List.of(), 0, 50, 0L, 0);
+    DataQueryResponse resp = new DataQueryResponse(List.of(), List.of(), 0, 50, 0L, 0);
     when(datasetDataService.getDatasetData(
             anyLong(), any(), anyInt(), anyInt(), any(), any(), anyBoolean(), any()))
         .thenReturn(resp);
@@ -235,8 +248,7 @@ class DatasetControllerExtendedTest {
 
   @Test
   void getData_withBboxFilter_passesFilter() throws Exception {
-    DataQueryResponse resp =
-        new DataQueryResponse(List.of(), List.of(), 0, 50, 0L, 0);
+    DataQueryResponse resp = new DataQueryResponse(List.of(), List.of(), 0, 50, 0L, 0);
     when(datasetDataService.getDatasetData(
             anyLong(), any(), anyInt(), anyInt(), any(), any(), anyBoolean(), any()))
         .thenReturn(resp);
@@ -254,8 +266,7 @@ class DatasetControllerExtendedTest {
 
   @Test
   void replaceData_returnsCreated() throws Exception {
-    BatchRowDataRequest req =
-        new BatchRowDataRequest(List.of(Map.of("name", "Alice")));
+    BatchRowDataRequest req = new BatchRowDataRequest(List.of(Map.of("name", "Alice")));
     when(datasetDataService.replaceDatasetData(anyLong(), any()))
         .thenReturn(new BatchRowDataResponse(1));
 
@@ -273,11 +284,11 @@ class DatasetControllerExtendedTest {
 
   @Test
   void toggleFavorite_returnsOk() throws Exception {
-    when(datasetFavoriteService.toggleFavorite(1L, 1L)).thenReturn(new FavoriteToggleResponse(true));
+    when(datasetFavoriteService.toggleFavorite(1L, 1L))
+        .thenReturn(new FavoriteToggleResponse(true));
 
     mockMvc
-        .perform(
-            post("/api/v1/datasets/1/favorite").header("Authorization", "Bearer test-token"))
+        .perform(post("/api/v1/datasets/1/favorite").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.favorited").value(true));
   }
@@ -338,7 +349,8 @@ class DatasetControllerExtendedTest {
   void addTag_duplicateTag_returnsConflict() throws Exception {
     AddTagRequest req = new AddTagRequest("sales");
     org.mockito.Mockito.doThrow(new IllegalStateException("Tag already exists"))
-        .when(datasetTagService).addTag(anyLong(), anyString(), anyLong());
+        .when(datasetTagService)
+        .addTag(anyLong(), anyString(), anyLong());
 
     mockMvc
         .perform(
@@ -407,13 +419,11 @@ class DatasetControllerExtendedTest {
 
   @Test
   void getQueryHistory_returnsPageResponse() throws Exception {
-    PageResponse<QueryHistoryResponse> page =
-        new PageResponse<>(List.of(), 0, 20, 0, 0);
+    PageResponse<QueryHistoryResponse> page = new PageResponse<>(List.of(), 0, 20, 0, 0);
     when(datasetDataService.getQueryHistory(anyLong(), anyInt(), anyInt())).thenReturn(page);
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/queries").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/queries").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
   }
 
@@ -470,8 +480,7 @@ class DatasetControllerExtendedTest {
     when(datasetDataService.getRow(anyLong(), anyLong())).thenReturn(resp);
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/data/rows/5").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/data/rows/5").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(5));
   }
@@ -480,7 +489,8 @@ class DatasetControllerExtendedTest {
 
   @Test
   void createApiImport_returnsCreated() throws Exception {
-    ApiImportRequest req = new ApiImportRequest("api-pipeline", null, null, null, "APPEND", true, null);
+    ApiImportRequest req =
+        new ApiImportRequest("api-pipeline", null, null, null, "APPEND", true, null);
     ApiImportResponse resp = new ApiImportResponse(10L, 20L, 30L);
     when(apiImportService.createApiImport(anyLong(), any(), anyLong())).thenReturn(resp);
 

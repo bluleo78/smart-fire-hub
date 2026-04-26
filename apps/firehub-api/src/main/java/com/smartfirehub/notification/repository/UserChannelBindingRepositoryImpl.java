@@ -119,7 +119,8 @@ class UserChannelBindingRepositoryImpl implements UserChannelBindingRepository {
     // SLACK_WORKSPACE JOIN으로 team_id 기준 워크스페이스 특정 후 외부 사용자 ID 매핑
     return dsl.select(USER_CHANNEL_BINDING.fields())
         .from(USER_CHANNEL_BINDING)
-        .join(SLACK_WORKSPACE).on(SLACK_WORKSPACE.ID.eq(USER_CHANNEL_BINDING.WORKSPACE_ID))
+        .join(SLACK_WORKSPACE)
+        .on(SLACK_WORKSPACE.ID.eq(USER_CHANNEL_BINDING.WORKSPACE_ID))
         .where(SLACK_WORKSPACE.TEAM_ID.eq(teamId))
         .and(USER_CHANNEL_BINDING.CHANNEL_TYPE.eq("SLACK"))
         .and(USER_CHANNEL_BINDING.EXTERNAL_USER_ID.eq(externalUserId))

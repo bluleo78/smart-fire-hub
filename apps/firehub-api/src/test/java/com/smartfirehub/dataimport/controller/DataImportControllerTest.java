@@ -17,7 +17,6 @@ import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,7 +52,9 @@ class DataImportControllerTest {
     // UserRepository mock: userId 1 → name "testuser"
     when(userRepository.findById(1L))
         .thenReturn(
-            Optional.of(new UserResponse(1L, "testuser", "test@test.com", "테스트유저", true, LocalDateTime.now())));
+            Optional.of(
+                new UserResponse(
+                    1L, "testuser", "test@test.com", "테스트유저", true, LocalDateTime.now())));
   }
 
   private MockMultipartFile csvFile() {
@@ -66,8 +67,7 @@ class DataImportControllerTest {
     when(importService.getImportsByDatasetId(1L)).thenReturn(List.of());
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/imports").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/imports").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
   }
 
@@ -80,8 +80,7 @@ class DataImportControllerTest {
   /** POST /datasets/{id}/imports/preview — 파일 미리보기 성공 */
   @Test
   void previewImport_withPermission_returnsOk() throws Exception {
-    ImportPreviewResponse preview =
-        new ImportPreviewResponse(List.of(), List.of(), List.of(), 10);
+    ImportPreviewResponse preview = new ImportPreviewResponse(List.of(), List.of(), List.of(), 10);
     when(importService.previewImport(anyLong(), any(), any())).thenReturn(preview);
 
     mockMvc

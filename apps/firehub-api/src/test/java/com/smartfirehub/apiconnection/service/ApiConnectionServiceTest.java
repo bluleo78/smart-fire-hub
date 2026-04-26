@@ -24,8 +24,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * ApiConnectionService 통합 테스트.
- * Phase 9: baseUrl 정규화, SSRF 검증(로컬 테스트 환경에서 localhost는 차단됨),
+ * ApiConnectionService 통합 테스트. Phase 9: baseUrl 정규화, SSRF 검증(로컬 테스트 환경에서 localhost는 차단됨),
  * findSelectable slim 목록, testConnection은 Scheduler Task에서 통합 커버.
  */
 class ApiConnectionServiceTest extends IntegrationTestBase {
@@ -37,8 +36,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
 
   /**
-   * SSRF 보호 서비스를 mock으로 교체 — 테스트 환경에서 DNS 해석이 불가한 외부 도메인 사용 허용.
-   * validateUrl은 아무 동작도 하지 않도록 기본 no-op으로 유지.
+   * SSRF 보호 서비스를 mock으로 교체 — 테스트 환경에서 DNS 해석이 불가한 외부 도메인 사용 허용. validateUrl은 아무 동작도 하지 않도록 기본
+   * no-op으로 유지.
    */
   @MockitoBean private SsrfProtectionService ssrfProtectionService;
 
@@ -158,7 +157,12 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     Map<String, String> authConfig = Map.of("apiKey", "original-key-value-5678");
     CreateApiConnectionRequest createReq =
         new CreateApiConnectionRequest(
-            "Original Name", "Original Desc", "API_KEY", authConfig, "https://orig.example.com", null);
+            "Original Name",
+            "Original Desc",
+            "API_KEY",
+            authConfig,
+            "https://orig.example.com",
+            null);
     ApiConnectionResponse created = apiConnectionService.create(createReq, testUserId);
 
     // name/description만 변경 — authConfig/baseUrl 미변경
@@ -213,10 +217,12 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     Map<String, String> config2 = Map.of("token", "token-two-2222");
 
     apiConnectionService.create(
-        new CreateApiConnectionRequest("Conn One", null, "API_KEY", config1, "https://one.example.com", null),
+        new CreateApiConnectionRequest(
+            "Conn One", null, "API_KEY", config1, "https://one.example.com", null),
         testUserId);
     apiConnectionService.create(
-        new CreateApiConnectionRequest("Conn Two", null, "BEARER", config2, "https://two.example.com", null),
+        new CreateApiConnectionRequest(
+            "Conn Two", null, "BEARER", config2, "https://two.example.com", null),
         testUserId);
 
     List<ApiConnectionResponse> all = apiConnectionService.getAll();
@@ -279,10 +285,11 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(ownedByTestUser).isGreaterThanOrEqualTo(2);
 
     // id, name, authType, baseUrl 필드만 존재 — authConfig 없음 (컴파일 타임 보장)
-    ApiConnectionSelectableResponse first = list.stream()
-        .filter(r -> "https://a.example.com".equals(r.baseUrl()))
-        .findFirst()
-        .orElseThrow();
+    ApiConnectionSelectableResponse first =
+        list.stream()
+            .filter(r -> "https://a.example.com".equals(r.baseUrl()))
+            .findFirst()
+            .orElseThrow();
     assertThat(first.id()).isNotNull();
     assertThat(first.name()).isEqualTo("Test Conn");
     assertThat(first.authType()).isEqualTo("API_KEY");

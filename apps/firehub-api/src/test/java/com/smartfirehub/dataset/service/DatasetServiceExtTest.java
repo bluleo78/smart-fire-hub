@@ -19,8 +19,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * DatasetService 추가 통합 테스트.
- * updateStatus, getDatasets(확장 시그니처), updateColumn, createDataset 엣지 케이스 등 미커버 분기 포함.
+ * DatasetService 추가 통합 테스트. updateStatus, getDatasets(확장 시그니처), updateColumn, createDataset 엣지 케이스
+ * 등 미커버 분기 포함.
  */
 @Transactional
 class DatasetServiceExtTest extends IntegrationTestBase {
@@ -61,15 +61,13 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     List<DatasetColumnRequest> columns =
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null),
-        testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null), testUserId);
   }
 
   private DatasetDetailResponse createDatasetWithColumns(
       String name, String tableName, List<DatasetColumnRequest> columns) {
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null),
-        testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null), testUserId);
   }
 
   // =========================================================================
@@ -81,12 +79,14 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     // PK 컬럼은 nullable 불가
     List<DatasetColumnRequest> columns =
         List.of(
-            new DatasetColumnRequest("id", "ID", "INTEGER", null, true /* nullable */, false, null, true /* isPK */));
+            new DatasetColumnRequest(
+                "id", "ID", "INTEGER", null, true /* nullable */, false, null, true /* isPK */));
 
     assertThatThrownBy(
             () ->
                 datasetService.createDataset(
-                    new CreateDatasetRequest("NullPK", "null_pk", null, null, "SOURCE", columns, null),
+                    new CreateDatasetRequest(
+                        "NullPK", "null_pk", null, null, "SOURCE", columns, null),
                     testUserId))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("nullable");
@@ -177,7 +177,8 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     DatasetDetailResponse ds = createSimpleDataset("StatusDS", "status_ds_ext");
 
     DatasetDetailResponse updated =
-        datasetService.updateStatus(ds.id(), new UpdateStatusRequest("CERTIFIED", "Verified"), testUserId);
+        datasetService.updateStatus(
+            ds.id(), new UpdateStatusRequest("CERTIFIED", "Verified"), testUserId);
 
     assertThat(updated.status()).isEqualTo("CERTIFIED");
     assertThat(updated.statusNote()).isEqualTo("Verified");
@@ -188,7 +189,8 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     DatasetDetailResponse ds = createSimpleDataset("DeprecatedDS", "deprecated_ds_ext");
 
     DatasetDetailResponse updated =
-        datasetService.updateStatus(ds.id(), new UpdateStatusRequest("DEPRECATED", "Old data"), testUserId);
+        datasetService.updateStatus(
+            ds.id(), new UpdateStatusRequest("DEPRECATED", "Old data"), testUserId);
 
     assertThat(updated.status()).isEqualTo("DEPRECATED");
   }
@@ -209,14 +211,18 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     DatasetDetailResponse ds = createSimpleDataset("InvalidStatus", "invalid_status_ext");
 
     assertThatThrownBy(
-            () -> datasetService.updateStatus(ds.id(), new UpdateStatusRequest("INVALID", null), testUserId))
+            () ->
+                datasetService.updateStatus(
+                    ds.id(), new UpdateStatusRequest("INVALID", null), testUserId))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void updateStatus_nonExistentDataset_throwsNotFound() {
     assertThatThrownBy(
-            () -> datasetService.updateStatus(999999L, new UpdateStatusRequest("CERTIFIED", null), testUserId))
+            () ->
+                datasetService.updateStatus(
+                    999999L, new UpdateStatusRequest("CERTIFIED", null), testUserId))
         .isInstanceOf(DatasetNotFoundException.class);
   }
 
@@ -230,12 +236,16 @@ class DatasetServiceExtTest extends IntegrationTestBase {
         createDatasetWithColumns(
             "UpdateColDisplay",
             "update_col_display_ext",
-            List.of(new DatasetColumnRequest("col1", "Original Name", "TEXT", null, true, false, null)));
+            List.of(
+                new DatasetColumnRequest(
+                    "col1", "Original Name", "TEXT", null, true, false, null)));
 
     Long colId = ds.columns().get(0).id();
 
     datasetService.updateColumn(
-        ds.id(), colId, new UpdateColumnRequest(null, "New Display Name", null, null, null, false, null, null));
+        ds.id(),
+        colId,
+        new UpdateColumnRequest(null, "New Display Name", null, null, null, false, null, null));
 
     DatasetDetailResponse updated = datasetService.getDatasetById(ds.id());
     assertThat(updated.columns().get(0).displayName()).isEqualTo("New Display Name");
@@ -253,7 +263,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     // 데이터 없을 때 인덱스 추가 성공
     datasetService.updateColumn(
-        ds.id(), colId, new UpdateColumnRequest(null, null, null, null, null, true /* isIndexed */, null, null));
+        ds.id(),
+        colId,
+        new UpdateColumnRequest(null, null, null, null, null, true /* isIndexed */, null, null));
 
     DatasetDetailResponse updated = datasetService.getDatasetById(ds.id());
     assertThat(updated.columns().get(0).isIndexed()).isTrue();
@@ -264,7 +276,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.updateColumn(
-                    999999L, 1L, new UpdateColumnRequest(null, "Name", null, null, null, false, null, null)))
+                    999999L,
+                    1L,
+                    new UpdateColumnRequest(null, "Name", null, null, null, false, null, null)))
         .isInstanceOf(DatasetNotFoundException.class);
   }
 
@@ -281,7 +295,10 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.updateColumn(
-                    ds.id(), colId, new UpdateColumnRequest(null, null, "INVALID_TYPE", null, null, null, null, null)))
+                    ds.id(),
+                    colId,
+                    new UpdateColumnRequest(
+                        null, null, "INVALID_TYPE", null, null, null, null, null)))
         .isInstanceOf(ColumnModificationException.class);
   }
 
@@ -346,7 +363,8 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             () ->
                 datasetService.addColumn(
                     ds.id(),
-                    new AddColumnRequest("new_col", "New Col", "TEXT", null, false /* not nullable */, false, null)))
+                    new AddColumnRequest(
+                        "new_col", "New Col", "TEXT", null, false /* not nullable */, false, null)))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("non-nullable");
   }
@@ -361,7 +379,8 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             () ->
                 datasetService.addColumn(
                     ds.id(),
-                    new AddColumnRequest("pk_col", "PK Col", "TEXT", null, true, false, null, true /* isPK */)))
+                    new AddColumnRequest(
+                        "pk_col", "PK Col", "TEXT", null, true, false, null, true /* isPK */)))
         .isInstanceOf(ColumnModificationException.class);
   }
 
@@ -374,7 +393,15 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             () ->
                 datasetService.addColumn(
                     ds.id(),
-                    new AddColumnRequest("pk_col", "PK Col", "TEXT", null, true /* nullable */, false, null, true /* isPK */)))
+                    new AddColumnRequest(
+                        "pk_col",
+                        "PK Col",
+                        "TEXT",
+                        null,
+                        true /* nullable */,
+                        false,
+                        null,
+                        true /* isPK */)))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("nullable");
   }
@@ -387,7 +414,15 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     DatasetColumnResponse col =
         datasetService.addColumn(
             ds.id(),
-            new AddColumnRequest("pk_col", "PK Col", "TEXT", null, false /* not nullable */, false, null, true /* isPK */));
+            new AddColumnRequest(
+                "pk_col",
+                "PK Col",
+                "TEXT",
+                null,
+                false /* not nullable */,
+                false,
+                null,
+                true /* isPK */));
 
     assertThat(col).isNotNull();
     assertThat(col.isPrimaryKey()).isTrue();
@@ -410,7 +445,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.updateColumn(
-                    ds.id(), colId, new UpdateColumnRequest("new_name", null, null, null, null, false, null, null)))
+                    ds.id(),
+                    colId,
+                    new UpdateColumnRequest("new_name", null, null, null, null, false, null, null)))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("rename");
   }
@@ -428,7 +465,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.updateColumn(
-                    ds.id(), colId, new UpdateColumnRequest(null, null, "INTEGER", null, null, false, null, null)))
+                    ds.id(),
+                    colId,
+                    new UpdateColumnRequest(null, null, "INTEGER", null, null, false, null, null)))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("data type");
   }
@@ -446,7 +485,10 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.updateColumn(
-                    ds.id(), colId, new UpdateColumnRequest(null, null, null, null, false /* change to NOT NULL */, false, null, null)))
+                    ds.id(),
+                    colId,
+                    new UpdateColumnRequest(
+                        null, null, null, null, false /* change to NOT NULL */, false, null, null)))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("nullable");
   }
@@ -470,7 +512,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 datasetService.updateColumn(
-                    ds2.id(), col1Id, new UpdateColumnRequest(null, "New Name", null, null, null, false, null, null)))
+                    ds2.id(),
+                    col1Id,
+                    new UpdateColumnRequest(null, "New Name", null, null, null, false, null, null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not belong");
   }

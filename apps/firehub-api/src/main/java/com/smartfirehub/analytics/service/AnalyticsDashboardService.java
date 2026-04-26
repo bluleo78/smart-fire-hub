@@ -44,7 +44,8 @@ public class AnalyticsDashboardService {
 
   public com.smartfirehub.global.dto.PageResponse<DashboardResponse> list(
       String search, Boolean sharedOnly, Long userId, int page, int size) {
-    List<DashboardResponse> content = dashboardRepository.findAll(search, sharedOnly, userId, page, size);
+    List<DashboardResponse> content =
+        dashboardRepository.findAll(search, sharedOnly, userId, page, size);
     long total = dashboardRepository.countAll(search, sharedOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new com.smartfirehub.global.dto.PageResponse<>(content, page, size, total, totalPages);

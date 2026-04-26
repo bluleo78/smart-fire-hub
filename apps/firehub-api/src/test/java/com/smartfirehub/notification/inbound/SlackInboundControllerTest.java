@@ -22,35 +22,42 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("test")
 class SlackInboundControllerTest {
 
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @MockitoBean private SlackInboundService slackInboundService;
+  @Autowired private MockMvc mockMvc;
+  @Autowired private ObjectMapper objectMapper;
+  @MockitoBean private SlackInboundService slackInboundService;
 
-    private static final String INTERNAL_TOKEN = "test-internal-token";
+  private static final String INTERNAL_TOKEN = "test-internal-token";
 
-    @Test
-    void inbound_유효한_Internal_토큰_dispatch_호출() throws Exception {
-        var body = Map.of(
-            "teamId", "T123",
-            "event", Map.of("type", "message", "channel", "C123", "user", "U123", "text", "hi", "ts", "1.0")
-        );
+  @Test
+  void inbound_유효한_Internal_토큰_dispatch_호출() throws Exception {
+    var body =
+        Map.of(
+            "teamId",
+            "T123",
+            "event",
+            Map.of(
+                "type", "message", "channel", "C123", "user", "U123", "text", "hi", "ts", "1.0"));
 
-        mockMvc.perform(post("/api/v1/channels/slack/inbound")
+    mockMvc
+        .perform(
+            post("/api/v1/channels/slack/inbound")
                 .header("Authorization", "Internal " + INTERNAL_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(body)))
-                .andExpect(status().isOk());
+        .andExpect(status().isOk());
 
-        verify(slackInboundService).dispatch(anyString(), any());
-    }
+    verify(slackInboundService).dispatch(anyString(), any());
+  }
 
-    @Test
-    void inbound_Internal_토큰_없음_401() throws Exception {
-        var body = Map.of("teamId", "T123", "event", Map.of("type", "message"));
+  @Test
+  void inbound_Internal_토큰_없음_401() throws Exception {
+    var body = Map.of("teamId", "T123", "event", Map.of("type", "message"));
 
-        mockMvc.perform(post("/api/v1/channels/slack/inbound")
+    mockMvc
+        .perform(
+            post("/api/v1/channels/slack/inbound")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(body)))
-                .andExpect(status().isUnauthorized());
-    }
+        .andExpect(status().isUnauthorized());
+  }
 }

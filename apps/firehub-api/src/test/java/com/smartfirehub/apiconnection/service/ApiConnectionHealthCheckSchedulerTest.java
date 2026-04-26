@@ -9,7 +9,6 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import java.util.List;
 import org.jooq.Field;
 import org.jooq.Record;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -17,9 +16,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * ApiConnectionHealthCheckScheduler 단위 테스트.
- * Repository, ApiConnectionService, ApiConnectionNotifier를 mock으로 격리하여
- * 스케줄러의 라우팅 로직(상태 전환 감지 → Notifier 호출)을 검증한다.
+ * ApiConnectionHealthCheckScheduler 단위 테스트. Repository, ApiConnectionService,
+ * ApiConnectionNotifier를 mock으로 격리하여 스케줄러의 라우팅 로직(상태 전환 감지 → Notifier 호출)을 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ApiConnectionHealthCheckSchedulerTest {
@@ -32,8 +30,7 @@ class ApiConnectionHealthCheckSchedulerTest {
 
   // 테스트용 jOOQ Record 헬퍼 필드
   private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
-  private static final Field<String> AC_NAME =
-      field(name("api_connection", "name"), String.class);
+  private static final Field<String> AC_NAME = field(name("api_connection", "name"), String.class);
   private static final Field<String> AC_LAST_STATUS =
       field(name("api_connection", "last_status"), String.class);
 
@@ -79,7 +76,8 @@ class ApiConnectionHealthCheckSchedulerTest {
     Record r1 = mockRecord(1L, "API-1", "UP");
     Record r2 = mockRecord(2L, "API-2", "UP");
     when(repository.findHealthCheckable()).thenReturn(List.of(r1, r2));
-    when(connectionService.testConnection(1L)).thenThrow(new RuntimeException("connection refused"));
+    when(connectionService.testConnection(1L))
+        .thenThrow(new RuntimeException("connection refused"));
     when(connectionService.testConnection(2L))
         .thenReturn(new TestConnectionResponse(true, 200, 30L, null));
 
@@ -106,10 +104,7 @@ class ApiConnectionHealthCheckSchedulerTest {
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────────
 
-  /**
-   * 지정된 값을 반환하는 mock Record를 생성한다.
-   * jOOQ Record 인터페이스를 mock으로 대체하여 실제 DB 없이 테스트한다.
-   */
+  /** 지정된 값을 반환하는 mock Record를 생성한다. jOOQ Record 인터페이스를 mock으로 대체하여 실제 DB 없이 테스트한다. */
   @SuppressWarnings("unchecked")
   private Record mockRecord(Long id, String name, String lastStatus) {
     Record r = mock(Record.class);

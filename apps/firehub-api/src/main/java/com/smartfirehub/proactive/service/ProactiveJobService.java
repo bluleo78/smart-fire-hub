@@ -261,7 +261,8 @@ public class ProactiveJobService {
           // 실제 성공 채널 집계는 outbox status aggregation view(Task 13 이후)로 대체.
           for (String t : configChannels) deliveredChannels.add(t);
         } catch (Exception e) {
-          log.warn("NotificationDispatcher enqueue failed for job {}: {}", jobId, e.getMessage(), e);
+          log.warn(
+              "NotificationDispatcher enqueue failed for job {}: {}", jobId, e.getMessage(), e);
         }
       } else {
         for (DeliveryChannel channel : deliveryChannels) {
@@ -271,7 +272,10 @@ public class ProactiveJobService {
               deliveredChannels.add(channel.type());
             } catch (Exception e) {
               log.warn(
-                  "DeliveryChannel {} failed for job {}: {}", channel.type(), jobId, e.getMessage());
+                  "DeliveryChannel {} failed for job {}: {}",
+                  channel.type(),
+                  jobId,
+                  e.getMessage());
             }
           }
         }

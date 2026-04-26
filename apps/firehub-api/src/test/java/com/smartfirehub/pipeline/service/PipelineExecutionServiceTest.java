@@ -9,7 +9,6 @@ import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.audit.service.AuditLogService;
-import com.smartfirehub.user.repository.UserRepository;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -28,6 +27,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.user.repository.UserRepository;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
@@ -589,7 +589,10 @@ class PipelineExecutionServiceTest {
             null,
             null,
             null,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     PipelineStepResponse apiStep =
         new PipelineStepResponse(

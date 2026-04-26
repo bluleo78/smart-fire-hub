@@ -64,7 +64,13 @@ public class ChartRepository {
       field(name("dashboard_widget", "chart_id"), Long.class);
 
   public List<ChartResponse> findAll(
-      String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId, int page, int size) {
+      String search,
+      String chartType,
+      Long savedQueryId,
+      Boolean sharedOnly,
+      Long userId,
+      int page,
+      int size) {
 
     var dashboardCountField =
         dsl.selectCount().from(DW).where(DW_CHART_ID.eq(C_ID)).asField("dashboard_count");
@@ -126,7 +132,8 @@ public class ChartRepository {
     return result;
   }
 
-  public long countAll(String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId) {
+  public long countAll(
+      String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId) {
     List<Condition> conditions = new ArrayList<>();
     if (Boolean.TRUE.equals(sharedOnly)) {
       conditions.add(C_IS_SHARED.isTrue());

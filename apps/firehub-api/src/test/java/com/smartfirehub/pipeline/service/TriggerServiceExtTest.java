@@ -17,17 +17,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * TriggerService 추가 통합 테스트 — 기존 테스트에서 커버되지 않은 분기.
- * - WEBHOOK with secret (encryptSecret/decryptSecret 경로)
- * - verifyWebhookSignature (secret 있음 / 없음 / webhook 없음)
- * - findByWebhookId
- * - fireTrigger: disabled trigger, null trigger (deleted)
- * - DATASET_CHANGE 트리거 생성 성공
- * - updateTrigger: PIPELINE_CHAIN 업스트림 변경 시 cycle 검사
- * - deleteTrigger: SCHEDULE 트리거 삭제 (afterCommit unregister 분기)
- * - toggleTrigger: SCHEDULE 트리거 (enable/disable afterCommit 분기)
- * - validateScheduleConfig: 기본값 주입 (timezone, concurrencyPolicy)
- * - getTriggerEvents 조회
+ * TriggerService 추가 통합 테스트 — 기존 테스트에서 커버되지 않은 분기. - WEBHOOK with secret
+ * (encryptSecret/decryptSecret 경로) - verifyWebhookSignature (secret 있음 / 없음 / webhook 없음) -
+ * findByWebhookId - fireTrigger: disabled trigger, null trigger (deleted) - DATASET_CHANGE 트리거 생성
+ * 성공 - updateTrigger: PIPELINE_CHAIN 업스트림 변경 시 cycle 검사 - deleteTrigger: SCHEDULE 트리거 삭제
+ * (afterCommit unregister 분기) - toggleTrigger: SCHEDULE 트리거 (enable/disable afterCommit 분기) -
+ * validateScheduleConfig: 기본값 주입 (timezone, concurrencyPolicy) - getTriggerEvents 조회
  */
 @Transactional
 class TriggerServiceExtTest extends IntegrationTestBase {
@@ -98,10 +93,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
     // secret이 빈 문자열이면 암호화하지 않는다
     CreateTriggerRequest request =
         new CreateTriggerRequest(
-            "Webhook Empty Secret",
-            TriggerType.WEBHOOK,
-            "No secret",
-            Map.of("secret", ""));
+            "Webhook Empty Secret", TriggerType.WEBHOOK, "No secret", Map.of("secret", ""));
 
     TriggerResponse response = triggerService.createTrigger(pipelineId, request, testUserId);
 
@@ -134,10 +126,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         triggerService.createTrigger(
             pipelineId,
             new CreateTriggerRequest(
-                "Signed Webhook",
-                TriggerType.WEBHOOK,
-                null,
-                Map.of("secret", "test-secret-key")),
+                "Signed Webhook", TriggerType.WEBHOOK, null, Map.of("secret", "test-secret-key")),
             testUserId);
 
     String webhookId = (String) created.config().get("webhookId");
@@ -156,10 +145,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         triggerService.createTrigger(
             pipelineId,
             new CreateTriggerRequest(
-                "Signed Webhook 2",
-                TriggerType.WEBHOOK,
-                null,
-                Map.of("secret", "test-secret-key")),
+                "Signed Webhook 2", TriggerType.WEBHOOK, null, Map.of("secret", "test-secret-key")),
             testUserId);
 
     String webhookId = (String) created.config().get("webhookId");
@@ -232,7 +218,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             "Minimal Schedule",
             TriggerType.SCHEDULE,
             null,
-            Map.of("cron", "0 0 * * *"));  // timezone/concurrencyPolicy 없음
+            Map.of("cron", "0 0 * * *")); // timezone/concurrencyPolicy 없음
 
     TriggerResponse response = triggerService.createTrigger(pipelineId, request, testUserId);
 
@@ -342,9 +328,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             testUserId);
 
     triggerService.updateTrigger(
-        created.id(),
-        new UpdateTriggerRequest("Updated Name", null, "new desc", null),
-        testUserId);
+        created.id(), new UpdateTriggerRequest("Updated Name", null, "new desc", null), testUserId);
 
     TriggerResponse updated = triggerService.getTriggerById(created.id());
     assertThat(updated.name()).isEqualTo("Updated Name");
@@ -360,10 +344,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         triggerService.createTrigger(
             pipelineId,
             new CreateTriggerRequest(
-                "Delete Schedule",
-                TriggerType.SCHEDULE,
-                null,
-                Map.of("cron", "0 1 * * *")),
+                "Delete Schedule", TriggerType.SCHEDULE, null, Map.of("cron", "0 1 * * *")),
             testUserId);
 
     triggerService.deleteTrigger(created.id());
@@ -382,10 +363,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         triggerService.createTrigger(
             pipelineId,
             new CreateTriggerRequest(
-                "Toggle Schedule",
-                TriggerType.SCHEDULE,
-                null,
-                Map.of("cron", "0 2 * * *")),
+                "Toggle Schedule", TriggerType.SCHEDULE, null, Map.of("cron", "0 2 * * *")),
             testUserId);
 
     // 비활성화 → SCHEDULE afterCommit unregister 분기 커버
@@ -407,10 +385,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         triggerService.createTrigger(
             pipelineId,
             new CreateTriggerRequest(
-                "Update Schedule",
-                TriggerType.SCHEDULE,
-                null,
-                Map.of("cron", "0 3 * * *")),
+                "Update Schedule", TriggerType.SCHEDULE, null, Map.of("cron", "0 3 * * *")),
             testUserId);
 
     // isEnabled=false로 업데이트 → afterCommit에서 unregisterSchedule 경로

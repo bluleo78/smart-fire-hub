@@ -91,9 +91,8 @@ public class AuthController {
   /**
    * 현재 세션 사용자에게 부여된 권한 코드 목록을 반환한다.
    *
-   * <p>ai-agent 가 MCP 파괴적 도구(delete_dataset 등)를 사용자 권한 기준으로
-   * 필터링(fail-closed)하기 위해 사용한다. 내부 서비스 통신 경로에서도
-   * `Authorization: Internal <token>` + `X-On-Behalf-Of: userId` 헤더로 호출되며,
+   * <p>ai-agent 가 MCP 파괴적 도구(delete_dataset 등)를 사용자 권한 기준으로 필터링(fail-closed)하기 위해 사용한다. 내부 서비스 통신
+   * 경로에서도 `Authorization: Internal <token>` + `X-On-Behalf-Of: userId` 헤더로 호출되며,
    * JwtAuthenticationFilter 가 해당 헤더를 처리하여 Authentication 에 userId 를 주입한다.
    */
   @GetMapping("/me/permissions")

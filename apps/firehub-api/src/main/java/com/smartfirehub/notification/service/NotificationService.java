@@ -77,12 +77,11 @@ public class NotificationService {
   }
 
   /**
-   * API 연결 상태 변화를 모든 사용자에게 대시보드 알림으로 브로드캐스트한다.
-   * 관리자만 볼 수 있는 알림이지만, 권한 필터링은 프론트엔드에서 처리한다.
+   * API 연결 상태 변화를 모든 사용자에게 대시보드 알림으로 브로드캐스트한다. 관리자만 볼 수 있는 알림이지만, 권한 필터링은 프론트엔드에서 처리한다.
    *
-   * @param eventType  "API_CONNECTION_DOWN" 또는 "API_CONNECTION_UP"
-   * @param message    알림 본문
-   * @param metadata   추가 컨텍스트 (apiConnectionId 등)
+   * @param eventType "API_CONNECTION_DOWN" 또는 "API_CONNECTION_UP"
+   * @param message 알림 본문
+   * @param metadata 추가 컨텍스트 (apiConnectionId 등)
    */
   public void broadcastApiConnectionStatus(
       String eventType, String message, Map<String, Object> metadata) {

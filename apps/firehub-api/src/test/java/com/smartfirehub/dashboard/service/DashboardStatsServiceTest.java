@@ -487,7 +487,9 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
             .toList();
 
     assertThat(feed.items()).as("total items in feed").isNotEmpty();
-    assertThat(failedItems).as("PIPELINE_FAILED items for pipeline %s", sourcePipeline1Id).isNotEmpty();
+    assertThat(failedItems)
+        .as("PIPELINE_FAILED items for pipeline %s", sourcePipeline1Id)
+        .isNotEmpty();
     assertThat(failedItems).allMatch(ActivityItem::isResolved);
   }
 

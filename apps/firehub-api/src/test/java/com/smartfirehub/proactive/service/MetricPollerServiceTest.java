@@ -2,7 +2,6 @@ package com.smartfirehub.proactive.service;
 
 import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 import static com.smartfirehub.jooq.Tables.USER;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -118,7 +117,16 @@ class MetricPollerServiceTest extends IntegrationTestBase {
   void poll_withDatasetMetric_executorReturnsValue_collectsValue() {
     when(executorClient.executeQuery(any(), anyInt(), anyBoolean()))
         .thenReturn(
-            new QueryExecuteResult(true, "SELECT", List.of("val"), List.of(Map.of("val", 42.0)), 1, 0, 0L, false, null));
+            new QueryExecuteResult(
+                true,
+                "SELECT",
+                List.of("val"),
+                List.of(Map.of("val", 42.0)),
+                1,
+                0,
+                0L,
+                false,
+                null));
 
     String config =
         "{\"anomaly\": {\"sensitivity\": \"medium\", \"metrics\": [{\"id\": \"m6\","
@@ -203,7 +211,8 @@ class MetricPollerServiceTest extends IntegrationTestBase {
   @Test
   void poll_withDatasetMetric_emptyResult_skipsMetric() {
     when(executorClient.executeQuery(any(), anyInt(), anyBoolean()))
-        .thenReturn(new QueryExecuteResult(true, "SELECT", List.of(), List.of(), 0, 0, 0L, false, null));
+        .thenReturn(
+            new QueryExecuteResult(true, "SELECT", List.of(), List.of(), 0, 0, 0L, false, null));
 
     String config =
         "{\"anomaly\": {\"sensitivity\": \"medium\", \"metrics\": [{\"id\": \"m10\","

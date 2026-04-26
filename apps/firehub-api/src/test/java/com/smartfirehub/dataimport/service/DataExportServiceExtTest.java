@@ -34,14 +34,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 /**
- * DataExportService 추가 통합 테스트.
- * 기존 DataExportServiceTest에서 누락된 분기:
- * - getExportFile: job not found, not completed, file not found
- * - exportQueryResult: GEOJSON 예외
- * - exportQueryResult: null 값 처리 (val == null → "")
- * - estimateExport: dataset not found
- * - exportDataset: dataset not found
- * - async export 경로 (rowCount > SYNC_THRESHOLD)
+ * DataExportService 추가 통합 테스트. 기존 DataExportServiceTest에서 누락된 분기: - getExportFile: job not found,
+ * not completed, file not found - exportQueryResult: GEOJSON 예외 - exportQueryResult: null 값 처리 (val
+ * == null → "") - estimateExport: dataset not found - exportDataset: dataset not found - async
+ * export 경로 (rowCount > SYNC_THRESHOLD)
  */
 @Transactional
 class DataExportServiceExtTest extends IntegrationTestBase {
@@ -87,7 +83,8 @@ class DataExportServiceExtTest extends IntegrationTestBase {
             .id();
 
     when(dataTableRowService.countRows(anyString(), anyList(), any(), anyMap())).thenReturn(5L);
-    when(dataTableRowService.queryData(anyString(), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
+    when(dataTableRowService.queryData(
+            anyString(), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
         .thenReturn(List.of(Map.<String, Object>of("name", "홍길동", "age", 30)))
         .thenReturn(List.of());
     when(asyncJobRepository.findActiveByUserAndJobType(anyLong(), anyString()))
@@ -119,7 +116,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                 new AsyncJobStatusResponse(
                     "running-job",
                     "DATA_EXPORT",
-                    "EXPORTING",  // not COMPLETED
+                    "EXPORTING", // not COMPLETED
                     50,
                     "in progress",
                     Map.of(),
@@ -148,7 +145,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     "COMPLETED",
                     100,
                     "done",
-                    Map.of(),  // filePath 없음
+                    Map.of(), // filePath 없음
                     null,
                     LocalDateTime.now(),
                     LocalDateTime.now(),
@@ -204,7 +201,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     null,
                     LocalDateTime.now(),
                     LocalDateTime.now(),
-                    userId + 9999L)));  // 다른 사용자 소유
+                    userId + 9999L))); // 다른 사용자 소유
 
     assertThatThrownBy(() -> dataExportService.getExportFile("owned-job", userId))
         .isInstanceOf(AccessDeniedException.class)

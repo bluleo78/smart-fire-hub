@@ -1,7 +1,6 @@
 package com.smartfirehub.analytics.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -25,13 +24,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * AnalyticsQueryExecutionService 추가 통합 테스트.
- * 기존 테스트에서 커버되지 않은 분기:
- * - executeViaExecutor 경로 (executorEnabled=true mock)
- * - SELECT 쿼리에 LIMIT이 이미 있는 경우
- * - UPDATE/DELETE DML (readOnly=false)
- * - 잘못된 SQL 구문 오류 처리
- * - WITH 쿼리 (CTE)
+ * AnalyticsQueryExecutionService 추가 통합 테스트. 기존 테스트에서 커버되지 않은 분기: - executeViaExecutor 경로
+ * (executorEnabled=true mock) - SELECT 쿼리에 LIMIT이 이미 있는 경우 - UPDATE/DELETE DML (readOnly=false) -
+ * 잘못된 SQL 구문 오류 처리 - WITH 쿼리 (CTE)
  */
 @Transactional
 class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
@@ -52,10 +47,14 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   void setUp() {
     testUserId =
         dsl.insertInto(DSL.table(DSL.name("user")))
-            .set(DSL.field(DSL.name("user", "username"), String.class), "execext_" + System.nanoTime())
+            .set(
+                DSL.field(DSL.name("user", "username"), String.class),
+                "execext_" + System.nanoTime())
             .set(DSL.field(DSL.name("user", "password"), String.class), "password")
             .set(DSL.field(DSL.name("user", "name"), String.class), "Exec Ext User")
-            .set(DSL.field(DSL.name("user", "email"), String.class), "execext_" + System.nanoTime() + "@example.com")
+            .set(
+                DSL.field(DSL.name("user", "email"), String.class),
+                "execext_" + System.nanoTime() + "@example.com")
             .returning(DSL.field(DSL.name("user", "id"), Long.class))
             .fetchOne()
             .get(DSL.field(DSL.name("user", "id"), Long.class));
@@ -181,19 +180,19 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   void executeViaExecutor_success_returnsResponse() {
     // executorClient.executeQuery() 성공 경로 — executorEnabled=true일 때의 코드 경로를
     // 직접 호출할 수 없으므로 executeQuery mock으로 간접 테스트 (커버리지 목적)
-    QueryExecuteResult mockResult = new QueryExecuteResult(
-        true,
-        "SELECT",
-        List.of("item", "score"),
-        List.of(Map.of("item", "apple", "score", 5)),
-        1,
-        0,
-        10L,
-        false,
-        null);
+    QueryExecuteResult mockResult =
+        new QueryExecuteResult(
+            true,
+            "SELECT",
+            List.of("item", "score"),
+            List.of(Map.of("item", "apple", "score", 5)),
+            1,
+            0,
+            10L,
+            false,
+            null);
 
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
-        .thenReturn(mockResult);
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean())).thenReturn(mockResult);
 
     // executorEnabled=false이므로 직접 실행 경로가 사용됨 (executor mock은 호출되지 않음)
     // 대신 직접 실행 경로에서 정상 응답 확인
@@ -254,10 +253,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
     assertThat(tableInfo.datasetName()).isEqualTo("Exec Ext DS");
     assertThat(tableInfo.datasetId()).isNotNull();
 
-    List<String> colNames =
-        tableInfo.columns().stream()
-            .map(c -> c.columnName())
-            .toList();
+    List<String> colNames = tableInfo.columns().stream().map(c -> c.columnName()).toList();
     assertThat(colNames).contains("item", "score");
   }
 }

@@ -9,7 +9,6 @@ import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
 import com.smartfirehub.analytics.dto.DashboardResponse;
-import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
@@ -25,8 +24,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * AnalyticsDashboardService 추가 통합 테스트.
- * list, getById, delete, getDashboardData, updateWidget, removeWidget, updateWidgetLayout 커버.
+ * AnalyticsDashboardService 추가 통합 테스트. list, getById, delete, getDashboardData, updateWidget,
+ * removeWidget, updateWidgetLayout 커버.
  */
 @Transactional
 class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
@@ -91,10 +90,13 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
 
   @Test
   void list_searchFilter_returnsMatchingDashboards() {
-    dashboardService.create(new CreateDashboardRequest("UniqueTitle123", null, false, null), ownerUserId);
-    dashboardService.create(new CreateDashboardRequest("OtherDash", null, false, null), ownerUserId);
+    dashboardService.create(
+        new CreateDashboardRequest("UniqueTitle123", null, false, null), ownerUserId);
+    dashboardService.create(
+        new CreateDashboardRequest("OtherDash", null, false, null), ownerUserId);
 
-    PageResponse<DashboardResponse> result = dashboardService.list("UniqueTitle123", null, ownerUserId, 0, 10);
+    PageResponse<DashboardResponse> result =
+        dashboardService.list("UniqueTitle123", null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("UniqueTitle123");
@@ -102,7 +104,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
 
   @Test
   void list_sharedDashboard_visibleToOtherUser() {
-    dashboardService.create(new CreateDashboardRequest("PublicDash", null, true, null), ownerUserId);
+    dashboardService.create(
+        new CreateDashboardRequest("PublicDash", null, true, null), ownerUserId);
 
     PageResponse<DashboardResponse> result = dashboardService.list(null, null, otherUserId, 0, 10);
 
@@ -117,7 +120,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   @Test
   void getById_existingDashboard_returnsDashboard() {
     DashboardResponse created =
-        dashboardService.create(new CreateDashboardRequest("GetMe", "desc", false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("GetMe", "desc", false, null), ownerUserId);
 
     DashboardResponse found = dashboardService.getById(created.id(), ownerUserId);
 
@@ -138,7 +142,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   @Test
   void delete_ownerCanDelete_success() {
     DashboardResponse created =
-        dashboardService.create(new CreateDashboardRequest("ToDelete", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("ToDelete", null, false, null), ownerUserId);
 
     dashboardService.delete(created.id(), ownerUserId);
 
@@ -149,7 +154,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   @Test
   void delete_nonOwner_throwsNotFound() {
     DashboardResponse created =
-        dashboardService.create(new CreateDashboardRequest("NotMine", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("NotMine", null, false, null), ownerUserId);
 
     assertThatThrownBy(() -> dashboardService.delete(created.id(), otherUserId))
         .isInstanceOf(DashboardNotFoundException.class);
@@ -173,7 +179,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             ownerUserId);
 
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("DataDash", null, true, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("DataDash", null, true, null), ownerUserId);
 
     dashboardService.addWidget(
         dashboard.id(), new AddWidgetRequest(chart.id(), 0, 0, 6, 4), ownerUserId);
@@ -188,7 +195,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   @Test
   void getDashboardData_emptyDashboard_returnsEmptyWidgets() {
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("EmptyDash", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("EmptyDash", null, false, null), ownerUserId);
 
     DashboardDataResponse data = dashboardService.getDashboardData(dashboard.id(), ownerUserId);
 
@@ -213,7 +221,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             ownerUserId);
 
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("WidgetDash", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("WidgetDash", null, false, null), ownerUserId);
 
     DashboardResponse afterAdd =
         dashboardService.addWidget(
@@ -232,7 +241,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   @Test
   void updateWidget_nonExistentWidget_throwsException() {
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("NoWidgetDash", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("NoWidgetDash", null, false, null), ownerUserId);
 
     assertThatThrownBy(
             () ->
@@ -253,7 +263,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             ownerUserId);
 
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("RemoveWidgetDash", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("RemoveWidgetDash", null, false, null), ownerUserId);
 
     DashboardResponse afterAdd =
         dashboardService.addWidget(
@@ -270,7 +281,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
   @Test
   void removeWidget_nonExistentWidget_throwsException() {
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("RemoveNone", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("RemoveNone", null, false, null), ownerUserId);
 
     assertThatThrownBy(() -> dashboardService.removeWidget(dashboard.id(), 999999L, ownerUserId))
         .isInstanceOf(IllegalArgumentException.class);
@@ -292,7 +304,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             ownerUserId);
 
     DashboardResponse dashboard =
-        dashboardService.create(new CreateDashboardRequest("LayoutDash", null, false, null), ownerUserId);
+        dashboardService.create(
+            new CreateDashboardRequest("LayoutDash", null, false, null), ownerUserId);
 
     DashboardResponse after1 =
         dashboardService.addWidget(
@@ -310,7 +323,8 @@ class AnalyticsDashboardServiceExtTest extends IntegrationTestBase {
             new UpdateWidgetLayoutRequest.WidgetPosition(w1, 2, 2, 5, 3),
             new UpdateWidgetLayoutRequest.WidgetPosition(w2, 7, 2, 5, 3));
 
-    dashboardService.updateWidgetLayout(dashboard.id(), new UpdateWidgetLayoutRequest(layouts), ownerUserId);
+    dashboardService.updateWidgetLayout(
+        dashboard.id(), new UpdateWidgetLayoutRequest(layouts), ownerUserId);
 
     // 레이아웃 변경 후 대시보드 조회 가능 확인
     DashboardResponse result = dashboardService.getById(dashboard.id(), ownerUserId);

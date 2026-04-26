@@ -34,10 +34,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * ReportTemplateController WebMvcTest — JaCoCo LINE 커버리지 보강용.
- * 템플릿 CRUD 엔드포인트를 커버한다.
- */
+/** ReportTemplateController WebMvcTest — JaCoCo LINE 커버리지 보강용. 템플릿 CRUD 엔드포인트를 커버한다. */
 @WebMvcTest(ReportTemplateController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class ReportTemplateControllerTest {
@@ -75,8 +72,7 @@ class ReportTemplateControllerTest {
     when(reportTemplateService.getTemplates(anyLong())).thenReturn(List.of(sampleTemplate()));
 
     mockMvc
-        .perform(
-            get("/api/v1/proactive/templates").header("Authorization", "Bearer valid-token"))
+        .perform(get("/api/v1/proactive/templates").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(5))
         .andExpect(jsonPath("$[0].name").value("Daily Summary"));
@@ -88,8 +84,7 @@ class ReportTemplateControllerTest {
     when(reportTemplateService.getTemplate(5L)).thenReturn(sampleTemplate());
 
     mockMvc
-        .perform(
-            get("/api/v1/proactive/templates/5").header("Authorization", "Bearer valid-token"))
+        .perform(get("/api/v1/proactive/templates/5").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(5))
         .andExpect(jsonPath("$.name").value("Daily Summary"));

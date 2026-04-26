@@ -12,8 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * SettingsService SMTP 관련 메서드 커버리지 보강 테스트.
- * getSmtpSettings / updateSmtpSettings / getSmtpConfig / 유효성 검증을 검증한다.
+ * SettingsService SMTP 관련 메서드 커버리지 보강 테스트. getSmtpSettings / updateSmtpSettings / getSmtpConfig /
+ * 유효성 검증을 검증한다.
  */
 @Transactional
 class SmtpSettingsServiceTest extends IntegrationTestBase {

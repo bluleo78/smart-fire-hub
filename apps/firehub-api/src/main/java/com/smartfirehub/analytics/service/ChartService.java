@@ -24,7 +24,13 @@ public class ChartService {
 
   /** List charts with optional filters and pagination. */
   public PageResponse<ChartResponse> list(
-      String search, String chartType, Long savedQueryId, Boolean sharedOnly, Long userId, int page, int size) {
+      String search,
+      String chartType,
+      Long savedQueryId,
+      Boolean sharedOnly,
+      Long userId,
+      int page,
+      int size) {
     List<ChartResponse> content =
         chartRepository.findAll(search, chartType, savedQueryId, sharedOnly, userId, page, size);
     long total = chartRepository.countAll(search, chartType, savedQueryId, sharedOnly, userId);

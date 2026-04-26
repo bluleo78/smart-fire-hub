@@ -57,7 +57,8 @@ class ChartControllerTest {
   @Test
   void listCharts_returnsPage() throws Exception {
     mockAuth("analytics:read");
-    when(chartService.list(any(), any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
+    when(chartService.list(
+            any(), any(), any(), any(), anyLong(), any(Integer.class), any(Integer.class)))
         .thenReturn(new PageResponse<>(List.of(), 0, 20, 0L, 0));
 
     mockMvc
@@ -71,8 +72,7 @@ class ChartControllerTest {
     ChartResponse created = sampleChartResponse(42L);
     when(chartService.create(any(CreateChartRequest.class), eq(1L))).thenReturn(created);
 
-    CreateChartRequest req =
-        new CreateChartRequest("chart1", "desc", 1L, "bar", Map.of(), false);
+    CreateChartRequest req = new CreateChartRequest("chart1", "desc", 1L, "bar", Map.of(), false);
 
     mockMvc
         .perform(
@@ -139,18 +139,6 @@ class ChartControllerTest {
     // ChartResponse 레코드는 필드가 많을 수 있으므로 Map 기반 실제 필드 세팅 대신 null/빈 값으로 생성한다.
     // 레코드 필드가 바뀌면 컴파일 에러로 즉시 감지된다.
     return new ChartResponse(
-        id,
-        "name",
-        null,
-        1L,
-        "query",
-        "bar",
-        Map.of(),
-        false,
-        "user",
-        1L,
-        null,
-        null,
-        0L);
+        id, "name", null, 1L, "query", "bar", Map.of(), false, "user", 1L, null, null, 0L);
   }
 }

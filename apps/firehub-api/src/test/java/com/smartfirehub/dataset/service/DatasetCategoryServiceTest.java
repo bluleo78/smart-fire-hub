@@ -15,10 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * DatasetCategoryService 통합 테스트.
- * CRUD 전체 흐름 및 참조 무결성, 이름 중복 검증 케이스를 커버한다.
- */
+/** DatasetCategoryService 통합 테스트. CRUD 전체 흐름 및 참조 무결성, 이름 중복 검증 케이스를 커버한다. */
 @Transactional
 class DatasetCategoryServiceTest extends IntegrationTestBase {
 
@@ -155,8 +152,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     CategoryResponse catB = categoryService.createCategory("Category B", "B 설명");
 
     // When/Then: B를 A의 이름으로 수정하면 중복 예외 발생
-    assertThatThrownBy(
-            () -> categoryService.updateCategory(catB.id(), "Category A", "새 설명"))
+    assertThatThrownBy(() -> categoryService.updateCategory(catB.id(), "Category A", "새 설명"))
         .isInstanceOf(DuplicateDatasetNameException.class)
         .hasMessageContaining("Category A");
   }

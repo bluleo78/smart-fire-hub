@@ -16,8 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * PermissionService 통합 테스트.
  *
- * <p>getAllPermissions, getPermissionsByCategory, getUserPermissions 핵심 메서드 전체 커버.
- * Flyway seed 데이터(38개 권한, ADMIN/USER 역할)를 활용하여 실제 DB에서 검증한다.
+ * <p>getAllPermissions, getPermissionsByCategory, getUserPermissions 핵심 메서드 전체 커버. Flyway seed
+ * 데이터(38개 권한, ADMIN/USER 역할)를 활용하여 실제 DB에서 검증한다.
  */
 @Transactional
 class PermissionServiceTest extends IntegrationTestBase {
@@ -39,8 +39,8 @@ class PermissionServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * 각 테스트 전 사용자를 생성하고 역할을 할당한다.
-   * Flyway seed에 의해 ADMIN(id=1), USER(id=2) 역할과 role_permission 매핑이 미리 존재한다.
+   * 각 테스트 전 사용자를 생성하고 역할을 할당한다. Flyway seed에 의해 ADMIN(id=1), USER(id=2) 역할과 role_permission 매핑이 미리
+   * 존재한다.
    */
   @BeforeEach
   void setUp() {
@@ -133,7 +133,10 @@ class PermissionServiceTest extends IntegrationTestBase {
   // getPermissionsByCategory
   // =========================================================================
 
-  /** "user" 카테고리 권한 5개(user:read, user:read:self, user:write:self, user:write, user:delete)가 반환되어야 한다. */
+  /**
+   * "user" 카테고리 권한 5개(user:read, user:read:self, user:write:self, user:write, user:delete)가 반환되어야
+   * 한다.
+   */
   @Test
   void getPermissionsByCategory_userCategory_returns5Permissions() {
     List<PermissionResponse> result = permissionService.getPermissionsByCategory("user");
@@ -185,8 +188,8 @@ class PermissionServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * ADMIN 역할(id=1)을 가진 사용자는 ADMIN에 할당된 모든 권한 코드를 반환해야 한다.
-   * Flyway seed 기준 ADMIN 역할에는 permission:read 코드가 포함된다.
+   * ADMIN 역할(id=1)을 가진 사용자는 ADMIN에 할당된 모든 권한 코드를 반환해야 한다. Flyway seed 기준 ADMIN 역할에는 permission:read
+   * 코드가 포함된다.
    */
   @Test
   void getUserPermissions_adminRole_containsPermissionRead() {
@@ -206,8 +209,8 @@ class PermissionServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * USER 역할(id=2)을 가진 사용자는 USER 역할에 할당된 권한만 반환해야 한다.
-   * Flyway seed 기준 USER 역할에는 user:read:self, user:write:self 등 최소 권한이 포함된다.
+   * USER 역할(id=2)을 가진 사용자는 USER 역할에 할당된 권한만 반환해야 한다. Flyway seed 기준 USER 역할에는 user:read:self,
+   * user:write:self 등 최소 권한이 포함된다.
    */
   @Test
   void getUserPermissions_userRole_returnsUserRolePermissions() {

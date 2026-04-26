@@ -153,8 +153,8 @@ class AuthControllerTest {
   }
 
   /**
-   * /me/permissions 는 세션 사용자의 권한 코드 목록을 반환한다. ai-agent 가 MCP 파괴 도구 필터링에
-   * 사용하는 경로이므로 JWT/Internal 인증 어느 쪽에서도 동작해야 한다. 여기서는 JWT 경로를 검증한다.
+   * /me/permissions 는 세션 사용자의 권한 코드 목록을 반환한다. ai-agent 가 MCP 파괴 도구 필터링에 사용하는 경로이므로 JWT/Internal 인증
+   * 어느 쪽에서도 동작해야 한다. 여기서는 JWT 경로를 검증한다.
    */
   @Test
   void getMyPermissions_returnsCodes() throws Exception {

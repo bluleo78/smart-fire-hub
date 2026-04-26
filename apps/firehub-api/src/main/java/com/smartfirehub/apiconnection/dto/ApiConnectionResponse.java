@@ -4,9 +4,8 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * API 연결 응답 DTO.
- * Phase 9: baseUrl, healthCheckPath, 헬스체크 상태 필드 추가.
- * maskedAuthConfig — 민감 키(apiKey, token 등)는 마스킹 처리된 값.
+ * API 연결 응답 DTO. Phase 9: baseUrl, healthCheckPath, 헬스체크 상태 필드 추가. maskedAuthConfig — 민감 키(apiKey,
+ * token 등)는 마스킹 처리된 값.
  */
 public record ApiConnectionResponse(
     Long id,

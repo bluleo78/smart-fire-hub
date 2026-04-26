@@ -5,7 +5,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.smartfirehub.dashboard.dto.ActivityFeedResponse;
-import com.smartfirehub.dashboard.dto.AttentionItemResponse;
 import com.smartfirehub.dashboard.dto.DashboardStatsResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
 import com.smartfirehub.dashboard.service.DashboardService;
@@ -66,9 +65,10 @@ class DashboardControllerTest {
   /** GET /health — 시스템 상태 반환 */
   @Test
   void getSystemHealth_withPermission_returnsOk() throws Exception {
-    SystemHealthResponse health = new SystemHealthResponse(
-        new SystemHealthResponse.PipelineHealth(5, 4, 1, 0, 0),
-        new SystemHealthResponse.DatasetHealth(10, 8, 1, 1));
+    SystemHealthResponse health =
+        new SystemHealthResponse(
+            new SystemHealthResponse.PipelineHealth(5, 4, 1, 0, 0),
+            new SystemHealthResponse.DatasetHealth(10, 8, 1, 1));
     when(dashboardService.getSystemHealth()).thenReturn(health);
 
     mockMvc

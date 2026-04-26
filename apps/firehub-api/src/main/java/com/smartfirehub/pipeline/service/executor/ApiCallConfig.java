@@ -7,6 +7,7 @@ import java.util.Map;
  * API_CALL 스텝 실행 설정.
  *
  * <p>URL 결정 우선순위 (Phase 9 리디자인):
+ *
  * <ol>
  *   <li>{@code apiConnectionId}가 설정된 경우: {@code connection.baseUrl + path}
  *   <li>{@code customUrl}이 설정된 경우: customUrl 그대로 사용

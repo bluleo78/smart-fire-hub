@@ -71,9 +71,7 @@ public class SettingsService {
     return settingsRepository.findByPrefix(prefix).stream()
         .collect(
             Collectors.toMap(
-                SettingResponse::key,
-                s -> s.value() != null ? s.value() : "",
-                (a, b) -> b));
+                SettingResponse::key, s -> s.value() != null ? s.value() : "", (a, b) -> b));
   }
 
   public void updateSettings(Map<String, String> settings, Long userId) {

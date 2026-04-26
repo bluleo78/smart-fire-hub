@@ -127,34 +127,34 @@ class ApiConnectionControllerTest {
   // ── 신규 엔드포인트 테스트 ──────────────────────────────────────────────────────
 
   /**
-   * GET /selectable — 인증만 있으면 관리자가 아니어도 접근 가능해야 한다.
-   * PermissionInterceptor는 @RequirePermission 어노테이션이 없으면 통과시킨다.
+   * GET /selectable — 인증만 있으면 관리자가 아니어도 접근 가능해야 한다. PermissionInterceptor는 @RequirePermission
+   * 어노테이션이 없으면 통과시킨다.
    */
   @Test
   void getSelectable_authenticated_returnsOk() throws Exception {
     when(apiConnectionService.findSelectable())
         .thenReturn(
-            List.of(new ApiConnectionSelectableResponse(1L, "GitHub API", "BEARER", "https://api.github.com")));
+            List.of(
+                new ApiConnectionSelectableResponse(
+                    1L, "GitHub API", "BEARER", "https://api.github.com")));
 
     mockMvc
-        .perform(get("/api/v1/api-connections/selectable").header("Authorization", "Bearer test-token"))
+        .perform(
+            get("/api/v1/api-connections/selectable").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(1))
         .andExpect(jsonPath("$[0].name").value("GitHub API"));
   }
 
-  /**
-   * GET /selectable — 인증 없이 접근 시 401 Unauthorized.
-   */
+  /** GET /selectable — 인증 없이 접근 시 401 Unauthorized. */
   @Test
   void getSelectable_noAuth_returnsUnauthorized() throws Exception {
-    mockMvc.perform(get("/api/v1/api-connections/selectable"))
-        .andExpect(status().isUnauthorized());
+    mockMvc.perform(get("/api/v1/api-connections/selectable")).andExpect(status().isUnauthorized());
   }
 
   /**
-   * POST /{id}/test — apiconnection:write 권한 보유 시 정상 응답.
-   * PermissionInterceptor가 permissionService.getUserPermissions()로 검증한다.
+   * POST /{id}/test — apiconnection:write 권한 보유 시 정상 응답. PermissionInterceptor가
+   * permissionService.getUserPermissions()로 검증한다.
    */
   @Test
   void postTest_withPermission_returnsResult() throws Exception {
@@ -162,22 +162,23 @@ class ApiConnectionControllerTest {
         .thenReturn(new TestConnectionResponse(true, 200, 42L, null));
 
     mockMvc
-        .perform(post("/api/v1/api-connections/1/test").header("Authorization", "Bearer test-token"))
+        .perform(
+            post("/api/v1/api-connections/1/test").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.ok").value(true))
         .andExpect(jsonPath("$.status").value(200));
   }
 
-  /**
-   * POST /refresh-all — apiconnection:write 권한 보유 시 jobId 반환.
-   */
+  /** POST /refresh-all — apiconnection:write 권한 보유 시 jobId 반환. */
   @Test
   void postRefreshAll_withPermission_returnsJobId() throws Exception {
     String jobId = java.util.UUID.randomUUID().toString();
     when(apiConnectionService.refreshAllAsync(any())).thenReturn(jobId);
 
     mockMvc
-        .perform(post("/api/v1/api-connections/refresh-all").header("Authorization", "Bearer test-token"))
+        .perform(
+            post("/api/v1/api-connections/refresh-all")
+                .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.jobId").value(jobId.toString()));
   }

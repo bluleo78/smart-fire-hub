@@ -99,7 +99,10 @@ class ApiCallExecutorTest {
         5000,
         60000,
         100,
-        null, null, null, null);
+        null,
+        null,
+        null,
+        null);
   }
 
   // -------------------------------------------------------------------------
@@ -169,7 +172,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     ApiCallExecutor.ApiCallResult result =
         executor.execute(config, "out_table", null, "APPEND", null);
@@ -294,7 +300,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     ApiCallExecutor.ApiCallResult result =
         executor.execute(config, "paged_table", null, "APPEND", null);
@@ -347,7 +356,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     ApiCallExecutor.ApiCallResult result =
         executor.execute(config, "partial_table", null, "APPEND", null);
@@ -418,7 +430,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     ApiCallExecutor.ApiCallResult result =
         executor.execute(config, "flaky_table", null, "APPEND", null);
@@ -454,7 +469,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
         .isInstanceOf(ApiCallException.class)
@@ -494,7 +512,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
         .isInstanceOf(ApiCallException.class)
@@ -538,7 +559,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     executor.execute(config, "native_table", null, "APPEND", null);
 
@@ -598,7 +622,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     // Column type map from dataset metadata
     Map<String, String> columnTypeMap =
@@ -657,7 +684,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     ApiCallExecutor.ApiCallResult result =
         executor.execute(config, "rep_table", null, "REPLACE", null);
@@ -708,7 +738,10 @@ class ApiCallExecutorTest {
             5000,
             60000,
             100,
-            null, null, null, null);
+            null,
+            null,
+            null,
+            null);
 
     assertThatThrownBy(() -> executor.execute(config, "rep_fail_table", null, "REPLACE", null))
         .isInstanceOf(ApiCallException.class);

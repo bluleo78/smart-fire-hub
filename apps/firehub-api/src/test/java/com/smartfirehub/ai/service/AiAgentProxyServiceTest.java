@@ -11,18 +11,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * AiAgentProxyService 단위 기능 테스트.
- * 외부 AI 에이전트 호출 없이 검증 가능한 분기 (verifyCliToken, verifyApiKey) 를 커버한다.
+ * AiAgentProxyService 단위 기능 테스트. 외부 AI 에이전트 호출 없이 검증 가능한 분기 (verifyCliToken, verifyApiKey) 를 커버한다.
  * 실제 WebClient 호출은 외부 의존성이므로 설정값 미존재 분기만 검증한다.
  */
 class AiAgentProxyServiceTest extends IntegrationTestBase {
 
   @Autowired private AiAgentProxyService aiAgentProxyService;
 
-  /**
-   * SettingsService를 MockitoBean으로 교체하여 외부 AI 에이전트 호출 없이
-   * 토큰/API키 미설정 분기를 검증한다.
-   */
+  /** SettingsService를 MockitoBean으로 교체하여 외부 AI 에이전트 호출 없이 토큰/API키 미설정 분기를 검증한다. */
   @MockitoBean private SettingsService settingsService;
 
   @Test

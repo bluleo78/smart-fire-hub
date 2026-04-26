@@ -54,7 +54,8 @@ public class AnalyticsDashboardRepository {
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
 
-  public List<DashboardResponse> findAll(String search, Boolean sharedOnly, Long userId, int page, int size) {
+  public List<DashboardResponse> findAll(
+      String search, Boolean sharedOnly, Long userId, int page, int size) {
     List<Condition> conditions = new ArrayList<>();
     if (Boolean.TRUE.equals(sharedOnly)) {
       conditions.add(D_IS_SHARED.isTrue());

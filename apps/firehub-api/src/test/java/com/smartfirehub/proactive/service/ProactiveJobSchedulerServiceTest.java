@@ -2,7 +2,6 @@ package com.smartfirehub.proactive.service;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 
-import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.LocalDateTime;
@@ -16,8 +15,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * ProactiveJobSchedulerService 통합 테스트.
- * registerSchedule / unregisterSchedule / rescheduleJob 메서드 커버.
+ * ProactiveJobSchedulerService 통합 테스트. registerSchedule / unregisterSchedule / rescheduleJob 메서드
+ * 커버.
  */
 @Transactional
 class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
@@ -28,8 +27,13 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
 
   @MockitoBean private ProactiveAiClient proactiveAiClient;
   @MockitoBean private ProactiveContextCollector proactiveContextCollector;
-  @MockitoBean private com.smartfirehub.proactive.service.delivery.DeliveryChannel chatDeliveryChannel;
-  @MockitoBean private com.smartfirehub.proactive.repository.AnomalyEventRepository anomalyEventRepository;
+
+  @MockitoBean
+  private com.smartfirehub.proactive.service.delivery.DeliveryChannel chatDeliveryChannel;
+
+  @MockitoBean
+  private com.smartfirehub.proactive.repository.AnomalyEventRepository anomalyEventRepository;
+
   @MockitoBean private com.smartfirehub.notification.service.SseEmitterRegistry sseEmitterRegistry;
 
   private Long testUserId;
@@ -74,31 +78,27 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
 
   @Test
   void registerSchedule_validCron_doesNotThrow() {
-    assertThatCode(
-            () -> schedulerService.registerSchedule(1L, "0 0 * * * *", "Asia/Seoul"))
+    assertThatCode(() -> schedulerService.registerSchedule(1L, "0 0 * * * *", "Asia/Seoul"))
         .doesNotThrowAnyException();
   }
 
   @Test
   void registerSchedule_invalidCron_doesNotThrow() {
     // 잘못된 cron 표현식 — 내부에서 예외를 로그만 남기고 삼킨다
-    assertThatCode(
-            () -> schedulerService.registerSchedule(999L, "INVALID_CRON", "Asia/Seoul"))
+    assertThatCode(() -> schedulerService.registerSchedule(999L, "INVALID_CRON", "Asia/Seoul"))
         .doesNotThrowAnyException();
   }
 
   @Test
   void registerSchedule_nullTimezone_usesDefault() {
     // timezone null → "Asia/Seoul" 기본값 적용
-    assertThatCode(
-            () -> schedulerService.registerSchedule(2L, "0 0 * * * *", null))
+    assertThatCode(() -> schedulerService.registerSchedule(2L, "0 0 * * * *", null))
         .doesNotThrowAnyException();
   }
 
   @Test
   void registerSchedule_blankTimezone_usesDefault() {
-    assertThatCode(
-            () -> schedulerService.registerSchedule(3L, "0 0 * * * *", "  "))
+    assertThatCode(() -> schedulerService.registerSchedule(3L, "0 0 * * * *", "  "))
         .doesNotThrowAnyException();
   }
 
@@ -120,15 +120,13 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
   @Test
   void unregisterSchedule_afterRegister_doesNotThrow() {
     schedulerService.registerSchedule(5L, "0 0 * * * *", "Asia/Seoul");
-    assertThatCode(() -> schedulerService.unregisterSchedule(5L))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> schedulerService.unregisterSchedule(5L)).doesNotThrowAnyException();
   }
 
   @Test
   void unregisterSchedule_notRegistered_doesNotThrow() {
     // computeIfPresent에서 no-op으로 처리
-    assertThatCode(() -> schedulerService.unregisterSchedule(99999L))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> schedulerService.unregisterSchedule(99999L)).doesNotThrowAnyException();
   }
 
   // =========================================================================
@@ -138,8 +136,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
   @Test
   void rescheduleJob_enabledWithCron_registersSchedule() {
     ProactiveJobResponse job = makeJobResponse(6L, "0 0 * * * *", "Asia/Seoul", true);
-    assertThatCode(() -> schedulerService.rescheduleJob(job))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> schedulerService.rescheduleJob(job)).doesNotThrowAnyException();
   }
 
   @Test
@@ -147,21 +144,18 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     // 먼저 등록 후 disabled로 reschedule → 취소만 수행
     schedulerService.registerSchedule(7L, "0 0 * * * *", "Asia/Seoul");
     ProactiveJobResponse disabled = makeJobResponse(7L, "0 0 * * * *", "Asia/Seoul", false);
-    assertThatCode(() -> schedulerService.rescheduleJob(disabled))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> schedulerService.rescheduleJob(disabled)).doesNotThrowAnyException();
   }
 
   @Test
   void rescheduleJob_enabledNoCron_onlyUnregisters() {
     ProactiveJobResponse noCron = makeJobResponse(8L, null, "Asia/Seoul", true);
-    assertThatCode(() -> schedulerService.rescheduleJob(noCron))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> schedulerService.rescheduleJob(noCron)).doesNotThrowAnyException();
   }
 
   @Test
   void rescheduleJob_enabledBlankCron_onlyUnregisters() {
     ProactiveJobResponse blankCron = makeJobResponse(9L, "  ", "Asia/Seoul", true);
-    assertThatCode(() -> schedulerService.rescheduleJob(blankCron))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> schedulerService.rescheduleJob(blankCron)).doesNotThrowAnyException();
   }
 }

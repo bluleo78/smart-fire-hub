@@ -13,10 +13,7 @@ import org.jooq.Table;
 import org.jooq.UpdateSetMoreStep;
 import org.springframework.stereotype.Repository;
 
-/**
- * API 연결 정보 저장소.
- * Phase 9 리디자인: baseUrl, 헬스체크 경로, 헬스체크 상태 필드 추가.
- */
+/** API 연결 정보 저장소. Phase 9 리디자인: baseUrl, 헬스체크 경로, 헬스체크 상태 필드 추가. */
 @Repository
 @RequiredArgsConstructor
 @lombok.extern.slf4j.Slf4j
@@ -126,9 +123,7 @@ public class ApiConnectionRepository {
         .toList();
   }
 
-  /**
-   * API 연결을 저장한다. baseUrl은 필수, healthCheckPath는 선택.
-   */
+  /** API 연결을 저장한다. baseUrl은 필수, healthCheckPath는 선택. */
   public Long save(
       String name,
       String description,
@@ -152,7 +147,7 @@ public class ApiConnectionRepository {
   /**
    * API 연결을 갱신한다. null인 항목은 Map에서 제외하여 기존 값을 보존한다.
    *
-   * @param baseUrl         변경할 Base URL (null이면 미변경)
+   * @param baseUrl 변경할 Base URL (null이면 미변경)
    * @param healthCheckPath 변경할 헬스체크 경로 (null이면 미변경)
    */
   public void update(
@@ -165,10 +160,16 @@ public class ApiConnectionRepository {
       String healthCheckPath) {
     // null인 항목은 스킵하여 기존 DB 값을 보존한다 (부분 수정 지원).
     // raw Map 캐스트 대신 명시적 체인으로 null 필드 누락 방지.
-    log.info("[ApiConnection.update] id={} name={} description={} authType={} hasAuthConfig={} baseUrl={} healthCheckPath={}",
-        id, name, description, authType, encryptedAuthConfig != null, baseUrl, healthCheckPath);
-    UpdateSetMoreStep<?> step = dsl.update(API_CONNECTION)
-        .set(AC_UPDATED_AT, LocalDateTime.now());
+    log.info(
+        "[ApiConnection.update] id={} name={} description={} authType={} hasAuthConfig={} baseUrl={} healthCheckPath={}",
+        id,
+        name,
+        description,
+        authType,
+        encryptedAuthConfig != null,
+        baseUrl,
+        healthCheckPath);
+    UpdateSetMoreStep<?> step = dsl.update(API_CONNECTION).set(AC_UPDATED_AT, LocalDateTime.now());
 
     if (name != null) step = step.set(AC_NAME, name);
     if (description != null) step = step.set(AC_DESCRIPTION, description);
@@ -181,12 +182,11 @@ public class ApiConnectionRepository {
   }
 
   /**
-   * 헬스체크 결과를 DB에 반영한다.
-   * last_checked_at은 현재 시각으로 자동 설정된다.
+   * 헬스체크 결과를 DB에 반영한다. last_checked_at은 현재 시각으로 자동 설정된다.
    *
-   * @param id           API 연결 ID
-   * @param status       헬스체크 상태 (예: "UP", "DOWN")
-   * @param latencyMs    응답 지연 ms (오류 시 null)
+   * @param id API 연결 ID
+   * @param status 헬스체크 상태 (예: "UP", "DOWN")
+   * @param latencyMs 응답 지연 ms (오류 시 null)
    * @param errorMessage 오류 메시지 (정상 시 null)
    */
   public void updateHealthStatus(Long id, String status, Long latencyMs, String errorMessage) {
@@ -199,10 +199,7 @@ public class ApiConnectionRepository {
         .execute();
   }
 
-  /**
-   * 헬스체크 대상 API 연결 목록을 반환한다.
-   * health_check_path가 설정된 레코드만 포함한다.
-   */
+  /** 헬스체크 대상 API 연결 목록을 반환한다. health_check_path가 설정된 레코드만 포함한다. */
   public List<Record> findHealthCheckable() {
     return dsl
         .select(

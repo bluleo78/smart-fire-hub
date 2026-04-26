@@ -434,17 +434,28 @@ class ApiCallPreviewServiceTest {
   // =========================================================================
 
   /**
-   * apiConnectionId가 설정된 경우: connection.baseUrl + request.url(path)로 URL을 구성한다.
-   * request.url()에 path만 넣으면 baseUrl과 결합되어야 한다.
+   * apiConnectionId가 설정된 경우: connection.baseUrl + request.url(path)로 URL을 구성한다. request.url()에
+   * path만 넣으면 baseUrl과 결합되어야 한다.
    */
   @Test
   void preview_apiConnectionId_joinsBaseUrlAndPath() {
     // apiConnectionService.getById()가 baseUrl을 가진 connection을 반환
     com.smartfirehub.apiconnection.dto.ApiConnectionResponse mockConn =
         new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
-            1L, "Test API", null, "BEARER", java.util.Map.of(),
-            "http://localhost:" + wireMock.port(), null, null, null, null, null,
-            1L, null, null);
+            1L,
+            "Test API",
+            null,
+            "BEARER",
+            java.util.Map.of(),
+            "http://localhost:" + wireMock.port(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            1L,
+            null,
+            null);
     when(apiConnectionService.getById(1L)).thenReturn(mockConn);
 
     wireMock.stubFor(
@@ -503,8 +514,8 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * API_KEY 헤더 방식: inlineAuth에 authType=API_KEY, placement=header, headerName, apiKey 설정 시
-   * 지정한 헤더명으로 API 키가 전달되어야 한다.
+   * API_KEY 헤더 방식: inlineAuth에 authType=API_KEY, placement=header, headerName, apiKey 설정 시 지정한
+   * 헤더명으로 API 키가 전달되어야 한다.
    */
   @Test
   void preview_apiKeyHeaderAuth_appliesCustomHeaderName() {
@@ -544,8 +555,8 @@ class ApiCallPreviewServiceTest {
   // =========================================================================
 
   /**
-   * Query Params 병합: request.queryParams(static)와 inlineAuth의 API_KEY(query placement)가
-   * 합쳐져서 URL 쿼리스트링에 포함되어야 한다.
+   * Query Params 병합: request.queryParams(static)와 inlineAuth의 API_KEY(query placement)가 합쳐져서 URL
+   * 쿼리스트링에 포함되어야 한다.
    */
   @Test
   void preview_queryParams_mergesStaticAndDynamic() {
@@ -583,8 +594,8 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * API_KEY 쿼리파라미터 방식: inlineAuth에 authType=API_KEY, placement=query 설정 시
-   * 지정한 파라미터명으로 API 키가 URL 쿼리스트링에 포함되어야 한다.
+   * API_KEY 쿼리파라미터 방식: inlineAuth에 authType=API_KEY, placement=query 설정 시 지정한 파라미터명으로 API 키가 URL
+   * 쿼리스트링에 포함되어야 한다.
    */
   @Test
   void preview_apiKeyQueryAuth_appendsToQueryString() {
@@ -623,10 +634,7 @@ class ApiCallPreviewServiceTest {
   // 타임아웃 검증
   // =========================================================================
 
-  /**
-   * 타임아웃 적용: timeoutMs가 설정된 경우 그 시간 내에 응답이 오면 성공한다.
-   * 여유 있는 타임아웃(5000ms)으로 정상 응답을 받는 케이스 검증.
-   */
+  /** 타임아웃 적용: timeoutMs가 설정된 경우 그 시간 내에 응답이 오면 성공한다. 여유 있는 타임아웃(5000ms)으로 정상 응답을 받는 케이스 검증. */
   @Test
   void preview_customTimeoutMs_appliedToRequest() {
     wireMock.stubFor(
@@ -641,24 +649,15 @@ class ApiCallPreviewServiceTest {
     ApiCallPreviewResponse response =
         service.preview(
             new ApiCallPreviewRequest(
-                baseUrl() + "/timeout-ok",
-                "GET",
-                null,
-                null,
-                null,
-                "$",
-                null,
-                null,
-                null,
-                5000));
+                baseUrl() + "/timeout-ok", "GET", null, null, null, "$", null, null, null, 5000));
 
     assertThat(response.success()).isTrue();
     assertThat(response.totalExtractedRows()).isEqualTo(1);
   }
 
   /**
-   * 타임아웃 초과: 서버 응답이 timeoutMs를 초과하면 success=false, errorMessage 반환.
-   * WireMock으로 응답을 늦게 반환하도록 설정하여 타임아웃 동작을 검증한다.
+   * 타임아웃 초과: 서버 응답이 timeoutMs를 초과하면 success=false, errorMessage 반환. WireMock으로 응답을 늦게 반환하도록 설정하여
+   * 타임아웃 동작을 검증한다.
    */
   @Test
   void preview_requestTimeout_returnsErrorMessage() {

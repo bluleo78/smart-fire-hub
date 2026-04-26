@@ -34,8 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * {@link DatasetService#getReferences(Long)} 통합 테스트.
  *
- * <p>데이터셋을 참조하는 파이프라인/대시보드/Proactive Job 집계 동작을 검증한다. Proactive Job 은 현재 스키마상 datasetId 연결이 없으므로
- * 항상 빈 리스트를 반환하는 것이 정상이다.
+ * <p>데이터셋을 참조하는 파이프라인/대시보드/Proactive Job 집계 동작을 검증한다. Proactive Job 은 현재 스키마상 datasetId 연결이 없으므로 항상
+ * 빈 리스트를 반환하는 것이 정상이다.
  */
 @Transactional
 class DatasetReferencesServiceTest extends IntegrationTestBase {
@@ -136,13 +136,7 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
             "does not reference target",
             List.of(
                 new PipelineStepRequest(
-                    "step1",
-                    "unrelated",
-                    "SQL",
-                    "SELECT 1",
-                    otherDatasetId,
-                    List.of(),
-                    null))),
+                    "step1", "unrelated", "SQL", "SELECT 1", otherDatasetId, List.of(), null))),
         testUserId);
 
     // When
@@ -204,8 +198,7 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
 
     var chart =
         chartService.create(
-            new CreateChartRequest(
-                "Refs Chart", null, savedQuery.id(), "BAR", Map.of(), false),
+            new CreateChartRequest("Refs Chart", null, savedQuery.id(), "BAR", Map.of(), false),
             testUserId);
 
     DashboardResponse dashboard =

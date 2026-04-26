@@ -27,10 +27,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * ProactiveMessageController WebMvcTest — JaCoCo LINE 커버리지 보강용.
- * 메시지 조회/읽음 처리 엔드포인트를 커버한다.
- */
+/** ProactiveMessageController WebMvcTest — JaCoCo LINE 커버리지 보강용. 메시지 조회/읽음 처리 엔드포인트를 커버한다. */
 @WebMvcTest(ProactiveMessageController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class ProactiveMessageControllerTest {
@@ -79,8 +76,7 @@ class ProactiveMessageControllerTest {
   @Test
   void getMessages_withCustomLimitAndOffset_returnsList() throws Exception {
     mockAuth("proactive:read");
-    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt()))
-        .thenReturn(List.of());
+    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt())).thenReturn(List.of());
 
     mockMvc
         .perform(
@@ -111,8 +107,7 @@ class ProactiveMessageControllerTest {
 
     mockMvc
         .perform(
-            put("/api/v1/proactive/messages/1/read")
-                .header("Authorization", "Bearer valid-token"))
+            put("/api/v1/proactive/messages/1/read").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
   }
 
@@ -132,9 +127,10 @@ class ProactiveMessageControllerTest {
   void getMessages_withoutAuth_returns401or403() throws Exception {
     mockMvc
         .perform(get("/api/v1/proactive/messages"))
-        .andExpect(result -> {
-          int status = result.getResponse().getStatus();
-          assert status == 401 || status == 403;
-        });
+        .andExpect(
+            result -> {
+              int status = result.getResponse().getStatus();
+              assert status == 401 || status == 403;
+            });
   }
 }

@@ -72,8 +72,7 @@ public class DatasetCategoryRepository {
   }
 
   /**
-   * 주어진 이름이 다른 카테고리에 이미 존재하는지 확인한다.
-   * 수정 시 자기 자신을 제외하고 중복 여부를 판별하기 위해 사용한다.
+   * 주어진 이름이 다른 카테고리에 이미 존재하는지 확인한다. 수정 시 자기 자신을 제외하고 중복 여부를 판별하기 위해 사용한다.
    *
    * @param name 확인할 카테고리 이름
    * @param excludeId 제외할 카테고리 ID (자기 자신)
@@ -81,8 +80,6 @@ public class DatasetCategoryRepository {
    */
   public boolean existsByNameExcludingId(String name, Long excludeId) {
     return dsl.fetchExists(
-        dsl.selectOne()
-            .from(DATASET_CATEGORY)
-            .where(DC_NAME.eq(name).and(DC_ID.ne(excludeId))));
+        dsl.selectOne().from(DATASET_CATEGORY).where(DC_NAME.eq(name).and(DC_ID.ne(excludeId))));
   }
 }

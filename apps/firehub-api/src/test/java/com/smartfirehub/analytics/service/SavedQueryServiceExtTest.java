@@ -16,9 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * SavedQueryService 추가 통합 테스트.
- * 기존 SavedQueryServiceTest에서 커버되지 않은 분기:
- * - executeById(): 정상 실행 및 접근 불가 예외
+ * SavedQueryService 추가 통합 테스트. 기존 SavedQueryServiceTest에서 커버되지 않은 분기: - executeById(): 정상 실행 및 접근
+ * 불가 예외
  */
 @Transactional
 class SavedQueryServiceExtTest extends IntegrationTestBase {
@@ -33,20 +32,28 @@ class SavedQueryServiceExtTest extends IntegrationTestBase {
   void setUp() {
     ownerUserId =
         dsl.insertInto(DSL.table(DSL.name("user")))
-            .set(DSL.field(DSL.name("user", "username"), String.class), "sq_ext_owner_" + System.nanoTime())
+            .set(
+                DSL.field(DSL.name("user", "username"), String.class),
+                "sq_ext_owner_" + System.nanoTime())
             .set(DSL.field(DSL.name("user", "password"), String.class), "password")
             .set(DSL.field(DSL.name("user", "name"), String.class), "SQ Ext Owner")
-            .set(DSL.field(DSL.name("user", "email"), String.class), "sq_ext_" + System.nanoTime() + "@example.com")
+            .set(
+                DSL.field(DSL.name("user", "email"), String.class),
+                "sq_ext_" + System.nanoTime() + "@example.com")
             .returning(DSL.field(DSL.name("user", "id"), Long.class))
             .fetchOne()
             .get(DSL.field(DSL.name("user", "id"), Long.class));
 
     otherUserId =
         dsl.insertInto(DSL.table(DSL.name("user")))
-            .set(DSL.field(DSL.name("user", "username"), String.class), "sq_ext_other_" + System.nanoTime())
+            .set(
+                DSL.field(DSL.name("user", "username"), String.class),
+                "sq_ext_other_" + System.nanoTime())
             .set(DSL.field(DSL.name("user", "password"), String.class), "password")
             .set(DSL.field(DSL.name("user", "name"), String.class), "SQ Ext Other")
-            .set(DSL.field(DSL.name("user", "email"), String.class), "sq_ext_other_" + System.nanoTime() + "@example.com")
+            .set(
+                DSL.field(DSL.name("user", "email"), String.class),
+                "sq_ext_other_" + System.nanoTime() + "@example.com")
             .returning(DSL.field(DSL.name("user", "id"), Long.class))
             .fetchOne()
             .get(DSL.field(DSL.name("user", "id"), Long.class));

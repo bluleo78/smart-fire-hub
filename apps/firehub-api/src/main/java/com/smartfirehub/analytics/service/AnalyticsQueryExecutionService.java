@@ -39,8 +39,8 @@ public class AnalyticsQueryExecutionService {
    * Execute SQL against the data schema. Routes to executor service when executorEnabled=true,
    * otherwise executes directly via jOOQ.
    *
-   * <p>시스템 스키마 접근 차단은 executor/direct 경로 공통으로 이 메서드에서 수행한다.
-   * executor 경로는 Python 유효성 검사기를 사용하므로 Java 측 스키마 차단을 우회할 수 있다.
+   * <p>시스템 스키마 접근 차단은 executor/direct 경로 공통으로 이 메서드에서 수행한다. executor 경로는 Python 유효성 검사기를 사용하므로 Java
+   * 측 스키마 차단을 우회할 수 있다.
    *
    * @param sql raw SQL from user
    * @param maxRows maximum rows to return (1–10000)
@@ -51,8 +51,10 @@ public class AnalyticsQueryExecutionService {
     // 시스템 스키마/함수 직접 참조 차단 — executor/direct 경로 모두 적용 (#33/#34/#86/#90)
     // executor 경로는 Python 측 차단만 있어 public 스키마 접근이 가능하므로 여기서 공통 차단
     String upperSql = sql.toUpperCase();
-    if (upperSql.contains("PUBLIC.") || upperSql.contains("INFORMATION_SCHEMA")
-        || upperSql.contains("PG_CATALOG") || upperSql.contains("PG_READ_FILE")
+    if (upperSql.contains("PUBLIC.")
+        || upperSql.contains("INFORMATION_SCHEMA")
+        || upperSql.contains("PG_CATALOG")
+        || upperSql.contains("PG_READ_FILE")
         || upperSql.contains("PG_EXECUTE")) {
       return errorResponse("보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
     }
@@ -102,8 +104,10 @@ public class AnalyticsQueryExecutionService {
 
     // 시스템 스키마/함수 직접 참조 차단 (#33/#34/#86 보안: 비밀번호 해시 유출, 파일 읽기 방지)
     String upperSql = cleanSql.toUpperCase();
-    if (upperSql.contains("PUBLIC.") || upperSql.contains("INFORMATION_SCHEMA")
-        || upperSql.contains("PG_CATALOG") || upperSql.contains("PG_READ_FILE")
+    if (upperSql.contains("PUBLIC.")
+        || upperSql.contains("INFORMATION_SCHEMA")
+        || upperSql.contains("PG_CATALOG")
+        || upperSql.contains("PG_READ_FILE")
         || upperSql.contains("PG_EXECUTE")) {
       return errorResponse("보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
     }

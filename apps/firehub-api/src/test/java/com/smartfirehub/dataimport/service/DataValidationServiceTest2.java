@@ -16,14 +16,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * DataValidationService 추가 단위 테스트 — 기존 테스트에서 누락된 분기 커버.
- * - validateWithMapping (컬럼 매핑 포함 검증)
- * - validatePrimaryKeys (PK 중복/빈값 검사)
- * - convertValue GEOMETRY 타입 pass-through
- * - convertValue unknown type 예외
- * - 따옴표 한 쪽만 있는 strip 분기
- * - DATE 다양한 포맷 (yyyy/MM/dd, dd-MM-yyyy, MM/dd/yyyy)
- * - TIMESTAMP 다양한 포맷 (yyyy/MM/dd HH:mm:ss, dd-MM-yyyy HH:mm:ss, yyyyMMddHHmmss)
+ * DataValidationService 추가 단위 테스트 — 기존 테스트에서 누락된 분기 커버. - validateWithMapping (컬럼 매핑 포함 검증) -
+ * validatePrimaryKeys (PK 중복/빈값 검사) - convertValue GEOMETRY 타입 pass-through - convertValue unknown
+ * type 예외 - 따옴표 한 쪽만 있는 strip 분기 - DATE 다양한 포맷 (yyyy/MM/dd, dd-MM-yyyy, MM/dd/yyyy) - TIMESTAMP 다양한
+ * 포맷 (yyyy/MM/dd HH:mm:ss, dd-MM-yyyy HH:mm:ss, yyyyMMddHHmmss)
  */
 class DataValidationServiceTest2 {
 
@@ -31,7 +27,8 @@ class DataValidationServiceTest2 {
 
   /** DatasetColumnResponse 생성 헬퍼 */
   private static DatasetColumnResponse col(String name, String dataType, boolean isNullable) {
-    return new DatasetColumnResponse(1L, name, name, dataType, null, isNullable, false, null, 0, false);
+    return new DatasetColumnResponse(
+        1L, name, name, dataType, null, isNullable, false, null, 0, false);
   }
 
   @BeforeEach
@@ -108,28 +105,32 @@ class DataValidationServiceTest2 {
   @Test
   void convertValue_timestamp_yyyySlashMMSlashdd_HHmmss() throws Exception {
     Object result = service.convertValue("2024/03/20 10:30:00", "TIMESTAMP");
-    assertThat(result).isInstanceOf(LocalDateTime.class)
+    assertThat(result)
+        .isInstanceOf(LocalDateTime.class)
         .isEqualTo(LocalDateTime.of(2024, 3, 20, 10, 30, 0));
   }
 
   @Test
   void convertValue_timestamp_ddDashMMDashyyyy_HHmmss() throws Exception {
     Object result = service.convertValue("20-03-2024 10:30:00", "TIMESTAMP");
-    assertThat(result).isInstanceOf(LocalDateTime.class)
+    assertThat(result)
+        .isInstanceOf(LocalDateTime.class)
         .isEqualTo(LocalDateTime.of(2024, 3, 20, 10, 30, 0));
   }
 
   @Test
   void convertValue_timestamp_ddSlashMMSlashyyyy_HHmmss() throws Exception {
     Object result = service.convertValue("20/03/2024 10:30:00", "TIMESTAMP");
-    assertThat(result).isInstanceOf(LocalDateTime.class)
+    assertThat(result)
+        .isInstanceOf(LocalDateTime.class)
         .isEqualTo(LocalDateTime.of(2024, 3, 20, 10, 30, 0));
   }
 
   @Test
   void convertValue_timestamp_yyyyMMddHHmmss_compact() throws Exception {
     Object result = service.convertValue("20240320103000", "TIMESTAMP");
-    assertThat(result).isInstanceOf(LocalDateTime.class)
+    assertThat(result)
+        .isInstanceOf(LocalDateTime.class)
         .isEqualTo(LocalDateTime.of(2024, 3, 20, 10, 30, 0));
   }
 
@@ -139,18 +140,15 @@ class DataValidationServiceTest2 {
 
   @Test
   void validateWithMapping_validRows_mapsCorrectly() {
-    List<DatasetColumnResponse> columns = List.of(
-        col("age", "INTEGER", false),
-        col("name", "TEXT", true));
+    List<DatasetColumnResponse> columns =
+        List.of(col("age", "INTEGER", false), col("name", "TEXT", true));
 
     // 파일 컬럼명이 다를 때 매핑
-    List<ColumnMappingEntry> mappings = List.of(
-        new ColumnMappingEntry("나이", "age"),
-        new ColumnMappingEntry("이름", "name"));
+    List<ColumnMappingEntry> mappings =
+        List.of(new ColumnMappingEntry("나이", "age"), new ColumnMappingEntry("이름", "name"));
 
-    List<Map<String, String>> rows = List.of(
-        Map.of("나이", "30", "이름", "홍길동"),
-        Map.of("나이", "25", "이름", "김철수"));
+    List<Map<String, String>> rows =
+        List.of(Map.of("나이", "30", "이름", "홍길동"), Map.of("나이", "25", "이름", "김철수"));
 
     ValidationResultWithDetails result = service.validateWithMapping(rows, columns, mappings);
 
@@ -213,9 +211,10 @@ class DataValidationServiceTest2 {
     // datasetColumn이 null인 매핑 항목은 무시되어야 한다
     List<DatasetColumnResponse> columns = List.of(col("name", "TEXT", true));
 
-    List<ColumnMappingEntry> mappings = List.of(
-        new ColumnMappingEntry("이름", "name"),
-        new ColumnMappingEntry("무시컬럼", null));  // datasetColumn = null → 무시
+    List<ColumnMappingEntry> mappings =
+        List.of(
+            new ColumnMappingEntry("이름", "name"),
+            new ColumnMappingEntry("무시컬럼", null)); // datasetColumn = null → 무시
 
     List<Map<String, String>> rows = List.of(Map.of("이름", "홍길동", "무시컬럼", "값"));
 
@@ -230,10 +229,8 @@ class DataValidationServiceTest2 {
 
   @Test
   void validatePrimaryKeys_validUniqueKeys_noErrorsOrWarnings() {
-    List<Map<String, String>> rows = List.of(
-        Map.of("id", "1"),
-        Map.of("id", "2"),
-        Map.of("id", "3"));
+    List<Map<String, String>> rows =
+        List.of(Map.of("id", "1"), Map.of("id", "2"), Map.of("id", "3"));
 
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("id"));
 
@@ -243,9 +240,7 @@ class DataValidationServiceTest2 {
 
   @Test
   void validatePrimaryKeys_emptyPkValue_recordsError() {
-    List<Map<String, String>> rows = List.of(
-        Map.of("id", ""),
-        Map.of("id", "2"));
+    List<Map<String, String>> rows = List.of(Map.of("id", ""), Map.of("id", "2"));
 
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("id"));
 
@@ -258,9 +253,7 @@ class DataValidationServiceTest2 {
 
   @Test
   void validatePrimaryKeys_duplicateKey_recordsWarning() {
-    List<Map<String, String>> rows = List.of(
-        Map.of("id", "1"),
-        Map.of("id", "1"));  // 중복
+    List<Map<String, String>> rows = List.of(Map.of("id", "1"), Map.of("id", "1")); // 중복
 
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("id"));
 
@@ -271,10 +264,11 @@ class DataValidationServiceTest2 {
   @Test
   void validatePrimaryKeys_compositePk_duplicateDetected() {
     // 복합 PK 중복 감지
-    List<Map<String, String>> rows = List.of(
-        Map.of("col_a", "1", "col_b", "X"),
-        Map.of("col_a", "1", "col_b", "Y"),
-        Map.of("col_a", "1", "col_b", "X"));  // 중복
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("col_a", "1", "col_b", "X"),
+            Map.of("col_a", "1", "col_b", "Y"),
+            Map.of("col_a", "1", "col_b", "X")); // 중복
 
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("col_a", "col_b"));
 
@@ -285,7 +279,7 @@ class DataValidationServiceTest2 {
   @Test
   void validatePrimaryKeys_nullPkColumn_recordsError() {
     // row에 PK 컬럼 키 자체가 없는 경우 → null로 처리되어 에러
-    List<Map<String, String>> rows = List.of(Map.of("other_col", "value"));  // "id" 키 없음
+    List<Map<String, String>> rows = List.of(Map.of("other_col", "value")); // "id" 키 없음
 
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("id"));
 

@@ -30,9 +30,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.jooq.DSLContext;
-import org.jooq.InsertOnDuplicateSetMoreStep;
-import org.jooq.InsertOnDuplicateSetStep;
-import org.jooq.InsertSetMoreStep;
 import org.jooq.InsertSetStep;
 import org.jooq.JSONB;
 import org.jooq.Record1;
@@ -44,8 +41,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * AiClassifyExecutor 단위 테스트. Spring 컨텍스트 없이 Mockito 로 실행한다. jOOQ DSLContext 는 fluent chain 이
- * 많아 deep stub 으로 처리한다.
+ * AiClassifyExecutor 단위 테스트. Spring 컨텍스트 없이 Mockito 로 실행한다. jOOQ DSLContext 는 fluent chain 이 많아
+ * deep stub 으로 처리한다.
  */
 class AiClassifyExecutorTest {
 
@@ -336,8 +333,7 @@ class AiClassifyExecutorTest {
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
-    when(aiAgentClient.classify(any(), anyLong()))
-        .thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
@@ -372,8 +368,7 @@ class AiClassifyExecutorTest {
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
-    when(aiAgentClient.classify(any(), anyLong()))
-        .thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     // onError=FAIL_STEP 설정으로 Step을 재구성
     AiClassifyConfig failConfig =
@@ -418,8 +413,7 @@ class AiClassifyExecutorTest {
 
   @Test
   void coerceRowValues_coercesAllKnownTypes() throws Exception {
-    Method m =
-        AiClassifyExecutor.class.getDeclaredMethod("coerceRowValues", Map.class, Map.class);
+    Method m = AiClassifyExecutor.class.getDeclaredMethod("coerceRowValues", Map.class, Map.class);
     m.setAccessible(true);
 
     Map<String, Object> row = new HashMap<>();
@@ -459,8 +453,7 @@ class AiClassifyExecutorTest {
 
   @Test
   void coerceRowValues_withInvalidNumber_swallowsNumberFormatException() throws Exception {
-    Method m =
-        AiClassifyExecutor.class.getDeclaredMethod("coerceRowValues", Map.class, Map.class);
+    Method m = AiClassifyExecutor.class.getDeclaredMethod("coerceRowValues", Map.class, Map.class);
     m.setAccessible(true);
 
     Map<String, Object> row = new HashMap<>();

@@ -176,8 +176,7 @@ class ProactiveJobControllerTest {
 
     mockMvc
         .perform(
-            post("/api/v1/proactive/jobs/10/execute")
-                .header("Authorization", "Bearer valid-token"))
+            post("/api/v1/proactive/jobs/10/execute").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isAccepted());
   }
 
@@ -186,7 +185,14 @@ class ProactiveJobControllerTest {
     mockAuth("proactive:read");
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 10L, "COMPLETED", LocalDateTime.now(), LocalDateTime.now(), null, null, null,
+            99L,
+            10L,
+            "COMPLETED",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            null,
+            null,
+            null,
             LocalDateTime.now());
     when(proactiveJobService.getExecutions(eq(10L), eq(1L), anyInt(), anyInt()))
         .thenReturn(List.of(exec));
@@ -205,7 +211,14 @@ class ProactiveJobControllerTest {
     when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 10L, "COMPLETED", LocalDateTime.now(), LocalDateTime.now(), null, null, null,
+            99L,
+            10L,
+            "COMPLETED",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            null,
+            null,
+            null,
             LocalDateTime.now());
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
@@ -224,7 +237,14 @@ class ProactiveJobControllerTest {
     // jobId(10) != execution.jobId(77) 분기 — 404
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 77L, "COMPLETED", LocalDateTime.now(), LocalDateTime.now(), null, null, null,
+            99L,
+            77L,
+            "COMPLETED",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            null,
+            null,
+            null,
             LocalDateTime.now());
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
@@ -242,7 +262,14 @@ class ProactiveJobControllerTest {
     // getValidatedResult 내부에서 jobId 불일치 → null → 400
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 77L, "COMPLETED", LocalDateTime.now(), LocalDateTime.now(), null, null, null,
+            99L,
+            77L,
+            "COMPLETED",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            null,
+            null,
+            null,
             LocalDateTime.now());
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
@@ -276,7 +303,14 @@ class ProactiveJobControllerTest {
     when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
     ProactiveJobExecutionResponse exec =
         new ProactiveJobExecutionResponse(
-            99L, 77L, "COMPLETED", LocalDateTime.now(), LocalDateTime.now(), null, null, null,
+            99L,
+            77L,
+            "COMPLETED",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            null,
+            null,
+            null,
             LocalDateTime.now());
     when(proactiveJobService.getExecution(99L)).thenReturn(exec);
 
@@ -307,8 +341,7 @@ class ProactiveJobControllerTest {
 
     mockMvc
         .perform(
-            get("/api/v1/proactive/jobs/recipients")
-                .header("Authorization", "Bearer valid-token"))
+            get("/api/v1/proactive/jobs/recipients").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].email").value("alice@example.com"));
   }

@@ -11,8 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * SettingsService CLI OAuth 토큰 및 추가 AI 설정 유효성 검증 테스트.
- * validateValues() 내의 나머지 분기(agent_type, session_max_tokens, max_tokens)를 커버한다.
+ * SettingsService CLI OAuth 토큰 및 추가 AI 설정 유효성 검증 테스트. validateValues() 내의 나머지 분기(agent_type,
+ * session_max_tokens, max_tokens)를 커버한다.
  */
 @Transactional
 class SettingsServiceCliTokenTest extends IntegrationTestBase {
@@ -64,16 +64,14 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
 
   @Test
   void updateSettings_maxTokensAboveRange_throwsIllegalArgument() {
-    assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("ai.max_tokens", "99999"), 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.max_tokens", "99999"), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("최대 토큰 수는");
   }
 
   @Test
   void updateSettings_maxTokensBelowRange_throwsIllegalArgument() {
-    assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("ai.max_tokens", "0"), 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.max_tokens", "0"), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("최대 토큰 수는");
   }
@@ -96,15 +94,15 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
 
   @Test
   void updateSettings_systemPromptBlank_throwsIllegalArgument() {
-    assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("ai.system_prompt", "  "), 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.system_prompt", "  "), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("시스템 프롬프트는");
   }
 
   @Test
   void updateSettings_systemPrompt_validValue_success() {
-    settingsService.updateSettings(Map.of("ai.system_prompt", "You are a helpful assistant."), null);
+    settingsService.updateSettings(
+        Map.of("ai.system_prompt", "You are a helpful assistant."), null);
 
     Optional<String> val = settingsService.getValue("ai.system_prompt");
     assertThat(val).isPresent().hasValue("You are a helpful assistant.");
@@ -112,16 +110,14 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
 
   @Test
   void updateSettings_maxTurnsAboveRange_throwsIllegalArgument() {
-    assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("ai.max_turns", "51"), 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.max_turns", "51"), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("최대 턴 수는 1에서 50 사이");
   }
 
   @Test
   void updateSettings_temperatureBelowRange_throwsIllegalArgument() {
-    assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("ai.temperature", "-0.1"), 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.temperature", "-0.1"), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Temperature는 0.0에서 1.0 사이");
   }

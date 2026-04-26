@@ -30,10 +30,9 @@ public interface UserChannelBindingRepository {
   /**
    * 팀 ID + 외부 사용자 ID로 활성 binding 조회 (Slack inbound 사용자 매핑용).
    *
-   * <p>SLACK_WORKSPACE.team_id를 통해 워크스페이스를 특정하고, 해당 워크스페이스에 속한
-   * ACTIVE 상태의 binding을 반환한다.
+   * <p>SLACK_WORKSPACE.team_id를 통해 워크스페이스를 특정하고, 해당 워크스페이스에 속한 ACTIVE 상태의 binding을 반환한다.
    *
-   * @param teamId         Slack 워크스페이스 team_id
+   * @param teamId Slack 워크스페이스 team_id
    * @param externalUserId Slack 사용자 ID (U로 시작하는 Slack user id)
    * @return 활성 binding, 없으면 Optional.empty()
    */

@@ -67,9 +67,7 @@ public class FileUploadService {
           Map.entry(
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "DOCUMENT"),
-          Map.entry(
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-              "DATA"));
+          Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "DATA"));
 
   // Category size limits in bytes
   private static final Map<String, Long> CATEGORY_SIZE_LIMITS =
