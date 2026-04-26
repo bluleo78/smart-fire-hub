@@ -163,8 +163,14 @@ export default function PipelineEditorPage() {
     );
   }
 
+  // 페이지 식별을 위한 시멘틱 h1 — WCAG 2.4.6 (Headings and Labels) 준수.
+  // EditorHeader 내부 파이프라인 이름은 input/span 으로만 렌더되어 heading 의미가 없으므로,
+  // 신규 생성("새 파이프라인")과 편집(파이프라인 이름) 모두를 sr-only h1로 보강하여 스크린리더에 노출한다.
+  const headingText = pipelineId ? state.name || '파이프라인 편집' : '새 파이프라인';
+
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">
+      <h1 className="sr-only">{headingText}</h1>
       {/* Header */}
       <EditorHeader
         state={state}

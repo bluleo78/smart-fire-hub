@@ -204,4 +204,36 @@ test.describe('파이프라인 에디터 페이지', () => {
     // 파이프라인 목록 페이지로 이동되어야 한다
     await expect(page).toHaveURL('/pipelines');
   });
+
+  // 회귀 테스트: WCAG 2.4.6 (Headings and Labels) — 페이지 진입 시 h1 헤딩 존재 보장 (issue #63)
+  test('신규 생성 페이지에 "새 파이프라인" h1 헤딩이 존재한다', async ({ authenticatedPage: page }) => {
+    // 신규 생성은 ID 없이 진입하므로 datasets/pipelines 목록만 모킹
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0,
+    });
+
+    await page.goto('/pipelines/new');
+
+    // 시멘틱 h1 (sr-only) 가 정확히 "새 파이프라인" 텍스트로 존재해야 한다
+    await expect(page.getByRole('heading', { level: 1, name: '새 파이프라인' })).toBeAttached();
+    // 페이지 전체에 heading 이 0개가 아닌 1개 이상 (회귀 가드)
+    const headingCount = await page.locator('h1, h2, h3, h4, h5, h6').count();
+    expect(headingCount).toBeGreaterThan(0);
+  });
+
+  test('기존 파이프라인 편집 페이지에 파이프라인 이름이 h1 헤딩으로 노출된다', async ({ authenticatedPage: page }) => {
+    const detail = createPipelineDetail({ id: 1, name: '월간 매출 ETL' });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0,
+    });
+
+    await page.goto('/pipelines/1');
+
+    // 파이프라인 이름이 h1 으로 노출되는지 확인
+    await expect(page.getByRole('heading', { level: 1, name: '월간 매출 ETL' })).toBeAttached();
+  });
 });
