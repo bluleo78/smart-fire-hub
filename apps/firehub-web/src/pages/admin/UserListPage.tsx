@@ -69,8 +69,14 @@ export default function UserListPage() {
               users.content.map((u) => (
                 <TableRow
                   key={u.id}
+                  // 키보드 접근성: Tab 포커스 가능하도록 tabIndex={0}, role="button" 추가
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`사용자 ${u.name} 상세 보기`}
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => navigate(`/admin/users/${u.id}`)}
+                  // Enter/Space 키로 행 클릭과 동일한 네비게이션 동작 수행
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/admin/users/${u.id}`); }}
                 >
                   <TableCell>{u.name}</TableCell>
                   <TableCell className="font-medium">{u.username}</TableCell>

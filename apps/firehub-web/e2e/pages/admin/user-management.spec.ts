@@ -31,8 +31,10 @@ test.describe('사용자 관리 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '이메일' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
 
-    // 행 개수 확인: 헤더 1행 + 데이터 3행 = 4행
-    await expect(page.getByRole('row')).toHaveCount(4);
+    // 행 개수 확인: 헤더 row 1개 + 데이터 button 행 3개
+    // 데이터 행은 role="button" (#29 키보드 접근성 수정으로 변경됨)이므로 별도 카운트
+    await expect(page.getByRole('row')).toHaveCount(1);  // 헤더 행만
+    await expect(page.getByRole('button', { name: /상세 보기/ })).toHaveCount(3);  // 데이터 행
 
     // 첫 번째 데이터 행의 셀 내용 확인 — 아이디(username), 이메일이 올바르게 렌더링되는지 검증
     await expect(page.getByRole('cell', { name: 'user1', exact: true })).toBeVisible();
@@ -197,6 +199,54 @@ test.describe('사용자 관리 페이지', () => {
     // PUT API payload 검증 — active: false 가 전달되어야 한다 (현재 isActive=true → 반전)
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({ active: false });
+  });
+
+  // #29 회귀: 클릭 가능한 테이블 행에 키보드 접근성 속성이 존재해야 한다
+  test('테이블 행에 키보드 접근성 속성이 있다 (#29)', async ({ authenticatedPage: page }) => {
+    await setupUserListMocks(page, 3);
+    await page.goto('/admin/users');
+
+    // 첫 번째 데이터 행이 tabIndex=0, role="button", aria-label 갖는지 확인
+    const firstRow = page.getByRole('button', { name: /사용자 사용자 1 상세 보기/ });
+    await expect(firstRow).toBeVisible();
+
+    // tabIndex={0} — Tab 포커스 가능한지 확인
+    const tabIndex = await firstRow.evaluate((el) => (el as HTMLElement).tabIndex);
+    expect(tabIndex).toBe(0);
+
+    // aria-label이 존재하는지 확인
+    const ariaLabel = await firstRow.getAttribute('aria-label');
+    expect(ariaLabel).not.toBeNull();
+  });
+
+  // #29 회귀: Enter/Space 키로 행 클릭과 동일한 네비게이션이 이루어져야 한다
+  test('테이블 행에서 Enter 키로 상세 페이지로 이동한다 (#29)', async ({ authenticatedPage: page }) => {
+    await setupUserListMocks(page, 3);
+    await setupUserDetailMocks(page, 1);
+    await page.goto('/admin/users');
+
+    // 첫 번째 사용자 행에 포커스 후 Enter 키 입력
+    const firstRow = page.getByRole('button', { name: /사용자 사용자 1 상세 보기/ });
+    await firstRow.focus();
+    await page.keyboard.press('Enter');
+
+    // 상세 페이지로 이동 확인
+    await expect(page).toHaveURL(/\/admin\/users\/1/);
+  });
+
+  // #30 회귀: SearchInput에 aria-label이 있어야 스크린리더가 접근 가능하다
+  test('SearchInput에 aria-label이 설정된다 (#30)', async ({ authenticatedPage: page }) => {
+    await setupUserListMocks(page, 3);
+    await page.goto('/admin/users');
+
+    // 검색 입력창에 aria-label이 설정되어 있는지 확인
+    const searchInput = page.getByPlaceholder('이름 또는 아이디로 검색...');
+    await expect(searchInput).toBeVisible();
+
+    // placeholder가 aria-label로 사용되는지 확인
+    const ariaLabel = await searchInput.getAttribute('aria-label');
+    expect(ariaLabel).not.toBeNull();
+    expect(ariaLabel).toBe('이름 또는 아이디로 검색...');
   });
 
   test('사용자 역할 저장 — PUT payload 검증', async ({ authenticatedPage: page }) => {
