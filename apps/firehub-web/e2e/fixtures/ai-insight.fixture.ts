@@ -144,3 +144,26 @@ export async function setupExecutionDetailMocks(
   }
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 }
+
+/**
+ * 리포트 뷰어 페이지 API 모킹
+ * - HTML 리포트 조회 API를 모킹한다.
+ * @param jobId - 잡 ID (기본값: 1)
+ * @param executionId - 실행 ID (기본값: 1)
+ * @param htmlContent - 반환할 HTML 문자열. null이면 rawHtml=null 케이스를 모킹한다.
+ */
+export async function setupReportViewerMocks(
+  page: Page,
+  jobId = 1,
+  executionId = 1,
+  htmlContent: string | null = '<html><body><h1>리포트</h1></body></html>',
+) {
+  // HTML 리포트 API — null이면 JSON null을 반환하여 rawHtml=null 상태를 재현한다
+  await mockApi(
+    page,
+    'GET',
+    `/api/v1/proactive/jobs/${jobId}/executions/${executionId}/html`,
+    htmlContent,
+  );
+  await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+}
