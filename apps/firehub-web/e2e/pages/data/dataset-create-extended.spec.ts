@@ -52,10 +52,9 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
     // 빈 폼에서 제출 → handleSubmit → Zod 유효성 검사 실패
     await page.getByRole('button', { name: '생성' }).click();
 
-    // 에러 토스트 메시지 확인
-    await expect(
-      page.getByText('입력값을 확인해주세요. 필수 항목이 누락되었거나 형식이 올바르지 않습니다.'),
-    ).toBeVisible({ timeout: 3000 });
+    // 인라인 에러 메시지 확인 (#69: 토스트 중복 노출 제거)
+    await expect(page.getByText('데이터셋 이름을 입력하세요')).toBeVisible({ timeout: 3000 });
+    await expect(page.getByText('테이블명을 입력하세요')).toBeVisible();
   });
 
   test('이름과 테이블명 입력 후 POST /datasets payload가 올바르게 전달된다', async ({

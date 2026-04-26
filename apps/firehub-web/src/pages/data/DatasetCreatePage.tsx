@@ -84,8 +84,26 @@ export default function DatasetCreatePage() {
       </div>
 
       <FormProvider {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit, () => {
-          toast.error('입력값을 확인해주세요. 필수 항목이 누락되었거나 형식이 올바르지 않습니다.');
+        {/*
+         * 폼 검증 실패 시 인라인 에러 메시지만 노출한다 (#69).
+         * 과거에는 toast.error로도 동일한 안내를 띄웠으나, 인라인 에러와
+         * 중복되어 사용자 시선을 분산시키고 어떤 필드가 잘못됐는지 알리지 못해 제거.
+         * 대신 첫 번째 에러 필드 input으로 자동 스크롤·focus 이동시켜 사용자가
+         * 즉시 어떤 필드를 수정해야 하는지 인지할 수 있도록 한다.
+         * 단, 서버 에러(API 실패)는 onSubmit catch의 handleApiError로 toast 노출 유지.
+         */}
+        <form onSubmit={form.handleSubmit(onSubmit, (errors) => {
+          // 에러가 있는 첫 번째 필드를 찾아 focus + scrollIntoView
+          const firstErrorKey = Object.keys(errors)[0];
+          if (firstErrorKey) {
+            const el = document.querySelector<HTMLElement>(
+              `[name="${firstErrorKey}"], #${firstErrorKey}`
+            );
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.focus({ preventScroll: true });
+            }
+          }
         })} className="space-y-6">
           <Card className="p-6">
             <h2 className="text-xl leading-7 font-semibold mb-4">기본 정보</h2>

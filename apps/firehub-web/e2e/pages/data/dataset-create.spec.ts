@@ -29,17 +29,28 @@ test.describe('데이터셋 생성 페이지', () => {
     await expect(page.getByRole('heading', { name: '칼럼 정의' })).toBeVisible();
   });
 
-  test('필수 필드 없이 제출 시 유효성 에러가 표시된다', async ({ authenticatedPage: page }) => {
+  test('필수 필드 없이 제출 시 인라인 유효성 에러만 표시되고 토스트는 노출되지 않는다 (#69)', async ({
+    authenticatedPage: page,
+  }) => {
     await setupDatasetMocks(page);
     await page.goto('/data/datasets/new');
 
     // 빈 폼 상태에서 생성 버튼 클릭 — onInvalid 콜백이 실행된다
     await page.getByRole('button', { name: '생성' }).click();
 
-    // handleSubmit의 onInvalid 콜백에서 표시되는 정확한 토스트 메시지 확인
+    // 각 필드 인라인 에러 메시지 확인 (Zod + react-hook-form)
+    await expect(page.getByText('데이터셋 이름을 입력하세요')).toBeVisible();
+    await expect(page.getByText('테이블명을 입력하세요')).toBeVisible();
+    await expect(page.getByText('칼럼명을 입력하세요')).toBeVisible();
+
+    // 폼 검증 실패 시 중복 토스트가 노출되지 않는지 확인 (#69 회귀 방지)
+    // 인라인 에러로 충분히 명확한 컨텍스트가 제공되므로 일반 토스트는 제거됨
     await expect(
       page.getByText('입력값을 확인해주세요. 필수 항목이 누락되었거나 형식이 올바르지 않습니다.'),
-    ).toBeVisible();
+    ).toHaveCount(0);
+
+    // 첫 번째 에러 필드(name)에 자동 포커스가 이동하는지 검증
+    await expect(page.getByLabel('데이터셋 이름')).toBeFocused();
   });
 
   test('취소 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
