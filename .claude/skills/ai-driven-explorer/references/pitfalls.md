@@ -184,3 +184,50 @@ playwright-cli -s=$SESSION eval "(()=>{ const old=window.onbeforeunload; window.
 
 **중요**: 이 함정은 unsaved-change 가드가 있는 모든 에디터 페이지에서 발생한다.
 PipelineEditorPage, 기타 폼 에디터 등 진입 후 이탈 시 반드시 위 해제 코드를 먼저 실행하라.
+
+## 17. 로그인 폼 — `fill`이 React 상태에 반영되지 않는 경우
+증상: `fill "input[placeholder*='email']" "..."` 실행 후 로그인 클릭 시 "유효한 이메일 형식의 아이디를 입력하세요" 오류 노출. 이메일 필드가 비어 있는 것처럼 동작.
+
+원인: React controlled input은 focus 없이 fill만 실행하면 nativeInputValueSetter가 제대로 트리거되지 않는 경우가 있음.
+
+**안전한 로그인 절차** (반드시 아래 순서로 실행):
+```bash
+# 1) 로그인 페이지 이동
+playwright-cli -s=$SESSION eval "window.location.href='/login'"
+sleep 1
+
+# 2) 이메일 필드 클릭(포커스) 후 fill
+playwright-cli -s=$SESSION click "input[placeholder*='email']"
+sleep 0.3
+playwright-cli -s=$SESSION fill "input[placeholder*='email']" "bluleo78@gmail.com"
+sleep 0.3
+
+# 3) 이메일 입력 확인 — placeholder가 여전히 보이면 type으로 재시도
+playwright-cli -s=$SESSION --raw snapshot > /tmp/snap_login.yml 2>/dev/null
+if grep -q "email@example.com" /tmp/snap_login.yml; then
+  # fill이 실패했으면 type으로 재시도 (pitfall #10 방식)
+  playwright-cli -s=$SESSION click "input[placeholder*='email']"
+  playwright-cli -s=$SESSION press "Control+a"
+  playwright-cli -s=$SESSION type "bluleo78@gmail.com"
+  sleep 0.3
+fi
+
+# 4) 비밀번호 클릭 후 fill
+playwright-cli -s=$SESSION click "input[type='password']"
+sleep 0.3
+playwright-cli -s=$SESSION fill "input[type='password']" "ehdgml88"
+sleep 0.3
+
+# 5) 로그인 버튼 클릭
+playwright-cli -s=$SESSION click "button:has-text('로그인')"
+sleep 2
+
+# 6) 로그인 성공 확인
+playwright-cli -s=$SESSION --raw snapshot > /tmp/snap_home.yml 2>/dev/null
+if grep -q "email@example.com\|로그인" /tmp/snap_home.yml; then
+  echo "LOGIN_FAILED — 로그인 페이지에 여전히 있음"
+else
+  echo "LOGIN_OK"
+  playwright-cli -s=$SESSION state-save .playwright-cli/state.json
+fi
+```

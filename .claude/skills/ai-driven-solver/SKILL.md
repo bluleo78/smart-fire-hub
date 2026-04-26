@@ -117,6 +117,31 @@ gh issue view <번호> --json number,title,body,labels
 SESSION="${SESSION_NAME:-solver#$(openssl rand -hex 3)}"
 playwright-cli -s=$SESSION --headed open http://localhost:5173
 playwright-cli -s=$SESSION state-load .playwright-cli/state.json
+
+# state-load 후 로그인 여부 확인
+playwright-cli -s=$SESSION --raw snapshot > /tmp/snap_check.yml 2>/dev/null
+if grep -q "email@example.com\|로그인 페이지" /tmp/snap_check.yml; then
+  # state 만료 → 수동 로그인 (pitfall #17: fill만으로는 React 상태 미반영 빈번)
+  playwright-cli -s=$SESSION click "input[placeholder*='email']"
+  sleep 0.3
+  playwright-cli -s=$SESSION fill "input[placeholder*='email']" "bluleo78@gmail.com"
+  sleep 0.3
+  # fill 실패 확인 — placeholder가 여전히 보이면 type으로 재시도
+  playwright-cli -s=$SESSION --raw snapshot > /tmp/snap_login.yml 2>/dev/null
+  if grep -q "email@example.com" /tmp/snap_login.yml; then
+    playwright-cli -s=$SESSION click "input[placeholder*='email']"
+    playwright-cli -s=$SESSION press "Control+a"
+    playwright-cli -s=$SESSION type "bluleo78@gmail.com"
+    sleep 0.3
+  fi
+  playwright-cli -s=$SESSION click "input[type='password']"
+  sleep 0.3
+  playwright-cli -s=$SESSION fill "input[type='password']" "ehdgml88"
+  sleep 0.3
+  playwright-cli -s=$SESSION click "button:has-text('로그인')"
+  sleep 2
+  playwright-cli -s=$SESSION state-save .playwright-cli/state.json
+fi
 ```
 
 ```
