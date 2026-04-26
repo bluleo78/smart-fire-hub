@@ -16,10 +16,11 @@ test.describe('스마트 작업 목록 페이지', () => {
     // 페이지 제목 확인
     await expect(page.getByRole('heading', { name: '스마트 작업' })).toBeVisible();
 
-    // 테이블 헤더 컬럼 확인
+    // 테이블 헤더 컬럼 확인 — '상태' 컬럼은 '활성' 토글과 정보 중복으로 제거 (#67)
     await expect(page.getByRole('columnheader', { name: '작업명' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '실행 주기' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '활성' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '상태' })).toHaveCount(0);
 
     // 팩토리에서 생성한 이름 패턴("잡 1", "잡 2", "잡 3") 확인
     await expect(page.getByText('잡 1')).toBeVisible();
@@ -90,8 +91,8 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(toggle).toBeChecked();
   });
 
-  test('비활성 작업에 "비활성" 배지가 표시된다', async ({ authenticatedPage: page }) => {
-    // enabled: false 작업으로 모킹
+  test('비활성 작업은 활성화 스위치가 꺼진 상태로 표시된다 (#67)', async ({ authenticatedPage: page }) => {
+    // '상태' 컬럼이 '활성' 토글과 중복되어 제거됨(#67) — 비활성 여부는 토글 off 로만 표현
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
       createJob({ id: 1, name: '비활성 작업', enabled: false }),
     ]);
@@ -99,8 +100,10 @@ test.describe('스마트 작업 목록 페이지', () => {
 
     await page.goto('/ai-insights/jobs');
 
-    // "비활성" 뱃지 확인
-    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '비활성' })).toBeVisible();
+    // 활성화 스위치가 unchecked 상태이고, '비활성' 배지는 더 이상 존재하지 않아야 한다
+    const toggle = page.getByRole('switch', { name: '비활성 작업 활성화' });
+    await expect(toggle).not.toBeChecked();
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '비활성' })).toHaveCount(0);
   });
 
   test('작업 활성/비활성 토글 — PUT payload 검증', async ({ authenticatedPage: page }) => {
@@ -264,7 +267,8 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(page.getByRole('tooltip', { name: '지금 실행' })).toBeVisible();
   });
 
-  test('FAILED 상태 작업에 "실패" 배지가 표시된다', async ({ authenticatedPage: page }) => {
+  test('FAILED lastExecution 작업도 목록에 정상 렌더링된다 (#67 컬럼 제거 후)', async ({ authenticatedPage: page }) => {
+    // '상태' 컬럼 제거(#67) — 실패 배지는 더 이상 목록에 표시되지 않으며, 행 자체는 정상 렌더링되어야 한다
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
       createJob({
         id: 1,
@@ -286,7 +290,8 @@ test.describe('스마트 작업 목록 페이지', () => {
 
     await page.goto('/ai-insights/jobs');
 
-    // "실패" 배지 확인
-    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toBeVisible();
+    // 작업명은 표시되고, '실패' 배지는 더 이상 존재하지 않아야 한다
+    await expect(page.getByText('실패 작업')).toBeVisible();
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toHaveCount(0);
   });
 });

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import type { ProactiveJob } from '@/api/proactive';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -58,23 +57,6 @@ function channelSummary(config: Record<string, unknown>): string {
   }
 
   return parts.join(' / ') || '-';
-}
-
-function jobStatusVariant(job: ProactiveJob): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (!job.enabled) return 'secondary';
-  const lastStatus = job.lastExecution?.status;
-  if (lastStatus === 'FAILED') return 'destructive';
-  if (lastStatus === 'RUNNING') return 'default';
-  return 'outline';
-}
-
-function jobStatusLabel(job: ProactiveJob): string {
-  if (!job.enabled) return '비활성';
-  const lastStatus = job.lastExecution?.status;
-  if (lastStatus === 'FAILED') return '실패';
-  if (lastStatus === 'RUNNING') return '실행 중';
-  if (lastStatus === 'COMPLETED') return '완료';
-  return '대기';
 }
 
 export default function ProactiveJobListPage() {
@@ -171,14 +153,13 @@ export default function ProactiveJobListPage() {
               <TableHead>실행 주기</TableHead>
               <TableHead>마지막 실행</TableHead>
               <TableHead>다음 실행</TableHead>
-              <TableHead>상태</TableHead>
               <TableHead>활성</TableHead>
               <TableHead className="w-[80px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableSkeletonRows columns={7} rows={5} />
+              <TableSkeletonRows columns={6} rows={5} />
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
                 <TableRow
@@ -203,9 +184,6 @@ export default function ProactiveJobListPage() {
                     {job.enabled && job.nextExecuteAt
                       ? formatNextRunShort(new Date(job.nextExecuteAt), job.timezone)
                       : '-'}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={jobStatusVariant(job)}>{jobStatusLabel(job)}</Badge>
                   </TableCell>
                   <TableCell>
                     <Switch
@@ -255,7 +233,7 @@ export default function ProactiveJobListPage() {
                 </TableRow>
               ))
             ) : (
-              <TableEmptyRow colSpan={7} message="스마트 작업이 없습니다." />
+              <TableEmptyRow colSpan={6} message="스마트 작업이 없습니다." />
             )}
           </TableBody>
         </Table>
