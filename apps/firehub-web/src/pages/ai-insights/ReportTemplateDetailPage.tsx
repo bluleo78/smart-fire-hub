@@ -5,6 +5,16 @@ import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -79,6 +89,17 @@ export default function ReportTemplateDetailPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'builder' | 'json'>('builder');
 
+  // 사용자 상호작용 후 변경 여부 추적 (이슈 #58)
+  // - 초기 로드(template 동기화)는 변경으로 간주하지 않기 위해 명시적으로 markDirty()를 호출
+  // - 이름/설명 폼, 스타일 텍스트, 섹션 트리, JSON 텍스트 변경 시 dirty=true
+  const [isDirty, setIsDirty] = useState(false);
+  const markDirty = useCallback(() => setIsDirty(true), []);
+
+  // 이탈 확인 다이얼로그 상태 — 뒤로가기/취소 클릭 시 dirty면 오픈
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  // 이탈 다이얼로그 확인 후 실행할 동작 — 'back'(목록 이동) 또는 'cancel-edit'(편집 취소)
+  const [leaveAction, setLeaveAction] = useState<'back' | 'cancel-edit'>('back');
+
   const tree = useSectionTree([]);
 
   // 이전 값 추적용 state (React 19 권장: 렌더링 중 state 조정 시 ref 대신 state 사용)
@@ -101,6 +122,8 @@ export default function ReportTemplateDetailPage() {
     setStructureJson(json);
     setStyleText(template.style ?? '');
     tree.setSections(sections);
+    // 초기 로드는 dirty가 아님 (이슈 #58)
+    setIsDirty(false);
   }
 
   // tree.sections → structureJson 동기화 — 렌더링 중 state 조정
@@ -113,6 +136,40 @@ export default function ReportTemplateDetailPage() {
       setSuppressTreeSync(false);
     }
   }
+
+  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (이슈 #58 — ChartBuilderPage/QueryEditorPage와 동일 패턴)
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동 (이슈 #58)
+  const handleBackClick = () => {
+    if (isDirty) {
+      setLeaveAction('back');
+      setLeaveDialogOpen(true);
+    } else {
+      navigate('/ai-insights/templates');
+    }
+  };
+
+  // structureJson onChange — JSON 탭 직접 편집 시 dirty 마킹 (이슈 #58)
+  const handleStructureJsonChange = useCallback(
+    (next: string) => {
+      setStructureJson(next);
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  // 스타일 텍스트 변경 — 사용자 입력 시 dirty 마킹 (이슈 #58)
+  const handleStyleTextChange = (next: string) => {
+    setStyleText(next);
+    markDirty();
+  };
 
   // Handle tab switching with JSON -> builder sync
   const handleTabChange = useCallback(
@@ -172,6 +229,8 @@ export default function ReportTemplateDetailPage() {
       createMutation.mutate(payload, {
         onSuccess: (created) => {
           toast.success('템플릿이 생성되었습니다.');
+          // 저장 성공 → dirty 해제 후 신규 템플릿 상세로 이동 (이슈 #58)
+          setIsDirty(false);
           setIsEditing(false);
           navigate(`/ai-insights/templates/${created.id}`);
         },
@@ -183,6 +242,8 @@ export default function ReportTemplateDetailPage() {
         {
           onSuccess: () => {
             toast.success('템플릿이 수정되었습니다.');
+            // 수정 성공 → dirty 해제 후 읽기 모드로 복귀 (이슈 #58)
+            setIsDirty(false);
             setIsEditing(false);
           },
           onError: (err) => handleApiError(err, '템플릿 수정에 실패했습니다.'),
@@ -221,7 +282,8 @@ export default function ReportTemplateDetailPage() {
     );
   };
 
-  const handleCancelEdit = () => {
+  // 편집 취소 본 동작 — 폼/구조/스타일/탭 초기화 (이슈 #58: dirty 가드 분리)
+  const performCancelEdit = useCallback(() => {
     if (template) {
       form.reset({ name: template.name, description: template.description ?? '' });
       const sections = Array.isArray(template.sections) ? template.sections : [];
@@ -232,6 +294,28 @@ export default function ReportTemplateDetailPage() {
     }
     setActiveTab('builder');
     setIsEditing(false);
+    setIsDirty(false);
+  }, [form, template, tree]);
+
+  // 취소 버튼 클릭 — dirty면 다이얼로그 표시, 아니면 즉시 취소 (이슈 #58)
+  const handleCancelEdit = () => {
+    if (isDirty) {
+      setLeaveAction('cancel-edit');
+      setLeaveDialogOpen(true);
+    } else {
+      performCancelEdit();
+    }
+  };
+
+  // 다이얼로그에서 '이탈' 클릭 — leaveAction에 따라 분기 (이슈 #58)
+  const handleLeaveConfirm = () => {
+    setLeaveDialogOpen(false);
+    setIsDirty(false);
+    if (leaveAction === 'back') {
+      navigate('/ai-insights/templates');
+    } else {
+      performCancelEdit();
+    }
   };
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
@@ -257,7 +341,7 @@ export default function ReportTemplateDetailPage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate('/ai-insights/templates')}
+            onClick={handleBackClick}
             aria-label="목록으로"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -266,11 +350,20 @@ export default function ReportTemplateDetailPage() {
             <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">
               {isNew ? '새 템플릿' : (template?.name ?? '-')}
             </h1>
-            {!isNew && template && (
-              <Badge variant={isBuiltin ? 'secondary' : 'default'} className="mt-1">
-                {isBuiltin ? '기본' : '커스텀'}
-              </Badge>
-            )}
+            <div className="flex items-center gap-2 mt-1">
+              {!isNew && template && (
+                <Badge variant={isBuiltin ? 'secondary' : 'default'}>
+                  {isBuiltin ? '기본' : '커스텀'}
+                </Badge>
+              )}
+              {/* 미저장 변경사항 표시 — ChartBuilderPage/QueryEditorPage와 동일 시각 패턴 (이슈 #58) */}
+              {isDirty && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <span className="text-muted-foreground">●</span>
+                  미저장 변경사항
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -342,7 +435,9 @@ export default function ReportTemplateDetailPage() {
                 <Label htmlFor="tpl-name">이름</Label>
                 <Input
                   id="tpl-name"
-                  {...form.register('name')}
+                  {...form.register('name', {
+                    onChange: markDirty,
+                  })}
                   placeholder="리포트 템플릿 이름"
                 />
                 {form.formState.errors.name && (
@@ -353,7 +448,9 @@ export default function ReportTemplateDetailPage() {
                 <Label htmlFor="tpl-desc">설명 (선택)</Label>
                 <Input
                   id="tpl-desc"
-                  {...form.register('description')}
+                  {...form.register('description', {
+                    onChange: markDirty,
+                  })}
                   placeholder="템플릿 설명을 입력하세요"
                 />
                 {form.formState.errors.description && (
@@ -365,7 +462,7 @@ export default function ReportTemplateDetailPage() {
                 <Textarea
                   id="tpl-style"
                   value={styleText}
-                  onChange={(e) => setStyleText(e.target.value)}
+                  onChange={(e) => handleStyleTextChange(e.target.value)}
                   placeholder="AI가 리포트를 작성할 때의 스타일을 기술하세요 (예: 경영진 보고서 스타일, 기술 분석 스타일 등)"
                   rows={2}
                 />
@@ -387,9 +484,18 @@ export default function ReportTemplateDetailPage() {
                 collapsedKeys={tree.collapsedKeys}
                 flatItems={tree.flatItems}
                 onSelect={tree.setSelectedKey}
-                onMove={tree.moveSection}
-                onAdd={tree.addSection}
-                onRemove={tree.removeSection}
+                onMove={(...args) => {
+                  markDirty();
+                  tree.moveSection(...args);
+                }}
+                onAdd={(...args) => {
+                  markDirty();
+                  tree.addSection(...args);
+                }}
+                onRemove={(...args) => {
+                  markDirty();
+                  tree.removeSection(...args);
+                }}
                 onToggleCollapse={tree.toggleCollapsed}
               />
             </Card>
@@ -406,7 +512,10 @@ export default function ReportTemplateDetailPage() {
                 <SectionPropertyEditor
                   section={tree.selectedSection}
                   onUpdate={(patch) => {
-                    if (tree.selectedKey) tree.updateSection(tree.selectedKey, patch);
+                    if (tree.selectedKey) {
+                      markDirty();
+                      tree.updateSection(tree.selectedKey, patch);
+                    }
                   }}
                 />
               </TabsContent>
@@ -418,7 +527,7 @@ export default function ReportTemplateDetailPage() {
                   <CardContent>
                     <TemplateJsonEditor
                       value={structureJson}
-                      onChange={setStructureJson}
+                      onChange={handleStructureJsonChange}
                       readonly={false}
                     />
                   </CardContent>
@@ -470,6 +579,25 @@ export default function ReportTemplateDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/*
+        이탈 확인 다이얼로그 — 뒤로가기/취소 클릭 시 dirty면 표시 (이슈 #58)
+        취소 시 머무름, 확인 시 변경사항 버리고 이탈/취소 동작 실행
+      */}
+      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLeaveConfirm}>이탈</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -318,6 +318,149 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await expect(page).toHaveURL(/\/ai-insights\/templates$/, { timeout: 5000 });
   });
 
+  /**
+   * 회귀 테스트 — 이슈 #58
+   * 템플릿 작성/수정 중 뒤로가기 클릭 시 저장 확인 다이얼로그 없이 변경사항이 소실되는 문제.
+   * isDirty 상태 + 뒤로가기/취소 버튼 onClick 인터셉트 + AlertDialog로 이탈 전 사용자 확인.
+   */
+  test.describe('이슈 #58 — 미저장 변경 이탈 가드', () => {
+    test('변경 사항이 없으면 뒤로가기 클릭 시 즉시 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 새 템플릿 페이지 — 입력 없는 상태
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await expect(page.getByRole('heading', { name: '새 템플릿' })).toBeVisible();
+
+      // 미저장 표시는 없어야 한다
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      // 뒤로가기 클릭 → 다이얼로그 없이 즉시 이동
+      await page.getByRole('button', { name: '목록으로' }).click();
+      await expect(page).toHaveURL(/\/ai-insights\/templates$/);
+    });
+
+    test('이름 입력 후 뒤로가기 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await expect(page.getByRole('heading', { name: '새 템플릿' })).toBeVisible();
+
+      // 이름 입력 → isDirty=true 트리거
+      await page.locator('#tpl-name').fill('테스트 템플릿');
+
+      // 미저장 변경사항 인디케이터 표시
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 뒤로가기 클릭 → AlertDialog 표시
+      await page.getByRole('button', { name: '목록으로' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: '저장하지 않은 변경사항' }),
+      ).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+
+      // URL은 아직 변경되지 않아야 함
+      await expect(page).toHaveURL(/\/ai-insights\/templates\/new$/);
+    });
+
+    test('이탈 확인 다이얼로그에서 취소를 누르면 페이지에 머무르고 입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await page.locator('#tpl-name').fill('테스트 템플릿');
+      await page.getByRole('button', { name: '목록으로' }).click();
+
+      // AlertDialog 내 '취소' 버튼 클릭
+      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+
+      // 다이얼로그 닫힘 + 페이지 유지 + 입력값 보존 + dirty 표시 유지
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/ai-insights\/templates\/new$/);
+      await expect(page.locator('#tpl-name')).toHaveValue('테스트 템플릿');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    });
+
+    test('이탈 확인 다이얼로그에서 이탈을 누르면 목록으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await page.locator('#tpl-name').fill('테스트 템플릿');
+      await page.getByRole('button', { name: '목록으로' }).click();
+
+      // '이탈' 버튼 클릭 → 변경사항 버리고 목록으로 이동
+      await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/ai-insights\/templates$/);
+    });
+
+    test('템플릿 저장 성공 후 미저장 표시가 사라진다', async ({ authenticatedPage: page }) => {
+      // 새 템플릿 생성 모킹 — 저장 후 상세 페이지로 이동한다
+      const created = createTemplate({ id: 100, name: '신규 템플릿', builtin: false });
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+      await mockApi(page, 'POST', '/api/v1/proactive/templates', created);
+      await mockApi(page, 'GET', '/api/v1/proactive/templates/100', created);
+
+      await page.goto('/ai-insights/templates/new');
+      await page.locator('#tpl-name').fill('신규 템플릿');
+
+      // 저장 전 dirty 표시 확인
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 생성 버튼 클릭
+      await page.getByRole('button', { name: '생성' }).click();
+
+      // 저장 후 신규 템플릿 상세로 이동
+      await expect(page).toHaveURL(/\/ai-insights\/templates\/100$/);
+
+      // 저장 성공 → dirty 해제 → 미저장 표시 사라짐
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+    });
+
+    test('편집 모드에서 변경 후 취소 버튼 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 커스텀 템플릿 모킹 — 편집 모드 진입 가능
+      const template = createTemplate({ id: 50, name: '편집 대상 템플릿', builtin: false });
+      await mockApi(page, 'GET', '/api/v1/proactive/templates/50', template);
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/50');
+      await expect(page.getByRole('heading', { name: '편집 대상 템플릿' })).toBeVisible({ timeout: 10000 });
+
+      // 편집 모드 진입
+      await page.getByRole('button', { name: '편집' }).click();
+
+      // 이름 변경 → dirty 트리거
+      await page.locator('#tpl-name').fill('수정된 이름');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 취소 버튼 클릭 → AlertDialog 표시 (페이지 이탈이 아닌 편집 취소도 가드)
+      await page.getByRole('button', { name: '취소' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: '저장하지 않은 변경사항' }),
+      ).toBeVisible();
+    });
+  });
+
   test('삭제 버튼 클릭 시 삭제 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     // builtin: false 커스텀 템플릿으로 모킹
     const template = createTemplate({ id: 3, name: '삭제 대상 템플릿', builtin: false });
