@@ -7,6 +7,10 @@ export function useAuditLogs(params: {
   actionType?: string;
   resource?: string;
   result?: string;
+  /** 날짜 범위 시작 (ISO 8601) */
+  startDate?: string;
+  /** 날짜 범위 종료 (ISO 8601) */
+  endDate?: string;
   page?: number;
   size?: number;
 }) {

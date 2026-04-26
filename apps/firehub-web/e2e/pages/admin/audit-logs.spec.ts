@@ -6,6 +6,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
 /**
  * 감사 로그 페이지 E2E 테스트
  * - 목록 렌더링, 필터, 검색, 페이지네이션을 검증한다.
+ * - 날짜 범위 필터(startDate/endDate) 파라미터 전달을 검증한다.
+ * - 행 클릭 시 상세 보기 다이얼로그에서 description 전문을 표시하는지 검증한다.
  * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
  */
 test.describe('감사 로그 페이지', () => {
@@ -126,5 +128,166 @@ test.describe('감사 로그 페이지', () => {
 
     // 페이지네이션 네비게이션이 렌더링되는지 확인
     await expect(page.getByRole('navigation')).toBeVisible();
+  });
+
+  /**
+   * 날짜 범위 필터 테스트
+   * - 시작일/종료일 입력 필드가 렌더링되는지 확인
+   * - 날짜 입력 시 startDate/endDate 파라미터가 API에 전달되는지 검증
+   */
+  test('날짜 범위 필터 입력 필드가 렌더링된다', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page);
+    await page.goto('/admin/audit-logs');
+
+    // 시작/종료 날짜 입력 필드 존재 확인
+    await expect(page.getByLabel('시작 날짜')).toBeVisible();
+    await expect(page.getByLabel('종료 날짜')).toBeVisible();
+  });
+
+  test('시작 날짜 입력 시 startDate 파라미터가 API에 전달된다', async ({ authenticatedPage: page }) => {
+    // 날짜 필터 요청 캡처
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+    await page.goto('/admin/audit-logs');
+
+    // 초기 요청 소비 후 날짜 입력
+    await page.waitForTimeout(200);
+
+    const startInput = page.getByLabel('시작 날짜');
+    await startInput.fill('2026-04-01');
+
+    // 날짜 변경 후 API 재호출 대기
+    await page.waitForTimeout(300);
+
+    // API에 startDate 파라미터가 전달됐는지 검증
+    const req = capture.lastRequest();
+    if (req) {
+      const startDate = req.searchParams.get('startDate');
+      expect(startDate).toContain('2026-04-01');
+    }
+  });
+
+  test('종료 날짜 입력 시 endDate 파라미터가 API에 전달된다', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+    await page.goto('/admin/audit-logs');
+
+    await page.waitForTimeout(200);
+
+    const endInput = page.getByLabel('종료 날짜');
+    await endInput.fill('2026-04-30');
+
+    await page.waitForTimeout(300);
+
+    const req = capture.lastRequest();
+    if (req) {
+      const endDate = req.searchParams.get('endDate');
+      expect(endDate).toContain('2026-04-30');
+    }
+  });
+
+  /**
+   * 행 클릭 상세 보기 테스트
+   * - 테이블 행 클릭 시 다이얼로그가 열리는지 확인
+   * - 다이얼로그에 description 전문이 표시되는지 검증 (truncate 해소)
+   * - IP 주소, 사용자명 등 추가 필드도 표시되는지 확인
+   */
+  test('행 클릭 시 상세 보기 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
+    const longDescription = '파이프라인 실행: 데이터 수집 → 전처리 → 분석 → 저장 단계가 모두 완료되었습니다. 처리된 레코드 수: 100,000건. 소요 시간: 3분 45초.';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({
+          id: 1,
+          username: 'admin',
+          description: longDescription,
+          ipAddress: '192.168.1.100',
+          result: 'SUCCESS',
+        }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    // 데이터 행이 렌더링될 때까지 대기
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+
+    // 행 클릭
+    const row = page.getByRole('row').nth(1); // 헤더 제외 첫 번째 데이터 행
+    await row.click();
+
+    // 다이얼로그가 열리는지 확인
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('감사 로그 상세')).toBeVisible();
+  });
+
+  test('상세 보기 다이얼로그에 description 전문이 표시된다', async ({ authenticatedPage: page }) => {
+    // truncate되어 잘리는 긴 description
+    const longDescription = '파이프라인 실행: 데이터 수집 → 전처리 → 분석 → 저장 단계가 모두 완료되었습니다. 처리된 레코드 수: 100,000건. 소요 시간: 3분 45초.';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, description: longDescription, username: 'admin' }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+
+    // 행 클릭 → 다이얼로그 열기
+    await page.getByRole('row').nth(1).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 다이얼로그 안에서 description 전문이 표시되는지 확인 (dialog 범위로 제한)
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText(longDescription)).toBeVisible();
+  });
+
+  test('상세 보기 다이얼로그에 IP 주소가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, ipAddress: '192.168.1.100', username: 'admin' }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+
+    // IP 주소가 다이얼로그 안에 표시되는지 검증 (dialog 범위로 제한)
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('192.168.1.100')).toBeVisible();
+  });
+
+  test('다이얼로그 닫기 버튼 클릭 시 다이얼로그가 닫힌다', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page, 1);
+    await page.goto('/admin/audit-logs');
+
+    await expect(page.getByRole('cell', { name: 'testuser' })).toBeVisible();
+    await page.getByRole('row').nth(1).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // X 버튼 클릭
+    await page.getByRole('dialog').getByRole('button').click();
+
+    // 다이얼로그가 닫히는지 확인
+    await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 });

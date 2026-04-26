@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -66,9 +67,23 @@ public class AuditLogService {
     return auditLogRepository.findById(id);
   }
 
+  /**
+   * 감사 로그 목록 페이지 조회
+   *
+   * @param startDate 날짜 범위 시작 (null이면 무제한)
+   * @param endDate 날짜 범위 종료 (null이면 무제한)
+   */
   @Transactional(readOnly = true)
   public PageResponse<AuditLogResponse> getAuditLogs(
-      String search, String actionType, String resource, String result, int page, int size) {
-    return auditLogRepository.findAll(search, actionType, resource, result, page, size);
+      String search,
+      String actionType,
+      String resource,
+      String result,
+      LocalDateTime startDate,
+      LocalDateTime endDate,
+      int page,
+      int size) {
+    return auditLogRepository.findAll(
+        search, actionType, resource, result, startDate, endDate, page, size);
   }
 }

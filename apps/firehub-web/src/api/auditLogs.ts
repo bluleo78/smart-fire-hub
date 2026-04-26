@@ -8,6 +8,10 @@ export const auditLogsApi = {
     actionType?: string;
     resource?: string;
     result?: string;
+    /** 날짜 범위 시작 (ISO 8601, 예: 2026-04-01T00:00:00) */
+    startDate?: string;
+    /** 날짜 범위 종료 (ISO 8601, 예: 2026-04-30T23:59:59) */
+    endDate?: string;
     page?: number;
     size?: number;
   }) => client.get<PageResponse<AuditLogResponse>>('/admin/audit-logs', { params }),

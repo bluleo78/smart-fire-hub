@@ -146,8 +146,27 @@ public class AuditLogRepository {
         .fetch(this::mapToResponse);
   }
 
+  /**
+   * 감사 로그 전체 조회 (페이지네이션 + 복합 필터)
+   *
+   * @param search 사용자명/설명 검색어
+   * @param actionType 액션 유형 필터
+   * @param resource 리소스 유형 필터
+   * @param result 결과(SUCCESS/FAILURE) 필터
+   * @param startDate 날짜 범위 시작 (inclusive, null이면 무제한)
+   * @param endDate 날짜 범위 종료 (inclusive, null이면 무제한)
+   * @param page 페이지 번호 (0부터)
+   * @param size 페이지 크기
+   */
   public PageResponse<AuditLogResponse> findAll(
-      String search, String actionType, String resource, String result, int page, int size) {
+      String search,
+      String actionType,
+      String resource,
+      String result,
+      LocalDateTime startDate,
+      LocalDateTime endDate,
+      int page,
+      int size) {
     Condition condition = noCondition();
 
     if (search != null && !search.isBlank()) {
@@ -169,6 +188,15 @@ public class AuditLogRepository {
 
     if (result != null && !result.isBlank()) {
       condition = condition.and(AL_RESULT.eq(result));
+    }
+
+    // 날짜 범위 필터: startDate 이상, endDate 이하
+    if (startDate != null) {
+      condition = condition.and(AL_ACTION_TIME.greaterOrEqual(startDate));
+    }
+
+    if (endDate != null) {
+      condition = condition.and(AL_ACTION_TIME.lessOrEqual(endDate));
     }
 
     long totalElements = dsl.selectCount().from(AUDIT_LOG).where(condition).fetchOne(0, long.class);

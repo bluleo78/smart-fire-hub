@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.time.LocalDateTime;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -105,7 +106,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_noFilter_returnsAll() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(4);
     assertThat(result.totalElements()).isEqualTo(4);
@@ -115,7 +116,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_searchByUsername_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs("user1", null, null, null, 0, 20);
+        auditLogService.getAuditLogs("user1", null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(2);
     assertThat(result.content()).allMatch(log -> log.username().equals("user1"));
@@ -124,7 +125,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_searchByDescription_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs("임포트", null, null, null, 0, 20);
+        auditLogService.getAuditLogs("임포트", null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).description()).contains("임포트");
@@ -133,7 +134,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_filterByActionType_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, "CREATE", null, null, 0, 20);
+        auditLogService.getAuditLogs(null, "CREATE", null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).actionType()).isEqualTo("CREATE");
@@ -142,7 +143,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_filterByResource_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, "user", null, 0, 20);
+        auditLogService.getAuditLogs(null, null, "user", null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).resource()).isEqualTo("user");
@@ -151,7 +152,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_filterByResult_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, "FAILURE", 0, 20);
+        auditLogService.getAuditLogs(null, null, null, "FAILURE", null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).result()).isEqualTo("FAILURE");
@@ -161,7 +162,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_combinedFilters_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, "CREATE", "dataset", "SUCCESS", 0, 20);
+        auditLogService.getAuditLogs(null, "CREATE", "dataset", "SUCCESS", null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).username()).isEqualTo("admin");
@@ -171,7 +172,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_pagination_works() {
     PageResponse<AuditLogResponse> page0 =
-        auditLogService.getAuditLogs(null, null, null, null, 0, 2);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 2);
 
     assertThat(page0.content()).hasSize(2);
     assertThat(page0.totalElements()).isEqualTo(4);
@@ -179,7 +180,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
     assertThat(page0.page()).isEqualTo(0);
 
     PageResponse<AuditLogResponse> page1 =
-        auditLogService.getAuditLogs(null, null, null, null, 1, 2);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, 1, 2);
 
     assertThat(page1.content()).hasSize(2);
     assertThat(page1.page()).isEqualTo(1);
@@ -188,7 +189,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_orderedByActionTimeDesc() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 20);
 
     for (int i = 0; i < result.content().size() - 1; i++) {
       assertThat(result.content().get(i).actionTime())
@@ -199,7 +200,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_withMetadata_returnsJsonString() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, "IMPORT", null, null, 0, 20);
+        auditLogService.getAuditLogs(null, "IMPORT", null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).metadata()).contains("data.csv");
@@ -208,9 +209,51 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_noMatch_returnsEmpty() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs("nonexistent", null, null, null, 0, 20);
+        auditLogService.getAuditLogs("nonexistent", null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).isEmpty();
     assertThat(result.totalElements()).isEqualTo(0);
+  }
+
+  /**
+   * 날짜 범위 필터 — 미래 startDate 지정 시 결과 없음
+   * (setUp에서 삽입된 모든 로그의 actionTime은 현재 시점이므로 미래 날짜로 필터하면 빈 결과)
+   */
+  @Test
+  void getAuditLogs_startDateInFuture_returnsEmpty() {
+    LocalDateTime futureDate = LocalDateTime.now().plusDays(1);
+    PageResponse<AuditLogResponse> result =
+        auditLogService.getAuditLogs(null, null, null, null, futureDate, null, 0, 20);
+
+    assertThat(result.content()).isEmpty();
+    assertThat(result.totalElements()).isEqualTo(0);
+  }
+
+  /**
+   * 날짜 범위 필터 — 과거 endDate 지정 시 결과 없음
+   * (setUp에서 삽입된 모든 로그의 actionTime은 현재 시점이므로 과거 날짜로 필터하면 빈 결과)
+   */
+  @Test
+  void getAuditLogs_endDateInPast_returnsEmpty() {
+    LocalDateTime pastDate = LocalDateTime.now().minusDays(1);
+    PageResponse<AuditLogResponse> result =
+        auditLogService.getAuditLogs(null, null, null, null, null, pastDate, 0, 20);
+
+    assertThat(result.content()).isEmpty();
+    assertThat(result.totalElements()).isEqualTo(0);
+  }
+
+  /**
+   * 날짜 범위 필터 — 충분히 넓은 범위 지정 시 전체 결과 반환
+   */
+  @Test
+  void getAuditLogs_dateRangeCoveringAll_returnsAll() {
+    LocalDateTime startDate = LocalDateTime.now().minusDays(1);
+    LocalDateTime endDate = LocalDateTime.now().plusDays(1);
+    PageResponse<AuditLogResponse> result =
+        auditLogService.getAuditLogs(null, null, null, null, startDate, endDate, 0, 20);
+
+    assertThat(result.content()).hasSize(4);
+    assertThat(result.totalElements()).isEqualTo(4);
   }
 }
