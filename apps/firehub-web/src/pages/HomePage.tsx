@@ -96,31 +96,31 @@ export default function HomePage() {
             <Skeleton className="h-5 w-48" />
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 [word-break:keep-all]">
             {/* Pipeline summary */}
             <button
               className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
               onClick={() => navigate('/pipelines')}
             >
-              <GitBranch className="h-4 w-4 text-pipeline" />
-              <span className="text-sm font-medium text-pipeline">파이프라인</span>
+              <GitBranch className="h-4 w-4 text-pipeline shrink-0" />
+              <span className="text-sm font-medium text-pipeline whitespace-nowrap">파이프라인</span>
               {ph && ph.total > 0 ? (
                 <span className="flex items-center gap-1.5 text-sm tabular-nums">
                   {ph.failing > 0 && (
-                    <span className="text-destructive font-semibold">{ph.failing} 실패</span>
+                    <span className="text-destructive font-semibold whitespace-nowrap">{ph.failing} 실패</span>
                   )}
                   {ph.running > 0 && (
-                    <span className="text-info font-semibold">{ph.running} 실행중</span>
+                    <span className="text-info font-semibold whitespace-nowrap">{ph.running} 실행중</span>
                   )}
                   {ph.healthy > 0 && (
-                    <span className="text-success font-semibold">{ph.healthy} 정상</span>
+                    <span className="text-success font-semibold whitespace-nowrap">{ph.healthy} 정상</span>
                   )}
                   {ph.disabled > 0 && (
-                    <span className="text-muted-foreground">{ph.disabled} 비활성</span>
+                    <span className="text-muted-foreground whitespace-nowrap">{ph.disabled} 비활성</span>
                   )}
                 </span>
               ) : (
-                <span className="text-sm text-muted-foreground tabular-nums">0개</span>
+                <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">0개</span>
               )}
               <Sparkline data={[3, 5, 2, 8, 4, 6, 9]} color="pipeline" className="mt-1" />
             </button>
@@ -132,22 +132,22 @@ export default function HomePage() {
               className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
               onClick={() => navigate('/data/datasets')}
             >
-              <Database className="h-4 w-4 text-primary" />
-              <span className="text-sm font-medium text-primary">데이터셋</span>
+              <Database className="h-4 w-4 text-primary shrink-0" />
+              <span className="text-sm font-medium text-primary whitespace-nowrap">데이터셋</span>
               {dh && dh.total > 0 ? (
                 <span className="flex items-center gap-1.5 text-sm tabular-nums">
                   {dh.empty > 0 && (
-                    <span className="text-destructive font-semibold">{dh.empty} 빈 데이터</span>
+                    <span className="text-destructive font-semibold whitespace-nowrap">{dh.empty} 빈 데이터</span>
                   )}
                   {dh.stale > 0 && (
-                    <span className="text-warning font-semibold">{dh.stale} 오래됨</span>
+                    <span className="text-warning font-semibold whitespace-nowrap">{dh.stale} 오래됨</span>
                   )}
                   {dh.fresh > 0 && (
-                    <span className="text-success font-semibold">{dh.fresh} 최신</span>
+                    <span className="text-success font-semibold whitespace-nowrap">{dh.fresh} 최신</span>
                   )}
                 </span>
               ) : (
-                <span className="text-sm text-muted-foreground tabular-nums">0개</span>
+                <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">0개</span>
               )}
               <Sparkline data={[8, 10, 6, 4, 7, 9, 5]} color="dataset" className="mt-1" />
             </button>
@@ -155,16 +155,16 @@ export default function HomePage() {
             <div className="h-4 w-px bg-border" />
 
             {/* Quick counts */}
-            <div className="flex items-center gap-1.5 text-sm text-dashboard-accent">
-              <LayoutDashboard className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-1.5 text-sm text-dashboard-accent whitespace-nowrap">
+              <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
               대시보드 <span className="tabular-nums">{dashboardsData?.totalElements ?? 0}</span>
             </div>
 
             {stats && stats.recentImports.length > 0 && (
               <>
                 <div className="h-4 w-px bg-border" />
-                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                  <Upload className="h-3.5 w-3.5" />
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground whitespace-nowrap">
+                  <Upload className="h-3.5 w-3.5 shrink-0" />
                   최근 임포트 {stats.recentImports.length}건
                 </div>
               </>
@@ -172,8 +172,8 @@ export default function HomePage() {
 
             {/* 모든 시스템 정상 표시 */}
             {hasNoIssues && (
-              <div className="flex items-center gap-1.5 text-sm text-success ml-auto">
-                <CheckCircle2 className="h-4 w-4" />
+              <div className="flex items-center gap-1.5 text-sm text-success ml-auto whitespace-nowrap">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
                 모든 시스템 정상
               </div>
             )}

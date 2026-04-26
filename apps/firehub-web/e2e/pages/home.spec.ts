@@ -232,6 +232,37 @@ test.describe('홈 페이지', () => {
    * - 대시보드와 데이터셋 목록 API를 실제 항목으로 오버라이드하여
    *   "최근 대시보드", "최근 데이터셋" 카드에 항목이 표시되는지 확인한다
    */
+  /**
+   * 테스트 9: 모바일(375px) 뷰포트에서 통계 카드 라벨이 글자 단위로 깨지지 않는다
+   * - 이슈 #60: 한글 라벨이 글자 단위 wrap되어 "데이터 셋", "빈 데이 터" 처럼 깨짐
+   * - 수정: 라벨 span에 whitespace-nowrap, 컨테이너에 word-break:keep-all 적용
+   * - 검증: 라벨이 단일 행으로 표시되어야 함 (라벨의 height가 1줄 높이여야 함)
+   */
+  test('모바일 뷰포트(375px)에서 통계 카드 라벨이 단어 보존 wrap된다', async ({ authenticatedPage: page }) => {
+    // 모바일 뷰포트로 변경
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.goto('/');
+
+    // 핵심 라벨이 보이는지 확인 (한글 단어가 깨지면 부분 매치 실패)
+    const labels = ['파이프라인', '데이터셋', '1 빈 데이터', '1 오래됨', '8 최신'];
+    for (const label of labels) {
+      const el = page.getByText(label, { exact: true }).first();
+      await expect(el).toBeVisible();
+    }
+
+    // 단어 단위 wrap 검증: 각 라벨 span의 computed style이 nowrap 또는 keep-all
+    // 컨테이너에 [word-break:keep-all]이 적용되어 라벨이 한 줄로 유지되어야 함
+    const dataSetLabel = page.getByText('데이터셋', { exact: true }).first();
+    const labelBox = await dataSetLabel.boundingBox();
+    // 한글 4글자 라벨의 폰트 크기는 14px (text-sm), 한 줄 높이 ~20px 이내
+    // 글자 단위로 깨지면 2줄 → 36px 이상이 되므로 30px 미만이어야 한 줄임을 보장
+    expect(labelBox?.height).toBeLessThan(30);
+
+    const emptyLabel = page.getByText('1 빈 데이터', { exact: true }).first();
+    const emptyBox = await emptyLabel.boundingBox();
+    expect(emptyBox?.height).toBeLessThan(30);
+  });
+
   test('최근 대시보드와 데이터셋이 카드에 표시된다', async ({ authenticatedPage: page }) => {
     // 분석 대시보드 목록 오버라이드
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards', {
