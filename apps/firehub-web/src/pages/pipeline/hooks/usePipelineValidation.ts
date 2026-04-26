@@ -49,6 +49,20 @@ export function usePipelineValidation(
         }
       }
 
+      // PYTHON 스텝 출력 컬럼 이름 빈값 검증
+      // pythonConfig.outputColumns 중 name.trim() === '' 인 항목이 있으면 저장을 차단한다
+      if (step.scriptType === 'PYTHON') {
+        const cols = step.pythonConfig?.outputColumns ?? [];
+        const hasBlankName = cols.some((col) => !col.name.trim());
+        if (hasBlankName) {
+          errors.push({
+            stepTempId: step.tempId,
+            field: 'pythonConfig.outputColumns.name',
+            message: '출력 컬럼명을 입력하세요',
+          });
+        }
+      }
+
       if (!result.success) {
         for (const issue of result.error.issues) {
           errors.push({

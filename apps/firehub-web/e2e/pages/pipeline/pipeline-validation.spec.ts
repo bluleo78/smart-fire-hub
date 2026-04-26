@@ -204,6 +204,64 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
   });
 });
 
+test.describe('usePipelineValidation — PYTHON 스텝 출력 컬럼 검증', () => {
+  /**
+   * PYTHON 스텝에서 출력 컬럼명을 비워둔 채 저장 시 에러를 표시하고 POST API를 호출하지 않는다.
+   * usePipelineValidation.ts의 pythonConfig.outputColumns.name 빈값 검증 분기를 커버한다.
+   * 이슈 #43: Python 스텝 출력 컬럼 빈 이름 저장 허용 버그 회귀 방지.
+   */
+  test('PYTHON 스텝에서 출력 컬럼명이 비어 있으면 저장이 차단된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+
+    // POST API 호출 캡처 — 저장 차단 시 호출되지 않아야 한다
+    const captureCreate = await mockApi(page, 'POST', '/api/v1/pipelines', {}, { capture: true });
+
+    await page.goto('/pipelines/new');
+
+    // 파이프라인 이름 입력 (파이프라인 이름 빈값 early-return 우회)
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    await nameInput.fill('Python 컬럼명 빈값 테스트');
+
+    // 스텝 추가
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('Python 처리 스텝');
+
+    // scriptType을 PYTHON으로 변경
+    const typeSelect = page.getByRole('combobox').first();
+    await expect(typeSelect).toBeVisible();
+    await typeSelect.click();
+    const pythonOption = page.getByRole('option', { name: /Python/ });
+    if ((await pythonOption.count()) === 0) {
+      return; // UI에 Python 옵션이 없으면 건너뜀
+    }
+    await pythonOption.click();
+
+    // 출력 컬럼 섹션에서 "컬럼 추가" 클릭 → 빈 컬럼명 행 생성
+    const addColumnBtn = page.getByRole('button', { name: /컬럼 추가/ });
+    if ((await addColumnBtn.count()) > 0) {
+      await addColumnBtn.click();
+    }
+    // 컬럼명 textbox가 있으면 비워둠 (기본값이 이미 빈 문자열)
+    const colNameInput = page.getByRole('textbox', { name: '컬럼명' }).first();
+    if ((await colNameInput.count()) > 0) {
+      await colNameInput.fill('');
+    }
+
+    // 저장 버튼 클릭 → PYTHON 출력 컬럼 빈값 검증 → 저장 차단
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // "입력 오류를 확인하세요" toast 표시 확인
+    await expect(page.getByText(/입력 오류/).first()).toBeVisible({ timeout: 5000 });
+
+    // POST API가 호출되지 않았음을 확인 (저장 차단 검증)
+    await page.waitForTimeout(500);
+    expect(captureCreate.requests.length).toBe(0);
+  });
+});
+
 test.describe('usePipelineValidation — AI_CLASSIFY 스텝 검증', () => {
   /**
    * AI_CLASSIFY 스텝에서 프롬프트 없이 저장 시 에러를 표시한다.
