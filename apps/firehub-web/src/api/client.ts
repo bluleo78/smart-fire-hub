@@ -50,6 +50,13 @@ client.interceptors.response.use(
     const originalRequest = error.config;
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      // /auth/login 또는 /auth/refresh 요청의 401은 토큰 갱신 시도 없이 그대로 reject
+      // — 로그인 시도 실패 시 무한 refresh 루프와 강제 리다이렉트를 방지하기 위함
+      const url = originalRequest.url ?? '';
+      if (url.includes('/auth/login') || url.includes('/auth/refresh')) {
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         if (failedQueue.length >= MAX_QUEUE_SIZE) {
           return Promise.reject(new Error('Too many queued requests'));

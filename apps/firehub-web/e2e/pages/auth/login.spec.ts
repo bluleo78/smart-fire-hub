@@ -53,13 +53,20 @@ test.describe('로그인 페이지', () => {
     await expect(page).toHaveURL('/');
   });
 
-  test('로그인 실패 시 에러 메시지를 표시한다', async ({ authMockedPage: page }) => {
-    // 로그인 API를 서버의 실제 영문 메시지가 포함된 401 에러로 오버라이드
-    // 수정 목적: 서버 영문 메시지("Invalid username or password")가 그대로 노출되는 버그 검증 (#31)
+  test('로그인 실패 시 에러 메시지를 표시한다', async ({ page }) => {
+    // authMockedPage 대신 plain page 사용
+    // — authMockedPage는 /auth/refresh를 200으로 모킹하므로 인터셉터 우회 여부를 검증할 수 없음
+    // 실제 브라우저 동작: /auth/login 401 → 인터셉터가 refresh를 시도하지 않고 catch 블록으로 전달
+    // (client.ts에서 /auth/login, /auth/refresh URL은 refresh 시도를 스킵하도록 수정됨 — refs #31)
+
+    // /auth/login → 401 + 영문 메시지 (서버가 실제로 반환하는 형태)
     await mockApi(page, 'POST', '/api/v1/auth/login', {
       status: 401,
       message: 'Invalid username or password',
     }, { status: 401 });
+
+    // /auth/refresh도 401로 모킹 — 인터셉터가 잘못 refresh를 시도해도 강제 리다이렉트가 발생하지 않음을 검증
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', {}, { status: 401 });
 
     await page.goto('/login');
 
