@@ -314,4 +314,30 @@ test.describe('홈 페이지', () => {
     await expect(page.getByText('소스').first()).toBeVisible();
     await expect(page.getByText('파생').first()).toBeVisible();
   });
+
+  /**
+   * 회귀: 이슈 #62 — 섹션 헤딩(h2/h3)이 SR 네비게이션을 위해 존재해야 한다
+   * - 수정 전: <h1>홈</h1> 단 1개만 존재 → SR이 섹션 점프 불가
+   * - 수정 후: 각 시각 섹션마다 h2/h3 존재 (시스템 건강 상태/주의 필요/퀵 액션/활동 피드 + 카드별 h3)
+   * - WCAG SC 2.4.6 (Headings and Labels) 준수
+   */
+  test('각 섹션마다 시멘틱 헤딩(h2/h3)이 존재한다 (이슈 #62)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+
+    // h1 — 페이지 제목
+    await expect(page.getByRole('heading', { level: 1, name: '홈' })).toBeVisible();
+
+    // h2 — 페이지 1단계 섹션들 (sr-only 포함하여 accessible name으로 검증)
+    await expect(page.getByRole('heading', { level: 2, name: '시스템 건강 상태' })).toBeAttached();
+    await expect(page.getByRole('heading', { level: 2, name: '퀵 액션' })).toBeAttached();
+    await expect(page.getByRole('heading', { level: 2, name: '활동 피드' })).toBeAttached();
+
+    // h3 — ZONE 4 위젯 그리드 내 카드들 (대시보드/데이터셋은 항상 표시)
+    await expect(page.getByRole('heading', { level: 3, name: '최근 대시보드' })).toBeAttached();
+    await expect(page.getByRole('heading', { level: 3, name: '최근 데이터셋' })).toBeAttached();
+
+    // 헤딩 개수 sanity — 최소 6개(이전 1개 → 회귀 방지)
+    const headingCount = await page.locator('h1, h2, h3').count();
+    expect(headingCount).toBeGreaterThanOrEqual(6);
+  });
 });

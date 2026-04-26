@@ -89,7 +89,9 @@ export default function HomePage() {
       </div>
 
       {/* ZONE 1 — 시스템 건강 상태바 (컴팩트 인라인) */}
-      <div className="rounded-lg border bg-card px-6 py-3">
+      {/* SR 네비게이션을 위한 sr-only 헤딩 — 시각 디자인은 유지 */}
+      <section aria-labelledby="home-system-health-heading" className="rounded-lg border bg-card px-6 py-3">
+        <h2 id="home-system-health-heading" className="sr-only">시스템 건강 상태</h2>
         {isHealthLoading ? (
           <div className="flex gap-4">
             <Skeleton className="h-5 w-48" />
@@ -179,7 +181,7 @@ export default function HomePage() {
             )}
           </div>
         )}
-      </div>
+      </section>
 
       {/* ZONE 2 — 주의 필요 (이슈가 있을 때만 표시) */}
       {attentionItems && attentionItems.length > 0 && (
@@ -188,7 +190,8 @@ export default function HomePage() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-warning" />
-                주의 필요
+                {/* h2: 페이지 내 1단계 섹션 헤딩 (SR 네비게이션 지원) */}
+                <h2 className="text-sm font-semibold m-0">주의 필요</h2>
                 <span className="inline-flex items-center justify-center rounded-full bg-destructive/10 text-destructive text-[11px] font-semibold px-1.5 py-0 min-w-[1.25rem] h-[1.25rem] leading-none">
                   {attentionItems.length}
                 </span>
@@ -243,7 +246,8 @@ export default function HomePage() {
       )}
 
       {/* ZONE 3 — 퀵 액션 */}
-      <div className="flex flex-wrap gap-2">
+      <section aria-labelledby="home-quick-actions-heading" className="flex flex-wrap gap-2">
+        <h2 id="home-quick-actions-heading" className="sr-only">퀵 액션</h2>
         <Button variant="outline" size="sm" onClick={() => navigate('/data/datasets/new')}>
           <Database className="h-4 w-4 mr-2" />
           새 데이터셋
@@ -260,7 +264,7 @@ export default function HomePage() {
           <LayoutDashboard className="h-4 w-4 mr-2" />
           대시보드 관리
         </Button>
-      </div>
+      </section>
 
       {/* ZONE 4 + ZONE 5 — 2컬럼 */}
       <div className="grid gap-4 lg:grid-cols-5">
@@ -272,7 +276,8 @@ export default function HomePage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
-                  최근 대시보드
+                  {/* h3: ZONE 4 위젯 그리드 내 하위 섹션 헤딩 */}
+                  <h3 className="text-sm font-semibold m-0">최근 대시보드</h3>
                 </CardTitle>
                 <div className="flex items-center gap-2">
                   {dashboardsData?.totalElements != null && (
@@ -323,7 +328,7 @@ export default function HomePage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Database className="h-4 w-4 text-muted-foreground" />
-                  최근 데이터셋
+                  <h3 className="text-sm font-semibold m-0">최근 데이터셋</h3>
                 </CardTitle>
                 <div className="flex items-center gap-2">
                   {datasetsData?.totalElements != null && (
@@ -380,7 +385,7 @@ export default function HomePage() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <Upload className="h-4 w-4 text-muted-foreground" />
-                    최근 임포트
+                    <h3 className="text-sm font-semibold m-0">최근 임포트</h3>
                   </CardTitle>
                   <span className="text-xs text-muted-foreground">총 {stats.recentImports.length}건</span>
                 </div>
@@ -414,7 +419,7 @@ export default function HomePage() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <GitBranch className="h-4 w-4 text-muted-foreground" />
-                    최근 실행
+                    <h3 className="text-sm font-semibold m-0">최근 실행</h3>
                   </CardTitle>
                   <span className="text-xs text-muted-foreground">총 {stats.recentExecutions.length}건</span>
                 </div>
@@ -445,7 +450,8 @@ export default function HomePage() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Activity className="h-4 w-4 text-muted-foreground" />
-                활동 피드
+                {/* h2: ZONE 5 활동 피드 (페이지 1단계 섹션) */}
+                <h2 className="text-sm font-semibold m-0">활동 피드</h2>
               </CardTitle>
               {activityFeed?.totalCount != null && (
                 <span className="text-xs text-muted-foreground">총 {activityFeed.totalCount}건</span>
