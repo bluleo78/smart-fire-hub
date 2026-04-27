@@ -76,10 +76,30 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
     handlers,
   } = useColumnManager({ dataset, datasetId });
 
+  // (#91) 100% NULL인 컬럼 수를 집계 — 헤더에 "이상 N개" 보조 메트릭으로 노출하고, 행도 시각 강조한다.
+  const emptyColumnCount = React.useMemo(() => {
+    let count = 0;
+    for (const col of localColumns) {
+      const stats = statsMap.get(col.columnName);
+      if (stats && stats.nullPercent >= 100) count += 1;
+    }
+    return count;
+  }, [localColumns, statsMap]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl leading-7 font-semibold">필드 목록 ({dataset.columns.length}개)</h2>
+        <h2 className="text-xl leading-7 font-semibold">
+          필드 목록 ({dataset.columns.length}개)
+          {emptyColumnCount > 0 && (
+            <span
+              className="ml-2 text-sm font-normal text-destructive"
+              data-testid="empty-column-count"
+            >
+              (이상 {emptyColumnCount}개)
+            </span>
+          )}
+        </h2>
         <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>
       </div>
 
@@ -106,9 +126,21 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
               const isExpanded = expandedColumnId === col.id;
               const isEditingDesc = editingColumnId === col.id;
 
+              // (#91) NULL 비율 100% → 행 좌측에 destructive 보더 + 미세한 배경, "비어있음" 배지 노출
+              const isAllNull = !!stats && stats.nullPercent >= 100;
+              const rowClass = [
+                isExpanded ? 'bg-muted/20' : '',
+                isAllNull ? 'border-l-4 border-l-destructive bg-destructive/5' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+
               return (
                 <React.Fragment key={col.id}>
-                  <TableRow className={isExpanded ? 'bg-muted/20' : undefined}>
+                  <TableRow
+                    className={rowClass || undefined}
+                    data-testid={isAllNull ? 'empty-column-row' : undefined}
+                  >
                     <TableCell className="w-6 p-1">
                       <Button
                         variant="ghost"
@@ -156,7 +188,14 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                     </TableCell>
                     <TableCell>
                       {stats ? (
-                        <NullProgressBar percent={stats.nullPercent} />
+                        <div className="flex items-center gap-2">
+                          <NullProgressBar percent={stats.nullPercent} />
+                          {isAllNull && (
+                            <Badge variant="destructive" className="shrink-0 text-[10px]">
+                              비어있음
+                            </Badge>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-muted-foreground text-sm">-</span>
                       )}
