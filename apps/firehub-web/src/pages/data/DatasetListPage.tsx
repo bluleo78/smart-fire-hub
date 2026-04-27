@@ -1,6 +1,6 @@
 import { BarChart3, Download,Eye, History, Plus, Star, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -46,38 +46,68 @@ function getRelativeTime(dateStr: string): string {
   return `${months}개월 전`;
 }
 
+type SortKey = 'name' | 'createdAt';
+
+/**
+ * URL 쿼리 파라미터를 단일 진실 소스(single source of truth)로 사용한다 (refs #94).
+ * - 새로고침/공유 시 필터·검색·정렬 상태가 복원된다.
+ * - 빈 값(default)일 때는 URL에서 제거하여 깔끔한 URL 유지.
+ * - history 오염 방지를 위해 replace=true 로 갱신.
+ */
 export default function DatasetListPage() {
   const navigate = useNavigate();
-  const [categoryId, setCategoryId] = useState<number | undefined>();
-  const [datasetType, setDatasetType] = useState<string>('');
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(0);
-  const [favoriteOnly, setFavoriteOnly] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // URL → 상태 파싱 (매 렌더 시 동기화)
+  const categoryIdParam = searchParams.get('categoryId');
+  const categoryId = categoryIdParam ? Number(categoryIdParam) : undefined;
+  const datasetType = searchParams.get('datasetType') || '';
+  const search = searchParams.get('q') || '';
+  const page = Number(searchParams.get('page') || '0');
+  const favoriteOnly = searchParams.get('favorite') === 'true';
+  const statusFilter = searchParams.get('status') || '';
   /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 10) */
-  const [size, setSize] = useState(10);
+  const size = Number(searchParams.get('size') || '10');
+  const sortKeyParam = searchParams.get('sort');
+  const sortKey: SortKey | null =
+    sortKeyParam === 'name' || sortKeyParam === 'createdAt' ? sortKeyParam : null;
+  const sortOrderParam = searchParams.get('order');
+  const sortOrder: SortDirection =
+    sortOrderParam === 'asc' || sortOrderParam === 'desc' ? sortOrderParam : 'none';
 
   /**
-   * 클라이언트 사이드 정렬 상태 — 이슈 #80 1차 대응.
-   * - 현재 페이지(서버에서 받은 size 건) 내 정렬만 수행한다.
-   * - 백엔드 sort 파라미터 연동(전체 정렬)은 후속 작업.
+   * URL 파라미터 패치 헬퍼 — 빈 값/기본값은 키 자체를 제거하여 URL 청결성 유지.
+   * value 가 null/undefined/'' 이면 키 삭제, 그렇지 않으면 set.
    */
-  type SortKey = 'name' | 'createdAt';
-  const [sortKey, setSortKey] = useState<SortKey | null>(null);
-  const [sortOrder, setSortOrder] = useState<SortDirection>('none');
+  const patchParams = useCallback(
+    (patch: Record<string, string | number | boolean | null | undefined>) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(patch)) {
+            if (v === null || v === undefined || v === '' || v === false) {
+              next.delete(k);
+            } else {
+              next.set(k, String(v));
+            }
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const toggleSort = (key: SortKey) => {
     if (sortKey !== key) {
-      setSortKey(key);
-      setSortOrder('asc');
+      patchParams({ sort: key, order: 'asc' });
       return;
     }
     // 같은 컬럼 재클릭 — asc → desc → none(원본 순서) 순환
-    if (sortOrder === 'asc') setSortOrder('desc');
-    else if (sortOrder === 'desc') {
-      setSortKey(null);
-      setSortOrder('none');
-    } else setSortOrder('asc');
+    if (sortOrder === 'asc') patchParams({ sort: key, order: 'desc' });
+    else if (sortOrder === 'desc') patchParams({ sort: null, order: null });
+    else patchParams({ sort: key, order: 'asc' });
   };
 
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -187,15 +217,13 @@ export default function DatasetListPage() {
             placeholder="데이터셋 검색..."
             value={search}
             onChange={(value) => {
-              setSearch(value);
-              setPage(0);
+              patchParams({ q: value, page: null });
             }}
           />
           <Select
             value={datasetType || '__all__'}
             onValueChange={(value) => {
-              setDatasetType(value === '__all__' ? '' : value);
-              setPage(0);
+              patchParams({ datasetType: value === '__all__' ? null : value, page: null });
             }}
           >
             <SelectTrigger className="w-[160px]">
@@ -213,8 +241,7 @@ export default function DatasetListPage() {
           <Select
             value={statusFilter || '__all__'}
             onValueChange={(value) => {
-              setStatusFilter(value === '__all__' ? '' : value);
-              setPage(0);
+              patchParams({ status: value === '__all__' ? null : value, page: null });
             }}
           >
             <SelectTrigger className="w-[140px]">
@@ -233,8 +260,7 @@ export default function DatasetListPage() {
             variant={favoriteOnly ? 'default' : 'outline'}
             size="sm"
             onClick={() => {
-              setFavoriteOnly((v) => !v);
-              setPage(0);
+              patchParams({ favorite: !favoriteOnly ? 'true' : null, page: null });
             }}
             className="gap-1.5"
           >
@@ -249,8 +275,7 @@ export default function DatasetListPage() {
             variant={categoryId === undefined ? 'default' : 'outline'}
             className="cursor-pointer hover:opacity-80 transition-opacity"
             onClick={() => {
-              setCategoryId(undefined);
-              setPage(0);
+              patchParams({ categoryId: null, page: null });
             }}
           >
             전체
@@ -261,8 +286,7 @@ export default function DatasetListPage() {
               variant={categoryId === cat.id ? 'default' : 'outline'}
               className="cursor-pointer hover:opacity-80 transition-opacity"
               onClick={() => {
-                setCategoryId(categoryId === cat.id ? undefined : cat.id);
-                setPage(0);
+                patchParams({ categoryId: categoryId === cat.id ? null : cat.id, page: null });
               }}
             >
               {cat.name}
@@ -437,7 +461,7 @@ export default function DatasetListPage() {
                 colSpan={7}
                 message="데이터셋이 없습니다."
                 searchKeyword={search || undefined}
-                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
                 emptyAction={
                   noFiltersActive ? (
                     <Button asChild size="sm" variant="outline">
@@ -457,12 +481,11 @@ export default function DatasetListPage() {
       <SimplePagination
         page={page}
         totalPages={totalPages}
-        onPageChange={setPage}
+        onPageChange={(p) => patchParams({ page: p === 0 ? null : p })}
         totalElements={totalElements}
         pageSize={size}
         onPageSizeChange={(newSize) => {
-          setSize(newSize);
-          setPage(0);
+          patchParams({ size: newSize === 10 ? null : newSize, page: null });
         }}
       />
 
