@@ -383,6 +383,67 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
   });
 
   /**
+   * 회귀 테스트(#82): 검색 필터 변경 시 선택된 행이 초기화되어야 한다.
+   * - 보이지 않는 행이 선택 상태로 남아 있으면 "삭제" 클릭 시 의도치 않은 행까지 삭제될 수 있다.
+   * - 안전한 기본 동작: debouncedSearch 변경 시 selectedRowIds 를 비운다.
+   */
+  test('검색 필터를 변경하면 이전에 선택된 행이 자동으로 해제된다 (refs #82)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) => {
+        const reqUrl = new URL(route.request().url());
+        const search = reqUrl.searchParams.get('search') ?? '';
+        const allRowsData = [
+          { _id: 101, id: 1, name: 'Alice', amount: 10 },
+          { _id: 102, id: 2, name: 'Bob', amount: 20 },
+          { _id: 103, id: 3, name: 'Carol', amount: 30 },
+        ];
+        const rows = search
+          ? allRowsData.filter((r) => r.name.includes(search))
+          : allRowsData;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows,
+            page: 0,
+            size: 50,
+            totalElements: rows.length,
+            totalPages: 1,
+          }),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+
+    // 1) 행 1, 2 선택 → 액션바에 "2개 행 선택됨" 표시
+    await page.getByRole('checkbox', { name: '행 1 선택' }).click();
+    await page.getByRole('checkbox', { name: '행 2 선택' }).click();
+    await expect(page.getByText('2개 행 선택됨')).toBeVisible({ timeout: 5000 });
+
+    // 2) 검색어 입력 → debounce(300ms) 후 결과가 1행으로 줄어듦
+    await page.getByPlaceholder('데이터 검색...').fill('Carol');
+    await expect(page.getByText('Carol')).toBeVisible();
+    await expect(page.getByText('Alice')).not.toBeVisible();
+
+    // 3) 핵심 검증: 선택된 행이 모두 초기화되어 액션바가 사라져야 한다.
+    //    (이전 동작: "2개 행 선택됨"이 그대로 유지되어 보이지 않는 행 삭제 위험)
+    await expect(page.getByText(/개 행 선택됨/)).not.toBeVisible();
+
+    // 4) 모든 체크박스가 unchecked 상태인지 확인
+    const carolCheckbox = page.getByRole('checkbox', { name: '행 1 선택' });
+    await expect(carolCheckbox).not.toBeChecked();
+  });
+
+  /**
    * 회귀 테스트: null DB 값이 'NULL' 텍스트 대신 dash('-')로 렌더링되어야 한다 (refs #13)
    */
   test('null 값은 NULL 텍스트가 아닌 dash(-)로 표시된다', async ({ authenticatedPage: page }) => {

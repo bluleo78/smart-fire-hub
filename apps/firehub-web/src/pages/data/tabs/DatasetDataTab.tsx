@@ -118,6 +118,14 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     clearSelection,
   } = useRowSelection(allRowIds);
 
+  // 검색 필터가 변경되면 선택된 행을 초기화한다.
+  // 이유: 검색 결과로 보이지 않게 된 행이 선택 상태로 남아 있으면 사용자가 인지하지 못한 채
+  // "삭제"를 눌러 보이지 않는 행까지 삭제될 위험이 있다. 안전한 기본 동작으로 필터 변경 시
+  // 전체 선택을 해제한다 (정렬 변경은 handleSortClick에서 이미 clearSelection 호출).
+  useEffect(() => {
+    clearSelection();
+  }, [debouncedSearch, clearSelection]);
+
   const rowVirtualizer = useVirtualizer({
     count: allRows.length,
     getScrollElement: () => parentRef.current,
