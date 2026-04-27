@@ -147,4 +147,69 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
     // 모달이 열리면 어떤 형태로든 dialog role 이 생긴다
     await expect(page.getByRole('dialog')).toBeVisible();
   });
+
+  /**
+   * 이슈 #111: 미리보기 다이얼로그 샘플 크기 셀렉트 회귀 방지.
+   * - 기본 5행 + 셀렉트 변경(50) 시 size 파라미터가 50으로 API 재호출되는지 검증.
+   * - 컬럼 헤더에 dataType 보조 텍스트가 노출되는지 검증.
+   */
+  test('미리보기 다이얼로그 — 샘플 크기 셀렉트 변경 시 size 파라미터가 API에 전달된다 (#111)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    await captureListRequests(page);
+
+    await mockApi(page, 'GET', '/api/v1/datasets/1', {
+      ...datasets[0],
+      columns: [],
+      sourceType: 'MANUAL',
+      sourceConfig: {},
+      rowCount: 0,
+      updatedAt: '2026-01-01T00:00:00Z',
+    });
+
+    // /datasets/1/data 캡처 — size 파라미터가 변경되는지 검증
+    const dataUrls: URL[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) => {
+        dataUrls.push(new URL(route.request().url()));
+        const size = Number(new URL(route.request().url()).searchParams.get('size') ?? 0);
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: [
+              { id: 1, columnName: 'name', displayName: '이름', dataType: 'VARCHAR', maxLength: 50, isNullable: false, isIndexed: false, isPrimaryKey: false, description: null, columnOrder: 0 },
+            ],
+            rows: Array.from({ length: size }, (_, i) => ({ name: `row${i}` })),
+            page: 0,
+            size,
+            totalElements: 100,
+            totalPages: Math.ceil(100 / Math.max(size, 1)),
+          }),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    const previewBtn = page.getByRole('button', { name: '미리보기' }).first();
+    await previewBtn.click({ force: true });
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 초기 진입: size=5 가 전달되어야 함
+    await expect.poll(() => dataUrls.some((u) => u.searchParams.get('size') === '5')).toBeTruthy();
+
+    // dataType 보조 표시 확인 (컬럼 헤더에 'VARCHAR' 노출)
+    await expect(page.getByRole('dialog').getByText('VARCHAR')).toBeVisible();
+
+    // 샘플 크기 셀렉트 변경 → 50
+    await page.getByLabel('샘플 크기').click();
+    await page.getByRole('option', { name: '50행' }).click();
+
+    // size=50 으로 재호출되는지 확인
+    await expect.poll(() => dataUrls.some((u) => u.searchParams.get('size') === '50')).toBeTruthy();
+  });
 });
