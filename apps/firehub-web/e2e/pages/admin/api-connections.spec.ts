@@ -154,6 +154,47 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeVisible();
   });
 
+  test('"지금 확인" 클릭 시 응답 본문/상태코드/요청 URL이 카드로 노출된다 (#76)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 상세 모킹 + test 응답을 4xx/응답 본문 포함으로 오버라이드
+    const detail = (await import('../../factories/admin.factory')).createApiConnections()[0];
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', { ...detail, id: 1 });
+    await mockApi(page, 'POST', '/api/v1/api-connections/1/test', {
+      ok: false,
+      status: 401,
+      latencyMs: 87,
+      errorMessage: 'HTTP 401',
+      requestUrl: 'https://api.example.com/health?token=secret',
+      responseBodyPreview: '{"error":"unauthorized","detail":"missing api key"}',
+      responseHeaders: { 'content-type': 'application/json', authorization: '****' },
+      responseContentType: 'application/json',
+    });
+
+    await page.goto('/admin/api-connections/1');
+    // 결과 카드는 클릭 전엔 보이지 않아야 한다
+    await expect(page.getByTestId('test-result-card')).toHaveCount(0);
+
+    await page.getByRole('button', { name: '지금 확인' }).click();
+
+    // 카드 등장 + 핵심 데이터 노출 검증 (단순 visible이 아닌 텍스트/속성 검증)
+    const card = page.getByTestId('test-result-card');
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId('test-result-status')).toHaveText('실패');
+    await expect(card).toContainText('HTTP 401');
+    await expect(card).toContainText('87ms');
+    // 요청 URL 노출
+    await expect(card).toContainText('https://api.example.com/health?token=secret');
+    // 응답 본문(JSON pretty-print) 노출
+    const body = card.getByTestId('test-result-body');
+    await expect(body).toContainText('"error": "unauthorized"');
+    await expect(body).toContainText('"detail": "missing api key"');
+    // 헤더 details 안의 마스킹 검증
+    await card.getByTestId('test-result-headers').click();
+    await expect(card.getByTestId('test-result-headers')).toContainText('authorization');
+    await expect(card.getByTestId('test-result-headers')).toContainText('****');
+  });
+
   test('목록에서 삭제 버튼 클릭 시 확인 다이얼로그가 열린다', async ({
     authenticatedPage: page,
   }) => {

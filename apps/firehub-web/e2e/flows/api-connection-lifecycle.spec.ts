@@ -73,7 +73,16 @@ test.describe('API 연결 라이프사이클', () => {
       }
       await route.fulfill({
         status: 200,
-        body: JSON.stringify({ ok: true, status: 200, latencyMs: 120, errorMessage: null }),
+        body: JSON.stringify({
+          ok: true,
+          status: 200,
+          latencyMs: 120,
+          errorMessage: null,
+          requestUrl: 'https://api.example.com/health',
+          responseBodyPreview: '{"status":"ok"}',
+          responseHeaders: { 'content-type': 'application/json' },
+          responseContentType: 'application/json',
+        }),
       });
     });
 

@@ -1,4 +1,4 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -28,6 +28,7 @@ import {
   useTestApiConnection,
   useUpdateApiConnection,
 } from '../../hooks/queries/useApiConnections';
+import type { TestConnectionResponse } from '../../types/api-connection';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 
 /** API 연결 상세 페이지 — 기본 정보/인증/연결 상태 확인/삭제 */
@@ -38,6 +39,8 @@ export default function ApiConnectionDetailPage() {
   const updateMutation = useUpdateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const testMutation = useTestApiConnection();
+  // 마지막 "지금 확인" 응답을 저장 — 상태코드/응답 본문/헤더/요청 URL 노출 (#76)
+  const [lastTestResult, setLastTestResult] = useState<TestConnectionResponse | null>(null);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -146,13 +149,43 @@ export default function ApiConnectionDetailPage() {
     if (!connection) return;
     try {
       const result = await testMutation.mutateAsync(connection.id);
+      // 응답 본문/헤더 등 디버깅 정보를 카드로 노출 (#76)
+      setLastTestResult(result);
       if (result.ok) {
-        toast.success(`연결 정상 (${result.latencyMs}ms)`);
+        toast.success(`연결 정상 (HTTP ${result.status ?? '-'}, ${result.latencyMs}ms)`);
       } else {
         toast.error(`연결 이상: ${result.errorMessage ?? '알 수 없는 오류'}`);
       }
     } catch (error) {
       handleApiError(error, '연결 테스트에 실패했습니다.');
+    }
+  };
+
+  /**
+   * 응답 본문을 Content-Type 또는 첫 글자 기반으로 JSON pretty-print.
+   * 파싱 실패 시 원본을 그대로 반환 (HTML 에러 페이지 등).
+   */
+  const formatResponseBody = (body: string | null, contentType: string | null): string => {
+    if (!body) return '';
+    const looksJson =
+      (contentType ?? '').toLowerCase().includes('json') ||
+      body.trimStart().startsWith('{') ||
+      body.trimStart().startsWith('[');
+    if (!looksJson) return body;
+    try {
+      return JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+      return body;
+    }
+  };
+
+  /** 클립보드 복사 — 비동기 실패 시 토스트 안내 */
+  const handleCopy = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} 복사됨`);
+    } catch {
+      toast.error('복사에 실패했습니다.');
     }
   };
 
@@ -222,6 +255,106 @@ export default function ApiConnectionDetailPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* 최근 테스트 결과 카드 (#76): 응답 상태코드/본문/헤더/요청 URL을 함께 노출하여 디버깅 지원 */}
+      {lastTestResult && (
+        <Card data-testid="test-result-card">
+          <CardHeader>
+            <CardTitle>최근 테스트 결과</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant={lastTestResult.ok ? 'default' : 'destructive'}
+                data-testid="test-result-status"
+              >
+                {lastTestResult.ok ? '성공' : '실패'}
+              </Badge>
+              <span className="text-sm font-mono">
+                HTTP {lastTestResult.status ?? '-'}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                · {lastTestResult.latencyMs}ms
+              </span>
+            </div>
+
+            {lastTestResult.errorMessage && (
+              <p className="text-sm text-destructive">{lastTestResult.errorMessage}</p>
+            )}
+
+            {/* 요청 URL */}
+            {lastTestResult.requestUrl && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground">요청 URL</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2"
+                    onClick={() => handleCopy(lastTestResult.requestUrl ?? '', '요청 URL')}
+                    aria-label="요청 URL 복사"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                </div>
+                <p className="text-xs font-mono break-all rounded bg-muted px-2 py-1">
+                  {lastTestResult.requestUrl}
+                </p>
+              </div>
+            )}
+
+            {/* 응답 헤더 */}
+            {Object.keys(lastTestResult.responseHeaders ?? {}).length > 0 && (
+              <details className="space-y-2" data-testid="test-result-headers">
+                <summary className="cursor-pointer text-sm font-medium">
+                  응답 헤더 ({Object.keys(lastTestResult.responseHeaders).length})
+                </summary>
+                <div className="overflow-x-auto rounded border">
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {Object.entries(lastTestResult.responseHeaders).map(([k, v]) => (
+                        <tr key={k} className="border-b last:border-b-0">
+                          <td className="px-2 py-1 font-mono text-muted-foreground whitespace-nowrap align-top">
+                            {k}
+                          </td>
+                          <td className="px-2 py-1 font-mono break-all">{v}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {/* 응답 본문 */}
+            {lastTestResult.responseBodyPreview !== null &&
+              lastTestResult.responseBodyPreview !== undefined && (
+                <div className="space-y-1" data-testid="test-result-body">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-muted-foreground">응답 본문</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2"
+                      onClick={() =>
+                        handleCopy(lastTestResult.responseBodyPreview ?? '', '응답 본문')
+                      }
+                      aria-label="응답 본문 복사"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <pre className="max-h-[400px] overflow-auto rounded bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all">
+                    {formatResponseBody(
+                      lastTestResult.responseBodyPreview,
+                      lastTestResult.responseContentType,
+                    ) || '(빈 응답)'}
+                  </pre>
+                </div>
+              )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Basic Info */}
       <Card>

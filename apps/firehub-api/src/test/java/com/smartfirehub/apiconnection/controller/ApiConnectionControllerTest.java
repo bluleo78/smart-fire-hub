@@ -159,7 +159,9 @@ class ApiConnectionControllerTest {
   @Test
   void postTest_withPermission_returnsResult() throws Exception {
     when(apiConnectionService.testConnection(1L))
-        .thenReturn(new TestConnectionResponse(true, 200, 42L, null));
+        .thenReturn(
+            new TestConnectionResponse(
+                true, 200, 42L, null, "https://api.example.com", "{}", java.util.Map.of(), "application/json"));
 
     mockMvc
         .perform(

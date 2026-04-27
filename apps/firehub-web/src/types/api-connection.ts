@@ -69,4 +69,12 @@ export interface TestConnectionResponse {
   status: number | null;
   latencyMs: number;
   errorMessage: string | null;
+  /** 실제로 호출된 URL (baseUrl + healthCheckPath 합성 결과) */
+  requestUrl: string | null;
+  /** 응답 본문 미리보기 (최대 4KB, 잘리면 "... (truncated)" 표시) */
+  responseBodyPreview: string | null;
+  /** 응답 헤더 맵. Authorization/Set-Cookie/Cookie/X-Api-Key 등 민감 헤더는 "****"로 마스킹됨. */
+  responseHeaders: Record<string, string>;
+  /** 응답 Content-Type — JSON pretty-print 판단용 */
+  responseContentType: string | null;
 }

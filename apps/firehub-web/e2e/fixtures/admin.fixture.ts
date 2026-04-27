@@ -148,11 +148,15 @@ export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1
     ...connection,
     id: connectionId,
   });
-  // 연결 즉시 테스트 응답 모킹
+  // 연결 즉시 테스트 응답 모킹 (#76: 응답 본문/헤더/요청 URL 포함)
   await mockApi(page, 'POST', `/api/v1/api-connections/${connectionId}/test`, {
     ok: true,
     status: 200,
     latencyMs: 120,
     errorMessage: null,
+    requestUrl: 'https://api.example.com/health',
+    responseBodyPreview: '{"status":"ok"}',
+    responseHeaders: { 'content-type': 'application/json' },
+    responseContentType: 'application/json',
   });
 }

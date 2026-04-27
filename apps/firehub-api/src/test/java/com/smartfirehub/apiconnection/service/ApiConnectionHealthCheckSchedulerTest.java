@@ -50,7 +50,7 @@ class ApiConnectionHealthCheckSchedulerTest {
     Record r = mockRecord(10L, "Test-API", "DOWN");
     when(repository.findHealthCheckable()).thenReturn(List.of(r));
     when(connectionService.testConnection(10L))
-        .thenReturn(new TestConnectionResponse(true, 200, 50L, null));
+        .thenReturn(new TestConnectionResponse(true, 200, 50L, null, "https://x", null, java.util.Map.of(), null));
 
     scheduler.runOnce();
 
@@ -63,7 +63,7 @@ class ApiConnectionHealthCheckSchedulerTest {
     Record r = mockRecord(20L, "Broken-API", "UP");
     when(repository.findHealthCheckable()).thenReturn(List.of(r));
     when(connectionService.testConnection(20L))
-        .thenReturn(new TestConnectionResponse(false, 503, 100L, "HTTP 503"));
+        .thenReturn(new TestConnectionResponse(false, 503, 100L, "HTTP 503", "https://x", null, java.util.Map.of(), null));
 
     scheduler.runOnce();
 
@@ -79,7 +79,7 @@ class ApiConnectionHealthCheckSchedulerTest {
     when(connectionService.testConnection(1L))
         .thenThrow(new RuntimeException("connection refused"));
     when(connectionService.testConnection(2L))
-        .thenReturn(new TestConnectionResponse(true, 200, 30L, null));
+        .thenReturn(new TestConnectionResponse(true, 200, 30L, null, "https://x", null, java.util.Map.of(), null));
 
     scheduler.runOnce();
 
@@ -95,7 +95,7 @@ class ApiConnectionHealthCheckSchedulerTest {
     Record r = mockRecord(5L, "New-API", null);
     when(repository.findHealthCheckable()).thenReturn(List.of(r));
     when(connectionService.testConnection(5L))
-        .thenReturn(new TestConnectionResponse(true, 200, 20L, null));
+        .thenReturn(new TestConnectionResponse(true, 200, 20L, null, "https://x", null, java.util.Map.of(), null));
 
     scheduler.runOnce();
 

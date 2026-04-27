@@ -167,34 +167,81 @@ public class ApiConnectionService {
 
     long start = System.currentTimeMillis();
     try {
+      // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
       var resp =
           webClient
               .get()
               .uri(url)
               .headers(h -> buildAuthHeaders(conn.authType(), rawConfig).forEach(h::set))
               .retrieve()
-              .toBodilessEntity()
+              .toEntity(String.class)
               .block(Duration.ofSeconds(5));
 
       long latency = System.currentTimeMillis() - start;
       Integer status = resp != null ? resp.getStatusCode().value() : null;
       boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
       String err = ok ? null : ("HTTP " + status);
+      String body = resp != null ? truncateBody(resp.getBody()) : null;
+      Map<String, String> headers = resp != null ? sanitizeHeaders(resp.getHeaders()) : Map.of();
+      String contentType =
+          resp != null && resp.getHeaders().getContentType() != null
+              ? resp.getHeaders().getContentType().toString()
+              : null;
       repository.updateHealthStatus(id, ok ? "UP" : "DOWN", latency, err);
-      return new TestConnectionResponse(ok, status, latency, err);
+      return new TestConnectionResponse(ok, status, latency, err, url, body, headers, contentType);
 
     } catch (WebClientResponseException e) {
       long latency = System.currentTimeMillis() - start;
       String err = "HTTP " + e.getStatusCode().value();
       repository.updateHealthStatus(id, "DOWN", latency, err);
-      return new TestConnectionResponse(false, e.getStatusCode().value(), latency, err);
+      // 4xx/5xx 응답 본문도 운영자가 봐야 디버깅 가능하므로 함께 노출.
+      String body = truncateBody(e.getResponseBodyAsString());
+      Map<String, String> headers = sanitizeHeaders(e.getHeaders());
+      String contentType =
+          e.getHeaders().getContentType() != null ? e.getHeaders().getContentType().toString() : null;
+      return new TestConnectionResponse(
+          false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
 
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
       String msg = e.getMessage();
       repository.updateHealthStatus(id, "DOWN", latency, msg);
-      return new TestConnectionResponse(false, null, latency, msg);
+      return new TestConnectionResponse(false, null, latency, msg, url, null, Map.of(), null);
     }
+  }
+
+  /** 응답 본문을 최대 4KB로 잘라 반환 (UI 노출용). null/빈값은 그대로 반환. */
+  private static final int MAX_BODY_PREVIEW_BYTES = 4096;
+
+  private static String truncateBody(String body) {
+    if (body == null || body.isEmpty()) return body;
+    if (body.length() <= MAX_BODY_PREVIEW_BYTES) return body;
+    return body.substring(0, MAX_BODY_PREVIEW_BYTES) + "\n... (truncated)";
+  }
+
+  /** 민감 헤더 마스킹 — 인증/세션/쿠키 헤더 값은 노출하지 않는다. */
+  private static final Set<String> SENSITIVE_HEADER_NAMES =
+      Set.of(
+          "authorization",
+          "proxy-authorization",
+          "set-cookie",
+          "cookie",
+          "x-api-key",
+          "x-auth-token");
+
+  private static Map<String, String> sanitizeHeaders(
+      org.springframework.http.HttpHeaders headers) {
+    Map<String, String> out = new HashMap<>();
+    headers.forEach(
+        (k, v) -> {
+          String joined = String.join(", ", v);
+          if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase())) {
+            out.put(k, "****");
+          } else {
+            out.put(k, joined);
+          }
+        });
+    return out;
   }
 
   /**
