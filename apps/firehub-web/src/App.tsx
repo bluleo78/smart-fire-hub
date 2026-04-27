@@ -64,7 +64,6 @@ function App() {
           {/* 퍼블릭 라우트: 각 페이지를 ErrorBoundary + Suspense로 감싸 렌더링 오류 격리 */}
           <Route path="/login" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense></PageErrorBoundary>} />
           <Route path="/signup" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><SignupPage /></Suspense></PageErrorBoundary>} />
-          <Route path="*" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><NotFoundPage /></Suspense></PageErrorBoundary>} />
           <Route element={<ProtectedRoute />}>
             {/* 앱 내부 라우트: AppLayout 전체를 PageErrorBoundary로 감싸 페이지 오류를 흰 화면 대신 폴백 UI로 처리 */}
             <Route element={<PageErrorBoundary><AppLayout /></PageErrorBoundary>}>
@@ -106,6 +105,9 @@ function App() {
                 <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
                 <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />
               </Route>
+              {/* catch-all 라우트 — AppLayout 내부에 두어 사이드바·헤더가 함께 표시되도록 함 (이슈 #81).
+                  미인증 사용자는 ProtectedRoute에서 이미 /login으로 리다이렉트되므로 기존 동작 유지. */}
+              <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Route>
         </Routes>
