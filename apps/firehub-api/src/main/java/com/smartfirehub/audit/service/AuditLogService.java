@@ -70,12 +70,14 @@ public class AuditLogService {
   /**
    * 감사 로그 목록 페이지 조회
    *
+   * @param userId 특정 사용자 ID 정확 일치 필터 (null이면 무제한, #89)
    * @param startDate 날짜 범위 시작 (null이면 무제한)
    * @param endDate 날짜 범위 종료 (null이면 무제한)
    */
   @Transactional(readOnly = true)
   public PageResponse<AuditLogResponse> getAuditLogs(
       String search,
+      Long userId,
       String actionType,
       String resource,
       String result,
@@ -84,6 +86,6 @@ public class AuditLogService {
       int page,
       int size) {
     return auditLogRepository.findAll(
-        search, actionType, resource, result, startDate, endDate, page, size);
+        search, userId, actionType, resource, result, startDate, endDate, page, size);
   }
 }

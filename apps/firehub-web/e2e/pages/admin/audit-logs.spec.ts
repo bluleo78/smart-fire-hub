@@ -81,7 +81,7 @@ test.describe('감사 로그 페이지', () => {
     await page.goto('/admin/audit-logs');
 
     // 검색 필드에 텍스트 입력
-    const searchInput = page.getByPlaceholder('사용자명 또는 설명으로 검색...');
+    const searchInput = page.getByPlaceholder('설명으로 검색...');
     await expect(searchInput).toBeVisible();
     await searchInput.fill('testuser');
 
@@ -373,6 +373,77 @@ test.describe('감사 로그 페이지', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('User Agent')).toHaveCount(0);
+  });
+
+  /**
+   * 이슈 #89: 사용자별 dropdown 필터
+   * - free-text 검색만으로는 동명이인/오타 노이즈가 발생 → user_id 정확 일치 필터 추가.
+   * - dropdown 옵션은 GET /api/v1/users 결과로 채워진다.
+   * - 사용자 선택 시 GET /api/v1/admin/audit-logs?userId=<id> 로 API 재호출.
+   */
+  test('사용자 필터 dropdown이 렌더링된다 (#89)', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page);
+    await page.goto('/admin/audit-logs');
+
+    // dropdown placeholder "전체 사용자" 가 보여야 함
+    await expect(page.getByLabel('사용자 필터')).toBeVisible();
+    await expect(page.getByText('전체 사용자')).toBeVisible();
+  });
+
+  test('사용자 dropdown 선택 시 userId 파라미터가 API에 전달된다 (#89)', async ({ authenticatedPage: page }) => {
+    // /users 모킹: id=2, username='testuser'
+    await setupAuditLogMocks(page);
+    // 캡처용 audit-logs 모킹은 setupAuditLogMocks 이후 추가하여 우선순위 확보
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1, username: 'testuser' })]),
+      { capture: true },
+    );
+
+    await page.goto('/admin/audit-logs');
+
+    // 초기 요청 소비
+    await page.waitForTimeout(200);
+
+    // dropdown 열기 — aria-label 로 정확히 지정
+    await page.getByLabel('사용자 필터').click();
+
+    // 옵션 클릭 — '테스트 사용자 (testuser)' (setupAuditLogMocks 의 두 번째 사용자, id=2)
+    await page.getByRole('option', { name: /테스트 사용자/ }).click();
+
+    // dropdown 변경 후 API 재호출 대기
+    await page.waitForTimeout(300);
+
+    // 캡처된 마지막 요청에 userId=2 가 포함되어야 함
+    const req = capture.lastRequest();
+    expect(req).toBeDefined();
+    expect(req?.searchParams.get('userId')).toBe('2');
+  });
+
+  test('초기 진입 시 userId 파라미터가 전송되지 않는다 (#89)', async ({ authenticatedPage: page }) => {
+    // 사용자 필터 기본값 = "전체 사용자" → API 요청에 userId 파라미터가 포함되지 않아야 함
+    await setupAuditLogMocks(page);
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+
+    await page.goto('/admin/audit-logs');
+    const req = await capture.waitForRequest();
+    expect(req.searchParams.get('userId')).toBeNull();
+  });
+
+  test('검색창 placeholder가 "설명으로 검색..."으로 변경되었다 (#89)', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page);
+    await page.goto('/admin/audit-logs');
+
+    // 사용자 필터가 별도 dropdown 으로 분리되었으므로 placeholder 는 "설명으로 검색..." 로 좁혀짐
+    await expect(page.getByPlaceholder('설명으로 검색...')).toBeVisible();
   });
 
   test('다이얼로그 닫기 버튼 클릭 시 다이얼로그가 닫힌다', async ({ authenticatedPage: page }) => {

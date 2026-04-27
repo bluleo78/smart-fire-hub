@@ -150,6 +150,7 @@ public class AuditLogRepository {
    * 감사 로그 전체 조회 (페이지네이션 + 복합 필터)
    *
    * @param search 사용자명/설명 검색어
+   * @param userId 사용자 ID 정확 일치 필터 (null이면 무제한, #89)
    * @param actionType 액션 유형 필터
    * @param resource 리소스 유형 필터
    * @param result 결과(SUCCESS/FAILURE) 필터
@@ -160,6 +161,7 @@ public class AuditLogRepository {
    */
   public PageResponse<AuditLogResponse> findAll(
       String search,
+      Long userId,
       String actionType,
       String resource,
       String result,
@@ -176,6 +178,11 @@ public class AuditLogRepository {
               AL_USERNAME
                   .likeIgnoreCase(pattern, '\\')
                   .or(AL_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
+    }
+
+    // 사용자별 정확 일치 필터 (#89): username free-text 검색과 달리 user_id 컬럼으로 직접 조회.
+    if (userId != null) {
+      condition = condition.and(AL_USER_ID.eq(userId));
     }
 
     if (actionType != null && !actionType.isBlank()) {

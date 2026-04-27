@@ -62,7 +62,7 @@ class AuditLogControllerTest {
             null,
             null);
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(log), 0, 20, 1, 1);
-    when(auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 20)).thenReturn(page);
+    when(auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 20)).thenReturn(page);
 
     mockMvc
         .perform(get("/api/v1/admin/audit-logs").header("Authorization", "Bearer valid-token"))
@@ -78,7 +78,7 @@ class AuditLogControllerTest {
   void getAuditLogs_withSearchFilter_passesParams() throws Exception {
     mockAuthentication("audit:read");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(), 0, 20, 0, 0);
-    when(auditLogService.getAuditLogs("admin", "CREATE", "dataset", "SUCCESS", null, null, 0, 20))
+    when(auditLogService.getAuditLogs("admin", null, "CREATE", "dataset", "SUCCESS", null, null, 0, 20))
         .thenReturn(page);
 
     mockMvc
@@ -98,7 +98,7 @@ class AuditLogControllerTest {
   void getAuditLogs_withPagination_passesPageParams() throws Exception {
     mockAuthentication("audit:read");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(), 2, 10, 50, 5);
-    when(auditLogService.getAuditLogs(null, null, null, null, null, null, 2, 10)).thenReturn(page);
+    when(auditLogService.getAuditLogs(null, null, null, null, null, null, null, 2, 10)).thenReturn(page);
 
     mockMvc
         .perform(
@@ -132,12 +132,29 @@ class AuditLogControllerTest {
             null,
             "{\"rows\":100}");
     PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(log), 0, 20, 1, 1);
-    when(auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 20)).thenReturn(page);
+    when(auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 20)).thenReturn(page);
 
     mockMvc
         .perform(get("/api/v1/admin/audit-logs").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].metadata.rows").value(100));
+  }
+
+  /** userId 쿼리 파라미터 (#89) — 사용자 ID로 정확 일치 필터링이 서비스에 전달되는지 검증. */
+  @Test
+  void getAuditLogs_withUserIdFilter_passesUserIdParam() throws Exception {
+    mockAuthentication("audit:read");
+    PageResponse<AuditLogResponse> page = new PageResponse<>(List.of(), 0, 20, 0, 0);
+    when(auditLogService.getAuditLogs(null, 42L, null, null, null, null, null, 0, 20))
+        .thenReturn(page);
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .header("Authorization", "Bearer valid-token")
+                .param("userId", "42"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(0));
   }
 
   @Test

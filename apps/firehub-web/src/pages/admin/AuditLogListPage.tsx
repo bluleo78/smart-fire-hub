@@ -28,6 +28,7 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuditLogs } from '@/hooks/queries/useAuditLogs';
+import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import type { AuditLogResponse } from '@/types/auditLog';
 
@@ -192,6 +193,11 @@ function AuditLogDetailDialog({
 export default function AuditLogListPage() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounceValue(search, 300);
+  /**
+   * 사용자 필터 (#89): 빈 문자열이면 전체, 숫자 문자열이면 해당 user_id 정확 일치.
+   * Select value는 string 만 허용하므로 number 변환은 API 호출 시 수행.
+   */
+  const [userId, setUserId] = useState<string>('');
   const [actionType, setActionType] = useState<string>('');
   const [resource, setResource] = useState<string>('');
   const [result, setResult] = useState<string>('');
@@ -213,6 +219,8 @@ export default function AuditLogListPage() {
 
   const { data: logs, isLoading, isError } = useAuditLogs({
     search: debouncedSearch || undefined,
+    // userId 필터 (#89): "all"/'' → undefined, 숫자 문자열은 number 변환
+    userId: userId ? Number(userId) : undefined,
     actionType: actionType || undefined,
     resource: resource || undefined,
     result: result || undefined,
@@ -222,6 +230,13 @@ export default function AuditLogListPage() {
     page,
     size: pageSize,
   });
+
+  /**
+   * 사용자 dropdown 옵션 로드 (#89)
+   * - 관리자 페이지이므로 GET /users 권한 보유 가정 (user:read)
+   * - 한 페이지당 100명까지 노출. 더 많은 사용자가 있으면 향후 검색 가능한 Combobox로 확장 고려.
+   */
+  const { data: usersPage } = useUsers({ size: 100 });
 
   const handleFilterChange = (setter: (v: string) => void) => (value: string) => {
     setter(value === 'all' ? '' : value);
@@ -246,10 +261,30 @@ export default function AuditLogListPage() {
 
       <div className="flex flex-wrap items-center gap-4">
         <SearchInput
-          placeholder="사용자명 또는 설명으로 검색..."
+          placeholder="설명으로 검색..."
           value={search}
           onChange={handleSearchChange}
         />
+
+        {/*
+          사용자 필터 dropdown (#89)
+          - free-text 검색은 username 부분 일치라 동명이인/오타 노이즈 발생 → user_id 정확 일치 필터 추가.
+          - 옵션은 GET /users 결과(최대 100명) 기반. SelectValue placeholder로 "전체 사용자" 표시.
+          - aria-label로 스크린리더 사용자가 필터 의도를 알 수 있도록 한다.
+        */}
+        <Select value={userId || 'all'} onValueChange={handleFilterChange(setUserId)}>
+          <SelectTrigger className="w-[180px]" aria-label="사용자 필터">
+            <SelectValue placeholder="전체 사용자" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">전체 사용자</SelectItem>
+            {usersPage?.content.map((u) => (
+              <SelectItem key={u.id} value={String(u.id)}>
+                {u.name} ({u.username})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         <Select value={actionType || 'all'} onValueChange={handleFilterChange(setActionType)}>
           <SelectTrigger className="w-[140px]">
@@ -362,9 +397,10 @@ export default function AuditLogListPage() {
                 message="감사 로그가 없습니다."
                 searchKeyword={debouncedSearch || undefined}
                 onResetSearch={
-                  search || actionType || resource || result || startDate || endDate
+                  search || userId || actionType || resource || result || startDate || endDate
                     ? () => {
                         setSearch('');
+                        setUserId('');
                         setActionType('');
                         setResource('');
                         setResult('');

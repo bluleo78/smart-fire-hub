@@ -4,6 +4,8 @@ import { auditLogsApi } from '../../api/auditLogs';
 
 export function useAuditLogs(params: {
   search?: string;
+  /** 사용자 ID 정확 일치 필터 (#89) */
+  userId?: number;
   actionType?: string;
   resource?: string;
   result?: string;

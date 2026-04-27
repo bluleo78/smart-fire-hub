@@ -106,7 +106,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_noFilter_returnsAll() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(4);
     assertThat(result.totalElements()).isEqualTo(4);
@@ -116,7 +116,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_searchByUsername_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs("user1", null, null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs("user1", null, null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(2);
     assertThat(result.content()).allMatch(log -> log.username().equals("user1"));
@@ -125,7 +125,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_searchByDescription_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs("임포트", null, null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs("임포트", null, null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).description()).contains("임포트");
@@ -134,7 +134,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_filterByActionType_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, "CREATE", null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, "CREATE", null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).actionType()).isEqualTo("CREATE");
@@ -143,7 +143,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_filterByResource_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, "user", null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, "user", null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).resource()).isEqualTo("user");
@@ -152,7 +152,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_filterByResult_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, "FAILURE", null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, "FAILURE", null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).result()).isEqualTo("FAILURE");
@@ -162,7 +162,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_combinedFilters_filtersResults() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, "CREATE", "dataset", "SUCCESS", null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, "CREATE", "dataset", "SUCCESS", null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).username()).isEqualTo("admin");
@@ -172,7 +172,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_pagination_works() {
     PageResponse<AuditLogResponse> page0 =
-        auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 2);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 2);
 
     assertThat(page0.content()).hasSize(2);
     assertThat(page0.totalElements()).isEqualTo(4);
@@ -180,7 +180,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
     assertThat(page0.page()).isEqualTo(0);
 
     PageResponse<AuditLogResponse> page1 =
-        auditLogService.getAuditLogs(null, null, null, null, null, null, 1, 2);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, null, 1, 2);
 
     assertThat(page1.content()).hasSize(2);
     assertThat(page1.page()).isEqualTo(1);
@@ -189,7 +189,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_orderedByActionTimeDesc() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, null, 0, 20);
 
     for (int i = 0; i < result.content().size() - 1; i++) {
       assertThat(result.content().get(i).actionTime())
@@ -200,7 +200,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_withMetadata_returnsJsonString() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, "IMPORT", null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, "IMPORT", null, null, null, null, 0, 20);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).metadata()).contains("data.csv");
@@ -209,7 +209,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   @Test
   void getAuditLogs_noMatch_returnsEmpty() {
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs("nonexistent", null, null, null, null, null, 0, 20);
+        auditLogService.getAuditLogs("nonexistent", null, null, null, null, null, null, 0, 20);
 
     assertThat(result.content()).isEmpty();
     assertThat(result.totalElements()).isEqualTo(0);
@@ -222,7 +222,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   void getAuditLogs_startDateInFuture_returnsEmpty() {
     LocalDateTime futureDate = LocalDateTime.now().plusDays(1);
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, futureDate, null, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, futureDate, null, 0, 20);
 
     assertThat(result.content()).isEmpty();
     assertThat(result.totalElements()).isEqualTo(0);
@@ -233,7 +233,7 @@ class AuditLogServiceTest extends IntegrationTestBase {
   void getAuditLogs_endDateInPast_returnsEmpty() {
     LocalDateTime pastDate = LocalDateTime.now().minusDays(1);
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, null, pastDate, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, null, pastDate, 0, 20);
 
     assertThat(result.content()).isEmpty();
     assertThat(result.totalElements()).isEqualTo(0);
@@ -245,9 +245,34 @@ class AuditLogServiceTest extends IntegrationTestBase {
     LocalDateTime startDate = LocalDateTime.now().minusDays(1);
     LocalDateTime endDate = LocalDateTime.now().plusDays(1);
     PageResponse<AuditLogResponse> result =
-        auditLogService.getAuditLogs(null, null, null, null, startDate, endDate, 0, 20);
+        auditLogService.getAuditLogs(null, null, null, null, null, startDate, endDate, 0, 20);
 
     assertThat(result.content()).hasSize(4);
     assertThat(result.totalElements()).isEqualTo(4);
+  }
+
+  /**
+   * userId 필터 (#89) — 특정 사용자 ID 정확 일치 필터링.
+   * username free-text 검색은 부분 일치이므로 동명이인/오타 가능, userId는 정확 일치로 노이즈 제거.
+   */
+  @Test
+  void getAuditLogs_filterByUserId_returnsOnlyThatUsersLogs() {
+    PageResponse<AuditLogResponse> result =
+        auditLogService.getAuditLogs(null, userId, null, null, null, null, null, 0, 20);
+
+    // user1 로그 2개(LOGIN, IMPORT)만 반환되어야 함
+    assertThat(result.content()).hasSize(2);
+    assertThat(result.totalElements()).isEqualTo(2);
+    assertThat(result.content()).allMatch(log -> log.userId().equals(userId));
+  }
+
+  @Test
+  void getAuditLogs_filterByUserId_admin_returnsOnlyAdminLogs() {
+    PageResponse<AuditLogResponse> result =
+        auditLogService.getAuditLogs(null, adminId, null, null, null, null, null, 0, 20);
+
+    // admin 로그 2개(CREATE, UPDATE)만 반환되어야 함
+    assertThat(result.content()).hasSize(2);
+    assertThat(result.content()).allMatch(log -> log.userId().equals(adminId));
   }
 }

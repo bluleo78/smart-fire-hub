@@ -5,6 +5,8 @@ import { client } from './client';
 export const auditLogsApi = {
   getAuditLogs: (params: {
     search?: string;
+    /** 사용자 ID 정확 일치 필터 (#89) — free-text search와 별도. */
+    userId?: number;
     actionType?: string;
     resource?: string;
     result?: string;
