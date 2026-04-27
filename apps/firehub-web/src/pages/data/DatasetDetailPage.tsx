@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy,Plus, Shield, Star, X } from 'lucide-react';
+import { ArrowLeft, BarChart2, Copy, FileCode, Plus, Shield, Star, X } from 'lucide-react';
 import { useEffect,useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -201,6 +201,37 @@ export default function DatasetDetailPage() {
               {dataset.datasetType === 'TEMP' && (
                 <Badge variant="secondary" className="text-xs">임시</Badge>
               )}
+              {/* 데이터셋 → 분석 워크플로우 단축 진입점 (#98)
+                  쿼리/차트 에디터로 이동하면서 ?datasetId=, ?sql= 파라미터로
+                  현재 데이터셋을 prefill — 사용자가 메뉴 → 새 차트 → 데이터 소스 검색 우회를 피한다. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={() => {
+                  const sql = `SELECT * FROM ${dataset.tableName} LIMIT 100`;
+                  navigate(
+                    `/analytics/queries/new?datasetId=${dataset.id}&sql=${encodeURIComponent(sql)}`
+                  );
+                }}
+              >
+                <FileCode className="h-3 w-3" />
+                쿼리 작성
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={() => {
+                  const sql = `SELECT * FROM ${dataset.tableName} LIMIT 100`;
+                  navigate(
+                    `/analytics/charts/new?queryId=adhoc&sql=${encodeURIComponent(sql)}&datasetId=${dataset.id}`
+                  );
+                }}
+              >
+                <BarChart2 className="h-3 w-3" />
+                차트 만들기
+              </Button>
               {/* Clone button */}
               <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
                 <Copy className="h-3 w-3" />
