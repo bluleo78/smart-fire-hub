@@ -1,4 +1,4 @@
-import { ArrowLeft, Pencil, Play, Save, X } from 'lucide-react';
+import { ArrowLeft, Pencil, Play, RotateCcw, Save, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -24,10 +24,14 @@ interface EditorHeaderProps {
   readOnly: boolean;
   isEditing: boolean;
   isExecutionMode: boolean;
+  /** 실행 상세 모드에서 현재 실행이 종료(FAILED/COMPLETED/CANCELLED)되었는지 — true일 때 재실행 버튼 노출 */
+  canRerun?: boolean;
   onSave: () => Promise<void> | void;
   onCancelEdit: () => void;
   onEdit: () => void;
   onExecute: () => void;
+  /** 실행 상세에서 "같은 입력으로 다시 실행" 버튼 핸들러 (이슈 #84) */
+  onRerun?: () => void;
   isSaving: boolean;
   isExecuting: boolean;
   pipelineId: number | null;
@@ -39,10 +43,12 @@ export function EditorHeader({
   readOnly,
   isEditing,
   isExecutionMode,
+  canRerun = false,
   onSave,
   onCancelEdit,
   onEdit,
   onExecute,
+  onRerun,
   isSaving,
   isExecuting,
   pipelineId,
@@ -105,6 +111,22 @@ export function EditorHeader({
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/*
+        재실행 버튼 — 실행 상세 모드에서 종료된 실행(FAILED/COMPLETED/CANCELLED)일 때만 표시.
+        클릭 시 같은 파이프라인을 동일 입력으로 다시 실행하고, 새 실행 ID로 라우팅한다 (이슈 #84).
+      */}
+      {pipelineId !== null && isExecutionMode && canRerun && (
+        <Button
+          variant="outline"
+          disabled={isExecuting}
+          onClick={onRerun}
+          aria-label="같은 입력으로 다시 실행"
+        >
+          <RotateCcw className="h-4 w-4" />
+          재실행
+        </Button>
+      )}
 
       {/* Execute button — 조회/편집 모두에서 표시 (실행 상세에서는 숨김) */}
       {pipelineId !== null && !isExecutionMode && (

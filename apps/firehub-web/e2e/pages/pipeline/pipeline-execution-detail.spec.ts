@@ -115,6 +115,84 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText(/실패 \d+/)).toBeVisible();
   });
 
+  test('FAILED 실행 상세에서 "재실행" 버튼이 표시되며 클릭 시 executePipeline 호출 후 새 실행으로 이동한다 (이슈 #84)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    const detail = createExecutionDetail({
+      id: 2,
+      pipelineId: 1,
+      status: 'FAILED',
+      stepExecutions: [
+        createStepExecution({
+          id: 1,
+          stepName: '데이터 추출',
+          status: 'FAILED',
+          errorMessage: 'boom',
+        }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/2', detail);
+    // 재실행 후 라우팅된 새 실행 ID(99) 상세 — 새 실행은 RUNNING 상태로 시작
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/99', createExecutionDetail({
+      id: 99,
+      pipelineId: 1,
+      status: 'RUNNING',
+      stepExecutions: [],
+    }));
+
+    // POST /pipelines/1/execute 호출을 가로채서 새 실행 ID를 응답하고 호출 여부를 검증한다
+    let executeCalled = false;
+    await page.route('**/api/v1/pipelines/1/execute', async (route) => {
+      if (route.request().method() === 'POST') {
+        executeCalled = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 99,
+            pipelineId: 1,
+            status: 'RUNNING',
+            triggeredBy: 'MANUAL',
+            executedBy: 'testuser',
+            startedAt: '2024-01-01T00:10:00Z',
+            completedAt: null,
+            errorMessage: null,
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.goto('/pipelines/1/executions/2');
+
+    // 재실행 버튼 노출 확인 (status=FAILED → canRerun)
+    const rerunBtn = page.getByRole('button', { name: '같은 입력으로 다시 실행' });
+    await expect(rerunBtn).toBeVisible({ timeout: 5000 });
+
+    // 클릭 → executePipeline POST 호출 → 새 실행 ID(99)로 라우팅
+    await rerunBtn.click();
+
+    await expect(page).toHaveURL(/\/pipelines\/1\/executions\/99$/, { timeout: 5000 });
+    expect(executeCalled).toBe(true);
+  });
+
+  test('COMPLETED 실행에는 재실행 버튼이 표시되고, RUNNING 실행에는 표시되지 않는다 (이슈 #84)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    // RUNNING 상태 실행 — 재실행 버튼 미노출
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', createExecutionDetail({
+      id: 1,
+      pipelineId: 1,
+      status: 'RUNNING',
+      stepExecutions: [],
+    }));
+
+    await page.goto('/pipelines/1/executions/1');
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: '같은 입력으로 다시 실행' })).toHaveCount(0);
+  });
+
   test('FAILED 스텝 선택 시 오류 상세 제목과 사용자 친화적 안내 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     // 기술적 오류 메시지가 "오류 상세" 섹션 제목 + 안내 메시지와 함께 표시되는지 검증 (이슈 #51)
     await setupPipelineEditorMocks(page, 1);

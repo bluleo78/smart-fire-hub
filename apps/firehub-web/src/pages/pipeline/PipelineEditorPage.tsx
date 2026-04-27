@@ -117,6 +117,29 @@ export default function PipelineEditorPage() {
     }
   };
 
+  /**
+   * 실행 상세에서 "재실행" 버튼 핸들러 (이슈 #84).
+   * 동일 파이프라인을 다시 실행 — 백엔드 executePipeline은 파이프라인 정의를 그대로 다시 돌리므로 입력 prefill이 필요 없다.
+   * 새 실행이 시작되면 응답의 새 execution id로 이동하여 진행 상황을 볼 수 있게 한다.
+   */
+  const handleRerun = async () => {
+    try {
+      const res = await executeMutation.mutateAsync();
+      const newExecId = res.data.id;
+      toast.success('파이프라인을 다시 실행했습니다.');
+      navigate(`/pipelines/${pipelineId}/executions/${newExecId}`);
+    } catch {
+      toast.error('재실행에 실패했습니다.');
+    }
+  };
+
+  /** 종료 상태(FAILED/COMPLETED/CANCELLED)에서만 재실행 버튼 노출 — RUNNING/PENDING은 진행 중이므로 제외 */
+  const canRerun =
+    !!executionData &&
+    (executionData.status === 'FAILED' ||
+      executionData.status === 'COMPLETED' ||
+      executionData.status === 'CANCELLED');
+
   const datasetOptions = useMemo(
     () =>
       datasetsData?.content?.map((d) => ({
@@ -178,10 +201,12 @@ export default function PipelineEditorPage() {
         readOnly={readOnly}
         isEditing={isEditing}
         isExecutionMode={!!executionId}
+        canRerun={canRerun}
         onSave={handleSave}
         onCancelEdit={handleCancelEdit}
         onEdit={() => setIsEditing(true)}
         onExecute={handleExecute}
+        onRerun={handleRerun}
         isSaving={isSaving}
         isExecuting={executeMutation.isPending}
         pipelineId={state.pipelineId}
