@@ -1,5 +1,5 @@
-import { ArrowLeft, BarChart2, Loader2, Play,Save } from 'lucide-react';
-import { useCallback,useEffect, useState } from 'react';
+import { ArrowLeft, BarChart2, Download, FileImage, FileType,Loader2, Play,Save } from 'lucide-react';
+import { useCallback,useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -26,6 +26,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -46,6 +52,12 @@ import {
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
+import {
+  exportChartAsPng,
+  exportChartAsSvg,
+  findChartSvg,
+  sanitizeFilename,
+} from '../../lib/chart-export';
 import type { ChartConfig,ChartType } from '../../types/analytics';
 
 // ============================================================
@@ -346,6 +358,9 @@ export default function ChartBuilderPage() {
   // 이탈 확인 다이얼로그 상태 — 뒤로가기 클릭 시 dirty면 오픈
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
 
+  // 차트 PNG/SVG 다운로드용 — 미리보기 컨테이너 ref. recharts/nivo SVG 추출에 사용 (이슈 #74).
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
+
   // Load existing chart into state
   useEffect(() => {
     if (existingChart) {
@@ -457,6 +472,34 @@ export default function ChartBuilderPage() {
       });
     }
     setSaveDialogOpen(true);
+  };
+
+  /**
+   * 차트 미리보기를 SVG/PNG로 내보낸다 (이슈 #74).
+   * - SVG: recharts/nivo가 렌더한 <svg>를 그대로 직렬화하여 다운로드 (벡터, 무손실).
+   * - PNG: SVG를 Canvas에 그려 래스터 변환 (보고서 첨부용, 2배 해상도).
+   * 쿼리 미실행 등으로 SVG가 없으면 토스트로 안내하고 종료.
+   */
+  const handleDownloadChart = async (format: 'svg' | 'png') => {
+    const svg = findChartSvg(previewContainerRef.current);
+    if (!svg) {
+      toast.error('다운로드할 차트가 없습니다. 먼저 쿼리를 실행해 주세요.');
+      return;
+    }
+    const baseName = sanitizeFilename(existingChart?.name ?? '차트');
+    try {
+      if (format === 'svg') {
+        exportChartAsSvg(svg, baseName);
+        toast.success('SVG 파일을 다운로드했습니다.');
+      } else {
+        await exportChartAsPng(svg, baseName);
+        toast.success('PNG 파일을 다운로드했습니다.');
+      }
+    } catch (e) {
+      toast.error(
+        `차트 다운로드 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`
+      );
+    }
   };
 
   const handleSave = async () => {
@@ -575,6 +618,32 @@ export default function ChartBuilderPage() {
             </span>
           )}
         </div>
+
+        {/* 차트 이미지 다운로드 (PNG/SVG) — 보고서·문서 첨부용 (이슈 #74) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={queryColumns.length === 0}
+              aria-label="차트 다운로드"
+            >
+              <Download className="h-4 w-4" />
+              다운로드
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => void handleDownloadChart('png')}>
+              <FileImage className="h-4 w-4" />
+              PNG 이미지로 저장
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void handleDownloadChart('svg')}>
+              <FileType className="h-4 w-4" />
+              SVG 벡터로 저장
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Button
           variant="outline"
@@ -697,7 +766,7 @@ export default function ChartBuilderPage() {
                 <p className="text-sm">쿼리를 실행하면 차트가 표시됩니다.</p>
               </div>
             ) : (
-              <div className="px-4 pt-3" style={{ height: 460 }}>
+              <div ref={previewContainerRef} className="px-4 pt-3" style={{ height: 460 }}>
                 <ChartRenderer
                   chartType={chartType}
                   config={config}
