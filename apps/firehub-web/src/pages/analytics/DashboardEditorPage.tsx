@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Check,
+  Download,
   LayoutDashboard,
   Loader2,
   Maximize2,
@@ -12,6 +13,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Share2,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -495,6 +497,42 @@ export default function DashboardEditorPage() {
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* 공유 (#99) — 현재 URL을 클립보드에 복사하여 협업 시 빠른 링크 공유 지원.
+              clipboard API 미지원 환경에서는 텍스트 영역 fallback. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              const url = window.location.href;
+              try {
+                await navigator.clipboard.writeText(url);
+                toast.success('대시보드 링크가 복사되었습니다.');
+              } catch {
+                // clipboard 미지원/거부 시 사용자에게 URL을 직접 보여줌
+                toast.error(`복사 실패. URL: ${url}`);
+              }
+            }}
+            title="공유 링크 복사"
+            className="h-8"
+            aria-label="공유 링크 복사"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+          </Button>
+
+          {/* PDF 내보내기 (#99) — window.print()로 브라우저 인쇄 다이얼로그를 띄워
+              "PDF로 저장" 옵션을 사용자가 선택하도록 한다. 별도 라이브러리 없이
+              가장 가벼운 1차 구현. 추후 puppeteer 기반 server-side 렌더링 추천. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.print()}
+            title="PDF로 내보내기 (인쇄 다이얼로그)"
+            className="h-8"
+            aria-label="PDF로 내보내기"
+          >
+            <Download className="h-3.5 w-3.5" />
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
