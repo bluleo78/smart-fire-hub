@@ -18,6 +18,10 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
+import {
+  useDirtyAggregator,
+  useUnsavedChangesGuard,
+} from '../../hooks/useUnsavedChangesGuard';
 import type { SettingResponse } from '../../types/settings';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
@@ -176,6 +180,18 @@ export default function SettingsPage() {
   };
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(original);
+
+  // 자식 탭(SmtpSettingsTab 등)의 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다.
+  // - AI 탭은 본 컴포넌트 내부 hasChanges로 직접 보고
+  // - 이메일 탭은 SmtpSettingsTab가 onReportDirty 콜백으로 보고
+  // 합산된 dirty가 true이면 sidebar/뒤로가기 등 라우터 이동을 가로채 AlertDialog 표시 (이슈 #86).
+  const { isAnyDirty, makeReporter } = useDirtyAggregator();
+  const aiReporter = makeReporter('ai');
+  const smtpReporter = makeReporter('smtp');
+  useEffect(() => {
+    aiReporter(hasChanges);
+  }, [aiReporter, hasChanges]);
+  const { dialog: unsavedDialog } = useUnsavedChangesGuard(isAnyDirty);
 
   const updateField = (key: keyof AISettingsForm, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -504,9 +520,12 @@ export default function SettingsPage() {
         </TabsContent>
         {/* 이메일 탭 */}
         <TabsContent value="email" className="mt-6">
-          <SmtpSettingsTab />
+          <SmtpSettingsTab onReportDirty={smtpReporter} />
         </TabsContent>
       </Tabs>
+
+      {/* 미저장 변경사항 이탈 가드 다이얼로그 (이슈 #86) */}
+      {unsavedDialog}
     </div>
   );
 }

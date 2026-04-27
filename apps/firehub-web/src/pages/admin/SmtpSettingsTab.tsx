@@ -13,6 +13,7 @@ import {
   useTestSmtpSettings,
   useUpdateSmtpSettings,
 } from '../../hooks/queries/useProactiveMessages';
+import { type ReportDirty, useReportDirty } from '../../hooks/useUnsavedChangesGuard';
 
 interface SmtpForm {
   'smtp.host': string;
@@ -32,7 +33,12 @@ const DEFAULT: SmtpForm = {
   'smtp.from_address': '',
 };
 
-export default function SmtpSettingsTab() {
+interface SmtpSettingsTabProps {
+  // 부모(SettingsPage)에 dirty 상태를 보고하여 라우터 이동 가드를 활성화한다 (이슈 #86).
+  onReportDirty?: ReportDirty;
+}
+
+export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps = {}) {
   const { data: settings, isLoading } = useSmtpSettings();
   const updateMutation = useUpdateSmtpSettings();
   const testMutation = useTestSmtpSettings();
@@ -56,6 +62,9 @@ export default function SmtpSettingsTab() {
   }, [settings]);
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(original);
+
+  // 부모에 dirty 상태 보고 — SettingsPage가 라우터 가드(useBlocker) + beforeunload를 운영한다.
+  useReportDirty(hasChanges, onReportDirty);
 
   const updateField = (key: keyof SmtpForm, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));

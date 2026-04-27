@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -260,5 +262,117 @@ test.describe('설정 페이지', () => {
 
     // toast 성공 메시지 확인
     await expect(page.getByText('테스트 이메일이 발송되었습니다.')).toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * 이슈 #86 회귀 방지 — 미저장 변경사항 이탈 가드.
+   * 이메일 탭에서 dirty 상태로 사이드바 메뉴를 클릭하면 AlertDialog가 떠야 하며,
+   * 취소 시 머무르고(값 보존), 이탈 시 다른 페이지로 이동한다.
+   */
+  test.describe('이슈 #86 — 미저장 변경 가드', () => {
+    async function setupEmailTabDirty(page: Page) {
+      await setupSettingsMocks(page);
+      await mockApi(page, 'GET', '/api/v1/settings/smtp', [
+        { key: 'smtp.host', value: '', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
+        { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
+        { key: 'smtp.username', value: '', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
+        { key: 'smtp.password', value: '', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
+        { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
+        { key: 'smtp.from_address', value: '', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
+      ]);
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+
+      // dirty 상태 만들기 — SMTP 호스트에 입력
+      await page.locator('#smtp-host').fill('smtp.test.com');
+      // 저장 버튼 활성화로 dirty 감지 확인
+      await expect(page.getByRole('button', { name: '저장' }).first()).toBeEnabled({
+        timeout: 3000,
+      });
+    }
+
+    test('이메일 탭 dirty 상태에서 사이드바 메뉴 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupEmailTabDirty(page);
+
+      // 사이드바 "홈" 링크 클릭 (사이드바 nav 영역으로 한정)
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      // AlertDialog 표시 검증
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+      // URL은 그대로 /admin/settings 유지 (즉시 이동되지 않아야 함)
+      expect(new URL(page.url()).pathname).toBe('/admin/settings');
+    });
+
+    test('이탈 다이얼로그에서 취소 클릭 시 페이지에 머무르고 입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupEmailTabDirty(page);
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      // 취소 클릭
+      await page.getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+
+      // URL 동일, 입력값 보존
+      expect(new URL(page.url()).pathname).toBe('/admin/settings');
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.test.com');
+    });
+
+    test('이탈 다이얼로그에서 이탈 클릭 시 변경값을 버리고 다른 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupEmailTabDirty(page);
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      // 이탈 클릭
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      // 홈("/")으로 이동 확인
+      await expect(page).toHaveURL(/\/$/);
+    });
+
+    test('AI 에이전트 탭 dirty 상태에서도 가드가 동작한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+
+      // AI 에이전트 탭은 기본 선택 — max_turns 변경
+      await page.getByLabel('최대 턴 수').fill('20');
+      await expect(page.getByRole('button', { name: '저장' }).first()).toBeEnabled({
+        timeout: 3000,
+      });
+
+      // 사이드바 메뉴 클릭
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      // 다이얼로그 표시 + URL 보존
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      expect(new URL(page.url()).pathname).toBe('/admin/settings');
+    });
+
+    test('변경 없는(clean) 상태에서는 메뉴 이동이 정상적으로 즉시 이루어진다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await mockApi(page, 'GET', '/api/v1/settings/smtp', []);
+      await page.goto('/admin/settings');
+      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
+
+      // dirty 상태가 아니므로 사이드바 메뉴 클릭 시 즉시 이동, 다이얼로그 없음
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+    });
   });
 });
