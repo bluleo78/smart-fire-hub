@@ -11,6 +11,7 @@ import type { ErrorResponse } from '@/types/auth';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
+import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
 import type { SignupFormData } from '../lib/validations/auth';
 import { signupSchema } from '../lib/validations/auth';
@@ -68,6 +69,7 @@ export default function SignupPage() {
                 id="username"
                 type="text"
                 placeholder="email@example.com"
+                autoComplete="username"
                 {...register('username')}
               />
             </FormField>
@@ -76,10 +78,22 @@ export default function SignupPage() {
               htmlFor="password"
               error={errors.password?.message}
             >
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
+                autoComplete="new-password"
                 {...register('password')}
+              />
+            </FormField>
+            <FormField
+              label="비밀번호 확인"
+              htmlFor="confirmPassword"
+              error={errors.confirmPassword?.message}
+            >
+              {/* 비밀번호 일치 검증 — Zod .refine으로 password와 동일한지 확인 */}
+              <PasswordInput
+                id="confirmPassword"
+                autoComplete="new-password"
+                {...register('confirmPassword')}
               />
             </FormField>
             <FormField
@@ -92,6 +106,7 @@ export default function SignupPage() {
                 id="name"
                 type="text"
                 maxLength={100}
+                autoComplete="name"
                 {...register('name')}
               />
             </FormField>
@@ -104,6 +119,7 @@ export default function SignupPage() {
                 id="email"
                 type="email"
                 placeholder="email@example.com"
+                autoComplete="email"
                 {...register('email')}
               />
             </FormField>

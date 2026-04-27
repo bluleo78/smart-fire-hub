@@ -14,7 +14,7 @@ test.describe('로그인 페이지', () => {
     await expect(page.getByText('Smart Fire Hub')).toBeVisible();
     // 입력 필드 존재 확인
     await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
-    await expect(page.getByLabel('비밀번호')).toBeVisible();
+    await expect(page.getByLabel('비밀번호', { exact: true })).toBeVisible();
     // 로그인 버튼 존재 확인
     await expect(page.getByRole('button', { name: '로그인' })).toBeVisible();
     // 회원가입 링크 존재 확인
@@ -36,7 +36,7 @@ test.describe('로그인 페이지', () => {
 
     // 자격증명 입력
     await page.getByLabel('아이디 (이메일)').fill('test@example.com');
-    await page.getByLabel('비밀번호').fill('testpassword123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('testpassword123');
 
     // 로그인 버튼 클릭
     await page.getByRole('button', { name: '로그인' }).click();
@@ -72,7 +72,7 @@ test.describe('로그인 페이지', () => {
 
     // 자격증명 입력
     await page.getByLabel('아이디 (이메일)').fill('wrong@example.com');
-    await page.getByLabel('비밀번호').fill('wrongpassword');
+    await page.getByLabel('비밀번호', { exact: true }).fill('wrongpassword');
 
     // 로그인 버튼 클릭
     await page.getByRole('button', { name: '로그인' }).click();
@@ -118,7 +118,7 @@ test.describe('로그인 페이지', () => {
 
     // 자격증명 입력
     await page.getByLabel('아이디 (이메일)').fill('test@example.com');
-    await page.getByLabel('비밀번호').fill('testpassword123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('testpassword123');
 
     // 로그인 버튼 클릭
     await page.getByRole('button', { name: '로그인' }).click();
@@ -152,7 +152,7 @@ test.describe('로그인 페이지', () => {
 
     // 자격증명 입력
     await page.getByLabel('아이디 (이메일)').fill('test@example.com');
-    await page.getByLabel('비밀번호').fill('testpassword123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('testpassword123');
 
     // 로그인 버튼 클릭 (응답 대기 없이 즉시 확인)
     await page.getByRole('button', { name: '로그인' }).click();
@@ -170,5 +170,35 @@ test.describe('로그인 페이지', () => {
 
     // /signup으로 이동했는지 확인
     await expect(page).toHaveURL(/\/signup/);
+  });
+
+  // #77: 입력 필드 autocomplete 속성 검증
+  test('이메일/비밀번호 필드에 적절한 autocomplete 속성이 설정되어 있다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/login');
+
+    await expect(page.getByLabel('아이디 (이메일)')).toHaveAttribute('autocomplete', 'username');
+    await expect(page.getByLabel('비밀번호', { exact: true })).toHaveAttribute(
+      'autocomplete',
+      'current-password',
+    );
+  });
+
+  // #78: 비밀번호 표시/숨김 토글 동작 검증
+  test('비밀번호 토글 버튼 클릭 시 type이 password ↔ text 로 전환된다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/login');
+
+    const pwInput = page.getByLabel('비밀번호', { exact: true });
+    await pwInput.fill('mypassword');
+    await expect(pwInput).toHaveAttribute('type', 'password');
+
+    await page.getByRole('button', { name: '비밀번호 보기' }).click();
+    await expect(pwInput).toHaveAttribute('type', 'text');
+
+    await page.getByRole('button', { name: '비밀번호 숨기기' }).click();
+    await expect(pwInput).toHaveAttribute('type', 'password');
   });
 });

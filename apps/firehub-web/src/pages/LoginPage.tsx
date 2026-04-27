@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
 import type { LoginFormData } from '../lib/validations/auth';
 import { loginSchema } from '../lib/validations/auth';
@@ -63,6 +64,7 @@ export default function LoginPage() {
                 id="username"
                 type="text"
                 placeholder="email@example.com"
+                autoComplete="username"
                 {...register('username')}
               />
               {errors.username && (
@@ -71,9 +73,9 @@ export default function LoginPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">비밀번호</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
+                autoComplete="current-password"
                 {...register('password')}
               />
               {errors.password && (

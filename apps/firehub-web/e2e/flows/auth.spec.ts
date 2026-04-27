@@ -15,7 +15,8 @@ test.describe('인증 전체 플로우', () => {
     // 회원가입 페이지에서 가입
     await page.goto('/signup');
     await page.getByLabel('아이디 (이메일)').fill('newuser@example.com');
-    await page.getByLabel('비밀번호').fill('Password123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
     await page.getByLabel('이름').fill('새 사용자');
     await page.getByRole('button', { name: '회원가입' }).click();
 

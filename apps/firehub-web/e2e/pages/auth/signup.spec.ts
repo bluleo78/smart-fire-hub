@@ -14,7 +14,8 @@ test.describe('회원가입 페이지', () => {
     await expect(page.getByText('회원가입').first()).toBeVisible();
     // 입력 필드 존재 확인
     await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
-    await expect(page.getByLabel('비밀번호')).toBeVisible();
+    await expect(page.getByLabel('비밀번호', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('비밀번호 확인')).toBeVisible();
     await expect(page.getByLabel('이름')).toBeVisible();
     // 회원가입 버튼 존재 확인
     await expect(page.getByRole('button', { name: '회원가입' })).toBeVisible();
@@ -29,7 +30,8 @@ test.describe('회원가입 페이지', () => {
 
     // 필드 채우기
     await page.getByLabel('아이디 (이메일)').fill('newuser@example.com');
-    await page.getByLabel('비밀번호').fill('Password123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
     await page.getByLabel('이름').fill('새 사용자');
 
     // 회원가입 버튼 클릭
@@ -64,7 +66,7 @@ test.describe('회원가입 페이지', () => {
     await page.goto('/signup');
 
     // 비밀번호 8자 미만 입력
-    await page.getByLabel('비밀번호').fill('short');
+    await page.getByLabel('비밀번호', { exact: true }).fill('short');
 
     // 다른 필드로 포커스 이동 후 제출하여 유효성 트리거
     await page.getByRole('button', { name: '회원가입' }).click();
@@ -84,7 +86,8 @@ test.describe('회원가입 페이지', () => {
 
     // 필드 채우기
     await page.getByLabel('아이디 (이메일)').fill('existing@example.com');
-    await page.getByLabel('비밀번호').fill('Password123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
     await page.getByLabel('이름').fill('기존 사용자');
 
     // 회원가입 버튼 클릭
@@ -103,7 +106,8 @@ test.describe('회원가입 페이지', () => {
     // 다른 필드는 유효한 값으로 채워 비밀번호 regex 오류만 격리한다
     await page.getByLabel('아이디 (이메일)').fill('user@example.com');
     // 소문자만 8자 이상 — 대문자·숫자 미포함 → regex 실패
-    await page.getByLabel('비밀번호').fill('alllowercase');
+    await page.getByLabel('비밀번호', { exact: true }).fill('alllowercase');
+    await page.getByLabel('비밀번호 확인').fill('alllowercase');
     await page.getByLabel('이름').fill('테스트');
     await page.getByRole('button', { name: '회원가입' }).click();
 
@@ -136,7 +140,8 @@ test.describe('회원가입 페이지', () => {
 
     // 프론트 Zod를 통과하는 올바른 형식 입력 — 서버 측 에러만 테스트
     await page.getByLabel('아이디 (이메일)').fill('user@example.com');
-    await page.getByLabel('비밀번호').fill('Password123');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
     await page.getByLabel('이름').fill('테스트');
     await page.getByRole('button', { name: '회원가입' }).click();
 
@@ -163,7 +168,8 @@ test.describe('회원가입 페이지', () => {
 
     // 유효한 아이디·비밀번호 입력 후 이름에만 101자 초과 값 설정
     await page.getByLabel('아이디 (이메일)').fill('newtest2@example.com');
-    await page.getByLabel('비밀번호').fill('Password1a');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password1a');
+    await page.getByLabel('비밀번호 확인').fill('Password1a');
     // maxLength=100 속성이 있어 브라우저가 100자로 잘라내므로 먼저 maxlength 제거 후 fill 사용
     // fill()은 React Hook Form이 감지하는 네이티브 이벤트를 정상적으로 발생시킨다
     const nameInput = page.getByLabel('이름');
@@ -187,5 +193,90 @@ test.describe('회원가입 페이지', () => {
 
     // /login으로 이동했는지 확인
     await expect(page).toHaveURL(/\/login/);
+  });
+
+  // #77: 입력 필드 autocomplete 속성 검증
+  test('모든 입력 필드에 적절한 autocomplete 속성이 설정되어 있다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/signup');
+
+    await expect(page.getByLabel('아이디 (이메일)')).toHaveAttribute('autocomplete', 'username');
+    await expect(page.getByLabel('비밀번호', { exact: true })).toHaveAttribute(
+      'autocomplete',
+      'new-password',
+    );
+    await expect(page.getByLabel('비밀번호 확인')).toHaveAttribute('autocomplete', 'new-password');
+    await expect(page.getByLabel('이름')).toHaveAttribute('autocomplete', 'name');
+    await expect(page.getByLabel('이메일 (선택)')).toHaveAttribute('autocomplete', 'email');
+  });
+
+  // #78: 비밀번호 표시/숨김 토글 동작 검증
+  test('비밀번호 토글 버튼 클릭 시 type이 password ↔ text 로 전환된다', async ({
+    authMockedPage: page,
+  }) => {
+    await page.goto('/signup');
+
+    const pwInput = page.getByLabel('비밀번호', { exact: true });
+    await pwInput.fill('Secret123');
+    await expect(pwInput).toHaveAttribute('type', 'password');
+
+    // 비밀번호 필드의 토글 버튼 클릭 — 보기 상태로 전환
+    const showButtons = page.getByRole('button', { name: '비밀번호 보기' });
+    await showButtons.first().click();
+    await expect(pwInput).toHaveAttribute('type', 'text');
+
+    // 다시 클릭 → 숨기기 상태
+    await page.getByRole('button', { name: '비밀번호 숨기기' }).first().click();
+    await expect(pwInput).toHaveAttribute('type', 'password');
+  });
+
+  // #79: 비밀번호 확인 일치 검증
+  test('비밀번호 확인이 일치하지 않으면 인라인 에러를 표시하고 API를 호출하지 않는다', async ({
+    authMockedPage: page,
+  }) => {
+    let apiCalled = false;
+    await page.route('**/api/v1/auth/signup', (route) => {
+      apiCalled = true;
+      return route.continue();
+    });
+
+    await page.goto('/signup');
+
+    await page.getByLabel('아이디 (이메일)').fill('user@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password999');
+    await page.getByLabel('이름').fill('테스트');
+    await page.getByRole('button', { name: '회원가입' }).click();
+
+    await expect(page.getByText('비밀번호가 일치하지 않습니다')).toBeVisible();
+    expect(apiCalled).toBe(false);
+    await expect(page).toHaveURL(/\/signup/);
+  });
+
+  // #79: signup 페이로드에 confirmPassword가 포함되지 않아야 한다 (서버 페이로드 정제)
+  test('회원가입 성공 시 API payload에 confirmPassword가 포함되지 않는다', async ({
+    authMockedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/auth/signup', createUser(), {
+      capture: true,
+    });
+
+    await page.goto('/signup');
+
+    await page.getByLabel('아이디 (이메일)').fill('newuser2@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
+    await page.getByLabel('이름').fill('정상 사용자');
+    await page.getByRole('button', { name: '회원가입' }).click();
+
+    const req = await capture.waitForRequest();
+    // payload에 confirmPassword 키가 없어야 한다 (서버는 모를 필드)
+    expect(req.payload).not.toHaveProperty('confirmPassword');
+    expect(req.payload).toMatchObject({
+      username: 'newuser2@example.com',
+      password: 'Password123',
+      name: '정상 사용자',
+    });
   });
 });

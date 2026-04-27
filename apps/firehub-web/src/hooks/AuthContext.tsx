@@ -78,11 +78,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchUserWithRoles]);
 
   const signup = useCallback(async (data: SignupFormData) => {
+    // confirmPassword는 클라이언트 검증 전용이므로 서버 페이로드에서 제외
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { confirmPassword, ...payload } = data;
     await authApi.signup({
-      ...data,
-      email: data.email || undefined,
+      ...payload,
+      email: payload.email || undefined,
     });
-    await login(data);
+    await login({ username: data.username, password: data.password });
   }, [login]);
 
   const logout = useCallback(async () => {
