@@ -42,6 +42,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../ui/tooltip';
+import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
 import { UserNav } from './UserNav';
 
 const AISidePanel = lazy(() =>
@@ -442,6 +443,8 @@ function AppLayoutInner() {
 
       </div>
 
+      {/* 전역 키보드 단축키 안내 다이얼로그 (#100) — "?" 키로 토글 */}
+      <KeyboardShortcutsHelp />
     </div>
   );
 }

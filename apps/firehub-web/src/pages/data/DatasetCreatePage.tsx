@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useEffect, useRef } from 'react';
 import { FormProvider,useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -51,6 +52,22 @@ export default function DatasetCreatePage() {
     },
   });
 
+  // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // 전역 Cmd/Ctrl+S 단축키로 폼 저장 (#100).
+  // 브라우저 기본 "페이지 저장" 다이얼로그를 preventDefault하고 requestSubmit으로 폼 검증을 거쳐 onSubmit 실행.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        formRef.current?.requestSubmit();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   const onSubmit = async (data: CreateDatasetFormData) => {
     try {
       const result = await createDataset.mutateAsync({
@@ -92,7 +109,7 @@ export default function DatasetCreatePage() {
          * 즉시 어떤 필드를 수정해야 하는지 인지할 수 있도록 한다.
          * 단, 서버 에러(API 실패)는 onSubmit catch의 handleApiError로 toast 노출 유지.
          */}
-        <form onSubmit={form.handleSubmit(onSubmit, (errors) => {
+        <form ref={formRef} onSubmit={form.handleSubmit(onSubmit, (errors) => {
           // 에러가 있는 첫 번째 필드를 찾아 focus + scrollIntoView
           const firstErrorKey = Object.keys(errors)[0];
           if (firstErrorKey) {
