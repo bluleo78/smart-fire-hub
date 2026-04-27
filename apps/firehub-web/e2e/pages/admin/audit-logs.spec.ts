@@ -474,6 +474,45 @@ test.describe('감사 로그 페이지', () => {
     await expect(row2.getByRole('cell', { name: '데이터셋', exact: true })).toBeVisible();
   });
 
+  /**
+   * 이슈 #109 회귀 (524eaae): RESOURCES 상수에 'auth' 누락으로 로그인/로그아웃 행의 리소스 컬럼이
+   * 영문 'auth' 그대로 노출되었다. 백엔드(AuthService/ApiConnectionNotifier 등)가 실제 사용 중인
+   * 모든 resource enum(auth/system/api_connection)이 한글 라벨로 매핑되는지 검증.
+   * - 액션 enum 측은 DATA_EXPORT/STATUS_CHANGE 보강분도 함께 검증.
+   */
+  test('백엔드에서 사용하는 모든 리소스/액션 enum이 한글 라벨로 매핑된다 (#109 회귀)', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', actionType: 'LOGIN', resource: 'auth', description: 'desc-row1' }),
+        createAuditLog({ id: 2, username: 'admin', actionType: 'STATUS_CHANGE', resource: 'system', description: 'desc-row2' }),
+        createAuditLog({ id: 3, username: 'admin', actionType: 'CREATE', resource: 'api_connection', description: 'desc-row3' }),
+        createAuditLog({ id: 4, username: 'admin', actionType: 'DATA_EXPORT', resource: 'dataset', description: 'desc-row4' }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    // 행 1: auth → '인증'
+    const row1 = page.getByRole('row').nth(1);
+    await expect(row1.getByRole('cell', { name: '로그인', exact: true })).toBeVisible();
+    await expect(row1.getByRole('cell', { name: '인증', exact: true })).toBeVisible();
+
+    // 행 2: STATUS_CHANGE → '상태 변경', system → '시스템'
+    const row2 = page.getByRole('row').nth(2);
+    await expect(row2.getByRole('cell', { name: '상태 변경', exact: true })).toBeVisible();
+    await expect(row2.getByRole('cell', { name: '시스템', exact: true })).toBeVisible();
+
+    // 행 3: api_connection → 'API 연결'
+    const row3 = page.getByRole('row').nth(3);
+    await expect(row3.getByRole('cell', { name: 'API 연결', exact: true })).toBeVisible();
+
+    // 행 4: DATA_EXPORT → '데이터 내보내기'
+    const row4 = page.getByRole('row').nth(4);
+    await expect(row4.getByRole('cell', { name: '데이터 내보내기', exact: true })).toBeVisible();
+  });
+
   test('알 수 없는 액션/리소스 enum은 raw 값 fallback으로 표시된다 (#109)', async ({ authenticatedPage: page }) => {
     await mockApi(
       page,

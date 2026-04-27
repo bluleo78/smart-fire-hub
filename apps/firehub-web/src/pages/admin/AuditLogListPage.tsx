@@ -33,7 +33,11 @@ import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
-/** 액션 유형 옵션 목록 */
+/**
+ * 액션 유형 옵션 목록
+ * - 백엔드(AuditLogService.log) 호출부에서 사용 중인 enum 전수: CREATE/UPDATE/DELETE/LOGIN/LOGOUT/IMPORT/EXECUTE/DATA_EXPORT/STATUS_CHANGE
+ * - #109 회귀: DATA_EXPORT, STATUS_CHANGE 매핑 누락 보강.
+ */
 const ACTION_TYPES = [
   { value: 'CREATE', label: '생성' },
   { value: 'UPDATE', label: '수정' },
@@ -42,15 +46,25 @@ const ACTION_TYPES = [
   { value: 'LOGOUT', label: '로그아웃' },
   { value: 'IMPORT', label: '임포트' },
   { value: 'EXECUTE', label: '실행' },
+  { value: 'DATA_EXPORT', label: '데이터 내보내기' },
+  { value: 'STATUS_CHANGE', label: '상태 변경' },
 ];
 
-/** 리소스 유형 옵션 목록 */
+/**
+ * 리소스 유형 옵션 목록
+ * - 백엔드 호출부(AuthService/PipelineExecutionService/DatasetService/DataImportService/DataExportService/ApiConnectionNotifier)에서
+ *   실제 사용 중인 resource 값 전수: auth/system/api_connection/pipeline/dataset (data_import는 dataimport 도메인에서 dataset으로 기록).
+ * - #109 회귀: auth/system/api_connection 매핑 누락으로 영문 raw 값 노출되던 문제 해소.
+ */
 const RESOURCES = [
+  { value: 'auth', label: '인증' },
   { value: 'user', label: '사용자' },
   { value: 'role', label: '역할' },
   { value: 'dataset', label: '데이터셋' },
   { value: 'pipeline', label: '파이프라인' },
   { value: 'data_import', label: '데이터 임포트' },
+  { value: 'api_connection', label: 'API 연결' },
+  { value: 'system', label: '시스템' },
 ];
 
 /** 결과 필터 옵션 목록 */
