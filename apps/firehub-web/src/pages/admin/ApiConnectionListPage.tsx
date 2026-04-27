@@ -1,14 +1,16 @@
-import { Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Plus, Trash2, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { apiConnectionsApi } from '@/api/api-connections';
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { handleApiError } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
+import type { TestConnectionResponse } from '@/types/api-connection';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -65,6 +67,9 @@ export default function ApiConnectionListPage() {
   // 신규 필드: baseUrl, healthCheckPath
   const [baseUrl, setBaseUrl] = useState('');
   const [healthCheckPath, setHealthCheckPath] = useState('');
+  // (#90) 저장 전 연결 테스트 결과/진행 상태
+  const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const resetForm = () => {
     setName('');
@@ -77,6 +82,55 @@ export default function ApiConnectionListPage() {
     setToken('');
     setBaseUrl('');
     setHealthCheckPath('');
+    setTestResult(null);
+    setTesting(false);
+  };
+
+  /**
+   * (#90) 입력값으로 dry-run 헬스체크 호출. 저장 없이 인라인 결과 표시.
+   * 입력 검증은 handleCreate와 동일한 규칙을 사용하되, 인증 정보는 미입력이어도 호출은 시도(공개 endpoint 케이스).
+   */
+  const handleTest = async () => {
+    if (!/^https?:\/\/.+/.test(baseUrl.trim())) {
+      toast.error('Base URL은 http 또는 https로 시작해야 합니다.');
+      return;
+    }
+    if (healthCheckPath.trim() && !/^\//.test(healthCheckPath.trim())) {
+      toast.error('헬스체크 경로는 /로 시작해야 합니다.');
+      return;
+    }
+
+    const authConfig: Record<string, string> = { authType };
+    if (authType === 'API_KEY') {
+      authConfig.placement = placement;
+      if (placement === 'header') {
+        if (headerName.trim()) authConfig.headerName = headerName;
+        if (apiKey.trim()) authConfig.apiKey = apiKey;
+      } else {
+        if (paramName.trim()) authConfig.paramName = paramName;
+        if (apiKey.trim()) authConfig.apiKey = apiKey;
+      }
+    } else if (token.trim()) {
+      authConfig.token = token;
+    }
+
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const response = await apiConnectionsApi.testPayload({
+        name: name.trim() || 'dry-run',
+        description: undefined,
+        authType,
+        authConfig,
+        baseUrl: baseUrl.trim(),
+        healthCheckPath: healthCheckPath.trim() || undefined,
+      });
+      setTestResult(response.data);
+    } catch (error) {
+      handleApiError(error, '연결 테스트에 실패했습니다.');
+    } finally {
+      setTesting(false);
+    }
   };
 
   const handleCreate = async () => {
@@ -290,13 +344,58 @@ export default function ApiConnectionListPage() {
                   </div>
                 )}
 
-                <Button
-                  className="w-full"
-                  onClick={handleCreate}
-                  disabled={createMutation.isPending}
-                >
-                  {createMutation.isPending ? '생성 중...' : '생성'}
-                </Button>
+                {/* (#90) 인라인 연결 테스트 결과 표시 */}
+                {testResult && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className={`rounded-md border p-3 text-sm ${
+                      testResult.ok
+                        ? 'border-green-500/40 bg-green-500/5 text-green-700 dark:text-green-400'
+                        : 'border-destructive/40 bg-destructive/5 text-destructive'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      {testResult.ok ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <XCircle className="h-4 w-4" />
+                      )}
+                      <span>
+                        {testResult.ok ? '연결 성공' : '연결 실패'}
+                        {testResult.status != null && ` · HTTP ${testResult.status}`}
+                        {` · ${testResult.latencyMs}ms`}
+                      </span>
+                    </div>
+                    {testResult.errorMessage && (
+                      <p className="mt-1 break-all text-xs">{testResult.errorMessage}</p>
+                    )}
+                    {testResult.requestUrl && (
+                      <p className="mt-1 break-all font-mono text-xs opacity-80">
+                        {testResult.requestUrl}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={handleTest}
+                    disabled={testing || createMutation.isPending}
+                  >
+                    {testing ? '테스트 중...' : '연결 테스트'}
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    onClick={handleCreate}
+                    disabled={createMutation.isPending}
+                  >
+                    {createMutation.isPending ? '생성 중...' : '생성'}
+                  </Button>
+                </div>
               </div>
             </DialogContent>
           </Dialog>

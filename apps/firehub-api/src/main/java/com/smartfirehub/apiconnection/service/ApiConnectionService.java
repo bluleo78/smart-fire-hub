@@ -210,6 +210,56 @@ public class ApiConnectionService {
     }
   }
 
+  /**
+   * (#90) 저장 전 dry-run 헬스체크. CreateApiConnectionRequest의 payload를 가지고 외부 API 호출만 수행하고 DB는 변경하지 않는다.
+   * authType 검증/baseUrl SSRF 검증은 동일하게 수행하므로 잘못된 입력은 즉시 ApiConnectionException으로 차단된다.
+   */
+  public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
+    validateAuthType(request.authType());
+    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
+    String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
+    String url = UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath);
+    Map<String, String> rawConfig =
+        request.authConfig() != null ? request.authConfig() : Map.of();
+
+    long start = System.currentTimeMillis();
+    try {
+      var resp =
+          webClient
+              .get()
+              .uri(url)
+              .headers(h -> buildAuthHeaders(request.authType(), rawConfig).forEach(h::set))
+              .retrieve()
+              .toEntity(String.class)
+              .block(Duration.ofSeconds(5));
+
+      long latency = System.currentTimeMillis() - start;
+      Integer status = resp != null ? resp.getStatusCode().value() : null;
+      boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
+      String err = ok ? null : ("HTTP " + status);
+      String body = resp != null ? truncateBody(resp.getBody()) : null;
+      Map<String, String> headers = resp != null ? sanitizeHeaders(resp.getHeaders()) : Map.of();
+      String contentType =
+          resp != null && resp.getHeaders().getContentType() != null
+              ? resp.getHeaders().getContentType().toString()
+              : null;
+      return new TestConnectionResponse(ok, status, latency, err, url, body, headers, contentType);
+    } catch (WebClientResponseException e) {
+      long latency = System.currentTimeMillis() - start;
+      String err = "HTTP " + e.getStatusCode().value();
+      String body = truncateBody(e.getResponseBodyAsString());
+      Map<String, String> headers = sanitizeHeaders(e.getHeaders());
+      String contentType =
+          e.getHeaders().getContentType() != null ? e.getHeaders().getContentType().toString() : null;
+      return new TestConnectionResponse(
+          false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
+    } catch (Exception e) {
+      long latency = System.currentTimeMillis() - start;
+      String msg = e.getMessage();
+      return new TestConnectionResponse(false, null, latency, msg, url, null, Map.of(), null);
+    }
+  }
+
   /** 응답 본문을 최대 4KB로 잘라 반환 (UI 노출용). null/빈값은 그대로 반환. */
   private static final int MAX_BODY_PREVIEW_BYTES = 4096;
 

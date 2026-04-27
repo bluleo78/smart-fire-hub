@@ -78,6 +78,17 @@ public class ApiConnectionController {
     return apiConnectionService.testConnection(id);
   }
 
+  /**
+   * (#90) 저장 전 dry-run 헬스체크. payload(인증/URL/경로)만 받아 외부 API 호출을 시도하고 결과를 반환한다. DB 미저장. 사용 시점:
+   * "새 API 연결 생성" 다이얼로그에서 입력값 검증.
+   */
+  @PostMapping("/test")
+  @RequirePermission("apiconnection:write")
+  public TestConnectionResponse testConnectionPayload(
+      @Valid @RequestBody CreateApiConnectionRequest request) {
+    return apiConnectionService.testConnectionPayload(request);
+  }
+
   /** 모든 헬스체크 가능 연결을 즉시 갱신하는 비동기 Job을 시작한다. 응답은 jobId를 반환하며, 진행률은 SSE로 확인 가능하다. */
   @PostMapping("/refresh-all")
   @RequirePermission("apiconnection:write")

@@ -761,4 +761,76 @@ test.describe('API 연결 페이지', () => {
 
     await expect(page).toHaveURL(/\/admin\/api-connections$/);
   });
+
+  // (#90) 생성 다이얼로그의 "연결 테스트" 버튼 — payload만 보내 dry-run 헬스체크 후 결과 인라인 표시
+  test('생성 다이얼로그에서 "연결 테스트" 클릭 시 dry-run 호출 + 결과 노출 (#90)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      {
+        ok: true,
+        status: 200,
+        latencyMs: 142,
+        errorMessage: null,
+        requestUrl: 'https://api.example.com/health',
+        responseBodyPreview: '{"status":"OK"}',
+        responseHeaders: { 'content-type': 'application/json' },
+        responseContentType: 'application/json',
+      },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+
+    // 입력값 채우기
+    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder('/health').fill('/health');
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('dry-run-key');
+
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+
+    // payload 검증 — dry-run 엔드포인트로 입력값 그대로 전달되어야 한다
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      baseUrl: 'https://api.example.com',
+      healthCheckPath: '/health',
+    });
+    expect((req.payload as { authConfig: Record<string, string> }).authConfig).toMatchObject({
+      headerName: 'X-API-Key',
+      apiKey: 'dry-run-key',
+    });
+
+    // 결과 인라인 표시 — 성공 표시와 응답 메타가 다이얼로그 안에 노출되어야 한다
+    await expect(page.getByText('연결 성공')).toBeVisible();
+    await expect(page.getByText(/HTTP 200/)).toBeVisible();
+    await expect(page.getByText(/142ms/)).toBeVisible();
+    await expect(page.getByText('https://api.example.com/health')).toBeVisible();
+  });
+
+  // (#92) 마스킹 키 옆 도움말 아이콘 — 보안 정책 안내 tooltip 노출 검증
+  test('마스킹된 키 값 옆 도움말 아이콘에 보안 정책 tooltip이 노출된다 (#92)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+
+    // 마스킹 뷰 + 도움말 버튼 노출 확인
+    const helpButton = page.getByTestId('masked-key-help');
+    await expect(helpButton).toBeVisible();
+    await expect(helpButton).toHaveAttribute('aria-label', '키 값 마스킹 정책 안내');
+
+    // hover 시 tooltip 콘텐츠 노출
+    await helpButton.hover();
+    await expect(
+      page.getByText('보안 정책상 마지막 4자리만 표시됩니다.', { exact: false }),
+    ).toBeVisible();
+  });
 });
