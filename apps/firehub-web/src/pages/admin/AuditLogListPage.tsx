@@ -60,6 +60,44 @@ const RESULTS = [
 ];
 
 /**
+ * 액션 유형 enum → 한글 라벨 매핑 (#109)
+ * - 테이블 컬럼/상세 다이얼로그가 영문 raw 값을 그대로 표시하던 문제 해소.
+ * - 알 수 없는(미래 추가) enum은 raw 값을 fallback으로 노출 + 콘솔 경고.
+ */
+const ACTION_LABEL_MAP: Record<string, string> = ACTION_TYPES.reduce(
+  (acc, t) => ({ ...acc, [t.value]: t.label }),
+  {} as Record<string, string>,
+);
+
+/** 리소스 enum → 한글 라벨 매핑 (#109) */
+const RESOURCE_LABEL_MAP: Record<string, string> = RESOURCES.reduce(
+  (acc, r) => ({ ...acc, [r.value]: r.label }),
+  {} as Record<string, string>,
+);
+
+/** 액션 enum 값을 한글 라벨로 변환. 매핑 없으면 raw 반환 + 경고. */
+function formatAuditAction(action: string | null | undefined): string {
+  if (!action) return '-';
+  const label = ACTION_LABEL_MAP[action];
+  if (!label) {
+    console.warn(`[AuditLog] Unknown actionType: ${action}`);
+    return action;
+  }
+  return label;
+}
+
+/** 리소스 enum 값을 한글 라벨로 변환. 매핑 없으면 raw 반환 + 경고. */
+function formatAuditResource(resource: string | null | undefined): string {
+  if (!resource) return '-';
+  const label = RESOURCE_LABEL_MAP[resource];
+  if (!label) {
+    console.warn(`[AuditLog] Unknown resource: ${resource}`);
+    return resource;
+  }
+  return label;
+}
+
+/**
  * 날짜 문자열(YYYY-MM-DD)을 ISO 8601 datetime 문자열로 변환.
  * endDate의 경우 하루의 끝(23:59:59)으로 설정해 inclusive 범위를 구현한다.
  */
@@ -103,11 +141,11 @@ function AuditLogDetailDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-muted-foreground mb-1 text-xs">액션</p>
-              <p>{log.actionType}</p>
+              <p>{formatAuditAction(log.actionType)}</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-1 text-xs">리소스</p>
-              <p>{log.resource}{log.resourceId ? ` (${log.resourceId})` : ''}</p>
+              <p>{formatAuditResource(log.resource)}{log.resourceId ? ` (${log.resourceId})` : ''}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -366,8 +404,8 @@ export default function AuditLogListPage() {
                     {formatDateTime(log.actionTime)}
                   </TableCell>
                   <TableCell className="font-medium">{log.username}</TableCell>
-                  <TableCell>{log.actionType}</TableCell>
-                  <TableCell>{log.resource}</TableCell>
+                  <TableCell>{formatAuditAction(log.actionType)}</TableCell>
+                  <TableCell>{formatAuditResource(log.resource)}</TableCell>
                   <TableCell className="max-w-xs truncate">{log.description ?? '-'}</TableCell>
                   <TableCell>
                     <Badge variant={log.result === 'SUCCESS' ? 'default' : 'destructive'}>

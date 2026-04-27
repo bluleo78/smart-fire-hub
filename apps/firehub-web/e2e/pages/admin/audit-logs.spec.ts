@@ -446,6 +446,51 @@ test.describe('감사 로그 페이지', () => {
     await expect(page.getByPlaceholder('설명으로 검색...')).toBeVisible();
   });
 
+  /**
+   * 이슈 #109: 액션/리소스 컬럼이 영문 enum 값을 그대로 표시하던 문제 회귀 방지.
+   * - actionType 'LOGIN' → '로그인', resource 'dataset' → '데이터셋' 으로 한글화되어야 함.
+   * - 알 수 없는 enum은 raw 값 fallback (콘솔 경고 포함).
+   */
+  test('액션/리소스 컬럼이 한글 라벨로 표시된다 (#109)', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', actionType: 'LOGIN', resource: 'user', description: '로그인 성공' }),
+        createAuditLog({ id: 2, username: 'admin', actionType: 'CREATE', resource: 'dataset', description: '데이터셋 생성' }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    // 첫 행: LOGIN → '로그인', user → '사용자'
+    const row1 = page.getByRole('row').nth(1);
+    await expect(row1.getByRole('cell', { name: '로그인', exact: true })).toBeVisible();
+    await expect(row1.getByRole('cell', { name: '사용자', exact: true })).toBeVisible();
+
+    // 둘째 행: CREATE → '생성', dataset → '데이터셋'
+    const row2 = page.getByRole('row').nth(2);
+    await expect(row2.getByRole('cell', { name: '생성', exact: true })).toBeVisible();
+    await expect(row2.getByRole('cell', { name: '데이터셋', exact: true })).toBeVisible();
+  });
+
+  test('알 수 없는 액션/리소스 enum은 raw 값 fallback으로 표시된다 (#109)', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, username: 'admin', actionType: 'UNKNOWN_ACTION', resource: 'unknown_resource' }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    const row = page.getByRole('row').nth(1);
+    // 매핑 없는 값은 raw 그대로 노출 (정상 표시 유지 + 콘솔 경고만)
+    await expect(row.getByRole('cell', { name: 'UNKNOWN_ACTION', exact: true })).toBeVisible();
+    await expect(row.getByRole('cell', { name: 'unknown_resource', exact: true })).toBeVisible();
+  });
+
   test('다이얼로그 닫기 버튼 클릭 시 다이얼로그가 닫힌다', async ({ authenticatedPage: page }) => {
     await setupAuditLogMocks(page, 1);
     await page.goto('/admin/audit-logs');
