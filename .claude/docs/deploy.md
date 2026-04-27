@@ -1,6 +1,10 @@
 # 배포 가이드
 
-배포 스크립트: `./scripts/deploy.sh [api|web|ai-agent|all]`
+배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|all]`
+
+> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부).
+> `all` 정의는 **3곳**에서 동기화 필요: `scripts/deploy.sh`, `scripts/update.sh`, 본 문서.
+> 운영 docker-compose 서비스명이 빌드 키와 다른 경우(`channel` → `firehub-channel`)는 두 스크립트의 `prod_service_name()` 헬퍼가 흡수한다.
 
 ## Docker 빌드 규칙 (중요)
 

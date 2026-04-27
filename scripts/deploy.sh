@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Smart Fire Hub 운영 배포 스크립트
-# Usage: ./scripts/deploy.sh [api|web|ai-agent|all]
+# Usage: ./scripts/deploy.sh [api|executor|web|ai-agent|channel|all]
+# all = api + executor + web + ai-agent + channel (5개 앱 전부)
 
 REGISTRY="ghcr.io/bluleo78/smart-fire-hub"
 PROD_DIR="$HOME/prod/smart-fire-hub"
@@ -60,21 +61,34 @@ build_and_push() {
   esac
 }
 
+# 빌드 키(api/web/ai-agent/executor/channel)를 운영 docker-compose 서비스명으로 매핑.
+# channel 만 운영 서비스명이 'firehub-channel'로 다르다 (이름 mismatch 흡수).
+prod_service_name() {
+  case "$1" in
+    channel) echo "firehub-channel" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 deploy_app() {
   local app=$1
-  log "Deploying $app to production"
+  local service
+  service=$(prod_service_name "$app")
+  log "Deploying $app (service=$service) to production"
   cd "$PROD_DIR"
-  docker compose pull "$app"
-  docker compose up -d --force-recreate "$app"
+  docker compose pull "$service"
+  docker compose up -d --force-recreate "$service"
   cd - > /dev/null
 }
 
 verify_app() {
   local app=$1
-  log "Verifying $app container..."
+  local service
+  service=$(prod_service_name "$app")
+  log "Verifying $app (service=$service) container..."
   sleep 10
   local status
-  status=$(cd "$PROD_DIR" && docker compose ps "$app" --format '{{.Status}}' 2>/dev/null)
+  status=$(cd "$PROD_DIR" && docker compose ps "$service" --format '{{.Status}}' 2>/dev/null)
   if echo "$status" | grep -qi "up\|running"; then
     log "$app is running: $status"
   else
@@ -92,7 +106,8 @@ if ! docker info 2>/dev/null | grep -q "ghcr.io"; then
 fi
 
 if [ "$TARGET" = "all" ]; then
-  APPS=("api" "executor" "web" "ai-agent")
+  # 운영 5개 앱 전부 (channel 포함). 추가/제거 시 update.sh 와 docs/deploy.md 도 함께 수정.
+  APPS=("api" "executor" "web" "ai-agent" "channel")
 else
   APPS=("$TARGET")
 fi
