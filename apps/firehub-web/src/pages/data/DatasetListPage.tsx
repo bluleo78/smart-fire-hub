@@ -32,6 +32,7 @@ import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 import { iGa } from '../../lib/utils';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
+import { ExportDialog } from './components/ExportDialog';
 
 function getRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -113,6 +114,11 @@ export default function DatasetListPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDatasetId, setPreviewDatasetId] = useState<number | null>(null);
   const [previewDatasetName, setPreviewDatasetName] = useState('');
+
+  // 내보내기 다이얼로그 상태 (refs #95) — 호버 액션 '내보내기' 버튼에서 트리거
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportDatasetId, setExportDatasetId] = useState<number | null>(null);
+  const [exportDatasetName, setExportDatasetName] = useState('');
 
   const { data: categoriesData } = useCategories();
   const { data: datasetsData, isLoading } = useDatasets({
@@ -429,8 +435,11 @@ export default function DatasetListPage() {
                         title="내보내기"
                         aria-label="내보내기"
                         onClick={(e) => {
+                          // refs #95: navigate 가 아닌 ExportDialog 오픈 — 라벨/아이콘과 동작 일치
                           e.stopPropagation();
-                          navigate(`/data/datasets/${dataset.id}?tab=data`);
+                          setExportDatasetId(dataset.id);
+                          setExportDatasetName(dataset.name);
+                          setExportOpen(true);
                         }}
                       >
                         <Download size={14} />
@@ -498,6 +507,19 @@ export default function DatasetListPage() {
           onOpenChange={(open) => {
             setPreviewOpen(open);
             if (!open) setPreviewDatasetId(null);
+          }}
+        />
+      )}
+
+      {/* Export Dialog (refs #95) — 호버 액션 '내보내기' 버튼에서 트리거 */}
+      {exportDatasetId !== null && (
+        <ExportDialog
+          datasetId={exportDatasetId}
+          datasetName={exportDatasetName}
+          open={exportOpen}
+          onOpenChange={(open) => {
+            setExportOpen(open);
+            if (!open) setExportDatasetId(null);
           }}
         />
       )}
