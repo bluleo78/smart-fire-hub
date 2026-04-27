@@ -28,6 +28,12 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../../components/ui/tooltip';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
 import type { DatasetColumnResponse,DatasetDetailResponse } from '../../../types/dataset';
 import { ColumnExpandedStats,NullProgressBar } from '../components/ColumnStats';
@@ -163,41 +169,68 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-0.5">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => handlers.moveColumn(index, 'up')}
-                          disabled={index === 0 || isReorderPending}
-                        >
-                          <ChevronUp className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => handlers.moveColumn(index, 'down')}
-                          disabled={index === localColumns.length - 1 || isReorderPending}
-                        >
-                          <ChevronDown className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handlers.editClick(col)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handlers.deleteClick(col)}
-                          disabled={localColumns.length <= 1}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      {/* 행 액션 아이콘 — 스크린리더와 마우스 사용자를 위해 aria-label과 시각적 Tooltip을 함께 제공 */}
+                      <TooltipProvider>
+                        <div className="flex items-center gap-0.5">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label="컬럼 위로 이동"
+                                onClick={() => handlers.moveColumn(index, 'up')}
+                                disabled={index === 0 || isReorderPending}
+                              >
+                                <ChevronUp className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>위로 이동</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label="컬럼 아래로 이동"
+                                onClick={() => handlers.moveColumn(index, 'down')}
+                                disabled={index === localColumns.length - 1 || isReorderPending}
+                              >
+                                <ChevronDown className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>아래로 이동</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="컬럼 편집"
+                                onClick={() => handlers.editClick(col)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>편집</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="컬럼 삭제"
+                                onClick={() => handlers.deleteClick(col)}
+                                disabled={localColumns.length <= 1}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>삭제</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </TooltipProvider>
                     </TableCell>
                   </TableRow>
 

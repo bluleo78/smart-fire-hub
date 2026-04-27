@@ -370,4 +370,22 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     // 기존 필드명이 입력 필드에 채워져 있다
     await expect(page.getByLabel('필드명 *')).toHaveValue('name');
   });
+
+  test('행 액션 아이콘 4개에 aria-label이 부여된다 (위로/아래로/편집/삭제)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // "name" 행의 4개 액션 버튼이 모두 접근 가능 이름(aria-label)을 가지는지 검증
+    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
+    await expect(nameRow.getByRole('button', { name: '컬럼 위로 이동' })).toBeVisible();
+    await expect(nameRow.getByRole('button', { name: '컬럼 아래로 이동' })).toBeVisible();
+    await expect(nameRow.getByRole('button', { name: '컬럼 편집' })).toBeVisible();
+    await expect(nameRow.getByRole('button', { name: '컬럼 삭제' })).toBeVisible();
+  });
 });
