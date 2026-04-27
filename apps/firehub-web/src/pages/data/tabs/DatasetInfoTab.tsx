@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { useUpdateDataset } from '../../../hooks/queries/useDatasets';
-import { formatDate } from '../../../lib/formatters';
+import { formatDate, getDatasetTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
 import type { ErrorResponse } from '../../../types/auth';
@@ -107,7 +107,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
           <Tag size={20} className="text-muted-foreground mb-2" />
           <div className="my-1">
             <Badge variant="secondary">
-              {dataset.datasetType === 'SOURCE' ? 'SOURCE' : dataset.datasetType === 'DERIVED' ? 'DERIVED' : 'TEMP'}
+              {/* 이슈 #107: 영문 enum 노출 금지 — 한글 라벨로 통일 */}
+              {getDatasetTypeLabel(dataset.datasetType)}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">유형</p>
@@ -217,7 +218,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
               <dt className="text-sm text-muted-foreground">데이터셋 타입</dt>
               <dd>
                 <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-                  {dataset.datasetType === 'SOURCE' ? '원본' : dataset.datasetType === 'DERIVED' ? '파생' : '임시'}
+                  {getDatasetTypeLabel(dataset.datasetType)}
                 </Badge>
               </dd>
             </div>
