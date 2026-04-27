@@ -1,6 +1,7 @@
 import {
   AreaChart,
   BarChart2,
+  BarChart3,
   BoxSelect,
   CandlestickChart,
   Donut,
@@ -45,7 +46,8 @@ const CHART_TYPES: ChartTypeMeta[] = [
   { type: 'SCATTER', label: '산점도', Icon: ScatterChart },
   { type: 'TABLE', label: '테이블', Icon: Table2 },
   { type: 'MAP', label: '지도', Icon: MapPin },
-  { type: 'HISTOGRAM', label: '히스토그램', Icon: BarChart2 },
+  // HISTOGRAM은 분포를 표현하는 BarChart3 사용 (BAR와 시각적 구분 — refs #93)
+  { type: 'HISTOGRAM', label: '히스토그램', Icon: BarChart3 },
   { type: 'BOXPLOT', label: '박스 플롯', Icon: BoxSelect },
   { type: 'HEATMAP', label: '히트맵', Icon: Grid3X3 },
   { type: 'TREEMAP', label: '트리맵', Icon: LayoutGrid },
