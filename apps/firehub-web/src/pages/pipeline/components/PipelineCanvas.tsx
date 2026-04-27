@@ -4,6 +4,7 @@ import {
   Background,
   Controls,
   type Edge,
+  MarkerType,
   type NodeMouseHandler,
   type OnConnect,
   type OnEdgesDelete,
@@ -37,6 +38,20 @@ export function PipelineCanvas({
   const { resolvedTheme } = useTheme();
   const nodeTypes = useMemo(() => ({ step: StepNode }), []);
   const edgeTypes = useMemo(() => ({ addStep: AddStepEdge }), []);
+
+  // 모든 edge에 화살표(markerEnd)를 일괄 적용해 데이터 흐름 방향을 시각화한다.
+  // color는 edge stroke와 동일한 currentColor를 사용해 테마(다크/라이트)에 자연스럽게 따라간다.
+  const defaultEdgeOptions = useMemo(
+    () => ({
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 18,
+        height: 18,
+        color: 'currentColor',
+      },
+    }),
+    [],
+  );
 
   // Set of step tempIds that have at least one outgoing edge (are depended upon)
   const outgoingSet = useMemo(() => {
@@ -168,6 +183,7 @@ export function PipelineCanvas({
         edges={edges}
         nodeTypes={nodeTypes as never}
         edgeTypes={edgeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
         onNodeClick={onNodeClick}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}

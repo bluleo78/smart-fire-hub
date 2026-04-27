@@ -280,4 +280,37 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await expect(page.getByRole('button', { name: 'Fit View' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Toggle Interactivity' })).toHaveCount(0);
   });
+
+  /**
+   * 의존 관계가 있는 파이프라인 로드 시 모든 edge에 화살표(markerEnd)가 적용되어
+   * 데이터 흐름 방향이 시각적으로 드러나는지 회귀 검증한다. (#88)
+   *
+   * defaultEdgeOptions로 일괄 적용되며, AddStepEdge가 props.markerEnd를 정상 전달하면
+   * SVG path의 marker-end 속성에 url(#...arrowclosed...) 마커 ID가 채워진다.
+   */
+  test('DAG edge — markerEnd 화살표가 모든 edge에 적용된다 (#88)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 에디터 로드 대기
+    await expect(page.getByRole('tab', { name: '개요' })).toBeVisible({ timeout: 10000 });
+
+    // 의존 관계가 있는 픽스처가 로드되면 react-flow가 edge-path를 그린다
+    // (SVG path는 visibility 판정상 hidden으로 잡혀 toBeVisible 대신 count로 검증)
+    const edgePaths = page.locator('.react-flow__edge-path');
+    await expect(edgePaths.first()).toBeAttached({ timeout: 5000 });
+
+    // 모든 edge-path의 marker-end가 ArrowClosed 마커를 참조해야 한다
+    const markerEnds = await edgePaths.evaluateAll((els) =>
+      els.map((el) => el.getAttribute('marker-end')),
+    );
+    expect(markerEnds.length).toBeGreaterThan(0);
+    for (const me of markerEnds) {
+      expect(me).not.toBeNull();
+      expect(me).toMatch(/url\(['"]?#.*arrowclosed/i);
+    }
+  });
 });
