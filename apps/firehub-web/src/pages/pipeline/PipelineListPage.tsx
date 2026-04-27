@@ -1,5 +1,5 @@
 import { Clock,Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo,useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -14,6 +14,8 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { StatusBadge } from '../../components/ui/status-badge';
 import {
+  SortableHeader,
+  type SortDirection,
   Table,
   TableBody,
   TableCell,
@@ -32,8 +34,46 @@ export default function PipelineListPage() {
   const { data: pipelinesData, isLoading } = usePipelines({ page, size });
   const deletePipeline = useDeletePipeline();
 
-  const pipelines = pipelinesData?.content || [];
+  /**
+   * 클라이언트 사이드 정렬 상태 — 이슈 #80 1차 대응.
+   * - 현재 페이지 내 정렬만 수행한다. 백엔드 sort 파라미터 연동은 후속 작업.
+   */
+  type SortKey = 'name' | 'stepCount' | 'createdAt';
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortDirection>('none');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey !== key) {
+      setSortKey(key);
+      setSortOrder('asc');
+      return;
+    }
+    if (sortOrder === 'asc') setSortOrder('desc');
+    else if (sortOrder === 'desc') {
+      setSortKey(null);
+      setSortOrder('none');
+    } else setSortOrder('asc');
+  };
+
+  const rawPipelines = pipelinesData?.content || [];
   const totalPages = pipelinesData?.totalPages || 0;
+
+  /**
+   * 정렬이 적용된 파이프라인 목록 (현재 페이지 내).
+   * - 원본 배열을 변형하지 않기 위해 slice() 후 정렬.
+   */
+  const pipelines = useMemo(() => {
+    if (!sortKey || sortOrder === 'none') return rawPipelines;
+    const sorted = rawPipelines.slice();
+    sorted.sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'name') cmp = a.name.localeCompare(b.name, 'ko');
+      else if (sortKey === 'stepCount') cmp = a.stepCount - b.stepCount;
+      else if (sortKey === 'createdAt') cmp = a.createdAt.localeCompare(b.createdAt);
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [rawPipelines, sortKey, sortOrder]);
 
   const handleDelete = async (id: number, name: string) => {
     try {
@@ -60,12 +100,27 @@ export default function PipelineListPage() {
         <Table aria-label="파이프라인 목록">
           <TableHeader>
             <TableRow>
-              <TableHead>이름</TableHead>
+              <SortableHeader
+                direction={sortKey === 'name' ? sortOrder : 'none'}
+                onSort={() => toggleSort('name')}
+              >
+                이름
+              </SortableHeader>
               <TableHead>상태</TableHead>
-              <TableHead>스텝 수</TableHead>
+              <SortableHeader
+                direction={sortKey === 'stepCount' ? sortOrder : 'none'}
+                onSort={() => toggleSort('stepCount')}
+              >
+                스텝 수
+              </SortableHeader>
               <TableHead>트리거</TableHead>
               <TableHead>생성자</TableHead>
-              <TableHead>생성일</TableHead>
+              <SortableHeader
+                direction={sortKey === 'createdAt' ? sortOrder : 'none'}
+                onSort={() => toggleSort('createdAt')}
+              >
+                생성일
+              </SortableHeader>
               <TableHead className="w-[60px]" />
             </TableRow>
           </TableHeader>

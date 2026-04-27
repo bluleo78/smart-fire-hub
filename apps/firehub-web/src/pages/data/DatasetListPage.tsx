@@ -1,5 +1,5 @@
 import { BarChart3, Download,Eye, History, Plus, Star, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -16,6 +16,8 @@ import {
 } from '../../components/ui/select';
 import { SimplePagination } from '../../components/ui/simple-pagination';
 import {
+  SortableHeader,
+  type SortDirection,
   Table,
   TableCell,
   TableHead,
@@ -55,6 +57,29 @@ export default function DatasetListPage() {
   /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 10) */
   const [size, setSize] = useState(10);
 
+  /**
+   * 클라이언트 사이드 정렬 상태 — 이슈 #80 1차 대응.
+   * - 현재 페이지(서버에서 받은 size 건) 내 정렬만 수행한다.
+   * - 백엔드 sort 파라미터 연동(전체 정렬)은 후속 작업.
+   */
+  type SortKey = 'name' | 'createdAt';
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortDirection>('none');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey !== key) {
+      setSortKey(key);
+      setSortOrder('asc');
+      return;
+    }
+    // 같은 컬럼 재클릭 — asc → desc → none(원본 순서) 순환
+    if (sortOrder === 'asc') setSortOrder('desc');
+    else if (sortOrder === 'desc') {
+      setSortKey(null);
+      setSortOrder('none');
+    } else setSortOrder('asc');
+  };
+
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDatasetId, setPreviewDatasetId] = useState<number | null>(null);
   const [previewDatasetName, setPreviewDatasetName] = useState('');
@@ -74,7 +99,23 @@ export default function DatasetListPage() {
   const { recents } = useRecentDatasets();
 
   const categories = categoriesData || [];
-  const datasets = datasetsData?.content || [];
+  const rawDatasets = datasetsData?.content || [];
+  /**
+   * 정렬이 적용된 데이터셋 목록 (현재 페이지 내).
+   * - 원본 배열을 변형하지 않기 위해 slice() 후 정렬.
+   * - 이름은 한국어 자모 정렬을 위해 localeCompare('ko'), 날짜는 ISO 문자열 비교.
+   */
+  const datasets = useMemo(() => {
+    if (!sortKey || sortOrder === 'none') return rawDatasets;
+    const sorted = rawDatasets.slice();
+    sorted.sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'name') cmp = a.name.localeCompare(b.name, 'ko');
+      else if (sortKey === 'createdAt') cmp = a.createdAt.localeCompare(b.createdAt);
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [rawDatasets, sortKey, sortOrder]);
   const totalPages = datasetsData?.totalPages || 0;
   const totalElements = datasetsData?.totalElements;
 
@@ -235,11 +276,21 @@ export default function DatasetListPage() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-[32px]" />
-              <TableHead>이름</TableHead>
+              <SortableHeader
+                direction={sortKey === 'name' ? sortOrder : 'none'}
+                onSort={() => toggleSort('name')}
+              >
+                이름
+              </SortableHeader>
               <TableHead>태그</TableHead>
               <TableHead>유형</TableHead>
               <TableHead>카테고리</TableHead>
-              <TableHead>생성일</TableHead>
+              <SortableHeader
+                direction={sortKey === 'createdAt' ? sortOrder : 'none'}
+                onSort={() => toggleSort('createdAt')}
+              >
+                생성일
+              </SortableHeader>
               <TableHead className="w-[60px]" />
             </TableRow>
           </TableHeader>
