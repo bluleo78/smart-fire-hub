@@ -288,6 +288,81 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(editBtn).toBeDisabled();
   });
 
+  test('검색 입력으로 카테고리를 필터링한다 (이슈 #75)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 카테고리 3개 (소방 데이터 / 통계 데이터 / 기타) 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    await page.goto('/data/categories');
+
+    // 초기 — 3개 행 모두 보임
+    await expect(page.getByRole('cell', { name: '소방 데이터', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '통계 데이터', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '기타', exact: true })).toBeVisible();
+
+    // "소방"으로 검색 → 1건만 남아야 함 (debounce 200ms)
+    await page.getByLabel('카테고리 검색').fill('소방');
+    await expect(page.getByRole('cell', { name: '소방 데이터', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '통계 데이터', exact: true })).not.toBeVisible();
+    await expect(page.getByRole('cell', { name: '기타', exact: true })).not.toBeVisible();
+
+    // 결과 카운트(1 / 3) 노출 확인
+    await expect(page.getByText('1 / 3')).toBeVisible();
+
+    // 일치하지 않는 키워드 → 빈 상태 메시지 (전체 빈 상태와 다른 메시지)
+    await page.getByLabel('카테고리 검색').fill('존재하지않는키워드xyz');
+    await expect(page.getByText('검색 결과가 없습니다.')).toBeVisible();
+
+    // 검색 지우기 → 다시 3건 모두
+    await page.getByRole('button', { name: '검색어 지우기' }).click();
+    await expect(page.getByText('3개')).toBeVisible();
+  });
+
+  test('정렬 드롭다운으로 카테고리 순서를 변경한다 (이슈 #75)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 정렬 비교를 위해 id/이름이 의도적으로 다른 카테고리 셋업
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [
+      { id: 5, name: '나카테고리', description: 'B' },
+      { id: 2, name: '가카테고리', description: 'A' },
+      { id: 9, name: '다카테고리', description: 'C' },
+    ]);
+
+    await page.goto('/data/categories');
+
+    // 정렬 드롭다운(role=combobox + aria-label="정렬 기준") 열기
+    const sortTrigger = page.getByRole('combobox', { name: '정렬 기준' });
+    await expect(sortTrigger).toBeVisible();
+
+    // 각 행의 첫 번째 셀(이름 컬럼) 텍스트 시퀀스를 추출하는 헬퍼.
+    // - 헤더 행은 columnheader role이라 cell role 필터에 포함되지 않음.
+    // - 첫 번째 셀(이름)만 추출해 정렬 결과를 단순 비교.
+    const readNameOrder = async (): Promise<string[]> => {
+      const cells = await page.getByRole('cell').allTextContents();
+      // 카테고리당 셀 3개(이름/설명/작업) — 0, 3, 6, ... 인덱스가 이름 셀
+      return cells.filter((_, i) => i % 3 === 0);
+    };
+
+    // 기본값: 이름 오름차순 → 가, 나, 다 순
+    expect(await readNameOrder()).toEqual(['가카테고리', '나카테고리', '다카테고리']);
+
+    // 이름 내림차순으로 변경 → 다, 나, 가
+    await sortTrigger.click();
+    await page.getByRole('option', { name: '이름 (내림차순)' }).click();
+    expect(await readNameOrder()).toEqual(['다카테고리', '나카테고리', '가카테고리']);
+
+    // 생성순 (오래된 순) = id asc → id 2, 5, 9 순 → 가, 나, 다
+    await sortTrigger.click();
+    await page.getByRole('option', { name: '생성순 (오래된 순)' }).click();
+    expect(await readNameOrder()).toEqual(['가카테고리', '나카테고리', '다카테고리']);
+
+    // 생성순 (최신 순) = id desc → id 9, 5, 2 순 → 다, 나, 가
+    await sortTrigger.click();
+    await page.getByRole('option', { name: '생성순 (최신 순)' }).click();
+    expect(await readNameOrder()).toEqual(['다카테고리', '나카테고리', '가카테고리']);
+  });
+
   test('편집·삭제 버튼에 aria-label이 부여된다 (접근성 회귀)', async ({
     authenticatedPage: page,
   }) => {
