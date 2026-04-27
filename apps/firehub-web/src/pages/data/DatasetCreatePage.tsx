@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FormProvider,useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../components/ui/select';
-import { useCategories, useCreateDataset } from '../../hooks/queries/useDatasets';
+import { useCategories, useCreateDataset, useDatasets } from '../../hooks/queries/useDatasets';
 import { handleApiError } from '../../lib/api-error';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
 import { createDatasetSchema } from '../../lib/validations/dataset';
@@ -55,6 +55,43 @@ export default function DatasetCreatePage() {
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
 
+  // 이름·테이블명 중복 검증을 위한 debounce 처리값 (#103).
+  // 사용자가 입력을 멈추고 약 400ms 경과 후에만 검색 쿼리를 트리거하여 키 입력마다 API가 폭주하지 않도록 함.
+  const watchedName = form.watch('name');
+  const watchedTableName = form.watch('tableName');
+  const [debouncedName, setDebouncedName] = useState('');
+  const [debouncedTableName, setDebouncedTableName] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedName(watchedName?.trim() ?? ''), 400);
+    return () => clearTimeout(t);
+  }, [watchedName]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedTableName(watchedTableName?.trim() ?? ''), 400);
+    return () => clearTimeout(t);
+  }, [watchedTableName]);
+
+  // 백엔드 search 파라미터로 부분 일치 결과를 받아 클라이언트에서 정확 일치를 검사한다 (#103).
+  // 전용 check-name 엔드포인트가 없는 현재 환경에서 useDatasets 결과를 활용해 중복 여부를 판정.
+  const { data: nameSearchData } = useDatasets({
+    search: debouncedName,
+    size: 20,
+  });
+  const { data: tableNameSearchData } = useDatasets({
+    search: debouncedTableName,
+    size: 20,
+  });
+
+  const isNameDuplicate =
+    debouncedName.length > 0 &&
+    !!nameSearchData?.content?.some((d) => d.name.toLowerCase() === debouncedName.toLowerCase());
+  const isTableNameDuplicate =
+    debouncedTableName.length > 0 &&
+    !!tableNameSearchData?.content?.some(
+      (d) => d.tableName.toLowerCase() === debouncedTableName.toLowerCase()
+    );
+
   // 전역 Cmd/Ctrl+S 단축키로 폼 저장 (#100).
   // 브라우저 기본 "페이지 저장" 다이얼로그를 preventDefault하고 requestSubmit으로 폼 검증을 거쳐 onSubmit 실행.
   useEffect(() => {
@@ -69,6 +106,15 @@ export default function DatasetCreatePage() {
   }, []);
 
   const onSubmit = async (data: CreateDatasetFormData) => {
+    // 중복 인라인 검증 결과가 있으면 제출 차단 (#103) — 서버 왕복으로 알게 되는 비용을 줄임
+    if (isNameDuplicate) {
+      form.setError('name', { type: 'duplicate', message: '이미 사용 중인 이름입니다.' });
+      return;
+    }
+    if (isTableNameDuplicate) {
+      form.setError('tableName', { type: 'duplicate', message: '이미 사용 중인 테이블명입니다.' });
+      return;
+    }
     try {
       const result = await createDataset.mutateAsync({
         name: data.name,
@@ -130,27 +176,42 @@ export default function DatasetCreatePage() {
                   label="데이터셋 이름"
                   htmlFor="name"
                   required
-                  error={form.formState.errors.name?.message}
+                  error={
+                    form.formState.errors.name?.message ??
+                    (isNameDuplicate ? '이미 사용 중인 이름입니다.' : undefined)
+                  }
                 >
                   <Input
                     id="name"
                     {...form.register('name')}
                     placeholder="예: 사용자 데이터"
+                    aria-invalid={isNameDuplicate || !!form.formState.errors.name}
                   />
+                  {/* 중복 검사 통과 시 양호 표시 (#103) */}
+                  {!isNameDuplicate && debouncedName.length > 0 && !form.formState.errors.name && (
+                    <p className="text-xs text-muted-foreground mt-1">사용 가능한 이름입니다.</p>
+                  )}
                 </FormField>
 
                 <FormField
                   label="테이블명"
                   htmlFor="tableName"
                   required
-                  error={form.formState.errors.tableName?.message}
+                  error={
+                    form.formState.errors.tableName?.message ??
+                    (isTableNameDuplicate ? '이미 사용 중인 테이블명입니다.' : undefined)
+                  }
                 >
                   <Input
                     id="tableName"
                     {...form.register('tableName')}
                     placeholder="예: user_data"
                     className="font-mono"
+                    aria-invalid={isTableNameDuplicate || !!form.formState.errors.tableName}
                   />
+                  {!isTableNameDuplicate && debouncedTableName.length > 0 && !form.formState.errors.tableName && (
+                    <p className="text-xs text-muted-foreground mt-1">사용 가능한 테이블명입니다.</p>
+                  )}
                 </FormField>
               </div>
 
@@ -215,7 +276,10 @@ export default function DatasetCreatePage() {
           </Card>
 
           <div className="flex gap-2">
-            <Button type="submit" disabled={form.formState.isSubmitting}>
+            <Button
+              type="submit"
+              disabled={form.formState.isSubmitting || isNameDuplicate || isTableNameDuplicate}
+            >
               {form.formState.isSubmitting ? '생성 중...' : '생성'}
             </Button>
             <Button
