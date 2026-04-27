@@ -6,10 +6,16 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   formatCellValue,
   formatDate,
+  formatDateOnly,
   formatDateShort,
+  formatDateTime,
+  formatDateTimeMinute,
   formatDuration,
   formatElapsedTime,
   formatFileSize,
+  formatIpAddress,
+  formatRelativeTime,
+  getDatasetTypeLabel,
   getRawCellValue,
   getStatusBadgeVariant,
   getStatusLabel,
@@ -187,6 +193,113 @@ describe('formatDuration', () => {
 
   it('시간 + 분', () => {
     expect(formatDuration('2026-04-11T00:00:00Z', '2026-04-11T01:05:00Z')).toBe('1시간 5분');
+  });
+});
+
+describe('formatDateTime / formatDateTimeMinute / formatDateOnly', () => {
+  // 이슈 #105: zero-pad YYYY-MM-DD HH:mm:ss 통일 포맷터.
+  // 로컬 타임존 의존 결과가 환경마다 달라질 수 있어 패턴만 검증한다.
+  it('formatDateTime — null/빈문자열은 "-"', () => {
+    expect(formatDateTime(null)).toBe('-');
+    expect(formatDateTime(undefined)).toBe('-');
+    expect(formatDateTime('')).toBe('-');
+  });
+
+  it('formatDateTime — 잘못된 입력은 "-"', () => {
+    expect(formatDateTime('not-a-date')).toBe('-');
+  });
+
+  it('formatDateTime — UTC 문자열을 zero-pad 절대시간으로', () => {
+    const result = formatDateTime('2026-04-11T03:05:09Z');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('formatDateTimeMinute — 분 단위 16자', () => {
+    const result = formatDateTimeMinute('2026-04-11T03:05:09Z');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(result.length).toBe(16);
+  });
+
+  it('formatDateOnly — YYYY-MM-DD zero-pad', () => {
+    const result = formatDateOnly('2026-04-11T03:05:09Z');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('formatDateOnly — null은 "-"', () => {
+    expect(formatDateOnly(null)).toBe('-');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  // 이슈 #105: 페이지 간 일관 상대시간.
+  beforeAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-11T12:00:00Z'));
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
+  it('null/빈문자열은 "-"', () => {
+    expect(formatRelativeTime(null)).toBe('-');
+    expect(formatRelativeTime(undefined)).toBe('-');
+    expect(formatRelativeTime('')).toBe('-');
+  });
+
+  it('1분 미만은 "방금 전"', () => {
+    expect(formatRelativeTime('2026-04-11T11:59:30Z')).toBe('방금 전');
+  });
+
+  it('분/시간/일/개월/년 단위', () => {
+    expect(formatRelativeTime('2026-04-11T11:55:00Z')).toBe('5분 전');
+    expect(formatRelativeTime('2026-04-11T10:00:00Z')).toBe('2시간 전');
+    expect(formatRelativeTime('2026-04-09T12:00:00Z')).toBe('2일 전');
+    expect(formatRelativeTime('2026-02-10T12:00:00Z')).toBe('2개월 전');
+    expect(formatRelativeTime('2024-04-11T12:00:00Z')).toBe('2년 전');
+  });
+
+  it('서버 LocalDateTime(타임존 미부착) 도 UTC로 처리', () => {
+    expect(formatRelativeTime('2026-04-11T11:55:00')).toBe('5분 전');
+  });
+});
+
+describe('formatIpAddress', () => {
+  // 이슈 #106: IPv6 loopback 정규화.
+  it('null/빈문자열은 "-"', () => {
+    expect(formatIpAddress(null)).toBe('-');
+    expect(formatIpAddress(undefined)).toBe('-');
+    expect(formatIpAddress('')).toBe('-');
+    expect(formatIpAddress('   ')).toBe('-');
+  });
+
+  it('IPv6 loopback raw → localhost', () => {
+    expect(formatIpAddress('0:0:0:0:0:0:0:1')).toBe('localhost');
+  });
+
+  it('IPv6 loopback 압축 → localhost', () => {
+    expect(formatIpAddress('::1')).toBe('localhost');
+  });
+
+  it('IPv4 loopback → localhost', () => {
+    expect(formatIpAddress('127.0.0.1')).toBe('localhost');
+  });
+
+  it('일반 IP는 그대로', () => {
+    expect(formatIpAddress('192.168.1.1')).toBe('192.168.1.1');
+    expect(formatIpAddress('2001:db8::1')).toBe('2001:db8::1');
+  });
+});
+
+describe('getDatasetTypeLabel', () => {
+  // 이슈 #107: 영문 enum 노출 방지.
+  it('알려진 enum 값', () => {
+    expect(getDatasetTypeLabel('SOURCE')).toBe('원본');
+    expect(getDatasetTypeLabel('DERIVED')).toBe('파생');
+    expect(getDatasetTypeLabel('TEMP')).toBe('임시');
+  });
+
+  it('알 수 없는 값은 원본 반환', () => {
+    expect(getDatasetTypeLabel('UNKNOWN')).toBe('UNKNOWN');
   });
 });
 

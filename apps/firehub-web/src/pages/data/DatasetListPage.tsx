@@ -29,7 +29,7 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
-import { formatDateShort } from '../../lib/formatters';
+import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
 import { iGa } from '../../lib/utils';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { ExportDialog } from './components/ExportDialog';
@@ -396,7 +396,9 @@ export default function DatasetListPage() {
                     )}
                   </TableCell>
                   <TableCell>{dataset.category?.name || '-'}</TableCell>
-                  <TableCell className="tabular-nums">{formatDateShort(dataset.createdAt)}</TableCell>
+                  <TableCell className="tabular-nums" title={formatDateTimeMinute(dataset.createdAt)}>
+                    {formatDateOnly(dataset.createdAt)}
+                  </TableCell>
                   <TableCell className="relative">
                     {/* Hover action buttons */}
                     <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">

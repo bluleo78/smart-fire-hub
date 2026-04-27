@@ -30,6 +30,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuditLogs } from '@/hooks/queries/useAuditLogs';
 import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { formatDateTime } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
 /** 액션 유형 옵션 목록 */
@@ -57,19 +58,6 @@ const RESULTS = [
   { value: 'SUCCESS', label: '성공' },
   { value: 'FAILURE', label: '실패' },
 ];
-
-/** 날짜-시간 문자열을 한국어 형식으로 포맷 */
-function formatDateTime(dateStr: string) {
-  const date = new Date(dateStr);
-  return date.toLocaleString('ko-KR', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
 
 /**
  * 날짜 문자열(YYYY-MM-DD)을 ISO 8601 datetime 문자열로 변환.

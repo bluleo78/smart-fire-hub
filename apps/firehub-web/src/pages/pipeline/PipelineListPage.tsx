@@ -24,7 +24,7 @@ import {
   TableRow,
 } from '../../components/ui/table';
 import { useDeletePipeline,usePipelines } from '../../hooks/queries/usePipelines';
-import { formatDateShort } from '../../lib/formatters';
+import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
 
 export default function PipelineListPage() {
   const navigate = useNavigate();
@@ -150,7 +150,9 @@ export default function PipelineListPage() {
                     )}
                   </TableCell>
                   <TableCell>{pipeline.createdBy}</TableCell>
-                  <TableCell>{formatDateShort(pipeline.createdAt)}</TableCell>
+                  <TableCell className="tabular-nums" title={formatDateTimeMinute(pipeline.createdAt)}>
+                    {formatDateOnly(pipeline.createdAt)}
+                  </TableCell>
                   <TableCell>
                     <DeleteConfirmDialog
                       entityName="파이프라인"

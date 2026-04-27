@@ -19,6 +19,110 @@ export function formatDateShort(dateStr: string): string {
   return parseUtcDate(dateStr).toLocaleDateString('ko-KR');
 }
 
+/**
+ * 날짜만 표시 — `YYYY-MM-DD` zero-pad (이슈 #105).
+ * `formatDateShort`는 로케일 의존이라 페이지 간 표시가 들쭉날쭉하여 별도 zero-pad 헬퍼 도입.
+ */
+export function formatDateOnly(dateStr: string | null | undefined): string {
+  if (!dateStr) return '-';
+  const d = parseUtcDate(dateStr);
+  if (Number.isNaN(d.getTime())) return '-';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** 두 자리 zero-pad. */
+function pad2(n: number): string {
+  return n.toString().padStart(2, '0');
+}
+
+/**
+ * 절대시간 포맷 — `YYYY-MM-DD HH:mm:ss` (KST).
+ * 페이지 간 일관성 확보를 위한 공통 포맷터 (이슈 #105).
+ * - 모든 자릿수 zero-pad
+ * - 로컬 타임존 기준 (KST)
+ * - null/undefined → '-'
+ */
+export function formatDateTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return '-';
+  const d = parseUtcDate(dateStr);
+  if (Number.isNaN(d.getTime())) return '-';
+  const yyyy = d.getFullYear();
+  const mm = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  const hh = pad2(d.getHours());
+  const mi = pad2(d.getMinutes());
+  const ss = pad2(d.getSeconds());
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
+/**
+ * 절대시간 포맷(분 단위) — `YYYY-MM-DD HH:mm` (KST).
+ * 목록 화면의 hover 툴팁에 적합 (초 단위 정밀도 불필요).
+ */
+export function formatDateTimeMinute(dateStr: string | null | undefined): string {
+  if (!dateStr) return '-';
+  const full = formatDateTime(dateStr);
+  if (full === '-') return '-';
+  return full.slice(0, 16);
+}
+
+/**
+ * 상대시간 포맷 — `방금 전`, `5분 전`, `3시간 전`, `2일 전`, `3개월 전`.
+ * 페이지 간 일관성 확보를 위한 공통 포맷터 (이슈 #105).
+ * timeAgo와 달리 UTC 파싱(parseUtcDate)을 사용하여 서버 LocalDateTime 문자열을 정확히 처리.
+ */
+export function formatRelativeTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return '-';
+  const d = parseUtcDate(dateStr);
+  if (Number.isNaN(d.getTime())) return '-';
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return '방금 전';
+  if (mins < 60) return `${mins}분 전`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}일 전`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}개월 전`;
+  const years = Math.floor(months / 12);
+  return `${years}년 전`;
+}
+
+/**
+ * IPv4/IPv6 주소를 사용자 친화적 형태로 변환 (이슈 #106).
+ * - IPv6 loopback `0:0:0:0:0:0:0:1` 또는 `::1` → `localhost`
+ * - IPv4 loopback `127.0.0.1` → `localhost`
+ * - 그 외는 원본 유지
+ * - null/undefined/빈문자열 → '-'
+ */
+export function formatIpAddress(ip: string | null | undefined): string {
+  if (!ip) return '-';
+  const trimmed = ip.trim();
+  if (trimmed === '') return '-';
+  // IPv6 loopback (raw 형태와 압축 형태 모두 처리)
+  if (trimmed === '0:0:0:0:0:0:0:1' || trimmed === '::1') return 'localhost';
+  if (trimmed === '127.0.0.1') return 'localhost';
+  return trimmed;
+}
+
+/**
+ * 데이터셋 타입 enum → 한글 라벨 (이슈 #107).
+ * 사용자 화면에서는 영문 enum이 노출되지 않도록 매핑.
+ */
+export function getDatasetTypeLabel(type: string): string {
+  switch (type) {
+    case 'SOURCE':
+      return '원본';
+    case 'DERIVED':
+      return '파생';
+    case 'TEMP':
+      return '임시';
+    default:
+      return type;
+  }
+}
+
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
 export function isNullValue(value: unknown): boolean {
