@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 import {
   Select,
   SelectContent,
@@ -224,25 +225,24 @@ export default function DatasetCreatePage() {
               </FormField>
 
               <div className="grid grid-cols-2 gap-4">
+                {/* 카테고리는 사용자 정의로 늘어날 수 있어 검색 가능한 SearchableSelect로 대체 (#104) */}
                 <FormField label="카테고리" htmlFor="categoryId">
-                  <Select
-                    value={form.watch('categoryId')?.toString() || '__none__'}
-                    onValueChange={(value) => {
-                      form.setValue('categoryId', value === '__none__' ? undefined : Number(value));
+                  <SearchableSelect
+                    id="categoryId"
+                    value={form.watch('categoryId')?.toString()}
+                    onChange={(value) => {
+                      form.setValue('categoryId', value === undefined ? undefined : Number(value));
                     }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="카테고리 선택" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">선택 안 함</SelectItem>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id.toString()}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={categories.map((cat) => ({
+                      value: cat.id.toString(),
+                      label: cat.name,
+                    }))}
+                    placeholder="카테고리 선택"
+                    searchPlaceholder="카테고리 검색..."
+                    emptyText="일치하는 카테고리가 없습니다."
+                    allowClear
+                    clearLabel="선택 안 함"
+                  />
                 </FormField>
 
                 <FormField
