@@ -51,7 +51,8 @@ export default function DatasetDetailPage() {
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
 
-  const { data: dataset, isLoading } = useDataset(datasetId);
+  // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
+  const { data: dataset, isLoading, isError } = useDataset(datasetId);
   const { data: categoriesData } = useCategories();
   const { addRecent } = useRecentDatasets();
   const { isAdmin } = useAuth();
@@ -70,6 +71,16 @@ export default function DatasetDetailPage() {
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 
   const categories = categoriesData || [];
+
+  // 존재하지 않는 데이터셋 ID(404 등) 접근 시: 토스트 안내 + 목록으로 이동 (#96)
+  // — 이전엔 isError 분기가 없어 isLoading=false + dataset=undefined 상태로
+  //   스켈레톤 분기에 갇혀 무한 표시되었음. 다른 도메인(차트/파이프라인/대시보드)은
+  //   "찾을 수 없습니다" 안내 또는 toast.error + navigate를 이미 제공하고 있어 이를 일치시킨다.
+  useEffect(() => {
+    if (!isError) return;
+    toast.error('데이터셋을 찾을 수 없습니다.');
+    navigate('/data/datasets');
+  }, [isError, navigate]);
 
   useEffect(() => {
     if (dataset) {
@@ -137,6 +148,11 @@ export default function DatasetDetailPage() {
 
   const hasGeometry = dataset?.columns.some(c => c.dataType === 'GEOMETRY') ?? false;
 
+  // 에러 시 위 useEffect에서 navigate 처리되므로 빈 컨테이너 렌더링.
+  // 로딩 또는 dataset 미도착 시에만 스켈레톤 표시 (#96).
+  if (isError) {
+    return <div />;
+  }
   if (isLoading || !dataset) {
     return (
       <div className="space-y-6">
