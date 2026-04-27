@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart2, Download, FileImage, FileType,Loader2, Play,Save } from 'lucide-react';
+import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Play,Save } from 'lucide-react';
 import { useCallback,useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -45,8 +45,10 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
+  useAddWidget,
   useChart,
   useCreateChart,
+  useDashboards,
   useExecuteSavedQuery,
   useSavedQueries,
   useUpdateChart,
@@ -302,6 +304,117 @@ function SaveDialog({
 }
 
 // ============================================================
+// Add to Dashboard Dialog (#97)
+// — 차트 → 대시보드 워크플로우 단축. 사용자가 차트 편집 페이지에서 즉시
+//   대시보드를 선택해 위젯으로 추가할 수 있게 함. 백엔드는 기존
+//   POST /api/v1/dashboards/{id}/widgets 엔드포인트 활용.
+// ============================================================
+
+interface AddToDashboardDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  chartId: number;
+  chartType: ChartType;
+}
+
+function AddToDashboardDialog({
+  open,
+  onOpenChange,
+  chartId,
+  chartType,
+}: AddToDashboardDialogProps) {
+  const navigate = useNavigate();
+  const [selectedDashboardId, setSelectedDashboardId] = useState<number | null>(null);
+  const { data: dashboardsData, isLoading } = useDashboards({ size: 100 });
+  const dashboards = dashboardsData?.content ?? [];
+
+  // 다이얼로그를 열 때마다 선택 초기화 — state-based tracking으로 cascading render 방지
+  const [openTracker, setOpenTracker] = useState(false);
+  if (open !== openTracker) {
+    setOpenTracker(open);
+    if (open) setSelectedDashboardId(null);
+  }
+
+  const addWidget = useAddWidget(selectedDashboardId ?? 0);
+
+  const handleAdd = async () => {
+    if (!selectedDashboardId) return;
+    // MAP 차트는 전체 폭, 큰 높이로 배치 (DashboardEditorPage와 동일 규칙)
+    const isMapChart = chartType === 'MAP';
+    try {
+      await addWidget.mutateAsync({
+        chartId,
+        positionX: 0,
+        positionY: 9999, // 가장 아래 배치 (서버에서 정렬)
+        width: isMapChart ? 12 : 6,
+        height: isMapChart ? 6 : 4,
+      });
+      const target = dashboards.find((d) => d.id === selectedDashboardId);
+      toast.success(`'${target?.name ?? '대시보드'}'에 차트가 추가되었습니다.`);
+      onOpenChange(false);
+      // 사용자가 결과를 즉시 확인할 수 있도록 대시보드 상세로 이동
+      navigate(`/analytics/dashboards/${selectedDashboardId}`);
+    } catch (error) {
+      handleApiError(error, '대시보드에 차트 추가 실패');
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>대시보드에 추가</DialogTitle>
+          <DialogDescription>
+            이 차트를 추가할 대시보드를 선택하세요.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 py-2 max-h-80 overflow-y-auto">
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">대시보드 목록을 불러오는 중...</p>
+          ) : dashboards.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              사용 가능한 대시보드가 없습니다. 먼저 대시보드를 생성해 주세요.
+            </p>
+          ) : (
+            dashboards.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setSelectedDashboardId(d.id)}
+                className={`w-full text-left px-3 py-2 rounded border transition-colors ${
+                  selectedDashboardId === d.id
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:bg-muted'
+                }`}
+              >
+                <div className="font-medium text-sm">{d.name}</div>
+                {d.description && (
+                  <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                    {d.description}
+                  </div>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            취소
+          </Button>
+          <Button
+            onClick={handleAdd}
+            disabled={!selectedDashboardId || addWidget.isPending}
+          >
+            {addWidget.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            추가
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // ChartBuilderPage
 // ============================================================
 
@@ -333,6 +446,8 @@ export default function ChartBuilderPage() {
   const [queryColumns, setQueryColumns] = useState<string[]>([]);
   const [queryRows, setQueryRows] = useState<Record<string, unknown>[]>([]);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  // 대시보드 추가 다이얼로그 상태 (#97)
+  const [addToDashboardOpen, setAddToDashboardOpen] = useState(false);
   const [saveForm, setSaveForm] = useState({
     name: '',
     description: '',
@@ -645,6 +760,22 @@ export default function ChartBuilderPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* 대시보드 추가 (#97) — 차트가 저장된 상태에서만 활성화.
+            저장 안 된 차트는 chartId가 없어 위젯으로 추가 불가. */}
+        {chartId && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setAddToDashboardOpen(true)}
+            disabled={isDirty}
+            title={isDirty ? '저장 후 대시보드에 추가할 수 있습니다' : '대시보드에 추가'}
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            대시보드에 추가
+          </Button>
+        )}
+
         <Button
           variant="outline"
           size="sm"
@@ -779,6 +910,16 @@ export default function ChartBuilderPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 대시보드에 추가 다이얼로그 (#97) */}
+      {chartId && (
+        <AddToDashboardDialog
+          open={addToDashboardOpen}
+          onOpenChange={setAddToDashboardOpen}
+          chartId={chartId}
+          chartType={chartType}
+        />
+      )}
 
       {/* Save Dialog */}
       <SaveDialog
