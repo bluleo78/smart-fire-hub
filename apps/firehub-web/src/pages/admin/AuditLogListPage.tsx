@@ -313,7 +313,7 @@ export default function AuditLogListPage() {
         </Select>
 
         <Select value={actionType || 'all'} onValueChange={handleFilterChange(setActionType)}>
-          <SelectTrigger className="w-[140px]">
+          <SelectTrigger className="w-[140px]" aria-label="액션 유형 필터">
             <SelectValue placeholder="액션 유형" />
           </SelectTrigger>
           <SelectContent>
@@ -325,7 +325,7 @@ export default function AuditLogListPage() {
         </Select>
 
         <Select value={resource || 'all'} onValueChange={handleFilterChange(setResource)}>
-          <SelectTrigger className="w-[140px]">
+          <SelectTrigger className="w-[140px]" aria-label="리소스 필터">
             <SelectValue placeholder="리소스" />
           </SelectTrigger>
           <SelectContent>
@@ -337,7 +337,7 @@ export default function AuditLogListPage() {
         </Select>
 
         <Select value={result || 'all'} onValueChange={handleFilterChange(setResult)}>
-          <SelectTrigger className="w-[120px]">
+          <SelectTrigger className="w-[120px]" aria-label="결과 필터">
             <SelectValue placeholder="결과" />
           </SelectTrigger>
           <SelectContent>

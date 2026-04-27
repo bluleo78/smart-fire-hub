@@ -491,6 +491,21 @@ test.describe('감사 로그 페이지', () => {
     await expect(row.getByRole('cell', { name: 'unknown_resource', exact: true })).toBeVisible();
   });
 
+  /**
+   * 이슈 #110: 액션 유형/리소스/결과 SelectTrigger의 aria-label 누락 회귀 방지.
+   * - 사용자 필터만 aria-label이 있고 나머지 3개는 placeholder만 있어 스크린리더 컨텍스트 모호.
+   */
+  test('액션/리소스/결과 필터 SelectTrigger에 aria-label이 부착된다 (#110)', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page);
+    await page.goto('/admin/audit-logs');
+
+    // 4개 필터 모두 aria-label로 식별 가능해야 함
+    await expect(page.getByLabel('사용자 필터')).toBeVisible();
+    await expect(page.getByLabel('액션 유형 필터')).toBeVisible();
+    await expect(page.getByLabel('리소스 필터')).toBeVisible();
+    await expect(page.getByLabel('결과 필터')).toBeVisible();
+  });
+
   test('다이얼로그 닫기 버튼 클릭 시 다이얼로그가 닫힌다', async ({ authenticatedPage: page }) => {
     await setupAuditLogMocks(page, 1);
     await page.goto('/admin/audit-logs');
