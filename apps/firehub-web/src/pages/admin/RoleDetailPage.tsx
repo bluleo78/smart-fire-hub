@@ -149,7 +149,8 @@ export default function RoleDetailPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/admin/roles')}>
+        {/* 역할 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102) */}
+        <Button variant="ghost" size="icon" onClick={() => navigate('/admin/roles')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 상세</h1>

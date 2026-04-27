@@ -167,7 +167,15 @@ export default function DatasetDetailPage() {
       <div>
         {/* Header with name and favorite */}
         <div className="flex items-start gap-3">
-          <Button variant="ghost" size="icon" className="mt-0.5 flex-shrink-0" onClick={() => navigate('/data/datasets')}>
+          {/* 데이터셋 목록으로 돌아가는 뒤로가기 버튼 — 스크린리더/마우스 사용자 모두를 위해 aria-label·title 명시 (#102) */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="mt-0.5 flex-shrink-0"
+            onClick={() => navigate('/data/datasets')}
+            aria-label="목록으로 돌아가기"
+            title="목록으로 돌아가기"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <button
