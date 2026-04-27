@@ -30,7 +30,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuditLogs } from '@/hooks/queries/useAuditLogs';
 import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
-import { formatDateTime } from '@/lib/formatters';
+import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
 /** 액션 유형 옵션 목록 */
@@ -119,7 +119,7 @@ function AuditLogDetailDialog({
             </div>
             <div>
               <p className="text-muted-foreground mb-1 text-xs">IP 주소</p>
-              <p>{log.ipAddress ?? '-'}</p>
+              <p title={log.ipAddress ?? undefined}>{formatIpAddress(log.ipAddress)}</p>
             </div>
           </div>
 
@@ -374,8 +374,11 @@ export default function AuditLogListPage() {
                       {log.result === 'SUCCESS' ? '성공' : '실패'}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {log.ipAddress ?? '-'}
+                  <TableCell
+                    className="text-sm text-muted-foreground"
+                    title={log.ipAddress ?? undefined}
+                  >
+                    {formatIpAddress(log.ipAddress)}
                   </TableCell>
                 </TableRow>
               ))
