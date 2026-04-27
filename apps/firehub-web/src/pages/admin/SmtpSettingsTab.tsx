@@ -57,7 +57,7 @@ export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps 
     });
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm(values);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setOriginal(values);
   }, [settings]);
 

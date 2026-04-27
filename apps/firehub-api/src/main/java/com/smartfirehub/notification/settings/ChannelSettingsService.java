@@ -1,14 +1,22 @@
 package com.smartfirehub.notification.settings;
 
 import com.smartfirehub.notification.ChannelType;
+import com.smartfirehub.notification.DeliveryContext;
+import com.smartfirehub.notification.DeliveryResult;
+import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
 import com.smartfirehub.notification.repository.UserChannelPreferenceRepository;
+import com.smartfirehub.notification.service.ChannelRegistry;
 import com.smartfirehub.notification.settings.dto.ChannelSettingResponse;
+import com.smartfirehub.notification.settings.dto.ChannelTestResult;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 /**
@@ -29,14 +37,17 @@ public class ChannelSettingsService {
   private final UserChannelBindingRepository bindingRepo;
   private final UserChannelPreferenceRepository preferenceRepo;
   private final UserRepository userRepository;
+  private final ChannelRegistry channelRegistry;
 
   public ChannelSettingsService(
       UserChannelBindingRepository bindingRepo,
       UserChannelPreferenceRepository preferenceRepo,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      ChannelRegistry channelRegistry) {
     this.bindingRepo = bindingRepo;
     this.preferenceRepo = preferenceRepo;
     this.userRepository = userRepository;
+    this.channelRegistry = channelRegistry;
   }
 
   /**
@@ -183,5 +194,83 @@ public class ChannelSettingsService {
       }
       // binding이 없으면 no-op (이미 해제된 상태)
     }
+  }
+
+  /**
+   * 채널 테스트 발송 — 사용자가 /settings/channels 페이지에서 "테스트 발송" 버튼을 눌렀을 때 호출.
+   *
+   * <p>outbox 큐를 거치지 않고 ChannelRegistry에서 해당 채널을 직접 lookup하여 {@code Channel.deliver()}로
+   * 동기 발송한다. 결과는 success/message 형태로 즉시 반환되어 토스트로 표시된다.
+   *
+   * <ul>
+   *   <li>CHAT: 항상 활성 — 별도 테스트 불필요. IllegalArgumentException으로 거부 (400).
+   *   <li>SLACK/KAKAO: 활성 binding이 없으면 success=false 반환 (사용자에게 "연동이 필요합니다" 안내).
+   *   <li>EMAIL: 사용자 계정 이메일로 실제 테스트 메일 1통 발송.
+   * </ul>
+   *
+   * @param userId 테스트 발송을 요청한 사용자 ID
+   * @param channelType 테스트 대상 채널
+   * @return 발송 결과 (성공/실패 + 사유 메시지)
+   * @throws IllegalArgumentException CHAT 채널은 테스트 발송 불가
+   */
+  public ChannelTestResult testChannel(long userId, ChannelType channelType) {
+    if (channelType == ChannelType.CHAT) {
+      throw new IllegalArgumentException("CHAT 채널은 항상 활성 상태이며 테스트 발송이 필요하지 않습니다.");
+    }
+
+    // OAuth 채널은 binding 미연결 시 즉시 실패 응답 (Channel.deliver()까지 가지 않고 사용자에게 명확한 안내)
+    Optional<UserChannelBinding> binding = bindingRepo.findActive(userId, channelType);
+    if (channelType == ChannelType.KAKAO || channelType == ChannelType.SLACK) {
+      if (binding.isEmpty()) {
+        return new ChannelTestResult(false, "채널 연동이 필요합니다. 먼저 '연동하기' 버튼으로 계정을 연결하세요.");
+      }
+    }
+
+    // 테스트 페이로드 — 사용자에게 발송됨이 명확하게 보이도록 시간 정보 포함
+    String now = java.time.LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+    Payload testPayload =
+        new Payload(
+            Payload.PayloadType.STANDARD,
+            "🔔 Smart Fire Hub 테스트 알림",
+            "이 메시지는 채널 연결 상태를 확인하기 위한 테스트 발송입니다. (" + now + ")",
+            List.of(),
+            List.of(),
+            List.of(),
+            Map.of("test", true),
+            Map.of());
+
+    // 수신 주소 결정 — EMAIL은 계정 이메일, 그 외는 binding이 처리
+    String recipientAddress = null;
+    if (channelType == ChannelType.EMAIL) {
+      recipientAddress = userRepository.findById(userId).map(u -> u.email()).orElse(null);
+      if (recipientAddress == null || recipientAddress.isBlank()) {
+        return new ChannelTestResult(false, "수신 이메일 주소를 확인할 수 없습니다.");
+      }
+    }
+
+    DeliveryContext ctx =
+        new DeliveryContext(
+            // outboxId — 테스트 발송은 outbox에 행을 만들지 않으므로 음수 sentinel 사용 (로그 추적용)
+            -System.currentTimeMillis(),
+            UUID.randomUUID(),
+            userId,
+            recipientAddress,
+            binding,
+            testPayload);
+
+    DeliveryResult result;
+    try {
+      result = channelRegistry.get(channelType).deliver(ctx);
+    } catch (RuntimeException e) {
+      return new ChannelTestResult(false, "테스트 발송 중 오류: " + e.getMessage());
+    }
+
+    return switch (result) {
+      case DeliveryResult.Sent ignored -> new ChannelTestResult(true, "테스트 메시지가 발송되었습니다.");
+      case DeliveryResult.TransientFailure tf ->
+          new ChannelTestResult(false, "발송 실패 (재시도 가능): " + tf.reason());
+      case DeliveryResult.PermanentFailure pf ->
+          new ChannelTestResult(false, "발송 실패: " + pf.details());
+    };
   }
 }

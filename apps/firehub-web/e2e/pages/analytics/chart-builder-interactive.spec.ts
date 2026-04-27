@@ -1,6 +1,6 @@
 import { createQueryResult } from '../../factories/analytics.factory';
-import { mockApi } from '../../fixtures/api-mock';
 import { setupNewChartBuilderMocks } from '../../fixtures/analytics.fixture';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**

@@ -4,6 +4,7 @@ import {
   type ChannelType,
   disconnectChannel,
   getChannelSettings,
+  testChannel,
   updateChannelPreference,
 } from '../../api/channels';
 
@@ -47,5 +48,18 @@ export function useDisconnectChannelMutation() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEY });
     },
+  });
+}
+
+/**
+ * 채널 테스트 발송 뮤테이션 훅
+ * POST /api/v1/channels/settings/{channel}/test
+ *
+ * 응답은 200 OK이지만 success=false인 경우가 있으므로, 호출자가 응답을 검사해
+ * 토스트(성공/실패)를 분기해야 한다 — SMTP 테스트와 동일한 처리 패턴.
+ */
+export function useTestChannelMutation() {
+  return useMutation({
+    mutationFn: (channel: ChannelType) => testChannel(channel),
   });
 }

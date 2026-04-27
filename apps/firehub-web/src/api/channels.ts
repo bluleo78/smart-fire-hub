@@ -46,3 +46,20 @@ export async function disconnectChannel(channel: ChannelType) {
 export async function getOAuthUrl(path: string) {
   return client.get<{ url: string }>(path.replace('/api/v1', ''));
 }
+
+/** 채널 테스트 발송 응답 — 백엔드 ChannelTestResult DTO와 일치 */
+export interface ChannelTestResponse {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * 채널 테스트 발송
+ * POST /api/v1/channels/settings/{channel}/test
+ *
+ * 200 OK + success: true/false 형태로 반환된다.
+ * SMTP 테스트(/admin/settings 이메일 탭)와 동일한 응답 형태로 통일.
+ */
+export async function testChannel(channel: ChannelType) {
+  return client.post<ChannelTestResponse>(`/channels/settings/${channel}/test`);
+}

@@ -3,6 +3,7 @@ package com.smartfirehub.notification.settings;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.settings.dto.ChannelPreferenceRequest;
 import com.smartfirehub.notification.settings.dto.ChannelSettingResponse;
+import com.smartfirehub.notification.settings.dto.ChannelTestResult;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -80,5 +82,25 @@ public class ChannelSettingsController {
     ChannelType channelType = ChannelType.valueOf(channel.toUpperCase());
     channelSettingsService.disconnectBinding(userId, channelType);
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * 채널 테스트 발송.
+   *
+   * <p>사용자가 /settings/channels 페이지의 채널 카드에서 "테스트 발송" 버튼을 누르면 호출. 해당 채널로 즉시 동기 발송하여
+   * 결과(success/message)를 반환한다. SMTP 테스트 엔드포인트와 동일한 응답 형태로 프론트엔드 토스트 처리 로직을 통일한다.
+   *
+   * <p>발송 자체가 실패해도 200 OK + {@code success: false}로 반환 (네트워크 오류와 구분 — 사용자에게 사유 안내).
+   *
+   * @param channel URL 경로의 채널 이름 (대소문자 무관). CHAT은 400 (테스트 불필요).
+   * @param authentication 인증 객체
+   * @return 발송 결과
+   */
+  @PostMapping("/{channel}/test")
+  public ResponseEntity<ChannelTestResult> testChannel(
+      @PathVariable("channel") String channel, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    ChannelType channelType = ChannelType.valueOf(channel.toUpperCase());
+    return ResponseEntity.ok(channelSettingsService.testChannel(userId, channelType));
   }
 }

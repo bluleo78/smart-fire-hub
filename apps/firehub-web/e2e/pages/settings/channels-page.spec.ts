@@ -231,6 +231,101 @@ test.describe('채널 설정 페이지', () => {
    * - 일반 채팅 버블(MessageSquare)이 아닌 카카오 브랜드 SVG 아이콘이 렌더링되어야 함
    * - 아이콘 컨테이너 배경이 카카오 브랜드 색상(#FEE500)이어야 함
    */
+  /**
+   * 회귀 테스트: 채널별 "테스트 발송" 버튼이 ChannelCard에 추가되어야 한다 (#85)
+   * - CHAT 카드에는 버튼이 없어야 함 (항상 활성 — 테스트 불필요)
+   * - EMAIL/KAKAO/SLACK 카드에는 버튼이 표시되어야 함
+   * - 미연결/재인증 필요 상태에서는 disabled
+   */
+  test('CHAT 카드에는 "테스트 발송" 버튼이 없다 (#85)', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+    await expect(page.getByText('앱 알림', { exact: true })).toBeVisible();
+
+    // CHAT 카드의 영역 내부에는 테스트 발송 버튼이 없어야 한다
+    const chatCard = page.locator('[data-slot="card"]', { hasText: '앱 알림' }).first();
+    await expect(chatCard.getByRole('button', { name: '테스트 발송' })).toHaveCount(0);
+  });
+
+  test('EMAIL 연결됨 — "테스트 발송" 버튼이 활성 상태로 표시된다 (#85)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+
+    const emailCard = page.locator('[data-slot="card"]', { hasText: '이메일' }).first();
+    const testButton = emailCard.getByRole('button', { name: '테스트 발송' });
+    await expect(testButton).toBeVisible();
+    await expect(testButton).toBeEnabled();
+  });
+
+  test('KAKAO 미연결 — "테스트 발송" 버튼은 disabled (#85)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+
+    const kakaoCard = page.locator('[data-slot="card"]', { hasText: '카카오 알림톡' }).first();
+    const testButton = kakaoCard.getByRole('button', { name: '테스트 발송' });
+    await expect(testButton).toBeVisible();
+    await expect(testButton).toBeDisabled();
+  });
+
+  test('SLACK 재인증 필요 — "테스트 발송" 버튼은 disabled (#85)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+
+    const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+    const testButton = slackCard.getByRole('button', { name: '테스트 발송' });
+    await expect(testButton).toBeVisible();
+    await expect(testButton).toBeDisabled();
+  });
+
+  test('EMAIL 테스트 발송 클릭 → POST /channels/settings/EMAIL/test 호출 + 성공 토스트 (#85)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    const postCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/channels/settings/EMAIL/test',
+      { success: true, message: '테스트 메시지가 발송되었습니다.' },
+      { capture: true, status: 200 },
+    );
+
+    await page.goto('/settings/channels');
+    const emailCard = page.locator('[data-slot="card"]', { hasText: '이메일' }).first();
+    await emailCard.getByRole('button', { name: '테스트 발송' }).click();
+
+    // 백엔드 호출 검증
+    const req = await postCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/channels/settings/EMAIL/test');
+
+    // 성공 토스트 검증
+    await expect(page.getByText('이메일 테스트 발송 성공')).toBeVisible();
+  });
+
+  test('EMAIL 테스트 발송 — 백엔드 success=false → 실패 토스트 표시 (#85)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/channels/settings/EMAIL/test',
+      { success: false, message: 'SMTP 호스트 미설정' },
+      { status: 200 },
+    );
+
+    await page.goto('/settings/channels');
+    const emailCard = page.locator('[data-slot="card"]', { hasText: '이메일' }).first();
+    await emailCard.getByRole('button', { name: '테스트 발송' }).click();
+
+    await expect(page.getByText(/테스트 발송 실패.*SMTP 호스트 미설정/)).toBeVisible();
+  });
+
   test('KAKAO 카드 아이콘 컨테이너에 카카오 브랜드 배경색이 적용된다', async ({
     authenticatedPage: page,
   }) => {

@@ -1,4 +1,4 @@
-import { Bell, Mail } from 'lucide-react';
+import { Bell, Mail, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
 import type { ChannelSetting, ChannelType } from '../../../api/channels';
@@ -31,6 +31,7 @@ import {
 } from '../../../components/ui/tooltip';
 import {
   useDisconnectChannelMutation,
+  useTestChannelMutation,
   useUpdateChannelPreferenceMutation,
 } from '../../../hooks/queries/useChannelSettings';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
@@ -151,9 +152,28 @@ export function ChannelCard({ setting }: ChannelCardProps) {
 
   const updatePreference = useUpdateChannelPreferenceMutation();
   const disconnect = useDisconnectChannelMutation();
+  const testSend = useTestChannelMutation();
 
   const isChatChannel = channel === 'CHAT';
   const isOAuthChannel = channel === 'KAKAO' || channel === 'SLACK';
+
+  /**
+   * 테스트 발송 핸들러 — /admin/settings 이메일 탭(SmtpSettingsTab)과 동일한 처리 패턴.
+   * 200 OK라도 백엔드 success=false면 실패 토스트로 분기 (네트워크 오류와 사용자 사유 분리).
+   */
+  const handleTestSend = () => {
+    testSend.mutate(channel, {
+      onSuccess: (res) => {
+        const data = res.data;
+        if (data?.success === false) {
+          toast.error(`테스트 발송 실패: ${data.message ?? '알 수 없는 오류'}`);
+        } else {
+          toast.success(`${label} 테스트 발송 성공`);
+        }
+      },
+      onError: () => toast.error('테스트 발송에 실패했습니다.'),
+    });
+  };
 
   const handleToggle = (checked: boolean) => {
     updatePreference.mutate(
@@ -235,6 +255,26 @@ export function ChannelCard({ setting }: ChannelCardProps) {
           <p className="text-xs text-muted-foreground truncate">
             {displayAddress}
           </p>
+        )}
+
+        {/* 액션 버튼 영역 (테스트 발송 + 연동/해제) */}
+        {!isChatChannel && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/*
+              테스트 발송 버튼 — EMAIL/KAKAO/SLACK 공통 (이슈 #85)
+              /admin/settings 이메일 탭과 동일한 패턴 — 채널 연결 상태를 사용자가 사전에 검증할 수 있도록 한다.
+              미연결 또는 재인증 필요 상태에서는 disabled (백엔드 호출해도 실패할 것이 자명).
+            */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleTestSend}
+              disabled={!connected || needsReauth || testSend.isPending}
+            >
+              <Send className="h-3.5 w-3.5" />
+              {testSend.isPending ? '발송 중...' : '테스트 발송'}
+            </Button>
+          </div>
         )}
 
         {/* OAuth 채널 액션 버튼 */}

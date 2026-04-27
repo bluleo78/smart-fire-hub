@@ -38,10 +38,10 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
       const dir = activePageIndex > prevIndexRef.current ? 'left' : 'right';
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDirection(dir);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setDisplayIndex(activePageIndex);
       prevIndexRef.current = activePageIndex;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       const timer = setTimeout(() => setDirection('none'), 350);
       return () => clearTimeout(timer);
     }
