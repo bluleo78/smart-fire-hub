@@ -142,6 +142,48 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     clearSelection();
   }, [clearSelection]);
 
+  // 선택된 행을 클라이언트에서 CSV로 변환해 다운로드한다.
+  // 이유: 백엔드 다운로드 엔드포인트는 전체/검색 결과 단위라 "선택된 N개"만 추출하는
+  // 경로가 없다. 이미 메모리에 있는 행을 RFC 4180 규칙(쌍따옴표/콤마/개행 escape)에 맞춰
+  // 직렬화하고 Blob으로 즉시 다운로드한다.
+  const handleExportSelected = useCallback(() => {
+    if (selectedRowIds.size === 0) return;
+    const selectedRows = allRows.filter((row) => selectedRowIds.has(row['id'] as number));
+    if (selectedRows.length === 0) {
+      toast.error('선택된 행을 찾을 수 없습니다.');
+      return;
+    }
+
+    // CSV 셀 escape: 쌍따옴표, 콤마, 개행 포함 시 쌍따옴표로 감싸고 내부 쌍따옴표는 두 번
+    const escapeCell = (value: unknown): string => {
+      if (value === null || value === undefined) return '';
+      const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      if (/[",\r\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const headerRow = columns.map((col) => escapeCell(col.displayName || col.columnName)).join(',');
+    const dataRows = selectedRows.map((row) =>
+      columns.map((col) => escapeCell(row[col.columnName ?? ''])).join(',')
+    );
+    // BOM 추가로 Excel에서 UTF-8 한글 깨짐 방지
+    const csv = '﻿' + [headerRow, ...dataRows].join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    link.href = url;
+    link.download = `${dataset.name || 'dataset'}_selected_${ts}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success(`${selectedRows.length}개 행을 CSV로 내보냈습니다.`);
+  }, [selectedRowIds, allRows, columns, dataset.name]);
+
   const handleDeleteConfirm = useCallback(() => {
     const ids = Array.from(selectedRowIds);
     deleteRows.mutate(ids, {
@@ -190,6 +232,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
       <SelectionActionBar
         selectedCount={selectedCount}
         onDeleteSelected={() => setDeleteDialogOpen(true)}
+        onExportSelected={handleExportSelected}
+        onClearSelection={clearSelection}
       />
 
       {isLoading ? (
