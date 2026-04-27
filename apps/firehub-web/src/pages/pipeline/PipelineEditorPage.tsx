@@ -3,6 +3,7 @@ import { useEffect, useMemo,useRef, useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { Breadcrumb } from '@/components/layout/Breadcrumb';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -194,6 +195,15 @@ export default function PipelineEditorPage() {
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">
       <h1 className="sr-only">{headingText}</h1>
+      {/* 상위 경로 표시용 breadcrumb (#101) — 캔버스가 화면을 가득 채우는 에디터에서도 위치 인지를 돕는다 */}
+      <div className="px-4 pt-3">
+        <Breadcrumb
+          items={[
+            { label: '파이프라인', to: '/pipelines' },
+            { label: headingText },
+          ]}
+        />
+      </div>
       {/* Header */}
       <EditorHeader
         state={state}

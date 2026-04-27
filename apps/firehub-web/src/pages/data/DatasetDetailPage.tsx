@@ -3,6 +3,7 @@ import { useEffect,useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { Breadcrumb } from '../../components/layout/Breadcrumb';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -165,6 +166,15 @@ export default function DatasetDetailPage() {
   return (
     <div className="space-y-6">
       <div>
+        {/* 상위 경로 표시용 breadcrumb (#101) — 사용자가 현재 위치를 인지하고 상위 목록으로 빠르게 이동할 수 있도록 함 */}
+        <Breadcrumb
+          className="mb-3"
+          items={[
+            { label: '데이터', to: '/data/datasets' },
+            { label: '데이터셋', to: '/data/datasets' },
+            { label: dataset.name },
+          ]}
+        />
         {/* Header with name and favorite */}
         <div className="flex items-start gap-3">
           {/* 데이터셋 목록으로 돌아가는 뒤로가기 버튼 — 스크린리더/마우스 사용자 모두를 위해 aria-label·title 명시 (#102) */}
