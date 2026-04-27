@@ -95,8 +95,11 @@ export async function exportChartAsPng(
   const width = rect.width || 800;
   const height = rect.height || 400;
 
-  // base64 인코딩으로 data URL 생성 (한글 등 멀티바이트 안전)
-  const base64 = window.btoa(unescape(encodeURIComponent(serialized)));
+  // base64 인코딩으로 data URL 생성 (한글 등 멀티바이트 안전 — TextEncoder 사용)
+  const bytes = new TextEncoder().encode(serialized);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = window.btoa(binary);
   const dataUrl = `data:image/svg+xml;base64,${base64}`;
 
   // SVG → Image → Canvas → PNG Blob
