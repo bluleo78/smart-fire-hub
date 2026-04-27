@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy } from 'lucide-react';
+import { ArrowLeft, Copy, HelpCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -22,6 +22,12 @@ import {
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip';
 import {
   useApiConnection,
   useDeleteApiConnection,
@@ -434,14 +440,54 @@ export default function ApiConnectionDetailPage() {
                     <span>{mc.placement === 'query' ? mc.paramName : mc.headerName}</span>
                   </div>
                   <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-                    <span className="text-muted-foreground">키 값</span>
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      키 값
+                      {/* (#92) 마스킹 정책 안내 — 평문 노출은 보안상 차단되며 변경 시 재입력 필요. */}
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="키 값 마스킹 정책 안내"
+                              data-testid="masked-key-help"
+                              className="text-muted-foreground/70 hover:text-foreground"
+                            >
+                              <HelpCircle className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[260px] text-xs">
+                            보안 정책상 마지막 4자리만 표시됩니다. 전체 키 확인이 필요하면 "인증 정보 변경"으로 재입력하세요.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </span>
                     <span className="font-mono">{mc.apiKey ?? '****'}</span>
                   </div>
                 </>
               )}
               {connection.authType === 'BEARER' && (
                 <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-                  <span className="text-muted-foreground">토큰</span>
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    토큰
+                    {/* (#92) 마스킹 정책 안내 — Bearer 토큰도 동일 정책 적용. */}
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="토큰 마스킹 정책 안내"
+                            data-testid="masked-token-help"
+                            className="text-muted-foreground/70 hover:text-foreground"
+                          >
+                            <HelpCircle className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[260px] text-xs">
+                          보안 정책상 마지막 4자리만 표시됩니다. 전체 토큰 확인이 필요하면 "인증 정보 변경"으로 재입력하세요.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </span>
                   <span className="font-mono">{mc.token ?? '****'}</span>
                 </div>
               )}
