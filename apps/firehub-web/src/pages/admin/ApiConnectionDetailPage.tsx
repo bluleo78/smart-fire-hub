@@ -99,7 +99,8 @@ export default function ApiConnectionDetailPage() {
           name: name.trim(),
           description: description.trim() || undefined,
           baseUrl: baseUrl.trim() || undefined,
-          healthCheckPath: healthCheckPath.trim() || undefined,
+          // 빈 문자열도 그대로 전달해야 backend 가 명시적 clear 로 인식한다 (#115)
+          healthCheckPath: healthCheckPath.trim(),
         },
       });
       toast.success('연결 정보가 업데이트되었습니다.');

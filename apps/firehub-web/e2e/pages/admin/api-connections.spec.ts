@@ -377,6 +377,35 @@ test.describe('API 연결 페이지', () => {
     });
   });
 
+  test('헬스체크 경로 비우고 저장 → PUT payload 에 빈 문자열 전달 (#115)', async ({
+    authenticatedPage: page,
+  }) => {
+    // backend 가 빈 문자열을 명시적 clear sentinel 로 인식하므로 frontend 도 빈 문자열을 그대로 보내야 한다.
+    // 기존 버그: `trim() || undefined` 가 빈 값을 undefined 로 만들어 필드가 omit 되고 backend 는 미변경으로 해석.
+    await setupApiConnectionDetailMocks(page, 1);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      { id: 1, name: '기상청 ASOS', authType: 'API_KEY' },
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 헬스체크 경로 입력란을 비운다 (placeholder 또는 label 기준 셀렉터 — 검증 가능한 안정 셀렉터 사용)
+    const hcInput = page.getByPlaceholder('/health (선택)');
+    await hcInput.clear();
+
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    // 빈 문자열로 명시적 전송되어야 backend 가 SQL NULL 로 clear 한다
+    expect(req.payload).toMatchObject({ healthCheckPath: '' });
+  });
+
   test('인증 유형 API_KEY + query placement → paramName PUT payload 검증', async ({
     authenticatedPage: page,
   }) => {
