@@ -176,7 +176,13 @@ public class ApiConnectionRepository {
     if (authType != null) step = step.set(AC_AUTH_TYPE, authType);
     if (encryptedAuthConfig != null) step = step.set(AC_AUTH_CONFIG, encryptedAuthConfig);
     if (baseUrl != null) step = step.set(AC_BASE_URL, baseUrl);
-    if (healthCheckPath != null) step = step.set(AC_HEALTH_CHECK_PATH, healthCheckPath);
+    // healthCheckPath: null=미변경, ""=명시적 clear(SQL NULL), 그 외=값 설정 (#115)
+    if (healthCheckPath != null) {
+      step =
+          healthCheckPath.isEmpty()
+              ? step.setNull(AC_HEALTH_CHECK_PATH)
+              : step.set(AC_HEALTH_CHECK_PATH, healthCheckPath);
+    }
 
     step.where(AC_ID.eq(id)).execute();
   }

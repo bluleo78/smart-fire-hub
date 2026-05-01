@@ -22,6 +22,17 @@ class UrlUtilsTest {
     assertEquals("https://a.com", UrlUtils.joinUrl("https://a.com/", null));
   }
 
+  /** (#114) "/" 단독은 의미 없는 trailing slash 를 만들지 않도록 빈 path 와 동일하게 처리한다. */
+  @Test
+  void joinUrl_rootSlashPath_returnsBaseUrlWithoutTrailingSlash() {
+    assertEquals(
+        "https://apis.data.go.kr/1360000/AsosDalyInfoService/getWthrDataList",
+        UrlUtils.joinUrl(
+            "https://apis.data.go.kr/1360000/AsosDalyInfoService/getWthrDataList", "/"));
+    assertEquals("https://a.com", UrlUtils.joinUrl("https://a.com", "/"));
+    assertEquals("https://a.com", UrlUtils.joinUrl("https://a.com/", "/"));
+  }
+
   @Test
   void normalizeBaseUrl_removesTrailingSlash() {
     assertEquals("https://a.com", UrlUtils.normalizeBaseUrl("https://a.com/"));

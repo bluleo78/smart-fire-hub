@@ -195,6 +195,55 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(decrypted.get("token")).isEqualTo("new-token-bbbb");
   }
 
+  /**
+   * (#115) healthCheckPath 를 빈 문자열로 update 하면 DB 의 기존 값이 NULL 로 clear 되어야 한다. 기존에는 service 가 ""→null 로
+   * 정규화하고 repository 가 null 을 "미변경"으로 해석해서 clear 가 불가능했다.
+   */
+  @Test
+  void update_emptyHealthCheckPath_clearsToNull() {
+    CreateApiConnectionRequest createReq =
+        new CreateApiConnectionRequest(
+            "HC Clear",
+            null,
+            "API_KEY",
+            Map.of("apiKey", "k"),
+            "https://hc-clear.example.com",
+            "/health");
+    ApiConnectionResponse created = apiConnectionService.create(createReq, testUserId);
+    assertThat(created.healthCheckPath()).isEqualTo("/health");
+
+    // 빈 문자열로 update → clear
+    UpdateApiConnectionRequest clearReq =
+        new UpdateApiConnectionRequest(null, null, null, null, null, "");
+    apiConnectionService.update(created.id(), clearReq);
+
+    ApiConnectionResponse afterClear = apiConnectionService.getById(created.id());
+    assertThat(afterClear.healthCheckPath()).isNull();
+  }
+
+  /** (#115) healthCheckPath 가 null 인 update 는 기존 값을 유지해야 한다 (PATCH semantics). */
+  @Test
+  void update_nullHealthCheckPath_preservesExisting() {
+    CreateApiConnectionRequest createReq =
+        new CreateApiConnectionRequest(
+            "HC Keep",
+            null,
+            "API_KEY",
+            Map.of("apiKey", "k"),
+            "https://hc-keep.example.com",
+            "/health");
+    ApiConnectionResponse created = apiConnectionService.create(createReq, testUserId);
+
+    // healthCheckPath=null → 미변경
+    UpdateApiConnectionRequest keepReq =
+        new UpdateApiConnectionRequest("Renamed", null, null, null, null, null);
+    apiConnectionService.update(created.id(), keepReq);
+
+    ApiConnectionResponse afterKeep = apiConnectionService.getById(created.id());
+    assertThat(afterKeep.name()).isEqualTo("Renamed");
+    assertThat(afterKeep.healthCheckPath()).isEqualTo("/health");
+  }
+
   @Test
   void delete_removesConnection() {
     Map<String, String> authConfig = Map.of("apiKey", "delete-me-key-9999");

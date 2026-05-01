@@ -370,11 +370,19 @@ public class ApiConnectionService {
    * @throws ApiConnectionException URL이 유효하지 않거나 내부 네트워크로의 요청인 경우
    */
   /**
-   * healthCheckPath를 정규화한다. 빈 문자열이나 공백만 있는 값은 null로 치환하여 스케줄러의 {@code findHealthCheckable} 대상에서
-   * 제외되도록 한다.
+   * healthCheckPath를 정규화한다. (#115)
+   *
+   * <ul>
+   *   <li>{@code null} → null (request 에 필드 미포함 = 미변경)
+   *   <li>빈 문자열/공백 → 빈 문자열 sentinel ("") (사용자가 명시적으로 비움 = 명시적 clear)
+   *   <li>그 외 → 원본 값
+   * </ul>
+   *
+   * <p>repository.update 가 sentinel "" 을 보면 컬럼을 SQL NULL 로 설정한다.
    */
   private String normalizeHealthCheckPath(String raw) {
-    if (raw == null || raw.isBlank()) return null;
+    if (raw == null) return null;
+    if (raw.isBlank()) return "";
     return raw;
   }
 
