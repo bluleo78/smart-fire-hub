@@ -476,6 +476,56 @@ class ApiCallPreviewServiceTest {
     assertThat(response.totalExtractedRows()).isEqualTo(1);
   }
 
+  /**
+   * (#113) saved API connection + placement=query: getDecryptedAuthConfig 가 authType 을 함께 반환하므로
+   * Preview 서비스가 paramName=apiKey 를 URL 에 부착해야 한다. 기존에는 authType 누락으로 query 분기 미진입 → 401 발생.
+   */
+  @Test
+  void preview_savedConnection_apiKeyQueryPlacement_appendsServiceKey() {
+    com.smartfirehub.apiconnection.dto.ApiConnectionResponse mockConn =
+        new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
+            7L,
+            "data.go.kr",
+            null,
+            "API_KEY",
+            java.util.Map.of(),
+            "http://localhost:" + wireMock.port(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            1L,
+            null,
+            null);
+    when(apiConnectionService.getById(7L)).thenReturn(mockConn);
+    // 핵심: 실제 운영 코드의 getDecryptedAuthConfig 가 authType 을 합쳐 반환하도록 변경됨
+    when(apiConnectionService.getDecryptedAuthConfig(7L))
+        .thenReturn(
+            java.util.Map.of(
+                "authType", "API_KEY",
+                "placement", "query",
+                "paramName", "serviceKey",
+                "apiKey", "PROD-SECRET-KEY"));
+
+    wireMock.stubFor(
+        get(urlPathEqualTo("/getWthrDataList"))
+            .withQueryParam("serviceKey", equalTo("PROD-SECRET-KEY"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"stnId\":108}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/getWthrDataList", "GET", null, null, null, "$", null, 7L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+  }
+
   // =========================================================================
   // Auth 헤더 적용 검증
   // =========================================================================

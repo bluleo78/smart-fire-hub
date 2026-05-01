@@ -31,6 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * API 연결(ApiConnection) 비즈니스 로직 서비스. Phase 9: baseUrl 정규화/SSRF 검증, 헬스체크(testConnection), slim
@@ -98,7 +99,15 @@ public class ApiConnectionService {
             .findById(id)
             .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
     String encryptedConfig = record.get(field(name("api_connection", "auth_config"), String.class));
-    return decryptToMap(encryptedConfig);
+    Map<String, String> config = decryptToMap(encryptedConfig);
+    // authType 은 별도 컬럼이라 복호화된 Map 에 들어있지 않다. 호출자(Preview/Executor 등)가
+    // authType 으로 분기(API_KEY + placement=query 등)할 수 있도록 함께 합쳐 반환한다. (#113)
+    String authType = record.get(field(name("api_connection", "auth_type"), String.class));
+    if (authType != null) {
+      config = new HashMap<>(config);
+      config.putIfAbsent("authType", authType);
+    }
+    return config;
   }
 
   @Transactional
@@ -163,7 +172,9 @@ public class ApiConnectionService {
   public TestConnectionResponse testConnection(Long id) {
     ApiConnectionResponse conn = getById(id);
     Map<String, String> rawConfig = getDecryptedAuthConfig(id);
-    String url = UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath());
+    String baseUrl = UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath());
+    // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113)
+    String url = applyAuthQueryParams(baseUrl, conn.authType(), rawConfig);
 
     long start = System.currentTimeMillis();
     try {
@@ -218,9 +229,11 @@ public class ApiConnectionService {
     validateAuthType(request.authType());
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
-    String url = UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath);
+    String joinedUrl = UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath);
     Map<String, String> rawConfig =
         request.authConfig() != null ? request.authConfig() : Map.of();
+    // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113)
+    String url = applyAuthQueryParams(joinedUrl, request.authType(), rawConfig);
 
     long start = System.currentTimeMillis();
     try {
@@ -390,14 +403,19 @@ public class ApiConnectionService {
   }
 
   /**
-   * authType과 authConfig를 기반으로 HTTP 인증 헤더를 생성한다. API_KEY: headerName + apiKey, BEARER:
-   * Authorization Bearer.
+   * authType과 authConfig를 기반으로 HTTP 인증 헤더를 생성한다. API_KEY + placement=query 인 경우는 URL query param 으로
+   * 전송해야 하므로 헤더에 포함하지 않는다(applyAuthQueryParams 가 처리). (#113)
    */
   private Map<String, String> buildAuthHeaders(String authType, Map<String, String> config) {
     Map<String, String> headers = new HashMap<>();
     if (config == null) return headers;
 
     if ("API_KEY".equals(authType)) {
+      String placement = config.getOrDefault("placement", "header");
+      if ("query".equals(placement)) {
+        // placement=query 는 URL 에 붙이므로 헤더 미생성
+        return headers;
+      }
       String headerName = config.getOrDefault("headerName", "X-API-Key");
       String apiKey = config.get("apiKey");
       if (apiKey != null) headers.put(headerName, apiKey);
@@ -406,6 +424,23 @@ public class ApiConnectionService {
       if (token != null) headers.put("Authorization", "Bearer " + token);
     }
     return headers;
+  }
+
+  /**
+   * API_KEY + placement=query 인 경우 URL 에 인증 query parameter(예: serviceKey=...) 를 부착해 반환한다. 그 외에는 원본
+   * URL 을 그대로 반환. (#113)
+   */
+  private String applyAuthQueryParams(String url, String authType, Map<String, String> config) {
+    if (config == null || !"API_KEY".equals(authType)) return url;
+    String placement = config.getOrDefault("placement", "header");
+    if (!"query".equals(placement)) return url;
+    String paramName = config.get("paramName");
+    String apiKey = config.get("apiKey");
+    if (paramName == null || paramName.isBlank() || apiKey == null) return url;
+    return UriComponentsBuilder.fromUriString(url)
+        .queryParam(paramName, apiKey)
+        .build(true)
+        .toUriString();
   }
 
   private void validateAuthType(String authType) {
