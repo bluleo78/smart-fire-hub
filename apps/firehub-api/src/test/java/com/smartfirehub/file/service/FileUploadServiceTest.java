@@ -117,8 +117,8 @@ class FileUploadServiceTest extends IntegrationTestBase {
 
   @Test
   void uploadFiles_imageTooLarge_throwsException() {
-    // IMAGE limit is 5MB; create 6MB content
-    byte[] bigContent = new byte[6 * 1024 * 1024];
+    // IMAGE 한도 10MB 초과 케이스로 11MB 사용
+    byte[] bigContent = new byte[11 * 1024 * 1024];
     MockMultipartFile file = new MockMultipartFile("files", "big.png", "image/png", bigContent);
 
     assertThatThrownBy(() -> fileUploadService.uploadFiles(List.of(file), testUserId))
@@ -128,8 +128,8 @@ class FileUploadServiceTest extends IntegrationTestBase {
 
   @Test
   void uploadFiles_textTooLarge_throwsException() {
-    // TEXT limit is 1MB; create 2MB content
-    byte[] bigContent = new byte[2 * 1024 * 1024];
+    // TEXT 한도 10MB 초과 케이스로 11MB 사용
+    byte[] bigContent = new byte[11 * 1024 * 1024];
     MockMultipartFile file = new MockMultipartFile("files", "big.txt", "text/plain", bigContent);
 
     assertThatThrownBy(() -> fileUploadService.uploadFiles(List.of(file), testUserId))

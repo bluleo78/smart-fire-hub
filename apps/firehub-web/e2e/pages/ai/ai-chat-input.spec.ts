@@ -272,11 +272,11 @@ test.describe('ChatInput — 파일 크기 및 개수 제한', () => {
     await openSidePanel(page);
 
     const fileInput = page.locator('input[type="file"]');
-    // TEXT 한도(2MB, 이슈 #41 상향 후) 초과 → toast.error(`...최대 ${formatFileSize(2097152)}`) = "2.0MB" (lines 34, 76-77 커버)
+    // TEXT 한도 10MB 초과 → toast.error("...최대 10.0MB") (formatFileSize MB 분기 커버)
     await fileInput.setInputFiles({
       name: 'large.txt',
       mimeType: 'text/plain',
-      buffer: Buffer.alloc(3 * 1024 * 1024, 'a'),
+      buffer: Buffer.alloc(11 * 1024 * 1024, 'a'),
     });
 
     await expect(page.getByText(/파일이 너무 큽니다/).first()).toBeVisible({ timeout: 3000 });

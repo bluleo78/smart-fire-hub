@@ -69,13 +69,14 @@ public class FileUploadService {
               "DOCUMENT"),
           Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "DATA"));
 
-  // Category size limits in bytes
+  // 카테고리별 첨부 사이즈 제한 (바이트). DATA는 대용량 CSV/XLSX 적재를 위해 256MB까지 허용,
+  // 나머지(IMAGE/PDF/TEXT/DOCUMENT)는 10MB로 통일한다.
   private static final Map<String, Long> CATEGORY_SIZE_LIMITS =
       Map.of(
-          "IMAGE", 5L * 1024 * 1024,
+          "IMAGE", 10L * 1024 * 1024,
           "PDF", 10L * 1024 * 1024,
-          "TEXT", 1L * 1024 * 1024,
-          "DATA", 5L * 1024 * 1024,
+          "TEXT", 10L * 1024 * 1024,
+          "DATA", 256L * 1024 * 1024,
           "DOCUMENT", 10L * 1024 * 1024);
 
   private final DSLContext dsl;

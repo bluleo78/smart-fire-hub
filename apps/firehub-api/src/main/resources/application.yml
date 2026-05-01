@@ -7,8 +7,8 @@ spring:
     baseline-version: 56
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 256MB
+      max-request-size: 256MB
 
 server:
   port: 8080
