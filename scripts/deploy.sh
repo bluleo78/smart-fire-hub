@@ -37,23 +37,23 @@ build_and_push() {
   case $app in
     api)
       log "Building + pushing $app (context: apps/firehub-api/)"
-      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/api:latest" --push apps/firehub-api/
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/api:latest" --push apps/firehub-api/
       ;;
     web)
       log "Building + pushing $app (context: project root)"
-      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/web:latest" -f apps/firehub-web/Dockerfile --push .
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/web:latest" -f apps/firehub-web/Dockerfile --push .
       ;;
     ai-agent)
       log "Building + pushing $app (context: project root)"
-      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile --push .
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile --push .
       ;;
     executor)
       log "Building + pushing $app (context: apps/firehub-executor/)"
-      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
       ;;
     channel)
       log "Building + pushing $app (context: apps/firehub-channel/)"
-      docker buildx build --platform "$PLATFORM" --no-cache -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
       ;;
     *)
       error "Unknown app: $app (valid: api, web, ai-agent, executor, channel)"
@@ -100,8 +100,8 @@ verify_app() {
 
 TARGET=${1:-all}
 
-# Docker 로그인 확인
-if ! docker info 2>/dev/null | grep -q "ghcr.io"; then
+# Docker 로그인 확인 (config.json 직접 확인 — `docker info`가 plugin 응답 대기로 hang 되는 문제 회피)
+if ! grep -q "ghcr.io" "$HOME/.docker/config.json" 2>/dev/null; then
   warn "ghcr.io 로그인이 필요할 수 있습니다"
 fi
 

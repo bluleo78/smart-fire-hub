@@ -1,5 +1,5 @@
 # === Stage 1: Build ===
-FROM eclipse-temurin:21-jdk AS build
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build
 
 ENV GRADLE_OPTS="-Xmx512m"
 
