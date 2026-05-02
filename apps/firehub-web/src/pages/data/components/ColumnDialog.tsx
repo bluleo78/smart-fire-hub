@@ -1,6 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
-import { KeyRound } from 'lucide-react';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -189,25 +188,12 @@ export function ColumnDialog({
             </div>
           )}
 
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="isPrimaryKey"
-              checked={form.watch('isPrimaryKey') ?? false}
-              onCheckedChange={(checked) => {
-                form.setValue('isPrimaryKey', checked as boolean);
-                if (checked) {
-                  form.setValue('isNullable', false);
-                }
-              }}
-              // 데이터가 있어도 PK 토글은 허용한다.
-              // 백엔드(DatasetService.updateColumn)가 NOT NULL · 데이터 유일성 검증과
-              // 복합 unique index 재생성을 처리하며, 위반 시 명확한 예외 메시지를 반환한다.
-            />
-            <Label htmlFor="isPrimaryKey" className="text-sm font-normal cursor-pointer flex items-center gap-1">
-              <KeyRound className="h-3 w-3" />
-              기본 키
-            </Label>
-          </div>
+          {/*
+            기본 키(PK) 토글은 단일 컬럼 편집 다이얼로그에서 제거되었다 (#117).
+            컬럼별 토글은 데이터 보유 시 복합 PK 의 중간 상태가 unique 하지 않을 수 있어
+            UX 적으로 혼란을 유발하므로, "기본 키 일괄 설정" 다이얼로그(PrimaryKeysDialog)
+            에서만 변경하도록 일원화한다.
+          */}
 
           <div className="flex items-center space-x-2">
             <Checkbox
@@ -216,7 +202,10 @@ export function ColumnDialog({
               onCheckedChange={(checked) =>
                 form.setValue('isNullable', checked as boolean)
               }
-              disabled={(mode === 'edit' && hasData) || (form.watch('isPrimaryKey') ?? false)}
+              // NULL 허용 토글은 데이터 존재 여부와 무관하게 허용한다 (#117).
+              // NOT NULL 로 조이려는데 NULL 데이터가 존재하면 백엔드가 거부하고,
+              // ColumnDialog 의 onSubmit 이 토스트로 안내한다. (PK 컬럼은 제외)
+              disabled={mode === 'edit' && (column?.isPrimaryKey ?? false)}
             />
             <Label htmlFor="isNullable" className="text-sm font-normal cursor-pointer">
               NULL 허용

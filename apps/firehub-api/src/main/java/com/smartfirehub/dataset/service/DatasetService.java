@@ -379,13 +379,24 @@ public class DatasetService {
     }
 
     if (request.isNullable() != null && request.isNullable() != column.isNullable()) {
-      if (rowCount > 0) {
-        throw new ColumnModificationException(
-            "Cannot change nullable constraint when dataset has data");
-      }
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
-      dataTableService.setColumnNullable(dataset.tableName(), currentColName, request.isNullable());
+      try {
+        // 데이터 존재 여부와 무관하게 시도하고, DB 가 거부하면 친화적인 메시지로 변환한다.
+        // - NOT NULL → NULL 허용: 항상 안전
+        // - NULL 허용 → NOT NULL: 컬럼에 NULL 값이 있으면 Postgres 가 거부 (jOOQ IntegrityConstraintViolationException)
+        dataTableService.setColumnNullable(
+            dataset.tableName(), currentColName, request.isNullable());
+      } catch (org.jooq.exception.IntegrityConstraintViolationException
+          | org.springframework.dao.DataIntegrityViolationException e) {
+        if (!request.isNullable()) {
+          throw new ColumnModificationException(
+              "NOT NULL 로 변경할 수 없습니다: 컬럼 '"
+                  + currentColName
+                  + "' 에 NULL 값이 존재합니다.");
+        }
+        throw e;
+      }
     }
 
     if (request.isIndexed() != null && request.isIndexed() != column.isIndexed()) {

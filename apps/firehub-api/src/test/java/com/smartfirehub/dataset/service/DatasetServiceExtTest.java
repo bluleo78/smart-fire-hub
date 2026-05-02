@@ -472,14 +472,35 @@ class DatasetServiceExtTest extends IntegrationTestBase {
         .hasMessageContaining("data type");
   }
 
+  // 데이터 존재 여부와 무관하게 NULL 허용 토글을 허용한다 (#117).
+  // NOT NULL 로 조이려는 경우만 컬럼에 NULL 값이 없을 때 성공.
   @Test
-  void updateColumn_changeNullableConstraintWithData_throwsException() {
+  void updateColumn_tightenToNotNull_succeedsWhenNoNullValues() {
     DatasetDetailResponse ds =
         createDatasetWithColumns(
-            "NullableChangeWithData",
-            "nullable_change_with_data_ext",
+            "TightenNotNullOk",
+            "tighten_not_null_ok_ext",
             List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)));
-    dsl.execute("INSERT INTO data.nullable_change_with_data_ext (col1) VALUES ('x')");
+    dsl.execute("INSERT INTO data.tighten_not_null_ok_ext (col1) VALUES ('x')");
+    Long colId = ds.columns().get(0).id();
+
+    datasetService.updateColumn(
+        ds.id(),
+        colId,
+        new UpdateColumnRequest(null, null, null, null, false, false, null, null));
+
+    DatasetDetailResponse refreshed = datasetService.getDatasetById(ds.id(), testUserId);
+    assertThat(refreshed.columns().get(0).isNullable()).isFalse();
+  }
+
+  @Test
+  void updateColumn_tightenToNotNull_failsWhenNullExists() {
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "TightenNotNullFail",
+            "tighten_not_null_fail_ext",
+            List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null)));
+    dsl.execute("INSERT INTO data.tighten_not_null_fail_ext (col1) VALUES (NULL)");
     Long colId = ds.columns().get(0).id();
 
     assertThatThrownBy(
@@ -487,10 +508,28 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                 datasetService.updateColumn(
                     ds.id(),
                     colId,
-                    new UpdateColumnRequest(
-                        null, null, null, null, false /* change to NOT NULL */, false, null, null)))
+                    new UpdateColumnRequest(null, null, null, null, false, false, null, null)))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("nullable");
+        .hasMessageContaining("NULL 값이 존재");
+  }
+
+  @Test
+  void updateColumn_relaxToNullable_succeedsRegardlessOfData() {
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "RelaxToNullable",
+            "relax_to_nullable_ext",
+            List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, false, false, null)));
+    dsl.execute("INSERT INTO data.relax_to_nullable_ext (col1) VALUES ('x')");
+    Long colId = ds.columns().get(0).id();
+
+    datasetService.updateColumn(
+        ds.id(),
+        colId,
+        new UpdateColumnRequest(null, null, null, null, true, false, null, null));
+
+    DatasetDetailResponse refreshed = datasetService.getDatasetById(ds.id(), testUserId);
+    assertThat(refreshed.columns().get(0).isNullable()).isTrue();
   }
 
   @Test

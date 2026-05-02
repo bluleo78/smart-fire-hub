@@ -371,10 +371,8 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByLabel('필드명 *')).toHaveValue('name');
   });
 
-  // 데이터가 있어도 PK 체크박스를 토글할 수 있어야 한다 (#117).
-  // 이전 동작: hasData=true 일 때 PK 체크박스가 disabled.
-  // 현 동작: 백엔드가 NOT NULL · 유일성을 검증하므로 UI 잠금을 해제.
-  test('데이터 보유 데이터셋에서도 PK 체크박스가 활성화되어 있다 (#117)', async ({
+  // ColumnDialog 에서 PK 토글은 제거되었다 — PK 변경은 PrimaryKeysDialog 로 일원화 (#117)
+  test('컬럼 편집 다이얼로그에는 기본 키(PK) 체크박스가 노출되지 않는다 (#117)', async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);
@@ -384,50 +382,63 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await page.getByRole('tab', { name: '필드' }).click();
     await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
 
-    // 비-PK 컬럼(name) 편집 다이얼로그 열기
     const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
     await nameRow.getByRole('button', { name: '컬럼 편집' }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
-    // PK 체크박스가 enabled — rowCount=100(데이터 있음)이어도 잠겨 있지 않다
-    const pkCheckbox = page.getByRole('dialog').getByRole('checkbox', { name: /기본 키/ });
-    await expect(pkCheckbox).toBeEnabled();
-    await expect(pkCheckbox).not.toBeChecked();
+    // PK 체크박스 미노출
+    await expect(page.getByRole('dialog').getByRole('checkbox', { name: /기본 키/ })).toHaveCount(0);
   });
 
-  // PK 변경 PUT 요청에 isPrimaryKey=true 가 포함되어 전송된다 (#117).
-  test('데이터 보유 데이터셋에서 PK 토글 후 저장 시 isPrimaryKey 가 payload 에 담긴다 (#117)', async ({
+  // 데이터 보유 데이터셋에서도 NULL 허용 토글은 활성화되어 있어야 한다 (#117)
+  test('데이터 보유 데이터셋에서 NULL 허용 토글이 활성화되어 있다 (#117)', async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);
 
-    // PUT /api/v1/datasets/5/columns/2 캡처 모킹
+    await page.goto('/data/datasets/5');
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // 비-PK 컬럼(name)
+    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
+    await nameRow.getByRole('button', { name: '컬럼 편집' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+
+    const nullableCheckbox = page.getByRole('dialog').getByRole('checkbox', { name: 'NULL 허용' });
+    await expect(nullableCheckbox).toBeEnabled();
+  });
+
+  // NULL 허용 토글 후 저장 시 isNullable 이 payload 에 담긴다 (#117)
+  test('NULL 허용 변경 후 수정 저장 시 isNullable 이 PUT payload 에 담긴다 (#117)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
     const updateCapture = await mockApi(
       page,
       'PUT',
-      '/api/v1/datasets/5/columns/2',
-      { id: 2, columnName: 'name', displayName: '이름', dataType: 'TEXT',
-        maxLength: null, isNullable: false, isIndexed: false, isPrimaryKey: true,
-        description: null, columnOrder: 1 },
+      '/api/v1/datasets/5/columns/3',
+      { id: 3, columnName: 'amount', displayName: '금액', dataType: 'INTEGER',
+        maxLength: null, isNullable: false, isIndexed: false, isPrimaryKey: false,
+        description: null, columnOrder: 2 },
       { capture: true },
     );
 
     await page.goto('/data/datasets/5');
-    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
     await page.getByRole('tab', { name: '필드' }).click();
     await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
 
-    // name 행의 편집 → PK 체크 → 저장
-    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
-    await nameRow.getByRole('button', { name: '컬럼 편집' }).click();
+    // amount 컬럼은 NULL 허용 → NULL 불허로 토글 후 저장
+    const amountRow = page.getByRole('row').filter({ hasText: 'amount' }).first();
+    await amountRow.getByRole('button', { name: '컬럼 편집' }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
-    await page.getByRole('dialog').getByRole('checkbox', { name: /기본 키/ }).click();
+    await page.getByRole('dialog').getByRole('checkbox', { name: 'NULL 허용' }).click();
     await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
 
-    // PUT payload 에 isPrimaryKey=true 가 담겨 전송되었는지 검증
     const req = await updateCapture.waitForRequest();
-    expect(req.payload).toMatchObject({ isPrimaryKey: true });
+    expect(req.payload).toMatchObject({ isNullable: false });
   });
 
   // 기본 키 일괄 설정 다이얼로그 — 복합 PK 변경 (#117)
