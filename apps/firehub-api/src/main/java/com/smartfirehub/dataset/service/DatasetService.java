@@ -30,6 +30,8 @@ import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
+import org.jooq.exception.IntegrityConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -387,8 +389,7 @@ public class DatasetService {
         // - NULL 허용 → NOT NULL: 컬럼에 NULL 값이 있으면 Postgres 가 거부 (jOOQ IntegrityConstraintViolationException)
         dataTableService.setColumnNullable(
             dataset.tableName(), currentColName, request.isNullable());
-      } catch (org.jooq.exception.IntegrityConstraintViolationException
-          | org.springframework.dao.DataIntegrityViolationException e) {
+      } catch (IntegrityConstraintViolationException | DataIntegrityViolationException e) {
         if (!request.isNullable()) {
           throw new ColumnModificationException(
               "NOT NULL 로 변경할 수 없습니다: 컬럼 '"

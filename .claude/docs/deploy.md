@@ -19,7 +19,7 @@
 - **firehub-api**: Dockerfile 내부에서 `COPY src/ src/` 상대 경로 → context가 `apps/firehub-api/`여야 함
 - **firehub-web/ai-agent**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함
 - **절대로** `docker build -f apps/firehub-api/Dockerfile .`으로 빌드하지 않는다 (소스 누락)
-- 반드시 `--no-cache` 옵션을 사용한다
+- 빌드 캐시는 buildx 가 자동 사용 (525849d 이후). 캐시를 강제로 무시할 필요가 있을 때만 `--no-cache` 추가.
 
 ## 운영 환경
 
@@ -44,5 +44,5 @@ docker compose ps                      # 상태 확인
 ./scripts/deploy.sh all        # 전체 (api 포함)
 ```
 
-> **주의**: deploy.sh는 `--no-cache` multiplatform 빌드를 수행하므로 시간이 오래 걸린다.
-> 이미 이미지를 push한 경우 위의 부분 배포 방식이 더 빠르다.
+> deploy.sh 는 buildx 캐시를 사용하므로 두 번째 빌드부터 단축된다.
+> 이미 이미지를 push 한 경우 위의 부분 배포 방식이 더 빠르다.
