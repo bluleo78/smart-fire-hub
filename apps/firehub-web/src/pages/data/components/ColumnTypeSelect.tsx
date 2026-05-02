@@ -20,6 +20,8 @@ const DATA_TYPES = [
   { value: 'BOOLEAN', label: '참/거짓' },
   { value: 'DATE', label: '날짜' },
   { value: 'TIMESTAMP', label: '일시' },
+  // 지오메트리(POINT 등) — GeoJSON 문자열 입출력. 데이터셋 지도 탭 노출 조건. (#118)
+  { value: 'GEOMETRY', label: '지오메트리(좌표)' },
 ] as const;
 
 export function ColumnTypeSelect({ value, onChange, disabled }: ColumnTypeSelectProps) {

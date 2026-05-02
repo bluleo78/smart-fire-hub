@@ -9,7 +9,7 @@ export const datasetColumnSchema = z.object({
     .max(100, '칼럼명은 100자 이하여야 합니다')
     .regex(columnNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
   displayName: z.string().max(100).optional().or(z.literal('')),
-  dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'], {
+  dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'GEOMETRY'], {
     message: '데이터 타입을 선택하세요',
   }),
   maxLength: z.number().int().min(1, '최소 1').max(10000, '최대 10000').optional().nullable(),
@@ -53,7 +53,7 @@ export const updateColumnSchema = z.object({
     .max(100, '칼럼명은 100자 이하여야 합니다')
     .regex(columnNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
   displayName: z.string().max(100).optional().or(z.literal('')),
-  dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'], {
+  dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'GEOMETRY'], {
     message: '데이터 타입을 선택하세요',
   }),
   maxLength: z.number().int().min(1, '최소 1').max(10000, '최대 10000').optional().nullable(),

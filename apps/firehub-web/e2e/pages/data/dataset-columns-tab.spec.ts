@@ -492,6 +492,27 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     expect(req.payload).toMatchObject({ columnIds: [1, 2] });
   });
 
+  // 컬럼 타입 선택에 GEOMETRY 옵션 노출 (#118) — 지도 탭 활성화 경로
+  test('필드 추가 다이얼로그 — "지오메트리(좌표)" 옵션을 선택할 수 있다 (#118)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: '필드 추가' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.getByRole('combobox').click();
+    await expect(page.getByRole('option', { name: '지오메트리(좌표)' })).toBeVisible();
+    await page.getByRole('option', { name: '지오메트리(좌표)' }).click();
+
+    // 선택 후 combobox 표시값 갱신
+    await expect(page.getByRole('combobox')).toContainText('지오메트리(좌표)');
+  });
+
   test('행 액션 아이콘 4개에 aria-label이 부여된다 (위로/아래로/편집/삭제)', async ({
     authenticatedPage: page,
   }) => {
