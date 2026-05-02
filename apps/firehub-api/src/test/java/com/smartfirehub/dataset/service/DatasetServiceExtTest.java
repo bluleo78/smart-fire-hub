@@ -544,4 +544,79 @@ class DatasetServiceExtTest extends IntegrationTestBase {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not belong");
   }
+
+  // =========================================================================
+  // updatePrimaryKeys — 복합 PK 일괄 갱신 (#117)
+  // =========================================================================
+
+  @Test
+  void updatePrimaryKeys_emptyDataset_setsCompositePk() {
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "CompositePkEmpty",
+            "composite_pk_empty",
+            List.of(
+                new DatasetColumnRequest("stn_id", "Station", "TEXT", null, false, false, null),
+                new DatasetColumnRequest("tm", "Time", "TEXT", null, false, false, null),
+                new DatasetColumnRequest("temp", "Temp", "INTEGER", null, true, false, null)));
+
+    Long stnId = ds.columns().get(0).id();
+    Long tmId = ds.columns().get(1).id();
+
+    datasetService.updatePrimaryKeys(ds.id(), List.of(stnId, tmId));
+
+    DatasetDetailResponse refreshed = datasetService.getDatasetById(ds.id(), testUserId);
+    java.util.Map<Long, Boolean> pk = new java.util.HashMap<>();
+    refreshed.columns().forEach(c -> pk.put(c.id(), c.isPrimaryKey()));
+    assertThat(pk.get(stnId)).isTrue();
+    assertThat(pk.get(tmId)).isTrue();
+    assertThat(pk.get(refreshed.columns().get(2).id())).isFalse();
+  }
+
+  @Test
+  void updatePrimaryKeys_clearAll_unsetsExistingPk() {
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "ClearPk",
+            "clear_pk_ext",
+            List.of(
+                new DatasetColumnRequest(
+                    "code", "Code", "INTEGER", null, false, false, null, true /* PK */),
+                new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)));
+
+    datasetService.updatePrimaryKeys(ds.id(), List.of());
+
+    DatasetDetailResponse refreshed = datasetService.getDatasetById(ds.id(), testUserId);
+    refreshed.columns().forEach(c -> assertThat(c.isPrimaryKey()).isFalse());
+  }
+
+  @Test
+  void updatePrimaryKeys_nullableColumn_throwsException() {
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "NullablePkBulk",
+            "nullable_pk_bulk_ext",
+            List.of(
+                new DatasetColumnRequest("a", "A", "TEXT", null, true /* nullable */, false, null),
+                new DatasetColumnRequest("b", "B", "TEXT", null, false, false, null)));
+
+    Long aId = ds.columns().get(0).id();
+
+    assertThatThrownBy(() -> datasetService.updatePrimaryKeys(ds.id(), List.of(aId)))
+        .isInstanceOf(ColumnModificationException.class)
+        .hasMessageContaining("nullable");
+  }
+
+  @Test
+  void updatePrimaryKeys_unknownColumnId_throwsException() {
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "UnknownColPk",
+            "unknown_col_pk_ext",
+            List.of(new DatasetColumnRequest("a", "A", "TEXT", null, false, false, null)));
+
+    assertThatThrownBy(() -> datasetService.updatePrimaryKeys(ds.id(), List.of(999_999L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not found");
+  }
 }

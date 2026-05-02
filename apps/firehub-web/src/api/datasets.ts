@@ -34,6 +34,9 @@ export const datasetsApi = {
     client.delete(`/datasets/${datasetId}/columns/${columnId}`),
   reorderColumns: (datasetId: number, columnIds: number[]) =>
     client.put(`/datasets/${datasetId}/columns/reorder`, { columnIds }),
+  // 데이터셋의 기본 키 컬럼 집합을 한 번에 갱신 (#117). 복합 PK 변경에 사용.
+  updatePrimaryKeys: (datasetId: number, columnIds: number[]) =>
+    client.put(`/datasets/${datasetId}/primary-keys`, { columnIds }),
   getDatasetData: (datasetId: number, params: {
     search?: string; page?: number; size?: number;
     sortBy?: string; sortDir?: string; includeTotalCount?: boolean;

@@ -430,6 +430,57 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     expect(req.payload).toMatchObject({ isPrimaryKey: true });
   });
 
+  // 기본 키 일괄 설정 다이얼로그 — 복합 PK 변경 (#117)
+  test('"기본 키 설정" 버튼 클릭 시 PrimaryKeysDialog 가 열리고 현재 PK 가 체크되어 있다 (#117)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: /기본 키 설정/ }).click();
+    await expect(page.getByRole('dialog', { name: /기본 키 일괄 설정/ })).toBeVisible({ timeout: 5000 });
+
+    // id 컬럼은 현재 PK 라 체크되어 있어야 한다
+    await expect(page.getByRole('checkbox', { name: /id 기본 키 토글/ })).toBeChecked();
+    // name 컬럼은 NOT NULL 이므로 토글 가능
+    await expect(page.getByRole('checkbox', { name: /name 기본 키 토글/ })).toBeEnabled();
+    await expect(page.getByRole('checkbox', { name: /name 기본 키 토글/ })).not.toBeChecked();
+    // amount 컬럼은 NULL 허용이라 비활성화
+    await expect(page.getByRole('checkbox', { name: /amount 기본 키 토글/ })).toBeDisabled();
+  });
+
+  test('PK 일괄 설정 — 복합 키(id+name) 적용 시 PUT payload 에 두 컬럼 ID 가 담긴다 (#117)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/5/primary-keys',
+      {},
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: /기본 키 설정/ }).click();
+    await expect(page.getByRole('dialog', { name: /기본 키 일괄 설정/ })).toBeVisible({ timeout: 5000 });
+
+    // name 추가 체크 (id 는 이미 체크) → 복합키
+    await page.getByRole('checkbox', { name: /name 기본 키 토글/ }).click();
+    await page.getByRole('button', { name: '적용' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ columnIds: [1, 2] });
+  });
+
   test('행 액션 아이콘 4개에 aria-label이 부여된다 (위로/아래로/편집/삭제)', async ({
     authenticatedPage: page,
   }) => {

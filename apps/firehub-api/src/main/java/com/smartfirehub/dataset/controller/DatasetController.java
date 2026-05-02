@@ -116,6 +116,16 @@ public class DatasetController {
     return ResponseEntity.noContent().build();
   }
 
+  // 데이터셋의 기본 키 컬럼 집합을 한 번에 갱신한다 (#117).
+  // 단일 컬럼 PUT 으로는 복합 PK 중간 상태가 unique 하지 않아 실패하므로 일괄 변경 엔드포인트가 필요하다.
+  @PutMapping("/{id}/primary-keys")
+  @RequirePermission("dataset:write")
+  public ResponseEntity<Void> updatePrimaryKeys(
+      @PathVariable Long id, @RequestBody UpdatePrimaryKeysRequest request) {
+    datasetService.updatePrimaryKeys(id, request.columnIds());
+    return ResponseEntity.noContent().build();
+  }
+
   @PutMapping("/{id}/columns/reorder")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> reorderColumns(

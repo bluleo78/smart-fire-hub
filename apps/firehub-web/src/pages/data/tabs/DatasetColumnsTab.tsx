@@ -44,6 +44,10 @@ import { useColumnManager } from '../hooks/useColumnManager';
 const ColumnDialog = lazy(() =>
   import('../components/ColumnDialog').then((m) => ({ default: m.ColumnDialog }))
 );
+// 기본 키 일괄 설정 다이얼로그 (#117) — 복합 PK 변경 시 단일 토글로는 중간 상태가 unique 하지 않을 수 있어 별도 UI 필요.
+const PrimaryKeysDialog = lazy(() =>
+  import('../components/PrimaryKeysDialog').then((m) => ({ default: m.PrimaryKeysDialog }))
+);
 
 interface DatasetColumnsTabProps {
   dataset: DatasetDetailResponse;
@@ -59,6 +63,8 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
 }: DatasetColumnsTabProps) {
   const hasData = dataset.rowCount > 0;
   const statsMap = useColumnStatsMap(datasetId, hasData);
+  // 기본 키 일괄 설정 다이얼로그 오픈 상태 (#117)
+  const [primaryKeysOpen, setPrimaryKeysOpen] = React.useState(false);
 
   const {
     localColumns,
@@ -100,7 +106,14 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
             </span>
           )}
         </h2>
-        <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>
+        <div className="flex items-center gap-2">
+          {/* 기본 키 일괄 설정 — 복합 PK 변경 진입점 (#117) */}
+          <Button variant="outline" onClick={() => setPrimaryKeysOpen(true)}>
+            <KeyRound className="mr-1 h-4 w-4" />
+            기본 키 설정
+          </Button>
+          <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>
+        </div>
       </div>
 
       <div className="rounded-md border">
@@ -301,6 +314,13 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
           open={editColumnOpen}
           onOpenChange={setEditColumnOpen}
           hasData={dataset.rowCount > 0}
+        />
+        <PrimaryKeysDialog
+          datasetId={datasetId}
+          columns={localColumns}
+          hasData={hasData}
+          open={primaryKeysOpen}
+          onOpenChange={setPrimaryKeysOpen}
         />
       </Suspense>
 

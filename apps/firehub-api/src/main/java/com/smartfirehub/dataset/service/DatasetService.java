@@ -459,6 +459,69 @@ public class DatasetService {
     }
   }
 
+  /**
+   * 데이터셋의 기본 키 컬럼 집합을 한 번에 갱신한다.
+   *
+   * <p>복합 PK 의 경우 단일 컬럼별 PUT 으로는 중간 상태가 unique 하지 않아 실패하므로,
+   * 최종 PK 컬럼 ID 목록을 받아 트랜잭션 안에서 일괄 적용한다. 검증 순서:
+   *
+   * <ol>
+   *   <li>모든 PK 컬럼이 NOT NULL 인지 확인 (PK 는 nullable 불가)
+   *   <li>데이터가 있을 경우 최종 PK 집합이 실제로 unique 한지 한 번에 검증
+   *   <li>{@code dataset_column.is_primary_key} 일괄 갱신
+   *   <li>unique index 재생성
+   * </ol>
+   */
+  @Transactional
+  public void updatePrimaryKeys(Long datasetId, List<Long> requestedPkIds) {
+    DatasetResponse dataset =
+        datasetRepository
+            .findById(datasetId)
+            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+
+    List<Long> pkIds = requestedPkIds != null ? requestedPkIds : List.of();
+
+    List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
+    java.util.Map<Long, DatasetColumnResponse> byId = new java.util.HashMap<>();
+    for (DatasetColumnResponse c : allColumns) {
+      byId.put(c.id(), c);
+    }
+
+    // 잘못된 컬럼 ID 검증
+    List<DatasetColumnResponse> targetCols = new java.util.ArrayList<>();
+    for (Long id : pkIds) {
+      DatasetColumnResponse c = byId.get(id);
+      if (c == null) {
+        throw new IllegalArgumentException(
+            "Column not found in dataset " + datasetId + ": " + id);
+      }
+      targetCols.add(c);
+    }
+
+    // 모든 PK 컬럼이 NOT NULL 이어야 한다
+    for (DatasetColumnResponse c : targetCols) {
+      if (c.isNullable()) {
+        throw new ColumnModificationException(
+            "Primary key column cannot be nullable: " + c.columnName());
+      }
+    }
+
+    long rowCount = dataTableRowService.countRows(dataset.tableName());
+
+    List<String> pkColumnNames = targetCols.stream().map(DatasetColumnResponse::columnName).toList();
+
+    // 데이터 존재 시 최종 집합이 unique 한지 한 번에 검증
+    if (rowCount > 0 && !pkColumnNames.isEmpty()) {
+      if (!dataTableRowService.checkDataUniqueness(dataset.tableName(), pkColumnNames)) {
+        throw new ColumnModificationException(
+            "Cannot set primary key: duplicate values exist in the data");
+      }
+    }
+
+    columnRepository.updatePrimaryKeys(datasetId, pkIds);
+    dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
+  }
+
   @Transactional
   public void deleteColumn(Long datasetId, Long columnId) {
     DatasetResponse dataset =

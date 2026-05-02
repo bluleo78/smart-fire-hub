@@ -190,6 +190,27 @@ public class DatasetColumnRepository {
     dsl.deleteFrom(DATASET_COLUMN).where(COL_ID.eq(id)).execute();
   }
 
+  /**
+   * 데이터셋의 모든 컬럼의 PK 플래그를 한 번에 갱신한다. {@code pkColumnIds} 에 포함된 컬럼은 true,
+   * 나머지는 false 로 설정한다. 복합 PK 일괄 변경 시 트랜잭션 안에서 호출되어야 한다.
+   */
+  public void updatePrimaryKeys(Long datasetId, List<Long> pkColumnIds) {
+    // 1) 우선 데이터셋의 모든 컬럼 PK 를 false 로
+    dsl.update(DATASET_COLUMN)
+        .set(COL_IS_PRIMARY_KEY, Boolean.FALSE)
+        .where(COL_DATASET_ID.eq(datasetId))
+        .execute();
+    if (pkColumnIds == null || pkColumnIds.isEmpty()) {
+      return;
+    }
+    // 2) 지정된 컬럼만 true 로
+    dsl.update(DATASET_COLUMN)
+        .set(COL_IS_PRIMARY_KEY, Boolean.TRUE)
+        .where(COL_DATASET_ID.eq(datasetId))
+        .and(COL_ID.in(pkColumnIds))
+        .execute();
+  }
+
   public void updateOrders(Long datasetId, List<Long> columnIds) {
     for (int i = 0; i < columnIds.size(); i++) {
       dsl.update(DATASET_COLUMN)
