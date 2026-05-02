@@ -199,7 +199,9 @@ export function ColumnDialog({
                   form.setValue('isNullable', false);
                 }
               }}
-              disabled={mode === 'edit' && hasData}
+              // 데이터가 있어도 PK 토글은 허용한다.
+              // 백엔드(DatasetService.updateColumn)가 NOT NULL · 데이터 유일성 검증과
+              // 복합 unique index 재생성을 처리하며, 위반 시 명확한 예외 메시지를 반환한다.
             />
             <Label htmlFor="isPrimaryKey" className="text-sm font-normal cursor-pointer flex items-center gap-1">
               <KeyRound className="h-3 w-3" />
