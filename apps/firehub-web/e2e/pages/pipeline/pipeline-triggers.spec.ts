@@ -381,4 +381,66 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
     expect(apiCalled).toBe(false);
   });
+
+  test('API 트리거 — 잘못된 IP 형식 입력 시 추가 차단 + 에러 메시지가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers', (route) => {
+      if (route.request().method() === 'POST') {
+        apiCalled = true;
+        return route.fulfill({ status: 201, body: JSON.stringify(createTrigger({ id: 99 })) });
+      }
+      return route.continue();
+    });
+
+    await gotoTriggerTab(page);
+
+    // API 트리거 유형 선택
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /API.*외부 API/ }).click();
+
+    // 잘못된 IP 형식 입력 → 추가 버튼 클릭
+    await page.getByPlaceholder('192.168.1.0/24').fill('invalid-ip');
+    await page.getByRole('button', { name: '추가' }).click();
+
+    // 에러 메시지가 표시되어야 하며 목록에 추가되지 않음
+    await expect(page.getByText(/올바른 IPv4 주소 또는 CIDR/)).toBeVisible();
+    await expect(page.getByText('invalid-ip')).not.toBeVisible();
+
+    // 잘못된 옥텟값 (999.999.999.999) 입력
+    await page.getByPlaceholder('192.168.1.0/24').fill('999.999.999.999');
+    await page.getByRole('button', { name: '추가' }).click();
+    await expect(page.getByText(/올바른 IPv4 주소 또는 CIDR/)).toBeVisible();
+    await expect(page.getByText('999.999.999.999')).not.toBeVisible();
+
+    // 유효한 CIDR 입력은 정상 추가됨
+    await page.getByPlaceholder('192.168.1.0/24').fill('10.0.0.0/24');
+    await page.getByRole('button', { name: '추가' }).click();
+    await expect(page.getByText('10.0.0.0/24')).toBeVisible();
+    // 에러 메시지 사라짐
+    await expect(page.getByText(/올바른 IPv4 주소 또는 CIDR/)).not.toBeVisible();
+
+    // API는 아직 호출되지 않아야 함 (트리거 생성 버튼 미클릭)
+    expect(apiCalled).toBe(false);
+  });
+
+  test('API 트리거 — 잘못된 CIDR 프리픽스 입력 시 추가 차단된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /API.*외부 API/ }).click();
+
+    // 프리픽스가 범위 초과 (0~32만 허용)
+    await page.getByPlaceholder('192.168.1.0/24').fill('192.168.1.0/33');
+    await page.getByRole('button', { name: '추가' }).click();
+    await expect(page.getByText(/올바른 IPv4 주소 또는 CIDR/)).toBeVisible();
+    await expect(page.getByText('192.168.1.0/33')).not.toBeVisible();
+  });
 });

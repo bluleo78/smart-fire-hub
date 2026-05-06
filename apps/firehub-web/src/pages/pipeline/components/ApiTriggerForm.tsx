@@ -17,9 +17,18 @@ interface ApiTriggerFormProps {
   errors?: Record<string, string>;
 }
 
+/**
+ * IPv4 단독 주소 또는 IPv4 CIDR 표기법 검증 정규식.
+ * 각 옥텟은 0~255, CIDR 프리픽스는 0~32만 허용.
+ */
+const IP_CIDR_REGEX =
+  /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}(\/([0-9]|[12]\d|3[0-2]))?$/;
+
 export default function ApiTriggerForm({ config, onChange, generatedToken, isEditMode, errors }: ApiTriggerFormProps) {
   const [copied, setCopied] = useState(false);
   const [ipInput, setIpInput] = useState('');
+  // IP 입력 값이 유효하지 않을 때 표시할 에러 메시지
+  const [ipError, setIpError] = useState('');
 
   const handleCopy = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -29,10 +38,22 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
 
   const handleAddIp = () => {
     const ip = ipInput.trim();
-    if (ip && !config.allowedIps.includes(ip)) {
-      onChange({ ...config, allowedIps: [...config.allowedIps, ip] });
-      setIpInput('');
+    if (!ip) return;
+
+    // IPv4 또는 IPv4/CIDR 형식 검증
+    if (!IP_CIDR_REGEX.test(ip)) {
+      setIpError('올바른 IPv4 주소 또는 CIDR 표기법을 입력하세요 (예: 192.168.1.1 또는 10.0.0.0/24)');
+      return;
     }
+
+    if (config.allowedIps.includes(ip)) {
+      setIpError('이미 추가된 IP입니다');
+      return;
+    }
+
+    setIpError('');
+    onChange({ ...config, allowedIps: [...config.allowedIps, ip] });
+    setIpInput('');
   };
 
   const handleRemoveIp = (ip: string) => {
@@ -95,7 +116,11 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
         <div className="flex gap-2">
           <Input
             value={ipInput}
-            onChange={(e) => setIpInput(e.target.value)}
+            onChange={(e) => {
+              setIpInput(e.target.value);
+              // 입력값 변경 시 에러 초기화
+              if (ipError) setIpError('');
+            }}
             placeholder="192.168.1.0/24"
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -108,6 +133,10 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
             추가
           </Button>
         </div>
+        {/* IP 형식 오류 메시지 */}
+        {ipError && (
+          <p className="text-sm text-destructive">{ipError}</p>
+        )}
         {config.allowedIps.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {config.allowedIps.map((ip) => (

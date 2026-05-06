@@ -6,6 +6,8 @@ import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -55,6 +57,8 @@ public class TriggerService {
         validateScheduleConfig(processedConfig);
       }
       case API -> {
+        // allowedIps 형식 검증 (IP 또는 CIDR만 허용)
+        validateAllowedIps(processedConfig);
         // Generate API token
         rawApiToken = generateSecureToken();
         String tokenHash = sha256Hash(rawApiToken);
@@ -144,6 +148,11 @@ public class TriggerService {
         triggerRepository
             .findById(triggerId)
             .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
+
+    // API 트리거 업데이트 시 allowedIps 형식 검증
+    if ("API".equals(existing.triggerType()) && request.config() != null) {
+      validateAllowedIps(request.config());
+    }
 
     // If PIPELINE_CHAIN and upstreamPipelineId is changing, validate
     if ("PIPELINE_CHAIN".equals(existing.triggerType()) && request.config() != null) {
@@ -479,5 +488,130 @@ public class TriggerService {
     // Validate concurrency policy
     String policy = config.get("concurrencyPolicy").toString();
     ConcurrencyPolicy.valueOf(policy); // throws if invalid
+  }
+
+  /**
+   * API 트리거의 allowedIps 목록에 포함된 각 항목이 유효한 IPv4 주소 또는 CIDR 표기인지 검증한다. 잘못된 형식이 있으면
+   * IllegalArgumentException(→ 400)을 던진다.
+   */
+  private void validateAllowedIps(Map<String, Object> config) {
+    Object allowedIpsObj = config.get("allowedIps");
+    if (allowedIpsObj == null) return;
+    if (!(allowedIpsObj instanceof List<?> ipList)) return;
+
+    for (Object item : ipList) {
+      String entry = item == null ? "" : item.toString().trim();
+      if (entry.isEmpty()) continue;
+
+      String ipPart = entry.contains("/") ? entry.substring(0, entry.indexOf('/')) : entry;
+      String prefixPart = entry.contains("/") ? entry.substring(entry.indexOf('/') + 1) : null;
+
+      // 옥텟 범위 검증을 포함한 IPv4 주소 형식 확인
+      if (!isValidIpv4(ipPart)) {
+        throw new IllegalArgumentException("잘못된 IP 주소 형식입니다: " + entry + " (IPv4 또는 CIDR 표기법만 허용)");
+      }
+
+      // CIDR 프리픽스 범위 검증 (0~32)
+      if (prefixPart != null) {
+        try {
+          int prefix = Integer.parseInt(prefixPart);
+          if (prefix < 0 || prefix > 32) {
+            throw new IllegalArgumentException("CIDR 프리픽스는 0~32 범위여야 합니다: " + entry);
+          }
+        } catch (NumberFormatException e) {
+          throw new IllegalArgumentException("잘못된 CIDR 형식입니다: " + entry);
+        }
+      }
+    }
+  }
+
+  /** 문자열이 유효한 IPv4 주소인지 확인한다. 각 옥텟이 0~255 범위인지 검사. */
+  private boolean isValidIpv4(String ip) {
+    String[] parts = ip.split("\\.", -1);
+    if (parts.length != 4) return false;
+    for (String part : parts) {
+      try {
+        int val = Integer.parseInt(part);
+        if (val < 0 || val > 255) return false;
+      } catch (NumberFormatException e) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * 주어진 sourceIp가 allowedIps 목록의 CIDR 범위에 포함되는지 확인한다. allowedIps가 비어 있으면 모든 IP를 허용한다. IPv4-mapped
+   * IPv6 주소(::ffff:x.x.x.x)는 IPv4로 변환하여 비교한다.
+   *
+   * @param sourceIp 요청 IP (IPv4 또는 ::ffff:x.x.x.x 형태의 IPv6)
+   * @param allowedIps 허용 IP/CIDR 목록
+   * @return 허용 여부
+   */
+  public boolean isIpAllowed(String sourceIp, List<String> allowedIps) {
+    if (allowedIps == null || allowedIps.isEmpty()) return true;
+
+    // IPv4-mapped IPv6 주소를 IPv4로 정규화 (예: ::1 → 127.0.0.1, ::ffff:192.168.1.1 → 192.168.1.1)
+    String normalizedIp = normalizeToIpv4(sourceIp);
+
+    for (String cidrEntry : allowedIps) {
+      if (cidrEntry == null || cidrEntry.trim().isEmpty()) continue;
+      try {
+        if (isIpInCidr(normalizedIp, cidrEntry.trim())) {
+          return true;
+        }
+      } catch (Exception e) {
+        // 저장된 항목에 잘못된 형식이 있으면 skip (로그만 기록)
+        log.warn("allowedIps 항목 파싱 실패 (skip): {}", cidrEntry);
+      }
+    }
+    return false;
+  }
+
+  /** IPv4-mapped IPv6 주소(::ffff:A.B.C.D 또는 ::1)를 IPv4 문자열로 변환한다. 이미 IPv4이면 그대로 반환. */
+  private String normalizeToIpv4(String ip) {
+    if (ip == null) return "";
+    // ::1 (IPv6 루프백) → 127.0.0.1
+    if ("::1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip)) return "127.0.0.1";
+    // ::ffff:x.x.x.x 형태 처리
+    if (ip.startsWith("::ffff:") || ip.startsWith("::FFFF:")) {
+      return ip.substring(7);
+    }
+    return ip;
+  }
+
+  /**
+   * sourceIp가 cidrEntry(예: "192.168.1.0/24" 또는 단순 IP "192.168.1.5")에 속하는지 판단한다. 바이트 레벨 비트 마스크 연산으로
+   * 정확하게 비교한다.
+   */
+  private boolean isIpInCidr(String sourceIp, String cidrEntry) throws UnknownHostException {
+    if (!cidrEntry.contains("/")) {
+      // 단순 IP 비교
+      return sourceIp.equals(cidrEntry);
+    }
+
+    int slashIdx = cidrEntry.indexOf('/');
+    String networkIpStr = cidrEntry.substring(0, slashIdx);
+    int prefix = Integer.parseInt(cidrEntry.substring(slashIdx + 1));
+
+    byte[] sourceBytes = InetAddress.getByName(sourceIp).getAddress();
+    byte[] networkBytes = InetAddress.getByName(networkIpStr).getAddress();
+
+    if (sourceBytes.length != networkBytes.length) return false;
+
+    // 비트 마스크로 네트워크 주소 범위 비교
+    int fullBytes = prefix / 8;
+    int remainBits = prefix % 8;
+
+    for (int i = 0; i < fullBytes; i++) {
+      if (sourceBytes[i] != networkBytes[i]) return false;
+    }
+
+    if (remainBits > 0 && fullBytes < sourceBytes.length) {
+      int mask = 0xFF & (0xFF << (8 - remainBits));
+      if ((sourceBytes[fullBytes] & mask) != (networkBytes[fullBytes] & mask)) return false;
+    }
+
+    return true;
   }
 }

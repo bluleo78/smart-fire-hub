@@ -5,6 +5,7 @@ import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +39,23 @@ public class ExternalTriggerController {
                   401,
                   "Unauthorized",
                   "Invalid token",
+                  null,
+                  Instant.now().toString(),
+                  request.getRequestURI()));
+    }
+
+    // allowedIps가 설정된 경우 요청 IP가 허용 목록에 포함되는지 검사 (#127)
+    @SuppressWarnings("unchecked")
+    List<String> allowedIps = (List<String>) trigger.config().getOrDefault("allowedIps", List.of());
+    if (!triggerService.isIpAllowed(sourceIp, allowedIps)) {
+      log.warn(
+          "API trigger {} blocked: IP {} not in allowedIps {}", trigger.id(), sourceIp, allowedIps);
+      return ResponseEntity.status(HttpStatus.FORBIDDEN)
+          .body(
+              new ErrorResponse(
+                  403,
+                  "Forbidden",
+                  "IP not allowed",
                   null,
                   Instant.now().toString(),
                   request.getRequestURI()));
