@@ -180,6 +180,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
+  /** 파이프라인 스텝 등 외부 리소스가 데이터셋을 참조하고 있어 삭제 불가한 경우 409 반환 (#126) */
+  @ExceptionHandler(com.smartfirehub.dataset.exception.DatasetInUseException.class)
+  public ResponseEntity<ErrorResponse> handleDatasetInUse(
+      com.smartfirehub.dataset.exception.DatasetInUseException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
   @ExceptionHandler(InvalidTableNameException.class)
   public ResponseEntity<ErrorResponse> handleInvalidTableName(
       InvalidTableNameException ex, HttpServletRequest request) {

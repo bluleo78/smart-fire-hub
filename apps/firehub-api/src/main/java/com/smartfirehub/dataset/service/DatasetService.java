@@ -17,6 +17,7 @@ import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.dto.UpdateStatusRequest;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
+import com.smartfirehub.dataset.exception.DatasetInUseException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
@@ -230,6 +231,18 @@ public class DatasetService {
         datasetRepository
             .findById(id)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+
+    // 파이프라인 스텝 출력 데이터셋으로 참조 중인 경우 삭제 불가 (#126)
+    // FK 위반 500 오류를 방지하기 위해 삭제 전 참조 건수를 확인한다.
+    int referencingStepCount =
+        dsl.fetchCount(
+            table(name("pipeline_step")),
+            field(name("output_dataset_id"), Long.class).eq(id));
+    if (referencingStepCount > 0) {
+      throw new DatasetInUseException(
+          referencingStepCount
+              + "개 파이프라인 스텝이 이 데이터셋을 출력으로 참조하고 있어 삭제할 수 없습니다.");
+    }
 
     dataTableService.dropTable(dataset.tableName());
     columnRepository.deleteByDatasetId(id);
