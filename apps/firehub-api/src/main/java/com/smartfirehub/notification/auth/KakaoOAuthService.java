@@ -47,6 +47,18 @@ public class KakaoOAuthService {
   }
 
   /**
+   * Kakao OAuth 자격증명(client_id) 설정 여부 확인.
+   *
+   * <p>application.yml의 notification.kakao.client_id가 비어있으면 false를 반환한다. 미설정 상태에서 OAuth 흐름을 시작하면
+   * client_id가 빈 URL이 생성되어 반드시 실패하므로, 컨트롤러에서 사전에 차단한다.
+   *
+   * @return client_id가 설정된 경우 true
+   */
+  public boolean isConfigured() {
+    return clientId != null && !clientId.isBlank();
+  }
+
+  /**
    * 카카오 OAuth 인증 URL 생성.
    *
    * <p>프론트엔드가 새 창으로 열어 사용자 카카오 로그인을 유도한다. scope=talk_message 권한을 요청한다 (나에게 보내기에 필요).

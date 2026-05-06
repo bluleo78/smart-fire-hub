@@ -326,6 +326,79 @@ test.describe('채널 설정 페이지', () => {
     await expect(page.getByText(/테스트 발송 실패.*SMTP 호스트 미설정/)).toBeVisible();
   });
 
+  /**
+   * 회귀 테스트: OAuth 자격증명 미설정 시 "연동하기" 클릭 → 에러 토스트 표시 (#129)
+   * - /oauth/kakao/auth-url 이 400 + {message: "..."} 반환 시 에러 메시지가 토스트로 표시되어야 한다.
+   * - 빈 client_id로 OAuth 팝업이 열리면 안 된다.
+   *
+   * 참고: oauthStartUrl은 백엔드가 반환하는 내부 API 경로("/api/v1/oauth/kakao/auth-url")로 설정해야
+   * OAuthConnectButton이 해당 경로로 GET 요청을 보낸다.
+   */
+  test('KAKAO 연동하기 클릭 — auth-url 400 응답 시 에러 토스트 표시 (refs #129)', async ({
+    authenticatedPage: page,
+  }) => {
+    // KAKAO oauthStartUrl을 실제 백엔드 API 경로로 설정 (기존 mock은 외부 URL 사용)
+    const settingsWithApiPath: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'KAKAO'
+        ? { ...s, oauthStartUrl: '/api/v1/oauth/kakao/auth-url' }
+        : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', settingsWithApiPath);
+    // OAuth auth-url 엔드포인트가 400 반환 (자격증명 미설정)
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/oauth/kakao/auth-url',
+      { message: '카카오 OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.' },
+      { status: 400 },
+    );
+
+    await page.goto('/settings/channels');
+    await expect(page.getByText('카카오 알림톡', { exact: true })).toBeVisible();
+
+    // "연동하기" 버튼 클릭
+    await page.getByRole('button', { name: '연동하기' }).click();
+
+    // 에러 토스트에 서버 메시지가 표시되어야 한다 (빈 client_id로 팝업이 열리면 안 됨)
+    await expect(
+      page.getByText('카카오 OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.'),
+    ).toBeVisible();
+  });
+
+  /**
+   * 회귀 테스트: Slack OAuth 자격증명 미설정 시 에러 토스트 표시 (#129)
+   */
+  test('SLACK 재연결 클릭 — auth-url 400 응답 시 에러 토스트 표시 (refs #129)', async ({
+    authenticatedPage: page,
+  }) => {
+    // SLACK oauthStartUrl을 실제 백엔드 API 경로로 설정
+    const settingsWithApiPath: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'SLACK'
+        ? { ...s, oauthStartUrl: '/api/v1/oauth/slack/auth-url' }
+        : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', settingsWithApiPath);
+    // OAuth auth-url 엔드포인트가 400 반환 (자격증명 미설정)
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/oauth/slack/auth-url',
+      { message: 'Slack OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.' },
+      { status: 400 },
+    );
+
+    await page.goto('/settings/channels');
+    await expect(page.getByText('Slack', { exact: true })).toBeVisible();
+
+    // "재연결" 버튼 클릭 (MOCK 데이터에서 SLACK은 needsReauth: true)
+    await page.getByRole('button', { name: '재연결' }).click();
+
+    // 에러 토스트에 서버 메시지가 표시되어야 한다
+    await expect(
+      page.getByText('Slack OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.'),
+    ).toBeVisible();
+  });
+
   test('KAKAO 카드 아이콘 컨테이너에 카카오 브랜드 배경색이 적용된다', async ({
     authenticatedPage: page,
   }) => {

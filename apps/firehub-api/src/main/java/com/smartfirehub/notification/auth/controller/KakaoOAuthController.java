@@ -37,12 +37,18 @@ public class KakaoOAuthController {
    * Kakao OAuth 인증 URL 반환 — 인증 필요.
    *
    * <p>팝업은 Bearer 헤더를 전달할 수 없으므로, 프론트엔드가 이 엔드포인트를 먼저 호출하여 실제 Kakao 인증 URL을 받은 뒤 해당 URL을 팝업으로 직접 연다.
+   * client_id가 미설정된 경우 빈 OAuth URL이 생성되어 반드시 실패하므로, 400을 반환하여 사전에 차단한다.
    *
    * @param authentication Spring Security 인증 객체 (principal = userId Long)
-   * @return {"url": "https://kauth.kakao.com/oauth/authorize?..."}
+   * @return {"url": "https://kauth.kakao.com/oauth/authorize?..."} 또는 400 (자격증명 미설정)
    */
   @GetMapping("/auth-url")
   public ResponseEntity<Map<String, String>> authUrl(Authentication authentication) {
+    // OAuth 자격증명 미설정 시 빈 client_id로 OAuth 흐름이 시작되는 것을 사전 차단
+    if (!kakaoOAuthService.isConfigured()) {
+      return ResponseEntity.badRequest()
+          .body(Map.of("message", "카카오 OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요."));
+    }
     Long userId = (Long) authentication.getPrincipal();
     String state = oAuthStateService.issue(userId, ChannelType.KAKAO);
     String authorizeUrl = kakaoOAuthService.authorizeUrl(state);

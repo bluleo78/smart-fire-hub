@@ -58,6 +58,18 @@ public class SlackOAuthService {
   }
 
   /**
+   * Slack OAuth 자격증명(client_id) 설정 여부 확인.
+   *
+   * <p>application.yml의 notification.slack.client_id가 비어있으면 false를 반환한다. 미설정 상태에서 OAuth 흐름을 시작하면
+   * client_id가 빈 URL이 생성되어 반드시 실패하므로, 컨트롤러에서 사전에 차단한다.
+   *
+   * @return client_id가 설정된 경우 true
+   */
+  public boolean isConfigured() {
+    return clientId != null && !clientId.isBlank();
+  }
+
+  /**
    * Slack OAuth 인증 URL 생성.
    *
    * <p>관리자가 새 창으로 열어 Slack 앱 설치를 진행한다. scope에는 봇 운영에 필요한 권한이 모두 포함된다.

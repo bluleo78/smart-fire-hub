@@ -199,8 +199,8 @@ public class ChannelSettingsService {
   /**
    * 채널 테스트 발송 — 사용자가 /settings/channels 페이지에서 "테스트 발송" 버튼을 눌렀을 때 호출.
    *
-   * <p>outbox 큐를 거치지 않고 ChannelRegistry에서 해당 채널을 직접 lookup하여 {@code Channel.deliver()}로
-   * 동기 발송한다. 결과는 success/message 형태로 즉시 반환되어 토스트로 표시된다.
+   * <p>outbox 큐를 거치지 않고 ChannelRegistry에서 해당 채널을 직접 lookup하여 {@code Channel.deliver()}로 동기 발송한다.
+   * 결과는 success/message 형태로 즉시 반환되어 토스트로 표시된다.
    *
    * <ul>
    *   <li>CHAT: 항상 활성 — 별도 테스트 불필요. IllegalArgumentException으로 거부 (400).
@@ -227,7 +227,8 @@ public class ChannelSettingsService {
     }
 
     // 테스트 페이로드 — 사용자에게 발송됨이 명확하게 보이도록 시간 정보 포함
-    String now = java.time.LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+    String now =
+        java.time.LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
     Payload testPayload =
         new Payload(
             Payload.PayloadType.STANDARD,

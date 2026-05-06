@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 
 import { type ChannelType,getOAuthUrl } from '../../../api/channels';
 import { Button } from '../../../components/ui/button';
+import { extractApiError } from '../../../lib/api-error';
 
 interface OAuthConnectButtonProps {
   channel: ChannelType;
@@ -65,8 +66,11 @@ export function OAuthConnectButton({ channel, oauthStartUrl, reauth = false }: O
       // 팝업이 Bearer 헤더를 전달할 수 없으므로, 먼저 인증된 요청으로 실제 OAuth URL을 받는다.
       const { data } = await getOAuthUrl(oauthStartUrl);
       openPopup(data.url);
-    } catch {
-      toast.error(`${channel} 연동 URL을 불러오지 못했습니다.`);
+    } catch (error) {
+      // 400: OAuth 자격증명 미설정 (서버에서 명시적 에러 메시지 반환)
+      // 그 외: 네트워크 오류 등 예기치 않은 오류
+      const message = extractApiError(error, `${channel} 연동 URL을 불러오지 못했습니다.`);
+      toast.error(message);
     } finally {
       setIsPending(false);
     }

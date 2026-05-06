@@ -154,4 +154,34 @@ class KakaoOAuthServiceTest {
     assertThat(url).contains("state=" + state);
     assertThat(url).contains("response_type=code");
   }
+
+  // =========================================================================
+  // isConfigured — 자격증명 설정 여부 검증
+  // =========================================================================
+
+  /** client_id가 설정된 경우 isConfigured()는 true를 반환해야 한다. */
+  @Test
+  void isConfigured_returnsTrue_whenClientIdIsSet() {
+    // given: setUp()에서 clientId = TEST_CLIENT_ID 주입됨
+
+    assertThat(kakaoOAuthService.isConfigured()).isTrue();
+  }
+
+  /** client_id가 빈 문자열인 경우 isConfigured()는 false를 반환해야 한다. */
+  @Test
+  void isConfigured_returnsFalse_whenClientIdIsBlank() {
+    // given: @Value 기본값("")으로 주입되는 미설정 케이스
+    ReflectionTestUtils.setField(kakaoOAuthService, "clientId", "");
+
+    assertThat(kakaoOAuthService.isConfigured()).isFalse();
+  }
+
+  /** client_id가 null인 경우 isConfigured()는 false를 반환해야 한다. */
+  @Test
+  void isConfigured_returnsFalse_whenClientIdIsNull() {
+    // given: 예외적으로 null이 주입된 경우 (방어 코드 검증)
+    ReflectionTestUtils.setField(kakaoOAuthService, "clientId", null);
+
+    assertThat(kakaoOAuthService.isConfigured()).isFalse();
+  }
 }
