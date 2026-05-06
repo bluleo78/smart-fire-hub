@@ -71,8 +71,12 @@ public class ApiConnectionController {
     return apiConnectionService.findSelectable();
   }
 
-  /** 저장된 API 연결의 상태를 즉시 점검한다. healthCheckPath 기반 GET 요청으로 2xx면 UP, 그 외 DOWN 처리 + DB 반영. */
-  @PostMapping("/{id}/test")
+  /**
+   * 저장된 API 연결의 상태를 즉시 점검한다. healthCheckPath 기반 GET 요청으로 2xx면 UP, 그 외 DOWN 처리 + DB 반영.
+   *
+   * <p>{id:\\d+} 제약으로 숫자 ID만 매핑 → POST /test 와의 라우팅 충돌 방지. (#113)
+   */
+  @PostMapping("/{id:\\d+}/test")
   @RequirePermission("apiconnection:write")
   public TestConnectionResponse testConnection(@PathVariable Long id) {
     return apiConnectionService.testConnection(id);

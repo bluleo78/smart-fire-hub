@@ -171,6 +171,82 @@ class ApiConnectionControllerTest {
         .andExpect(jsonPath("$.status").value(200));
   }
 
+  /**
+   * POST /test — payload 기반 dry-run 연결 테스트. /{id}/test 라우팅에 가로채이지 않고 정상 호출되어야 한다. (#113)
+   */
+  @Test
+  void postTestPayload_withPermission_returnsResult() throws Exception {
+    CreateApiConnectionRequest request =
+        new CreateApiConnectionRequest(
+            "Query Param Test",
+            null,
+            "API_KEY",
+            Map.of("placement", "query", "paramName", "serviceKey", "apiKey", "test-key"),
+            "https://apis.example.com/service",
+            null);
+
+    when(apiConnectionService.testConnectionPayload(any(CreateApiConnectionRequest.class)))
+        .thenReturn(
+            new TestConnectionResponse(
+                true,
+                200,
+                42L,
+                null,
+                "https://apis.example.com/service?serviceKey=test-key",
+                "{}",
+                java.util.Map.of(),
+                "application/json"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections/test")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.ok").value(true))
+        .andExpect(jsonPath("$.status").value(200));
+
+    verify(apiConnectionService).testConnectionPayload(any(CreateApiConnectionRequest.class));
+  }
+
+  /**
+   * POST /test 는 /{id:\\d+}/test 에 라우팅되지 않아야 한다. "test" 를 Long 으로 변환 시도하면 500이 아닌 testConnectionPayload
+   * 로 정상 처리되어야 한다. (#113 regression 재확인)
+   */
+  @Test
+  void postTestPayload_routingDoesNotConflictWithIdTest() throws Exception {
+    // POST /test 경로가 /{id}/test 에 가로채이지 않음을 verify 로 확인
+    // — testConnectionPayload 가 호출되고 testConnection(Long) 은 호출되지 않아야 한다
+    CreateApiConnectionRequest request =
+        new CreateApiConnectionRequest(
+            "Routing Check",
+            null,
+            "BEARER",
+            Map.of("token", "tok"),
+            "https://routing.example.com",
+            null);
+
+    when(apiConnectionService.testConnectionPayload(any(CreateApiConnectionRequest.class)))
+        .thenReturn(
+            new TestConnectionResponse(
+                false, 401, 100L, "HTTP 401", "https://routing.example.com", null,
+                java.util.Map.of(), null));
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections/test")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk()); // 500 이 아닌 200(서비스 레벨 실패)
+
+    // testConnection(Long) 이 아닌 testConnectionPayload 가 호출되어야 한다
+    verify(apiConnectionService).testConnectionPayload(any(CreateApiConnectionRequest.class));
+    org.mockito.Mockito.verify(apiConnectionService, org.mockito.Mockito.never())
+        .testConnection(org.mockito.ArgumentMatchers.anyLong());
+  }
+
   /** POST /refresh-all — apiconnection:write 권한 보유 시 jobId 반환. */
   @Test
   void postRefreshAll_withPermission_returnsJobId() throws Exception {
