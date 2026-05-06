@@ -148,7 +148,7 @@ class AuthServiceTest extends IntegrationTestBase {
     // Try to use the revoked refresh token — reuse detection kicks in
     assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))
         .isInstanceOf(InvalidTokenException.class)
-        .hasMessage("Refresh token reuse detected");
+        .hasMessage("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
   }
 
   @Test
@@ -170,7 +170,7 @@ class AuthServiceTest extends IntegrationTestBase {
     // This should revoke the entire token family, including the second token
     assertThatThrownBy(() -> authService.refresh(firstRefreshToken))
         .isInstanceOf(InvalidTokenException.class)
-        .hasMessage("Refresh token reuse detected");
+        .hasMessage("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
 
     // The legitimate second token should also be revoked (family revocation)
     assertThatThrownBy(() -> authService.refresh(secondRefreshToken))
@@ -203,7 +203,7 @@ class AuthServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))
         .isInstanceOf(UserDeactivatedException.class)
-        .hasMessage("User account is deactivated");
+        .hasMessage("비활성화된 계정입니다.");
   }
 
   @Test

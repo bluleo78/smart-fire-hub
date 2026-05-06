@@ -88,7 +88,8 @@ public class AuthService {
   @Transactional
   public TokenResponse login(LoginRequest request) {
     if (loginAttemptService.isBlocked(request.username())) {
-      throw new AccountLockedException("Too many failed login attempts. Please try again later.");
+      // 과도한 로그인 실패로 계정이 잠긴 경우 한국어 메시지 반환
+      throw new AccountLockedException("로그인 시도 횟수를 초과하였습니다. 잠시 후 다시 시도해 주세요.");
     }
 
     UserResponse user =
@@ -97,7 +98,8 @@ public class AuthService {
             .orElseThrow(
                 () -> {
                   loginAttemptService.loginFailed(request.username());
-                  return new InvalidCredentialsException("Invalid username or password");
+                  // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
+                  return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
                 });
 
     String storedPassword =
@@ -106,16 +108,18 @@ public class AuthService {
             .orElseThrow(
                 () -> {
                   loginAttemptService.loginFailed(request.username());
-                  return new InvalidCredentialsException("Invalid username or password");
+                  // 사용자 존재 여부 노출 방지를 위해 동일한 메시지 반환
+                  return new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
                 });
 
     if (!passwordEncoder.matches(request.password(), storedPassword)) {
       loginAttemptService.loginFailed(request.username());
-      throw new InvalidCredentialsException("Invalid username or password");
+      throw new InvalidCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
     }
 
     if (!user.isActive()) {
-      throw new UserDeactivatedException("User account is deactivated");
+      // 비활성화된 계정 접근 시 한국어 메시지 반환
+      throw new UserDeactivatedException("비활성화된 계정입니다.");
     }
 
     loginAttemptService.loginSucceeded(request.username());
@@ -148,7 +152,8 @@ public class AuthService {
   @Transactional
   public TokenResponse refresh(String rawRefreshToken) {
     if (!jwtTokenProvider.validateRefreshToken(rawRefreshToken)) {
-      throw new InvalidTokenException("Invalid or expired refresh token");
+      // 만료되었거나 유효하지 않은 리프레시 토큰 — 한국어 메시지 반환
+      throw new InvalidTokenException("유효하지 않거나 만료된 토큰입니다.");
     }
 
     String tokenHash = hashToken(rawRefreshToken);
@@ -159,18 +164,20 @@ public class AuthService {
       refreshTokenRepository
           .findFamilyIdByTokenHash(tokenHash)
           .ifPresent(refreshTokenRepository::revokeByFamilyId);
-      throw new InvalidTokenException("Refresh token reuse detected");
+      // 이미 사용된 토큰 재사용 시도 — 보안 이슈, 한국어 메시지 반환
+      throw new InvalidTokenException("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
     }
 
     if (!refreshTokenRepository.existsValidToken(tokenHash)) {
-      throw new InvalidTokenException("Refresh token has been revoked");
+      // 폐기된 토큰으로 갱신 시도 — 한국어 메시지 반환
+      throw new InvalidTokenException("만료되었거나 폐기된 토큰입니다. 다시 로그인해 주세요.");
     }
 
     // Look up the family before revoking the current token
     UUID familyId =
         refreshTokenRepository
             .findFamilyIdByTokenHash(tokenHash)
-            .orElseThrow(() -> new InvalidTokenException("Token family not found"));
+            .orElseThrow(() -> new InvalidTokenException("토큰 정보를 찾을 수 없습니다. 다시 로그인해 주세요."));
 
     refreshTokenRepository.revokeByTokenHash(tokenHash);
 
@@ -178,10 +185,11 @@ public class AuthService {
     UserResponse user =
         userRepository
             .findById(userId)
-            .orElseThrow(() -> new InvalidTokenException("User not found for token"));
+            .orElseThrow(() -> new InvalidTokenException("토큰에 해당하는 사용자를 찾을 수 없습니다. 다시 로그인해 주세요."));
 
     if (!user.isActive()) {
-      throw new UserDeactivatedException("User account is deactivated");
+      // 비활성화된 계정으로 토큰 갱신 시도 — 한국어 메시지 반환
+      throw new UserDeactivatedException("비활성화된 계정입니다.");
     }
 
     String accessToken = jwtTokenProvider.generateAccessToken(user.id(), user.username());
