@@ -863,6 +863,51 @@ test.describe('API 연결 페이지', () => {
     ).toBeVisible();
   });
 
+  test('잘못된 Base URL 저장 시 한국어 검증 에러 토스트가 표시된다 (#125)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이슈 #125 회귀 테스트:
+    // 서버가 422/400 검증 오류를 반환할 때 errors 필드의 한국어 메시지를 토스트에 표시해야 한다.
+    // 기존에는 최상위 message "Validation failed" (영문)가 그대로 노출됨.
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT API가 400 + errors 필드(한국어)를 반환하도록 모킹
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 400,
+              error: 'Bad Request',
+              message: 'Validation failed',
+              errors: { baseUrl: 'http:// 또는 https://로 시작하는 URL이어야 합니다' },
+            }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // Base URL에 잘못된 값 입력 후 저장
+    const baseUrlInput = page.getByPlaceholder('https://api.example.com');
+    await baseUrlInput.clear();
+    await baseUrlInput.fill('not-a-url');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    // 한국어 검증 메시지가 토스트로 표시되어야 한다 (영문 "Validation failed" 아님)
+    await expect(
+      page.getByText('http:// 또는 https://로 시작하는 URL이어야 합니다'),
+    ).toBeVisible();
+    // 영문 메시지는 토스트에 노출되지 않아야 한다
+    await expect(page.getByText('Validation failed')).not.toBeVisible();
+  });
+
   test('Base URL 비워서 저장 시 에러 토스트 표시 — API 미호출 검증 (#124)', async ({
     authenticatedPage: page,
   }) => {

@@ -4,6 +4,20 @@ import { toast } from 'sonner';
 import type { ErrorResponse } from '@/types/auth';
 
 /**
+ * ErrorResponse에서 사용자에게 표시할 메시지를 추출한다.
+ * errors 필드(필드별 검증 오류)가 있으면 첫 번째 값을 우선 반환하여
+ * 한국어 검증 메시지가 그대로 토스트에 뜨도록 한다.
+ * errors 없으면 최상위 message, 그것도 없으면 fallback 사용.
+ */
+function pickBestMessage(errData: ErrorResponse, fallback: string): string {
+  if (errData.errors) {
+    const firstFieldMsg = Object.values(errData.errors)[0];
+    if (firstFieldMsg) return firstFieldMsg;
+  }
+  return errData.message || fallback;
+}
+
+/**
  * Axios 에러에서 백엔드 ErrorResponse.message를 추출한다.
  * responseType: 'blob' 요청에서 서버가 에러를 반환하면 error.response.data가
  * Blob 형태로 오므로, 이를 텍스트로 읽어 JSON 파싱을 시도한다.
@@ -17,7 +31,7 @@ export function extractApiError(error: unknown, fallback: string): string {
       return fallback;
     }
     const errData = data as ErrorResponse;
-    return errData.message || fallback;
+    return pickBestMessage(errData, fallback);
   }
   return fallback;
 }
@@ -36,13 +50,13 @@ export async function extractApiErrorAsync(
       try {
         const text = await data.text();
         const parsed = JSON.parse(text) as ErrorResponse;
-        return parsed.message || fallback;
+        return pickBestMessage(parsed, fallback);
       } catch {
         return fallback;
       }
     }
     const errData = data as ErrorResponse;
-    return errData.message || fallback;
+    return pickBestMessage(errData, fallback);
   }
   return fallback;
 }
