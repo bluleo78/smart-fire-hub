@@ -628,6 +628,12 @@ export default function ChartBuilderPage() {
         toast.error('공간 컬럼을 선택하세요.');
         return;
       }
+      // 선택된 공간 컬럼이 실제 GeoJSON 데이터를 포함하는지 검증
+      // — 저장 시점에 row 데이터를 기반으로 타입을 검사해 비공간 컬럼 저장을 차단한다
+      if (!isGeoJsonColumn(config.spatialColumn, queryRows)) {
+        toast.error('선택한 컬럼에 공간 데이터(GeoJSON)가 없습니다. GEOMETRY 타입 컬럼을 선택하세요.');
+        return;
+      }
     } else if (['CANDLESTICK', 'BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
       // 이 타입들은 yAxis 대신 전용 컬럼 설정 사용 — xAxis만 필수
       if (!config.xAxis) {

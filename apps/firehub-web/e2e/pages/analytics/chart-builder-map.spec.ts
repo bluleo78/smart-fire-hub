@@ -57,6 +57,51 @@ test.describe('차트 빌더 — MAP 차트 타입', () => {
     );
   });
 
+  /** 비공간 컬럼(GeoJSON 없음)만 포함한 쿼리 결과 — year_month 와 revenue 컬럼 */
+  const nonGeoQueryResult = createQueryResult({
+    columns: ['year_month', 'revenue'],
+    rows: [
+      { year_month: '2025-01', revenue: 1000000 },
+      { year_month: '2025-02', revenue: 1200000 },
+    ],
+    totalRows: 2,
+  });
+
+  test('비공간 컬럼을 공간 컬럼으로 선택하면 저장이 차단된다 (#122)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', nonGeoQueryResult);
+
+    // POST /charts 호출 여부를 추적 — 저장 차단 시 호출되지 않아야 한다
+    let chartPostCalled = false;
+    await page.route('**/api/v1/analytics/charts', (route) => {
+      if (route.request().method() === 'POST') {
+        chartPostCalled = true;
+        return route.fulfill({ status: 201, body: JSON.stringify({}) });
+      }
+      return route.continue();
+    });
+
+    await page.goto('/analytics/charts/new');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByText('2개 컬럼, 2개 행 로드됨')).toBeVisible();
+
+    // MAP 차트 타입 선택
+    await page.getByRole('button', { name: '지도' }).click();
+
+    // 비공간 컬럼이 공간 컬럼으로 자동 선택된 상태에서 저장 시도
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('heading', { name: '차트 저장' })).toBeVisible();
+    await page.getByRole('button', { name: '저장', exact: true }).last().click();
+
+    // 에러 토스트가 표시되고 POST /charts 는 호출되지 않아야 한다
+    await expect(page.getByText('선택한 컬럼에 공간 데이터(GeoJSON)가 없습니다.')).toBeVisible();
+    expect(chartPostCalled).toBe(false);
+  });
+
   test('MAP 차트 저장 시 spatialColumn 이 POST payload 에 포함된다', async ({
     authenticatedPage: page,
   }) => {
