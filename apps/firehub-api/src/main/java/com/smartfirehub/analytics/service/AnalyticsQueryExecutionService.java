@@ -114,8 +114,10 @@ public class AnalyticsQueryExecutionService {
 
     long startTime = System.currentTimeMillis();
 
-    // search_path를 data 스키마만으로 제한하여 public 스키마 암묵적 접근 차단
-    dsl.execute("SET LOCAL search_path = 'data'");
+    // search_path에 data 스키마와 public 스키마(PostGIS 확장 함수 위치) 포함 (#121)
+    // public 스키마 직접 참조(PUBLIC. prefix)는 보안상 여전히 차단되지만,
+    // ST_AsGeoJSON 등 PostGIS 함수는 search_path를 통한 암묵적 참조로 사용 가능하도록 허용
+    dsl.execute("SET LOCAL search_path = 'data', 'public'");
     dsl.execute("SET LOCAL statement_timeout = '30s'");
     dsl.execute("SAVEPOINT analytics_query");
 
