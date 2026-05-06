@@ -11,6 +11,7 @@ import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
@@ -54,7 +55,7 @@ public class DataExportController {
   @RequirePermission("data:export")
   public ResponseEntity<?> exportDataset(
       @PathVariable Long datasetId,
-      @RequestBody ExportRequest request,
+      @Valid @RequestBody ExportRequest request,
       HttpServletRequest httpRequest,
       HttpServletResponse httpResponse,
       Authentication authentication)
@@ -114,7 +115,7 @@ public class DataExportController {
   @PostMapping("/query-results/export")
   @RequirePermission("data:export")
   public ResponseEntity<StreamingResponseBody> exportQueryResult(
-      @RequestBody QueryResultExportRequest request) {
+      @Valid @RequestBody QueryResultExportRequest request) {
 
     StreamingResponseBody body =
         exportService.exportQueryResult(request.columnNames(), request.rows(), request.format());

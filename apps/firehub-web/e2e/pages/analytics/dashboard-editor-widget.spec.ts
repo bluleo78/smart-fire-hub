@@ -142,14 +142,17 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
   });
 
-  test('위젯 제거 성공 — 확인 다이얼로그에서 삭제 클릭 시 토스트 표시 (handleRemoveWidget)', async ({ authenticatedPage: page }) => {
+  test('위젯 제거 성공 — 확인 다이얼로그에서 삭제 클릭 시 즉시 DELETE API 호출 및 토스트 표시 (#133)', async ({ authenticatedPage: page }) => {
     // setupDashboardEditorMocks를 사용해 위젯 포함 대시보드를 올바른 형식으로 모킹
-    // (중복 GET 등록 시 LIFO 충돌을 피하기 위해 fixture 활용)
     await setupDashboardEditorMocks(page, 1);
-    // 완료 클릭 시 서버에 반영될 DELETE 모킹 (handleSaveEdit 경로)
-    await mockApi(page, 'DELETE', '/api/v1/analytics/dashboards/1/widgets/1', {});
-    // 레이아웃 저장 PATCH 모킹 (완료 시 updateWidget 호출)
-    await mockApi(page, 'PATCH', '/api/v1/analytics/dashboards/1/widgets/1', {});
+    // 삭제 확인 클릭 시 즉시 호출될 DELETE 모킹 — capture로 호출 검증
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/analytics/dashboards/1/widgets/1',
+      {},
+      { capture: true },
+    );
 
     await page.goto('/analytics/dashboards/1');
     await expect(page.getByText('테스트 차트')).toBeVisible();
@@ -165,15 +168,19 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3000 });
     await expect(page.getByRole('alertdialog').getByText('위젯 삭제')).toBeVisible();
 
-    // 다이얼로그에서 "삭제" 클릭 → 로컬에서 위젯 제거 + 토스트 표시
+    // 다이얼로그에서 "삭제" 클릭 → 즉시 서버 DELETE + 토스트 표시 (#133 수정된 동작)
     await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    // DELETE API가 즉시 호출되었음을 검증 (완료 버튼 없이도)
+    const captured = await deleteCapture.waitForRequest();
+    expect(captured.url.href).toContain('/api/v1/analytics/dashboards/1/widgets/1');
 
     // 성공 토스트 확인
     await expect(page.getByText('위젯이 제거되었습니다.')).toBeVisible({ timeout: 5000 });
   });
 
-  test('위젯 삭제 확인 다이얼로그 — 취소 클릭 시 위젯 유지 (이슈 #17 회귀 방지)', async ({ authenticatedPage: page }) => {
-    // 취소 시 DELETE API가 호출되지 않음을 확인하는 회귀 테스트
+  test('위젯 삭제 확인 다이얼로그 — 취소 클릭 시 DELETE API 미호출, 위젯 유지', async ({ authenticatedPage: page }) => {
+    // AlertDialog에서 취소 클릭 시 DELETE API가 호출되지 않음을 확인하는 회귀 테스트
     await setupDashboardEditorMocks(page, 1);
 
     await page.goto('/analytics/dashboards/1');
@@ -208,46 +215,46 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await expect(page.getByText('테스트 차트')).toBeVisible();
   });
 
-  test('편집 취소(X 버튼) — 위젯 삭제 후 취소 시 위젯 복원, DELETE API 미호출 (이슈 #17 회귀 방지)', async ({ authenticatedPage: page }) => {
-    // 편집 취소 시 로컬 변경사항(삭제)이 서버에 반영되지 않아야 한다
+  test('위젯 삭제 즉시 반영 — 완료 버튼 없이도 삭제 확인 시 DELETE API 호출됨 (#133 회귀 방지)', async ({ authenticatedPage: page }) => {
+    // 핵심 검증: 위젯 삭제가 "완료" 버튼 클릭 없이 즉시 서버에 반영된다.
+    // 추가(POST)와 동일한 즉시 반영 패턴을 유지하여 동작 일관성을 보장한다 (#133).
     await setupDashboardEditorMocks(page, 1);
+
+    // 삭제 DELETE 모킹 등록
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/analytics/dashboards/1/widgets/1',
+      {},
+      { capture: true },
+    );
 
     await page.goto('/analytics/dashboards/1');
     await expect(page.getByText('테스트 차트')).toBeVisible();
-
-    // DELETE API 호출 감시
-    let deleteCalled = false;
-    await page.route('**/api/v1/analytics/dashboards/1/widgets/**', (route) => {
-      if (route.request().method() === 'DELETE') {
-        deleteCalled = true;
-        return route.fulfill({ status: 200, body: '{}' });
-      }
-      return route.continue();
-    });
 
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
     await expect(page.locator('button[title="위젯 제거"]').first()).toBeVisible({ timeout: 5000 });
 
-    // 위젯 삭제 → 확인 다이얼로그 → 삭제 확인 (로컬에서만 제거)
+    // 위젯 삭제 → 확인 다이얼로그 → 삭제 확인
     await page.locator('button[title="위젯 제거"]').first().click();
     await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
 
-    // 편집 취소(X 버튼) 클릭 — handleCancelEdit 경로
+    // DELETE API가 즉시 호출되었음을 검증 — 완료 버튼 클릭 없이도 서버에 반영됨
+    const captured = await deleteCapture.waitForRequest();
+    expect(captured.url.href).toContain('/api/v1/analytics/dashboards/1/widgets/1');
+
+    // 편집 취소(X 버튼) 클릭 — 삭제는 이미 서버에 반영되어 있음
     await page.getByRole('button', { name: '편집 취소' }).click();
-
-    // DELETE API가 호출되지 않았음을 검증 (서버에 반영 안 됨)
-    expect(deleteCalled).toBe(false);
-
-    // 취소 후 위젯이 다시 보여야 한다 (롤백)
-    await expect(page.getByText('테스트 차트')).toBeVisible({ timeout: 3000 });
+    // 편집 모드 종료 확인
+    await expect(page.getByRole('button', { name: '편집' })).toBeVisible({ timeout: 3000 });
   });
 
-  test('편집 완료(완료 버튼) — 위젯 삭제 후 완료 시 DELETE API 호출됨 (이슈 #17 회귀 방지)', async ({ authenticatedPage: page }) => {
-    // 완료 버튼 클릭 시에만 실제로 서버에 DELETE가 반영되어야 한다
+  test('편집 완료(완료 버튼) — 위젯 삭제 후 완료 시 추가 DELETE 미호출 (이미 즉시 반영됨, #133)', async ({ authenticatedPage: page }) => {
+    // 수정 후 동작: 삭제는 확인 시 즉시 반영되므로 완료 버튼에서 DELETE를 재호출하지 않음
     await setupDashboardEditorMocks(page, 1);
 
-    // DELETE 및 PATCH 모킹
+    // 삭제 DELETE 모킹 — 삭제 확인 시 1회 호출됨
     const deleteCapture = await mockApi(
       page,
       'DELETE',
@@ -265,16 +272,18 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await page.getByRole('button', { name: '편집' }).click();
     await expect(page.locator('button[title="위젯 제거"]').first()).toBeVisible({ timeout: 5000 });
 
-    // 위젯 삭제 → 확인 다이얼로그 → 삭제 확인
+    // 위젯 삭제 → 확인 다이얼로그 → 삭제 확인 → 즉시 서버 DELETE 발생
     await page.locator('button[title="위젯 제거"]').first().click();
     await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
 
-    // 완료 버튼 클릭 — handleSaveEdit: 서버에 DELETE 반영
-    await page.getByRole('button', { name: '완료' }).click();
-
-    // DELETE API가 호출되었음을 검증
+    // 삭제 확인 시점에 DELETE API가 호출되었음을 검증
     const captured = await deleteCapture.waitForRequest();
     expect(captured.url.href).toContain('/api/v1/analytics/dashboards/1/widgets/1');
+
+    // 완료 버튼 클릭 — handleSaveEdit: 레이아웃 PATCH만 처리, DELETE 재호출 없음
+    await page.getByRole('button', { name: '완료' }).click();
+    // 완료 후 편집 모드 종료 확인
+    await expect(page.getByRole('button', { name: '편집' })).toBeVisible({ timeout: 3000 });
   });
 
   test('차트 추가 성공 — 토스트 및 레이아웃 갱신 (handleAddWidget)', async ({ authenticatedPage: page }) => {

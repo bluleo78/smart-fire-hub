@@ -306,22 +306,30 @@ export default function DashboardEditorPage() {
     []
   );
 
-  // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 로컬 editingWidgets에서만 제거한다.
-  // 서버에는 "완료" 클릭 시 handleSaveEdit에서 일괄 반영.
-  const handleConfirmDelete = useCallback(() => {
+  // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 즉시 서버에 DELETE 요청을 보낸다.
+  // 위젯 추가(handleAddWidget)와 동일하게 즉시 서버 반영하여 동작 일관성을 유지한다.
+  // 이전에는 로컬 상태에만 저장하고 "완료" 버튼 클릭 시 일괄 반영했으나,
+  // 추가는 즉시 반영, 삭제는 지연 반영하여 동작이 불일치하는 버그(#133)를 수정한다.
+  const handleConfirmDelete = useCallback(async () => {
     if (deleteConfirmWidgetId === null) return;
     const id = deleteConfirmWidgetId;
     setDeleteConfirmWidgetId(null);
-    setEditingWidgets((prev) => {
-      if (!prev) return prev;
-      const next = prev.filter((w) => w.id !== id);
-      // 위젯 제거 후 레이아웃도 동기화
-      const items = widgetsToLayoutItems(next);
-      setLocalLayouts({ lg: items, md: items, sm: items });
-      return next;
-    });
-    toast.success('위젯이 제거되었습니다.');
-  }, [deleteConfirmWidgetId]);
+    try {
+      await removeWidgetMutation.mutateAsync(id);
+      // 서버 DELETE 성공 후 로컬 editingWidgets에서도 제거하여 UI 동기화
+      setEditingWidgets((prev) => {
+        if (!prev) return prev;
+        const next = prev.filter((w) => w.id !== id);
+        // 위젯 제거 후 레이아웃도 동기화
+        const items = widgetsToLayoutItems(next);
+        setLocalLayouts({ lg: items, md: items, sm: items });
+        return next;
+      });
+      toast.success('위젯이 제거되었습니다.');
+    } catch (error) {
+      handleApiError(error, '위젯 제거에 실패했습니다.');
+    }
+  }, [deleteConfirmWidgetId, removeWidgetMutation]);
 
   const handleAddWidget = useCallback(
     async (chartId: number, chartType?: string) => {
@@ -391,9 +399,8 @@ export default function DashboardEditorPage() {
   }, [dashboard]);
 
   /**
-   * 편집 완료(완료 버튼): 로컬 변경사항을 서버에 일괄 반영한다.
-   * 1. 삭제된 위젯: DELETE 요청 전송
-   * 2. 레이아웃 변경: PATCH 요청 전송
+   * 편집 완료(완료 버튼): 레이아웃 변경사항을 서버에 일괄 반영한다.
+   * 삭제는 확인 시 즉시 서버에 반영되므로 여기서는 레이아웃 PATCH만 처리한다.
    */
   const handleSaveEdit = useCallback(async () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -403,24 +410,13 @@ export default function DashboardEditorPage() {
       return;
     }
 
-    const originalIds = new Set(dashboard.widgets.map((w) => w.id));
     const remainingIds = new Set(editingWidgets.map((w) => w.id));
 
-    // 1. 삭제된 위젯 서버에 반영
-    const deletedIds = [...originalIds].filter((id) => !remainingIds.has(id));
-    for (const widgetId of deletedIds) {
-      try {
-        await removeWidgetMutation.mutateAsync(widgetId);
-      } catch (error) {
-        handleApiError(error, '위젯 제거에 실패했습니다.');
-      }
-    }
-
-    // 2. 레이아웃 변경 서버에 반영 (lg 기준)
+    // 레이아웃 변경 서버에 반영 (lg 기준)
     const lgItems = (localLayouts.lg as LayoutItem[] | undefined) ?? [];
     lgItems.forEach((item) => {
       const widgetId = parseInt(item.i, 10);
-      // 삭제된 위젯은 건너뜀
+      // 현재 편집 목록에 없는 위젯(이미 삭제됨)은 건너뜀
       if (!remainingIds.has(widgetId)) return;
       updateWidgetMutation.mutate({
         widgetId,
@@ -435,7 +431,7 @@ export default function DashboardEditorPage() {
 
     setEditingWidgets(null);
     setIsEditing(false);
-  }, [dashboard, editingWidgets, localLayouts, removeWidgetMutation, updateWidgetMutation]);
+  }, [dashboard, editingWidgets, localLayouts, updateWidgetMutation]);
 
   if (isLoading) {
     return (
@@ -648,14 +644,14 @@ export default function DashboardEditorPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>위젯 삭제</AlertDialogTitle>
             <AlertDialogDescription>
-              이 위젯을 삭제하시겠습니까? "완료" 클릭 전까지는 취소가 가능합니다.
+              이 위젯을 삭제하시겠습니까? 삭제 즉시 서버에 반영되며 되돌릴 수 없습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={handleConfirmDelete}
+              onClick={() => void handleConfirmDelete()}
             >
               삭제
             </AlertDialogAction>
