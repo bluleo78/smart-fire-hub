@@ -107,7 +107,8 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
               <Button variant="outline" onClick={() => props.onOpenChange(false)} disabled={status.isUploading}>
                 취소
               </Button>
-              <Button onClick={handlers.import} disabled={derived.hasUnmappedRequired || status.isUploading}>
+              {/* validRows가 0이면 임포트 불가 — 헤더만 있고 데이터 행이 없는 파일 방지 (#128) */}
+              <Button onClick={handlers.import} disabled={derived.hasUnmappedRequired || status.isUploading || (validationResult !== null && validationResult.validRows === 0)}>
                 {status.isUploading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />

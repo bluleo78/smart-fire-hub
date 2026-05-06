@@ -433,6 +433,108 @@ test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
   });
 });
 
+/**
+ * #128 회귀 방지 — 0행 CSV(헤더만 있는 파일) 임포트 시 임포트 버튼 비활성화
+ * 검증 결과 validRows === 0 이면 임포트 버튼이 disabled 상태여야 한다.
+ */
+test.describe('#128 회귀 방지 — 0행 데이터 CSV 임포트 버튼 비활성화', () => {
+  /**
+   * 헤더만 있는 파일 미리보기 응답 — 데이터 행 없음.
+   * suggestedMappings에 필수 컬럼(id)을 포함해야 hasUnmappedRequired === false 가 되어
+   * 검증 버튼이 활성화된다.
+   */
+  function createHeaderOnlyPreviewResponse() {
+    return {
+      fileHeaders: ['id', 'name'],
+      sampleRows: [],
+      suggestedMappings: [
+        { fileColumn: 'id', datasetColumn: 'id', matchType: 'EXACT', confidence: 1.0 },
+        { fileColumn: 'name', datasetColumn: 'name', matchType: 'EXACT', confidence: 1.0 },
+      ],
+      totalRows: 0,
+    };
+  }
+
+  /** 0행 검증 응답 — validRows === 0 */
+  function createZeroRowValidateResponse() {
+    return { totalRows: 0, validRows: 0, errorRows: 0, errors: [] };
+  }
+
+  test('검증 후 validRows === 0 이면 임포트 버튼이 비활성화된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      createHeaderOnlyPreviewResponse(),
+    );
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      createZeroRowValidateResponse(),
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    // 파일 선택 → 미리보기 응답 수신 후 2단계 진입
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    // 검증 버튼 클릭 → 0행 검증 결과 수신
+    const validateBtn = page.getByRole('dialog').getByRole('button', { name: '검증' });
+    await expect(validateBtn).toBeVisible({ timeout: 10_000 });
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/validate') && r.status() === 200),
+      validateBtn.click(),
+    ]);
+
+    // 검증 완료 후 임포트 버튼이 disabled 상태여야 한다
+    const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeDisabled({ timeout: 5_000 });
+  });
+
+  test('validRows > 0 이면 임포트 버튼이 활성화된다 (정상 케이스 회귀 방지)', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      createPreviewResponse(),
+    );
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      createValidateResponse(),
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const validateBtn = page.getByRole('dialog').getByRole('button', { name: '검증' });
+    await expect(validateBtn).toBeVisible({ timeout: 10_000 });
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/validate') && r.status() === 200),
+      validateBtn.click(),
+    ]);
+
+    // 정상 케이스: validRows === 2 → 임포트 버튼 활성화
+    const importBtn = page.getByRole('dialog').getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeEnabled({ timeout: 5_000 });
+  });
+});
+
 test.describe('데이터셋 변경 이력 탭', () => {
   test('임포트 이력이 있으면 이력 탭에 파일명과 상태가 표시된다', async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
