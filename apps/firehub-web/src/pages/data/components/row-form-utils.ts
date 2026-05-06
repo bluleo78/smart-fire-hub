@@ -26,6 +26,31 @@ export function buildRowZodSchema(columns: DatasetColumnResponse[]) {
         if (col.isNullable) field = field.optional().or(z.literal(''));
         else field = (field as z.ZodString).min(1, '필수 입력 항목입니다.');
         break;
+      case 'GEOMETRY': {
+        // GeoJSON 유효성 검증: type 필드가 GeoJSON 표준 값인지 확인
+        const GEOJSON_TYPES = [
+          'Point', 'LineString', 'Polygon',
+          'MultiPoint', 'MultiLineString', 'MultiPolygon',
+          'GeometryCollection', 'Feature', 'FeatureCollection',
+        ];
+        const geoField = z.string().refine(
+          (v) => {
+            try {
+              const parsed = JSON.parse(v);
+              return GEOJSON_TYPES.includes(parsed?.type);
+            } catch {
+              return false;
+            }
+          },
+          { message: 'GeoJSON 형식으로 입력하세요. 예: {"type":"Point","coordinates":[126.97,37.56]}' },
+        );
+        if (col.isNullable) {
+          field = geoField.optional().or(z.literal(''));
+        } else {
+          field = geoField;
+        }
+        break;
+      }
       case 'DATE':
       case 'TIMESTAMP':
       case 'TEXT':

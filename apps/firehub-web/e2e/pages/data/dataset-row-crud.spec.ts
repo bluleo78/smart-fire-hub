@@ -282,6 +282,147 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     expect(payload.data.label).toBe('테스트');
   });
 
+  test('GEOMETRY 컬럼에 잘못된 값 입력 → 클라이언트 GeoJSON 유효성 에러 표시', async ({
+    authenticatedPage: page,
+  }) => {
+    // GEOMETRY 컬럼 포함 데이터셋 (nullable — 선택 입력)
+    const geoDataset = createDatasetDetail({
+      id: 3,
+      rowCount: 0,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 2,
+          columnName: 'label',
+          displayName: '이름',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 1,
+        }),
+        createColumn({
+          id: 3,
+          columnName: 'geom',
+          displayName: '위치 (지오메트리)',
+          dataType: 'GEOMETRY',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 2,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/3', geoDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/3/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/3/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/3/data',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ columns: geoDataset.columns, rows: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }),
+      }),
+    );
+
+    await page.goto('/data/datasets/3');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // 필수 필드 입력
+    await page.locator('#add-label').fill('테스트');
+
+    // GEOMETRY 컬럼에 잘못된 값 입력 (GeoJSON 아님)
+    await page.locator('#add-geom').fill('잘못된값');
+
+    // 제출 시도
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // 클라이언트 측 Zod 에러 표시 확인 — 서버로 보내지 않고 다이얼로그가 유지됨
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('GeoJSON 형식으로 입력하세요')).toBeVisible();
+  });
+
+  test('GEOMETRY 컬럼에 유효한 GeoJSON 입력 → 정상 제출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const geoDataset = createDatasetDetail({
+      id: 3,
+      rowCount: 0,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 2,
+          columnName: 'label',
+          displayName: '이름',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 1,
+        }),
+        createColumn({
+          id: 3,
+          columnName: 'geom',
+          displayName: '위치 (지오메트리)',
+          dataType: 'GEOMETRY',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 2,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/3', geoDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/3/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/3/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/3/data',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ columns: geoDataset.columns, rows: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }),
+      }),
+    );
+
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/3/data/rows',
+      { id: 1, label: '테스트', geom: '{"type":"Point","coordinates":[126.97,37.56]}' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/3');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    await page.locator('#add-label').fill('테스트');
+
+    // 유효한 GeoJSON Point 입력
+    await page.locator('#add-geom').fill('{"type":"Point","coordinates":[126.97,37.56]}');
+
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    // 정상 제출 확인 — API payload에 geom 포함
+    const captured = await addCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data).toMatchObject({
+      label: '테스트',
+      geom: '{"type":"Point","coordinates":[126.97,37.56]}',
+    });
+  });
+
   test('EditRowDialog — X 버튼 클릭 시 다이얼로그가 닫힌다', async ({
     authenticatedPage: page,
   }) => {
