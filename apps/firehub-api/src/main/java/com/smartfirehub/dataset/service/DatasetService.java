@@ -386,15 +386,14 @@ public class DatasetService {
       try {
         // 데이터 존재 여부와 무관하게 시도하고, DB 가 거부하면 친화적인 메시지로 변환한다.
         // - NOT NULL → NULL 허용: 항상 안전
-        // - NULL 허용 → NOT NULL: 컬럼에 NULL 값이 있으면 Postgres 가 거부 (jOOQ IntegrityConstraintViolationException)
+        // - NULL 허용 → NOT NULL: 컬럼에 NULL 값이 있으면 Postgres 가 거부 (jOOQ
+        // IntegrityConstraintViolationException)
         dataTableService.setColumnNullable(
             dataset.tableName(), currentColName, request.isNullable());
       } catch (IntegrityConstraintViolationException | DataIntegrityViolationException e) {
         if (!request.isNullable()) {
           throw new ColumnModificationException(
-              "NOT NULL 로 변경할 수 없습니다: 컬럼 '"
-                  + currentColName
-                  + "' 에 NULL 값이 존재합니다.");
+              "NOT NULL 로 변경할 수 없습니다: 컬럼 '" + currentColName + "' 에 NULL 값이 존재합니다.");
         }
         throw e;
       }
@@ -441,8 +440,7 @@ public class DatasetService {
           if (!pkColNames.contains(colName)) pkColNames.add(colName);
 
           if (!dataTableRowService.checkDataUniqueness(dataset.tableName(), pkColNames)) {
-            throw new ColumnModificationException(
-                "Cannot set as primary key: duplicate values exist in the data");
+            throw new ColumnModificationException("기본 키를 설정할 수 없습니다. 데이터에 중복값이 존재합니다.");
           }
         }
       }
@@ -474,8 +472,8 @@ public class DatasetService {
   /**
    * 데이터셋의 기본 키 컬럼 집합을 한 번에 갱신한다.
    *
-   * <p>복합 PK 의 경우 단일 컬럼별 PUT 으로는 중간 상태가 unique 하지 않아 실패하므로,
-   * 최종 PK 컬럼 ID 목록을 받아 트랜잭션 안에서 일괄 적용한다. 검증 순서:
+   * <p>복합 PK 의 경우 단일 컬럼별 PUT 으로는 중간 상태가 unique 하지 않아 실패하므로, 최종 PK 컬럼 ID 목록을 받아 트랜잭션 안에서 일괄 적용한다. 검증
+   * 순서:
    *
    * <ol>
    *   <li>모든 PK 컬럼이 NOT NULL 인지 확인 (PK 는 nullable 불가)
@@ -504,8 +502,7 @@ public class DatasetService {
     for (Long id : pkIds) {
       DatasetColumnResponse c = byId.get(id);
       if (c == null) {
-        throw new IllegalArgumentException(
-            "Column not found in dataset " + datasetId + ": " + id);
+        throw new IllegalArgumentException("Column not found in dataset " + datasetId + ": " + id);
       }
       targetCols.add(c);
     }
@@ -520,13 +517,13 @@ public class DatasetService {
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
 
-    List<String> pkColumnNames = targetCols.stream().map(DatasetColumnResponse::columnName).toList();
+    List<String> pkColumnNames =
+        targetCols.stream().map(DatasetColumnResponse::columnName).toList();
 
     // 데이터 존재 시 최종 집합이 unique 한지 한 번에 검증
     if (rowCount > 0 && !pkColumnNames.isEmpty()) {
       if (!dataTableRowService.checkDataUniqueness(dataset.tableName(), pkColumnNames)) {
-        throw new ColumnModificationException(
-            "Cannot set primary key: duplicate values exist in the data");
+        throw new ColumnModificationException("기본 키를 설정할 수 없습니다. 데이터에 중복값이 존재합니다.");
       }
     }
 
