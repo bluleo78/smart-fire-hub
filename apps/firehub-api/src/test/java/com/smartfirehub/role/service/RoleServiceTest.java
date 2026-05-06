@@ -61,7 +61,7 @@ class RoleServiceTest extends IntegrationTestBase {
   void createRole_duplicateName_throwsException() {
     assertThatThrownBy(() -> roleService.createRole("ADMIN", "Duplicate"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("already exists");
+        .hasMessageContaining("이미 존재하는 역할 이름입니다");
   }
 
   @Test

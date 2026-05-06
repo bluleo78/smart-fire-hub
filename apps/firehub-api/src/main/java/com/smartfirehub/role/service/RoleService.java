@@ -38,7 +38,7 @@ public class RoleService {
   @Transactional
   public RoleResponse createRole(String name, String description) {
     if (roleRepository.existsByName(name)) {
-      throw new IllegalArgumentException("Role name already exists: " + name);
+      throw new IllegalArgumentException("이미 존재하는 역할 이름입니다: " + name);
     }
     return roleRepository.save(name, description);
   }

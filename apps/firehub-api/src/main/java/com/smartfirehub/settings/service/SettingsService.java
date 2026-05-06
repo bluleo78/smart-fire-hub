@@ -147,6 +147,19 @@ public class SettingsService {
       }
     }
 
+    // smtp.port 범위 검증 — 1~65535 범위를 벗어나면 400 Bad Request
+    if (settings.containsKey("smtp.port")) {
+      String portStr = settings.get("smtp.port");
+      try {
+        int port = Integer.parseInt(portStr);
+        if (port < 1 || port > 65535) {
+          throw new IllegalArgumentException("SMTP 포트 번호는 1에서 65535 사이여야 합니다. 입력값: " + port);
+        }
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
+      }
+    }
+
     boolean hasMaskedPassword = isMaskedApiKey(settings.get("smtp.password"));
 
     Map<String, String> filtered =

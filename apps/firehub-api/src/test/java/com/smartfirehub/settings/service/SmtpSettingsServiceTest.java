@@ -105,4 +105,49 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
     Map<String, String> config = settingsService.getSmtpConfig();
     assertThat(config).containsEntry("smtp.username", "smtp-user@example.com");
   }
+
+  // --- smtp.port 범위 검증 테스트 ---
+
+  @Test
+  void updateSmtpSettings_portAbove65535_throwsIllegalArgument() {
+    // 99999는 유효 범위(1-65535) 초과 — 서버가 거부해야 한다
+    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.port", "99999"), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("65535");
+  }
+
+  @Test
+  void updateSmtpSettings_portZero_throwsIllegalArgument() {
+    // 0은 포트 하한(1) 미만
+    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.port", "0"), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("65535");
+  }
+
+  @Test
+  void updateSmtpSettings_portNegative_throwsIllegalArgument() {
+    // 음수 포트 번호
+    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.port", "-1"), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("65535");
+  }
+
+  @Test
+  void updateSmtpSettings_portNonNumeric_throwsIllegalArgument() {
+    // 숫자가 아닌 포트 값
+    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.port", "abc"), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("유효하지 않습니다");
+  }
+
+  @Test
+  void updateSmtpSettings_portBoundary_acceptsValidPorts() {
+    // 경계값 1과 65535는 유효해야 한다
+    settingsService.updateSmtpSettings(Map.of("smtp.port", "1"), null);
+    settingsService.updateSmtpSettings(Map.of("smtp.port", "65535"), null);
+    settingsService.updateSmtpSettings(Map.of("smtp.port", "587"), null);
+
+    Map<String, String> config = settingsService.getSmtpConfig();
+    assertThat(config).containsEntry("smtp.port", "587");
+  }
 }
