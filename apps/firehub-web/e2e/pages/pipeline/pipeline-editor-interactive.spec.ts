@@ -313,4 +313,98 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
       expect(me).toMatch(/url\(['"]?#.*arrowclosed/i);
     }
   });
+
+  /**
+   * 회귀 테스트: #132 — 미저장 변경사항 있을 때 취소 버튼이 AlertDialog 없이 즉시 편집 종료되는 버그.
+   *
+   * 수정 내용: handleCancelEdit()에서 state.isDirty가 true이면 AlertDialog를 표시하고,
+   * 사용자가 확인 시에만 cancelEdit() + setIsEditing(false) 호출.
+   */
+  test('미저장 변경사항이 있을 때 취소 버튼 → AlertDialog가 표시된다 (#132)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '수정' }).click();
+
+    // 파이프라인 이름 변경 → isDirty = true (미저장 변경사항 발생)
+    const nameInput = page.getByPlaceholder('파이프라인 이름');
+    await nameInput.fill('변경된 이름');
+
+    // 취소 버튼 클릭
+    await page.getByRole('button', { name: '취소' }).click();
+
+    // AlertDialog가 표시되어야 한다 (즉시 편집 종료 금지)
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('변경사항을 취소하시겠습니까?')).toBeVisible();
+  });
+
+  test('미저장 변경사항 AlertDialog — "계속 편집" 클릭 시 편집 모드 유지 (#132)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 편집 모드 진입 후 이름 변경
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByPlaceholder('파이프라인 이름').fill('변경된 이름');
+
+    // 취소 버튼 클릭 → AlertDialog 표시
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // "계속 편집" 클릭 → 다이얼로그 닫히고 편집 모드 유지
+    await page.getByRole('button', { name: '계속 편집' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+    // 편집 모드가 여전히 활성: "저장" 버튼이 보여야 한다
+    await expect(page.getByRole('button', { name: '저장' })).toBeVisible();
+  });
+
+  test('미저장 변경사항 AlertDialog — "변경사항 취소" 클릭 시 편집 모드 종료 (#132)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 편집 모드 진입 후 이름 변경
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByPlaceholder('파이프라인 이름').fill('변경된 이름');
+
+    // 취소 버튼 클릭 → AlertDialog 표시
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    // "변경사항 취소" 클릭 → 편집 모드 종료
+    await page.getByRole('button', { name: '변경사항 취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+    // 편집 모드 종료: "수정" 버튼이 다시 보여야 한다
+    await expect(page.getByRole('button', { name: '수정' })).toBeVisible();
+  });
+
+  test('변경사항 없을 때 취소 버튼 → AlertDialog 없이 즉시 편집 종료 (#132)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    await page.goto('/pipelines/1');
+
+    // 편집 모드 진입 (변경 없음)
+    await page.getByRole('button', { name: '수정' }).click();
+
+    // 취소 버튼 클릭 → AlertDialog 없이 즉시 종료
+    await page.getByRole('button', { name: '취소' }).click();
+
+    // AlertDialog가 표시되지 않아야 한다
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+    // 편집 모드 종료: "수정" 버튼이 바로 보여야 한다
+    await expect(page.getByRole('button', { name: '수정' })).toBeVisible();
+  });
 });

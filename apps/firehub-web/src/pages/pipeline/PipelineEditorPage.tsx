@@ -4,6 +4,16 @@ import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Breadcrumb } from '@/components/layout/Breadcrumb';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -50,6 +60,9 @@ export default function PipelineEditorPage() {
   // 조회/편집 모드: 신규 생성은 항상 편집, 기존 파이프라인은 조회 모드에서 시작
   const [isEditing, setIsEditing] = useState(!pipelineId);
   const readOnly = !!executionId || !isEditing;
+
+  // 미저장 변경사항 취소 확인 다이얼로그 표시 여부 (#132)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   // 실행 상세 진입 시 실행 이력 탭, 그 외 개요 탭
   const [activeTab, setActiveTab] = useState(executionId ? 'executions' : 'overview');
@@ -104,7 +117,23 @@ export default function PipelineEditorPage() {
     if (ok) setIsEditing(false);
   };
 
+  /**
+   * 취소 버튼 핸들러 (#132).
+   * 미저장 변경사항(isDirty)이 있을 경우 AlertDialog로 확인 후 취소.
+   * 변경사항이 없으면 즉시 편집 모드 종료.
+   */
   const handleCancelEdit = () => {
+    if (state.isDirty) {
+      setShowCancelConfirm(true);
+    } else {
+      cancelEdit();
+      setIsEditing(false);
+    }
+  };
+
+  /** 미저장 변경사항 폐기 확정 — AlertDialog "변경사항 취소" 버튼 핸들러 */
+  const handleConfirmCancel = () => {
+    setShowCancelConfirm(false);
     cancelEdit();
     setIsEditing(false);
   };
@@ -195,6 +224,22 @@ export default function PipelineEditorPage() {
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">
       <h1 className="sr-only">{headingText}</h1>
+
+      {/* 미저장 변경사항 취소 확인 다이얼로그 (#132) — isDirty 상태에서 취소 버튼 클릭 시 표시 */}
+      <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>변경사항을 취소하시겠습니까?</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하지 않은 변경사항이 모두 사라집니다. 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>계속 편집</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmCancel}>변경사항 취소</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* 상위 경로 표시용 breadcrumb (#101) — 캔버스가 화면을 가득 채우는 에디터에서도 위치 인지를 돕는다 */}
       <div className="px-4 pt-3">
         <Breadcrumb
