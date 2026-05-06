@@ -173,4 +173,15 @@ class GlobalExceptionHandlerExtendedTest {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.status").value(409));
   }
+
+  /** 업로드 파일 크기 초과 시 500이 아닌 400과 한국어 안내 메시지를 반환해야 한다 (#137) */
+  @Test
+  void maxUploadSizeExceeded_returns400_withKoreanMessage() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/max-upload-size-exceeded"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.error").value("Bad Request"))
+        .andExpect(jsonPath("$.message").value("파일 크기가 허용 한도(50MB)를 초과했습니다. 더 작은 파일을 업로드해주세요."));
+  }
 }

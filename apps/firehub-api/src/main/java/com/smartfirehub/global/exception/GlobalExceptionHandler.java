@@ -47,6 +47,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
@@ -225,6 +226,19 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleUnsupportedFileType(
       UnsupportedFileTypeException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  /**
+   * 업로드 파일 크기가 제한(50MB)을 초과했을 때 400 대신 명확한 메시지를 반환한다. Spring Boot 기본 동작은 500 또는 비구조화된 에러이므로 여기서
+   * 통일한다 (#137).
+   */
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceeded(
+      MaxUploadSizeExceededException ex, HttpServletRequest request) {
+    ErrorResponse response =
+        buildError(
+            HttpStatus.BAD_REQUEST, "파일 크기가 허용 한도(50MB)를 초과했습니다. 더 작은 파일을 업로드해주세요.", null, request);
     return ResponseEntity.badRequest().body(response);
   }
 

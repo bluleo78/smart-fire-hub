@@ -18,6 +18,7 @@ import com.smartfirehub.user.exception.UserDeactivatedException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 /** 추가 예외 핸들러 커버리지를 위한 stub 컨트롤러 — GlobalExceptionHandlerExtendedTest 전용. */
 @RestController
@@ -112,5 +113,11 @@ public class ExceptionStubControllerExtended {
   @GetMapping("/cyclic-trigger-dependency")
   public void cyclicTriggerDependency() {
     throw new CyclicTriggerDependencyException("Cyclic trigger dependency detected");
+  }
+
+  /** 업로드 파일 크기 초과 시 GlobalExceptionHandler가 400을 반환하는지 검증하기 위한 stub (#137) */
+  @GetMapping("/max-upload-size-exceeded")
+  public void maxUploadSizeExceeded() {
+    throw new MaxUploadSizeExceededException(50 * 1024 * 1024L);
   }
 }
