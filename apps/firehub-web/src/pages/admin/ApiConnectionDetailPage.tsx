@@ -92,13 +92,18 @@ export default function ApiConnectionDetailPage() {
       toast.error('연결 이름은 필수입니다.');
       return;
     }
+    // Base URL은 API 연결의 필수 값 — 빈 값으로 저장하면 백엔드가 null 처리해 무음으로 무시하므로 클라이언트에서 차단 (#124)
+    if (!baseUrl.trim()) {
+      toast.error('Base URL은 필수입니다.');
+      return;
+    }
     try {
       await updateMutation.mutateAsync({
         id: Number(id),
         data: {
           name: name.trim(),
           description: description.trim() || undefined,
-          baseUrl: baseUrl.trim() || undefined,
+          baseUrl: baseUrl.trim(),
           // 빈 문자열도 그대로 전달해야 backend 가 명시적 clear 로 인식한다 (#115)
           healthCheckPath: healthCheckPath.trim(),
         },

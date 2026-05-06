@@ -862,4 +862,43 @@ test.describe('API 연결 페이지', () => {
       page.getByText('보안 정책상 마지막 4자리만 표시됩니다.', { exact: false }),
     ).toBeVisible();
   });
+
+  test('Base URL 비워서 저장 시 에러 토스트 표시 — API 미호출 검증 (#124)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이슈 #124 회귀 테스트:
+    // Base URL을 지운 뒤 저장 클릭 시 클라이언트 검증이 에러 토스트를 표시하고
+    // PUT API를 호출하지 않아야 한다 (기존에는 성공 토스트가 뜨고 서버에서 무시됨).
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT API 캡처 설정 — 이 요청이 발생하면 안 된다
+    let putCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          putCalled = true;
+          return route.fulfill({ status: 200, body: JSON.stringify({ id: 1 }) });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // Base URL 필드를 비운다 (placeholder="https://api.example.com")
+    const baseUrlInput = page.getByPlaceholder('https://api.example.com');
+    await baseUrlInput.clear();
+
+    // 저장 버튼 클릭
+    await page.getByRole('button', { name: '저장' }).click();
+
+    // 에러 토스트가 표시되어야 한다
+    await expect(page.getByText('Base URL은 필수입니다.')).toBeVisible();
+
+    // PUT API가 호출되지 않아야 한다 (short wait after click to be sure)
+    await page.waitForTimeout(300);
+    expect(putCalled).toBe(false);
+  });
 });
