@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Download, FileSpreadsheet, FileText, MapPin } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { exportsApi } from '../../../api/exports';
@@ -49,6 +49,15 @@ export function ExportDialog({
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const { startTracking } = useExportJobTracking();
+
+  // 비동기 내보내기 폴링 cleanup 함수를 ref로 보관
+  // ExportDialog가 언마운트될 때 진행 중인 interval을 정리한다
+  const cleanupTrackingRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    return () => {
+      cleanupTrackingRef.current?.();
+    };
+  }, []);
 
   const { data: estimate, isLoading } = useQuery({
     queryKey: ['export-estimate', datasetId, search],
@@ -120,7 +129,8 @@ export function ExportDialog({
           request
         );
         onOpenChange(false);
-        startTracking(data.jobId, datasetName);
+        // startTracking이 반환하는 cleanup을 ref에 저장 — 언마운트 시 clearInterval 호출
+        cleanupTrackingRef.current = startTracking(data.jobId, datasetName);
       } catch (error) {
         handleApiError(error, '내보내기 요청에 실패했습니다.');
       }
