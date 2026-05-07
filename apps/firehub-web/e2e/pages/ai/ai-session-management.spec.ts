@@ -310,6 +310,39 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     ]);
     expect(deletedId).toBe(1); // MOCK_SESSIONS[0].id === 1
   });
+
+  test('삭제 API 실패 시 에러 토스트가 표시된다 (#194)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openPanelWithSessions(page);
+
+    // DELETE 세션 API를 500으로 응답하여 실패 상황 재현 — onError 핸들러 유무 검증
+    await page.route(
+      (url) => /\/api\/v1\/ai\/sessions\/\d+$/.test(url.pathname),
+      (route) => {
+        if (route.request().method() === 'DELETE') {
+          return route.fulfill({ status: 500, body: '' });
+        }
+        return route.continue();
+      },
+    );
+
+    // 드롭다운 열기 → 삭제 버튼 클릭 → AlertDialog 확인
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
+    await trigger.click();
+    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
+    await expect(menuItem1).toBeVisible({ timeout: 3000 });
+    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+
+    // AlertDialog에서 삭제 확인 → DELETE API 실패 → onError 토스트
+    await Promise.all([
+      page.waitForResponse((r) => /\/ai\/sessions\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
+      page.getByRole('button', { name: '삭제' }).click(),
+    ]);
+
+    // onError 핸들러가 실행되어 에러 토스트가 표시되어야 함
+    await expect(page.getByText('대화 삭제에 실패했습니다.')).toBeVisible({ timeout: 3000 });
+  });
 });
 
 test.describe('AI 세션 관리 — 새 대화 (startNewSession)', () => {

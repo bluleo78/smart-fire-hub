@@ -25,6 +25,10 @@ export function useDeleteAISession() {
       queryClient.invalidateQueries({ queryKey: ['ai-sessions'] });
       toast.success('대화가 삭제되었습니다.');
     },
+    // 삭제 API 실패 시 사용자에게 오류 피드백 제공
+    onError: () => {
+      toast.error('대화 삭제에 실패했습니다.');
+    },
   });
 }
 
