@@ -16,6 +16,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import org.springframework.core.io.ByteArrayResource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -89,11 +90,13 @@ class FileUploadControllerTest {
     mockMvc.perform(get("/api/v1/files/1")).andExpect(status().isUnauthorized());
   }
 
-  /** GET /files/{id}/content — 파일 콘텐츠 다운로드 성공 */
+  /** GET /files/{id}/content — 파일 콘텐츠 스트리밍 다운로드 성공 (OOM 방지: Resource 반환) */
   @Test
   void getFileContent_withAuth_returnsOk() throws Exception {
+    byte[] data = "col1,col2\n1,2".getBytes();
+    // ByteArrayResource는 테스트용 mock; 실제 서비스는 FileSystemResource를 사용한다
     FileContentResult result =
-        new FileContentResult("col1,col2\n1,2".getBytes(), "text/csv", "test.csv");
+        new FileContentResult(new ByteArrayResource(data), "text/csv", "test.csv", data.length);
     when(fileUploadService.getFileContent(anyLong(), anyLong())).thenReturn(result);
 
     mockMvc

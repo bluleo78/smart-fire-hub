@@ -10,6 +10,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -181,7 +183,12 @@ public class FileUploadService {
         record.getCreatedAt().toInstant());
   }
 
-  public record FileContentResult(byte[] content, String mimeType, String originalName) {}
+  /**
+   * 파일 다운로드 결과 레코드.
+   * byte[] 대신 Resource를 사용하여 대용량 파일(최대 256MB)을
+   * 스트리밍으로 전송하고 힙 메모리 과소비를 방지한다.
+   */
+  public record FileContentResult(Resource resource, String mimeType, String originalName, long size) {}
 
   public FileContentResult getFileContent(Long fileId, Long userId) throws IOException {
     var record =
@@ -199,8 +206,11 @@ public class FileUploadService {
       throw new FileNotFoundException(fileId);
     }
 
-    byte[] content = Files.readAllBytes(storagePath);
-    return new FileContentResult(content, record.getMimeType(), record.getOriginalName());
+    // Files.readAllBytes() 대신 FileSystemResource로 스트리밍 반환.
+    // DATA 카테고리 파일은 최대 256MB이므로 전체 로드 시 OOM 위험 → 스트리밍 방식 필수.
+    long fileSize = Files.size(storagePath);
+    Resource resource = new FileSystemResource(storagePath);
+    return new FileContentResult(resource, record.getMimeType(), record.getOriginalName(), fileSize);
   }
 
   private String resolveMimeType(MultipartFile file) {

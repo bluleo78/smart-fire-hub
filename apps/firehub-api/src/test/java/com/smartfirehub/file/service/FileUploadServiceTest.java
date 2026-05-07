@@ -12,6 +12,7 @@ import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.file.service.FileUploadService.FileContentResult;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -173,8 +174,13 @@ class FileUploadServiceTest extends IntegrationTestBase {
         .isInstanceOf(FileNotFoundException.class);
   }
 
+  /**
+   * getFileContent()가 byte[] 대신 Resource를 반환하는지 검증.
+   * OOM 방지를 위해 스트리밍 방식(FileSystemResource)으로 파일을 제공하므로
+   * resource.getInputStream()으로 읽어 내용을 확인한다.
+   */
   @Test
-  void getFileContent_ownFile_returnsBytes() throws IOException {
+  void getFileContent_ownFile_returnsStreamableResource() throws IOException {
     byte[] fileBytes = "hello file content".getBytes();
     MockMultipartFile file = new MockMultipartFile("files", "content.txt", "text/plain", fileBytes);
     List<FileUploadResponse> uploaded = fileUploadService.uploadFiles(List.of(file), testUserId);
@@ -182,9 +188,37 @@ class FileUploadServiceTest extends IntegrationTestBase {
 
     FileContentResult result = fileUploadService.getFileContent(fileId, testUserId);
 
-    assertThat(result.content()).isEqualTo(fileBytes);
+    // byte[] 필드가 없고 Resource 필드로 스트리밍됨을 확인
+    assertThat(result.resource()).isNotNull();
     assertThat(result.mimeType()).isEqualTo("text/plain");
     assertThat(result.originalName()).isEqualTo("content.txt");
+    assertThat(result.size()).isEqualTo(fileBytes.length);
+
+    // InputStream으로 읽어 실제 내용 동일성 검증
+    try (InputStream is = result.resource().getInputStream()) {
+      byte[] actual = is.readAllBytes();
+      assertThat(actual).isEqualTo(fileBytes);
+    }
+  }
+
+  /**
+   * 대용량 파일(스트리밍 대상)에서도 Resource가 올바르게 반환되는지 검증.
+   * 실제 OOM은 재현 불가이므로 구조적 검증(byte[] 미사용)으로 대체한다.
+   */
+  @Test
+  void getFileContent_largeFile_returnsResourceWithCorrectSize() throws IOException {
+    // 5MB 파일로 size 필드 정확성 검증
+    byte[] largeBytes = new byte[5 * 1024 * 1024];
+    new java.util.Random().nextBytes(largeBytes);
+    MockMultipartFile file = new MockMultipartFile("files", "large.csv", "text/csv", largeBytes);
+    List<FileUploadResponse> uploaded = fileUploadService.uploadFiles(List.of(file), testUserId);
+    Long fileId = uploaded.get(0).id();
+
+    FileContentResult result = fileUploadService.getFileContent(fileId, testUserId);
+
+    assertThat(result.resource()).isNotNull();
+    assertThat(result.size()).isEqualTo(largeBytes.length);
+    assertThat(result.mimeType()).isEqualTo("text/csv");
   }
 
   @Test

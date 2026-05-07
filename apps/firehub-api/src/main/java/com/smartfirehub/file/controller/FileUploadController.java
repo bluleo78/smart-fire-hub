@@ -9,6 +9,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -43,14 +44,17 @@ public class FileUploadController {
     return ResponseEntity.ok(response);
   }
 
+  /**
+   * 파일 콘텐츠 다운로드.
+   * OOM 방지를 위해 byte[] 대신 Resource(스트리밍)로 응답한다.
+   * Spring의 ResourceHttpMessageConverter가 청크 단위로 전송하므로
+   * 대용량 파일(최대 256MB)도 힙 메모리를 과소비하지 않는다.
+   */
   @GetMapping("/{fileId}/content")
-  public ResponseEntity<byte[]> getFileContent(
+  public ResponseEntity<Resource> getFileContent(
       @PathVariable Long fileId, Authentication authentication) throws IOException {
     Long userId = (Long) authentication.getPrincipal();
     FileContentResult result = fileUploadService.getFileContent(fileId, userId);
-
-    String encodedName =
-        URLEncoder.encode(result.originalName(), StandardCharsets.UTF_8).replace("+", "%20");
 
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.parseMediaType(result.mimeType()));
@@ -58,8 +62,8 @@ public class FileUploadController {
         ContentDisposition.inline()
             .filename(result.originalName(), StandardCharsets.UTF_8)
             .build());
-    headers.setContentLength(result.content().length);
+    headers.setContentLength(result.size());
 
-    return ResponseEntity.ok().headers(headers).body(result.content());
+    return ResponseEntity.ok().headers(headers).body(result.resource());
   }
 }
