@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
@@ -262,10 +263,17 @@ public class PipelineService {
 
   public PipelineExecutionResponse executePipeline(
       Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
-    // Verify pipeline exists
-    pipelineRepository
-        .findById(pipelineId)
-        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+    // 파이프라인 존재 여부 확인
+    PipelineResponse pipeline =
+        pipelineRepository
+            .findById(pipelineId)
+            .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+
+    // 비활성 파이프라인은 수동 실행 불가 — 활성화 후 재시도해야 함 (#187)
+    if (!pipeline.isActive()) {
+      throw new PipelineInactiveException(
+          "Pipeline " + pipelineId + " is inactive and cannot be executed");
+    }
 
     // Get user display name
     String username =

@@ -21,6 +21,7 @@ import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
@@ -278,6 +279,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(PipelineNameConflictException.class)
   public ResponseEntity<ErrorResponse> handlePipelineNameConflict(
       PipelineNameConflictException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
+  /** 비활성 파이프라인 수동 실행 시도 시 409 반환 (#187) */
+  @ExceptionHandler(PipelineInactiveException.class)
+  public ResponseEntity<ErrorResponse> handlePipelineInactive(
+      PipelineInactiveException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
