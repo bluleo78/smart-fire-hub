@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -24,15 +25,23 @@ public class SlackApiClient {
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
 
-  public SlackApiClient() {
+  /**
+   * Spring 주입 생성자 — Spring이 관리하는 ObjectMapper 빈을 재사용한다.
+   *
+   * <p>new ObjectMapper() 직접 생성을 피해 Spring의 커스텀 직렬화 설정(JavaTimeModule 등)이 적용되도록 한다 (이슈 #190).
+   *
+   * @param objectMapper Spring 컨텍스트에서 주입받는 ObjectMapper 빈
+   */
+  @Autowired
+  public SlackApiClient(ObjectMapper objectMapper) {
     this.webClient = WebClient.builder().baseUrl("https://slack.com/api").build();
-    this.objectMapper = new ObjectMapper();
+    this.objectMapper = objectMapper;
   }
 
   /** 테스트용 생성자 — WireMock 등 커스텀 baseUrl 주입 가능. */
-  SlackApiClient(WebClient webClient) {
+  SlackApiClient(WebClient webClient, ObjectMapper objectMapper) {
     this.webClient = webClient;
-    this.objectMapper = new ObjectMapper();
+    this.objectMapper = objectMapper;
   }
 
   /**

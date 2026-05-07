@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.notification.Payload;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -33,8 +34,16 @@ public class SlackBlockKitRenderer {
 
   private final ObjectMapper objectMapper;
 
-  public SlackBlockKitRenderer() {
-    this.objectMapper = new ObjectMapper();
+  /**
+   * Spring 주입 생성자 — Spring이 관리하는 ObjectMapper 빈을 재사용한다.
+   *
+   * <p>new ObjectMapper() 직접 생성을 피해 Spring의 커스텀 직렬화 설정이 적용되도록 한다 (이슈 #190).
+   *
+   * @param objectMapper Spring 컨텍스트에서 주입받는 ObjectMapper 빈
+   */
+  @Autowired
+  public SlackBlockKitRenderer(ObjectMapper objectMapper) {
+    this.objectMapper = objectMapper;
   }
 
   /**

@@ -40,9 +40,9 @@ class SlackApiClientTest {
   }
 
   private SlackApiClient client() {
-    // 테스트용 생성자: WireMock baseUrl 주입
+    // 테스트용 생성자: WireMock baseUrl + 기본 ObjectMapper 주입
     WebClient wc = WebClient.builder().baseUrl("http://localhost:" + wireMock.port()).build();
-    return new SlackApiClient(wc);
+    return new SlackApiClient(wc, new com.fasterxml.jackson.databind.ObjectMapper());
   }
 
   // -----------------------------------------------------------------------
