@@ -66,7 +66,8 @@ class NotificationDispatcherTest {
   }
 
   @Test
-  void enqueue_advisesUserWhenForcedChatFallback() {
+  void enqueue_advisesUserWhenForcedChatFallback_withSkippedChannels() {
+    // SLACK이 skip되어 CHAT 강제 폴백된 경우 → advisory 발송해야 함
     Recipient r = new Recipient(1L, null, EnumSet.of(ChannelType.SLACK));
     NotificationRequest req =
         new NotificationRequest(
@@ -80,6 +81,27 @@ class NotificationDispatcherTest {
 
     // CHAT 본문 1건 + CHANNEL_ADVISORY 1건 = 2 INSERT
     verify(outboxRepo, times(2)).insertIfAbsent(any());
+  }
+
+  @Test
+  void enqueue_noAdvisory_whenEmptyRequestedChannelsCauseForcedChat() {
+    // requestedChannels가 비어있어 CHAT 강제 폴백된 경우 → advisory 발송 안 함
+    Recipient r = new Recipient(1L, null, EnumSet.noneOf(ChannelType.class));
+    NotificationRequest req =
+        new NotificationRequest(
+            "TEST_EVENT", null, 99L, UUID.randomUUID(), samplePayload(), null, List.of(r));
+    when(routingResolver.resolve(r))
+        .thenReturn(
+            // skippedReasons 없음: requestedChannels가 비어있던 경우
+            new ResolvedRouting(List.of(ChannelType.CHAT), Map.of(), true));
+
+    enabled().enqueue(req);
+
+    // CHAT 본문 1건만, CHANNEL_ADVISORY 없음
+    ArgumentCaptor<NotificationOutboxRow> captor =
+        ArgumentCaptor.forClass(NotificationOutboxRow.class);
+    verify(outboxRepo, times(1)).insertIfAbsent(captor.capture());
+    assertThat(captor.getValue().channelType()).isEqualTo(ChannelType.CHAT);
   }
 
   @Test

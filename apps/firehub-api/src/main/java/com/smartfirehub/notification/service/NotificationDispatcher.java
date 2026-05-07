@@ -67,7 +67,9 @@ public class NotificationDispatcher {
         outboxRepo.insertIfAbsent(
             buildRow(request, recipient, channel, correlationId, request.standardPayload()));
       }
-      if (routing.forcedChatFallback()) {
+      // skippedReasons가 있을 때만 advisory 발송: requestedChannels가 비어있는 경우(채널 미설정)에는
+      // 채널 설정 문제가 아니므로 불필요한 안내 메시지를 보내지 않는다
+      if (routing.forcedChatFallback() && !routing.skippedReasons().isEmpty()) {
         outboxRepo.insertIfAbsent(
             buildAdvisoryRow(request, recipient, correlationId, routing.skippedReasons()));
       }
