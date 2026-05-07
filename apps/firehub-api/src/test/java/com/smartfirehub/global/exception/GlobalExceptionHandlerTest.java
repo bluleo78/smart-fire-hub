@@ -239,4 +239,15 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.error").value("Internal Server Error"))
         .andExpect(jsonPath("$.message").value("An unexpected error occurred"));
   }
+
+  /** 지원하지 않는 HTTP 메서드 요청 시 500 대신 405 반환 확인 (#197) */
+  @Test
+  void unsupportedHttpMethod_returns405() throws Exception {
+    mockMvc
+        .perform(post("/test/exception/unexpected-error"))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(jsonPath("$.status").value(405))
+        .andExpect(jsonPath("$.error").value("Method Not Allowed"))
+        .andExpect(jsonPath("$.message").value("지원하지 않는 HTTP 메서드입니다."));
+  }
 }

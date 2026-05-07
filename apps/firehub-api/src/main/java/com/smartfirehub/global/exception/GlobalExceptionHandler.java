@@ -47,6 +47,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -503,6 +504,15 @@ public class GlobalExceptionHandler {
     } catch (IOException e) {
       log.debug("Failed to write timeout response: {}", e.getMessage());
     }
+  }
+
+  /** 지원하지 않는 HTTP 메서드로 요청 시 500 대신 405 반환 (#197) */
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<ErrorResponse> handleMethodNotAllowed(
+      HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+    ErrorResponse response =
+        buildError(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 HTTP 메서드입니다.", null, request);
+    return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(response);
   }
 
   /** 존재하지 않는 API 경로 요청 시 500 대신 404 반환 (#98) */
