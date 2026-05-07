@@ -64,6 +64,13 @@ public class PipelineSandboxDataSourceConfig {
 
   @Bean("pipelineDslContext")
   public DSLContext pipelineDslContext(@Qualifier("pipelineDataSource") DataSource dataSource) {
-    return DSL.using(new DataSourceConnectionProvider(dataSource), SQLDialect.POSTGRES);
+    // 주 dslContext()와 동일한 패턴 적용:
+    // 1. TransactionAwareDataSourceProxy → Spring @Transactional과 jOOQ가 같은 커넥션 공유
+    // 2. SpringTransactionProvider → dsl.transaction()이 Spring 트랜잭션에 참여 (테스트 롤백 정상 동작)
+    DefaultConfiguration config = new DefaultConfiguration();
+    config.set(new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(dataSource)));
+    config.set(SQLDialect.POSTGRES);
+    config.set(new SpringTransactionProvider(new DataSourceTransactionManager(dataSource)));
+    return DSL.using(config);
   }
 }
