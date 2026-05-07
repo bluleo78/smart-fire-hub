@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, streamAIChat } from '../../api/ai';
@@ -48,6 +48,29 @@ export function useAIChat(options?: {
 
   const [isUploading, setIsUploading] = useState(false);
 
+  // 생성된 Blob URL을 추적하여 컴포넌트 언마운트 또는 세션 교체 시 일괄 해제 (메모리 누수 방지)
+  const blobUrlsRef = useRef<string[]>([]);
+
+  /** Blob URL을 생성하고 추적 목록에 등록한다. */
+  const createTrackedBlobUrl = useCallback((blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    blobUrlsRef.current.push(url);
+    return url;
+  }, []);
+
+  /** 추적 중인 모든 Blob URL을 해제한다. */
+  const revokeAllBlobUrls = useCallback(() => {
+    blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    blobUrlsRef.current = [];
+  }, []);
+
+  // 컴포넌트 언마운트 시 누적된 Blob URL 전체 해제
+  useEffect(() => {
+    return () => {
+      revokeAllBlobUrls();
+    };
+  }, [revokeAllBlobUrls]);
+
   const sendMessage = useCallback(async (content: string, files?: File[]) => {
     messagesCommittedRef.current = false;
 
@@ -67,7 +90,7 @@ export function useAIChat(options?: {
           fileSize: f.fileSize,
           category: f.fileCategory,
           previewUrl: f.mimeType.startsWith('image/')
-            ? URL.createObjectURL(files.find(file => file.name === f.originalName) ?? files[0])
+            ? createTrackedBlobUrl(files.find(file => file.name === f.originalName) ?? files[0])
             : undefined,
         }));
       } catch {
@@ -325,7 +348,7 @@ export function useAIChat(options?: {
       navContext,
       screen,
     );
-  }, [currentSessionId, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentSessionId, queryClient, createTrackedBlobUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
@@ -400,7 +423,7 @@ export function useAIChat(options?: {
             blobPromises.push(
               apiClient.get(`/files/${att.id}/content`, { responseType: 'blob' })
               .then((res) => {
-                att.previewUrl = URL.createObjectURL(res.data as Blob);
+                att.previewUrl = createTrackedBlobUrl(res.data as Blob);
               }).catch(() => {}),
             );
           }
@@ -413,7 +436,7 @@ export function useAIChat(options?: {
     } finally {
       setIsLoadingHistory(false);
     }
-  }, []);
+  }, [createTrackedBlobUrl]);
 
   return {
     messages,

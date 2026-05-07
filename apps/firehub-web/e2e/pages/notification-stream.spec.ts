@@ -229,6 +229,48 @@ test.describe('useNotificationStream — SSE 이벤트 처리', () => {
     await expect.poll(() => dashboardsCallCount, { timeout: 5000 }).toBeGreaterThanOrEqual(2);
   });
 
+  test('PROACTIVE_MESSAGE + CRITICAL severity 시 토스트가 1개만 표시된다 (중복 방지 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    /**
+     * 버그 회귀 테스트 (#157):
+     * PROACTIVE_MESSAGE 이벤트가 CRITICAL severity일 때
+     * switch-case에서 toast.info 후 severity 블록이 추가로 실행되어
+     * toast.error까지 2개 표시되던 버그를 방지한다.
+     * 수정 후: return으로 함수 종료하여 info 토스트 1개만 표시된다.
+     */
+    const notification = {
+      ...baseNotification,
+      eventType: 'PROACTIVE_MESSAGE',
+      severity: 'CRITICAL',
+      title: '중요 인사이트',
+      description: 'CRITICAL 등급의 프로액티브 메시지입니다.',
+    };
+
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 1 });
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/notifications/stream',
+      (route) => {
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          headers: { 'Cache-Control': 'no-cache' },
+          body: makeSseBody('notification', notification),
+        });
+      },
+    );
+
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // info 토스트(제목)가 표시되어야 한다
+    await expect(page.getByText('중요 인사이트')).toBeVisible({ timeout: 5000 });
+
+    // 동일 제목 토스트가 1개만 존재해야 한다 (중복 표시 금지)
+    await expect(page.getByText('중요 인사이트')).toHaveCount(1);
+  });
+
   test('SSE 연결 오류 시 재연결을 시도한다 (지수 백오프)', async ({
     authenticatedPage: page,
   }) => {

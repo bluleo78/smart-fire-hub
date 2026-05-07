@@ -86,10 +86,13 @@ function handleNotification(
     case 'PROACTIVE_MESSAGE':
       queryClient.invalidateQueries({ queryKey: ['proactive', 'messages'] });
       queryClient.invalidateQueries({ queryKey: ['proactive', 'unread-count'] });
+      // PROACTIVE_MESSAGE는 severity와 무관하게 info 토스트 하나만 표시.
+      // severity 블록이 추가로 실행되지 않도록 여기서 함수를 종료한다.
       toast.info(event.title, { description: event.description });
-      break;
+      return;
   }
 
+  // PROACTIVE_MESSAGE 외 이벤트에 대해 severity 기반 토스트 표시
   if (event.severity === 'CRITICAL') {
     toast.error(event.title, { description: event.description });
   } else if (event.severity === 'WARNING') {
