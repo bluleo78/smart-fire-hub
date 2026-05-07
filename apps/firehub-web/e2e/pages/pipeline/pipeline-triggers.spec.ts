@@ -443,4 +443,152 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText(/올바른 IPv4 주소 또는 CIDR/)).toBeVisible();
     await expect(page.getByText('192.168.1.0/33')).not.toBeVisible();
   });
+
+  /**
+   * 회귀 방지 테스트 (#196)
+   * DATASET_CHANGE 트리거 생성 시 폴링 주기가 30초 미만이면 유효성 에러가 표시되고 API 호출이 차단되어야 한다.
+   */
+  test('DATASET_CHANGE 트리거 추가 — 폴링 주기 29초 입력 시 유효성 에러가 표시되고 API 호출이 차단된다 (refs #196)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers', (route) => {
+      if (route.request().method() === 'POST') {
+        apiCalled = true;
+        return route.fulfill({ status: 201, body: JSON.stringify(createTrigger({ id: 99 })) });
+      }
+      return route.continue();
+    });
+
+    // 데이터셋 목록 모킹 (콤보박스가 데이터셋을 로드할 수 있도록)
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [{ id: 1, name: '센서 데이터', tableName: 'sensor_data' }],
+      page: 0,
+      size: 1000,
+      totalElements: 1,
+      totalPages: 1,
+    });
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /데이터셋 변경/ }).click();
+
+    await page.getByLabel(/^이름/).fill('변경 감지 트리거');
+
+    // 폴링 주기를 30초 미만(29초)으로 설정
+    const pollingInput = page.locator('input[type="number"]').first();
+    await pollingInput.fill('29');
+
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    // 폴링 주기 유효성 에러가 표시되어야 함
+    await expect(page.getByText('폴링 주기는 30~3600초 사이여야 합니다')).toBeVisible();
+    // API가 호출되지 않아야 함 (클라이언트 측 차단 확인)
+    expect(apiCalled).toBe(false);
+  });
+
+  /**
+   * 회귀 방지 테스트 (#196)
+   * DATASET_CHANGE 트리거 생성 시 폴링 주기가 3600초를 초과하면 유효성 에러가 표시되어야 한다.
+   */
+  test('DATASET_CHANGE 트리거 추가 — 폴링 주기 3601초 입력 시 유효성 에러가 표시된다 (refs #196)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers', (route) => {
+      if (route.request().method() === 'POST') {
+        apiCalled = true;
+        return route.fulfill({ status: 201, body: JSON.stringify(createTrigger({ id: 99 })) });
+      }
+      return route.continue();
+    });
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /데이터셋 변경/ }).click();
+
+    await page.getByLabel(/^이름/).fill('변경 감지 트리거');
+
+    // 폴링 주기를 3600초 초과(3601초)로 설정
+    const pollingInput = page.locator('input[type="number"]').first();
+    await pollingInput.fill('3601');
+
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    // 유효성 에러가 표시되어야 함
+    await expect(page.getByText('폴링 주기는 30~3600초 사이여야 합니다')).toBeVisible();
+    expect(apiCalled).toBe(false);
+  });
+
+  /**
+   * 회귀 방지 테스트 (#196)
+   * DATASET_CHANGE 트리거 생성 시 폴링 주기가 유효한 범위(30~3600초)이면 정상 생성된다.
+   */
+  test('DATASET_CHANGE 트리거 추가 — 폴링 주기 30초·데이터셋 선택 시 정상 생성되고 payload 가 전송된다 (refs #196)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 데이터셋이 있는 경우로 별도 모킹 (setupTriggerTabMocks는 빈 목록으로 설정)
+    const pipelineId = 1;
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}`, createPipelineDetail({ id: pipelineId }));
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, []);
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, []);
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, []);
+    // 데이터셋 목록에 항목 포함 (DatasetCombobox가 선택할 수 있도록)
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [{ id: 42, name: '화재 이력', tableName: 'fire_history' }],
+      page: 0,
+      size: 1000,
+      totalElements: 1,
+      totalPages: 1,
+    });
+
+    const created = createTrigger({
+      id: 20,
+      name: '화재 이력 변경 감지',
+      triggerType: 'DATASET_CHANGE',
+      config: { datasetIds: [42], pollingIntervalSeconds: 30, debounceSeconds: 0 },
+    });
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines/1/triggers',
+      created,
+      { capture: true },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '트리거' }).click();
+    await expect(page.getByRole('button', { name: /트리거 추가/ })).toBeVisible();
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /데이터셋 변경/ }).click();
+
+    await page.getByLabel(/^이름/).fill('화재 이력 변경 감지');
+
+    // DatasetCombobox에서 데이터셋 선택 (콤보박스 버튼 클릭 → 항목 선택)
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '화재 이력' }).click();
+
+    // 폴링 주기를 30초(최솟값)로 설정
+    const pollingInput = page.locator('input[type="number"]').first();
+    await pollingInput.fill('30');
+
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+
+    // POST payload 검증: pollingIntervalSeconds가 30으로 전송되어야 함
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      name: '화재 이력 변경 감지',
+      triggerType: 'DATASET_CHANGE',
+      config: expect.objectContaining({
+        pollingIntervalSeconds: 30,
+      }),
+    });
+  });
 });

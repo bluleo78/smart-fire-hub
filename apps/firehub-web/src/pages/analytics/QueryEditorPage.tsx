@@ -66,7 +66,7 @@ import {
   useSchemaInfo,
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
-import { handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError } from '../../lib/api-error';
 import { downloadBlob } from '../../lib/download';
 import { cn } from '../../lib/utils';
 import type { AnalyticsQueryResult } from '../../types/analytics';
@@ -278,6 +278,8 @@ interface SaveDialogProps {
   onSave: () => void;
   isSaving: boolean;
   isEdit: boolean;
+  /** 저장 시 발생한 오류 메시지 — 다이얼로그 내 인라인 표시용 */
+  error?: string | null;
 }
 
 function SaveDialog({
@@ -295,6 +297,7 @@ function SaveDialog({
   onSave,
   isSaving,
   isEdit,
+  error,
 }: SaveDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -305,6 +308,10 @@ function SaveDialog({
             {isEdit ? '쿼리 설정을 수정하여 저장합니다.' : '쿼리 이름과 설정을 입력하여 저장합니다.'}
           </DialogDescription>
         </DialogHeader>
+        {/* 저장 실패 오류 메시지 인라인 표시 — 사용자가 다이얼로그 내에서 원인을 즉시 인지하도록 (이슈 #195) */}
+        {error && (
+          <p className="text-sm text-destructive -mt-2">{error}</p>
+        )}
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="query-name">이름 *</Label>
@@ -389,6 +396,8 @@ export default function QueryEditorPage() {
   const [sql, setSql] = useState(initialSql);
   const [result, setResult] = useState<AnalyticsQueryResult | null>(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  // 저장 다이얼로그 내 인라인 오류 메시지 상태 (이슈 #195)
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveForm, setSaveForm] = useState({
     name: '',
     description: '',
@@ -532,12 +541,22 @@ export default function QueryEditorPage() {
         isShared: savedQuery.isShared,
       });
     }
+    // 다이얼로그 열 때 이전 오류 초기화 (이슈 #195)
+    setSaveError(null);
     setSaveDialogOpen(true);
   };
 
   const handleSave = async () => {
     if (savingRef.current || !saveForm.name.trim()) return;
+
+    // 클라이언트 측 SQL 빈값 검증 — 서버 400 이전에 인라인 오류를 표시하여 UX 개선 (이슈 #195)
+    if (!sql.trim()) {
+      setSaveError('SQL을 입력해야 저장할 수 있습니다.');
+      return;
+    }
+
     savingRef.current = true;
+    setSaveError(null);
 
     try {
       if (isNew) {
@@ -570,6 +589,9 @@ export default function QueryEditorPage() {
         setIsDirty(false);
       }
     } catch (error) {
+      // API 오류 발생 시 다이얼로그 내에 인라인으로 오류 메시지를 표시한다 (이슈 #195)
+      // toast만으로는 다이얼로그 내 사용자가 오류를 인지하기 어려우므로 saveError도 함께 설정
+      setSaveError(extractApiError(error, '쿼리 저장에 실패했습니다.'));
       handleApiError(error, '쿼리 저장에 실패했습니다.');
     } finally {
       savingRef.current = false;
@@ -843,6 +865,7 @@ export default function QueryEditorPage() {
         onSave={handleSave}
         isSaving={isSaving}
         isEdit={!isNew}
+        error={saveError}
       />
 
       {/*

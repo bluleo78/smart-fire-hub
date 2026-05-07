@@ -210,7 +210,8 @@ test.describe('쿼리 에디터 페이지', () => {
       { capture: true },
     );
 
-    await page.goto('/analytics/queries/new');
+    // SQL이 채워진 상태로 이동해야 클라이언트 검증을 통과하여 저장 API가 호출된다 (이슈 #195)
+    await page.goto('/analytics/queries/new?sql=' + encodeURIComponent('SELECT 1'));
     await expect(page.getByText('새 쿼리')).toBeVisible();
 
     // 저장 버튼 클릭 → 다이얼로그 열기
@@ -317,7 +318,8 @@ test.describe('쿼리 에디터 페이지', () => {
       { capture: true },
     );
 
-    await page.goto('/analytics/queries/new');
+    // SQL이 채워진 상태로 이동해야 클라이언트 검증을 통과하여 저장 API가 호출된다 (이슈 #195)
+    await page.goto('/analytics/queries/new?sql=' + encodeURIComponent('SELECT 1'));
     await expect(page.getByText('새 쿼리')).toBeVisible();
 
     // 저장 버튼 클릭 → 다이얼로그 열기

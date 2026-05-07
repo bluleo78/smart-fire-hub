@@ -67,8 +67,14 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
       if (!c.upstreamPipelineId) errors.upstreamPipelineId = '선행 파이프라인을 선택하세요';
     }
     if (trigger.triggerType === 'DATASET_CHANGE') {
-      const c = config as { datasetIds: number[] };
+      const c = config as { datasetIds: number[]; pollingIntervalSeconds: number; debounceSeconds: number };
       if (!c.datasetIds?.length) errors.datasetIds = '감시 대상 데이터셋을 선택하세요';
+      // 폴링 주기 범위 검증: 최솟값 30초, 최댓값 3600초
+      if (c.pollingIntervalSeconds < 30 || c.pollingIntervalSeconds > 3600)
+        errors.pollingIntervalSeconds = '폴링 주기는 30~3600초 사이여야 합니다';
+      // 디바운스 시간 범위 검증: 0초 이상 3600초 이하
+      if (c.debounceSeconds < 0 || c.debounceSeconds > 3600)
+        errors.debounceSeconds = '디바운스 시간은 0~3600초 사이여야 합니다';
     }
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;

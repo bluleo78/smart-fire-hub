@@ -134,6 +134,34 @@ test.describe('쿼리 에디터 심화', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 
+  /**
+   * 이슈 #195 회귀 테스트: 빈 SQL 저장 시 다이얼로그 내 오류 메시지 표시
+   * - 새 쿼리에서 SQL을 입력하지 않은 채 저장 다이얼로그의 저장 버튼을 클릭하면
+   *   다이얼로그 내에 인라인 오류 메시지가 표시되어야 한다.
+   */
+  test('[이슈 #195] 빈 SQL로 저장 시 다이얼로그 내 오류 메시지가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewQueryEditorMocks(page);
+
+    await page.goto('/analytics/queries/new');
+    await expect(page.getByText('새 쿼리')).toBeVisible();
+
+    // SQL을 입력하지 않은 상태에서 저장 버튼 클릭 → 다이얼로그 오픈
+    await page.getByRole('button', { name: '저장' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+
+    // 다이얼로그 내 저장 버튼 클릭 — SQL이 비어 있으므로 클라이언트 검증으로 막혀야 함
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 다이얼로그가 여전히 열려 있어야 한다 (닫히면 안 됨)
+    await expect(dialog).toBeVisible();
+
+    // 다이얼로그 내에 SQL 관련 오류 메시지가 인라인으로 표시되어야 한다
+    await expect(dialog.getByText('SQL을 입력해야 저장할 수 있습니다.')).toBeVisible();
+  });
+
   test('실행 결과에서 Excel 내보내기 옵션이 표시된다', async ({
     authenticatedPage: page,
   }) => {

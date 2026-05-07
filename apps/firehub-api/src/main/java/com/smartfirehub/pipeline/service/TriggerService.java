@@ -97,6 +97,19 @@ public class TriggerService {
           throw new IllegalArgumentException(
               "datasetIds is required and must not be empty for DATASET_CHANGE trigger");
         }
+        // 폴링 주기 범위 검증: 30초 이상 3600초 이하
+        int pollingInterval =
+            ((Number) processedConfig.getOrDefault("pollingIntervalSeconds", 60)).intValue();
+        if (pollingInterval < 30 || pollingInterval > 3600) {
+          throw new IllegalArgumentException(
+              "pollingIntervalSeconds must be between 30 and 3600");
+        }
+        // 디바운스 시간 범위 검증: 0초 이상 3600초 이하
+        int debounceSeconds =
+            ((Number) processedConfig.getOrDefault("debounceSeconds", 0)).intValue();
+        if (debounceSeconds < 0 || debounceSeconds > 3600) {
+          throw new IllegalArgumentException("debounceSeconds must be between 0 and 3600");
+        }
       }
     }
 
@@ -163,6 +176,24 @@ public class TriggerService {
           throw new CyclicTriggerDependencyException("Pipeline cannot trigger itself");
         }
         validatePipelineChain(existing.pipelineId(), upstreamPipelineId);
+      }
+    }
+
+    // DATASET_CHANGE 트리거 업데이트 시 폴링 주기·디바운스 범위 검증
+    if ("DATASET_CHANGE".equals(existing.triggerType()) && request.config() != null) {
+      Map<String, Object> updatedConfig = request.config();
+      if (updatedConfig.containsKey("pollingIntervalSeconds")) {
+        int pollingInterval = ((Number) updatedConfig.get("pollingIntervalSeconds")).intValue();
+        if (pollingInterval < 30 || pollingInterval > 3600) {
+          throw new IllegalArgumentException(
+              "pollingIntervalSeconds must be between 30 and 3600");
+        }
+      }
+      if (updatedConfig.containsKey("debounceSeconds")) {
+        int debounceSeconds = ((Number) updatedConfig.get("debounceSeconds")).intValue();
+        if (debounceSeconds < 0 || debounceSeconds > 3600) {
+          throw new IllegalArgumentException("debounceSeconds must be between 0 and 3600");
+        }
       }
     }
 
