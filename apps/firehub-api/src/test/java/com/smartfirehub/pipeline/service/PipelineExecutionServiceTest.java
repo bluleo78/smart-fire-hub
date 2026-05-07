@@ -264,6 +264,51 @@ class PipelineExecutionServiceTest {
   }
 
   // ------------------------------------------------------------------ //
+  // @Transactional 원자성 관련 테스트 (이슈 #191)
+  // ------------------------------------------------------------------ //
+
+  /**
+   * createStepExecution 도중 예외 발생 시 asyncRunner.executeAsync가 호출되지 않음을 검증한다.
+   *
+   * <p>실제 트랜잭션 롤백은 Spring 통합 환경에서만 일어나지만, 비동기 실행 위임이 차단되는지는
+   * 단위 레벨에서도 검증할 수 있다. 트랜잭션 동기화가 비활성 상태(테스트 환경)에서는 즉시 호출
+   * 경로를 타므로, 예외 전파로 asyncRunner 미호출 여부를 확인한다.
+   */
+  @Test
+  void executePipeline_createStepExecutionThrows_asyncRunnerNotCalled() {
+    // given: 두 스텝 중 두 번째 스텝 실행 레코드 생성 시 예외 발생
+    Long pipelineId = 8L;
+    Long userId = 10L;
+    Long executionId = 100L;
+    Long step1Id = 120L;
+    Long step2Id = 121L;
+
+    PipelineStepResponse step1 =
+        stepResponse(step1Id, "step1", "SQL", "SELECT 1", null, List.of());
+    PipelineStepResponse step2 =
+        stepResponse(step2Id, "step2", "SQL", "SELECT 2", null, List.of("step1"));
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(220L);
+    // 두 번째 스텝 실행 레코드 생성 시 DB 오류 시뮬레이션
+    when(executionRepository.createStepExecution(executionId, step2Id))
+        .thenThrow(new RuntimeException("DB connection lost"));
+
+    // when / then: 예외가 전파되어야 한다
+    assertThatThrownBy(() -> service.executePipeline(pipelineId, userId))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("DB connection lost");
+
+    // asyncRunner.executeAsync는 호출되지 않아야 한다
+    // (트랜잭션 컨텍스트 없는 단위 테스트 환경에서, 즉시 호출 경로이지만
+    //  예외 전파로 인해 registerSynchronization 이전에 중단됨)
+    verify(asyncRunner, never())
+        .executeAsync(any(), any(), any(), any(), any(), any(), anyBoolean());
+  }
+
+  // ------------------------------------------------------------------ //
   // Helpers
   // ------------------------------------------------------------------ //
 

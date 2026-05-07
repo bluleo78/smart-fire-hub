@@ -17,6 +17,9 @@ import java.util.Queue;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 파이프라인 실행 오케스트레이터.
@@ -126,10 +129,14 @@ public class PipelineExecutionService {
   /**
    * 파이프라인을 비동기로 실행한다 (수동 실행).
    *
+   * <p>실행 레코드 생성이 단일 트랜잭션으로 원자적으로 처리된다. 실제 비동기 실행은 트랜잭션 커밋 후에
+   * 시작되므로 데이터 가시성 문제가 없다.
+   *
    * @param pipelineId 실행할 파이프라인 ID
    * @param userId 실행 요청 사용자 ID
    * @return 생성된 파이프라인 실행 레코드 ID
    */
+  @Transactional
   public Long executePipeline(Long pipelineId, Long userId) {
     return executePipeline(pipelineId, userId, "MANUAL", null);
   }
@@ -139,12 +146,17 @@ public class PipelineExecutionService {
    *
    * <p>실행 레코드를 생성한 뒤 {@link PipelineAsyncRunner#executeAsync}에 위임하여 HTTP 스레드를 블로킹하지 않는다.
    *
+   * <p>트랜잭션 원자성: {@code createExecution} + N×{@code createStepExecution}이 단일 트랜잭션으로 묶여
+   * 중간 실패 시 모두 롤백된다. {@code asyncRunner.executeAsync}는 트랜잭션 커밋 이후({@code afterCommit})에
+   * 호출되므로 비동기 스레드가 미커밋 데이터를 읽는 경쟁 조건이 발생하지 않는다.
+   *
    * @param pipelineId 실행할 파이프라인 ID
    * @param userId 실행 요청 사용자 ID
    * @param triggeredBy 트리거 유형 (예: "MANUAL", "SCHEDULE", "API")
    * @param triggerId 트리거 레코드 ID (해당 없으면 null)
    * @return 생성된 파이프라인 실행 레코드 ID
    */
+  @Transactional
   public Long executePipeline(Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
     // 파이프라인 스텝 및 의존성 로드
     List<PipelineStepResponse> steps = stepRepository.findByPipelineId(pipelineId);
@@ -154,6 +166,7 @@ public class PipelineExecutionService {
         executionRepository.createExecution(pipelineId, userId, triggeredBy, triggerId);
 
     // 스텝 실행 레코드 일괄 생성 (초기 상태: PENDING)
+    // 중간에 예외 발생 시 @Transactional이 createExecution 포함 전체를 롤백한다
     Map<Long, Long> stepIdToStepExecId = new HashMap<>();
     for (PipelineStepResponse step : steps) {
       Long stepExecId = executionRepository.createStepExecution(executionId, step.id());
@@ -163,11 +176,43 @@ public class PipelineExecutionService {
     // 의존성 맵 구성 (stepId → 의존 스텝 ID 목록)
     Map<Long, List<Long>> stepDependencyMap = buildDependencyMap(steps);
 
-    // 별도 Bean(PipelineAsyncRunner)을 통해 비동기 실행 위임
-    // → Spring AOP 프록시를 통해 @Async("pipelineExecutor")가 올바르게 적용됨
-    asyncRunner.executeAsync(
-        pipelineId, executionId, steps, stepDependencyMap, stepIdToStepExecId, userId,
-        executorEnabled);
+    // 비동기 실행은 트랜잭션 커밋 후에 시작한다.
+    // @Transactional 메서드 내에서 @Async를 직접 호출하면, 비동기 스레드가
+    // 아직 커밋되지 않은 데이터를 읽으려 시도하는 경쟁 조건이 생길 수 있다.
+    // afterCommit 콜백으로 executeAsync를 지연 호출하여 이를 방지한다.
+    // 트랜잭션 동기화가 활성화되지 않은 경우(예: 테스트 환경)에는 즉시 호출한다.
+    final Long finalExecutionId = executionId;
+    final Map<Long, Long> finalStepIdToStepExecId = stepIdToStepExecId;
+    final Map<Long, List<Long>> finalStepDependencyMap = stepDependencyMap;
+    final List<PipelineStepResponse> finalSteps = steps;
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              // 트랜잭션 커밋 완료 후 비동기 실행 위임
+              // → Spring AOP 프록시를 통해 @Async("pipelineExecutor")가 올바르게 적용됨
+              asyncRunner.executeAsync(
+                  pipelineId,
+                  finalExecutionId,
+                  finalSteps,
+                  finalStepDependencyMap,
+                  finalStepIdToStepExecId,
+                  userId,
+                  executorEnabled);
+            }
+          });
+    } else {
+      // 트랜잭션 컨텍스트 없음 — 즉시 비동기 실행 위임
+      asyncRunner.executeAsync(
+          pipelineId,
+          finalExecutionId,
+          finalSteps,
+          finalStepDependencyMap,
+          finalStepIdToStepExecId,
+          userId,
+          executorEnabled);
+    }
 
     // 파이프라인 실행 감사 로그 (#60/#92)
     String pipelineNameForLog = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
