@@ -77,6 +77,10 @@ export function SchemaBuilder() {
                 value={watch(`columns.${index}.dataType`)}
                 onChange={(value) => {
                   setValue(`columns.${index}.dataType`, value as CreateDatasetFormData['columns'][number]['dataType']);
+                  // GEOMETRY 타입은 B-tree 인덱스 기반 PK 불가 — 선택 시 기본 키를 자동 해제한다 (#199)
+                  if (value === 'GEOMETRY') {
+                    setValue(`columns.${index}.isPrimaryKey`, false);
+                  }
                 }}
               />
               {errors.columns?.[index]?.dataType && (
@@ -108,9 +112,11 @@ export function SchemaBuilder() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
+                  {/* GEOMETRY 타입은 B-tree UNIQUE INDEX 생성 불가 → PK 설정 비활성화 (#199) */}
                   <Checkbox
                     id={`columns.${index}.isPrimaryKey`}
                     checked={watch(`columns.${index}.isPrimaryKey`)}
+                    disabled={watch(`columns.${index}.dataType`) === 'GEOMETRY'}
                     onCheckedChange={(checked) => {
                       setValue(`columns.${index}.isPrimaryKey`, checked as boolean);
                       if (checked) {

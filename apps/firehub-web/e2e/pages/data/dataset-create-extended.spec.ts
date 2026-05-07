@@ -397,3 +397,80 @@ test.describe('데이터셋 목록 — formatters.ts 날짜/포맷 렌더링', (
     await expect(page.getByText('데이터셋 B')).toBeVisible({ timeout: 3000 });
   });
 });
+
+/**
+ * SchemaBuilder — GEOMETRY 타입 컬럼 PK 비활성화 회귀 테스트 (#199)
+ * GEOMETRY 컬럼에 기본 키를 설정하면 잘못된 B-tree UNIQUE INDEX가 생성되는 버그 방지.
+ */
+test.describe('SchemaBuilder — GEOMETRY 타입 기본 키 비활성화 (#199)', () => {
+  test('GEOMETRY 타입 선택 시 기본 키 체크박스가 비활성화된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await gotoCreatePage(page);
+
+    // 데이터 타입을 GEOMETRY로 변경 (SchemaBuilder의 두 번째 native select)
+    await page.locator('select').nth(1).selectOption('GEOMETRY');
+
+    // 기본 키 체크박스가 disabled 상태인지 검증 — GEOMETRY는 B-tree PK 불가
+    const pkCheckbox = page.getByLabel('기본 키');
+    await expect(pkCheckbox).toBeDisabled({ timeout: 3000 });
+  });
+
+  test('GEOMETRY 타입으로 변경 시 기존에 체크된 기본 키가 자동 해제된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await gotoCreatePage(page);
+
+    // 먼저 기본 키 체크 (기본 타입 TEXT에서는 가능)
+    const pkCheckbox = page.getByLabel('기본 키');
+    await pkCheckbox.check();
+    await expect(pkCheckbox).toBeChecked();
+
+    // GEOMETRY로 변경 — isPrimaryKey가 자동으로 false로 재설정된다
+    await page.locator('select').nth(1).selectOption('GEOMETRY');
+
+    // 체크 해제 + disabled 확인
+    await expect(pkCheckbox).not.toBeChecked({ timeout: 3000 });
+    await expect(pkCheckbox).toBeDisabled();
+  });
+
+  test('GEOMETRY 타입 컬럼으로 POST 시 isPrimaryKey가 false로 전달된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await gotoCreatePage(page);
+
+    let capturedPayload: Record<string, unknown> = {};
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() === 'POST') {
+          capturedPayload = route.request().postDataJSON() as Record<string, unknown>;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(MOCK_CREATED_DATASET),
+          });
+        }
+        return route.continue();
+      },
+    );
+
+    await page.getByLabel('데이터셋 이름').fill('지오 데이터셋');
+    await page.getByLabel('테이블명').fill('geo_dataset');
+    await page.getByPlaceholder('예: user_id').first().fill('location');
+
+    // 데이터 타입을 GEOMETRY로 변경
+    await page.locator('select').nth(1).selectOption('GEOMETRY');
+
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST',
+      ),
+      page.getByRole('button', { name: '생성' }).click(),
+    ]);
+
+    // payload에서 GEOMETRY 컬럼의 isPrimaryKey가 false인지 검증
+    const columns = capturedPayload.columns as Array<Record<string, unknown>>;
+    expect(columns[0]).toMatchObject({ columnName: 'location', dataType: 'GEOMETRY', isPrimaryKey: false });
+  });
+});

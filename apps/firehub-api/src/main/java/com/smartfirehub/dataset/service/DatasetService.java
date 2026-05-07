@@ -63,11 +63,16 @@ public class DatasetService {
       dataTableService.validateName(col.columnName());
     }
 
-    // Validate PK columns: must be NOT NULL
+    // Validate PK columns: must be NOT NULL, and GEOMETRY type cannot be a primary key (#199)
     for (DatasetColumnRequest col : request.columns()) {
       if (col.isPrimaryKey() && col.isNullable()) {
         throw new ColumnModificationException(
             "Primary key column '" + col.columnName() + "' cannot be nullable");
+      }
+      // GEOMETRY 컬럼은 GiST 인덱스만 지원하며 B-tree UNIQUE INDEX 생성 불가 → PK 거부
+      if (col.isPrimaryKey() && "GEOMETRY".equals(col.dataType())) {
+        throw new ColumnModificationException(
+            "GEOMETRY column '" + col.columnName() + "' cannot be a primary key");
       }
     }
 
@@ -236,12 +241,10 @@ public class DatasetService {
     // FK 위반 500 오류를 방지하기 위해 삭제 전 참조 건수를 확인한다.
     int referencingStepCount =
         dsl.fetchCount(
-            table(name("pipeline_step")),
-            field(name("output_dataset_id"), Long.class).eq(id));
+            table(name("pipeline_step")), field(name("output_dataset_id"), Long.class).eq(id));
     if (referencingStepCount > 0) {
       throw new DatasetInUseException(
-          referencingStepCount
-              + "개 파이프라인 스텝이 이 데이터셋을 출력으로 참조하고 있어 삭제할 수 없습니다.");
+          referencingStepCount + "개 파이프라인 스텝이 이 데이터셋을 출력으로 참조하고 있어 삭제할 수 없습니다.");
     }
 
     dataTableService.dropTable(dataset.tableName());
