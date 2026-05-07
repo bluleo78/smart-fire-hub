@@ -513,6 +513,31 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByRole('combobox')).toContainText('지오메트리(좌표)');
   });
 
+  // 데이터 있는 데이터셋 경고 메시지에 "NULL 허용 여부"가 포함되면 안 된다 (#198)
+  // PR #117에서 NULL 허용 토글이 자유화됐으나 경고 메시지가 업데이트되지 않은 불일치 수정
+  test('데이터 있는 경우 경고 메시지에 "NULL 허용 여부"가 없고 실제 비활성 필드만 언급한다 (#198)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    // 비-PK 컬럼(name) 편집 — hasData=true 이므로 경고 메시지가 표시된다
+    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
+    await nameRow.getByRole('button', { name: '컬럼 편집' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+
+    // 경고 메시지에 "NULL 허용 여부"가 포함되지 않아야 한다
+    await expect(page.getByRole('dialog').getByText('NULL 허용 여부')).toHaveCount(0);
+    // 경고 메시지에 "필드명, 데이터 타입, 길이는 변경할 수 없습니다" 가 표시되어야 한다
+    await expect(page.getByRole('dialog').getByText(/필드명, 데이터 타입, 길이는 변경할 수 없습니다/)).toBeVisible();
+    // NULL 허용 체크박스는 enabled 상태여야 한다
+    await expect(page.getByRole('dialog').getByRole('checkbox', { name: 'NULL 허용' })).toBeEnabled();
+  });
+
   test('행 액션 아이콘 4개에 aria-label이 부여된다 (위로/아래로/편집/삭제)', async ({
     authenticatedPage: page,
   }) => {

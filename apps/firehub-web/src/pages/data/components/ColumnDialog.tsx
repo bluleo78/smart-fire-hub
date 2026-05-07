@@ -125,7 +125,7 @@ export function ColumnDialog({
           {mode === 'edit' && hasData && (
             <div className="rounded-md bg-warning-subtle border border-warning/20 p-3">
               <p className="text-sm text-warning">
-                데이터가 있는 경우 필드명, 데이터 타입, 길이, NULL 허용 여부는 변경할 수 없습니다.
+                데이터가 있는 경우 필드명, 데이터 타입, 길이는 변경할 수 없습니다.
               </p>
             </div>
           )}
