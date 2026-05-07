@@ -18,7 +18,6 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import com.smartfirehub.job.service.AsyncJobService;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
@@ -32,7 +31,6 @@ import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -52,6 +50,14 @@ public class DataExportService {
   private final AsyncJobService asyncJobService;
   private final AsyncJobRepository asyncJobRepository;
   private final AuditLogService auditLogService;
+
+  /**
+   * 비동기 Export 실행 위임 빈.
+   *
+   * <p>Spring AOP @Async는 프록시 기반이므로 같은 빈 내 자기호출(this.executeAsyncExport)로는 적용되지 않는다. 별도 빈인
+   * DataExportAsyncRunner를 통해 호출해야 프록시가 개입하여 exportExecutor 스레드풀에서 실행된다.
+   */
+  private final DataExportAsyncRunner asyncRunner;
 
   @Transactional(readOnly = true)
   public ExportEstimate estimateExport(Long datasetId, ExportRequest request) {
@@ -131,7 +137,9 @@ public class DataExportService {
               userId,
               Map.of("format", request.format().name(), "filename", filename));
 
-      executeAsyncExport(
+      // AOP 프록시를 통해 호출해야 @Async가 적용된다. 자기호출(this.executeAsyncExport)은 프록시를 우회하므로
+      // 별도 빈인 DataExportAsyncRunner에 위임한다.
+      asyncRunner.executeAsyncExport(
           jobId,
           dataset,
           selectedColumns,
@@ -215,125 +223,6 @@ public class DataExportService {
         }
       }
     };
-  }
-
-  // --- Async export ---
-
-  @Async("exportExecutor")
-  public void executeAsyncExport(
-      String jobId,
-      DatasetResponse dataset,
-      List<DatasetColumnResponse> selectedColumns,
-      Map<String, String> columnTypes,
-      String search,
-      ExportFormat format,
-      String geometryColumn,
-      String filename,
-      Long userId,
-      String username,
-      String ipAddress,
-      String userAgent) {
-
-    Path filePath = EXPORT_DIR.resolve(jobId + "." + format.getExtension());
-    try {
-      Files.createDirectories(EXPORT_DIR);
-
-      List<String> columnNames =
-          selectedColumns.stream().map(DatasetColumnResponse::columnName).toList();
-      long totalRows =
-          dataTableRowService.countRows(dataset.tableName(), columnNames, search, columnTypes);
-
-      asyncJobService.updateProgress(
-          jobId, "EXPORTING", 0, "내보내기 시작: " + totalRows + "행", Map.of("totalRows", totalRows));
-
-      try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(filePath));
-          ExportWriter writer = createWriter(format, fos, geometryColumn)) {
-
-        writeHeader(writer, selectedColumns, format);
-
-        int page = 0;
-        long processedRows = 0;
-        while (true) {
-          List<Map<String, Object>> rows =
-              dataTableRowService.queryData(
-                  dataset.tableName(),
-                  columnNames,
-                  search,
-                  page,
-                  PAGE_SIZE,
-                  null,
-                  "ASC",
-                  columnTypes);
-          if (rows.isEmpty()) break;
-
-          for (Map<String, Object> row : rows) {
-            String[] values = new String[columnNames.size()];
-            for (int i = 0; i < columnNames.size(); i++) {
-              Object val = row.get(columnNames.get(i));
-              values[i] = val != null ? val.toString() : "";
-            }
-            writer.writeRow(values);
-          }
-
-          processedRows += rows.size();
-          int progress = totalRows > 0 ? (int) (processedRows * 100 / totalRows) : 0;
-          asyncJobService.updateProgress(
-              jobId,
-              "EXPORTING",
-              Math.min(progress, 99),
-              processedRows + "/" + totalRows + " 행 처리 중",
-              Map.of("processedRows", processedRows, "totalRows", totalRows));
-          page++;
-        }
-      }
-
-      long fileSize = Files.size(filePath);
-      asyncJobService.completeJob(
-          jobId,
-          Map.of(
-              "filePath",
-              filePath.toString(),
-              "filename",
-              filename,
-              "contentType",
-              format.getContentType(),
-              "fileSize",
-              fileSize));
-
-      auditLogService.log(
-          userId,
-          username,
-          "DATA_EXPORT",
-          "dataset",
-          String.valueOf(dataset.id()),
-          format.name() + " 내보내기 완료 (" + totalRows + "행)",
-          ipAddress,
-          userAgent,
-          "SUCCESS",
-          null,
-          Map.of("format", format.name(), "rowCount", totalRows, "fileSize", fileSize));
-
-    } catch (Exception e) {
-      log.error("Async export failed for jobId={}: {}", jobId, e.getMessage(), e);
-      asyncJobService.failJob(jobId, "내보내기 실패: " + e.getMessage());
-      try {
-        Files.deleteIfExists(filePath);
-      } catch (IOException ignored) {
-      }
-
-      auditLogService.log(
-          userId,
-          username,
-          "DATA_EXPORT",
-          "dataset",
-          String.valueOf(dataset.id()),
-          format.name() + " 내보내기 실패",
-          ipAddress,
-          userAgent,
-          "FAILURE",
-          e.getMessage(),
-          null);
-    }
   }
 
   // --- Sync export ---

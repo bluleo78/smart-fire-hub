@@ -16,6 +16,7 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.notification.service.NotificationService;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -314,9 +315,6 @@ public class DataImportService {
       asyncJobService.updateProgress(
           jobId, "PARSING", 10, "Parsing file...", Map.of("totalRows", 0, "processedRows", 0));
 
-      // Read file
-      byte[] fileData = Files.readAllBytes(Path.of(filePath));
-
       // Load parse options
       ParseOptions parseOptions = ParseOptions.defaults();
       if (parseOptsPath != null && !parseOptsPath.isEmpty()) {
@@ -328,10 +326,14 @@ public class DataImportService {
         }
       }
 
-      // Parse file
+      // Parse file — Files.newInputStream() 스트리밍으로 읽어 대용량 파일 OOM 방지.
+      // 기존 Files.readAllBytes()는 파일 크기 × 2~3배 힙을 소비했으나,
+      // InputStream 오버로드는 버퍼 단위로 읽어 메모리 사용량을 최소화한다.
       log.info("Parsing file for import: {} → dataset {}", fileName, datasetId);
-      List<Map<String, String>> parsedRows =
-          fileParserService.parse(fileData, fileType.toLowerCase(), parseOptions);
+      List<Map<String, String>> parsedRows;
+      try (InputStream is = Files.newInputStream(Path.of(filePath))) {
+        parsedRows = fileParserService.parse(is, fileType.toLowerCase(), parseOptions);
+      }
 
       asyncJobService.updateProgress(
           jobId,

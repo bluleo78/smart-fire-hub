@@ -276,6 +276,51 @@ class DataImportServiceTest extends IntegrationTestBase {
     assertThat(csvOutput).contains("Email");
   }
 
+  /**
+   * processImport가 Files.newInputStream() 스트리밍 경로를 통해 대용량 파일을 byte[] 로드 없이 파싱·적재하는지 검증한다. 실제 OOM 재현
+   * 없이도 스트리밍 코드 경로가 정상 동작함을 확인한다.
+   */
+  @Test
+  void processImport_csvViaStreaming_insertsRowsWithoutLoadingAllBytes() throws Exception {
+    // Given: 1000행 CSV 파일을 임시 파일로 생성 (스트리밍 경로 검증)
+    StringBuilder csv = new StringBuilder("name,age,email\n");
+    for (int i = 0; i < 1000; i++) {
+      csv.append("User")
+          .append(i)
+          .append(",")
+          .append(20 + i % 80)
+          .append(",user")
+          .append(i)
+          .append("@example.com\n");
+    }
+    String filePath = createTempCsvFile(csv.toString());
+
+    // When: processImport 직접 호출 (Jobrunr 잡 메서드, 스트리밍 InputStream 사용)
+    dataImportService.processImport(
+        "stream-test-job-id",
+        testDatasetId,
+        filePath,
+        "",
+        "",
+        "stream_test.csv",
+        (long) csv.length(),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND");
+
+    // Then: 1000행 전부 적재됐는지 확인
+    var count =
+        dsl.fetchCount(
+            dsl.select()
+                .from(
+                    org.jooq.impl.DSL.table(
+                        org.jooq.impl.DSL.name("data", "import_test_dataset"))));
+    assertThat(count).isEqualTo(1000);
+  }
+
   private String createTempCsvFile(String content) throws Exception {
     java.nio.file.Path tempDir =
         java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");

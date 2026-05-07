@@ -12,6 +12,7 @@ import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
@@ -50,6 +51,9 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   @MockitoBean private AsyncJobService asyncJobService;
   @MockitoBean private AsyncJobRepository asyncJobRepository;
   @MockitoBean private AuditLogService auditLogService;
+
+  /** 비동기 Export 실행을 DataExportService로부터 위임받는 별도 빈 — mock으로 실제 비동기 실행 없이 위임 여부만 검증 */
+  @MockitoBean private DataExportAsyncRunner asyncRunner;
 
   private Long userId;
   private Long datasetId;
@@ -278,8 +282,14 @@ class DataExportServiceExtTest extends IntegrationTestBase {
   // exportDataset — async path (rowCount > SYNC_THRESHOLD)
   // -----------------------------------------------------------------------
 
+  /**
+   * 대용량 데이터셋 내보내기 시 비동기 경로를 검증한다.
+   *
+   * <p>핵심 검증 포인트: DataExportService가 자기호출(self-invocation) 없이 DataExportAsyncRunner 빈에 실행을 위임하는지
+   * 확인한다. 자기호출이었다면 Spring AOP 프록시가 우회되어 @Async가 적용되지 않는 원래 버그(#167)가 된다.
+   */
   @Test
-  void exportDataset_largeDataset_returnsAsyncResult() {
+  void exportDataset_largeDataset_delegatesToAsyncRunner() {
     // SYNC_THRESHOLD(50,000)보다 큰 row count → async 경로
     when(dataTableRowService.countRows(anyString(), anyList(), any(), anyMap()))
         .thenReturn(DataExportService.SYNC_THRESHOLD + 1L);
@@ -291,9 +301,26 @@ class DataExportServiceExtTest extends IntegrationTestBase {
     ExportResult result =
         dataExportService.exportDataset(datasetId, request, userId, "expext", "127.0.0.1", "agent");
 
+    // 응답은 즉시 async jobId를 반환해야 한다
     assertThat(result.async()).isTrue();
     assertThat(result.jobId()).isEqualTo("async-job-id-1");
     assertThat(result.streamingBody()).isNull();
+
+    // DataExportAsyncRunner에 실행이 위임되어야 한다 (자기호출이 아님을 보장)
+    verify(asyncRunner)
+        .executeAsyncExport(
+            eq("async-job-id-1"),
+            any(DatasetResponse.class),
+            anyList(),
+            anyMap(),
+            isNull(), // search
+            eq(ExportFormat.CSV),
+            isNull(), // geometryColumn
+            anyString(), // filename
+            eq(userId),
+            eq("expext"),
+            eq("127.0.0.1"),
+            eq("agent"));
   }
 
   // -----------------------------------------------------------------------

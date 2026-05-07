@@ -52,6 +52,9 @@ class DataExportServiceTest extends IntegrationTestBase {
 
   @MockitoBean private AuditLogService auditLogService;
 
+  /** 비동기 Export 실행 위임 빈 — 테스트에서는 mock으로 대체하여 실제 비동기 실행 없이 동작 */
+  @MockitoBean private DataExportAsyncRunner asyncRunner;
+
   private Long userId;
   private Long datasetId;
   private Long geoDatasetId;
