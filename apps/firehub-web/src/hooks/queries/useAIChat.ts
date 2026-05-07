@@ -48,6 +48,13 @@ export function useAIChat(options?: {
 
   const [isUploading, setIsUploading] = useState(false);
 
+  // options.onCanvasWidget을 ref로 관리하여 sendMessage useCallback에서 stale closure 없이 최신 콜백 참조
+  // useCallback 의존성에 options를 추가하면 매 렌더마다 sendMessage가 재생성되므로 ref 패턴 사용
+  const onCanvasWidgetRef = useRef(options?.onCanvasWidget);
+  useEffect(() => {
+    onCanvasWidgetRef.current = options?.onCanvasWidget;
+  });
+
   // 생성된 Blob URL을 추적하여 컴포넌트 언마운트 또는 세션 교체 시 일괄 해제 (메모리 누수 방지)
   const blobUrlsRef = useRef<string[]>([]);
 
@@ -259,9 +266,10 @@ export function useAIChat(options?: {
 
                 // Canvas widget placement: fire callback at tool_result time (idempotent, no useEffect)
                 // Fires for ALL tool results — AIProvider decides whether to place on canvas based on mode
-                if (options?.onCanvasWidget) {
+                // onCanvasWidgetRef.current 사용: 최신 콜백을 참조 (stale closure 방지)
+                if (onCanvasWidgetRef.current) {
                   const canvasLayout = lastTool.input?.canvas as CanvasLayout | undefined;
-                  options.onCanvasWidget({
+                  onCanvasWidgetRef.current({
                     id: lastTool.id || `tc-${lastTool.name}-${toolCalls.length}`,
                     toolName: lastTool.name,
                     input: lastTool.input || {},
@@ -348,7 +356,7 @@ export function useAIChat(options?: {
       navContext,
       screen,
     );
-  }, [currentSessionId, queryClient, createTrackedBlobUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentSessionId, queryClient, createTrackedBlobUrl]);
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
