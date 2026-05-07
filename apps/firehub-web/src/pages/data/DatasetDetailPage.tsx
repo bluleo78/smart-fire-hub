@@ -52,6 +52,15 @@ export default function DatasetDetailPage() {
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
 
+  // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).
+  // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
+  useEffect(() => {
+    const newTabParam = searchParams.get('tab');
+    const newTab = newTabParam && validTabs.includes(newTabParam) ? newTabParam : 'info';
+    setActiveTab(newTab);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
   const { data: dataset, isLoading, isError } = useDataset(datasetId);
   const { data: categoriesData } = useCategories();

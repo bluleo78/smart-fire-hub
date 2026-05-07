@@ -616,4 +616,31 @@ test.describe('데이터셋 상세 페이지', () => {
     // Popover가 닫혀야 한다 (콘텐츠 비표시)
     await expect(page.getByText('데이터셋 상태 변경')).not.toBeVisible({ timeout: 3000 });
   });
+
+  /**
+   * 회귀 테스트 (issue #170): URL ?tab= 파라미터가 외부에서 변경될 때 activeTab이 동기화되어야 한다.
+   * - 페이지가 이미 로드된 상태에서 URL의 tab 파라미터가 바뀌면 탭 UI도 같이 전환되어야 한다.
+   * - DatasetListPage 호버 버튼 등이 ?tab=data 링크로 이동할 때 탭이 실제로 전환되는지 검증.
+   */
+  test('페이지 로드 후 URL ?tab= 파라미터 변경 시 activeTab이 동기화된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    // info 탭(기본값)으로 먼저 진입
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    // 기본 탭(정보)이 활성 상태인지 확인
+    await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'active');
+
+    // URL을 ?tab=data로 직접 변경 (외부 링크 클릭 시나리오 재현) — pushState로 SPA 내 이동
+    await page.evaluate(() => {
+      window.history.pushState({}, '', '/data/datasets/1?tab=data');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    // searchParams 변경 → activeTab 동기화 → '데이터' 탭이 활성화되어야 한다 (issue #170 회귀 방지)
+    await expect(page.getByRole('tab', { name: '데이터' })).toHaveAttribute('data-state', 'active', { timeout: 3000 });
+    await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'inactive');
+  });
 });
