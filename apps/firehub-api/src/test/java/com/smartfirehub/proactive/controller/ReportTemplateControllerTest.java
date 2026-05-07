@@ -127,6 +127,25 @@ class ReportTemplateControllerTest {
         .andExpect(status().isNoContent());
   }
 
+  /**
+   * 이슈 #200 회귀 테스트 — PUT 엔드포인트에 빈 이름 전송 시 400 반환 검증.
+   * UpdateReportTemplateRequest.name 에 @NotBlank 검증이 없으면 204를 반환하여 빈 이름으로 저장된다.
+   */
+  @Test
+  void updateTemplate_emptyName_returns400() throws Exception {
+    mockAuth("proactive:write");
+    // name이 빈 문자열인 요청 — @NotBlank 위반으로 400이어야 한다
+    UpdateReportTemplateRequest req = new UpdateReportTemplateRequest("", null, null, null);
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/templates/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest());
+  }
+
   @Test
   void deleteTemplate_returnsNoContent() throws Exception {
     mockAuth("proactive:write");

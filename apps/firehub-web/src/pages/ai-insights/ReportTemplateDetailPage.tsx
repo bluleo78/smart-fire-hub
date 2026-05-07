@@ -107,10 +107,12 @@ export default function ReportTemplateDetailPage() {
   const [prevTreeSections, setPrevTreeSections] = useState(tree.sections);
   const [suppressTreeSync, setSuppressTreeSync] = useState(false);
 
-  // mode: 'onChange' — 이름 필드 실시간 유효성 반영으로 저장 버튼 비활성화 지원
+  // mode: 'all' — onChange + onBlur + onSubmit 모든 시점에 유효성 검사를 수행한다.
+  // 이름 필드를 Ctrl+A → Backspace로 지운 후에도 isValid가 즉시 false로 갱신되도록 'all'을 사용한다.
+  // (이슈 #200: mode: 'onChange'만으로는 field 비움 후 isValid 갱신이 지연되는 문제)
   const form = useForm<ReportTemplateFormValues>({
     resolver: zodResolver(reportTemplateSchema),
-    mode: 'onChange',
+    mode: 'all',
     values: template ? { name: template.name, description: template.description ?? '' } : { name: '', description: '' },
   });
 

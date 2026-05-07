@@ -461,6 +461,100 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     });
   });
 
+  /**
+   * 회귀 테스트 — 이슈 #200
+   * 편집 모드에서 이름 필드를 비우면 저장 버튼이 비활성화되어야 하며,
+   * 이름을 다시 입력하면 활성화되어야 한다.
+   * 또한 서버가 400을 반환할 때 에러 토스트가 표시되어야 한다.
+   */
+  test.describe('이슈 #200 — 이름 삭제 시 저장 버튼 비활성화', () => {
+    test('편집 모드에서 이름 필드를 비우면 저장 버튼이 비활성화된다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 커스텀 템플릿 모킹 — 편집 버튼이 표시되어야 한다
+      const template = createTemplate({ id: 200, name: '유효성 테스트 템플릿', builtin: false });
+      await mockApi(page, 'GET', '/api/v1/proactive/templates/200', template);
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/200');
+      await expect(page.getByRole('heading', { name: '유효성 테스트 템플릿' })).toBeVisible({ timeout: 10000 });
+
+      // 편집 모드 진입
+      await page.getByRole('button', { name: '편집' }).click();
+
+      // 이름 필드가 렌더링되어야 한다
+      await expect(page.locator('#tpl-name')).toBeVisible();
+
+      // 이름 필드를 비운다 — clear()로 전체 삭제
+      await page.locator('#tpl-name').clear();
+
+      // 저장 버튼이 비활성화되어야 한다 (mode: 'all' 수정 후 isValid가 즉시 false로 갱신)
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+
+      // 이름 에러 메시지가 표시되어야 한다
+      await expect(page.getByText('이름을 입력해주세요.')).toBeVisible();
+    });
+
+    test('이름 필드를 비웠다가 다시 입력하면 저장 버튼이 활성화된다', async ({
+      authenticatedPage: page,
+    }) => {
+      const template = createTemplate({ id: 201, name: '버튼 활성화 테스트', builtin: false });
+      await mockApi(page, 'GET', '/api/v1/proactive/templates/201', template);
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/201');
+      await expect(page.getByRole('heading', { name: '버튼 활성화 테스트' })).toBeVisible({ timeout: 10000 });
+
+      await page.getByRole('button', { name: '편집' }).click();
+      await expect(page.locator('#tpl-name')).toBeVisible();
+
+      // 이름 필드 비우기 → 저장 버튼 비활성화 확인
+      await page.locator('#tpl-name').clear();
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+
+      // 이름 재입력 → 저장 버튼 활성화 확인
+      await page.locator('#tpl-name').fill('수정된 템플릿 이름');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    });
+
+    test('서버가 400을 반환하면 에러 토스트가 표시된다', async ({ authenticatedPage: page }) => {
+      // 서버 측 @NotBlank 검증 실패를 재현하기 위해 PUT 엔드포인트를 400으로 모킹한다.
+      // 이 케이스는 프론트엔드 유효성 검사를 우회하는 직접 API 호출 또는 레이스 컨디션 상황을 커버한다.
+      const template = createTemplate({ id: 202, name: '서버 검증 테스트', builtin: false });
+      await mockApi(page, 'GET', '/api/v1/proactive/templates/202', template);
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      // PUT API를 400으로 모킹 — 서버 측 @NotBlank 검증 실패 시나리오
+      await mockApi(
+        page,
+        'PUT',
+        '/api/v1/proactive/templates/202',
+        { message: '템플릿 이름은 필수입니다.' },
+        { status: 400 },
+      );
+      // 모킹한 PUT 응답을 받은 후 다시 조회될 때를 위한 모킹
+      await mockApi(page, 'GET', '/api/v1/proactive/templates/202', template);
+
+      await page.goto('/ai-insights/templates/202');
+      await expect(page.getByRole('heading', { name: '서버 검증 테스트' })).toBeVisible({ timeout: 10000 });
+
+      // 편집 모드 진입 후 유효한 이름으로 저장 시도
+      // (유효한 이름이지만 서버가 400을 반환하는 시나리오)
+      await page.getByRole('button', { name: '편집' }).click();
+      await expect(page.locator('#tpl-name')).toBeVisible();
+
+      // 기존 이름 변경 → 저장 버튼 활성화 상태로 클릭
+      await page.locator('#tpl-name').fill('서버에서 거부될 이름');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 서버 400 응답 → 에러 토스트 표시
+      await expect(page.locator('[data-sonner-toast]')).toBeVisible({ timeout: 5000 });
+    });
+  });
+
   test('삭제 버튼 클릭 시 삭제 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     // builtin: false 커스텀 템플릿으로 모킹
     const template = createTemplate({ id: 3, name: '삭제 대상 템플릿', builtin: false });
