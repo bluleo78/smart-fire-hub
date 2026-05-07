@@ -73,17 +73,15 @@ public class DataImportService {
           "Unsupported file type. Only CSV and XLSX are supported.");
     }
 
-    byte[] fileData = file.getBytes();
+    // getInputStream()으로 스트리밍 처리 — getBytes()는 대용량 파일 OOM 위험(#145)
+    // MultipartFile은 호출마다 새로운 InputStream을 반환하므로 3회 호출 안전
+    List<String> headers =
+        fileParserService.parseHeaders(file.getInputStream(), fileType, parseOptions);
 
-    // Parse headers
-    List<String> headers = fileParserService.parseHeaders(fileData, fileType, parseOptions);
-
-    // Parse sample rows (5 rows)
     List<Map<String, String>> sampleRows =
-        fileParserService.parseSampleRows(fileData, fileType, 5, parseOptions);
+        fileParserService.parseSampleRows(file.getInputStream(), fileType, 5, parseOptions);
 
-    // Count total rows
-    int totalRows = fileParserService.countRows(fileData, fileType, parseOptions);
+    int totalRows = fileParserService.countRows(file.getInputStream(), fileType, parseOptions);
 
     // Get dataset columns
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -123,10 +121,9 @@ public class DataImportService {
           "Unsupported file type. Only CSV and XLSX are supported.");
     }
 
-    byte[] fileData = file.getBytes();
-
-    // Parse all rows
-    List<Map<String, String>> rows = fileParserService.parse(fileData, fileType, parseOptions);
+    // getInputStream()으로 스트리밍 처리 — getBytes()는 대용량 파일 OOM 위험(#145)
+    List<Map<String, String>> rows =
+        fileParserService.parse(file.getInputStream(), fileType, parseOptions);
 
     // Get dataset columns
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);

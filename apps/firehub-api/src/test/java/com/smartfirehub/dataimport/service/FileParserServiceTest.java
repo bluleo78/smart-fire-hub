@@ -485,6 +485,116 @@ class FileParserServiceTest {
   }
 
   // -----------------------------------------------------------------------
+  // InputStream 오버로드 — parseHeaders / parseSampleRows / countRows / parse
+  // OOM 방지(#145): previewImport·validateImport 경로에서 사용하는 스트리밍 메서드 검증
+  // -----------------------------------------------------------------------
+
+  @Test
+  void parseHeaders_csvViaInputStream_returnsHeaders() throws Exception {
+    String csv = "name,age,city\nAlice,30,Seoul";
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<String> headers = service.parseHeaders(toStream(csv), "csv", opts);
+
+    assertThat(headers).containsExactly("name", "age", "city");
+  }
+
+  @Test
+  void parseHeaders_xlsxViaInputStream_returnsHeaders() throws Exception {
+    byte[] data = buildXlsx();
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<String> headers = service.parseHeaders(new ByteArrayInputStream(data), "xlsx", opts);
+
+    assertThat(headers).containsExactly("name", "age", "active");
+  }
+
+  @Test
+  void parseHeaders_unsupportedTypeViaInputStream_throws() {
+    ParseOptions opts = ParseOptions.defaults();
+    assertThatThrownBy(() -> service.parseHeaders(toStream("x"), "pdf", opts))
+        .isInstanceOf(UnsupportedFileTypeException.class);
+  }
+
+  @Test
+  void parseSampleRows_csvViaInputStream_limitsRows() throws Exception {
+    String csv = "id,name\n1,a\n2,b\n3,c\n4,d\n5,e";
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> rows = service.parseSampleRows(toStream(csv), "csv", 3, opts);
+
+    assertThat(rows).hasSize(3);
+    assertThat(rows.get(0)).containsEntry("id", "1");
+  }
+
+  @Test
+  void parseSampleRows_xlsxViaInputStream_limitsRows() throws Exception {
+    byte[] data = buildXlsx();
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> rows =
+        service.parseSampleRows(new ByteArrayInputStream(data), "xlsx", 1, opts);
+
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0)).containsEntry("name", "Alice");
+  }
+
+  @Test
+  void countRows_csvViaInputStream_returnsDataRowCount() throws Exception {
+    String csv = "name,age\nAlice,30\nBob,25\nCharlie,35";
+    ParseOptions opts = ParseOptions.defaults();
+
+    int count = service.countRows(toStream(csv), "csv", opts);
+
+    assertThat(count).isEqualTo(3);
+  }
+
+  @Test
+  void countRows_xlsxViaInputStream_returnsDataRowCount() throws Exception {
+    byte[] data = buildXlsx();
+    ParseOptions opts = ParseOptions.defaults();
+
+    int count = service.countRows(new ByteArrayInputStream(data), "xlsx", opts);
+
+    assertThat(count).isEqualTo(2);
+  }
+
+  @Test
+  void parse_csvViaInputStream_returnsAllRows() throws Exception {
+    String csv = "id,value\n1,foo\n2,bar";
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> rows = service.parse(toStream(csv), "csv", opts);
+
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(0)).containsEntry("id", "1").containsEntry("value", "foo");
+    assertThat(rows.get(1)).containsEntry("id", "2").containsEntry("value", "bar");
+  }
+
+  @Test
+  void parse_xlsxViaInputStream_returnsAllRows() throws Exception {
+    byte[] data = buildXlsx();
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> rows = service.parse(new ByteArrayInputStream(data), "xlsx", opts);
+
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(0)).containsEntry("name", "Alice");
+  }
+
+  @Test
+  void parse_csvAutoEncodingViaInputStream_detectsAndParses() throws Exception {
+    // AUTO 인코딩 + InputStream: mark/reset으로 인코딩 감지 후 정상 파싱되는지 확인
+    String csv = "name,age\nAlice,30\nBob,25";
+    ParseOptions opts = new ParseOptions(",", "AUTO", true, 0);
+
+    List<Map<String, String>> rows = service.parse(toStream(csv), "csv", opts);
+
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(0)).containsEntry("name", "Alice").containsEntry("age", "30");
+  }
+
+  // -----------------------------------------------------------------------
   // parseExcel(InputStream) — direct call
   // -----------------------------------------------------------------------
 
