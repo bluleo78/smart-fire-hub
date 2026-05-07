@@ -161,4 +161,56 @@ test.describe('데이터셋 상세 — 지도 탭', () => {
     // 다이얼로그 혹은 Sheet가 열림
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
   });
+
+  /**
+   * 회귀 방지: MapView DARK_STYLE URL이 LIGHT_STYLE과 달라야 한다 (#180)
+   *
+   * MapLibre가 headless 환경에서 스타일 URL을 실제로 fetch하므로
+   * page.route()로 타일 요청을 가로채 URL 패턴을 검증한다.
+   * 다크 모드 전환 시 `/styles/dark` URL, 라이트 모드 시 `/styles/liberty` URL이
+   * 요청되어야 하며, 두 URL이 달라야 한다.
+   */
+  test('MapView: 다크 테마에서 DARK_STYLE URL이 LIGHT_STYLE과 다른 URL로 요청된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // OpenFreeMap 타일 요청을 빈 스타일로 stub (WebGL 오류 방지)
+    const emptyStyle = {
+      version: 8,
+      sources: {},
+      layers: [],
+    };
+    const requestedStyleUrls: string[] = [];
+
+    // OpenFreeMap 스타일 요청 캡처
+    await page.route('https://tiles.openfreemap.org/styles/**', (route) => {
+      requestedStyleUrls.push(route.request().url());
+      void route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(emptyStyle),
+      });
+    });
+
+    await setupMocks(page, 2, detailWithGeometry);
+    await page.goto('/data/datasets/2');
+    await page.getByRole('tab', { name: '지도' }).click();
+    await page.waitForTimeout(500);
+
+    // 라이트 모드 초기 스타일 요청 — liberty 스타일이어야 한다
+    const lightUrls = requestedStyleUrls.filter((u) => u.includes('/styles/liberty'));
+    expect(lightUrls.length).toBeGreaterThan(0);
+
+    // 다크 모드로 전환
+    requestedStyleUrls.length = 0;
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(500);
+
+    // 다크 모드 전환 후 dark 스타일 요청이 발생해야 한다
+    const darkUrls = requestedStyleUrls.filter((u) => u.includes('/styles/dark'));
+    expect(darkUrls.length).toBeGreaterThan(0);
+
+    // 두 스타일 URL이 서로 달라야 한다 (핵심 회귀 검증)
+    const hasLibertyInDark = requestedStyleUrls.some((u) => u.includes('/styles/liberty'));
+    expect(hasLibertyInDark).toBe(false);
+  });
 });

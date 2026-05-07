@@ -5,7 +5,8 @@ import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
 
 const LIGHT_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
-const DARK_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+// 다크 테마 전용 스타일 URL — OpenFreeMap의 dark 스타일(배경 rgb(12,12,12))
+const DARK_STYLE = 'https://tiles.openfreemap.org/styles/dark';
 
 interface MapViewProps {
   className?: string;
