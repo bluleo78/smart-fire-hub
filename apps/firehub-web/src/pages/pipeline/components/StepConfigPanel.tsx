@@ -293,7 +293,13 @@ export default function StepConfigPanel({
             <>
               <Separator />
               <Suspense fallback={<Skeleton className="h-[200px]" />}>
+                {/*
+                 * key={step.tempId}로 스텝이 변경될 때마다 ApiCallStepConfig를 재마운트한다.
+                 * 재마운트 없이는 useState 지연 초기화(lazy initializer)가 마운트 시 1회만 실행되어
+                 * headerPairs/queryParamPairs가 이전 스텝의 값으로 고정되는 stale 상태가 발생한다.
+                 */}
                 <ApiCallStepConfig
+                  key={step.tempId}
                   apiConfig={(step.apiConfig ?? {}) as Record<string, unknown>}
                   apiConnectionId={step.apiConnectionId ?? null}
                   onChange={(config) => handleUpdateStep({ apiConfig: config })}

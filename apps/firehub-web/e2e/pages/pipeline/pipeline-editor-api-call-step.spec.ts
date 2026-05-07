@@ -310,4 +310,118 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     // path 필드가 apiConfig에 포함되어야 한다
     expect(step.apiConfig?.path).toBe('/v1/data');
   });
+
+  /**
+   * TC-8 (회귀): #163 — 스텝 전환 시 headerPairs/queryParamPairs stale 상태 수정 검증
+   *
+   * 재현 시나리오:
+   * 1. 스텝 A(API_CALL)에 헤더 'X-Custom-Key: my-value' 추가 → 상위 상태에 저장
+   * 2. 스텝 B(SQL/비어있는 새 스텝) 선택 → ApiCallStepConfig 패널이 사라짐
+   * 3. 다시 스텝 A 선택 → ApiCallStepConfig 재마운트
+   * 4. 헤더 KvEditor에 'X-Custom-Key'가 표시되어야 한다 (이전엔 빈 상태 고정)
+   *
+   * 수정: StepConfigPanel에서 ApiCallStepConfig에 key={step.tempId} 부여 →
+   * 스텝 전환 시 재마운트되어 useState 초기화 시 최신 apiConfig.headers로 KV 상태 설정.
+   */
+  test('스텝 전환 후 돌아왔을 때 헤더 KV 상태가 이전 값으로 복원된다 (stale state 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    /**
+     * #163 회귀 테스트 — 기존 파이프라인 편집 모드 진입 시나리오 사용
+     * - API_CALL 스텝(헤더: X-Custom-Key)과 SQL 스텝을 포함한 파이프라인을 로드
+     * - API_CALL 스텝 선택 → SQL 스텝 선택 → API_CALL 스텝 재선택
+     * - 재선택 시 헤더 KV 상태가 apiConfig.headers 기준으로 초기화되는지 검증
+     */
+    const apiCallStepApiConfig = {
+      headers: { 'X-Custom-Key': 'my-value' },
+      queryParams: {},
+      method: 'GET',
+      customUrl: 'https://api.example.com',
+    };
+
+    // 헤더 있는 API_CALL 스텝 + SQL 스텝을 포함한 파이프라인 모킹
+    await mockApi(page, 'GET', '/api/v1/pipelines/999', {
+      id: 999,
+      name: '헤더 테스트 파이프라인',
+      description: '',
+      isActive: true,
+      createdBy: 'testuser',
+      steps: [
+        {
+          id: 10,
+          name: 'API 스텝',
+          description: '',
+          scriptType: 'API_CALL',
+          scriptContent: '',
+          outputDatasetId: null,
+          outputDatasetName: null,
+          inputDatasetIds: [],
+          dependsOnStepNames: [],
+          stepOrder: 0,
+          loadStrategy: 'REPLACE',
+          apiConfig: apiCallStepApiConfig,
+          aiConfig: undefined,
+          pythonConfig: undefined,
+          apiConnectionId: null,
+        },
+        {
+          id: 11,
+          name: 'SQL 스텝',
+          description: '',
+          scriptType: 'SQL',
+          scriptContent: 'SELECT 1',
+          outputDatasetId: null,
+          outputDatasetName: null,
+          inputDatasetIds: [],
+          dependsOnStepNames: [],
+          stepOrder: 1,
+          loadStrategy: 'REPLACE',
+          apiConfig: null,
+          aiConfig: undefined,
+          pythonConfig: undefined,
+          apiConnectionId: null,
+        },
+      ],
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: null,
+      updatedBy: null,
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/999/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/999/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/999/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0,
+    });
+
+    // 파이프라인 에디터 편집 모드로 직접 진입
+    await page.goto('/pipelines/999');
+
+    // 편집 모드 진입 ("수정" 버튼 클릭)
+    await page.getByRole('button', { name: '수정' }).click();
+
+    // API_CALL 스텝 노드(#1) 클릭 → 스텝 패널 열기
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    // ApiCallStepConfig Suspense 로딩 완료 대기
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+
+    // SQL 스텝 노드(#2) 클릭 → API_CALL 패널 언마운트
+    await page.locator('.react-flow__node').nth(1).click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('기본 설정')).not.toBeVisible();
+
+    // 다시 API_CALL 스텝 노드(#1) 클릭 → ApiCallStepConfig 재마운트
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+
+    // 헤더 Collapsible 트리거 클릭 — '헤더' 텍스트 버튼 (Section 컴포넌트의 CollapsibleTrigger)
+    // Playwright는 button의 accessible name(텍스트+아이콘)으로 검색하므로 hasText로 매칭
+    await page.locator('button').filter({ hasText: /^헤더$/ }).click();
+
+    // key={step.tempId} 수정 덕분에 재마운트 시 apiConfig.headers로 올바르게 초기화됨
+    // 수정 전: 빈 상태 고정 / 수정 후: 'X-Custom-Key'/'my-value' 복원
+    // input[value] 속성으로 값 확인 (Playwright에서는 getByDisplayValue 미지원)
+    await expect(page.locator('input[placeholder="Content-Type"]')).toHaveValue('X-Custom-Key', { timeout: 5000 });
+    await expect(page.locator('input[placeholder="application/json"]')).toHaveValue('my-value');
+  });
 });
