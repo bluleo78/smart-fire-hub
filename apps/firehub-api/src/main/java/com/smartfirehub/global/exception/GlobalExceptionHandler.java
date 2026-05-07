@@ -21,6 +21,7 @@ import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
@@ -273,6 +274,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }
 
+  /** 파이프라인 이름 중복 시 409 반환 (#181) */
+  @ExceptionHandler(PipelineNameConflictException.class)
+  public ResponseEntity<ErrorResponse> handlePipelineNameConflict(
+      PipelineNameConflictException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
   @ExceptionHandler(CyclicDependencyException.class)
   public ResponseEntity<ErrorResponse> handleCyclicDependency(
       CyclicDependencyException ex, HttpServletRequest request) {
@@ -310,8 +319,8 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 비즈니스 규칙 위반(예: 마지막 ADMIN 비활성화 시도)에 대해 409 Conflict 반환 (#146).
-   * IllegalArgumentException(400)과 구별하여 상태 충돌임을 명확히 한다.
+   * 비즈니스 규칙 위반(예: 마지막 ADMIN 비활성화 시도)에 대해 409 Conflict 반환 (#146). IllegalArgumentException(400)과
+   * 구별하여 상태 충돌임을 명확히 한다.
    */
   @ExceptionHandler(IllegalStateException.class)
   public ResponseEntity<ErrorResponse> handleIllegalState(
@@ -428,10 +437,7 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }
 
-  /**
-   * Job 중복 실행 시도 — 409 Conflict 반환 (#149).
-   * ProactiveJobException보다 먼저 등록되어야 서브클래스 우선 매핑이 적용된다.
-   */
+  /** Job 중복 실행 시도 — 409 Conflict 반환 (#149). ProactiveJobException보다 먼저 등록되어야 서브클래스 우선 매핑이 적용된다. */
   @ExceptionHandler(ProactiveJobAlreadyRunningException.class)
   public ResponseEntity<ErrorResponse> handleProactiveJobAlreadyRunning(
       ProactiveJobAlreadyRunningException ex, HttpServletRequest request) {

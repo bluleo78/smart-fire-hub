@@ -90,6 +90,11 @@ public class DatasetRepository {
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
   private static final Field<String> U_NAME = field(name("user", "name"), String.class);
 
+  // status_updated_by 사용자 이름 JOIN을 위한 별칭 (user 테이블 중복 JOIN 시 충돌 방지)
+  private static final Table<?> STATUS_USER_TABLE = table(name("user")).as("status_user");
+  private static final Field<Long> SU_ID = field(name("status_user", "id"), Long.class);
+  private static final Field<String> SU_NAME = field(name("status_user", "name"), String.class);
+
   private DatasetResponse mapToDatasetResponse(
       Record r, Set<Long> favoriteIds, Map<Long, List<String>> tagsByDatasetId) {
     CategoryResponse category =
@@ -101,16 +106,8 @@ public class DatasetRepository {
     List<String> tags =
         tagsByDatasetId != null ? tagsByDatasetId.getOrDefault(id, List.of()) : List.of();
 
-    String statusUpdatedByName = null;
-    Long statusUpdatedById = r.get(DS_STATUS_UPDATED_BY);
-    if (statusUpdatedById != null) {
-      statusUpdatedByName =
-          dsl.select(U_NAME)
-              .from(USER_TABLE)
-              .where(U_ID.eq(statusUpdatedById))
-              .fetchOptional(u -> u.get(U_NAME))
-              .orElse(null);
-    }
+    // N+1 제거: status_updated_by 사용자 이름은 JOIN으로 미리 조회된 값을 사용
+    String statusUpdatedByName = r.get(SU_NAME);
 
     return new DatasetResponse(
         id,
@@ -227,6 +224,7 @@ public class DatasetRepository {
     Set<Long> favoriteIds = fetchFavoriteIds(currentUserId);
     Map<Long, List<String>> tagsByDatasetId = fetchTagsByDatasetIds(datasetIds);
 
+    // status_updated_by 사용자 이름을 JOIN으로 한 번에 조회하여 N+1 제거
     return dsl.select(
             DS_ID,
             DS_NAME,
@@ -241,10 +239,13 @@ public class DatasetRepository {
             DS_SOURCE_PIPELINE_STEP_ID,
             DC_ID,
             DC_NAME,
-            DC_DESCRIPTION)
+            DC_DESCRIPTION,
+            SU_NAME)
         .from(DATASET)
         .leftJoin(DATASET_CATEGORY)
         .on(DS_CATEGORY_ID.eq(DC_ID))
+        .leftJoin(STATUS_USER_TABLE)
+        .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
         .where(DS_ID.in(datasetIds))
         .orderBy(DS_ID.asc())
         .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId));
@@ -288,6 +289,7 @@ public class DatasetRepository {
     Set<Long> favoriteIds = fetchFavoriteIds(currentUserId);
     Map<Long, List<String>> tagMap = fetchTagsByDatasetIds(List.of(id));
 
+    // status_updated_by 사용자 이름을 JOIN으로 조회하여 N+1 제거
     return dsl.select(
             DS_ID,
             DS_NAME,
@@ -302,10 +304,13 @@ public class DatasetRepository {
             DS_SOURCE_PIPELINE_STEP_ID,
             DC_ID,
             DC_NAME,
-            DC_DESCRIPTION)
+            DC_DESCRIPTION,
+            SU_NAME)
         .from(DATASET)
         .leftJoin(DATASET_CATEGORY)
         .on(DS_CATEGORY_ID.eq(DC_ID))
+        .leftJoin(STATUS_USER_TABLE)
+        .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
         .where(DS_ID.eq(id))
         .fetchOptional(r -> mapToDatasetResponse(r, favoriteIds, tagMap));
   }

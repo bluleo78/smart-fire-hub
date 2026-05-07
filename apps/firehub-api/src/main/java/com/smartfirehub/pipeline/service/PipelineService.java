@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
@@ -37,6 +38,12 @@ public class PipelineService {
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
+    // 이름 중복 검사 — 동일 이름의 파이프라인이 존재하면 409 반환 (#181)
+    if (pipelineRepository.existsByName(request.name())) {
+      throw new PipelineNameConflictException(
+          "Pipeline with name '" + request.name() + "' already exists");
+    }
+
     // Validate DAG (cycle detection)
     executionService.validateDAG(request.steps());
 
@@ -151,6 +158,15 @@ public class PipelineService {
     pipelineRepository
         .findById(id)
         .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
+
+    // 이름 변경 시 중복 검사 — 다른 파이프라인에 동일 이름이 있으면 409 반환 (#181)
+    if (request.name() != null) {
+      String currentName = pipelineRepository.findNameById(id).orElse(null);
+      if (!request.name().equals(currentName) && pipelineRepository.existsByName(request.name())) {
+        throw new PipelineNameConflictException(
+            "Pipeline with name '" + request.name() + "' already exists");
+      }
+    }
 
     // Validate DAG if steps provided
     if (request.steps() != null) {

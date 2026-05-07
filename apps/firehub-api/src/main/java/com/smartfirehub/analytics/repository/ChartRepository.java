@@ -2,6 +2,7 @@ package com.smartfirehub.analytics.repository;
 
 import static org.jooq.impl.DSL.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
@@ -25,6 +26,9 @@ import org.springframework.stereotype.Repository;
 public class ChartRepository {
 
   private final DSLContext dsl;
+
+  /** 매 호출마다 ObjectMapper를 새로 생성하지 않도록 스프링 빈으로 주입받아 재사용 (#182) */
+  private final ObjectMapper objectMapper;
 
   // chart table
   private static final Table<?> C = table(name("chart"));
@@ -315,13 +319,10 @@ public class ChartRepository {
         r.get("dashboard_count", Long.class));
   }
 
-  private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
-      new com.fasterxml.jackson.databind.ObjectMapper();
-
   private String mapToJson(Map<String, Object> map) {
     if (map == null || map.isEmpty()) return "{}";
     try {
-      return OBJECT_MAPPER.writeValueAsString(map);
+      return objectMapper.writeValueAsString(map);
     } catch (Exception e) {
       return "{}";
     }
@@ -329,11 +330,9 @@ public class ChartRepository {
 
   @SuppressWarnings("unchecked")
   private Map<String, Object> parseJson(String json) {
-    // Delegate to Jackson via ObjectMapper if available, otherwise return raw wrapper
+    // 주입받은 ObjectMapper 빈을 재사용하여 JSON 파싱 (#182)
     try {
-      com.fasterxml.jackson.databind.ObjectMapper om =
-          new com.fasterxml.jackson.databind.ObjectMapper();
-      return om.readValue(json, Map.class);
+      return objectMapper.readValue(json, Map.class);
     } catch (Exception e) {
       return Map.of();
     }
