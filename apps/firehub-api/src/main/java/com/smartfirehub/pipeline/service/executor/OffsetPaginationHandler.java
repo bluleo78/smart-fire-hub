@@ -28,11 +28,21 @@ public class OffsetPaginationHandler {
       return false;
     }
 
+    // 빈 페이지(0건)이면 totalCount 유무와 무관하게 즉시 종료
+    // 외부 API 중 totalCount를 제공하지 않는 경우, 마지막 페이지가 pageSize와 정확히 일치할 때
+    // 다음 페이지를 한 번 더 요청하게 되는데, 그 응답이 0건이면 여기서 멈춘다.
+    if (currentPageRows == 0) {
+      return false;
+    }
+
     if (totalCount != null) {
       return currentOffset + pageSize < totalCount;
     }
 
-    // Unknown total: stop when we received a partial (or empty) page
+    // totalCount 미제공 시: 부분 페이지(currentPageRows < pageSize)이면 마지막 페이지로 판단.
+    // 단, 마지막 페이지가 정확히 pageSize건인 경우 다음 페이지를 한 번 더 요청하게 되며,
+    // 그 응답이 0건이면 위의 currentPageRows == 0 조건으로 종료된다.
+    // 이 추가 요청을 완전히 제거하려면 totalCount를 API에서 제공받아야 한다.
     return currentPageRows >= pageSize;
   }
 

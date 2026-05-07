@@ -144,15 +144,18 @@ public class ApiCallExecutor {
             }
           }
 
-          // Insert batch into the target table (tmp for REPLACE, original for APPEND)
-          if (!rows.isEmpty()) {
-            List<String> columns = extractColumns(rows);
-            dataTableRowService.insertBatch(insertTarget, columns, rows);
-            totalRows += rows.size();
-          }
           totalPages++;
-
           log.debug("Fetched page offset={} rows={} totalSoFar={}", offset, rows.size(), totalRows);
+
+          // 빈 페이지이면 더 이상 진행하지 않는다 — 오프셋 초과 요청 차단 (일부 외부 API는 빈 오프셋에 400 반환)
+          if (rows.isEmpty()) {
+            break;
+          }
+
+          // Insert batch into the target table (tmp for REPLACE, original for APPEND)
+          List<String> columns = extractColumns(rows);
+          dataTableRowService.insertBatch(insertTarget, columns, rows);
+          totalRows += rows.size();
 
           // Check duration
           long elapsed = System.currentTimeMillis() - startTime;
