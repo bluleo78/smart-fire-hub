@@ -47,6 +47,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -72,6 +73,23 @@ public class GlobalExceptionHandler {
     ex.getBindingResult()
         .getFieldErrors()
         .forEach(error -> fieldErrors.put(error.getField(), error.getDefaultMessage()));
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  /** @Validated + @Min/@Max 등 쿼리 파라미터 제약 위반 시 400 반환 (#139) */
+  @ExceptionHandler(ConstraintViolationException.class)
+  public ResponseEntity<ErrorResponse> handleConstraintViolation(
+      ConstraintViolationException ex, HttpServletRequest request) {
+    Map<String, String> fieldErrors = new HashMap<>();
+    ex.getConstraintViolations()
+        .forEach(
+            v -> {
+              String path = v.getPropertyPath().toString();
+              String field = path.contains(".") ? path.substring(path.lastIndexOf('.') + 1) : path;
+              fieldErrors.put(field, v.getMessage());
+            });
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
     return ResponseEntity.badRequest().body(response);

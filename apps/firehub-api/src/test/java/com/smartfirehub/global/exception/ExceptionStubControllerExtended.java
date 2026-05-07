@@ -15,6 +15,8 @@ import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.user.exception.UserDeactivatedException;
+import jakarta.validation.ConstraintViolationException;
+import java.util.Set;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -119,5 +121,11 @@ public class ExceptionStubControllerExtended {
   @GetMapping("/max-upload-size-exceeded")
   public void maxUploadSizeExceeded() {
     throw new MaxUploadSizeExceededException(50 * 1024 * 1024L);
+  }
+
+  /** @Validated 쿼리 파라미터 제약 위반 시 400 반환 검증 stub (#139) */
+  @GetMapping("/constraint-violation")
+  public void constraintViolation() {
+    throw new ConstraintViolationException("page: must be greater than or equal to 0", Set.of());
   }
 }
