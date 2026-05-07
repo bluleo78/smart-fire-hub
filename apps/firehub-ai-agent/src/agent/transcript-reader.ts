@@ -1,4 +1,6 @@
 import { readFile, readdir, access } from 'fs/promises';
+import { createReadStream } from 'fs';
+import readline from 'readline';
 import path from 'path';
 import os from 'os';
 import { getTranscriptPath } from './agent-cli.js';
@@ -104,11 +106,22 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
   const filePath = await findTranscriptFilePath(sessionId);
   if (!filePath) return [];
 
-  let raw: string;
-  try {
-    raw = await readFile(filePath, 'utf-8');
-  } catch {
-    return [];
+  /**
+   * createReadStream + readline을 통해 라인 단위 스트리밍 파싱.
+   * readFile로 전체 파일을 메모리에 적재하면 대용량 세션에서 OOM이 발생하므로
+   * 스트리밍 방식으로 전환하여 메모리 사용량을 O(파일 크기) → O(라인 크기)로 낮춘다.
+   */
+  async function* streamLines(fp: string): AsyncGenerator<string> {
+    const fileStream = createReadStream(fp, { encoding: 'utf-8' });
+    const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        yield line;
+      }
+    } finally {
+      rl.close();
+      fileStream.destroy();
+    }
   }
 
   const messages: HistoryMessage[] = [];
@@ -119,7 +132,14 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
   // Track tool_use_id → toolCall object for attaching tool_result later
   const toolCallsByUseId = new Map<string, HistoryToolCall>();
 
-  for (const line of raw.split('\n')) {
+  let lineIter: AsyncGenerator<string>;
+  try {
+    lineIter = streamLines(filePath);
+  } catch {
+    return [];
+  }
+
+  for await (const line of lineIter) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 

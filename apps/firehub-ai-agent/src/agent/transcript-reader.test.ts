@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Readable } from 'stream';
 import { readSessionTranscript } from './transcript-reader.js';
 
 // Mock fs/promises — readdir/access도 포함해야 findTranscriptFilePath가 동작함
@@ -8,11 +9,26 @@ vi.mock('fs/promises', () => ({
   access: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock fs (non-promises) — createReadStream 스트리밍 파싱용
+vi.mock('fs', () => ({
+  createReadStream: vi.fn(),
+}));
+
 import { readFile } from 'fs/promises';
+import { createReadStream } from 'fs';
+
+/** JSONL 문자열을 Readable 스트림으로 변환하는 헬퍼 */
+function makeJsonlStream(jsonl: string): Readable {
+  return Readable.from([jsonl]);
+}
 
 describe('readSessionTranscript', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // clearAllMocks 후 fs/promises 기본 동작 복원
+    const fsp = await import('fs/promises');
+    (fsp.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['fake-project']);
+    (fsp.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -35,7 +51,9 @@ describe('readSessionTranscript', () => {
       }),
     ].join('\n');
 
-    (readFile as ReturnType<typeof vi.fn>).mockResolvedValue(jsonl);
+    // CLI transcript 경로 실패 → JSONL 스트리밍 경로로 폴백
+    (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
     const messages = await readSessionTranscript('test-session');
     expect(messages).toHaveLength(2);
@@ -46,7 +64,8 @@ describe('readSessionTranscript', () => {
   });
 
   it('should return empty array for empty file', async () => {
-    (readFile as ReturnType<typeof vi.fn>).mockResolvedValue('');
+    (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(''));
 
     const messages = await readSessionTranscript('empty-session');
     expect(messages).toEqual([]);
@@ -54,6 +73,9 @@ describe('readSessionTranscript', () => {
 
   it('should return empty array when file does not exist', async () => {
     (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    // findTranscriptFilePath의 access가 실패하면 filePath === null → [] 반환
+    const { access } = await import('fs/promises');
+    (access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
 
     const messages = await readSessionTranscript('nonexistent-session');
     expect(messages).toEqual([]);
@@ -81,7 +103,8 @@ describe('readSessionTranscript', () => {
       }),
     ].join('\n');
 
-    (readFile as ReturnType<typeof vi.fn>).mockResolvedValue(jsonl);
+    (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
     const messages = await readSessionTranscript('filter-session');
     // tool_result user message should be excluded
@@ -132,7 +155,8 @@ describe('readSessionTranscript', () => {
       }),
     ].join('\n');
 
-    (readFile as ReturnType<typeof vi.fn>).mockResolvedValue(jsonl);
+    (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
     const messages = await readSessionTranscript('chart-session');
     expect(messages).toHaveLength(3);
@@ -188,7 +212,8 @@ describe('readSessionTranscript', () => {
       }),
     ].join('\n');
 
-    (readFile as ReturnType<typeof vi.fn>).mockResolvedValue(jsonl);
+    (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
     const messages = await readSessionTranscript('tool-only-session');
     expect(messages).toHaveLength(3);
