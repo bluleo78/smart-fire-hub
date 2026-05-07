@@ -121,4 +121,108 @@ class FileCleanupServiceTest extends IntegrationTestBase {
 
     // 예외 없이 완료 (assertion 불필요 — 예외 발생 시 테스트 실패)
   }
+
+  /**
+   * 버그 회귀: 디스크 파일 삭제 실패 시 DB 레코드는 유지되어야 한다.
+   *
+   * <p>존재하지 않는 경로(삭제 불가 경로)를 DB에 등록한 후 cleanupExpiredFiles() 호출 시 DB 레코드가 유지되는지 검증한다.
+   * 이슈 #152: 디스크 삭제 실패 시에도 DB 레코드가 삭제되어 고아 파일(orphan) 발생하는 버그 재현 방지.
+   */
+  @Test
+  void cleanupExpiredFiles_diskDeleteFails_dbRecordRetained(@TempDir Path tempDir)
+      throws IOException {
+    // 만료된 파일을 생성하고 권한을 제거하여 삭제 불가 상태로 만듦
+    Path undeletableFile = tempDir.resolve("locked-upload.csv");
+    Files.createFile(undeletableFile);
+    // 부모 디렉토리를 읽기 전용으로 설정하여 Files.deleteIfExists() 실패 유도
+    undeletableFile.toFile().getParentFile().setWritable(false);
+
+    OffsetDateTime expiredAt = OffsetDateTime.now(ZoneOffset.UTC).minusHours(1);
+    dsl.insertInto(UPLOADED_FILES)
+        .set(UPLOADED_FILES.ORIGINAL_NAME, "locked-upload.csv")
+        .set(UPLOADED_FILES.STORED_NAME, "locked-upload-stored.csv")
+        .set(UPLOADED_FILES.STORAGE_PATH, undeletableFile.toString())
+        .set(UPLOADED_FILES.MIME_TYPE, "text/csv")
+        .set(UPLOADED_FILES.FILE_SIZE, 100L)
+        .set(UPLOADED_FILES.FILE_CATEGORY, "IMPORT")
+        .set(UPLOADED_FILES.UPLOADED_BY, testUserId)
+        .set(UPLOADED_FILES.EXPIRES_AT, expiredAt)
+        .execute();
+
+    try {
+      fileCleanupService.cleanupExpiredFiles();
+
+      // 디스크 삭제 실패 시 DB 레코드는 반드시 유지되어야 함 (고아 파일 방지)
+      int remaining =
+          dsl.fetchCount(
+              UPLOADED_FILES, UPLOADED_FILES.STORAGE_PATH.eq(undeletableFile.toString()));
+      assertThat(remaining).isEqualTo(1);
+    } finally {
+      // 테스트 후 디렉토리 쓰기 권한 복원 (TempDir 정리를 위해)
+      undeletableFile.toFile().getParentFile().setWritable(true);
+    }
+  }
+
+  /**
+   * 혼합 시나리오: 일부 파일 삭제 성공, 일부 실패 시 성공한 파일의 DB 레코드만 삭제되어야 한다.
+   *
+   * <p>이슈 #152 수정 검증 — 디스크 삭제 성공 경로만 IN 절로 지정하여 DB 삭제하는 로직을 확인한다.
+   */
+  @Test
+  void cleanupExpiredFiles_partialDiskFailure_onlySuccessfulRecordsDeleted(@TempDir Path tempDir)
+      throws IOException {
+    // 삭제 가능한 만료 파일
+    Path deletableFile = tempDir.resolve("deletable-upload.csv");
+    Files.createFile(deletableFile);
+
+    // 삭제 불가 만료 파일 (부모 디렉토리를 별도 서브디렉토리로 분리)
+    Path lockedDir = tempDir.resolve("locked");
+    Files.createDirectory(lockedDir);
+    Path undeletableFile = lockedDir.resolve("locked-upload.csv");
+    Files.createFile(undeletableFile);
+
+    OffsetDateTime expiredAt = OffsetDateTime.now(ZoneOffset.UTC).minusHours(1);
+
+    dsl.insertInto(UPLOADED_FILES)
+        .set(UPLOADED_FILES.ORIGINAL_NAME, "deletable-upload.csv")
+        .set(UPLOADED_FILES.STORED_NAME, "deletable-stored.csv")
+        .set(UPLOADED_FILES.STORAGE_PATH, deletableFile.toString())
+        .set(UPLOADED_FILES.MIME_TYPE, "text/csv")
+        .set(UPLOADED_FILES.FILE_SIZE, 100L)
+        .set(UPLOADED_FILES.FILE_CATEGORY, "IMPORT")
+        .set(UPLOADED_FILES.UPLOADED_BY, testUserId)
+        .set(UPLOADED_FILES.EXPIRES_AT, expiredAt)
+        .execute();
+
+    dsl.insertInto(UPLOADED_FILES)
+        .set(UPLOADED_FILES.ORIGINAL_NAME, "locked-upload.csv")
+        .set(UPLOADED_FILES.STORED_NAME, "locked-stored.csv")
+        .set(UPLOADED_FILES.STORAGE_PATH, undeletableFile.toString())
+        .set(UPLOADED_FILES.MIME_TYPE, "text/csv")
+        .set(UPLOADED_FILES.FILE_SIZE, 100L)
+        .set(UPLOADED_FILES.FILE_CATEGORY, "IMPORT")
+        .set(UPLOADED_FILES.UPLOADED_BY, testUserId)
+        .set(UPLOADED_FILES.EXPIRES_AT, expiredAt)
+        .execute();
+
+    // lockedDir 쓰기 권한 제거로 undeletableFile 삭제 불가 유도
+    lockedDir.toFile().setWritable(false);
+
+    try {
+      fileCleanupService.cleanupExpiredFiles();
+
+      // 삭제 성공한 파일의 DB 레코드는 삭제되어야 함
+      int deletableRemaining =
+          dsl.fetchCount(UPLOADED_FILES, UPLOADED_FILES.STORAGE_PATH.eq(deletableFile.toString()));
+      assertThat(deletableRemaining).isEqualTo(0);
+
+      // 삭제 실패한 파일의 DB 레코드는 유지되어야 함
+      int undeletableRemaining =
+          dsl.fetchCount(
+              UPLOADED_FILES, UPLOADED_FILES.STORAGE_PATH.eq(undeletableFile.toString()));
+      assertThat(undeletableRemaining).isEqualTo(1);
+    } finally {
+      lockedDir.toFile().setWritable(true);
+    }
+  }
 }
