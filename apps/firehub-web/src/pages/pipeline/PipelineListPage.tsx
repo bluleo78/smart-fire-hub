@@ -1,4 +1,4 @@
-import { Clock,Plus, Trash2 } from 'lucide-react';
+import { Clock, Info, Plus, Trash2 } from 'lucide-react';
 import { useMemo,useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -96,6 +96,14 @@ export default function PipelineListPage() {
         </Button>
       </div>
 
+      {/* 클라이언트 사이드 정렬 범위 안내 — 정렬 활성 시에만 표시하여 혼동 방지 (이슈 #165) */}
+      {sortKey && (
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>현재 페이지 내 정렬이 적용됩니다. 전체 정렬은 페이지를 이동하면 초기화됩니다.</span>
+        </div>
+      )}
+
       <div className="rounded-md border">
         <Table aria-label="파이프라인 목록">
           <TableHeader>
@@ -103,6 +111,7 @@ export default function PipelineListPage() {
               <SortableHeader
                 direction={sortKey === 'name' ? sortOrder : 'none'}
                 onSort={() => toggleSort('name')}
+                title="현재 페이지 내에서만 정렬됩니다"
               >
                 이름
               </SortableHeader>
@@ -110,6 +119,7 @@ export default function PipelineListPage() {
               <SortableHeader
                 direction={sortKey === 'stepCount' ? sortOrder : 'none'}
                 onSort={() => toggleSort('stepCount')}
+                title="현재 페이지 내에서만 정렬됩니다"
               >
                 스텝 수
               </SortableHeader>
@@ -118,6 +128,7 @@ export default function PipelineListPage() {
               <SortableHeader
                 direction={sortKey === 'createdAt' ? sortOrder : 'none'}
                 onSort={() => toggleSort('createdAt')}
+                title="현재 페이지 내에서만 정렬됩니다"
               >
                 생성일
               </SortableHeader>

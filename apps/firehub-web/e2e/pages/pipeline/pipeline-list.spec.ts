@@ -150,6 +150,21 @@ test.describe('파이프라인 목록 페이지', () => {
     await expect(noTriggerRow.locator('[data-slot="badge"]').filter({ hasText: /^0$/ })).not.toBeVisible();
   });
 
+  test('정렬 클릭 시 현재 페이지 내 정렬 범위 안내 메시지가 표시된다 (이슈 #165)', async ({ authenticatedPage: page }) => {
+    // 10개 파이프라인 목록 모킹
+    await setupPipelineMocks(page, 5);
+    await page.goto('/pipelines');
+
+    // 정렬 미적용 상태: 범위 안내 메시지가 보이지 않아야 한다
+    await expect(page.getByText('현재 페이지 내 정렬이 적용됩니다.')).not.toBeVisible();
+
+    // "이름" 헤더 클릭 → 정렬 활성화
+    await page.getByRole('columnheader', { name: '이름' }).getByRole('button').click();
+
+    // 정렬 활성 후: 범위 안내 메시지가 보여야 한다
+    await expect(page.getByText(/현재 페이지 내 정렬이 적용됩니다/)).toBeVisible();
+  });
+
   test('서버 에러(500) 시 목록이 비어 있다', async ({ authenticatedPage: page }) => {
     // 500 에러 응답으로 모킹
     await mockApi(page, 'GET', '/api/v1/pipelines', {}, { status: 500 });
