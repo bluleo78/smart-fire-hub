@@ -32,6 +32,7 @@ import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.ConstraintViolationException;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.time.Instant;
@@ -47,7 +48,6 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
-import jakarta.validation.ConstraintViolationException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -78,7 +78,9 @@ public class GlobalExceptionHandler {
     return ResponseEntity.badRequest().body(response);
   }
 
-  /** @Validated + @Min/@Max 등 쿼리 파라미터 제약 위반 시 400 반환 (#139) */
+  /**
+   * @Validated + @Min/@Max 등 쿼리 파라미터 제약 위반 시 400 반환 (#139)
+   */
   @ExceptionHandler(ConstraintViolationException.class)
   public ResponseEntity<ErrorResponse> handleConstraintViolation(
       ConstraintViolationException ex, HttpServletRequest request) {
@@ -256,7 +258,10 @@ public class GlobalExceptionHandler {
       MaxUploadSizeExceededException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(
-            HttpStatus.BAD_REQUEST, "파일 크기가 허용 한도(256MB)를 초과했습니다. 더 작은 파일을 업로드해주세요.", null, request);
+            HttpStatus.BAD_REQUEST,
+            "파일 크기가 허용 한도(256MB)를 초과했습니다. 더 작은 파일을 업로드해주세요.",
+            null,
+            request);
     return ResponseEntity.badRequest().body(response);
   }
 
@@ -301,6 +306,17 @@ public class GlobalExceptionHandler {
       IllegalArgumentException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
     return ResponseEntity.badRequest().body(response);
+  }
+
+  /**
+   * 비즈니스 규칙 위반(예: 마지막 ADMIN 비활성화 시도)에 대해 409 Conflict 반환 (#146).
+   * IllegalArgumentException(400)과 구별하여 상태 충돌임을 명확히 한다.
+   */
+  @ExceptionHandler(IllegalStateException.class)
+  public ResponseEntity<ErrorResponse> handleIllegalState(
+      IllegalStateException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
   @ExceptionHandler(AiSessionNotFoundException.class)

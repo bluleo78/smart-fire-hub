@@ -132,6 +132,94 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void setUserActive_success() {
+    // 일반 유저(ADMIN 아님) 비활성화는 정상 동작
+    userService.setUserActive(testUserId, false);
+
+    UserDetailResponse detail = userService.getUserById(testUserId);
+    assertThat(detail.isActive()).isFalse();
+  }
+
+  @Test
+  void setUserActive_lastAdmin_throwsException() {
+    // 유일한 활성 ADMIN 계정을 비활성화하면 IllegalStateException (#146)
+    Long adminRoleId =
+        dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
+
+    // testUserId에게 ADMIN 역할 부여
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, testUserId)
+        .set(USER_ROLE.ROLE_ID, adminRoleId)
+        .execute();
+
+    // 시스템에 활성 ADMIN이 testUserId 하나뿐인 상태에서 비활성화 시도
+    // (setUp의 testUserId 외 다른 ADMIN이 없는 경우를 가정 — IntegrationTestBase 격리 환경)
+    assertThatThrownBy(() -> userService.setUserActive(testUserId, false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("마지막 활성 ADMIN");
+  }
+
+  @Test
+  void setUserActive_lastAdmin_allowActivation() {
+    // 비활성 ADMIN을 다시 활성화하는 것은 항상 허용
+    Long adminRoleId =
+        dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
+
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, testUserId)
+        .set(USER_ROLE.ROLE_ID, adminRoleId)
+        .execute();
+
+    // 먼저 다른 ADMIN을 하나 더 만들어 비활성화 가능 상태로
+    Long adminUserId =
+        dsl.insertInto(USER)
+            .set(USER.USERNAME, "admin2@example.com")
+            .set(USER.PASSWORD, passwordEncoder.encode("Password123"))
+            .set(USER.NAME, "Admin 2")
+            .set(USER.EMAIL, "admin2@example.com")
+            .set(USER.IS_ACTIVE, false)
+            .returning(USER.ID)
+            .fetchOne()
+            .getId();
+
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, adminUserId)
+        .set(USER_ROLE.ROLE_ID, adminRoleId)
+        .execute();
+
+    // 비활성 ADMIN 계정 활성화 — 예외 없이 성공해야 함
+    userService.setUserActive(adminUserId, true);
+
+    UserDetailResponse detail = userService.getUserById(adminUserId);
+    assertThat(detail.isActive()).isTrue();
+  }
+
+  @Test
+  void setUserActive_multipleAdmins_allowDeactivation() {
+    // 활성 ADMIN이 2명 이상이면 한 명 비활성화 허용 (#146)
+    Long adminRoleId =
+        dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
+
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, testUserId)
+        .set(USER_ROLE.ROLE_ID, adminRoleId)
+        .execute();
+
+    Long secondAdminId =
+        dsl.insertInto(USER)
+            .set(USER.USERNAME, "admin3@example.com")
+            .set(USER.PASSWORD, passwordEncoder.encode("Password123"))
+            .set(USER.NAME, "Admin 3")
+            .set(USER.EMAIL, "admin3@example.com")
+            .returning(USER.ID)
+            .fetchOne()
+            .getId();
+
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, secondAdminId)
+        .set(USER_ROLE.ROLE_ID, adminRoleId)
+        .execute();
+
+    // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함
     userService.setUserActive(testUserId, false);
 
     UserDetailResponse detail = userService.getUserById(testUserId);

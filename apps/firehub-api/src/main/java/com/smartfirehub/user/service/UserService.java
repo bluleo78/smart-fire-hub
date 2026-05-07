@@ -106,6 +106,10 @@ public class UserService {
     if (!userRepository.existsById(userId)) {
       throw new UserNotFoundException("User not found: " + userId);
     }
+    // 마지막 활성 ADMIN 비활성화 방지 — 모든 ADMIN이 잠기면 시스템 관리 불가 (#146)
+    if (!active && userRepository.hasAdminRole(userId) && userRepository.countActiveAdmins() <= 1) {
+      throw new IllegalStateException("마지막 활성 ADMIN 계정은 비활성화할 수 없습니다");
+    }
     userRepository.setActive(userId, active);
   }
 }
