@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -19,6 +20,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
@@ -172,12 +174,29 @@ class ProactiveJobControllerTest {
   @Test
   void executeJob_returnsAccepted() throws Exception {
     mockAuth("proactive:write");
+    doNothing().when(proactiveJobService).tryAcquireRunSlot(10L);
     doNothing().when(proactiveJobService).executeJob(10L, 1L);
 
     mockMvc
         .perform(
             post("/api/v1/proactive/jobs/10/execute").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isAccepted());
+  }
+
+  /**
+   * Job이 이미 실행 중일 때 tryAcquireRunSlot이 ProactiveJobAlreadyRunningException을 던지면
+   * 409 Conflict를 반환해야 한다 (#149).
+   */
+  @Test
+  void executeJob_whenAlreadyRunning_returnsConflict() throws Exception {
+    mockAuth("proactive:write");
+    doThrow(new ProactiveJobAlreadyRunningException("Job이 이미 실행 중입니다: 10"))
+        .when(proactiveJobService).tryAcquireRunSlot(10L);
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs/10/execute").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isConflict());
   }
 
   @Test

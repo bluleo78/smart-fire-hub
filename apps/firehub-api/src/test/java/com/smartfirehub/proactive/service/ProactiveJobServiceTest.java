@@ -15,6 +15,7 @@ import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
@@ -129,6 +130,28 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> proactiveJobService.getJob(id, testUserId))
         .isInstanceOf(ProactiveJobNotFoundException.class)
         .hasMessageContaining("Proactive Job을 찾을 수 없습니다");
+  }
+
+  // ── 중복 실행 방지 슬롯 ───────────────────────────────────────────────────────────
+
+  /** tryAcquireRunSlot — 최초 획득은 성공, 두 번째 호출은 ProactiveJobAlreadyRunningException 발생 (#149) */
+  @Test
+  void tryAcquireRunSlot_firstCallSucceeds_secondCallThrows() {
+    var job = proactiveJobService.createJob(buildCreateRequest("슬롯 테스트"), testUserId);
+    Long jobId = job.id();
+
+    // 첫 번째 획득 — 성공
+    rawJobService.tryAcquireRunSlot(jobId);
+
+    // 두 번째 획득 — 이미 실행 중이므로 409 예외
+    assertThatThrownBy(() -> rawJobService.tryAcquireRunSlot(jobId))
+        .isInstanceOf(ProactiveJobAlreadyRunningException.class)
+        .hasMessageContaining(String.valueOf(jobId));
+
+    // 슬롯 해제 후 재획득 가능 확인
+    rawJobService.releaseRunSlot(jobId);
+    rawJobService.tryAcquireRunSlot(jobId); // 예외 없이 통과해야 한다
+    rawJobService.releaseRunSlot(jobId);
   }
 
   // ── Execute success ───────────────────────────────────────────────────────────

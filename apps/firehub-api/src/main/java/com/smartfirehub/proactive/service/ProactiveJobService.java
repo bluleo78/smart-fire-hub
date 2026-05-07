@@ -12,6 +12,7 @@ import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
@@ -188,12 +189,37 @@ public class ProactiveJobService {
         .orElseThrow(() -> new ProactiveJobException("Execution을 찾을 수 없습니다: " + executionId));
   }
 
-  @Async("pipelineExecutor")
-  public void executeJob(Long jobId, Long userId) {
+  /**
+   * 동시 실행 방지 슬롯을 획득한다.
+   * @Async 메서드 호출 전에 반드시 이 메서드를 먼저 호출해야 한다.
+   * 이미 실행 중인 경우 ProactiveJobAlreadyRunningException(→ 409 Conflict)을 던진다.
+   * 이 메서드는 동기(non-@Async)로 호출되어 예외가 HTTP 호출자에게 정상 전파된다.
+   */
+  public void tryAcquireRunSlot(Long jobId) {
     AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));
     if (!running.compareAndSet(false, true)) {
-      throw new ProactiveJobException("Job이 이미 실행 중입니다: " + jobId);
+      throw new ProactiveJobAlreadyRunningException("Job이 이미 실행 중입니다: " + jobId);
     }
+  }
+
+  /**
+   * 동시 실행 방지 슬롯을 강제 해제한다.
+   * executeJob 비동기 제출이 실패(RejectedExecutionException 등)한 경우 컨트롤러에서 호출하여
+   * 슬롯이 영구 점유되는 것을 방지한다.
+   */
+  public void releaseRunSlot(Long jobId) {
+    AtomicBoolean running = runningJobs.get(jobId);
+    if (running != null) {
+      running.set(false);
+    }
+  }
+
+  @Async("pipelineExecutor")
+  public void executeJob(Long jobId, Long userId) {
+    // 슬롯 획득은 tryAcquireRunSlot()에서 사전 수행됨.
+    // @Async 특성상 이 메서드 내부에서 throw한 예외는 호출자에게 전파되지 않으므로
+    // 중복 실행 방지 체크는 동기 컨텍스트(컨트롤러)에서 미리 처리한다.
+    AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));
 
     Long executionId = executionRepository.create(jobId);
     executionRepository.updateStatus(executionId, "RUNNING", LocalDateTime.now(), null);
@@ -375,6 +401,13 @@ public class ProactiveJobService {
           e.getMessage());
     }
 
+    // 중복 실행 슬롯 획득 후 비동기 실행 — 이미 실행 중이면 조용히 skip
+    try {
+      tryAcquireRunSlot(event.jobId());
+    } catch (ProactiveJobAlreadyRunningException e) {
+      log.info("Anomaly-triggered execution skipped for job {} (already running)", event.jobId());
+      return;
+    }
     try {
       executeJob(event.jobId(), event.userId());
       recordCooldown(event.jobId());

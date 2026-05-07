@@ -24,6 +24,7 @@ import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
+import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.role.exception.RoleNotFoundException;
@@ -425,6 +426,17 @@ public class GlobalExceptionHandler {
       ProactiveJobNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /**
+   * Job 중복 실행 시도 — 409 Conflict 반환 (#149).
+   * ProactiveJobException보다 먼저 등록되어야 서브클래스 우선 매핑이 적용된다.
+   */
+  @ExceptionHandler(ProactiveJobAlreadyRunningException.class)
+  public ResponseEntity<ErrorResponse> handleProactiveJobAlreadyRunning(
+      ProactiveJobAlreadyRunningException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
   @ExceptionHandler(ProactiveJobException.class)
