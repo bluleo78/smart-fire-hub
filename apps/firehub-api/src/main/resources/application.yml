@@ -7,10 +7,8 @@ spring:
     baseline-version: 56
   servlet:
     multipart:
-      # OOM 방지: 전체 파일을 byte[]로 메모리에 로드하는 구조이므로
-      # 파일 크기 상한을 50MB로 제한하여 힙 소진 위험을 경감한다 (#137)
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 256MB
+      max-request-size: 256MB
 
 server:
   port: 8080

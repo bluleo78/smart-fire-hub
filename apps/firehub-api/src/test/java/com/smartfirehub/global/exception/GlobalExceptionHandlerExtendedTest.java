@@ -182,6 +182,6 @@ class GlobalExceptionHandlerExtendedTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value(400))
         .andExpect(jsonPath("$.error").value("Bad Request"))
-        .andExpect(jsonPath("$.message").value("파일 크기가 허용 한도(50MB)를 초과했습니다. 더 작은 파일을 업로드해주세요."));
+        .andExpect(jsonPath("$.message").value("파일 크기가 허용 한도(256MB)를 초과했습니다. 더 작은 파일을 업로드해주세요."));
   }
 }

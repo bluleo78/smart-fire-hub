@@ -230,7 +230,7 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 업로드 파일 크기가 제한(50MB)을 초과했을 때 400 대신 명확한 메시지를 반환한다. Spring Boot 기본 동작은 500 또는 비구조화된 에러이므로 여기서
+   * 업로드 파일 크기가 제한(256MB)을 초과했을 때 400 대신 명확한 메시지를 반환한다. Spring Boot 기본 동작은 500 또는 비구조화된 에러이므로 여기서
    * 통일한다 (#137).
    */
   @ExceptionHandler(MaxUploadSizeExceededException.class)
@@ -238,7 +238,7 @@ public class GlobalExceptionHandler {
       MaxUploadSizeExceededException ex, HttpServletRequest request) {
     ErrorResponse response =
         buildError(
-            HttpStatus.BAD_REQUEST, "파일 크기가 허용 한도(50MB)를 초과했습니다. 더 작은 파일을 업로드해주세요.", null, request);
+            HttpStatus.BAD_REQUEST, "파일 크기가 허용 한도(256MB)를 초과했습니다. 더 작은 파일을 업로드해주세요.", null, request);
     return ResponseEntity.badRequest().body(response);
   }
 
