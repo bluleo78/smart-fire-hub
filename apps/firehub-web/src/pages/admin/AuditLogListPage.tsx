@@ -112,11 +112,18 @@ function formatAuditResource(resource: string | null | undefined): string {
 }
 
 /**
- * 날짜 문자열(YYYY-MM-DD)을 ISO 8601 datetime 문자열로 변환.
- * endDate의 경우 하루의 끝(23:59:59)으로 설정해 inclusive 범위를 구현한다.
+ * 날짜 문자열(YYYY-MM-DD)을 ISO 8601 UTC datetime 문자열로 변환.
+ * - KST(UTC+9) 환경에서 타임존 suffix 없이 생성하면 백엔드가 UTC로 해석할 때 9시간 오프셋 오류가 발생하므로,
+ *   Date 객체로 변환 후 toISOString()으로 UTC 기준 문자열(Z suffix)을 생성한다.
+ * - endDate의 경우 하루의 끝(23:59:59 KST = 14:59:59 UTC)으로 설정해 inclusive 범위를 구현한다.
  */
 function toIsoDateTime(dateStr: string, endOfDay = false): string {
-  return endOfDay ? `${dateStr}T23:59:59` : `${dateStr}T00:00:00`;
+  // YYYY-MM-DD를 로컬 타임존 기준 시작/끝 시각으로 파싱 후 UTC ISO 문자열로 변환
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day, 0, 0, 0, 0);
+  return date.toISOString();
 }
 
 /**

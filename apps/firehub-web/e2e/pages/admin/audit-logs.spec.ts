@@ -165,10 +165,12 @@ test.describe('감사 로그 페이지', () => {
     await page.waitForTimeout(300);
 
     // API에 startDate 파라미터가 전달됐는지 검증
+    // #164: toIsoDateTime이 UTC ISO 8601(Z suffix)으로 변환하므로 KST 환경에서는 날짜가 달라질 수 있다.
+    // 따라서 ISO 8601 형식 자체(Z suffix)를 검증한다.
     const req = capture.lastRequest();
     if (req) {
       const startDate = req.searchParams.get('startDate');
-      expect(startDate).toContain('2026-04-01');
+      expect(startDate).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
     }
   });
 
@@ -192,7 +194,38 @@ test.describe('감사 로그 페이지', () => {
     const req = capture.lastRequest();
     if (req) {
       const endDate = req.searchParams.get('endDate');
-      expect(endDate).toContain('2026-04-30');
+      // #164: UTC ISO 8601 형식(Z suffix)이어야 한다
+      expect(endDate).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
+    }
+  });
+
+  /**
+   * 이슈 #164: toIsoDateTime() 타임존 suffix 누락 회귀 방지.
+   * - KST(UTC+9) 환경에서 'YYYY-MM-DDTHH:mm:ss' 형식으로 생성하면 백엔드가 UTC로 해석 시 9시간 오프셋 오류 발생.
+   * - 수정 후: Date.toISOString() 로 UTC Z-suffix 문자열을 생성해야 한다.
+   */
+  test('날짜 필터가 UTC ISO 8601 형식(Z suffix)으로 API에 전달된다 (#164)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+    await page.goto('/admin/audit-logs');
+    await page.waitForTimeout(200);
+
+    await page.getByLabel('시작 날짜').fill('2026-04-01');
+    await page.waitForTimeout(300);
+
+    const req = capture.lastRequest();
+    if (req) {
+      const startDate = req.searchParams.get('startDate');
+      // UTC ISO 8601 형식이어야 한다: 'Z' suffix 포함, 타임존 offset 없는 로컬 형식 불허.
+      // KST(UTC+9) 환경에서는 날짜 부분이 하루 앞으로 변환될 수 있으므로 형식만 검증한다.
+      expect(startDate).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/);
+      // 'T' 없이 순수 날짜 문자열인 경우(버그 상태)가 아님을 보장
+      expect(startDate).not.toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
     }
   });
 
