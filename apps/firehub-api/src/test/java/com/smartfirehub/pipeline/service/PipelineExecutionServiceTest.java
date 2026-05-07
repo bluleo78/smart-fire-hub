@@ -345,6 +345,178 @@ class PipelineExecutionServiceTest {
     assertThat(executedSql).endsWith(cteSql);
   }
 
+  // ------------------------------------------------------------------ //
+  // isSelectStatement / CTE DML 오분류 방지 테스트 (#159)
+  // ------------------------------------------------------------------ //
+
+  @Test
+  void executeStep_withCteUpdateAndOutputDataset_doesNotWrapAsInsert() throws Exception {
+    // given: WITH ... UPDATE DML — INSERT INTO 래핑 없이 SQL을 그대로 실행해야 한다
+    Long pipelineId = 13L;
+    Long userId = 1L;
+    Long executionId = 103L;
+    Long stepId = 203L;
+    Long stepExecId = 303L;
+    Long outputDatasetId = 53L;
+
+    String cteDml =
+        "WITH x AS (SELECT id FROM data.\"source\" WHERE condition = true)"
+            + " UPDATE data.\"target\" SET col = 1 WHERE id IN (SELECT id FROM x)";
+
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "cte-update", "SQL", cteDml, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // UPDATE이므로 extractSelectColumnsWithTypes는 호출하지 않아야 한다
+    when(sqlExecutor.execute(anyString())).thenReturn("3 rows affected");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: INSERT INTO 래핑 없이 원래 SQL 그대로 실행
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+    assertThat(executedSql)
+        .as("CTE+UPDATE DML은 INSERT INTO 래핑 없이 그대로 실행되어야 한다")
+        .doesNotStartWith("INSERT INTO");
+    assertThat(executedSql).isEqualTo(cteDml);
+    // pipelineDsl.fetch는 호출되지 않아야 한다 (SELECT 컬럼 추출 불필요)
+    verify(pipelineDsl, never()).fetch(anyString());
+  }
+
+  @Test
+  void executeStep_withCteDeleteAndOutputDataset_doesNotWrapAsInsert() throws Exception {
+    // given: WITH ... DELETE DML — INSERT INTO 래핑 없이 SQL을 그대로 실행해야 한다
+    Long pipelineId = 14L;
+    Long userId = 1L;
+    Long executionId = 104L;
+    Long stepId = 204L;
+    Long stepExecId = 304L;
+    Long outputDatasetId = 54L;
+
+    String cteDml =
+        "WITH obsolete AS (SELECT id FROM data.\"logs\" WHERE created_at < '2024-01-01')"
+            + " DELETE FROM data.\"logs\" WHERE id IN (SELECT id FROM obsolete)";
+
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "cte-delete", "SQL", cteDml, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    when(sqlExecutor.execute(anyString())).thenReturn("5 rows deleted");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: INSERT INTO 래핑 없이 원래 SQL 그대로 실행
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+    assertThat(executedSql)
+        .as("CTE+DELETE DML은 INSERT INTO 래핑 없이 그대로 실행되어야 한다")
+        .doesNotStartWith("INSERT INTO");
+    assertThat(executedSql).isEqualTo(cteDml);
+    verify(pipelineDsl, never()).fetch(anyString());
+  }
+
+  @Test
+  void executeStep_withCteSelectAndOutputDataset_wrapsAsInsert() throws Exception {
+    // given: WITH ... SELECT (CTE SELECT) — 기존처럼 INSERT INTO 래핑이 되어야 한다
+    Long pipelineId = 15L;
+    Long userId = 1L;
+    Long executionId = 105L;
+    Long stepId = 205L;
+    Long stepExecId = 305L;
+    Long outputDatasetId = 55L;
+
+    String cteSelect =
+        "WITH summary AS (SELECT category, COUNT(*) AS cnt FROM data.\"items\" GROUP BY category)"
+            + " SELECT category, cnt FROM summary";
+
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "cte-select", "SQL", cteSelect, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_summary"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("category", false), col("cnt", false)));
+
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES)
+            .newResult(DSL.field("category"), DSL.field("cnt"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    when(sqlExecutor.execute(anyString())).thenReturn("10 rows affected");
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: CTE+SELECT는 INSERT INTO로 래핑되어야 한다
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+    assertThat(executedSql)
+        .as("CTE+SELECT는 INSERT INTO 래핑이 되어야 한다")
+        .startsWith("INSERT INTO data.\"output_summary\"");
+    assertThat(executedSql).endsWith(cteSelect);
+  }
+
+  @Test
+  void executeStep_withCteSelectAndOutputDataset_doesNotWrapDmlAsInsert() throws Exception {
+    // regression guard: stepResponseWithOutput 으로 outputDatasetId가 설정되어도
+    // DML이면 pipelineDsl.fetch 를 호출하지 않고 그대로 실행한다
+    // (이 케이스는 기존에 버그로 INSERT INTO + UPDATE 형태로 실행되었음)
+    Long pipelineId = 16L;
+    Long userId = 1L;
+    Long executionId = 106L;
+    Long stepId = 206L;
+    Long stepExecId = 306L;
+    Long outputDatasetId = 56L;
+
+    // CTE 내부에 SELECT가 있어도 최종 문장이 INSERT이면 DML이다
+    String cteInsert =
+        "WITH src AS (SELECT id, val FROM data.\"source\")"
+            + " INSERT INTO data.\"dest\" (id, val) SELECT id, val FROM src";
+
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "cte-insert", "SQL", cteInsert, outputDatasetId, List.of());
+
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
+    when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
+        .thenReturn(executionId);
+    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+
+    when(sqlExecutor.execute(anyString())).thenReturn("7 rows affected");
+
+    // when
+    service.executePipeline(pipelineId, userId);
+
+    // then: CTE+INSERT DML은 추가 INSERT INTO 래핑 없이 그대로 실행
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+    assertThat(executedSql)
+        .as("CTE+INSERT DML은 이중 INSERT INTO 래핑 없이 원본 SQL 그대로 실행되어야 한다")
+        .isEqualTo(cteInsert);
+    verify(pipelineDsl, never()).fetch(anyString());
+  }
+
   @Test
   void executeStep_selectWithoutOutputDataset_createsTempDataset() throws Exception {
     // given: SELECT but no outputDatasetId → auto-create temp dataset

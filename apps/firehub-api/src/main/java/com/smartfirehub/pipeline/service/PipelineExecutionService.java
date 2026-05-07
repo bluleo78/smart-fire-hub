@@ -1048,9 +1048,73 @@ public class PipelineExecutionService {
     return result.toString();
   }
 
+  /**
+   * SQL 문장이 SELECT(또는 CTE + SELECT)인지 판별한다.
+   *
+   * <p>WITH 절로 시작하는 CTE 구문은 본문 키워드(SELECT / INSERT / UPDATE / DELETE / MERGE)를
+   * 파싱하여 실제 DML 여부를 확인한다. CTE 뒤에 SELECT가 오는 경우만 true를 반환하며,
+   * UPDATE / INSERT / DELETE / MERGE가 오는 경우 false를 반환한다.
+   *
+   * <p>예:
+   * <ul>
+   *   <li>{@code WITH cte AS (...) SELECT ...} → true (래핑 가능)
+   *   <li>{@code WITH cte AS (...) UPDATE ...} → false (DML, 래핑 불가)
+   *   <li>{@code SELECT ...} → true
+   * </ul>
+   */
   private boolean isSelectStatement(String sql) {
     String upper = sql.stripLeading().toUpperCase();
-    return upper.startsWith("SELECT") || upper.startsWith("WITH");
+    if (upper.startsWith("SELECT")) {
+      return true;
+    }
+    if (!upper.startsWith("WITH")) {
+      return false;
+    }
+    // WITH 절 이후 본문 키워드를 파싱하여 SELECT 여부 판별
+    // CTE 정의 내의 괄호 중첩을 추적하고, 최상위 레벨에서 처음 나오는 키워드를 확인한다.
+    return isCteFollowedBySelect(upper);
+  }
+
+  /**
+   * WITH 절이 있는 SQL에서 CTE 정의를 건너뛴 후 본문이 SELECT인지 확인한다.
+   *
+   * <p>괄호 깊이를 추적하여 최상위 레벨에 도달한 뒤 첫 번째 키워드를 검사한다.
+   * INSERT / UPDATE / DELETE / MERGE가 나오면 false, SELECT가 나오면 true.
+   *
+   * @param upperSql 대문자로 변환되고 앞뒤 공백이 제거된 SQL 문자열
+   * @return CTE 본문이 SELECT이면 true, DML이면 false
+   */
+  private boolean isCteFollowedBySelect(String upperSql) {
+    int depth = 0;
+    int len = upperSql.length();
+    int i = 0;
+
+    while (i < len) {
+      char c = upperSql.charAt(i);
+      if (c == '(') {
+        depth++;
+        i++;
+      } else if (c == ')') {
+        depth--;
+        i++;
+      } else if (depth == 0) {
+        // 최상위 레벨에서 키워드를 확인한다
+        if (upperSql.startsWith("SELECT", i)) {
+          return true;
+        }
+        if (upperSql.startsWith("INSERT", i)
+            || upperSql.startsWith("UPDATE", i)
+            || upperSql.startsWith("DELETE", i)
+            || upperSql.startsWith("MERGE", i)) {
+          return false;
+        }
+        i++;
+      } else {
+        i++;
+      }
+    }
+    // 키워드를 찾지 못한 경우 안전하게 false 반환 (DML로 간주)
+    return false;
   }
 
   private List<String> extractSelectColumns(String sql) {

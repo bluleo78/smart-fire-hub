@@ -4,8 +4,10 @@ import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import jakarta.annotation.PostConstruct;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
@@ -106,6 +108,19 @@ public class TriggerSchedulerService {
    * window, fire immediately and record MISSED event.
    */
   private void detectMissedFire(TriggerResponse trigger) {
+    detectMissedFire(trigger, Instant.now());
+  }
+
+  /**
+   * nextFireTime과 현재 시각을 timezone-aware하게 비교하여 missed fire를 감지한다.
+   *
+   * <p>테스트에서 현재 시각을 주입할 수 있도록 now 파라미터를 받는 package-private 오버로드.
+   *
+   * <p>nextFireTime은 trigger config의 timezone 기준 LocalDateTime으로 저장되어 있으므로,
+   * config.timezone을 적용해 ZonedDateTime으로 해석한 뒤 Instant로 변환하여 비교한다.
+   * 이렇게 하면 JVM 기본 timezone에 무관하게 올바른 시점 비교가 가능하다.
+   */
+  void detectMissedFire(TriggerResponse trigger, Instant now) {
     Map<String, Object> state = trigger.triggerState();
     if (state == null || !state.containsKey("nextFireTime")) {
       return;
@@ -113,10 +128,16 @@ public class TriggerSchedulerService {
 
     try {
       String nextFireTimeStr = state.get("nextFireTime").toString();
-      LocalDateTime nextFireTime =
-          LocalDateTime.parse(nextFireTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
 
-      if (nextFireTime.isBefore(LocalDateTime.now())) {
+      // config.timezone 기준으로 nextFireTime을 ZonedDateTime으로 해석 (registerSchedule과 동일 기준)
+      String timezone =
+          (String) trigger.config().getOrDefault("timezone", "Asia/Seoul");
+      ZoneId zoneId = ZoneId.of(timezone);
+      LocalDateTime localNextFireTime =
+          LocalDateTime.parse(nextFireTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+      Instant nextFireInstant = ZonedDateTime.of(localNextFireTime, zoneId).toInstant();
+
+      if (nextFireInstant.isBefore(now)) {
         log.warn(
             "Missed fire detected for trigger {} (nextFireTime: {})",
             trigger.id(),
