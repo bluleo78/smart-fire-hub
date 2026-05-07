@@ -5,6 +5,7 @@ import {
   createJob,
   createJobExecution,
   createJobs,
+  createMessage,
   createTemplate,
   createTemplates,
 } from '../factories/ai-insight.factory';
@@ -143,6 +144,22 @@ export async function setupExecutionDetailMocks(
     );
   }
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+}
+
+/**
+ * AI 알림 패널 API 모킹
+ * - 프로액티브 메시지 목록과 읽지 않은 건수를 모킹한다.
+ * @param messages - 반환할 메시지 배열 (기본값: jobId/executionId 있는 메시지 1건)
+ */
+export async function setupNotificationPanelMocks(
+  page: Page,
+  messages?: ReturnType<typeof createMessage>[],
+) {
+  const defaultMessages = messages ?? [createMessage({ jobId: 1, executionId: 1 })];
+  await mockApi(page, 'GET', '/api/v1/proactive/messages', defaultMessages);
+  await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', {
+    count: defaultMessages.filter((m) => !m.read).length,
+  });
 }
 
 /**

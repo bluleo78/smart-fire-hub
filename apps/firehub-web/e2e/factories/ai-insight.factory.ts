@@ -93,6 +93,7 @@ export function createMessage(overrides?: Partial<ProactiveMessage>): ProactiveM
   return {
     id: 1,
     userId: 1,
+    jobId: 1,
     executionId: 1,
     jobName: '매일 현황 리포트',
     title: '2024년 1월 1일 현황 리포트',

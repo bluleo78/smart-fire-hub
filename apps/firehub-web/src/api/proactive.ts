@@ -114,6 +114,8 @@ export interface ProactiveJob {
 export interface ProactiveMessage {
   id: number;
   userId: number;
+  /** 실행이 속한 잡 ID — execution JOIN으로 채워지며, executionId가 없으면 null */
+  jobId: number | null;
   executionId: number | null;
   jobName: string | null;
   title: string;

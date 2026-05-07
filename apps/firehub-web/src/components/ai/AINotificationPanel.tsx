@@ -141,9 +141,10 @@ function DetailView({
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const sections = getSections(message.content);
   const relTime = getRelativeTime(message.createdAt);
-  // 리포트 보기 링크 생성용 메타데이터
-  const jobId = message.content.jobId as string | undefined;
-  const executionId = message.content.executionId as string | undefined;
+  // 리포트 보기 링크 생성용 메타데이터 — content 내부가 아닌 최상위 필드로 읽는다
+  // (백엔드 ProactiveMessageResponse에서 execution JOIN으로 jobId/executionId를 직접 반환)
+  const jobId = message.jobId;
+  const executionId = message.executionId;
 
   return (
     <div className="flex flex-col h-full">
@@ -213,8 +214,8 @@ function DetailView({
                 setReportModalOpen(false);
                 onClose();
               }}
-              jobId={Number(jobId)}
-              executionId={Number(executionId)}
+              jobId={jobId}
+              executionId={executionId}
             />
           </>
         )}
