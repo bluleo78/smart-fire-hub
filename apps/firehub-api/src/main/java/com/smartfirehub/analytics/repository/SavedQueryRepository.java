@@ -223,25 +223,15 @@ public class SavedQueryRepository {
     return Optional.of(mapToResponse(r));
   }
 
-  /** Returns the raw record regardless of ownership (used for clone). */
-  public Optional<Record> findRawById(Long id) {
-    Record r =
-        dsl.select(
-                SQ_ID,
-                SQ_NAME,
-                SQ_DESCRIPTION,
-                SQ_SQL_TEXT,
-                SQ_DATASET_ID,
-                SQ_FOLDER,
-                SQ_IS_SHARED,
-                SQ_CREATED_BY)
-            .from(SQ)
-            .where(SQ_ID.eq(id).and(SQ_CREATED_BY.eq(SQ_CREATED_BY)))
-            .fetchOne();
-    return Optional.ofNullable(r);
-  }
-
-  /** Finds a record by id with no ownership restriction (for reading shared queries). */
+  /**
+   * id로 레코드를 소유권 제한 없이 조회한다 (clone 등 내부 처리용).
+   *
+   * <p>이전에 존재하던 {@code findRawById(Long id)} 메서드는 WHERE 절에
+   * {@code SQ_CREATED_BY.eq(SQ_CREATED_BY)} — 컬럼을 자기 자신과 비교하는 tautology 조건이
+   * 포함되어 있었다. 해당 메서드는 호출부가 없는 dead code였으며, 실제 소유권 필터링이 필요한
+   * 경우라면 {@link #findByIdForOwner(Long, Long)}를 사용해야 한다.
+   * 소유권 무관 조회는 이 메서드({@code findRawByIdUnrestricted})가 올바른 구현이다.
+   */
   public Optional<Record> findRawByIdUnrestricted(Long id) {
     Record r =
         dsl.select(

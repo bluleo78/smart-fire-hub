@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smartfirehub.analytics.dto.AddWidgetRequest;
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
+import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
 import com.smartfirehub.analytics.dto.DashboardResponse;
@@ -157,10 +158,13 @@ public class AnalyticsDashboardService {
       if (queryResult == null) {
         queryResult = emptyQueryResponse();
       }
+      // chartId 별로 한 번만 조회하여 불필요한 중복 DB 쿼리 방지 (이슈 #148)
+      // 기존: null 체크 + 생성자 인수 두 곳에서 getById() 2회 호출
+      // 수정: Optional로 1회만 조회 후 로컬 변수에 캐싱
+      ChartResponse chartResponse =
+          chartService.getByIdOptional(widget.chartId(), userId).orElse(null);
       ChartDataResponse chartData =
-          chartService.getById(widget.chartId(), userId) != null
-              ? new ChartDataResponse(chartService.getById(widget.chartId(), userId), queryResult)
-              : null;
+          chartResponse != null ? new ChartDataResponse(chartResponse, queryResult) : null;
       if (chartData != null) {
         widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
       }

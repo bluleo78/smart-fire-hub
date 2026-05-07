@@ -8,6 +8,7 @@ import com.smartfirehub.analytics.dto.SavedQueryListResponse;
 import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
+import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
@@ -28,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 class SavedQueryServiceTest extends IntegrationTestBase {
 
   @Autowired private SavedQueryService savedQueryService;
+  @Autowired private SavedQueryRepository savedQueryRepository;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
 
@@ -409,5 +411,35 @@ class SavedQueryServiceTest extends IntegrationTestBase {
 
     assertThat(folders).containsExactlyInAnyOrder("reports", "dashboards");
     assertThat(folders).doesNotContainNull();
+  }
+
+  // =========================================================================
+  // findRawByIdUnrestricted — 소유권 무관 조회 (tautology 버그 회귀 테스트, GitHub #151)
+  // =========================================================================
+
+  /**
+   * findRawByIdUnrestricted 는 소유권(created_by)에 관계없이 id로 레코드를 반환해야 한다.
+   * 이전에 존재하던 findRawById() 메서드는 WHERE 절에 SQ_CREATED_BY.eq(SQ_CREATED_BY)
+   * (tautology) 조건을 포함한 dead code였으며 제거되었다. 이 테스트는 올바른 조회 메서드가
+   * 다른 사용자의 private 쿼리도 반환함을 검증한다.
+   */
+  @Test
+  void findRawByIdUnrestricted_returnsRecordRegardlessOfOwnership() {
+    // ownerUserId 의 private 쿼리 생성
+    SavedQueryResponse privateQuery =
+        createQuery("Private Raw", "SELECT 999", null, false, ownerUserId);
+
+    // otherUserId 기준에서도 raw 조회가 성공해야 한다
+    var rawOpt = savedQueryRepository.findRawByIdUnrestricted(privateQuery.id());
+
+    assertThat(rawOpt).isPresent();
+    assertThat(rawOpt.get().get("name", String.class)).isEqualTo("Private Raw");
+    assertThat(rawOpt.get().get("sql_text", String.class)).isEqualTo("SELECT 999");
+  }
+
+  @Test
+  void findRawByIdUnrestricted_nonExistentId_returnsEmpty() {
+    var rawOpt = savedQueryRepository.findRawByIdUnrestricted(Long.MAX_VALUE);
+    assertThat(rawOpt).isEmpty();
   }
 }
