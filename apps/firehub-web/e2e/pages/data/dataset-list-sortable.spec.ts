@@ -51,6 +51,31 @@ test.describe('데이터셋 목록 — 컬럼 헤더 정렬 (#80)', () => {
     await expect(dataRows.first()).toContainText('데이터셋 5');
   });
 
+  test('정렬 활성 시 현재 페이지 내 정렬 안내 메시지가 표시된다 (이슈 #173 회귀 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(3)));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets');
+
+    // 정렬 미적용 상태에서는 안내 메시지가 없어야 한다
+    await expect(page.getByText('현재 페이지 내 정렬이 적용됩니다')).not.toBeVisible();
+
+    // 이름 헤더 클릭 → 정렬 활성화
+    const nameHeader = page.getByRole('columnheader', { name: /이름/ });
+    await nameHeader.getByRole('button').click();
+
+    // 안내 메시지가 표시되어야 한다
+    await expect(page.getByText(/현재 페이지 내 정렬이 적용됩니다/)).toBeVisible();
+
+    // 정렬 해제(3차 클릭) 시 안내 메시지가 사라져야 한다
+    await nameHeader.getByRole('button').click(); // desc
+    await nameHeader.getByRole('button').click(); // none
+    await expect(page.getByText('현재 페이지 내 정렬이 적용됩니다')).not.toBeVisible();
+  });
+
   test('생성일 헤더도 정렬 가능하며 다른 컬럼 클릭 시 이전 컬럼 aria-sort 가 해제된다', async ({
     authenticatedPage: page,
   }) => {
