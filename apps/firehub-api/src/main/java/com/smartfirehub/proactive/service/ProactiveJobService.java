@@ -1,15 +1,11 @@
 package com.smartfirehub.proactive.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.dto.NotificationEvent;
-import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
-import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
@@ -18,22 +14,14 @@ import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
-import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
-import com.smartfirehub.proactive.repository.ReportTemplateRepository;
-import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
-import com.smartfirehub.proactive.util.ProactiveConfigParser;
-import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
@@ -46,23 +34,14 @@ public class ProactiveJobService {
 
   private final ProactiveJobRepository proactiveJobRepository;
   private final ProactiveJobExecutionRepository executionRepository;
-  private final ProactiveMessageRepository messageRepository;
-  private final ReportTemplateRepository reportTemplateRepository;
-  private final ProactiveContextCollector contextCollector;
-  private final ProactiveAiClient aiClient;
-  private final SettingsService settingsService;
-  private final ObjectMapper objectMapper;
   private final ProactiveJobSchedulerService schedulerService;
-  private final List<DeliveryChannel> deliveryChannels;
   private final UserRepository userRepository;
   // 이상 탐지 이벤트 저장 Repository — anomaly_event 테이블에 이벤트 이력을 영속화한다
   private final AnomalyEventRepository anomalyEventRepository;
   // SSE 에미터 레지스트리 — 사용자에게 실시간 이상 탐지 알림을 전송한다
   private final SseEmitterRegistry sseEmitterRegistry;
-  // Outbox 기반 알림 Dispatcher (feature flag ON일 때 사용)
-  private final NotificationDispatcher notificationDispatcher;
-  // notification.outbox.enabled=true면 Dispatcher 경로, false면 기존 DeliveryChannel 직접 호출
-  private final boolean notificationOutboxEnabled;
+  // Spring AOP @Async 프록시를 우회하는 self-call 문제를 방지하기 위해 별도 빈으로 분리 (이슈 #192)
+  private final ProactiveJobAsyncRunner asyncRunner;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -73,34 +52,20 @@ public class ProactiveJobService {
   public ProactiveJobService(
       ProactiveJobRepository proactiveJobRepository,
       ProactiveJobExecutionRepository executionRepository,
-      ProactiveMessageRepository messageRepository,
-      ReportTemplateRepository reportTemplateRepository,
-      ProactiveContextCollector contextCollector,
-      ProactiveAiClient aiClient,
-      SettingsService settingsService,
-      ObjectMapper objectMapper,
       @Lazy ProactiveJobSchedulerService schedulerService,
-      List<DeliveryChannel> deliveryChannels,
       UserRepository userRepository,
       AnomalyEventRepository anomalyEventRepository,
       SseEmitterRegistry sseEmitterRegistry,
-      NotificationDispatcher notificationDispatcher,
-      @Value("${notification.outbox.enabled:false}") boolean notificationOutboxEnabled) {
+      ProactiveJobAsyncRunner asyncRunner) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
-    this.messageRepository = messageRepository;
-    this.reportTemplateRepository = reportTemplateRepository;
-    this.contextCollector = contextCollector;
-    this.aiClient = aiClient;
-    this.settingsService = settingsService;
-    this.objectMapper = objectMapper;
     this.schedulerService = schedulerService;
-    this.deliveryChannels = deliveryChannels;
     this.userRepository = userRepository;
     this.anomalyEventRepository = anomalyEventRepository;
     this.sseEmitterRegistry = sseEmitterRegistry;
-    this.notificationDispatcher = notificationDispatcher;
-    this.notificationOutboxEnabled = notificationOutboxEnabled;
+    this.asyncRunner = asyncRunner;
+    // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
+    asyncRunner.setRunningJobs(this.runningJobs);
   }
 
   @Transactional(readOnly = true)
@@ -190,10 +155,9 @@ public class ProactiveJobService {
   }
 
   /**
-   * 동시 실행 방지 슬롯을 획득한다.
-   * @Async 메서드 호출 전에 반드시 이 메서드를 먼저 호출해야 한다.
-   * 이미 실행 중인 경우 ProactiveJobAlreadyRunningException(→ 409 Conflict)을 던진다.
-   * 이 메서드는 동기(non-@Async)로 호출되어 예외가 HTTP 호출자에게 정상 전파된다.
+   * 동시 실행 방지 슬롯을 획득한다. @Async 메서드 호출 전에 반드시 이 메서드를 먼저 호출해야 한다. 이미 실행 중인 경우
+   * ProactiveJobAlreadyRunningException(→ 409 Conflict)을 던진다. 이 메서드는 동기(non-@Async)로 호출되어 예외가 HTTP
+   * 호출자에게 정상 전파된다.
    */
   public void tryAcquireRunSlot(Long jobId) {
     AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));
@@ -203,9 +167,8 @@ public class ProactiveJobService {
   }
 
   /**
-   * 동시 실행 방지 슬롯을 강제 해제한다.
-   * executeJob 비동기 제출이 실패(RejectedExecutionException 등)한 경우 컨트롤러에서 호출하여
-   * 슬롯이 영구 점유되는 것을 방지한다.
+   * 동시 실행 방지 슬롯을 강제 해제한다. executeJob 비동기 제출이 실패(RejectedExecutionException 등)한 경우 컨트롤러에서 호출하여 슬롯이
+   * 영구 점유되는 것을 방지한다.
    */
   public void releaseRunSlot(Long jobId) {
     AtomicBoolean running = runningJobs.get(jobId);
@@ -214,116 +177,17 @@ public class ProactiveJobService {
     }
   }
 
-  @Async("pipelineExecutor")
+  /**
+   * Proactive Job을 비동기로 실행한다.
+   *
+   * <p>실제 실행 로직은 {@link ProactiveJobAsyncRunner#executeJob}에 위임한다. Spring AOP @Async 프록시를 우회하는
+   * self-call 문제를 방지하기 위해 별도 빈(asyncRunner)을 통해 호출한다 (이슈 #192).
+   *
+   * @param jobId 실행할 Proactive Job ID
+   * @param userId 실행 요청 사용자 ID
+   */
   public void executeJob(Long jobId, Long userId) {
-    // 슬롯 획득은 tryAcquireRunSlot()에서 사전 수행됨.
-    // @Async 특성상 이 메서드 내부에서 throw한 예외는 호출자에게 전파되지 않으므로
-    // 중복 실행 방지 체크는 동기 컨텍스트(컨트롤러)에서 미리 처리한다.
-    AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));
-
-    Long executionId = executionRepository.create(jobId);
-    executionRepository.updateStatus(executionId, "RUNNING", LocalDateTime.now(), null);
-
-    try {
-      ProactiveJobResponse job =
-          proactiveJobRepository
-              .findById(jobId, userId)
-              .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
-
-      // 컨텍스트 수집
-      String context = contextCollector.collectContext(job.config(), jobId);
-
-      // 템플릿 조회 (templateId가 있으면 sections/style 포함)
-      Map<String, Object> template = null;
-      if (job.templateId() != null) {
-        var tmpl = reportTemplateRepository.findById(job.templateId());
-        if (tmpl.isPresent()) {
-          var t = tmpl.get();
-          template = new HashMap<>();
-          template.put("sections", t.sections());
-          template.put("output_format", "structured");
-          if (t.style() != null) {
-            template.put("style", t.style());
-          }
-        }
-      }
-
-      // AI 설정 조회
-      Map<String, String> aiSettings = settingsService.getAsMap("ai.");
-      String apiKey = settingsService.getDecryptedApiKey().orElse("");
-      String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
-      String cliOauthToken = null;
-      if ("cli".equals(agentType)) {
-        cliOauthToken = settingsService.getDecryptedCliOauthToken().orElse(null);
-      }
-
-      // AI 실행
-      ProactiveResult result =
-          aiClient.execute(
-              userId,
-              job.prompt(),
-              context,
-              apiKey,
-              agentType,
-              cliOauthToken,
-              template,
-              job.config());
-
-      // 결과 저장
-      Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});
-      executionRepository.updateResult(executionId, "COMPLETED", resultMap, LocalDateTime.now());
-
-      // DeliveryChannel 호출 (config.channels 필터링)
-      List<String> configChannels = ProactiveConfigParser.getChannelTypes(job.config());
-      // notification.outbox.enabled=true → 새 Dispatcher 경로 (비동기 Outbox + Worker).
-      // false → 기존 직접 호출 경로 유지 (회귀 안전, Stage 1 마이그레이션 중).
-      List<String> deliveredChannels = new ArrayList<>();
-      if (notificationOutboxEnabled) {
-        try {
-          com.smartfirehub.notification.NotificationRequest request =
-              ProactiveJobNotificationMapper.toRequest(job, executionId, result);
-          notificationDispatcher.enqueue(request);
-          // Outbox 경로에서는 즉시 발송 전이라 deliveredChannels를 확정할 수 없음.
-          // 실제 성공 채널 집계는 outbox status aggregation view(Task 13 이후)로 대체.
-          for (String t : configChannels) deliveredChannels.add(t);
-        } catch (Exception e) {
-          log.warn(
-              "NotificationDispatcher enqueue failed for job {}: {}", jobId, e.getMessage(), e);
-        }
-      } else {
-        for (DeliveryChannel channel : deliveryChannels) {
-          if (configChannels.isEmpty() || configChannels.contains(channel.type())) {
-            try {
-              channel.deliver(job, executionId, result);
-              deliveredChannels.add(channel.type());
-            } catch (Exception e) {
-              log.warn(
-                  "DeliveryChannel {} failed for job {}: {}",
-                  channel.type(),
-                  jobId,
-                  e.getMessage());
-            }
-          }
-        }
-      }
-
-      // 실제 전달된 채널 목록을 DB에 저장
-      if (!deliveredChannels.isEmpty()) {
-        executionRepository.updateDeliveredChannels(executionId, deliveredChannels);
-      }
-
-      // 마지막 실행 시간 업데이트
-      proactiveJobRepository.updateLastExecuted(jobId, LocalDateTime.now(), null);
-
-      log.info("Proactive job {} executed successfully", jobId);
-
-    } catch (Exception e) {
-      log.error("Proactive job {} execution failed", jobId, e);
-      executionRepository.updateError(executionId, e.getMessage());
-      throw new ProactiveJobException("Job 실행 실패: " + e.getMessage(), e);
-    } finally {
-      running.set(false);
-    }
+    asyncRunner.executeJob(jobId, userId);
   }
 
   @Transactional(readOnly = true)
@@ -402,6 +266,7 @@ public class ProactiveJobService {
     }
 
     // 중복 실행 슬롯 획득 후 비동기 실행 — 이미 실행 중이면 조용히 skip
+    // asyncRunner.executeJob()을 호출하여 Spring AOP 프록시를 통한 @Async 실행을 보장한다 (이슈 #192)
     try {
       tryAcquireRunSlot(event.jobId());
     } catch (ProactiveJobAlreadyRunningException e) {
@@ -409,7 +274,7 @@ public class ProactiveJobService {
       return;
     }
     try {
-      executeJob(event.jobId(), event.userId());
+      asyncRunner.executeJob(event.jobId(), event.userId());
       recordCooldown(event.jobId());
     } catch (Exception e) {
       log.warn("Anomaly-triggered execution failed for job {}: {}", event.jobId(), e.getMessage());
