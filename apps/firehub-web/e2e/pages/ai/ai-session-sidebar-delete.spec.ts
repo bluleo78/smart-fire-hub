@@ -145,12 +145,19 @@ test.describe('AISessionSidebar — 현재 활성 세션 삭제 후 UI 초기화
     await expect(page.getByText('이슈 211 테스트 메시지')).toBeVisible({ timeout: 3_000 });
     await expect(page.getByText('응답 메시지입니다.')).toBeVisible({ timeout: 3_000 });
 
-    // 현재 활성 세션의 삭제 버튼 클릭 → handleDelete(e, 'active-session-211', 10)
-    // → deleteSession.mutate(10, { onSuccess: () => startNewSession() })
+    // 현재 활성 세션의 삭제 버튼 클릭 → DeleteConfirmDialog 오픈 (#210)
+    // → 확인 버튼 클릭 → deleteSession.mutate(10, { onSuccess: () => startNewSession() })
     const deleteBtn = page.getByText('활성 대화 테스트').locator('..').getByRole('button');
+    await deleteBtn.click({ force: true });
+
+    // 확인 다이얼로그가 열렸는지 검증 — "대화 삭제" 제목이 보여야 함 (#210)
+    await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3_000 });
+    await expect(page.getByText('대화 삭제')).toBeVisible({ timeout: 3_000 });
+
+    // "삭제" 버튼 클릭으로 확인 → 실제 DELETE API 호출
     await Promise.all([
       page.waitForResponse((r) => /\/ai\/sessions\/10$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
-      deleteBtn.click({ force: true }),
+      page.getByRole('button', { name: '삭제' }).click(),
     ]);
 
     // 핵심 검증: 채팅 히스토리가 초기화되어야 함 (#211 fix)
@@ -219,11 +226,15 @@ test.describe('AISessionSidebar — 현재 활성 세션 삭제 후 UI 초기화
     // 메시지 히스토리 표시 확인
     await expect(page.getByText('이슈 211 테스트 메시지')).toBeVisible({ timeout: 3_000 });
 
-    // 세션 B("다른 대화") 삭제 버튼 클릭
+    // 세션 B("다른 대화") 삭제 버튼 클릭 → DeleteConfirmDialog 오픈 (#210)
     const otherDeleteBtn = page.getByText('다른 대화').locator('..').getByRole('button');
+    await otherDeleteBtn.click({ force: true });
+
+    // 확인 다이얼로그 확인 후 삭제 확정
+    await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3_000 });
     await Promise.all([
       page.waitForResponse((r) => /\/ai\/sessions\/11$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
-      otherDeleteBtn.click({ force: true }),
+      page.getByRole('button', { name: '삭제' }).click(),
     ]);
 
     // 핵심 검증: 세션 A의 채팅 히스토리가 그대로 유지되어야 함

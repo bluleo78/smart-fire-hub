@@ -1,8 +1,9 @@
-import { MessageSquare,Plus, Trash2 } from 'lucide-react';
+import { MessageSquare, Plus, Trash2 } from 'lucide-react';
 
 import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
+import { DeleteConfirmDialog } from '../ui/delete-confirm-dialog';
 import { ScrollArea } from '../ui/scroll-area';
 import { useAI } from './AIProvider';
 
@@ -11,9 +12,11 @@ export function AISessionSidebar() {
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
 
-  // 세션 삭제 핸들러 — 현재 활성 세션을 삭제하는 경우 startNewSession()으로 채팅 UI 초기화
-  const handleDelete = (e: React.MouseEvent, sessionId: string, id: number) => {
-    e.stopPropagation();
+  /**
+   * 세션 삭제 실행 — DeleteConfirmDialog 확인 후 호출됨 (#210)
+   * 현재 활성 세션을 삭제하는 경우 startNewSession()으로 채팅 UI 초기화
+   */
+  const handleDeleteConfirmed = (sessionId: string, id: number) => {
     const isActive = sessionId === currentSessionId;
     deleteSession.mutate(id, {
       onSuccess: () => {
@@ -55,14 +58,23 @@ export function AISessionSidebar() {
                 <span className="flex-1 truncate text-xs">
                   {session.title || `대화 #${session.id}`}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100"
-                  onClick={(e) => handleDelete(e, session.sessionId, session.id)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
+                {/* 삭제 전 확인 다이얼로그 — 즉시 삭제 방지 (#210) */}
+                <DeleteConfirmDialog
+                  entityName="대화"
+                  itemName={session.title || `대화 #${session.id}`}
+                  onConfirm={() => handleDeleteConfirmed(session.sessionId, session.id)}
+                  trigger={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`${session.title || `대화 #${session.id}`} 삭제`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  }
+                />
               </div>
             ))
           ) : (
