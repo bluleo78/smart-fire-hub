@@ -403,6 +403,11 @@ export function useAIChat(options?: {
   }, []);
 
   const startNewSession = useCallback(() => {
+    // 스트리밍 중 새 세션 시작 시 기존 SSE 스트림을 취소하여 상태 오염 방지
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setMessages([]);
     setCurrentSessionId(null);
     setStreamingMessage(null);
@@ -417,6 +422,11 @@ export function useAIChat(options?: {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const loadSession = useCallback(async (sessionId: string) => {
+    // 스트리밍 중 다른 세션으로 전환 시 기존 SSE 스트림을 취소하여 새 세션 상태 오염 방지
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setIsLoadingHistory(true);
     setCurrentSessionId(sessionId);
     setMessages([]);
