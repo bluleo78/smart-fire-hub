@@ -453,6 +453,59 @@ test.describe('AI 챗 data-analyst', () => {
 
 
   /**
+   * DA-08: Agent 연결 실패 SSE 오류 이벤트 → 실제 연결 실패 메시지가 표시된다 (refs #205)
+   *
+   * 수정 전: 백엔드가 { type: 'error', data: 'Agent connection failed: ...' }를 전송하면
+   *          프론트엔드 event.message가 undefined → "알 수 없는 오류가 발생했습니다"로 fallback.
+   * 수정 후: 백엔드가 { type: 'error', message: 'Agent connection failed: ...' }를 전송하면
+   *          프론트엔드가 실제 오류 메시지를 표시한다.
+   *
+   * 이 테스트는 수정된 키 이름(message)으로 오류 이벤트를 보낼 때
+   * 실제 메시지 내용이 채팅창에 표시되는지를 검증한다.
+   */
+  test('DA-08: Agent 연결 실패 오류 → 실제 오류 메시지가 채팅창에 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-conn-fail');
+
+    // 수정 후 백엔드가 전송하는 형식: "message" 키 사용
+    const CONNECTION_FAIL_EVENTS = [
+      sseEvent({ type: 'init', sessionId: 'data-analyst-session-conn-fail' }),
+      sseEvent({ type: 'error', message: 'Agent connection failed: Connection refused: /127.0.0.1:3001' }),
+    ];
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          },
+          body: CONNECTION_FAIL_EVENTS.join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('데이터셋 목록을 보여줘');
+    await chatInput.press('Enter');
+
+    // 수정 후: event.message가 실제 오류 내용을 포함하므로 "Connection refused" 또는
+    // "Agent connection failed" 텍스트가 채팅창에 표시되어야 한다.
+    // "알 수 없는 오류가 발생했습니다" fallback이 아닌 실제 오류가 표시됨을 검증한다.
+    await expect(
+      page.getByText(/Agent connection failed|Connection refused/).first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    // fallback 메시지("알 수 없는 오류")는 표시되지 않아야 한다
+    await expect(page.getByText('알 수 없는 오류가 발생했습니다')).not.toBeVisible();
+  });
+
+  /**
    * DA-05: 새 세션 시작 → 메시지 목록이 초기화되고 빈 상태 문구가 표시된다
    * useAIChat.startNewSession(): messages/currentSessionId/streamingMessage를 모두 초기화한다.
    */

@@ -258,7 +258,10 @@ public class AiAgentProxyService {
             String payload =
                 objectMapper.writeValueAsString(
                     Map.of(
-                        "type", "error", "data", "Agent connection failed: " + error.getMessage()));
+                        "type",
+                        "error",
+                        "message",
+                        "Agent connection failed: " + error.getMessage()));
             emitter.send(SseEmitter.event().data(payload));
             emitter.completeWithError(error);
           } catch (IOException ignored) {
