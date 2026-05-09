@@ -306,9 +306,10 @@ function RenderToolCall({ tc, isStreaming }: { tc: AIToolCall; isStreaming?: boo
   const navigate = useNavigate();
   const { mode, setMode } = useAI();
 
-  const handleNavigate = (path: string) => {
+  const handleNavigate = (path: string, state?: Record<string, unknown>) => {
     if (mode === 'fullscreen') setMode('side');
-    navigate(path);
+    // state가 있으면 React Router location.state로 전달 — 위젯이 대상 페이지에 데이터 프리필 가능
+    navigate(path, state ? { state } : undefined);
   };
 
   if (widget && tc.input) {

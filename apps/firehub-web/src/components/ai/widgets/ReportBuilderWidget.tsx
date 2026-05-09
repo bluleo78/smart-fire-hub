@@ -272,7 +272,13 @@ export default function ReportBuilderWidget({
             variant="default"
             size="sm"
             className="flex-1"
-            onClick={() => onNavigate?.('/ai-insights/jobs/new')}
+            onClick={() =>
+              onNavigate?.('/ai-insights/jobs/new', {
+                // 리포트 제목을 작업명으로, 원본 질문을 분석 프롬프트로 프리필
+                name: title,
+                prompt: question,
+              })
+            }
           >
             <Save className="mr-1 h-3.5 w-3.5" />
             저장

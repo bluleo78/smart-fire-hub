@@ -208,20 +208,58 @@ test.describe('AI 리포트 빌더 위젯', () => {
   test('저장 버튼을 클릭하면 스마트 작업 생성 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await mockChatSSEWithReportWidget(page);
 
-    // 네비게이션 대상 페이지 모킹
+    await openChatAndSend(page, '이번 달 매출이 왜 떨어졌나요?');
+
+    // 위젯이 렌더링될 때까지 대기
+    await expect(page.getByText('매출 분석 리포트')).toBeVisible({ timeout: 10000 });
+
+    // 스마트 작업 생성 페이지 API 모킹
     await page.route(
-      (url) => url.pathname.includes('/ai-insights/jobs/new'),
-      (route) => route.fulfill({ status: 200, body: '<html></html>' }),
+      (url) => url.pathname === '/api/v1/proactive/templates',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) }),
     );
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/messages/unread-count',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ count: 0 }) }),
+    );
+
+    // "저장" 버튼 클릭 → 스마트 작업 생성 페이지로 이동
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page).toHaveURL(/ai-insights\/jobs\/new/);
+  });
+
+  test('저장 버튼 클릭 시 리포트 title·question이 스마트 작업 폼에 프리필된다 (이슈 #213)', async ({ authenticatedPage: page }) => {
+    /**
+     * 이 테스트는 이슈 #213 수정 회귀 테스트이다.
+     * ReportBuilderWidget 저장 버튼 클릭 시 리포트 데이터(title, question)가
+     * React Router location.state로 전달되어 스마트 작업 생성 폼에 프리필되는지 검증한다.
+     */
+    await mockChatSSEWithReportWidget(page);
 
     await openChatAndSend(page, '이번 달 매출이 왜 떨어졌나요?');
 
     // 위젯이 렌더링될 때까지 대기
     await expect(page.getByText('매출 분석 리포트')).toBeVisible({ timeout: 10000 });
 
+    // 스마트 작업 생성 페이지 API 모킹
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/templates',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) }),
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/messages/unread-count',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ count: 0 }) }),
+    );
+
     // "저장" 버튼 클릭 → 스마트 작업 생성 페이지로 이동
     await page.getByRole('button', { name: '저장' }).click();
-    await expect(page).toHaveURL(/ai-insights\/jobs\/new/);
+    await expect(page).toHaveURL(/ai-insights\/jobs\/new/, { timeout: 5000 });
+
+    // 핵심 검증 — 리포트 데이터가 폼에 프리필되어 있는지 확인 (이슈 #213)
+    // title → 작업 이름 필드
+    await expect(page.getByLabel('작업 이름 *')).toHaveValue('매출 분석 리포트', { timeout: 5000 });
+    // question → 분석 프롬프트 필드 (수동 모드에서 표시됨)
+    await expect(page.getByLabel('분석 프롬프트 *')).toHaveValue('이번 달 매출이 왜 떨어졌나요?', { timeout: 5000 });
   });
 
   test('섹션 콘텐츠가 없는 경우 빈 상태를 표시한다', async ({ authenticatedPage: page }) => {

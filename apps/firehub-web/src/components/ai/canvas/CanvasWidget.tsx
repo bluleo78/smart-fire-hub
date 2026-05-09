@@ -57,7 +57,7 @@ export function CanvasWidget({ widget, onRemove }: CanvasWidgetProps) {
           <Suspense fallback={<div className="h-20 animate-pulse bg-muted/30 rounded" />}>
             <entry.component
               input={widget.input}
-              onNavigate={(path) => navigate(path)}
+              onNavigate={(path, state) => navigate(path, state ? { state } : undefined)}
               displayMode="native"
             />
           </Suspense>

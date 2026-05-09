@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
@@ -93,12 +93,22 @@ function buildDefaultValues(job?: {
   };
 }
 
+/** ReportBuilderWidget 저장 버튼으로부터 전달된 프리필 데이터 타입 */
+interface ReportPrefillState {
+  name?: string;
+  prompt?: string;
+}
+
 export default function ProactiveJobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isNew = !id || id === 'new';
   const jobId = isNew ? 0 : Number(id);
+
+  // ReportBuilderWidget 저장 버튼에서 전달된 프리필 데이터 (이슈 #213)
+  const prefill = isNew ? (location.state as ReportPrefillState | null) : null;
 
   const activeTab = searchParams.get('tab') ?? 'overview';
 
@@ -118,9 +128,16 @@ export default function ProactiveJobDetailPage() {
   // 이탈 다이얼로그 확인 후 실행할 동작 — 'back'(목록 이동) 또는 'cancel-edit'(편집 취소)
   const [leaveAction, setLeaveAction] = useState<'back' | 'cancel-edit'>('back');
 
+  // prefill이 있으면 기본값에 리포트 제목/질문을 덮어씌워 폼을 미리 채운다 (이슈 #213)
+  const defaultValues = buildDefaultValues(job);
+  if (prefill && isNew) {
+    if (prefill.name) defaultValues.name = prefill.name;
+    if (prefill.prompt) defaultValues.prompt = prefill.prompt;
+  }
+
   const form = useForm<ProactiveJobFormValues>({
     resolver: zodResolver(proactiveJobSchema),
-    values: buildDefaultValues(job),
+    values: defaultValues,
   });
 
   const createMutation = useCreateProactiveJob();
