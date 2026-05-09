@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# 이슈를 GitHub Projects 보드에 추가하고 현재 iteration + Status=ready를 배정한다
+# 이슈를 GitHub Projects 보드에 추가하고 현재 iteration + Status=backlog를 배정한다
 # 사용법: add-to-board.sh <이슈번호>
 # - 이미 보드에 있으면 iteration/status만 갱신 (idempotent)
+# - ai-fix 라벨이 붙은 이슈만 파일럿이 자동 처리 (옵트인)
 
 ISSUE_NUM=$1
 
@@ -9,6 +10,7 @@ GH_PROJECT_ID="PVT_kwHOAE-_Hc4BUFv9"
 GH_STATUS_FIELD="PVTSSF_lAHOAE-_Hc4BUFv9zhBQQq0"
 GH_ITERATION_FIELD="PVTIF_lAHOAE-_Hc4BUFv9zhBQRMI"
 GH_OPT_READY="e18bf179"
+GH_OPT_BACKLOG="f75ad846"
 
 # 이슈 node ID 조회
 ISSUE_NODE_ID=$(gh api graphql -f query="{
@@ -72,14 +74,14 @@ else
   echo "[add-to-board] ⚠️  #$ISSUE_NUM iteration 조회 실패" >&2
 fi
 
-# Status = ready (파일럿이 픽업 예정)
+# Status = backlog (기본값 — 사람이 검토 후 ai-fix 라벨 부착 시 파일럿 픽업)
 gh api graphql -f query="mutation {
   updateProjectV2ItemFieldValue(input: {
     projectId: \"$GH_PROJECT_ID\"
     itemId: \"$ITEM_ID\"
     fieldId: \"$GH_STATUS_FIELD\"
-    value: { singleSelectOptionId: \"$GH_OPT_READY\" }
+    value: { singleSelectOptionId: \"$GH_OPT_BACKLOG\" }
   }) { projectV2Item { id } }
-}" > /dev/null 2>&1 || echo "[add-to-board] ⚠️  #$ISSUE_NUM status=ready 배정 실패" >&2
+}" > /dev/null 2>&1 || echo "[add-to-board] ⚠️  #$ISSUE_NUM status=backlog 배정 실패" >&2
 
-echo "[add-to-board] ✅ #$ISSUE_NUM → 보드 배정 완료 (iteration=$ITER_ID, status=ready)"
+echo "[add-to-board] ✅ #$ISSUE_NUM → 보드 배정 완료 (iteration=$ITER_ID, status=backlog)"
