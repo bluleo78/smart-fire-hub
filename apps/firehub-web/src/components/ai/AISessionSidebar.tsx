@@ -11,9 +11,15 @@ export function AISessionSidebar() {
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
 
-  const handleDelete = (e: React.MouseEvent, id: number) => {
+  // 세션 삭제 핸들러 — 현재 활성 세션을 삭제하는 경우 startNewSession()으로 채팅 UI 초기화
+  const handleDelete = (e: React.MouseEvent, sessionId: string, id: number) => {
     e.stopPropagation();
-    deleteSession.mutate(id);
+    const isActive = sessionId === currentSessionId;
+    deleteSession.mutate(id, {
+      onSuccess: () => {
+        if (isActive) startNewSession();
+      },
+    });
   };
 
   return (
@@ -53,7 +59,7 @@ export function AISessionSidebar() {
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100"
-                  onClick={(e) => handleDelete(e, session.id)}
+                  onClick={(e) => handleDelete(e, session.sessionId, session.id)}
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>
