@@ -30,7 +30,8 @@ function getCategory(mimeType: string): 'IMAGE' | 'PDF' | 'TEXT' | 'DATA' | 'DOC
     mimeType.startsWith('text/') ||
     mimeType === 'application/json' ||
     mimeType === 'application/xml' ||
-    mimeType === 'application/x-yaml'
+    mimeType === 'application/x-yaml' ||
+    mimeType === 'application/yaml'   // IANA 표준 YAML MIME 타입 추가 (refs #212)
   ) return 'TEXT';
   return null;
 }
