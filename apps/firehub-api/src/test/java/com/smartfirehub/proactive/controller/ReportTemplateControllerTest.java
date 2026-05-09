@@ -128,8 +128,8 @@ class ReportTemplateControllerTest {
   }
 
   /**
-   * 이슈 #200 회귀 테스트 — PUT 엔드포인트에 빈 이름 전송 시 400 반환 검증.
-   * UpdateReportTemplateRequest.name 에 @NotBlank 검증이 없으면 204를 반환하여 빈 이름으로 저장된다.
+   * 이슈 #200 회귀 테스트 — PUT 엔드포인트에 빈 이름 전송 시 400 반환 검증. UpdateReportTemplateRequest.name 에 @NotBlank
+   * 검증이 없으면 204를 반환하여 빈 이름으로 저장된다.
    */
   @Test
   void updateTemplate_emptyName_returns400() throws Exception {

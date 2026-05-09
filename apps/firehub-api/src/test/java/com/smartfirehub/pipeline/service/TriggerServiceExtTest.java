@@ -207,8 +207,8 @@ class TriggerServiceExtTest extends IntegrationTestBase {
   }
 
   /**
-   * pollingIntervalSeconds가 30 미만이면 서버 측에서 IllegalArgumentException을 던져야 한다 (refs #196).
-   * 클라이언트 검증을 우회한 직접 API 호출에서도 400 차단을 보장한다.
+   * pollingIntervalSeconds가 30 미만이면 서버 측에서 IllegalArgumentException을 던져야 한다 (refs #196). 클라이언트 검증을
+   * 우회한 직접 API 호출에서도 400 차단을 보장한다.
    */
   @Test
   void createDatasetChangeTrigger_pollingIntervalBelowMin_throwsException() {
@@ -224,9 +224,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         .hasMessageContaining("pollingIntervalSeconds must be between 30 and 3600");
   }
 
-  /**
-   * pollingIntervalSeconds가 3600 초과이면 서버 측에서 IllegalArgumentException을 던져야 한다 (refs #196).
-   */
+  /** pollingIntervalSeconds가 3600 초과이면 서버 측에서 IllegalArgumentException을 던져야 한다 (refs #196). */
   @Test
   void createDatasetChangeTrigger_pollingIntervalAboveMax_throwsException() {
     CreateTriggerRequest request =
@@ -234,17 +232,14 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             "Too Long Polling",
             TriggerType.DATASET_CHANGE,
             null,
-            Map.of(
-                "datasetIds", List.of(1), "pollingIntervalSeconds", 3601, "debounceSeconds", 0));
+            Map.of("datasetIds", List.of(1), "pollingIntervalSeconds", 3601, "debounceSeconds", 0));
 
     assertThatThrownBy(() -> triggerService.createTrigger(pipelineId, request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("pollingIntervalSeconds must be between 30 and 3600");
   }
 
-  /**
-   * pollingIntervalSeconds가 경계값(30초)이면 정상 생성되어야 한다 (refs #196).
-   */
+  /** pollingIntervalSeconds가 경계값(30초)이면 정상 생성되어야 한다 (refs #196). */
   @Test
   void createDatasetChangeTrigger_pollingIntervalAtMin_success() {
     CreateTriggerRequest request =
