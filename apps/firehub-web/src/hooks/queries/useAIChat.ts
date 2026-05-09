@@ -448,7 +448,10 @@ export function useAIChat(options?: {
       if (blobPromises.length > 0) await Promise.all(blobPromises);
       setMessages(msgs);
     } catch (error) {
+      // 세션 히스토리 로드 실패 시 사용자에게 에러 피드백 제공
       console.error('Failed to load session history:', error);
+      toast.error('대화 이력을 불러오지 못했습니다.');
+      setMessages([]); // 빈 상태 명시적 처리
     } finally {
       setIsLoadingHistory(false);
     }
