@@ -32,11 +32,36 @@ class AiSessionServiceTest extends IntegrationTestBase {
     aiSessionService.createSession(
         userId, new CreateAiSessionRequest("session-001", null, null, "My Session"));
 
-    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId);
+    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId, 0, 20);
 
     assertThat(sessions).hasSize(1);
     assertThat(sessions.get(0).sessionId()).isEqualTo("session-001");
     assertThat(sessions.get(0).userId()).isEqualTo(userId);
+  }
+
+  @Test
+  void getSessions_paginationLimitsResults() {
+    // page=0, size=2 요청 시 최대 2건만 반환되는지 검증 (페이지네이션 LIMIT 효과)
+    UserResponse user =
+        authService.signup(
+            new SignupRequest("testpager", "pager@example.com", "Password123", "Pager User"));
+    Long userId = user.id();
+
+    // 3개 세션 생성
+    aiSessionService.createSession(
+        userId, new CreateAiSessionRequest("session-p1", null, null, "Page Session 1"));
+    aiSessionService.createSession(
+        userId, new CreateAiSessionRequest("session-p2", null, null, "Page Session 2"));
+    aiSessionService.createSession(
+        userId, new CreateAiSessionRequest("session-p3", null, null, "Page Session 3"));
+
+    // page=0, size=2 → 최대 2건
+    List<AiSessionResponse> page0 = aiSessionService.getSessions(userId, 0, 2);
+    assertThat(page0).hasSize(2);
+
+    // page=1, size=2 → 나머지 1건
+    List<AiSessionResponse> page1 = aiSessionService.getSessions(userId, 1, 2);
+    assertThat(page1).hasSize(1);
   }
 
   @Test
@@ -103,7 +128,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
 
     aiSessionService.updateSessionTitle(userId, created.id(), "Updated Title");
 
-    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId);
+    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId, 0, 20);
     assertThat(sessions).hasSize(1);
     assertThat(sessions.get(0).title()).isEqualTo("Updated Title");
   }
@@ -139,7 +164,7 @@ class AiSessionServiceTest extends IntegrationTestBase {
 
     aiSessionService.deleteSession(userId, created.id());
 
-    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId);
+    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId, 0, 20);
     assertThat(sessions).isEmpty();
   }
 

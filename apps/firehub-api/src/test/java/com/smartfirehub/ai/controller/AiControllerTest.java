@@ -69,13 +69,39 @@ class AiControllerTest {
             "My Session",
             LocalDateTime.now(),
             LocalDateTime.now());
-    when(aiSessionService.getSessions(1L)).thenReturn(List.of(session));
+    when(aiSessionService.getSessions(1L, 0, 20)).thenReturn(List.of(session));
 
     mockMvc
         .perform(get("/api/v1/ai/sessions").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].sessionId").value("session-001"))
         .andExpect(jsonPath("$[0].title").value("My Session"));
+  }
+
+  @Test
+  void getSessions_withPageAndSize_passesParamsToService() throws Exception {
+    mockAuthentication("ai:read");
+    when(aiSessionService.getSessions(1L, 1, 10)).thenReturn(List.of());
+
+    mockMvc
+        .perform(
+            get("/api/v1/ai/sessions")
+                .param("page", "1")
+                .param("size", "10")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
+  }
+
+  @Test
+  void getSessions_withoutParams_usesDefaults() throws Exception {
+    mockAuthentication("ai:read");
+    when(aiSessionService.getSessions(1L, 0, 20)).thenReturn(List.of());
+
+    mockMvc
+        .perform(get("/api/v1/ai/sessions").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
   }
 
   @Test

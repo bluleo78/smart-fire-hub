@@ -18,8 +18,19 @@ public class AiSessionService {
 
   private final AiSessionRepository aiSessionRepository;
 
-  public List<AiSessionResponse> getSessions(Long userId) {
-    return aiSessionRepository.findByUserId(userId);
+  /**
+   * 사용자 AI 세션 목록을 페이지네이션으로 조회한다.
+   *
+   * <p>기존에는 전체 목록을 반환하여 세션이 많을 때(471건 등) 성능 저하가 발생했다. page·size 파라미터를 레포지토리에 전달하여 LIMIT/OFFSET
+   * 슬라이싱을 적용한다.
+   *
+   * @param userId 조회할 사용자 ID
+   * @param page 0-based 페이지 번호 (기본값 0)
+   * @param size 페이지당 항목 수 (기본값 20)
+   * @return 페이지네이션된 세션 목록
+   */
+  public List<AiSessionResponse> getSessions(Long userId, int page, int size) {
+    return aiSessionRepository.findByUserId(userId, page, size);
   }
 
   public Optional<AiSessionResponse> getSessionByContext(

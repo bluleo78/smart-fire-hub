@@ -25,11 +25,26 @@ public class AiController {
   private final AiAgentProxyService aiAgentProxyService;
   private final SettingsService settingsService;
 
+  /**
+   * AI 세션 목록을 페이지네이션으로 조회한다.
+   *
+   * <p>page·size 파라미터를 적용하여 전체 세션 대신 요청된 범위만 반환한다. 기본값: page=0, size=20.
+   *
+   * @param authentication 현재 인증 정보 (userId 추출용)
+   * @param page 0-based 페이지 번호 (기본값 0)
+   * @param size 페이지당 항목 수 (기본값 20, 최대 100)
+   * @return 페이지네이션된 세션 목록 응답
+   */
   @GetMapping("/sessions")
   @RequirePermission("ai:read")
-  public ResponseEntity<List<AiSessionResponse>> getSessions(Authentication authentication) {
+  public ResponseEntity<List<AiSessionResponse>> getSessions(
+      Authentication authentication,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
     Long userId = (Long) authentication.getPrincipal();
-    return ResponseEntity.ok(aiSessionService.getSessions(userId));
+    // size 상한 제한: 과도한 요청으로 인한 성능 저하 방지
+    int effectiveSize = Math.min(size, 100);
+    return ResponseEntity.ok(aiSessionService.getSessions(userId, page, effectiveSize));
   }
 
   @PostMapping("/sessions")

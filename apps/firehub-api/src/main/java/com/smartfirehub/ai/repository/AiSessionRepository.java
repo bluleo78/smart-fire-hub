@@ -47,7 +47,18 @@ public class AiSessionRepository {
   private static final Field<String> SLACK_THREAD_TS =
       field(name("ai_session", "slack_thread_ts"), String.class);
 
-  public List<AiSessionResponse> findByUserId(Long userId) {
+  /**
+   * 사용자 ID로 AI 세션 목록을 페이지네이션 조회한다.
+   *
+   * <p>page·size 파라미터로 LIMIT/OFFSET 슬라이싱을 적용하여 전체 세션이 아닌 요청된 범위만 반환한다. 기존에는 전체 목록을 반환하여 세션 수가 많을 때
+   * 성능 저하가 발생했다.
+   *
+   * @param userId 조회할 사용자 ID
+   * @param page 0-based 페이지 번호
+   * @param size 페이지당 항목 수
+   * @return 페이지네이션된 세션 응답 목록 (updatedAt 내림차순 정렬)
+   */
+  public List<AiSessionResponse> findByUserId(Long userId, int page, int size) {
     return dsl.select(
             ID,
             USER_ID,
@@ -60,6 +71,8 @@ public class AiSessionRepository {
         .from(AI_SESSION)
         .where(USER_ID.eq(userId))
         .orderBy(UPDATED_AT.desc())
+        .limit(size)
+        .offset((long) page * size)
         .fetch(
             r ->
                 AiSessionResponse.ofWeb(
