@@ -63,6 +63,8 @@ export interface AIToolCall {
   name: string;
   input: Record<string, unknown>;
   result?: string;
+  /** MCP 도구 호출 실패 여부 — safeTool()이 isError: true를 반환한 경우 true */
+  isError?: boolean;
 }
 
 export interface AIStreamEvent {
@@ -72,6 +74,8 @@ export interface AIStreamEvent {
   toolName?: string;
   input?: Record<string, unknown>;
   result?: string;
+  /** tool_result 이벤트에서 MCP 도구 호출 실패 여부 */
+  isError?: boolean;
   message?: string;
   inputTokens?: number;
   status?: 'started' | 'completed';

@@ -559,3 +559,91 @@ test.describe('MessageBubble — 코드블록 언어 레이블 및 복사 버튼
     await expect(page.getByText('sql').first()).toBeVisible({ timeout: 5_000 });
   });
 });
+
+test.describe('ToolCallDisplay — isError 실패 표시', () => {
+  /**
+   * MB-13: tool_result에 isError: true가 있으면 "✗ 실패" 표시
+   * 회귀 방지: MCP 도구 호출 실패 시 "✓ 완료"가 아닌 "✗ 실패"로 사용자에게 알린다 (refs #206)
+   */
+  test('MB-13: isError:true tool_result → "✗ 실패" 표시', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-13-session');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        // safeTool()이 403 에러를 받아 isError: true를 반환하는 시나리오 모킹
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-13-session' }),
+            sseEvent({ type: 'tool_use', toolName: 'mcp__firehub__list_datasets', input: {} }),
+            sseEvent({
+              type: 'tool_result',
+              toolName: 'mcp__firehub__list_datasets',
+              result: 'Error: API 요청 실패: 403 Forbidden',
+              isError: true,
+            }),
+            sseEvent({ type: 'text', content: '데이터셋 조회 중 오류가 발생했습니다.' }),
+            sseEvent({ type: 'done', inputTokens: 50 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('데이터셋 목록 조회');
+    await chatInput.press('Enter');
+
+    // 도구 이름이 표시된다
+    await expect(page.getByText('데이터셋 목록').first()).toBeVisible({ timeout: 10_000 });
+    // isError: true → "✗ 실패" 표시 (기존 "✓ 완료" 대신)
+    await expect(page.getByText('✗ 실패').first()).toBeVisible({ timeout: 10_000 });
+    // "✓ 완료"가 보이지 않아야 한다
+    await expect(page.getByText('✓ 완료')).not.toBeVisible();
+  });
+
+  /**
+   * MB-14: tool_result에 isError 없거나 false이면 "✓ 완료" 표시 (정상 경로 회귀 방지)
+   */
+  test('MB-14: isError 없는 tool_result → "✓ 완료" 표시 (정상 경로)', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-14-session');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-14-session' }),
+            sseEvent({ type: 'tool_use', toolName: 'mcp__firehub__list_datasets', input: {} }),
+            sseEvent({
+              type: 'tool_result',
+              toolName: 'mcp__firehub__list_datasets',
+              result: JSON.stringify([{ id: 1, name: 'test' }]),
+              // isError 없음 (정상 성공)
+            }),
+            sseEvent({ type: 'text', content: '데이터셋 1건이 조회되었습니다.' }),
+            sseEvent({ type: 'done', inputTokens: 50 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('데이터셋 목록');
+    await chatInput.press('Enter');
+
+    // 도구 이름이 표시된다
+    await expect(page.getByText('데이터셋 목록').first()).toBeVisible({ timeout: 10_000 });
+    // isError 없음 → "✓ 완료" 또는 결과 요약 표시
+    await expect(page.getByText('✓ 완료').or(page.getByText('1건 조회')).first()).toBeVisible({ timeout: 10_000 });
+    // "✗ 실패"가 보이지 않아야 한다
+    await expect(page.getByText('✗ 실패')).not.toBeVisible();
+  });
+});

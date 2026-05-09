@@ -267,6 +267,10 @@ export function useAIChat(options?: {
               if (toolCalls.length > 0) {
                 const lastTool = toolCalls[toolCalls.length - 1];
                 lastTool.result = event.result;
+                // isError 전달: MCP 도구 실패 시 UI에서 실패 상태를 표시하기 위해 보존
+                if (event.isError !== undefined) {
+                  lastTool.isError = event.isError;
+                }
 
                 // Canvas widget placement: fire callback at tool_result time (idempotent, no useEffect)
                 // Fires for ALL tool results — AIProvider decides whether to place on canvas based on mode

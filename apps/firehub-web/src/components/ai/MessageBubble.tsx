@@ -203,6 +203,8 @@ function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isSt
   const detail = formatToolDetail(toolCall.input);
   const hasResult = toolCall.result !== undefined;
   const resultSummary = hasResult && toolCall.result ? formatToolResult(toolCall.result) : null;
+  // isError가 true이면 MCP 도구 호출 실패 — 성공처럼 표시하지 않고 실패 상태로 구분
+  const isFailed = toolCall.isError === true;
 
   return (
     <div className="my-1 flex items-center gap-1.5 rounded border border-border/50 bg-background/50 px-2 py-1 text-xs">
@@ -210,9 +212,15 @@ function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isSt
       <span className="font-medium">{label}</span>
       {detail && <span className="text-muted-foreground truncate">{detail}</span>}
       {(hasResult || !isStreaming) && (
-        <span className="ml-auto shrink-0 text-success">
-          {resultSummary ?? '✓ 완료'}
-        </span>
+        isFailed ? (
+          <span className="ml-auto shrink-0 text-destructive">
+            {'✗ 실패'}
+          </span>
+        ) : (
+          <span className="ml-auto shrink-0 text-success">
+            {resultSummary ?? '✓ 완료'}
+          </span>
+        )
       )}
       {!hasResult && isStreaming && (
         <span className="ml-auto shrink-0 animate-pulse text-warning">

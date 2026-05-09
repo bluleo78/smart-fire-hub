@@ -91,11 +91,14 @@ export function processMessage(
               resultStr = JSON.stringify(rawContent);
             }
             const toolId = 'tool_use_id' in block ? String(block.tool_use_id) : 'unknown';
-            console.log(`${tag()} ◀ Tool result [${toolId}]: ${truncate(resultStr ?? '(empty)')}`);
+            // is_error 필드 추출: safeTool()이 에러 발생 시 isError: true를 반환하므로 SSE 이벤트에 포함
+            const isError = 'is_error' in block ? Boolean((block as { is_error?: unknown }).is_error) : false;
+            console.log(`${tag()} ◀ Tool result [${toolId}]${isError ? ' (ERROR)' : ''}: ${truncate(resultStr ?? '(empty)')}`);
             events.push({
               type: 'tool_result',
               toolName: toolId,
               result: resultStr,
+              isError,
             });
           } else {
             const blockType =
