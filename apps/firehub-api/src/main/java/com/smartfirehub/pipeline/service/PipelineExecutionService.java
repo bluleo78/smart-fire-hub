@@ -24,11 +24,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * 파이프라인 실행 오케스트레이터.
  *
- * <p>파이프라인 실행 레코드를 생성하고 {@link PipelineAsyncRunner}에게 비동기 실행을 위임한다. 실제 스텝 실행 로직은 PipelineAsyncRunner에
- * 위치하며, 이 클래스는 DAG 유효성 검증과 실행 초기화만 담당한다.
+ * <p>파이프라인 실행 레코드를 생성하고 {@link PipelineAsyncRunner}에게 비동기 실행을 위임한다. 실제 스텝 실행 로직은
+ * PipelineAsyncRunner에 위치하며, 이 클래스는 DAG 유효성 검증과 실행 초기화만 담당한다.
  *
- * <p>설계 의도: PipelineAsyncRunner를 별도 Spring Bean으로 분리함으로써 {@code @Async} AOP 프록시가 올바르게 적용된다.
- * 같은 클래스 내 자기호출(self-invocation)은 프록시를 우회하여 HTTP 스레드를 블로킹할 수 있는 문제를 방지한다 (이슈 #189).
+ * <p>설계 의도: PipelineAsyncRunner를 별도 Spring Bean으로 분리함으로써 {@code @Async} AOP 프록시가 올바르게 적용된다. 같은 클래스
+ * 내 자기호출(self-invocation)은 프록시를 우회하여 HTTP 스레드를 블로킹할 수 있는 문제를 방지한다 (이슈 #189).
  */
 @Slf4j
 @Service
@@ -129,8 +129,7 @@ public class PipelineExecutionService {
   /**
    * 파이프라인을 비동기로 실행한다 (수동 실행).
    *
-   * <p>실행 레코드 생성이 단일 트랜잭션으로 원자적으로 처리된다. 실제 비동기 실행은 트랜잭션 커밋 후에
-   * 시작되므로 데이터 가시성 문제가 없다.
+   * <p>실행 레코드 생성이 단일 트랜잭션으로 원자적으로 처리된다. 실제 비동기 실행은 트랜잭션 커밋 후에 시작되므로 데이터 가시성 문제가 없다.
    *
    * @param pipelineId 실행할 파이프라인 ID
    * @param userId 실행 요청 사용자 ID
@@ -146,9 +145,9 @@ public class PipelineExecutionService {
    *
    * <p>실행 레코드를 생성한 뒤 {@link PipelineAsyncRunner#executeAsync}에 위임하여 HTTP 스레드를 블로킹하지 않는다.
    *
-   * <p>트랜잭션 원자성: {@code createExecution} + N×{@code createStepExecution}이 단일 트랜잭션으로 묶여
-   * 중간 실패 시 모두 롤백된다. {@code asyncRunner.executeAsync}는 트랜잭션 커밋 이후({@code afterCommit})에
-   * 호출되므로 비동기 스레드가 미커밋 데이터를 읽는 경쟁 조건이 발생하지 않는다.
+   * <p>트랜잭션 원자성: {@code createExecution} + N×{@code createStepExecution}이 단일 트랜잭션으로 묶여 중간 실패 시 모두
+   * 롤백된다. {@code asyncRunner.executeAsync}는 트랜잭션 커밋 이후({@code afterCommit})에 호출되므로 비동기 스레드가 미커밋
+   * 데이터를 읽는 경쟁 조건이 발생하지 않는다.
    *
    * @param pipelineId 실행할 파이프라인 ID
    * @param userId 실행 요청 사용자 ID

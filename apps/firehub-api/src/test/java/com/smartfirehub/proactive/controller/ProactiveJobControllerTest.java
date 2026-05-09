@@ -20,12 +20,12 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
-import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import java.time.LocalDateTime;
@@ -184,14 +184,15 @@ class ProactiveJobControllerTest {
   }
 
   /**
-   * Job이 이미 실행 중일 때 tryAcquireRunSlot이 ProactiveJobAlreadyRunningException을 던지면
-   * 409 Conflict를 반환해야 한다 (#149).
+   * Job이 이미 실행 중일 때 tryAcquireRunSlot이 ProactiveJobAlreadyRunningException을 던지면 409 Conflict를 반환해야
+   * 한다 (#149).
    */
   @Test
   void executeJob_whenAlreadyRunning_returnsConflict() throws Exception {
     mockAuth("proactive:write");
     doThrow(new ProactiveJobAlreadyRunningException("Job이 이미 실행 중입니다: 10"))
-        .when(proactiveJobService).tryAcquireRunSlot(10L);
+        .when(proactiveJobService)
+        .tryAcquireRunSlot(10L);
 
     mockMvc
         .perform(

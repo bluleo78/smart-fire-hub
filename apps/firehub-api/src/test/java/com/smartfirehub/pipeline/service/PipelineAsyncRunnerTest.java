@@ -39,8 +39,8 @@ import org.springframework.context.ApplicationEventPublisher;
 /**
  * PipelineAsyncRunner 단위 테스트.
  *
- * <p>실제 스텝 실행 로직(SQL 래핑, 임시 데이터셋 생성, 의존성 스킵 등)을 검증한다. @Async AOP 프록시는 단위 테스트에서 적용되지 않으므로 executeAsync는
- * 동기적으로 실행되어 동작을 직접 검증할 수 있다.
+ * <p>실제 스텝 실행 로직(SQL 래핑, 임시 데이터셋 생성, 의존성 스킵 등)을 검증한다. @Async AOP 프록시는 단위 테스트에서 적용되지 않으므로
+ * executeAsync는 동기적으로 실행되어 동작을 직접 검증할 수 있다.
  */
 @ExtendWith(MockitoExtension.class)
 class PipelineAsyncRunnerTest {
@@ -159,12 +159,10 @@ class PipelineAsyncRunnerTest {
         .updateExecutionStatus(eq(executionId), eq("RUNNING"), any(), any());
 
     // when
-    runner.executeAsync(
-        pipelineId, executionId, List.of(), Map.of(), Map.of(), userId, false);
+    runner.executeAsync(pipelineId, executionId, List.of(), Map.of(), Map.of(), userId, false);
 
     // then: 실패 상태로 갱신 및 실패 이벤트 발행
-    verify(executionRepository)
-        .updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any());
+    verify(executionRepository).updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any());
     ArgumentCaptor<PipelineCompletedEvent> captor =
         ArgumentCaptor.forClass(PipelineCompletedEvent.class);
     verify(applicationEventPublisher).publishEvent(captor.capture());
@@ -240,7 +238,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(anyString())).thenReturn("1 row affected");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then
     assertThat(status).isEqualTo("COMPLETED");
@@ -272,11 +271,13 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse sqlStep =
         stepResponseWithOutput(stepId, "cte-update", "SQL", cteDml, outputDatasetId, List.of());
 
-    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("target_tbl"));
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("target_tbl"));
     when(sqlExecutor.execute(anyString())).thenReturn("3 rows affected");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then: INSERT INTO 래핑 없이 원래 SQL 그대로 실행
     assertThat(status).isEqualTo("COMPLETED");
@@ -309,7 +310,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(anyString())).thenReturn("5 rows deleted");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then
     assertThat(status).isEqualTo("COMPLETED");
@@ -349,7 +351,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(anyString())).thenReturn("10 rows affected");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then: CTE+SELECT는 INSERT INTO로 래핑
     assertThat(status).isEqualTo("COMPLETED");
@@ -381,7 +384,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(anyString())).thenReturn("7 rows affected");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then: CTE+INSERT DML은 추가 INSERT INTO 래핑 없이 그대로 실행
     assertThat(status).isEqualTo("COMPLETED");
@@ -422,7 +426,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(anyString())).thenReturn("2 rows affected");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then: 임시 데이터셋 생성 후 INSERT INTO 래핑
     assertThat(status).isEqualTo("COMPLETED");
@@ -523,7 +528,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(insertSql)).thenReturn("1 row affected");
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then: 원본 INSERT 그대로 실행 (래핑 없음)
     assertThat(status).isEqualTo("COMPLETED");
@@ -554,7 +560,8 @@ class PipelineAsyncRunnerTest {
     doReturn(mockResult).when(pipelineDsl).fetch(anyString());
 
     // when
-    String status = runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
 
     // then: FAILED 반환, 에러 메시지 포함
     assertThat(status).isEqualTo("FAILED");
@@ -630,7 +637,8 @@ class PipelineAsyncRunnerTest {
         .thenReturn(new ApiCallExecutor.ApiCallResult(5, "log"));
 
     // when
-    String status = runner.executeStep(stepExecId, apiStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, apiStep, pipelineId, "TestPipeline", userId, false);
 
     // then: 임시 데이터셋 생성, apiCallExecutor 호출 확인
     assertThat(status).isEqualTo("COMPLETED");
@@ -687,7 +695,8 @@ class PipelineAsyncRunnerTest {
         .thenReturn(new AiClassifyExecutor.ExecutionResult(10L, "ai log"));
 
     // when
-    String status = runner.executeStep(stepExecId, aiStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, aiStep, pipelineId, "TestPipeline", userId, false);
 
     // then: 임시 데이터셋 생성, aiClassifyExecutor 호출 확인
     assertThat(status).isEqualTo("COMPLETED");
@@ -792,7 +801,8 @@ class PipelineAsyncRunnerTest {
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(false);
 
     // when
-    String status = runner.executeStep(stepExecId, pythonStep, pipelineId, "TestPipeline", userId, false);
+    String status =
+        runner.executeStep(stepExecId, pythonStep, pipelineId, "TestPipeline", userId, false);
 
     // then: FAILED 반환, 권한 오류 메시지 포함
     assertThat(status).isEqualTo("FAILED");
@@ -842,7 +852,8 @@ class PipelineAsyncRunnerTest {
         .thenReturn(new ExecutorClient.PythonExecuteResult(true, "hello\n", 0, null, 100L, 0));
 
     // when — executorEnabled=true
-    String status = runner.executeStep(stepExecId, pythonStep, pipelineId, "TestPipeline", userId, true);
+    String status =
+        runner.executeStep(stepExecId, pythonStep, pipelineId, "TestPipeline", userId, true);
 
     // then: executorClient.executePython이 script + output_table + column_type_map 포함 Map으로 호출됨
     assertThat(status).isEqualTo("COMPLETED");
@@ -1006,13 +1017,7 @@ class PipelineAsyncRunnerTest {
 
     // when
     runner.executeAsync(
-        pipelineId,
-        executionId,
-        List.of(step1, step2),
-        depMap,
-        stepExecMap,
-        userId,
-        false);
+        pipelineId, executionId, List.of(step1, step2), depMap, stepExecMap, userId, false);
 
     // then: step2 SQL에 {{#1}}이 data."table1"로 치환됨
     ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
@@ -1059,8 +1064,7 @@ class PipelineAsyncRunnerTest {
 
     Map<Long, List<Long>> depMap =
         Map.of(step1Id, List.of(), step2Id, List.of(), step3Id, List.of());
-    Map<Long, Long> stepExecMap =
-        Map.of(step1Id, 360L, step2Id, 361L, step3Id, stepExec3Id);
+    Map<Long, Long> stepExecMap = Map.of(step1Id, 360L, step2Id, 361L, step3Id, stepExec3Id);
 
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
@@ -1072,13 +1076,7 @@ class PipelineAsyncRunnerTest {
 
     // when
     runner.executeAsync(
-        pipelineId,
-        executionId,
-        List.of(step1, step2, step3),
-        depMap,
-        stepExecMap,
-        userId,
-        false);
+        pipelineId, executionId, List.of(step1, step2, step3), depMap, stepExecMap, userId, false);
 
     // then: step3는 자기 참조 오류로 FAILED
     verify(executionRepository)

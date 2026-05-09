@@ -209,7 +209,9 @@ public class ApiConnectionService {
       String body = truncateBody(e.getResponseBodyAsString());
       Map<String, String> headers = sanitizeHeaders(e.getHeaders());
       String contentType =
-          e.getHeaders().getContentType() != null ? e.getHeaders().getContentType().toString() : null;
+          e.getHeaders().getContentType() != null
+              ? e.getHeaders().getContentType().toString()
+              : null;
       return new TestConnectionResponse(
           false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
 
@@ -230,8 +232,7 @@ public class ApiConnectionService {
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
     String joinedUrl = UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath);
-    Map<String, String> rawConfig =
-        request.authConfig() != null ? request.authConfig() : Map.of();
+    Map<String, String> rawConfig = request.authConfig() != null ? request.authConfig() : Map.of();
     // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113)
     String url = applyAuthQueryParams(joinedUrl, request.authType(), rawConfig);
 
@@ -263,7 +264,9 @@ public class ApiConnectionService {
       String body = truncateBody(e.getResponseBodyAsString());
       Map<String, String> headers = sanitizeHeaders(e.getHeaders());
       String contentType =
-          e.getHeaders().getContentType() != null ? e.getHeaders().getContentType().toString() : null;
+          e.getHeaders().getContentType() != null
+              ? e.getHeaders().getContentType().toString()
+              : null;
       return new TestConnectionResponse(
           false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
     } catch (Exception e) {
@@ -292,8 +295,7 @@ public class ApiConnectionService {
           "x-api-key",
           "x-auth-token");
 
-  private static Map<String, String> sanitizeHeaders(
-      org.springframework.http.HttpHeaders headers) {
+  private static Map<String, String> sanitizeHeaders(org.springframework.http.HttpHeaders headers) {
     Map<String, String> out = new HashMap<>();
     headers.forEach(
         (k, v) -> {

@@ -116,9 +116,8 @@ public class TriggerSchedulerService {
    *
    * <p>테스트에서 현재 시각을 주입할 수 있도록 now 파라미터를 받는 package-private 오버로드.
    *
-   * <p>nextFireTime은 trigger config의 timezone 기준 LocalDateTime으로 저장되어 있으므로,
-   * config.timezone을 적용해 ZonedDateTime으로 해석한 뒤 Instant로 변환하여 비교한다.
-   * 이렇게 하면 JVM 기본 timezone에 무관하게 올바른 시점 비교가 가능하다.
+   * <p>nextFireTime은 trigger config의 timezone 기준 LocalDateTime으로 저장되어 있으므로, config.timezone을 적용해
+   * ZonedDateTime으로 해석한 뒤 Instant로 변환하여 비교한다. 이렇게 하면 JVM 기본 timezone에 무관하게 올바른 시점 비교가 가능하다.
    */
   void detectMissedFire(TriggerResponse trigger, Instant now) {
     Map<String, Object> state = trigger.triggerState();
@@ -130,8 +129,7 @@ public class TriggerSchedulerService {
       String nextFireTimeStr = state.get("nextFireTime").toString();
 
       // config.timezone 기준으로 nextFireTime을 ZonedDateTime으로 해석 (registerSchedule과 동일 기준)
-      String timezone =
-          (String) trigger.config().getOrDefault("timezone", "Asia/Seoul");
+      String timezone = (String) trigger.config().getOrDefault("timezone", "Asia/Seoul");
       ZoneId zoneId = ZoneId.of(timezone);
       LocalDateTime localNextFireTime =
           LocalDateTime.parse(nextFireTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME);

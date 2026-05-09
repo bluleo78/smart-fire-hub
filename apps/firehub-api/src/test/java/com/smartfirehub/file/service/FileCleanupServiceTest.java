@@ -125,8 +125,8 @@ class FileCleanupServiceTest extends IntegrationTestBase {
   /**
    * 버그 회귀: 디스크 파일 삭제 실패 시 DB 레코드는 유지되어야 한다.
    *
-   * <p>존재하지 않는 경로(삭제 불가 경로)를 DB에 등록한 후 cleanupExpiredFiles() 호출 시 DB 레코드가 유지되는지 검증한다.
-   * 이슈 #152: 디스크 삭제 실패 시에도 DB 레코드가 삭제되어 고아 파일(orphan) 발생하는 버그 재현 방지.
+   * <p>존재하지 않는 경로(삭제 불가 경로)를 DB에 등록한 후 cleanupExpiredFiles() 호출 시 DB 레코드가 유지되는지 검증한다. 이슈 #152: 디스크
+   * 삭제 실패 시에도 DB 레코드가 삭제되어 고아 파일(orphan) 발생하는 버그 재현 방지.
    */
   @Test
   void cleanupExpiredFiles_diskDeleteFails_dbRecordRetained(@TempDir Path tempDir)

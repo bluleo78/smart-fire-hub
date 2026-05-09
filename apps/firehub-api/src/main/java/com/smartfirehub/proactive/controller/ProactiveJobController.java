@@ -85,10 +85,9 @@ public class ProactiveJobController {
   }
 
   /**
-   * Job을 즉시 실행한다.
-   * 중복 실행 방지를 위해 먼저 동기 메서드로 실행 슬롯을 획득한다.
-   * 슬롯 획득 실패 시 ProactiveJobAlreadyRunningException이 던져져 409 Conflict로 응답된다.
-   * @Async 제출 자체가 실패(RejectedExecutionException 등)하면 슬롯을 즉시 해제한다 (#149).
+   * Job을 즉시 실행한다. 중복 실행 방지를 위해 먼저 동기 메서드로 실행 슬롯을 획득한다. 슬롯 획득 실패 시
+   * ProactiveJobAlreadyRunningException이 던져져 409 Conflict로 응답된다. @Async 제출 자체가
+   * 실패(RejectedExecutionException 등)하면 슬롯을 즉시 해제한다 (#149).
    */
   @PostMapping("/{id}/execute")
   @RequirePermission("proactive:write")

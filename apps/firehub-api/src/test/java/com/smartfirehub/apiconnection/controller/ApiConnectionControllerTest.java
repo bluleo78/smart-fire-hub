@@ -161,7 +161,14 @@ class ApiConnectionControllerTest {
     when(apiConnectionService.testConnection(1L))
         .thenReturn(
             new TestConnectionResponse(
-                true, 200, 42L, null, "https://api.example.com", "{}", java.util.Map.of(), "application/json"));
+                true,
+                200,
+                42L,
+                null,
+                "https://api.example.com",
+                "{}",
+                java.util.Map.of(),
+                "application/json"));
 
     mockMvc
         .perform(
@@ -171,9 +178,7 @@ class ApiConnectionControllerTest {
         .andExpect(jsonPath("$.status").value(200));
   }
 
-  /**
-   * POST /test — payload 기반 dry-run 연결 테스트. /{id}/test 라우팅에 가로채이지 않고 정상 호출되어야 한다. (#113)
-   */
+  /** POST /test — payload 기반 dry-run 연결 테스트. /{id}/test 라우팅에 가로채이지 않고 정상 호출되어야 한다. (#113) */
   @Test
   void postTestPayload_withPermission_returnsResult() throws Exception {
     CreateApiConnectionRequest request =
@@ -211,8 +216,8 @@ class ApiConnectionControllerTest {
   }
 
   /**
-   * POST /test 는 /{id:\\d+}/test 에 라우팅되지 않아야 한다. "test" 를 Long 으로 변환 시도하면 500이 아닌 testConnectionPayload
-   * 로 정상 처리되어야 한다. (#113 regression 재확인)
+   * POST /test 는 /{id:\\d+}/test 에 라우팅되지 않아야 한다. "test" 를 Long 으로 변환 시도하면 500이 아닌
+   * testConnectionPayload 로 정상 처리되어야 한다. (#113 regression 재확인)
    */
   @Test
   void postTestPayload_routingDoesNotConflictWithIdTest() throws Exception {
@@ -230,8 +235,14 @@ class ApiConnectionControllerTest {
     when(apiConnectionService.testConnectionPayload(any(CreateApiConnectionRequest.class)))
         .thenReturn(
             new TestConnectionResponse(
-                false, 401, 100L, "HTTP 401", "https://routing.example.com", null,
-                java.util.Map.of(), null));
+                false,
+                401,
+                100L,
+                "HTTP 401",
+                "https://routing.example.com",
+                null,
+                java.util.Map.of(),
+                null));
 
     mockMvc
         .perform(

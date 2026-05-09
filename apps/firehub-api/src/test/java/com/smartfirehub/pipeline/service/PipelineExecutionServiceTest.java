@@ -26,8 +26,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * PipelineExecutionService 단위 테스트.
  *
- * <p>비동기 실행 로직(executeStep, topologicalSort 등)은 {@link PipelineAsyncRunnerTest}에서 검증한다. 이 클래스는
- * DAG 유효성 검사와 실행 오케스트레이션(레코드 생성 → asyncRunner 위임)만 검증한다.
+ * <p>비동기 실행 로직(executeStep, topologicalSort 등)은 {@link PipelineAsyncRunnerTest}에서 검증한다. 이 클래스는 DAG
+ * 유효성 검사와 실행 오케스트레이션(레코드 생성 → asyncRunner 위임)만 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 class PipelineExecutionServiceTest {
@@ -195,8 +195,7 @@ class PipelineExecutionServiceTest {
     Long step1Id = 110L;
     Long step2Id = 111L;
 
-    PipelineStepResponse step1 =
-        stepResponse(step1Id, "step1", "SQL", "SELECT 1", null, List.of());
+    PipelineStepResponse step1 = stepResponse(step1Id, "step1", "SQL", "SELECT 1", null, List.of());
     PipelineStepResponse step2 =
         stepResponse(step2Id, "step2", "SQL", "SELECT 2", null, List.of("step1"));
 
@@ -270,9 +269,8 @@ class PipelineExecutionServiceTest {
   /**
    * createStepExecution 도중 예외 발생 시 asyncRunner.executeAsync가 호출되지 않음을 검증한다.
    *
-   * <p>실제 트랜잭션 롤백은 Spring 통합 환경에서만 일어나지만, 비동기 실행 위임이 차단되는지는
-   * 단위 레벨에서도 검증할 수 있다. 트랜잭션 동기화가 비활성 상태(테스트 환경)에서는 즉시 호출
-   * 경로를 타므로, 예외 전파로 asyncRunner 미호출 여부를 확인한다.
+   * <p>실제 트랜잭션 롤백은 Spring 통합 환경에서만 일어나지만, 비동기 실행 위임이 차단되는지는 단위 레벨에서도 검증할 수 있다. 트랜잭션 동기화가 비활성 상태(테스트
+   * 환경)에서는 즉시 호출 경로를 타므로, 예외 전파로 asyncRunner 미호출 여부를 확인한다.
    */
   @Test
   void executePipeline_createStepExecutionThrows_asyncRunnerNotCalled() {
@@ -283,8 +281,7 @@ class PipelineExecutionServiceTest {
     Long step1Id = 120L;
     Long step2Id = 121L;
 
-    PipelineStepResponse step1 =
-        stepResponse(step1Id, "step1", "SQL", "SELECT 1", null, List.of());
+    PipelineStepResponse step1 = stepResponse(step1Id, "step1", "SQL", "SELECT 1", null, List.of());
     PipelineStepResponse step2 =
         stepResponse(step2Id, "step2", "SQL", "SELECT 2", null, List.of("step1"));
 

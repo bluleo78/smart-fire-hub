@@ -117,12 +117,12 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (KST 기준 저장).
-   * config.timezone = "Asia/Seoul" → 실제 Instant = 2026-05-07T00:00:00Z.
-   * now = 2026-05-07T00:30:00Z (서버 UTC 기준 00:30) → 이미 지남 → missed fire 감지해야 함.
+   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (KST 기준 저장). config.timezone = "Asia/Seoul" → 실제
+   * Instant = 2026-05-07T00:00:00Z. now = 2026-05-07T00:30:00Z (서버 UTC 기준 00:30) → 이미 지남 → missed
+   * fire 감지해야 함.
    *
-   * 수정 전 버그: now를 UTC LocalDateTime.now()로 해석하면 nextFireTime "09:00:00 UTC"와 비교
-   * → 아직 미래라고 판단하여 missed fire를 놓친다.
+   * <p>수정 전 버그: now를 UTC LocalDateTime.now()로 해석하면 nextFireTime "09:00:00 UTC"와 비교 → 아직 미래라고 판단하여
+   * missed fire를 놓친다.
    */
   @Test
   void detectMissedFire_withSeoulTimezone_detectsMissedFireCorrectly() {
@@ -170,12 +170,11 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (KST 기준 저장).
-   * config.timezone = "Asia/Seoul" → 실제 Instant = 2026-05-07T00:00:00Z.
-   * now = 2026-05-06T23:30:00Z (서버 UTC 기준, 아직 KST 09:00 이전) → 미래 → missed fire 없어야 함.
+   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (KST 기준 저장). config.timezone = "Asia/Seoul" → 실제
+   * Instant = 2026-05-07T00:00:00Z. now = 2026-05-06T23:30:00Z (서버 UTC 기준, 아직 KST 09:00 이전) → 미래 →
+   * missed fire 없어야 함.
    *
-   * 수정 전 버그: LocalDateTime.now()를 UTC 기준으로 사용하면 "09:00 UTC"와 비교하여
-   * 동일한 시각을 "이미 지남"으로 오탐한다.
+   * <p>수정 전 버그: LocalDateTime.now()를 UTC 기준으로 사용하면 "09:00 UTC"와 비교하여 동일한 시각을 "이미 지남"으로 오탐한다.
    */
   @Test
   void detectMissedFire_withSeoulTimezone_doesNotFireWhenStillFuture() {
@@ -220,8 +219,8 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (UTC 기준 저장, config.timezone = "UTC").
-   * now = 2026-05-07T09:30:00Z → 이미 지남 → missed fire 감지.
+   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (UTC 기준 저장, config.timezone = "UTC"). now =
+   * 2026-05-07T09:30:00Z → 이미 지남 → missed fire 감지.
    */
   @Test
   void detectMissedFire_withUtcTimezone_detectsMissedFireCorrectly() {

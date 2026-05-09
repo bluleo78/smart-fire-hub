@@ -175,9 +175,8 @@ class FileUploadServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * getFileContent()가 byte[] 대신 Resource를 반환하는지 검증.
-   * OOM 방지를 위해 스트리밍 방식(FileSystemResource)으로 파일을 제공하므로
-   * resource.getInputStream()으로 읽어 내용을 확인한다.
+   * getFileContent()가 byte[] 대신 Resource를 반환하는지 검증. OOM 방지를 위해 스트리밍 방식(FileSystemResource)으로 파일을
+   * 제공하므로 resource.getInputStream()으로 읽어 내용을 확인한다.
    */
   @Test
   void getFileContent_ownFile_returnsStreamableResource() throws IOException {
@@ -201,10 +200,7 @@ class FileUploadServiceTest extends IntegrationTestBase {
     }
   }
 
-  /**
-   * 대용량 파일(스트리밍 대상)에서도 Resource가 올바르게 반환되는지 검증.
-   * 실제 OOM은 재현 불가이므로 구조적 검증(byte[] 미사용)으로 대체한다.
-   */
+  /** 대용량 파일(스트리밍 대상)에서도 Resource가 올바르게 반환되는지 검증. 실제 OOM은 재현 불가이므로 구조적 검증(byte[] 미사용)으로 대체한다. */
   @Test
   void getFileContent_largeFile_returnsResourceWithCorrectSize() throws IOException {
     // 5MB 파일로 size 필드 정확성 검증

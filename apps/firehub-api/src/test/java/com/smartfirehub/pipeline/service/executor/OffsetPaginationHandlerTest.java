@@ -9,10 +9,8 @@ import org.junit.jupiter.api.Test;
 /**
  * OffsetPaginationHandler.hasNextPage() 종료 조건 단위 테스트.
  *
- * <p>핵심 케이스:
- * - totalCount 제공 시 경계값 판단
- * - totalCount 미제공 시 부분·꽉찬·빈 페이지 판단
- * - 빈 페이지(0건)은 항상 종료 (refs #156)
+ * <p>핵심 케이스: - totalCount 제공 시 경계값 판단 - totalCount 미제공 시 부분·꽉찬·빈 페이지 판단 - 빈 페이지(0건)은 항상 종료 (refs
+ * #156)
  */
 class OffsetPaginationHandlerTest {
 

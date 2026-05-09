@@ -418,10 +418,9 @@ class SavedQueryServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * findRawByIdUnrestricted 는 소유권(created_by)에 관계없이 id로 레코드를 반환해야 한다.
-   * 이전에 존재하던 findRawById() 메서드는 WHERE 절에 SQ_CREATED_BY.eq(SQ_CREATED_BY)
-   * (tautology) 조건을 포함한 dead code였으며 제거되었다. 이 테스트는 올바른 조회 메서드가
-   * 다른 사용자의 private 쿼리도 반환함을 검증한다.
+   * findRawByIdUnrestricted 는 소유권(created_by)에 관계없이 id로 레코드를 반환해야 한다. 이전에 존재하던 findRawById() 메서드는
+   * WHERE 절에 SQ_CREATED_BY.eq(SQ_CREATED_BY) (tautology) 조건을 포함한 dead code였으며 제거되었다. 이 테스트는 올바른 조회
+   * 메서드가 다른 사용자의 private 쿼리도 반환함을 검증한다.
    */
   @Test
   void findRawByIdUnrestricted_returnsRecordRegardlessOfOwnership() {

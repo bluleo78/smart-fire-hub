@@ -196,8 +196,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * (#115) healthCheckPath 를 빈 문자열로 update 하면 DB 의 기존 값이 NULL 로 clear 되어야 한다. 기존에는 service 가 ""→null 로
-   * 정규화하고 repository 가 null 을 "미변경"으로 해석해서 clear 가 불가능했다.
+   * (#115) healthCheckPath 를 빈 문자열로 update 하면 DB 의 기존 값이 NULL 로 clear 되어야 한다. 기존에는 service 가
+   * ""→null 로 정규화하고 repository 가 null 을 "미변경"으로 해석해서 clear 가 불가능했다.
    */
   @Test
   void update_emptyHealthCheckPath_clearsToNull() {

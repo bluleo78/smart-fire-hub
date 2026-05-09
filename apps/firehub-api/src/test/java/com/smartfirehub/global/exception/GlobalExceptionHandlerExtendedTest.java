@@ -185,7 +185,9 @@ class GlobalExceptionHandlerExtendedTest {
         .andExpect(jsonPath("$.message").value("파일 크기가 허용 한도(256MB)를 초과했습니다. 더 작은 파일을 업로드해주세요."));
   }
 
-  /** @Validated 쿼리 파라미터 제약 위반 시 400 반환 (#139) */
+  /**
+   * @Validated 쿼리 파라미터 제약 위반 시 400 반환 (#139)
+   */
   @Test
   void constraintViolation_returns400() throws Exception {
     mockMvc

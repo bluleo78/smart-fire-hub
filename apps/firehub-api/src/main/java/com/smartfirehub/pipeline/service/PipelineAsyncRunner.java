@@ -454,8 +454,7 @@ public class PipelineAsyncRunner {
                     tempDatasetService.createTempDataset(
                         pythonColumns, pipelineId, pipelineName, stepId, step.name(), userId);
               } else {
-                log.info(
-                    "Reusing existing temp dataset {} for Python step {}", dsId, step.name());
+                log.info("Reusing existing temp dataset {} for Python step {}", dsId, step.name());
                 outputDatasetId = dsId;
               }
             } else {
@@ -552,8 +551,7 @@ public class PipelineAsyncRunner {
                   tempDatasetService.createTempDataset(
                       apiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
             } else {
-              log.info(
-                  "Reusing existing temp dataset {} for API_CALL step {}", dsId, step.name());
+              log.info("Reusing existing temp dataset {} for API_CALL step {}", dsId, step.name());
               outputDatasetId = dsId;
             }
           } else {

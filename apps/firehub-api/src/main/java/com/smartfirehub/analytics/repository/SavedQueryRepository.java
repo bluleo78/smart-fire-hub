@@ -226,11 +226,10 @@ public class SavedQueryRepository {
   /**
    * id로 레코드를 소유권 제한 없이 조회한다 (clone 등 내부 처리용).
    *
-   * <p>이전에 존재하던 {@code findRawById(Long id)} 메서드는 WHERE 절에
-   * {@code SQ_CREATED_BY.eq(SQ_CREATED_BY)} — 컬럼을 자기 자신과 비교하는 tautology 조건이
-   * 포함되어 있었다. 해당 메서드는 호출부가 없는 dead code였으며, 실제 소유권 필터링이 필요한
-   * 경우라면 {@link #findByIdForOwner(Long, Long)}를 사용해야 한다.
-   * 소유권 무관 조회는 이 메서드({@code findRawByIdUnrestricted})가 올바른 구현이다.
+   * <p>이전에 존재하던 {@code findRawById(Long id)} 메서드는 WHERE 절에 {@code SQ_CREATED_BY.eq(SQ_CREATED_BY)}
+   * — 컬럼을 자기 자신과 비교하는 tautology 조건이 포함되어 있었다. 해당 메서드는 호출부가 없는 dead code였으며, 실제 소유권 필터링이 필요한 경우라면
+   * {@link #findByIdForOwner(Long, Long)}를 사용해야 한다. 소유권 무관 조회는 이 메서드({@code
+   * findRawByIdUnrestricted})가 올바른 구현이다.
    */
   public Optional<Record> findRawByIdUnrestricted(Long id) {
     Record r =

@@ -101,8 +101,7 @@ public class TriggerService {
         int pollingInterval =
             ((Number) processedConfig.getOrDefault("pollingIntervalSeconds", 60)).intValue();
         if (pollingInterval < 30 || pollingInterval > 3600) {
-          throw new IllegalArgumentException(
-              "pollingIntervalSeconds must be between 30 and 3600");
+          throw new IllegalArgumentException("pollingIntervalSeconds must be between 30 and 3600");
         }
         // 디바운스 시간 범위 검증: 0초 이상 3600초 이하
         int debounceSeconds =
@@ -185,8 +184,7 @@ public class TriggerService {
       if (updatedConfig.containsKey("pollingIntervalSeconds")) {
         int pollingInterval = ((Number) updatedConfig.get("pollingIntervalSeconds")).intValue();
         if (pollingInterval < 30 || pollingInterval > 3600) {
-          throw new IllegalArgumentException(
-              "pollingIntervalSeconds must be between 30 and 3600");
+          throw new IllegalArgumentException("pollingIntervalSeconds must be between 30 and 3600");
         }
       }
       if (updatedConfig.containsKey("debounceSeconds")) {

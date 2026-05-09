@@ -83,8 +83,8 @@ public class ApiConnectionController {
   }
 
   /**
-   * (#90) 저장 전 dry-run 헬스체크. payload(인증/URL/경로)만 받아 외부 API 호출을 시도하고 결과를 반환한다. DB 미저장. 사용 시점:
-   * "새 API 연결 생성" 다이얼로그에서 입력값 검증.
+   * (#90) 저장 전 dry-run 헬스체크. payload(인증/URL/경로)만 받아 외부 API 호출을 시도하고 결과를 반환한다. DB 미저장. 사용 시점: "새 API
+   * 연결 생성" 다이얼로그에서 입력값 검증.
    */
   @PostMapping("/test")
   @RequirePermission("apiconnection:write")

@@ -50,8 +50,7 @@ public final class SqlValidationUtils {
    * Detect the main DML verb of a (possibly CTE-prefixed) SQL string. Assumes the SQL has already
    * been stripped by {@link #stripAndValidate}.
    *
-   * <p>CTE 쿼리의 경우 문자열 리터럴 내부에 DML 키워드가 포함될 수 있으므로,
-   * 단순 정규식 매칭 대신 괄호 깊이를 추적하여 최상위 레벨의 본문 키워드만 확인한다.
+   * <p>CTE 쿼리의 경우 문자열 리터럴 내부에 DML 키워드가 포함될 수 있으므로, 단순 정규식 매칭 대신 괄호 깊이를 추적하여 최상위 레벨의 본문 키워드만 확인한다.
    *
    * @param stripped SQL string without comments
    * @return "SELECT", "INSERT", "UPDATE", or "DELETE"
@@ -72,8 +71,7 @@ public final class SqlValidationUtils {
   /**
    * WITH 절이 있는 SQL에서 CTE 정의를 건너뛴 후 최상위 레벨 본문 키워드를 반환한다.
    *
-   * <p>괄호 깊이를 추적하여 depth==0인 최상위 레벨에서 처음 나타나는 DML/SELECT 키워드를 반환한다.
-   * 문자열 리터럴은 호출 전에 이미 제거되어 있어야 한다.
+   * <p>괄호 깊이를 추적하여 depth==0인 최상위 레벨에서 처음 나타나는 DML/SELECT 키워드를 반환한다. 문자열 리터럴은 호출 전에 이미 제거되어 있어야 한다.
    *
    * @param upperNoLiterals 대문자 변환 + 문자열 리터럴 제거된 SQL
    * @return "SELECT", "INSERT", "UPDATE", "DELETE" 중 하나 (기본값: "SELECT")
@@ -109,8 +107,7 @@ public final class SqlValidationUtils {
   /**
    * SQL 문자열에서 단일 따옴표로 감싸인 문자열 리터럴을 제거하고 빈 따옴표쌍으로 교체한다.
    *
-   * <p>이중 따옴표 이스케이프(`''`)는 리터럴 내부로 처리하여 올바르게 건너뛴다.
-   * 제거 목적이므로 리터럴 내용은 보존하지 않는다.
+   * <p>이중 따옴표 이스케이프(`''`)는 리터럴 내부로 처리하여 올바르게 건너뛴다. 제거 목적이므로 리터럴 내용은 보존하지 않는다.
    *
    * @param sql 원본 SQL 문자열
    * @return 문자열 리터럴이 제거된 SQL

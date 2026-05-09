@@ -163,23 +163,23 @@ public class UserRepository {
   }
 
   /**
-   * 활성 ADMIN 사용자 수를 반환한다.
-   * 마지막 ADMIN 비활성화 방지 체크에 사용 (#146).
+   * 활성 ADMIN 사용자 수를 반환한다. 마지막 ADMIN 비활성화 방지 체크에 사용 (#146).
    *
    * @return is_active=true 이고 ADMIN 역할을 가진 사용자 수
    */
   public int countActiveAdmins() {
     return dsl.select(count())
         .from(USER)
-        .join(USER_ROLE).on(USER_ROLE.USER_ID.eq(USER.ID))
-        .join(ROLE).on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
+        .join(USER_ROLE)
+        .on(USER_ROLE.USER_ID.eq(USER.ID))
+        .join(ROLE)
+        .on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
         .where(ROLE.NAME.eq("ADMIN").and(USER.IS_ACTIVE.isTrue()))
         .fetchOne(0, Integer.class);
   }
 
   /**
-   * 특정 사용자가 ADMIN 역할을 갖고 있는지 확인한다.
-   * 마지막 ADMIN 비활성화 방지 체크에 사용 (#146).
+   * 특정 사용자가 ADMIN 역할을 갖고 있는지 확인한다. 마지막 ADMIN 비활성화 방지 체크에 사용 (#146).
    *
    * @param userId 확인할 사용자 ID
    * @return 해당 사용자가 ADMIN 역할을 보유하면 true
@@ -188,7 +188,8 @@ public class UserRepository {
     return dsl.fetchExists(
         dsl.selectOne()
             .from(USER_ROLE)
-            .join(ROLE).on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
+            .join(ROLE)
+            .on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
             .where(USER_ROLE.USER_ID.eq(userId).and(ROLE.NAME.eq("ADMIN"))));
   }
 

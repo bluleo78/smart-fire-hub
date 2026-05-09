@@ -17,9 +17,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>단일 application-scoped daemon thread로 실행. feature flag OFF면 start되지 않음.
  *
- * <p>LISTEN 전용 커넥션은 HikariCP 풀 외부에서 {@link DriverManager#getConnection}으로 직접 획득한다.
- * {@code DataSourceUtils.getConnection()}을 사용하면 루프 실행 내내 풀 커넥션 1개를 점유하여
- * 커넥션 풀 고갈(#174)이 발생하므로, 풀을 거치지 않는 전용 소켓 커넥션을 사용한다.
+ * <p>LISTEN 전용 커넥션은 HikariCP 풀 외부에서 {@link DriverManager#getConnection}으로 직접 획득한다. {@code
+ * DataSourceUtils.getConnection()}을 사용하면 루프 실행 내내 풀 커넥션 1개를 점유하여 커넥션 풀 고갈(#174)이 발생하므로, 풀을 거치지 않는
+ * 전용 소켓 커넥션을 사용한다.
  */
 @Component
 public class OutboxListenerLoop {
@@ -28,6 +28,7 @@ public class OutboxListenerLoop {
 
   /** LISTEN 전용 커넥션 획득에 사용할 JDBC 접속 정보. */
   private final DataSourceProperties dataSourceProperties;
+
   private final NotificationDispatchWorker worker;
   private final boolean listenEnabled;
   private final boolean outboxEnabled;
@@ -63,20 +64,18 @@ public class OutboxListenerLoop {
     running = false;
   }
 
-  /**
-   * LISTEN 루프 본체. 재시도마다 DriverManager로 풀 외부 전용 커넥션을 획득하고,
-   * 루프 종료 또는 예외 발생 시 반드시 커넥션을 close한다.
-   */
+  /** LISTEN 루프 본체. 재시도마다 DriverManager로 풀 외부 전용 커넥션을 획득하고, 루프 종료 또는 예외 발생 시 반드시 커넥션을 close한다. */
   private void loop() {
     while (running) {
       // HikariCP 풀을 거치지 않고 DriverManager로 전용 LISTEN 커넥션 직접 획득.
       // 이 커넥션은 풀 대역에 포함되지 않으므로 풀 고갈을 유발하지 않는다.
       Connection conn = null;
       try {
-        conn = DriverManager.getConnection(
-            dataSourceProperties.getUrl(),
-            dataSourceProperties.getUsername(),
-            dataSourceProperties.getPassword());
+        conn =
+            DriverManager.getConnection(
+                dataSourceProperties.getUrl(),
+                dataSourceProperties.getUsername(),
+                dataSourceProperties.getPassword());
         conn.setAutoCommit(true); // LISTEN은 트랜잭션 불필요; idle 트랜잭션 방지
         PGConnection pg = conn.unwrap(PGConnection.class);
         try (var st = conn.createStatement()) {

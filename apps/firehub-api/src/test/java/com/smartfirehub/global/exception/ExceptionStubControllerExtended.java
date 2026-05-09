@@ -123,7 +123,9 @@ public class ExceptionStubControllerExtended {
     throw new MaxUploadSizeExceededException(50 * 1024 * 1024L);
   }
 
-  /** @Validated 쿼리 파라미터 제약 위반 시 400 반환 검증 stub (#139) */
+  /**
+   * @Validated 쿼리 파라미터 제약 위반 시 400 반환 검증 stub (#139)
+   */
   @GetMapping("/constraint-violation")
   public void constraintViolation() {
     throw new ConstraintViolationException("page: must be greater than or equal to 0", Set.of());

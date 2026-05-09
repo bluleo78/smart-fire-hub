@@ -252,8 +252,8 @@ class AuditLogServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * userId 필터 (#89) — 특정 사용자 ID 정확 일치 필터링.
-   * username free-text 검색은 부분 일치이므로 동명이인/오타 가능, userId는 정확 일치로 노이즈 제거.
+   * userId 필터 (#89) — 특정 사용자 ID 정확 일치 필터링. username free-text 검색은 부분 일치이므로 동명이인/오타 가능, userId는 정확
+   * 일치로 노이즈 제거.
    */
   @Test
   void getAuditLogs_filterByUserId_returnsOnlyThatUsersLogs() {

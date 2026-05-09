@@ -48,10 +48,10 @@ class ProactiveMessageControllerTest {
 
   private ProactiveMessageResponse sampleMessage() {
     return new ProactiveMessageResponse(
-        1L,            // id
-        1L,            // userId
-        5L,            // jobId
-        10L,           // executionId
+        1L, // id
+        1L, // userId
+        5L, // jobId
+        10L, // executionId
         "Daily Report", // title
         Map.of("summary", "All good"),
         "REPORT",

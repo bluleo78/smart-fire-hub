@@ -154,7 +154,7 @@ public class ProactiveMessageRepository {
       return new ProactiveMessageResponse(
           r.get(PM_ID),
           r.get(PM_USER_ID),
-          r.get(PJE_JOB_ID),   // execution JOIN을 통해 상위 잡 ID 포함
+          r.get(PJE_JOB_ID), // execution JOIN을 통해 상위 잡 ID 포함
           r.get(PM_EXECUTION_ID),
           r.get(PM_TITLE),
           content,

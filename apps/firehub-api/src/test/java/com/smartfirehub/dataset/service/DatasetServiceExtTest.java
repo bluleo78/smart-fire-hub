@@ -485,9 +485,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     Long colId = ds.columns().get(0).id();
 
     datasetService.updateColumn(
-        ds.id(),
-        colId,
-        new UpdateColumnRequest(null, null, null, null, false, false, null, null));
+        ds.id(), colId, new UpdateColumnRequest(null, null, null, null, false, false, null, null));
 
     DatasetDetailResponse refreshed = datasetService.getDatasetById(ds.id(), testUserId);
     assertThat(refreshed.columns().get(0).isNullable()).isFalse();
@@ -524,9 +522,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     Long colId = ds.columns().get(0).id();
 
     datasetService.updateColumn(
-        ds.id(),
-        colId,
-        new UpdateColumnRequest(null, null, null, null, true, false, null, null));
+        ds.id(), colId, new UpdateColumnRequest(null, null, null, null, true, false, null, null));
 
     DatasetDetailResponse refreshed = datasetService.getDatasetById(ds.id(), testUserId);
     assertThat(refreshed.columns().get(0).isNullable()).isTrue();

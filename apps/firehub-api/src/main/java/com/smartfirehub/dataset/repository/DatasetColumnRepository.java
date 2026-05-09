@@ -191,8 +191,8 @@ public class DatasetColumnRepository {
   }
 
   /**
-   * 데이터셋의 모든 컬럼의 PK 플래그를 한 번에 갱신한다. {@code pkColumnIds} 에 포함된 컬럼은 true,
-   * 나머지는 false 로 설정한다. 복합 PK 일괄 변경 시 트랜잭션 안에서 호출되어야 한다.
+   * 데이터셋의 모든 컬럼의 PK 플래그를 한 번에 갱신한다. {@code pkColumnIds} 에 포함된 컬럼은 true, 나머지는 false 로 설정한다. 복합 PK 일괄
+   * 변경 시 트랜잭션 안에서 호출되어야 한다.
    */
   public void updatePrimaryKeys(Long datasetId, List<Long> pkColumnIds) {
     // 1) 우선 데이터셋의 모든 컬럼 PK 를 false 로

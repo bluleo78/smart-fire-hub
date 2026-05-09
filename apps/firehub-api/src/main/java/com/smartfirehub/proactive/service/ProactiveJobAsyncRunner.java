@@ -2,12 +2,12 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
-import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
@@ -70,8 +70,8 @@ public class ProactiveJobAsyncRunner {
   /**
    * Proactive Job을 비동기로 실행한다.
    *
-   * <p>이 메서드는 {@code pipelineExecutor} 스레드풀에서 실행되므로 이벤트 리스너 스레드나 HTTP 요청 스레드를 블록하지 않는다.
-   * AI 호출, 컨텍스트 수집, 결과 저장, 알림 발송을 순차 수행한다.
+   * <p>이 메서드는 {@code pipelineExecutor} 스레드풀에서 실행되므로 이벤트 리스너 스레드나 HTTP 요청 스레드를 블록하지 않는다. AI 호출, 컨텍스트
+   * 수집, 결과 저장, 알림 발송을 순차 수행한다.
    *
    * @param jobId 실행할 Proactive Job ID
    * @param userId 실행 요청 사용자 ID
