@@ -6,7 +6,6 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.*;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
-import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
@@ -709,7 +708,9 @@ public class DataImportService {
           userMessage,
           metadata);
 
-      throw new ImportProcessingException("Import failed: " + e.getMessage(), e);
+      // Jobrunr 재시도를 막기 위해 예외를 재투척하지 않고 여기서 종료.
+      // 재투척 시 Jobrunr이 자동 재시도하여 이미 삭제된 임시 파일에 접근하거나
+      // 감사 로그가 중복 기록되는 문제(#168)가 발생한다.
     } finally {
       // Clean up temp files
       try {

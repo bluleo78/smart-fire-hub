@@ -52,8 +52,7 @@ public class FileParserService {
   // -----------------------------------------------------------------------
 
   /**
-   * CSV/XLSX 헤더를 InputStream에서 파싱한다.
-   * AUTO 인코딩 감지가 필요한 CSV의 경우, BufferedInputStream의 mark/reset을 이용해
+   * CSV/XLSX 헤더를 InputStream에서 파싱한다. AUTO 인코딩 감지가 필요한 CSV의 경우, BufferedInputStream의 mark/reset을 이용해
    * 앞부분 바이트만 읽어 인코딩을 판별한 후 스트림 전체를 재읽는다.
    */
   public List<String> parseHeaders(InputStream inputStream, String fileType, ParseOptions opts)
@@ -65,9 +64,7 @@ public class FileParserService {
     };
   }
 
-  /**
-   * CSV/XLSX 샘플 행을 InputStream에서 파싱한다.
-   */
+  /** CSV/XLSX 샘플 행을 InputStream에서 파싱한다. */
   public List<Map<String, String>> parseSampleRows(
       InputStream inputStream, String fileType, int maxRows, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
@@ -77,9 +74,7 @@ public class FileParserService {
     };
   }
 
-  /**
-   * CSV/XLSX 전체 행 수를 InputStream에서 계산한다.
-   */
+  /** CSV/XLSX 전체 행 수를 InputStream에서 계산한다. */
   public int countRows(InputStream inputStream, String fileType, ParseOptions opts)
       throws Exception {
     return switch (fileType.toLowerCase()) {
@@ -89,11 +84,9 @@ public class FileParserService {
     };
   }
 
-  /**
-   * CSV/XLSX 전체 데이터를 InputStream에서 파싱한다.
-   */
-  public List<Map<String, String>> parse(InputStream inputStream, String fileType, ParseOptions opts)
-      throws Exception {
+  /** CSV/XLSX 전체 데이터를 InputStream에서 파싱한다. */
+  public List<Map<String, String>> parse(
+      InputStream inputStream, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseCsvFromStream(inputStream, opts);
       case "xlsx", "xls" -> parseExcel(inputStream);
@@ -277,23 +270,34 @@ public class FileParserService {
       for (int s = 0; s < opts.skipRows(); s++) {
         if (reader.readNext() == null) return Collections.emptyList();
       }
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) return Collections.emptyList();
+      // readAll() 대신 readNextRecord() 반복으로 maxRows 개수만 읽어 메모리 최소화(#169)
       String[] headers;
-      int dataStart;
       if (opts.hasHeader()) {
-        headers = allRows.get(0);
-        dataStart = 1;
+        headers = reader.readNext();
+        if (headers == null) return Collections.emptyList();
       } else {
-        int colCount = allRows.get(0).length;
+        String[] firstRow = reader.readNext();
+        if (firstRow == null) return Collections.emptyList();
+        int colCount = firstRow.length;
         headers = new String[colCount];
         for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
-        dataStart = 0;
+        // 헤더가 없는 경우 첫 행도 데이터로 포함
+        Map<String, String> firstMap = new HashMap<>();
+        for (int j = 0; j < headers.length && j < firstRow.length; j++)
+          firstMap.put(headers[j], firstRow[j]);
+        List<Map<String, String>> result = new ArrayList<>();
+        result.add(firstMap);
+        String[] row;
+        while (result.size() < maxRows && (row = reader.readNext()) != null) {
+          Map<String, String> rowMap = new HashMap<>();
+          for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
+          result.add(rowMap);
+        }
+        return result;
       }
       List<Map<String, String>> result = new ArrayList<>();
-      int limit = Math.min(allRows.size() - dataStart, maxRows);
-      for (int i = dataStart; i < dataStart + limit; i++) {
-        String[] row = allRows.get(i);
+      String[] row;
+      while (result.size() < maxRows && (row = reader.readNext()) != null) {
         Map<String, String> rowMap = new HashMap<>();
         for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
         result.add(rowMap);
@@ -377,23 +381,34 @@ public class FileParserService {
       for (int s = 0; s < opts.skipRows(); s++) {
         if (reader.readNext() == null) return Collections.emptyList();
       }
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) return Collections.emptyList();
+      // readAll() 대신 readNextRecord() 반복으로 maxRows 개수만 읽어 메모리 최소화(#169)
       String[] headers;
-      int dataStart;
       if (opts.hasHeader()) {
-        headers = allRows.get(0);
-        dataStart = 1;
+        headers = reader.readNext();
+        if (headers == null) return Collections.emptyList();
       } else {
-        int colCount = allRows.get(0).length;
+        String[] firstRow = reader.readNext();
+        if (firstRow == null) return Collections.emptyList();
+        int colCount = firstRow.length;
         headers = new String[colCount];
         for (int i = 0; i < colCount; i++) headers[i] = "column_" + (i + 1);
-        dataStart = 0;
+        // 헤더가 없는 경우 첫 행도 데이터로 포함
+        Map<String, String> firstMap = new HashMap<>();
+        for (int j = 0; j < headers.length && j < firstRow.length; j++)
+          firstMap.put(headers[j], firstRow[j]);
+        List<Map<String, String>> result = new ArrayList<>();
+        result.add(firstMap);
+        String[] row;
+        while (result.size() < maxRows && (row = reader.readNext()) != null) {
+          Map<String, String> rowMap = new HashMap<>();
+          for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
+          result.add(rowMap);
+        }
+        return result;
       }
       List<Map<String, String>> result = new ArrayList<>();
-      int limit = Math.min(allRows.size() - dataStart, maxRows);
-      for (int i = dataStart; i < dataStart + limit; i++) {
-        String[] row = allRows.get(i);
+      String[] row;
+      while (result.size() < maxRows && (row = reader.readNext()) != null) {
         Map<String, String> rowMap = new HashMap<>();
         for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
         result.add(rowMap);
@@ -444,10 +459,8 @@ public class FileParserService {
   }
 
   /**
-   * InputStream 기반 CSVReader 빌더.
-   * AUTO 인코딩인 경우: BufferedInputStream에 mark를 설정하고 선행 바이트를 읽어
-   * 인코딩을 감지한 뒤 reset()으로 스트림 처음으로 돌아간다.
-   * mark를 지원하지 않는 InputStream이면 BufferedInputStream으로 감싼다.
+   * InputStream 기반 CSVReader 빌더. AUTO 인코딩인 경우: BufferedInputStream에 mark를 설정하고 선행 바이트를 읽어 인코딩을 감지한
+   * 뒤 reset()으로 스트림 처음으로 돌아간다. mark를 지원하지 않는 InputStream이면 BufferedInputStream으로 감싼다.
    */
   private CSVReader buildCsvReaderFromStream(InputStream inputStream, ParseOptions opts)
       throws IOException {

@@ -7,11 +7,15 @@ vi.mock('fs/promises', () => ({
     mkdir: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn().mockResolvedValue(undefined),
     rm: vi.fn().mockResolvedValue(undefined),
+    readdir: vi.fn().mockResolvedValue([]),
+    stat: vi.fn().mockResolvedValue({ mtimeMs: Date.now() }),
+    unlink: vi.fn().mockResolvedValue(undefined),
+    readFile: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
   },
 }));
 
 import fs from 'fs/promises';
-import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta } from './file-downloader.js';
+import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, purgeExpiredSessionAttachments } from './file-downloader.js';
 import type { FireHubApiClient } from '../mcp/api-client.js';
 
 const TEST_DIR = '/tmp/test-chat-files';
@@ -241,5 +245,73 @@ describe('toAttachmentMeta', () => {
   it('returns empty array for empty input', () => {
     const result = toAttachmentMeta([]);
     expect(result).toEqual([]);
+  });
+});
+
+describe('purgeExpiredSessionAttachments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // readdir 기본: 빈 디렉터리
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: Date.now() });
+    (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  });
+
+  // FD-P01: 디렉터리 없으면 아무 것도 하지 않음
+  it('FD-P01: silently returns when attachments directory does not exist', async () => {
+    (fs.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    await expect(purgeExpiredSessionAttachments()).resolves.toBeUndefined();
+    expect(fs.unlink).not.toHaveBeenCalled();
+  });
+
+  // FD-P02: TTL 이내 파일은 삭제하지 않음
+  it('FD-P02: does not delete files within TTL', async () => {
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-abc.json']);
+    // mtimeMs = 현재 시각 (만료 안 됨)
+    (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: Date.now() });
+
+    await purgeExpiredSessionAttachments();
+
+    expect(fs.unlink).not.toHaveBeenCalled();
+  });
+
+  // FD-P03: TTL 초과 파일은 삭제
+  it('FD-P03: deletes expired sidecar files older than 7 days', async () => {
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['old-session.json', 'recent.json']);
+    const EIGHT_DAYS_AGO = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    (fs.stat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ mtimeMs: EIGHT_DAYS_AGO }) // old-session.json → 만료
+      .mockResolvedValueOnce({ mtimeMs: Date.now() });    // recent.json → 유효
+
+    await purgeExpiredSessionAttachments();
+
+    expect(fs.unlink).toHaveBeenCalledTimes(1);
+    expect((fs.unlink as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('old-session.json');
+  });
+
+  // FD-P04: .json 확장자가 아닌 파일은 무시
+  it('FD-P04: ignores non-json files in the directory', async () => {
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session.json', 'README.txt']);
+    (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: 0 }); // 무조건 만료
+
+    await purgeExpiredSessionAttachments();
+
+    // README.txt는 stat도 호출되지 않아야 함
+    expect(fs.stat).toHaveBeenCalledTimes(1);
+    expect(fs.unlink).toHaveBeenCalledTimes(1);
+  });
+
+  // FD-P05: 개별 파일 처리 실패는 전체를 중단하지 않음
+  it('FD-P05: continues purging other files when one file fails', async () => {
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['a.json', 'b.json']);
+    const EIGHT_DAYS_AGO = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: EIGHT_DAYS_AGO });
+    (fs.unlink as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('Permission denied')) // a.json 실패
+      .mockResolvedValueOnce(undefined);                    // b.json 성공
+
+    await expect(purgeExpiredSessionAttachments()).resolves.toBeUndefined();
+    expect(fs.unlink).toHaveBeenCalledTimes(2);
   });
 });
