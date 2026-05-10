@@ -60,4 +60,32 @@ class SlackInboundControllerTest {
                 .content(objectMapper.writeValueAsString(body)))
         .andExpect(status().isUnauthorized());
   }
+
+  /** 잘못된 토큰은 401을 반환해야 한다 — 타이밍 공격 방어(MessageDigest.isEqual)로 변경된 후에도 동등 비교가 유지되는지 회귀 검증. */
+  @Test
+  void inbound_잘못된_Internal_토큰_401() throws Exception {
+    var body = Map.of("teamId", "T123", "event", Map.of("type", "message"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/channels/slack/inbound")
+                .header("Authorization", "Internal wrong-token-value")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)))
+        .andExpect(status().isUnauthorized());
+  }
+
+  /** 토큰 길이가 다른 경우에도 동등하지 않게 처리되어야 한다 (MessageDigest.isEqual 길이 불일치 케이스). */
+  @Test
+  void inbound_길이가_다른_Internal_토큰_401() throws Exception {
+    var body = Map.of("teamId", "T123", "event", Map.of("type", "message"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/channels/slack/inbound")
+                .header("Authorization", "Internal short")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)))
+        .andExpect(status().isUnauthorized());
+  }
 }
