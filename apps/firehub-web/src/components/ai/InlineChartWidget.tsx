@@ -166,6 +166,8 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
 
 interface InlineChartWidgetProps {
   sql: string;
+  // AI가 전달하는 분석 제목 — 있으면 헤더에 표시, 없으면 차트 유형명으로 폴백
+  title?: string;
   chartType: ChartType;
   config: ChartConfig;
   columns: string[];
@@ -175,6 +177,7 @@ interface InlineChartWidgetProps {
 
 export function InlineChartWidget({
   sql: sqlText,
+  title,
   chartType,
   config,
   columns,
@@ -183,15 +186,25 @@ export function InlineChartWidget({
   const [sqlOpen, setSqlOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  // 헤더 표시 우선순위: title > 차트 유형명. 둘 다 trim 후 비어 있으면 chartType 키 그대로.
+  const trimmedTitle = title?.trim();
+  const headerLabel = trimmedTitle && trimmedTitle.length > 0
+    ? trimmedTitle
+    : (CHART_TYPE_LABELS[chartType] ?? chartType);
+  // title이 있으면 차트 유형명을 보조 라벨로 표시(맥락 유지). 없으면 행수만 표시.
+  const subLabel = trimmedTitle && trimmedTitle.length > 0
+    ? `${CHART_TYPE_LABELS[chartType] ?? chartType} · ${rows.length}건`
+    : `${rows.length}건`;
+
   return (
     <div className="my-2 rounded-lg border border-border bg-card overflow-hidden min-w-[min(400px,100%)]">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
-        <span className="text-sm font-medium text-card-foreground">
-          {CHART_TYPE_LABELS[chartType] ?? chartType}
+        <span className="text-sm font-medium text-card-foreground" data-testid="inline-chart-title">
+          {headerLabel}
         </span>
-        <span className="text-xs text-muted-foreground ml-1">
-          ({rows.length}건)
+        <span className="text-xs text-muted-foreground ml-1" data-testid="inline-chart-sublabel">
+          ({subLabel})
         </span>
       </div>
 

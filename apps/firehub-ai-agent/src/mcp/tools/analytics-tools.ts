@@ -228,6 +228,7 @@ export function registerAnalyticsTools(
       '채팅에 인라인 차트를 표시합니다. execute_analytics_query로 조회한 데이터를 차트로 시각화할 때 사용합니다.',
       {
         sql: z.string().describe('차트 데이터를 조회한 SQL 쿼리 (참조용 표시)'),
+        title: z.string().optional().describe('차트 헤더에 표시할 분석 제목 (예: "출동 유형별 비율"). 미전달 시 차트 유형명으로 폴백.'),
         chartType: z.enum(CHART_TYPE_VALUES).describe('차트 유형'),
         config: z.object({
           xAxis: z.string().describe('X축 컬럼명'),
@@ -252,6 +253,7 @@ export function registerAnalyticsTools(
       },
       async (args: {
         sql: string;
+        title?: string;
         chartType: string;
         config: { xAxis: string; yAxis: string[]; groupBy?: string; stacked?: boolean; spatialColumn?: string;
           bins?: number; valueColumn?: string; min?: number; max?: number; target?: number;
@@ -267,6 +269,7 @@ export function registerAnalyticsTools(
           displayed: true,
           chartType: args.chartType,
           rowCount: args.rows.length,
+          title: args.title,
         });
       },
     ),

@@ -474,6 +474,39 @@ describe('Analytics MCP Tools', () => {
       }
     });
 
+    it('should accept optional title and echo it in result (이슈 #203)', async () => {
+      // title은 프론트엔드 인라인 차트 헤더에 표시되는 분석 제목.
+      // 미전달 시 폴백, 전달 시 결과에 포함되어 클라이언트가 렌더링 시 사용한다.
+      const result = await invokeTool(server, 'show_chart', {
+        sql: 'SELECT category, count FROM data."incidents" GROUP BY category',
+        title: '출동 유형별 비율',
+        chartType: 'PIE',
+        config: { xAxis: 'category', yAxis: ['count'] },
+        columns: ['category', 'count'],
+        rows: [
+          { category: '화재', count: 10 },
+          { category: '구조', count: 5 },
+        ],
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.title).toBe('출동 유형별 비율');
+    });
+
+    it('should accept show_chart without title (폴백 동작 — 기존 호출 호환)', async () => {
+      const result = await invokeTool(server, 'show_chart', {
+        sql: 'SELECT 1',
+        chartType: 'BAR',
+        config: { xAxis: 'a', yAxis: ['b'] },
+        columns: ['a', 'b'],
+        rows: [{ a: 'x', b: 1 }],
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.title).toBeUndefined();
+    });
+
     it('should reject invalid chartType via Zod validation', async () => {
       const result = await invokeTool(server, 'show_chart', {
         sql: 'SELECT 1',

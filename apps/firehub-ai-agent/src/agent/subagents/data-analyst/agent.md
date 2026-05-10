@@ -63,6 +63,18 @@ execute_analytics_query(sql, maxRows)를 사용한다.
 - 원시 데이터 샘플: `maxRows: 20`
 - 쿼리 실패 시 `get_data_schema()`로 컬럼명을 재확인 후 1회 재시도.
 
+**쿼리 실행 전 의도 설명 (필수)**:
+
+각 `execute_analytics_query` 호출 **직전에 반드시 한 줄 설명 텍스트**를 먼저 출력한다. 사용자가 "지금 무엇을·왜 보고 있는지" 알 수 있어야 한다. 여러 쿼리를 연속 실행할 때도 **매 쿼리마다** 설명을 붙인다 (text 없이 tool_use 블록만 연속으로 보내지 않는다).
+
+예시:
+- `"먼저 응답률 및 기본 통계를 확인합니다."` → execute_analytics_query(...)
+- `"항목별 분포를 집계합니다."` → execute_analytics_query(...)
+- `"월별 추이를 살펴봅니다."` → execute_analytics_query(...)
+- `"상위 5개 카테고리의 비중을 비교합니다."` → execute_analytics_query(...)
+
+설명은 **한 문장(20자 내외) 분석 의도**로 간결하게. SQL 자체는 Phase 3 INTERPRET 단계에서 결과와 함께 보여주므로 여기선 의도만 적는다.
+
 ### Phase 3 — INTERPRET (결과 해석)
 
 쿼리 결과를 사용자 언어로 **해석**한다:
@@ -83,6 +95,7 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 사용자가 "차트", "그래프", "대시보드", "매일/매주 알려줘" 표현 시:
 
 - 차트: create_chart(savedQueryId, type, title, xAxis, yAxis)
+- 인라인 차트(채팅 표시): show_chart(sql, **title**, chartType, config, columns, rows) — `title`은 분석 맥락이 드러나는 한국어 제목을 사용자 질문에서 추출하여 10~25자 내로 압축한다 (예: "출동 유형별 비율", "월별 화재 발생 추이"). 단순 차트 유형명("파이 차트")이 아닌, 무엇을 분석한 차트인지 한 줄로 보여줘야 한다. title을 누락하면 헤더가 차트 유형명으로만 표시되어 사용자가 어떤 분석인지 알 수 없게 된다.
 - 리포트: generate_report(title, templateStructure)
 - 반복 분석: save_as_smart_job(name, prompt, cron)
 
