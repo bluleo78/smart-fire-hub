@@ -183,8 +183,19 @@ export function InlineChartWidget({
   columns,
   rows,
 }: InlineChartWidgetProps) {
-  const [sqlOpen, setSqlOpen] = useState(false);
+  // SQL 보기 다이얼로그(전체 SQL을 모달로 표시 — 인라인 한 줄 표시 한계 해소, #204)
+  const [sqlDialogOpen, setSqlDialogOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+
+  // 클립보드 복사 — 모달 안에서 전체 SQL을 빠르게 복사할 수 있도록 제공
+  async function handleCopySql() {
+    try {
+      await navigator.clipboard.writeText(sqlText);
+      toast.success('SQL이 복사되었습니다.');
+    } catch {
+      toast.error('복사에 실패했습니다.');
+    }
+  }
 
   // 헤더 표시 우선순위: title > 차트 유형명. 둘 다 trim 후 비어 있으면 chartType 키 그대로.
   const trimmedTitle = title?.trim();
@@ -221,31 +232,58 @@ export function InlineChartWidget({
         </ChartErrorBoundary>
       </div>
 
-      {/* SQL collapsible */}
+      {/* SQL 보기 — 인라인 펼침 대신 모달로 전체 SQL 표시 (#204).
+          긴 CTE/서브쿼리도 줄바꿈+세로 스크롤로 확인 가능하도록 다이얼로그에서 표시한다. */}
       <div className="border-t border-border">
         <button
           type="button"
+          data-testid="inline-chart-sql-toggle"
           className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
-          onClick={() => setSqlOpen((v) => !v)}
+          onClick={() => setSqlDialogOpen(true)}
         >
-          <span className="transition-transform duration-200" style={{ display: 'inline-block', transform: sqlOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-            ▶
-          </span>
           SQL 보기
         </button>
-        {sqlOpen && (
-          <div className="px-3 pb-3">
+      </div>
+
+      {/* SQL 모달 — 전체 SQL을 구문 강조 + 줄바꿈 + 세로 스크롤로 표시. 복사 버튼 제공. */}
+      <Dialog open={sqlDialogOpen} onOpenChange={setSqlDialogOpen}>
+        <DialogContent className="sm:max-w-[720px]">
+          <DialogHeader>
+            <DialogTitle>실행 SQL</DialogTitle>
+            <DialogDescription className="sr-only">
+              차트 생성에 사용된 전체 SQL 쿼리입니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div
+            className="max-h-[60vh] overflow-auto rounded-md"
+            data-testid="inline-chart-sql-dialog-content"
+          >
             <SyntaxHighlighter
               style={codeStyle}
               language="sql"
               PreTag="div"
-              customStyle={{ margin: 0, fontSize: '0.75rem', borderRadius: '0.375rem' }}
+              wrapLongLines
+              customStyle={{
+                margin: 0,
+                fontSize: '0.8125rem',
+                borderRadius: '0.375rem',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
             >
               {sqlText}
             </SyntaxHighlighter>
           </div>
-        )}
-      </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSqlDialogOpen(false)}>
+              닫기
+            </Button>
+            <Button onClick={handleCopySql} data-testid="inline-chart-sql-copy">
+              복사
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Footer */}
       <div className="flex justify-end px-3 py-2 border-t border-border bg-muted/20">

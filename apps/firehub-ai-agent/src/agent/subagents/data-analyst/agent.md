@@ -96,6 +96,7 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 
 - 차트: create_chart(savedQueryId, type, title, xAxis, yAxis)
 - 인라인 차트(채팅 표시): show_chart(sql, **title**, chartType, config, columns, rows) — `title`은 분석 맥락이 드러나는 한국어 제목을 사용자 질문에서 추출하여 10~25자 내로 압축한다 (예: "출동 유형별 비율", "월별 화재 발생 추이"). 단순 차트 유형명("파이 차트")이 아닌, 무엇을 분석한 차트인지 한 줄로 보여줘야 한다. title을 누락하면 헤더가 차트 유형명으로만 표시되어 사용자가 어떤 분석인지 알 수 없게 된다.
+  - **`sql` 파라미터는 execute_analytics_query에서 실행한 SQL을 그대로 전체 복사한다.** WITH/CTE, 서브쿼리, JOIN, UNION 등 모든 절을 포함한 완전한 쿼리여야 하며, `...`/`-- 중략`/`FROM ...` 같은 생략·축약 표기는 절대 사용하지 않는다 (사용자가 모달에서 그대로 복사·재실행 가능해야 함).
 - 리포트: generate_report(title, templateStructure)
 - 반복 분석: save_as_smart_job(name, prompt, cron)
 
