@@ -236,14 +236,16 @@ class FileParserServiceTest {
     List<Map<String, String>> rows = service.parse(data, "xlsx");
 
     assertThat(rows).hasSize(2);
+    // POI XSSFSheetXMLHandler는 불리언 셀을 "TRUE"/"FALSE"(대문자)로 직렬화한다.
+    // 문자열 셀에 "TRUE"/"FALSE"를 입력한 경우 값 손상을 방지하기 위해 정규화를 제거하였다.
     assertThat(rows.get(0))
         .containsEntry("name", "Alice")
         .containsEntry("age", "30")
-        .containsEntry("active", "true");
+        .containsEntry("active", "TRUE");
     assertThat(rows.get(1))
         .containsEntry("name", "Bob")
         .containsEntry("age", "25.5")
-        .containsEntry("active", "false");
+        .containsEntry("active", "FALSE");
   }
 
   @Test
@@ -608,7 +610,7 @@ class FileParserServiceTest {
     assertThat(rows.get(0))
         .containsEntry("name", "Alice")
         .containsEntry("age", "30")
-        .containsEntry("active", "true");
+        .containsEntry("active", "TRUE");
   }
 
   @Test

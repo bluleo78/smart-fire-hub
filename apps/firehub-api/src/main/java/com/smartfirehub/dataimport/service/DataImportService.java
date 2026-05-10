@@ -68,9 +68,10 @@ public class DataImportService {
     }
 
     String fileType = getFileType(originalFilename);
-    if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
+    // XLS(레거시 바이너리 포맷)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
+    if (!fileType.equals("csv") && !fileType.equals("xlsx") && !fileType.equals("xls")) {
       throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV and XLSX are supported.");
+          "Unsupported file type. Only CSV, XLSX, and XLS are supported.");
     }
 
     // getInputStream()으로 스트리밍 처리 — getBytes()는 대용량 파일 OOM 위험(#145)
@@ -116,9 +117,10 @@ public class DataImportService {
     }
 
     String fileType = getFileType(originalFilename);
-    if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
+    // XLS(레거시 바이너리 포맷)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
+    if (!fileType.equals("csv") && !fileType.equals("xlsx") && !fileType.equals("xls")) {
       throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV and XLSX are supported.");
+          "Unsupported file type. Only CSV, XLSX, and XLS are supported.");
     }
 
     // getInputStream()으로 스트리밍 처리 — getBytes()는 대용량 파일 OOM 위험(#145)
@@ -209,9 +211,10 @@ public class DataImportService {
     }
 
     String fileType = getFileType(originalFilename);
-    if (!fileType.equals("csv") && !fileType.equals("xlsx")) {
+    // XLS(레거시 바이너리 포맷)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
+    if (!fileType.equals("csv") && !fileType.equals("xlsx") && !fileType.equals("xls")) {
       throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV and XLSX are supported.");
+          "Unsupported file type. Only CSV, XLSX, and XLS are supported.");
     }
 
     long fileSize = file.getSize();

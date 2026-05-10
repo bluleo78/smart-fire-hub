@@ -12,10 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.*;
-import org.apache.poi.ss.usermodel.*;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -178,34 +175,37 @@ public class FileParserService {
   // Excel (no ParseOptions — Excel handles encoding internally)
   // -----------------------------------------------------------------------
 
+  /**
+   * XLSX/XLS 파일 전체를 파싱하여 헤더-값 맵의 리스트로 반환한다.
+   *
+   * <p>첫 행을 헤더로 인식하고, 나머지 행을 {헤더: 값} 형태의 Map으로 누적한다. ExcelStreamingParser를 통해 DOM 없이 스트리밍 방식으로
+   * 처리한다.
+   */
   public List<Map<String, String>> parseExcel(InputStream inputStream) throws Exception {
-    try (Workbook workbook = WorkbookFactory.create(inputStream)) {
-      Sheet sheet = workbook.getSheetAt(0);
-      Iterator<Row> rowIterator = sheet.iterator();
+    // 첫 행을 헤더로 캡처하기 위해 배열로 감싼다(람다 캡처 제약 우회)
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+    final List<Map<String, String>> result = new ArrayList<>();
 
-      if (!rowIterator.hasNext()) {
-        return Collections.emptyList();
-      }
+    ExcelStreamingParser.parse(
+        inputStream,
+        (idx, cells) -> {
+          if (headerHolder[0] == null) {
+            // 첫 행 = 헤더
+            headerHolder[0] = new ArrayList<>(cells);
+            return true;
+          }
+          List<String> headers = headerHolder[0];
+          Map<String, String> row = new HashMap<>();
+          for (int i = 0; i < headers.size(); i++) {
+            String value = i < cells.size() ? cells.get(i) : "";
+            row.put(headers.get(i), value);
+          }
+          result.add(row);
+          return true;
+        });
 
-      Row headerRow = rowIterator.next();
-      List<String> headers = new ArrayList<>();
-      for (Cell cell : headerRow) {
-        headers.add(getCellValueAsString(cell));
-      }
-
-      List<Map<String, String>> result = new ArrayList<>();
-      while (rowIterator.hasNext()) {
-        Row row = rowIterator.next();
-        Map<String, String> rowMap = new HashMap<>();
-        for (int i = 0; i < headers.size(); i++) {
-          Cell cell = row.getCell(i);
-          String value = cell != null ? getCellValueAsString(cell) : "";
-          rowMap.put(headers.get(i), value);
-        }
-        result.add(rowMap);
-      }
-      return result;
-    }
+    return result;
   }
 
   // -----------------------------------------------------------------------
@@ -491,92 +491,73 @@ public class FileParserService {
   // Private Excel helpers (no ParseOptions)
   // -----------------------------------------------------------------------
 
+  /**
+   * XLSX/XLS 파일의 첫 행(헤더)만 파싱하여 반환한다.
+   *
+   * <p>첫 행 수신 직후 false를 반환해 파싱을 조기 종료한다(early-exit). 대용량 파일에서 불필요한 DOM 적재 없이 빠르게 헤더를 추출한다.
+   */
   private List<String> parseHeadersExcel(InputStream inputStream) throws Exception {
-    try (Workbook workbook = WorkbookFactory.create(inputStream)) {
-      Sheet sheet = workbook.getSheetAt(0);
-      Row headerRow = sheet.getRow(0);
-      if (headerRow == null) {
-        return Collections.emptyList();
-      }
-      List<String> headers = new ArrayList<>();
-      for (Cell cell : headerRow) {
-        headers.add(getCellValueAsString(cell));
-      }
-      return headers;
-    }
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+
+    ExcelStreamingParser.parse(
+        inputStream,
+        (idx, cells) -> {
+          headerHolder[0] = new ArrayList<>(cells);
+          return false; // 첫 행 후 즉시 중단
+        });
+
+    return headerHolder[0] != null ? headerHolder[0] : Collections.emptyList();
   }
 
+  /**
+   * XLSX/XLS 파일에서 헤더를 포함하여 최대 maxRows개의 샘플 데이터 행을 파싱한다.
+   *
+   * <p>결과가 maxRows에 도달하면 false를 반환하여 파싱을 조기 종료한다. 대용량 파일에서 미리보기 용도로 일부만 읽을 때 활용한다.
+   */
   private List<Map<String, String>> parseSampleRowsExcel(InputStream inputStream, int maxRows)
       throws Exception {
-    try (Workbook workbook = WorkbookFactory.create(inputStream)) {
-      Sheet sheet = workbook.getSheetAt(0);
-      Iterator<Row> rowIterator = sheet.iterator();
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+    final List<Map<String, String>> result = new ArrayList<>();
 
-      if (!rowIterator.hasNext()) {
-        return Collections.emptyList();
-      }
-
-      Row headerRow = rowIterator.next();
-      List<String> headers = new ArrayList<>();
-      for (Cell cell : headerRow) {
-        headers.add(getCellValueAsString(cell));
-      }
-
-      List<Map<String, String>> result = new ArrayList<>();
-      int count = 0;
-      while (rowIterator.hasNext() && count < maxRows) {
-        Row row = rowIterator.next();
-        Map<String, String> rowMap = new HashMap<>();
-        for (int i = 0; i < headers.size(); i++) {
-          Cell cell = row.getCell(i);
-          String value = cell != null ? getCellValueAsString(cell) : "";
-          rowMap.put(headers.get(i), value);
-        }
-        result.add(rowMap);
-        count++;
-      }
-      return result;
-    }
-  }
-
-  private int countRowsExcel(InputStream inputStream) throws Exception {
-    try (Workbook workbook = WorkbookFactory.create(inputStream)) {
-      Sheet sheet = workbook.getSheetAt(0);
-      int lastRowNum = sheet.getLastRowNum();
-      return Math.max(0, lastRowNum);
-    }
-  }
-
-  private String getCellValueAsString(Cell cell) {
-    if (cell == null) {
-      return "";
-    }
-    return switch (cell.getCellType()) {
-      case STRING -> cell.getStringCellValue();
-      case NUMERIC -> {
-        if (DateUtil.isCellDateFormatted(cell)) {
-          Date date = cell.getDateCellValue();
-          LocalDateTime ldt = date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
-          yield ldt.toString();
-        } else {
-          double numericValue = cell.getNumericCellValue();
-          if (numericValue == Math.floor(numericValue)) {
-            yield String.valueOf((long) numericValue);
-          } else {
-            yield String.valueOf(numericValue);
+    ExcelStreamingParser.parse(
+        inputStream,
+        (idx, cells) -> {
+          if (headerHolder[0] == null) {
+            // 첫 행 = 헤더
+            headerHolder[0] = new ArrayList<>(cells);
+            return true;
           }
-        }
-      }
-      case BOOLEAN -> String.valueOf(cell.getBooleanCellValue());
-      case FORMULA -> {
-        try {
-          yield String.valueOf(cell.getNumericCellValue());
-        } catch (Exception e) {
-          yield cell.getStringCellValue();
-        }
-      }
-      case BLANK -> "";
-      default -> "";
-    };
+          List<String> headers = headerHolder[0];
+          Map<String, String> row = new HashMap<>();
+          for (int i = 0; i < headers.size(); i++) {
+            String value = i < cells.size() ? cells.get(i) : "";
+            row.put(headers.get(i), value);
+          }
+          result.add(row);
+          return result.size() < maxRows; // maxRows 도달 시 중단
+        });
+
+    return result;
+  }
+
+  /**
+   * XLSX/XLS 파일의 데이터 행 수(헤더 제외)를 반환한다.
+   *
+   * <p>콜백으로 전체 행을 카운트한 뒤 헤더 1행을 빼서 반환한다. 기존 lastRowNum 기반 동작(0-based 인덱스 = 데이터 행 수)과 동등하다.
+   */
+  private int countRowsExcel(InputStream inputStream) throws Exception {
+    final int[] counter = new int[] {0};
+
+    ExcelStreamingParser.parse(
+        inputStream,
+        (idx, cells) -> {
+          counter[0]++;
+          return true;
+        });
+
+    // 헤더 행 1개를 제외한 데이터 행 수 반환
+    return Math.max(0, counter[0] - 1);
   }
 }

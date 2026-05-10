@@ -16,9 +16,11 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -319,6 +321,39 @@ class DataImportServiceTest extends IntegrationTestBase {
                     org.jooq.impl.DSL.table(
                         org.jooq.impl.DSL.name("data", "import_test_dataset"))));
     assertThat(count).isEqualTo(1000);
+  }
+
+  /**
+   * .xls 확장자 파일이 UnsupportedFileTypeException 없이 수락되는지 검증한다. XLS 허용 화이트리스트 추가(Task 6) 이후
+   * importFile이 PENDING 상태를 반환해야 한다.
+   */
+  @Test
+  void importFile_xlsExtension_isAccepted() throws Exception {
+    // Given: HSSFWorkbook으로 단순 XLS 파일(헤더 "name", 데이터 행 "alice") 생성
+    HSSFWorkbook workbook = new HSSFWorkbook();
+    var sheet = workbook.createSheet("Sheet1");
+    var header = sheet.createRow(0);
+    header.createCell(0).setCellValue("name");
+    var dataRow = sheet.createRow(1);
+    dataRow.createCell(0).setCellValue("alice");
+
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    workbook.write(baos);
+    workbook.close();
+    byte[] xlsBytes = baos.toByteArray();
+
+    MockMultipartFile file =
+        new MockMultipartFile("file", "sample.xls", "application/vnd.ms-excel", xlsBytes);
+
+    // When: importFile 호출 시 UnsupportedFileTypeException이 발생하지 않아야 함
+    ImportStartResponse response =
+        dataImportService.importFile(
+            testDatasetId, file, null, testUserId, "Test User", "127.0.0.1", "TestAgent");
+
+    // Then: 정상적으로 잡이 등록되어 PENDING 상태 반환
+    assertThat(response).isNotNull();
+    assertThat(response.jobId()).isNotNull();
+    assertThat(response.status()).isEqualTo("PENDING");
   }
 
   private String createTempCsvFile(String content) throws Exception {
