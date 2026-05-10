@@ -307,13 +307,28 @@ public class PipelineService {
 
   @Transactional(readOnly = true)
   public ExecutionDetailResponse getExecutionById(Long pipelineId, Long executionId) {
-    // Verify pipeline exists
+    // 파이프라인 존재 확인
     pipelineRepository
         .findById(pipelineId)
         .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
 
-    return executionRepository
-        .findExecutionById(executionId)
-        .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + executionId));
+    // 실행 조회 후, 해당 실행이 요청한 파이프라인에 속하는지 소유권 검증 (#188).
+    // pipelineId가 일치하지 않으면 다른 파이프라인의 실행 상세가 노출되므로
+    // 존재 여부 자체를 숨기기 위해 404(PipelineNotFoundException) 반환.
+    ExecutionDetailResponse execution =
+        executionRepository
+            .findExecutionById(executionId)
+            .orElseThrow(
+                () ->
+                    new PipelineNotFoundException(
+                        "Execution not found: " + executionId + " in pipeline " + pipelineId));
+
+    if (!pipelineId.equals(execution.pipelineId())) {
+      // 크로스-파이프라인 접근 차단. 정보 노출 방지를 위해 동일한 not-found 메시지 형식 사용.
+      throw new PipelineNotFoundException(
+          "Execution not found: " + executionId + " in pipeline " + pipelineId);
+    }
+
+    return execution;
   }
 }

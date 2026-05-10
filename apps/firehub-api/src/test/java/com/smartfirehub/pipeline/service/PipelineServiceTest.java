@@ -554,4 +554,48 @@ class PipelineServiceTest extends IntegrationTestBase {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("onError");
   }
+
+  /**
+   * 회귀 테스트 (#188): execution이 요청한 pipelineId에 속하지 않으면 PipelineNotFoundException(404)
+   * 으로 거부해야 한다 — 그렇지 않으면 다른 파이프라인 실행 상세가 노출된다.
+   */
+  @Test
+  void getExecutionById_otherPipelinesExecution_throwsNotFound() {
+    // Given: 두 개의 파이프라인 + 첫 번째 파이프라인에서만 실행 생성
+    PipelineDetailResponse pipelineA =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("Pipeline A", "desc", List.of()), testUserId);
+    PipelineDetailResponse pipelineB =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("Pipeline B", "desc", List.of()), testUserId);
+
+    PipelineExecutionResponse executionOfA =
+        pipelineService.executePipeline(pipelineA.id(), testUserId);
+
+    // When/Then: pipelineB 컨텍스트로 executionOfA 조회 시 404
+    assertThatThrownBy(
+            () -> pipelineService.getExecutionById(pipelineB.id(), executionOfA.id()))
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessageContaining("Execution not found");
+
+    // Sanity: 정상 컨텍스트(pipelineA)에서는 정상 조회되어야 함
+    ExecutionDetailResponse detail =
+        pipelineService.getExecutionById(pipelineA.id(), executionOfA.id());
+    assertThat(detail.id()).isEqualTo(executionOfA.id());
+    assertThat(detail.pipelineId()).isEqualTo(pipelineA.id());
+  }
+
+  /**
+   * 회귀 테스트 (#188): 존재하지 않는 execution도 동일하게 PipelineNotFoundException으로 통일.
+   */
+  @Test
+  void getExecutionById_nonexistentExecution_throwsNotFound() {
+    PipelineDetailResponse pipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("Pipeline X", "desc", List.of()), testUserId);
+
+    assertThatThrownBy(() -> pipelineService.getExecutionById(pipeline.id(), 999_999_999L))
+        .isInstanceOf(PipelineNotFoundException.class)
+        .hasMessageContaining("Execution not found");
+  }
 }
