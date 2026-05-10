@@ -12,6 +12,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +77,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "step1",
                 "First step",
                 "SQL",
-                "SELECT * FROM input",
+                "SELECT * FROM data.src_table",
                 outputDatasetId,
                 List.of(inputDatasetId),
                 null),
@@ -84,7 +85,7 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "step2",
                 "Second step",
                 "SQL",
-                "SELECT * FROM output WHERE condition",
+                "SELECT * FROM data.dst_table WHERE id = 1",
                 inputDatasetId,
                 List.of(outputDatasetId),
                 List.of("step1")));
@@ -118,6 +119,50 @@ class PipelineServiceTest extends IntegrationTestBase {
     // Verify dependencies
     Long depCount = dsl.selectCount().from(PIPELINE_STEP_DEPENDENCY).fetchOne(0, Long.class);
     assertThat(depCount).isGreaterThanOrEqualTo(1);
+  }
+
+  // SQL 안전 검증 통합 회귀 (#136)
+
+  @Test
+  void createPipeline_sqlStepWithPublicSchemaReference_isRejected() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1",
+                "unsafe step",
+                "SQL",
+                "SELECT * FROM public.\"user\"",
+                outputDatasetId,
+                null,
+                null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Unsafe Pipeline Schema", "test", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("data");
+  }
+
+  @Test
+  void createPipeline_sqlStepWithMultiStatement_isRejected() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1",
+                "multi stmt step",
+                "SQL",
+                "SELECT 1; SELECT 2",
+                outputDatasetId,
+                null,
+                null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Unsafe Pipeline Multi", "test", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("멀티");
   }
 
   @Test

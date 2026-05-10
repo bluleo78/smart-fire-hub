@@ -19,6 +19,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -71,6 +72,7 @@ public class PipelineAsyncRunner {
   private final ExecutorClient executorClient;
   private final AiClassifyExecutor aiClassifyExecutor;
   private final TempDatasetService tempDatasetService;
+  private final SqlValidator sqlValidator;
 
   /** {@code @Qualifier("pipelineDslContext")}가 필요하여 명시적 생성자 주입을 사용한다. */
   public PipelineAsyncRunner(
@@ -91,7 +93,8 @@ public class PipelineAsyncRunner {
       PermissionChecker permissionChecker,
       ExecutorClient executorClient,
       AiClassifyExecutor aiClassifyExecutor,
-      TempDatasetService tempDatasetService) {
+      TempDatasetService tempDatasetService,
+      SqlValidator sqlValidator) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -110,6 +113,7 @@ public class PipelineAsyncRunner {
     this.executorClient = executorClient;
     this.aiClassifyExecutor = aiClassifyExecutor;
     this.tempDatasetService = tempDatasetService;
+    this.sqlValidator = sqlValidator;
   }
 
   /**
@@ -345,6 +349,9 @@ public class PipelineAsyncRunner {
       if ("SQL".equals(step.scriptType())) {
         String sql = step.scriptContent().trim();
         sql = resolveStepReferences(sql, pipelineId, step.stepOrder());
+        // 실행 직전 재검증 — 저장 이후 정책 변경/우회 방지. probe/wrappedSql 결합은 이 검증 통과 후이므로
+        // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
+        sqlValidator.validate(sql);
         boolean isSelect = isSelectStatement(sql);
 
         // SELECT이고 outputDatasetId가 없으면 임시 데이터셋 자동 생성

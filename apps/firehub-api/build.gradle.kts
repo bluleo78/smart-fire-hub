@@ -87,6 +87,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
     // Markdown → HTML 변환
     implementation("org.commonmark:commonmark:0.24.0")
+    // SQL 파서 — 파이프라인 SQL 스텝 AST 화이트리스트 검증 (#136)
+    implementation("com.github.jsqlparser:jsqlparser:5.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
     // PDF 생성 (Flying Saucer — HTML/CSS → PDF)
     implementation("org.xhtmlrenderer:flying-saucer-pdf-openpdf:9.4.0")

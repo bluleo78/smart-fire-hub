@@ -59,15 +59,13 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
 
   @Test
   void markSent_setsStatus() {
+    // 다른 테스트 컨텍스트의 NotificationDispatchWorker @Scheduled 폴러가 캐시된 채로 백그라운드에서
+    // 계속 claim 할 수 있으므로 claimDue 결과에 의존하지 않고 row id를 직접 조회해 markSent를 검증한다.
     UUID corr = UUID.randomUUID();
     repo.insertIfAbsent(sampleRow("key-sent-" + corr, corr));
 
-    var claimed =
-        repo.claimDue(10_000, "i").stream()
-            .filter(r -> r.correlationId().equals(corr))
-            .findFirst()
-            .orElseThrow();
-    repo.markSent(claimed.id(), "ext-123");
+    long id = repo.findByCorrelation(corr).get(0).id();
+    repo.markSent(id, "ext-123");
 
     var rows = repo.findByCorrelation(corr);
     assertThat(rows.get(0).status()).isEqualTo("SENT");

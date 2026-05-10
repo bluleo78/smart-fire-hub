@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
 import java.util.List;
@@ -36,6 +37,7 @@ public class PipelineService {
   private final UserRepository userRepository;
   private final TriggerRepository triggerRepository;
   private final ObjectMapper objectMapper;
+  private final SqlValidator sqlValidator;
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
@@ -86,6 +88,11 @@ public class PipelineService {
       // Validate PYTHON step outputColumns
       if ("PYTHON".equals(stepRequest.scriptType()) && stepRequest.pythonConfig() != null) {
         validatePythonStep(stepRequest);
+      }
+
+      // SQL 스텝 안전 정책(단일 statement + DML + data 스키마 + 위험 함수 차단) 검증 (#136)
+      if ("SQL".equals(stepRequest.scriptType())) {
+        sqlValidator.validate(stepRequest.scriptContent());
       }
 
       // Save step

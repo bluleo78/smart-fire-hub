@@ -22,6 +22,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -63,6 +64,7 @@ class PipelineAsyncRunnerTest {
   @Mock PermissionChecker permissionChecker;
   @Mock TempDatasetService tempDatasetService;
   @Mock ExecutorClient executorClient;
+  @Mock SqlValidator sqlValidator;
 
   @InjectMocks PipelineAsyncRunner runner;
 

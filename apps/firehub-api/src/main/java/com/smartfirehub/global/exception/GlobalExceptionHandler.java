@@ -26,6 +26,7 @@ import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
@@ -305,6 +306,17 @@ public class GlobalExceptionHandler {
     ErrorResponse response =
         buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+  }
+
+  /**
+   * 파이프라인 SQL 스텝의 안전 정책 위반 — 저장 시 거부 또는 실행 시 거부 모두 동일 매핑. (#136)
+   */
+  @ExceptionHandler(UnsafeSqlException.class)
+  public ResponseEntity<ErrorResponse> handleUnsafeSql(
+      UnsafeSqlException ex, HttpServletRequest request) {
+    log.warn("Unsafe SQL rejected: {}", ex.getMessage());
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
   }
 
   @ExceptionHandler(com.smartfirehub.dataset.exception.SqlQueryException.class)
