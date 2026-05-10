@@ -20,13 +20,14 @@ GitHub Issues의 버그 이슈를 one-shot으로 처리한다.
 | `design` | 본문에 `## 재현` 대신 `## 영향`/`## 비교`. 디자인 토큰 의사결정·시각 캡처가 사람 영역 |
 | `a11y` | WCAG SC 의미 판단·SR 청취·키보드 흐름 검증이 사람 영역. 코드 한 줄 수정으로 안 끝남 |
 | `perf` | 측정값(LCP/INP/CLS)·DevTools 캡처·heap snapshot 비교가 사람 영역 |
-| `security` | 보안 결정은 자동화 부적합 (별도 에스컬레이션 트리거) |
+
+> `security` 라벨은 자동 차단하지 않는다. 코드 레벨 수정(타이밍 공격, JSON 이스케이프, 소유권 검증 등)이 가능한 보안 이슈는 Step 2.1 종합 판단 기준에 따라 자율 처리 가능. 정책·권한 모델 결정이 필요하면 Step 2.1에서 needs_human으로 분기.
 
 ```bash
 # 라벨 조회
 LABELS=$(gh issue view <번호> --json labels -q '.labels[].name' | tr '\n' ' ')
 INCOMPAT_FOUND=""
-for L in design a11y perf security; do
+for L in design a11y perf; do
   echo "$LABELS" | grep -q "$L" && INCOMPAT_FOUND="$L" && break
 done
 ```
@@ -42,7 +43,7 @@ done
 이슈 #<번호>는 `<INCOMPAT_FOUND>` 라벨 — bug perspective 본문 형식이 아닙니다.
 - design/a11y/perf 이슈는 디자인 토큰 의사결정·시각 캡처·SR 청취·측정값 캡처가 필요해
   자율 코드 수정 부적합합니다.
-- security 이슈는 사람 결정 후 close 정책입니다.
+- security 이슈는 처리 범위·정책 결정에 따라 자율 처리 적합성이 달라지므로 Step 2.1 종합 판단을 거칩니다.
 
 진행 옵션:
   (1) 그래도 진행 (사용자가 직접 안내하며 함께 작업)
@@ -96,6 +97,21 @@ gh issue view <번호> --json number,title,body,labels
 - **수정 방향**: `## 수정 방향` 섹션의 권고 수정 방법
 
 원인이 프론트엔드/백엔드 모두에 걸쳐 있는지 파악한다.
+
+### Step 2.1. 사람 개입 필요 여부 종합 판단
+
+분석 후 자율 처리 가능성을 **종합 판단**한다 (단일 항목 매칭 아님). 판단 축은 ai-driven-pilot SKILL.md `3.3.1` 절을 따른다 — 난이도 / 처리 범위 / 결정 사안 / brainstorm·plan 필요 / **전제 검증**. 각 축을 함께 보고 "자율 사이클로 안전하게 끝낼 수 있는가" 확신이 서면 진행, 아니면 needs_human 보고.
+
+**전제 검증 (필수 사전 검사)**: 이슈 본문의 핵심 진단이 도메인/스펙 가정에 의존하는지 점검한다.
+- 본문에 "X여야 한다 / X가 의도일 것이다 / 만약 ~라면 / 추정컨대 / 의도라면" 등의 가정 표현이 있으면 → 강한 needs_human 신호
+- 코드/문서/테스트로 가정의 명시적 근거를 찾을 수 있는지 확인 (예: API 스펙, 도메인 모델 주석, 기존 테스트의 assertion). 근거 없으면 → needs_human
+- explorer가 `## 전제 가정` 섹션을 본문에 포함시킨 경우 무조건 needs_human (가정 자체가 사용자 결정 사안)
+
+needs_human 판단 시:
+- pilot subagent 모드: `RESULT: #<N> / needs_human / <어느 축이 결정적이었는지 한 줄>` 출력 후 종료. pilot이 ai-fix 제거 + 보드 backlog 이동 처리.
+- 사용자 직접 호출 모드: 사용자에게 "이 이슈는 사람 결정이 필요한 부분(...)이 있습니다, 진행할까요?" 확인.
+
+판단 결과 진행이면 Step 2.5로 계속.
 
 ---
 

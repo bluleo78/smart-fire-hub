@@ -384,6 +384,22 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 
 발견된 버그는 GitHub Issues에 즉시 등록 후 **프로젝트 보드에도 추가**한다 (사람이 보드에서 즉시 볼 수 있도록).
 
+#### 등록 전 전제 가정 검증 (필수)
+
+이슈 등록 직전에 **자신의 진단이 도메인/스펙 가정에 의존하는지** 점검한다. 다음 중 하나라도 해당하면 결함이 아닌 사람 결정 사안일 수 있다:
+
+- 본문에 "X여야 한다 / X가 의도일 것이다 / 만약 ~라면 / 추정컨대" 같은 가정 표현이 들어감
+- 코드/문서/테스트로 명시적 스펙 근거를 찾을 수 없고 explorer 자신의 판단에 의존
+- 동일 시스템에 다른 해석 가능성이 존재 (예: username을 일반 ID로 볼 수도 이메일로 볼 수도 있는 경우)
+
+해당 시 처리:
+- `bug` 대신 또는 함께 `needs-decision` 라벨 부착
+- 본문에 `## 전제 가정` 섹션 추가하여 explorer가 채택한 가정과 그 근거(또는 근거 부재)를 명시
+- **`ai-fix` 라벨은 부착하지 않는다** — 사용자가 가정을 확인 후 수동으로 부여
+- 보드 Status는 `backlog` 그대로 (자동 처리 큐 진입 차단)
+
+근거가 명확하고 가정 의존이 없으면 평소대로 등록.
+
 **Perspective별 라벨 매핑** (반드시 perspective에 맞는 라벨을 부착해야 pilot이 올바르게 라우팅):
 
 | Perspective | 기본 라벨 (심각도는 케이스별 조정) | 본문 형식 (Section 7 템플릿) |
@@ -394,7 +410,7 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 | `perf` | `bug,severity:major,perf` (또는 `severity:critical,perf`) | `references/perspectives/perf.md` §7 (측정값·DevTools 캡처 첨부) |
 | security 결함 | `bug,severity:critical,security` (perspective와 무관, 발견 즉시 부착) | bug 본문 + 보안 영향 항목 |
 
-> **이 라벨이 pilot 라우팅의 핵심**: design/a11y/perf/security 라벨이 부착되면 pilot 자율 사이클이 자동으로 사람 큐로 빼서 디자인 토큰·SR 청취·측정값 같은 사람 영역 작업을 보호한다.
+> **이 라벨이 solver 차단의 핵심**: design/a11y/perf 라벨이 부착되면 solver Step 0이 자율 처리 부적합으로 차단한다. `security`는 자동 차단 대상이 아니며 (코드 레벨 fix 가능한 경우 多), Step 2.1 종합 판단으로 진행 여부를 결정한다.
 
 ```bash
 # bug perspective 기본 템플릿 (다른 perspective는 perspectives/<name>.md 참조)
@@ -431,7 +447,7 @@ bash .claude/skills/ai-driven-pilot/scripts/add-to-board.sh "$ISSUE_NUM"
 
 심각도별 라벨: `severity:critical` / `severity:major` / `severity:minor` / `severity:ux`
 
-**보안 이슈는 `security` 라벨 추가**: SQL/DML 우회, 크로스 스키마 접근, IDOR, 권한 우회, 민감 데이터 노출(비밀번호 해시·토큰 등), XSS, CSRF, 대량 할당 등 Section 3 보안 체크리스트로 발견된 버그는 `bug,severity:critical,security` 형태로 등록한다. `security` 라벨은 pilot의 자율 사이클에서 자동 close 차단 → 사람 결정으로 라우팅되는 트리거다.
+**보안 이슈는 `security` 라벨 추가**: SQL/DML 우회, 크로스 스키마 접근, IDOR, 권한 우회, 민감 데이터 노출(비밀번호 해시·토큰 등), XSS, CSRF, 대량 할당 등 Section 3 보안 체크리스트로 발견된 버그는 `bug,severity:critical,security` 형태로 등록한다. `security` 라벨은 솔버 Step 0의 자동 차단 대상이 아니며, Step 2.1 종합 판단(전제 검증 포함)으로 자율 처리/사람 검토 분기.
 
 커버리지 매트릭스의 🔴 항목에는 `gh issue view <번호> --json number,title`로 확인한 이슈 번호를 기록한다.
 

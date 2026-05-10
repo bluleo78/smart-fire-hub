@@ -43,8 +43,10 @@ OPEN + resolved                             ← 검증 대기 (Jira의 RESOLVED 
 | `duplicate` | 중복 닫음 | 사용자 |
 | `wontfix` / `by-design` | 수정 안 함으로 닫음 | 사용자 |
 | `pilot:processing` | pilot 자율 사이클 처리 중 | pilot (작업 종료 시 자동 제거) |
-| `pilot:escalated` | pilot 사이클이 사람 결정으로 넘김 | pilot (사람이 라벨 제거 후에야 재진입) |
+| `ai-fix` | pilot 자율 처리 옵트인 신호 | 사용자/explorer (사람 개입 필요 시 pilot이 자동 제거) |
 | `security` (선택) | 보안 이슈 식별 | explorer/사용자 |
+
+> pilot이 사람 개입 필요로 판단하면 `ai-fix` 라벨을 제거하고 보드 Status를 `backlog`로 이동한다. 별도 `pilot:escalated` 라벨은 사용하지 않는다 (상태는 보드로만 표현).
 
 ## 검색 패턴
 
