@@ -90,6 +90,44 @@ test.describe('MessageBubble — 텍스트 렌더링', () => {
     await expect(page.getByText(codeContent, { exact: false })).toBeVisible({ timeout: 10_000 });
   });
 
+  // 언어 지정 없는 펜스드 코드블록도 CodeBlock 컴포넌트로 렌더링되어 복사 버튼이 노출되어야 한다 (#214)
+  test('언어 지정 없는 펜스드 코드블록도 복사 버튼이 표시된다 (#214)', async ({ authenticatedPage: page }) => {
+    // SSE 본문 내 개행은 반드시 이스케이프된 형태여야 함 (실 개행은 SSE 이벤트를 끊는다)
+    const codeContent = 'plain text snippet\\nsecond line';
+    await sendMessageWithResponse(
+      page,
+      '코드 블록 예시',
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        `data: {"type":"text","content":"예시:\\n\\n\`\`\`\\n${codeContent}\\n\`\`\`"}\n\n`,
+        'data: {"type":"done","inputTokens":12}\n\n',
+      ].join(''),
+    );
+
+    // 코드 내용 렌더링 확인
+    await expect(page.getByText('plain text snippet', { exact: false })).toBeVisible({ timeout: 10_000 });
+
+    // 복사 버튼이 노출되어야 함 — 언어 미지정 펜스드 블록도 CodeBlock으로 처리되어야 한다
+    await expect(page.getByRole('button', { name: '코드 복사' })).toBeVisible({ timeout: 5000 });
+  });
+
+  // 인라인 코드는 펜스드가 아니므로 복사 버튼이 붙지 않아야 한다 (인라인 vs 펜스드 구분 회귀 방지, #214)
+  test('인라인 코드는 복사 버튼 없이 렌더링된다 (#214)', async ({ authenticatedPage: page }) => {
+    await sendMessageWithResponse(
+      page,
+      '인라인 코드 예시',
+      [
+        'data: {"type":"init","sessionId":"test-session"}\n\n',
+        'data: {"type":"text","content":"`inline_code` 예시입니다."}\n\n',
+        'data: {"type":"done","inputTokens":8}\n\n',
+      ].join(''),
+    );
+
+    await expect(page.getByText('inline_code', { exact: false })).toBeVisible({ timeout: 10_000 });
+    // 인라인 코드에는 코드 복사 버튼이 없어야 한다
+    await expect(page.getByRole('button', { name: '코드 복사' })).toHaveCount(0);
+  });
+
   test('여러 텍스트 청크가 누적되어 하나의 메시지로 렌더링된다', async ({ authenticatedPage: page }) => {
     await sendMessageWithResponse(
       page,

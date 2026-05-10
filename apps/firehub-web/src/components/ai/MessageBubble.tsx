@@ -274,13 +274,22 @@ const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['component
   },
   code({ className, children }) {
     const match = /language-(\w+)/.exec(className || '');
-    // 언어가 감지된 펜스드 코드블록 → CodeBlock 컴포넌트로 언어 레이블과 복사 버튼 제공
-    return match ? (
-      <CodeBlock
-        language={match[1]}
-        code={String(children).replace(/\n$/, '')}
-      />
-    ) : (
+    const codeText = String(children ?? '');
+    // react-markdown 규칙:
+    //   - 인라인 코드(`foo`)는 children에 개행이 없음
+    //   - 펜스드 코드블록(```...```)은 children 끝에 개행이 포함됨
+    // 언어 지정 여부와 무관하게 펜스드 블록이면 CodeBlock으로 처리하여
+    // 복사 버튼/스타일을 제공한다 (#214). 언어 미지정 시 빈 문자열 전달.
+    const isFencedBlock = match !== null || codeText.includes('\n');
+    if (isFencedBlock) {
+      return (
+        <CodeBlock
+          language={match ? match[1] : ''}
+          code={codeText.replace(/\n$/, '')}
+        />
+      );
+    }
+    return (
       <code className={className}>
         {children}
       </code>
