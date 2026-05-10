@@ -344,6 +344,8 @@ class ProactiveJobControllerTest {
   @Test
   void getAnomalyEvents_returnsList() throws Exception {
     mockAuth("proactive:read");
+    // 소유권 검증 — 정상 소유자 케이스 (#150)
+    when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
     when(proactiveJobService.getAnomalyEvents(anyLong(), anyInt())).thenReturn(List.of());
 
     mockMvc
@@ -351,6 +353,25 @@ class ProactiveJobControllerTest {
             get("/api/v1/proactive/jobs/10/anomaly-events")
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
+  }
+
+  @Test
+  void getAnomalyEvents_nonOwner_returnsNotFound() throws Exception {
+    // #150: 다른 사용자의 Job ID로 anomaly-events 조회 시 404 — 소유권 검증으로 정보 누출 차단
+    mockAuth("proactive:read");
+    when(proactiveJobService.getJob(10L, 1L))
+        .thenThrow(
+            new com.smartfirehub.proactive.exception.ProactiveJobNotFoundException(
+                "Proactive Job을 찾을 수 없습니다: 10"));
+
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/jobs/10/anomaly-events")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isNotFound());
+    // getAnomalyEvents가 호출되지 않았는지 확인 — 소유권 검증 실패 시 데이터 조회 자체가 발생하면 안 됨
+    org.mockito.Mockito.verify(proactiveJobService, org.mockito.Mockito.never())
+        .getAnomalyEvents(anyLong(), anyInt());
   }
 
   @Test

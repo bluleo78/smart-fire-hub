@@ -198,6 +198,9 @@ public class ProactiveJobController {
   /**
    * 특정 작업의 이상 탐지 이벤트 이력을 조회한다. 최근 순으로 limit 건을 반환하며, 기본값은 20건이다.
    *
+   * <p>소유권 검증: 호출자가 해당 Job의 소유자가 아니면 getJob()이 ProactiveJobNotFoundException을 던져 404로 응답된다
+   * (#150). 이를 통해 다른 사용자의 이상 탐지 이벤트(metric 이름·값·편차) 무단 열람을 차단한다.
+   *
    * @param id proactive_job ID
    * @param limit 최대 반환 건수 (기본값: 20)
    * @return 이상 탐지 이벤트 목록
@@ -205,7 +208,12 @@ public class ProactiveJobController {
   @GetMapping("/{id}/anomaly-events")
   @RequirePermission("proactive:read")
   public ResponseEntity<List<AnomalyEventRepository.AnomalyEventRecord>> getAnomalyEvents(
-      @PathVariable Long id, @RequestParam(defaultValue = "20") int limit) {
+      @PathVariable Long id,
+      @RequestParam(defaultValue = "20") int limit,
+      Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    // Job 소유권 검증 — 미소유자 호출은 여기서 404 (#150)
+    proactiveJobService.getJob(id, userId);
     return ResponseEntity.ok(proactiveJobService.getAnomalyEvents(id, limit));
   }
 
