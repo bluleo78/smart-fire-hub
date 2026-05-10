@@ -3,8 +3,11 @@ package com.smartfirehub.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,5 +64,35 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     String result = aiAgentProxyService.verifyApiKey();
 
     assertThat(result).isEqualTo("{\"valid\":false}");
+  }
+
+  /**
+   * 회귀 테스트(#154 / #175): 토큰 값에 JSON 특수문자(따옴표·백슬래시·줄바꿈·탭 등)가 포함되어도 ObjectMapper로 직렬화하면 JSON 구조가 깨지지 않고
+   * 정확한 원본 값으로 다시 파싱된다는 것을 검증한다. 이전의 문자열 연결 + replace 방식은 백슬래시를 이스케이프하지 않아 JSON 인젝션 또는 파싱 오류를 유발했다.
+   */
+  @Test
+  void objectMapperSerialization_escapesAllJsonSpecialChars() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+
+    // case 1: 백슬래시 (#175 핵심 케이스)
+    String tokenWithBackslash = "abc\\def";
+    String body1 = mapper.writeValueAsString(Map.of("token", tokenWithBackslash));
+    JsonNode parsed1 = mapper.readTree(body1);
+    assertThat(parsed1.get("token").asText()).isEqualTo(tokenWithBackslash);
+
+    // case 2: 따옴표 + JSON 인젝션 시도 (#154 핵심 케이스)
+    String injectionPayload = "abc\\\", \"valid\":true, \"x\":\"";
+    String body2 = mapper.writeValueAsString(Map.of("token", injectionPayload));
+    JsonNode parsed2 = mapper.readTree(body2);
+    // 인젝션이 차단되어 token 필드 안에 통째로 들어가야 한다
+    assertThat(parsed2.get("token").asText()).isEqualTo(injectionPayload);
+    // valid 필드가 외부에서 주입되지 않았는지 확인 (Map.of로 만든 단일 키만 존재)
+    assertThat(parsed2.has("valid")).isFalse();
+
+    // case 3: 줄바꿈/탭/제어문자
+    String controlChars = "line1\nline2\tcol\rback";
+    String body3 = mapper.writeValueAsString(Map.of("apiKey", controlChars));
+    JsonNode parsed3 = mapper.readTree(body3);
+    assertThat(parsed3.get("apiKey").asText()).isEqualTo(controlChars);
   }
 }

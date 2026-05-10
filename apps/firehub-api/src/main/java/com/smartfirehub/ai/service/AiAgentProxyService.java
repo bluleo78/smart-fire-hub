@@ -76,12 +76,15 @@ public class AiAgentProxyService {
     if (tokenOpt.isEmpty() || tokenOpt.get().isBlank()) {
       return "{\"valid\":false}";
     }
+    // JSON 인젝션 방지: 문자열 연결이 아닌 ObjectMapper로 안전하게 직렬화한다.
+    // 백슬래시(\\), 따옴표("), 줄바꿈(\n), 탭(\t) 등 모든 JSON 특수문자가 자동 이스케이프된다.
+    String body = serializeBody(Map.of("token", tokenOpt.get()));
     return webClient
         .post()
         .uri("/agent/cli-auth/verify")
         .header("Authorization", "Internal " + internalToken)
         .contentType(MediaType.APPLICATION_JSON)
-        .bodyValue("{\"token\":\"" + tokenOpt.get().replace("\"", "\\\"") + "\"}")
+        .bodyValue(body)
         .retrieve()
         .bodyToMono(String.class)
         .block(Duration.ofSeconds(40));
@@ -92,15 +95,30 @@ public class AiAgentProxyService {
     if (apiKeyOpt.isEmpty() || apiKeyOpt.get().isBlank()) {
       return "{\"valid\":false}";
     }
+    // JSON 인젝션 방지: 문자열 연결이 아닌 ObjectMapper로 안전하게 직렬화한다.
+    String body = serializeBody(Map.of("apiKey", apiKeyOpt.get()));
     return webClient
         .post()
         .uri("/agent/api-key/verify")
         .header("Authorization", "Internal " + internalToken)
         .contentType(MediaType.APPLICATION_JSON)
-        .bodyValue("{\"apiKey\":\"" + apiKeyOpt.get().replace("\"", "\\\"") + "\"}")
+        .bodyValue(body)
         .retrieve()
         .bodyToMono(String.class)
         .block(Duration.ofSeconds(40));
+  }
+
+  /**
+   * Map을 JSON 문자열로 직렬화한다. ObjectMapper는 모든 JSON 특수문자를 안전하게 이스케이프하므로 토큰/API키에 따옴표·백슬래시·제어문자가 포함되어도 JSON 구조가
+   * 깨지지 않는다.
+   */
+  private String serializeBody(Map<String, ?> payload) {
+    try {
+      return objectMapper.writeValueAsString(payload);
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      // Map 직렬화는 실패할 수 없으므로 발생 시 즉시 런타임 예외로 노출
+      throw new IllegalStateException("Failed to serialize verification body", e);
+    }
   }
 
   public String getSessionHistory(String sessionId) {
