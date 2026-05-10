@@ -11,6 +11,7 @@ import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.service.DataImportService;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
@@ -78,7 +79,8 @@ public class DataImportController {
     Long userId = (Long) authentication.getPrincipal();
     String username =
         userRepository.findById(userId).map(user -> user.name()).orElse(String.valueOf(userId));
-    String ipAddress = request.getRemoteAddr();
+    // 리버스 프록시 환경에서 실제 클라이언트 IP를 기록하기 위해 X-Forwarded-For 우선 확인 (이슈 #147)
+    String ipAddress = ClientIpExtractor.extract(request);
     String userAgent = request.getHeader("User-Agent");
 
     ImportMode resolvedImportMode;
