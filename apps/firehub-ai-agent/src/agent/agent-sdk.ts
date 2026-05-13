@@ -16,6 +16,19 @@ import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttac
 import type { SSEEvent } from '../providers/types.js';
 export type { SSEEvent } from '../providers/types.js';
 
+// #216: SDK 의 E96()/getExternalMcpMode 는 query() 옵션의 env 가 아닌
+// **현재 프로세스의 process.env.ENABLE_TOOL_SEARCH** 를 직접 읽는다 (cli.js dm8).
+// 따라서 options.env 에만 설정하면 SDK 내부 모드 결정은 영향받지 않고
+// "tst-auto" 기본 모드 그대로 동작 → 임계치 도달 시 ToolSearch 가 다시 발생.
+// 모듈 로드 시점에 process.env 를 직접 설정하여 SDK 가 "standard" 모드를
+// 선택하도록 강제한다. ENABLE_EXPERIMENTAL_MCP_CLI 도 동일 이유로 차단.
+if (!('ENABLE_TOOL_SEARCH' in process.env) || process.env.ENABLE_TOOL_SEARCH !== 'false') {
+  process.env.ENABLE_TOOL_SEARCH = 'false';
+}
+if (!('ENABLE_EXPERIMENTAL_MCP_CLI' in process.env) || process.env.ENABLE_EXPERIMENTAL_MCP_CLI !== 'false') {
+  process.env.ENABLE_EXPERIMENTAL_MCP_CLI = 'false';
+}
+
 export interface AgentOptions {
   message: string;
   sessionId?: string;
@@ -107,6 +120,22 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
   // Auto-compact at ~60% of effective context window (~108K tokens)
   cleanEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '60';
+  // #216: deferred-tools(ToolSearch 메타 호출) 강제 비활성화.
+  //
+  // Claude Agent SDK 의 도구 노출 모드는 ENABLE_TOOL_SEARCH 환경변수로 제어된다
+  // (SDK 내부 getExternalMcpMode/E96, cli.js):
+  //   - 미설정 / "auto" / "auto:N" → "tst-auto" (자동 임계치 도달 시 ToolSearch 활성)
+  //   - "true" / "1" / "on"        → "tst"      (항상 ToolSearch 활성)
+  //   - "false" / "0" / "off"      → "standard" (ToolSearch 완전 비활성)
+  //
+  // settingSources: [] 만으로는 호스트의 ~/.claude/settings.json 상속만 차단되므로
+  // SDK 기본 "tst-auto" 가 임계치를 넘으면 ToolSearch 가 그대로 발생한다.
+  // 서비스 백엔드는 firehub MCP 도구를 시스템 프롬프트로 명시했으므로 deferred
+  // 모드가 필요 없다 → "standard" 모드로 강제 고정.
+  cleanEnv.ENABLE_TOOL_SEARCH = 'false';
+  // 호스트의 ENABLE_EXPERIMENTAL_MCP_CLI 가 주입되어 mcp-cli 모드로 빠지지 않도록
+  // 함께 차단한다. ai-agent 백엔드는 in-process MCP 서버(createSdkMcpServer)만 쓴다.
+  cleanEnv.ENABLE_EXPERIMENTAL_MCP_CLI = 'false';
 
   if (apiKey) {
     cleanEnv.ANTHROPIC_API_KEY = apiKey;
@@ -216,6 +245,11 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
         'NotebookEdit',
         'TodoWrite',
       ],
+      // #216: ToolSearch / mcp-search 메타 검색 도구를 명시적으로 차단.
+      // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
+      // 곧바로 비활성으로 폴백한다(cli.js XOq 체크 — "may have been disallowed
+      // via disallowedTools"). ENABLE_TOOL_SEARCH=false 와 함께 이중 차단.
+      disallowedTools: ['ToolSearch', 'mcp__claude-search__*'],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,

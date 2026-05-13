@@ -376,12 +376,22 @@ describe('executeAgent', () => {
     expect(events.every((e) => (e as { type: string }).type !== 'error')).toBe(true);
   });
 
-  // AS-21 (#216): settingSources 는 빈 배열이어야 한다.
-  // 'user' 로 설정되면 호스트 사용자의 ~/.claude/settings.json (deferred-tools 등)이
-  // SDK 에 상속되어 매 신규 툴 호출 직전마다 ToolSearch 메타-툴이 한 턴씩
-  // 추가 소모된다. 서비스 백엔드는 시스템 프롬프트/MCP 서버를 코드로 명시하므로
-  // 사용자 설정을 상속할 필요가 없다 → 빈 배열로 명시적 차단.
-  it('AS-21: passes settingSources: [] to SDK query (no inheritance from ~/.claude)', async () => {
+  // AS-21 (#216): deferred-tools(ToolSearch 메타 호출) 강제 비활성 검증.
+  //
+  // 1차 fix(f81beb89): settingSources:[] 만 적용 → 회귀 발생.
+  // 2차 fix: options.env.ENABLE_TOOL_SEARCH=false 추가 → 여전히 회귀.
+  //   원인 — SDK 의 E96()/getExternalMcpMode(cli.js dm8) 는 query() 옵션의 env 가
+  //   아닌 **호스트 process.env.ENABLE_TOOL_SEARCH** 를 직접 읽는다.
+  //   따라서 options.env 는 Bash subprocess 환경에만 영향, SDK 내부 모드 결정
+  //   에는 영향 없음 → "tst-auto" 기본 모드 유지 → 임계치 도달 시 ToolSearch 발생.
+  // 3차 fix: 모듈 로드 시점에 process.env 를 직접 설정 (agent-sdk.ts top-level).
+  //
+  // SDK 내부 isToolSearchEnabled 는 다음 두 경로에서 disable:
+  //   (a) process.env.ENABLE_TOOL_SEARCH ∈ {"false","0","off","no"} → "standard"
+  //   (b) disallowedTools 에 "ToolSearch" 포함 → XOq 체크에서 즉시 false
+  // 본 테스트는 (a) process.env 가 실제 설정되었는지, (b) options.env 와
+  // disallowedTools 가 SDK 에 전달되는지를 모두 검증한다.
+  it('AS-21: deferred-tools 강제 비활성 (env+disallowedTools 이중 차단, #216)', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const mockQuery = vi.mocked(query);
 
@@ -413,10 +423,23 @@ describe('executeAgent', () => {
 
     expect(mockQuery).toHaveBeenCalledOnce();
     const callArgs = mockQuery.mock.calls[0][0] as {
-      options?: { settingSources?: string[] };
+      options?: {
+        settingSources?: string[];
+        disallowedTools?: string[];
+        env?: Record<string, string>;
+      };
     };
+    // (구 검증 유지) ~/.claude 상속 차단
     expect(callArgs.options?.settingSources).toEqual([]);
-    expect(callArgs.options?.settingSources).not.toContain('user');
+    // (a) **process.env** — SDK E96()/dm8 이 직접 읽는 핵심 신호.
+    //     모듈 로드 시점에 agent-sdk.ts top-level 에서 설정되어야 한다.
+    expect(process.env.ENABLE_TOOL_SEARCH).toBe('false');
+    expect(process.env.ENABLE_EXPERIMENTAL_MCP_CLI).toBe('false');
+    // (a-2) options.env 도 함께 설정되어야 Bash subprocess 환경 일관성 보장
+    expect(callArgs.options?.env?.ENABLE_TOOL_SEARCH).toBe('false');
+    expect(callArgs.options?.env?.ENABLE_EXPERIMENTAL_MCP_CLI).toBe('false');
+    // (b) ToolSearch 자체를 disallowedTools 로 명시적 차단 (이중 안전망)
+    expect(callArgs.options?.disallowedTools).toContain('ToolSearch');
   });
 
   // AS-20: missing apiKey and no env var yields error event immediately
