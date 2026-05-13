@@ -376,6 +376,49 @@ describe('executeAgent', () => {
     expect(events.every((e) => (e as { type: string }).type !== 'error')).toBe(true);
   });
 
+  // AS-21 (#216): settingSources 는 빈 배열이어야 한다.
+  // 'user' 로 설정되면 호스트 사용자의 ~/.claude/settings.json (deferred-tools 등)이
+  // SDK 에 상속되어 매 신규 툴 호출 직전마다 ToolSearch 메타-툴이 한 턴씩
+  // 추가 소모된다. 서비스 백엔드는 시스템 프롬프트/MCP 서버를 코드로 명시하므로
+  // 사용자 설정을 상속할 필요가 없다 → 빈 배열로 명시적 차단.
+  it('AS-21: passes settingSources: [] to SDK query (no inheritance from ~/.claude)', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-settings',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      apiKey: 'sk-test-key',
+    })) {
+      // drain
+    }
+
+    expect(mockQuery).toHaveBeenCalledOnce();
+    const callArgs = mockQuery.mock.calls[0][0] as {
+      options?: { settingSources?: string[] };
+    };
+    expect(callArgs.options?.settingSources).toEqual([]);
+    expect(callArgs.options?.settingSources).not.toContain('user');
+  });
+
   // AS-20: missing apiKey and no env var yields error event immediately
   it('AS-20: yields error event when apiKey is missing and ANTHROPIC_API_KEY env var is unset', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');

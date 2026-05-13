@@ -219,7 +219,12 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
-      settingSources: ['user'],
+      // settingSources: 호스트 사용자의 ~/.claude/settings.json 상속을 차단한다.
+      // 'user'로 설정하면 개발자/운영자의 deferred-tools, enableAllProjectMcpServers
+      // 등이 SDK에 주입되어 매 신규 툴 호출마다 ToolSearch 메타-툴이 한 턴 더 추가됨
+      // (#216). 서비스 백엔드는 시스템 프롬프트와 MCP 서버를 코드로 명시하므로
+      // 사용자 설정을 상속할 이유가 없다. 빈 배열로 명시적 차단.
+      settingSources: [],
       ...(Object.keys(subagents).length > 0 && { agents: subagents }),
       ...(sessionId ? { resume: sessionId } : {}),
     },
