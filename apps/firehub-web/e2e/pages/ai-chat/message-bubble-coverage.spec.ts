@@ -646,4 +646,80 @@ test.describe('ToolCallDisplay — isError 실패 표시', () => {
     // "✗ 실패"가 보이지 않아야 한다
     await expect(page.getByText('✗ 실패')).not.toBeVisible();
   });
+
+  /**
+   * MB-15 (#202): 데이터셋 ID가 포함된 tool_use 표시 시 ID(`#7`) 대신 데이터셋 이름을 노출.
+   * useDataset(id)로 캐시/API 조회한 결과를 detail 영역에 표시한다. API 응답이 도착할 때까지는
+   * fallback `#id`가 잠시 보일 수 있어, 최종적으로 이름이 표시되는지만 검증한다.
+   */
+  test('MB-15 (#202): datasetId 포함 tool_use → "#id" 대신 데이터셋 이름 표시', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-15-session');
+
+    // useDataset(7) 응답 — 사람이 읽는 데이터셋 이름.
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/7',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 7,
+            name: '2024년 화재 통계',
+            tableName: 'fire_stats_2024',
+            description: null,
+            category: null,
+            datasetType: 'SOURCE',
+            createdBy: 'tester',
+            columns: [],
+            rowCount: 0,
+            createdAt: '2026-04-12T00:00:00Z',
+            updatedAt: null,
+            updatedBy: null,
+            isFavorite: false,
+            tags: [],
+            status: 'NONE',
+            statusNote: null,
+            statusUpdatedBy: null,
+            statusUpdatedAt: null,
+            linkedPipelines: [],
+          }),
+        }),
+    );
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-15-session' }),
+            sseEvent({
+              type: 'tool_use',
+              toolName: 'mcp__firehub__execute_sql_query',
+              input: { datasetId: 7, sql: 'SELECT * FROM fire_stats_2024' },
+            }),
+            sseEvent({
+              type: 'tool_result',
+              toolName: 'mcp__firehub__execute_sql_query',
+              result: JSON.stringify({ rowCount: 3 }),
+            }),
+            sseEvent({ type: 'text', content: '실행 완료.' }),
+            sseEvent({ type: 'done', inputTokens: 30 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('화재 통계 조회');
+    await chatInput.press('Enter');
+
+    // 데이터셋 이름이 detail 영역에 표시되어야 한다 (#id 표기 제거).
+    await expect(page.getByText('2024년 화재 통계').first()).toBeVisible({ timeout: 10_000 });
+    // 명시적 회귀 가드: 더 이상 '#7' 형태의 ID는 표시되지 않는다.
+    await expect(page.getByText(/#7\b/)).not.toBeVisible();
+  });
 });

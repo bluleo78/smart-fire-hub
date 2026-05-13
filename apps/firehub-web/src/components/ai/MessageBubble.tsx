@@ -13,6 +13,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 
+import { useDataset } from '../../hooks/queries/useDatasets';
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
 import { useAI } from './AIProvider';
@@ -160,10 +161,16 @@ function truncate(str: string, max: number): string {
   return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
-function formatToolDetail(input: Record<string, unknown>): string | null {
+function formatToolDetail(
+  input: Record<string, unknown>,
+  options?: { datasetName?: string },
+): string | null {
   const parts: string[] = [];
-  // MCP firehub tools
-  if (input.datasetId) parts.push(`#${input.datasetId}`);
+  // MCP firehub tools — 데이터셋 ID는 사용자가 순번으로 오해할 수 있으므로(#178/#202)
+  // 캐시된 데이터셋 이름이 있으면 이름을, 없으면 fallback으로 '#id' 표시.
+  if (input.datasetId) {
+    parts.push(options?.datasetName ?? `#${input.datasetId}`);
+  }
   if (input.sql) parts.push(truncate(String(input.sql), 60));
   if (input.pipelineId) parts.push(`Pipeline #${input.pipelineId}`);
   if (input.rows && Array.isArray(input.rows)) parts.push(`${input.rows.length}건`);
@@ -200,7 +207,17 @@ function formatToolResult(result: string): string | null {
 // 스트리밍 완료 후 result가 없는 tool call은 "✓ 완료"로 표시해야 하므로 구분 필요.
 function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isStreaming?: boolean }) {
   const { label, icon } = getToolDisplay(toolCall.name);
-  const detail = formatToolDetail(toolCall.input);
+  // 데이터셋 ID가 입력에 있으면 데이터셋 이름을 조회해 표기 (#202).
+  // useDataset은 enabled:!!id 로 ID 없으면 호출하지 않음 → 0 전달로 비활성화.
+  const rawDatasetId = toolCall.input.datasetId;
+  const datasetId =
+    typeof rawDatasetId === 'number'
+      ? rawDatasetId
+      : typeof rawDatasetId === 'string'
+        ? Number.parseInt(rawDatasetId, 10) || 0
+        : 0;
+  const { data: dataset } = useDataset(datasetId);
+  const detail = formatToolDetail(toolCall.input, { datasetName: dataset?.name });
   const hasResult = toolCall.result !== undefined;
   const resultSummary = hasResult && toolCall.result ? formatToolResult(toolCall.result) : null;
   // isError가 true이면 MCP 도구 호출 실패 — 성공처럼 표시하지 않고 실패 상태로 구분
