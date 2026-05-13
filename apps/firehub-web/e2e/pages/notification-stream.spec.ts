@@ -271,6 +271,43 @@ test.describe('useNotificationStream — SSE 이벤트 처리', () => {
     await expect(page.getByText('중요 인사이트')).toHaveCount(1);
   });
 
+  /**
+   * 보안 회귀 방지(#172): JWT가 URL 쿼리 파라미터로 노출되지 않고
+   * Authorization 헤더로 전송되는지 검증한다. EventSource는 헤더를 못 보내서
+   * 과거 `?token=` 방식이었으나 fetch + ReadableStream으로 전환되었다.
+   */
+  test('SSE 요청은 Authorization 헤더로 토큰을 전송하며 URL에 토큰을 포함하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    let capturedUrl = '';
+    let capturedAuthHeader: string | undefined;
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/notifications/stream',
+      (route) => {
+        const req = route.request();
+        capturedUrl = req.url();
+        capturedAuthHeader = req.headers()['authorization'];
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: '',
+        });
+      },
+    );
+
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // 요청이 실제로 발생할 때까지 대기
+    await expect.poll(() => capturedUrl, { timeout: 5000 }).not.toBe('');
+
+    // URL에 토큰이 포함되지 않아야 한다
+    expect(capturedUrl).not.toMatch(/[?&]token=/);
+    // Authorization 헤더에 Bearer 토큰이 실려야 한다
+    expect(capturedAuthHeader).toMatch(/^Bearer\s+\S+/);
+  });
+
   test('SSE 연결 오류 시 재연결을 시도한다 (지수 백오프)', async ({
     authenticatedPage: page,
   }) => {

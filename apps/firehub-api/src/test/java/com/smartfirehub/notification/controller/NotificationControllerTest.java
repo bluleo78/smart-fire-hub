@@ -54,4 +54,15 @@ class NotificationControllerTest {
   void subscribe_withoutAuth_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/notifications/stream")).andExpect(status().isUnauthorized());
   }
+
+  /**
+   * 쿼리 파라미터 `?token=`로는 인증되지 않는다 (#172). 토큰 로그 노출 위험으로 fallback을
+   * 제거했으며, 프론트엔드는 fetch + ReadableStream으로 Authorization 헤더를 전송한다.
+   */
+  @Test
+  void subscribe_withQueryParamToken_returnsUnauthorized() throws Exception {
+    mockMvc
+        .perform(get("/api/v1/notifications/stream").param("token", "test-token"))
+        .andExpect(status().isUnauthorized());
+  }
 }

@@ -45,11 +45,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
     String authHeader = request.getHeader("Authorization");
 
+    // JWT는 Authorization 헤더로만 받는다. 과거에는 EventSource API의 헤더 미지원 때문에
+    // /api/v1/notifications/stream 엔드포인트에 한해 `?token=` 쿼리 파라미터 fallback을
+    // 허용했으나, 토큰이 액세스 로그/프록시 로그/Referer/브라우저 히스토리에 노출되는
+    // 위험이 있어 제거했다. 프론트엔드는 fetch + ReadableStream으로 SSE를 수신한다.
     String token = null;
     if (authHeader != null && authHeader.startsWith("Bearer ")) {
       token = authHeader.substring(7);
-    } else if (request.getRequestURI().equals("/api/v1/notifications/stream")) {
-      token = request.getParameter("token");
     }
 
     if (token != null) {

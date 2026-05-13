@@ -17,11 +17,9 @@ public class NotificationController {
 
   private final SseEmitterRegistry registry;
 
-  // NOTE: EventSource API does not support custom headers, so the JWT token is passed
-  // as a query parameter (?token=...). This is a known security tradeoff — the token may
-  // appear in server access logs and proxy logs. Mitigation: JwtAuthenticationFilter only
-  // accepts query param tokens for this specific endpoint. TODO: Replace with short-lived
-  // SSE ticket (POST /api/v1/notifications/ticket → 30s TTL single-use token).
+  // SSE 스트림 구독. 프론트엔드가 fetch + ReadableStream으로 호출하며 Authorization
+  // 헤더로 JWT를 전달한다. 표준 EventSource는 헤더 미지원이라 과거 `?token=` 쿼리
+  // 파라미터 fallback을 두었으나 토큰 로그 노출 위험으로 제거했다(#172).
   @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   @RequirePermission("dataset:read")
   public SseEmitter subscribe() {
