@@ -1,8 +1,11 @@
 package com.smartfirehub.global.exception;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.springframework.http.MediaType;
 
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -194,5 +197,39 @@ class GlobalExceptionHandlerExtendedTest {
         .perform(get("/test/exception2/constraint-violation"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value(400));
+  }
+
+  /** path variable Long 타입에 비-숫자 문자열이 전달되면 500이 아닌 400 반환 (#219) */
+  @Test
+  void typeMismatch_pathLong_returns400() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/type-mismatch-long/abc"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.message").value("Validation failed"))
+        .andExpect(jsonPath("$.errors.id").exists());
+  }
+
+  /** Boolean 쿼리 파라미터에 잘못된 값이 전달되면 500이 아닌 400 반환 (#219) */
+  @Test
+  void typeMismatch_queryBoolean_returns400() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/type-mismatch-boolean").param("flag", "notbool"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.errors.flag").exists());
+  }
+
+  /** malformed JSON body 시 500이 아닌 400 반환 (#219) */
+  @Test
+  void messageNotReadable_malformedJson_returns400() throws Exception {
+    mockMvc
+        .perform(
+            post("/test/exception2/message-not-readable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{not valid json"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.message").value("요청 본문을 해석할 수 없습니다."));
   }
 }

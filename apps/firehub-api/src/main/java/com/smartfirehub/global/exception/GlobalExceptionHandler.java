@@ -48,11 +48,13 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -525,6 +527,37 @@ public class GlobalExceptionHandler {
     ErrorResponse response =
         buildError(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 HTTP 메서드입니다.", null, request);
     return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(response);
+  }
+
+  /**
+   * 경로/쿼리 파라미터 타입 불일치 시 500 대신 400 반환 (#219). 예: {@code Long id} 파라미터에 "abc" 같은 비-숫자
+   * 문자열이 전달되거나, {@code Boolean} 쿼리 파라미터에 "notbool" 같은 값이 전달되는 경우. 클라이언트 입력 오류이므로 400으로 분류하여
+   * 모니터링 SLO 오염과 5xx 알람 노이즈를 방지한다.
+   */
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<ErrorResponse> handleTypeMismatch(
+      MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+    String typeName =
+        ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "올바른";
+    Map<String, String> fieldErrors =
+        Map.of(
+            ex.getName(),
+            String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  /**
+   * 요청 본문이 malformed JSON이거나 역직렬화에 실패한 경우 500 대신 400 반환 (#219). 같은 카테고리(클라이언트 입력 오류 → 4xx)이며 본문을
+   * 읽지 못한 케이스이므로 400 Bad Request로 매핑한다.
+   */
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ResponseEntity<ErrorResponse> handleMessageNotReadable(
+      HttpMessageNotReadableException ex, HttpServletRequest request) {
+    ErrorResponse response =
+        buildError(HttpStatus.BAD_REQUEST, "요청 본문을 해석할 수 없습니다.", null, request);
+    return ResponseEntity.badRequest().body(response);
   }
 
   /** 존재하지 않는 API 경로 요청 시 500 대신 404 반환 (#98) */

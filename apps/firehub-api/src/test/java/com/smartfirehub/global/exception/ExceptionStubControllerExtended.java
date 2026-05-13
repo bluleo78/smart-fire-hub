@@ -18,7 +18,11 @@ import com.smartfirehub.user.exception.UserDeactivatedException;
 import jakarta.validation.ConstraintViolationException;
 import java.util.Set;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
@@ -129,5 +133,23 @@ public class ExceptionStubControllerExtended {
   @GetMapping("/constraint-violation")
   public void constraintViolation() {
     throw new ConstraintViolationException("page: must be greater than or equal to 0", Set.of());
+  }
+
+  /** path variable이 {@code Long} 타입인데 비-숫자 문자열이 전달되면 MethodArgumentTypeMismatchException 발생 (#219) */
+  @GetMapping("/type-mismatch-long/{id}")
+  public void typeMismatchLong(@PathVariable Long id) {
+    // 정상 케이스에선 도달하지 않음. 'abc' 같은 입력이면 Spring이 컨버터 단에서 예외를 던진다.
+  }
+
+  /** 쿼리 파라미터가 {@code Boolean} 타입인데 'notbool' 같은 값이 전달되면 동일한 예외 발생 (#219) */
+  @GetMapping("/type-mismatch-boolean")
+  public void typeMismatchBoolean(@RequestParam Boolean flag) {
+    // 정상 케이스에선 도달하지 않음.
+  }
+
+  /** malformed JSON body 시 HttpMessageNotReadableException 발생 (#219) */
+  @PostMapping("/message-not-readable")
+  public void messageNotReadable(@RequestBody java.util.Map<String, Object> body) {
+    // 정상 케이스에선 도달하지 않음.
   }
 }
