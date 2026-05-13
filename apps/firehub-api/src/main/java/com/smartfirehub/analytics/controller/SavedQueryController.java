@@ -108,8 +108,9 @@ public class SavedQueryController {
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     int maxRows = request != null && request.maxRows() != null ? request.maxRows() : 1000;
-    boolean readOnly = request != null && Boolean.TRUE.equals(request.readOnly());
-    return ResponseEntity.ok(savedQueryService.executeById(id, maxRows, readOnly, userId));
+    // #178 analytics:read 권한만 요구하는 엔드포인트이므로 클라이언트 readOnly 값을 무시하고
+    // 항상 readOnly=true 강제 — INSERT/UPDATE/DELETE 등 쓰기 SQL 우회 차단.
+    return ResponseEntity.ok(savedQueryService.executeById(id, maxRows, true, userId));
   }
 
   @PostMapping("/{id}/clone")

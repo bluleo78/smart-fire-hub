@@ -252,6 +252,27 @@ class SavedQueryControllerTest {
         .andExpect(jsonPath("$.totalRows").value(1));
   }
 
+  /**
+   * #178 보안 회귀 방지: analytics:read 권한만으로 호출되는 저장 쿼리 실행 엔드포인트는 클라이언트가
+   * readOnly=false 를 보내도 무시하고 항상 readOnly=true 로 강제해야 한다.
+   */
+  @Test
+  void executeSavedQuery_clientReadOnlyFalse_isForcedToTrue() throws Exception {
+    when(savedQueryService.executeById(anyLong(), anyInt(), anyBoolean(), anyLong()))
+        .thenReturn(sampleQueryResult());
+    AnalyticsQueryRequest request = new AnalyticsQueryRequest(null, 100, false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries/1/execute")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk());
+
+    verify(savedQueryService).executeById(1L, 100, true, 1L);
+  }
+
   // ── POST /api/v1/analytics/queries/{id}/clone ──────────────────────────────
 
   @Test
