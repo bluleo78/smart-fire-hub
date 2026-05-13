@@ -21,10 +21,13 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +71,43 @@ public class ProactiveJobService {
     asyncRunner.setRunningJobs(this.runningJobs);
   }
 
+  /**
+   * cronExpression / timezone 값을 Spring 스케줄러가 실제로 사용하는 파서로 사전 검증한다.
+   *
+   * <p>둘 다 nullable / blank 허용 — 값이 비어 있으면 스케줄에 등록되지 않을 뿐 저장은 정상 처리된다. 값이 들어 있으면 다음 조건을 만족해야 한다.
+   *
+   * <ul>
+   *   <li>{@code cronExpression}: {@link CronExpression#parse} 통과 (6필드: 초 분 시 일 월 요일)
+   *   <li>{@code timezone}: {@link ZoneId#of} 통과 (IANA zone)
+   * </ul>
+   *
+   * 실패 시 {@link ProactiveJobException} 을 던지며, {@code GlobalExceptionHandler} 가 400 으로 매핑한다. 기존 동작은
+   * 잘못된 값을 그대로 저장한 뒤 스케줄러 catch-all 에서 조용히 실패시키는 것이었는데, 이로 인해 사용자에게는 정상 생성처럼 보이지만 실제로는 한 번도 실행되지 않는
+   * "좀비 잡" 이 발생했다 (#221).
+   *
+   * @param cronExpression 검증할 cron 식 (nullable)
+   * @param timezone 검증할 IANA timezone 문자열 (nullable)
+   * @throws ProactiveJobException 형식이 유효하지 않을 때
+   */
+  static void validateCronAndTimezone(String cronExpression, String timezone) {
+    if (cronExpression != null && !cronExpression.isBlank()) {
+      try {
+        CronExpression.parse(cronExpression);
+      } catch (IllegalArgumentException e) {
+        throw new ProactiveJobException(
+            "유효하지 않은 cron 표현식: \"" + cronExpression + "\" — " + e.getMessage());
+      }
+    }
+    if (timezone != null && !timezone.isBlank()) {
+      try {
+        ZoneId.of(timezone);
+      } catch (DateTimeException e) {
+        throw new ProactiveJobException(
+            "유효하지 않은 timezone: \"" + timezone + "\" — IANA zone ID 가 아닙니다");
+      }
+    }
+  }
+
   @Transactional(readOnly = true)
   public List<ProactiveJobResponse> getJobs(Long userId) {
     return proactiveJobRepository.findByUserId(userId);
@@ -83,6 +123,10 @@ public class ProactiveJobService {
 
   @Transactional
   public ProactiveJobResponse createJob(CreateProactiveJobRequest request, Long userId) {
+    // cronExpression / timezone 형식을 사전 검증한다. 잘못된 값을 그대로 저장하면 스케줄러가 silent fail 하여
+    // 사용자에게는 정상 생성처럼 보이지만 실제 실행이 한 번도 일어나지 않는 좀비 상태가 된다 (#221).
+    validateCronAndTimezone(request.cronExpression(), request.timezone());
+
     Long id =
         proactiveJobRepository.create(
             userId,
@@ -109,6 +153,9 @@ public class ProactiveJobService {
 
   @Transactional
   public void updateJob(Long id, UpdateProactiveJobRequest request, Long userId) {
+    // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221).
+    validateCronAndTimezone(request.cronExpression(), request.timezone());
+
     proactiveJobRepository.update(
         id,
         userId,

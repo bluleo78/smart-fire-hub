@@ -75,7 +75,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         name,
         "테스트 프롬프트",
         null,
-        "0 9 * * *",
+        "0 0 9 * * *",
         "Asia/Seoul",
         null,
         Map.of("channels", List.of("CHAT")));
@@ -102,7 +102,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThat(created.id()).isNotNull();
     assertThat(created.name()).isEqualTo("CRUD 테스트 작업");
     assertThat(created.prompt()).isEqualTo("테스트 프롬프트");
-    assertThat(created.cronExpression()).isEqualTo("0 9 * * *");
+    assertThat(created.cronExpression()).isEqualTo("0 0 9 * * *");
     assertThat(created.enabled()).isTrue();
 
     // getJob
@@ -123,7 +123,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "비활성 생성 테스트",
             "테스트 프롬프트",
             null,
-            "0 9 * * *",
+            "0 0 9 * * *",
             "Asia/Seoul",
             false,
             Map.of("channels", List.of("CHAT")));
@@ -145,7 +145,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "기본값 테스트",
             "프롬프트",
             null,
-            "0 9 * * *",
+            "0 0 9 * * *",
             "Asia/Seoul",
             null,
             Map.of("channels", List.of("CHAT")));
@@ -163,13 +163,83 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     // when
     UpdateProactiveJobRequest updateReq =
-        new UpdateProactiveJobRequest("수정 후 이름", "수정된 프롬프트", null, "0 8 * * *", null, null, null);
+        new UpdateProactiveJobRequest("수정 후 이름", "수정된 프롬프트", null, "0 0 8 * * *", null, null, null);
     proactiveJobService.updateJob(created.id(), updateReq, testUserId);
 
     // then
     ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
     assertThat(updated.name()).isEqualTo("수정 후 이름");
-    assertThat(updated.cronExpression()).isEqualTo("0 8 * * *");
+    assertThat(updated.cronExpression()).isEqualTo("0 0 8 * * *");
+  }
+
+  /**
+   * 잘못된 cron 표현식으로 생성을 시도하면 ProactiveJobException(→400) 이 발생하고 DB 에 저장되지 않아야 한다 (#221). 이전에는 검증 없이
+   * 그대로 저장되어 스케줄러가 silent fail 하는 좀비 잡이 만들어졌다.
+   */
+  @Test
+  void createJob_withInvalidCron_throwsAndNotPersisted() {
+    long before = dsl.fetchCount(com.smartfirehub.jooq.Tables.PROACTIVE_JOB);
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "잘못된 cron",
+            "프롬프트",
+            null,
+            "not a cron",
+            "Asia/Seoul",
+            true,
+            Map.of("channels", List.of("CHAT")));
+
+    assertThatThrownBy(() -> proactiveJobService.createJob(req, testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("cron");
+
+    long after = dsl.fetchCount(com.smartfirehub.jooq.Tables.PROACTIVE_JOB);
+    assertThat(after).isEqualTo(before);
+  }
+
+  /** 존재하지 않는 IANA timezone 으로 생성을 시도하면 ProactiveJobException(→400) 이 발생해야 한다 (#221). */
+  @Test
+  void createJob_withInvalidTimezone_throws() {
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "잘못된 tz",
+            "프롬프트",
+            null,
+            "0 0 9 * * *",
+            "Mars/Phobos",
+            true,
+            Map.of("channels", List.of("CHAT")));
+
+    assertThatThrownBy(() -> proactiveJobService.createJob(req, testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("timezone");
+  }
+
+  /** 업데이트에서도 동일하게 cron / timezone 사전 검증이 적용되어야 한다 (#221). */
+  @Test
+  void updateJob_withInvalidCron_throws() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("업데이트 검증 테스트"), testUserId);
+    UpdateProactiveJobRequest req =
+        new UpdateProactiveJobRequest("x", "y", null, "### BAD ###", "Asia/Seoul", true, null);
+
+    assertThatThrownBy(() -> proactiveJobService.updateJob(created.id(), req, testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageContaining("cron");
+  }
+
+  /** cron / timezone 이 null/blank 인 update 는 검증을 통과해야 한다 (toggle 등 부분 업데이트 호환성). */
+  @Test
+  void updateJob_withBlankCronAndTimezone_allowed() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("blank 업데이트 테스트"), testUserId);
+    UpdateProactiveJobRequest req =
+        new UpdateProactiveJobRequest("이름만 변경", null, null, null, null, null, null);
+
+    proactiveJobService.updateJob(created.id(), req, testUserId);
+
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.name()).isEqualTo("이름만 변경");
   }
 
   @Test
