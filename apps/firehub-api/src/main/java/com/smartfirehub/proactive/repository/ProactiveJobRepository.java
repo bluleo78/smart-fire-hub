@@ -144,6 +144,12 @@ public class ProactiveJobRepository {
         .fetch(r -> toResponse(r, null));
   }
 
+  /**
+   * Proactive Job을 새로 생성한다.
+   *
+   * <p>{@code enabled}가 null이면 기본값 {@code true}를 적용한다. 호출자가 {@code false}를 명시하면 비활성 상태로 저장된다
+   * (#220).
+   */
   public Long create(
       Long userId,
       String name,
@@ -151,6 +157,7 @@ public class ProactiveJobRepository {
       Long templateId,
       String cronExpression,
       String timezone,
+      Boolean enabled,
       Map<String, Object> config) {
     try {
       String configJson = config != null ? objectMapper.writeValueAsString(config) : "{}";
@@ -161,7 +168,7 @@ public class ProactiveJobRepository {
           .set(PJ_TEMPLATE_ID, templateId)
           .set(PJ_CRON_EXPRESSION, cronExpression)
           .set(PJ_TIMEZONE, timezone != null ? timezone : "Asia/Seoul")
-          .set(PJ_ENABLED, true)
+          .set(PJ_ENABLED, enabled != null ? enabled : true)
           .set(PJ_CONFIG, JSONB.valueOf(configJson))
           .returning(PJ_ID)
           .fetchOne(r -> r.get(PJ_ID));

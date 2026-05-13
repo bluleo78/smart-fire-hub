@@ -91,12 +91,17 @@ public class ProactiveJobService {
             request.templateId(),
             request.cronExpression(),
             request.timezone(),
+            request.enabled(),
             request.config());
     ProactiveJobResponse job =
         proactiveJobRepository
             .findById(id, userId)
             .orElseThrow(() -> new ProactiveJobException("Job 생성 실패"));
-    if (job.cronExpression() != null && !job.cronExpression().isBlank()) {
+    // enabled=false로 명시 생성된 잡은 스케줄러에 등록하지 않는다 (#220).
+    // job.enabled()는 DB에서 다시 읽어온 값이므로 null이 아니다.
+    if (Boolean.TRUE.equals(job.enabled())
+        && job.cronExpression() != null
+        && !job.cronExpression().isBlank()) {
       schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
     return job;

@@ -113,7 +113,8 @@ class ProactiveJobControllerTest {
     Map<String, Object> config = new HashMap<>();
     config.put("channels", List.of());
     CreateProactiveJobRequest req =
-        new CreateProactiveJobRequest("daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", config);
+        new CreateProactiveJobRequest(
+            "daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, config);
     when(proactiveJobService.createJob(any(), eq(1L))).thenReturn(sampleJob());
 
     mockMvc

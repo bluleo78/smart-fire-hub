@@ -72,7 +72,13 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
   private CreateProactiveJobRequest buildCreateRequest(String name) {
     return new CreateProactiveJobRequest(
-        name, "테스트 프롬프트", null, "0 9 * * *", "Asia/Seoul", Map.of("channels", List.of("CHAT")));
+        name,
+        "테스트 프롬프트",
+        null,
+        "0 9 * * *",
+        "Asia/Seoul",
+        null,
+        Map.of("channels", List.of("CHAT")));
   }
 
   private ProactiveResult buildMockResult() {
@@ -102,6 +108,51 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     // getJob
     ProactiveJobResponse found = proactiveJobService.getJob(created.id(), testUserId);
     assertThat(found.name()).isEqualTo("CRUD 테스트 작업");
+  }
+
+  /**
+   * 회귀 테스트 — CreateProactiveJobRequest에 enabled=false를 보내면 비활성 상태로 저장되어야 한다 (#220).
+   *
+   * <p>이전에는 DTO에 enabled 필드가 없어 무조건 true로 생성되고 스케줄러에 즉시 등록되는 버그가 있었다.
+   */
+  @Test
+  void createJob_withEnabledFalse_storedAsDisabled() {
+    // given
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "비활성 생성 테스트",
+            "테스트 프롬프트",
+            null,
+            "0 9 * * *",
+            "Asia/Seoul",
+            false,
+            Map.of("channels", List.of("CHAT")));
+
+    // when
+    ProactiveJobResponse created = proactiveJobService.createJob(req, testUserId);
+
+    // then — DB에 enabled=false로 저장
+    assertThat(created.enabled()).isFalse();
+    ProactiveJobResponse refetched = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(refetched.enabled()).isFalse();
+  }
+
+  /** enabled 미지정(null) 시 기본값 true가 적용되어야 한다 (#220 기본 동작 유지). */
+  @Test
+  void createJob_withEnabledNull_defaultsToTrue() {
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "기본값 테스트",
+            "프롬프트",
+            null,
+            "0 9 * * *",
+            "Asia/Seoul",
+            null,
+            Map.of("channels", List.of("CHAT")));
+
+    ProactiveJobResponse created = proactiveJobService.createJob(req, testUserId);
+
+    assertThat(created.enabled()).isTrue();
   }
 
   @Test
