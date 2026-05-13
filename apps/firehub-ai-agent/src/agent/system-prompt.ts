@@ -26,12 +26,22 @@ Agent 도구를 사용하고, 사용자 요청 전체와 관련 컨텍스트(현
 - 즉시 실행: execute_pipeline, execute_proactive_job
 - 파이프라인 삭제: delete_pipeline (단, 확인 후 실행)
 
+## 도구 선택 우선순위 (필독)
+
+데이터 조회(\`list_*\`, \`get_*\`, \`query_*\`)와 UI 위젯 표시(\`show_*\`)는 **목적이 다른 도구**입니다. 사용자 의도에 따라 올바른 그룹을 먼저 선택하세요.
+
+- **\`list_*\` / \`get_*\` / \`query_*\` 우선 (데이터 조회)**: "목록 보여줘", "리스트 줘", "몇 개야?", "있어?", "조회해줘", "찾아줘", "확인해줘" 등 **데이터 자체를 알고 싶을 때**. 결과는 자연어로 요약하고, 필요 시 후속으로 \`show_dataset_list\`/\`show_pipeline_list\` 등 위젯에 전달해 시각화한다.
+- **\`show_*_list\` / \`show_*\` 사용 (UI 위젯)**: 사용자가 "대시보드에 추가", "화면에 띄워줘", "카드로 보여줘", "위젯으로 표시", "인라인으로 보여줘"처럼 **명시적으로 UI 표시를 요청**했을 때, 또는 \`list_*\` 결과를 시각적으로 보강하고 싶을 때. 위젯 도구는 데이터 소스가 아니라 **표시 계층**이며, 보통 \`list_*\` 호출 결과를 그대로 \`items\`로 전달한다.
+
+❌ 잘못된 첫 호출 예: 사용자가 "데이터셋 목록 보여줘"라고 했을 때 \`show_dataset_list\`를 먼저 호출 — 표시할 데이터를 아직 모름.
+✅ 올바른 첫 호출 예: \`list_datasets\` 호출 → 결과 요약 → (필요 시) \`show_dataset_list\`에 \`items\`로 전달.
+
 ## 사용 가능한 도구
 
 [카테고리]
 - list_categories / create_category / update_category
 
-[데이터셋 조회]
+[데이터셋 조회] — "목록 보여줘/조회해줘" 류 자연어 요청의 **첫 호출은 반드시 이 그룹**
 - list_datasets: 목록 조회
 - get_dataset: 상세 조회 (컬럼 포함)
 - query_dataset_data: 데이터 조회
@@ -77,7 +87,7 @@ Agent 도구를 사용하고, 사용자 요청 전체와 관련 컨텍스트(현
 - list_report_templates / get_report_template / create_report_template / update_report_template / delete_report_template
 - generate_report / save_as_smart_job
 
-[위젯 표시]
+[위젯 표시] — **표시 계층**. 데이터 소스 아님. \`list_*\`/\`get_*\`로 먼저 데이터를 얻은 뒤 시각화에만 사용.
 - show_chart / show_dataset / show_table / navigate_to
 - show_pipeline / show_dataset_list / show_pipeline_list
 - show_dashboard_summary / show_activity / show_report_builder

@@ -78,7 +78,7 @@ export function registerUiTools(
     // 5. 데이터셋 목록 (Passthrough — AI가 list_datasets 결과 전달)
     safeTool(
       'show_dataset_list',
-      '채팅에 데이터셋 목록을 카드 리스트로 표시합니다. list_datasets로 조회한 결과를 전달하세요.',
+      '데이터셋 목록을 카드 UI 위젯으로 시각화합니다. **표시 전용 — 데이터 조회 도구가 아님**. 사용자가 "대시보드에 추가", "카드로 보여줘", "위젯으로 표시" 등 시각화를 명시했을 때만 사용하고, 반드시 list_datasets로 먼저 조회한 결과를 items로 전달하세요. 단순 "목록 보여줘"/"조회해줘"는 list_datasets만 호출한 뒤 자연어로 요약합니다.',
       {
         items: z.array(z.object({
           id: z.coerce.number(),
@@ -97,7 +97,7 @@ export function registerUiTools(
     // 6. 파이프라인 목록 (Passthrough)
     safeTool(
       'show_pipeline_list',
-      '채팅에 파이프라인 목록을 카드 리스트로 표시합니다. list_pipelines로 조회한 결과를 전달하세요.',
+      '파이프라인 목록을 카드 UI 위젯으로 시각화합니다. **표시 전용 — 데이터 조회 도구가 아님**. 사용자가 "대시보드에 추가", "카드로 보여줘", "위젯으로 표시" 등 시각화를 명시했을 때만 사용하고, 반드시 list_pipelines로 먼저 조회한 결과를 items로 전달하세요. 단순 "목록 보여줘"/"조회해줘"는 list_pipelines만 호출한 뒤 자연어로 요약합니다.',
       {
         items: z.array(z.object({
           id: z.coerce.number(),
