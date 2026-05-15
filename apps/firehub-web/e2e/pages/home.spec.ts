@@ -340,4 +340,135 @@ test.describe('홈 페이지', () => {
     const headingCount = await page.locator('h1, h2, h3').count();
     expect(headingCount).toBeGreaterThanOrEqual(6);
   });
+
+  /**
+   * 회귀: 이슈 #225 — 홈 위젯 스크롤 영역 일괄 점검
+   * - "최근 임포트" / "최근 실행" 위젯은 slice(0,5)로 5건 고정 표시이며 내부 스크롤이 발생하면 안된다.
+   *   (max-h-[13rem] 안에 5건이 들어가지 않아 첫 항목 상단이 잘리는 회귀)
+   * - 풀리스트/페이지네이션 위젯(최근 대시보드/데이터셋, 주의 필요, 활동 피드)은 스크롤이 발생하더라도
+   *   스크롤바와 컨텐츠 사이 우측 패딩(pr-2 = 8px)이 있어야 한다.
+   */
+  test('5건 고정 위젯("최근 임포트", "최근 실행")은 내부 스크롤이 발생하지 않는다 (이슈 #225)', async ({ authenticatedPage: page }) => {
+    // dashboard/stats를 5건 임포트 + 5건 실행으로 오버라이드
+    await mockApi(page, 'GET', '/api/v1/dashboard/stats', {
+      totalDatasets: 10,
+      sourceDatasets: 6,
+      derivedDatasets: 4,
+      totalPipelines: 5,
+      activePipelines: 3,
+      recentImports: Array.from({ length: 5 }, (_, i) => ({
+        id: i + 1,
+        datasetName: `데이터셋 ${i + 1}`,
+        fileName: `file_${i + 1}.csv`,
+        status: 'COMPLETED',
+        createdAt: '2026-05-15T10:00:00',
+      })),
+      recentExecutions: Array.from({ length: 5 }, (_, i) => ({
+        id: i + 1,
+        pipelineName: `파이프라인 ${i + 1}`,
+        status: 'COMPLETED',
+        createdAt: '2026-05-15T10:00:00',
+      })),
+    });
+
+    await page.goto('/');
+
+    // "최근 임포트" 위젯 컨테이너 — 카드 제목 다음 형제인 CardContent 안의 div를 잡는다
+    // 카드 헤더 텍스트로 카드 루트를 찾고, 내부의 첫 번째 .py-1.5 항목의 부모 div를 평가한다
+    const importItem = page.getByText('데이터셋 1', { exact: true });
+    await expect(importItem).toBeVisible();
+    // 5건 모두 표시 확인 (잘림 회귀 방지)
+    await expect(page.getByText('데이터셋 5', { exact: true })).toBeVisible();
+
+    // 컨테이너의 scrollHeight == clientHeight (스크롤 미발생)
+    // 항목 div의 부모(스크롤 컨테이너)를 직접 평가
+    const importScrollState = await importItem.evaluate((node) => {
+      // node = <p class="truncate text-sm">데이터셋 1</p>
+      // 부모 체인: p -> .min-w-0 -> .py-1.5 항목 -> 스크롤 컨테이너 div
+      const itemRow = node.closest('.py-1\\.5');
+      const scrollContainer = itemRow?.parentElement;
+      return {
+        scrollHeight: scrollContainer?.scrollHeight ?? 0,
+        clientHeight: scrollContainer?.clientHeight ?? 0,
+      };
+    });
+    // 스크롤이 발생하지 않으려면 scrollHeight <= clientHeight여야 한다
+    expect(importScrollState.scrollHeight).toBeLessThanOrEqual(importScrollState.clientHeight);
+
+    // "최근 실행" 위젯도 동일 검증
+    const execItem = page.getByText('파이프라인 1', { exact: true });
+    await expect(execItem).toBeVisible();
+    await expect(page.getByText('파이프라인 5', { exact: true })).toBeVisible();
+
+    const execScrollState = await execItem.evaluate((node) => {
+      const itemRow = node.closest('.py-1\\.5');
+      const scrollContainer = itemRow?.parentElement;
+      return {
+        scrollHeight: scrollContainer?.scrollHeight ?? 0,
+        clientHeight: scrollContainer?.clientHeight ?? 0,
+      };
+    });
+    expect(execScrollState.scrollHeight).toBeLessThanOrEqual(execScrollState.clientHeight);
+  });
+
+  test('풀리스트 위젯("최근 대시보드"/"최근 데이터셋")은 스크롤 컨테이너에 우측 패딩이 있다 (이슈 #225)', async ({ authenticatedPage: page }) => {
+    // 다수 항목으로 오버라이드하여 스크롤 발생 조건 확보
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', {
+      content: Array.from({ length: 10 }, (_, i) => ({
+        id: i + 1,
+        name: `대시보드 ${i + 1}`,
+        widgetCount: i + 1,
+      })),
+      page: 0,
+      size: 10,
+      totalElements: 10,
+      totalPages: 1,
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: Array.from({ length: 10 }, (_, i) => ({
+        id: i + 1,
+        name: `데이터셋 ${i + 1}`,
+        datasetType: 'SOURCE',
+        createdAt: '2026-05-15T10:00:00',
+      })),
+      page: 0,
+      size: 10,
+      totalElements: 10,
+      totalPages: 1,
+    });
+
+    await page.goto('/');
+
+    // 첫 항목으로 스크롤 컨테이너 접근 → padding-right >= 6px 검증
+    const dashItem = page.getByText('대시보드 1', { exact: true }).first();
+    await expect(dashItem).toBeVisible();
+    const dashPadding = await dashItem.evaluate((node) => {
+      // 대시보드 항목은 button 요소. 가장 가까운 scroll container를 부모 체인에서 찾는다.
+      let el: HTMLElement | null = node as HTMLElement;
+      while (el && el.parentElement) {
+        const style = getComputedStyle(el);
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+          return parseFloat(style.paddingRight);
+        }
+        el = el.parentElement;
+      }
+      return 0;
+    });
+    expect(dashPadding).toBeGreaterThanOrEqual(6);
+
+    // "최근 데이터셋"도 동일 검증
+    const dsItem = page.getByText('데이터셋 1', { exact: true }).first();
+    const dsPadding = await dsItem.evaluate((node) => {
+      let el: HTMLElement | null = node as HTMLElement;
+      while (el && el.parentElement) {
+        const style = getComputedStyle(el);
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+          return parseFloat(style.paddingRight);
+        }
+        el = el.parentElement;
+      }
+      return 0;
+    });
+    expect(dsPadding).toBeGreaterThanOrEqual(6);
+  });
 });

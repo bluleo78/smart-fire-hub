@@ -201,7 +201,7 @@ export default function HomePage() {
           <Separator />
           <CardContent className="px-3 pt-1 pb-2">
             <div
-              className={`space-y-1.5 overflow-y-auto max-h-[11.5rem] ${THIN_SCROLLBAR}`}
+              className={`space-y-1.5 overflow-y-auto max-h-[11.5rem] pr-2 ${THIN_SCROLLBAR}`}
             >
               {attentionItems.map((item, idx) => (
                 <button
@@ -301,7 +301,7 @@ export default function HomePage() {
                   ))}
                 </div>
               ) : dashboardsData?.content && dashboardsData.content.length > 0 ? (
-                <div className={`overflow-y-auto max-h-[13rem] ${THIN_SCROLLBAR}`}>
+                <div className={`overflow-y-auto max-h-[13rem] pr-2 ${THIN_SCROLLBAR}`}>
                   {dashboardsData.content.map((dashboard) => (
                     <button
                       key={dashboard.id}
@@ -352,7 +352,7 @@ export default function HomePage() {
                   ))}
                 </div>
               ) : datasetsData?.content && datasetsData.content.length > 0 ? (
-                <div className={`overflow-y-auto max-h-[13rem] ${THIN_SCROLLBAR}`}>
+                <div className={`overflow-y-auto max-h-[13rem] pr-2 ${THIN_SCROLLBAR}`}>
                   {datasetsData.content.map((ds) => (
                     <button
                       key={ds.id}
@@ -392,7 +392,7 @@ export default function HomePage() {
               </CardHeader>
               <Separator />
               <CardContent className="px-3 pt-1 pb-2">
-                <div className={`overflow-y-auto max-h-[13rem] ${THIN_SCROLLBAR}`}>
+                <div>
                   {stats.recentImports.slice(0, 5).map((imp) => (
                     <div key={imp.id} className="flex items-center justify-between py-1.5">
                       <div className="min-w-0 flex-1">
@@ -426,7 +426,7 @@ export default function HomePage() {
               </CardHeader>
               <Separator />
               <CardContent className="px-3 pt-1 pb-2">
-                <div className={`overflow-y-auto max-h-[13rem] ${THIN_SCROLLBAR}`}>
+                <div>
                   {stats.recentExecutions.slice(0, 5).map((exec) => (
                     <div key={exec.id} className="flex items-center justify-between py-1.5">
                       <p className="truncate text-sm min-w-0 flex-1">{exec.pipelineName}</p>
@@ -506,7 +506,7 @@ export default function HomePage() {
               </div>
             ) : activityFeed?.items && activityFeed.items.length > 0 ? (
               <div
-                className={`overflow-y-auto h-[32rem] ${THIN_SCROLLBAR}`}
+                className={`overflow-y-auto h-[32rem] pr-2 ${THIN_SCROLLBAR}`}
               >
                 {activityFeed.items.map((item) => (
                   <div
