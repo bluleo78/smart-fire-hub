@@ -12,7 +12,7 @@ import {
   Upload,
   XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '../components/ui/badge';
@@ -33,7 +33,6 @@ import {
 import { useDatasets } from '../hooks/queries/useDatasets';
 import { useAuth } from '../hooks/useAuth';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
-import type { ActivityFeedParams } from '../types/dashboard';
 
 const THIN_SCROLLBAR =
   '[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border';
@@ -57,20 +56,52 @@ export default function HomePage() {
   const { data: dashboardsData, isLoading: isDashboardsLoading } = useDashboards({ page: 0, size: 5 });
   const { data: datasetsData, isLoading: isDatasetsLoading } = useDatasets({ page: 0, size: 5 });
 
-  const [activityParams, setActivityParams] = useState<ActivityFeedParams>({
-    page: 0,
-    size: 20,
-  });
-  const { data: activityFeed, isLoading: isActivityLoading } = useActivityFeed(activityParams);
-
+  // 활동 피드: 필터 상태만 보관. 페이지는 useInfiniteQuery가 내부적으로 관리한다 (이슈 #226).
   const [typeFilter, setTypeFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
+  const {
+    data: activityFeedPages,
+    isLoading: isActivityLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useActivityFeed({
+    size: 20,
+    type: typeFilter || undefined,
+    severity: severityFilter || undefined,
+  });
+
+  // 모든 페이지의 items를 평탄화 — 렌더링은 누적된 리스트를 그대로 사용
+  const activityItems = useMemo(
+    () => activityFeedPages?.pages.flatMap((p) => p.items) ?? [],
+    [activityFeedPages],
+  );
+  const activityTotalCount = activityFeedPages?.pages[0]?.totalCount;
 
   function applyFilter(type: string, severity: string) {
     setTypeFilter(type);
     setSeverityFilter(severity);
-    setActivityParams({ page: 0, size: 20, type: type || undefined, severity: severity || undefined });
   }
+
+  // sentinel 감지: 하단 sentinel이 시야에 들어오면 다음 페이지 자동 fetch.
+  // 컨테이너 내부 스크롤(`h-[32rem]`)이므로 root를 스크롤 컨테이너로 지정해야 한다.
+  const activityScrollRef = useRef<HTMLDivElement>(null);
+  const activitySentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sentinel = activitySentinelRef.current;
+    const root = activityScrollRef.current;
+    if (!sentinel || !root || !hasNextPage || isFetchingNextPage) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          fetchNextPage();
+        }
+      },
+      { root, rootMargin: '100px' },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, activityItems.length]);
 
   const ph = health?.pipelineHealth;
   const dh = health?.datasetHealth;
@@ -453,8 +484,8 @@ export default function HomePage() {
                 {/* h2: ZONE 5 활동 피드 (페이지 1단계 섹션) */}
                 <h2 className="text-sm font-semibold m-0">활동 피드</h2>
               </CardTitle>
-              {activityFeed?.totalCount != null && (
-                <span className="text-xs text-muted-foreground">총 {activityFeed.totalCount}건</span>
+              {activityTotalCount != null && (
+                <span className="text-xs text-muted-foreground">총 {activityTotalCount}건</span>
               )}
             </div>
             {/* Filters */}
@@ -504,11 +535,13 @@ export default function HomePage() {
                   <Skeleton key={i} className="h-10 w-full" />
                 ))}
               </div>
-            ) : activityFeed?.items && activityFeed.items.length > 0 ? (
+            ) : activityItems.length > 0 ? (
               <div
+                ref={activityScrollRef}
+                data-testid="activity-feed-scroll"
                 className={`overflow-y-auto h-[32rem] pr-2 ${THIN_SCROLLBAR}`}
               >
-                {activityFeed.items.map((item) => (
+                {activityItems.map((item) => (
                   <div
                     key={`${item.eventType}-${item.id}`}
                     className={`flex items-start gap-2.5 py-2 border-b last:border-0 row-hover ${
@@ -535,21 +568,20 @@ export default function HomePage() {
                     </div>
                   </div>
                 ))}
-                {activityFeed.hasMore && (
-                  <div className="pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full h-7 text-xs"
-                      onClick={() =>
-                        setActivityParams((prev) => ({
-                          ...prev,
-                          size: (prev.size ?? 20) + 20,
-                        }))
-                      }
-                    >
-                      더보기
-                    </Button>
+                {/* sentinel: 시야에 들어오면 IntersectionObserver가 fetchNextPage 호출 */}
+                {hasNextPage && (
+                  <div
+                    ref={activitySentinelRef}
+                    data-testid="activity-feed-sentinel"
+                    className="py-2 text-center text-xs text-muted-foreground"
+                  >
+                    {isFetchingNextPage ? '불러오는 중...' : ''}
+                  </div>
+                )}
+                {/* 끝 도달 안내 — 두 번째 페이지 이상 로드 후 더 이상 없을 때만 표시 (단일 페이지에서는 노이즈) */}
+                {!hasNextPage && activityFeedPages && activityFeedPages.pages.length > 1 && (
+                  <div className="py-2 text-center text-xs text-muted-foreground">
+                    더 이상 항목이 없습니다.
                   </div>
                 )}
               </div>

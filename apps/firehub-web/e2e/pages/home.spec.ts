@@ -411,6 +411,143 @@ test.describe('홈 페이지', () => {
     expect(execScrollState.scrollHeight).toBeLessThanOrEqual(execScrollState.clientHeight);
   });
 
+  /**
+   * 이슈 #226 — 활동 피드 더보기 버튼 제거 후 무한 스크롤로 전환
+   * - sentinel 진입 시 자동으로 page=1 요청이 발생하고 누적 렌더되는지 검증
+   * - 1페이지/2페이지가 같은 컨테이너에 누적되어 스크롤 위치가 보존되는지 검증
+   * - "더보기" 버튼이 더 이상 존재하지 않음을 검증
+   */
+  test('활동 피드는 sentinel 진입 시 다음 페이지를 자동 fetch하여 누적 렌더한다 (이슈 #226)', async ({ authenticatedPage: page }) => {
+    // page 파라미터에 따라 다른 응답을 주는 동적 핸들러 등록.
+    // setupHomeMocks가 이미 GET /api/v1/dashboard/activity를 빈 응답으로 모킹해놨으므로
+    // 우리는 우선순위가 더 높은(나중에 등록되는) 핸들러로 덮어쓴다.
+    const requestedPages: number[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/dashboard/activity',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const reqUrl = new URL(route.request().url());
+        const pageParam = Number(reqUrl.searchParams.get('page') ?? '0');
+        requestedPages.push(pageParam);
+
+        // page=0 → 20개 + hasMore=true, page=1 → 10개 + hasMore=false
+        if (pageParam === 0) {
+          const items = Array.from({ length: 20 }, (_, i) => ({
+            id: i + 1,
+            eventType: 'PIPELINE_SUCCESS',
+            title: `활동 ${i + 1}`,
+            description: `desc ${i + 1}`,
+            severity: 'INFO',
+            entityType: 'PIPELINE',
+            entityId: i + 1,
+            occurredAt: '2026-05-15T10:00:00',
+            isResolved: true,
+          }));
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ items, totalCount: 30, hasMore: true }),
+          });
+        }
+        const items = Array.from({ length: 10 }, (_, i) => ({
+          id: 21 + i,
+          eventType: 'PIPELINE_SUCCESS',
+          title: `활동 ${21 + i}`,
+          description: `desc ${21 + i}`,
+          severity: 'INFO',
+          entityType: 'PIPELINE',
+          entityId: 21 + i,
+          occurredAt: '2026-05-15T09:00:00',
+          isResolved: true,
+        }));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items, totalCount: 30, hasMore: false }),
+        });
+      },
+    );
+
+    await page.goto('/');
+
+    // 1페이지 로드 완료 — 첫/마지막 항목 확인
+    await expect(page.getByText('활동 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('활동 20', { exact: true })).toBeVisible();
+
+    // "더보기" 버튼은 더 이상 존재하지 않아야 한다 (이슈 #226의 핵심)
+    await expect(page.getByRole('button', { name: '더보기' })).toHaveCount(0);
+
+    // sentinel이 컨테이너 내부에 존재하나 화면 밖이므로, 스크롤 컨테이너를 끝까지 내려서 진입시킴
+    const scrollContainer = page.getByTestId('activity-feed-scroll');
+    await scrollContainer.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+
+    // 2페이지 진입으로 page=1 호출이 발생 — 새 항목이 화면에 누적
+    await expect(page.getByText('활동 21', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('활동 30', { exact: true })).toBeVisible();
+
+    // 1페이지 항목은 사라지지 않고 함께 렌더 (스크롤 누적)
+    await expect(page.getByText('활동 1', { exact: true })).toBeAttached();
+
+    // API 호출 시퀀스 검증 — page=0, page=1이 정확히 호출되었어야 함
+    expect(requestedPages).toContain(0);
+    expect(requestedPages).toContain(1);
+
+    // 끝 도달 후 sentinel은 사라지고 끝 안내 표시
+    await expect(page.getByTestId('activity-feed-sentinel')).toHaveCount(0);
+    await expect(page.getByText('더 이상 항목이 없습니다.')).toBeVisible();
+  });
+
+  test('활동 피드 필터 변경 시 page=0부터 다시 시작한다 (이슈 #226)', async ({ authenticatedPage: page }) => {
+    // 필터 변경 → queryKey 변경 → useInfiniteQuery가 page=0으로 재시작.
+    // 동일 핸들러로 type 파라미터별 응답을 분기한다.
+    const capturedRequests: Array<{ page: number; type: string | null; severity: string | null }> = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/dashboard/activity',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const reqUrl = new URL(route.request().url());
+        const pageParam = Number(reqUrl.searchParams.get('page') ?? '0');
+        const type = reqUrl.searchParams.get('type');
+        const severity = reqUrl.searchParams.get('severity');
+        capturedRequests.push({ page: pageParam, type, severity });
+
+        const label = type === 'PIPELINE' ? '파이프 항목' : '기본 항목';
+        const items = Array.from({ length: 3 }, (_, i) => ({
+          id: i + 1,
+          eventType: 'PIPELINE_SUCCESS',
+          title: `${label} ${i + 1}`,
+          description: 'desc',
+          severity: 'INFO',
+          entityType: 'PIPELINE',
+          entityId: i + 1,
+          occurredAt: '2026-05-15T10:00:00',
+          isResolved: true,
+        }));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items, totalCount: 3, hasMore: false }),
+        });
+      },
+    );
+
+    await page.goto('/');
+    await expect(page.getByText('기본 항목 1', { exact: true })).toBeVisible();
+
+    // "파이프라인" 필터 클릭 — 활동 피드 카드 내부의 필터 버튼
+    await page.getByRole('button', { name: '파이프라인', exact: true }).click();
+
+    // 새 type 파라미터로 page=0이 다시 호출되며, 응답이 화면에 반영
+    await expect(page.getByText('파이프 항목 1', { exact: true })).toBeVisible({ timeout: 5000 });
+
+    // type=PIPELINE 요청 중 page=0이 포함되어야 함
+    const pipelineReqs = capturedRequests.filter((r) => r.type === 'PIPELINE');
+    expect(pipelineReqs.length).toBeGreaterThan(0);
+    expect(pipelineReqs.some((r) => r.page === 0)).toBe(true);
+  });
+
   test('풀리스트 위젯("최근 대시보드"/"최근 데이터셋")은 스크롤 컨테이너에 우측 패딩이 있다 (이슈 #225)', async ({ authenticatedPage: page }) => {
     // 다수 항목으로 오버라이드하여 스크롤 발생 조건 확보
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards', {
