@@ -4,6 +4,7 @@ import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
 import com.smartfirehub.notification.Payload;
+import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
 import com.smartfirehub.notification.repository.UserChannelPreferenceRepository;
@@ -38,16 +39,19 @@ public class ChannelSettingsService {
   private final UserChannelPreferenceRepository preferenceRepo;
   private final UserRepository userRepository;
   private final ChannelRegistry channelRegistry;
+  private final SlackWorkspaceRepository slackWorkspaceRepo;
 
   public ChannelSettingsService(
       UserChannelBindingRepository bindingRepo,
       UserChannelPreferenceRepository preferenceRepo,
       UserRepository userRepository,
-      ChannelRegistry channelRegistry) {
+      ChannelRegistry channelRegistry,
+      SlackWorkspaceRepository slackWorkspaceRepo) {
     this.bindingRepo = bindingRepo;
     this.preferenceRepo = preferenceRepo;
     this.userRepository = userRepository;
     this.channelRegistry = channelRegistry;
+    this.slackWorkspaceRepo = slackWorkspaceRepo;
   }
 
   /**
@@ -81,7 +85,8 @@ public class ChannelSettingsService {
               true, // 항상 연결됨 (웹 인박스)
               false,
               "웹 인박스",
-              null // OAuth 불필요
+              null, // OAuth 불필요
+              null // workspaceId 미사용
               );
 
       case EMAIL ->
@@ -91,7 +96,8 @@ public class ChannelSettingsService {
               email != null && !email.isBlank(), // 이메일이 등록되어 있으면 connected
               false,
               email, // null이어도 프론트엔드가 처리
-              null // OAuth 불필요
+              null, // OAuth 불필요
+              null // workspaceId 미사용
               );
 
       case KAKAO -> {
@@ -114,7 +120,9 @@ public class ChannelSettingsService {
             connected,
             needsReauth,
             displayAddress,
-            KAKAO_OAUTH_AUTH_URL);
+            KAKAO_OAUTH_AUTH_URL,
+            null // KAKAO는 workspace 개념 없음
+            );
       }
 
       case SLACK -> {
@@ -129,13 +137,22 @@ public class ChannelSettingsService {
                 .map(UserChannelBinding::displayAddress)
                 .filter(s -> s != null && !s.isBlank())
                 .orElse("Slack");
+        // 활성 워크스페이스 ID 노출 — 프론트엔드가 사용자 ID 매핑 UI를 보여줄지 결정하기 위함.
+        // 워크스페이스가 설치되었지만 binding이 없는 상태에서만 link-user POST가 의미 있다.
+        // binding이 있으면 binding.workspaceId() 우선 사용 (재연동 안내 등에 활용 가능).
+        Long workspaceId =
+            binding
+                .map(UserChannelBinding::workspaceId)
+                .orElseGet(
+                    () -> slackWorkspaceRepo.findFirstActive().map(w -> w.id()).orElse(null));
         yield new ChannelSettingResponse(
             "SLACK",
             preferenceRepo.isEnabled(userId, ChannelType.SLACK),
             connected,
             needsReauth,
             displayAddress,
-            SLACK_OAUTH_AUTH_URL);
+            SLACK_OAUTH_AUTH_URL,
+            workspaceId);
       }
     };
   }

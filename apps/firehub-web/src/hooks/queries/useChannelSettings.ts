@@ -4,6 +4,7 @@ import {
   type ChannelType,
   disconnectChannel,
   getChannelSettings,
+  linkSlackUser,
   testChannel,
   updateChannelPreference,
 } from '../../api/channels';
@@ -61,5 +62,22 @@ export function useDisconnectChannelMutation() {
 export function useTestChannelMutation() {
   return useMutation({
     mutationFn: (channel: ChannelType) => testChannel(channel),
+  });
+}
+
+/**
+ * Slack 사용자 ID 매핑 뮤테이션 훅
+ * POST /api/v1/oauth/slack/link-user
+ *
+ * 성공 시 channel-settings 캐시를 무효화하여 SLACK 카드가 connected=true로 갱신되게 한다.
+ */
+export function useLinkSlackUserMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workspaceId, slackUserId }: { workspaceId: number; slackUserId: string }) =>
+      linkSlackUser(workspaceId, slackUserId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
   });
 }

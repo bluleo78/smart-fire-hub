@@ -66,6 +66,35 @@ class SlackWorkspaceRepositoryImpl implements SlackWorkspaceRepository {
   }
 
   /**
+   * 활성 워크스페이스(revoked_at IS NULL) 중 가장 최근 설치된 1건 반환.
+   *
+   * <p>installed_by_user_id 기준 정렬이 아닌 id DESC로 단순 정렬 (현재 단일 워크스페이스 모델). signing_secret/previous
+   * 컬럼도 함께 매핑한다 — 컬럼 누락 시 NPE 발생 가능.
+   */
+  @Override
+  public Optional<SlackWorkspace> findFirstActive() {
+    return dsl.selectFrom(SLACK_WORKSPACE)
+        .where(SLACK_WORKSPACE.REVOKED_AT.isNull())
+        .orderBy(SLACK_WORKSPACE.ID.desc())
+        .limit(1)
+        .fetchOptional()
+        .map(
+            r ->
+                new SlackWorkspace(
+                    r.getId(),
+                    r.getTeamId(),
+                    r.getTeamName(),
+                    r.getBotUserId(),
+                    r.getBotTokenEnc(),
+                    r.getSigningSecretEnc(),
+                    r.getPreviousSigningSecretEnc(),
+                    r.getPreviousSigningSecretExpiresAt() == null
+                        ? null
+                        : r.getPreviousSigningSecretExpiresAt().toInstant(),
+                    r.getInstalledByUserId()));
+  }
+
+  /**
    * team_id UNIQUE 제약 충돌 시 UPDATE, 없으면 INSERT.
    *
    * <p>signing_secret_enc는 기존 값을 유지한다 (재설치해도 signing secret는 변경되지 않는 경우가 많으므로). V51 마이그레이션의 NOT

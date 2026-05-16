@@ -71,12 +71,12 @@ class ChannelSettingsControllerTest {
     // given: 4채널 mock 응답 준비
     List<ChannelSettingResponse> mockResponse =
         List.of(
-            new ChannelSettingResponse("CHAT", true, true, false, "웹 인박스", null),
-            new ChannelSettingResponse("EMAIL", true, true, false, "user@example.com", null),
+            new ChannelSettingResponse("CHAT", true, true, false, "웹 인박스", null, null),
+            new ChannelSettingResponse("EMAIL", true, true, false, "user@example.com", null, null),
             new ChannelSettingResponse(
-                "KAKAO", false, false, false, "카카오톡", "/api/v1/oauth/kakao/auth-url"),
+                "KAKAO", false, false, false, "카카오톡", "/api/v1/oauth/kakao/auth-url", null),
             new ChannelSettingResponse(
-                "SLACK", false, false, false, "Slack", "/api/v1/oauth/slack/auth-url"));
+                "SLACK", false, false, false, "Slack", "/api/v1/oauth/slack/auth-url", null));
     when(channelSettingsService.getSettings(TEST_USER_ID)).thenReturn(mockResponse);
 
     // when & then

@@ -5,6 +5,10 @@ export type ChannelType = 'CHAT' | 'EMAIL' | 'KAKAO' | 'SLACK';
 
 /**
  * 채널 설정 응답 타입 — 백엔드 ChannelSettingResponse DTO와 일치
+ *
+ * - workspaceId: SLACK 전용 식별자. 워크스페이스 OAuth 설치가 완료되었으나 사용자 binding이 없는 상태에서
+ *   사용자 ID 매핑 입력 UI(ChannelCard 내부)가 어느 워크스페이스로 link-user 호출할지 결정하기 위해 노출된다.
+ *   설치 전·다른 채널·일반 환경에서는 null.
  */
 export interface ChannelSetting {
   channel: ChannelType;
@@ -13,6 +17,7 @@ export interface ChannelSetting {
   needsReauth: boolean;
   displayAddress: string | null;
   oauthStartUrl: string | null;
+  workspaceId: number | null;
 }
 
 /**
@@ -62,4 +67,16 @@ export interface ChannelTestResponse {
  */
 export async function testChannel(channel: ChannelType) {
   return client.post<ChannelTestResponse>(`/channels/settings/${channel}/test`);
+}
+
+/**
+ * Slack 사용자 ID 매핑 (workspace install 이후 user_channel_binding 생성).
+ * POST /api/v1/oauth/slack/link-user
+ *
+ * - 백엔드는 입력된 slackUserId로 DM ping을 전송하여 봇 접근 가능 여부를 검증하고
+ *   binding(ACTIVE)을 생성한다. 실패 시 4xx 에러를 던지므로 호출 측에서 토스트로 안내한다.
+ * - 응답은 204 No Content.
+ */
+export async function linkSlackUser(workspaceId: number, slackUserId: string) {
+  return client.post<void>('/oauth/slack/link-user', { workspaceId, slackUserId });
 }

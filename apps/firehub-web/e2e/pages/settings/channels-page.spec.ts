@@ -16,6 +16,7 @@ const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
     needsReauth: false,
     displayAddress: null,
     oauthStartUrl: null,
+    workspaceId: null,
   },
   {
     channel: 'EMAIL',
@@ -24,6 +25,7 @@ const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
     needsReauth: false,
     displayAddress: 'test@example.com',
     oauthStartUrl: null,
+    workspaceId: null,
   },
   {
     channel: 'KAKAO',
@@ -32,6 +34,7 @@ const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
     needsReauth: false,
     displayAddress: null,
     oauthStartUrl: 'https://kauth.kakao.com/oauth/authorize?client_id=test',
+    workspaceId: null,
   },
   {
     channel: 'SLACK',
@@ -40,6 +43,7 @@ const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
     needsReauth: true,
     displayAddress: 'workspace.slack.com',
     oauthStartUrl: 'https://slack.com/oauth/v2/authorize?client_id=test',
+    workspaceId: null,
   },
 ];
 
@@ -397,6 +401,134 @@ test.describe('채널 설정 페이지', () => {
     await expect(
       page.getByText('Slack OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.'),
     ).toBeVisible();
+  });
+
+  /**
+   * 회귀 테스트: Slack 워크스페이스 설치는 완료되었으나 user binding이 없는 상태 (#234)
+   *
+   * 핵심 시나리오:
+   * - SLACK 채널: connected=false, needsReauth=false, workspaceId=1 (워크스페이스 설치 완료)
+   * - "사용자 매핑 추후 지원" Badge 대신 회원 ID 입력 UI가 노출되어야 한다
+   * - "연동하기" OAuth 버튼은 노출되지 않아야 한다 (재설치 흐름이 아니므로)
+   * - 입력 → "연동 확인 DM 받기" 버튼 → POST /api/v1/oauth/slack/link-user 호출
+   *   payload: { workspaceId: 1, slackUserId: <대문자 정규화된 입력값> }
+   * - 성공 시 토스트 표시 + GET /api/v1/channels/settings 재조회
+   */
+  test.describe('SLACK 사용자 매핑 UI (#234)', () => {
+    /** 워크스페이스 설치 완료 + binding 없음 상태 — link-user UI가 노출되어야 하는 정확한 조건. */
+    const SLACK_INSTALLED_NO_BINDING: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'SLACK'
+        ? {
+            ...s,
+            connected: false,
+            needsReauth: false,
+            enabled: false,
+            workspaceId: 1,
+            displayAddress: 'Slack',
+            oauthStartUrl: '/api/v1/oauth/slack/auth-url',
+          }
+        : s,
+    );
+
+    test('워크스페이스 설치 + binding 없음 → 사용자 ID 입력 UI 노출 + OAuth 버튼 비노출', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/channels/settings', SLACK_INSTALLED_NO_BINDING);
+      await page.goto('/settings/channels');
+
+      const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+
+      // 사용자 ID 입력창과 연동 버튼이 노출된다
+      await expect(slackCard.getByLabel('Slack 회원 ID')).toBeVisible();
+      await expect(slackCard.getByRole('button', { name: '연동 확인 DM 받기' })).toBeVisible();
+
+      // 워크스페이스가 이미 설치된 상태이므로 "연동하기" OAuth 버튼은 표시되지 않는다
+      await expect(slackCard.getByRole('button', { name: '연동하기' })).toHaveCount(0);
+
+      // 미구현 안내 배지는 더 이상 표시되지 않는다 (회귀 방지)
+      await expect(slackCard.getByText('사용자 매핑 추후 지원')).toHaveCount(0);
+    });
+
+    test('정상 입력 → POST /oauth/slack/link-user 호출 + 성공 토스트', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/channels/settings', SLACK_INSTALLED_NO_BINDING);
+      const linkCapture = await mockApi(
+        page,
+        'POST',
+        '/api/v1/oauth/slack/link-user',
+        {},
+        { capture: true, status: 204 },
+      );
+
+      await page.goto('/settings/channels');
+      const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+
+      // 소문자로 입력해도 백엔드 전송 시 자동 대문자 정규화 (Slack user ID는 항상 대문자)
+      await slackCard.getByLabel('Slack 회원 ID').fill('u0abcdef12');
+      await slackCard.getByRole('button', { name: '연동 확인 DM 받기' }).click();
+
+      // payload 검증 — workspaceId 정수 + slackUserId 대문자 정규화
+      const req = await linkCapture.waitForRequest();
+      expect(req.url.pathname).toBe('/api/v1/oauth/slack/link-user');
+      expect(req.payload).toMatchObject({ workspaceId: 1, slackUserId: 'U0ABCDEF12' });
+
+      // 성공 토스트 검증
+      await expect(
+        page.getByText(/Slack 연동이 완료되었습니다/),
+      ).toBeVisible();
+    });
+
+    test('잘못된 패턴 입력 → 클라이언트 검증으로 API 호출 차단 + 에러 토스트', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/channels/settings', SLACK_INSTALLED_NO_BINDING);
+      // API가 호출되지 않아야 하지만 안전망으로 등록 (호출되면 테스트가 토스트 한 줄로는 잡지 못함)
+      const linkCapture = await mockApi(
+        page,
+        'POST',
+        '/api/v1/oauth/slack/link-user',
+        {},
+        { capture: true, status: 204 },
+      );
+
+      await page.goto('/settings/channels');
+      const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+
+      // U로 시작하지 않는 잘못된 값
+      await slackCard.getByLabel('Slack 회원 ID').fill('XYZ123');
+      await slackCard.getByRole('button', { name: '연동 확인 DM 받기' }).click();
+
+      // 형식 에러 토스트 표시
+      await expect(page.getByText(/올바른 Slack 회원 ID 형식이 아닙니다/)).toBeVisible();
+
+      // API 호출되지 않았는지 검증 (캡처된 요청이 없어야 함)
+      expect(linkCapture.requests).toHaveLength(0);
+    });
+
+    test('백엔드 4xx 응답 → 에러 메시지 토스트 표시', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/channels/settings', SLACK_INSTALLED_NO_BINDING);
+      await mockApi(
+        page,
+        'POST',
+        '/api/v1/oauth/slack/link-user',
+        { message: 'Slack 봇이 해당 사용자에게 DM을 보낼 수 없습니다. 채널에 봇을 초대해주세요.' },
+        { status: 400 },
+      );
+
+      await page.goto('/settings/channels');
+      const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+
+      await slackCard.getByLabel('Slack 회원 ID').fill('U0ABCDEF12');
+      await slackCard.getByRole('button', { name: '연동 확인 DM 받기' }).click();
+
+      // 백엔드 메시지가 그대로 토스트로 노출되어 사용자에게 사유 안내
+      await expect(
+        page.getByText(/Slack 봇이 해당 사용자에게 DM을 보낼 수 없습니다/),
+      ).toBeVisible();
+    });
   });
 
   test('KAKAO 카드 아이콘 컨테이너에 카카오 브랜드 배경색이 적용된다', async ({

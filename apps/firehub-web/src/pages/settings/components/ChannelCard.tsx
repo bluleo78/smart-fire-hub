@@ -1,4 +1,5 @@
 import { Bell, Mail, Send } from 'lucide-react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 
 import type { ChannelSetting, ChannelType } from '../../../api/channels';
@@ -13,7 +14,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '../../../components/ui/alert-dialog';
-import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import {
   Card,
@@ -22,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
 import { Switch } from '../../../components/ui/switch';
 import {
   Tooltip,
@@ -31,9 +32,11 @@ import {
 } from '../../../components/ui/tooltip';
 import {
   useDisconnectChannelMutation,
+  useLinkSlackUserMutation,
   useTestChannelMutation,
   useUpdateChannelPreferenceMutation,
 } from '../../../hooks/queries/useChannelSettings';
+import { extractApiError } from '../../../lib/api-error';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { OAuthConnectButton } from './OAuthConnectButton';
 
@@ -140,7 +143,15 @@ interface ChannelCardProps {
  * - EMAIL: 계정 이메일 표시
  */
 export function ChannelCard({ setting }: ChannelCardProps) {
-  const { channel, enabled, connected, needsReauth, displayAddress, oauthStartUrl } = setting;
+  const {
+    channel,
+    enabled,
+    connected,
+    needsReauth,
+    displayAddress,
+    oauthStartUrl,
+    workspaceId,
+  } = setting;
 
   const Icon = CHANNEL_ICONS[channel];
   const label = CHANNEL_LABELS[channel];
@@ -153,6 +164,41 @@ export function ChannelCard({ setting }: ChannelCardProps) {
   const updatePreference = useUpdateChannelPreferenceMutation();
   const disconnect = useDisconnectChannelMutation();
   const testSend = useTestChannelMutation();
+  const linkSlackUser = useLinkSlackUserMutation();
+
+  // Slack 사용자 ID 입력값 — SLACK 카드에서만 사용. 패턴 검증은 제출 시 수행한다.
+  const [slackUserIdInput, setSlackUserIdInput] = useState('');
+
+  /**
+   * Slack 사용자 ID 패턴 검증.
+   * - 형식: ^U[A-Z0-9]{8,12}$ (Slack user ID는 대문자 U + 8~12자 영숫자, 예: U0123456789)
+   * - 사용자 입력은 자동으로 trim/uppercase 변환된 값으로 검증한다.
+   */
+  const SLACK_USER_ID_PATTERN = /^U[A-Z0-9]{8,12}$/;
+
+  const handleLinkSlackUser = () => {
+    if (workspaceId == null) {
+      toast.error('Slack 워크스페이스 정보를 찾을 수 없습니다. 관리자에게 문의하세요.');
+      return;
+    }
+    const normalized = slackUserIdInput.trim().toUpperCase();
+    if (!SLACK_USER_ID_PATTERN.test(normalized)) {
+      toast.error('올바른 Slack 회원 ID 형식이 아닙니다. (예: U0123456789)');
+      return;
+    }
+    linkSlackUser.mutate(
+      { workspaceId, slackUserId: normalized },
+      {
+        onSuccess: () => {
+          toast.success('Slack 연동이 완료되었습니다. 확인 DM이 발송되었는지 Slack에서 확인해주세요.');
+          setSlackUserIdInput('');
+        },
+        onError: (error) => {
+          toast.error(extractApiError(error, 'Slack 연동에 실패했습니다.'));
+        },
+      },
+    );
+  };
 
   const isChatChannel = channel === 'CHAT';
   const isOAuthChannel = channel === 'KAKAO' || channel === 'SLACK';
@@ -279,46 +325,82 @@ export function ChannelCard({ setting }: ChannelCardProps) {
 
         {/* OAuth 채널 액션 버튼 */}
         {isOAuthChannel && (
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* 미연결 or 재인증 필요: 연동/재연결 버튼 */}
-            {(!connected || needsReauth) && oauthStartUrl && (
-              <OAuthConnectButton
-                channel={channel}
-                oauthStartUrl={oauthStartUrl}
-                reauth={needsReauth}
-              />
-            )}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/*
+                미연결 or 재인증 필요: 연동/재연결 버튼.
+                단, SLACK의 경우 워크스페이스가 이미 설치되어 workspaceId가 있고 needsReauth가 아니면 (#234)
+                "워크스페이스 OAuth"는 완료된 상태이므로 OAuth 버튼 대신 사용자 매핑 UI를 보여줘야 한다.
+              */}
+              {(!connected || needsReauth) &&
+                oauthStartUrl &&
+                !(channel === 'SLACK' && workspaceId != null && !needsReauth) && (
+                  <OAuthConnectButton
+                    channel={channel}
+                    oauthStartUrl={oauthStartUrl}
+                    reauth={needsReauth}
+                  />
+                )}
 
-            {/* 연결됨 + 재인증 불필요: 연결 해제 버튼 */}
-            {connected && !needsReauth && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button size="sm" variant="outline">
-                    연결 해제
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{label} 연결 해제</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {label} 채널 연결을 해제하시겠습니까? 알림 수신이 중단됩니다.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>취소</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleDisconnect}>
+              {/* 연결됨 + 재인증 불필요: 연결 해제 버튼 */}
+              {connected && !needsReauth && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" variant="outline">
                       연결 해제
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>{label} 연결 해제</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {label} 채널 연결을 해제하시겠습니까? 알림 수신이 중단됩니다.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>취소</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDisconnect}>
+                        연결 해제
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
 
-            {/* Slack: 사용자 매핑 안내 (Stage 2 Task 5 MVP — 추후 지원) */}
-            {channel === 'SLACK' && connected && (
-              <Badge variant="secondary" className="text-xs">
-                사용자 매핑 추후 지원
-              </Badge>
+            {/*
+              Slack 사용자 ID 매핑 UI (#234) — 워크스페이스는 설치되었으나 user_channel_binding이 없는 상태.
+              - 표시 조건: SLACK 채널 + 미연결 + 재인증 아님 + workspaceId 존재
+              - 입력 → POST /api/v1/oauth/slack/link-user → 백엔드가 DM ping 시도 + binding 생성
+              - 성공 시 채널 목록 invalidate → "연결됨" 상태로 전환
+            */}
+            {channel === 'SLACK' && !connected && !needsReauth && workspaceId != null && (
+              <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium">Slack 회원 ID 연동</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Slack 워크스페이스 설치는 완료되었습니다. 이제 본인의 Slack 회원 ID를 입력하여 DM
+                    수신 채널을 활성화하세요. (Slack 앱 → 프로필 → 더보기 → "회원 ID 복사")
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Input
+                    aria-label="Slack 회원 ID"
+                    placeholder="U0123456789"
+                    value={slackUserIdInput}
+                    onChange={(e) => setSlackUserIdInput(e.target.value)}
+                    className="h-8 text-xs max-w-[180px]"
+                    disabled={linkSlackUser.isPending}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleLinkSlackUser}
+                    disabled={linkSlackUser.isPending || slackUserIdInput.trim().length === 0}
+                  >
+                    {linkSlackUser.isPending ? '연동 중...' : '연동 확인 DM 받기'}
+                  </Button>
+                </div>
+              </div>
             )}
           </div>
         )}

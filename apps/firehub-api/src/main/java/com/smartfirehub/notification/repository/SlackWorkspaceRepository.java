@@ -15,6 +15,16 @@ public interface SlackWorkspaceRepository {
   Optional<SlackWorkspace> findById(long id);
 
   /**
+   * 활성 상태(revoked_at IS NULL)인 워크스페이스 중 하나를 반환.
+   *
+   * <p>현재 단계에서는 단일 워크스페이스 설치 모델이므로 가장 최근에 설치된 활성 워크스페이스 1건을 반환한다. /settings/channels 페이지에서 SLACK
+   * 채널 카드가 "사용자 ID 매핑 UI"를 노출할지 결정하기 위해 사용된다.
+   *
+   * @return 활성 워크스페이스 (없으면 empty)
+   */
+  Optional<SlackWorkspace> findFirstActive();
+
+  /**
    * OAuth 설치 완료 시 워크스페이스 upsert.
    *
    * <p>team_id 충돌 시 team_name, bot_user_id, bot_token_enc, installed_by_user_id, revoked_at을 갱신하여
