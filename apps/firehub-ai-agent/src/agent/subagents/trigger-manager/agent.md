@@ -67,10 +67,32 @@ maxTurns: 20
 
 **단순 isEnabled 토글은 Phase 2를 생략하고 바로 update_trigger를 호출한다.**
 
-삭제 시:
-1. list_triggers(pipelineId)로 해당 트리거 확인
-2. **사용자에게 트리거 이름과 함께 삭제 의사 재확인**: "'{name}' 트리거를 삭제합니다. 삭제 후 이 트리거로는 파이프라인이 실행되지 않습니다. 계속할까요?"
-3. 사용자 명시적 확인("네", "삭제해줘") 후에만 delete_trigger(pipelineId, triggerId) 호출
+삭제 시 — **2턴 분리 필수 (절대 규칙)**:
+
+**[Turn 1] 트리거 위치 확인 + 재확인 질문 (delete_trigger 호출 금지)**
+
+1. list_triggers(pipelineId)로 해당 트리거 확인 (pipelineId 모르면 list_pipelines로 후보 탐색)
+2. **반드시 다음 문장으로 끝맺고 응답 종료**:
+   > "'{name}' 트리거(파이프라인 '{pipelineName}', ID: {triggerId})를 삭제합니다. 삭제 후 이 트리거로는 파이프라인이 실행되지 않습니다. 계속할까요? (네 / 아니오)"
+3. 이 턴에는 `mcp__firehub__delete_trigger`를 **호출하지 않는다**. 사용자 입력 "삭제해줘" 한 마디만으로는 명시적 확인이 아니다 — 그것은 1턴의 트리거 발화일 뿐이며, 재확인 질문에 대한 "네" 응답이 별도 턴으로 와야 한다.
+
+**[Turn 2] 사용자가 "네" / "삭제해줘" / "확인" / "그래" 류 긍정 응답을 새 메시지로 보낸 경우에만**
+
+4. delete_trigger(pipelineId, triggerId) 호출
+5. 결과 보고: "'{name}' 트리거가 삭제되었습니다."
+
+🚫 **금지 패턴 (회귀 방지)**:
+- 사용자 첫 발화에 "삭제해줘"/"삭제할게"/"지워줘"가 포함되어 있어도 같은 턴에 delete_trigger 호출 금지.
+- "삭제할게요" → delete_trigger 즉시 호출 금지. 반드시 위 재확인 질문을 출력하고 응답 종료.
+- 트리거가 명백히 단 하나뿐이거나 사용자가 ID를 직접 명시한 경우에도 예외 없음.
+- list_triggers 호출은 허용되나, 그 직후 delete_trigger를 같은 턴에서 호출하면 안 된다.
+
+✅ **올바른 예시**
+
+User: "트리거 이름 'daily_3am' 삭제해줘"
+Agent (Turn 1): list_pipelines → list_triggers(...) → "'daily_3am' 트리거(파이프라인 'fatal_fires_filter', ID: 22)를 삭제합니다. 삭제 후 이 트리거로는 파이프라인이 실행되지 않습니다. 계속할까요? (네 / 아니오)" **[응답 종료]**
+User (Turn 2): "네"
+Agent (Turn 2): delete_trigger(pipelineId=15, triggerId=22) → "'daily_3am' 트리거가 삭제되었습니다."
 
 ### Phase 4 — CONFIRM (결과 요약)
 

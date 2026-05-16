@@ -78,8 +78,9 @@
 | WEBHOOK 시크릿 | 입력받아 config에 전달만. 확인 메시지에 포함 금지 |
 | WEBHOOK ID(UUID) | `config.webhookId` 채팅 출력 금지. URL/경로(`/api/webhooks/<UUID>`)·URL 형식 예시도 금지. "파이프라인 상세 화면에서 확인"으로만 안내 |
 | 위임 금지 | 트리거 작업을 `Agent` 도구로 다른 subagent에 위임 금지. trigger-manager가 mcp__firehub__* 도구로 직접 처리 |
-| 삭제 전 확인 | 이름 명시 + 명시적 사용자 확인 필수 |
+| 삭제 전 확인 | **2턴 분리 필수**. 1턴: 재확인 질문만 출력하고 응답 종료. 2턴: 사용자 "네/삭제해줘/확인" 별도 응답 후 delete_trigger 호출. 같은 턴에 list_triggers → delete_trigger 연속 호출 금지 |
 | ID 단독 삭제 | 금지. 항상 이름을 함께 표시 |
+| 첫 발화 "삭제해줘" | 그 자체가 명시적 확인이 **아님**. 1턴 재확인 질문 후 별도 턴의 긍정 응답이 필요 |
 
 ## update_trigger — 변경 가능 필드
 
