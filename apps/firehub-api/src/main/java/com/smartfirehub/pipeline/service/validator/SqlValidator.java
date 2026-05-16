@@ -28,8 +28,8 @@ import org.springframework.stereotype.Component;
  *   <li>위험 함수({@code pg_read_file}, {@code lo_import}, {@code dblink_connect} 등) 호출 금지
  * </ul>
  *
- * <p>이중 방어 — DB 역할({@code pipeline_executor})이 시스템 함수/스키마를 차단하지만, 애플리케이션 레이어에서 조기 차단하여 명확한 에러를 제공한다.
- * (#136)
+ * <p>이중 방어 — DB 역할({@code pipeline_executor})이 시스템 함수/스키마를 차단하지만, 애플리케이션 레이어에서 조기 차단하여 명확한 에러를
+ * 제공한다. (#136)
  */
 @Slf4j
 @Component
@@ -40,8 +40,8 @@ public class SqlValidator {
   /**
    * SELECT 본문 등에서 호출 가능한 위험 함수 deny-list.
    *
-   * <p>AST 통과(SELECT 형태)이지만 실제로는 파일/네트워크/DB 카탈로그를 노출하는 함수들. DB 역할이 EXECUTE 권한을 갖지 않더라도 애플리케이션
-   * 레이어에서 조기 차단하여 명확한 에러를 제공한다.
+   * <p>AST 통과(SELECT 형태)이지만 실제로는 파일/네트워크/DB 카탈로그를 노출하는 함수들. DB 역할이 EXECUTE 권한을 갖지 않더라도 애플리케이션 레이어에서
+   * 조기 차단하여 명확한 에러를 제공한다.
    */
   private static final Set<String> BLOCKED_FUNCTIONS =
       Set.of(
@@ -107,9 +107,9 @@ public class SqlValidator {
   /**
    * 모든 실제 테이블 참조가 {@code data} 스키마인지 검사한다.
    *
-   * <p>{@link TablesNamesFinder#getTables(Statement)}가 CTE 이름과 컬럼 alias는 자동으로 제외한 실제 테이블 FQN만
-   * 반환하므로 그 문자열 셋만 검사하면 된다. 결과 형식 예: {@code "data.t"}, {@code "data.\"My Table\""},
-   * {@code "public.\"user\""}, {@code "t"}(스키마 없음).
+   * <p>{@link TablesNamesFinder#getTables(Statement)}가 CTE 이름과 컬럼 alias는 자동으로 제외한 실제 테이블 FQN만 반환하므로
+   * 그 문자열 셋만 검사하면 된다. 결과 형식 예: {@code "data.t"}, {@code "data.\"My Table\""}, {@code
+   * "public.\"user\""}, {@code "t"}(스키마 없음).
    */
   private void requireDataSchemaOnly(Statement statement) {
     Set<String> tables;
@@ -170,8 +170,7 @@ public class SqlValidator {
         int dot = fnName.lastIndexOf('.');
         String simple = dot >= 0 ? fnName.substring(dot + 1) : fnName;
         if (BLOCKED_FUNCTIONS.contains(simple.toLowerCase())) {
-          throw new UnsafeSqlException(
-              "허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
+          throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
         }
       }
       return super.visit(function, context);

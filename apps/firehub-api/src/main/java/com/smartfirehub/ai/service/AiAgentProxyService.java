@@ -109,8 +109,8 @@ public class AiAgentProxyService {
   }
 
   /**
-   * Map을 JSON 문자열로 직렬화한다. ObjectMapper는 모든 JSON 특수문자를 안전하게 이스케이프하므로 토큰/API키에 따옴표·백슬래시·제어문자가 포함되어도 JSON 구조가
-   * 깨지지 않는다.
+   * Map을 JSON 문자열로 직렬화한다. ObjectMapper는 모든 JSON 특수문자를 안전하게 이스케이프하므로 토큰/API키에 따옴표·백슬래시·제어문자가 포함되어도
+   * JSON 구조가 깨지지 않는다.
    */
   private String serializeBody(Map<String, ?> payload) {
     try {

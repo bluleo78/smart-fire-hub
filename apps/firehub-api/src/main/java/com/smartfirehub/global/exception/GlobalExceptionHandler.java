@@ -47,8 +47,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -310,9 +310,7 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 
-  /**
-   * 파이프라인 SQL 스텝의 안전 정책 위반 — 저장 시 거부 또는 실행 시 거부 모두 동일 매핑. (#136)
-   */
+  /** 파이프라인 SQL 스텝의 안전 정책 위반 — 저장 시 거부 또는 실행 시 거부 모두 동일 매핑. (#136) */
   @ExceptionHandler(UnsafeSqlException.class)
   public ResponseEntity<ErrorResponse> handleUnsafeSql(
       UnsafeSqlException ex, HttpServletRequest request) {
@@ -530,27 +528,24 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 경로/쿼리 파라미터 타입 불일치 시 500 대신 400 반환 (#219). 예: {@code Long id} 파라미터에 "abc" 같은 비-숫자
-   * 문자열이 전달되거나, {@code Boolean} 쿼리 파라미터에 "notbool" 같은 값이 전달되는 경우. 클라이언트 입력 오류이므로 400으로 분류하여
-   * 모니터링 SLO 오염과 5xx 알람 노이즈를 방지한다.
+   * 경로/쿼리 파라미터 타입 불일치 시 500 대신 400 반환 (#219). 예: {@code Long id} 파라미터에 "abc" 같은 비-숫자 문자열이 전달되거나,
+   * {@code Boolean} 쿼리 파라미터에 "notbool" 같은 값이 전달되는 경우. 클라이언트 입력 오류이므로 400으로 분류하여 모니터링 SLO 오염과 5xx 알람
+   * 노이즈를 방지한다.
    */
   @ExceptionHandler(MethodArgumentTypeMismatchException.class)
   public ResponseEntity<ErrorResponse> handleTypeMismatch(
       MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
-    String typeName =
-        ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "올바른";
+    String typeName = ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "올바른";
     Map<String, String> fieldErrors =
-        Map.of(
-            ex.getName(),
-            String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
+        Map.of(ex.getName(), String.format("'%s'는 %s 타입이어야 합니다.", ex.getValue(), typeName));
     ErrorResponse response =
         buildError(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors, request);
     return ResponseEntity.badRequest().body(response);
   }
 
   /**
-   * 요청 본문이 malformed JSON이거나 역직렬화에 실패한 경우 500 대신 400 반환 (#219). 같은 카테고리(클라이언트 입력 오류 → 4xx)이며 본문을
-   * 읽지 못한 케이스이므로 400 Bad Request로 매핑한다.
+   * 요청 본문이 malformed JSON이거나 역직렬화에 실패한 경우 500 대신 400 반환 (#219). 같은 카테고리(클라이언트 입력 오류 → 4xx)이며 본문을 읽지
+   * 못한 케이스이므로 400 Bad Request로 매핑한다.
    */
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ResponseEntity<ErrorResponse> handleMessageNotReadable(

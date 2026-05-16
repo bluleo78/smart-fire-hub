@@ -67,8 +67,9 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 회귀 테스트(#154 / #175): 토큰 값에 JSON 특수문자(따옴표·백슬래시·줄바꿈·탭 등)가 포함되어도 ObjectMapper로 직렬화하면 JSON 구조가 깨지지 않고
-   * 정확한 원본 값으로 다시 파싱된다는 것을 검증한다. 이전의 문자열 연결 + replace 방식은 백슬래시를 이스케이프하지 않아 JSON 인젝션 또는 파싱 오류를 유발했다.
+   * 회귀 테스트(#154 / #175): 토큰 값에 JSON 특수문자(따옴표·백슬래시·줄바꿈·탭 등)가 포함되어도 ObjectMapper로 직렬화하면 JSON 구조가 깨지지
+   * 않고 정확한 원본 값으로 다시 파싱된다는 것을 검증한다. 이전의 문자열 연결 + replace 방식은 백슬래시를 이스케이프하지 않아 JSON 인젝션 또는 파싱 오류를
+   * 유발했다.
    */
   @Test
   void objectMapperSerialization_escapesAllJsonSpecialChars() throws Exception {

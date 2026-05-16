@@ -12,9 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 로그인 실패 카운터 영속 저장소(#144).
  *
- * <p>{@link #incrementAttempts(String)}는 UPSERT + RETURNING으로 동시 실패 요청의 카운터 증가를 원자적으로 처리한다.
- * 잠금 기간(15분)은 SQL의 {@code interval '15 minutes'}로 인라인된다 — 변경 시 V58 마이그레이션 주석과
- * 본 클래스 SQL을 함께 동기화한다.
+ * <p>{@link #incrementAttempts(String)}는 UPSERT + RETURNING으로 동시 실패 요청의 카운터 증가를 원자적으로 처리한다. 잠금
+ * 기간(15분)은 SQL의 {@code interval '15 minutes'}로 인라인된다 — 변경 시 V58 마이그레이션 주석과 본 클래스 SQL을 함께 동기화한다.
  */
 @Repository
 @RequiredArgsConstructor

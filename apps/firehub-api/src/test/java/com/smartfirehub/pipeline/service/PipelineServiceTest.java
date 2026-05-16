@@ -601,8 +601,8 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 회귀 테스트 (#188): execution이 요청한 pipelineId에 속하지 않으면 PipelineNotFoundException(404)
-   * 으로 거부해야 한다 — 그렇지 않으면 다른 파이프라인 실행 상세가 노출된다.
+   * 회귀 테스트 (#188): execution이 요청한 pipelineId에 속하지 않으면 PipelineNotFoundException(404) 으로 거부해야 한다 —
+   * 그렇지 않으면 다른 파이프라인 실행 상세가 노출된다.
    */
   @Test
   void getExecutionById_otherPipelinesExecution_throwsNotFound() {
@@ -618,8 +618,7 @@ class PipelineServiceTest extends IntegrationTestBase {
         pipelineService.executePipeline(pipelineA.id(), testUserId);
 
     // When/Then: pipelineB 컨텍스트로 executionOfA 조회 시 404
-    assertThatThrownBy(
-            () -> pipelineService.getExecutionById(pipelineB.id(), executionOfA.id()))
+    assertThatThrownBy(() -> pipelineService.getExecutionById(pipelineB.id(), executionOfA.id()))
         .isInstanceOf(PipelineNotFoundException.class)
         .hasMessageContaining("Execution not found");
 
@@ -630,9 +629,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(detail.pipelineId()).isEqualTo(pipelineA.id());
   }
 
-  /**
-   * 회귀 테스트 (#188): 존재하지 않는 execution도 동일하게 PipelineNotFoundException으로 통일.
-   */
+  /** 회귀 테스트 (#188): 존재하지 않는 execution도 동일하게 PipelineNotFoundException으로 통일. */
   @Test
   void getExecutionById_nonexistentExecution_throwsNotFound() {
     PipelineDetailResponse pipeline =

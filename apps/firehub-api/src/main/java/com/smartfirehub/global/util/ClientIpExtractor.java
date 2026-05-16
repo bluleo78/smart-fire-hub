@@ -5,8 +5,8 @@ import jakarta.servlet.http.HttpServletRequest;
 /**
  * 클라이언트 IP 추출 유틸리티.
  *
- * <p>리버스 프록시(nginx 등) 뒤에 배포된 환경에서는 {@link HttpServletRequest#getRemoteAddr()}이 항상 프록시 IP를 반환한다.
- * 따라서 감사 로그에 실제 클라이언트 IP를 기록하려면 {@code X-Forwarded-For} 헤더를 우선 확인해야 한다.
+ * <p>리버스 프록시(nginx 등) 뒤에 배포된 환경에서는 {@link HttpServletRequest#getRemoteAddr()}이 항상 프록시 IP를 반환한다. 따라서
+ * 감사 로그에 실제 클라이언트 IP를 기록하려면 {@code X-Forwarded-For} 헤더를 우선 확인해야 한다.
  *
  * <p>이 유틸은 감사 로그 IP 기록 방식의 일관성을 보장하기 위해 도입되었다 (이슈 #147 참조).
  */

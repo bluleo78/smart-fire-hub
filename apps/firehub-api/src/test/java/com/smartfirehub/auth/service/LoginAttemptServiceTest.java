@@ -17,8 +17,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * LoginAttemptService 통합 테스트(#144).
  *
- * <p>실제 PostgreSQL(smartfirehub_test)을 사용하여 영속 잠금 로직을 검증한다. 각 테스트는 UUID 기반
- * username으로 격리되어 병렬 실행이나 잔여 데이터에 영향받지 않는다.
+ * <p>실제 PostgreSQL(smartfirehub_test)을 사용하여 영속 잠금 로직을 검증한다. 각 테스트는 UUID 기반 username으로 격리되어 병렬 실행이나
+ * 잔여 데이터에 영향받지 않는다.
  */
 class LoginAttemptServiceTest extends IntegrationTestBase {
 

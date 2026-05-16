@@ -253,8 +253,8 @@ class SavedQueryControllerTest {
   }
 
   /**
-   * #178 보안 회귀 방지: analytics:read 권한만으로 호출되는 저장 쿼리 실행 엔드포인트는 클라이언트가
-   * readOnly=false 를 보내도 무시하고 항상 readOnly=true 로 강제해야 한다.
+   * #178 보안 회귀 방지: analytics:read 권한만으로 호출되는 저장 쿼리 실행 엔드포인트는 클라이언트가 readOnly=false 를 보내도 무시하고 항상
+   * readOnly=true 로 강제해야 한다.
    */
   @Test
   void executeSavedQuery_clientReadOnlyFalse_isForcedToTrue() throws Exception {

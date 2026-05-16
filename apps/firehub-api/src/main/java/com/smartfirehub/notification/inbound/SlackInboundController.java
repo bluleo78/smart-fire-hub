@@ -38,8 +38,8 @@ public class SlackInboundController {
   }
 
   /**
-   * Internal 토큰 유효성 검증 — "Internal {token}" 형식 확인 후 토큰 비교. 타이밍 공격 방지를 위해
-   * {@link MessageDigest#isEqual(byte[], byte[])}로 상수 시간 비교한다.
+   * Internal 토큰 유효성 검증 — "Internal {token}" 형식 확인 후 토큰 비교. 타이밍 공격 방지를 위해 {@link
+   * MessageDigest#isEqual(byte[], byte[])}로 상수 시간 비교한다.
    */
   private boolean isValidInternalToken(String authHeader) {
     if (authHeader == null || !authHeader.startsWith("Internal ")) return false;

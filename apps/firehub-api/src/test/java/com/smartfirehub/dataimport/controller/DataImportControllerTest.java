@@ -83,8 +83,8 @@ class DataImportControllerTest {
   }
 
   /**
-   * POST /datasets/{id}/imports — X-Forwarded-For 헤더가 있으면 첫 번째 값을 ipAddress로 service에 전달한다 (이슈 #147).
-   * 리버스 프록시 환경에서 실제 클라이언트 IP가 감사 로그에 기록되어야 한다.
+   * POST /datasets/{id}/imports — X-Forwarded-For 헤더가 있으면 첫 번째 값을 ipAddress로 service에 전달한다 (이슈
+   * #147). 리버스 프록시 환경에서 실제 클라이언트 IP가 감사 로그에 기록되어야 한다.
    */
   @Test
   void importFile_withXForwardedFor_passesClientIpToService() throws Exception {
@@ -141,8 +141,7 @@ class DataImportControllerTest {
 
     ArgumentCaptor<String> ipCaptor = ArgumentCaptor.forClass(String.class);
     verify(importService)
-        .importFile(
-            eq(1L), any(), any(), eq(1L), any(), ipCaptor.capture(), any(), any(), any());
+        .importFile(eq(1L), any(), any(), eq(1L), any(), ipCaptor.capture(), any(), any(), any());
     assertThat(ipCaptor.getValue()).isEqualTo("198.51.100.42");
   }
 

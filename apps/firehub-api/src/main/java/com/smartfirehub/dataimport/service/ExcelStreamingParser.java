@@ -126,13 +126,12 @@ public final class ExcelStreamingParser {
     /**
      * 셀 값을 현재 행에 추가한다.
      *
-     * <p>POI {@code XSSFSheetXMLHandler}는 셀 타입을 {@link SheetContentsHandler}에 노출하지 않으므로,
-     * 실제 불리언 셀과 "TRUE"/"FALSE" 리터럴 문자열 셀을 이 콜백에서 구분할 수 없다. 따라서 불리언 정규화를
-     * 수행하지 않고 POI가 직렬화한 값을 그대로 저장한다.
+     * <p>POI {@code XSSFSheetXMLHandler}는 셀 타입을 {@link SheetContentsHandler}에 노출하지 않으므로, 실제 불리언 셀과
+     * "TRUE"/"FALSE" 리터럴 문자열 셀을 이 콜백에서 구분할 수 없다. 따라서 불리언 정규화를 수행하지 않고 POI가 직렬화한 값을 그대로 저장한다.
      *
-     * <p><b>불리언 동작 변경 사항:</b> 실제 불리언 셀은 POI 내부 변환에 의해 "TRUE"/"FALSE"(대문자)로
-     * 출력된다. 기존 {@code getCellValueAsString}이 "true"/"false"(소문자)를 반환하던 것과 미세하게 다르다.
-     * 이는 문자열 셀에 "TRUE"/"FALSE"가 입력된 경우 값을 손상시키지 않기 위한 올바른 트레이드오프이다.
+     * <p><b>불리언 동작 변경 사항:</b> 실제 불리언 셀은 POI 내부 변환에 의해 "TRUE"/"FALSE"(대문자)로 출력된다. 기존 {@code
+     * getCellValueAsString}이 "true"/"false"(소문자)를 반환하던 것과 미세하게 다르다. 이는 문자열 셀에 "TRUE"/"FALSE"가 입력된
+     * 경우 값을 손상시키지 않기 위한 올바른 트레이드오프이다.
      */
     @Override
     public void cell(String cellReference, String formattedValue, XSSFComment comment) {

@@ -135,7 +135,9 @@ public class ExceptionStubControllerExtended {
     throw new ConstraintViolationException("page: must be greater than or equal to 0", Set.of());
   }
 
-  /** path variable이 {@code Long} 타입인데 비-숫자 문자열이 전달되면 MethodArgumentTypeMismatchException 발생 (#219) */
+  /**
+   * path variable이 {@code Long} 타입인데 비-숫자 문자열이 전달되면 MethodArgumentTypeMismatchException 발생 (#219)
+   */
   @GetMapping("/type-mismatch-long/{id}")
   public void typeMismatchLong(@PathVariable Long id) {
     // 정상 케이스에선 도달하지 않음. 'abc' 같은 입력이면 Spring이 컨버터 단에서 예외를 던진다.
