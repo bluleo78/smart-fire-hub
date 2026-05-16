@@ -33,7 +33,7 @@ export function registerTriggerTools(
         config: z
           .record(z.string(), z.unknown())
           .describe(
-            '트리거 설정. SCHEDULE: {cronExpression}, API: {}, PIPELINE_CHAIN: {upstreamPipelineId}, WEBHOOK: {secret?}, DATASET_CHANGE: {datasetId}',
+            '트리거 설정. SCHEDULE: {cron} — 필드명은 반드시 "cron" (cronExpression/cron_expression 금지). 값은 Spring CronTrigger 6필드("초 분 시 일 월 요일") 또는 5필드("분 시 일 월 요일"). 5필드 입력 시 서버가 앞에 "0 "을 붙여 6필드로 정규화. 예: "0 0 3 * * *" (매일 3시). API: {}, PIPELINE_CHAIN: {upstreamPipelineId, condition?}, WEBHOOK: {secret?}, DATASET_CHANGE: {datasetId}',
           ),
       },
       async (args) => {

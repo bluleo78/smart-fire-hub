@@ -618,8 +618,9 @@ describe('SL-TM: trigger-manager subagent integration', () => {
     const agents = loadSubagents(realSubagentsDir);
 
     const prompt = agents['trigger-manager'].prompt;
-    // rules.md 핵심 키워드
-    expect(prompt).toContain('cronExpression');
+    // rules.md 핵심 키워드 — cron 필드명/6필드 규칙 (#233)
+    expect(prompt).toContain('cron');
+    expect(prompt).toContain('Spring CronTrigger 6필드');
     // examples.md 핵심 키워드
     expect(prompt).toContain('새벽 집계');
   });
