@@ -1,5 +1,54 @@
 # 파이프라인 생성 예제
 
+## 예제 0: 단순 필터 — DESIGN 단계 출력 + SELECT * 회피 (필수 패턴)
+
+**요구사항 (사용자 짧은 요청)**: "데이터셋 화재 발생 위치(id=67)에서 사망자수 > 0 행만 필터링하는 SQL 파이프라인 만들어줘. 이름은 'fatal_fires_filter'."
+
+이 짧은 한 줄은 **위임 신호가 아님** — 반드시 Phase 1 (`get_dataset`) → Phase 2 DESIGN 텍스트 → 사용자 승인 → Phase 4 `create_pipeline` 순서를 지킨다.
+
+### Phase 1 — 스키마 확인 (도구 호출)
+`get_dataset(id=67)`로 컬럼 목록 획득 → `occurred_at` (TIMESTAMP), `death_count` (INTEGER), `location` (GEOMETRY).
+
+### Phase 2 — DESIGN 텍스트 (사용자에게 출력)
+
+```
+## 설계안: fatal_fires_filter
+
+| 스텝 | 타입 | 입력 | 출력 |
+|------|------|------|------|
+| filter_fatal_fires | SQL | data."fire_incidents" | temp 자동 생성 |
+
+### SQL
+```sql
+SELECT
+  occurred_at,
+  death_count,
+  location
+FROM data."fire_incidents"
+WHERE death_count > 0
+```
+
+### 검증 체크리스트
+- [✅] 컬럼명이 실제 스키마와 일치 (occurred_at / death_count / location)
+- [✅] SELECT * 미사용 — 필요한 컬럼만 명시
+- [✅] 예약 컬럼(id/import_id/created_at) 충돌 없음
+- [✅] {{#N}} 미사용 (단일 스텝)
+- [✅] 순환 의존성 없음
+
+**이대로 생성할까요?** (예 / 수정 요청)
+```
+
+### Phase 4 — 사용자 승인 후 create_pipeline 호출
+
+사용자가 "예" / "응" / "ok" / "생성해" 등으로 응답한 다음에만 `create_pipeline`을 호출. `SELECT *`가 절대 들어가지 않은 scriptContent로 호출한다.
+
+**핵심**:
+- DESIGN 텍스트 없이 곧장 `create_pipeline`을 호출하지 않는다.
+- `SELECT *`를 쓰지 않는다. 필터링만 해도 컬럼을 모두 풀어 적는다.
+- 사용자가 짧게 요청해도 설계안을 보여주고 승인받는 단계를 생략하지 않는다.
+
+---
+
 ## 예제 1: 단순 SQL 집계
 
 **요구사항**: sales 테이블을 월별로 집계하여 monthly_summary에 저장

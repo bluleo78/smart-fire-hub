@@ -32,7 +32,8 @@
 방지법:
 - 소스 테이블의 `id` 컬럼이 필요하면 반드시 별칭 사용: `SELECT id AS source_id, ...`
 - `import_id`, `created_at`도 마찬가지로 별칭 사용
-- `SELECT *` 대신 필요한 컬럼만 명시적으로 나열하세요
+- **`SELECT *` 금지 — 반드시 필요한 컬럼만 명시적으로 나열**. `create_pipeline` 호출 직전에 scriptContent를 다시 확인해 `*`가 없는지 점검할 것
+- 필터링만 하고 모든 컬럼이 필요한 경우에도 `*` 대신 컬럼명을 모두 풀어 적는다. Phase 1에서 받은 컬럼 목록을 그대로 사용하면 된다
 
 ## AI_CLASSIFY 입력 데이터셋
 AI_CLASSIFY 스텝의 입력 데이터는 두 가지 방법으로 지정합니다:
