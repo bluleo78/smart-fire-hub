@@ -52,6 +52,12 @@ fi
 gh issue list --label "pilot:processing" --state open --json number
 # 출력 있으면 사용자에게 "이전 처리 중이던 이슈입니다, 정리하고 시작할까요?"
 
+# 4b) 보드 iteration sweep — open 이슈 중 iteration 미배정/옛 iteration이면 현재로 이관
+# GitHub Projects v2는 iteration roll-over를 자동 수행하지 않으므로 새 iteration 시작 후
+# 미완료 이슈가 옛/없음 상태로 남는다. status는 보존 (in_review 등 기존 상태 유지).
+bash .claude/skills/ai-driven-pilot/scripts/sweep-iteration.sh
+# 출력 예: "✅ #117: none → Iteration 3" 라인이 있으면 이번에 이관된 건. 결과만 사용자에게 보고.
+
 # 5) 미정리 pilot playwright 세션 잔존 체크 (이전 사이클이 close 안 한 흔적)
 playwright-cli list 2>&1 | grep -E "browser \"p[sce][0-9a-f]+\"" | head
 # 출력 있으면 사용자에게 알리고, 동의 시 각 세션을 개별 close.
