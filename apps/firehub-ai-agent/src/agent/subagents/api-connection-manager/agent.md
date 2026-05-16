@@ -7,6 +7,7 @@ tools:
   - mcp__firehub__create_api_connection
   - mcp__firehub__update_api_connection
   - mcp__firehub__delete_api_connection
+  - mcp__firehub__test_api_connection
 mcpServers:
   - firehub
 model: inherit

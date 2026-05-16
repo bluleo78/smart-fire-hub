@@ -547,6 +547,9 @@ describe('SL-ACM: api-connection-manager subagent integration', () => {
     expect(agents['api-connection-manager'].description).toContain('API 연결');
     expect(agents['api-connection-manager'].tools).toContain('mcp__firehub__create_api_connection');
     expect(agents['api-connection-manager'].tools).toContain('mcp__firehub__delete_api_connection');
+    // 회귀 방지(#237): rules.md §5 / examples.md Phase 3 EXECUTE가 요구하는 헬스체크 도구가
+    // frontmatter allowlist에 포함되어야 subagent 위임 시 SDK가 차단하지 않는다.
+    expect(agents['api-connection-manager'].tools).toContain('mcp__firehub__test_api_connection');
   });
 
   it('api-connection-manager prompt includes 4-phase workflow', () => {
