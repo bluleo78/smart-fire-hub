@@ -31,6 +31,23 @@ description: >
 
 > **함정 목록**: playwright-cli 사용 중 막히면 `references/pitfalls.md`를 읽는다.
 
+> **[필수 경계] AI 채팅 응답 결함은 inspector 영역**
+> AI 채팅 UI에서 다음 부류 결함을 발견하면 explorer에서 등록하지 말고
+> `ai-driven-agent-inspector`로 라우팅한다 (사용자에게 안내):
+>
+> - 응답 내용의 사실 오류 / 환각 (존재하지 않는 데이터셋·필드 언급 등)
+> - 잘못된 도구(MCP) 호출, 위임 규칙 위반, 파괴 작업 confirm 누락
+> - 응답 지연/토큰 과소비, maxTurns 도달
+> - AI 응답의 한국어 표현·결과 요약 누락
+>
+> Explorer가 등록할 수 있는 채팅 UI 결함은 **UI 자체의 문제**만:
+> 입력창 동작, 메시지 렌더링/스크롤, 첨부 업로드, 세션 ID 표시, SSE 연결 끊김 시 UI 반응 등.
+> 백엔드 응답 생성 로직 결함은 `subagent-quality` 라벨이 붙어야 하고, 그건 inspector가 trace로 잡는다.
+>
+> **모드별 처리**:
+> - 사용자 직접 호출: 발견 시 사용자에게 "inspector로 점검 권장" 1회 안내 후 등록 안 함.
+> - Pilot subagent 모드: 등록하지 않고 매트릭스에 "inspector 영역" 메모 후 다음 시나리오로 진행 (pilot이 다음 사이클에서 inspector 탐색을 dispatch).
+
 ## 1. 브라우저 실행
 
 > **도구 선택**: 브라우저 자동화는 반드시 `playwright-cli` CLI를 사용한다.

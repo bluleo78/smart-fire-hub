@@ -23,6 +23,22 @@ GitHub Issues의 버그 이슈를 one-shot으로 처리한다.
 
 > `security` 라벨은 자동 차단하지 않는다. 코드 레벨 수정(타이밍 공격, JSON 이스케이프, 소유권 검증 등)이 가능한 보안 이슈는 Step 2.1 종합 판단 기준에 따라 자율 처리 가능. 정책·권한 모델 결정이 필요하면 Step 2.1에서 needs_human으로 분기.
 
+> **`subagent-quality` 라벨 — 별도 도메인 처리 경로**
+> ai-driven-agent-inspector가 등록한 이슈로, **수정 대상이 코드가 아니라 프롬프트 파일**일 가능성이 높다.
+> Step 2/4/5/6에서 다음 차이를 적용:
+>
+> - **수정 대상 우선순위**:
+>   1. `apps/firehub-ai-agent/src/agent/subagents/<subagent>/agent.md` — 역할/도구/워크플로
+>   2. `apps/firehub-ai-agent/src/agent/subagents/<subagent>/rules.md` — 도메인 규칙
+>   3. `apps/firehub-ai-agent/src/agent/subagents/<subagent>/examples.md` — few-shot
+>   4. `apps/firehub-ai-agent/src/agent/system-prompt.ts` (또는 `subagent-loader.ts`) — 라우팅/로더 코드
+>   본문 `## Trace 근거`에서 호출된 도구·기대 동작·실측 차이를 확인하여 어느 파일이 single source of truth인지 정함.
+> - **재현 (Step 2.5)**: playwright-cli가 아니라 `curl -X POST http://localhost:3001/agent/chat`. 트레이스는 `test-results/subagent-eval/.../traces/<id>.sse`. 이슈 본문의 트레이스 경로를 그대로 재실행.
+> - **테스트 (Step 5)**: 프롬프트 변경은 단위 테스트로 검증 불가. 대신 동일 시나리오를 재호출해 trace의 tool_use 시퀀스·응답 텍스트가 기대대로 변했는지 grep으로 확인. 코드 수정이 함께 일어났다면 `pnpm -F firehub-ai-agent test` 실행.
+> - **검증 (Step 6)**: 재호출 결과를 별도 trace로 저장. 회귀 방지를 위해 `test-results/subagent-eval/.coverage-matrix-<perspective>.md`의 해당 시나리오 행에 fix-verified 표시.
+> - **커밋 범위**: 프롬프트 파일 변경 + (선택) 시스템 프롬프트 코드 + 회귀용 trace 파일은 commit 제외(`test-results/`는 gitignore 가정).
+> - **Step 2.1 종합 판단**: rules.md에 명시되지 않은 새 행동을 요구하는 이슈는 needs_human (스펙 추가가 필요).
+
 ```bash
 # 라벨 조회
 LABELS=$(gh issue view <번호> --json labels -q '.labels[].name' | tr '\n' ' ')
