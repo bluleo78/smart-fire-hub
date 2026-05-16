@@ -137,12 +137,21 @@ public class DatasetColumnRepository {
   }
 
   public void update(Long id, UpdateColumnRequest request) {
+    // 부분 수정(PUT) 의미를 유지하기 위해 null 필드는 기존 값을 보존한다.
+    // 특히 is_indexed 컬럼은 NOT NULL 제약이므로 null 세팅 시 IntegrityConstraintViolation → 500 (#222).
     var step = dsl.update(DATASET_COLUMN);
-    var set =
-        step.set(COL_DISPLAY_NAME, request.displayName())
-            .set(COL_IS_INDEXED, request.isIndexed())
-            .set(COL_DESCRIPTION, request.description());
+    // jOOQ 빌더 타입을 통일하기 위해 항상 1개 이상의 set이 필요. id로 강제 self-assign.
+    var set = step.set(COL_ID, COL_ID);
 
+    if (request.displayName() != null) {
+      set = set.set(COL_DISPLAY_NAME, request.displayName());
+    }
+    if (request.isIndexed() != null) {
+      set = set.set(COL_IS_INDEXED, request.isIndexed());
+    }
+    if (request.description() != null) {
+      set = set.set(COL_DESCRIPTION, request.description());
+    }
     if (request.columnName() != null) {
       set = set.set(COL_COLUMN_NAME, request.columnName());
     }

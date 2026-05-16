@@ -94,7 +94,7 @@ public class DatasetController {
   @PostMapping("/{id}/columns")
   @RequirePermission("dataset:write")
   public ResponseEntity<DatasetColumnResponse> addColumn(
-      @PathVariable Long id, @RequestBody AddColumnRequest request) {
+      @PathVariable Long id, @Valid @RequestBody AddColumnRequest request) {
     DatasetColumnResponse column = datasetService.addColumn(id, request);
     return ResponseEntity.status(HttpStatus.CREATED).body(column);
   }
@@ -104,7 +104,7 @@ public class DatasetController {
   public ResponseEntity<Void> updateColumn(
       @PathVariable Long id,
       @PathVariable Long columnId,
-      @RequestBody UpdateColumnRequest request) {
+      @Valid @RequestBody UpdateColumnRequest request) {
     datasetService.updateColumn(id, columnId, request);
     return ResponseEntity.noContent().build();
   }
