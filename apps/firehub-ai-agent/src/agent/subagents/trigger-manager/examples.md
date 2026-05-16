@@ -172,3 +172,49 @@ delete_trigger(pipelineId=5, triggerId=12) 호출
 >
 > "웹훅 ID: `cabf8e3a-6bd0-4f69-bac6-c35e9089afc3`, URL: `{서버주소}/api/webhooks/cabf8e3a-...`"
 > 표·코드 블록·자연어 어디에든 UUID나 `/api/webhooks/...` 형식을 포함하면 보안 규칙 위반이다.
+
+---
+
+## 예시: pipelineId 미지정 단순 트리거 목록 조회 (N+1 호출 방지)
+
+**사용자**: 트리거 목록 보여줘.
+
+**에이전트**:
+
+[Phase 1 — IDENTIFY] pipelineId가 지정되지 않은 단순 조회 요청이다. **N+1 호출을 피하기 위해 모든 파이프라인의 트리거를 한꺼번에 펼치지 않는다**. list_pipelines를 1회 호출해 파이프라인 후보를 제시하고, 어느 파이프라인의 트리거를 볼지 사용자에게 되묻는다.
+
+`mcp__firehub__list_pipelines` 1회 호출 →
+
+현재 파이프라인 목록:
+
+| ID | 이름 |
+|----|------|
+| 1  | sample_pipeline |
+| 5  | fatal_fires_filter |
+| 8  | weekly_aggregate |
+| 10 | monthly_report |
+| 18 | hourly_sync |
+
+어느 파이프라인의 트리거를 보시겠습니까? (예: "5번" 또는 "fatal_fires_filter")
+
+**[응답 종료 — 같은 응답 안에서 list_triggers를 호출하지 않는다]**
+
+---
+
+**사용자 (다음 턴)**: 5번 보여줘.
+
+**에이전트**:
+
+`mcp__firehub__list_triggers(pipelineId=5)` **1회만** 호출 →
+
+'fatal_fires_filter' 파이프라인 트리거 목록:
+
+| ID | 이름 | 유형 | 활성 | 다음 실행 |
+|----|------|------|------|----------|
+| 22 | daily_3am | SCHEDULE | ✅ | 2026-05-18 03:00 |
+
+> 🚫 **잘못된 패턴 (절대 금지)** — 비교용
+>
+> User: "트리거 목록 보여줘"
+> Agent: list_pipelines → list_triggers(1) → list_triggers(5) → list_triggers(8) → list_triggers(10) → list_triggers(18) → ... (11회 반복)
+> 이는 critical perf 회귀(#238)다. pipelineId가 명시되지 않은 단순 조회는 **list_pipelines 1회 + 되묻기**로 끝낸다.
