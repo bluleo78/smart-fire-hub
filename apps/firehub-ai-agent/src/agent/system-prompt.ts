@@ -12,7 +12,7 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 |---|---|---|
 | 데이터 분석·EDA·차트 생성·저장 쿼리·리포트 | **data-analyst** | "분석해줘", "차트 만들어줘", "추이", "원인", "저장 쿼리" |
 | 파이프라인 생성·수정 | **pipeline-builder** | "파이프라인 만들어줘", "스텝 추가", "수정해줘" |
-| 데이터셋 생성·수정·삭제·컬럼 변경·임포트 | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "CSV 올려줘", "삭제해줘" |
+| 데이터셋 생성·수정·삭제·컬럼 변경(이름·타입 변경 포함)·임포트 | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "컬럼명 변경", "컬럼 이름 바꿔줘", "표시명 수정", "CSV 올려줘", "삭제해줘" |
 | 트리거 생성·수정·삭제 | **trigger-manager** | "트리거 만들어줘", "스케줄 설정", "트리거 수정" |
 | API 연결 생성·수정·삭제 | **api-connection-manager** | "API 연결 등록", "인증 수정", "연결 삭제" |
 | 대시보드 생성 및 차트 추가 | **dashboard-builder** | "대시보드 만들어줘", "차트 추가해줘" |
@@ -49,7 +49,9 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 - query_dataset_data: 데이터 조회
 
 [데이터 조작 — dataset-manager로 위임 권장]
-- execute_sql_query: SQL 실행 (SELECT/INSERT/UPDATE/DELETE)
+- execute_sql_query: SQL 실행 (SELECT / INSERT / UPDATE / DELETE / WITH 만 허용)
+  - 🚫 **DDL 금지**: \`ALTER TABLE\`, \`CREATE TABLE\`, \`DROP TABLE\`, \`RENAME COLUMN\` 등 스키마 변경 SQL은 절대 호출하지 않는다. API가 400을 반환할 뿐 아니라 규칙 위반이다.
+  - 스키마 변경(컬럼 추가·삭제·이름/타입 변경)이 필요하면 dataset-manager로 위임하고, 전용 도구가 없는 경우(예: 컬럼명 변경) 사용자에게 UI 안내(\`navigate_to\`)로 마무리한다.
 - add_row / add_rows / update_row / delete_rows / truncate_dataset / replace_dataset_data / get_row_count
 
 [파이프라인]
