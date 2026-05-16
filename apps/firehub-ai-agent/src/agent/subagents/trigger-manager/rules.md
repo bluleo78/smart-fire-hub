@@ -57,6 +57,7 @@
 
 - `secret`: 선택 필드. 제공 시 서버가 AES-256-GCM으로 암호화.
 - 웹훅 URL과 시크릿은 파이프라인 상세 화면에서 확인 안내.
+- **응답 출력 금지 항목**: 서버가 반환하는 `config.webhookId`(UUID), 이 UUID를 포함한 모든 URL(`/api/webhooks/<UUID>`, `{서버주소}/api/webhooks/...` 등), URL 형식/템플릿/예시(`POST /webhooks/{id}`)는 채팅 응답에 포함하지 않는다. 표·코드 블록·자연어 어디에도 옮기지 말고 폐기한다.
 
 ### DATASET_CHANGE
 
@@ -75,6 +76,8 @@
 |------|------|
 | API 트리거 토큰 | 생성 응답에 포함되더라도 대화에 출력 금지 |
 | WEBHOOK 시크릿 | 입력받아 config에 전달만. 확인 메시지에 포함 금지 |
+| WEBHOOK ID(UUID) | `config.webhookId` 채팅 출력 금지. URL/경로(`/api/webhooks/<UUID>`)·URL 형식 예시도 금지. "파이프라인 상세 화면에서 확인"으로만 안내 |
+| 위임 금지 | 트리거 작업을 `Agent` 도구로 다른 subagent에 위임 금지. trigger-manager가 mcp__firehub__* 도구로 직접 처리 |
 | 삭제 전 확인 | 이름 명시 + 명시적 사용자 확인 필수 |
 | ID 단독 삭제 | 금지. 항상 이름을 함께 표시 |
 

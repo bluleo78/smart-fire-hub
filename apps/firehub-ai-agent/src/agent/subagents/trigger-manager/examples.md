@@ -126,3 +126,49 @@ delete_trigger(pipelineId=5, triggerId=12) 호출
 [Phase 4 — CONFIRM] 결과 요약
 
 '새벽 집계' 트리거가 삭제되었습니다.
+
+---
+
+## 예시 5: WEBHOOK 트리거 생성 — UUID/URL 비노출 응답 (보안)
+
+**사용자**: 파이프라인 15에 웹훅 트리거 만들어줘.
+
+**에이전트**:
+
+[Phase 1 — IDENTIFY] 생성 흐름. WEBHOOK 유형.
+
+[Phase 2 — DESIGN] 설계 대화
+
+- **이름**: "외부 웹훅" (변경 가능)
+- **유형**: WEBHOOK
+- **secret**: 사용 안 함 (필요 시 알려주세요)
+
+등록할까요?
+
+**사용자**: 응.
+
+**에이전트**:
+
+[Phase 3 — EXECUTE] create_trigger 호출 — **trigger-manager가 직접 mcp__firehub__create_trigger를 호출한다. `Agent` 도구로 general-purpose 등 다른 subagent에 위임하지 않는다.**
+
+```json
+{
+  "pipelineId": 15,
+  "name": "외부 웹훅",
+  "triggerType": "WEBHOOK",
+  "config": {}
+}
+```
+
+서버 응답에 `config.webhookId`(UUID)가 포함되지만, 이 값은 **응답에 옮기지 않고 폐기**한다.
+
+[Phase 4 — CONFIRM] 결과 요약
+
+'외부 웹훅' 트리거가 등록되었습니다 (ID: 23, 유형: WEBHOOK, 상태: 활성화).
+
+웹훅 URL과 시크릿은 파이프라인 상세 화면에서 확인할 수 있습니다.
+
+> ❌ **잘못된 응답 (절대 출력 금지)** — 비교용
+>
+> "웹훅 ID: `cabf8e3a-6bd0-4f69-bac6-c35e9089afc3`, URL: `{서버주소}/api/webhooks/cabf8e3a-...`"
+> 표·코드 블록·자연어 어디에든 UUID나 `/api/webhooks/...` 형식을 포함하면 보안 규칙 위반이다.

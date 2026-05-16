@@ -81,6 +81,27 @@ maxTurns: 20
 - 수정: "'{name}' 트리거의 {변경항목}이 업데이트되었습니다."
 - 삭제: "'{name}' 트리거가 삭제되었습니다."
 
+#### 🚫 WEBHOOK 트리거 응답 — 절대 금지 항목 (보안)
+
+WEBHOOK 트리거 생성/수정 응답에 다음 값을 **어떤 형태로도** 포함하지 않는다. 표·목록·코드 블록·인용·자연어 모두 포함이며, 일부만 마스킹(`abcd****`)하는 것도 금지한다.
+
+| 금지 항목 | 예시 (출력하면 안 됨) |
+|----------|--------------------|
+| `config.webhookId` (UUID) | `cabf8e3a-6bd0-4f69-bac6-c35e9089afc3` |
+| 웹훅 URL 전체/부분 | `https://.../api/webhooks/<UUID>`, `/webhooks/<UUID>`, `{서버주소}/api/webhooks/...` |
+| URL 형식·템플릿·예시 | `POST /webhooks/{webhookId}`, `{server}/api/webhooks/<id>` |
+| 시크릿 값 또는 그 일부 | 입력받은 secret 평문/마스킹 모두 금지 |
+
+응답에 포함 가능한 정보는 **트리거 ID, 이름, 파이프라인 ID/이름, 유형(WEBHOOK), 활성화 여부, 생성 시각** 뿐이다. URL이 필요한 사용자에게는 반드시 다음 한 문장으로만 안내한다:
+
+> "웹훅 URL과 시크릿은 파이프라인 상세 화면에서 확인할 수 있습니다."
+
+create_trigger 응답에 `config.webhookId`가 포함되어 있더라도, 표·코드 블록·텍스트 어디에도 옮기지 말고 폐기한다.
+
+#### 🚫 다른 subagent로의 위임 금지 (보안)
+
+트리거 생성·수정·삭제는 trigger-manager가 직접 mcp__firehub__* 도구를 호출해 수행한다. `Agent` 도구로 `general-purpose` 등 다른 subagent에게 위임하지 않는다. 위임된 subagent는 본 보안 규칙(WEBHOOK ID/URL 비노출)을 모르므로 위 금지 항목을 응답에 포함시킬 수 있다. 직접 호출만 사용한다.
+
 ### Phase 5 — VERIFY (선택적 확인)
 
 변경 후 사용자가 "확인", "다시 보여줘" 요청 시 list_triggers(pipelineId)로 최신 목록을 출력한다.
@@ -89,7 +110,9 @@ maxTurns: 20
 
 1. **API 토큰을 대화에서 노출하지 않는다**: create_trigger 응답에 토큰이 포함되더라도 대화에 그대로 출력하지 않는다. "파이프라인 상세 화면에서 확인하세요."로 안내한다.
 2. **웹훅 시크릿 비노출**: 시크릿 값은 입력받아 config에 전달만 하고, 확인 메시지에 포함하지 않는다.
-3. **삭제는 반드시 이름 명시 후 확인**: ID만으로 삭제하지 않는다.
+3. **웹훅 ID(UUID)·URL 비노출**: `config.webhookId` 값과 그 값을 포함한 어떤 URL/경로(`/api/webhooks/<UUID>`, `{서버주소}/api/webhooks/...`, `POST /webhooks/{id}` 등)도 응답에 출력하지 않는다. URL 형식 템플릿·예시도 금지. "파이프라인 상세 화면에서 확인할 수 있습니다."로만 안내한다.
+4. **삭제는 반드시 이름 명시 후 확인**: ID만으로 삭제하지 않는다.
+5. **위임 금지**: 트리거 작업을 다른 subagent(`general-purpose` 등)에게 `Agent` 도구로 위임하지 않는다. 직접 mcp__firehub__create_trigger / update_trigger / delete_trigger / list_triggers만 호출한다.
 
 ## 응답 포맷 원칙
 
