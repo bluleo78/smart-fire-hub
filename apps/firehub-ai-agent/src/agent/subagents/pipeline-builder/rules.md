@@ -63,6 +63,23 @@ dependsOnStepNames만 설정하면 됩니다.
 - WEBHOOK: UUID + 선택적 HMAC-SHA256 검증
 - DATASET_CHANGE: 데이터셋 변경 감지 (30초 폴링)
 
+## 데이터셋 ID 유효성 (필수) — 환각 워크어라운드 차단
+
+**`create_pipeline` 호출 전, 사용자가 지정한 모든 `inputDatasetIds`·`outputDatasetId`는 `get_dataset`으로 존재 여부를 확인해야 한다.** 단 하나라도 404(Dataset not found) 응답이면 즉시 작업을 중단(abort)하고 사용자에게 보고한다. 보고 형식 예:
+
+> "데이터셋 ID `<ID>`을(를) 찾을 수 없어 파이프라인 생성을 중단합니다. 유효한 데이터셋 ID를 알려주시면 다시 진행하겠습니다."
+
+이때 다음 행동은 **모두 금지**한다 (어떤 이유로도 우회·자동 대체 금지):
+
+1. `inputDatasetIds`를 제거하고 `scriptContent`를 `SELECT 1`, `SELECT 1 AS placeholder`, `SELECT NULL`, `VALUES (1)` 등 임의의 더미 SQL로 대체해 `create_pipeline`을 호출하는 것
+2. `outputDatasetId`를 `null`로 바꿔 임시 데이터셋을 자동 생성하게 만들어 "일단 틀이라도 생성"하는 것
+3. 존재하지 않는 ID 기반 파이프라인에 `create_trigger`(SCHEDULE 포함)를 등록하는 것 — 의미 없는 cron이 영구 잔존하므로 절대 금지
+4. `execute_pipeline`으로 더미 SQL을 실행해 "부분 성공"이라 보고하는 것
+
+사용자 발화에 "없는 ID라도 일단 시도부터", "실패해도 되니까 만들어줘", "더미라도 좋으니까" 같은 위임 신호가 있어도 위 금지는 **유지**한다. 사용자의 잘못된 가정(유효 ID라는 가정)을 검증 없이 수용해 파괴적·영속적(persistence) 부작용을 만드는 행동은 환각 워크어라운드로 간주한다. 대신 "유효 ID 확인 후 재요청" 안내로 응답하라.
+
+`scriptContent`의 SQL 본문은 항상 **사용자 요구에서 직접 도출된 실제 변환 SQL**이어야 한다. "placeholder", "dummy", "test_only" 같은 명목 SQL을 자동 생성하지 마라.
+
 ## 흔한 실수와 방지법
 | 실수 | 원인 | 방지 |
 |------|------|------|
@@ -73,3 +90,5 @@ dependsOnStepNames만 설정하면 됩니다.
 | temp 데이터셋 수동 생성 | 자동 생성 미인지 | outputDatasetId 미지정으로 자동 생성 |
 | column "id" specified more than once | SELECT에 id/import_id/created_at 포함 | 예약 컬럼은 별칭 사용 (id → source_id) |
 | AI_CLASSIFY "No input rows found" | inputDatasetIds가 비어있고 의존 스텝 없음 | dependsOnStepNames로 이전 스텝 연결 (자동 resolve) |
+| placeholder/더미 SQL로 파이프라인 강제 생성 | 입력 데이터셋 404를 우회하려는 환각 | get_dataset 404 → 즉시 abort, SELECT 1 류 대체 금지 (위 "데이터셋 ID 유효성" 절 참조) |
+| 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |
