@@ -13,15 +13,47 @@ type ChartTypeValue = typeof CHART_TYPE_VALUES[number];
 // execute_analytics_query 응답 크기 가드 (이슈 #251)
 // Claude Agent SDK는 single tool_result에 토큰 한도(약 25K tokens)가 있어 큰 결과는 자동 truncate.
 // 1) maxRows 미지정 시 기본값 1000으로 명시 (백엔드 정책과 별개로 tool 레이어에서 cap)
-// 2) 응답 직렬화 후 길이가 임계치 초과 시 행 배열을 잘라서 LLM에 truncated 메타 제공
+// 2) 응답 직렬화 후 토큰 추정치가 임계치 초과 시 행 배열을 잘라서 LLM에 truncated 메타 제공
 //    → LLM이 trial-and-error 재시도 없이 즉시 SUMMARY/AGGREGATE 권유 행동으로 분기 가능
 // 3) 회귀 방지(#251 재처리): clamp 측정과 최종 직렬화 형식을 모두 **compact JSON**으로 통일.
-//    이전 버전은 clamp가 compact로 측정하고 최종 응답은 pretty-print(JSON.stringify(_, null, 2))로
-//    직렬화하여 동일 페이로드인데 출력 시점 크기가 ~25–30% 더 커져 SDK 한도를 다시 초과했다.
-//    compact 출력이 token 효율도 더 좋으므로 analytics 쿼리 결과 한정으로 compact로 반환한다.
+// 4) 회귀 방지(#251 2차 재처리): 바이트 단위 임계치만으로는 한국어 등 다바이트 문자에서
+//    토큰 한도 초과를 막을 수 없다. 한글 1자(3 UTF-8 bytes)는 약 2-3 토큰을 차지하므로
+//    63KB compact JSON이 25K 토큰을 초과한 사례가 발생(trace crosscheck-251r1-s2-biglimit.sse).
+//    → 문자(코드포인트) 클래스별 가중치 기반 토큰 추정 + 이진탐색식 retry 루프로 강화.
 const ANALYTICS_DEFAULT_MAX_ROWS = 1000;
-// 80KB ≈ 약 20K tokens. SDK 한도(~25K tokens) 대비 안전 마진을 확보 (이전 200KB는 마진 부족).
-const ANALYTICS_RESPONSE_MAX_BYTES = 80_000;
+// SDK single tool_result 토큰 한도는 ~25K. 안전 마진 포함 18K를 운영 한도로 사용한다.
+// (한국어 데이터 비중이 높을수록 토큰 효율이 떨어지므로 보수적으로 설정)
+const ANALYTICS_RESPONSE_MAX_TOKENS = 18_000;
+// 바이트 임계치는 ASCII 위주 데이터에 대한 빠른 1차 게이트 — 토큰 추정보다 저렴하다.
+// 한국어 등 다바이트 케이스에서는 토큰 추정이 결정적이므로 바이트 게이트는 보수적으로 30KB.
+const ANALYTICS_RESPONSE_MAX_BYTES = 30_000;
+
+/**
+ * 직렬화된 문자열의 토큰 수 추정.
+ * Claude tokenizer를 직접 호출하지 않고 코드포인트 클래스별 가중치로 보수적 추정한다.
+ * - ASCII 인쇄 가능 문자: ≈ 0.25 토큰/char (영문은 약 4 chars/token)
+ * - 그 외(한글·한자·일본어·이모지 등 BMP 비-ASCII): ≈ 1.8 토큰/char (한글 1자 ≈ 2-3 토큰)
+ * - 서로게이트 페어/이모지: 한 코드포인트로 묶어 약 3 토큰 가산.
+ * 실제 BPE 토크나이저보다 약간 후하게(많게) 추정하는 보수적 함수로, 한도 초과를 사전에 차단한다.
+ */
+export function estimateTokens(text: string): number {
+  let ascii = 0;
+  let wide = 0;
+  let surrogateCodepoints = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      // high surrogate — 다음 low surrogate와 함께 하나의 코드포인트
+      surrogateCodepoints += 1;
+      i += 1; // skip low surrogate
+      continue;
+    }
+    if (code < 0x80) ascii += 1;
+    else wide += 1;
+  }
+  // ASCII: 4 chars/token, wide: 0.55 chars/token (≈ 1.8 tokens/char), surrogate: 3 tokens/codepoint
+  return Math.ceil(ascii * 0.25 + wide * 1.8 + surrogateCodepoints * 3);
+}
 
 interface AnalyticsQueryResult {
   queryType?: string;
@@ -37,26 +69,41 @@ interface AnalyticsQueryResult {
 
 /**
  * 응답이 너무 크면 행 배열을 절단해 token 한도 초과를 방지한다.
- * - 직렬화 후 바이트 길이를 측정해 임계치 초과 시 이진탐색에 가까운 비율 추정으로 행 수를 줄임
+ * - 1차 게이트: 직렬화 바이트 길이 vs maxBytes (ASCII 위주 데이터에 효과적, 저렴)
+ * - 2차 게이트: 코드포인트 가중치 기반 토큰 추정 vs maxTokens (한국어 등 다바이트 케이스 결정적)
+ * - 어느 한쪽이라도 초과하면 행 수를 비율 추정으로 줄이고, 결과를 다시 측정해 양쪽 모두 통과할 때까지
+ *   이진탐색식 retry (최대 16회 — O(log n))
  * - truncated/returnedRows/totalRows/hint 메타를 동봉해 LLM에 명시적 신호 전달
+ *
+ * 회귀 방지(#251 2차): 한국어 데이터 63KB compact JSON이 25K 토큰 초과한 사례 대응 —
+ * 바이트만으로 측정하면 한글이 들어간 결과를 차단하지 못한다.
  */
 export function clampAnalyticsResult(
   result: AnalyticsQueryResult,
   maxBytes: number = ANALYTICS_RESPONSE_MAX_BYTES,
+  maxTokens: number = ANALYTICS_RESPONSE_MAX_TOKENS,
 ): AnalyticsQueryResult {
   const rows = Array.isArray(result?.rows) ? result.rows : [];
   const originalRowCount = rows.length;
   const serialized = JSON.stringify(result);
+  const initialTokens = estimateTokens(serialized);
 
-  if (serialized.length <= maxBytes || originalRowCount === 0) {
+  // 양쪽 한도 모두 이내면 통과
+  if ((serialized.length <= maxBytes && initialTokens <= maxTokens) || originalRowCount === 0) {
     return result;
   }
 
-  // 평균 행 바이트로 비율 추정 — 정확하지 않아도 안전 마진을 두면 충분
-  // 직렬화한 rows 길이 기반: 메타 오버헤드 무시하고 maxBytes의 80%만 사용
-  const safeBudget = Math.floor(maxBytes * 0.8);
+  // 두 제약 중 더 빡빡한 쪽 기준으로 초기 keepRows를 추정한다.
+  // - 바이트 비율: safeBudget(bytes) / avgRowBytes
+  // - 토큰 비율: safeTokenBudget / avgRowTokens
+  // 둘 중 작은 값을 채택하여 retry 횟수를 줄인다.
+  const safeBytesBudget = Math.floor(maxBytes * 0.8);
+  const safeTokenBudget = Math.floor(maxTokens * 0.8);
   const avgRowBytes = Math.max(1, Math.floor(serialized.length / originalRowCount));
-  let keepRows = Math.max(1, Math.floor(safeBudget / avgRowBytes));
+  const avgRowTokens = Math.max(1, Math.floor(initialTokens / originalRowCount));
+  const byBytes = Math.max(1, Math.floor(safeBytesBudget / avgRowBytes));
+  const byTokens = Math.max(1, Math.floor(safeTokenBudget / avgRowTokens));
+  let keepRows = Math.min(byBytes, byTokens);
   if (keepRows >= originalRowCount) {
     keepRows = Math.max(1, originalRowCount - 1);
   }
@@ -71,9 +118,12 @@ export function clampAnalyticsResult(
     hint: '결과가 큽니다. LIMIT/집계(GROUP BY, COUNT, AVG 등)/조건절을 추가하거나 차트 시각화(show_chart)를 권장합니다.',
   };
 
-  // 한 번 더 초과하면 행을 절반씩 줄이며 맞춤 (최대 8회 — O(log n))
-  let safety = 8;
-  while (JSON.stringify(candidate).length > maxBytes && truncatedRows.length > 1 && safety-- > 0) {
+  // 양쪽(바이트·토큰) 모두 한도 이하가 될 때까지 행을 절반씩 줄임 (이진탐색식, 최대 16회)
+  let safety = 16;
+  while (truncatedRows.length > 1 && safety-- > 0) {
+    const candidateStr = JSON.stringify(candidate);
+    const candidateTokens = estimateTokens(candidateStr);
+    if (candidateStr.length <= maxBytes && candidateTokens <= maxTokens) break;
     truncatedRows = truncatedRows.slice(0, Math.max(1, Math.floor(truncatedRows.length / 2)));
     candidate = { ...candidate, rows: truncatedRows, returnedRows: truncatedRows.length };
   }

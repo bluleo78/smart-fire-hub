@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createFireHubMcpServer } from '../firehub-mcp-server.js';
 import { FireHubApiClient } from '../api-client.js';
-import { clampAnalyticsResult } from './analytics-tools.js';
+import { clampAnalyticsResult, estimateTokens } from './analytics-tools.js';
 
 function createMockClient(): FireHubApiClient {
   const client = Object.create(FireHubApiClient.prototype);
@@ -217,6 +217,93 @@ describe('Analytics MCP Tools', () => {
     it('clampAnalyticsResult unit: empty rows returned unchanged', () => {
       const r = { queryType: 'SELECT', columns: [], rows: [], totalRows: 0, truncated: false };
       expect(clampAnalyticsResult(r, 100)).toBe(r);
+    });
+
+    // 이슈 #251 2차 회귀: 한국어 등 다바이트 문자에서 바이트 단위 임계치만으로는
+    // SDK 토큰 한도(~25K)를 막을 수 없다. trace crosscheck-251r1-s2-biglimit.sse에서
+    // 63KB compact JSON이 토큰 한도를 초과해 동일 회귀가 재발한 사례.
+    // → 토큰 추정 + 보수적 바이트 임계치 + retry 루프로 한도 이내 보장.
+    describe('Korean multibyte regression (#251 second pass)', () => {
+      it('estimateTokens: Korean characters count more tokens than ASCII', () => {
+        const ascii = 'a'.repeat(100);
+        const korean = '가'.repeat(100);
+        // 한글은 ASCII 대비 약 7배 이상의 토큰을 사용 (보수 추정 0.25 vs 1.8 tokens/char)
+        expect(estimateTokens(korean)).toBeGreaterThan(estimateTokens(ascii) * 5);
+      });
+
+      it('estimateTokens: empty string returns 0', () => {
+        expect(estimateTokens('')).toBe(0);
+      });
+
+      it('estimateTokens: monotonic — longer input means more tokens', () => {
+        const short = '안녕하세요';
+        const long = '안녕하세요'.repeat(50);
+        expect(estimateTokens(long)).toBeGreaterThan(estimateTokens(short));
+      });
+
+      it('clamps Korean-heavy response below token threshold even when bytes alone would pass', async () => {
+        // 한국어 customers 시나리오 시뮬레이션 (trace 실측 케이스 재현).
+        // 행당 한글 비중이 높으면 바이트는 60KB 수준이어도 토큰 추정은 25K를 초과한다.
+        const koreanRows = Array.from({ length: 600 }, (_, i) => ({
+          고객번호: i,
+          고객명: `홍길동${i}_김철수_이영희`,
+          주소: `서울특별시 강남구 테헤란로 ${i}길 ${(i * 7) % 999}번지`,
+          전화번호: `010-${String(i).padStart(4, '0')}-1234`,
+          가입일자: `2026-${(i % 12) + 1}월-${(i % 28) + 1}일 가입`,
+          비고: `장기우수회원 등급 ${i % 5}단계 — 누적 포인트 ${i * 137}점 적립 상태`,
+        }));
+        (client.executeAnalyticsQuery as ReturnType<typeof vi.fn>).mockResolvedValue({
+          queryType: 'SELECT',
+          columns: ['고객번호', '고객명', '주소', '전화번호', '가입일자', '비고'],
+          rows: koreanRows,
+          affectedRows: 0,
+          executionTimeMs: 150,
+          totalRows: 600,
+          truncated: false,
+          error: null,
+        });
+
+        const result = await invokeTool(server, 'execute_analytics_query', {
+          sql: 'SELECT * FROM customers',
+          maxRows: 10000,
+        });
+        const text = result.content[0].text;
+        const parsed = JSON.parse(text);
+
+        // (1) truncated 메타 첨부
+        expect(parsed.truncated).toBe(true);
+        expect(parsed.totalRows).toBe(600);
+        expect(parsed.returnedRows).toBeLessThan(600);
+
+        // (2) 핵심: 토큰 추정이 SDK 한도(25K) 이내 — 한국어 데이터에서도 안전 보장
+        expect(estimateTokens(text)).toBeLessThanOrEqual(25_000);
+
+        // (3) 바이트 임계치도 보수적으로 통과 (30KB)
+        expect(text.length).toBeLessThanOrEqual(30_000);
+      });
+
+      it('clampAnalyticsResult unit: Korean-only payload below default token threshold', () => {
+        const rows = Array.from({ length: 1000 }, (_, i) => ({
+          이름: `테스트사용자_${i}`,
+          내용: '가나다라마바사아자차카타파하'.repeat(8),
+          상태: '활성_상태_정상_운영_중',
+        }));
+        const r = { queryType: 'SELECT', columns: ['이름', '내용', '상태'], rows, totalRows: 1000, truncated: false };
+        const out = clampAnalyticsResult(r);
+        expect(out.truncated).toBe(true);
+        const serialized = JSON.stringify(out);
+        // 디폴트 임계치(18K 토큰) 이내 — 한국어 다바이트 케이스에서도 보장
+        expect(estimateTokens(serialized)).toBeLessThanOrEqual(18_000);
+      });
+
+      it('clampAnalyticsResult unit: respects explicit maxTokens override', () => {
+        const rows = Array.from({ length: 500 }, (_, i) => ({ 한글값: '데이터'.repeat(20), idx: i }));
+        const r = { queryType: 'SELECT', columns: ['한글값', 'idx'], rows, totalRows: 500, truncated: false };
+        // 더 엄격한 5K 토큰 한도 적용
+        const out = clampAnalyticsResult(r, 30_000, 5_000);
+        expect(out.truncated).toBe(true);
+        expect(estimateTokens(JSON.stringify(out))).toBeLessThanOrEqual(5_000);
+      });
     });
   });
 
