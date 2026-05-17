@@ -125,4 +125,64 @@ describe('SYSTEM_PROMPT', () => {
       expect(piiSection).toMatch(/마스킹 풀어|원본 보여/);
     });
   });
+
+  // 이슈 #239 회귀 방지 — 응답 스타일 정책.
+  // 트리거/스마트잡 서브에이전트에서 fix됐던 중간 narration 누출이 메인 에이전트 경로에서 회귀.
+  // 메인 에이전트가 list_datasets + 다중 get_row_count 등을 호출할 때 "병렬로 조회합니다" 같은
+  // 계획·진행 안내 텍스트 델타를 송출하던 결함. tool_use 사이의 텍스트는 비워두고 최종 결과만
+  // 단일 응답으로 송출하도록 정책을 텍스트 계약으로 고정한다.
+  describe('응답 스타일 — 중간 narration 금지 (refs #239)', () => {
+    // 응답 스타일 섹션이 존재하고 #239를 참조해야 함
+    it('응답 스타일 섹션이 #239를 참조한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/응답 스타일[\s\S]*#239/);
+    });
+
+    // 메인 에이전트가 정책 적용 대상임을 명시해야 함 (메인 에이전트 경로 회귀 핵심 지점)
+    it('메인 에이전트도 응답 스타일 정책 적용 대상임을 명시한다', () => {
+      const styleSection = SYSTEM_PROMPT.split('## 응답 스타일')[1];
+      expect(styleSection).toBeDefined();
+      expect(styleSection).toMatch(/메인 에이전트/);
+    });
+
+    // tool_use 사이의 텍스트는 비워둠 — #239 회귀의 직접 가드
+    it('tool_use 사이의 텍스트 응답은 비워두라는 규칙을 명시한다', () => {
+      const styleSection = SYSTEM_PROMPT.split('## 응답 스타일')[1];
+      expect(styleSection).toBeDefined();
+      expect(styleSection).toMatch(/tool_use 사이|tool_use 블록 사이/);
+      expect(styleSection).toMatch(/비워둔다|텍스트 델타도 송출하지 않/);
+    });
+
+    // 계획·병렬 처리 narration 금지 명시 — #239 회귀 키워드
+    it('"병렬로 조회합니다"·계획 선언 narration 금지를 명시한다', () => {
+      const styleSection = SYSTEM_PROMPT.split('## 응답 스타일')[1];
+      expect(styleSection).toBeDefined();
+      expect(styleSection).toMatch(/병렬로 조회합니다/);
+      expect(styleSection).toMatch(/계획 선언 금지|계획.*송출하지 않/);
+    });
+
+    // 중간 진행 narration 금지 표현이 1번 항목에 포함되어야 함 (조회합니다·처리합니다)
+    it('"조회합니다"·"처리합니다" 류 진행 narration 금지 표현을 1번 항목에 포함한다', () => {
+      const styleSection = SYSTEM_PROMPT.split('## 응답 스타일')[1];
+      expect(styleSection).toBeDefined();
+      expect(styleSection).toMatch(/조회합니다/);
+      expect(styleSection).toMatch(/처리합니다/);
+    });
+
+    // 잘못된 예시에 #239 회귀 케이스("병렬로 조회합니다")가 포함되어야 함
+    it('잘못된 예시에 #239 회귀 케이스("병렬로 조회합니다")를 포함한다', () => {
+      const styleSection = SYSTEM_PROMPT.split('## 응답 스타일')[1];
+      expect(styleSection).toBeDefined();
+      // 잘못된 예 블록 안에서 #239 회귀 발화가 명시되어야 함
+      expect(styleSection).toMatch(/❌[\s\S]*모든 데이터셋의 행 수를 병렬로 조회합니다/);
+    });
+
+    // 허용되는 응답 구성 = (a) 최종 결과 요약 + (b) 다음 단계 제안/확인 — 이 둘 외 금지
+    it('허용되는 응답 구성을 (최종 결과 + 다음 단계 제안/확인) 두 가지로 한정한다', () => {
+      const styleSection = SYSTEM_PROMPT.split('## 응답 스타일')[1];
+      expect(styleSection).toBeDefined();
+      expect(styleSection).toMatch(/허용되는 응답 구성/);
+      expect(styleSection).toMatch(/최종 결과 요약/);
+      expect(styleSection).toMatch(/다음 단계 제안|확인 질문/);
+    });
+  });
 });
