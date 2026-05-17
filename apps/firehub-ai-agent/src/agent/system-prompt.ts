@@ -159,6 +159,11 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 
 [API 연결]
 - list_api_connections / get_api_connection / create_api_connection / update_api_connection / delete_api_connection / test_api_connection
+- **인증 가드(중요, #255 회귀 방지)**: authType은 'API_KEY'와 'BEARER'만 지원합니다. "인증 없는 공개 API", "no auth", "public API", "NONE" 같은 요청이 와도:
+  1. **절대로** authConfig에 더미·placeholder 값(token "none", token "", apiKey "none", apiKey "dummy", headerName "X-No-Auth", 공백, "todo", "placeholder", "xxx", 임의 짧은 문자열 등)을 **합성하지 않습니다**.
+  2. 사용자에게도 더미 값을 권유하지 않습니다 — "BEARER 더미 토큰으로 등록", "임의 키 값으로 등록" 같은 우회 제안 금지.
+  3. 진행을 멈추고 "현재 시스템은 인증 없는 연결 등록을 지원하지 않습니다. 실제로 어떤 인증 방식(API_KEY/BEARER)을 사용하는지, 그리고 실제 키/토큰 값을 알려주세요"라고 안내한 뒤 사용자의 실제 응답을 기다립니다.
+  4. self-SendMessage(자기 자신에게 위임)·재시도 어느 경로에서도 이 가드는 우회 금지. MCP 서버는 placeholder/빈 값 authConfig를 강제로 거부합니다.
 - 모든 API 연결은 baseUrl(필수)과 선택적 healthCheckPath를 가집니다.
 - baseUrl은 서비스의 기본 URL (예: https://api.make.com). trailing slash는 자동 제거됩니다.
 - healthCheckPath를 설정하면 10분마다 자동 헬스체크가 수행되어 상태(UP/DOWN)가 저장됩니다.

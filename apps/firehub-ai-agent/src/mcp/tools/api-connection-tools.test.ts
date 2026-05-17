@@ -87,6 +87,126 @@ describe('API Connection MCP Tools', () => {
     });
   });
 
+  describe('create_api_connection — 더미/placeholder 자격증명 차단 (#255)', () => {
+    it('rejects empty token (BEARER)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-empty',
+        authType: 'BEARER',
+        authConfig: { token: '' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects token="none" (BEARER)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-none',
+        authType: 'BEARER',
+        authConfig: { token: 'none' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects apiKey="dummy" (API_KEY)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-dummy',
+        authType: 'API_KEY',
+        authConfig: { apiKey: 'dummy', headerName: 'X-Api-Key' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects headerName="X-No-Auth" placeholder', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-xna',
+        authType: 'API_KEY',
+        authConfig: { apiKey: 'realkey-abc123', headerName: 'X-No-Auth' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects token with only whitespace', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-ws',
+        authType: 'BEARER',
+        authConfig: { token: '   ' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects too-short token (< 3 chars)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-short',
+        authType: 'BEARER',
+        authConfig: { token: 'ab' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects API_KEY missing headerName', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-missing',
+        authType: 'API_KEY',
+        authConfig: { apiKey: 'real-key-1234' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('accepts real-looking BEARER token', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'real-bearer',
+        authType: 'BEARER',
+        authConfig: { token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBeFalsy();
+      expect(client.createApiConnection).toHaveBeenCalled();
+    });
+  });
+
+  describe('update_api_connection — 더미 자격증명 차단 (#255)', () => {
+    it('rejects update with empty token', async () => {
+      const result = await invokeTool(server, 'update_api_connection', {
+        id: 1,
+        authType: 'BEARER',
+        authConfig: { token: '' },
+      });
+      expect(result.isError).toBe(true);
+      expect(client.updateApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects update with placeholder apiKey', async () => {
+      const result = await invokeTool(server, 'update_api_connection', {
+        id: 1,
+        authConfig: { apiKey: 'placeholder', headerName: 'X-Api-Key' },
+      });
+      expect(result.isError).toBe(true);
+      expect(client.updateApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('allows update without authConfig (name only)', async () => {
+      const result = await invokeTool(server, 'update_api_connection', {
+        id: 1,
+        name: 'renamed',
+      });
+      expect(result.isError).toBeFalsy();
+      expect(client.updateApiConnection).toHaveBeenCalled();
+    });
+  });
+
   describe('update_api_connection', () => {
     it('calls apiClient.updateApiConnection with id and data', async () => {
       const args = { id: 3, name: '수정된 연결', baseUrl: 'https://new.example.com' };
