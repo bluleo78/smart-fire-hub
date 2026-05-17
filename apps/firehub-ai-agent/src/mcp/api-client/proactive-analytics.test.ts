@@ -34,8 +34,34 @@ describe('proactiveApi (via FireHubApiClient)', () => {
   it('createSmartJob calls POST /proactive/jobs', async () => {
     const body = { name: 'j', prompt: 'p', cronExpression: '0 9 * * *' };
     const mock = { id: 1, ...body };
+    // config 누락 시 자동으로 빈 객체 {}가 주입되어야 한다 (#244)
     nock(BASE_URL)
-      .post('/proactive/jobs', (reqBody: Record<string, unknown>) => reqBody.name === 'j')
+      .post(
+        '/proactive/jobs',
+        (reqBody: Record<string, unknown>) =>
+          reqBody.name === 'j' &&
+          typeof reqBody.config === 'object' &&
+          reqBody.config !== null &&
+          Object.keys(reqBody.config as Record<string, unknown>).length === 0,
+      )
+      .reply(201, mock);
+    const result = await client.createSmartJob(body);
+    expect(result).toEqual(mock);
+  });
+
+  it('createSmartJob preserves explicit config when provided', async () => {
+    const body = {
+      name: 'j2',
+      prompt: 'p',
+      cronExpression: '0 9 * * *',
+      config: { channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }] },
+    };
+    const mock = { id: 2, ...body };
+    nock(BASE_URL)
+      .post('/proactive/jobs', (reqBody: Record<string, unknown>) => {
+        const cfg = reqBody.config as { channels?: unknown[] } | undefined;
+        return cfg !== undefined && Array.isArray(cfg.channels) && cfg.channels.length === 1;
+      })
       .reply(201, mock);
     const result = await client.createSmartJob(body);
     expect(result).toEqual(mock);

@@ -573,6 +573,7 @@ export class FireHubApiClient {
     timezone?: string;
     templateId?: number;
     channels?: string[];
+    config?: Record<string, unknown>;
   }) {
     return this._proactive.createSmartJob(data);
   }
@@ -586,6 +587,7 @@ export class FireHubApiClient {
       templateId?: number;
       channels?: string[];
       enabled?: boolean;
+      config?: Record<string, unknown>;
     },
   ) {
     return this._proactive.updateSmartJob(id, data);

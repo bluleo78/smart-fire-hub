@@ -46,6 +46,10 @@ export function registerProactiveTools(
           .array(z.string())
           .optional()
           .describe('전달 채널 목록 (기본: ["CHAT"])'),
+        config: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('JSON 설정 (deliveryChannels, advancedOptions 등). 생략 시 빈 객체로 전송됨'),
       },
       async (args: {
         name: string;
@@ -54,7 +58,9 @@ export function registerProactiveTools(
         timezone?: string;
         templateId?: number;
         channels?: string[];
+        config?: Record<string, unknown>;
       }) => {
+        // 서버 CreateProactiveJobRequest.config는 @NotNull. api-client에서 기본값 {} 주입.
         const result = await apiClient.createSmartJob(args);
         return jsonResult(result);
       },
@@ -72,6 +78,10 @@ export function registerProactiveTools(
         templateId: z.number().optional().describe('리포트 양식 ID'),
         channels: z.array(z.string()).optional().describe('전달 채널 목록'),
         enabled: z.boolean().optional().describe('활성화 여부'),
+        config: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('JSON 설정 (deliveryChannels, advancedOptions 등)'),
       },
       async (args: {
         id: number;
@@ -82,6 +92,7 @@ export function registerProactiveTools(
         templateId?: number;
         channels?: string[];
         enabled?: boolean;
+        config?: Record<string, unknown>;
       }) => {
         const { id, ...data } = args;
         const result = await apiClient.updateSmartJob(id, data);

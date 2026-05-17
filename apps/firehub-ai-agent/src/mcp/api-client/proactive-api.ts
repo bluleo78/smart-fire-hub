@@ -13,8 +13,12 @@ export function createProactiveApi(client: AxiosInstance) {
       timezone?: string;
       templateId?: number;
       channels?: string[];
+      config?: Record<string, unknown>;
     }): Promise<unknown> {
-      const response = await client.post('/proactive/jobs', data);
+      // 서버 CreateProactiveJobRequest.config는 @NotNull이므로 누락 시 400 발생.
+      // MCP 도구 호출 측에서 config를 생략해도 빈 객체를 기본값으로 주입한다 (#244).
+      const payload = { ...data, config: data.config ?? {} };
+      const response = await client.post('/proactive/jobs', payload);
       return response.data;
     },
     async updateSmartJob(
@@ -27,8 +31,10 @@ export function createProactiveApi(client: AxiosInstance) {
         templateId?: number;
         channels?: string[];
         enabled?: boolean;
+        config?: Record<string, unknown>;
       },
     ): Promise<unknown> {
+      // UpdateProactiveJobRequest.config는 nullable이지만, MCP에서 명시적으로 전달된 경우만 보냄.
       const response = await client.put(`/proactive/jobs/${id}`, data);
       return response.data;
     },
