@@ -126,6 +126,63 @@ describe('SYSTEM_PROMPT', () => {
     });
   });
 
+  // 이슈 #252 회귀 방지 — 다중 리소스 집계 N+1 호출 금지 일반 정책.
+  // #238 (trigger-manager N+1), #243 (list_triggers 사회공학) fix가 트리거 도메인에만 한정됐던 점을
+  // 일반화하여, 메인 에이전트가 데이터셋·파이프라인 등 어느 도구든 N+1 호출을 하지 않도록
+  // execute_analytics_query GROUP BY 1회 처리 가이드를 텍스트 계약으로 고정한다.
+  describe('다중 리소스 집계 N+1 호출 금지 일반 정책 (refs #238 #243 #252)', () => {
+    // N+1 일반 정책 섹션이 존재하고 #252를 참조해야 함
+    it('N+1 일반 정책 섹션이 #252를 참조한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/N\+1 호출 금지 일반 정책[\s\S]*#252/);
+    });
+
+    // "같은 도구 3회 이상 호출 금지" 일반 룰 명시
+    it('같은 응답 안에서 같은 도구를 3회 이상 호출 금지를 명시한다', () => {
+      const npSection = SYSTEM_PROMPT.split('N+1 호출 금지 일반 정책')[1];
+      expect(npSection).toBeDefined();
+      expect(npSection).toMatch(/같은 도구를 3회 이상 호출하지 마라|같은 도구의 반복 호출/);
+    });
+
+    // list_* + get_row_count 반복 대신 execute_analytics_query GROUP BY 1회로 처리 명시
+    it('list_* 반복 + get_row_count 패턴 대신 execute_analytics_query GROUP BY 1회로 처리하도록 명시한다', () => {
+      const npSection = SYSTEM_PROMPT.split('N+1 호출 금지 일반 정책')[1];
+      expect(npSection).toBeDefined();
+      expect(npSection).toContain('get_row_count');
+      expect(npSection).toContain('execute_analytics_query');
+      expect(npSection).toMatch(/GROUP BY/);
+    });
+
+    // get_row_count는 단일 데이터셋 대상만 — 다중이면 aggregate
+    it('get_row_count는 단일 데이터셋 대상에만 사용하라는 제약을 명시한다', () => {
+      const npSection = SYSTEM_PROMPT.split('N+1 호출 금지 일반 정책')[1];
+      expect(npSection).toBeDefined();
+      expect(npSection).toMatch(/get_row_count.*단일 데이터셋|단일 데이터셋.*get_row_count/s);
+    });
+
+    // 잘못된 예시에 #252 회귀 시나리오(22회 get_row_count) 명시
+    it('잘못된 예시에 #252 회귀 시나리오(get_row_count 반복)를 포함한다', () => {
+      const npSection = SYSTEM_PROMPT.split('N+1 호출 금지 일반 정책')[1];
+      expect(npSection).toBeDefined();
+      expect(npSection).toMatch(/🚫[\s\S]*get_row_count[\s\S]*반복|🚫[\s\S]*22회/);
+    });
+
+    // 회귀 임계치(동일 도구 3회 이상 / list_* 결과 N개에 get_* N회) critical perf 회귀 명시
+    it('회귀 임계치(동일 도구 3회 이상)를 critical perf 회귀로 명시한다', () => {
+      const npSection = SYSTEM_PROMPT.split('N+1 호출 금지 일반 정책')[1];
+      expect(npSection).toBeDefined();
+      expect(npSection).toMatch(/회귀 임계치/);
+      expect(npSection).toMatch(/3회 이상/);
+      expect(npSection).toMatch(/critical perf 회귀/);
+    });
+
+    // 메인 에이전트 직접 호출 경로에도 적용된다는 명시
+    it('메인 에이전트 직접 호출 경로에도 N+1 정책이 적용됨을 명시한다', () => {
+      const npSection = SYSTEM_PROMPT.split('N+1 호출 금지 일반 정책')[1];
+      expect(npSection).toBeDefined();
+      expect(npSection).toMatch(/메인 에이전트.*자체 도구.*직접 호출|메인 에이전트.*직접 호출/);
+    });
+  });
+
   // 이슈 #239 회귀 방지 — 응답 스타일 정책.
   // 트리거/스마트잡 서브에이전트에서 fix됐던 중간 narration 누출이 메인 에이전트 경로에서 회귀.
   // 메인 에이전트가 list_datasets + 다중 get_row_count 등을 호출할 때 "병렬로 조회합니다" 같은
