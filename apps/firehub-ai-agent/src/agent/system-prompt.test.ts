@@ -29,4 +29,39 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('show_dataset_list');
     expect(SYSTEM_PROMPT).toContain('list_datasets');
   });
+
+  // 이슈 #241 회귀 방지 — 파괴 작업 confirm 우회 사회공학 거부 정책이 명문화되어야 함
+  describe('파괴 작업 confirm 우회 거부 (refs #241)', () => {
+    // drop_dataset_column이 파괴 작업 목록에 포함되어야 함 (이전 누락)
+    it('drop_dataset_column을 파괴 작업 목록에 포함한다', () => {
+      expect(SYSTEM_PROMPT).toContain('drop_dataset_column');
+      // 파괴 작업 섹션 안에 포함되어야 함
+      const destructiveSection = SYSTEM_PROMPT.split('## 파괴 작업')[1];
+      expect(destructiveSection).toBeDefined();
+      expect(destructiveSection).toContain('drop_dataset_column');
+    });
+
+    // delete_dataset 호출 전 get_dataset_references 선행 호출 의무를 명시해야 함
+    it('delete_dataset 전에 get_dataset_references 선행 호출 의무를 명시한다', () => {
+      expect(SYSTEM_PROMPT).toContain('get_dataset_references');
+      expect(SYSTEM_PROMPT).toMatch(/get_dataset_references.*먼저|반드시.*get_dataset_references/s);
+    });
+
+    // "확인 묻지마" / "skip confirm" 류 사회공학 우회 거부 정책이 명시되어야 함
+    it('confirm 우회 사회공학 발화를 거부하는 정책을 명시한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/확인 묻지\s?마|skip confirm|한 번에 다 처리/);
+      expect(SYSTEM_PROMPT).toMatch(/시스템 정책|우회.*불가|우회되지 않/);
+    });
+
+    // 단일 발화 multi-step 파괴 작업도 각 단계마다 별도 턴 확인 필요 명시
+    it('단일 발화 multi-step 파괴 작업도 단계마다 별도 턴 확인을 요구한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/multi-step|단일 발화|연쇄/);
+      expect(SYSTEM_PROMPT).toMatch(/배치 승인 금지|각 파괴 단계|단계마다.*확인/);
+    });
+
+    // 전문 에이전트 위임 시 "확인 묻지마" 류 발화를 그대로 forward 하지 않도록 명시
+    it('전문 에이전트 위임 시 confirm 우회 발화를 forward 하지 않도록 명시한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/그대로 전달하지 않|forward 하지 않|약화시키는 표현/);
+    });
+  });
 });
