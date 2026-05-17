@@ -122,8 +122,66 @@ describe('Analytics MCP Tools', () => {
       expect(parsed.returnedRows).toBe(parsed.rows.length);
       expect(typeof parsed.hint).toBe('string');
       expect(parsed.hint).toMatch(/LIMIT|집계|차트/);
-      // 직렬화 결과가 200KB 임계치 이하인지 확인
-      expect(result.content[0].text.length).toBeLessThanOrEqual(200_000);
+      // 직렬화 결과가 80KB 임계치 이하인지 확인 (이슈 #251 회귀 처리: 200KB → 80KB로 강화)
+      expect(result.content[0].text.length).toBeLessThanOrEqual(80_000);
+    });
+
+    // 이슈 #251 회귀 (재처리): clamp 측정과 최종 직렬화 형식 정합성 회귀 방지.
+    // 이전 버전은 clamp가 compact JSON으로 크기를 측정했지만 최종 응답은
+    // JSON.stringify(_, null, 2) pretty-print로 직렬화하여 동일 데이터인데
+    // 출력 시점 크기가 ~25–30% 더 커져 SDK token 한도를 재초과했다.
+    // execute_analytics_query 출력이 compact 직렬화 형식인지(개행/들여쓰기 없음) 확인하고,
+    // 클램프 임계치(80KB) 이내인지 보장한다.
+    it('execute_analytics_query output is compact JSON (no pretty-print) — regression #251', async () => {
+      // 명확하게 임계치를 넘는 페이로드로 clamp 경로를 유도
+      const bigRows = Array.from({ length: 5000 }, (_, i) => ({
+        id: i,
+        v: `${'pad_'.repeat(20)}${i}`,
+        t: `2026-05-${(i % 28) + 1}T00:00:00Z`,
+      }));
+      (client.executeAnalyticsQuery as ReturnType<typeof vi.fn>).mockResolvedValue({
+        queryType: 'SELECT',
+        columns: ['id', 'v', 't'],
+        rows: bigRows,
+        affectedRows: 0,
+        executionTimeMs: 100,
+        totalRows: 5000,
+        truncated: false,
+        error: null,
+      });
+
+      const result = await invokeTool(server, 'execute_analytics_query', {
+        sql: 'SELECT id, v, t FROM big',
+        maxRows: 10000,
+      });
+
+      const text = result.content[0].text;
+
+      // (1) pretty-print 회귀 방지: compact JSON은 `{\n  "` 같은 들여쓰기 시퀀스를 포함하지 않는다.
+      //     JSON.stringify(data, null, 2) 출력에는 항상 `\n  ` 패턴이 다수 나타나므로 부정 검증으로 충분.
+      expect(text).not.toContain('\n  ');
+      expect(text.startsWith('{"')).toBe(true);
+
+      // (2) 임계치 정합성: clamp가 측정한 형식과 최종 출력 형식이 같으므로 80KB 이내여야 한다.
+      expect(text.length).toBeLessThanOrEqual(80_000);
+
+      // (3) truncated 메타가 동봉됐는지 (정상 clamp 경로 확인)
+      const parsed = JSON.parse(text);
+      expect(parsed.truncated).toBe(true);
+      expect(parsed.returnedRows).toBeLessThan(5000);
+    });
+
+    it('clampAnalyticsResult unit: respects 80KB default threshold — regression #251', () => {
+      // 디폴트 임계치(80KB) 적용을 명시 검증 (이전엔 200KB)
+      const rows = Array.from({ length: 2000 }, (_, i) => ({
+        a: 'x'.repeat(200),
+        b: `pad_${i}_${'y'.repeat(50)}`,
+        i,
+      }));
+      const r = { queryType: 'SELECT', columns: ['a', 'b', 'i'], rows, totalRows: 2000, truncated: false };
+      const out = clampAnalyticsResult(r); // 디폴트 임계치 사용
+      expect(out.truncated).toBe(true);
+      expect(JSON.stringify(out).length).toBeLessThanOrEqual(80_000);
     });
 
     it('does not modify response when result is small', async () => {

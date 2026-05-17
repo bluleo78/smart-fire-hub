@@ -11,12 +11,17 @@ const CHART_TYPE_VALUES = [
 type ChartTypeValue = typeof CHART_TYPE_VALUES[number];
 
 // execute_analytics_query 응답 크기 가드 (이슈 #251)
-// Claude Agent SDK는 single tool_result에 토큰 한도가 있어 큰 결과(약 2MB JSON)는 자동 truncate.
+// Claude Agent SDK는 single tool_result에 토큰 한도(약 25K tokens)가 있어 큰 결과는 자동 truncate.
 // 1) maxRows 미지정 시 기본값 1000으로 명시 (백엔드 정책과 별개로 tool 레이어에서 cap)
 // 2) 응답 직렬화 후 길이가 임계치 초과 시 행 배열을 잘라서 LLM에 truncated 메타 제공
 //    → LLM이 trial-and-error 재시도 없이 즉시 SUMMARY/AGGREGATE 권유 행동으로 분기 가능
+// 3) 회귀 방지(#251 재처리): clamp 측정과 최종 직렬화 형식을 모두 **compact JSON**으로 통일.
+//    이전 버전은 clamp가 compact로 측정하고 최종 응답은 pretty-print(JSON.stringify(_, null, 2))로
+//    직렬화하여 동일 페이로드인데 출력 시점 크기가 ~25–30% 더 커져 SDK 한도를 다시 초과했다.
+//    compact 출력이 token 효율도 더 좋으므로 analytics 쿼리 결과 한정으로 compact로 반환한다.
 const ANALYTICS_DEFAULT_MAX_ROWS = 1000;
-const ANALYTICS_RESPONSE_MAX_BYTES = 200_000; // ~200KB / ~50K tokens 추정. SDK 한도(~25K tokens) 대비 안전 마진.
+// 80KB ≈ 약 20K tokens. SDK 한도(~25K tokens) 대비 안전 마진을 확보 (이전 200KB는 마진 부족).
+const ANALYTICS_RESPONSE_MAX_BYTES = 80_000;
 
 interface AnalyticsQueryResult {
   queryType?: string;
@@ -104,7 +109,9 @@ export function registerAnalyticsTools(
         const result = await apiClient.executeAnalyticsQuery(args.sql, effectiveMaxRows);
         // 응답 직렬화 크기가 임계치 초과면 자동 truncate + 메타 동봉.
         const clamped = clampAnalyticsResult(result as AnalyticsQueryResult);
-        return jsonResult(clamped);
+        // 회귀 방지(#251): jsonResult의 pretty-print는 clamp 측정 형식과 불일치하므로
+        // 여기서만 compact 직렬화로 ToolResult를 직접 구성한다 (다른 tool의 pretty-print는 유지).
+        return { content: [{ type: 'text' as const, text: JSON.stringify(clamped) }] };
       },
     ),
 
