@@ -442,6 +442,114 @@ describe('executeAgent', () => {
     expect(callArgs.options?.disallowedTools).toContain('ToolSearch');
   });
 
+  // AS-22 (#256): 메인 에이전트 host 도구 화이트리스트/블랙리스트 강제.
+  //
+  // 배경: ai-driven-agent-inspector 라운드 9 trace(skill-repro-010.sse)에서
+  // 메인 에이전트가 `Skill(superpowers:brainstorming)`, `TaskCreate`,
+  // `TaskUpdate` 를 자유 호출. allowedTools 에 host filesystem/shell/web 도구가
+  // 광범위하게 포함돼 있었고 disallowedTools 에 Skill/Task* 명시 차단 누락.
+  //
+  // 본 테스트는:
+  //   (a) allowedTools 가 mcp__firehub__* + Agent 로 좁혀졌는지
+  //   (b) disallowedTools 에 Skill/TaskCreate/TaskUpdate/TaskList/TaskGet/
+  //       TaskStop/TaskOutput + Read/Write/Edit/NotebookEdit/Bash/Glob/Grep/LS +
+  //       WebFetch/WebSearch + ToolSearch/mcp__claude-search__* 가 포함됐는지
+  // 를 검증해 회귀를 방지한다.
+  it('AS-22: 메인 에이전트 host 도구 화이트리스트/블랙리스트 강제 (#256)', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-tools',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      apiKey: 'sk-test-key',
+    })) {
+      // drain
+    }
+
+    expect(mockQuery).toHaveBeenCalledOnce();
+    const callArgs = mockQuery.mock.calls[0][0] as {
+      options?: {
+        allowedTools?: string[];
+        disallowedTools?: string[];
+      };
+    };
+
+    const allowed = callArgs.options?.allowedTools ?? [];
+    const disallowed = callArgs.options?.disallowedTools ?? [];
+
+    // (a) allowedTools 는 firehub MCP 도구 + subagent 위임만 허용.
+    //     host filesystem/shell/web 도구는 화이트리스트에서 제거됐다.
+    expect(allowed).toContain('mcp__firehub__*');
+    expect(allowed).toContain('Agent');
+    for (const host of [
+      'Read',
+      'Write',
+      'Edit',
+      'NotebookEdit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'LS',
+      'WebFetch',
+      'WebSearch',
+      'Skill',
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskList',
+      'TaskGet',
+      'TaskStop',
+      'TaskOutput',
+      'TodoWrite',
+    ]) {
+      expect(allowed).not.toContain(host);
+    }
+
+    // (b) disallowedTools 에 skill/task ecosystem + 호스트 IO + 외부 네트워크 +
+    //     메타-검색 도구가 명시적으로 차단돼 있어야 한다 (이중 안전망).
+    for (const blocked of [
+      'ToolSearch',
+      'mcp__claude-search__*',
+      'Skill',
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskList',
+      'TaskGet',
+      'TaskStop',
+      'TaskOutput',
+      'Read',
+      'Write',
+      'Edit',
+      'NotebookEdit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'LS',
+      'WebFetch',
+      'WebSearch',
+    ]) {
+      expect(disallowed).toContain(blocked);
+    }
+  });
+
   // AS-20: missing apiKey and no env var yields error event immediately
   it('AS-20: yields error event when apiKey is missing and ANTHROPIC_API_KEY env var is unset', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');

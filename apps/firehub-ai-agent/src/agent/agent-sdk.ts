@@ -231,25 +231,52 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       mcpServers: {
         firehub: firehubServer,
       },
+      // #256: 메인 에이전트는 firehub MCP 도구 + subagent 위임(Agent) 만 허용.
+      // 호스트 도구(Read/Write/Edit/Bash/Glob/Grep/WebFetch/WebSearch/NotebookEdit
+      // /TodoWrite) 는 메인이 직접 호출하지 않는다. 파일 IO/웹은 firehub MCP 또는
+      // 전용 subagent(report-writer 등) 에 위임. allowedTools 는 화이트리스트로
+      // 동작하므로 여기 없는 host 도구는 차단된다. (개별 subagent 가 자체
+      // tools 프론트매터로 host 도구를 선언하는 경우 subagent 정의에서 노출)
       allowedTools: [
         'mcp__firehub__*',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'Bash',
-        'WebFetch',
-        'WebSearch',
         'Agent',
-        'NotebookEdit',
-        'TodoWrite',
       ],
-      // #216: ToolSearch / mcp-search 메타 검색 도구를 명시적으로 차단.
+      // #216 / #256: 메타-검색·skill·task host 도구를 명시적으로 차단 (이중 안전망).
       // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
       // 곧바로 비활성으로 폴백한다(cli.js XOq 체크 — "may have been disallowed
       // via disallowedTools"). ENABLE_TOOL_SEARCH=false 와 함께 이중 차단.
-      disallowedTools: ['ToolSearch', 'mcp__claude-search__*'],
+      //
+      // #256: CLI provider 가 자체 채널로 host skill/task ecosystem 을 활성화하는
+      // 경로(예: ~/.claude/skills 자동 로딩, task subagent dispatcher) 를 차단한다.
+      // 트레이스(skill-repro-010.sse) 에서 메인 에이전트가 `Skill(superpowers:
+      // brainstorming)` 과 `TaskCreate/TaskUpdate` 를 자발적으로 호출하여 host
+      // privilege escalation 가능성이 확인됐다. 화이트리스트(allowedTools) 와
+      // 블랙리스트(disallowedTools) 를 함께 적용해 어느 한쪽이 SDK 내부 해석상
+      // "추가 허용" 으로 동작하더라도 차단되도록 한다.
+      disallowedTools: [
+        'ToolSearch',
+        'mcp__claude-search__*',
+        // skill/task ecosystem (#256)
+        'Skill',
+        'TaskCreate',
+        'TaskUpdate',
+        'TaskList',
+        'TaskGet',
+        'TaskStop',
+        'TaskOutput',
+        // host filesystem / shell — 메인 에이전트는 firehub MCP 로만 작업
+        'Read',
+        'Write',
+        'Edit',
+        'NotebookEdit',
+        'Bash',
+        'Glob',
+        'Grep',
+        'LS',
+        // 외부 네트워크
+        'WebFetch',
+        'WebSearch',
+      ],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
