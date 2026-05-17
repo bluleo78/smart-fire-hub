@@ -64,7 +64,15 @@ export function createProactiveApi(client: AxiosInstance) {
         output_format: string;
       };
     }): Promise<unknown> {
-      const response = await client.post('/proactive/templates', data);
+      // 백엔드 CreateReportTemplateRequest는 {name, description, sections, style}을 flat으로 받는다.
+      // MCP 도구는 LLM 친화를 위해 structure 래퍼를 유지하지만, 전송 직전에 평탄화해야 400을 피한다. (#245)
+      const payload = {
+        name: data.name,
+        description: data.description,
+        sections: data.structure.sections,
+        style: data.style,
+      };
+      const response = await client.post('/proactive/templates', payload);
       return response.data;
     },
     async createSmartJobWithTemplate(data: {
@@ -87,12 +95,12 @@ export function createProactiveApi(client: AxiosInstance) {
       };
       templateStyle?: string;
     }): Promise<unknown> {
-      // 1. Create template
+      // 1. Create template — 백엔드는 sections를 최상위로 받으므로 structure 래퍼를 평탄화한다. (#245)
       const template = await client.post('/proactive/templates', {
         name: data.templateName,
         description: `AI 자동 생성 — "${data.prompt}"`,
         style: data.templateStyle,
-        structure: data.templateStructure,
+        sections: data.templateStructure.sections,
       });
       const templateId = (template.data as { id: number }).id;
       // 2. Create smart job
@@ -146,7 +154,16 @@ export function createProactiveApi(client: AxiosInstance) {
         };
       },
     ): Promise<unknown> {
-      const response = await client.put(`/proactive/templates/${id}`, data);
+      // 백엔드 UpdateReportTemplateRequest도 flat 구조({name, description, sections, style})를 요구한다. (#245)
+      const payload: Record<string, unknown> = {
+        name: data.name,
+        description: data.description,
+        style: data.style,
+      };
+      if (data.structure?.sections !== undefined) {
+        payload.sections = data.structure.sections;
+      }
+      const response = await client.put(`/proactive/templates/${id}`, payload);
       return response.data;
     },
 

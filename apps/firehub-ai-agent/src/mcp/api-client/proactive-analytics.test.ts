@@ -96,17 +96,31 @@ describe('proactiveApi (via FireHubApiClient)', () => {
     expect(result).toEqual(mock);
   });
 
-  it('createReportTemplate calls POST /proactive/templates', async () => {
+  it('createReportTemplate calls POST /proactive/templates with flat payload (no structure wrapper) — #245', async () => {
     const body = {
       name: 'tpl',
+      description: 'desc',
+      style: 'concise',
       structure: {
         sections: [{ key: 's1', label: 'Section 1' }],
         output_format: 'markdown',
       },
     };
-    const mock = { id: 1, ...body };
+    const mock = { id: 1, name: 'tpl' };
+    // 백엔드 CreateReportTemplateRequest는 sections를 최상위로 받는다. structure 래퍼와 output_format은 전송되면 안 된다.
     nock(BASE_URL)
-      .post('/proactive/templates', (reqBody: Record<string, unknown>) => reqBody.name === 'tpl')
+      .post('/proactive/templates', (reqBody: Record<string, unknown>) => {
+        const sections = reqBody.sections as Array<Record<string, unknown>> | undefined;
+        return (
+          reqBody.name === 'tpl' &&
+          reqBody.description === 'desc' &&
+          reqBody.style === 'concise' &&
+          Array.isArray(sections) &&
+          sections[0]?.key === 's1' &&
+          reqBody.structure === undefined &&
+          reqBody.output_format === undefined
+        );
+      })
       .reply(201, mock);
     const result = await client.createReportTemplate(body);
     expect(result).toEqual(mock);
@@ -115,8 +129,17 @@ describe('proactiveApi (via FireHubApiClient)', () => {
   it('createSmartJobWithTemplate creates template then job', async () => {
     const template = { id: 77, name: 'auto-tpl' };
     const job = { id: 88, name: 'auto-job', templateId: 77 };
+    // 백엔드는 sections를 최상위로 받으므로 createSmartJobWithTemplate도 flat 페이로드를 보내야 한다. (#245)
     nock(BASE_URL)
-      .post('/proactive/templates', (reqBody: Record<string, unknown>) => reqBody.name === 'auto-tpl')
+      .post('/proactive/templates', (reqBody: Record<string, unknown>) => {
+        const sections = reqBody.sections as Array<Record<string, unknown>> | undefined;
+        return (
+          reqBody.name === 'auto-tpl' &&
+          Array.isArray(sections) &&
+          sections[0]?.key === 's1' &&
+          reqBody.structure === undefined
+        );
+      })
       .reply(201, template);
     nock(BASE_URL)
       .post('/proactive/jobs', (reqBody: Record<string, unknown>) => reqBody.templateId === 77)
@@ -174,6 +197,30 @@ describe('proactiveApi (via FireHubApiClient)', () => {
       .put('/proactive/templates/3', (reqBody: Record<string, unknown>) => reqBody.name === 'renamed')
       .reply(200, mock);
     const result = await client.updateReportTemplate(3, { name: 'renamed' });
+    expect(result).toEqual(mock);
+  });
+
+  it('updateReportTemplate flattens structure.sections into top-level sections — #245', async () => {
+    const mock = { id: 5, name: 'tpl' };
+    nock(BASE_URL)
+      .put('/proactive/templates/5', (reqBody: Record<string, unknown>) => {
+        const sections = reqBody.sections as Array<Record<string, unknown>> | undefined;
+        return (
+          reqBody.name === 'tpl' &&
+          Array.isArray(sections) &&
+          sections[0]?.key === 'summary' &&
+          reqBody.structure === undefined &&
+          reqBody.output_format === undefined
+        );
+      })
+      .reply(200, mock);
+    const result = await client.updateReportTemplate(5, {
+      name: 'tpl',
+      structure: {
+        sections: [{ key: 'summary', label: '요약' }],
+        output_format: 'markdown',
+      },
+    });
     expect(result).toEqual(mock);
   });
 
