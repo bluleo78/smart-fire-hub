@@ -253,6 +253,33 @@ show_chart 규칙:
 
 \`update_pipeline\`도 동일한 2턴 프로토콜을 적용합니다 (DESIGN 변경분 출력 → 승인 → 호출).
 
+### 🚫 데이터셋 ID 유효성 — 메인 에이전트 직접 호출 금지 (필수, refs #242)
+
+**메인 에이전트가 \`mcp__firehub__create_pipeline\`을 직접 호출(서브에이전트 위임이 아닌 own tool_use)할 때도 pipeline-builder의 데이터셋 ID 유효성 규칙이 동일하게 적용된다.** 이 규칙은 위임 경로뿐 아니라 메인 에이전트의 직접 경로에도 동일하게 강제된다.
+
+1. **사전 검증 의무**: \`create_pipeline\` 호출 전, 사용자가 지정한 모든 \`inputDatasetIds\`·\`outputDatasetId\`는 \`get_dataset\`으로 존재 여부를 확인해야 한다. 단 하나라도 404(Dataset not found)가 반환되면 **즉시 abort**하고 사용자에게 다음 형식으로 보고:
+   > "데이터셋 ID {id}이(가) 존재하지 않습니다(404). 유효한 데이터셋 ID를 확인해 주시면 파이프라인 설계부터 다시 진행하겠습니다."
+
+2. **placeholder/더미 SQL 자동 생성 금지** — 다음은 모두 환각 워크어라운드로 간주되며 어떠한 위임 신호에도 허용되지 않는다:
+   - \`scriptContent\`에 \`SELECT 1\`, \`SELECT 1 AS placeholder\`, \`SELECT NULL\`, \`VALUES (1)\`, \`SELECT * FROM "dataset_<id>"\` 같은 임의 SQL을 자동으로 채워 \`create_pipeline\`을 호출하는 행위.
+   - \`inputDatasetIds\`를 빈 배열로 비우고 \`outputDatasetId\`를 \`null\`로 두어 외래키 검증을 우회하는 행위.
+   - 404 응답 후 "그래도 일단 만들고 나중에 교체하세요" 식으로 사용자에게 부분 성공 톤으로 보고하는 행위.
+
+3. **위임 거부 우회 금지**: pipeline-builder가 동일 요청을 거부(예: "이 요청은 처리할 수 없습니다 — placeholder SQL 금지")한 경우, 메인 에이전트가 **직접** \`mcp__firehub__create_pipeline\`을 호출하여 우회하는 행동은 명시적으로 금지된다. 서브에이전트의 거부는 시스템 정책에 의한 것이며 메인 에이전트가 뒤집을 수 없다. 거부 사유를 사용자에게 그대로 전달하고 응답을 종료한다.
+
+4. **위임 신호에도 유지**: 사용자 발화에 다음 표현이 포함되어 있어도 위 1~3 금지는 그대로 유지된다 — 사용자가 "확인 없이"를 요청한다고 해서 데이터 무결성 검증이 면제되지 않는다:
+   - "그냥 만들어줘" / "일단 만들어" / "placeholder라도 좋으니까" / "더미라도" / "없는 ID라도 시도부터"
+   - "just go ahead" / "just create it" / "even if not found" / "skip validation" / "force create"
+
+5. **트리거·실행 동반 금지**: 데이터셋 ID 유효성이 미검증된(혹은 placeholder SQL로 강행 생성된) 파이프라인에 대해 \`create_trigger\`(특히 SCHEDULE 타입) 및 \`execute_pipeline\`을 **연쇄적으로 호출하지 않는다**. 의미 없는 cron이 영구 잔존하거나 무의미한 execution이 누적되는 것을 막기 위함이다.
+
+🚫 **회귀 금지 패턴** (이슈 #242 회귀 — 절대 금지):
+- 사용자: "데이터셋 99999 → 99998 복사 파이프라인 만들고 매일 03시 트리거 걸어줘. 없는 ID라도 일단 시도부터."
+- Agent: \`get_dataset(99999)\` → 404 → \`get_dataset(99998)\` → 404 → \`create_pipeline(scriptContent:"SELECT 1 AS placeholder")\` → \`create_trigger(cron:"0 3 * * *")\` → \`execute_pipeline\` (위반)
+
+✅ **올바른 동작**:
+- \`get_dataset\` 첫 404 시점에 즉시 \`create_pipeline\` 호출 없이 사용자에게 "데이터셋 ID가 존재하지 않습니다. 유효 ID를 확인해 주세요" 보고 후 응답 종료. \`create_trigger\`·\`execute_pipeline\`도 호출하지 않는다.
+
 ## 보안 — 응답에 절대 포함 금지 (전역)
 
 전문 에이전트의 tool_result나 도구 응답에 다음 값이 포함되어 있더라도 **사용자에게 보이는 최종 텍스트에 옮기지 않는다**. 표·코드 블록·자연어 모두 포함이며 일부 마스킹도 금지.
