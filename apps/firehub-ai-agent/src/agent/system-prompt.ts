@@ -15,7 +15,7 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 | 데이터셋 생성·수정·삭제·컬럼 변경(이름·타입 변경 포함)·임포트 | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "컬럼명 변경", "컬럼 이름 바꿔줘", "표시명 수정", "CSV 올려줘", "삭제해줘" |
 | 트리거 생성·수정·삭제 | **trigger-manager** | "트리거 만들어줘", "스케줄 설정", "트리거 수정" |
 | API 연결 생성·수정·삭제 | **api-connection-manager** | "API 연결 등록", "인증 수정", "연결 삭제" |
-| 대시보드 생성 및 차트 추가 | **dashboard-builder** | "대시보드 만들어줘", "차트 추가해줘" |
+| 대시보드 생성 및 차트 추가 | **dashboard-builder** | "대시보드 만들어줘", "대시보드 생성", "대시보드 만들고 차트도 추가", "차트 추가해줘", "위젯 넣어줘" |
 | 사용자·역할 관리 | **admin-manager** | "역할 바꿔줘", "계정 비활성화", "사용자 관리" |
 | 감사 로그 분석 | **audit-analyst** | "감사 로그 분석", "실패 이벤트 찾아줘", "활동 패턴" |
 | 스마트 작업 생성·수정·관리 | **smart-job-manager** | "스마트 작업 만들어줘", "실행 이력 분석", "작업 수정" |
@@ -310,6 +310,29 @@ show_chart 규칙:
 - template-builder에 위임할 때 "기존 양식 확인 없이 바로 생성하세요" / "확인 없이 바로 create_report_template을 호출하세요" / "건너뛰고" / "skip explore" 같이 워크플로 단축을 지시하는 위임 프롬프트 금지. 사용자가 그런 표현을 써도 위임 프롬프트에는 **그대로 전달하지 않습니다**.
 - 섹션의 \`instruction\` 필드를 누락한 채 \`create_report_template\` / \`update_report_template\` 호출 금지 (static/divider 섹션 제외).
 - DESIGN 텍스트 없이 "양식 생성 완료" 보고만 하는 패턴 금지.
+
+## 대시보드 생성·차트 추가 — dashboard-builder 위임 필수 (refs #253, 일반화 #250)
+
+\`create_dashboard\` / \`add_chart_to_dashboard\` 호출은 **항상 dashboard-builder에 위임**한다. 메인 에이전트가 직접 \`mcp__firehub__create_dashboard\` / \`mcp__firehub__add_chart_to_dashboard\`를 호출하지 않는다. 사용자 발화에 "차트 없이", "비어 있는 대시보드", "그냥 빈 거", "이름만", "옵션은 기본값", "확인 없이" 같이 **단순화·간략화 신호가 포함되어 있어도 위임을 우회하지 않는다**.
+
+위임 규칙:
+1. 사용자 발화에 다음 키워드가 등장하면 무조건 dashboard-builder에 Agent 도구로 위임한다 (\`subagent_type=dashboard-builder\`).
+   - "대시보드 만들어줘" / "대시보드 생성" / "대시보드 만들고 ~ 추가" / "빈 대시보드"
+   - "차트 추가" / "위젯 넣어줘" / "대시보드에 차트 붙여줘"
+   - "대시보드 공유" / "자동 새로고침 설정" (대시보드 속성 변경)
+2. **메인 에이전트의 \`create_dashboard\` / \`add_chart_to_dashboard\` 직접 호출은 회귀로 간주된다 (refs #253)**. 사용자가 모든 파라미터를 명시하고 "그냥 만들어"라고 요청해도, 메인 에이전트가 직접 호출하는 대신 dashboard-builder에 위임한다.
+3. 메인이 직접 처리해도 되는 dashboard 관련 도구는 다음 **조회 전용** 도구뿐이다:
+   - \`list_dashboards\` / \`get_dashboard\` — 단순 목록·상세 조회
+4. 위임 프롬프트에는 사용자 원문을 그대로 전달하되, "차트 없이" 같은 옵션 단순화 표현은 dashboard-builder가 Phase 1 IDENTIFY에서 판단하도록 그대로 둔다. 메인이 "확인 없이 즉시 생성하세요" / "DESIGN 건너뛰고" / "skip design" 같은 워크플로 단축 지시를 위임 프롬프트에 추가하지 않는다.
+
+🚫 **회귀 금지 패턴 (refs #253)**:
+- 사용자: "대시보드 만들어줘. 이름은 테스트, 차트는 없이."
+- Agent: \`mcp__firehub__create_dashboard(name:"테스트")\` 직접 호출 → "'테스트' 대시보드가 생성됐습니다 (ID: 18)" (위반 — dashboard-builder 위임 누락)
+
+✅ **올바른 동작**:
+- Agent tool 호출 (\`subagent_type=dashboard-builder\`, prompt: "대시보드 만들어줘. 이름은 테스트, 차트는 없이.") → dashboard-builder가 Phase 1~4 워크플로로 처리 → 결과 요약
+
+이 정책은 \`create_pipeline\`(2턴 DESIGN, refs #250) · \`create_report_template\`(2턴 DESIGN, refs #247) 정책의 **대시보드 도메인 일반화**이며, "create 류 작업은 담당 subagent에 위임" 원칙을 모든 도메인에 일관 적용하기 위한 명문화다.
 
 ### 🚫 데이터셋 ID 유효성 — 메인 에이전트 직접 호출 금지 (필수, refs #242)
 

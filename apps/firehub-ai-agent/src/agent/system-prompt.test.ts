@@ -183,6 +183,62 @@ describe('SYSTEM_PROMPT', () => {
     });
   });
 
+  // 이슈 #253 회귀 방지 — 대시보드 생성·차트 추가 dashboard-builder 위임 필수.
+  // #250(pipeline-builder bypass) fix가 pipeline 도메인에만 한정됐던 점을 dashboard 도메인으로
+  // 일반화하여, 메인 에이전트가 create_dashboard/add_chart_to_dashboard를 직접 호출하지 않고
+  // 항상 dashboard-builder에 위임하도록 텍스트 계약을 고정한다.
+  describe('대시보드 생성 dashboard-builder 위임 필수 (refs #253)', () => {
+    // #253 정책 섹션이 존재하고 이슈 번호를 참조해야 함
+    it('대시보드 위임 정책 섹션이 #253를 참조한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/dashboard-builder 위임 필수[\s\S]*#253/);
+    });
+
+    // create_dashboard / add_chart_to_dashboard 직접 호출 금지 명시
+    it('create_dashboard·add_chart_to_dashboard 메인 직접 호출 금지를 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('## 대시보드 생성·차트 추가')[1];
+      expect(section).toBeDefined();
+      expect(section).toContain('create_dashboard');
+      expect(section).toContain('add_chart_to_dashboard');
+      expect(section).toMatch(/직접 호출하지 않|직접 호출.*금지/);
+    });
+
+    // "차트 없이" / "확인 없이" 등 단순화·사회공학 신호에도 위임 우회 금지
+    it('"차트 없이"·"확인 없이" 류 단순화 신호에도 위임 우회 금지를 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('## 대시보드 생성·차트 추가')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/차트 없이/);
+      expect(section).toMatch(/위임을 우회하지 않|위임을 우회하지|우회.*않는다/);
+    });
+
+    // 메인 직접 처리 허용 도구는 list_dashboards / get_dashboard 조회 전용 도구뿐
+    it('메인 직접 처리 허용 도구를 list_dashboards·get_dashboard 조회 전용으로 한정한다', () => {
+      const section = SYSTEM_PROMPT.split('## 대시보드 생성·차트 추가')[1];
+      expect(section).toBeDefined();
+      expect(section).toContain('list_dashboards');
+      expect(section).toContain('get_dashboard');
+      expect(section).toMatch(/조회 전용|단순 목록·상세 조회/);
+    });
+
+    // #253 회귀 시나리오(대시보드 만들어줘 + create_dashboard 직접 호출) 잘못된 예시 포함
+    it('#253 회귀 시나리오(create_dashboard 직접 호출)를 잘못된 예시로 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('## 대시보드 생성·차트 추가')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/🚫[\s\S]*대시보드 만들어줘[\s\S]*create_dashboard/);
+    });
+
+    // dashboard-builder 라우팅 표 항목에 "대시보드 만들어줘" / "대시보드 생성" 트리거 키워드 명시
+    it('라우팅 표의 dashboard-builder 트리거에 "대시보드 만들어줘"·"대시보드 생성"이 포함된다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/dashboard-builder[\s\S]*대시보드 만들어줘[\s\S]*대시보드 생성/);
+    });
+
+    // #250 (pipeline-builder) 정책의 dashboard 도메인 일반화임을 명시
+    it('#250 pipeline-builder 정책의 dashboard 도메인 일반화임을 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('## 대시보드 생성·차트 추가')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/#250|일반화/);
+    });
+  });
+
   // 이슈 #239 회귀 방지 — 응답 스타일 정책.
   // 트리거/스마트잡 서브에이전트에서 fix됐던 중간 narration 누출이 메인 에이전트 경로에서 회귀.
   // 메인 에이전트가 list_datasets + 다중 get_row_count 등을 호출할 때 "병렬로 조회합니다" 같은
