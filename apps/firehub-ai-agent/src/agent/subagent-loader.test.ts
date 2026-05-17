@@ -514,6 +514,23 @@ describe('SL-DA: data-analyst subagent integration', () => {
     expect(prompt).toContain('execute_analytics_query');
     expect(prompt).toContain('EDA SQL');
   });
+
+  // 이슈 #249 회귀 방지: data-analyst가 쿼리 결과의 PII 컬럼을 자동 마스킹하도록 명시
+  it('SL-DA-PII (refs #249): data-analyst 프롬프트가 PII 자동 마스킹 규칙을 포함한다', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['data-analyst'].prompt;
+    // #246/#249 참조 + 마스킹 키워드 + 핵심 PII 키워드가 인라인되어 있어야 함
+    expect(prompt).toMatch(/#246|#249/);
+    expect(prompt).toMatch(/마스킹/);
+    expect(prompt).toContain('이메일');
+    expect(prompt).toMatch(/전화|phone/);
+    // 마스킹 형식 예시도 포함
+    expect(prompt).toMatch(/a\*\*\*@e\*\*\*\.com/);
+    expect(prompt).toMatch(/010-\*\*\*\*-\d{4}/);
+  });
 });
 
 // ── SL-16: Graceful degradation across multiple subagents ────────────────────
@@ -663,6 +680,19 @@ describe('SL-DB: dashboard-builder subagent integration', () => {
     // examples.md 핵심 키워드 — 대화 예시 + Phase 라벨
     expect(prompt).toContain('화재 현황 대시보드');
     expect(prompt).toContain('Phase 3 — EXECUTE');
+  });
+
+  // 이슈 #249 회귀 방지: dashboard-builder도 PII 마스킹 명문화 (#246 일반화)
+  it('SL-DB-PII (refs #249): dashboard-builder 프롬프트가 PII 마스킹 규칙을 포함한다', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['dashboard-builder'].prompt;
+    expect(prompt).toMatch(/#246|#249/);
+    expect(prompt).toMatch(/마스킹/);
+    expect(prompt).toContain('이메일');
+    expect(prompt).toMatch(/a\*\*\*@e\*\*\*\.com/);
   });
 });
 
