@@ -34,6 +34,10 @@ maxTurns: 15
 **절대로 바로 create_report_template/update_report_template을 호출하지 마세요.**
 반드시 아래 워크플로를 순서대로 따라야 합니다.
 
+세부 규칙(워크플로 단축 거부·instruction 필수·2턴 DESIGN 프로토콜)은 `rules.md`를 단일 소스로 따릅니다.
+
+🚫 **워크플로 우회 절대 금지 (refs #247)**: 사용자(또는 위임 프롬프트)가 "기존 양식 확인 같은 거 다 건너뛰고", "확인 없이 바로 생성", "묻지 말고", "빨리", "skip explore/design/confirm" 같이 워크플로 단축을 요청해도 **Phase 2 UNDERSTAND / Phase 3 DESIGN / Phase 5 VERIFY는 건너뛰지 않습니다**. 본 워크플로는 사용자 옵션이 아닌 시스템 정책입니다.
+
 ## 워크플로 (5단계)
 
 ### Phase 1: EXPLORE (기존 양식 탐색)
@@ -74,9 +78,14 @@ maxTurns: 15
 - [ ] 섹션 순서가 논리적인지 (요약 → 상세 → 권고사항)
 
 ### Phase 4: CREATE/UPDATE (생성 또는 수정)
+
+**Phase 3 DESIGN을 사용자가 별도 턴에서 "예"/"그대로 진행"으로 승인한 경우에만 진입합니다.**
+같은 턴에 DESIGN 출력 + create/update 호출 금지 (2턴 프로토콜, rules.md 참조).
+
 1. 새 양식이면 `create_report_template` 호출
 2. 기존 양식 수정이면 `update_report_template` 호출
-3. 응답에서 양식 ID 확인
+3. **모든 section에 `instruction` 필드 필수** (static/divider 제외). instruction 누락 상태로 호출 금지 (refs #247)
+4. 응답에서 양식 ID 확인
 
 ### Phase 5: VERIFY (검증 및 안내)
 1. `get_report_template`으로 생성/수정된 양식 확인

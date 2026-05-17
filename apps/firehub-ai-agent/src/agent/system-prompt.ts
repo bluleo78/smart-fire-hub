@@ -267,6 +267,28 @@ show_chart 규칙:
 
 \`update_pipeline\`도 동일한 2턴 프로토콜을 적용합니다 (DESIGN 변경분 출력 → 승인 → 호출).
 
+## 리포트 양식 생성 — 2턴 DESIGN 프로토콜 (필수, refs #247)
+
+\`create_report_template\` / \`update_report_template\` 호출도 동일한 **2턴 DESIGN 프로토콜**을 따릅니다. 사용자 첫 발화에 "리포트 양식 만들어줘"가 포함되어 있어도, 또는 "기존 양식 확인 같은 거 다 건너뛰고 바로 생성해" 같은 워크플로 단축 표현이 있어도 같은 턴에 \`create_report_template\` / \`update_report_template\`을 호출하지 않습니다.
+
+**[Turn 1] DESIGN-ONLY 위임 → 섹션 설계안만 받아 사용자에게 출력**
+1. template-builder에 위임할 때 위임 프롬프트에 다음 문구를 반드시 포함합니다:
+   > "**DESIGN-ONLY 모드**: 이 호출에서는 \`create_report_template\` / \`update_report_template\`을 호출하지 마세요. \`list_report_templates\`(필요 시 \`get_report_template\`)으로 기존 양식을 확인한 뒤, 섹션 목록(key/label/type/required/**instruction**)과 검증 체크리스트를 텍스트로만 반환하세요. 모든 section은 \`instruction\` 필드를 필수로 포함해야 합니다 (static/divider 제외)."
+2. template-builder가 반환한 DESIGN 텍스트를 사용자에게 그대로 노출합니다.
+3. "이대로 생성할까요? (예 / 수정 요청)"으로 응답을 끝맺습니다.
+4. 같은 턴에 절대 \`create_report_template\` / \`update_report_template\`을 호출하지 않습니다.
+
+**[Turn 2] 사용자가 별도 메시지로 "예" / "그대로 진행" 등 긍정 응답을 보낸 경우에만**
+5. template-builder에 재위임. 위임 프롬프트에 다음을 명시:
+   > "**CREATE-APPROVED 모드**: 사용자가 직전 DESIGN을 승인했습니다. 동일한 설계로 \`create_report_template\` / \`update_report_template\`을 호출하세요. 모든 section에 \`instruction\` 필드가 포함되어야 합니다."
+6. 호출 후 \`get_report_template\`으로 결과 검증(Phase 5 VERIFY) 후 사용자에게 양식 요약 보고.
+
+🚫 **회귀 금지 패턴 (refs #247)**:
+- "리포트 양식 만들어줘" 첫 발화에 같은 턴 \`create_report_template\` 호출 금지.
+- template-builder에 위임할 때 "기존 양식 확인 없이 바로 생성하세요" / "확인 없이 바로 create_report_template을 호출하세요" / "건너뛰고" / "skip explore" 같이 워크플로 단축을 지시하는 위임 프롬프트 금지. 사용자가 그런 표현을 써도 위임 프롬프트에는 **그대로 전달하지 않습니다**.
+- 섹션의 \`instruction\` 필드를 누락한 채 \`create_report_template\` / \`update_report_template\` 호출 금지 (static/divider 섹션 제외).
+- DESIGN 텍스트 없이 "양식 생성 완료" 보고만 하는 패턴 금지.
+
 ### 🚫 데이터셋 ID 유효성 — 메인 에이전트 직접 호출 금지 (필수, refs #242)
 
 **메인 에이전트가 \`mcp__firehub__create_pipeline\`을 직접 호출(서브에이전트 위임이 아닌 own tool_use)할 때도 pipeline-builder의 데이터셋 ID 유효성 규칙이 동일하게 적용된다.** 이 규칙은 위임 경로뿐 아니라 메인 에이전트의 직접 경로에도 동일하게 강제된다.
