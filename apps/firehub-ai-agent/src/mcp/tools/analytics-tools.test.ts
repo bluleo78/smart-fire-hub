@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createFireHubMcpServer } from '../firehub-mcp-server.js';
 import { FireHubApiClient } from '../api-client.js';
+import { clampAnalyticsResult } from './analytics-tools.js';
 
 function createMockClient(): FireHubApiClient {
   const client = Object.create(FireHubApiClient.prototype);
@@ -65,7 +66,8 @@ describe('Analytics MCP Tools', () => {
 
     await invokeTool(server, 'execute_analytics_query', { sql: 'SELECT COUNT(*) as cnt FROM t' });
 
-    expect(client.executeAnalyticsQuery).toHaveBeenCalledWith('SELECT COUNT(*) as cnt FROM t', undefined);
+    // 이슈 #251: maxRows 미지정 시 tool 레이어가 기본값 1000으로 cap한다.
+    expect(client.executeAnalyticsQuery).toHaveBeenCalledWith('SELECT COUNT(*) as cnt FROM t', 1000);
   });
 
   it('execute_analytics_query returns isError on failure', async () => {
@@ -77,6 +79,87 @@ describe('Analytics MCP Tools', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('DML not allowed');
+  });
+
+  // --- 이슈 #251: execute_analytics_query 응답 크기 가드 ---
+  describe('execute_analytics_query response size guard (#251)', () => {
+    it('passes maxRows through when caller specifies it', async () => {
+      (client.executeAnalyticsQuery as ReturnType<typeof vi.fn>).mockResolvedValue({
+        queryType: 'SELECT', columns: ['id'], rows: [{ id: 1 }], affectedRows: 0, executionTimeMs: 1, totalRows: 1, truncated: false, error: null,
+      });
+      await invokeTool(server, 'execute_analytics_query', { sql: 'SELECT id FROM t', maxRows: 5000 });
+      expect(client.executeAnalyticsQuery).toHaveBeenCalledWith('SELECT id FROM t', 5000);
+    });
+
+    it('clamps large response with truncated meta when serialized size exceeds threshold', async () => {
+      // ~3000행 × 컬럼 7개로 약 200KB 초과 응답 시뮬레이션
+      const bigRows = Array.from({ length: 3000 }, (_, i) => ({
+        id: i,
+        name: `name_${i}_with_some_padding_text_to_inflate_bytes`,
+        addr: `address_line_${i}_${'x'.repeat(40)}`,
+        phone: `010-${String(i).padStart(4, '0')}-1234`,
+        email: `user${i}@example.com`,
+        memo: `${'lorem ipsum '.repeat(5)}${i}`,
+        created: `2026-01-${(i % 28) + 1}T00:00:00Z`,
+      }));
+      (client.executeAnalyticsQuery as ReturnType<typeof vi.fn>).mockResolvedValue({
+        queryType: 'SELECT',
+        columns: ['id', 'name', 'addr', 'phone', 'email', 'memo', 'created'],
+        rows: bigRows,
+        affectedRows: 0,
+        executionTimeMs: 200,
+        totalRows: 3000,
+        truncated: false,
+        error: null,
+      });
+
+      const result = await invokeTool(server, 'execute_analytics_query', { sql: 'SELECT * FROM users', maxRows: 10000 });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.truncated).toBe(true);
+      expect(parsed.totalRows).toBe(3000);
+      expect(parsed.returnedRows).toBeLessThan(3000);
+      expect(parsed.returnedRows).toBe(parsed.rows.length);
+      expect(typeof parsed.hint).toBe('string');
+      expect(parsed.hint).toMatch(/LIMIT|집계|차트/);
+      // 직렬화 결과가 200KB 임계치 이하인지 확인
+      expect(result.content[0].text.length).toBeLessThanOrEqual(200_000);
+    });
+
+    it('does not modify response when result is small', async () => {
+      const smallResult = {
+        queryType: 'SELECT', columns: ['id'], rows: [{ id: 1 }, { id: 2 }],
+        affectedRows: 0, executionTimeMs: 3, totalRows: 2, truncated: false, error: null,
+      };
+      (client.executeAnalyticsQuery as ReturnType<typeof vi.fn>).mockResolvedValue(smallResult);
+      const result = await invokeTool(server, 'execute_analytics_query', { sql: 'SELECT id FROM t' });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.truncated).toBe(false);
+      expect(parsed.rows).toHaveLength(2);
+      expect(parsed.hint).toBeUndefined();
+      expect(parsed.returnedRows).toBeUndefined();
+    });
+
+    it('clampAnalyticsResult unit: passes through small payloads unchanged', () => {
+      const r = { queryType: 'SELECT', columns: ['a'], rows: [{ a: 1 }], totalRows: 1, truncated: false };
+      expect(clampAnalyticsResult(r)).toBe(r);
+    });
+
+    it('clampAnalyticsResult unit: truncates and attaches meta when over budget', () => {
+      const rows = Array.from({ length: 500 }, (_, i) => ({ a: 'x'.repeat(500), i }));
+      const r = { queryType: 'SELECT', columns: ['a', 'i'], rows, totalRows: 500, truncated: false };
+      const out = clampAnalyticsResult(r, 10_000); // 10KB 강제 임계치
+      expect(out.truncated).toBe(true);
+      expect(out.returnedRows).toBeLessThan(500);
+      expect(out.totalRows).toBe(500);
+      expect(out.hint).toBeDefined();
+      expect(JSON.stringify(out).length).toBeLessThanOrEqual(10_000);
+    });
+
+    it('clampAnalyticsResult unit: empty rows returned unchanged', () => {
+      const r = { queryType: 'SELECT', columns: [], rows: [], totalRows: 0, truncated: false };
+      expect(clampAnalyticsResult(r, 100)).toBe(r);
+    });
   });
 
   // --- create_saved_query ---

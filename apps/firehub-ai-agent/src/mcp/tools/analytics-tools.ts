@@ -10,6 +10,72 @@ const CHART_TYPE_VALUES = [
 ] as const;
 type ChartTypeValue = typeof CHART_TYPE_VALUES[number];
 
+// execute_analytics_query 응답 크기 가드 (이슈 #251)
+// Claude Agent SDK는 single tool_result에 토큰 한도가 있어 큰 결과(약 2MB JSON)는 자동 truncate.
+// 1) maxRows 미지정 시 기본값 1000으로 명시 (백엔드 정책과 별개로 tool 레이어에서 cap)
+// 2) 응답 직렬화 후 길이가 임계치 초과 시 행 배열을 잘라서 LLM에 truncated 메타 제공
+//    → LLM이 trial-and-error 재시도 없이 즉시 SUMMARY/AGGREGATE 권유 행동으로 분기 가능
+const ANALYTICS_DEFAULT_MAX_ROWS = 1000;
+const ANALYTICS_RESPONSE_MAX_BYTES = 200_000; // ~200KB / ~50K tokens 추정. SDK 한도(~25K tokens) 대비 안전 마진.
+
+interface AnalyticsQueryResult {
+  queryType?: string;
+  columns?: string[];
+  rows?: Array<Record<string, unknown>>;
+  affectedRows?: number;
+  executionTimeMs?: number;
+  totalRows?: number;
+  truncated?: boolean;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * 응답이 너무 크면 행 배열을 절단해 token 한도 초과를 방지한다.
+ * - 직렬화 후 바이트 길이를 측정해 임계치 초과 시 이진탐색에 가까운 비율 추정으로 행 수를 줄임
+ * - truncated/returnedRows/totalRows/hint 메타를 동봉해 LLM에 명시적 신호 전달
+ */
+export function clampAnalyticsResult(
+  result: AnalyticsQueryResult,
+  maxBytes: number = ANALYTICS_RESPONSE_MAX_BYTES,
+): AnalyticsQueryResult {
+  const rows = Array.isArray(result?.rows) ? result.rows : [];
+  const originalRowCount = rows.length;
+  const serialized = JSON.stringify(result);
+
+  if (serialized.length <= maxBytes || originalRowCount === 0) {
+    return result;
+  }
+
+  // 평균 행 바이트로 비율 추정 — 정확하지 않아도 안전 마진을 두면 충분
+  // 직렬화한 rows 길이 기반: 메타 오버헤드 무시하고 maxBytes의 80%만 사용
+  const safeBudget = Math.floor(maxBytes * 0.8);
+  const avgRowBytes = Math.max(1, Math.floor(serialized.length / originalRowCount));
+  let keepRows = Math.max(1, Math.floor(safeBudget / avgRowBytes));
+  if (keepRows >= originalRowCount) {
+    keepRows = Math.max(1, originalRowCount - 1);
+  }
+
+  let truncatedRows = rows.slice(0, keepRows);
+  let candidate: AnalyticsQueryResult = {
+    ...result,
+    rows: truncatedRows,
+    truncated: true,
+    returnedRows: truncatedRows.length,
+    totalRows: typeof result.totalRows === 'number' ? result.totalRows : originalRowCount,
+    hint: '결과가 큽니다. LIMIT/집계(GROUP BY, COUNT, AVG 등)/조건절을 추가하거나 차트 시각화(show_chart)를 권장합니다.',
+  };
+
+  // 한 번 더 초과하면 행을 절반씩 줄이며 맞춤 (최대 8회 — O(log n))
+  let safety = 8;
+  while (JSON.stringify(candidate).length > maxBytes && truncatedRows.length > 1 && safety-- > 0) {
+    truncatedRows = truncatedRows.slice(0, Math.max(1, Math.floor(truncatedRows.length / 2)));
+    candidate = { ...candidate, rows: truncatedRows, returnedRows: truncatedRows.length };
+  }
+
+  return candidate;
+}
+
 export function registerAnalyticsTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
@@ -29,11 +95,16 @@ export function registerAnalyticsTools(
           .min(1)
           .max(10000)
           .optional()
-          .describe('최대 반환 행 수 (기본 1000, 최대 10000)'),
+          .describe('최대 반환 행 수 (기본 1000, 최대 10000). 1000을 초과하면 token 한도 초과 위험 — 집계 SQL이나 show_chart 사용을 우선 검토.'),
       },
       async (args: { sql: string; maxRows?: number }) => {
-        const result = await apiClient.executeAnalyticsQuery(args.sql, args.maxRows);
-        return jsonResult(result);
+        // 이슈 #251: maxRows 미지정 시 기본값 1000으로 cap (tool 레이어 안전망).
+        // LLM이 명시적으로 큰 값을 보낸 경우에만 백엔드 @Max(10000)까지 허용.
+        const effectiveMaxRows = args.maxRows ?? ANALYTICS_DEFAULT_MAX_ROWS;
+        const result = await apiClient.executeAnalyticsQuery(args.sql, effectiveMaxRows);
+        // 응답 직렬화 크기가 임계치 초과면 자동 truncate + 메타 동봉.
+        const clamped = clampAnalyticsResult(result as AnalyticsQueryResult);
+        return jsonResult(clamped);
       },
     ),
 
