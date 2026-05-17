@@ -60,6 +60,10 @@ export function createProactiveApi(client: AxiosInstance) {
           label: string;
           required?: boolean;
           type?: string;
+          // #248: 섹션별 AI 작성 지침. 백엔드는 Map<String, Object>로 받으므로
+          // 객체 전체를 그대로 forward하면 보존되지만, TS 타입에서 누락되면
+          // 호출부에서 strip되거나 후속 리팩토링에서 의도치 않게 빠질 위험이 있다.
+          instruction?: string;
         }>;
         output_format: string;
       };
@@ -149,6 +153,8 @@ export function createProactiveApi(client: AxiosInstance) {
             label: string;
             required?: boolean;
             type?: string;
+            // #248: 섹션별 AI 작성 지침 (create와 동일 사유)
+            instruction?: string;
           }>;
           output_format?: string;
         };

@@ -126,6 +126,52 @@ describe('proactiveApi (via FireHubApiClient)', () => {
     expect(result).toEqual(mock);
   });
 
+  it('createReportTemplate forwards sections.instruction to backend — #248', async () => {
+    // #248 회귀 방지: tool_use input의 instruction이 백엔드까지 보존되어야 한다.
+    const body = {
+      name: '247-검증양식',
+      structure: {
+        sections: [
+          { key: 'summary', label: '요약', type: 'text', required: true, instruction: '분석 대상의 전반적인 현황을 3~5문장으로 요약' },
+          { key: 'result', label: '결과', type: 'text', required: true, instruction: '분석 결과를 항목별로 구체적으로 서술' },
+        ],
+        output_format: 'markdown',
+      },
+    };
+    nock(BASE_URL)
+      .post('/proactive/templates', (reqBody: Record<string, unknown>) => {
+        const sections = reqBody.sections as Array<Record<string, unknown>> | undefined;
+        return (
+          Array.isArray(sections) &&
+          sections.length === 2 &&
+          sections[0]?.instruction === '분석 대상의 전반적인 현황을 3~5문장으로 요약' &&
+          sections[1]?.instruction === '분석 결과를 항목별로 구체적으로 서술'
+        );
+      })
+      .reply(201, { id: 16 });
+    const result = await client.createReportTemplate(body);
+    expect(result).toEqual({ id: 16 });
+  });
+
+  it('updateReportTemplate forwards sections.instruction to backend — #248', async () => {
+    nock(BASE_URL)
+      .put('/proactive/templates/7', (reqBody: Record<string, unknown>) => {
+        const sections = reqBody.sections as Array<Record<string, unknown>> | undefined;
+        return (
+          Array.isArray(sections) &&
+          sections[0]?.instruction === '핵심 지표를 표로 정리'
+        );
+      })
+      .reply(200, { id: 7 });
+    const result = await client.updateReportTemplate(7, {
+      structure: {
+        sections: [{ key: 'metrics', label: '지표', type: 'table', instruction: '핵심 지표를 표로 정리' }],
+        output_format: 'markdown',
+      },
+    });
+    expect(result).toEqual({ id: 7 });
+  });
+
   it('createSmartJobWithTemplate creates template then job', async () => {
     const template = { id: 77, name: 'auto-tpl' };
     const job = { id: 88, name: 'auto-job', templateId: 77 };

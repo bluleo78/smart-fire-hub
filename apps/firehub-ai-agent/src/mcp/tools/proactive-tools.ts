@@ -148,6 +148,12 @@ export function registerProactiveTools(
                 label: z.string().describe('섹션 레이블 (표시 이름)'),
                 required: z.boolean().optional().describe('필수 여부'),
                 type: z.string().optional().describe('섹션 타입 (예: text, table, chart)'),
+                // #248: 섹션별 AI 작성 지침. 누락 시 백엔드 저장 후에도 빈 스켈레톤이 되어
+                // template-builder 규칙("instruction은 구체적이고 명확해야 한다")이 무력화됨.
+                instruction: z
+                  .string()
+                  .optional()
+                  .describe('섹션별 AI 작성 지침 (해당 섹션에 어떤 내용을 어떻게 작성할지)'),
               }),
             ),
             output_format: z.string().describe('출력 형식 (예: "markdown")'),
@@ -163,6 +169,7 @@ export function registerProactiveTools(
             label: string;
             required?: boolean;
             type?: string;
+            instruction?: string;
           }>;
           output_format: string;
         };
@@ -268,6 +275,11 @@ export function registerProactiveTools(
                 label: z.string().describe('섹션 레이블 (표시 이름)'),
                 required: z.boolean().optional().describe('필수 여부'),
                 type: z.string().optional().describe('섹션 타입'),
+                // #248: 섹션별 AI 작성 지침 (create와 동일 사유)
+                instruction: z
+                  .string()
+                  .optional()
+                  .describe('섹션별 AI 작성 지침'),
               }),
             ),
             output_format: z.string().describe('출력 형식'),
@@ -285,6 +297,7 @@ export function registerProactiveTools(
             label: string;
             required?: boolean;
             type?: string;
+            instruction?: string;
           }>;
           output_format: string;
         };

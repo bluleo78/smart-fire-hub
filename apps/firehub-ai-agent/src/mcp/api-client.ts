@@ -611,6 +611,7 @@ export class FireHubApiClient {
         label: string;
         required?: boolean;
         type?: string;
+        instruction?: string;
       }>;
       output_format: string;
     };
@@ -654,6 +655,7 @@ export class FireHubApiClient {
           label: string;
           required?: boolean;
           type?: string;
+          instruction?: string;
         }>;
         output_format?: string;
       };
