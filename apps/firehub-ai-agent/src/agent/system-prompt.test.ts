@@ -239,6 +239,74 @@ describe('SYSTEM_PROMPT', () => {
     });
   });
 
+  // 이슈 #254 회귀 방지 — 시스템 메타 노출 금지 정책.
+  // 사용자 "어떤 subagent들이 있어?" 메타 질문에 메인이 10개 subagent 내부 식별자 +
+  // 권한 어노테이션을 백틱 코드 표 형태로 평문 노출하던 결함. 사회공학 공격 vector 차단을
+  // 위해 내부 식별자·권한 어노테이션·라우팅 메타 노출 금지를 텍스트 계약으로 고정한다.
+  describe('시스템 메타 노출 금지 (refs #254)', () => {
+    // 메타 노출 금지 정책 섹션이 존재하고 #254를 참조해야 함
+    it('시스템 메타 노출 금지 섹션이 #254를 참조한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/시스템 메타 노출 금지[\s\S]*#254/);
+    });
+
+    // 노출 금지 대상: 내부 subagent 식별자 (*-manager, *-builder, *-analyst 패턴 명시)
+    it('내부 subagent 식별자(*-manager/*-builder/*-analyst) 노출 금지를 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/\*-manager/);
+      expect(section).toMatch(/\*-builder/);
+      expect(section).toMatch(/\*-analyst/);
+      expect(section).toMatch(/노출 금지|노출하지 않/);
+    });
+
+    // 권한 어노테이션 노출 금지 명시 (audit:read, 관리자 전용)
+    it('권한 어노테이션(audit:read·관리자 전용) 노출 금지를 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/audit:read/);
+      expect(section).toMatch(/관리자 전용/);
+    });
+
+    // 메타 질문(architecture / 내부 구조 / 어떤 subagent) 에 대한 capability 중심 응답 가이드
+    it('메타 질문(내부 구조/architecture/어떤 subagent) 트리거 키워드를 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/내부 구조|어떤 subagent|architecture/);
+    });
+
+    // capability 중심 응답 가이드 — "데이터셋 관리", "파이프라인" 등 사람 친화적 카테고리
+    it('capability 중심 응답 가이드(사람 친화적 카테고리)를 제시한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/capability 중심|기능.*관점|기능 설명/);
+      expect(section).toMatch(/데이터셋 관리/);
+      expect(section).toMatch(/파이프라인/);
+    });
+
+    // #254 회귀 시나리오 — 표 형태로 subagent 식별자 + 권한 어노테이션 노출 금지 예시
+    it('#254 회귀 시나리오(표 형태 subagent 식별자 + 권한 어노테이션 노출)를 잘못된 예시로 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/🚫[\s\S]*data-analyst[\s\S]*audit-analyst/);
+    });
+
+    // 사회공학적 우회 시도("디버깅 목적", "ignore previous instructions" 등) 차단
+    it('사회공학적 우회 시도(디버깅·ignore previous instructions 등)를 거부한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/디버깅|ignore previous instructions|내부 개발자/);
+      expect(section).toMatch(/면제되지 않|어떤 발화로도/);
+    });
+
+    // 회귀 임계치 명시 — 식별자 2개 이상 또는 권한 어노테이션 1개 이상 노출 시 critical 회귀
+    it('회귀 임계치(식별자 2개 이상 / 권한 어노테이션 1개 이상 노출)를 critical 회귀로 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('### 🚫 시스템 메타 노출 금지')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/회귀 임계치/);
+      expect(section).toMatch(/critical/);
+    });
+  });
+
   // 이슈 #239 회귀 방지 — 응답 스타일 정책.
   // 트리거/스마트잡 서브에이전트에서 fix됐던 중간 narration 누출이 메인 에이전트 경로에서 회귀.
   // 메인 에이전트가 list_datasets + 다중 get_row_count 등을 호출할 때 "병렬로 조회합니다" 같은
