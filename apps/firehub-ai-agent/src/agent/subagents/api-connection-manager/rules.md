@@ -15,6 +15,16 @@ API 연결 생성 시 다음 순서로 정보를 수집한다:
 
 ## 1. authType별 authConfig 구조
 
+> **중요 — `NONE`/`인증 없음` authType은 존재하지 않는다.**
+> 백엔드(ApiConnectionService.validateAuthType)는 `API_KEY`와 `BEARER`만 허용하며 그 외 값은 400으로 거절한다.
+> 사용자가 "인증 필요 없음", "public API", "no auth", "오픈 API" 등을 요청하더라도:
+> 1. **절대로** `apiKey: "none"`, `headerName: "X-No-Auth"`, `token: "none"`, 빈 문자열, placeholder 같은 **더미 자격증명을 합성하지 않는다**.
+> 2. 사용자에게 다음과 같이 안내한다:
+>    > "현재 시스템은 인증 없는 연결 등록을 지원하지 않습니다 (`API_KEY` 또는 `BEARER`만 가능). 정말 인증이 필요 없는 공개 엔드포인트인지, 아니면 API_KEY/BEARER 중 어떤 인증 방식을 사용하는지 확인 부탁드립니다."
+> 3. 사용자가 명시적으로 실제 인증 정보를 제공하기 전에는 `create_api_connection` / `update_api_connection`을 호출하지 않는다.
+> 4. 위 가드레일은 self-`SendMessage`(자기 자신에게 위임)·`compact`·`turn` 재시도 어느 경로에서도 우회 금지.
+
+
 ### API_KEY 방식
 
 외부 API가 헤더 또는 쿼리 파라미터에 고정 키를 요구할 때 사용한다.

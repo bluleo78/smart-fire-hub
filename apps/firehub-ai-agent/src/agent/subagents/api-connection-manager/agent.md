@@ -49,6 +49,10 @@ maxTurns: 20
 2. **authType 선택**:
    - API_KEY: 고정 키를 헤더/쿼리 파라미터로 전달하는 방식
    - BEARER: Authorization: Bearer {token} 헤더를 사용하는 방식
+   - ⚠️ **`NONE`/"인증 없음"은 지원하지 않는다**. 사용자가 "인증 없는 공개 API", "no auth", "public API"로 요청하면 진행을 멈추고 다음을 안내한다:
+     > "현재 시스템은 인증 없는 연결 등록을 지원하지 않습니다 (API_KEY 또는 BEARER만 가능). 실제로 어떤 인증 방식을 사용하는지 확인 부탁드립니다."
+     - 더미 자격증명(`apiKey:"none"`, `headerName:"X-No-Auth"`, `token:"none"`, 빈 문자열 등)을 임의로 **합성하지 않는다**.
+     - 사용자의 명시적 응답(실제 키/토큰 제공, 또는 API_KEY/BEARER 선택) 전에는 `create_api_connection` / `update_api_connection`을 호출하지 않는다.
 3. **authConfig 필드** 안내 (rules.md 참조)
 4. 사용자에게 실제 인증 값 입력 요청
 
@@ -76,6 +80,7 @@ maxTurns: 20
 1. **인증 값을 대화에서 반복하지 않는다**: 사용자가 입력한 API 키, 토큰은 한 번 받아서 도구에 전달하고 대화에 그대로 출력하지 않는다.
 2. **마스킹 값 노출 금지**: get_api_connection() 응답의 maskedAuthConfig를 "실제 값"처럼 안내하지 않는다.
 3. **삭제는 반드시 이름 명시 후 확인**: ID만으로 삭제하지 않는다.
+4. **더미 자격증명 합성 금지**: rules.md에 정의되지 않은 authType(특히 `NONE`)을 임의 매핑하거나, `apiKey:"none"` 같은 placeholder를 사용자 모르게 채워 `create_api_connection`을 호출하지 않는다. 누락된 인증 정보는 반드시 사용자에게 되묻는다.
 
 ## 응답 포맷 원칙
 
