@@ -22,6 +22,7 @@ import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttachments } from './file-downloader.js';
+import { ALLOWED_TOOLS, DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 /** CLI 트랜스크립트 파일 형식 */
 export interface CliTranscript {
@@ -238,6 +239,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const basePromptWithGuide = `${SYSTEM_PROMPT}${subagentGuide}`;
   const effectiveSystemPrompt = resolveSystemPrompt(basePromptWithGuide, systemPrompt, overrideSystemPrompt);
 
+  // #256: SDK 프로바이더와 동일한 정책을 CLI 프로바이더에도 적용한다.
+  // - --allowed-tools: firehub MCP + Agent 위임만 허용 (화이트리스트)
+  // - --disallowed-tools: host skill/task/IO/네트워크 도구 명시 차단 (이중 안전망)
+  // - --disable-slash-commands: 호스트의 skill ecosystem (Skill 도구 진입점) 비활성
+  //   spawn 된 `claude` CLI 가 호스트 `~/.claude/skills/` 를 자동 로드하여 Skill 도구를
+  //   노출하는 경로를 차단한다. firehub 메인 에이전트는 슬래시 커맨드/스킬을 사용하지
+  //   않으므로 영향 없음.
+  // CLI 플래그 이름은 `claude --help` 기준 camelCase 와 hyphen 모두 인식되나, 안정성을
+  // 위해 hyphen 표기(--allowed-tools / --disallowed-tools) 를 사용한다.
   const cliArgs = [
     '-p', enhancedMessage,
     '--output-format', 'stream-json',
@@ -247,6 +257,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     '--strict-mcp-config',
     '--system-prompt', effectiveSystemPrompt,
     '--permission-mode', 'bypassPermissions',
+    '--allowed-tools', ALLOWED_TOOLS.join(','),
+    '--disallowed-tools', DISALLOWED_TOOLS.join(','),
+    '--disable-slash-commands',
     '--model', effectiveModel,
   ];
 
@@ -329,13 +342,23 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       if (msg.type === 'assistant' && msg.message?.content) {
         for (const block of msg.message.content) {
           if (block.type === 'tool_use') {
+            const toolName = block.name ?? '';
+            // #256: SDK 옵션이 어떤 이유로 무력화돼도(plugin/skill 채널 우회 등) 런타임에서 차단.
+            // tool_use 이벤트를 받은 즉시 정책 위반 여부를 검사하고 차단 시 child 를 종료한다.
+            const policyDeny = checkToolPolicy(toolName);
+            if (policyDeny) {
+              console.warn(`[CLI Agent] [policy] ${policyDeny} — killing child`);
+              yield { type: 'error', message: policyDeny };
+              try { child.kill('SIGTERM'); } catch { /* ignore */ }
+              return;
+            }
             assistantToolCalls.push({
-              name: block.name ?? '',
+              name: toolName,
               input: (block.input as Record<string, unknown>) ?? {},
             });
             yield {
               type: 'tool_use',
-              toolName: block.name ?? '',
+              toolName,
               input: block.input,
             };
           } else if (block.type === 'text' && block.text) {

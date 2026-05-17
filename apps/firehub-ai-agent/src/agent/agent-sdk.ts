@@ -12,6 +12,7 @@ import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttachments } from './file-downloader.js';
+import { ALLOWED_TOOLS, DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 import type { SSEEvent } from '../providers/types.js';
 export type { SSEEvent } from '../providers/types.js';
@@ -237,10 +238,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       // 전용 subagent(report-writer 등) 에 위임. allowedTools 는 화이트리스트로
       // 동작하므로 여기 없는 host 도구는 차단된다. (개별 subagent 가 자체
       // tools 프론트매터로 host 도구를 선언하는 경우 subagent 정의에서 노출)
-      allowedTools: [
-        'mcp__firehub__*',
-        'Agent',
-      ],
+      // 정책은 ./tool-policy.ts 에 single source of truth — CLI 프로바이더도 동일 리스트 적용(#256).
+      allowedTools: [...ALLOWED_TOOLS],
       // #216 / #256: 메타-검색·skill·task host 도구를 명시적으로 차단 (이중 안전망).
       // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
       // 곧바로 비활성으로 폴백한다(cli.js XOq 체크 — "may have been disallowed
@@ -253,30 +252,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       // privilege escalation 가능성이 확인됐다. 화이트리스트(allowedTools) 와
       // 블랙리스트(disallowedTools) 를 함께 적용해 어느 한쪽이 SDK 내부 해석상
       // "추가 허용" 으로 동작하더라도 차단되도록 한다.
-      disallowedTools: [
-        'ToolSearch',
-        'mcp__claude-search__*',
-        // skill/task ecosystem (#256)
-        'Skill',
-        'TaskCreate',
-        'TaskUpdate',
-        'TaskList',
-        'TaskGet',
-        'TaskStop',
-        'TaskOutput',
-        // host filesystem / shell — 메인 에이전트는 firehub MCP 로만 작업
-        'Read',
-        'Write',
-        'Edit',
-        'NotebookEdit',
-        'Bash',
-        'Glob',
-        'Grep',
-        'LS',
-        // 외부 네트워크
-        'WebFetch',
-        'WebSearch',
-      ],
+      disallowedTools: [...DISALLOWED_TOOLS],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
@@ -341,6 +317,16 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       const events = processMessage(msg, tag, hasStreamedText);
       for (const event of events) {
         if (event.type === 'tool_use') {
+          // #256: 옵션이 어떤 이유로 무력화돼도(plugin 채널 우회 등) 런타임에서 차단.
+          // 차단 시 abort 신호로 SDK 스트림을 즉시 종료시킨다.
+          const policyDeny = checkToolPolicy(String(event.toolName || ''));
+          if (policyDeny) {
+            console.warn(`${tag()} [policy] ${policyDeny} — aborting stream`);
+            yield { type: 'error', message: policyDeny };
+            doneEmitted = true;
+            try { abortController.abort(); } catch { /* ignore */ }
+            return;
+          }
           toolCallStart = Date.now();
           lastToolName = String(event.toolName || '');
         }

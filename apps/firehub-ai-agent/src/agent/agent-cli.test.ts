@@ -95,6 +95,41 @@ describe('executeCliAgent — #240 subagent registration', () => {
     expect(parsed['pipeline-builder']).toHaveProperty('prompt');
   });
 
+  // #256: 회귀 — CLI 프로바이더에 --allowed-tools/--disallowed-tools/--disable-slash-commands
+  // 플래그가 누락되면 host 도구(Skill, TaskCreate, Bash 등)가 차단되지 않는다.
+  it('spawn된 claude CLI 인자에 도구 정책 플래그가 포함되어야 한다 (#256)', async () => {
+    const gen = executeCliAgent({
+      message: 'test',
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    });
+
+    for await (const _ev of gen) {
+      // drain
+    }
+
+    const argv = spawnMock.mock.calls[0][1] as string[];
+
+    // --allowed-tools: 화이트리스트
+    const allowedIdx = argv.indexOf('--allowed-tools');
+    expect(allowedIdx).toBeGreaterThan(-1);
+    const allowedValue = argv[allowedIdx + 1];
+    expect(allowedValue).toContain('mcp__firehub__*');
+    expect(allowedValue).toContain('Agent');
+
+    // --disallowed-tools: skill/task/host IO 명시 차단
+    const disallowedIdx = argv.indexOf('--disallowed-tools');
+    expect(disallowedIdx).toBeGreaterThan(-1);
+    const disallowedValue = argv[disallowedIdx + 1];
+    for (const blocked of ['Skill', 'TaskCreate', 'TaskUpdate', 'Bash', 'Read', 'Write', 'WebFetch']) {
+      expect(disallowedValue).toContain(blocked);
+    }
+
+    // --disable-slash-commands: 호스트 skill ecosystem 자동 로드 차단
+    expect(argv).toContain('--disable-slash-commands');
+  });
+
   it('system-prompt에 buildSubagentGuide 결과가 부착되어야 한다', async () => {
     const gen = executeCliAgent({
       message: 'test',
