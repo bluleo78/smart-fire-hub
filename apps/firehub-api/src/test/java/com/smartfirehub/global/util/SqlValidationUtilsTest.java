@@ -106,6 +106,43 @@ class SqlValidationUtilsTest {
     assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("DELETE");
   }
 
+  // ─── detectQueryType: data-modifying CTE (이슈 #227 보안 결함) ────────────
+  // PostgreSQL data-modifying CTE는 본문이 SELECT여도 내부 DELETE/UPDATE/INSERT가 실제로 실행된다.
+  // readOnly 검증이 우회되지 않도록 CTE 내부 DML 키워드를 감지하여 DML 타입을 반환해야 한다.
+
+  @Test
+  void detectQueryType_cteWithInnerDelete_returnsDelete() {
+    String sql = "WITH d AS (DELETE FROM t WHERE 1=0 RETURNING *) SELECT * FROM d";
+    assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("DELETE");
+  }
+
+  @Test
+  void detectQueryType_cteWithInnerUpdate_returnsUpdate() {
+    String sql = "WITH u AS (UPDATE t SET c=c WHERE 1=0 RETURNING id) SELECT * FROM u";
+    assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("UPDATE");
+  }
+
+  @Test
+  void detectQueryType_cteWithInnerInsert_returnsInsert() {
+    String sql = "WITH i AS (INSERT INTO t(c) VALUES('x') RETURNING id) SELECT * FROM i";
+    assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("INSERT");
+  }
+
+  @Test
+  void detectQueryType_nestedCteWithDelete_returnsDelete() {
+    // 중첩 CTE — 두 번째 CTE가 data-modifying
+    String sql =
+        "WITH x AS (SELECT 1), d AS (DELETE FROM t WHERE 1=0 RETURNING *) SELECT * FROM d";
+    assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("DELETE");
+  }
+
+  @Test
+  void detectQueryType_cteWithSelectOnly_returnsSelect() {
+    // 정상 케이스 — 내부도 SELECT만, 본문도 SELECT → 통과해야 함
+    String sql = "WITH x AS (SELECT * FROM customers) SELECT * FROM x";
+    assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("SELECT");
+  }
+
   // ─── stripStringLiterals ──────────────────────────────────────────────────
 
   @Test
