@@ -1,4 +1,18 @@
+# pre-commit 훅 — 가벼운 정합성 검사는 항상, 무거운 회귀(E2E + gradle)는 코드 변경이 있을 때만.
+# 비코드(.md / docs / IDE 설정 / 이슈 템플릿 등) 단독 커밋은 ~수 초 안에 통과한다.
+# 참고: AI 회귀 보장 우선이라 경계 모호 시 안전하게 풀 회귀로 본다.
+
 npx lint-staged
 pnpm typecheck
+
+# 스테이지된 파일 중 "코드로 간주" 되는 항목이 하나라도 있는지 판정.
+CHANGED=$(git diff --cached --name-only --diff-filter=ACMR)
+NEEDS_REGRESSION=$(printf '%s\n' "$CHANGED" | grep -vE '^(docs/|.*\.md$|LICENSE.*|\.gitignore$|\.gitattributes$|\.vscode/|\.idea/|\.editorconfig$|\.github/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE))' | grep .)
+
+if [ -z "$NEEDS_REGRESSION" ]; then
+  echo "[pre-commit] 비코드 변경만 감지 — E2E + gradle test skip"
+  exit 0
+fi
+
 pnpm test:e2e
 cd apps/firehub-api && ./gradlew test -x generateJooq --build-cache --configuration-cache
