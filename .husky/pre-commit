@@ -31,24 +31,22 @@ if [ -n "$FORCE_FULL" ] || [ -n "$NON_DOMAIN_PAGE" ]; then
   echo "[pre-commit] 공유 영역/매핑 외 변경 감지 — 전체 E2E 실행"
   pnpm test:e2e || exit 1
 elif [ -n "$WEB_PAGE_CHANGES" ]; then
-  # 4) 도메인 단독 변경 → 도메인 외 smoke + 해당 도메인 전수 (중복 0)
-  DOMAINS=$(printf '%s\n' "$WEB_PAGE_CHANGES" | sed -E 's|^apps/firehub-web/src/pages/([^/]+)/.*$|\1|' | sort -u)
-  DOMAINS_RE=$(echo $DOMAINS | tr ' ' '|')
-  DOMAINS_STR=$(echo $DOMAINS | tr '\n' ' ')
-  echo "[pre-commit] 도메인 한정 변경 감지: $DOMAINS_STR— 도메인 외 smoke + 해당 도메인 전수 실행"
+  # 4) 도메인 단독 변경 → 전역 smoke + 해당 도메인의 non-smoke (중복 0)
+  # 다중 도메인 지원: newline 을 명시적으로 space 로 정규화해야 zsh/bash 양쪽에서 안전.
+  DOMAINS_STR=$(printf '%s\n' "$WEB_PAGE_CHANGES" | sed -E 's|^apps/firehub-web/src/pages/([^/]+)/.*$|\1|' | sort -u | tr '\n' ' ')
+  echo "[pre-commit] 도메인 한정 변경 감지: ${DOMAINS_STR}— 전역 smoke + 해당 도메인 non-smoke 실행"
 
   cd apps/firehub-web || exit 1
-  # 도메인 spec 인자 + 도메인 외 spec 인자 분리 (중복 회피)
+  # 도메인 spec 인자 구성
   DOMAIN_SPECS=""
-  for d in $DOMAINS; do
+  for d in $DOMAINS_STR; do
     DOMAIN_SPECS="$DOMAIN_SPECS e2e/pages/$d"
   done
-  NON_DOMAIN_SPECS=$(find e2e -name "*.spec.ts" | grep -vE "^e2e/pages/($DOMAINS_RE)/" | tr '\n' ' ')
 
-  # 1) 도메인 외 spec 의 smoke 만 (전역 핵심 회귀, 도메인과 중복 없음)
-  npx playwright test $NON_DOMAIN_SPECS --grep "@smoke" || exit 1
-  # 2) 도메인 전수 (해당 도메인의 모든 test 1회)
-  npx playwright test $DOMAIN_SPECS || exit 1
+  # 1) 전역 smoke (모든 도메인의 @smoke 태그된 test)
+  npx playwright test --grep "@smoke" || exit 1
+  # 2) 해당 도메인의 non-smoke (smoke 는 1단계에서 이미 실행되므로 제외 → 중복 0)
+  npx playwright test $DOMAIN_SPECS --grep-invert "@smoke" || exit 1
   cd - >/dev/null
 else
   # 5) firehub-web 외 변경(api 단독 등) — gradle 단계에서 회귀 검증되므로 E2E skip
