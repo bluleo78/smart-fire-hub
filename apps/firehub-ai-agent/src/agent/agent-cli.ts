@@ -7,7 +7,7 @@
  */
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
+import { mkdir, readFile, readdir, writeFile, unlink } from 'fs/promises';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { createInterface } from 'readline';
@@ -17,6 +17,7 @@ import { dirname } from 'path';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
+import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
@@ -226,13 +227,18 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
   const effectiveModel = model ?? DEFAULT_MODEL;
 
-  // #240: firehub 전문 subagent 정의를 CLI(`--agents` JSON 플래그)로 함께 전달한다.
+  // #240: firehub 전문 subagent 정의를 CLI에 전달한다.
   // 전달하지 않으면 spawn된 `claude` CLI는 호스트의 빌트인/플러그인 agent만 인지하므로
   // 시스템 프롬프트가 지시한 `Agent(subagent_type: "pipeline-builder")` 호출이
   // "Agent type not found"로 실패하고, 폴백으로 메인 에이전트가 직접 firehub MCP
   // 도구를 호출해 subagent의 rules.md(파괴 확인·GIS 자동 감지 등)가 우회된다.
   // SDK 프로바이더(agent-sdk.ts)는 동일 정의를 `options.agents`로 이미 전달하고 있다.
+  // #260: 초기에는 `--agents <json>` 인자로 전달했으나, 11개 subagent 정의 JSON 합산이
+  // 172KB에 달해 Linux execve MAX_ARG_STRLEN(128KB) 초과 → spawn E2BIG 재발.
+  // claude CLI 는 CWD `.claude/agents/*.md` 를 자동 발견하므로, userWorkDir 하위에
+  // 정의 파일들을 써두고 `--agents` 플래그는 사용하지 않는다.
   const subagents = loadSubagents();
+  await writeSubagentDefinitions(userWorkDir, subagents);
   // 시스템 프롬프트에 동적 위임 가이드를 부착(SDK 프로바이더와 동일 패턴).
   // subagent 이름 변경/추가 시 system-prompt.ts 정적 표와 동시에 갱신되도록 한다.
   const subagentGuide = buildSubagentGuide(subagents);
@@ -270,12 +276,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     '--model', effectiveModel,
   ];
 
-  // #240: subagent 정의가 1개 이상일 때만 --agents 추가. 빈 객체 전달 시 CLI가
-  // JSON 파싱 후 빈 등록을 만들어 호스트 plugin agent까지 비활성화될 가능성이 있으므로
-  // 명시적 가드.
-  if (Object.keys(subagents).length > 0) {
-    cliArgs.push('--agents', JSON.stringify(subagents));
-  }
+  // #260: subagent 정의는 `--agents` 인자 대신 `userWorkDir/.claude/agents/*.md`
+  // 파일로 전달한다(위 writeSubagentDefinitions 호출). argv 크기 한계 회피.
 
   // 세션 재개: Claude Code의 내부 session ID로 이전 컨텍스트 복원
   if (isResume && claudeSessionId) {
@@ -439,4 +441,66 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       console.error('[CLI Agent] stderr:', stderr);
     }
   }
+}
+
+/**
+ * subagent 정의를 `.claude/agents/<name>.md` 파일로 직렬화한다.
+ *
+ * 이유: claude CLI 의 `--agents <json>` 인자에 전체 정의를 인라인 전달하면
+ * Linux execve 의 MAX_ARG_STRLEN(보통 128KB) 한계를 초과해 spawn E2BIG 가 발생한다(#260).
+ * claude CLI 는 cwd 의 `.claude/agents/*.md` 를 자동 발견하므로 파일로 두면 argv 부담이 없다.
+ *
+ * 매 호출마다 기존 .md 를 정리하고 다시 쓴다 — 정의가 추가/삭제/변경되어도 일관 유지.
+ */
+export async function writeSubagentDefinitions(
+  workDir: string,
+  subagents: Record<string, AgentDefinition>,
+): Promise<void> {
+  const agentsDir = join(workDir, '.claude', 'agents');
+  await mkdir(agentsDir, { recursive: true });
+
+  // 기존 정의 정리(이전 호출에서 남은 stale 파일 제거)
+  try {
+    const existing = await readdir(agentsDir);
+    await Promise.all(
+      existing
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => unlink(join(agentsDir, f)).catch(() => {})),
+    );
+  } catch {
+    // 디렉터리 부재 등은 무시 — mkdir 가 보장
+  }
+
+  for (const [name, def] of Object.entries(subagents)) {
+    await writeFile(join(agentsDir, `${name}.md`), serializeSubagent(name, def), 'utf-8');
+  }
+}
+
+/** AgentDefinition 을 frontmatter + prompt 본문 형식의 markdown 으로 직렬화. */
+function serializeSubagent(name: string, def: AgentDefinition): string {
+  const lines: string[] = ['---', `name: ${name}`, `description: ${yamlDoubleQuoted(def.description)}`];
+
+  if (def.tools && def.tools.length > 0) {
+    lines.push('tools:');
+    for (const tool of def.tools) {
+      lines.push(`  - ${tool}`);
+    }
+  }
+  if (def.model && def.model !== 'inherit') {
+    lines.push(`model: ${def.model}`);
+  }
+  if (typeof def.maxTurns === 'number') {
+    lines.push(`maxTurns: ${def.maxTurns}`);
+  }
+
+  lines.push('---', '');
+  return lines.join('\n') + (def.prompt ?? '');
+}
+
+/**
+ * 임의 문자열을 YAML double-quoted 스칼라로 안전하게 직렬화한다.
+ * 백슬래시·따옴표·줄바꿈만 이스케이프해 description 한 줄 값에 충분하도록 한다.
+ */
+function yamlDoubleQuoted(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
 }

@@ -2,14 +2,17 @@
  * agent-cli.ts 단위 테스트
  *
  * 핵심 회귀 방지 대상:
- * - #240: firehub subagent 정의가 spawn된 claude CLI에게 `--agents` 플래그로 전달되어야 한다.
+ * - #240: firehub subagent 정의가 spawn된 claude CLI에 전달되어야 한다.
  *   누락 시 메인 에이전트가 `Agent(subagent_type: "pipeline-builder")` 호출 시
  *   "Agent type not found" 에러가 발생하고 subagent rules.md가 우회된다.
+ * - #260: subagent 정의는 `--agents <json>` 인자가 아닌 cwd `.claude/agents/<name>.md`
+ *   파일로 전달되어야 한다. JSON 인자가 172KB → Linux MAX_ARG_STRLEN(128KB) 초과로 spawn E2BIG 재발.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 
 // child_process.spawn을 모킹하여 실제 CLI를 띄우지 않고 인자만 검증한다.
 const spawnMock = vi.fn();
@@ -86,33 +89,37 @@ describe('executeCliAgent — #240 subagent registration', () => {
     vi.clearAllMocks();
   });
 
-  it('spawn된 claude CLI 인자에 --agents JSON이 포함되어야 한다 (#240)', async () => {
+  it('subagent 정의가 cwd .claude/agents/<name>.md 파일로 작성되어야 한다 (#240, #260)', async () => {
     const gen = executeCliAgent({
       message: 'test',
-      userId: 1,
+      userId: 9999, // 고정 userId — userWorkDir 경로 예측 가능
       useSubscription: false,
       apiKey: 'sk-test',
     });
 
-    // 제너레이터 소비 (init만 받고 종료)
     for await (const _ev of gen) {
-      // no-op — just drain
+      // drain
     }
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
-    const [bin, args] = spawnMock.mock.calls[0];
+    const [bin, args, opts] = spawnMock.mock.calls[0];
     expect(bin).toBe('claude');
-    expect(Array.isArray(args)).toBe(true);
 
+    // #260: argv 에는 --agents 가 더 이상 포함되지 않아야 한다.
     const argv = args as string[];
-    const agentsIdx = argv.indexOf('--agents');
-    expect(agentsIdx).toBeGreaterThan(-1);
+    expect(argv).not.toContain('--agents');
 
-    const agentsJson = argv[agentsIdx + 1];
-    const parsed = JSON.parse(agentsJson);
-    expect(Object.keys(parsed).sort()).toEqual(['dataset-manager', 'pipeline-builder']);
-    expect(parsed['pipeline-builder']).toHaveProperty('description');
-    expect(parsed['pipeline-builder']).toHaveProperty('prompt');
+    // cwd 의 .claude/agents/*.md 가 작성되어 있어야 한다.
+    const cwd = (opts as { cwd: string }).cwd;
+    const agentsDir = join(cwd, '.claude', 'agents');
+    expect(existsSync(join(agentsDir, 'pipeline-builder.md'))).toBe(true);
+    expect(existsSync(join(agentsDir, 'dataset-manager.md'))).toBe(true);
+
+    const pbContent = readFileSync(join(agentsDir, 'pipeline-builder.md'), 'utf-8');
+    expect(pbContent).toMatch(/^---\n/);
+    expect(pbContent).toContain('name: pipeline-builder');
+    expect(pbContent).toContain('description: "파이프라인 빌더"');
+    expect(pbContent).toContain('당신은 파이프라인 빌더입니다.');
   });
 
   // #256: 회귀 — CLI 프로바이더에 --allowed-tools/--disallowed-tools/--disable-slash-commands
