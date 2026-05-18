@@ -158,6 +158,12 @@ pnpm exec playwright test --project=chromium  # 직접 실행
 - 목표: 신규 80% / 전체 70% (가이드라인 참조)
 - E2E가 주 측정 채널. 단위 테스트는 pure-logic 파일(훅/리듀서/유틸) 대상으로 추가 중.
 
+## E2E Coverage
+- 기본 실행(`pnpm test:e2e`)은 속도를 위해 V8 coverage 수집 비활성화.
+- coverage 리포트가 필요하면 `E2E_COVERAGE=1 pnpm test:e2e` 로 실행.
+- 산출물: `apps/firehub-web/coverage/`.
+- pre-commit 훅에서는 항상 off.
+
 ## Design System
 
 UI 작업(새 페이지, 컴포넌트 생성, 기존 UI 수정) 시 반드시 [`docs/design-system/`](../../docs/design-system/index.md)의 디자인 가이드라인을 참조하여 구현한다. 타이포그래피, 간격, 페이지 패턴, 폼 패턴, 피드백 상태, 색상 토큰 등 모든 UI 규칙은 해당 문서가 단일 원본(Single Source of Truth)이다.

@@ -59,7 +59,10 @@ export default function ReportTemplateDetailPage() {
   const { data: templates = [], isLoading: isLoadingList } = useProactiveTemplates();
   // Fallback: use list data if single-item API fails
   const template = templateDirect ?? templates.find((t) => t.id === templateId);
-  const isLoading = isLoadingDirect && isLoadingList;
+  // 두 쿼리 중 하나라도 진행 중이면 "로딩 중"으로 본다 — 저장 직후 /templates/new → /templates/100 으로
+  // 이동하는 시점에 list 쿼리가 캐시 적중으로 즉시 false가 되어 guard(73~80)가 잘못 발화,
+  // detail 쿼리가 끝나기 전에 목록으로 되돌리던 race를 차단한다.
+  const isLoading = isLoadingDirect || isLoadingList;
 
   // 존재하지 않는 템플릿 ID 접근 시 에러 처리 — toast + 목록 페이지로 이동 (#38)
   // useEffect를 훅 순서 보장을 위해 조건부 return 이전에 배치한다
@@ -73,11 +76,14 @@ export default function ReportTemplateDetailPage() {
 
   useEffect(() => {
     if (isNew) return;
+    // 에러 케이스는 위 useEffect(isErrorDirect)가 별도 toast/navigate 로 처리한다.
+    // 둘 다 발화하면 toast 2개가 동시 노출되어 strict-mode locator 검증이 실패하므로 분리.
+    if (isErrorDirect) return;
     if (!isLoading && !template) {
       toast.error('존재하지 않는 템플릿입니다.');
       navigate('/ai-insights/templates');
     }
-  }, [isLoading, isNew, navigate, template]);
+  }, [isErrorDirect, isLoading, isNew, navigate, template]);
 
   const createMutation = useCreateProactiveTemplate();
   const updateMutation = useUpdateProactiveTemplate();

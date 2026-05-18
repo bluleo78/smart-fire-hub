@@ -113,16 +113,20 @@ export const test = base.extend<AuthFixtures>({
    * 모든 테스트에 자동 적용되는 V8 커버리지 수집기
    * - Chromium 프로젝트에서만 동작하며, 그 외 브라우저는 no-op
    * - 테스트 시작 시 JS 커버리지 수집 시작, 종료 시 monocart에 add + generate
+   * - E2E_COVERAGE=1 일 때만 동작 (기본 off) — startJSCoverage/stopJSCoverage/MCR.add
+   *   오버헤드를 매 테스트마다 지불하지 않기 위해 명시적 opt-in으로 전환했다.
    */
   autoCoverage: [
     async ({ page, browserName }, use) => {
+      const coverageEnabled = process.env.E2E_COVERAGE === '1';
       const isChromium = browserName === 'chromium';
-      if (isChromium) {
+      const collect = coverageEnabled && isChromium;
+      if (collect) {
         // resetOnNavigation: false — 페이지 이동해도 누적 수집
         await page.coverage.startJSCoverage({ resetOnNavigation: false });
       }
       await use();
-      if (isChromium) {
+      if (collect) {
         const coverageEntries = await page.coverage.stopJSCoverage();
         // add 만 호출 — 실제 리포트 생성은 globalTeardown 에서 수행한다.
         // 이렇게 해야 여러 테스트/워커의 데이터가 outputDir/.cache 에 누적되어 merge 된다.

@@ -422,11 +422,20 @@ test.describe('리포트 템플릿 상세 페이지', () => {
       // 저장 전 dirty 표시 확인
       await expect(page.getByText('미저장 변경사항')).toBeVisible();
 
-      // 생성 버튼 클릭
-      await page.getByRole('button', { name: '생성' }).click();
+      // 생성 버튼 클릭 + POST 응답을 명시적으로 대기 — 8 workers 환경에서
+      // Vite dev 서버 동시 요청 부하로 5s 기본 timeout이 종종 초과되는 race를 제거한다.
+      const [postResponse] = await Promise.all([
+        page.waitForResponse(
+          (res) =>
+            res.url().endsWith('/api/v1/proactive/templates') &&
+            res.request().method() === 'POST',
+        ),
+        page.getByRole('button', { name: '생성' }).click(),
+      ]);
+      expect(postResponse.status()).toBe(200);
 
-      // 저장 후 신규 템플릿 상세로 이동
-      await expect(page).toHaveURL(/\/ai-insights\/templates\/100$/);
+      // 저장 후 신규 템플릿 상세로 이동 — 모킹 응답 처리 + navigate 마진 확보
+      await expect(page).toHaveURL(/\/ai-insights\/templates\/100$/, { timeout: 15_000 });
 
       // 저장 성공 → dirty 해제 → 미저장 표시 사라짐
       await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
