@@ -629,7 +629,7 @@ describe('SL-TM: trigger-manager subagent integration', () => {
     expect(tools).toContain('mcp__firehub__delete_trigger');
   });
 
-  it('SL-TM-03: trigger-manager prompt inlines rules.md and examples.md content', () => {
+  it('SL-TM-03: trigger-manager prompt inlines rules.md (examples.md excluded by default — #260)', () => {
     resetSubagentCache();
     const realSubagentsDir = path.join(__dirname, 'subagents');
     const agents = loadSubagents(realSubagentsDir);
@@ -638,8 +638,9 @@ describe('SL-TM: trigger-manager subagent integration', () => {
     // rules.md 핵심 키워드 — cron 필드명/6필드 규칙 (#233)
     expect(prompt).toContain('cron');
     expect(prompt).toContain('Spring CronTrigger 6필드');
-    // examples.md 핵심 키워드
-    expect(prompt).toContain('새벽 집계');
+    // #260: examples.md 는 기본 제외 — 토큰 비용 절감.
+    // "새벽 집계" 는 agent.md 에도 등장하므로 examples.md 고유 대화 예시로 검증.
+    expect(prompt).not.toContain('파이프라인 5번에 매일 오전 3시');
   });
 });
 
@@ -668,7 +669,7 @@ describe('SL-DB: dashboard-builder subagent integration', () => {
     expect(tools).toContain('mcp__firehub__navigate_to');
   });
 
-  it('SL-DB-03: dashboard-builder prompt inlines rules.md and examples.md content', () => {
+  it('SL-DB-03: dashboard-builder prompt inlines rules.md (examples.md excluded by default — #260)', () => {
     resetSubagentCache();
     const realSubagentsDir = path.join(__dirname, 'subagents');
     const agents = loadSubagents(realSubagentsDir);
@@ -677,9 +678,8 @@ describe('SL-DB: dashboard-builder subagent integration', () => {
     // rules.md 핵심 키워드 — 그리드 레이아웃 파라미터 + 12열 그리드 설명
     expect(prompt).toContain('positionX');
     expect(prompt).toContain('12열 그리드');
-    // examples.md 핵심 키워드 — 대화 예시 + Phase 라벨
-    expect(prompt).toContain('화재 현황 대시보드');
-    expect(prompt).toContain('Phase 3 — EXECUTE');
+    // #260: examples.md 는 기본 제외.
+    expect(prompt).not.toContain('화재 현황 대시보드');
   });
 
   // 이슈 #249 회귀 방지: dashboard-builder도 PII 마스킹 명문화 (#246 일반화)
@@ -722,7 +722,7 @@ describe('SL-AM: admin-manager subagent integration', () => {
     expect(tools).toContain('mcp__firehub__list_permissions');
   });
 
-  it('SL-AM-03: admin-manager prompt inlines rules.md and examples.md content', () => {
+  it('SL-AM-03: admin-manager prompt inlines rules.md (examples.md excluded by default — #260)', () => {
     resetSubagentCache();
     const realSubagentsDir = path.join(__dirname, 'subagents');
     const agents = loadSubagents(realSubagentsDir);
@@ -731,9 +731,8 @@ describe('SL-AM: admin-manager subagent integration', () => {
     // rules.md 핵심 키워드 — 권한 게이팅 표 + set_user_roles 동작 설명
     expect(prompt).toContain('role:assign');
     expect(prompt).toContain('교체(replace)');
-    // examples.md 핵심 키워드 — 대화 예시 + Phase 라벨
-    expect(prompt).toContain('김철수');
-    expect(prompt).toContain('Phase 3 — EXECUTE');
+    // #260: examples.md 는 기본 제외.
+    expect(prompt).not.toContain('김철수');
   });
 });
 

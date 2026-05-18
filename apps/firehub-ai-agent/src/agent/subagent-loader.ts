@@ -9,6 +9,18 @@ const __dirname = path.dirname(__filename);
 const MAX_KNOWLEDGE_SIZE = 100 * 1024; // 100KB
 const WARN_KNOWLEDGE_SIZE = 50 * 1024; // 50KB
 
+/**
+ * #260 (perf): 매 요청마다 subagent 정의 전체가 LLM 컨텍스트에 포함돼 토큰 비용 부담.
+ * 사용 시연 목적의 examples.md 는 agent.md(목적·도구)와 rules.md(안전 가드) 만으로
+ * 모델이 추론 가능하므로 기본 제외. 정확도 영향 최소화하면서 약 33KB 절감.
+ *
+ * 환경변수 FIREHUB_SUBAGENT_INCLUDE_EXAMPLES=1 로 두면 다시 포함 (디버깅·평가용).
+ */
+const SUBAGENT_KNOWLEDGE_EXCLUDE: ReadonlySet<string> =
+  process.env.FIREHUB_SUBAGENT_INCLUDE_EXAMPLES === '1'
+    ? new Set()
+    : new Set(['examples.md']);
+
 interface Frontmatter {
   name?: string;
   description?: string;
@@ -117,12 +129,15 @@ function loadSubagentDir(dirPath: string, dirName: string): AgentDefinition | nu
     return null;
   }
 
-  // Collect knowledge files: *.md except agent.md, sorted alphabetically
+  // Collect knowledge files: *.md except agent.md and excluded names, sorted alphabetically
+  // #260: examples.md 등 시연 자료는 정확도 보존 범위에서 기본 제외(토큰 비용 절감).
   let knowledgeFiles: string[] = [];
   try {
     knowledgeFiles = fs
       .readdirSync(dirPath)
-      .filter((f) => f.endsWith('.md') && f !== 'agent.md')
+      .filter(
+        (f) => f.endsWith('.md') && f !== 'agent.md' && !SUBAGENT_KNOWLEDGE_EXCLUDE.has(f),
+      )
       .sort();
   } catch (err) {
     console.error(`[subagent-loader] Failed to read directory "${dirName}":`, err);
