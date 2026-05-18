@@ -126,7 +126,7 @@ test.describe('AI 챗 admin-manager', () => {
   /**
    * AM-01: 사용자 목록 조회 요청 → 응답에 사용자/목록 관련 키워드 포함
    */
-  test('AM-01: 사용자 목록 조회 요청 → 응답에 관련 키워드 포함', async ({ authenticatedPage: page }) => {
+  test('AM-01: 사용자 목록 조회 요청 → 응답에 관련 키워드 포함', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'admin-manager-session-1');
 
     let capturedPayload: Record<string, unknown> | null = null;

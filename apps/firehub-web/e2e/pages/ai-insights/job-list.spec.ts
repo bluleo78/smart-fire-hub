@@ -8,7 +8,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - API 모킹 기반으로 백엔드 없이 목록 페이지 UI를 검증한다.
  */
 test.describe('스마트 작업 목록 페이지', () => {
-  test('작업 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('작업 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 3개 작업 목록을 모킹한 후 목록 페이지 접근
     await setupJobListMocks(page, 3);
     await page.goto('/ai-insights/jobs');
@@ -160,7 +160,7 @@ test.describe('스마트 작업 목록 페이지', () => {
     expect(req).toBeTruthy();
   });
 
-  test('작업 행 클릭 시 작업 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('작업 행 클릭 시 작업 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupJobListMocks(page, 2);
     // 작업 상세 페이지에서 필요한 API 모킹 — createJob({ id: 1 }) 기본값: name='매일 현황 리포트'
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));

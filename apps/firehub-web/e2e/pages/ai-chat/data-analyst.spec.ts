@@ -166,7 +166,7 @@ test.describe('AI 챗 data-analyst', () => {
    * DA-01: 분석 요청 → 응답에 분석 관련 키워드 포함 확인
    * 테이블, 컬럼, 분석, 쿼리, 데이터셋 중 하나 이상이 응답에 포함되어야 한다.
    */
-  test('DA-01: 분석 요청 → 응답에 분석 관련 키워드 포함', async ({ authenticatedPage: page }) => {
+  test('DA-01: 분석 요청 → 응답에 분석 관련 키워드 포함', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'data-analyst-session-1');
 
     // POST body 캡처 — 사용자 메시지가 AI 챗 API에 정확히 전달되는지 검증한다.

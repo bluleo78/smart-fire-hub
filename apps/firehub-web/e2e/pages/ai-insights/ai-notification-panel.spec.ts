@@ -14,7 +14,7 @@ test.describe('AI 알림 패널', () => {
    * jobId + executionId가 있는 메시지를 선택하면 "리포트 보기" 버튼이 노출된다.
    * (Bug #177: message.content.jobId → message.jobId 수정 후 동작 검증)
    */
-  test('jobId/executionId 있는 메시지 선택 시 "리포트 보기" 버튼이 표시된다', async ({ authenticatedPage: page }) => {
+  test('jobId/executionId 있는 메시지 선택 시 "리포트 보기" 버튼이 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // jobId=1, executionId=1 포함된 메시지 모킹
     await setupNotificationPanelMocks(page, [
       createMessage({ jobId: 1, executionId: 1, title: '현황 리포트 완료', read: false }),

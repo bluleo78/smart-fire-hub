@@ -10,7 +10,7 @@ import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
  *   페이지 레벨 렌더링과 탭 전환에 집중한다.
  */
 test.describe('파이프라인 에디터 페이지', () => {
-  test('기존 파이프라인을 로드하면 탭 메뉴가 표시된다', async ({ authenticatedPage: page }) => {
+  test('기존 파이프라인을 로드하면 탭 메뉴가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 에디터 API 모킹
     await setupPipelineEditorMocks(page, 1);
 

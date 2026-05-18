@@ -13,7 +13,7 @@ import { expect, test } from '../fixtures/auth.fixture';
  * - 각 플로우는 여러 페이지를 걸쳐 진행된다.
  */
 test.describe('분석 플로우', () => {
-  test('쿼리 목록 → 새 쿼리 버튼 → 에디터 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('쿼리 목록 → 새 쿼리 버튼 → 에디터 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 쿼리 목록 페이지 모킹
     await setupQueryListMocks(page, 3);
     // 에디터 페이지로 이동 시 필요한 스키마/폴더 API 모킹

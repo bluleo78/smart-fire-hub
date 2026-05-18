@@ -55,7 +55,7 @@ async function setupChannelMocks(page: Parameters<typeof mockApi>[0]) {
 }
 
 test.describe('채널 설정 페이지', () => {
-  test('페이지 진입 시 4개 채널 카드가 표시된다', async ({ authenticatedPage: page }) => {
+  test('페이지 진입 시 4개 채널 카드가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupChannelMocks(page);
     await page.goto('/settings/channels');
 
@@ -80,7 +80,7 @@ test.describe('채널 설정 페이지', () => {
     await expect(page.getByRole('button', { name: '연동하기' })).toBeVisible();
   });
 
-  test('EMAIL 토글 OFF → PATCH /api/v1/channels/settings/EMAIL/preference 호출', async ({
+  test('EMAIL 토글 OFF → PATCH /api/v1/channels/settings/EMAIL/preference 호출', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupChannelMocks(page);

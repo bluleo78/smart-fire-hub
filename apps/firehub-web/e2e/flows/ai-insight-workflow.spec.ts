@@ -13,7 +13,7 @@ import { expect, test } from '../fixtures/auth.fixture';
  *   여러 페이지를 걸치는 사용자 플로우를 검증한다.
  */
 test.describe('AI 인사이트 플로우', () => {
-  test('작업 목록 → 작업 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('작업 목록 → 작업 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 작업 목록 페이지 모킹
     await setupJobListMocks(page, 3);
     // 작업 상세 페이지 모킹 — createJob({ id:1 }) 기본값:

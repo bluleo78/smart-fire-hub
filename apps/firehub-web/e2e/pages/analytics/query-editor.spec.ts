@@ -13,7 +13,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - CodeMirror 에디터 내부 입력은 어렵기 때문에 페이지 레벨 UI 확인에 집중한다.
  */
 test.describe('쿼리 에디터 페이지', () => {
-  test('새 쿼리 에디터가 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('새 쿼리 에디터가 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 새 쿼리 에디터에서 필요한 스키마/폴더 API 모킹
     await setupNewQueryEditorMocks(page);
 
@@ -55,7 +55,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await expect(page.getByText('another_table').first()).toBeVisible();
   });
 
-  test('기존 쿼리 에디터에서 실행 버튼 클릭 시 결과 테이블이 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('기존 쿼리 에디터에서 실행 버튼 클릭 시 결과 테이블이 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 기존 쿼리 에디터 모킹 (sqlText가 채워진 쿼리 로드됨)
     await setupQueryEditorMocks(page, 1);
     // ad-hoc 쿼리 실행 결과 모킹 — columns: ['id','name','value'], rows 2개, executionTimeMs: 42
@@ -195,7 +195,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '공유됨' })).toBeVisible();
   });
 
-  test('새 쿼리 저장 다이얼로그 — 저장 버튼 클릭 시 POST API가 호출된다', async ({
+  test('새 쿼리 저장 다이얼로그 — 저장 버튼 클릭 시 POST API가 호출된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupNewQueryEditorMocks(page);

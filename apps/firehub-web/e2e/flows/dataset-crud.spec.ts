@@ -8,7 +8,7 @@ import { setupDatasetDetailMocks, setupDatasetMocks } from '../fixtures/dataset.
  * - 목록 → 상세 이동, 생성 플로우, 삭제 플로우를 통합 검증한다.
  */
 test.describe('데이터셋 CRUD 플로우', () => {
-  test('목록 페이지에서 행 클릭 시 상세 페이지로 이동한다', async ({
+  test('목록 페이지에서 행 클릭 시 상세 페이지로 이동한다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     // 목록 API 모킹

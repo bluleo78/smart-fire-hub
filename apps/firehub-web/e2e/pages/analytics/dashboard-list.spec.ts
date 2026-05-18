@@ -8,7 +8,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - API 모킹 기반으로 백엔드 없이 목록 페이지 UI를 검증한다.
  */
 test.describe('대시보드 목록 페이지', () => {
-  test('대시보드 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('대시보드 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 3개 대시보드 목록을 모킹한 후 목록 페이지 접근
     await setupDashboardListMocks(page, 3);
     await page.goto('/analytics/dashboards');
@@ -55,7 +55,7 @@ test.describe('대시보드 목록 페이지', () => {
     await expect(page.getByRole('tab', { name: '공유됨' })).toBeVisible();
   });
 
-  test('새 대시보드 버튼 클릭 시 생성 다이얼로그가 열리고 POST payload가 전달된다', async ({ authenticatedPage: page }) => {
+  test('새 대시보드 버튼 클릭 시 생성 다이얼로그가 열리고 POST payload가 전달된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDashboardListMocks(page, 2);
     await page.goto('/analytics/dashboards');
 

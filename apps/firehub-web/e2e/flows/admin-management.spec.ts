@@ -18,7 +18,7 @@ test.describe('관리자 플로우', () => {
     await setupAdminAuth(page);
   });
 
-  test('사용자 목록에서 행 클릭 시 사용자 상세 페이지로 이동한다', async ({
+  test('사용자 목록에서 행 클릭 시 사용자 상세 페이지로 이동한다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     // 목록 페이지 API 모킹

@@ -123,7 +123,7 @@ async function openChatAndSend(page: import('@playwright/test').Page, message: s
 }
 
 test.describe('AI 리포트 빌더 위젯', () => {
-  test('generate_report 도구 결과가 위젯으로 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('generate_report 도구 결과가 위젯으로 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockChatSSEWithReportWidget(page);
     await openChatAndSend(page, '이번 달 매출이 왜 떨어졌나요?');
 

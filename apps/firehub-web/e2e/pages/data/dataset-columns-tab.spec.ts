@@ -83,7 +83,7 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     ]);
   }
 
-  test('필드 목록이 렌더링되고 PK / 데이터 타입 / null 허용 여부가 표시된다', async ({
+  test('필드 목록이 렌더링되고 PK / 데이터 타입 / null 허용 여부가 표시된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);
@@ -269,7 +269,7 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByLabel('최대 길이 *')).toBeVisible();
   });
 
-  test('필드 추가 — POST payload 검증 (필드명·타입·nullable)', async ({
+  test('필드 추가 — POST payload 검증 (필드명·타입·nullable)', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);

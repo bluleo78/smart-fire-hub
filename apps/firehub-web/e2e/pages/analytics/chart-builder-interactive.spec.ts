@@ -24,7 +24,7 @@ test.describe('차트 빌더 인터랙티브 흐름', () => {
     totalRows: 6,
   });
 
-  test('새 차트에서 쿼리 실행 후 미리보기 패널이 렌더링된다', async ({
+  test('새 차트에서 쿼리 실행 후 미리보기 패널이 렌더링된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupNewChartBuilderMocks(page);

@@ -8,7 +8,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 기본/커스텀 템플릿 구분, 빈 상태, 새 템플릿 버튼을 검증한다.
  */
 test.describe('리포트 양식 목록 페이지', () => {
-  test('템플릿 목록이 기본/커스텀으로 구분되어 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('템플릿 목록이 기본/커스텀으로 구분되어 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 기본(builtin: true) + 커스텀(builtin: false) 템플릿 각 1개씩 모킹
     // createTemplates() → [{id:1, name:'일일 현황 리포트', builtin:true}, {id:2, name:'주간 통계 리포트', builtin:false}]
     await setupTemplateListMocks(page);
@@ -105,7 +105,7 @@ test.describe('리포트 양식 목록 페이지', () => {
     expect(maxHeight).toBe(minHeight);
   });
 
-  test('커스텀 템플릿 카드 클릭 시 템플릿 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('커스텀 템플릿 카드 클릭 시 템플릿 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 커스텀 템플릿 포함 목록 모킹
     await mockApi(page, 'GET', '/api/v1/proactive/templates', [
       createTemplate({ id: 2, name: '주간 통계 리포트', builtin: false }),

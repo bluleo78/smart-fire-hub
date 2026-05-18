@@ -11,7 +11,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - API 모킹 기반으로 백엔드 없이 차트 빌더 UI를 검증한다.
  */
 test.describe('차트 빌더 페이지', () => {
-  test('새 차트 빌더가 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('새 차트 빌더가 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 새 차트 빌더에서 필요한 쿼리 목록 API 모킹
     await setupNewChartBuilderMocks(page);
 
@@ -79,7 +79,7 @@ test.describe('차트 빌더 페이지', () => {
     await expect(page.getByText('쿼리를 실행하면 차트가 표시됩니다.')).toBeVisible();
   });
 
-  test('새 차트 저장 — 저장 다이얼로그에서 POST payload 검증', async ({
+  test('새 차트 저장 — 저장 다이얼로그에서 POST payload 검증', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupNewChartBuilderMocks(page);

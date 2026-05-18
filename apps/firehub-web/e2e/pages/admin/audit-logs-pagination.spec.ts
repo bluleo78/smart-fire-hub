@@ -15,7 +15,7 @@ test.describe('감사 로그 페이지네이션 - 강화 (이슈 #65)', () => {
     await setupAdminAuth(page);
   });
 
-  test('페이지 번호 버튼이 렌더링되고 클릭 시 page 파라미터가 전달된다', async ({
+  test('페이지 번호 버튼이 렌더링되고 클릭 시 page 파라미터가 전달된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     // 390건 / 20건/page = 20 페이지

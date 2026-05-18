@@ -8,7 +8,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - API 모킹 기반으로 백엔드 없이 목록 페이지 UI를 검증한다.
  */
 test.describe('차트 목록 페이지', () => {
-  test('차트 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('차트 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 3개 차트 목록을 모킹한 후 목록 페이지 접근
     await setupChartListMocks(page, 3);
     await page.goto('/analytics/charts');

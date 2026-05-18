@@ -12,7 +12,7 @@ test.describe('404 페이지', () => {
    * 테스트 1: 인증 사용자 — 사이드바·헤더가 함께 렌더된다
    * 이슈 #81의 핵심 회귀: 404가 단독 화면이 아닌 AppLayout 내부에서 표시되어야 한다
    */
-  test('인증 사용자가 잘못된 URL 접근 시 사이드바·헤더와 함께 404 콘텐츠가 렌더된다', async ({
+  test('인증 사용자가 잘못된 URL 접근 시 사이드바·헤더와 함께 404 콘텐츠가 렌더된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await page.goto('/this-page-does-not-exist-12345');

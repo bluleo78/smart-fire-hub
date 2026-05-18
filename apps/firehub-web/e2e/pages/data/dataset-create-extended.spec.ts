@@ -57,7 +57,7 @@ test.describe('DatasetCreatePage — 기본 정보 입력', () => {
     await expect(page.getByText('테이블명을 입력하세요')).toBeVisible();
   });
 
-  test('이름과 테이블명 입력 후 POST /datasets payload가 올바르게 전달된다', async ({
+  test('이름과 테이블명 입력 후 POST /datasets payload가 올바르게 전달된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await gotoCreatePage(page);

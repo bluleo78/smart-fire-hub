@@ -7,7 +7,7 @@ import { expect, test } from '../fixtures/auth.fixture';
  * - 회원가입 → 로그인, 로그인 → 프로필 수정, 미인증 접근 보호 등 실제 사용자 시나리오를 검증한다.
  */
 test.describe('인증 전체 플로우', () => {
-  test('회원가입 후 홈에 도달한다', async ({ authMockedPage: page }) => {
+  test('회원가입 후 홈에 도달한다', { tag: '@smoke' }, async ({ authMockedPage: page }) => {
     // 회원가입 API 성공 응답 모킹 — capture: true로 요청 payload를 캡처한다
     // signup() 내부에서 login()이 자동 호출되므로 회원가입 성공 시 '/'로 바로 이동한다
     const capture = await mockApi(page, 'POST', '/api/v1/auth/signup', createUser(), { capture: true });

@@ -168,7 +168,7 @@ test.describe('AI 챗 audit-analyst', () => {
   /**
    * AA-01: 실패 이벤트 조회 요청 → 응답에 실패 건수 포함
    */
-  test('AA-01: 실패 이벤트 조회 요청 → 응답에 실패 이벤트 요약 포함', async ({ authenticatedPage: page }) => {
+  test('AA-01: 실패 이벤트 조회 요청 → 응답에 실패 이벤트 요약 포함', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'audit-analyst-session-1');
 
     let capturedPayload: Record<string, unknown> | null = null;

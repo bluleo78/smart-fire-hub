@@ -102,7 +102,7 @@ test.describe('AI 챗 api-connection-manager', () => {
    * ACM-01: API 연결 생성 요청 → payload에 '공공데이터포털' 포함 + 응답에 등록 완료 메시지 확인
    * 연결이 등록되었습니다|API_KEY|ID: 5 중 하나 이상이 응답에 포함되어야 한다.
    */
-  test('ACM-01: API 연결 생성 요청 → 연결 등록 완료 응답 확인', async ({ authenticatedPage: page }) => {
+  test('ACM-01: API 연결 생성 요청 → 연결 등록 완료 응답 확인', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'acm-session-1');
 
     // POST body 캡처 — 사용자 메시지가 AI 챗 API에 정확히 전달되는지 검증한다.

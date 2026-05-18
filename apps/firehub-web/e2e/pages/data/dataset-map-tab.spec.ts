@@ -87,7 +87,7 @@ test.describe('데이터셋 상세 — 지도 탭', () => {
     await expect(page.getByRole('tab', { name: '지도' })).toBeVisible();
   });
 
-  test('지도 탭 클릭 시 맵 컨테이너가 렌더링된다', async ({
+  test('지도 탭 클릭 시 맵 컨테이너가 렌더링된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page, 2, detailWithGeometry);

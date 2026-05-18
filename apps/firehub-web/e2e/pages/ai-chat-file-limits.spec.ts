@@ -11,7 +11,7 @@ test.describe('AI 채팅 파일 첨부 사이즈 제한', () => {
   /**
    * 테스트 1: IMAGE 파일 7MB → 첨부 성공 (한도 10MB 이내)
    */
-  test('IMAGE 파일 7MB 첨부가 허용된다 (한도 10MB)', async ({ authenticatedPage: page }) => {
+  test('IMAGE 파일 7MB 첨부가 허용된다 (한도 10MB)', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await page.goto('/');
 
     const fileInput = page.locator('input[type="file"]').first();

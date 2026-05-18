@@ -193,7 +193,7 @@ test.describe('데이터셋 상세 — 내보내기 다이얼로그', () => {
     await expect(page.getByText(/내보내기 준비 중|내보내기 중/)).toBeVisible({ timeout: 8000 });
   });
 
-  test('내보내기 성공 시 다이얼로그가 닫힌다', async ({ authenticatedPage: page }) => {
+  test('내보내기 성공 시 다이얼로그가 닫힌다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupMocks(page);
 
     // 내보내기 POST → 성공 (CSV blob)

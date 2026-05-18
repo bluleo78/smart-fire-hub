@@ -133,7 +133,7 @@ test.describe('AI 챗 dashboard-builder', () => {
   /**
    * DB-01: 대시보드 생성 요청 → 응답에 대시보드/생성 관련 키워드 포함
    */
-  test('DB-01: 대시보드 생성 요청 → 응답에 관련 키워드 포함', async ({ authenticatedPage: page }) => {
+  test('DB-01: 대시보드 생성 요청 → 응답에 관련 키워드 포함', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'dashboard-builder-session-1');
 
     let capturedPayload: Record<string, unknown> | null = null;

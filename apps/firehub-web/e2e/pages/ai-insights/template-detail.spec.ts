@@ -9,7 +9,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - TemplateJsonEditor(CodeMirror) 비동기 렌더링으로 인해 데이터 로딩 대기가 필요하다.
  */
 test.describe('리포트 템플릿 상세 페이지', () => {
-  test('커스텀 템플릿 상세가 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('커스텀 템플릿 상세가 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 커스텀 템플릿(builtin: false)으로 모킹
     // createTemplate 기본값 sections: [{key:'summary', label:'요약'}, {key:'details', label:'상세 내용'}]
     const template = createTemplate({ id: 1, name: '기본 리포트 템플릿', builtin: false });
@@ -68,7 +68,7 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await expect(page.getByRole('button', { name: '삭제' })).toBeVisible();
   });
 
-  test('새 템플릿 페이지에서 생성 폼이 표시된다', async ({ authenticatedPage: page }) => {
+  test('새 템플릿 페이지에서 생성 폼이 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 새 템플릿 페이지 API 모킹 (템플릿 목록만 필요)
     await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });

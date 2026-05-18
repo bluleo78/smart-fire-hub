@@ -163,7 +163,7 @@ async function openChatPanel(page: Page) {
 test.describe('AI 챗 dataset-manager', () => {
   // TODO: 실제 AI 백엔드와 드래그&드롭 파일 업로드 훅 통합 이후 flakiness를 재확인한다.
   // 본 테스트는 SSE 응답을 모킹하므로 AI API 키나 ai-agent 프로세스가 없어도 동작한다.
-  test('CSV 첨부 → GIS 감지 → 신규 데이터셋 생성', async ({ authenticatedPage: page }) => {
+  test('CSV 첨부 → GIS 감지 → 신규 데이터셋 생성', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockChatSSESequence(page);
     await mockAiSessions(page);
     await mockFileUpload(page);

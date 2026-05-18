@@ -8,7 +8,7 @@ import { setupPipelineEditorMocks, setupPipelineMocks } from '../fixtures/pipeli
  * - 목록 → 에디터 이동, 실행 플로우 등 페이지 간 흐름을 통합 검증한다.
  */
 test.describe('파이프라인 워크플로우', () => {
-  test('목록 페이지에서 행 클릭 시 에디터 페이지로 이동한다', async ({
+  test('목록 페이지에서 행 클릭 시 에디터 페이지로 이동한다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     // 목록 API 모킹 (파이프라인 5개)

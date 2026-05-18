@@ -8,7 +8,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 실행 상태(COMPLETED/FAILED/RUNNING)에 따른 UI 렌더링을 검증한다.
  */
 test.describe('실행 상세 페이지', () => {
-  test('완료된 실행의 메타 정보가 올바르게 표시된다', async ({ authenticatedPage: page }) => {
+  test('완료된 실행의 메타 정보가 올바르게 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // COMPLETED 상태 실행 모킹
     // 팩토리 기본값: deliveredChannels:['email'], startedAt:'2024-01-01T09:00:00Z'
     await setupExecutionDetailMocks(page, 1, 1, 'COMPLETED');

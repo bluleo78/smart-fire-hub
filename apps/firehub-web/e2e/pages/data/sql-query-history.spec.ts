@@ -159,7 +159,7 @@ test.describe('SqlQueryHistory — 쿼리 이력 팝오버', () => {
     await expect(page.getByText('테이블을 찾을 수 없습니다')).toBeVisible();
   });
 
-  test('이력 항목 클릭 시 해당 SQL이 에디터에 채워진다', async ({ authenticatedPage: page }) => {
+  test('이력 항목 클릭 시 해당 SQL이 에디터에 채워진다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
     const targetSql = 'SELECT id, name FROM incidents LIMIT 10';
     await mockApi(

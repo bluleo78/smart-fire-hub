@@ -17,7 +17,7 @@ test.describe('사용자 관리 페이지', () => {
     await setupAdminAuth(page);
   });
 
-  test('사용자 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('사용자 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 3명의 사용자 목록 모킹
     await setupUserListMocks(page, 3);
     await page.goto('/admin/users');

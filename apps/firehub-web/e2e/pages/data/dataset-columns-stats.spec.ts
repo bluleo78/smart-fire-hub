@@ -59,7 +59,7 @@ async function setupMocksWithStats(page: import('@playwright/test').Page) {
 }
 
 test.describe('DatasetDetailPage — 탭 전환', () => {
-  test('데이터셋 이름이 페이지 제목에 표시된다', async ({ authenticatedPage: page }) => {
+  test('데이터셋 이름이 페이지 제목에 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDatasetDetailMocks(page, DATASET_ID);
     await page.goto(`/data/datasets/${DATASET_ID}`);
 

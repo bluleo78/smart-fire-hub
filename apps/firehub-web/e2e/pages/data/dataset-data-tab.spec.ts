@@ -80,7 +80,7 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     ]);
   }
 
-  test('데이터 탭 전환 시 행이 렌더링되고 행 수가 헤더에 표시된다', async ({
+  test('데이터 탭 전환 시 행이 렌더링되고 행 수가 헤더에 표시된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupDataTabMocks(page);

@@ -15,7 +15,7 @@ test.describe('설정 페이지', () => {
     await setupAdminAuth(page);
   });
 
-  test('설정 페이지가 올바르게 로드된다', async ({ authenticatedPage: page }) => {
+  test('설정 페이지가 올바르게 로드된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupSettingsMocks(page);
     await page.goto('/admin/settings');
 

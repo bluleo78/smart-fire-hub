@@ -26,7 +26,7 @@ test.describe('AI 인사이트 섹션 트리 — 렌더링 및 트리 조작', (
    * 읽기 전용 모드에서 API로 불러온 섹션들이 트리에 표시된다.
    * useSectionTree의 setSections 초기화 + flatItems 계산 경로를 커버한다.
    */
-  test('템플릿 상세 페이지에서 섹션 목록이 읽기 전용으로 표시된다', async ({ authenticatedPage: page }) => {
+  test('템플릿 상세 페이지에서 섹션 목록이 읽기 전용으로 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupTemplate(page, {
       builtin: false,
       sections: [

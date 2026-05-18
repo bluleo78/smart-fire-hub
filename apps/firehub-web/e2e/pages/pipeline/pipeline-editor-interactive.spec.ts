@@ -23,7 +23,7 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     });
   }
 
-  test('빈 상태 → 스텝 추가 버튼 클릭 시 첫 번째 스텝이 생성된다', async ({
+  test('빈 상태 → 스텝 추가 버튼 클릭 시 첫 번째 스텝이 생성된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupNewEditorMocks(page);

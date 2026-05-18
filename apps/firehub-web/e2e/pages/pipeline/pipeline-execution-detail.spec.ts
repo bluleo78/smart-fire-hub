@@ -14,7 +14,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
 import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
-  test('실행 탭에서 실행 클릭 시 ExecutionSummary가 표시된다', async ({ authenticatedPage: page }) => {
+  test('실행 탭에서 실행 클릭 시 ExecutionSummary가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);
 
     // 실행 상세 API 모킹 (id=1)

@@ -10,7 +10,7 @@ import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
  *   비즈니스 로직(즐겨찾기 토글, 페이지네이션 등)까지 검증한다.
  */
 test.describe('데이터셋 목록 페이지', () => {
-  test('데이터셋 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('데이터셋 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 5개 데이터셋 목록을 모킹한 후 목록 페이지 접근
     await setupDatasetMocks(page);
     await page.goto('/data/datasets');
@@ -40,7 +40,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page.getByRole('row', { name: /데이터셋 5/ })).toBeVisible();
   });
 
-  test('데이터셋 추가 버튼 클릭 시 /new 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('데이터셋 추가 버튼 클릭 시 /new 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDatasetMocks(page);
 
     // 생성 페이지도 미리 카테고리 API 모킹 (이동 후 사용)
@@ -155,7 +155,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page.getByText('데이터셋이 없습니다.')).toBeVisible();
   });
 
-  test('데이터셋 행 클릭 시 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('데이터셋 행 클릭 시 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDatasetMocks(page);
 
     // 상세 페이지 API도 미리 모킹

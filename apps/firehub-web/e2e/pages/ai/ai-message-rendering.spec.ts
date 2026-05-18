@@ -45,7 +45,7 @@ async function sendMessageWithResponse(
 }
 
 test.describe('MessageBubble — 텍스트 렌더링', () => {
-  test('사용자 메시지와 AI 텍스트 응답이 버블로 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('사용자 메시지와 AI 텍스트 응답이 버블로 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await sendMessageWithResponse(
       page,
       '안녕하세요',

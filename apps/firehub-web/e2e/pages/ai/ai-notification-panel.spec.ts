@@ -49,7 +49,7 @@ test.describe('AI 인사이트 알림 패널', () => {
   /** 종 아이콘(Bell) 버튼 locator — 아이콘 전용이라 accessible name 에 'AI 인사이트' 포함 */
   const bellSelector = /AI 인사이트 알림|안 읽은 AI 인사이트/;
 
-  test('종 아이콘 클릭 시 알림 목록이 표시된다', async ({ authenticatedPage: page }) => {
+  test('종 아이콘 클릭 시 알림 목록이 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 패널 open 시 호출되는 messages API 모킹
     await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
 

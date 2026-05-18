@@ -8,7 +8,7 @@ import { setupPipelineMocks } from '../../fixtures/pipeline.fixture';
  * - API 모킹 기반으로 백엔드 없이 목록 페이지 UI를 검증한다.
  */
 test.describe('파이프라인 목록 페이지', () => {
-  test('파이프라인 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('파이프라인 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 5개 파이프라인 목록을 모킹한 후 목록 페이지 접근
     await setupPipelineMocks(page, 5);
     await page.goto('/pipelines');

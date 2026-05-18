@@ -65,7 +65,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     );
   }
 
-  test('행 추가 다이얼로그에서 입력 후 POST /data/rows 호출된다', async ({
+  test('행 추가 다이얼로그에서 입력 후 POST /data/rows 호출된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);
@@ -110,7 +110,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     });
   });
 
-  test('행 더블클릭 → EditRowDialog 표시 및 PUT /data/rows/101 호출된다', async ({
+  test('행 더블클릭 → EditRowDialog 표시 및 PUT /data/rows/101 호출된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);

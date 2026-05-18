@@ -17,7 +17,7 @@ test.describe('API 연결 페이지', () => {
     await setupAdminAuth(page);
   });
 
-  test('API 연결 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('API 연결 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupApiConnectionListMocks(page);
     await page.goto('/admin/api-connections');
 

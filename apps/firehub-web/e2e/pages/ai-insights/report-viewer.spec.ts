@@ -27,7 +27,7 @@ test.describe('리포트 뷰어 페이지', () => {
     await expect(pdfButton).toBeDisabled();
   });
 
-  test('rawHtml이 있으면 인쇄·PDF 버튼이 활성화된다', async ({
+  test('rawHtml이 있으면 인쇄·PDF 버튼이 활성화된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     // 정상 HTML 리포트 모킹 — 버튼이 활성화되어야 한다

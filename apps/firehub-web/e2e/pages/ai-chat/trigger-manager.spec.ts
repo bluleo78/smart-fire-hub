@@ -141,7 +141,7 @@ test.describe('AI 챗 trigger-manager', () => {
   /**
    * TM-01: 스케줄 트리거 생성 요청 → 응답에 트리거/스케줄 관련 키워드 포함
    */
-  test('TM-01: 스케줄 트리거 생성 요청 → 응답에 관련 키워드 포함', async ({ authenticatedPage: page }) => {
+  test('TM-01: 스케줄 트리거 생성 요청 → 응답에 관련 키워드 포함', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockAiSessions(page, 'trigger-manager-session-1');
 
     let capturedPayload: Record<string, unknown> | null = null;

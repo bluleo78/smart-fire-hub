@@ -78,7 +78,7 @@ async function openPanelWithSessions(page: import('@playwright/test').Page) {
 }
 
 test.describe('AI 세션 관리 — SessionSwitcher', () => {
-  test('세션 목록이 있을 때 SessionSwitcher 드롭다운 트리거가 표시된다', async ({
+  test('세션 목록이 있을 때 SessionSwitcher 드롭다운 트리거가 표시된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await openPanelWithSessions(page);

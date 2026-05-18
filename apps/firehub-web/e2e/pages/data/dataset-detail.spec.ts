@@ -21,7 +21,7 @@ async function setupDetailPageMocks(page: import('@playwright/test').Page, datas
  * - 상세 정보 렌더링, 탭 전환, 에러 처리, 즐겨찾기, 태그 기능을 검증한다.
  */
 test.describe('데이터셋 상세 페이지', () => {
-  test('데이터셋 상세 정보가 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('데이터셋 상세 정보가 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
     await page.goto('/data/datasets/1');
 
@@ -42,7 +42,7 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByText('원본').first()).toBeVisible();
   });
 
-  test('탭이 올바르게 렌더링되고 전환된다', async ({ authenticatedPage: page }) => {
+  test('탭이 올바르게 렌더링되고 전환된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
     await page.goto('/data/datasets/1');
 

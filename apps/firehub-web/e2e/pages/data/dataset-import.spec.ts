@@ -93,7 +93,7 @@ async function setupImportMocks(page: import('@playwright/test').Page) {
 }
 
 test.describe('데이터셋 임포트 다이얼로그', () => {
-  test('데이터 탭에 임포트 버튼이 표시된다', async ({ authenticatedPage: page }) => {
+  test('데이터 탭에 임포트 버튼이 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
     await page.goto(`/data/datasets/${DATASET_ID}`);
 
@@ -118,7 +118,7 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
     await expect(page.getByRole('dialog').locator('input[type="file"]')).toBeAttached();
   });
 
-  test('파일 선택 시 미리보기 API가 호출되고 매핑 단계(2단계)로 이동한다', async ({ authenticatedPage: page }) => {
+  test('파일 선택 시 미리보기 API가 호출되고 매핑 단계(2단계)로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
     // 미리보기 API 모킹 — 요청 캡처로 API 호출 여부 검증
     const previewCapture = await mockApi(

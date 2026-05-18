@@ -120,7 +120,7 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
    * validate() === true 분기를 커버한다.
    * CodeMirror 에디터에 내용 입력 후 저장.
    */
-  test('유효한 파이프라인 저장 시 POST API가 호출된다', async ({
+  test('유효한 파이프라인 저장 시 POST API가 호출된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupNewEditorMocks(page);

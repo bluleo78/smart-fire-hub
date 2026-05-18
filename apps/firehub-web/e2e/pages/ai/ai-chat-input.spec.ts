@@ -85,7 +85,7 @@ test.describe('ChatInput — 키보드 동작', () => {
     expect(value).toContain('\n');
   });
 
-  test('Enter 입력 시 메시지가 전송되고 입력창이 초기화된다', async ({ authenticatedPage: page }) => {
+  test('Enter 입력 시 메시지가 전송되고 입력창이 초기화된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // AI 세션 생성 및 SSE 응답 모킹
     await page.route(
       (url) => url.pathname === '/api/v1/ai/sessions',
@@ -319,7 +319,7 @@ test.describe('ChatInput — 파일 크기 및 개수 제한', () => {
 });
 
 test.describe('AISidePanel — 패널 동작', () => {
-  test('side 모드에서 AI 패널이 열리고 입력창이 표시된다', async ({ authenticatedPage: page }) => {
+  test('side 모드에서 AI 패널이 열리고 입력창이 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await openSidePanel(page);
 
     // 입력창이 보이면 side 패널이 열린 것

@@ -8,7 +8,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - API 모킹 기반으로 백엔드 없이 에디터 페이지 UI를 검증한다.
  */
 test.describe('대시보드 에디터 페이지', () => {
-  test('대시보드 로드 시 이름이 툴바에 표시된다', async ({ authenticatedPage: page }) => {
+  test('대시보드 로드 시 이름이 툴바에 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 대시보드 ID=1 관련 API 모킹
     await setupDashboardEditorMocks(page, 1);
 

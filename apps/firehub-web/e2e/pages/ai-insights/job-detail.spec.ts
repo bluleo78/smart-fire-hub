@@ -13,7 +13,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 기존 작업 조회, 실행 이력, 새 작업 생성 폼 UI를 검증한다.
  */
 test.describe('스마트 작업 상세 페이지', () => {
-  test('작업 정보가 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('작업 정보가 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 잡 ID 1 상세 페이지 모킹
     await setupJobDetailMocks(page, 1);
 
@@ -40,7 +40,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText('기본 리포트 템플릿')).toBeVisible();
   });
 
-  test('실행 이력 탭에서 실행 목록을 확인할 수 있다', async ({ authenticatedPage: page }) => {
+  test('실행 이력 탭에서 실행 목록을 확인할 수 있다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 실행 이력 3건 포함하여 모킹 — 첫 번째 FAILED, 나머지 COMPLETED
     await setupJobDetailWithExecutionsMocks(page, 1, 3);
 
@@ -67,7 +67,7 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(completedBadges).toHaveCount(2);
   });
 
-  test('새 작업 페이지에서 생성 폼이 표시된다', async ({ authenticatedPage: page }) => {
+  test('새 작업 페이지에서 생성 폼이 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 새 작업 페이지 API 모킹
     await setupNewJobMocks(page);
 

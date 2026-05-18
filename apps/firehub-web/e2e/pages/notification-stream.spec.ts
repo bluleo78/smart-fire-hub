@@ -31,7 +31,7 @@ test.describe('useNotificationStream — SSE 이벤트 처리', () => {
    * 나중에 등록한 라우트가 우선 적용된다 (Playwright last-match wins).
    */
 
-  test('PIPELINE_COMPLETED 이벤트 수신 시 대시보드 쿼리가 갱신된다', async ({
+  test('PIPELINE_COMPLETED 이벤트 수신 시 대시보드 쿼리가 갱신된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     const notification = {

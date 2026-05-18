@@ -41,7 +41,7 @@ async function gotoTriggerTab(page: Page) {
 }
 
 test.describe('파이프라인 트리거 탭', () => {
-  test('스케줄 트리거 추가 — cron + concurrencyPolicy 가 POST payload 로 전송된다', async ({
+  test('스케줄 트리거 추가 — cron + concurrencyPolicy 가 POST payload 로 전송된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupTriggerTabMocks(page);

@@ -8,7 +8,7 @@ import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
  * - 폼 렌더링, 유효성 검사, 취소 플로우, 서버 에러, API payload 검증을 수행한다.
  */
 test.describe('데이터셋 생성 페이지', () => {
-  test('생성 폼이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('생성 폼이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 카테고리 API 모킹 (폼에서 카테고리 셀렉트 박스에 사용)
     await setupDatasetMocks(page);
     await page.goto('/data/datasets/new');
@@ -92,7 +92,7 @@ test.describe('데이터셋 생성 페이지', () => {
     await expect(page.getByText('이미 존재하는 테이블명입니다.')).toBeVisible();
   });
 
-  test('폼 입력 후 정상 생성 시 상세 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+  test('폼 입력 후 정상 생성 시 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDatasetMocks(page);
 
     // 데이터셋 생성 POST API를 capture: true로 모킹하여 payload를 캡처한다

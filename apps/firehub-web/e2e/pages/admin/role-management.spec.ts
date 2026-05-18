@@ -17,7 +17,7 @@ test.describe('역할 관리 페이지', () => {
     await setupAdminAuth(page);
   });
 
-  test('역할 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('역할 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupRoleListMocks(page);
     await page.goto('/admin/roles');
 

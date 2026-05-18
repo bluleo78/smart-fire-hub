@@ -40,7 +40,7 @@ test.describe('리포트 템플릿 섹션 트리 빌더', () => {
     return { template, updateCapture };
   }
 
-  test('편집 모드에서 "섹션 추가" 드롭다운으로 Text 섹션을 추가한다', async ({ authenticatedPage: page }) => {
+  test('편집 모드에서 "섹션 추가" 드롭다운으로 Text 섹션을 추가한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupEditableTemplate(page);
 
     await page.goto('/ai-insights/templates/10');
@@ -216,7 +216,7 @@ test.describe('리포트 템플릿 섹션 트리 빌더', () => {
     await expect(page.getByText('새 text 섹션').first()).toBeVisible();
   });
 
-  test('저장 시 편집한 sections 가 PUT payload 에 반영된다', async ({ authenticatedPage: page }) => {
+  test('저장 시 편집한 sections 가 PUT payload 에 반영된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     const { updateCapture } = await setupEditableTemplate(page);
 
     await page.goto('/ai-insights/templates/10');

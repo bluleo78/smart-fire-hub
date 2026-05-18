@@ -21,7 +21,7 @@ test.describe('AIStatusChip — 모드 회전', () => {
     await page.goto('/', { waitUntil: 'commit' });
   });
 
-  test('첫 번째 클릭 — side 모드로 AI 패널이 열린다', async ({ authenticatedPage: page }) => {
+  test('첫 번째 클릭 — side 모드로 AI 패널이 열린다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // AI 세션 목록 모킹 (빈 세션, 패널은 렌더링됨)
     await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
 

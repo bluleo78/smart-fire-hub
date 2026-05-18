@@ -7,7 +7,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 목록 렌더링, 빈 상태, 생성 다이얼로그를 검증한다.
  */
 test.describe('카테고리 관리 페이지', () => {
-  test('카테고리 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('카테고리 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 카테고리 3개 목록 모킹
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
 

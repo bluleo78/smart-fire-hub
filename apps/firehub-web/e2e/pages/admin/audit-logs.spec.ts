@@ -16,7 +16,7 @@ test.describe('감사 로그 페이지', () => {
     await setupAdminAuth(page);
   });
 
-  test('감사 로그 목록이 올바르게 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('감사 로그 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupAuditLogMocks(page, 5);
     await page.goto('/admin/audit-logs');
 

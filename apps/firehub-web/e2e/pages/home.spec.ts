@@ -13,7 +13,7 @@ test.describe('홈 페이지', () => {
    * 테스트 1: 기본 렌더링
    * - 로그인 후 홈('/')으로 이동하여 핵심 UI 요소가 표시되는지 확인한다
    */
-  test('홈 페이지 기본 요소가 렌더링된다', async ({ authenticatedPage: page }) => {
+  test('홈 페이지 기본 요소가 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // authenticatedPage는 이미 로그인 + setupHomeMocks가 완료된 상태이므로
     // '/'로 이동하면 대시보드가 정상 로드된다
     await page.goto('/');
