@@ -7,8 +7,8 @@
  */
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import { homedir } from 'os';
+import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
@@ -248,6 +248,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   //   않으므로 영향 없음.
   // CLI 플래그 이름은 `claude --help` 기준 camelCase 와 hyphen 모두 인식되나, 안정성을
   // 위해 hyphen 표기(--allowed-tools / --disallowed-tools) 를 사용한다.
+  // #259: system-prompt 가 매우 크면 --system-prompt 인자로 직접 전달 시
+  // 다른 인자와 누적되어 Linux ARG_MAX(컨테이너 128KB) 초과로 spawn E2BIG 발생.
+  // claude CLI 의 --system-prompt-file 옵션을 사용해 임시 파일 경로로 전달한다.
+  // 임시 파일은 spawn 종료 후 정리.
+  const systemPromptFile = join(tmpdir(), `firehub-sysprompt-${randomUUID()}.txt`);
+  await writeFile(systemPromptFile, effectiveSystemPrompt, 'utf-8');
+
   const cliArgs = [
     '-p', enhancedMessage,
     '--output-format', 'stream-json',
@@ -255,7 +262,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     '--include-partial-messages',
     '--mcp-config', mcpConfigPath,
     '--strict-mcp-config',
-    '--system-prompt', effectiveSystemPrompt,
+    '--system-prompt-file', systemPromptFile,
     '--permission-mode', 'bypassPermissions',
     '--allowed-tools', ALLOWED_TOOLS.join(','),
     '--disallowed-tools', DISALLOWED_TOOLS.join(','),
@@ -424,6 +431,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     if (fileIds?.length) {
       await cleanupChatFiles(chatFilesDir).catch(() => {});
     }
+    // #259: system-prompt 임시 파일 정리
+    await unlink(systemPromptFile).catch(() => {});
 
     const stderr = stderrChunks.join('');
     if (stderr) {

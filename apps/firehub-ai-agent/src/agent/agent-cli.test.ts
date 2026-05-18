@@ -9,12 +9,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
+import { readFileSync } from 'fs';
 
 // child_process.spawn을 모킹하여 실제 CLI를 띄우지 않고 인자만 검증한다.
 const spawnMock = vi.fn();
 vi.mock('child_process', () => ({
   spawn: (...args: unknown[]) => spawnMock(...args),
 }));
+
+// #259: --system-prompt-file 의 파일은 finally 에서 unlink 되므로
+// spawn 호출 시점에 즉시 캡처해두어야 테스트에서 검증 가능.
+let capturedSystemPromptFile: { path: string; content: string } | null = null;
 
 // loadSubagents가 디스크를 읽지 않도록 모킹.
 vi.mock('./subagent-loader.js', async () => {
@@ -59,7 +64,22 @@ function makeFakeChild() {
 describe('executeCliAgent — #240 subagent registration', () => {
   beforeEach(() => {
     spawnMock.mockReset();
-    spawnMock.mockImplementation(() => makeFakeChild());
+    capturedSystemPromptFile = null;
+    spawnMock.mockImplementation((_bin: string, args: unknown) => {
+      const argv = args as string[];
+      // #259: --system-prompt-file 의 임시 파일은 finally 에서 unlink 되므로
+      // spawn 호출 시점에 즉시 읽어 캡처해둔다.
+      const fileIdx = argv.indexOf('--system-prompt-file');
+      if (fileIdx >= 0) {
+        const path = argv[fileIdx + 1];
+        try {
+          capturedSystemPromptFile = { path, content: readFileSync(path, 'utf-8') };
+        } catch {
+          /* ignore */
+        }
+      }
+      return makeFakeChild();
+    });
   });
 
   afterEach(() => {
@@ -130,7 +150,7 @@ describe('executeCliAgent — #240 subagent registration', () => {
     expect(argv).toContain('--disable-slash-commands');
   });
 
-  it('system-prompt에 buildSubagentGuide 결과가 부착되어야 한다', async () => {
+  it('system-prompt-file 의 내용에 buildSubagentGuide 결과가 부착되어야 한다 (#259)', async () => {
     const gen = executeCliAgent({
       message: 'test',
       userId: 1,
@@ -143,9 +163,13 @@ describe('executeCliAgent — #240 subagent registration', () => {
     }
 
     const argv = spawnMock.mock.calls[0][1] as string[];
-    const spIdx = argv.indexOf('--system-prompt');
-    expect(spIdx).toBeGreaterThan(-1);
-    const systemPrompt = argv[spIdx + 1];
+    // #259: --system-prompt 직접 전달이 아닌 --system-prompt-file 로 파일 경로 전달.
+    // ARG_MAX(128KB) 초과로 인한 spawn E2BIG 회피.
+    expect(argv).toContain('--system-prompt-file');
+    expect(argv).not.toContain('--system-prompt');
+
+    expect(capturedSystemPromptFile).not.toBeNull();
+    const systemPrompt = capturedSystemPromptFile!.content;
     // buildSubagentGuide가 반환한 헤더 마커가 포함되어야 한다.
     expect(systemPrompt).toContain('## 전문 에이전트 활용');
     expect(systemPrompt).toContain('pipeline-builder');
