@@ -92,3 +92,4 @@ apps/firehub-api/uploads/
 
 # Superpowers plans/specs (로컬 작업 산출물)
 docs/superpowers/
+.serena/
