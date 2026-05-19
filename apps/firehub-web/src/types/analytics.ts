@@ -113,7 +113,12 @@ export interface ChartConfig {
   yAxisLabel?: string;
   stacked?: boolean;
   spatialColumn?: string;    // MAP 차트: GEOMETRY 컬럼명 (필수)
-  colorByColumn?: string;    // MAP 차트: 색상 기준 컬럼 (선택)
+  colorByColumn?: string;    // MAP 차트: 색상 기준 컬럼 (선택, points 모드 전용)
+
+  // MAP 차트 표시 모드 — 'points' (기존 점/폴리곤) vs 'heatmap' (좌표 밀도). 기본 'points' (#119)
+  mapDisplayMode?: 'points' | 'heatmap';
+  // MAP+heatmap 전용 가중치 컬럼 (numeric, 선택). 미지정 시 균등 가중치 1. (#119)
+  weightColumn?: string;
   // HISTOGRAM: 구간 수 (기본 20)
   bins?: number;
   // HEATMAP: 셀 색상 기준 컬럼 (xAxis=행, yAxis[0]=열)
