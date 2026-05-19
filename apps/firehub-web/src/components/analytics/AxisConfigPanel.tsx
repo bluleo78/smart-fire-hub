@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from '../ui/select';
 import { Switch } from '../ui/switch';
+import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 
 interface AxisConfigPanelProps {
   chartType: ChartType;
@@ -28,9 +29,33 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
   const isMap = chartType === 'MAP';
 
   if (isMap) {
+    const mode = config.mapDisplayMode ?? 'points';
     return (
       <div className="space-y-4">
-        {/* 공간 컬럼 (필수) */}
+        {/* 표시 모드 — 점 / 히트맵 토글 (#119) */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            표시 모드
+          </Label>
+          <Tabs
+            value={mode}
+            onValueChange={(next) =>
+              update({
+                mapDisplayMode: next as 'points' | 'heatmap',
+                // 모드 전환 시 반대 모드 전용 필드 초기화
+                weightColumn: next === 'points' ? undefined : config.weightColumn,
+                colorByColumn: next === 'heatmap' ? undefined : config.colorByColumn,
+              })
+            }
+          >
+            <TabsList className="h-8">
+              <TabsTrigger value="points" className="text-xs">점</TabsTrigger>
+              <TabsTrigger value="heatmap" className="text-xs">히트맵</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {/* 공간 컬럼 (필수, 공통) */}
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
             공간 컬럼
@@ -39,7 +64,7 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
             value={config.spatialColumn || NO_COLUMN}
             onValueChange={(v) => update({ spatialColumn: v === NO_COLUMN ? undefined : v })}
           >
-            <SelectTrigger className="h-8 text-sm">
+            <SelectTrigger className="h-8 text-sm" aria-label="공간 컬럼">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -53,30 +78,62 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
           </Select>
         </div>
 
-        {/* 색상 기준 (선택) */}
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            색상 기준 (선택사항)
-          </Label>
-          <Select
-            value={config.colorByColumn || NO_COLUMN}
-            onValueChange={(v) => update({ colorByColumn: v === NO_COLUMN ? undefined : v })}
-          >
-            <SelectTrigger className="h-8 text-sm">
-              <SelectValue placeholder="선택 안 함" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
-              {columns
-                .filter((col) => col !== config.spatialColumn)
-                .map((col) => (
-                  <SelectItem key={col} value={col}>
-                    {col}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* points 모드: 색상 기준 */}
+        {mode === 'points' && (
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              색상 기준 (선택사항)
+            </Label>
+            <Select
+              value={config.colorByColumn || NO_COLUMN}
+              onValueChange={(v) => update({ colorByColumn: v === NO_COLUMN ? undefined : v })}
+            >
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue placeholder="선택 안 함" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+                {columns
+                  .filter((col) => col !== config.spatialColumn)
+                  .map((col) => (
+                    <SelectItem key={col} value={col}>
+                      {col}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* heatmap 모드: 가중치 컬럼 */}
+        {mode === 'heatmap' && (
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              가중치 컬럼 (선택사항)
+            </Label>
+            <Select
+              value={config.weightColumn || NO_COLUMN}
+              onValueChange={(v) => update({ weightColumn: v === NO_COLUMN ? undefined : v })}
+            >
+              <SelectTrigger className="h-8 text-sm" aria-label="가중치 컬럼">
+                <SelectValue placeholder="없음 — 균등 가중치" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_COLUMN}>없음 — 균등 가중치</SelectItem>
+                {columns
+                  .filter((col) => col !== config.spatialColumn)
+                  .map((col) => (
+                    <SelectItem key={col} value={col}>
+                      {col}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              값이 클수록 해당 위치의 밀도 기여가 커집니다.
+            </p>
+          </div>
+        )}
       </div>
     );
   }
