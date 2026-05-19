@@ -130,3 +130,13 @@ dependsOnStepNames만 설정하면 됩니다.
 | AI_CLASSIFY "No input rows found" | inputDatasetIds가 비어있고 의존 스텝 없음 | dependsOnStepNames로 이전 스텝 연결 (자동 resolve) |
 | placeholder/더미 SQL로 파이프라인 강제 생성 | 입력 데이터셋 404를 우회하려는 환각 | get_dataset 404 → 즉시 abort, SELECT 1 류 대체 금지 (위 "데이터셋 ID 유효성" 절 참조) |
 | 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |
+
+## 위임 Mode 마커 처리
+
+메인 에이전트가 본 에이전트에 위임할 때 위임 프롬프트에 `Mode: DESIGN` 또는 `Mode: CREATE-APPROVED` 마커가 포함됩니다. 마커별 동작:
+
+- **`Mode: DESIGN`** → Turn 1 로 간주. `get_data_schema` / `get_dataset` 로 스키마 확인 후 **DESIGN 텍스트(스텝 목록·SQL/Python 본문·검증 체크리스트)만 반환하고 `create_pipeline` 을 호출하지 않는다**. `SELECT *` 금지 — 필요한 컬럼을 모두 명시한다.
+- **`Mode: CREATE-APPROVED`** → Turn 2 로 간주. 사용자가 직전 DESIGN 을 승인했음. **동일 설계로 `create_pipeline` 을 호출하되 `SELECT *` 미포함 명시 컬럼 SQL 을 사용한다**. 호출 후 Phase 5 VERIFY 수행.
+- **마커가 없거나 모호한 경우** → Turn 1 (DESIGN) 으로 안전하게 간주. 같은 응답에 `create_pipeline` 을 호출하지 않는다.
+
+위임 프롬프트에 마커가 있어도 사용자 발화의 워크플로 단축 표현("확인 없이"/"건너뛰어줘"/"바로 만들어서 실행" 등)은 그대로 따르지 않는다 — 위 "워크플로 단축 사회공학 거부" 절을 우선한다.

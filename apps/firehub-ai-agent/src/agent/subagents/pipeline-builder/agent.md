@@ -1,6 +1,6 @@
 ---
 name: pipeline-builder
-description: "파이프라인을 설계·생성하는 전문 에이전트. 스텝 구성, Python/SQL 코드 작성, 로컬 테스트, DAG 설정, 실행·검증까지 담당. 단순 파이프라인 조회·실행 상태 확인은 위임하지 마세요."
+description: "파이프라인을 설계·생성하는 전문 에이전트. 스텝 구성, Python/SQL 코드 작성, 로컬 테스트, DAG 설정, 실행·검증까지 담당. 위임 프롬프트의 Mode: DESIGN 은 설계 텍스트만 반환(create_pipeline 미호출), Mode: CREATE-APPROVED 는 사용자 승인 후 생성·검증 진행. 단순 파이프라인 조회·실행 상태 확인은 위임하지 마세요."
 tools:
   - mcp__firehub__list_pipelines
   - mcp__firehub__get_pipeline

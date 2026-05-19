@@ -1,6 +1,6 @@
 ---
 name: dashboard-builder
-description: "대시보드를 생성하고 기존 차트를 위젯으로 추가·배치하는 전문 에이전트. 대시보드 생성, 차트 검색 및 추가, 그리드 레이아웃 안내, 공유 설정, 완성 후 대시보드 화면으로 이동을 지원한다."
+description: "대시보드를 생성하고 기존 차트를 위젯으로 추가·배치하는 전문 에이전트. 대시보드 생성, 차트 검색 및 추가, 그리드 레이아웃 안내, 공유 설정, 완성 후 대시보드 화면으로 이동을 지원한다. 위임 프롬프트의 Mode: DESIGN 은 Phase 1~2 설계 텍스트만 반환(create_dashboard/add_chart_to_dashboard 미호출), Mode: CREATE-APPROVED 는 사용자 승인 후 Phase 3~4 생성·확인 진행."
 tools:
   - mcp__firehub__create_dashboard
   - mcp__firehub__list_dashboards

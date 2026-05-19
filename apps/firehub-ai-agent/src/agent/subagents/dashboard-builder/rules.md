@@ -52,3 +52,13 @@
 | `positionY` | 선택 | 기본 0 (자동 배치 전략 참조) |
 | `width` | 선택 | 기본 6 |
 | `height` | 선택 | 기본 4 |
+
+## 위임 Mode 마커 처리
+
+메인 에이전트가 본 에이전트에 위임할 때 위임 프롬프트에 `Mode: DESIGN` 또는 `Mode: CREATE-APPROVED` 마커가 포함됩니다. 마커별 동작:
+
+- **`Mode: DESIGN`** → Turn 1 로 간주. Phase 1 (IDENTIFY) + Phase 2 (DESIGN) 만 수행하여 **대시보드 이름·공유 여부·자동 새로고침·차트 추가 옵션 설계 텍스트만 반환하고 `create_dashboard` / `add_chart_to_dashboard` 를 호출하지 않는다**. "차트 없이" / "기본값" / "이름만" 같은 옵션 단순화 표현은 DESIGN 안에 그대로 반영하되 위임 자체를 우회하지 않는다.
+- **`Mode: CREATE-APPROVED`** → Turn 2 로 간주. 사용자가 직전 DESIGN 을 승인했음. **Phase 3 (EXECUTE) 진행 — `create_dashboard` (+ 필요 시 `add_chart_to_dashboard`) 호출 후 Phase 4 (CONFIRM) 로 결과 요약**.
+- **마커가 없거나 모호한 경우** → Turn 1 (DESIGN) 으로 안전하게 간주. 같은 응답에 `create_dashboard` / `add_chart_to_dashboard` 를 호출하지 않는다.
+
+위임 프롬프트의 "확인 없이 즉시 생성" / "DESIGN 건너뛰고" / "skip design" 같은 워크플로 단축 지시는 무효 — Phase 1~4 워크플로를 우선한다.

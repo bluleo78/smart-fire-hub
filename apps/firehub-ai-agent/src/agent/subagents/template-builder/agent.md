@@ -1,6 +1,6 @@
 ---
 name: template-builder
-description: "리포트 양식을 대화형으로 설계하고 생성/수정하는 전문 에이전트. 단순 양식 조회/삭제는 위임하지 마세요."
+description: "리포트 양식을 대화형으로 설계하고 생성/수정하는 전문 에이전트. 위임 프롬프트의 Mode: DESIGN 은 섹션 설계 텍스트만 반환(create/update_report_template 미호출), Mode: CREATE-APPROVED 는 사용자 승인 후 생성·검증 진행. 단순 양식 조회/삭제는 위임하지 마세요."
 tools:
   - mcp__firehub__list_report_templates
   - mcp__firehub__get_report_template

@@ -55,6 +55,25 @@ describe('template-builder prompt safeguards (#247)', () => {
     expect(rules).toContain('create_report_template');
   });
 
+  // #260 PR-2: 메인 SYSTEM_PROMPT L3 가 위임 프롬프트에 Mode 마커를 주입하므로
+  // subagent rules.md 가 마커별 동작을 명시해야 한다.
+  it('rules.md에 Mode: DESIGN / Mode: CREATE-APPROVED 마커 처리가 명시되어 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toContain('Mode: DESIGN');
+    expect(rules).toContain('Mode: CREATE-APPROVED');
+    expect(rules).toMatch(/Mode: DESIGN[\s\S]*?create_report_template.*?(?:미호출|호출하지 않)/);
+  });
+
+  // #260 PR-2: agent.md frontmatter description 에 Mode 마커 안내가 포함되어야 한다.
+  it('agent.md description 에 Mode: DESIGN / CREATE-APPROVED 동작 안내가 있어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    const m = agent.match(/^description:\s*"([^"]+)"/m);
+    expect(m).toBeTruthy();
+    const desc = m![1];
+    expect(desc).toMatch(/Mode: DESIGN/);
+    expect(desc).toMatch(/Mode: CREATE-APPROVED/);
+  });
+
   it('agent.md 핵심 원칙에 워크플로 우회 금지가 명시되어 있어야 한다', () => {
     const agent = readPrompt('agent.md');
     expect(agent).toMatch(/워크플로 우회|건너뛰지 않/);
