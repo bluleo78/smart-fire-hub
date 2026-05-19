@@ -89,6 +89,23 @@ describe('Inspector 회귀 보호망 (refs #260)', () => {
         );
       }
     });
+
+    // #261: 메인 L3 의 위임 프롬프트 형식이 "두 마커 외 wording 대체 금지" 강제력으로 명시되어야 함.
+    // (이전엔 "위임 시 위임 프롬프트에: - Turn 1 → Mode: DESIGN" 같은 약한 표현이라 메인 LLM 이
+    //  실제 위임 시 "L3 가드를 준수하세요" 같은 일반 지시로 대체하는 경향 발생)
+    it('메인 L3 가 위임 프롬프트 첫 줄에 마커 강제 + wording 대체 금지를 명시한다', () => {
+      const l3 = SYSTEM_PROMPT.split('## L3. 통합 가드 패턴')[1];
+      expect(l3).toBeDefined();
+      // "위임 프롬프트 형식" 섹션 헤더 또는 동등 표현
+      expect(l3).toMatch(/위임 프롬프트 형식|위임 프롬프트는.*반드시.*첫 줄/);
+      // "첫 줄" 명시
+      expect(l3).toContain('첫 줄');
+      // "wording 으로 대체 금지" 또는 동등
+      expect(l3).toMatch(/대체.*금지|대체할 수 없|두 마커 외/);
+      // 올바른 예 + 잘못된 예
+      expect(l3).toMatch(/✅.*Mode: DESIGN|올바른.*Mode: DESIGN/s);
+      expect(l3).toMatch(/❌.*잘못된|마커 누락/);
+    });
   });
 
   // 시나리오 3: 응답 출력 규칙 — 도구 식별자 / 권한 메타 / 시크릿 노출 금지 단일 정의.
