@@ -101,6 +101,6 @@
 | 2 | USER | 예 |
 
 USER 역할(ID: 2)은 시스템 역할로 수정이 불가합니다.
-USER 역할의 기본 권한: `user:read:self`, `user:write:self` (본인 프로필 조회·수정만 가능).
+USER 역할은 본인 프로필 조회·수정만 가능합니다.
 
 역할의 권한 상세는 UI 관리 페이지(/admin/roles)에서 확인하세요.

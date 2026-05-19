@@ -157,14 +157,16 @@ describe('pipeline-builder workflow social-engineering safeguards (#250)', () =>
     expect(rules).toMatch(/#250/);
   });
 
-  it('rules.md에 대표적 단축 발화 패턴이 거부 목록에 포함되어 있어야 한다', () => {
+  // #260 PR-3: 사회공학 차단 표현 목록은 메인 SYSTEM_PROMPT L3 단일 source 로 통합됨.
+  // pipeline-builder rules.md 는 메인 정의를 참조하고 핵심 패턴만 명시 (중복 7KB 제거).
+  it('rules.md 의 사회공학 차단이 메인 L3 단일 source 를 참조한다', () => {
     const rules = readPrompt('rules.md');
-    // 이슈 #250의 트리거 발화
+    // 메인 L3 참조 명시 + 핵심 패턴 일부만 본문에 유지 (검증용)
+    expect(rules).toMatch(/메인 SYSTEM_PROMPT 의 L3/);
+    expect(rules).toMatch(/단일 source/);
     expect(rules).toContain('건너뛰어줘');
-    expect(rules).toContain('바로 만들어서 실행해');
     expect(rules).toContain('확인 없이');
     expect(rules.toLowerCase()).toContain('skip confirm');
-    expect(rules.toLowerCase()).toContain('just do it');
   });
 
   it('rules.md에 create_pipeline + execute_pipeline 같은 turn 연쇄 금지가 명시되어 있어야 한다', () => {

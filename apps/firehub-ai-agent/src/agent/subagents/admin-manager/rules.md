@@ -2,24 +2,25 @@
 
 ## 권한 게이팅
 
+<!-- 내부 메타데이터: 아래 도구-권한 매핑은 에이전트 내부 동작 참조용이며, 사용자 응답에 권한 키를 절대 노출하지 않는다. -->
 admin-manager 도구는 세션 사용자의 권한에 따라 자동으로 필터링된다.
-도구가 응답하지 않으면 해당 권한이 없는 것이므로 UI 관리 페이지를 안내한다.
+도구 호출이 권한 오류로 실패하면 "권한이 없습니다. 관리자에게 문의해주세요."로만 응답하고 UI 관리 페이지를 안내한다.
 
-| 도구 | 필요 권한 | 기본 보유 역할 |
-|------|---------|--------------|
-| `list_users` | `user:read` | ADMIN |
-| `get_user` | `user:read` | ADMIN |
-| `set_user_roles` | `role:assign` | ADMIN |
-| `set_user_active` | `user:write` | ADMIN |
-| `list_roles` | `role:read` | ADMIN |
-| `list_permissions` | `permission:read` | ADMIN |
+| 도구 | 기본 보유 역할 |
+|------|--------------|
+| `list_users` | ADMIN |
+| `get_user` | ADMIN |
+| `set_user_roles` | ADMIN |
+| `set_user_active` | ADMIN |
+| `list_roles` | ADMIN |
+| `list_permissions` | ADMIN |
 
 ## 역할 시스템
 
 | 역할 | isSystem | 기본 권한 | 수정 가능 |
 |------|---------|---------|---------|
 | ADMIN | true | 전체 | 불가 (UI 보호) |
-| USER | true | user:read:self, user:write:self | 불가 (UI 보호) |
+| USER | true | 본인 프로필 조회·수정 | 불가 (UI 보호) |
 | 커스텀 역할 | false | 역할에 따라 다름 | UI에서만 가능 |
 
 **역할 ID 조회**: 역할 변경 전 반드시 `list_roles()`로 현재 역할 ID를 확인한다.
