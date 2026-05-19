@@ -728,8 +728,9 @@ describe('SL-AM: admin-manager subagent integration', () => {
     const agents = loadSubagents(realSubagentsDir);
 
     const prompt = agents['admin-manager'].prompt;
-    // rules.md 핵심 키워드 — 권한 게이팅 표 + set_user_roles 동작 설명
-    expect(prompt).toContain('role:assign');
+    // rules.md 핵심 키워드 — 권한 게이팅 설명 + set_user_roles 동작 설명
+    // (권한 키 평문 노출 금지 #254 정책 준수: role:assign 등 권한 키는 rules.md에서 제거됨)
+    expect(prompt).toContain('권한이 없습니다. 관리자에게 문의해주세요');
     expect(prompt).toContain('교체(replace)');
     // #260: examples.md 는 기본 제외.
     expect(prompt).not.toContain('김철수');
