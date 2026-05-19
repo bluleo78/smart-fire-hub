@@ -1,3 +1,13 @@
+<!--
+이 문서는 trigger-manager 에이전트의 동작 규칙입니다. 메인 SYSTEM_PROMPT 와 호응하는
+4 레이어 구조를 따릅니다 (적응형):
+
+- L1. 워크플로 — Phase 1~5 (자체 정의)
+- L2. 도구 정책 — 트리거 CRUD 사전 조건 (pipelineId 필수 등)
+- L3. 통합 가드 — 파괴 작업(delete_trigger) 2턴 + 사회공학 우회 차단 (메인 L3 정의를 따름)
+- L4. N+1 호출 금지 — 메인 L4 (list_triggers pipelineId 필수) 정책을 따름
+-->
+
 # trigger-manager — 규칙 참조
 
 ## 트리거 유형별 config 스키마
@@ -134,6 +144,8 @@
 ```
 
 ⚠️ 이 응답 안에서 `list_triggers`를 호출하지 않는다. 사용자가 파이프라인을 지정하는 **다음 턴**에 1회만 호출한다.
+
+list_triggers 사용 시 메인 SYSTEM_PROMPT L4 의 'pipelineId 필수 + 미지정 단순 조회 시 list_pipelines 1회 후 되묻기' 정책을 따른다.
 
 ## update_trigger — 변경 가능 필드
 
