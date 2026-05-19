@@ -64,14 +64,17 @@ describe('template-builder prompt safeguards (#247)', () => {
     expect(rules).toMatch(/Mode: DESIGN[\s\S]*?create_report_template.*?(?:미호출|호출하지 않)/);
   });
 
-  // #260 PR-2: agent.md frontmatter description 에 Mode 마커 안내가 포함되어야 한다.
-  it('agent.md description 에 Mode: DESIGN / CREATE-APPROVED 동작 안내가 있어야 한다', () => {
+  // #260 PR-2 회수: description 은 메인 LLM 의 라우팅 결정용이므로 capability 만 명시.
+  // Mode 마커 같은 위임 프롬프트 디테일은 description 에 넣지 않는다 (rules.md 에만 유지).
+  it('agent.md description 에 capability(설계 → 사용자 승인 → 생성) 흐름이 명시된다', () => {
     const agent = readPrompt('agent.md');
     const m = agent.match(/^description:\s*"([^"]+)"/m);
     expect(m).toBeTruthy();
     const desc = m![1];
-    expect(desc).toMatch(/Mode: DESIGN/);
-    expect(desc).toMatch(/Mode: CREATE-APPROVED/);
+    expect(desc).toMatch(/설계/);
+    expect(desc).toMatch(/승인/);
+    // 내부 마커는 description 에 누출 금지
+    expect(desc).not.toMatch(/Mode:/);
   });
 
   it('agent.md 핵심 원칙에 워크플로 우회 금지가 명시되어 있어야 한다', () => {
