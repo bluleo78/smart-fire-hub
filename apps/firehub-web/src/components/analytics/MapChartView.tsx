@@ -3,11 +3,15 @@ import { useMemo, useState } from 'react';
 
 import { FeaturePopup } from '@/components/map/FeaturePopup';
 import { GeoJsonLayer } from '@/components/map/GeoJsonLayer';
+import { HeatmapLayer } from '@/components/map/HeatmapLayer';
 import { MapView } from '@/components/map/MapView';
 import { toFeatureCollection } from '@/lib/geo-utils';
 import type { GeoJsonFeature } from '@/types/dataset';
 
 import type { ChartConfig } from '../../types/analytics';
+
+// heatmap 모드에서 행 수가 이 값을 초과하면 inline 경고 배지 노출. 렌더링은 시도. (#119 Risk)
+const HEATMAP_ROW_WARN = 50_000;
 
 interface MapChartViewProps {
   config: ChartConfig;
@@ -66,22 +70,43 @@ export function MapChartView({ config, data, height }: MapChartViewProps) {
     );
   }
 
+  const isHeatmap = config.mapDisplayMode === 'heatmap';
+  const showRowWarning = isHeatmap && data.length > HEATMAP_ROW_WARN;
+
   return (
     <div className="relative rounded-lg overflow-hidden" style={{ height: height ?? '100%' }}>
       <MapView className="w-full h-full" onMapReady={setMapInstance} />
       {mapInstance && (
-        <>
-          <GeoJsonLayer
+        isHeatmap ? (
+          <HeatmapLayer
             map={mapInstance}
             data={featureCollection}
-            onFeatureClick={setSelectedFeature}
+            weightProperty={config.weightColumn}
           />
-          <FeaturePopup
-            map={mapInstance}
-            feature={selectedFeature}
-            onClose={() => setSelectedFeature(null)}
-          />
-        </>
+        ) : (
+          <>
+            <GeoJsonLayer
+              map={mapInstance}
+              data={featureCollection}
+              onFeatureClick={setSelectedFeature}
+            />
+            <FeaturePopup
+              map={mapInstance}
+              feature={selectedFeature}
+              onClose={() => setSelectedFeature(null)}
+            />
+          </>
+        )
+      )}
+      {showRowWarning && (
+        <div
+          className="absolute top-2 right-2 z-10 rounded-md bg-yellow-100/90 text-yellow-900 px-2 py-1 text-xs shadow"
+          role="status"
+          aria-live="polite"
+          data-testid="heatmap-row-warning"
+        >
+          데이터 {data.length.toLocaleString()}행 — 렌더링 성능 저하 가능
+        </div>
       )}
     </div>
   );
