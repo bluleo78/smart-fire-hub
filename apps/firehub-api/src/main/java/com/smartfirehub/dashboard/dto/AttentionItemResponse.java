@@ -3,7 +3,7 @@ package com.smartfirehub.dashboard.dto;
 import java.time.LocalDateTime;
 
 public record AttentionItemResponse(
-    String type, // PIPELINE_FAILED, DATASET_STALE, IMPORT_FAILED
+    String type, // PIPELINE_FAILED, IMPORT_FAILED
     String severity, // CRITICAL, WARNING
     String title,
     String description,

@@ -261,42 +261,6 @@ class DashboardHealthTest extends IntegrationTestBase {
   }
 
   @Test
-  void getAttentionItems_containsStaleDatasets() {
-    List<AttentionItemResponse> items = dashboardService.getAttentionItems();
-
-    // stale dataset (48h) → WARNING
-    List<AttentionItemResponse> staleItems =
-        items.stream()
-            .filter(i -> "DATASET_STALE".equals(i.type()))
-            .filter(i -> i.entityId().equals(staleDatasetId))
-            .toList();
-    assertThat(staleItems).hasSize(1);
-    assertThat(staleItems.get(0).severity()).isEqualTo("WARNING");
-
-    // critical stale dataset (96h) → CRITICAL
-    List<AttentionItemResponse> criticalItems =
-        items.stream()
-            .filter(i -> "DATASET_STALE".equals(i.type()))
-            .filter(i -> i.entityId().equals(criticalStaleDatasetId))
-            .toList();
-    assertThat(criticalItems).hasSize(1);
-    assertThat(criticalItems.get(0).severity()).isEqualTo("CRITICAL");
-  }
-
-  @Test
-  void getAttentionItems_freshDatasetNotInList() {
-    List<AttentionItemResponse> items = dashboardService.getAttentionItems();
-
-    // Fresh dataset should NOT appear in attention items
-    boolean hasFreshAsStale =
-        items.stream()
-            .filter(i -> "DATASET_STALE".equals(i.type()))
-            .anyMatch(i -> i.entityId().equals(freshDatasetId));
-
-    assertThat(hasFreshAsStale).isFalse();
-  }
-
-  @Test
   void getAttentionItems_sortedBySeverityThenDate() {
     List<AttentionItemResponse> items = dashboardService.getAttentionItems();
 

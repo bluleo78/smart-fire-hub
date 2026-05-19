@@ -331,7 +331,6 @@ public class DashboardService {
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime twoHoursAgo = now.minusHours(2);
     LocalDateTime twentyFourHoursAgo = now.minusHours(24);
-    LocalDateTime seventyTwoHoursAgo = now.minusHours(72);
 
     // 1. Failed pipelines: active pipelines whose latest execution is FAILED
     // Get latest execution per pipeline
@@ -396,64 +395,6 @@ public class DashboardService {
               pipelineId,
               "PIPELINE",
               lastFailedAt != null ? lastFailedAt : now));
-    }
-
-    // 2. Stale source datasets: 24h+ no successful import
-    // WARNING: 24h~72h, CRITICAL: 72h+
-    var staleDatasets =
-        dsl.select(D_ID, D_NAME, field("last_import.last_import_at", LocalDateTime.class))
-            .from(DATASET)
-            .leftJoin(
-                dsl.select(
-                        AL_RESOURCE_ID.as("dataset_rid"), max(AL_ACTION_TIME).as("last_import_at"))
-                    .from(AUDIT_LOG)
-                    .where(
-                        AL_ACTION_TYPE
-                            .eq("IMPORT")
-                            .and(AL_RESOURCE.eq("dataset"))
-                            .and(AL_RESULT.eq("SUCCESS")))
-                    .groupBy(AL_RESOURCE_ID)
-                    .asTable("last_import"))
-            .on(D_ID.cast(String.class).eq(field("last_import.dataset_rid", String.class)))
-            .where(
-                D_DATASET_TYPE
-                    .eq("SOURCE")
-                    .and(
-                        // no import at all, or last import older than 24h
-                        field("last_import.last_import_at", LocalDateTime.class)
-                            .isNull()
-                            .or(
-                                field("last_import.last_import_at", LocalDateTime.class)
-                                    .lessOrEqual(twentyFourHoursAgo)))
-                    // exclude brand-new datasets (created <24h ago with no import — not yet stale)
-                    .and(
-                        D_CREATED_AT
-                            .lessOrEqual(twentyFourHoursAgo)
-                            .or(
-                                field("last_import.last_import_at", LocalDateTime.class)
-                                    .isNotNull())))
-            .fetch();
-
-    for (Record r : staleDatasets) {
-      Long datasetId = r.get(D_ID);
-      String datasetName = r.get(D_NAME);
-      LocalDateTime lastImportAt = r.get(field("last_import.last_import_at", LocalDateTime.class));
-
-      boolean isCritical = lastImportAt == null || lastImportAt.isBefore(seventyTwoHoursAgo);
-      String severity = isCritical ? "CRITICAL" : "WARNING";
-
-      String description =
-          lastImportAt != null ? "마지막 갱신: " + formatTimeAgo(lastImportAt, now) : "임포트 이력 없음";
-
-      items.add(
-          new AttentionItemResponse(
-              "DATASET_STALE",
-              severity,
-              "데이터셋 '" + datasetName + "' 오래됨",
-              description,
-              datasetId,
-              "DATASET",
-              lastImportAt != null ? lastImportAt : now));
     }
 
     // 3. Failed imports within last 24h: WARNING
