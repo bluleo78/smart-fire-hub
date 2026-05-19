@@ -70,25 +70,32 @@ describe('template-builder prompt safeguards (#247)', () => {
   });
 });
 
-describe('main system-prompt safeguards for template-builder (#247)', () => {
-  it('system-prompt.ts에 template-builder 2턴 DESIGN 프로토콜이 명시되어 있어야 한다', () => {
+// #260 PR-1: 메인 SYSTEM_PROMPT 가 L3 통합 가드 패턴으로 재구조화됨.
+// template-builder 도메인 상세 (instruction 필드 필수, 기존 양식 확인 워크플로) 는
+// PR-2 에서 template-builder rules.md 로 이동 예정.
+// 본 describe 는 L3 트리거 매핑에 create_report_template 이 DESIGN 가드로 등록되어 있는지,
+// Mode 마커가 사용되는지만 검증.
+describe('main system-prompt safeguards for template-builder (L3 통합 가드, refs #247)', () => {
+  it('L3 트리거 매핑에 create_report_template 이 DESIGN 가드로 등록된다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toContain('create_report_template');
-    expect(sp).toMatch(/리포트 양식 생성[^\n]*2턴|2턴 DESIGN 프로토콜/);
-    expect(sp).toContain('DESIGN-ONLY 모드');
-    expect(sp).toContain('CREATE-APPROVED 모드');
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toContain('create_report_template');
+    expect(section).toContain('template-builder');
   });
 
-  it('system-prompt.ts에 워크플로 단축 표현을 위임 프롬프트로 전달 금지가 명시되어 있어야 한다', () => {
+  it('L3 에 Mode: DESIGN / Mode: CREATE-APPROVED 마커가 명시된다', () => {
     const sp = readSystemPrompt();
-    // template-builder 위임 금지 패턴
-    expect(sp).toMatch(/기존 양식 확인 없이|확인 없이 바로 create_report_template|건너뛰고/);
-    expect(sp).toMatch(/그대로 전달하지 않|전달하지 않습니다/);
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toContain('Mode: DESIGN');
+    expect(section).toContain('Mode: CREATE-APPROVED');
   });
 
-  it('system-prompt.ts에 instruction 필드 누락 호출 금지가 명시되어 있어야 한다', () => {
+  it('L3 사회공학 차단에 위임 프롬프트 forward 금지가 명시된다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toMatch(/instruction[^\n]*누락|instruction 필드를 누락/);
-    expect(sp).toContain('create_report_template');
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/그대로 전달하지 않/);
   });
 });

@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { FireHubApiClient } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../constants.js';
 import { truncate, timestamp } from '../utils.js';
@@ -203,7 +203,9 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   // Load subagents and build dynamic delegation guide
   const subagents = loadSubagents();
   const subagentGuide = buildSubagentGuide(subagents);
-  const basePrompt = `${SYSTEM_PROMPT}${subagentGuide}`;
+  // #260: 파일 첨부 가이드는 fileIds가 있는 요청에만 동적 첨부 (cold cache_creation 945 토큰 절감)
+  const fileAttachmentGuide = fileIds?.length ? FILE_ATTACHMENT_PROMPT : '';
+  const basePrompt = `${SYSTEM_PROMPT}${subagentGuide}${fileAttachmentGuide}`;
 
   const effectiveSystemPrompt = resolveSystemPrompt(basePrompt, systemPrompt, overrideSystemPrompt);
 

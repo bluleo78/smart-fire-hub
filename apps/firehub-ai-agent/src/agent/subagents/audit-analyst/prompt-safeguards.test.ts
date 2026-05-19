@@ -71,13 +71,13 @@ describe('audit-analyst prompt safeguards (#246)', () => {
 });
 
 describe('main system-prompt safeguards (#246)', () => {
-  it('system-prompt.ts에 묻지 않은 사용자 PII 자발적 노출 금지가 명시되어 있어야 한다', () => {
+  it('system-prompt.ts에 L5 PII 마스킹 섹션이 명시되어 있어야 한다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toContain('묻지 않은 사용자 PII 자발적 노출 금지');
+    expect(sp).toContain('## L5. PII 마스킹 (전역)');
     expect(sp).toContain('list_audit_logs');
-    // 이메일/식별정보 키워드
+    // 이메일/마스킹 키워드
     expect(sp).toMatch(/이메일/);
-    expect(sp).toMatch(/식별정보/);
+    expect(sp).toMatch(/마스킹/);
   });
 
   it('system-prompt.ts에 마스킹 또는 집계로만 표시 원칙이 있어야 한다', () => {
@@ -87,11 +87,10 @@ describe('main system-prompt safeguards (#246)', () => {
     expect(sp).toMatch(/❌/);
   });
 
-  it('system-prompt.ts에 관리자 전용 도구 호출 전 권한 고지 규칙이 있어야 한다', () => {
+  it('system-prompt.ts에 audit:read 권한 및 권한 없음 처리 규칙이 있어야 한다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toContain('관리자 전용 도구 호출 전 권한 고지');
+    // L2 응답 출력 규칙에 audit:read 및 권한 없음 안내 포함
     expect(sp).toContain('audit:read');
-    // 권한 에러 시 도구 추가 호출 금지
-    expect(sp).toMatch(/403|권한 에러|권한 없음/);
+    expect(sp).toMatch(/권한이 없습니다|권한 없음/);
   });
 });

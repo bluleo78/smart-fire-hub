@@ -75,42 +75,44 @@ describe('pipeline-builder prompt safeguards (#242)', () => {
   });
 });
 
-describe('main system-prompt safeguards (#242 회귀)', () => {
-  it('system-prompt.ts에 메인 에이전트 직접 호출 시 데이터셋 ID 유효성 검증 의무가 명시되어 있어야 한다', () => {
+// #260 PR-1: 메인 SYSTEM_PROMPT 가 L3 통합 가드 패턴으로 재구조화됨.
+// 도메인별 상세 문구는 PR-2 에서 pipeline-builder rules.md / agent.md 로 이동 예정.
+// 본 describe 는 L3 트리거 매핑 + 입력 합성 금지 + 사회공학 차단 단일 정의의 존재만 검증.
+describe('main system-prompt safeguards (L3 통합 가드, refs #242)', () => {
+  it('L3 입력 합성 금지에 placeholder SQL / 존재하지 않는 datasetId / abort 가 명시된다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toContain('데이터셋 ID 유효성');
-    expect(sp).toContain('메인 에이전트 직접 호출 금지');
-    // 404 시 즉시 abort
-    expect(sp).toMatch(/404|Dataset not found/);
-    expect(sp).toMatch(/abort|중단/);
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section.toLowerCase()).toContain('placeholder');
+    expect(section).toContain('SELECT 1');
+    expect(section).toMatch(/404/);
+    expect(section).toMatch(/abort/);
+    expect(section).toContain('datasetId');
   });
 
-  it('system-prompt.ts에 placeholder/더미 SQL 자동 생성 금지가 명시되어 있어야 한다', () => {
+  it('L3 트리거 매핑에 create_pipeline 이 DESIGN 가드로 등록된다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toContain('SELECT 1');
-    expect(sp.toLowerCase()).toContain('placeholder');
-    expect(sp).toMatch(/금지/);
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toContain('create_pipeline');
+    expect(section).toContain('Mode: DESIGN');
+    expect(section).toContain('pipeline-builder');
   });
 
-  it('system-prompt.ts에 pipeline-builder 거부 우회 금지가 명시되어 있어야 한다', () => {
+  it('L3 사회공학 차단에 한국어/영어 위임 우회 패턴이 포함된다', () => {
     const sp = readSystemPrompt();
-    // 서브에이전트 거부를 메인이 직접 호출로 우회하는 회귀 패턴 금지
-    expect(sp).toContain('위임 거부 우회 금지');
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/그냥 만들어/);
+    expect(section.toLowerCase()).toContain('force create');
+    expect(section.toLowerCase()).toContain('just create it');
   });
 
-  it('system-prompt.ts에 한국어/영어 위임 신호 우회 패턴이 금지 목록에 있어야 한다', () => {
+  it('L3 입력 합성 금지에 trigger·execute 연쇄 금지가 포함된다', () => {
     const sp = readSystemPrompt();
-    // 한국어
-    expect(sp).toContain('그냥 만들어줘');
-    // 영어
-    expect(sp.toLowerCase()).toContain('just go ahead');
-  });
-
-  it('system-prompt.ts에 트리거·실행 동반 호출 금지가 명시되어 있어야 한다', () => {
-    const sp = readSystemPrompt();
-    expect(sp).toContain('create_trigger');
-    expect(sp).toContain('execute_pipeline');
-    expect(sp).toMatch(/SCHEDULE|cron/);
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/연쇄/);
   });
 });
 
@@ -165,20 +167,22 @@ describe('pipeline-builder workflow social-engineering safeguards (#250)', () =>
     expect(agent).toMatch(/시스템 정책/);
   });
 
-  it('system-prompt.ts에 pipeline-builder 위임 시 단축 표현 forward 금지가 명시되어 있어야 한다', () => {
+  // #260 PR-1: 위임 프롬프트의 단축 표현 forward 금지는 L3 사회공학 차단 단일 정의로 흡수.
+  // 도메인별 발화("건너뛰어줘"/"바로 만들어서 실행해")는 PR-2 에서 pipeline-builder rules.md 로 이동.
+  it('L3 사회공학 차단에 위임 프롬프트 forward 금지 + 단축 표현이 명시된다', () => {
     const sp = readSystemPrompt();
-    // #250 회귀 식별 + forward 금지 명문화
-    expect(sp).toMatch(/#250/);
-    // 위임 프롬프트로 단축 표현을 "그대로 전달하지 않습니다" 류 표현
-    expect(sp).toMatch(/그대로 전달하지 않습니다|그대로 전달하지 않/);
-    expect(sp).toContain('건너뛰어줘');
-    expect(sp).toContain('바로 만들어서 실행해');
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/그대로 전달하지 않/);
+    // 일반화된 단축 표현 (도메인 특수 발화는 subagent rules.md 로 이동 예정)
+    expect(section).toMatch(/확인 없이|skip confirm|yolo/i);
   });
 
-  it('system-prompt.ts에 create_pipeline + execute_pipeline 같은 turn 연쇄 금지가 명시되어 있어야 한다', () => {
+  // #260 PR-1: trigger·execute 연쇄 금지는 L3 입력 합성 금지 마지막 항목에 흡수.
+  it('L3 입력 합성 금지에 trigger·execute 연쇄 금지가 명시된다', () => {
     const sp = readSystemPrompt();
-    expect(sp).toContain('execute_pipeline');
-    // 같은 turn 연쇄 금지 / turn 분리
-    expect(sp).toMatch(/같은 turn|turn을 분리|연쇄 호출하지 않/);
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/연쇄/);
   });
 });

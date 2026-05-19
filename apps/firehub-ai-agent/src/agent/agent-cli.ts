@@ -14,7 +14,7 @@ import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
@@ -242,7 +242,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 시스템 프롬프트에 동적 위임 가이드를 부착(SDK 프로바이더와 동일 패턴).
   // subagent 이름 변경/추가 시 system-prompt.ts 정적 표와 동시에 갱신되도록 한다.
   const subagentGuide = buildSubagentGuide(subagents);
-  const basePromptWithGuide = `${SYSTEM_PROMPT}${subagentGuide}`;
+  // #260: 파일 첨부 가이드는 fileIds가 있는 요청에만 동적 첨부 (cold cache_creation 945 토큰 절감)
+  const fileAttachmentGuide = fileIds?.length ? FILE_ATTACHMENT_PROMPT : '';
+  const basePromptWithGuide = `${SYSTEM_PROMPT}${subagentGuide}${fileAttachmentGuide}`;
   const effectiveSystemPrompt = resolveSystemPrompt(basePromptWithGuide, systemPrompt, overrideSystemPrompt);
 
   // #256: SDK 프로바이더와 동일한 정책을 CLI 프로바이더에도 적용한다.
