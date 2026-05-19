@@ -64,7 +64,8 @@ public final class SqlValidationUtils {
       // 단순 upper().contains() 방식은 CTE 컬럼 리터럴 'needs update' 같은 값을 오탐한다.
       String noLiterals = stripStringLiterals(withoutTrailingSemicolon).toUpperCase();
 
-      // 보안 (이슈 #227): 데이터 수정 CTE(`WITH d AS (DELETE/UPDATE/INSERT/MERGE/TRUNCATE ... RETURNING) SELECT ...`)는
+      // 보안 (이슈 #227): 데이터 수정 CTE(`WITH d AS (DELETE/UPDATE/INSERT/MERGE/TRUNCATE ... RETURNING)
+      // SELECT ...`)는
       // 본문이 SELECT여도 PostgreSQL이 CTE 내부 DML을 실제로 실행한다. 따라서 readOnly 모드에서 SELECT로 분류하면
       // 우회가 발생한다. CTE 정의 내부에서 DML 키워드가 발견되면 해당 DML 타입을 반환해 readOnly 검증이 차단하도록 한다.
       String cteDml = detectCteInnerDml(noLiterals);
@@ -80,12 +81,11 @@ public final class SqlValidationUtils {
   /**
    * WITH 절 내부의 CTE 정의(괄호 안)에서 DML 키워드를 탐지한다.
    *
-   * <p>data-modifying CTE는 PostgreSQL 표준 기능으로, `WITH name AS (DELETE/UPDATE/INSERT/MERGE/TRUNCATE ... RETURNING)`
-   * 형태가 가능하며 본문이 SELECT여도 내부 DML이 실제로 실행된다. readOnly 검증을 우회하지 못하도록 CTE 내부에서 DML이
+   * <p>data-modifying CTE는 PostgreSQL 표준 기능으로, `WITH name AS (DELETE/UPDATE/INSERT/MERGE/TRUNCATE
+   * ... RETURNING)` 형태가 가능하며 본문이 SELECT여도 내부 DML이 실제로 실행된다. readOnly 검증을 우회하지 못하도록 CTE 내부에서 DML이
    * 발견되면 해당 키워드를 반환한다.
    *
-   * <p>괄호 깊이 1 이상(CTE 본체)에서 단어 경계로 구분된 DML 키워드를 탐색한다. 문자열 리터럴은 호출 전에 이미 제거되어
-   * 있어야 한다.
+   * <p>괄호 깊이 1 이상(CTE 본체)에서 단어 경계로 구분된 DML 키워드를 탐색한다. 문자열 리터럴은 호출 전에 이미 제거되어 있어야 한다.
    *
    * @param upperNoLiterals 대문자 변환 + 문자열 리터럴 제거된 SQL
    * @return CTE 내부에서 발견된 DML 키워드("DELETE"/"UPDATE"/"INSERT"/"MERGE"/"TRUNCATE"), 없으면 null
@@ -117,9 +117,7 @@ public final class SqlValidationUtils {
     return null;
   }
 
-  /**
-   * 위치 i가 단어 경계인지(앞 문자가 영문/숫자/밑줄이 아닌지) 검사한다. i==0이면 단어 경계로 간주한다.
-   */
+  /** 위치 i가 단어 경계인지(앞 문자가 영문/숫자/밑줄이 아닌지) 검사한다. i==0이면 단어 경계로 간주한다. */
   private static boolean isWordBoundary(String s, int i) {
     if (i == 0) return true;
     char prev = s.charAt(i - 1);

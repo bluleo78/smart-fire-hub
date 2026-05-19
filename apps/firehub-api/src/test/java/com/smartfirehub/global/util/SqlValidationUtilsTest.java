@@ -131,8 +131,7 @@ class SqlValidationUtilsTest {
   @Test
   void detectQueryType_nestedCteWithDelete_returnsDelete() {
     // 중첩 CTE — 두 번째 CTE가 data-modifying
-    String sql =
-        "WITH x AS (SELECT 1), d AS (DELETE FROM t WHERE 1=0 RETURNING *) SELECT * FROM d";
+    String sql = "WITH x AS (SELECT 1), d AS (DELETE FROM t WHERE 1=0 RETURNING *) SELECT * FROM d";
     assertThat(SqlValidationUtils.detectQueryType(sql)).isEqualTo("DELETE");
   }
 

@@ -68,8 +68,8 @@ class SlackWorkspaceRepositoryImpl implements SlackWorkspaceRepository {
   /**
    * 활성 워크스페이스(revoked_at IS NULL) 중 가장 최근 설치된 1건 반환.
    *
-   * <p>installed_by_user_id 기준 정렬이 아닌 id DESC로 단순 정렬 (현재 단일 워크스페이스 모델). signing_secret/previous
-   * 컬럼도 함께 매핑한다 — 컬럼 누락 시 NPE 발생 가능.
+   * <p>installed_by_user_id 기준 정렬이 아닌 id DESC로 단순 정렬 (현재 단일 워크스페이스 모델). signing_secret/previous 컬럼도
+   * 함께 매핑한다 — 컬럼 누락 시 NPE 발생 가능.
    */
   @Override
   public Optional<SlackWorkspace> findFirstActive() {
