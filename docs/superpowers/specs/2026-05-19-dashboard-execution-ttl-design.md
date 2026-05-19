@@ -33,22 +33,24 @@
 - audit_log TTL — 별도 정책 필요, 본 범위 외.
 - 스케줄 누락(cron 예정 vs 실제 실행) 알림 — 시스템에 스케줄 개념 없음, 별도 설계 필요, 본 범위 외.
 
-## 4. DB 변경 — V50 마이그레이션
+## 4. DB 변경 — V59 마이그레이션
+
+현재 최신 마이그레이션은 V58이므로 신규는 V59. 기존 FK 이름은 `trigger_event_execution_id_fkey`로 확인됨.
 
 ```sql
--- V50__trigger_event_cascade_on_execution_delete.sql
+-- V59__trigger_event_cascade_on_execution_delete.sql
 -- trigger_event.execution_id FK 를 ON DELETE CASCADE 로 변경.
 -- pipeline_execution TTL 정리 시 자식 trigger_event 행이 자동 정리되도록.
 
 ALTER TABLE trigger_event
-  DROP CONSTRAINT <기존 FK 이름>;
+    DROP CONSTRAINT IF EXISTS trigger_event_execution_id_fkey;
 
 ALTER TABLE trigger_event
-  ADD CONSTRAINT trigger_event_execution_id_fkey
-    FOREIGN KEY (execution_id) REFERENCES pipeline_execution(id) ON DELETE CASCADE;
+    ADD CONSTRAINT trigger_event_execution_id_fkey
+        FOREIGN KEY (execution_id) REFERENCES pipeline_execution(id) ON DELETE CASCADE;
 ```
 
-기존 FK 이름은 마이그레이션 작성 시 `information_schema.table_constraints`로 확인 후 정확한 이름 사용.
+`application.yml`의 `flyway.baseline-version`을 59로 업데이트.
 
 데이터 변경 없음, 짧은 lock, 안전.
 
@@ -159,7 +161,7 @@ public class PipelineExecutionTtlJob {
 ```
 feat(dashboard): pipeline_execution 90일 TTL + stale 카드 제거 (refs #223, closes #224)
 
-- V50 마이그레이션: trigger_event.execution_id FK ON DELETE CASCADE
+- V59 마이그레이션: trigger_event.execution_id FK ON DELETE CASCADE
 - PipelineExecutionTtlJob: 매일 자정, COMPLETED + 90일 경과 행 삭제 (env override)
 - DashboardService.getAttentionItems: stale 데이터셋 블록 제거
 - Frontend: AttentionList stale 섹션 + 타입 정리
@@ -174,7 +176,7 @@ feat(dashboard): pipeline_execution 90일 TTL + stale 카드 제거 (refs #223, 
 ## 11. 변경 파일 요약
 
 신규:
-- `apps/firehub-api/src/main/resources/db/migration/V50__trigger_event_cascade_on_execution_delete.sql`
+- `apps/firehub-api/src/main/resources/db/migration/V59__trigger_event_cascade_on_execution_delete.sql`
 - `apps/firehub-api/src/main/java/com/smartfirehub/dashboard/job/PipelineExecutionTtlJob.java`
 - `apps/firehub-api/src/test/java/com/smartfirehub/dashboard/job/PipelineExecutionTtlJobTest.java`
 
