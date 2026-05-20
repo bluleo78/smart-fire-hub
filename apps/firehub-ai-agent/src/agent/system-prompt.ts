@@ -269,8 +269,10 @@ export const FILE_ATTACHMENT_PROMPT = `
 
 ## 파일 첨부 처리
 
-사용자가 파일을 첨부하면 [첨부 파일] 섹션에 로컬 경로가 표시됩니다.
+사용자가 파일을 첨부하면 [첨부 파일] 섹션에 \`fileId=<숫자>\`와 로컬 경로가 함께 표시됩니다.
 Read 도구로 파일을 읽을 수 있습니다.
+
+- **fileId 사용 (필수, refs #264)**: 데이터셋 임포트 관련 MCP 도구(\`preview_csv\` / \`validate_import\` / \`start_import\`)를 호출할 때는 안내문의 \`fileId\` 값을 그대로 인자로 넘긴다. fileId는 채팅에 첨부된 파일의 서버 식별자이며 로컬 경로와 별개다. 이 값을 추측하거나 임의로 부여하지 않는다.
 
 - 이미지·PDF: Read 도구로 직접 읽기
 - 텍스트·CSV: Read 도구로 읽되, 대용량은 offset/limit 활용

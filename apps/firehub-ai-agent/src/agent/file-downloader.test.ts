@@ -15,7 +15,14 @@ vi.mock('fs/promises', () => ({
 }));
 
 import fs from 'fs/promises';
-import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, purgeExpiredSessionAttachments } from './file-downloader.js';
+import {
+  downloadChatFiles,
+  cleanupChatFiles,
+  toAttachmentMeta,
+  purgeExpiredSessionAttachments,
+  formatAttachmentLine,
+  buildNonImageAttachmentSection,
+} from './file-downloader.js';
 import type { FireHubApiClient } from '../mcp/api-client.js';
 
 const TEST_DIR = '/tmp/test-chat-files';
@@ -245,6 +252,55 @@ describe('toAttachmentMeta', () => {
   it('returns empty array for empty input', () => {
     const result = toAttachmentMeta([]);
     expect(result).toEqual([]);
+  });
+});
+
+// 회귀: 첨부 안내문에 fileId 누락 시 dataset-manager가 preview_csv 호출 불가 — #264
+describe('formatAttachmentLine / buildNonImageAttachmentSection (refs #264)', () => {
+  const csvFile = {
+    fileId: 42,
+    originalName: '강릉 화재.csv',
+    mimeType: 'text/csv',
+    fileSize: 100 * 1024,
+    fileCategory: 'csv',
+    localPath: '/tmp/firehub/강릉_화재.csv',
+  };
+  const imageFile = {
+    fileId: 7,
+    originalName: 'screenshot.png',
+    mimeType: 'image/png',
+    fileSize: 50 * 1024,
+    fileCategory: 'image',
+    localPath: '/tmp/firehub/screenshot.png',
+  };
+
+  it('비이미지(includeCategory=true) 안내에 fileId, 카테고리, 크기, 로컬경로가 모두 포함된다', () => {
+    const line = formatAttachmentLine(csvFile, true);
+    expect(line).toContain('fileId=42');
+    expect(line).toContain('csv');
+    expect(line).toContain('100.0KB');
+    expect(line).toContain('/tmp/firehub/강릉_화재.csv');
+    expect(line).toContain('강릉 화재.csv');
+  });
+
+  it('이미지(includeCategory=false) 안내에도 fileId가 포함된다 (일관 포맷)', () => {
+    const line = formatAttachmentLine(imageFile, false);
+    expect(line).toContain('fileId=7');
+    expect(line).toContain('50.0KB');
+    // includeCategory=false면 카테고리는 빠진다
+    expect(line).not.toMatch(/\bimage,\s*\d/);
+  });
+
+  it('buildNonImageAttachmentSection은 "[첨부 파일]" 헤더 + 각 줄 fileId + Read 안내 포함', () => {
+    const section = buildNonImageAttachmentSection([csvFile, { ...csvFile, fileId: 99, originalName: 'b.csv' }]);
+    expect(section).toContain('[첨부 파일]');
+    expect(section).toContain('fileId=42');
+    expect(section).toContain('fileId=99');
+    expect(section).toContain('Read 도구로 읽을 수 있습니다');
+  });
+
+  it('빈 배열이면 빈 문자열을 반환한다', () => {
+    expect(buildNonImageAttachmentSection([])).toBe('');
   });
 });
 

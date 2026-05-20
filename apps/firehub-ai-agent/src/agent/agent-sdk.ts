@@ -11,7 +11,13 @@ import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../cons
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
-import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttachments } from './file-downloader.js';
+import {
+  downloadChatFiles,
+  cleanupChatFiles,
+  toAttachmentMeta,
+  saveSessionAttachments,
+  formatAttachmentLine,
+} from './file-downloader.js';
 import { ALLOWED_TOOLS, DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 import type { SSEEvent } from '../providers/types.js';
@@ -178,19 +184,20 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
         }
 
         // 비이미지 파일 안내 + 사용자 메시지를 text block으로 추가
+        // fileId 포함은 formatAttachmentLine이 single source of truth (refs #264)
         let textContent = message || '첨부된 파일을 분석해주세요.';
         if (nonImageFiles.length > 0) {
           const fileList = nonImageFiles
-            .map((f) => `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
+            .map((f) => formatAttachmentLine(f, true))
             .join('\n');
           textContent = `[첨부 파일]\n${fileList}\nRead 도구로 읽을 수 있습니다.\n\n` + textContent;
         }
         blocks.push({ type: 'text' as const, text: textContent });
         imageContentBlocks = blocks;
       } else {
-        // 비이미지 파일만 있는 경우: 기존 텍스트 방식
+        // 비이미지 파일만 있는 경우: 동일 helper 사용
         const fileList = nonImageFiles
-          .map((f) => `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
+          .map((f) => formatAttachmentLine(f, true))
           .join('\n');
         enhancedMessage =
           `[첨부 파일]\n${fileList}\n\n` +

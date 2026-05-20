@@ -70,6 +70,34 @@ export async function cleanupChatFiles(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 }
 
+/**
+ * 첨부 파일 목록의 한 줄 안내 포맷을 생성한다.
+ *
+ * <p>fileId 포함 사유 (refs #264): dataset-manager 등 임포트 워크플로의 MCP 도구
+ * (preview_csv / validate_import / start_import)는 서버 측 fileId를 필수 인자로
+ * 받는다. 안내문에서 누락되면 모델이 도구를 호출하지 못해 사용자가 직접 임포트하라는
+ * 응답으로 빠진다.
+ *
+ * @param file 다운로드된 첨부 파일
+ * @param includeCategory true면 카테고리(`csv`, `image` 등) 표시
+ */
+export function formatAttachmentLine(file: DownloadedFile, includeCategory: boolean): string {
+  const sizeKb = (file.fileSize / 1024).toFixed(1);
+  const meta = includeCategory ? `${file.fileCategory}, ${sizeKb}KB` : `${sizeKb}KB`;
+  return `- ${file.originalName} (${meta}, fileId=${file.fileId}): ${file.localPath}`;
+}
+
+/**
+ * 비이미지 파일 배열을 텍스트 안내 섹션으로 변환한다 (SDK/CLI 경로 공통 포맷).
+ *
+ * @returns "[첨부 파일]\n- ...\nRead 도구로 ..." 형식의 문자열. 파일이 없으면 빈 문자열.
+ */
+export function buildNonImageAttachmentSection(files: DownloadedFile[]): string {
+  if (files.length === 0) return '';
+  const lines = files.map((f) => formatAttachmentLine(f, true)).join('\n');
+  return `[첨부 파일]\n${lines}\nRead 도구로 읽을 수 있습니다.`;
+}
+
 /** DownloadedFile 배열 → AttachmentMeta 배열 변환 */
 export function toAttachmentMeta(files: DownloadedFile[]): AttachmentMeta[] {
   return files.map((f) => ({

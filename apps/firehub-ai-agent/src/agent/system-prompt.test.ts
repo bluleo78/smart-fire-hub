@@ -387,6 +387,10 @@ describe('SYSTEM_PROMPT', () => {
       // #262: 경로 제한 wording 강화 — "경로 제한" 헤더 + Bash 명령 차단 명시
       expect(FILE_ATTACHMENT_PROMPT).toContain('경로 제한');
       expect(FILE_ATTACHMENT_PROMPT).toMatch(/첨부 파일 경로/);
+      // #264: fileId 사용 가이드 — preview_csv/validate_import/start_import이 fileId 필수이므로
+      // 안내문의 fileId 값을 그대로 인자로 넘기도록 명시되어 있어야 한다
+      expect(FILE_ATTACHMENT_PROMPT).toContain('fileId');
+      expect(FILE_ATTACHMENT_PROMPT).toMatch(/preview_csv|validate_import|start_import/);
     });
   });
 

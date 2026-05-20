@@ -22,7 +22,13 @@ import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL } from '../constants.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
-import { downloadChatFiles, cleanupChatFiles, toAttachmentMeta, saveSessionAttachments } from './file-downloader.js';
+import {
+  downloadChatFiles,
+  cleanupChatFiles,
+  toAttachmentMeta,
+  saveSessionAttachments,
+  formatAttachmentLine,
+} from './file-downloader.js';
 import { ALLOWED_TOOLS, DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 /** CLI 트랜스크립트 파일 형식 */
@@ -155,18 +161,14 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
       const parts: string[] = ['[첨부 파일]'];
 
-      // 이미지 파일: Read 도구가 이미지를 시각적으로 표시할 수 있음을 명시
+      // formatAttachmentLine이 fileId 포함 포맷의 single source of truth (refs #264)
       if (imageFiles.length > 0) {
-        const imgList = imageFiles
-          .map((f) => `- ${f.originalName} (${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
-          .join('\n');
+        const imgList = imageFiles.map((f) => formatAttachmentLine(f, false)).join('\n');
         parts.push(`[이미지]\n${imgList}\n→ Read 도구로 열면 이미지를 직접 볼 수 있습니다. 반드시 Read로 열어서 시각적으로 분석하세요.`);
       }
 
       if (nonImageFiles.length > 0) {
-        const fileList = nonImageFiles
-          .map((f) => `- ${f.originalName} (${f.fileCategory}, ${(f.fileSize / 1024).toFixed(1)}KB): ${f.localPath}`)
-          .join('\n');
+        const fileList = nonImageFiles.map((f) => formatAttachmentLine(f, true)).join('\n');
         parts.push(`[파일]\n${fileList}\n→ Read 도구로 읽을 수 있습니다.`);
       }
 
