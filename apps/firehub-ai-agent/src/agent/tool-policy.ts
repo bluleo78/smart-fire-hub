@@ -1,40 +1,46 @@
 /**
- * 메인 에이전트 도구 정책 (single source of truth — #256).
+ * 메인 에이전트 도구 정책 (single source of truth — #256, #266).
  *
  * SDK 프로바이더(agent-sdk.ts)와 CLI 프로바이더(agent-cli.ts)가 동일한 정책으로
  * 도구 화이트리스트/블랙리스트를 적용하도록 공유 상수로 분리한다.
  *
- * 회귀 발견 경위 (#256 라운드 2):
- *   - SDK 프로바이더에는 allowedTools/disallowedTools 가 query() 옵션으로 적용돼 있었으나,
- *     CLI 프로바이더(spawn 'claude')에는 --allowed-tools/--disallowed-tools 플래그가 누락
- *     되어 호스트 도구(Skill, TaskCreate, Bash 등)가 그대로 호출됐다.
- *   - 추가로 SDK 가 allow/disallow 를 "추가 허용" 으로 해석하는 엣지 케이스가 있을 수 있어
- *     런타임 in-flight 검사(tool_use 이벤트에서 차단)를 보조 안전망으로 둔다.
+ * 정책 모델 — allow-by-default (#266):
+ *   메인 챗의 역할은 라우팅/위임이며 실제 작업은 subagent 가 수행한다. deny-by-default 모델은
+ *   호스트 도구 ecosystem 이 확장될 때마다(예: AskUserQuestion 신규 등장) "tool not in allow list"
+ *   회귀를 반복적으로 만들어 사용자 무응답 사고를 유발했다. 따라서 **구체적 위험이 있는 도구만
+ *   명시 차단**하고 그 외는 모두 허용한다. 운영(컨테이너)·로컬(호스트) 모두 동일 정책 — 로컬
+ *   환경에서도 호스트 위협 도구가 차단되도록 보수적 기준 유지.
  *
- * 정책:
- *   - allowed: firehub MCP 도구(`mcp__firehub__*`) + 서브에이전트 위임(`Agent`)
- *   - disallowed: host skill/task ecosystem, host 파일 IO/shell, 외부 네트워크,
- *     meta-search(ToolSearch)
+ * 회귀 발견 경위:
+ *   - #256: SDK/CLI 옵션 불일치로 host 도구가 막히지 않음 → tool-policy 도입
+ *   - #262: Read/Bash 가 deny-by-default 에 걸려 첨부 파일 처리 불가 → 허용
+ *   - #266: AskUserQuestion 이 동일 사유로 차단되어 dataset-manager 워크플로 불가 →
+ *           allow-by-default 로 정책 모델을 뒤집고 위험 도구만 명시 차단
  */
 
-/** 허용 도구 화이트리스트. allowed list 와 disallowed list 는 동시에 적용된다. */
-export const ALLOWED_TOOLS: readonly string[] = [
-  'mcp__firehub__*',
-  'Agent',
-  // #262: 파일 첨부 처리용 — Read (이미지/PDF/텍스트/CSV) + Bash (XLSX/DOCX python3 처리)
-  // FILE_ATTACHMENT_PROMPT (system-prompt.ts) 가 이 도구 사용을 지시하며, 첨부 파일 경로
-  // (~/chat-files/*) 외 접근은 SYSTEM_PROMPT 에서 금지. fileIds 없는 요청에는 가이드 자체가
-  // 첨부되지 않으므로 LLM 이 호출할 동기 없음.
-  'Read',
-  'Bash',
-] as const;
-
-/** 명시 차단 도구 블랙리스트(이중 안전망). */
+/**
+ * 명시 차단 도구 블랙리스트.
+ *
+ * 차단 사유:
+ *   - **호스트 파일 변조**: Write/Edit/NotebookEdit — 로컬 dev 에선 사용자 홈/git, 운영 컨테이너에선
+ *     마운트된 볼륨 변조 위험. 데이터 변경은 firehub MCP 도구로만 진행.
+ *   - **호스트 ecosystem 부산물**: Skill 은 \`~/.claude/skills\` 의 markdown 을 로드해 모델이 본업에서
+ *     이탈하는 사고를 만들고(#256 trace skill-repro-010), Task* 는 채팅 SSE 채널 외부에 백그라운드
+ *     작업을 만들어 결과가 사용자에게 도달하지 못한다. 비동기 잡은 firehub MCP/Jobrunr 로 일원화.
+ *   - **meta-search 우회 (#216)**: ToolSearch 는 매 호출마다 한 턴씩 더 소비하고 SDK 가 disallowedTools
+ *     에 포함된 경우 자동 비활성화로 폴백한다. 우리는 firehub MCP 만 등록하므로 발견 대상도 없음.
+ *
+ * 풀린 도구 (참고):
+ *   - Read/Bash/Glob/Grep/LS — 첨부 파일 처리(#262, #266)
+ *   - AskUserQuestion/TodoWrite/ExitPlanMode — 채팅 UX (#266)
+ *   - WebSearch/WebFetch — 외부 정보 조회 (#266 사용자 결정)
+ */
 export const DISALLOWED_TOOLS: readonly string[] = [
-  // meta-search (#216)
-  'ToolSearch',
-  'mcp__claude-search__*',
-  // skill/task ecosystem (#256)
+  // 호스트 파일 변조
+  'Write',
+  'Edit',
+  'NotebookEdit',
+  // host skill/task ecosystem
   'Skill',
   'TaskCreate',
   'TaskUpdate',
@@ -42,47 +48,45 @@ export const DISALLOWED_TOOLS: readonly string[] = [
   'TaskGet',
   'TaskStop',
   'TaskOutput',
-  // host filesystem / shell 일부 — Write/Edit/NotebookEdit/Glob/Grep/LS 는 첨부 처리에 불필요하므로 차단 유지
-  'Write',
-  'Edit',
-  'NotebookEdit',
-  'Glob',
-  'Grep',
-  'LS',
-  // 외부 네트워크
-  'WebFetch',
-  'WebSearch',
+  // meta-search 우회 (#216)
+  'ToolSearch',
+  'mcp__claude-search__*',
 ] as const;
 
 /**
- * 런타임 in-flight 차단 — tool_use 블록의 도구명이 허용되지 않으면 true.
+ * (Legacy) 허용 도구 화이트리스트.
  *
- * SDK/CLI 옵션이 어떤 이유로 무력화되더라도(예: 옵션 미전달, plugin 채널 우회) 스트림
- * 파서가 tool_use 이벤트를 받는 즉시 자체 정책으로 차단할 수 있도록 한다.
+ * SDK/CLI 의 \`allowedTools\` 옵션이 deny-by-default 효과를 갖기 때문에, allow-by-default 정책을
+ * 달성하려면 \`allowedTools\` 자체를 미전달해야 한다 (#266 — agent-sdk.ts / agent-cli.ts 에서 제외).
+ * 본 상수는 핵심 도구 목록을 명시한 보조 변수로, 런타임 in-flight 검사(\`checkToolPolicy\`)는
+ * 이 목록을 참조하지 않는다.
+ */
+export const ALLOWED_TOOLS: readonly string[] = [
+  'mcp__firehub__*',
+  'Agent',
+] as const;
+
+/**
+ * 런타임 in-flight 차단 — allow-by-default (#266).
  *
  * 규칙:
- *   1. DISALLOWED_TOOLS 에 정확히 매칭(또는 `mcp__claude-search__*` 같은 prefix-패턴)되면 차단
- *   2. ALLOWED_TOOLS 의 어떤 패턴에도 매칭되지 않으면 차단(deny-by-default)
+ *   1. DISALLOWED_TOOLS 에 정확히 매칭(또는 \`mcp__claude-search__*\` 같은 prefix-패턴)되면 차단
+ *   2. 그 외는 모두 허용 — 새 호스트 도구가 추가돼도 자동 통과되어 무응답 회귀를 막는다
  *
- * @param toolName SDK/CLI 가 보고한 tool_use.name (예: 'mcp__firehub__list_datasets', 'Skill')
+ * @param toolName SDK/CLI 가 보고한 tool_use.name
  * @returns 차단 사유 문자열(차단해야 할 때) 또는 null(허용)
  */
 export function checkToolPolicy(toolName: string): string | null {
-  if (!toolName) return null; // 빈 이름은 파싱 노이즈 — 상위에서 처리
-  // 1) 명시 차단 — 정확 일치 또는 prefix(`*` 와일드카드) 매칭
+  if (!toolName) return null; // 빈 이름은 파싱 노이즈
   for (const pat of DISALLOWED_TOOLS) {
     if (matchToolPattern(pat, toolName)) {
       return `host tool blocked by policy (#256): ${toolName}`;
     }
   }
-  // 2) 허용 화이트리스트 — 매칭 패턴이 하나라도 있어야 통과
-  for (const pat of ALLOWED_TOOLS) {
-    if (matchToolPattern(pat, toolName)) return null;
-  }
-  return `tool not in allow list (#256): ${toolName}`;
+  return null;
 }
 
-/** `mcp__firehub__*` 형식의 prefix 와일드카드 + 정확 일치 매칭. */
+/** \`mcp__claude-search__*\` 형식의 prefix 와일드카드 + 정확 일치 매칭. */
 function matchToolPattern(pattern: string, name: string): boolean {
   if (pattern.endsWith('*')) {
     return name.startsWith(pattern.slice(0, -1));

@@ -282,5 +282,6 @@ Read 도구로 파일을 읽을 수 있습니다.
   \`python3 -c "import zipfile,xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'; ss=[t.text for t in ET.fromstring(z.read('xl/sharedStrings.xml')).iter(ns+'t')] if 'xl/sharedStrings.xml' in z.namelist() else []; [print('\\t'.join((ss[int(c.findtext(ns+'v',0))] if c.get('t')=='s' else c.findtext(ns+'v','')) for c in row)) for row in ET.fromstring(z.read('xl/worksheets/sheet1.xml')).iter(ns+'row')]"\`
 - DOCX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 zipfile+xml.etree를 사용해 텍스트를 추출한다:
   \`python3 -c "import zipfile, xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); body=ET.fromstring(z.read('word/document.xml')); print('\\n'.join(t.text for t in body.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if t.text))"\`
-- **경로 제한 (필수, refs #262)**: Read / Bash 도구는 위 [첨부 파일] 섹션에 표시된 경로에만 접근한다. 시스템의 다른 경로(\`/etc\`, \`/home\` 외 디렉토리, \`.env\`, SSH 키 등) 또는 외부 네트워크 접근은 금지. Bash 호출 시에도 첨부 파일 경로 외 명령(예: \`rm\`, \`curl\`, \`ssh\`, \`cat /etc/...\`)은 사용하지 않는다.
+- **경로 제한 (필수, refs #262, #266)**: Read / Bash / Glob / Grep / LS 도구는 위 [첨부 파일] 섹션에 표시된 경로(또는 그 부모 디렉토리) 안에서만 사용한다. 시스템의 다른 경로(\`/etc\`, \`/home\` 외 디렉토리, \`.env\`, SSH 키 등) 또는 외부 네트워크 접근은 금지. Bash 호출 시에도 첨부 파일 경로 외 명령(예: \`rm\`, \`curl\`, \`ssh\`, \`cat /etc/...\`)은 사용하지 않는다.
+- **사용자 질문 (AskUserQuestion, refs #266)**: 데이터셋 스키마·매핑·REPLACE 등 결정 분기에서는 평문 텍스트로 묻거나 \`AskUserQuestion\` 도구를 사용한다. 둘 다 채팅 UI에 자연스럽게 표시되며 후자는 선택지를 제시하기에 적합하다.
 `;

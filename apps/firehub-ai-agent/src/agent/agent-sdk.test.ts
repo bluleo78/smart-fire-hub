@@ -500,24 +500,18 @@ describe('executeAgent', () => {
       };
     };
 
-    const allowed = callArgs.options?.allowedTools ?? [];
     const disallowed = callArgs.options?.disallowedTools ?? [];
 
-    // (a) allowedTools 는 firehub MCP 도구 + subagent 위임 + 첨부 처리용 Read/Bash 만 허용.
-    //     (#262: Read/Bash 는 첨부 파일 처리에 필요해 ALLOWED 로 이동)
-    expect(allowed).toContain('mcp__firehub__*');
-    expect(allowed).toContain('Agent');
-    expect(allowed).toContain('Read');
-    expect(allowed).toContain('Bash');
-    for (const host of [
+    // #266: allowedTools 는 미전달 (allow-by-default). disallowedTools 만으로 명시 차단.
+    expect(callArgs.options?.allowedTools).toBeUndefined();
+
+    // strict 모드 기본값(테스트 환경) 기준: 호스트 파일 변조 / skill·task ecosystem /
+    // meta-search 가 명시 차단된다. WebFetch/WebSearch/Read/Bash/Glob/Grep/LS/
+    // AskUserQuestion 등은 차단 대상 아님 (#266).
+    for (const blocked of [
       'Write',
       'Edit',
       'NotebookEdit',
-      'Glob',
-      'Grep',
-      'LS',
-      'WebFetch',
-      'WebSearch',
       'Skill',
       'TaskCreate',
       'TaskUpdate',
@@ -525,34 +519,13 @@ describe('executeAgent', () => {
       'TaskGet',
       'TaskStop',
       'TaskOutput',
-      'TodoWrite',
-    ]) {
-      expect(allowed).not.toContain(host);
-    }
-
-    // (b) disallowedTools 에 skill/task ecosystem + 호스트 쓰기 IO + 외부 네트워크 +
-    //     메타-검색 도구가 명시적으로 차단돼 있어야 한다 (이중 안전망).
-    //     (#262: Read/Bash 는 DISALLOWED 에서 제거됨)
-    for (const blocked of [
       'ToolSearch',
       'mcp__claude-search__*',
-      'Skill',
-      'TaskCreate',
-      'TaskUpdate',
-      'TaskList',
-      'TaskGet',
-      'TaskStop',
-      'TaskOutput',
-      'Write',
-      'Edit',
-      'NotebookEdit',
-      'Glob',
-      'Grep',
-      'LS',
-      'WebFetch',
-      'WebSearch',
     ]) {
       expect(disallowed).toContain(blocked);
+    }
+    for (const allowed of ['WebFetch', 'WebSearch', 'AskUserQuestion', 'Glob', 'Grep', 'LS', 'TodoWrite']) {
+      expect(disallowed).not.toContain(allowed);
     }
   });
 

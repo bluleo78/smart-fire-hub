@@ -18,7 +18,7 @@ import {
   saveSessionAttachments,
   formatAttachmentLine,
 } from './file-downloader.js';
-import { ALLOWED_TOOLS, DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 import type { SSEEvent } from '../providers/types.js';
 export type { SSEEvent } from '../providers/types.js';
@@ -241,26 +241,14 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       mcpServers: {
         firehub: firehubServer,
       },
-      // #256: 메인 에이전트는 firehub MCP 도구 + subagent 위임(Agent) 만 허용.
-      // 호스트 도구(Read/Write/Edit/Bash/Glob/Grep/WebFetch/WebSearch/NotebookEdit
-      // /TodoWrite) 는 메인이 직접 호출하지 않는다. 파일 IO/웹은 firehub MCP 또는
-      // 전용 subagent(report-writer 등) 에 위임. allowedTools 는 화이트리스트로
-      // 동작하므로 여기 없는 host 도구는 차단된다. (개별 subagent 가 자체
-      // tools 프론트매터로 host 도구를 선언하는 경우 subagent 정의에서 노출)
-      // 정책은 ./tool-policy.ts 에 single source of truth — CLI 프로바이더도 동일 리스트 적용(#256).
-      allowedTools: [...ALLOWED_TOOLS],
-      // #216 / #256: 메타-검색·skill·task host 도구를 명시적으로 차단 (이중 안전망).
-      // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
-      // 곧바로 비활성으로 폴백한다(cli.js XOq 체크 — "may have been disallowed
-      // via disallowedTools"). ENABLE_TOOL_SEARCH=false 와 함께 이중 차단.
+      // #266: allow-by-default — allowedTools 는 양수 화이트리스트 효과가 강해
+      // (그 외 host 도구 전체 차단) 새 도구 등장 시마다 회귀를 만들어 의도적으로 미전달.
+      // 메인은 라우팅/위임 역할이고, 위험한 도구는 아래 disallowedTools 로 명시 차단한다.
       //
-      // #256: CLI provider 가 자체 채널로 host skill/task ecosystem 을 활성화하는
-      // 경로(예: ~/.claude/skills 자동 로딩, task subagent dispatcher) 를 차단한다.
-      // 트레이스(skill-repro-010.sse) 에서 메인 에이전트가 `Skill(superpowers:
-      // brainstorming)` 과 `TaskCreate/TaskUpdate` 를 자발적으로 호출하여 host
-      // privilege escalation 가능성이 확인됐다. 화이트리스트(allowedTools) 와
-      // 블랙리스트(disallowedTools) 를 함께 적용해 어느 한쪽이 SDK 내부 해석상
-      // "추가 허용" 으로 동작하더라도 차단되도록 한다.
+      // #216 / #256: 메타-검색·skill·task·host 파일 변조 도구만 명시 차단.
+      // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
+      // 곧바로 비활성으로 폴백한다 (cli.js XOq 체크 — "may have been disallowed via
+      // disallowedTools"). 정책은 ./tool-policy.ts 가 single source of truth — CLI 프로바이더도 동일 리스트 적용.
       disallowedTools: [...DISALLOWED_TOOLS],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,

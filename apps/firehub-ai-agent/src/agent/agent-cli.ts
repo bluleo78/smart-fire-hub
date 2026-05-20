@@ -29,7 +29,7 @@ import {
   saveSessionAttachments,
   formatAttachmentLine,
 } from './file-downloader.js';
-import { ALLOWED_TOOLS, DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 /** CLI 트랜스크립트 파일 형식 */
 export interface CliTranscript {
@@ -274,7 +274,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     '--strict-mcp-config',
     '--system-prompt-file', systemPromptFile,
     '--permission-mode', 'bypassPermissions',
-    '--allowed-tools', ALLOWED_TOOLS.join(','),
+    // #266: --allowed-tools 미전달 (allow-by-default). --disallowed-tools 만 명시 차단.
     '--disallowed-tools', DISALLOWED_TOOLS.join(','),
     '--disable-slash-commands',
     '--model', effectiveModel,

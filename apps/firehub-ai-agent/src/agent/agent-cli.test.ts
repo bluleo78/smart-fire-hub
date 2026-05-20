@@ -122,9 +122,10 @@ describe('executeCliAgent — #240 subagent registration', () => {
     expect(pbContent).toContain('당신은 파이프라인 빌더입니다.');
   });
 
-  // #256: 회귀 — CLI 프로바이더에 --allowed-tools/--disallowed-tools/--disable-slash-commands
-  // 플래그가 누락되면 host 도구(Skill, TaskCreate, Bash 등)가 차단되지 않는다.
-  it('spawn된 claude CLI 인자에 도구 정책 플래그가 포함되어야 한다 (#256)', async () => {
+  // #266: allow-by-default 정책 — --allowed-tools 미전달, --disallowed-tools 만 명시 차단
+  // 이전 회귀(#256)에서 발견된 host 도구 우회를 막으면서, 신규 호스트 도구가 자동 차단돼
+  // 채팅이 무응답으로 끊기는 사고(AskUserQuestion 회귀)를 동시에 방지한다.
+  it('spawn된 claude CLI 인자: --allowed-tools 미전달, --disallowed-tools 만 명시 차단 (#266)', async () => {
     const gen = executeCliAgent({
       message: 'test',
       userId: 1,
@@ -138,21 +139,21 @@ describe('executeCliAgent — #240 subagent registration', () => {
 
     const argv = spawnMock.mock.calls[0][1] as string[];
 
-    // --allowed-tools: 화이트리스트
-    const allowedIdx = argv.indexOf('--allowed-tools');
-    expect(allowedIdx).toBeGreaterThan(-1);
-    const allowedValue = argv[allowedIdx + 1];
-    expect(allowedValue).toContain('mcp__firehub__*');
-    expect(allowedValue).toContain('Agent');
+    // --allowed-tools 는 더 이상 전달되지 않는다 (allow-by-default)
+    expect(argv).not.toContain('--allowed-tools');
 
-    // --disallowed-tools: skill/task/host IO 명시 차단
+    // --disallowed-tools: 명시 차단 도구만 전달
     const disallowedIdx = argv.indexOf('--disallowed-tools');
     expect(disallowedIdx).toBeGreaterThan(-1);
     const disallowedValue = argv[disallowedIdx + 1];
-    // #262: Bash/Read 는 첨부 처리용으로 ALLOWED 이동 — 차단 검증 대상에서 제외
-    for (const blocked of ['Skill', 'TaskCreate', 'TaskUpdate', 'Write', 'WebFetch']) {
+    // 호스트 파일 변조 / skill·task ecosystem / meta-search 차단 유지
+    for (const blocked of ['Skill', 'TaskCreate', 'TaskUpdate', 'Write', 'Edit', 'NotebookEdit', 'ToolSearch']) {
       expect(disallowedValue).toContain(blocked);
     }
+    // #266: AskUserQuestion / Glob / Grep / LS / WebFetch / WebSearch 는 차단 대상이 아니다
+    expect(disallowedValue).not.toContain('AskUserQuestion');
+    expect(disallowedValue).not.toContain('WebFetch');
+    expect(disallowedValue).not.toContain('WebSearch');
 
     // --disable-slash-commands: 호스트 skill ecosystem 자동 로드 차단
     expect(argv).toContain('--disable-slash-commands');
