@@ -384,7 +384,9 @@ describe('SYSTEM_PROMPT', () => {
       expect(FILE_ATTACHMENT_PROMPT).toContain('XLSX');
       expect(FILE_ATTACHMENT_PROMPT).toContain('openpyxl');
       expect(FILE_ATTACHMENT_PROMPT).toContain('DOCX');
-      expect(FILE_ATTACHMENT_PROMPT).toContain('첨부 파일 경로만 읽어야');
+      // #262: 경로 제한 wording 강화 — "경로 제한" 헤더 + Bash 명령 차단 명시
+      expect(FILE_ATTACHMENT_PROMPT).toContain('경로 제한');
+      expect(FILE_ATTACHMENT_PROMPT).toMatch(/첨부 파일 경로/);
     });
   });
 

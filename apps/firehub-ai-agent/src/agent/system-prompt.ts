@@ -280,5 +280,5 @@ Read 도구로 파일을 읽을 수 있습니다.
   \`python3 -c "import zipfile,xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'; ss=[t.text for t in ET.fromstring(z.read('xl/sharedStrings.xml')).iter(ns+'t')] if 'xl/sharedStrings.xml' in z.namelist() else []; [print('\\t'.join((ss[int(c.findtext(ns+'v',0))] if c.get('t')=='s' else c.findtext(ns+'v','')) for c in row)) for row in ET.fromstring(z.read('xl/worksheets/sheet1.xml')).iter(ns+'row')]"\`
 - DOCX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 zipfile+xml.etree를 사용해 텍스트를 추출한다:
   \`python3 -c "import zipfile, xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); body=ET.fromstring(z.read('word/document.xml')); print('\\n'.join(t.text for t in body.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if t.text))"\`
-- 첨부 파일 경로만 읽어야 합니다. 시스템의 다른 경로에는 접근하지 마세요.
+- **경로 제한 (필수, refs #262)**: Read / Bash 도구는 위 [첨부 파일] 섹션에 표시된 경로에만 접근한다. 시스템의 다른 경로(\`/etc\`, \`/home\` 외 디렉토리, \`.env\`, SSH 키 등) 또는 외부 네트워크 접근은 금지. Bash 호출 시에도 첨부 파일 경로 외 명령(예: \`rm\`, \`curl\`, \`ssh\`, \`cat /etc/...\`)은 사용하지 않는다.
 `;

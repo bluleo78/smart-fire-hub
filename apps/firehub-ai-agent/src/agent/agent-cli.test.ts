@@ -149,7 +149,8 @@ describe('executeCliAgent — #240 subagent registration', () => {
     const disallowedIdx = argv.indexOf('--disallowed-tools');
     expect(disallowedIdx).toBeGreaterThan(-1);
     const disallowedValue = argv[disallowedIdx + 1];
-    for (const blocked of ['Skill', 'TaskCreate', 'TaskUpdate', 'Bash', 'Read', 'Write', 'WebFetch']) {
+    // #262: Bash/Read 는 첨부 처리용으로 ALLOWED 이동 — 차단 검증 대상에서 제외
+    for (const blocked of ['Skill', 'TaskCreate', 'TaskUpdate', 'Write', 'WebFetch']) {
       expect(disallowedValue).toContain(blocked);
     }
 

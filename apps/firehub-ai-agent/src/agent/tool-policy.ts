@@ -21,6 +21,12 @@
 export const ALLOWED_TOOLS: readonly string[] = [
   'mcp__firehub__*',
   'Agent',
+  // #262: 파일 첨부 처리용 — Read (이미지/PDF/텍스트/CSV) + Bash (XLSX/DOCX python3 처리)
+  // FILE_ATTACHMENT_PROMPT (system-prompt.ts) 가 이 도구 사용을 지시하며, 첨부 파일 경로
+  // (~/chat-files/*) 외 접근은 SYSTEM_PROMPT 에서 금지. fileIds 없는 요청에는 가이드 자체가
+  // 첨부되지 않으므로 LLM 이 호출할 동기 없음.
+  'Read',
+  'Bash',
 ] as const;
 
 /** 명시 차단 도구 블랙리스트(이중 안전망). */
@@ -36,12 +42,10 @@ export const DISALLOWED_TOOLS: readonly string[] = [
   'TaskGet',
   'TaskStop',
   'TaskOutput',
-  // host filesystem / shell — 메인 에이전트는 firehub MCP 로만 작업
-  'Read',
+  // host filesystem / shell 일부 — Write/Edit/NotebookEdit/Glob/Grep/LS 는 첨부 처리에 불필요하므로 차단 유지
   'Write',
   'Edit',
   'NotebookEdit',
-  'Bash',
   'Glob',
   'Grep',
   'LS',

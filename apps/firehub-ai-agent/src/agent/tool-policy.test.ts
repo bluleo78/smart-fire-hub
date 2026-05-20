@@ -10,13 +10,16 @@ describe('tool-policy (#256)', () => {
   it('ALLOWED_TOOLS 와 DISALLOWED_TOOLS 의 명시 핵심 도구가 유지된다 (회귀 가드)', () => {
     expect(ALLOWED_TOOLS).toContain('mcp__firehub__*');
     expect(ALLOWED_TOOLS).toContain('Agent');
+    // #262: 파일 첨부 처리용 Read/Bash 허용
+    expect(ALLOWED_TOOLS).toContain('Read');
+    expect(ALLOWED_TOOLS).toContain('Bash');
 
     // skill/task ecosystem 명시 차단
     for (const t of ['Skill', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskStop']) {
       expect(DISALLOWED_TOOLS).toContain(t);
     }
-    // host IO/shell 명시 차단
-    for (const t of ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']) {
+    // host IO/shell 일부 명시 차단 (Read/Bash 는 #262 로 ALLOWED 이동)
+    for (const t of ['Write', 'Edit', 'Glob', 'Grep']) {
       expect(DISALLOWED_TOOLS).toContain(t);
     }
     // 외부 네트워크 차단
@@ -38,11 +41,20 @@ describe('tool-policy (#256)', () => {
     expect(checkToolPolicy('TaskList')).toMatch(/blocked/);
   });
 
-  it('host filesystem / shell 도구는 차단된다', () => {
-    expect(checkToolPolicy('Read')).toMatch(/blocked/);
+  it('host filesystem 쓰기 도구(Write/Edit/NotebookEdit/Glob/Grep/LS)는 차단된다', () => {
     expect(checkToolPolicy('Write')).toMatch(/blocked/);
-    expect(checkToolPolicy('Bash')).toMatch(/blocked/);
     expect(checkToolPolicy('Edit')).toMatch(/blocked/);
+    expect(checkToolPolicy('NotebookEdit')).toMatch(/blocked/);
+    expect(checkToolPolicy('Glob')).toMatch(/blocked/);
+    expect(checkToolPolicy('Grep')).toMatch(/blocked/);
+    expect(checkToolPolicy('LS')).toMatch(/blocked/);
+  });
+
+  // #262: Read + Bash 는 파일 첨부 처리용으로 허용 — FILE_ATTACHMENT_PROMPT 가
+  // 첨부 파일 경로 한정 사용을 지시하며, fileIds 없는 요청에는 가이드 자체가 첨부되지 않음.
+  it('Read 와 Bash 는 파일 첨부 처리용으로 허용된다 (#262)', () => {
+    expect(checkToolPolicy('Read')).toBeNull();
+    expect(checkToolPolicy('Bash')).toBeNull();
   });
 
   it('외부 네트워크 도구는 차단된다', () => {
