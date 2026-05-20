@@ -652,4 +652,75 @@ class FileParserServiceTest {
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0)).containsEntry("이름", "홍길동").containsEntry("도시", "서울");
   }
+
+  // -----------------------------------------------------------------------
+  // 인코딩 자동 감지 회귀 — #263
+  // -----------------------------------------------------------------------
+
+  /**
+   * 회귀 #263: BOM 없는 UTF-8 파일이지만 peek 버퍼(64KB) 끝에 한글 멀티바이트 시퀀스가
+   * 잘려 있는 경우, 이전 구현은 MALFORMED으로 판정해 EUC-KR로 폴백했다.
+   * CharsetDecoder 기반 구현은 truncation을 UNDERFLOW로 처리해 UTF-8로 올바로 감지한다.
+   */
+  @Test
+  void detectEncoding_utf8WithMultibyteTruncatedAtPeekBoundary_detectedAsUtf8() throws Exception {
+    // 8192바이트 경계에 한글 한 글자(3바이트)가 걸치도록 페이로드 구성.
+    // peek 버퍼가 64KB로 커진 후에도 어떤 크기든 비슷한 경계가 존재할 수 있다.
+    StringBuilder padding = new StringBuilder();
+    while (padding.length() < 8190) padding.append('a');
+    String csv = "재난번호,신고접수일시,종별\n" + padding + "재난재난,20251101000000,화재";
+    byte[] full = csv.getBytes(StandardCharsets.UTF_8);
+    byte[] peek = new byte[Math.min(full.length, 8191)]; // 한글 3바이트 중 첫 1바이트만 포함
+    System.arraycopy(full, 0, peek, 0, peek.length);
+
+    // detectEncoding이 truncated 한글을 보고도 UTF-8 판정해야 한다
+    assertThat(ParseOptions.detectEncoding(peek)).isEqualTo("UTF-8");
+
+    // 그리고 실제 파싱도 한글이 깨지지 않아야 한다
+    List<Map<String, String>> rows = service.parse(full, "csv");
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0)).containsKey("재난번호").containsEntry("종별", "화재");
+  }
+
+  @Test
+  void detectEncoding_emptyData_returnsUtf8() {
+    assertThat(ParseOptions.detectEncoding(new byte[0])).isEqualTo("UTF-8");
+    assertThat(ParseOptions.detectEncoding(null)).isEqualTo("UTF-8");
+  }
+
+  @Test
+  void detectEncoding_asciiOnly_returnsUtf8() {
+    byte[] data = "name,age\nAlice,30".getBytes(StandardCharsets.US_ASCII);
+    assertThat(ParseOptions.detectEncoding(data)).isEqualTo("UTF-8");
+  }
+
+  @Test
+  void detectEncoding_cp949Korean_returnsMs949Fallback() {
+    // MS949(=CP949)는 EUC-KR의 superset. AUTO 감지 시 폴백 라벨이 MS949가 되어야 한다.
+    byte[] data = "재난번호,신고접수일시\nA001,20251101".getBytes(Charset.forName("MS949"));
+    assertThat(ParseOptions.detectEncoding(data)).isEqualTo("MS949");
+  }
+
+  @Test
+  void parse_csvCp949Encoded_decodedCorrectlyViaMs949Fallback() throws Exception {
+    // CP949(MS949)로 인코딩된 한국 행정안전부 스타일 CSV가 AUTO 감지로 정상 파싱되는지
+    byte[] data = "이름,도시\n홍길동,서울".getBytes(Charset.forName("MS949"));
+    List<Map<String, String>> rows = service.parse(data, "csv");
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0)).containsEntry("이름", "홍길동").containsEntry("도시", "서울");
+  }
+
+  @Test
+  void parse_csvUtf16LeBom_detectedAsUtf16Le() throws Exception {
+    byte[] bom = {(byte) 0xFF, (byte) 0xFE};
+    byte[] body = "name,age\nAlice,30".getBytes(Charset.forName("UTF-16LE"));
+    byte[] data = new byte[bom.length + body.length];
+    System.arraycopy(bom, 0, data, 0, bom.length);
+    System.arraycopy(body, 0, data, bom.length, body.length);
+
+    assertThat(ParseOptions.detectEncoding(data)).isEqualTo("UTF-16LE");
+    List<Map<String, String>> rows = service.parse(data, "csv");
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).values()).contains("Alice", "30");
+  }
 }
