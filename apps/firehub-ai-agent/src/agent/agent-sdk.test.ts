@@ -185,7 +185,10 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'tool1', result: 'result text' }]);
+    // #206/#265: tool_result 페이로드는 항상 isError 필드를 포함한다 (safeTool 에러 전파용)
+    expect(result).toEqual([
+      { type: 'tool_result', toolName: 'tool1', result: 'result text', isError: false },
+    ]);
   });
 
   // AS-08: user tool_result with array content joins text fields with \n
@@ -208,7 +211,9 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'tool2', result: 'line1\nline2' }]);
+    expect(result).toEqual([
+      { type: 'tool_result', toolName: 'tool2', result: 'line1\nline2', isError: false },
+    ]);
   });
 
   // AS-09: user tool_result with undefined content
@@ -222,7 +227,9 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, mockTag, false);
 
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'tool3', result: undefined }]);
+    expect(result).toEqual([
+      { type: 'tool_result', toolName: 'tool3', result: undefined, isError: false },
+    ]);
   });
 
   // AS-10: result success returns done event with correct inputTokens

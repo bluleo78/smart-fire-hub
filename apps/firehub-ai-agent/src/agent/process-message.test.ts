@@ -120,7 +120,8 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, tag, false);
 
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-1', result: 'ok' }]);
+    // #206/#265: tool_result 페이로드는 항상 isError 필드를 포함한다 (safeTool 에러 전파용)
+    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-1', result: 'ok', isError: false }]);
   });
 
   // PM-09: user/tool_result(array content) — 텍스트 블록들을 \n으로 결합
@@ -141,7 +142,28 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, tag, false);
 
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-2', result: 'line1\nline2' }]);
+    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-2', result: 'line1\nline2', isError: false }]);
+  });
+
+  // PM-09b: safeTool 에러 path — is_error: true → isError: true 전파 (refs #206/#265)
+  it('PM-09b: user tool_result with is_error=true sets isError=true', () => {
+    const msg = {
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'id-err',
+          content: 'tool failed: 404',
+          is_error: true,
+        }],
+      },
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, tag, false);
+
+    expect(result).toEqual([
+      { type: 'tool_result', toolName: 'id-err', result: 'tool failed: 404', isError: true },
+    ]);
   });
 
   // PM-10: result/success — done 이벤트에 inputTokens + outputTokens 포함
