@@ -161,14 +161,16 @@ function handleNotification(
       queryClient.invalidateQueries({ queryKey: ['proactive', 'unread-count'] });
       // PROACTIVE_MESSAGE는 severity와 무관하게 info 토스트 하나만 표시.
       // severity 블록이 추가로 실행되지 않도록 여기서 함수를 종료한다.
-      toast.info(event.title, { description: event.description });
+      // id를 부여하여 SSE 재연결로 동일 알림이 재도달해도 토스트가 중복되지 않는다 (#279).
+      toast.info(event.title, { id: event.id, description: event.description });
       return;
   }
 
   // PROACTIVE_MESSAGE 외 이벤트에 대해 severity 기반 토스트 표시
+  // id를 부여하여 SSE 재연결로 동일 알림이 재도달해도 토스트가 중복되지 않는다 (#279).
   if (event.severity === 'CRITICAL') {
-    toast.error(event.title, { description: event.description });
+    toast.error(event.title, { id: event.id, description: event.description });
   } else if (event.severity === 'WARNING') {
-    toast.warning(event.title, { description: event.description });
+    toast.warning(event.title, { id: event.id, description: event.description });
   }
 }

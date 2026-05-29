@@ -30,8 +30,8 @@ const MOCK_CREATED_DATASET = createDatasetDetail({ id: 99, name: '새 소방 데
 async function gotoCreatePage(page: import('@playwright/test').Page) {
   await mockApi(page, 'GET', '/api/v1/dataset-categories', MOCK_CATEGORIES);
   await page.goto(CREATE_URL, { waitUntil: 'commit' });
-  // "데이터셋 생성" 헤딩이 표시될 때까지 대기
-  await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible({ timeout: 5000 });
+  // "데이터셋 생성" 헤딩이 표시될 때까지 대기 (#280: 연쇄 실행 race 완화로 10s)
+  await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe('DatasetCreatePage — 기본 정보 입력', () => {
