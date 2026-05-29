@@ -535,8 +535,8 @@ export class FireHubApiClient {
     return this._analytics.executeSavedQuery(id);
   }
 
-  getDataSchema(): Promise<SchemaInfo> {
-    return this._analytics.getDataSchema();
+  getDataSchema(datasetIds?: number[]): Promise<SchemaInfo> {
+    return this._analytics.getDataSchema(datasetIds);
   }
 
   createChart(data: CreateChartParams): Promise<Chart> {

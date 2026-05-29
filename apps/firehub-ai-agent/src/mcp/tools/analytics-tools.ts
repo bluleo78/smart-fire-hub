@@ -217,13 +217,23 @@ export function registerAnalyticsTools(
       },
     ),
 
-    // 5. 스키마 정보 조회 (AI가 쿼리 작성 시 참조)
+    // 5. 스키마 정보 조회 — datasetIds 필수 (refs #267, #272)
     safeTool(
       'get_data_schema',
-      'data 스키마의 모든 테이블과 컬럼 목록을 반환합니다. SQL 쿼리 작성 시 참조하세요.',
-      {},
-      async () => {
-        const result = await apiClient.getDataSchema();
+      '특정 데이터셋들의 테이블·컬럼 정보를 반환합니다. ' +
+        '**datasetIds 파라미터는 필수**입니다 — 생략 시 전체 스키마(수십 KB)가 반환되어 ' +
+        '컨텍스트 토큰 한도를 초과해 작업 불가. 먼저 `list_datasets` 로 분석 대상 ID를 확인한 뒤 호출하세요. ' +
+        'JOIN 분석은 관련된 모든 datasetId 를 한 번에 전달하면 한 응답으로 받습니다.',
+      {
+        datasetIds: z
+          .array(z.number())
+          .min(1)
+          .describe(
+            '조회할 데이터셋 ID 배열 (필수, 1개 이상). 예: 단일 분석 [11], JOIN 분석 [7, 11]',
+          ),
+      },
+      async (args: { datasetIds: number[] }) => {
+        const result = await apiClient.getDataSchema(args.datasetIds);
         return jsonResult(result);
       },
     ),

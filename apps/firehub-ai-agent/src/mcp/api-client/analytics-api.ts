@@ -226,8 +226,18 @@ export function createAnalyticsApi(client: AxiosInstance) {
       return response.data;
     },
 
-    async getDataSchema(): Promise<SchemaInfo> {
-      const response = await client.get('/analytics/queries/schema');
+    /**
+     * data 스키마의 테이블·컬럼 정보를 조회한다.
+     *
+     * @param datasetIds 필터할 dataset id 목록.
+     *                   - undefined → 전체 (백엔드 BC)
+     *                   - 비어있으면 백엔드가 빈 응답 반환 (defensive)
+     *                   - 운영에서는 MCP Zod 가 비어있지 않은 배열을 강제
+     */
+    async getDataSchema(datasetIds?: number[]): Promise<SchemaInfo> {
+      const response = await client.get('/analytics/queries/schema', {
+        params: datasetIds !== undefined ? { datasetIds: datasetIds.join(',') } : undefined,
+      });
       return response.data;
     },
 

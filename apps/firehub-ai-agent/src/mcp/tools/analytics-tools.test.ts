@@ -388,39 +388,60 @@ describe('Analytics MCP Tools', () => {
     expect(result.content[0].text).toContain('Query not found');
   });
 
-  // --- get_data_schema ---
-  it('get_data_schema calls apiClient.getDataSchema', async () => {
+  // --- get_data_schema (PR-3: datasetIds 필수) ---
+  it('get_data_schema calls apiClient.getDataSchema with datasetIds array', async () => {
     const mockSchema = {
       tables: [
         {
           tableName: 'fire_incidents',
-          datasetName: '화재 사고',
-          datasetId: 1,
-          columns: [
-            { columnName: 'id', dataType: 'bigint', displayName: 'ID' },
-            { columnName: 'incident_date', dataType: 'timestamp', displayName: '사고일시' },
-          ],
+          datasetName: '화재',
+          datasetId: 11,
+          columns: [{ columnName: 'incident_date', dataType: 'timestamp', displayName: '발생일시' }],
         },
       ],
     };
     (client.getDataSchema as ReturnType<typeof vi.fn>).mockResolvedValue(mockSchema);
 
-    const result = await invokeTool(server, 'get_data_schema', {});
+    const result = await invokeTool(server, 'get_data_schema', { datasetIds: [11] });
 
-    expect(client.getDataSchema).toHaveBeenCalled();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.tables).toHaveLength(1);
-    expect(parsed.tables[0].tableName).toBe('fire_incidents');
-    expect(parsed.tables[0].columns).toHaveLength(2);
+    expect(client.getDataSchema).toHaveBeenCalledWith([11]);
+    expect(JSON.parse(result.content[0].text)).toEqual(mockSchema);
     expect(result.isError).toBeUndefined();
   });
 
-  it('get_data_schema returns isError on failure', async () => {
+  it('get_data_schema accepts multiple dataset ids', async () => {
+    (client.getDataSchema as ReturnType<typeof vi.fn>).mockResolvedValue({ tables: [] });
+
+    await invokeTool(server, 'get_data_schema', { datasetIds: [11, 7] });
+
+    expect(client.getDataSchema).toHaveBeenCalledWith([11, 7]);
+  });
+
+  // 부정 케이스 — Zod 스키마 차단 검증 (refs #267, #272)
+  // invokeTool 헬퍼는 _registeredTools.handler 를 직접 호출하므로 SDK 의 Zod 검증을 건너뛴다.
+  // 따라서 운영에서 빈/누락 호출을 SDK 가 차단하는지(즉 스키마 정의 자체)를 inputSchema 의
+  // ZodArray 에 safeParse 를 호출해 단위 레벨로 확인한다.
+  it('get_data_schema rejects empty datasetIds via Zod', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = (server.instance as any)._registeredTools['get_data_schema'];
+    // SDK 가 raw shape 을 ZodObject 로 wrap 해 보관 — 객체 단위로 safeParse 검증.
+    const result = entry.inputSchema.safeParse({ datasetIds: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('get_data_schema rejects missing datasetIds via Zod', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = (server.instance as any)._registeredTools['get_data_schema'];
+    const result = entry.inputSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('get_data_schema returns isError on apiClient failure', async () => {
     (client.getDataSchema as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('Internal Server Error'),
     );
 
-    const result = await invokeTool(server, 'get_data_schema', {});
+    const result = await invokeTool(server, 'get_data_schema', { datasetIds: [11] });
 
     expect(result.isError).toBe(true);
   });
