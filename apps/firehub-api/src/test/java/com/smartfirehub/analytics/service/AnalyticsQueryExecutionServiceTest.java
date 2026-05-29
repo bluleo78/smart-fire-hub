@@ -237,8 +237,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     SchemaInfoResponse nullFiltered = executionService.getSchemaInfo(null);
     assertThat(nullFiltered.tables())
         .extracting(SchemaInfoResponse.TableInfo::tableName)
-        .containsAll(
-            all.tables().stream().map(SchemaInfoResponse.TableInfo::tableName).toList());
+        .containsAll(all.tables().stream().map(SchemaInfoResponse.TableInfo::tableName).toList());
   }
 
   /** 빈 배열 전달 시 빈 응답 반환 — defensive 분기 검증. */

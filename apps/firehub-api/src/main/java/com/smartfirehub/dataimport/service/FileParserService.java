@@ -324,9 +324,9 @@ public class FileParserService {
   // -----------------------------------------------------------------------
 
   /**
-   * 인코딩 감지에 사용할 최대 선행 바이트 수. peek 버퍼 끝에서 멀티바이트가 잘려도
-   * {@link com.smartfirehub.dataimport.dto.ParseOptions#detectEncoding(byte[])}가 올바로 처리하지만,
-   * 더 큰 prefix를 보면 오감지 가능성이 낮아진다(예: ASCII 헤더 뒤에 비ASCII가 한참 뒤에 나오는 파일).
+   * 인코딩 감지에 사용할 최대 선행 바이트 수. peek 버퍼 끝에서 멀티바이트가 잘려도 {@link
+   * com.smartfirehub.dataimport.dto.ParseOptions#detectEncoding(byte[])}가 올바로 처리하지만, 더 큰 prefix를 보면
+   * 오감지 가능성이 낮아진다(예: ASCII 헤더 뒤에 비ASCII가 한참 뒤에 나오는 파일).
    */
   private static final int ENCODING_PEEK_LIMIT = 65536;
 

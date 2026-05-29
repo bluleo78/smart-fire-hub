@@ -658,9 +658,8 @@ class FileParserServiceTest {
   // -----------------------------------------------------------------------
 
   /**
-   * 회귀 #263: BOM 없는 UTF-8 파일이지만 peek 버퍼(64KB) 끝에 한글 멀티바이트 시퀀스가
-   * 잘려 있는 경우, 이전 구현은 MALFORMED으로 판정해 EUC-KR로 폴백했다.
-   * CharsetDecoder 기반 구현은 truncation을 UNDERFLOW로 처리해 UTF-8로 올바로 감지한다.
+   * 회귀 #263: BOM 없는 UTF-8 파일이지만 peek 버퍼(64KB) 끝에 한글 멀티바이트 시퀀스가 잘려 있는 경우, 이전 구현은 MALFORMED으로 판정해
+   * EUC-KR로 폴백했다. CharsetDecoder 기반 구현은 truncation을 UNDERFLOW로 처리해 UTF-8로 올바로 감지한다.
    */
   @Test
   void detectEncoding_utf8WithMultibyteTruncatedAtPeekBoundary_detectedAsUtf8() throws Exception {
