@@ -412,8 +412,11 @@ public class AnalyticsQueryExecutionService {
    *   <li>PSQL 인데 sem 없으면 psql.getMessage() 만
    *   <li>PSQL 아니면 원본 메시지 (또는 toString)
    * </ol>
+   *
+   * <p>package-private — same-package 테스트에서 분기 커버리지(truncate, sem==null fallback) 직접 검증을 위해 노출. 외부 호출은
+   * 위 catch 블록 한 곳뿐.
    */
-  private String formatExecutionError(Exception e) {
+  String formatExecutionError(Exception e) {
     Throwable cause = e;
     while (cause.getCause() != null && !(cause instanceof PSQLException)) {
       cause = cause.getCause();

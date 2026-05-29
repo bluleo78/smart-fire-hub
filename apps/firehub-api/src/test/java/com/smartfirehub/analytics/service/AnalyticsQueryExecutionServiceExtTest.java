@@ -276,26 +276,67 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
     assertThat(res.error()).containsPattern("Position: \\d+");
   }
 
-  @Test
-  void executeDirectly_errorMessage_truncatedAt2000Chars() {
-    // 3000자 식별자 → PSQL 에러 메시지가 식별자를 그대로 포함 → 2000자 초과 → truncate
-    String hugeCol = "a".repeat(3000);
-    AnalyticsQueryResponse res =
-        executionService.execute("SELECT " + hugeCol + " FROM data.exec_ext_test", 100, true);
+  // ============================================================
+  // formatExecutionError 헬퍼 직접 분기 커버 — package-private 노출
+  //   - 직전 commit c85c6baf 의 2건이 PG NAMEDATALEN/ServerErrorMessage 우회로
+  //     실제 분기를 못 커버해 vacuous PASS 되던 문제를 해결.
+  //   - same-package 직접 호출로 truncate / sem==null fallback / cause unwrap 직접 검증.
+  // ============================================================
 
-    assertThat(res.error()).isNotNull();
-    assertThat(res.error().length()).isLessThanOrEqualTo(2000);
+  /** truncate 분기: 2000자 초과 입력 시 정확히 잘리고 "... [truncated]" suffix. */
+  @Test
+  void formatExecutionError_messageOver2000Chars_truncatesWithMarker() {
+    // 3000자 메시지 — PG 가 식별자 자르는 식의 우회 없이 헬퍼 분기 직접 검증
+    String longMessage = "x".repeat(3000);
+    RuntimeException e = new RuntimeException(longMessage);
+
+    String formatted = executionService.formatExecutionError(e);
+
+    assertThat(formatted.length()).isLessThanOrEqualTo(2000);
+    assertThat(formatted).endsWith("... [truncated]");
   }
 
+  /** truncate 분기 음성: 2000자 이하면 그대로 반환. */
   @Test
-  void executeDirectly_divisionByZero_psqlExceptionFallback() {
-    // ServerErrorMessage 부재/특수 케이스에도 ERROR: 시작 보장
-    AnalyticsQueryResponse res = executionService.execute("SELECT 1/0", 100, true);
+  void formatExecutionError_messageWithin2000Chars_returnsAsIs() {
+    String shortMessage = "small error";
+    RuntimeException e = new RuntimeException(shortMessage);
 
-    assertThat(res.error()).isNotNull();
-    assertThat(res.error()).contains("ERROR:");
-    // 22012 SQLState 또는 division 키워드 둘 중 하나는 있어야
-    assertThat(res.error()).containsAnyOf("22012", "division");
+    String formatted = executionService.formatExecutionError(e);
+
+    assertThat(formatted).isEqualTo(shortMessage);
+  }
+
+  /** sem==null fallback 분기: ServerErrorMessage 가 null 인 PSQLException → psql.getMessage() 만 사용. */
+  @Test
+  void formatExecutionError_psqlExceptionWithoutServerErrorMessage_fallsBackToMessage() {
+    // ServerErrorMessage 없는 PSQLException — 보통 클라이언트측 에러 (예: connection 실패)
+    // PSQLException(String, PSQLState) 생성자는 ServerErrorMessage 를 설정하지 않음
+    org.postgresql.util.PSQLException psql =
+        new org.postgresql.util.PSQLException(
+            "connection refused", org.postgresql.util.PSQLState.CONNECTION_FAILURE);
+
+    String formatted = executionService.formatExecutionError(psql);
+
+    assertThat(formatted).startsWith("ERROR: ");
+    assertThat(formatted).contains("connection refused");
+  }
+
+  /** cause chain unwrap: 래핑된 PSQLException 도 unwrap 해서 ServerErrorMessage 분해. */
+  @Test
+  void formatExecutionError_wrappedPsqlException_unwrapsAndDecomposes() {
+    // 실제 jOOQ 가 DataAccessException 으로 PSQLException 을 wrap 하는 시나리오 모사
+    org.postgresql.util.PSQLException psql =
+        new org.postgresql.util.PSQLException(
+            "wrapped failure", org.postgresql.util.PSQLState.CONNECTION_FAILURE);
+    RuntimeException wrapper = new RuntimeException("outer wrapper", psql);
+
+    String formatted = executionService.formatExecutionError(wrapper);
+
+    assertThat(formatted).startsWith("ERROR: ");
+    assertThat(formatted).contains("wrapped failure");
+    // 'outer wrapper' 는 cause chain 의 outer 레이어 메시지 — unwrap 후 PSQL 진입으로 미사용
+    assertThat(formatted).doesNotContain("outer wrapper");
   }
 
   @Test
