@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -217,7 +219,7 @@ public class AnalyticsQueryExecutionService {
       long executionTimeMs = System.currentTimeMillis() - startTime;
       dsl.execute("ROLLBACK TO SAVEPOINT analytics_query");
       return new AnalyticsQueryResponse(
-          queryType, List.of(), List.of(), 0, executionTimeMs, 0, false, e.getMessage());
+          queryType, List.of(), List.of(), 0, executionTimeMs, 0, false, formatExecutionError(e));
     } finally {
       try {
         dsl.execute("SET LOCAL search_path TO public");
@@ -227,10 +229,7 @@ public class AnalyticsQueryExecutionService {
     }
   }
 
-  /**
-   * BC 진입점 — 인자 없이 호출되는 기존 외부 호출자(Web UI, 컨트롤러 BC)를 위해 유지.
-   * 내부적으로 datasetIds=null 오버로드에 위임한다.
-   */
+  /** BC 진입점 — 인자 없이 호출되는 기존 외부 호출자(Web UI, 컨트롤러 BC)를 위해 유지. 내부적으로 datasetIds=null 오버로드에 위임한다. */
   public SchemaInfoResponse getSchemaInfo() {
     return getSchemaInfo(null);
   }
@@ -391,5 +390,68 @@ public class AnalyticsQueryExecutionService {
 
   private AnalyticsQueryResponse errorResponse(String message) {
     return new AnalyticsQueryResponse("UNKNOWN", List.of(), List.of(), 0, 0, 0, false, message);
+  }
+
+  // ============================================================
+  // SQL 실행 에러 포맷터 (PR-2, refs #267, #272)
+  //  - PSQLException.getServerErrorMessage() 분해로 LLM 친화적 자연어 인라인 포맷 반환
+  //  - jOOQ 가 prefix 로 echo 하는 SQL 본문 제거 (회당 6KB → ~150B)
+  //  - 모든 경로 2000자 truncate 가드
+  // ============================================================
+
+  private static final int ERROR_MAX_LEN = 2000;
+
+  /**
+   * 실행 catch 블록에서 응답 error 필드 문자열을 생성한다.
+   *
+   * <p>분해 우선순위:
+   *
+   * <ol>
+   *   <li>cause 체인 unwrap → PSQLException
+   *   <li>ServerErrorMessage 있으면 MESSAGE / HINT / DETAIL / SQLState / Position 조립
+   *   <li>PSQL 인데 sem 없으면 psql.getMessage() 만
+   *   <li>PSQL 아니면 원본 메시지 (또는 toString)
+   * </ol>
+   */
+  private String formatExecutionError(Exception e) {
+    Throwable cause = e;
+    while (cause.getCause() != null && !(cause instanceof PSQLException)) {
+      cause = cause.getCause();
+    }
+
+    if (cause instanceof PSQLException psql) {
+      ServerErrorMessage sem = psql.getServerErrorMessage();
+      if (sem != null) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("ERROR: ").append(nullToEmpty(sem.getMessage()));
+        appendIfPresent(sb, "\nHINT: ", sem.getHint());
+        appendIfPresent(sb, "\nDETAIL: ", sem.getDetail());
+        appendIfPresent(sb, "\nSQLState: ", sem.getSQLState());
+        if (sem.getPosition() > 0) {
+          sb.append("\nPosition: ").append(sem.getPosition());
+        }
+        return truncate(sb.toString());
+      }
+      return truncate("ERROR: " + nullToEmpty(psql.getMessage()));
+    }
+
+    String msg = cause.getMessage();
+    return truncate(msg != null ? msg : e.toString());
+  }
+
+  private static String nullToEmpty(String s) {
+    return s == null ? "" : s;
+  }
+
+  private static void appendIfPresent(StringBuilder sb, String prefix, String value) {
+    if (value != null && !value.isBlank()) {
+      sb.append(prefix).append(value);
+    }
+  }
+
+  private static String truncate(String s) {
+    if (s == null) return "";
+    if (s.length() <= ERROR_MAX_LEN) return s;
+    return s.substring(0, ERROR_MAX_LEN - 20) + "... [truncated]";
   }
 }

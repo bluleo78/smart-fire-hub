@@ -233,6 +233,103 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   // getSchemaInfo — dataset 연결된 컬럼 정보
   // =========================================================================
 
+  // ============================================================
+  // formatExecutionError — PSQLException 분해 (PR-2, refs #267, #272)
+  //  - jOOQ 가 prefix 로 echo 하는 'SQL [...]; ERROR: ...' 본문을 제거
+  //  - ServerErrorMessage 분해로 SQLState / Position / HINT / DETAIL 보존
+  //  - 2000자 truncate 가드 확인
+  // ============================================================
+
+  @Test
+  void executeDirectly_undefinedColumn_returnsCleanErrorWithSqlState42703() {
+    AnalyticsQueryResponse res =
+        executionService.execute("SELECT kindness FROM data.exec_ext_test", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    // SQL 본문 echo 제거 확인 — jOOQ prefix 'SQL [...]' 토큰이 error 에 없어야 한다
+    assertThat(res.error()).doesNotContain("SQL [");
+    // PSQL 진단 라벨 보존
+    assertThat(res.error()).contains("ERROR:");
+    assertThat(res.error()).contains("kindness");
+    assertThat(res.error()).contains("SQLState: 42703");
+  }
+
+  @Test
+  void executeDirectly_undefinedTable_returnsCleanErrorWithSqlState42P01() {
+    AnalyticsQueryResponse res =
+        executionService.execute("SELECT * FROM no_such_table_xyz", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    assertThat(res.error()).doesNotContain("SQL [");
+    assertThat(res.error()).contains("ERROR:");
+    assertThat(res.error()).contains("SQLState: 42P01");
+  }
+
+  @Test
+  void executeDirectly_syntaxError_includesPosition() {
+    AnalyticsQueryResponse res =
+        executionService.execute("SELECT FROMM data.exec_ext_test", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    assertThat(res.error()).contains("ERROR:");
+    assertThat(res.error()).contains("SQLState: 42601");
+    assertThat(res.error()).containsPattern("Position: \\d+");
+  }
+
+  @Test
+  void executeDirectly_errorMessage_truncatedAt2000Chars() {
+    // 3000자 식별자 → PSQL 에러 메시지가 식별자를 그대로 포함 → 2000자 초과 → truncate
+    String hugeCol = "a".repeat(3000);
+    AnalyticsQueryResponse res =
+        executionService.execute("SELECT " + hugeCol + " FROM data.exec_ext_test", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    assertThat(res.error().length()).isLessThanOrEqualTo(2000);
+  }
+
+  @Test
+  void executeDirectly_divisionByZero_psqlExceptionFallback() {
+    // ServerErrorMessage 부재/특수 케이스에도 ERROR: 시작 보장
+    AnalyticsQueryResponse res = executionService.execute("SELECT 1/0", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    assertThat(res.error()).contains("ERROR:");
+    // 22012 SQLState 또는 division 키워드 둘 중 하나는 있어야
+    assertThat(res.error()).containsAnyOf("22012", "division");
+  }
+
+  @Test
+  void executeViaExecutor_failure_keepsExistingPrefixUnchanged_BC() {
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenThrow(new RuntimeException("connection refused"));
+
+    // executorEnabled 강제 활성
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        executionService, "executorEnabled", true);
+
+    try {
+      AnalyticsQueryResponse res = executionService.execute("SELECT 1", 100, true);
+
+      assertThat(res.error()).isNotNull();
+      // Executor 경로의 prefix 보존 — 본 PR 무영향 영역
+      assertThat(res.error()).startsWith("Executor 연결 실패");
+    } finally {
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          executionService, "executorEnabled", false);
+    }
+  }
+
+  @Test
+  void executeDirectly_validationFailure_doesNotEchoSql() {
+    // DROP 은 SqlValidationUtils 가 차단 → SqlQueryException 한국어 메시지 (SQL 본문 비포함)
+    AnalyticsQueryResponse res =
+        executionService.execute("DROP TABLE data.exec_ext_test", 100, true);
+
+    assertThat(res.error()).isNotNull();
+    assertThat(res.error().length()).isLessThanOrEqualTo(2000);
+    assertThat(res.error()).doesNotContain("DROP TABLE data.exec_ext_test");
+  }
+
   @Test
   void getSchemaInfo_includesDatasetMetadata() {
     // exec_ext_test 테이블이 data 스키마에 존재하고 dataset과 연결되어 있어야 함
