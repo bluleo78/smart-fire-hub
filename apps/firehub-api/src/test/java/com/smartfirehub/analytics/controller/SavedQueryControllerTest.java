@@ -1,5 +1,6 @@
 package com.smartfirehub.analytics.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -195,6 +196,35 @@ class SavedQueryControllerTest {
         .andExpect(status().isOk());
 
     verify(executionService).getSchemaInfo(List.of(11L, 7L));
+  }
+
+  /**
+   * GET /schema?datasetIds= (빈 문자열) — Spring 의 List<Long> 빈 값 바인딩 동작 fix.
+   *
+   * <p>PR-1 의 빈 배열 defensive 분기가 HTTP 경로에서 실제 트리거되는지 캡처 어서션으로 확인한다. Spring 6.x 의 {@code
+   * ?datasetIds=} 처리 동작(빈 문자열 → null 또는 empty list)을 둘 다 허용해 버전 변동을 흡수한다. 즉, 빈 값은 결국 BC 분기(전체 반환)로
+   * 들어가 Zod 가 차단하지 않은 HTTP 우회 경로를 검증한다.
+   */
+  @Test
+  void getSchema_emptyDatasetIdsParam_behaviorDocumented() throws Exception {
+    when(executionService.getSchemaInfo((List<Long>) any()))
+        .thenReturn(new SchemaInfoResponse(List.of()));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/schema?datasetIds=")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    // 실제 바인딩 결과 캡처 — Spring 버전·PG 버전 차이를 흡수하기 위해 null 또는 empty list 둘 다 허용.
+    @SuppressWarnings("unchecked")
+    org.mockito.ArgumentCaptor<List<Long>> captor =
+        org.mockito.ArgumentCaptor.forClass(List.class);
+    verify(executionService).getSchemaInfo(captor.capture());
+    List<Long> captured = captor.getValue();
+    assertThat(captured == null || captured.isEmpty())
+        .as("Spring @RequestParam List<Long> 빈 문자열 바인딩: null 또는 empty list")
+        .isTrue();
   }
 
   // ── GET /api/v1/analytics/queries/folders ──────────────────────────────────
