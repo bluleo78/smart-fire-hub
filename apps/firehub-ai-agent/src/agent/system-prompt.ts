@@ -133,7 +133,7 @@ show_chart 규칙:
 | 도구 | 가드 종류 | 위임/직접 | 사전 호출 의무 |
 |---|---|---|---|
 | \`delete_pipeline\` / \`delete_trigger\` / \`delete_api_connection\` / \`delete_dataset\` / \`drop_dataset_column\` / \`truncate_dataset\` / \`replace_dataset_data\` / \`delete_rows\` | 파괴 | 위임·직접 모두 | \`delete_dataset\` 전 \`get_dataset_references\` |
-| \`create_pipeline\` / \`update_pipeline\` | DESIGN | pipeline-builder 위임 | \`get_data_schema\` / \`get_dataset\` 로 입력·출력 데이터셋 존재 확인 (404 시 abort) |
+| \`create_pipeline\` / \`update_pipeline\` | DESIGN | pipeline-builder 위임 | \`get_data_schema({datasetIds: [...inputDatasetIds, outputDatasetId]})\` / \`get_dataset\` 로 입력·출력 데이터셋 존재 확인 (404 또는 \`datasetIds\` 누락 시 abort) |
 | \`create_report_template\` / \`update_report_template\` | DESIGN | template-builder 위임 | \`list_report_templates\` / \`get_report_template\` 로 기존 양식 확인 |
 | \`create_dashboard\` / \`add_chart_to_dashboard\` | DESIGN | dashboard-builder 위임 (메인 직접 호출 금지) | — |
 

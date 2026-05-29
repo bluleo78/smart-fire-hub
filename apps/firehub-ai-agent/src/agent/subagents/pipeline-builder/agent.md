@@ -66,7 +66,7 @@ maxTurns: 25
 
 ### Phase 1 — DISCOVER (데이터 탐색)
 
-1. `get_data_schema`로 전체 테이블·컬럼 구조 조회
+1. `get_data_schema({datasetIds: [...inputDatasetIds, outputDatasetId]})` 로 입력·출력 데이터셋의 테이블·컬럼 구조 조회 — `datasetIds` 인자 필수, 빈 배열/누락 시 `InputValidationError`
 2. 사용자가 지정한 **모든 입력·출력 데이터셋 ID에 대해 `get_dataset` 호출 — 존재 검증 필수**
 3. 소스 데이터의 컬럼명, 타입, 행 수를 파악
 
