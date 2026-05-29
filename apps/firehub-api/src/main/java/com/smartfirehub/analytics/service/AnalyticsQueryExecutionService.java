@@ -228,22 +228,51 @@ public class AnalyticsQueryExecutionService {
   }
 
   /**
-   * Return table/column information for the data schema. Used for CodeMirror autocomplete and query
-   * builder.
+   * BC 진입점 — 인자 없이 호출되는 기존 외부 호출자(Web UI, 컨트롤러 BC)를 위해 유지.
+   * 내부적으로 datasetIds=null 오버로드에 위임한다.
    */
   public SchemaInfoResponse getSchemaInfo() {
-    // Query information_schema.columns for data schema
-    var infoRecords =
-        dsl.fetch(
-            "SELECT c.table_name, c.column_name, c.data_type, "
-                + "       d.id AS dataset_id, d.name AS dataset_name, "
-                + "       dc.display_name "
-                + "FROM information_schema.columns c "
-                + "LEFT JOIN dataset d ON d.table_name = c.table_name "
-                + "LEFT JOIN dataset_column dc "
-                + "  ON dc.dataset_id = d.id AND dc.column_name = c.column_name "
-                + "WHERE c.table_schema = 'data' "
-                + "ORDER BY c.table_name, c.ordinal_position");
+    return getSchemaInfo(null);
+  }
+
+  /**
+   * data 스키마의 테이블·컬럼 정보를 반환한다.
+   *
+   * @param datasetIds 필터링할 dataset id 목록.
+   *     <ul>
+   *       <li>{@code null} — 전체 반환 (BC: 기존 인자 없는 호출과 동일)
+   *       <li>비어있음 — 빈 응답 (defensive: 외부에서 ?datasetIds= 빈값으로 호출 시 전체 폴백 방지)
+   *       <li>값 있음 — 해당 id 들만 필터
+   *     </ul>
+   */
+  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds) {
+    if (datasetIds != null && datasetIds.isEmpty()) {
+      return new SchemaInfoResponse(List.of());
+    }
+
+    StringBuilder sql =
+        new StringBuilder()
+            .append("SELECT c.table_name, c.column_name, c.data_type, ")
+            .append("       d.id AS dataset_id, d.name AS dataset_name, ")
+            .append("       dc.display_name ")
+            .append("FROM information_schema.columns c ")
+            .append("LEFT JOIN dataset d ON d.table_name = c.table_name ")
+            .append("LEFT JOIN dataset_column dc ")
+            .append("  ON dc.dataset_id = d.id AND dc.column_name = c.column_name ")
+            .append("WHERE c.table_schema = 'data' ");
+
+    if (datasetIds != null) {
+      // datasetIds 는 컨트롤러에서 Long 타입으로 바인딩 — SQL injection 위험 없음
+      String csv =
+          datasetIds.stream()
+              .map(String::valueOf)
+              .collect(java.util.stream.Collectors.joining(","));
+      sql.append("AND d.id IN (").append(csv).append(") ");
+    }
+
+    sql.append("ORDER BY c.table_name, c.ordinal_position");
+
+    var infoRecords = dsl.fetch(sql.toString());
 
     Map<String, SchemaInfoResponse.TableInfo> tableMap = new LinkedHashMap<>();
 
@@ -259,7 +288,7 @@ public class AnalyticsQueryExecutionService {
                   tableName, datasetName, datasetId, new ArrayList<>()));
 
       var tableInfo = tableMap.get(tableName);
-      // Add column info to the existing table entry
+      // 기존 테이블 항목에 컬럼 정보 추가
       var columns = new ArrayList<>(tableInfo.columns());
       columns.add(
           new SchemaInfoResponse.ColumnInfo(

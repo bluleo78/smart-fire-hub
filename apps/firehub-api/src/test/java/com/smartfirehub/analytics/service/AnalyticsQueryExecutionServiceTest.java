@@ -191,4 +191,93 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
         execTestInfo.columns().stream().map(SchemaInfoResponse.ColumnInfo::columnName).toList();
     assertThat(columnNames).contains("name", "value");
   }
+
+  // === getSchemaInfo(List<Long>) — datasetIds 필터 ===
+
+  /** 두 개의 스키마 픽스처 데이터셋을 생성하고 각각의 id를 반환한다. */
+  private List<Long> createTwoSchemaFixtures() {
+    Long ds1 =
+        datasetService
+            .createDataset(
+                new CreateDatasetRequest(
+                    "Schema Test A",
+                    "schema_test_a",
+                    null,
+                    null,
+                    "SOURCE",
+                    List.of(
+                        new DatasetColumnRequest("col_a1", "A1", "TEXT", null, true, false, null),
+                        new DatasetColumnRequest(
+                            "col_a2", "A2", "INTEGER", null, true, false, null)),
+                    null),
+                testUserId)
+            .id();
+    Long ds2 =
+        datasetService
+            .createDataset(
+                new CreateDatasetRequest(
+                    "Schema Test B",
+                    "schema_test_b",
+                    null,
+                    null,
+                    "SOURCE",
+                    List.of(
+                        new DatasetColumnRequest("col_b1", "B1", "TEXT", null, true, false, null)),
+                    null),
+                testUserId)
+            .id();
+    return List.of(ds1, ds2);
+  }
+
+  /** null datasetIds 전달 시 전체 반환 — BC 검증. */
+  @Test
+  void getSchemaInfo_nullDatasetIds_returnsAllTables_BC() {
+    List<Long> ids = createTwoSchemaFixtures();
+    SchemaInfoResponse all = executionService.getSchemaInfo();
+    SchemaInfoResponse nullFiltered = executionService.getSchemaInfo(null);
+    assertThat(nullFiltered.tables())
+        .extracting(SchemaInfoResponse.TableInfo::tableName)
+        .containsAll(
+            all.tables().stream().map(SchemaInfoResponse.TableInfo::tableName).toList());
+  }
+
+  /** 빈 배열 전달 시 빈 응답 반환 — defensive 분기 검증. */
+  @Test
+  void getSchemaInfo_emptyList_returnsEmpty_defensive() {
+    createTwoSchemaFixtures();
+    SchemaInfoResponse res = executionService.getSchemaInfo(List.of());
+    assertThat(res.tables()).isEmpty();
+  }
+
+  /** 단일 datasetId 전달 시 해당 테이블만 반환. */
+  @Test
+  void getSchemaInfo_singleDatasetId_returnsOnlyMatchingTable() {
+    List<Long> ids = createTwoSchemaFixtures();
+    Long firstId = ids.get(0);
+    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(firstId));
+    assertThat(res.tables())
+        .extracting(SchemaInfoResponse.TableInfo::datasetId)
+        .containsExactly(firstId);
+    assertThat(res.tables())
+        .extracting(SchemaInfoResponse.TableInfo::tableName)
+        .containsExactly("schema_test_a");
+  }
+
+  /** 여러 datasetId 전달 시 해당 테이블 모두 반환. */
+  @Test
+  void getSchemaInfo_multipleDatasetIds_returnsAllMatching() {
+    List<Long> ids = createTwoSchemaFixtures();
+    SchemaInfoResponse res = executionService.getSchemaInfo(ids);
+    assertThat(res.tables())
+        .extracting(SchemaInfoResponse.TableInfo::tableName)
+        .containsExactlyInAnyOrder("schema_test_a", "schema_test_b");
+  }
+
+  /** 존재하지 않는 datasetId 전달 시 빈 응답 반환. */
+  @Test
+  void getSchemaInfo_unknownDatasetId_returnsEmpty() {
+    createTwoSchemaFixtures();
+    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(9_999_999L));
+    assertThat(res.tables()).isEmpty();
+  }
 }
