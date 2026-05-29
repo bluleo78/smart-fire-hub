@@ -160,23 +160,12 @@ class SavedQueryControllerTest {
             get("/api/v1/analytics/queries/schema").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.tables[0].tableName").value("my_table"));
+
+    // 추가 — datasetIds 미지정 시 서비스의 List<Long> 오버로드에 null 위임 검증
+    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull());
   }
 
   // === GET /api/v1/analytics/queries/schema — datasetIds 필터 (PR-1 Task 2) ===
-
-  /** datasetIds 미지정 → 서비스에 null 위임 (BC: 전체 스키마 반환). */
-  @Test
-  void getSchema_noParam_callsServiceWithNull_BC() throws Exception {
-    when(executionService.getSchemaInfo((List<Long>) isNull()))
-        .thenReturn(new SchemaInfoResponse(List.of()));
-
-    mockMvc
-        .perform(
-            get("/api/v1/analytics/queries/schema").header("Authorization", "Bearer test-token"))
-        .andExpect(status().isOk());
-
-    verify(executionService).getSchemaInfo((List<Long>) isNull());
-  }
 
   /** 단일 datasetId — Spring 의 List<Long> 단일 값 바인딩 검증. */
   @Test
