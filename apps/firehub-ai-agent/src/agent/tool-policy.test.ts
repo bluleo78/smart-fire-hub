@@ -82,4 +82,62 @@ describe('tool-policy (#256, #266)', () => {
   it('빈 도구명은 null (파싱 노이즈 — 상위에서 처리)', () => {
     expect(checkToolPolicy('')).toBeNull();
   });
+
+  // #276: Agent 위임 라우팅 백스톱 — subagent_type 화이트리스트 강제
+  describe('Agent subagent_type 백스톱 (#276)', () => {
+    const WHITELIST = ['data-analyst', 'dataset-manager', 'trigger-manager'] as const;
+
+    it('정의된 subagent 타입은 허용된다', () => {
+      expect(checkToolPolicy('Agent', { subagent_type: 'data-analyst' }, WHITELIST)).toBeNull();
+      expect(checkToolPolicy('Agent', { subagent_type: 'dataset-manager' }, WHITELIST)).toBeNull();
+    });
+
+    it('general-purpose 위임은 화이트리스트 모드에서 차단된다', () => {
+      const r = checkToolPolicy('Agent', { subagent_type: 'general-purpose' }, WHITELIST);
+      expect(r).toMatch(/blocked by policy \(#276\)/);
+      expect(r).toContain('general-purpose');
+    });
+
+    it('표에 없는 임의 타입은 차단된다', () => {
+      expect(
+        checkToolPolicy('Agent', { subagent_type: 'researcher' }, WHITELIST),
+      ).toMatch(/blocked by policy \(#276\)/);
+    });
+
+    it('subagent_type 미지정(타입 생략 우회)도 화이트리스트 모드에서 차단된다', () => {
+      // 호스트가 general-purpose 로 폴백하므로 빈 타입도 막는다
+      expect(checkToolPolicy('Agent', {}, WHITELIST)).toMatch(/blocked by policy \(#276\)/);
+    });
+
+    it('공백 패딩된 타입도 trim 후 판정된다', () => {
+      expect(checkToolPolicy('Agent', { subagent_type: '  data-analyst  ' }, WHITELIST)).toBeNull();
+      expect(
+        checkToolPolicy('Agent', { subagent_type: ' general-purpose ' }, WHITELIST),
+      ).toMatch(/blocked/);
+    });
+
+    it('화이트리스트 미제공 시에도 general-purpose 만은 차단된다 (방어 하한선)', () => {
+      expect(checkToolPolicy('Agent', { subagent_type: 'general-purpose' })).toMatch(/blocked/);
+      // 그 외 타입은 화이트리스트 없으면 통과 (정보 부족 시 관대)
+      expect(checkToolPolicy('Agent', { subagent_type: 'data-analyst' })).toBeNull();
+    });
+
+    it('input 미전달 시 Agent 는 허용된다 (BC — 호출부가 input 안 넘기는 경로)', () => {
+      expect(checkToolPolicy('Agent')).toBeNull();
+    });
+
+    it('차단 메시지에 전체 에이전트 roster(코드명)를 노출하지 않는다 (L2 준수, user-facing SSE)', () => {
+      const r = checkToolPolicy('Agent', { subagent_type: 'general-purpose' }, WHITELIST) ?? '';
+      // 시도된 타입(general-purpose)만 진단용 포함, 다른 정의된 에이전트명은 누출 금지
+      expect(r).not.toContain('dataset-manager');
+      expect(r).not.toContain('trigger-manager');
+      expect(r).not.toContain('data-analyst');
+    });
+
+    it('Agent 가 아닌 도구의 subagent_type 필드는 무시된다', () => {
+      expect(
+        checkToolPolicy('mcp__firehub__list_datasets', { subagent_type: 'general-purpose' }, WHITELIST),
+      ).toBeNull();
+    });
+  });
 });

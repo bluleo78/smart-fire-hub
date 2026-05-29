@@ -316,7 +316,12 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
         if (event.type === 'tool_use') {
           // #256: 옵션이 어떤 이유로 무력화돼도(plugin 채널 우회 등) 런타임에서 차단.
           // 차단 시 abort 신호로 SDK 스트림을 즉시 종료시킨다.
-          const policyDeny = checkToolPolicy(String(event.toolName || ''));
+          // #276: Agent 위임은 정의된 subagent 화이트리스트(loadSubagents 키)로 백스톱.
+          const policyDeny = checkToolPolicy(
+            String(event.toolName || ''),
+            event.input as Record<string, unknown> | undefined,
+            Object.keys(subagents),
+          );
           if (policyDeny) {
             console.warn(`${tag()} [policy] ${policyDeny} — aborting stream`);
             yield { type: 'error', message: policyDeny };

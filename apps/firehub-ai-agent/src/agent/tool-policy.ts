@@ -73,16 +73,58 @@ export const ALLOWED_TOOLS: readonly string[] = [
  *   1. DISALLOWED_TOOLS 에 정확히 매칭(또는 \`mcp__claude-search__*\` 같은 prefix-패턴)되면 차단
  *   2. 그 외는 모두 허용 — 새 호스트 도구가 추가돼도 자동 통과되어 무응답 회귀를 막는다
  *
+ * #276: Agent 위임 라우팅 백스톱 — \`subagent_type\` 화이트리스트 강제.
+ *   메인 에이전트가 SYSTEM_PROMPT L1 의 라우팅 지시를 어기고 호스트 빌트인 \`general-purpose\`
+ *   나 미정의 타입으로 위임하면, 전문 subagent 의 rules.md(파괴 확인·PII·maxTurns)가 통째로
+ *   우회되고 폭주(운영 trace: 223턴/21.6M토큰)가 발생한다. 프롬프트가 1차 방어이며 본 백스톱은
+ *   실제 호출 시 강제 중단하는 2차 안전망이다.
+ *
+ *   런타임 강제만이 유일한 수단인 이유 (SDK 0.2.x 소스 검증):
+ *   - \`permissionMode: 'bypassPermissions'\` 하에서 canUseTool 은 \`passthrough\` 로 무력화.
+ *   - 호스트 빌트인 \`general-purpose\`(source:"built-in") 는 \`options.agents\` 와 무관하게 항상 존재.
+ *   - 미정의 타입은 에러가 아니라 \`general-purpose\` 로 조용히 폴백(fork resolver).
+ *   → 따라서 stream-interception(본 함수) 의 terminal block 이 유일한 강제점이다.
+ *
  * @param toolName SDK/CLI 가 보고한 tool_use.name
+ * @param input (선택) tool_use.input — Agent 위임의 \`subagent_type\` 검사에 사용
+ * @param validSubagentTypes (선택) 정의된 firehub subagent 이름 목록(\`Object.keys(loadSubagents())\`).
+ *        제공 시 화이트리스트 강제, 미제공 시 빌트인 \`general-purpose\` 만 차단(방어 하한선).
  * @returns 차단 사유 문자열(차단해야 할 때) 또는 null(허용)
  */
-export function checkToolPolicy(toolName: string): string | null {
+export function checkToolPolicy(
+  toolName: string,
+  input?: Record<string, unknown>,
+  validSubagentTypes?: readonly string[],
+): string | null {
   if (!toolName) return null; // 빈 이름은 파싱 노이즈
   for (const pat of DISALLOWED_TOOLS) {
     if (matchToolPattern(pat, toolName)) {
       return `host tool blocked by policy (#256): ${toolName}`;
     }
   }
+
+  // #276: Agent 위임 시 subagent_type 백스톱. input 이 없으면(호출부가 미전달) 검사 생략 — BC.
+  if (toolName === 'Agent' && input) {
+    const rawType = input.subagent_type;
+    const subagentType = typeof rawType === 'string' ? rawType.trim() : '';
+    const hasWhitelist = !!validSubagentTypes && validSubagentTypes.length > 0;
+
+    // 차단 메시지는 user-facing SSE error 로 전달되므로 L2(코드명 비노출) 준수 — 전체 에이전트
+    // roster 를 싣지 않는다. 시도된 타입(general-purpose/미정의)만 진단용으로 포함하며, 이는
+    // 정의된 firehub 에이전트 이름이 아니다(유효 이름은 통과). terminal block 이라 모델은 이
+    // 메시지를 보지 못하므로 대안 안내(roster)는 무의미 — 라우팅 1차 방어는 SYSTEM_PROMPT L1 가 담당.
+    if (hasWhitelist) {
+      // 화이트리스트 모드: 정의된 타입만 허용. 미지정/빈값도 차단 — 호스트가 general-purpose 로
+      // 폴백하므로 "타입 생략" 우회를 막는다.
+      if (!validSubagentTypes!.includes(subagentType)) {
+        return `subagent routing blocked by policy (#276): "${subagentType || '(unspecified)'}" is not an allowed delegation target`;
+      }
+    } else if (subagentType === 'general-purpose') {
+      // 화이트리스트 미제공 시에도 호스트 빌트인 general-purpose 는 차단(방어 하한선).
+      return `subagent routing blocked by policy (#276): "general-purpose" is not an allowed delegation target`;
+    }
+  }
+
   return null;
 }
 

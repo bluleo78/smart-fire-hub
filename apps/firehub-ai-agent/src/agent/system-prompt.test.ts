@@ -11,6 +11,15 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('도구 선택 우선순위');
   });
 
+  // #276: general-purpose 위임 금지를 강한 어조 + 위반 예시로 명시해야 함 (런타임 백스톱과 1차 방어 이중화)
+  it('general-purpose 위임 금지를 차단 경고와 함께 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('general-purpose');
+    // 단순 "쓰지 마세요"가 아니라 런타임 차단 사실을 알려 모델이 직접 처리/정확 위임으로 우회하게 한다
+    expect(SYSTEM_PROMPT).toMatch(/차단|금지/);
+    // 대안 안내: 표의 정확한 이름 위임 또는 메인 직접 처리
+    expect(SYSTEM_PROMPT).toMatch(/직접/);
+  });
+
   // list_* / get_* / query_* 그룹을 데이터 조회 우선 도구로 명시해야 함
   it('list_*/get_*/query_* 를 데이터 조회 우선 도구로 명시한다', () => {
     expect(SYSTEM_PROMPT).toMatch(/list_\*.*get_\*.*query_\*/s);

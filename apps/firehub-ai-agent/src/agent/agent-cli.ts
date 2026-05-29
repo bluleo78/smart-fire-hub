@@ -358,7 +358,12 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             const toolName = block.name ?? '';
             // #256: SDK 옵션이 어떤 이유로 무력화돼도(plugin/skill 채널 우회 등) 런타임에서 차단.
             // tool_use 이벤트를 받은 즉시 정책 위반 여부를 검사하고 차단 시 child 를 종료한다.
-            const policyDeny = checkToolPolicy(toolName);
+            // #276: Agent 위임은 정의된 subagent 화이트리스트(loadSubagents 키)로 백스톱.
+            const policyDeny = checkToolPolicy(
+              toolName,
+              (block.input as Record<string, unknown>) ?? undefined,
+              Object.keys(subagents),
+            );
             if (policyDeny) {
               console.warn(`[CLI Agent] [policy] ${policyDeny} — killing child`);
               yield { type: 'error', message: policyDeny };
