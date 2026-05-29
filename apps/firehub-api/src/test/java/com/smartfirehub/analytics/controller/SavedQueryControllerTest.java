@@ -152,13 +152,60 @@ class SavedQueryControllerTest {
     SchemaInfoResponse schema =
         new SchemaInfoResponse(
             List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())));
-    when(executionService.getSchemaInfo()).thenReturn(schema);
+    // PR-1 Task 2: 컨트롤러가 datasetIds 파라미터를 받는 오버로드로 변경됨 → null 분기 stub.
+    when(executionService.getSchemaInfo((List<Long>) isNull())).thenReturn(schema);
 
     mockMvc
         .perform(
             get("/api/v1/analytics/queries/schema").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.tables[0].tableName").value("my_table"));
+  }
+
+  // === GET /api/v1/analytics/queries/schema — datasetIds 필터 (PR-1 Task 2) ===
+
+  /** datasetIds 미지정 → 서비스에 null 위임 (BC: 전체 스키마 반환). */
+  @Test
+  void getSchema_noParam_callsServiceWithNull_BC() throws Exception {
+    when(executionService.getSchemaInfo((List<Long>) isNull()))
+        .thenReturn(new SchemaInfoResponse(List.of()));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/schema").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(executionService).getSchemaInfo((List<Long>) isNull());
+  }
+
+  /** 단일 datasetId — Spring 의 List<Long> 단일 값 바인딩 검증. */
+  @Test
+  void getSchema_singleDatasetId_passesListWithOneElement() throws Exception {
+    when(executionService.getSchemaInfo(List.of(11L)))
+        .thenReturn(new SchemaInfoResponse(List.of()));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/schema?datasetIds=11")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(executionService).getSchemaInfo(List.of(11L));
+  }
+
+  /** 콤마 구분 다중 datasetIds — 순서 보존 검증. */
+  @Test
+  void getSchema_multipleDatasetIds_passesListInOrder() throws Exception {
+    when(executionService.getSchemaInfo(List.of(11L, 7L)))
+        .thenReturn(new SchemaInfoResponse(List.of()));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/schema?datasetIds=11,7")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(executionService).getSchemaInfo(List.of(11L, 7L));
   }
 
   // ── GET /api/v1/analytics/queries/folders ──────────────────────────────────

@@ -54,8 +54,11 @@ public class SavedQueryController {
 
   @GetMapping("/schema")
   @RequirePermission("analytics:read")
-  public ResponseEntity<SchemaInfoResponse> getSchema() {
-    return ResponseEntity.ok(executionService.getSchemaInfo());
+  public ResponseEntity<SchemaInfoResponse> getSchema(
+      @RequestParam(required = false) List<Long> datasetIds) {
+    // datasetIds 미지정 시 null 위임 → 서비스 BC 분기로 전체 스키마 반환.
+    // 지정 시 (?datasetIds=11 / ?datasetIds=11,7) 해당 데이터셋만 필터링 — ai-agent 응답 크기 절감.
+    return ResponseEntity.ok(executionService.getSchemaInfo(datasetIds));
   }
 
   @GetMapping("/folders")
