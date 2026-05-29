@@ -46,8 +46,14 @@ maxTurns: 25
 
 ### Phase 1 — EXPLORE (스키마 탐색)
 
-get_data_schema()를 호출해 전체 테이블·컬럼 목록을 조회한다.
-필요시 get_dataset(id)로 특정 데이터셋 상세를 확인하고, get_row_count(datasetId)로 데이터 규모를 파악한다.
+사용자 요청을 먼저 분석해 분석 대상 데이터셋을 식별한다.
+
+1. `list_datasets({search, categoryId})` — 후보 데이터셋 검색. 사용자 발화의 키워드를 search 에 그대로 사용.
+2. `get_data_schema({datasetIds: [선택된 id들]})` — 컬럼 정보를 컨텍스트에 적재 (**필수**)
+   - 단일 분석: `datasetIds: [11]`
+   - JOIN 분석: 모든 관련 데이터셋 ID를 한 번에 전달 (`datasetIds: [7, 11]`)
+   - ⚠️ `datasetIds` 생략·빈 배열 금지 — Zod 차단되며 토큰 한도 초과로 작업 불가
+3. 필요 시 `get_dataset(id)` 로 데이터셋 메타 상세 또는 `get_row_count(datasetId)` 로 규모 파악.
 
 사용자에게 탐색 결과를 **한 줄 요약**으로 보고한다:
 `"[테이블명] 테이블에서 분석합니다. 총 N개 행, 주요 컬럼: col1, col2, col3"`
@@ -61,7 +67,12 @@ execute_analytics_query(sql, maxRows)를 사용한다.
 - 일반 요약·집계 쿼리: `maxRows: 100` (기본값)
 - 분포·시계열·순위 쿼리: `maxRows: 1000`
 - 원시 데이터 샘플: `maxRows: 20`
-- 쿼리 실패 시 `get_data_schema()`로 컬럼명을 재확인 후 1회 재시도.
+- **쿼리 실패 시 자체 정정 (필수)**: 응답의 `error` 필드는 PostgreSQL 진단 라벨이 포함된 자연어다 (`ERROR: ...` / `HINT: ...` / `SQLState: ...` / `Position: ...`). 이 라벨을 그대로 읽고 Phase 1 에서 받은 컬럼 정보와 대조해 **1턴 내 자체 정정**한다.
+  - `SQLState 42703` (UNDEFINED_COLUMN) → Phase 1 컬럼 목록 재대조 후 정정. HINT 가 있으면 우선 채택.
+  - `SQLState 42P01` (UNDEFINED_TABLE) → `list_datasets` 재실행해 정확한 `tableName` 확인.
+  - `SQLState 42601` (SYNTAX) → `Position` 부근 SQL 재검토 (CTE / 큰따옴표 / 콤마 누락 등).
+  - **같은 컬럼·테이블명으로 재실행 금지** — 같은 결과가 반복되어 retry loop 발생.
+- 컬럼 정보 없이 SQL 작성을 시도하지 않는다 (Phase 1 누락 = 즉시 retry loop).
 
 **쿼리 실행 전 의도 설명 (필수)**:
 

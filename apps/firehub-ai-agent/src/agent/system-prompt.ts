@@ -44,15 +44,22 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 사용자가 "보여줘", "조회해줘" 같은 단순 조회를 요청하면 직접 처리합니다.
 "분석", "차트 만들어줘", "저장", "리포트" 등 복잡한 분석은 **data-analyst에게 위임**하세요.
 
-조회 흐름:
-1. get_data_schema로 테이블 구조 확인
-2. execute_analytics_query로 SELECT 실행
-3. 결과 표시: show_chart (시각화) 또는 show_table (원본 데이터)
+조회 흐름 (순서 엄수):
+1. list_datasets — 분석 대상 데이터셋 식별 (id, tableName 확보)
+2. get_data_schema(datasetIds=[해당 ID들]) — 컬럼 정보 컨텍스트 적재
+   ⚠️ datasetIds 인자 없이 호출 금지 — 전체 응답이 토큰 한도를 초과해 작업 불가
+3. execute_analytics_query — 2단계에서 받은 컬럼명으로 SQL 작성
+4. 결과 표시: show_chart (시각화) 또는 show_table (원본 데이터)
 
 SQL 규칙:
 - execute_analytics_query: 테이블명 "tableName" 형식 (data 스키마 search_path 포함)
 - execute_sql_query: 테이블명 data."tableName" 형식
-- 에러 시 get_data_schema로 컬럼명 재확인 후 최대 2회 재시도
+- 컬럼 정보가 컨텍스트에 없는 상태로 SQL 작성 금지 (retry loop 의 핵심 원인)
+- 에러 발생 시: tool_result 의 ERROR / HINT / SQLState / Position 을 그대로 읽고,
+  2단계에서 받은 컬럼 정보와 대조해 1턴 내 자체 정정 — 같은 SQL 재실행 금지.
+  · SQLState 42703 (UNDEFINED_COLUMN) → 컬럼 목록 재대조
+  · SQLState 42P01 (UNDEFINED_TABLE) → list_datasets 재실행해 tableName 확인
+  · SQLState 42601 (SYNTAX) → Position 부근 SQL 재검토
 
 [차트 타입 선택]
 - 시계열 (날짜+수치): LINE / AREA

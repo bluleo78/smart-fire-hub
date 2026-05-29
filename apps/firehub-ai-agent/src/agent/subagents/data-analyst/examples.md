@@ -6,9 +6,10 @@
 
 **에이전트**:
 
-[Phase 1 — EXPLORE] get_data_schema()를 호출한다.
-
-> 탐색 결과: `fire_incidents` 테이블, 8개 컬럼, 24,150개 행
+[Phase 1 — EXPLORE]
+1. `list_datasets({search: "화재"})` → `[{id: 11, tableName: "fire_incidents", name: "화재 출동 조사 데이터"}]`
+2. `get_data_schema({datasetIds: [11]})` → 컬럼 8개 (`incident_date`, `incident_type`, `station_id`, `response_time_sec`, ...)
+3. `get_row_count(11)` → 24,150 행
 
 `fire_incidents` 테이블에서 분석합니다. 총 24,150건, 주요 컬럼: `incident_date`, `incident_type`, `station_id`, `response_time_sec`.
 
@@ -116,7 +117,76 @@ LIMIT 15
 
 ---
 
-## 예시 4: 비담당 요청 — 위임
+## 예시 4: SQL 에러 자체 정정 (retry loop 차단)
+
+**사용자**: 만족도 데이터 평균 보여줘
+
+**에이전트**:
+
+[Phase 1 — EXPLORE]
+1. `list_datasets({search: "만족도"})` → `[{id: 7, tableName: "survey_119_2026"}]`
+2. `get_data_schema({datasetIds: [7]})` → 컬럼: `survey1_kindness`, `survey2_kindness_detail`, `survey4_speed`, ...
+
+[Phase 2 — ANALYZE] 만족도 평균을 확인합니다.
+
+```sql
+SELECT AVG("kindness") FROM "survey_119_2026"
+```
+
+→ 에러 응답:
+```
+ERROR: column "kindness" does not exist
+HINT: Perhaps you meant to reference the column "survey1_kindness".
+SQLState: 42703
+Position: 12
+```
+
+HINT 와 Phase 1 컬럼 목록에서 정확한 이름을 확인했습니다 — `survey1_kindness` 로 정정합니다.
+
+```sql
+SELECT AVG("survey1_kindness") FROM "survey_119_2026"
+```
+
+→ 결과: `{avg: 8.7}`
+
+[Phase 3 — INTERPRET] 친절도 평균은 **8.7점** 입니다 (10점 만점 기준).
+
+---
+
+## ❌ 잘못된 패턴 (retry loop 의 원인)
+
+### 1. 컨텍스트 없이 SQL 추측
+
+```
+execute_analytics_query("SELECT kindness FROM survey")
+→ ERROR: column "kindness" does not exist
+→ (같은 SQL 재시도) → 같은 ERROR → ... → retry loop
+```
+
+Phase 1 (`list_datasets` + `get_data_schema`) 없이 SQL 을 작성하면 컬럼명·테이블명을 추측할 수밖에 없다.
+
+### 2. `get_data_schema` 빈 호출
+
+```
+get_data_schema()
+→ InputValidationError: datasetIds is required
+```
+
+SDK 가 즉시 차단한다. `list_datasets` 먼저 호출해 id 를 확보한 뒤 다시 호출.
+
+### 3. 에러 무시 후 같은 SQL 반복
+
+```
+execute_analytics_query(...) → ERROR + HINT
+execute_analytics_query(같은 SQL)  ← HINT 안 읽음
+→ 같은 ERROR
+```
+
+`error` 필드의 `ERROR / HINT / SQLState / Position` 라벨은 자체 정정을 위한 정보다. 읽지 않으면 retry loop 가 발생한다.
+
+---
+
+## 예시 5: 비담당 요청 — 위임
 
 **사용자**: 화재 데이터셋 새로 만들어줘
 
