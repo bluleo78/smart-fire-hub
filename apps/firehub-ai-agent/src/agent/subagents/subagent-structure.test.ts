@@ -79,3 +79,48 @@ describe('11개 subagent 4 레이어 구조 일관성 (refs #260 PR-5)', () => {
     }
   });
 });
+
+/**
+ * data-analyst Phase 2 사전 조건 회귀 가드 (refs #267).
+ *
+ * SQL 분석 직전 list_datasets → get_data_schema(datasetIds) 의무 충족이
+ * rules.md §1.5 / examples.md 의 잘못된 패턴 섹션·신규 예시 4 (SQL 에러 자체 정정) 로
+ * 명문화되어 있어야 한다. 텍스트가 사라지면 retry loop 회귀 위험이 다시 열린다.
+ */
+describe('data-analyst Phase 2 사전 조건 (refs #267)', () => {
+  const rules = fs.readFileSync(path.join(__dirname, 'data-analyst/rules.md'), 'utf-8');
+  const examples = fs.readFileSync(path.join(__dirname, 'data-analyst/examples.md'), 'utf-8');
+
+  it('rules.md 에 §1.5 Phase 2 사전 조건 섹션이 존재한다', () => {
+    expect(rules).toContain('## 1.5. Phase 2 사전 조건');
+    // 사전 조건 본문에 datasetIds 키워드 (Phase 1 → Phase 2 게이팅 핵심)
+    expect(rules).toContain('datasetIds');
+  });
+
+  it('rules.md SQLState 표에 42703 / 42P01 / 42601 분기가 포함된다', () => {
+    expect(rules).toContain('42703');
+    expect(rules).toContain('42P01');
+    expect(rules).toContain('42601');
+  });
+
+  it('examples.md 잘못된 패턴 섹션이 존재한다 (InputValidationError 케이스)', () => {
+    expect(examples).toContain('## ❌ 잘못된 패턴');
+    // SDK Zod 차단 케이스 — 빈 호출 회귀 가드
+    expect(examples).toContain('InputValidationError');
+  });
+
+  it('examples.md 신규 예시 4 SQL 에러 자체 정정 헤더가 존재한다', () => {
+    expect(examples).toContain('예시 4: SQL 에러 자체 정정');
+    // 에러 자체 정정 예시 본문에 SQLState 42703 (UNDEFINED_COLUMN) 케이스 포함
+    expect(examples).toContain('SQLState: 42703');
+  });
+
+  it('examples.md 섹션 순서: 예시 4 → 잘못된 패턴 → 예시 5 보존', () => {
+    const idx4 = examples.indexOf('## 예시 4: SQL 에러 자체 정정');
+    const idxBad = examples.indexOf('## ❌ 잘못된 패턴');
+    const idx5 = examples.indexOf('## 예시 5:');
+    expect(idx4).toBeGreaterThan(0);
+    expect(idxBad).toBeGreaterThan(idx4);
+    expect(idx5).toBeGreaterThan(idxBad);
+  });
+});

@@ -371,6 +371,27 @@ describe('analyticsApi (via FireHubApiClient)', () => {
     expect(result).toEqual(mock);
   });
 
+  // refs #267 — datasetIds 배열을 콤마 join 으로 직렬화해야 한다. axios params 기본 직렬화는
+  // 배열을 `datasetIds=1&datasetIds=2` 로 펴므로, analytics-api 가 명시적으로 `.join(',')` 변환해
+  // 백엔드 Spring `@RequestParam List<Long>` 의 콤마 구분 단일 파라미터 컨벤션과 정렬된다.
+  it('getDataSchema with single datasetId serializes as ?datasetIds=11', async () => {
+    nock(BASE_URL)
+      .get('/analytics/queries/schema')
+      .query({ datasetIds: '11' })
+      .reply(200, { tables: [] });
+    await client.getDataSchema([11]);
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('getDataSchema with multiple datasetIds serializes as ?datasetIds=11,7', async () => {
+    nock(BASE_URL)
+      .get('/analytics/queries/schema')
+      .query({ datasetIds: '11,7' })
+      .reply(200, { tables: [] });
+    await client.getDataSchema([11, 7]);
+    expect(nock.isDone()).toBe(true);
+  });
+
   it('createChart calls POST /analytics/charts', async () => {
     const body = {
       name: 'c',

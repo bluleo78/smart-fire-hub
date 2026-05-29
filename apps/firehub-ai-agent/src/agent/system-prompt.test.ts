@@ -450,4 +450,35 @@ describe('SYSTEM_PROMPT', () => {
       expect(l3.toLowerCase()).toContain('force create');
     });
   });
+
+  // 이슈 #267 회귀 방지 — L1-2 단순 데이터 조회 워크플로 가드.
+  // SQL 분석 직전 list_datasets → get_data_schema(datasetIds) → execute_analytics_query 순서를
+  // 명시하여, 컬럼 정보 없이 SQL 을 추측해 42703 retry loop 가 발생하는 결함을 차단한다.
+  // get_data_schema 빈 호출 금지 경고 + SQLState 별 자체 정정 분기 + 컬럼 컨텍스트 가드를
+  // 텍스트 계약으로 고정한다.
+  describe('L1-2 워크플로 가드 (refs #267)', () => {
+    // L1-2 영역에 list_datasets → get_data_schema(datasetIds=) → execute_analytics_query 흐름이 명시되어야 함
+    it('list_datasets → get_data_schema(datasetIds=) → execute_analytics_query 흐름을 명시한다', () => {
+      expect(SYSTEM_PROMPT).toContain('list_datasets');
+      expect(SYSTEM_PROMPT).toContain('get_data_schema(datasetIds=');
+      expect(SYSTEM_PROMPT).toContain('execute_analytics_query');
+    });
+
+    // 빈 호출 금지 경고 — SDK Zod 차단 우회 안내가 누락되지 않도록 보장
+    it('datasetIds 빈 호출 금지 경고를 포함한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/⚠️.*datasetIds 인자 없이 호출 금지/);
+    });
+
+    // SQLState 별 자체 정정 분기 (42703 / 42P01 / 42601) — retry loop 차단 핵심
+    it('SQLState 42703 / 42P01 / 42601 자체 정정 분기를 명시한다', () => {
+      expect(SYSTEM_PROMPT).toContain('SQLState 42703');
+      expect(SYSTEM_PROMPT).toContain('SQLState 42P01');
+      expect(SYSTEM_PROMPT).toContain('SQLState 42601');
+    });
+
+    // 컬럼 정보가 컨텍스트에 없는 상태로 SQL 작성 금지 가드
+    it('컬럼 정보 없이 SQL 작성 금지 가드를 명시한다', () => {
+      expect(SYSTEM_PROMPT).toContain('컬럼 정보가 컨텍스트에 없는 상태로 SQL 작성 금지');
+    });
+  });
 });
