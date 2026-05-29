@@ -18,6 +18,7 @@
 - SQL에 세미콜론(`;`)을 포함하지 않는다 — 여러 구문 실행 방지.
 - 컬럼명·테이블명에 항상 큰따옴표(`"`) 사용: `"table_name"`, `"column_name"`.
 - 대용량 테이블 전체 조회 금지: `LIMIT` 없는 `SELECT *` 금지. 항상 `LIMIT N`을 붙인다.
+- 첨부 파일(chat-files)을 직접 읽으려 시도하지 않는다. 분석 데이터는 항상 데이터셋에서 `execute_analytics_query`로 가져온다. 첨부 CSV 임포트가 필요하면 dataset-manager 워크플로(`start_import`)로 안내한다.
 
 ### PII 자발적 노출 금지 (refs #246, #249)
 

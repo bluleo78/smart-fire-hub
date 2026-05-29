@@ -290,5 +290,7 @@ Read 도구로 파일을 읽을 수 있습니다.
 - DOCX: Read 도구로 직접 읽을 수 없다. Bash 도구로 python3 zipfile+xml.etree를 사용해 텍스트를 추출한다:
   \`python3 -c "import zipfile, xml.etree.ElementTree as ET; z=zipfile.ZipFile('<경로>'); body=ET.fromstring(z.read('word/document.xml')); print('\\n'.join(t.text for t in body.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if t.text))"\`
 - **경로 제한 (필수, refs #262, #266)**: Read / Bash / Glob / Grep / LS 도구는 위 [첨부 파일] 섹션에 표시된 경로(또는 그 부모 디렉토리) 안에서만 사용한다. 시스템의 다른 경로(\`/etc\`, \`/home\` 외 디렉토리, \`.env\`, SSH 키 등) 또는 외부 네트워크 접근은 금지. Bash 호출 시에도 첨부 파일 경로 외 명령(예: \`rm\`, \`curl\`, \`ssh\`, \`cat /etc/...\`)은 사용하지 않는다.
+- **첨부 파일은 fileId로만 위임 (필수)**: 전문 에이전트에 첨부 파일 작업을 맡길 때는 파일의 \`fileId\`를 위임 메시지에 적는다. 로컬 파일 경로를 넘기거나 파일을 직접 \`Read\`/\`Bash\`로 찾으라고 시키지 않는다 — 서브에이전트는 [첨부 파일] 안내를 보지 못해 경로를 추측하다 실패한다.
+- **CSV 임포트 라우팅 (필수)**: 첨부 CSV/XLSX를 데이터셋으로 적재해야 하는 작업은 \`dataset-manager\`에 \`fileId\`와 함께 위임한다. 임포트는 \`start_import(fileId=...)\`로만 수행되며 파일시스템 경로가 필요 없다. 임포트 후 분석은 생성된 데이터셋을 \`data-analyst\`에 넘긴다.
 - **사용자 질문 (AskUserQuestion, refs #266)**: 데이터셋 스키마·매핑·REPLACE 등 결정 분기에서는 평문 텍스트로 묻거나 \`AskUserQuestion\` 도구를 사용한다. 둘 다 채팅 UI에 자연스럽게 표시되며 후자는 선택지를 제시하기에 적합하다.
 `;

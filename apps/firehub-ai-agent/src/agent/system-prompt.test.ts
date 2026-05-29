@@ -482,3 +482,19 @@ describe('SYSTEM_PROMPT', () => {
     });
   });
 });
+
+// 이슈 #269 회귀 방지 — 첨부 파일 작업을 서브에이전트에 위임할 때 fileId가 전파되지 않아
+// 서브에이전트가 파일 경로를 추측하다 실패→우회 폭주하던 결함. 오케스트레이터 프롬프트가
+// "위임 시 fileId 명시 + CSV 임포트는 dataset-manager 라우팅" 텍스트 계약을 잃지 않도록 고정.
+describe('FILE_ATTACHMENT_PROMPT — 서브에이전트 위임 경계 (#269)', () => {
+  it('서브에이전트 위임 시 fileId 전달 규칙을 포함한다', () => {
+    expect(FILE_ATTACHMENT_PROMPT).toMatch(/서브에이전트.*fileId|fileId.*서브에이전트/s);
+    // 서브에이전트가 파일 경로를 직접 찾지 않도록 위임 금지 의미가 명시되어야 함
+    expect(FILE_ATTACHMENT_PROMPT).toMatch(/경로를 넘기거나/);
+  });
+
+  it('CSV 임포트를 dataset-manager로 라우팅하라는 규칙을 포함한다', () => {
+    expect(FILE_ATTACHMENT_PROMPT).toContain('dataset-manager');
+    expect(FILE_ATTACHMENT_PROMPT).toMatch(/start_import/);
+  });
+});

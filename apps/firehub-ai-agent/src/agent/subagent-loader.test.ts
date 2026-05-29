@@ -531,6 +531,18 @@ describe('SL-DA: data-analyst subagent integration', () => {
     expect(prompt).toMatch(/a\*\*\*@e\*\*\*\.com/);
     expect(prompt).toMatch(/010-\*\*\*\*-\d{4}/);
   });
+
+  // 이슈 #269 — data-analyst는 Read 도구가 없어 직접 위험은 없으나, 방어선 일관화 +
+  // 이슈 처방 충족을 위해 chat-files 직접 접근 금지·임포트 워크플로 안내를 인라인한다.
+  it('SL-DA-CHATFILES (#269): data-analyst 프롬프트가 chat-files 직접 접근 금지를 포함한다', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['data-analyst'].prompt;
+    expect(prompt).toContain('chat-files');
+    expect(prompt).toMatch(/start_import|dataset-manager/);
+  });
 });
 
 // ── SL-16: Graceful degradation across multiple subagents ────────────────────
@@ -641,6 +653,21 @@ describe('SL-TM: trigger-manager subagent integration', () => {
     // #260: examples.md 는 기본 제외 — 토큰 비용 절감.
     // "새벽 집계" 는 agent.md 에도 등장하므로 examples.md 고유 대화 예시로 검증.
     expect(prompt).not.toContain('파이프라인 5번에 매일 오전 3시');
+  });
+
+  // 이슈 #269 회귀 방지 — Read/Bash를 가진 유일한 위임 대상인 pipeline-builder가
+  // chat-files 경로를 추측·탐색하다 실패→우회 폭주하던 결함. 경계 규칙 인라인 보장.
+  it('SL-PB-CHATFILES (#269): pipeline-builder 프롬프트가 chat-files 경계 규칙을 포함한다', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const prompt = agents['pipeline-builder'].prompt;
+    expect(prompt).toContain('chat-files');
+    expect(prompt).toMatch(/추측|탐색/);
+    expect(prompt).toMatch(/금지/);
+    // 우회 폭주 차단 — 올바른 임포트 워크플로(start_import) 안내가 포함되어야 함
+    expect(prompt).toMatch(/start_import/);
   });
 });
 
