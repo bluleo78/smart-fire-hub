@@ -14,15 +14,16 @@ import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
 import { registerAllTools } from './firehub-mcp-server.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
+import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/failure-streak.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
 /**
- * Creates a safeTool function that registers tools on an McpServer instance.
- * The return type is cast to SafeToolFn so existing register*Tools() functions
- * (which are typed against the SDK's safeTool signature) work without modification.
+ * createMcpSafeTool: McpServer.tool() 시그니처에 맞춘 safeTool + Tier1 경고 주입.
+ * 핸들러를 try/catch로 감싸고(기존 동작 유지), 연속 실패 트래커에 기록하여
+ * 임계(WARN_AT)에 도달한 오류 결과엔 경고 힌트를 1회 덧붙인다.
  */
-function createMcpSafeTool(server: McpServer): SafeToolFn {
+function createMcpSafeTool(server: McpServer, tracker: FailureTracker): SafeToolFn {
   return function safeTool<Schema extends AnyZodRawShape>(
     name: string,
     description: string,
@@ -32,26 +33,26 @@ function createMcpSafeTool(server: McpServer): SafeToolFn {
     server.tool(
       name,
       description,
-      // Cast: AnyZodRawShape (Zod v4) is compatible with ZodRawShapeCompat (MCP SDK)
+      // Cast: AnyZodRawShape (Zod v4) 은 MCP SDK ZodRawShapeCompat 와 호환
       schema as Record<string, never>,
       async (args: Record<string, unknown>) => {
+        let result: ToolResult;
         try {
-          const result = await handler(args as InferShape<Schema>);
-          return {
-            content: result.content,
-            isError: result.isError,
-          };
+          result = await handler(args as InferShape<Schema>);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`[MCP Stdio Tool] ${name} failed: ${message}`);
-          return {
-            content: [{ type: 'text' as const, text: message }],
-            isError: true,
-          };
+          result = { content: [{ type: 'text', text: message }], isError: true };
         }
+        const text = result.content.map((c) => c.text).join('');
+        const { warn } = tracker.record(name, text, result.isError ?? false);
+        const finalContent = warn
+          ? [...result.content, { type: 'text' as const, text: FAILURE_WARN_HINT }]
+          : result.content;
+        return { content: finalContent, isError: result.isError };
       },
     );
-    // Return value is unused by register*Tools() callers; return placeholder
+    // 반환값은 register*Tools() 호출부에서 사용되지 않음 — placeholder 반환
     return undefined as unknown as ReturnType<SafeToolFn>;
   } as SafeToolFn;
 }
@@ -83,7 +84,9 @@ async function main(): Promise<void> {
     version: MCP_SERVER_VERSION,
   });
 
-  const safeTool = createMcpSafeTool(server);
+  // 연속 실패 트래커 생성 후 safeTool 래퍼에 주입 (Tier1 경고 주입용)
+  const tracker = createTracker();
+  const safeTool = createMcpSafeTool(server, tracker);
 
   // Register all FireHub tools (공통 함수 사용)
   registerAllTools(apiClient, safeTool, jsonResult);

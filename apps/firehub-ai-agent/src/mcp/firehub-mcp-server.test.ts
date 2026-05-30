@@ -3,8 +3,10 @@ import {
   createFireHubMcpServer,
   buildAllMcpTools,
   filterToolsByPermissions,
+  createSafeTool,
 } from './firehub-mcp-server.js';
 import { FireHubApiClient } from './api-client.js';
+import { createTracker, FAILURE_WARN_SENTINEL } from '../agent/failure-streak.js';
 
 function createMockClient(): FireHubApiClient {
   const client = Object.create(FireHubApiClient.prototype);
@@ -331,5 +333,44 @@ describe('destructive tool filtering', () => {
     ];
     const filtered = filterToolsByPermissions(fake, ['dataset:read']);
     expect(filtered.map((t) => t.name)).toEqual(['list_datasets', 'some_other_tool']);
+  });
+});
+
+describe('createSafeTool Tier1 경고 주입', () => {
+  it('동일 오류 4회째 결과에만 경고 힌트가 붙는다', async () => {
+    const tracker = createTracker({ warnAt: 4, haltAt: 8 });
+    const safeTool = createSafeTool(tracker);
+    const def = safeTool('execute_sql_query', 'desc', {}, async () => ({
+      content: [{ type: 'text', text: 'column "x" does not exist' }],
+      isError: true,
+    })) as unknown as { handler: (a: unknown) => Promise<{ content: { text: string }[] }> };
+
+    const texts: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await def.handler({});
+      texts.push(r.content.map((c) => c.text).join(''));
+    }
+    expect(texts[0]).not.toContain(FAILURE_WARN_SENTINEL);
+    expect(texts[2]).not.toContain(FAILURE_WARN_SENTINEL);
+    expect(texts[3]).toContain(FAILURE_WARN_SENTINEL); // 4회째만
+    expect(texts[4]).not.toContain(FAILURE_WARN_SENTINEL);
+  });
+
+  it('성공 결과엔 힌트 없음 + 카운터 리셋', async () => {
+    const tracker = createTracker({ warnAt: 2, haltAt: 8 });
+    const safeTool = createSafeTool(tracker);
+    let fail = true;
+    const def = safeTool('tool_a', 'desc', {}, async () => ({
+      content: [{ type: 'text', text: fail ? 'boom' : 'ok' }],
+      isError: fail,
+    })) as unknown as { handler: (a: unknown) => Promise<{ content: { text: string }[] }> };
+
+    await def.handler({}); // 실패 1
+    fail = false;
+    const ok = await def.handler({}); // 성공 → 리셋
+    expect(ok.content.map((c) => c.text).join('')).not.toContain(FAILURE_WARN_SENTINEL);
+    fail = true;
+    const r = await def.handler({}); // 다시 1 (warnAt=2 미달)
+    expect(r.content.map((c) => c.text).join('')).not.toContain(FAILURE_WARN_SENTINEL);
   });
 });

@@ -4,6 +4,7 @@ import type {
   AnyZodRawShape,
   InferShape,
 } from '@anthropic-ai/claude-agent-sdk';
+import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/failure-streak.js';
 import { FireHubApiClient } from './api-client.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import { registerCategoryTools } from './tools/category-tools.js';
@@ -37,6 +38,40 @@ export function safeTool<Schema extends AnyZodRawShape>(
       return { content: [{ type: 'text', text: message }], isError: true };
     }
   });
+}
+
+/**
+ * createSafeTool: 연속 실패 트래커를 주입한 safeTool 팩토리.
+ * 핸들러를 try/catch로 감싸고(기존 동작 유지), 결과를 트래커에 기록하여
+ * 같은 오류가 임계(WARN_AT)에 도달하면 Tier1 경고 힌트를 결과 텍스트에 1회 덧붙인다.
+ */
+export function createSafeTool(tracker: FailureTracker): SafeToolFn {
+  return function safeTool<Schema extends AnyZodRawShape>(
+    name: string,
+    description: string,
+    schema: Schema,
+    handler: (args: InferShape<Schema>) => Promise<ToolResult>,
+  ) {
+    return tool(name, description, schema, async (args: InferShape<Schema>): Promise<ToolResult> => {
+      let result: ToolResult;
+      try {
+        result = await handler(args);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[MCP Tool] ${name} failed: ${message}`);
+        result = { content: [{ type: 'text', text: message }], isError: true };
+      }
+      const text = result.content.map((c) => c.text).join('');
+      const { warn } = tracker.record(name, text, result.isError ?? false);
+      if (warn) {
+        return {
+          ...result,
+          content: [...result.content, { type: 'text', text: FAILURE_WARN_HINT }],
+        };
+      }
+      return result;
+    });
+  };
 }
 
 export function jsonResult(data: unknown): ToolResult {
@@ -145,13 +180,16 @@ export function registerAllTools(
 
 /**
  * buildAllMcpTools: createSdkMcpServer에 전달할 도구 배열을 생성한다.
- * registerAllTools를 기본 safeTool/jsonResult로 래핑한 편의 함수.
+ * 호출(메시지 턴) 스코프 연속 실패 트래커를 생성하여 Tier1 경고 주입 safeTool로 래핑한다.
  */
 export function buildAllMcpTools(
   apiClient: FireHubApiClient,
   options: BuildToolsOptions = {},
 ) {
-  return registerAllTools(apiClient, safeTool, jsonResult, options);
+  // 호출(메시지 턴) 스코프 연속 실패 트래커 — Tier1 경고 주입용
+  const tracker = createTracker();
+  const trackedSafeTool = createSafeTool(tracker);
+  return registerAllTools(apiClient, trackedSafeTool, jsonResult, options);
 }
 
 export function createFireHubMcpServer(
