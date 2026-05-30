@@ -19,6 +19,7 @@ import {
   formatAttachmentLine,
 } from './file-downloader.js';
 import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { createTracker, buildHaltMessage } from './failure-streak.js';
 
 import type { SSEEvent } from '../providers/types.js';
 export type { SSEEvent } from '../providers/types.js';
@@ -276,6 +277,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   let firstTextReceived = false;
   let hasStreamedText = false;
   let lastTurnContextTokens = 0;
+  // Tier2 강제중단용 연속 실패 트래커 (도구 이름은 lastToolName 재사용)
+  const haltTracker = createTracker();
 
   // Heartbeat: log periodically when waiting for Claude API response
   let waitTimer: ReturnType<typeof setInterval> | null = null;
@@ -313,6 +316,9 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
       const events = processMessage(msg, tag, hasStreamedText);
       for (const event of events) {
+        // Tier2 halt 판정 결과를 이벤트 처리 후 사용하기 위한 플래그
+        let haltNow = false;
+        let haltMessage = '';
         if (event.type === 'tool_use') {
           // #256: 옵션이 어떤 이유로 무력화돼도(plugin 채널 우회 등) 런타임에서 차단.
           // 차단 시 abort 신호로 SDK 스트림을 즉시 종료시킨다.
@@ -339,6 +345,17 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
             console.log(`${tag()} Tool ${lastToolName} completed in ${toolDuration}s`);
             toolCallStart = 0;
           }
+          // 연속 실패 기록 + halt 판정 (도구 이름은 lastToolName)
+          const resultText = String((event as { result?: unknown }).result ?? '');
+          const { halt } = haltTracker.record(
+            lastToolName,
+            resultText,
+            Boolean((event as { isError?: unknown }).isError),
+          );
+          if (halt) {
+            haltNow = true;
+            haltMessage = buildHaltMessage(lastToolName, resultText);
+          }
         }
         // init 이벤트에서 sessionId 확보 → 첨부 파일 메타데이터 사이드카 저장
         if (event.type === 'init' && event.sessionId && downloadResult?.files.length) {
@@ -362,6 +379,18 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
           console.log(`${tag()} Total ${turnNumber} turn(s)`);
         }
         yield event;
+        // Tier2: 실패 결과를 프론트에 전달한 뒤 강제중단
+        if (haltNow) {
+          console.warn(`${tag()} [failure-streak] ${haltMessage} — aborting stream`);
+          yield { type: 'error', message: haltMessage };
+          doneEmitted = true;
+          try {
+            abortController.abort();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
       }
       // Emit turn event right after processing all tool_results in a user message
       // so the frontend can commit the current turn and show ThinkingIndicator

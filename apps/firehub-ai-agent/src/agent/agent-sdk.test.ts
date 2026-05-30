@@ -529,6 +529,111 @@ describe('executeAgent', () => {
     }
   });
 
+  // AS-23: 동일 도구가 동일 오류로 8회 연속 실패하면 Tier2 강제중단
+  it('AS-23: 동일 도구가 동일 오류로 8회 실패하면 강제중단 + error emit', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    // tool_use + tool_result 페어를 10회 반복 — 8회째에서 halt가 트리거되어야 한다
+    async function* fakeStream() {
+      for (let i = 0; i < 10; i++) {
+        // assistant: tool_use 블록
+        yield {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', name: 'execute_sql_query', input: { sql: `SELECT c${i}` } }],
+          },
+        };
+        // user: tool_result 블록 (isError=true, 동일 오류 메시지)
+        yield {
+          type: 'user',
+          message: {
+            content: [{
+              type: 'tool_result',
+              tool_use_id: `tu_${i}`,
+              content: 'column "x" does not exist',
+              is_error: true,
+            }],
+          },
+        };
+      }
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-halt',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: { type: string; message?: unknown }[] = [];
+    for await (const event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      apiKey: 'sk-test-key',
+    })) {
+      events.push(event as { type: string; message?: unknown });
+    }
+
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    expect(String(errs[0].message)).toContain('execute_sql_query');
+    // 10회 전에 중단되어야 한다
+    expect(events.filter((e) => e.type === 'tool_result').length).toBeLessThan(10);
+  });
+
+  // AS-24: 성공이 섞이면 streak 리셋 → 강제중단 없음
+  it('AS-24: 성공이 섞이면 리셋되어 중단되지 않음', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    // 14회 중 매 3번째(i % 3 === 2)만 성공 → streak 계속 리셋됨
+    async function* fakeStream() {
+      for (let i = 0; i < 14; i++) {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', name: 'execute_sql_query', input: { sql: 'q' } }],
+          },
+        };
+        const ok = i % 3 === 2;
+        yield {
+          type: 'user',
+          message: {
+            content: [{
+              type: 'tool_result',
+              tool_use_id: `tu_${i}`,
+              content: ok ? 'ok' : 'column "x" does not exist',
+              is_error: !ok,
+            }],
+          },
+        };
+      }
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-mix',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: { type: string }[] = [];
+    for await (const event of executeAgent({
+      message: 'hello',
+      userId: 1,
+      apiKey: 'sk-test-key',
+    })) {
+      events.push(event as { type: string });
+    }
+
+    expect(events.filter((e) => e.type === 'error').length).toBe(0);
+  });
+
   // AS-20: missing apiKey and no env var yields error event immediately
   it('AS-20: yields error event when apiKey is missing and ANTHROPIC_API_KEY env var is unset', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
