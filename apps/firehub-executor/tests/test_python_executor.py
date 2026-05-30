@@ -147,17 +147,44 @@ def test_fallback_env_isolation():
     call_kwargs = mock_run.call_args[1]
     env = call_kwargs["env"]
 
+    # DB 접근은 DB_URL 하나로 충분 — 개별 자격증명 키는 노출하지 않는다 (#89, #270).
     allowed_keys = {
-        "DB_URL", "DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT",
-        "DB_NAME", "DB_SCHEMA", "PATH", "HOME", "PYTHONDONTWRITEBYTECODE",
+        "DB_URL", "DB_SCHEMA", "PATH", "HOME", "PYTHONDONTWRITEBYTECODE",
     }
     assert set(env.keys()) == allowed_keys
     assert env["DB_SCHEMA"] == "data"
     assert env["HOME"] == "/tmp"
+    # 개별 자격증명 키 미노출 (#270)
+    for k in ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT", "DB_NAME"):
+        assert k not in env
     # Must NOT inherit host environment
-    import os
     assert "VIRTUAL_ENV" not in env
     assert "USER" not in env
+
+
+# ---------------------------------------------------------------------------
+# test_nsjail_env_no_discrete_credentials (#270)
+#   nsjail 경로도 fallback 과 동일하게 DB_URL/DB_SCHEMA 만 주입하고,
+#   개별 자격증명 키(DB_PASSWORD 등)는 스크립트 env 에 노출하지 않는다.
+# ---------------------------------------------------------------------------
+def test_nsjail_env_no_discrete_credentials():
+    settings = make_settings(nsjail_enabled=True)
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
+        execute_python("print('ok')", None, settings)
+
+    cmd = mock_run.call_args[0][0]
+    # cmd 리스트에서 "--env" 다음에 오는 "KEY=VALUE" 들의 KEY 를 수집
+    env_keys = {
+        cmd[i + 1].split("=", 1)[0]
+        for i, tok in enumerate(cmd)
+        if tok == "--env" and i + 1 < len(cmd)
+    }
+    assert "DB_URL" in env_keys
+    assert "DB_SCHEMA" in env_keys
+    for k in ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT", "DB_NAME"):
+        assert k not in env_keys, f"개별 자격증명 키 {k} 가 nsjail env 에 노출됨 (#270)"
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
@@ -38,6 +39,7 @@ public class PipelineService {
   private final TriggerRepository triggerRepository;
   private final ObjectMapper objectMapper;
   private final SqlValidator sqlValidator;
+  private final PythonScriptValidator pythonScriptValidator;
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
@@ -83,6 +85,11 @@ public class PipelineService {
       // Validate AI_CLASSIFY step requirements
       if ("AI_CLASSIFY".equals(stepRequest.scriptType())) {
         validateAiClassifyStep(stepRequest);
+      }
+
+      // PYTHON 스텝 escalation 코드(shell/동적실행 등) 차단 — pythonConfig 유무와 무관하게 항상 검증 (#270)
+      if ("PYTHON".equals(stepRequest.scriptType())) {
+        pythonScriptValidator.validate(stepRequest.scriptContent());
       }
 
       // Validate PYTHON step outputColumns

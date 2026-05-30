@@ -66,12 +66,10 @@ def execute_python(
                 "-R", f"{settings.python_packages_dir}:/opt/python-packages",
                 "-B", "/tmp",
                 "-R", f"{script_path}:/script.py",
+                # DB 접근은 DB_URL 하나로 충분(psycopg2.connect(os.environ["DB_URL"])).
+                # 개별 자격증명 키(DB_USER/DB_PASSWORD/DB_HOST/...)는 공격 표면을 늘릴 뿐이라 주입하지 않는다.
+                # nsjail 비활성 경로(아래)도 동일하게 DB_URL 만 제공하므로 동작이 일치한다. (#270)
                 "--env", f"DB_URL=postgresql://{settings.db_user}:{settings.db_password}@{settings.db_host}:{settings.db_port}/{settings.db_name}",
-                "--env", f"DB_USER={settings.db_user}",
-                "--env", f"DB_PASSWORD={settings.db_password}",
-                "--env", f"DB_HOST={settings.db_host}",
-                "--env", f"DB_PORT={settings.db_port}",
-                "--env", f"DB_NAME={settings.db_name}",
                 "--env", "DB_SCHEMA=data",
                 "--env", f"PYTHONPATH=/opt/python-packages",
                 "--env", "PATH=/usr/bin:/usr/local/bin",

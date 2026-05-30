@@ -319,6 +319,16 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
   }
 
+  /** 파이프라인 PYTHON 스텝의 escalation 코드 차단 — 저장 시·실행 시 모두 400 매핑. (#270) */
+  @ExceptionHandler(com.smartfirehub.pipeline.exception.UnsafePythonScriptException.class)
+  public ResponseEntity<ErrorResponse> handleUnsafePython(
+      com.smartfirehub.pipeline.exception.UnsafePythonScriptException ex,
+      HttpServletRequest request) {
+    log.warn("Unsafe Python script rejected: {}", ex.getMessage());
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+  }
+
   @ExceptionHandler(com.smartfirehub.dataset.exception.SqlQueryException.class)
   public ResponseEntity<ErrorResponse> handleSqlQuery(
       com.smartfirehub.dataset.exception.SqlQueryException ex, HttpServletRequest request) {

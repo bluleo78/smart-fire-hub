@@ -19,6 +19,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -73,6 +74,7 @@ public class PipelineAsyncRunner {
   private final AiClassifyExecutor aiClassifyExecutor;
   private final TempDatasetService tempDatasetService;
   private final SqlValidator sqlValidator;
+  private final PythonScriptValidator pythonScriptValidator;
 
   /** {@code @Qualifier("pipelineDslContext")}가 필요하여 명시적 생성자 주입을 사용한다. */
   public PipelineAsyncRunner(
@@ -94,7 +96,8 @@ public class PipelineAsyncRunner {
       ExecutorClient executorClient,
       AiClassifyExecutor aiClassifyExecutor,
       TempDatasetService tempDatasetService,
-      SqlValidator sqlValidator) {
+      SqlValidator sqlValidator,
+      PythonScriptValidator pythonScriptValidator) {
     this.stepRepository = stepRepository;
     this.executionRepository = executionRepository;
     this.pipelineRepository = pipelineRepository;
@@ -114,6 +117,7 @@ public class PipelineAsyncRunner {
     this.aiClassifyExecutor = aiClassifyExecutor;
     this.tempDatasetService = tempDatasetService;
     this.sqlValidator = sqlValidator;
+    this.pythonScriptValidator = pythonScriptValidator;
   }
 
   /**
@@ -439,6 +443,8 @@ public class PipelineAsyncRunner {
           throw new ScriptExecutionException(
               "Python 스크립트 실행에는 'pipeline:python_execute' 권한이 필요합니다. " + "관리자에게 이 기능 활성화를 요청하세요.");
         }
+        // escalation 코드 차단 — 저장 시 검증을 우회해 저장된 스텝(직접 DB 삽입 등)에 대한 실행 시 2차 방어 (#270)
+        pythonScriptValidator.validate(step.scriptContent());
         // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =

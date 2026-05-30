@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
@@ -12,6 +13,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
+import com.smartfirehub.pipeline.exception.UnsafePythonScriptException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
@@ -163,6 +165,51 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("멀티");
+  }
+
+  // PYTHON 스텝 escalation 코드 차단 — 저장 경로 end-to-end 검증 (#270).
+  // validate() 호출이 saveSteps 에 실제로 배선되어 있는지 보장한다(단위테스트만으로는 배선 미검증).
+  @Test
+  void createPipeline_pythonStepWithSubprocess_isRejected() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1",
+                "escalation step",
+                "PYTHON",
+                "import subprocess\nsubprocess.run(['cat', '/etc/passwd'])",
+                outputDatasetId,
+                null,
+                null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Unsafe Pipeline Python", "test", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(UnsafePythonScriptException.class);
+  }
+
+  // 정당한 psycopg2/DB_URL 입력 조회 스텝은 저장이 허용되어야 한다 (false-positive 가드 end-to-end).
+  @Test
+  void createPipeline_pythonStepWithLegitimatePsycopg2_succeeds() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1",
+                "legit etl step",
+                "PYTHON",
+                "import os, json, psycopg2\n"
+                    + "conn = psycopg2.connect(os.environ['DB_URL'])\n"
+                    + "print(json.dumps([]))",
+                outputDatasetId,
+                null,
+                null));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Legit Pipeline Python", "test", steps);
+
+    assertThatCode(() -> pipelineService.createPipeline(request, testUserId))
+        .doesNotThrowAnyException();
   }
 
   @Test

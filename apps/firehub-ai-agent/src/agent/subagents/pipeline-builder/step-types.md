@@ -54,7 +54,10 @@
 - stdout JSON의 키 이름이 outputColumns의 name과 일치해야 함
 
 **환경변수** (자동 제공):
-- DB_URL, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SCHEMA(=data)
+- `DB_URL` — data 스키마 접근용 PostgreSQL 접속 문자열. `psycopg2.connect(os.environ["DB_URL"])` 형식으로 입력 데이터를 직접 조회한다.
+- `DB_SCHEMA` (=data)
+- ⚠️ 개별 자격증명 키(DB_PASSWORD/DB_USER/DB_HOST 등)는 제공하지 않는다. DB 접근은 `DB_URL` 만 사용한다.
+- ⚠️ 금지(저장·실행 시 차단됨): 셸 실행(`subprocess`/`os.system`/`os.popen`), 동적 코드 실행(`eval`/`exec`/`__import__`/`importlib`/`ctypes`). 데이터 가공은 pandas/numpy 로 한다.
 
 **예시**:
 ```json
