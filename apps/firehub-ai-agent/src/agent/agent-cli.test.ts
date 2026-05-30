@@ -64,6 +64,77 @@ function makeFakeChild() {
   return child;
 }
 
+/**
+ * 특정 stdout 라인을 순차적으로 내보내는 가짜 child process를 생성한다.
+ * Tier2 강제중단 테스트에서 사용 (lines를 스트리밍하는 Readable 생성).
+ */
+function makeFakeChildWithLines(lines: string[]) {
+  const stdout = Readable.from(lines.map((l) => l + '\n'));
+  const stderr = new EventEmitter() as EventEmitter & { on: EventEmitter['on'] };
+
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: Readable;
+    stderr: EventEmitter;
+    kill: (sig?: string) => void;
+  };
+  child.stdout = stdout;
+  child.stderr = stderr;
+  child.kill = vi.fn();
+
+  return child;
+}
+
+describe('executeCliAgent — Tier2 연속 실패 강제중단 (#271)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('동일 도구가 동일 오류로 8회 실패하면 child.kill + error emit', async () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const id = `tu_${i}`;
+      lines.push(
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'tool_use', name: 'execute_sql_query', input: { sql: `q${i}` }, id }] },
+        }),
+      );
+      lines.push(
+        JSON.stringify({
+          type: 'user',
+          message: {
+            content: [{ type: 'tool_result', tool_use_id: id, content: 'column "x" does not exist', is_error: true }],
+          },
+        }),
+      );
+    }
+    lines.push(JSON.stringify({ type: 'result' }));
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    // 제너레이터의 모든 이벤트를 수집한다.
+    const events: Array<{ type: string; message?: unknown }> = [];
+    for await (const ev of executeCliAgent({
+      message: 'test',
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; message?: unknown });
+    }
+
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    expect(String(errs[0].message)).toContain('execute_sql_query');
+    expect(child.kill).toHaveBeenCalled();
+  });
+});
+
 describe('executeCliAgent — #240 subagent registration', () => {
   beforeEach(() => {
     spawnMock.mockReset();

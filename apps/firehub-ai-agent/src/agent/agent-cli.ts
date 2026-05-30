@@ -30,6 +30,7 @@ import {
   formatAttachmentLine,
 } from './file-downloader.js';
 import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { createTracker, buildHaltMessage } from './failure-streak.js';
 
 /** CLI 트랜스크립트 파일 형식 */
 export interface CliTranscript {
@@ -190,6 +191,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const now = () => new Date().toISOString();
   let assistantText = '';
   let assistantToolCalls: HistoryToolCall[] = [];
+  // Tier2 강제중단용 연속 실패 트래커
+  const haltTracker = createTracker();
 
   // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
   const userMsg: HistoryMessage = {
@@ -406,6 +409,21 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               toolName: '',
               result: resultText,
             };
+            // Tier2: 연속 실패 기록 + 강제중단
+            const isError = Boolean((block as { is_error?: unknown }).is_error);
+            const tName = assistantToolCalls[assistantToolCalls.length - 1]?.name ?? '';
+            const { halt } = haltTracker.record(tName, resultText, isError);
+            if (halt) {
+              const haltMessage = buildHaltMessage(tName, resultText);
+              console.warn(`[CLI Agent] [failure-streak] ${haltMessage} — killing child`);
+              yield { type: 'error', message: haltMessage };
+              try {
+                child.kill('SIGTERM');
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
           }
         }
         continue;
