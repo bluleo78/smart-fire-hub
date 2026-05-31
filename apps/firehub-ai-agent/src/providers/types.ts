@@ -1,7 +1,7 @@
 import type { OutputColumn, ClassifyResponse } from '../services/classification-service.js';
 
 export type SSEEvent = {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction' | 'ping';
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'turn' | 'done' | 'error' | 'compaction' | 'ping' | 'cost_alarm';
   [key: string]: unknown;
 };
 
