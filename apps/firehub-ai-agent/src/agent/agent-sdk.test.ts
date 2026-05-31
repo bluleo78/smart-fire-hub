@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processMessage } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { MAX_BUDGET_USD, COST_ALARM_TOKENS } from '../constants.js';
 
 // Mock dependencies needed for executeAgent
 vi.mock('@anthropic-ai/claude-agent-sdk', async (importOriginal) => {
@@ -337,6 +338,7 @@ describe('executeAgent', () => {
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     // Reset env
     delete process.env.ANTHROPIC_API_KEY;
   });
@@ -656,6 +658,57 @@ describe('executeAgent', () => {
     // Should yield exactly one error event
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'error' });
+  });
+
+  it('AS-BUDGET: queryOptions에 maxBudgetUsd가 설정된다', async () => {
+    const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
+    async function* fakeStream() {
+      yield { type: 'result', subtype: 'success', session_id: 's', usage: {} } as never;
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
+    const { executeAgent } = await import('./agent-sdk.js');
+    for await (const _e of executeAgent({ message: 'hi', userId: 1, apiKey: 'sk-test' } as never)) {
+      void _e;
+    }
+    const opts = (mockQuery.mock.calls[0][0] as { options: { maxBudgetUsd?: number } }).options;
+    expect(opts.maxBudgetUsd).toBe(MAX_BUDGET_USD);
+  });
+
+  it('AS-ALARM: 누적 토큰이 임계 초과 시 cost_alarm 1회 emit', async () => {
+    const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
+    const big = COST_ALARM_TOKENS + 1_000_000;
+    async function* fakeStream() {
+      yield {
+        type: 'stream_event',
+        event: { type: 'message_start', message: { usage: { input_tokens: big } } },
+      } as never;
+      yield { type: 'result', subtype: 'success', session_id: 's', usage: {} } as never;
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
+    const { executeAgent } = await import('./agent-sdk.js');
+    const events: Array<{ type: string }> = [];
+    for await (const e of executeAgent({ message: 'hi', userId: 1, apiKey: 'sk-test' } as never)) {
+      events.push(e as { type: string });
+    }
+    expect(events.filter((e) => e.type === 'cost_alarm')).toHaveLength(1);
+  });
+
+  it('AS-ALARM-NONE: 임계 미만이면 cost_alarm 없음', async () => {
+    const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
+    async function* fakeStream() {
+      yield {
+        type: 'stream_event',
+        event: { type: 'message_start', message: { usage: { input_tokens: 100 } } },
+      } as never;
+      yield { type: 'result', subtype: 'success', session_id: 's', usage: {} } as never;
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
+    const { executeAgent } = await import('./agent-sdk.js');
+    const events: Array<{ type: string }> = [];
+    for await (const e of executeAgent({ message: 'hi', userId: 1, apiKey: 'sk-test' } as never)) {
+      events.push(e as { type: string });
+    }
+    expect(events.filter((e) => e.type === 'cost_alarm')).toHaveLength(0);
   });
 });
 

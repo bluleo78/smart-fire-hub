@@ -7,7 +7,14 @@ import { FireHubApiClient } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
-import { DEFAULT_MODEL, DEFAULT_MAX_TURNS, HEARTBEAT_INTERVAL_MS } from '../constants.js';
+import {
+  DEFAULT_MODEL,
+  DEFAULT_MAX_TURNS,
+  HEARTBEAT_INTERVAL_MS,
+  MAX_BUDGET_USD,
+  COST_ALARM_TOKENS,
+  COST_ALARM_TURNS,
+} from '../constants.js';
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
@@ -235,6 +242,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       model: model || DEFAULT_MODEL,
       systemPrompt: effectiveSystemPrompt,
       maxTurns,
+      // #277: 쿼리 전체(서브에이전트 턴 포함) USD 예산 하드 캡. 초과 시 error_max_budget_usd.
+      maxBudgetUsd: MAX_BUDGET_USD,
       ...(temperature !== undefined ? { temperature } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
       abortController,
@@ -279,6 +288,9 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   let lastTurnContextTokens = 0;
   // Tier2 강제중단용 연속 실패 트래커 (도구 이름은 lastToolName 재사용)
   const haltTracker = createTracker();
+  // #277 소프트 알람: 턴별 토큰 누적 + 1회 emit 플래그
+  let cumulativeTokens = 0;
+  let costAlarmEmitted = false;
 
   // Heartbeat: log periodically when waiting for Claude API response
   let waitTimer: ReturnType<typeof setInterval> | null = null;
@@ -311,6 +323,23 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
             (u.input_tokens ?? 0) +
             (u.cache_read_input_tokens ?? 0) +
             (u.cache_creation_input_tokens ?? 0);
+          // #277: 턴별 토큰을 누적해 임계 초과 시 cost_alarm 1회 emit(중단 안 함)
+          cumulativeTokens += lastTurnContextTokens;
+          if (
+            !costAlarmEmitted &&
+            (cumulativeTokens >= COST_ALARM_TOKENS || turnNumber >= COST_ALARM_TURNS)
+          ) {
+            costAlarmEmitted = true;
+            console.warn(
+              `${tag()} [cost-alarm] 누적 ${cumulativeTokens} 토큰 / ${turnNumber} 턴 — 비싼 작업 진행 중`,
+            );
+            yield {
+              type: 'cost_alarm',
+              tokens: cumulativeTokens,
+              turns: turnNumber,
+              message: `이 작업이 누적 ${cumulativeTokens.toLocaleString()} 토큰을 소비하며 진행 중입니다.`,
+            };
+          }
         }
       }
 
