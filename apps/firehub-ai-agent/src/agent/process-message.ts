@@ -1,6 +1,7 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent } from './agent-sdk.js';
 import { truncate } from '../utils.js';
+import { MAX_BUDGET_USD } from '../constants.js';
 
 export function processMessage(
   msg: SDKMessage,
@@ -154,8 +155,12 @@ export function processMessage(
           outputTokens: totalOutputTokens,
         });
       } else {
-        const rawError = 'errors' in msg ? msg.errors.join('; ') : '';
-        const errorMsg = rawError || 'max_turns_exceeded';
+        // #277: 예산 초과는 전용 메시지로 구분(그 외는 기존 max_turns 처리 유지)
+        const isBudget = (msg.subtype as string) === 'error_max_budget_usd';
+        const rawError = 'errors' in msg ? (msg as { errors: string[] }).errors.join('; ') : '';
+        const errorMsg = isBudget
+          ? `이 작업이 비용 한도($${MAX_BUDGET_USD})에 도달해 자동 중단되었습니다. 범위를 좁혀 다시 시도해 주세요.`
+          : rawError || 'max_turns_exceeded';
         console.error(`${tag()} ✗ Session failed: ${errorMsg}`);
         events.push({
           type: 'error',

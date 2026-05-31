@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processMessage } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { MAX_BUDGET_USD } from '../constants.js';
 
 // console 출력 억제
 beforeEach(() => {
@@ -230,6 +231,23 @@ describe('processMessage', () => {
     const result = processMessage(msg, tag, false);
 
     expect(result).toEqual([{ type: 'text', content: 'streaming chunk' }]);
+  });
+
+  // PM-BUDGET: result error_max_budget_usd → 예산 한도 전용 error 이벤트 반환
+  it('PM-BUDGET: result error_max_budget_usd → 예산 한도 error 이벤트', () => {
+    const msg = {
+      type: 'result',
+      subtype: 'error_max_budget_usd',
+      session_id: 'sess-b',
+      usage: { input_tokens: 10, output_tokens: 5 },
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, tag, false);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('error');
+    expect(String(result[0].message)).toContain('비용 한도');
+    expect(String(result[0].message)).toContain(String(MAX_BUDGET_USD));
   });
 
   // PM-13: unknown type — 빈 배열 반환
