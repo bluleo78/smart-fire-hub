@@ -58,6 +58,30 @@
 | `42601` SYNTAX | `Position` 부근 SQL 검토 (큰따옴표·콤마·CTE 닫힘) |
 | 그 외 | 사용자에게 실패 원인을 한 줄로 보고하고 다음 행동 확인 |
 
+## 1.6. 참고 데이터 인라인 금지
+
+**10행 이상의 고정 참고 데이터**(직원 명단·부서표·코드표 등)를 `VALUES`/CTE로 SQL에 인라인하지 않는다. 이유: 동일 데이터가 매 쿼리·재시도마다 `tool_use` 인자와 `tool_result` 본문에 echo되어 토큰이 폭증한다 (50행 ≈ 2.5KB × 재시도 횟수).
+
+대신 다음 순서를 따른다:
+
+1. `list_datasets` 로 해당 참고 데이터가 이미 데이터셋으로 존재하는지 확인한다 → 있으면 **JOIN** 한다.
+2. 없으면 사용자에게 *"이 데이터를 반복 분석하려면 참고 데이터셋으로 만들어두길 권장합니다"* 라고 **안내**한다. 데이터셋 생성·수정은 dataset-manager 담당이므로 data-analyst 가 직접 생성하지 않는다. 사용자가 동의하면 데이터셋 생성 후 JOIN 분석으로 진행한다.
+
+**예외**: 10행 미만의 일회성 필터 값(`WHERE "team" IN ('1팀','2팀')` 등)은 인라인을 **허용**한다 — 과잉 차단을 막기 위함이다.
+
+```sql
+-- ❌ 인라인: 50행 참고 데이터를 매 쿼리에 echo
+WITH meta(name, team) AS (
+  VALUES ('홍길동','3팀'), ('김소방','2팀') -- ... 50행 ...
+)
+SELECT s.*, m.team FROM "scores" s JOIN meta m ON s.name = m.name
+
+-- ✅ 참고 데이터셋 JOIN: 명단은 데이터셋에 1회 보관
+SELECT s.*, m.team
+FROM "scores" s
+JOIN "employee_meta" m ON s.name = m.name
+```
+
 ## 2. EDA SQL 패턴 라이브러리
 
 ### 2-1. 기본 통계 (Summary Statistics)
