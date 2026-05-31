@@ -19,6 +19,14 @@ function readRules(): string {
   return fs.readFileSync(path.join(__dirname, 'rules.md'), 'utf-8');
 }
 
+function readAnalyticsTools(): string {
+  // data-analyst/ → subagents → agent → src, 그 후 mcp/tools/analytics-tools.ts
+  return fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'mcp', 'tools', 'analytics-tools.ts'),
+    'utf-8',
+  );
+}
+
 describe('data-analyst prompt safeguards (#273)', () => {
   it('rules.md에 10행 이상 참고 데이터 VALUES 인라인 금지 규칙이 있어야 한다', () => {
     const rules = readRules();
@@ -39,5 +47,12 @@ describe('data-analyst prompt safeguards (#273)', () => {
     const rules = readRules();
     expect(rules).toMatch(/10\s*행\s*미만/);
     expect(rules).toContain('허용');
+  });
+
+  it('execute_analytics_query description에 참고 데이터 JOIN 가이드가 있어야 한다', () => {
+    const src = readAnalyticsTools();
+    // tool description은 모델 프롬프트에 노출됨 — 동일 임계값(10행) + 데이터셋 JOIN 유도
+    expect(src).toMatch(/10행 이상의 고정 참고 데이터/);
+    expect(src).toMatch(/데이터셋으로 만들어 JOIN/);
   });
 });

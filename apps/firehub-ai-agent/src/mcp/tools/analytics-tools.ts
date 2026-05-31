@@ -142,7 +142,7 @@ export function registerAnalyticsTools(
     // 전체 data 스키마에서 실행되므로 DML 허용 시 보안 위험.
     safeTool(
       'execute_analytics_query',
-      'data 스키마의 모든 테이블에서 SELECT 쿼리를 실행합니다. cross-dataset JOIN 가능. DML은 지원하지 않습니다.',
+      'data 스키마의 모든 테이블에서 SELECT 쿼리를 실행합니다. cross-dataset JOIN 가능. DML은 지원하지 않습니다. 10행 이상의 고정 참고 데이터(명단·코드표)는 VALUES로 인라인하지 말고 데이터셋으로 만들어 JOIN하세요.',
       {
         sql: z.string().describe('실행할 SELECT SQL 쿼리. 테이블명은 data 스키마에서 그냥 "tableName" 형식으로 사용'),
         maxRows: z
