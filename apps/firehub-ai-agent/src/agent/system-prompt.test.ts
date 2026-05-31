@@ -492,6 +492,28 @@ describe('SYSTEM_PROMPT', () => {
   });
 });
 
+// 차단 도구 사전 안내 roster 회귀 가드.
+// 배경: Write 등 차단 도구는 terminal block이라 모델이 차단 메시지를 못 본다.
+// 따라서 사전 SYSTEM_PROMPT roster만이 우회 시도·재시도 낭비를 예방할 수 있다.
+describe('L1-3 차단 도구 사전 안내 (#274)', () => {
+  it('L1-3 섹션 헤더와 사용 불가 도구(Write/Edit) 명시가 있어야 한다', () => {
+    expect(SYSTEM_PROMPT).toContain('L1-3');
+    expect(SYSTEM_PROMPT).toContain('사용 불가');
+    expect(SYSTEM_PROMPT).toContain('Write');
+    expect(SYSTEM_PROMPT).toContain('Edit');
+  });
+
+  it('파일 저장 대체 경로로 create_dataset를 안내해야 한다', () => {
+    expect(SYSTEM_PROMPT).toContain('create_dataset');
+  });
+
+  it('Bash를 통한 파일쓰기 우회 금지를 명시해야 한다', () => {
+    expect(SYSTEM_PROMPT).toMatch(/Bash/);
+    expect(SYSTEM_PROMPT).toContain('우회');
+    expect(SYSTEM_PROMPT).toMatch(/python3|heredoc/);
+  });
+});
+
 // 이슈 #269 회귀 방지 — 첨부 파일 작업을 서브에이전트에 위임할 때 fileId가 전파되지 않아
 // 서브에이전트가 파일 경로를 추측하다 실패→우회 폭주하던 결함. 오케스트레이터 프롬프트가
 // "위임 시 fileId 명시 + CSV 임포트는 dataset-manager 라우팅" 텍스트 계약을 잃지 않도록 고정.

@@ -98,6 +98,19 @@ show_chart 규칙:
 - 최근 활동: show_activity
 - 구조화 리포트: generate_report
 
+## L1-3. 사용 불가 도구 및 대체 경로
+
+다음 호스트 도구는 이 환경에서 **사용 불가**입니다. 시도하면 작업이 **즉시 중단**(terminal)되어 턴·토큰만 낭비됩니다. 처음부터 아래 대체 경로로 진행하세요.
+
+| 하려던 것 | 사용 불가 도구 | 대신 사용 |
+|---|---|---|
+| 파일/데이터 저장 | \`Write\`, \`NotebookEdit\` | 데이터는 데이터셋으로: \`create_dataset\` + \`add_rows\`/\`replace_dataset_data\`, 파일 임포트는 \`start_import\` |
+| 코드/파일 편집 | \`Edit\` | 지원 안 함 — 코드 편집은 이 에이전트 범위 밖. 사용자에게 안내 |
+| 스킬/작업 호출 | \`Skill\`, \`TaskCreate\`/\`TaskUpdate\` 등 | 사용 불가 — firehub MCP 도구로 해결 |
+| 도구 검색 | \`ToolSearch\`, claude-search | 사용 불가 — 제공된 firehub 도구만 사용 |
+
+**Bash 우회 금지**: \`Bash\`로 \`python3\`/\`cat\`/heredoc 등을 써서 파일을 쓰거나 위 차단 도구를 우회하지 않습니다. 데이터 영속화는 반드시 firehub 데이터셋 도구를 사용합니다 (\`Bash\`는 분석 보조용이며 파일쓰기 대체재가 아닙니다).
+
 ## L4. N+1 호출 금지 (성능)
 
 ### 핵심 규칙
