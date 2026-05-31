@@ -20,7 +20,7 @@ import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
-import { DEFAULT_MODEL } from '../constants.js';
+import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 import {
   downloadChatFiles,
@@ -193,6 +193,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   let assistantToolCalls: HistoryToolCall[] = [];
   // Tier2 강제중단용 연속 실패 트래커
   const haltTracker = createTracker();
+  // #277 소프트 알람: 턴 수 누적 + 1회 emit 플래그
+  let costTurnCount = 0;
+  let costAlarmEmitted = false;
 
   // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
   const userMsg: HistoryMessage = {
@@ -280,6 +283,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     // #266: --allowed-tools 미전달 (allow-by-default). --disallowed-tools 만 명시 차단.
     '--disallowed-tools', DISALLOWED_TOOLS.join(','),
     '--disable-slash-commands',
+    // #277: 쿼리 전체(서브에이전트 포함) USD 예산 하드 캡. 초과 시 result 가 budget 에러.
+    '--max-budget-usd', String(MAX_BUDGET_USD),
     '--model', effectiveModel,
   ];
 
@@ -432,6 +437,18 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       // Turn boundary — commit current assistant message, start new one
       if (msg.type === 'turn') {
         commitAssistant();
+        costTurnCount++;
+        // #277: 턴 수가 임계 초과 시 cost_alarm 1회 emit(중단 안 함)
+        if (!costAlarmEmitted && costTurnCount >= COST_ALARM_TURNS) {
+          costAlarmEmitted = true;
+          console.warn(`[CLI Agent] [cost-alarm] ${costTurnCount}턴 — 비싼 작업 진행 중`);
+          yield {
+            type: 'cost_alarm',
+            tokens: 0,
+            turns: costTurnCount,
+            message: `이 작업이 ${costTurnCount}턴째 진행 중입니다.`,
+          };
+        }
         continue;
       }
 
@@ -441,7 +458,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         await saveTranscript();
         const inputTokens = msg.usage?.input_tokens ?? 0;
         const outputTokens = msg.usage?.output_tokens ?? 0;
-        if (msg.subtype === 'error') {
+        if ((msg.subtype as string) === 'error_max_budget_usd') {
+          // #277: 예산 초과 전용 메시지
+          yield {
+            type: 'error',
+            message: `이 작업이 비용 한도($${MAX_BUDGET_USD})에 도달해 자동 중단되었습니다. 범위를 좁혀 다시 시도해 주세요.`,
+            inputTokens,
+            outputTokens,
+          };
+        } else if (msg.subtype === 'error') {
           yield {
             type: 'error',
             message: msg.result ?? 'CLI agent returned an error',

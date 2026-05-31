@@ -13,6 +13,7 @@ import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
 
 // child_process.spawn을 모킹하여 실제 CLI를 띄우지 않고 인자만 검증한다.
 const spawnMock = vi.fn();
@@ -253,5 +254,72 @@ describe('executeCliAgent — #240 subagent registration', () => {
     // buildSubagentGuide가 반환한 헤더 마커가 포함되어야 한다.
     expect(systemPrompt).toContain('## 전문 에이전트 활용');
     expect(systemPrompt).toContain('pipeline-builder');
+  });
+});
+
+describe('executeCliAgent — #277 비용 가드레일', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('CLI-BUDGET-ARG: cliArgs에 --max-budget-usd 가 포함된다', async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string });
+    }
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain('--max-budget-usd');
+    expect(args[args.indexOf('--max-budget-usd') + 1]).toBe(String(MAX_BUDGET_USD));
+  });
+
+  it('CLI-BUDGET-ERR: result error_max_budget_usd → 비용 한도 error 이벤트', async () => {
+    const lines = [
+      JSON.stringify({ type: 'result', subtype: 'error_max_budget_usd', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; message?: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; message?: string });
+    }
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    expect(String(errs[0].message)).toContain('비용 한도');
+  });
+
+  it('CLI-ALARM: 턴 수가 임계 초과 시 cost_alarm 1회', async () => {
+    const lines: string[] = [];
+    for (let i = 0; i < COST_ALARM_TURNS + 2; i++) {
+      lines.push(JSON.stringify({ type: 'turn' }));
+    }
+    lines.push(JSON.stringify({ type: 'result', subtype: 'success', session_id: 's', usage: {} }));
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string });
+    }
+    expect(events.filter((e) => e.type === 'cost_alarm')).toHaveLength(1);
   });
 });
