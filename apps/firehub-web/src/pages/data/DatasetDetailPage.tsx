@@ -36,6 +36,7 @@ import { CloneDatasetDialog } from './components/CloneDatasetDialog';
 import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
 import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
 import { DatasetDataTab } from './tabs/DatasetDataTab';
+import { DatasetDocumentsTab } from './tabs/DatasetDocumentsTab';
 import { DatasetHistoryTab } from './tabs/DatasetHistoryTab';
 import { DatasetInfoTab } from './tabs/DatasetInfoTab';
 import { DatasetMapTab } from './tabs/DatasetMapTab';
@@ -46,23 +47,31 @@ export default function DatasetDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const datasetId = Number(id);
 
+  // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
+  // dataset을 먼저 선언하여 하위 탭 타입 판별(isDocument)·useEffect 의존성에 활용한다.
+  const { data: dataset, isLoading, isError } = useDataset(datasetId);
+
   // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
-  const validTabs = ['info', 'columns', 'data', 'map', 'history'];
+  // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
+  const isDocument = dataset?.datasetType === 'DOCUMENT';
+  const validTabs = isDocument ? ['info', 'documents'] : ['info', 'columns', 'data', 'map', 'history'];
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
 
   // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).
+  // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 datasetType 기반 validTabs를 재계산하여
+  // ?tab=documents로 직접 진입한 DOCUMENT 데이터셋이 올바른 탭으로 복원된다.
   // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
   useEffect(() => {
+    const isDocumentType = dataset?.datasetType === 'DOCUMENT';
+    const currentValidTabs = isDocumentType
+      ? ['info', 'documents']
+      : ['info', 'columns', 'data', 'map', 'history'];
     const newTabParam = searchParams.get('tab');
-    const newTab = newTabParam && validTabs.includes(newTabParam) ? newTabParam : 'info';
+    const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
-  // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
-  const { data: dataset, isLoading, isError } = useDataset(datasetId);
+  }, [searchParams, dataset]);
   const { data: categoriesData } = useCategories();
   const { addRecent } = useRecentDatasets();
   const { isAdmin } = useAuth();
@@ -402,10 +411,16 @@ export default function DatasetDetailPage() {
       >
         <TabsList className="border-b justify-start h-10">
           <TabsTrigger value="info">정보</TabsTrigger>
-          <TabsTrigger value="columns">필드</TabsTrigger>
-          <TabsTrigger value="data">데이터</TabsTrigger>
-          {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
-          <TabsTrigger value="history">이력</TabsTrigger>
+          {isDocument ? (
+            <TabsTrigger value="documents">문서</TabsTrigger>
+          ) : (
+            <>
+              <TabsTrigger value="columns">필드</TabsTrigger>
+              <TabsTrigger value="data">데이터</TabsTrigger>
+              {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
+              <TabsTrigger value="history">이력</TabsTrigger>
+            </>
+          )}
         </TabsList>
 
         {activeTab === 'info' && (
@@ -431,6 +446,11 @@ export default function DatasetDetailPage() {
         {activeTab === 'history' && (
           <div className="mt-6">
             <DatasetHistoryTab dataset={dataset} datasetId={datasetId} />
+          </div>
+        )}
+        {activeTab === 'documents' && (
+          <div className="mt-6">
+            <DatasetDocumentsTab dataset={dataset} datasetId={datasetId} />
           </div>
         )}
       </Tabs>
