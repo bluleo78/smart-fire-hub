@@ -70,6 +70,20 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(page.getByText('document_1.pdf · 청크', { exact: false })).toBeVisible();
   });
 
+  test('검색 모드를 키워드로 선택하면 mode:KEYWORD를 전송한다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    // 검색 모드 토글에서 키워드 선택
+    await page.getByRole('tab', { name: '키워드' }).click();
+    await page.getByPlaceholder('검색어를 입력하세요').fill('소화 방식');
+    await page.getByRole('button', { name: '검색' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ query: '소화 방식', mode: 'KEYWORD' });
+  });
+
   /**
    * 회귀 테스트: DOCUMENT 데이터셋은 백엔드가 rowCount: null을 반환한다.
    * DatasetInfoTab가 null.toLocaleString()을 호출하면 TypeError로 정보 탭이 크래시하므로,

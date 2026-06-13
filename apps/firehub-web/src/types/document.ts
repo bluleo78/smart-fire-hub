@@ -19,11 +19,16 @@ export interface DocumentFileResponse {
   completedAt: string | null;
 }
 
+// 검색 모드: 의미(벡터) / 키워드(트라이그램) / 하이브리드(RRF, 기본)
+export type DocumentSearchMode = 'SEMANTIC' | 'KEYWORD' | 'HYBRID';
+
 /** DocumentSearchRequest — 의미검색 요청. topK 기본 5, 최대 20(백엔드에서 정규화). */
 export interface DocumentSearchRequest {
   query: string;
   datasetIds?: number[];
   topK?: number;
+  // 생략 시 서버 기본 HYBRID
+  mode?: DocumentSearchMode;
 }
 
 /** DocumentSearchHit — 코사인 검색 결과 1건. score는 1-거리(1=완전일치). */
