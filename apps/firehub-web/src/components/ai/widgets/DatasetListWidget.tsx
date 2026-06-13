@@ -17,6 +17,7 @@ const TYPE_LABEL: Record<string, string> = {
   SOURCE: '원본',
   DERIVED: '파생',
   TEMP: '임시',
+  DOCUMENT: '문서', // 비정형 문서 데이터셋 레이블
 };
 
 /* 데이터셋 타입별 배지 색상 — 시맨틱 토큰 사용 */
@@ -24,6 +25,7 @@ const TYPE_CLASS: Record<string, string> = {
   SOURCE: 'bg-info/10 text-info',
   DERIVED: 'bg-success/10 text-success',
   TEMP: 'bg-warning/10 text-warning',
+  DOCUMENT: 'bg-secondary/10 text-secondary-foreground', // 문서 유형 배지 색상
 };
 
 function formatDate(dateStr: string | undefined): string {

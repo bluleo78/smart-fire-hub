@@ -20,6 +20,7 @@ const DATASET_TYPE_LABEL: Record<string, string> = {
   SOURCE: '원본',
   DERIVED: '파생',
   TEMP: '임시',
+  DOCUMENT: '문서', // 비정형 문서 데이터셋 레이블
 };
 
 const PAGE_SIZE = 20;

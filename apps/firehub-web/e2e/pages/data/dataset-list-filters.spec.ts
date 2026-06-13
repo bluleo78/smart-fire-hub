@@ -98,6 +98,62 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
     await expect.poll(() => urls.some((u) => u.searchParams.get('datasetType') === 'SOURCE')).toBeTruthy();
   });
 
+  test('DOCUMENT 유형 데이터셋이 "문서" 배지로 렌더링된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // DOCUMENT 유형 데이터셋 1건을 포함한 목록을 모킹한다
+    const documentDataset = createDataset({
+      id: 10,
+      name: '문서 데이터셋 — 소방청 고시',
+      datasetType: 'DOCUMENT',
+      status: 'NONE',
+      isFavorite: false,
+      tags: [],
+    });
+
+    await setupCommon(page);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse([documentDataset])),
+        }),
+    );
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    // DOCUMENT 유형 → "문서" 배지가 해당 행에 표시되어야 한다
+    const docRow = page.getByRole('row', { name: /문서 데이터셋 — 소방청 고시/ });
+    await expect(docRow).toBeVisible();
+    await expect(docRow.getByText('문서', { exact: true })).toBeVisible();
+  });
+
+  test('유형 필터에서 "문서" 선택 시 API 에 datasetType=DOCUMENT 가 전달된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    const urls = await captureListRequests(page);
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    // 유형 SELECT 드롭다운 열기 — "문서" 옵션 선택
+    const typeCombobox = page
+      .getByRole('combobox')
+      .filter({ hasText: /전체 유형|원본|파생|임시|문서/ })
+      .first();
+    await typeCombobox.click();
+    await page.getByRole('option', { name: '문서' }).click();
+
+    // API 재호출 시 datasetType=DOCUMENT 쿼리 파라미터가 포함되어야 한다
+    await expect
+      .poll(() => urls.some((u) => u.searchParams.get('datasetType') === 'DOCUMENT'))
+      .toBeTruthy();
+  });
+
   test('즐겨찾기 필터 버튼 클릭 시 API 에 favoriteOnly=true 가 전달된다', async ({
     authenticatedPage: page,
   }) => {

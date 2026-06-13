@@ -240,6 +240,8 @@ export default function DatasetListPage() {
               <SelectItem value="SOURCE">원본</SelectItem>
               <SelectItem value="DERIVED">파생</SelectItem>
               <SelectItem value="TEMP">임시</SelectItem>
+              {/* DOCUMENT 유형 — 비정형 문서 데이터셋 필터 */}
+              <SelectItem value="DOCUMENT">문서</SelectItem>
             </SelectContent>
           </Select>
 
@@ -403,6 +405,10 @@ export default function DatasetListPage() {
                     )}
                     {dataset.datasetType === 'TEMP' && (
                       <Badge className="bg-muted text-muted-foreground border-0">임시</Badge>
+                    )}
+                    {/* DOCUMENT 유형 — 비정형 문서 데이터셋 배지 */}
+                    {dataset.datasetType === 'DOCUMENT' && (
+                      <Badge className="bg-secondary/10 text-secondary-foreground border-0">문서</Badge>
                     )}
                   </TableCell>
                   <TableCell>{dataset.category?.name || '-'}</TableCell>
