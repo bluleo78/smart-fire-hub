@@ -76,6 +76,24 @@ public class NotificationService {
     registry.broadcast(userId, notification);
   }
 
+  /** 문서 인제스션 완료/실패 알림. notifyImportCompleted 와 동일한 NotificationEvent/broadcast 형태를 따른다. */
+  public void notifyDocumentIngested(
+      Long userId, Long datasetId, String fileName, boolean success) {
+    NotificationEvent notification =
+        new NotificationEvent(
+            UUID.randomUUID().toString(),
+            success ? "DOCUMENT_INGESTED" : "DOCUMENT_INGEST_FAILED",
+            success ? "INFO" : "WARNING",
+            success ? "문서 처리 완료" : "문서 처리 실패",
+            "문서 '" + fileName + "' 처리가 " + (success ? "완료되었습니다." : "실패했습니다."),
+            "DATASET",
+            datasetId,
+            Map.of("fileName", fileName),
+            LocalDateTime.now());
+
+    registry.broadcast(userId, notification);
+  }
+
   /**
    * API 연결 상태 변화를 모든 사용자에게 대시보드 알림으로 브로드캐스트한다. 관리자만 볼 수 있는 알림이지만, 권한 필터링은 프론트엔드에서 처리한다.
    *
