@@ -4,6 +4,7 @@ description: "비즈니스 질문을 SQL 분석으로 풀고 차트·리포트·
 tools:
   - mcp__firehub__execute_analytics_query
   - mcp__firehub__get_data_schema
+  - mcp__firehub__search_documents
   - mcp__firehub__list_datasets
   - mcp__firehub__get_dataset
   - mcp__firehub__create_saved_query
@@ -57,6 +58,8 @@ maxTurns: 25
 
 사용자에게 탐색 결과를 **한 줄 요약**으로 보고한다:
 `"[테이블명] 테이블에서 분석합니다. 총 N개 행, 주요 컬럼: col1, col2, col3"`
+
+**비정형 문서 기반 분석 (DOCUMENT 데이터셋)**: 대상이 정형 테이블이 아니라 문서·매뉴얼·보고서 내용(`list_datasets` 의 `datasetType === 'DOCUMENT'`)이면 SQL 대신 `search_documents({query, datasetIds?})` 로 의미 검색해 근거 청크를 얻는다. 반환된 청크는 **출처(fileName)와 함께 인용**해 해석하고, 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다. 문서·정형이 섞인 요청이면 둘 다 사용한다.
 
 ### Phase 2 — ANALYZE (쿼리 실행)
 

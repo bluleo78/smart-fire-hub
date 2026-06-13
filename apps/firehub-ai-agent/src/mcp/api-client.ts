@@ -48,6 +48,9 @@ import {
   type UserPage,
 } from './api-client/admin-api.js';
 import { createAuditApi, type AuditLogPage } from './api-client/audit-api.js';
+import { createDocumentApi, type DocumentSearchHit } from './api-client/document-api.js';
+
+export type { DocumentSearchHit };
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -63,6 +66,7 @@ export class FireHubApiClient {
   private _dataImport: ReturnType<typeof createDataImportApi>;
   private _admin: ReturnType<typeof createAdminApi>;
   private _audit: ReturnType<typeof createAuditApi>;
+  private _document: ReturnType<typeof createDocumentApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -115,6 +119,7 @@ export class FireHubApiClient {
     this._dataImport = createDataImportApi(this.client);
     this._admin = createAdminApi(this.client);
     this._audit = createAuditApi(this.client);
+    this._document = createDocumentApi(this.client);
   }
 
   listCategories() {
@@ -561,6 +566,11 @@ export class FireHubApiClient {
 
   addDashboardWidget(dashboardId: number, data: AddDashboardWidgetParams): Promise<DashboardWidget> {
     return this._analytics.addDashboardWidget(dashboardId, data);
+  }
+
+  /** 문서 RAG 검색. 의미 기반으로 매칭되는 문서 청크 목록을 반환한다. */
+  searchDocuments(query: string, datasetIds?: number[], topK?: number): Promise<DocumentSearchHit[]> {
+    return this._document.searchDocuments(query, datasetIds, topK);
   }
 
   listSmartJobs() {

@@ -15,6 +15,7 @@ import { registerTriggerTools } from './tools/trigger-tools.js';
 import { registerApiConnectionTools } from './tools/api-connection-tools.js';
 import { registerMiscTools } from './tools/misc-tools.js';
 import { registerAnalyticsTools } from './tools/analytics-tools.js';
+import { registerDocumentTools } from './tools/document-tools.js';
 import { registerUiTools } from './tools/ui-tools.js';
 import { registerProactiveTools } from './tools/proactive-tools.js';
 import { registerDataImportTools } from './tools/dataimport-tools.js';
@@ -85,6 +86,7 @@ export type JsonResultFn = typeof jsonResult;
  * 권한 코드 상수. raw 문자열 리터럴 대신 이 상수를 참조해 오타·리팩토링 누락을 방지한다.
  */
 const PERMISSIONS = {
+  DATASET_READ: 'dataset:read',
   DATASET_DELETE: 'dataset:delete',
   USER_READ: 'user:read',
   USER_WRITE: 'user:write',
@@ -103,6 +105,7 @@ const PERMISSIONS = {
  * 파괴적 도구만 등록하며, 맵에 없는 도구는 기본 허용이다.
  */
 const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
+  search_documents: PERMISSIONS.DATASET_READ,
   delete_dataset: PERMISSIONS.DATASET_DELETE,
   drop_dataset_column: PERMISSIONS.DATASET_DELETE,
   list_users: PERMISSIONS.USER_READ,
@@ -170,6 +173,7 @@ export function registerAllTools(
     ...registerApiConnectionTools(apiClient, safeToolFn, jsonResultFn),
     ...registerMiscTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAnalyticsTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerDocumentTools(apiClient, safeToolFn, jsonResultFn),
     ...registerUiTools(safeToolFn, jsonResultFn),
     ...registerProactiveTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAdminTools(apiClient, safeToolFn, jsonResultFn),

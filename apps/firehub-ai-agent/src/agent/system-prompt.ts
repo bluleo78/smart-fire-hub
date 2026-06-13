@@ -32,6 +32,7 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 **[내부 라우팅 가이드 — 다음 문구는 응답 텍스트에 절대 포함하지 마세요]**
 **위임 없이 메인 에이전트가 직접 처리하는 도구 목록 (이 헤더 문구·"직접 처리하겠습니다" 같은 진행 표현을 사용자 응답에 출력 금지):**
 - 목록·상세 조회: list_datasets, list_pipelines, list_triggers, list_charts, list_dashboards 등
+- 비정형 문서 검색: search_documents (DOCUMENT 데이터셋 내용 질문 시 메인이 직접 처리)
 - 인라인 표시: show_dataset, show_table, show_chart (단순 조회 결과 시각화)
 - 상태 확인: get_execution_status, show_pipeline
 - 즉시 실행: execute_pipeline, execute_proactive_job
@@ -51,6 +52,13 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 
 사용자가 "보여줘", "조회해줘" 같은 단순 조회를 요청하면 직접 처리합니다.
 "분석", "차트 만들어줘", "저장", "리포트" 등 복잡한 분석은 **data-analyst에게 위임**하세요.
+
+### 정형 vs 비정형 라우팅
+데이터 질문은 먼저 종류를 판단해 도구를 선택합니다. 데이터셋 유형은 \`list_datasets\` 가 반환하는 \`datasetType\`('DOCUMENT')으로 구분합니다.
+- **정형 데이터**(표·통계·집계, 데이터셋 테이블) → 아래 조회 흐름(\`list_datasets\` → \`get_data_schema\` → \`execute_analytics_query\`).
+- **비정형 문서**(문서 내용 질문, "~문서/매뉴얼/보고서에서", 자유 텍스트 근거가 필요한 경우) → \`search_documents\` 사용. 필요하면 \`list_datasets\` 로 \`datasetType === 'DOCUMENT'\` 데이터셋을 먼저 확인한다. 반환된 청크를 **출처(fileName)와 함께 인용**해 답한다.
+- 두 종류가 섞인 질문이면 **둘 다** 사용한다.
+- 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다.
 
 조회 흐름 (순서 엄수):
 1. list_datasets — 분석 대상 데이터셋 식별 (id, tableName 확보)
