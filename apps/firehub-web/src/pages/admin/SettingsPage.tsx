@@ -1,4 +1,4 @@
-import { Bot, Eye, EyeOff, Mail, RotateCcw, Save, Settings, ShieldCheck } from 'lucide-react';
+import { Bot, Boxes, Eye, EyeOff, Mail, RotateCcw, Save, Settings, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -23,6 +23,7 @@ import {
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
 import type { SettingResponse } from '../../types/settings';
+import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
 const AGENT_TYPE_OPTIONS = [
@@ -188,6 +189,7 @@ export default function SettingsPage() {
   const { isAnyDirty, makeReporter } = useDirtyAggregator();
   const aiReporter = makeReporter('ai');
   const smtpReporter = makeReporter('smtp');
+  const embeddingReporter = makeReporter('embedding');
   useEffect(() => {
     aiReporter(hasChanges);
   }, [aiReporter, hasChanges]);
@@ -234,6 +236,10 @@ export default function SettingsPage() {
           <TabsTrigger value="email">
             <Mail className="h-4 w-4" />
             이메일
+          </TabsTrigger>
+          <TabsTrigger value="embedding">
+            <Boxes className="h-4 w-4" />
+            임베딩
           </TabsTrigger>
         </TabsList>
 
@@ -521,6 +527,10 @@ export default function SettingsPage() {
         {/* 이메일 탭 */}
         <TabsContent value="email" className="mt-6">
           <SmtpSettingsTab onReportDirty={smtpReporter} />
+        </TabsContent>
+        {/* 임베딩 탭 */}
+        <TabsContent value="embedding" className="mt-6">
+          <EmbeddingSettingsTab onReportDirty={embeddingReporter} />
         </TabsContent>
       </Tabs>
 
