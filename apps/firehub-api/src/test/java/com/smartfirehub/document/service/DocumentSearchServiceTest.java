@@ -82,9 +82,9 @@ class DocumentSearchServiceTest {
     var a = new DocumentSearchHit(10L, 1L, 3L, "f", 0, "A", 0.9);
     var b = new DocumentSearchHit(11L, 1L, 3L, "f", 1, "B", 0.8);
     var c = new DocumentSearchHit(12L, 1L, 3L, "f", 2, "C", 0.7);
-    when(repo.searchByCosine(Mockito.any(), Mockito.eq(List.of(3L)), Mockito.anyInt()))
+    when(repo.searchByCosine(Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(50)))
         .thenReturn(List.of(a, b));
-    when(repo.searchByTrigram(Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.anyInt()))
+    when(repo.searchByTrigram(Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(50)))
         .thenReturn(List.of(b, c));
 
     var service = new DocumentSearchService(factory, repo);
