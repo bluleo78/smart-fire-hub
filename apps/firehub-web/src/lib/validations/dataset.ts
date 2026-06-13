@@ -40,7 +40,7 @@ export const createDatasetSchema = z.object({
 }).superRefine((data, ctx) => {
   // DOCUMENT 데이터셋은 동적 컬럼이 없으므로 빈 배열 허용. 그 외 유형은 최소 1개 필요.
   if (data.datasetType !== 'DOCUMENT' && data.columns.length === 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['columns'], message: '최소 1개의 칼럼을 정의하세요' });
+    ctx.addIssue({ code: 'custom', path: ['columns'], message: '최소 1개의 칼럼을 정의하세요' });
   }
 });
 
