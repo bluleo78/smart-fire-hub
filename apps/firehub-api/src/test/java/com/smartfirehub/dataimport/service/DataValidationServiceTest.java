@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -251,5 +252,63 @@ class DataValidationServiceTest {
     assertThat(result.errors()).isEmpty();
     // The converted row should contain null for the nullable column
     assertThat(result.validRows().get(0)).containsExactly((Object) null);
+  }
+
+  // -----------------------------------------------------------------------
+  // dedupeByPrimaryKeysLastWins — UPSERT 파일 내 중복 PK 접기 (last-write-wins)
+  // -----------------------------------------------------------------------
+
+  // PK 행 맵을 간단히 만드는 헬퍼 (가변 HashMap — 운영 코드의 rowMaps와 동일 형태)
+  private static Map<String, Object> row(
+      String pk, String pkValue, String otherCol, Object otherVal) {
+    Map<String, Object> m = new HashMap<>();
+    m.put(pk, pkValue);
+    m.put(otherCol, otherVal);
+    return m;
+  }
+
+  @Test
+  void dedupeByPrimaryKeysLastWins_collapsesDuplicates_keepingLastOccurrence() {
+    // 같은 disaster_no(UR42...)가 두 번 등장 — UPSERT 의미상 마지막 행이 이겨야 한다
+    List<Map<String, Object>> rows =
+        List.of(
+            row("disaster_no", "UR4206974320", "scale", "A"),
+            row("disaster_no", "UR0000000001", "scale", "B"),
+            row("disaster_no", "UR4206974320", "scale", "C")); // 1행과 중복 → last-wins
+
+    DataValidationService.DedupResult result =
+        service.dedupeByPrimaryKeysLastWins(rows, List.of("disaster_no"));
+
+    // 중복 1건이 제거되어 2행만 남고, 제거 건수가 보고된다
+    assertThat(result.rows()).hasSize(2);
+    assertThat(result.removedCount()).isEqualTo(1);
+
+    // last-wins: 남은 UR4206974320 행의 값은 마지막 occurrence(C)여야 한다
+    Map<String, Object> kept =
+        result.rows().stream()
+            .filter(r -> "UR4206974320".equals(r.get("disaster_no")))
+            .findFirst()
+            .orElseThrow();
+    assertThat(kept.get("scale")).isEqualTo("C");
+  }
+
+  @Test
+  void dedupeByPrimaryKeysLastWins_compositeKey_treatsFullTupleAsKey() {
+    // 복합 PK: (region, disaster_no) — 한 컬럼만 같으면 중복 아님
+    Map<String, Object> r1 = new HashMap<>();
+    r1.put("region", "donghae");
+    r1.put("disaster_no", "UR1");
+    Map<String, Object> r2 = new HashMap<>();
+    r2.put("region", "gangneung");
+    r2.put("disaster_no", "UR1"); // disaster_no는 같지만 region이 달라 중복 아님
+    Map<String, Object> r3 = new HashMap<>();
+    r3.put("region", "donghae");
+    r3.put("disaster_no", "UR1"); // r1과 완전히 동일한 복합키 → 중복
+
+    DataValidationService.DedupResult result =
+        service.dedupeByPrimaryKeysLastWins(List.of(r1, r2, r3), List.of("region", "disaster_no"));
+
+    assertThat(result.rows()).hasSize(2);
+    assertThat(result.removedCount()).isEqualTo(1);
   }
 }

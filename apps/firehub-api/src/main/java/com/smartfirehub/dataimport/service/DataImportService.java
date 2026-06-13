@@ -567,25 +567,35 @@ public class DataImportService {
                       pkErrorJson));
               return;
             }
-            if (!pkValidation.warnings().isEmpty()) {
+            // 파일 내 중복 PK를 last-write-wins로 접는다(dedup).
+            // 이렇게 하지 않으면 같은 PK가 한 배치의 INSERT ... ON CONFLICT DO UPDATE 안에 두 번 들어가
+            // Postgres "cannot affect row a second time" 오류로 배치 전체가 실패한다(#281).
+            DataValidationService.DedupResult dedup =
+                validationService.dedupeByPrimaryKeysLastWins(rowMaps, pkColumns);
+            List<Map<String, Object>> upsertRows = dedup.rows();
+            if (dedup.removedCount() > 0) {
               log.warn(
-                  "UPSERT PK warnings (within-file duplicates): {}",
-                  pkValidation.warnings().size());
+                  "UPSERT within-file duplicate PKs collapsed (last-write-wins): {} rows removed,"
+                      + " {} rows to upsert on PK columns {}",
+                  dedup.removedCount(),
+                  upsertRows.size(),
+                  pkColumns);
             }
 
+            int upsertTotal = upsertRows.size();
             log.info(
-                "UPSERT mode: upserting {} valid rows on PK columns {}", validCount, pkColumns);
+                "UPSERT mode: upserting {} valid rows on PK columns {}", upsertTotal, pkColumns);
             asyncJobService.updateProgress(
                 jobId,
                 "INSERTING",
                 40,
                 "Upserting data...",
-                Map.of("totalRows", insertTotal, "processedRows", 0));
+                Map.of("totalRows", upsertTotal, "processedRows", 0));
             dataTableRowService.upsertBatchWithProgress(
                 dataset.tableName(),
                 columnNames,
                 pkColumns,
-                rowMaps,
+                upsertRows,
                 null,
                 (processed, total) -> {
                   int pct = 40 + (int) ((processed / (double) total) * 60);
@@ -598,21 +608,46 @@ public class DataImportService {
                 });
           }
           case REPLACE -> {
-            log.info("REPLACE mode: truncating table then inserting {} valid rows", validCount);
+            // REPLACE도 truncate 후 plain insert이므로, 데이터셋에 PK가 있으면 파일 내 중복 PK가
+            // unique index를 위반해 실패한다(#281, UPSERT와 동일 근본 원인). REPLACE는 파일이 새 진실이므로
+            // last-write-wins dedup이 타당하다. PK가 없으면 unique index도 없어 dedup이 불필요하다.
+            List<String> replacePkColumns =
+                columns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            List<Map<String, Object>> replaceRows = rowMaps;
+            if (!replacePkColumns.isEmpty()) {
+              DataValidationService.DedupResult dedup =
+                  validationService.dedupeByPrimaryKeysLastWins(rowMaps, replacePkColumns);
+              replaceRows = dedup.rows();
+              if (dedup.removedCount() > 0) {
+                log.warn(
+                    "REPLACE within-file duplicate PKs collapsed (last-write-wins): {} rows"
+                        + " removed, {} rows to insert on PK columns {}",
+                    dedup.removedCount(),
+                    replaceRows.size(),
+                    replacePkColumns);
+              }
+            }
+
+            int replaceTotal = replaceRows.size();
+            log.info("REPLACE mode: truncating table then inserting {} valid rows", replaceTotal);
             asyncJobService.updateProgress(
                 jobId,
                 "INSERTING",
                 40,
                 "Replacing table...",
-                Map.of("totalRows", insertTotal, "processedRows", 0));
+                Map.of("totalRows", replaceTotal, "processedRows", 0));
             // Wrap truncate + insert in a single transaction for atomicity
+            List<Map<String, Object>> replaceRowsFinal = replaceRows;
             transactionTemplate.executeWithoutResult(
                 status -> {
                   dataTableRowService.truncateTable(dataset.tableName());
                   dataTableRowService.insertBatchWithProgress(
                       dataset.tableName(),
                       columnNames,
-                      rowMaps,
+                      replaceRowsFinal,
                       (processed, total) -> {
                         int pct = 40 + (int) ((processed / (double) total) * 60);
                         asyncJobService.updateProgress(

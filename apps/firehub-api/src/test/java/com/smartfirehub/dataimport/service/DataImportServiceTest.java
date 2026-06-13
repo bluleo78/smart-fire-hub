@@ -356,6 +356,139 @@ class DataImportServiceTest extends IntegrationTestBase {
     assertThat(response.status()).isEqualTo("PENDING");
   }
 
+  /**
+   * 운영 재현 회귀 테스트(#281): 파일 안에 같은 PK가 중복된 데이터를 UPSERT 모드로 임포트해도 실패하지 않아야 한다.
+   *
+   * <p>수정 전에는 중복 PK 행이 한 배치의 INSERT ... ON CONFLICT DO UPDATE 안에 들어가 Postgres "cannot affect row a
+   * second time" 오류로 배치 전체가 실패했다. 수정 후에는 last-write-wins로 dedup되어 정상 적재되고, 같은 PK는 파일의 마지막 값이 남아야
+   * 한다.
+   */
+  @Test
+  void processImport_upsertWithWithinFileDuplicatePk_collapsesLastWins() throws Exception {
+    // Given: PK 컬럼(code)을 가진 데이터셋 생성
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("code", "Code", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest("label", "Label", "TEXT", null, true, false, null, false));
+    DatasetDetailResponse pkDataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Upsert Dedup Dataset",
+                "upsert_dedup_dataset",
+                "UPSERT 중복 PK 회귀 테스트용",
+                null,
+                "SOURCE",
+                columns,
+                null),
+            testUserId);
+
+    // 같은 code(A001)가 두 번 등장 — UPSERT 시 마지막 값(second)이 이겨야 한다
+    String csv =
+        """
+        code,label
+        A001,first
+        A002,other
+        A001,second
+        """;
+    String filePath = createTempCsvFile(csv);
+
+    // When: UPSERT 모드로 processImport 직접 호출 (수정 전이면 여기서 배치 실패)
+    dataImportService.processImport(
+        "upsert-dedup-job-id",
+        pkDataset.id(),
+        filePath,
+        "",
+        "",
+        "upsert_dedup.csv",
+        (long) csv.length(),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "UPSERT");
+
+    // Then: 중복이 접혀 2행만 적재되고, A001의 label은 마지막 값 'second'여야 한다
+    var rows =
+        dsl.select()
+            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "upsert_dedup_dataset")))
+            .fetch();
+    assertThat(rows).hasSize(2);
+
+    String a001Label =
+        rows.stream()
+            .filter(r -> "A001".equals(r.get("code")))
+            .map(r -> (String) r.get("label"))
+            .findFirst()
+            .orElse(null);
+    assertThat(a001Label).isEqualTo("second");
+  }
+
+  /**
+   * 운영 재현 회귀 테스트(#281): REPLACE 모드도 파일 내 중복 PK가 있으면 truncate 후 plain insert 단계에서 unique index를 위반해
+   * 실패한다. UPSERT와 동일 근본 원인이며, REPLACE는 파일이 새 진실이므로 last-write-wins dedup이 의미상 타당하다.
+   */
+  @Test
+  void processImport_replaceWithWithinFileDuplicatePk_collapsesLastWins() throws Exception {
+    // Given: PK 컬럼(code)을 가진 데이터셋 생성
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("code", "Code", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest("label", "Label", "TEXT", null, true, false, null, false));
+    DatasetDetailResponse pkDataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Replace Dedup Dataset",
+                "replace_dedup_dataset",
+                "REPLACE 중복 PK 회귀 테스트용",
+                null,
+                "SOURCE",
+                columns,
+                null),
+            testUserId);
+
+    // 같은 code(A001)가 두 번 등장 — REPLACE 시 마지막 값(second)이 남아야 한다
+    String csv =
+        """
+        code,label
+        A001,first
+        A002,other
+        A001,second
+        """;
+    String filePath = createTempCsvFile(csv);
+
+    // When: REPLACE 모드로 processImport 직접 호출 (수정 전이면 unique index 위반으로 실패)
+    dataImportService.processImport(
+        "replace-dedup-job-id",
+        pkDataset.id(),
+        filePath,
+        "",
+        "",
+        "replace_dedup.csv",
+        (long) csv.length(),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "REPLACE");
+
+    // Then: 중복이 접혀 2행만 남고, A001의 label은 마지막 값 'second'여야 한다
+    var rows =
+        dsl.select()
+            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "replace_dedup_dataset")))
+            .fetch();
+    assertThat(rows).hasSize(2);
+
+    String a001Label =
+        rows.stream()
+            .filter(r -> "A001".equals(r.get("code")))
+            .map(r -> (String) r.get("label"))
+            .findFirst()
+            .orElse(null);
+    assertThat(a001Label).isEqualTo("second");
+  }
+
   private String createTempCsvFile(String content) throws Exception {
     java.nio.file.Path tempDir =
         java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");

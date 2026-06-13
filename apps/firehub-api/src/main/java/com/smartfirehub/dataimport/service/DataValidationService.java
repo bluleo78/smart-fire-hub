@@ -294,7 +294,46 @@ public class DataValidationService {
     return new PkValidationResult(errors, warnings);
   }
 
+  /**
+   * UPSERT 모드에서 파일 내 중복 PK 행을 last-write-wins 규칙으로 접는다(dedup).
+   *
+   * <p>왜 필요한가: 동일 PK가 한 배치의 {@code INSERT ... ON CONFLICT DO UPDATE} 안에 두 번 이상 들어가면 Postgres가 "ON
+   * CONFLICT DO UPDATE command cannot affect row a second time" 오류로 배치 전체를 거부한다. {@link
+   * #validatePrimaryKeys}가 이미 "last-write-wins" 의도를 경고로 알리지만 실제 접기는 하지 않았기 때문에, 배치 적재 직전에 이 메서드로
+   * 중복을 제거해야 한다.
+   *
+   * <p>composite key는 {@link #validatePrimaryKeys}와 동일하게 null-byte 구분자로 구성하며, 같은 키의 마지막 occurrence
+   * 값이 남는다(원래 등장 순서는 유지).
+   *
+   * @param rows 컬럼명→값 형태의 행 목록 (적재 대상)
+   * @param pkColumns 주 키 컬럼명 목록
+   * @return 중복이 제거된 행 목록과 제거 건수
+   */
+  public DedupResult dedupeByPrimaryKeysLastWins(
+      List<Map<String, Object>> rows, List<String> pkColumns) {
+    // 등장 순서를 보존하면서 같은 PK는 마지막 값으로 덮어쓰기 위해 LinkedHashMap 사용
+    java.util.LinkedHashMap<String, Map<String, Object>> byKey = new java.util.LinkedHashMap<>();
+
+    for (Map<String, Object> row : rows) {
+      // validatePrimaryKeys와 동일한 방식으로 복합 키 문자열 생성 (null → "")
+      StringBuilder keyBuilder = new StringBuilder();
+      for (int i = 0; i < pkColumns.size(); i++) {
+        if (i > 0) keyBuilder.append('\0');
+        Object value = row.get(pkColumns.get(i));
+        keyBuilder.append(value != null ? value.toString() : "");
+      }
+      // put은 기존 위치를 유지한 채 값만 마지막 occurrence로 덮어쓴다 → last-write-wins
+      byKey.put(keyBuilder.toString(), row);
+    }
+
+    int removedCount = rows.size() - byKey.size();
+    return new DedupResult(new java.util.ArrayList<>(byKey.values()), removedCount);
+  }
+
   public record PkValidationResult(List<ValidationErrorDetail> errors, List<String> warnings) {}
+
+  /** dedupeByPrimaryKeysLastWins 결과: 중복 제거된 행 목록과 제거 건수. */
+  public record DedupResult(List<Map<String, Object>> rows, int removedCount) {}
 
   public record ValidationResult(
       List<List<Object>> validRows,
