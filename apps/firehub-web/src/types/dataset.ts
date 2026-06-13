@@ -55,7 +55,8 @@ export interface DatasetDetailResponse {
   datasetType: 'SOURCE' | 'DERIVED' | 'TEMP' | 'DOCUMENT';
   createdBy: string;
   columns: DatasetColumnResponse[];
-  rowCount: number;
+  // DOCUMENT 데이터셋은 동적 테이블이 없어 백엔드가 null을 반환한다.
+  rowCount: number | null;
   createdAt: string;
   updatedAt: string | null;
   updatedBy: string | null;

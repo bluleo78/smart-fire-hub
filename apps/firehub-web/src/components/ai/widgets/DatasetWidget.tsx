@@ -185,7 +185,7 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
           📐 {columns.length}개 컬럼
         </span>
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          📋 {formatRowCount(dataset.rowCount)}건
+          📋 {formatRowCount(dataset.rowCount ?? 0)}건
         </span>
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
           🕒 {formatDate(dataset.updatedAt)}

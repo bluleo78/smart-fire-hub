@@ -47,6 +47,7 @@ Thumbs.db
 .claude/settings.local.json
 .claude/plans/
 .claude/projects/
+.claude/ai-driven/
 
 # Gradle bin output
 **/bin/

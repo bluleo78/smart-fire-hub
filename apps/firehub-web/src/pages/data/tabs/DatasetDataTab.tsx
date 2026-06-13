@@ -78,7 +78,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     sortDir: sort?.dir,
   });
 
-  const statsMap = useColumnStatsMap(datasetId, dataset.rowCount > 0);
+  const statsMap = useColumnStatsMap(datasetId, (dataset.rowCount ?? 0) > 0);
   const deleteRows = useDeleteDataRows(datasetId);
 
   // Debounce search

@@ -91,7 +91,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         {/* Row Count */}
         <Card className="p-4">
           <Database size={20} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.rowCount.toLocaleString()}</p>
+          <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.rowCount != null ? dataset.rowCount.toLocaleString() : '-'}</p>
           <p className="text-sm text-muted-foreground">행</p>
         </Card>
 

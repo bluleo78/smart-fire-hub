@@ -44,7 +44,7 @@ export function useColumnManager({
   const [expandedColumnId, setExpandedColumnId] = React.useState<number | null>(null);
   const [editingColumnId, setEditingColumnId] = React.useState<number | null>(null);
 
-  const hasData = dataset.rowCount > 0;
+  const hasData = (dataset.rowCount ?? 0) > 0;
   const deleteColumn = useDeleteColumn(datasetId);
   const reorderColumns = useReorderColumns(datasetId);
 

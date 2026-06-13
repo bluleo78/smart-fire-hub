@@ -81,7 +81,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
         {/* Source info */}
         <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
           원본: <span className="font-medium text-foreground">{dataset.name}</span>{' '}
-          ({dataset.columns.length}열, {dataset.rowCount.toLocaleString()}행)
+          ({dataset.columns.length}열, {(dataset.rowCount ?? 0).toLocaleString()}행)
         </div>
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -128,7 +128,7 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
                   <div>
                     <Label className="text-sm">데이터 포함</Label>
                     <p className="text-xs text-muted-foreground">
-                      {dataset.rowCount.toLocaleString()}행의 데이터를 복제
+                      {(dataset.rowCount ?? 0).toLocaleString()}행의 데이터를 복제
                     </p>
                   </div>
                   <Switch checked={field.value} onCheckedChange={field.onChange} />

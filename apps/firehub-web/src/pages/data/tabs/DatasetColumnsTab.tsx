@@ -61,7 +61,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
   dataset,
   datasetId,
 }: DatasetColumnsTabProps) {
-  const hasData = dataset.rowCount > 0;
+  const hasData = (dataset.rowCount ?? 0) > 0;
   const statsMap = useColumnStatsMap(datasetId, hasData);
   // 기본 키 일괄 설정 다이얼로그 오픈 상태 (#117)
   const [primaryKeysOpen, setPrimaryKeysOpen] = React.useState(false);
@@ -313,7 +313,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
           column={selectedColumn}
           open={editColumnOpen}
           onOpenChange={setEditColumnOpen}
-          hasData={dataset.rowCount > 0}
+          hasData={(dataset.rowCount ?? 0) > 0}
         />
         <PrimaryKeysDialog
           datasetId={datasetId}
