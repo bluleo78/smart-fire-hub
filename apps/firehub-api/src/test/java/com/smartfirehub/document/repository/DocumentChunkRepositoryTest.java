@@ -129,4 +129,50 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     var hits = chunkRepository.searchByCosine(vec(1f, 0f), List.of(datasetId), 5);
     assertThat(hits).isEmpty();
   }
+
+  @Test
+  void searchByTrigramFindsExactTermChunk() {
+    Long userId = dsl.fetchOne(
+        "INSERT INTO \"user\"(username, password, name, email) VALUES"
+            + " ('doctrgm','x','Doc Trgm','doctrgm@example.com') RETURNING id").get(0, Long.class);
+    Long datasetId = dsl.fetchOne(
+        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
+            + " ('doctrgm-set','data.doctrgm_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+    Long fileId = dsl.fetchOne(
+        "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) VALUES (?, 't.txt','text/plain',3,'/tmp/t','COMPLETED', ?)"
+            + " RETURNING id", datasetId, userId).get(0, Long.class);
+
+    // 고유 식별자가 든 청크와 무관한 청크 — 키워드 검색은 식별자 청크를 찾아야 한다.
+    chunkRepository.insertBatch(
+        fileId, datasetId,
+        List.of(new Chunk(0, "재난번호 UR4206974320 강릉 산불 피해", 1),
+                new Chunk(1, "전혀 무관한 일반 텍스트입니다", 1)),
+        List.of(vec(1f, 0f), vec(0f, 1f)),
+        "bge-m3");
+
+    var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5);
+
+    assertThat(hits).isNotEmpty();
+    assertThat(hits.get(0).content()).contains("UR4206974320");
+  }
+
+  @Test
+  void searchByTrigramExcludesNonCompletedFiles() {
+    Long userId = dsl.fetchOne(
+        "INSERT INTO \"user\"(username, password, name, email) VALUES"
+            + " ('doctrgm2','x','Doc Trgm2','doctrgm2@example.com') RETURNING id").get(0, Long.class);
+    Long datasetId = dsl.fetchOne(
+        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
+            + " ('doctrgm2-set','data.doctrgm2_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+    Long fileId = dsl.fetchOne(
+        "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) VALUES (?, 'pp.txt','text/plain',3,'/tmp/pp','PARSING', ?)"
+            + " RETURNING id", datasetId, userId).get(0, Long.class);
+    chunkRepository.insertBatch(fileId, datasetId,
+        List.of(new Chunk(0, "UR4206974320 숨김", 1)), List.of(vec(1f, 0f)), "bge-m3");
+
+    var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5);
+    assertThat(hits).isEmpty();
+  }
 }

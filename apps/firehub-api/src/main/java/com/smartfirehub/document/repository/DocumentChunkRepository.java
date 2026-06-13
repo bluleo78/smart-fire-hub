@@ -95,6 +95,46 @@ public class DocumentChunkRepository {
             r.get("score", Double.class)));
   }
 
+  /**
+   * pg_trgm word_similarity 기준 키워드 top-K 청크 조회. 완료된 문서만 검색한다.
+   * word_similarity(query, content) 는 짧은 질의를 긴 본문의 일부와 매칭해 0~1 점수를 준다.
+   * 임베딩이 필요 없어 임베딩 서비스 장애 시에도 동작한다(KEYWORD/HYBRID 회복탄력성).
+   * 0.1 floor 로 잡음을 제거한다(word_similarity_threshold GUC 와 무관하게 동작).
+   */
+  public List<DocumentSearchHit> searchByTrigram(
+      String query, List<Long> datasetIds, int topK) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT dc.id, dc.document_file_id, dc.dataset_id, df.original_name,"
+                + " dc.chunk_index, dc.content, word_similarity(?, dc.content) AS score"
+                + " FROM document_chunk dc"
+                + " JOIN document_file df ON df.id = dc.document_file_id"
+                + " WHERE df.status = 'COMPLETED'");
+    List<Object> params = new java.util.ArrayList<>();
+    params.add(query); // SELECT 의 word_similarity 첫 인자
+    if (datasetIds != null && !datasetIds.isEmpty()) {
+      sql.append(" AND dc.dataset_id IN (")
+          .append(datasetIds.stream().map(x -> "?").collect(java.util.stream.Collectors.joining(",")))
+          .append(")");
+      params.addAll(datasetIds);
+    }
+    // WHERE 절은 SELECT 의 alias(score)를 참조할 수 없어 word_similarity 를 다시 계산한다.
+    sql.append(" AND word_similarity(?, dc.content) > 0.1");
+    params.add(query);
+    sql.append(" ORDER BY score DESC LIMIT ?");
+    params.add(topK);
+
+    return dsl.fetch(sql.toString(), params.toArray())
+        .map(r -> new DocumentSearchHit(
+            r.get("id", Long.class),
+            r.get("document_file_id", Long.class),
+            r.get("dataset_id", Long.class),
+            r.get("original_name", String.class),
+            r.get("chunk_index", Integer.class),
+            r.get("content", String.class),
+            r.get("score", Double.class)));
+  }
+
   /** float[] → pgvector 텍스트 리터럴 "[v1,v2,...]". */
   private String toVectorLiteral(float[] v) {
     StringBuilder sb = new StringBuilder("[");
