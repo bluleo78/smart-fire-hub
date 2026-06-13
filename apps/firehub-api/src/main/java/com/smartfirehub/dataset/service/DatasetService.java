@@ -45,6 +45,9 @@ public class DatasetService {
 
   private static final Set<String> VALID_STATUSES = Set.of("NONE", "CERTIFIED", "DEPRECATED");
 
+  // DOCUMENT 데이터셋은 data.<table> 동적 테이블/컬럼이 없고 데이터가 document_chunk 에 저장된다.
+  private static final String DOCUMENT_TYPE = "DOCUMENT";
+
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
   private final DatasetCategoryRepository categoryRepository;
@@ -91,8 +94,12 @@ public class DatasetService {
     }
 
     DatasetResponse dataset = datasetRepository.save(request, userId);
-    columnRepository.saveBatch(dataset.id(), request.columns());
-    dataTableService.createTable(request.tableName(), request.columns());
+    // DOCUMENT 데이터셋은 데이터가 document_chunk 에 저장되므로 data.<table> 동적 테이블을 만들지 않는다.
+    // dataset.table_name 은 메타데이터 식별자로만 쓰이며, 컬럼 영속화/물리 테이블 생성을 건너뛴다.
+    if (!DOCUMENT_TYPE.equals(request.datasetType())) {
+      columnRepository.saveBatch(dataset.id(), request.columns());
+      dataTableService.createTable(request.tableName(), request.columns());
+    }
 
     // 데이터셋 생성 감사 로그 (#60/#92)
     userRepository
@@ -113,6 +120,13 @@ public class DatasetService {
                     null));
 
     return getDatasetById(dataset.id());
+  }
+
+  /** DOCUMENT 데이터셋은 동적 테이블/컬럼이 없으므로 컬럼·행 조작을 거부한다. */
+  private void rejectIfDocument(String datasetType, String operation) {
+    if (DOCUMENT_TYPE.equals(datasetType)) {
+      throw new IllegalArgumentException("DOCUMENT 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
+    }
   }
 
   @Transactional(readOnly = true)
@@ -154,7 +168,12 @@ public class DatasetService {
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(id);
-    long rowCount = dataTableRowService.countRows(dataset.tableName());
+    // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없으므로 countRows(존재하지 않는 테이블 COUNT) 가 실패한다.
+    // 문서 행 수는 document_chunk 기준이며 Task 4 범위 밖이므로 0 으로 반환한다.
+    long rowCount =
+        DOCUMENT_TYPE.equals(dataset.datasetType())
+            ? 0L
+            : dataTableRowService.countRows(dataset.tableName());
 
     String createdByUsername =
         datasetRepository
@@ -247,7 +266,11 @@ public class DatasetService {
           referencingStepCount + "개 파이프라인 스텝이 이 데이터셋을 출력으로 참조하고 있어 삭제할 수 없습니다.");
     }
 
-    dataTableService.dropTable(dataset.tableName());
+    // DOCUMENT 데이터셋은 동적 테이블을 만든 적이 없으므로 DROP 을 시도하지 않는다.
+    // document_file/document_chunk 행은 dataset 삭제 시 FK CASCADE 로 함께 제거된다.
+    if (!DOCUMENT_TYPE.equals(dataset.datasetType())) {
+      dataTableService.dropTable(dataset.tableName());
+    }
     columnRepository.deleteByDatasetId(id);
     datasetRepository.deleteById(id);
 
@@ -281,6 +304,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "컬럼 관리");
 
     dataTableService.validateName(request.columnName());
 
@@ -334,6 +358,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "컬럼 관리");
 
     DatasetColumnResponse column =
         columnRepository
@@ -504,6 +529,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "기본키 변경");
 
     List<Long> pkIds = requestedPkIds != null ? requestedPkIds : List.of();
 
@@ -553,6 +579,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "컬럼 관리");
 
     DatasetColumnResponse column =
         columnRepository
@@ -739,6 +766,8 @@ public class DatasetService {
         datasetRepository
             .findById(sourceId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + sourceId));
+    // DOCUMENT 데이터셋은 동적 테이블이 없어 복제 시 phantom 테이블이 생기므로 Phase 1 에서는 거부한다.
+    rejectIfDocument(sourceDataset.datasetType(), "복제");
 
     List<DatasetColumnResponse> sourceColumns = columnRepository.findByDatasetId(sourceId);
 

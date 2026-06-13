@@ -106,6 +106,48 @@ class DatasetServiceTest extends IntegrationTestBase {
   }
 
   @Test
+  void createDocumentDatasetSkipsDynamicTable() {
+    // DOCUMENT 데이터셋은 데이터가 document_chunk 에 저장되므로 data.<table> 동적 테이블을 만들지 않는다.
+    // 빈 컬럼 목록으로 생성해도 성공해야 하며, 물리 테이블은 존재하지 않아야 한다.
+    CreateDatasetRequest request =
+        new CreateDatasetRequest(
+            "Document Dataset",
+            "document_dataset",
+            "RAG document dataset",
+            testCategoryId,
+            "DOCUMENT",
+            List.of(),
+            null);
+
+    DatasetDetailResponse created = datasetService.createDataset(request, testUserId);
+
+    assertThat(created.datasetType()).isEqualTo("DOCUMENT");
+    assertThat(created.tableName()).isEqualTo("document_dataset");
+
+    Long tableExists =
+        dsl.selectCount()
+            .from("information_schema.tables")
+            .where("table_schema = 'data' AND table_name = 'document_dataset'")
+            .fetchOne(0, Long.class);
+    assertThat(tableExists).isEqualTo(0);
+  }
+
+  @Test
+  void addColumn_documentDataset_throwsIllegalArgument() {
+    // DOCUMENT 데이터셋은 동적 테이블/컬럼이 없으므로 컬럼 추가는 400(IllegalArgumentException)으로 거부되어야 한다.
+    DatasetDetailResponse doc =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Doc AddCol", "doc_addcol", null, null, "DOCUMENT", List.of(), null),
+            testUserId);
+
+    AddColumnRequest req = new AddColumnRequest("c1", "C1", "TEXT", null, true, false, null);
+
+    assertThatThrownBy(() -> datasetService.addColumn(doc.id(), req))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void createDataset_duplicateName_throwsException() {
     // Given
     List<DatasetColumnRequest> columns =

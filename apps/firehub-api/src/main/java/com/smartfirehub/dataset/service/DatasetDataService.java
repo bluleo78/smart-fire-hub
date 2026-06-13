@@ -47,12 +47,23 @@ public class DatasetDataService {
   private final QueryHistoryRepository queryHistoryRepository;
   private final ObjectMapper objectMapper;
 
+  // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없고 데이터가 document_chunk 에 저장된다.
+  private static final String DOCUMENT_TYPE = "DOCUMENT";
+
+  /** DOCUMENT 데이터셋은 동적 테이블이 없으므로 행 조회/편집을 거부한다(존재하지 않는 테이블 접근 시 500 방지). */
+  private void rejectIfDocument(String datasetType, String operation) {
+    if (DOCUMENT_TYPE.equals(datasetType)) {
+      throw new IllegalArgumentException("DOCUMENT 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
+    }
+  }
+
   @Transactional(readOnly = true)
   public List<ColumnStatsResponse> getDatasetStats(Long datasetId) {
     DatasetResponse dataset =
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "통계 조회");
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     if (rowCount == 0) {
@@ -69,6 +80,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "데이터 삭제");
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     dataTableRowService.truncateTable(dataset.tableName());
     return new DataDeleteResponse((int) rowCount);
@@ -80,6 +92,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "행 수 조회");
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     return new RowCountResponse(rowCount);
   }
@@ -90,6 +103,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "데이터 교체");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
 
@@ -118,6 +132,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "행 삭제");
     int deletedCount = dataTableRowService.deleteRows(dataset.tableName(), rowIds);
     return new DataDeleteResponse(deletedCount);
   }
@@ -153,6 +168,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "데이터 조회");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
@@ -234,6 +250,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "행 추가");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
@@ -270,6 +287,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "행 일괄 추가");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
 
@@ -296,6 +314,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "행 수정");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
@@ -312,6 +331,7 @@ public class DatasetDataService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    rejectIfDocument(dataset.datasetType(), "행 조회");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();

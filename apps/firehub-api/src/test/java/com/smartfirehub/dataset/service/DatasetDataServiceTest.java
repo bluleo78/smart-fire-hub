@@ -92,6 +92,26 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   }
 
   // =========================================================================
+  // DOCUMENT 데이터셋 가드
+  // =========================================================================
+
+  /** 예외: DOCUMENT 데이터셋은 동적 테이블이 없으므로 행 조작이 400(IllegalArgumentException)으로 거부된다 */
+  @Test
+  void rowOps_documentDataset_throwsIllegalArgument() {
+    DatasetDetailResponse doc =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Doc Rows", "doc_rows", null, null, "DOCUMENT", List.of(), null),
+            testUserId);
+
+    assertThatThrownBy(() -> datasetDataService.getRowCount(doc.id()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> datasetDataService.addRow(doc.id(), new RowDataRequest(Map.of("name", "x"))))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  // =========================================================================
   // getDatasetStats
   // =========================================================================
 
