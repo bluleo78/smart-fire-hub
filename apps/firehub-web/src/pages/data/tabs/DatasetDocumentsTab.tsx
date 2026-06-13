@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { Button } from '../../../components/ui/button';
 import { useDeleteDocument, useDocuments, useUploadDocument } from '../../../hooks/queries/useDocuments';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DocumentList } from '../components/DocumentList';
@@ -48,16 +49,16 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
     <div className="space-y-6">
       <section>
         <h2 className="text-lg font-semibold mb-3">문서 업로드</h2>
-        <FileUploadZone onFileSelect={setPendingFile} accept={ACCEPT} disabled={upload.isPending} />
+        <FileUploadZone
+          onFileSelect={setPendingFile}
+          accept={ACCEPT}
+          disabled={upload.isPending}
+          rejectionMessage="PDF, Word, 텍스트 문서만 지원합니다."
+        />
         <div className="mt-3">
-          <button
-            type="button"
-            className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
-            disabled={!pendingFile || upload.isPending}
-            onClick={handleUpload}
-          >
+          <Button type="button" disabled={!pendingFile || upload.isPending} onClick={handleUpload}>
             {upload.isPending ? '업로드 중...' : '업로드'}
-          </button>
+          </Button>
         </div>
       </section>
 

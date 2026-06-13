@@ -8,6 +8,8 @@ interface FileUploadZoneProps {
   onFileSelect: (file: File) => void;
   accept?: string;
   disabled?: boolean;
+  /** 허용되지 않은 파일 거부 시 표시할 메시지. accept 형식에 맞춰 호출부에서 지정. */
+  rejectionMessage?: string;
 }
 
 /**
@@ -27,7 +29,12 @@ function isFileAccepted(file: File, accept: string): boolean {
   });
 }
 
-export function FileUploadZone({ onFileSelect, accept = '.csv,.xlsx', disabled }: FileUploadZoneProps) {
+export function FileUploadZone({
+  onFileSelect,
+  accept = '.csv,.xlsx',
+  disabled,
+  rejectionMessage = 'CSV 또는 XLSX 파일만 지원합니다.',
+}: FileUploadZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,20 +47,20 @@ export function FileUploadZone({ onFileSelect, accept = '.csv,.xlsx', disabled }
     if (file) {
       // 드래그 앤 드롭은 <input accept> 속성이 적용되지 않으므로 직접 검증한다
       if (!isFileAccepted(file, accept)) {
-        toast.error('CSV 또는 XLSX 파일만 지원합니다.');
+        toast.error(rejectionMessage);
         return;
       }
       setSelectedFile(file);
       onFileSelect(file);
     }
-  }, [onFileSelect, disabled, accept]);
+  }, [onFileSelect, disabled, accept, rejectionMessage]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       // 파일 선택 방식에서도 동일하게 검증 (input accept 는 힌트일 뿐, 강제하지 않음)
       if (!isFileAccepted(file, accept)) {
-        toast.error('CSV 또는 XLSX 파일만 지원합니다.');
+        toast.error(rejectionMessage);
         // input 을 초기화하여 같은 잘못된 파일을 다시 선택해도 onChange 가 발생하도록 한다
         e.target.value = '';
         return;
