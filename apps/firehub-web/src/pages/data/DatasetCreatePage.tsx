@@ -56,6 +56,10 @@ export default function DatasetCreatePage() {
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
 
+  // DOCUMENT 유형 여부 — 유형이 바뀔 때마다 재렌더링되어 칼럼·테이블명 UI를 토글한다.
+  const watchedDatasetType = form.watch('datasetType');
+  const isDocument = watchedDatasetType === 'DOCUMENT';
+
   // 이름·테이블명 중복 검증을 위한 debounce 처리값 (#103).
   // 사용자가 입력을 멈추고 약 400ms 경과 후에만 검색 쿼리를 트리거하여 키 입력마다 API가 폭주하지 않도록 함.
   const watchedName = form.watch('name');
@@ -112,7 +116,8 @@ export default function DatasetCreatePage() {
       form.setError('name', { type: 'duplicate', message: '이미 사용 중인 이름입니다.' });
       return;
     }
-    if (isTableNameDuplicate) {
+    // DOCUMENT는 tableName을 자동 생성하므로 중복 검사에서 제외한다.
+    if (!isDocument && isTableNameDuplicate) {
       form.setError('tableName', { type: 'duplicate', message: '이미 사용 중인 테이블명입니다.' });
       return;
     }
@@ -194,26 +199,29 @@ export default function DatasetCreatePage() {
                   )}
                 </FormField>
 
-                <FormField
-                  label="테이블명"
-                  htmlFor="tableName"
-                  required
-                  error={
-                    form.formState.errors.tableName?.message ??
-                    (isTableNameDuplicate ? '이미 사용 중인 테이블명입니다.' : undefined)
-                  }
-                >
-                  <Input
-                    id="tableName"
-                    {...form.register('tableName')}
-                    placeholder="예: user_data"
-                    className="font-mono"
-                    aria-invalid={isTableNameDuplicate || !!form.formState.errors.tableName}
-                  />
-                  {!isTableNameDuplicate && debouncedTableName.length > 0 && !form.formState.errors.tableName && (
-                    <p className="text-xs text-muted-foreground mt-1">사용 가능한 테이블명입니다.</p>
-                  )}
-                </FormField>
+                {/* DOCUMENT 유형은 tableName을 자동 생성하므로 입력 필드를 숨긴다 */}
+                {!isDocument && (
+                  <FormField
+                    label="테이블명"
+                    htmlFor="tableName"
+                    required
+                    error={
+                      form.formState.errors.tableName?.message ??
+                      (isTableNameDuplicate ? '이미 사용 중인 테이블명입니다.' : undefined)
+                    }
+                  >
+                    <Input
+                      id="tableName"
+                      {...form.register('tableName')}
+                      placeholder="예: user_data"
+                      className="font-mono"
+                      aria-invalid={isTableNameDuplicate || !!form.formState.errors.tableName}
+                    />
+                    {!isTableNameDuplicate && debouncedTableName.length > 0 && !form.formState.errors.tableName && (
+                      <p className="text-xs text-muted-foreground mt-1">사용 가능한 테이블명입니다.</p>
+                    )}
+                  </FormField>
+                )}
               </div>
 
               <FormField label="설명" htmlFor="description">
@@ -254,7 +262,14 @@ export default function DatasetCreatePage() {
                   <Select
                     value={form.watch('datasetType')}
                     onValueChange={(value) => {
-                      form.setValue('datasetType', value as 'SOURCE' | 'DERIVED');
+                      const v = value as 'SOURCE' | 'DERIVED' | 'TEMP' | 'DOCUMENT';
+                      form.setValue('datasetType', v);
+                      // DOCUMENT는 동적 테이블/컬럼이 없다. tableName은 메타 식별자로만 쓰이므로
+                      // 규칙([a-z][a-z0-9_]*)을 만족하는 doc_<timestamp>를 자동 생성하고 컬럼은 비운다.
+                      if (v === 'DOCUMENT') {
+                        form.setValue('tableName', `doc_${Date.now()}`);
+                        form.setValue('columns', []);
+                      }
                     }}
                   >
                     <SelectTrigger>
@@ -263,6 +278,7 @@ export default function DatasetCreatePage() {
                     <SelectContent>
                       <SelectItem value="SOURCE">원본</SelectItem>
                       <SelectItem value="DERIVED">파생</SelectItem>
+                      <SelectItem value="DOCUMENT">문서</SelectItem>
                     </SelectContent>
                   </Select>
                 </FormField>
@@ -270,10 +286,13 @@ export default function DatasetCreatePage() {
             </div>
           </Card>
 
-          <Card className="p-6">
-            <h2 className="text-xl leading-7 font-semibold mb-4">칼럼 정의</h2>
-            <SchemaBuilder />
-          </Card>
+          {/* DOCUMENT 유형은 동적 칼럼이 없으므로 칼럼 정의 카드를 숨긴다 */}
+          {!isDocument && (
+            <Card className="p-6">
+              <h2 className="text-xl leading-7 font-semibold mb-4">칼럼 정의</h2>
+              <SchemaBuilder />
+            </Card>
+          )}
 
           <div className="flex gap-2">
             <Button
