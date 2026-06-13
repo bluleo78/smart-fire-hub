@@ -1,4 +1,5 @@
-import { createDocuments } from '../../factories/document.factory';
+import { createDocument, createDocuments } from '../../factories/document.factory';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDocumentDatasetMocks } from '../../fixtures/document.fixture';
 
@@ -14,6 +15,38 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(page.getByRole('tab', { name: '필드' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: '데이터' })).toHaveCount(0);
     await expect(page.getByText('document_1.pdf')).toBeVisible();
+  });
+
+  test('문서를 업로드하면 POST가 호출된다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, []);
+    const uploaded = createDocuments(1)[0];
+    const capture = await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/documents`, uploaded, {
+      status: 202,
+      capture: true,
+    });
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    // 문서 업로드 섹션의 파일 입력만 선택 — AI 패널 등 다른 파일 입력과 구분한다
+    await page.locator('input[type="file"][accept*=".pdf,.docx"]').setInputFiles({
+      name: 'manual.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 test'),
+    });
+    await page.getByRole('button', { name: '업로드' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.url.pathname).toBe(`/api/v1/datasets/${DATASET_ID}/documents`);
+  });
+
+  test('완료/실패 상태 배지를 표시한다', async ({ authenticatedPage: page }) => {
+    const docs = [
+      createDocument({ id: 1, originalName: 'done.pdf', status: 'COMPLETED' }),
+      createDocument({ id: 2, originalName: 'fail.pdf', status: 'FAILED', errorDetail: '추출 실패' }),
+    ];
+    await setupDocumentDatasetMocks(page, DATASET_ID, docs);
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    await expect(page.getByText('완료')).toBeVisible();
+    await expect(page.getByText('실패')).toBeVisible();
   });
 
   /**
