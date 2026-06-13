@@ -37,9 +37,9 @@ describe('documentApi (via FireHubApiClient)', () => {
         score: 0.92,
       },
     ];
-    // undefined 인자는 백엔드에 null 로 전달되어야 한다.
+    // undefined 인자는 백엔드에 null 로 전달되어야 한다(mode 포함, 서버 기본 HYBRID).
     nock(BASE_URL)
-      .post('/documents/search', { query: '질의', datasetIds: null, topK: null })
+      .post('/documents/search', { query: '질의', datasetIds: null, topK: null, mode: null })
       .reply(200, mock);
     const result = await client.searchDocuments('질의', undefined, undefined);
     expect(result).toEqual(mock);
@@ -48,9 +48,19 @@ describe('documentApi (via FireHubApiClient)', () => {
   it('searchDocuments(query, datasetIds, topK) passes datasetIds/topK unchanged', async () => {
     const mock: DocumentSearchHit[] = [];
     nock(BASE_URL)
-      .post('/documents/search', { query: '질의', datasetIds: [1, 2], topK: 5 })
+      .post('/documents/search', { query: '질의', datasetIds: [1, 2], topK: 5, mode: null })
       .reply(200, mock);
     const result = await client.searchDocuments('질의', [1, 2], 5);
+    expect(result).toEqual(mock);
+  });
+
+  it('searchDocuments(query, ..., mode) passes mode through unchanged', async () => {
+    const mock: DocumentSearchHit[] = [];
+    // mode 지정 시 본문에 그대로 전달되어야 한다.
+    nock(BASE_URL)
+      .post('/documents/search', { query: '질의', datasetIds: null, topK: null, mode: 'KEYWORD' })
+      .reply(200, mock);
+    const result = await client.searchDocuments('질의', undefined, undefined, 'KEYWORD');
     expect(result).toEqual(mock);
   });
 });

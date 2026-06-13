@@ -58,7 +58,8 @@ describe('Document MCP Tools', () => {
       topK: 5,
     });
 
-    expect(client.searchDocuments).toHaveBeenCalledWith('질의', [3], 5);
+    // mode 미지정 시 4번째 인자는 undefined (서버 기본 HYBRID).
+    expect(client.searchDocuments).toHaveBeenCalledWith('질의', [3], 5, undefined);
     expect(result.content[0].type).toBe('text');
     expect(JSON.parse(result.content[0].text)).toEqual(mockHits);
     expect(result.isError).toBeUndefined();
@@ -69,7 +70,15 @@ describe('Document MCP Tools', () => {
 
     await invokeTool(server, 'search_documents', { query: '안전' });
 
-    expect(client.searchDocuments).toHaveBeenCalledWith('안전', undefined, undefined);
+    expect(client.searchDocuments).toHaveBeenCalledWith('안전', undefined, undefined, undefined);
+  });
+
+  it('search_documents passes mode through to apiClient', async () => {
+    (client.searchDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await invokeTool(server, 'search_documents', { query: '안전', mode: 'KEYWORD' });
+
+    expect(client.searchDocuments).toHaveBeenCalledWith('안전', undefined, undefined, 'KEYWORD');
   });
 
   it('search_documents returns isError on failure', async () => {

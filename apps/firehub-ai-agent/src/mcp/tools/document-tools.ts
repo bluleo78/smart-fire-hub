@@ -59,7 +59,7 @@ export function registerDocumentTools(
     // 비정형 문서(DOCUMENT 데이터셋) 의미 검색
     safeTool(
       'search_documents',
-      '비정형 문서(DOCUMENT 데이터셋, 보고서·매뉴얼 등)에서 의미적으로 유사한 내용을 검색한다. datasetIds 생략 시 접근 가능한 모든 문서 검색. 결과 청크를 출처(fileName)와 함께 인용해 답하라.',
+      '비정형 문서(DOCUMENT 데이터셋, 보고서·매뉴얼 등)에서 유사한 내용을 검색한다. datasetIds 생략 시 접근 가능한 모든 문서 검색. 기본은 의미+키워드 하이브리드 검색이며, mode 로 SEMANTIC/KEYWORD 를 지정할 수 있다. 결과 청크를 출처(fileName)와 함께 인용해 답하라.',
       {
         query: z.string().describe('검색 질의 문자열'),
         datasetIds: z
@@ -72,9 +72,18 @@ export function registerDocumentTools(
           .max(20)
           .optional()
           .describe('반환할 최대 청크 수 (1~20, 생략 시 백엔드 기본값)'),
+        mode: z
+          .enum(['SEMANTIC', 'KEYWORD', 'HYBRID'])
+          .optional()
+          .describe('검색 모드 (생략 시 하이브리드: 의미+키워드). SEMANTIC=의미만, KEYWORD=키워드만'),
       },
-      async (args: { query: string; datasetIds?: number[]; topK?: number }) => {
-        const hits = await apiClient.searchDocuments(args.query, args.datasetIds, args.topK);
+      async (args: {
+        query: string;
+        datasetIds?: number[];
+        topK?: number;
+        mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID';
+      }) => {
+        const hits = await apiClient.searchDocuments(args.query, args.datasetIds, args.topK, args.mode);
         // 청크 content가 길 수 있어 토큰 한도 가드를 적용한다.
         return jsonResult(clampDocumentHits(hits));
       },

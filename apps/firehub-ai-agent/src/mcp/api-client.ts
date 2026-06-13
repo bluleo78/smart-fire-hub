@@ -569,8 +569,13 @@ export class FireHubApiClient {
   }
 
   /** 문서 RAG 검색. 의미 기반으로 매칭되는 문서 청크 목록을 반환한다. */
-  searchDocuments(query: string, datasetIds?: number[], topK?: number): Promise<DocumentSearchHit[]> {
-    return this._document.searchDocuments(query, datasetIds, topK);
+  searchDocuments(
+    query: string,
+    datasetIds?: number[],
+    topK?: number,
+    mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
+  ): Promise<DocumentSearchHit[]> {
+    return this._document.searchDocuments(query, datasetIds, topK, mode);
   }
 
   listSmartJobs() {
