@@ -1,6 +1,8 @@
 services:
   db:
-    image: imresamu/postgis:16-3.5
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     environment:
       POSTGRES_DB: smartfirehub
       POSTGRES_USER: app
@@ -17,7 +19,9 @@ services:
 
   # 테스트 전용 DB — 로컬 개발 DB(5432)와 분리하여 테스트 격리 보장
   db-test:
-    image: imresamu/postgis:16-3.5
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     environment:
       POSTGRES_DB: smartfirehub_test
       POSTGRES_USER: app
