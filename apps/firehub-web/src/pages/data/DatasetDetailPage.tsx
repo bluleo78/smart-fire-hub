@@ -1,5 +1,5 @@
 import { ArrowLeft, BarChart2, Copy, FileCode, Plus, Shield, Star, X } from 'lucide-react';
-import { useEffect,useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -63,7 +63,8 @@ export default function DatasetDetailPage() {
   // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 datasetType 기반 validTabs를 재계산하여
   // ?tab=documents로 직접 진입한 DOCUMENT 데이터셋이 올바른 탭으로 복원된다.
   // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
-  useEffect(() => {
+  // 페인트 전 동기 보정으로 탭 깜빡임 방지.
+  useLayoutEffect(() => {
     const isDocumentType = dataset?.datasetType === 'DOCUMENT';
     const currentValidTabs = isDocumentType
       ? ['info', 'documents']

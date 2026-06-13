@@ -97,4 +97,20 @@ test.describe('문서 데이터셋 상세', () => {
     // 렌더 도중 미처리 예외가 없어야 한다 (rowCount.toLocaleString() 크래시 회귀 방지)
     expect(pageErrors).toHaveLength(0);
   });
+
+  test('문서를 삭제하면 DELETE가 호출된다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, [createDocument({ id: 7, originalName: 'gone.pdf' })]);
+    const capture = await mockApi(page, 'DELETE', `/api/v1/datasets/${DATASET_ID}/documents/7`, null, {
+      status: 204,
+      capture: true,
+    });
+    // window.confirm 다이얼로그를 자동 수락한다
+    page.on('dialog', (d) => d.accept());
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    await page.getByRole('button', { name: 'gone.pdf 삭제' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.url.pathname).toBe(`/api/v1/datasets/${DATASET_ID}/documents/7`);
+  });
 });

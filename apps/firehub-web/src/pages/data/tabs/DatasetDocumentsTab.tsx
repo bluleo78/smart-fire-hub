@@ -26,6 +26,8 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
   const upload = useUploadDocument(datasetId);
   const remove = useDeleteDocument(datasetId);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  // uploadKey가 바뀌면 FileUploadZone을 리마운트하여 내부 selectedFile 상태를 초기화한다.
+  const [uploadKey, setUploadKey] = useState(0);
 
   const handleUpload = () => {
     if (!pendingFile) return;
@@ -33,6 +35,7 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
       onSuccess: () => {
         toast.success('업로드를 시작했습니다. 처리에는 시간이 걸릴 수 있습니다.');
         setPendingFile(null);
+        setUploadKey((k) => k + 1);
       },
       onError: () => toast.error('업로드에 실패했습니다.'),
     });
@@ -51,6 +54,7 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
       <section>
         <h2 className="text-lg font-semibold mb-3">문서 업로드</h2>
         <FileUploadZone
+          key={uploadKey}
           onFileSelect={setPendingFile}
           accept={ACCEPT}
           disabled={upload.isPending}

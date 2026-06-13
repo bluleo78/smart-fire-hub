@@ -118,6 +118,8 @@ export function getDatasetTypeLabel(type: string): string {
       return '파생';
     case 'TEMP':
       return '임시';
+    case 'DOCUMENT':
+      return '문서';
     default:
       return type;
   }

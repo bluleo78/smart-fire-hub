@@ -296,6 +296,7 @@ describe('getDatasetTypeLabel', () => {
     expect(getDatasetTypeLabel('SOURCE')).toBe('원본');
     expect(getDatasetTypeLabel('DERIVED')).toBe('파생');
     expect(getDatasetTypeLabel('TEMP')).toBe('임시');
+    expect(getDatasetTypeLabel('DOCUMENT')).toBe('문서');
   });
 
   it('알 수 없는 값은 원본 반환', () => {

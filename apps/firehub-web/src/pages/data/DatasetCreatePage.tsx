@@ -269,6 +269,9 @@ export default function DatasetCreatePage() {
                       if (v === 'DOCUMENT') {
                         form.setValue('tableName', `doc_${Date.now()}`);
                         form.setValue('columns', []);
+                      } else if (watchedDatasetType === 'DOCUMENT') {
+                        // 문서→다른 유형 전환 시 자동 생성된 tableName을 비워 사용자가 직접 입력하도록 한다
+                        form.setValue('tableName', '');
                       }
                     }}
                   >
