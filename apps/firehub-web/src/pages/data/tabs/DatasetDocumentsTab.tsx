@@ -5,6 +5,7 @@ import { Button } from '../../../components/ui/button';
 import { useDeleteDocument, useDocuments, useUploadDocument } from '../../../hooks/queries/useDocuments';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DocumentList } from '../components/DocumentList';
+import { DocumentSearchPanel } from '../components/DocumentSearchPanel';
 import { FileUploadZone } from '../components/FileUploadZone';
 
 interface DatasetDocumentsTabProps {
@@ -76,6 +77,8 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
           />
         )}
       </section>
+
+      <DocumentSearchPanel datasetId={datasetId} />
     </div>
   );
 }

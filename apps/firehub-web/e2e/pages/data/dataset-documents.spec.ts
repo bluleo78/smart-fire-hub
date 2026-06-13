@@ -49,6 +49,27 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(page.getByText('실패')).toBeVisible();
   });
 
+  test('의미검색 결과를 표시한다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const hits = [
+      {
+        chunkId: 11, documentFileId: 1, datasetId: DATASET_ID, fileName: 'document_1.pdf',
+        chunkIndex: 3, content: '소화 방식은 물 분무, 포소화, 분말소화로 나뉜다.', score: 0.87,
+      },
+    ];
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', hits, { capture: true });
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    await page.getByPlaceholder('검색어를 입력하세요').fill('소화 방식');
+    await page.getByRole('button', { name: '검색' }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { datasetIds: number[] }).datasetIds).toEqual([DATASET_ID]);
+    await expect(page.getByText('소화 방식은 물 분무', { exact: false })).toBeVisible();
+    // 검색 결과 span은 "fileName · 청크 #N" 형태 — 문서 목록 셀과 구분된다
+    await expect(page.getByText('document_1.pdf · 청크', { exact: false })).toBeVisible();
+  });
+
   /**
    * 회귀 테스트: DOCUMENT 데이터셋은 백엔드가 rowCount: null을 반환한다.
    * DatasetInfoTab가 null.toLocaleString()을 호출하면 TypeError로 정보 탭이 크래시하므로,
