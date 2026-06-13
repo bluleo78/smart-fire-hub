@@ -83,4 +83,50 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     int count = dsl.fetchCount(dsl.selectFrom("document_chunk").where("dataset_id = ?", datasetId));
     assertThat(count).isEqualTo(n);
   }
+
+  @Test
+  void searchByCosineReturnsNearestCompletedChunks() {
+    Long userId = dsl.fetchOne(
+        "INSERT INTO \"user\"(username, password, name, email) VALUES"
+            + " ('docsearch','x','Doc Search','docsearch@example.com') RETURNING id").get(0, Long.class);
+    Long datasetId = dsl.fetchOne(
+        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
+            + " ('docsearch-set','data.docsearch_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+    Long fileId = dsl.fetchOne(
+        "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) VALUES (?, 'doc.txt','text/plain',3,'/tmp/d','COMPLETED', ?)"
+            + " RETURNING id", datasetId, userId).get(0, Long.class);
+
+    chunkRepository.insertBatch(
+        fileId, datasetId,
+        List.of(new Chunk(0, "near", 1), new Chunk(1, "far", 1)),
+        List.of(vec(1f, 0f), vec(0f, 1f)),
+        "bge-m3");
+
+    var hits = chunkRepository.searchByCosine(vec(1f, 0f), List.of(datasetId), 5);
+
+    assertThat(hits).isNotEmpty();
+    assertThat(hits.get(0).content()).isEqualTo("near");
+    assertThat(hits.get(0).fileName()).isEqualTo("doc.txt");
+    assertThat(hits.get(0).score()).isGreaterThan(hits.get(hits.size() - 1).score());
+  }
+
+  @Test
+  void searchByCosineExcludesNonCompletedFiles() {
+    Long userId = dsl.fetchOne(
+        "INSERT INTO \"user\"(username, password, name, email) VALUES"
+            + " ('docsearch2','x','Doc Search2','docsearch2@example.com') RETURNING id").get(0, Long.class);
+    Long datasetId = dsl.fetchOne(
+        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
+            + " ('docsearch2-set','data.docsearch2_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+    Long fileId = dsl.fetchOne(
+        "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) VALUES (?, 'p.txt','text/plain',3,'/tmp/p','PARSING', ?)"
+            + " RETURNING id", datasetId, userId).get(0, Long.class);
+    chunkRepository.insertBatch(fileId, datasetId,
+        List.of(new Chunk(0, "hidden", 1)), List.of(vec(1f, 0f)), "bge-m3");
+
+    var hits = chunkRepository.searchByCosine(vec(1f, 0f), List.of(datasetId), 5);
+    assertThat(hits).isEmpty();
+  }
 }

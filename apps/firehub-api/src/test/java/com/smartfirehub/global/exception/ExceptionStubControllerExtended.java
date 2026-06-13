@@ -9,6 +9,7 @@ import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
+import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
 import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
@@ -104,6 +105,11 @@ public class ExceptionStubControllerExtended {
   @GetMapping("/external-service-error")
   public void externalServiceError() {
     throw new ExternalServiceException("External service unavailable");
+  }
+
+  @GetMapping("/embedding-error")
+  public void embeddingError() {
+    throw new EmbeddingException("Embedding service unavailable");
   }
 
   @GetMapping("/import-processing")

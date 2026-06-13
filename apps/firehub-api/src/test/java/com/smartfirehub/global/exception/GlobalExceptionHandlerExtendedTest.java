@@ -153,6 +153,14 @@ class GlobalExceptionHandlerExtendedTest {
   }
 
   @Test
+  void embeddingError_returns502() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/embedding-error"))
+        .andExpect(status().isBadGateway())
+        .andExpect(jsonPath("$.status").value(502));
+  }
+
+  @Test
   void importProcessing_returns500() throws Exception {
     mockMvc
         .perform(get("/test/exception2/import-processing"))

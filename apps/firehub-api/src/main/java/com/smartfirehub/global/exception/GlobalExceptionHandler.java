@@ -15,6 +15,7 @@ import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataimport.exception.ImportValidationException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.exception.*;
+import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
 import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
@@ -401,6 +402,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ExternalServiceException.class)
   public ResponseEntity<ErrorResponse> handleExternalService(
       ExternalServiceException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.BAD_GATEWAY, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
+  }
+
+  /** 임베딩 서비스(Ollama 등) 장애·미지원 provider 설정 시 외부 서비스 실패로 보고 502 반환. */
+  @ExceptionHandler(EmbeddingException.class)
+  public ResponseEntity<ErrorResponse> handleEmbedding(
+      EmbeddingException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_GATEWAY, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
   }
