@@ -106,6 +106,8 @@ dependencies {
     testImplementation("org.springframework.security:spring-security-test")
     // WireMock for API call integration tests
     testImplementation("org.wiremock:wiremock-standalone:3.10.0")
+    // MockWebServer for embedding provider unit tests (버전은 Spring Boot BOM이 관리)
+    testImplementation("com.squareup.okhttp3:mockwebserver")
     testRuntimeOnly("org.postgresql:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

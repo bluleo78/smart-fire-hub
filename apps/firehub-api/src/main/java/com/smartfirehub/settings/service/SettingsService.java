@@ -37,6 +37,10 @@ public class SettingsService {
           "smtp.starttls",
           "smtp.from_address");
 
+  // 임베딩 provider 설정 키 (V63 시드). embedding.api_key 는 ai.api_key 와 동일하게 암호화/마스킹 처리한다.
+  private static final Set<String> ALLOWED_EMBEDDING_KEYS =
+      Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
+
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
 
@@ -46,7 +50,8 @@ public class SettingsService {
         .map(
             setting -> {
               if ("ai.api_key".equals(setting.key())
-                  || "ai.cli_oauth_token".equals(setting.key())) {
+                  || "ai.cli_oauth_token".equals(setting.key())
+                  || "embedding.api_key".equals(setting.key())) {
                 String masked =
                     setting.value() == null || setting.value().isBlank()
                         ? ""
@@ -76,31 +81,28 @@ public class SettingsService {
 
   public void updateSettings(Map<String, String> settings, Long userId) {
     for (String key : settings.keySet()) {
-      if (!ALLOWED_AI_KEYS.contains(key)) {
+      if (!ALLOWED_AI_KEYS.contains(key) && !ALLOWED_EMBEDDING_KEYS.contains(key)) {
         throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
       }
     }
 
     boolean hasMaskedApiKey = isMaskedApiKey(settings.get("ai.api_key"));
     boolean hasMaskedCliToken = isMaskedApiKey(settings.get("ai.cli_oauth_token"));
+    boolean hasMaskedEmbeddingKey = isMaskedApiKey(settings.get("embedding.api_key"));
 
     // Skip validation and save for masked values (unchanged by user)
     Map<String, String> filtered =
         settings.entrySet().stream()
             .filter(e -> !(hasMaskedApiKey && "ai.api_key".equals(e.getKey())))
             .filter(e -> !(hasMaskedCliToken && "ai.cli_oauth_token".equals(e.getKey())))
+            .filter(e -> !(hasMaskedEmbeddingKey && "embedding.api_key".equals(e.getKey())))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     validateValues(filtered);
 
     Map<String, String> toUpdate =
         filtered.entrySet().stream()
             .collect(
-                Collectors.toMap(
-                    Map.Entry::getKey,
-                    e ->
-                        ("ai.api_key".equals(e.getKey()) || "ai.cli_oauth_token".equals(e.getKey()))
-                            ? encryptionService.encrypt(e.getValue())
-                            : e.getValue()));
+                Collectors.toMap(Map.Entry::getKey, e -> encryptIfSecret(e.getKey(), e.getValue())));
 
     if (!toUpdate.isEmpty()) {
       settingsRepository.updateSettings(toUpdate, userId);
@@ -109,6 +111,20 @@ public class SettingsService {
 
   private static boolean isMaskedApiKey(String value) {
     return value != null && value.startsWith("****");
+  }
+
+  /**
+   * 비밀 값(ai.api_key, ai.cli_oauth_token, embedding.api_key)은 저장 전 암호화한다. embedding.api_key 는 Ollama
+   * 로컬 등 키가 불필요한 경우 빈 문자열일 수 있으므로, 빈 값은 암호화하지 않고 그대로 둔다(빈 ciphertext 복호화 실패 방지).
+   */
+  private String encryptIfSecret(String key, String value) {
+    if ("ai.api_key".equals(key) || "ai.cli_oauth_token".equals(key)) {
+      return encryptionService.encrypt(value);
+    }
+    if ("embedding.api_key".equals(key)) {
+      return value.isBlank() ? value : encryptionService.encrypt(value);
+    }
+    return value;
   }
 
   @Transactional(readOnly = true)
@@ -235,6 +251,11 @@ public class SettingsService {
             case "ai.agent_type" -> {
               if (!Set.of("sdk", "cli", "cli-api").contains(value))
                 throw new IllegalArgumentException("에이전트 유형은 sdk, cli, cli-api 중 하나여야 합니다");
+            }
+            case "embedding.provider" -> {
+              if (!Set.of("OLLAMA", "VOYAGE", "OPENAI").contains(value))
+                throw new IllegalArgumentException(
+                    "임베딩 provider 는 OLLAMA, VOYAGE, OPENAI 중 하나여야 합니다");
             }
             default -> {
               /* ai.model is a free-form string, validated by frontend dropdown */

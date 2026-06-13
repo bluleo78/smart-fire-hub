@@ -177,6 +177,30 @@ class SettingsServiceTest extends IntegrationTestBase {
     assertThat(result.values()).doesNotContainNull();
   }
 
+  // ── 임베딩 설정 테스트 ─────────────────────────────────────────────────────
+
+  @Test
+  void embeddingProviderRejectsInvalidValue() {
+    assertThatThrownBy(
+            () -> settingsService.updateSettings(Map.of("embedding.provider", "INVALID"), 1L))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void embeddingApiKeyIsMaskedOnRead() {
+    // updated_by FK 제약 때문에 test DB에 존재하지 않는 userId 대신 null 사용 (기존 테스트 관례)
+    settingsService.updateSettings(Map.of("embedding.api_key", "secret-key-123"), null);
+    var settings = settingsService.getByPrefix("embedding");
+    var apiKey =
+        settings.stream()
+            .filter(s -> s.key().equals("embedding.api_key"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(apiKey.value()).doesNotContain("secret-key-123");
+    // ai.api_key 마스킹 테스트와 동일하게 마스킹 포맷(****)도 검증한다
+    assertThat(apiKey.value()).startsWith("****");
+  }
+
   @Test
   void updateSettings_apiKey_maskedValue_skipsUpdate() {
     // given: store a real key first
