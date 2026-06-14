@@ -16,11 +16,14 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   const [hits, setHits] = useState<DocumentSearchHit[]>([]);
   // 검색 모드: 기본 하이브리드(HYBRID). 의미(SEMANTIC)=벡터, 키워드(KEYWORD)=트라이그램.
   const [mode, setMode] = useState<DocumentSearchMode>('HYBRID');
+  // 실제 검색에 사용된 모드 — 결과 점수 표기에 사용 (토글을 검색 후 바꿔도 결과 표기는 유지).
+  const [searchedMode, setSearchedMode] = useState<DocumentSearchMode>('HYBRID');
   const search = useSearchDocuments();
 
   const handleSearch = () => {
     const q = query.trim();
     if (!q) return;
+    setSearchedMode(mode);
     search.mutate(
       { query: q, datasetIds: [datasetId], topK: 5, mode },
       {
@@ -32,7 +35,7 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold">의미검색</h2>
+      <h2 className="text-lg font-semibold">문서 검색</h2>
       {/* 검색 모드 토글 — 하이브리드(기본)/의미/키워드. 서버는 생략 시 HYBRID. */}
       <Tabs value={mode} onValueChange={(v) => setMode(v as DocumentSearchMode)}>
         <TabsList>
@@ -58,11 +61,16 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
         <p className="text-sm text-muted-foreground">검색 결과가 없습니다.</p>
       )}
       <ul className="space-y-2">
-        {hits.map((h) => (
+        {hits.map((h, index) => (
           <li key={h.chunkId} className="rounded-md border p-3">
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>{h.fileName} · 청크 #{h.chunkIndex}</span>
-              <span>유사도 {(h.score * 100).toFixed(1)}%</span>
+              {/* HYBRID의 score는 RRF 점수라 백분율 의미가 없어 순위로 표기. SEMANTIC/KEYWORD는 0~1이라 % 유지. */}
+              {searchedMode === 'HYBRID' ? (
+                <span>관련도 {index + 1}위</span>
+              ) : (
+                <span>유사도 {(h.score * 100).toFixed(1)}%</span>
+              )}
             </div>
             <p className="mt-1 text-sm whitespace-pre-wrap">{h.content}</p>
           </li>

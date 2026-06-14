@@ -68,6 +68,8 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(page.getByText('소화 방식은 물 분무', { exact: false })).toBeVisible();
     // 검색 결과 span은 "fileName · 청크 #N" 형태 — 문서 목록 셀과 구분된다
     await expect(page.getByText('document_1.pdf · 청크', { exact: false })).toBeVisible();
+    // 기본 모드 HYBRID는 RRF 점수라 % 대신 순위로 표기 — 첫 결과는 "관련도 1위"
+    await expect(page.getByText('관련도 1위')).toBeVisible();
   });
 
   test('검색 모드를 키워드로 선택하면 mode:KEYWORD를 전송한다', async ({ authenticatedPage: page }) => {

@@ -31,7 +31,11 @@ export interface DocumentSearchRequest {
   mode?: DocumentSearchMode;
 }
 
-/** DocumentSearchHit — 코사인 검색 결과 1건. score는 1-거리(1=완전일치). */
+/**
+ * DocumentSearchHit — 검색 결과 1건.
+ * score 의미는 검색 모드에 따라 다르다: SEMANTIC=코사인 유사도, KEYWORD=word_similarity(0~1),
+ * HYBRID=RRF 점수(백분율 의미 없음 — UI는 순위로 표기).
+ */
 export interface DocumentSearchHit {
   chunkId: number;
   documentFileId: number;
