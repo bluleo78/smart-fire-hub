@@ -158,6 +158,35 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
   }
 
   @Test
+  void searchByTrigramReturnsModerateSimilarityBelowDefaultThreshold() {
+    // word_similarity('fire statistics report', 'annual wildfire damage summary 2026') ≈ 0.133.
+    // 0.1 floor 위지만 pg_trgm 기본 word_similarity_threshold(0.6) 아래의 "중간 유사도" 케이스.
+    // searchByTrigram 이 SET LOCAL 로 임계값을 0.1 로 낮춰야만 <% 가 이 청크를 통과시킨다.
+    // 만약 기본 0.6 이 적용되면 누락되므로, 이 테스트는 GUC 보존 회귀를 잡아낸다.
+    Long userId = dsl.fetchOne(
+        "INSERT INTO \"user\"(username, password, name, email) VALUES"
+            + " ('doctrgm3','x','Doc Trgm3','doctrgm3@example.com') RETURNING id").get(0, Long.class);
+    Long datasetId = dsl.fetchOne(
+        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
+            + " ('doctrgm3-set','data.doctrgm3_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+    Long fileId = dsl.fetchOne(
+        "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) VALUES (?, 'm.txt','text/plain',3,'/tmp/m','COMPLETED', ?)"
+            + " RETURNING id", datasetId, userId).get(0, Long.class);
+
+    chunkRepository.insertBatch(
+        fileId, datasetId,
+        List.of(new Chunk(0, "annual wildfire damage summary 2026", 1)),
+        List.of(vec(1f, 0f)),
+        "bge-m3");
+
+    var hits = chunkRepository.searchByTrigram("fire statistics report", List.of(datasetId), 5);
+
+    assertThat(hits).isNotEmpty();
+    assertThat(hits.get(0).content()).isEqualTo("annual wildfire damage summary 2026");
+  }
+
+  @Test
   void searchByTrigramExcludesNonCompletedFiles() {
     Long userId = dsl.fetchOne(
         "INSERT INTO \"user\"(username, password, name, email) VALUES"

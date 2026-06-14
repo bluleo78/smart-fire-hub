@@ -9,6 +9,7 @@ import com.smartfirehub.document.dto.DocumentSearchHit;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 /** document_chunk 벡터 배치 적재. embedding 은 '[..]'::vector 문자열 캐스팅으로 바인딩한다. */
@@ -99,7 +100,14 @@ public class DocumentChunkRepository {
    * pg_trgm word_similarity 기준 키워드 top-K 청크 조회. 완료된 문서만 검색한다.
    * word_similarity(query, content) 는 짧은 질의를 긴 본문의 일부와 매칭해 0~1 점수를 준다.
    * 임베딩이 필요 없어 임베딩 서비스 장애 시에도 동작한다(KEYWORD/HYBRID 회복탄력성).
-   * 0.1 floor 로 잡음을 제거한다(word_similarity_threshold GUC 와 무관하게 동작).
+   *
+   * <p>필터를 {@code content %> query} 연산자로 표현해 content 의 GIN trigram 인덱스
+   * (idx_document_chunk_content_trgm)를 Bitmap Index Scan 으로 사용하도록 한다(함수형
+   * word_similarity()>0.1 은 인덱스를 못 타 대규모에서 seq scan — 실측 5.5만 행 298ms vs
+   * 인덱스 0.9ms). 인덱스를 타려면 컬럼이 좌변이어야 하므로 교환 연산자 {@code %>} 를 쓴다
+   * ({@code content %> q} ≡ {@code q <% content} ≡ {@code word_similarity(q, content) > 임계값}).
+   * {@code %>} 는 pg_trgm.word_similarity_threshold GUC(기본 0.6)를 임계값으로 쓰므로, 기존
+   * 0.1 floor 를 유지하려면 같은 트랜잭션에서 SET LOCAL 로 0.1 로 낮춰야 한다.
    */
   public List<DocumentSearchHit> searchByTrigram(
       String query, List<Long> datasetIds, int topK) {
@@ -118,21 +126,28 @@ public class DocumentChunkRepository {
           .append(")");
       params.addAll(datasetIds);
     }
-    // WHERE 절은 SELECT 의 alias(score)를 참조할 수 없어 word_similarity 를 다시 계산한다.
-    sql.append(" AND word_similarity(?, dc.content) > 0.1");
-    params.add(query);
+    // content %> query 는 GIN trigram 인덱스를 탄다(컬럼 좌변). 임계값은 아래 SET LOCAL 의 0.1.
+    sql.append(" AND dc.content %> ?");
+    params.add(query); // %> 우변(질의)
     sql.append(" ORDER BY score DESC LIMIT ?");
     params.add(topK);
 
-    return dsl.fetch(sql.toString(), params.toArray())
-        .map(r -> new DocumentSearchHit(
-            r.get("id", Long.class),
-            r.get("document_file_id", Long.class),
-            r.get("dataset_id", Long.class),
-            r.get("original_name", String.class),
-            r.get("chunk_index", Integer.class),
-            r.get("content", String.class),
-            r.get("score", Double.class)));
+    String finalSql = sql.toString();
+    Object[] finalParams = params.toArray();
+    // SET LOCAL 과 조회를 같은 커넥션/트랜잭션에서 실행해야 임계값이 적용된다(LOCAL 은 tx 종료 시 자동 복원).
+    return dsl.transactionResult(cfg -> {
+      DSLContext tx = DSL.using(cfg);
+      tx.execute("SET LOCAL pg_trgm.word_similarity_threshold = 0.1");
+      return tx.fetch(finalSql, finalParams)
+          .map(r -> new DocumentSearchHit(
+              r.get("id", Long.class),
+              r.get("document_file_id", Long.class),
+              r.get("dataset_id", Long.class),
+              r.get("original_name", String.class),
+              r.get("chunk_index", Integer.class),
+              r.get("content", String.class),
+              r.get("score", Double.class)));
+    });
   }
 
   /** float[] → pgvector 텍스트 리터럴 "[v1,v2,...]". */
