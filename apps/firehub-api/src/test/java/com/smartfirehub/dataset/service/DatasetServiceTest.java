@@ -191,6 +191,56 @@ class DatasetServiceTest extends IntegrationTestBase {
   }
 
   @Test
+  void getDatasets_searchMatchesTagName() {
+    // 대규모 디스커버리(#282): search 키워드가 태그명에도 매칭되어야 한다.
+    // 이름/테이블/컬럼에는 없고 오직 태그에만 있는 토큰으로 태그 JOIN 경로를 검증한다.
+    List<DatasetColumnRequest> columns =
+        List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
+    DatasetDetailResponse tagged =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Plain DS", "plain_ds", null, null, "SOURCE", columns, null),
+            testUserId);
+    datasetService.createDataset(
+        new CreateDatasetRequest("Other DS", "other_ds", null, null, "SOURCE", columns, null),
+        testUserId);
+    datasetTagService.addTag(tagged.id(), "zztagkw", testUserId);
+
+    PageResponse<DatasetResponse> result =
+        datasetService.getDatasets(null, null, "zztagkw", 0, 10);
+
+    assertThat(result.content()).hasSize(1);
+    assertThat(result.content().get(0).id()).isEqualTo(tagged.id());
+  }
+
+  @Test
+  void getDatasets_searchMatchesCategoryName() {
+    // 대규모 디스커버리(#282): search 키워드가 카테고리명에도 매칭되어야 한다.
+    Long catId =
+        dsl.insertInto(DATASET_CATEGORY)
+            .set(DATASET_CATEGORY.NAME, "zzcatkw Category")
+            .returning(DATASET_CATEGORY.ID)
+            .fetchOne()
+            .getId();
+    List<DatasetColumnRequest> columns =
+        List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
+    DatasetDetailResponse inCat =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Plain DS2", "plain_ds2", null, catId, "SOURCE", columns, null),
+            testUserId);
+    datasetService.createDataset(
+        new CreateDatasetRequest("Other DS2", "other_ds2", null, null, "SOURCE", columns, null),
+        testUserId);
+
+    PageResponse<DatasetResponse> result =
+        datasetService.getDatasets(null, null, "zzcatkw", 0, 10);
+
+    assertThat(result.content()).hasSize(1);
+    assertThat(result.content().get(0).id()).isEqualTo(inCat.id());
+  }
+
+  @Test
   void updateDataset_success() {
     // Given
     List<DatasetColumnRequest> columns =

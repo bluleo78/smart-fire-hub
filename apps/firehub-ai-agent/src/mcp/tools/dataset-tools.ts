@@ -10,11 +10,17 @@ export function registerDatasetTools(
   return [
     safeTool(
       'list_datasets',
-      '데이터셋 목록을 조회합니다',
+      '데이터셋 목록을 조회합니다. 데이터셋이 많을 때는 search 키워드로 후보를 좁혀 조회하세요(전체 페이징 금지).',
       {
         categoryId: z.number().optional().describe('카테고리 ID'),
-        datasetType: z.enum(['SOURCE', 'DERIVED']).optional().describe('데이터셋 타입 (SOURCE 또는 DERIVED)'),
-        search: z.string().optional().describe('검색어'),
+        datasetType: z
+          .enum(['SOURCE', 'DERIVED', 'DOCUMENT'])
+          .optional()
+          .describe('데이터셋 타입 (SOURCE/DERIVED=정형, DOCUMENT=비정형 문서)'),
+        search: z
+          .string()
+          .optional()
+          .describe('검색어 — 이름·설명·테이블명·컬럼명·태그·카테고리명에 매칭. 디스커버리 시 후보를 좁히는 데 사용'),
         status: z.string().optional().describe('상태 (NONE, CERTIFIED, DEPRECATED)'),
         favoriteOnly: z.boolean().optional().describe('즐겨찾기만 조회 (기본값: false)'),
         page: z.number().optional().describe('페이지 번호 (0부터 시작)'),

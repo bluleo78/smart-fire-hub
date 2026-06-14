@@ -166,6 +166,9 @@ public class DatasetRepository {
     }
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
+      // 대규모 디스커버리(#282): 이름·설명·테이블명·컬럼 외에 태그명·카테고리명도 매칭해
+      // "어느 데이터셋에서 답을 찾을지" 후보 선별의 신호를 넓힌다. (DATASET_TAG·DATASET_CATEGORY
+      // LEFT JOIN 은 findAll/count 의 id 쿼리에 추가; selectDistinct/countDistinct 로 중복 제거됨)
       condition =
           condition.and(
               DS_NAME
@@ -174,7 +177,9 @@ public class DatasetRepository {
                   .or(DS_TABLE_NAME.likeIgnoreCase(pattern, '\\'))
                   .or(COL_COLUMN_NAME.likeIgnoreCase(pattern, '\\'))
                   .or(COL_DISPLAY_NAME.likeIgnoreCase(pattern, '\\'))
-                  .or(COL_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
+                  .or(COL_DESCRIPTION.likeIgnoreCase(pattern, '\\'))
+                  .or(DT_TAG_NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(DC_NAME.likeIgnoreCase(pattern, '\\')));
     }
     return condition;
   }
@@ -200,7 +205,11 @@ public class DatasetRepository {
         dsl.selectDistinct(DS_ID)
             .from(DATASET)
             .leftJoin(DATASET_COLUMN)
-            .on(COL_DATASET_ID.eq(DS_ID));
+            .on(COL_DATASET_ID.eq(DS_ID))
+            .leftJoin(DATASET_TAG)
+            .on(DT_DATASET_ID.eq(DS_ID))
+            .leftJoin(DATASET_CATEGORY)
+            .on(DS_CATEGORY_ID.eq(DC_ID));
 
     if (favoriteOnly && currentUserId != null) {
       idQuery =
@@ -268,7 +277,11 @@ public class DatasetRepository {
         dsl.select(countDistinct(DS_ID))
             .from(DATASET)
             .leftJoin(DATASET_COLUMN)
-            .on(COL_DATASET_ID.eq(DS_ID));
+            .on(COL_DATASET_ID.eq(DS_ID))
+            .leftJoin(DATASET_TAG)
+            .on(DT_DATASET_ID.eq(DS_ID))
+            .leftJoin(DATASET_CATEGORY)
+            .on(DS_CATEGORY_ID.eq(DC_ID));
 
     if (favoriteOnly && currentUserId != null) {
       return countQuery

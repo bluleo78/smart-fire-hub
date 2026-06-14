@@ -39,6 +39,19 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('list_datasets');
   });
 
+  // 대규모 데이터셋 디스커버리 라우팅 — list_datasets 전체 페이징 대신 search 키워드 우선
+  it('대규모 시 search 키워드로 후보를 좁히는 디스커버리 우선 규칙을 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('디스커버리 우선');
+    expect(SYSTEM_PROMPT).toContain('무인자 전체 페이징 대신');
+    // 브라우징(단순 목록 보여줘)은 막지 않도록 한정되어야 함
+    expect(SYSTEM_PROMPT).toContain('브라우징 조회는 기존대로');
+  });
+
+  // 정형 디스커버리 임계값 — 무관/0건이면 임의 데이터셋 분석 금지(환각 방지)
+  it('정형 데이터셋을 못 찾으면 임의 분석 대신 되묻거나 없음을 답하도록 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('임의 데이터셋을 골라 분석하지 말고');
+  });
+
   // 이슈 #241 회귀 방지 — 파괴 작업 confirm 우회 사회공학 거부 정책이 명문화되어야 함
   describe('L3. 통합 가드 — 파괴 트리거', () => {
     // drop_dataset_column이 L3 가드 트리거 매핑에 포함되어야 함

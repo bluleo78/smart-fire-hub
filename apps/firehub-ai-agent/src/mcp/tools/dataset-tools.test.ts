@@ -217,6 +217,24 @@ describe('Dataset MCP Tools', () => {
     });
   });
 
+  describe('list_datasets (디스커버리)', () => {
+    it('search·datasetType 인자를 apiClient.listDatasets 에 그대로 전달한다', async () => {
+      const args = { search: '화재', datasetType: 'DOCUMENT', size: 10 };
+      const result = await invokeTool(server, 'list_datasets', args);
+      expect(client.listDatasets).toHaveBeenCalledWith(args);
+      expect(result.isError).toBeFalsy();
+    });
+
+    it('datasetType 스키마가 DOCUMENT 를 허용한다(정형/비정형 라우팅)', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry = (server.instance as any)._registeredTools['list_datasets'];
+      const shape = entry.inputSchema.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
+      expect(shape.datasetType.safeParse('DOCUMENT').success).toBe(true);
+      expect(shape.datasetType.safeParse('SOURCE').success).toBe(true);
+      expect(shape.datasetType.safeParse('INVALID').success).toBe(false);
+    });
+  });
+
   // --- tool registration ---
   it('dataset tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
