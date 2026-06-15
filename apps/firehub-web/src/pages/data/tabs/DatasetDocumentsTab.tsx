@@ -1,3 +1,4 @@
+import { FileText } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -81,7 +82,12 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
         {isLoading ? (
           <p className="text-sm text-muted-foreground">불러오는 중...</p>
         ) : !documents || documents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">업로드된 문서가 없습니다.</p>
+          /* 빈 상태: 아이콘 + 제목 + 안내 문구 — 다른 탭의 Empty State 패턴과 시각적 일관성 유지 */
+          <div className="flex flex-col items-center py-8 text-center" data-testid="documents-empty-state">
+            <FileText className="h-10 w-10 text-muted-foreground mb-3" />
+            <p className="text-sm font-medium">업로드된 문서가 없습니다</p>
+            <p className="text-xs text-muted-foreground mt-1">위의 업로드 영역에서 PDF, Word, 텍스트 파일을 추가하세요</p>
+          </div>
         ) : (
           <DocumentList
             documents={documents}

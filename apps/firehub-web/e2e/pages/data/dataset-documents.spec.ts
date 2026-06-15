@@ -201,6 +201,31 @@ test.describe('문서 데이터셋 상세', () => {
   });
 
   /**
+   * 회귀 테스트 (#289): 문서 목록이 비어 있을 때 아이콘 + 제목 + 안내 문구로 구성된
+   * Empty State가 표시되어야 한다. 텍스트만 있는 단순 p 태그는 허용되지 않는다.
+   */
+  test('문서 목록이 비어 있을 때 아이콘·제목·안내 문구를 포함한 빈 상태를 표시한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 문서가 없는 상태로 모킹
+    await setupDocumentDatasetMocks(page, DATASET_ID, []);
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+
+    // 빈 상태 컨테이너가 렌더링되어야 한다
+    const emptyState = page.getByTestId('documents-empty-state');
+    await expect(emptyState).toBeVisible();
+
+    // 아이콘(svg)이 포함되어야 한다 — lucide FileText
+    await expect(emptyState.locator('svg')).toBeVisible();
+
+    // 제목 문구 확인
+    await expect(page.getByText('업로드된 문서가 없습니다')).toBeVisible();
+
+    // 안내 문구 확인
+    await expect(page.getByText('위의 업로드 영역에서 PDF, Word, 텍스트 파일을 추가하세요')).toBeVisible();
+  });
+
+  /**
    * 회귀 테스트 (#288): 검색 입력창이 shadcn Input 컴포넌트를 사용하는지 검증한다.
    * raw <input>이 아닌 shadcn Input이면 data-slot="input" 속성이 존재하며
    * 다크모드 토큰(border-input, focus-visible:ring)이 적용된 클래스를 갖는다.
