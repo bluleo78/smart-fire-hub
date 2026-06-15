@@ -10,6 +10,8 @@ interface FileUploadZoneProps {
   disabled?: boolean;
   /** 허용되지 않은 파일 거부 시 표시할 메시지. accept 형식에 맞춰 호출부에서 지정. */
   rejectionMessage?: string;
+  /** 드롭존 안에 표시할 안내 문구. 미지정 시 기본값(CSV/Excel) 사용. */
+  promptText?: string;
 }
 
 /**
@@ -34,6 +36,7 @@ export function FileUploadZone({
   accept = '.csv,.xlsx',
   disabled,
   rejectionMessage = 'CSV 또는 XLSX 파일만 지원합니다.',
+  promptText = 'CSV 또는 Excel 파일을 드래그하세요',
 }: FileUploadZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -87,7 +90,7 @@ export function FileUploadZone({
         <p className="text-sm font-medium">{selectedFile.name} ({formatFileSize(selectedFile.size)})</p>
       ) : (
         <>
-          <p className="text-sm font-medium">CSV 또는 Excel 파일을 드래그하세요</p>
+          <p className="text-sm font-medium">{promptText}</p>
           <p className="text-xs text-muted-foreground mt-1">또는 클릭하여 파일 선택</p>
         </>
       )}

@@ -163,6 +163,21 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(page.getByText('삭제에 실패했습니다.')).toHaveCount(0);
   });
 
+  /**
+   * 회귀 테스트 (#283): DOCUMENT 데이터셋 업로드존 안내 문구가 "CSV 또는 Excel"이 아닌
+   * "PDF, Word, 텍스트 문서를 드래그하세요"로 표시되어야 한다.
+   */
+  test('DOCUMENT 업로드존 안내 문구가 PDF/Word/텍스트 문서로 표시된다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, []);
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+
+    // 드롭존 안내 문구가 컨텍스트에 맞게 표시되어야 한다
+    await expect(page.getByText('PDF, Word, 텍스트 문서를 드래그하세요')).toBeVisible();
+    // 구조형 데이터셋용 문구가 잘못 표시되면 안 된다
+    await expect(page.getByText('CSV 또는 Excel 파일을 드래그하세요')).toHaveCount(0);
+  });
+
   test('문서를 삭제하면 DELETE가 호출된다', async ({ authenticatedPage: page }) => {
     await setupDocumentDatasetMocks(page, DATASET_ID, [createDocument({ id: 7, originalName: 'gone.pdf' })]);
     const capture = await mockApi(page, 'DELETE', `/api/v1/datasets/${DATASET_ID}/documents/7`, null, {

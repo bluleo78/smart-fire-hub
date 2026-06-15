@@ -67,6 +67,7 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
           accept={ACCEPT}
           disabled={upload.isPending}
           rejectionMessage="PDF, Word, 텍스트 문서만 지원합니다."
+          promptText="PDF, Word, 텍스트 문서를 드래그하세요"
         />
         <div className="mt-3">
           <Button type="button" disabled={!pendingFile || upload.isPending} onClick={handleUpload}>
