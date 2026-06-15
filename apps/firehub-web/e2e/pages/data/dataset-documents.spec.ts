@@ -265,6 +265,48 @@ test.describe('문서 데이터셋 상세', () => {
     expect(ariaLabel).toBe('파일 업로드 영역, Enter 또는 Space로 파일 선택');
   });
 
+  /**
+   * 회귀 테스트 (#291): 검색 결과 항목 클릭 시 accordion 방식으로 내용이 펼쳐져야 한다.
+   * - 클릭 전: 첫 줄만 표시(line-clamp) + "▼ 펼치기" 힌트
+   * - 클릭 후: 전문 표시 + "▲ 접기" 힌트, aria-expanded=true
+   * - 재클릭: 다시 접힘
+   */
+  test('검색 결과 항목 클릭 시 내용이 accordion으로 펼쳐지고 재클릭 시 접힌다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const hits = [
+      {
+        chunkId: 99, documentFileId: 1, datasetId: DATASET_ID, fileName: 'document_1.pdf',
+        chunkIndex: 1, content: '화재 감지 시스템은 열감지기와 연기감지기로 구성된다.', score: 0.92,
+      },
+    ];
+    await mockApi(page, 'POST', '/api/v1/documents/search', hits);
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    await page.getByPlaceholder('검색어를 입력하세요').fill('화재 감지');
+    await page.getByRole('button', { name: '검색' }).click();
+
+    // 결과 항목이 렌더링됐는지 확인
+    const resultItem = page.getByRole('button', { name: /화재 감지/ }).or(
+      page.locator('li[role="button"]').filter({ hasText: '화재 감지' })
+    ).first();
+    await expect(resultItem).toBeVisible();
+
+    // 클릭 전: "▼ 펼치기" 힌트 표시, aria-expanded=false
+    await expect(page.getByText('▼ 펼치기')).toBeVisible();
+    const li = page.locator('li[role="button"]').filter({ hasText: '화재 감지' }).first();
+    await expect(li).toHaveAttribute('aria-expanded', 'false');
+
+    // 클릭 후: "▲ 접기"로 변경, aria-expanded=true
+    await li.click();
+    await expect(page.getByText('▲ 접기')).toBeVisible();
+    await expect(li).toHaveAttribute('aria-expanded', 'true');
+
+    // 재클릭: "▼ 펼치기"로 복귀
+    await li.click();
+    await expect(page.getByText('▼ 펼치기')).toBeVisible();
+    await expect(li).toHaveAttribute('aria-expanded', 'false');
+  });
+
   test('문서를 삭제하면 DELETE가 호출된다', async ({ authenticatedPage: page }) => {
     await setupDocumentDatasetMocks(page, DATASET_ID, [createDocument({ id: 7, originalName: 'gone.pdf' })]);
     const capture = await mockApi(page, 'DELETE', `/api/v1/datasets/${DATASET_ID}/documents/7`, null, {
