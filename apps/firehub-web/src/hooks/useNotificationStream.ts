@@ -156,6 +156,16 @@ function handleNotification(
       queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       break;
+    case 'DOCUMENT_INGESTED':
+      // 문서 인제스션 성공 — 목록 갱신 후 성공 토스트 표시 (#285)
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
+      toast.success(event.title, { id: event.id, description: event.description });
+      return;
+    case 'DOCUMENT_INGEST_FAILED':
+      // 문서 인제스션 실패 — 목록 갱신 후 오류 토스트 표시 (#285)
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
+      toast.error(event.title, { id: event.id, description: event.description });
+      return;
     case 'PROACTIVE_MESSAGE':
       queryClient.invalidateQueries({ queryKey: ['proactive', 'messages'] });
       queryClient.invalidateQueries({ queryKey: ['proactive', 'unread-count'] });

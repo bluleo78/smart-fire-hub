@@ -308,6 +308,78 @@ test.describe('useNotificationStream — SSE 이벤트 처리', () => {
     expect(capturedAuthHeader).toMatch(/^Bearer\s+\S+/);
   });
 
+  /**
+   * 회귀 방지 (#285): DOCUMENT_INGESTED(INFO) 이벤트 수신 시 success toast와
+   * documents 쿼리 갱신이 발생해야 한다. 이전에는 switch case 미비로 조용히 무시됨.
+   */
+  test('DOCUMENT_INGESTED 이벤트 수신 시 success toast가 표시되고 documents 쿼리가 갱신된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const notification = {
+      ...baseNotification,
+      eventType: 'DOCUMENT_INGESTED',
+      severity: 'INFO',
+      entityType: 'DOCUMENT',
+      entityId: 42,
+      title: '문서 처리 완료',
+      description: 'report.pdf 인제스션이 완료되었습니다.',
+    };
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/notifications/stream',
+      (route) => {
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          headers: { 'Cache-Control': 'no-cache' },
+          body: makeSseBody('notification', notification),
+        });
+      },
+    );
+
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // DOCUMENT_INGESTED → toast.success(title, { description })
+    await expect(page.getByText('문서 처리 완료')).toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * 회귀 방지 (#285): DOCUMENT_INGEST_FAILED(WARNING) 이벤트 수신 시 error toast와
+   * documents 쿼리 갱신이 발생해야 한다. 명시적 case 처리로 일관성 확보.
+   */
+  test('DOCUMENT_INGEST_FAILED 이벤트 수신 시 error toast가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const notification = {
+      ...baseNotification,
+      eventType: 'DOCUMENT_INGEST_FAILED',
+      severity: 'WARNING',
+      entityType: 'DOCUMENT',
+      entityId: 43,
+      title: '문서 처리 실패',
+      description: 'corrupted.pdf 인제스션 중 오류가 발생했습니다.',
+    };
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/notifications/stream',
+      (route) => {
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          headers: { 'Cache-Control': 'no-cache' },
+          body: makeSseBody('notification', notification),
+        });
+      },
+    );
+
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // DOCUMENT_INGEST_FAILED → toast.error(title, { description })
+    await expect(page.getByText('문서 처리 실패')).toBeVisible({ timeout: 5000 });
+  });
+
   test('SSE 연결 오류 시 재연결을 시도한다 (지수 백오프)', async ({
     authenticatedPage: page,
   }) => {
