@@ -87,14 +87,14 @@ test.describe('문서 데이터셋 상세', () => {
   });
 
   /**
-   * 회귀 테스트: DOCUMENT 데이터셋은 백엔드가 rowCount: null을 반환한다.
-   * DatasetInfoTab가 null.toLocaleString()을 호출하면 TypeError로 정보 탭이 크래시하므로,
-   * 정보 탭이 정상 렌더되고 행 카운트가 '-'로 표시되는지 검증한다.
+   * 회귀 테스트 (#286): DOCUMENT 데이터셋은 행/컬럼 개념이 없으므로
+   * 정보 탭에서 '행' 및 '개 컬럼' 통계 카드를 숨겨야 한다.
+   * 또한 크래시 없이 정상 렌더되는지도 검증한다.
    */
-  test('rowCount가 null인 DOCUMENT 데이터셋의 정보 탭이 크래시 없이 - 를 표시한다', async ({
+  test('DOCUMENT 데이터셋 정보 탭에서 행/컬럼 카드가 숨겨지고 크래시 없이 렌더된다', async ({
     authenticatedPage: page,
   }) => {
-    // 페이지 에러(미처리 예외)를 수집 — toLocaleString()이 throw하면 여기에 잡힌다.
+    // 페이지 에러(미처리 예외)를 수집 — 크래시 회귀 방지
     const pageErrors: Error[] = [];
     page.on('pageerror', (err) => pageErrors.push(err));
 
@@ -106,12 +106,34 @@ test.describe('문서 데이터셋 상세', () => {
     // 정보 탭이 활성 상태로 렌더링되어야 한다
     await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'active');
 
-    // 행 카운트 카드가 '-'를 표시해야 한다 ('행' 라벨 카드 내부)
+    // DOCUMENT 유형은 '행' 카드를 표시하지 않아야 한다 (#286)
     const rowCard = page.locator('div').filter({ hasText: /^-행$/ });
-    await expect(rowCard).toBeVisible();
+    await expect(rowCard).not.toBeVisible();
 
-    // 렌더 도중 미처리 예외가 없어야 한다 (rowCount.toLocaleString() 크래시 회귀 방지)
+    // DOCUMENT 유형은 '개 컬럼' 카드를 표시하지 않아야 한다 (#286)
+    const colCard = page.locator('p.text-sm').filter({ hasText: /^개 컬럼$/ });
+    await expect(colCard).not.toBeVisible();
+
+    // 렌더 도중 미처리 예외가 없어야 한다
     expect(pageErrors).toHaveLength(0);
+  });
+
+  /**
+   * 회귀 테스트 (#287): DOCUMENT 유형은 SQL 쿼리/차트 기능이 없으므로
+   * 헤더 영역의 '쿼리 작성'·'차트 만들기' 버튼을 숨겨야 한다.
+   */
+  test('DOCUMENT 데이터셋 헤더에 쿼리 작성·차트 만들기 버튼이 표시되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(2));
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+
+    // 정보 탭이 로드될 때까지 대기
+    await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'active');
+
+    // DOCUMENT 유형에는 쿼리/차트 버튼이 없어야 한다 (#287)
+    await expect(page.getByRole('button', { name: '쿼리 작성' })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: '차트 만들기' })).not.toBeVisible();
   });
 
   /**

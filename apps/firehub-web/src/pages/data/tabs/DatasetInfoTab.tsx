@@ -88,19 +88,24 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
     <div className="max-w-4xl space-y-6">
       {/* Top Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Row Count */}
-        <Card className="p-4">
-          <Database size={20} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.rowCount != null ? dataset.rowCount.toLocaleString() : '-'}</p>
-          <p className="text-sm text-muted-foreground">행</p>
-        </Card>
+        {/* DOCUMENT 유형은 행/컬럼 개념이 없으므로 해당 카드 숨김 (#286) */}
+        {dataset.datasetType !== 'DOCUMENT' && (
+          <>
+            {/* Row Count */}
+            <Card className="p-4">
+              <Database size={20} className="text-muted-foreground mb-2" />
+              <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.rowCount != null ? dataset.rowCount.toLocaleString() : '-'}</p>
+              <p className="text-sm text-muted-foreground">행</p>
+            </Card>
 
-        {/* Column Count */}
-        <Card className="p-4">
-          <Columns size={20} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.columns.length}</p>
-          <p className="text-sm text-muted-foreground">개 컬럼</p>
-        </Card>
+            {/* Column Count */}
+            <Card className="p-4">
+              <Columns size={20} className="text-muted-foreground mb-2" />
+              <p className="text-2xl font-semibold font-mono tabular-nums">{dataset.columns.length}</p>
+              <p className="text-sm text-muted-foreground">개 컬럼</p>
+            </Card>
+          </>
+        )}
 
         {/* Type */}
         <Card className="p-4">
