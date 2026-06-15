@@ -200,6 +200,22 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(page.getByText('CSV 또는 Excel 파일을 드래그하세요')).toHaveCount(0);
   });
 
+  /**
+   * 회귀 테스트 (#288): 검색 입력창이 shadcn Input 컴포넌트를 사용하는지 검증한다.
+   * raw <input>이 아닌 shadcn Input이면 data-slot="input" 속성이 존재하며
+   * 다크모드 토큰(border-input, focus-visible:ring)이 적용된 클래스를 갖는다.
+   */
+  test('검색 입력창이 shadcn Input 컴포넌트로 렌더링된다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+
+    // shadcn Input 컴포넌트는 data-slot="input" 속성을 갖는다
+    const searchInput = page.getByPlaceholder('검색어를 입력하세요');
+    await expect(searchInput).toBeVisible();
+    const dataSlot = await searchInput.getAttribute('data-slot');
+    expect(dataSlot).toBe('input');
+  });
+
   test('문서를 삭제하면 DELETE가 호출된다', async ({ authenticatedPage: page }) => {
     await setupDocumentDatasetMocks(page, DATASET_ID, [createDocument({ id: 7, originalName: 'gone.pdf' })]);
     const capture = await mockApi(page, 'DELETE', `/api/v1/datasets/${DATASET_ID}/documents/7`, null, {

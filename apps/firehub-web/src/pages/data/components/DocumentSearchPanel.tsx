@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { useSearchDocuments } from '../../../hooks/queries/useDocuments';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
@@ -45,8 +46,9 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
         </TabsList>
       </Tabs>
       <div className="flex gap-2">
-        <input
-          className="flex-1 rounded-md border px-3 py-2 text-sm"
+        {/* shadcn Input 사용 — 다크모드 배경·포커스링·border-input 토큰 일관성 보장 (#288) */}
+        <Input
+          className="flex-1"
           placeholder="검색어를 입력하세요"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
