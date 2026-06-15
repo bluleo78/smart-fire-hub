@@ -32,7 +32,7 @@ test.describe('문서 데이터셋 상세', () => {
       mimeType: 'application/pdf',
       buffer: Buffer.from('%PDF-1.4 test'),
     });
-    await page.getByRole('button', { name: '업로드' }).click();
+    await page.getByRole('button', { name: '업로드', exact: true }).click();
 
     const req = await capture.waitForRequest();
     expect(req.url.pathname).toBe(`/api/v1/datasets/${DATASET_ID}/documents`);
@@ -157,7 +157,7 @@ test.describe('문서 데이터셋 상세', () => {
       mimeType: 'application/pdf',
       buffer: Buffer.from('%PDF-1.4 test'),
     });
-    await page.getByRole('button', { name: '업로드' }).click();
+    await page.getByRole('button', { name: '업로드', exact: true }).click();
 
     // 일반 메시지 대신 백엔드 구체적 사유가 표시되어야 한다
     await expect(page.getByText('이미 업로드된 동일 문서입니다.')).toBeVisible();
@@ -239,6 +239,30 @@ test.describe('문서 데이터셋 상세', () => {
     await expect(searchInput).toBeVisible();
     const dataSlot = await searchInput.getAttribute('data-slot');
     expect(dataSlot).toBe('input');
+  });
+
+  /**
+   * 회귀 테스트 (#290): 업로드 드롭존이 키보드로 접근·활성화 가능해야 한다.
+   * - tabIndex={0}: Tab 키로 포커스 대상에 포함
+   * - role="button": 스크린리더가 인터랙티브 요소로 인식
+   * - aria-label: 접근 가능한 이름 제공
+   * - onKeyDown: Enter/Space로 파일 선택 다이얼로그 트리거
+   */
+  test('업로드 드롭존이 키보드 접근성 속성(tabIndex/role/aria-label)을 갖는다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, []);
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+
+    // role="button" + aria-label로 드롭존 식별
+    const dropzone = page.getByRole('button', { name: '파일 업로드 영역, Enter 또는 Space로 파일 선택' });
+    await expect(dropzone).toBeVisible();
+
+    // tabIndex=0 → Tab 포커스 대상에 포함됨을 검증
+    const tabIndex = await dropzone.getAttribute('tabindex');
+    expect(tabIndex).toBe('0');
+
+    // aria-label 정확히 부착됨을 검증
+    const ariaLabel = await dropzone.getAttribute('aria-label');
+    expect(ariaLabel).toBe('파일 업로드 영역, Enter 또는 Space로 파일 선택');
   });
 
   test('문서를 삭제하면 DELETE가 호출된다', async ({ authenticatedPage: page }) => {

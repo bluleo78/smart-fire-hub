@@ -73,14 +73,30 @@ export function FileUploadZone({
     }
   };
 
+  /**
+   * 키보드 접근성: Enter 또는 Space 키 입력 시 파일 선택 다이얼로그를 열도록 한다.
+   * WCAG 2.1 SC 2.1.1 (Keyboard) 준수.
+   */
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
+      e.preventDefault();
+      inputRef.current?.click();
+    }
+  };
+
   return (
     <div
+      tabIndex={disabled ? -1 : 0}
+      role="button"
+      aria-label="파일 업로드 영역, Enter 또는 Space로 파일 선택"
       onClick={() => !disabled && inputRef.current?.click()}
+      onKeyDown={handleKeyDown}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDrop}
       className={cn(
         'flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors cursor-pointer',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         isDragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25',
         disabled && 'opacity-50 cursor-not-allowed'
       )}
