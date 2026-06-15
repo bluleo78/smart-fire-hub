@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
 import { useDeleteDocument, useDocuments, useUploadDocument } from '../../../hooks/queries/useDocuments';
+import { extractApiError } from '../../../lib/api-error';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DocumentList } from '../components/DocumentList';
 import { DocumentSearchPanel } from '../components/DocumentSearchPanel';
@@ -37,7 +38,13 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
         setPendingFile(null);
         setUploadKey((k) => k + 1);
       },
-      onError: () => toast.error('업로드에 실패했습니다.'),
+      onError: (err) => {
+        // 백엔드 ErrorResponse.message(중복 등 구체적 사유)를 우선 표시하고, 없으면 폴백 메시지 사용
+        toast.error(extractApiError(err, '업로드에 실패했습니다.'));
+        // 실패 후에도 파일 선택 상태를 초기화하여 재시도 UX 개선
+        setPendingFile(null);
+        setUploadKey((k) => k + 1);
+      },
     });
   };
 
@@ -45,7 +52,8 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
     if (!window.confirm('이 문서를 삭제하시겠습니까? 관련 임베딩도 함께 삭제됩니다.')) return;
     remove.mutate(documentId, {
       onSuccess: () => toast.success('문서를 삭제했습니다.'),
-      onError: () => toast.error('삭제에 실패했습니다.'),
+      // 백엔드 ErrorResponse.message를 우선 표시하고, 없으면 폴백 메시지 사용
+      onError: (err) => toast.error(extractApiError(err, '삭제에 실패했습니다.')),
     });
   };
 

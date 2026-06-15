@@ -114,6 +114,55 @@ test.describe('문서 데이터셋 상세', () => {
     expect(pageErrors).toHaveLength(0);
   });
 
+  /**
+   * 회귀 테스트 (#284): 업로드 실패 시 백엔드 ErrorResponse.message를 토스트로 표시한다.
+   * 중복 업로드(409)처럼 구체적인 사유가 있으면 일반 메시지 대신 백엔드 메시지를 표시해야 한다.
+   */
+  test('업로드 실패 시 백엔드 사유(ErrorResponse.message)를 토스트로 표시한다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, []);
+    // 중복 업로드 시 백엔드가 반환하는 409 에러 응답 모킹
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/documents`,
+      { message: '이미 업로드된 동일 문서입니다.', errors: null },
+      { status: 409 },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    await page.locator('input[type="file"][accept*=".pdf,.docx"]').setInputFiles({
+      name: 'duplicate.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 test'),
+    });
+    await page.getByRole('button', { name: '업로드' }).click();
+
+    // 일반 메시지 대신 백엔드 구체적 사유가 표시되어야 한다
+    await expect(page.getByText('이미 업로드된 동일 문서입니다.')).toBeVisible();
+    await expect(page.getByText('업로드에 실패했습니다.')).toHaveCount(0);
+  });
+
+  /**
+   * 회귀 테스트 (#284): 삭제 실패 시 백엔드 ErrorResponse.message를 토스트로 표시한다.
+   */
+  test('삭제 실패 시 백엔드 사유(ErrorResponse.message)를 토스트로 표시한다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, [createDocument({ id: 7, originalName: 'locked.pdf' })]);
+    await mockApi(
+      page,
+      'DELETE',
+      `/api/v1/datasets/${DATASET_ID}/documents/7`,
+      { message: '파이프라인에서 참조 중인 문서는 삭제할 수 없습니다.', errors: null },
+      { status: 409 },
+    );
+    page.on('dialog', (d) => d.accept());
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    await page.getByRole('button', { name: 'locked.pdf 삭제' }).click();
+
+    await expect(page.getByText('파이프라인에서 참조 중인 문서는 삭제할 수 없습니다.')).toBeVisible();
+    await expect(page.getByText('삭제에 실패했습니다.')).toHaveCount(0);
+  });
+
   test('문서를 삭제하면 DELETE가 호출된다', async ({ authenticatedPage: page }) => {
     await setupDocumentDatasetMocks(page, DATASET_ID, [createDocument({ id: 7, originalName: 'gone.pdf' })]);
     const capture = await mockApi(page, 'DELETE', `/api/v1/datasets/${DATASET_ID}/documents/7`, null, {
