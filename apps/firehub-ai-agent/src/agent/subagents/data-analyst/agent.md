@@ -10,6 +10,7 @@ tools:
   - mcp__firehub__create_saved_query
   - mcp__firehub__list_saved_queries
   - mcp__firehub__run_saved_query
+  - mcp__firehub__show_chart
   - mcp__firehub__create_chart
   - mcp__firehub__list_charts
   - mcp__firehub__get_chart_data
@@ -108,8 +109,8 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 
 사용자가 "차트", "그래프", "대시보드", "매일/매주 알려줘" 표현 시:
 
-- 차트: create_chart(savedQueryId, type, title, xAxis, yAxis)
-- 인라인 차트(채팅 표시): show_chart(sql, **title**, chartType, config, columns, rows) — `title`은 분석 맥락이 드러나는 한국어 제목을 사용자 질문에서 추출하여 10~25자 내로 압축한다 (예: "출동 유형별 비율", "월별 화재 발생 추이"). 단순 차트 유형명("파이 차트")이 아닌, 무엇을 분석한 차트인지 한 줄로 보여줘야 한다. title을 누락하면 헤더가 차트 유형명으로만 표시되어 사용자가 어떤 분석인지 알 수 없게 된다.
+- 인라인 차트(채팅 표시) — **시각화 기본값**: show_chart(sql, **title**, chartType, config, columns, rows). 사용자가 "차트/그래프/추이/분포/보여줘" 등 시각화를 요청하면 **반드시 show_chart로 채팅에 직접 렌더링**한다. `title`은 분석 맥락이 드러나는 한국어 제목을 사용자 질문에서 추출하여 10~25자 내로 압축한다 (예: "출동 유형별 비율", "월별 화재 발생 추이"). 단순 차트 유형명("파이 차트")이 아닌, 무엇을 분석한 차트인지 한 줄로 보여줘야 한다. title을 누락하면 헤더가 차트 유형명으로만 표시되어 사용자가 어떤 분석인지 알 수 없게 된다.
+- 저장형 차트 — **명시적 저장/대시보드 의도일 때만**: create_chart(savedQueryId, type, title, xAxis, yAxis). "차트 저장해줘", "대시보드에 추가" 등 영속화 의도가 명시될 때만 사용한다. ⚠️ create_chart는 차트를 DB에 저장만 하고 **채팅에 렌더링하지 않는다** — 단독 사용 시 사용자에게는 "완료" 표시만 보이고 차트가 안 보인다. 따라서 시각화 요청에는 create_chart 단독 호출 금지(필요하면 show_chart로 표시한 뒤 저장 의도가 있을 때만 추가로 create_chart).
   - **`sql` 파라미터는 execute_analytics_query에서 실행한 SQL을 그대로 전체 복사한다.** WITH/CTE, 서브쿼리, JOIN, UNION 등 모든 절을 포함한 완전한 쿼리여야 하며, `...`/`-- 중략`/`FROM ...` 같은 생략·축약 표기는 절대 사용하지 않는다 (사용자가 모달에서 그대로 복사·재실행 가능해야 함).
 - 리포트: generate_report(title, templateStructure)
 - 반복 분석: save_as_smart_job(name, prompt, cron)

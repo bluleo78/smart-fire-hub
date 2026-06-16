@@ -81,6 +81,32 @@ describe('11개 subagent 4 레이어 구조 일관성 (refs #260 PR-5)', () => {
 });
 
 /**
+ * data-analyst show_chart 도구 보유 회귀 가드.
+ *
+ * data-analyst 본문(Phase 5)은 인라인 차트 시각화에 show_chart 사용을 지시한다.
+ * 그런데 frontmatter tools 화이트리스트에 show_chart 가 빠져 있으면 에이전트가
+ * 물리적으로 show_chart 를 호출하지 못하고 create_chart(저장만, 렌더링 없음)로
+ * 폴백하여 사용자에게 차트가 표시되지 않는다. tools 목록과 본문 지시의 정합성을 고정한다.
+ */
+describe('data-analyst show_chart 도구 보유 (인라인 차트 렌더링)', () => {
+  const agentMd = fs.readFileSync(path.join(__dirname, 'data-analyst/agent.md'), 'utf-8');
+  // frontmatter 영역(첫 --- ~ 두 번째 ---)만 추출하여 tools 화이트리스트 검사
+  const frontmatter = agentMd.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+
+  it('frontmatter tools 에 show_chart 가 포함된다 (본문 지시와 정합)', () => {
+    expect(frontmatter).toContain('mcp__firehub__show_chart');
+  });
+
+  it('본문이 show_chart 를 인라인 시각화 기본값으로 명시한다', () => {
+    expect(agentMd).toMatch(/show_chart[\s\S]*?(기본값|채팅에 직접 렌더링)/);
+  });
+
+  it('create_chart 가 단독으로 렌더링되지 않음(저장 전용)을 경고한다', () => {
+    expect(agentMd).toMatch(/create_chart[\s\S]*?(렌더링하지 않|저장만|저장 전용)/);
+  });
+});
+
+/**
  * data-analyst Phase 2 사전 조건 회귀 가드 (refs #267).
  *
  * SQL 분석 직전 list_datasets → get_data_schema(datasetIds) 의무 충족이
