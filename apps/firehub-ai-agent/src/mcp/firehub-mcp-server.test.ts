@@ -121,7 +121,8 @@ describe('MCP Tool Handlers', () => {
       columns: [{ columnName: 'col1', displayName: 'Col 1', dataType: 'TEXT' }],
     };
     await invokeTool(server, 'create_dataset', args);
-    expect(client.createDataset).toHaveBeenCalledWith(args);
+    // 에이전트는 정형 데이터셋만 생성하므로 storageType: 'TABLE' 이 항상 추가된다.
+    expect(client.createDataset).toHaveBeenCalledWith({ ...args, storageType: 'TABLE' });
   });
 
   // MCP-05: query_dataset_data

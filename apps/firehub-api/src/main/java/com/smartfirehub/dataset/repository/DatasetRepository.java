@@ -39,8 +39,11 @@ public class DatasetRepository {
       field(name("dataset", "description"), String.class);
   private static final Field<Long> DS_CATEGORY_ID =
       field(name("dataset", "category_id"), Long.class);
-  private static final Field<String> DS_DATASET_TYPE =
-      field(name("dataset", "dataset_type"), String.class);
+  // 저장 방식(TABLE/DOCUMENT)과 출처(SOURCE/DERIVED/TEMP)를 분리한 두 컬럼
+  private static final Field<String> DS_STORAGE_TYPE =
+      field(name("dataset", "storage_type"), String.class);
+  private static final Field<String> DS_ORIGIN_TYPE =
+      field(name("dataset", "origin_type"), String.class);
   private static final Field<Long> DS_CREATED_BY = field(name("dataset", "created_by"), Long.class);
   private static final Field<LocalDateTime> DS_CREATED_AT =
       field(name("dataset", "created_at"), LocalDateTime.class);
@@ -115,7 +118,8 @@ public class DatasetRepository {
         r.get(DS_TABLE_NAME),
         r.get(DS_DESCRIPTION),
         category,
-        r.get(DS_DATASET_TYPE),
+        r.get(DS_STORAGE_TYPE),
+        r.get(DS_ORIGIN_TYPE),
         r.get(DS_CREATED_AT),
         isFavorite,
         tags,
@@ -153,13 +157,16 @@ public class DatasetRepository {
   }
 
   private Condition buildCondition(
-      Long categoryId, String datasetType, String search, String status) {
+      Long categoryId, String storageType, String originType, String search, String status) {
     Condition condition = trueCondition();
     if (categoryId != null) {
       condition = condition.and(DS_CATEGORY_ID.eq(categoryId));
     }
-    if (datasetType != null && !datasetType.isBlank()) {
-      condition = condition.and(DS_DATASET_TYPE.eq(datasetType));
+    if (storageType != null && !storageType.isBlank()) {
+      condition = condition.and(DS_STORAGE_TYPE.eq(storageType));
+    }
+    if (originType != null && !originType.isBlank()) {
+      condition = condition.and(DS_ORIGIN_TYPE.eq(originType));
     }
     if (status != null && !status.isBlank()) {
       condition = condition.and(DS_STATUS.eq(status));
@@ -185,20 +192,21 @@ public class DatasetRepository {
   }
 
   public List<DatasetResponse> findAll(
-      Long categoryId, String datasetType, String search, int page, int size) {
-    return findAll(categoryId, datasetType, search, page, size, null, null, false);
+      Long categoryId, String storageType, String originType, String search, int page, int size) {
+    return findAll(categoryId, storageType, originType, search, page, size, null, null, false);
   }
 
   public List<DatasetResponse> findAll(
       Long categoryId,
-      String datasetType,
+      String storageType,
+      String originType,
       String search,
       int page,
       int size,
       Long currentUserId,
       String status,
       boolean favoriteOnly) {
-    Condition condition = buildCondition(categoryId, datasetType, search, status);
+    Condition condition = buildCondition(categoryId, storageType, originType, search, status);
 
     // First get the distinct IDs for the page
     var idQuery =
@@ -239,7 +247,8 @@ public class DatasetRepository {
             DS_NAME,
             DS_TABLE_NAME,
             DS_DESCRIPTION,
-            DS_DATASET_TYPE,
+            DS_STORAGE_TYPE,
+            DS_ORIGIN_TYPE,
             DS_CREATED_AT,
             DS_STATUS,
             DS_STATUS_NOTE,
@@ -260,18 +269,19 @@ public class DatasetRepository {
         .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId));
   }
 
-  public long count(Long categoryId, String datasetType, String search) {
-    return count(categoryId, datasetType, search, null, null, false);
+  public long count(Long categoryId, String storageType, String originType, String search) {
+    return count(categoryId, storageType, originType, search, null, null, false);
   }
 
   public long count(
       Long categoryId,
-      String datasetType,
+      String storageType,
+      String originType,
       String search,
       Long currentUserId,
       String status,
       boolean favoriteOnly) {
-    Condition condition = buildCondition(categoryId, datasetType, search, status);
+    Condition condition = buildCondition(categoryId, storageType, originType, search, status);
 
     var countQuery =
         dsl.select(countDistinct(DS_ID))
@@ -308,7 +318,8 @@ public class DatasetRepository {
             DS_NAME,
             DS_TABLE_NAME,
             DS_DESCRIPTION,
-            DS_DATASET_TYPE,
+            DS_STORAGE_TYPE,
+            DS_ORIGIN_TYPE,
             DS_CREATED_AT,
             DS_STATUS,
             DS_STATUS_NOTE,
@@ -335,7 +346,8 @@ public class DatasetRepository {
             .set(DS_TABLE_NAME, request.tableName())
             .set(DS_DESCRIPTION, request.description())
             .set(DS_CATEGORY_ID, request.categoryId())
-            .set(DS_DATASET_TYPE, request.datasetType())
+            .set(DS_STORAGE_TYPE, request.storageType())
+            .set(DS_ORIGIN_TYPE, request.originType())
             .set(DS_CREATED_BY, createdBy);
     if (request.sourcePipelineStepId() != null) {
       insert = insert.set(DS_SOURCE_PIPELINE_STEP_ID, request.sourcePipelineStepId());
@@ -346,7 +358,8 @@ public class DatasetRepository {
             DS_NAME,
             DS_TABLE_NAME,
             DS_DESCRIPTION,
-            DS_DATASET_TYPE,
+            DS_STORAGE_TYPE,
+            DS_ORIGIN_TYPE,
             DS_CREATED_AT,
             DS_STATUS,
             DS_STATUS_NOTE,
@@ -372,7 +385,8 @@ public class DatasetRepository {
                   r.get(DS_TABLE_NAME),
                   r.get(DS_DESCRIPTION),
                   category,
-                  r.get(DS_DATASET_TYPE),
+                  r.get(DS_STORAGE_TYPE),
+                  r.get(DS_ORIGIN_TYPE),
                   r.get(DS_CREATED_AT),
                   false,
                   List.of(),
@@ -451,12 +465,5 @@ public class DatasetRepository {
         .from(DATASET)
         .where(DS_ID.eq(id))
         .fetchOptional(r -> r.get(DS_UPDATED_BY));
-  }
-
-  public Optional<String> findDatasetTypeById(Long id) {
-    return dsl.select(DS_DATASET_TYPE)
-        .from(DATASET)
-        .where(DS_ID.eq(id))
-        .fetchOptional(r -> r.get(DS_DATASET_TYPE));
   }
 }

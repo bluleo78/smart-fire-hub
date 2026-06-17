@@ -36,8 +36,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('docrepo','x','Doc Repo','docrepo@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('docrepo-set','data.docrepo_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('docrepo-set','data.docrepo_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 'a.txt','text/plain',3,'/tmp/a','COMPLETED', ?)"
@@ -64,8 +64,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('docrepo2','x','Doc Repo2','docrepo2@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('docrepo2-set','data.docrepo2_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('docrepo2-set','data.docrepo2_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 'b.txt','text/plain',3,'/tmp/b','COMPLETED', ?)"
@@ -90,8 +90,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('docsearch','x','Doc Search','docsearch@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('docsearch-set','data.docsearch_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('docsearch-set','data.docsearch_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 'doc.txt','text/plain',3,'/tmp/d','COMPLETED', ?)"
@@ -117,8 +117,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('docsearch2','x','Doc Search2','docsearch2@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('docsearch2-set','data.docsearch2_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('docsearch2-set','data.docsearch2_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 'p.txt','text/plain',3,'/tmp/p','PARSING', ?)"
@@ -136,8 +136,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('doctrgm','x','Doc Trgm','doctrgm@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('doctrgm-set','data.doctrgm_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('doctrgm-set','data.doctrgm_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 't.txt','text/plain',3,'/tmp/t','COMPLETED', ?)"
@@ -167,8 +167,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('doctrgm3','x','Doc Trgm3','doctrgm3@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('doctrgm3-set','data.doctrgm3_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('doctrgm3-set','data.doctrgm3_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 'm.txt','text/plain',3,'/tmp/m','COMPLETED', ?)"
@@ -192,8 +192,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES"
             + " ('doctrgm2','x','Doc Trgm2','doctrgm2@example.com') RETURNING id").get(0, Long.class);
     Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-            + " ('doctrgm2-set','data.doctrgm2_set','DOCUMENT', ?) RETURNING id", userId).get(0, Long.class);
+        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+            + " ('doctrgm2-set','data.doctrgm2_set','DOCUMENT', 'SOURCE', ?) RETURNING id", userId).get(0, Long.class);
     Long fileId = dsl.fetchOne(
         "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
             + " storage_path, status, uploaded_by) VALUES (?, 'pp.txt','text/plain',3,'/tmp/pp','PARSING', ?)"

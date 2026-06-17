@@ -63,7 +63,7 @@ class DatasetTagServiceTest extends IntegrationTestBase {
                 "tag_test_ds1",
                 null,
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
                 null),
             testUserId);
@@ -77,7 +77,7 @@ class DatasetTagServiceTest extends IntegrationTestBase {
                 "tag_test_ds2",
                 null,
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
                 null),
             testUserId);

@@ -37,8 +37,12 @@ public class DashboardService {
   private static final Field<String> D_NAME = field(name("dataset", "name"), String.class);
   private static final Field<String> D_TABLE_NAME =
       field(name("dataset", "table_name"), String.class);
-  private static final Field<String> D_DATASET_TYPE =
-      field(name("dataset", "dataset_type"), String.class);
+  // 저장 방식(TABLE/DOCUMENT)과 출처(SOURCE/DERIVED/TEMP)를 분리한 두 컬럼
+  // 기존 dataset_type='SOURCE' ≡ storage_type='TABLE' AND origin_type='SOURCE' (문서 유입 방지)
+  private static final Field<String> D_STORAGE_TYPE =
+      field(name("dataset", "storage_type"), String.class);
+  private static final Field<String> D_ORIGIN_TYPE =
+      field(name("dataset", "origin_type"), String.class);
   private static final Field<LocalDateTime> D_CREATED_AT =
       field(name("dataset", "created_at"), LocalDateTime.class);
 
@@ -95,11 +99,17 @@ public class DashboardService {
 
     // Count source datasets
     long sourceDatasets =
-        dsl.selectCount().from(DATASET).where(D_DATASET_TYPE.eq("SOURCE")).fetchOne(0, Long.class);
+        dsl.selectCount()
+            .from(DATASET)
+            .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
+            .fetchOne(0, Long.class);
 
     // Count derived datasets
     long derivedDatasets =
-        dsl.selectCount().from(DATASET).where(D_DATASET_TYPE.eq("DERIVED")).fetchOne(0, Long.class);
+        dsl.selectCount()
+            .from(DATASET)
+            .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("DERIVED")))
+            .fetchOne(0, Long.class);
 
     // Count total pipelines
     long totalPipelines = dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class);
@@ -230,7 +240,7 @@ public class DashboardService {
                         .and(AL_RESOURCE.eq("dataset"))
                         .and(AL_RESULT.eq("SUCCESS"))
                         .and(AL_ACTION_TIME.greaterThan(freshThreshold))
-                        .and(D_DATASET_TYPE.eq("SOURCE"))));
+                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))));
 
     // Also count source datasets created within 24h with no imports (brand new = fresh)
     int newSourceNoImport =
@@ -238,8 +248,9 @@ public class DashboardService {
             dsl.selectDistinct(D_ID)
                 .from(DATASET)
                 .where(
-                    D_DATASET_TYPE
-                        .eq("SOURCE")
+                    D_STORAGE_TYPE
+                        .eq("TABLE")
+                        .and(D_ORIGIN_TYPE.eq("SOURCE"))
                         .and(D_CREATED_AT.greaterThan(freshThreshold))
                         .and(
                             notExists(
@@ -268,7 +279,7 @@ public class DashboardService {
                         .eq("IMPORT")
                         .and(AL_RESOURCE.eq("dataset"))
                         .and(AL_RESULT.eq("SUCCESS"))
-                        .and(D_DATASET_TYPE.eq("SOURCE")))
+                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE"))))
                 .andNot(
                     exists(
                         dsl.selectOne()
@@ -289,8 +300,9 @@ public class DashboardService {
             dsl.selectDistinct(D_ID)
                 .from(DATASET)
                 .where(
-                    D_DATASET_TYPE
-                        .eq("SOURCE")
+                    D_STORAGE_TYPE
+                        .eq("TABLE")
+                        .and(D_ORIGIN_TYPE.eq("SOURCE"))
                         .and(D_CREATED_AT.lessOrEqual(staleThreshold))
                         .and(
                             notExists(

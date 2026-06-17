@@ -9,8 +9,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 test.describe('데이터셋 목록 — URL 동기화', () => {
   const datasets = [
-    createDataset({ id: 1, name: '고객 데이터셋', datasetType: 'SOURCE', status: 'CERTIFIED' }),
-    createDataset({ id: 2, name: '주문 데이터셋', datasetType: 'DERIVED', status: 'NONE' }),
+    createDataset({ id: 1, name: '고객 데이터셋', storageType: 'TABLE', originType: 'SOURCE', status: 'CERTIFIED' }),
+    createDataset({ id: 2, name: '주문 데이터셋', storageType: 'TABLE', originType: 'DERIVED', status: 'NONE' }),
   ];
 
   async function setupCommon(page: import('@playwright/test').Page) {

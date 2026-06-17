@@ -75,7 +75,7 @@ class DatasetFavoriteServiceTest extends IntegrationTestBase {
                 "fav_test_ds",
                 null,
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
                 null),
             userId1);

@@ -78,7 +78,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
                     "ext_exp_data",
                     null,
                     null,
-                    "SOURCE",
+                    "TABLE", "SOURCE",
                     List.of(
                         new DatasetColumnRequest("name", "이름", "TEXT", null, true, false, null),
                         new DatasetColumnRequest("age", "나이", "INTEGER", null, true, false, null)),

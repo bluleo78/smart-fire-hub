@@ -16,7 +16,7 @@ export async function setupDocumentDatasetMocks(
   documents = createDocuments(3),
 ) {
   // 백엔드는 DOCUMENT 데이터셋에 대해 동적 테이블이 없어 rowCount: null을 반환한다 — 프로덕션 실제값 반영.
-  const detail = createDatasetDetail({ id: datasetId, datasetType: 'DOCUMENT', columns: [], rowCount: null });
+  const detail = createDatasetDetail({ id: datasetId, storageType: 'DOCUMENT', originType: 'SOURCE', columns: [], rowCount: null });
   await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}`, detail);
   await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/documents`, documents);
   // DatasetDetailPage 헤더 영역에서 항상 호출되는 API (탭 무관)

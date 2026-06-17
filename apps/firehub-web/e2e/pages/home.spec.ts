@@ -282,13 +282,15 @@ test.describe('홈 페이지', () => {
         {
           id: 1,
           name: '소방서 위치 데이터',
-          datasetType: 'SOURCE',
+          storageType: 'TABLE',
+          originType: 'SOURCE',
           createdAt: '2026-04-01T00:00:00',
         },
         {
           id: 2,
           name: '화재 발생 통계',
-          datasetType: 'DERIVED',
+          storageType: 'TABLE',
+          originType: 'DERIVED',
           createdAt: '2026-04-02T00:00:00',
         },
       ],
@@ -310,8 +312,8 @@ test.describe('홈 페이지', () => {
     // 최근 데이터셋 카드 — 항목 이름 확인
     await expect(page.getByText('소방서 위치 데이터')).toBeVisible();
     await expect(page.getByText('화재 발생 통계')).toBeVisible();
-    // 데이터셋 유형 뱃지 확인
-    await expect(page.getByText('소스').first()).toBeVisible();
+    // 데이터셋 유형 뱃지 확인 — storageType(TABLE)+originType(SOURCE/DERIVED) 기반 라벨
+    await expect(page.getByText('원본').first()).toBeVisible();
     await expect(page.getByText('파생').first()).toBeVisible();
   });
 
@@ -565,7 +567,8 @@ test.describe('홈 페이지', () => {
       content: Array.from({ length: 10 }, (_, i) => ({
         id: i + 1,
         name: `데이터셋 ${i + 1}`,
-        datasetType: 'SOURCE',
+        storageType: 'TABLE',
+        originType: 'SOURCE',
         createdAt: '2026-05-15T10:00:00',
       })),
       page: 0,

@@ -20,7 +20,7 @@ export const categoriesApi = {
 };
 
 export const datasetsApi = {
-  getDatasets: (params: { categoryId?: number; datasetType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string }) =>
+  getDatasets: (params: { categoryId?: number; storageType?: string; originType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string }) =>
     client.get<PageResponse<DatasetResponse>>('/datasets', { params }),
   getDatasetById: (id: number) => client.get<DatasetDetailResponse>(`/datasets/${id}`),
   createDataset: (data: CreateDatasetRequest) => client.post<DatasetDetailResponse>('/datasets', data),

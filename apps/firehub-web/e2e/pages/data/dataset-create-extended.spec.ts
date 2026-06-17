@@ -34,6 +34,19 @@ async function gotoCreatePage(page: import('@playwright/test').Page) {
   await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible({ timeout: 10_000 });
 }
 
+/**
+ * SchemaBuilder 첫 번째 컬럼의 데이터 타입을 GEOMETRY로 변경한다.
+ *
+ * ColumnTypeSelect는 native <select>가 아니라 Radix Select(combobox + 팝오버)로 렌더링된다(#118).
+ * 카테고리 combobox는 접근명 "카테고리"를 갖지만, 컬럼 타입 combobox는 접근명이 비어 있고
+ * 기본값 라벨 "텍스트"를 자식 텍스트로만 가진다(추가로 Radix 숨김 native select도 combobox로 잡힘).
+ * 따라서 hasText '텍스트'로 컬럼 타입 트리거를 특정해 연 뒤 "지오메트리(좌표)" 옵션을 선택한다.
+ */
+async function selectGeometryType(page: import('@playwright/test').Page) {
+  await page.getByRole('combobox').filter({ hasText: '텍스트' }).click();
+  await page.getByRole('option', { name: '지오메트리(좌표)' }).click();
+}
+
 test.describe('DatasetCreatePage — 기본 정보 입력', () => {
   test('필수 필드(이름, 테이블명)가 렌더링된다', async ({ authenticatedPage: page }) => {
     await gotoCreatePage(page);
@@ -300,10 +313,14 @@ test.describe('DatasetCreatePage — 에러 처리 (useCreateDataset 에러)', (
 });
 
 test.describe('DatasetCreatePage — 데이터셋 유형 선택', () => {
-  test('데이터셋 유형 "파생"으로 변경 시 payload datasetType이 DERIVED이다', async ({
+  test('파생 유형(URL 쿼리)으로 진입 시 payload originType이 DERIVED이다', async ({
     authenticatedPage: page,
   }) => {
-    await gotoCreatePage(page);
+    // 유형은 폼 셀렉트가 아니라 생성 유형 선택 모달이 전달하는 URL 쿼리로 고정된다.
+    // 테이블·파생 유형은 storageType=TABLE&originType=DERIVED 로 진입한다.
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', MOCK_CATEGORIES);
+    await page.goto('/data/datasets/new?storageType=TABLE&originType=DERIVED', { waitUntil: 'commit' });
+    await expect(page.getByRole('heading', { name: '데이터셋 생성' })).toBeVisible({ timeout: 10_000 });
 
     let capturedPayload: Record<string, unknown> = {};
     await page.route(
@@ -321,21 +338,21 @@ test.describe('DatasetCreatePage — 데이터셋 유형 선택', () => {
       },
     );
 
+    // 유형 표시 영역에 "테이블"·"파생" 두 배지가 노출되는지 확인 (읽기 전용 표시)
+    const typeDisplay = page.getByText('데이터셋 유형').locator('..');
+    await expect(typeDisplay.getByText('테이블', { exact: true })).toBeVisible();
+    await expect(typeDisplay.getByText('파생', { exact: true })).toBeVisible();
+
     await page.getByLabel('데이터셋 이름').fill('파생 데이터셋');
     await page.getByLabel('테이블명').fill('derived_dataset');
     await page.getByPlaceholder('예: user_id').first().fill('id');
-
-    // 두 번째 Select가 데이터셋 유형 (기본값 "원본"/SOURCE)
-    // combobox들 중 두 번째가 datasetType Select
-    const selects = page.getByRole('combobox');
-    await selects.nth(1).click();
-    await page.getByRole('option', { name: '파생' }).click();
 
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/v1/datasets') && r.request().method() === 'POST'),
       page.getByRole('button', { name: '생성' }).click(),
     ]);
-    expect(capturedPayload.datasetType).toBe('DERIVED');
+    expect(capturedPayload.storageType).toBe('TABLE');
+    expect(capturedPayload.originType).toBe('DERIVED');
   });
 });
 
@@ -378,8 +395,8 @@ test.describe('데이터셋 목록 — formatters.ts 날짜/포맷 렌더링', (
     authenticatedPage: page,
   }) => {
     const datasets = [
-      createDataset({ id: 1, name: '데이터셋 A', tableName: 'dataset_a', datasetType: 'SOURCE' }),
-      createDataset({ id: 2, name: '데이터셋 B', tableName: 'dataset_b', datasetType: 'DERIVED' }),
+      createDataset({ id: 1, name: '데이터셋 A', tableName: 'dataset_a', storageType: 'TABLE', originType: 'SOURCE' }),
+      createDataset({ id: 2, name: '데이터셋 B', tableName: 'dataset_b', storageType: 'TABLE', originType: 'DERIVED' }),
     ];
 
     await mockApi(page, 'GET', '/api/v1/datasets', {
@@ -408,8 +425,8 @@ test.describe('SchemaBuilder — GEOMETRY 타입 기본 키 비활성화 (#199)'
   }) => {
     await gotoCreatePage(page);
 
-    // 데이터 타입을 GEOMETRY로 변경 (SchemaBuilder의 두 번째 native select)
-    await page.locator('select').nth(1).selectOption('GEOMETRY');
+    // 데이터 타입을 GEOMETRY로 변경 (SchemaBuilder의 컬럼 데이터 타입 Radix Select)
+    await selectGeometryType(page);
 
     // 기본 키 체크박스가 disabled 상태인지 검증 — GEOMETRY는 B-tree PK 불가
     const pkCheckbox = page.getByLabel('기본 키');
@@ -427,7 +444,7 @@ test.describe('SchemaBuilder — GEOMETRY 타입 기본 키 비활성화 (#199)'
     await expect(pkCheckbox).toBeChecked();
 
     // GEOMETRY로 변경 — isPrimaryKey가 자동으로 false로 재설정된다
-    await page.locator('select').nth(1).selectOption('GEOMETRY');
+    await selectGeometryType(page);
 
     // 체크 해제 + disabled 확인
     await expect(pkCheckbox).not.toBeChecked({ timeout: 3000 });
@@ -460,7 +477,7 @@ test.describe('SchemaBuilder — GEOMETRY 타입 기본 키 비활성화 (#199)'
     await page.getByPlaceholder('예: user_id').first().fill('location');
 
     // 데이터 타입을 GEOMETRY로 변경
-    await page.locator('select').nth(1).selectOption('GEOMETRY');
+    await selectGeometryType(page);
 
     await Promise.all([
       page.waitForResponse(

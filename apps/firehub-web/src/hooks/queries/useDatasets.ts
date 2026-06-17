@@ -12,7 +12,7 @@ export function useCategories() {
   });
 }
 
-export function useDatasets(params: { categoryId?: number; datasetType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string }) {
+export function useDatasets(params: { categoryId?: number; storageType?: string; originType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string }) {
   return useQuery({
     queryKey: ['datasets', params],
     queryFn: () => datasetsApi.getDatasets(params).then(r => r.data),

@@ -136,7 +136,8 @@ test.describe('데이터셋 생성 페이지', () => {
     expect(req.payload).toMatchObject({
       name: '신규 데이터셋',
       tableName: 'new_dataset',
-      datasetType: 'SOURCE',
+      storageType: 'TABLE',
+      originType: 'SOURCE',
       columns: [expect.objectContaining({ columnName: 'col_name' })],
     });
 

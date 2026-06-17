@@ -66,7 +66,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
             "exec_ext_test",
             null,
             null,
-            "SOURCE",
+            "TABLE", "SOURCE",
             List.of(
                 new DatasetColumnRequest("item", "Item", "TEXT", null, true, false, null),
                 new DatasetColumnRequest("score", "Score", "INTEGER", null, true, false, null)),

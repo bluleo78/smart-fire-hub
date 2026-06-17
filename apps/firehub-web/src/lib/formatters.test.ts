@@ -15,10 +15,11 @@ import {
   formatFileSize,
   formatIpAddress,
   formatRelativeTime,
-  getDatasetTypeLabel,
+  getOriginTypeLabel,
   getRawCellValue,
   getStatusBadgeVariant,
   getStatusLabel,
+  getStorageTypeLabel,
   isNullValue,
   timeAgo,
 } from './formatters';
@@ -290,18 +291,15 @@ describe('formatIpAddress', () => {
   });
 });
 
-describe('getDatasetTypeLabel', () => {
-  // 이슈 #107: 영문 enum 노출 방지.
-  it('알려진 enum 값', () => {
-    expect(getDatasetTypeLabel('SOURCE')).toBe('원본');
-    expect(getDatasetTypeLabel('DERIVED')).toBe('파생');
-    expect(getDatasetTypeLabel('TEMP')).toBe('임시');
-    expect(getDatasetTypeLabel('DOCUMENT')).toBe('문서');
-  });
+describe('getStorageTypeLabel', () => {
+  it('TABLE → 테이블', () => expect(getStorageTypeLabel('TABLE')).toBe('테이블'));
+  it('DOCUMENT → 문서', () => expect(getStorageTypeLabel('DOCUMENT')).toBe('문서'));
+});
 
-  it('알 수 없는 값은 원본 반환', () => {
-    expect(getDatasetTypeLabel('UNKNOWN')).toBe('UNKNOWN');
-  });
+describe('getOriginTypeLabel', () => {
+  it('SOURCE → 원본', () => expect(getOriginTypeLabel('SOURCE')).toBe('원본'));
+  it('DERIVED → 파생', () => expect(getOriginTypeLabel('DERIVED')).toBe('파생'));
+  it('TEMP → 임시', () => expect(getOriginTypeLabel('TEMP')).toBe('임시'));
 });
 
 describe('timeAgo / formatElapsedTime', () => {

@@ -38,16 +38,22 @@ test.describe('데이터셋 CRUD 플로우', () => {
     await expect(page.getByText('test_dataset').first()).toBeVisible();
   });
 
-  test('데이터셋 추가 버튼 → 생성 페이지 → 취소 → 목록으로 돌아온다', async ({
+  test('데이터셋 추가 버튼 → 유형 선택 모달 → 생성 페이지 → 취소 → 목록으로 돌아온다', async ({
     authenticatedPage: page,
   }) => {
     // 목록 API 모킹
     await setupDatasetMocks(page);
     await page.goto('/data/datasets');
 
-    // 데이터셋 추가 버튼 클릭
-    await page.getByRole('link', { name: /데이터셋 추가/ }).click();
-    await expect(page).toHaveURL('/data/datasets/new');
+    // 데이터셋 추가 버튼 클릭 → 2단계 유형 선택 모달 (직접 navigate 하지 않음)
+    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('어떤 데이터셋을 만드시나요?')).toBeVisible();
+
+    // 테이블 → 원본 선택 시 URL 쿼리와 함께 생성 폼으로 이동
+    await dialog.getByRole('button', { name: '테이블' }).click();
+    await dialog.getByRole('button', { name: '원본' }).click();
+    await expect(page).toHaveURL('/data/datasets/new?storageType=TABLE&originType=SOURCE');
 
     // 취소 버튼 클릭 → 목록으로 복귀
     await page.getByRole('button', { name: '취소' }).click();

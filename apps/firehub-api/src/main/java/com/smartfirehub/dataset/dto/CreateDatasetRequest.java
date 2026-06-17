@@ -8,13 +8,19 @@ public record CreateDatasetRequest(
     @NotBlank String tableName,
     String description,
     Long categoryId,
-    String datasetType,
+    String storageType,
+    String originType,
     List<DatasetColumnRequest> columns,
     Long sourcePipelineStepId) {
 
   public CreateDatasetRequest {
-    if (datasetType == null) {
-      datasetType = "SOURCE";
+    // 저장 방식 기본값: 행·열 테이블
+    if (storageType == null) {
+      storageType = "TABLE";
+    }
+    // 출처 기본값: 직접 수집 원본
+    if (originType == null) {
+      originType = "SOURCE";
     }
   }
 }

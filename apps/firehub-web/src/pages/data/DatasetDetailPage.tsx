@@ -53,19 +53,19 @@ export default function DatasetDetailPage() {
 
   // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
-  const isDocument = dataset?.datasetType === 'DOCUMENT';
+  const isDocument = dataset?.storageType === 'DOCUMENT';
   const validTabs = isDocument ? ['info', 'documents'] : ['info', 'columns', 'data', 'map', 'history'];
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
 
   // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).
-  // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 datasetType 기반 validTabs를 재계산하여
+  // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 storageType 기반 validTabs를 재계산하여
   // ?tab=documents로 직접 진입한 DOCUMENT 데이터셋이 올바른 탭으로 복원된다.
   // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
   // 페인트 전 동기 보정으로 탭 깜빡임 방지.
   useLayoutEffect(() => {
-    const isDocumentType = dataset?.datasetType === 'DOCUMENT';
+    const isDocumentType = dataset?.storageType === 'DOCUMENT';
     const currentValidTabs = isDocumentType
       ? ['info', 'documents']
       : ['info', 'columns', 'data', 'map', 'history'];
@@ -235,7 +235,7 @@ export default function DatasetDetailPage() {
                 </Badge>
               )}
               {/* TEMP badge */}
-              {dataset.datasetType === 'TEMP' && (
+              {dataset.originType === 'TEMP' && (
                 <Badge variant="secondary" className="text-xs">임시</Badge>
               )}
               {/* 데이터셋 → 분석 워크플로우 단축 진입점 (#98)

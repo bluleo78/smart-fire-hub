@@ -83,7 +83,7 @@ class DatasetControllerTest {
             "orders",
             "Order data",
             category,
-            "CUSTOM",
+            "TABLE", "SOURCE",
             LocalDateTime.now(),
             false,
             List.of(),
@@ -95,7 +95,7 @@ class DatasetControllerTest {
     PageResponse<DatasetResponse> page = new PageResponse<>(List.of(dataset), 0, 20, 1, 1);
 
     when(datasetService.getDatasets(
-            any(), any(), any(), anyInt(), anyInt(), anyLong(), any(), anyBoolean()))
+            any(), any(), any(), any(), anyInt(), anyInt(), anyLong(), any(), anyBoolean()))
         .thenReturn(page);
 
     mockMvc
@@ -108,7 +108,7 @@ class DatasetControllerTest {
   @Test
   void createDataset_withPermission_returnsCreated() throws Exception {
     CreateDatasetRequest request =
-        new CreateDatasetRequest("Orders", "orders", "Order data", 1L, "CUSTOM", List.of(), null);
+        new CreateDatasetRequest("Orders", "orders", "Order data", 1L, "TABLE", "SOURCE", List.of(), null);
     DatasetDetailResponse detail =
         new DatasetDetailResponse(
             1L,
@@ -116,7 +116,7 @@ class DatasetControllerTest {
             "orders",
             "Order data",
             new CategoryResponse(1L, "Sales", "Sales data"),
-            "CUSTOM",
+            "TABLE", "SOURCE",
             "testuser",
             List.of(),
             0L,
@@ -155,7 +155,7 @@ class DatasetControllerTest {
             "orders",
             "Order data",
             new CategoryResponse(1L, "Sales", "Sales data"),
-            "CUSTOM",
+            "TABLE", "SOURCE",
             "testuser",
             List.of(),
             100L,

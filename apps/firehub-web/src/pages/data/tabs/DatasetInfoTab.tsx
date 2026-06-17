@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { useUpdateDataset } from '../../../hooks/queries/useDatasets';
-import { formatDate, getDatasetTypeLabel } from '../../../lib/formatters';
+import { formatDate, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
 import type { ErrorResponse } from '../../../types/auth';
@@ -89,7 +89,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       {/* Top Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* DOCUMENT 유형은 행/컬럼 개념이 없으므로 해당 카드 숨김 (#286) */}
-        {dataset.datasetType !== 'DOCUMENT' && (
+        {dataset.storageType !== 'DOCUMENT' && (
           <>
             {/* Row Count */}
             <Card className="p-4">
@@ -110,11 +110,10 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         {/* Type */}
         <Card className="p-4">
           <Tag size={20} className="text-muted-foreground mb-2" />
-          <div className="my-1">
-            <Badge variant="secondary">
-              {/* 이슈 #107: 영문 enum 노출 금지 — 한글 라벨로 통일 */}
-              {getDatasetTypeLabel(dataset.datasetType)}
-            </Badge>
+          <div className="my-1 flex gap-1">
+            {/* 이슈 #107: 영문 enum 노출 금지 — 저장 방식/출처를 한글 라벨 두 배지로 표시 */}
+            <Badge variant="secondary">{getStorageTypeLabel(dataset.storageType)}</Badge>
+            <Badge variant="secondary">{getOriginTypeLabel(dataset.originType)}</Badge>
           </div>
           <p className="text-sm text-muted-foreground">유형</p>
         </Card>
@@ -133,14 +132,14 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
-          {!isEditing && dataset.datasetType !== 'TEMP' && (
+          {!isEditing && dataset.originType !== 'TEMP' && (
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Edit className="h-4 w-4" />
               수정
             </Button>
           )}
         </div>
-        {dataset.datasetType === 'TEMP' && (
+        {dataset.originType === 'TEMP' && (
           <p className="text-sm text-muted-foreground mb-4 p-3 rounded-md bg-muted">
             파이프라인에서 자동 생성된 임시 데이터셋입니다.
           </p>
@@ -221,9 +220,11 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">데이터셋 타입</dt>
-              <dd>
-                <Badge variant={dataset.datasetType === 'SOURCE' ? 'default' : 'secondary'}>
-                  {getDatasetTypeLabel(dataset.datasetType)}
+              <dd className="flex gap-1">
+                {/* 저장 방식/출처를 분리하여 두 배지로 표시 */}
+                <Badge variant="secondary">{getStorageTypeLabel(dataset.storageType)}</Badge>
+                <Badge variant={dataset.originType === 'SOURCE' ? 'default' : 'secondary'}>
+                  {getOriginTypeLabel(dataset.originType)}
                 </Badge>
               </dd>
             </div>

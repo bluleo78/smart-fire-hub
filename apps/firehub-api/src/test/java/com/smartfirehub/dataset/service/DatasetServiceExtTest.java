@@ -61,13 +61,13 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     List<DatasetColumnRequest> columns =
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null), testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null), testUserId);
   }
 
   private DatasetDetailResponse createDatasetWithColumns(
       String name, String tableName, List<DatasetColumnRequest> columns) {
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null), testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null), testUserId);
   }
 
   // =========================================================================
@@ -86,7 +86,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             () ->
                 datasetService.createDataset(
                     new CreateDatasetRequest(
-                        "NullPK", "null_pk", null, null, "SOURCE", columns, null),
+                        "NullPK", "null_pk", null, null, "TABLE", "SOURCE", columns, null),
                     testUserId))
         .isInstanceOf(ColumnModificationException.class)
         .hasMessageContaining("nullable");
@@ -101,7 +101,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             () ->
                 datasetService.createDataset(
                     new CreateDatasetRequest(
-                        "BadCat", "bad_cat", null, 999999L, "SOURCE", columns, null),
+                        "BadCat", "bad_cat", null, 999999L, "TABLE", "SOURCE", columns, null),
                     testUserId))
         .isInstanceOf(CategoryNotFoundException.class);
   }
@@ -116,7 +116,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             () ->
                 datasetService.createDataset(
                     new CreateDatasetRequest(
-                        "DupTable2", "dup_table_ext", null, null, "SOURCE", columns, null),
+                        "DupTable2", "dup_table_ext", null, null, "TABLE", "SOURCE", columns, null),
                     testUserId))
         .isInstanceOf(DuplicateDatasetNameException.class);
   }
@@ -131,9 +131,9 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     datasetService.updateStatus(ds.id(), new UpdateStatusRequest("CERTIFIED", "ok"), testUserId);
 
     PageResponse<DatasetResponse> certified =
-        datasetService.getDatasets(null, null, null, 0, 10, testUserId, "CERTIFIED", false);
+        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, "CERTIFIED", false);
     PageResponse<DatasetResponse> deprecated =
-        datasetService.getDatasets(null, null, null, 0, 10, testUserId, "DEPRECATED", false);
+        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, "DEPRECATED", false);
 
     List<Long> certIds = certified.content().stream().map(DatasetResponse::id).toList();
     assertThat(certIds).contains(ds.id());
@@ -150,7 +150,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     datasetFavoriteService.toggleFavorite(fav.id(), testUserId);
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, null, 0, 10, testUserId, null, true);
+        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, null, true);
 
     List<Long> ids = result.content().stream().map(DatasetResponse::id).toList();
     assertThat(ids).contains(fav.id());
@@ -162,7 +162,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     createSimpleDataset("IgnoreMeExt", "ignore_me_ext");
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, "SearchMeExt", 0, 10, null, null, false);
+        datasetService.getDatasets(null, null, null, "SearchMeExt", 0, 10, null, null, false);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("SearchMeExt");

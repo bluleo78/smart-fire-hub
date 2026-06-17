@@ -96,7 +96,7 @@ public class DatasetService {
     DatasetResponse dataset = datasetRepository.save(request, userId);
     // DOCUMENT 데이터셋은 데이터가 document_chunk 에 저장되므로 data.<table> 동적 테이블을 만들지 않는다.
     // dataset.table_name 은 메타데이터 식별자로만 쓰이며, 컬럼 영속화/물리 테이블 생성을 건너뛴다.
-    if (!DOCUMENT_TYPE.equals(request.datasetType())) {
+    if (!DOCUMENT_TYPE.equals(request.storageType())) {
       columnRepository.saveBatch(dataset.id(), request.columns());
       dataTableService.createTable(request.tableName(), request.columns());
     }
@@ -123,22 +123,24 @@ public class DatasetService {
   }
 
   /** DOCUMENT 데이터셋은 동적 테이블/컬럼이 없으므로 컬럼·행 조작을 거부한다. */
-  private void rejectIfDocument(String datasetType, String operation) {
-    if (DOCUMENT_TYPE.equals(datasetType)) {
+  private void rejectIfDocument(String storageType, String operation) {
+    if (DOCUMENT_TYPE.equals(storageType)) {
       throw new IllegalArgumentException("DOCUMENT 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
     }
   }
 
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
-      Long categoryId, String datasetType, String search, int page, int size) {
-    return getDatasets(categoryId, datasetType, search, page, size, null, null, false);
+      Long categoryId, String storageType, String originType, String search, int page, int size) {
+    return getDatasets(
+        categoryId, storageType, originType, search, page, size, null, null, false);
   }
 
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
       Long categoryId,
-      String datasetType,
+      String storageType,
+      String originType,
       String search,
       int page,
       int size,
@@ -147,10 +149,18 @@ public class DatasetService {
       boolean favoriteOnly) {
     List<DatasetResponse> content =
         datasetRepository.findAll(
-            categoryId, datasetType, search, page, size, currentUserId, status, favoriteOnly);
+            categoryId,
+            storageType,
+            originType,
+            search,
+            page,
+            size,
+            currentUserId,
+            status,
+            favoriteOnly);
     long totalElements =
         datasetRepository.count(
-            categoryId, datasetType, search, currentUserId, status, favoriteOnly);
+            categoryId, storageType, originType, search, currentUserId, status, favoriteOnly);
     int totalPages = (int) Math.ceil((double) totalElements / size);
     return new PageResponse<>(content, page, size, totalElements, totalPages);
   }
@@ -171,7 +181,7 @@ public class DatasetService {
     // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없으므로 countRows(존재하지 않는 테이블 COUNT) 가 실패한다.
     // 문서 행 수는 document_chunk 기준이며 Task 4 범위 밖이므로 0 으로 반환한다.
     long rowCount =
-        DOCUMENT_TYPE.equals(dataset.datasetType())
+        DOCUMENT_TYPE.equals(dataset.storageType())
             ? 0L
             : dataTableRowService.countRows(dataset.tableName());
 
@@ -216,7 +226,8 @@ public class DatasetService {
         dataset.tableName(),
         dataset.description(),
         dataset.category(),
-        dataset.datasetType(),
+        dataset.storageType(),
+        dataset.originType(),
         createdByUsername,
         columns,
         rowCount,
@@ -268,7 +279,7 @@ public class DatasetService {
 
     // DOCUMENT 데이터셋은 동적 테이블을 만든 적이 없으므로 DROP 을 시도하지 않는다.
     // document_file/document_chunk 행은 dataset 삭제 시 FK CASCADE 로 함께 제거된다.
-    if (!DOCUMENT_TYPE.equals(dataset.datasetType())) {
+    if (!DOCUMENT_TYPE.equals(dataset.storageType())) {
       dataTableService.dropTable(dataset.tableName());
     }
     columnRepository.deleteByDatasetId(id);
@@ -304,7 +315,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
-    rejectIfDocument(dataset.datasetType(), "컬럼 관리");
+    rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
     dataTableService.validateName(request.columnName());
 
@@ -358,7 +369,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
-    rejectIfDocument(dataset.datasetType(), "컬럼 관리");
+    rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
     DatasetColumnResponse column =
         columnRepository
@@ -529,7 +540,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
-    rejectIfDocument(dataset.datasetType(), "기본키 변경");
+    rejectIfDocument(dataset.storageType(), "기본키 변경");
 
     List<Long> pkIds = requestedPkIds != null ? requestedPkIds : List.of();
 
@@ -579,7 +590,7 @@ public class DatasetService {
         datasetRepository
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
-    rejectIfDocument(dataset.datasetType(), "컬럼 관리");
+    rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
     DatasetColumnResponse column =
         columnRepository
@@ -767,7 +778,7 @@ public class DatasetService {
             .findById(sourceId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + sourceId));
     // DOCUMENT 데이터셋은 동적 테이블이 없어 복제 시 phantom 테이블이 생기므로 Phase 1 에서는 거부한다.
-    rejectIfDocument(sourceDataset.datasetType(), "복제");
+    rejectIfDocument(sourceDataset.storageType(), "복제");
 
     List<DatasetColumnResponse> sourceColumns = columnRepository.findByDatasetId(sourceId);
 
@@ -789,7 +800,8 @@ public class DatasetService {
             request.tableName(),
             description,
             sourceDataset.category() != null ? sourceDataset.category().id() : null,
-            sourceDataset.datasetType(),
+            sourceDataset.storageType(),
+            sourceDataset.originType(),
             List.of(), // columns will be added separately
             null // sourcePipelineStepId — cloned datasets are not auto-generated
             );

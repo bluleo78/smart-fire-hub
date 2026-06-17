@@ -44,7 +44,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
             "exec_test",
             null,
             null,
-            "SOURCE",
+            "TABLE", "SOURCE",
             List.of(
                 new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
                 new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)),
@@ -204,7 +204,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
                     "schema_test_a",
                     null,
                     null,
-                    "SOURCE",
+                    "TABLE", "SOURCE",
                     List.of(
                         new DatasetColumnRequest("col_a1", "A1", "TEXT", null, true, false, null),
                         new DatasetColumnRequest(
@@ -220,7 +220,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
                     "schema_test_b",
                     null,
                     null,
-                    "SOURCE",
+                    "TABLE", "SOURCE",
                     List.of(
                         new DatasetColumnRequest("col_b1", "B1", "TEXT", null, true, false, null)),
                     null),

@@ -31,7 +31,7 @@ test.describe('데이터셋 목록 페이지', () => {
     // '데이터셋 1' 행에 '원본' 유형 배지와 '기본 카테고리' 카테고리 텍스트가 렌더링되는지 셀 단위 검증
     const firstDataRow = page.getByRole('row', { name: /데이터셋 1/ });
     await expect(firstDataRow).toBeVisible();
-    // datasetType='SOURCE' → '원본' 배지
+    // originType='SOURCE' → '원본' 배지
     await expect(firstDataRow.getByText('원본')).toBeVisible();
     // category.name='기본 카테고리' (createDatasets는 createCategory() 기본값을 사용)
     await expect(firstDataRow.getByText('기본 카테고리')).toBeVisible();
@@ -40,17 +40,20 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page.getByRole('row', { name: /데이터셋 5/ })).toBeVisible();
   });
 
-  test('데이터셋 추가 버튼 클릭 시 /new 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
+  test('데이터셋 추가 버튼 클릭 시 유형 선택 모달이 열리고 선택 시 생성 폼으로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDatasetMocks(page);
 
-    // 생성 페이지도 미리 카테고리 API 모킹 (이동 후 사용)
     await page.goto('/data/datasets');
 
-    // "데이터셋 추가" 버튼 클릭 (Link → <a> role="link")
-    await page.getByRole('link', { name: /데이터셋 추가/ }).click();
+    // "데이터셋 추가" 버튼 클릭 → 2단계 유형 선택 모달이 열린다 (더 이상 직접 navigate 하지 않음)
+    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('어떤 데이터셋을 만드시나요?')).toBeVisible();
 
-    // /data/datasets/new 페이지로 이동 확인
-    await expect(page).toHaveURL('/data/datasets/new');
+    // 테이블 → 원본 선택 시 URL 쿼리와 함께 생성 폼으로 이동
+    await dialog.getByRole('button', { name: '테이블' }).click();
+    await dialog.getByRole('button', { name: '원본' }).click();
+    await expect(page).toHaveURL('/data/datasets/new?storageType=TABLE&originType=SOURCE');
   });
 
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
@@ -173,22 +176,22 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(page).toHaveURL(/\/data\/datasets\/1/);
   });
 
-  test('유형 필터 선택 시 datasetType 파라미터가 반영된다', async ({ authenticatedPage: page }) => {
+  test('출처 필터 선택 시 originType 파라미터가 반영된다', async ({ authenticatedPage: page }) => {
     await setupDatasetMocks(page);
     await page.goto('/data/datasets');
 
     await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
 
-    // 유형 필터 재요청 캡처
+    // 출처 필터 재요청 캡처
     const capture = await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]), { capture: true });
 
-    // "원본" 유형 선택
-    await page.getByRole('combobox').first().click();
+    // "원본" 출처 선택 — "전체 출처" 트리거로 출처 SELECT 식별
+    await page.getByRole('combobox').filter({ hasText: /전체 출처/ }).first().click();
     await page.getByRole('option', { name: '원본' }).click();
 
-    // API 요청에 datasetType=SOURCE 가 전달되는지 검증
+    // API 요청에 originType=SOURCE 가 전달되는지 검증
     const req = await capture.waitForRequest();
-    expect(req.searchParams.get('datasetType')).toBe('SOURCE');
+    expect(req.searchParams.get('originType')).toBe('SOURCE');
   });
 
   test('삭제 버튼 클릭 시 삭제 확인 AlertDialog가 열린다', async ({ authenticatedPage: page }) => {
@@ -218,8 +221,8 @@ test.describe('데이터셋 목록 페이지', () => {
     // 상태 필터 재요청 캡처
     const capture = await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]), { capture: true });
 
-    // 두 번째 combobox 가 상태 필터 (유형/상태 순서)
-    const statusCombobox = page.getByRole('combobox').nth(1);
+    // 상태 필터 — "전체 상태" 트리거로 식별 (저장방식/출처 SELECT와 구분)
+    const statusCombobox = page.getByRole('combobox').filter({ hasText: /전체 상태/ }).first();
     await statusCombobox.click();
     await page.getByRole('option', { name: '인증됨' }).click();
 

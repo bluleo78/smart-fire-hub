@@ -67,7 +67,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Query Test DS", testTableName, null, null, "SOURCE", columns, null),
+                "Query Test DS", testTableName, null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     testDatasetId = dataset.id();
 

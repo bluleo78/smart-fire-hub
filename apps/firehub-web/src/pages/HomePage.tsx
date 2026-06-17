@@ -394,7 +394,7 @@ export default function HomePage() {
                         <span className="text-sm truncate group-hover:text-foreground">{ds.name}</span>
                         <FreshnessBar lastUpdated={ds.createdAt} className="ml-2" />
                         <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
-                          {ds.datasetType === 'SOURCE' ? '소스' : '파생'}
+                          {ds.storageType === 'DOCUMENT' ? '문서' : ds.originType === 'DERIVED' ? '파생' : '원본'}
                         </Badge>
                       </div>
                     </button>

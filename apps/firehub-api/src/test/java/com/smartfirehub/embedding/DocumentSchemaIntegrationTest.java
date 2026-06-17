@@ -41,8 +41,8 @@ class DocumentSchemaIntegrationTest extends IntegrationTestBase {
     // DOCUMENT 타입 데이터셋 생성 (V61 제약에 DOCUMENT가 추가되어야 통과)
     Long datasetId =
         dsl.fetchOne(
-                "INSERT INTO dataset(name, table_name, dataset_type, created_by) "
-                    + "VALUES ('docset-test','data.docset_test','DOCUMENT', ?) RETURNING id",
+                "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) "
+                    + "VALUES ('docset-test','data.docset_test','DOCUMENT', 'SOURCE', ?) RETURNING id",
                 userId)
             .get(0, Long.class);
 

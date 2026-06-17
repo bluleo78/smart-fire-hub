@@ -106,11 +106,20 @@ export function formatIpAddress(ip: string | null | undefined): string {
   return trimmed;
 }
 
-/**
- * 데이터셋 타입 enum → 한글 라벨 (이슈 #107).
- * 사용자 화면에서는 영문 enum이 노출되지 않도록 매핑.
- */
-export function getDatasetTypeLabel(type: string): string {
+/** 저장 방식 라벨 */
+export function getStorageTypeLabel(type: string): string {
+  switch (type) {
+    case 'TABLE':
+      return '테이블';
+    case 'DOCUMENT':
+      return '문서';
+    default:
+      return type;
+  }
+}
+
+/** 출처 라벨 */
+export function getOriginTypeLabel(type: string): string {
   switch (type) {
     case 'SOURCE':
       return '원본';
@@ -118,8 +127,6 @@ export function getDatasetTypeLabel(type: string): string {
       return '파생';
     case 'TEMP':
       return '임시';
-    case 'DOCUMENT':
-      return '문서';
     default:
       return type;
   }

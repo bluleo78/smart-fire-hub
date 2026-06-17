@@ -57,7 +57,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     DatasetDetailResponse inputDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Input Dataset", "input_dataset", null, null, "SOURCE", columns, null),
+                "Input Dataset", "input_dataset", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     inputDatasetId = inputDataset.id();
 
@@ -65,7 +65,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     DatasetDetailResponse outputDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Output Dataset", "output_dataset", null, null, "DERIVED", columns, null),
+                "Output Dataset", "output_dataset", null, null, "TABLE", "DERIVED", columns, null),
             testUserId);
     outputDatasetId = outputDataset.id();
   }

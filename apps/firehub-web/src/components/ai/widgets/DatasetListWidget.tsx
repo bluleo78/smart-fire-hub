@@ -4,7 +4,9 @@ import { WidgetShell } from './WidgetShell';
 interface DatasetListItem {
   id: number;
   name: string;
-  datasetType?: string;
+  // 데이터셋 유형이 저장 방식(storageType) + 출처(originType)로 분리됨
+  storageType?: string;
+  originType?: string;
   rowCount?: number;
   updatedAt?: string;
 }
@@ -13,20 +15,17 @@ interface ShowDatasetListInput {
   items: DatasetListItem[];
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  SOURCE: '원본',
-  DERIVED: '파생',
-  TEMP: '임시',
-  DOCUMENT: '문서', // 비정형 문서 데이터셋 레이블
-};
+/** 저장 방식 라벨 — DatasetListPage와 동일하게 테이블/문서로 표시 */
+function storageLabel(storageType?: string): string {
+  return storageType === 'DOCUMENT' ? '문서' : '테이블';
+}
 
-/* 데이터셋 타입별 배지 색상 — 시맨틱 토큰 사용 */
-const TYPE_CLASS: Record<string, string> = {
-  SOURCE: 'bg-info/10 text-info',
-  DERIVED: 'bg-success/10 text-success',
-  TEMP: 'bg-warning/10 text-warning',
-  DOCUMENT: 'bg-secondary/10 text-secondary-foreground', // 문서 유형 배지 색상
-};
+/** 출처 라벨 — 원본/파생/임시 */
+function originLabel(originType?: string): string {
+  if (originType === 'DERIVED') return '파생';
+  if (originType === 'TEMP') return '임시';
+  return '원본';
+}
 
 function formatDate(dateStr: string | undefined): string {
   if (!dateStr) return '-';
@@ -60,9 +59,15 @@ export default function DatasetListWidget({ input, onNavigate, displayMode }: Wi
             >
               <div className="flex items-center gap-2">
                 <span className="flex-1 truncate text-sm font-medium">{item.name}</span>
-                {item.datasetType && (
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${TYPE_CLASS[item.datasetType] ?? 'bg-muted text-muted-foreground'}`}>
-                    {TYPE_LABEL[item.datasetType] ?? item.datasetType}
+                {/* 저장 방식 + 출처를 두 배지로 분리 표시 — DatasetListPage와 일관 */}
+                {item.storageType && (
+                  <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-secondary/10 text-secondary-foreground">
+                    {storageLabel(item.storageType)}
+                  </span>
+                )}
+                {item.originType && (
+                  <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary">
+                    {originLabel(item.originType)}
                   </span>
                 )}
               </div>

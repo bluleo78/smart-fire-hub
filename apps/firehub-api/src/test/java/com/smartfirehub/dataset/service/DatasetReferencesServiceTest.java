@@ -71,14 +71,14 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
     DatasetDetailResponse target =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Refs Target", "refs_target", null, null, "SOURCE", columns, null),
+                "Refs Target", "refs_target", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     targetDatasetId = target.id();
 
     DatasetDetailResponse other =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Refs Other", "refs_other", null, null, "SOURCE", columns, null),
+                "Refs Other", "refs_other", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     otherDatasetId = other.id();
   }

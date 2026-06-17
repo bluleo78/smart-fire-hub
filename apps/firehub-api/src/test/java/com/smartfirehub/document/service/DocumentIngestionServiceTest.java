@@ -57,8 +57,8 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
             .get(0, Long.class);
     Long datasetId =
         dsl.fetchOne(
-                "INSERT INTO dataset(name, table_name, dataset_type, created_by) VALUES"
-                    + " ('docing-set','data.docing_set','DOCUMENT', ?) RETURNING id",
+                "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+                    + " ('docing-set','data.docing_set','DOCUMENT', 'SOURCE', ?) RETURNING id",
                 userId)
             .get(0, Long.class);
     byte[] data = "소방 점검 보고서. 화재 예방 점검 결과.".repeat(50).getBytes();

@@ -10,7 +10,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 test.describe('데이터셋 목록 — 호버 내보내기 액션', () => {
   const datasets = [
-    createDataset({ id: 1, name: '고객 데이터셋', datasetType: 'SOURCE', status: 'CERTIFIED' }),
+    createDataset({ id: 1, name: '고객 데이터셋', storageType: 'TABLE', originType: 'SOURCE', status: 'CERTIFIED' }),
   ];
 
   async function setupCommon(page: import('@playwright/test').Page) {

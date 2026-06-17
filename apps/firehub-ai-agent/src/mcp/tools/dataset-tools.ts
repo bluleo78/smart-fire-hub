@@ -13,10 +13,14 @@ export function registerDatasetTools(
       '데이터셋 목록을 조회합니다. 데이터셋이 많을 때는 search 키워드로 후보를 좁혀 조회하세요(전체 페이징 금지).',
       {
         categoryId: z.number().optional().describe('카테고리 ID'),
-        datasetType: z
-          .enum(['SOURCE', 'DERIVED', 'DOCUMENT'])
+        storageType: z
+          .enum(['TABLE', 'DOCUMENT'])
           .optional()
-          .describe('데이터셋 타입 (SOURCE/DERIVED=정형, DOCUMENT=비정형 문서)'),
+          .describe('저장 방식 (TABLE=정형 테이블, DOCUMENT=비정형 문서)'),
+        originType: z
+          .enum(['SOURCE', 'DERIVED', 'TEMP'])
+          .optional()
+          .describe('출처 (SOURCE=원본, DERIVED=파생, TEMP=임시)'),
         search: z
           .string()
           .optional()
@@ -28,7 +32,8 @@ export function registerDatasetTools(
       },
       async (args: {
         categoryId?: number;
-        datasetType?: string;
+        storageType?: string;
+        originType?: string;
         search?: string;
         status?: string;
         favoriteOnly?: boolean;
@@ -87,10 +92,10 @@ export function registerDatasetTools(
         tableName: z.string().describe('테이블 이름 ([a-z][a-z0-9_]* 패턴)'),
         description: z.string().optional().describe('데이터셋 설명'),
         categoryId: z.number().optional().describe('카테고리 ID'),
-        datasetType: z
+        originType: z
           .enum(['SOURCE', 'DERIVED'])
           .optional()
-          .describe('데이터셋 타입 (SOURCE 또는 DERIVED, 기본값: SOURCE)'),
+          .describe('출처 (SOURCE=원본, DERIVED=파생, 기본값: SOURCE). 저장 방식은 항상 TABLE(정형 테이블)입니다.'),
         columns: z
           .array(
             z.object({
@@ -120,7 +125,7 @@ export function registerDatasetTools(
         tableName: string;
         description?: string;
         categoryId?: number;
-        datasetType?: string;
+        originType?: string;
         columns: Array<{
           columnName: string;
           displayName: string;
@@ -132,7 +137,9 @@ export function registerDatasetTools(
           description?: string;
         }>;
       }) => {
-        const result = await apiClient.createDataset(args);
+        // 에이전트는 정형 데이터셋만 생성하므로 storageType 은 항상 TABLE 로 고정한다.
+        // (비정형 DOCUMENT 데이터셋은 파일 업로드가 필요해 이 도구로 생성할 수 없다.)
+        const result = await apiClient.createDataset({ ...args, storageType: 'TABLE' });
         return jsonResult(result);
       },
     ),

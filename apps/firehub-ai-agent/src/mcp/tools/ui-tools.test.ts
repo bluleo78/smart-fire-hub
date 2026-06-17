@@ -180,8 +180,8 @@ describe('UI MCP Tools', () => {
     it('returns displayed: true with count', async () => {
       const result = await invokeTool(server, 'show_dataset_list', {
         items: [
-          { id: 1, name: '화재 데이터', datasetType: 'TABLE', rowCount: 100 },
-          { id: 2, name: '소방서 위치', datasetType: 'TABLE' },
+          { id: 1, name: '화재 데이터', storageType: 'TABLE', originType: 'SOURCE', rowCount: 100 },
+          { id: 2, name: '소방서 위치', storageType: 'TABLE', originType: 'SOURCE' },
         ],
       });
 

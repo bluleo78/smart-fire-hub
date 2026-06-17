@@ -10,7 +10,8 @@ export interface DatasetResponse {
   tableName: string;
   description: string | null;
   category: CategoryResponse | null;
-  datasetType: 'SOURCE' | 'DERIVED' | 'TEMP' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT';
+  originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   createdAt: string;
   isFavorite: boolean;
   tags: string[];
@@ -52,7 +53,8 @@ export interface DatasetDetailResponse {
   tableName: string;
   description: string | null;
   category: CategoryResponse | null;
-  datasetType: 'SOURCE' | 'DERIVED' | 'TEMP' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT';
+  originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   createdBy: string;
   columns: DatasetColumnResponse[];
   // DOCUMENT 데이터셋은 동적 테이블이 없어 백엔드가 null을 반환한다.
@@ -74,7 +76,8 @@ export interface CreateDatasetRequest {
   tableName: string;
   description?: string;
   categoryId?: number;
-  datasetType: 'SOURCE' | 'DERIVED' | 'TEMP' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT';
+  originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   columns: DatasetColumnRequest[];
   sourcePipelineStepId?: number;
 }

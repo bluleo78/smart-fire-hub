@@ -83,7 +83,8 @@ export function registerUiTools(
         items: z.array(z.object({
           id: z.coerce.number(),
           name: z.string(),
-          datasetType: z.string().optional(),
+          storageType: z.string().optional(),
+          originType: z.string().optional(),
           rowCount: z.coerce.number().optional(),
           updatedAt: z.string().optional(),
         })).describe('데이터셋 목록'),

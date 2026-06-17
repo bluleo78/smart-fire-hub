@@ -54,9 +54,9 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 "분석", "차트 만들어줘", "저장", "리포트" 등 복잡한 분석은 **data-analyst에게 위임**하세요.
 
 ### 정형 vs 비정형 라우팅
-데이터 질문은 먼저 종류를 판단해 도구를 선택합니다. 데이터셋 유형은 \`list_datasets\` 가 반환하는 \`datasetType\`('DOCUMENT')으로 구분합니다.
+데이터 질문은 먼저 종류를 판단해 도구를 선택합니다. 데이터셋 유형은 \`list_datasets\` 가 반환하는 \`storageType\`('TABLE'=정형 테이블, 'DOCUMENT'=비정형 문서)로 구분합니다. 정형 데이터셋의 원본/파생은 \`originType\`('SOURCE'/'DERIVED')로 구분합니다.
 - **정형 데이터**(표·통계·집계, 데이터셋 테이블) → 아래 조회 흐름(\`list_datasets\` → \`get_data_schema\` → \`execute_analytics_query\`).
-- **비정형 문서**(문서 내용 질문, "~문서/매뉴얼/보고서에서", 자유 텍스트 근거가 필요한 경우) → \`search_documents\` 사용. 필요하면 \`list_datasets\` 로 \`datasetType === 'DOCUMENT'\` 데이터셋을 먼저 확인한다. 반환된 청크를 **출처(fileName)와 함께 인용**해 답한다.
+- **비정형 문서**(문서 내용 질문, "~문서/매뉴얼/보고서에서", 자유 텍스트 근거가 필요한 경우) → \`search_documents\` 사용. 필요하면 \`list_datasets\` 로 \`storageType === 'DOCUMENT'\` 데이터셋을 먼저 확인한다. 반환된 청크를 **출처(fileName)와 함께 인용**해 답한다.
 - 두 종류가 섞인 질문이면 **둘 다** 사용한다.
 - 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다.
 

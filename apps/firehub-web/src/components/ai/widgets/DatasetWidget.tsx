@@ -174,7 +174,7 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
     <WidgetShell
       title={dataset.name}
       icon="📦"
-      subtitle={DATASET_TYPE_LABEL[dataset.datasetType]}
+      subtitle={dataset.storageType === 'DOCUMENT' ? '문서' : DATASET_TYPE_LABEL[dataset.originType]}
       navigateTo={`/data/datasets/${dataset.id}`}
       onNavigate={onNavigate}
       displayMode={displayMode}

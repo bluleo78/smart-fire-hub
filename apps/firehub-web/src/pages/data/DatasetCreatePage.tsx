@@ -1,23 +1,18 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef, useState } from 'react';
 import { FormProvider,useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import { SearchableSelect } from '../../components/ui/searchable-select';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../../components/ui/select';
 import { useCategories, useCreateDataset, useDatasets } from '../../hooks/queries/useDatasets';
 import { handleApiError } from '../../lib/api-error';
+import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
 import { createDatasetSchema } from '../../lib/validations/dataset';
 import { SchemaBuilder } from './components/SchemaBuilder';
@@ -29,36 +24,46 @@ export default function DatasetCreatePage() {
 
   const categories = categoriesData || [];
 
+  // 유형은 더 이상 폼에서 선택하지 않고 URL 쿼리(생성 유형 선택 모달에서 전달)로 고정한다.
+  const [searchParams] = useSearchParams();
+  const storageType = (searchParams.get('storageType') === 'DOCUMENT' ? 'DOCUMENT' : 'TABLE') as 'TABLE' | 'DOCUMENT';
+  const originType = (() => {
+    const o = searchParams.get('originType');
+    return o === 'DERIVED' || o === 'TEMP' ? o : 'SOURCE';
+  })() as 'SOURCE' | 'DERIVED' | 'TEMP';
+  // DOCUMENT 유형 여부 — 칼럼·테이블명 UI 토글에 사용 (URL에서 파생되므로 폼 watch 불필요)
+  const isDocument = storageType === 'DOCUMENT';
+
   const form = useForm<CreateDatasetFormData>({
     mode: 'onSubmit',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(createDatasetSchema) as any,
     defaultValues: {
       name: '',
-      tableName: '',
+      // DOCUMENT는 동적 테이블/컬럼이 없어 tableName을 규칙([a-z][a-z0-9_]*) 만족하는 메타 식별자로 자동 생성
+      tableName: isDocument ? `doc_${Date.now()}` : '',
       description: '',
       categoryId: undefined,
-      datasetType: 'SOURCE',
-      columns: [
-        {
-          columnName: '',
-          displayName: '',
-          dataType: 'TEXT',
-          isNullable: true,
-          isIndexed: false,
-          isPrimaryKey: false,
-          description: '',
-        },
-      ],
+      storageType,
+      originType,
+      columns: isDocument
+        ? []
+        : [
+            {
+              columnName: '',
+              displayName: '',
+              dataType: 'TEXT',
+              isNullable: true,
+              isIndexed: false,
+              isPrimaryKey: false,
+              description: '',
+            },
+          ],
     },
   });
 
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
-
-  // DOCUMENT 유형 여부 — 유형이 바뀔 때마다 재렌더링되어 칼럼·테이블명 UI를 토글한다.
-  const watchedDatasetType = form.watch('datasetType');
-  const isDocument = watchedDatasetType === 'DOCUMENT';
 
   // 이름·테이블명 중복 검증을 위한 debounce 처리값 (#103).
   // 사용자가 입력을 멈추고 약 400ms 경과 후에만 검색 쿼리를 트리거하여 키 입력마다 API가 폭주하지 않도록 함.
@@ -127,7 +132,8 @@ export default function DatasetCreatePage() {
         tableName: data.tableName,
         description: data.description || undefined,
         categoryId: data.categoryId || undefined,
-        datasetType: data.datasetType,
+        storageType: data.storageType,
+        originType: data.originType,
         columns: data.columns.map((col) => ({
           columnName: col.columnName,
           displayName: col.displayName || undefined,
@@ -253,37 +259,12 @@ export default function DatasetCreatePage() {
                   />
                 </FormField>
 
-                <FormField
-                  label="데이터셋 유형"
-                  htmlFor="datasetType"
-                  required
-                  error={form.formState.errors.datasetType?.message}
-                >
-                  <Select
-                    value={form.watch('datasetType')}
-                    onValueChange={(value) => {
-                      const v = value as 'SOURCE' | 'DERIVED' | 'TEMP' | 'DOCUMENT';
-                      form.setValue('datasetType', v);
-                      // DOCUMENT는 동적 테이블/컬럼이 없다. tableName은 메타 식별자로만 쓰이므로
-                      // 규칙([a-z][a-z0-9_]*)을 만족하는 doc_<timestamp>를 자동 생성하고 컬럼은 비운다.
-                      if (v === 'DOCUMENT') {
-                        form.setValue('tableName', `doc_${Date.now()}`);
-                        form.setValue('columns', []);
-                      } else if (watchedDatasetType === 'DOCUMENT') {
-                        // 문서→다른 유형 전환 시 자동 생성된 tableName을 비워 사용자가 직접 입력하도록 한다
-                        form.setValue('tableName', '');
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="SOURCE">원본</SelectItem>
-                      <SelectItem value="DERIVED">파생</SelectItem>
-                      <SelectItem value="DOCUMENT">문서</SelectItem>
-                    </SelectContent>
-                  </Select>
+                {/* 유형은 생성 유형 선택 모달에서 정해 URL로 고정되므로 폼에서 변경 불가 — 읽기 전용으로 표시 */}
+                <FormField label="데이터셋 유형" htmlFor="datasetTypeDisplay">
+                  <div id="datasetTypeDisplay" className="flex items-center gap-2 h-9">
+                    <Badge variant="secondary">{getStorageTypeLabel(storageType)}</Badge>
+                    <Badge variant="secondary">{getOriginTypeLabel(originType)}</Badge>
+                  </div>
                 </FormField>
               </div>
             </div>

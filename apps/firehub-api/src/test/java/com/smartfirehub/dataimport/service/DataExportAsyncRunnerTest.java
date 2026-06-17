@@ -224,7 +224,7 @@ class DataExportAsyncRunnerTest {
 
   private DatasetResponse buildDataset(Long id, String tableName, String name) {
     return new DatasetResponse(
-        id, name, tableName, null, null, "SOURCE", null, false, null, null, null, null, null, null);
+        id, name, tableName, null, null, "TABLE", "SOURCE", null, false, null, null, null, null, null, null);
   }
 
   private DatasetColumnResponse buildColumn(

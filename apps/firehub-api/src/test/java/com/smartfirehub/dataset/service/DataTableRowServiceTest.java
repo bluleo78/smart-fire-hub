@@ -68,7 +68,7 @@ class DataTableRowServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
             new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(tableName, tableName, null, null, "SOURCE", columns, null),
+        new CreateDatasetRequest(tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
         testUserId);
   }
 
@@ -492,7 +492,7 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "upsert_new", "upsert_new", null, null, "SOURCE", columns, null),
+                "upsert_new", "upsert_new", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     String tableName = dataset.tableName();
 
@@ -520,7 +520,7 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "upsert_update", "upsert_update", null, null, "SOURCE", columns, null),
+                "upsert_update", "upsert_update", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     String tableName = dataset.tableName();
 

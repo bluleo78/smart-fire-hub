@@ -43,7 +43,7 @@ public class DocumentIngestionService {
             .findById(datasetId)
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
     // 문서 인제스션은 DOCUMENT 타입 데이터셋에서만 허용한다(SOURCE 등 다른 타입 차단).
-    if (!"DOCUMENT".equals(dataset.datasetType())) {
+    if (!"DOCUMENT".equals(dataset.storageType())) {
       throw new IllegalArgumentException("DOCUMENT 데이터셋만 문서를 업로드할 수 있습니다");
     }
     String checksum = storageService.checksum(data);

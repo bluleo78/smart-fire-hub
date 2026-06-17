@@ -38,7 +38,7 @@ test.describe('데이터셋 상세 페이지', () => {
     // rowCount '100' 표시 확인 (createDatasetDetail의 기본값 rowCount: 100)
     await expect(page.getByText('100').first()).toBeVisible();
 
-    // 데이터셋 유형 배지 — datasetType: 'SOURCE' → '원본' 표시
+    // 데이터셋 유형 배지 — originType: 'SOURCE' → '원본' 표시
     await expect(page.getByText('원본').first()).toBeVisible();
   });
 
@@ -485,7 +485,7 @@ test.describe('데이터셋 상세 페이지', () => {
   });
 
   test('TEMP 타입 데이터셋은 임시 배지를 표시한다', async ({ authenticatedPage: page }) => {
-    const detail = createDatasetDetail({ id: 1, datasetType: 'TEMP' });
+    const detail = createDatasetDetail({ id: 1, storageType: 'TABLE', originType: 'TEMP' });
     await mockApi(page, 'GET', '/api/v1/datasets/1', detail);
     await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
       columns: detail.columns,

@@ -68,7 +68,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
             new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "SOURCE", columns, null), testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null), testUserId);
   }
 
   /**
@@ -87,7 +87,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest(
                 colName, colName, dataType, maxLength, isNullable, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(tableName, tableName, null, null, "SOURCE", columns, null),
+        new CreateDatasetRequest(tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
         testUserId);
   }
 
@@ -101,7 +101,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     DatasetDetailResponse doc =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Doc Rows", "doc_rows", null, null, "DOCUMENT", List.of(), null),
+                "Doc Rows", "doc_rows", null, null, "DOCUMENT", "SOURCE", List.of(), null),
             testUserId);
 
     assertThatThrownBy(() -> datasetDataService.getRowCount(doc.id()))
@@ -745,7 +745,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     DatasetDetailResponse sourceDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Source DS", "source_ds", null, null, "SOURCE", sourceColumns, null),
+                "Source DS", "source_ds", null, null, "TABLE", "SOURCE", sourceColumns, null),
             testUserId);
 
     // 대상 데이터셋: "email" 컬럼에 description 없음
@@ -754,7 +754,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     DatasetDetailResponse targetDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Target DS", "target_ds", null, null, "SOURCE", targetColumns, null),
+                "Target DS", "target_ds", null, null, "TABLE", "SOURCE", targetColumns, null),
             testUserId);
 
     // description 전파 실행
@@ -779,7 +779,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     DatasetDetailResponse sourceDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Prop Source", "prop_source", null, null, "SOURCE", sourceColumns, null),
+                "Prop Source", "prop_source", null, null, "TABLE", "SOURCE", sourceColumns, null),
             testUserId);
 
     // 대상: "title" 컬럼에 기존 description 있음
@@ -788,7 +788,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     DatasetDetailResponse targetDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Prop Target", "prop_target", null, null, "SOURCE", targetColumns, null),
+                "Prop Target", "prop_target", null, null, "TABLE", "SOURCE", targetColumns, null),
             testUserId);
 
     datasetDataService.propagateDescriptions(targetDataset.id());

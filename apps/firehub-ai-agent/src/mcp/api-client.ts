@@ -134,7 +134,8 @@ export class FireHubApiClient {
 
   listDatasets(params?: {
     categoryId?: number;
-    datasetType?: string;
+    storageType?: string;
+    originType?: string;
     search?: string;
     status?: string;
     favoriteOnly?: boolean;
@@ -164,7 +165,8 @@ export class FireHubApiClient {
     tableName: string;
     description?: string;
     categoryId?: number;
-    datasetType?: string;
+    storageType?: string;
+    originType?: string;
     columns: Array<{
       columnName: string;
       displayName: string;

@@ -32,7 +32,8 @@ public class DatasetController {
   @RequirePermission("dataset:read")
   public ResponseEntity<PageResponse<DatasetResponse>> getDatasets(
       @RequestParam(required = false) Long categoryId,
-      @RequestParam(required = false) String datasetType,
+      @RequestParam(required = false) String storageType,
+      @RequestParam(required = false) String originType,
       @RequestParam(required = false) String search,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
@@ -44,7 +45,7 @@ public class DatasetController {
     Long userId = (Long) authentication.getPrincipal();
     PageResponse<DatasetResponse> response =
         datasetService.getDatasets(
-            categoryId, datasetType, search, page, size, userId, status, favoriteOnly);
+            categoryId, storageType, originType, search, page, size, userId, status, favoriteOnly);
     return ResponseEntity.ok(response);
   }
 

@@ -124,7 +124,7 @@ class DashboardHealthTest extends IntegrationTestBase {
             .getId();
 
     // ---- Datasets ----
-    // Note: dataset_type check constraint: SOURCE or DERIVED
+    // Note: storage_type(TABLE|DOCUMENT) + origin_type(SOURCE|DERIVED|TEMP) 두 축으로 분리됨
     // We insert directly; no data schema table is created in tests (that requires DataTableService)
 
     // Fresh dataset: SOURCE, imported 2h ago (within 24h)
@@ -132,7 +132,7 @@ class DashboardHealthTest extends IntegrationTestBase {
         dsl.insertInto(DATASET)
             .set(DATASET.NAME, "Fresh Dataset " + System.nanoTime())
             .set(DATASET.TABLE_NAME, "fresh_ds_" + System.nanoTime())
-            .set(DATASET.DATASET_TYPE, "SOURCE")
+            .set(DATASET.STORAGE_TYPE, "TABLE").set(DATASET.ORIGIN_TYPE, "SOURCE")
             .set(DATASET.CREATED_BY, testUserId)
             .set(DATASET.CREATED_AT, LocalDateTime.now().minusDays(7))
             .returning(DATASET.ID)
@@ -155,7 +155,7 @@ class DashboardHealthTest extends IntegrationTestBase {
         dsl.insertInto(DATASET)
             .set(DATASET.NAME, "Stale Dataset " + System.nanoTime())
             .set(DATASET.TABLE_NAME, "stale_ds_" + System.nanoTime())
-            .set(DATASET.DATASET_TYPE, "SOURCE")
+            .set(DATASET.STORAGE_TYPE, "TABLE").set(DATASET.ORIGIN_TYPE, "SOURCE")
             .set(DATASET.CREATED_BY, testUserId)
             .set(DATASET.CREATED_AT, LocalDateTime.now().minusDays(7))
             .returning(DATASET.ID)
@@ -178,7 +178,7 @@ class DashboardHealthTest extends IntegrationTestBase {
         dsl.insertInto(DATASET)
             .set(DATASET.NAME, "Critical Stale Dataset " + System.nanoTime())
             .set(DATASET.TABLE_NAME, "critical_stale_ds_" + System.nanoTime())
-            .set(DATASET.DATASET_TYPE, "SOURCE")
+            .set(DATASET.STORAGE_TYPE, "TABLE").set(DATASET.ORIGIN_TYPE, "SOURCE")
             .set(DATASET.CREATED_BY, testUserId)
             .set(DATASET.CREATED_AT, LocalDateTime.now().minusDays(30))
             .returning(DATASET.ID)

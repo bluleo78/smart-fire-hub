@@ -42,17 +42,17 @@ test.describe('DOCUMENT 데이터셋 생성', () => {
       await mockApi(page, 'GET', '/api/v1/datasets/10/queries', createPageResponse([]));
       await mockApi(page, 'GET', '/api/v1/datasets/tags', ['sample']);
 
-      await page.goto('/data/datasets/new');
+      // 유형은 폼 셀렉트가 아니라 생성 유형 선택 모달이 전달하는 URL 쿼리로 고정된다.
+      // 문서 유형은 모달에서 출처 단계를 건너뛰고 storageType=DOCUMENT 로 진입한다.
+      await page.goto('/data/datasets/new?storageType=DOCUMENT&originType=SOURCE');
 
       // 데이터셋 이름 입력
       await page.getByLabel('데이터셋 이름').fill('문서 데이터셋');
 
-      // 데이터셋 유형을 "문서"로 변경 — SelectTrigger는 role="combobox" 로 렌더링
-      await page.getByRole('combobox').filter({ hasText: '원본' }).click();
-      await page.getByRole('option', { name: '문서' }).click();
-
-      // 칼럼 정의 카드가 사라지는지 확인 (DOCUMENT는 동적 칼럼 없음)
+      // 칼럼 정의 카드가 표시되지 않는지 확인 (DOCUMENT는 동적 칼럼 없음)
       await expect(page.getByRole('heading', { name: '칼럼 정의' })).not.toBeVisible();
+      // 테이블명 입력 필드도 숨겨진다 (자동 생성)
+      await expect(page.getByLabel('테이블명')).toHaveCount(0);
 
       // 생성 버튼 클릭
       await page.getByRole('button', { name: '생성' }).click();
@@ -61,7 +61,8 @@ test.describe('DOCUMENT 데이터셋 생성', () => {
       const req = await capture.waitForRequest();
       expect(req.payload).toMatchObject({
         name: '문서 데이터셋',
-        datasetType: 'DOCUMENT',
+        storageType: 'DOCUMENT',
+        originType: 'SOURCE',
         columns: [],
       });
       // tableName은 doc_<timestamp> 형식 — 백엔드 식별자 규칙([a-z][a-z0-9_]*)을 만족

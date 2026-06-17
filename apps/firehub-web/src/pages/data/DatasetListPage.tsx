@@ -1,6 +1,6 @@
 import { BarChart3, Download, Eye, History, Info, Plus, Star, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -29,9 +29,10 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
-import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
+import { formatDateOnly, formatDateTimeMinute, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import { iGa } from '../../lib/utils';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
+import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
 import { ExportDialog } from './components/ExportDialog';
 
 function getRelativeTime(dateStr: string): string {
@@ -62,7 +63,8 @@ export default function DatasetListPage() {
   // URL → 상태 파싱 (매 렌더 시 동기화)
   const categoryIdParam = searchParams.get('categoryId');
   const categoryId = categoryIdParam ? Number(categoryIdParam) : undefined;
-  const datasetType = searchParams.get('datasetType') || '';
+  const storageType = searchParams.get('storageType') || '';
+  const originType = searchParams.get('originType') || '';
   const search = searchParams.get('q') || '';
   const page = Number(searchParams.get('page') || '0');
   const favoriteOnly = searchParams.get('favorite') === 'true';
@@ -120,10 +122,14 @@ export default function DatasetListPage() {
   const [exportDatasetId, setExportDatasetId] = useState<number | null>(null);
   const [exportDatasetName, setExportDatasetName] = useState('');
 
+  // 데이터셋 생성 유형 선택 모달 상태 — 저장 방식/출처를 먼저 고른 뒤 생성 폼으로 이동
+  const [typeModalOpen, setTypeModalOpen] = useState(false);
+
   const { data: categoriesData } = useCategories();
   const { data: datasetsData, isLoading } = useDatasets({
     categoryId,
-    datasetType: datasetType || undefined,
+    storageType: storageType || undefined,
+    originType: originType || undefined,
     search: search || undefined,
     page,
     size,
@@ -155,7 +161,7 @@ export default function DatasetListPage() {
   const totalPages = datasetsData?.totalPages || 0;
   const totalElements = datasetsData?.totalElements;
 
-  const noFiltersActive = !search && !categoryId && !datasetType && !favoriteOnly && !statusFilter;
+  const noFiltersActive = !search && !categoryId && !storageType && !originType && !favoriteOnly && !statusFilter;
 
   const handleDelete = async (id: number, name: string) => {
     try {
@@ -181,11 +187,9 @@ export default function DatasetListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">데이터셋 관리</h1>
-        <Button asChild>
-          <Link to="/data/datasets/new">
-            <Plus className="h-4 w-4" />
-            데이터셋 추가
-          </Link>
+        <Button onClick={() => setTypeModalOpen(true)}>
+          <Plus className="h-4 w-4" />
+          데이터셋 추가
         </Button>
       </div>
 
@@ -226,22 +230,33 @@ export default function DatasetListPage() {
               patchParams({ q: value, page: null });
             }}
           />
+          {/* 저장 방식 필터 */}
           <Select
-            value={datasetType || '__all__'}
-            onValueChange={(value) => {
-              patchParams({ datasetType: value === '__all__' ? null : value, page: null });
-            }}
+            value={storageType || '__all__'}
+            onValueChange={(v) => patchParams({ storageType: v === '__all__' ? null : v, page: null })}
           >
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="전체 유형" />
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="전체 저장방식" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__all__">전체 유형</SelectItem>
+              <SelectItem value="__all__">전체 저장방식</SelectItem>
+              <SelectItem value="TABLE">테이블</SelectItem>
+              <SelectItem value="DOCUMENT">문서</SelectItem>
+            </SelectContent>
+          </Select>
+          {/* 출처 필터 */}
+          <Select
+            value={originType || '__all__'}
+            onValueChange={(v) => patchParams({ originType: v === '__all__' ? null : v, page: null })}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="전체 출처" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">전체 출처</SelectItem>
               <SelectItem value="SOURCE">원본</SelectItem>
               <SelectItem value="DERIVED">파생</SelectItem>
               <SelectItem value="TEMP">임시</SelectItem>
-              {/* DOCUMENT 유형 — 비정형 문서 데이터셋 필터 */}
-              <SelectItem value="DOCUMENT">문서</SelectItem>
             </SelectContent>
           </Select>
 
@@ -396,20 +411,16 @@ export default function DatasetListPage() {
                     </div>
                   </TableCell>
 
+                  {/* 저장 방식 + 출처를 두 배지로 분리 표시 */}
                   <TableCell>
-                    {dataset.datasetType === 'SOURCE' && (
-                      <Badge className="bg-primary/10 text-primary border-0">원본</Badge>
-                    )}
-                    {dataset.datasetType === 'DERIVED' && (
-                      <Badge className="bg-success/10 text-success border-0">파생</Badge>
-                    )}
-                    {dataset.datasetType === 'TEMP' && (
-                      <Badge className="bg-muted text-muted-foreground border-0">임시</Badge>
-                    )}
-                    {/* DOCUMENT 유형 — 비정형 문서 데이터셋 배지 */}
-                    {dataset.datasetType === 'DOCUMENT' && (
-                      <Badge className="bg-secondary/10 text-secondary-foreground border-0">문서</Badge>
-                    )}
+                    <div className="flex gap-1">
+                      <Badge className="bg-secondary/10 text-secondary-foreground border-0">
+                        {getStorageTypeLabel(dataset.storageType)}
+                      </Badge>
+                      <Badge className="bg-primary/10 text-primary border-0">
+                        {getOriginTypeLabel(dataset.originType)}
+                      </Badge>
+                    </div>
                   </TableCell>
                   <TableCell>{dataset.category?.name || '-'}</TableCell>
                   <TableCell className="tabular-nums" title={formatDateTimeMinute(dataset.createdAt)}>
@@ -491,11 +502,9 @@ export default function DatasetListPage() {
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
                 emptyAction={
                   noFiltersActive ? (
-                    <Button asChild size="sm" variant="outline">
-                      <Link to="/data/datasets/new">
-                        <Plus className="h-4 w-4" />
-                        새 데이터셋 만들기
-                      </Link>
+                    <Button size="sm" variant="outline" onClick={() => setTypeModalOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      새 데이터셋 만들기
                     </Button>
                   ) : undefined
                 }
@@ -541,6 +550,15 @@ export default function DatasetListPage() {
           }}
         />
       )}
+
+      {/* 데이터셋 생성 유형 선택 모달 — 선택 완료 시 URL 쿼리로 유형을 전달하며 생성 폼으로 이동 */}
+      <DatasetTypeModal
+        open={typeModalOpen}
+        onOpenChange={setTypeModalOpen}
+        onSelect={(s: DatasetTypeSelection) =>
+          navigate(`/data/datasets/new?storageType=${s.storageType}&originType=${s.originType}`)
+        }
+      />
     </div>
   );
 }

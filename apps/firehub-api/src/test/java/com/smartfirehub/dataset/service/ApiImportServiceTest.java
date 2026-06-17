@@ -58,7 +58,7 @@ class ApiImportServiceTest extends IntegrationTestBase {
                 "api_import_dataset",
                 "Test dataset for API import",
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 columns,
                 null),
             testUserId);

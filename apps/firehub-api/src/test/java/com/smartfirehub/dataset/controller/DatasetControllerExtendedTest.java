@@ -73,7 +73,7 @@ class DatasetControllerExtendedTest {
         "ds_table",
         null,
         null,
-        "CUSTOM",
+        "TABLE", "SOURCE",
         "user",
         List.of(),
         0L,

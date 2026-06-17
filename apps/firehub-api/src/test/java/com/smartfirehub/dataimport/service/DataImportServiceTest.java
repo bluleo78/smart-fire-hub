@@ -71,7 +71,7 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "import_test_dataset",
                 "Dataset for import testing",
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -233,7 +233,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     DatasetDetailResponse anotherDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Another Dataset", "another_dataset", null, null, "SOURCE", columns, null),
+                "Another Dataset", "another_dataset", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
 
     // When/Then
@@ -377,7 +377,7 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "upsert_dedup_dataset",
                 "UPSERT 중복 PK 회귀 테스트용",
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -442,7 +442,7 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "replace_dedup_dataset",
                 "REPLACE 중복 PK 회귀 테스트용",
                 null,
-                "SOURCE",
+                "TABLE", "SOURCE",
                 columns,
                 null),
             testUserId);

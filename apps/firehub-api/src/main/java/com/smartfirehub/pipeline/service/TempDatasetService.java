@@ -64,7 +64,14 @@ public class TempDatasetService {
 
     CreateDatasetRequest request =
         new CreateDatasetRequest(
-            datasetName, tableName, "파이프라인 자동 생성 임시 데이터셋", null, "TEMP", columnRequests, stepId);
+            datasetName,
+            tableName,
+            "파이프라인 자동 생성 임시 데이터셋",
+            null,
+            "TABLE", // storage_type: 임시 데이터셋은 항상 물리 테이블
+            "TEMP", // origin_type: 파이프라인 자동 생성
+            columnRequests,
+            stepId);
 
     return datasetService.createDataset(request, userId).id();
   }
