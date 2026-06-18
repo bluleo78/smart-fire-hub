@@ -166,3 +166,56 @@ test.describe('임베딩 설정 탭', () => {
     expect(settings).not.toHaveProperty('embedding.api_key');
   });
 });
+
+/**
+ * 재임베딩 카드 E2E 테스트
+ * - provider 설정 카드 아래의 "재임베딩" 카드(현황 + 전체 재임베딩 실행)를 검증한다.
+ * - GET /admin/embedding/status 로 현황을, POST /admin/embedding/reindex-all 로 트리거 결과를 모킹한다.
+ * - AlertDialog 확인 후 시작 toast가 노출되는지 확인한다.
+ */
+test.describe('재임베딩 카드', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    // 임베딩 탭 진입 시 provider 폼이 호출하는 GET /settings 모킹 (기존 헬퍼 재사용)
+    await setupGetSettingsMock(page);
+    // 재임베딩 현황 — 데이터셋은 완료(28/28), 문서 청크는 진행 중(340/500)
+    await mockApi(page, 'GET', '/api/v1/admin/embedding/status', {
+      model: 'bge-m3',
+      datasets: { total: 28, embedded: 28 },
+      documentChunks: { total: 500, embedded: 340 },
+    });
+  });
+
+  test(
+    '재임베딩 카드가 현황을 표시하고 전체 재임베딩 실행 시 시작 toast가 노출된다',
+    { tag: '@smoke' },
+    async ({ authenticatedPage: page }) => {
+      // 전체 재임베딩 트리거 — 202 Accepted + 대상 카운트(데이터셋 28, 문서셋 4)
+      await mockApi(
+        page,
+        'POST',
+        '/api/v1/admin/embedding/reindex-all',
+        { datasets: 28, documentDatasets: 4 },
+        { status: 202 },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '임베딩' }).click();
+
+      // 재임베딩 카드 노출 + 현재 모델 + 문서 청크 진행 카운트 확인
+      await expect(page.getByText('재임베딩', { exact: true })).toBeVisible();
+      await expect(page.getByText('현재 모델:')).toBeVisible();
+      await expect(page.getByText('340 / 500')).toBeVisible();
+
+      // 트리거 버튼 클릭 → AlertDialog 노출 → 다이얼로그 내 "실행" 클릭
+      // (트리거는 "전체 재임베딩 실행", 확인 액션은 "실행"이므로 alertdialog로 스코프를 좁힌다)
+      await page.getByRole('button', { name: '전체 재임베딩 실행' }).click();
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('button', { name: '실행' }).click();
+
+      // 시작 toast 확인 (재임베딩을 시작했습니다 (데이터셋 28, 문서셋 4).)
+      await expect(page.getByText(/재임베딩을 시작했습니다/)).toBeVisible({ timeout: 5000 });
+    },
+  );
+});

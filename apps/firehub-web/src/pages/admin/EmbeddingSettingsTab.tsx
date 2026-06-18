@@ -1,7 +1,18 @@
-import { Boxes, Eye, EyeOff, RotateCcw, Save } from 'lucide-react';
+import { Boxes, Eye, EyeOff, RefreshCw, RotateCcw, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -14,6 +25,10 @@ import {
   SelectValue,
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
+import {
+  useEmbeddingStatus,
+  useReindexAllEmbeddings,
+} from '../../hooks/queries/useEmbedding';
 import {
   useEmbeddingSettings,
   useUpdateEmbeddingSettings,
@@ -43,6 +58,34 @@ const PROVIDER_OPTIONS: { value: string; label: string; disabled: boolean }[] = 
   { value: 'OPENAI', label: 'OpenAI (준비 중)', disabled: true },
 ];
 
+// 재임베딩 진행 현황 한 줄(라벨 + 카운트 + 진행 바)을 렌더링한다.
+// shadcn Progress 컴포넌트가 없어 muted/primary div 바로 직접 구성한다.
+function ReindexProgressRow({
+  label,
+  embedded,
+  total,
+}: {
+  label: string;
+  embedded: number;
+  total: number;
+}) {
+  // 대상이 0건이면 "완료"로 간주해 100%로 표시한다.
+  const pct = total === 0 ? 100 : Math.round((embedded / total) * 100);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="tabular-nums">
+          {embedded} / {total}
+        </span>
+      </div>
+      <div className="h-2 w-full rounded bg-muted">
+        <div className="h-2 rounded bg-primary transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 interface EmbeddingSettingsTabProps {
   // 부모(SettingsPage)에 dirty 상태를 보고해 라우터 이탈 가드를 활성화한다 (이슈 #86 패턴).
   onReportDirty?: ReportDirty;
@@ -56,6 +99,10 @@ interface EmbeddingSettingsTabProps {
 export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSettingsTabProps = {}) {
   const { data: settings, isLoading } = useEmbeddingSettings();
   const updateMutation = useUpdateEmbeddingSettings();
+
+  // 재임베딩 카드용 — 현황 폴링 조회 및 전체 재임베딩 실행 mutation
+  const { data: status } = useEmbeddingStatus();
+  const reindex = useReindexAllEmbeddings();
 
   const [form, setForm] = useState<EmbeddingForm>(DEFAULT);
   const [original, setOriginal] = useState<EmbeddingForm>(DEFAULT);
@@ -218,6 +265,63 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
           되돌리기
         </Button>
       </div>
+
+      {/* 재임베딩 — 현재 모델 기준 데이터셋·문서 청크 임베딩 진행 현황 및 전체 재임베딩 실행.
+          provider 폼(카드+저장/되돌리기) 아래에 별도 카드로 배치한다. */}
+      <Card className="card-hover">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4" />
+            재임베딩
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* 현재 임베딩 모델 — status 로딩 전에는 dash 표시 */}
+          <div className="text-sm">
+            <span className="text-muted-foreground">현재 모델: </span>
+            <span className="font-medium">{status?.model ?? '—'}</span>
+          </div>
+
+          {/* 진행 현황 두 줄 — 데이터셋 카탈로그 / 문서 청크 */}
+          <div className="space-y-4">
+            <ReindexProgressRow
+              label="데이터셋 카탈로그"
+              embedded={status?.datasets.embedded ?? 0}
+              total={status?.datasets.total ?? 0}
+            />
+            <ReindexProgressRow
+              label="문서 청크"
+              embedded={status?.documentChunks.embedded ?? 0}
+              total={status?.documentChunks.total ?? 0}
+            />
+          </div>
+
+          <Separator />
+
+          {/* 전체 재임베딩 실행 — 비용/시간이 큰 작업이므로 AlertDialog로 한 번 더 확인 */}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={reindex.isPending}>
+                <RefreshCw className="h-4 w-4" />
+                {reindex.isPending ? '시작 중...' : '전체 재임베딩 실행'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>전체 재임베딩 실행</AlertDialogTitle>
+                <AlertDialogDescription>
+                  모든 데이터셋·문서를 현재 모델({status?.model ?? '—'})로 다시 임베딩합니다. 데이터
+                  양에 따라 시간이 걸릴 수 있습니다.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogAction onClick={() => reindex.mutate()}>실행</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </CardContent>
+      </Card>
     </div>
   );
 }

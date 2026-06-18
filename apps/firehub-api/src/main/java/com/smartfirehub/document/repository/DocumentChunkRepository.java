@@ -20,6 +20,9 @@ public class DocumentChunkRepository {
   private final DSLContext dsl;
   private static final int BATCH_SIZE = 200;
 
+  /** 재임베딩 대상 청크의 (id, content) 쌍. content 만 임베딩 모델에 재투입한다. */
+  public record ChunkContent(long chunkId, String content) {}
+
   /** 해당 문서의 기존 청크를 모두 삭제(잡 재시도 시 중복 방지). */
   public void deleteByDocumentFileId(Long documentFileId) {
     dsl.deleteFrom(table(name("document_chunk")))
@@ -148,6 +151,53 @@ public class DocumentChunkRepository {
               r.get("content", String.class),
               r.get("score", Double.class)));
     });
+  }
+
+  /** 청크가 존재하는 모든 데이터셋 id 목록(중복 제거). 재임베딩 시 데이터셋 단위로 순회하기 위함. */
+  public List<Long> findDocumentDatasetIds() {
+    return dsl.fetch("SELECT DISTINCT dataset_id FROM document_chunk ORDER BY dataset_id")
+        .map(r -> r.get("dataset_id", Long.class));
+  }
+
+  /** 해당 데이터셋의 청크 (id, content) 를 id 오름차순으로 조회. updateEmbeddingBatch 와 순서를 맞춰 사용. */
+  public List<ChunkContent> findChunkContentsByDataset(long datasetId) {
+    return dsl.fetch(
+            "SELECT id, content FROM document_chunk WHERE dataset_id = ? ORDER BY id", datasetId)
+        .map(r -> new ChunkContent(r.get("id", Long.class), r.get("content", String.class)));
+  }
+
+  /**
+   * 청크 임베딩을 id 기준으로 배치 갱신. chunkIds.get(i) 의 행에 embeddings.get(i) 를 적용한다.
+   * 벡터는 insertBatch 와 동일하게 텍스트 리터럴 + {@code ?::vector} 캐스팅으로 바인딩하고,
+   * jOOQ batch API 로 BATCH_SIZE 단위 묶음 전송해 왕복을 줄인다.
+   */
+  public void updateEmbeddingBatch(List<Long> chunkIds, List<float[]> embeddings, String model) {
+    if (chunkIds.size() != embeddings.size()) {
+      throw new IllegalArgumentException(
+          "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
+    }
+    String sql = "UPDATE document_chunk SET embedding = ?::vector, embedding_model = ? WHERE id = ?";
+    for (int start = 0; start < chunkIds.size(); start += BATCH_SIZE) {
+      int end = Math.min(start + BATCH_SIZE, chunkIds.size());
+      org.jooq.BatchBindStep batch = dsl.batch(sql);
+      for (int i = start; i < end; i++) {
+        batch = batch.bind(toVectorLiteral(embeddings.get(i)), model, chunkIds.get(i));
+      }
+      batch.execute();
+    }
+  }
+
+  /** 전체 청크 수. 재임베딩 진행률 계산의 분모. */
+  public long countAllChunks() {
+    return dsl.fetchOne("SELECT COUNT(*) FROM document_chunk").get(0, Long.class);
+  }
+
+  /** 특정 모델로 임베딩이 채워진 청크 수. 재임베딩 진행/완료 판단에 사용. */
+  public long countEmbeddedByModel(String model) {
+    return dsl.fetchOne(
+            "SELECT COUNT(*) FROM document_chunk WHERE embedding IS NOT NULL AND embedding_model = ?",
+            model)
+        .get(0, Long.class);
   }
 
   /** float[] → pgvector 텍스트 리터럴 "[v1,v2,...]". */

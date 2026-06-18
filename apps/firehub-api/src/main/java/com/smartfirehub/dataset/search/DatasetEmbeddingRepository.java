@@ -39,4 +39,17 @@ public class DatasetEmbeddingRepository {
   public void delete(long datasetId) {
     dsl.execute("DELETE FROM dataset_embedding WHERE dataset_id = ?", datasetId);
   }
+
+  /** 전체 데이터셋 수. 임베딩 진행률 계산의 분모. */
+  public long countAllDatasets() {
+    return dsl.fetchOne("SELECT COUNT(*) FROM dataset").get(0, Long.class);
+  }
+
+  /** 특정 모델로 임베딩이 채워진 데이터셋 수. 임베딩 진행/완료 판단에 사용. */
+  public long countEmbeddedByModel(String model) {
+    return dsl.fetchOne(
+            "SELECT COUNT(*) FROM dataset_embedding WHERE embedding IS NOT NULL AND embedding_model = ?",
+            model)
+        .get(0, Long.class);
+  }
 }
