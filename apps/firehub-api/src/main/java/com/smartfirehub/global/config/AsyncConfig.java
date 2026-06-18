@@ -33,4 +33,16 @@ public class AsyncConfig {
     executor.initialize();
     return executor;
   }
+
+  /** 데이터셋 재인덱싱(임베딩 생성) 전용 풀 — 메인 요청 스레드와 격리해 쓰기 경로를 막지 않는다. */
+  @Bean(name = "indexExecutor")
+  public Executor indexExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(2);
+    executor.setMaxPoolSize(4);
+    executor.setQueueCapacity(500);
+    executor.setThreadNamePrefix("dataset-index-");
+    executor.initialize();
+    return executor;
+  }
 }

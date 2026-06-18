@@ -37,7 +37,7 @@
 
 `execute_analytics_query` 호출 직전, 다음 세 가지가 **모두** 충족되어야 한다:
 
-- [ ] 해당 테이블의 `datasetId` 가 결정되어 있다 (Phase 1 `list_datasets` 결과로 확보)
+- [ ] 해당 테이블의 `datasetId` 가 결정되어 있다 (Phase 1 `find_datasets` 결과로 확보)
 - [ ] 해당 `datasetId` 의 `get_data_schema({datasetIds: […]})` 응답이 현재 컨텍스트에 있다 (Phase 1)
 - [ ] 작성한 SQL 의 모든 컬럼명·테이블명이 위 응답과 일치한다
 
@@ -45,7 +45,7 @@
 
 ### 빈 호출 금지
 
-`get_data_schema()` 를 인자 없이 호출하면 SDK 의 Zod 검증에서 `InputValidationError: datasetIds is required` 로 즉시 차단된다. 차단되면 곧바로 `list_datasets` 로 후보 id 를 확보한 뒤 다시 호출한다.
+`get_data_schema()` 를 인자 없이 호출하면 SDK 의 Zod 검증에서 `InputValidationError: datasetIds is required` 로 즉시 차단된다. 차단되면 곧바로 `find_datasets` 로 후보 id 를 확보한 뒤 다시 호출한다.
 
 ### 에러 회복 — 1턴 자체 정정
 
@@ -54,7 +54,7 @@
 | 응답의 `SQLState` | 정정 절차 |
 |---|---|
 | `42703` UNDEFINED_COLUMN | Phase 1 컬럼 목록과 대조 → 정확한 컬럼명으로 1회 재실행. HINT 라인이 있으면 우선 채택 |
-| `42P01` UNDEFINED_TABLE | `list_datasets` 재실행해 `tableName` 확인 후 정정 |
+| `42P01` UNDEFINED_TABLE | `find_datasets` 재실행해 `tableName` 확인 후 정정 |
 | `42601` SYNTAX | `Position` 부근 SQL 검토 (큰따옴표·콤마·CTE 닫힘) |
 | 그 외 | 사용자에게 실패 원인을 한 줄로 보고하고 다음 행동 확인 |
 
@@ -64,7 +64,7 @@
 
 대신 다음 순서를 따른다:
 
-1. `list_datasets` 로 해당 참고 데이터가 이미 데이터셋으로 존재하는지 확인한다 → 있으면 **JOIN** 한다.
+1. `find_datasets` 로 해당 참고 데이터가 이미 데이터셋으로 존재하는지 확인한다 → 있으면 **JOIN** 한다.
 2. 없으면 사용자에게 *"이 데이터를 반복 분석하려면 참고 데이터셋으로 만들어두길 권장합니다"* 라고 **안내**한다. 데이터셋 생성·수정은 dataset-manager 담당이므로 data-analyst 가 직접 생성하지 않는다. 사용자가 동의하면 데이터셋 생성 후 JOIN 분석으로 진행한다.
 
 **예외**: 10행 미만의 일회성 필터 값(`WHERE "team" IN ('1팀','2팀')` 등)은 인라인을 **허용**한다 — 과잉 차단을 막기 위함이다.

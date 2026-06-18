@@ -7,7 +7,7 @@
 **에이전트**:
 
 [Phase 1 — EXPLORE]
-1. `list_datasets({search: "화재"})` → `[{id: 11, tableName: "fire_incidents", name: "화재 출동 조사 데이터"}]`
+1. `find_datasets({query: "화재"})` → `[{id: 11, tableName: "fire_incidents", name: "화재 출동 조사 데이터", storageType: "TABLE"}]`
 2. `get_data_schema({datasetIds: [11]})` → 컬럼 8개 (`incident_date`, `incident_type`, `station_id`, `response_time_sec`, ...)
 3. `get_row_count(11)` → 24,150 행
 
@@ -124,7 +124,7 @@ LIMIT 15
 **에이전트**:
 
 [Phase 1 — EXPLORE]
-1. `list_datasets({search: "만족도"})` → `[{id: 7, tableName: "survey_119_2026"}]`
+1. `find_datasets({query: "만족도"})` → `[{id: 7, tableName: "survey_119_2026", storageType: "TABLE"}]`
 2. `get_data_schema({datasetIds: [7]})` → 컬럼: `survey1_kindness`, `survey2_kindness_detail`, `survey4_speed`, ...
 
 [Phase 2 — ANALYZE] 만족도 평균을 확인합니다.
@@ -163,7 +163,7 @@ execute_analytics_query("SELECT kindness FROM survey")
 → (같은 SQL 재시도) → 같은 ERROR → ... → retry loop
 ```
 
-Phase 1 (`list_datasets` + `get_data_schema`) 없이 SQL 을 작성하면 컬럼명·테이블명을 추측할 수밖에 없다.
+Phase 1 (`find_datasets` + `get_data_schema`) 없이 SQL 을 작성하면 컬럼명·테이블명을 추측할 수밖에 없다.
 
 ### 2. `get_data_schema` 빈 호출
 
@@ -172,7 +172,7 @@ get_data_schema()
 → InputValidationError: datasetIds is required
 ```
 
-SDK 가 즉시 차단한다. `list_datasets` 먼저 호출해 id 를 확보한 뒤 다시 호출.
+SDK 가 즉시 차단한다. `find_datasets` 먼저 호출해 id 를 확보한 뒤 다시 호출.
 
 ### 3. 에러 무시 후 같은 SQL 반복
 

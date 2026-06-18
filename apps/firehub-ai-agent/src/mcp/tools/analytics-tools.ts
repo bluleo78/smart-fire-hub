@@ -222,7 +222,7 @@ export function registerAnalyticsTools(
       'get_data_schema',
       '특정 데이터셋들의 테이블·컬럼 정보를 반환합니다. ' +
         '**datasetIds 파라미터는 필수**입니다 — 생략 시 전체 스키마(수십 KB)가 반환되어 ' +
-        '컨텍스트 토큰 한도를 초과해 작업 불가. 먼저 `list_datasets` 로 분석 대상 ID를 확인한 뒤 호출하세요. ' +
+        '컨텍스트 토큰 한도를 초과해 작업 불가. 먼저 `find_datasets` 로 분석 대상 ID를 확인한 뒤 호출하세요. ' +
         'JOIN 분석은 관련된 모든 datasetId 를 한 번에 전달하면 한 응답으로 받습니다.',
       {
         datasetIds: z

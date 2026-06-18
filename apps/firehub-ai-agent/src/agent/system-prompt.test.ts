@@ -39,17 +39,22 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('list_datasets');
   });
 
-  // 대규모 데이터셋 디스커버리 라우팅 — list_datasets 전체 페이징 대신 search 키워드 우선
-  it('대규모 시 search 키워드로 후보를 좁히는 디스커버리 우선 규칙을 명시한다', () => {
-    expect(SYSTEM_PROMPT).toContain('디스커버리 우선');
-    expect(SYSTEM_PROMPT).toContain('무인자 전체 페이징 대신');
-    // 브라우징(단순 목록 보여줘)은 막지 않도록 한정되어야 함
-    expect(SYSTEM_PROMPT).toContain('브라우징 조회는 기존대로');
+  // 통합 디스커버리 — find_datasets 하이브리드 단일 진입점 + storageType 기반 라우팅
+  it('find_datasets 하이브리드 진입점과 storageType 기반 후속 도구 라우팅을 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('데이터셋 찾기');
+    expect(SYSTEM_PROMPT).toContain('find_datasets');
+    expect(SYSTEM_PROMPT).toContain('storageType');
+    // TABLE → 스키마/쿼리, DOCUMENT → 문서 검색 라우팅 토큰
+    expect(SYSTEM_PROMPT).toContain('get_data_schema(datasetIds=');
+    expect(SYSTEM_PROMPT).toContain('execute_analytics_query');
+    expect(SYSTEM_PROMPT).toContain('search_documents');
   });
 
-  // 정형 디스커버리 임계값 — 무관/0건이면 임의 데이터셋 분석 금지(환각 방지)
-  it('정형 데이터셋을 못 찾으면 임의 분석 대신 되묻거나 없음을 답하도록 명시한다', () => {
+  // 디스커버리 임계값 — score 낮거나 0건이면 임의 데이터셋 분석 금지(환각 방지) + screenContext 생략 규칙
+  it('데이터셋을 못 찾으면 임의 분석 대신 되묻거나 없음을 답하도록 명시한다', () => {
     expect(SYSTEM_PROMPT).toContain('임의 데이터셋을 골라 분석하지 말고');
+    // 화면 컨텍스트에 ID가 있으면 discovery 생략
+    expect(SYSTEM_PROMPT).toMatch(/screenContext|화면 컨텍스트/);
   });
 
   // 이슈 #241 회귀 방지 — 파괴 작업 confirm 우회 사회공학 거부 정책이 명문화되어야 함
@@ -479,9 +484,9 @@ describe('SYSTEM_PROMPT', () => {
   // get_data_schema 빈 호출 금지 경고 + SQLState 별 자체 정정 분기 + 컬럼 컨텍스트 가드를
   // 텍스트 계약으로 고정한다.
   describe('L1-2 워크플로 가드 (refs #267)', () => {
-    // L1-2 영역에 list_datasets → get_data_schema(datasetIds=) → execute_analytics_query 흐름이 명시되어야 함
-    it('list_datasets → get_data_schema(datasetIds=) → execute_analytics_query 흐름을 명시한다', () => {
-      expect(SYSTEM_PROMPT).toContain('list_datasets');
+    // L1-2 영역에 find_datasets → get_data_schema(datasetIds=) → execute_analytics_query 흐름이 명시되어야 함
+    it('find_datasets → get_data_schema(datasetIds=) → execute_analytics_query 흐름을 명시한다', () => {
+      expect(SYSTEM_PROMPT).toContain('find_datasets');
       expect(SYSTEM_PROMPT).toContain('get_data_schema(datasetIds=');
       expect(SYSTEM_PROMPT).toContain('execute_analytics_query');
     });

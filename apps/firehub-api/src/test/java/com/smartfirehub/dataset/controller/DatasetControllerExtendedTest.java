@@ -11,6 +11,8 @@ import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetFavoriteService;
+import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
+import com.smartfirehub.dataset.search.DatasetSearchService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.service.DatasetTagService;
 import com.smartfirehub.global.config.SecurityConfig;
@@ -46,6 +48,9 @@ class DatasetControllerExtendedTest {
   @MockitoBean private DatasetFavoriteService datasetFavoriteService;
   @MockitoBean private DatasetTagService datasetTagService;
   @MockitoBean private ApiImportService apiImportService;
+  // 검색/임베딩 백필 서비스도 DatasetController 의존성이므로 @WebMvcTest 컨텍스트에 mock 등록 필요
+  @MockitoBean private DatasetSearchService datasetSearchService;
+  @MockitoBean private DatasetEmbeddingBackfillService datasetEmbeddingBackfillService;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;

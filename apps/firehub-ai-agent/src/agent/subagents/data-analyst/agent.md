@@ -5,6 +5,7 @@ tools:
   - mcp__firehub__execute_analytics_query
   - mcp__firehub__get_data_schema
   - mcp__firehub__search_documents
+  - mcp__firehub__find_datasets
   - mcp__firehub__list_datasets
   - mcp__firehub__get_dataset
   - mcp__firehub__create_saved_query
@@ -50,7 +51,7 @@ maxTurns: 25
 
 사용자 요청을 먼저 분석해 분석 대상 데이터셋을 식별한다.
 
-1. `list_datasets({search, categoryId})` — 후보 데이터셋 검색. 사용자 발화의 키워드를 search 에 그대로 사용.
+1. `find_datasets({query})` — 후보 데이터셋 검색. 사용자 발화의 키워드를 query 에 그대로 사용. 반환 후보의 `storageType` 으로 정형/비정형(DOCUMENT) 여부를 판별한다.
 2. `get_data_schema({datasetIds: [선택된 id들]})` — 컬럼 정보를 컨텍스트에 적재 (**필수**)
    - 단일 분석: `datasetIds: [11]`
    - JOIN 분석: 모든 관련 데이터셋 ID를 한 번에 전달 (`datasetIds: [7, 11]`)
@@ -60,7 +61,7 @@ maxTurns: 25
 사용자에게 탐색 결과를 **한 줄 요약**으로 보고한다:
 `"[테이블명] 테이블에서 분석합니다. 총 N개 행, 주요 컬럼: col1, col2, col3"`
 
-**비정형 문서 기반 분석 (DOCUMENT 데이터셋)**: 대상이 정형 테이블이 아니라 문서·매뉴얼·보고서 내용(`list_datasets` 의 `storageType === 'DOCUMENT'`)이면 SQL 대신 `search_documents({query, datasetIds?})` 로 의미 검색해 근거 청크를 얻는다. 반환된 청크는 **출처(fileName)와 함께 인용**해 해석하고, 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다. 문서·정형이 섞인 요청이면 둘 다 사용한다.
+**비정형 문서 기반 분석 (DOCUMENT 데이터셋)**: 대상이 정형 테이블이 아니라 문서·매뉴얼·보고서 내용(`find_datasets` 결과의 `storageType === 'DOCUMENT'`)이면 SQL 대신 `search_documents({query, datasetIds?})` 로 의미 검색해 근거 청크를 얻는다. 반환된 청크는 **출처(fileName)와 함께 인용**해 해석하고, 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다. 문서·정형이 섞인 요청이면 둘 다 사용한다.
 
 ### Phase 2 — ANALYZE (쿼리 실행)
 
@@ -73,7 +74,7 @@ execute_analytics_query(sql, maxRows)를 사용한다.
 - 원시 데이터 샘플: `maxRows: 20`
 - **쿼리 실패 시 자체 정정 (필수)**: 응답의 `error` 필드는 PostgreSQL 진단 라벨이 포함된 자연어다 (`ERROR: ...` / `HINT: ...` / `SQLState: ...` / `Position: ...`). 이 라벨을 그대로 읽고 Phase 1 에서 받은 컬럼 정보와 대조해 **1턴 내 자체 정정**한다.
   - `SQLState 42703` (UNDEFINED_COLUMN) → Phase 1 컬럼 목록 재대조 후 정정. HINT 가 있으면 우선 채택.
-  - `SQLState 42P01` (UNDEFINED_TABLE) → `list_datasets` 재실행해 정확한 `tableName` 확인.
+  - `SQLState 42P01` (UNDEFINED_TABLE) → `find_datasets`(또는 `get_dataset`)로 정확한 `tableName` 재확인.
   - `SQLState 42601` (SYNTAX) → `Position` 부근 SQL 재검토 (CTE / 큰따옴표 / 콤마 누락 등).
   - **같은 컬럼·테이블명으로 재실행 금지** — 같은 결과가 반복되어 retry loop 발생.
 - 컬럼 정보 없이 SQL 작성을 시도하지 않는다 (Phase 1 누락 = 즉시 retry loop).

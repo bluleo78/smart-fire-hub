@@ -9,6 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
+import com.smartfirehub.dataset.search.DatasetSearchHit;
+import com.smartfirehub.dataset.search.DatasetSearchService;
 import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetFavoriteService;
@@ -50,6 +53,10 @@ class DatasetControllerTest {
   @MockitoBean private DatasetTagService datasetTagService;
 
   @MockitoBean private ApiImportService apiImportService;
+
+  @MockitoBean private DatasetSearchService datasetSearchService;
+
+  @MockitoBean private DatasetEmbeddingBackfillService datasetEmbeddingBackfillService;
 
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
 
@@ -208,6 +215,40 @@ class DatasetControllerTest {
   @Test
   void getDatasets_withoutAuth_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/datasets")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void searchDatasets_withPermission_returnsHits() throws Exception {
+    // 검색 서비스는 스텁 — 컨트롤러가 요청 body 를 받아 결과 배열을 그대로 반환하는지 검증
+    when(datasetSearchService.search(any()))
+        .thenReturn(
+            List.of(
+                new DatasetSearchHit(42L, "화재 출동", "설명", "TABLE", "SOURCE", "fire", "안전", 0.9)));
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/search")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"query\":\"화재\",\"mode\":\"HYBRID\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].datasetId").value(42))
+        .andExpect(jsonPath("$[0].storageType").value("TABLE"));
+  }
+
+  @Test
+  void backfillEmbeddings_withPermission_returnsAcceptedWithScheduledCount() throws Exception {
+    // dataset:write 권한으로 백필 트리거 시 202 Accepted + {"scheduled": N} 반환, 서비스 호출 검증
+    when(datasetEmbeddingBackfillService.backfillAll()).thenReturn(3);
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/embedding/backfill")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.scheduled").value(3));
+
+    verify(datasetEmbeddingBackfillService).backfillAll();
   }
 
   @Test

@@ -2,6 +2,7 @@
 name: dataset-manager
 description: "데이터셋 생성·수정·삭제·컬럼 변경·CSV/XLSX 임포트를 대화형으로 수행하는 전문 에이전트. 단순 조회(목록, 상세, 스키마 확인)는 위임하지 마세요. 공간 데이터 감지 시 GEOMETRY 컬럼과 SRID 4326을 자동 제안합니다."
 tools:
+  - mcp__firehub__find_datasets
   - mcp__firehub__list_datasets
   - mcp__firehub__get_dataset
   - mcp__firehub__create_dataset

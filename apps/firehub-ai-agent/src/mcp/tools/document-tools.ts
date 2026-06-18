@@ -59,7 +59,7 @@ export function registerDocumentTools(
     // 비정형 문서(DOCUMENT 데이터셋) 의미 검색
     safeTool(
       'search_documents',
-      '비정형 문서(DOCUMENT 데이터셋, 보고서·매뉴얼 등)에서 유사한 내용을 검색한다. datasetIds 생략 시 접근 가능한 모든 문서 검색. 기본은 의미+키워드 하이브리드 검색이며, mode 로 SEMANTIC/KEYWORD 를 지정할 수 있다. 결과 청크를 출처(fileName)와 함께 인용해 답하라.',
+      '비정형 문서(DOCUMENT 데이터셋, 보고서·매뉴얼 등)에서 유사한 내용을 검색한다. 대상 데이터셋은 보통 find_datasets로 먼저 찾은 datasetIds를 넘긴다. datasetIds 생략 시 접근 가능한 모든 문서 검색. 기본은 의미+키워드 하이브리드 검색이며, mode 로 SEMANTIC/KEYWORD 를 지정할 수 있다. 결과 청크를 출처(fileName)와 함께 인용해 답하라.',
       {
         query: z.string().describe('검색 질의 문자열'),
         datasetIds: z

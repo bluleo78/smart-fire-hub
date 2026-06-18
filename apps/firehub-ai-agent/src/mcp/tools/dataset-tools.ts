@@ -10,7 +10,7 @@ export function registerDatasetTools(
   return [
     safeTool(
       'list_datasets',
-      '데이터셋 목록을 조회합니다. 데이터셋이 많을 때는 search 키워드로 후보를 좁혀 조회하세요(전체 페이징 금지).',
+      '데이터셋 목록을 필터/페이징으로 조회합니다(목록·필터·CRUD 용도). 분석 대상을 찾는 검색은 find_datasets를 사용하세요.',
       {
         categoryId: z.number().optional().describe('카테고리 ID'),
         storageType: z

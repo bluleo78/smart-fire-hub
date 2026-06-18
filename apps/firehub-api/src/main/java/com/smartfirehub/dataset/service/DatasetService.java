@@ -24,6 +24,8 @@ import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
+import com.smartfirehub.dataset.search.DatasetChangedEvent;
+import com.smartfirehub.dataset.search.DatasetEmbeddingService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
@@ -32,6 +34,7 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,6 +60,9 @@ public class DatasetService {
   private final DatasetTagRepository tagRepository;
   private final DSLContext dsl;
   private final AuditLogService auditLogService;
+  // 검색 인덱싱: source_text 동기 저장 + 임베딩 비동기 재생성 트리거 (통합 데이터셋 Discovery)
+  private final DatasetEmbeddingService datasetEmbeddingService;
+  private final ApplicationEventPublisher events;
 
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
@@ -119,7 +125,25 @@ public class DatasetService {
                     null,
                     null));
 
+    // 메타·컬럼이 모두 영속화된 뒤 검색 인덱스 갱신
+    reindexSearch(dataset.id());
+
     return getDatasetById(dataset.id());
+  }
+
+  /**
+   * 데이터셋 메타(이름/설명/컬럼/태그/카테고리)가 영속화된 직후 검색 인덱스를 갱신한다.
+   *
+   * <ul>
+   *   <li>source_text: 같은 쓰기 트랜잭션에서 동기 저장 → 키워드 검색 즉시 노출.
+   *   <li>embedding: 커밋 완료 후 비동기 재생성(외부 호출 동반) — 쓰기 트랜잭션/요청 스레드를 막지 않음.
+   * </ul>
+   *
+   * <p>반드시 컬럼·태그까지 INSERT 된 뒤 호출해야 한다(metaReader 가 방금 쓴 데이터를 같은 트랜잭션에서 읽음).
+   */
+  private void reindexSearch(long datasetId) {
+    datasetEmbeddingService.syncSourceText(datasetId); // 동기: 같은 트랜잭션, 키워드 검색 즉시 노출
+    events.publishEvent(new DatasetChangedEvent(datasetId)); // 비동기: 커밋 후 임베딩
   }
 
   /** DOCUMENT 데이터셋은 동적 테이블/컬럼이 없으므로 컬럼·행 조작을 거부한다. */
@@ -258,6 +282,9 @@ public class DatasetService {
     }
 
     datasetRepository.update(id, request, userId);
+
+    // 이름/설명/카테고리 변경 반영
+    reindexSearch(id);
   }
 
   @Transactional
@@ -359,6 +386,9 @@ public class DatasetService {
               .toList();
       dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
     }
+
+    // 컬럼 추가 반영
+    reindexSearch(datasetId);
 
     return column;
   }
@@ -519,6 +549,9 @@ public class DatasetService {
         dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
       }
     }
+
+    // 컬럼명/표시명/타입 등 변경 반영 (PK 플래그만 바뀌어도 무해)
+    reindexSearch(datasetId);
   }
 
   /**
@@ -624,6 +657,9 @@ public class DatasetService {
               .toList();
       dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
     }
+
+    // 컬럼 삭제 반영 (데이터셋은 남으므로 인덱스 갱신)
+    reindexSearch(datasetId);
   }
 
   @Transactional
@@ -861,7 +897,10 @@ public class DatasetService {
       }
     }
 
-    // 7. Return full detail response
+    // 7. 신규 데이터셋(컬럼·태그 적재 완료) 검색 인덱스 갱신
+    reindexSearch(newDataset.id());
+
+    // 8. Return full detail response
     return getDatasetById(newDataset.id(), userId);
   }
 }

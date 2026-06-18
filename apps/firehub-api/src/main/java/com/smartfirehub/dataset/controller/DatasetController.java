@@ -2,6 +2,10 @@ package com.smartfirehub.dataset.controller;
 
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.dto.SpatialFilter;
+import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
+import com.smartfirehub.dataset.search.DatasetSearchHit;
+import com.smartfirehub.dataset.search.DatasetSearchRequest;
+import com.smartfirehub.dataset.search.DatasetSearchService;
 import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetFavoriteService;
@@ -11,6 +15,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +32,8 @@ public class DatasetController {
   private final DatasetFavoriteService datasetFavoriteService;
   private final DatasetTagService datasetTagService;
   private final ApiImportService apiImportService;
+  private final DatasetSearchService datasetSearchService;
+  private final DatasetEmbeddingBackfillService datasetEmbeddingBackfillService;
 
   @GetMapping
   @RequirePermission("dataset:read")
@@ -47,6 +54,24 @@ public class DatasetController {
         datasetService.getDatasets(
             categoryId, storageType, originType, search, page, size, userId, status, favoriteOnly);
     return ResponseEntity.ok(response);
+  }
+
+  /** 데이터셋 카탈로그 시맨틱+키워드 하이브리드 검색 (AI discovery 진입점). */
+  @PostMapping("/search")
+  @RequirePermission("dataset:read")
+  public List<DatasetSearchHit> searchDatasets(@RequestBody DatasetSearchRequest request) {
+    return datasetSearchService.search(request);
+  }
+
+  /**
+   * 관리자용 데이터셋 검색 인덱스 수동 백필. 전체 데이터셋의 source_text 를 동기 적재한 뒤 임베딩 재색인을 비동기 분산한다.
+   * 인덱스를 변경하므로 dataset:write 권한을 요구한다.
+   */
+  @PostMapping("/embedding/backfill")
+  @RequirePermission("dataset:write")
+  public ResponseEntity<Map<String, Integer>> backfillEmbeddings() {
+    int count = datasetEmbeddingBackfillService.backfillAll();
+    return ResponseEntity.accepted().body(Map.of("scheduled", count));
   }
 
   @PostMapping

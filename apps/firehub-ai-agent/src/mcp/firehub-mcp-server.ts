@@ -16,6 +16,7 @@ import { registerApiConnectionTools } from './tools/api-connection-tools.js';
 import { registerMiscTools } from './tools/misc-tools.js';
 import { registerAnalyticsTools } from './tools/analytics-tools.js';
 import { registerDocumentTools } from './tools/document-tools.js';
+import { registerFindDatasetTools } from './tools/find-datasets-tools.js';
 import { registerUiTools } from './tools/ui-tools.js';
 import { registerProactiveTools } from './tools/proactive-tools.js';
 import { registerDataImportTools } from './tools/dataimport-tools.js';
@@ -106,6 +107,7 @@ const PERMISSIONS = {
  */
 const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   search_documents: PERMISSIONS.DATASET_READ,
+  find_datasets: PERMISSIONS.DATASET_READ,
   delete_dataset: PERMISSIONS.DATASET_DELETE,
   drop_dataset_column: PERMISSIONS.DATASET_DELETE,
   list_users: PERMISSIONS.USER_READ,
@@ -166,6 +168,7 @@ export function registerAllTools(
   const allTools = [
     ...registerCategoryTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDatasetTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerFindDatasetTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDataImportTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDataTools(apiClient, safeToolFn, jsonResultFn),
     ...registerPipelineTools(apiClient, safeToolFn, jsonResultFn),

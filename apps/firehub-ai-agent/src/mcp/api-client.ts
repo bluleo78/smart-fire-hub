@@ -49,8 +49,13 @@ import {
 } from './api-client/admin-api.js';
 import { createAuditApi, type AuditLogPage } from './api-client/audit-api.js';
 import { createDocumentApi, type DocumentSearchHit } from './api-client/document-api.js';
+import {
+  createDatasetSearchApi,
+  type DatasetSearchHit,
+} from './api-client/dataset-search-api.js';
 
 export type { DocumentSearchHit };
+export type { DatasetSearchHit };
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -67,6 +72,7 @@ export class FireHubApiClient {
   private _admin: ReturnType<typeof createAdminApi>;
   private _audit: ReturnType<typeof createAuditApi>;
   private _document: ReturnType<typeof createDocumentApi>;
+  private _datasetSearch: ReturnType<typeof createDatasetSearchApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -120,6 +126,7 @@ export class FireHubApiClient {
     this._admin = createAdminApi(this.client);
     this._audit = createAuditApi(this.client);
     this._document = createDocumentApi(this.client);
+    this._datasetSearch = createDatasetSearchApi(this.client);
   }
 
   listCategories() {
@@ -578,6 +585,16 @@ export class FireHubApiClient {
     mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
   ): Promise<DocumentSearchHit[]> {
     return this._document.searchDocuments(query, datasetIds, topK, mode);
+  }
+
+  /** 데이터셋 카탈로그 통합 Discovery 검색. 시맨틱+키워드 하이브리드로 후보 데이터셋을 반환한다. */
+  searchDatasets(
+    query: string,
+    mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
+    topK?: number,
+    storageType?: 'TABLE' | 'DOCUMENT',
+  ): Promise<DatasetSearchHit[]> {
+    return this._datasetSearch.searchDatasets(query, mode, topK, storageType);
   }
 
   listSmartJobs() {
