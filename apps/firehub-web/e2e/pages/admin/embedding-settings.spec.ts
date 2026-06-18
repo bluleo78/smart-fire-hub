@@ -85,6 +85,20 @@ test.describe('임베딩 설정 탭', () => {
     await expect(page.locator('#embedding-api-key')).toHaveValue('****masked****');
   });
 
+  // 회귀: 설정 탭 스트립(TabsList)에 overflow-x-auto만 주면 CSS 사양상 overflow-y가
+  // visible→auto로 승격되어 탭 콘텐츠가 고정 높이를 미세 초과할 때 유령 세로 스크롤바가 생긴다.
+  // overflow-y를 hidden으로 고정해 세로 오버플로가 없어야 한다.
+  test('설정 탭 스트립에 유령 세로 스크롤바가 없다', async ({ authenticatedPage: page }) => {
+    await page.goto('/admin/settings');
+    const tablist = page.getByRole('tablist');
+    await expect(tablist).toBeVisible();
+
+    // overflow-y가 auto로 승격되지 않고 hidden으로 고정되어야 한다(승격 시 유령 세로 스크롤바 발생).
+    // 콘텐츠가 고정 높이를 1px 미세 초과하더라도 hidden이면 스크롤바가 절대 생기지 않는다.
+    const overflowY = await tablist.evaluate((el) => getComputedStyle(el).overflowY);
+    expect(overflowY).toBe('hidden');
+  });
+
   test('VOYAGE / OPENAI provider 옵션은 비활성화되어 선택할 수 없다', async ({
     authenticatedPage: page,
   }) => {

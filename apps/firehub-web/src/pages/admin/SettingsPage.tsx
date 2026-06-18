@@ -223,7 +223,10 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="ai">
-        <TabsList className="overflow-x-auto flex-nowrap">
+        {/* overflow-x-auto만 주면 CSS 사양상 overflow-y가 visible→auto로 승격되어
+            탭 콘텐츠가 고정 높이를 미세 초과할 때 유령 세로 스크롤바가 생긴다.
+            가로 스크롤(좁은 화면 대응)은 유지하되 세로는 명시적으로 hidden 고정. */}
+        <TabsList className="overflow-x-auto overflow-y-hidden flex-nowrap">
           {/* 일반 탭 — 다른 탭과 아이콘 일관성 유지 */}
           <TabsTrigger value="general">
             <Settings className="h-4 w-4" />
