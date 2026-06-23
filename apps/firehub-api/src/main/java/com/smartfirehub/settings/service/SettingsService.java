@@ -249,8 +249,9 @@ public class SettingsService {
               /* CLI OAuth 토큰은 비어있을 수 있음 (구독 미사용 시) */
             }
             case "ai.agent_type" -> {
-              if (!Set.of("sdk", "cli", "cli-api").contains(value))
-                throw new IllegalArgumentException("에이전트 유형은 sdk, cli, cli-api 중 하나여야 합니다");
+              // opencode 추가: opencode 는 배포 환경의 opencode auth 에 의존하므로 별도 자격증명 불필요
+              if (!Set.of("sdk", "cli", "cli-api", "opencode").contains(value))
+                throw new IllegalArgumentException("에이전트 유형은 sdk, cli, cli-api, opencode 중 하나여야 합니다");
             }
             case "embedding.provider" -> {
               if (!Set.of("OLLAMA", "VOYAGE", "OPENAI").contains(value))

@@ -39,7 +39,7 @@ export interface ClassifyProvider {
   classify(options: ClassifyProviderOptions): Promise<ClassifyResponse>;
 }
 
-export type AgentType = 'sdk' | 'cli' | 'cli-api';
+export type AgentType = 'sdk' | 'cli' | 'cli-api' | 'opencode';
 
 export interface ProviderConfig {
   agentType: AgentType;

@@ -265,6 +265,67 @@ test.describe('설정 페이지', () => {
   });
 
   /**
+   * OpenCode 에이전트 유형 선택 시 키 입력 UI 숨김 검증.
+   * - opencode 선택 시 API 키/OAuth 입력창 대신 안내 메시지가 표시되어야 한다.
+   */
+  test.describe('OpenCode 에이전트 유형', () => {
+    test('OpenCode 선택 시 키 입력 UI가 숨겨지고 안내 메시지가 표시된다', { tag: '@smoke' }, async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+
+      // AI 에이전트 탭이 기본으로 선택되어 있는지 확인
+      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
+
+      // 에이전트 유형 셀렉트를 클릭해 드롭다운 열기
+      await page.getByLabel('에이전트 유형').click();
+
+      // OpenCode 옵션 선택
+      await page.getByRole('option', { name: 'OpenCode' }).click();
+
+      // API 키 입력창이 사라졌는지 확인
+      await expect(page.locator('#ai-api-key')).not.toBeVisible();
+
+      // OAuth 토큰 입력창도 사라졌는지 확인
+      await expect(page.locator('#ai-cli-oauth-token')).not.toBeVisible();
+
+      // OpenCode 안내 메시지가 표시되어야 한다
+      await expect(
+        page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
+      ).toBeVisible();
+    });
+
+    test('OpenCode에서 다른 유형으로 변경 시 해당 입력 UI가 다시 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+
+      // OpenCode로 변경
+      await page.getByLabel('에이전트 유형').click();
+      await page.getByRole('option', { name: 'OpenCode' }).click();
+
+      // 안내 메시지 확인
+      await expect(
+        page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
+      ).toBeVisible();
+
+      // SDK 유형으로 변경
+      await page.getByLabel('에이전트 유형').click();
+      await page.getByRole('option', { name: 'AI Agent (SDK)' }).click();
+
+      // API 키 입력창이 다시 표시되어야 한다
+      await expect(page.locator('#ai-api-key')).toBeVisible();
+
+      // 안내 메시지는 숨겨져야 한다
+      await expect(
+        page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
+      ).not.toBeVisible();
+    });
+  });
+
+  /**
    * 이슈 #86 회귀 방지 — 미저장 변경사항 이탈 가드.
    * 이메일 탭에서 dirty 상태로 사이드바 메뉴를 클릭하면 AlertDialog가 떠야 하며,
    * 취소 시 머무르고(값 보존), 이탈 시 다른 페이지로 이동한다.

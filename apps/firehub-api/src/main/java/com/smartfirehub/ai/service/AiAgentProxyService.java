@@ -146,14 +146,18 @@ public class AiAgentProxyService {
     aiSettings.remove("ai.api_key");
     String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
 
-    // 인증 수단 검증: cli 모드는 OAuth 토큰, sdk 모드는 API 키가 필요
+    // 인증 수단 검증: cli=OAuth 토큰, sdk/cli-api=API 키, opencode=배포측 인증(검증 불필요)
     Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
     Optional<String> cliTokenOpt =
         "cli".equals(agentType) ? settingsService.getDecryptedCliOauthToken() : Optional.empty();
-    boolean missingCredential =
-        "cli".equals(agentType)
-            ? (cliTokenOpt.isEmpty() || cliTokenOpt.get().isBlank())
-            : apiKeyOpt.isEmpty();
+    boolean missingCredential;
+    if ("opencode".equals(agentType)) {
+      missingCredential = false; // OpenCode 는 배포 환경 opencode auth 에 의존(옵션 3)
+    } else if ("cli".equals(agentType)) {
+      missingCredential = cliTokenOpt.isEmpty() || cliTokenOpt.get().isBlank();
+    } else {
+      missingCredential = apiKeyOpt.isEmpty();
+    }
     if (missingCredential) {
       try {
         String errorMessage =
@@ -176,7 +180,10 @@ public class AiAgentProxyService {
     if (fileIds != null && !fileIds.isEmpty()) {
       requestBody.put("fileIds", fileIds);
     }
-    apiKeyOpt.ifPresent(key -> requestBody.put("apiKey", key));
+    // opencode 는 배포 환경에서 자체 인증 처리 — apiKey 를 요청 바디에 포함하지 않음
+    if (!"opencode".equals(agentType)) {
+      apiKeyOpt.ifPresent(key -> requestBody.put("apiKey", key));
+    }
     requestBody.put("agentType", agentType);
     if ("cli".equals(agentType)) {
       cliTokenOpt.ifPresent(token -> requestBody.put("cliOauthToken", token));

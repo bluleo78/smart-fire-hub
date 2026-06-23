@@ -66,6 +66,10 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     assertThat(result).isEqualTo("{\"valid\":false}");
   }
 
+  // 주: opencode 의 streamChat 자격증명 우회(missingCredential=false) 검증은
+  // SseEmitter + WireMock 통합 환경이 필요하므로 단위 테스트가 아닌 E2E(프론트 Playwright)에서 커버한다.
+  // verifyApiKey 는 agent_type 과 무관한 경로라 여기서 opencode 분기를 의미 있게 검증할 수 없어 별도 단위 테스트를 두지 않는다.
+
   /**
    * 회귀 테스트(#154 / #175): 토큰 값에 JSON 특수문자(따옴표·백슬래시·줄바꿈·탭 등)가 포함되어도 ObjectMapper로 직렬화하면 JSON 구조가 깨지지
    * 않고 정확한 원본 값으로 다시 파싱된다는 것을 검증한다. 이전의 문자열 연결 + replace 방식은 백슬래시를 이스케이프하지 않아 JSON 인젝션 또는 파싱 오류를

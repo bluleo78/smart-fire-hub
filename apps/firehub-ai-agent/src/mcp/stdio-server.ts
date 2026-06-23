@@ -15,6 +15,7 @@ import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
 import { registerAllTools } from './firehub-mcp-server.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
 import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/failure-streak.js';
+import { isOpenCodeSchemaCompat, sanitizeOutgoingMessage } from './schema-compat.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -92,9 +93,22 @@ async function main(): Promise<void> {
   registerAllTools(apiClient, safeTool, jsonResult);
 
   const transport = new StdioServerTransport();
+
+  // OpenCode 경로: tools/list 응답에서 게이트웨이가 거부하는 `propertyNames` 를 제거한다.
+  // transport.send 를 래핑해 나가는 메시지를 정제(Anthropic 경로엔 미적용 — env 게이트).
+  if (isOpenCodeSchemaCompat()) {
+    const originalSend = transport.send.bind(transport);
+    transport.send = async (message: Parameters<typeof originalSend>[0]) => {
+      sanitizeOutgoingMessage(message);
+      return originalSend(message);
+    };
+  }
+
   await server.connect(transport);
 
-  console.error(`[MCP Stdio] FireHub MCP server running (userId=${userId})`);
+  console.error(
+    `[MCP Stdio] FireHub MCP server running (userId=${userId}${isOpenCodeSchemaCompat() ? ', opencode-schema-compat' : ''})`,
+  );
 }
 
 main().catch((err) => {

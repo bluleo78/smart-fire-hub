@@ -27,6 +27,11 @@ FROM node:22-alpine
 # Install Claude Code CLI (required by @anthropic-ai/claude-agent-sdk)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Install OpenCode CLI (required by the `opencode` agent type)
+# npm 래퍼가 플랫폼에 맞는 바이너리를 받아 alpine(musl)에서도 동작한다.
+# 모델 인증은 배포 환경의 opencode 전역 설정/환경변수에 의존(옵션 3).
+RUN npm install -g opencode-ai
+
 # Create non-root user (Claude Code blocks --dangerously-skip-permissions as root)
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 

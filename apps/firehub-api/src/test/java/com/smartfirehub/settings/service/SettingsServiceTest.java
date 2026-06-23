@@ -2,6 +2,7 @@ package com.smartfirehub.settings.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.settings.dto.SettingResponse;
@@ -175,6 +176,24 @@ class SettingsServiceTest extends IntegrationTestBase {
     assertThat(result).containsEntry("ai.max_turns", "15");
     // 모든 value는 null이 아니어야 한다 (null → 빈 문자열 치환 정책)
     assertThat(result.values()).doesNotContainNull();
+  }
+
+  // ── ai.agent_type opencode 허용 테스트 ────────────────────────────────────
+
+  @Test
+  void updateSettings_opencode_agentType_허용() {
+    // ai.agent_type = "opencode" 저장이 예외 없이 통과해야 한다
+    assertDoesNotThrow(() -> settingsService.updateSettings(Map.of("ai.agent_type", "opencode"), null));
+    assertThat(settingsService.getAsMap("ai")).containsEntry("ai.agent_type", "opencode");
+  }
+
+  @Test
+  void updateSettings_invalidAgentType_throwsIllegalArgumentException() {
+    // opencode 허용 후에도 잘못된 값은 예외가 발생해야 한다
+    assertThatThrownBy(
+            () -> settingsService.updateSettings(Map.of("ai.agent_type", "unknown-type"), 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("에이전트 유형은 sdk, cli, cli-api, opencode 중 하나여야 합니다");
   }
 
   // ── 임베딩 설정 테스트 ─────────────────────────────────────────────────────

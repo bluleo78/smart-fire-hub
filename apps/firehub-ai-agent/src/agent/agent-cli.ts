@@ -6,14 +6,12 @@
  * matching the same interface as executeAgent() in agent-sdk.ts.
  */
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
 import { mkdir, readFile, readdir, writeFile, unlink } from 'fs/promises';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
@@ -51,25 +49,6 @@ export function getTranscriptPath(sessionId: string): string {
   return join(getTranscriptDir(), `${sessionId}.json`);
 }
 
-/** Resolve MCP stdio server command + args for the current runtime.
- *  - Production (dist/): `node dist/mcp/stdio-server.js`
- *  - Development (src/): `tsx src/mcp/stdio-server.ts` (node can't run .ts)
- */
-function getStdioServerCommand(): { command: string; args: string[] } {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const serverJs = join(__dirname, '..', 'mcp', 'stdio-server.js');
-
-  if (existsSync(serverJs)) {
-    // Production: compiled .js exists in dist/
-    return { command: 'node', args: [serverJs] };
-  }
-
-  // Dev: .ts only — use tsx from project node_modules
-  const serverTs = join(__dirname, '..', 'mcp', 'stdio-server.ts');
-  const tsxBin = join(__dirname, '..', '..', 'node_modules', '.bin', 'tsx');
-  return { command: tsxBin, args: [serverTs] };
-}
 
 function buildMcpConfig(userId: number, apiBaseUrl: string, internalToken: string): object {
   const { command, args } = getStdioServerCommand();

@@ -30,6 +30,8 @@ const AGENT_TYPE_OPTIONS = [
   { value: 'sdk', label: 'AI Agent (SDK)' },
   { value: 'cli', label: 'Claude Code (구독)' },
   { value: 'cli-api', label: 'Claude Code (API)' },
+  // OpenCode: 별도 키 없이 배포 환경 인증 사용
+  { value: 'opencode', label: 'OpenCode' },
 ];
 
 const MODEL_OPTIONS = [
@@ -112,8 +114,8 @@ export default function SettingsPage() {
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
 
-    // API 키 검증은 sdk 또는 cli-api 모드에서만 필요
-    if (form['ai.agent_type'] !== 'cli') {
+    // API 키 검증은 sdk 또는 cli-api 모드에서만 필요 (cli·opencode는 별도 인증 사용)
+    if (form['ai.agent_type'] !== 'cli' && form['ai.agent_type'] !== 'opencode') {
       const apiKey = form['ai.api_key'];
       if (!apiKey.trim()) {
         newErrors['ai.api_key'] = 'API 키를 입력하세요';
@@ -289,8 +291,13 @@ export default function SettingsPage() {
 
               <Separator />
 
-              {/* CLI OAuth 토큰 또는 API 키 */}
-              {form['ai.agent_type'] === 'cli' ? (
+              {/* OpenCode / CLI OAuth 토큰 / API 키 — 에이전트 유형에 따라 분기 */}
+              {form['ai.agent_type'] === 'opencode' ? (
+                // OpenCode: 배포 환경 인증(opencode auth) 사용 — 별도 키 입력 불필요
+                <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.
+                </div>
+              ) : form['ai.agent_type'] === 'cli' ? (
                 <div className="space-y-2">
                   <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
                   <div className="flex gap-2 max-w-md">
