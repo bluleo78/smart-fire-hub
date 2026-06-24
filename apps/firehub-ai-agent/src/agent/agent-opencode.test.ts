@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseOpenCodeEvent, buildOpenCodeConfig } from './agent-opencode.js';
+import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
 
 describe('buildOpenCodeConfig', () => {
   it('mcp.firehub 에 USER_ID 등 환경변수를 주입한다', () => {
@@ -22,6 +23,31 @@ describe('buildOpenCodeConfig', () => {
     expect(cfg.permission.edit).toBe('deny');
     expect(cfg.permission.write).toBe('deny');
     expect(cfg.permission.webfetch).toBe('deny');
+  });
+
+  it('메인(build) 에서 task 위임을 전면 차단하고 빌트인 general 을 비활성화한다 (#0 보안)', () => {
+    // 위임 차단으로 firehub 도구 직접 호출을 강제 — 비격리 general 서브에이전트 누수 방지.
+    const cfg = buildOpenCodeConfig(1, 'u', 't');
+    expect(cfg.agent.build.permission.task['*']).toBe('deny');
+    expect(cfg.agent.general.disable).toBe(true);
+  });
+});
+
+describe('OPENCODE_SYSTEM_PROMPT', () => {
+  it('위임을 금지하고 직접 처리·요약을 지시한다 (가짜 위임 태그 방지)', () => {
+    // 위임 라우팅을 그대로 주면 약한 모델이 막힌 위임을 텍스트로 흉내내 응답이 깨진다.
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('위임 금지');
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('<call:Agent');
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('결과 요약 필수');
+    // 위임 중심 SYSTEM_PROMPT 의 라우팅 표 헤더가 섞이지 않았는지 (회귀 가드)
+    expect(OPENCODE_SYSTEM_PROMPT).not.toContain('전문 에이전트에게 위임하세요');
+  });
+
+  it('안전 통제(PII 마스킹·파괴 2턴 확인)를 보존한다', () => {
+    // 위임 제거로 안전 규칙이 약한 모델 메인에 얹히므로 프롬프트에 반드시 잔류해야 한다.
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('PII 마스킹');
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('파괴 작업 2턴 확인');
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('get_dataset_references');
   });
 });
 
