@@ -157,6 +157,26 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
   }
 }
 
+/**
+ * `opencode run` CLI 인자 구성.
+ *
+ * --dir 명시(필수): OpenCode 는 서버(location services) 모델이라 spawn 의 cwd 만으로는
+ *   프로젝트 디렉토리가 컨테이너 부팅 상태에 따라 /app(소스 트리)로 잘못 앵커될 수 있다.
+ *   그러면 워크스페이스 opencode.json(firehub MCP·도구 잠금·agent 블록)·AGENTS.md 가 로드되지
+ *   않아 firehub 도구가 사라지고 모델이 /app 소스를 풀권한으로 훑는다(2026-06-24 운영 실측).
+ *   --dir 로 격리 워크스페이스를 프로젝트 루트로 강제해 cwd 의존성을 제거한다.
+ * --model 미전달: provider/model 은 배포 측 전역 opencode 설정(Bedrock 등) 상속(옵션 3).
+ */
+export function buildOpenCodeRunArgs(
+  message: string,
+  workDir: string,
+  resumeSessionId?: string,
+): string[] {
+  const args = ['run', message, '--dir', workDir, '--format', 'json'];
+  if (resumeSessionId) args.push('--session', resumeSessionId);
+  return args;
+}
+
 export async function* executeOpenCodeAgent(options: ChatProviderOptions): AsyncGenerator<SSEEvent> {
   // fileIds(첨부)는 v1 범위 외 — 의도적으로 destructure 하지 않음.
   const { message, userId, systemPrompt, overrideSystemPrompt, abortSignal } = options;
@@ -218,17 +238,15 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
     JSON.stringify(buildOpenCodeConfig(userId, apiBaseUrl, internalToken), null, 2),
   );
 
-  // 시스템 프롬프트 (단일 에이전트 직접처리). OpenCode 는 cwd AGENTS.md 를 시스템 지시로 읽는다.
+  // 시스템 프롬프트 (단일 에이전트 직접처리). OpenCode 는 프로젝트 디렉토리의 AGENTS.md 를 시스템 지시로 읽는다.
   //  - 위임(task)은 buildOpenCodeConfig 에서 차단하므로 subagent 정의(.opencode/agents)·위임 가이드는
   //    쓰지 않는다. OPENCODE_SYSTEM_PROMPT 가 firehub 도구 직접 호출·결과 요약을 지시한다.
   const effectiveSystemPrompt = resolveSystemPrompt(OPENCODE_SYSTEM_PROMPT, systemPrompt, overrideSystemPrompt);
   await writeFile(join(userWorkDir, 'AGENTS.md'), effectiveSystemPrompt, 'utf-8');
 
-  // --model 미전달: provider/model 은 배포/테스트 측 전역 opencode 설정(Bedrock 등) 상속(옵션 3).
-  const cliArgs = ['run', message || '', '--format', 'json'];
   // 재개: opencode 자체 발급 세션 id(ses_...) 를 --session 에 전달.
   // OpenCode 가 외부 id 를 수용하지 않으므로 첫 이벤트 sessionID 를 캡처해 저장/재사용.
-  if (isResume && opencodeSessionId) cliArgs.push('--session', opencodeSessionId);
+  const cliArgs = buildOpenCodeRunArgs(message || '', userWorkDir, isResume ? opencodeSessionId : undefined);
 
   // 인증: 모델 인증만 상속하고 내부 토큰은 opencode 본체 env 에서 제거(#0).
   //  - INTERNAL_SERVICE_TOKEN 은 mcp.firehub.environment 로 자식 MCP 에만 전달되므로 본체엔 불필요.

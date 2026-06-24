@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseOpenCodeEvent, buildOpenCodeConfig } from './agent-opencode.js';
+import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs } from './agent-opencode.js';
 import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
 
 describe('buildOpenCodeConfig', () => {
@@ -30,6 +30,23 @@ describe('buildOpenCodeConfig', () => {
     const cfg = buildOpenCodeConfig(1, 'u', 't');
     expect(cfg.agent.build.permission.task['*']).toBe('deny');
     expect(cfg.agent.general.disable).toBe(true);
+  });
+});
+
+describe('buildOpenCodeRunArgs', () => {
+  it('--dir 로 격리 워크스페이스를 프로젝트 루트로 강제한다 (cwd 의존 제거)', () => {
+    // --dir 누락 시 opencode 가 /app(소스)로 앵커돼 워크스페이스 설정이 무시되는 회귀 방지.
+    const args = buildOpenCodeRunArgs('안녕', '/home/u/.firehub/workspaces-opencode/1');
+    const di = args.indexOf('--dir');
+    expect(di).toBeGreaterThan(-1);
+    expect(args[di + 1]).toBe('/home/u/.firehub/workspaces-opencode/1');
+    expect(args).toContain('--format');
+    expect(args).not.toContain('--session');
+  });
+
+  it('재개 세션 id 가 있으면 --session 을 덧붙인다', () => {
+    const args = buildOpenCodeRunArgs('계속', '/wd', 'ses_abc');
+    expect(args.slice(-2)).toEqual(['--session', 'ses_abc']);
   });
 });
 
