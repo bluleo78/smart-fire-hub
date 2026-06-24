@@ -100,11 +100,23 @@ export function buildOpenCodeConfig(
 }
 
 /**
+ * OpenCode 도구명(`firehub_<tool>`) → 프론트엔드 계약(`mcp__firehub__<tool>`)으로 정규화.
+ *
+ * 왜: 프론트엔드 위젯 레지스트리(WidgetRegistry)는 `mcp__firehub__` 접두사만 벗겨 `show_chart`
+ *   등으로 매칭한다(Claude SDK 경로가 emit 하는 형식). OpenCode 는 `<server>_<tool>` 규칙으로
+ *   `firehub_show_chart` 를 내보내므로 정규화하지 않으면 show_chart/show_table 등 위젯이 렌더되지
+ *   않는다(2026-06-24 운영: 차트 미표시). 트랜스크립트 저장에도 동일 형식이라 history 재생도 일치.
+ */
+export function normalizeFirehubToolName(toolName: string): string {
+  return toolName.replace(/^firehub_/, 'mcp__firehub__');
+}
+
+/**
  * opencode --format json 한 라인(JSON) → SSEEvent[].
  * 실측 스키마(opencode-schema-notes.md):
  *  - type="text": part.text → [{type:'text', content}]
  *  - type="tool_use": part.type="tool", part.tool, part.state.{input,output}
- *    → completed 상태에서 tool_use + tool_result 둘 다 emit
+ *    → completed 상태에서 tool_use + tool_result 둘 다 emit (toolName 은 mcp__firehub__ 로 정규화)
  *  - type="step_finish": part.reason="stop" → done(with tokens), 그 외 → turn
  *  - type="step_start" 등 무시 대상 → []
  *  - type="error": error 이벤트로 변환
@@ -126,7 +138,8 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
       // 실측: completed 상태에서만 input+output 이 모두 채워진다.
       // running 등 중간 상태는 무시(중복 tool_use 이벤트 방지).
       if (part.state?.status !== 'completed') return [];
-      const toolName = String(part.tool ?? '');
+      // 프론트엔드 위젯 매칭을 위해 mcp__firehub__ 형식으로 정규화(Claude 경로와 동일 계약).
+      const toolName = normalizeFirehubToolName(String(part.tool ?? ''));
       return [
         { type: 'tool_use', toolName, input: part.state?.input },
         { type: 'tool_result', toolName, result: String(part.state?.output ?? '') },

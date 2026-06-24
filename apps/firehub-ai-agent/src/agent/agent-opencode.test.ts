@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs } from './agent-opencode.js';
+import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs, normalizeFirehubToolName } from './agent-opencode.js';
 import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
 
 describe('buildOpenCodeConfig', () => {
@@ -83,8 +83,17 @@ describe('parseOpenCodeEvent', () => {
       part: { type: 'tool', tool: 'firehub_list_categories', state: { status: 'completed', input: { a: 1 }, output: 'result' } },
     });
     expect(evs).toHaveLength(2);
-    expect(evs[0]).toEqual({ type: 'tool_use', toolName: 'firehub_list_categories', input: { a: 1 } });
-    expect(evs[1]).toEqual({ type: 'tool_result', toolName: 'firehub_list_categories', result: 'result' });
+    // 프론트엔드 위젯 매칭을 위해 mcp__firehub__ 형식으로 정규화돼야 한다.
+    expect(evs[0]).toEqual({ type: 'tool_use', toolName: 'mcp__firehub__list_categories', input: { a: 1 } });
+    expect(evs[1]).toEqual({ type: 'tool_result', toolName: 'mcp__firehub__list_categories', result: 'result' });
+  });
+
+  it('firehub_ 도구명을 mcp__firehub__ 로 정규화한다 (위젯 렌더링 계약)', () => {
+    // 프론트 WidgetRegistry 는 mcp__firehub__ 접두사만 벗겨 show_chart 등으로 매칭한다.
+    expect(normalizeFirehubToolName('firehub_show_chart')).toBe('mcp__firehub__show_chart');
+    expect(normalizeFirehubToolName('firehub_execute_analytics_query')).toBe('mcp__firehub__execute_analytics_query');
+    // 접두사 1회만 치환 (도구명 내부 underscore 보존)
+    expect(normalizeFirehubToolName('firehub_get_data_schema')).toBe('mcp__firehub__get_data_schema');
   });
 
   it('tool_use 이벤트(running 등 비완료 상태)는 빈 배열을 반환한다', () => {
