@@ -64,6 +64,9 @@ docker compose ps                      # 상태 확인
    - 미구성 시 채팅은 명확한 `error` SSE 로 종료된다.
 3. **firehub 도구 인증**: 별도 조치 불필요 — ai-agent 가 요청별 `opencode.json` 의 `mcp.firehub.environment` 로 `INTERNAL_SERVICE_TOKEN`/`USER_ID` 를 주입한다(사용자별 격리). opencode 본체 env 에서는 내부 토큰이 제거된다.
 4. **도구 권한**: 요청별 `opencode.json` 이 빌트인 도구를 비활성(`tools`)하고 `permission` 으로 `firehub_*` 만 허용한다(채팅에서 bash/파일/네트워크 접근 차단).
+5. **위임 차단 + 단일 에이전트 직접처리 (2026-06-24)**: 요청별 `opencode.json` 의 `agent` 블록이 메인(`build`)에서 `task` 위임을 전면 deny 하고 빌트인 `general` 서브에이전트를 disable 한다. 약한 모델(gemma)이 firehub 전용 subagent 대신 비격리 `general` 로 위임해 소스를 훑으며 멈추고(응답 지연) 내부 소스를 노출하던 문제(#0 보안)를 차단한다. opencode 경로는 위임 없이 `OPENCODE_SYSTEM_PROMPT` 로 firehub 도구를 직접 호출·요약한다(Claude SDK 경로의 위임 구조와 분리).
+
+> ⚠ **알려진 한계 — PII 마스킹(opencode 경로)**: PII 마스킹은 프롬프트 지시에만 의존하며 코드 레벨 강제 계층이 없다. 약한 모델(gemma)은 마스킹 규칙을 따르지 않아 조회/분석 결과에 **실명·이메일 등 원본 PII 가 노출될 수 있다**(2026-06-24 실측). 강한 모델(Claude SDK 경로)은 프롬프트를 준수하나 보장은 아니다. 운영 결정으로 위험을 감수하고 배포함 — PII 민감 데이터에 opencode 옵션 사용 시 유의. 근본 해소는 MCP 도구 출력의 코드 레벨 컬럼 마스킹(후속 과제).
 
 ### 게이트웨이 스키마 호환 (`propertyNames` 자동 제거)
 

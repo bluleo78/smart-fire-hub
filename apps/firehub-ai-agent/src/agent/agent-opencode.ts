@@ -14,9 +14,7 @@ import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { ChatProviderOptions, SSEEvent } from '../providers/types.js';
 import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
-import { writeOpenCodeSubagentDefinitions } from './opencode-subagents.js';
-import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 // 트랜스크립트: CLI 와 동일 포맷/경로로 저장하면 history 엔드포인트가 그대로 읽는다.
 import { getTranscriptDir, getTranscriptPath, type CliTranscript } from './agent-cli.js';
@@ -36,6 +34,11 @@ export interface OpenCodeConfig {
   model?: string;
   tools: Record<string, boolean>;
   permission: Record<string, string>;
+  // 에이전트별 설정: 위임(task) 차단 + 빌트인 general 비활성 (#0 보안 + 응답 정상화).
+  agent: {
+    build: { permission: { task: Record<string, string> } };
+    general: { disable: boolean };
+  };
   mcp: {
     firehub: {
       type: string;
@@ -69,6 +72,16 @@ export function buildOpenCodeConfig(
       // firehub MCP 도구만 허용 (네이밍/패턴은 Task 1 확정값으로 교체)
       'firehub_*': 'allow',
     },
+    // 위임(task) 전면 차단 + 빌트인 general 비활성화.
+    //  - 약한 모델(gemma)이 firehub 전용 subagent 대신 빌트인 general 로 위임하면,
+    //    general 은 요청별 permission 잠금을 상속하지 않아 bash/read 로 소스를 훑으며
+    //    멈추고(응답 지연) 내부 소스가 노출된다(2026-06-24 운영 인시던트, #0 보안).
+    //  - 메인(build)에서 task 를 deny 하면 firehub 도구 직접 호출로 강제되고(실측 정상),
+    //    OPENCODE_SYSTEM_PROMPT 가 위임 대신 직접처리·요약을 지시한다.
+    agent: {
+      build: { permission: { task: { '*': 'deny' } } },
+      general: { disable: true },
+    },
     mcp: {
       firehub: {
         type: 'local',
@@ -87,11 +100,23 @@ export function buildOpenCodeConfig(
 }
 
 /**
+ * OpenCode 도구명(`firehub_<tool>`) → 프론트엔드 계약(`mcp__firehub__<tool>`)으로 정규화.
+ *
+ * 왜: 프론트엔드 위젯 레지스트리(WidgetRegistry)는 `mcp__firehub__` 접두사만 벗겨 `show_chart`
+ *   등으로 매칭한다(Claude SDK 경로가 emit 하는 형식). OpenCode 는 `<server>_<tool>` 규칙으로
+ *   `firehub_show_chart` 를 내보내므로 정규화하지 않으면 show_chart/show_table 등 위젯이 렌더되지
+ *   않는다(2026-06-24 운영: 차트 미표시). 트랜스크립트 저장에도 동일 형식이라 history 재생도 일치.
+ */
+export function normalizeFirehubToolName(toolName: string): string {
+  return toolName.replace(/^firehub_/, 'mcp__firehub__');
+}
+
+/**
  * opencode --format json 한 라인(JSON) → SSEEvent[].
  * 실측 스키마(opencode-schema-notes.md):
  *  - type="text": part.text → [{type:'text', content}]
  *  - type="tool_use": part.type="tool", part.tool, part.state.{input,output}
- *    → completed 상태에서 tool_use + tool_result 둘 다 emit
+ *    → completed 상태에서 tool_use + tool_result 둘 다 emit (toolName 은 mcp__firehub__ 로 정규화)
  *  - type="step_finish": part.reason="stop" → done(with tokens), 그 외 → turn
  *  - type="step_start" 등 무시 대상 → []
  *  - type="error": error 이벤트로 변환
@@ -113,7 +138,8 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
       // 실측: completed 상태에서만 input+output 이 모두 채워진다.
       // running 등 중간 상태는 무시(중복 tool_use 이벤트 방지).
       if (part.state?.status !== 'completed') return [];
-      const toolName = String(part.tool ?? '');
+      // 프론트엔드 위젯 매칭을 위해 mcp__firehub__ 형식으로 정규화(Claude 경로와 동일 계약).
+      const toolName = normalizeFirehubToolName(String(part.tool ?? ''));
       return [
         { type: 'tool_use', toolName, input: part.state?.input },
         { type: 'tool_result', toolName, result: String(part.state?.output ?? '') },
@@ -142,6 +168,26 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
     default:
       return [];
   }
+}
+
+/**
+ * `opencode run` CLI 인자 구성.
+ *
+ * --dir 명시(필수): OpenCode 는 서버(location services) 모델이라 spawn 의 cwd 만으로는
+ *   프로젝트 디렉토리가 컨테이너 부팅 상태에 따라 /app(소스 트리)로 잘못 앵커될 수 있다.
+ *   그러면 워크스페이스 opencode.json(firehub MCP·도구 잠금·agent 블록)·AGENTS.md 가 로드되지
+ *   않아 firehub 도구가 사라지고 모델이 /app 소스를 풀권한으로 훑는다(2026-06-24 운영 실측).
+ *   --dir 로 격리 워크스페이스를 프로젝트 루트로 강제해 cwd 의존성을 제거한다.
+ * --model 미전달: provider/model 은 배포 측 전역 opencode 설정(Bedrock 등) 상속(옵션 3).
+ */
+export function buildOpenCodeRunArgs(
+  message: string,
+  workDir: string,
+  resumeSessionId?: string,
+): string[] {
+  const args = ['run', message, '--dir', workDir, '--format', 'json'];
+  if (resumeSessionId) args.push('--session', resumeSessionId);
+  return args;
 }
 
 export async function* executeOpenCodeAgent(options: ChatProviderOptions): AsyncGenerator<SSEEvent> {
@@ -205,21 +251,15 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
     JSON.stringify(buildOpenCodeConfig(userId, apiBaseUrl, internalToken), null, 2),
   );
 
-  // subagent 정의 (.opencode/agents/*.md) — Claude 버전과 동등 위임
-  const subagents = loadSubagents();
-  await writeOpenCodeSubagentDefinitions(userWorkDir, subagents);
-
-  // 시스템 프롬프트 (위임 가이드 포함). OpenCode 는 AGENTS.md/instructions 로 주입.
-  // ⚠ Task 1: AGENTS.md 가 실제로 시스템 지시로 읽히는지, 위임 관용구가 OpenCode 에 통하는지 확정.
-  const subagentGuide = buildSubagentGuide(subagents);
-  const effectiveSystemPrompt = resolveSystemPrompt(`${SYSTEM_PROMPT}${subagentGuide}`, systemPrompt, overrideSystemPrompt);
+  // 시스템 프롬프트 (단일 에이전트 직접처리). OpenCode 는 프로젝트 디렉토리의 AGENTS.md 를 시스템 지시로 읽는다.
+  //  - 위임(task)은 buildOpenCodeConfig 에서 차단하므로 subagent 정의(.opencode/agents)·위임 가이드는
+  //    쓰지 않는다. OPENCODE_SYSTEM_PROMPT 가 firehub 도구 직접 호출·결과 요약을 지시한다.
+  const effectiveSystemPrompt = resolveSystemPrompt(OPENCODE_SYSTEM_PROMPT, systemPrompt, overrideSystemPrompt);
   await writeFile(join(userWorkDir, 'AGENTS.md'), effectiveSystemPrompt, 'utf-8');
 
-  // --model 미전달: provider/model 은 배포/테스트 측 전역 opencode 설정(Bedrock 등) 상속(옵션 3).
-  const cliArgs = ['run', message || '', '--format', 'json'];
   // 재개: opencode 자체 발급 세션 id(ses_...) 를 --session 에 전달.
   // OpenCode 가 외부 id 를 수용하지 않으므로 첫 이벤트 sessionID 를 캡처해 저장/재사용.
-  if (isResume && opencodeSessionId) cliArgs.push('--session', opencodeSessionId);
+  const cliArgs = buildOpenCodeRunArgs(message || '', userWorkDir, isResume ? opencodeSessionId : undefined);
 
   // 인증: 모델 인증만 상속하고 내부 토큰은 opencode 본체 env 에서 제거(#0).
   //  - INTERNAL_SERVICE_TOKEN 은 mcp.firehub.environment 로 자식 MCP 에만 전달되므로 본체엔 불필요.
