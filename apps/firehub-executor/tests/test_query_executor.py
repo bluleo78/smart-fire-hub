@@ -6,7 +6,6 @@ import pytest
 
 from app.services.query_executor import (
     _build_geojson_wrapped_sql,
-    _detect_geometry_in_rows,
     execute_query,
 )
 
@@ -267,6 +266,110 @@ def test_statement_timeout_set():
         f"Expected statement_timeout in: {executed_sqls}"
 
 
+def test_numeric_text_not_misdetected_as_geometry():
+    """YYYYMMDDHHMMSS 같은 숫자 텍스트 컬럼을 geometry 로 오판하지 않는다 (회귀)."""
+    executed_sqls = []
+    cursor = MagicMock()
+    cursor.description = [("report_date", 25, None, None, None, None, None)]  # 25 = text OID
+    cursor.fetchall.return_value = [("20260131235609",)]
+    cursor.rowcount = 0
+
+    def capture_execute(sql, *args, **kwargs):
+        executed_sqls.append(sql)
+
+    cursor.execute.side_effect = capture_execute
+
+    # geometry OID 조회용 사이드 커서 (geometry OID=16000; text 25 는 미포함)
+    geom_cursor = MagicMock()
+    geom_cursor.fetchall.return_value = [(16000,)]
+    side_conn = MagicMock()
+    side_conn.cursor.return_value = geom_cursor
+    cursor.connection = side_conn
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    result = execute_query("SELECT report_date FROM survey", max_rows=1000, read_only=False, conn=conn)
+
+    assert result.success is True
+    assert result.rows == [{"report_date": "20260131235609"}]
+    assert not any("ST_AsGeoJSON" in s for s in executed_sqls), \
+        f"text 컬럼이 geometry 로 오판되어 래핑됨: {executed_sqls}"
+
+
+def test_geometry_column_wrapped_via_oid_on_success():
+    """성공한 SELECT 결과에 실제 geometry 컬럼(OID 매칭)이 있으면 ST_AsGeoJSON 로 래핑한다."""
+    GEOM_OID = 16000
+    executed_sqls = []
+    state = {"wrapped": False}
+
+    cursor = MagicMock()
+    cursor.rowcount = 0
+    cursor.description = [("geom", GEOM_OID, None, None, None, None, None)]
+
+    def execute_side(sql, *args, **kwargs):
+        executed_sqls.append(sql)
+        if "ST_AsGeoJSON" in sql:
+            state["wrapped"] = True
+            cursor.description = [("geom", 25, None, None, None, None, None)]
+
+    def fetchall_side():
+        if state["wrapped"]:
+            return [('{"type":"Point","coordinates":[1,2]}',)]
+        return [("0101000000AABBCCDD",)]
+
+    cursor.execute.side_effect = execute_side
+    cursor.fetchall.side_effect = fetchall_side
+
+    geom_cursor = MagicMock()
+    geom_cursor.fetchall.return_value = [(GEOM_OID,)]
+    side_conn = MagicMock()
+    side_conn.cursor.return_value = geom_cursor
+    cursor.connection = side_conn
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=conn)
+
+    assert result.success is True
+    assert any("ST_AsGeoJSON" in s for s in executed_sqls)
+    assert result.rows == [{"geom": '{"type":"Point","coordinates":[1,2]}'}]
+
+
+def test_geometry_wrap_failure_falls_back_to_original_result():
+    """geometry 로 판정됐으나 ST_AsGeoJSON 재실행이 실패하면 원본 성공 결과를 반환한다."""
+    GEOM_OID = 16000
+    executed_sqls = []
+
+    cursor = MagicMock()
+    cursor.rowcount = 0
+    cursor.description = [("geom", GEOM_OID, None, None, None, None, None)]
+    cursor.fetchall.return_value = [("0101000000DEADBEEF",)]
+
+    def execute_side(sql, *args, **kwargs):
+        executed_sqls.append(sql)
+        if "ST_AsGeoJSON" in sql:
+            raise Exception("ST_AsGeoJSON 실패")
+
+    cursor.execute.side_effect = execute_side
+
+    geom_cursor = MagicMock()
+    geom_cursor.fetchall.return_value = [(GEOM_OID,)]
+    side_conn = MagicMock()
+    side_conn.cursor.return_value = geom_cursor
+    cursor.connection = side_conn
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=conn)
+
+    assert result.success is True
+    assert result.rows == [{"geom": "0101000000DEADBEEF"}]
+    assert any("ST_AsGeoJSON" in s for s in executed_sqls)  # 시도는 했음
+
+
 def test_geometry_detection_via_limit0():
     """When initial SELECT fails, geometry detection via LIMIT 0 + pg_type should trigger wrapped SQL."""
     # Geometry OID
@@ -334,6 +437,21 @@ def test_geometry_detection_via_limit0():
 # Unit tests for helper functions
 # ---------------------------------------------------------------------------
 
+def test_fetch_geom_oids_returns_pg_type_oids():
+    """pg_type 조회 결과의 OID 집합을 반환한다."""
+    from app.services.query_executor import _fetch_geom_oids
+
+    cur = MagicMock()
+    cur.fetchall.return_value = [(16000,), (16001,)]
+    conn = MagicMock()
+    conn.cursor.return_value = cur
+
+    oids = _fetch_geom_oids(conn)
+
+    assert oids == {16000, 16001}
+    assert any("pg_type" in c.args[0] for c in cur.execute.call_args_list)
+
+
 def test_build_geojson_wrapped_sql():
     column_metas = [("id", False), ("geom", True), ("name", False)]
     result = _build_geojson_wrapped_sql("SELECT id, geom, name FROM t", column_metas)
@@ -347,30 +465,6 @@ def test_build_geojson_wrapped_sql():
     assert 'ST_AsGeoJSON("geom")' in parts  # wrapped
     assert parts.count('"id"') == 1  # id is plain, appears once
 
-
-def test_detect_geometry_in_rows():
-    # Valid hex WKB string (endianness byte + hex-encoded data)
-    hex_wkb = "0101000000000000000000F03F0000000000000040"
-    rows = [{"id": 1, "geom": hex_wkb, "name": "test"}]
-    columns = ["id", "geom", "name"]
-
-    result = _detect_geometry_in_rows(rows, columns)
-
-    assert "geom" in result
-    assert "id" not in result
-    assert "name" not in result
-
-
-def test_detect_geometry_in_rows_no_geom():
-    rows = [{"id": 1, "name": "hello"}]
-    columns = ["id", "name"]
-    result = _detect_geometry_in_rows(rows, columns)
-    assert result == set()
-
-
-def test_detect_geometry_in_rows_empty():
-    result = _detect_geometry_in_rows([], ["id"])
-    assert result == set()
 
 
 def test_execution_time_measured():

@@ -1,33 +1,44 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import Any, Dict, List, Tuple
 
 from app.schemas.responses import QueryExecuteResponse
 
+logger = logging.getLogger(__name__)
+
+
+def _fetch_geom_oids(conn) -> set[int]:
+    """geometry/geography 타입의 OID 집합을 pg_type 에서 조회한다.
+
+    성공 경로와 에러 fallback 경로가 공유한다. 값이 아니라 컬럼의 선언된
+    타입 OID로 geometry 여부를 판정하기 위한 근거를 제공한다.
+    """
+    cur = conn.cursor()
+    cur.execute("SELECT oid FROM pg_type WHERE typname IN ('geometry', 'geography')")
+    oids = {row[0] for row in cur.fetchall()}
+    cur.close()
+    return oids
+
 
 def _detect_geometry_columns(cursor, sql: str) -> List[Tuple[str, bool]]:
     """Detect column names and whether they are geometry via LIMIT 0 + pg_type lookup."""
     conn = cursor.connection
+    # meta_cursor 를 먼저 연다 (커서 오픈 순서 보존).
     meta_cursor = conn.cursor()
     meta_cursor.execute(f"SELECT * FROM ({sql}) _geom_detect LIMIT 0")
 
-    meta_cursor2 = conn.cursor()
-    meta_cursor2.execute(
-        "SELECT oid FROM pg_type WHERE typname IN ('geometry', 'geography')"
-    )
-    geom_oids = {row[0] for row in meta_cursor2.fetchall()}
+    geom_oids = _fetch_geom_oids(conn)
 
     columns: List[Tuple[str, bool]] = []
     for desc in meta_cursor.description or []:
         col_name = desc[0]
         type_oid = desc[1]  # type_code in psycopg2
-        is_geom = type_oid in geom_oids
-        columns.append((col_name, is_geom))
+        columns.append((col_name, type_oid in geom_oids))
 
     meta_cursor.close()
-    meta_cursor2.close()
     return columns
 
 
@@ -46,24 +57,6 @@ def _build_geojson_wrapped_sql(
             select_parts.append(f'"{escaped}"')
     return f"WITH _src AS ({original_sql}) SELECT {', '.join(select_parts)} FROM _src"
 
-
-def _detect_geometry_in_rows(
-    rows: List[Dict[str, Any]], columns: List[str]
-) -> set:
-    """Detect geometry columns by checking if values look like hex WKB strings."""
-    if not rows:
-        return set()
-    geom_cols = set()
-    first_row = rows[0]
-    for col in columns:
-        val = first_row.get(col)
-        if isinstance(val, str) and len(val) > 10:
-            try:
-                bytes.fromhex(val)
-                geom_cols.add(col)
-            except ValueError:
-                pass
-    return geom_cols
 
 
 def _has_limit(sql: str) -> bool:
@@ -153,24 +146,38 @@ def execute_query(
                 except Exception:
                     raise original_error
 
-            # Check for hex WKB geometry in result rows
-            if rows and original_error is None:
-                geom_cols = _detect_geometry_in_rows(rows, columns)
-                if geom_cols:
-                    # Re-run with geometry wrapping
-                    # Build column_metas using detected geom cols
-                    column_metas_from_rows = [
-                        (col, col in geom_cols) for col in columns
-                    ]
-                    wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas_from_rows)
-                    if not _has_limit(wrapped_sql):
-                        wrapped_sql = _add_limit(wrapped_sql, max_rows)
-                    cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
-                    cursor.execute("SAVEPOINT analytics_query")
-                    cursor.execute(wrapped_sql)
-                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                    raw_rows = cursor.fetchall()
-                    rows = [dict(zip(columns, row)) for row in raw_rows]
+            # OID 기반 geometry 컬럼 감지 (성공 경로).
+            # 값이 아니라 컬럼의 선언된 타입 OID 로 판정 → 숫자 텍스트 오탐 없음.
+            if rows and original_error is None and cursor.description:
+                desc_snapshot = list(cursor.description)
+                geom_oids = _fetch_geom_oids(cursor.connection)
+                column_metas = [
+                    (desc[0], desc[1] in geom_oids) for desc in desc_snapshot
+                ]
+                if any(is_geom for _, is_geom in column_metas):
+                    orig_columns, orig_rows = columns, rows
+                    try:
+                        wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
+                        if not _has_limit(wrapped_sql):
+                            wrapped_sql = _add_limit(wrapped_sql, max_rows)
+                        cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
+                        cursor.execute("SAVEPOINT analytics_query")
+                        cursor.execute(wrapped_sql)
+                        columns = [d[0] for d in cursor.description] if cursor.description else []
+                        raw_rows = cursor.fetchall()
+                        rows = [dict(zip(columns, row)) for row in raw_rows]
+                    except Exception as exc:
+                        # 방어적 폴백: GeoJSON 변환 실패 시 원본 성공 결과를 유지한다
+                        # (연결이 정상일 때. 연결 사망 등으로 아래 rollback 도 실패하면
+                        #  바깥 except 가 잡아 에러 응답으로 끝난다).
+                        # 침묵 강등을 관측 가능하게 로깅한다.
+                        logger.warning(
+                            "geometry GeoJSON wrap failed, falling back to raw result: %s",
+                            exc,
+                        )
+                        cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
+                        cursor.execute("SAVEPOINT analytics_query")
+                        columns, rows = orig_columns, orig_rows
 
             truncated = len(rows) >= max_rows
             cursor.execute("RELEASE SAVEPOINT analytics_query")
