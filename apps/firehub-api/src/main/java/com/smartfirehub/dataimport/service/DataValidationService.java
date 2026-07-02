@@ -97,14 +97,16 @@ public class DataValidationService {
       case "TEXT", "VARCHAR" -> value;
       case "INTEGER" -> {
         try {
-          yield Long.parseLong(value);
+          // 천단위 콤마(예: "38,344") 제거 후 파싱. 임포트 데이터에 흔한 형식.
+          yield Long.parseLong(value.replace(",", ""));
         } catch (NumberFormatException e) {
           throw new Exception("Invalid integer value: " + value);
         }
       }
       case "DECIMAL" -> {
         try {
-          yield new BigDecimal(value);
+          // 천단위 콤마 제거 후 파싱(소수 구분자는 마침표 전제). BigDecimal 은 콤마를 못 받음.
+          yield new BigDecimal(value.replace(",", ""));
         } catch (NumberFormatException e) {
           throw new Exception("Invalid decimal value: " + value);
         }

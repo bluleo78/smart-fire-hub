@@ -76,6 +76,13 @@ class DataValidationServiceTest {
         .hasMessageContaining("Invalid integer value");
   }
 
+  @Test
+  void convertValue_integer_thousandsComma_stripsAndParses() throws Exception {
+    // 천단위 콤마가 든 값("38,344")도 정수로 파싱돼야 한다 (임포트 흔한 형식).
+    Object result = service.convertValue("38,344", "INTEGER");
+    assertThat(result).isInstanceOf(Long.class).isEqualTo(38344L);
+  }
+
   // -----------------------------------------------------------------------
   // convertValue — DECIMAL
   // -----------------------------------------------------------------------
@@ -92,6 +99,14 @@ class DataValidationServiceTest {
     assertThatThrownBy(() -> service.convertValue("xyz", "DECIMAL"))
         .isInstanceOf(Exception.class)
         .hasMessageContaining("Invalid decimal value");
+  }
+
+  @Test
+  void convertValue_decimal_thousandsComma_stripsAndParses() throws Exception {
+    // 천단위 콤마가 든 소수("1,234.56")도 파싱돼야 한다.
+    Object result = service.convertValue("1,234.56", "DECIMAL");
+    assertThat(result).isInstanceOf(BigDecimal.class);
+    assertThat(((BigDecimal) result).compareTo(new BigDecimal("1234.56"))).isZero();
   }
 
   // -----------------------------------------------------------------------
