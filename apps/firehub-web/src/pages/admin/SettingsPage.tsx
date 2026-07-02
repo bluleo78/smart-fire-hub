@@ -35,9 +35,9 @@ const AGENT_TYPE_OPTIONS = [
 ];
 
 const MODEL_OPTIONS = [
-  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
 ];
 
 interface AISettingsForm {
@@ -57,7 +57,7 @@ const DEFAULT_VALUES: AISettingsForm = {
   'ai.api_key': '',
   'ai.cli_oauth_token': '',
   'ai.agent_type': 'sdk',
-  'ai.model': 'claude-sonnet-4-6',
+  'ai.model': 'claude-sonnet-5',
   'ai.max_turns': '10',
   'ai.system_prompt': '',
   'ai.temperature': '1.0',

@@ -188,7 +188,7 @@ public class AiAgentProxyService {
     if ("cli".equals(agentType)) {
       cliTokenOpt.ifPresent(token -> requestBody.put("cliOauthToken", token));
     }
-    requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-4-6"));
+    requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-5"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
     requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));
     requestBody.put("temperature", parseDoubleSafe(aiSettings.get("ai.temperature"), 1.0));

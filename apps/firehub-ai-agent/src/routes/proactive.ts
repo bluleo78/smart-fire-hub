@@ -276,7 +276,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     return;
   }
 
-  const model = body.model || 'claude-haiku-4-5-20251001';
+  const model = body.model || 'claude-haiku-4-5';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
   // report-writer가 HTML 리포트 + 요약을 저장할 임시 디렉토리
   const reportDir = `/tmp/proactive-report-${Date.now()}-${userId}`;

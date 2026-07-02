@@ -1,5 +1,5 @@
 /** Default Claude model for agent execution */
-export const DEFAULT_MODEL = 'claude-sonnet-4-6';
+export const DEFAULT_MODEL = 'claude-sonnet-5';
 
 /** Default max agent turns */
 export const DEFAULT_MAX_TURNS = 10;

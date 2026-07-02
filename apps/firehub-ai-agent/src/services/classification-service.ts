@@ -45,7 +45,7 @@ async function getModelAndApiKey(
     headers['X-On-Behalf-Of'] = String(userId);
   }
 
-  let model = process.env.AI_DEFAULT_MODEL || 'claude-haiku-4-5-20251001';
+  let model = process.env.AI_DEFAULT_MODEL || 'claude-haiku-4-5';
   let apiKey = process.env.ANTHROPIC_API_KEY || '';
 
   try {
