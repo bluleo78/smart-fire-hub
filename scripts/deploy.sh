@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Smart Fire Hub 운영 배포 스크립트
-# Usage: ./scripts/deploy.sh [api|executor|web|ai-agent|channel|all]
-# all = api + executor + web + ai-agent + channel (5개 앱 전부)
+# Usage: ./scripts/deploy.sh [api|executor|web|ai-agent|channel|db|all]
+# all = api + executor + web + ai-agent + channel (5개 앱 전부, db 제외 — DB는 개별 배포로만 재기동)
 
 REGISTRY="ghcr.io/bluleo78/smart-fire-hub"
 PROD_DIR="$HOME/prod/smart-fire-hub"
@@ -55,8 +55,12 @@ build_and_push() {
       log "Building + pushing $app (context: apps/firehub-channel/)"
       docker buildx build --platform "$PLATFORM" -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
       ;;
+    db)
+      log "Building + pushing $app (context: project root, image tag: postgres)"
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/postgres:latest" -f docker/postgres/Dockerfile --push .
+      ;;
     *)
-      error "Unknown app: $app (valid: api, web, ai-agent, executor, channel)"
+      error "Unknown app: $app (valid: api, web, ai-agent, executor, channel, db)"
       ;;
   esac
 }
