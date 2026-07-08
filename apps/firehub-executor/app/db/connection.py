@@ -29,6 +29,11 @@ def close_pool() -> None:
         _pool = None
 
 
+def is_pool_ready() -> bool:
+    """커넥션 풀 초기화 여부. health check가 실제 DB 연결 가능 상태를 반영하도록 함."""
+    return _pool is not None
+
+
 def _is_conn_alive(conn) -> bool:
     """Check if a pooled connection is still usable."""
     try:

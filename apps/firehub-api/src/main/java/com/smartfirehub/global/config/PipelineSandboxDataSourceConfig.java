@@ -59,6 +59,10 @@ public class PipelineSandboxDataSourceConfig {
     ds.setMaximumPoolSize(10);
     ds.setPoolName("pipeline-sandbox-pool");
     ds.setConnectionTestQuery("SELECT 1");
+    // HikariCP는 기본적으로 풀 생성 시 커넥션을 즉시 검증해 실패하면 앱 기동 자체를 막는다.
+    // pipeline_executor 비밀번호는 PipelineExecutorPasswordSyncCallback이 Flyway migrate 직후 동기화하므로,
+    // 그 시점 이전에 이 빈이 즉시 검증하면 동기화 전 상태로 실패할 수 있다 — 지연 검증으로 전환.
+    ds.setInitializationFailTimeout(-1);
     return ds;
   }
 

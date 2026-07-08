@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     db_port: int = 5432
     db_name: str = "firehub"
     db_user: str = "pipeline_executor"
-    db_password: str = ""
+    db_password: str = "pipeline_exec_pwd"  # V32/V70 마이그레이션의 기본값과 일치 (로컬 dev 편의)
 
     # Auth — 기본값 없음: 미설정 시 Pydantic ValidationError로 기동 실패
     internal_service_token: str
