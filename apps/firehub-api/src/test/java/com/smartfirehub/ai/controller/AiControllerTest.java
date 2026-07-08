@@ -3,6 +3,8 @@ package com.smartfirehub.ai.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -19,6 +21,8 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -230,5 +234,25 @@ class AiControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
         .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void getAuthStatus_sdkWithOauthToken_usesTokenVerification() throws Exception {
+    // given: sdk 타입이고 OAuth 토큰이 설정된 상태
+    mockAuthentication("ai:settings");
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.agent_type", "sdk"));
+    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of("oat-test"));
+    when(aiAgentProxyService.verifyCliToken()).thenReturn("{\"valid\":true}");
+
+    // when: /auth-status 엔드포인트 호출
+    mockMvc
+        .perform(get("/api/v1/ai/auth-status").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(content().string("{\"valid\":true}"));
+
+    // then: OAuth 토큰 검증 경로(`verifyCliToken`)가 호출되고 API 키 경로(`verifyApiKey`)는 호출되지 않음
+    verify(aiAgentProxyService).verifyCliToken();
+    verify(aiAgentProxyService, never()).verifyApiKey();
   }
 }

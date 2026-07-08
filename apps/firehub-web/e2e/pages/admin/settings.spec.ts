@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import { createSetting } from '../../factories/admin.factory';
 import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -322,6 +323,121 @@ test.describe('설정 페이지', () => {
       await expect(
         page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
       ).not.toBeVisible();
+    });
+  });
+
+  /**
+   * SDK 에이전트 유형 선택 시 OAuth 토큰 + API 키 필드 동시 노출 검증.
+   * - sdk는 OAuth·API 키 둘 다 지원(OAuth 우선)하므로 두 입력창이 모두 보여야 한다.
+   * - OAuth 토큰 저장 시 PUT payload에 ai.cli_oauth_token 키가 담기는지 검증한다.
+   */
+  test.describe('SDK 에이전트 유형', () => {
+    /**
+     * cli-api 상태로 설정을 로드한 뒤 실제로 sdk로 전환하는 onChange를 발생시켜
+     * 분기(필드 노출)가 전환 시점에 정확히 동작하는지 검증한다.
+     * (setupSettingsMocks는 초기값이 이미 sdk라 재선택은 onChange를 트리거하지 않으므로 별도 모킹 사용)
+     */
+    test('cli-api에서 sdk로 전환 시 OAuth 토큰과 API 키 필드가 모두 노출되고 저장된다', { tag: '@smoke' }, async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/settings', [
+        createSetting({ key: 'ai.agent_type', value: 'cli-api', description: '에이전트 유형' }),
+        createSetting({ key: 'ai.model', value: 'claude-sonnet-4-6', description: '모델' }),
+        createSetting({ key: 'ai.max_turns', value: '10', description: '최대 턴 수' }),
+        createSetting({ key: 'ai.system_prompt', value: '당신은 도움이 되는 AI 어시스턴트입니다.', description: '시스템 프롬프트' }),
+        createSetting({ key: 'ai.temperature', value: '1.0', description: 'Temperature' }),
+        createSetting({ key: 'ai.max_tokens', value: '16384', description: '최대 응답 토큰' }),
+        createSetting({ key: 'ai.session_max_tokens', value: '50000', description: '세션 최대 토큰' }),
+        createSetting({ key: 'ai.api_key', value: '****masked****', description: 'API 키' }),
+        createSetting({ key: 'ai.cli_oauth_token', value: '', description: 'OAuth 토큰' }),
+      ]);
+      // 저장 PUT 캡처 — goto 이전에 등록
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
+
+      await page.goto('/admin/settings');
+      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
+
+      // 전환 전: cli-api 상태이므로 OAuth 토큰 입력창은 보이지 않아야 한다
+      await expect(page.locator('#ai-cli-oauth-token')).not.toBeVisible();
+      await expect(page.locator('#ai-api-key')).toBeVisible();
+
+      // 에이전트 유형을 sdk로 실제 전환 (cli-api -> sdk 실제 onChange 발생)
+      await page.getByLabel('에이전트 유형').click();
+      await page.getByRole('option', { name: 'AI Agent (SDK)' }).click();
+
+      // 전환 후: OAuth 토큰 필드와 API 키 필드가 모두 노출되어야 한다
+      await expect(page.locator('#ai-cli-oauth-token')).toBeVisible();
+      await expect(page.locator('#ai-api-key')).toBeVisible();
+
+      // OAuth 토큰 입력 후 저장
+      await page.locator('#ai-cli-oauth-token').fill('sk-ant-oat01-xyz');
+      const saveButton = page.getByRole('button', { name: '저장' }).first();
+      await expect(saveButton).toBeEnabled({ timeout: 3000 });
+      await saveButton.click();
+
+      // PUT payload에 ai.cli_oauth_token이 담겨야 한다
+      const req = await saveCapture.waitForRequest();
+      expect((req.payload as { settings: Record<string, string> }).settings['ai.cli_oauth_token']).toBe(
+        'sk-ant-oat01-xyz',
+      );
+    });
+
+    /**
+     * 이슈: sdk 모드에서 OAuth 토큰만 입력해도 validate()가 API 키를 강제 요구해
+     * OAuth 전용 설정을 저장할 수 없던 버그(회귀 방지).
+     */
+    test('sdk 모드에서 API 키 없이 OAuth 토큰만 입력해도 저장된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page); // 초기값 agent_type=sdk, api_key=****masked****
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
+
+      await page.goto('/admin/settings');
+      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
+
+      // API 키를 비우고(짧은/빈 값) OAuth 토큰만 채운다
+      const apiKeyInput = page.locator('#ai-api-key');
+      await apiKeyInput.fill('');
+      await page.locator('#ai-cli-oauth-token').fill('sk-ant-oat01-onlytoken');
+
+      const saveButton = page.getByRole('button', { name: '저장' }).first();
+      await expect(saveButton).toBeEnabled({ timeout: 3000 });
+      await saveButton.click();
+
+      // 검증 에러 없이 저장 성공 toast가 보여야 한다
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+
+      const req = await saveCapture.waitForRequest();
+      expect((req.payload as { settings: Record<string, string> }).settings['ai.cli_oauth_token']).toBe(
+        'sk-ant-oat01-onlytoken',
+      );
+    });
+
+    /**
+     * sdk 모드에서 API 키와 OAuth 토큰이 모두 비어있으면 저장이 차단되어야 한다.
+     */
+    test('sdk 모드에서 API 키와 OAuth 토큰이 모두 비어있으면 저장이 차단된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
+
+      // API 키, OAuth 토큰 모두 비운다 (기존 마스킹된 API 키를 지우는 것만으로 dirty 상태가 된다)
+      await page.locator('#ai-api-key').fill('');
+      await page.locator('#ai-cli-oauth-token').fill('');
+
+      const saveButton = page.getByRole('button', { name: '저장' }).first();
+      await expect(saveButton).toBeEnabled({ timeout: 3000 });
+      await saveButton.click();
+
+      // 에러 toast 확인 및 PUT 미호출 확인
+      await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+      expect(saveCapture.lastRequest()).toBeUndefined();
     });
   });
 

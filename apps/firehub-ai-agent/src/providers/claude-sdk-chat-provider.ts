@@ -6,8 +6,9 @@ export class ClaudeSdkChatProvider implements ChatProvider {
   readonly name = 'claude-sdk';
 
   constructor(
-    private readonly apiKey: string,
+    private readonly apiKey: string | undefined,
     private readonly defaultModel: string,
+    private readonly oauthToken?: string,
   ) {}
 
   async *execute(options: ChatProviderOptions): AsyncGenerator<SSEEvent> {
@@ -23,6 +24,7 @@ export class ClaudeSdkChatProvider implements ChatProvider {
       temperature: options.temperature,
       maxTokens: options.maxTokens,
       apiKey: this.apiKey,
+      oauthToken: this.oauthToken,
       abortSignal: options.abortSignal,
     };
     yield* executeAgent(agentOptions);

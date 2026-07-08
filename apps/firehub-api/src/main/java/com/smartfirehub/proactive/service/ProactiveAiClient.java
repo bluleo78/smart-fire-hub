@@ -46,7 +46,7 @@ public class ProactiveAiClient {
       String context,
       String apiKey,
       String agentType,
-      String cliOauthToken,
+      String oauthToken,
       Map<String, Object> template,
       Map<String, Object> config) {
     try {
@@ -56,8 +56,10 @@ public class ProactiveAiClient {
       body.put("apiKey", apiKey != null ? apiKey : "");
       body.put("agentType", agentType != null ? agentType : "sdk");
       body.put("config", config != null ? config : Map.of());
-      if (cliOauthToken != null) {
-        body.put("cliOauthToken", cliOauthToken);
+      // ai-agent가 body의 oauthToken 키를 읽는다 (cli/sdk 공통, 구 cliOauthToken 키는 폐기).
+      // 공백 문자열은 다른 검증 지점(missingCredential 등)과 동일하게 "없음"으로 취급한다.
+      if (oauthToken != null && !oauthToken.isBlank()) {
+        body.put("oauthToken", oauthToken);
       }
       if (template != null) {
         body.put("template", template);

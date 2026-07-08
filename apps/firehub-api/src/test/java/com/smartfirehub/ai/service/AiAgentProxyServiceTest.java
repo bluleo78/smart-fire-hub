@@ -1,23 +1,60 @@
 package com.smartfirehub.ai.service;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * AiAgentProxyService 단위 기능 테스트. 외부 AI 에이전트 호출 없이 검증 가능한 분기 (verifyCliToken, verifyApiKey) 를 커버한다.
- * 실제 WebClient 호출은 외부 의존성이므로 설정값 미존재 분기만 검증한다.
+ * AiAgentProxyService 단위 기능 테스트. 외부 AI 에이전트 호출 없이 검증 가능한 분기 (verifyCliToken, verifyApiKey) 를 커버하고,
+ * WireMock으로 ai-agent 서비스를 스텁하여 streamChat의 sdk/cli OAuth 토큰 주입 분기를 검증한다.
  */
 class AiAgentProxyServiceTest extends IntegrationTestBase {
+
+  // WireMock 서버를 정적 필드에서 즉시 시작한다: @DynamicPropertySource는 Spring 컨텍스트 준비(빈 생성) 이전에
+  // 호출되므로, 그 시점에 이미 포트가 결정되어 있어야 agent.url 프로퍼티를 WireMock 주소로 오버라이드할 수 있다.
+  static WireMockServer wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
+
+  @BeforeAll
+  static void startWireMock() {
+    wireMock.start();
+  }
+
+  @AfterAll
+  static void stopWireMock() {
+    wireMock.stop();
+  }
+
+  @BeforeEach
+  void resetWireMock() {
+    wireMock.resetAll();
+  }
+
+  /** agent.url을 WireMock 동적 포트로 오버라이드하여 실제 ai-agent 대신 스텁 서버로 요청이 전송되게 한다. */
+  @DynamicPropertySource
+  static void overrideAgentUrl(DynamicPropertyRegistry registry) {
+    registry.add("agent.url", () -> "http://localhost:" + wireMock.port());
+  }
 
   @Autowired private AiAgentProxyService aiAgentProxyService;
 
@@ -64,6 +101,42 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     String result = aiAgentProxyService.verifyApiKey();
 
     assertThat(result).isEqualTo("{\"valid\":false}");
+  }
+
+  /**
+   * sdk 모드 + OAuth 토큰 설정 시(API 키는 없음) ai-agent로 전송되는 요청 body에 {@code oauthToken}이 포함되고, 더 이상
+   * 사용하지 않는 {@code cliOauthToken} 키는 포함되지 않아야 한다. (Task 1: ai-agent가 body oauthToken을 읽도록 변경됨에
+   * 맞춰 firehub-api 프록시도 동일 키로 전달해야 함)
+   */
+  @Test
+  void streamChat_sdkWithOauthToken_injectsOauthTokenIntoBody() {
+    // given: agent_type=sdk, OAuth 토큰 설정, API 키는 없음
+    when(settingsService.getAsMap("ai"))
+        .thenReturn(Map.of("ai.agent_type", "sdk", "ai.model", "claude-sonnet-5"));
+    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of("oat-test"));
+    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.empty());
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "text/event-stream")
+                    .withBody("event: done\ndata: {}\n\n")));
+
+    // when
+    SseEmitter emitter = new SseEmitter();
+    aiAgentProxyService.streamChat(emitter, "hi", null, List.of(), 1L, null, null);
+
+    // then: ai-agent로 전송된 body에 oauthToken 포함, cliOauthToken 키는 더 이상 사용되지 않음
+    await()
+        .atMost(Duration.ofSeconds(3))
+        .untilAsserted(
+            () ->
+                wireMock.verify(
+                    postRequestedFor(urlEqualTo("/agent/chat"))
+                        .withRequestBody(matchingJsonPath("$.oauthToken", equalTo("oat-test")))
+                        .withRequestBody(matchingJsonPath("$.agentType", equalTo("sdk")))
+                        .withRequestBody(notMatching(".*cliOauthToken.*"))));
   }
 
   // 주: opencode 의 streamChat 자격증명 우회(missingCredential=false) 검증은

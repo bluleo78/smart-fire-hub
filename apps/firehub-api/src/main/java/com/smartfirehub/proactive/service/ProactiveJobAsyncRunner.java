@@ -117,9 +117,10 @@ public class ProactiveJobAsyncRunner {
       Map<String, String> aiSettings = settingsService.getAsMap("ai.");
       String apiKey = settingsService.getDecryptedApiKey().orElse("");
       String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
-      String cliOauthToken = null;
-      if ("cli".equals(agentType)) {
-        cliOauthToken = settingsService.getDecryptedCliOauthToken().orElse(null);
+      String oauthToken = null;
+      // cli 또는 sdk 에서 구독 OAuth 토큰을 조회해 전달(sdk 는 OAuth 우선).
+      if ("cli".equals(agentType) || "sdk".equals(agentType)) {
+        oauthToken = settingsService.getDecryptedCliOauthToken().orElse(null);
       }
 
       // AI 실행
@@ -130,7 +131,7 @@ public class ProactiveJobAsyncRunner {
               context,
               apiKey,
               agentType,
-              cliOauthToken,
+              oauthToken,
               template,
               job.config());
 

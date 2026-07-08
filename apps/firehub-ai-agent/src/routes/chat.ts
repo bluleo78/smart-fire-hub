@@ -31,7 +31,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     temperature,
     maxTokens,
     apiKey,
-    cliOauthToken,
+    oauthToken,
     agentType = 'sdk',
     navigationContext,
     screenContext,
@@ -82,7 +82,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     const providerConfig: ProviderConfig = {
       agentType: agentType as AgentType,
       apiKey,
-      cliOauthToken: typeof cliOauthToken === 'string' ? cliOauthToken : undefined,
+      oauthToken: typeof oauthToken === 'string' ? oauthToken : undefined,
       model,
     };
     const provider = ProviderFactory.createChatProvider(providerConfig);

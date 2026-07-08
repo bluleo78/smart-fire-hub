@@ -69,7 +69,7 @@ describe('ClaudeCliChatProvider', () => {
     expect(called.sessionId).toBe('sess-abc');
     expect(called.model).toBe('claude-haiku-4-5-20251001');
     expect(called.maxTurns).toBe(5);
-    expect(called.cliOauthToken).toBe('oauth-token');
+    expect(called.oauthToken).toBe('oauth-token');
     expect(called.useSubscription).toBe(true);
   });
 });

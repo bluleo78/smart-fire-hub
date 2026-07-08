@@ -34,11 +34,11 @@ describe('ProviderFactory', () => {
       expect(provider.name).toBe('claude-sdk');
     });
 
-    // PF-02: SDK mode without apiKey throws error
-    it('PF-02: SDK mode without apiKey throws error', () => {
+    // PF-02: SDK mode without apiKey/oauthToken throws error
+    it('PF-02: SDK mode without apiKey or oauthToken throws error', () => {
       expect(() =>
         ProviderFactory.createChatProvider({ agentType: 'sdk' }),
-      ).toThrow('API key required for SDK mode');
+      ).toThrow('API key or OAuth token required for SDK mode');
     });
 
     // PF-03: CLI mode returns ClaudeCliChatProvider with name 'claude-cli'

@@ -57,7 +57,7 @@ export interface AgentOptions {
   temperature?: number;
   maxTokens?: number;
   apiKey?: string;
-  cliOauthToken?: string;
+  oauthToken?: string;
   abortSignal?: AbortSignal;
 }
 
@@ -99,6 +99,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     temperature,
     maxTokens,
     apiKey,
+    oauthToken,
     abortSignal,
   } = options;
 
@@ -152,10 +153,17 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   // 함께 차단한다. ai-agent 백엔드는 in-process MCP 서버(createSdkMcpServer)만 쓴다.
   cleanEnv.ENABLE_EXPERIMENTAL_MCP_CLI = 'false';
 
-  if (apiKey) {
+  // 인증 우선순위: OAuth 구독 토큰 > 메서드 API 키 > 프로세스 환경 폴백.
+  // OAuth 토큰이 있으면 구독 인증을 강제하기 위해 ANTHROPIC_API_KEY를 제거한다
+  // (Agent SDK가 CLAUDE_CODE_OAUTH_TOKEN으로 인증 — smart-workplace sdk-runner와 동일).
+  // 공백 문자열은 프록시 쪽 검증(missingCredential 등)과 동일하게 "없음"으로 취급한다.
+  if (oauthToken?.trim()) {
+    delete cleanEnv.ANTHROPIC_API_KEY;
+    cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+  } else if (apiKey) {
     cleanEnv.ANTHROPIC_API_KEY = apiKey;
   } else if (!cleanEnv.ANTHROPIC_API_KEY) {
-    yield { type: 'error' as const, message: 'API key not provided' };
+    yield { type: 'error' as const, message: 'No API key or OAuth token provided' };
     return;
   }
 
