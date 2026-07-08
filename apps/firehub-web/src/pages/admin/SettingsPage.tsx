@@ -27,9 +27,9 @@ import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
 const AGENT_TYPE_OPTIONS = [
-  { value: 'sdk', label: 'AI Agent (SDK)' },
-  { value: 'cli', label: 'Claude Code (구독)' },
-  { value: 'cli-api', label: 'Claude Code (API)' },
+  { value: 'sdk', label: 'Claude Agent SDK' },
+  { value: 'cli', label: 'Claude Code CLI' },
+  { value: 'cli-api', label: 'Claude API' },
   // OpenCode: 별도 키 없이 배포 환경 인증 사용
   { value: 'opencode', label: 'OpenCode' },
 ];

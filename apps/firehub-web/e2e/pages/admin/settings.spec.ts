@@ -314,7 +314,7 @@ test.describe('설정 페이지', () => {
 
       // SDK 유형으로 변경
       await page.getByLabel('에이전트 유형').click();
-      await page.getByRole('option', { name: 'AI Agent (SDK)' }).click();
+      await page.getByRole('option', { name: 'Claude Agent SDK' }).click();
 
       // API 키 입력창이 다시 표시되어야 한다
       await expect(page.locator('#ai-api-key')).toBeVisible();
@@ -364,7 +364,7 @@ test.describe('설정 페이지', () => {
 
       // 에이전트 유형을 sdk로 실제 전환 (cli-api -> sdk 실제 onChange 발생)
       await page.getByLabel('에이전트 유형').click();
-      await page.getByRole('option', { name: 'AI Agent (SDK)' }).click();
+      await page.getByRole('option', { name: 'Claude Agent SDK' }).click();
 
       // 전환 후: OAuth 토큰 필드와 API 키 필드가 모두 노출되어야 한다
       await expect(page.locator('#ai-cli-oauth-token')).toBeVisible();
