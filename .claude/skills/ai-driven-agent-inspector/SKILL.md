@@ -134,7 +134,7 @@ UI 없이 SSE 엔드포인트를 직접 호출한다.
 
 ```bash
 # firehub-ai-agent 가동 확인 (port 3001)
-curl -sf http://localhost:3001/agent/health > /dev/null && echo OK || echo NOPE
+curl -sf http://localhost:5020/agent/health > /dev/null && echo OK || echo NOPE
 
 # 내부 인증 토큰 (firehub-ai-agent/.env.local의 INTERNAL_SERVICE_TOKEN)
 TOKEN=$(grep INTERNAL_SERVICE_TOKEN apps/firehub-ai-agent/.env.local | cut -d= -f2)
@@ -152,7 +152,7 @@ mkdir -p "$SESSION_DIR/traces"
 SCENARIO_ID="dataset-001"
 PROMPT="공간 데이터인 화재 발생 위치 데이터셋 만들어줘. 컬럼은 시간, 위치, 사망자수."
 
-curl -sN -X POST http://localhost:3001/agent/chat \
+curl -sN -X POST http://localhost:5020/agent/chat \
   -H "Authorization: Internal $TOKEN" \
   -H "Content-Type: application/json" \
   -d "$(jq -n --arg msg "$PROMPT" '{
@@ -205,7 +205,7 @@ grep "^event: error$" -A1 "$SESSION_DIR/traces/$SCENARIO_ID.sse"
 SESSION_ID=$(grep "^event: init$" -A1 "$SESSION_DIR/traces/$SCENARIO_ID.sse" \
   | grep "^data:" | sed 's/^data: //' | jq -r '.sessionId')
 
-curl -s "http://localhost:3001/agent/history/$SESSION_ID" \
+curl -s "http://localhost:5020/agent/history/$SESSION_ID" \
   -H "Authorization: Internal $TOKEN" | jq .
 ```
 

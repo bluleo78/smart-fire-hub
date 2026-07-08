@@ -8,7 +8,7 @@ See also the root [CLAUDE.md](../../CLAUDE.md) for monorepo-level commands and c
 
 ```bash
 # Run / Build
-./gradlew bootRun --args='--spring.profiles.active=local'   # 로컬 개발 서버 (8080)
+./gradlew bootRun --args='--spring.profiles.active=local'   # 로컬 개발 서버 (5010)
 ./gradlew build                                              # 빌드 (테스트 포함)
 ./gradlew build -x test                                      # 빌드 (테스트 제외)
 
@@ -100,9 +100,9 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 
 ### Async & Streaming
 
-- **Jobrunr**: 데이터 임포트 비동기 처리. `@Job` 어노테이션. Dashboard: localhost:8000 (local 프로필)
+- **Jobrunr**: 데이터 임포트 비동기 처리. `@Job` 어노테이션. Dashboard: localhost:5040 (local 프로필)
 - **AsyncJobService**: JVM 내 `ConcurrentHashMap<UUID, List<SseEmitter>>` 기반 실시간 추적
-- **AI 프록시**: `AiAgentProxyService`가 외부 ai-agent 서비스(localhost:3001)로 SSE 스트리밍 중계
+- **AI 프록시**: `AiAgentProxyService`가 외부 ai-agent 서비스(localhost:5020)로 SSE 스트리밍 중계
 - **비동기 설정**: `AsyncConfig` — pipelineExecutor (core=5, max=10, queue=25)
 
 ### Encryption
@@ -113,7 +113,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 
 | Profile | DB | Jobrunr Dashboard | AI Agent |
 |---------|--------|-----------|----------|
-| `local` | `smartfirehub` (localhost:5432) | enabled (port 8000) | localhost:3001 |
+| `local` | `smartfirehub` (localhost:5432) | enabled (port 5040) | localhost:5020 |
 | `test` | `smartfirehub_test` (localhost:5432) | disabled | localhost:9999 (stub) |
 
 환경변수: `JWT_SECRET` (Base64 인코딩, 256비트 이상), `ENCRYPTION_MASTER_KEY` (Base64 인코딩). local 프로필은 하드코딩된 개발용 키 사용.

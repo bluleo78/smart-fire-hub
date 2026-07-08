@@ -11,7 +11,7 @@ export const DEFAULT_TRUNCATE_LENGTH = 200;
 export const HEARTBEAT_INTERVAL_MS = 10_000;
 
 /** Default server port */
-export const DEFAULT_PORT = 3001;
+export const DEFAULT_PORT = 5020;
 
 /** MCP server name */
 export const MCP_SERVER_NAME = 'firehub';
