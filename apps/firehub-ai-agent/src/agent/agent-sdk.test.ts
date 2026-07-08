@@ -660,6 +660,98 @@ describe('executeAgent', () => {
     expect(events[0]).toMatchObject({ type: 'error' });
   });
 
+  // AS-25 (Task 1): 인증 우선순위 — OAuth 구독 토큰 > 메서드 API 키 > 프로세스 환경 폴백.
+  it('AS-25: oauthToken이 있으면 CLAUDE_CODE_OAUTH_TOKEN 설정하고 ANTHROPIC_API_KEY 제거', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-oauth',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: unknown[] = [];
+    for await (const event of executeAgent({
+      message: 'hi',
+      userId: 1,
+      oauthToken: 'oat-1',
+      apiKey: 'sk-should-be-dropped',
+    })) {
+      events.push(event);
+    }
+
+    expect(mockQuery).toHaveBeenCalledOnce();
+    const callArgs = mockQuery.mock.calls[0][0] as {
+      options?: { env?: Record<string, string | undefined> };
+    };
+    expect(callArgs.options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('oat-1');
+    expect(callArgs.options?.env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(events.every((e) => (e as { type: string }).type !== 'error')).toBe(true);
+  });
+
+  it('AS-26: oauthToken 없고 apiKey 있으면 ANTHROPIC_API_KEY 설정', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-apikey',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    for await (const _event of executeAgent({
+      message: 'hi',
+      userId: 1,
+      apiKey: 'sk-1',
+    })) {
+      // drain
+    }
+
+    const callArgs = mockQuery.mock.calls[0][0] as {
+      options?: { env?: Record<string, string | undefined> };
+    };
+    expect(callArgs.options?.env?.ANTHROPIC_API_KEY).toBe('sk-1');
+    expect(callArgs.options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+
+  it('AS-27: 토큰·키 모두 없으면 error 이벤트 후 query 미호출', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: unknown[] = [];
+    for await (const event of executeAgent({ message: 'hi', userId: 1 })) {
+      events.push(event);
+    }
+
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(events.some((e) => (e as { type: string }).type === 'error')).toBe(true);
+  });
+
   it('AS-BUDGET: queryOptions에 maxBudgetUsd가 설정된다', async () => {
     const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
     async function* fakeStream() {

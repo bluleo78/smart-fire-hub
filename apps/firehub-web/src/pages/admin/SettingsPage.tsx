@@ -114,14 +114,27 @@ export default function SettingsPage() {
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
 
-    // API 키 검증은 sdk 또는 cli-api 모드에서만 필요 (cli·opencode는 별도 인증 사용)
-    if (form['ai.agent_type'] !== 'cli' && form['ai.agent_type'] !== 'opencode') {
+    // API 키/OAuth 토큰 검증: cli·opencode는 별도 인증이라 불필요.
+    // cli-api는 API 키만 사용, sdk는 API 키 또는 OAuth 토큰 중 하나만 있으면 저장 가능(OAuth 우선).
+    if (form['ai.agent_type'] === 'cli-api') {
       const apiKey = form['ai.api_key'];
       if (!apiKey.trim()) {
         newErrors['ai.api_key'] = 'API 키를 입력하세요';
       } else if (!apiKey.startsWith('****') && apiKey.length < 10) {
         newErrors['ai.api_key'] = 'API 키는 10자 이상이어야 합니다';
       }
+    } else if (form['ai.agent_type'] === 'sdk') {
+      const apiKey = form['ai.api_key'];
+      const hasOauthToken = form['ai.cli_oauth_token'].trim().length > 0;
+      if (!hasOauthToken) {
+        // OAuth 토큰이 없으면 API 키가 필수 (cli-api와 동일 규칙)
+        if (!apiKey.trim()) {
+          newErrors['ai.api_key'] = 'API 키 또는 OAuth 토큰 중 하나를 입력하세요';
+        } else if (!apiKey.startsWith('****') && apiKey.length < 10) {
+          newErrors['ai.api_key'] = 'API 키는 10자 이상이어야 합니다';
+        }
+      }
+      // OAuth 토큰이 있으면 API 키 유무·형식과 무관하게 저장 가능 (OAuth 우선)
     }
     // cli 모드에서 oauth 토큰이 없어도 저장 가능 (로그인 안 된 상태일 수 있음)
 
@@ -291,104 +304,113 @@ export default function SettingsPage() {
 
               <Separator />
 
-              {/* OpenCode / CLI OAuth 토큰 / API 키 — 에이전트 유형에 따라 분기 */}
+              {/* OpenCode / CLI OAuth 토큰 / API 키 — 에이전트 유형에 따라 분기
+                  sdk는 OAuth 토큰과 API 키를 모두 지원(백엔드에서 OAuth 우선 적용)하므로
+                  두 필드를 동시에 노출한다. */}
               {form['ai.agent_type'] === 'opencode' ? (
                 // OpenCode: 배포 환경 인증(opencode auth) 사용 — 별도 키 입력 불필요
                 <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                   배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.
                 </div>
-              ) : form['ai.agent_type'] === 'cli' ? (
-                <div className="space-y-2">
-                  <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
-                  <div className="flex gap-2 max-w-md">
-                    <div className="relative flex-1">
-                      <Input
-                        id="ai-cli-oauth-token"
-                        type={showCliOauthToken ? 'text' : 'password'}
-                        className="pr-10"
-                        value={form['ai.cli_oauth_token']}
-                        onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
-                        placeholder="sk-ant-oat01-..."
-                      />
-                      <button
-                        type="button"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        onClick={() => setShowCliOauthToken(!showCliOauthToken)}
-                        aria-label={showCliOauthToken ? '토큰 숨기기' : '토큰 보기'}
-                      >
-                        {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={verifyAuth}
-                      disabled={isVerifying || hasChanges}
-                      className="shrink-0"
-                    >
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      {isVerifying ? '검증 중...' : '인증 확인'}
-                    </Button>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    로컬에서 claude setup-token으로 발급받은 OAuth 토큰
-                    {authStatus && (
-                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
-                        {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
-                        {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
-                        {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
-                      </span>
-                    )}
-                  </p>
-                </div>
               ) : (
-                <div className="space-y-2">
-                  <Label htmlFor="ai-api-key">API 키</Label>
-                  <div className="flex gap-2 max-w-md">
-                    <div className="relative flex-1">
-                      <Input
-                        id="ai-api-key"
-                        type={showApiKey ? 'text' : 'password'}
-                        className="pr-10"
-                        value={form['ai.api_key']}
-                        onChange={(e) => updateField('ai.api_key', e.target.value)}
-                        placeholder="sk-ant-..."
-                      />
-                      <button
-                        type="button"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
-                      >
-                        {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
+                <div className="space-y-4">
+                  {/* cli 또는 sdk: OAuth 토큰 필드 (sdk는 OAuth 우선) */}
+                  {(form['ai.agent_type'] === 'cli' || form['ai.agent_type'] === 'sdk') && (
+                    <div className="space-y-2">
+                      <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
+                      <div className="flex gap-2 max-w-md">
+                        <div className="relative flex-1">
+                          <Input
+                            id="ai-cli-oauth-token"
+                            type={showCliOauthToken ? 'text' : 'password'}
+                            className="pr-10"
+                            value={form['ai.cli_oauth_token']}
+                            onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
+                            placeholder="sk-ant-oat01-..."
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            onClick={() => setShowCliOauthToken(!showCliOauthToken)}
+                            aria-label={showCliOauthToken ? '토큰 숨기기' : '토큰 보기'}
+                          >
+                            {showCliOauthToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={verifyAuth}
+                          disabled={isVerifying || hasChanges}
+                          className="shrink-0"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          {isVerifying ? '검증 중...' : '인증 확인'}
+                        </Button>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        로컬에서 claude setup-token으로 발급받은 OAuth 토큰
+                        {authStatus && (
+                          <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
+                            {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
+                            {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
+                            {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
+                          </span>
+                        )}
+                      </p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={verifyAuth}
-                      disabled={isVerifying || hasChanges}
-                      className="shrink-0"
-                    >
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      {isVerifying ? '검증 중...' : '인증 확인'}
-                    </Button>
-                  </div>
-                  {errors['ai.api_key'] && (
-                    <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
                   )}
-                  <p className="text-sm text-muted-foreground">
-                    Anthropic API 키 (sk-ant-...)
-                    {authStatus && (
-                      <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
-                        {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
-                        {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
-                        {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
-                      </span>
-                    )}
-                  </p>
+                  {/* cli-api 또는 sdk: API 키 필드 */}
+                  {(form['ai.agent_type'] === 'cli-api' || form['ai.agent_type'] === 'sdk') && (
+                    <div className="space-y-2">
+                      <Label htmlFor="ai-api-key">API 키</Label>
+                      <div className="flex gap-2 max-w-md">
+                        <div className="relative flex-1">
+                          <Input
+                            id="ai-api-key"
+                            type={showApiKey ? 'text' : 'password'}
+                            className="pr-10"
+                            value={form['ai.api_key']}
+                            onChange={(e) => updateField('ai.api_key', e.target.value)}
+                            placeholder="sk-ant-..."
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            aria-label={showApiKey ? 'API 키 숨기기' : 'API 키 보기'}
+                          >
+                            {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={verifyAuth}
+                          disabled={isVerifying || hasChanges}
+                          className="shrink-0"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          {isVerifying ? '검증 중...' : '인증 확인'}
+                        </Button>
+                      </div>
+                      {errors['ai.api_key'] && (
+                        <p className="text-sm text-destructive">{errors['ai.api_key']}</p>
+                      )}
+                      <p className="text-sm text-muted-foreground">
+                        Anthropic API 키 (sk-ant-...)
+                        {authStatus && (
+                          <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
+                            {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
+                            {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
+                            {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -8,7 +8,7 @@ export class ClaudeCliChatProvider implements ChatProvider {
   constructor(
     private readonly useSubscription: boolean,
     private readonly apiKey?: string,
-    private readonly cliOauthToken?: string,
+    private readonly oauthToken?: string,
   ) {
     this.name = useSubscription ? 'claude-cli' : 'claude-cli-api';
   }
@@ -27,7 +27,7 @@ export class ClaudeCliChatProvider implements ChatProvider {
       maxTokens: options.maxTokens,
       useSubscription: this.useSubscription,
       apiKey: this.apiKey,
-      cliOauthToken: this.cliOauthToken,
+      oauthToken: this.oauthToken,
       abortSignal: options.abortSignal,
     };
     yield* executeCliAgent(cliOptions);

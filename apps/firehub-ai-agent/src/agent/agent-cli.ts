@@ -90,8 +90,8 @@ interface StreamJsonMessage {
 export interface CliAgentOptions extends AgentOptions {
   /** true = 구독 인증 사용 (ANTHROPIC_API_KEY 제거), false = API 키 사용 */
   useSubscription?: boolean;
-  /** DB에서 복호화된 CLI OAuth 토큰 (구독 모드에서 CLAUDE_CODE_OAUTH_TOKEN으로 설정) */
-  cliOauthToken?: string;
+  /** DB에서 복호화된 OAuth 토큰 (구독 모드에서 CLAUDE_CODE_OAUTH_TOKEN으로 설정) */
+  oauthToken?: string;
 }
 
 export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator<SSEEvent> {
@@ -103,7 +103,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     systemPrompt,
     overrideSystemPrompt,
     apiKey,
-    cliOauthToken,
+    oauthToken,
     abortSignal,
     useSubscription = true,
   } = options;
@@ -279,8 +279,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   if (useSubscription) {
     // 구독 모드: ANTHROPIC_API_KEY를 제거하여 Claude Pro/Max 구독 인증 사용
     delete childEnv.ANTHROPIC_API_KEY;
-    if (cliOauthToken) {
-      childEnv.CLAUDE_CODE_OAUTH_TOKEN = cliOauthToken;
+    if (oauthToken) {
+      childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
     }
   } else {
     // API 모드: 전달받은 API 키 사용 (종량제)

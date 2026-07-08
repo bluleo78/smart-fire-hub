@@ -9,10 +9,12 @@ export class ProviderFactory {
   static createChatProvider(config: ProviderConfig): ChatProvider {
     switch (config.agentType) {
       case 'sdk':
-        if (!config.apiKey) throw new Error('API key required for SDK mode');
-        return new ClaudeSdkChatProvider(config.apiKey, config.model || DEFAULT_MODEL);
+        // sdk는 API 키 또는 OAuth 토큰 중 하나만 있어도 동작(OAuth 우선).
+        if (!config.apiKey && !config.oauthToken)
+          throw new Error('API key or OAuth token required for SDK mode');
+        return new ClaudeSdkChatProvider(config.apiKey, config.model || DEFAULT_MODEL, config.oauthToken);
       case 'cli':
-        return new ClaudeCliChatProvider(true, undefined, config.cliOauthToken);
+        return new ClaudeCliChatProvider(true, undefined, config.oauthToken);
       case 'cli-api':
         if (!config.apiKey) throw new Error('API key required for CLI-API mode');
         return new ClaudeCliChatProvider(false, config.apiKey);

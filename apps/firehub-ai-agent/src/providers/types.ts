@@ -45,5 +45,5 @@ export interface ProviderConfig {
   agentType: AgentType;
   model?: string;
   apiKey?: string;
-  cliOauthToken?: string;
+  oauthToken?: string;
 }

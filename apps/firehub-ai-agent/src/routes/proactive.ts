@@ -31,7 +31,7 @@ interface ProactiveRequest {
   apiKey?: string;
   userId?: number;
   agentType?: string;
-  cliOauthToken?: string;
+  oauthToken?: string;
 }
 
 interface OutputSection {
@@ -286,7 +286,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   const providerConfig: ProviderConfig = {
     agentType,
     apiKey: apiKey || undefined,
-    cliOauthToken: body.cliOauthToken || undefined,
+    oauthToken: body.oauthToken || undefined,
     model: model,
   };
   const provider = ProviderFactory.createChatProvider(providerConfig);

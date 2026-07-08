@@ -90,12 +90,14 @@ public class AiController {
   public ResponseEntity<String> getAuthStatus() {
     Map<String, String> aiSettings = settingsService.getAsMap("ai");
     String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
-    String result;
-    if ("cli".equals(agentType)) {
-      result = aiAgentProxyService.verifyCliToken();
-    } else {
-      result = aiAgentProxyService.verifyApiKey();
-    }
+    // cli, 또는 (sdk 이고 OAuth 토큰이 설정된 경우) 토큰 검증. 그 외 API 키 검증.
+    boolean useTokenVerification =
+        "cli".equals(agentType)
+            || ("sdk".equals(agentType)
+                && settingsService.getDecryptedCliOauthToken().filter(t -> !t.isBlank()).isPresent());
+    String result = useTokenVerification
+        ? aiAgentProxyService.verifyCliToken()
+        : aiAgentProxyService.verifyApiKey();
     return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
   }
 

@@ -146,24 +146,34 @@ public class AiAgentProxyService {
     aiSettings.remove("ai.api_key");
     String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
 
-    // 인증 수단 검증: cli=OAuth 토큰, sdk/cli-api=API 키, opencode=배포측 인증(검증 불필요)
+    // 인증 수단 검증: cli/sdk=OAuth 토큰(sdk는 API 키와 양자택일), cli-api=API 키, opencode=배포측 인증(검증 불필요)
     Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
     Optional<String> cliTokenOpt =
-        "cli".equals(agentType) ? settingsService.getDecryptedCliOauthToken() : Optional.empty();
+        ("cli".equals(agentType) || "sdk".equals(agentType))
+            ? settingsService.getDecryptedCliOauthToken()
+            : Optional.empty();
     boolean missingCredential;
     if ("opencode".equals(agentType)) {
       missingCredential = false; // OpenCode 는 배포 환경 opencode auth 에 의존(옵션 3)
     } else if ("cli".equals(agentType)) {
       missingCredential = cliTokenOpt.isEmpty() || cliTokenOpt.get().isBlank();
-    } else {
+    } else if ("sdk".equals(agentType)) {
+      // sdk 는 API 키 또는 OAuth 토큰 중 하나만 있어도 인증 가능(OAuth 우선).
+      boolean hasToken = cliTokenOpt.isPresent() && !cliTokenOpt.get().isBlank();
+      missingCredential = apiKeyOpt.isEmpty() && !hasToken;
+    } else { // cli-api
       missingCredential = apiKeyOpt.isEmpty();
     }
     if (missingCredential) {
       try {
-        String errorMessage =
-            "cli".equals(agentType)
-                ? "Claude CLI OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 토큰을 등록하세요."
-                : "AI API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 등록하세요.";
+        String errorMessage;
+        if ("cli".equals(agentType)) {
+          errorMessage = "Claude CLI OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 토큰을 등록하세요.";
+        } else if ("sdk".equals(agentType)) {
+          errorMessage = "AI API 키 또는 OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 등록하세요.";
+        } else {
+          errorMessage = "AI API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 등록하세요.";
+        }
         String errorPayload =
             objectMapper.writeValueAsString(Map.of("type", "error", "message", errorMessage));
         emitter.send(SseEmitter.event().data(errorPayload));
@@ -185,8 +195,11 @@ public class AiAgentProxyService {
       apiKeyOpt.ifPresent(key -> requestBody.put("apiKey", key));
     }
     requestBody.put("agentType", agentType);
-    if ("cli".equals(agentType)) {
-      cliTokenOpt.ifPresent(token -> requestBody.put("cliOauthToken", token));
+    // cli 또는 sdk 에서 OAuth 토큰이 있으면 body 에 주입(중립 키 oauthToken).
+    // sdk 에서 apiKey 와 함께 있으면 ai-agent 가 OAuth 를 우선 선택한다.
+    // 공백 문자열은 missingCredential/verify 판정과 동일하게 "없음"으로 취급한다.
+    if ("cli".equals(agentType) || "sdk".equals(agentType)) {
+      cliTokenOpt.filter(token -> !token.isBlank()).ifPresent(token -> requestBody.put("oauthToken", token));
     }
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-5"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
