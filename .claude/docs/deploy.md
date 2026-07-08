@@ -1,10 +1,11 @@
 # 배포 가이드
 
-배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|all]`
+배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|db|all]`
 
-> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부).
+> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부, **db는 제외**).
 > `all` 정의는 **3곳**에서 동기화 필요: `scripts/deploy.sh`, `scripts/update.sh`, 본 문서.
 > 운영 docker-compose 서비스명이 빌드 키와 다른 경우(`channel` → `firehub-channel`)는 두 스크립트의 `prod_service_name()` 헬퍼가 흡수한다.
+> `db`는 변경이 드물고 재기동 시 서비스 전체에 영향을 주므로 `all`에서 제외 — `./scripts/deploy.sh db`로 개별 배포만 가능.
 
 ## Docker 빌드 규칙 (중요)
 
@@ -15,6 +16,7 @@
 | **firehub-api** | `apps/firehub-api/` (자체 디렉토리) | `docker build apps/firehub-api/` |
 | **firehub-web** | `.` (프로젝트 루트) | `docker build -f apps/firehub-web/Dockerfile .` |
 | **firehub-ai-agent** | `.` (프로젝트 루트) | `docker build -f apps/firehub-ai-agent/Dockerfile .` |
+| **db (postgres)** | `.` (프로젝트 루트) | `docker build -f docker/postgres/Dockerfile .` (이미지 태그는 `postgres`, 빌드 키는 `db`) |
 
 - **firehub-api**: Dockerfile 내부에서 `COPY src/ src/` 상대 경로 → context가 `apps/firehub-api/`여야 함
 - **firehub-web/ai-agent**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함

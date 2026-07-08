@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Smart Fire Hub 원격 업데이트 스크립트
 # ghcr.io에서 최신 이미지를 pull하고 컨테이너를 재생성한다.
-# Usage: ./scripts/update.sh [api|web|ai-agent|executor|channel|all]
-# all = api + executor + web + ai-agent + channel (5개 앱 전부)
+# Usage: ./scripts/update.sh [api|web|ai-agent|executor|channel|db|all]
+# all = api + executor + web + ai-agent + channel (5개 앱 전부, db 제외 — DB는 개별 배포로만 재기동)
 
 PROD_DIR="$HOME/prod/smart-fire-hub"
 

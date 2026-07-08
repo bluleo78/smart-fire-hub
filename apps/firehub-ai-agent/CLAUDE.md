@@ -7,7 +7,7 @@ See also the root [CLAUDE.md](../../CLAUDE.md) for monorepo-level commands and c
 ## Commands
 
 ```bash
-pnpm dev              # 개발 서버 실행 (tsx watch, port 3001)
+pnpm dev              # 개발 서버 실행 (tsx watch, port 5020)
 pnpm build            # TypeScript 빌드 (dist/)
 pnpm typecheck        # 타입 체크 (tsc --noEmit)
 pnpm test             # Vitest 테스트 실행
@@ -66,9 +66,9 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 ### Environment Variables
 
 `.env.local` 파일에서 로드 (dotenv). `.env.example` 참조:
-- `PORT` — 서버 포트 (기본 3001)
+- `PORT` — 서버 포트 (기본 5020)
 - `INTERNAL_SERVICE_TOKEN` — firehub-api와 공유하는 내부 인증 토큰
-- `API_BASE_URL` — firehub-api 주소 (기본 `http://localhost:8080/api/v1`)
+- `API_BASE_URL` — firehub-api 주소 (기본 `http://localhost:5010/api/v1`)
 - `ANTHROPIC_API_KEY` — (선택) Claude API 키 폴백. 주 설정은 관리페이지(`/admin/settings`)에서 요청별로 전달됨
 - `MAX_TURNS` — 에이전트 최대 턴 수 (기본 10)
 

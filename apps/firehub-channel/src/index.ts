@@ -5,7 +5,7 @@ import { sendRouter } from './routes/send.js';
 import { slackEventsRouter } from './routes/slack-events.js';
 
 const app = express();
-const PORT = process.env.PORT ?? '3002';
+const PORT = process.env.PORT ?? '5030';
 
 app.use(cors());
 

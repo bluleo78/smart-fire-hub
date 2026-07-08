@@ -44,7 +44,7 @@ curl -sf http://localhost:5173 > /dev/null && echo OK || echo NOPE
 
 # 3b) subagent-quality 큐가 있으면 firehub-ai-agent도 헬스체크
 if gh issue list --label "subagent-quality" --state open --limit 1 --json number -q '.[0].number' | grep -q .; then
-  curl -sf http://localhost:3001/agent/health > /dev/null && echo OK || echo NOPE_AI
+  curl -sf http://localhost:5020/agent/health > /dev/null && echo OK || echo NOPE_AI
   # NOPE_AI면 inspector 액션만 skip하고 explorer 큐는 계속 (전체 중단 X)
 fi
 
@@ -242,7 +242,7 @@ Agent(
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
 - 이 이슈는 `subagent-quality` 라벨로 firehub-ai-agent의 subagent 결함이다.
-- playwright-cli는 사용하지 않는다. 대신 `POST http://localhost:3001/agent/chat`을 curl로 직접 호출한다.
+- playwright-cli는 사용하지 않는다. 대신 `POST http://localhost:5020/agent/chat`을 curl로 직접 호출한다.
 - INTERNAL_SERVICE_TOKEN은 `apps/firehub-ai-agent/.env.local`에서 읽는다.
 - 세션 디렉토리: `test-results/subagent-eval/$(date +%Y-%m-%dT%H-%M)/traces/crosscheck-<N>.sse`
 - 검증 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 번호 #N 포함):
@@ -301,7 +301,7 @@ Agent(
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- POST http://localhost:3001/agent/chat (Authorization: Internal <token>)를 직접 호출.
+- POST http://localhost:5020/agent/chat (Authorization: Internal <token>)를 직접 호출.
 - 한 패스는 한 perspective(accuracy/tool/perf/ux) × 한 subagent로 집중.
   대상 selection: `test-results/subagent-eval/.coverage-matrix-accuracy.md`의 ⬜ 항목 우선.
 - 발견된 이슈는 `gh issue create` 직후 inspector 스킬 안내에 따라 `add-to-board.sh`로 보드에 자동 추가됨 (라벨: bug,subagent-quality,severity:*,<perspective>).

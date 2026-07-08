@@ -1,5 +1,5 @@
 server:
-  port: 8090
+  port: 5010
 
 spring:
   datasource:
@@ -11,7 +11,7 @@ org:
   jobrunr:
     dashboard:
       enabled: true
-      port: 8000
+      port: 5040
 
 app:
   base-url: http://localhost:5173
@@ -20,7 +20,7 @@ app:
   encryption:
     master-key: ${ENCRYPTION_MASTER_KEY:bG9jYWwtZGV2LW1hc3Rlci1rZXktZm9yLWVuY3J5cHQ=}
   cors:
-    allowed-origins: http://localhost:5173,http://localhost:3001
+    allowed-origins: http://localhost:5173,http://localhost:5020
   pipeline:
     datasource:
       url: jdbc:postgresql://localhost:5432/smartfirehub
@@ -30,5 +30,5 @@ app:
     enabled: false  # local dev: direct execution (no executor service needed)
 
 agent:
-  url: http://127.0.0.1:3001
+  url: http://127.0.0.1:5020
   internal-token: ${AGENT_INTERNAL_TOKEN:firehub-local-dev-internal-token}

@@ -31,7 +31,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8090',
+        target: 'http://localhost:5010',
         changeOrigin: true,
         // SSE 스트리밍 응답 버퍼링 방지
         configure: (proxy) => {

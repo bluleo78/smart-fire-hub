@@ -7,7 +7,7 @@ See also the root [CLAUDE.md](../../CLAUDE.md) for monorepo-level commands and c
 ## Commands
 
 ```bash
-pnpm dev              # Vite dev server (proxies /api to localhost:8080)
+pnpm dev              # Vite dev server (proxies /api to localhost:5010)
 pnpm build            # TypeScript check + Vite production build
 pnpm lint             # ESLint (flat config, ignores dist and src/components/ui)
 pnpm typecheck        # tsc -b --noEmit
@@ -133,7 +133,7 @@ src/
 - Theming via `next-themes` (dark/light/system)
 - Toast notifications via Sonner (`toast.success()`, `toast.error()`)
 - ESLint flat config with `typescript-eslint`, `react-hooks`, `react-refresh` plugins
-- Vite proxy forwards `/api` requests to backend at `localhost:8080` with SSE buffering disabled
+- Vite proxy forwards `/api` requests to backend at `localhost:5010` with SSE buffering disabled
 
 ## Testing
 
