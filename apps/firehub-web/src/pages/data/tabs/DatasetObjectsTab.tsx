@@ -16,6 +16,9 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
     if (files && files.length > 0) upload.mutate(Array.from(files));
   };
 
+  // 부분 실패한 파일 목록 — 있으면 배너 + 재시도(실패건만 재업로드)를 노출한다.
+  const failedFiles = upload.data?.failedFiles ?? [];
+
   const items = data?.pages.flatMap((p) => p.objects) ?? [];
 
   return (
@@ -55,6 +58,22 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
           onChange={(e) => handleFiles(e.target.files)}
         />
       </div>
+
+      {/* 부분 실패 배너: 일부 파일 업로드 실패 시 실패 건수 표시 + 실패건만 재시도. 재시도 중엔 숨김. */}
+      {!upload.isPending && failedFiles.length > 0 && (
+        <div className="flex items-center justify-between rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          <span>
+            {upload.data!.total}개 중 {failedFiles.length}개 업로드 실패
+          </span>
+          <button
+            type="button"
+            onClick={() => upload.mutate(failedFiles)}
+            className="rounded-md border border-destructive/50 px-3 py-1 hover:bg-destructive/20"
+          >
+            실패건 재시도
+          </button>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="p-6 text-muted-foreground">불러오는 중…</div>

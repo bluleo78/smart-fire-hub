@@ -156,4 +156,92 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
       'https://example.com/u1.jpg',
     );
   });
+
+  test('일부 PUT이 실패하면 실패 배너를 띄우고 성공분은 목록에 반영, 재시도로 실패건만 재업로드한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      storageType: 'FILE',
+      originType: 'SOURCE',
+      columns: [],
+      rowCount: null,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    // 목록 GET 호출 횟수를 센다 — 부분 실패에도 onSettled invalidate로 재조회가 일어나는지 검증.
+    let objectsGetCount = 0;
+    await page.route((url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/objects`, (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      objectsGetCount += 1;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ objects: [], nextToken: null, hasMore: false }),
+      });
+    });
+
+    // upload-urls: 요청 files 수만큼 target을 발급(위치별 URL). 각 호출 페이로드를 순서대로 기록한다.
+    const uploadUrlsCalls: { files: { ext: string }[] }[] = [];
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/objects/upload-urls`,
+      (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        const payload = route.request().postDataJSON() as { files: { ext: string }[] };
+        uploadUrlsCalls.push(payload);
+        const targets = payload.files.map((_, i) => ({
+          key: `equip/web/2026-07-20/f${i}.jpg`,
+          uploadUrl: `https://minio.example.com/put/f${i}`,
+        }));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ targets, expiresInSeconds: 900 }),
+        });
+      },
+    );
+
+    // PUT mock — f1은 첫 시도에서만 500(부분 실패 유도), 재시도(이후)에는 200. f0은 항상 200.
+    let f1Attempts = 0;
+    await page.route('https://minio.example.com/**', (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/f1')) {
+        f1Attempts += 1;
+        if (f1Attempts === 1) return route.fulfill({ status: 500, body: '' });
+      }
+      return route.fulfill({ status: 200, body: '' });
+    });
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '오브젝트' }).click();
+    await expect.poll(() => objectsGetCount).toBeGreaterThanOrEqual(1);
+    const getCountBeforeUpload = objectsGetCount;
+
+    // 파일 2개 주입 → 배치 업로드(하나는 실패하도록 설계됨)
+    await page
+      .getByRole('button', { name: '파일을 드래그하거나 클릭하여 업로드' })
+      .locator('input[type="file"]')
+      .setInputFiles([
+        { name: 'a.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('a') },
+        { name: 'b.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('b') },
+      ]);
+
+    // 첫 배치는 2건 요청
+    await expect.poll(() => uploadUrlsCalls.length).toBe(1);
+    expect(uploadUrlsCalls[0].files).toHaveLength(2);
+
+    // 부분 실패 배너: 2개 중 1개 실패
+    await expect(page.getByText('2개 중 1개 업로드 실패')).toBeVisible();
+
+    // 부분 실패여도 목록이 재조회된다(onSettled invalidate) — GET 호출이 늘어난다.
+    await expect.poll(() => objectsGetCount).toBeGreaterThan(getCountBeforeUpload);
+
+    // 재시도: 실패건(1개)만 재업로드 → upload-urls가 1건으로 재호출되고 배너가 사라진다.
+    await page.getByRole('button', { name: '실패건 재시도' }).click();
+    await expect.poll(() => uploadUrlsCalls.length).toBe(2);
+    expect(uploadUrlsCalls[1].files).toHaveLength(1);
+    await expect(page.getByText('2개 중 1개 업로드 실패')).toHaveCount(0);
+  });
 });
