@@ -26,6 +26,8 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.search.DatasetChangedEvent;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
+import com.smartfirehub.file.repository.FileDatasetConfigRepository;
+import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
@@ -51,6 +53,31 @@ public class DatasetService {
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블/컬럼이 없고 데이터가 document_chunk 에 저장된다.
   private static final String DOCUMENT_TYPE = "DOCUMENT";
 
+  // FILE(오브젝트) 데이터셋은 개별 파일이 MinIO 에 저장되고 dataset 은 버킷/프리픽스 매핑만 가지므로
+  // data.<table> 동적 테이블/컬럼이 없다.
+  private static final String FILE_TYPE = "FILE";
+
+  /** 물리 테이블/컬럼을 갖는 저장 타입인지 여부 (TABLE 만 true, DOCUMENT/FILE 은 false). */
+  private static boolean isTableBacked(String storageType) {
+    return !DOCUMENT_TYPE.equals(storageType) && !FILE_TYPE.equals(storageType);
+  }
+
+  /**
+   * FILE 데이터셋의 저장 프리픽스를 정규화한다.
+   *
+   * <p>보안(격리) 목적: 요청 프리픽스가 비어 있으면 빈 문자열("")을 그대로 저장해서는 안 된다. 컨트롤러는 오브젝트 키가 {@code cfg.prefix()}로
+   * 시작하는지로 데이터셋 간 접근을 격리하는데, 빈 문자열은 모든 키와 일치해 버킷 전체가 노출된다. 또한 프리픽스가 "/"로 끝나지 않으면 "equip" 이
+   * "equipment/..." 처럼 의도치 않은 다른 프리픽스와 부분 일치할 수 있으므로 항상 "/"로 끝나도록 강제한다.
+   */
+  private static String normalizeFilePrefix(String requested, long datasetId) {
+    if (requested == null || requested.isBlank()) {
+      // 데이터셋별로 고유한 격리 프리픽스를 생성한다.
+      return "datasets/" + datasetId + "/";
+    }
+    String trimmed = requested.trim();
+    return trimmed.endsWith("/") ? trimmed : trimmed + "/";
+  }
+
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
   private final DatasetCategoryRepository categoryRepository;
@@ -63,6 +90,10 @@ public class DatasetService {
   // 검색 인덱싱: source_text 동기 저장 + 임베딩 비동기 재생성 트리거 (통합 데이터셋 Discovery)
   private final DatasetEmbeddingService datasetEmbeddingService;
   private final ApplicationEventPublisher events;
+  // FILE 데이터셋의 MinIO 버킷/프리픽스 매핑 저장소
+  private final FileDatasetConfigRepository fileDatasetConfigRepository;
+  // FILE 데이터셋 생성 시 bucket 미지정이면 기본 버킷을 조회하기 위해 사용
+  private final FileObjectStorageService fileObjectStorageService;
 
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
@@ -100,11 +131,24 @@ public class DatasetService {
     }
 
     DatasetResponse dataset = datasetRepository.save(request, userId);
-    // DOCUMENT 데이터셋은 데이터가 document_chunk 에 저장되므로 data.<table> 동적 테이블을 만들지 않는다.
+    // DOCUMENT/FILE 데이터셋은 data.<table> 동적 테이블이 없으므로(문서는 document_chunk, 파일은 MinIO 에 저장)
     // dataset.table_name 은 메타데이터 식별자로만 쓰이며, 컬럼 영속화/물리 테이블 생성을 건너뛴다.
-    if (!DOCUMENT_TYPE.equals(request.storageType())) {
+    if (isTableBacked(request.storageType())) {
+      // TABLE 데이터셋만 동적 data.<table> 물리 테이블과 컬럼을 만든다.
       columnRepository.saveBatch(dataset.id(), request.columns());
       dataTableService.createTable(request.tableName(), request.columns());
+    } else if (FILE_TYPE.equals(request.storageType())) {
+      // FILE 데이터셋은 MinIO 버킷/프리픽스 매핑만 저장한다(개별 파일 행 없음).
+      String bucket =
+          request.bucket() != null && !request.bucket().isBlank()
+              ? request.bucket()
+              : fileObjectStorageService.defaultBucket();
+      // 보안: 빈 프리픽스("")를 그대로 저장하면 컨트롤러의 key.startsWith(prefix) 격리가
+      // 사실상 무력화되어(모든 키가 "" 로 시작) 버킷 전체 오브젝트가 노출된다.
+      // 프리픽스 미지정 시 데이터셋별 고유 프리픽스를 생성하고, 지정 시 trailing slash 를 강제해
+      // "equip" 이 "equipment/..." 등 다른 프리픽스와 부분 일치하지 않도록 한다.
+      String prefix = normalizeFilePrefix(request.prefix(), dataset.id());
+      fileDatasetConfigRepository.save(dataset.id(), bucket, prefix);
     }
 
     // 데이터셋 생성 감사 로그 (#60/#92)
@@ -146,18 +190,17 @@ public class DatasetService {
     events.publishEvent(new DatasetChangedEvent(datasetId)); // 비동기: 커밋 후 임베딩
   }
 
-  /** DOCUMENT 데이터셋은 동적 테이블/컬럼이 없으므로 컬럼·행 조작을 거부한다. */
+  /** 물리 테이블이 없는(DOCUMENT/FILE) 데이터셋의 컬럼·행 조작을 거부한다. */
   private void rejectIfDocument(String storageType, String operation) {
-    if (DOCUMENT_TYPE.equals(storageType)) {
-      throw new IllegalArgumentException("DOCUMENT 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
+    if (DOCUMENT_TYPE.equals(storageType) || FILE_TYPE.equals(storageType)) {
+      throw new IllegalArgumentException(storageType + " 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
     }
   }
 
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
       Long categoryId, String storageType, String originType, String search, int page, int size) {
-    return getDatasets(
-        categoryId, storageType, originType, search, page, size, null, null, false);
+    return getDatasets(categoryId, storageType, originType, search, page, size, null, null, false);
   }
 
   @Transactional(readOnly = true)
@@ -202,10 +245,10 @@ public class DatasetService {
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(id);
-    // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없으므로 countRows(존재하지 않는 테이블 COUNT) 가 실패한다.
-    // 문서 행 수는 document_chunk 기준이며 Task 4 범위 밖이므로 0 으로 반환한다.
+    // DOCUMENT/FILE 데이터셋은 data.<table> 동적 테이블이 없으므로 countRows(존재하지 않는 테이블 COUNT) 가 실패한다.
+    // 문서 행 수는 document_chunk 기준, 파일 개수는 MinIO 오브젝트 목록 기준이며 Task 4 범위 밖이므로 0 으로 반환한다.
     long rowCount =
-        DOCUMENT_TYPE.equals(dataset.storageType())
+        (DOCUMENT_TYPE.equals(dataset.storageType()) || FILE_TYPE.equals(dataset.storageType()))
             ? 0L
             : dataTableRowService.countRows(dataset.tableName());
 
@@ -304,9 +347,11 @@ public class DatasetService {
           referencingStepCount + "개 파이프라인 스텝이 이 데이터셋을 출력으로 참조하고 있어 삭제할 수 없습니다.");
     }
 
-    // DOCUMENT 데이터셋은 동적 테이블을 만든 적이 없으므로 DROP 을 시도하지 않는다.
-    // document_file/document_chunk 행은 dataset 삭제 시 FK CASCADE 로 함께 제거된다.
-    if (!DOCUMENT_TYPE.equals(dataset.storageType())) {
+    // DOCUMENT/FILE 데이터셋은 생성 시 동적 테이블을 만든 적이 없으므로 DROP 을 시도하지 않는다.
+    // (오늘은 DROP TABLE IF EXISTS 라 FILE 을 걸러도 무해하지만, 생성/삭제 로직의 대칭성을 위해
+    // isTableBacked 로 통일한다.) document_file/document_chunk 행, file_dataset_config 행은
+    // dataset 삭제 시 FK CASCADE 로 함께 제거된다.
+    if (isTableBacked(dataset.storageType())) {
       dataTableService.dropTable(dataset.tableName());
     }
     columnRepository.deleteByDatasetId(id);

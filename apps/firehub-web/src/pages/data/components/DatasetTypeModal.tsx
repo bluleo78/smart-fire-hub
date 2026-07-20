@@ -1,10 +1,10 @@
-import { ArrowLeft, Database, FileText } from 'lucide-react';
+import { ArrowLeft, Boxes, Database, FileText } from 'lucide-react';
 import { useState } from 'react';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 
 export interface DatasetTypeSelection {
-  storageType: 'TABLE' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT' | 'FILE';
   originType: 'SOURCE' | 'DERIVED';
 }
 
@@ -27,10 +27,10 @@ export function DatasetTypeModal({ open, onOpenChange, onSelect }: DatasetTypeMo
   };
 
   // 1단계 선택 처리
-  const handleStorage = (storageType: 'TABLE' | 'DOCUMENT') => {
-    if (storageType === 'DOCUMENT') {
-      // 문서는 출처 단계를 건너뛰고 기본 SOURCE로 즉시 완료
-      onSelect({ storageType: 'DOCUMENT', originType: 'SOURCE' });
+  const handleStorage = (storageType: 'TABLE' | 'DOCUMENT' | 'FILE') => {
+    if (storageType === 'DOCUMENT' || storageType === 'FILE') {
+      // 문서·파일은 출처 단계 없이 SOURCE로 즉시 완료
+      onSelect({ storageType, originType: 'SOURCE' });
       handleOpenChange(false);
     } else {
       setStep(2);
@@ -51,7 +51,7 @@ export function DatasetTypeModal({ open, onOpenChange, onSelect }: DatasetTypeMo
         </DialogHeader>
 
         {step === 1 ? (
-          <div className="grid grid-cols-2 gap-4 py-2">
+          <div className="grid grid-cols-3 gap-4 py-2">
             <button
               type="button"
               onClick={() => handleStorage('TABLE')}
@@ -69,6 +69,15 @@ export function DatasetTypeModal({ open, onOpenChange, onSelect }: DatasetTypeMo
               <FileText className="h-8 w-8 text-primary" />
               <span className="font-semibold">문서</span>
               <span className="text-xs text-muted-foreground">PDF, Word,<br />텍스트 파일 등</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleStorage('FILE')}
+              className="flex flex-col items-center gap-2 rounded-lg border-2 border-border p-6 text-center transition-colors hover:border-primary hover:bg-accent"
+            >
+              <Boxes className="h-8 w-8 text-primary" />
+              <span className="font-semibold">파일</span>
+              <span className="text-xs text-muted-foreground">대량 이미지·파일<br />오브젝트 스토리지</span>
             </button>
           </div>
         ) : (

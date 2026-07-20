@@ -60,6 +60,19 @@ test.describe('데이터셋 CRUD 플로우', () => {
     await expect(page).toHaveURL('/data/datasets');
   });
 
+  test('FILE 타입 선택 시 생성 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+    // 목록 API 모킹
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    // 데이터셋 추가 버튼 클릭 → 유형 선택 모달에서 "파일" 카드 클릭
+    await page.getByRole('button', { name: '데이터셋 추가' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '파일 대량 이미지·파일 오브젝트 스토리지' }).click();
+
+    // 문서와 마찬가지로 출처 단계 없이 즉시 storageType=FILE 로 생성 폼 이동
+    await expect(page).toHaveURL('/data/datasets/new?storageType=FILE&originType=SOURCE');
+  });
+
   test('데이터셋 생성 후 상세 페이지로 자동 이동한다', async ({ authenticatedPage: page }) => {
     // 목록 및 카테고리 모킹
     await setupDatasetMocks(page);

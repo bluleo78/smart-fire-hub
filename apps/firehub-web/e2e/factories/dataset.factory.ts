@@ -89,6 +89,28 @@ export function createDatasetDetail(overrides?: Partial<DatasetDetailResponse>):
   };
 }
 
+/** FILE 유형 데이터셋 목록용 응답 객체 생성 — 대량 이미지·파일 오브젝트 스토리지 데이터셋 */
+export function createFileDataset(overrides?: Partial<DatasetResponse>): DatasetResponse {
+  return createDataset({
+    name: '파일 데이터셋',
+    tableName: 'file_dataset',
+    storageType: 'FILE',
+    ...overrides,
+  });
+}
+
+/** FILE 유형 데이터셋 상세 응답 객체 생성 — 동적 칼럼/행이 없어 columns: [], rowCount: null */
+export function createFileDatasetDetail(overrides?: Partial<DatasetDetailResponse>): DatasetDetailResponse {
+  return createDatasetDetail({
+    name: '파일 데이터셋',
+    tableName: 'file_dataset',
+    storageType: 'FILE',
+    columns: [],
+    rowCount: null,
+    ...overrides,
+  });
+}
+
 /** DatasetResponse 여러 개를 한 번에 생성 */
 export function createDatasets(count: number): DatasetResponse[] {
   return Array.from({ length: count }, (_, i) =>

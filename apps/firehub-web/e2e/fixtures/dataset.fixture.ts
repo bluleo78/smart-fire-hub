@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { createCategories, createDatasetDetail, createDatasets } from '../factories/dataset.factory';
+import { createCategories, createDatasetDetail, createDatasets, createFileDatasetDetail } from '../factories/dataset.factory';
 import { createPageResponse, mockApi } from './api-mock';
 
 /**
@@ -40,4 +40,34 @@ export async function setupDatasetDetailMocks(page: Page, datasetId = 1) {
   });
   await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/stats`, []);
   await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/queries`, createPageResponse([]));
+}
+
+/**
+ * FILE 데이터셋 생성 플로우 API 모킹
+ * - POST /api/v1/datasets 생성 응답과, 생성 후 자동 이동하는 상세 페이지 API를 모킹한다.
+ * - capture 옵션으로 반환되는 MockApiCapture를 통해 테스트에서 실제 전송된 payload를 검증할 수 있다.
+ * @param datasetId - 생성 응답으로 반환할 데이터셋 ID (기본값: 20)
+ */
+export async function setupFileDatasetCreateMocks(page: Page, datasetId = 20) {
+  const detail = createFileDatasetDetail({ id: datasetId });
+  const capture = await mockApi(
+    page,
+    'POST',
+    '/api/v1/datasets',
+    { id: datasetId, name: detail.name },
+    { capture: true },
+  );
+  await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}`, detail);
+  await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/data`, {
+    columns: detail.columns,
+    rows: [],
+    page: 0,
+    size: 20,
+    totalElements: 0,
+    totalPages: 0,
+  });
+  await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/stats`, []);
+  await mockApi(page, 'GET', `/api/v1/datasets/${datasetId}/queries`, createPageResponse([]));
+  await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+  return capture;
 }

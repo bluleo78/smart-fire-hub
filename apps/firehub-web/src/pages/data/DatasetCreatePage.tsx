@@ -26,13 +26,19 @@ export default function DatasetCreatePage() {
 
   // 유형은 더 이상 폼에서 선택하지 않고 URL 쿼리(생성 유형 선택 모달에서 전달)로 고정한다.
   const [searchParams] = useSearchParams();
-  const storageType = (searchParams.get('storageType') === 'DOCUMENT' ? 'DOCUMENT' : 'TABLE') as 'TABLE' | 'DOCUMENT';
+  const storageType = (() => {
+    const s = searchParams.get('storageType');
+    return s === 'DOCUMENT' || s === 'FILE' ? s : 'TABLE';
+  })() as 'TABLE' | 'DOCUMENT' | 'FILE';
   const originType = (() => {
     const o = searchParams.get('originType');
     return o === 'DERIVED' || o === 'TEMP' ? o : 'SOURCE';
   })() as 'SOURCE' | 'DERIVED' | 'TEMP';
-  // DOCUMENT 유형 여부 — 칼럼·테이블명 UI 토글에 사용 (URL에서 파생되므로 폼 watch 불필요)
+  // DOCUMENT/FILE 유형 여부 — 칼럼·테이블명 UI 토글에 사용 (URL에서 파생되므로 폼 watch 불필요)
   const isDocument = storageType === 'DOCUMENT';
+  const isFile = storageType === 'FILE';
+  // 동적 테이블/컬럼이 없는 스키마리스 유형 통합 플래그
+  const isSchemaless = isDocument || isFile;
 
   const form = useForm<CreateDatasetFormData>({
     mode: 'onSubmit',
@@ -40,13 +46,14 @@ export default function DatasetCreatePage() {
     resolver: zodResolver(createDatasetSchema) as any,
     defaultValues: {
       name: '',
-      // DOCUMENT는 동적 테이블/컬럼이 없어 tableName을 규칙([a-z][a-z0-9_]*) 만족하는 메타 식별자로 자동 생성
-      tableName: isDocument ? `doc_${Date.now()}` : '',
+      // DOCUMENT/FILE은 동적 테이블/컬럼이 없어 tableName을 규칙([a-z][a-z0-9_]*) 만족하는 메타 식별자로 자동 생성
+      tableName: isFile ? `file_${Date.now()}` : isDocument ? `doc_${Date.now()}` : '',
       description: '',
       categoryId: undefined,
       storageType,
       originType,
-      columns: isDocument
+      prefix: '',
+      columns: isSchemaless
         ? []
         : [
             {
@@ -121,8 +128,8 @@ export default function DatasetCreatePage() {
       form.setError('name', { type: 'duplicate', message: '이미 사용 중인 이름입니다.' });
       return;
     }
-    // DOCUMENT는 tableName을 자동 생성하므로 중복 검사에서 제외한다.
-    if (!isDocument && isTableNameDuplicate) {
+    // DOCUMENT/FILE은 tableName을 자동 생성하므로 중복 검사에서 제외한다.
+    if (!isSchemaless && isTableNameDuplicate) {
       form.setError('tableName', { type: 'duplicate', message: '이미 사용 중인 테이블명입니다.' });
       return;
     }
@@ -134,6 +141,8 @@ export default function DatasetCreatePage() {
         categoryId: data.categoryId || undefined,
         storageType: data.storageType,
         originType: data.originType,
+        // FILE 유형만 prefix를 전송 — bucket은 백엔드 기본값을 사용하도록 미전송
+        ...(isFile ? { prefix: data.prefix || undefined } : {}),
         columns: data.columns.map((col) => ({
           columnName: col.columnName,
           displayName: col.displayName || undefined,
@@ -205,8 +214,8 @@ export default function DatasetCreatePage() {
                   )}
                 </FormField>
 
-                {/* DOCUMENT 유형은 tableName을 자동 생성하므로 입력 필드를 숨긴다 */}
-                {!isDocument && (
+                {/* DOCUMENT/FILE 유형은 tableName을 자동 생성하므로 입력 필드를 숨긴다 */}
+                {!isSchemaless && (
                   <FormField
                     label="테이블명"
                     htmlFor="tableName"
@@ -237,6 +246,18 @@ export default function DatasetCreatePage() {
                   placeholder="데이터셋 설명"
                 />
               </FormField>
+
+              {/* FILE 유형 전용: 오브젝트 스토리지 내 파일 경로 프리픽스 (선택 입력, 미입력 시 백엔드 기본값 사용) */}
+              {isFile && (
+                <FormField label="경로 프리픽스" htmlFor="prefix">
+                  <Input
+                    id="prefix"
+                    {...form.register('prefix')}
+                    placeholder="예: datasets/equipment/"
+                    className="font-mono"
+                  />
+                </FormField>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 {/* 카테고리는 사용자 정의로 늘어날 수 있어 검색 가능한 SearchableSelect로 대체 (#104) */}
@@ -270,8 +291,8 @@ export default function DatasetCreatePage() {
             </div>
           </Card>
 
-          {/* DOCUMENT 유형은 동적 칼럼이 없으므로 칼럼 정의 카드를 숨긴다 */}
-          {!isDocument && (
+          {/* DOCUMENT/FILE 유형은 동적 칼럼이 없으므로 칼럼 정의 카드를 숨긴다 */}
+          {!isSchemaless && (
             <Card className="p-6">
               <h2 className="text-xl leading-7 font-semibold mb-4">칼럼 정의</h2>
               <SchemaBuilder />

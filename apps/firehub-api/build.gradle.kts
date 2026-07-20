@@ -95,6 +95,8 @@ dependencies {
     implementation("org.xhtmlrenderer:flying-saucer-pdf-openpdf:9.4.0")
     // HTML5 → XHTML 변환 (AI 생성 HTML을 Flying Saucer에 전달하기 위함)
     implementation("org.jsoup:jsoup:1.18.3")
+    // MinIO(S3 호환) 오브젝트 스토리지 — FILE 데이터셋
+    implementation("io.minio:minio:8.5.17")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
