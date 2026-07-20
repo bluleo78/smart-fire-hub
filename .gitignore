@@ -85,6 +85,9 @@ playwright-report/
 db-data/
 db-test-data/
 
+# Local MinIO bind mount (오브젝트 스토리지 데이터)
+minio-data/
+
 # AI 채팅 파일 업로드 (로컬 디스크 저장, 프로덕션에서는 별도 스토리지 사용)
 apps/firehub-api/uploads/
 

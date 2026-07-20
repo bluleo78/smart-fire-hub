@@ -10,7 +10,7 @@ export interface DatasetResponse {
   tableName: string;
   description: string | null;
   category: CategoryResponse | null;
-  storageType: 'TABLE' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT' | 'FILE';
   originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   createdAt: string;
   isFavorite: boolean;
@@ -53,7 +53,7 @@ export interface DatasetDetailResponse {
   tableName: string;
   description: string | null;
   category: CategoryResponse | null;
-  storageType: 'TABLE' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT' | 'FILE';
   originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   createdBy: string;
   columns: DatasetColumnResponse[];
@@ -76,10 +76,13 @@ export interface CreateDatasetRequest {
   tableName: string;
   description?: string;
   categoryId?: number;
-  storageType: 'TABLE' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT' | 'FILE';
   originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   columns: DatasetColumnRequest[];
   sourcePipelineStepId?: number;
+  // FILE 타입 전용: 오브젝트 스토리지 버킷/프리픽스 (미전송 시 백엔드 기본값 사용)
+  bucket?: string;
+  prefix?: string;
 }
 
 export interface DatasetColumnRequest {

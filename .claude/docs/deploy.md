@@ -1,11 +1,12 @@
 # 배포 가이드
 
-배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|db|all]`
+배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|db|minio|all]`
 
-> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부, **db는 제외**).
+> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부, **db·minio는 제외**).
 > `all` 정의는 **3곳**에서 동기화 필요: `scripts/deploy.sh`, `scripts/update.sh`, 본 문서.
 > 운영 docker-compose 서비스명이 빌드 키와 다른 경우(`channel` → `firehub-channel`)는 두 스크립트의 `prod_service_name()` 헬퍼가 흡수한다.
-> `db`는 변경이 드물고 재기동 시 서비스 전체에 영향을 주므로 `all`에서 제외 — `./scripts/deploy.sh db`로 개별 배포만 가능.
+> `db`, `minio`는 stateful/변경이 드문 서비스로 재기동 시 데이터·서비스 전체에 영향을 주므로 `all`에서 제외 — 각각 `./scripts/deploy.sh db`, `./scripts/deploy.sh minio`로 개별 배포만 가능.
+> `minio`는 **public 이미지**(`minio/minio`)라 빌드/push 없이 `docker compose pull minio && docker compose up -d --force-recreate minio`만 수행한다 (`db`가 자체 Dockerfile로 빌드하는 것과 다름).
 
 ## Docker 빌드 규칙 (중요)
 
@@ -43,7 +44,8 @@ docker compose ps                      # 상태 확인
 ```bash
 ./scripts/deploy.sh ai-agent   # ai-agent만
 ./scripts/deploy.sh web        # web만
-./scripts/deploy.sh all        # 전체 (api 포함)
+./scripts/deploy.sh minio      # minio만 (public 이미지 pull + 재기동, 빌드 없음)
+./scripts/deploy.sh all        # 전체 (api 포함, db/minio 제외)
 ```
 
 > deploy.sh 는 buildx 캐시를 사용하므로 두 번째 빌드부터 단축된다.

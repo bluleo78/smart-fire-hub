@@ -4,7 +4,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-    baseline-version: 68
+    baseline-version: 70
   servlet:
     multipart:
       max-file-size: 256MB
@@ -46,6 +46,12 @@ firehub:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3
     expiry-hours: 24
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket: ${MINIO_BUCKET:firehub-files}
+    presign-expiry-seconds: ${MINIO_PRESIGN_EXPIRY:300}
 
 channel:
   service:

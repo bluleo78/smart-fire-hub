@@ -113,6 +113,8 @@ export function getStorageTypeLabel(type: string): string {
       return '테이블';
     case 'DOCUMENT':
       return '문서';
+    case 'FILE':
+      return '파일';
     default:
       return type;
   }

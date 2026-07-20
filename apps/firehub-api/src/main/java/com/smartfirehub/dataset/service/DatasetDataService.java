@@ -49,11 +49,13 @@ public class DatasetDataService {
 
   // DOCUMENT 데이터셋은 data.<table> 동적 테이블이 없고 데이터가 document_chunk 에 저장된다.
   private static final String DOCUMENT_TYPE = "DOCUMENT";
+  // FILE(오브젝트) 데이터셋도 개별 파일이 MinIO 에 저장되어 data.<table> 동적 테이블이 없다.
+  private static final String FILE_TYPE = "FILE";
 
-  /** DOCUMENT 데이터셋은 동적 테이블이 없으므로 행 조회/편집을 거부한다(존재하지 않는 테이블 접근 시 500 방지). */
+  /** 물리 테이블이 없는(DOCUMENT/FILE) 데이터셋은 행 조회/편집을 거부한다(존재하지 않는 테이블 접근 시 500 방지). */
   private void rejectIfDocument(String storageType, String operation) {
-    if (DOCUMENT_TYPE.equals(storageType)) {
-      throw new IllegalArgumentException("DOCUMENT 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
+    if (DOCUMENT_TYPE.equals(storageType) || FILE_TYPE.equals(storageType)) {
+      throw new IllegalArgumentException(storageType + " 데이터셋은 " + operation + " 작업을 지원하지 않습니다");
     }
   }
 

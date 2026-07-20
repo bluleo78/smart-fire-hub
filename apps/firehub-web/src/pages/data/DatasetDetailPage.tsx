@@ -40,6 +40,7 @@ import { DatasetDocumentsTab } from './tabs/DatasetDocumentsTab';
 import { DatasetHistoryTab } from './tabs/DatasetHistoryTab';
 import { DatasetInfoTab } from './tabs/DatasetInfoTab';
 import { DatasetMapTab } from './tabs/DatasetMapTab';
+import { DatasetObjectsTab } from './tabs/DatasetObjectsTab';
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
@@ -54,7 +55,12 @@ export default function DatasetDetailPage() {
   // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
   const isDocument = dataset?.storageType === 'DOCUMENT';
-  const validTabs = isDocument ? ['info', 'documents'] : ['info', 'columns', 'data', 'map', 'history'];
+  const isFile = dataset?.storageType === 'FILE';
+  const validTabs = isDocument
+    ? ['info', 'documents']
+    : isFile
+      ? ['info', 'objects']
+      : ['info', 'columns', 'data', 'map', 'history'];
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -66,9 +72,12 @@ export default function DatasetDetailPage() {
   // 페인트 전 동기 보정으로 탭 깜빡임 방지.
   useLayoutEffect(() => {
     const isDocumentType = dataset?.storageType === 'DOCUMENT';
+    const isFileType = dataset?.storageType === 'FILE';
     const currentValidTabs = isDocumentType
       ? ['info', 'documents']
-      : ['info', 'columns', 'data', 'map', 'history'];
+      : isFileType
+        ? ['info', 'objects']
+        : ['info', 'columns', 'data', 'map', 'history'];
     const newTabParam = searchParams.get('tab');
     const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);
@@ -419,6 +428,8 @@ export default function DatasetDetailPage() {
           <TabsTrigger value="info">정보</TabsTrigger>
           {isDocument ? (
             <TabsTrigger value="documents">문서</TabsTrigger>
+          ) : isFile ? (
+            <TabsTrigger value="objects">오브젝트</TabsTrigger>
           ) : (
             <>
               <TabsTrigger value="columns">필드</TabsTrigger>
@@ -457,6 +468,11 @@ export default function DatasetDetailPage() {
         {activeTab === 'documents' && (
           <div className="mt-6">
             <DatasetDocumentsTab dataset={dataset} datasetId={datasetId} />
+          </div>
+        )}
+        {activeTab === 'objects' && (
+          <div className="mt-6">
+            <DatasetObjectsTab datasetId={dataset.id} />
           </div>
         )}
       </Tabs>
