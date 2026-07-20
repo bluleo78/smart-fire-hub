@@ -67,6 +67,12 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 - 화면 컨텍스트(screenContext)에 데이터셋 ID가 있으면 \`find_datasets\` 를 생략하고 그 ID를 사용한다.
 - 단순 "데이터셋 목록 보여줘" 같은 브라우징 조회는 \`list_datasets\` (목록·필터·CRUD)로 처리한다.
 
+## 지식 그래프(GraphRAG) 도구 선택 규칙
+- 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정")
+  → \`graphrag_query\` 사용. 반환된 노드/관계와 sourceChunks의 fileName을 인용해 답한다.
+- 단일 데이터셋 조회·단순 문서검색은 기존 \`find_datasets\`/\`search_documents\`를 사용한다.
+- 그래프가 비어있거나 연결 실패로 graphrag_query가 근거를 못 주면, 기존 문서검색으로 우회한다.
+
 조회 흐름 (순서 엄수):
 1. find_datasets(query=핵심 질의) — 분석 대상 데이터셋 식별 (id, storageType, tableName 확보).
 2. get_data_schema(datasetIds=[해당 ID들]) — 컬럼 정보 컨텍스트 적재

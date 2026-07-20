@@ -53,9 +53,11 @@ import {
   createDatasetSearchApi,
   type DatasetSearchHit,
 } from './api-client/dataset-search-api.js';
+import { createGraphSourceApi, type ChunkContent } from './api-client/graph-source-api.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
+export type { ChunkContent };
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -73,6 +75,7 @@ export class FireHubApiClient {
   private _audit: ReturnType<typeof createAuditApi>;
   private _document: ReturnType<typeof createDocumentApi>;
   private _datasetSearch: ReturnType<typeof createDatasetSearchApi>;
+  private _graphSource: ReturnType<typeof createGraphSourceApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -127,6 +130,7 @@ export class FireHubApiClient {
     this._audit = createAuditApi(this.client);
     this._document = createDocumentApi(this.client);
     this._datasetSearch = createDatasetSearchApi(this.client);
+    this._graphSource = createGraphSourceApi(this.client);
   }
 
   listCategories() {
@@ -595,6 +599,11 @@ export class FireHubApiClient {
     storageType?: 'TABLE' | 'DOCUMENT',
   ): Promise<DatasetSearchHit[]> {
     return this._datasetSearch.searchDatasets(query, mode, topK, storageType);
+  }
+
+  /** GraphRAG 추출용 — datasetId의 문서 청크 전체를 가져온다. */
+  listDocumentChunks(datasetId: number): Promise<ChunkContent[]> {
+    return this._graphSource.listDocumentChunks(datasetId);
   }
 
   listSmartJobs() {
