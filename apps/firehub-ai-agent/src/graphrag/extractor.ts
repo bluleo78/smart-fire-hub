@@ -2,21 +2,13 @@
 // classification-service.ts와 동일하게 Anthropic messages API를 raw axios로 단발 호출한다(query() 아님).
 import axios from 'axios';
 import {
-  ExtractionResult, EntityType, RelationType, isEntityType, isRelationType, isAllowedTriple, ENTITY_TYPES, RELATION_TYPES,
+  ExtractionResult, EntityType, RelationType, isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
 } from './ontology.js';
 
 export interface ExtractOptions { model: string; apiKey: string; anthropicBaseUrl?: string; }
 
-// LLM에 온톨로지 스키마와 함께 JSON 산출을 지시하는 시스템 프롬프트.
-const SYSTEM_PROMPT = `너는 화재조사 보고서에서 지식 그래프를 추출하는 도구다.
-아래 온톨로지에 **정확히 일치하는** 엔티티와 관계만 추출한다.
-엔티티 타입: ${ENTITY_TYPES.join(', ')}
-관계 타입: ${RELATION_TYPES.join(', ')}
-반드시 다음 형식의 JSON 코드블록만 출력한다:
-\`\`\`json
-{"entities":[{"type":"Incident","name":"..."}],"relations":[{"subject":"엔티티명","type":"CAUSED_BY","object":"엔티티명"}]}
-\`\`\`
-name은 본문에 등장한 표기를 그대로 사용한다.`;
+// 온톨로지 정의에서 생성한 추출용 시스템 프롬프트(도메인 하드코딩을 ontology.ts로 이관).
+const SYSTEM_PROMPT = buildExtractionPrompt();
 
 // 응답 텍스트에서 첫 JSON 코드블록을 추출해 파싱한다. 실패 시 null.
 function parseJsonBlock(text: string): unknown | null {
