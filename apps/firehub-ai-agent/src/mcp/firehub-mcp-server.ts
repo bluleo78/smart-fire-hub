@@ -22,6 +22,7 @@ import { registerProactiveTools } from './tools/proactive-tools.js';
 import { registerDataImportTools } from './tools/dataimport-tools.js';
 import { registerAdminTools } from './tools/admin-tools.js';
 import { registerAuditTools } from './tools/audit-tools.js';
+import { registerGraphragTools } from './tools/graphrag-tools.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -88,6 +89,7 @@ export type JsonResultFn = typeof jsonResult;
  */
 const PERMISSIONS = {
   DATASET_READ: 'dataset:read',
+  DATASET_WRITE: 'dataset:write',
   DATASET_DELETE: 'dataset:delete',
   USER_READ: 'user:read',
   USER_WRITE: 'user:write',
@@ -117,6 +119,8 @@ const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   list_roles: PERMISSIONS.ROLE_READ,
   list_permissions: PERMISSIONS.PERMISSION_READ,
   list_audit_logs: PERMISSIONS.AUDIT_READ,
+  graphrag_ingest: PERMISSIONS.DATASET_WRITE,
+  graphrag_query: PERMISSIONS.DATASET_READ,
 };
 
 /**
@@ -181,6 +185,7 @@ export function registerAllTools(
     ...registerProactiveTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAdminTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAuditTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerGraphragTools(apiClient, safeToolFn, jsonResultFn),
   ];
   return filterToolsByPermissions(allTools, options.userPermissions);
 }
