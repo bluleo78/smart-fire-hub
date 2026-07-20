@@ -112,6 +112,6 @@ file_dataset_config (신규, dataset 1:1)   ← 또는 dataset.config JSONB 컬�
 - **네트워크 도달성**: 로봇·브라우저가 MinIO 엔드포인트에 직접 도달 가능해야 함(presigned URL 호스트). 사내망/게이트웨이 토폴로지 확정 시 엔드포인트 노출 방식 조정 필요.
 - **자격증명 관리**: PoC는 수동. 로봇 다수화 시 프리픽스별 정책 자동 발급 필요(후속).
 - **파일별 메타/검색 요구가 생기면** DB에 파일 행을 두는 모델로 확장 분기(현재는 S3 list 기반).
-- **CORS**: 브라우저가 presigned GET으로 직접 접근하려면 MinIO 버킷 CORS 설정 필요.
+- **CORS**: 브라우저가 presigned GET/PUT으로 MinIO에 직접 접근하려면 버킷/서버 CORS 설정이 필요하다. dev는 `MINIO_API_CORS_ALLOW_ORIGIN`(docker-compose)로 웹 오리진(`http://localhost:5173`)을 허용해 해소했다. prod는 `MINIO_ENDPOINT`가 브라우저 도달 가능한 공개 호스트여야 하고, 같은 방식으로 공개 웹 오리진을 CORS 허용해야 브라우저 업로드/썸네일이 동작한다(로봇 서버-투-서버 PUT은 CORS 무관).
 - **prod MINIO_ENDPOINT는 반드시 브라우저 도달 가능한 공개 URL이어야 함(알려진 한계)**: presigned GET URL은 API가 사용하는 `MINIO_ENDPOINT` 호스트를 기준으로 서명되므로, 이 값이 컨테이너 내부 주소(`http://minio:9000`)로 남아 있으면 브라우저에서 썸네일을 로드할 수 없다. prod에서는 `MINIO_ENDPOINT`를 리버스 프록시/DNS로 노출된 공개 호스트로 설정하고, 해당 버킷에 웹 오리진을 허용하는 CORS를 함께 구성해야 한다. 그렇지 않으면 썸네일 로딩이 실패하며, 이 경우 앱이 바이트를 대신 프록시하는 폴백 경로가 필요하다(이번 PoC 범위에서는 dual-endpoint 클라이언트를 구현하지 않고 알려진 한계로만 남긴다).
 ```

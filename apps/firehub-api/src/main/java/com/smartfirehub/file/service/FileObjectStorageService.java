@@ -87,4 +87,26 @@ public class FileObjectStorageService {
       throw new RuntimeException("presigned URL 발급 실패: " + e.getMessage(), e);
     }
   }
+
+  /** 업로드용 presigned URL 기본 만료(초). 업로드는 GET 썸네일보다 느릴 수 있어 별도 설정을 사용한다. */
+  public int defaultUploadPresignExpiry() {
+    return props.uploadPresignExpirySeconds();
+  }
+
+  /** 오브젝트 단건에 대한 단기 presigned PUT URL을 발급한다(클라이언트가 MinIO로 직접 업로드, 앱 미경유). */
+  public PresignedUrlResponse presignedPutUrl(String bucket, String objectKey, int expirySeconds) {
+    try {
+      String url =
+          minioClient.getPresignedObjectUrl(
+              GetPresignedObjectUrlArgs.builder()
+                  .method(Method.PUT)
+                  .bucket(bucket)
+                  .object(objectKey)
+                  .expiry(expirySeconds)
+                  .build());
+      return new PresignedUrlResponse(url, expirySeconds);
+    } catch (Exception e) {
+      throw new RuntimeException("presigned PUT URL 발급 실패: " + e.getMessage(), e);
+    }
+  }
 }

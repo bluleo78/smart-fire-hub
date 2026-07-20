@@ -1,6 +1,6 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { objectsApi } from '../../api/objects';
+import { extOf, objectsApi, putToPresignedUrl } from '../../api/objects';
 
 /**
  * 오브젝트 목록 무한스크롤 조회 — 토큰 기반 페이지네이션.
@@ -28,5 +28,28 @@ export function usePresignedUrl(datasetId: number, key: string, enabled = true) 
     queryFn: () => objectsApi.presignedUrl(datasetId, key).then((r) => r.data.url),
     staleTime: 4 * 60 * 1000,
     enabled,
+  });
+}
+
+/**
+ * FILE 데이터셋 업로드 뮤테이션.
+ * ① upload-urls로 파일 수만큼 presigned PUT 대상 발급 → ② 각 파일을 MinIO에 직접 PUT →
+ * ③ 성공 시 오브젝트 목록 쿼리를 무효화하여 새 오브젝트를 재조회한다.
+ */
+export function useUploadObjects(datasetId: number, robotId = 'web') {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (files: File[]) => {
+      const { data } = await objectsApi.requestUploadUrls(datasetId, {
+        robotId,
+        files: files.map((f) => ({ ext: extOf(f) })),
+      });
+      // 응답 targets는 요청 files 순서를 유지하므로 인덱스로 짝지어 업로드한다.
+      await Promise.all(data.targets.map((t, i) => putToPresignedUrl(t.uploadUrl, files[i])));
+      return data.targets.length;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['datasets', datasetId, 'objects'] });
+    },
   });
 }

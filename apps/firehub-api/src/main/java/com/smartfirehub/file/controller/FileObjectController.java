@@ -2,13 +2,22 @@ package com.smartfirehub.file.controller;
 
 import com.smartfirehub.file.dto.ObjectListResponse;
 import com.smartfirehub.file.dto.PresignedUrlResponse;
+import com.smartfirehub.file.dto.UploadTarget;
+import com.smartfirehub.file.dto.UploadUrlRequest;
+import com.smartfirehub.file.dto.UploadUrlRequest.FileSpec;
+import com.smartfirehub.file.dto.UploadUrlResponse;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository.FileDatasetConfig;
 import com.smartfirehub.file.service.FileObjectStorageService;
+import com.smartfirehub.file.service.ObjectKeyGenerator;
 import com.smartfirehub.global.security.RequirePermission;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,11 +29,18 @@ public class FileObjectController {
 
   private final FileObjectStorageService storage;
   private final FileDatasetConfigRepository configRepo;
+  private final ObjectKeyGenerator keyGenerator;
+
+  // 업로드 배치 상한: 대량 유입 대비 1회 다건 발급을 허용하되 남용을 막는다.
+  private static final int MAX_UPLOAD_BATCH = 1000;
 
   public FileObjectController(
-      FileObjectStorageService storage, FileDatasetConfigRepository configRepo) {
+      FileObjectStorageService storage,
+      FileDatasetConfigRepository configRepo,
+      ObjectKeyGenerator keyGenerator) {
     this.storage = storage;
     this.configRepo = configRepo;
+    this.keyGenerator = keyGenerator;
   }
 
   /** 데이터셋 프리픽스 하위 오브젝트 목록(페이지네이션). */
@@ -53,6 +69,33 @@ public class FileObjectController {
     // 하드코딩 만료값 대신 설정(firehub.minio.presign-expiry-seconds)을 사용한다.
     return ResponseEntity.ok(
         storage.presignedGetUrl(cfg.bucket(), key, storage.defaultPresignExpiry()));
+  }
+
+  /** 업로드용 presigned PUT URL을 배치로 발급한다. 앱이 키를 생성하여 프리픽스 격리·규약을 강제한다. */
+  @PostMapping("/upload-urls")
+  @RequirePermission("dataset:write")
+  public ResponseEntity<UploadUrlResponse> createUploadUrls(
+      @PathVariable Long datasetId, @RequestBody UploadUrlRequest request) {
+    FileDatasetConfig cfg = config(datasetId);
+    List<FileSpec> files = request.files();
+    // files는 1개 이상 MAX_UPLOAD_BATCH 이하만 허용(0개/초과는 잘못된 요청).
+    if (files == null || files.isEmpty() || files.size() > MAX_UPLOAD_BATCH) {
+      throw new IllegalArgumentException("files는 1개 이상 " + MAX_UPLOAD_BATCH + "개 이하여야 합니다");
+    }
+    // files 배열에 null 원소가 섞여 있으면 아래 f.ext() 호출에서 NPE(500)가 발생하므로
+    // 사전에 걸러내어 클라이언트 오류(400)로 명확히 응답한다.
+    if (files.stream().anyMatch(f -> f == null)) {
+      throw new IllegalArgumentException("files 배열에 null 원소를 포함할 수 없습니다");
+    }
+    int expiry = storage.defaultUploadPresignExpiry();
+    List<UploadTarget> targets = new ArrayList<>();
+    for (FileSpec f : files) {
+      // 앱이 키 생성(프리픽스 격리 + 규약 강제) → 해당 키에 대한 presigned PUT URL 발급.
+      String key = keyGenerator.generateKey(cfg.prefix(), request.robotId(), f.ext());
+      String url = storage.presignedPutUrl(cfg.bucket(), key, expiry).url();
+      targets.add(new UploadTarget(key, url));
+    }
+    return ResponseEntity.ok(new UploadUrlResponse(targets, expiry));
   }
 
   /** 데이터셋의 FILE config 조회(없으면 FILE 데이터셋이 아님). */

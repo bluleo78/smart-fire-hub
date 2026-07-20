@@ -52,6 +52,7 @@ firehub:
     secret-key: ${MINIO_SECRET_KEY:minioadmin}
     bucket: ${MINIO_BUCKET:firehub-files}
     presign-expiry-seconds: ${MINIO_PRESIGN_EXPIRY:300}
+    upload-presign-expiry-seconds: ${MINIO_UPLOAD_PRESIGN_EXPIRY:900}
 
 channel:
   service:

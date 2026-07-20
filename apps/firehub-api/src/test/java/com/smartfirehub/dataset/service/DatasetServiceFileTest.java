@@ -184,4 +184,57 @@ class DatasetServiceFileTest {
     verify(fileObjectStorageService, never()).defaultBucket();
     verify(fileDatasetConfigRepository).save(DATASET_ID, "custom-bucket", "equip/");
   }
+
+  @Test
+  void createFileDataset_withNullColumns_doesNotThrow_andSavesConfig() {
+    // given: columns == null 인 FILE 요청 (d2a4f266 에서 고친 NPE 회귀 방지용).
+    // createDataset 은 storageType 분기 이전에 request.columns() 를 순회했었는데,
+    // FILE 요청은 columns 가 null 로 넘어올 수 있어 NPE 가 발생했다.
+    // 이 테스트는 columns != null ? ... : List.of() 정규화 가드가 되돌려지면 실패해야 한다.
+    CreateDatasetRequest request =
+        new CreateDatasetRequest(
+            "Null Columns File Dataset",
+            "null_columns_file_dataset",
+            "FILE storage dataset with null columns",
+            null,
+            "FILE",
+            "SOURCE",
+            null,
+            null,
+            null,
+            null);
+
+    DatasetResponse savedDataset =
+        new DatasetResponse(
+            DATASET_ID,
+            "Null Columns File Dataset",
+            "null_columns_file_dataset",
+            "FILE storage dataset with null columns",
+            null,
+            "FILE",
+            "SOURCE",
+            null,
+            false,
+            List.of(),
+            "NONE",
+            null,
+            null,
+            null,
+            null);
+
+    when(datasetRepository.save(request, USER_ID)).thenReturn(savedDataset);
+    when(datasetRepository.findById(eq(DATASET_ID), any())).thenReturn(Optional.of(savedDataset));
+    when(fileObjectStorageService.defaultBucket()).thenReturn("default-bucket");
+
+    // when: columns 가 null 이어도 예외 없이 생성되어야 한다.
+    DatasetDetailResponse response = datasetService.createDataset(request, USER_ID);
+
+    // then: 물리 테이블/컬럼 미생성 + file_dataset_config 저장
+    verify(dataTableService, never()).createTable(anyString(), any());
+    verify(columnRepository, never()).saveBatch(anyLong(), any());
+    verify(fileDatasetConfigRepository)
+        .save(DATASET_ID, "default-bucket", "datasets/" + DATASET_ID + "/");
+
+    org.assertj.core.api.Assertions.assertThat(response.storageType()).isEqualTo("FILE");
+  }
 }

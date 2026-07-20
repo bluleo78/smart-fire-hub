@@ -2,6 +2,7 @@ package com.smartfirehub.file.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.file.config.MinioProperties;
@@ -11,10 +12,12 @@ import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.ListObjectsArgs;
 import io.minio.MinioClient;
 import io.minio.Result;
+import io.minio.http.Method;
 import io.minio.messages.Item;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -26,7 +29,7 @@ class FileObjectStorageServiceTest {
 
   private FileObjectStorageService service() {
     MinioProperties props =
-        new MinioProperties("http://localhost:9000", "k", "s", "firehub-files", 300);
+        new MinioProperties("http://localhost:9000", "k", "s", "firehub-files", 300, 900);
     return new FileObjectStorageService(minioClient, props);
   }
 
@@ -86,6 +89,28 @@ class FileObjectStorageServiceTest {
     assertThat(resp.objects()).hasSize(2);
     assertThat(resp.hasMore()).isFalse();
     assertThat(resp.nextToken()).isNull();
+  }
+
+  /** presignedPutUrl은 반드시 PUT 메서드로 서명하고, 발급된 URL을 그대로 반환해야 한다. */
+  @Test
+  void presignedPutUrl_usesPutMethodAndReturnsUrl() throws Exception {
+    ArgumentCaptor<GetPresignedObjectUrlArgs> captor =
+        ArgumentCaptor.forClass(GetPresignedObjectUrlArgs.class);
+    when(minioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
+        .thenReturn("http://localhost:9000/firehub-files/x/1.jpg?sig=put");
+
+    PresignedUrlResponse resp = service().presignedPutUrl("firehub-files", "x/1.jpg", 900);
+
+    verify(minioClient).getPresignedObjectUrl(captor.capture());
+    assertThat(captor.getValue().method()).isEqualTo(Method.PUT);
+    assertThat(resp.url()).contains("1.jpg");
+    assertThat(resp.expiresInSeconds()).isEqualTo(900);
+  }
+
+  /** 업로드 만료는 GET(300)과 분리된 설정값(900)을 반환해야 한다. */
+  @Test
+  void defaultUploadPresignExpiry_returnsConfigured() {
+    assertThat(service().defaultUploadPresignExpiry()).isEqualTo(900);
   }
 
   private Item mockItem(String key, long size) {

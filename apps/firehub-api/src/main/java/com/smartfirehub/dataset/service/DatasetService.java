@@ -99,12 +99,17 @@ public class DatasetService {
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
     dataTableService.validateName(request.tableName());
 
-    for (DatasetColumnRequest col : request.columns()) {
+    // DOCUMENT/FILE 데이터셋은 컬럼 정의가 없어 columns 가 null 로 들어올 수 있다(로봇 등 프로그래매틱
+    // API 호출 시). 아래 컬럼 검증 루프에서 NPE 가 나지 않도록 null 을 빈 목록으로 정규화한다.
+    List<DatasetColumnRequest> columns =
+        request.columns() != null ? request.columns() : List.of();
+
+    for (DatasetColumnRequest col : columns) {
       dataTableService.validateName(col.columnName());
     }
 
     // Validate PK columns: must be NOT NULL, and GEOMETRY type cannot be a primary key (#199)
-    for (DatasetColumnRequest col : request.columns()) {
+    for (DatasetColumnRequest col : columns) {
       if (col.isPrimaryKey() && col.isNullable()) {
         throw new ColumnModificationException(
             "Primary key column '" + col.columnName() + "' cannot be nullable");
