@@ -73,6 +73,20 @@ export function isAllowedTriple(subjectType: EntityType, rel: RelationType, obje
   return ONTOLOGY_TRIPLES.some(([s, r, o]) => s === subjectType && r === rel && o === objectType);
 }
 
+// ── 시각화용 직렬화 (읽기 전용) ──
+// CORE_ONTOLOGY를 프론트 계약 형태로 평문 직렬화한다. 도메인 로직/추출에는 영향 없음.
+export interface SerializedEntityType { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; }
+export interface SerializedTriple { subject: string; relation: string; object: string; description: string; }
+export interface SerializedOntology { domain: string; entities: SerializedEntityType[]; relations: SerializedTriple[]; }
+
+export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): SerializedOntology {
+  return {
+    domain: ontology.domain,
+    entities: ontology.entities.map((e) => ({ type: e.type, description: e.description, naming: e.naming, resolution: e.resolution })),
+    relations: ontology.relations.map((r) => ({ subject: r.subject, relation: r.relation, object: r.object, description: r.description })),
+  };
+}
+
 // 온톨로지 정의로부터 추출용 시스템 프롬프트를 생성한다(도메인 무관 — 도메인 특화는 ontology 인자에만 존재).
 export function buildExtractionPrompt(ontology: Ontology = CORE_ONTOLOGY): string {
   const entityLines = ontology.entities

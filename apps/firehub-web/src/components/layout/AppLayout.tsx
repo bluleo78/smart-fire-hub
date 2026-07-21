@@ -11,6 +11,7 @@ import {
   Home,
   LayoutDashboard,
   Menu,
+  Network,
   Plug,
   Search,
   Settings,
@@ -91,6 +92,7 @@ const adminNavItems: NavItem[] = [
   { label: '사용자 관리', href: '/admin/users', icon: Users },
   { label: '역할 관리', href: '/admin/roles', icon: Shield },
   { label: '감사 로그', href: '/admin/audit-logs', icon: FileText },
+  { label: '온톨로지', href: '/admin/ontology', icon: Network },
   { label: '설정', href: '/admin/settings', icon: Settings },
 ];
 

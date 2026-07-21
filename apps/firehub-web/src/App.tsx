@@ -44,6 +44,7 @@ const ReportTemplateDetailPage = lazy(() => import('./pages/ai-insights/ReportTe
 const ExecutionDetailPage = lazy(() => import('./pages/ai-insights/ExecutionDetailPage'));
 const ReportViewerPage = lazy(() => import('./pages/ai-insights/ReportViewerPage'));
 const ChannelsPage = lazy(() => import('./pages/settings/ChannelsPage'));
+const OntologyPage = lazy(() => import('./pages/admin/OntologyPage'));
 
 function PageSkeleton() {
   return (
@@ -101,6 +102,7 @@ function App() {
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
                 <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
                 <Route path="/admin/settings" element={<SettingsPage />} />
+                <Route path="/admin/ontology" element={<OntologyPage />} />
                 <Route path="/admin/ai-settings" element={<Navigate to="/admin/settings" replace />} />
                 <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
                 <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />

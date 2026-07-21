@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt, CORE_ONTOLOGY, ONTOLOGY_TRIPLES,
-  entityResolutionPolicy,
+  entityResolutionPolicy, serializeOntology,
 } from './ontology.js';
 
 describe('ontology', () => {
@@ -44,5 +44,16 @@ describe('ontology', () => {
     expect(entityResolutionPolicy('Damage')).toBe('exact');
     expect(entityResolutionPolicy('Incident')).toBe('exact');
     expect(entityResolutionPolicy('Building')).toBe('embedding');
+  });
+});
+
+describe('serializeOntology', () => {
+  it('domain·entities·relations를 평문 형태로 직렬화한다', () => {
+    const s = serializeOntology(CORE_ONTOLOGY);
+    expect(s.domain).toBe('화재조사 보고서');
+    expect(s.entities).toHaveLength(6);
+    expect(s.entities[0]).toEqual({ type: 'Incident', description: expect.any(String), naming: expect.any(String), resolution: 'exact' });
+    expect(s.relations).toHaveLength(6);
+    expect(s.relations[0]).toEqual({ subject: 'Incident', relation: 'OCCURRED_AT', object: 'Building', description: expect.any(String) });
   });
 });

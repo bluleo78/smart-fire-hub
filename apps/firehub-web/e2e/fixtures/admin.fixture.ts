@@ -8,6 +8,7 @@ import {
   createSetting,
 } from '../factories/admin.factory';
 import { createAdminUserDetail, createRole, createUser, createUserDetail } from '../factories/auth.factory';
+import { createOntologyGraph, createOntologySchema } from '../factories/ontology.factory';
 import { createPageResponse, mockApi } from './api-mock';
 
 /**
@@ -170,4 +171,22 @@ export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1
     responseHeaders: { 'content-type': 'application/json' },
     responseContentType: 'application/json',
   });
+}
+
+/**
+ * 온톨로지 시각화 페이지 API 모킹
+ * - 스키마(GET /api/v1/ontology)와 인스턴스 그래프(GET /api/v1/ontology/graph)를 모킹한다.
+ */
+export async function setupOntologyMocks(page: Page) {
+  await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
+  await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+}
+
+/**
+ * 온톨로지 인스턴스 그래프 조회 실패 모킹
+ * - 스키마는 정상 응답하되, 그래프 엔드포인트만 500을 반환해 에러 상태 UI를 검증할 수 있게 한다.
+ */
+export async function setupOntologyGraphErrorMock(page: Page) {
+  await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
+  await mockApi(page, 'GET', '/api/v1/ontology/graph', { message: '그래프 조회 실패' }, { status: 500 });
 }

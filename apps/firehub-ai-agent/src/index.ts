@@ -5,6 +5,7 @@ import classifyRouter from './routes/classify.js';
 import proactiveRouter from './routes/proactive.js';
 import chartRenderRouter from './routes/chart-render.js';
 import pdfRouter from './routes/pdf.js';
+import graphRouter from './routes/graph.js';
 import { DEFAULT_PORT } from './constants.js';
 
 dotenv.config({ path: '.env.local' });
@@ -19,6 +20,7 @@ app.use('/agent', classifyRouter);
 app.use('/agent', proactiveRouter);
 app.use('/agent', chartRenderRouter);
 app.use('/agent', pdfRouter);
+app.use('/agent', graphRouter); // 온톨로지 시각화 읽기 엔드포인트
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err);
