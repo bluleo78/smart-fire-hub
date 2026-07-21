@@ -4,6 +4,7 @@ import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
+import { createCliCompleter } from '../../graphrag/llm-cli.js';
 import { loadGraph } from '../../graphrag/loader.js';
 import { embedTexts } from '../../graphrag/embedding.js';
 import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
@@ -11,16 +12,15 @@ import { retrieve } from '../../graphrag/retriever.js';
 
 /**
  * GraphRAG 관련 MCP 도구를 등록한다.
- * 스켈레톤 단계: model/apiKey는 classification-service.ts의 getModelAndApiKey처럼
- * 관리 설정을 조회하지 않고, env 폴백(AI_DEFAULT_MODEL/ANTHROPIC_API_KEY)만 사용한다.
+ * 엔티티/관계 추출 LLM 호출은 인증된 claude CLI 헤드리스 실행(createCliCompleter)에 위임한다.
+ * (로컬은 macOS 키체인, prod는 CLAUDE_CODE_OAUTH_TOKEN 환경변수로 인증되며 API 키가 필요 없다.)
  */
 export function registerGraphragTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
 ) {
-  const model = process.env.AI_DEFAULT_MODEL ?? 'claude-haiku-4-5';
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? '';
+  const complete = createCliCompleter();
 
   return [
     safeTool(
@@ -33,7 +33,7 @@ export function registerGraphragTools(
         const summary = await ingestDataset(
           {
             listChunks: (id) => apiClient.listDocumentChunks(id),
-            extract: (text) => extractGraph(text, { model, apiKey }),
+            extract: (text) => extractGraph(text, { complete }),
             load: (graph, chunkId) => loadGraph(graph, chunkId),
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)에 쓰이는 bge-m3 임베딩 클라이언트.
             embed: (texts) => embedTexts(texts),
@@ -60,7 +60,7 @@ export function registerGraphragTools(
               q, ids, k, mode as 'SEMANTIC' | 'KEYWORD' | 'HYBRID' | undefined,
             ),
           },
-          args.query, args.topK,
+          args.query, { topK: args.topK },
         );
         // Neo4j 연결 불가 등은 retrieve에서 throw → safeTool이 isError로 감싸 폴백 메시지 제공.
         return jsonResult({

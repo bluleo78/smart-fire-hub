@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt, CORE_ONTOLOGY, ONTOLOGY_TRIPLES,
+  entityResolutionPolicy,
 } from './ontology.js';
 
 describe('ontology', () => {
@@ -38,5 +39,10 @@ describe('ontology', () => {
     const custom = { ...CORE_ONTOLOGY, domain: '의료 기록' };
     expect(buildExtractionPrompt(custom)).toContain('의료 기록');
     expect(buildExtractionPrompt(custom)).not.toContain('화재조사 보고서');
+  });
+  it('엔티티 타입별 해소(resolution) 정책 — 수치/고유 엔티티는 exact, 표기변형 엔티티는 embedding', () => {
+    expect(entityResolutionPolicy('Damage')).toBe('exact');
+    expect(entityResolutionPolicy('Incident')).toBe('exact');
+    expect(entityResolutionPolicy('Building')).toBe('embedding');
   });
 });

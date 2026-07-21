@@ -1,11 +1,12 @@
 // 청크 텍스트를 LLM에 넘겨 온톨로지 준수 엔티티/관계를 추출한다.
-// classification-service.ts와 동일하게 Anthropic messages API를 raw axios로 단발 호출한다(query() 아님).
-import axios from 'axios';
+// LLM 호출은 CompleteFn으로 주입받는다(기본 구현은 llm-cli.ts의 인증된 claude CLI 헤드리스 호출).
+// axios로 x-api-key를 직접 호출하던 방식은 prod에 유효한 API 키가 없어 제거했다.
 import {
   ExtractionResult, EntityType, RelationType, isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
 } from './ontology.js';
+import type { CompleteFn } from './llm-cli.js';
 
-export interface ExtractOptions { model: string; apiKey: string; anthropicBaseUrl?: string; }
+export interface ExtractOptions { complete: CompleteFn; }
 
 // 온톨로지 정의에서 생성한 추출용 시스템 프롬프트(도메인 하드코딩을 ontology.ts로 이관).
 const SYSTEM_PROMPT = buildExtractionPrompt();
@@ -18,17 +19,9 @@ function parseJsonBlock(text: string): unknown | null {
 }
 
 export async function extractGraph(text: string, opts: ExtractOptions): Promise<ExtractionResult> {
-  const base = opts.anthropicBaseUrl ?? 'https://api.anthropic.com';
   let content = '';
   try {
-    const resp = await axios.post(
-      `${base}/v1/messages`,
-      { model: opts.model, max_tokens: 2048, system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: text }] },
-      { headers: { 'x-api-key': opts.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        timeout: 60_000 },
-    );
-    content = resp.data?.content?.[0]?.text ?? '';
+    content = await opts.complete(SYSTEM_PROMPT, text);
   } catch (err) {
     // API 키 오설정/타임아웃 등을 진단할 수 있도록 경고 로그를 남기고, 배치는 계속 진행한다.
     console.warn('[graphrag] extractGraph LLM 호출 실패, 빈 결과로 계속:', err);

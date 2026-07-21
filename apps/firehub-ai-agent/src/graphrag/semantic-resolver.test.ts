@@ -8,6 +8,10 @@ const VECTORS: Record<string, number[]> = {
   '스프링클러': [1, 0, 0],
   '스프링클러 설비': [0.99, 0.14, 0],
   '감지기': [0, 1, 0],
+  // Damage 타입 테스트용 — mock embed로는 threshold(0.78) 이상으로 근접하게 만들어
+  // "값에 관계없이 exact 정책이 클러스터링 자체를 건너뛴다"는 것을 검증한다.
+  '재산피해 약 1.2억원': [1, 0, 0],
+  '재산피해 약 4.5억원': [0.99, 0.14, 0],
 };
 
 const mockEmbed: EmbedFn = async (texts: string[]) => texts.map((t) => VECTORS[t] ?? [0, 0, 1]);
@@ -46,6 +50,31 @@ describe('buildCanonicalMap', () => {
     const map = await buildCanonicalMap(entities, mockEmbed);
     expect(map.get(entityKey('Equipment', '스프링클러'))?.type).toBe('Equipment');
     expect(map.get(entityKey('Building', '스프링클러'))?.type).toBe('Building');
+  });
+
+  it("resolution='exact' 타입(Damage)은 mock embed가 threshold 이상을 반환해도 병합하지 않는다", async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Damage', '재산피해 약 1.2억원'), type: 'Damage', name: '재산피해 약 1.2억원' },
+      { key: entityKey('Damage', '재산피해 약 4.5억원'), type: 'Damage', name: '재산피해 약 4.5억원' },
+    ];
+    const map = await buildCanonicalMap(entities, mockEmbed);
+
+    const key1 = entityKey('Damage', '재산피해 약 1.2억원');
+    const key2 = entityKey('Damage', '재산피해 약 4.5억원');
+    // 서로 다른 canonical로 남아 두 개의 별개 엔티티를 유지해야 한다.
+    expect(map.get(key1)?.key).toBe(key1);
+    expect(map.get(key2)?.key).toBe(key2);
+    expect(map.get(key1)?.key).not.toBe(map.get(key2)?.key);
+  });
+
+  it("resolution='embedding' 타입(Equipment)은 근접 이름을 그대로 병합한다(회귀 확인)", async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
+      { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
+    ];
+    const map = await buildCanonicalMap(entities, mockEmbed);
+    expect(map.get(entityKey('Equipment', '스프링클러'))?.key)
+      .toBe(map.get(entityKey('Equipment', '스프링클러 설비'))?.key);
   });
 });
 
