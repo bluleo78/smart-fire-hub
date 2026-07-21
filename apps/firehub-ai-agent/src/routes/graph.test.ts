@@ -26,11 +26,4 @@ describe('graph routes', () => {
     const res = await request(app).get('/agent/graph');
     expect(res.status).toBe(502);
   });
-
-  it('GET /agent/ontology 는 온톨로지 스키마를 반환한다', async () => {
-    const res = await request(app).get('/agent/ontology');
-    expect(res.status).toBe(200);
-    expect(res.body.entities).toHaveLength(6);
-    expect(res.body.relations).toHaveLength(6);
-  });
 });

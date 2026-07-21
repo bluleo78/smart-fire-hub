@@ -60,6 +60,7 @@ import {
   type ObjectListResponse,
   type PresignedUrlResponse,
 } from './api-client/file-object-api.js';
+import type { SerializedOntology } from '../graphrag/ontology.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
@@ -525,6 +526,12 @@ export class FireHubApiClient {
    */
   async getSessionPermissions(): Promise<string[]> {
     const { data } = await this.client.get<string[]>('/auth/me/permissions');
+    return data;
+  }
+
+  /** GraphRAG 추출용 — api 소유 온톨로지 스키마를 조회한다(GET /api/v1/ontology, dataset:read). */
+  async getOntology(): Promise<SerializedOntology> {
+    const { data } = await this.client.get<SerializedOntology>('/ontology');
     return data;
   }
 
