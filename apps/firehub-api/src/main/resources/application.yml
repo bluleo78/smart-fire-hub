@@ -4,7 +4,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-    baseline-version: 70
+    baseline-version: 71
   servlet:
     multipart:
       max-file-size: 256MB
