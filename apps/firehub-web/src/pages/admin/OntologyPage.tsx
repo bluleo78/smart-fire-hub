@@ -1,6 +1,9 @@
+import { AlertCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { SearchInput } from '@/components/ui/search-input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOntologyGraph, useOntologySchema } from '@/hooks/queries/useOntology';
 import type { GraphNode } from '@/types/ontology';
@@ -10,10 +13,28 @@ import NodeDetailDrawer from './components/NodeDetailDrawer';
 import SchemaGraph from './components/SchemaGraph';
 import TypeLegend from './components/TypeLegend';
 
+// 캔버스 로딩 중 표시하는 스켈레톤 — 컨테이너를 꽉 채워 레이아웃 시프트를 막는다.
+function GraphLoading() {
+  return <Skeleton className="h-full w-full" />;
+}
+
+// 캔버스 에러 상태 — 아이콘 + 메시지 + 재시도 버튼(하우스 error 패턴). 재시도는 해당 쿼리 refetch를 호출한다.
+function GraphError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <AlertCircle className="h-10 w-10 text-destructive" />
+      <p className="text-sm font-medium">{message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        다시 시도
+      </Button>
+    </div>
+  );
+}
+
 // 온톨로지 시각화 관리 페이지 — 스키마/인스턴스 탭 + 공유 색상 범례(읽기 전용).
 export default function OntologyPage() {
-  const { data: schema, isError: isSchemaError } = useOntologySchema();
-  const { data: graph, isError } = useOntologyGraph();
+  const { data: schema, isLoading: isSchemaLoading, isError: isSchemaError, refetch: refetchSchema } = useOntologySchema();
+  const { data: graph, isLoading: isGraphLoading, isError, refetch: refetchGraph } = useOntologyGraph();
   const [tab, setTab] = useState('schema');
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set()); // 빈 Set = 전체
   const [search, setSearch] = useState('');
@@ -45,36 +66,29 @@ export default function OntologyPage() {
           <TabsTrigger value="schema">스키마</TabsTrigger>
           <TabsTrigger value="instance">인스턴스 그래프</TabsTrigger>
         </TabsList>
-        <TabsContent value="schema">
+        <TabsContent value="schema" className="mt-6">
           <div className="h-[600px] rounded-lg border">
             {isSchemaError ? (
-              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                온톨로지를 불러오지 못했습니다.
-              </div>
+              <GraphError message="온톨로지를 불러오지 못했습니다." onRetry={() => refetchSchema()} />
+            ) : isSchemaLoading || !schema ? (
+              <GraphLoading />
             ) : (
-              schema && <SchemaGraph schema={schema} onTypeClick={drillDown} />
+              <SchemaGraph schema={schema} onTypeClick={drillDown} />
             )}
           </div>
         </TabsContent>
-        <TabsContent value="instance">
+        <TabsContent value="instance" className="mt-6">
           <div className="flex gap-3">
-            <Input
-              placeholder="이름 검색"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="max-w-xs"
-            />
+            <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="max-w-xs" />
           </div>
           <div className="mt-3 flex h-[600px] rounded-lg border overflow-hidden">
             <div className="flex-1">
               {isError ? (
-                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                  그래프를 불러오지 못했습니다.
-                </div>
+                <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />
+              ) : isGraphLoading || !graph ? (
+                <GraphLoading />
               ) : (
-                graph && (
-                  <InstanceGraph graph={graph} activeTypes={activeTypes} search={search} onNodeSelect={setSelected} />
-                )
+                <InstanceGraph graph={graph} activeTypes={activeTypes} search={search} onNodeSelect={setSelected} />
               )}
             </div>
             <NodeDetailDrawer

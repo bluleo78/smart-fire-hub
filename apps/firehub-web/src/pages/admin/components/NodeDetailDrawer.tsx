@@ -1,3 +1,6 @@
+import { X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
 import { colorForType } from '@/lib/ontology-colors';
 import type { GraphEdge, GraphNode } from '@/types/ontology';
 
@@ -22,11 +25,11 @@ export default function NodeDetailDrawer({ node, edges, nodesByKey, onClose }: P
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full" style={{ background: colorForType(node.type) }} />
-          <span className="font-semibold text-sm">{node.type}</span>
+          <h3 className="font-semibold text-sm">{node.type}</h3>
         </div>
-        <button onClick={onClose} className="text-muted-foreground text-sm" aria-label="닫기">
-          ✕
-        </button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="닫기">
+          <X className="h-4 w-4" />
+        </Button>
       </div>
       <div className="text-sm mb-2">{node.name}</div>
       <div className="text-xs text-muted-foreground break-all mb-3">{node.key}</div>

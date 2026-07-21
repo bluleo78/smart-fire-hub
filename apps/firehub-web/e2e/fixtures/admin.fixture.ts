@@ -190,3 +190,31 @@ export async function setupOntologyGraphErrorMock(page: Page) {
   await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
   await mockApi(page, 'GET', '/api/v1/ontology/graph', { message: '그래프 조회 실패' }, { status: 500 });
 }
+
+/**
+ * 온톨로지 인스턴스 그래프 재시도(refetch) 모킹
+ * - 초기 로드(TanStack Query retry:1 → 최초 요청 + 자동 재시도 1회 = 2회)는 모두 500으로 실패시켜 에러 UI를 노출하고,
+ *   그 이후(사용자 "다시 시도" 클릭에 의한 refetch)부터는 200 정상 그래프를 반환한다.
+ * - 실제 재요청이 발생했는지 검증할 수 있도록 총 호출 횟수를 담은 카운터 객체를 반환한다.
+ */
+export async function setupOntologyGraphRetryMock(page: Page) {
+  await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
+
+  const counter = { calls: 0 };
+  const graphBody = createOntologyGraph();
+  await page.route(
+    (url) => url.pathname === '/api/v1/ontology/graph',
+    (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      counter.calls += 1;
+      // 최초 로드의 요청+자동 재시도(2회)는 실패, 이후 수동 refetch부터 성공.
+      const fail = counter.calls <= 2;
+      return route.fulfill({
+        status: fail ? 500 : 200,
+        contentType: 'application/json',
+        body: JSON.stringify(fail ? { message: '그래프 조회 실패' } : graphBody),
+      });
+    },
+  );
+  return counter;
+}

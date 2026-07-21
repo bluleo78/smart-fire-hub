@@ -1,4 +1,4 @@
-import { ENTITY_TYPE_COLORS } from '@/lib/ontology-colors';
+import { colorForType, ENTITY_TYPE_COLORS } from '@/lib/ontology-colors';
 import type { GraphData, OntologySchema } from '@/types/ontology';
 
 interface Props {
@@ -25,9 +25,11 @@ export default function TypeLegend({ schema, graph, activeTypes, onToggle }: Pro
             key={t}
             type="button"
             onClick={() => onToggle(t)}
+            // aria-pressed로 토글(필터 활성) 상태를 스크린리더에 노출한다.
+            aria-pressed={active}
             className={`flex items-center gap-1.5 text-xs rounded px-1.5 py-0.5 ${active ? '' : 'opacity-35'}`}
           >
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: ENTITY_TYPE_COLORS[t] ?? '#64748b' }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: colorForType(t) }} />
             {t}
             <span className="text-muted-foreground">
               {policyByType(t) ?? ''}

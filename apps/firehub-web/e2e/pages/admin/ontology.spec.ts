@@ -2,6 +2,7 @@ import { createOntologyGraph } from '../../factories/ontology.factory';
 import {
   setupAdminAuth,
   setupOntologyGraphErrorMock,
+  setupOntologyGraphRetryMock,
   setupOntologyMocks,
 } from '../../fixtures/admin.fixture';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -125,5 +126,34 @@ test.describe('온톨로지 시각화 페이지', () => {
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
     // React Flow 노드는 렌더되지 않는다(크래시 없이 안전하게 폴백)
     await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  });
+
+  test('인스턴스 그래프 에러 후 "다시 시도" 클릭 시 재요청하여 그래프가 정상 렌더된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    // 초기 로드는 실패시키고 이후 refetch부터 성공하는 모킹 — 재요청 횟수를 카운터로 추적.
+    const counter = await setupOntologyGraphRetryMock(page);
+    await page.goto('/admin/ontology');
+
+    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+
+    // 초기 로드 실패 → 에러 문구 + 재시도 버튼 노출
+    await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
+    const retryButton = page.getByRole('button', { name: '다시 시도' });
+    await expect(retryButton).toBeVisible();
+
+    // 재시도 이전까지의 요청 수 기록(최초 요청 + 자동 재시도 1회 = 2회)
+    const callsBeforeRetry = counter.calls;
+    expect(callsBeforeRetry).toBeGreaterThanOrEqual(1);
+
+    // "다시 시도" 클릭 → 그래프 API 재요청 → 성공 응답으로 노드 렌더
+    await retryButton.click();
+
+    // 에러 문구가 사라지고 모킹 그래프의 노드 수(7개)만큼 렌더된다
+    await expect(page.getByText('그래프를 불러오지 못했습니다.')).toHaveCount(0);
+    await expect(page.locator('.react-flow__node')).toHaveCount(graph.nodes.length);
+    // 실제 재요청이 발생했음을 검증(입력→처리→출력: 클릭 → API 재호출 → UI 반영)
+    expect(counter.calls).toBeGreaterThan(callsBeforeRetry);
   });
 });
