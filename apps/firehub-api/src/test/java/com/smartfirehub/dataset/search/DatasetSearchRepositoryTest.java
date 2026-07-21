@@ -141,6 +141,41 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     assertThat(hits).noneMatch(h -> h.datasetId().equals(table));
   }
 
+  /**
+   * 회귀 가드: FILE(오브젝트) 데이터셋도 storageType 필터 없이 검색되면 결과에 포함되어야 한다.
+   * 검색/색인 계층은 storage_type 을 배제하지 않으므로(동적 필터만 존재) FILE 도 유효 후보다.
+   * 누군가 `AND storage_type IN ('TABLE','DOCUMENT')` 같은 제약을 추가하면 이 테스트가 깨진다.
+   */
+  @Test
+  void searchByTrigramIncludesFileStorageTypeWhenUnfiltered() {
+    Long userId = createUser("dssearch_file");
+    Long file = createDataset("화재 현장 사진 모음", "data.ds_file_a", "FILE", "SOURCE", userId);
+    seedEmbedding(file, "화재 현장 사진 및 첨부 파일 오브젝트", null);
+
+    var hits = searchRepository.searchByTrigram("화재", null, 10);
+
+    assertThat(hits).anyMatch(h -> h.datasetId().equals(file));
+    var hit = hits.stream().filter(h -> h.datasetId().equals(file)).findFirst().orElseThrow();
+    assertThat(hit.storageType()).isEqualTo("FILE");
+  }
+
+  /** FILE 로 storageType 필터를 걸면 FILE 데이터셋만 반환된다. */
+  @Test
+  void searchByTrigramAppliesFileStorageTypeFilter() {
+    Long userId = createUser("dssearch_file_filter");
+    Long file = createDataset("화재 파일셋", "data.ds_ff_file", "FILE", "SOURCE", userId);
+    Long doc = createDataset("화재 문서셋2", "data.ds_ff_doc", "DOCUMENT", "SOURCE", userId);
+    seedEmbedding(file, "화재 관련 파일 오브젝트 모음", null);
+    seedEmbedding(doc, "화재 관련 비정형 문서", null);
+
+    var hits = searchRepository.searchByTrigram("화재", "FILE", 10);
+
+    assertThat(hits).isNotEmpty();
+    assertThat(hits).allMatch(h -> h.storageType().equals("FILE"));
+    assertThat(hits).anyMatch(h -> h.datasetId().equals(file));
+    assertThat(hits).noneMatch(h -> h.datasetId().equals(doc));
+  }
+
   private static int indexOf(java.util.List<DatasetSearchHit> hits, Long datasetId) {
     for (int i = 0; i < hits.size(); i++) {
       if (hits.get(i).datasetId().equals(datasetId)) return i;

@@ -67,6 +67,26 @@ describe('find_datasets MCP tool', () => {
     expect(client.searchDatasets).toHaveBeenCalledWith('안전', undefined, undefined, undefined);
   });
 
+  it('storageType 필터로 FILE 을 전달할 수 있다 (enum 이 FILE 을 허용)', async () => {
+    (client.searchDatasets as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // FILE 은 과거 enum(['TABLE','DOCUMENT'])에서 런타임 거부되던 값 — 이제 통과해야 한다.
+    const result = await invokeTool(server, 'find_datasets', { query: '첨부파일', storageType: 'FILE' });
+
+    expect(result.isError).toBeUndefined();
+    expect(client.searchDatasets).toHaveBeenCalledWith('첨부파일', undefined, undefined, 'FILE');
+  });
+
+  it('storageType enum 이 TABLE/DOCUMENT/FILE 을 허용하고 그 외는 거부한다', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = (server.instance as any)._registeredTools['find_datasets'];
+    const shape = entry.inputSchema.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
+    expect(shape.storageType.safeParse('TABLE').success).toBe(true);
+    expect(shape.storageType.safeParse('DOCUMENT').success).toBe(true);
+    expect(shape.storageType.safeParse('FILE').success).toBe(true);
+    expect(shape.storageType.safeParse('INVALID').success).toBe(false);
+  });
+
   it('실패 시 isError를 반환한다', async () => {
     (client.searchDatasets as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('검색 오류'));
 

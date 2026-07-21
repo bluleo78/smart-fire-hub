@@ -53,7 +53,7 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 
 세션 재개: `sessionId`가 있으면 `options.resume`에 전달하여 이전 대화를 이어감. Claude Code의 `~/.claude/projects/` 하위 JSONL 파일에 트랜스크립트 저장됨.
 
-**`src/mcp/firehub-mcp-server.ts`** — MCP 서버 정의. `createSdkMcpServer()`로 `firehub` 네임스페이스 서버 생성. 36개 도구를 `safeTool()` 래퍼로 등록 (에러 시 `isError: true` 반환). 도구 카테고리: 카테고리(3), 데이터셋(5), 데이터 조작(8), 파이프라인(6), 트리거(4), API 연결(5), 기타(2). Zod v4 스키마로 입력 검증.
+**`src/mcp/firehub-mcp-server.ts`** — MCP 서버 정의. `createSdkMcpServer()`로 `firehub` 네임스페이스 서버 생성. 39개 도구를 `safeTool()` 래퍼로 등록 (에러 시 `isError: true` 반환). 도구 카테고리: 카테고리(3), 데이터셋(5), FILE 오브젝트(3: list_dataset_files·summarize_dataset_files·get_dataset_file_url), 데이터 조작(8), 파이프라인(6), 트리거(4), API 연결(5), 기타(2). Zod v4 스키마로 입력 검증.
 
 **`src/mcp/api-client.ts`** — Axios 기반 HTTP 클라이언트. firehub-api의 `/api/v1/*` 엔드포인트 호출. `Authorization: Internal {token}` + `X-On-Behalf-Of: {userId}` 헤더로 내부 서비스 인증 및 사용자 대행.
 

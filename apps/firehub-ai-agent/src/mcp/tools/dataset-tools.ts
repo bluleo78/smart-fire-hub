@@ -14,9 +14,9 @@ export function registerDatasetTools(
       {
         categoryId: z.number().optional().describe('카테고리 ID'),
         storageType: z
-          .enum(['TABLE', 'DOCUMENT'])
+          .enum(['TABLE', 'DOCUMENT', 'FILE'])
           .optional()
-          .describe('저장 방식 (TABLE=정형 테이블, DOCUMENT=비정형 문서)'),
+          .describe('저장 방식 (TABLE=정형 테이블, DOCUMENT=비정형 문서, FILE=파일 오브젝트)'),
         originType: z
           .enum(['SOURCE', 'DERIVED', 'TEMP'])
           .optional()

@@ -17,6 +17,7 @@ import { registerMiscTools } from './tools/misc-tools.js';
 import { registerAnalyticsTools } from './tools/analytics-tools.js';
 import { registerDocumentTools } from './tools/document-tools.js';
 import { registerFindDatasetTools } from './tools/find-datasets-tools.js';
+import { registerFileObjectTools } from './tools/file-object-tools.js';
 import { registerUiTools } from './tools/ui-tools.js';
 import { registerProactiveTools } from './tools/proactive-tools.js';
 import { registerDataImportTools } from './tools/dataimport-tools.js';
@@ -110,6 +111,10 @@ const PERMISSIONS = {
 const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   search_documents: PERMISSIONS.DATASET_READ,
   find_datasets: PERMISSIONS.DATASET_READ,
+  // FILE(오브젝트) 데이터셋 조회 도구 — find_datasets 와 동일하게 dataset:read 로 게이팅
+  list_dataset_files: PERMISSIONS.DATASET_READ,
+  summarize_dataset_files: PERMISSIONS.DATASET_READ,
+  get_dataset_file_url: PERMISSIONS.DATASET_READ,
   delete_dataset: PERMISSIONS.DATASET_DELETE,
   drop_dataset_column: PERMISSIONS.DATASET_DELETE,
   list_users: PERMISSIONS.USER_READ,
@@ -181,6 +186,7 @@ export function registerAllTools(
     ...registerMiscTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAnalyticsTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDocumentTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerFileObjectTools(apiClient, safeToolFn, jsonResultFn),
     ...registerUiTools(safeToolFn, jsonResultFn),
     ...registerProactiveTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAdminTools(apiClient, safeToolFn, jsonResultFn),

@@ -5,8 +5,8 @@ public record DatasetSearchHit(
     Long datasetId,
     String name,
     String description,
-    String storageType, // "TABLE" | "DOCUMENT"
+    String storageType, // "TABLE" | "DOCUMENT" | "FILE"
     String originType, // "SOURCE" | "DERIVED" | "TEMP"
-    String tableName, // TABLE만; DOCUMENT은 null
+    String tableName, // TABLE만; DOCUMENT·FILE은 null
     String category, // 카테고리명, 없으면 null
     double score) {} // RRF 점수(HYBRID) / 코사인 유사도 / word_similarity

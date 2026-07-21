@@ -463,6 +463,46 @@ describe('FireHubApiClient', () => {
     });
   });
 
+  // --- FILE(오브젝트) 데이터셋 ---
+  describe('FILE object dataset endpoints', () => {
+    it('listDatasetObjects: GET /datasets/{id}/objects 를 token·size 쿼리와 함께 호출한다', async () => {
+      const mockResp = {
+        objects: [{ key: 'pfx/a.csv', name: 'a.csv', size: 12, lastModified: '2026-07-01T00:00:00Z' }],
+        nextToken: 'pfx/a.csv',
+        hasMore: true,
+      };
+      const scope = nock(BASE_URL)
+        .get('/datasets/7/objects')
+        .query({ token: 'tok', size: '100' })
+        .reply(200, mockResp);
+
+      const result = await client.listDatasetObjects(7, 'tok', 100);
+      expect(result).toEqual(mockResp);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('listDatasetObjects: 인자 생략 시 쿼리 없이 호출한다', async () => {
+      const scope = nock(BASE_URL)
+        .get('/datasets/7/objects')
+        .reply(200, { objects: [], nextToken: null, hasMore: false });
+
+      await client.listDatasetObjects(7);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('getDatasetObjectUrl: GET /datasets/{id}/objects/url 를 key 쿼리와 함께 호출한다', async () => {
+      const mockResp = { url: 'https://minio.example/firehub-files/pfx/a.csv?sig=x', expiresInSeconds: 300 };
+      const scope = nock(BASE_URL)
+        .get('/datasets/7/objects/url')
+        .query({ key: 'pfx/a.csv' })
+        .reply(200, mockResp);
+
+      const result = await client.getDatasetObjectUrl(7, 'pfx/a.csv');
+      expect(result).toEqual(mockResp);
+      expect(scope.isDone()).toBe(true);
+    });
+  });
+
   // --- Error message format ---
   it('should format error message as "API 오류 (status): message"', async () => {
     nock(BASE_URL).get('/datasets').reply(500, { message: 'Internal Server Error' });
