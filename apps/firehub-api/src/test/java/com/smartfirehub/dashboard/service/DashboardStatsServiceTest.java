@@ -45,6 +45,16 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
    */
   @BeforeEach
   void setUp() {
+    // 공유 테스트 DB(smartfirehub_test)에 다른 테스트가 커밋해 누적된 audit_log/pipeline_execution 이
+    // activity feed·recentImports 의 상위 페이지를 잠식한다(특히 미해결 PIPELINE_FAILED 가 상단 고정).
+    // 그 결과 갓 시드한 이벤트가 page 0(size 50)에서 밀려나 "피드에 나타나는가" 류 단언이 누적량에
+    // 따라 비결정적으로 실패한다(날짜가 아니라 누적이 원인). 각 테스트를 깨끗한 기준선에서 시작하도록
+    // 관련 테이블을 FK 순서로 비운다. @Transactional 이라 롤백되어 영속 데이터엔 영향이 없다.
+    dsl.deleteFrom(PIPELINE_STEP_EXECUTION).execute();
+    dsl.deleteFrom(TRIGGER_EVENT).execute();
+    dsl.deleteFrom(PIPELINE_EXECUTION).execute();
+    dsl.deleteFrom(AUDIT_LOG).execute();
+
     // 테스트용 사용자 생성 (nano time으로 유니크 보장)
     testUserId =
         dsl.insertInto(USER)
