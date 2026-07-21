@@ -1,23 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
 
-import { objectsApi } from '../../../api/objects';
 import { useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
+import { formatObjectDate, formatObjectSize, openObjectInNewTab } from '../../../lib/objectFile';
 import { collectEntries, filesToItems } from '../../../lib/uploadTree';
-
-/** 바이트를 사람이 읽기 쉬운 단위로 표기(B/KB/MB). */
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** ISO 문자열을 로컬 날짜시간으로(없거나 잘못되면 '-'). */
-function formatDate(iso: string | null): string {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
-}
 
 /**
  * FILE 데이터셋 오브젝트 브라우저 탭 — 업로드(드래그앤드롭) + S3 스타일 목록(이름/크기/수정일) + 무한스크롤.
@@ -62,24 +47,6 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
   const failedItems = upload.data?.failedItems ?? [];
 
   const items = data?.pages.flatMap((p) => p.objects) ?? [];
-
-  // 행 클릭 → presigned GET URL 발급 후 새 탭에서 열기/다운로드. 키 마지막 세그먼트가 파일명이라 저장명도 원본명이 된다.
-  // 팝업 차단을 피하려고 탭을 동기적으로 먼저 연 뒤, URL을 받아 이동시킨다.
-  const handleOpen = async (key: string) => {
-    // 팝업 차단을 피하려고 탭을 동기적으로 먼저 연다. noopener는 window.open이 null을 반환하므로 쓰지 않는다.
-    const win = window.open('', '_blank');
-    if (!win) {
-      toast.error('팝업이 차단되어 파일을 열 수 없습니다');
-      return;
-    }
-    try {
-      const { data: res } = await objectsApi.presignedUrl(datasetId, key);
-      win.location.href = res.url;
-    } catch {
-      win.close();
-      toast.error('다운로드 URL 발급에 실패했습니다');
-    }
-  };
 
   return (
     <div className="space-y-4 p-2">
@@ -166,13 +133,13 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
               <button
                 key={o.key}
                 type="button"
-                onClick={() => handleOpen(o.key)}
+                onClick={() => openObjectInNewTab(datasetId, o.key)}
                 title={o.key}
                 className="grid w-full grid-cols-[1fr_6rem_12rem] items-center gap-4 border-b px-4 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
               >
                 <span className="truncate">{o.name}</span>
-                <span className="text-right text-muted-foreground">{formatSize(o.size)}</span>
-                <span className="text-right text-muted-foreground">{formatDate(o.lastModified)}</span>
+                <span className="text-right text-muted-foreground">{formatObjectSize(o.size)}</span>
+                <span className="text-right text-muted-foreground">{formatObjectDate(o.lastModified)}</span>
               </button>
             ))}
           </div>

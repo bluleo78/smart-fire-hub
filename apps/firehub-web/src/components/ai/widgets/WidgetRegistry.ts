@@ -41,6 +41,12 @@ const WIDGET_REGISTRY: Record<string, WidgetEntry> = {
     label: '데이터셋 목록',
     icon: '📦',
   },
+  /** FILE(오브젝트) 데이터셋 파일 목록 카드 — datasetId만 받아 FE가 /objects API를 직접 조회 */
+  show_dataset_files: {
+    component: lazy(() => import('./DatasetFilesWidget')),
+    label: '파일 목록',
+    icon: '📁',
+  },
   show_pipeline_list: {
     component: lazy(() => import('./PipelineListWidget')),
     label: '파이프라인 목록',

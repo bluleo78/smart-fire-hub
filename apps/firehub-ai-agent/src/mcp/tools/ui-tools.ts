@@ -95,6 +95,19 @@ export function registerUiTools(
       },
     ),
 
+    // 5-1. FILE(오브젝트) 데이터셋 파일 목록 (Reference — FE가 /objects API fetch)
+    safeTool(
+      'show_dataset_files',
+      'FILE(오브젝트) 데이터셋의 파일 목록을 채팅에 인라인 카드로 표시합니다. **표시 전용 — 데이터 조회 도구가 아님**. datasetId만 넘기면 프론트엔드가 직접 파일 목록을 조회·렌더하고, 각 파일 클릭 시 다운로드/미리보기 링크를 발급합니다. find_datasets 결과 storageType === "FILE" 데이터셋을 사용자가 "보여줘/목록/카드로" 요청할 때 사용하세요. 파일 개수·용량·형식 등 요약 분석이 필요하면 summarize_dataset_files를 사용합니다.',
+      {
+        datasetId: z.coerce.number().describe('표시할 FILE 데이터셋 ID'),
+        canvas: canvasSchema,
+      },
+      async (args: { datasetId: number }) => {
+        return jsonResult({ displayed: true, datasetId: args.datasetId });
+      },
+    ),
+
     // 6. 파이프라인 목록 (Passthrough)
     safeTool(
       'show_pipeline_list',

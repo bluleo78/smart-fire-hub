@@ -34,7 +34,7 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 - 데이터셋 찾기(정형·비정형·파일 공통): find_datasets — 키워드+의미 하이브리드. 반환 storageType으로 후속 도구 선택
 - 목록·필터·CRUD: list_datasets, list_pipelines, list_triggers, list_charts, list_dashboards 등
 - 비정형 문서 검색: search_documents (DOCUMENT 데이터셋 내용 질문 시 메인이 직접 처리)
-- 파일 오브젝트(FILE 데이터셋): list_dataset_files(파일 목록)·summarize_dataset_files(구성 요약)·get_dataset_file_url(다운로드/미리보기 링크) — 메인이 직접 처리
+- 파일 오브젝트(FILE 데이터셋): list_dataset_files(파일 목록)·summarize_dataset_files(구성 요약)·get_dataset_file_url(다운로드/미리보기 링크)·show_dataset_files(파일 목록 카드) — 메인이 직접 처리
 - 인라인 표시: show_dataset, show_table, show_chart (단순 조회 결과 시각화)
 - 상태 확인: get_execution_status, show_pipeline
 - 즉시 실행: execute_pipeline, execute_proactive_job
@@ -61,7 +61,7 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 반환된 각 후보의 \`storageType\` 으로 후속 도구를 선택한다:
   - storageType === 'TABLE'    → get_data_schema(datasetIds=[...]) → execute_analytics_query
   - storageType === 'DOCUMENT' → search_documents(query, datasetIds=[...])
-  - storageType === 'FILE'     → summarize_dataset_files(구성 요약) / list_dataset_files(목록) / get_dataset_file_url(다운로드·미리보기 링크)
+  - storageType === 'FILE'     → summarize_dataset_files(구성 요약) / list_dataset_files(목록) / get_dataset_file_url(다운로드·미리보기 링크) / show_dataset_files(파일 목록 카드 표시)
 [혼합] 후보에 여러 유형이 섞이면 각각의 경로를 사용한다.
 - ⚠️ FILE 데이터셋에는 **SQL 도구(get_data_schema/execute_analytics_query) 와 search_documents 를 쓰지 않는다** — 물리 테이블도 문서 청크도 없어 실패한다. 반드시 위 파일 도구만 사용한다.
 - FILE 데이터셋은 개별 파일을 DB 행으로 관리하지 않는다. "몇 개/무슨 형식/총 용량" 류 구성 질문은 \`summarize_dataset_files\`(오브젝트 스토리지 실시간 집계)로 답하고, \`capped=true\` 면 정확한 총합으로 단정하지 말고 \`countLabel\`("≥N") 표현을 인용한다. 특정 파일을 열어달라는 요청은 \`get_dataset_file_url\` 로 링크를 발급해 제시한다(에이전트가 바이트를 직접 읽지 않는다).
@@ -118,6 +118,7 @@ show_chart 규칙:
 - 페이지 이동: navigate_to
 - 파이프라인 상태: show_pipeline
 - 데이터셋 목록: show_dataset_list
+- FILE 데이터셋 파일 목록: show_dataset_files
 - 파이프라인 목록: show_pipeline_list
 - 시스템 현황: show_dashboard_summary
 - 최근 활동: show_activity

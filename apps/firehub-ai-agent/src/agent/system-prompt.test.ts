@@ -56,6 +56,8 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('summarize_dataset_files');
     expect(SYSTEM_PROMPT).toContain('list_dataset_files');
     expect(SYSTEM_PROMPT).toContain('get_dataset_file_url');
+    // FILE 목록 인라인 카드 위젯도 FILE 라우팅에 노출되어야 함
+    expect(SYSTEM_PROMPT).toContain('show_dataset_files');
     // FILE 데이터셋에 SQL/문서검색 도구를 쓰지 말라는 가드가 명시되어야 함
     expect(SYSTEM_PROMPT).toMatch(/FILE 데이터셋에는[\s\S]*SQL 도구/);
     // 개별 파일이 DB 로 관리되지 않는다는 전제와 capped 인용 규칙

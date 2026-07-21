@@ -53,6 +53,18 @@ describe('UI MCP Tools', () => {
     });
   });
 
+  // --- show_dataset_files ---
+  describe('show_dataset_files', () => {
+    it('returns displayed: true with datasetId (Reference 패턴 ack)', async () => {
+      const result = await invokeTool(server, 'show_dataset_files', { datasetId: 42 });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.displayed).toBe(true);
+      expect(parsed.datasetId).toBe(42);
+    });
+  });
+
   // --- show_table ---
   describe('show_table', () => {
     it('returns displayed: true with rowCount and totalRows', async () => {
