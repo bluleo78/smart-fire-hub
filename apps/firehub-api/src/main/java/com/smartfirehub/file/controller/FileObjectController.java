@@ -82,7 +82,7 @@ public class FileObjectController {
     if (files == null || files.isEmpty() || files.size() > MAX_UPLOAD_BATCH) {
       throw new IllegalArgumentException("files는 1개 이상 " + MAX_UPLOAD_BATCH + "개 이하여야 합니다");
     }
-    // files 배열에 null 원소가 섞여 있으면 아래 f.ext() 호출에서 NPE(500)가 발생하므로
+    // files 배열에 null 원소가 섞여 있으면 아래 f.filename() 호출에서 NPE(500)가 발생하므로
     // 사전에 걸러내어 클라이언트 오류(400)로 명확히 응답한다.
     if (files.stream().anyMatch(f -> f == null)) {
       throw new IllegalArgumentException("files 배열에 null 원소를 포함할 수 없습니다");
@@ -90,8 +90,12 @@ public class FileObjectController {
     int expiry = storage.defaultUploadPresignExpiry();
     List<UploadTarget> targets = new ArrayList<>();
     for (FileSpec f : files) {
-      // 앱이 키 생성(프리픽스 격리 + 규약 강제) → 해당 키에 대한 presigned PUT URL 발급.
-      String key = keyGenerator.generateKey(cfg.prefix(), request.robotId(), f.ext());
+      // 앱이 prefix를 붙여 "<prefix><파일명>" 키 생성(S3 방식) → 해당 키에 대한 presigned PUT URL 발급.
+      String key = keyGenerator.generateKey(cfg.prefix(), f.filename());
+      // 파일명이 정제 후 비면 key가 prefix와 같아진다(빈/경로만/무의미 이름). 유효 파일명 요구로 400 응답.
+      if (key.equals(cfg.prefix())) {
+        throw new IllegalArgumentException("유효한 파일명이 필요합니다: " + f.filename());
+      }
       String url = storage.presignedPutUrl(cfg.bucket(), key, expiry).url();
       targets.add(new UploadTarget(key, url));
     }

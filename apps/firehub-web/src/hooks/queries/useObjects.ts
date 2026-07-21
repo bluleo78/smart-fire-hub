@@ -1,6 +1,6 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { extOf, objectsApi, putToPresignedUrl } from '../../api/objects';
+import { objectsApi, putToPresignedUrl } from '../../api/objects';
 
 /**
  * 오브젝트 목록 무한스크롤 조회 — 토큰 기반 페이지네이션.
@@ -13,21 +13,6 @@ export function useObjectList(datasetId: number, size = 50) {
       objectsApi.list(datasetId, { token: pageParam as string | undefined, size }).then((r) => r.data),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => (last.hasMore ? (last.nextToken ?? undefined) : undefined),
-  });
-}
-
-/**
- * 단건 presigned URL 조회(썸네일용).
- * staleTime을 presign 만료(5분)보다 짧게(4분) 두어 만료된 URL을 캐시에서 재사용하지 않는다.
- * enabled: 이미지가 아닌 오브젝트(썸네일이 필요 없는 행)에서 불필요한 presign 요청을
- * 보내지 않도록 호출부(ObjectThumbnail)에서 이미지 여부를 넘겨 제어한다.
- */
-export function usePresignedUrl(datasetId: number, key: string, enabled = true) {
-  return useQuery({
-    queryKey: ['datasets', datasetId, 'objects', 'url', key],
-    queryFn: () => objectsApi.presignedUrl(datasetId, key).then((r) => r.data.url),
-    staleTime: 4 * 60 * 1000,
-    enabled,
   });
 }
 
@@ -46,13 +31,13 @@ export interface UploadResult {
  * 실패한 파일만 모아 재시도할 수 있게 한다(전부-아니면-전무 방지). upload-urls 발급 자체가
  * 실패하는 총 실패만 throw되어 mutation error(isError)로 전파된다.
  */
-export function useUploadObjects(datasetId: number, robotId = 'web') {
+export function useUploadObjects(datasetId: number) {
   const qc = useQueryClient();
   return useMutation<UploadResult, Error, File[]>({
     mutationFn: async (files) => {
+      // 원본 파일명을 그대로 보내면 앱이 "<prefix><filename>" 키로 저장한다(S3 방식).
       const { data } = await objectsApi.requestUploadUrls(datasetId, {
-        robotId,
-        files: files.map((f) => ({ ext: extOf(f) })),
+        files: files.map((f) => ({ filename: f.name })),
       });
       // 응답 targets는 요청 files 순서를 유지하므로 인덱스로 짝지어 업로드한다.
       const results = await Promise.allSettled(

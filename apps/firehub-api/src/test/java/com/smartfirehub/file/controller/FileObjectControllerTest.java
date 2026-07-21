@@ -2,7 +2,6 @@ package com.smartfirehub.file.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.matchesPattern;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -94,7 +93,7 @@ class FileObjectControllerTest {
     mvc.perform(get("/api/v1/datasets/99/objects")).andExpect(status().is4xxClientError());
   }
 
-  /** upload-urls: 파일 N개 → 대상 N개, robotId/ext 정제 후 키가 프리픽스 하위 규약을 만족한다. */
+  /** upload-urls: 파일 N개 → 대상 N개, 키는 "&lt;prefix&gt;&lt;파일명&gt;"(S3 방식)로 프리픽스 하위에 생성된다. */
   @Test
   void createUploadUrls_generatesKeysUnderPrefixAndDelegates() throws Exception {
     when(configRepo.findByDatasetId(7L))
@@ -107,14 +106,27 @@ class FileObjectControllerTest {
     mvc.perform(
             post("/api/v1/datasets/7/objects/upload-urls")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"robotId\":\"Robot 01!\",\"files\":[{\"ext\":\"JPG\"},{\"ext\":\"png\"}]}"))
+                .content("{\"files\":[{\"filename\":\"photo.jpg\"},{\"filename\":\"my report.png\"}]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.expiresInSeconds").value(900))
         .andExpect(jsonPath("$.targets.length()").value(2))
-        .andExpect(
-            jsonPath("$.targets[0].key")
-                .value(matchesPattern("equip/robot-01/\\d{4}-\\d{2}-\\d{2}/[0-9a-f-]{36}\\.jpg")))
+        // 원본 파일명이 그대로 prefix 하위 키가 된다(경로 주입은 basename만 남음).
+        .andExpect(jsonPath("$.targets[0].key").value("equip/photo.jpg"))
+        .andExpect(jsonPath("$.targets[1].key").value("equip/my report.png"))
         .andExpect(jsonPath("$.targets[0].uploadUrl").value(containsString("sig=put")));
+  }
+
+  /** 파일명이 정제 후 비면(공백/경로만/무의미) 키가 prefix와 같아지므로 400으로 거부한다. */
+  @Test
+  void createUploadUrls_rejectsBlankFilename() throws Exception {
+    when(configRepo.findByDatasetId(7L))
+        .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
+    when(storage.defaultUploadPresignExpiry()).thenReturn(900);
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"files\":[{\"filename\":\"..\"}]}"))
+        .andExpect(status().is4xxClientError());
   }
 
   /** files가 비면 400. */
@@ -134,7 +146,7 @@ class FileObjectControllerTest {
   void createUploadUrls_rejectsOverBatchLimit() throws Exception {
     when(configRepo.findByDatasetId(7L))
         .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
-    String one = "{\"ext\":\"jpg\"}";
+    String one = "{\"filename\":\"a.jpg\"}";
     String files = (one + ",").repeat(1001);
     files = files.substring(0, files.length() - 1); // 마지막 콤마 제거 → 1001개
     mvc.perform(

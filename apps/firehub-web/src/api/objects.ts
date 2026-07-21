@@ -41,8 +41,8 @@ export const objectsApi = {
   // 오브젝트 단건 presigned GET URL
   presignedUrl: (datasetId: number, key: string) =>
     client.get<PresignedUrlResponse>(`/datasets/${datasetId}/objects/url`, { params: { key } }),
-  // presigned PUT URL 배치 발급 (앱이 키 생성)
-  requestUploadUrls: (datasetId: number, body: { robotId?: string; files: { ext: string }[] }) =>
+  // presigned PUT URL 배치 발급 (앱이 "<prefix><filename>" 키 생성 — S3 방식)
+  requestUploadUrls: (datasetId: number, body: { files: { filename: string }[] }) =>
     client.post<UploadUrlResponse>(`/datasets/${datasetId}/objects/upload-urls`, body),
 };
 
@@ -53,8 +53,7 @@ export async function putToPresignedUrl(uploadUrl: string, file: File): Promise<
   });
 }
 
-/** 파일명에서 확장자 추출(소문자, 점 제외). 확장자가 없으면 'bin'. */
-export function extOf(file: File): string {
-  const i = file.name.lastIndexOf('.');
-  return i >= 0 ? file.name.slice(i + 1).toLowerCase() : 'bin';
+/** 오브젝트 키에서 표시 파일명(마지막 경로 세그먼트) 추출 — S3 방식. */
+export function objectName(key: string): string {
+  return key.split('/').pop() || key;
 }
