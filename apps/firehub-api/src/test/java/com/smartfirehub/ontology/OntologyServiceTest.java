@@ -4,42 +4,30 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.ontology.dto.GraphResponse;
-import com.smartfirehub.ontology.dto.OntologyResponse;
-import com.smartfirehub.ontology.service.OntologyProxyService;
+import com.smartfirehub.ontology.service.OntologyService;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import org.junit.jupiter.api.*;
 
-// OntologyProxyService 단위 테스트 — MockWebServer로 ai-agent를 흉내내어
-// 정상 응답이 DTO로 그대로 통과되는지, 실패 응답(502)이 예외로 전파되는지 검증한다.
+// OntologyService 단위 테스트 — MockWebServer로 ai-agent를 흉내내어 getGraph 프록시가
+// camelCase 필드를 정확히 역직렬화하고 실패 응답(502)을 예외로 전파하는지 검증한다.
+// getOntology 는 DB 읽기로 전환되어 OntologyRepositoryTest 가 커버한다(여기선 리포지토리 mock).
 // Spring 컨텍스트 없이 서비스 객체를 직접 생성하는 순수 단위 테스트.
-class OntologyProxyServiceTest {
+class OntologyServiceTest {
   private MockWebServer server;
-  private OntologyProxyService service;
+  private OntologyService service;
 
   @BeforeEach
   void setUp() throws Exception {
     server = new MockWebServer();
     server.start();
-    service = new OntologyProxyService(server.url("/").toString(), "test-token");
+    service = new OntologyService(server.url("/").toString(), "test-token",
+        org.mockito.Mockito.mock(com.smartfirehub.ontology.repository.OntologyRepository.class));
   }
 
   @AfterEach
   void tearDown() throws Exception {
     server.shutdown();
-  }
-
-  @Test
-  void getOntology_는_ai_agent_응답을_DTO로_통과시킨다() {
-    server.enqueue(
-        new MockResponse()
-            .setHeader("Content-Type", "application/json")
-            .setBody(
-                "{\"domain\":\"화재조사 보고서\",\"entities\":[{\"type\":\"Incident\",\"description\":\"d\",\"naming\":\"n\",\"resolution\":\"exact\"}],\"relations\":[]}"));
-    OntologyResponse res = service.getOntology();
-    assertThat(res.domain()).isEqualTo("화재조사 보고서");
-    assertThat(res.entities()).hasSize(1);
-    assertThat(res.entities().get(0).type()).isEqualTo("Incident");
   }
 
   // getGraph()의 다중 단어 camelCase 필드(sourceChunkCount, subjectKey, objectKey)가
