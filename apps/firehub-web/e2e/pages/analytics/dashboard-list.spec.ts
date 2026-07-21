@@ -32,8 +32,9 @@ test.describe('대시보드 목록 페이지', () => {
     // 첫 번째 데이터 행에 위젯 수 '1개'가 표시되는지 확인
     // DashboardListPage는 widgetCount를 "{widgetCount}개" 형식의 plain text로 렌더링함
     // createDashboardListItem 기본값: widgetCount: 1
+    // exact:true 필수 — 부분일치면 수정일 상대시간("N개월 전")의 "…1개…"와도 매칭돼 strict 위반이 난다.
     const firstRow = page.getByRole('row').nth(1);
-    await expect(firstRow.getByText('1개')).toBeVisible();
+    await expect(firstRow.getByText('1개', { exact: true })).toBeVisible();
   });
 
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
