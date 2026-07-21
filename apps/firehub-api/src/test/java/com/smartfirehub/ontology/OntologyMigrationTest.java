@@ -28,9 +28,11 @@ class OntologyMigrationTest extends IntegrationTestBase {
   void 시드_엔티티는_원본_순서로_6개_적재된다() {
     List<String> types = dsl.select(ET_TYPE).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_TYPE));
     assertThat(types).containsExactly("Incident", "Building", "Cause", "Damage", "Equipment", "Regulation");
-    // exact/embedding 정책이 정확히 보존됐는지(Incident/Damage 만 exact).
-    String incidentRes = dsl.select(ET_RES).from(ET).where(ET_TYPE.eq("Incident")).fetchOne(r -> r.get(ET_RES));
-    assertThat(incidentRes).isEqualTo("exact");
+    // resolution 정책 6종 전부 순서대로 검증한다. resolution 은 추출 프롬프트에 실리지 않아
+    // "프롬프트 바이트 동일" 회귀가 커버하지 못하므로(오직 semantic-resolver 병합 정책에만 영향),
+    // 여기서 Incident/Damage=exact, 나머지=embedding 을 명시적으로 단언해 시드 오류를 잡는다.
+    List<String> resolutions = dsl.select(ET_RES).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_RES));
+    assertThat(resolutions).containsExactly("exact", "embedding", "embedding", "exact", "embedding", "embedding");
   }
 
   @Test
