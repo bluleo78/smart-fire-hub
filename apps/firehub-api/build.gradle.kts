@@ -138,6 +138,17 @@ jooq {
                     database.apply {
                         name = "org.jooq.meta.postgres.PostgresDatabase"
                         inputSchema = "public"
+                        // 스캔 단계에서 이름 없는 파라미터로 "Missing name" 로그를 남기는
+                        // PostGIS 함수 제외 (앱 코드에서 미사용)
+                        excludes = "st_dump|st_dumppoints|st_dumprings|st_dumpsegments|st_fromflatgeobuf"
+                    }
+                    // Routine(함수) 코드젠 비활성화.
+                    // public 스키마의 함수는 대부분 PostGIS/pg_trgm/pgvector 확장이 설치한 것으로,
+                    // 파라미터에 이름이 없어 대량의 "Missing name" 정보 로그를 유발하고
+                    // 앱 코드에서는 생성된 Routine 클래스를 전혀 사용하지 않는다(테이블만 사용).
+                    generate.apply {
+                        isRoutines = false
+                        isUdts = false
                     }
                     target.apply {
                         packageName = "com.smartfirehub.jooq"
