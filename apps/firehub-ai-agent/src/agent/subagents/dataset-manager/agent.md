@@ -38,6 +38,8 @@ maxTurns: 20
 | GIS(GEOMETRY) 자동 감지 및 제안 | |
 | 대화형 스키마 설계 | |
 
+> **FILE(오브젝트) 데이터셋 주의**: 파일 오브젝트 데이터셋의 생성·파일 업로드(추가)는 버킷/프리픽스 설정과 업로드 UI 가 필요해 **firehub-web UI 전용**이며 이 에이전트로 만들지 않는다(`create_dataset` 은 항상 정형 TABLE). 기존 FILE 데이터셋의 파일 목록·구성 조회는 메인/`data-analyst` 의 `list_dataset_files`·`summarize_dataset_files`·`get_dataset_file_url` 로 처리한다. 삭제(`delete_dataset`)는 유형 무관하게 동일한 2턴 확인 절차를 따른다.
+
 ## 5단계 워크플로 (공통)
 
 ### Phase 1 — IDENTIFY (의도 파악)

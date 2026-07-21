@@ -231,6 +231,7 @@ describe('Dataset MCP Tools', () => {
       const shape = entry.inputSchema.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
       expect(shape.storageType.safeParse('DOCUMENT').success).toBe(true);
       expect(shape.storageType.safeParse('TABLE').success).toBe(true);
+      expect(shape.storageType.safeParse('FILE').success).toBe(true);
       expect(shape.storageType.safeParse('INVALID').success).toBe(false);
       expect(shape.originType.safeParse('SOURCE').success).toBe(true);
       expect(shape.originType.safeParse('DERIVED').success).toBe(true);

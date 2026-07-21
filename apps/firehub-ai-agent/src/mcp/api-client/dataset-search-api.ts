@@ -5,7 +5,7 @@ export interface DatasetSearchHit {
   datasetId: number;
   name: string;
   description: string | null;
-  storageType: 'TABLE' | 'DOCUMENT';
+  storageType: 'TABLE' | 'DOCUMENT' | 'FILE';
   originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   tableName: string | null;
   category: string | null;
@@ -21,13 +21,13 @@ export function createDatasetSearchApi(client: AxiosInstance) {
      * @param query       검색 질의 문자열
      * @param mode        검색 모드 (undefined → 백엔드 기본값, null 전달)
      * @param topK        반환할 최대 후보 수 (undefined → 백엔드 기본값, null 전달)
-     * @param storageType 저장 유형 필터 (undefined → 전체, 백엔드에 null 전달)
+     * @param storageType 저장 유형 필터 (TABLE/DOCUMENT/FILE, undefined → 전체, 백엔드에 null 전달)
      */
     async searchDatasets(
       query: string,
       mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
       topK?: number,
-      storageType?: 'TABLE' | 'DOCUMENT',
+      storageType?: 'TABLE' | 'DOCUMENT' | 'FILE',
     ): Promise<DatasetSearchHit[]> {
       const response = await client.post('/datasets/search', {
         query,

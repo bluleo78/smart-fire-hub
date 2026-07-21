@@ -50,6 +50,19 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('search_documents');
   });
 
+  // FILE(오브젝트) 데이터셋 라우팅 — SQL/문서검색이 아닌 파일 도구로 분기해야 함(환각·오호출 방지)
+  it('FILE storageType 을 파일 도구로 라우팅하고 SQL 도구 사용을 금지한다', () => {
+    // 데이터셋 찾기 섹션에 FILE 분기가 존재
+    expect(SYSTEM_PROMPT).toContain('summarize_dataset_files');
+    expect(SYSTEM_PROMPT).toContain('list_dataset_files');
+    expect(SYSTEM_PROMPT).toContain('get_dataset_file_url');
+    // FILE 데이터셋에 SQL/문서검색 도구를 쓰지 말라는 가드가 명시되어야 함
+    expect(SYSTEM_PROMPT).toMatch(/FILE 데이터셋에는[\s\S]*SQL 도구/);
+    // 개별 파일이 DB 로 관리되지 않는다는 전제와 capped 인용 규칙
+    expect(SYSTEM_PROMPT).toMatch(/개별 파일을 DB 행으로 관리하지 않/);
+    expect(SYSTEM_PROMPT).toContain('countLabel');
+  });
+
   // 디스커버리 임계값 — score 낮거나 0건이면 임의 데이터셋 분석 금지(환각 방지) + screenContext 생략 규칙
   it('데이터셋을 못 찾으면 임의 분석 대신 되묻거나 없음을 답하도록 명시한다', () => {
     expect(SYSTEM_PROMPT).toContain('임의 데이터셋을 골라 분석하지 말고');

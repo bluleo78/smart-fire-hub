@@ -54,10 +54,17 @@ import {
   type DatasetSearchHit,
 } from './api-client/dataset-search-api.js';
 import { createGraphSourceApi, type ChunkContent } from './api-client/graph-source-api.js';
+import {
+  createFileObjectApi,
+  type ObjectItem,
+  type ObjectListResponse,
+  type PresignedUrlResponse,
+} from './api-client/file-object-api.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
 export type { ChunkContent };
+export type { ObjectItem, ObjectListResponse, PresignedUrlResponse };
 
 export class FireHubApiClient {
   private client: AxiosInstance;
@@ -76,6 +83,7 @@ export class FireHubApiClient {
   private _document: ReturnType<typeof createDocumentApi>;
   private _datasetSearch: ReturnType<typeof createDatasetSearchApi>;
   private _graphSource: ReturnType<typeof createGraphSourceApi>;
+  private _fileObject: ReturnType<typeof createFileObjectApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
     this.client = axios.create({
@@ -131,6 +139,7 @@ export class FireHubApiClient {
     this._document = createDocumentApi(this.client);
     this._datasetSearch = createDatasetSearchApi(this.client);
     this._graphSource = createGraphSourceApi(this.client);
+    this._fileObject = createFileObjectApi(this.client);
   }
 
   listCategories() {
@@ -596,9 +605,26 @@ export class FireHubApiClient {
     query: string,
     mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
     topK?: number,
-    storageType?: 'TABLE' | 'DOCUMENT',
+    storageType?: 'TABLE' | 'DOCUMENT' | 'FILE',
   ): Promise<DatasetSearchHit[]> {
     return this._datasetSearch.searchDatasets(query, mode, topK, storageType);
+  }
+
+  /**
+   * FILE(오브젝트) 데이터셋의 오브젝트 목록을 한 페이지 조회한다.
+   * FILE 데이터셋은 파일을 DB 행으로 관리하지 않아 목록은 S3 ListObjects 로 실시간 계산된다.
+   */
+  listDatasetObjects(
+    datasetId: number,
+    token?: string,
+    size?: number,
+  ): Promise<ObjectListResponse> {
+    return this._fileObject.listObjects(datasetId, token, size);
+  }
+
+  /** FILE 데이터셋 오브젝트의 단기 presigned GET URL 을 발급한다(다운로드/미리보기). */
+  getDatasetObjectUrl(datasetId: number, key: string): Promise<PresignedUrlResponse> {
+    return this._fileObject.getObjectUrl(datasetId, key);
   }
 
   /** GraphRAG 추출용 — datasetId의 문서 청크 전체를 가져온다. */

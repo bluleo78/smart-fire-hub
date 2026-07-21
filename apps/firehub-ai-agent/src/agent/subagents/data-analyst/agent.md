@@ -5,6 +5,9 @@ tools:
   - mcp__firehub__execute_analytics_query
   - mcp__firehub__get_data_schema
   - mcp__firehub__search_documents
+  - mcp__firehub__list_dataset_files
+  - mcp__firehub__summarize_dataset_files
+  - mcp__firehub__get_dataset_file_url
   - mcp__firehub__find_datasets
   - mcp__firehub__list_datasets
   - mcp__firehub__get_dataset
@@ -51,7 +54,7 @@ maxTurns: 25
 
 사용자 요청을 먼저 분석해 분석 대상 데이터셋을 식별한다.
 
-1. `find_datasets({query})` — 후보 데이터셋 검색. 사용자 발화의 키워드를 query 에 그대로 사용. 반환 후보의 `storageType` 으로 정형/비정형(DOCUMENT) 여부를 판별한다.
+1. `find_datasets({query})` — 후보 데이터셋 검색. 사용자 발화의 키워드를 query 에 그대로 사용. 반환 후보의 `storageType` 으로 정형(TABLE)/비정형 문서(DOCUMENT)/파일 오브젝트(FILE) 여부를 판별한다.
 2. `get_data_schema({datasetIds: [선택된 id들]})` — 컬럼 정보를 컨텍스트에 적재 (**필수**)
    - 단일 분석: `datasetIds: [11]`
    - JOIN 분석: 모든 관련 데이터셋 ID를 한 번에 전달 (`datasetIds: [7, 11]`)
@@ -62,6 +65,8 @@ maxTurns: 25
 `"[테이블명] 테이블에서 분석합니다. 총 N개 행, 주요 컬럼: col1, col2, col3"`
 
 **비정형 문서 기반 분석 (DOCUMENT 데이터셋)**: 대상이 정형 테이블이 아니라 문서·매뉴얼·보고서 내용(`find_datasets` 결과의 `storageType === 'DOCUMENT'`)이면 SQL 대신 `search_documents({query, datasetIds?})` 로 의미 검색해 근거 청크를 얻는다. 반환된 청크는 **출처(fileName)와 함께 인용**해 해석하고, 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다. 문서·정형이 섞인 요청이면 둘 다 사용한다.
+
+**파일 오브젝트 데이터셋 (FILE 데이터셋)**: 대상이 파일 저장소(`find_datasets` 결과의 `storageType === 'FILE'`)면 SQL·문서검색 도구를 쓰지 않는다(물리 테이블·청크가 없어 실패). 파일이 DB 에 개별 관리되지 않으므로 구성(개수·용량·형식) 질문은 `summarize_dataset_files({datasetId})` 의 실시간 매니페스트로 답하고, `capped=true` 면 총합을 단정하지 말고 `countLabel`("≥N")을 인용한다. 파일 목록 나열은 `list_dataset_files`, 특정 파일 열람은 `get_dataset_file_url` 로 다운로드/미리보기 링크를 발급해 제시한다(바이트를 직접 읽지 않음). 파일 내용 자체의 심층 분석이 필요하면 해당 파일을 채팅에 첨부해 임포트하거나 DOCUMENT 데이터셋으로 적재하도록 안내한다.
 
 ### Phase 2 — ANALYZE (쿼리 실행)
 
