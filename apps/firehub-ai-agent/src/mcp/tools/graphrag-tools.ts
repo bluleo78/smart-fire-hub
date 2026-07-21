@@ -9,6 +9,8 @@ import { loadGraph } from '../../graphrag/loader.js';
 import { embedTexts } from '../../graphrag/embedding.js';
 import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
+// 임시: 정적 코어 온톨로지를 주입한다(빌드 그린 유지). Task 4에서 api fetch로 교체 예정.
+import { CORE_ONTOLOGY } from '../../graphrag/ontology.js';
 
 /**
  * GraphRAG 관련 MCP 도구를 등록한다.
@@ -33,12 +35,13 @@ export function registerGraphragTools(
         const summary = await ingestDataset(
           {
             listChunks: (id) => apiClient.listDocumentChunks(id),
-            extract: (text) => extractGraph(text, { complete }),
+            extract: (text) => extractGraph(text, { complete, ontology: CORE_ONTOLOGY }),
             load: (graph, chunkId) => loadGraph(graph, chunkId),
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)에 쓰이는 bge-m3 임베딩 클라이언트.
             embed: (texts) => embedTexts(texts),
           },
           args.datasetId,
+          CORE_ONTOLOGY,
         );
         return jsonResult(summary);
       },

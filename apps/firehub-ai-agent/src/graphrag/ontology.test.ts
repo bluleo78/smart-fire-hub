@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt, CORE_ONTOLOGY, ONTOLOGY_TRIPLES,
-  entityResolutionPolicy, serializeOntology,
+  isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt, CORE_ONTOLOGY,
+  entityResolutionPolicy, serializeOntology, deserializeOntology,
 } from './ontology.js';
 
 describe('ontology', () => {
@@ -12,17 +12,16 @@ describe('ontology', () => {
     expect(isRelationType('KNOWS')).toBe(false);
   });
   it('허용된 트리플만 통과시킨다', () => {
-    expect(isAllowedTriple('Incident', 'CAUSED_BY', 'Cause')).toBe(true);
-    expect(isAllowedTriple('Building', 'HAS_EQUIPMENT', 'Equipment')).toBe(true);
+    expect(isAllowedTriple(CORE_ONTOLOGY, 'Incident', 'CAUSED_BY', 'Cause')).toBe(true);
+    expect(isAllowedTriple(CORE_ONTOLOGY, 'Building', 'HAS_EQUIPMENT', 'Equipment')).toBe(true);
     // 방향/조합이 온톨로지에 없으면 거부
-    expect(isAllowedTriple('Cause', 'CAUSED_BY', 'Incident')).toBe(false);
-    expect(isAllowedTriple('Building', 'CAUSED_BY', 'Cause')).toBe(false);
+    expect(isAllowedTriple(CORE_ONTOLOGY, 'Cause', 'CAUSED_BY', 'Incident')).toBe(false);
+    expect(isAllowedTriple(CORE_ONTOLOGY, 'Building', 'CAUSED_BY', 'Cause')).toBe(false);
   });
   it('허용 트리플은 온톨로지 관계 정의에서 파생된다', () => {
-    // CORE_ONTOLOGY.relations와 ONTOLOGY_TRIPLES가 항상 일치해야 한다(단일 소스).
-    expect(ONTOLOGY_TRIPLES).toHaveLength(CORE_ONTOLOGY.relations.length);
+    // CORE_ONTOLOGY.relations의 모든 관계는 isAllowedTriple로 허용되어야 한다(단일 소스).
     for (const r of CORE_ONTOLOGY.relations) {
-      expect(isAllowedTriple(r.subject, r.relation, r.object)).toBe(true);
+      expect(isAllowedTriple(CORE_ONTOLOGY, r.subject, r.relation, r.object)).toBe(true);
     }
   });
   it('추출 프롬프트는 온톨로지 정의에서 생성된다(도메인 하드코딩 없음)', () => {
@@ -41,9 +40,9 @@ describe('ontology', () => {
     expect(buildExtractionPrompt(custom)).not.toContain('화재조사 보고서');
   });
   it('엔티티 타입별 해소(resolution) 정책 — 수치/고유 엔티티는 exact, 표기변형 엔티티는 embedding', () => {
-    expect(entityResolutionPolicy('Damage')).toBe('exact');
-    expect(entityResolutionPolicy('Incident')).toBe('exact');
-    expect(entityResolutionPolicy('Building')).toBe('embedding');
+    expect(entityResolutionPolicy(CORE_ONTOLOGY, 'Damage')).toBe('exact');
+    expect(entityResolutionPolicy(CORE_ONTOLOGY, 'Incident')).toBe('exact');
+    expect(entityResolutionPolicy(CORE_ONTOLOGY, 'Building')).toBe('embedding');
   });
 });
 
@@ -55,5 +54,23 @@ describe('serializeOntology', () => {
     expect(s.entities[0]).toEqual({ type: 'Incident', description: expect.any(String), naming: expect.any(String), resolution: 'exact' });
     expect(s.relations).toHaveLength(6);
     expect(s.relations[0]).toEqual({ subject: 'Incident', relation: 'OCCURRED_AT', object: 'Building', description: expect.any(String) });
+  });
+});
+
+describe('ontology 파라미터화 + 직렬화 왕복', () => {
+  // wire 왕복(serialize→deserialize) 후 프롬프트가 원본과 바이트 동일해야 한다(소스 플립의 핵심 불변식).
+  it('deserializeOntology 왕복 후 buildExtractionPrompt 가 바이트 동일하다', () => {
+    const roundTripped = deserializeOntology(serializeOntology(CORE_ONTOLOGY));
+    expect(buildExtractionPrompt(roundTripped)).toBe(buildExtractionPrompt(CORE_ONTOLOGY));
+  });
+
+  it('resolution 정책이 ontology 인자 기준으로 정확하다', () => {
+    expect(entityResolutionPolicy(CORE_ONTOLOGY, 'Incident')).toBe('exact');
+    expect(entityResolutionPolicy(CORE_ONTOLOGY, 'Building')).toBe('embedding');
+  });
+
+  it('isAllowedTriple 이 ontology 인자 기준으로 허용/차단한다', () => {
+    expect(isAllowedTriple(CORE_ONTOLOGY, 'Incident', 'OCCURRED_AT', 'Building')).toBe(true);
+    expect(isAllowedTriple(CORE_ONTOLOGY, 'Building', 'OCCURRED_AT', 'Incident')).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { extractGraph } from './extractor.js';
+import { CORE_ONTOLOGY } from './ontology.js';
 import type { CompleteFn } from './llm-cli.js';
 
 describe('extractGraph', () => {
@@ -17,7 +18,7 @@ describe('extractGraph', () => {
     });
     const complete: CompleteFn = vi.fn().mockResolvedValue('```json\n' + jsonPayload + '\n```');
 
-    const result = await extractGraph('화재 보고서 본문...', { complete });
+    const result = await extractGraph('화재 보고서 본문...', { complete, ontology: CORE_ONTOLOGY });
     expect(result.entities).toEqual([
       { type: 'Incident', name: '2026-001' },
       { type: 'Cause', name: '전기적 요인' },
@@ -29,13 +30,13 @@ describe('extractGraph', () => {
 
   it('깨진 JSON이면 빈 결과를 반환한다(배치 중단 없이)', async () => {
     const complete: CompleteFn = vi.fn().mockResolvedValue('no json here');
-    const result = await extractGraph('본문', { complete });
+    const result = await extractGraph('본문', { complete, ontology: CORE_ONTOLOGY });
     expect(result).toEqual({ entities: [], relations: [] });
   });
 
   it('complete가 예외를 던지면 빈 결과를 반환한다(fail-soft)', async () => {
     const complete: CompleteFn = vi.fn().mockRejectedValue(new Error('claude CLI 실패'));
-    const result = await extractGraph('본문', { complete });
+    const result = await extractGraph('본문', { complete, ontology: CORE_ONTOLOGY });
     expect(result).toEqual({ entities: [], relations: [] });
   });
 });

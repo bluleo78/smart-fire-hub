@@ -4,7 +4,7 @@
 // 2단계 구조인 이유: 임베딩 기반 클러스터링(semantic-resolver.ts)은 데이터셋 전체 엔티티를
 // 한 번에 봐야 청크를 넘나드는 표기 변형("스프링클러" vs "스프링클러 설비")을 병합할 수 있다.
 // 청크마다 즉시 적재하는 이전 방식은 청크 간 클러스터링이 불가능했다.
-import { ExtractionResult } from './ontology.js';
+import { ExtractionResult, Ontology } from './ontology.js';
 import { resolveExtraction, ResolvedGraph, ResolvedEntity } from './resolver.js';
 import { buildCanonicalMap, applyCanonicalMap, EmbedFn } from './semantic-resolver.js';
 
@@ -22,7 +22,9 @@ export interface IngestSummary {
   extractionFailures?: number;
 }
 
-export async function ingestDataset(deps: IngestDeps, datasetId: number): Promise<IngestSummary> {
+export async function ingestDataset(
+  deps: IngestDeps, datasetId: number, ontology: Ontology,
+): Promise<IngestSummary> {
   const chunks = await deps.listChunks(datasetId);
 
   // 1단계(수집): 청크별로 추출→로컬 해소(정확 문자열 병합)만 수행하고, 적재는 미룬다.
@@ -38,7 +40,7 @@ export async function ingestDataset(deps: IngestDeps, datasetId: number): Promis
   }
 
   // 2단계(전역 해소): 데이터셋 전체 엔티티를 임베딩 클러스터링해 canonical map을 만든다.
-  const canonicalMap = await buildCanonicalMap(allEntities, deps.embed);
+  const canonicalMap = await buildCanonicalMap(allEntities, deps.embed, ontology);
 
   // 3단계(적재): 청크별 그래프를 canonical map으로 재작성 후 Neo4j에 멱등 적재한다.
   // sourceChunkIds는 loader.ts가 청크 단위로 누적하므로 청크별 load 호출을 유지한다.

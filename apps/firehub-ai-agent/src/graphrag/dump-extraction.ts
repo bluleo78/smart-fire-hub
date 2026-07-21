@@ -6,13 +6,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { extractGraph } from './extractor.js';
 import { createCliCompleter } from './llm-cli.js';
+import { CORE_ONTOLOGY } from './ontology.js';
 
 async function main() {
   const dir = resolve(process.cwd(), '../../docs/superpowers/fixtures/graphrag-samples');
   const complete = createCliCompleter();
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.md'))) {
     const text = readFileSync(resolve(dir, file), 'utf8');
-    const result = await extractGraph(text, { complete });
+    const result = await extractGraph(text, { complete, ontology: CORE_ONTOLOGY });
     console.log(`\n===== ${file} =====`);
     console.log(JSON.stringify(result, null, 2));
   }

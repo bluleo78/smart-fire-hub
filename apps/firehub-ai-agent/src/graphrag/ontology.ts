@@ -54,23 +54,21 @@ export const CORE_ONTOLOGY: Ontology = {
   ],
 };
 
-// 허용 트리플 (주어타입, 관계, 목적어타입) — CORE_ONTOLOGY에서 파생. 이 조합만 그래프에 적재한다.
-export const ONTOLOGY_TRIPLES: ReadonlyArray<readonly [EntityType, RelationType, EntityType]> =
-  CORE_ONTOLOGY.relations.map((r) => [r.subject, r.relation, r.object] as const);
-
 export function isEntityType(x: string): x is EntityType {
   return (ENTITY_TYPES as readonly string[]).includes(x);
 }
 export function isRelationType(x: string): x is RelationType {
   return (RELATION_TYPES as readonly string[]).includes(x);
 }
-// 엔티티 타입의 해소 정책 조회 — 온톨로지에 없는 타입은 안전하게 'embedding' 기본값 반환.
-export function entityResolutionPolicy(type: EntityType): 'embedding' | 'exact' {
-  return CORE_ONTOLOGY.entities.find((e) => e.type === type)?.resolution ?? 'embedding';
+// 엔티티 타입의 해소 정책 조회 — 전달된 ontology 기준. 없는 타입은 안전하게 'embedding' 기본값.
+export function entityResolutionPolicy(ontology: Ontology, type: EntityType): 'embedding' | 'exact' {
+  return ontology.entities.find((e) => e.type === type)?.resolution ?? 'embedding';
 }
-// 주어·관계·목적어 조합이 온톨로지 허용 트리플에 존재하는지 검사한다.
-export function isAllowedTriple(subjectType: EntityType, rel: RelationType, objectType: EntityType): boolean {
-  return ONTOLOGY_TRIPLES.some(([s, r, o]) => s === subjectType && r === rel && o === objectType);
+// 주어·관계·목적어 조합이 전달된 ontology 의 허용 트리플에 존재하는지 검사한다.
+export function isAllowedTriple(
+  ontology: Ontology, subjectType: EntityType, rel: RelationType, objectType: EntityType,
+): boolean {
+  return ontology.relations.some((r) => r.subject === subjectType && r.relation === rel && r.object === objectType);
 }
 
 // ── 시각화용 직렬화 (읽기 전용) ──
@@ -84,6 +82,19 @@ export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): Serialize
     domain: ontology.domain,
     entities: ontology.entities.map((e) => ({ type: e.type, description: e.description, naming: e.naming, resolution: e.resolution })),
     relations: ontology.relations.map((r) => ({ subject: r.subject, relation: r.relation, object: r.object, description: r.description })),
+  };
+}
+
+// wire 형태(SerializedOntology)를 내부 Ontology 로 역직렬화한다(온톨로지에 없는 타입/관계는 방어적으로 제외).
+export function deserializeOntology(s: SerializedOntology): Ontology {
+  return {
+    domain: s.domain,
+    entities: s.entities
+      .filter((e) => isEntityType(e.type))
+      .map((e) => ({ type: e.type as EntityType, description: e.description, naming: e.naming, resolution: e.resolution })),
+    relations: s.relations
+      .filter((r) => isEntityType(r.subject) && isRelationType(r.relation) && isEntityType(r.object))
+      .map((r) => ({ subject: r.subject as EntityType, relation: r.relation as RelationType, object: r.object as EntityType, description: r.description })),
   };
 }
 

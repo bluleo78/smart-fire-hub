@@ -2,14 +2,12 @@
 // LLM 호출은 CompleteFn으로 주입받는다(기본 구현은 llm-cli.ts의 인증된 claude CLI 헤드리스 호출).
 // axios로 x-api-key를 직접 호출하던 방식은 prod에 유효한 API 키가 없어 제거했다.
 import {
-  ExtractionResult, EntityType, RelationType, isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
+  ExtractionResult, EntityType, RelationType, Ontology,
+  isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
 } from './ontology.js';
 import type { CompleteFn } from './llm-cli.js';
 
-export interface ExtractOptions { complete: CompleteFn; }
-
-// 온톨로지 정의에서 생성한 추출용 시스템 프롬프트(도메인 하드코딩을 ontology.ts로 이관).
-const SYSTEM_PROMPT = buildExtractionPrompt();
+export interface ExtractOptions { complete: CompleteFn; ontology: Ontology; }
 
 // 응답 텍스트에서 첫 JSON 코드블록을 추출해 파싱한다. 실패 시 null.
 function parseJsonBlock(text: string): unknown | null {
@@ -19,9 +17,11 @@ function parseJsonBlock(text: string): unknown | null {
 }
 
 export async function extractGraph(text: string, opts: ExtractOptions): Promise<ExtractionResult> {
+  // 전달된 ontology 로 시스템 프롬프트를 조립한다(정적 상수 → 동적, 소스 플립 대응).
+  const systemPrompt = buildExtractionPrompt(opts.ontology);
   let content = '';
   try {
-    content = await opts.complete(SYSTEM_PROMPT, text);
+    content = await opts.complete(systemPrompt, text);
   } catch (err) {
     // API 키 오설정/타임아웃 등을 진단할 수 있도록 경고 로그를 남기고, 배치는 계속 진행한다.
     console.warn('[graphrag] extractGraph LLM 호출 실패, 빈 결과로 계속:', err);
@@ -49,7 +49,7 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
         || typeof rec.type !== 'string' || !isRelationType(rec.type)) return false;
       const subjectType = typeByName.get(rec.subject);
       const objectType = typeByName.get(rec.object);
-      return !!subjectType && !!objectType && isAllowedTriple(subjectType, rec.type, objectType);
+      return !!subjectType && !!objectType && isAllowedTriple(opts.ontology, subjectType, rec.type, objectType);
     })
     .map((r) => ({ subject: r.subject, type: r.type, object: r.object }));
 

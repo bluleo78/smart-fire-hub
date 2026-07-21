@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ingestDataset, IngestDeps } from './ingest.js';
+import { CORE_ONTOLOGY } from './ontology.js';
 
 // 이름 문자열을 그대로 결정적 벡터로 만드는 mock embed. 동일 이름은 항상 동일 벡터 →
 // 코사인 1.0으로 자기 자신과만 병합되고, 서로 다른 이름은 병합되지 않는다(순수 오케스트레이션 검증 목적).
@@ -24,7 +25,7 @@ describe('ingestDataset', () => {
       load,
       embed: mockEmbed,
     };
-    const summary = await ingestDataset(deps, 7);
+    const summary = await ingestDataset(deps, 7, CORE_ONTOLOGY);
 
     expect(deps.extract).toHaveBeenCalledTimes(2);
     // load는 청크별로 호출되며, remap된 그래프를 받는다.
@@ -48,7 +49,7 @@ describe('ingestDataset', () => {
       load,
       embed: mockEmbed,
     };
-    const summary = await ingestDataset(deps, 8);
+    const summary = await ingestDataset(deps, 8, CORE_ONTOLOGY);
     expect(summary.entities).toBe(1);
     expect(summary.chunks).toBe(2);
   });

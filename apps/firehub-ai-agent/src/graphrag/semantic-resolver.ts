@@ -1,7 +1,7 @@
 // 임베딩 기반 시맨틱 엔티티 해소 — resolver.ts의 정확 문자열 병합을 보완한다.
 // 같은 EntityType 내에서 표기가 달라도 의미가 같은 엔티티(예: "스프링클러" vs "스프링클러 설비")를
 // 코사인 유사도로 클러스터링해 하나의 canonical 엔티티로 합친다.
-import { EntityType, entityResolutionPolicy } from './ontology.js';
+import { EntityType, Ontology, entityResolutionPolicy } from './ontology.js';
 import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
 import { cosineSimilarity } from './embedding.js';
 
@@ -48,6 +48,7 @@ function pickCanonicalName(names: string[]): string {
 export async function buildCanonicalMap(
   entities: ResolvedEntity[],
   embed: EmbedFn,
+  ontology: Ontology,
   threshold: number = MERGE_THRESHOLD,
 ): Promise<Map<string, ResolvedEntity>> {
   // key 기준 dedupe(같은 엔티티가 여러 청크에서 중복 등장 가능).
@@ -66,7 +67,7 @@ export async function buildCanonicalMap(
   for (const [type, list] of byType) {
     // 'exact' 정책 타입(Incident/Damage 등 수치·고유 엔티티)은 임베딩 클러스터링을 건너뛰고
     // 각 엔티티를 그대로 자기 자신에 매핑한다 — 표기가 비슷해도 값이 다르면 병합 금지.
-    if (entityResolutionPolicy(type) === 'exact') {
+    if (entityResolutionPolicy(ontology, type) === 'exact') {
       for (const e of list) result.set(e.key, e);
       continue;
     }

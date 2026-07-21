@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildCanonicalMap, applyCanonicalMap, MERGE_THRESHOLD, EmbedFn } from './semantic-resolver.js';
 import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
+import { CORE_ONTOLOGY } from './ontology.js';
 
 // 이름 → 벡터 고정 매핑(Ollama 미사용). '스프링클러'/'스프링클러 설비'는 코사인 ≥0.78로 근접,
 // '감지기'는 직교(0)로 명확히 별개 클러스터가 되도록 손으로 만든 값.
@@ -29,7 +30,7 @@ describe('buildCanonicalMap', () => {
       { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
       { key: entityKey('Equipment', '감지기'), type: 'Equipment', name: '감지기' },
     ];
-    const map = await buildCanonicalMap(entities, mockEmbed);
+    const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
 
     const sprinklerKey = entityKey('Equipment', '스프링클러');
     const sprinklerFullKey = entityKey('Equipment', '스프링클러 설비');
@@ -47,7 +48,7 @@ describe('buildCanonicalMap', () => {
       { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
       { key: entityKey('Building', '스프링클러'), type: 'Building', name: '스프링클러' },
     ];
-    const map = await buildCanonicalMap(entities, mockEmbed);
+    const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
     expect(map.get(entityKey('Equipment', '스프링클러'))?.type).toBe('Equipment');
     expect(map.get(entityKey('Building', '스프링클러'))?.type).toBe('Building');
   });
@@ -57,7 +58,7 @@ describe('buildCanonicalMap', () => {
       { key: entityKey('Damage', '재산피해 약 1.2억원'), type: 'Damage', name: '재산피해 약 1.2억원' },
       { key: entityKey('Damage', '재산피해 약 4.5억원'), type: 'Damage', name: '재산피해 약 4.5억원' },
     ];
-    const map = await buildCanonicalMap(entities, mockEmbed);
+    const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
 
     const key1 = entityKey('Damage', '재산피해 약 1.2억원');
     const key2 = entityKey('Damage', '재산피해 약 4.5억원');
@@ -72,7 +73,7 @@ describe('buildCanonicalMap', () => {
       { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
       { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
     ];
-    const map = await buildCanonicalMap(entities, mockEmbed);
+    const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
     expect(map.get(entityKey('Equipment', '스프링클러'))?.key)
       .toBe(map.get(entityKey('Equipment', '스프링클러 설비'))?.key);
   });
@@ -103,7 +104,7 @@ describe('applyCanonicalMap', () => {
       { key: dKey, type: 'Equipment', name: '감지기' },
       { key: bKey, type: 'Building', name: '중앙로 상가건물' },
     ];
-    const map = await buildCanonicalMap(entities, mockEmbed);
+    const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
 
     const result = applyCanonicalMap(graph, map);
 
