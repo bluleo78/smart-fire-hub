@@ -26,16 +26,26 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class FileObjectStorageServiceTest {
 
   @Mock MinioClient minioClient;
+  @Mock MinioClient presignMinioClient;
 
   private FileObjectStorageService service() {
+    // endpoint(내부)와 publicEndpoint(공개)를 분리해 주입한다. 목록은 minioClient, presign은 presignMinioClient 담당.
     MinioProperties props =
-        new MinioProperties("http://localhost:9000", "k", "s", "firehub-files", 300, 900);
-    return new FileObjectStorageService(minioClient, props);
+        new MinioProperties(
+            "http://localhost:9000",
+            "http://localhost:9000",
+            "us-east-1",
+            "k",
+            "s",
+            "firehub-files",
+            300,
+            900);
+    return new FileObjectStorageService(minioClient, presignMinioClient, props);
   }
 
   @Test
-  void presignedGetUrl_delegatesToMinioClientAndReturnsUrl() throws Exception {
-    when(minioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
+  void presignedGetUrl_delegatesToPresignClientAndReturnsUrl() throws Exception {
+    when(presignMinioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
         .thenReturn("http://localhost:9000/firehub-files/a.jpg?sig=abc");
 
     PresignedUrlResponse resp = service().presignedGetUrl("firehub-files", "a.jpg", 300);
@@ -96,12 +106,12 @@ class FileObjectStorageServiceTest {
   void presignedPutUrl_usesPutMethodAndReturnsUrl() throws Exception {
     ArgumentCaptor<GetPresignedObjectUrlArgs> captor =
         ArgumentCaptor.forClass(GetPresignedObjectUrlArgs.class);
-    when(minioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
+    when(presignMinioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
         .thenReturn("http://localhost:9000/firehub-files/x/1.jpg?sig=put");
 
     PresignedUrlResponse resp = service().presignedPutUrl("firehub-files", "x/1.jpg", 900);
 
-    verify(minioClient).getPresignedObjectUrl(captor.capture());
+    verify(presignMinioClient).getPresignedObjectUrl(captor.capture());
     assertThat(captor.getValue().method()).isEqualTo(Method.PUT);
     assertThat(resp.url()).contains("1.jpg");
     assertThat(resp.expiresInSeconds()).isEqualTo(900);
@@ -111,6 +121,46 @@ class FileObjectStorageServiceTest {
   @Test
   void defaultUploadPresignExpiry_returnsConfigured() {
     assertThat(service().defaultUploadPresignExpiry()).isEqualTo(900);
+  }
+
+  /**
+   * Slice 3 핵심 회귀: presign은 내부 endpoint가 아니라 공개 endpoint(publicEndpoint)로 서명해야 한다.
+   * getPresignedObjectUrl은 네트워크 없이 host+path를 로컬 서명하므로, 서로 다른 endpoint로 빌드한 실제
+   * MinioClient 2개를 주입해 발급 URL의 host가 공개 호스트인지(내부 호스트가 새지 않는지) 검증한다.
+   */
+  @Test
+  void presign_signsAgainstPublicEndpointNotInternal() {
+    MinioClient internal =
+        MinioClient.builder()
+            .endpoint("http://minio:9000")
+            .region("us-east-1")
+            .credentials("k", "s")
+            .build();
+    MinioClient publicClient =
+        MinioClient.builder()
+            .endpoint("http://public.example:9000")
+            .region("us-east-1")
+            .credentials("k", "s")
+            .build();
+    MinioProperties props =
+        new MinioProperties(
+            "http://minio:9000",
+            "http://public.example:9000",
+            "us-east-1",
+            "k",
+            "s",
+            "firehub-files",
+            300,
+            900);
+    FileObjectStorageService svc = new FileObjectStorageService(internal, publicClient, props);
+
+    String getUrl = svc.presignedGetUrl("firehub-files", "a.jpg", 300).url();
+    String putUrl = svc.presignedPutUrl("firehub-files", "a.jpg", 900).url();
+
+    assertThat(getUrl).startsWith("http://public.example:9000/");
+    assertThat(putUrl).startsWith("http://public.example:9000/");
+    assertThat(getUrl).doesNotContain("minio:9000");
+    assertThat(putUrl).doesNotContain("minio:9000");
   }
 
   private Item mockItem(String key, long size) {

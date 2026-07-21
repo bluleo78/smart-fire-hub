@@ -48,6 +48,10 @@ firehub:
     expiry-hours: 24
   minio:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    # presign 서명 전용 공개 엔드포인트. 미지정 시 endpoint로 폴백 → dev/단일호스트 환경은 무변경.
+    public-endpoint: ${MINIO_PUBLIC_ENDPOINT:${MINIO_ENDPOINT:http://localhost:9000}}
+    # presign 서명 리전(MinIO 기본값 us-east-1). 명시해 리전 조회 네트워크 호출을 없앤다.
+    region: ${MINIO_REGION:us-east-1}
     access-key: ${MINIO_ACCESS_KEY:minioadmin}
     secret-key: ${MINIO_SECRET_KEY:minioadmin}
     bucket: ${MINIO_BUCKET:firehub-files}

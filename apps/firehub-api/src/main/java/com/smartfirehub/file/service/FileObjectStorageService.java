@@ -13,17 +13,23 @@ import io.minio.messages.Item;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /** MinIO(S3 호환) 오브젝트 스토리지 접근 서비스. 대량 파일 바이트는 앱을 통과하지 않으며, 목록 조회와 presigned GET URL 발급만 담당한다. */
 @Service
 public class FileObjectStorageService {
 
-  private final MinioClient minioClient;
+  private final MinioClient minioClient; // 내부 통신용(목록/조회)
+  private final MinioClient presignMinioClient; // presign 서명용(공개 엔드포인트로 서명)
   private final MinioProperties props;
 
-  public FileObjectStorageService(MinioClient minioClient, MinioProperties props) {
+  public FileObjectStorageService(
+      MinioClient minioClient,
+      @Qualifier("presignMinioClient") MinioClient presignMinioClient,
+      MinioProperties props) {
     this.minioClient = minioClient;
+    this.presignMinioClient = presignMinioClient;
     this.props = props;
   }
 
@@ -74,8 +80,9 @@ public class FileObjectStorageService {
   /** 오브젝트 단건에 대한 단기 presigned GET URL을 발급한다(브라우저가 MinIO에서 직접 GET). */
   public PresignedUrlResponse presignedGetUrl(String bucket, String objectKey, int expirySeconds) {
     try {
+      // presign은 공개 엔드포인트 클라이언트로 서명해야 브라우저가 직접 GET할 수 있다.
       String url =
-          minioClient.getPresignedObjectUrl(
+          presignMinioClient.getPresignedObjectUrl(
               GetPresignedObjectUrlArgs.builder()
                   .method(Method.GET)
                   .bucket(bucket)
@@ -96,8 +103,9 @@ public class FileObjectStorageService {
   /** 오브젝트 단건에 대한 단기 presigned PUT URL을 발급한다(클라이언트가 MinIO로 직접 업로드, 앱 미경유). */
   public PresignedUrlResponse presignedPutUrl(String bucket, String objectKey, int expirySeconds) {
     try {
+      // presign은 공개 엔드포인트 클라이언트로 서명해야 브라우저가 직접 PUT할 수 있다.
       String url =
-          minioClient.getPresignedObjectUrl(
+          presignMinioClient.getPresignedObjectUrl(
               GetPresignedObjectUrlArgs.builder()
                   .method(Method.PUT)
                   .bucket(bucket)
