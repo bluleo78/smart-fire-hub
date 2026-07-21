@@ -60,7 +60,7 @@ export function registerGraphragTools(
               q, ids, k, mode as 'SEMANTIC' | 'KEYWORD' | 'HYBRID' | undefined,
             ),
           },
-          args.query, args.topK,
+          args.query, { topK: args.topK },
         );
         // Neo4j 연결 불가 등은 retrieve에서 throw → safeTool이 isError로 감싸 폴백 메시지 제공.
         return jsonResult({

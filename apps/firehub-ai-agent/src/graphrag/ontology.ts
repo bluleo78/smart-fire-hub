@@ -16,8 +16,9 @@ export interface ExtractedEntity { type: EntityType; name: string; }
 export interface ExtractedRelation { subject: string; type: RelationType; object: string; }
 export interface ExtractionResult { entities: ExtractedEntity[]; relations: ExtractedRelation[]; }
 
-// 엔티티 타입 정의 — 설명 + 명명 규칙. 프롬프트가 이 메타데이터로 조립된다.
-export interface EntityTypeDef { type: EntityType; description: string; naming: string; }
+// 엔티티 타입 정의 — 설명 + 명명 규칙 + 해소(resolution) 정책. 프롬프트가 이 메타데이터로 조립된다.
+// resolution: 'embedding'(표기 변형을 임베딩 유사도로 병합) | 'exact'(정확 키 일치만 병합 — 수치·고유성 보존 목적).
+export interface EntityTypeDef { type: EntityType; description: string; naming: string; resolution: 'embedding' | 'exact'; }
 // 관계 정의 — 허용 (주어타입, 관계, 목적어타입) + 의미 설명.
 export interface RelationDef { subject: EntityType; relation: RelationType; object: EntityType; description: string; }
 // 온톨로지 = 도메인 설명 + 엔티티 정의 + 관계 정의. 추출 엔진은 이 구조만 알면 도메인 무관하게 동작한다.
@@ -34,12 +35,14 @@ const VERBATIM_NAMING = '본문에 등장한 표기를 그대로 사용한다.';
 export const CORE_ONTOLOGY: Ontology = {
   domain: '화재조사 보고서',
   entities: [
-    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: UNIQUE_NAMING },
-    { type: 'Building', description: '물리적 장소/건물', naming: VERBATIM_NAMING },
-    { type: 'Cause', description: '발화·발생 원인', naming: VERBATIM_NAMING },
-    { type: 'Damage', description: '피해 내역', naming: VERBATIM_NAMING },
-    { type: 'Equipment', description: '소방 설비/장비', naming: VERBATIM_NAMING },
-    { type: 'Regulation', description: '관련 법규/기준', naming: VERBATIM_NAMING },
+    // Incident/Damage는 사건별로 고유하거나 구체 수치를 담으므로 임베딩 유사도 병합 시 서로 다른
+    // 사건/피해가 뭉개질 수 있다 → 'exact'(정확 키 일치만 병합)로 고정.
+    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: UNIQUE_NAMING, resolution: 'exact' },
+    { type: 'Building', description: '물리적 장소/건물', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { type: 'Cause', description: '발화·발생 원인', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { type: 'Damage', description: '피해 내역', naming: VERBATIM_NAMING, resolution: 'exact' },
+    { type: 'Equipment', description: '소방 설비/장비', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { type: 'Regulation', description: '관련 법규/기준', naming: VERBATIM_NAMING, resolution: 'embedding' },
   ],
   relations: [
     { subject: 'Incident', relation: 'OCCURRED_AT', object: 'Building', description: '사건이 발생한 장소' },
@@ -60,6 +63,10 @@ export function isEntityType(x: string): x is EntityType {
 }
 export function isRelationType(x: string): x is RelationType {
   return (RELATION_TYPES as readonly string[]).includes(x);
+}
+// 엔티티 타입의 해소 정책 조회 — 온톨로지에 없는 타입은 안전하게 'embedding' 기본값 반환.
+export function entityResolutionPolicy(type: EntityType): 'embedding' | 'exact' {
+  return CORE_ONTOLOGY.entities.find((e) => e.type === type)?.resolution ?? 'embedding';
 }
 // 주어·관계·목적어 조합이 온톨로지 허용 트리플에 존재하는지 검사한다.
 export function isAllowedTriple(subjectType: EntityType, rel: RelationType, objectType: EntityType): boolean {
