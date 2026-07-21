@@ -63,9 +63,12 @@ public class FileObjectStorageService {
       while (it.hasNext() && items.size() < maxKeys) {
         Item item = it.next().get();
         if (item.isDir()) continue;
-        lastKey = item.objectName();
+        String key = item.objectName();
+        lastKey = key;
+        // 표시명 = prefix를 제외한 상대경로(폴더 구조 노출). 항상 prefix 하위를 조회하므로 startsWith가 참이다.
+        String name = key.startsWith(prefix) ? key.substring(prefix.length()) : key;
         String modified = item.lastModified() != null ? item.lastModified().toString() : null;
-        items.add(new ObjectItemResponse(item.objectName(), item.size(), modified));
+        items.add(new ObjectItemResponse(key, name, item.size(), modified));
       }
       // 현재 페이지를 채운 뒤에도 이터레이터에 원소가 남아 있으면 다음 페이지가 존재하는 것이다.
       hasMore = it.hasNext();

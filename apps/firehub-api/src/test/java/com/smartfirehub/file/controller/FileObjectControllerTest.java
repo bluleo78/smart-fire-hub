@@ -52,13 +52,15 @@ class FileObjectControllerTest {
     when(storage.listObjects(eq("firehub-files"), eq("equip/"), any(), anyInt()))
         .thenReturn(
             new ObjectListResponse(
-                List.of(new ObjectItemResponse("equip/a.jpg", 123L, "2026-07-20T00:00:00Z")),
+                List.of(new ObjectItemResponse("equip/a.jpg", "a.jpg", 123L, "2026-07-20T00:00:00Z")),
                 null,
                 false));
 
     mvc.perform(get("/api/v1/datasets/7/objects"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.objects[0].key").value("equip/a.jpg"));
+        .andExpect(jsonPath("$.objects[0].key").value("equip/a.jpg"))
+        // 표시명(name)은 prefix를 제외한 상대경로로 함께 내려간다.
+        .andExpect(jsonPath("$.objects[0].name").value("a.jpg"));
   }
 
   @Test
@@ -110,10 +112,41 @@ class FileObjectControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.expiresInSeconds").value(900))
         .andExpect(jsonPath("$.targets.length()").value(2))
-        // 원본 파일명이 그대로 prefix 하위 키가 된다(경로 주입은 basename만 남음).
+        // 원본 파일명이 그대로 prefix 하위 키가 된다.
         .andExpect(jsonPath("$.targets[0].key").value("equip/photo.jpg"))
         .andExpect(jsonPath("$.targets[1].key").value("equip/my report.png"))
         .andExpect(jsonPath("$.targets[0].uploadUrl").value(containsString("sig=put")));
+  }
+
+  /** upload-urls: 폴더 업로드 시 상대경로가 prefix 하위 키에 그대로 보존된다(구조 보존). */
+  @Test
+  void createUploadUrls_preservesFolderStructureInKey() throws Exception {
+    when(configRepo.findByDatasetId(7L))
+        .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
+    when(storage.defaultUploadPresignExpiry()).thenReturn(900);
+    when(storage.presignedPutUrl(eq("firehub-files"), any(), eq(900)))
+        .thenAnswer(
+            inv -> new PresignedUrlResponse("http://minio/" + inv.getArgument(1) + "?sig=put", 900));
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"files\":[{\"filename\":\"site-A/2026/cam1/img001.jpg\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets[0].key").value("equip/site-A/2026/cam1/img001.jpg"));
+  }
+
+  /** upload-urls: ".." 세그먼트가 섞인 경로는 traversal 방어로 거부된다(정제 후 빈 → 400). */
+  @Test
+  void createUploadUrls_rejectsTraversalPath() throws Exception {
+    when(configRepo.findByDatasetId(7L))
+        .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
+    when(storage.defaultUploadPresignExpiry()).thenReturn(900);
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"files\":[{\"filename\":\"sub/../../etc/passwd\"}]}"))
+        .andExpect(status().is4xxClientError());
   }
 
   /** 파일명이 정제 후 비면(공백/경로만/무의미) 키가 prefix와 같아지므로 400으로 거부한다. */

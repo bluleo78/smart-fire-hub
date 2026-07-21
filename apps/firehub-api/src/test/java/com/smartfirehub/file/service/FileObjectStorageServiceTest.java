@@ -101,6 +101,19 @@ class FileObjectStorageServiceTest {
     assertThat(resp.nextToken()).isNull();
   }
 
+  /** name은 prefix를 제외한 상대경로여야 한다(폴더 구조 노출 — ③). key는 전체 키를 유지한다. */
+  @Test
+  void listObjects_nameIsRelativePathUnderPrefix() throws Exception {
+    Item nested = mockItem("equip/site-A/2026/img.jpg", 10L);
+    when(minioClient.listObjects(any(ListObjectsArgs.class)))
+        .thenReturn(List.of(new Result<>(nested)));
+
+    ObjectListResponse resp = service().listObjects("firehub-files", "equip/", null, 10);
+
+    assertThat(resp.objects().get(0).key()).isEqualTo("equip/site-A/2026/img.jpg");
+    assertThat(resp.objects().get(0).name()).isEqualTo("site-A/2026/img.jpg");
+  }
+
   /** presignedPutUrl은 반드시 PUT 메서드로 서명하고, 발급된 URL을 그대로 반환해야 한다. */
   @Test
   void presignedPutUrl_usesPutMethodAndReturnsUrl() throws Exception {

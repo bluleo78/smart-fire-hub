@@ -2,9 +2,10 @@ import axios from 'axios';
 
 import { client } from './client';
 
-/** 오브젝트 스토리지(FILE 데이터셋) 1건 메타 — key/size/최종수정일 */
+/** 오브젝트 스토리지(FILE 데이터셋) 1건 메타 — key(전체 키)/name(prefix 제외 상대경로, 표시용)/size/최종수정일 */
 export interface ObjectItem {
   key: string;
+  name: string;
   size: number;
   lastModified: string | null;
 }

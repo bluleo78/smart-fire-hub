@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { createCategories, createDatasetDetail } from '../factories/dataset.factory';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
@@ -24,8 +28,8 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
     // 오브젝트 목록 mock — 키는 "<prefix>...<파일명>". 표시명은 마지막 경로 세그먼트(S3 방식).
     await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/objects`, {
       objects: [
-        { key: 'equip/보고서.md', size: 2048, lastModified: '2026-07-20T00:00:00Z' },
-        { key: 'equip/2026/photo.jpg', size: 1048576, lastModified: null },
+        { key: 'equip/보고서.md', name: '보고서.md', size: 2048, lastModified: '2026-07-20T00:00:00Z' },
+        { key: 'equip/2026/photo.jpg', name: '2026/photo.jpg', size: 1048576, lastModified: null },
       ],
       nextToken: null,
       hasMore: false,
@@ -34,9 +38,9 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
     await page.goto(`/data/datasets/${DATASET_ID}`);
     await page.getByRole('tab', { name: '오브젝트' }).click();
 
-    // 키 전체가 아니라 마지막 세그먼트만 이름으로 노출된다.
+    // 표시명 = prefix를 제외한 상대경로. 폴더 구조(2026/)는 보이되 데이터셋 prefix(equip/)는 숨긴다.
     await expect(page.getByText('보고서.md', { exact: true })).toBeVisible();
-    await expect(page.getByText('photo.jpg', { exact: true })).toBeVisible();
+    await expect(page.getByText('2026/photo.jpg', { exact: true })).toBeVisible();
     await expect(page.getByText('equip/2026/photo.jpg')).toHaveCount(0);
     // 크기가 사람이 읽는 단위로 표기된다.
     await expect(page.getByText('2.0 KB')).toBeVisible();
@@ -57,7 +61,7 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
     await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
     await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/objects`, {
-      objects: [{ key: 'equip/report.md', size: 2048, lastModified: null }],
+      objects: [{ key: 'equip/report.md', name: 'report.md', size: 2048, lastModified: null }],
       nextToken: null,
       hasMore: false,
     });
@@ -142,7 +146,7 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
       if (route.request().method() !== 'GET') return route.fallback();
       const body = uploaded
         ? {
-            objects: [{ key: 'equip/photo.jpg', size: 1024, lastModified: null }],
+            objects: [{ key: 'equip/photo.jpg', name: 'photo.jpg', size: 1024, lastModified: null }],
             nextToken: null,
             hasMore: false,
           }
@@ -186,7 +190,7 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
     // 숨겨진 파일 입력에 파일 주입 → 업로드 트리거
     // 다른 탭(문서)의 업로드 인풋도 DOM에 함께 마운트되어 있으므로 드롭존 버튼으로 범위를 좁힌다.
     await page
-      .getByRole('button', { name: '파일을 드래그하거나 클릭하여 업로드' })
+      .getByRole('button', { name: '파일·폴더를 드래그하거나 클릭하여 업로드' })
       .locator('input[type="file"]')
       .setInputFiles({
         name: 'photo.jpg',
@@ -270,7 +274,7 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
 
     // 파일 2개 주입 → 배치 업로드(하나는 실패하도록 설계됨)
     await page
-      .getByRole('button', { name: '파일을 드래그하거나 클릭하여 업로드' })
+      .getByRole('button', { name: '파일·폴더를 드래그하거나 클릭하여 업로드' })
       .locator('input[type="file"]')
       .setInputFiles([
         { name: 'a.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('a') },
@@ -292,5 +296,69 @@ test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
     await expect.poll(() => uploadUrlsCalls.length).toBe(2);
     expect(uploadUrlsCalls[1].files).toHaveLength(1);
     await expect(page.getByText('2개 중 1개 업로드 실패')).toHaveCount(0);
+  });
+
+  test('폴더를 선택하면 하위 상대경로를 filename으로 전송해 구조를 보존한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      storageType: 'FILE',
+      originType: 'SOURCE',
+      columns: [],
+      rowCount: null,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/objects`, {
+      objects: [],
+      nextToken: null,
+      hasMore: false,
+    });
+
+    // upload-urls 발급 mock — 폴더 업로드가 하위 파일의 "상대경로"를 filename으로 싣는지 검증하려 페이로드를 캡처한다.
+    let payload: { files: { filename: string }[] } | null = null;
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/objects/upload-urls`,
+      (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        payload = route.request().postDataJSON() as { files: { filename: string }[] };
+        const targets = payload.files.map((f, i) => ({
+          key: `equip/${f.filename}`,
+          uploadUrl: `https://minio.example.com/put/${i}`,
+        }));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ targets, expiresInSeconds: 900 }),
+        });
+      },
+    );
+    await page.route('https://minio.example.com/**', (route) => route.fulfill({ status: 200, body: '' }));
+
+    // 실제 중첩 디렉터리를 만들어 webkitdirectory 인풋에 넘긴다 → 브라우저가 webkitRelativePath를 채운다.
+    const root = mkdtempSync(join(tmpdir(), 'fh-folder-'));
+    mkdirSync(join(root, 'site-A', '2026'), { recursive: true });
+    writeFileSync(join(root, 'site-A', '2026', 'img.jpg'), 'a');
+    writeFileSync(join(root, 'root.txt'), 'b');
+
+    try {
+      await page.goto(`/data/datasets/${DATASET_ID}`);
+      await page.getByRole('tab', { name: '오브젝트' }).click();
+
+      // webkitdirectory 인풋(폴더 선택)에 디렉터리 자체를 주입.
+      await page.locator('input[webkitdirectory]').setInputFiles(root);
+
+      // 전송된 filename들이 하위 상대경로를 보존하는지 확인(선택 폴더명이 최상위 세그먼트가 되므로 접미사로 검증).
+      await expect.poll(() => payload).not.toBeNull();
+      const names = payload!.files.map((f) => f.filename);
+      expect(names.some((n) => n.endsWith('site-A/2026/img.jpg'))).toBe(true);
+      expect(names.some((n) => n.endsWith('root.txt'))).toBe(true);
+      // 평면화되지 않았는지(구조 보존) — 하위 경로가 실제로 들어있다.
+      expect(names.some((n) => n.includes('site-A/2026/'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

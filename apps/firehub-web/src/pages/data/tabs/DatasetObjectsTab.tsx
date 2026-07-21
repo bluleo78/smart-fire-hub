@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { objectName, objectsApi } from '../../../api/objects';
+import { objectsApi } from '../../../api/objects';
 import { useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
+import { collectEntries, filesToItems } from '../../../lib/uploadTree';
 
 /** 바이트를 사람이 읽기 쉬운 단위로 표기(B/KB/MB). */
 function formatSize(bytes: number): string {
@@ -27,15 +28,38 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
     useObjectList(datasetId);
   const upload = useUploadObjects(datasetId);
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  // 파일 선택/드롭 공통 처리 — 1개 이상일 때만 업로드 시작.
+  // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 → 마운트 시 ref로 부여(폴더 선택 인풋).
+  useEffect(() => {
+    folderInputRef.current?.setAttribute('webkitdirectory', '');
+  }, []);
+
+  // 파일/폴더 선택 공통 처리 — webkitRelativePath가 있으면 상대경로로, 없으면 파일명으로 업로드한다.
   const handleFiles = (files: FileList | null) => {
-    if (files && files.length > 0) upload.mutate(Array.from(files));
+    if (!files || files.length === 0) return;
+    upload.mutate(filesToItems(Array.from(files)));
   };
 
-  // 부분 실패한 파일 목록 — 있으면 배너 + 재시도(실패건만 재업로드)를 노출한다.
-  const failedFiles = upload.data?.failedFiles ?? [];
+  // 드롭 처리 — 폴더가 섞이면 FileSystemEntry로 재귀 순회해 하위 파일까지 상대경로로 수집한다.
+  // 엔트리는 드롭 이벤트 동안에만 유효하므로 동기적으로 먼저 확보한 뒤 비동기로 순회한다.
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const dt = e.dataTransfer;
+    const entries = Array.from(dt.items)
+      .map((it) => it.webkitGetAsEntry?.() ?? null)
+      .filter((en): en is FileSystemEntry => en !== null);
+    const flatFiles = Array.from(dt.files); // 엔트리 API 미지원 브라우저 폴백용
+    void (async () => {
+      const items = entries.length > 0 ? await collectEntries(entries) : filesToItems(flatFiles);
+      if (items.length > 0) upload.mutate(items);
+    })();
+  };
+
+  // 부분 실패한 항목 목록 — 있으면 배너 + 재시도(실패건만 재업로드)를 노출한다.
+  const failedItems = upload.data?.failedItems ?? [];
 
   const items = data?.pages.flatMap((p) => p.objects) ?? [];
 
@@ -72,11 +96,7 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          handleFiles(e.dataTransfer.files);
-        }}
+        onDrop={handleDrop}
         className={`cursor-pointer rounded-md border border-dashed p-6 text-center text-sm ${
           dragOver ? 'border-primary bg-accent' : 'text-muted-foreground'
         }`}
@@ -85,7 +105,7 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
           ? '업로드 중…'
           : upload.isError
             ? '업로드 실패 — 다시 시도하세요'
-            : '파일을 드래그하거나 클릭하여 업로드'}
+            : '파일·폴더를 드래그하거나 클릭하여 업로드'}
         <input
           ref={inputRef}
           type="file"
@@ -95,15 +115,33 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
         />
       </div>
 
-      {/* 부분 실패 배너: 일부 파일 업로드 실패 시 실패 건수 표시 + 실패건만 재시도. 재시도 중엔 숨김. */}
-      {!upload.isPending && failedFiles.length > 0 && (
+      {/* 폴더 선택: webkitdirectory 인풋으로 디렉터리 전체(하위 구조 포함)를 선택해 업로드한다. */}
+      <div className="text-center text-sm">
+        <button
+          type="button"
+          onClick={() => folderInputRef.current?.click()}
+          className="rounded-md border px-3 py-1 text-muted-foreground hover:bg-accent"
+        >
+          또는 폴더 선택
+        </button>
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => handleFiles(e.target.files)}
+        />
+      </div>
+
+      {/* 부분 실패 배너: 일부 업로드 실패 시 실패 건수 표시 + 실패건만 재시도. 재시도 중엔 숨김. */}
+      {!upload.isPending && failedItems.length > 0 && (
         <div className="flex items-center justify-between rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <span>
-            {upload.data!.total}개 중 {failedFiles.length}개 업로드 실패
+            {upload.data!.total}개 중 {failedItems.length}개 업로드 실패
           </span>
           <button
             type="button"
-            onClick={() => upload.mutate(failedFiles)}
+            onClick={() => upload.mutate(failedItems)}
             className="rounded-md border border-destructive/50 px-3 py-1 hover:bg-destructive/20"
           >
             실패건 재시도
@@ -132,7 +170,7 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
                 title={o.key}
                 className="grid w-full grid-cols-[1fr_6rem_12rem] items-center gap-4 border-b px-4 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
               >
-                <span className="truncate">{objectName(o.key)}</span>
+                <span className="truncate">{o.name}</span>
                 <span className="text-right text-muted-foreground">{formatSize(o.size)}</span>
                 <span className="text-right text-muted-foreground">{formatDate(o.lastModified)}</span>
               </button>
