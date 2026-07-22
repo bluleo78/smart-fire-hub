@@ -535,6 +535,14 @@ export class FireHubApiClient {
     return data;
   }
 
+  // GraphRAG 적재 이력을 api에 기록한다(best-effort — 호출부에서 실패를 삼킨다).
+  async recordGraphIngest(datasetId: number, body: {
+    schemaVersionAtIngest: number; chunkCount: number; nodeCount: number;
+    edgeCount: number; extractionFailures: number; status: string;
+  }): Promise<void> {
+    await this.client.post(`/datasets/${datasetId}/graph-ingests`, body);
+  }
+
   async getFileInfo(fileId: number): Promise<{
     id: number;
     originalName: string;

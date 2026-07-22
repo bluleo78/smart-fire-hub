@@ -45,6 +45,17 @@ export function registerGraphragTools(
           args.datasetId,
           ontology,
         );
+        // 적재 이력을 best-effort 로 기록한다(실패해도 적재 결과 반환에는 영향 없음).
+        const failures = summary.extractionFailures ?? 0;
+        try {
+          await apiClient.recordGraphIngest(args.datasetId, {
+            schemaVersionAtIngest: ontology.schemaVersion,
+            chunkCount: summary.chunks, nodeCount: summary.entities, edgeCount: summary.relations,
+            extractionFailures: failures, status: failures > 0 ? 'PARTIAL' : 'SUCCESS',
+          });
+        } catch (err) {
+          console.warn('[graphrag] 적재 이력 기록 실패(무시하고 계속):', err);
+        }
         return jsonResult(summary);
       },
     ),

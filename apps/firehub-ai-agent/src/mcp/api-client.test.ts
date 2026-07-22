@@ -41,6 +41,13 @@ describe('FireHubApiClient', () => {
     expect(result.domain).toBe('화재조사 보고서');
   });
 
+  it('recordGraphIngest 는 이력 POST 를 보낸다', async () => {
+    const scope = nock(BASE_URL).post('/datasets/42/graph-ingests', (body) =>
+      body.schemaVersionAtIngest === 1 && body.status === 'SUCCESS' && body.nodeCount === 20).reply(201, { id: 7 });
+    await client.recordGraphIngest(42, { schemaVersionAtIngest: 1, chunkCount: 10, nodeCount: 20, edgeCount: 15, extractionFailures: 0, status: 'SUCCESS' });
+    expect(scope.isDone()).toBe(true);
+  });
+
   // --- Categories ---
   it('should list categories via GET /dataset-categories', async () => {
     const mockData = [{ id: 1, name: 'Cat1' }];

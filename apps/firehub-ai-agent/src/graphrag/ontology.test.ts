@@ -89,6 +89,7 @@ describe('온톨로지 속성', () => {
   it('deserializeOntology 는 wire properties 를 매핑한다', () => {
     const wire: SerializedOntology = {
       domain: 'd',
+      schemaVersion: 2,
       entities: [{ type: 'Incident', description: 'x', naming: 'y', resolution: 'exact',
         properties: [{ name: '피해액', description: 'z', dataType: 'number', unit: '원' }] }],
       relations: [],
@@ -104,5 +105,11 @@ describe('온톨로지 속성', () => {
     expect(prompt).toContain('피해액');       // Incident 속성 렌더
     // Building 은 속성 없음 → 속성 헤더가 Building 블록에 붙지 않음(느슨한 회귀 확인)
     expect(prompt).toMatch(/Building:[^\n]*\n\s+· 명명:/);
+  });
+
+  it('deserializeOntology 는 schemaVersion 을 매핑하고, CORE_ONTOLOGY 는 1', () => {
+    expect(CORE_ONTOLOGY.schemaVersion).toBe(1);
+    const ont = deserializeOntology({ domain: 'd', schemaVersion: 5, entities: [], relations: [] } as SerializedOntology);
+    expect(ont.schemaVersion).toBe(5);
   });
 });

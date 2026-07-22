@@ -36,7 +36,8 @@ export interface EntityTypeDef {
 // 관계 정의 — 허용 (주어타입, 관계, 목적어타입) + 의미 설명.
 export interface RelationDef { subject: EntityType; relation: RelationType; object: EntityType; description: string; }
 // 온톨로지 = 도메인 설명 + 엔티티 정의 + 관계 정의. 추출 엔진은 이 구조만 알면 도메인 무관하게 동작한다.
-export interface Ontology { domain: string; entities: readonly EntityTypeDef[]; relations: readonly RelationDef[]; }
+// schemaVersion: api(DB) 소유 온톨로지 스키마 버전 — 적재 이력에 "당시 스키마"로 기록해 추후 스키마 변경 추적에 쓴다.
+export interface Ontology { domain: string; schemaVersion: number; entities: readonly EntityTypeDef[]; relations: readonly RelationDef[]; }
 
 // identity/event 성격의 엔티티에 공통으로 적용되는 고유 명명 규칙(도메인 무관 원칙).
 const UNIQUE_NAMING =
@@ -48,6 +49,7 @@ const VERBATIM_NAMING = '본문에 등장한 표기를 그대로 사용한다.';
 // 코어 온톨로지 인스턴스 — 화재조사 도메인. 도메인 특화는 이 객체에만 존재한다.
 export const CORE_ONTOLOGY: Ontology = {
   domain: '화재조사 보고서',
+  schemaVersion: 1,
   entities: [
     // Incident/Damage는 사건별로 고유하거나 구체 수치를 담으므로 임베딩 유사도 병합 시 서로 다른
     // 사건/피해가 뭉개질 수 있다 → 'exact'(정확 키 일치만 병합)로 고정.
@@ -92,11 +94,12 @@ export function isAllowedTriple(
 // CORE_ONTOLOGY를 프론트 계약 형태로 평문 직렬화한다. 도메인 로직/추출에는 영향 없음.
 export interface SerializedEntityType { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; properties?: PropertyDef[]; }
 export interface SerializedTriple { subject: string; relation: string; object: string; description: string; }
-export interface SerializedOntology { domain: string; entities: SerializedEntityType[]; relations: SerializedTriple[]; }
+export interface SerializedOntology { domain: string; schemaVersion: number; entities: SerializedEntityType[]; relations: SerializedTriple[]; }
 
 export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): SerializedOntology {
   return {
     domain: ontology.domain,
+    schemaVersion: ontology.schemaVersion,
     entities: ontology.entities.map((e) => ({
       type: e.type, description: e.description, naming: e.naming, resolution: e.resolution,
       properties: e.properties ? [...e.properties] : undefined,
@@ -109,6 +112,8 @@ export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): Serialize
 export function deserializeOntology(s: SerializedOntology): Ontology {
   return {
     domain: s.domain,
+    // 방어 기본값: 구버전 api/캐시된 wire 응답 등 schemaVersion 이 없을 수 있으므로 1로 폴백.
+    schemaVersion: s.schemaVersion ?? 1,
     entities: s.entities
       .filter((e) => isEntityType(e.type))
       .map((e) => ({
