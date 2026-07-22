@@ -1,9 +1,14 @@
 package com.smartfirehub.graphingest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.graphingest.repository.GraphIngestRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import org.jooq.DSLContext;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -11,6 +16,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 class GraphIngestRepositoryTest extends IntegrationTestBase {
 
   @Autowired private GraphIngestRepository repo;
+  @Autowired private DSLContext dsl;
+
+  // IntegrationTestBase 는 롤백하지 않고 커밋하므로, 테스트 네임스페이스(dataset_id >= 9000)를
+  // 매 테스트 전 정리해 재실행 시 누적 행으로 인한 실패(hasSize 등)를 방지한다.
+  @BeforeEach
+  void cleanupTestNamespace() {
+    dsl.deleteFrom(table(name("dataset_graph_ingest")))
+        .where(field(name("dataset_id"), Long.class).ge(9000L))
+        .execute();
+  }
 
   @Test
   void save_and_findByDataset_returnsNewestFirst() {
