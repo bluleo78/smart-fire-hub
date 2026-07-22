@@ -31,10 +31,9 @@ test.describe('온톨로지 시각화 페이지', () => {
       await setupOntologyMocks(page);
       await page.goto('/admin/ontology');
 
-      // 범례: 6타입 버튼 표시
-      const legend = page.getByTestId('type-legend');
-      await expect(legend).toBeVisible();
-      await expect(legend.getByRole('button')).toHaveCount(6);
+      // 타입 필터 패널: 6타입 토글 버튼 표시(리스트 영역 기준 — 검색/전체 버튼 제외)
+      await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+      await expect(page.getByTestId('type-filter-list').getByRole('button')).toHaveCount(6);
 
       // 스키마 탭(기본 탭)도 Cytoscape 렌더 — 엔티티 타입 노드 6개(data-node-count로 검증)
       await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', '6');
@@ -73,6 +72,9 @@ test.describe('온톨로지 시각화 페이지', () => {
     await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
+    // 드로어 도킹 검증용: 선택 전 그래프 캔버스 폭을 기록한다.
+    const graphBefore = await page.getByTestId('instance-graph').boundingBox();
+
     // Building 노드(강남타워)를 tap — canvas라 좌표 클릭 대신 cy에서 프로그래매틱 tap을 발생시킨다.
     // outgoing(HAS_EQUIPMENT)·incoming(OCCURRED_AT x2) 관계를 모두 가진다.
     await page.evaluate((key) => {
@@ -83,6 +85,15 @@ test.describe('온톨로지 시각화 페이지', () => {
 
     const drawer = page.getByTestId('node-detail-drawer');
     await expect(drawer).toBeVisible();
+
+    // 도킹 회귀 방지(입력→처리→출력): 노드 선택 시 그래프가 드로어 폭만큼 줄고(min-w-0),
+    // 드로어가 패널(overflow-hidden) 밖으로 잘리지 않아야 한다. toBeVisible만으로는 클리핑을 못 잡는다.
+    const graphAfter = await page.getByTestId('instance-graph').boundingBox();
+    const drawerBox = await drawer.boundingBox();
+    const panelBox = await page.getByTestId('instance-graph-panel').boundingBox();
+    expect(graphAfter!.width).toBeLessThan(graphBefore!.width);
+    // 드로어 우측 끝이 패널 우측 경계 안에 있어야 한다(잘리지 않음).
+    expect(drawerBox!.x + drawerBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1);
     // 클릭한 노드의 이름이 드로어에 표시된다
     await expect(drawer).toContainText(building.name);
     // 나가는 관계: HAS_EQUIPMENT → 스프링클러설비
@@ -90,6 +101,165 @@ test.describe('온톨로지 시각화 페이지', () => {
     await expect(drawer).toContainText('스프링클러설비');
     // 들어오는 관계: OCCURRED_AT ← 강남구 오피스텔 화재
     await expect(drawer).toContainText('OCCURRED_AT');
+  });
+
+  test('인스펙터 관계 클릭 시 인접 노드로 이동한다(내비게이션)', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    const equipment = graph.nodes.find((n) => n.name === '스프링클러설비')!;
+    await setupOntologyMocks(page);
+    await page.goto('/admin/ontology');
+    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    // 강남타워(Building) tap → 인스펙터 오픈(HAS_EQUIPMENT → 스프링클러설비 보유).
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(sel: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('tap');
+    }, building.key);
+    const drawer = page.getByTestId('node-detail-drawer');
+    await expect(drawer).toContainText(building.name);
+
+    // 관계 대상(스프링클러설비) 버튼 클릭 → 인스펙터가 대상 노드로 갱신(타입 헤더 Equipment).
+    await drawer.getByRole('button', { name: '스프링클러설비' }).click();
+    await expect(drawer.getByRole('heading')).toContainText('Equipment');
+    await expect(drawer).toContainText('스프링클러설비');
+
+    // 캔버스 선택도 대상 노드로 이동한다(입력→처리→출력).
+    const selectedId = await page.evaluate(() => {
+      const cy = (window as unknown as { __ontologyCy: { $(s: string): { length: number; map(f: (e: { id(): string }) => string): string[] } } })
+        .__ontologyCy;
+      const sel = cy.$('node:selected');
+      return sel.length ? sel.map((e) => e.id())[0] : null;
+    });
+    expect(selectedId).toBe(equipment.key);
+  });
+
+  test('인스펙터 좌측 핸들 드래그로 폭을 조절한다', async ({ authenticatedPage: page }) => {
+    const graph = createOntologyGraph();
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    await setupOntologyMocks(page);
+    await page.goto('/admin/ontology');
+    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(sel: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('tap');
+    }, building.key);
+    const drawer = page.getByTestId('node-detail-drawer');
+    await expect(drawer).toBeVisible();
+
+    // 좌측 리사이즈 핸들을 왼쪽으로 끌면 폭이 늘어난다(오른쪽 도킹 패널).
+    const before = (await drawer.boundingBox())!.width;
+    const handle = drawer.getByRole('separator', { name: '인스펙터 폭 조절' });
+    const hb = (await handle.boundingBox())!;
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hb.x - 120, hb.y + hb.height / 2, { steps: 8 });
+    await page.mouse.up();
+    const after = (await drawer.boundingBox())!.width;
+    expect(after).toBeGreaterThan(before + 50);
+  });
+
+  test('노드 hover 시 이웃 아닌 요소가 흐려진다(스포트라이트)', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    await setupOntologyMocks(page);
+    await page.goto('/admin/ontology');
+    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    // canvas라 좌표 hover 대신 cy에서 mouseover를 프로그래매틱 발생.
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(s: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('mouseover');
+    }, building.key);
+
+    // 호버 노드의 닫힌 이웃은 안 흐려지고, 그 외 노드는 모두 .faded.
+    const state = await page.evaluate((key) => {
+      type Ele = { hasClass(c: string): boolean };
+      type Coll = { length: number; every(f: (e: Ele) => boolean): boolean; some(f: (e: Ele) => boolean): boolean };
+      const cy = (window as unknown as {
+        __ontologyCy: {
+          getElementById(id: string): { hasClass(c: string): boolean; closedNeighborhood(): unknown };
+          nodes(): Coll & { difference(o: unknown): Coll };
+        };
+      }).__ontologyCy;
+      const hovered = cy.getElementById(key);
+      const others = cy.nodes().difference(hovered.closedNeighborhood());
+      return {
+        anyOthers: others.length > 0,
+        allOthersFaded: others.length > 0 && others.every((n) => n.hasClass('faded')),
+        hoveredFaded: hovered.hasClass('faded'),
+        hoveredSpotlight: hovered.hasClass('spotlight'),
+      };
+    }, building.key);
+    expect(state.anyOthers).toBe(true);
+    expect(state.allOthersFaded).toBe(true);
+    expect(state.hoveredFaded).toBe(false);
+    expect(state.hoveredSpotlight).toBe(true);
+
+    // mouseout → 모든 fade 해제.
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(s: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('mouseout');
+    }, building.key);
+    const anyFaded = await page.evaluate(() => {
+      const cy = (window as unknown as { __ontologyCy: { elements(): { some(f: (e: { hasClass(c: string): boolean }) => boolean): boolean } } })
+        .__ontologyCy;
+      return cy.elements().some((e) => e.hasClass('faded') || e.hasClass('spotlight'));
+    });
+    expect(anyFaded).toBe(false);
+  });
+
+  test('타입 묶기 토글 시 타입별 compound 번들로 접힌다', async ({ authenticatedPage: page }) => {
+    const graph = createOntologyGraph();
+    const typeCount = new Set(graph.nodes.map((n) => n.type)).size;
+    await setupOntologyMocks(page);
+    await page.goto('/admin/ontology');
+    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    type IsGroupCy = { nodes(sel?: string): { length: number } };
+    const groupCount = () =>
+      page.evaluate(() => (window as unknown as { __ontologyCy: IsGroupCy }).__ontologyCy.nodes('[?isGroup]').length);
+
+    // 묶기 전: 평면(부모 없음).
+    expect(await groupCount()).toBe(0);
+
+    // 타입 묶기 ON → layoutstop 후 collapseAll. 접힘 완료(부모 수=타입 수)까지 폴링.
+    await page.getByRole('button', { name: '타입 묶기' }).click();
+    await expect.poll(groupCount).toBe(typeCount);
+
+    // 각 타입이 번들(collapsed 메타노드)로 축약되어, 보이는 노드 수가 타입 수로 줄어든다(실노드 숨김 = 밀집 감소).
+    const after = await page.evaluate(() => {
+      const cy = (window as unknown as { __ontologyCy: IsGroupCy }).__ontologyCy;
+      return {
+        groups: cy.nodes('[?isGroup]').length,
+        collapsed: cy.nodes('.cy-expand-collapse-collapsed-node').length,
+        total: cy.nodes().length,
+      };
+    });
+    expect(after.groups).toBe(typeCount);
+    expect(after.collapsed).toBe(typeCount);
+    expect(after.total).toBe(typeCount);
+
+    // 타입 묶기 OFF → 다시 평면(부모 0, 실노드 전량 복원).
+    await page.getByRole('button', { name: '타입 묶기' }).click();
+    await expect.poll(groupCount).toBe(0);
+    const flatTotal = await page.evaluate(
+      () => (window as unknown as { __ontologyCy: IsGroupCy }).__ontologyCy.nodes().length,
+    );
+    expect(flatTotal).toBe(graph.nodes.length);
   });
 
   test('스키마 탭에서 Incident 타입 클릭 시 인스턴스 탭으로 드릴다운되어 Incident 노드만 표시된다', async ({
@@ -127,12 +297,37 @@ test.describe('온톨로지 시각화 페이지', () => {
     // 초기: 전체 노드(7개) 표시
     await expectNodeCount(page, graph.nodes.length);
 
-    // 범례에서 'Building' 타입 버튼 클릭 → 필터 토글(Building만 활성)
-    const legend = page.getByTestId('type-legend');
-    await legend.getByRole('button', { name: /Building/ }).click();
+    // 타입 필터 패널에서 'Building' 타입 버튼 클릭 → 필터 토글(Building만 활성)
+    const panel = page.getByTestId('type-filter-panel');
+    await panel.getByRole('button', { name: /Building/ }).click();
 
     // Building 타입 노드만 남아야 한다 (모킹 그래프 기준 1개)
     await expectNodeCount(page, buildingCount);
+  });
+
+  test('타입 필터 패널 — resolution 그룹 헤더 표시 + "전체" 리셋 복원', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    const buildingCount = graph.nodes.filter((n) => n.type === 'Building').length;
+    await setupOntologyMocks(page);
+    await page.goto('/admin/ontology');
+    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    // resolution별 그룹 헤더가 노출된다(정확 매칭 / 임베딩 해소).
+    const panel = page.getByTestId('type-filter-panel');
+    await expect(panel.getByText('정확 매칭')).toBeVisible();
+    await expect(panel.getByText('임베딩 해소')).toBeVisible();
+
+    // 타입 토글 시 '전체' 리셋 버튼이 등장하고, 클릭하면 전체 필터로 복원된다(입력→처리→출력).
+    await expect(panel.getByRole('button', { name: '전체' })).toHaveCount(0);
+    await panel.getByRole('button', { name: /Building/ }).click();
+    await expectNodeCount(page, buildingCount);
+    const reset = panel.getByRole('button', { name: '전체' });
+    await expect(reset).toBeVisible();
+    await reset.click();
+    await expectNodeCount(page, graph.nodes.length);
   });
 
   test('인스턴스 그래프 조회 실패 시 에러 문구가 표시되고 페이지가 크래시하지 않는다', async ({
@@ -141,8 +336,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     await setupOntologyGraphErrorMock(page);
     await page.goto('/admin/ontology');
 
-    // 스키마는 정상 로드되어 범례/스키마 탭은 그대로 동작한다
-    await expect(page.getByTestId('type-legend')).toBeVisible();
+    // 스키마는 정상 로드되어 타입 필터/스키마 탭은 그대로 동작한다
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
 
     await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
 

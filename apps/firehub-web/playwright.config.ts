@@ -5,6 +5,11 @@ import { defineConfig, devices } from '@playwright/test';
  * - Vite dev 서버를 자동 기동하고 Chromium에서 테스트 실행
  * - API는 page.route()로 모킹하므로 백엔드 서버 불필요
  */
+// 포트 파라미터화 — 기본 5173(하위호환). 멀티 워크트리에서 stale :5173(타 코드) 오염을 피해
+// 격리 포트로 검증할 수 있도록 PW_PORT로 baseURL·webServer(dev 서버 포트)를 함께 바꾼다.
+const PW_PORT = process.env.PW_PORT ?? '5173';
+const BASE_URL = `http://localhost:${PW_PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   outputDir: '../../test-results/e2e',
@@ -21,7 +26,7 @@ export default defineConfig({
   reporter: 'html',
 
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: BASE_URL,
     /* 실패 시 트레이스 수집 — 디버깅용 */
     trace: 'on-first-retry',
   },
@@ -33,10 +38,10 @@ export default defineConfig({
     },
   ],
 
-  /* Vite dev 서버 자동 기동 — 없으면 기동, 있으면 재사용 */
+  /* Vite dev 서버 자동 기동 — 없으면 기동(PW_PORT), 있으면 재사용 */
   webServer: {
-    command: 'pnpm dev',
-    url: 'http://localhost:5173',
+    command: `pnpm exec vite --port ${PW_PORT} --strictPort`,
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000, // Vite 기동 대기 최대 2분
   },

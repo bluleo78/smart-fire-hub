@@ -66,9 +66,12 @@ const BREADTHFIRST_LAYOUT = {
   name: 'breadthfirst',
   directed: true,
   spacingFactor: 1.3,
-  padding: 24,
+  padding: 40,
   fit: true,
 } as unknown as cytoscape.LayoutOptions;
+
+// 리사이즈 후 재맞춤 시 노드가 경계에 붙지 않도록 주는 여백(px).
+const FIT_PADDING = 40;
 
 // 온톨로지 스키마 다이어그램 — 타입 노드 + 허용 트리플 엣지를 Cytoscape(계층형)로 배치한다.
 // 읽기 전용 — 노드 tap 시 onTypeClick으로 드릴다운을 위임한다.
@@ -98,9 +101,10 @@ export default function SchemaGraph({ schema, onTypeClick }: Props) {
 
   // cy 인스턴스 생성(mount 시 1회) — tap 핸들러 바인딩 + dev용 window 노출. unmount 시 파기.
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
     const cy = cytoscape({
-      container: containerRef.current,
+      container,
       style: buildStylesheet(isDark),
       minZoom: 0.2,
       maxZoom: 2.5,
@@ -113,7 +117,23 @@ export default function SchemaGraph({ schema, onTypeClick }: Props) {
     if (import.meta.env.DEV) {
       (window as unknown as { __ontologySchemaCy?: cytoscape.Core }).__ontologySchemaCy = cy;
     }
+
+    // 컨테이너 크기 변화(창 리사이즈·사이드바 토글) 대응 — 최초 fit 이후 재측정·재맞춤이 없으면 잘린다.
+    let fitTimer: ReturnType<typeof setTimeout> | undefined;
+    const ro = new ResizeObserver(() => {
+      const c = cyRef.current;
+      if (!c) return;
+      c.resize(); // 캔버스 픽셀 크기를 컨테이너에 즉시 재동기화
+      clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => {
+        if (c.elements().length > 0) c.fit(undefined, FIT_PADDING); // 디바운스 후 여백 포함 재맞춤
+      }, 150);
+    });
+    ro.observe(container);
+
     return () => {
+      ro.disconnect();
+      clearTimeout(fitTimer);
       if (import.meta.env.DEV) delete (window as unknown as { __ontologySchemaCy?: cytoscape.Core }).__ontologySchemaCy;
       cy.destroy();
       cyRef.current = null;
