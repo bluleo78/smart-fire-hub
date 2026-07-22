@@ -19,4 +19,5 @@ SELECT et.id, '피해액',
        'number', '원', 0
 FROM ontology_entity_type et
 JOIN ontology o ON o.id = et.ontology_id
-WHERE o.id = 1 AND et.type = 'Incident';
+WHERE o.id = 1 AND et.type = 'Incident'
+ON CONFLICT (entity_type_id, name) DO NOTHING;
