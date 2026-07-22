@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt, CORE_ONTOLOGY,
-  entityResolutionPolicy, serializeOntology, deserializeOntology,
+  entityResolutionPolicy, serializeOntology, deserializeOntology, SerializedOntology,
 } from './ontology.js';
 
 describe('ontology', () => {
@@ -51,7 +51,10 @@ describe('serializeOntology', () => {
     const s = serializeOntology(CORE_ONTOLOGY);
     expect(s.domain).toBe('화재조사 보고서');
     expect(s.entities).toHaveLength(6);
-    expect(s.entities[0]).toEqual({ type: 'Incident', description: expect.any(String), naming: expect.any(String), resolution: 'exact' });
+    expect(s.entities[0]).toEqual({
+      type: 'Incident', description: expect.any(String), naming: expect.any(String), resolution: 'exact',
+      properties: [expect.objectContaining({ name: '피해액', dataType: 'number', unit: '원' })],
+    });
     expect(s.relations).toHaveLength(6);
     expect(s.relations[0]).toEqual({ subject: 'Incident', relation: 'OCCURRED_AT', object: 'Building', description: expect.any(String) });
   });
@@ -72,5 +75,34 @@ describe('ontology 파라미터화 + 직렬화 왕복', () => {
   it('isAllowedTriple 이 ontology 인자 기준으로 허용/차단한다', () => {
     expect(isAllowedTriple(CORE_ONTOLOGY, 'Incident', 'OCCURRED_AT', 'Building')).toBe(true);
     expect(isAllowedTriple(CORE_ONTOLOGY, 'Building', 'OCCURRED_AT', 'Incident')).toBe(false);
+  });
+});
+
+describe('온톨로지 속성', () => {
+  it('CORE_ONTOLOGY 의 Incident 는 피해액(number,원) 속성을 가진다', () => {
+    const inc = CORE_ONTOLOGY.entities.find((e) => e.type === 'Incident')!;
+    expect(inc.properties).toEqual([
+      expect.objectContaining({ name: '피해액', dataType: 'number', unit: '원' }),
+    ]);
+  });
+
+  it('deserializeOntology 는 wire properties 를 매핑한다', () => {
+    const wire: SerializedOntology = {
+      domain: 'd',
+      entities: [{ type: 'Incident', description: 'x', naming: 'y', resolution: 'exact',
+        properties: [{ name: '피해액', description: 'z', dataType: 'number', unit: '원' }] }],
+      relations: [],
+    };
+    const ont = deserializeOntology(wire);
+    expect(ont.entities[0].properties).toEqual([
+      { name: '피해액', description: 'z', dataType: 'number', unit: '원' },
+    ]);
+  });
+
+  it('buildExtractionPrompt 는 속성 있는 타입엔 속성 줄을, 없는 타입엔 없음(회귀)', () => {
+    const prompt = buildExtractionPrompt(CORE_ONTOLOGY);
+    expect(prompt).toContain('피해액');       // Incident 속성 렌더
+    // Building 은 속성 없음 → 속성 헤더가 Building 블록에 붙지 않음(느슨한 회귀 확인)
+    expect(prompt).toMatch(/Building:[^\n]*\n\s+· 명명:/);
   });
 });

@@ -12,13 +12,27 @@ export const RELATION_TYPES = [
 ] as const;
 export type RelationType = (typeof RELATION_TYPES)[number];
 
-export interface ExtractedEntity { type: EntityType; name: string; }
+// 엔티티 데이터 프로퍼티 정의 — 속성명·설명·데이터타입·단위. 추출/정규화/질의가 이 메타로 동작한다.
+export interface PropertyDef { name: string; description: string; dataType: 'text' | 'number' | 'date'; unit?: string; }
+
+export interface ExtractedEntity {
+  type: EntityType;
+  name: string;
+  // 정규화된 속성값 맵(예: {"피해액": 120000000}) — Task 4(추출/정규화)가 채운다. 이 태스크는 타입만 추가.
+  properties?: Record<string, number | string>;
+}
 export interface ExtractedRelation { subject: string; type: RelationType; object: string; }
 export interface ExtractionResult { entities: ExtractedEntity[]; relations: ExtractedRelation[]; }
 
-// 엔티티 타입 정의 — 설명 + 명명 규칙 + 해소(resolution) 정책. 프롬프트가 이 메타데이터로 조립된다.
+// 엔티티 타입 정의 — 설명 + 명명 규칙 + 해소(resolution) 정책 + (선택) 데이터 속성 정의.
 // resolution: 'embedding'(표기 변형을 임베딩 유사도로 병합) | 'exact'(정확 키 일치만 병합 — 수치·고유성 보존 목적).
-export interface EntityTypeDef { type: EntityType; description: string; naming: string; resolution: 'embedding' | 'exact'; }
+export interface EntityTypeDef {
+  type: EntityType;
+  description: string;
+  naming: string;
+  resolution: 'embedding' | 'exact';
+  properties?: readonly PropertyDef[];
+}
 // 관계 정의 — 허용 (주어타입, 관계, 목적어타입) + 의미 설명.
 export interface RelationDef { subject: EntityType; relation: RelationType; object: EntityType; description: string; }
 // 온톨로지 = 도메인 설명 + 엔티티 정의 + 관계 정의. 추출 엔진은 이 구조만 알면 도메인 무관하게 동작한다.
@@ -37,7 +51,10 @@ export const CORE_ONTOLOGY: Ontology = {
   entities: [
     // Incident/Damage는 사건별로 고유하거나 구체 수치를 담으므로 임베딩 유사도 병합 시 서로 다른
     // 사건/피해가 뭉개질 수 있다 → 'exact'(정확 키 일치만 병합)로 고정.
-    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: UNIQUE_NAMING, resolution: 'exact' },
+    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: UNIQUE_NAMING, resolution: 'exact',
+      properties: [{ name: '피해액',
+        description: '화재로 인한 재산 피해 총액을 원 단위 정수로 추출. \'억\'=1e8, \'만\'=1e4 로 환산하고 콤마·통화기호 제거. 범위·근사값은 대표값 1개만.',
+        dataType: 'number', unit: '원' }] },
     { type: 'Building', description: '물리적 장소/건물', naming: VERBATIM_NAMING, resolution: 'embedding' },
     { type: 'Cause', description: '발화·발생 원인', naming: VERBATIM_NAMING, resolution: 'embedding' },
     { type: 'Damage', description: '피해 내역', naming: VERBATIM_NAMING, resolution: 'exact' },
@@ -73,14 +90,17 @@ export function isAllowedTriple(
 
 // ── 시각화용 직렬화 (읽기 전용) ──
 // CORE_ONTOLOGY를 프론트 계약 형태로 평문 직렬화한다. 도메인 로직/추출에는 영향 없음.
-export interface SerializedEntityType { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; }
+export interface SerializedEntityType { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; properties?: PropertyDef[]; }
 export interface SerializedTriple { subject: string; relation: string; object: string; description: string; }
 export interface SerializedOntology { domain: string; entities: SerializedEntityType[]; relations: SerializedTriple[]; }
 
 export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): SerializedOntology {
   return {
     domain: ontology.domain,
-    entities: ontology.entities.map((e) => ({ type: e.type, description: e.description, naming: e.naming, resolution: e.resolution })),
+    entities: ontology.entities.map((e) => ({
+      type: e.type, description: e.description, naming: e.naming, resolution: e.resolution,
+      properties: e.properties ? [...e.properties] : undefined,
+    })),
     relations: ontology.relations.map((r) => ({ subject: r.subject, relation: r.relation, object: r.object, description: r.description })),
   };
 }
@@ -91,7 +111,13 @@ export function deserializeOntology(s: SerializedOntology): Ontology {
     domain: s.domain,
     entities: s.entities
       .filter((e) => isEntityType(e.type))
-      .map((e) => ({ type: e.type as EntityType, description: e.description, naming: e.naming, resolution: e.resolution })),
+      .map((e) => ({
+        type: e.type as EntityType, description: e.description, naming: e.naming, resolution: e.resolution,
+        // 허용된 dataType(text|number|date)만 통과시킨다 — 엔티티/관계 타입 필터링과 동일한 방어적 원칙.
+        properties: (e.properties ?? [])
+          .filter((p) => ['text', 'number', 'date'].includes(p.dataType))
+          .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit })),
+      })),
     relations: s.relations
       .filter((r) => isEntityType(r.subject) && isRelationType(r.relation) && isEntityType(r.object))
       .map((r) => ({ subject: r.subject as EntityType, relation: r.relation as RelationType, object: r.object as EntityType, description: r.description })),
@@ -101,7 +127,17 @@ export function deserializeOntology(s: SerializedOntology): Ontology {
 // 온톨로지 정의로부터 추출용 시스템 프롬프트를 생성한다(도메인 무관 — 도메인 특화는 ontology 인자에만 존재).
 export function buildExtractionPrompt(ontology: Ontology = CORE_ONTOLOGY): string {
   const entityLines = ontology.entities
-    .map((e) => `- ${e.type}: ${e.description}\n  · 명명: ${e.naming}`)
+    .map((e) => {
+      let line = `- ${e.type}: ${e.description}\n  · 명명: ${e.naming}`;
+      // 속성 정의가 있는 타입만 속성 렌더 — 없는 타입은 기존 줄과 바이트 동일(회귀 보존).
+      if (e.properties && e.properties.length > 0) {
+        const props = e.properties
+          .map((p) => `    - ${p.name}(${p.dataType}${p.unit ? `, ${p.unit}` : ''}): ${p.description}`)
+          .join('\n');
+        line += `\n  · 속성(있으면 추출):\n${props}`;
+      }
+      return line;
+    })
     .join('\n');
   const relationLines = ontology.relations
     .map((r) => `- ${r.subject} -${r.relation}-> ${r.object}: ${r.description}`)
@@ -117,6 +153,6 @@ ${relationLines}
 
 반드시 다음 형식의 JSON 코드블록만 출력한다(설명 금지):
 \`\`\`json
-{"entities":[{"type":"Incident","name":"..."}],"relations":[{"subject":"엔티티명","type":"CAUSED_BY","object":"엔티티명"}]}
+{"entities":[{"type":"Incident","name":"...","properties":{"피해액":"약 1억 2천만원"}}],"relations":[{"subject":"엔티티명","type":"CAUSED_BY","object":"엔티티명"}]}
 \`\`\``;
 }
