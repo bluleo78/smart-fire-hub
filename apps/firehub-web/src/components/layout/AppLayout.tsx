@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   BarChart3,
+  Boxes,
   ChevronDown,
   ChevronRight,
   ChevronsLeft,
@@ -88,11 +89,17 @@ const aiInsightsNavItems: NavItem[] = [
   { label: '리포트 양식', href: '/ai-insights/templates', icon: FileText },
 ];
 
+// 지식그래프 — 관리(admin) 하위에서 최상위 그룹으로 승격. 인증 사용자면 접근 가능(읽기 전용).
+// 그래프 탐색=인스턴스 그래프 뷰, 지식 모델=스키마(엔티티 타입·관계) 뷰.
+const knowledgeGraphNavItems: NavItem[] = [
+  { label: '그래프 탐색', href: '/knowledge-graph/explore', icon: Network },
+  { label: '지식 모델', href: '/knowledge-graph/model', icon: Boxes },
+];
+
 const adminNavItems: NavItem[] = [
   { label: '사용자 관리', href: '/admin/users', icon: Users },
   { label: '역할 관리', href: '/admin/roles', icon: Shield },
   { label: '감사 로그', href: '/admin/audit-logs', icon: FileText },
-  { label: '온톨로지', href: '/admin/ontology', icon: Network },
   { label: '설정', href: '/admin/settings', icon: Settings },
 ];
 
@@ -223,6 +230,7 @@ function AppLayoutInner() {
   const [analyticsOpen, setAnalyticsOpen] = useState(true);
   const [automationOpen, setAutomationOpen] = useState(true);
   const [aiInsightsOpen, setAiInsightsOpen] = useState(true);
+  const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(true);
   const [adminOpen, setAdminOpen] = useState(true);
 
   const toggleCollapsed = () => {
@@ -366,6 +374,17 @@ function AppLayoutInner() {
                 onClick={handleNavClick}
                 open={aiInsightsOpen}
                 onOpenChange={setAiInsightsOpen}
+              />
+
+              {/* 지식그래프 — admin 게이팅 없이 모든 인증 사용자에게 노출(백엔드도 dataset:read로 접근 허용). */}
+              <NavSection
+                label="지식그래프"
+                items={knowledgeGraphNavItems}
+                isActive={isActive}
+                collapsed={collapsed}
+                onClick={handleNavClick}
+                open={knowledgeGraphOpen}
+                onOpenChange={setKnowledgeGraphOpen}
               />
 
               {isAdmin && (

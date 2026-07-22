@@ -1,5 +1,6 @@
 import { AlertCircle, Boxes, PanelLeft, PanelLeftClose } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { SearchInput } from '@/components/ui/search-input';
@@ -35,7 +36,14 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
 export default function OntologyPage() {
   const { data: schema, isLoading: isSchemaLoading, isError: isSchemaError, refetch: refetchSchema } = useOntologySchema();
   const { data: graph, isLoading: isGraphLoading, isError, refetch: refetchGraph } = useOntologyGraph();
-  const [tab, setTab] = useState('schema');
+
+  // 탭 상태는 URL(:view)에서 파생 — 사이드바 '그래프 탐색'(explore)/'지식 모델'(model) 항목과 하이라이트를 동기화한다.
+  // explore↔instance, model↔schema. view가 없거나 알 수 없으면 그래프 탐색(instance)으로 폴백.
+  const { view } = useParams<{ view?: string }>();
+  const navigate = useNavigate();
+  const tab = view === 'model' ? 'schema' : 'instance';
+  // 탭 클릭 → 해당 뷰 URL로 이동. 동일 라우트(:view 파라미터만 변경)이므로 리마운트 없이 필터/선택 state가 보존된다.
+  const setTab = (next: string) => navigate(`/knowledge-graph/${next === 'schema' ? 'model' : 'explore'}`);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set()); // 빈 Set = 전체
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<GraphNode | null>(null);
@@ -84,10 +92,10 @@ export default function OntologyPage() {
         >
           {filterCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
-        <h1 className="text-sm font-semibold">온톨로지</h1>
+        <h1 className="text-sm font-semibold">지식그래프</h1>
         <TabsList>
-          <TabsTrigger value="schema">스키마</TabsTrigger>
-          <TabsTrigger value="instance">인스턴스 그래프</TabsTrigger>
+          <TabsTrigger value="instance">그래프 탐색</TabsTrigger>
+          <TabsTrigger value="schema">지식 모델</TabsTrigger>
         </TabsList>
         <div className="ml-auto flex items-center gap-2">
           {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음). */}

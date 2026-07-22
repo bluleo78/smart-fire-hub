@@ -8,14 +8,15 @@ import {
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
- * 온톨로지 시각화 페이지 E2E 테스트
- * - 스키마/인스턴스 그래프 렌더, 탭 전환, 노드 클릭 드로어, 드릴다운 브리지, 범례 필터, 에러 상태를 검증한다.
- * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
+ * 지식그래프(구 온톨로지) 시각화 페이지 E2E 테스트
+ * - 지식 모델(스키마)/그래프 탐색(인스턴스) 렌더, 탭 전환, 노드 클릭 드로어, 드릴다운 브리지, 범례 필터, 에러 상태를 검증한다.
+ * - URL: /knowledge-graph/model(스키마=지식 모델) · /knowledge-graph/explore(인스턴스=그래프 탐색). 탭은 URL(:view)에서 파생.
+ * - 페이지는 더 이상 AdminRoute로 게이팅되지 않지만(비관리자 접근은 별도 describe에서 검증), 이 블록은 ADMIN 픽스처로 유지한다.
  * - 백엔드 없이 page.route()로 /api/v1/ontology(/graph)를 모킹한다.
  * - 인스턴스 그래프는 Cytoscape.js(Canvas) 렌더 — DOM 노드가 없으므로 컨테이너의 data-node-count(필터 후 노드 수)와
  *   dev에서 노출되는 window.__ontologyCy로 검증한다. fcose 레이아웃은 비결정적이라 캔버스 좌표 클릭은 쓰지 않는다.
  */
-test.describe('온톨로지 시각화 페이지', () => {
+test.describe('지식그래프 시각화 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
   });
@@ -29,7 +30,7 @@ test.describe('온톨로지 시각화 페이지', () => {
     { tag: '@smoke' },
     async ({ authenticatedPage: page }) => {
       await setupOntologyMocks(page);
-      await page.goto('/admin/ontology');
+      await page.goto('/knowledge-graph/model');
 
       // 타입 필터 패널: 6타입 토글 버튼 표시(리스트 영역 기준 — 검색/전체 버튼 제외)
       await expect(page.getByTestId('type-filter-panel')).toBeVisible();
@@ -46,9 +47,9 @@ test.describe('온톨로지 시각화 페이지', () => {
     async ({ authenticatedPage: page }) => {
       const graph = createOntologyGraph();
       await setupOntologyMocks(page);
-      await page.goto('/admin/ontology');
+      await page.goto('/knowledge-graph/model');
 
-      await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+      await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
       // 모킹 그래프의 노드 수(7개)만큼 Cytoscape 노드가 렌더된다(data-node-count로 검증)
       await expectNodeCount(page, graph.nodes.length);
@@ -68,8 +69,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
     // 드로어 도킹 검증용: 선택 전 그래프 캔버스 폭을 기록한다.
@@ -110,8 +111,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     const equipment = graph.nodes.find((n) => n.name === '스프링클러설비')!;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
     // 강남타워(Building) tap → 인스펙터 오픈(HAS_EQUIPMENT → 스프링클러설비 보유).
@@ -142,8 +143,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
     await page.evaluate((key) => {
@@ -172,8 +173,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
     // canvas라 좌표 hover 대신 cy에서 mouseover를 프로그래매틱 발생.
@@ -225,8 +226,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const typeCount = new Set(graph.nodes.map((n) => n.type)).size;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
     type IsGroupCy = { nodes(sel?: string): { length: number } };
@@ -268,7 +269,7 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const incidentCount = graph.nodes.filter((n) => n.type === 'Incident').length;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
+    await page.goto('/knowledge-graph/model');
 
     // 스키마 탭의 'Incident' 타입 노드 tap → 드릴다운 브리지.
     // 스키마도 Cytoscape(canvas)라 좌표 클릭 대신 cy에서 프로그래매틱 tap을 발생시킨다(노드 id = 타입명).
@@ -280,7 +281,7 @@ test.describe('온톨로지 시각화 페이지', () => {
     });
 
     // 인스턴스 탭이 활성화되어야 한다
-    await expect(page.getByRole('tab', { name: '인스턴스 그래프' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: '그래프 탐색' })).toHaveAttribute('aria-selected', 'true');
     // Incident 타입 노드만 필터되어 표시되어야 한다 (모킹 그래프 기준 2개)
     await expectNodeCount(page, incidentCount);
   });
@@ -291,8 +292,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const buildingCount = graph.nodes.filter((n) => n.type === 'Building').length;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
     // 초기: 전체 노드(7개) 표시
     await expectNodeCount(page, graph.nodes.length);
@@ -311,8 +312,8 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const buildingCount = graph.nodes.filter((n) => n.type === 'Building').length;
     await setupOntologyMocks(page);
-    await page.goto('/admin/ontology');
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
     // resolution별 그룹 헤더가 노출된다(정확 매칭 / 임베딩 해소).
@@ -334,12 +335,12 @@ test.describe('온톨로지 시각화 페이지', () => {
     authenticatedPage: page,
   }) => {
     await setupOntologyGraphErrorMock(page);
-    await page.goto('/admin/ontology');
+    await page.goto('/knowledge-graph/model');
 
     // 스키마는 정상 로드되어 타입 필터/스키마 탭은 그대로 동작한다
     await expect(page.getByTestId('type-filter-panel')).toBeVisible();
 
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
     // 인스턴스 그래프 API 500 응답 시 에러 문구가 표시된다
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
@@ -353,9 +354,9 @@ test.describe('온톨로지 시각화 페이지', () => {
     const graph = createOntologyGraph();
     // 초기 로드는 실패시키고 이후 refetch부터 성공하는 모킹 — 재요청 횟수를 카운터로 추적.
     const counter = await setupOntologyGraphRetryMock(page);
-    await page.goto('/admin/ontology');
+    await page.goto('/knowledge-graph/model');
 
-    await page.getByRole('tab', { name: '인스턴스 그래프' }).click();
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
     // 초기 로드 실패 → 에러 문구 + 재시도 버튼 노출
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
@@ -374,5 +375,37 @@ test.describe('온톨로지 시각화 페이지', () => {
     await expectNodeCount(page, graph.nodes.length);
     // 실제 재요청이 발생했음을 검증(입력→처리→출력: 클릭 → API 재호출 → UI 반영)
     expect(counter.calls).toBeGreaterThan(callsBeforeRetry);
+  });
+});
+
+/**
+ * 지식그래프 IA — 접근 제어 완화 검증 (증분 4)
+ * - 페이지가 관리(admin) 하위 → 최상위 '지식그래프' 그룹으로 이동하며 AdminRoute 밖으로 나왔다.
+ * - 여기서는 setupAdminAuth를 호출하지 않는다 → 기본 authenticatedPage는 USER 역할(비관리자)이다.
+ *   따라서 이 블록은 "비관리자도 접근 가능"이라는 완화 자체를 검증한다.
+ *   (백엔드도 V2에서 USER 역할에 dataset:read를 부여하므로 실제 프로덕션에서도 접근 가능 — 무변경.)
+ */
+test.describe('지식그래프 IA — 비관리자 접근/리다이렉트', () => {
+  test('비관리자(USER)도 /knowledge-graph/explore에 접근해 그래프 탐색이 렌더된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+
+    // AdminRoute였다면 '/'로 튕겼겠지만, 이제 인증만으로 렌더된다.
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+    // explore = 그래프 탐색(인스턴스) 탭이 기본 활성.
+    await expect(page.getByRole('tab', { name: '그래프 탐색' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('구 URL /admin/ontology는 비관리자도 /knowledge-graph/explore로 리다이렉트된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/admin/ontology');
+
+    // 리다이렉트가 AdminRoute 밖에 있으므로 비관리자도 '/'로 튕기지 않고 지식그래프로 이동한다.
+    await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
   });
 });

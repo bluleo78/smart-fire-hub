@@ -95,6 +95,11 @@ function App() {
               <Route path="/ai-insights/templates/:id" element={<ReportTemplateDetailPage />} />
               <Route path="/ai-insights/jobs/:jobId/executions/:executionId" element={<ExecutionDetailPage />} />
               <Route path="/ai-insights/jobs/:jobId/executions/:executionId/report" element={<ReportViewerPage />} />
+              {/* 지식그래프 — admin 게이팅 밖(인증만 필요). view 파라미터로 그래프 탐색(explore)/지식 모델(model) 뷰를 전환. */}
+              <Route path="/knowledge-graph" element={<Navigate to="/knowledge-graph/explore" replace />} />
+              <Route path="/knowledge-graph/:view" element={<OntologyPage />} />
+              {/* 구 URL 하위호환 — AdminRoute 밖에 둬야 비관리자 북마크도 리다이렉트된다(안 그러면 /로 튕김). */}
+              <Route path="/admin/ontology" element={<Navigate to="/knowledge-graph/explore" replace />} />
               <Route element={<AdminRoute />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />
@@ -102,7 +107,6 @@ function App() {
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
                 <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
                 <Route path="/admin/settings" element={<SettingsPage />} />
-                <Route path="/admin/ontology" element={<OntologyPage />} />
                 <Route path="/admin/ai-settings" element={<Navigate to="/admin/settings" replace />} />
                 <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
                 <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />
