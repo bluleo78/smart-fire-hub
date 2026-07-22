@@ -116,7 +116,8 @@ export function deserializeOntology(s: SerializedOntology): Ontology {
         // 허용된 dataType(text|number|date)만 통과시킨다 — 엔티티/관계 타입 필터링과 동일한 방어적 원칙.
         properties: (e.properties ?? [])
           .filter((p) => ['text', 'number', 'date'].includes(p.dataType))
-          .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit })),
+          // api wire 의 unit 은 nullable → JSON null 이 올 수 있으므로 undefined 로 정규화(타입 string|undefined 보존).
+          .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit ?? undefined })),
       })),
     relations: s.relations
       .filter((r) => isEntityType(r.subject) && isRelationType(r.relation) && isEntityType(r.object))
