@@ -23,11 +23,20 @@ public class OntologyRepository {
   private static final Field<Long> O_ID = field(name("ontology", "id"), Long.class);
 
   private static final Table<?> ENTITY_TYPE = table(name("ontology_entity_type"));
+  private static final Field<Long> ET_ID = field(name("ontology_entity_type", "id"), Long.class);
   private static final Field<String> ET_TYPE = field(name("ontology_entity_type", "type"), String.class);
   private static final Field<String> ET_DESC = field(name("ontology_entity_type", "description"), String.class);
   private static final Field<String> ET_NAMING = field(name("ontology_entity_type", "naming"), String.class);
   private static final Field<String> ET_RES = field(name("ontology_entity_type", "resolution"), String.class);
   private static final Field<Integer> ET_ORDER = field(name("ontology_entity_type", "sort_order"), Integer.class);
+
+  private static final Table<?> ENTITY_PROP = table(name("ontology_entity_property"));
+  private static final Field<Long> EP_TYPE_ID = field(name("ontology_entity_property", "entity_type_id"), Long.class);
+  private static final Field<String> EP_NAME = field(name("ontology_entity_property", "name"), String.class);
+  private static final Field<String> EP_DESC = field(name("ontology_entity_property", "description"), String.class);
+  private static final Field<String> EP_DTYPE = field(name("ontology_entity_property", "data_type"), String.class);
+  private static final Field<String> EP_UNIT = field(name("ontology_entity_property", "unit"), String.class);
+  private static final Field<Integer> EP_ORDER = field(name("ontology_entity_property", "sort_order"), Integer.class);
 
   private static final Table<?> RELATION = table(name("ontology_relation"));
   private static final Field<String> R_SUBJECT = field(name("ontology_relation", "subject"), String.class);
@@ -41,11 +50,21 @@ public class OntologyRepository {
     String domain = dsl.select(O_DOMAIN).from(ONTOLOGY).where(O_ID.eq(1L)).fetchOne(r -> r.get(O_DOMAIN));
 
     List<OntologyResponse.EntityType> entities =
-        dsl.select(ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
+        dsl.select(ET_ID, ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
             .from(ENTITY_TYPE)
             .orderBy(ET_ORDER)
-            .fetch(r -> new OntologyResponse.EntityType(
-                r.get(ET_TYPE), r.get(ET_DESC), r.get(ET_NAMING), r.get(ET_RES)));
+            .fetch(r -> {
+              // 각 엔티티 타입의 데이터 프로퍼티를 sort_order 순으로 조회한다.
+              List<OntologyResponse.Property> props =
+                  dsl.select(EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT)
+                      .from(ENTITY_PROP)
+                      .where(EP_TYPE_ID.eq(r.get(ET_ID)))
+                      .orderBy(EP_ORDER)
+                      .fetch(p -> new OntologyResponse.Property(
+                          p.get(EP_NAME), p.get(EP_DESC), p.get(EP_DTYPE), p.get(EP_UNIT)));
+              return new OntologyResponse.EntityType(
+                  r.get(ET_TYPE), r.get(ET_DESC), r.get(ET_NAMING), r.get(ET_RES), props);
+            });
 
     List<OntologyResponse.Triple> relations =
         dsl.select(R_SUBJECT, R_RELATION, R_OBJECT, R_DESC)

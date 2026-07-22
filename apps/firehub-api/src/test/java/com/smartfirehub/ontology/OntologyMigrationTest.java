@@ -3,6 +3,8 @@ package com.smartfirehub.ontology;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -12,9 +14,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 // V71 시드 검증 — CORE_ONTOLOGY 원본이 순서·문자열 그대로 적재됐는지 확인한다(바이트 동일성 보증의 DB 측 근거).
+// V72 시드(엔티티 데이터 프로퍼티) 검증도 함께 포함한다.
 class OntologyMigrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+  @Autowired private OntologyRepository ontologyRepository;
 
   private static final Table<?> ET = table(name("ontology_entity_type"));
   private static final Field<String> ET_TYPE = field(name("ontology_entity_type", "type"), String.class);
@@ -40,5 +44,22 @@ class OntologyMigrationTest extends IntegrationTestBase {
     List<String> rels = dsl.select(REL_RELATION).from(REL).orderBy(REL_ORDER).fetch(r -> r.get(REL_RELATION));
     assertThat(rels).containsExactly(
         "OCCURRED_AT", "CAUSED_BY", "RESULTED_IN", "HAS_EQUIPMENT", "VIOLATED", "GOVERNED_BY");
+  }
+
+  // V72 시드: Incident 는 '피해액'(number, 원) 속성 1개를 가져야 한다. 다른 타입은 속성 없음.
+  @Test
+  void incident_hasDamageAmountProperty() {
+    OntologyResponse res = ontologyRepository.findOntology();
+    OntologyResponse.EntityType incident = res.entities().stream()
+        .filter(e -> e.type().equals("Incident")).findFirst().orElseThrow();
+    assertThat(incident.properties()).hasSize(1);
+    OntologyResponse.Property p = incident.properties().get(0);
+    assertThat(p.name()).isEqualTo("피해액");
+    assertThat(p.dataType()).isEqualTo("number");
+    assertThat(p.unit()).isEqualTo("원");
+    // 속성 미정의 타입은 빈 목록.
+    OntologyResponse.EntityType building = res.entities().stream()
+        .filter(e -> e.type().equals("Building")).findFirst().orElseThrow();
+    assertThat(building.properties()).isEmpty();
   }
 }
