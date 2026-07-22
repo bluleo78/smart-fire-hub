@@ -20,7 +20,9 @@ export function buildStructuredCypher(
   const def = ontology.entities.find((e) => e.type === (entityType as EntityType));
   const allowed = new Map((def?.properties ?? []).map((p) => [p.name, p.dataType]));
 
-  const params: Record<string, unknown> = { entityType, cap: MAX_RESULTS };
+  // cap 은 Cypher LIMIT 에 쓰이므로 반드시 Neo4j INTEGER 로 바인딩한다.
+  // (JS number 를 그대로 넘기면 드라이버가 Float 로 패킹 → LIMIT 이 INTEGER 를 요구해 런타임 에러.)
+  const params: Record<string, unknown> = { entityType, cap: neo4j.int(MAX_RESULTS) };
   const preds: string[] = [];
   for (let i = 0; i < filters.length; i++) {
     const f = filters[i];
