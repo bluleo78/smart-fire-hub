@@ -21,6 +21,7 @@ public class OntologyRepository {
   private static final Table<?> ONTOLOGY = table(name("ontology"));
   private static final Field<String> O_DOMAIN = field(name("ontology", "domain"), String.class);
   private static final Field<Long> O_ID = field(name("ontology", "id"), Long.class);
+  private static final Field<Integer> O_SCHEMA_VERSION = field(name("ontology", "schema_version"), Integer.class);
 
   private static final Table<?> ENTITY_TYPE = table(name("ontology_entity_type"));
   private static final Field<Long> ET_ID = field(name("ontology_entity_type", "id"), Long.class);
@@ -47,7 +48,10 @@ public class OntologyRepository {
 
   // 단일 온톨로지(id=1) 를 조회해 OntologyResponse 로 조립한다.
   public OntologyResponse findOntology() {
-    String domain = dsl.select(O_DOMAIN).from(ONTOLOGY).where(O_ID.eq(1L)).fetchOne(r -> r.get(O_DOMAIN));
+    // domain, schema_version 을 한 번에 조회한다.
+    var head = dsl.select(O_DOMAIN, O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(1L)).fetchOne();
+    String domain = head.get(O_DOMAIN);
+    int schemaVersion = head.get(O_SCHEMA_VERSION);
 
     List<OntologyResponse.EntityType> entities =
         dsl.select(ET_ID, ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
@@ -73,6 +77,11 @@ public class OntologyRepository {
             .fetch(r -> new OntologyResponse.Triple(
                 r.get(R_SUBJECT), r.get(R_RELATION), r.get(R_OBJECT), r.get(R_DESC)));
 
-    return new OntologyResponse(domain, entities, relations);
+    return new OntologyResponse(domain, schemaVersion, entities, relations);
+  }
+
+  // stale 질의용 경량 조회 — 온톨로지 본문 없이 schema_version 만 확인한다(Task 3: dataset_graph_ingest 재사용 여부 판단).
+  public int currentSchemaVersion() {
+    return dsl.select(O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(1L)).fetchOne(r -> r.get(O_SCHEMA_VERSION));
   }
 }

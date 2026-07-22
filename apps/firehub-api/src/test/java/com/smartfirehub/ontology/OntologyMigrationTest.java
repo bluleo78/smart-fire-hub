@@ -62,4 +62,12 @@ class OntologyMigrationTest extends IntegrationTestBase {
         .filter(e -> e.type().equals("Building")).findFirst().orElseThrow();
     assertThat(building.properties()).isEmpty();
   }
+
+  // V71 시드의 schema_version(=1)이 응답/조회로 노출되어야 한다.
+  @Test
+  void ontology_exposesSchemaVersion() {
+    OntologyResponse res = ontologyRepository.findOntology();
+    assertThat(res.schemaVersion()).isEqualTo(1);
+    assertThat(ontologyRepository.currentSchemaVersion()).isEqualTo(1);
+  }
 }
