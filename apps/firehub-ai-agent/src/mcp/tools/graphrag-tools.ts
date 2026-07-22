@@ -11,6 +11,7 @@ import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
 import { loadOntology } from '../../graphrag/ontology-source.js';
+import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
 
 /**
  * GraphRAG 관련 MCP 도구를 등록한다.
@@ -71,6 +72,26 @@ export function registerGraphragTools(
           subgraph: { nodes: result.nodes, relations: result.relations },
           sourceChunks: result.sourceChunks,
         });
+      },
+    ),
+    safeTool(
+      'graphrag_structured_query',
+      '엔티티를 속성값 술어로 필터·열거한다(예: "피해액 1억 넘는 사건 전부", "~이상/이하"). '
+        + '반환된 entities(이름+속성값)를 인용해 답하라. 관계·경로 질문은 graphrag_query 를 쓸 것. '
+        + '필터 가능 속성: Incident.피해액(number, 원). (온톨로지에 정의된 속성만 필터 가능)',
+      {
+        entityType: z.string().describe('필터할 엔티티 타입(예: Incident)'),
+        filters: z.array(z.object({
+          property: z.string().describe('온톨로지에 정의된 속성명(예: 피해액)'),
+          operator: z.enum(['gt', 'gte', 'lt', 'lte', 'eq', 'neq', 'contains']).describe('비교 연산자'),
+          value: z.union([z.number(), z.string()]).describe('비교값(number 속성은 원 단위 정수)'),
+        })).describe('AND 로 결합되는 술어 목록'),
+      },
+      async (args: { entityType: string; filters: Array<{ property: string; operator: Operator; value: number | string }> }) => {
+        // 질의 시점 온톨로지를 fetch(실패 시 폴백)해 화이트리스트로 사용한다.
+        const ontology = await loadOntology(apiClient);
+        const result = await structuredQuery(ontology, args.entityType, args.filters as Filter[]);
+        return jsonResult(result);
       },
     ),
   ];

@@ -74,6 +74,8 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 ## 지식 그래프(GraphRAG) 도구 선택 규칙
 - 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정")
   → \`graphrag_query\` 사용. 반환된 노드/관계와 sourceChunks의 fileName을 인용해 답한다.
+- 속성값 기준 필터·열거 질문(예: "피해액 1억 넘는 사건 전부", "~이상/이하 건") → graphrag_structured_query.
+  관계·연결·경로 질문 → graphrag_query.
 - 단일 데이터셋 조회·단순 문서검색은 기존 \`find_datasets\`/\`search_documents\`를 사용한다.
 - 그래프가 비어있거나 연결 실패로 graphrag_query가 근거를 못 주면, 기존 문서검색으로 우회한다.
 

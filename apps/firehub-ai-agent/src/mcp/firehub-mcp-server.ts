@@ -126,6 +126,7 @@ const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   list_audit_logs: PERMISSIONS.AUDIT_READ,
   graphrag_ingest: PERMISSIONS.DATASET_WRITE,
   graphrag_query: PERMISSIONS.DATASET_READ,
+  graphrag_structured_query: PERMISSIONS.DATASET_READ,
 };
 
 /**
