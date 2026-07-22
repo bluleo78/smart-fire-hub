@@ -346,6 +346,17 @@ function AppLayoutInner() {
                 onOpenChange={setDataOpen}
               />
 
+              {/* 지식그래프 — 데이터 다음 배치(데이터에서 파생된 지식 자산). admin 게이팅 없이 모든 인증 사용자에게 노출. */}
+              <NavSection
+                label="지식그래프"
+                items={knowledgeGraphNavItems}
+                isActive={isActive}
+                collapsed={collapsed}
+                onClick={handleNavClick}
+                open={knowledgeGraphOpen}
+                onOpenChange={setKnowledgeGraphOpen}
+              />
+
               <NavSection
                 label="분석"
                 items={analyticsNavItems}
@@ -374,17 +385,6 @@ function AppLayoutInner() {
                 onClick={handleNavClick}
                 open={aiInsightsOpen}
                 onOpenChange={setAiInsightsOpen}
-              />
-
-              {/* 지식그래프 — admin 게이팅 없이 모든 인증 사용자에게 노출(백엔드도 dataset:read로 접근 허용). */}
-              <NavSection
-                label="지식그래프"
-                items={knowledgeGraphNavItems}
-                isActive={isActive}
-                collapsed={collapsed}
-                onClick={handleNavClick}
-                open={knowledgeGraphOpen}
-                onOpenChange={setKnowledgeGraphOpen}
               />
 
               {isAdmin && (
