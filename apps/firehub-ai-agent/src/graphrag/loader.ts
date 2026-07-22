@@ -8,11 +8,13 @@ export async function loadGraph(
 ): Promise<{ nodes: number; relations: number }> {
   const session = getSession();
   try {
-    // 노드 MERGE — key 기준. sourceChunkIds에 chunkId를 중복 없이 누적(멱등).
+    // 노드 MERGE — key 기준. sourceChunkIds 누적 + 정규화 속성 병합.
+    // 속성은 SET n += e.properties(last-write-wins). Incident 는 문서당 1개(exact)라 동일값 전제하 허용.
     await session.run(
       `UNWIND $entities AS e
        MERGE (n:Entity {key: e.key})
        SET n.type = e.type, n.name = e.name
+       SET n += coalesce(e.properties, {})
        SET n.sourceChunkIds =
          CASE WHEN $chunkId IN coalesce(n.sourceChunkIds, [])
               THEN n.sourceChunkIds ELSE coalesce(n.sourceChunkIds, []) + $chunkId END`,

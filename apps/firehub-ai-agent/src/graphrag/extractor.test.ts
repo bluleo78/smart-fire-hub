@@ -40,3 +40,22 @@ describe('extractGraph', () => {
     expect(result).toEqual({ entities: [], relations: [] });
   });
 });
+
+describe('extractGraph 속성 추출', () => {
+  it('정의된 속성은 정규화, 미정의 키는 폐기', async () => {
+    const complete: CompleteFn = async () => JSON.stringify({
+      entities: [{ type: 'Incident', name: '2024 서울 창고 화재', properties: { 피해액: '약 1억 2천만원', 헛것: 'x' } }],
+      relations: [],
+    });
+    const res = await extractGraph('...', { complete, ontology: CORE_ONTOLOGY });
+    expect(res.entities[0].properties).toEqual({ 피해액: 120_000_000 });
+  });
+
+  it('정규화 실패 속성은 제외', async () => {
+    const complete: CompleteFn = async () => JSON.stringify({
+      entities: [{ type: 'Incident', name: 'X', properties: { 피해액: '큼' } }], relations: [],
+    });
+    const res = await extractGraph('...', { complete, ontology: CORE_ONTOLOGY });
+    expect(res.entities[0].properties).toBeUndefined();
+  });
+});

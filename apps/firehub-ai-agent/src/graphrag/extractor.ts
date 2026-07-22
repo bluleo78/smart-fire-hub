@@ -6,6 +6,7 @@ import {
   isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
 } from './ontology.js';
 import type { CompleteFn } from './llm-cli.js';
+import { normalizeProperty } from './property-normalizer.js';
 
 export interface ExtractOptions { complete: CompleteFn; ontology: Ontology; }
 
@@ -33,12 +34,27 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
 
   // 엔티티: 온톨로지 타입에 없는 것은 폐기. 이름→타입 맵을 만들어 관계 검증에 사용.
   // parsed.entities가 배열이 아닌 경우(형식 오류)에도 배치가 죽지 않도록 방어.
+  // 온톨로지 타입별 속성 정의 맵(정규화·화이트리스트에 사용).
+  const propDefsByType = new Map(opts.ontology.entities.map((e) => [e.type, e.properties ?? []]));
+
   const entities = (Array.isArray(parsed.entities) ? parsed.entities : [])
-    .filter((e: unknown): e is { type: EntityType; name: string } => {
+    .filter((e: unknown): e is { type: EntityType; name: string; properties?: Record<string, unknown> } => {
       const rec = e as Record<string, unknown> | null;
       return !!rec && typeof rec.name === 'string' && typeof rec.type === 'string' && isEntityType(rec.type);
     })
-    .map((e) => ({ type: e.type, name: e.name }));
+    .map((e) => {
+      // 온톨로지에 정의된 속성만 정규화해 채운다. 미정의 키·정규화 실패는 폐기.
+      const defs = propDefsByType.get(e.type) ?? [];
+      const props: Record<string, number | string> = {};
+      for (const def of defs) {
+        const raw = e.properties?.[def.name];
+        if (typeof raw !== 'string') continue;
+        const val = normalizeProperty(def.dataType, def.unit, raw);
+        if (val !== null) props[def.name] = val;
+      }
+      const hasProps = Object.keys(props).length > 0;
+      return { type: e.type, name: e.name, ...(hasProps ? { properties: props } : {}) };
+    });
   const typeByName = new Map<string, EntityType>(entities.map((e) => [e.name, e.type]));
 
   // 관계: 관계타입 유효 + 주어·목적어가 추출된 엔티티 + 허용 트리플이어야 함.

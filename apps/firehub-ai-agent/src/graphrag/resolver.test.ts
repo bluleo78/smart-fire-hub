@@ -22,4 +22,11 @@ describe('resolver', () => {
       { subjectKey: entityKey('Incident', '2026-001'), type: 'OCCURRED_AT', objectKey: entityKey('Building', '중앙로 상가') },
     ]);
   });
+
+  it('속성값을 ResolvedEntity 로 전달', () => {
+    const g = resolveExtraction({
+      entities: [{ type: 'Incident', name: 'X', properties: { 피해액: 120_000_000 } }], relations: [],
+    });
+    expect(g.entities[0].properties).toEqual({ 피해액: 120_000_000 });
+  });
 });
