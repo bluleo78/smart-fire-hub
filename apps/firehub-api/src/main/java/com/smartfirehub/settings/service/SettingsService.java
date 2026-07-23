@@ -137,6 +137,15 @@ public class SettingsService {
     return getValue("ai.cli_oauth_token").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
+  /**
+   * 임베딩 provider 인증용 복호화된 API 키. OpenAI 등 인증이 필요한 provider 에서만 사용하며, Ollama(로컬)는 빈 값이라
+   * empty 를 반환한다. 키는 절대 ai-agent 로 내려보내지 않고 api 내부(EmbeddingProviderFactory)에서만 쓴다.
+   */
+  @Transactional(readOnly = true)
+  public Optional<String> getDecryptedEmbeddingApiKey() {
+    return getValue("embedding.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
+  }
+
   @Transactional(readOnly = true)
   public List<SettingResponse> getSmtpSettings() {
     return settingsRepository.findByPrefix("smtp").stream()

@@ -535,6 +535,20 @@ export class FireHubApiClient {
     return data;
   }
 
+  /**
+   * 텍스트 배치를 firehub-api 의 활성 임베딩 provider(system_settings 기반)로 벡터화한다
+   * (POST /api/v1/admin/embedding/embed, dataset:read). provider/모델/API 키는 api 가 소유하므로
+   * ai-agent 는 이를 알 필요 없이 위임만 한다 — GraphRAG 엔티티 해소의 시맨틱 클러스터링에서 사용.
+   */
+  async embed(texts: string[]): Promise<number[][]> {
+    const { data } = await this.client.post<{
+      model: string;
+      dimension: number;
+      embeddings: number[][];
+    }>('/admin/embedding/embed', { texts });
+    return data.embeddings;
+  }
+
   // GraphRAG 적재 이력을 api에 기록한다(best-effort — 호출부에서 실패를 삼킨다).
   async recordGraphIngest(datasetId: number, body: {
     schemaVersionAtIngest: number; chunkCount: number; nodeCount: number;

@@ -6,10 +6,13 @@ import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
 import { cosineSimilarity } from './embedding.js';
 
 // bge-m3 실측 검증값: 변형 표기(동의어) ≥0.78, 서로 다른 엔티티는 ≤0.755로 명확히 분리됨.
+// ⚠️ 이 임계값은 bge-m3 임베딩 분포에 맞춰 튜닝된 값이다. 임베딩 provider 를 OpenAI 등으로 바꾸면
+// (system_settings.embedding.provider) 벡터 공간이 달라져 오·병합 위험이 생기므로, provider 전환 시
+// 반드시 이 값을 재측정해야 한다.
 export const MERGE_THRESHOLD = 0.78;
 
-// 텍스트 배열 → 벡터 배열. 실제 구현은 embedding.ts의 embedTexts를 주입하고,
-// 테스트에서는 결정적 mock을 주입해 Ollama 의존 없이 검증한다.
+// 텍스트 배열 → 벡터 배열. 실제 구현은 firehub-api 활성 provider 를 호출하는 apiClient.embed 를 주입하고,
+// 테스트에서는 결정적 mock을 주입해 임베딩 의존 없이 검증한다.
 export interface EmbedFn { (texts: string[]): Promise<number[][]>; }
 
 // 이름들 사이에서 union-find로 유사도 클러스터를 찾는다.

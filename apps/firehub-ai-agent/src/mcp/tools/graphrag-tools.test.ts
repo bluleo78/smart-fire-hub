@@ -17,7 +17,6 @@ vi.mock('../../graphrag/neo4j-client.js', () => ({ bootstrapConstraints: vi.fn()
 vi.mock('../../graphrag/extractor.js', () => ({ extractGraph: vi.fn() }));
 vi.mock('../../graphrag/llm-cli.js', () => ({ createCliCompleter: vi.fn(() => vi.fn()) }));
 vi.mock('../../graphrag/loader.js', () => ({ loadGraph: vi.fn() }));
-vi.mock('../../graphrag/embedding.js', () => ({ embedTexts: vi.fn() }));
 
 import { registerGraphragTools } from './graphrag-tools.js';
 import { ingestDataset } from '../../graphrag/ingest.js';

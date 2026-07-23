@@ -6,7 +6,6 @@ import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
 import { createCliCompleter } from '../../graphrag/llm-cli.js';
 import { loadGraph } from '../../graphrag/loader.js';
-import { embedTexts } from '../../graphrag/embedding.js';
 import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
@@ -39,8 +38,8 @@ export function registerGraphragTools(
             listChunks: (id) => apiClient.listDocumentChunks(id),
             extract: (text) => extractGraph(text, { complete, ontology }),
             load: (graph, chunkId) => loadGraph(graph, chunkId),
-            // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)에 쓰이는 bge-m3 임베딩 클라이언트.
-            embed: (texts) => embedTexts(texts),
+            // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)용 임베딩 — firehub-api 활성 provider 에 위임.
+            embed: (texts) => apiClient.embed(texts),
           },
           args.datasetId,
           ontology,

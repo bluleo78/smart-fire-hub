@@ -48,6 +48,22 @@ describe('FireHubApiClient', () => {
     expect(scope.isDone()).toBe(true);
   });
 
+  // --- 임베딩 위임 ---
+  it('embed 는 POST /admin/embedding/embed 로 위임하고 embeddings 배열만 반환한다', async () => {
+    const scope = nock(BASE_URL)
+      .post('/admin/embedding/embed', (body) =>
+        Array.isArray(body.texts) && body.texts[0] === '스프링클러' && body.texts[1] === '스프링클러 설비')
+      .reply(200, {
+        model: 'bge-m3',
+        dimension: 1024,
+        embeddings: [[1, 0, 0], [0.9, 0.1, 0]],
+      });
+
+    const vectors = await client.embed(['스프링클러', '스프링클러 설비']);
+    expect(vectors).toEqual([[1, 0, 0], [0.9, 0.1, 0]]);
+    expect(scope.isDone()).toBe(true);
+  });
+
   // --- Categories ---
   it('should list categories via GET /dataset-categories', async () => {
     const mockData = [{ id: 1, name: 'Cat1' }];
