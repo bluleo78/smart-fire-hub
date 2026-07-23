@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  * type 예외 - 따옴표 한 쪽만 있는 strip 분기 - DATE 다양한 포맷 (yyyy/MM/dd, dd-MM-yyyy, MM/dd/yyyy) - TIMESTAMP 다양한
  * 포맷 (yyyy/MM/dd HH:mm:ss, dd-MM-yyyy HH:mm:ss, yyyyMMddHHmmss)
  */
-class DataValidationServiceTest2 {
+class DataValidationServiceMappingTest {
 
   private DataValidationService service;
 
