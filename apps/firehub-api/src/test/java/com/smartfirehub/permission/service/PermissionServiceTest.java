@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
  * PermissionService 통합 테스트.
  *
  * <p>getAllPermissions, getPermissionsByCategory, getUserPermissions 핵심 메서드 전체 커버. Flyway seed
- * 데이터(38개 권한, ADMIN/USER 역할)를 활용하여 실제 DB에서 검증한다.
+ * 데이터(39개 권한, ADMIN/USER 역할)를 활용하여 실제 DB에서 검증한다.
  */
 @Transactional
 class PermissionServiceTest extends IntegrationTestBase {
@@ -94,12 +94,12 @@ class PermissionServiceTest extends IntegrationTestBase {
   // getAllPermissions
   // =========================================================================
 
-  /** Flyway seed 데이터(38개)가 모두 반환되어야 한다. */
+  /** Flyway seed 데이터(39개, V74의 ontology:write 포함)가 모두 반환되어야 한다. */
   @Test
   void getAllPermissions_returnAllSeedPermissions() {
     List<PermissionResponse> result = permissionService.getAllPermissions();
 
-    assertThat(result).hasSize(38);
+    assertThat(result).hasSize(39);
   }
 
   /** 반환 목록은 id 오름차순으로 정렬되어야 한다. */

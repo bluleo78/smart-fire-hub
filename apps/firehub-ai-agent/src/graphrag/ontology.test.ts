@@ -5,11 +5,22 @@ import {
 } from './ontology.js';
 
 describe('ontology', () => {
-  it('유효 엔티티/관계 타입을 인식한다', () => {
-    expect(isEntityType('Incident')).toBe(true);
-    expect(isEntityType('Person')).toBe(false);
-    expect(isRelationType('CAUSED_BY')).toBe(true);
-    expect(isRelationType('KNOWS')).toBe(false);
+  it('유효 엔티티/관계 타입을 인식한다(전달된 ontology 기준)', () => {
+    expect(isEntityType(CORE_ONTOLOGY, 'Incident')).toBe(true);
+    expect(isEntityType(CORE_ONTOLOGY, 'Person')).toBe(false);
+    expect(isRelationType(CORE_ONTOLOGY, 'CAUSED_BY')).toBe(true);
+    expect(isRelationType(CORE_ONTOLOGY, 'KNOWS')).toBe(false);
+  });
+  it('DB 편집으로 추가된 타입도 ontology 인자에 있으면 통과한다(D.2: 하드코딩 상수에 더 이상 안 갇힘)', () => {
+    const extended = {
+      ...CORE_ONTOLOGY,
+      entities: [...CORE_ONTOLOGY.entities, { type: 'Witness', description: '목격자', naming: '본문 표기 보존', resolution: 'embedding' as const }],
+      relations: [...CORE_ONTOLOGY.relations, { subject: 'Incident', relation: 'TESTIFIED_BY', object: 'Witness', description: '사건을 증언한 목격자' }],
+    };
+    expect(isEntityType(extended, 'Witness')).toBe(true);
+    expect(isRelationType(extended, 'TESTIFIED_BY')).toBe(true);
+    // 번들 CORE_ONTOLOGY 기준으로는 여전히 미정의(고정 상수가 아니라 인자 기준임을 교차 검증)
+    expect(isEntityType(CORE_ONTOLOGY, 'Witness')).toBe(false);
   });
   it('허용된 트리플만 통과시킨다', () => {
     expect(isAllowedTriple(CORE_ONTOLOGY, 'Incident', 'CAUSED_BY', 'Cause')).toBe(true);

@@ -1,16 +1,19 @@
-// 코어 온톨로지 — 엔티티/관계 타입, 허용 트리플, 도메인 메타데이터를 고정 정의한다.
-// 추출 프롬프트는 이 온톨로지 정의에서 생성된다(도메인 하드코딩을 여기 한 곳으로 모음).
-// walking skeleton 범위에서는 이 파일이 유일한 온톨로지 소스(추후 DB/관리 UI로 승격 예정).
+// 코어 온톨로지 — 번들 폴백(api 무응답 시)용 엔티티/관계 타입, 허용 트리플, 도메인 메타데이터.
+// 추출 프롬프트는 (api에서 로드했거나 이 번들로 폴백한) 온톨로지 정의에서 생성된다.
+// B-2b(지식 모델 편집)부터 온톨로지의 정본은 api(DB)이며, 여기 ENTITY_TYPES/RELATION_TYPES는
+// CORE_ONTOLOGY 번들 정의에만 쓰이는 상수다 — 엔티티/관계 타입 검증(isEntityType 등)은 이제
+// 이 고정 배열이 아니라 "실제 로드된 Ontology 인스턴스"를 기준으로 하므로, DB에서 새 타입을
+// 추가·수정해도(예: 관리자가 지식 모델을 편집) 여기 재배포 없이 그대로 통과한다.
 
 export const ENTITY_TYPES = [
   'Incident', 'Building', 'Cause', 'Damage', 'Equipment', 'Regulation',
 ] as const;
-export type EntityType = (typeof ENTITY_TYPES)[number];
+export type EntityType = string;
 
 export const RELATION_TYPES = [
   'OCCURRED_AT', 'CAUSED_BY', 'RESULTED_IN', 'HAS_EQUIPMENT', 'VIOLATED', 'GOVERNED_BY',
 ] as const;
-export type RelationType = (typeof RELATION_TYPES)[number];
+export type RelationType = string;
 
 // 엔티티 데이터 프로퍼티 정의 — 속성명·설명·데이터타입·단위. 추출/정규화/질의가 이 메타로 동작한다.
 export interface PropertyDef { name: string; description: string; dataType: 'text' | 'number' | 'date'; unit?: string; }
@@ -73,11 +76,13 @@ export const CORE_ONTOLOGY: Ontology = {
   ],
 };
 
-export function isEntityType(x: string): x is EntityType {
-  return (ENTITY_TYPES as readonly string[]).includes(x);
+// 전달된 ontology(로드된 실제 스키마)에 정의된 엔티티/관계 타입인지 검사한다.
+// DB 편집으로 추가/변경된 타입도 그대로 통과해야 하므로, 고정 상수가 아니라 ontology 인자를 기준으로 삼는다.
+export function isEntityType(ontology: Ontology, x: string): boolean {
+  return ontology.entities.some((e) => e.type === x);
 }
-export function isRelationType(x: string): x is RelationType {
-  return (RELATION_TYPES as readonly string[]).includes(x);
+export function isRelationType(ontology: Ontology, x: string): boolean {
+  return ontology.relations.some((r) => r.relation === x);
 }
 // 엔티티 타입의 해소 정책 조회 — 전달된 ontology 기준. 없는 타입은 안전하게 'embedding' 기본값.
 export function entityResolutionPolicy(ontology: Ontology, type: EntityType): 'embedding' | 'exact' {
@@ -108,25 +113,27 @@ export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): Serialize
   };
 }
 
-// wire 형태(SerializedOntology)를 내부 Ontology 로 역직렬화한다(온톨로지에 없는 타입/관계는 방어적으로 제외).
+// wire 형태(SerializedOntology)를 내부 Ontology 로 역직렬화한다.
+// DB(api)가 온톨로지 정본이므로 고정 상수(ENTITY_TYPES/RELATION_TYPES)로는 필터링하지 않는다 —
+// 대신 wire 응답 자체의 일관성만 방어한다: relation은 응답에 실제로 존재하는 엔티티 타입만 참조해야 한다
+// (예: subject/object 오타나 삭제된 타입을 가리키는 정합성 깨진 응답 방어).
 export function deserializeOntology(s: SerializedOntology): Ontology {
+  const knownTypes = new Set(s.entities.map((e) => e.type));
   return {
     domain: s.domain,
     // 방어 기본값: 구버전 api/캐시된 wire 응답 등 schemaVersion 이 없을 수 있으므로 1로 폴백.
     schemaVersion: s.schemaVersion ?? 1,
-    entities: s.entities
-      .filter((e) => isEntityType(e.type))
-      .map((e) => ({
-        type: e.type as EntityType, description: e.description, naming: e.naming, resolution: e.resolution,
-        // 허용된 dataType(text|number|date)만 통과시킨다 — 엔티티/관계 타입 필터링과 동일한 방어적 원칙.
-        properties: (e.properties ?? [])
-          .filter((p) => ['text', 'number', 'date'].includes(p.dataType))
-          // api wire 의 unit 은 nullable → JSON null 이 올 수 있으므로 undefined 로 정규화(타입 string|undefined 보존).
-          .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit ?? undefined })),
-      })),
+    entities: s.entities.map((e) => ({
+      type: e.type, description: e.description, naming: e.naming, resolution: e.resolution,
+      // 허용된 dataType(text|number|date)만 통과시킨다 — 정의되지 않은 값 방어.
+      properties: (e.properties ?? [])
+        .filter((p) => ['text', 'number', 'date'].includes(p.dataType))
+        // api wire 의 unit 은 nullable → JSON null 이 올 수 있으므로 undefined 로 정규화(타입 string|undefined 보존).
+        .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit ?? undefined })),
+    })),
     relations: s.relations
-      .filter((r) => isEntityType(r.subject) && isRelationType(r.relation) && isEntityType(r.object))
-      .map((r) => ({ subject: r.subject as EntityType, relation: r.relation as RelationType, object: r.object as EntityType, description: r.description })),
+      .filter((r) => knownTypes.has(r.subject) && knownTypes.has(r.object))
+      .map((r) => ({ subject: r.subject, relation: r.relation, object: r.object, description: r.description })),
   };
 }
 

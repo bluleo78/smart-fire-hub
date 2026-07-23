@@ -40,7 +40,8 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
   const entities = (Array.isArray(parsed.entities) ? parsed.entities : [])
     .filter((e: unknown): e is { type: EntityType; name: string; properties?: Record<string, unknown> } => {
       const rec = e as Record<string, unknown> | null;
-      return !!rec && typeof rec.name === 'string' && typeof rec.type === 'string' && isEntityType(rec.type);
+      return !!rec && typeof rec.name === 'string' && typeof rec.type === 'string'
+        && isEntityType(opts.ontology, rec.type);
     })
     .map((e) => {
       // 온톨로지에 정의된 속성만 정규화해 채운다. 미정의 키·정규화 실패는 폐기.
@@ -62,7 +63,7 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
     .filter((r: unknown): r is { subject: string; type: RelationType; object: string } => {
       const rec = r as Record<string, unknown> | null;
       if (!rec || typeof rec.subject !== 'string' || typeof rec.object !== 'string'
-        || typeof rec.type !== 'string' || !isRelationType(rec.type)) return false;
+        || typeof rec.type !== 'string' || !isRelationType(opts.ontology, rec.type)) return false;
       const subjectType = typeByName.get(rec.subject);
       const objectType = typeByName.get(rec.object);
       return !!subjectType && !!objectType && isAllowedTriple(opts.ontology, subjectType, rec.type, objectType);

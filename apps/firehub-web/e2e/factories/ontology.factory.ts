@@ -6,15 +6,22 @@
 
 import type { EntityTypeDef, GraphData, GraphNode, OntologySchema, Triple } from '@/types/ontology';
 
-/** CORE_ONTOLOGY 엔티티 정의(6타입) — Incident/Damage는 exact, 나머지는 embedding 해소 정책 */
+/** CORE_ONTOLOGY 엔티티 정의(6타입) — Incident/Damage는 exact, 나머지는 embedding 해소 정책.
+ * Damage에 데이터 프로퍼티(피해액) 1개를 부여해 편집 라운드트립 시 미편집 properties 보존을 검증할 수 있게 한다. */
 function createEntityTypeDefs(): EntityTypeDef[] {
   return [
-    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: '문서마다 고유', resolution: 'exact' },
-    { type: 'Building', description: '물리적 장소/건물', naming: '본문 표기 보존', resolution: 'embedding' },
-    { type: 'Cause', description: '발화·발생 원인', naming: '본문 표기 보존', resolution: 'embedding' },
-    { type: 'Damage', description: '피해 내역', naming: '본문 표기 보존', resolution: 'exact' },
-    { type: 'Equipment', description: '소방 설비/장비', naming: '본문 표기 보존', resolution: 'embedding' },
-    { type: 'Regulation', description: '관련 법규/기준', naming: '본문 표기 보존', resolution: 'embedding' },
+    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: '문서마다 고유', resolution: 'exact', properties: [] },
+    { type: 'Building', description: '물리적 장소/건물', naming: '본문 표기 보존', resolution: 'embedding', properties: [] },
+    { type: 'Cause', description: '발화·발생 원인', naming: '본문 표기 보존', resolution: 'embedding', properties: [] },
+    {
+      type: 'Damage',
+      description: '피해 내역',
+      naming: '본문 표기 보존',
+      resolution: 'exact',
+      properties: [{ name: '피해액', description: '추정 재산 피해액(원)', dataType: 'number', unit: '원' }],
+    },
+    { type: 'Equipment', description: '소방 설비/장비', naming: '본문 표기 보존', resolution: 'embedding', properties: [] },
+    { type: 'Regulation', description: '관련 법규/기준', naming: '본문 표기 보존', resolution: 'embedding', properties: [] },
   ];
 }
 
@@ -34,6 +41,7 @@ function createTriples(): Triple[] {
 export function createOntologySchema(overrides?: Partial<OntologySchema>): OntologySchema {
   return {
     domain: '화재조사 보고서',
+    schemaVersion: 1,
     entities: createEntityTypeDefs(),
     relations: createTriples(),
     ...overrides,

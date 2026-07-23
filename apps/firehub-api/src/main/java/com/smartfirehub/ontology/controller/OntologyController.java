@@ -3,6 +3,7 @@ package com.smartfirehub.ontology.controller;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.service.OntologyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -26,5 +27,13 @@ public class OntologyController {
   @RequirePermission("dataset:read")
   public GraphResponse getGraph() {
     return ontologyService.getGraph();
+  }
+
+  // 지식 모델 편집(B-2b) — full-document 교체 + schema_version 원자 증가. 편집은 특권(ontology:write, ADMIN).
+  // 낙관적 동시성: 요청의 schemaVersion이 현재 DB 버전과 일치할 때만 적용(불일치 시 409).
+  @PutMapping
+  @RequirePermission("ontology:write")
+  public OntologyResponse updateOntology(@RequestBody UpdateOntologyRequest request) {
+    return ontologyService.updateOntology(request);
   }
 }
