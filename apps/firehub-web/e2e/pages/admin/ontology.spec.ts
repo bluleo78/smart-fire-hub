@@ -605,6 +605,113 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(dialog).toBeVisible();
   });
 
+  // 5-3: 엔티티 타입 추가 — 추가한 타입이 저장 payload의 entities 배열에 반영되는지 검증.
+  test('엔티티 타입을 추가하면 저장 payload의 entities 배열에 새 타입이 포함된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('new-entity-type-name').fill('Sensor');
+    await dialog.getByTestId('add-entity-type').click();
+
+    // 새 카드가 즉시 렌더된다(추가는 이름 확정 후 append이므로 카드 식별자가 곧 타입명).
+    await expect(dialog.getByTestId('entity-edit-Sensor')).toBeVisible();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    expect(payload.entities).toHaveLength(schema.entities.length + 1);
+    expect(payload.entities).toContainEqual({
+      type: 'Sensor',
+      description: '',
+      naming: '',
+      resolution: 'embedding',
+      properties: [],
+    });
+  });
+
+  // 5-3: 이름 없이 추가 시도 — 로컬 검증이 즉시 막고 새 카드가 생기지 않는다.
+  test('이름 없이 타입 추가를 시도하면 로컬 에러 토스트가 뜨고 카드가 추가되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('add-entity-type').click();
+
+    await expect(page.getByText('타입 이름을 입력하세요.')).toBeVisible();
+    await expect(dialog.locator('[data-testid^="entity-edit-"]')).toHaveCount(schema.entities.length);
+  });
+
+  // 5-3: 중복 이름 추가 시도 — 현재 목록과 겹치는 이름은 로컬 검증이 막는다.
+  test('이미 존재하는 타입 이름으로 추가를 시도하면 로컬 에러 토스트가 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('new-entity-type-name').fill('Incident');
+    await dialog.getByTestId('add-entity-type').click();
+
+    await expect(page.getByText('이미 존재하는 타입입니다: Incident')).toBeVisible();
+    await expect(dialog.locator('[data-testid^="entity-edit-"]')).toHaveCount(schema.entities.length);
+  });
+
+  // 5-3: 타입 삭제 — 삭제한 타입과 그 타입을 참조하던 관계가 저장 payload에서 함께 제거되는지 검증.
+  // Regulation은 2개 관계(Incident→VIOLATED, Equipment→GOVERNED_BY)의 object이므로 cascade 대상이 명확하다.
+  test('엔티티 타입을 삭제하면 그 타입과 참조 관계가 저장 payload에서 함께 제거된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    const regulationRefs = schema.relations.filter(
+      (r) => r.subject === 'Regulation' || r.object === 'Regulation',
+    ).length;
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-delete-Regulation').click();
+
+    // cascade 안내 토스트(참조 관계 개수 포함) — 고유 문구로 특정한다.
+    await expect(
+      page.getByText(`타입 'Regulation'과(와) 이를 참조하는 관계 ${regulationRefs}개를 제거했습니다.`),
+    ).toBeVisible();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    expect(payload.entities.map((e) => e.type)).not.toContain('Regulation');
+    expect(payload.entities).toHaveLength(schema.entities.length - 1);
+    // 참조 관계도 함께 제거 — Regulation을 subject/object로 하는 트리플이 남아 있으면 안 된다.
+    expect(payload.relations).toHaveLength(schema.relations.length - regulationRefs);
+    expect(payload.relations.some((r) => r.subject === 'Regulation' || r.object === 'Regulation')).toBe(false);
+  });
+
   test('편집 저장 중 버전 충돌(409) 시 에러 토스트가 표시되고 다이얼로그는 닫히지 않는다', async ({
     authenticatedPage: page,
   }) => {

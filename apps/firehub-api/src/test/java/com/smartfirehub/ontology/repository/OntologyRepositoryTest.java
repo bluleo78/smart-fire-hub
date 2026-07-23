@@ -186,6 +186,44 @@ class OntologyRepositoryTest extends IntegrationTestBase {
         .containsExactly("사상자수");
   }
 
+  // (5-3 a) 엔티티 타입 추가: entities 배열에 새 타입을 더해 PUT하면 delete+reinsert로 그대로 생긴다.
+  @Test
+  void updateOntology_는_새_엔티티_타입을_추가할_수_있다() {
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.add(new OntologyResponse.EntityType("Sensor", "감지 센서", "본문 표기 보존", "embedding", List.of()));
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, entities, original.relations());
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    assertThat(res.entities()).extracting(OntologyResponse.EntityType::type).contains("Sensor");
+    assertThat(res.entities()).hasSize(original.entities().size() + 1);
+  }
+
+  // (5-3 b) 참조 관계가 있는 타입 삭제: 타입을 빼고 그 타입을 참조하던 관계도 함께 빼서 PUT하면
+  // 타입·그 속성(entity_type_id FK 캐스케이드)·참조 관계가 모두 사라진다(클라이언트 cascade + delete-all-reinsert).
+  // Damage는 속성(피해액) 1개 보유 + RESULTED_IN 관계의 object이므로 두 경로를 한 번에 검증한다.
+  @Test
+  void updateOntology_는_참조_관계가_있는_타입을_속성과_관계와_함께_삭제한다() {
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.removeIf(e -> e.type().equals("Damage"));
+    List<OntologyResponse.Triple> relations = new java.util.ArrayList<>(original.relations());
+    long damageRefs =
+        original.relations().stream()
+            .filter(r -> r.subject().equals("Damage") || r.object().equals("Damage"))
+            .count();
+    relations.removeIf(r -> r.subject().equals("Damage") || r.object().equals("Damage"));
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, entities, relations);
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    assertThat(res.entities()).extracting(OntologyResponse.EntityType::type).doesNotContain("Damage");
+    assertThat(res.entities()).hasSize(original.entities().size() - 1);
+    assertThat(res.relations()).noneMatch(r -> r.subject().equals("Damage") || r.object().equals("Damage"));
+    assertThat(res.relations()).hasSize(original.relations().size() - (int) damageRefs);
+  }
+
   // (f) stale 시드 시나리오: dataset_graph_ingest에 현재 버전(1)으로 적재 이력을 남긴 뒤 온톨로지를
   // 편집(버전 2)하면, 해당 데이터셋이 GraphIngestRepository.findStale(2)에 나타나야 한다(그래프 재적재 필요 신호).
   @Test
