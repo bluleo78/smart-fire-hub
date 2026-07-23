@@ -11,11 +11,19 @@ export interface EvalDeps {
   complete: CompleteFn;
 }
 
-export async function runEval(deps: EvalDeps, questions: EvalQuestion[], sourceDocs: string): Promise<EvalResult[]> {
+// 문항 처리 단계 진행 알림(선택) — 라이브 CLI에서 진행 상황을 실시간으로 보여주기 위함. 순수 로직에는 영향 없음.
+export type EvalProgress = (event: { index: number; total: number; id: string; stage: 'context' | 'answer' | 'judge' | 'done' }) => void;
+
+export async function runEval(
+  deps: EvalDeps, questions: EvalQuestion[], sourceDocs: string, onProgress?: EvalProgress,
+): Promise<EvalResult[]> {
   const out: EvalResult[] = [];
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
+    const total = questions.length;
+    onProgress?.({ index: i, total, id: q.id, stage: 'context' });
     const [gCtx, vCtx] = await Promise.all([deps.graphragContext(q.question), deps.vectorContext(q.question)]);
+    onProgress?.({ index: i, total, id: q.id, stage: 'answer' });
     const [gAns, vAns] = await Promise.all([
       answerFromContext(deps.complete, q.question, gCtx),
       answerFromContext(deps.complete, q.question, vCtx),
@@ -24,6 +32,7 @@ export async function runEval(deps: EvalDeps, questions: EvalQuestion[], sourceD
     const graphragIsA = i % 2 === 0;
     const answerA = graphragIsA ? gAns : vAns;
     const answerB = graphragIsA ? vAns : gAns;
+    onProgress?.({ index: i, total, id: q.id, stage: 'judge' });
     const v = await judge(deps.complete, q.question, sourceDocs, answerA, answerB);
     // 슬롯을 graphrag/vector 관점으로 정규화.
     const graphragScore = graphragIsA ? v.scoreA : v.scoreB;
@@ -34,6 +43,7 @@ export async function runEval(deps: EvalDeps, questions: EvalQuestion[], sourceD
       winner = graphragWon ? 'graphrag' : 'vector';
     }
     out.push({ id: q.id, class: q.class, graphragAnswer: gAns, vectorAnswer: vAns, graphragScore, vectorScore, winner, rationale: v.rationale });
+    onProgress?.({ index: i, total, id: q.id, stage: 'done' });
   }
   return out;
 }

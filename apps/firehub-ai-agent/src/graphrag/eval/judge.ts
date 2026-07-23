@@ -47,7 +47,9 @@ export async function judge(
   answerA: string,
   answerB: string,
 ): Promise<JudgeVerdict> {
+  // complete()는 userText를 CLI stdin으로 전달하는데 빈 문자열은 CLI가 거부한다(-p 헤드리스는
+  // stdin/prompt 인자 중 하나가 반드시 필요) — question(항상 비어있지 않음)을 그대로 전달한다.
   return parseJudgeVerdict(
-    await complete(buildJudgePrompt(question, sourceDocs, answerA, answerB), ''),
+    await complete(buildJudgePrompt(question, sourceDocs, answerA, answerB), question),
   );
 }

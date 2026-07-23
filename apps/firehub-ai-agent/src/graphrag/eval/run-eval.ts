@@ -54,8 +54,9 @@ async function main(): Promise<void> {
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5010/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-  // 평가 스크립트는 사용자 대행이 필요 없는 시스템 배치 실행이므로 임의 시스템 userId(0)를 사용한다.
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 0);
+  // X-On-Behalf-Of 로 실 사용자를 대행해야 dataset:read 권한 검사를 통과한다(EVAL_USER_ID 미지정 시 1).
+  const evalUserId = Number(process.env.EVAL_USER_ID ?? '1');
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, evalUserId);
 
   const complete = createCliCompleter();
   const sourceDocs = loadSourceDocs();
@@ -81,7 +82,10 @@ async function main(): Promise<void> {
     complete,
   };
 
-  const results = await runEval(deps, questions, sourceDocs);
+  const STAGE_LABEL: Record<string, string> = { context: '컨텍스트 조회', answer: '답변 생성', judge: '심판 채점', done: '완료' };
+  const results = await runEval(deps, questions, sourceDocs, (e) => {
+    console.log(`[${e.index + 1}/${e.total}] ${e.id} — ${STAGE_LABEL[e.stage]}`);
+  });
   const agg = aggregate(results);
   const markdown = renderScorecard(agg, results, label);
 

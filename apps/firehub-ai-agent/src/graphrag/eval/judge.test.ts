@@ -25,4 +25,12 @@ describe('judge', () => {
     const v = await judge(complete, 'q', 'docs', 'a', 'b');
     expect(v.winner).toBe('B');
   });
+
+  it('judge 는 complete 를 빈 문자열이 아닌 question 을 userText(stdin)로 호출한다', async () => {
+    // 회귀: CLI 기반 complete()는 userText 를 stdin 으로 전달하는데, claude -p 는 빈 stdin 을
+    // 거부해 라이브 실행이 즉시 실패했다(단위테스트는 complete 를 mock 하므로 이 결함을 못 잡았음).
+    const complete = vi.fn().mockResolvedValue('```json\n{"scoreA":1,"scoreB":1,"winner":"tie","rationale":"x"}\n```');
+    await judge(complete, 'q', 'docs', 'a', 'b');
+    expect(complete).toHaveBeenCalledWith(expect.any(String), 'q');
+  });
 });
