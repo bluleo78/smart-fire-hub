@@ -1,3 +1,4 @@
+import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -16,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useUpdateOntology } from '@/hooks/queries/useOntology';
 import { extractApiError } from '@/lib/api-error';
-import type { EntityTypeDef, OntologySchema } from '@/types/ontology';
+import type { EntityTypeDef, OntologySchema, Property, Triple } from '@/types/ontology';
 
 interface OntologyEditDialogProps {
   schema: OntologySchema;
@@ -24,12 +25,17 @@ interface OntologyEditDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+// Neo4j 노드 예약 필드(loader.ts 모델) — 속성명으로 쓰면 적재 시 노드 정체성 필드가 깨진다.
+// api OntologyService.RESERVED_PROPERTY_NAMES와 동일한 목록(서비스 경계상 공유 불가, 수동 동기화).
+const RESERVED_PROPERTY_NAMES = new Set(['key', 'type', 'name', 'sourceChunkIds']);
+const DATA_TYPES: Array<'text' | 'number' | 'date'> = ['text', 'number', 'date'];
+
 /**
- * 지식 모델 편집 다이얼로그(B-2b 슬라이스 5-1) — 수직 얇은 슬라이스.
- * 편집 대상은 domain + 각 엔티티 타입의 description/naming/resolution뿐이다.
- * relations와 각 엔티티의 properties는 이 슬라이스에서 편집 UI가 없으므로,
- * 원본 스키마에서 그대로 가져와 PUT payload에 손대지 않고 포함한다(전체 삭제·재삽입 방식이라
- * 빠뜨리면 조용히 유실되므로, "편집 대상 필드만 갈아끼우고 나머지는 원본을 그대로 복사"가 핵심 불변식).
+ * 지식 모델 편집 다이얼로그.
+ * 5-1: domain + 엔티티 타입 description/naming/resolution 편집.
+ * 5-2: 관계(트리플) CRUD + 엔티티별 속성(property) CRUD 추가 — 이제 relations/properties도
+ * 이 컴포넌트가 소유한 state로 편집되며, 저장 시 원본이 아닌 편집된 값을 PUT payload에 담는다.
+ * 엔티티 타입 자체의 추가/삭제는 여전히 범위 밖(node key 파급 — 별도 슬라이스).
  *
  * 폼 state는 useState 초기값으로만 schema를 반영한다(useEffect로 동기화하지 않음) — 대신
  * 호출부(OntologyPage)가 다이얼로그가 열릴 때마다 이 컴포넌트에 key를 바꿔 리마운트시켜
@@ -38,19 +44,83 @@ interface OntologyEditDialogProps {
 export default function OntologyEditDialog({ schema, open, onOpenChange }: OntologyEditDialogProps) {
   const [domain, setDomain] = useState(schema.domain);
   const [entities, setEntities] = useState<EntityTypeDef[]>(schema.entities);
+  const [relations, setRelations] = useState<Triple[]>(schema.relations);
   const updateOntology = useUpdateOntology();
+
+  const entityTypes = entities.map((e) => e.type);
 
   const updateEntity = (type: string, patch: Partial<EntityTypeDef>) =>
     setEntities((prev) => prev.map((e) => (e.type === type ? { ...e, ...patch } : e)));
 
+  // ── 속성(property) CRUD — 엔티티 카드 내부에서 동작, entities state의 해당 엔티티만 갱신 ──
+  const addProperty = (type: string) =>
+    updateEntity(type, {
+      properties: [
+        ...(entities.find((e) => e.type === type)?.properties ?? []),
+        { name: '', description: '', dataType: 'text', unit: null },
+      ],
+    });
+
+  const updateProperty = (type: string, index: number, patch: Partial<Property>) => {
+    const entity = entities.find((e) => e.type === type);
+    if (!entity) return;
+    const next = entity.properties.map((p, i) => (i === index ? { ...p, ...patch } : p));
+    updateEntity(type, { properties: next });
+  };
+
+  const removeProperty = (type: string, index: number) => {
+    const entity = entities.find((e) => e.type === type);
+    if (!entity) return;
+    updateEntity(type, { properties: entity.properties.filter((_, i) => i !== index) });
+  };
+
+  // ── 관계(트리플) CRUD ──
+  const addRelation = () =>
+    setRelations((prev) => [
+      ...prev,
+      { subject: entityTypes[0] ?? '', relation: '', object: entityTypes[0] ?? '', description: '' },
+    ]);
+
+  const updateRelation = (index: number, patch: Partial<Triple>) =>
+    setRelations((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+
+  const removeRelation = (index: number) =>
+    setRelations((prev) => prev.filter((_, i) => i !== index));
+
+  // 서버 왕복 없이 즉시 잡을 수 있는 위반만 로컬 검증한다(예약어/중복) — 참조 무결성은
+  // subject/object가 Select로 현재 엔티티 타입만 선택 가능해 UI 단에서부터 보장된다.
+  const validateLocally = (): string | null => {
+    for (const e of entities) {
+      const names = new Set<string>();
+      for (const p of e.properties) {
+        if (RESERVED_PROPERTY_NAMES.has(p.name)) {
+          return `예약어는 속성명으로 쓸 수 없습니다(${e.type}): ${p.name}`;
+        }
+        if (names.has(p.name)) {
+          return `중복된 속성명(${e.type}): ${p.name}`;
+        }
+        names.add(p.name);
+      }
+    }
+    const seenTriples = new Set<string>();
+    for (const r of relations) {
+      const key = `${r.subject}|${r.relation}|${r.object}`;
+      if (seenTriples.has(key)) {
+        return `중복된 관계: ${r.subject} -${r.relation}-> ${r.object}`;
+      }
+      seenTriples.add(key);
+    }
+    return null;
+  };
+
   const handleSave = () => {
+    const localError = validateLocally();
+    if (localError) {
+      toast.error(localError);
+      return;
+    }
     updateOntology.mutate(
-      {
-        domain,
-        schemaVersion: schema.schemaVersion,
-        entities, // properties는 각 엔티티에 원본 그대로 보존됨(편집 UI 없음)
-        relations: schema.relations, // 이 슬라이스는 관계 편집 범위 밖 — 원본 그대로 왕복
-      },
+      { domain, schemaVersion: schema.schemaVersion, entities, relations },
       {
         onSuccess: () => {
           toast.success('지식 모델이 저장되었습니다.');
@@ -69,7 +139,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
         <DialogHeader>
           <DialogTitle>지식 모델 편집</DialogTitle>
           <DialogDescription>
-            엔티티 타입의 설명·명명 규칙·해상도 정책을 수정합니다. 관계와 속성은 이 화면에서 변경되지 않습니다.
+            엔티티 타입의 설명·명명 규칙·해상도·속성과 엔티티 간 관계를 수정합니다. 타입 자체의 추가/삭제는 여기서 지원하지 않습니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -116,8 +186,157 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* 속성(property) CRUD — 이름이 예약어(key/type/name/sourceChunkIds)와 겹치면 즉시 에러 표시 */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <Label>속성</Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => addProperty(entity.type)}
+                    aria-label={`${entity.type} 속성 추가`}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    속성 추가
+                  </Button>
+                </div>
+                {entity.properties.map((prop, i) => {
+                  const reserved = RESERVED_PROPERTY_NAMES.has(prop.name);
+                  return (
+                    <div
+                      key={i}
+                      className="flex flex-col gap-1.5 rounded border p-2"
+                      data-testid={`property-row-${entity.type}-${i}`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          aria-label={`${entity.type} 속성 이름`}
+                          placeholder="속성명"
+                          value={prop.name}
+                          onChange={(e) => updateProperty(entity.type, i, { name: e.target.value })}
+                          className="flex-1"
+                        />
+                        <Select
+                          value={prop.dataType ?? 'text'}
+                          onValueChange={(v: 'text' | 'number' | 'date') => updateProperty(entity.type, i, { dataType: v })}
+                        >
+                          <SelectTrigger aria-label={`${entity.type} 속성 타입`} className="w-28">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DATA_TYPES.map((dt) => (
+                              <SelectItem key={dt} value={dt as string}>
+                                {dt}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          aria-label={`${entity.type} 속성 단위`}
+                          placeholder="단위(선택)"
+                          value={prop.unit ?? ''}
+                          onChange={(e) => updateProperty(entity.type, i, { unit: e.target.value || null })}
+                          className="w-24"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          onClick={() => removeProperty(entity.type, i)}
+                          aria-label={`${entity.type} 속성 삭제`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      <Input
+                        aria-label={`${entity.type} 속성 설명`}
+                        placeholder="설명(추출·정규화 지침)"
+                        value={prop.description}
+                        onChange={(e) => updateProperty(entity.type, i, { description: e.target.value })}
+                      />
+                      {reserved && (
+                        <p className="text-xs text-destructive">
+                          예약어는 속성명으로 쓸 수 없습니다: key, type, name, sourceChunkIds
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ))}
+
+          {/* 관계(트리플) CRUD — 주어/목적어는 현재 엔티티 타입 목록에서만 선택(참조 무결성을 UI에서부터 보장) */}
+          <div className="flex flex-col gap-2 rounded-md border p-4" data-testid="relations-editor">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">관계</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                onClick={addRelation}
+                aria-label="관계 추가"
+                disabled={entityTypes.length === 0}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                관계 추가
+              </Button>
+            </div>
+            {relations.map((rel, i) => (
+              <div key={i} className="flex flex-col gap-1.5 rounded border p-2" data-testid={`relation-row-${i}`}>
+                <div className="flex items-center gap-1.5">
+                  <Select value={rel.subject} onValueChange={(v) => updateRelation(i, { subject: v })}>
+                    <SelectTrigger aria-label="관계 주어 타입" className="flex-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {entityTypes.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    aria-label="관계명"
+                    placeholder="관계명(예: CAUSED_BY)"
+                    value={rel.relation}
+                    onChange={(e) => updateRelation(i, { relation: e.target.value })}
+                    className="flex-1"
+                  />
+                  <Select value={rel.object} onValueChange={(v) => updateRelation(i, { object: v })}>
+                    <SelectTrigger aria-label="관계 목적어 타입" className="flex-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {entityTypes.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => removeRelation(i)}
+                    aria-label="관계 삭제"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <Input
+                  aria-label="관계 설명"
+                  placeholder="설명"
+                  value={rel.description}
+                  onChange={(e) => updateRelation(i, { description: e.target.value })}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
         <DialogFooter>

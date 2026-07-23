@@ -3,13 +3,28 @@
 import { getSession } from './neo4j-client.js';
 import { ResolvedGraph } from './resolver.js';
 
+// 노드 정체성 필드(위 모델 참조) — 속성명이 이 중 하나면 `SET n += props`가 정체성 필드를 덮어써
+// 노드가 깨진다. api(OntologyService.RESERVED_PROPERTY_NAMES)가 편집 시점에 막지만, 과거 데이터·
+// 직접 DB조작 등 우회 경로에 대비해 적재 직전에도 한 번 더 방어한다(defense-in-depth).
+const RESERVED_NODE_KEYS = new Set(['key', 'type', 'name', 'sourceChunkIds']);
+
+function sanitizeProperties(
+  properties: Record<string, number | string> | undefined,
+): Record<string, number | string> {
+  if (!properties) return {};
+  return Object.fromEntries(
+    Object.entries(properties).filter(([k]) => !RESERVED_NODE_KEYS.has(k)),
+  );
+}
+
 export async function loadGraph(
   graph: ResolvedGraph, sourceChunkId: number,
 ): Promise<{ nodes: number; relations: number }> {
   const session = getSession();
   try {
-    // 노드 MERGE — key 기준. sourceChunkIds 누적 + 정규화 속성 병합.
+    // 노드 MERGE — key 기준. sourceChunkIds 누적 + 정규화 속성 병합(예약키는 sanitizeProperties로 제거 후).
     // 속성은 SET n += e.properties(last-write-wins). Incident 는 문서당 1개(exact)라 동일값 전제하 허용.
+    const entities = graph.entities.map((e) => ({ ...e, properties: sanitizeProperties(e.properties) }));
     await session.run(
       `UNWIND $entities AS e
        MERGE (n:Entity {key: e.key})
@@ -18,7 +33,7 @@ export async function loadGraph(
        SET n.sourceChunkIds =
          CASE WHEN $chunkId IN coalesce(n.sourceChunkIds, [])
               THEN n.sourceChunkIds ELSE coalesce(n.sourceChunkIds, []) + $chunkId END`,
-      { entities: graph.entities, chunkId: sourceChunkId },
+      { entities, chunkId: sourceChunkId },
     );
     // 관계 MERGE — (subjectKey)-[:REL {type}]->(objectKey). sourceChunkIds 동일 누적.
     await session.run(
