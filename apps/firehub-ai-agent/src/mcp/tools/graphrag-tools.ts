@@ -37,7 +37,7 @@ export function registerGraphragTools(
           {
             listChunks: (id) => apiClient.listDocumentChunks(id),
             extract: (text) => extractGraph(text, { complete, ontology }),
-            load: (graph, chunkId) => loadGraph(graph, chunkId),
+            load: (graph, chunkId, schemaVersion) => loadGraph(graph, chunkId, schemaVersion),
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)용 임베딩 — firehub-api 활성 provider 에 위임.
             embed: (texts) => apiClient.embed(texts),
           },

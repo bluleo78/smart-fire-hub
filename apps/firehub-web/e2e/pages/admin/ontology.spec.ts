@@ -105,6 +105,71 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(drawer).toContainText('OCCURRED_AT');
   });
 
+  // 5-4: schemaVersion이 현재 온톨로지 버전과 같으면 "적재 시점 스키마 v{N}"만 표시(구버전 강조 없음).
+  test('노드의 schemaVersion이 현재 스키마와 같으면 구버전 표시 없이 버전만 노출된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    const incident1 = graph.nodes.find((n) => n.key === 'incident-1')!; // factory: schemaVersion=1
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(sel: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('tap');
+    }, incident1.key);
+
+    const versionBadge = page.getByTestId('node-schema-version');
+    await expect(versionBadge).toHaveText('적재 시점 스키마 v1');
+    await expect(versionBadge).not.toContainText('구버전');
+  });
+
+  // 5-4: schemaVersion이 없는 노드(스탬프 도입 이전 레거시 적재)는 버전 표시 자체를 생략한다.
+  test('노드에 schemaVersion이 없으면(레거시) 버전 표시가 나타나지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    const incident2 = graph.nodes.find((n) => n.key === 'incident-2')!; // factory: schemaVersion=null
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(sel: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('tap');
+    }, incident2.key);
+
+    await expect(page.getByTestId('node-detail-drawer')).toBeVisible();
+    await expect(page.getByTestId('node-schema-version')).toHaveCount(0);
+  });
+
+  // 5-4: 노드의 schemaVersion이 현재 온톨로지 버전보다 낮으면 구버전 적재임을 강조 표시한다.
+  test('노드의 schemaVersion이 현재 스키마보다 낮으면 구버전 표시가 강조된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema({ schemaVersion: 2 });
+    const graph = createOntologyGraph();
+    const building = graph.nodes.find((n) => n.key === 'building-1')!; // factory: schemaVersion=1 (<2)
+    await mockApi(page, 'GET', '/api/v1/ontology', schema);
+    await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    await page.evaluate((key) => {
+      (window as unknown as { __ontologyCy: { $(sel: string): { emit(e: string): void } } }).__ontologyCy
+        .$(`#${key}`)
+        .emit('tap');
+    }, building.key);
+
+    await expect(page.getByTestId('node-schema-version')).toHaveText('적재 시점 스키마 v1(구버전)');
+  });
+
   test('인스펙터 관계 클릭 시 인접 노드로 이동한다(내비게이션)', async ({
     authenticatedPage: page,
   }) => {

@@ -81,10 +81,11 @@ public class OntologyService {
     return ontologyRepository.findOntology();
   }
 
-  // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds}))와 겹치는
+  // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
   // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
   // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
-  private static final Set<String> RESERVED_PROPERTY_NAMES = Set.of("key", "type", "name", "sourceChunkIds");
+  private static final Set<String> RESERVED_PROPERTY_NAMES =
+      Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion");
 
   // 편집 페이로드 검증 — DB CHECK/UNIQUE 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
   private void validate(UpdateOntologyRequest req) {

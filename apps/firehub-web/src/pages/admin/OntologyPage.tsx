@@ -179,6 +179,7 @@ export default function OntologyPage() {
               nodesByKey={nodesByKey}
               onClose={() => setSelected(null)}
               onNavigate={navigateTo}
+              currentSchemaVersion={schema?.schemaVersion}
             />
           )}
         </div>

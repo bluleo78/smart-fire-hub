@@ -61,14 +61,16 @@ export const ONTOLOGY_GRAPH_NODE_KEYS = {
 
 /** 인스턴스 그래프(GET /api/v1/ontology/graph) 응답 객체 생성 — Incident 2개 + 나머지 타입 각 1개, 총 7노드 */
 export function createOntologyGraph(overrides?: Partial<GraphData>): GraphData {
+  // schemaVersion: incident1=1(현재 스키마와 동일 — 정상 표시), incident2=null(스탬프 도입 이전
+  // 레거시 노드 — 표시 안 함), 나머지는 1(구버전 표시 테스트는 schema override로 별도 구성).
   const nodes: GraphNode[] = [
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.incident1, type: 'Incident', name: '강남구 오피스텔 화재(2026-03-02)', sourceChunkCount: 5 },
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.incident2, type: 'Incident', name: '송파구 아파트 화재(2026-04-11)', sourceChunkCount: 3 },
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.building, type: 'Building', name: '강남타워', sourceChunkCount: 4 },
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.cause, type: 'Cause', name: '전기적 요인(누전)', sourceChunkCount: 2 },
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.damage, type: 'Damage', name: '재산피해 약 3200만원', sourceChunkCount: 2 },
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.equipment, type: 'Equipment', name: '스프링클러설비', sourceChunkCount: 3 },
-    { key: ONTOLOGY_GRAPH_NODE_KEYS.regulation, type: 'Regulation', name: '소방시설법 제9조', sourceChunkCount: 1 },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.incident1, type: 'Incident', name: '강남구 오피스텔 화재(2026-03-02)', sourceChunkCount: 5, schemaVersion: 1 },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.incident2, type: 'Incident', name: '송파구 아파트 화재(2026-04-11)', sourceChunkCount: 3, schemaVersion: null },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.building, type: 'Building', name: '강남타워', sourceChunkCount: 4, schemaVersion: 1 },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.cause, type: 'Cause', name: '전기적 요인(누전)', sourceChunkCount: 2, schemaVersion: 1 },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.damage, type: 'Damage', name: '재산피해 약 3200만원', sourceChunkCount: 2, schemaVersion: 1 },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.equipment, type: 'Equipment', name: '스프링클러설비', sourceChunkCount: 3, schemaVersion: 1 },
+    { key: ONTOLOGY_GRAPH_NODE_KEYS.regulation, type: 'Regulation', name: '소방시설법 제9조', sourceChunkCount: 1, schemaVersion: 1 },
   ];
   const edges = [
     { subjectKey: ONTOLOGY_GRAPH_NODE_KEYS.incident1, type: 'OCCURRED_AT', objectKey: ONTOLOGY_GRAPH_NODE_KEYS.building },

@@ -41,4 +41,19 @@ describe('readWholeGraph', () => {
     expect(g.edges).toEqual([{ subjectKey: 'incident:a', type: 'OCCURRED_AT', objectKey: 'building:b' }]);
     expect(closeMock).toHaveBeenCalled(); // 세션 정리
   });
+
+  // 5-4: schemaVersion이 있는 노드는 number로 변환해 포함하고, 스탬프 도입 이전 레거시 노드(속성
+  // 없음 → null)는 필드 자체를 생략한다 — "0/구버전"과 "값 없음"을 UI가 혼동하지 않게 하는 계약.
+  it('schemaVersion이 있으면 number로 포함하고, 없으면(레거시 노드) 필드를 생략한다', async () => {
+    runMock
+      .mockResolvedValueOnce({ records: [
+        rec({ key: 'incident:a', type: 'Incident', name: '화재A', sourceChunkCount: int(1), schemaVersion: int(3) }),
+        rec({ key: 'legacy:b', type: 'Building', name: '레거시', sourceChunkCount: int(1), schemaVersion: null }),
+      ] })
+      .mockResolvedValueOnce({ records: [] });
+
+    const g = await readWholeGraph();
+    expect(g.nodes[0].schemaVersion).toBe(3);
+    expect(g.nodes[1]).not.toHaveProperty('schemaVersion');
+  });
 });

@@ -12,6 +12,8 @@ interface Props {
   onClose: () => void;
   // 관계 항목 클릭 시 인접 노드로 이동(대상 노드가 그래프에 있을 때만 활성).
   onNavigate?: (key: string) => void;
+  // 현재 온톨로지 schema_version — node.schemaVersion과 비교해 구버전 적재 여부를 표시(5-4).
+  currentSchemaVersion?: number;
 }
 
 // 인스펙터 리사이즈 폭 범위(px) — AI 패널 규약(w-80=320)을 기본값으로 한다.
@@ -21,7 +23,14 @@ const DEFAULT_WIDTH = 320;
 
 // 노드 상세 우측 인스펙터 — 선택 노드의 속성 + 인접 관계(들어오는/나가는 트리플)를 보여준다(읽기 전용).
 // 좌측 엣지 드래그로 폭 조절(AISidePanel 패턴). 관계 항목은 대상 노드로 이동하는 버튼.
-export default function NodeDetailDrawer({ node, edges, nodesByKey, onClose, onNavigate }: Props) {
+export default function NodeDetailDrawer({
+  node,
+  edges,
+  nodesByKey,
+  onClose,
+  onNavigate,
+  currentSchemaVersion,
+}: Props) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   // 드래그 시작점(clientX)과 시작 폭을 보관 — null이면 드래그 중 아님.
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -104,6 +113,21 @@ export default function NodeDetailDrawer({ node, edges, nodesByKey, onClose, onN
         <div className="mb-2 text-sm">{node.name}</div>
         <div className="mb-3 break-all text-xs text-muted-foreground">{node.key}</div>
         <div className="mb-3 text-xs text-muted-foreground">출처 청크 {node.sourceChunkCount}개</div>
+        {/* schemaVersion이 없는 노드(스탬프 도입 이전 레거시 적재)는 아무것도 표시하지 않는다 —
+            "값 없음"을 0이나 구버전으로 오인하지 않기 위함. */}
+        {node.schemaVersion != null && (
+          <div
+            className={
+              currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion
+                ? 'mb-3 text-xs text-destructive'
+                : 'mb-3 text-xs text-muted-foreground'
+            }
+            data-testid="node-schema-version"
+          >
+            적재 시점 스키마 v{node.schemaVersion}
+            {currentSchemaVersion != null && node.schemaVersion < currentSchemaVersion && '(구버전)'}
+          </div>
+        )}
         <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">관계</div>
         <ul className="space-y-1 text-xs">
           {outgoing.map((e, i) => (

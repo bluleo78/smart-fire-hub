@@ -28,9 +28,9 @@ describe('ingestDataset', () => {
     const summary = await ingestDataset(deps, 7, CORE_ONTOLOGY);
 
     expect(deps.extract).toHaveBeenCalledTimes(2);
-    // load는 청크별로 호출되며, remap된 그래프를 받는다.
-    expect(load).toHaveBeenCalledWith(expect.anything(), 10);
-    expect(load).toHaveBeenCalledWith(expect.anything(), 11);
+    // load는 청크별로 호출되며, remap된 그래프와 현재 온톨로지 schemaVersion을 받는다(5-4).
+    expect(load).toHaveBeenCalledWith(expect.anything(), 10, CORE_ONTOLOGY.schemaVersion);
+    expect(load).toHaveBeenCalledWith(expect.anything(), 11, CORE_ONTOLOGY.schemaVersion);
     expect(mockEmbed).toHaveBeenCalled();
 
     // 청크 간 동일 엔티티(A, B)가 중복 추출되었으므로 distinct canonical 엔티티는 2개, 관계는 1개.
