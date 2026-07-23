@@ -39,7 +39,9 @@ export async function closeDriver(): Promise<void> {
 
 // ── 온톨로지 시각화용 전체 그래프 읽기 (읽기 전용) ──
 // 시각화 노드/엣지 형태. sourceChunkIds 배열 대신 개수만 노출(뷰에 충분·페이로드 축소).
-export interface GraphNode { key: string; type: string; name: string; sourceChunkCount: number; }
+// schemaVersion: 적재 당시 온톨로지 스키마 버전(5-4). 스탬프 도입 이전에 적재된 레거시 노드는
+// 속성 자체가 없어 undefined — "값 없음"과 "구버전(0)"을 혼동하지 않도록 optional로 둔다.
+export interface GraphNode { key: string; type: string; name: string; sourceChunkCount: number; schemaVersion?: number; }
 export interface GraphEdge { subjectKey: string; type: string; objectKey: string; }
 export interface WholeGraph { nodes: GraphNode[]; edges: GraphEdge[]; }
 
@@ -50,15 +52,20 @@ export async function readWholeGraph(): Promise<WholeGraph> {
   try {
     const nodeRes = await session.run(
       'MATCH (n:Entity) RETURN n.key AS key, n.type AS type, n.name AS name, ' +
-      'size(coalesce(n.sourceChunkIds, [])) AS sourceChunkCount',
+      'size(coalesce(n.sourceChunkIds, [])) AS sourceChunkCount, n.schemaVersion AS schemaVersion',
     );
     const edgeRes = await session.run(
       'MATCH (a:Entity)-[r:REL]->(b:Entity) RETURN a.key AS subjectKey, r.type AS type, b.key AS objectKey',
     );
-    const nodes: GraphNode[] = nodeRes.records.map((r) => ({
-      key: r.get('key'), type: r.get('type'), name: r.get('name'),
-      sourceChunkCount: r.get('sourceChunkCount').toNumber(), // neo4j Integer → JS number
-    }));
+    const nodes: GraphNode[] = nodeRes.records.map((r) => {
+      const schemaVersion = r.get('schemaVersion');
+      return {
+        key: r.get('key'), type: r.get('type'), name: r.get('name'),
+        sourceChunkCount: r.get('sourceChunkCount').toNumber(), // neo4j Integer → JS number
+        // 레거시 노드는 속성이 없어 schemaVersion이 null → undefined로 정규화(0/구버전과 구분).
+        ...(schemaVersion != null ? { schemaVersion: schemaVersion.toNumber() } : {}),
+      };
+    });
     const edges: GraphEdge[] = edgeRes.records.map((r) => ({
       subjectKey: r.get('subjectKey'), type: r.get('type'), objectKey: r.get('objectKey'),
     }));

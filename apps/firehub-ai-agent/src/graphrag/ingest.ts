@@ -11,7 +11,9 @@ import { buildCanonicalMap, applyCanonicalMap, EmbedFn } from './semantic-resolv
 export interface IngestDeps {
   listChunks(datasetId: number): Promise<{ chunkId: number; content: string }[]>;
   extract(text: string): Promise<ExtractionResult>;
-  load(graph: ResolvedGraph, chunkId: number): Promise<{ nodes: number; relations: number }>;
+  load(
+    graph: ResolvedGraph, chunkId: number, schemaVersion: number,
+  ): Promise<{ nodes: number; relations: number }>;
   embed: EmbedFn;
 }
 export interface IngestSummary {
@@ -48,7 +50,7 @@ export async function ingestDataset(
   const distinctRelKeys = new Set<string>();
   for (const { chunkId, graph } of perChunk) {
     const remapped = applyCanonicalMap(graph, canonicalMap);
-    await deps.load(remapped, chunkId);
+    await deps.load(remapped, chunkId, ontology.schemaVersion);
     for (const e of remapped.entities) distinctEntityKeys.add(e.key);
     for (const r of remapped.relations) distinctRelKeys.add(`${r.subjectKey}|${r.type}|${r.objectKey}`);
   }

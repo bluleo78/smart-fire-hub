@@ -58,19 +58,23 @@ class OntologyServiceTest {
 
   // getGraph()의 다중 단어 camelCase 필드(sourceChunkCount, subjectKey, objectKey)가
   // Jackson 역직렬화 시 이름 불일치 없이 정확히 매핑되는지 검증한다.
+  // schemaVersion(5-4)은 두 노드로 있음/없음(레거시) 두 경로를 모두 확인한다.
   @Test
   void getGraph_는_노드와_엣지의_camelCase_필드를_정확히_역직렬화한다() {
     server.enqueue(
         new MockResponse()
             .setHeader("Content-Type", "application/json")
             .setBody(
-                "{\"nodes\":[{\"key\":\"n1\",\"type\":\"Incident\",\"name\":\"화재\",\"sourceChunkCount\":3}],"
+                "{\"nodes\":[{\"key\":\"n1\",\"type\":\"Incident\",\"name\":\"화재\",\"sourceChunkCount\":3,\"schemaVersion\":2},"
+                    + "{\"key\":\"n2\",\"type\":\"Cause\",\"name\":\"누전\",\"sourceChunkCount\":1}],"
                     + "\"edges\":[{\"subjectKey\":\"n1\",\"type\":\"CAUSED_BY\",\"objectKey\":\"n2\"}]}"));
     GraphResponse res = service.getGraph();
     assertThat(res.nodes().get(0).sourceChunkCount()).isEqualTo(3);
     assertThat(res.nodes().get(0).key()).isEqualTo("n1");
     assertThat(res.nodes().get(0).type()).isEqualTo("Incident");
     assertThat(res.nodes().get(0).name()).isEqualTo("화재");
+    assertThat(res.nodes().get(0).schemaVersion()).isEqualTo(2);
+    assertThat(res.nodes().get(1).schemaVersion()).isNull(); // schemaVersion 미포함 응답 → 레거시 노드
     assertThat(res.edges().get(0).subjectKey()).isEqualTo("n1");
     assertThat(res.edges().get(0).type()).isEqualTo("CAUSED_BY");
     assertThat(res.edges().get(0).objectKey()).isEqualTo("n2");

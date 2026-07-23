@@ -32,9 +32,9 @@ afterAll(async () => { await closeDriver(); });
 
 describe('loadGraph (integration)', () => {
   it('두 번 적재해도 노드/관계 수가 불변이다(멱등)', async () => {
-    await loadGraph(graph, 101);
+    await loadGraph(graph, 101, 1);
     const n1 = await count('Entity'), r1 = await count('REL');
-    await loadGraph(graph, 101);
+    await loadGraph(graph, 101, 1);
     expect(await count('Entity')).toBe(n1);
     expect(await count('REL')).toBe(r1);
     expect(n1).toBe(2);

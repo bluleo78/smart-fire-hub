@@ -27,7 +27,7 @@ interface OntologyEditDialogProps {
 
 // Neo4j 노드 예약 필드(loader.ts 모델) — 속성명으로 쓰면 적재 시 노드 정체성 필드가 깨진다.
 // api OntologyService.RESERVED_PROPERTY_NAMES와 동일한 목록(서비스 경계상 공유 불가, 수동 동기화).
-const RESERVED_PROPERTY_NAMES = new Set(['key', 'type', 'name', 'sourceChunkIds']);
+const RESERVED_PROPERTY_NAMES = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion']);
 const DATA_TYPES: Array<'text' | 'number' | 'date'> = ['text', 'number', 'date'];
 
 /**
@@ -236,7 +236,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                 </Select>
               </div>
 
-              {/* 속성(property) CRUD — 이름이 예약어(key/type/name/sourceChunkIds)와 겹치면 즉시 에러 표시 */}
+              {/* 속성(property) CRUD — 이름이 예약어(key/type/name/sourceChunkIds/schemaVersion)와 겹치면 즉시 에러 표시 */}
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
                   <Label>속성</Label>
@@ -307,7 +307,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                       />
                       {reserved && (
                         <p className="text-xs text-destructive">
-                          예약어는 속성명으로 쓸 수 없습니다: key, type, name, sourceChunkIds
+                          예약어는 속성명으로 쓸 수 없습니다: key, type, name, sourceChunkIds, schemaVersion
                         </p>
                       )}
                     </div>

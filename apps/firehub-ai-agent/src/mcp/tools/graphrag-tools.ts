@@ -38,7 +38,7 @@ export function registerGraphragTools(
           {
             listChunks: (id) => apiClient.listDocumentChunks(id),
             extract: (text) => extractGraph(text, { complete, ontology }),
-            load: (graph, chunkId) => loadGraph(graph, chunkId),
+            load: (graph, chunkId, schemaVersion) => loadGraph(graph, chunkId, schemaVersion),
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)에 쓰이는 bge-m3 임베딩 클라이언트.
             embed: (texts) => embedTexts(texts),
           },

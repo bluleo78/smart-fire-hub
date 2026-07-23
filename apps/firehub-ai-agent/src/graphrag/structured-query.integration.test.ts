@@ -21,7 +21,7 @@ beforeAll(async () => {
   await bootstrapConstraints();
   const s = getSession();
   try { await s.run('MATCH (n:Entity) DETACH DELETE n'); } finally { await s.close(); } // 테스트 격리
-  await loadGraph(graph, 777);
+  await loadGraph(graph, 777, 1);
 });
 afterAll(async () => { await closeDriver(); });
 
