@@ -78,7 +78,7 @@ describe('buildCanonicalMap', () => {
       .toBe(map.get(entityKey('Equipment', '스프링클러 설비'))?.key);
   });
 
-  it('근접쌍(코사인 0.5~0.78)에서 link 가 true 를 반환하면 병합한다', async () => {
+  it('근접쌍(코사인 0.5~0.78)에서 link 가 same:true 를 반환해도 recordPending 미주입 시에는 그냥 호출만 되고 병합하지 않는다(HITL)', async () => {
     // 코사인 유사도 계산: dot(a,b)/(|a||b|). [1,0,0] vs [0.6,0.6,0] → 0.6/(1*0.849) ≈ 0.707 (0.5~0.78 구간).
     const entities: ResolvedEntity[] = [
       { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
@@ -86,22 +86,22 @@ describe('buildCanonicalMap', () => {
     ];
     const embed: EmbedFn = async (texts) => texts.map((t) =>
       (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
-    const link = vi.fn().mockResolvedValue(true);
+    const link = vi.fn().mockResolvedValue({ same: true, rationale: '동일 원인' });
     const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
 
     expect(link).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause');
     expect(map.get(entityKey('Cause', '전기적 요인'))?.key)
-      .toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+      .not.toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
   });
 
-  it('근접쌍에서 link 가 false 를 반환하면 병합하지 않는다', async () => {
+  it('근접쌍에서 link 가 same:false 를 반환하면 병합하지 않는다', async () => {
     const entities: ResolvedEntity[] = [
       { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
       { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
     ];
     const embed: EmbedFn = async (texts) => texts.map((t) =>
       (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
-    const link = vi.fn().mockResolvedValue(false);
+    const link = vi.fn().mockResolvedValue({ same: false, rationale: '' });
     const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
 
     expect(map.get(entityKey('Cause', '전기적 요인'))?.key)
@@ -115,7 +115,7 @@ describe('buildCanonicalMap', () => {
       { key: entityKey('Cause', '누수'), type: 'Cause', name: '누수' },
     ];
     const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0, 1, 0]));
-    const link = vi.fn().mockResolvedValue(true);
+    const link = vi.fn().mockResolvedValue({ same: true, rationale: '' });
     await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
 
     expect(link).not.toHaveBeenCalled();
@@ -126,7 +126,7 @@ describe('buildCanonicalMap', () => {
       { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
       { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
     ];
-    const link = vi.fn().mockResolvedValue(false);
+    const link = vi.fn().mockResolvedValue({ same: false, rationale: '' });
     const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
 
     expect(link).not.toHaveBeenCalled();
@@ -145,6 +145,75 @@ describe('buildCanonicalMap', () => {
 
     expect(map.get(entityKey('Cause', '전기적 요인'))?.key)
       .not.toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+  });
+
+  it('lookupDecision이 approved를 반환하면 link를 호출하지 않고 바로 병합한다', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn();
+    const lookupDecision = vi.fn().mockResolvedValue('approved');
+    const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link, lookupDecision);
+
+    expect(link).not.toHaveBeenCalled();
+    expect(map.get(entityKey('Cause', '전기적 요인'))?.key).toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+  });
+
+  it('lookupDecision이 rejected를 반환하면 link를 호출하지 않고 병합하지 않는다', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn();
+    const lookupDecision = vi.fn().mockResolvedValue('rejected');
+    const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link, lookupDecision);
+
+    expect(link).not.toHaveBeenCalled();
+    expect(map.get(entityKey('Cause', '전기적 요인'))?.key).not.toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+  });
+
+  it('결정이 없고(undefined) link가 same:true를 반환해도 union하지 않고 recordPending만 호출한다(HITL 보류)', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn().mockResolvedValue({ same: true, rationale: '동의어로 보임' });
+    const lookupDecision = vi.fn().mockResolvedValue(undefined);
+    const recordPending = vi.fn().mockResolvedValue(undefined);
+    const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link, lookupDecision, recordPending);
+
+    expect(map.get(entityKey('Cause', '전기적 요인'))?.key).not.toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+    expect(recordPending).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause', expect.any(Number), '동의어로 보임');
+  });
+
+  it('link가 same:false를 반환하면 recordPending을 호출하지 않는다', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn().mockResolvedValue({ same: false, rationale: '' });
+    const recordPending = vi.fn();
+    await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link, undefined, recordPending);
+
+    expect(recordPending).not.toHaveBeenCalled();
+  });
+
+  it('lookupDecision이 실패(reject)해도 LLM 호출로 폴백한다', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn().mockResolvedValue({ same: false, rationale: '' });
+    const lookupDecision = vi.fn().mockRejectedValue(new Error('network error'));
+    await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link, lookupDecision);
+
+    expect(link).toHaveBeenCalled();
   });
 });
 

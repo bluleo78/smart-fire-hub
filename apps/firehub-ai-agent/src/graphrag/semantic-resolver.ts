@@ -8,6 +8,12 @@ import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
 import { cosineSimilarity } from './embedding.js';
 import { LinkFn } from './semantic-link.js';
 
+// 근접쌍 기존 결정 조회 — approved면 union, rejected면 스킵(둘 다 LLM 미호출). 결정 없으면(undefined) 기존처럼 LLM 호출.
+// 조회 자체가 실패(네트워크 등)해도 undefined로 취급해 LLM 호출로 폴백한다(clusterNames 내부에서 try/catch).
+export type LookupFn = (nameA: string, nameB: string, entityType: EntityType) => Promise<'approved' | 'rejected' | undefined>;
+// LLM이 "같다"고 판정한 근접쌍을 검수 대기열에 등록한다. 실패해도 ingest를 막지 않는다(clusterNames 내부에서 try/catch).
+export type RecordFn = (nameA: string, nameB: string, entityType: EntityType, similarity: number, rationale: string) => Promise<void>;
+
 // bge-m3 실측 검증값: 변형 표기(동의어) ≥0.78, 서로 다른 엔티티는 ≤0.755로 명확히 분리됨.
 // ⚠️ 임베딩 provider가 바뀌면(예: OLLAMA→OPENAI) 이 값을 재측정해야 한다 — 아래 NEAR_MISS_LOW도 동일.
 export const MERGE_THRESHOLD = 0.78;
@@ -22,13 +28,18 @@ const NEAR_MISS_LOW = 0.5;
 export interface EmbedFn { (texts: string[]): Promise<number[][]>; }
 
 // 이름들 사이에서 union-find로 유사도 클러스터를 찾는다.
-// link가 주입되면 코사인이 [NEAR_MISS_LOW, threshold) 구간인 쌍만 LLM 재판단 후 병합 여부를 결정한다.
+// link가 주입되면 코사인이 [NEAR_MISS_LOW, threshold) 구간인 쌍만 근접쌍 처리 대상이 된다.
+// HITL: lookupDecision으로 기존 결정을 먼저 확인 → approved만 union, rejected는 스킵.
+// 결정이 없으면 link(LLM)를 호출하되, same=true여도 union하지 않고 recordPending으로 대기열에만 등록한다
+// (사람 승인 전까지 그래프 반영 보류 — 병합 오류가 병합 누락보다 위험하다는 판단).
 async function clusterNames(
   names: string[],
   vectors: number[][],
   threshold: number,
   entityType: EntityType,
   link?: LinkFn,
+  lookupDecision?: LookupFn,
+  recordPending?: RecordFn,
 ): Promise<string[][]> {
   const parent = names.map((_, i) => i);
   function find(i: number): number {
@@ -45,8 +56,29 @@ async function clusterNames(
       if (sim >= threshold) {
         union(i, j);
       } else if (link && sim >= NEAR_MISS_LOW && find(i) !== find(j)) {
-        // eslint-disable-next-line no-await-in-loop -- 근접쌍은 대개 소수라 순차 호출로 충분하다.
-        if (await link(names[i], names[j], entityType)) union(i, j);
+        let decision: 'approved' | 'rejected' | undefined;
+        if (lookupDecision) {
+          try {
+            decision = await lookupDecision(names[i], names[j], entityType);
+          } catch {
+            decision = undefined; // 조회 실패 → LLM 호출로 폴백.
+          }
+        }
+        if (decision === 'approved') {
+          union(i, j);
+        } else if (decision === 'rejected') {
+          // 스킵 — LLM 미호출, union 안 함.
+        } else {
+          const verdict = await link(names[i], names[j], entityType);
+          if (verdict.same && recordPending) {
+            try {
+              await recordPending(names[i], names[j], entityType, sim, verdict.rationale);
+            } catch (err) {
+              console.warn('[semantic-resolver] 근접쌍 대기열 등록 실패(무시하고 계속):', err);
+            }
+          }
+          // verdict.same이어도 union하지 않는다 — 사람 승인 전까지 병합 보류(HITL).
+        }
       }
     }
   }
@@ -61,7 +93,8 @@ async function clusterNames(
 }
 
 // 클러스터 내 canonical 이름 선택: 가장 긴 이름 우선, 길이가 같으면 사전순으로 가장 앞선 것.
-function pickCanonicalName(names: string[]): string {
+// synonym-merge.ts의 HITL 승인 병합 keeper 선정도 이 규칙을 그대로 재사용한다(규칙 불일치 시 승인 병합이 재적재 때 되돌아감).
+export function pickCanonicalName(names: string[]): string {
   return [...names].sort((a, b) => (b.length - a.length) || a.localeCompare(b))[0];
 }
 
@@ -73,6 +106,8 @@ export async function buildCanonicalMap(
   ontology: Ontology,
   threshold: number = MERGE_THRESHOLD,
   link?: LinkFn,
+  lookupDecision?: LookupFn,
+  recordPending?: RecordFn,
 ): Promise<Map<string, ResolvedEntity>> {
   // key 기준 dedupe(같은 엔티티가 여러 청크에서 중복 등장 가능).
   const distinct = new Map<string, ResolvedEntity>();
@@ -97,7 +132,7 @@ export async function buildCanonicalMap(
 
     const names = list.map((e) => e.name);
     const vectors = await embed(names);
-    const clusters = await clusterNames(names, vectors, threshold, type, link);
+    const clusters = await clusterNames(names, vectors, threshold, type, link, lookupDecision, recordPending);
 
     for (const clusterNames_ of clusters) {
       const canonicalName = pickCanonicalName(clusterNames_);

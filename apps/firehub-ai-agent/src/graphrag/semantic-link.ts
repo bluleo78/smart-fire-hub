@@ -1,6 +1,8 @@
 // 임베딩 임계값(0.78) 미달이지만 완전히 무관하지는 않은 근접쌍(0.5~0.78)을 LLM으로 재판단해
 // 표기 변형을 넘어선 의미적 동의어(예: "전기적 요인" ↔ "분전반의 누전")를 병합 후보로 승격한다.
 // judge.ts와 동일하게 CLI 기반 CompleteFn을 감싼다.
+// HITL(사람 검수) 도입으로 same=true 판정도 즉시 병합하지 않고 rationale과 함께 대기열에 등록만 한다 —
+// 반환 타입이 boolean → {same, rationale}로 확장된 이유.
 import type { CompleteFn } from './llm-cli.js';
 import type { EntityType } from './ontology.js';
 
@@ -18,35 +20,34 @@ export function buildLinkPrompt(nameA: string, nameB: string, entityType: Entity
 \`\`\``;
 }
 
-// JSON 코드블록을 파싱. 실패 시 false(병합 안 함)로 안전 폴백 —
+export interface LinkVerdict { same: boolean; rationale: string; }
+
+// JSON 코드블록을 파싱. 실패 시 same=false(병합 안 함)로 안전 폴백 —
 // 잘못된 병합(서로 다른 엔티티를 하나로 합침)이 병합 누락보다 더 나쁜 실패라서 보수적으로 간다.
-export function parseLinkVerdict(text: string): boolean {
+export function parseLinkVerdict(text: string): LinkVerdict {
   const m = text.match(/```json\s*([\s\S]*?)```/);
   const raw = m ? m[1] : text;
   try {
     const o = JSON.parse(raw.trim());
-    return o.same === true;
+    return { same: o.same === true, rationale: typeof o.rationale === 'string' ? o.rationale : '' };
   } catch {
-    return false;
+    return { same: false, rationale: '' };
   }
 }
 
-export type LinkFn = (nameA: string, nameB: string, entityType: EntityType) => Promise<boolean>;
+export type LinkFn = (nameA: string, nameB: string, entityType: EntityType) => Promise<LinkVerdict>;
 
 export async function link(
   complete: CompleteFn,
   nameA: string,
   nameB: string,
   entityType: EntityType,
-): Promise<boolean> {
+): Promise<LinkVerdict> {
   try {
-    // complete()는 userText를 CLI stdin으로 전달하며 빈 문자열은 CLI가 거부한다
-    // (judge.ts에서 실측된 버그 클래스) — nameA(항상 비어있지 않음)를 그대로 전달한다.
     return parseLinkVerdict(
       await complete(buildLinkPrompt(nameA, nameB, entityType), nameA),
     );
   } catch {
-    // LLM 호출 자체 실패(CLI 에러 등) — 이 쌍만 병합 안 함으로 처리하고 나머지는 계속 진행.
-    return false;
+    return { same: false, rationale: '' };
   }
 }

@@ -45,6 +45,7 @@ const ExecutionDetailPage = lazy(() => import('./pages/ai-insights/ExecutionDeta
 const ReportViewerPage = lazy(() => import('./pages/ai-insights/ReportViewerPage'));
 const ChannelsPage = lazy(() => import('./pages/settings/ChannelsPage'));
 const OntologyPage = lazy(() => import('./pages/admin/OntologyPage'));
+const SynonymReviewPage = lazy(() => import('./pages/graphrag/SynonymReviewPage'));
 
 function PageSkeleton() {
   return (
@@ -98,6 +99,7 @@ function App() {
               {/* 지식그래프 — admin 게이팅 밖(인증만 필요). view 파라미터로 그래프 탐색(explore)/지식 모델(model) 뷰를 전환. */}
               <Route path="/knowledge-graph" element={<Navigate to="/knowledge-graph/explore" replace />} />
               <Route path="/knowledge-graph/:view" element={<OntologyPage />} />
+              <Route path="/knowledge-graph/synonym-review" element={<SynonymReviewPage />} />
               {/* 구 URL 하위호환 — AdminRoute 밖에 둬야 비관리자 북마크도 리다이렉트된다(안 그러면 /로 튕김). */}
               <Route path="/admin/ontology" element={<Navigate to="/knowledge-graph/explore" replace />} />
               <Route element={<AdminRoute />}>

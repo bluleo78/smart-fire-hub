@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   BarChart3,
   Boxes,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ChevronsLeft,
@@ -94,6 +95,7 @@ const aiInsightsNavItems: NavItem[] = [
 const knowledgeGraphNavItems: NavItem[] = [
   { label: '그래프 탐색', href: '/knowledge-graph/explore', icon: Network },
   { label: '지식 모델', href: '/knowledge-graph/model', icon: Boxes },
+  { label: '동의어 검수', href: '/knowledge-graph/synonym-review', icon: CheckCircle2 },
 ];
 
 const adminNavItems: NavItem[] = [

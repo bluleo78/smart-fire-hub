@@ -56,7 +56,7 @@ describe('ingestDataset', () => {
 
   it('IngestDeps.link 가 주어지면 buildCanonicalMap 에 전달된다', async () => {
     const load = vi.fn().mockResolvedValue({ nodes: 1, relations: 0 });
-    const link = vi.fn().mockResolvedValue(false);
+    const link = vi.fn().mockResolvedValue({ same: false, rationale: '' });
     const deps: IngestDeps = {
       listChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'c1' }]),
       extract: vi.fn().mockResolvedValue({
@@ -75,5 +75,24 @@ describe('ingestDataset', () => {
     await ingestDataset(deps, 9, CORE_ONTOLOGY);
 
     expect(link).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause');
+  });
+
+  it('deps.lookupDecision/recordPending을 buildCanonicalMap에 전달한다', async () => {
+    const lookupDecision = vi.fn().mockResolvedValue(undefined);
+    const recordPending = vi.fn().mockResolvedValue(undefined);
+    const link = vi.fn().mockResolvedValue({ same: false, rationale: '' });
+    const deps: IngestDeps = {
+      listChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'x' }]),
+      extract: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
+      load: vi.fn().mockResolvedValue({ nodes: 0, relations: 0 }),
+      embed: vi.fn().mockResolvedValue([]),
+      link,
+      lookupDecision,
+      recordPending,
+    };
+    await ingestDataset(deps, 1, CORE_ONTOLOGY);
+    // 근접쌍이 없는(엔티티 0개) 케이스라 lookupDecision/recordPending이 호출되지 않을 수 있다 —
+    // 이 테스트는 buildCanonicalMap 호출 자체에 deps가 실려가는지(타입 오류 없이 통과하는지)만 확인한다.
+    expect(deps.load).toHaveBeenCalled();
   });
 });

@@ -54,13 +54,14 @@ import {
   type DatasetSearchHit,
 } from './api-client/dataset-search-api.js';
 import { createGraphSourceApi, type ChunkContent } from './api-client/graph-source-api.js';
+import { createSynonymApi } from './api-client/synonym-api.js';
 import {
   createFileObjectApi,
   type ObjectItem,
   type ObjectListResponse,
   type PresignedUrlResponse,
 } from './api-client/file-object-api.js';
-import type { SerializedOntology } from '../graphrag/ontology.js';
+import type { SerializedOntology, EntityType } from '../graphrag/ontology.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
@@ -84,6 +85,7 @@ export class FireHubApiClient {
   private _document: ReturnType<typeof createDocumentApi>;
   private _datasetSearch: ReturnType<typeof createDatasetSearchApi>;
   private _graphSource: ReturnType<typeof createGraphSourceApi>;
+  private _synonym: ReturnType<typeof createSynonymApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
@@ -140,6 +142,7 @@ export class FireHubApiClient {
     this._document = createDocumentApi(this.client);
     this._datasetSearch = createDatasetSearchApi(this.client);
     this._graphSource = createGraphSourceApi(this.client);
+    this._synonym = createSynonymApi(this.client);
     this._fileObject = createFileObjectApi(this.client);
   }
 
@@ -659,6 +662,16 @@ export class FireHubApiClient {
   /** GraphRAG 추출용 — datasetId의 문서 청크 전체를 가져온다. */
   listDocumentChunks(datasetId: number): Promise<ChunkContent[]> {
     return this._graphSource.listDocumentChunks(datasetId);
+  }
+
+  /** HITL 근접쌍 기존 결정 조회 — 결정 없으면 undefined. */
+  lookupSynonymDecision(entityType: EntityType, nameA: string, nameB: string): Promise<'approved' | 'rejected' | undefined> {
+    return this._synonym.lookupSynonymDecision(entityType, nameA, nameB);
+  }
+
+  /** LLM이 "같다"고 판정한 근접쌍을 HITL 검수 대기열에 등록한다. */
+  recordPendingSynonym(entityType: EntityType, nameA: string, nameB: string, similarity: number, rationale: string): Promise<void> {
+    return this._synonym.recordPendingSynonym(entityType, nameA, nameB, similarity, rationale);
   }
 
   listSmartJobs() {

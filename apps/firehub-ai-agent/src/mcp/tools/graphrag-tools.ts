@@ -43,6 +43,10 @@ export function registerGraphragTools(
             embed: (texts) => apiClient.embed(texts),
             // 임베딩 임계값 미달 근접쌍(코사인 0.5~0.78)을 LLM으로 재판단해 의미적 동의어를 추가 병합.
             link: (a, b, type) => semanticLink(complete, a, b, type),
+            // HITL: 근접쌍 기존 결정 조회 + LLM "같다" 판정을 대기열에 등록.
+            lookupDecision: (a, b, type) => apiClient.lookupSynonymDecision(type, a, b),
+            recordPending: (a, b, type, similarity, rationale) =>
+              apiClient.recordPendingSynonym(type, a, b, similarity, rationale),
           },
           args.datasetId,
           ontology,
