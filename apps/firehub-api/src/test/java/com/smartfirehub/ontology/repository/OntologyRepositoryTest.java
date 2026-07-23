@@ -224,6 +224,40 @@ class OntologyRepositoryTest extends IntegrationTestBase {
     assertThat(res.relations()).hasSize(original.relations().size() - (int) damageRefs);
   }
 
+  // (5-5) DB 레벨 타입 리네임: entity_type_id가 이름이 아닌 Long 서로게이트 FK이므로, 카드의 type
+  // 문자열만 바꿔 PUT하면 리포지토리 변경 없이 그대로 반영된다(속성 보존 확인 — Neo4j 마이그레이션은
+  // OntologyServiceTest가 별도로 검증하는 상위 레이어 관심사).
+  @Test
+  void updateOntology_는_타입_이름을_변경해도_속성과_참조_관계를_보존한다() {
+    var cause = original.entities().stream().filter(e -> e.type().equals("Cause")).findFirst().orElseThrow();
+    var renamed =
+        new OntologyResponse.EntityType(
+            "RootCause", cause.description(), cause.naming(), cause.resolution(), cause.properties());
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.set(entities.indexOf(cause), renamed);
+
+    List<OntologyResponse.Triple> relations =
+        original.relations().stream()
+            .map(
+                r ->
+                    new OntologyResponse.Triple(
+                        r.subject().equals("Cause") ? "RootCause" : r.subject(),
+                        r.relation(),
+                        r.object().equals("Cause") ? "RootCause" : r.object(),
+                        r.description()))
+            .toList();
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, entities, relations);
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    assertThat(res.entities()).extracting(OntologyResponse.EntityType::type).doesNotContain("Cause").contains("RootCause");
+    var rootCause =
+        res.entities().stream().filter(e -> e.type().equals("RootCause")).findFirst().orElseThrow();
+    assertThat(rootCause.properties()).isEqualTo(cause.properties());
+    assertThat(res.relations()).extracting(OntologyResponse.Triple::object).contains("RootCause").doesNotContain("Cause");
+  }
+
   // (f) stale 시드 시나리오: dataset_graph_ingest에 현재 버전(1)으로 적재 이력을 남긴 뒤 온톨로지를
   // 편집(버전 2)하면, 해당 데이터셋이 GraphIngestRepository.findStale(2)에 나타나야 한다(그래프 재적재 필요 신호).
   @Test

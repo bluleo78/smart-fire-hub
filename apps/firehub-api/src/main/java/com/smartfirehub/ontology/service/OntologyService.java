@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -19,9 +20,10 @@ import org.springframework.web.reactive.function.client.WebClientException;
 
 // 온톨로지 스키마는 api DB 단일 소유(OntologyRepository), 전체 그래프(/graph)는 ai-agent(Neo4j) 프록시.
 // B-2a 소스 플립: 과거 getOntology 프록시를 DB 읽기로 교체했다(getGraph 는 프록시 유지).
+@Slf4j
 @Service
 public class OntologyService {
-  // ai-agent 무응답 시 서블릿 스레드 고갈 방지용 블로킹 타임아웃(getGraph 프록시 전용).
+  // ai-agent 무응답 시 서블릿 스레드 고갈 방지용 블로킹 타임아웃(getGraph 프록시·리네임 마이그레이션 공용).
   private static final Duration BLOCK_TIMEOUT = Duration.ofSeconds(40);
 
   private final WebClient webClient;
@@ -57,6 +59,28 @@ public class OntologyService {
     validate(req);
     int newVersion = ontologyRepository.updateOntology(req);
 
+    // 5-5: 타입 리네임 — DB 커밋(위)은 이미 완료된 소스오브트루스. Neo4j 노드 key/type은 같은 요청
+    // 안에서 동기적으로 마이그레이션을 시도하되(즉시 일관성), Postgres/Neo4j는 별개 저장소라 진짜
+    // 2PC는 불가능하므로 best-effort로 처리한다 — 실패해도 전체 응답은 성공 처리한다. 실패한 타입의
+    // 데이터셋은 schema_version 불일치로 기존 stale 판정(dataset_graph_ingest)에 자연히 걸려
+    // 재적재(graphrag_ingest)가 새 타입명 기준 조회는 복구한다(5-4 인프라가 안전망) — 다만 old-type
+    // 노드 자체는 재적재로 자동 삭제되지 않고 고아로 남을 수 있어 완전한 정리는 아니다.
+    for (var rename : req.renames()) {
+      try {
+        webClient
+            .post()
+            .uri("/agent/graph/rename-type")
+            .bodyValue(new RenameTypeBody(rename.from(), rename.to()))
+            .retrieve()
+            .bodyToMono(Void.class)
+            .block(BLOCK_TIMEOUT);
+      } catch (WebClientException e) {
+        log.warn(
+            "타입 리네임 Neo4j 마이그레이션 실패(무시하고 계속, DB는 이미 커밋됨): {} → {}: {}",
+            rename.from(), rename.to(), e.getMessage());
+      }
+    }
+
     // 감사 로그 — 현재 인증 사용자(principal=Long userId). username은 best-effort 조회.
     var auth = SecurityContextHolder.getContext().getAuthentication();
     if (auth != null && auth.getPrincipal() instanceof Long userId) {
@@ -80,6 +104,9 @@ public class OntologyService {
 
     return ontologyRepository.findOntology();
   }
+
+  // ai-agent POST /agent/graph/rename-type 요청 바디(oldType/newType — TypeRename의 from/to와 필드명 다름).
+  private record RenameTypeBody(String oldType, String newType) {}
 
   // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
   // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
@@ -143,6 +170,29 @@ public class OntologyService {
       String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
       if (!seenTriples.add(tripleKey)) {
         throw new IllegalArgumentException("중복된 관계: " + tripleKey);
+      }
+    }
+
+    // 타입 리네임(5-5) 무결성 — to는 최종 entities에 실존해야 하고, from은 리네임돼 사라졌어야 하므로
+    // 최종 entities에 존재하면 안 된다(잘못된 rename 의도가 Neo4j 마이그레이션으로 새는 것을 방지).
+    Set<String> seenFroms = new HashSet<>();
+    for (var rename : req.renames()) {
+      if (rename.from() == null || rename.from().isBlank() || rename.to() == null || rename.to().isBlank()) {
+        throw new IllegalArgumentException("타입 리네임의 from/to는 비어 있을 수 없습니다.");
+      }
+      if (rename.from().equals(rename.to())) {
+        throw new IllegalArgumentException("타입 리네임의 from과 to가 동일합니다: " + rename.from());
+      }
+      if (!seenTypes.contains(rename.to())) {
+        throw new IllegalArgumentException(
+            "타입 리네임의 to가 최종 엔티티 타입에 없습니다: " + rename.to() + " (from " + rename.from() + ")");
+      }
+      if (seenTypes.contains(rename.from())) {
+        throw new IllegalArgumentException(
+            "타입 리네임의 from이 여전히 엔티티 타입으로 남아 있습니다: " + rename.from());
+      }
+      if (!seenFroms.add(rename.from())) {
+        throw new IllegalArgumentException("중복된 타입 리네임(from): " + rename.from());
       }
     }
   }

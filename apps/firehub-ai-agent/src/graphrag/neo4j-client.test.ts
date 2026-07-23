@@ -14,7 +14,7 @@ vi.mock('neo4j-driver', () => ({
   },
 }));
 
-import { readWholeGraph } from './neo4j-client.js';
+import { readWholeGraph, renameEntityType } from './neo4j-client.js';
 
 // neo4j Integer 흉내 — toNumber() 제공.
 const int = (n: number) => ({ toNumber: () => n });
@@ -55,5 +55,26 @@ describe('readWholeGraph', () => {
     const g = await readWholeGraph();
     expect(g.nodes[0].schemaVersion).toBe(3);
     expect(g.nodes[1]).not.toHaveProperty('schemaVersion');
+  });
+});
+
+// 5-5: 타입 리네임 — key 접두어("<oldType>:")를 고정 길이만큼 잘라 newType으로 치환하고 type도 갱신한다.
+describe('renameEntityType', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('MATCH·SET에 oldType/newType 파라미터를 전달하고 마이그레이션된 노드 수를 반환한다', async () => {
+    runMock.mockResolvedValueOnce({ records: [rec({ migrated: int(3) })] });
+
+    const migrated = await renameEntityType('Cause', 'RootCause');
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.stringContaining('MATCH (n:Entity {type: $oldType})'),
+      { oldType: 'Cause', newType: 'RootCause' },
+    );
+    const [cypher] = runMock.mock.calls[0];
+    expect(cypher).toContain('SET n.key = $newType');
+    expect(cypher).toContain('n.type = $newType');
+    expect(migrated).toBe(3);
+    expect(closeMock).toHaveBeenCalled();
   });
 });

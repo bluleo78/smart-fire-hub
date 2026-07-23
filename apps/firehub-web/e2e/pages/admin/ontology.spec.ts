@@ -1,3 +1,5 @@
+import type { UpdateOntologyRequest } from '@/types/ontology';
+
 import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import {
   setupAdminAuth,
@@ -775,6 +777,92 @@ test.describe('지식그래프 시각화 페이지', () => {
     // 참조 관계도 함께 제거 — Regulation을 subject/object로 하는 트리플이 남아 있으면 안 된다.
     expect(payload.relations).toHaveLength(schema.relations.length - regulationRefs);
     expect(payload.relations.some((r) => r.subject === 'Regulation' || r.object === 'Regulation')).toBe(false);
+  });
+
+  // 5-5: 엔티티 타입 리네임 — payload의 entities/relations에 새 이름이 반영되고, renames에 (from,to)가 담긴다.
+  // Cause는 CAUSED_BY 관계의 object이므로 관계 cascade-rewrite도 함께 검증한다.
+  test('엔티티 타입 이름을 변경하면 entities/relations/renames가 새 이름으로 저장 payload에 반영된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-rename-start-Cause').click();
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름', { exact: true }).fill('RootCause');
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름 확인').click();
+
+    // 확정 직후 카드 식별자가 새 이름으로 바뀐다(리네임은 즉시 반영, 저장 전에도 UI에 보임).
+    await expect(dialog.getByTestId('entity-edit-RootCause')).toBeVisible();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as UpdateOntologyRequest;
+    expect(payload.entities.map((e) => e.type)).not.toContain('Cause');
+    expect(payload.entities.map((e) => e.type)).toContain('RootCause');
+    expect(payload.renames).toEqual([{ from: 'Cause', to: 'RootCause' }]);
+    // CAUSED_BY 관계의 object가 Cause→RootCause로 cascade-rewrite 되어야 한다.
+    const causedBy = payload.relations.find((r) => r.relation === 'CAUSED_BY');
+    expect(causedBy?.object).toBe('RootCause');
+  });
+
+  // 5-5: 이미 존재하는 타입 이름으로 리네임 시도 시 로컬에서 즉시 거부(저장 API 호출 안 됨).
+  test('이미 존재하는 타입 이름으로 변경을 시도하면 로컬 에러 토스트가 뜨고 카드가 그대로 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-rename-start-Cause').click();
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름', { exact: true }).fill('Building');
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름 확인').click();
+
+    await expect(page.getByText('이미 존재하는 타입입니다: Building')).toBeVisible();
+    await expect(dialog.getByTestId('entity-edit-Cause')).toBeVisible();
+  });
+
+  // 5-5: 리네임 후 원래 이름으로 되돌리면 renames 엔트리가 제거되어(무변경 취급) payload에 담기지 않는다.
+  test('리네임 후 원래 이름으로 되돌리면 renames가 비어 저장 payload에 담기지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-rename-start-Cause').click();
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름', { exact: true }).fill('RootCause');
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름 확인').click();
+
+    await dialog.getByTestId('entity-rename-start-RootCause').click();
+    await dialog.getByTestId('entity-rename-form-RootCause').getByLabel('RootCause 타입 이름', { exact: true }).fill('Cause');
+    await dialog.getByTestId('entity-rename-form-RootCause').getByLabel('RootCause 타입 이름 확인').click();
+    await expect(dialog.getByTestId('entity-edit-Cause')).toBeVisible();
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as UpdateOntologyRequest;
+    expect(payload.renames).toEqual([]);
+    expect(payload.entities.map((e) => e.type)).toContain('Cause');
   });
 
   test('편집 저장 중 버전 충돌(409) 시 에러 토스트가 표시되고 다이얼로그는 닫히지 않는다', async ({
