@@ -512,6 +512,10 @@ public class DataImportService {
 
             switch (importMode) {
               case APPEND -> {
+                // NOTE(부분 커밋): APPEND는 staging 없이 target 테이블에 배치를 곧바로 커밋하며 스트리밍한다(트랜잭션으로
+                // 감싸지 않음 — 스트리밍 본질). 따라서 파스/삽입이 중간 배치에서 실패하면 그 이전까지 커밋된 행은 target에
+                // 남는다(롤백되지 않음). 이는 전량 로딩 시절의 "검증 후 0행 or 전량" 원자성과 다른, 스트리밍 전환의 의도된
+                // trade-off다. 원자성이 필요한 REPLACE(PK 無)만 스트림 전체를 트랜잭션으로 감싼다(아래 참조).
                 BiConsumer<Integer, Integer> wrapped =
                     (processed, total) -> {
                       int globalProcessed = base + processed;
