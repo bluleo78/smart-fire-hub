@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  * type 예외 - 따옴표 한 쪽만 있는 strip 분기 - DATE 다양한 포맷 (yyyy/MM/dd, dd-MM-yyyy, MM/dd/yyyy) - TIMESTAMP 다양한
  * 포맷 (yyyy/MM/dd HH:mm:ss, dd-MM-yyyy HH:mm:ss, yyyyMMddHHmmss)
  */
-class DataValidationServiceTest2 {
+class DataValidationServiceMappingTest {
 
   private DataValidationService service;
 
@@ -221,6 +221,40 @@ class DataValidationServiceTest2 {
     ValidationResultWithDetails result = service.validateWithMapping(rows, columns, mappings);
 
     assertThat(result.validCount()).isEqualTo(1);
+  }
+
+  // -----------------------------------------------------------------------
+  // validateWithMapping — rowIndexBase 오버로드 (배치 검증 전역 행 번호 오프셋)
+  // -----------------------------------------------------------------------
+
+  @Test
+  void validateWithMapping_withRowIndexBase_offsetsErrorRowIndex() {
+    List<DatasetColumnResponse> columns = List.of(col("age", "INTEGER", false));
+    List<ColumnMappingEntry> mappings = List.of(new ColumnMappingEntry("나이", "age"));
+
+    // 내부 인덱스 1(1-based)인 첫 행이 invalid → base=500이면 전역 rowIndex는 501
+    List<Map<String, String>> rows = List.of(Map.of("나이", "not_a_number"));
+
+    ValidationResultWithDetails result = service.validateWithMapping(rows, columns, mappings, 500);
+
+    assertThat(result.errorCount()).isEqualTo(1);
+    assertThat(result.errors().get(0).rowNumber()).isEqualTo(501);
+    assertThat(result.totalRows()).isEqualTo(1);
+  }
+
+  @Test
+  void validateWithMapping_noRowIndexBaseArg_delegatesToZeroBaseAndPreservesBehavior() {
+    List<DatasetColumnResponse> columns = List.of(col("age", "INTEGER", false));
+    List<ColumnMappingEntry> mappings = List.of(new ColumnMappingEntry("나이", "age"));
+
+    List<Map<String, String>> rows = List.of(Map.of("나이", "not_a_number"));
+
+    ValidationResultWithDetails withoutBase = service.validateWithMapping(rows, columns, mappings);
+    ValidationResultWithDetails withZeroBase =
+        service.validateWithMapping(rows, columns, mappings, 0);
+
+    assertThat(withoutBase.errors().get(0).rowNumber()).isEqualTo(1);
+    assertThat(withoutBase.errors()).isEqualTo(withZeroBase.errors());
   }
 
   // -----------------------------------------------------------------------

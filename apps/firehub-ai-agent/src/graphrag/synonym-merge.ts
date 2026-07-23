@@ -1,7 +1,7 @@
 // HITL 승인된 근접쌍을 Neo4j에서 병합한다 — 이미 별도 노드로 적재된 두 엔티티의 관계를 재배선하고
 // 중복 노드를 삭제한다(semantic-resolver.ts의 union-find는 노드 생성 "전" 메모리 병합이라 이 용도로 재사용 불가).
 import { getSession } from './neo4j-client.js';
-import { EntityType } from './ontology.js';
+import { EntityType, Ontology, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
 
@@ -15,15 +15,20 @@ function unionDedupe(a: number[], b: number[]): number[] {
 
 /**
  * entityType/nameA/nameB로 식별되는 두 엔티티 노드를 하나로 병합한다.
+ * entityKey는 5-6부터 typeId 기반("<entity_type_id>:<정규화이름>")이라, entityType 문자열을
+ * ontology로 typeId로 변환한 뒤에만 키를 계산할 수 있다(엔티티 타입 리네임에도 key가 안정적).
  * keeper(존치)/loser(삭제) 판정: semantic-resolver.ts의 pickCanonicalName과 동일한 규칙(긴 이름 우선,
  * 동률이면 localeCompare)을 사용한다 — 이 두 규칙이 어긋나면, 승인되어 삭제된 노드가 다음 적재 시
  * pickCanonicalName에 의해 canonical로 재선정되어 Neo4j에 다시 생성되는 버그가 발생한다(승인 병합이
  * 조용히 원복됨). 따라서 approval-time keeper는 반드시 향후 ingest가 수렴할 이름과 일치해야 한다.
  * 둘 중 하나라도 그래프에 아직 없으면(적재 전) 병합할 대상이 없으므로 no-op한다.
  */
-export async function mergeEntities(entityType: EntityType, nameA: string, nameB: string): Promise<void> {
-  const keyA = entityKey(entityType, nameA);
-  const keyB = entityKey(entityType, nameB);
+export async function mergeEntities(
+  ontology: Ontology, entityType: EntityType, nameA: string, nameB: string,
+): Promise<void> {
+  const typeId = entityTypeId(ontology, entityType);
+  const keyA = entityKey(typeId, nameA);
+  const keyB = entityKey(typeId, nameB);
   if (keyA === keyB) return; // 이미 같은 키(정규화 후 동일 이름) — 병합 불필요.
 
   const session = getSession();
@@ -39,7 +44,7 @@ export async function mergeEntities(entityType: EntityType, nameA: string, nameB
     if (!a || !b) return; // 둘 중 하나가 그래프에 없음 — 병합 대상 없음.
 
     const canonicalName = pickCanonicalName([nameA, nameB]);
-    const keeperKey = entityKey(entityType, canonicalName);
+    const keeperKey = entityKey(typeId, canonicalName);
     const [keeper, loser] = keeperKey === keyA ? [a, b] : [b, a];
 
     await reconnectRelations(session, loser.key, keeper.key, 'out');

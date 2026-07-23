@@ -3,7 +3,7 @@
 // 코사인 유사도로 클러스터링해 하나의 canonical 엔티티로 합친다.
 // 코사인이 임계값 미달이지만 완전히 무관하지도 않은 근접쌍(0.5~0.78)은 옵션으로 주입된 LinkFn(LLM)에게
 // 재판단시켜, 표기 변형을 넘어선 의미적 동의어(semantic-link.ts 참고)를 추가로 병합한다.
-import { EntityType, Ontology, entityResolutionPolicy } from './ontology.js';
+import { EntityType, Ontology, entityResolutionPolicy, entityTypeId } from './ontology.js';
 import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
 import { cosineSimilarity } from './embedding.js';
 import { LinkFn } from './semantic-link.js';
@@ -136,7 +136,8 @@ export async function buildCanonicalMap(
 
     for (const clusterNames_ of clusters) {
       const canonicalName = pickCanonicalName(clusterNames_);
-      const canonical: ResolvedEntity = { key: entityKey(type, canonicalName), type, name: canonicalName };
+      const canonical: ResolvedEntity =
+        { key: entityKey(entityTypeId(ontology, type), canonicalName), type, name: canonicalName };
       for (const name of clusterNames_) {
         // 같은 이름을 가진 모든 원본 엔티티(중복 name)를 canonical로 매핑.
         for (const e of list) if (e.name === name) result.set(e.key, canonical);

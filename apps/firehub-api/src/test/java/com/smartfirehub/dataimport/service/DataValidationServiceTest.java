@@ -270,6 +270,46 @@ class DataValidationServiceTest {
   }
 
   // -----------------------------------------------------------------------
+  // validate — rowIndexBase 오버로드 (배치 검증 시 전역 행 번호 오프셋)
+  // -----------------------------------------------------------------------
+
+  @Test
+  void validate_withRowIndexBase_offsetsErrorRowIndex() {
+    List<DatasetColumnResponse> columns = List.of(col("age", "INTEGER", false));
+
+    // 배치의 두 번째 행(내부 인덱스 2)이 invalid → base=1000이면 전역 rowIndex는 1002여야 함
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("age", "25"), // valid
+            Map.of("age", "abc") // invalid
+            );
+
+    DataValidationService.ValidationResult result = service.validate(rows, columns, 1000);
+
+    assertThat(result.errorCount()).isEqualTo(1);
+    assertThat(result.errors().get(0)).contains("Row 1002");
+    // totalRows는 이번 호출(배치)의 행수만 반영 — 누적은 컨트롤러 책임
+    assertThat(result.totalRows()).isEqualTo(2);
+  }
+
+  @Test
+  void validate_noRowIndexBaseArg_delegatesToZeroBaseAndPreservesBehavior() {
+    List<DatasetColumnResponse> columns = List.of(col("age", "INTEGER", false));
+
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("age", "25"), // valid
+            Map.of("age", "abc") // invalid — 내부 인덱스 2 (1-based)
+            );
+
+    DataValidationService.ValidationResult withoutBase = service.validate(rows, columns);
+    DataValidationService.ValidationResult withZeroBase = service.validate(rows, columns, 0);
+
+    assertThat(withoutBase.errors().get(0)).contains("Row 2");
+    assertThat(withoutBase.errors()).isEqualTo(withZeroBase.errors());
+  }
+
+  // -----------------------------------------------------------------------
   // dedupeByPrimaryKeysLastWins — UPSERT 파일 내 중복 PK 접기 (last-write-wins)
   // -----------------------------------------------------------------------
 

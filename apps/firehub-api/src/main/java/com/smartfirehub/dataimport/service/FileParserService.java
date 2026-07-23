@@ -12,7 +12,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Consumer;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -89,6 +92,120 @@ public class FileParserService {
       case "xlsx", "xls", "xlsb" -> parseExcel(inputStream);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
+  }
+
+  // -----------------------------------------------------------------------
+  // Public API — Path 오버로드 (임시 파일을 이미 디스크에 spill한 호출자용)
+  // InputStream 오버로드와 달리 파일을 다시 메모리/temp로 복사하지 않고 그대로 재사용한다.
+  // CSV는 Files.newInputStream으로 스트림을 열고, Excel은 ExcelStreamingParser.parse(File,...)
+  // core 진입점(랜덤액세스)에 직접 위임하여 InputStream 오버로드 경로의 2차 spill을 피한다.
+  // -----------------------------------------------------------------------
+
+  /**
+   * CSV/XLSX 헤더를 파일 경로에서 파싱한다.
+   *
+   * <p>주의: Excel(xlsx/xls/xlsb)은 항상 첫 행을 헤더로 취급하며 {@code opts}의 hasHeader=false/skipRows는 적용되지
+   * 않는다(기존 Excel 파싱 동작과 동일). CSV만 두 옵션을 온전히 반영한다.
+   */
+  public List<String> parseHeaders(Path file, String fileType, ParseOptions opts) throws Exception {
+    return switch (fileType.toLowerCase()) {
+      case "csv" -> {
+        try (InputStream in = Files.newInputStream(file)) {
+          yield parseHeadersCsvFromStream(in, opts);
+        }
+      }
+      case "xlsx", "xls", "xlsb" -> parseHeadersExcelFile(file.toFile());
+      default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    };
+  }
+
+  /**
+   * CSV/XLSX 샘플 행을 파일 경로에서 파싱한다.
+   *
+   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만
+   * 해당 옵션을 반영한다.
+   */
+  public List<Map<String, String>> parseSampleRows(
+      Path file, String fileType, int maxRows, ParseOptions opts) throws Exception {
+    return switch (fileType.toLowerCase()) {
+      case "csv" -> {
+        try (InputStream in = Files.newInputStream(file)) {
+          yield parseSampleRowsCsvFromStream(in, maxRows, opts);
+        }
+      }
+      case "xlsx", "xls", "xlsb" -> parseSampleRowsExcelFile(file.toFile(), maxRows);
+      default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    };
+  }
+
+  /**
+   * CSV/XLSX 전체 행 수를 파일 경로에서 계산한다.
+   *
+   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만
+   * 해당 옵션을 반영한다.
+   */
+  public int countRows(Path file, String fileType, ParseOptions opts) throws Exception {
+    return switch (fileType.toLowerCase()) {
+      case "csv" -> {
+        try (InputStream in = Files.newInputStream(file)) {
+          yield countRowsCsvFromStream(in, opts);
+        }
+      }
+      case "xlsx", "xls", "xlsb" -> countRowsExcelFile(file.toFile());
+      default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    };
+  }
+
+  /**
+   * CSV/XLSX 전체 데이터를 파일 경로에서 파싱한다.
+   *
+   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만
+   * 해당 옵션을 반영한다.
+   */
+  public List<Map<String, String>> parse(Path file, String fileType, ParseOptions opts)
+      throws Exception {
+    return switch (fileType.toLowerCase()) {
+      case "csv" -> {
+        try (InputStream in = Files.newInputStream(file)) {
+          yield parseCsvFromStream(in, opts);
+        }
+      }
+      case "xlsx", "xls", "xlsb" -> parseExcelFile(file.toFile());
+      default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    };
+  }
+
+  /**
+   * CSV/XLSX 대용량 파일을 배치 콜백 방식으로 스트리밍 파싱한다.
+   *
+   * <p>전체 행을 메모리에 적재하지 않고, batchSize개씩 모아 {@code onBatch}를 호출한 뒤 배치 리스트를 비운다. 100~400MB급 파일을
+   * 임포트할 때 OOM 없이 처리하기 위한 진입점이다(#169 연장선).
+   *
+   * <p>CSV: {@link #buildCsvReaderFromStream}로 AUTO 인코딩까지 지원하는 리더를 얻어 skipRows를 건너뛴 뒤
+   * readNext() 루프로 행을 순회한다({@code readAll()} 금지). Excel: {@link ExcelStreamingParser#parse(java.io.File,
+   * ExcelStreamingParser.RowConsumer)} core 진입점(랜덤액세스)에 위임한다.
+   *
+   * <p>주의: Excel(xlsx/xls/xlsb)은 항상 첫 행을 헤더로 취급하며 {@code opts}의 hasHeader=false/skipRows는 적용되지
+   * 않는다(기존 InputStream 기반 parseExcel/parseHeadersExcel과 동일한 동작이며 회귀가 아니다). CSV만 두 옵션을 온전히
+   * 반영하므로, hasHeader=false나 skipRows에 의존하는 호출은 Excel 입력에 사용하지 말 것.
+   */
+  public void parseStreaming(
+      Path file,
+      String fileType,
+      ParseOptions opts,
+      int batchSize,
+      Consumer<List<Map<String, String>>> onBatch)
+      throws Exception {
+    switch (fileType.toLowerCase()) {
+      case "csv" -> {
+        try (InputStream in = Files.newInputStream(file)) {
+          parseStreamingCsvFromStream(in, opts, batchSize, onBatch);
+        }
+      }
+      // Excel 분기: opts(hasHeader/skipRows) 미사용 — 위 Javadoc 참고
+      case "xlsx", "xls", "xlsb" -> parseStreamingExcelFile(file.toFile(), batchSize, onBatch);
+      default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -426,10 +543,68 @@ public class FileParserService {
       for (int s = 0; s < opts.skipRows(); s++) {
         if (reader.readNext() == null) return 0;
       }
-      List<String[]> allRows = reader.readAll();
-      if (allRows.isEmpty()) return 0;
-      return opts.hasHeader() ? Math.max(0, allRows.size() - 1) : allRows.size();
+      // readAll() 대신 readNext() 반복으로 전체 행을 List<String[]>에 적재하지 않고 카운트만 수행
+      // (대용량 CSV, 예: 400MB 파일 전체를 메모리에 올리지 않기 위한 OOM 방지, #169 연장선)
+      int count = 0;
+      while (reader.readNext() != null) {
+        count++;
+      }
+      if (count == 0) return 0;
+      return opts.hasHeader() ? Math.max(0, count - 1) : count;
     }
+  }
+
+  /**
+   * CSV를 batchSize 단위로 배치 콜백 스트리밍 파싱한다. {@code readAll()}을 쓰지 않고 readNext()만 반복하므로 전체 파일 크기와
+   * 무관하게 배치 하나 분량만 메모리에 유지한다.
+   *
+   * <p>hasHeader=false인 경우 첫 행도 column_N 헤더로 Map을 만들어 데이터로 포함한다(기존 규칙과 동일).
+   */
+  private void parseStreamingCsvFromStream(
+      InputStream inputStream,
+      ParseOptions opts,
+      int batchSize,
+      Consumer<List<Map<String, String>>> onBatch)
+      throws Exception {
+    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
+      for (int s = 0; s < opts.skipRows(); s++) {
+        if (reader.readNext() == null) return; // skipRows가 파일 범위를 넘으면 결과 없음
+      }
+
+      String[] headerRow;
+      List<Map<String, String>> batch = new ArrayList<>(batchSize);
+
+      if (opts.hasHeader()) {
+        headerRow = reader.readNext();
+        if (headerRow == null) return; // 헤더뿐이거나 빈 파일
+      } else {
+        // 첫 행으로 column_N 헤더를 합성하고, 첫 행 자체도 데이터로 포함
+        String[] firstRow = reader.readNext();
+        if (firstRow == null) return;
+        headerRow = new String[firstRow.length];
+        for (int i = 0; i < firstRow.length; i++) headerRow[i] = "column_" + (i + 1);
+        batch.add(toRowMap(headerRow, firstRow));
+      }
+
+      String[] row;
+      while ((row = reader.readNext()) != null) {
+        batch.add(toRowMap(headerRow, row));
+        if (batch.size() >= batchSize) {
+          onBatch.accept(batch);
+          batch = new ArrayList<>(batchSize);
+        }
+      }
+      if (!batch.isEmpty()) {
+        onBatch.accept(batch);
+      }
+    }
+  }
+
+  /** header[]/row[]를 {헤더: 값} Map으로 변환하는 공통 헬퍼. */
+  private static Map<String, String> toRowMap(String[] headers, String[] row) {
+    Map<String, String> rowMap = new HashMap<>();
+    for (int j = 0; j < headers.length && j < row.length; j++) rowMap.put(headers[j], row[j]);
+    return rowMap;
   }
 
   // -----------------------------------------------------------------------
@@ -563,5 +738,138 @@ public class FileParserService {
 
     // 헤더 행 1개를 제외한 데이터 행 수 반환
     return Math.max(0, counter[0] - 1);
+  }
+
+  // -----------------------------------------------------------------------
+  // Private Excel helpers — File 기반 (Path 오버로드/스트리밍용)
+  // ExcelStreamingParser.parse(File,...) core 진입점(랜덤액세스)에 직접 위임하여
+  // InputStream 오버로드가 겪는 임시 파일 재-spill을 피한다.
+  //
+  // 주의(ParseOptions 미적용): 아래 helper들은 모두 ParseOptions를 받지 않으며,
+  // 첫 행을 항상 헤더로 취급한다 — hasHeader=false/skipRows는 반영되지 않는다.
+  // 이는 기존 InputStream 기반 parseExcel/parseHeadersExcel(위)과 동일한 동작으로
+  // 회귀가 아니다. CSV 경로만 해당 옵션을 온전히 지원한다.
+  // -----------------------------------------------------------------------
+
+  /** XLSX/XLS/XLSB 파일의 첫 행(헤더)만 파일 경로에서 직접 파싱한다. */
+  private List<String> parseHeadersExcelFile(java.io.File file) throws Exception {
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+
+    ExcelStreamingParser.parse(
+        file,
+        (idx, cells) -> {
+          headerHolder[0] = new ArrayList<>(cells);
+          return false; // 첫 행 후 즉시 중단
+        });
+
+    return headerHolder[0] != null ? headerHolder[0] : Collections.emptyList();
+  }
+
+  /** XLSX/XLS/XLSB 파일에서 헤더 포함 최대 maxRows개의 샘플 데이터 행을 파일 경로에서 직접 파싱한다. */
+  private List<Map<String, String>> parseSampleRowsExcelFile(java.io.File file, int maxRows)
+      throws Exception {
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+    final List<Map<String, String>> result = new ArrayList<>();
+
+    ExcelStreamingParser.parse(
+        file,
+        (idx, cells) -> {
+          if (headerHolder[0] == null) {
+            headerHolder[0] = new ArrayList<>(cells);
+            return true;
+          }
+          List<String> headers = headerHolder[0];
+          Map<String, String> row = new HashMap<>();
+          for (int i = 0; i < headers.size(); i++) {
+            String value = i < cells.size() ? cells.get(i) : "";
+            row.put(headers.get(i), value);
+          }
+          result.add(row);
+          return result.size() < maxRows;
+        });
+
+    return result;
+  }
+
+  /** XLSX/XLS/XLSB 파일의 데이터 행 수(헤더 제외)를 파일 경로에서 직접 계산한다. */
+  private int countRowsExcelFile(java.io.File file) throws Exception {
+    final int[] counter = new int[] {0};
+
+    ExcelStreamingParser.parse(
+        file,
+        (idx, cells) -> {
+          counter[0]++;
+          return true;
+        });
+
+    return Math.max(0, counter[0] - 1);
+  }
+
+  /** XLSX/XLS/XLSB 파일 전체를 파일 경로에서 직접 파싱하여 헤더-값 맵 리스트로 반환한다. */
+  private List<Map<String, String>> parseExcelFile(java.io.File file) throws Exception {
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+    final List<Map<String, String>> result = new ArrayList<>();
+
+    ExcelStreamingParser.parse(
+        file,
+        (idx, cells) -> {
+          if (headerHolder[0] == null) {
+            headerHolder[0] = new ArrayList<>(cells);
+            return true;
+          }
+          List<String> headers = headerHolder[0];
+          Map<String, String> row = new HashMap<>();
+          for (int i = 0; i < headers.size(); i++) {
+            String value = i < cells.size() ? cells.get(i) : "";
+            row.put(headers.get(i), value);
+          }
+          result.add(row);
+          return true;
+        });
+
+    return result;
+  }
+
+  /**
+   * XLSX/XLS/XLSB 파일을 batchSize 단위로 배치 콜백 스트리밍 파싱한다.
+   *
+   * <p>첫 행을 헤더로 캡처하고, 이후 행을 배치에 누적하다가 batchSize에 도달하면 {@code onBatch}를 호출한 뒤 배치를 비운다.
+   * RowConsumer는 항상 true를 반환해 전체 행을 순회하며, 파싱이 끝난 뒤 잔여 배치를 flush한다.
+   */
+  private void parseStreamingExcelFile(
+      java.io.File file, int batchSize, Consumer<List<Map<String, String>>> onBatch)
+      throws Exception {
+    @SuppressWarnings("unchecked")
+    final List<String>[] headerHolder = new List[] {null};
+    final List<Map<String, String>>[] batchHolder = new List[] {new ArrayList<>(batchSize)};
+
+    ExcelStreamingParser.parse(
+        file,
+        (idx, cells) -> {
+          if (headerHolder[0] == null) {
+            // 첫 행 = 헤더
+            headerHolder[0] = new ArrayList<>(cells);
+            return true;
+          }
+          List<String> headers = headerHolder[0];
+          Map<String, String> row = new HashMap<>();
+          for (int i = 0; i < headers.size(); i++) {
+            String value = i < cells.size() ? cells.get(i) : "";
+            row.put(headers.get(i), value);
+          }
+          batchHolder[0].add(row);
+          if (batchHolder[0].size() >= batchSize) {
+            onBatch.accept(batchHolder[0]);
+            batchHolder[0] = new ArrayList<>(batchSize);
+          }
+          return true;
+        });
+
+    if (!batchHolder[0].isEmpty()) {
+      onBatch.accept(batchHolder[0]);
+    }
   }
 }

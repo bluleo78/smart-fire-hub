@@ -11,6 +11,10 @@ vi.mock('./neo4j-client.js', () => ({
 import { mergeEntities } from './synonym-merge.js';
 import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
+import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+
+// 5-6: entityKey는 typeId 기반 — CORE_ONTOLOGY의 고정 id를 조회해 사용한다.
+const causeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
 
 describe('mergeEntities', () => {
   beforeEach(() => {
@@ -19,8 +23,8 @@ describe('mergeEntities', () => {
   });
 
   it('canonical(가장 긴 이름) 기준으로 keeper를 삼아 나머지를 삭제한다 — chunk 수와 무관', async () => {
-    const keyA = entityKey('Cause', '누전'); // chunk 3개(더 많음)지만 이름이 짧다 — keeper가 되면 안 됨(C1 회귀 가드).
-    const keyB = entityKey('Cause', '분전반 누전'); // chunk 1개(더 적음)지만 이름이 더 길다 — pickCanonicalName 규칙상 keeper.
+    const keyA = entityKey(causeId, '누전'); // chunk 3개(더 많음)지만 이름이 짧다 — keeper가 되면 안 됨(C1 회귀 가드).
+    const keyB = entityKey(causeId, '분전반 누전'); // chunk 1개(더 적음)지만 이름이 더 길다 — pickCanonicalName 규칙상 keeper.
     // 1번째 run: 노드 조회. A가 3개, B가 1개.
     runMock.mockResolvedValueOnce({
       records: [
@@ -31,7 +35,7 @@ describe('mergeEntities', () => {
     // out/in 관계 조회는 빈 결과.
     runMock.mockResolvedValue({ records: [] });
 
-    await mergeEntities('Cause', '누전', '분전반 누전');
+    await mergeEntities(CORE_ONTOLOGY, 'Cause', '누전', '분전반 누전');
 
     // keeper는 chunk 수가 아니라 canonical(가장 긴) 이름 — 여기서는 B(분전반 누전).
     const setCall = runMock.mock.calls.find(([cypher]) => cypher.includes('SET k.sourceChunkIds'));
@@ -41,12 +45,12 @@ describe('mergeEntities', () => {
   });
 
   it('둘 중 하나가 그래프에 없으면 아무 것도 하지 않는다', async () => {
-    const keyA = entityKey('Cause', '전기적 요인');
+    const keyA = entityKey(causeId, '전기적 요인');
     runMock.mockResolvedValueOnce({
       records: [{ get: (k: string) => (k === 'key' ? keyA : [1]) }],
     });
 
-    await mergeEntities('Cause', '전기적 요인', '분전반의 누전');
+    await mergeEntities(CORE_ONTOLOGY, 'Cause', '전기적 요인', '분전반의 누전');
 
     expect(runMock).toHaveBeenCalledTimes(1); // 노드 조회 1회만, 이후 호출 없음.
   });
@@ -54,9 +58,9 @@ describe('mergeEntities', () => {
   it('pickCanonicalName의 타이브레이크(길이 동률 시 사전순)를 그대로 따른다', async () => {
     const nameA = '전기적 요인';
     const nameB = '분전반의 누전';
-    const keyA = entityKey('Cause', nameA);
-    const keyB = entityKey('Cause', nameB);
-    const expectedKeeper = entityKey('Cause', pickCanonicalName([nameA, nameB]));
+    const keyA = entityKey(causeId, nameA);
+    const keyB = entityKey(causeId, nameB);
+    const expectedKeeper = entityKey(causeId, pickCanonicalName([nameA, nameB]));
     runMock.mockResolvedValueOnce({
       records: [
         { get: (k: string) => (k === 'key' ? keyA : [1]) },
@@ -65,17 +69,19 @@ describe('mergeEntities', () => {
     });
     runMock.mockResolvedValue({ records: [] });
 
-    await mergeEntities('Cause', nameA, nameB);
+    await mergeEntities(CORE_ONTOLOGY, 'Cause', nameA, nameB);
 
     const setCall = runMock.mock.calls.find(([cypher]) => cypher.includes('SET k.sourceChunkIds'));
     expect(setCall?.[1].keeperKey).toBe(expectedKeeper);
   });
 
   it('관계가 존재하면 out/in 방향 모두 keeper로 재배선한 뒤 loser를 삭제한다 (I1: 지금까지 빈 결과만 테스트되어 reconnectRelations가 실행된 적이 없었음)', async () => {
-    const keyA = entityKey('Cause', '누전'); // loser
-    const keyB = entityKey('Cause', '분전반 누전'); // keeper(가장 긴 이름)
-    const otherOutKey = entityKey('Effect', '화재');
-    const otherInKey = entityKey('Symptom', '스파크');
+    const keyA = entityKey(causeId, '누전'); // loser
+    const keyB = entityKey(causeId, '분전반 누전'); // keeper(가장 긴 이름)
+    // 상대 노드는 CORE_ONTOLOGY에 없는 임의 typeId — mergeEntities는 상대 노드 key를 그대로 통과시킬 뿐
+    // entityTypeId로 재검증하지 않으므로, 구분되는 값이기만 하면 된다.
+    const otherOutKey = entityKey(999, '화재');
+    const otherInKey = entityKey(998, '스파크');
 
     // cypher 내용에 따라 응답을 분기 — 호출 순서에 의존하지 않아 코드 변경에도 견고하다.
     runMock.mockImplementation(async (cypher: string) => {
@@ -128,7 +134,7 @@ describe('mergeEntities', () => {
       return { records: [] };
     });
 
-    await mergeEntities('Cause', '누전', '분전반 누전');
+    await mergeEntities(CORE_ONTOLOGY, 'Cause', '누전', '분전반 누전');
 
     const calls = runMock.mock.calls;
     const outMergeCall = calls.find(([cypher]) => cypher.includes('MERGE (k)-[x:REL {type: $type}]->(o)'));

@@ -1,8 +1,10 @@
 package com.smartfirehub.dataimport.service;
 
-import java.io.BufferedInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import javax.xml.parsers.ParserConfigurationException;
@@ -10,7 +12,9 @@ import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
 import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.openxml4j.opc.PackageAccess;
 import org.apache.poi.poifs.filesystem.FileMagic;
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.ss.util.CellAddress;
 import org.apache.poi.xssf.binary.XSSFBSharedStringsTable;
 import org.apache.poi.xssf.binary.XSSFBSheetHandler;
@@ -45,14 +49,41 @@ public final class ExcelStreamingParser {
     private static final EarlyStopException INSTANCE = new EarlyStopException();
   }
 
-  /** 포맷을 자동 감지하여 XLSX/XLSB 또는 XLS 파서로 분기한다. */
+  /**
+   * 포맷을 자동 감지하여 XLSX/XLSB 또는 XLS 파서로 분기한다.
+   *
+   * <p><b>Thin wrapper:</b> {@link OPCPackage#open(InputStream)}은 ZIP의 각 엔트리를 전부 메모리 byte[]로
+   * 버퍼링하기 때문에(특히 엔트리 크기를 미리 알 수 없는 data-descriptor zip에서는 POI temp-file 임계값 설정도
+   * 무력화됨) 대용량 파일에서 OOM/파싱 실패를 유발한다. 이를 피하기 위해 InputStream을 임시 파일로 1회 복사한 뒤
+   * 실제 파싱은 랜덤액세스가 가능한 {@link #parse(File, RowConsumer)}에 위임하고, 종료 시 임시 파일을 즉시
+   * 삭제한다. 기존 호출부(FileParserService 등)는 시그니처 변경 없이 그대로 사용 가능하다.
+   */
   public static void parse(InputStream in, RowConsumer consumer) throws Exception {
-    BufferedInputStream buffered =
-        in instanceof BufferedInputStream bi ? bi : new BufferedInputStream(in);
-    FileMagic magic = FileMagic.valueOf(buffered);
+    File temp = File.createTempFile("excel-streaming-", ".tmp");
+    // try-with-resources로 전달받은 스트림을 복사 후 닫는다. 기존 구현은 OPCPackage.open(in)/
+    // POIFSFileSystem(in)이 close 시 내부적으로 스트림을 닫아줬으므로, 그 닫기 계약을 그대로 유지해
+    // 파일 디스크립터 누수를 막는다(close는 멱등이라 호출자가 다시 닫아도 안전).
+    try (in) {
+      Files.copy(in, temp.toPath(), StandardCopyOption.REPLACE_EXISTING);
+      parse(temp, consumer);
+    } finally {
+      Files.deleteIfExists(temp.toPath());
+    }
+  }
+
+  /**
+   * 파일에서 직접 랜덤액세스로 열어 파싱하는 core 진입점.
+   *
+   * <p>{@link FileMagic#valueOf(File)}로 포맷을 감지한 뒤, OOXML(XLSX/XLSB)은 {@link OPCPackage#open(File,
+   * PackageAccess)}로, OLE2(XLS)는 {@link POIFSFileSystem#POIFSFileSystem(File)}로 연다. 두 API 모두 ZIP/OLE2
+   * 컨테이너를 파일 채널 기반 랜덤액세스로 읽어 엔트리를 전량 메모리에 적재하지 않고 필요한 부분만 온디맨드로
+   * 읽으므로, {@code InputStream} 기반 오픈에서 발생하던 대용량 파일 OOM을 근본적으로 회피한다.
+   */
+  public static void parse(File file, RowConsumer consumer) throws Exception {
+    FileMagic magic = FileMagic.valueOf(file);
     switch (magic) {
-      case OOXML -> parseOoxml(buffered, consumer);
-      case OLE2 -> parseXls(buffered, consumer);
+      case OOXML -> parseOoxml(file, consumer);
+      case OLE2 -> parseXls(file, consumer);
       default -> throw new IOException("Unsupported Excel format: " + magic);
     }
   }
@@ -64,9 +95,13 @@ public final class ExcelStreamingParser {
   /**
    * XLSX와 XLSB는 둘 다 ZIP 기반 OOXML 컨테이너라 {@link FileMagic}만으로는 구분할 수 없다. 워크북 파트의 content-type을 확인해
    * 바이너리(XLSB) 여부를 판별한다.
+   *
+   * <p>{@code PackageAccess.READ}로 열어 ZipFile 랜덤액세스(중앙 디렉터리 기반 온디맨드 읽기)를 사용한다 — 이
+   * 방식은 엔트리 크기가 ZIP 중앙 디렉터리에서 항상 확정적으로 조회되므로, data-descriptor(사이즈 미상) 엔트리에서
+   * 무력화되는 temp-file 임계값 설정과 달리 항상 안전하게 스트리밍된다.
    */
-  private static void parseOoxml(InputStream in, RowConsumer consumer) throws Exception {
-    try (OPCPackage pkg = OPCPackage.open(in)) {
+  private static void parseOoxml(File file, RowConsumer consumer) throws Exception {
+    try (OPCPackage pkg = OPCPackage.open(file, PackageAccess.READ)) {
       boolean isXlsb =
           !pkg.getPartsByContentType(XSSFRelation.XLSB_BINARY_WORKBOOK.getContentType())
               .isEmpty();
@@ -206,9 +241,9 @@ public final class ExcelStreamingParser {
   // XLS (BIFF) — POIFSFileSystem + HSSFEventFactory
   // ---------------------------------------------------------------------
 
-  private static void parseXls(InputStream in, RowConsumer consumer) throws Exception {
-    try (org.apache.poi.poifs.filesystem.POIFSFileSystem fs =
-        new org.apache.poi.poifs.filesystem.POIFSFileSystem(in)) {
+  private static void parseXls(File file, RowConsumer consumer) throws Exception {
+    // readOnly=true — 파싱 전용이므로 파일 잠금/쓰기 권한이 필요 없다(읽기 전용 마운트에서도 안전).
+    try (POIFSFileSystem fs = new POIFSFileSystem(file, true)) {
       org.apache.poi.hssf.eventusermodel.HSSFEventFactory factory =
           new org.apache.poi.hssf.eventusermodel.HSSFEventFactory();
       org.apache.poi.hssf.eventusermodel.HSSFRequest request =
