@@ -258,7 +258,80 @@ class OntologyRepositoryTest extends IntegrationTestBase {
     assertThat(res.relations()).extracting(OntologyResponse.Triple::object).contains("RootCause").doesNotContain("Cause");
   }
 
-  // (f) stale 시드 시나리오: dataset_graph_ingest에 현재 버전(1)으로 적재 이력을 남긴 뒤 온톨로지를
+  // (5-6 a) id 안정성: 리네임이 아닌 일반 편집(description 변경)은 entity_type_id를 그대로 보존한다
+  // (UPDATE-in-place — ai-agent가 이 id 기반으로 Neo4j key를 구성하므로 무편집 타입의 id 변경은
+  // 곧 불필요한 key 드리프트를 의미한다).
+  @Test
+  void updateOntology_는_일반_편집_시_미변경_타입의_id를_보존한다() {
+    var incident = original.entities().get(0);
+    var edited =
+        new OntologyResponse.EntityType(
+            incident.type(), "수정된 설명", incident.naming(), incident.resolution(), incident.properties());
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.set(0, edited);
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, entities, original.relations());
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    var reloaded = res.entities().stream().filter(e -> e.type().equals(incident.type())).findFirst().orElseThrow();
+    assertThat(reloaded.id()).isEqualTo(incident.id());
+    assertThat(reloaded.description()).isEqualTo("수정된 설명");
+  }
+
+  // (5-6 b) id 안정성: renames 힌트가 있는 리네임은 entity_type_id를 보존한 채 이름만 바꾼다
+  // (Neo4j가 이 id로 key를 구성하면 리네임 후에도 key가 그대로 — 마이그레이션 불필요의 근거).
+  @Test
+  void updateOntology_는_renames_힌트가_있으면_리네임해도_id를_보존한다() {
+    var cause = original.entities().stream().filter(e -> e.type().equals("Cause")).findFirst().orElseThrow();
+    var renamed =
+        new OntologyResponse.EntityType(
+            "RootCause", cause.description(), cause.naming(), cause.resolution(), cause.properties());
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.set(entities.indexOf(cause), renamed);
+
+    UpdateOntologyRequest req =
+        new UpdateOntologyRequest(
+            original.domain(), 1, entities, original.relations(),
+            List.of(new UpdateOntologyRequest.TypeRename("Cause", "RootCause")));
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    var rootCause = res.entities().stream().filter(e -> e.type().equals("RootCause")).findFirst().orElseThrow();
+    assertThat(rootCause.id()).isEqualTo(cause.id()); // renames 힌트 덕분에 id 보존.
+    assertThat(res.entities()).extracting(OntologyResponse.EntityType::type).doesNotContain("Cause");
+  }
+
+  // (5-6 c) id 안정성: 삭제된 타입의 id는 완전히 소멸하고, 새로 추가된 타입은 이전에 쓰인 적 없는
+  // 새 id를 받는다(delete-then-insert가 아니라 실제 매칭 기반 UPDATE/INSERT/DELETE임을 확인).
+  @Test
+  void updateOntology_는_삭제된_타입의_id를_재사용하지_않는다() {
+    java.util.Set<Long> originalIds =
+        original.entities().stream().map(OntologyResponse.EntityType::id).collect(java.util.stream.Collectors.toSet());
+
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.removeIf(e -> e.type().equals("Damage"));
+    entities.add(new OntologyResponse.EntityType("Sensor", "감지 센서", "본문 표기 보존", "embedding", List.of()));
+    List<OntologyResponse.Triple> relations = new java.util.ArrayList<>(original.relations());
+    relations.removeIf(r -> r.subject().equals("Damage") || r.object().equals("Damage"));
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, entities, relations);
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    var sensor = res.entities().stream().filter(e -> e.type().equals("Sensor")).findFirst().orElseThrow();
+    assertThat(originalIds).doesNotContain(sensor.id()); // 새 타입은 이전에 없던 새 id.
+
+    // 나머지(미편집) 타입들의 id는 그대로 보존되어야 한다.
+    for (var e : res.entities()) {
+      if (e.type().equals("Sensor")) continue;
+      var origEntity =
+          original.entities().stream().filter(o -> o.type().equals(e.type())).findFirst().orElseThrow();
+      assertThat(e.id()).isEqualTo(origEntity.id());
+    }
+  }
+
+  // (f) stale 시나리오: dataset_graph_ingest에 현재 버전(1)으로 적재 이력을 남긴 뒤 온톨로지를
   // 편집(버전 2)하면, 해당 데이터셋이 GraphIngestRepository.findStale(2)에 나타나야 한다(그래프 재적재 필요 신호).
   @Test
   void updateOntology_는_기존_적재_데이터셋을_stale로_만든다() {

@@ -86,10 +86,13 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
 
   // 삭제: 타입을 제거하고, 그 타입을 subject/object로 참조하던 관계도 함께 정리(cascade)한다.
   // 정리하지 않으면 서버 5-2 참조 무결성 검증(400)에 걸리므로 클라이언트가 선제 정리한다.
+  // renames(5-5)도 함께 정리 — 이 타입이 리네임 결과(현재값)라면 그 엔트리를 지우지 않으면
+  // "to가 최종 엔티티 타입에 없다"는 서버 400으로 새어 나가 단순 삭제가 실패로 보인다.
   const removeEntityType = (type: string) => {
     const pruned = relations.filter((r) => r.subject === type || r.object === type).length;
     setEntities((prev) => prev.filter((e) => e.type !== type));
     setRelations((prev) => prev.filter((r) => r.subject !== type && r.object !== type));
+    setRenames((prev) => Object.fromEntries(Object.entries(prev).filter(([, cur]) => cur !== type)));
     toast.success(
       pruned > 0
         ? `타입 '${type}'과(와) 이를 참조하는 관계 ${pruned}개를 제거했습니다.`

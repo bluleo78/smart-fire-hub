@@ -865,6 +865,41 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(payload.entities.map((e) => e.type)).toContain('Cause');
   });
 
+  // 5-5 회귀: 리네임한 타입을 곧바로 삭제하면(변심), 해당 renames 엔트리도 함께 정리되어야 한다.
+  // 정리하지 않으면 서버가 "리네임의 to가 최종 엔티티 타입에 없다"고 400을 던져 단순 삭제가 실패로 보인다.
+  test('리네임 후 그 타입을 삭제하면 renames 엔트리도 함께 제거되어 저장이 성공한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-rename-start-Cause').click();
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름', { exact: true }).fill('RootCause');
+    await dialog.getByTestId('entity-rename-form-Cause').getByLabel('Cause 타입 이름 확인').click();
+    await expect(dialog.getByTestId('entity-edit-RootCause')).toBeVisible();
+
+    await dialog.getByTestId('entity-delete-RootCause').click();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as UpdateOntologyRequest;
+    expect(payload.renames).toEqual([]);
+    expect(payload.entities.map((e) => e.type)).not.toContain('RootCause');
+    expect(payload.entities.map((e) => e.type)).not.toContain('Cause');
+    // Cause를 object로 참조하던 CAUSED_BY 관계도 함께 제거되어야 한다.
+    expect(payload.relations.some((r) => r.relation === 'CAUSED_BY')).toBe(false);
+  });
+
   test('편집 저장 중 버전 충돌(409) 시 에러 토스트가 표시되고 다이얼로그는 닫히지 않는다', async ({
     authenticatedPage: page,
   }) => {

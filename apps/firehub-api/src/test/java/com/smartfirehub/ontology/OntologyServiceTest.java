@@ -245,53 +245,6 @@ class OntologyServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
-  // (5-5) 유효한 리네임은 DB 커밋 후 ai-agent에 마이그레이션을 동기 요청한다.
-  @Test
-  void updateOntology_는_유효한_리네임_시_ai_agent에_마이그레이션을_요청한다() throws Exception {
-    OntologyResponse updated =
-        new OntologyResponse(
-            "d", 2, List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())), List.of());
-    when(repository.updateOntology(any())).thenReturn(2);
-    when(repository.findOntology()).thenReturn(updated);
-    server.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
-
-    UpdateOntologyRequest req =
-        new UpdateOntologyRequest(
-            "d",
-            1,
-            List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())),
-            List.of(),
-            List.of(new UpdateOntologyRequest.TypeRename("Cause", "RootCause")));
-
-    service.updateOntology(req);
-
-    var recorded = server.takeRequest();
-    assertThat(recorded.getPath()).isEqualTo("/agent/graph/rename-type");
-    assertThat(recorded.getBody().readUtf8()).contains("\"oldType\":\"Cause\"").contains("\"newType\":\"RootCause\"");
-  }
-
-  // (5-5) 마이그레이션이 실패(502)해도 DB는 이미 커밋됐으므로 전체 응답은 성공 처리한다(best-effort).
-  @Test
-  void updateOntology_는_리네임_마이그레이션_실패해도_전체_응답은_성공한다() {
-    OntologyResponse updated =
-        new OntologyResponse(
-            "d", 2, List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())), List.of());
-    when(repository.updateOntology(any())).thenReturn(2);
-    when(repository.findOntology()).thenReturn(updated);
-    server.enqueue(new MockResponse().setResponseCode(502).setBody("{\"error\":\"rename migration failed\"}"));
-
-    UpdateOntologyRequest req =
-        new UpdateOntologyRequest(
-            "d",
-            1,
-            List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())),
-            List.of(),
-            List.of(new UpdateOntologyRequest.TypeRename("Cause", "RootCause")));
-
-    OntologyResponse res = service.updateOntology(req);
-    assertThat(res.schemaVersion()).isEqualTo(2);
-  }
-
   // happy: 유효 페이로드는 리포지토리 updateOntology 호출 후 갱신본을 재조회해 반환한다.
   @Test
   void updateOntology_는_유효하면_리포지토리를_호출하고_갱신본을_반환한다() {

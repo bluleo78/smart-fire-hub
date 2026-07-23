@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn(), renameEntityType: vi.fn() }));
+vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn() }));
 vi.mock('../middleware/auth.js', () => ({
   internalAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-import { readWholeGraph, renameEntityType } from '../graphrag/neo4j-client.js';
+import { readWholeGraph } from '../graphrag/neo4j-client.js';
 import graphRouter from './graph.js';
 
 const app = express();
@@ -33,24 +33,6 @@ describe('graph routes', () => {
     expect(res.status).toBe(502);
   });
 
-  // 5-5: 리네임 마이그레이션 라우트 — api가 DB 리네임 커밋 직후 동기 호출한다.
-  it('POST /agent/graph/rename-type 은 마이그레이션된 노드 수를 반환한다', async () => {
-    vi.mocked(renameEntityType).mockResolvedValue(3);
-    const res = await request(app).post('/agent/graph/rename-type').send({ oldType: 'Cause', newType: 'RootCause' });
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ migrated: 3 });
-    expect(renameEntityType).toHaveBeenCalledWith('Cause', 'RootCause');
-  });
-
-  it('POST /agent/graph/rename-type 은 oldType/newType 누락 시 400을 반환한다', async () => {
-    const res = await request(app).post('/agent/graph/rename-type').send({ oldType: 'Cause' });
-    expect(res.status).toBe(400);
-    expect(renameEntityType).not.toHaveBeenCalled();
-  });
-
-  it('POST /agent/graph/rename-type 은 마이그레이션 실패 시 502를 반환한다', async () => {
-    vi.mocked(renameEntityType).mockRejectedValue(new Error('constraint violation'));
-    const res = await request(app).post('/agent/graph/rename-type').send({ oldType: 'Cause', newType: 'RootCause' });
-    expect(res.status).toBe(502);
-  });
+  // 5-6: 엔티티 타입 리네임이 entity_type_id 보존 기반의 순수 DB 연산이 되어 Neo4j 마이그레이션
+  // 라우트(5-5의 POST /agent/graph/rename-type)가 불필요해져 제거했다 — 관련 테스트도 함께 제거.
 });

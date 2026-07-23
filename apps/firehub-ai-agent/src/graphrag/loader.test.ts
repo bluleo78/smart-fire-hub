@@ -11,6 +11,11 @@ vi.mock('./neo4j-client.js', () => ({
 
 import { loadGraph } from './loader.js';
 import { entityKey } from './resolver.js';
+import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+
+// 5-6: entityKey는 typeId(entity_type_id) 기반 — CORE_ONTOLOGY의 고정 id를 조회해 사용한다.
+const incidentId = entityTypeId(CORE_ONTOLOGY, 'Incident');
+const causeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
 
 describe('loadGraph', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -18,7 +23,7 @@ describe('loadGraph', () => {
   it('노드에 속성 맵을 SET n += 로 저장', async () => {
     const graph = {
       entities: [
-        { key: entityKey('Incident', '2024 서울 창고 화재'), type: 'Incident' as const, name: '2024 서울 창고 화재', properties: { 피해액: 120_000_000 } },
+        { key: entityKey(incidentId, '2024 서울 창고 화재'), type: 'Incident' as const, name: '2024 서울 창고 화재', properties: { 피해액: 120_000_000 } },
       ],
       relations: [],
     };
@@ -36,7 +41,7 @@ describe('loadGraph', () => {
     const graph = {
       entities: [
         {
-          key: entityKey('Incident', '2024 서울 창고 화재'),
+          key: entityKey(incidentId, '2024 서울 창고 화재'),
           type: 'Incident' as const,
           name: '2024 서울 창고 화재',
           properties: {
@@ -60,11 +65,11 @@ describe('loadGraph', () => {
   it('노드와 관계 MERGE 모두 schemaVersion을 Cypher params로 전달한다', async () => {
     const graph = {
       entities: [
-        { key: entityKey('Incident', '사건'), type: 'Incident' as const, name: '사건' },
-        { key: entityKey('Cause', '원인'), type: 'Cause' as const, name: '원인' },
+        { key: entityKey(incidentId, '사건'), type: 'Incident' as const, name: '사건' },
+        { key: entityKey(causeId, '원인'), type: 'Cause' as const, name: '원인' },
       ],
       relations: [
-        { subjectKey: entityKey('Incident', '사건'), type: 'CAUSED_BY', objectKey: entityKey('Cause', '원인') },
+        { subjectKey: entityKey(incidentId, '사건'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '원인') },
       ],
     };
     await loadGraph(graph, 1, 5);

@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { buildCanonicalMap, applyCanonicalMap, MERGE_THRESHOLD, EmbedFn } from './semantic-resolver.js';
 import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
-import { CORE_ONTOLOGY } from './ontology.js';
+import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+
+// 5-6: entityKey는 typeId 기반 — CORE_ONTOLOGY의 고정 id를 조회해 사용한다.
+const equipmentId = entityTypeId(CORE_ONTOLOGY, 'Equipment');
+const buildingId = entityTypeId(CORE_ONTOLOGY, 'Building');
+const damageId = entityTypeId(CORE_ONTOLOGY, 'Damage');
 
 // 이름 → 벡터 고정 매핑(Ollama 미사용). '스프링클러'/'스프링클러 설비'는 코사인 ≥0.78로 근접,
 // '감지기'는 직교(0)로 명확히 별개 클러스터가 되도록 손으로 만든 값.
@@ -26,15 +31,15 @@ describe('MERGE_THRESHOLD', () => {
 describe('buildCanonicalMap', () => {
   it('같은 타입 내 근접 이름을 가장 긴 이름으로 병합하고, 직교 이름은 분리한다', async () => {
     const entities: ResolvedEntity[] = [
-      { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
-      { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
-      { key: entityKey('Equipment', '감지기'), type: 'Equipment', name: '감지기' },
+      { key: entityKey(equipmentId, '스프링클러'), type: 'Equipment', name: '스프링클러' },
+      { key: entityKey(equipmentId, '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
+      { key: entityKey(equipmentId, '감지기'), type: 'Equipment', name: '감지기' },
     ];
     const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
 
-    const sprinklerKey = entityKey('Equipment', '스프링클러');
-    const sprinklerFullKey = entityKey('Equipment', '스프링클러 설비');
-    const detectorKey = entityKey('Equipment', '감지기');
+    const sprinklerKey = entityKey(equipmentId, '스프링클러');
+    const sprinklerFullKey = entityKey(equipmentId, '스프링클러 설비');
+    const detectorKey = entityKey(equipmentId, '감지기');
 
     expect(map.get(sprinklerKey)?.name).toBe('스프링클러 설비');
     expect(map.get(sprinklerFullKey)?.name).toBe('스프링클러 설비');
@@ -45,23 +50,23 @@ describe('buildCanonicalMap', () => {
 
   it('타입이 다르면 이름이 같아도 병합하지 않는다', async () => {
     const entities: ResolvedEntity[] = [
-      { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
-      { key: entityKey('Building', '스프링클러'), type: 'Building', name: '스프링클러' },
+      { key: entityKey(equipmentId, '스프링클러'), type: 'Equipment', name: '스프링클러' },
+      { key: entityKey(buildingId, '스프링클러'), type: 'Building', name: '스프링클러' },
     ];
     const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
-    expect(map.get(entityKey('Equipment', '스프링클러'))?.type).toBe('Equipment');
-    expect(map.get(entityKey('Building', '스프링클러'))?.type).toBe('Building');
+    expect(map.get(entityKey(equipmentId, '스프링클러'))?.type).toBe('Equipment');
+    expect(map.get(entityKey(buildingId, '스프링클러'))?.type).toBe('Building');
   });
 
   it("resolution='exact' 타입(Damage)은 mock embed가 threshold 이상을 반환해도 병합하지 않는다", async () => {
     const entities: ResolvedEntity[] = [
-      { key: entityKey('Damage', '재산피해 약 1.2억원'), type: 'Damage', name: '재산피해 약 1.2억원' },
-      { key: entityKey('Damage', '재산피해 약 4.5억원'), type: 'Damage', name: '재산피해 약 4.5억원' },
+      { key: entityKey(damageId, '재산피해 약 1.2억원'), type: 'Damage', name: '재산피해 약 1.2억원' },
+      { key: entityKey(damageId, '재산피해 약 4.5억원'), type: 'Damage', name: '재산피해 약 4.5억원' },
     ];
     const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
 
-    const key1 = entityKey('Damage', '재산피해 약 1.2억원');
-    const key2 = entityKey('Damage', '재산피해 약 4.5억원');
+    const key1 = entityKey(damageId, '재산피해 약 1.2억원');
+    const key2 = entityKey(damageId, '재산피해 약 4.5억원');
     // 서로 다른 canonical로 남아 두 개의 별개 엔티티를 유지해야 한다.
     expect(map.get(key1)?.key).toBe(key1);
     expect(map.get(key2)?.key).toBe(key2);
@@ -70,21 +75,21 @@ describe('buildCanonicalMap', () => {
 
   it("resolution='embedding' 타입(Equipment)은 근접 이름을 그대로 병합한다(회귀 확인)", async () => {
     const entities: ResolvedEntity[] = [
-      { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
-      { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
+      { key: entityKey(equipmentId, '스프링클러'), type: 'Equipment', name: '스프링클러' },
+      { key: entityKey(equipmentId, '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
     ];
     const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
-    expect(map.get(entityKey('Equipment', '스프링클러'))?.key)
-      .toBe(map.get(entityKey('Equipment', '스프링클러 설비'))?.key);
+    expect(map.get(entityKey(equipmentId, '스프링클러'))?.key)
+      .toBe(map.get(entityKey(equipmentId, '스프링클러 설비'))?.key);
   });
 });
 
 describe('applyCanonicalMap', () => {
   it('엔티티/관계를 canonical 키로 재작성하고 중복을 제거한다', async () => {
-    const eKey = entityKey('Equipment', '스프링클러');
-    const eFullKey = entityKey('Equipment', '스프링클러 설비');
-    const dKey = entityKey('Equipment', '감지기');
-    const bKey = entityKey('Building', '중앙로 상가건물');
+    const eKey = entityKey(equipmentId, '스프링클러');
+    const eFullKey = entityKey(equipmentId, '스프링클러 설비');
+    const dKey = entityKey(equipmentId, '감지기');
+    const bKey = entityKey(buildingId, '중앙로 상가건물');
 
     const graph: ResolvedGraph = {
       entities: [
@@ -114,7 +119,7 @@ describe('applyCanonicalMap', () => {
 
     // 두 관계 모두 같은 canonical objectKey를 가리키므로 dedupe되어 1개만 남는다.
     expect(result.relations).toHaveLength(1);
-    expect(result.relations[0].objectKey).toBe(entityKey('Equipment', '스프링클러 설비'));
+    expect(result.relations[0].objectKey).toBe(entityKey(equipmentId, '스프링클러 설비'));
     expect(result.relations[0].subjectKey).toBe(bKey);
   });
 

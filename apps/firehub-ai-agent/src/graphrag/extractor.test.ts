@@ -47,7 +47,7 @@ describe('extractGraph', () => {
       ...CORE_ONTOLOGY,
       entities: [
         ...CORE_ONTOLOGY.entities,
-        { type: 'Witness', description: '목격자', naming: '본문 표기 보존', resolution: 'embedding' as const },
+        { id: 999, type: 'Witness', description: '목격자', naming: '본문 표기 보존', resolution: 'embedding' as const },
       ],
       relations: [
         ...CORE_ONTOLOGY.relations,

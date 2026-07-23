@@ -29,12 +29,16 @@ export interface ExtractionResult { entities: ExtractedEntity[]; relations: Extr
 
 // 엔티티 타입 정의 — 설명 + 명명 규칙 + 해소(resolution) 정책 + (선택) 데이터 속성 정의.
 // resolution: 'embedding'(표기 변형을 임베딩 유사도로 병합) | 'exact'(정확 키 일치만 병합 — 수치·고유성 보존 목적).
+// id(5-6): api(ontology_entity_type.id) 서로게이트 PK — 타입명이 리네임돼도 리포지토리가 UPDATE로
+// 보존하는 안정적 식별자. Neo4j 노드 key(entityKey)가 이 id를 기반으로 구성되어, 리네임 시에도
+// key가 바뀌지 않는다(타입 문자열은 더 이상 key의 일부가 아님).
 export interface EntityTypeDef {
   type: EntityType;
   description: string;
   naming: string;
   resolution: 'embedding' | 'exact';
   properties?: readonly PropertyDef[];
+  id: number;
 }
 // 관계 정의 — 허용 (주어타입, 관계, 목적어타입) + 의미 설명.
 export interface RelationDef { subject: EntityType; relation: RelationType; object: EntityType; description: string; }
@@ -50,21 +54,26 @@ const UNIQUE_NAMING =
 const VERBATIM_NAMING = '본문에 등장한 표기를 그대로 사용한다.';
 
 // 코어 온톨로지 인스턴스 — 화재조사 도메인. 도메인 특화는 이 객체에만 존재한다.
+// id: 번들 폴백 전용 고정값(1~6) — api DB의 실제 entity_type_id와는 무관하다. 섞이지 않는 이유는
+// "폴백이라서"가 아니라 파이프라인 순서다: loadOntology()가 실패해 이 폴백으로 넘어갈 정도로 api가
+// 응답하지 않으면, 같은 api를 호출하는 ingestDataset의 deps.listChunks()도 반드시 실패해 entityKey가
+// 구성되기 전에 파이프라인 자체가 중단된다(graphrag-tools.ts 참고). 이 폴백 id가 실제 저장에 쓰이는
+// 경로는 존재하지 않는다 — listChunks가 api 이외의 경로(캐시 등)로 바뀌면 이 불변식이 깨진다.
 export const CORE_ONTOLOGY: Ontology = {
   domain: '화재조사 보고서',
   schemaVersion: 1,
   entities: [
     // Incident/Damage는 사건별로 고유하거나 구체 수치를 담으므로 임베딩 유사도 병합 시 서로 다른
     // 사건/피해가 뭉개질 수 있다 → 'exact'(정확 키 일치만 병합)로 고정.
-    { type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: UNIQUE_NAMING, resolution: 'exact',
+    { id: 1, type: 'Incident', description: '사건/이벤트 (예: 발생한 화재)', naming: UNIQUE_NAMING, resolution: 'exact',
       properties: [{ name: '피해액',
         description: '화재로 인한 재산 피해 총액을 원 단위 정수로 추출. \'억\'=1e8, \'만\'=1e4 로 환산하고 콤마·통화기호 제거. 범위·근사값은 대표값 1개만.',
         dataType: 'number', unit: '원' }] },
-    { type: 'Building', description: '물리적 장소/건물', naming: VERBATIM_NAMING, resolution: 'embedding' },
-    { type: 'Cause', description: '발화·발생 원인', naming: VERBATIM_NAMING, resolution: 'embedding' },
-    { type: 'Damage', description: '피해 내역', naming: VERBATIM_NAMING, resolution: 'exact' },
-    { type: 'Equipment', description: '소방 설비/장비', naming: VERBATIM_NAMING, resolution: 'embedding' },
-    { type: 'Regulation', description: '관련 법규/기준', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { id: 2, type: 'Building', description: '물리적 장소/건물', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { id: 3, type: 'Cause', description: '발화·발생 원인', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { id: 4, type: 'Damage', description: '피해 내역', naming: VERBATIM_NAMING, resolution: 'exact' },
+    { id: 5, type: 'Equipment', description: '소방 설비/장비', naming: VERBATIM_NAMING, resolution: 'embedding' },
+    { id: 6, type: 'Regulation', description: '관련 법규/기준', naming: VERBATIM_NAMING, resolution: 'embedding' },
   ],
   relations: [
     { subject: 'Incident', relation: 'OCCURRED_AT', object: 'Building', description: '사건이 발생한 장소' },
@@ -88,6 +97,14 @@ export function isRelationType(ontology: Ontology, x: string): boolean {
 export function entityResolutionPolicy(ontology: Ontology, type: EntityType): 'embedding' | 'exact' {
   return ontology.entities.find((e) => e.type === type)?.resolution ?? 'embedding';
 }
+// 엔티티 타입명 → id(5-6, Neo4j key 구성용). extractor.ts가 isEntityType으로 이미 ontology에 실존하는
+// 타입만 통과시키므로, 이 함수를 호출하는 시점엔 항상 매칭에 성공해야 한다 — 실패하면 파이프라인
+// 불변식이 깨진 것이므로 조용히 폴백하지 않고 예외를 던진다.
+export function entityTypeId(ontology: Ontology, type: EntityType): number {
+  const def = ontology.entities.find((e) => e.type === type);
+  if (!def) throw new Error(`온톨로지에 정의되지 않은 엔티티 타입: ${type}`);
+  return def.id;
+}
 // 주어·관계·목적어 조합이 전달된 ontology 의 허용 트리플에 존재하는지 검사한다.
 export function isAllowedTriple(
   ontology: Ontology, subjectType: EntityType, rel: RelationType, objectType: EntityType,
@@ -97,7 +114,7 @@ export function isAllowedTriple(
 
 // ── 시각화용 직렬화 (읽기 전용) ──
 // CORE_ONTOLOGY를 프론트 계약 형태로 평문 직렬화한다. 도메인 로직/추출에는 영향 없음.
-export interface SerializedEntityType { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; properties?: PropertyDef[]; }
+export interface SerializedEntityType { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; properties?: PropertyDef[]; id?: number; }
 export interface SerializedTriple { subject: string; relation: string; object: string; description: string; }
 export interface SerializedOntology { domain: string; schemaVersion: number; entities: SerializedEntityType[]; relations: SerializedTriple[]; }
 
@@ -106,7 +123,7 @@ export function serializeOntology(ontology: Ontology = CORE_ONTOLOGY): Serialize
     domain: ontology.domain,
     schemaVersion: ontology.schemaVersion,
     entities: ontology.entities.map((e) => ({
-      type: e.type, description: e.description, naming: e.naming, resolution: e.resolution,
+      type: e.type, description: e.description, naming: e.naming, resolution: e.resolution, id: e.id,
       properties: e.properties ? [...e.properties] : undefined,
     })),
     relations: ontology.relations.map((r) => ({ subject: r.subject, relation: r.relation, object: r.object, description: r.description })),
@@ -123,14 +140,22 @@ export function deserializeOntology(s: SerializedOntology): Ontology {
     domain: s.domain,
     // 방어 기본값: 구버전 api/캐시된 wire 응답 등 schemaVersion 이 없을 수 있으므로 1로 폴백.
     schemaVersion: s.schemaVersion ?? 1,
-    entities: s.entities.map((e) => ({
-      type: e.type, description: e.description, naming: e.naming, resolution: e.resolution,
-      // 허용된 dataType(text|number|date)만 통과시킨다 — 정의되지 않은 값 방어.
-      properties: (e.properties ?? [])
-        .filter((p) => ['text', 'number', 'date'].includes(p.dataType))
-        // api wire 의 unit 은 nullable → JSON null 이 올 수 있으므로 undefined 로 정규화(타입 string|undefined 보존).
-        .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit ?? undefined })),
-    })),
+    entities: s.entities.map((e) => {
+      // id(5-6)는 Neo4j key 구성에 쓰이는 정체성 필드라 누락을 조용히 넘기면 안 된다 —
+      // undefined인 채로 진행하면 모든 무id 타입이 "undefined:이름"으로 뭉개져 서로 다른
+      // 타입의 엔티티가 같은 key 네임스페이스로 충돌할 수 있다. 명시적으로 실패시킨다.
+      if (e.id == null) {
+        throw new Error(`온톨로지 wire 응답에 entity_type id가 없습니다: ${e.type}`);
+      }
+      return {
+        type: e.type, description: e.description, naming: e.naming, resolution: e.resolution, id: e.id,
+        // 허용된 dataType(text|number|date)만 통과시킨다 — 정의되지 않은 값 방어.
+        properties: (e.properties ?? [])
+          .filter((p) => ['text', 'number', 'date'].includes(p.dataType))
+          // api wire 의 unit 은 nullable → JSON null 이 올 수 있으므로 undefined 로 정규화(타입 string|undefined 보존).
+          .map((p) => ({ name: p.name, description: p.description, dataType: p.dataType, unit: p.unit ?? undefined })),
+      };
+    }),
     relations: s.relations
       .filter((r) => knownTypes.has(r.subject) && knownTypes.has(r.object))
       .map((r) => ({ subject: r.subject, relation: r.relation, object: r.object, description: r.description })),

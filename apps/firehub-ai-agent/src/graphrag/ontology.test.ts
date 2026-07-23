@@ -14,7 +14,7 @@ describe('ontology', () => {
   it('DB 편집으로 추가된 타입도 ontology 인자에 있으면 통과한다(D.2: 하드코딩 상수에 더 이상 안 갇힘)', () => {
     const extended = {
       ...CORE_ONTOLOGY,
-      entities: [...CORE_ONTOLOGY.entities, { type: 'Witness', description: '목격자', naming: '본문 표기 보존', resolution: 'embedding' as const }],
+      entities: [...CORE_ONTOLOGY.entities, { id: 999, type: 'Witness', description: '목격자', naming: '본문 표기 보존', resolution: 'embedding' as const }],
       relations: [...CORE_ONTOLOGY.relations, { subject: 'Incident', relation: 'TESTIFIED_BY', object: 'Witness', description: '사건을 증언한 목격자' }],
     };
     expect(isEntityType(extended, 'Witness')).toBe(true);
@@ -63,7 +63,7 @@ describe('serializeOntology', () => {
     expect(s.domain).toBe('화재조사 보고서');
     expect(s.entities).toHaveLength(6);
     expect(s.entities[0]).toEqual({
-      type: 'Incident', description: expect.any(String), naming: expect.any(String), resolution: 'exact',
+      id: 1, type: 'Incident', description: expect.any(String), naming: expect.any(String), resolution: 'exact',
       properties: [expect.objectContaining({ name: '피해액', dataType: 'number', unit: '원' })],
     });
     expect(s.relations).toHaveLength(6);
@@ -101,7 +101,7 @@ describe('온톨로지 속성', () => {
     const wire: SerializedOntology = {
       domain: 'd',
       schemaVersion: 2,
-      entities: [{ type: 'Incident', description: 'x', naming: 'y', resolution: 'exact',
+      entities: [{ id: 1, type: 'Incident', description: 'x', naming: 'y', resolution: 'exact',
         properties: [{ name: '피해액', description: 'z', dataType: 'number', unit: '원' }] }],
       relations: [],
     };

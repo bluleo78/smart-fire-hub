@@ -6,13 +6,15 @@ import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js
 import { loadGraph } from './loader.js';
 import { entityKey } from './resolver.js';
 import { structuredQuery } from './structured-query.js';
-import { CORE_ONTOLOGY } from './ontology.js';
+import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+
+const incidentId = entityTypeId(CORE_ONTOLOGY, 'Incident');
 
 // 피해액 2억(>1e8, 매칭) 사건과 5천만(<1e8, 비매칭) 사건을 적재한다.
 const graph = {
   entities: [
-    { key: entityKey('Incident', '큰불-2026'), type: 'Incident' as const, name: '큰불-2026', properties: { 피해액: 200_000_000 } },
-    { key: entityKey('Incident', '작은불-2026'), type: 'Incident' as const, name: '작은불-2026', properties: { 피해액: 50_000_000 } },
+    { key: entityKey(incidentId, '큰불-2026'), type: 'Incident' as const, name: '큰불-2026', properties: { 피해액: 200_000_000 } },
+    { key: entityKey(incidentId, '작은불-2026'), type: 'Incident' as const, name: '작은불-2026', properties: { 피해액: 50_000_000 } },
   ],
   relations: [],
 };
