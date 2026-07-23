@@ -50,7 +50,6 @@ async function main(): Promise<void> {
   if (!datasetIdArg) {
     throw new Error('사용법: eval:a1 <datasetId> [label]');
   }
-  const datasetId = Number(datasetIdArg);
   const label = process.argv[3] ?? datasetIdArg;
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5010/api/v1';
@@ -74,7 +73,9 @@ async function main(): Promise<void> {
       return formatGraphContext(result.nodes, result.relations, result.sourceChunks);
     },
     vectorContext: async (question: string): Promise<string[]> => {
-      const hits = await apiClient.searchDocuments(question, [datasetId], 8, 'HYBRID');
+      // graphragContext(retrieve 내부)가 datasetIds=undefined(전역 검색)로 시드를 잡으므로,
+      // 검색 경로만 다르고 검색 범위는 동일해야 하는 공정 비교를 위해 벡터 경로도 전역 검색으로 맞춘다.
+      const hits = await apiClient.searchDocuments(question, undefined, 8, 'HYBRID');
       return formatVectorContext(hits);
     },
     complete,
