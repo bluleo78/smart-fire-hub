@@ -12,18 +12,23 @@ import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.poifs.filesystem.FileMagic;
 import org.apache.poi.ss.util.CellAddress;
+import org.apache.poi.xssf.binary.XSSFBSharedStringsTable;
+import org.apache.poi.xssf.binary.XSSFBSheetHandler;
+import org.apache.poi.xssf.binary.XSSFBStylesTable;
 import org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable;
+import org.apache.poi.xssf.eventusermodel.XSSFBReader;
 import org.apache.poi.xssf.eventusermodel.XSSFReader;
 import org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler;
 import org.apache.poi.xssf.eventusermodel.XSSFSheetXMLHandler.SheetContentsHandler;
 import org.apache.poi.xssf.model.StylesTable;
 import org.apache.poi.xssf.usermodel.XSSFComment;
+import org.apache.poi.xssf.usermodel.XSSFRelation;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 
 /**
- * XLSX/XLS 파일을 이벤트 기반으로 파싱한다.
+ * XLSX/XLS/XLSB 파일을 이벤트 기반으로 파싱한다.
  *
  * <p>워크북 전체 DOM을 메모리에 적재하지 않고 한 행씩 {@link RowConsumer}로 흘려보낸다. RowConsumer가 false를 반환하면 즉시 파싱을
  * 중단한다(early-exit). 첫 시트만 처리한다(현재 동작과 동일).
@@ -40,51 +45,98 @@ public final class ExcelStreamingParser {
     private static final EarlyStopException INSTANCE = new EarlyStopException();
   }
 
-  /** 포맷을 자동 감지하여 XLSX 또는 XLS 파서로 분기한다. */
+  /** 포맷을 자동 감지하여 XLSX/XLSB 또는 XLS 파서로 분기한다. */
   public static void parse(InputStream in, RowConsumer consumer) throws Exception {
     BufferedInputStream buffered =
         in instanceof BufferedInputStream bi ? bi : new BufferedInputStream(in);
     FileMagic magic = FileMagic.valueOf(buffered);
     switch (magic) {
-      case OOXML -> parseXlsx(buffered, consumer);
+      case OOXML -> parseOoxml(buffered, consumer);
       case OLE2 -> parseXls(buffered, consumer);
       default -> throw new IOException("Unsupported Excel format: " + magic);
     }
   }
 
   // ---------------------------------------------------------------------
-  // XLSX (OOXML) — XSSFReader + XSSFSheetXMLHandler SAX
+  // XLSX/XLSB (OOXML 컨테이너) — 워크북 파트 content-type으로 XLSB 여부 판별 후 분기
   // ---------------------------------------------------------------------
 
-  private static void parseXlsx(InputStream in, RowConsumer consumer) throws Exception {
+  /**
+   * XLSX와 XLSB는 둘 다 ZIP 기반 OOXML 컨테이너라 {@link FileMagic}만으로는 구분할 수 없다. 워크북 파트의 content-type을 확인해
+   * 바이너리(XLSB) 여부를 판별한다.
+   */
+  private static void parseOoxml(InputStream in, RowConsumer consumer) throws Exception {
     try (OPCPackage pkg = OPCPackage.open(in)) {
-      XSSFReader reader = new XSSFReader(pkg);
-      ReadOnlySharedStringsTable strings = new ReadOnlySharedStringsTable(pkg);
-      StylesTable styles = reader.getStylesTable();
-
-      XSSFReader.SheetIterator sheets = (XSSFReader.SheetIterator) reader.getSheetsData();
-      if (!sheets.hasNext()) return;
-      try (InputStream sheetStream = sheets.next()) {
-        SheetContentsHandler handler = new RowAggregatingHandler(consumer);
-        XMLReader xmlReader = newXmlReader();
-        xmlReader.setContentHandler(
-            new XSSFSheetXMLHandler(
-                styles, strings, handler, new LegacyExcelDataFormatter(), false));
-        try {
-          xmlReader.parse(new InputSource(sheetStream));
-        } catch (EarlyStopException ignore) {
-          // 정상 조기 종료 — Java SAX 구현이 RuntimeException을 감싸지 않고 직접 전파함
-        } catch (SAXException e) {
-          // SAX 파서가 RuntimeException을 SAXException으로 감싸는 경우(구버전 런타임 대비)
-          if (!(e.getCause() instanceof EarlyStopException)
-              && !(e.getException() instanceof EarlyStopException)) {
-            throw e;
-          }
-          // 정상 조기 종료
-        }
+      boolean isXlsb =
+          !pkg.getPartsByContentType(XSSFRelation.XLSB_BINARY_WORKBOOK.getContentType())
+              .isEmpty();
+      if (isXlsb) {
+        parseXlsb(pkg, consumer);
+      } else {
+        parseXlsx(pkg, consumer);
       }
     } catch (OpenXML4JException e) {
-      throw new IOException("Failed to open XLSX package", e);
+      throw new IOException("Failed to open XLSX/XLSB package", e);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // XLSX — XSSFReader + XSSFSheetXMLHandler SAX
+  // ---------------------------------------------------------------------
+
+  private static void parseXlsx(OPCPackage pkg, RowConsumer consumer) throws Exception {
+    XSSFReader reader = new XSSFReader(pkg);
+    ReadOnlySharedStringsTable strings = new ReadOnlySharedStringsTable(pkg);
+    StylesTable styles = reader.getStylesTable();
+
+    XSSFReader.SheetIterator sheets = (XSSFReader.SheetIterator) reader.getSheetsData();
+    if (!sheets.hasNext()) return;
+    try (InputStream sheetStream = sheets.next()) {
+      SheetContentsHandler handler = new RowAggregatingHandler(consumer);
+      XMLReader xmlReader = newXmlReader();
+      xmlReader.setContentHandler(
+          new XSSFSheetXMLHandler(styles, strings, handler, new LegacyExcelDataFormatter(), false));
+      try {
+        xmlReader.parse(new InputSource(sheetStream));
+      } catch (EarlyStopException ignore) {
+        // 정상 조기 종료 — Java SAX 구현이 RuntimeException을 감싸지 않고 직접 전파함
+      } catch (SAXException e) {
+        // SAX 파서가 RuntimeException을 SAXException으로 감싸는 경우(구버전 런타임 대비)
+        if (!(e.getCause() instanceof EarlyStopException)
+            && !(e.getException() instanceof EarlyStopException)) {
+          throw e;
+        }
+        // 정상 조기 종료
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // XLSB — XSSFBReader + XSSFBSheetHandler 바이너리 레코드 파서
+  // ---------------------------------------------------------------------
+
+  /**
+   * XLSB는 시트가 XML이 아닌 바이너리 레코드(BIFF12)로 저장된다. POI의 {@code org.apache.poi.xssf.binary} 패키지가
+   * 제공하는 저수준 레코드 파서를 사용하며, {@link XSSFBSheetHandler}는 XLSX와 동일한 {@link SheetContentsHandler}
+   * 인터페이스를 받으므로 {@link RowAggregatingHandler}를 그대로 재사용한다.
+   */
+  private static void parseXlsb(OPCPackage pkg, RowConsumer consumer) throws Exception {
+    XSSFBReader reader = new XSSFBReader(pkg);
+    XSSFBSharedStringsTable strings = new XSSFBSharedStringsTable(pkg);
+    XSSFBStylesTable styles = reader.getXSSFBStylesTable();
+
+    var sheets = reader.getSheetsData();
+    if (!sheets.hasNext()) return;
+    try (InputStream sheetStream = sheets.next()) {
+      SheetContentsHandler handler = new RowAggregatingHandler(consumer);
+      XSSFBSheetHandler sheetHandler =
+          new XSSFBSheetHandler(
+              sheetStream, styles, null, strings, handler, new LegacyExcelDataFormatter(), false);
+      try {
+        sheetHandler.parse();
+      } catch (EarlyStopException ignore) {
+        // 정상 조기 종료
+      }
     }
   }
 

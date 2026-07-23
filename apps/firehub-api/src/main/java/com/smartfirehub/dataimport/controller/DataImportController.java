@@ -39,10 +39,13 @@ public class DataImportController {
       @RequestParam(defaultValue = ",") String delimiter,
       @RequestParam(defaultValue = "AUTO") String encoding,
       @RequestParam(defaultValue = "true") boolean hasHeader,
-      @RequestParam(defaultValue = "0") int skipRows)
+      @RequestParam(defaultValue = "0") int skipRows,
+      @RequestParam(defaultValue = "false") boolean partial)
       throws Exception {
     ParseOptions parseOptions = new ParseOptions(delimiter, encoding, hasHeader, skipRows);
-    return ResponseEntity.ok(importService.previewImport(datasetId, file, parseOptions));
+    // partial=true: 프론트가 대용량 CSV의 앞부분만 잘라 전송한 경우. 파일 끝이 잘려 있어
+    // 전체 행수 계산(countRows)을 건너뛴다. (프론트 dataImports.previewImport 참고)
+    return ResponseEntity.ok(importService.previewImport(datasetId, file, parseOptions, partial));
   }
 
   @PostMapping("/imports/validate")

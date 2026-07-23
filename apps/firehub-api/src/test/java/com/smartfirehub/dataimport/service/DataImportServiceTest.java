@@ -8,8 +8,10 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.ExportFormat;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
+import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
+import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -135,6 +137,59 @@ class DataImportServiceTest extends IntegrationTestBase {
                     testDatasetId, file, null, testUserId, "Test User", null, null))
         .isInstanceOf(UnsupportedFileTypeException.class)
         .hasMessageContaining("File name is required");
+  }
+
+  @Test
+  void previewImport_fullCsv_countsAllRows() throws Exception {
+    // Given - 완전한 CSV (partial=false, 기본 경로)
+    String csvContent =
+        """
+        name,age,email
+        Alice,30,alice@example.com
+        Bob,25,bob@example.com
+        Carol,40,carol@example.com
+        """;
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file", "test.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8));
+
+    // When
+    ImportPreviewResponse preview = dataImportService.previewImport(testDatasetId, file);
+
+    // Then - 전체 파일이므로 전체 행수(3)를 정확히 계산한다
+    assertThat(preview.fileHeaders()).containsExactly("name", "age", "email");
+    assertThat(preview.totalRows()).isEqualTo(3);
+  }
+
+  /**
+   * 대용량 CSV 미리보기 슬라이스(413 회피) 회귀 방지: 프론트가 앞부분만 잘라 보내면 파일 끝의 마지막 행이 열린 따옴표로 끝날 수 있다. partial=true일
+   * 때 전체 행수 계산(countRows, 파일 끝까지 스캔)을 건너뛰어 예외 없이 헤더+샘플을 반환해야 한다. 샘플 5행은 파일 앞에서 조기 종료하므로 잘린 꼬리에 닿지 않는다.
+   */
+  @Test
+  void previewImport_partialTruncatedCsv_skipsCountAndDoesNotThrow() throws Exception {
+    // Given - 마지막 행이 닫히지 않은 따옴표로 끝나는(파일 중간에서 잘린) CSV.
+    // 완전한 데이터 행 6개 뒤에 잘린 행 1개 → 샘플 5행은 잘린 행에 닿지 않는다.
+    String truncatedCsv =
+        "name,age,email\n"
+            + "Alice,30,a@x.com\n"
+            + "Bob,25,b@x.com\n"
+            + "Carol,40,c@x.com\n"
+            + "Dave,35,d@x.com\n"
+            + "Eve,28,e@x.com\n"
+            + "Frank,50,f@x.com\n"
+            + "Grace,22,\"unterminated"; // 열린 따옴표 상태로 EOF
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file", "big.csv", "text/csv", truncatedCsv.getBytes(StandardCharsets.UTF_8));
+
+    // When - partial=true
+    ImportPreviewResponse preview =
+        dataImportService.previewImport(testDatasetId, file, ParseOptions.defaults(), true);
+
+    // Then - 예외 없이 헤더/샘플 반환, 전체 행수는 미계산(-1)
+    assertThat(preview.fileHeaders()).containsExactly("name", "age", "email");
+    assertThat(preview.sampleRows()).hasSize(5);
+    assertThat(preview.totalRows()).isEqualTo(-1);
   }
 
   @Test

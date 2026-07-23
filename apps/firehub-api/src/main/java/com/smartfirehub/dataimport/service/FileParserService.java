@@ -56,7 +56,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseHeadersCsvFromStream(inputStream, opts);
-      case "xlsx", "xls" -> parseHeadersExcel(inputStream);
+      case "xlsx", "xls", "xlsb" -> parseHeadersExcel(inputStream);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -66,7 +66,7 @@ public class FileParserService {
       InputStream inputStream, String fileType, int maxRows, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseSampleRowsCsvFromStream(inputStream, maxRows, opts);
-      case "xlsx", "xls" -> parseSampleRowsExcel(inputStream, maxRows);
+      case "xlsx", "xls", "xlsb" -> parseSampleRowsExcel(inputStream, maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -76,7 +76,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> countRowsCsvFromStream(inputStream, opts);
-      case "xlsx", "xls" -> countRowsExcel(inputStream);
+      case "xlsx", "xls", "xlsb" -> countRowsExcel(inputStream);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -86,7 +86,7 @@ public class FileParserService {
       InputStream inputStream, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseCsvFromStream(inputStream, opts);
-      case "xlsx", "xls" -> parseExcel(inputStream);
+      case "xlsx", "xls", "xlsb" -> parseExcel(inputStream);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -140,7 +140,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseCsvFromBytes(fileData, opts);
-      case "xlsx", "xls" -> parseExcel(new ByteArrayInputStream(fileData));
+      case "xlsx", "xls", "xlsb" -> parseExcel(new ByteArrayInputStream(fileData));
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -149,7 +149,7 @@ public class FileParserService {
       throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseHeadersCsvFromBytes(fileData, opts);
-      case "xlsx", "xls" -> parseHeadersExcel(new ByteArrayInputStream(fileData));
+      case "xlsx", "xls", "xlsb" -> parseHeadersExcel(new ByteArrayInputStream(fileData));
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -158,7 +158,7 @@ public class FileParserService {
       byte[] fileData, String fileType, int maxRows, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseSampleRowsCsvFromBytes(fileData, maxRows, opts);
-      case "xlsx", "xls" -> parseSampleRowsExcel(new ByteArrayInputStream(fileData), maxRows);
+      case "xlsx", "xls", "xlsb" -> parseSampleRowsExcel(new ByteArrayInputStream(fileData), maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -166,7 +166,7 @@ public class FileParserService {
   public int countRows(byte[] fileData, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> countRowsCsvFromBytes(fileData, opts);
-      case "xlsx", "xls" -> countRowsExcel(new ByteArrayInputStream(fileData));
+      case "xlsx", "xls", "xlsb" -> countRowsExcel(new ByteArrayInputStream(fileData));
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }

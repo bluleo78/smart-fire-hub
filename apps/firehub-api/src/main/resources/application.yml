@@ -7,8 +7,10 @@ spring:
     baseline-version: 74
   servlet:
     multipart:
-      max-file-size: 256MB
-      max-request-size: 256MB
+      # 대용량 CSV/XLSX 임포트 허용. 미리보기는 CSV를 앞부분만 잘라 보내지만(413 회피),
+      # 실제 검증/임포트는 파일 전체를 전송하므로 400MB급 파일까지 여유 있게 수용한다.
+      max-file-size: 512MB
+      max-request-size: 512MB
 
 server:
   port: 8080

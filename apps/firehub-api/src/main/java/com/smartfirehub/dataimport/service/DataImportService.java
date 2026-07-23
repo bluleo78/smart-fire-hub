@@ -56,6 +56,17 @@ public class DataImportService {
 
   public ImportPreviewResponse previewImport(
       Long datasetId, MultipartFile file, ParseOptions parseOptions) throws Exception {
+    return previewImport(datasetId, file, parseOptions, false);
+  }
+
+  /**
+   * 데이터셋 임포트 미리보기. {@code partial=true}는 프론트가 대용량 CSV의 앞부분만 잘라 전송한 경우로, 파일 끝이 잘려 있다. 이때 전체
+   * 행수(countRows)는 잘린 마지막 행이 열린 따옴표로 끝나면 예외를 던질 수 있고 값도 부정확하므로 계산을 건너뛴다(totalRows=-1). totalRows는
+   * 미리보기 UI에서 사용되지 않으며, 실제 전체 행수는 검증/임포트 시점에 전체 파일로 확정된다.
+   */
+  public ImportPreviewResponse previewImport(
+      Long datasetId, MultipartFile file, ParseOptions parseOptions, boolean partial)
+      throws Exception {
     // Validate dataset exists
     datasetRepository
         .findById(datasetId)
@@ -68,10 +79,13 @@ public class DataImportService {
     }
 
     String fileType = getFileType(originalFilename);
-    // XLS(레거시 바이너리 포맷)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
-    if (!fileType.equals("csv") && !fileType.equals("xlsx") && !fileType.equals("xls")) {
+    // XLS(레거시 바이너리 포맷)/XLSB(바이너리 XLSX)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
+    if (!fileType.equals("csv")
+        && !fileType.equals("xlsx")
+        && !fileType.equals("xls")
+        && !fileType.equals("xlsb")) {
       throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV, XLSX, and XLS are supported.");
+          "Unsupported file type. Only CSV, XLSX, XLS, and XLSB are supported.");
     }
 
     // getInputStream()으로 스트리밍 처리 — getBytes()는 대용량 파일 OOM 위험(#145)
@@ -82,7 +96,9 @@ public class DataImportService {
     List<Map<String, String>> sampleRows =
         fileParserService.parseSampleRows(file.getInputStream(), fileType, 5, parseOptions);
 
-    int totalRows = fileParserService.countRows(file.getInputStream(), fileType, parseOptions);
+    // partial 미리보기는 파일 끝이 잘려 있어 전체 행수를 셀 수 없다(위 Javadoc 참고).
+    int totalRows =
+        partial ? -1 : fileParserService.countRows(file.getInputStream(), fileType, parseOptions);
 
     // Get dataset columns
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -117,10 +133,13 @@ public class DataImportService {
     }
 
     String fileType = getFileType(originalFilename);
-    // XLS(레거시 바이너리 포맷)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
-    if (!fileType.equals("csv") && !fileType.equals("xlsx") && !fileType.equals("xls")) {
+    // XLS(레거시 바이너리 포맷)/XLSB(바이너리 XLSX)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
+    if (!fileType.equals("csv")
+        && !fileType.equals("xlsx")
+        && !fileType.equals("xls")
+        && !fileType.equals("xlsb")) {
       throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV, XLSX, and XLS are supported.");
+          "Unsupported file type. Only CSV, XLSX, XLS, and XLSB are supported.");
     }
 
     // getInputStream()으로 스트리밍 처리 — getBytes()는 대용량 파일 OOM 위험(#145)
@@ -211,10 +230,13 @@ public class DataImportService {
     }
 
     String fileType = getFileType(originalFilename);
-    // XLS(레거시 바이너리 포맷)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
-    if (!fileType.equals("csv") && !fileType.equals("xlsx") && !fileType.equals("xls")) {
+    // XLS(레거시 바이너리 포맷)/XLSB(바이너리 XLSX)도 XLSX와 동일한 스트리밍 파서로 처리 가능하므로 허용
+    if (!fileType.equals("csv")
+        && !fileType.equals("xlsx")
+        && !fileType.equals("xls")
+        && !fileType.equals("xlsb")) {
       throw new UnsupportedFileTypeException(
-          "Unsupported file type. Only CSV, XLSX, and XLS are supported.");
+          "Unsupported file type. Only CSV, XLSX, XLS, and XLSB are supported.");
     }
 
     long fileSize = file.getSize();
@@ -905,9 +927,9 @@ public class DataImportService {
       return "파일 업로드가 중간에 실패했습니다. 다시 시도해주세요.";
     }
 
-    // CSV/XLSX parse errors
+    // CSV/XLSX/XLSB parse errors
     if (msg.contains("ArrayIndexOutOfBoundsException") || msg.contains("Cannot parse")) {
-      return "파일 형식이 올바르지 않습니다. CSV 또는 XLSX 파일을 확인해주세요.";
+      return "파일 형식이 올바르지 않습니다. CSV, XLSX, 또는 XLSB 파일을 확인해주세요.";
     }
 
     // Connection / timeout

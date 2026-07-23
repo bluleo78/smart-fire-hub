@@ -292,7 +292,7 @@ test.describe('데이터셋 임포트 다이얼로그', () => {
 test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () => {
   /**
    * 드래그 앤 드롭으로 지원하지 않는 파일을 떨어뜨렸을 때
-   * "CSV 또는 XLSX 파일만 지원합니다" 토스트가 뜨고, 파일이 선택되지 않음을 검증한다.
+   * "CSV, XLSX, 또는 XLSB 파일만 지원합니다" 토스트가 뜨고, 파일이 선택되지 않음을 검증한다.
    */
   test('드래그 앤 드롭으로 .txt 파일 투하 시 에러 토스트가 표시되고 파일이 선택되지 않는다', async ({ authenticatedPage: page }) => {
     await setupImportMocks(page);
@@ -314,7 +314,7 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
     });
 
     // 에러 토스트가 표시된다
-    await expect(page.getByText('CSV 또는 XLSX 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('CSV, XLSX, 또는 XLSB 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
 
     // 잘못된 파일명이 드롭존에 표시되지 않는다 (setSelectedFile 이 호출되어선 안 됨)
     await expect(page.getByRole('dialog').getByText('document.txt')).not.toBeVisible();
@@ -337,7 +337,7 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
       zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
     });
 
-    await expect(page.getByText('CSV 또는 XLSX 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('CSV, XLSX, 또는 XLSB 파일만 지원합니다')).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole('dialog').getByText('report.pdf')).not.toBeVisible();
   });
 
@@ -356,7 +356,7 @@ test.describe('FileUploadZone 파일 형식 검증 — #24 회귀 방지', () =>
     await page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE);
 
     // 에러 토스트 없이 미리보기 단계(2단계)로 진행돼야 함
-    await expect(page.getByText('CSV 또는 XLSX 파일만 지원합니다')).not.toBeVisible();
+    await expect(page.getByText('CSV, XLSX, 또는 XLSB 파일만 지원합니다')).not.toBeVisible();
     await expect(page.getByRole('dialog').getByRole('button', { name: '임포트' })).toBeVisible({ timeout: 10_000 });
   });
 });
@@ -559,5 +559,102 @@ test.describe('데이터셋 변경 이력 탭', () => {
 
     // 빈 임포트 목록 — 데이터셋 생성 이벤트만 존재
     await expect(page.getByText('데이터셋을 생성했습니다')).toBeVisible();
+  });
+});
+
+/**
+ * 대용량 CSV 미리보기 슬라이스 회귀 방지.
+ * 400MB CSV 미리보기가 413(Entity Too Large)으로 실패하던 문제를 막기 위해, 프론트는 CSV의
+ * 앞부분(최대 2MB)만 잘라 전송하고 ?partial=true를 붙인다. (dataImports.ts previewImport)
+ */
+test.describe('대용량 CSV 미리보기 슬라이스', () => {
+  const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+
+  /** minBytes 이상이 되도록 유효한 CSV 버퍼를 생성한다 (라인 배열 후 1회 join — O(n)) */
+  function makeCsvBuffer(minBytes: number): Buffer {
+    const lines: string[] = ['id,name'];
+    let bytes = 8;
+    let i = 0;
+    while (bytes < minBytes) {
+      const line = `${i},row-value-${i}-padding-abcdefghij`;
+      lines.push(line);
+      bytes += line.length + 1;
+      i++;
+    }
+    return Buffer.from(lines.join('\n') + '\n', 'utf-8');
+  }
+
+  /** 미리보기 요청의 URL·본문 크기를 캡처하는 라우트를 설치한다 */
+  async function capturePreviewRequest(page: import('@playwright/test').Page) {
+    const cap = { url: '', bodySize: -1 };
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports/preview`,
+      (route) => {
+        cap.url = route.request().url();
+        // 대용량 멀티파트 본문에서 postDataBuffer가 실패하더라도 응답 fulfill은 반드시 수행한다
+        try {
+          cap.bodySize = route.request().postDataBuffer()?.length ?? -1;
+        } catch {
+          cap.bodySize = -1;
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPreviewResponse()),
+        });
+      },
+    );
+    return cap;
+  }
+
+  async function openImportDialog(page: import('@playwright/test').Page) {
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+  }
+
+  test('대용량 CSV는 앞부분만 잘라 partial=true로 전송된다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    const cap = await capturePreviewRequest(page);
+    await openImportDialog(page);
+
+    // 3MB CSV 투하 → 미리보기 호출
+    const largeCsv = makeCsvBuffer(3 * 1024 * 1024);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles({
+        name: 'large.csv',
+        mimeType: 'text/csv',
+        buffer: largeCsv,
+      }),
+    ]);
+
+    // partial 플래그가 붙는다
+    expect(cap.url).toContain('partial=true');
+    // 전송 본문은 원본(3MB)보다 작고, 슬라이스 한도(2MB) + 멀티파트 오버헤드 수준이다
+    expect(cap.bodySize).toBeGreaterThan(1 * 1024 * 1024);
+    expect(cap.bodySize).toBeLessThan(PREVIEW_MAX_BYTES + 64 * 1024);
+    // 2단계(매핑)로 진입
+    await expect(page.getByRole('dialog').getByRole('button', { name: '임포트' })).toBeVisible();
+  });
+
+  test('소용량 CSV는 전체가 전송되고 partial 플래그가 없다', async ({ authenticatedPage: page }) => {
+    await setupImportMocks(page);
+    const cap = await capturePreviewRequest(page);
+    await openImportDialog(page);
+
+    const smallCsv = Buffer.from('id,name\n1,항목 1\n2,항목 2\n', 'utf-8');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles({
+        name: 'small.csv',
+        mimeType: 'text/csv',
+        buffer: smallCsv,
+      }),
+    ]);
+
+    // 슬라이스하지 않았으므로 partial 없음, 본문에 원본 바이트가 모두 포함된다
+    expect(cap.url).not.toContain('partial=true');
+    expect(cap.bodySize).toBeGreaterThanOrEqual(smallCsv.length);
   });
 });
