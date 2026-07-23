@@ -119,6 +119,73 @@ class OntologyRepositoryTest extends IntegrationTestBase {
     assertThat(res.relations()).isEqualTo(original.relations());
   }
 
+  // (5-2 a) 관계 추가: 새 트리플을 relations 배열에 더해 PUT하면 delete+reinsert로 그대로 반영된다.
+  @Test
+  void updateOntology_는_새_관계를_추가할_수_있다() {
+    List<OntologyResponse.Triple> relations = new java.util.ArrayList<>(original.relations());
+    relations.add(new OntologyResponse.Triple("Cause", "OCCURRED_AT", "Building", "새 관계"));
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, original.entities(), relations);
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    assertThat(res.relations()).extracting(OntologyResponse.Triple::relation).contains("OCCURRED_AT");
+    assertThat(res.relations()).hasSize(original.relations().size() + 1);
+  }
+
+  // (5-2 b) 관계 삭제: relations 배열에서 항목을 빼고 PUT하면 사라진다.
+  @Test
+  void updateOntology_는_관계를_삭제할_수_있다() {
+    List<OntologyResponse.Triple> relations = new java.util.ArrayList<>(original.relations());
+    OntologyResponse.Triple removed = relations.remove(0);
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, original.entities(), relations);
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    assertThat(res.relations()).hasSize(original.relations().size() - 1);
+    assertThat(res.relations()).doesNotContain(removed);
+  }
+
+  // (5-2 e) 속성 추가/삭제 라운드트립: 한 엔티티 타입의 properties 배열에 항목을 더하고 빼면 그대로 반영된다.
+  @Test
+  void updateOntology_는_속성을_추가하고_삭제할_수_있다() {
+    var incident = original.entities().get(0);
+    var withNewProp =
+        new OntologyResponse.EntityType(
+            incident.type(),
+            incident.description(),
+            incident.naming(),
+            incident.resolution(),
+            List.of(
+                incident.properties().get(0),
+                new OntologyResponse.Property("사상자수", "사망·부상자 합계", "number", "명")));
+    List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
+    entities.set(0, withNewProp);
+
+    UpdateOntologyRequest addReq = new UpdateOntologyRequest(original.domain(), 1, entities, original.relations());
+    repository.updateOntology(addReq);
+
+    OntologyResponse afterAdd = repository.findOntology();
+    assertThat(afterAdd.entities().get(0).properties()).extracting(OntologyResponse.Property::name)
+        .contains("사상자수");
+
+    var withoutOriginalProp =
+        new OntologyResponse.EntityType(
+            incident.type(), incident.description(), incident.naming(), incident.resolution(),
+            List.of(new OntologyResponse.Property("사상자수", "사망·부상자 합계", "number", "명")));
+    List<OntologyResponse.EntityType> entities2 = new java.util.ArrayList<>(afterAdd.entities());
+    entities2.set(0, withoutOriginalProp);
+
+    UpdateOntologyRequest removeReq =
+        new UpdateOntologyRequest(afterAdd.domain(), 2, entities2, afterAdd.relations());
+    repository.updateOntology(removeReq);
+
+    OntologyResponse afterRemove = repository.findOntology();
+    assertThat(afterRemove.entities().get(0).properties()).extracting(OntologyResponse.Property::name)
+        .containsExactly("사상자수");
+  }
+
   // (f) stale 시드 시나리오: dataset_graph_ingest에 현재 버전(1)으로 적재 이력을 남긴 뒤 온톨로지를
   // 편집(버전 2)하면, 해당 데이터셋이 GraphIngestRepository.findStale(2)에 나타나야 한다(그래프 재적재 필요 신호).
   @Test

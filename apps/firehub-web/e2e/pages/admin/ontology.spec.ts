@@ -448,6 +448,163 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(payload.entities).toHaveLength(schema.entities.length);
   });
 
+  // 5-2: 관계(트리플) CRUD — 추가한 관계가 저장 payload의 relations 배열에 반영되는지 검증.
+  test('관계를 추가하면 저장 payload의 relations 배열에 새 트리플이 포함된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const relationsEditor = dialog.getByTestId('relations-editor');
+    await relationsEditor.getByRole('button', { name: '관계 추가' }).click();
+
+    const newRow = relationsEditor.getByTestId(`relation-row-${schema.relations.length}`);
+    await newRow.getByLabel('관계 주어 타입').click();
+    await page.getByRole('option', { name: 'Cause', exact: true }).click();
+    await newRow.getByLabel('관계명').fill('OVERLAPS_WITH');
+    await newRow.getByLabel('관계 목적어 타입').click();
+    await page.getByRole('option', { name: 'Damage', exact: true }).click();
+    await newRow.getByLabel('관계 설명').fill('원인과 피해가 겹침');
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    expect(payload.relations).toHaveLength(schema.relations.length + 1);
+    expect(payload.relations).toContainEqual({
+      subject: 'Cause',
+      relation: 'OVERLAPS_WITH',
+      object: 'Damage',
+      description: '원인과 피해가 겹침',
+    });
+  });
+
+  // 5-2: 관계 삭제 — 삭제한 관계가 저장 payload에서 제거되는지 검증.
+  test('관계를 삭제하면 저장 payload의 relations 배열에서 제거된다', async ({ authenticatedPage: page }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const relationsEditor = dialog.getByTestId('relations-editor');
+    await relationsEditor.getByTestId('relation-row-0').getByLabel('관계 삭제').click();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    expect(payload.relations).toHaveLength(schema.relations.length - 1);
+    expect(payload.relations).not.toContainEqual(schema.relations[0]);
+  });
+
+  // 5-2: 속성(property) CRUD — 엔티티 카드에서 추가한 속성이 저장 payload에 반영되는지 검증.
+  test('엔티티에 속성을 추가하면 저장 payload에 반영된다', async ({ authenticatedPage: page }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const incidentRow = dialog.getByTestId('entity-edit-Incident');
+    await incidentRow.getByRole('button', { name: 'Incident 속성 추가' }).click();
+
+    const newProp = incidentRow.getByTestId('property-row-Incident-0');
+    await newProp.getByLabel('Incident 속성 이름').fill('사상자수');
+    await newProp.getByLabel('Incident 속성 단위').fill('명');
+    await newProp.getByLabel('Incident 속성 설명').fill('사망·부상자 합계');
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    const incident = payload.entities.find((e) => e.type === 'Incident');
+    expect(incident?.properties).toContainEqual({
+      name: '사상자수',
+      description: '사망·부상자 합계',
+      dataType: 'text',
+      unit: '명',
+    });
+  });
+
+  // 5-2: 속성 삭제 — 삭제한 속성이 저장 payload에서 제거되는지 검증(다른 엔티티의 속성은 보존).
+  test('엔티티의 속성을 삭제하면 저장 payload에서 제거된다', async ({ authenticatedPage: page }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const damageRow = dialog.getByTestId('entity-edit-Damage');
+    await damageRow.getByTestId('property-row-Damage-0').getByLabel('Damage 속성 삭제').click();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    const damage = payload.entities.find((e) => e.type === 'Damage');
+    expect(damage?.properties).toHaveLength(0);
+  });
+
+  // 5-2: 예약어 속성명은 서버 왕복 없이 로컬에서 즉시 차단된다(저장 API 호출 안 됨).
+  test('속성명에 예약어(type)를 입력하면 로컬 에러 토스트가 뜨고 저장 API가 호출되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const incidentRow = dialog.getByTestId('entity-edit-Incident');
+    await incidentRow.getByRole('button', { name: 'Incident 속성 추가' }).click();
+    await incidentRow.getByTestId('property-row-Incident-0').getByLabel('Incident 속성 이름').fill('type');
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 인라인 힌트("예약어는 속성명으로 쓸 수 없습니다: key, type, ...")와 텍스트가 겹치므로
+    // 토스트 고유 문구(엔티티·속성명 포함)로 특정해 strict-mode 충돌을 피한다.
+    await expect(page.getByText('예약어는 속성명으로 쓸 수 없습니다(Incident): type')).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+    await expect(dialog).toBeVisible();
+  });
+
   test('편집 저장 중 버전 충돌(409) 시 에러 토스트가 표시되고 다이얼로그는 닫히지 않는다', async ({
     authenticatedPage: page,
   }) => {

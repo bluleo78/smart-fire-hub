@@ -124,6 +124,80 @@ class OntologyServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  // 편집 검증(5-2): 관계가 존재하지 않는 엔티티 타입을 참조하면 거부한다.
+  @Test
+  void updateOntology_는_존재하지_않는_타입을_참조하는_관계를_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", "a", "n", "exact", List.of())),
+            List.of(new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "설명")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
+  // 편집 검증(5-2): 동일한 (subject, relation, object) 트리플이 중복되면 거부한다.
+  @Test
+  void updateOntology_는_중복된_관계를_거부한다() {
+    var entities =
+        List.of(
+            new OntologyResponse.EntityType("Incident", "a", "n", "exact", List.of()),
+            new OntologyResponse.EntityType("Building", "b", "n", "embedding", List.of()));
+    UpdateOntologyRequest dup =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            entities,
+            List.of(
+                new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "설명1"),
+                new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "설명2")));
+    assertThatThrownBy(() -> service.updateOntology(dup))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  // 편집 검증(5-2): 속성명이 Neo4j 노드 예약 필드(key/type/name/sourceChunkIds)와 겹치면 거부한다.
+  @Test
+  void updateOntology_는_예약어_속성명을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "a",
+                    "n",
+                    "exact",
+                    List.of(new OntologyResponse.Property("type", "설명", "text", null)))),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
+  // 편집 검증(5-2): 같은 엔티티 타입 내 속성명이 중복되면 거부한다(DB UNIQUE 위반이 500으로 새기 전에 차단).
+  @Test
+  void updateOntology_는_같은_엔티티_내_중복_속성명을_거부한다() {
+    UpdateOntologyRequest dup =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "a",
+                    "n",
+                    "exact",
+                    List.of(
+                        new OntologyResponse.Property("피해액", "설명1", "number", "원"),
+                        new OntologyResponse.Property("피해액", "설명2", "number", "원")))),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(dup))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   // happy: 유효 페이로드는 리포지토리 updateOntology 호출 후 갱신본을 재조회해 반환한다.
   @Test
   void updateOntology_는_유효하면_리포지토리를_호출하고_갱신본을_반환한다() {

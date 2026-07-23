@@ -81,7 +81,12 @@ public class OntologyService {
     return ontologyRepository.findOntology();
   }
 
-  // 편집 페이로드 검증 — DB CHECK 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
+  // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds}))와 겹치는
+  // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
+  // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
+  private static final Set<String> RESERVED_PROPERTY_NAMES = Set.of("key", "type", "name", "sourceChunkIds");
+
+  // 편집 페이로드 검증 — DB CHECK/UNIQUE 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
   private void validate(UpdateOntologyRequest req) {
     if (req.domain() == null || req.domain().isBlank()) {
       throw new IllegalArgumentException("domain은 비어 있을 수 없습니다.");
@@ -105,12 +110,38 @@ public class OntologyService {
             "resolution은 embedding 또는 exact여야 합니다: " + e.type());
       }
       if (e.properties() != null) {
+        Set<String> seenPropNames = new HashSet<>();
         for (var p : e.properties()) {
+          if (RESERVED_PROPERTY_NAMES.contains(p.name())) {
+            throw new IllegalArgumentException("예약어는 속성명으로 쓸 수 없습니다: " + p.name());
+          }
+          if (!seenPropNames.add(p.name())) {
+            throw new IllegalArgumentException(
+                "중복된 속성명(" + e.type() + "): " + p.name());
+          }
           if (p.dataType() != null && !List.of("text", "number", "date").contains(p.dataType())) {
             throw new IllegalArgumentException(
                 "데이터 타입은 text|number|date 중 하나여야 합니다: " + p.name());
           }
         }
+      }
+    }
+
+    // 관계 참조 무결성 — subject/object는 위 entities 루프에서 확정된 타입 집합에 존재해야 한다.
+    // 오탈자·삭제된 타입 참조를 DB 삽입 전에 400으로 차단(FK 없는 문자열 참조라 안 걸러지면 조용히 깨짐).
+    Set<String> seenTriples = new HashSet<>();
+    for (var r : req.relations()) {
+      if (!seenTypes.contains(r.subject())) {
+        throw new IllegalArgumentException(
+            "관계가 존재하지 않는 엔티티 타입을 참조합니다(subject): " + r.subject());
+      }
+      if (!seenTypes.contains(r.object())) {
+        throw new IllegalArgumentException(
+            "관계가 존재하지 않는 엔티티 타입을 참조합니다(object): " + r.object());
+      }
+      String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
+      if (!seenTriples.add(tripleKey)) {
+        throw new IllegalArgumentException("중복된 관계: " + tripleKey);
       }
     }
   }
