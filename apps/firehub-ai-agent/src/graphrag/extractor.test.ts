@@ -39,6 +39,40 @@ describe('extractGraph', () => {
     const result = await extractGraph('본문', { complete, ontology: CORE_ONTOLOGY });
     expect(result).toEqual({ entities: [], relations: [] });
   });
+
+  // D.2 회귀: 관리자가 지식 모델(DB)에 새 타입을 추가하면, 하드코딩 ENTITY_TYPES/RELATION_TYPES에
+  // 없어도(Witness/TESTIFIED_BY는 CORE_ONTOLOGY 번들에 없음) 로드된 ontology 인자만 보고 통과해야 한다.
+  it('DB에서 추가된(번들 상수엔 없는) 새 타입도 로드된 ontology에 있으면 폐기하지 않는다', async () => {
+    const extendedOntology = {
+      ...CORE_ONTOLOGY,
+      entities: [
+        ...CORE_ONTOLOGY.entities,
+        { type: 'Witness', description: '목격자', naming: '본문 표기 보존', resolution: 'embedding' as const },
+      ],
+      relations: [
+        ...CORE_ONTOLOGY.relations,
+        { subject: 'Incident', relation: 'TESTIFIED_BY', object: 'Witness', description: '사건을 증언한 목격자' },
+      ],
+    };
+    const jsonPayload = JSON.stringify({
+      entities: [
+        { type: 'Incident', name: '2026-001' },
+        { type: 'Witness', name: '김철수' },
+      ],
+      relations: [{ subject: '2026-001', type: 'TESTIFIED_BY', object: '김철수' }],
+    });
+    const complete: CompleteFn = vi.fn().mockResolvedValue('```json\n' + jsonPayload + '\n```');
+
+    const result = await extractGraph('화재 보고서 본문...', { complete, ontology: extendedOntology });
+
+    expect(result.entities).toEqual([
+      { type: 'Incident', name: '2026-001' },
+      { type: 'Witness', name: '김철수' },
+    ]);
+    expect(result.relations).toEqual([
+      { subject: '2026-001', type: 'TESTIFIED_BY', object: '김철수' },
+    ]);
+  });
 });
 
 describe('extractGraph 속성 추출', () => {

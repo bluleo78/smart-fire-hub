@@ -16,7 +16,7 @@ const MAX_RESULTS = 100;
 export function buildStructuredCypher(
   ontology: Ontology, entityType: string, filters: Filter[],
 ): { cypher: string; params: Record<string, unknown> } | { error: string } {
-  if (!isEntityType(entityType)) return { error: `알 수 없는 엔티티 타입: ${entityType}` };
+  if (!isEntityType(ontology, entityType)) return { error: `알 수 없는 엔티티 타입: ${entityType}` };
   const def = ontology.entities.find((e) => e.type === (entityType as EntityType));
   const allowed = new Map((def?.properties ?? []).map((p) => [p.name, p.dataType]));
 
@@ -60,7 +60,7 @@ export async function structuredQuery(
     const entities = res.records.map((rec) => {
       const props = rec.get('props') as Record<string, unknown>;
       // 내부 필드 제거 → 온톨로지 속성만 노출.
-      const { key, type, name, sourceChunkIds, ...rest } = props;
+      const { key: _key, type: _type, name: _name, sourceChunkIds: _sourceChunkIds, ...rest } = props;
       // Neo4j Integer(number 속성은 Long 저장) → JS number 로 변환(retriever 의 Number(degree) 선례). 그 외 타입은 그대로.
       const properties = Object.fromEntries(
         Object.entries(rest).map(([k, v]) => [k, neo4j.isInt(v) ? (v as { toNumber(): number }).toNumber() : v]),

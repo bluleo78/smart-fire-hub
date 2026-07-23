@@ -1,4 +1,4 @@
-import { AlertCircle, Boxes, PanelLeft, PanelLeftClose } from 'lucide-react';
+import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, Pencil } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -7,10 +7,12 @@ import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOntologyGraph, useOntologySchema } from '@/hooks/queries/useOntology';
+import { useAuth } from '@/hooks/useAuth';
 import type { GraphNode } from '@/types/ontology';
 
 import InstanceGraph from './components/InstanceGraph';
 import NodeDetailDrawer from './components/NodeDetailDrawer';
+import OntologyEditDialog from './components/OntologyEditDialog';
 import SchemaGraph from './components/SchemaGraph';
 import TypeFilterPanel from './components/TypeFilterPanel';
 
@@ -50,6 +52,8 @@ export default function OntologyPage() {
   const [focusKey, setFocusKey] = useState<string | null>(null); // 관계 클릭 내비게이션 포커스 대상
   const [filterCollapsed, setFilterCollapsed] = useState(false); // 좌측 타입 필터 패널 접기
   const [grouped, setGrouped] = useState(false); // 타입 묶기(compound 번들)
+  const [editOpen, setEditOpen] = useState(false); // 지식 모델 편집 다이얼로그(ADMIN 전용, ontology:write)
+  const { isAdmin } = useAuth();
 
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
 
@@ -98,6 +102,13 @@ export default function OntologyPage() {
           <TabsTrigger value="schema">지식 모델</TabsTrigger>
         </TabsList>
         <div className="ml-auto flex items-center gap-2">
+          {/* 지식 모델 편집(ADMIN 전용) — 스키마 탭에서만 노출. 서버도 ontology:write(ADMIN)로 재검증한다. */}
+          {tab === 'schema' && isAdmin && schema && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditOpen(true)}>
+              <Pencil className="h-4 w-4" />
+              편집
+            </Button>
+          )}
           {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음). */}
           {tab === 'instance' && (
             <>
@@ -172,6 +183,16 @@ export default function OntologyPage() {
           )}
         </div>
       </div>
+
+      {/* key: 열릴 때마다 리마운트해 폼 state를 최신 schema로 새로 시작한다(useEffect 동기화 대신). */}
+      {schema && (
+        <OntologyEditDialog
+          key={editOpen ? 'open' : 'closed'}
+          schema={schema}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+        />
+      )}
     </Tabs>
   );
 }

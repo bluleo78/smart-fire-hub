@@ -1,10 +1,11 @@
-import { createOntologyGraph } from '../../factories/ontology.factory';
+import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import {
   setupAdminAuth,
   setupOntologyGraphErrorMock,
   setupOntologyGraphRetryMock,
   setupOntologyMocks,
 } from '../../fixtures/admin.fixture';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -376,6 +377,92 @@ test.describe('지식그래프 시각화 페이지', () => {
     // 실제 재요청이 발생했음을 검증(입력→처리→출력: 클릭 → API 재호출 → UI 반영)
     expect(counter.calls).toBeGreaterThan(callsBeforeRetry);
   });
+
+  test('ADMIN은 지식 모델 탭에서 편집 다이얼로그를 열어 description을 수정·저장할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await expect(dialog).toBeVisible();
+
+    // Incident의 description만 수정한다.
+    const incidentRow = page.getByTestId('entity-edit-Incident');
+    await incidentRow.getByLabel('설명').fill('수정된 사건 설명');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 입력→API payload 검증
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    expect(payload.entities.find((e) => e.type === 'Incident')?.description).toBe('수정된 사건 설명');
+    expect(payload.schemaVersion).toBe(schema.schemaVersion);
+
+    // 저장 성공 → 다이얼로그가 닫힌다
+    await expect(dialog).toBeHidden();
+  });
+
+  // ⚠️ 라운드트립 무결성 회귀 테스트 — full-document PUT(전체 삭제·재삽입) 방식의 핵심 위험을 검증한다.
+  // 편집 폼이 손대지 않은 Damage.properties(피해액)와 전체 relations가 payload에 그대로(값·순서) 보존되어야 한다.
+  // 그렇지 않으면 "저장됨" 토스트가 뜨고 버전도 증가하지만 조용히 데이터가 유실된다.
+  test('편집 저장 시 미편집 엔티티의 properties와 전체 relations가 원본 그대로 payload에 포함된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    // Building만 편집(Damage는 건드리지 않음) — Damage.properties가 편집 UI 밖에서도 보존되는지가 관건.
+    await dialog.getByTestId('entity-edit-Building').getByLabel('설명').fill('수정된 건물 설명');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+
+    // 미편집 Damage의 properties(피해액)가 완전히 동일하게 보존된다.
+    const damage = payload.entities.find((e) => e.type === 'Damage');
+    expect(damage?.properties).toEqual(schema.entities.find((e) => e.type === 'Damage')!.properties);
+
+    // relations는 이 슬라이스에서 편집 UI가 없으므로 순서·값이 원본과 완전히 동일해야 한다.
+    expect(payload.relations).toEqual(schema.relations);
+
+    // 편집 대상 엔티티 수는 원본과 동일(엔티티 추가/삭제 없음 — 이 슬라이스 범위 밖).
+    expect(payload.entities).toHaveLength(schema.entities.length);
+  });
+
+  test('편집 저장 중 버전 충돌(409) 시 에러 토스트가 표시되고 다이얼로그는 닫히지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await mockApi(page, 'PUT', '/api/v1/ontology', { message: '지식 모델이 다른 사용자에 의해 이미 수정되었습니다.' }, { status: 409 });
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-edit-Incident').getByLabel('설명').fill('충돌 시도');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('지식 모델이 다른 사용자에 의해 이미 수정되었습니다.')).toBeVisible();
+    await expect(dialog).toBeVisible();
+  });
 });
 
 /**
@@ -407,5 +494,13 @@ test.describe('지식그래프 IA — 비관리자 접근/리다이렉트', () =
     // 리다이렉트가 AdminRoute 밖에 있으므로 비관리자도 '/'로 튕기지 않고 지식그래프로 이동한다.
     await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
     await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+  });
+
+  test('비관리자는 지식 모델 탭에서 편집 버튼을 볼 수 없다(ontology:write는 ADMIN 전용)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await expect(page.getByRole('button', { name: '편집' })).toHaveCount(0);
   });
 });
