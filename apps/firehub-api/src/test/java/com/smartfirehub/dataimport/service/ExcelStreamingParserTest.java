@@ -1,19 +1,29 @@
 package com.smartfirehub.dataimport.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
+import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.CreationHelper;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.util.IOUtils;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ExcelStreamingParserTest {
 
@@ -263,5 +273,161 @@ class ExcelStreamingParserTest {
     assertThat(rows).hasSize(2);
     // 문자열 "TRUE"는 소문자로 변환되지 않고 그대로 보존되어야 한다
     assertThat(rows.get(1)).containsExactly("TRUE");
+  }
+
+  // =====================================================================
+  // Task 4 회귀 테스트 — File 기반 랜덤액세스 전환 검증
+  //
+  // SXSSFWorkbook의 자연스러운 출력물은 ZIP 엔트리 크기가 데이터 디스크립터(size=-1)로 기록된다.
+  // 이는 POI의 setThresholdBytesForTempFiles가 무력화되는 정확히 그 케이스이며,
+  // 이 테스트들은 File 기반 오픈(OPCPackage.open(File, PackageAccess))이 그 케이스에서도
+  // 여전히 안전하게 동작함을 증명한다.
+  // =====================================================================
+
+  private static final int LARGE_ROW_COUNT = 20_000;
+
+  /**
+   * SXSSFWorkbook으로 대용량(2만 행) 숫자 위주 시트를 생성해 File로 저장한다. 숫자 위주로 구성해
+   * sharedStrings/styles 엔트리가 아닌 sheet1.xml 엔트리 자체가 커지도록 한다.
+   */
+  private static void writeLargeDataDescriptorFixture(File dest) throws Exception {
+    try (SXSSFWorkbook wb = new SXSSFWorkbook(100);
+        FileOutputStream out = new FileOutputStream(dest)) {
+      Sheet sheet = wb.createSheet("data");
+      Row header = sheet.createRow(0);
+      for (int c = 0; c < 10; c++) {
+        header.createCell(c).setCellValue("col" + c);
+      }
+      for (int r = 1; r <= LARGE_ROW_COUNT; r++) {
+        Row row = sheet.createRow(r);
+        for (int c = 0; c < 10; c++) {
+          row.createCell(c).setCellValue(r * 1000.0 + c);
+        }
+      }
+      wb.write(out);
+      wb.dispose(); // SXSSF 임시 파일 정리
+    }
+  }
+
+  /**
+   * 픽스처가 실제로 data-descriptor(엔트리 크기 미상, size=-1) zip인지 직접 검증한다.
+   *
+   * <p>브리프의 MUST 조건 — "테스트 픽스처는 반드시 data-descriptor zip이어야 한다" — 을 SXSSF 자연 출력에
+   * 의존하는 방식으로만 만족시키면, 향후 POI/SXSSF 구현이 바뀌어 알려진 크기를 쓰게 되더라도 테스트가 조용히
+   * 통과해버려 더 이상 목표 케이스를 검증하지 못하는 상태가 될 수 있다. {@code ZipArchiveInputStream}(POI가
+   * 내부적으로 사용하는 것과 동일한 commons-compress 구현체)으로 sheet1.xml 엔트리를 {@code getNextEntry()}
+   * 하자마자 {@code getSize()}가 -1을 반환하는지 명시적으로 확인해 이 전제를 고정한다.
+   */
+  private static void assertSheetEntryIsDataDescriptor(File fixture) throws Exception {
+    try (ZipArchiveInputStream zis = new ZipArchiveInputStream(new FileInputStream(fixture))) {
+      ZipArchiveEntry entry;
+      boolean found = false;
+      while ((entry = zis.getNextEntry()) != null) {
+        if (entry.getName().equals("xl/worksheets/sheet1.xml")) {
+          assertThat(entry.getSize())
+              .as("SXSSF 자연 출력 픽스처는 getNextEntry() 시점에 크기를 알 수 없어야 한다(data descriptor)")
+              .isEqualTo(-1L);
+          found = true;
+        }
+      }
+      assertThat(found).as("sheet1.xml 엔트리를 찾지 못함").isTrue();
+    }
+  }
+
+  /**
+   * 핵심 회귀 테스트: data-descriptor(size=-1) 대용량 xlsx를 {@code IOUtils.setByteArrayMaxOverride}로
+   * POI의 엔트리당 허용 크기를 인위적으로 낮춘 상태에서도, File 기반 파싱(현재 {@code parse(InputStream)}이
+   * 내부적으로 temp 파일에 스필 후 위임)은 성공적으로 스트리밍됨을 검증한다.
+   *
+   * <p>대조군으로 같은 픽스처를 {@code OPCPackage.open(InputStream)}으로 직접 열면 실패한다는 것도 함께
+   * 확인한다 — InputStream 기반 오픈은 엔트리 크기를 모르므로 POI가 기본 상한(100MB)을 기준으로 판단하는데,
+   * override가 그보다 작게 설정되면 실제 데이터 크기와 무관하게 즉시 실패한다. 반면 File 기반 오픈은 ZIP 중앙
+   * 디렉터리에서 엔트리 크기를 확정적으로 읽는 완전히 다른 코드 경로(ZipFileZipEntrySource)를 사용하므로 이
+   * override의 영향을 받지 않는다.
+   */
+  @Test
+  void large_data_descriptor_xlsx_streams_via_file_based_path_even_with_low_byte_array_override(
+      @TempDir File tempDir) throws Exception {
+    File fixture = new File(tempDir, "large-data-descriptor.xlsx");
+    writeLargeDataDescriptorFixture(fixture);
+    assertSheetEntryIsDataDescriptor(fixture);
+
+    // 대용량 파일에서 POI가 메모리에 허용할 최대 엔트리 크기를 1MB로 인위적으로 낮춘다.
+    // (전역 static 상태이므로 반드시 finally에서 원복한다.)
+    IOUtils.setByteArrayMaxOverride(1_000_000);
+    try {
+      // 대조군: InputStream 기반 직접 오픈은 엔트리 크기 미상(size=-1) + 낮은 override 조합으로 실패한다.
+      assertThatThrownBy(
+              () -> {
+                try (OPCPackage pkg = OPCPackage.open(new FileInputStream(fixture))) {
+                  // no-op — 오픈 자체에서 실패해야 함
+                }
+              })
+          .isInstanceOf(Throwable.class);
+
+      // 본 검증: parse(InputStream)은 내부적으로 temp 파일에 스필한 뒤 File 기반 랜덤액세스로 열므로
+      // 동일한 override 하에서도 성공적으로 전체 행을 스트리밍한다.
+      List<List<String>> rows = new ArrayList<>();
+      ExcelStreamingParser.parse(
+          new FileInputStream(fixture),
+          (idx, cells) -> {
+            rows.add(cells);
+            return true;
+          });
+
+      assertThat(rows).hasSize(LARGE_ROW_COUNT + 1); // 헤더 포함
+      assertThat(rows.get(0)).containsExactly(
+          "col0", "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9");
+    } finally {
+      // 전역 static 상태 원복 — 다른 테스트에 영향(cross-test pollution)을 주지 않도록 필수
+      IOUtils.setByteArrayMaxOverride(-1);
+    }
+  }
+
+  /**
+   * File 기반 core 진입점({@code parse(File, RowConsumer)})이 첫 행에서 early-exit 하면 대용량 파일을
+   * 전량 읽지 않고 즉시 중단됨을 검증한다(스트리밍 특성 보존 확인).
+   */
+  @Test
+  void file_based_parse_stops_immediately_on_early_exit_for_large_fixture(@TempDir File tempDir)
+      throws Exception {
+    File fixture = new File(tempDir, "large-early-exit.xlsx");
+    writeLargeDataDescriptorFixture(fixture);
+
+    List<List<String>> rows = new ArrayList<>();
+    ExcelStreamingParser.parse(
+        fixture,
+        (idx, cells) -> {
+          rows.add(cells);
+          return false; // 첫 행만 받고 즉시 중단
+        });
+
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0)).containsExactly(
+        "col0", "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9");
+  }
+
+  /** File 기반 core 진입점이 소규모 XLSX도 기존과 동일하게 파싱함을 확인한다(회귀 방지). */
+  @Test
+  void file_based_parse_matches_existing_inputstream_result_for_small_xlsx(@TempDir File tempDir)
+      throws Exception {
+    byte[] data = buildXlsx();
+    File file = new File(tempDir, "small.xlsx");
+    try (FileOutputStream out = new FileOutputStream(file)) {
+      out.write(data);
+    }
+
+    List<List<String>> rows = new ArrayList<>();
+    ExcelStreamingParser.parse(
+        file,
+        (idx, cells) -> {
+          rows.add(cells);
+          return true;
+        });
+
+    assertThat(rows).hasSize(3);
+    assertThat(rows.get(0)).containsExactly("name", "age");
+    assertThat(rows.get(1)).containsExactly("alice", "30");
+    assertThat(rows.get(2)).containsExactly("bob", "25");
   }
 }

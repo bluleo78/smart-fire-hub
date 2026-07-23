@@ -34,9 +34,20 @@ public class DataValidationService {
 
   public ValidationResult validate(
       List<Map<String, String>> rows, List<DatasetColumnResponse> columns) {
+    // 단일 파일 전체를 한 번에 검증하는 기존 호출 경로 — 오프셋 없이(0) 위임
+    return validate(rows, columns, 0);
+  }
+
+  /**
+   * 대용량 파일을 배치 단위로 스트리밍 임포트할 때, 배치별로 잘라 검증하면서도 에러 메시지의 행 번호가 파일 전체 기준(전역)이 되도록 오프셋을 적용한다.
+   *
+   * @param rowIndexBase 이번 배치 이전까지 이미 처리된 행 수(전역 오프셋). 파일 처음부터 검증하면 0.
+   */
+  public ValidationResult validate(
+      List<Map<String, String>> rows, List<DatasetColumnResponse> columns, int rowIndexBase) {
     List<List<Object>> validRows = new ArrayList<>();
     List<String> errors = new ArrayList<>();
-    int rowIndex = 0;
+    int rowIndex = rowIndexBase;
 
     for (Map<String, String> row : rows) {
       rowIndex++;
@@ -169,6 +180,21 @@ public class DataValidationService {
       List<Map<String, String>> rows,
       List<DatasetColumnResponse> columns,
       List<ColumnMappingEntry> mappings) {
+    // 단일 파일 전체를 한 번에 검증하는 기존 호출 경로 — 오프셋 없이(0) 위임
+    return validateWithMapping(rows, columns, mappings, 0);
+  }
+
+  /**
+   * 대용량 파일을 배치 단위로 스트리밍 임포트할 때, 배치별로 잘라 검증하면서도 {@link ValidationErrorDetail#rowNumber()}가 파일 전체
+   * 기준(전역)이 되도록 오프셋을 적용한다.
+   *
+   * @param rowIndexBase 이번 배치 이전까지 이미 처리된 행 수(전역 오프셋). 파일 처음부터 검증하면 0.
+   */
+  public ValidationResultWithDetails validateWithMapping(
+      List<Map<String, String>> rows,
+      List<DatasetColumnResponse> columns,
+      List<ColumnMappingEntry> mappings,
+      int rowIndexBase) {
 
     // Build mapping lookup: fileColumn -> datasetColumn
     Map<String, String> columnMapping = new HashMap<>();
@@ -186,7 +212,7 @@ public class DataValidationService {
 
     List<List<Object>> validRows = new ArrayList<>();
     List<ValidationErrorDetail> errors = new ArrayList<>();
-    int rowIndex = 0;
+    int rowIndex = rowIndexBase;
 
     for (Map<String, String> row : rows) {
       rowIndex++;
