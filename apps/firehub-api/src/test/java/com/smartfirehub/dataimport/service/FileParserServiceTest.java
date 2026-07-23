@@ -10,6 +10,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +25,7 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Pure unit tests for FileParserService — no Spring context required. All test data is created
@@ -31,9 +35,52 @@ class FileParserServiceTest {
 
   private FileParserService service;
 
+  @TempDir private Path tempDir;
+
   @BeforeEach
   void setUp() {
     service = new FileParserService();
+  }
+
+  // Helper: CSV 문자열을 임시 파일로 저장 (Path 오버로드 테스트용)
+  private Path writeCsvFile(String content) throws Exception {
+    Path file = tempDir.resolve("test-" + System.nanoTime() + ".csv");
+    Files.writeString(file, content, StandardCharsets.UTF_8);
+    return file;
+  }
+
+  // Helper: XLSX bytes를 임시 파일로 저장 (Path 오버로드 테스트용)
+  private Path writeXlsxFile(byte[] data) throws Exception {
+    Path file = tempDir.resolve("test-" + System.nanoTime() + ".xlsx");
+    Files.write(file, data);
+    return file;
+  }
+
+  // Helper: N개 데이터 행을 가진 CSV 문자열 생성(헤더 포함)
+  private static String buildCsvWithRows(int dataRows) {
+    StringBuilder sb = new StringBuilder("id,value\n");
+    for (int i = 0; i < dataRows; i++) {
+      sb.append(i).append(",v").append(i).append('\n');
+    }
+    return sb.toString();
+  }
+
+  // Helper: N개 데이터 행을 가진 XLSX(헤더 포함) 생성
+  private static byte[] buildXlsxWithRows(int dataRows) throws Exception {
+    try (Workbook wb = new XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Sheet sheet = wb.createSheet("test");
+      Row h = sheet.createRow(0);
+      h.createCell(0).setCellValue("id");
+      h.createCell(1).setCellValue("value");
+      for (int i = 0; i < dataRows; i++) {
+        Row r = sheet.createRow(i + 1);
+        r.createCell(0).setCellValue(i);
+        r.createCell(1).setCellValue("v" + i);
+      }
+      wb.write(out);
+      return out.toByteArray();
+    }
   }
 
   // Helper: CSV string → InputStream
@@ -561,6 +608,51 @@ class FileParserServiceTest {
     assertThat(count).isEqualTo(2);
   }
 
+  // -----------------------------------------------------------------------
+  // countRows(InputStream) — readNext() 스트리밍 카운트 검증 (Task 2: 대용량 CSV OOM 방지)
+  // skipRows > 0(파일 범위 내) + hasHeader true/false 조합에서도 카운트가 정확한지 확인
+  // -----------------------------------------------------------------------
+
+  @Test
+  void countRows_csvViaInputStream_skipRowsWithinFile_hasHeaderTrue_excludesSkippedAndHeader()
+      throws Exception {
+    // 앞 2행(주석성 skip 행) + 헤더 1행 + 데이터 4행
+    String csv = "# comment1\n# comment2\nname,age\nAlice,30\nBob,25\nCharlie,35\nDave,40";
+    ParseOptions opts = new ParseOptions(",", "UTF-8", true, 2);
+
+    int count = service.countRows(toStream(csv), "csv", opts);
+
+    assertThat(count).isEqualTo(4);
+  }
+
+  @Test
+  void countRows_csvViaInputStream_skipRowsWithinFile_hasHeaderFalse_countsAllRemainingRows()
+      throws Exception {
+    // 앞 1행 skip 후 헤더 없이 남은 4행 전부 데이터로 카운트
+    String csv = "# comment\nAlice,30\nBob,25\nCharlie,35\nDave,40";
+    ParseOptions opts = new ParseOptions(",", "UTF-8", false, 1);
+
+    int count = service.countRows(toStream(csv), "csv", opts);
+
+    assertThat(count).isEqualTo(4);
+  }
+
+  @Test
+  void countRows_csvViaInputStream_manyRows_countsCorrectlyWithoutMaterializingAll()
+      throws Exception {
+    // readNext() 루프 기반 스트리밍 카운트가 대량 행에서도 정확한지 확인(#OOM 방지 회귀 방지용 규모)
+    StringBuilder sb = new StringBuilder("id,value\n");
+    int dataRows = 20_000;
+    for (int i = 0; i < dataRows; i++) {
+      sb.append(i).append(",v").append(i).append('\n');
+    }
+    ParseOptions opts = ParseOptions.defaults();
+
+    int count = service.countRows(toStream(sb.toString()), "csv", opts);
+
+    assertThat(count).isEqualTo(dataRows);
+  }
+
   @Test
   void parse_csvViaInputStream_returnsAllRows() throws Exception {
     String csv = "id,value\n1,foo\n2,bar";
@@ -721,5 +813,209 @@ class FileParserServiceTest {
     List<Map<String, String>> rows = service.parse(data, "csv");
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0).values()).contains("Alice", "30");
+  }
+
+  // -----------------------------------------------------------------------
+  // parseStreaming(Path, ...) — 배치 콜백 스트리밍 (Task 5)
+  // -----------------------------------------------------------------------
+
+  @Test
+  void parseStreaming_csvWithHeader_batchesOfThreeSumToTotal() throws Exception {
+    int dataRows = 10; // ceil(10/3) = 4 batches: 3,3,3,1
+    Path file = writeCsvFile(buildCsvWithRows(dataRows));
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+
+    service.parseStreaming(file, "csv", ParseOptions.defaults(), 3, batches::add);
+
+    assertThat(batches).hasSize(4);
+    int total = 0;
+    for (List<Map<String, String>> batch : batches) {
+      assertThat(batch.size()).isLessThanOrEqualTo(3);
+      total += batch.size();
+    }
+    assertThat(total).isEqualTo(dataRows);
+    assertThat(batches.get(0).get(0)).containsKeys("id", "value");
+    assertThat(batches.get(0).get(0)).containsEntry("id", "0").containsEntry("value", "v0");
+    // 마지막 배치는 나머지 1행
+    assertThat(batches.get(3)).hasSize(1);
+  }
+
+  @Test
+  void parseStreaming_csvNoHeader_firstRowIncludedAsData() throws Exception {
+    // hasHeader=false: 첫 행도 데이터로 포함되어야 함
+    String csv = "Alice,30\nBob,25\nCharlie,35\nDave,40\nEve,45";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = new ParseOptions(",", "UTF-8", false, 0);
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+
+    service.parseStreaming(file, "csv", opts, 3, batches::add);
+
+    int total = batches.stream().mapToInt(List::size).sum();
+    assertThat(total).isEqualTo(5);
+    assertThat(batches.get(0).get(0)).containsEntry("column_1", "Alice").containsEntry("column_2", "30");
+  }
+
+  @Test
+  void parseStreaming_csvWithSkipRows_skipsBeforeHeader() throws Exception {
+    String csv = "# c1\n# c2\nname,age\nAlice,30\nBob,25\nCharlie,35\nDave,40";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = new ParseOptions(",", "UTF-8", true, 2);
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+
+    service.parseStreaming(file, "csv", opts, 3, batches::add);
+
+    int total = batches.stream().mapToInt(List::size).sum();
+    assertThat(total).isEqualTo(4);
+    assertThat(batches.get(0).get(0)).containsEntry("name", "Alice");
+  }
+
+  @Test
+  void parseStreaming_xlsxWithHeader_batchesOfThreeSumToTotal() throws Exception {
+    int dataRows = 10;
+    byte[] data = buildXlsxWithRows(dataRows);
+    Path file = writeXlsxFile(data);
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+
+    service.parseStreaming(file, "xlsx", ParseOptions.defaults(), 3, batches::add);
+
+    assertThat(batches).hasSize(4);
+    int total = 0;
+    for (List<Map<String, String>> batch : batches) {
+      assertThat(batch.size()).isLessThanOrEqualTo(3);
+      total += batch.size();
+    }
+    assertThat(total).isEqualTo(dataRows);
+    assertThat(batches.get(0).get(0)).containsKeys("id", "value");
+    assertThat(batches.get(0).get(0)).containsEntry("id", "0").containsEntry("value", "v0");
+    assertThat(batches.get(3)).hasSize(1);
+  }
+
+  @Test
+  void parseStreaming_csvExactMultipleOfBatchSize_noEmptyFinalBatch() throws Exception {
+    // 정확히 나누어 떨어지는 경우 마지막 빈 배치가 flush되지 않아야 함
+    int dataRows = 9; // 3배치 * 3
+    Path file = writeCsvFile(buildCsvWithRows(dataRows));
+    List<List<Map<String, String>>> batches = new ArrayList<>();
+
+    service.parseStreaming(file, "csv", ParseOptions.defaults(), 3, batches::add);
+
+    assertThat(batches).hasSize(3);
+    batches.forEach(b -> assertThat(b).hasSize(3));
+  }
+
+  @Test
+  void parseStreaming_unsupportedFileType_throws() throws Exception {
+    Path file = writeCsvFile("a,b\n1,2");
+    assertThatThrownBy(
+            () -> service.parseStreaming(file, "pdf", ParseOptions.defaults(), 3, b -> {}))
+        .isInstanceOf(UnsupportedFileTypeException.class);
+  }
+
+  // -----------------------------------------------------------------------
+  // Path 기반 오버로드 — InputStream 오버로드와 동일 결과 검증 (Task 5)
+  // -----------------------------------------------------------------------
+
+  @Test
+  void parseHeaders_csvViaPath_matchesInputStreamOverload() throws Exception {
+    String csv = "name,age,city\nAlice,30,Seoul";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<String> pathHeaders = service.parseHeaders(file, "csv", opts);
+    List<String> streamHeaders = service.parseHeaders(toStream(csv), "csv", opts);
+
+    assertThat(pathHeaders).isEqualTo(streamHeaders);
+  }
+
+  @Test
+  void parseHeaders_xlsxViaPath_matchesInputStreamOverload() throws Exception {
+    byte[] data = buildXlsx();
+    Path file = writeXlsxFile(data);
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<String> pathHeaders = service.parseHeaders(file, "xlsx", opts);
+    List<String> streamHeaders = service.parseHeaders(new ByteArrayInputStream(data), "xlsx", opts);
+
+    assertThat(pathHeaders).isEqualTo(streamHeaders);
+  }
+
+  @Test
+  void parseSampleRows_csvViaPath_matchesInputStreamOverload() throws Exception {
+    String csv = "id,name\n1,a\n2,b\n3,c\n4,d\n5,e";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> pathRows = service.parseSampleRows(file, "csv", 3, opts);
+    List<Map<String, String>> streamRows = service.parseSampleRows(toStream(csv), "csv", 3, opts);
+
+    assertThat(pathRows).isEqualTo(streamRows);
+  }
+
+  @Test
+  void parseSampleRows_xlsxViaPath_matchesInputStreamOverload() throws Exception {
+    byte[] data = buildXlsx();
+    Path file = writeXlsxFile(data);
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> pathRows = service.parseSampleRows(file, "xlsx", 1, opts);
+    List<Map<String, String>> streamRows =
+        service.parseSampleRows(new ByteArrayInputStream(data), "xlsx", 1, opts);
+
+    assertThat(pathRows).isEqualTo(streamRows);
+  }
+
+  @Test
+  void countRows_csvViaPath_matchesInputStreamOverload() throws Exception {
+    String csv = "name,age\nAlice,30\nBob,25\nCharlie,35";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = ParseOptions.defaults();
+
+    int pathCount = service.countRows(file, "csv", opts);
+    int streamCount = service.countRows(toStream(csv), "csv", opts);
+
+    assertThat(pathCount).isEqualTo(streamCount).isEqualTo(3);
+  }
+
+  @Test
+  void countRows_xlsxViaPath_matchesInputStreamOverload() throws Exception {
+    byte[] data = buildXlsx();
+    Path file = writeXlsxFile(data);
+    ParseOptions opts = ParseOptions.defaults();
+
+    int pathCount = service.countRows(file, "xlsx", opts);
+    int streamCount = service.countRows(new ByteArrayInputStream(data), "xlsx", opts);
+
+    assertThat(pathCount).isEqualTo(streamCount).isEqualTo(2);
+  }
+
+  @Test
+  void parse_csvViaPath_matchesInputStreamOverload() throws Exception {
+    String csv = "id,value\n1,foo\n2,bar";
+    Path file = writeCsvFile(csv);
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> pathRows = service.parse(file, "csv", opts);
+    List<Map<String, String>> streamRows = service.parse(toStream(csv), "csv", opts);
+
+    assertThat(pathRows).isEqualTo(streamRows);
+  }
+
+  @Test
+  void parse_xlsxViaPath_matchesInputStreamOverload() throws Exception {
+    byte[] data = buildXlsx();
+    Path file = writeXlsxFile(data);
+    ParseOptions opts = ParseOptions.defaults();
+
+    List<Map<String, String>> pathRows = service.parse(file, "xlsx", opts);
+    List<Map<String, String>> streamRows = service.parse(new ByteArrayInputStream(data), "xlsx", opts);
+
+    assertThat(pathRows).isEqualTo(streamRows);
+  }
+
+  @Test
+  void parseHeaders_viaPath_unsupportedFileType_throws() throws Exception {
+    Path file = writeCsvFile("x");
+    assertThatThrownBy(() -> service.parseHeaders(file, "doc", ParseOptions.defaults()))
+        .isInstanceOf(UnsupportedFileTypeException.class);
   }
 }

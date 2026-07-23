@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiConsumer;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -1139,5 +1140,327 @@ public class DataTableRowService {
       result.put(record.field(i).getName(), record.get(i));
     }
     return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Staging table lifecycle — 대용량 파일 스트리밍 UPSERT/REPLACE를 위한 SQL측 dedup
+  //
+  // 기존 upsertBatch/insertBatch는 파일 전체를 메모리에 올려 in-memory
+  // dedupeByPrimaryKeysLastWins(LinkedHashMap)로 파일 내 중복 PK를 제거한 뒤 적재했다.
+  // 100~400MB급 파일은 이 전체 로딩이 OOM을 유발한다.
+  //
+  // 대안: 배치 단위로 실제 테이블(staging)에 순서대로 스트리밍 삽입(_seq BIGSERIAL로 순서 기록)한 뒤,
+  // promote 시점에 SQL의 DISTINCT ON (pk) ORDER BY pk, _seq DESC로 "파일 내 마지막 등장 값만" 뽑아
+  // target에 반영한다. dedup 로직 자체를 DB 엔진으로 위임해 JVM 힙에 전체 rows를 올리지 않는다.
+  //
+  // TEMP TABLE을 쓰지 않는 이유: TEMP TABLE은 커넥션/트랜잭션 스코프이므로, 배치마다 커밋하며
+  // 스트리밍하려면 하나의 거대한 트랜잭션(=커넥션 점유)을 강제하게 되어 스트리밍의 이점이 사라진다.
+  // 따라서 data 스키마에 실제(영구) 테이블을 만들고 완료 후 명시적으로 DROP한다.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * target 테이블의 데이터 컬럼 타입을 information_schema에서 복제해 data 스키마에 staging용 실제 테이블을 생성한다.
+   *
+   * <p>테이블명은 {@code stg_import_} + UUID hex(하이픈 제거, 소문자)로 생성되며 항상 {@code
+   * DataTableService.validateName}을 통과한다. id/import_id/created_at 등 target의 시스템 컬럼은 복제하지 않고, 대신
+   * 파일 내 삽입 순서를 기록하는 {@code _seq BIGSERIAL}을 추가한다. staging 테이블에는 PK unique 제약을 두지 않아 동일 PK가 여러 배치에
+   * 걸쳐 중복 삽입되는 것을 허용한다(이게 이 설계의 핵심 — dedup을 promote 시점 SQL로 미룬다).
+   *
+   * <p>CREATE TABLE ... LIKE target INCLUDING ALL을 쓰지 않는 이유: LIKE INCLUDING ALL은 target의 PK unique
+   * index까지 복제하므로, staging에 같은 PK를 두 번 삽입하는 순간 unique violation이 발생해 이 설계의 전제(중복 허용)가 깨진다.
+   *
+   * @return 생성된 staging 테이블명
+   */
+  public String createStagingTable(String targetTableName, List<String> columns) {
+    dataTableService.validateName(targetTableName);
+    for (String col : columns) {
+      dataTableService.validateName(col);
+    }
+
+    // UUID hex(32자, [0-9a-f])는 항상 [a-z][a-z0-9_]* 패턴을 만족한다.
+    String stagingTable = "stg_import_" + UUID.randomUUID().toString().replace("-", "");
+    dataTableService.validateName(stagingTable);
+
+    Map<String, String> columnDdl = introspectColumnDdl(targetTableName, columns);
+
+    StringBuilder sql = new StringBuilder();
+    sql.append("CREATE TABLE data.\"").append(stagingTable).append("\" (");
+    sql.append("_seq BIGSERIAL");
+    for (String col : columns) {
+      sql.append(", \"").append(col).append("\" ").append(columnDdl.get(col));
+    }
+    sql.append(")");
+    dsl.execute(sql.toString());
+
+    return stagingTable;
+  }
+
+  /**
+   * information_schema.columns를 조회해 대상 테이블의 컬럼별 DDL 타입 문자열을 만든다. GEOMETRY 컬럼은
+   * DataTableService.createTable이 항상 GEOMETRY(Geometry, 4326)로만 생성하므로 그 형태를 그대로 재현한다.
+   *
+   * <p>반환된 DDL 문자열은 CREATE TABLE에 쓰일 뿐 아니라, GEOMETRY/TIMESTAMP/BOOLEAN/BIGINT/NUMERIC/DATE 키워드를
+   * 포함하고 있어 기존 insertPlaceholder(colName, columnTypes)의 타입 판별(부분 문자열 매칭)에도 그대로 재사용할 수 있다.
+   */
+  private Map<String, String> introspectColumnDdl(String tableName, List<String> columns) {
+    String sql =
+        "SELECT column_name, data_type, udt_name, character_maximum_length, "
+            + "numeric_precision, numeric_scale "
+            + "FROM information_schema.columns "
+            + "WHERE table_schema = 'data' AND table_name = ?";
+    var result = dsl.fetch(sql, tableName);
+
+    Map<String, String> ddlByColumn = new HashMap<>();
+    for (var record : result) {
+      String colName = record.get("column_name", String.class);
+      String dataType = record.get("data_type", String.class);
+      String udtName = record.get("udt_name", String.class);
+      Integer maxLen = record.get("character_maximum_length", Integer.class);
+      Integer precision = record.get("numeric_precision", Integer.class);
+      Integer scale = record.get("numeric_scale", Integer.class);
+      ddlByColumn.put(colName, toDdlType(dataType, udtName, maxLen, precision, scale));
+    }
+
+    Map<String, String> ddlByRequestedColumn = new HashMap<>();
+    for (String col : columns) {
+      String ddl = ddlByColumn.get(col);
+      if (ddl == null) {
+        throw new IllegalStateException(
+            "Column '" + col + "' not found on table '" + tableName + "'");
+      }
+      ddlByRequestedColumn.put(col, ddl);
+    }
+    return ddlByRequestedColumn;
+  }
+
+  private String toDdlType(
+      String dataType, String udtName, Integer maxLen, Integer precision, Integer scale) {
+    if ("geometry".equalsIgnoreCase(udtName)) {
+      return "GEOMETRY(Geometry, 4326)";
+    }
+    return switch (dataType) {
+      case "text" -> "TEXT";
+      case "character varying" -> "VARCHAR(" + (maxLen != null ? maxLen : 255) + ")";
+      case "bigint" -> "BIGINT";
+      case "numeric" -> "NUMERIC(" + precision + "," + scale + ")";
+      case "boolean" -> "BOOLEAN";
+      case "date" -> "DATE";
+      case "timestamp without time zone" -> "TIMESTAMP";
+      default -> "TEXT";
+    };
+  }
+
+  /**
+   * staging 테이블에 rows를 500행 청크로 스트리밍 삽입한다. 기존 insertBatchWithProgress와 동일한 청크/progress 패턴을 따르되,
+   * import_id는 다루지 않는다. {@code _seq}는 BIGSERIAL DEFAULT로 자동 채번되므로 데이터 컬럼만 명시적으로 INSERT하며, 배치는 호출
+   * 순서대로 실행되므로 {@code _seq}가 파일 내 등장 순서를 그대로 반영한다(promote 시 LWW 판정 근거).
+   */
+  public void insertStagingBatchWithProgress(
+      String stagingTable,
+      List<String> columns,
+      List<Map<String, Object>> rows,
+      BiConsumer<Integer, Integer> progressCallback) {
+    dataTableService.validateName(stagingTable);
+    for (String col : columns) {
+      dataTableService.validateName(col);
+    }
+
+    if (rows.isEmpty()) {
+      return;
+    }
+
+    // staging 테이블은 target과 동일한 컬럼 타입으로 생성되었으므로, staging 자신을 introspect해
+    // GEOMETRY 등 타입-인지 placeholder(ST_GeomFromGeoJSON 등)를 그대로 재사용한다.
+    Map<String, String> columnTypes = introspectColumnDdl(stagingTable, columns);
+
+    StringBuilder baseSql = new StringBuilder();
+    baseSql.append("INSERT INTO data.\"").append(stagingTable).append("\" (");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) baseSql.append(", ");
+      baseSql.append("\"").append(columns.get(i)).append("\"");
+    }
+    baseSql.append(") VALUES ");
+
+    StringBuilder ph = new StringBuilder("(");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) ph.append(", ");
+      ph.append(insertPlaceholder(columns.get(i), columnTypes));
+    }
+    ph.append(")");
+    String placeholders = ph.toString();
+
+    int totalRows = rows.size();
+    int batchSize = 500;
+    int processedRows = 0;
+
+    for (int start = 0; start < rows.size(); start += batchSize) {
+      int end = Math.min(start + batchSize, rows.size());
+      List<Map<String, Object>> chunk = rows.subList(start, end);
+
+      StringBuilder sql = new StringBuilder(baseSql);
+      for (int r = 0; r < chunk.size(); r++) {
+        if (r > 0) sql.append(", ");
+        sql.append(placeholders);
+      }
+
+      Object[] values = new Object[chunk.size() * columns.size()];
+      int idx = 0;
+      for (Map<String, Object> row : chunk) {
+        for (String col : columns) {
+          values[idx++] = row.get(col);
+        }
+      }
+      dsl.execute(sql.toString(), values);
+
+      processedRows += chunk.size();
+      progressCallback.accept(processedRows, totalRows);
+    }
+  }
+
+  /**
+   * staging 테이블의 내용을 target 테이블로 promote(UPSERT)한다. {@code DISTINCT ON (pk) ORDER BY pk, _seq
+   * DESC}로 각 PK별 파일 내 마지막 등장 행만 선택한 뒤, 기존 upsertBatch와 동일한 {@code ON CONFLICT ... DO UPDATE}로
+   * target에 반영한다.
+   *
+   * <p>inserted/updated 카운트는 기존과 동일하게 PostgreSQL xmax 트릭(RETURNING (xmax = 0))으로 판별하되, 대량 upsert
+   * 시 결과 row 전체를 JVM으로 fetch하면(예: 수백만 건) 스트리밍으로 없앤 OOM을 카운팅 단계에서 재도입하게 된다. 이를 피하기 위해
+   * data-modifying CTE로 INSERT를 감싸고, 바깥 SELECT에서 count(*) FILTER로 서버 사이드에서 집계해 최종적으로 단 한 행(inserted,
+   * updated)만 JVM으로 가져온다.
+   */
+  public UpsertResult promoteStagingToUpsert(
+      String stagingTable,
+      String targetTableName,
+      List<String> columns,
+      List<String> pkColumns,
+      Long importId) {
+    dataTableService.validateName(stagingTable);
+    dataTableService.validateName(targetTableName);
+    for (String col : columns) {
+      dataTableService.validateName(col);
+    }
+    for (String pkCol : pkColumns) {
+      dataTableService.validateName(pkCol);
+    }
+
+    if (pkColumns.isEmpty()) {
+      throw new IllegalStateException("UPSERT mode requires at least one primary key column");
+    }
+
+    Set<String> pkSet = new HashSet<>(pkColumns);
+    List<String> updateCols = columns.stream().filter(c -> !pkSet.contains(c)).toList();
+
+    StringBuilder pkList = new StringBuilder();
+    for (int i = 0; i < pkColumns.size(); i++) {
+      if (i > 0) pkList.append(", ");
+      pkList.append("\"").append(pkColumns.get(i)).append("\"");
+    }
+
+    StringBuilder colsList = new StringBuilder();
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) colsList.append(", ");
+      colsList.append("\"").append(columns.get(i)).append("\"");
+    }
+
+    StringBuilder conflictTarget = new StringBuilder("(").append(pkList).append(")");
+
+    StringBuilder updateSet = new StringBuilder("import_id = EXCLUDED.import_id");
+    for (String col : updateCols) {
+      updateSet.append(", \"").append(col).append("\" = EXCLUDED.\"").append(col).append("\"");
+    }
+
+    String sql =
+        "WITH promoted AS ("
+            + "INSERT INTO data.\""
+            + targetTableName
+            + "\" (import_id, "
+            + colsList
+            + ") "
+            + "SELECT DISTINCT ON ("
+            + pkList
+            + ") ?::bigint, "
+            + colsList
+            + " FROM data.\""
+            + stagingTable
+            + "\" "
+            + "ORDER BY "
+            + pkList
+            + ", _seq DESC "
+            + "ON CONFLICT "
+            + conflictTarget
+            + " DO UPDATE SET "
+            + updateSet
+            + " RETURNING (xmax = 0) AS was_insert"
+            + ") "
+            + "SELECT count(*) FILTER (WHERE was_insert) AS inserted, "
+            + "count(*) FILTER (WHERE NOT was_insert) AS updated "
+            + "FROM promoted";
+
+    var record = dsl.fetchOne(sql, importId);
+    long inserted = record != null ? record.get("inserted", Long.class) : 0L;
+    long updated = record != null ? record.get("updated", Long.class) : 0L;
+
+    return new UpsertResult((int) inserted, (int) updated);
+  }
+
+  /**
+   * staging 테이블 내용으로 target 테이블을 완전히 교체(REPLACE)한다. target을 TRUNCATE한 뒤, {@code DISTINCT ON
+   * (pk) ORDER BY pk, _seq DESC}로 PK별 파일 내 마지막 등장 행만 삽입한다.
+   *
+   * <p>TRUNCATE + INSERT가 원자적으로 처리되어야 하므로, 호출자가 {@code transactionTemplate} 등으로 감싼 트랜잭션 내에서
+   * 호출해야 한다(기존 DataImportService의 REPLACE 처리 패턴과 동일).
+   */
+  public void promoteStagingToReplace(
+      String stagingTable, String targetTableName, List<String> columns, List<String> pkColumns) {
+    dataTableService.validateName(stagingTable);
+    dataTableService.validateName(targetTableName);
+    for (String col : columns) {
+      dataTableService.validateName(col);
+    }
+    for (String pkCol : pkColumns) {
+      dataTableService.validateName(pkCol);
+    }
+
+    if (pkColumns.isEmpty()) {
+      throw new IllegalStateException("REPLACE promote requires at least one primary key column");
+    }
+
+    dsl.execute("TRUNCATE TABLE data.\"" + targetTableName + "\"");
+
+    StringBuilder pkList = new StringBuilder();
+    for (int i = 0; i < pkColumns.size(); i++) {
+      if (i > 0) pkList.append(", ");
+      pkList.append("\"").append(pkColumns.get(i)).append("\"");
+    }
+
+    StringBuilder colsList = new StringBuilder();
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) colsList.append(", ");
+      colsList.append("\"").append(columns.get(i)).append("\"");
+    }
+
+    String sql =
+        "INSERT INTO data.\""
+            + targetTableName
+            + "\" ("
+            + colsList
+            + ") "
+            + "SELECT DISTINCT ON ("
+            + pkList
+            + ") "
+            + colsList
+            + " FROM data.\""
+            + stagingTable
+            + "\" "
+            + "ORDER BY "
+            + pkList
+            + ", _seq DESC";
+
+    dsl.execute(sql);
+  }
+
+  /** staging 테이블을 삭제한다. import job 완료(성공/실패 무관) 후 항상 호출되어야 한다. */
+  public void dropStagingTable(String stagingTable) {
+    dataTableService.validateName(stagingTable);
+    dsl.execute("DROP TABLE IF EXISTS data.\"" + stagingTable + "\"");
   }
 }

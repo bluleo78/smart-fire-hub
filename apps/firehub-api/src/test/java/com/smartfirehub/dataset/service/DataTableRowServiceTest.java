@@ -2,13 +2,16 @@ package com.smartfirehub.dataset.service;
 
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataimport.service.DataValidationService;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -31,6 +34,8 @@ class DataTableRowServiceTest extends IntegrationTestBase {
   @Autowired private DataTableRowService dataTableRowService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+  @Autowired private DataValidationService dataValidationService;
+  @Autowired private DataTableService dataTableService;
 
   /** 테스트용 사용자 ID */
   private Long testUserId;
@@ -558,5 +563,206 @@ class DataTableRowServiceTest extends IntegrationTestBase {
                     tableName, List.of("name", "value"), List.of(), rows, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("primary key");
+  }
+
+  // =========================================================================
+  // staging table lifecycle — 대용량 스트리밍 UPSERT/REPLACE용 SQL측 dedup
+  // =========================================================================
+
+  /** pk=true(code)+일반(label) 컬럼을 가진 데이터셋 생성. staging 테스트 공용 헬퍼. */
+  private DatasetDetailResponse createPkDataset(String tableName) {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("code", "Code", "TEXT", null, false, false, null, true),
+            new DatasetColumnRequest("label", "Label", "TEXT", null, true, false, null, false));
+    return datasetService.createDataset(
+        new CreateDatasetRequest(tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
+        testUserId);
+  }
+
+  /**
+   * 정상: 같은 pk(code=C1)가 서로 다른 배치에 다른 순서로 등장할 때, promoteStagingToUpsert 이후 target에는 `_seq`가 가장 큰(=파일
+   * 내 마지막 등장) 행만 남아야 한다(last-write-wins). inserted/updated 카운트도 정확해야 한다.
+   */
+  @Test
+  void promoteStagingToUpsert_duplicatePkAcrossBatches_lastWriteWins() {
+    DatasetDetailResponse dataset = createPkDataset("stg_upsert_lww_test");
+    String tableName = dataset.tableName();
+    List<String> columns = List.of("code", "label");
+    List<String> pkColumns = List.of("code");
+
+    String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
+
+    // 배치1: C1(first) 등장
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable,
+        columns,
+        List.of(
+            Map.of("code", "C1", "label", "First"), Map.of("code", "C2", "label", "OnlyOnce")),
+        (done, total) -> {});
+    // 배치2: C1이 다시 등장 (마지막 등장이므로 이 값이 살아남아야 함)
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable,
+        columns,
+        List.of(Map.of("code", "C1", "label", "Last")),
+        (done, total) -> {});
+
+    DataTableRowService.UpsertResult result =
+        dataTableRowService.promoteStagingToUpsert(
+            stagingTable, tableName, columns, pkColumns, null);
+
+    // C1, C2 두 개의 고유 pk만 신규 삽입되어야 함(파일 내 중복은 target에 없던 pk이므로 inserted)
+    assertThat(result.inserted()).isEqualTo(2);
+    assertThat(result.updated()).isEqualTo(0);
+
+    List<Map<String, Object>> rows =
+        dataTableRowService.queryData(tableName, columns, null, 0, 10);
+    assertThat(rows).hasSize(2);
+    Map<String, Object> c1 =
+        rows.stream().filter(r -> "C1".equals(r.get("code"))).findFirst().orElseThrow();
+    assertThat(c1.get("label")).isEqualTo("Last");
+
+    dataTableRowService.dropStagingTable(stagingTable);
+  }
+
+  /** 정상: 이미 target에 존재하는 pk를 staging으로 promote하면 updated로 집계되어야 한다. */
+  @Test
+  void promoteStagingToUpsert_existingTargetRow_countedAsUpdated() {
+    DatasetDetailResponse dataset = createPkDataset("stg_upsert_update_test");
+    String tableName = dataset.tableName();
+    List<String> columns = List.of("code", "label");
+    List<String> pkColumns = List.of("code");
+
+    dataTableRowService.upsertBatch(
+        tableName, columns, pkColumns, List.of(Map.of("code", "C1", "label", "Original")), null);
+
+    String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable, columns, List.of(Map.of("code", "C1", "label", "Updated")), (d, t) -> {});
+
+    DataTableRowService.UpsertResult result =
+        dataTableRowService.promoteStagingToUpsert(
+            stagingTable, tableName, columns, pkColumns, null);
+
+    assertThat(result.inserted()).isEqualTo(0);
+    assertThat(result.updated()).isEqualTo(1);
+
+    dataTableRowService.dropStagingTable(stagingTable);
+  }
+
+  /**
+   * 정합성 고정(pin): staging 경로의 promote 결과가 기존 in-memory
+   * DataValidationService.dedupeByPrimaryKeysLastWins와 동일 입력에 대해 동일한 최종 값을 산출해야 한다. (null/구분자
+   * 충돌 등 엣지 케이스는 제외 — 순수하게 구분되는 pk에 대해서만 비교)
+   */
+  @Test
+  void promoteStagingToUpsert_sameFinalRowsAsInMemoryDedup() {
+    DatasetDetailResponse dataset = createPkDataset("stg_upsert_equiv_test");
+    String tableName = dataset.tableName();
+    List<String> columns = List.of("code", "label");
+    List<String> pkColumns = List.of("code");
+
+    // 공유 픽스처: C1이 3번, C2가 1번 등장. 각 pk의 마지막 등장 값이 살아남아야 한다.
+    List<Map<String, Object>> fixture =
+        List.of(
+            Map.of("code", "C1", "label", "v1"),
+            Map.of("code", "C2", "label", "v1"),
+            Map.of("code", "C1", "label", "v2"),
+            Map.of("code", "C1", "label", "v3"));
+
+    // 1) 기존 in-memory dedup 경로
+    DataValidationService.DedupResult inMemory =
+        dataValidationService.dedupeByPrimaryKeysLastWins(fixture, pkColumns);
+    Map<Object, Object> expectedByCode = new java.util.HashMap<>();
+    for (Map<String, Object> row : inMemory.rows()) {
+      expectedByCode.put(row.get("code"), row.get("label"));
+    }
+
+    // 2) 신규 staging SQL 경로 (파일 내 등장 순서를 그대로 두 배치로 나눠 삽입)
+    String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable, columns, new ArrayList<>(fixture.subList(0, 2)), (d, t) -> {});
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable, columns, new ArrayList<>(fixture.subList(2, 4)), (d, t) -> {});
+    dataTableRowService.promoteStagingToUpsert(stagingTable, tableName, columns, pkColumns, null);
+
+    List<Map<String, Object>> actualRows =
+        dataTableRowService.queryData(tableName, columns, null, 0, 10);
+    Map<Object, Object> actualByCode = new java.util.HashMap<>();
+    for (Map<String, Object> row : actualRows) {
+      actualByCode.put(row.get("code"), row.get("label"));
+    }
+
+    assertThat(actualByCode).isEqualTo(expectedByCode);
+
+    dataTableRowService.dropStagingTable(stagingTable);
+  }
+
+  /** 정상: promoteStagingToReplace는 target을 truncate 후 staging의 pk별 마지막 값만 insert해야 한다. */
+  @Test
+  void promoteStagingToReplace_truncatesAndInsertsDistinctLastWins() {
+    DatasetDetailResponse dataset = createPkDataset("stg_replace_test");
+    String tableName = dataset.tableName();
+    List<String> columns = List.of("code", "label");
+    List<String> pkColumns = List.of("code");
+
+    // target에 기존 데이터가 있어야 truncate 검증 가능
+    dataTableRowService.upsertBatch(
+        tableName,
+        columns,
+        pkColumns,
+        List.of(Map.of("code", "OLD", "label", "ShouldBeGone")),
+        null);
+
+    String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable,
+        columns,
+        List.of(Map.of("code", "C1", "label", "First")),
+        (d, t) -> {});
+    dataTableRowService.insertStagingBatchWithProgress(
+        stagingTable,
+        columns,
+        List.of(Map.of("code", "C1", "label", "Last")),
+        (d, t) -> {});
+
+    dataTableRowService.promoteStagingToReplace(stagingTable, tableName, columns, pkColumns);
+
+    List<Map<String, Object>> rows =
+        dataTableRowService.queryData(tableName, columns, null, 0, 10);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).get("code")).isEqualTo("C1");
+    assertThat(rows.get(0).get("label")).isEqualTo("Last");
+
+    dataTableRowService.dropStagingTable(stagingTable);
+  }
+
+  /** 정상: dropStagingTable 이후에는 해당 테이블에 대한 쿼리가 실패해야 한다(테이블 부재). */
+  @Test
+  void dropStagingTable_afterDrop_tableNoLongerExists() {
+    DatasetDetailResponse dataset = createPkDataset("stg_drop_test");
+    String tableName = dataset.tableName();
+    List<String> columns = List.of("code", "label");
+
+    String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
+    dataTableRowService.dropStagingTable(stagingTable);
+
+    assertThatThrownBy(() -> dsl.fetch("SELECT * FROM data.\"" + stagingTable + "\""))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  /** 정상: createStagingTable이 생성하는 이름은 validateName([a-z][a-z0-9_]*)을 통과해야 한다. */
+  @Test
+  void createStagingTable_generatedName_passesValidateName() {
+    DatasetDetailResponse dataset = createPkDataset("stg_name_test");
+    String tableName = dataset.tableName();
+    List<String> columns = List.of("code", "label");
+
+    String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
+
+    assertThat(stagingTable).startsWith("stg_import_");
+    assertThatCode(() -> dataTableService.validateName(stagingTable)).doesNotThrowAnyException();
+
+    dataTableRowService.dropStagingTable(stagingTable);
   }
 }
