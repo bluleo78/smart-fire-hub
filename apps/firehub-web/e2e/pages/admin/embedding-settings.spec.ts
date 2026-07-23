@@ -99,7 +99,7 @@ test.describe('임베딩 설정 탭', () => {
     expect(overflowY).toBe('hidden');
   });
 
-  test('VOYAGE / OPENAI provider 옵션은 비활성화되어 선택할 수 없다', async ({
+  test('OLLAMA/OPENAI는 선택 가능하고 VOYAGE만 비활성화된다', async ({
     authenticatedPage: page,
   }) => {
     await page.goto('/admin/settings');
@@ -109,8 +109,12 @@ test.describe('임베딩 설정 탭', () => {
     // Select 열기
     await page.locator('#embedding-provider').click();
 
-    // OLLAMA는 활성, 나머지는 비활성(aria-disabled="true")
+    // OLLAMA/OPENAI는 활성, VOYAGE(미구현)만 비활성(aria-disabled="true")
     await expect(page.getByRole('option', { name: 'Ollama' })).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    await expect(page.getByRole('option', { name: 'OpenAI', exact: true })).not.toHaveAttribute(
       'aria-disabled',
       'true',
     );
@@ -118,10 +122,44 @@ test.describe('임베딩 설정 탭', () => {
       'aria-disabled',
       'true',
     );
-    await expect(page.getByRole('option', { name: 'OpenAI (준비 중)' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+  });
+
+  test('OpenAI 선택 시 모델/base_url이 OpenAI 기본값으로 자동 교체되고 저장 payload에 담긴다', async ({
+    authenticatedPage: page,
+  }) => {
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+    await page.goto('/admin/settings');
+    await page.getByRole('tab', { name: '임베딩' }).click();
+    await expect(page.getByText('임베딩 provider 설정')).toBeVisible();
+    await expect(page.locator('#embedding-model')).toHaveValue('bge-m3');
+
+    // provider를 OpenAI로 전환 → 이전 provider(OLLAMA) 기본값이던 model/base_url이 OpenAI 기본값으로 스왑
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+
+    await expect(page.locator('#embedding-provider')).toContainText('OpenAI');
+    await expect(page.locator('#embedding-model')).toHaveValue('text-embedding-3-small');
+    await expect(page.locator('#embedding-base-url')).toHaveValue('https://api.openai.com');
+
+    // OpenAI는 api_key가 필요하므로 입력(마스킹 상태가 아니라 실제 값 → payload에 포함되어야 함)
+    await page.locator('#embedding-api-key').fill('sk-test-key');
+
+    const saveBtn = page.getByRole('button', { name: '저장' }).first();
+    await expect(saveBtn).toBeEnabled({ timeout: 3000 });
+    await saveBtn.click();
+
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      settings: {
+        'embedding.provider': 'OPENAI',
+        'embedding.model': 'text-embedding-3-small',
+        'embedding.base_url': 'https://api.openai.com',
+        'embedding.api_key': 'sk-test-key',
+      },
+    });
+
+    await expect(page.getByText('임베딩 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
   });
 
   test('모델 수정 후 저장 시 변경된 키가 PUT payload에 담겨 전송된다', async ({

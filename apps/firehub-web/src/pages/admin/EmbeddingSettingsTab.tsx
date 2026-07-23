@@ -50,13 +50,21 @@ const DEFAULT: EmbeddingForm = {
   'embedding.api_key': '',
 };
 
-// provider 옵션 — Phase 1에서는 OLLAMA만 구현됨. VOYAGE/OPENAI는 팩토리가 예외를 던지므로
-// 저장 시 런타임 오류를 막기 위해 비활성(disabled) 처리하고 "(준비 중)" 라벨을 붙인다.
+// provider 옵션 — OLLAMA(로컬)와 OPENAI(클라우드) 구현됨. VOYAGE는 팩토리가 아직 예외를 던지므로
+// 저장 시 런타임 오류를 막기 위해 비활성(disabled) 처리하고 "(준비 중)" 라벨을 유지한다.
 const PROVIDER_OPTIONS: { value: string; label: string; disabled: boolean }[] = [
   { value: 'OLLAMA', label: 'Ollama', disabled: false },
+  { value: 'OPENAI', label: 'OpenAI', disabled: false },
   { value: 'VOYAGE', label: 'Voyage (준비 중)', disabled: true },
-  { value: 'OPENAI', label: 'OpenAI (준비 중)', disabled: true },
 ];
+
+// provider별 권장 기본값 — provider 전환 시 이전 기본값 그대로였던(사용자 미변경) 모델/base_url을
+// 새 provider 기본값으로 자동 교체하는 데 사용한다. OpenAI는 dimensions:1024 축소를 지원하는 3-small 기본.
+const PROVIDER_DEFAULTS: Record<string, { model: string; baseUrl: string }> = {
+  OLLAMA: { model: 'bge-m3', baseUrl: 'http://host.docker.internal:11434' },
+  OPENAI: { model: 'text-embedding-3-small', baseUrl: 'https://api.openai.com' },
+  VOYAGE: { model: 'voyage-3', baseUrl: 'https://api.voyageai.com' },
+};
 
 // 재임베딩 진행 현황 한 줄(라벨 + 카운트 + 진행 바)을 렌더링한다.
 // shadcn Progress 컴포넌트가 없어 muted/primary div 바로 직접 구성한다.
@@ -130,6 +138,28 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  // provider 변경 — 모델/base_url이 이전 provider 기본값 그대로면(사용자가 손대지 않았으면)
+  // 새 provider 권장 기본값으로 교체한다. 사용자가 커스텀한 값은 보존한다.
+  const handleProviderChange = (next: string) => {
+    setForm((prev) => {
+      const prevDefaults = PROVIDER_DEFAULTS[prev['embedding.provider']];
+      const nextDefaults = PROVIDER_DEFAULTS[next];
+      if (!nextDefaults) return { ...prev, 'embedding.provider': next };
+      return {
+        ...prev,
+        'embedding.provider': next,
+        'embedding.model':
+          prev['embedding.model'] === prevDefaults?.model
+            ? nextDefaults.model
+            : prev['embedding.model'],
+        'embedding.base_url':
+          prev['embedding.base_url'] === prevDefaults?.baseUrl
+            ? nextDefaults.baseUrl
+            : prev['embedding.base_url'],
+      };
+    });
+  };
+
   const handleSave = async () => {
     const toSave: Record<string, string> = { ...form };
     // 마스킹된 api_key(****...)를 사용자가 수정하지 않았다면 PUT에서 제외한다.
@@ -167,12 +197,12 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Provider — OLLAMA만 선택 가능, 나머지는 disabled */}
+          {/* Provider — OLLAMA/OPENAI 선택 가능, VOYAGE는 미구현이라 disabled */}
           <div className="space-y-2">
             <Label htmlFor="embedding-provider">Provider</Label>
             <Select
               value={form['embedding.provider']}
-              onValueChange={(value) => updateField('embedding.provider', value)}
+              onValueChange={handleProviderChange}
             >
               <SelectTrigger id="embedding-provider" className="w-full max-w-md">
                 <SelectValue placeholder="Provider를 선택하세요" />
