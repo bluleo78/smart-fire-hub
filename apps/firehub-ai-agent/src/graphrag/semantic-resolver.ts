@@ -1,22 +1,35 @@
 // 임베딩 기반 시맨틱 엔티티 해소 — resolver.ts의 정확 문자열 병합을 보완한다.
 // 같은 EntityType 내에서 표기가 달라도 의미가 같은 엔티티(예: "스프링클러" vs "스프링클러 설비")를
 // 코사인 유사도로 클러스터링해 하나의 canonical 엔티티로 합친다.
+// 코사인이 임계값 미달이지만 완전히 무관하지도 않은 근접쌍(0.5~0.78)은 옵션으로 주입된 LinkFn(LLM)에게
+// 재판단시켜, 표기 변형을 넘어선 의미적 동의어(semantic-link.ts 참고)를 추가로 병합한다.
 import { EntityType, Ontology, entityResolutionPolicy } from './ontology.js';
 import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
 import { cosineSimilarity } from './embedding.js';
+import { LinkFn } from './semantic-link.js';
 
 // bge-m3 실측 검증값: 변형 표기(동의어) ≥0.78, 서로 다른 엔티티는 ≤0.755로 명확히 분리됨.
-// ⚠️ 이 임계값은 bge-m3 임베딩 분포에 맞춰 튜닝된 값이다. 임베딩 provider 를 OpenAI 등으로 바꾸면
-// (system_settings.embedding.provider) 벡터 공간이 달라져 오·병합 위험이 생기므로, provider 전환 시
-// 반드시 이 값을 재측정해야 한다.
+// ⚠️ 임베딩 provider가 바뀌면(예: OLLAMA→OPENAI) 이 값을 재측정해야 한다 — 아래 NEAR_MISS_LOW도 동일.
 export const MERGE_THRESHOLD = 0.78;
 
-// 텍스트 배열 → 벡터 배열. 실제 구현은 firehub-api 활성 provider 를 호출하는 apiClient.embed 를 주입하고,
-// 테스트에서는 결정적 mock을 주입해 임베딩 의존 없이 검증한다.
+// 근접쌍 재판단 하한선 — 이 미만은 LLM에게도 묻지 않고 확정적으로 별개 처리한다(비용 통제,
+// 명백히 무관한 쌍 배제). A1 평가 하네스에서 실측된 "전기적 요인"↔"분전반의 누전"(코사인 0.42)처럼
+// 이 하한보다 낮은 딥 변형은 이번 슬라이스로도 잡히지 않는다(알려진 한계).
+const NEAR_MISS_LOW = 0.5;
+
+// 텍스트 배열 → 벡터 배열. 실제 구현(graphrag-tools.ts)은 apiClient.embed(firehub-api 활성 provider에 위임)를
+// 주입하고, 테스트에서는 결정적 mock을 주입해 외부 의존 없이 검증한다.
 export interface EmbedFn { (texts: string[]): Promise<number[][]>; }
 
 // 이름들 사이에서 union-find로 유사도 클러스터를 찾는다.
-function clusterNames(names: string[], vectors: number[][], threshold: number): string[][] {
+// link가 주입되면 코사인이 [NEAR_MISS_LOW, threshold) 구간인 쌍만 LLM 재판단 후 병합 여부를 결정한다.
+async function clusterNames(
+  names: string[],
+  vectors: number[][],
+  threshold: number,
+  entityType: EntityType,
+  link?: LinkFn,
+): Promise<string[][]> {
   const parent = names.map((_, i) => i);
   function find(i: number): number {
     if (parent[i] !== i) parent[i] = find(parent[i]);
@@ -28,7 +41,13 @@ function clusterNames(names: string[], vectors: number[][], threshold: number): 
   }
   for (let i = 0; i < names.length; i += 1) {
     for (let j = i + 1; j < names.length; j += 1) {
-      if (cosineSimilarity(vectors[i], vectors[j]) >= threshold) union(i, j);
+      const sim = cosineSimilarity(vectors[i], vectors[j]);
+      if (sim >= threshold) {
+        union(i, j);
+      } else if (link && sim >= NEAR_MISS_LOW && find(i) !== find(j)) {
+        // eslint-disable-next-line no-await-in-loop -- 근접쌍은 대개 소수라 순차 호출로 충분하다.
+        if (await link(names[i], names[j], entityType)) union(i, j);
+      }
     }
   }
   const groups = new Map<number, string[]>();
@@ -53,6 +72,7 @@ export async function buildCanonicalMap(
   embed: EmbedFn,
   ontology: Ontology,
   threshold: number = MERGE_THRESHOLD,
+  link?: LinkFn,
 ): Promise<Map<string, ResolvedEntity>> {
   // key 기준 dedupe(같은 엔티티가 여러 청크에서 중복 등장 가능).
   const distinct = new Map<string, ResolvedEntity>();
@@ -77,7 +97,7 @@ export async function buildCanonicalMap(
 
     const names = list.map((e) => e.name);
     const vectors = await embed(names);
-    const clusters = clusterNames(names, vectors, threshold);
+    const clusters = await clusterNames(names, vectors, threshold, type, link);
 
     for (const clusterNames_ of clusters) {
       const canonicalName = pickCanonicalName(clusterNames_);

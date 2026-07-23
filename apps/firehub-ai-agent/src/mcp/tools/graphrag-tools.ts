@@ -11,6 +11,7 @@ import { retrieve } from '../../graphrag/retriever.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
 import { loadOntology } from '../../graphrag/ontology-source.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
+import { link as semanticLink } from '../../graphrag/semantic-link.js';
 
 /**
  * GraphRAG 관련 MCP 도구를 등록한다.
@@ -40,6 +41,8 @@ export function registerGraphragTools(
             load: (graph, chunkId, schemaVersion) => loadGraph(graph, chunkId, schemaVersion),
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)용 임베딩 — firehub-api 활성 provider 에 위임.
             embed: (texts) => apiClient.embed(texts),
+            // 임베딩 임계값 미달 근접쌍(코사인 0.5~0.78)을 LLM으로 재판단해 의미적 동의어를 추가 병합.
+            link: (a, b, type) => semanticLink(complete, a, b, type),
           },
           args.datasetId,
           ontology,

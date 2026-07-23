@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildCanonicalMap, applyCanonicalMap, MERGE_THRESHOLD, EmbedFn } from './semantic-resolver.js';
 import { entityKey, ResolvedEntity, ResolvedGraph } from './resolver.js';
 import { CORE_ONTOLOGY } from './ontology.js';
@@ -76,6 +76,75 @@ describe('buildCanonicalMap', () => {
     const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY);
     expect(map.get(entityKey('Equipment', '스프링클러'))?.key)
       .toBe(map.get(entityKey('Equipment', '스프링클러 설비'))?.key);
+  });
+
+  it('근접쌍(코사인 0.5~0.78)에서 link 가 true 를 반환하면 병합한다', async () => {
+    // 코사인 유사도 계산: dot(a,b)/(|a||b|). [1,0,0] vs [0.6,0.6,0] → 0.6/(1*0.849) ≈ 0.707 (0.5~0.78 구간).
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) =>
+      (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn().mockResolvedValue(true);
+    const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
+
+    expect(link).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause');
+    expect(map.get(entityKey('Cause', '전기적 요인'))?.key)
+      .toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+  });
+
+  it('근접쌍에서 link 가 false 를 반환하면 병합하지 않는다', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) =>
+      (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const link = vi.fn().mockResolvedValue(false);
+    const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
+
+    expect(map.get(entityKey('Cause', '전기적 요인'))?.key)
+      .not.toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
+  });
+
+  it('코사인 0.5 미만 쌍은 link 가 주입되어 있어도 호출하지 않는다', async () => {
+    // 직교 벡터 → 코사인 0.
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '누수'), type: 'Cause', name: '누수' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0, 1, 0]));
+    const link = vi.fn().mockResolvedValue(true);
+    await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
+
+    expect(link).not.toHaveBeenCalled();
+  });
+
+  it('코사인 0.78 이상 쌍은 link 가 주입되어 있어도 호출하지 않고 바로 병합한다', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Equipment', '스프링클러'), type: 'Equipment', name: '스프링클러' },
+      { key: entityKey('Equipment', '스프링클러 설비'), type: 'Equipment', name: '스프링클러 설비' },
+    ];
+    const link = vi.fn().mockResolvedValue(false);
+    const map = await buildCanonicalMap(entities, mockEmbed, CORE_ONTOLOGY, MERGE_THRESHOLD, link);
+
+    expect(link).not.toHaveBeenCalled();
+    expect(map.get(entityKey('Equipment', '스프링클러'))?.key)
+      .toBe(map.get(entityKey('Equipment', '스프링클러 설비'))?.key);
+  });
+
+  it('link 미주입 시 기존 동작과 동일하다(근접쌍이 있어도 병합하지 않음)', async () => {
+    const entities: ResolvedEntity[] = [
+      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey('Cause', '분전반의 누전'), type: 'Cause', name: '분전반의 누전' },
+    ];
+    const embed: EmbedFn = async (texts) => texts.map((t) =>
+      (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]));
+    const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY);
+
+    expect(map.get(entityKey('Cause', '전기적 요인'))?.key)
+      .not.toBe(map.get(entityKey('Cause', '분전반의 누전'))?.key);
   });
 });
 

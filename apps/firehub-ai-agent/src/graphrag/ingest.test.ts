@@ -53,4 +53,27 @@ describe('ingestDataset', () => {
     expect(summary.entities).toBe(1);
     expect(summary.chunks).toBe(2);
   });
+
+  it('IngestDeps.link 가 주어지면 buildCanonicalMap 에 전달된다', async () => {
+    const load = vi.fn().mockResolvedValue({ nodes: 1, relations: 0 });
+    const link = vi.fn().mockResolvedValue(false);
+    const deps: IngestDeps = {
+      listChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'c1' }]),
+      extract: vi.fn().mockResolvedValue({
+        entities: [
+          { type: 'Cause', name: '전기적 요인' },
+          { type: 'Cause', name: '분전반의 누전' },
+        ],
+        relations: [],
+      }),
+      load,
+      // 두 이름이 코사인 0.5~0.78 구간에 들어오도록 고정 벡터.
+      embed: vi.fn(async (texts: string[]) => texts.map((t) =>
+        (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]))),
+      link,
+    };
+    await ingestDataset(deps, 9, CORE_ONTOLOGY);
+
+    expect(link).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause');
+  });
 });
