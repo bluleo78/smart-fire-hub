@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import { buildAnswerPrompt, answerFromContext } from './answer.js';
 
 it('프롬프트에 컨텍스트 블록과 근거-한정 지침이 포함된다', () => {
