@@ -57,6 +57,11 @@ public class OntologyService {
     validate(req);
     int newVersion = ontologyRepository.updateOntology(req);
 
+    // 5-6: 타입 리네임은 이제 순수 DB 연산이다 — OntologyRepository가 entity_type_id를 UPDATE로
+    // 보존하므로(리네임돼도 같은 행), ai-agent는 이 id 기반으로 Neo4j 노드 key를 구성해 리네임에도
+    // key가 바뀌지 않는다. 5-5에서 있었던 "저장 직후 ai-agent에 Neo4j key 마이그레이션 동기 요청"은
+    // 더 이상 필요 없어 제거했다(renames는 검증에만 쓰이고 ai-agent로 전달되지 않음).
+
     // 감사 로그 — 현재 인증 사용자(principal=Long userId). username은 best-effort 조회.
     var auth = SecurityContextHolder.getContext().getAuthentication();
     if (auth != null && auth.getPrincipal() instanceof Long userId) {
@@ -143,6 +148,29 @@ public class OntologyService {
       String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
       if (!seenTriples.add(tripleKey)) {
         throw new IllegalArgumentException("중복된 관계: " + tripleKey);
+      }
+    }
+
+    // 타입 리네임(5-5) 무결성 — to는 최종 entities에 실존해야 하고, from은 리네임돼 사라졌어야 하므로
+    // 최종 entities에 존재하면 안 된다(잘못된 rename 의도가 Neo4j 마이그레이션으로 새는 것을 방지).
+    Set<String> seenFroms = new HashSet<>();
+    for (var rename : req.renames()) {
+      if (rename.from() == null || rename.from().isBlank() || rename.to() == null || rename.to().isBlank()) {
+        throw new IllegalArgumentException("타입 리네임의 from/to는 비어 있을 수 없습니다.");
+      }
+      if (rename.from().equals(rename.to())) {
+        throw new IllegalArgumentException("타입 리네임의 from과 to가 동일합니다: " + rename.from());
+      }
+      if (!seenTypes.contains(rename.to())) {
+        throw new IllegalArgumentException(
+            "타입 리네임의 to가 최종 엔티티 타입에 없습니다: " + rename.to() + " (from " + rename.from() + ")");
+      }
+      if (seenTypes.contains(rename.from())) {
+        throw new IllegalArgumentException(
+            "타입 리네임의 from이 여전히 엔티티 타입으로 남아 있습니다: " + rename.from());
+      }
+      if (!seenFroms.add(rename.from())) {
+        throw new IllegalArgumentException("중복된 타입 리네임(from): " + rename.from());
       }
     }
   }

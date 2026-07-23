@@ -3,6 +3,12 @@ import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js
 import { loadGraph } from './loader.js';
 import { entityKey } from './resolver.js';
 import { retrieve } from './retriever.js';
+import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+
+const incidentId = entityTypeId(CORE_ONTOLOGY, 'Incident');
+const buildingId = entityTypeId(CORE_ONTOLOGY, 'Building');
+const causeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
+const regulationId = entityTypeId(CORE_ONTOLOGY, 'Regulation');
 
 beforeAll(async () => {
   await bootstrapConstraints();
@@ -11,13 +17,13 @@ beforeAll(async () => {
   // 시드 그래프: 사건 2026-001 -(OCCURRED_AT)-> 건물, -(CAUSED_BY)-> 원인. 모두 chunkId 500에서 유래.
   await loadGraph({
     entities: [
-      { key: entityKey('Incident', '2026-001'), type: 'Incident', name: '2026-001' },
-      { key: entityKey('Building', '중앙로 상가'), type: 'Building', name: '중앙로 상가' },
-      { key: entityKey('Cause', '전기적 요인'), type: 'Cause', name: '전기적 요인' },
+      { key: entityKey(incidentId, '2026-001'), type: 'Incident', name: '2026-001' },
+      { key: entityKey(buildingId, '중앙로 상가'), type: 'Building', name: '중앙로 상가' },
+      { key: entityKey(causeId, '전기적 요인'), type: 'Cause', name: '전기적 요인' },
     ],
     relations: [
-      { subjectKey: entityKey('Incident', '2026-001'), type: 'OCCURRED_AT', objectKey: entityKey('Building', '중앙로 상가') },
-      { subjectKey: entityKey('Incident', '2026-001'), type: 'CAUSED_BY', objectKey: entityKey('Cause', '전기적 요인') },
+      { subjectKey: entityKey(incidentId, '2026-001'), type: 'OCCURRED_AT', objectKey: entityKey(buildingId, '중앙로 상가') },
+      { subjectKey: entityKey(incidentId, '2026-001'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '전기적 요인') },
     ],
   }, 500, 1);
 });
@@ -41,9 +47,9 @@ describe('retrieve (integration)', () => {
     // 시드 사건(2026-002)이 공용 허브 규정과 연결되고, 그 허브가 이 사건과 무관한
     // 다른 사건들(무관-001..010)과도 VIOLATED로 연결된 상황을 구성한다.
     // hubDegree 기본값(10) 이상이 되도록 무관 사건 10개를 만든다.
-    const hubKey = entityKey('Regulation', '소방시설법 제12조');
-    const seedIncidentKey = entityKey('Incident', '2026-002');
-    const unrelatedKeys = Array.from({ length: 10 }, (_, i) => entityKey('Incident', `무관-${i}`));
+    const hubKey = entityKey(regulationId, '소방시설법 제12조');
+    const seedIncidentKey = entityKey(incidentId, '2026-002');
+    const unrelatedKeys = Array.from({ length: 10 }, (_, i) => entityKey(incidentId, `무관-${i}`));
 
     // 주의: loadGraph는 전달된 entities 전부에 sourceChunkId를 기록하므로, 허브 노드를
     // 시드 청크(600)로도 적재하면 허브 자체가 "시드"가 되어(항상 확장) 테스트 의도가 깨진다.

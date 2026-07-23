@@ -202,6 +202,49 @@ class OntologyServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  // 편집 검증(5-5): 리네임의 to가 최종 엔티티 타입 목록에 없으면 거부한다.
+  @Test
+  void updateOntology_는_리네임_to가_최종_타입에_없으면_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())),
+            List.of(),
+            List.of(new UpdateOntologyRequest.TypeRename("Cause", "Unrelated")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
+  // 편집 검증(5-5): 리네임의 from이 최종 엔티티 타입 목록에 여전히 남아 있으면 거부한다(리네임 안 됨).
+  @Test
+  void updateOntology_는_리네임_from이_여전히_타입으로_남아있으면_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Cause", "a", "n", "exact", List.of())),
+            List.of(),
+            List.of(new UpdateOntologyRequest.TypeRename("Cause", "Cause")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  // 편집 검증(5-5): from과 to가 같은(무변화) 리네임은 거부한다.
+  @Test
+  void updateOntology_는_리네임_from과_to가_같으면_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())),
+            List.of(),
+            List.of(new UpdateOntologyRequest.TypeRename("RootCause", "RootCause")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   // happy: 유효 페이로드는 리포지토리 updateOntology 호출 후 갱신본을 재조회해 반환한다.
   @Test
   void updateOntology_는_유효하면_리포지토리를_호출하고_갱신본을_반환한다() {

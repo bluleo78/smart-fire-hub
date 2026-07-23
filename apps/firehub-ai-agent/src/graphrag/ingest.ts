@@ -39,7 +39,7 @@ export async function ingestDataset(
   for (const chunk of chunks) {
     const extraction = await deps.extract(chunk.content); // 추출 실패 시 extractor가 빈 결과 반환 → 계속
     if (extraction.entities.length === 0 && extraction.relations.length === 0) extractionFailures += 1;
-    const graph = resolveExtraction(extraction);
+    const graph = resolveExtraction(extraction, ontology);
     perChunk.push({ chunkId: chunk.chunkId, graph });
     allEntities.push(...graph.entities);
   }

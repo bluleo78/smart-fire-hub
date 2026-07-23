@@ -14,3 +14,6 @@ describe('neo4j-client (integration)', () => {
     } finally { await session.close(); }
   });
 });
+
+// 5-6: 엔티티 타입 리네임이 entity_type_id 보존 기반의 순수 DB 연산이 되어(entityKey가 typeId 기반)
+// Neo4j 마이그레이션(renameEntityType)이 불필요해졌다 — 이 describe 블록 전체를 제거했다.

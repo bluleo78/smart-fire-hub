@@ -3,14 +3,18 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js';
 import { loadGraph } from './loader.js';
 import { entityKey } from './resolver.js';
+import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+
+const incidentId = entityTypeId(CORE_ONTOLOGY, 'Incident');
+const causeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
 
 const graph = {
   entities: [
-    { key: entityKey('Incident', '2026-001'), type: 'Incident' as const, name: '2026-001' },
-    { key: entityKey('Cause', '전기적 요인'), type: 'Cause' as const, name: '전기적 요인' },
+    { key: entityKey(incidentId, '2026-001'), type: 'Incident' as const, name: '2026-001' },
+    { key: entityKey(causeId, '전기적 요인'), type: 'Cause' as const, name: '전기적 요인' },
   ],
   relations: [
-    { subjectKey: entityKey('Incident', '2026-001'), type: 'CAUSED_BY' as const, objectKey: entityKey('Cause', '전기적 요인') },
+    { subjectKey: entityKey(incidentId, '2026-001'), type: 'CAUSED_BY' as const, objectKey: entityKey(causeId, '전기적 요인') },
   ],
 };
 
