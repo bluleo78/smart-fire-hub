@@ -42,6 +42,21 @@ public class DataImportService {
   // 배치 단위로 파싱+검증하여 전체 행을 한 번에 메모리에 적재하지 않는다(400MB xlsb preview/validate OOM 해소, #7).
   private static final int BATCH_SIZE = 2000;
 
+  // 전량 실패로 치닫는 파일(예: 날짜 포맷 불일치로 63만 행 전부 실패)을 끝까지 검증하며 기다리지 않도록
+  // 하는 조기 탈출 임계치. 유효 행이 하나도 없이 검증 오류만 이 값을 넘으면 파일 설정이 잘못된 것으로 보고
+  // 스트림을 중단한다. 일부라도 유효 행이 있으면(APPEND 부분 성공 보존) 이 가드에 걸리지 않는다.
+  private static final int MAX_VALIDATION_ERRORS_BEFORE_ABORT = 1000;
+
+  /**
+   * 스트리밍 검증 중 조기 탈출을 위한 내부 신호용 예외. RuntimeException을 상속해 REPLACE(PK 無) 트랜잭션 람다의 rethrow 분기를
+   * 그대로 통과하고 트랜잭션 롤백을 유발한다. 스택트레이스는 불필요하므로 생성 비용을 없앤다.
+   */
+  private static final class ValidationAbortException extends RuntimeException {
+    ValidationAbortException() {
+      super(null, null, false, false);
+    }
+  }
+
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
   private final DataTableService dataTableService;
@@ -460,6 +475,7 @@ public class DataImportService {
       boolean[] pkNullFound = {false};
       List<ValidationErrorDetail> pkErrorsAccum = new ArrayList<>();
       boolean[] replaceNoPkTruncated = {false}; // REPLACE(PK 無) lazy truncate: 유효 행 발견 시 1회만
+      boolean[] abortedEarly = {false}; // 전량 실패 조기 탈출 여부 — 실패 메시지 문구 결정에 사용
 
       final int totalRowsForProgress = Math.max(totalRows, 1); // 0 나눗셈 방지
 
@@ -491,6 +507,14 @@ public class DataImportService {
               }
             }
             processedSoFar[0] += batch.size();
+
+            // 조기 탈출: 유효 행이 하나도 없이 오류만 임계치를 넘으면 파일 전체를 계속 검증하는 것이
+            // 무의미하므로 스트림을 중단한다. 예외를 던져 parseStreaming 루프를 빠져나오고,
+            // 바깥에서 잡아 기존 all-rows-failed 판정 경로로 자연스럽게 진입시킨다.
+            if (validCount[0] == 0 && errorCount[0] >= MAX_VALIDATION_ERRORS_BEFORE_ABORT) {
+              abortedEarly[0] = true;
+              throw new ValidationAbortException();
+            }
 
             if (validRowsBatch.isEmpty()) {
               return; // 이 배치에는 적재할 유효 행이 없음
@@ -610,19 +634,28 @@ public class DataImportService {
       // REPLACE(PK 無)만 truncate+insert 원자성이 필요하므로 스트림 전체를 트랜잭션으로 감싼다.
       // 나머지 모드는 staging(별도 영구 테이블)에 배치 커밋하며 스트리밍하므로 트랜잭션이 불필요하다
       // (하나의 거대한 트랜잭션으로 커넥션을 점유하면 스트리밍의 이점이 사라진다).
-      if (importMode == ImportMode.REPLACE && pkColumns.isEmpty()) {
-        transactionTemplate.executeWithoutResult(
-            status -> {
-              try {
-                fileParserService.parseStreaming(
-                    path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, onBatch);
-              } catch (Exception e) {
-                throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
-              }
-            });
-      } else {
-        fileParserService.parseStreaming(
-            path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, onBatch);
+      try {
+        if (importMode == ImportMode.REPLACE && pkColumns.isEmpty()) {
+          transactionTemplate.executeWithoutResult(
+              status -> {
+                try {
+                  fileParserService.parseStreaming(
+                      path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, onBatch);
+                } catch (Exception e) {
+                  throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
+                }
+              });
+        } else {
+          fileParserService.parseStreaming(
+              path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, onBatch);
+        }
+      } catch (ValidationAbortException abort) {
+        // 조기 탈출로 스트림을 중단했다. REPLACE(PK 無)라면 트랜잭션이 롤백되어 대상 테이블이 원복된다.
+        // 유효 행이 0이므로 아래 all-rows-failed 판정으로 자연스럽게 진입한다.
+        log.warn(
+            "Validation aborted early for dataset {}: {} errors, 0 valid rows so far",
+            datasetId,
+            errorCount[0]);
       }
 
       int totalRowsFinal = processedSoFar[0];
@@ -644,11 +677,11 @@ public class DataImportService {
                         + "' - "
                         + detailErrorsAccum.get(0).error())
                 : (simpleErrorsAccum.isEmpty() ? null : simpleErrorsAccum.get(0));
-        String failMessage =
-            "All rows failed validation ("
-                + errorCountFinal
-                + " errors)"
-                + (sampleError != null ? " — e.g. " + sampleError : "");
+        String prefix =
+            abortedEarly[0]
+                ? "Validation aborted after " + errorCountFinal + "+ failures with no valid rows"
+                : "All rows failed validation (" + errorCountFinal + " errors)";
+        String failMessage = prefix + (sampleError != null ? " — e.g. " + sampleError : "");
         asyncJobService.failJob(jobId, failMessage);
 
         Object errorsForJson = hasMappings ? detailErrorsAccum : simpleErrorsAccum;

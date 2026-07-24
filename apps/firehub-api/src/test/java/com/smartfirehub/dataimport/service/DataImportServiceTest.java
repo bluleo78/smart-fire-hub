@@ -31,6 +31,7 @@ import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mock.web.MockMultipartFile;
@@ -456,6 +457,51 @@ class DataImportServiceTest extends IntegrationTestBase {
                     org.jooq.impl.DSL.table(
                         org.jooq.impl.DSL.name("data", "import_test_dataset"))));
     assertThat(count).isEqualTo(1000);
+  }
+
+  /**
+   * 조기 탈출 회귀 테스트: 유효 행이 하나도 없이 검증 오류만 임계치를 넘으면 파일 전체를 끝까지 검증하지 않고 스트림을 중단해야 한다. 날짜/타입 불일치로 63만 행이 전량
+   * 실패하는 파일을 모두 기다리던 문제를 방지한다. 3000행(배치 2개 분량)을 모두 실패시키되, 조기 탈출이 동작하면 첫 배치(2000행)만 검증하고 멈추므로 실패 메시지의 오류
+   * 수가 2000에 그친다.
+   */
+  @Test
+  void processImport_allRowsFailBeyondThreshold_abortsEarly() throws Exception {
+    // Given: age(INTEGER)에 숫자가 아닌 값을 넣어 모든 행이 검증 실패하는 3000행 CSV
+    StringBuilder csv = new StringBuilder("name,age,email\n");
+    for (int i = 0; i < 3000; i++) {
+      csv.append("User").append(i).append(",notanumber,u").append(i).append("@example.com\n");
+    }
+    String filePath = createTempCsvFile(csv.toString());
+
+    // When: APPEND 모드로 processImport 직접 호출
+    dataImportService.processImport(
+        "abort-test-job-id",
+        testDatasetId,
+        filePath,
+        "",
+        "",
+        "abort_test.csv",
+        (long) csv.length(),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND");
+
+    // Then: 조기 탈출 메시지로 실패 처리되고, 첫 배치(2000행)까지만 검증했음을 오류 수로 확인
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService).failJob(Mockito.eq("abort-test-job-id"), msg.capture());
+    assertThat(msg.getValue()).startsWith("Validation aborted after 2000+ failures");
+
+    // 대상 테이블에는 아무 행도 적재되지 않아야 한다
+    var count =
+        dsl.fetchCount(
+            dsl.select()
+                .from(
+                    org.jooq.impl.DSL.table(
+                        org.jooq.impl.DSL.name("data", "import_test_dataset"))));
+    assertThat(count).isZero();
   }
 
   /**
