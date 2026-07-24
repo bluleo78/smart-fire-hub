@@ -166,7 +166,17 @@ export function useJobProgress(jobId: string | null): JobProgress | null {
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            // 스트림이 정상 종료(done=true)됐지만 terminal 이벤트(COMPLETED/FAILED/complete/error)를
+            // 아직 못 받은 경우 — 백엔드 SseEmitter가 타임아웃(5분)으로 만료된 것으로 간주한다.
+            // 재연결해도 서버 emitter가 다시 5분 뒤 끊길 뿐이므로, DB 상태를 직접 조회하는
+            // REST 폴백으로 전환해 최종 결과(완료/실패)를 확실히 받는다.
+            // 단, signal.aborted(unmount 등 의도적 취소)인 경우엔 폴백하지 않는다(이중 안전장치).
+            if (!isTerminalRef.current && !controller.signal.aborted) {
+              startRestPolling();
+            }
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
