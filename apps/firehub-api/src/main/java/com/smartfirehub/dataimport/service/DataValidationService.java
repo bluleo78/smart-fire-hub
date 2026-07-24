@@ -78,6 +78,33 @@ public class DataValidationService {
     return new ValidationResult(validRows, errors, rows.size(), validRows.size(), errors.size());
   }
 
+  /** 컬럼 데이터타입이 DATE 또는 TIMESTAMP인지 판정한다. 무의미한 날짜없음 표식 정규화는 이 두 타입에 한정한다. */
+  private static boolean isDateOrTimestampType(String dataType) {
+    return "DATE".equals(dataType) || "TIMESTAMP".equals(dataType);
+  }
+
+  /**
+   * 값이 "무의미한 날짜없음 표식"인지 판정한다. 레거시/공공 데이터에서 날짜 없음을 "0", "0000-00-00", "00000000",
+   * "0000/00/00", "00000000000000" 등으로 표기하는 경우가 있어, 어떤 포맷으로도 파싱되지 않아 "Invalid date value: 0"으로
+   * 거부되던 문제를 방지하기 위함이다.
+   *
+   * <p>과검출 방지: 구분자(-, /, 공백, :)를 제거한 뒤 남은 문자열이 최소 1자 이상이면서 전부 '0'인 경우에만 무의미값으로 판정한다. 유효한 날짜(예:
+   * "2020-03-16" → 구분자 제거 시 "20200316")는 0이 아닌 문자가 섞여 있으므로 오검출되지 않는다.
+   */
+  private static boolean isMeaninglessDateValue(String value) {
+    if (value == null) return false;
+    String trimmed = value.trim();
+    if (trimmed.isEmpty()) return false; // 빈 값은 기존 empty 처리 경로에서 이미 다룸
+
+    String stripped = trimmed.replaceAll("[-/ :]", "");
+    if (stripped.isEmpty()) return false;
+
+    for (int i = 0; i < stripped.length(); i++) {
+      if (stripped.charAt(i) != '0') return false;
+    }
+    return true;
+  }
+
   public Object convertValue(String value, String dataType) throws Exception {
     if (value == null || value.isEmpty()) {
       return null;
@@ -284,6 +311,13 @@ public class DataValidationService {
 
     for (DatasetColumnResponse column : columns) {
       String rawValue = row.get(column.columnName());
+
+      // DATE/TIMESTAMP 컬럼의 "0", "0000-00-00" 등 무의미한 날짜없음 표식은 빈 값과 동일하게 취급하여
+      // 아래의 기존 빈 값 처리 경로(필수면 에러, nullable이면 null 저장)를 타게 한다.
+      // "Invalid date value: 0" 형태로 거부하지 않기 위함.
+      if (isDateOrTimestampType(column.dataType()) && isMeaninglessDateValue(rawValue)) {
+        rawValue = null;
+      }
 
       // Check required field
       if (!column.isNullable() && (rawValue == null || rawValue.trim().isEmpty())) {

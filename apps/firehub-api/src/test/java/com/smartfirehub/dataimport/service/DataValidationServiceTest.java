@@ -270,6 +270,95 @@ class DataValidationServiceTest {
   }
 
   // -----------------------------------------------------------------------
+  // validate — DATE/TIMESTAMP "0" 등 무의미한 날짜없음 표식 → null 취급
+  // -----------------------------------------------------------------------
+
+  @Test
+  void validate_nullableDateColumn_zeroValue_treatedAsNull() {
+    // (a) DATE nullable 컬럼 "0" → 빈 값과 동일하게 null 저장(에러 없음)
+    List<DatasetColumnResponse> columns = List.of(col("event_date", "DATE", true));
+
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(Map.of("event_date", "0")), columns);
+
+    assertThat(result.errorCount()).isEqualTo(0);
+    assertThat(result.validCount()).isEqualTo(1);
+    assertThat(result.validRows().get(0)).containsExactly((Object) null);
+  }
+
+  @Test
+  void validate_nonNullDateColumn_zeroValue_reportsRequiredErrorNotInvalidDate() {
+    // (b) DATE non-null 컬럼 "0" → "required but empty" 계열 에러 (Invalid date value 아님)
+    List<DatasetColumnResponse> columns = List.of(col("event_date", "DATE", false));
+
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(Map.of("event_date", "0")), columns);
+
+    assertThat(result.errorCount()).isEqualTo(1);
+    assertThat(result.errors().get(0)).contains("required but empty");
+    assertThat(result.errors().get(0)).doesNotContain("Invalid date value");
+  }
+
+  @Test
+  void validate_dateColumn_allZeroVariants_treatedAsNull() {
+    // (c) all-zero 변형("0000-00-00", "00000000") → null 저장
+    List<DatasetColumnResponse> columns = List.of(col("event_date", "DATE", true));
+
+    DataValidationService.ValidationResult result1 =
+        service.validate(List.of(Map.of("event_date", "0000-00-00")), columns);
+    DataValidationService.ValidationResult result2 =
+        service.validate(List.of(Map.of("event_date", "00000000")), columns);
+
+    assertThat(result1.errorCount()).isEqualTo(0);
+    assertThat(result1.validRows().get(0)).containsExactly((Object) null);
+    assertThat(result2.errorCount()).isEqualTo(0);
+    assertThat(result2.validRows().get(0)).containsExactly((Object) null);
+  }
+
+  @Test
+  void validate_timestampColumn_allZeroVariants_treatedAsNull() {
+    // 타임스탬프 전용 all-zero 변형("00000000000000")도 동일하게 null 처리
+    List<DatasetColumnResponse> columns = List.of(col("event_ts", "TIMESTAMP", true));
+
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(Map.of("event_ts", "00000000000000")), columns);
+
+    assertThat(result.errorCount()).isEqualTo(0);
+    assertThat(result.validRows().get(0)).containsExactly((Object) null);
+  }
+
+  @Test
+  void validate_dateColumn_validDates_stillParsedCorrectly() {
+    // (d) 정상 날짜("2020-03-16") 및 yyyyMMdd("20200316") 회귀 — 절대 무의미값으로 오검출되면 안 됨
+    List<DatasetColumnResponse> columns = List.of(col("event_date", "DATE", false));
+
+    DataValidationService.ValidationResult isoResult =
+        service.validate(List.of(Map.of("event_date", "2020-03-16")), columns);
+    DataValidationService.ValidationResult compactResult =
+        service.validate(List.of(Map.of("event_date", "20200316")), columns);
+
+    assertThat(isoResult.errorCount()).isEqualTo(0);
+    assertThat(isoResult.validRows().get(0)).containsExactly(LocalDate.of(2020, 3, 16));
+    assertThat(compactResult.errorCount()).isEqualTo(0);
+    assertThat(compactResult.validRows().get(0)).containsExactly(LocalDate.of(2020, 3, 16));
+  }
+
+  @Test
+  void validate_numericColumn_zeroValue_notAffectedByDateNormalization() {
+    // (e) NUMERIC("DECIMAL") "0"은 정규화 대상이 아니며 숫자 0으로 정상 변환된다
+    List<DatasetColumnResponse> columns = List.of(col("amount", "DECIMAL", false));
+
+    DataValidationService.ValidationResult result =
+        service.validate(List.of(Map.of("amount", "0")), columns);
+
+    assertThat(result.errorCount()).isEqualTo(0);
+    assertThat(result.validRows().get(0)).hasSize(1);
+    Object value = result.validRows().get(0).get(0);
+    assertThat(value).isInstanceOf(BigDecimal.class);
+    assertThat(((BigDecimal) value).compareTo(BigDecimal.ZERO)).isZero();
+  }
+
+  // -----------------------------------------------------------------------
   // validate — rowIndexBase 오버로드 (배치 검증 시 전역 행 번호 오프셋)
   // -----------------------------------------------------------------------
 
