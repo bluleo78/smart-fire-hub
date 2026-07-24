@@ -166,4 +166,36 @@ describe('ingestDataset', () => {
     };
     await expect(ingestDataset(deps, 1, CORE_ONTOLOGY)).resolves.toBeDefined();
   });
+
+  it('동의어 근접쌍 등록 시 datasetId와 두 이름 청크의 합집합(dedup)을 recordPending에 전달한다', async () => {
+    // Cause는 embedding 정책 타입 — 근접쌍(코사인 0.5~0.78) + link same:true 경로로 recordPending이 호출된다.
+    // 두 이름을 서로 다른 청크에서 추출시켜, 합집합이 양쪽 chunkId를 모두 포함하는지(=인덱스 정렬 운반)를 판별한다.
+    const recordPending = vi.fn().mockResolvedValue(undefined);
+    const link = vi.fn().mockResolvedValue({ same: true, rationale: '동의어로 보임' });
+    const lookupDecision = vi.fn().mockResolvedValue(undefined);
+    let call = 0;
+    const deps: IngestDeps = {
+      // 청크 10: '전기적 요인' / 청크 20: '분전반의 누전' — 이름이 청크별로 분리됨.
+      listChunks: async () => [{ chunkId: 10, content: 'c10' }, { chunkId: 20, content: 'c20' }],
+      extract: async () => {
+        call += 1;
+        return call === 1
+          ? { entities: [{ type: 'Cause', name: '전기적 요인' }], relations: [] }
+          : { entities: [{ type: 'Cause', name: '분전반의 누전' }], relations: [] };
+      },
+      load: async () => ({ nodes: 1, relations: 0 }),
+      // 근접쌍 벡터: 코사인 ≈0.707 (∈[0.5,0.78)).
+      embed: async (texts: string[]) => texts.map((t) => (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0])),
+      link,
+      lookupDecision,
+      recordPending,
+    };
+    await ingestDataset(deps, 99, CORE_ONTOLOGY);
+
+    // 판별 포인트: datasetId=99, 그리고 sourceChunkIds가 양쪽 청크(10,20)를 모두 포함해야 한다.
+    expect(recordPending).toHaveBeenCalledTimes(1);
+    const args = recordPending.mock.calls[0];
+    expect(args[5]).toBe(99); // datasetId
+    expect([...args[6]].sort((a: number, b: number) => a - b)).toEqual([10, 20]); // sourceChunkIds 합집합
+  });
 });

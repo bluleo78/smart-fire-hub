@@ -1,4 +1,4 @@
-import type { ReviewItemResponse } from '../../src/types/reviewItem';
+import type { EvidenceChunk, ReviewItemResponse } from '../../src/types/reviewItem';
 
 export function createSynonymReviewItem(overrides: Partial<ReviewItemResponse> = {}): ReviewItemResponse {
   return {
@@ -19,4 +19,9 @@ export function createPropertyReviewItem(overrides: Partial<ReviewItemResponse> 
     decidedBy: null, decidedAt: null, createdAt: '2026-07-23T09:00:00',
     ...overrides,
   };
+}
+
+// GET /evidence 모킹용 원문 청크 스니펫(동의어 항목의 근거 표시 검증용).
+export function createEvidenceChunk(overrides: Partial<EvidenceChunk> = {}): EvidenceChunk {
+  return { chunkId: 501, content: '스프링클러 설비 오작동으로 인한 방수 지연이 확인되었다.', ...overrides };
 }

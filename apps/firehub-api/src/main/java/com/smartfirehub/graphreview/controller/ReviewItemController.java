@@ -32,7 +32,8 @@ public class ReviewItemController {
   @PostMapping("/synonym/pending")
   @RequirePermission("dataset:write")
   public void recordSynonym(@RequestBody PendingSynonymRequest req) {
-    service.recordPendingSynonym(req.entityType(), req.nameA(), req.nameB(), req.similarity(), req.rationale());
+    service.recordPendingSynonym(req.entityType(), req.nameA(), req.nameB(),
+        req.similarity(), req.rationale(), req.datasetId(), req.sourceChunkIds());
   }
 
   // 속성 정규화 실패 등록 — ai-agent ingest 중 호출.

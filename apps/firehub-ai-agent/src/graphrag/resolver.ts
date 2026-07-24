@@ -1,7 +1,7 @@
 // 추출된 엔티티를 정규화 키로 병합하고, 관계를 키 기반으로 재작성한다(엔티티 해소).
 import { ExtractionResult, EntityType, RelationType, Ontology, entityTypeId } from './ontology.js';
 
-export interface ResolvedEntity { key: string; type: EntityType; name: string; properties?: Record<string, number | string>; }
+export interface ResolvedEntity { key: string; type: EntityType; name: string; properties?: Record<string, number | string>; sourceChunkIds?: number[]; }
 export interface ResolvedRelation { subjectKey: string; type: RelationType; objectKey: string; }
 export interface ResolvedGraph { entities: ResolvedEntity[]; relations: ResolvedRelation[]; }
 

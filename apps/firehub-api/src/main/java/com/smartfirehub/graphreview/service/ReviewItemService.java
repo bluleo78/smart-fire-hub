@@ -33,9 +33,11 @@ public class ReviewItemService {
     return s.trim().replaceAll("\\s+", " ").toLowerCase();
   }
 
-  /** 동의어 근접쌍 등록 — 이름쌍을 정규화 비교로 정렬(순서 무관 dedupe) 후 payload/dedupe_key 구성. */
+  /** 동의어 근접쌍 등록 — 이름쌍을 정규화 비교로 정렬(순서 무관 dedupe) 후 payload/dedupe_key 구성.
+   *  datasetId/sourceChunkIds가 오면 원문 근거(evidence)용으로 함께 기록한다(신규-only, first-writer-wins). */
   @SneakyThrows
-  public void recordPendingSynonym(String entityType, String rawA, String rawB, Double similarity, String rationale) {
+  public void recordPendingSynonym(String entityType, String rawA, String rawB, Double similarity, String rationale,
+      Long datasetId, List<Long> sourceChunkIds) {
     String a = rawA.trim();
     String b = rawB.trim();
     if (normalize(a).compareTo(normalize(b)) > 0) { String t = a; a = b; b = t; }
@@ -43,8 +45,13 @@ public class ReviewItemService {
     payload.put("entityType", entityType);
     payload.put("nameA", a);
     payload.put("nameB", b);
+    // 속성 경로와 동일하게 정수 chunkId 배열로 기록(evidence()가 asLong으로 읽음).
+    if (sourceChunkIds != null && !sourceChunkIds.isEmpty()) {
+      var arr = payload.putArray("sourceChunkIds");
+      for (Long c : sourceChunkIds) if (c != null) arr.add(c.longValue());
+    }
     String dedupe = entityType + "|" + a + "|" + b;
-    repo.upsertPending(SYNONYM, dedupe, null, "similarity", similarity, rationale, objectMapper.writeValueAsString(payload));
+    repo.upsertPending(SYNONYM, dedupe, datasetId, "similarity", similarity, rationale, objectMapper.writeValueAsString(payload));
   }
 
   /** 동의어 근접쌍 기존 결정 조회 — 없으면 "none". */

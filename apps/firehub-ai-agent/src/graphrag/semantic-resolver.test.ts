@@ -194,7 +194,7 @@ describe('buildCanonicalMap', () => {
     const map = await buildCanonicalMap(entities, embed, CORE_ONTOLOGY, MERGE_THRESHOLD, link, lookupDecision, recordPending);
 
     expect(map.get(entityKey(causeId, '전기적 요인'))?.key).not.toBe(map.get(entityKey(causeId, '분전반의 누전'))?.key);
-    expect(recordPending).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause', expect.any(Number), '동의어로 보임');
+    expect(recordPending).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause', expect.any(Number), '동의어로 보임', undefined, []);
   });
 
   it('link가 same:false를 반환하면 recordPending을 호출하지 않는다', async () => {

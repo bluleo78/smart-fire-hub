@@ -15,9 +15,12 @@ import com.smartfirehub.graphreview.service.GraphMutationClient;
 import com.smartfirehub.graphreview.service.ReviewItemService;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class ReviewItemServiceTest {
@@ -38,9 +41,48 @@ class ReviewItemServiceTest {
   @Test
   void recordPendingSynonym_ordersNamesByNormalizedComparison() {
     // "분전반의 누전" > "전기적 요인" (정규화 사전순) → nameA/nameB가 정렬되어 payload/dedupe에 반영.
-    service.recordPendingSynonym("Cause", "분전반의 누전", "전기적 요인", 0.7, "동의어");
+    service.recordPendingSynonym("Cause", "분전반의 누전", "전기적 요인", 0.7, "동의어", null, null);
     verify(repo).upsertPending(eq("synonym_merge"), any(), eq(null), eq("similarity"), eq(0.7), eq("동의어"),
         argThatContainsBoth());
+  }
+
+  @Test
+  @DisplayName("동의어 등록 시 datasetId와 sourceChunkIds가 저장되고 evidence가 원문 스니펫을 반환한다")
+  void recordPendingSynonym_persistsEvidence() {
+    long datasetId = 99L;
+    long chunkId = 10L;
+
+    // 실제 서비스가 기록한 payload를 캡처 — 손으로 만든 payload가 아니라 recordPendingSynonym이
+    // 진짜로 sourceChunkIds를 직렬화했는지, datasetId를 그대로 전달했는지를 검증한다.
+    service.recordPendingSynonym("Cause", "전기적 요인", "분전반의 누전", 0.7, "동의어", datasetId, List.of(chunkId));
+
+    ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+    verify(repo).upsertPending(eq("synonym_merge"), any(), eq(datasetId), eq("similarity"), eq(0.7), eq("동의어"),
+        payloadCaptor.capture());
+
+    ReviewItemRecord persisted = new ReviewItemRecord(
+        1L, "synonym_merge", "pending", datasetId, "similarity", 0.7, "동의어",
+        payloadCaptor.getValue(), null, null, LocalDateTime.now());
+    when(repo.findById(1L)).thenReturn(Optional.of(persisted));
+    when(chunkRepository.findChunkContentsByDataset(datasetId))
+        .thenReturn(List.of(new DocumentChunkRepository.ChunkContent(chunkId, "원문 청크 내용")));
+
+    var evidence = service.evidence(1L);
+    assertThat(evidence).isNotEmpty();
+    assertThat(evidence.get(0).chunkId()).isEqualTo(chunkId);
+  }
+
+  @Test
+  @DisplayName("datasetId/sourceChunkIds 없이 등록하면 저장되지만 evidence는 빈 배열(신규-only·하위호환)")
+  void recordPendingSynonym_noEvidenceWhenNull() {
+    service.recordPendingSynonym("Cause", "누전", "합선", 0.7, "동의어", null, null);
+    verify(repo).upsertPending(eq("synonym_merge"), any(), eq(null), eq("similarity"), eq(0.7), eq("동의어"), any());
+
+    ReviewItemRecord persisted = new ReviewItemRecord(
+        2L, "synonym_merge", "pending", null, "similarity", 0.7, "동의어", "{}", null, null, LocalDateTime.now());
+    when(repo.findById(2L)).thenReturn(Optional.of(persisted));
+
+    assertThat(service.evidence(2L)).isEmpty();
   }
 
   @Test

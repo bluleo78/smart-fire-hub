@@ -50,12 +50,13 @@ export async function ingestDataset(
     const graph = resolveExtraction(extraction, ontology);
     // 정규화 실패 후보(원본 이름 그대로)는 청크별로 보존해 3단계에서 canonical key로 바인딩한다.
     perChunk.push({ chunkId: chunk.chunkId, graph, candidates: extraction.propertyReviewCandidates ?? [] });
-    allEntities.push(...graph.entities);
+    // 각 엔티티에 출처 chunkId를 스탬프해 2단계 전역 해소까지 운반한다(동의어 근거용). graph.entities 원본은 건드리지 않는다.
+    allEntities.push(...graph.entities.map((e) => ({ ...e, sourceChunkIds: [chunk.chunkId] })));
   }
 
   // 2단계(전역 해소): 데이터셋 전체 엔티티를 임베딩 클러스터링해 canonical map을 만든다.
   const canonicalMap = await buildCanonicalMap(
-    allEntities, deps.embed, ontology, undefined, deps.link, deps.lookupDecision, deps.recordPending,
+    allEntities, deps.embed, ontology, undefined, deps.link, deps.lookupDecision, deps.recordPending, datasetId,
   );
 
   // 3단계(적재): 청크별 그래프를 canonical map으로 재작성 후 Neo4j에 멱등 적재한다.

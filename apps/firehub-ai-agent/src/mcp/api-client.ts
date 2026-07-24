@@ -669,9 +669,12 @@ export class FireHubApiClient {
     return this._review.lookupSynonymDecision(entityType, nameA, nameB);
   }
 
-  /** LLM "같다" 판정 근접쌍을 검수 대기열에 등록. */
-  recordPendingSynonym(entityType: EntityType, nameA: string, nameB: string, similarity: number, rationale: string): Promise<void> {
-    return this._review.recordPendingSynonym(entityType, nameA, nameB, similarity, rationale);
+  /** LLM "같다" 판정 근접쌍을 검수 대기열에 등록. datasetId/sourceChunkIds는 원문 근거용(선택). */
+  recordPendingSynonym(
+    entityType: EntityType, nameA: string, nameB: string, similarity: number, rationale: string,
+    datasetId?: number, sourceChunkIds?: number[],
+  ): Promise<void> {
+    return this._review.recordPendingSynonym(entityType, nameA, nameB, similarity, rationale, datasetId, sourceChunkIds);
   }
 
   /** 정규화 실패 속성을 검수 대기열에 등록. */

@@ -13,12 +13,13 @@ export function createReviewApi(client: AxiosInstance) {
       });
       return data.status === 'approved' || data.status === 'rejected' ? data.status : undefined;
     },
-    // LLM "같다" 판정 근접쌍을 검수 대기열에 등록(이미 존재하면 서버가 무시).
+    // LLM "같다" 판정 근접쌍을 검수 대기열에 등록(이미 존재하면 서버가 무시). datasetId/sourceChunkIds는 원문 근거용(선택).
     async recordPendingSynonym(
       entityType: EntityType, nameA: string, nameB: string, similarity: number, rationale: string,
+      datasetId?: number, sourceChunkIds?: number[],
     ): Promise<void> {
       await client.post('/graphrag/review-items/synonym/pending', {
-        entityType, nameA, nameB, similarity, rationale,
+        entityType, nameA, nameB, similarity, rationale, datasetId, sourceChunkIds,
       });
     },
     // 정규화 실패 속성을 검수 대기열에 등록. entityKey는 canonical 최종 key.

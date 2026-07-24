@@ -12,7 +12,8 @@ import { LinkFn } from './semantic-link.js';
 // 조회 자체가 실패(네트워크 등)해도 undefined로 취급해 LLM 호출로 폴백한다(clusterNames 내부에서 try/catch).
 export type LookupFn = (nameA: string, nameB: string, entityType: EntityType) => Promise<'approved' | 'rejected' | undefined>;
 // LLM이 "같다"고 판정한 근접쌍을 검수 대기열에 등록한다. 실패해도 ingest를 막지 않는다(clusterNames 내부에서 try/catch).
-export type RecordFn = (nameA: string, nameB: string, entityType: EntityType, similarity: number, rationale: string) => Promise<void>;
+// datasetId/sourceChunkIds는 원문 근거 표시용 — 없으면(구 경로) 근거 없이 등록된다.
+export type RecordFn = (nameA: string, nameB: string, entityType: EntityType, similarity: number, rationale: string, datasetId?: number, sourceChunkIds?: number[]) => Promise<void>;
 
 // bge-m3 실측 검증값: 변형 표기(동의어) ≥0.78, 서로 다른 엔티티는 ≤0.755로 명확히 분리됨.
 // ⚠️ 임베딩 provider가 바뀌면(예: OLLAMA→OPENAI) 이 값을 재측정해야 한다 — 아래 NEAR_MISS_LOW도 동일.
@@ -40,6 +41,8 @@ async function clusterNames(
   link?: LinkFn,
   lookupDecision?: LookupFn,
   recordPending?: RecordFn,
+  chunkIdsByIndex?: number[][], // names[]와 인덱스 정렬된 각 이름의 출처 chunkId(키 드리프트 방지).
+  datasetId?: number,
 ): Promise<string[][]> {
   const parent = names.map((_, i) => i);
   function find(i: number): number {
@@ -72,7 +75,9 @@ async function clusterNames(
           const verdict = await link(names[i], names[j], entityType);
           if (verdict.same && recordPending) {
             try {
-              await recordPending(names[i], names[j], entityType, sim, verdict.rationale);
+              // 두 이름의 출처 청크 합집합(dedup) — 인덱스 정렬된 chunkIdsByIndex에서만 취득(이름 재조회 없음).
+              const sourceChunkIds = [...new Set([...(chunkIdsByIndex?.[i] ?? []), ...(chunkIdsByIndex?.[j] ?? [])])];
+              await recordPending(names[i], names[j], entityType, sim, verdict.rationale, datasetId, sourceChunkIds);
             } catch (err) {
               console.warn('[semantic-resolver] 근접쌍 대기열 등록 실패(무시하고 계속):', err);
             }
@@ -108,10 +113,18 @@ export async function buildCanonicalMap(
   link?: LinkFn,
   lookupDecision?: LookupFn,
   recordPending?: RecordFn,
+  datasetId?: number,
 ): Promise<Map<string, ResolvedEntity>> {
-  // key 기준 dedupe(같은 엔티티가 여러 청크에서 중복 등장 가능).
+  // key 기준 dedupe(같은 엔티티가 여러 청크에서 중복 등장 가능) — 이때 sourceChunkIds는 합집합으로 보존한다.
   const distinct = new Map<string, ResolvedEntity>();
-  for (const e of entities) if (!distinct.has(e.key)) distinct.set(e.key, e);
+  for (const e of entities) {
+    const existing = distinct.get(e.key);
+    if (!existing) {
+      distinct.set(e.key, { ...e, sourceChunkIds: [...(e.sourceChunkIds ?? [])] });
+    } else if (e.sourceChunkIds?.length) {
+      existing.sourceChunkIds = [...new Set([...(existing.sourceChunkIds ?? []), ...e.sourceChunkIds])];
+    }
+  }
 
   // 타입별로 그룹핑.
   const byType = new Map<EntityType, ResolvedEntity[]>();
@@ -131,8 +144,10 @@ export async function buildCanonicalMap(
     }
 
     const names = list.map((e) => e.name);
+    // names[]와 인덱스 정렬된 출처 chunkId 배열 — recordPending 근거로 clusterNames까지 그대로 운반.
+    const chunkIdsByIndex = list.map((e) => e.sourceChunkIds ?? []);
     const vectors = await embed(names);
-    const clusters = await clusterNames(names, vectors, threshold, type, link, lookupDecision, recordPending);
+    const clusters = await clusterNames(names, vectors, threshold, type, link, lookupDecision, recordPending, chunkIdsByIndex, datasetId);
 
     for (const clusterNames_ of clusters) {
       const canonicalName = pickCanonicalName(clusterNames_);
