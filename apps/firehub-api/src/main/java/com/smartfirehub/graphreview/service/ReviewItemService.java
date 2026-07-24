@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.graphreview.dto.EntityRelationRef;
 import com.smartfirehub.graphreview.dto.EvidenceChunk;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.dto.ReviewItemResponse;
@@ -27,6 +28,7 @@ public class ReviewItemService {
 
   static final String SYNONYM = "synonym_merge";
   static final String PROPERTY = "property_normalization";
+  static final String ENTITY = "entity_extraction";
 
   // resolver.ts normalizeName과 동일 규칙(trim + 연속공백 1칸 + 소문자) — 정렬 키로만 사용, 저장은 원본(trim).
   private static String normalize(String s) {
@@ -80,6 +82,40 @@ public class ReviewItemService {
         objectMapper.writeValueAsString(payload));
   }
 
+  /** 저신뢰 엔티티 검수 등록 — dedupe_key는 as-extracted 정체성(entityType|정규화이름), signal_score=confidence. */
+  @SneakyThrows
+  public void recordPendingEntity(
+      Long datasetId, String entityType, String name, JsonNode properties,
+      List<Long> sourceChunkIds, Double confidence, String reason, List<EntityRelationRef> relations) {
+    ObjectNode payload = objectMapper.createObjectNode();
+    payload.put("entityType", entityType);
+    payload.put("name", name);
+    if (properties != null && !properties.isNull()) payload.set("properties", properties);
+    if (sourceChunkIds != null && !sourceChunkIds.isEmpty()) {
+      var arr = payload.putArray("sourceChunkIds");
+      for (Long c : sourceChunkIds) if (c != null) arr.add(c.longValue());
+    }
+    var relArr = payload.putArray("relations");
+    if (relations != null) {
+      for (EntityRelationRef r : relations) {
+        ObjectNode ro = objectMapper.createObjectNode();
+        ro.put("relType", r.relType());
+        ro.put("direction", r.direction());
+        ro.put("otherKey", r.otherKey());
+        relArr.add(ro);
+      }
+    }
+    String dedupe = entityType + "|" + normalize(name);
+    String reasonMsg = (reason != null && !reason.isBlank()) ? reason : "추출 신뢰도가 낮은 엔티티입니다.";
+    repo.upsertPending(ENTITY, dedupe, datasetId, "low_confidence", confidence, reasonMsg,
+        objectMapper.writeValueAsString(payload));
+  }
+
+  /** 저신뢰 엔티티 기존 결정 조회 — 없으면 "none". dedupe_key는 recordPendingEntity와 동일 규칙. */
+  public String lookupEntity(String entityType, String name) {
+    return repo.findDecisionStatus(ENTITY, entityType + "|" + normalize(name)).orElse("none");
+  }
+
   public List<ReviewItemResponse> listPending(String itemType) {
     return repo.findPending(itemType).stream().map(this::toResponse).toList();
   }
@@ -98,6 +134,17 @@ public class ReviewItemService {
         mutationClient.setProperty(
             p.path("entityKey").asText(), p.path("propertyName").asText(),
             p.path("dataType").asText(), correctedValue);
+      }
+      case ENTITY -> {
+        // as-extracted 타입/이름 그대로 적재(정정 없음). 보류 관계는 add-entity가 끝점 존재 시에만 MERGE.
+        JsonNode props = p.path("properties");
+        List<Long> chunkIds = new ArrayList<>();
+        p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
+        List<GraphMutationClient.RelationRef> rels = new ArrayList<>();
+        p.path("relations").forEach(r -> rels.add(new GraphMutationClient.RelationRef(
+            r.path("relType").asText(), r.path("direction").asText(), r.path("otherKey").asText())));
+        mutationClient.addEntity(p.path("entityType").asText(), p.path("name").asText(),
+            props.isMissingNode() ? null : props, chunkIds, rels);
       }
       default -> throw new IllegalStateException("알 수 없는 item_type: " + row.itemType());
     }

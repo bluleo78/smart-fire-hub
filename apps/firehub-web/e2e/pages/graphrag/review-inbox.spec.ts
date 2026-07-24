@@ -1,4 +1,4 @@
-import { createEvidenceChunk, createPropertyReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
+import { createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -65,5 +65,37 @@ test.describe('AI 검수 인박스', () => {
 
     await expect(page.getByText(chunk.content)).toBeVisible();
     await expect(page.getByText(`청크 #${chunk.chunkId}`)).toBeVisible();
+  });
+
+  test('엔티티 항목이 이름·신뢰도·관계수와 함께 렌더링된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createEntityReviewItem()]);
+    await page.goto('/knowledge-graph/review');
+    await expect(page.getByText('노후 배선 추정')).toBeVisible();
+    await expect(page.getByText('0.42')).toBeVisible();
+    await expect(page.getByText(/연결 관계 1건/)).toBeVisible();
+  });
+
+  test('엔티티 적재 승인 시 correctedValue 없이 approve API를 호출하고 사라진다', async ({ authenticatedPage: page }) => {
+    let sentBody: unknown = 'unset';
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createEntityReviewItem()]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/3/approve', (route) => {
+      sentBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createEntityReviewItem({ status: 'approved' })) });
+    });
+    await page.goto('/knowledge-graph/review');
+    await expect(page.getByText('노후 배선 추정')).toBeVisible();
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+    await page.getByRole('button', { name: '적재' }).click();
+    await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+    // 엔티티 승인은 correctedValue를 보내지 않는다(undefined).
+    await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBeUndefined();
+  });
+
+  test('엔티티 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createEntityReviewItem()]);
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items/3/evidence', [{ chunkId: 9, content: '노후된 배선으로 추정된다.' }]);
+    await page.goto('/knowledge-graph/review');
+    await page.getByRole('button', { name: '원문 근거 보기' }).click();
+    await expect(page.getByText('노후된 배선으로 추정된다.')).toBeVisible();
   });
 });

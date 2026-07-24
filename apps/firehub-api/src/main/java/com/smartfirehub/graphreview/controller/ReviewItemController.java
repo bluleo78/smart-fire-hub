@@ -2,7 +2,9 @@ package com.smartfirehub.graphreview.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.graphreview.dto.DecideRequest;
+import com.smartfirehub.graphreview.dto.EntityLookupResponse;
 import com.smartfirehub.graphreview.dto.EvidenceChunk;
+import com.smartfirehub.graphreview.dto.PendingEntityRequest;
 import com.smartfirehub.graphreview.dto.PendingPropertyRequest;
 import com.smartfirehub.graphreview.dto.PendingSynonymRequest;
 import com.smartfirehub.graphreview.dto.ReviewItemResponse;
@@ -42,6 +44,21 @@ public class ReviewItemController {
   public void recordProperty(@RequestBody PendingPropertyRequest req) {
     service.recordPendingProperty(req.datasetId(), req.chunkId(), req.entityKey(), req.entityType(),
         req.propertyName(), req.dataType(), req.rawText());
+  }
+
+  // 저신뢰 엔티티 등록 — ai-agent ingest 중 호출.
+  @PostMapping("/entity/pending")
+  @RequirePermission("dataset:write")
+  public void recordEntity(@RequestBody PendingEntityRequest req) {
+    service.recordPendingEntity(req.datasetId(), req.entityType(), req.name(), req.properties(),
+        req.sourceChunkIds(), req.confidence(), req.reason(), req.relations());
+  }
+
+  // 저신뢰 엔티티 기존 결정 조회 — ingest 중 ai-agent가 보류 판정 시 확인.
+  @GetMapping("/entity/lookup")
+  @RequirePermission("dataset:read")
+  public EntityLookupResponse lookupEntity(@RequestParam String entityType, @RequestParam String name) {
+    return new EntityLookupResponse(service.lookupEntity(entityType, name));
   }
 
   // 검수 대기 목록 — status/itemType 필터(둘 다 선택).

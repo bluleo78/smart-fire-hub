@@ -50,6 +50,9 @@ export function registerGraphragTools(
             // 정규화 실패 속성 검수 등록(교정형).
             recordPropertyReview: (datasetId, chunkId, key, type, prop, dataType, raw) =>
               apiClient.recordPropertyReview(datasetId, chunkId, key, type, prop, dataType, raw),
+            // 엔티티 추출 검수: 저신뢰 엔티티 기존 결정 조회 + 보류 엔티티(+관계) 큐 등록.
+            lookupEntityDecision: (type, name) => apiClient.lookupEntityDecision(type, name),
+            recordPendingEntity: (item) => apiClient.recordPendingEntity(item),
           },
           args.datasetId,
           ontology,

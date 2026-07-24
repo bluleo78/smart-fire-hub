@@ -21,6 +21,21 @@ export function createPropertyReviewItem(overrides: Partial<ReviewItemResponse> 
   };
 }
 
+// 저신뢰 엔티티 검수 항목(승인 시 그래프 적재) — signal은 low_confidence, score=confidence.
+export function createEntityReviewItem(overrides: Partial<ReviewItemResponse> = {}): ReviewItemResponse {
+  return {
+    id: 3, itemType: 'entity_extraction', status: 'pending', datasetId: 122,
+    signalType: 'low_confidence', signalScore: 0.42,
+    reason: '문서에 명시적 언급이 약해 추론에 의존함',
+    payload: {
+      entityType: 'Cause', name: '노후 배선 추정', sourceChunkIds: [9],
+      relations: [{ relType: 'CAUSED_BY', direction: 'in', otherKey: '3:창고 화재' }],
+    },
+    decidedBy: null, decidedAt: null, createdAt: '2026-07-23T09:00:00',
+    ...overrides,
+  };
+}
+
 // GET /evidence 모킹용 원문 청크 스니펫(동의어 항목의 근거 표시 검증용).
 export function createEvidenceChunk(overrides: Partial<EvidenceChunk> = {}): EvidenceChunk {
   return { chunkId: 501, content: '스프링클러 설비 오작동으로 인한 방수 지연이 확인되었다.', ...overrides };

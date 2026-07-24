@@ -4,7 +4,8 @@ import { internalAuth } from '../middleware/auth.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
 import { setEntityProperty } from '../graphrag/property-mutation.js';
-import { EntityType } from '../graphrag/ontology.js';
+import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
+import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { loadOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
@@ -69,6 +70,44 @@ router.post('/graph/set-property', internalAuth, async (req, res) => {
     res.status(204).send();
   } catch {
     res.status(502).json({ error: 'set property failed' });
+  }
+});
+
+const addEntityBodySchema = z.object({
+  entityType: z.string().min(1),
+  name: z.string().min(1),
+  properties: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+  sourceChunkIds: z.array(z.number()).default([]),
+  relations: z.array(z.object({
+    relType: z.string().min(1),
+    direction: z.enum(['out', 'in']),
+    otherKey: z.string().min(1),
+  })).default([]),
+});
+
+// HITL 승인된 저신뢰 엔티티를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
+// entityKey가 typeId 기반이라 entityType→typeId 변환에 온톨로지가 필요(merge-entities와 동일 관례, 시스템유저 id=1).
+router.post('/graph/add-entity', internalAuth, async (req, res) => {
+  const parsed = addEntityBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
+    return;
+  }
+  try {
+    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
+    const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
+    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
+    const ontology = await loadOntology(apiClient);
+    await addEntity(ontology, {
+      entityType: parsed.data.entityType as EntityType,
+      name: parsed.data.name,
+      properties: parsed.data.properties,
+      sourceChunkIds: parsed.data.sourceChunkIds,
+      relations: parsed.data.relations.map((r) => ({ ...r, relType: r.relType as RelationType })) as AddEntityInput['relations'],
+    });
+    res.status(204).send();
+  } catch {
+    res.status(502).json({ error: 'add entity failed' });
   }
 });
 

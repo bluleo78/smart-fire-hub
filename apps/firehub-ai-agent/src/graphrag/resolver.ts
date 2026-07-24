@@ -1,7 +1,7 @@
 // 추출된 엔티티를 정규화 키로 병합하고, 관계를 키 기반으로 재작성한다(엔티티 해소).
 import { ExtractionResult, EntityType, RelationType, Ontology, entityTypeId } from './ontology.js';
 
-export interface ResolvedEntity { key: string; type: EntityType; name: string; properties?: Record<string, number | string>; sourceChunkIds?: number[]; }
+export interface ResolvedEntity { key: string; type: EntityType; name: string; properties?: Record<string, number | string>; sourceChunkIds?: number[]; confidence?: number; reason?: string; }
 export interface ResolvedRelation { subjectKey: string; type: RelationType; objectKey: string; }
 export interface ResolvedGraph { entities: ResolvedEntity[]; relations: ResolvedRelation[]; }
 
@@ -23,11 +23,20 @@ export function resolveExtraction(extraction: ExtractionResult, ontology: Ontolo
   for (const e of extraction.entities) {
     const key = entityKey(entityTypeId(ontology, e.type), e.name);
     keyByName.set(e.name, key);
-    // 최초 등장 엔티티만 대표로 등록 — 속성값도 최초 등장분을 전달(정규화·해소는 여기서 안 함).
-    if (!byKey.has(key)) byKey.set(key, {
-      key, type: e.type, name: e.name.trim().replace(/\s+/g, ' '),
-      ...(e.properties ? { properties: e.properties } : {}),
-    });
+    const existing = byKey.get(key);
+    // 최초 등장 엔티티를 대표로 등록(속성/신뢰도/사유 최초분 전달).
+    if (!existing) {
+      byKey.set(key, {
+        key, type: e.type, name: e.name.trim().replace(/\s+/g, ' '),
+        ...(e.properties ? { properties: e.properties } : {}),
+        ...(e.confidence !== undefined ? { confidence: e.confidence } : {}),
+        ...(e.reason ? { reason: e.reason } : {}),
+      });
+    } else if (e.confidence !== undefined && (existing.confidence === undefined || e.confidence > existing.confidence)) {
+      // 같은 청크 내 중복 등장 — confidence는 max로 집계(가장 확신한 mention 채택), 사유도 그 mention 것으로.
+      existing.confidence = e.confidence;
+      existing.reason = e.reason ?? existing.reason;
+    }
   }
   // 관계를 키로 재작성 + (subjectKey,type,objectKey) 중복 제거.
   const relSet = new Set<string>();

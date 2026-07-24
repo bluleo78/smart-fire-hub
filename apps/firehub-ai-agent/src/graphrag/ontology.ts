@@ -23,6 +23,9 @@ export interface ExtractedEntity {
   name: string;
   // 정규화된 속성값 맵(예: {"피해액": 120000000}) — Task 4(추출/정규화)가 채운다. 이 태스크는 타입만 추가.
   properties?: Record<string, number | string>;
+  // 추출 LLM이 신고하는 이 엔티티 추출의 신뢰도(0~1)와 사유. 임계값 미만은 검수 보류 대상(엔티티 추출 검수).
+  confidence?: number;
+  reason?: string;
 }
 export interface ExtractedRelation { subject: string; type: RelationType; object: string; }
 export interface ExtractionResult {
@@ -196,6 +199,8 @@ export function buildExtractionPrompt(ontology: Ontology = CORE_ONTOLOGY): strin
     .join('\n');
   return `너는 ${ontology.domain}에서 지식 그래프를 추출하는 도구다.
 아래 온톨로지에 **정확히 일치하는** 엔티티와 관계만 추출한다.
+각 엔티티에는 confidence(0~1: 이 엔티티를 문서에서 추출한 확신도)와 reason(그 사유)을 반드시 포함한다.
+문서에 명시적 근거가 있으면 높게, 추론·암시에 의존하거나 애매하면 낮게 매긴다.
 
 [엔티티 타입]
 ${entityLines}
@@ -205,6 +210,6 @@ ${relationLines}
 
 반드시 다음 형식의 JSON 코드블록만 출력한다(설명 금지):
 \`\`\`json
-{"entities":[{"type":"Incident","name":"...","properties":{"피해액":"약 1억 2천만원"}}],"relations":[{"subject":"엔티티명","type":"CAUSED_BY","object":"엔티티명"}]}
+{"entities":[{"type":"Incident","name":"...","confidence":0.9,"reason":"명시적 서술","properties":{"피해액":"약 1억 2천만원"}}],"relations":[{"subject":"엔티티명","type":"CAUSED_BY","object":"엔티티명"}]}
 \`\`\``;
 }

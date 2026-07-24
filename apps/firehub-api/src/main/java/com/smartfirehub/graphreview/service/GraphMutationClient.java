@@ -1,7 +1,10 @@
 package com.smartfirehub.graphreview.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -42,7 +45,28 @@ public class GraphMutationClient {
         "엔티티 속성 갱신");
   }
 
+  /** add-entity 요청의 보류 관계 참조. */
+  public record RelationRef(String relType, String direction, String otherKey) {}
+
+  /** ai-agent POST /agent/graph/add-entity — 승인된 저신뢰 엔티티를 Neo4j에 적재(as-extracted 타입/이름). */
+  public void addEntity(String entityType, String name, JsonNode properties,
+      List<Long> sourceChunkIds, List<RelationRef> relations) {
+    Map<String, Object> body = new HashMap<>();
+    body.put("entityType", entityType);
+    body.put("name", name);
+    if (properties != null && !properties.isNull()) body.put("properties", properties);
+    body.put("sourceChunkIds", sourceChunkIds == null ? List.of() : sourceChunkIds);
+    body.put("relations", relations == null ? List.of()
+        : relations.stream().map(r -> Map.of("relType", r.relType(), "direction", r.direction(), "otherKey", r.otherKey())).toList());
+    postJson("/agent/graph/add-entity", body, "엔티티 적재");
+  }
+
   private void post(String uri, Map<String, String> body, String opLabel) {
+    postJson(uri, body, opLabel);
+  }
+
+  /** 임의 JSON 바디 POST — 실패는 ExternalServiceException(502)으로 전파(호출자가 DB 갱신 보류). */
+  private void postJson(String uri, Object body, String opLabel) {
     try {
       webClient.post().uri(uri).bodyValue(body).retrieve().toBodilessEntity().block(TIMEOUT);
     } catch (WebClientException e) {

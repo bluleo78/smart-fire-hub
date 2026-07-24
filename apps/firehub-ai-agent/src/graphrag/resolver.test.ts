@@ -36,3 +36,18 @@ describe('resolver', () => {
     expect(g.entities[0].properties).toEqual({ 피해액: 120_000_000 });
   });
 });
+
+describe('resolveExtraction confidence 집계', () => {
+  it('대표 엔티티에 confidence/reason을 싣고 같은 key 중복은 max로 집계한다', () => {
+    const g = resolveExtraction({
+      entities: [
+        { type: 'Cause', name: '누전', confidence: 0.4, reason: '추론' },
+        { type: 'Cause', name: '누전', confidence: 0.9, reason: '명시' },
+      ],
+      relations: [],
+    }, CORE_ONTOLOGY);
+    expect(g.entities).toHaveLength(1);
+    expect(g.entities[0].confidence).toBe(0.9);
+    expect(g.entities[0].reason).toBe('명시');
+  });
+});

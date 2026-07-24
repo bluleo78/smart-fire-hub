@@ -40,7 +40,7 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
   // 정규화에 실패한(원문은 있으나 파싱 불가) 속성을 사람 검수 큐로 넘기기 위해 수집한다.
   const propertyReviewCandidates: PropertyReviewCandidate[] = [];
   const entities = (Array.isArray(parsed.entities) ? parsed.entities : [])
-    .filter((e: unknown): e is { type: EntityType; name: string; properties?: Record<string, unknown> } => {
+    .filter((e: unknown): e is { type: EntityType; name: string; properties?: Record<string, unknown>; confidence?: unknown; reason?: unknown } => {
       const rec = e as Record<string, unknown> | null;
       return !!rec && typeof rec.name === 'string' && typeof rec.type === 'string'
         && isEntityType(opts.ontology, rec.type);
@@ -62,7 +62,15 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
         }
       }
       const hasProps = Object.keys(props).length > 0;
-      return { type: e.type, name: e.name, ...(hasProps ? { properties: props } : {}) };
+      // confidence는 0~1 숫자만 채택(그 외는 미신고=undefined). reason은 문자열만.
+      const confidence = typeof e.confidence === 'number' && e.confidence >= 0 && e.confidence <= 1 ? e.confidence : undefined;
+      const reason = typeof e.reason === 'string' && e.reason.trim() !== '' ? e.reason : undefined;
+      return {
+        type: e.type, name: e.name,
+        ...(hasProps ? { properties: props } : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(reason ? { reason } : {}),
+      };
     });
   const typeByName = new Map<string, EntityType>(entities.map((e) => [e.name, e.type]));
 

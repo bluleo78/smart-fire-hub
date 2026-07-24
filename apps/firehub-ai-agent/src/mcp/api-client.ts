@@ -685,6 +685,21 @@ export class FireHubApiClient {
     return this._review.recordPropertyReview(datasetId, chunkId, entityKey, entityType, propertyName, dataType, rawText);
   }
 
+  /** 저신뢰 엔티티 기존 검수 결정 조회 — 없으면 undefined. */
+  lookupEntityDecision(entityType: EntityType, name: string): Promise<'approved' | 'rejected' | undefined> {
+    return this._review.lookupEntityDecision(entityType, name);
+  }
+
+  /** 저신뢰 엔티티(+보류 관계)를 검수 대기열에 등록. */
+  recordPendingEntity(item: {
+    datasetId: number; entityType: EntityType; name: string;
+    properties?: Record<string, number | string>; sourceChunkIds: number[];
+    confidence: number; reason?: string;
+    relations: { relType: string; direction: 'out' | 'in'; otherKey: string }[];
+  }): Promise<void> {
+    return this._review.recordPendingEntity(item);
+  }
+
   listSmartJobs() {
     return this._proactive.listSmartJobs();
   }

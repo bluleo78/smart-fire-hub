@@ -106,4 +106,17 @@ describe('extractGraph 속성 추출', () => {
     // 파싱 실패값은 노드 properties에는 실리지 않는다(기존 동작 유지).
     expect(result.entities[0].properties?.피해액).toBeUndefined();
   });
+
+  it('엔티티 confidence/reason을 통과시키고 범위 밖 confidence는 버린다', async () => {
+    const complete = async () => '```json\n{"entities":[' +
+      '{"type":"Cause","name":"누전","confidence":0.3,"reason":"추론"},' +
+      '{"type":"Cause","name":"과부하","confidence":9}' + // 범위 밖 → 미신고
+      '],"relations":[]}\n```';
+    const res = await extractGraph('본문', { complete, ontology: CORE_ONTOLOGY });
+    const 누전 = res.entities.find((e) => e.name === '누전')!;
+    const 과부하 = res.entities.find((e) => e.name === '과부하')!;
+    expect(누전.confidence).toBe(0.3);
+    expect(누전.reason).toBe('추론');
+    expect(과부하.confidence).toBeUndefined();
+  });
 });

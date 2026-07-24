@@ -199,3 +199,129 @@ describe('ingestDataset', () => {
     expect([...args[6]].sort((a: number, b: number) => a - b)).toEqual([10, 20]); // sourceChunkIds 합집합
   });
 });
+
+// ── 저신뢰 엔티티 보류 + lookup 3분기 + 관계 수집 (엔티티 검수 슬라이스, Task 2) ──
+import { ResolvedGraph } from './resolver.js';
+import { ExtractedEntity, ExtractedRelation } from './ontology.js';
+
+// recordPendingEntity에 전달되는 item 형태 — IngestDeps 선언에서 그대로 파생(중복 정의 방지).
+type PendingItem = Parameters<NonNullable<IngestDeps['recordPendingEntity']>>[0];
+
+// 각 이름이 서로 다른 벡터를 갖도록(임베딩 클러스터 병합 방지 — 이 테스트는 confidence 필터만 검증).
+function orthogonalEmbed(texts: string[]): Promise<number[][]> {
+  return Promise.resolve(texts.map((_, i) => texts.map((_, j) => (i === j ? 1 : 0))));
+}
+// chunkId별 추출 결과를 주입하는 extract mock.
+function extractFrom(map: Record<string, { entities: ExtractedEntity[]; relations?: ExtractedRelation[] }>) {
+  return (text: string) => Promise.resolve({ entities: map[text]?.entities ?? [], relations: map[text]?.relations ?? [] });
+}
+
+function baseDeps(over: Partial<IngestDeps>, loads: ResolvedGraph[], pending: PendingItem[]): IngestDeps {
+  return {
+    listChunks: () => Promise.resolve([{ chunkId: 1, content: 'c1' }]),
+    extract: extractFrom({}),
+    load: (g) => { loads.push(g); return Promise.resolve({ nodes: g.entities.length, relations: g.relations.length }); },
+    embed: orthogonalEmbed,
+    recordPendingEntity: (item) => { pending.push(item); return Promise.resolve(); },
+    ...over,
+  };
+}
+
+describe('ingestDataset 저신뢰 보류', () => {
+  it('전원 고신뢰면 아무것도 보류하지 않고 그래프가 이전과 동일하다(판별)', async () => {
+    const loads: ResolvedGraph[] = []; const pending: PendingItem[] = [];
+    const deps = baseDeps({
+      extract: extractFrom({ c1: { entities: [
+        { type: 'Cause', name: '누전', confidence: 0.9 },
+        { type: 'Cause', name: '과부하', confidence: 0.8 },
+      ], relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하' }] } }),
+    }, loads, pending);
+    // CAUSED_BY는 CORE_ONTOLOGY에서 Incident->Cause만 허용 트리플이지만, 이 mock 경로는
+    // extractor를 거치지 않고 resolveExtraction에 직접 주입되며 resolveExtraction은 허용 트리플을
+    // 검사하지 않고 두 끝점 이름이 해소되는지만 확인하므로 관계가 그대로 유지된다.
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    const loadedKeys = loads.flatMap((g) => g.entities.map((e) => e.name));
+    expect(loadedKeys).toEqual(expect.arrayContaining(['누전', '과부하']));
+    // 관계도 그대로 적재되어야 "그래프가 이전과 완전히 동일"이 성립한다(관계 드롭 회귀 방지).
+    expect(loads.flatMap((g) => g.relations)).toHaveLength(1);
+    expect(pending).toHaveLength(0);
+  });
+
+  it('저신뢰 엔티티는 적재에서 제외되고 큐에 등록된다', async () => {
+    const loads: ResolvedGraph[] = []; const pending: PendingItem[] = [];
+    const deps = baseDeps({
+      lookupEntityDecision: () => Promise.resolve(undefined),
+      extract: extractFrom({ c1: { entities: [
+        { type: 'Cause', name: '노후배선', confidence: 0.3, reason: '추론' },
+      ] } }),
+    }, loads, pending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    expect(loads.flatMap((g) => g.entities)).toHaveLength(0);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ entityType: 'Cause', name: '노후배선', confidence: 0.3, reason: '추론', datasetId: 122 });
+    expect(pending[0].sourceChunkIds).toEqual([1]);
+  });
+
+  it('집계 confidence=max — 다른 청크의 고신뢰 mention이 flag를 해제한다(오름차순 0.4→0.9)', async () => {
+    const loads: ResolvedGraph[] = []; const pending: PendingItem[] = [];
+    const deps = baseDeps({
+      listChunks: () => Promise.resolve([{ chunkId: 1, content: 'c1' }, { chunkId: 2, content: 'c2' }]),
+      lookupEntityDecision: () => Promise.resolve(undefined),
+      extract: extractFrom({
+        c1: { entities: [{ type: 'Cause', name: '누전', confidence: 0.4 }] },
+        c2: { entities: [{ type: 'Cause', name: '누전', confidence: 0.9 }] },
+      }),
+    }, loads, pending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    expect(loads.flatMap((g) => g.entities).some((e) => e.name === '누전')).toBe(true);
+    expect(pending).toHaveLength(0);
+  });
+
+  // Task 1 리뷰 갭 보완: "max"와 "마지막 값 우선(last-write-wins)"을 구분하기 위해
+  // 내림차순(chunk1=0.9 → chunk2=0.4) 순서에서도 여전히 적재되는지(=max가 유지되는지) 검증한다.
+  it('집계 confidence=max — 내림차순(0.9→0.4)에서도 max 유지로 적재된다(last-write-wins 아님을 증명)', async () => {
+    const loads: ResolvedGraph[] = []; const pending: PendingItem[] = [];
+    const deps = baseDeps({
+      listChunks: () => Promise.resolve([{ chunkId: 1, content: 'c1' }, { chunkId: 2, content: 'c2' }]),
+      lookupEntityDecision: () => Promise.resolve(undefined),
+      extract: extractFrom({
+        c1: { entities: [{ type: 'Cause', name: '누전', confidence: 0.9 }] },
+        c2: { entities: [{ type: 'Cause', name: '누전', confidence: 0.4 }] },
+      }),
+    }, loads, pending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    expect(loads.flatMap((g) => g.entities).some((e) => e.name === '누전')).toBe(true);
+    expect(pending).toHaveLength(0);
+  });
+
+  it('lookup 3분기 — approved는 적재, rejected는 조용히 보류, none은 큐', async () => {
+    for (const [decision, expectLoaded, expectQueued] of [
+      ['approved', true, false], ['rejected', false, false], [undefined, false, true],
+    ] as const) {
+      const loads: ResolvedGraph[] = []; const pending: PendingItem[] = [];
+      const deps = baseDeps({
+        lookupEntityDecision: () => Promise.resolve(decision),
+        extract: extractFrom({ c1: { entities: [{ type: 'Cause', name: '노후배선', confidence: 0.3 }] } }),
+      }, loads, pending);
+      await ingestDataset(deps, 122, CORE_ONTOLOGY);
+      expect(loads.flatMap((g) => g.entities).some((e) => e.name === '노후배선')).toBe(expectLoaded);
+      expect(pending.length > 0).toBe(expectQueued);
+    }
+  });
+
+  it('보류 엔티티가 끌린 관계는 적재에서 제외되고 payload.relations에 수집된다', async () => {
+    const loads: ResolvedGraph[] = []; const pending: PendingItem[] = [];
+    const deps = baseDeps({
+      lookupEntityDecision: () => Promise.resolve(undefined),
+      extract: extractFrom({ c1: { entities: [
+        { type: 'Cause', name: '노후배선', confidence: 0.3 },   // 보류
+        { type: 'Cause', name: '과부하', confidence: 0.9 },     // 적재
+      ], relations: [{ subject: '노후배선', type: 'CAUSED_BY', object: '과부하' }] } }),
+    }, loads, pending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    // 관계는 보류 끝점을 포함하므로 적재 안 됨.
+    expect(loads.flatMap((g) => g.relations)).toHaveLength(0);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].relations).toEqual([{ relType: 'CAUSED_BY', direction: 'out', otherKey: expect.stringContaining('과부하') }]);
+  });
+});

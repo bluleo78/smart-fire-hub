@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.graphreview.dto.EntityRelationRef;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.graphreview.service.GraphMutationClient;
@@ -132,6 +133,55 @@ class ReviewItemServiceTest {
   void approve_alreadyDecided_throws() {
     when(repo.findById(4L)).thenReturn(Optional.of(withStatus(record("synonym_merge", "{}"), "approved")));
     assertThatThrownBy(() -> service.approve(4L, null, 1L)).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  @DisplayName("엔티티 등록 시 datasetId/sourceChunkIds가 저장되고 evidence가 원문 스니펫을 반환한다")
+  void recordPendingEntity_persistsEvidence() {
+    long datasetId = 99L, chunkId = 10L;
+    service.recordPendingEntity(datasetId, "Cause", "노후배선", null, List.of(chunkId), 0.3, "추론",
+        List.of(new EntityRelationRef("CAUSED_BY", "out", "3:과부하")));
+
+    ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+    verify(repo).upsertPending(eq("entity_extraction"), any(), eq(datasetId), eq("low_confidence"), eq(0.3), any(),
+        payloadCaptor.capture());
+    assertThat(payloadCaptor.getValue()).contains("노후배선").contains("relations").contains("3:과부하");
+
+    ReviewItemRecord persisted = new ReviewItemRecord(1L, "entity_extraction", "pending", datasetId,
+        "low_confidence", 0.3, "추론", payloadCaptor.getValue(), null, null, LocalDateTime.now());
+    when(repo.findById(1L)).thenReturn(Optional.of(persisted));
+    when(chunkRepository.findChunkContentsByDataset(datasetId))
+        .thenReturn(List.of(new DocumentChunkRepository.ChunkContent(chunkId, "원문 청크 내용")));
+    var evidence = service.evidence(1L);
+    assertThat(evidence).isNotEmpty();
+    assertThat(evidence.get(0).chunkId()).isEqualTo(chunkId);
+  }
+
+  @Test
+  @DisplayName("엔티티 승인 시 addEntity를 호출하고(정정 없음) status를 approved로 갱신한다")
+  void approve_entity_callsAddEntity() {
+    ReviewItemRecord pending = new ReviewItemRecord(3L, "entity_extraction", "pending", 99L, "low_confidence", 0.3, "추론",
+        "{\"entityType\":\"Cause\",\"name\":\"노후배선\",\"sourceChunkIds\":[10],"
+        + "\"relations\":[{\"relType\":\"CAUSED_BY\",\"direction\":\"out\",\"otherKey\":\"3:과부하\"}]}",
+        null, null, LocalDateTime.now());
+    when(repo.findById(3L)).thenReturn(Optional.of(pending));
+
+    service.approve(3L, null, 1L); // correctedValue 불필요.
+
+    ArgumentCaptor<List<GraphMutationClient.RelationRef>> relCaptor = ArgumentCaptor.forClass(List.class);
+    verify(mutationClient).addEntity(eq("Cause"), eq("노후배선"), any(), eq(List.of(10L)), relCaptor.capture());
+    assertThat(relCaptor.getValue()).hasSize(1);
+    assertThat(relCaptor.getValue().get(0).otherKey()).isEqualTo("3:과부하");
+    verify(repo).updateStatus(3L, "approved", 1L);
+  }
+
+  @Test
+  @DisplayName("엔티티 lookup은 저장된 결정 상태를 반환한다")
+  void lookupEntity_returnsStatus() {
+    when(repo.findDecisionStatus("entity_extraction", "Cause|노후배선")).thenReturn(Optional.of("approved"));
+    assertThat(service.lookupEntity("Cause", "노후배선")).isEqualTo("approved");
+    when(repo.findDecisionStatus("entity_extraction", "Cause|미결")).thenReturn(Optional.empty());
+    assertThat(service.lookupEntity("Cause", "미결")).isEqualTo("none");
   }
 
   // --- helpers ---
