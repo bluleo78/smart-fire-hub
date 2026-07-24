@@ -98,6 +98,13 @@ class DataValidationServiceMappingTest {
     assertThat(result).isInstanceOf(LocalDate.class).isEqualTo(LocalDate.of(2024, 3, 20));
   }
 
+  @Test
+  void convertValue_date_yyyyMMdd_compact() throws Exception {
+    // 구분자 없는 8자리 yyyyMMdd 포맷(예: 20200316) — 공공/레거시 CSV 대응
+    Object result = service.convertValue("20200316", "DATE");
+    assertThat(result).isInstanceOf(LocalDate.class).isEqualTo(LocalDate.of(2020, 3, 16));
+  }
+
   // -----------------------------------------------------------------------
   // convertValue — TIMESTAMP 포맷 변형들
   // -----------------------------------------------------------------------

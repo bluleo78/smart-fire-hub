@@ -21,7 +21,9 @@ public class DataValidationService {
           DateTimeFormatter.ofPattern("yyyy/MM/dd"),
           DateTimeFormatter.ofPattern("dd-MM-yyyy"),
           DateTimeFormatter.ofPattern("dd/MM/yyyy"),
-          DateTimeFormatter.ofPattern("MM/dd/yyyy"));
+          DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+          // 구분자 없는 8자리 yyyyMMdd(예: 20200316) — 공공/레거시 CSV에 흔한 형식
+          DateTimeFormatter.ofPattern("yyyyMMdd"));
 
   private static final List<DateTimeFormatter> TIMESTAMP_FORMATTERS =
       List.of(
@@ -147,7 +149,7 @@ public class DataValidationService {
               "Invalid date value: "
                   + value
                   + " (expected formats: yyyy-MM-dd, yyyy/MM/dd, dd-MM-yyyy, dd/MM/yyyy,"
-                  + " MM/dd/yyyy)");
+                  + " MM/dd/yyyy, yyyyMMdd)");
         }
         yield date;
       }
