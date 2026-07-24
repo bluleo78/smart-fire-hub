@@ -8,7 +8,6 @@ import {
   ChevronsLeft,
   Database,
   FileText,
-  Flame,
   GitBranch,
   Home,
   LayoutDashboard,
@@ -27,10 +26,12 @@ import { lazy, Suspense,useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../../hooks/useAuth';
+import { useBranding } from '../../hooks/useBranding';
 import { useNotificationStream } from '../../hooks/useNotificationStream';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIStatusChip } from '../ai/AIStatusChip';
+import { BrandLogo } from '../BrandLogo';
 import { Button } from '../ui/button';
 import {
   Collapsible,
@@ -222,6 +223,7 @@ function NavSection({
 function AppLayoutInner() {
   useNotificationStream();
   const { isAdmin } = useAuth();
+  const { brandName } = useBranding(); // 런타임 브랜드명 (사이드바 표시)
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { isOpen: aiOpen, mode: aiMode, setMode: setAIMode } = useAI();
@@ -294,7 +296,7 @@ function AppLayoutInner() {
                       onClick={toggleCollapsed}
                       className="h-8 w-8"
                     >
-                      <Flame className="h-5 w-5 text-primary logo-pulse rounded" />
+                      <BrandLogo className="h-5 w-5" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="right" sideOffset={8}>
@@ -308,8 +310,8 @@ function AppLayoutInner() {
                     className="flex items-center gap-2 text-base font-semibold"
                     onClick={handleNavClick}
                   >
-                    <Flame className="h-5 w-5 shrink-0 text-primary logo-pulse rounded" />
-                    <span className="truncate">Smart Fire Hub</span>
+                    <BrandLogo className="h-5 w-5 shrink-0" />
+                    <span className="truncate">{brandName}</span>
                   </Link>
                   <Button
                     variant="ghost"

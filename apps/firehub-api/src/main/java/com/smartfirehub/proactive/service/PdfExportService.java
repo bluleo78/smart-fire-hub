@@ -42,6 +42,10 @@ public class PdfExportService {
   private final WebClient agentWebClient;
   private final String internalToken;
 
+  /** 화이트라벨링용 브랜드명. PDF 리포트 푸터의 브랜드 표기에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
+
   public PdfExportService(
       TemplateEngine templateEngine,
       ReportRenderUtils reportRenderUtils,
@@ -124,6 +128,8 @@ public class PdfExportService {
     ctx.setVariable("jobName", jobName);
     ctx.setVariable("generatedAt", LocalDateTime.now().format(DISPLAY_FORMATTER));
     ctx.setVariable("sections", templateSections);
+    // 화이트라벨링: PDF 템플릿 푸터의 브랜드명 표기에 사용
+    ctx.setVariable("brandName", brandName);
 
     String xhtml = templateEngine.process("proactive-report-pdf", ctx);
 

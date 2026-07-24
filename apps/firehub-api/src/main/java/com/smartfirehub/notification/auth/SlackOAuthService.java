@@ -46,6 +46,10 @@ public class SlackOAuthService {
       "${notification.slack.scopes:chat:write,im:write,im:history,users:read,reactions:write,app_mentions:read}")
   private String scopes;
 
+  /** 화이트라벨링용 브랜드명. 연동 확인 DM 메시지에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
+
   public SlackOAuthService(
       SlackApiClient slackApiClient,
       SlackWorkspaceRepository slackWorkspaceRepo,
@@ -151,7 +155,8 @@ public class SlackOAuthService {
     String dmChannelId = convResp.path("channel").path("id").asText();
 
     // 연동 확인 DM 발송 — blocks 없이 텍스트만
-    slackApiClient.chatPostMessage(botToken, dmChannelId, null, "Smart Fire Hub 채널 연동이 확인되었습니다.");
+    slackApiClient.chatPostMessage(
+        botToken, dmChannelId, null, brandName + " 채널 연동이 확인되었습니다.");
 
     // user_channel_binding upsert
     Instant now = Instant.now();

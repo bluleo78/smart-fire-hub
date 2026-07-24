@@ -11,6 +11,7 @@ import com.smartfirehub.notification.repository.UserChannelBindingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -44,6 +45,10 @@ public class SlackInboundService {
   private final SlackChannel slackChannel;
   private final EncryptionService encryption;
   private final SlackInboundMetrics metrics;
+
+  /** 화이트라벨링용 브랜드명. 미연동 사용자 안내 메시지에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
 
   public SlackInboundService(
       UserChannelBindingRepository bindingRepo,
@@ -113,7 +118,7 @@ public class SlackInboundService {
             botToken,
             channel,
             slackUserId,
-            "Smart Fire Hub 웹에서 먼저 계정 연동을 진행해주세요: "
+            brandName + " 웹에서 먼저 계정 연동을 진행해주세요: "
                 + "https://app.smartfirehub.com/settings/channels");
         return;
       }

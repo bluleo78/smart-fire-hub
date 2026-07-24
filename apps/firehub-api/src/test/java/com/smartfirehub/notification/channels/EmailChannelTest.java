@@ -20,9 +20,11 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * EmailChannel 경계 경로 단위 검증.
@@ -91,6 +93,20 @@ class EmailChannelTest {
     assertThat(result).isInstanceOf(DeliveryResult.TransientFailure.class);
   }
 
+  /** 화이트라벨링: 제목 미지정 시 subject가 주입된 브랜드명 기반("Acme 알림")으로 구성되어야 한다. */
+  @Test
+  @SuppressWarnings("unchecked")
+  void deliver_nullTitle_usesBrandNameForSubject() {
+    ReflectionTestUtils.setField(channel, "brandName", "Acme");
+    when(settingsService.getSmtpConfig()).thenReturn(smtpConfig());
+
+    channel.deliver(ctxWithNullTitle("to@example.com"));
+
+    ArgumentCaptor<Map<String, Object>> messageCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(channelHttpClient).send(eq("EMAIL"), any(Map.class), messageCaptor.capture());
+    assertThat(messageCaptor.getValue().get("text")).isEqualTo("Acme 알림");
+  }
+
   // ----------------------------------------------------------------
   // 헬퍼
   // ----------------------------------------------------------------
@@ -107,6 +123,21 @@ class EmailChannelTest {
             Map.of(),
             Map.of());
     return new DeliveryContext(1L, UUID.randomUUID(), userId, address, Optional.empty(), p);
+  }
+
+  /** title이 null인 Payload — subject 기본값(브랜드명) 경로 검증용. */
+  private DeliveryContext ctxWithNullTitle(String address) {
+    Payload p =
+        new Payload(
+            Payload.PayloadType.STANDARD,
+            null,
+            "요약",
+            List.of(),
+            List.of(),
+            List.of(),
+            Map.of(),
+            Map.of());
+    return new DeliveryContext(1L, UUID.randomUUID(), null, address, Optional.empty(), p);
   }
 
   private Map<String, String> smtpConfig() {

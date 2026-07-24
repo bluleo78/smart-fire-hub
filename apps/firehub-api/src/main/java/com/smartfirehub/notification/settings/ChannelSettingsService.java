@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -40,6 +41,10 @@ public class ChannelSettingsService {
   private final UserRepository userRepository;
   private final ChannelRegistry channelRegistry;
   private final SlackWorkspaceRepository slackWorkspaceRepo;
+
+  /** 화이트라벨링용 브랜드명. 채널 테스트 알림 페이로드 제목에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
 
   public ChannelSettingsService(
       UserChannelBindingRepository bindingRepo,
@@ -249,7 +254,7 @@ public class ChannelSettingsService {
     Payload testPayload =
         new Payload(
             Payload.PayloadType.STANDARD,
-            "🔔 Smart Fire Hub 테스트 알림",
+            "🔔 " + brandName + " 테스트 알림",
             "이 메시지는 채널 연결 상태를 확인하기 위한 테스트 발송입니다. (" + now + ")",
             List.of(),
             List.of(),
