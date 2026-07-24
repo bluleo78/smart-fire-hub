@@ -1,0 +1,64 @@
+# 백엔드 브랜딩 + web config.js 마운트 패치 — "Smart Data Platform"
+#
+# 이 파일은 그대로 `kubectl apply` 하는 완결 매니페스트가 아니라,
+# 대상 환경의 Deployment 3개에 "추가할 설정"을 보여주는 패치 예시다.
+# (Deployment 이름/namespace 는 대상 환경 규칙에 맞춰 조정)
+#
+# 적용 방법 예 (strategic-merge patch):
+#   kubectl patch deployment firehub-web      --patch-file deployment-env-patch.yaml   # web 부분만 발췌 적용
+#   kubectl patch deployment firehub-api      -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","env":[{"name":"APP_BRANDING_NAME","value":"Smart Data Platform"}]}]}}}}'
+#   kubectl patch deployment firehub-ai-agent -p '{"spec":{"template":{"spec":{"containers":[{"name":"ai-agent","env":[{"name":"BRAND_NAME","value":"Smart Data Platform"}]}]}}}}'
+#
+# Kustomize 를 쓰면 아래 조각들을 patches/patchesStrategicMerge 로 넣으면 된다.
+
+---
+# 1) web — config.js override 마운트 (ConfigMap: web-branding)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firehub-web
+spec:
+  template:
+    spec:
+      volumes:
+        - name: web-branding
+          configMap:
+            name: web-branding
+      containers:
+        - name: web
+          volumeMounts:
+            # 단일 파일만 교체 — subPath 로 /config.js 만 덮는다(디렉토리 통째 교체 아님).
+            - name: web-branding
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
+              readOnly: true
+
+---
+# 2) firehub-api — 백엔드 생성 콘텐츠(리포트 PDF/HTML, 알림 이메일/Slack/Kakao) 브랜드명
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firehub-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          env:
+            - name: APP_BRANDING_NAME
+              value: "Smart Data Platform"
+
+---
+# 3) firehub-ai-agent — AI 어시스턴트 자기소개 프롬프트 브랜드명
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firehub-ai-agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: ai-agent
+          env:
+            - name: BRAND_NAME
+              value: "Smart Data Platform"
