@@ -205,14 +205,14 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * validateImport 스트리밍 배치 검증(BATCH_SIZE=2000) 시 오류 rowIndex가 배치 로컬(1..N)이 아니라 파일 전역 기준이어야
-   * 한다(rowIndexBase 스레딩 회귀 테스트). 5000행 CSV 중 2001~2100행(두 번째 배치 내부)에서 name을 비워 필수값 오류를
-   * 유발하고, 에러가 100개로 캡되면서도 rowIndex가 2001~2100 범위(전역)로 정확히 나오는지 검증한다.
+   * validateImport는 전량 검증이 아니라 파일 앞 200행만 샘플 검사한다(대용량 파일에서도 O(샘플)로 즉시 응답, N1). 5000행
+   * CSV 중 2001~2100행(샘플 범위 밖)에서 name을 비워 필수값 오류를 유발해도, 샘플(앞 200행)에는 포함되지 않으므로 검증
+   * 결과에 그 오류가 나타나지 않아야 한다.
    */
   @Test
-  void validateImport_largeCsvSpanningMultipleBatches_hasGlobalRowIndexAndCappedErrors()
+  void validateImport_largeCsvSpanningMultipleBatches_onlySamplesFirst200Rows()
       throws Exception {
-    // Given - 5000행 CSV, 2001~2100행만 name 비움(필수값 위반)
+    // Given - 5000행 CSV, 2001~2100행만 name 비움(필수값 위반, 샘플 범위 밖)
     StringBuilder csv = new StringBuilder("name,age,email\n");
     for (int i = 1; i <= 5000; i++) {
       boolean invalid = i >= 2001 && i <= 2100;
@@ -232,15 +232,12 @@ class DataImportServiceTest extends IntegrationTestBase {
     // When
     ImportValidateResponse result = dataImportService.validateImport(testDatasetId, file, mappings);
 
-    // Then - 전체/정상/오류 건수는 정확해야 하고, 오류는 첫 100개만 반환된다
-    assertThat(result.totalRows()).isEqualTo(5000);
-    assertThat(result.errorRows()).isEqualTo(100);
-    assertThat(result.validRows()).isEqualTo(4900);
-    assertThat(result.errors()).hasSize(100);
-
-    // rowIndex가 배치 로컬(1..100)이 아니라 전역(2001~2100)이어야 함 — 두 번째 배치(rowIndexBase=2000)에서 발생
-    assertThat(result.errors().get(0).rowNumber()).isEqualTo(2001);
-    assertThat(result.errors().get(result.errors().size() - 1).rowNumber()).isEqualTo(2100);
+    // Then - 5000행 전체가 아니라 앞 200행만 검사되고, 그 200행은 모두 유효(오류는 2001행 이후에만 있음)
+    assertThat(result.sampled()).isTrue();
+    assertThat(result.sampleSize()).isEqualTo(200);
+    assertThat(result.errorRows()).isZero();
+    assertThat(result.validRows()).isEqualTo(200);
+    assertThat(result.errors()).isEmpty();
   }
 
   /** validateImport가 spill한 임시 파일을 finally에서 삭제하는지 확인한다(누수 방지). */
@@ -460,9 +457,13 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 조기 탈출 회귀 테스트: 유효 행이 하나도 없이 검증 오류만 임계치를 넘으면 파일 전체를 끝까지 검증하지 않고 스트림을 중단해야 한다. 날짜/타입 불일치로 63만 행이 전량
-   * 실패하는 파일을 모두 기다리던 문제를 방지한다. 3000행(배치 2개 분량)을 모두 실패시키되, 조기 탈출이 동작하면 첫 배치(2000행)만 검증하고 멈추므로 실패 메시지의 오류
-   * 수가 2000에 그친다.
+   * fail-fast 회귀 테스트(Task2): 검증(Pass1)이 첫 오류가 나오는 배치에서 즉시 스트림을 중단해야 한다. 날짜/타입 불일치로 63만
+   * 행이 전량 실패하는 파일을 끝까지 기다리던 문제를 방지한다. 3000행(배치 2개 분량)을 모두 실패시키되, fail-fast가 동작하면 첫
+   * 배치(2000행)만 검증하고 멈추므로 실패 메시지의 오류 수가 2000에 그친다.
+   *
+   * <p>옛(#7/#168/#169) 계약은 "유효 행이 하나도 없이 오류만 임계치(1000)를 넘을 때만" 조기 중단하고, 일부라도 유효 행이 있으면
+   * (부분 성공) 계속 진행해 유효 행을 적재했다. Task2는 이 부분 적재 자체를 제거하므로 — 오류가 하나라도 나오면(임계치 무관) 즉시
+   * 중단하고 0행 실패로 귀결된다. 이 테스트는 그 새 계약(오류 수 무관 즉시 중단 + fail-fast 메시지)에 맞게 갱신됐다.
    */
   @Test
   void processImport_allRowsFailBeyondThreshold_abortsEarly() throws Exception {
@@ -489,12 +490,13 @@ class DataImportServiceTest extends IntegrationTestBase {
         "",
         "APPEND");
 
-    // Then: 조기 탈출 메시지로 실패 처리되고, 첫 배치(2000행)까지만 검증했음을 오류 수로 확인
+    // Then: fail-fast 메시지로 실패 처리되고, 첫 배치(2000행)까지만 검증했음을 오류 수로 확인
     ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
     Mockito.verify(asyncJobService).failJob(Mockito.eq("abort-test-job-id"), msg.capture());
-    assertThat(msg.getValue()).startsWith("Validation aborted after 2000+ failures");
+    assertThat(msg.getValue())
+        .startsWith("Import validation failed, no rows were loaded (2000 error(s) found)");
 
-    // 대상 테이블에는 아무 행도 적재되지 않아야 한다
+    // 대상 테이블에는 아무 행도 적재되지 않아야 한다(부분 적재 없음)
     var count =
         dsl.fetchCount(
             dsl.select()
@@ -727,8 +729,14 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * APPEND 스트리밍: BATCH_SIZE(2000)보다 많은 행을 가진 CSV를 임포트해도 유효 행 전부가 적재되고, progress 콜백이 여러 번
-   * 호출되며 processedRows가 단조 증가(non-decreasing)하는지 검증한다. 배치 경계를 넘어 진행률이 리셋되지 않아야 한다.
+   * APPEND 스트리밍: BATCH_SIZE(2000)보다 많은 행을 가진 CSV를 임포트해도 유효 행 전부가 적재되고, 각 단계(검증/삽입) 내에서
+   * progress 콜백의 processedRows가 단조 증가(non-decreasing)하는지 검증한다.
+   *
+   * <p>Task2(검증→삽입 2단계 분리) 갱신: 예전엔 검증+삽입이 한 배치 안에서 함께 일어나 하나의 processedRows 카운터가 파일
+   * 전체에 걸쳐 계속 증가했다. 이제는 Pass1(검증, processedRows 0→전체)과 Pass2(삽입, processedRows 0→전체)가 완전히
+   * 분리된 별개 단계이므로, 단계 전환 시점(VALIDATING→INSERTING)에 processedRows가 되돌아가는 것은 "정직한 스테퍼"의
+   * 의도된 동작이다(Pass2가 Pass1의 카운터를 이어받으면 오히려 삽입 진행이 100%에 멈춘 것처럼 보여 부정확하다). 따라서 이
+   * 테스트는 단계별로 나눠 그 안에서만 단조성을 확인하고, 배치 경계를 넘는 리셋 회귀만 잡는다.
    */
   @Test
   void processImport_appendStreaming_largeCsv_insertsAllRowsWithMonotonicProgress()
@@ -746,12 +754,15 @@ class DataImportServiceTest extends IntegrationTestBase {
     }
     String filePath = createTempCsvFile(csv.toString());
 
+    List<String> statusesSeen = new ArrayList<>();
     List<Integer> processedRowsSeen = new ArrayList<>();
     Mockito.doAnswer(
             invocation -> {
+              String status = invocation.getArgument(1);
               Map<String, Object> metadata = invocation.getArgument(4);
               Object processed = metadata.get("processedRows");
               if (processed instanceof Integer p) {
+                statusesSeen.add(status);
                 processedRowsSeen.add(p);
               }
               return invocation.callRealMethod();
@@ -780,7 +791,7 @@ class DataImportServiceTest extends IntegrationTestBase {
         "",
         "APPEND");
 
-    // Then: 전체 행이 적재되고, 여러 번의 progress 콜백이 단조 증가했어야 한다
+    // Then: 전체 행이 적재됐어야 한다
     var count =
         dsl.fetchCount(
             dsl.select()
@@ -789,9 +800,24 @@ class DataImportServiceTest extends IntegrationTestBase {
                         org.jooq.impl.DSL.name("data", "import_test_dataset"))));
     assertThat(count).isEqualTo(4500);
 
-    assertThat(processedRowsSeen.size()).isGreaterThan(1);
-    for (int i = 1; i < processedRowsSeen.size(); i++) {
-      assertThat(processedRowsSeen.get(i)).isGreaterThanOrEqualTo(processedRowsSeen.get(i - 1));
+    // 검증(VALIDATING) 단계 내에서 processedRows가 단조 증가해야 한다 — 여러 배치가 있었음을 확인.
+    List<Integer> validatingRows = new ArrayList<>();
+    List<Integer> insertingRows = new ArrayList<>();
+    for (int i = 0; i < statusesSeen.size(); i++) {
+      if ("VALIDATING".equals(statusesSeen.get(i))) {
+        validatingRows.add(processedRowsSeen.get(i));
+      } else if ("INSERTING".equals(statusesSeen.get(i))) {
+        insertingRows.add(processedRowsSeen.get(i));
+      }
+    }
+    assertThat(validatingRows.size()).isGreaterThan(1);
+    for (int i = 1; i < validatingRows.size(); i++) {
+      assertThat(validatingRows.get(i)).isGreaterThanOrEqualTo(validatingRows.get(i - 1));
+    }
+    // 삽입(INSERTING) 단계 내에서도 배치 경계를 넘어 processedRows가 단조 증가해야 한다.
+    assertThat(insertingRows.size()).isGreaterThan(1);
+    for (int i = 1; i < insertingRows.size(); i++) {
+      assertThat(insertingRows.get(i)).isGreaterThanOrEqualTo(insertingRows.get(i - 1));
     }
   }
 

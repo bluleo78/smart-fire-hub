@@ -2,8 +2,8 @@ import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import type { ImportValidateResponse, ValidationErrorDetail } from '../../../types/dataImport';
+import { ValidationErrorTable } from './ValidationErrorTable';
 
 interface ImportValidationSectionProps {
   validationResult: ImportValidateResponse | null;
@@ -54,8 +54,7 @@ export function ImportValidationSection({
                 <div className="text-sm">
                   <p className="font-medium text-success">검증 성공</p>
                   <p className="text-muted-foreground">
-                    전체 {validationResult.totalRows.toLocaleString()}행 / 유효{' '}
-                    {validationResult.validRows.toLocaleString()}행
+                    유효 {validationResult.validRows.toLocaleString()}행
                   </p>
                 </div>
               </>
@@ -65,16 +64,19 @@ export function ImportValidationSection({
                 <div className="text-sm">
                   <p className="font-medium text-warning">검증 오류 발견</p>
                   <p className="text-muted-foreground">
-                    전체 {validationResult.totalRows.toLocaleString()}행 / 유효{' '}
-                    {validationResult.validRows.toLocaleString()}행 / 오류{' '}
+                    유효 {validationResult.validRows.toLocaleString()}행 / 오류{' '}
                     <span className="text-destructive font-medium">
-                      {validationResult.errorRows.toLocaleString()}행
+                      {validationResult.errorRows.toLocaleString()}건
                     </span>
                   </p>
                 </div>
               </>
             )}
           </div>
+          {/* 사전 검증은 전량이 아니라 앞부분 샘플만 검사한다. 사용자가 "오류 0 = 전체 안전"으로 오해하지 않게 명시. */}
+          <p className="text-sm text-muted-foreground">
+            샘플 {validationResult.sampleSize.toLocaleString()}행 검사 결과 · 전체 데이터 검증은 임포트 시 수행됩니다
+          </p>
 
           {validationResult.errors.length > 0 && (
             <div className="space-y-2">
@@ -82,27 +84,8 @@ export function ImportValidationSection({
                 <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground">
                   오류 상세 보기 ({validationResult.errors.length}개)
                 </summary>
-                <div className="mt-2 rounded-md border overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>행</TableHead>
-                        <TableHead>컬럼</TableHead>
-                        <TableHead>값</TableHead>
-                        <TableHead>오류</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {displayedErrors.map((err, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell>{err.rowNumber}</TableCell>
-                          <TableCell className="font-medium">{err.columnName}</TableCell>
-                          <TableCell className="max-w-xs truncate">{err.value || '-'}</TableCell>
-                          <TableCell className="text-destructive text-xs">{err.error}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div className="mt-2 rounded-md border">
+                  <ValidationErrorTable errors={displayedErrors} />
                 </div>
                 {validationResult.errors.length > 100 && !showAllErrors && (
                   <Button

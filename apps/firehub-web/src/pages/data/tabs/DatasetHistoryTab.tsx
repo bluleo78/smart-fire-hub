@@ -2,8 +2,10 @@ import React, { useMemo } from 'react';
 
 import { Badge } from '../../../components/ui/badge';
 import { useImports } from '../../../hooks/queries/useDatasets';
+import { parseErrorDetails } from '../../../lib/errorDetails';
 import { formatDate, formatFileSize, getStatusBadgeVariant, getStatusLabel } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
+import { ValidationErrorTable } from '../components/ValidationErrorTable';
 
 interface DatasetHistoryTabProps {
   dataset: DatasetDetailResponse;
@@ -26,7 +28,11 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
       <h2 className="text-xl leading-7 font-semibold">변경 이력</h2>
       <div className="space-y-6">
         {sortedImports.length > 0 &&
-          sortedImports.map((imp) => (
+          sortedImports.map((imp) => {
+            // audit_log.metadata.errorDetails 는 { errors: ValidationErrorDetail[] } 형태의 (중첩)JSON.
+            // 안전 파싱 후 테이블 렌더 — 파싱 실패/형식 불일치 시 null 반환하여 섹션 자체를 숨긴다.
+            const parsedErrors = parseErrorDetails(imp.errorDetails);
+            return (
             <div key={`import-${imp.id}`} className="flex gap-4">
               <div className="flex flex-col items-center">
                 <div className="h-2.5 w-2.5 rounded-full bg-primary mt-1.5" />
@@ -66,20 +72,19 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
                       <span className="text-destructive text-sm">{imp.errorMessage}</span>
                     </div>
                   )}
-                  {imp.errorDetails && Object.keys(imp.errorDetails).length > 0 && (
+                  {parsedErrors && (
                     <details className="mt-2">
                       <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                        오류 상세 보기
+                        검증 오류 상세
                       </summary>
-                      <pre className="mt-1 text-xs bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap">
-                        {JSON.stringify(imp.errorDetails, null, 2)}
-                      </pre>
+                      <ValidationErrorTable errors={parsedErrors} />
                     </details>
                   )}
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
 
         {/* Dataset creation event */}
         <div className="flex gap-4">

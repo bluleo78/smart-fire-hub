@@ -53,39 +53,25 @@ public class DataValidationService {
 
     for (Map<String, String> row : rows) {
       rowIndex++;
-      List<Object> convertedRow = new ArrayList<>();
-      boolean rowValid = true;
 
-      for (DatasetColumnResponse column : columns) {
-        String rawValue = row.get(column.columnName());
+      // 매핑 없는 경로도 매핑 경로(validateWithMapping/toRows)와 동일한 셀 변환 로직(convertRowOrNull)을
+      // 공유한다 — 별도 인라인 변환 루프를 유지하면 두 경로가 갈라져 "검증 통과 == 값 변환 성공"이 어긋나는
+      // 미묘한 버그(Task2 핵심 위험)가 생긴다. 에러 형식은 기존 String 메시지 포맷을 그대로 유지한다.
+      List<ValidationErrorDetail> rowErrors = new ArrayList<>();
+      List<Object> convertedRow = convertRowOrNull(row, columns, rowIndex, rowErrors);
 
-        // Check required field
-        if (!column.isNullable() && (rawValue == null || rawValue.trim().isEmpty())) {
-          errors.add(
-              "Row " + rowIndex + ": column '" + column.columnName() + "' is required but empty");
-          rowValid = false;
-          continue;
-        }
-
-        // Handle null/empty values
-        if (rawValue == null || rawValue.trim().isEmpty()) {
-          convertedRow.add(null);
-          continue;
-        }
-
-        // Convert and validate based on data type
-        try {
-          Object convertedValue = convertValue(rawValue.trim(), column.dataType());
-          convertedRow.add(convertedValue);
-        } catch (Exception e) {
-          errors.add(
-              "Row " + rowIndex + ": column '" + column.columnName() + "' - " + e.getMessage());
-          rowValid = false;
-        }
-      }
-
-      if (rowValid) {
+      if (convertedRow != null) {
         validRows.add(convertedRow);
+      } else {
+        for (ValidationErrorDetail detail : rowErrors) {
+          // "Required field is empty"는 convertRowOrNull의 필수값 누락 메시지 — 기존 문구로 복원
+          String suffix =
+              "Required field is empty".equals(detail.error())
+                  ? "is required but empty"
+                  : "- " + detail.error();
+          errors.add(
+              "Row " + detail.rowNumber() + ": column '" + detail.columnName() + "' " + suffix);
+        }
       }
     }
 
@@ -199,18 +185,7 @@ public class DataValidationService {
       int rowIndexBase) {
 
     // Build mapping lookup: fileColumn -> datasetColumn
-    Map<String, String> columnMapping = new HashMap<>();
-    for (ColumnMappingEntry mapping : mappings) {
-      if (mapping.datasetColumn() != null) {
-        columnMapping.put(mapping.fileColumn(), mapping.datasetColumn());
-      }
-    }
-
-    // Build column lookup by name
-    Map<String, DatasetColumnResponse> columnsByName = new HashMap<>();
-    for (DatasetColumnResponse col : columns) {
-      columnsByName.put(col.columnName(), col);
-    }
+    Map<String, String> columnMapping = buildColumnMapping(mappings);
 
     List<List<Object>> validRows = new ArrayList<>();
     List<ValidationErrorDetail> errors = new ArrayList<>();
@@ -220,57 +195,126 @@ public class DataValidationService {
       rowIndex++;
 
       // Remap row using column mappings
-      Map<String, String> remappedRow = new HashMap<>();
-      for (Map.Entry<String, String> entry : row.entrySet()) {
-        String fileColumn = entry.getKey();
-        String datasetColumn = columnMapping.get(fileColumn);
-        if (datasetColumn != null) {
-          remappedRow.put(datasetColumn, entry.getValue());
-        }
-      }
+      Map<String, String> remappedRow = remapRow(row, columnMapping);
 
-      List<Object> convertedRow = new ArrayList<>();
-      boolean rowValid = true;
-
-      for (DatasetColumnResponse column : columns) {
-        String rawValue = remappedRow.get(column.columnName());
-
-        // Check required field
-        if (!column.isNullable() && (rawValue == null || rawValue.trim().isEmpty())) {
-          errors.add(
-              new ValidationErrorDetail(
-                  rowIndex,
-                  column.columnName(),
-                  rawValue != null ? rawValue : "",
-                  "Required field is empty"));
-          rowValid = false;
-          continue;
-        }
-
-        // Handle null/empty values
-        if (rawValue == null || rawValue.trim().isEmpty()) {
-          convertedRow.add(null);
-          continue;
-        }
-
-        // Convert and validate based on data type
-        try {
-          Object convertedValue = convertValue(rawValue.trim(), column.dataType());
-          convertedRow.add(convertedValue);
-        } catch (Exception e) {
-          errors.add(
-              new ValidationErrorDetail(rowIndex, column.columnName(), rawValue, e.getMessage()));
-          rowValid = false;
-        }
-      }
-
-      if (rowValid) {
+      // Pass1(검증)과 Pass2(삽입의 toRows)가 동일한 변환 로직(convertRowOrNull)을 호출한다 —
+      // 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 미묘한 버그가 생긴다(Task2 핵심 위험).
+      List<Object> convertedRow = convertRowOrNull(remappedRow, columns, rowIndex, errors);
+      if (convertedRow != null) {
         validRows.add(convertedRow);
       }
     }
 
     return new ValidationResultWithDetails(
         validRows, errors, rows.size(), validRows.size(), errors.size());
+  }
+
+  /**
+   * 배치의 각 행을 데이터셋 컬럼 순서에 맞는 값 리스트로 변환한다(임포트 잡 Pass2 삽입 전용).
+   *
+   * <p>Pass1 검증({@link #validateWithMapping})과 반드시 같은 셀 변환 로직({@link #convertRowOrNull})을 거치므로,
+   * "검증 통과 == 값 변환 성공"이 두 경로에서 어긋나지 않는다. 매핑 없는 경로({@code mappings=null} 또는 빈 리스트)는 {@link
+   * #validate}와 동일하게 컬럼명으로 행을 직접 조회한다. Pass2는 전량 검증을 통과한 배치에서만 호출되므로 변환 실패(null 반환)는
+   * 발생하지 않는 것이 전제다 — 이 전제가 깨지면(변환기 불변식 위반) 빈 행을 조용히 삽입하는 대신 즉시 예외로 실패시킨다.
+   */
+  public List<List<Object>> toRows(
+      List<Map<String, String>> rows,
+      List<DatasetColumnResponse> columns,
+      List<ColumnMappingEntry> mappings) {
+    boolean hasMappings = mappings != null && !mappings.isEmpty();
+    Map<String, String> columnMapping = hasMappings ? buildColumnMapping(mappings) : Map.of();
+    List<ValidationErrorDetail> discardedErrors = new ArrayList<>();
+
+    List<List<Object>> result = new ArrayList<>();
+    int rowIndex = 0;
+    for (Map<String, String> row : rows) {
+      rowIndex++;
+      Map<String, String> effectiveRow = hasMappings ? remapRow(row, columnMapping) : row;
+      List<Object> convertedRow = convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors);
+      if (convertedRow == null) {
+        // Pass1(검증)을 통과한 행이 Pass2(삽입)에서 변환 실패하는 것은 불변식 위반이다.
+        // 조용히 빈 행을 삽입하면 데이터 정합성이 깨지므로 즉시 실패시킨다.
+        throw new IllegalStateException(
+            "검증을 통과한 행이 삽입 변환에 실패했습니다 (row " + rowIndex + ") — 변환기 불변식 위반");
+      }
+      result.add(convertedRow);
+    }
+    return result;
+  }
+
+  /** {@link ColumnMappingEntry} 목록을 fileColumn -> datasetColumn lookup map으로 변환한다. */
+  private Map<String, String> buildColumnMapping(List<ColumnMappingEntry> mappings) {
+    Map<String, String> columnMapping = new HashMap<>();
+    if (mappings == null) {
+      return columnMapping;
+    }
+    for (ColumnMappingEntry mapping : mappings) {
+      if (mapping.datasetColumn() != null) {
+        columnMapping.put(mapping.fileColumn(), mapping.datasetColumn());
+      }
+    }
+    return columnMapping;
+  }
+
+  /** fileColumn 키의 행을 datasetColumn 키로 리매핑한다. */
+  private Map<String, String> remapRow(Map<String, String> row, Map<String, String> columnMapping) {
+    Map<String, String> remappedRow = new HashMap<>();
+    for (Map.Entry<String, String> entry : row.entrySet()) {
+      String datasetColumn = columnMapping.get(entry.getKey());
+      if (datasetColumn != null) {
+        remappedRow.put(datasetColumn, entry.getValue());
+      }
+    }
+    return remappedRow;
+  }
+
+  /**
+   * 한 행(매핑 경로는 이미 매핑 적용됨)을 데이터셋 컬럼 순서의 값 리스트로 변환한다. 필수값 누락/타입 변환 실패는 errorSink에 기록하고
+   * null을 반환한다(행 전체 무효). {@link #validate}, {@link #validateWithMapping}, {@link #toRows} 세 경로 모두
+   * 이 메서드를 공유해 변환 로직이 하나로 유지되게 한다(Task2 핵심 위험 3) — 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는
+   * 미묘한 버그가 생긴다.
+   */
+  private List<Object> convertRowOrNull(
+      Map<String, String> row,
+      List<DatasetColumnResponse> columns,
+      int rowIndex,
+      List<ValidationErrorDetail> errorSink) {
+    List<Object> convertedRow = new ArrayList<>();
+    boolean rowValid = true;
+
+    for (DatasetColumnResponse column : columns) {
+      String rawValue = row.get(column.columnName());
+
+      // Check required field
+      if (!column.isNullable() && (rawValue == null || rawValue.trim().isEmpty())) {
+        errorSink.add(
+            new ValidationErrorDetail(
+                rowIndex,
+                column.columnName(),
+                rawValue != null ? rawValue : "",
+                "Required field is empty"));
+        rowValid = false;
+        continue;
+      }
+
+      // Handle null/empty values
+      if (rawValue == null || rawValue.trim().isEmpty()) {
+        convertedRow.add(null);
+        continue;
+      }
+
+      // Convert and validate based on data type
+      try {
+        Object convertedValue = convertValue(rawValue.trim(), column.dataType());
+        convertedRow.add(convertedValue);
+      } catch (Exception e) {
+        errorSink.add(
+            new ValidationErrorDetail(rowIndex, column.columnName(), rawValue, e.getMessage()));
+        rowValid = false;
+      }
+    }
+
+    return rowValid ? convertedRow : null;
   }
 
   public PkValidationResult validatePrimaryKeys(

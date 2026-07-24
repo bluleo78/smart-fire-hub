@@ -42,14 +42,13 @@ public class DataImportService {
   // 배치 단위로 파싱+검증하여 전체 행을 한 번에 메모리에 적재하지 않는다(400MB xlsb preview/validate OOM 해소, #7).
   private static final int BATCH_SIZE = 2000;
 
-  // 전량 실패로 치닫는 파일(예: 날짜 포맷 불일치로 63만 행 전부 실패)을 끝까지 검증하며 기다리지 않도록
-  // 하는 조기 탈출 임계치. 유효 행이 하나도 없이 검증 오류만 이 값을 넘으면 파일 설정이 잘못된 것으로 보고
-  // 스트림을 중단한다. 일부라도 유효 행이 있으면(APPEND 부분 성공 보존) 이 가드에 걸리지 않는다.
-  private static final int MAX_VALIDATION_ERRORS_BEFORE_ABORT = 1000;
+  // 사전 검증 샘플 크기 — 전량 검증(임포트 잡)이 아닌, 스키마/매핑 빠른 확인용 앞 N행.
+  private static final int SAMPLE_VALIDATION_ROWS = 200;
 
   /**
-   * 스트리밍 검증 중 조기 탈출을 위한 내부 신호용 예외. RuntimeException을 상속해 REPLACE(PK 無) 트랜잭션 람다의 rethrow 분기를
-   * 그대로 통과하고 트랜잭션 롤백을 유발한다. 스택트레이스는 불필요하므로 생성 비용을 없앤다.
+   * 스트리밍 검증(Pass1) 중 fail-fast 중단을 위한 내부 신호용 예외. 오류가 하나라도 나오면 즉시 던져 부분 적재를 방지한다
+   * (Task2: 검증→삽입 2단계 분리). RuntimeException을 상속해 REPLACE(PK 無) 트랜잭션 람다의 rethrow 분기를 그대로 통과하고
+   * 트랜잭션 롤백을 유발한다. 스택트레이스는 불필요하므로 생성 비용을 없앤다.
    */
   private static final class ValidationAbortException extends RuntimeException {
     ValidationAbortException() {
@@ -177,43 +176,38 @@ public class DataImportService {
     // Get dataset columns
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
 
-    // MultipartFile을 임시 파일로 1회 spill 후 parseStreaming으로 배치 단위 파싱+검증한다.
-    // 기존에는 fileParserService.parse()로 전체 행을 한 번에 메모리에 적재하고 단일
-    // validateWithMapping 호출로 검증했는데, 대용량 파일에서 파싱 결과 리스트 전체가 힙에 남아
-    // OOM을 유발했다(#7). 배치마다 검증 후 버림으로써 메모리 사용량을 배치 크기로 제한한다.
+    // 앞 200행만 파싱해 스키마/매핑을 빠르게 검사한다(전량 검증은 임포트 잡이 담당).
+    // countRows/전량 parseStreaming을 제거해 512MB 파일에서도 O(샘플)로 즉시 응답한다.
     Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-imports");
     Files.createDirectories(tempDir);
     Path tempFile = Files.createTempFile(tempDir, "validate-", "." + fileType);
     try {
       file.transferTo(tempFile.toFile());
 
-      // 배치별 결과를 러닝 합산한다. 오류는 첫 100개만 유지(성능) — 전체 오류를 누적하지 않는다.
-      int[] totalRows = {0};
-      int[] validCount = {0};
-      int[] errorCount = {0};
-      List<ValidationErrorDetail> firstErrors = new java.util.ArrayList<>();
+      List<Map<String, String>> sample =
+          fileParserService.parseSampleRows(
+              tempFile, fileType, SAMPLE_VALIDATION_ROWS, parseOptions);
 
-      fileParserService.parseStreaming(
-          tempFile,
-          fileType,
-          parseOptions,
-          BATCH_SIZE,
-          batch -> {
-            // rowIndexBase = 이전 배치까지 누적된 행 수 → 오류의 rowIndex가 파일 전역 기준이 되도록 함
-            DataValidationService.ValidationResultWithDetails batchResult =
-                validationService.validateWithMapping(batch, columns, mappings, totalRows[0]);
+      // 임포트 잡 배치 검증과 동일한 로직 재사용. rowIndexBase=0 (샘플은 파일 선두).
+      List<ValidationErrorDetail> errors;
+      int validCount;
+      int errorCount;
+      if (mappings != null && !mappings.isEmpty()) {
+        DataValidationService.ValidationResultWithDetails vr =
+            validationService.validateWithMapping(sample, columns, mappings, 0);
+        errors = vr.errors();
+        validCount = vr.validCount();
+        errorCount = vr.errorCount();
+      } else {
+        DataValidationService.ValidationResult vr = validationService.validate(sample, columns, 0);
+        // ValidationResult.errors()는 List<String>이므로 상세 4필드로 매핑 불가 → 상세 없음 처리.
+        // (매핑 없는 경로는 기존에도 상세 컬럼 정보를 제공하지 않음)
+        errors = List.of();
+        validCount = vr.validCount();
+        errorCount = vr.errorCount();
+      }
 
-            totalRows[0] += batchResult.totalRows();
-            validCount[0] += batchResult.validCount();
-            errorCount[0] += batchResult.errorCount();
-
-            if (firstErrors.size() < 100) {
-              int remaining = 100 - firstErrors.size();
-              firstErrors.addAll(batchResult.errors().stream().limit(remaining).toList());
-            }
-          });
-
-      return new ImportValidateResponse(totalRows[0], validCount[0], errorCount[0], firstErrors);
+      return new ImportValidateResponse(sample.size(), validCount, errorCount, true, errors);
     } finally {
       // 검증 완료 후 임시 파일 정리 — 누적 방지
       Files.deleteIfExists(tempFile);
@@ -414,18 +408,10 @@ public class DataImportService {
       // 람다(transactionTemplate)에서 캡처하려면 effectively-final이어야 하므로 확정 값을 복사한다.
       final ParseOptions parseOptionsFinal = parseOptions;
 
-      // Pre-count: 스트리밍 전 전체 행 수를 미리 세어 progress 분모로 사용한다.
-      // 기존에는 parse() 결과 List의 size()를 썼으나, 스트리밍은 배치 단위로만 행을 보므로
-      // 진행률 표시를 위해 countRows()로 한 번 더 스캔한다. Excel/CSV 모두 File 기반이라 재-spill 없음.
-      log.info("Counting rows for import: {} → dataset {}", fileName, datasetId);
-      int totalRows = fileParserService.countRows(path, fileTypeLower, parseOptionsFinal);
-
+      // Task2: 검증(Pass1)이 전량 스트리밍하며 행수를 세므로, 별도의 countRows() pre-scan은 더 이상 필요 없다
+      // (기존에는 진행률 분모를 위해 파일을 한 번 더 스캔했으나, Pass1이 그 역할을 겸한다).
       asyncJobService.updateProgress(
-          jobId,
-          "VALIDATING",
-          30,
-          "Validating data...",
-          Map.of("totalRows", totalRows, "processedRows", 0));
+          jobId, "VALIDATING", 20, "Validating data...", Map.of("totalRows", 0, "processedRows", 0));
 
       // Load dataset columns / mappings / mode
       List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -460,10 +446,6 @@ public class DataImportService {
       boolean useStaging =
           importMode == ImportMode.UPSERT
               || (importMode == ImportMode.REPLACE && !pkColumns.isEmpty());
-      if (useStaging) {
-        stagingTable = dataTableRowService.createStagingTable(dataset.tableName(), columnNames);
-      }
-      final String stagingTableFinal = stagingTable;
 
       // ---- 배치 콜백에서 캡처할 누적 상태 (1-요소 배열/가변 리스트로 effectively-final 우회) ----
       int[] processedSoFar = {0}; // 검증까지 완료한 행 수(유효+오류) — rowIndexBase 및 최종 totalRows로 사용
@@ -475,20 +457,16 @@ public class DataImportService {
       boolean[] pkNullFound = {false};
       List<ValidationErrorDetail> pkErrorsAccum = new ArrayList<>();
       boolean[] replaceNoPkTruncated = {false}; // REPLACE(PK 無) lazy truncate: 유효 행 발견 시 1회만
-      boolean[] abortedEarly = {false}; // 전량 실패 조기 탈출 여부 — 실패 메시지 문구 결정에 사용
 
-      final int totalRowsForProgress = Math.max(totalRows, 1); // 0 나눗셈 방지
-
-      Consumer<List<Map<String, String>>> onBatch =
+      // Pass1 콜백: 검증 전용. 삽입하지 않고 카운트/오류만 누적하며, 첫 오류가 나오는 배치에서 fail-fast로
+      // 중단한다(부분 적재 방지). rowIndexBase는 이전까지 누적 처리된 행 수(전역 오프셋)로, 오류 rowNumber가
+      // 배치 로컬이 아닌 파일 전역 기준이 되게 한다(validateImport와 동일 패턴).
+      Consumer<List<Map<String, String>>> validateBatch =
           batch -> {
-            // 배치 검증 — rowIndexBase는 이전까지 누적 처리된 행 수(전역 오프셋)로, 오류 rowNumber가
-            // 배치 로컬이 아닌 파일 전역 기준이 되게 한다(validateImport와 동일 패턴).
-            List<List<Object>> validRowsBatch;
             if (hasMappings) {
               DataValidationService.ValidationResultWithDetails vr =
                   validationService.validateWithMapping(
                       batch, columns, mappingsFinal, processedSoFar[0]);
-              validRowsBatch = vr.validRows();
               validCount[0] += vr.validCount();
               errorCount[0] += vr.errorCount();
               if (detailErrorsAccum.size() < 100) {
@@ -498,7 +476,6 @@ public class DataImportService {
             } else {
               DataValidationService.ValidationResult vr =
                   validationService.validate(batch, columns, processedSoFar[0]);
-              validRowsBatch = vr.validRows();
               validCount[0] += vr.validCount();
               errorCount[0] += vr.errorCount();
               if (simpleErrorsAccum.size() < 100) {
@@ -508,20 +485,119 @@ public class DataImportService {
             }
             processedSoFar[0] += batch.size();
 
-            // 조기 탈출: 유효 행이 하나도 없이 오류만 임계치를 넘으면 파일 전체를 계속 검증하는 것이
-            // 무의미하므로 스트림을 중단한다. 예외를 던져 parseStreaming 루프를 빠져나오고,
-            // 바깥에서 잡아 기존 all-rows-failed 판정 경로로 자연스럽게 진입시킨다.
-            if (validCount[0] == 0 && errorCount[0] >= MAX_VALIDATION_ERRORS_BEFORE_ABORT) {
-              abortedEarly[0] = true;
+            // fail-fast: 검증 오류가 하나라도 나오면 즉시 스트림을 중단한다(부분 적재 방지, Task2).
+            // 예외를 던져 parseStreaming 루프를 빠져나오고, 바깥에서 잡아 검증 실패 판정으로 진입시킨다.
+            if (errorCount[0] >= 1) {
               throw new ValidationAbortException();
             }
 
-            if (validRowsBatch.isEmpty()) {
-              return; // 이 배치에는 적재할 유효 행이 없음
-            }
+            // 검증 단계는 전체 행수(분모)를 아직 모르므로 % 대신 고정값(20)으로 두어 UI가
+            // "검증 중…"을 스피너로 렌더하게 하고, processedRows만 실시간으로 갱신한다.
+            asyncJobService.updateProgress(
+                jobId,
+                "VALIDATING",
+                20,
+                "Validating data...",
+                Map.of("processedRows", processedSoFar[0]));
+          };
 
+      // Pass 1: 전량 검증. 첫 오류가 나오는 배치에서 ValidationAbortException으로 중단한다.
+      boolean validationPassed;
+      try {
+        fileParserService.parseStreaming(
+            path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, validateBatch);
+        validationPassed = errorCount[0] == 0;
+      } catch (ValidationAbortException abort) {
+        validationPassed = false;
+        log.warn(
+            "Validation aborted (fail-fast) for dataset {} at row ~{}: {} error(s)",
+            datasetId,
+            processedSoFar[0],
+            errorCount[0]);
+      }
+
+      int totalRowsFinal = processedSoFar[0]; // Pass1이 전량 스트리밍하며 센 파일 전체 행수
+      final int totalRowsForProgress = Math.max(totalRowsFinal, 1); // 0 나눗셈 방지
+      int validCountFinal;
+      int errorCountFinal = errorCount[0];
+
+      if (!validationPassed) {
+        // fail-fast: 검증 오류가 하나라도 있으면 전량 미적재. 첫 불량 행 상세를 메시지에 실어 원인 파악을 돕는다.
+        String sampleError =
+            hasMappings
+                ? (detailErrorsAccum.isEmpty()
+                    ? null
+                    : "Row "
+                        + detailErrorsAccum.get(0).rowNumber()
+                        + " column '"
+                        + detailErrorsAccum.get(0).columnName()
+                        + "' - "
+                        + detailErrorsAccum.get(0).error())
+                : (simpleErrorsAccum.isEmpty() ? null : simpleErrorsAccum.get(0));
+        String failMessage =
+            "Import validation failed, no rows were loaded ("
+                + errorCountFinal
+                + " error(s) found)"
+                + (sampleError != null ? " — e.g. " + sampleError : "");
+        asyncJobService.failJob(jobId, failMessage);
+
+        Object errorsForJson = hasMappings ? detailErrorsAccum : simpleErrorsAccum;
+        String errorJson = objectMapper.writeValueAsString(Map.of("errors", errorsForJson));
+
+        Map<String, Object> metadata =
+            Map.of(
+                "fileName",
+                fileName,
+                "fileSize",
+                fileSize,
+                "fileType",
+                fileType,
+                "totalRows",
+                totalRowsFinal,
+                "successRows",
+                0,
+                "errorRows",
+                errorCountFinal,
+                "errorDetails",
+                errorJson);
+
+        auditLogService.log(
+            userId,
+            username,
+            "IMPORT",
+            "dataset",
+            String.valueOf(datasetId),
+            "File import: " + fileName,
+            ipAddress,
+            userAgent,
+            "FAILURE",
+            failMessage,
+            metadata);
+
+        log.error(
+            "Import failed: validation error(s) found for dataset {} — {}",
+            datasetId,
+            failMessage);
+        return;
+      }
+
+      // ---- Pass 2: 삽입. 여기 도달했다는 것은 파일 전체가 검증을 통과했다는 뜻이다(validationPassed==true). ----
+      validCountFinal = validCount[0];
+
+      // 스테이징 생성은 삽입 경로에서만 수행한다 — 검증 중단(fail-fast) 시엔 빈 스테이징을 만들지 않는다
+      // (Task2 핵심 위험 1: 스테이징 생명주기). finally의 dropStagingTable은 stagingTable==null이면 no-op.
+      if (useStaging) {
+        stagingTable = dataTableRowService.createStagingTable(dataset.tableName(), columnNames);
+      }
+      final String stagingTableFinal = stagingTable;
+
+      // Pass 2 콜백: 삽입 전용. 이미 전량 검증을 통과했으므로 배치 전 행을 그대로 적재한다. 검증기와 동일한
+      // toRows() 변환을 사용해 "검증 통과 == 값 변환 성공"이 두 패스에서 어긋나지 않게 한다(핵심 위험 3).
+      Consumer<List<Map<String, String>>> insertBatch =
+          batch -> {
+            List<List<Object>> rows = validationService.toRows(batch, columns, mappingsFinal);
             List<Map<String, Object>> rowMapsBatch =
-                validRowsBatch.stream()
+                rows.stream()
                     .map(
                         row -> {
                           Map<String, Object> rowMap = new HashMap<>();
@@ -536,10 +612,11 @@ public class DataImportService {
 
             switch (importMode) {
               case APPEND -> {
-                // NOTE(부분 커밋): APPEND는 staging 없이 target 테이블에 배치를 곧바로 커밋하며 스트리밍한다(트랜잭션으로
-                // 감싸지 않음 — 스트리밍 본질). 따라서 파스/삽입이 중간 배치에서 실패하면 그 이전까지 커밋된 행은 target에
-                // 남는다(롤백되지 않음). 이는 전량 로딩 시절의 "검증 후 0행 or 전량" 원자성과 다른, 스트리밍 전환의 의도된
-                // trade-off다. 원자성이 필요한 REPLACE(PK 無)만 스트림 전체를 트랜잭션으로 감싼다(아래 참조).
+                // NOTE: 검증(Pass1)이 삽입(Pass2) 전에 전량 완료되므로 "검증 실패로 인한" 부분 적재는
+                // 없다. 단 APPEND Pass2는 트랜잭션으로 감싸지 않는다(스트리밍 본질 — 대용량 파일을
+                // 메모리에 올리지 않기 위함). 따라서 "삽입 도중 DB 오류"가 나면 그 이전까지 커밋된
+                // 배치는 롤백되지 않고 남는다. 이는 REPLACE(PK 無)만 truncate+insert를 트랜잭션으로
+                // 감싼 것과의 차이이며, 기존 스트리밍 구조가 의도적으로 감수하는 trade-off다.
                 BiConsumer<Integer, Integer> wrapped =
                     (processed, total) -> {
                       int globalProcessed = base + processed;
@@ -550,7 +627,7 @@ public class DataImportService {
                           "INSERTING",
                           Math.min(pct, 100),
                           "Inserting data...",
-                          Map.of("totalRows", totalRows, "processedRows", globalProcessed));
+                          Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
                 dataTableRowService.insertBatchWithProgress(
                     dataset.tableName(), columnNames, rowMapsBatch, wrapped);
@@ -594,7 +671,7 @@ public class DataImportService {
                           "INSERTING",
                           Math.min(pct, 100),
                           "Upserting data...",
-                          Map.of("totalRows", totalRows, "processedRows", globalProcessed));
+                          Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
                 dataTableRowService.insertStagingBatchWithProgress(
                     stagingTableFinal, columnNames, rowMapsBatch, wrapped);
@@ -611,14 +688,16 @@ public class DataImportService {
                           "INSERTING",
                           Math.min(pct, 100),
                           "Replacing table...",
-                          Map.of("totalRows", totalRows, "processedRows", globalProcessed));
+                          Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
                 if (!pkColumns.isEmpty()) {
                   dataTableRowService.insertStagingBatchWithProgress(
                       stagingTableFinal, columnNames, rowMapsBatch, wrapped);
                 } else {
                   // PK가 없으면 unique index가 없어 dedup이 불필요 — target에 직접 적재.
-                  // lazy truncate: 유효 행이 처음 나올 때 1회만 truncate → 전량 무효 시 대상 보존.
+                  // lazy truncate: 유효 행이 처음 나올 때 1회만 truncate. 여기 도달했다는 것 자체가
+                  // 전량 검증을 통과했다는 뜻이므로(fail-fast), 기존의 "전량 무효 시 보존" lazy 방어는
+                  // 이제 도달하지 않지만 안전하게 유지한다.
                   if (!replaceNoPkTruncated[0]) {
                     dataTableRowService.truncateTable(dataset.tableName());
                     replaceNoPkTruncated[0] = true;
@@ -631,94 +710,22 @@ public class DataImportService {
             }
           };
 
-      // REPLACE(PK 無)만 truncate+insert 원자성이 필요하므로 스트림 전체를 트랜잭션으로 감싼다.
+      // REPLACE(PK 無)만 truncate+insert 원자성이 필요하므로 삽입 스트림 전체를 트랜잭션으로 감싼다.
       // 나머지 모드는 staging(별도 영구 테이블)에 배치 커밋하며 스트리밍하므로 트랜잭션이 불필요하다
       // (하나의 거대한 트랜잭션으로 커넥션을 점유하면 스트리밍의 이점이 사라진다).
-      try {
-        if (importMode == ImportMode.REPLACE && pkColumns.isEmpty()) {
-          transactionTemplate.executeWithoutResult(
-              status -> {
-                try {
-                  fileParserService.parseStreaming(
-                      path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, onBatch);
-                } catch (Exception e) {
-                  throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
-                }
-              });
-        } else {
-          fileParserService.parseStreaming(
-              path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, onBatch);
-        }
-      } catch (ValidationAbortException abort) {
-        // 조기 탈출로 스트림을 중단했다. REPLACE(PK 無)라면 트랜잭션이 롤백되어 대상 테이블이 원복된다.
-        // 유효 행이 0이므로 아래 all-rows-failed 판정으로 자연스럽게 진입한다.
-        log.warn(
-            "Validation aborted early for dataset {}: {} errors, 0 valid rows so far",
-            datasetId,
-            errorCount[0]);
-      }
-
-      int totalRowsFinal = processedSoFar[0];
-      int validCountFinal = validCount[0];
-      int errorCountFinal = errorCount[0];
-
-      // all-rows-failed: 스트림이 끝나야 전체 파일을 봤다고 확정할 수 있으므로 여기서 판정한다.
-      if (validCountFinal == 0 && errorCountFinal > 0) {
-        // 전량 실패 시 UI가 "All rows failed validation"만 보여주면 원인 파악이 불가능하므로,
-        // 실제 검증 오류의 첫 사례를 요약 메시지에 함께 실어 준다(상세 목록은 errorDetails에 보존).
-        String sampleError =
-            hasMappings
-                ? (detailErrorsAccum.isEmpty()
-                    ? null
-                    : "Row "
-                        + detailErrorsAccum.get(0).rowNumber()
-                        + " column '"
-                        + detailErrorsAccum.get(0).columnName()
-                        + "' - "
-                        + detailErrorsAccum.get(0).error())
-                : (simpleErrorsAccum.isEmpty() ? null : simpleErrorsAccum.get(0));
-        String prefix =
-            abortedEarly[0]
-                ? "Validation aborted after " + errorCountFinal + "+ failures with no valid rows"
-                : "All rows failed validation (" + errorCountFinal + " errors)";
-        String failMessage = prefix + (sampleError != null ? " — e.g. " + sampleError : "");
-        asyncJobService.failJob(jobId, failMessage);
-
-        Object errorsForJson = hasMappings ? detailErrorsAccum : simpleErrorsAccum;
-        String errorJson = objectMapper.writeValueAsString(Map.of("errors", errorsForJson));
-
-        Map<String, Object> metadata =
-            Map.of(
-                "fileName",
-                fileName,
-                "fileSize",
-                fileSize,
-                "fileType",
-                fileType,
-                "totalRows",
-                totalRowsFinal,
-                "successRows",
-                0,
-                "errorRows",
-                errorCountFinal,
-                "errorDetails",
-                errorJson);
-
-        auditLogService.log(
-            userId,
-            username,
-            "IMPORT",
-            "dataset",
-            String.valueOf(datasetId),
-            "File import: " + fileName,
-            ipAddress,
-            userAgent,
-            "FAILURE",
-            failMessage,
-            metadata);
-
-        log.error("Import failed: all rows invalid for dataset {} — {}", datasetId, failMessage);
-        return;
+      if (importMode == ImportMode.REPLACE && pkColumns.isEmpty()) {
+        transactionTemplate.executeWithoutResult(
+            status -> {
+              try {
+                fileParserService.parseStreaming(
+                    path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, insertBatch);
+              } catch (Exception e) {
+                throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
+              }
+            });
+      } else {
+        fileParserService.parseStreaming(
+            path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, insertBatch);
       }
 
       // UPSERT에서 NULL PK가 발견되면 promote 없이 실패 처리(기존과 동일 메시지/감사 로그).

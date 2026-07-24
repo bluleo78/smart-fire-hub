@@ -2,10 +2,16 @@ import { CheckCircle2, Clock,Loader2, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { ImportProgress } from '@/hooks/queries/useImportProgress';
+import { getFailedPhase } from '@/hooks/queries/useImportProgress';
+import type { ValidationErrorDetail } from '@/types/dataImport';
+
+import { ValidationErrorTable } from './ValidationErrorTable';
 
 interface ImportProgressViewProps {
   progress: ImportProgress | null;
   onClose: () => void;
+  /** FAILED 시 이력(ImportResponse)에서 조회해 전달하는 검증 오류 상세 — 없으면 테이블을 렌더하지 않는다 */
+  failedErrors?: ValidationErrorDetail[] | null;
 }
 
 type Stage = ImportProgress['stage'];
@@ -21,19 +27,26 @@ const STAGE_LABELS: Record<Stage, string> = {
   FAILED: '실패',
 };
 
-function getStageIndex(stage: Stage): number {
-  return STAGES.indexOf(stage === 'FAILED' ? 'INSERTING' : stage);
+// FAILED는 STAGES 목록에 없는 종단 상태라 그 자체로는 "몇 번째 단계"인지 알 수 없다.
+// 백엔드가 실패 시점의 progress를 보존해서 보내주므로(getFailedPhase), 이를 근거로
+// 실제로 실패한 단계(VALIDATING 또는 INSERTING)를 역산해 스텝퍼에 정확히 표기한다.
+function getStageIndex(stage: Stage, failedProgress?: number): number {
+  if (stage === 'FAILED') {
+    return STAGES.indexOf(getFailedPhase(failedProgress ?? 0));
+  }
+  return STAGES.indexOf(stage);
 }
 
 interface StepIndicatorProps {
   stage: Stage;
   label: string;
   currentStage: Stage;
+  failedProgress?: number;
 }
 
-function StepIndicator({ stage, label, currentStage }: StepIndicatorProps) {
-  const currentIdx = getStageIndex(currentStage);
-  const stageIdx = getStageIndex(stage);
+function StepIndicator({ stage, label, currentStage, failedProgress }: StepIndicatorProps) {
+  const currentIdx = getStageIndex(currentStage, failedProgress);
+  const stageIdx = getStageIndex(stage, failedProgress);
   const isFailed = currentStage === 'FAILED';
 
   let state: 'done' | 'active' | 'pending';
@@ -94,11 +107,13 @@ function ProgressBar({ value }: ProgressBarProps) {
   );
 }
 
-export function ImportProgressView({ progress, onClose }: ImportProgressViewProps) {
+export function ImportProgressView({ progress, onClose, failedErrors }: ImportProgressViewProps) {
   const stage = progress?.stage ?? 'PENDING';
   const pct = progress?.progress ?? 0;
   const isTerminal = stage === 'COMPLETED' || stage === 'FAILED';
   const isPending = stage === 'PENDING';
+  // VALIDATING은 분모(totalRows)가 없어 진행률을 계산할 수 없다 — % 바 대신 스피너로 표시(indeterminate)
+  const isValidatingIndeterminate = stage === 'VALIDATING';
 
   const handleClose = () => {
     if (!isTerminal && !isPending) {
@@ -126,7 +141,7 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
       <div className="flex items-start justify-between gap-1">
         {STAGES.map((s, idx) => (
           <div key={s} className="flex items-center flex-1">
-            <StepIndicator stage={s} label={STAGE_LABELS[s]} currentStage={stage} />
+            <StepIndicator stage={s} label={STAGE_LABELS[s]} currentStage={stage} failedProgress={pct} />
             {idx < STAGES.length - 1 && (
               <div className="flex-1 h-px bg-border mx-1 mt-[-12px]" />
             )}
@@ -134,8 +149,17 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
         ))}
       </div>
 
-      {/* Progress bar (only when not terminal) */}
-      {!isTerminal && (
+      {/* Progress bar — VALIDATING은 분모가 없어 스피너(indeterminate), INSERTING은 % 바 */}
+      {!isTerminal && isValidatingIndeterminate && (
+        <div className="flex flex-col items-center gap-2 py-2">
+          <Loader2 className="w-6 h-6 animate-spin text-info" />
+          <p className="text-sm text-muted-foreground">검증 중…</p>
+          {progress.processedRows !== undefined && (
+            <p className="text-xs text-muted-foreground">{progress.processedRows.toLocaleString()}행 검사됨</p>
+          )}
+        </div>
+      )}
+      {!isTerminal && !isValidatingIndeterminate && (
         <div className="space-y-1.5">
           <ProgressBar value={pct} />
           <div className="flex justify-end">
@@ -174,10 +198,16 @@ export function ImportProgressView({ progress, onClose }: ImportProgressViewProp
           {progress.errorMessage && (
             <p className="text-sm text-destructive pl-7">{progress.errorMessage}</p>
           )}
+          {/* 실패 시점의 상세 오류(행/컬럼/값/오류)는 진행 이벤트엔 없고 이력(ImportResponse)에서 조회해 전달받는다 */}
+          {failedErrors && failedErrors.length > 0 && (
+            <div className="pl-7">
+              <ValidationErrorTable errors={failedErrors} />
+            </div>
+          )}
         </div>
       )}
 
-      {!isTerminal && (
+      {!isTerminal && !isValidatingIndeterminate && (
         <div className="space-y-1">
           <p className="text-sm text-center text-muted-foreground">
             {stage === 'INSERTING' && progress.processedRows !== undefined && progress.totalRows !== undefined

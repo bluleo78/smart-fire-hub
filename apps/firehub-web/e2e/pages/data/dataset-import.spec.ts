@@ -31,9 +31,9 @@ function createPreviewResponse() {
   };
 }
 
-/** 검증 응답 — 오류 없음 */
+/** 검증 응답 — 오류 없음 (샘플 검증) */
 function createValidateResponse() {
-  return { totalRows: 2, validRows: 2, errorRows: 0, errors: [] };
+  return { sampleSize: 2, validRows: 2, errorRows: 0, sampled: true, errors: [] };
 }
 
 /** 임포트 시작 응답 — jobId 는 진행 상황 SSE/폴링에 사용된다 */
@@ -407,7 +407,7 @@ test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
       page,
       'POST',
       `/api/v1/datasets/${DATASET_ID}/imports/validate`,
-      { totalRows: 2, validRows: 0, errorRows: 2, errors: [{ row: 1, message: '형식 오류' }] },
+      { sampleSize: 2, validRows: 0, errorRows: 2, sampled: true, errors: [{ row: 1, message: '형식 오류' }] },
     );
 
     await page.goto(`/data/datasets/${DATASET_ID}`);
@@ -428,8 +428,8 @@ test.describe('임포트 에러 처리 — useImportDialog 분기', () => {
       validateBtn.click(),
     ]);
 
-    // handleValidate → result.errorRows > 0 → toast.warning
-    await expect(page.getByText(/검증 완료.*2개의 오류/)).toBeVisible({ timeout: 5000 });
+    // handleValidate → result.errorRows > 0 → toast.warning (샘플 기준 문구)
+    await expect(page.getByText(/샘플 2행 중 2개 오류/)).toBeVisible({ timeout: 5000 });
   });
 });
 
@@ -455,9 +455,9 @@ test.describe('#128 회귀 방지 — 0행 데이터 CSV 임포트 버튼 비활
     };
   }
 
-  /** 0행 검증 응답 — validRows === 0 */
+  /** 0행 검증 응답 — validRows === 0 (샘플 검증) */
   function createZeroRowValidateResponse() {
-    return { totalRows: 0, validRows: 0, errorRows: 0, errors: [] };
+    return { sampleSize: 0, validRows: 0, errorRows: 0, sampled: true, errors: [] };
   }
 
   test('검증 후 validRows === 0 이면 임포트 버튼이 비활성화된다', async ({ authenticatedPage: page }) => {

@@ -15,7 +15,9 @@ export interface ImportResponse {
   totalRows: number | null;
   successRows: number | null;
   errorRows: number | null;
-  errorDetails: Record<string, unknown> | null;
+  // 백엔드는 { errors: ValidationErrorDetail[] } 를 JSON 문자열로 이중 인코딩해 내려준다 —
+  // parseErrorDetails() 로 안전 파싱한다 (src/lib/errorDetails.ts).
+  errorDetails: string | Record<string, unknown> | null;
   errorMessage: string | null;
   importedBy: string;
   startedAt: string | null;
@@ -43,9 +45,10 @@ export interface ColumnMappingEntry {
 }
 
 export interface ImportValidateResponse {
-  totalRows: number;
+  sampleSize: number; // 검사한 샘플 행 수 (= min(200, 파일 행수))
   validRows: number;
-  errorRows: number;
+  errorRows: number; // 오류 상세(errors) 건수 — 실패 컬럼 단위이며 실패 행 수와 다를 수 있음
+  sampled: boolean; // 항상 true — 전량이 아닌 샘플 검사임을 표기
   errors: ValidationErrorDetail[];
 }
 

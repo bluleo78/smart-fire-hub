@@ -1,12 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { useEffect,useState } from 'react';
+import { useEffect,useMemo,useState } from 'react';
 import { toast } from 'sonner';
 
-import { usePreviewImport, useUploadFile,useValidateImport } from '../../../hooks/queries/useDatasets';
+import { useImports,usePreviewImport, useUploadFile,useValidateImport } from '../../../hooks/queries/useDatasets';
 import type { ImportProgress } from '../../../hooks/queries/useImportProgress';
 import { useImportProgress } from '../../../hooks/queries/useImportProgress';
 import { handleApiError } from '../../../lib/api-error';
+import { parseErrorDetails } from '../../../lib/errorDetails';
 import type {
   ColumnMappingEntry,
   ImportMode,
@@ -35,6 +36,7 @@ interface UseImportDialogReturn {
   setImportMode: (mode: ImportMode) => void;
   jobId: string | null;
   importProgress: ImportProgress | null;
+  failedErrors: ValidationErrorDetail[] | null;
   handlers: {
     fileSelect: (file: File) => void;
     mappingChange: (fileColumn: string, datasetColumn: string | null) => void;
@@ -78,14 +80,32 @@ export function useImportDialog({
   const previewImport = usePreviewImport(datasetId);
   const validateImport = useValidateImport(datasetId);
   const uploadFile = useUploadFile(datasetId);
+  // 임포트 진행 실패 시 오류 상세(errorDetails)는 SSE 이벤트에 실리지 않고 audit_log를 통해
+  // 이력(ImportResponse)에만 저장된다 — 이력 목록을 조회해 FAILED 블록에서 재사용한다.
+  const { data: imports } = useImports(datasetId);
 
-  // Invalidate queries when import completes
+  // Invalidate queries when import completes or fails (실패 이력도 errorDetails 조회를 위해 갱신 필요)
   useEffect(() => {
-    if (importProgress?.stage === 'COMPLETED') {
+    if (importProgress?.stage === 'COMPLETED' || importProgress?.stage === 'FAILED') {
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'imports'] });
       queryClient.invalidateQueries({ queryKey: ['datasets', datasetId] });
     }
   }, [importProgress?.stage, queryClient, datasetId]);
+
+  // 현재 열려 있는 다이얼로그의 선택 파일과 이름이 같은 가장 최근 FAILED 이력에서
+  // 검증 오류 상세를 찾는다. jobId는 ImportResponse에 없어 직접 매칭할 수 없기 때문에
+  // fileName + 최신순 정렬을 근사 매칭 기준으로 사용한다.
+  const failedErrors = useMemo(() => {
+    if (importProgress?.stage !== 'FAILED' || !imports) return null;
+    const candidates = imports
+      .filter((i) => i.status === 'FAILED' && (!selectedFile || i.fileName === selectedFile.name))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    for (const candidate of candidates) {
+      const parsed = parseErrorDetails(candidate.errorDetails);
+      if (parsed) return parsed;
+    }
+    return null;
+  }, [importProgress?.stage, imports, selectedFile]);
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -137,10 +157,11 @@ export function useImportDialog({
     try {
       const result = await validateImport.mutateAsync({ file: selectedFile, mappings });
       setValidationResult(result);
+      // 사전 검증 완료 토스트 — 샘플 검사임을 명시
       if (result.errorRows === 0) {
-        toast.success('검증에 성공했습니다.');
+        toast.success(`샘플 ${result.sampleSize}행 검사 통과`);
       } else {
-        toast.warning(`검증 완료: ${result.errorRows}개의 오류가 발견되었습니다.`);
+        toast.warning(`샘플 ${result.sampleSize}행 중 ${result.errorRows}개 오류`);
       }
     } catch (error) {
       handleApiError(error, '검증에 실패했습니다.');
@@ -200,6 +221,7 @@ export function useImportDialog({
     setImportMode,
     jobId,
     importProgress,
+    failedErrors,
     handlers: {
       fileSelect: handleFileSelect,
       mappingChange: handleMappingChange,

@@ -265,6 +265,76 @@ class DataValidationServiceMappingTest {
   }
 
   // -----------------------------------------------------------------------
+  // toRows — Pass1(검증)과 Pass2(삽입)가 동일한 값 변환을 사용하는지 확인하는 정합성 테스트
+  // (Task2 핵심 위험 3: 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 버그가 생긴다).
+  // -----------------------------------------------------------------------
+
+  @Test
+  void toRows_withMapping_matchesValidateWithMappingValidRows() {
+    List<DatasetColumnResponse> columns =
+        List.of(col("name", "TEXT", false), col("age", "INTEGER", true));
+    List<ColumnMappingEntry> mappings =
+        List.of(new ColumnMappingEntry("이름", "name"), new ColumnMappingEntry("나이", "age"));
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("이름", "Alice", "나이", "30"),
+            Map.of("이름", "Bob", "나이", "25"),
+            Map.of("이름", "Carol", "나이", ""));
+
+    ValidationResultWithDetails vr = service.validateWithMapping(rows, columns, mappings);
+    List<List<Object>> converted = service.toRows(rows, columns, mappings);
+
+    // 전량 유효한 배치이므로 toRows()의 원소별 결과가 검증 결과의 validRows()와 정확히 같아야 한다.
+    assertThat(vr.errorCount()).isZero();
+    assertThat(converted).isEqualTo(vr.validRows());
+  }
+
+  @Test
+  void toRows_withoutMapping_matchesValidateValidRows() {
+    List<DatasetColumnResponse> columns =
+        List.of(
+            col("name", "TEXT", false),
+            col("age", "INTEGER", true),
+            col("score", "DECIMAL", true));
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("name", "Alice", "age", "30", "score", "88.5"),
+            Map.of("name", "Bob", "age", "25", "score", "91.2"));
+
+    DataValidationService.ValidationResult vr = service.validate(rows, columns);
+    List<List<Object>> converted = service.toRows(rows, columns, null);
+
+    assertThat(vr.errorCount()).isZero();
+    assertThat(vr.validRows()).hasSize(2);
+    assertThat(converted).isEqualTo(vr.validRows());
+  }
+
+  /**
+   * 매핑 없는 경로에서 필수값 누락/타입 변환 실패가 있는 잘못된 행은 validate()가 에러로 기록하고 유효 행에서 제외해야 한다.
+   * validate()와 toRows/validateWithMapping이 동일한 convertRowOrNull을 공유하는지 회귀 확인하는 테스트.
+   */
+  @Test
+  void validate_withoutMapping_invalidRow_recordsErrorAndExcludesRow() {
+    List<DatasetColumnResponse> columns =
+        List.of(col("name", "TEXT", false), col("age", "INTEGER", true));
+    List<Map<String, String>> rows =
+        List.of(
+            Map.of("name", "Alice", "age", "30"), // valid
+            Map.of("name", "", "age", "25"), // 필수값(name) 누락
+            Map.of("name", "Carl", "age", "not-a-number")); // 타입 변환 실패
+
+    DataValidationService.ValidationResult vr = service.validate(rows, columns);
+
+    assertThat(vr.validRows()).hasSize(1);
+    assertThat(vr.errorCount()).isEqualTo(2);
+    assertThat(vr.errors().get(0)).contains("Row 2").contains("name").contains("required but empty");
+    assertThat(vr.errors().get(1))
+        .contains("Row 3")
+        .contains("age")
+        .contains("Invalid integer value");
+  }
+
+  // -----------------------------------------------------------------------
   // validatePrimaryKeys — 정상 / PK 빈값 / 중복
   // -----------------------------------------------------------------------
 

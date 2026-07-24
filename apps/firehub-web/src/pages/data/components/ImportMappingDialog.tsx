@@ -29,6 +29,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
     importMode,
     setImportMode,
     importProgress,
+    failedErrors,
     handlers,
     derived,
     status,
@@ -123,7 +124,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
         )}
 
         {step === 3 && (
-          <ImportProgressView progress={importProgress} onClose={handlers.close} />
+          <ImportProgressView progress={importProgress} onClose={handlers.close} failedErrors={failedErrors} />
         )}
       </DialogContent>
     </Dialog>
