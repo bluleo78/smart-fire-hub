@@ -2,18 +2,26 @@ package com.smartfirehub.job.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.user.dto.UserResponse;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -281,5 +289,59 @@ class AsyncJobServiceTest extends IntegrationTestBase {
     assertThat(jobsA.get(0).stage()).isEqualTo("PENDING");
     assertThat(jobsB).hasSize(1);
     assertThat(jobsB.get(0).stage()).isEqualTo("PENDING");
+  }
+
+  // ──────────────────────────────────────────────
+  // sendHeartbeats (SSE 하트비트)
+  // ──────────────────────────────────────────────
+
+  /** sendHeartbeats: 활성 emitter가 있으면 각 emitter에 comment("ping") 이벤트가 전송된다. */
+  @Test
+  void sendHeartbeats_withActiveEmitters_sendsPingComment() throws IOException {
+    SseEmitter mockEmitter1 = mock(SseEmitter.class);
+    SseEmitter mockEmitter2 = mock(SseEmitter.class);
+
+    ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters =
+        new ConcurrentHashMap<>();
+    emitters.put(
+        "job-A", new CopyOnWriteArrayList<>(List.of(mockEmitter1)));
+    emitters.put(
+        "job-B", new CopyOnWriteArrayList<>(List.of(mockEmitter2)));
+    ReflectionTestUtils.setField(asyncJobService, "emitters", emitters);
+
+    asyncJobService.sendHeartbeats();
+
+    verify(mockEmitter1, times(1)).send(any(SseEmitter.SseEventBuilder.class));
+    verify(mockEmitter2, times(1)).send(any(SseEmitter.SseEventBuilder.class));
+  }
+
+  /** sendHeartbeats: 활성 emitter가 없으면(emitters 맵이 비어 있으면) no-op이며 예외가 발생하지 않는다. */
+  @Test
+  void sendHeartbeats_noActiveEmitters_noOp() {
+    ReflectionTestUtils.setField(
+        asyncJobService, "emitters", new ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>>());
+
+    asyncJobService.sendHeartbeats();
+    // 예외 없이 반환되면 성공 (검증할 emitter가 없으므로 상호작용 없음)
+  }
+
+  /** sendHeartbeats: emitter의 send()가 실패(IOException)하면 removeEmitter로 정리되어 emitters 맵에서 제거된다. */
+  @Test
+  void sendHeartbeats_sendFails_removesDeadEmitter() throws IOException {
+    SseEmitter mockEmitter = mock(SseEmitter.class);
+    org.mockito.Mockito.doThrow(new IOException("broken pipe"))
+        .when(mockEmitter)
+        .send(any(SseEmitter.SseEventBuilder.class));
+
+    ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters =
+        new ConcurrentHashMap<>();
+    CopyOnWriteArrayList<SseEmitter> list = new CopyOnWriteArrayList<>(List.of(mockEmitter));
+    emitters.put("job-C", list);
+    ReflectionTestUtils.setField(asyncJobService, "emitters", emitters);
+
+    asyncJobService.sendHeartbeats();
+
+    verify(mockEmitter, times(1)).send(any(SseEmitter.SseEventBuilder.class));
+    assertThat(list).isEmpty();
   }
 }

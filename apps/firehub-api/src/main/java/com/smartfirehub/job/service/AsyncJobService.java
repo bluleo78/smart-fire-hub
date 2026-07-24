@@ -15,6 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +30,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Slf4j
 public class AsyncJobService {
 
-  private static final long EMITTER_TIMEOUT_MS = 300_000L;
+  // 대용량 임포트가 수분~수십분 소요될 수 있어 5분(300_000L) 만료 시 진행률 스트림이 조기 종료되던 문제를 방지하기 위해 30분으로 상향
+  private static final long EMITTER_TIMEOUT_MS = 1_800_000L;
   private static final int MAX_SUBSCRIBERS_PER_JOB = 5;
   private static final int DB_UPDATE_INTERVAL = 5;
 
@@ -192,6 +194,27 @@ public class AsyncJobService {
   public List<AsyncJobStatusResponse> findActiveJobs(
       String jobType, String resource, String resourceId) {
     return asyncJobRepository.findActiveByResource(jobType, resource, resourceId);
+  }
+
+  /**
+   * 15초 주기로 활성 emitter 전체에 SSE comment(":ping")를 전송하는 하트비트. 프록시/로드밸런서의 idle timeout으로 커넥션이 끊기거나, 클라이언트가
+   * 죽은 채로 emitter만 남는 것을 방지한다. 데이터 이벤트가 아닌 comment이므로 프론트의 이벤트 파싱(onmessage/addEventListener)에는 영향을 주지 않는다.
+   * 이 프로젝트는 이미 {@code @EnableScheduling}이 전역 활성화되어 있고(AsyncConfig), 동일한 SSE 하트비트 패턴을
+   * {@code SseEmitterRegistry.sendHeartbeat()}에서 이미 사용 중이므로, 별도 ScheduledExecutorService를 새로 두지 않고 기존 관례를 따른다.
+   */
+  @Scheduled(fixedRate = 15_000)
+  void sendHeartbeats() {
+    if (emitters.isEmpty()) return;
+
+    // ConcurrentHashMap.forEach는 스냅샷이 아니라 약한 일관성(weakly consistent) 순회를 제공하므로
+    // 순회 중 removeEmitter()로 인한 리스트 변경(CopyOnWriteArrayList)이 있어도 안전하다.
+    emitters.forEach(
+        (jobId, list) -> {
+          if (list.isEmpty()) return;
+          for (SseEmitter emitter : list) {
+            safeSend(jobId, emitter, SseEmitter.event().comment("ping"));
+          }
+        });
   }
 
   // --- Internal helpers ---
