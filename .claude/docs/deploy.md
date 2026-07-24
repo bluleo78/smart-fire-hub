@@ -51,6 +51,65 @@ docker compose ps                      # 상태 확인
 > deploy.sh 는 buildx 캐시를 사용하므로 두 번째 빌드부터 단축된다.
 > 이미 이미지를 push 한 경우 위의 부분 배포 방식이 더 빠르다.
 
+## 사이트별 브랜딩 (화이트라벨) — 재빌드 없이 로고·아이콘 교체
+
+web 이미지는 **단일 이미지**를 유지하고, 브랜딩(브랜드명·로고·파비콘)은 런타임에 주입한다.
+프론트가 `<head>`에서 `/config.js`를 먼저 읽어 `window.__APP_CONFIG__`로 확정하므로 벤더 브랜드 깜빡임이 없다.
+
+- **기본값**: 이미지에 `dist/config.js`(= `apps/firehub-web/public/config.js`)가 포함되어 있고, 미교체 시 기존 "Smart Fire Hub" 브랜드가 유지된다.
+- **사이트별 override**: 그 파일만 사이트별 파일로 마운트하면 된다(재빌드 불필요). 볼륨을 **처음 추가**할 때만 `docker compose up -d --force-recreate web`가 필요하고, 이후 마운트된 `config.js` 내용 수정은 `no-store` 캐시라 새로고침으로 즉시 반영된다.
+
+```yaml
+# ~/prod/<site>/docker-compose.yml — web 서비스에 config.js 마운트
+services:
+  web:
+    volumes:
+      - ./branding/config.js:/usr/share/nginx/html/config.js:ro
+```
+
+```js
+// ./branding/config.js — 사이트별 브랜딩
+(function () {
+  var config = {
+    brandName: 'Acme Data',
+    logoUrl: '/firehub-files/branding/acme-logo.svg', // null이면 기본 Flame 아이콘
+    faviconUrl: '/firehub-files/branding/acme-fav.svg',
+  };
+  window.__APP_CONFIG__ = config;
+  document.title = config.brandName;
+  var l = document.querySelector("link[rel='icon']");
+  if (!l) { l = document.createElement('link'); l.rel = 'icon'; document.head.appendChild(l); }
+  l.href = config.faviconUrl;
+})();
+```
+
+- **로고/파비콘 에셋**: 이미 동일 오리진(8888)으로 서빙되는 **MinIO 경로**(`/firehub-files/...`)에 업로드해 URL로 지정하는 방식을 권장한다(별도 마운트 불필요). 또는 nginx web root(`/usr/share/nginx/html/branding/`)에 파일을 마운트하고 `/branding/...` 경로로 참조해도 된다.
+- `nginx.conf`는 `/config.js`에 `Cache-Control: no-store`를 설정해 교체가 즉시 반영된다.
+- **파비콘 포맷**: `index.html`의 정적 `<link rel="icon" type="image/svg+xml">`가 남아 있어 SVG 파비콘을 권장한다. `.png`/`.ico`를 쓰려면 config.js에서 `link.type`도 함께 조정한다(대부분 브라우저는 무시하지만).
+### 백엔드 브랜딩 (firehub-api / ai-agent)
+
+웹 UI 외 **백엔드 생성 콘텐츠**의 브랜드명도 배포별 env로 주입한다(기본값 "Smart Fire Hub").
+
+- **firehub-api**: Spring 프로퍼티 `app.branding.name` (env `APP_BRANDING_NAME`, 기본 `Smart Fire Hub`). 적용 대상:
+  - 프로액티브 리포트 템플릿(`proactive-report.html`, `proactive-report-pdf.html`) — 브랜드 표기·푸터
+  - 알림 채널 — 이메일 제목, Slack/Kakao 문구, 채널 연동/테스트 알림 메시지
+- **firehub-ai-agent**: env `BRAND_NAME` (기본 `Smart Fire Hub`) — AI 어시스턴트 자기소개(`SYSTEM_PROMPT`/`OPENCODE_SYSTEM_PROMPT`).
+
+docker-compose `environment:`(또는 `.env`)에 두 값을 사이트 브랜드로 지정하면 된다:
+
+```yaml
+services:
+  api:
+    environment:
+      APP_BRANDING_NAME: "Acme Data"
+  ai-agent:
+    environment:
+      BRAND_NAME: "Acme Data"
+```
+
+> **AI 페르소나 DB 시드(관리자 편집 영역)**: 일반 채팅 시스템 프롬프트는 `[ai-agent const(BRAND_NAME 반영)]` **뒤에** DB 설정값 `ai.system_prompt`(V69 시드)가 `[사용자 지시사항]`으로 append된다. 이 시드는 "당신은 Smart Fire Hub의 AI 어시스턴트입니다."를 담고 있으므로, `BRAND_NAME`만 바꾸면 이 문구는 기본값 그대로 남는다. 이 값은 **관리자가 설정 화면에서 직접 편집하는 DB 콘텐츠**로 설계상 env 자동 주입 대상이 아니다. 화이트라벨 시 관리자가 설정 화면에서 `ai.system_prompt`의 페르소나 문구를 사이트 브랜드로 수정한다.
+- **다음 단계(멀티테넌트)**: 정적 `/config.js` 대신 서버가 요청 `Host`별로 `/config.js`를 생성하면 React 코드 변경 없이 한 배포가 여러 사이트 브랜딩을 서빙할 수 있다(소비 인터페이스 `window.__APP_CONFIG__` 동일). apple-touch-icon·theme-color·PWA manifest는 이때 함께 추가한다(현재 범위 밖).
+
 ## OpenCode 에이전트(`ai.agent_type=opencode`) 운영 요건
 
 설정 화면에서 AI 옵션을 **OpenCode**로 선택하면 ai-agent 컨테이너가 `opencode run` 서브프로세스로 채팅을 처리한다. 운영 시 아래가 갖춰져야 동작한다.

@@ -46,6 +46,10 @@ public class EmailDeliveryChannel implements DeliveryChannel {
   @Value("${app.base-url:}")
   private String appBaseUrl;
 
+  /** 화이트라벨링용 브랜드명. 이메일 제목 접두어와 리포트 템플릿의 브랜드 표기에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
+
   @Override
   public String type() {
     return "EMAIL";
@@ -135,7 +139,7 @@ public class EmailDeliveryChannel implements DeliveryChannel {
           MimeMessageHelper helper = new MimeMessageHelper(message, multipart, "UTF-8");
           helper.setFrom(fromAddress);
           helper.setTo(toAddress);
-          helper.setSubject("[Smart Fire Hub] " + result.effectiveTitle(job.name()));
+          helper.setSubject("[" + brandName + "] " + result.effectiveTitle(job.name()));
           helper.setText(html, true);
 
           for (ChartImage chart : chartImages) {
@@ -222,6 +226,8 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     // summary 마크다운을 HTML로 변환하여 이메일에서 굵게, 목록 등이 렌더링되도록 한다
     ctx.setVariable("summary", reportRenderUtils.markdownToHtml(result.effectiveSummary()));
     ctx.setVariable("reportUrl", reportUrl);
+    // 화이트라벨링: 템플릿 푸터의 브랜드명 표기에 사용
+    ctx.setVariable("brandName", brandName);
     return templateEngine.process("proactive-report", ctx);
   }
 }

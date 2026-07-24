@@ -77,6 +77,8 @@ class SlackOAuthServiceTest {
     ReflectionTestUtils.setField(slackOAuthService, "clientSecret", TEST_CLIENT_SECRET);
     ReflectionTestUtils.setField(slackOAuthService, "redirectUri", TEST_REDIRECT_URI);
     ReflectionTestUtils.setField(slackOAuthService, "scopes", TEST_SCOPES);
+    // @Value 브랜드명 — Mockito 단위 테스트는 Spring 주입이 없으므로 기본 브랜드명을 직접 설정
+    ReflectionTestUtils.setField(slackOAuthService, "brandName", "Smart Fire Hub");
   }
 
   // =========================================================================

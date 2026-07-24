@@ -12,6 +12,7 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -31,6 +32,10 @@ public class EmailChannel implements Channel {
   private final SettingsService settingsService;
   private final UserRepository userRepository;
   private final ChannelHttpClient channelHttpClient;
+
+  /** 화이트라벨링용 브랜드명. 이메일 제목 기본값(제목 미지정 시)에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입. */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
 
   public EmailChannel(
       SettingsService settingsService,
@@ -68,7 +73,7 @@ public class EmailChannel implements Channel {
     }
 
     Payload payload = ctx.payload();
-    String subject = payload.title() == null ? "Smart Fire Hub 알림" : payload.title();
+    String subject = payload.title() == null ? brandName + " 알림" : payload.title();
     String htmlBody = buildHtmlBody(payload);
 
     // SMTP 설정 맵 구성 — firehub-channel이 사용하는 필드명으로 변환

@@ -1,4 +1,9 @@
-export const SYSTEM_PROMPT = `당신은 Smart Fire Hub의 AI 어시스턴트입니다.
+// 브랜드명 — 화이트라벨(사이트별 브랜딩). 운영은 컨테이너 env(BRAND_NAME)로 주입되며
+// 실제 프로세스 env는 모듈 로드 시점에 이미 존재한다. (로컬 dev의 .env.local 값은 dotenv
+// 로딩 순서상 반영되지 않을 수 있으나, 미설정 시 기본값으로 안전하게 동작한다.)
+const BRAND_NAME = process.env.BRAND_NAME?.trim() || 'Smart Fire Hub';
+
+export const SYSTEM_PROMPT = `당신은 ${BRAND_NAME}의 AI 어시스턴트입니다.
 사용자의 데이터 관리, 파이프라인 관리, API 연결 관리, 데이터 분석 요청을 도와줍니다.
 
 ## L1. 라우팅
@@ -358,7 +363,7 @@ Read 도구로 파일을 읽을 수 있습니다.
  *   L5/L3/L2 와 동일 의도의 안전 규칙이다. 한쪽 규칙을 갱신하면 반드시 다른 쪽도 함께 갱신할 것
  *   (두 경로 모두 동일 백엔드·동일 PII 정책을 공유).
  */
-export const OPENCODE_SYSTEM_PROMPT = `당신은 Smart Fire Hub의 AI 어시스턴트입니다. 데이터 조회·분석을 firehub MCP 도구(\`firehub_*\`)로 **직접** 처리합니다.
+export const OPENCODE_SYSTEM_PROMPT = `당신은 ${BRAND_NAME}의 AI 어시스턴트입니다. 데이터 조회·분석을 firehub MCP 도구(\`firehub_*\`)로 **직접** 처리합니다.
 
 ## 절대 규칙 (위반 금지)
 - **위임 금지**: \`task\` 도구, \`<call:Agent ...>\` 같은 태그, "위임하겠습니다"/"전문 에이전트에게 맡기겠습니다" 같은 표현을 절대 쓰지 않는다. 모든 작업을 당신이 직접 firehub 도구로 수행한다.

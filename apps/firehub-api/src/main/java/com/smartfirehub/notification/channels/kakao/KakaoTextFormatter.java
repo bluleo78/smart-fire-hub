@@ -1,6 +1,7 @@
 package com.smartfirehub.notification.channels.kakao;
 
 import com.smartfirehub.notification.Payload;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,8 +16,13 @@ public class KakaoTextFormatter {
   /** 카카오 text 템플릿 최대 허용 길이 (1000자). 안내문구 여유분을 빼고 본문 한도 설정. */
   private static final int MAX_LEN = 990;
 
-  /** 메시지 끝에 항상 붙는 안내 문구. 사용자가 답장 경로를 알 수 있도록 안내. */
-  private static final String FOOTER = "\n\n답장은 Smart Fire Hub 웹/Slack에서";
+  /**
+   * 화이트라벨링용 브랜드명. 답장 경로 안내 문구(FOOTER)에 사용한다. 배포처별 APP_BRANDING_NAME으로 주입.
+   *
+   * <p>static final 상수는 주입값을 참조할 수 없으므로 FOOTER는 render() 사용 시점에 조립한다.
+   */
+  @Value("${app.branding.name:Smart Fire Hub}")
+  private String brandName;
 
   /**
    * Payload를 카카오 전송용 텍스트로 렌더링.
@@ -64,6 +70,8 @@ public class KakaoTextFormatter {
       body = body.substring(0, MAX_LEN) + "…";
     }
 
-    return body + FOOTER;
+    // 메시지 끝에 항상 붙는 안내 문구. 사용자가 답장 경로를 알 수 있도록 안내 (브랜드명 반영).
+    String footer = "\n\n답장은 " + brandName + " 웹/Slack에서";
+    return body + footer;
   }
 }

@@ -25,6 +25,9 @@ org:
       enabled: false
 
 app:
+  branding:
+    # 화이트라벨링용 브랜드명. 배포처별로 APP_BRANDING_NAME 환경변수로 덮어쓴다. 미설정 시 기본값 사용.
+    name: ${APP_BRANDING_NAME:Smart Fire Hub}
   jwt:
     secret: ${JWT_SECRET}
     access-expiration: 1800000

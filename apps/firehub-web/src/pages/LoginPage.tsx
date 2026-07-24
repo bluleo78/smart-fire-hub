@@ -4,18 +4,21 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Navigate } from 'react-router-dom';
 
+import { BrandLogo } from '../components/BrandLogo';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
+import { useBranding } from '../hooks/useBranding';
 import type { LoginFormData } from '../lib/validations/auth';
 import { loginSchema } from '../lib/validations/auth';
 import type { ErrorResponse } from '../types/auth';
 
 export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
+  const { brandName } = useBranding(); // 런타임 브랜드명 (로그인 화면 제목)
   const [serverError, setServerError] = useState('');
 
   const {
@@ -54,7 +57,11 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Smart Fire Hub</CardTitle>
+          {/* 브랜드 로고 — logoUrl 설정 시 이미지, 없으면 기본 아이콘(Flame) */}
+          <div className="mb-2 flex justify-center">
+            <BrandLogo className="h-10 w-10" />
+          </div>
+          <CardTitle className="text-2xl">{brandName}</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
