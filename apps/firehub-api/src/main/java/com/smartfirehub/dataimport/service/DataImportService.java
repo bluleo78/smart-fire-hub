@@ -631,7 +631,25 @@ public class DataImportService {
 
       // all-rows-failed: 스트림이 끝나야 전체 파일을 봤다고 확정할 수 있으므로 여기서 판정한다.
       if (validCountFinal == 0 && errorCountFinal > 0) {
-        asyncJobService.failJob(jobId, "All rows failed validation");
+        // 전량 실패 시 UI가 "All rows failed validation"만 보여주면 원인 파악이 불가능하므로,
+        // 실제 검증 오류의 첫 사례를 요약 메시지에 함께 실어 준다(상세 목록은 errorDetails에 보존).
+        String sampleError =
+            hasMappings
+                ? (detailErrorsAccum.isEmpty()
+                    ? null
+                    : "Row "
+                        + detailErrorsAccum.get(0).rowNumber()
+                        + " column '"
+                        + detailErrorsAccum.get(0).columnName()
+                        + "' - "
+                        + detailErrorsAccum.get(0).error())
+                : (simpleErrorsAccum.isEmpty() ? null : simpleErrorsAccum.get(0));
+        String failMessage =
+            "All rows failed validation ("
+                + errorCountFinal
+                + " errors)"
+                + (sampleError != null ? " — e.g. " + sampleError : "");
+        asyncJobService.failJob(jobId, failMessage);
 
         Object errorsForJson = hasMappings ? detailErrorsAccum : simpleErrorsAccum;
         String errorJson = objectMapper.writeValueAsString(Map.of("errors", errorsForJson));
@@ -663,10 +681,10 @@ public class DataImportService {
             ipAddress,
             userAgent,
             "FAILURE",
-            "All rows failed validation",
+            failMessage,
             metadata);
 
-        log.error("Import failed: all rows invalid for dataset {}", datasetId);
+        log.error("Import failed: all rows invalid for dataset {} — {}", datasetId, failMessage);
         return;
       }
 
