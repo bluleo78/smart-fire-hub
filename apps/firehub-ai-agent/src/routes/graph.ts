@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { internalAuth } from '../middleware/auth.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
+import { setEntityProperty } from '../graphrag/property-mutation.js';
 import { EntityType } from '../graphrag/ontology.js';
 import { loadOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
@@ -46,6 +47,28 @@ router.post('/graph/merge-entities', internalAuth, async (req, res) => {
     res.status(204).send();
   } catch {
     res.status(502).json({ error: 'entity merge failed' });
+  }
+});
+
+const setPropertyBodySchema = z.object({
+  entityKey: z.string().min(1),
+  propertyName: z.string().min(1),
+  dataType: z.enum(['text', 'number', 'date']),
+  value: z.string(),
+});
+
+// HITL 승인된 속성 정정값을 Neo4j 노드에 write — firehub-api(GraphMutationClient)가 승인 시 호출.
+router.post('/graph/set-property', internalAuth, async (req, res) => {
+  const parsed = setPropertyBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
+    return;
+  }
+  try {
+    await setEntityProperty(parsed.data.entityKey, parsed.data.propertyName, parsed.data.dataType, parsed.data.value);
+    res.status(204).send();
+  } catch {
+    res.status(502).json({ error: 'set property failed' });
   }
 });
 

@@ -92,4 +92,18 @@ describe('extractGraph 속성 추출', () => {
     const res = await extractGraph('...', { complete, ontology: CORE_ONTOLOGY });
     expect(res.entities[0].properties).toBeUndefined();
   });
+
+  it('정규화 실패 속성을 propertyReviewCandidates로 수집한다', async () => {
+    // complete를 목킹해 Incident.피해액에 파싱 불가한 원문("수천만원대")을 반환하도록 한다.
+    const complete: CompleteFn = vi.fn().mockResolvedValue(JSON.stringify({
+      entities: [{ type: 'Incident', name: '창고 화재', properties: { 피해액: '수천만원대' } }],
+      relations: [],
+    }));
+    const result = await extractGraph('창고 화재 원문', { complete, ontology: CORE_ONTOLOGY });
+    expect(result.propertyReviewCandidates).toEqual([
+      { entityType: 'Incident', entityName: '창고 화재', propertyName: '피해액', dataType: 'number', rawText: '수천만원대' },
+    ]);
+    // 파싱 실패값은 노드 properties에는 실리지 않는다(기존 동작 유지).
+    expect(result.entities[0].properties?.피해액).toBeUndefined();
+  });
 });

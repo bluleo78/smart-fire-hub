@@ -3,8 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mergeEntitiesMock } = vi.hoisted(() => ({ mergeEntitiesMock: vi.fn() }));
+const { mergeEntitiesMock, setEntityPropertyMock } = vi.hoisted(() => ({ mergeEntitiesMock: vi.fn(), setEntityPropertyMock: vi.fn() }));
 vi.mock('../graphrag/synonym-merge.js', () => ({ mergeEntities: mergeEntitiesMock }));
+vi.mock('../graphrag/property-mutation.js', () => ({ setEntityProperty: setEntityPropertyMock }));
 vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn() }));
 // merge-entities 핸들러가 entityType→typeId 변환용 온톨로지를 fetch한다 — 실제 HTTP 호출 없이 고정 온톨로지로 대체.
 vi.mock('../graphrag/ontology-source.js', () => ({ loadOntology: vi.fn().mockResolvedValue({ domain: 'test', schemaVersion: 1, entities: [], relations: [] }) }));
@@ -82,4 +83,25 @@ describe('POST /agent/graph/merge-entities', () => {
 
   // 5-6: 엔티티 타입 리네임이 entity_type_id 보존 기반의 순수 DB 연산이 되어 Neo4j 마이그레이션
   // 라우트(5-5의 POST /agent/graph/rename-type)가 불필요해져 제거했다 — 관련 테스트도 함께 제거.
+});
+
+describe('POST /agent/graph/set-property', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('POST /agent/graph/set-property는 setEntityProperty를 호출하고 204를 반환한다', async () => {
+    const res = await request(app)
+      .post('/agent/graph/set-property')
+      .set('Authorization', 'Internal test-internal-token')
+      .send({ entityKey: '3:화재', propertyName: '피해액', dataType: 'number', value: '30000000' });
+    expect(res.status).toBe(204);
+    expect(setEntityPropertyMock).toHaveBeenCalledWith('3:화재', '피해액', 'number', '30000000');
+  });
+
+  it('POST /agent/graph/set-property는 잘못된 body에 400', async () => {
+    const res = await request(app)
+      .post('/agent/graph/set-property')
+      .set('Authorization', 'Internal test-internal-token')
+      .send({ entityKey: '', propertyName: '피해액', dataType: 'number', value: '1' });
+    expect(res.status).toBe(400);
+  });
 });

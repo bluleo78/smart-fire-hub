@@ -47,6 +47,9 @@ export function registerGraphragTools(
             lookupDecision: (a, b, type) => apiClient.lookupSynonymDecision(type, a, b),
             recordPending: (a, b, type, similarity, rationale) =>
               apiClient.recordPendingSynonym(type, a, b, similarity, rationale),
+            // 정규화 실패 속성 검수 등록(교정형).
+            recordPropertyReview: (datasetId, chunkId, key, type, prop, dataType, raw) =>
+              apiClient.recordPropertyReview(datasetId, chunkId, key, type, prop, dataType, raw),
           },
           args.datasetId,
           ontology,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProperty } from './property-normalizer.js';
+import { normalizeProperty, normalizePropertyChecked } from './property-normalizer.js';
 
 describe('normalizeProperty number', () => {
   it.each([
@@ -32,4 +32,25 @@ describe('normalizeProperty date', () => {
 describe('normalizeProperty text', () => {
   it('트림', () => { expect(normalizeProperty('text', undefined, '  전소  ')).toBe('전소'); });
   it('빈값 → null', () => { expect(normalizeProperty('text', undefined, '   ')).toBeNull(); });
+});
+
+describe('normalizePropertyChecked', () => {
+  it('정상 파싱은 status=ok', () => {
+    expect(normalizePropertyChecked('number', '원', '약 3천만원')).toEqual({ value: 30000000, status: 'ok' });
+    expect(normalizePropertyChecked('date', undefined, '2026년 1월 15일')).toEqual({ value: '2026-01-15', status: 'ok' });
+  });
+
+  it('빈 문자열은 status=ok(값 없음 — 검수 대상 아님)', () => {
+    expect(normalizePropertyChecked('number', '원', '   ')).toEqual({ value: null, status: 'ok' });
+  });
+
+  it('비어있지 않은데 파싱 실패면 status=failed', () => {
+    expect(normalizePropertyChecked('number', '원', '수천만원대')).toEqual({ value: null, status: 'failed' });
+    expect(normalizePropertyChecked('date', undefined, '작년 겨울')).toEqual({ value: null, status: 'failed' });
+  });
+
+  it('기존 normalizeProperty는 값만 반환(하위호환)', () => {
+    expect(normalizeProperty('number', '원', '약 3천만원')).toBe(30000000);
+    expect(normalizeProperty('number', '원', '수천만원대')).toBeNull();
+  });
 });

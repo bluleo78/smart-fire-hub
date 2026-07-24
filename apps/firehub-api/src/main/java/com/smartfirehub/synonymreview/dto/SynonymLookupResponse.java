@@ -1,4 +1,0 @@
-package com.smartfirehub.synonymreview.dto;
-
-/** 근접쌍 기존 결정 조회 응답 — status는 approved/rejected/pending/none(결정 없음, 처음 발견). */
-public record SynonymLookupResponse(String status) {}

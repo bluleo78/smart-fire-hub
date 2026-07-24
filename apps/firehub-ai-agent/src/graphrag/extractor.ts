@@ -2,11 +2,11 @@
 // LLM 호출은 CompleteFn으로 주입받는다(기본 구현은 llm-cli.ts의 인증된 claude CLI 헤드리스 호출).
 // axios로 x-api-key를 직접 호출하던 방식은 prod에 유효한 API 키가 없어 제거했다.
 import {
-  ExtractionResult, EntityType, RelationType, Ontology,
+  ExtractionResult, EntityType, RelationType, Ontology, PropertyReviewCandidate,
   isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
 } from './ontology.js';
 import type { CompleteFn } from './llm-cli.js';
-import { normalizeProperty } from './property-normalizer.js';
+import { normalizePropertyChecked } from './property-normalizer.js';
 
 export interface ExtractOptions { complete: CompleteFn; ontology: Ontology; }
 
@@ -37,6 +37,8 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
   // 온톨로지 타입별 속성 정의 맵(정규화·화이트리스트에 사용).
   const propDefsByType = new Map(opts.ontology.entities.map((e) => [e.type, e.properties ?? []]));
 
+  // 정규화에 실패한(원문은 있으나 파싱 불가) 속성을 사람 검수 큐로 넘기기 위해 수집한다.
+  const propertyReviewCandidates: PropertyReviewCandidate[] = [];
   const entities = (Array.isArray(parsed.entities) ? parsed.entities : [])
     .filter((e: unknown): e is { type: EntityType; name: string; properties?: Record<string, unknown> } => {
       const rec = e as Record<string, unknown> | null;
@@ -44,14 +46,20 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
         && isEntityType(opts.ontology, rec.type);
     })
     .map((e) => {
-      // 온톨로지에 정의된 속성만 정규화해 채운다. 미정의 키·정규화 실패는 폐기.
+      // 온톨로지에 정의된 속성만 정규화해 채운다. 미정의 키는 폐기, 정규화 실패는 검수 후보로 수집.
       const defs = propDefsByType.get(e.type) ?? [];
       const props: Record<string, number | string> = {};
       for (const def of defs) {
         const raw = e.properties?.[def.name];
         if (typeof raw !== 'string') continue;
-        const val = normalizeProperty(def.dataType, def.unit, raw);
-        if (val !== null) props[def.name] = val;
+        const { value, status } = normalizePropertyChecked(def.dataType, def.unit, raw);
+        if (value !== null) {
+          props[def.name] = value;
+        } else if (status === 'failed') {
+          propertyReviewCandidates.push({
+            entityType: e.type, entityName: e.name, propertyName: def.name, dataType: def.dataType, rawText: raw,
+          });
+        }
       }
       const hasProps = Object.keys(props).length > 0;
       return { type: e.type, name: e.name, ...(hasProps ? { properties: props } : {}) };
@@ -70,5 +78,9 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
     })
     .map((r) => ({ subject: r.subject, type: r.type, object: r.object }));
 
-  return { entities, relations };
+  return {
+    entities,
+    relations,
+    ...(propertyReviewCandidates.length > 0 ? { propertyReviewCandidates } : {}),
+  };
 }

@@ -25,7 +25,21 @@ export interface ExtractedEntity {
   properties?: Record<string, number | string>;
 }
 export interface ExtractedRelation { subject: string; type: RelationType; object: string; }
-export interface ExtractionResult { entities: ExtractedEntity[]; relations: ExtractedRelation[]; }
+export interface ExtractionResult {
+  entities: ExtractedEntity[];
+  relations: ExtractedRelation[];
+  // 정규화 실패 속성 검수 후보(선택) — 비어 있으면 생략.
+  propertyReviewCandidates?: PropertyReviewCandidate[];
+}
+
+// 정규화 실패 속성 검수 후보 — extractor가 채우고 ingest가 canonical key 바인딩 후 검수 큐에 등록한다.
+export interface PropertyReviewCandidate {
+  entityType: EntityType;
+  entityName: string;       // 추출 원본 이름(canonical 재매핑 전) — ingest가 최종 key로 변환.
+  propertyName: string;
+  dataType: 'text' | 'number' | 'date';
+  rawText: string;          // 정규화하지 못한 원문 값.
+}
 
 // 엔티티 타입 정의 — 설명 + 명명 규칙 + 해소(resolution) 정책 + (선택) 데이터 속성 정의.
 // resolution: 'embedding'(표기 변형을 임베딩 유사도로 병합) | 'exact'(정확 키 일치만 병합 — 수치·고유성 보존 목적).

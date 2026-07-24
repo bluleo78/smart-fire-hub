@@ -25,14 +25,31 @@ function parseDate(raw: string): string | null {
   return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
+// 정규화 결과 + 파싱 상태. status='failed'는 검수 큐(HITL) 탐지 트리거로 쓰인다.
+export interface NormalizeResult { value: number | string | null; status: 'ok' | 'failed'; }
+
+// raw를 dataType에 맞게 정규화하고, 실패 여부까지 반환한다(검수 큐 탐지용).
+// 빈 입력(공백/빈문자)은 값 없음이지만 status=ok — 원문에 값이 없었던 것이므로 검수 대상이 아니다.
+// 비어있지 않은데 파싱이 실패하면 status=failed — 사람이 정정할 수 있게 검수 큐로 보낸다.
+export function normalizePropertyChecked(
+  dataType: 'text' | 'number' | 'date', unit: string | undefined, raw: string,
+): NormalizeResult {
+  if (typeof raw !== 'string') return { value: null, status: 'ok' };
+  const isBlank = raw.trim() === '';
+  let value: number | string | null;
+  switch (dataType) {
+    case 'number': value = parseKoreanNumber(raw); break;
+    case 'date': value = parseDate(raw); break;
+    case 'text': { const t = raw.trim().replace(/\s+/g, ' '); value = t === '' ? null : t; break; }
+    default: value = null;
+  }
+  const status: 'ok' | 'failed' = value === null && !isBlank ? 'failed' : 'ok';
+  return { value, status };
+}
+
+// 하위호환 래퍼 — 값만 필요한 기존 호출부용.
 export function normalizeProperty(
   dataType: 'text' | 'number' | 'date', unit: string | undefined, raw: string,
 ): number | string | null {
-  if (typeof raw !== 'string') return null;
-  switch (dataType) {
-    case 'number': return parseKoreanNumber(raw);
-    case 'date': return parseDate(raw);
-    case 'text': { const t = raw.trim().replace(/\s+/g, ' '); return t === '' ? null : t; }
-    default: return null;
-  }
+  return normalizePropertyChecked(dataType, unit, raw).value;
 }

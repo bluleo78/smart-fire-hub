@@ -54,7 +54,7 @@ import {
   type DatasetSearchHit,
 } from './api-client/dataset-search-api.js';
 import { createGraphSourceApi, type ChunkContent } from './api-client/graph-source-api.js';
-import { createSynonymApi } from './api-client/synonym-api.js';
+import { createReviewApi } from './api-client/review-api.js';
 import {
   createFileObjectApi,
   type ObjectItem,
@@ -85,7 +85,7 @@ export class FireHubApiClient {
   private _document: ReturnType<typeof createDocumentApi>;
   private _datasetSearch: ReturnType<typeof createDatasetSearchApi>;
   private _graphSource: ReturnType<typeof createGraphSourceApi>;
-  private _synonym: ReturnType<typeof createSynonymApi>;
+  private _review: ReturnType<typeof createReviewApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
 
   constructor(baseURL: string, internalToken: string, userId: number) {
@@ -142,7 +142,7 @@ export class FireHubApiClient {
     this._document = createDocumentApi(this.client);
     this._datasetSearch = createDatasetSearchApi(this.client);
     this._graphSource = createGraphSourceApi(this.client);
-    this._synonym = createSynonymApi(this.client);
+    this._review = createReviewApi(this.client);
     this._fileObject = createFileObjectApi(this.client);
   }
 
@@ -664,14 +664,22 @@ export class FireHubApiClient {
     return this._graphSource.listDocumentChunks(datasetId);
   }
 
-  /** HITL 근접쌍 기존 결정 조회 — 결정 없으면 undefined. */
+  /** 동의어 근접쌍 기존 결정 조회 — 결정 없으면 undefined. */
   lookupSynonymDecision(entityType: EntityType, nameA: string, nameB: string): Promise<'approved' | 'rejected' | undefined> {
-    return this._synonym.lookupSynonymDecision(entityType, nameA, nameB);
+    return this._review.lookupSynonymDecision(entityType, nameA, nameB);
   }
 
-  /** LLM이 "같다"고 판정한 근접쌍을 HITL 검수 대기열에 등록한다. */
+  /** LLM "같다" 판정 근접쌍을 검수 대기열에 등록. */
   recordPendingSynonym(entityType: EntityType, nameA: string, nameB: string, similarity: number, rationale: string): Promise<void> {
-    return this._synonym.recordPendingSynonym(entityType, nameA, nameB, similarity, rationale);
+    return this._review.recordPendingSynonym(entityType, nameA, nameB, similarity, rationale);
+  }
+
+  /** 정규화 실패 속성을 검수 대기열에 등록. */
+  recordPropertyReview(
+    datasetId: number, chunkId: number, entityKey: string, entityType: EntityType,
+    propertyName: string, dataType: 'text' | 'number' | 'date', rawText: string,
+  ): Promise<void> {
+    return this._review.recordPropertyReview(datasetId, chunkId, entityKey, entityType, propertyName, dataType, rawText);
   }
 
   listSmartJobs() {
