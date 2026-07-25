@@ -2,8 +2,10 @@ package com.smartfirehub.ontology.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.user.repository.UserRepository;
@@ -86,25 +88,96 @@ public class OntologyService {
     return ontologyRepository.findOntology();
   }
 
+  // id 스코프 조회.
+  public OntologyResponse getById(long ontologyId) {
+    return ontologyRepository.findById(ontologyId);
+  }
+
+  // 온톨로지 목록(요약).
+  public List<OntologySummary> listOntologies() {
+    return ontologyRepository.findAllSummaries();
+  }
+
+  // 신규 온톨로지 생성 — 검증(IllegalArgumentException→400) 후 삽입, 새 id 반환.
+  public long createOntology(CreateOntologyRequest req) {
+    validateCore(req.domain(), req.entities(), req.relations());
+    long id = ontologyRepository.createOntology(req);
+
+    // 감사 로그 — 신규 생성된 온톨로지의 실제 id를 entityId로 기록한다(레거시처럼 "1" 고정 아님).
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && auth.getPrincipal() instanceof Long userId) {
+      userRepository
+          .findById(userId)
+          .ifPresent(
+              u ->
+                  auditLogService.log(
+                      userId,
+                      u.username(),
+                      "ONTOLOGY_CREATE",
+                      "ontology",
+                      String.valueOf(id),
+                      "지식 모델 생성 — domain=" + req.domain(),
+                      null,
+                      null,
+                      "SUCCESS",
+                      null,
+                      null));
+    }
+
+    return id;
+  }
+
+  // id 스코프 편집 — 검증 + 낙관적 잠금(버전 불일치 IllegalStateException→409).
+  public OntologyResponse updateOntology(long ontologyId, UpdateOntologyRequest req) {
+    validate(req);
+    ontologyRepository.updateOntology(ontologyId, req);
+
+    // 감사 로그 — 편집 대상 온톨로지의 실제 id(ontologyId)를 entityId로 기록한다.
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && auth.getPrincipal() instanceof Long userId) {
+      userRepository
+          .findById(userId)
+          .ifPresent(
+              u ->
+                  auditLogService.log(
+                      userId,
+                      u.username(),
+                      "ONTOLOGY_UPDATE",
+                      "ontology",
+                      String.valueOf(ontologyId),
+                      "지식 모델 편집 — ontologyId=" + ontologyId,
+                      null,
+                      null,
+                      "SUCCESS",
+                      null,
+                      null));
+    }
+
+    return ontologyRepository.findById(ontologyId);
+  }
+
   // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
   // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
   // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
   private static final Set<String> RESERVED_PROPERTY_NAMES =
       Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion");
 
-  // 편집 페이로드 검증 — DB CHECK/UNIQUE 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
-  private void validate(UpdateOntologyRequest req) {
-    if (req.domain() == null || req.domain().isBlank()) {
+  // 온톨로지 본문 공통 검증(생성/편집 공용) — domain, entity 타입, resolution, property, relation 참조 무결성.
+  private void validateCore(
+      String domain,
+      List<OntologyResponse.EntityType> entities,
+      List<OntologyResponse.Triple> relations) {
+    if (domain == null || domain.isBlank()) {
       throw new IllegalArgumentException("domain은 비어 있을 수 없습니다.");
     }
-    if (req.entities() == null || req.entities().isEmpty()) {
+    if (entities == null || entities.isEmpty()) {
       throw new IllegalArgumentException("엔티티 타입은 최소 1개 이상이어야 합니다.");
     }
-    if (req.relations() == null) {
+    if (relations == null) {
       throw new IllegalArgumentException("relations는 null일 수 없습니다.");
     }
     Set<String> seenTypes = new HashSet<>();
-    for (var e : req.entities()) {
+    for (var e : entities) {
       if (e.type() == null || e.type().isBlank()) {
         throw new IllegalArgumentException("엔티티 타입명은 비어 있을 수 없습니다.");
       }
@@ -112,8 +185,7 @@ public class OntologyService {
         throw new IllegalArgumentException("중복된 엔티티 타입명: " + e.type());
       }
       if (!"embedding".equals(e.resolution()) && !"exact".equals(e.resolution())) {
-        throw new IllegalArgumentException(
-            "resolution은 embedding 또는 exact여야 합니다: " + e.type());
+        throw new IllegalArgumentException("resolution은 embedding 또는 exact여야 합니다: " + e.type());
       }
       if (e.properties() != null) {
         Set<String> seenPropNames = new HashSet<>();
@@ -122,33 +194,36 @@ public class OntologyService {
             throw new IllegalArgumentException("예약어는 속성명으로 쓸 수 없습니다: " + p.name());
           }
           if (!seenPropNames.add(p.name())) {
-            throw new IllegalArgumentException(
-                "중복된 속성명(" + e.type() + "): " + p.name());
+            throw new IllegalArgumentException("중복된 속성명(" + e.type() + "): " + p.name());
           }
           if (p.dataType() != null && !List.of("text", "number", "date").contains(p.dataType())) {
-            throw new IllegalArgumentException(
-                "데이터 타입은 text|number|date 중 하나여야 합니다: " + p.name());
+            throw new IllegalArgumentException("데이터 타입은 text|number|date 중 하나여야 합니다: " + p.name());
           }
         }
       }
     }
-
-    // 관계 참조 무결성 — subject/object는 위 entities 루프에서 확정된 타입 집합에 존재해야 한다.
-    // 오탈자·삭제된 타입 참조를 DB 삽입 전에 400으로 차단(FK 없는 문자열 참조라 안 걸러지면 조용히 깨짐).
     Set<String> seenTriples = new HashSet<>();
-    for (var r : req.relations()) {
+    for (var r : relations) {
       if (!seenTypes.contains(r.subject())) {
-        throw new IllegalArgumentException(
-            "관계가 존재하지 않는 엔티티 타입을 참조합니다(subject): " + r.subject());
+        throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(subject): " + r.subject());
       }
       if (!seenTypes.contains(r.object())) {
-        throw new IllegalArgumentException(
-            "관계가 존재하지 않는 엔티티 타입을 참조합니다(object): " + r.object());
+        throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(object): " + r.object());
       }
       String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
       if (!seenTriples.add(tripleKey)) {
         throw new IllegalArgumentException("중복된 관계: " + tripleKey);
       }
+    }
+  }
+
+  // 편집 페이로드 검증 — DB CHECK/UNIQUE 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
+  private void validate(UpdateOntologyRequest req) {
+    validateCore(req.domain(), req.entities(), req.relations());
+
+    Set<String> seenTypes = new HashSet<>();
+    for (var e : req.entities()) {
+      seenTypes.add(e.type());
     }
 
     // 타입 리네임(5-5) 무결성 — to는 최종 entities에 실존해야 하고, from은 리네임돼 사라졌어야 하므로

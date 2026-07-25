@@ -1,6 +1,8 @@
 package com.smartfirehub.ontology;
 
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -13,6 +15,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.ontology.controller.OntologyController;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
@@ -125,6 +128,100 @@ class OntologyControllerTest {
     mockMvc
         .perform(
             put("/api/v1/ontology")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(VALID_REQUEST)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.schemaVersion").value(2));
+  }
+
+  // 목록 라우트 — dataset:read 권한으로 200, 리포지토리 findAllSummaries 스텁.
+  @Test
+  void 온톨로지_목록_라우트가_200() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+    when(ontologyRepository.findAllSummaries())
+        .thenReturn(List.of(new OntologySummary(1L, "화재조사 보고서", 1)));
+
+    mockMvc
+        .perform(get("/api/v1/ontologies").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].id").value(1));
+  }
+
+  // id 스코프 단건 조회 — findById(2) 스텁.
+  @Test
+  void id_스코프_단건조회_라우트가_200() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+    when(ontologyRepository.findById(2L))
+        .thenReturn(new OntologyResponse("판매", 1, List.of(), List.of()));
+
+    mockMvc
+        .perform(get("/api/v1/ontology/2").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.domain").value("판매"));
+  }
+
+  // 생성 라우트 — ontology:write 권한 없으면 403(게이팅 검증).
+  @Test
+  void 생성_라우트는_ontology_write_없으면_403() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/ontologies")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+                            "판매",
+                            List.of(
+                                new OntologyResponse.EntityType(
+                                    "Customer", "고객", "표기 그대로", "exact", List.of())),
+                            List.of()))))
+        .andExpect(status().isForbidden());
+  }
+
+  // 생성 라우트 — 권한 보유 시 201과 발급 id를 반환한다.
+  @Test
+  void 생성_라우트는_유효하면_201과_id를_반환한다() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
+    when(ontologyRepository.createOntology(org.mockito.ArgumentMatchers.any())).thenReturn(7L);
+
+    mockMvc
+        .perform(
+            post("/api/v1/ontologies")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+                            "판매",
+                            List.of(
+                                new OntologyResponse.EntityType(
+                                    "Customer", "고객", "표기 그대로", "exact", List.of())),
+                            List.of()))))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$").value(7));
+  }
+
+  // id 스코프 편집 — findById로 갱신본을 재조회해 200으로 반환한다.
+  @Test
+  void id_스코프_편집_라우트가_200() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
+    when(ontologyRepository.updateOntology(org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(2);
+    when(ontologyRepository.findById(2L))
+        .thenReturn(
+            new OntologyResponse(
+                "판매",
+                2,
+                List.of(new OntologyResponse.EntityType("Customer", "고객", "표기 그대로", "exact", List.of())),
+                List.of()));
+
+    mockMvc
+        .perform(
+            put("/api/v1/ontology/2")
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(VALID_REQUEST)))

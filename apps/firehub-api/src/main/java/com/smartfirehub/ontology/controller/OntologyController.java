@@ -1,39 +1,74 @@
 package com.smartfirehub.ontology.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.service.OntologyService;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-// 온톨로지 시각화(읽기 전용) — 스키마는 api DB 조회, 전체 그래프는 ai-agent로 프록시한다.
+// 온톨로지 CRUD — 다중 온톨로지 지원(Task 3). 클래스 매핑을 /api/v1로 올려 복수형 /ontologies(목록·생성)와
+// 단수형 /ontology/{id}(단건 조회·편집)를 함께 표현한다. 기존 GET/PUT /ontology(id=1 하위호환)와
+// GET /ontology/graph(ai-agent 프록시)는 문서 파이프라인 등 기존 호출부 회귀 방지를 위해 그대로 유지한다.
 @RestController
-@RequestMapping("/api/v1/ontology")
+@RequestMapping("/api/v1")
 @RequiredArgsConstructor
 public class OntologyController {
   private final OntologyService ontologyService;
 
-  // 온톨로지 스키마(엔티티 타입/관계 트리플) 조회.
-  @GetMapping
+  // [하위호환] 기본 온톨로지(화재조사 id=1) 스키마 — 문서 파이프라인 프록시가 사용.
+  @GetMapping("/ontology")
   @RequirePermission("dataset:read")
   public OntologyResponse getOntology() {
     return ontologyService.getOntology();
   }
 
-  // 전체 적재 지식그래프(노드/엣지) 조회.
-  @GetMapping("/graph")
+  // 전체 적재 지식그래프(노드/엣지) — ai-agent 프록시.
+  @GetMapping("/ontology/graph")
   @RequirePermission("dataset:read")
   public GraphResponse getGraph() {
     return ontologyService.getGraph();
   }
 
-  // 지식 모델 편집(B-2b) — full-document 교체 + schema_version 원자 증가. 편집은 특권(ontology:write, ADMIN).
-  // 낙관적 동시성: 요청의 schemaVersion이 현재 DB 버전과 일치할 때만 적용(불일치 시 409).
-  @PutMapping
+  // [하위호환] 기본 온톨로지(id=1) 편집.
+  @PutMapping("/ontology")
   @RequirePermission("ontology:write")
   public OntologyResponse updateOntology(@RequestBody UpdateOntologyRequest request) {
     return ontologyService.updateOntology(request);
+  }
+
+  // 온톨로지 목록(요약).
+  @GetMapping("/ontologies")
+  @RequirePermission("dataset:read")
+  public List<OntologySummary> listOntologies() {
+    return ontologyService.listOntologies();
+  }
+
+  // id 스코프 단건 조회.
+  @GetMapping("/ontology/{id}")
+  @RequirePermission("dataset:read")
+  public OntologyResponse getById(@PathVariable Long id) {
+    return ontologyService.getById(id);
+  }
+
+  // 신규 온톨로지 생성(ADMIN 특권). 생성된 id를 201로 반환.
+  @PostMapping("/ontologies")
+  @RequirePermission("ontology:write")
+  public ResponseEntity<Long> create(@RequestBody CreateOntologyRequest request) {
+    long id = ontologyService.createOntology(request);
+    return ResponseEntity.status(201).body(id);
+  }
+
+  // id 스코프 편집(ADMIN 특권).
+  @PutMapping("/ontology/{id}")
+  @RequirePermission("ontology:write")
+  public OntologyResponse updateById(
+      @PathVariable Long id, @RequestBody UpdateOntologyRequest request) {
+    return ontologyService.updateOntology(id, request);
   }
 }

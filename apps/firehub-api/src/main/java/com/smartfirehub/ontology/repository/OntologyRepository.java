@@ -2,7 +2,9 @@ package com.smartfirehub.ontology.repository;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
@@ -16,8 +18,10 @@ import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
-// 온톨로지 DB 읽기 — 단일 온톨로지(id=1)를 OntologyResponse 계약으로 조립한다.
-// sort_order 정렬로 ai-agent 프롬프트 조립 순서(바이트 동일성)를 보존한다. plain-SQL DSL(생성 클래스 비의존).
+// 온톨로지 DB 읽기/쓰기 — id로 지정한 온톨로지를 OntologyResponse 계약으로 조립한다(다중 온톨로지 지원).
+// 무인자 오버로드(findOntology/currentSchemaVersion/updateOntology)는 기존 단일 온톨로지(id=1) 호출부와의
+// 하위호환을 위해 findById(1L) 등으로 위임한다. sort_order 정렬로 ai-agent 프롬프트 조립 순서(바이트 동일성)를
+// 보존한다. plain-SQL DSL(생성 클래스 비의존).
 @Repository
 @RequiredArgsConstructor
 public class OntologyRepository {
@@ -55,16 +59,22 @@ public class OntologyRepository {
   private static final Field<String> R_DESC = field(name("ontology_relation", "description"), String.class);
   private static final Field<Integer> R_ORDER = field(name("ontology_relation", "sort_order"), Integer.class);
 
-  // 단일 온톨로지(id=1) 를 조회해 OntologyResponse 로 조립한다.
-  public OntologyResponse findOntology() {
-    // domain, schema_version 을 한 번에 조회한다.
-    var head = dsl.select(O_DOMAIN, O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(1L)).fetchOne();
+  // 지정한 온톨로지를 조회해 OntologyResponse로 조립한다(해당 ontology_id의 타입/관계만).
+  public OntologyResponse findById(long ontologyId) {
+    var head =
+        dsl.select(O_DOMAIN, O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(ontologyId)).fetchOne();
+    // 존재하지 않는 id는 NPE→500이 아니라 명확한 400(전역 핸들러 규약)으로 차단한다.
+    // 신규 라우트 GET /api/v1/ontology/{id}가 임의 id를 받으므로 반드시 필요.
+    if (head == null) {
+      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
+    }
     String domain = head.get(O_DOMAIN);
     int schemaVersion = head.get(O_SCHEMA_VERSION);
 
     List<OntologyResponse.EntityType> entities =
         dsl.select(ET_ID, ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
             .from(ENTITY_TYPE)
+            .where(ET_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 타입만
             .orderBy(ET_ORDER)
             .fetch(r -> {
               // 각 엔티티 타입의 데이터 프로퍼티를 sort_order 순으로 조회한다.
@@ -82,6 +92,7 @@ public class OntologyRepository {
     List<OntologyResponse.Triple> relations =
         dsl.select(R_SUBJECT, R_RELATION, R_OBJECT, R_DESC)
             .from(RELATION)
+            .where(R_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 관계만
             .orderBy(R_ORDER)
             .fetch(r -> new OntologyResponse.Triple(
                 r.get(R_SUBJECT), r.get(R_RELATION), r.get(R_OBJECT), r.get(R_DESC)));
@@ -89,16 +100,100 @@ public class OntologyRepository {
     return new OntologyResponse(domain, schemaVersion, entities, relations);
   }
 
+  // 하위호환 — 기존 단일 온톨로지 호출부(문서 파이프라인 프록시 라우트)는 기본 화재조사(id=1)를 본다.
+  public OntologyResponse findOntology() {
+    return findById(1L);
+  }
+
+  // 온톨로지 목록(요약). id 순.
+  public List<OntologySummary> findAllSummaries() {
+    return dsl.select(O_ID, O_DOMAIN, O_SCHEMA_VERSION)
+        .from(ONTOLOGY)
+        .orderBy(O_ID)
+        .fetch(r -> new OntologySummary(r.get(O_ID), r.get(O_DOMAIN), r.get(O_SCHEMA_VERSION)));
+  }
+
+  // 온톨로지 존재 여부(바인딩 검증용).
+  public boolean existsById(long ontologyId) {
+    return dsl.fetchExists(dsl.selectOne().from(ONTOLOGY).where(O_ID.eq(ontologyId)));
+  }
+
   // stale 질의용 경량 조회 — 온톨로지 본문 없이 schema_version 만 확인한다(Task 3: dataset_graph_ingest 재사용 여부 판단).
+  public int currentSchemaVersion(long ontologyId) {
+    var record = dsl.select(O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(ontologyId)).fetchOne();
+    // 존재하지 않는 id는 NPE→500이 아니라 findById와 동일하게 명확한 400(전역 핸들러 규약)으로 차단한다.
+    if (record == null) {
+      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
+    }
+    return record.get(O_SCHEMA_VERSION);
+  }
+
+  // 하위호환 — id=1 위임.
   public int currentSchemaVersion() {
-    return dsl.select(O_SCHEMA_VERSION).from(ONTOLOGY).where(O_ID.eq(1L)).fetchOne(r -> r.get(O_SCHEMA_VERSION));
+    return currentSchemaVersion(1L);
+  }
+
+  // 신규 도메인 온톨로지 생성 — ontology 행(schema_version=1) + entity_type + relation을 원자 삽입.
+  // id는 IDENTITY(V77)로 자동 발급되어 반환된다. sort_order는 요청 배열 순서로 매긴다.
+  public long createOntology(CreateOntologyRequest req) {
+    return dsl.transactionResult(cfg -> {
+      DSLContext tx = using(cfg);
+      long ontologyId =
+          tx.insertInto(ONTOLOGY)
+              .set(O_DOMAIN, req.domain())
+              .set(O_SCHEMA_VERSION, 1)
+              .set(O_UPDATED_AT, currentOffsetDateTime())
+              .returning(O_ID)
+              .fetchOne()
+              .get(O_ID);
+
+      int etOrder = 0;
+      for (var e : req.entities()) {
+        long entityTypeId =
+            tx.insertInto(ENTITY_TYPE)
+                .set(ET_ONTOLOGY_ID, ontologyId)
+                .set(ET_TYPE, e.type())
+                .set(ET_DESC, e.description())
+                .set(ET_NAMING, e.naming())
+                .set(ET_RES, e.resolution())
+                .set(ET_ORDER, etOrder++)
+                .returning(ET_ID)
+                .fetchOne()
+                .get(ET_ID);
+        int epOrder = 0;
+        List<OntologyResponse.Property> props = e.properties() == null ? List.of() : e.properties();
+        for (var p : props) {
+          tx.insertInto(ENTITY_PROP)
+              .set(EP_TYPE_ID, entityTypeId)
+              .set(EP_NAME, p.name())
+              .set(EP_DESC, p.description())
+              .set(EP_DTYPE, p.dataType())
+              .set(EP_UNIT, p.unit())
+              .set(EP_ORDER, epOrder++)
+              .execute();
+        }
+      }
+
+      int rOrder = 0;
+      for (var t : req.relations()) {
+        tx.insertInto(RELATION)
+            .set(R_ONTOLOGY_ID, ontologyId)
+            .set(R_SUBJECT, t.subject())
+            .set(R_RELATION, t.relation())
+            .set(R_OBJECT, t.object())
+            .set(R_DESC, t.description())
+            .set(R_ORDER, rOrder++)
+            .execute();
+      }
+      return ontologyId;
+    });
   }
 
   // 단일 온톨로지(id=1) 전체를 교체하는 full-document 편집(B-2b). 단일 트랜잭션 원자성:
   // ① 낙관적 잠금 + 버전 증가(기대 버전과 일치할 때만) ② relation은 전량 재작성(id 안정성 불필요 —
   // subject/object는 문자열 참조라 FK 없음) ③ entity_type은 매칭 기반 UPDATE/INSERT/DELETE로 id 보존(5-6).
   // 반환값 = 증가된 새 schema_version. 기대 버전 불일치 시 IllegalStateException → 409(전역 핸들러 규약).
-  public int updateOntology(UpdateOntologyRequest req) {
+  public int updateOntology(long ontologyId, UpdateOntologyRequest req) {
     return dsl.transactionResult(cfg -> {
       DSLContext tx = using(cfg);
 
@@ -108,7 +203,7 @@ public class OntologyRepository {
               .set(O_DOMAIN, req.domain())
               .set(O_SCHEMA_VERSION, O_SCHEMA_VERSION.plus(1))
               .set(O_UPDATED_AT, currentOffsetDateTime())
-              .where(O_ID.eq(1L).and(O_SCHEMA_VERSION.eq(req.schemaVersion())))
+              .where(O_ID.eq(ontologyId).and(O_SCHEMA_VERSION.eq(req.schemaVersion())))
               .execute();
       if (updated == 0) {
         // 기대 버전 불일치 = 다른 사용자가 먼저 수정(또는 잘못된 버전). 트랜잭션 롤백 → 자식 변경 없음.
@@ -117,11 +212,11 @@ public class OntologyRepository {
       }
 
       // ② relation은 전량 재작성(기존과 동일 — subject/object는 문자열 참조라 entity_type_id와 무관).
-      tx.deleteFrom(RELATION).where(R_ONTOLOGY_ID.eq(1L)).execute();
+      tx.deleteFrom(RELATION).where(R_ONTOLOGY_ID.eq(ontologyId)).execute();
       int rOrder = 0;
       for (var t : req.relations()) {
         tx.insertInto(RELATION)
-            .set(R_ONTOLOGY_ID, 1L)
+            .set(R_ONTOLOGY_ID, ontologyId)
             .set(R_SUBJECT, t.subject())
             .set(R_RELATION, t.relation())
             .set(R_OBJECT, t.object())
@@ -136,7 +231,7 @@ public class OntologyRepository {
       // 매칭 규칙: (a) 기존 타입명과 그대로 같으면 그 행 (b) req.renames()의 from→to 힌트가 가리키는
       // 기존 행 (c) 매칭 안 되면 신규(새 id 발급). 매칭 안 된 기존 행은 삭제 대상(사용자가 지운 타입).
       Map<String, Long> existingIdByType =
-          tx.select(ET_TYPE, ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(1L))
+          tx.select(ET_TYPE, ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))
               .fetch().intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID));
       Map<String, String> renameToFrom = new HashMap<>();
       for (var rename : req.renames()) {
@@ -182,7 +277,7 @@ public class OntologyRepository {
         } else {
           entityTypeId =
               tx.insertInto(ENTITY_TYPE)
-                  .set(ET_ONTOLOGY_ID, 1L)
+                  .set(ET_ONTOLOGY_ID, ontologyId)
                   .set(ET_TYPE, e.type())
                   .set(ET_DESC, e.description())
                   .set(ET_NAMING, e.naming())
@@ -212,5 +307,10 @@ public class OntologyRepository {
 
       return req.schemaVersion() + 1;
     });
+  }
+
+  // 하위호환 — 기존 단일 온톨로지 편집 호출부(테스트 snapshot/restore, 레거시 PUT)는 id=1을 편집.
+  public int updateOntology(UpdateOntologyRequest req) {
+    return updateOntology(1L, req);
   }
 }

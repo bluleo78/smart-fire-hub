@@ -3,6 +3,7 @@ package com.smartfirehub.ontology;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -261,5 +262,43 @@ class OntologyServiceTest {
 
     assertThat(res.schemaVersion()).isEqualTo(2);
     verify(repository).updateOntology(any());
+  }
+
+  // 유효 생성 페이로드 헬퍼.
+  private com.smartfirehub.ontology.dto.CreateOntologyRequest validCreate() {
+    return new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+        "판매",
+        List.of(new OntologyResponse.EntityType("Customer", "고객", "표기 그대로", "exact", List.of())),
+        List.of());
+  }
+
+  // 검증 통과 시 리포지토리에 위임하고 발급 id를 그대로 반환한다.
+  @Test
+  void createOntology_는_검증후_리포지토리에_위임한다() {
+    when(repository.createOntology(any())).thenReturn(5L);
+    long id = service.createOntology(validCreate());
+    assertThat(id).isEqualTo(5L);
+    verify(repository).createOntology(any());
+  }
+
+  // 도메인 공백은 IllegalArgumentException(→400)이며 리포지토리를 호출하지 않는다.
+  @Test
+  void createOntology_도메인_공백이면_거부하고_리포지토리_미호출() {
+    var bad =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "  ",
+            List.of(new OntologyResponse.EntityType("A", "a", "n", "exact", List.of())),
+            List.of());
+    assertThatThrownBy(() -> service.createOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(repository, never()).createOntology(any());
+  }
+
+  // getById는 리포지토리 findById에 위임한다.
+  @Test
+  void getById_는_findById에_위임한다() {
+    var expected = new OntologyResponse("판매", 1, List.of(), List.of());
+    when(repository.findById(2L)).thenReturn(expected);
+    assertThat(service.getById(2L)).isEqualTo(expected);
   }
 }
