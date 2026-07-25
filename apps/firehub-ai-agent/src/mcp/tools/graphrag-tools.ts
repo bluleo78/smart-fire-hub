@@ -53,6 +53,9 @@ export function registerGraphragTools(
             // 엔티티 추출 검수: 저신뢰 엔티티 기존 결정 조회 + 보류 엔티티(+관계) 큐 등록.
             lookupEntityDecision: (type, name) => apiClient.lookupEntityDecision(type, name),
             recordPendingEntity: (item) => apiClient.recordPendingEntity(item),
+            // 관계 추출 검수: 저신뢰 관계 기존 결정 조회 + 보류 관계 큐 등록.
+            lookupRelationDecision: (subjectKey, relType, objectKey) => apiClient.lookupRelationDecision(subjectKey, relType, objectKey),
+            recordPendingRelation: (item) => apiClient.recordPendingRelation(item),
           },
           args.datasetId,
           ontology,

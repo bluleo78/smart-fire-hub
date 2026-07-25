@@ -1,4 +1,4 @@
-import { createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
+import { createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createRelationReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -97,5 +97,37 @@ test.describe('AI 검수 인박스', () => {
     await page.goto('/knowledge-graph/review');
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
     await expect(page.getByText('노후된 배선으로 추정된다.')).toBeVisible();
+  });
+
+  test('관계 항목이 주어→관계→목적어·신뢰도와 함께 렌더링된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
+    await page.goto('/knowledge-graph/review');
+    await expect(page.getByText('노후 배선')).toBeVisible();
+    await expect(page.getByText('창고 화재')).toBeVisible();
+    await expect(page.getByText('CAUSED_BY')).toBeVisible();
+    await expect(page.getByText('0.35')).toBeVisible();
+  });
+
+  test('관계 적재 승인 시 correctedValue 없이 approve API를 호출하고 사라진다', async ({ authenticatedPage: page }) => {
+    let sentBody: unknown = 'unset';
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/4/approve', (route) => {
+      sentBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createRelationReviewItem({ status: 'approved' })) });
+    });
+    await page.goto('/knowledge-graph/review');
+    await expect(page.getByText('CAUSED_BY')).toBeVisible();
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+    await page.getByRole('button', { name: '적재' }).click();
+    await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+    await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBeUndefined();
+  });
+
+  test('관계 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items/4/evidence', [{ chunkId: 9, content: '노후 배선이 화재 원인으로 추정된다.' }]);
+    await page.goto('/knowledge-graph/review');
+    await page.getByRole('button', { name: '원문 근거 보기' }).click();
+    await expect(page.getByText('노후 배선이 화재 원인으로 추정된다.')).toBeVisible();
   });
 });

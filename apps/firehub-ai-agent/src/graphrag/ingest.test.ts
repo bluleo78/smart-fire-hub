@@ -325,3 +325,92 @@ describe('ingestDataset 저신뢰 보류', () => {
     expect(pending[0].relations).toEqual([{ relType: 'CAUSED_BY', direction: 'out', otherKey: expect.stringContaining('과부하') }]);
   });
 });
+
+// ── 저신뢰 관계 보류 + lookup 3분기 + 끝점 우선 (관계 검수 슬라이스, Task 2) ──
+// recordPendingRelation에 전달되는 item 형태 — IngestDeps 선언에서 그대로 파생(중복 정의 방지).
+type RelPendingItem = Parameters<NonNullable<IngestDeps['recordPendingRelation']>>[0];
+
+describe('ingestDataset 저신뢰 관계 보류', () => {
+  function relDeps(over: Partial<IngestDeps>, loads: ResolvedGraph[], relPending: RelPendingItem[]): IngestDeps {
+    return {
+      listChunks: () => Promise.resolve([{ chunkId: 1, content: 'c1' }]),
+      extract: extractFrom({}),
+      load: (g) => { loads.push(g); return Promise.resolve({ nodes: g.entities.length, relations: g.relations.length }); },
+      embed: orthogonalEmbed,
+      recordPendingRelation: (item) => { relPending.push(item); return Promise.resolve(); },
+      ...over,
+    };
+  }
+  const ENT = (name: string) => ({ type: 'Cause', name, confidence: 0.9 }); // 끝점은 항상 고신뢰(적재)
+
+  it('전원 고신뢰 관계면 아무것도 보류하지 않고 엣지가 이전과 동일하다(판별)', async () => {
+    const loads: ResolvedGraph[] = []; const relPending: RelPendingItem[] = [];
+    const deps = relDeps({ extract: extractFrom({ c1: { entities: [ENT('누전'), ENT('과부하')],
+      relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.9 }] } }) }, loads, relPending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    expect(loads.flatMap((g) => g.relations)).toHaveLength(1);
+    expect(relPending).toHaveLength(0);
+  });
+
+  it('저신뢰 관계(양 끝점 고신뢰)는 엣지 적재에서 제외되고 큐에 등록된다', async () => {
+    const loads: ResolvedGraph[] = []; const relPending: RelPendingItem[] = [];
+    const deps = relDeps({ lookupRelationDecision: () => Promise.resolve(undefined),
+      extract: extractFrom({ c1: { entities: [ENT('누전'), ENT('과부하')],
+        relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.3, reason: '추론' }] } }) }, loads, relPending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    expect(loads.flatMap((g) => g.entities).length).toBe(2);       // 끝점 엔티티는 적재
+    expect(loads.flatMap((g) => g.relations)).toHaveLength(0);     // 저신뢰 엣지는 미적재
+    expect(relPending).toHaveLength(1);
+    expect(relPending[0]).toMatchObject({ relType: 'CAUSED_BY', confidence: 0.3, reason: '추론', datasetId: 122 });
+    expect(relPending[0].subjectName).toBe('누전');
+    expect(relPending[0].objectName).toBe('과부하');
+    expect(relPending[0].sourceChunkIds).toEqual([1]);
+  });
+
+  it('집계 max — 다른 청크 고신뢰 mention이 관계 flag를 해제한다(오름/내림차순)', async () => {
+    for (const [c1conf, c2conf] of [[0.4, 0.9], [0.9, 0.4]] as const) {
+      const loads: ResolvedGraph[] = []; const relPending: RelPendingItem[] = [];
+      const deps = relDeps({
+        listChunks: () => Promise.resolve([{ chunkId: 1, content: 'c1' }, { chunkId: 2, content: 'c2' }]),
+        lookupRelationDecision: () => Promise.resolve(undefined),
+        extract: extractFrom({
+          c1: { entities: [ENT('누전'), ENT('과부하')], relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: c1conf }] },
+          c2: { entities: [ENT('누전'), ENT('과부하')], relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: c2conf }] },
+        }),
+      }, loads, relPending);
+      await ingestDataset(deps, 122, CORE_ONTOLOGY);
+      expect(loads.flatMap((g) => g.relations).length > 0).toBe(true);
+      expect(relPending).toHaveLength(0);
+    }
+  });
+
+  it('lookup 3분기 — approved 적재/rejected 조용히 보류/none 보류+큐', async () => {
+    for (const [decision, loaded, queued] of [['approved', true, false], ['rejected', false, false], [undefined, false, true]] as const) {
+      const loads: ResolvedGraph[] = []; const relPending: RelPendingItem[] = [];
+      const deps = relDeps({ lookupRelationDecision: () => Promise.resolve(decision),
+        extract: extractFrom({ c1: { entities: [ENT('누전'), ENT('과부하')],
+          relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.3 }] } }) }, loads, relPending);
+      await ingestDataset(deps, 122, CORE_ONTOLOGY);
+      expect(loads.flatMap((g) => g.relations).length > 0).toBe(loaded);
+      expect(relPending.length > 0).toBe(queued);
+    }
+  });
+
+  it('끝점 우선 — 끝점 엔티티가 보류된 저신뢰 관계는 relation 큐에 안 들어간다', async () => {
+    const loads: ResolvedGraph[] = []; const relPending: RelPendingItem[] = []; const entPending: PendingItem[] = [];
+    const deps = relDeps({
+      lookupEntityDecision: () => Promise.resolve(undefined),
+      lookupRelationDecision: () => Promise.resolve(undefined),
+      recordPendingEntity: (item) => { entPending.push(item); return Promise.resolve(); },
+      extract: extractFrom({ c1: { entities: [
+        { type: 'Cause', name: '노후배선', confidence: 0.3 },   // 끝점 엔티티 보류(슬라이스1)
+        { type: 'Cause', name: '과부하', confidence: 0.9 },
+      ], relations: [{ subject: '노후배선', type: 'CAUSED_BY', object: '과부하', confidence: 0.3 }] } }),
+    }, loads, relPending);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    // 관계는 끝점(노후배선)이 엔티티-보류라 슬라이스1이 지배 → relation 큐 X(엔티티 payload에 수집됨).
+    expect(relPending).toHaveLength(0);
+    expect(entPending).toHaveLength(1);
+    expect(entPending[0].relations.length).toBe(1);
+  });
+});

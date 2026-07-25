@@ -13,7 +13,7 @@ import {
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError } from '@/lib/api-error';
 import type {
-  EntityPayload, PropertyPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
+  EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
 
 // AI가 수행한 불확실한 작업(동의어 병합·속성 정규화)을 사람이 원문 근거와 함께 검수·판단하는 인박스.
@@ -49,6 +49,7 @@ export default function ReviewInboxPage() {
         <p className="text-muted-foreground text-sm">
           AI가 수행한 불확실한 작업을 원문 근거와 함께 검수합니다. 동의어 병합은 승인 시 그래프에 병합되고,
           속성 정규화는 정정값을 입력해 반영합니다. 저신뢰 엔티티는 승인 시 관계와 함께 그래프에 적재됩니다.
+          저신뢰 관계는 승인 시 그래프 엣지로 적재됩니다.
         </p>
       </div>
 
@@ -58,6 +59,7 @@ export default function ReviewInboxPage() {
           <TabsTrigger value="synonym_merge">동의어</TabsTrigger>
           <TabsTrigger value="property_normalization">속성</TabsTrigger>
           <TabsTrigger value="entity_extraction">엔티티</TabsTrigger>
+          <TabsTrigger value="relation_extraction">관계</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -99,17 +101,19 @@ function ReviewRow(props: {
   const isProperty = row.itemType === 'property_normalization';
   const isSynonym = row.itemType === 'synonym_merge';
   const isEntity = row.itemType === 'entity_extraction';
+  const isRelation = row.itemType === 'relation_extraction';
 
   return (
     <>
       <TableRow>
         <TableCell>
-          <Badge variant="secondary">{isSynonym ? '동의어' : isProperty ? '속성' : isEntity ? '엔티티' : row.itemType}</Badge>
+          <Badge variant="secondary">{isSynonym ? '동의어' : isProperty ? '속성' : isEntity ? '엔티티' : isRelation ? '관계' : row.itemType}</Badge>
         </TableCell>
         <TableCell className="max-w-md">
           {isSynonym && <SynonymContent payload={row.payload as SynonymPayload} rationale={row.reason} />}
           {isProperty && <PropertyContent payload={row.payload as PropertyPayload} reason={row.reason} value={correctedValue} onChange={setCorrectedValue} />}
           {isEntity && <EntityContent payload={row.payload as EntityPayload} reason={row.reason} />}
+          {isRelation && <RelationContent payload={row.payload as RelationPayload} reason={row.reason} />}
         </TableCell>
         <TableCell className="text-sm text-muted-foreground">
           {row.signalType === 'similarity' && row.signalScore != null ? `유사도 ${row.signalScore.toFixed(3)}`
@@ -124,7 +128,7 @@ function ReviewRow(props: {
         <TableCell className="text-right space-x-2 whitespace-nowrap">
           <Button size="sm" disabled={processing || (isProperty && correctedValue.trim() === '')}
             onClick={() => onApprove(row.id, isProperty ? correctedValue : undefined)}>
-            {isProperty ? '정정 적용' : isEntity ? '적재' : '승인'}
+            {isProperty ? '정정 적용' : isEntity || isRelation ? '적재' : '승인'}
           </Button>
           <Button size="sm" variant="outline" disabled={processing} onClick={() => onReject(row.id)}>거부</Button>
         </TableCell>
@@ -172,6 +176,20 @@ function EntityContent({ payload, reason }: { payload: EntityPayload; reason: st
     <div className="space-y-1">
       <div><span className="font-medium">{payload.name}</span> <Badge variant="outline">{payload.entityType}</Badge></div>
       {relCount > 0 && <div className="text-xs text-muted-foreground">연결 관계 {relCount}건 (승인 시 함께 적재)</div>}
+      {reason && <div className="text-xs text-muted-foreground">{reason}</div>}
+    </div>
+  );
+}
+
+// 저신뢰 관계 — 주어→[관계]→목적어·사유 표시(정정 입력 없음, 승인 시 엣지 적재).
+function RelationContent({ payload, reason }: { payload: RelationPayload; reason: string | null }) {
+  return (
+    <div className="space-y-1">
+      <div>
+        <span className="font-medium">{payload.subjectName}</span>
+        {' '}<Badge variant="outline">{payload.relType}</Badge>{' → '}
+        <span className="font-medium">{payload.objectName}</span>
+      </div>
       {reason && <div className="text-xs text-muted-foreground">{reason}</div>}
     </div>
   );

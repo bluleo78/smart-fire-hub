@@ -29,6 +29,7 @@ public class ReviewItemService {
   static final String SYNONYM = "synonym_merge";
   static final String PROPERTY = "property_normalization";
   static final String ENTITY = "entity_extraction";
+  static final String RELATION = "relation_extraction";
 
   // resolver.ts normalizeName과 동일 규칙(trim + 연속공백 1칸 + 소문자) — 정렬 키로만 사용, 저장은 원본(trim).
   private static String normalize(String s) {
@@ -116,6 +117,32 @@ public class ReviewItemService {
     return repo.findDecisionStatus(ENTITY, entityType + "|" + normalize(name)).orElse("none");
   }
 
+  /** 저신뢰 관계 검수 등록 — dedupe_key는 ai-agent가 계산한 canonical subjectKey|relType|objectKey(opaque). */
+  @SneakyThrows
+  public void recordPendingRelation(
+      Long datasetId, String subjectKey, String relType, String objectKey,
+      String subjectName, String objectName, List<Long> sourceChunkIds, Double confidence, String reason) {
+    ObjectNode payload = objectMapper.createObjectNode();
+    payload.put("subjectKey", subjectKey);
+    payload.put("relType", relType);
+    payload.put("objectKey", objectKey);
+    payload.put("subjectName", subjectName);
+    payload.put("objectName", objectName);
+    if (sourceChunkIds != null && !sourceChunkIds.isEmpty()) {
+      var arr = payload.putArray("sourceChunkIds");
+      for (Long c : sourceChunkIds) if (c != null) arr.add(c.longValue());
+    }
+    String dedupe = subjectKey + "|" + relType + "|" + objectKey;
+    String reasonMsg = (reason != null && !reason.isBlank()) ? reason : "추출 신뢰도가 낮은 관계입니다.";
+    repo.upsertPending(RELATION, dedupe, datasetId, "low_confidence", confidence, reasonMsg,
+        objectMapper.writeValueAsString(payload));
+  }
+
+  /** 저신뢰 관계 기존 결정 조회 — 없으면 "none". dedupe_key는 ai-agent 계산 opaque 값 그대로. */
+  public String lookupRelation(String subjectKey, String relType, String objectKey) {
+    return repo.findDecisionStatus(RELATION, subjectKey + "|" + relType + "|" + objectKey).orElse("none");
+  }
+
   public List<ReviewItemResponse> listPending(String itemType) {
     return repo.findPending(itemType).stream().map(this::toResponse).toList();
   }
@@ -145,6 +172,13 @@ public class ReviewItemService {
             r.path("relType").asText(), r.path("direction").asText(), r.path("otherKey").asText())));
         mutationClient.addEntity(p.path("entityType").asText(), p.path("name").asText(),
             props.isMissingNode() ? null : props, chunkIds, rels);
+      }
+      case RELATION -> {
+        // as-extracted 관계 그대로 적재. add-relation이 양 끝점 존재 시에만 MERGE.
+        List<Long> chunkIds = new ArrayList<>();
+        p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
+        mutationClient.addRelation(
+            p.path("subjectKey").asText(), p.path("relType").asText(), p.path("objectKey").asText(), chunkIds);
       }
       default -> throw new IllegalStateException("알 수 없는 item_type: " + row.itemType());
     }

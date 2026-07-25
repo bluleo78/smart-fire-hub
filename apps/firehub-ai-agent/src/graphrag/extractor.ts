@@ -76,7 +76,7 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
 
   // 관계: 관계타입 유효 + 주어·목적어가 추출된 엔티티 + 허용 트리플이어야 함.
   const relations = (Array.isArray(parsed.relations) ? parsed.relations : [])
-    .filter((r: unknown): r is { subject: string; type: RelationType; object: string } => {
+    .filter((r: unknown): r is { subject: string; type: RelationType; object: string; confidence?: unknown; reason?: unknown } => {
       const rec = r as Record<string, unknown> | null;
       if (!rec || typeof rec.subject !== 'string' || typeof rec.object !== 'string'
         || typeof rec.type !== 'string' || !isRelationType(opts.ontology, rec.type)) return false;
@@ -84,7 +84,16 @@ export async function extractGraph(text: string, opts: ExtractOptions): Promise<
       const objectType = typeByName.get(rec.object);
       return !!subjectType && !!objectType && isAllowedTriple(opts.ontology, subjectType, rec.type, objectType);
     })
-    .map((r) => ({ subject: r.subject, type: r.type, object: r.object }));
+    .map((r) => {
+      // confidence는 0~1 숫자만 채택(그 외 미신고=undefined). reason은 비어있지 않은 문자열만.
+      const confidence = typeof r.confidence === 'number' && r.confidence >= 0 && r.confidence <= 1 ? r.confidence : undefined;
+      const reason = typeof r.reason === 'string' && r.reason.trim() !== '' ? r.reason : undefined;
+      return {
+        subject: r.subject, type: r.type, object: r.object,
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(reason ? { reason } : {}),
+      };
+    });
 
   return {
     entities,

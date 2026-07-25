@@ -51,3 +51,18 @@ describe('resolveExtraction confidence 집계', () => {
     expect(g.entities[0].reason).toBe('명시');
   });
 });
+
+describe('resolveExtraction 관계 confidence 집계', () => {
+  it('관계 confidence/reason을 싣고 같은 엣지 중복은 max로 집계한다', () => {
+    const g = resolveExtraction({
+      entities: [{ type: 'Cause', name: '누전' }, { type: 'Cause', name: '과부하' }],
+      relations: [
+        { subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.4, reason: '추론' },
+        { subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.9, reason: '명시' },
+      ],
+    }, CORE_ONTOLOGY);
+    expect(g.relations).toHaveLength(1);
+    expect(g.relations[0].confidence).toBe(0.9);
+    expect(g.relations[0].reason).toBe('명시');
+  });
+});

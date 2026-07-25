@@ -47,5 +47,22 @@ export function createReviewApi(client: AxiosInstance) {
     }): Promise<void> {
       await client.post('/graphrag/review-items/entity/pending', item);
     },
+    // 저신뢰 관계 기존 검수 결정 조회. 없으면 undefined.
+    async lookupRelationDecision(
+      subjectKey: string, relType: string, objectKey: string,
+    ): Promise<'approved' | 'rejected' | undefined> {
+      const { data } = await client.get('/graphrag/review-items/relation/lookup', {
+        params: { subjectKey, relType, objectKey },
+      });
+      return data.status === 'approved' || data.status === 'rejected' ? data.status : undefined;
+    },
+    // 저신뢰 관계를 검수 대기열에 등록(이미 존재하면 서버가 무시).
+    async recordPendingRelation(item: {
+      datasetId: number; subjectKey: string; relType: string; objectKey: string;
+      subjectName: string; objectName: string; sourceChunkIds: number[];
+      confidence: number; reason?: string;
+    }): Promise<void> {
+      await client.post('/graphrag/review-items/relation/pending', item);
+    },
   };
 }

@@ -184,6 +184,51 @@ class ReviewItemServiceTest {
     assertThat(service.lookupEntity("Cause", "미결")).isEqualTo("none");
   }
 
+  @Test
+  @DisplayName("관계 등록 시 datasetId/sourceChunkIds가 저장되고 evidence가 원문 스니펫을 반환한다")
+  void recordPendingRelation_persistsEvidence() {
+    long datasetId = 99L, chunkId = 7L;
+    service.recordPendingRelation(datasetId, "12:누전", "CAUSED_BY", "34:과부하", "누전", "과부하",
+        List.of(chunkId), 0.3, "추론");
+
+    ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+    verify(repo).upsertPending(eq("relation_extraction"), eq("12:누전|CAUSED_BY|34:과부하"),
+        eq(datasetId), eq("low_confidence"), eq(0.3), any(), payloadCaptor.capture());
+    assertThat(payloadCaptor.getValue()).contains("누전").contains("과부하").contains("CAUSED_BY");
+
+    ReviewItemRecord persisted = new ReviewItemRecord(1L, "relation_extraction", "pending", datasetId,
+        "low_confidence", 0.3, "추론", payloadCaptor.getValue(), null, null, LocalDateTime.now());
+    when(repo.findById(1L)).thenReturn(Optional.of(persisted));
+    when(chunkRepository.findChunkContentsByDataset(datasetId))
+        .thenReturn(List.of(new DocumentChunkRepository.ChunkContent(chunkId, "원문 청크 내용")));
+    var evidence = service.evidence(1L);
+    assertThat(evidence).isNotEmpty();
+    assertThat(evidence.get(0).chunkId()).isEqualTo(chunkId);
+  }
+
+  @Test
+  @DisplayName("관계 승인 시 addRelation을 호출하고 status를 approved로 갱신한다")
+  void approve_relation_callsAddRelation() {
+    ReviewItemRecord pending = new ReviewItemRecord(4L, "relation_extraction", "pending", 99L, "low_confidence", 0.3, "추론",
+        "{\"subjectKey\":\"12:누전\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"34:과부하\",\"sourceChunkIds\":[7]}",
+        null, null, LocalDateTime.now());
+    when(repo.findById(4L)).thenReturn(Optional.of(pending));
+
+    service.approve(4L, null, 1L); // correctedValue 불필요.
+
+    verify(mutationClient).addRelation("12:누전", "CAUSED_BY", "34:과부하", List.of(7L));
+    verify(repo).updateStatus(4L, "approved", 1L);
+  }
+
+  @Test
+  @DisplayName("관계 lookup은 저장된 결정 상태를 반환한다(opaque key 그대로)")
+  void lookupRelation_returnsStatus() {
+    when(repo.findDecisionStatus("relation_extraction", "12:누전|CAUSED_BY|34:과부하")).thenReturn(Optional.of("rejected"));
+    assertThat(service.lookupRelation("12:누전", "CAUSED_BY", "34:과부하")).isEqualTo("rejected");
+    when(repo.findDecisionStatus("relation_extraction", "a|R|b")).thenReturn(Optional.empty());
+    assertThat(service.lookupRelation("a", "R", "b")).isEqualTo("none");
+  }
+
   // --- helpers ---
   private static ReviewItemRecord record(String itemType, String payloadJson) {
     return new ReviewItemRecord(1L, itemType, "pending", null, null, null, null, payloadJson, null, null, LocalDateTime.now());

@@ -5,6 +5,7 @@ import { readWholeGraph } from '../graphrag/neo4j-client.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
 import { setEntityProperty } from '../graphrag/property-mutation.js';
 import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
+import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { loadOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
@@ -108,6 +109,34 @@ router.post('/graph/add-entity', internalAuth, async (req, res) => {
     res.status(204).send();
   } catch {
     res.status(502).json({ error: 'add entity failed' });
+  }
+});
+
+const addRelationBodySchema = z.object({
+  subjectKey: z.string().min(1),
+  relType: z.string().min(1),
+  objectKey: z.string().min(1),
+  sourceChunkIds: z.array(z.number()).default([]),
+});
+
+// HITL 승인된 저신뢰 관계를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
+// 엣지 schemaVersion 스탬프를 위해 온톨로지를 로드한다(add-entity와 동일 관례, 시스템유저 id=1).
+router.post('/graph/add-relation', internalAuth, async (req, res) => {
+  const parsed = addRelationBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
+    return;
+  }
+  try {
+    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
+    const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
+    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
+    const ontology = await loadOntology(apiClient);
+    await addRelation(ontology.schemaVersion, parsed.data.subjectKey, parsed.data.relType as RelationType,
+      parsed.data.objectKey, parsed.data.sourceChunkIds);
+    res.status(204).send();
+  } catch {
+    res.status(502).json({ error: 'add relation failed' });
   }
 });
 

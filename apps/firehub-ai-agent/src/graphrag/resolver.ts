@@ -2,7 +2,7 @@
 import { ExtractionResult, EntityType, RelationType, Ontology, entityTypeId } from './ontology.js';
 
 export interface ResolvedEntity { key: string; type: EntityType; name: string; properties?: Record<string, number | string>; sourceChunkIds?: number[]; confidence?: number; reason?: string; }
-export interface ResolvedRelation { subjectKey: string; type: RelationType; objectKey: string; }
+export interface ResolvedRelation { subjectKey: string; type: RelationType; objectKey: string; confidence?: number; reason?: string; }
 export interface ResolvedGraph { entities: ResolvedEntity[]; relations: ResolvedRelation[]; }
 
 // 앞뒤 공백 제거 + 연속 공백 1칸 + 소문자화. 표기 변형을 흡수하는 최소 정규화.
@@ -38,16 +38,23 @@ export function resolveExtraction(extraction: ExtractionResult, ontology: Ontolo
       existing.reason = e.reason ?? existing.reason;
     }
   }
-  // 관계를 키로 재작성 + (subjectKey,type,objectKey) 중복 제거.
-  const relSet = new Set<string>();
-  const relations: ResolvedRelation[] = [];
+  // 관계를 키로 재작성 + (subjectKey,type,objectKey) 중복 제거. 같은 엣지 중복은 confidence를 max로 집계.
+  const relByDedup = new Map<string, ResolvedRelation>();
   for (const r of extraction.relations) {
     const sk = keyByName.get(r.subject), ok = keyByName.get(r.object);
     if (!sk || !ok) continue;
     const dedup = `${sk}|${r.type}|${ok}`;
-    if (relSet.has(dedup)) continue;
-    relSet.add(dedup);
-    relations.push({ subjectKey: sk, type: r.type, objectKey: ok });
+    const existing = relByDedup.get(dedup);
+    if (!existing) {
+      relByDedup.set(dedup, {
+        subjectKey: sk, type: r.type, objectKey: ok,
+        ...(r.confidence !== undefined ? { confidence: r.confidence } : {}),
+        ...(r.reason ? { reason: r.reason } : {}),
+      });
+    } else if (r.confidence !== undefined && (existing.confidence === undefined || r.confidence > existing.confidence)) {
+      existing.confidence = r.confidence;
+      existing.reason = r.reason ?? existing.reason;
+    }
   }
-  return { entities: [...byKey.values()], relations };
+  return { entities: [...byKey.values()], relations: [...relByDedup.values()] };
 }

@@ -700,6 +700,20 @@ export class FireHubApiClient {
     return this._review.recordPendingEntity(item);
   }
 
+  /** 저신뢰 관계 기존 검수 결정 조회 — 없으면 undefined. */
+  lookupRelationDecision(subjectKey: string, relType: string, objectKey: string): Promise<'approved' | 'rejected' | undefined> {
+    return this._review.lookupRelationDecision(subjectKey, relType, objectKey);
+  }
+
+  /** 저신뢰 관계를 검수 대기열에 등록. */
+  recordPendingRelation(item: {
+    datasetId: number; subjectKey: string; relType: string; objectKey: string;
+    subjectName: string; objectName: string; sourceChunkIds: number[];
+    confidence: number; reason?: string;
+  }): Promise<void> {
+    return this._review.recordPendingRelation(item);
+  }
+
   listSmartJobs() {
     return this._proactive.listSmartJobs();
   }

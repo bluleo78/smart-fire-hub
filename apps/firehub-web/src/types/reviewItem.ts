@@ -1,6 +1,6 @@
 /** 범용 AI 검수 인박스 — graph_review_item API 타입. */
 export type ReviewItemStatus = 'pending' | 'approved' | 'rejected';
-export type ReviewItemType = 'synonym_merge' | 'property_normalization' | 'entity_extraction';
+export type ReviewItemType = 'synonym_merge' | 'property_normalization' | 'entity_extraction' | 'relation_extraction';
 
 /** 동의어 병합 항목 payload. */
 export interface SynonymPayload {
@@ -35,6 +35,16 @@ export interface EntityPayload {
   relations?: EntityRelationRef[];
 }
 
+/** 저신뢰 관계 검수 항목 payload. */
+export interface RelationPayload {
+  subjectKey: string;
+  relType: string;
+  objectKey: string;
+  subjectName: string;
+  objectName: string;
+  sourceChunkIds?: number[];
+}
+
 export interface ReviewItemResponse {
   id: number;
   itemType: ReviewItemType;
@@ -43,7 +53,7 @@ export interface ReviewItemResponse {
   signalType: string | null;
   signalScore: number | null;
   reason: string | null;
-  payload: SynonymPayload | PropertyPayload | EntityPayload | Record<string, unknown>;
+  payload: SynonymPayload | PropertyPayload | EntityPayload | RelationPayload | Record<string, unknown>;
   decidedBy: number | null;
   decidedAt: string | null;
   createdAt: string | null;

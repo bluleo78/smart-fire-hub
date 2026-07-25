@@ -61,6 +61,16 @@ public class GraphMutationClient {
     postJson("/agent/graph/add-entity", body, "엔티티 적재");
   }
 
+  /** ai-agent POST /agent/graph/add-relation — 승인된 저신뢰 관계를 Neo4j에 적재(양 끝점 존재 시 MERGE). */
+  public void addRelation(String subjectKey, String relType, String objectKey, List<Long> sourceChunkIds) {
+    Map<String, Object> body = new HashMap<>();
+    body.put("subjectKey", subjectKey);
+    body.put("relType", relType);
+    body.put("objectKey", objectKey);
+    body.put("sourceChunkIds", sourceChunkIds == null ? List.of() : sourceChunkIds);
+    postJson("/agent/graph/add-relation", body, "관계 적재");
+  }
+
   private void post(String uri, Map<String, String> body, String opLabel) {
     postJson(uri, body, opLabel);
   }

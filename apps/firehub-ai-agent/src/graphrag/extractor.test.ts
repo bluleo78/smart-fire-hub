@@ -119,4 +119,21 @@ describe('extractGraph 속성 추출', () => {
     expect(누전.reason).toBe('추론');
     expect(과부하.confidence).toBeUndefined();
   });
+
+  it('관계 confidence/reason을 통과시키고 범위 밖 confidence는 버린다', async () => {
+    // CORE_ONTOLOGY의 허용 트리플은 Incident -CAUSED_BY-> Cause 방향만 존재하므로
+    // 두 관계 모두 subject=Incident 타입, object=Cause 타입으로 구성한다.
+    const complete = async () => '```json\n{"entities":[' +
+      '{"type":"Incident","name":"누전"},{"type":"Incident","name":"합선"},{"type":"Cause","name":"과부하"}' +
+      '],"relations":[' +
+      '{"subject":"누전","type":"CAUSED_BY","object":"과부하","confidence":0.3,"reason":"추론"},' +
+      '{"subject":"합선","type":"CAUSED_BY","object":"과부하","confidence":9}' +
+      ']}\n```';
+    const res = await extractGraph('본문', { complete, ontology: CORE_ONTOLOGY });
+    const r1 = res.relations.find((r) => r.subject === '누전')!;
+    const r2 = res.relations.find((r) => r.subject === '합선')!;
+    expect(r1.confidence).toBe(0.3);
+    expect(r1.reason).toBe('추론');
+    expect(r2.confidence).toBeUndefined();
+  });
 });

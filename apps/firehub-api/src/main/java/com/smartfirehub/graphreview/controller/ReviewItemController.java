@@ -6,7 +6,9 @@ import com.smartfirehub.graphreview.dto.EntityLookupResponse;
 import com.smartfirehub.graphreview.dto.EvidenceChunk;
 import com.smartfirehub.graphreview.dto.PendingEntityRequest;
 import com.smartfirehub.graphreview.dto.PendingPropertyRequest;
+import com.smartfirehub.graphreview.dto.PendingRelationRequest;
 import com.smartfirehub.graphreview.dto.PendingSynonymRequest;
+import com.smartfirehub.graphreview.dto.RelationLookupResponse;
 import com.smartfirehub.graphreview.dto.ReviewItemResponse;
 import com.smartfirehub.graphreview.dto.SynonymLookupResponse;
 import com.smartfirehub.graphreview.service.ReviewItemService;
@@ -59,6 +61,22 @@ public class ReviewItemController {
   @RequirePermission("dataset:read")
   public EntityLookupResponse lookupEntity(@RequestParam String entityType, @RequestParam String name) {
     return new EntityLookupResponse(service.lookupEntity(entityType, name));
+  }
+
+  // 저신뢰 관계 등록 — ai-agent ingest 중 호출.
+  @PostMapping("/relation/pending")
+  @RequirePermission("dataset:write")
+  public void recordRelation(@RequestBody PendingRelationRequest req) {
+    service.recordPendingRelation(req.datasetId(), req.subjectKey(), req.relType(), req.objectKey(),
+        req.subjectName(), req.objectName(), req.sourceChunkIds(), req.confidence(), req.reason());
+  }
+
+  // 저신뢰 관계 기존 결정 조회 — ingest 중 ai-agent가 보류 판정 시 확인.
+  @GetMapping("/relation/lookup")
+  @RequirePermission("dataset:read")
+  public RelationLookupResponse lookupRelation(
+      @RequestParam String subjectKey, @RequestParam String relType, @RequestParam String objectKey) {
+    return new RelationLookupResponse(service.lookupRelation(subjectKey, relType, objectKey));
   }
 
   // 검수 대기 목록 — status/itemType 필터(둘 다 선택).
