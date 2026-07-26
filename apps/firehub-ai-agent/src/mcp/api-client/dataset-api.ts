@@ -142,5 +142,10 @@ export function createDatasetApi(client: AxiosInstance) {
       const { data } = await client.get(`/datasets/${id}/references`);
       return data;
     },
+    // 데이터셋에 저장된 표→그래프 매핑 조회(GET /datasets/{id}/mapping). 표 투영이 소비.
+    async getDatasetMapping(id: number): Promise<{ datasetId: number; ontologyId: number; spec: unknown; status: string }> {
+      const response = await client.get(`/datasets/${id}/mapping`);
+      return response.data;
+    },
   };
 }

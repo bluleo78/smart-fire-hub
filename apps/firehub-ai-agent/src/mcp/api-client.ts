@@ -184,6 +184,11 @@ export class FireHubApiClient {
   ) {
     return this._datasets.queryDatasetData(id, params);
   }
+  // 표→그래프 매핑 조회 위임. spec/status/ontologyId를 표 투영 툴에 노출한다.
+  async getDatasetMapping(id: number): Promise<{ spec: import('../graphrag/table-projection.js').MappingSpec; status: string; ontologyId: number }> {
+    const m = await this._datasets.getDatasetMapping(id);
+    return { spec: m.spec as import('../graphrag/table-projection.js').MappingSpec, status: m.status, ontologyId: m.ontologyId };
+  }
   createDataset(data: {
     name: string;
     tableName: string;
@@ -535,6 +540,12 @@ export class FireHubApiClient {
   /** GraphRAG 추출용 — api 소유 온톨로지 스키마를 조회한다(GET /api/v1/ontology, dataset:read). */
   async getOntology(): Promise<SerializedOntology> {
     const { data } = await this.client.get<SerializedOntology>('/ontology');
+    return data;
+  }
+
+  /** 표 투영용 — 특정 온톨로지를 id로 조회한다(GET /api/v1/ontology/{id}). */
+  async getOntologyById(id: number): Promise<SerializedOntology> {
+    const { data } = await this.client.get<SerializedOntology>(`/ontology/${id}`);
     return data;
   }
 

@@ -5,9 +5,11 @@ import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
 import { createCliCompleter } from '../../graphrag/llm-cli.js';
-import { loadGraph } from '../../graphrag/loader.js';
+import { loadGraph, loadTableGraph } from '../../graphrag/loader.js';
 import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
+import { projectTableDataset, DataPage } from '../../graphrag/table-projection.js';
+import { deserializeOntology } from '../../graphrag/ontology.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
 import { loadOntology } from '../../graphrag/ontology-source.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
@@ -70,6 +72,40 @@ export function registerGraphragTools(
           });
         } catch (err) {
           console.warn('[graphrag] 적재 이력 기록 실패(무시하고 계속):', err);
+        }
+        return jsonResult(summary);
+      },
+    ),
+    safeTool(
+      'graphrag_project_table',
+      'TABLE 데이터셋의 행을 승인된(active) 매핑에 따라 지식 그래프(Neo4j)에 결정적으로 투영한다. 관리/구축 목적으로만 사용.',
+      { datasetId: z.number().describe('투영할 TABLE 데이터셋 ID') },
+      async (args: { datasetId: number }) => {
+        // Neo4j 제약 보장 → 매핑 조회(active 게이트) → 바인딩 온톨로지 로드 → 투영.
+        await bootstrapConstraints();
+        const mapping = await apiClient.getDatasetMapping(args.datasetId);
+        if (mapping.status !== 'active') {
+          throw new Error(`매핑이 active 상태가 아닙니다(현재: ${mapping.status ?? '없음'}). 먼저 매핑을 활성화하세요.`);
+        }
+        // 표는 id=1이 아닌 온톨로지에 바인딩될 수 있어 by-id로 로드한다(폴백 없음).
+        const ontology = deserializeOntology(await apiClient.getOntologyById(mapping.ontologyId));
+        const summary = await projectTableDataset(
+          {
+            fetchRows: (id, page, size) =>
+              apiClient.queryDatasetData(id, { page, size, includeTotalCount: true }) as Promise<DataPage>,
+            load: (graph, datasetId, schemaVersion) => loadTableGraph(graph, datasetId, schemaVersion),
+          },
+          args.datasetId, ontology, mapping.spec,
+        );
+        // 투영 이력 best-effort 기록(chunkCount에는 처리 행 수를 담는다 — 표엔 청크 개념이 없음).
+        try {
+          await apiClient.recordGraphIngest(args.datasetId, {
+            schemaVersionAtIngest: ontology.schemaVersion,
+            chunkCount: summary.rowCount, nodeCount: summary.nodeCount, edgeCount: summary.edgeCount,
+            extractionFailures: 0, status: 'SUCCESS',
+          });
+        } catch (err) {
+          console.warn('[graphrag] 표 투영 이력 기록 실패(무시하고 계속):', err);
         }
         return jsonResult(summary);
       },
