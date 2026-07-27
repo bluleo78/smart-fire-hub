@@ -147,5 +147,14 @@ export function createDatasetApi(client: AxiosInstance) {
       const response = await client.get(`/datasets/${id}/mapping`);
       return response.data;
     },
+    // 데이터셋↔온톨로지 바인딩 조회(GET /datasets/{id}/ontology). ontologyId=null이면 미바인딩.
+    async getDatasetOntology(id: number): Promise<{ datasetId: number; ontologyId: number | null }> {
+      const response = await client.get(`/datasets/${id}/ontology`);
+      return response.data;
+    },
+    // 추론된 매핑을 draft로 저장(PUT /datasets/{id}/mapping). body는 MappingSpec 그대로.
+    async saveDatasetMapping(id: number, spec: unknown): Promise<void> {
+      await client.put(`/datasets/${id}/mapping`, spec);
+    },
   };
 }

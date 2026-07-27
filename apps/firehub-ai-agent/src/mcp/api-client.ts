@@ -189,6 +189,15 @@ export class FireHubApiClient {
     const m = await this._datasets.getDatasetMapping(id);
     return { spec: m.spec as import('../graphrag/table-projection.js').MappingSpec, status: m.status, ontologyId: m.ontologyId };
   }
+  // 데이터셋↔온톨로지 바인딩 조회 위임(추론 툴이 소비). ontologyId=null이면 미바인딩.
+  async getDatasetOntology(id: number): Promise<{ datasetId: number; ontologyId: number | null }> {
+    return this._datasets.getDatasetOntology(id);
+  }
+
+  // 추론된 매핑 draft 저장 위임. spec은 MappingSpec.
+  async saveDatasetMapping(id: number, spec: import('../graphrag/table-projection.js').MappingSpec): Promise<void> {
+    await this._datasets.saveDatasetMapping(id, spec);
+  }
   createDataset(data: {
     name: string;
     tableName: string;

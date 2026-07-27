@@ -10,6 +10,8 @@ import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
 import { projectTableDataset, DataPage } from '../../graphrag/table-projection.js';
 import { deserializeOntology } from '../../graphrag/ontology.js';
+import { profileColumns } from '../../graphrag/column-profiler.js';
+import { inferMapping } from '../../graphrag/mapping-inference.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
 import { loadOntology } from '../../graphrag/ontology-source.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
@@ -108,6 +110,72 @@ export function registerGraphragTools(
           console.warn('[graphrag] 표 투영 이력 기록 실패(무시하고 계속):', err);
         }
         return jsonResult(summary);
+      },
+    ),
+    safeTool(
+      'graphrag_infer_mapping',
+      'TABLE 데이터셋의 컬럼을 프로파일링하고 LLM으로 온톨로지 매핑(MappingSpec)을 추론해 draft 매핑으로 저장한다. 관리/구축 목적으로만 사용.',
+      {
+        datasetId: z.number().describe('매핑을 추론할 TABLE 데이터셋 ID'),
+        force: z.boolean().optional().describe('active 매핑이 있어도 덮어써 재추론(draft로 강등됨, 재활성화 필요)'),
+      },
+      async (args: { datasetId: number; force?: boolean }) => {
+        // 1) 존재/활성 가드: 404=매핑없음(진행), draft=덮어씀, active=거부(force 아니면).
+        //    getDatasetMapping은 매핑이 없으면 404로 throw하므로 catch해서 상태를 구분한다.
+        let existing: { status: string } | null = null;
+        try {
+          existing = await apiClient.getDatasetMapping(args.datasetId);
+        } catch (err) {
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status !== 404) throw err; // 404만 "매핑 없음"으로 취급, 그 외 에러는 전파
+        }
+        if (existing?.status === 'active' && !args.force) {
+          throw new Error(
+            '활성(active) 매핑이 있습니다. 재추론하려면 force:true 를 지정하세요' +
+              '(경고: 재활성화 전까지 그래프는 기존 매핑 기준으로 남습니다).',
+          );
+        }
+        // 2) 온톨로지 바인딩 로드 — 미바인딩이면 백엔드 저장이 400이므로 사전 거부.
+        const binding = await apiClient.getDatasetOntology(args.datasetId);
+        if (binding.ontologyId == null) {
+          throw new Error('데이터셋이 온톨로지에 바인딩되지 않았습니다. 먼저 온톨로지를 바인딩하세요.');
+        }
+        const ontology = deserializeOntology(await apiClient.getOntologyById(binding.ontologyId));
+        // 3) 컬럼 메타 + 행 표본을 동일 data 쿼리로 확보(최대 3페이지, ≤600행).
+        const columns: { columnName: string; dataType: string; isPrimaryKey: boolean }[] = [];
+        const sampleRows: Record<string, unknown>[] = [];
+        const SAMPLE_ROW_CAP = 600;
+        let page = 0;
+        while (sampleRows.length < SAMPLE_ROW_CAP) {
+          const resp = (await apiClient.queryDatasetData(args.datasetId, {
+            page,
+            size: 200,
+            includeTotalCount: true,
+          })) as { columns: typeof columns; rows: Record<string, unknown>[]; totalPages: number };
+          if (page === 0) columns.push(...resp.columns); // 컬럼 메타는 첫 페이지에서 확보
+          sampleRows.push(...resp.rows);
+          page += 1;
+          if (page >= resp.totalPages || resp.rows.length === 0) break;
+        }
+        // 4) 프로파일 → 5) 추론(자체 conformance 필터로 부적합분 드롭).
+        const profiles = profileColumns(columns, sampleRows);
+        const result = await inferMapping({ complete }, ontology, profiles);
+        // 6) 빈 결과 가드: 무용한 빈 draft를 저장하지 않고 표면화(조용히 저장 금지).
+        if (result.spec.entities.length === 0) {
+          throw new Error('추론 결과가 비었습니다(LLM 실패 또는 매핑 가능한 컬럼 없음). draft를 저장하지 않았습니다.');
+        }
+        // 7) draft 저장(PUT → status=draft).
+        await apiClient.saveDatasetMapping(args.datasetId, result.spec);
+        // 8) 요약 반환. confidence/dropped는 휘발성(draft엔 저장 안 됨).
+        return jsonResult({
+          datasetId: args.datasetId,
+          status: 'draft',
+          entityCount: result.spec.entities.length,
+          relationCount: result.spec.relations.length,
+          dropped: result.dropped,
+          confidences: result.confidences,
+          forcedOverActive: existing?.status === 'active' && !!args.force,
+        });
       },
     ),
     safeTool(

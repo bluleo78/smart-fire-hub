@@ -10,8 +10,8 @@ import { normalizePropertyChecked } from './property-normalizer.js';
 
 export interface ExtractOptions { complete: CompleteFn; ontology: Ontology; }
 
-// 응답 텍스트에서 첫 JSON 코드블록을 추출해 파싱한다. 실패 시 null.
-function parseJsonBlock(text: string): unknown | null {
+// ```json 코드블록(없으면 전체)에서 JSON을 파싱한다. 실패 시 null. (mapping-inference.ts도 재사용)
+export function parseJsonBlock(text: string): unknown | null {
   const m = text.match(/```json\s*([\s\S]*?)```/);
   const raw = m ? m[1] : text;
   try { return JSON.parse(raw.trim()); } catch { return null; }
