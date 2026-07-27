@@ -39,6 +39,7 @@ import { DatasetDataTab } from './tabs/DatasetDataTab';
 import { DatasetDocumentsTab } from './tabs/DatasetDocumentsTab';
 import { DatasetHistoryTab } from './tabs/DatasetHistoryTab';
 import { DatasetInfoTab } from './tabs/DatasetInfoTab';
+import { DatasetMappingTab } from './tabs/DatasetMappingTab';
 import { DatasetMapTab } from './tabs/DatasetMapTab';
 import { DatasetObjectsTab } from './tabs/DatasetObjectsTab';
 
@@ -60,7 +61,7 @@ export default function DatasetDetailPage() {
     ? ['info', 'documents']
     : isFile
       ? ['info', 'objects']
-      : ['info', 'columns', 'data', 'map', 'history'];
+      : ['info', 'columns', 'data', 'map', 'mapping', 'history'];
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -77,7 +78,7 @@ export default function DatasetDetailPage() {
       ? ['info', 'documents']
       : isFileType
         ? ['info', 'objects']
-        : ['info', 'columns', 'data', 'map', 'history'];
+        : ['info', 'columns', 'data', 'map', 'mapping', 'history'];
     const newTabParam = searchParams.get('tab');
     const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);
@@ -435,6 +436,7 @@ export default function DatasetDetailPage() {
               <TabsTrigger value="columns">필드</TabsTrigger>
               <TabsTrigger value="data">데이터</TabsTrigger>
               {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
+              <TabsTrigger value="mapping">매핑</TabsTrigger>
               <TabsTrigger value="history">이력</TabsTrigger>
             </>
           )}
@@ -458,6 +460,11 @@ export default function DatasetDetailPage() {
         {activeTab === 'map' && hasGeometry && (
           <div className="mt-6">
             <DatasetMapTab dataset={dataset} datasetId={datasetId} />
+          </div>
+        )}
+        {activeTab === 'mapping' && (
+          <div className="mt-6">
+            <DatasetMappingTab dataset={dataset} datasetId={datasetId} />
           </div>
         )}
         {activeTab === 'history' && (

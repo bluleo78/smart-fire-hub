@@ -1,6 +1,6 @@
 // 온톨로지 시각화 계약 타입 — firehub-api /api/v1/ontology(/graph) 응답과 1:1.
 export interface Property { name: string; description: string; dataType: 'text' | 'number' | 'date' | null; unit: string | null; }
-export interface EntityTypeDef { type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; properties: Property[]; }
+export interface EntityTypeDef { id?: number; type: string; description: string; naming: string; resolution: 'embedding' | 'exact'; properties: Property[]; }
 export interface Triple { subject: string; relation: string; object: string; description: string; }
 export interface OntologySchema { domain: string; schemaVersion: number; entities: EntityTypeDef[]; relations: Triple[]; }
 
@@ -17,3 +17,6 @@ export type UpdateOntologyRequest = OntologySchema & { renames: TypeRename[] };
 export interface GraphNode { key: string; type: string; name: string; sourceChunkCount: number; schemaVersion: number | null; }
 export interface GraphEdge { subjectKey: string; type: string; objectKey: string; }
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }
+
+// 다중 온톨로지 목록(GET /api/v1/ontologies) — 데이터셋 바인딩 시 선택지로 쓴다.
+export interface OntologySummary { id: number; domain: string; schemaVersion: number; }
