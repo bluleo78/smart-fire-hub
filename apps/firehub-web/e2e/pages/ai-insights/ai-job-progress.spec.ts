@@ -29,10 +29,15 @@ async function setupImportBase(page: import('@playwright/test').Page) {
     totalRows: 1,
   });
   // 검증 응답
+  // ImportValidateResponse는 sampleSize/sampled가 필수 필드다 — 누락 시
+  // ImportValidationSection이 `validationResult.sampleSize.toLocaleString()`에서
+  // undefined를 참조해 렌더링 중 예외를 던지고 PageErrorBoundary가 다이얼로그 전체를
+  // 대체해버려 이후 '임포트' 버튼을 찾지 못하는 상시 실패로 이어진다 (#296).
   await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/validate`, {
-    totalRows: 1,
+    sampleSize: 1,
     validRows: 1,
     errorRows: 0,
+    sampled: true,
     errors: [],
   });
   // 임포트 시작 응답
