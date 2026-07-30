@@ -1,5 +1,5 @@
 // 표 컬럼 프로파일 + 온톨로지를 LLM에 넘겨 매핑(MappingSpec)을 추론한다.
-// 백엔드 MappingService.validate()가 스펙 전체를 400으로 거부하므로, 여기서 규칙 2~5를
+// 백엔드 MappingService.validate()가 스펙 전체를 400으로 거부하므로, 여기서 규칙 2~6을
 // TS로 재구현해 부적합 제안을 버리고 통과분만 낸다(그래야 draft 저장이 항상 성공).
 import type { CompleteFn } from './llm-cli.js';
 import { Ontology, isEntityType, isAllowedTriple } from './ontology.js';
@@ -104,6 +104,7 @@ export async function inferMapping(
   if (!parsed) return { spec: EMPTY, dropped, confidences };
 
   const columnNames = new Set(profiles.map((p) => p.columnName));
+  const profileByName = new Map(profiles.map((p) => [p.columnName, p]));
   const rawEntities = Array.isArray(parsed.entities) ? parsed.entities : [];
   const rawRelations = Array.isArray(parsed.relations) ? parsed.relations : [];
 
@@ -118,10 +119,13 @@ export async function inferMapping(
       dropped.push({ kind: 'entity', detail: `없는 nameColumn: ${re?.nameColumn} (${re.entityType})` });
       return;
     }
-    const definedNames = new Set((ontology.entities.find((e) => e.type === re.entityType)?.properties ?? []).map((p) => p.name));
+    const definedProps = new Map(
+      (ontology.entities.find((e) => e.type === re.entityType)?.properties ?? []).map((p) => [p.name, p]),
+    );
     const properties: MappingSpec['entities'][number]['properties'] = [];
     for (const p of Array.isArray(re.properties) ? re.properties : []) {
-      if (typeof p?.propertyName !== 'string' || !definedNames.has(p.propertyName)) {
+      const defined = typeof p?.propertyName === 'string' ? definedProps.get(p.propertyName) : undefined;
+      if (!defined) {
         dropped.push({ kind: 'property', detail: `미정의 속성: ${p?.propertyName} (${re.entityType})` });
         continue;
       }
@@ -129,7 +133,20 @@ export async function inferMapping(
         dropped.push({ kind: 'property', detail: `없는 속성 컬럼: ${p?.column} (${re.entityType}.${p.propertyName})` });
         continue;
       }
-      properties.push({ column: p.column, propertyName: p.propertyName });
+      // 규칙 6(#324): 속성 dataType과 컬럼 타입 축이 다르면 백엔드가 스펙 전체를 400으로 거부하므로
+      // 여기서 해당 속성만 버린다. text 속성·dataType 미지정 속성은 백엔드와 동일하게 통과.
+      // number/date 속성은 축이 정확히 같을 때만 남긴다 — 여기가 백엔드보다 약간 엄격하지만
+      // (미지 컬럼타입을 profiler가 text로 접음) 초과 드롭은 400이 아니라 제안 누락이라 안전한 방향이다.
+      const columnAxis = profileByName.get(p.column)?.ontologyDataType ?? null;
+      if (defined.dataType && defined.dataType !== 'text' && columnAxis !== defined.dataType) {
+        dropped.push({
+          kind: 'property',
+          detail: `타입 불일치 속성: ${re.entityType}.${p.propertyName}(${defined.dataType}) ← ${p.column}(${columnAxis})`,
+        });
+        continue;
+      }
+      // propertyName은 온톨로지 정의에서 찾은 이름(defined.name)을 쓴다 — 값은 같지만 타입이 확정된다.
+      properties.push({ column: p.column, propertyName: defined.name });
     }
     pushConfidence(confidences, `entity:${re.entityType}:${re.nameColumn}`, re.confidence);
     kept.push({ entity: { entityType: re.entityType, nameColumn: re.nameColumn, properties }, origIndex });

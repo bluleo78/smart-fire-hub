@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import type { DraftEntity } from '../../../lib/mapping-spec';
+import { propertyTypeMismatch } from '../../../lib/mapping-spec';
 import type { EntityMappingFormData } from '../../../lib/validations/mapping';
 import { entityMappingSchema } from '../../../lib/validations/mapping';
 import type { DatasetColumnResponse } from '../../../types/dataset';
@@ -68,7 +69,21 @@ export function EntityMappingDialog({
     replace([]);
   };
 
+  // 속성 행별 컬럼↔속성 타입 호환 검사(#324).
+  // 서버 conformance가 활성화 시점에 400으로 막지만, 그때 알면 이미 편집을 다 끝낸 뒤다 —
+  // 선택 즉시 행 아래에 사유를 보여주고 확인도 막는다. 드롭다운 자체를 disabled 하지 않는 이유는
+  // 컬럼·속성 중 무엇을 먼저 고르는지에 따라 막히는 쪽이 달라져 오히려 혼란스럽기 때문.
+  const watchedProperties = form.watch('properties');
+  const typeErrors = (watchedProperties ?? []).map((p) => {
+    if (!p?.column || !p?.propertyName) return null; // 둘 다 고르기 전에는 판정하지 않는다
+    const columnType = columns.find((c) => c.columnName === p.column)?.dataType;
+    const propertyDataType = availableProperties.find((ap) => ap.name === p.propertyName)?.dataType;
+    return propertyTypeMismatch(columnType, propertyDataType);
+  });
+  const hasTypeError = typeErrors.some((e) => e !== null);
+
   const submit = (data: EntityMappingFormData) => {
+    if (hasTypeError) return; // 타입 위반 행이 남아 있으면 저장 대상 초안에 넣지 않는다
     onSubmit(data);
     onOpenChange(false);
   };
@@ -159,7 +174,8 @@ export function EntityMappingDialog({
               <p className="text-sm text-muted-foreground">이 엔티티 타입에는 정의된 속성이 없습니다.</p>
             )}
             {fields.map((field, index) => (
-              <div key={field.id} className="flex items-end gap-2">
+              <div key={field.id} className="space-y-1">
+                <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                   <Label className="text-xs" htmlFor={`property-column-${index}`}>
                     데이터셋 컬럼
@@ -191,7 +207,12 @@ export function EntityMappingDialog({
                       form.setValue(`properties.${index}.propertyName`, v, { shouldValidate: true })
                     }
                   >
-                    <SelectTrigger id={`property-name-${index}`} data-testid={`property-name-select-${index}`}>
+                    <SelectTrigger
+                      id={`property-name-${index}`}
+                      data-testid={`property-name-select-${index}`}
+                      aria-invalid={typeErrors[index] ? true : undefined}
+                      aria-describedby={typeErrors[index] ? `property-type-error-${index}` : undefined}
+                    >
                       <SelectValue placeholder="속성 선택" />
                     </SelectTrigger>
                     <SelectContent>
@@ -206,6 +227,16 @@ export function EntityMappingDialog({
                 <Button type="button" variant="ghost" size="sm" onClick={() => remove(index)}>
                   제거
                 </Button>
+                </div>
+                {typeErrors[index] && (
+                  <p
+                    id={`property-type-error-${index}`}
+                    data-testid={`property-type-error-${index}`}
+                    className="text-sm text-destructive"
+                  >
+                    {typeErrors[index]}
+                  </p>
+                )}
               </div>
             ))}
             {form.formState.errors.properties && (
@@ -218,7 +249,7 @@ export function EntityMappingDialog({
           </div>
 
           <div className="flex gap-2">
-            <Button type="submit" className="flex-1">
+            <Button type="submit" className="flex-1" disabled={hasTypeError}>
               확인
             </Button>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

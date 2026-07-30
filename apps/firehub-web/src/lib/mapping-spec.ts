@@ -112,3 +112,44 @@ export function removeEntity(draft: MappingDraft, entityId: string): MappingDraf
     relations: draft.relations.filter((r) => r.subjectId !== entityId && r.objectId !== entityId),
   };
 }
+
+/**
+ * 데이터셋 컬럼 타입 → 온톨로지 dataType(text|number|date) 축약.
+ * 백엔드 MappingService.collapseColumnType과 같은 대응이어야 한다 —
+ * 여기서 통과시킨 조합이 서버에서 400이면 클라이언트 사전 안내가 무의미해지기 때문이다.
+ * 모르는 타입은 null(판정 보류)로 두어 서버와 같이 과소차단을 택한다.
+ */
+export function collapseColumnType(columnType: string | null | undefined): 'text' | 'number' | 'date' | null {
+  if (!columnType) return null;
+  // VARCHAR(255)처럼 정밀도가 붙어 올 수 있어 괄호 앞부분만 본다.
+  const base = columnType.trim().toUpperCase().split('(')[0];
+  switch (base) {
+    case 'INTEGER': case 'BIGINT': case 'SMALLINT': case 'DECIMAL':
+    case 'NUMERIC': case 'DOUBLE': case 'REAL': case 'FLOAT':
+      return 'number';
+    case 'DATE': case 'TIMESTAMP': case 'TIMESTAMPTZ': case 'TIME':
+      return 'date';
+    // BOOLEAN·GEOMETRY는 숫자도 날짜도 아니므로 text로 접어 number/date 연결을 막는다.
+    case 'TEXT': case 'VARCHAR': case 'CHAR': case 'BPCHAR': case 'BOOLEAN': case 'GEOMETRY':
+      return 'text';
+    default:
+      return null;
+  }
+}
+
+/**
+ * 컬럼↔속성 타입 호환 위반 메시지. 호환되면 null.
+ * text 속성은 어떤 값이든 문자열로 담을 수 있어 제한하지 않고, dataType 미지정 속성과
+ * 판정 보류 컬럼도 통과시킨다(서버 규칙과 동일).
+ */
+export function propertyTypeMismatch(
+  columnType: string | null | undefined,
+  propertyDataType: 'text' | 'number' | 'date' | null | undefined,
+): string | null {
+  if (!propertyDataType || propertyDataType === 'text') return null;
+  const actual = collapseColumnType(columnType);
+  if (actual === null || actual === propertyDataType) return null;
+  const label = { text: '텍스트', number: '숫자', date: '날짜' }[actual];
+  const want = propertyDataType === 'number' ? '숫자' : '날짜';
+  return `${label} 컬럼은 ${want} 속성(${propertyDataType})에 연결할 수 없습니다`;
+}

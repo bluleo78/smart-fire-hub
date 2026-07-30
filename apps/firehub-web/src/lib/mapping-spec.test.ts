@@ -6,6 +6,7 @@ import {
   emptyDraft,
   entityLabel,
   nextDraftId,
+  propertyTypeMismatch,
   removeEntity,
   resetDraftIdCounter,
   toDraft,
@@ -113,5 +114,36 @@ describe('mapping-spec', () => {
     const draft = toDraft(sampleSpec());
     draft.relations.push({ id: 'r-ghost', subjectId: draft.entities[0].id, relation: 'CAUSED_BY', objectId: 'e-ghost' });
     expect(toSpec(draft).relations).toHaveLength(2);
+  });
+});
+
+// 컬럼↔속성 타입 호환(#324) — 서버 MappingService.validate()와 같은 규칙이어야 한다.
+describe('propertyTypeMismatch', () => {
+  it('문자열 컬럼은 number 속성에 연결할 수 없다', () => {
+    expect(propertyTypeMismatch('VARCHAR', 'number')).toContain('숫자 속성');
+    expect(propertyTypeMismatch('TEXT', 'number')).not.toBeNull();
+    expect(propertyTypeMismatch('BOOLEAN', 'date')).not.toBeNull();
+  });
+
+  it('같은 축이면 통과한다', () => {
+    expect(propertyTypeMismatch('DECIMAL', 'number')).toBeNull();
+    expect(propertyTypeMismatch('INTEGER', 'number')).toBeNull();
+    expect(propertyTypeMismatch('TIMESTAMP', 'date')).toBeNull();
+    expect(propertyTypeMismatch('DATE', 'date')).toBeNull();
+  });
+
+  it('text 속성·dataType 미지정 속성은 어떤 컬럼이든 통과한다', () => {
+    expect(propertyTypeMismatch('DECIMAL', 'text')).toBeNull();
+    expect(propertyTypeMismatch('VARCHAR', null)).toBeNull();
+  });
+
+  it('정밀도가 붙은 타입도 축약해 판정한다', () => {
+    expect(propertyTypeMismatch('VARCHAR(255)', 'number')).not.toBeNull();
+    expect(propertyTypeMismatch('NUMERIC(18,6)', 'number')).toBeNull();
+  });
+
+  it('모르는 컬럼 타입은 판정을 보류한다(과소차단)', () => {
+    expect(propertyTypeMismatch('MONEY', 'number')).toBeNull();
+    expect(propertyTypeMismatch(undefined, 'number')).toBeNull();
   });
 });

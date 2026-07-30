@@ -1,4 +1,4 @@
-// mapping-inference 단위 테스트 — complete 스텁 주입, conformance 필터(규칙 2~5) 및 드롭 검증.
+// mapping-inference 단위 테스트 — complete 스텁 주입, conformance 필터(규칙 2~6) 및 드롭 검증.
 import { describe, it, expect } from 'vitest';
 import { inferMapping, InferMappingDeps } from './mapping-inference.js';
 import type { Ontology } from './ontology.js';
@@ -9,7 +9,10 @@ const ontology: Ontology = {
   domain: 'fire', schemaVersion: 1,
   entities: [
     { type: 'Building', description: '', naming: '', resolution: 'exact', id: 1,
-      properties: [{ name: 'address', description: '', dataType: 'text' }] },
+      properties: [
+        { name: 'address', description: '', dataType: 'text' },
+        { name: 'loss', description: '', dataType: 'number' }, // 규칙6 타입 불일치 검증용
+      ] },
     { type: 'Inspection', description: '', naming: '', resolution: 'exact', id: 2, properties: [] },
   ],
   relations: [{ subject: 'Building', relation: 'HAS_INSPECTION', object: 'Inspection', description: '' }],
@@ -63,6 +66,29 @@ describe('inferMapping', () => {
     expect(res.spec.entities).toHaveLength(1);
     expect(res.spec.entities[0].properties).toHaveLength(0);
     expect(res.dropped.filter((d) => d.kind === 'property')).toHaveLength(2);
+  });
+
+  it('규칙6: number 속성에 문자열 컬럼을 붙인 제안만 버리고 나머지는 유지 (#324)', async () => {
+    const res = await inferMapping(stub({
+      entities: [{ entityType: 'Building', nameColumn: 'bld_name', properties: [
+        { column: 'addr', propertyName: 'loss' },       // VARCHAR(text) → number 속성: 드롭
+        { column: 'addr', propertyName: 'address' },    // text → text: 유지
+      ] }],
+      relations: [],
+    }), ontology, profiles);
+    expect(res.spec.entities[0].properties).toEqual([{ column: 'addr', propertyName: 'address' }]);
+    expect(res.dropped.some((d) => d.detail.includes('타입 불일치'))).toBe(true);
+  });
+
+  it('규칙6: number 속성에 숫자 컬럼은 통과시킨다 (#324)', async () => {
+    const res = await inferMapping(stub({
+      entities: [{ entityType: 'Building', nameColumn: 'bld_name', properties: [
+        { column: 'insp_id', propertyName: 'loss' },
+      ] }],
+      relations: [],
+    }), ontology, profiles);
+    expect(res.spec.entities[0].properties).toEqual([{ column: 'insp_id', propertyName: 'loss' }]);
+    expect(res.dropped).toHaveLength(0);
   });
 
   it('규칙5b: 허용되지 않은 트리플 관계를 버린다', async () => {

@@ -174,6 +174,64 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(dialog.getByText('모든 속성 행에서 데이터셋 컬럼과 온톨로지 속성을 선택해야 합니다.')).toBeVisible();
   });
 
+  // 회귀(#324) — 숫자 속성에 텍스트 컬럼을 붙이면 서버 conformance가 400으로 막는다.
+  // 활성화 버튼을 누른 뒤에야 알게 되지 않도록, 선택 즉시 행 아래에 사유가 뜨고 확인이 막혀야 한다.
+  test('숫자 속성에 텍스트 컬럼을 고르면 행별 사유를 보여주고 확인을 막는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    const capture = await mockApi(
+      page,
+      'PUT',
+      `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`,
+      createMappingResponse({ status: 'draft' }),
+      { capture: true },
+    );
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByTestId('entity-type-select').click();
+    await page.getByRole('option', { name: 'Damage' }).click();
+    await dialog.getByTestId('entity-name-column-select').click();
+    await page.getByRole('option', { name: 'damage_name' }).click();
+
+    // damage_name(TEXT) → 피해액(number): 타입 축이 달라 서버가 거부하는 조합.
+    await dialog.getByRole('button', { name: '속성 추가' }).click();
+    await dialog.getByTestId('property-column-select-0').click();
+    await page.getByRole('option', { name: 'damage_name' }).click();
+    await dialog.getByTestId('property-name-select-0').click();
+    await page.getByRole('option', { name: '피해액' }).click();
+
+    const rowError = dialog.getByTestId('property-type-error-0');
+    await expect(rowError).toHaveText('텍스트 컬럼은 숫자 속성(number)에 연결할 수 없습니다');
+    await expect(dialog.getByTestId('property-name-select-0')).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByRole('button', { name: '확인' })).toBeDisabled();
+
+    // 숫자 컬럼으로 바꾸면 사유가 사라지고 정상 저장까지 이어진다.
+    await dialog.getByTestId('property-column-select-0').click();
+    await page.getByRole('option', { name: 'damage_amount' }).click();
+    await expect(rowError).toBeHidden();
+    await dialog.getByRole('button', { name: '확인' }).click();
+    await expect(dialog).toBeHidden();
+
+    await page.getByRole('button', { name: '초안 저장' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.payload).toEqual({
+      entities: [
+        {
+          entityType: 'Damage',
+          nameColumn: 'damage_name',
+          properties: [{ column: 'damage_amount', propertyName: '피해액' }],
+        },
+      ],
+      relations: [],
+    });
+  });
+
   // #300 회귀 — placeholder(지시문)와 오류(요건문)가 같은 문장이면 오류가 "새 정보"로 읽히지 않는다.
   // 두 문구가 동시에, 서로 다른 문장으로 보이는 것까지 확인해야 규칙이 지켜졌다고 할 수 있다.
   test('필수 셀렉트를 비운 채 확인하면 오류는 요건문으로 뜨고 placeholder 지시문은 그대로 남는다', async ({
