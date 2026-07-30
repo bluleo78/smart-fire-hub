@@ -88,6 +88,20 @@ export function EntityMappingDialog({
     onOpenChange(false);
   };
 
+  // 제출 실패 시 첫 오류 필드로 포커스를 옮긴다(#330).
+  // react-hook-form의 shouldFocusError는 register된 네이티브 입력만 대상이라 Radix Select 트리거에는
+  // 적용되지 않는다. 포커스가 가야 이미 연결된 aria-describedby 오류 문구가 읽힌다.
+  // 필드 순서는 errors 객체 키 순서(보장되지 않음)가 아니라 화면 순서대로 명시한다.
+  const FIELD_ORDER: [keyof EntityMappingFormData, string][] = [
+    ['entityType', 'entity-type'],
+    ['nameColumn', 'entity-name-column'],
+  ];
+  const focusFirstError = (errors: Record<string, unknown>) => {
+    const first = FIELD_ORDER.find(([name]) => errors[name]);
+    // properties 배열만 오류인 경우는 대응 트리거가 없어 포커스를 그대로 둔다(엉뚱한 곳으로 옮기지 않음).
+    if (first) document.getElementById(first[1])?.focus();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto" data-testid="entity-mapping-dialog">
@@ -98,7 +112,7 @@ export function EntityMappingDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit(submit)} className="space-y-4">
+        <form onSubmit={form.handleSubmit(submit, focusFirstError)} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="entity-type">엔티티 타입 *</Label>
             <Select value={entityType} onValueChange={handleEntityTypeChange}>

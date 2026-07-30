@@ -24,6 +24,17 @@ export function ImportValidationSection({
   onValidate,
   onShowAllErrors,
 }: ImportValidationSectionProps) {
+  // 검증 진행/결과를 스크린리더에 고지할 문구(#330, WCAG SC 4.1.3).
+  // 결과 카드 자체가 아니라 항상 마운트된 별도 영역의 텍스트를 갈아끼운다 —
+  // live region이 내용과 함께 마운트되면 대부분의 스크린리더가 읽지 않는다.
+  const liveMessage = isValidating
+    ? '검증 중'
+    : validationResult
+      ? validationResult.errorRows === 0
+        ? `검증 성공, 유효 ${validationResult.validRows.toLocaleString()}행`
+        : `검증 오류 발견, 유효 ${validationResult.validRows.toLocaleString()}행, 오류 ${validationResult.errorRows.toLocaleString()}건`
+      : '';
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -43,6 +54,14 @@ export function ImportValidationSection({
             '검증'
           )}
         </Button>
+      </div>
+
+      {/*
+       * 사용자가 누른 버튼의 결과 "요약"이므로 진행 중인 낭독을 끊는 assertive(alert) 대신
+       * polite(status)로 둔다 — 검증은 제출을 막는 오류가 아니라 임포트 여부 판단 재료다.
+       */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only" data-testid="import-validation-status">
+        {liveMessage}
       </div>
 
       {validationResult && (

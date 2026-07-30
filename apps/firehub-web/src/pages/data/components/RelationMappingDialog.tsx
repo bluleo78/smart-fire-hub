@@ -79,6 +79,18 @@ export function RelationMappingDialog({
     onOpenChange(false);
   };
 
+  // 제출 실패 시 첫 오류 필드로 포커스 이동(#330) — EntityMappingDialog와 동일한 이유.
+  // Radix Select 트리거는 react-hook-form의 자동 포커스 대상이 아니라 직접 옮긴다.
+  const FIELD_ORDER: [keyof RelationMappingFormData, string][] = [
+    ['subjectId', 'relation-subject'],
+    ['objectId', 'relation-object'],
+    ['relation', 'relation-type'],
+  ];
+  const focusFirstError = (errors: Record<string, unknown>) => {
+    const first = FIELD_ORDER.find(([name]) => errors[name]);
+    if (first) document.getElementById(first[1])?.focus();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="relation-mapping-dialog">
@@ -89,7 +101,7 @@ export function RelationMappingDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit(submit)} className="space-y-4">
+        <form onSubmit={form.handleSubmit(submit, focusFirstError)} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="relation-subject">주어 엔티티 *</Label>
             <Select value={subjectId} onValueChange={(v) => handleEndpointChange('subjectId', v)}>

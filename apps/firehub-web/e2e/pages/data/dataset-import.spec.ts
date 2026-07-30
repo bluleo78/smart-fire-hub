@@ -658,3 +658,92 @@ test.describe('대용량 CSV 미리보기 슬라이스', () => {
     expect(cap.bodySize).toBeGreaterThanOrEqual(smallCsv.length);
   });
 });
+
+/**
+ * #331 / #330 회귀: 임포트 다이얼로그의 접근성 배선.
+ * - #331 컬럼 매핑 Select에 "어느 파일 컬럼의 매핑인지"를 담은 접근 가능한 이름
+ * - #330 단계 전환 고지(포커스 이동) + 검증 진행·결과 live region
+ */
+test.describe('임포트 다이얼로그 접근성 (#330 #331)', () => {
+  /** 파일 업로드 → 2단계(컬럼 매핑) 진입까지 공통 절차 */
+  async function openMappingStep(page: import('@playwright/test').Page) {
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+  }
+
+  test('#331 컬럼 매핑 Select가 파일 컬럼명을 포함한 접근 가능한 이름을 가진다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openMappingStep(page);
+
+    // 이름이 없으면 스크린리더에는 선택된 값("id")만 읽혀 어느 행인지 구별되지 않는다.
+    // createPreviewResponse()의 파일 컬럼 id/name 각각에 대해 이름으로 조회 가능해야 한다.
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('combobox', { name: 'id 컬럼을 매핑할 데이터셋 컬럼' })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'name 컬럼을 매핑할 데이터셋 컬럼' })).toBeVisible();
+    // 이름 없는 combobox가 남아 있지 않은지도 확인한다(같은 표의 다른 행 누락 방지).
+    const unnamed = await dialog.locator('[role=combobox]').evaluateAll((els) =>
+      els.filter((el) => !el.getAttribute('aria-label') && !el.getAttribute('aria-labelledby')).length,
+    );
+    expect(unnamed).toBe(0);
+  });
+
+  test('#330 2단계 진입 시 포커스가 "컬럼 매핑" 제목으로 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openMappingStep(page);
+
+    // 수정 전에는 다이얼로그 컨테이너 <div>에 포커스가 남아 내용 교체가 고지되지 않았다.
+    const heading = page.getByRole('dialog').getByRole('heading', { name: '컬럼 매핑' });
+    await expect(heading).toBeFocused();
+  });
+
+  test('#330 검증 진행·결과가 live region 텍스트로 고지된다', async ({ authenticatedPage: page }) => {
+    await openMappingStep(page);
+    await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      createValidateResponse(),
+    );
+
+    const dialog = page.getByRole('dialog');
+    const status = dialog.getByTestId('import-validation-status');
+    // live region은 결과와 함께 생기면 낭독되지 않으므로, 검증 전부터 비어 있는 채로 존재해야 한다.
+    await expect(status).toHaveAttribute('aria-live', 'polite');
+    await expect(status).toHaveText('');
+
+    await dialog.getByRole('button', { name: '검증' }).click();
+
+    // 검증 성공 결과가 카드뿐 아니라 live region 텍스트로도 전달된다(유효 행 수 포함).
+    await expect(status).toHaveText('검증 성공, 유효 2행');
+  });
+
+  test('#330 검증 오류가 발견되면 오류 건수까지 live region에 실린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openMappingStep(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/validate`, {
+      sampleSize: 2,
+      validRows: 1,
+      errorRows: 1,
+      sampled: true,
+      errors: [{ rowNumber: 2, columnName: 'id', value: 'x', message: '숫자가 아닙니다' }],
+    });
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: '검증' }).click();
+
+    await expect(dialog.getByTestId('import-validation-status')).toHaveText(
+      '검증 오류 발견, 유효 1행, 오류 1건',
+    );
+  });
+});

@@ -698,3 +698,65 @@ test.describe('데이터셋 매핑 탭', () => {
     });
   });
 });
+
+/**
+ * #330 회귀: 제출 실패가 스크린리더에 전달되어야 한다.
+ * 오류 배선(aria-invalid/aria-describedby)은 #300에서 붙었지만 포커스가 `확인` 버튼에 남아
+ * 그 설명이 읽히는 시점이 오지 않았다 — 실패 시 첫 오류 필드로 포커스를 옮긴다.
+ */
+test.describe('#330 매핑 다이얼로그 제출 실패 포커스', () => {
+  test('엔티티 매핑을 빈 값으로 제출하면 첫 오류 필드(엔티티 타입)로 포커스가 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await dialog.getByRole('button', { name: '확인' }).click();
+
+    // 포커스가 첫 오류 필드로 이동해야 연결된 오류 문구가 낭독된다.
+    await expect(dialog.getByTestId('entity-type-select')).toBeFocused();
+  });
+
+  test('엔티티 타입만 고르고 제출하면 다음 오류 필드(이름 컬럼)로 포커스가 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await dialog.getByTestId('entity-type-select').click();
+    await page.getByRole('option', { name: 'Damage' }).click();
+
+    await dialog.getByRole('button', { name: '확인' }).click();
+
+    // 앞 필드가 채워졌으므로 화면 순서상 다음 오류 필드로 간다(errors 키 순서가 아니라 화면 순서).
+    await expect(dialog.getByTestId('entity-name-column-select')).toBeFocused();
+  });
+
+  test('관계 매핑을 빈 값으로 제출하면 첫 오류 필드(주어 엔티티)로 포커스가 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({
+      spec: {
+        entities: [
+          { entityType: 'Incident', nameColumn: 'incident_name', properties: [] },
+          { entityType: 'Building', nameColumn: 'building_name', properties: [] },
+        ],
+        relations: [],
+      },
+    }));
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '관계 매핑 추가' }).click();
+    const dialog = page.getByTestId('relation-mapping-dialog');
+    await dialog.getByRole('button', { name: '확인' }).click();
+
+    await expect(dialog.getByTestId('relation-subject-select')).toBeFocused();
+  });
+});

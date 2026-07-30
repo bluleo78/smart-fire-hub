@@ -1,4 +1,5 @@
 import { AlertTriangle, ArrowRight } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { Badge } from '../../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -35,9 +36,19 @@ export function ImportMappingTable({
   getAvailableDatasetColumns,
   onMappingChange,
 }: ImportMappingTableProps) {
+  // 파일 업로드(1단계) → 컬럼 매핑(2단계)은 다이얼로그 내용이 통째로 교체되는데, 포커스는 다이얼로그
+  // 컨테이너에 그대로 남아 스크린리더 사용자에게는 아무 일도 없던 것과 구별되지 않는다.
+  // 이 표가 마운트되는 시점 = 2단계 진입이므로 새 단계의 제목으로 포커스를 옮겨 맥락을 알린다(#330).
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-semibold">컬럼 매핑</h3>
+      <h3 className="text-sm font-semibold" ref={headingRef} tabIndex={-1}>
+        컬럼 매핑
+      </h3>
       {hasUnmappedRequired && (
         <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle p-3 text-sm text-warning">
           <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
@@ -78,7 +89,15 @@ export function ImportMappingTable({
                         onMappingChange(suggestion.fileColumn, value === '__none__' ? null : value)
                       }
                     >
-                      <SelectTrigger className="h-8 text-xs w-full">
+                      {/*
+                       * Radix Select은 role/aria-expanded는 붙여주지만 접근 가능한 이름은 만들지 않는다.
+                       * 이름이 없으면 스크린리더에 "현재 선택된 값"만 읽혀 어느 파일 컬럼의 매핑인지 알 수 없다 —
+                       * 표 셀의 인접성은 프로그램적 연결이 아니므로 파일 컬럼명을 이름에 담는다(#331, WCAG SC 4.1.2).
+                       */}
+                      <SelectTrigger
+                        className="h-8 text-xs w-full"
+                        aria-label={`${suggestion.fileColumn} 컬럼을 매핑할 데이터셋 컬럼`}
+                      >
                         <SelectValue placeholder="매핑 안 함" />
                       </SelectTrigger>
                       <SelectContent>
