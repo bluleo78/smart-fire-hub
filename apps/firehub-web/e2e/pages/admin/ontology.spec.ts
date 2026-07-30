@@ -1528,6 +1528,69 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     );
     expect(inHiddenPanel).toBe(false);
   });
+
+  /**
+   * #332 회귀: NodeDetailDrawer 리사이즈 핸들이 마우스 전용이었다
+   * (role="separator"인데 tabIndex·화살표 키·aria-valuenow가 없었다).
+   *
+   * 방향 규약: 인스펙터가 오른쪽 고정이라 드래그도 "왼쪽으로 끌면 넓어진다".
+   * 화살표도 이에 맞춰 ← = 폭 증가 / → = 폭 감소이며, Home = 최소 폭 / End = 최대 폭이다.
+   */
+  test('노드 상세 인스펙터 폭을 키보드(←/→/Home/End)로 조절할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(graph.nodes.length));
+
+    // 마우스 없이 노드 선택 → 드로어 오픈(#326에서 추가된 대체 목록 경로).
+    const items = page.getByTestId('instance-graph-node-list').locator('[data-graph-item]');
+    await items.first().focus();
+    await page.keyboard.press('Enter');
+
+    const drawer = page.getByTestId('node-detail-drawer');
+    await expect(drawer).toBeVisible();
+    const handle = page.getByTestId('node-detail-resize-handle');
+
+    // 선언한 role=separator(window splitter)에 걸맞은 값이 노출되어야 한다.
+    await expect(handle).toHaveAttribute('aria-valuenow', '320');
+    await expect(handle).toHaveAttribute('aria-valuemin', '260');
+    await expect(handle).toHaveAttribute('aria-valuemax', '560');
+
+    // 목록 항목에서 Tab 한 번으로 핸들에 도달한다(포커스 가능 = 마우스 없이 조작 가능).
+    await items.first().focus();
+    await page.keyboard.press('Tab');
+    await expect(handle).toBeFocused();
+
+    // 렌더된 실제 폭까지 함께 검증한다 — aria 값만 바뀌고 UI가 안 따라오는 것을 막는다.
+    const renderedWidth = () => drawer.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+    expect(await renderedWidth()).toBe(320);
+
+    // ← 2회 = +32px
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    await expect(handle).toHaveAttribute('aria-valuenow', '352');
+    expect(await renderedWidth()).toBe(352);
+
+    // → 1회 = -16px
+    await page.keyboard.press('ArrowRight');
+    await expect(handle).toHaveAttribute('aria-valuenow', '336');
+    expect(await renderedWidth()).toBe(336);
+
+    // End = 최대 폭, Home = 최소 폭.
+    await page.keyboard.press('End');
+    await expect(handle).toHaveAttribute('aria-valuenow', '560');
+    expect(await renderedWidth()).toBe(560);
+    await page.keyboard.press('Home');
+    await expect(handle).toHaveAttribute('aria-valuenow', '260');
+    expect(await renderedWidth()).toBe(260);
+
+    // 최소 폭에서 더 줄이려 해도 clamp되어 범위를 벗어나지 않는다.
+    await page.keyboard.press('ArrowRight');
+    await expect(handle).toHaveAttribute('aria-valuenow', '260');
+    expect(await renderedWidth()).toBe(260);
+  });
 });
 
 /**

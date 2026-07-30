@@ -20,6 +20,11 @@ interface Props {
 const MIN_WIDTH = 260;
 const MAX_WIDTH = 560;
 const DEFAULT_WIDTH = 320;
+// 키보드(화살표) 1회 조작당 변화량(px) — 드래그와 달리 이산 조작이므로 체감 가능한 단위로 잡는다(#332).
+const KEY_STEP = 16;
+
+/** 폭을 허용 범위로 clamp. */
+const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w));
 
 // 노드 상세 우측 인스펙터 — 선택 노드의 속성 + 인접 관계(들어오는/나가는 트리플)를 보여준다(읽기 전용).
 // 좌측 엣지 드래그로 폭 조절(AISidePanel 패턴). 관계 항목은 대상 노드로 이동하는 버튼.
@@ -41,8 +46,7 @@ export default function NodeDetailDrawer({
       const d = dragRef.current;
       if (!d) return;
       // 오른쪽 패널이므로 왼쪽으로 끌수록(clientX 감소) 넓어진다.
-      const next = d.startWidth + (d.startX - e.clientX);
-      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, next)));
+      setWidth(clampWidth(d.startWidth + (d.startX - e.clientX)));
     };
     const onUp = () => {
       if (!dragRef.current) return;
@@ -63,6 +67,23 @@ export default function NodeDetailDrawer({
     // 드래그 중 텍스트 선택/커서 깜빡임 방지.
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+  };
+
+  // 키보드 폭 조절(#332) — 마우스 전용이던 리사이즈 핸들에 window-splitter 조작을 부여한다.
+  // 방향 규약: 이 인스펙터는 오른쪽 고정이라 드래그도 "왼쪽으로 끌면 넓어진다". 화살표도 이를 따라
+  // ←가 폭 증가 / →가 폭 감소다. aria-valuenow(=폭)와 화살표 방향이 반대로 보이지만,
+  // 사용자가 보는 것은 "핸들이 움직이는 방향"이므로 마우스와 일치시키는 편이 혼란이 적다.
+  const onHandleKeyDown = (e: React.KeyboardEvent) => {
+    let next: number | null = null;
+    if (e.key === 'ArrowLeft') next = width + KEY_STEP;
+    else if (e.key === 'ArrowRight') next = width - KEY_STEP;
+    // Home/End는 노출한 aria-valuemin/max에 맞춘다 — Home=최소 폭, End=최대 폭.
+    else if (e.key === 'Home') next = MIN_WIDTH;
+    else if (e.key === 'End') next = MAX_WIDTH;
+    if (next === null) return;
+    // aside가 overflow-y-auto라 화살표/Home/End가 스크롤로 새는 것을 막는다.
+    e.preventDefault();
+    setWidth(clampWidth(next));
   };
 
   if (!node) return null;
@@ -92,13 +113,20 @@ export default function NodeDetailDrawer({
       style={{ width }}
       data-testid="node-detail-drawer"
     >
-      {/* 좌측 리사이즈 핸들 */}
+      {/* 좌측 리사이즈 핸들 — 마우스 드래그 + 키보드(←/→/Home/End) 양쪽 지원(#332).
+          폭 1px이라 기본 포커스 링이 보이지 않으므로 ring을 안쪽으로 명시한다. */}
       <div
-        className="absolute bottom-0 left-0 top-0 z-10 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30"
+        className="absolute bottom-0 left-0 top-0 z-10 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
         onMouseDown={startDrag}
+        onKeyDown={onHandleKeyDown}
+        tabIndex={0}
         role="separator"
         aria-orientation="vertical"
         aria-label="인스펙터 폭 조절"
+        aria-valuenow={width}
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
+        data-testid="node-detail-resize-handle"
       />
       <div className="p-4">
         <div className="mb-3 flex items-center justify-between">
