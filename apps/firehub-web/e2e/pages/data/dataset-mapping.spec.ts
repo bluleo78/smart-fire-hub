@@ -163,6 +163,8 @@ test.describe('데이터셋 매핑 탭', () => {
     );
     await page.goto(MAPPING_URL);
 
+    // 초안 저장은 dirty일 때만 눌리므로, 관계 하나를 지워 변경 상태를 만든다.
+    await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
     await page.getByRole('button', { name: '초안 저장' }).click();
     await expect(page.getByText('온톨로지에 없는 엔티티 타입입니다: Ghost')).toBeVisible();
   });
@@ -340,6 +342,68 @@ test.describe('데이터셋 매핑 탭', () => {
     await page.getByTestId('mapping-activate-button').click();
     await expect(page.getByText('저장되지 않은 변경이 있습니다. 먼저 저장하세요.')).toBeVisible();
     // 활성화되지 않았으므로 배지는 그대로다.
+    await expect(page.getByTestId('mapping-status')).toHaveText('초안');
+  });
+
+  // 회귀(#297): 저장은 status를 항상 draft로 되돌리므로, 미변경 재저장은 활성 매핑을 조용히 강등시켰다.
+  test('변경이 없으면 초안 저장을 막아 활성 매핑이 강등되지 않는다', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    const capture = await mockApi(
+      page,
+      'PUT',
+      `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`,
+      createMappingResponse({ status: 'draft' }),
+      { capture: true },
+    );
+    await page.goto(MAPPING_URL);
+
+    await expect(page.getByTestId('mapping-status')).toHaveText('활성');
+    await expect(page.getByTestId('mapping-save-button')).toBeDisabled();
+
+    // 편집을 하면 다시 눌릴 수 있어야 한다 — 정상 편집 흐름은 막지 않는다.
+    await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByTestId('mapping-save-button')).toBeEnabled();
+    // 강등 확인 전에는 PUT이 나가지 않는다.
+    expect(capture.requests.length).toBe(0);
+  });
+
+  // 회귀(#297): 활성 → 초안 강등은 그래프 투영을 멈추므로 사전 고지가 필요하다.
+  test('활성 매핑을 편집 후 저장하면 강등 확인을 거친 뒤에만 PUT이 나간다', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    const capture = await mockApi(
+      page,
+      'PUT',
+      `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`,
+      createMappingResponse({ status: 'draft' }),
+      { capture: true },
+    );
+    await page.goto(MAPPING_URL);
+
+    await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await page.getByTestId('mapping-save-button').click();
+
+    const confirm = page.getByTestId('mapping-demote-confirm');
+    await expect(confirm).toBeVisible();
+
+    // 취소하면 저장이 일어나지 않고 활성 상태가 유지된다.
+    await confirm.getByRole('button', { name: '취소' }).click();
+    await expect(confirm).toBeHidden();
+    expect(capture.requests.length).toBe(0);
+    await expect(page.getByTestId('mapping-status')).toHaveText('활성');
+
+    // 확인하면 강등된 spec이 저장된다.
+    await page.getByTestId('mapping-save-button').click();
+    await confirm.getByRole('button', { name: '초안으로 저장' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.payload).toEqual({
+      entities: [
+        { entityType: 'Incident', nameColumn: 'incident_name', properties: [] },
+        { entityType: 'Building', nameColumn: 'building_name', properties: [] },
+      ],
+      relations: [],
+    });
     await expect(page.getByTestId('mapping-status')).toHaveText('초안');
   });
 });

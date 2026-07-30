@@ -61,6 +61,8 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
   const [editingEntity, setEditingEntity] = useState<DraftEntity | null>(null);
   // 삭제 확인 대상. 참조 관계 수를 고지해야 하므로 별도 상태로 들고 있는다.
   const [deletingEntity, setDeletingEntity] = useState<DraftEntity | null>(null);
+  // 활성 매핑을 초안으로 되돌리는 저장 확인 대기 상태.
+  const [confirmingDemote, setConfirmingDemote] = useState(false);
 
   const handleEntityAdd = () => {
     setEditingEntity(null);
@@ -149,7 +151,7 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
     }
   };
 
-  const handleSave = async () => {
+  const persistDraft = async () => {
     try {
       await saveMapping.mutateAsync(toSpec(draft));
       setDirty(false);
@@ -158,6 +160,23 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
       // 컨포먼스 위반(400)은 백엔드가 한국어로 정확한 사유를 준다 — 그대로 노출한다.
       handleApiError(error, '매핑 저장에 실패했습니다.');
     }
+  };
+
+  /**
+   * 저장은 항상 status를 draft로 되돌리므로, 활성 매핑을 저장하면 그래프 투영이 조용히 멈춘다.
+   * 활성 상태에서만 확인 절차를 끼워 넣는다 — 초안 상태 저장은 부작용이 없어 즉시 진행한다.
+   */
+  const handleSave = async () => {
+    if (mapping?.status === 'active') {
+      setConfirmingDemote(true);
+      return;
+    }
+    await persistDraft();
+  };
+
+  const handleDemoteConfirm = async () => {
+    setConfirmingDemote(false);
+    await persistDraft();
   };
 
   if (bindingLoading || mappingLoading) {
@@ -187,7 +206,12 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
               저장되지 않은 변경
             </span>
           )}
-          <Button onClick={handleSave} disabled={saveMapping.isPending}>
+          <Button
+            onClick={handleSave}
+            // 미변경 상태의 재저장은 status를 draft로 되돌리는 부작용만 남기므로 막는다.
+            disabled={!dirty || saveMapping.isPending}
+            data-testid="mapping-save-button"
+          >
             {saveMapping.isPending ? '저장 중...' : '초안 저장'}
           </Button>
           <Button
@@ -263,6 +287,22 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction onClick={handleEntityDeleteConfirm}>삭제</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmingDemote} onOpenChange={(open) => !open && setConfirmingDemote(false)}>
+        <AlertDialogContent data-testid="mapping-demote-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>활성 매핑을 초안으로 되돌립니다</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하면 매핑 상태가 활성에서 초안으로 바뀌고, 이 데이터셋의 지식그래프 투영이 중단됩니다. 편집을 반영한
+              뒤 다시 활성화해야 투영이 재개됩니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDemoteConfirm}>초안으로 저장</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
