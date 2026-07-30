@@ -1374,3 +1374,158 @@ test.describe('지식그래프 IA — 비관리자 접근/리다이렉트', () =
     await expect(page.getByRole('button', { name: '편집' })).toHaveCount(0);
   });
 });
+
+/**
+ * 그래프 캔버스 키보드·스크린리더 접근성 회귀 (#326, #327)
+ * - #326: Cytoscape 캔버스는 <canvas>만 그려 탭 스톱·대체 텍스트가 0이었다 → 필터/검색 결과와 동기화되는
+ *   대체 노드 목록(GraphKeyboardList)을 렌더해 마우스 없이 노드 선택 → 상세 드로어까지 도달 가능해야 한다.
+ * - #327: 접힌 타입 필터 패널이 aria-hidden만 갖고 있어 보이지 않는 탭 스톱 7개가 남았다 → inert로 차단해야 한다.
+ */
+test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('그래프 탐색 탭의 대체 노드 목록이 전체 노드·관계 수를 접근 가능한 이름으로 노출한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(graph.nodes.length));
+
+    // 캔버스 요약이 접근 가능한 이름으로 제공된다(SC 1.1.1 대체 텍스트).
+    const list = page.getByTestId('instance-graph-node-list');
+    await expect(list).toHaveAttribute(
+      'aria-label',
+      `지식그래프 노드 ${graph.nodes.length}개, 관계 ${graph.edges.length}개`,
+    );
+    // 노드 하나당 활성화 가능한 항목 1개 — 이름·타입·인접 관계 수가 텍스트로 읽힌다.
+    await expect(list.locator('[data-graph-item]')).toHaveCount(graph.nodes.length);
+    // incident-1은 OCCURRED_AT/CAUSED_BY/RESULTED_IN/VIOLATED 4개 관계를 갖는다.
+    await expect(list.locator('[data-graph-item]').first()).toHaveText(
+      `${graph.nodes[0].name} (Incident) — 관계 4개`,
+    );
+    // 캔버스 자체는 대체 텍스트가 없으므로 접근성 트리에서 제외되어야 한다.
+    await expect(page.getByTestId('instance-graph').locator('> div[aria-hidden="true"]')).toHaveCount(1);
+  });
+
+  test('키보드만으로 노드를 선택해 상세 드로어를 열 수 있다(마우스 미사용)', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    const building = graph.nodes.find((n) => n.type === 'Building')!;
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(graph.nodes.length));
+
+    const items = page.getByTestId('instance-graph-node-list').locator('[data-graph-item]');
+    // roving tabIndex: 목록의 탭 스톱은 1개(첫 항목)뿐이어야 한다 — 노드가 많아도 탭 순서를 막지 않는다.
+    await expect(items.first()).toHaveAttribute('tabindex', '0');
+    await expect(items.nth(1)).toHaveAttribute('tabindex', '-1');
+
+    // Tab으로 목록 진입 — 툴바(탭/검색/타입 묶기) → 타입 필터 패널(검색 + 토글 6) → 탭패널 → 첫 노드 항목 순.
+    // 실제 탭 스톱 수에 의존하지 않고, 목록에 닿을 때까지 Tab을 눌러 "키보드로 도달 가능"만 검증한다.
+    await page.getByRole('button', { name: '타입 필터 접기' }).focus();
+    for (let i = 0; i < 25 && !(await items.first().evaluate((el) => el === document.activeElement)); i++) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(items.first()).toBeFocused();
+    // 포커스가 들어오면 시각적으로도 드러나야 한다(보이지 않는 포커스 금지, SC 2.4.7).
+    await expect(items.first()).toBeVisible();
+
+    // ↓ 로 Building 노드까지 이동 후 Enter → 상세 드로어 오픈.
+    const buildingIndex = graph.nodes.findIndex((n) => n.key === building.key);
+    for (let i = 0; i < buildingIndex; i++) await page.keyboard.press('ArrowDown');
+    await expect(items.nth(buildingIndex)).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    const drawer = page.getByTestId('node-detail-drawer');
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(building.name)).toBeVisible();
+    // 인접 관계(HAS_EQUIPMENT → 스프링클러설비)까지 드로어에 표시된다.
+    await expect(drawer.getByText('HAS_EQUIPMENT')).toBeVisible();
+  });
+
+  test('대체 노드 목록은 이름 검색·타입 필터 결과와 동기화된다(숨긴 노드가 SR에 남지 않는다)', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(graph.nodes.length));
+
+    const list = page.getByTestId('instance-graph-node-list');
+    // 이름 검색 — '강남'은 Incident 1건 + Building 1건에 매칭된다.
+    await page.getByPlaceholder('이름 검색').fill('강남');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '2');
+    await expect(list.locator('[data-graph-item]')).toHaveCount(2);
+    await expect(list).toHaveAttribute('aria-label', /노드 2개/);
+
+    // 타입 필터 — Building만 켜면 검색과 교집합이 되어 1건만 남는다.
+    await page.getByTestId('type-filter-list').getByRole('button', { name: /^Building/ }).click();
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '1');
+    await expect(list.locator('[data-graph-item]')).toHaveCount(1);
+    await expect(list.locator('[data-graph-item]')).toHaveText(/강남타워 \(Building\)/);
+  });
+
+  test('지식 모델 탭에서도 키보드로 타입 드릴다운이 가능하다', async ({ authenticatedPage: page }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', String(schema.entities.length));
+
+    const list = page.getByTestId('schema-graph-type-list');
+    await expect(list).toHaveAttribute(
+      'aria-label',
+      `지식 모델 타입 ${schema.entities.length}개, 관계 ${schema.relations.length}개`,
+    );
+    // Incident는 OCCURRED_AT/CAUSED_BY/RESULTED_IN/VIOLATED 4개 트리플의 주체다.
+    await expect(list.locator('[data-graph-item]').first()).toHaveText('Incident — 관계 4개');
+
+    // 첫 항목 포커스 → ↓ 로 Building(2번째) → Enter → 그래프 탐색 탭으로 드릴다운 + 해당 타입만 필터.
+    await list.locator('[data-graph-item]').first().focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(list.locator('[data-graph-item]').nth(1)).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '1');
+    await expect(page.getByTestId('type-filter-list').getByRole('button', { name: /^Building/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  test('접힌 타입 필터 패널은 inert로 포커스 순서에서 제거된다(보이지 않는 탭 스톱 없음)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    const panel = page.getByTestId('type-filter-panel');
+    await expect(panel).toBeVisible();
+    // 펼친 상태에서는 inert가 없어야 한다(정상 조작 가능).
+    await expect(panel).not.toHaveAttribute('inert', /.*/);
+
+    await page.getByRole('button', { name: '타입 필터 접기' }).click();
+    // 접히면 inert가 붙고, aria-hidden은 제거된다(inert가 접근성 트리 제거를 함의 — 중복 지정 금지).
+    await expect(panel).toHaveAttribute('inert', /.*/);
+    await expect(panel).not.toHaveAttribute('aria-hidden', /.*/);
+
+    // 내부 컨트롤 7개(타입 검색 1 + 타입 토글 6)는 여전히 DOM에 있으나 포커스가 들어가지 않는다.
+    const focusEscaped = await panel.evaluate((el) => {
+      const target = el.querySelector<HTMLElement>('input, button');
+      target?.focus();
+      return el.contains(document.activeElement);
+    });
+    expect(focusEscaped).toBe(false);
+
+    // 접기 토글 버튼에서 Tab 을 눌렀을 때 폭 0인 패널 내부가 아니라 다음 실제 컨트롤로 넘어간다.
+    await page.getByRole('button', { name: '타입 필터 펼치기' }).focus();
+    await page.keyboard.press('Tab');
+    const inHiddenPanel = await page.evaluate(
+      () => !!document.activeElement?.closest('[data-testid="type-filter-panel"]'),
+    );
+    expect(inHiddenPanel).toBe(false);
+  });
+});

@@ -8,6 +8,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { colorForType } from '@/lib/ontology-colors';
 import type { GraphData, GraphNode } from '@/types/ontology';
 
+import GraphKeyboardList from './GraphKeyboardList';
+
 // fcose 레이아웃 + expand-collapse(타입 묶기) 확장을 모듈 로드 시 1회 등록(중복 등록은 cytoscape가 무시).
 cytoscape.use(fcose);
 cytoscape.use(expandCollapse);
@@ -145,6 +147,26 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
 
   const nodeMap = useMemo(() => new Map(filteredNodes.map((n) => [n.key, n])), [filteredNodes]);
 
+  // 캔버스 텍스트 대체 목록(#326) — 필터·검색 결과와 동일한 노드만 노출한다(숨긴 노드가 SR에 새면 안 됨).
+  // 라벨에 타입·인접 관계 수를 함께 담아, 시각으로만 알 수 있던 정보를 키보드/SR 사용자도 얻게 한다.
+  const keyboardItems = useMemo(() => {
+    const degree = new Map<string, number>();
+    for (const e of filteredEdges) {
+      degree.set(e.subjectKey, (degree.get(e.subjectKey) ?? 0) + 1);
+      degree.set(e.objectKey, (degree.get(e.objectKey) ?? 0) + 1);
+    }
+    return filteredNodes.map((n) => ({
+      id: n.key,
+      label: `${n.name} (${n.type}) — 관계 ${degree.get(n.key) ?? 0}개`,
+    }));
+  }, [filteredNodes, filteredEdges]);
+
+  // 대체 목록 항목 활성화 → 캔버스 tap과 동일한 선택 경로.
+  const selectByKey = (key: string) => {
+    const raw = nodeMap.get(key);
+    if (raw) onNodeSelect(raw);
+  };
+
   useEffect(() => {
     onSelectRef.current = onNodeSelect;
   }, [onNodeSelect]);
@@ -274,8 +296,17 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
 
   return (
     <div className="relative h-full w-full" data-testid="instance-graph" data-node-count={filteredNodes.length}>
-      {/* Cytoscape 캔버스 마운트 지점 — 항상 렌더해 cy 라이프사이클을 단순하게 유지한다. */}
-      <div ref={containerRef} className="h-full w-full" />
+      {/* Cytoscape 캔버스 마운트 지점 — 항상 렌더해 cy 라이프사이클을 단순하게 유지한다.
+          canvas는 대체 텍스트가 없어 접근성 트리에서 제외하고, 아래 GraphKeyboardList가 텍스트 대체물을 담당한다. */}
+      <div ref={containerRef} className="h-full w-full" aria-hidden="true" />
+
+      {/* 키보드·스크린리더 전용 노드 목록(#326) — 포커스 시 오버레이로 드러난다. */}
+      <GraphKeyboardList
+        label={`지식그래프 노드 ${filteredNodes.length}개, 관계 ${filteredEdges.length}개`}
+        items={keyboardItems}
+        onActivate={selectByKey}
+        data-testid="instance-graph-node-list"
+      />
 
       {/* 적재된 그래프가 아예 없는 빈 상태(하우스 empty 패턴). */}
       {graph.nodes.length === 0 && (

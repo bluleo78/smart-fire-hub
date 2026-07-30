@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { entityColorSet } from '@/lib/ontology-colors';
 import type { OntologySchema } from '@/types/ontology';
 
+import GraphKeyboardList from './GraphKeyboardList';
+
 interface Props {
   schema: OntologySchema;
   onTypeClick?: (type: string) => void;
@@ -152,9 +154,32 @@ export default function SchemaGraph({ schema, onTypeClick }: Props) {
     if (schema.entities.length > 0) cy.layout(BREADTHFIRST_LAYOUT).run();
   }, [elements, isDark, schema.entities.length]);
 
+  // 캔버스 텍스트 대체 목록(#326) — 타입별 인접 관계 수를 라벨에 담아 드릴다운을 키보드로도 가능하게 한다.
+  const keyboardItems = useMemo(() => {
+    const degree = new Map<string, number>();
+    for (const r of schema.relations) {
+      degree.set(r.subject, (degree.get(r.subject) ?? 0) + 1);
+      degree.set(r.object, (degree.get(r.object) ?? 0) + 1);
+    }
+    return schema.entities.map((e) => ({
+      id: e.type,
+      label: `${e.type} — 관계 ${degree.get(e.type) ?? 0}개`,
+    }));
+  }, [schema]);
+
   return (
-    <div className="h-full w-full" data-testid="schema-graph" data-node-count={schema.entities.length}>
-      <div ref={containerRef} className="h-full w-full" />
+    // relative: 대체 목록이 포커스 시 캔버스 위 오버레이로 뜨는 기준 박스.
+    <div className="relative h-full w-full" data-testid="schema-graph" data-node-count={schema.entities.length}>
+      {/* canvas는 대체 텍스트가 없어 접근성 트리에서 제외 — 텍스트 대체물은 GraphKeyboardList가 담당한다. */}
+      <div ref={containerRef} className="h-full w-full" aria-hidden="true" />
+
+      {/* 키보드·스크린리더 전용 타입 목록(#326) — onTypeClick이 있을 때만 활성화(드릴다운) 가능. */}
+      <GraphKeyboardList
+        label={`지식 모델 타입 ${schema.entities.length}개, 관계 ${schema.relations.length}개`}
+        items={keyboardItems}
+        onActivate={onTypeClick}
+        data-testid="schema-graph-type-list"
+      />
     </div>
   );
 }

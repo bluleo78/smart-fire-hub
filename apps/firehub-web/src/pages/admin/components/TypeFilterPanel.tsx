@@ -59,7 +59,10 @@ export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, 
         collapsed ? 'w-0 border-r-0' : 'w-64',
       )}
       data-testid="type-filter-panel"
-      aria-hidden={collapsed}
+      // inert: 접힌 패널의 내부 컨트롤을 포커스 순서와 접근성 트리에서 동시에 제거한다(#327).
+      // aria-hidden만으로는 접근성 트리에서만 빠지고 탭 스톱이 남아, 보이지 않는 곳에 포커스가 갇혔다.
+      // w-0(+overflow-hidden)은 display:none/visibility:hidden이 아니라 포커스를 막지 못한다.
+      inert={collapsed}
     >
       {/* 헤더 — 타이틀 + 전체 리셋(활성 필터가 있을 때만 노출). */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
