@@ -672,6 +672,91 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(dialog).toBeVisible();
   });
 
+  // #302 회귀: 관계명을 비운 채 저장하면 로컬에서 막히고, 이름을 채우면 정상 저장된다.
+  test('관계명을 비운 채 저장하면 위치를 특정한 에러가 뜨고 저장 API가 호출되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const relationsEditor = dialog.getByTestId('relations-editor');
+    // 관계 추가는 관계명을 빈 칸으로 seed하므로 아무것도 입력하지 않고 저장을 시도한다.
+    await relationsEditor.getByRole('button', { name: '관계 추가' }).click();
+    const newRow = relationsEditor.getByTestId(`relation-row-${schema.relations.length}`);
+    await expect(newRow.getByText('관계명을 입력하세요')).toBeVisible();
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 인라인 힌트와 문구가 겹치므로 주어→목적어가 붙은 토스트 문구로 특정한다.
+    await expect(page.getByText('관계명을 입력하세요(Incident → Incident)')).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+    await expect(dialog).toBeVisible();
+
+    // 이름을 채우면 인라인 에러가 사라지고 저장이 payload에 담겨 나간다.
+    await newRow.getByLabel('관계명').fill('RELATED_TO');
+    await expect(newRow.getByText('관계명을 입력하세요')).toBeHidden();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    expect(payload.relations).toContainEqual({
+      subject: 'Incident',
+      relation: 'RELATED_TO',
+      object: 'Incident',
+      description: '',
+    });
+  });
+
+  // #302 회귀: 이름이 빈 속성 2개는 예전에 ''끼리 충돌해 "중복된 속성명(Building):"으로 잘려 표시됐다.
+  // blank 검사가 중복 검사보다 먼저 걸려 어느 행이 문제인지 알려주는지 검증한다.
+  test('속성명을 비운 채 저장하면 중복이 아니라 빈 이름으로 진단되고 저장 API가 호출되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const buildingCard = dialog.getByTestId('entity-edit-Building');
+    await buildingCard.getByRole('button', { name: 'Building 속성 추가' }).click();
+    await buildingCard.getByRole('button', { name: 'Building 속성 추가' }).click();
+    await expect(buildingCard.getByTestId('property-row-Building-0').getByText('속성명을 입력하세요')).toBeVisible();
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('이름이 비어 있는 속성이 있습니다(Building, 1번째 행)')).toBeVisible();
+    await expect(page.getByText('중복된 속성명')).toBeHidden();
+    expect(capture.requests).toHaveLength(0);
+
+    // 두 행 모두 이름을 채우면 저장이 성사되고 payload에 두 속성이 담긴다.
+    await buildingCard.getByTestId('property-row-Building-0').getByLabel('Building 속성 이름').fill('층수');
+    await buildingCard.getByTestId('property-row-Building-1').getByLabel('Building 속성 이름').fill('연면적');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as typeof schema;
+    const building = payload.entities.find((e) => e.type === 'Building');
+    expect(building?.properties.map((p) => p.name)).toEqual(['층수', '연면적']);
+  });
+
   // 5-3: 엔티티 타입 추가 — 추가한 타입이 저장 payload의 entities 배열에 반영되는지 검증.
   test('엔티티 타입을 추가하면 저장 payload의 entities 배열에 새 타입이 포함된다', async ({
     authenticatedPage: page,

@@ -190,6 +190,11 @@ public class OntologyService {
       if (e.properties() != null) {
         Set<String> seenPropNames = new HashSet<>();
         for (var p : e.properties()) {
+          // blank 검사를 예약어/중복보다 먼저 둔다 — 이름이 빈 속성이 2개면 ''끼리 충돌해
+          // "중복된 속성명"으로 오진단되고(실제 원인은 미입력), null이면 Set.of#contains가 NPE를 던져 500이 된다.
+          if (p.name() == null || p.name().isBlank()) {
+            throw new IllegalArgumentException("속성명은 비어 있을 수 없습니다: " + e.type());
+          }
           if (RESERVED_PROPERTY_NAMES.contains(p.name())) {
             throw new IllegalArgumentException("예약어는 속성명으로 쓸 수 없습니다: " + p.name());
           }
@@ -204,6 +209,12 @@ public class OntologyService {
     }
     Set<String> seenTriples = new HashSet<>();
     for (var r : relations) {
+      // 관계명 blank도 중복(tripleKey) 검사보다 먼저 — 빈 관계명 2건은 tripleKey가 같아
+      // "중복된 관계"로 오진단된다. 이름 없는 관계는 LLM 추출·표 투영이 참조할 수 없어 무의미하다.
+      if (r.relation() == null || r.relation().isBlank()) {
+        throw new IllegalArgumentException(
+            "관계명은 비어 있을 수 없습니다: " + r.subject() + " → " + r.object());
+      }
       if (!seenTypes.contains(r.subject())) {
         throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(subject): " + r.subject());
       }

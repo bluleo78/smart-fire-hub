@@ -189,12 +189,17 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
   const removeRelation = (index: number) =>
     setRelations((prev) => prev.filter((_, i) => i !== index));
 
-  // 서버 왕복 없이 즉시 잡을 수 있는 위반만 로컬 검증한다(예약어/중복) — 참조 무결성은
+  // 서버 왕복 없이 즉시 잡을 수 있는 위반만 로컬 검증한다(빈값/예약어/중복) — 참조 무결성은
   // subject/object가 Select로 현재 엔티티 타입만 선택 가능해 UI 단에서부터 보장된다.
+  // blank 검사는 반드시 중복 검사보다 먼저 — 빈 이름 2개는 서로 같은 키라서 중복으로 오진단되고,
+  // 메시지에 빈 이름이 끼어들어 "중복된 속성명(Building):" 처럼 문장이 잘린다(#302).
   const validateLocally = (): string | null => {
     for (const e of entities) {
       const names = new Set<string>();
-      for (const p of e.properties) {
+      for (const [i, p] of e.properties.entries()) {
+        if (!p.name.trim()) {
+          return `이름이 비어 있는 속성이 있습니다(${e.type}, ${i + 1}번째 행)`;
+        }
         if (RESERVED_PROPERTY_NAMES.has(p.name)) {
           return `예약어는 속성명으로 쓸 수 없습니다(${e.type}): ${p.name}`;
         }
@@ -206,6 +211,9 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
     }
     const seenTriples = new Set<string>();
     for (const r of relations) {
+      if (!r.relation.trim()) {
+        return `관계명을 입력하세요(${r.subject} → ${r.object})`;
+      }
       const key = `${r.subject}|${r.relation}|${r.object}`;
       if (seenTriples.has(key)) {
         return `중복된 관계: ${r.subject} -${r.relation}-> ${r.object}`;
@@ -412,6 +420,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                 </div>
                 {entity.properties.map((prop, i) => {
                   const reserved = RESERVED_PROPERTY_NAMES.has(prop.name);
+                  // 빈 속성명은 저장 시 토스트로도 막지만, 어느 행이 문제인지 즉시 보이도록 인라인으로도 알린다(#302).
+                  const blankName = !prop.name.trim();
                   return (
                     <div
                       key={i}
@@ -464,6 +474,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                         value={prop.description}
                         onChange={(e) => updateProperty(entity.type, i, { description: e.target.value })}
                       />
+                      {blankName && <p className="text-xs text-destructive">속성명을 입력하세요</p>}
                       {reserved && (
                         <p className="text-xs text-destructive">
                           예약어는 속성명으로 쓸 수 없습니다: key, type, name, sourceChunkIds, schemaVersion
@@ -573,6 +584,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                   value={rel.description}
                   onChange={(e) => updateRelation(i, { description: e.target.value })}
                 />
+                {/* 빈 관계명은 저장 시 토스트로도 막지만, 어느 행이 문제인지 즉시 보이도록 인라인으로도 알린다(#302). */}
+                {!rel.relation.trim() && <p className="text-xs text-destructive">관계명을 입력하세요</p>}
               </div>
             ))}
           </div>

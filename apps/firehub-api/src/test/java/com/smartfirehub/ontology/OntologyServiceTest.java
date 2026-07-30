@@ -203,6 +203,82 @@ class OntologyServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  // 편집 검증(#302): 속성명이 빈 문자열이면 거부한다. 이름 없는 속성은 LLM 추출·표 투영이 참조할 수 없다.
+  @Test
+  void updateOntology_는_빈_속성명을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "a",
+                    "n",
+                    "exact",
+                    List.of(new OntologyResponse.Property("  ", "설명", "text", null)))),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("속성명은 비어 있을 수 없습니다");
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
+  // 편집 검증(#302): 속성명 null도 blank와 동일하게 400으로 거부한다.
+  // 회귀 가드 — 예약어 검사(Set.of#contains)가 먼저 돌면 NPE로 500이 됐다.
+  @Test
+  void updateOntology_는_null_속성명을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "a",
+                    "n",
+                    "exact",
+                    List.of(new OntologyResponse.Property(null, "설명", "text", null)))),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("속성명은 비어 있을 수 없습니다");
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
+  // 편집 검증(#302): 관계명이 비면 거부한다. 빈 관계명 2건은 tripleKey가 같아 중복으로 오진단되므로
+  // blank 검사가 중복 검사보다 먼저 걸리는지도 메시지로 확인한다.
+  @Test
+  void updateOntology_는_빈_관계명을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", "a", "n", "exact", List.of())),
+            List.of(
+                new OntologyResponse.Triple("Incident", "", "Incident", ""),
+                new OntologyResponse.Triple("Incident", "", "Incident", "")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("관계명은 비어 있을 수 없습니다");
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
+  // 편집 검증(#302): 관계명 null도 동일하게 거부한다(NPE/DB NOT NULL 위반 방지).
+  @Test
+  void updateOntology_는_null_관계명을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", "a", "n", "exact", List.of())),
+            List.of(new OntologyResponse.Triple("Incident", null, "Incident", "")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("관계명은 비어 있을 수 없습니다");
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
   // 편집 검증(5-5): 리네임의 to가 최종 엔티티 타입 목록에 없으면 거부한다.
   @Test
   void updateOntology_는_리네임_to가_최종_타입에_없으면_거부한다() {
