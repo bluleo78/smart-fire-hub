@@ -14,6 +14,7 @@ import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
 import com.smartfirehub.dataimport.dto.ParseOptions;
+import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -115,6 +116,41 @@ class DataImportServiceTest extends IntegrationTestBase {
     // Then
     assertThat(response.jobId()).isNotNull();
     assertThat(response.status()).isEqualTo("PENDING");
+  }
+
+  /**
+   * 회귀 가드(#312): 같은 데이터셋에 임포트가 이미 진행 중이면 두 번째 요청은 ConcurrentImportException(→409)이어야 한다.
+   *
+   * <p>V14 partial unique index가 활성 잡을 하나로 제한하므로 두 번째 createJob은 제약 위반을 일으킨다. 이때 DSLContext에
+   * ExceptionTranslatorExecuteListener가 등록되어 있어야만 jOOQ 예외가 Spring의 DataIntegrityViolationException으로
+   * 번역되어 DataImportService의 catch가 매칭된다. 번역기가 빠지면 이 예외가 그대로 새어나가 500이 된다.
+   */
+  @Test
+  void importFile_whenImportAlreadyInProgress_throwsConcurrentImportException() throws Exception {
+    // Given: 첫 번째 임포트로 활성(PENDING) 잡을 만든다
+    String csvContent =
+        """
+        name,age,email
+        Alice,30,alice@example.com
+        """;
+    MockMultipartFile first =
+        new MockMultipartFile(
+            "file", "first.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8));
+    ImportStartResponse started =
+        dataImportService.importFile(
+            testDatasetId, first, null, testUserId, "Test User", "127.0.0.1", "TestAgent");
+    assertThat(started.status()).isEqualTo("PENDING");
+
+    // When/Then: 같은 데이터셋에 두 번째 임포트 → 409로 매핑되는 도메인 예외
+    MockMultipartFile second =
+        new MockMultipartFile(
+            "file", "second.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                dataImportService.importFile(
+                    testDatasetId, second, null, testUserId, "Test User", "127.0.0.1", "TestAgent"))
+        .isInstanceOf(ConcurrentImportException.class)
+        .hasMessageContaining("already in progress");
   }
 
   @Test

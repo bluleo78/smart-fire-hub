@@ -7,9 +7,11 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultConfiguration;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.autoconfigure.jooq.ExceptionTranslatorExecuteListener;
 import org.springframework.boot.autoconfigure.jooq.SpringTransactionProvider;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -38,10 +40,12 @@ public class PipelineSandboxDataSourceConfig {
     // Spring Boot auto-config의 동작을 재현:
     // 1. TransactionAwareDataSourceProxy → Spring @Transactional과 jOOQ가 같은 커넥션 공유
     // 2. SpringTransactionProvider → dsl.transaction()이 Spring 트랜잭션에 참여 (테스트 롤백 정상 동작)
+    // 3. ExceptionTranslatorExecuteListener → jOOQ 예외를 Spring DataAccessException 계층으로 번역
     DefaultConfiguration config = new DefaultConfiguration();
     config.set(new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(dataSource)));
     config.set(SQLDialect.POSTGRES);
     config.set(new SpringTransactionProvider(new DataSourceTransactionManager(dataSource)));
+    config.set(new DefaultExecuteListenerProvider(ExceptionTranslatorExecuteListener.DEFAULT));
     return DSL.using(config);
   }
 
@@ -71,10 +75,12 @@ public class PipelineSandboxDataSourceConfig {
     // 주 dslContext()와 동일한 패턴 적용:
     // 1. TransactionAwareDataSourceProxy → Spring @Transactional과 jOOQ가 같은 커넥션 공유
     // 2. SpringTransactionProvider → dsl.transaction()이 Spring 트랜잭션에 참여 (테스트 롤백 정상 동작)
+    // 3. ExceptionTranslatorExecuteListener → jOOQ 예외를 Spring DataAccessException 계층으로 번역
     DefaultConfiguration config = new DefaultConfiguration();
     config.set(new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(dataSource)));
     config.set(SQLDialect.POSTGRES);
     config.set(new SpringTransactionProvider(new DataSourceTransactionManager(dataSource)));
+    config.set(new DefaultExecuteListenerProvider(ExceptionTranslatorExecuteListener.DEFAULT));
     return DSL.using(config);
   }
 }

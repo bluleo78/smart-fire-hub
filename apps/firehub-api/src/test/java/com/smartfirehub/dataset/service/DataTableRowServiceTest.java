@@ -747,8 +747,10 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
     dataTableRowService.dropStagingTable(stagingTable);
 
+    // 예외 번역기(ExceptionTranslatorExecuteListener) 등록으로 jOOQ DataAccessException이
+    // Spring의 BadSqlGrammarException(존재하지 않는 릴레이션)으로 번역된다 (#312).
     assertThatThrownBy(() -> dsl.fetch("SELECT * FROM data.\"" + stagingTable + "\""))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        .isInstanceOf(org.springframework.jdbc.BadSqlGrammarException.class);
   }
 
   /** 정상: createStagingTable이 생성하는 이름은 validateName([a-z][a-z0-9_]*)을 통과해야 한다. */

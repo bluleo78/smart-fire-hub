@@ -104,12 +104,15 @@ class AiSessionRepositorySlackTest extends IntegrationTestBase {
         testUserId, "agent-session-first", TEAM_ID, CHANNEL_ID, THREAD_TS, "첫 번째 세션");
 
     // when/then: 동일 (team,channel,thread) 로 두 번째 INSERT → UNIQUE 위반
-    // jOOQ는 IntegrityConstraintViolationException을 던진다 (DataAccessException의 하위 클래스).
+    // DSLContext에 ExceptionTranslatorExecuteListener가 등록되어 있으므로 jOOQ의
+    // IntegrityConstraintViolationException이 아니라 Spring의 DuplicateKeyException으로 번역된다 (#312).
+    // 이 타입 고정이 곧 예외 번역기 등록 여부의 회귀 가드다.
     assertThatThrownBy(
             () ->
                 aiSessionRepository.createSlackSession(
                     testUserId, "agent-session-second", TEAM_ID, CHANNEL_ID, THREAD_TS, "두 번째 세션"))
-        .isInstanceOf(org.jooq.exception.IntegrityConstraintViolationException.class);
+        .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
   }
 
   /**
