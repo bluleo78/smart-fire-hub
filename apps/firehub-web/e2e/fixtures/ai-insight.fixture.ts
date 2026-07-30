@@ -154,11 +154,17 @@ export async function setupExecutionDetailMocks(
 export async function setupNotificationPanelMocks(
   page: Page,
   messages?: ReturnType<typeof createMessage>[],
+  /**
+   * 서버 전체 미읽음 수를 명시적으로 덮어쓴다 (#351).
+   * 기본값은 넘긴 메시지에서 파생하는데, 그러면 "서버 전체 수 vs 받아온 페이지 내 수"의
+   * 불일치를 재현할 수 없다 — 한 페이지(50건)만 받아온 상태에서 전체가 140건인 상황 등.
+   */
+  unreadCountOverride?: number,
 ) {
   const defaultMessages = messages ?? [createMessage({ jobId: 1, executionId: 1 })];
   await mockApi(page, 'GET', '/api/v1/proactive/messages', defaultMessages);
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', {
-    count: defaultMessages.filter((m) => !m.read).length,
+    count: unreadCountOverride ?? defaultMessages.filter((m) => !m.read).length,
   });
 }
 

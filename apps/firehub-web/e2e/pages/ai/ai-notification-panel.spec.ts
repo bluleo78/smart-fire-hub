@@ -92,6 +92,9 @@ test.describe('AI 인사이트 알림 패널', () => {
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/messages', messages);
+    // #351: '전체 읽음' 노출 조건이 "받아온 페이지 내 미읽음"에서 서버 전체 집계로 바뀌었다.
+    // base.fixture가 0을 주므로 여기서 덮어쓴 뒤 재진입해 쿼리를 다시 태운다.
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 1 });
     const markAllCapture = await mockApi(
       page,
       'PUT',
@@ -99,12 +102,13 @@ test.describe('AI 인사이트 알림 패널', () => {
       {},
       { capture: true },
     );
+    await page.goto('/', { waitUntil: 'commit' });
 
     await page.getByRole('button', { name: bellSelector }).first().click();
     // 목록 데이터가 로드된 뒤 '전체 읽음' 버튼이 렌더링됨 (unreadCount > 0 조건)
     await expect(page.getByText('데이터 품질 이상 감지')).toBeVisible();
 
-    await page.getByRole('button', { name: '전체 읽음 처리' }).click();
+    await page.getByRole('button', { name: /전체를 읽음 처리/ }).click();
 
     // markAllAsRead API 가 실제로 호출되었는지 검증
     const req = await markAllCapture.waitForRequest();

@@ -308,6 +308,22 @@ export function timeAgo(dateStr: string): string {
 }
 
 /**
+ * 알림 목록용 상대/절대 시간 포맷 (#355).
+ *
+ * 7일 이내면 `timeAgo`, 넘으면 `M월 D일` 절대 날짜.
+ * 원래 AINotificationPanel 안에 있었으나 분기 판정과 절대일자 폴백만 `new Date`(로컬 파싱)를
+ * 써서 `timeAgo`(UTC 파싱)와 경계에서 최대 9시간 어긋났다. 계약 이탈이 재발하지 않도록
+ * `parseUtcDate`를 쓰는 formatters로 옮긴다.
+ */
+export function relativeOrShortDate(dateStr: string): string {
+  const d = parseUtcDate(dateStr);
+  if (Number.isNaN(d.getTime())) return '-';
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  if (days < 7) return timeAgo(dateStr);
+  return d.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+}
+
+/**
  * 상대 시간 포맷 (elapsed ms → "N초 전")
  */
 export function formatElapsedTime(ms: number): string {

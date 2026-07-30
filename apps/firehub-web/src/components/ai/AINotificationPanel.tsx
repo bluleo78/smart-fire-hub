@@ -10,21 +10,23 @@ import {
   useMarkAllAsRead,
   useMarkAsRead,
   useProactiveMessages,
+  useUnreadCount,
 } from '../../hooks/queries/useProactiveMessages';
-import { timeAgo } from '../../lib/formatters';
+import { relativeOrShortDate } from '../../lib/formatters';
 import { getSections } from '../../lib/proactive-utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getRelativeTime(dateStr: string): string {
-  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
-  if (days < 7) return timeAgo(dateStr);
-  return new Date(dateStr).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
-}
+// #355: 7일 분기와 절대일자 폴백만 로컬 파싱이라 timeAgo(UTC 파싱)와 경계에서 어긋났다.
+// formatters의 relativeOrShortDate로 이관 — 서버 문자열은 전부 UTC로 해석한다.
+const getRelativeTime = relativeOrShortDate;
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 const REMARK_PLUGINS = [remarkGfm];
+
+/** 알림 목록 한 페이지 크기 — "더 보기" 1회당 이만큼 더 불러온다 (#351) */
+const PAGE_SIZE = 50;
 
 function EmptyState() {
   return (
@@ -249,11 +251,19 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
   const [selectedMessage, setSelectedMessage] = useState<ProactiveMessage | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const { data: messages = [], isLoading } = useProactiveMessages({ limit: 50 });
+  // #351: 한 페이지 크기만큼씩 늘려가며 더 불러온다. 예전에는 50건 고정이라
+  // 미읽음이 50건을 넘으면 나머지에 도달할 UI 경로가 아예 없었다.
+  const [limit, setLimit] = useState(PAGE_SIZE);
+
+  const { data: messages = [], isLoading, isFetching } = useProactiveMessages({ limit });
   const markAsRead = useMarkAsRead();
   const markAllAsRead = useMarkAllAsRead();
 
-  const unreadCount = messages.filter((m) => !m.read).length;
+  // #351: 배지는 서버 전체 집계를 쓴다. 받아온 페이지 안에서만 세면 헤더 벨 배지(전체 수)와
+  // 어긋난다(140 vs 50). 같은 지표를 두 방식으로 계산하지 않는다.
+  const { data: unreadCount = 0 } = useUnreadCount();
+  // 받아온 건수가 요청한 limit과 같으면 아직 더 남았을 수 있다.
+  const hasMore = messages.length >= limit;
 
   // Mount animation
   useEffect(() => {
@@ -335,8 +345,10 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
                     backgroundColor: 'var(--destructive)',
                     color: 'var(--destructive-foreground)',
                   }}
+                  data-testid="notification-panel-unread-badge"
                 >
-                  {unreadCount > 99 ? '99+' : unreadCount}
+                  {/* #351: 패널 헤더는 잘리지 않은 실제 수를 보여준다(헤더 벨의 99+ 축약과 대비). */}
+                  {unreadCount}
                 </span>
               )}
             </div>
@@ -347,8 +359,9 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
                   onClick={() => markAllAsRead.mutate()}
                   disabled={markAllAsRead.isPending}
                   className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
-                  aria-label="전체 읽음 처리"
-                  title="전체 읽음"
+                  // #351: 대상 범위가 "보이는 50건"이 아니라 서버 전량임을 문구로 명확히 한다.
+                  aria-label={`안 읽은 알림 ${unreadCount}건 전체를 읽음 처리`}
+                  title={`안 읽은 알림 ${unreadCount}건 전체를 읽음 처리합니다`}
                 >
                   <CheckCheck className="h-3 w-3" />
                   전체 읽음
@@ -389,6 +402,19 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
                     />
                   </div>
                 ))}
+                {/* #351: 50건 고정 페이지라 나머지에 도달할 경로가 없던 것을 해소한다. */}
+                {hasMore && (
+                  <div className="p-2">
+                    <button
+                      type="button"
+                      onClick={() => setLimit((n) => n + PAGE_SIZE)}
+                      disabled={isFetching}
+                      className="w-full rounded py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
+                    >
+                      {isFetching ? '불러오는 중…' : '더 보기'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

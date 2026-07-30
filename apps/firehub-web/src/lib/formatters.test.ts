@@ -21,6 +21,7 @@ import {
   getStatusLabel,
   getStorageTypeLabel,
   isNullValue,
+  relativeOrShortDate,
   timeAgo,
 } from './formatters';
 
@@ -340,6 +341,32 @@ describe('timeAgo / formatElapsedTime', () => {
 
   it('timeAgo와 formatRelativeTime이 같은 문자열을 같게 해석한다 (#349)', () => {
     expect(timeAgo('2026-04-11T10:00:00')).toBe(formatRelativeTime('2026-04-11T10:00:00'));
+  });
+
+  /**
+   * #355 회귀 — `relativeOrShortDate`는 7일 분기 판정·절대일자 폴백·timeAgo 위임을
+   * 모두 같은 UTC 파싱 규칙으로 해야 한다. 이관 전에는 분기만 `new Date`(로컬)라
+   * KST 브라우저에서 경계가 최대 9시간 어긋났다.
+   */
+  it('relativeOrShortDate: 7일 미만은 timeAgo에 위임한다 (#355)', () => {
+    expect(relativeOrShortDate('2026-04-05T12:00:00Z')).toBe('6일 전');
+  });
+
+  it('relativeOrShortDate: 7일 이상은 절대 날짜로 표시한다 (#355)', () => {
+    expect(relativeOrShortDate('2026-04-04T12:00:00Z')).toBe(
+      new Date('2026-04-04T12:00:00Z').toLocaleDateString('ko-KR', {
+        month: 'short',
+        day: 'numeric',
+      }),
+    );
+  });
+
+  it('relativeOrShortDate: 타임존 없는 문자열도 UTC로 해석해 분기가 일치한다 (#355)', () => {
+    // 경계 근처(6일 22시간 전) — 로컬(KST) 파싱이면 9시간 밀려 7일 이상으로 오판한다
+    expect(relativeOrShortDate('2026-04-04T14:00:00')).toBe('6일 전');
+    expect(relativeOrShortDate('2026-04-04T14:00:00')).toBe(
+      relativeOrShortDate('2026-04-04T14:00:00Z'),
+    );
   });
 
   it('formatElapsedTime: 5초 미만은 "방금"', () => {
