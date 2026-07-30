@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -13,6 +17,7 @@ import {
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError } from '@/lib/api-error';
 import { validatePropertyCorrection } from '@/lib/property-correction';
+import { cn } from '@/lib/utils';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
@@ -38,6 +43,107 @@ function formatSignal(signalType: string | null, signalScore: number | null): st
   return `${label} ${signalScore.toFixed(signalType === 'similarity' ? 3 : 2)}`;
 }
 
+/** 확인 다이얼로그가 제어하는 대상 — 어떤 행을, 어떤 조치로, (속성이면) 어떤 정정값으로 확정할지. */
+type ConfirmTarget = {
+  row: ReviewItemResponse;
+  action: 'approve' | 'reject';
+  /** 다이얼로그를 연 시점의 정정값 스냅샷 — 사용자가 그래프에 무엇을 쓰는지 그대로 에코하고, 확정 시에도 이 값을 보낸다. */
+  correctedValue?: string;
+};
+
+/** 행에서 누른 동사를 확인 버튼 라벨로 그대로 재사용한다(중립어 '확인' 금지 — 오클릭 방지 어포던스). */
+function actionVerb(row: ReviewItemResponse, action: 'approve' | 'reject'): string {
+  if (action === 'reject') return '거부';
+  if (row.itemType === 'property_normalization') return '정정 적용';
+  if (row.itemType === 'entity_extraction' || row.itemType === 'relation_extraction') return '적재';
+  return '승인';
+}
+
+/** 거부 다이얼로그의 대상 요약 한 줄 — item_type별 표기는 승인 카피의 대상 표기를 재사용한다. */
+function rejectSummary(row: ReviewItemResponse): string {
+  switch (row.itemType) {
+    case 'synonym_merge': {
+      const p = row.payload as SynonymPayload;
+      return `대상: “${p.nameA}” ↔ “${p.nameB}” (${p.entityType})`;
+    }
+    case 'property_normalization': {
+      const p = row.payload as PropertyPayload;
+      return `대상: ${p.entityType}.${p.propertyName} — 원문 “${p.rawText}”`;
+    }
+    case 'entity_extraction': {
+      const p = row.payload as EntityPayload;
+      return `대상: “${p.name}” (${p.entityType})`;
+    }
+    case 'relation_extraction': {
+      const p = row.payload as RelationPayload;
+      return `대상: “${p.subjectName}” → ${p.relType} → “${p.objectName}”`;
+    }
+    default:
+      return '';
+  }
+}
+
+/**
+ * 확인 다이얼로그 카피를 만든다. 다이얼로그는 페이지에 1개만 두고 item_type × action으로 문구만 스위칭한다.
+ * destructive는 되돌리기 난이도가 실제로 높은 경우(동의어 병합 승인 / 모든 거부)에만 준다 —
+ * 전부 빨강이면 경고가 무의미해지기 때문.
+ */
+function buildConfirmCopy(target: ConfirmTarget): {
+  title: string; body: string; summary: string | null; confirmLabel: string; destructive: boolean;
+} {
+  const { row, action } = target;
+  const confirmLabel = actionVerb(row, action);
+
+  if (action === 'reject') {
+    return {
+      title: '검수를 거부합니다',
+      body: '이 항목을 거부 처리하면 그래프에 반영되지 않고 검수 목록에서 사라집니다. 현재 화면에서 다시 조회하거나 되돌릴 수 없습니다.',
+      summary: rejectSummary(row),
+      confirmLabel,
+      destructive: true,
+    };
+  }
+
+  switch (row.itemType) {
+    case 'synonym_merge': {
+      const p = row.payload as SynonymPayload;
+      return {
+        title: '동의어를 병합합니다',
+        body: `“${p.nameA}”와 “${p.nameB}”를 같은 ${p.entityType}로 병합합니다. 그래프의 두 노드가 하나로 합쳐지며, 이 작업은 되돌릴 수 없습니다.`,
+        summary: null, confirmLabel, destructive: true,
+      };
+    }
+    case 'property_normalization': {
+      const p = row.payload as PropertyPayload;
+      return {
+        title: '속성 정정값을 반영합니다',
+        body: `${p.entityType}.${p.propertyName} 속성을 원문 “${p.rawText}” 에서 “${target.correctedValue ?? ''}” 로 정정해 그래프에 기록합니다.`,
+        summary: null, confirmLabel, destructive: false,
+      };
+    }
+    case 'entity_extraction': {
+      const p = row.payload as EntityPayload;
+      const relCount = p.relations?.length ?? 0;
+      const base = `“${p.name}”(${p.entityType}) 엔티티를 그래프에 적재합니다.`;
+      return {
+        title: '엔티티를 그래프에 적재합니다',
+        body: relCount > 0 ? `${base} 이 엔티티에 연결된 관계 ${relCount}건도 함께 적재됩니다.` : base,
+        summary: null, confirmLabel, destructive: false,
+      };
+    }
+    case 'relation_extraction': {
+      const p = row.payload as RelationPayload;
+      return {
+        title: '관계를 그래프에 적재합니다',
+        body: `“${p.subjectName}” → ${p.relType} → “${p.objectName}” 관계를 그래프 엣지로 적재합니다.`,
+        summary: null, confirmLabel, destructive: false,
+      };
+    }
+    default:
+      return { title: '검수를 확정합니다', body: '이 항목을 확정합니다.', summary: null, confirmLabel, destructive: false };
+  }
+}
+
 // AI가 수행한 불확실한 작업(동의어 병합·속성 정규화)을 사람이 원문 근거와 함께 검수·판단하는 인박스.
 export default function ReviewInboxPage() {
   // 탭 필터 — undefined면 전체, 아니면 해당 item_type만.
@@ -46,6 +152,8 @@ export default function ReviewInboxPage() {
   const approve = useApproveReviewItem();
   const reject = useRejectReviewItem();
   const [processingId, setProcessingId] = useState<number | null>(null);
+  // 확인 다이얼로그는 페이지에 1개만 둔다(행마다 렌더하면 DOM이 부풀고, 확정 후 행이 사라질 때 언마운트 레이스가 생긴다).
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
 
   const doApprove = async (id: number, correctedValue?: string) => {
     setProcessingId(id);
@@ -63,6 +171,18 @@ export default function ReviewInboxPage() {
     } catch (err) { handleApiError(err, '거부 처리에 실패했습니다.'); }
     finally { setProcessingId(null); }
   };
+
+  // 확인 클릭 → 다이얼로그를 먼저 닫고 → 기존 mutation 경로를 그대로 호출한다.
+  // 닫기를 먼저 하는 이유: 실패(409) 시 사유 토스트와 잔존 행이 오버레이 뒤에 가려지면 안 된다(#310 동작 보존).
+  const handleConfirm = () => {
+    const target = confirmTarget;
+    if (!target) return;
+    setConfirmTarget(null);
+    if (target.action === 'approve') void doApprove(target.row.id, target.correctedValue);
+    else void doReject(target.row.id);
+  };
+
+  const copy = confirmTarget ? buildConfirmCopy(confirmTarget) : null;
 
   return (
     <div className="space-y-4 p-6">
@@ -102,10 +222,36 @@ export default function ReviewInboxPage() {
             <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
           )}
           {pending?.map((row) => (
-            <ReviewRow key={row.id} row={row} processing={processingId === row.id} onApprove={doApprove} onReject={doReject} />
+            <ReviewRow key={row.id} row={row} processing={processingId === row.id} onRequestConfirm={setConfirmTarget} />
           ))}
         </TableBody>
       </Table>
+
+      {/* 4개 조치(승인·적재·정정 적용·거부) 전부가 거치는 단일 확인 게이트. 그래프 변경/목록 소멸이 모두 비가역이라 조건부 스킵은 두지 않는다. */}
+      <AlertDialog open={confirmTarget !== null} onOpenChange={(open) => !open && setConfirmTarget(null)}>
+        <AlertDialogContent
+          data-testid="review-decide-confirm"
+          data-action={confirmTarget?.action}
+          data-item-type={confirmTarget?.row.itemType}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>{copy?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{copy?.body}</AlertDialogDescription>
+            {copy?.summary && <div className="text-muted-foreground text-sm">{copy.summary}</div>}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            {/* 취소가 좌측·기본 포커스 — 비가역 조치에서 Enter 오입력이 곧바로 확정되지 않게 한다. */}
+            <AlertDialogCancel autoFocus data-testid="review-decide-confirm-cancel">취소</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="review-decide-confirm-action"
+              className={cn(copy?.destructive && buttonVariants({ variant: 'destructive' }))}
+              onClick={handleConfirm}
+            >
+              {copy?.confirmLabel}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -114,10 +260,10 @@ export default function ReviewInboxPage() {
 function ReviewRow(props: {
   row: ReviewItemResponse;
   processing: boolean;
-  onApprove: (id: number, correctedValue?: string) => void;
-  onReject: (id: number) => void;
+  /** 즉시 확정하지 않고 페이지 레벨 확인 다이얼로그를 연다(정정값은 이 시점 스냅샷). */
+  onRequestConfirm: (target: ConfirmTarget) => void;
 }) {
-  const { row, processing, onApprove, onReject } = props;
+  const { row, processing, onRequestConfirm } = props;
   const [showEvidence, setShowEvidence] = useState(false);
   const [correctedValue, setCorrectedValue] = useState('');
   const isProperty = row.itemType === 'property_normalization';
@@ -157,11 +303,13 @@ function ReviewRow(props: {
           </div>
         </TableCell>
         <TableCell className="text-right space-x-2 whitespace-nowrap">
+          {/* #311 회귀 가드 — 정정값이 비었거나 형식 위반이면 트리거 자체가 비활성이라 다이얼로그도 열리지 않는다. */}
           <Button size="sm" disabled={processing || (isProperty && correctionError !== null)}
-            onClick={() => onApprove(row.id, isProperty ? correctedValue : undefined)}>
+            onClick={() => onRequestConfirm({ row, action: 'approve', correctedValue: isProperty ? correctedValue : undefined })}>
             {isProperty ? '정정 적용' : isEntity || isRelation ? '적재' : '승인'}
           </Button>
-          <Button size="sm" variant="outline" disabled={processing} onClick={() => onReject(row.id)}>거부</Button>
+          <Button size="sm" variant="outline" disabled={processing}
+            onClick={() => onRequestConfirm({ row, action: 'reject' })}>거부</Button>
         </TableCell>
       </TableRow>
       {showEvidence && (

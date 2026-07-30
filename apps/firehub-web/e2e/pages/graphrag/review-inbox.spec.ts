@@ -24,6 +24,7 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('전기적 요인')).toBeVisible();
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
     await page.getByRole('button', { name: '승인' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
 
     await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
     expect(approveCalled).toBe(true);
@@ -40,6 +41,7 @@ test.describe('AI 검수 인박스', () => {
     await page.goto('/knowledge-graph/review');
     await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('30000000');
     await page.getByRole('button', { name: '정정 적용' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
 
     await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBe('30000000');
   });
@@ -86,6 +88,7 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('노후 배선 추정')).toBeVisible();
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
     await page.getByRole('button', { name: '적재' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
     await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
     // 엔티티 승인은 correctedValue를 보내지 않는다(undefined).
     await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBeUndefined();
@@ -119,6 +122,7 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('CAUSED_BY')).toBeVisible();
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
     await page.getByRole('button', { name: '적재' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
     await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
     await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBeUndefined();
   });
@@ -139,6 +143,7 @@ test.describe('AI 검수 인박스', () => {
     await page.goto('/knowledge-graph/review');
     await expect(page.getByText('CAUSED_BY')).toBeVisible();
     await page.getByRole('button', { name: '적재' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
 
     // 서버가 알려준 구체적 사유가 그대로 보여야 한다(일반 폴백 문구로 퇴화하면 원인을 알 수 없다).
     await expect(page.getByText(reason)).toBeVisible();
@@ -183,6 +188,7 @@ test.describe('AI 검수 인박스', () => {
     await input.fill('2026-01-05');
     await expect(page.getByText('존재하지 않는 날짜입니다.')).toHaveCount(0);
     await page.getByRole('button', { name: '정정 적용' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
 
     await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBe('2026-01-05');
   });
@@ -210,6 +216,7 @@ test.describe('AI 검수 인박스', () => {
     await page.goto('/knowledge-graph/review');
     await page.getByPlaceholder('YYYY-MM-DD').fill('2026-01-05');
     await page.getByRole('button', { name: '정정 적용' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
 
     await expect(page.getByText(reason)).toBeVisible();
     await expect(page.getByText('검수를 승인했습니다.')).toHaveCount(0);
@@ -241,5 +248,141 @@ test.describe('AI 검수 인박스', () => {
     await page.goto('/knowledge-graph/review');
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
     await expect(page.getByText('노후 배선이 화재 원인으로 추정된다.')).toBeVisible();
+  });
+
+  // #315 — 승인/적재/정정 적용/거부 4개 조치는 그래프를 바꾸거나(비가역) 항목을 목록에서 영구히 없앤다.
+  // 행 높이가 낮고 버튼이 인접해 오클릭 위험이 실재하므로 전건 확인 게이트를 둔다.
+  test.describe('확정 전 확인 다이얼로그 (#315)', () => {
+    test('승인 버튼만 눌러서는 API가 호출되지 않고 확인 다이얼로그가 뜬다', async ({ authenticatedPage: page }) => {
+      let approveCalled = false;
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/1/approve', (route) => {
+        approveCalled = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createSynonymReviewItem({ status: 'approved' })) });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '승인' }).click();
+
+      // 다이얼로그가 열려 있는 동안에도 서버는 호출되지 않아야 한다 — 게이트가 실제로 존재한다는 증거.
+      await expect(page.getByTestId('review-decide-confirm')).toBeVisible();
+      expect(approveCalled).toBe(false);
+      // 기본 포커스는 취소여야 한다(Enter 오입력이 곧바로 확정되지 않게).
+      await expect(page.getByTestId('review-decide-confirm-cancel')).toBeFocused();
+    });
+
+    test('확인 다이얼로그에서 취소하면 mutation이 발생하지 않고 행이 남는다', async ({ authenticatedPage: page }) => {
+      let rejectCalled = false;
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/1/reject', (route) => {
+        rejectCalled = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createSynonymReviewItem({ status: 'rejected' })) });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '거부' }).click();
+      await page.getByTestId('review-decide-confirm-cancel').click();
+
+      await expect(page.getByTestId('review-decide-confirm')).toHaveCount(0);
+      expect(rejectCalled).toBe(false);
+      await expect(page.getByText('전기적 요인')).toBeVisible();
+      await expect(page.getByText('검수를 거부했습니다.')).toHaveCount(0);
+    });
+
+    test('거부 확인 시 reject API를 호출하고 성공 토스트가 뜬다', async ({ authenticatedPage: page }) => {
+      let rejectCalled = false;
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/1/reject', (route) => {
+        rejectCalled = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createSynonymReviewItem({ status: 'rejected' })) });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '거부' }).click();
+      await page.getByTestId('review-decide-confirm-action').click();
+
+      await expect(page.getByText('검수를 거부했습니다.')).toBeVisible();
+      expect(rejectCalled).toBe(true);
+    });
+
+    test('동의어 승인 다이얼로그는 병합 대상과 비가역성을 알리고 destructive 액션을 쓴다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '승인' }).click();
+
+      const dialog = page.getByTestId('review-decide-confirm');
+      await expect(dialog).toHaveAttribute('data-item-type', 'synonym_merge');
+      await expect(dialog).toContainText('동의어를 병합합니다');
+      await expect(dialog).toContainText('“전기적 요인”와 “분전반의 누전”를 같은 Cause로 병합합니다');
+      await expect(dialog).toContainText('되돌릴 수 없습니다');
+      // 확인 라벨은 행에서 누른 동사를 그대로 재사용한다.
+      await expect(page.getByTestId('review-decide-confirm-action')).toHaveText('승인');
+      await expect(page.getByTestId('review-decide-confirm-action')).toHaveClass(/bg-destructive/);
+    });
+
+    test('속성 정정 다이얼로그는 원문과 입력한 정정값을 그대로 에코한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('30000000');
+      await page.getByRole('button', { name: '정정 적용' }).click();
+
+      const dialog = page.getByTestId('review-decide-confirm');
+      await expect(dialog).toContainText('속성 정정값을 반영합니다');
+      await expect(dialog).toContainText('Incident.피해액');
+      await expect(dialog).toContainText('“수천만원대”');
+      await expect(dialog).toContainText('“30000000”');
+      await expect(page.getByTestId('review-decide-confirm-action')).toHaveText('정정 적용');
+      // 되돌리기 난이도가 낮은 조치까지 빨강이면 경고가 무의미해진다.
+      await expect(page.getByTestId('review-decide-confirm-action')).not.toHaveClass(/bg-destructive/);
+    });
+
+    test('엔티티 적재 다이얼로그는 함께 적재되는 연결 관계 건수를 알린다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createEntityReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '적재' }).click();
+
+      const dialog = page.getByTestId('review-decide-confirm');
+      await expect(dialog).toContainText('엔티티를 그래프에 적재합니다');
+      await expect(dialog).toContainText('“노후 배선 추정”(Cause) 엔티티를 그래프에 적재합니다.');
+      await expect(dialog).toContainText('연결된 관계 1건도 함께 적재됩니다');
+      await expect(page.getByTestId('review-decide-confirm-action')).toHaveText('적재');
+      await expect(page.getByTestId('review-decide-confirm-action')).not.toHaveClass(/bg-destructive/);
+    });
+
+    test('관계 적재 다이얼로그는 주어→관계→목적어를 그대로 보여준다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '적재' }).click();
+
+      const dialog = page.getByTestId('review-decide-confirm');
+      await expect(dialog).toContainText('관계를 그래프에 적재합니다');
+      await expect(dialog).toContainText('“노후 배선” → CAUSED_BY → “창고 화재” 관계를 그래프 엣지로 적재합니다.');
+      await expect(page.getByTestId('review-decide-confirm-action')).not.toHaveClass(/bg-destructive/);
+    });
+
+    test('거부 다이얼로그는 item_type별 대상 요약과 함께 destructive 액션을 쓴다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '거부' }).click();
+
+      const dialog = page.getByTestId('review-decide-confirm');
+      await expect(dialog).toHaveAttribute('data-action', 'reject');
+      await expect(dialog).toContainText('검수를 거부합니다');
+      await expect(dialog).toContainText('검수 목록에서 사라집니다');
+      await expect(dialog).toContainText('대상: “노후 배선” → CAUSED_BY → “창고 화재”');
+      await expect(page.getByTestId('review-decide-confirm-action')).toHaveText('거부');
+      await expect(page.getByTestId('review-decide-confirm-action')).toHaveClass(/bg-destructive/);
+    });
+
+    // #311 회귀 가드 — 확인 게이트가 생겼다고 형식 위반 정정값이 다이얼로그를 통해 새어나가면 안 된다.
+    test('정정값 형식 위반 상태에서는 트리거가 다이얼로그를 열지 못한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByPlaceholder('YYYY-MM-DD').fill('작년겨울');
+
+      await expect(page.getByText('YYYY-MM-DD 형식의 날짜를 입력하세요(예: 2026-01-05).')).toBeVisible();
+      await page.getByRole('button', { name: '정정 적용' }).click({ force: true });
+      await expect(page.getByTestId('review-decide-confirm')).toHaveCount(0);
+    });
   });
 });
