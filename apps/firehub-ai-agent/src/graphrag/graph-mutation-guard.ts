@@ -29,6 +29,20 @@ export class GraphTargetMissingError extends GraphMutationRejectedError {
   }
 }
 
+/**
+ * 요청이 온톨로지 스키마(관계 타입·허용 트리플)를 위반해 그래프에 반영할 수 없는 상태(#319).
+ *
+ * <p>지식그래프는 온톨로지를 기준으로 질의·투영되므로, 스키마에 없는 엣지는 만들어져도 질의에서 누락되거나
+ * 예상치 못한 결과를 만든다(데이터셋 매핑의 conformance 검증과 같은 원칙). 대상 부재(GraphTargetMissingError)와
+ * 마찬가지로 "사람이 고칠 수 있는 요청 문제"이므로 409 + 한국어 사유로 검수 UI까지 전달한다.
+ */
+export class OntologyConformanceError extends GraphMutationRejectedError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OntologyConformanceError';
+  }
+}
+
 /** session.run() 결과 중 이 가드가 쓰는 최소 형태(테스트에서 세션을 모킹하기 쉽도록 구조적 타입). */
 export interface CountableResult {
   records: { get(key: string): unknown }[];

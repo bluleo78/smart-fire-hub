@@ -154,7 +154,10 @@ router.post('/graph/add-relation', internalAuth, async (req, res) => {
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
     const ontology = await loadOntology(apiClient);
-    await addRelation(ontology.schemaVersion, parsed.data.subjectKey, parsed.data.relType as RelationType,
+    // relType은 zod의 문자열 검사만 거친 값이므로 온톨로지 대조는 addRelation이 담당한다(#319).
+    // 위반 시 OntologyConformanceError → respondMutationError가 409 + 한국어 사유로 매핑한다
+    // (400이 아니라 409인 이유: firehub-api의 GraphMutationClient는 409만 사유 문구를 살려 올린다).
+    await addRelation(ontology, parsed.data.subjectKey, parsed.data.relType as RelationType,
       parsed.data.objectKey, parsed.data.sourceChunkIds);
     res.status(204).send();
   } catch (e) {

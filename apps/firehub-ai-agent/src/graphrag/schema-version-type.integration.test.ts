@@ -62,7 +62,7 @@ describe('schemaVersion 저장 타입 (실 Neo4j, #308)', () => {
 
   it('addRelation도 엣지 schemaVersion을 INTEGER로 저장한다', async () => {
     await loadGraph({ entities: graph.entities, relations: [] }, 30802, 1);
-    await addRelation(CORE_ONTOLOGY.schemaVersion, kA, 'CAUSED_BY', kB, [30802]);
+    await addRelation(CORE_ONTOLOGY, kA, 'CAUSED_BY', kB, [30802]);
     expect(await relValueType(kA, kB)).toMatch(/^INTEGER/);
   });
 
