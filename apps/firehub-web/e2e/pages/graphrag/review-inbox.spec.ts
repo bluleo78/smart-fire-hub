@@ -434,4 +434,76 @@ test.describe('AI 검수 인박스', () => {
       await expect(page.getByTestId('review-inbox-table')).toBeFocused();
     });
   });
+
+  // #338/#340/#342 회귀 가드 — 표의 반복 컨트롤이 스크린리더에 상태·대상·오류 사유를 전달하는지 검증한다.
+  // 시각 라벨(승인/거부/원문 근거 보기)은 행마다 동일하므로 접근 가능한 이름·ARIA 배선만이 유일한 구분 수단이다.
+  test.describe('표 반복 컨트롤의 접근성 배선 (#338, #340, #342)', () => {
+    test('근거 토글이 aria-expanded로 상태를, aria-controls로 실제 패널을 가리킨다 (#338)', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem({ id: 777 })]);
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items/777/evidence', [createEvidenceChunk({ chunkId: 501 })]);
+      await page.goto('/knowledge-graph/review');
+
+      const toggle = page.getByRole('button', { name: /원문 근거 보기/ });
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+      await toggle.click();
+      const expanded = page.getByRole('button', { name: /근거 숨기기/ });
+      await expect(expanded).toHaveAttribute('aria-expanded', 'true');
+
+      // aria-controls가 가리키는 id가 실제 DOM에 존재하고 근거 내용을 담고 있어야 한다(공허한 배선 방지).
+      const controlsId = await expanded.getAttribute('aria-controls');
+      expect(controlsId).toBeTruthy();
+      const panel = page.locator(`#${controlsId!}`);
+      await expect(panel).toContainText('스프링클러 설비 오작동');
+
+      // 로딩→결과 전환이 조용히 일어나지 않도록 live region이 패널 안에 있어야 한다(SC 4.1.3).
+      await expect(panel.locator('[aria-live="polite"]')).toHaveCount(1);
+    });
+
+    test('행마다 반복되는 근거 토글·조치 버튼의 접근 가능한 이름이 서로 다른 대상을 식별한다 (#338, #342)', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [
+        createSynonymReviewItem(), createRelationReviewItem(),
+      ]);
+      await page.goto('/knowledge-graph/review');
+
+      // 행 단위 접근 가능한 이름 수집 — 표 본문의 각 <tr> 안 버튼들.
+      const namesOf = async (i: number) =>
+        page.locator('tbody tr').nth(i).locator('button')
+          .evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? e.textContent ?? ''));
+
+      await expect(page.getByText('전기적 요인')).toBeVisible();
+      const row0 = await namesOf(0);
+      const row1 = await namesOf(1);
+      expect(row0.length).toBeGreaterThan(0);
+
+      // 각 행의 이름에 그 행의 대상이 들어가 있어야 한다.
+      expect(row0.join('|')).toContain('전기적 요인');
+      expect(row1.join('|')).toContain('노후 배선');
+      // 두 행의 같은 조치 버튼이 동일한 이름을 갖지 않아야 한다(rotor에서 구분 불가 방지).
+      for (const n of row0) expect(row1).not.toContain(n);
+      // 시각 라벨은 짧게 유지된다 — 표 밀도를 위해 텍스트는 그대로.
+      await expect(page.locator('tbody tr').nth(0).getByRole('button', { name: /거부$/ })).toHaveText('거부');
+    });
+
+    test('속성 정정값 오류가 aria-describedby로 입력에 연결되어 사유가 낭독된다 (#340)', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+
+      const input = page.getByLabel('occurredAt 정정값');
+      // 정상 입력 상태에서는 오류 연결이 없어야 한다.
+      await input.fill('2026-01-02');
+      await expect(input).toHaveAttribute('aria-invalid', 'false');
+      await expect(input).not.toHaveAttribute('aria-describedby', /.+/);
+
+      // 달력상 존재하지 않는 날짜 → aria-invalid + 사유 연결.
+      await input.fill('2026-13-99');
+      await expect(input).toHaveAttribute('aria-invalid', 'true');
+      const describedBy = await input.getAttribute('aria-describedby');
+      expect(describedBy).toBeTruthy();
+      // 참조된 노드가 실제로 존재하고 사유 문구를 담고 있어야 한다(#300과 동일 배선).
+      await expect(page.locator(`#${describedBy!}`)).toHaveText('존재하지 않는 날짜입니다.');
+      // 입력 도중 등장하는 오류라 role=alert로 즉시 고지되어야 한다.
+      await expect(page.locator(`#${describedBy!}`)).toHaveAttribute('role', 'alert');
+    });
+  });
 });

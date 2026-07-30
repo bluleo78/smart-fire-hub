@@ -212,7 +212,8 @@ export default function ReviewInboxPage() {
   const copy = confirmTarget ? buildConfirmCopy(confirmTarget) : null;
 
   return (
-    <div className="space-y-4 p-6">
+    // 좁은 폭에서는 페이지 패딩을 줄여 320px 리플로우 여유를 확보한다(#345).
+    <div className="space-y-4 p-4 sm:p-6">
       <div>
         <h1 className="text-2xl font-semibold">AI 검수</h1>
         <p className="text-muted-foreground text-sm">
@@ -309,6 +310,14 @@ function ReviewRow(props: {
   const isEntity = row.itemType === 'entity_extraction';
   const isRelation = row.itemType === 'relation_extraction';
 
+  // 행마다 반복되는 컨트롤(근거 토글·조치 버튼)의 접근 가능한 이름에 붙일 대상 요약(#338, #342).
+  // 시각 라벨은 표 밀도를 위해 짧게 두고 aria-label로만 대상을 덧붙인다. rejectSummary가 이미
+  // item_type별 대상 표기를 만들고 있으므로 '대상: ' 접두만 떼어 재사용한다(카피 중복 방지).
+  const targetSummary = rejectSummary(row).replace(/^대상: /, '');
+  // 근거 패널은 다음 <tr>에 삽입되므로 토글과 aria-controls로 명시적으로 묶는다. id는 행 단위로 유일해야 한다.
+  const evidencePanelId = `review-evidence-${row.id}`;
+  const approveVerb = actionVerb(row, 'approve');
+
   return (
     <>
       <TableRow>
@@ -319,6 +328,7 @@ function ReviewRow(props: {
           {isSynonym && <SynonymContent payload={row.payload as SynonymPayload} rationale={row.reason} />}
           {isProperty && (
             <PropertyContent
+              itemId={row.id}
               payload={row.payload as PropertyPayload} reason={row.reason}
               value={correctedValue} onChange={setCorrectedValue}
               error={correctedValue.trim() === '' ? null : correctionError}
@@ -330,25 +340,44 @@ function ReviewRow(props: {
         <TableCell className="text-sm text-muted-foreground">
           {formatSignal(row.signalType, row.signalScore)}
           <div>
-            <button type="button" className="text-primary underline text-xs" onClick={() => setShowEvidence((s) => !s)}>
+            {/* aria-expanded/aria-controls로 접힘·펼침 상태와 대상 패널을 노출한다(#338, SC 4.1.2).
+                시각 라벨은 행마다 같지만 aria-label로 대상을 붙여 버튼 목록에서 구분되게 한다(SC 2.4.6).
+                aria-controls는 패널이 실제로 있을 때만 붙인다 — 없는 id를 가리키면 무효 참조가 된다. */}
+            <button
+              type="button"
+              className="text-primary underline text-xs"
+              aria-expanded={showEvidence}
+              aria-controls={showEvidence ? evidencePanelId : undefined}
+              aria-label={`${targetSummary} — ${showEvidence ? '근거 숨기기' : '원문 근거 보기'}`}
+              onClick={() => setShowEvidence((s) => !s)}
+            >
               {showEvidence ? '근거 숨기기' : '원문 근거 보기'}
             </button>
           </div>
         </TableCell>
         <TableCell className="text-right space-x-2 whitespace-nowrap">
           {/* #311 회귀 가드 — 정정값이 비었거나 형식 위반이면 트리거 자체가 비활성이라 다이얼로그도 열리지 않는다. */}
+          {/* 조치는 전부 비가역이므로 접근 가능한 이름이 어떤 행인지 식별해야 한다(#342, SC 2.4.6/4.1.2).
+              시각 라벨(승인/적재/정정 적용/거부)은 유지하고 aria-label로만 대상 요약을 덧붙인다. */}
           <Button size="sm" disabled={processing || (isProperty && correctionError !== null)}
+            aria-label={`${targetSummary} — ${approveVerb}`}
             onClick={() => onRequestConfirm({ row, action: 'approve', correctedValue: isProperty ? correctedValue : undefined })}>
-            {isProperty ? '정정 적용' : isEntity || isRelation ? '적재' : '승인'}
+            {approveVerb}
           </Button>
           <Button size="sm" variant="outline" disabled={processing}
+            aria-label={`${targetSummary} — 거부`}
             onClick={() => onRequestConfirm({ row, action: 'reject' })}>거부</Button>
         </TableCell>
       </TableRow>
       {showEvidence && (
         <TableRow>
+          {/* 토글이 aria-controls로 가리키는 패널 컨테이너. 로딩 → 결과 전환이 비동기로 조용히 일어나므로
+              aria-live/aria-busy로 고지한다(#338, SC 4.1.3). */}
           <TableCell colSpan={4} className="bg-muted/40">
-            <EvidencePanel id={row.id} />
+            {/* id/live region은 <td>가 아니라 내부 div에 둔다 — td에 role을 덮으면 표 셀 시맨틱이 깨진다. */}
+            <div id={evidencePanelId} aria-label={`${targetSummary} 원문 근거`} role="group">
+              <EvidencePanel id={row.id} />
+            </div>
           </TableCell>
         </TableRow>
       )}
@@ -366,9 +395,14 @@ function SynonymContent({ payload, rationale }: { payload: SynonymPayload; ratio
 }
 
 function PropertyContent(props: {
+  /** 오류 노드 id를 행 단위로 유일화하기 위해 필요 — 같은 표에 여러 행이 동시에 렌더된다(#340). */
+  itemId: number;
   payload: PropertyPayload; reason: string | null; value: string; onChange: (v: string) => void; error: string | null;
 }) {
-  const { payload, reason, value, onChange, error } = props;
+  const { itemId, payload, reason, value, onChange, error } = props;
+  // aria-invalid만으로는 "유효하지 않음"까지만 낭독된다. 사유 노드에 id를 주고 aria-describedby로 묶어야
+  // 무엇이 잘못됐는지가 전달된다(#340, SC 3.3.1/1.3.1). #300 매핑 다이얼로그와 같은 배선 패턴.
+  const errorId = `review-correction-error-${itemId}`;
   return (
     <div className="space-y-1">
       <div><Badge variant="outline">{payload.entityType}.{payload.propertyName}</Badge> 원문: <span className="font-medium">“{payload.rawText}”</span></div>
@@ -377,8 +411,10 @@ function PropertyContent(props: {
         className="max-w-xs" placeholder={payload.dataType === 'number' ? '정정 숫자(예: 30000000)' : payload.dataType === 'date' ? 'YYYY-MM-DD' : '정정 텍스트'}
         value={value} onChange={(e) => onChange(e.target.value)}
         aria-invalid={error !== null} aria-label={`${payload.propertyName} 정정값`}
+        aria-describedby={error ? errorId : undefined}
       />
-      {error && <div className="text-xs text-destructive">{error}</div>}
+      {/* role="alert": 입력 도중 뒤늦게 등장하는 오류라 포커스를 옮기지 않고도 즉시 고지되어야 한다. */}
+      {error && <div id={errorId} role="alert" className="text-xs text-destructive">{error}</div>}
     </div>
   );
 }
@@ -410,11 +446,15 @@ function RelationContent({ payload, reason }: { payload: RelationPayload; reason
 }
 
 // 원문 근거 패널 — 펼칠 때만 조회(enabled). 스니펫 없으면 안내.
+// 로딩 → 결과(또는 '근거 없음') 전환이 시각적으로만 일어나던 것을 aria-live/aria-busy로 고지한다(#338, SC 4.1.3).
 function EvidencePanel({ id }: { id: number }) {
   const { data, isLoading } = useReviewItemEvidence(id, true);
-  if (isLoading) return <span className="text-muted-foreground text-sm">근거 불러오는 중...</span>;
-  if (!data || data.length === 0) return <span className="text-muted-foreground text-sm">이 항목에는 연결된 원문 근거가 없습니다.</span>;
-  return (
+  // live region은 콘텐츠가 바뀔 때 이미 DOM에 있어야 낭독된다 — 분기마다 새로 만들지 않고 래퍼를 항상 유지한다.
+  const body = isLoading ? (
+    <span className="text-muted-foreground text-sm">근거 불러오는 중...</span>
+  ) : !data || data.length === 0 ? (
+    <span className="text-muted-foreground text-sm">이 항목에는 연결된 원문 근거가 없습니다.</span>
+  ) : (
     <div className="space-y-2">
       {data.map((c) => (
         <div key={c.chunkId} className="text-sm">
@@ -422,6 +462,11 @@ function EvidencePanel({ id }: { id: number }) {
           <p className="whitespace-pre-wrap">{c.content}</p>
         </div>
       ))}
+    </div>
+  );
+  return (
+    <div aria-live="polite" aria-busy={isLoading} data-testid={`review-evidence-live-${id}`}>
+      {body}
     </div>
   );
 }
