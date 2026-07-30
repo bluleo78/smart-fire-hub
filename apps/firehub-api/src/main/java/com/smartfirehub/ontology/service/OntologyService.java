@@ -187,6 +187,15 @@ public class OntologyService {
       if (!"embedding".equals(e.resolution()) && !"exact".equals(e.resolution())) {
         throw new IllegalArgumentException("resolution은 embedding 또는 exact여야 합니다: " + e.type());
       }
+      // description/naming 컬럼은 NOT NULL(기본값 없음)이라 null이 그대로 INSERT되면 제약 위반으로
+      // 500이 새어나간다(#305). null만 막고 빈 문자열은 허용한다 — 컬럼 제약이 NOT NULL일 뿐이고
+      // 실제로 설명을 비워 저장한 기존 데이터가 정상 왕복(GET→PUT)돼야 하기 때문이다.
+      if (e.description() == null) {
+        throw new IllegalArgumentException("엔티티 설명(description)은 null일 수 없습니다: " + e.type());
+      }
+      if (e.naming() == null) {
+        throw new IllegalArgumentException("엔티티 명명 규칙(naming)은 null일 수 없습니다: " + e.type());
+      }
       if (e.properties() != null) {
         Set<String> seenPropNames = new HashSet<>();
         for (var p : e.properties()) {
@@ -201,7 +210,14 @@ public class OntologyService {
           if (!seenPropNames.add(p.name())) {
             throw new IllegalArgumentException("중복된 속성명(" + e.type() + "): " + p.name());
           }
-          if (p.dataType() != null && !List.of("text", "number", "date").contains(p.dataType())) {
+          // 속성 description도 NOT NULL 컬럼 — 엔티티와 동일하게 null만 차단한다(#305).
+          if (p.description() == null) {
+            throw new IllegalArgumentException(
+                "속성 설명(description)은 null일 수 없습니다(" + e.type() + "): " + p.name());
+          }
+          // dataType은 NOT NULL + CHECK(text|number|date)라 null은 애초에 저장 불가하다.
+          // 기존 코드가 null을 통과시켜 제약 위반 500이 났으므로 null도 400으로 거른다(#305).
+          if (p.dataType() == null || !List.of("text", "number", "date").contains(p.dataType())) {
             throw new IllegalArgumentException("데이터 타입은 text|number|date 중 하나여야 합니다: " + p.name());
           }
         }
@@ -220,6 +236,11 @@ public class OntologyService {
       }
       if (!seenTypes.contains(r.object())) {
         throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(object): " + r.object());
+      }
+      // 관계 description도 NOT NULL 컬럼 — 엔티티/속성과 동일하게 null만 차단한다(#305).
+      if (r.description() == null) {
+        throw new IllegalArgumentException(
+            "관계 설명(description)은 null일 수 없습니다: " + r.subject() + " → " + r.object());
       }
       String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
       if (!seenTriples.add(tripleKey)) {

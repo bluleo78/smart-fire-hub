@@ -246,6 +246,134 @@ class OntologyServiceTest {
     verify(repository, org.mockito.Mockito.never()).updateOntology(any());
   }
 
+  // 편집 검증(#305): 엔티티 description이 null이면 400으로 거부한다.
+  // 회귀 가드 — 검증이 없으면 NOT NULL 컬럼에 null이 INSERT돼 제약 위반 500이 새어나갔다.
+  @Test
+  void updateOntology_는_null_엔티티_description을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", null, "n", "exact", List.of())),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("엔티티 설명(description)은 null일 수 없습니다");
+    verify(repository, never()).updateOntology(any());
+  }
+
+  // 편집 검증(#305): 엔티티 naming도 NOT NULL 컬럼이라 null이면 400으로 거부한다.
+  @Test
+  void updateOntology_는_null_엔티티_naming을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", "a", null, "exact", List.of())),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("엔티티 명명 규칙(naming)은 null일 수 없습니다");
+    verify(repository, never()).updateOntology(any());
+  }
+
+  // 편집 검증(#305): 속성 description도 NOT NULL 컬럼이라 null이면 400으로 거부한다.
+  @Test
+  void updateOntology_는_null_속성_description을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "a",
+                    "n",
+                    "exact",
+                    List.of(new OntologyResponse.Property("피해액", null, "text", null)))),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("속성 설명(description)은 null일 수 없습니다");
+    verify(repository, never()).updateOntology(any());
+  }
+
+  // 편집 검증(#305): dataType은 NOT NULL + CHECK(text|number|date)라 null도 잘못된 값과 동일하게 거부한다.
+  @Test
+  void updateOntology_는_null_dataType을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "a",
+                    "n",
+                    "exact",
+                    List.of(new OntologyResponse.Property("피해액", "설명", null, null)))),
+            List.of());
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("데이터 타입은 text|number|date 중 하나여야 합니다");
+    verify(repository, never()).updateOntology(any());
+  }
+
+  // 편집 검증(#305): 관계 description도 NOT NULL 컬럼이라 null이면 400으로 거부한다.
+  @Test
+  void updateOntology_는_null_관계_description을_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", "a", "n", "exact", List.of())),
+            List.of(new OntologyResponse.Triple("Incident", "SELF", "Incident", null)));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("관계 설명(description)은 null일 수 없습니다");
+    verify(repository, never()).updateOntology(any());
+  }
+
+  // 편집 검증(#305) 경계 고정: 빈 문자열 description/naming은 **허용**한다.
+  // 컬럼 제약은 NOT NULL일 뿐이라 ''로 저장된 기존 데이터가 GET→PUT 왕복으로 다시 저장돼야 한다.
+  // 이 테스트가 없으면 후일 blank까지 막는 강화가 들어가 정상 왕복이 조용히 깨진다.
+  @Test
+  void updateOntology_는_빈_문자열_description과_naming은_허용한다() {
+    UpdateOntologyRequest ok =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(
+                new OntologyResponse.EntityType(
+                    "Incident",
+                    "",
+                    "",
+                    "exact",
+                    List.of(new OntologyResponse.Property("피해액", "", "number", null)))),
+            List.of(new OntologyResponse.Triple("Incident", "SELF", "Incident", "")));
+    when(repository.updateOntology(any())).thenReturn(2);
+    when(repository.findOntology())
+        .thenReturn(new OntologyResponse("d", 2, List.of(), List.of()));
+
+    service.updateOntology(ok);
+
+    verify(repository).updateOntology(any());
+  }
+
+  // 생성 검증(#305): 생성 경로도 동일한 validateCore를 타므로 null description을 400으로 거부한다.
+  @Test
+  void createOntology_는_null_엔티티_description을_거부한다() {
+    var bad =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "판매",
+            List.of(new OntologyResponse.EntityType("Customer", null, "n", "exact", List.of())),
+            List.of());
+    assertThatThrownBy(() -> service.createOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("엔티티 설명(description)은 null일 수 없습니다");
+    verify(repository, never()).createOntology(any());
+  }
+
   // 편집 검증(#302): 관계명이 비면 거부한다. 빈 관계명 2건은 tripleKey가 같아 중복으로 오진단되므로
   // blank 검사가 중복 검사보다 먼저 걸리는지도 메시지로 확인한다.
   @Test
