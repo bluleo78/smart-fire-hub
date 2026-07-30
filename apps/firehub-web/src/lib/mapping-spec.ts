@@ -87,6 +87,15 @@ export function toSpec(draft: MappingDraft): MappingSpec {
   };
 }
 
+/**
+ * 엔티티를 사람이 읽는 한 줄 라벨로 만든다.
+ * 표·선택 드롭다운·삭제 확인 문구가 모두 같은 표기를 써야 사용자가 같은 대상임을 알아보므로,
+ * 문자열 조립을 이 한 곳으로 모은다. 끝점을 찾지 못했을 때의 폴백은 조회 실패를 아는 호출부가 처리한다.
+ */
+export function entityLabel(entity: DraftEntity): string {
+  return `${entity.entityType} (${entity.nameColumn})`;
+}
+
 /** 해당 엔티티를 주어 또는 목적어로 쓰는 관계 수. 삭제 확인 문구에 쓴다. */
 export function countRelationsReferencing(draft: MappingDraft, entityId: string): number {
   return draft.relations.filter((r) => r.subjectId === entityId || r.objectId === entityId).length;

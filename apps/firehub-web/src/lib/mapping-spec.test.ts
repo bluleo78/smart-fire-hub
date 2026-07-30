@@ -4,6 +4,7 @@ import type { MappingSpec } from '../types/mapping';
 import {
   countRelationsReferencing,
   emptyDraft,
+  entityLabel,
   nextDraftId,
   removeEntity,
   resetDraftIdCounter,
@@ -100,6 +101,12 @@ describe('mapping-spec', () => {
     const before = JSON.stringify(draft);
     removeEntity(draft, draft.entities[0].id);
     expect(JSON.stringify(draft)).toBe(before);
+  });
+
+  // 표·선택 드롭다운·삭제 확인 문구가 같은 표기를 쓰는 것이 이 헬퍼의 존재 이유다. (#299)
+  it('entityLabel은 "타입 (이름컬럼)" 표기를 만든다', () => {
+    const draft = toDraft(sampleSpec());
+    expect(entityLabel(draft.entities[0])).toBe('Incident (incident_name)');
   });
 
   it('toSpec은 존재하지 않는 엔티티를 가리키는 관계를 버린다', () => {

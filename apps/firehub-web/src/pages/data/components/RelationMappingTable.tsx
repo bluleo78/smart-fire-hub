@@ -1,6 +1,7 @@
 import { Button } from '../../../components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import type { DraftEntity, DraftRelation } from '../../../lib/mapping-spec';
+import { entityLabel } from '../../../lib/mapping-spec';
 
 interface RelationMappingTableProps {
   relations: DraftRelation[];
@@ -20,7 +21,7 @@ export function RelationMappingTable({
 }: RelationMappingTableProps) {
   const labelOf = (id: string) => {
     const entity = entities.find((e) => e.id === id);
-    return entity ? `${entity.entityType} (${entity.nameColumn})` : '(삭제됨)';
+    return entity ? entityLabel(entity) : '(삭제됨)';
   };
 
   return (

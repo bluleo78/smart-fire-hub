@@ -22,7 +22,7 @@ import {
 } from '../../../hooks/queries/useMapping';
 import { handleApiError } from '../../../lib/api-error';
 import type { DraftEntity, DraftRelation, MappingDraft } from '../../../lib/mapping-spec';
-import { countRelationsReferencing, emptyDraft, nextDraftId, removeEntity, toDraft, toSpec } from '../../../lib/mapping-spec';
+import { countRelationsReferencing, emptyDraft, entityLabel, nextDraftId, removeEntity, toDraft, toSpec } from '../../../lib/mapping-spec';
 import type { EntityMappingFormData, RelationMappingFormData } from '../../../lib/validations/mapping';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { EntityMappingDialog } from '../components/EntityMappingDialog';
@@ -130,8 +130,22 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
     );
   };
 
-  const handleRelationDelete = (relation: DraftRelation) => {
-    updateDraft((prev) => ({ ...prev, relations: prev.relations.filter((r) => r.id !== relation.id) }));
+  /**
+   * 관계 삭제 확인 대상. 엔티티 삭제와 같은 패널·같은 `삭제` 라벨인데 한쪽만 즉시 실행되면
+   * 사용자가 엔티티 쪽에서 형성한 "삭제는 확인이 뜬다"는 기대가 깨진다 — 관계도 확인을 거친다. (#299)
+   */
+  const [deletingRelation, setDeletingRelation] = useState<DraftRelation | null>(null);
+
+  // 확인 문구에 쓸 끝점 라벨. 엔티티가 이미 지워졌으면 표와 같은 폴백 표기를 쓴다.
+  const endpointLabel = (entityId: string) => {
+    const entity = draft.entities.find((e) => e.id === entityId);
+    return entity ? entityLabel(entity) : '(삭제됨)';
+  };
+
+  const handleRelationDeleteConfirm = () => {
+    if (!deletingRelation) return;
+    updateDraft((prev) => ({ ...prev, relations: prev.relations.filter((r) => r.id !== deletingRelation.id) }));
+    setDeletingRelation(null);
   };
 
   /**
@@ -264,7 +278,7 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
         entities={draft.entities}
         onAdd={handleRelationAdd}
         onEdit={handleRelationEdit}
-        onDelete={handleRelationDelete}
+        onDelete={setDeletingRelation}
       />
 
       {ontology && (
@@ -292,6 +306,26 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction onClick={handleEntityDeleteConfirm}>삭제</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deletingRelation !== null} onOpenChange={(open) => !open && setDeletingRelation(null)}>
+        <AlertDialogContent data-testid="relation-delete-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>관계 매핑 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingRelation && (
+                <>
+                  {endpointLabel(deletingRelation.subjectId)} → {deletingRelation.relation} →{' '}
+                  {endpointLabel(deletingRelation.objectId)} 관계 매핑을 삭제합니다.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRelationDeleteConfirm}>삭제</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import type { DraftEntity, DraftRelation } from '../../../lib/mapping-spec';
+import { entityLabel } from '../../../lib/mapping-spec';
 import type { RelationMappingFormData } from '../../../lib/validations/mapping';
 import { relationMappingSchema } from '../../../lib/validations/mapping';
 import type { OntologySchema } from '../../../types/ontology';
@@ -73,8 +74,6 @@ export function RelationMappingDialog({
     form.setValue('relation', '');
   };
 
-  const label = (e: DraftEntity) => `${e.entityType} (${e.nameColumn})`;
-
   const submit = (data: RelationMappingFormData) => {
     onSubmit(data);
     onOpenChange(false);
@@ -100,7 +99,7 @@ export function RelationMappingDialog({
               <SelectContent>
                 {entities.map((e) => (
                   <SelectItem key={e.id} value={e.id}>
-                    {label(e)}
+                    {entityLabel(e)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -119,7 +118,7 @@ export function RelationMappingDialog({
               <SelectContent>
                 {entities.map((e) => (
                   <SelectItem key={e.id} value={e.id}>
-                    {label(e)}
+                    {entityLabel(e)}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -188,8 +188,9 @@ test.describe('데이터셋 매핑 탭', () => {
     );
     await page.goto(MAPPING_URL);
 
-    // 초안 저장은 dirty일 때만 눌리므로, 관계 하나를 지워 변경 상태를 만든다.
+    // 초안 저장은 dirty일 때만 눌리므로, 관계 하나를 지워(확인 다이얼로그 포함) 변경 상태를 만든다.
     await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
     await page.getByRole('button', { name: '초안 저장' }).click();
     await expect(page.getByText('온톨로지에 없는 엔티티 타입입니다: Ghost')).toBeVisible();
   });
@@ -360,8 +361,9 @@ test.describe('데이터셋 매핑 탭', () => {
     await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'draft' }));
     await page.goto(MAPPING_URL);
 
-    // 관계 하나를 지워 dirty 상태를 만든다.
+    // 관계 하나를 지워(확인 다이얼로그 포함) dirty 상태를 만든다.
     await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByTestId('mapping-dirty')).toBeVisible();
 
     await page.getByTestId('mapping-activate-button').click();
@@ -386,8 +388,9 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(page.getByTestId('mapping-status')).toHaveText('활성');
     await expect(page.getByTestId('mapping-save-button')).toBeDisabled();
 
-    // 편집을 하면 다시 눌릴 수 있어야 한다 — 정상 편집 흐름은 막지 않는다.
+    // 편집(관계 삭제 + 확인)을 하면 다시 눌릴 수 있어야 한다 — 정상 편집 흐름은 막지 않는다.
     await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByTestId('mapping-save-button')).toBeEnabled();
     // 강등 확인 전에는 PUT이 나가지 않는다.
     expect(capture.requests.length).toBe(0);
@@ -407,6 +410,7 @@ test.describe('데이터셋 매핑 탭', () => {
     await page.goto(MAPPING_URL);
 
     await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
     await page.getByTestId('mapping-save-button').click();
 
     const confirm = page.getByTestId('mapping-demote-confirm');
@@ -430,5 +434,39 @@ test.describe('데이터셋 매핑 탭', () => {
       relations: [],
     });
     await expect(page.getByTestId('mapping-status')).toHaveText('초안');
+  });
+
+  // 회귀(#299): 같은 패널의 엔티티 삭제는 확인을 요구하는데 관계 삭제만 즉시 실행돼,
+  // 잘못 누른 관계(주어/관계/목적어 3단 선택)를 되돌릴 수 없었다.
+  test('관계 삭제는 확인 다이얼로그를 거치고, 취소하면 관계가 남는다', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+    await page.goto(MAPPING_URL);
+
+    await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+
+    // 확인 전에는 행도 dirty 표시도 그대로다.
+    const confirm = page.getByTestId('relation-delete-confirm');
+    await expect(confirm).toBeVisible();
+    // 어떤 관계가 지워지는지 끝점 라벨까지 정확히 고지해야 한다.
+    await expect(confirm).toContainText(
+      'Incident (incident_name) → OCCURRED_AT → Building (building_name) 관계 매핑을 삭제합니다.',
+    );
+    await expect(page.getByTestId('relation-row-OCCURRED_AT')).toBeVisible();
+    await expect(page.getByTestId('mapping-dirty')).toBeHidden();
+
+    // 취소하면 삭제가 일어나지 않는다.
+    await confirm.getByRole('button', { name: '취소' }).click();
+    await expect(confirm).toBeHidden();
+    await expect(page.getByTestId('relation-row-OCCURRED_AT')).toBeVisible();
+    await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 1개');
+    await expect(page.getByTestId('mapping-dirty')).toBeHidden();
+
+    // 확인하면 행이 사라지고 미저장 변경으로 표시된다.
+    await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+    await confirm.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByTestId('relation-row-OCCURRED_AT')).toHaveCount(0);
+    await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 0개');
+    await expect(page.getByTestId('mapping-dirty')).toBeVisible();
   });
 });
