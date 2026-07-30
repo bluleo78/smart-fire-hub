@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
-import proactiveRouter, { buildSectionPrompt, parseSections } from './proactive.js';
+import proactiveRouter, {
+  buildSectionPrompt,
+  parseSections,
+  detectAgentFailure,
+} from './proactive.js';
 
 const mockExecute = vi.hoisted(() => vi.fn());
 
@@ -193,6 +197,110 @@ describe('Proactive routes — integration tests', () => {
     expect(body.rawText).toBe(freeText);
     expect(body.usage.inputTokens).toBe(50);
     expect(body.usage.outputTokens).toBe(80);
+  });
+
+  // 이슈 #350: 에이전트가 인증 실패를 일반 텍스트로 흘리고 정상 종료(done)하는 실제 시퀀스.
+  // 이 경우 200으로 응답하면 백엔드가 COMPLETED로 기록하고 오류 원문을 리포트 본문 삼아
+  // CHAT/EMAIL로 발송한다. 리포트 파일도 없으므로 502로 실패 처리되어야 한다.
+  it('TC5: 인증 실패 텍스트가 done으로 종료되면 502로 실패 처리한다 (#350)', async () => {
+    const authError =
+      'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid bearer token"},"request_id":"req_011CdYN4tsktnijbWhnP2ZCV"}';
+
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'text', content: authError };
+        yield { type: 'done', inputTokens: 0, outputTokens: 0 };
+      })(),
+    );
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(502);
+    const body = res.body as { error: string; code: string };
+    expect(body.code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    // 오류 원문·request_id가 응답에 실려 나가면 안 된다 (로그에만 남긴다)
+    expect(JSON.stringify(res.body)).not.toContain('request_id');
+    expect(JSON.stringify(res.body)).not.toContain('Invalid bearer token');
+  });
+
+  it('TC6: 리포트 파일도 없고 출력 텍스트도 비면 502로 실패 처리한다 (#350)', async () => {
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'done', inputTokens: 0, outputTokens: 0 };
+      })(),
+    );
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(502);
+    expect((res.body as { code: string }).code).toBe('AGENT_EMPTY_OUTPUT');
+  });
+
+  // 회귀 방지(negative control): 장애를 *서술*하는 정상 리포트는 본문에 오류 문구가 들어 있어도
+  // 성공으로 처리되어야 한다. 실패 판정을 본문 선두 200자로 한정한 이유가 이것이다.
+  it('TC7: 본문 중간에 오류 문구를 인용한 정상 리포트는 200을 유지한다 (#350 회귀 방지)', async () => {
+    const report =
+      '## 일간 운영 리포트\n어제 수집된 데이터를 분석한 결과입니다.\n\n' +
+      '## 장애 내역\n외부 API 연결에서 반복 실패가 관측되었습니다. ' +
+      '수집 로그에 API Error: 401 authentication_error 가 기록되어 연결 자격 증명 갱신이 필요합니다.\n';
+
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'text', content: report };
+        yield { type: 'done', inputTokens: 120, outputTokens: 300 };
+      })(),
+    );
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '운영 리포트', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(200);
+    expect((res.body as { rawText: string }).rawText).toBe(report);
+  });
+});
+
+describe('detectAgentFailure', () => {
+  it('선두의 인증 실패 문구를 탐지한다', () => {
+    expect(
+      detectAgentFailure('Failed to authenticate. API Error: 401 {"type":"error"}'),
+    ).toBe('failed to authenticate');
+    expect(detectAgentFailure('Credit balance is too low')).toBe('credit balance is too low');
+    // 라이브 검증에서 실측된 SDK 문구 (잘못된 API 키)
+    expect(detectAgentFailure('Invalid API key · Fix external API key')).toBe('invalid api key');
+  });
+
+  it('선두가 아닌 위치의 오류 문구는 탐지하지 않는다 (장애를 서술하는 정상 리포트 보호)', () => {
+    expect(
+      detectAgentFailure('## 장애 내역\n수집 로그에 API Error: 401 이 기록되었습니다.'),
+    ).toBeNull();
+    expect(detectAgentFailure('요약: 인증 오류로 Failed to authenticate 로그 발생')).toBeNull();
+  });
+
+  it('빈 문자열은 null을 반환한다', () => {
+    expect(detectAgentFailure('   ')).toBeNull();
   });
 });
 

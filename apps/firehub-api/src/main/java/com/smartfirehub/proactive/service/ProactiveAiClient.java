@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.exception.ProactiveJobException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -81,15 +82,34 @@ public class ProactiveAiClient {
       return parseResponse(responseBody);
 
     } catch (WebClientResponseException e) {
-      throw new RuntimeException(
-          "AI agent proactive failed with status "
-              + e.getStatusCode()
-              + ": "
-              + e.getResponseBodyAsString(),
-          e);
+      // 원문 응답 본문(오류 메시지·request_id 등 내부 정보 포함)은 서버 로그에만 남긴다.
+      // 여기서 throw한 메시지는 execution.error로 저장되어 사용자 화면에 그대로 노출되므로
+      // 번역된 행동 가능 문구만 전달한다 (이슈 #350, #313 원칙).
+      String body = e.getResponseBodyAsString();
+      log.error(
+          "AI agent proactive failed with status {}: {}", e.getStatusCode(), body);
+      throw new ProactiveJobException(userFacingMessageFor(body), e);
     } catch (Exception e) {
-      throw new RuntimeException("AI agent proactive request failed: " + e.getMessage(), e);
+      log.error("AI agent proactive request failed: {}", e.getMessage(), e);
+      throw new ProactiveJobException(AGENT_CALL_FAILED_MESSAGE, e);
     }
+  }
+
+  /** 에이전트 호출 자체가 실패했을 때(네트워크·타임아웃·5xx) 사용자에게 보여줄 문구. */
+  static final String AGENT_CALL_FAILED_MESSAGE =
+      "AI 에이전트 호출에 실패해 리포트를 생성하지 못했습니다. 잠시 후 다시 시도하거나 관리 > 설정에서 AI 설정을 확인해 주세요.";
+
+  /**
+   * 에이전트 오류 응답 본문의 {@code code}를 보고 사용자 문구를 고른다.
+   *
+   * <p>ai-agent는 인증/쿼터 실패를 {@code AGENT_AUTH_OR_QUOTA_FAILURE} 코드로 구분해 알려준다. 이 경우
+   * 사용자가 실제로 취할 수 있는 조치(인증 정보 확인)를 안내한다.
+   */
+  private String userFacingMessageFor(String responseBody) {
+    if (responseBody != null && responseBody.contains("AGENT_AUTH_OR_QUOTA_FAILURE")) {
+      return ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE;
+    }
+    return AGENT_CALL_FAILED_MESSAGE;
   }
 
   private ProactiveResult parseResponse(String responseBody) throws Exception {

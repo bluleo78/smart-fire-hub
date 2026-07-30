@@ -184,6 +184,39 @@ function getSectionTypeGuide(type?: string): string | null {
   }
 }
 
+/**
+ * 에이전트 레벨 실패(인증 만료·크레딧 소진·레이트리밋)를 나타내는 문구들.
+ *
+ * <p>왜 필요한가: CLI/SDK 경로는 이런 실패를 SSE `error` 이벤트가 아니라 **일반 assistant 텍스트**로
+ * 흘려보낸 뒤 정상적으로 `done`으로 종료한다. 그 결과 오류 문자열이 rawText에 누적되어 리포트 본문으로
+ * 둔갑하고, 백엔드는 이를 COMPLETED로 기록해 CHAT/EMAIL로 발송한다 (이슈 #350).
+ */
+const AGENT_FAILURE_SIGNATURES = [
+  'failed to authenticate',
+  'invalid api key', // SDK가 잘못된 API 키에 대해 내는 문구: "Invalid API key · Fix external API key"
+  'invalid bearer token',
+  'authentication_error',
+  'api error: 401',
+  'api error: 403',
+  'api error: 429',
+  'credit balance is too low',
+  'oauth token has expired',
+];
+
+/**
+ * rawText가 리포트가 아니라 에이전트 실패 메시지인지 판정한다.
+ *
+ * <p>출력의 **맨 앞**에서만 매칭하는 이유: FireHub 리포트는 파이프라인/API 연결 장애를 *서술*하므로
+ * 본문에 `API Error: 401` 같은 문자열이 정상적으로 등장할 수 있다(짧은 리포트에서는 앞부분에 나올
+ * 수도 있다). includes()나 넉넉한 선두 윈도로 검사하면 멀쩡한 리포트를 실패로 처리하는 회귀가 생긴다.
+ * 반면 에이전트 실패 메시지는 예외 없이 출력 첫 글자부터 시작하므로 startsWith가 오탐 없는 경계다.
+ */
+export function detectAgentFailure(rawText: string): string | null {
+  const head = rawText.trim().toLowerCase();
+  if (!head) return null;
+  return AGENT_FAILURE_SIGNATURES.find((sig) => head.startsWith(sig)) ?? null;
+}
+
 export function parseSections(text: string, template?: Template): OutputSection[] {
   if (!template) {
     return [{ key: 'content', label: '분석 결과', content: text.trim() }];
@@ -336,6 +369,25 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     if (mdContent) console.log(`[Proactive] MD report: ${mdContent.length} bytes`);
     if (summary) console.log(`[Proactive] Summary: ${summary.length} bytes`);
     if (!fromFile) console.warn(`[Proactive] No report files found in ${reportDir}, falling back to rawText`);
+
+    // 리포트 파일이 하나도 없는데 rawText마저 비었거나 에이전트 실패 메시지라면,
+    // 이 실행은 분석을 전혀 수행하지 못한 것이다. 200으로 응답하면 백엔드가 COMPLETED로
+    // 기록하고 오류 원문을 리포트 본문 삼아 CHAT/EMAIL로 발송한다 (이슈 #350).
+    // 리포트 파일이 하나라도 생성됐다면 정상 실행이므로 이 게이트를 타지 않는다.
+    if (!fromFile) {
+      const failureSignature = detectAgentFailure(rawText);
+      if (failureSignature || !rawText.trim()) {
+        // 원문(에러 메시지·request_id 포함)은 서버 로그에만 남기고 응답 본문에는 싣지 않는다.
+        console.error(
+          `[Proactive] Agent produced no usable report (signature=${failureSignature ?? 'empty-output'}). raw: ${rawText.slice(0, 500)}`,
+        );
+        res.status(502).json({
+          error: 'Agent produced no usable report',
+          code: failureSignature ? 'AGENT_AUTH_OR_QUOTA_FAILURE' : 'AGENT_EMPTY_OUTPUT',
+        });
+        return;
+      }
+    }
 
     // sections: PDF/이메일에서 사용. report.md → parseSections, 없으면 rawText 폴백
     const sections = mdContent

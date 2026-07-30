@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -328,6 +329,56 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThat(executions).hasSize(1);
     assertThat(executions.get(0).status()).isEqualTo("FAILED");
     assertThat(executions.get(0).errorMessage()).contains("AI Agent 연결 실패");
+  }
+
+  /**
+   * [#350] AI 인증 실패 원문이 리포트 본문으로 둔갑한 결과는 COMPLETED로 기록하지 않고, CHAT/EMAIL로도 발송하지 않는다.
+   *
+   * <p>에이전트가 인증 오류를 일반 텍스트로 흘린 뒤 정상 종료하면 aiClient는 예외 없이 "내용이 있는" 결과를 반환한다. 이 결과가 그대로 저장·발송되던 것이 이슈의
+   * 핵심이었다.
+   */
+  @Test
+  void executeJob_authErrorTextAsReportBody_executionFailedAndNotDelivered() {
+    // given
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("인증 실패 결과 테스트"), testUserId);
+
+    ProactiveResult authFailureResult =
+        new ProactiveResult(
+            null,
+            List.of(
+                new ProactiveResult.Section(
+                    "content",
+                    "분석 결과",
+                    "Failed to authenticate. API Error: 401"
+                        + " {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\","
+                        + "\"message\":\"Invalid bearer token\"},\"request_id\":\"req_011Cd\"}",
+                    "text",
+                    null)),
+            new ProactiveResult.Usage(0, 0, 0),
+            "",
+            "");
+
+    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveAiClient.execute(
+            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
+        .thenReturn(authFailureResult);
+    when(chatDeliveryChannel.type()).thenReturn("CHAT");
+
+    // when / then
+    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId))
+        .isInstanceOf(ProactiveJobException.class);
+
+    var executions = executionRepository.findByJobId(created.id(), 10, 0);
+    assertThat(executions).hasSize(1);
+    assertThat(executions.get(0).status()).isEqualTo("FAILED");
+    // 사용자에게 노출되는 오류 메시지에 원문·request_id가 새어 나가면 안 된다 (#313 원칙)
+    assertThat(executions.get(0).errorMessage())
+        .doesNotContain("request_id")
+        .doesNotContain("Invalid bearer token")
+        .contains("AI 인증 정보");
+    // 실패 결과는 어떤 채널로도 발송되지 않아야 한다
+    verify(chatDeliveryChannel, never()).deliver(any(), anyLong(), any());
   }
 
   // ── DeliveryChannel ───────────────────────────────────────────────────────────

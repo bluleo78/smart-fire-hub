@@ -135,6 +135,17 @@ public class ProactiveJobAsyncRunner {
               template,
               job.config());
 
+      // 발송 전 결과 검증 (이슈 #350) — 내용이 없거나 본문이 에이전트 실패 메시지인 결과를
+      // COMPLETED로 기록하면 오류 원문이 그대로 CHAT/EMAIL로 나간다. 검증 실패 시 예외를 던져
+      // 아래 catch에서 FAILED로 기록하게 하고, DeliveryChannel 발송은 아예 수행하지 않는다.
+      var rejection = ProactiveResultValidator.findRejectionReason(result);
+      if (rejection.isPresent()) {
+        // 내부 사유(오류 원문 포함 가능)는 로그에만 남기고, 저장·노출 메시지는 번역된 문구를 쓴다.
+        log.error(
+            "Proactive job {} produced an undeliverable result: {}", jobId, rejection.get());
+        throw new ProactiveJobException(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
+      }
+
       // 결과 저장
       Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});
       executionRepository.updateResult(executionId, "COMPLETED", resultMap, LocalDateTime.now());
