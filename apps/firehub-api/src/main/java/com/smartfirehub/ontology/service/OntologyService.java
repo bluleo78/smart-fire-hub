@@ -239,7 +239,11 @@ public class OntologyService {
 
     // 타입 리네임(5-5) 무결성 — to는 최종 entities에 실존해야 하고, from은 리네임돼 사라졌어야 하므로
     // 최종 entities에 존재하면 안 된다(잘못된 rename 의도가 Neo4j 마이그레이션으로 새는 것을 방지).
+    // to 중복도 금지한다 — 리포지토리가 renames를 to→from HashMap으로 뒤집기 때문에(같은 to의 앞 항목이
+    // 덮어써짐) 덮어써진 from의 기존 행이 "매칭 안 된 타입"으로 판정돼 DELETE된다. 그 행의 entity_type_id가
+    // 사라지면 이 id를 key로 삼는 Neo4j 노드 연결도 끊긴다(데이터 소실 경로). 검증이 유일한 방어선이다.
     Set<String> seenFroms = new HashSet<>();
+    Set<String> seenTos = new HashSet<>();
     for (var rename : req.renames()) {
       if (rename.from() == null || rename.from().isBlank() || rename.to() == null || rename.to().isBlank()) {
         throw new IllegalArgumentException("타입 리네임의 from/to는 비어 있을 수 없습니다.");
@@ -257,6 +261,9 @@ public class OntologyService {
       }
       if (!seenFroms.add(rename.from())) {
         throw new IllegalArgumentException("중복된 타입 리네임(from): " + rename.from());
+      }
+      if (!seenTos.add(rename.to())) {
+        throw new IllegalArgumentException("중복된 타입 리네임(to): " + rename.to());
       }
     }
   }

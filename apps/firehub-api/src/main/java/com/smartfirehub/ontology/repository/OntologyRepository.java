@@ -233,6 +233,9 @@ public class OntologyRepository {
       Map<String, Long> existingIdByType =
           tx.select(ET_TYPE, ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))
               .fetch().intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID));
+      // 이름 기반 renames의 한계: to가 중복되면 앞 항목이 덮어써져 그 from 행이 아래에서 DELETE된다.
+      // 구조적 해소는 id 기반 재설계(#304)의 몫이고, 그 전까지는 OntologyService.validate의
+      // to/from 중복 검사가 유일한 방어선이다(#306).
       Map<String, String> renameToFrom = new HashMap<>();
       for (var rename : req.renames()) {
         renameToFrom.put(rename.to(), rename.from());

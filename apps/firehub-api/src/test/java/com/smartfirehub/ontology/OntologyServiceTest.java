@@ -322,6 +322,26 @@ class OntologyServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  // 편집 검증(#306): 같은 to를 갖는 리네임 2건은 거부한다. 리포지토리가 renames를 to→from 맵으로
+  // 뒤집으므로 앞 항목의 from 행이 미매칭으로 판정돼 DELETE된다(entity_type_id·Neo4j key 소실).
+  // 리포지토리에 도달하지 않는 것까지 단정해 데이터 소실 경로가 완전히 차단됐음을 확인한다.
+  @Test
+  void updateOntology_는_리네임_to가_중복이면_거부한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("RootCause", "a", "n", "exact", List.of())),
+            List.of(),
+            List.of(
+                new UpdateOntologyRequest.TypeRename("Cause", "RootCause"),
+                new UpdateOntologyRequest.TypeRename("Damage", "RootCause")));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("중복된 타입 리네임(to)");
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
   // happy: 유효 페이로드는 리포지토리 updateOntology 호출 후 갱신본을 재조회해 반환한다.
   @Test
   void updateOntology_는_유효하면_리포지토리를_호출하고_갱신본을_반환한다() {
