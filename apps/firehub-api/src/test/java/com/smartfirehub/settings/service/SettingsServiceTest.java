@@ -235,4 +235,125 @@ class SettingsServiceTest extends IntegrationTestBase {
     Optional<String> encryptedAfterMaskedUpdate = settingsService.getValue("ai.api_key");
     assertThat(encryptedAfterMaskedUpdate).isPresent().hasValue(encryptedValue);
   }
+
+  // ── 임베딩 provider 정합성 검증 (#322 base_url 불일치 / #323 API 키 누락) ──────────
+
+  /** OPENAI 로 바꾸면서 Ollama 주소(http)가 남아 있으면 저장을 막아야 한다 (#322 의 핵심 조합). */
+  @Test
+  void embeddingOpenAiRejectsNonHttpsBaseUrl() {
+    assertThatThrownBy(
+            () ->
+                settingsService.updateSettings(
+                    Map.of(
+                        "embedding.provider", "OPENAI",
+                        "embedding.model", "text-embedding-3-small",
+                        "embedding.base_url", "http://localhost:11434",
+                        "embedding.api_key", "sk-test-key"),
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("https");
+  }
+
+  /** provider/base_url/api_key 가 모두 정합적이면 저장된다 (검증이 정상 저장을 막지 않는지 확인). */
+  @Test
+  void embeddingOpenAiAcceptsHttpsBaseUrlWithApiKey() {
+    assertDoesNotThrow(
+        () ->
+            settingsService.updateSettings(
+                Map.of(
+                    "embedding.provider", "OPENAI",
+                    "embedding.model", "text-embedding-3-small",
+                    "embedding.base_url", "https://api.openai.com",
+                    "embedding.api_key", "sk-test-key"),
+                null));
+    assertThat(settingsService.getValue("embedding.base_url")).hasValue("https://api.openai.com");
+  }
+
+  /** OPENAI 인데 API 키가 페이로드에도 없고 저장된 값도 없으면 거부한다 (#323). */
+  @Test
+  void embeddingOpenAiRejectsBlankApiKey() {
+    // 시드 상태에서 embedding.api_key 는 빈 값이므로 페이로드에서도 빈 값을 보낸다
+    assertThatThrownBy(
+            () ->
+                settingsService.updateSettings(
+                    Map.of(
+                        "embedding.provider", "OPENAI",
+                        "embedding.base_url", "https://api.openai.com",
+                        "embedding.api_key", ""),
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 키가 필요합니다");
+  }
+
+  /** api_key 를 아예 보내지 않아도 저장된 키가 있으면 통과해야 한다 — 마스킹 흐름 회귀 방지. */
+  @Test
+  void embeddingOpenAiAcceptsOmittedApiKeyWhenStoredKeyExists() {
+    settingsService.updateSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
+
+    // 프론트는 마스킹된 키를 페이로드에서 제거하므로 api_key 없이 provider 만 바뀌는 요청이 온다
+    assertDoesNotThrow(
+        () ->
+            settingsService.updateSettings(
+                Map.of(
+                    "embedding.provider", "OPENAI",
+                    "embedding.base_url", "https://api.openai.com"),
+                null));
+  }
+
+  /** 마스킹 값(****)은 "기존 키 유지"이므로 OPENAI 저장이 통과해야 한다. */
+  @Test
+  void embeddingOpenAiAcceptsMaskedApiKeyWhenStoredKeyExists() {
+    settingsService.updateSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
+
+    assertDoesNotThrow(
+        () ->
+            settingsService.updateSettings(
+                Map.of(
+                    "embedding.provider", "OPENAI",
+                    "embedding.base_url", "https://api.openai.com",
+                    "embedding.api_key", "****key"),
+                null));
+    // 마스킹 값이 실제 키를 덮어쓰지 않았는지 확인
+    assertThat(settingsService.getDecryptedEmbeddingApiKey()).hasValue("sk-stored-key");
+  }
+
+  /** 저장된 키가 있어도 사용자가 명시적으로 빈 값을 보내면 키 삭제이므로 거부한다. */
+  @Test
+  void embeddingOpenAiRejectsExplicitBlankApiKeyEvenWithStoredKey() {
+    settingsService.updateSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
+
+    assertThatThrownBy(
+            () ->
+                settingsService.updateSettings(
+                    Map.of(
+                        "embedding.provider", "OPENAI",
+                        "embedding.base_url", "https://api.openai.com",
+                        "embedding.api_key", ""),
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 키가 필요합니다");
+  }
+
+  /** base_url 형식 검증 — 절대 URL 이 아니면 provider 와 무관하게 거부한다. */
+  @Test
+  void embeddingRejectsMalformedBaseUrl() {
+    assertThatThrownBy(
+            () -> settingsService.updateSettings(Map.of("embedding.base_url", "localhost:11434"), null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("http://");
+  }
+
+  /** OLLAMA 는 API 키 없이 http 로컬 주소를 그대로 저장할 수 있어야 한다 (기존 동작 보존). */
+  @Test
+  void embeddingOllamaAcceptsLocalHttpBaseUrlWithoutApiKey() {
+    assertDoesNotThrow(
+        () ->
+            settingsService.updateSettings(
+                Map.of(
+                    "embedding.provider", "OLLAMA",
+                    "embedding.model", "bge-m3",
+                    "embedding.base_url", "http://localhost:11434",
+                    "embedding.api_key", ""),
+                null));
+  }
 }

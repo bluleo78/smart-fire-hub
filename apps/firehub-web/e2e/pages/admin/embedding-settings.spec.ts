@@ -39,13 +39,13 @@ const EMBEDDING_SETTINGS: SettingResponse[] = [
  * - prefix=embedding → 임베딩 설정, 그 외(ai) → AI 설정.
  * - PUT 등 다른 메서드는 route.fallback()으로 다음 핸들러(PUT 캡처)에 위임한다.
  */
-async function setupGetSettingsMock(page: Page) {
+async function setupGetSettingsMock(page: Page, embedding: SettingResponse[] = EMBEDDING_SETTINGS) {
   await page.route(
     (url) => url.pathname === '/api/v1/settings',
     (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
       const prefix = new URL(route.request().url()).searchParams.get('prefix');
-      const body = prefix === 'embedding' ? EMBEDDING_SETTINGS : AI_SETTINGS;
+      const body = prefix === 'embedding' ? embedding : AI_SETTINGS;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -216,6 +216,144 @@ test.describe('임베딩 설정 탭', () => {
     // 변경한 base_url은 포함, 마스킹된 api_key는 제외되어야 한다
     expect(settings['embedding.base_url']).toBe('http://localhost:11434');
     expect(settings).not.toHaveProperty('embedding.api_key');
+  });
+});
+
+/**
+ * 임베딩 설정 검증 회귀 테스트 (#322 provider/base_url 불일치, #323 API 키 누락)
+ * - #322: base_url이 하드코딩된 기본값과 "문자열이 다르기만 하면" 커스텀으로 오판되어 보존되던 문제.
+ *   실제 배포에서 흔한 http://localhost:11434(기본값은 host.docker.internal)를 전제로 검증한다.
+ * - #323: OpenAI인데 API 키가 비어도 저장이 가능하던 문제 — 인라인 오류 + 저장 비활성 검증.
+ */
+test.describe('임베딩 설정 검증', () => {
+  // 기본값(host.docker.internal)과 호스트만 다른 동종 Ollama 주소 — #322의 실제 재현 전제
+  const LOCALHOST_EMBEDDING: SettingResponse[] = [
+    { key: 'embedding.provider', value: 'OLLAMA', description: 'provider', updatedAt: '2024-01-01T00:00:00Z' },
+    { key: 'embedding.model', value: 'bge-m3', description: '모델', updatedAt: '2024-01-01T00:00:00Z' },
+    { key: 'embedding.base_url', value: 'http://localhost:11434', description: 'base url', updatedAt: '2024-01-01T00:00:00Z' },
+    { key: 'embedding.api_key', value: '', description: 'API 키', updatedAt: '2024-01-01T00:00:00Z' },
+  ];
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  // 임베딩 탭까지 이동하는 공통 단계
+  async function openEmbeddingTab(page: Page) {
+    await page.goto('/admin/settings');
+    await page.getByRole('tab', { name: '임베딩' }).click();
+    await expect(page.getByText('임베딩 provider 설정')).toBeVisible();
+  }
+
+  test('#322 기본값과 다른 Ollama 주소도 OpenAI 전환 시 OpenAI 기본값으로 교체된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupGetSettingsMock(page, LOCALHOST_EMBEDDING);
+    await openEmbeddingTab(page);
+
+    // 전제: 저장된 base_url이 하드코딩 기본값과 다르다 (예전 코드는 여기서 보존해버렸다)
+    await expect(page.locator('#embedding-base-url')).toHaveValue('http://localhost:11434');
+
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+
+    // base_url·모델 모두 OpenAI 기본값으로 교체되어야 한다 (Ollama 주소 잔존 = 버그)
+    await expect(page.locator('#embedding-base-url')).toHaveValue('https://api.openai.com');
+    await expect(page.locator('#embedding-model')).toHaveValue('text-embedding-3-small');
+    // 값이 임의로 사라진 것처럼 보이지 않도록 교체 사실을 안내한다
+    await expect(page.getByText(/새 provider 기본값으로 교체되었습니다/)).toBeVisible();
+  });
+
+  test('#322 OpenAI provider에 http Base URL을 직접 넣으면 저장이 막히고 오류가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupGetSettingsMock(page, LOCALHOST_EMBEDDING);
+    await openEmbeddingTab(page);
+
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+    await page.locator('#embedding-api-key').fill('sk-test-key');
+
+    // 사용자가 수동으로 Ollama 주소를 되돌려 넣는 경우도 막아야 한다
+    await page.locator('#embedding-base-url').fill('http://localhost:11434');
+
+    await expect(page.getByText('OpenAI provider의 Base URL은 https 주소여야 합니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장' }).first()).toBeDisabled();
+  });
+
+  test('#323 OpenAI provider에서 API 키가 비면 저장이 비활성되고 인라인 오류가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장된 키가 없는 상태(api_key 빈 값)에서 OpenAI로 전환하는 시나리오
+    await setupGetSettingsMock(page, LOCALHOST_EMBEDDING);
+    await openEmbeddingTab(page);
+
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+
+    // provider가 바뀌어 dirty지만, API 키가 없으므로 저장은 막혀야 한다
+    await expect(page.getByText('OpenAI provider에는 API 키가 필요합니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장' }).first()).toBeDisabled();
+
+    // 키를 채우면 오류가 사라지고 저장이 가능해진다
+    await page.locator('#embedding-api-key').fill('sk-test-key');
+    await expect(page.getByText('OpenAI provider에는 API 키가 필요합니다.')).toBeHidden();
+    await expect(page.getByRole('button', { name: '저장' }).first()).toBeEnabled();
+  });
+
+  test('#323 마스킹된 기존 키는 유효한 키로 인정되어 OpenAI 저장을 막지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 서버가 마스킹해 내려준 키(****masked****) = 저장된 키가 있다는 뜻이므로 저장 가능해야 한다
+    await setupGetSettingsMock(page);
+    await openEmbeddingTab(page);
+
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+
+    await expect(page.getByText('OpenAI provider에는 API 키가 필요합니다.')).toBeHidden();
+    await expect(page.getByRole('button', { name: '저장' }).first()).toBeEnabled();
+  });
+
+  test('모델이나 Base URL을 비우면 저장이 막힌다', async ({ authenticatedPage: page }) => {
+    await setupGetSettingsMock(page);
+    await openEmbeddingTab(page);
+
+    await page.locator('#embedding-model').fill('');
+    await expect(page.getByText('모델을 입력하세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장' }).first()).toBeDisabled();
+
+    await page.locator('#embedding-model').fill('bge-m3');
+    await page.locator('#embedding-base-url').fill('localhost:11434');
+    await expect(
+      page.getByText('Base URL은 http:// 또는 https:// 로 시작하는 올바른 주소여야 합니다.'),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장' }).first()).toBeDisabled();
+  });
+
+  test('저장 실패 시 서버가 준 사유가 토스트에 표시된다', async ({ authenticatedPage: page }) => {
+    // 서버 검증(400)의 사유가 고정 문구에 덮이지 않고 사용자에게 도달하는지 검증 (#323 항목4).
+    // 클라이언트 검증을 통과하는 payload로 저장하되 서버가 400을 주는 상황을 모킹한다.
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/settings',
+      { status: 400, error: 'Bad Request', message: 'OpenAI 임베딩 provider 에는 API 키가 필요합니다' },
+      { status: 400 },
+    );
+    await setupGetSettingsMock(page);
+    await openEmbeddingTab(page);
+
+    await page.locator('#embedding-model').fill('bge-m3-v2');
+    const saveBtn = page.getByRole('button', { name: '저장' }).first();
+    await expect(saveBtn).toBeEnabled();
+    await saveBtn.click();
+
+    // 서버 메시지가 그대로 노출되어야 한다 (고정 fallback 문구가 아니라)
+    await expect(page.getByText('OpenAI 임베딩 provider 에는 API 키가 필요합니다')).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.getByText('임베딩 설정 저장에 실패했습니다.')).toBeHidden();
   });
 });
 

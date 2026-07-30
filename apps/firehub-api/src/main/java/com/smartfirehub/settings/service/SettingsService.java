@@ -98,6 +98,7 @@ public class SettingsService {
             .filter(e -> !(hasMaskedEmbeddingKey && "embedding.api_key".equals(e.getKey())))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     validateValues(filtered);
+    validateEmbeddingConsistency(filtered);
 
     Map<String, String> toUpdate =
         filtered.entrySet().stream()
@@ -272,5 +273,74 @@ public class SettingsService {
             }
           }
         });
+  }
+
+  /**
+   * 임베딩 설정의 항목 간 정합성을 검증한다 (이슈 #322, #323).
+   *
+   * <p>키를 하나씩 보는 {@link #validateValues}로는 "provider 는 OPENAI 인데 base_url 이 Ollama 주소"
+   * 같은 조합 오류를 잡을 수 없다. 잘못된 조합이 저장되면 실패가 설정 화면이 아니라 한참 뒤
+   * {@code EmbeddingProviderFactory} 런타임에야 드러나므로, 저장 시점에 막는다.
+   *
+   * <p><b>유효값 해석 규칙</b>: 페이로드에 <b>키가 없으면</b> 저장된 값으로 폴백하고, <b>키가 있으면
+   * 빈 문자열이라도 그 값을 그대로</b> 쓴다. 마스킹된 api_key 는 호출부에서 이미 제거되므로 "키 없음"
+   * = "기존 키 유지"로 해석되어, 저장된 키가 있는데 페이로드에 없다는 이유로 거부하는 회귀가 나지 않는다.
+   * 반대로 사용자가 명시적으로 비운 빈 문자열은 그대로 "빈 값"으로 취급해 거부한다.
+   */
+  private void validateEmbeddingConsistency(Map<String, String> settings) {
+    // 임베딩 키가 하나도 없는 저장(예: AI 탭 저장)은 검증 대상이 아니다.
+    if (settings.keySet().stream().noneMatch(ALLOWED_EMBEDDING_KEYS::contains)) return;
+
+    String provider = effectiveValue(settings, "embedding.provider").orElse("OLLAMA");
+    String model = effectiveValue(settings, "embedding.model").orElse("");
+    String baseUrl = effectiveValue(settings, "embedding.base_url").orElse("");
+
+    // 모델/base_url 은 어떤 provider 든 비어 있으면 안 된다 (페이로드에 명시된 경우에 한해 검사).
+    if (settings.containsKey("embedding.model") && model.isBlank())
+      throw new IllegalArgumentException("임베딩 모델은 비어있을 수 없습니다");
+    if (settings.containsKey("embedding.base_url") && baseUrl.isBlank())
+      throw new IllegalArgumentException("임베딩 Base URL 은 비어있을 수 없습니다");
+
+    // base_url 형식 — http/https 스킴과 호스트를 갖춘 절대 URL 이어야 한다.
+    if (!baseUrl.isBlank() && embeddingUrlScheme(baseUrl).isEmpty())
+      throw new IllegalArgumentException(
+          "임베딩 Base URL 은 http:// 또는 https:// 로 시작하는 올바른 주소여야 합니다: " + baseUrl);
+
+    if (!"OPENAI".equals(provider)) return;
+
+    // OPENAI 는 공개 API/프록시 모두 TLS 를 쓴다. http 주소가 남아 있다는 것은 Ollama 등 다른
+    // provider 주소가 그대로 남은 불일치 신호이므로 거부한다 (평문 http 자체 호스팅 프록시는 미지원).
+    if (!baseUrl.isBlank() && !"https".equals(embeddingUrlScheme(baseUrl).orElse("")))
+      throw new IllegalArgumentException(
+          "OpenAI 임베딩 provider 의 Base URL 은 https 주소여야 합니다. 현재 값: "
+              + baseUrl
+              + " (provider 를 변경했다면 Base URL 도 함께 변경하세요)");
+
+    // OPENAI 는 Bearer 인증 필수 — 저장된 키도 없고 새 키도 없으면 저장을 막는다.
+    boolean hasStoredKey =
+        settingsRepository.getValue("embedding.api_key").filter(v -> !v.isBlank()).isPresent();
+    String submittedKey = settings.get("embedding.api_key");
+    boolean keyAvailable =
+        submittedKey != null ? !submittedKey.isBlank() : hasStoredKey;
+    if (!keyAvailable) throw new IllegalArgumentException("OpenAI 임베딩 provider 에는 API 키가 필요합니다");
+  }
+
+  /** 페이로드에 키가 있으면 그 값(빈 문자열 포함), 없으면 저장된 값을 반환한다. */
+  private Optional<String> effectiveValue(Map<String, String> settings, String key) {
+    if (settings.containsKey(key)) return Optional.ofNullable(settings.get(key));
+    return settingsRepository.getValue(key);
+  }
+
+  /** base_url 의 http/https 스킴을 반환한다. 절대 URL 이 아니거나 호스트가 없으면 empty. */
+  private Optional<String> embeddingUrlScheme(String baseUrl) {
+    try {
+      java.net.URI uri = java.net.URI.create(baseUrl.trim());
+      String scheme = uri.getScheme();
+      if (uri.getHost() == null || scheme == null) return Optional.empty();
+      String lower = scheme.toLowerCase(java.util.Locale.ROOT);
+      return "http".equals(lower) || "https".equals(lower) ? Optional.of(lower) : Optional.empty();
+    } catch (IllegalArgumentException e) {
+      return Optional.empty();
+    }
   }
 }

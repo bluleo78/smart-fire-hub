@@ -34,6 +34,7 @@ import {
   useUpdateEmbeddingSettings,
 } from '../../hooks/queries/useEmbeddingSettings';
 import { type ReportDirty, useReportDirty } from '../../hooks/useUnsavedChangesGuard';
+import { handleApiError } from '../../lib/api-error';
 
 interface EmbeddingForm {
   'embedding.provider': string;
@@ -65,6 +66,53 @@ const PROVIDER_DEFAULTS: Record<string, { model: string; baseUrl: string }> = {
   OPENAI: { model: 'text-embedding-3-small', baseUrl: 'https://api.openai.com' },
   VOYAGE: { model: 'voyage-3', baseUrl: 'https://api.voyageai.com' },
 };
+
+// 폼 필드별 검증 오류. 서버(SettingsService.validateEmbeddingConsistency)와 같은 규칙을 미러링해
+// 저장 전에 인라인으로 알려준다 — 잘못된 조합이 저장되면 실패가 임베딩 호출 런타임에야 드러나기 때문(#322, #323).
+interface EmbeddingFormErrors {
+  model?: string;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+// base_url 이 http/https 스킴과 호스트를 갖춘 절대 URL 인지 확인하고 스킴을 반환한다.
+function parseBaseUrlScheme(baseUrl: string): string | null {
+  try {
+    const url = new URL(baseUrl.trim());
+    if (!url.hostname) return null;
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.protocol : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * provider별 필수값·형식을 검증한다.
+ * - 모델/Base URL은 provider와 무관하게 필수이며 Base URL은 절대 URL이어야 한다.
+ * - OPENAI는 Bearer 인증이 필수라 API 키가 있어야 하고, 엔드포인트는 https여야 한다
+ *   (http 주소가 남아 있으면 Ollama 등 이전 provider 주소가 잔존한 불일치 신호).
+ * - API 키가 마스킹(`****`)된 상태는 "서버에 저장된 키가 있음"을 뜻하므로 유효값으로 본다.
+ */
+function validateEmbeddingForm(form: EmbeddingForm): EmbeddingFormErrors {
+  const errors: EmbeddingFormErrors = {};
+  const baseUrl = form['embedding.base_url'].trim();
+
+  if (!form['embedding.model'].trim()) errors.model = '모델을 입력하세요.';
+
+  if (!baseUrl) {
+    errors.baseUrl = 'Base URL을 입력하세요.';
+  } else if (!parseBaseUrlScheme(baseUrl)) {
+    errors.baseUrl = 'Base URL은 http:// 또는 https:// 로 시작하는 올바른 주소여야 합니다.';
+  } else if (form['embedding.provider'] === 'OPENAI' && parseBaseUrlScheme(baseUrl) !== 'https:') {
+    errors.baseUrl = 'OpenAI provider의 Base URL은 https 주소여야 합니다.';
+  }
+
+  if (form['embedding.provider'] === 'OPENAI' && !form['embedding.api_key'].trim()) {
+    errors.apiKey = 'OpenAI provider에는 API 키가 필요합니다.';
+  }
+
+  return errors;
+}
 
 // 재임베딩 진행 현황 한 줄(라벨 + 카운트 + 진행 바)을 렌더링한다.
 // shadcn Progress 컴포넌트가 없어 muted/primary div 바로 직접 구성한다.
@@ -131,6 +179,13 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(original);
 
+  // 인라인 검증 결과 — 오류가 있으면 저장 버튼을 막는다(값 유효성과 무관하던 기존 dirty-only 조건 보완).
+  const errors = validateEmbeddingForm(form);
+  const hasValidationErrors = Object.keys(errors).length > 0;
+
+  // provider를 바꾼 직후에는 모델/Base URL이 새 provider 기본값으로 교체되었음을 안내한다.
+  const providerChanged = form['embedding.provider'] !== original['embedding.provider'];
+
   // 부모에 dirty 상태 보고 — SettingsPage가 라우터 가드(beforeunload 등)를 운영한다.
   useReportDirty(hasChanges, onReportDirty);
 
@@ -138,29 +193,29 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  // provider 변경 — 모델/base_url이 이전 provider 기본값 그대로면(사용자가 손대지 않았으면)
-  // 새 provider 권장 기본값으로 교체한다. 사용자가 커스텀한 값은 보존한다.
+  // provider 변경 — 모델/base_url을 새 provider 권장 기본값으로 항상 교체한다.
+  // 예전에는 "이전 provider 기본값과 문자열이 같을 때만" 교체했는데, 기본값과 호스트만 다른
+  // 동종 주소(예: http://localhost:11434 vs 기본값 http://host.docker.internal:11434)를
+  // 사용자 커스텀으로 오판해 Ollama 주소가 OpenAI provider에 남는 불일치를 만들었다(#322).
+  // 한 provider의 엔드포인트/모델은 다른 provider에서 어차피 무효이므로 보존 가치가 없다.
+  // api_key는 의도적으로 건드리지 않는다 — 지우면 임시로 provider를 바꿨다가 되돌릴 때
+  // 서버에 저장된 키까지 빈 값으로 덮어써 유실되기 때문이다.
   const handleProviderChange = (next: string) => {
     setForm((prev) => {
-      const prevDefaults = PROVIDER_DEFAULTS[prev['embedding.provider']];
       const nextDefaults = PROVIDER_DEFAULTS[next];
       if (!nextDefaults) return { ...prev, 'embedding.provider': next };
       return {
         ...prev,
         'embedding.provider': next,
-        'embedding.model':
-          prev['embedding.model'] === prevDefaults?.model
-            ? nextDefaults.model
-            : prev['embedding.model'],
-        'embedding.base_url':
-          prev['embedding.base_url'] === prevDefaults?.baseUrl
-            ? nextDefaults.baseUrl
-            : prev['embedding.base_url'],
+        'embedding.model': nextDefaults.model,
+        'embedding.base_url': nextDefaults.baseUrl,
       };
     });
   };
 
   const handleSave = async () => {
+    // 방어적 재검증 — 저장 버튼은 오류가 있으면 비활성이지만, 키보드 등 다른 경로로도 막는다.
+    if (hasValidationErrors) return;
     const toSave: Record<string, string> = { ...form };
     // 마스킹된 api_key(****...)를 사용자가 수정하지 않았다면 PUT에서 제외한다.
     // (SMTP/AI 탭과 동일한 마스킹 스킵 로직 — 평문 키 유실 방지)
@@ -174,7 +229,9 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
           setOriginal({ ...form });
           toast.success('임베딩 설정이 저장되었습니다.');
         },
-        onError: () => toast.error('임베딩 설정 저장에 실패했습니다.'),
+        // 서버 검증(provider/base_url/api_key 정합성) 실패 사유를 그대로 노출한다.
+        // 고정 문구로 덮으면 400의 원인이 사용자에게 전달되지 않아 검증이 무의미해진다(#323).
+        onError: (error) => handleApiError(error, '임베딩 설정 저장에 실패했습니다.'),
       },
     );
   };
@@ -216,6 +273,13 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
               </SelectContent>
             </Select>
             <p className="text-sm text-muted-foreground">임베딩 생성에 사용할 provider</p>
+            {/* provider 전환 시 모델/Base URL이 자동 교체됨을 알려 값이 사라진 것처럼 보이지 않게 한다 */}
+            {providerChanged && (
+              <p className="text-sm text-amber-600 dark:text-amber-500" role="status">
+                provider를 변경하여 모델과 Base URL이 새 provider 기본값으로 교체되었습니다. 필요하면
+                직접 수정하세요.
+              </p>
+            )}
           </div>
 
           <Separator />
@@ -229,8 +293,13 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
               value={form['embedding.model']}
               onChange={(e) => updateField('embedding.model', e.target.value)}
               placeholder="bge-m3"
+              aria-invalid={Boolean(errors.model)}
             />
-            <p className="text-sm text-muted-foreground">임베딩 모델 이름</p>
+            {errors.model ? (
+              <p className="text-sm text-destructive">{errors.model}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">임베딩 모델 이름</p>
+            )}
           </div>
 
           <Separator />
@@ -244,8 +313,13 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
               value={form['embedding.base_url']}
               onChange={(e) => updateField('embedding.base_url', e.target.value)}
               placeholder="http://host.docker.internal:11434"
+              aria-invalid={Boolean(errors.baseUrl)}
             />
-            <p className="text-sm text-muted-foreground">provider API 엔드포인트 주소</p>
+            {errors.baseUrl ? (
+              <p className="text-sm text-destructive">{errors.baseUrl}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">provider API 엔드포인트 주소</p>
+            )}
           </div>
 
           <Separator />
@@ -261,6 +335,7 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
                 value={form['embedding.api_key']}
                 onChange={(e) => updateField('embedding.api_key', e.target.value)}
                 placeholder="provider API 키 (Ollama는 불필요)"
+                aria-invalid={Boolean(errors.apiKey)}
               />
               <button
                 type="button"
@@ -271,9 +346,13 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
                 {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Voyage/OpenAI 사용 시 필요. Ollama는 비워둡니다.
-            </p>
+            {errors.apiKey ? (
+              <p className="text-sm text-destructive">{errors.apiKey}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Voyage/OpenAI 사용 시 필요. Ollama는 비워둡니다.
+              </p>
+            )}
           </div>
 
           <Separator />
@@ -286,7 +365,10 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
       </Card>
 
       <div className="flex items-center gap-3">
-        <Button onClick={handleSave} disabled={updateMutation.isPending || !hasChanges}>
+        <Button
+          onClick={handleSave}
+          disabled={updateMutation.isPending || !hasChanges || hasValidationErrors}
+        >
           <Save className="h-4 w-4" />
           {updateMutation.isPending ? '저장 중...' : '저장'}
         </Button>
