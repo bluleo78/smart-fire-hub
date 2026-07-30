@@ -12,6 +12,7 @@ import { mergeEntities } from './synonym-merge.js';
 import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
 import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
+import { GraphTargetMissingError } from './graph-mutation-guard.js';
 
 // 5-6: entityKey는 typeId 기반 — CORE_ONTOLOGY의 고정 id를 조회해 사용한다.
 const causeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
@@ -44,15 +45,17 @@ describe('mergeEntities', () => {
     expect(deleteCall?.[1]).toEqual({ loserKey: keyA });
   });
 
-  it('둘 중 하나가 그래프에 없으면 아무 것도 하지 않는다', async () => {
+  it('둘 중 하나가 그래프에 없으면 병합하지 않고 실패를 던진다(#310 무음 유실 방지)', async () => {
     const keyA = entityKey(causeId, '전기적 요인');
     runMock.mockResolvedValueOnce({
       records: [{ get: (k: string) => (k === 'key' ? keyA : [1]) }],
     });
 
-    await mergeEntities(CORE_ONTOLOGY, 'Cause', '전기적 요인', '분전반의 누전');
+    // 예전에는 조용히 return해 호출측이 승인 성공으로 처리했고, 병합 결정이 유실됐다.
+    await expect(mergeEntities(CORE_ONTOLOGY, 'Cause', '전기적 요인', '분전반의 누전'))
+      .rejects.toThrow(GraphTargetMissingError);
 
-    expect(runMock).toHaveBeenCalledTimes(1); // 노드 조회 1회만, 이후 호출 없음.
+    expect(runMock).toHaveBeenCalledTimes(1); // 노드 조회 1회만, 그래프 변경 호출 없음.
   });
 
   it('pickCanonicalName의 타이브레이크(길이 동률 시 사전순)를 그대로 따른다', async () => {

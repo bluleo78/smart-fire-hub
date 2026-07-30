@@ -7,6 +7,7 @@ import { setEntityProperty } from '../graphrag/property-mutation.js';
 import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
+import { GraphTargetMissingError } from '../graphrag/graph-mutation-guard.js';
 import { loadOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
@@ -14,6 +15,21 @@ import { FireHubApiClient } from '../mcp/api-client.js';
 // 5-6: 엔티티 타입 리네임은 이제 순수 DB 연산(entity_type_id 보존)이라 Neo4j 마이그레이션 라우트가
 // 불필요해져 제거했다(5-5의 POST /graph/rename-type — resolver.ts entityKey 참조).
 const router = Router();
+
+/**
+ * 그래프 변경 실패를 상태코드로 나눠 응답한다(#310).
+ * - GraphTargetMissingError: 대상 노드 부재라 "지금 이 요청으로는 반영 불가"인 상태 충돌 → 409 + 사용자용 사유.
+ *   firehub-api가 이 사유를 그대로 ErrorResponse.message로 올려 검수 UI 토스트에 노출하고, 항목은 pending으로 남는다.
+ * - 그 외: 진짜 장애 → 502(무로그 502 금지 #308 — 항상 로그를 남긴다).
+ */
+function respondMutationError(res: import('express').Response, opLabel: string, fallback: string, e: unknown): void {
+  console.error(`[graph] ${opLabel} 실패:`, e);
+  if (e instanceof GraphTargetMissingError) {
+    res.status(409).json({ error: 'graph target missing', message: e.message });
+    return;
+  }
+  res.status(502).json({ error: fallback });
+}
 
 // 전체 지식그래프(Neo4j). 읽기 실패 시 502(상위 프록시가 그대로 전파).
 router.get('/graph', internalAuth, async (_req, res) => {
@@ -50,8 +66,7 @@ router.post('/graph/merge-entities', internalAuth, async (req, res) => {
     await mergeEntities(ontology, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
     res.status(204).send();
   } catch (e) {
-    console.error('[graph] merge-entities 실패:', e);
-    res.status(502).json({ error: 'entity merge failed' });
+    respondMutationError(res, 'merge-entities', 'entity merge failed', e);
   }
 });
 
@@ -73,8 +88,7 @@ router.post('/graph/set-property', internalAuth, async (req, res) => {
     await setEntityProperty(parsed.data.entityKey, parsed.data.propertyName, parsed.data.dataType, parsed.data.value);
     res.status(204).send();
   } catch (e) {
-    console.error('[graph] set-property 실패:', e);
-    res.status(502).json({ error: 'set property failed' });
+    respondMutationError(res, 'set-property', 'set property failed', e);
   }
 });
 
@@ -112,6 +126,8 @@ router.post('/graph/add-entity', internalAuth, async (req, res) => {
     });
     res.status(204).send();
   } catch (e) {
+    // add-entity는 409 매핑 대상이 아니다(#310) — 노드 MERGE는 MATCH 없이 항상 생성되므로 무음 유실이 없고,
+    // 끝점이 아직 없는 보류 관계를 건너뛰는 것은 "양쪽 보류는 마지막 승인 때 생성"이라는 설계상 정상 동작이다.
     console.error('[graph] add-entity 실패:', e);
     res.status(502).json({ error: 'add entity failed' });
   }
@@ -141,8 +157,7 @@ router.post('/graph/add-relation', internalAuth, async (req, res) => {
       parsed.data.objectKey, parsed.data.sourceChunkIds);
     res.status(204).send();
   } catch (e) {
-    console.error('[graph] add-relation 실패:', e);
-    res.status(502).json({ error: 'add relation failed' });
+    respondMutationError(res, 'add-relation', 'add relation failed', e);
   }
 });
 

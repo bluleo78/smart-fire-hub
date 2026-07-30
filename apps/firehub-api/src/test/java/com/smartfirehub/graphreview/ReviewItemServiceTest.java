@@ -3,6 +3,8 @@ package com.smartfirehub.graphreview;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -218,6 +220,52 @@ class ReviewItemServiceTest {
 
     verify(mutationClient).addRelation("12:누전", "CAUSED_BY", "34:과부하", List.of(7L));
     verify(repo).updateStatus(4L, "approved", 1L);
+  }
+
+  @Test
+  @DisplayName("끝점 없는 관계 승인은 실패를 전파하고 status를 갱신하지 않아 항목이 pending으로 남는다 (#310)")
+  void approve_relation_endpointMissing_keepsPending() {
+    ReviewItemRecord pending = new ReviewItemRecord(5L, "relation_extraction", "pending", 99L, "low_confidence", 0.38,
+        "인과 표현이 약함",
+        "{\"subjectKey\":\"1:2026-001\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"9:없는엔티티\",\"sourceChunkIds\":[18]}",
+        null, null, LocalDateTime.now());
+    when(repo.findById(5L)).thenReturn(Optional.of(pending));
+    // ai-agent가 409를 주면 GraphMutationClient가 사유를 담은 IllegalStateException으로 바꿔 던진다.
+    Mockito.doThrow(new IllegalStateException("주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다."))
+        .when(mutationClient).addRelation(any(), any(), any(), any());
+
+    // 무음 유실 방지: 그래프에 아무 것도 안 들어갔으면 승인도 실패해야 한다.
+    assertThatThrownBy(() -> service.approve(5L, null, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("그래프에 없어");
+    verify(repo, never()).updateStatus(eq(5L), anyString(), anyLong());
+  }
+
+  @Test
+  @DisplayName("병합 대상 없는 동의어 승인도 status를 갱신하지 않는다 (#310)")
+  void approve_synonym_targetMissing_keepsPending() {
+    when(repo.findById(6L)).thenReturn(Optional.of(new ReviewItemRecord(6L, "synonym_merge", "pending", null,
+        "similarity", 0.7, "동의어", "{\"entityType\":\"Cause\",\"nameA\":\"누전\",\"nameB\":\"분전반 누전\"}",
+        null, null, LocalDateTime.now())));
+    Mockito.doThrow(new IllegalStateException("병합할 엔티티가 그래프에 없어 동의어를 병합할 수 없습니다."))
+        .when(mutationClient).mergeEntities(any(), any(), any());
+
+    assertThatThrownBy(() -> service.approve(6L, null, 1L)).isInstanceOf(IllegalStateException.class);
+    verify(repo, never()).updateStatus(eq(6L), anyString(), anyLong());
+  }
+
+  @Test
+  @DisplayName("대상 노드 없는 속성 정정 승인도 status를 갱신하지 않는다 (#310)")
+  void approve_property_targetMissing_keepsPending() {
+    when(repo.findById(7L)).thenReturn(Optional.of(new ReviewItemRecord(7L, "property_normalization", "pending", 99L,
+        "normalization_failure", null, "정규화 실패",
+        "{\"entityKey\":\"3:없는엔티티\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}",
+        null, null, LocalDateTime.now())));
+    Mockito.doThrow(new IllegalStateException("대상 엔티티가 그래프에 없어 속성을 정정할 수 없습니다."))
+        .when(mutationClient).setProperty(any(), any(), any(), any());
+
+    assertThatThrownBy(() -> service.approve(7L, "30000000", 1L)).isInstanceOf(IllegalStateException.class);
+    verify(repo, never()).updateStatus(eq(7L), anyString(), anyLong());
   }
 
   @Test

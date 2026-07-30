@@ -3,6 +3,7 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js';
 import { addRelation } from './relation-add.js';
+import { GraphTargetMissingError } from './graph-mutation-guard.js';
 import { entityKey } from './resolver.js';
 import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
 
@@ -38,9 +39,17 @@ describe('addRelation (실 Neo4j)', () => {
     expect(await edgeCount(kA, kB)).toBe(1);
   });
 
-  it('끝점이 없으면 no-op(엣지 생성 안 함)', async () => {
+  it('끝점이 없으면 엣지를 만들지 않고 실패를 던진다 — 무음 유실 방지(#310)', async () => {
     await makeNode(kA, 'ZZTEST_누전'); // kB 없음
-    await addRelation(CORE_ONTOLOGY.schemaVersion, kA, 'CAUSED_BY', kB, [7]);
+    await expect(addRelation(CORE_ONTOLOGY.schemaVersion, kA, 'CAUSED_BY', kB, [7]))
+      .rejects.toThrow(GraphTargetMissingError);
     expect(await edgeCount(kA, kB)).toBe(0);
+  });
+
+  it('이미 같은 엣지가 있으면 성공한다(멱등) — 새 엣지 생성 수가 아니라 끝점 바인딩으로 판정', async () => {
+    await makeNode(kA, 'ZZTEST_누전'); await makeNode(kB, 'ZZTEST_과부하');
+    await addRelation(CORE_ONTOLOGY.schemaVersion, kA, 'CAUSED_BY', kB, [7]);
+    await expect(addRelation(CORE_ONTOLOGY.schemaVersion, kA, 'CAUSED_BY', kB, [8])).resolves.toBeUndefined();
+    expect(await edgeCount(kA, kB)).toBe(1);
   });
 });

@@ -123,6 +123,31 @@ test.describe('AI 검수 인박스', () => {
     await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBeUndefined();
   });
 
+  // #310 회귀 가드 — 끝점 없는 관계를 적재 승인하면 서버가 409 + 사유를 준다.
+  // 이때 성공 토스트를 띄우고 행을 지워버리면 검수 결과가 조용히 유실되므로,
+  // 반드시 사유를 그대로 노출하고 항목을 목록에 남겨 재시도할 수 있어야 한다.
+  test('끝점 없는 관계 적재가 409로 거절되면 사유 토스트를 띄우고 항목이 목록에 남는다', async ({ authenticatedPage: page }) => {
+    const reason = '주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다(subject=12:노후 배선, object=34:창고 화재).';
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/4/approve', (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 409, error: 'Conflict', message: reason, timestamp: '2026-07-30T00:00:00Z', path: '/api/v1/graphrag/review-items/4/approve' }),
+      }));
+
+    await page.goto('/knowledge-graph/review');
+    await expect(page.getByText('CAUSED_BY')).toBeVisible();
+    await page.getByRole('button', { name: '적재' }).click();
+
+    // 서버가 알려준 구체적 사유가 그대로 보여야 한다(일반 폴백 문구로 퇴화하면 원인을 알 수 없다).
+    await expect(page.getByText(reason)).toBeVisible();
+    await expect(page.getByText('검수를 승인했습니다.')).toHaveCount(0);
+    // 항목은 여전히 검수 대기 상태로 남아 있어야 한다.
+    await expect(page.getByText('CAUSED_BY')).toBeVisible();
+    await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
+  });
+
   test('관계 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/4/evidence', [{ chunkId: 9, content: '노후 배선이 화재 원인으로 추정된다.' }]);

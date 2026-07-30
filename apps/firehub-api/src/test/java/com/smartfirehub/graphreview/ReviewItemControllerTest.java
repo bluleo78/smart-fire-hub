@@ -85,6 +85,22 @@ class ReviewItemControllerTest {
         .andExpect(status().isBadGateway());
   }
 
+  /**
+   * 대상 노드 부재로 그래프에 아무 것도 반영되지 않은 승인은 409 + 구체적 사유로 나가야 한다 (#310).
+   * 사유가 응답 body의 message로 살아 나오지 않으면 검수 UI가 일반 폴백 문구만 띄워 원인을 알 수 없다.
+   */
+  @Test
+  void approve_graphTargetMissing_returns409WithReason() throws Exception {
+    String reason = "주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다.";
+    doThrow(new IllegalStateException(reason))
+        .when(service).approve(anyLong(), org.mockito.ArgumentMatchers.any(), anyLong());
+    mockMvc.perform(post("/api/v1/graphrag/review-items/{id}/approve", 1L)
+            .contentType("application/json").content("{}")
+            .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value(reason));
+  }
+
   @Test
   void reject_returnsRejected() throws Exception {
     when(service.reject(1L, 1L)).thenReturn(resp("rejected"));

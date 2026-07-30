@@ -4,6 +4,7 @@ import { getSession } from './neo4j-client.js';
 import { EntityType, Ontology, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
+import { GraphTargetMissingError } from './graph-mutation-guard.js';
 
 interface EntityRow { key: string; sourceChunkIds: number[]; }
 interface RelRow { type: string; otherKey: string; sourceChunkIds: number[]; }
@@ -21,7 +22,8 @@ function unionDedupe(a: number[], b: number[]): number[] {
  * 동률이면 localeCompare)을 사용한다 — 이 두 규칙이 어긋나면, 승인되어 삭제된 노드가 다음 적재 시
  * pickCanonicalName에 의해 canonical로 재선정되어 Neo4j에 다시 생성되는 버그가 발생한다(승인 병합이
  * 조용히 원복됨). 따라서 approval-time keeper는 반드시 향후 ingest가 수렴할 이름과 일치해야 한다.
- * 둘 중 하나라도 그래프에 아직 없으면(적재 전) 병합할 대상이 없으므로 no-op한다.
+ * 둘 중 하나라도 그래프에 아직 없으면(적재 전) 병합할 대상이 없다 — 예전에는 조용히 no-op했고 호출측이
+ * 이를 성공으로 보고 검수 항목을 approved로 바꿔 병합 결정이 유실됐다(#310). 이제 실패로 전파한다.
  */
 export async function mergeEntities(
   ontology: Ontology, entityType: EntityType, nameA: string, nameB: string,
@@ -41,7 +43,13 @@ export async function mergeEntities(
     for (const r of nodeRes.records) nodes.set(r.get('key'), { key: r.get('key'), sourceChunkIds: r.get('sourceChunkIds') });
     const a = nodes.get(keyA);
     const b = nodes.get(keyB);
-    if (!a || !b) return; // 둘 중 하나가 그래프에 없음 — 병합 대상 없음.
+    if (!a || !b) {
+      // 둘 중 하나가 그래프에 없음 — 병합할 수 없으므로 승인을 실패시켜 항목을 pending으로 남긴다.
+      const missing = !a ? nameA : nameB;
+      throw new GraphTargetMissingError(
+        `병합할 엔티티가 그래프에 없어 동의어를 병합할 수 없습니다(${missing}).`,
+      );
+    }
 
     const canonicalName = pickCanonicalName([nameA, nameB]);
     const keeperKey = entityKey(typeId, canonicalName);
