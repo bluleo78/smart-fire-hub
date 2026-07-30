@@ -84,6 +84,36 @@ class GraphMutationClientTest {
   }
 
   @Test
+  @DisplayName("장애 메시지에 내부 호스트·포트·경로가 새지 않고 행동 가능한 문구만 남는다 (#313)")
+  void setProperty_serverError_doesNotLeakInternalAddress() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/set-property"))
+            .willReturn(aResponse().withStatus(502).withBody("{\"error\":\"set property failed\"}")));
+
+    assertThatThrownBy(() -> client().setProperty("3:창고 화재", "피해액", "number", "30000000"))
+        .isInstanceOf(ExternalServiceException.class)
+        .hasMessageNotContaining("http://")
+        .hasMessageNotContaining("127.0.0.1")
+        .hasMessageNotContaining(String.valueOf(wireMock.port()))
+        .hasMessageNotContaining("/agent/graph/")
+        .hasMessageContaining("엔티티 속성 갱신")
+        .hasMessageContaining("다시 시도");
+  }
+
+  @Test
+  @DisplayName("연결 자체가 실패해도 내부 주소를 노출하지 않는다 (#313)")
+  void setProperty_connectionRefused_doesNotLeakInternalAddress() {
+    // 아무도 듣지 않는 포트 → WebClientRequestException(연결 거부). 메시지에 내부 주소가 박히는 대표 경로다.
+    GraphMutationClient offline = new GraphMutationClient("http://127.0.0.1:1", "test-token");
+
+    assertThatThrownBy(() -> offline.setProperty("3:창고 화재", "피해액", "number", "30000000"))
+        .isInstanceOf(ExternalServiceException.class)
+        .hasMessageNotContaining("127.0.0.1")
+        .hasMessageNotContaining("http://")
+        .hasMessageContaining("엔티티 속성 갱신");
+  }
+
+  @Test
   @DisplayName("2xx는 정상 반환한다(호출자가 status를 approved로 갱신하는 경로)")
   void addRelation_success() {
     wireMock.stubFor(post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));

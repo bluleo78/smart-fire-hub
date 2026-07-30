@@ -7,11 +7,14 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * 검수 승인 시 Neo4j 소유자인 ai-agent에 그래프 변경을 위임한다(역방향 통신 — 기존 Internal 인증 재사용).
@@ -22,6 +25,7 @@ import org.springframework.web.reactive.function.client.WebClientException;
  */
 @Component
 public class GraphMutationClient {
+  private static final Logger log = LoggerFactory.getLogger(GraphMutationClient.class);
   private static final Duration TIMEOUT = Duration.ofSeconds(30);
 
   private final WebClient webClient;
@@ -105,11 +109,50 @@ public class GraphMutationClient {
                   response
                       .bodyToMono(String.class)
                       .defaultIfEmpty("")
-                      .map(raw -> new IllegalStateException(conflictMessage(raw, opLabel))))
+                      .map(raw -> new GraphConflictException(conflictMessage(raw, opLabel))))
           .toBodilessEntity()
-          .block(TIMEOUT);
-    } catch (WebClientException e) {
-      throw new ExternalServiceException("ai-agent " + opLabel + " 호출 실패: " + e.getMessage(), e);
+          .timeout(TIMEOUT)
+          .block();
+    } catch (GraphConflictException e) {
+      // 409 사유 전달용(#310) — 이미 사용자용 한국어 문구이므로 그대로 위임한다.
+      throw e;
+    } catch (RuntimeException e) {
+      // 전송 계층 실패(연결 거부·5xx·타임아웃). 상세는 로그에만 남긴다(#313).
+      log.error("[graph-mutation] {} 호출 실패 (uri={})", opLabel, uri, e);
+      throw new ExternalServiceException(userFacingFailure(opLabel, e), e);
+    }
+  }
+
+  /**
+   * 하위 서비스 예외 문자열을 사용자 메시지로 그대로 올리지 않는다(#313).
+   *
+   * <p>WebClient 예외 메시지에는 {@code 502 Bad Gateway from POST http://127.0.0.1:5020/agent/graph/set-property}
+   * 처럼 내부 호스트·포트·경로가 박혀 있어, 검수자에게 무의미할 뿐 아니라 내부 구조가 브라우저로 샌다. 대신 무엇이
+   * 실패했고 지금 무엇을 하면 되는지만 남기고, 원인 추적에 필요한 원문은 위 {@code log.error}가 담당한다. 사용자
+   * 입력이 원인인 실패는 이 경로로 오지 않는다 — ai-agent가 409 + 한국어 사유로 돌려주고(#310, #311) 위에서 통과된다.
+   */
+  private String userFacingFailure(String opLabel, RuntimeException e) {
+    if (e instanceof WebClientResponseException res) {
+      return "AI 그래프 서비스가 " + opLabel + " 요청을 처리하지 못했습니다(응답 코드 "
+          + res.getStatusCode().value() + "). 잠시 후 다시 시도해 주세요.";
+    }
+    if (e.getCause() instanceof TimeoutException) {
+      return "AI 그래프 서비스 응답이 " + TIMEOUT.toSeconds() + "초 안에 오지 않아 " + opLabel
+          + "에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+    }
+    return "AI 그래프 서비스에 연결할 수 없어 " + opLabel + "에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+  }
+
+  /**
+   * ai-agent 409(상태 충돌)의 사유를 그대로 사용자에게 올리기 위한 전용 예외(#310, #313).
+   *
+   * <p>{@link IllegalStateException}을 상속해 GlobalExceptionHandler의 409 매핑을 그대로 쓰되, 타입을 좁혀 둔다 —
+   * Reactor가 던지는 다른 IllegalStateException(블로킹 타임아웃 등)의 내부 영문 문구가 "사용자용 사유"로 오인되어
+   * 그대로 노출되는 일을 막기 위함이다. 그런 예외는 아래 RuntimeException 분기에서 정제된다.
+   */
+  private static class GraphConflictException extends IllegalStateException {
+    GraphConflictException(String message) {
+      super(message);
     }
   }
 
