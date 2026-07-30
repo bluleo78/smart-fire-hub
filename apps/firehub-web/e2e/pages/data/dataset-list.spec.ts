@@ -314,4 +314,50 @@ test.describe('데이터셋 목록 페이지', () => {
     // 최근 접근 데이터셋 카드의 상대 시간 확인 — getRelativeTime이 60일 전 날짜를 '2개월 전'으로 표시
     await expect(page.getByText(/개월 전/).first()).toBeVisible({ timeout: 5000 });
   });
+  /**
+   * #328 회귀: DeleteConfirmDialog 는 실제 AlertDialogTrigger 를 쓰므로 Radix 가 복귀를 시도하지만,
+   * 삭제 확인 후에는 트리거가 있던 행이 사라져 그 focus() 가 조용히 실패하고 포커스가 <body> 로 떨어졌다.
+   * 트리거가 사라진 경우 살아남은 가장 가까운 조상(표 본문)으로 복귀해 원래 위치 근처를 유지해야 한다.
+   */
+  test('삭제 확인 후 행이 사라져도 포커스가 <body>로 떨어지지 않고 표 안에 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    let deleted = false;
+    const all = createDatasets(5);
+    // 삭제 후 목록이 실제로 줄어들게 해 트리거 언마운트를 재현한다.
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      async (route) => {
+        const list = deleted ? all.slice(1) : all;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(list)),
+        });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1',
+      async (route) => {
+        if (route.request().method() === 'DELETE') {
+          deleted = true;
+          return route.fulfill({ status: 204, body: '' });
+        }
+        return route.fallback();
+      },
+    );
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: '데이터셋 관리' })).toBeVisible();
+
+    const deleteBtn = page.getByRole('row', { name: /데이터셋 1/ }).getByRole('button', { name: '삭제' });
+    await deleteBtn.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByRole('row', { name: /데이터셋 1/ })).toHaveCount(0);
+
+    // 표 본문(tbody)이 포커스를 받아 키보드 사용자가 원래 위치 근처에 남는다.
+    await expect(page.locator('table tbody')).toBeFocused();
+  });
 });

@@ -34,13 +34,24 @@ export function useDialogFocusRestore({
   restoreFocusRef?: React.RefObject<HTMLElement | null>
 }) {
   const capturedRef = React.useRef<HTMLElement | null>(null)
+  // 트리거의 조상 체인. 트리거가 DOM 에서 떨어지면 parentElement 가 null 이 되므로
+  // 열릴 때 미리 기록해 둬야 "살아남은 가장 가까운 조상"을 찾을 수 있다.
+  const ancestorsRef = React.useRef<HTMLElement[]>([])
 
   const handleOpenAutoFocus = React.useCallback(
     (event: Event) => {
       const active = document.activeElement
       // <body> 는 복귀해봐야 의미가 없으므로 캡처 대상에서 제외한다.
-      capturedRef.current =
+      const trigger =
         active instanceof HTMLElement && active !== document.body ? active : null
+      capturedRef.current = trigger
+
+      const ancestors: HTMLElement[] = []
+      for (let el = trigger?.parentElement; el && el !== document.body; el = el.parentElement) {
+        ancestors.push(el)
+      }
+      ancestorsRef.current = ancestors
+
       onOpenAutoFocus?.(event)
     },
     [onOpenAutoFocus]
@@ -53,15 +64,32 @@ export function useDialogFocusRestore({
       if (event.defaultPrevented) return
 
       const captured = capturedRef.current
+      const ancestors = ancestorsRef.current
       requestAnimationFrame(() => {
         // Radix/FocusScope 기본 복귀가 성공했으면(=body 가 아니면) 손대지 않는다.
+        // 트리거가 언마운트된 경우 Radix 의 focus() 는 조용히 실패해 여기로 떨어진다.
         const active = document.activeElement
         if (active && active !== document.body) return
 
-        // 트리거가 살아 있으면 트리거로, 사라졌으면(행 삭제 등) 지정된 대체 지점으로.
-        const target =
-          captured && captured.isConnected ? captured : (restoreFocusRef?.current ?? null)
-        target?.focus()
+        // 1순위: 살아 있는 트리거. 2순위: 호출측이 지정한 대체 지점.
+        // 3순위: 살아남은 가장 가까운 조상(표/목록 컨테이너) — 페이지 맨 위로 튕기는 것보다
+        //        원래 위치 근처에 남는 편이 낫다. FocusScope 가 컨테이너에 포커스를 주는 것과 같은 패턴.
+        if (captured?.isConnected) return void captured.focus()
+        if (restoreFocusRef?.current) return void restoreFocusRef.current.focus()
+
+        const container = ancestors.find((el) => el.isConnected)
+        if (!container) return
+        // 컨테이너는 보통 포커스 불가이므로 일시적으로 tabIndex 를 부여하고,
+        // 포커스가 떠나면 원상복구해 Tab 순서를 오염시키지 않는다.
+        if (!container.hasAttribute("tabindex")) {
+          container.setAttribute("tabindex", "-1")
+          container.addEventListener(
+            "blur",
+            () => container.removeAttribute("tabindex"),
+            { once: true }
+          )
+        }
+        container.focus()
       })
     },
     [onCloseAutoFocus, restoreFocusRef]
