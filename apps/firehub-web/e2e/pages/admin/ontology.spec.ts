@@ -1643,3 +1643,74 @@ test.describe('#328 지식 모델 편집 다이얼로그 포커스 복귀', () =
     await expect(trigger).toBeFocused();
   });
 });
+
+/**
+ * #329 회귀: 지식 모델 편집의 인라인 검증 오류가 입력과 프로그램적으로 연결되어야 한다.
+ *
+ * 오류 문구를 빨간 텍스트로 "가까이" 두는 것만으로는 스크린리더에 전달되지 않는다.
+ * 매핑 다이얼로그(#300)와 같은 배선(aria-invalid + aria-describedby → 오류 <p>의 id)을 적용한다.
+ * WCAG 2.2 SC 3.3.1 / 1.3.1 / 4.1.2.
+ */
+test.describe('#329 지식 모델 편집 인라인 오류 ARIA 배선', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('속성명이 예약어면 입력에 aria-invalid와 오류 문구를 가리키는 aria-describedby가 붙는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const incidentRow = dialog.getByTestId('entity-edit-Incident');
+    await incidentRow.getByRole('button', { name: 'Incident 속성 추가' }).click();
+
+    const propertyRow = incidentRow.getByTestId('property-row-Incident-0');
+    const nameInput = propertyRow.getByLabel('Incident 속성 이름');
+
+    // 빈 이름(추가 직후) — 이미 오류 상태이므로 배선이 살아 있어야 한다.
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    const blankErrorId = await nameInput.getAttribute('aria-describedby');
+    expect(blankErrorId).toBeTruthy();
+    await expect(page.locator(`#${blankErrorId}`)).toHaveText('속성명을 입력하세요');
+
+    // 예약어 — 같은 배선이 예약어 문구를 가리킨다.
+    await nameInput.fill('key');
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    const reservedErrorId = await nameInput.getAttribute('aria-describedby');
+    expect(reservedErrorId).toBeTruthy();
+    await expect(page.locator(`#${reservedErrorId}`)).toContainText('예약어는 속성명으로 쓸 수 없습니다');
+
+    // 정상 이름으로 고치면 무효 표시가 사라지고 설명 연결도 끊긴다(존재하지 않는 노드를 가리키지 않도록).
+    await nameInput.fill('severity');
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    expect(await nameInput.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  test('관계명이 비면 관계명 입력에 aria-invalid와 오류 문구 연결이 붙는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const relationsEditor = dialog.getByTestId('relations-editor');
+    // 관계 추가는 관계명을 빈 칸으로 seed한다.
+    await relationsEditor.getByRole('button', { name: '관계 추가' }).click();
+
+    const newRow = relationsEditor.getByTestId(`relation-row-${schema.relations.length}`);
+    const relationInput = newRow.getByLabel('관계명');
+    await expect(relationInput).toHaveAttribute('aria-invalid', 'true');
+    const errorId = await relationInput.getAttribute('aria-describedby');
+    expect(errorId).toBeTruthy();
+    await expect(page.locator(`#${errorId}`)).toHaveText('관계명을 입력하세요');
+
+    await relationInput.fill('CAUSED_BY');
+    await expect(relationInput).not.toHaveAttribute('aria-invalid', 'true');
+    expect(await relationInput.getAttribute('aria-describedby')).toBeNull();
+  });
+});

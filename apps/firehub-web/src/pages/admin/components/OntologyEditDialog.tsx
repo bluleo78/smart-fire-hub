@@ -565,6 +565,11 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                   const reserved = RESERVED_PROPERTY_NAMES.has(prop.name);
                   // 빈 속성명은 저장 시 토스트로도 막지만, 어느 행이 문제인지 즉시 보이도록 인라인으로도 알린다(#302).
                   const blankName = !prop.name.trim();
+                  // 시각적 근접성만으로는 스크린리더에 오류가 전달되지 않는다 — 입력↔오류 문구를
+                  // aria-invalid/aria-describedby로 연결한다(#329, WCAG SC 3.3.1).
+                  // 예약어는 항상 non-blank이므로 두 오류는 동시에 뜨지 않아 id 재사용이 안전하다.
+                  const nameErrorId = `property-name-error-${entity.type}-${i}`;
+                  const nameInvalid = blankName || reserved;
                   return (
                     <div
                       key={i}
@@ -574,6 +579,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                       <div className="flex items-center gap-1.5">
                         <Input
                           aria-label={`${entity.type} 속성 이름`}
+                          aria-invalid={nameInvalid || undefined}
+                          aria-describedby={nameInvalid ? nameErrorId : undefined}
                           placeholder="속성명"
                           value={prop.name}
                           onChange={(e) => updateProperty(entity.type, i, { name: e.target.value })}
@@ -617,9 +624,13 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                         value={prop.description}
                         onChange={(e) => updateProperty(entity.type, i, { description: e.target.value })}
                       />
-                      {blankName && <p className="text-xs text-destructive">속성명을 입력하세요</p>}
+                      {blankName && (
+                        <p id={nameErrorId} className="text-xs text-destructive">
+                          속성명을 입력하세요
+                        </p>
+                      )}
                       {reserved && (
-                        <p className="text-xs text-destructive">
+                        <p id={nameErrorId} className="text-xs text-destructive">
                           예약어는 속성명으로 쓸 수 없습니다: key, type, name, sourceChunkIds, schemaVersion
                         </p>
                       )}
@@ -677,7 +688,11 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                 관계 추가
               </Button>
             </div>
-            {relations.map((rel, i) => (
+            {relations.map((rel, i) => {
+              // 속성 행과 동일하게 관계명 입력↔오류 문구를 연결한다(#329).
+              const relationBlank = !rel.relation.trim();
+              const relationErrorId = `relation-name-error-${i}`;
+              return (
               <div key={i} className="flex flex-col gap-1.5 rounded border p-2" data-testid={`relation-row-${i}`}>
                 <div className="flex items-center gap-1.5">
                   <Select value={rel.subject} onValueChange={(v) => updateRelation(i, { subject: v })}>
@@ -694,6 +709,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                   </Select>
                   <Input
                     aria-label="관계명"
+                    aria-invalid={relationBlank || undefined}
+                    aria-describedby={relationBlank ? relationErrorId : undefined}
                     placeholder="관계명(예: CAUSED_BY)"
                     value={rel.relation}
                     onChange={(e) => updateRelation(i, { relation: e.target.value })}
@@ -728,9 +745,14 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                   onChange={(e) => updateRelation(i, { description: e.target.value })}
                 />
                 {/* 빈 관계명은 저장 시 토스트로도 막지만, 어느 행이 문제인지 즉시 보이도록 인라인으로도 알린다(#302). */}
-                {!rel.relation.trim() && <p className="text-xs text-destructive">관계명을 입력하세요</p>}
+                {relationBlank && (
+                  <p id={relationErrorId} className="text-xs text-destructive">
+                    관계명을 입력하세요
+                  </p>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
