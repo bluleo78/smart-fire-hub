@@ -104,7 +104,15 @@ export default function OntologyPage() {
         <div className="ml-auto flex items-center gap-2">
           {/* 지식 모델 편집(ADMIN 전용) — 스키마 탭에서만 노출. 서버도 ontology:write(ADMIN)로 재검증한다. */}
           {tab === 'schema' && isAdmin && schema && (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditOpen(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              // 편집 진입 시 최신 스키마를 먼저 확보한다(#301) — staleTime 5분 때문에 리마운트만으로는
+              // 재조회가 일어나지 않아, 낡은 schemaVersion으로 편집을 시작하면 저장이 곧바로 409가 된다.
+              // 재조회가 끝난 뒤 열어야 다이얼로그가 최신 원본으로 초기화된다(실패해도 캐시본으로 진행).
+              onClick={() => void refetchSchema().finally(() => setEditOpen(true))}
+            >
               <Pencil className="h-4 w-4" />
               편집
             </Button>

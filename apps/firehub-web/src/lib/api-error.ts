@@ -61,6 +61,15 @@ export async function extractApiErrorAsync(
   return fallback;
 }
 
+/**
+ * 낙관적 동시성 충돌(409 Conflict) 여부를 판정한다.
+ * 버전 불일치 저장 실패를 일반 에러와 구분해 "최신 버전 재조회 → 재시도" 복구 경로를
+ * 태우는 호출부(useUpdateOntology 등)가 공통으로 쓴다.
+ */
+export function isConflictError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 409;
+}
+
 export function handleApiError(error: unknown, fallback: string): void {
   toast.error(extractApiError(error, fallback));
 }

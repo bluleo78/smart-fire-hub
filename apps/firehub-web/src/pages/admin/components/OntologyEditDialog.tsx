@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useUpdateOntology } from '@/hooks/queries/useOntology';
-import { extractApiError } from '@/lib/api-error';
+import { extractApiError, isConflictError } from '@/lib/api-error';
 import type { EntityTypeDef, OntologySchema, Property, Triple, TypeRename } from '@/types/ontology';
 
 interface OntologyEditDialogProps {
@@ -57,7 +57,17 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [renamingType, setRenamingType] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  // baseVersion: 이 폼이 근거로 삼은(= 마지막으로 저장 시도한) 스키마 버전. PUT payload에는 항상
+  // 이 값을 담는다 — schema prop은 409 후 재조회로 갱신되므로, prop을 그대로 보내면 "최신 버전 +
+  // 낡은 내용"이 짝지어져 남의 변경을 소리 없이 덮어쓰는 lost-update가 된다(#301).
+  const [baseVersion, setBaseVersion] = useState(schema.schemaVersion);
+  const [hasConflict, setHasConflict] = useState(false);
   const updateOntology = useUpdateOntology();
+
+  // 409 후 useUpdateOntology가 ['ontology']를 무효화 → 재조회분이 (리마운트 없이) prop으로 도착하면
+  // 이 값이 baseVersion보다 커진다. 그때서야 "덮어쓰고 저장"이 의미를 가진다.
+  const latestVersion = schema.schemaVersion;
+  const isLatestLoaded = hasConflict && latestVersion !== baseVersion;
 
   const entityTypes = entities.map((e) => e.type);
 
@@ -205,7 +215,9 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
     return null;
   };
 
-  const handleSave = () => {
+  // 저장 실행 — 어느 버전을 근거로 보낼지는 호출부가 정한다(초기 저장=baseVersion,
+  // 충돌 복구=재조회된 최신 버전). 충돌 시 편집 state는 그대로 두고 배너만 띄운다.
+  const submit = (version: number) => {
     const localError = validateLocally();
     if (localError) {
       toast.error(localError);
@@ -213,7 +225,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
     }
     const renamesPayload: TypeRename[] = Object.entries(renames).map(([from, to]) => ({ from, to }));
     updateOntology.mutate(
-      { domain, schemaVersion: schema.schemaVersion, entities, relations, renames: renamesPayload },
+      { domain, schemaVersion: version, entities, relations, renames: renamesPayload },
       {
         onSuccess: () => {
           toast.success('지식 모델이 저장되었습니다.');
@@ -221,10 +233,19 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
         },
         onError: (error) => {
           toast.error(extractApiError(error, '지식 모델 저장에 실패했습니다.'));
+          if (isConflictError(error)) {
+            // 방금 시도한 버전을 기준선으로 확정 — 이후 재조회분이 도착해야 배너 액션이 열린다.
+            setBaseVersion(version);
+            setHasConflict(true);
+          }
         },
       },
     );
   };
+
+  const handleSave = () => submit(baseVersion);
+  // 충돌 복구: 편집 내용은 유지한 채 재조회된 최신 버전으로만 갈아끼워 재저장한다.
+  const handleOverwrite = () => submit(latestVersion);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -237,6 +258,34 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
         </DialogHeader>
 
         <div className="flex flex-col gap-6 py-2">
+          {/* 충돌 복구 배너(#301) — 409 후 최신 스키마 재조회가 끝나면 "덮어쓰고 저장"으로
+              편집 내용을 잃지 않고 재저장할 수 있다. 재조회 전에는 안내만 노출(액션 비활성). */}
+          {hasConflict && (
+            <div
+              className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3"
+              role="alert"
+              data-testid="ontology-conflict-banner"
+            >
+              <p className="text-sm font-medium">지식 모델이 다른 사용자에 의해 이미 수정되었습니다.</p>
+              <p className="text-xs text-muted-foreground">
+                {isLatestLoaded
+                  ? `최신 버전(v${latestVersion})을 불러왔습니다. 편집 내용을 유지한 채 저장하면 그 사이 반영된 다른 변경을 덮어씁니다.`
+                  : '최신 내용을 불러오는 중입니다...'}
+              </p>
+              <div>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={handleOverwrite}
+                  disabled={!isLatestLoaded || updateOntology.isPending}
+                  data-testid="ontology-conflict-overwrite"
+                >
+                  덮어쓰고 저장
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-2">
             <Label htmlFor="ontology-domain">도메인</Label>
             <Input id="ontology-domain" value={domain} onChange={(e) => setDomain(e.target.value)} />

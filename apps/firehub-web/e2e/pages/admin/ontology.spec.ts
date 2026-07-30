@@ -912,8 +912,101 @@ test.describe('지식그래프 시각화 페이지', () => {
     await dialog.getByTestId('entity-edit-Incident').getByLabel('설명').fill('충돌 시도');
     await dialog.getByRole('button', { name: '저장' }).click();
 
-    await expect(page.getByText('지식 모델이 다른 사용자에 의해 이미 수정되었습니다.')).toBeVisible();
+    // 토스트로 안내되고 다이얼로그는 유지된다. #301 이후 같은 문구의 충돌 배너가 다이얼로그 안에도
+    // 뜨므로, 토스트 영역으로 범위를 좁혀 단언한다.
+    await expect(
+      page.getByLabel('Notifications alt+T').getByText('지식 모델이 다른 사용자에 의해 이미 수정되었습니다.'),
+    ).toBeVisible();
     await expect(dialog).toBeVisible();
+    await expect(page.getByTestId('ontology-conflict-banner')).toBeVisible();
+  });
+
+  // #301 회귀 — 409 후 복구 경로. 이전에는 재시도·재오픈 모두 낡은 schemaVersion을 재전송해
+  // 409가 무한 반복되고, 유일한 탈출구인 브라우저 새로고침은 편집 전량을 날렸다.
+  // 검증 관전 포인트 3가지: (1) 첫 PUT은 v1, (2) 두 PUT 사이에 GET 재조회가 실제로 끼어들 것,
+  // (3) 두 번째 PUT은 v2 + 사용자의 편집(도메인 문자열)이 그대로 살아 있을 것.
+  test('저장 충돌(409) 후 최신 버전을 재조회해 편집 내용을 유지한 채 재저장할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+
+    // 서버 상태를 흉내내는 카운터 모킹: 첫 PUT은 버전 불일치(409)로 튕기며 서버 버전을 2로 올리고,
+    // 이후 GET은 v2를 돌려준다. 두 번째 PUT은 payload가 v2일 때만 성공한다.
+    let serverVersion = schema.schemaVersion; // 1
+    const events: string[] = [];
+    const putPayloads: UpdateOntologyRequest[] = [];
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontology',
+      async (route) => {
+        const method = route.request().method();
+        if (method === 'GET') {
+          events.push('GET');
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ ...schema, schemaVersion: serverVersion }),
+          });
+        }
+        if (method === 'PUT') {
+          events.push('PUT');
+          const payload = route.request().postDataJSON() as UpdateOntologyRequest;
+          putPayloads.push(payload);
+          if (payload.schemaVersion !== serverVersion) {
+            return route.fulfill({
+              status: 409,
+              contentType: 'application/json',
+              body: JSON.stringify({ message: '지식 모델이 다른 사용자에 의해 이미 수정되었습니다.' }),
+            });
+          }
+          serverVersion += 1;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ ...schema, ...payload, schemaVersion: serverVersion }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await expect(dialog).toBeVisible();
+
+    // 사용자의 편집 — 이 값이 충돌 복구 후에도 살아남아야 한다.
+    await dialog.locator('#ontology-domain').fill('충돌 후에도 살아남는 도메인');
+
+    // 다른 세션이 먼저 저장한 상황을 만든다(서버 버전만 앞서 나감).
+    serverVersion = 2;
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 충돌 배너가 뜨고, 재조회가 끝나면 복구 액션이 활성화된다.
+    const overwrite = page.getByTestId('ontology-conflict-overwrite');
+    await expect(page.getByTestId('ontology-conflict-banner')).toBeVisible();
+    await expect(overwrite).toBeEnabled();
+    // 편집 내용은 그대로 유지된다(폼 리셋 금지).
+    await expect(dialog.locator('#ontology-domain')).toHaveValue('충돌 후에도 살아남는 도메인');
+
+    await overwrite.click();
+
+    // 저장 성공 → 다이얼로그가 닫힌다.
+    await expect(dialog).toBeHidden();
+
+    // (1) 첫 PUT은 낡은 v1, (3) 두 번째 PUT은 재조회된 v2 + 편집 내용 유지
+    expect(putPayloads).toHaveLength(2);
+    expect(putPayloads[0].schemaVersion).toBe(1);
+    expect(putPayloads[1].schemaVersion).toBe(2);
+    expect(putPayloads[1].domain).toBe('충돌 후에도 살아남는 도메인');
+
+    // (2) 두 PUT 사이에 온톨로지 GET 재조회가 실제로 발생했다 — 이슈의 핵심 누락 관측치.
+    const firstPut = events.indexOf('PUT');
+    const secondPut = events.lastIndexOf('PUT');
+    const getBetween = events.slice(firstPut + 1, secondPut).includes('GET');
+    expect(getBetween).toBe(true);
   });
 });
 
