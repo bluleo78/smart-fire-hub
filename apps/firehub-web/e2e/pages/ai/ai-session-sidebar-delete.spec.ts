@@ -147,7 +147,7 @@ test.describe('AISessionSidebar — 현재 활성 세션 삭제 후 UI 초기화
 
     // 현재 활성 세션의 삭제 버튼 클릭 → DeleteConfirmDialog 오픈 (#210)
     // → 확인 버튼 클릭 → deleteSession.mutate(10, { onSuccess: () => startNewSession() })
-    const deleteBtn = page.getByText('활성 대화 테스트').locator('..').getByRole('button');
+    const deleteBtn = page.getByRole('button', { name: '활성 대화 테스트 삭제' });
     await deleteBtn.click({ force: true });
 
     // 확인 다이얼로그가 열렸는지 검증 — "대화 삭제" 제목이 보여야 함 (#210)
@@ -227,7 +227,7 @@ test.describe('AISessionSidebar — 현재 활성 세션 삭제 후 UI 초기화
     await expect(page.getByText('이슈 211 테스트 메시지')).toBeVisible({ timeout: 3_000 });
 
     // 세션 B("다른 대화") 삭제 버튼 클릭 → DeleteConfirmDialog 오픈 (#210)
-    const otherDeleteBtn = page.getByText('다른 대화').locator('..').getByRole('button');
+    const otherDeleteBtn = page.getByRole('button', { name: '다른 대화 삭제' });
     await otherDeleteBtn.click({ force: true });
 
     // 확인 다이얼로그 확인 후 삭제 확정

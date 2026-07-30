@@ -94,7 +94,7 @@ test.describe('AISessionSidebar — 삭제 확인 다이얼로그 (#210)', () =>
     );
 
     // "이슈 210 테스트 대화" 세션의 삭제 버튼 클릭
-    const deleteBtn = page.getByText('이슈 210 테스트 대화').locator('..').getByRole('button');
+    const deleteBtn = page.getByRole('button', { name: '이슈 210 테스트 대화 삭제' });
     await deleteBtn.click({ force: true });
 
     // 핵심 검증: DELETE API 즉시 호출 안 됨 — 다이얼로그가 먼저 열려야 함
@@ -148,7 +148,7 @@ test.describe('AISessionSidebar — 삭제 확인 다이얼로그 (#210)', () =>
     );
 
     // 삭제 버튼 클릭 → 다이얼로그 열기
-    const deleteBtn = page.getByText('이슈 210 테스트 대화').locator('..').getByRole('button');
+    const deleteBtn = page.getByRole('button', { name: '이슈 210 테스트 대화 삭제' });
     await deleteBtn.click({ force: true });
 
     // 다이얼로그 열림 확인
@@ -192,7 +192,7 @@ test.describe('AISessionSidebar — 삭제 확인 다이얼로그 (#210)', () =>
     );
 
     // 삭제 버튼 클릭 → 다이얼로그 열기
-    const deleteBtn = page.getByText('이슈 210 테스트 대화').locator('..').getByRole('button');
+    const deleteBtn = page.getByRole('button', { name: '이슈 210 테스트 대화 삭제' });
     await deleteBtn.click({ force: true });
 
     // 다이얼로그 열림 확인
