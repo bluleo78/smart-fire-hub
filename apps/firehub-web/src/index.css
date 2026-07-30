@@ -2,6 +2,13 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/*
+ * AI 응답 마크다운(표/목록/헤딩/인용) 렌더링용 Typography 플러그인 (#335).
+ * Tailwind v4는 tailwind.config 대신 CSS에서 @plugin으로 등록한다.
+ * 색상은 하단 "AI 마크다운 prose" 블록에서 시맨틱 토큰으로 재매핑한다.
+ */
+@plugin "@tailwindcss/typography";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -450,4 +457,58 @@
 @keyframes canvas-dim-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+/* ===== AI 마크다운 prose (#335) =====
+ * @tailwindcss/typography는 gray 팔레트를 하드코딩한 --tw-prose-* 변수를 쓴다.
+ * 이 앱은 시맨틱 토큰(--foreground/--border/--muted-foreground 등)으로 라이트·다크를
+ * 이미 전환하므로, prose 변수를 토큰으로 재매핑해 두 체계가 충돌하지 않게 한다.
+ * (본문은 currentColor — 말풍선 배경에 맞춰 부모가 정한 색을 그대로 따른다.)
+ *
+ * 이 규칙들은 의도적으로 @layer 밖(unlayered)에 둔다. 레이어 없는 선언이
+ * 플러그인이 utilities 레이어에 넣은 .prose / .dark .prose-invert 규칙보다
+ * 우선하므로, 기존 코드에 남아 있는 dark:prose-invert가 토큰을 덮어쓰지 못한다.
+ */
+.prose {
+  --tw-prose-body: currentColor;
+  --tw-prose-headings: currentColor;
+  --tw-prose-lead: currentColor;
+  --tw-prose-links: var(--primary);
+  --tw-prose-bold: currentColor;
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-bullets: var(--muted-foreground);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--muted-foreground);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--muted-foreground);
+  --tw-prose-code: currentColor;
+  --tw-prose-pre-code: currentColor;
+  --tw-prose-pre-bg: transparent;
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+}
+
+/*
+ * 인라인 코드: typography가 넣는 백틱 의사요소(`code::before/after`)를 제거하고
+ * 앱의 muted 배경 칩 스타일을 유지한다.
+ */
+.prose :where(code):not(:where([class~="not-prose"] *))::before,
+.prose :where(code):not(:where([class~="not-prose"] *))::after {
+  content: none;
+}
+.prose :where(code):not(:where(pre *), :where([class~="not-prose"] *)) {
+  background-color: var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 0.125rem 0.25rem;
+  font-weight: inherit;
+}
+
+/*
+ * 코드블록은 CodeBlock 컴포넌트가 자체 배경·패딩·복사 버튼을 렌더한다(#214).
+ * typography의 pre 스타일이 이중 배경/패딩을 만들지 않도록 무력화한다.
+ */
+.prose :where(pre):not(:where([class~="not-prose"] *)) {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+  margin: 0;
 }
