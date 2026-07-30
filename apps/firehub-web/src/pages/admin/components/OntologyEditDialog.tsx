@@ -30,6 +30,36 @@ interface OntologyEditDialogProps {
 const RESERVED_PROPERTY_NAMES = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion']);
 const DATA_TYPES: Array<'text' | 'number' | 'date'> = ['text', 'number', 'date'];
 
+// 서버가 renames 검증에 실패했을 때 던지는 내부 용어 메시지의 고정 앞부분(#304).
+// ErrorResponse에 에러 코드가 없어 message 부분일치로만 식별할 수 있다 — 이 문구가 그대로
+// 사용자에게 노출되면 "어떤 편집을 되돌려야 하는지" 알 수 없으므로 사용자 어휘로 바꿔 준다.
+const SERVER_RENAME_REUSE_PREFIX = '타입 리네임의 from이';
+
+/**
+ * "이름 재사용/맞바꾸기" 조합을 저장 전에 잡아낸다(#304).
+ *
+ * 서버는 renames를 (from,to) 이름 쌍으로만 표현하므로 이름 교환(A의 이름을 비운 뒤 그 이름을
+ * B에 부여)을 나타낼 수 없고, "각 from이 최종 엔티티 타입 목록에 남아 있으면 400"이라는 규칙으로
+ * 거부한다. 여기서 서버와 **동일한 술어**를 그대로 계산해, 서버가 어차피 거부할 조합만 정확히
+ * 막는다 — 지금까지 저장되던 편집이 새로 막히는 일은 없다.
+ *
+ * @returns 재사용된 이름(=차단 사유). 문제 없으면 null.
+ */
+const findReusedRenamedName = (
+  nextRenames: Record<string, string>,
+  nextTypes: string[],
+): string | null => {
+  const finalTypes = new Set(nextTypes);
+  for (const from of Object.keys(nextRenames)) {
+    if (finalTypes.has(from)) return from;
+  }
+  return null;
+};
+
+/** 이름 재사용 차단 안내 — 어떤 이름이 문제인지와 어떻게 하면 되는지를 함께 알린다. */
+const reusedNameMessage = (name: string) =>
+  `다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다: ${name} — 이름 변경을 먼저 저장한 뒤 다시 시도하세요.`;
+
 /**
  * 지식 모델 편집 다이얼로그.
  * 5-1: domain + 엔티티 타입 description/naming/resolution 편집.
@@ -88,6 +118,12 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
       toast.error(`이미 존재하는 타입입니다: ${name}`);
       return;
     }
+    // 리네임으로 비워진 이름을 새 타입 이름으로 재사용하는 것도 서버 renames 검증에 걸린다(#304).
+    const reused = findReusedRenamedName(renames, [...entityTypes, name]);
+    if (reused) {
+      toast.error(reusedNameMessage(reused));
+      return;
+    }
     setEntities((prev) => [
       ...prev,
       { type: name, description: '', naming: '', resolution: 'embedding', properties: [] },
@@ -134,15 +170,24 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
       toast.error(`이미 존재하는 타입입니다: ${newName}`);
       return;
     }
-    setRenames((prev) => {
-      // currentType이 이미 어떤 원본의 리네임 결과라면(연쇄 리네임), 그 원본 키를 유지한 채 값만 갱신.
-      const originalKey = Object.entries(prev).find(([, cur]) => cur === currentType)?.[0] ?? currentType;
-      if (originalKey === newName) {
-        // 원래 이름으로 되돌아옴 — 엔트리 제거(무변경 취급).
-        return Object.fromEntries(Object.entries(prev).filter(([k]) => k !== originalKey));
-      }
-      return { ...prev, [originalKey]: newName };
-    });
+    // currentType이 이미 어떤 원본의 리네임 결과라면(연쇄 리네임), 그 원본 키를 유지한 채 값만 갱신.
+    const originalKey = Object.entries(renames).find(([, cur]) => cur === currentType)?.[0] ?? currentType;
+    const nextRenames =
+      originalKey === newName
+        ? // 원래 이름으로 되돌아옴 — 엔트리 제거(무변경 취급).
+          Object.fromEntries(Object.entries(renames).filter(([k]) => k !== originalKey))
+        : { ...renames, [originalKey]: newName };
+    // 이름 재사용/맞바꾸기(#304)는 서버가 반드시 400으로 거부하므로 확정 시점에 미리 막는다.
+    // 되돌리기(originalKey === newName)는 위에서 엔트리가 제거되므로 여기 걸리지 않는다.
+    const reused = findReusedRenamedName(
+      nextRenames,
+      entities.map((e) => (e.type === currentType ? newName : e.type)),
+    );
+    if (reused) {
+      toast.error(reusedNameMessage(reused));
+      return;
+    }
+    setRenames(nextRenames);
     setEntities((prev) => prev.map((e) => (e.type === currentType ? { ...e, type: newName } : e)));
     setRelations((prev) =>
       prev.map((r) => ({
@@ -220,6 +265,12 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
       }
       seenTriples.add(key);
     }
+    // 이름 재사용(#304) 최종 안전망 — 확정 시점 가드(confirmRename/addEntityType)를 빠져나온
+    // 조합이 남아 있어도, 실제 전송 직전의 payload 그대로 검사해 서버 400 대신 원인을 안내한다.
+    const reused = findReusedRenamedName(renames, entities.map((e) => e.type));
+    if (reused) {
+      return reusedNameMessage(reused);
+    }
     return null;
   };
 
@@ -240,7 +291,21 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
           onOpenChange(false);
         },
         onError: (error) => {
-          toast.error(extractApiError(error, '지식 모델 저장에 실패했습니다.'));
+          const message = extractApiError(error, '지식 모델 저장에 실패했습니다.');
+          // 서버의 내부 검증 용어(`타입 리네임의 from이 ...`)는 편집 화면에서 의미를 전달하지 못하므로
+          // 사용자 어휘로 바꿔 노출한다(#304). 그 외 메시지는 서버 문구를 그대로 살린다.
+          if (message.startsWith(SERVER_RENAME_REUSE_PREFIX)) {
+            // 서버 문구는 `...남아 있습니다: Incident` 형태지만, 이름 부분이 없더라도 내부 용어가
+            // 새어 나가지 않도록 콜론이 있을 때만 이름을 뽑고 없으면 이름 없는 안내로 떨어뜨린다.
+            const [, reused] = message.split(/:\s*/, 2);
+            toast.error(
+              reused
+                ? reusedNameMessage(reused)
+                : '다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다 — 이름 변경을 먼저 저장한 뒤 다시 시도하세요.',
+            );
+          } else {
+            toast.error(message);
+          }
           if (isConflictError(error)) {
             // 방금 시도한 버전을 기준선으로 확정 — 이후 재조회분이 도착해야 배너 액션이 열린다.
             setBaseVersion(version);

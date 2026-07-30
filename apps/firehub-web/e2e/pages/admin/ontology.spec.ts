@@ -985,6 +985,103 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(payload.relations.some((r) => r.relation === 'CAUSED_BY')).toBe(false);
   });
 
+  // #304 회귀: 이름 맞바꾸기(A 이름을 비운 뒤 그 이름을 B에 부여). 이전에는 UI가 조합을 통과시키고
+  // 저장 시점에야 서버가 400("타입 리네임의 from이 여전히...")으로 튕겨, 세션의 편집 전량을 포기해야 했다.
+  // 이제 세 번째 리네임 확정 시점에 원인 이름을 특정해 차단하므로, 앞선 정상 편집은 그대로 저장할 수 있다.
+  test('타입 이름 맞바꾸기를 시도하면 확정 시점에 차단되고 앞선 정상 리네임은 그대로 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { ...schema, schemaVersion: schema.schemaVersion + 1 },
+      { capture: true },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    const rename = async (from: string, to: string) => {
+      await dialog.getByTestId(`entity-rename-start-${from}`).click();
+      await dialog.getByTestId(`entity-rename-form-${from}`).getByLabel(`${from} 타입 이름`, { exact: true }).fill(to);
+      await dialog.getByTestId(`entity-rename-form-${from}`).getByLabel(`${from} 타입 이름 확인`).click();
+    };
+
+    // 1~2단계는 정상 리네임 — Incident 이름이 비워지므로 UI 중복 검사는 통과한다.
+    await rename('Building', 'Temp');
+    await expect(dialog.getByTestId('entity-edit-Temp')).toBeVisible();
+    await rename('Incident', 'Xyz');
+    await expect(dialog.getByTestId('entity-edit-Xyz')).toBeVisible();
+
+    // 3단계: 비워진 Incident 이름을 재사용 → 차단. 어떤 이름이 문제인지 + 어떻게 하면 되는지 안내.
+    await rename('Temp', 'Incident');
+    await expect(page.getByText('다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다: Incident')).toBeVisible();
+    // 카드는 Temp 그대로 — 차단된 리네임이 부분 적용되면 안 된다.
+    await expect(dialog.getByTestId('entity-edit-Temp')).toBeVisible();
+    await expect(dialog.getByTestId('entity-edit-Incident')).toHaveCount(0);
+
+    // 차단은 그 한 건에만 적용된다 — 앞선 정상 리네임 2건은 여전히 저장 가능해야 한다(작업 전량 포기 방지).
+    await dialog.getByRole('button', { name: '저장' }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as UpdateOntologyRequest;
+    expect(payload.renames).toEqual([
+      { from: 'Building', to: 'Temp' },
+      { from: 'Incident', to: 'Xyz' },
+    ]);
+    // 서버가 400을 던지는 조건(어떤 from이 최종 타입 목록에 남아 있음)이 payload에 없어야 한다.
+    const finalTypes = payload.entities.map((e) => e.type);
+    expect(payload.renames?.some((r) => finalTypes.includes(r.from))).toBe(false);
+  });
+
+  // #304 회귀: 리네임으로 비워진 이름을 "새 타입 추가"로 재사용하는 경로도 서버 검증에 동일하게 걸린다.
+  test('리네임으로 비워진 이름을 새 타입 이름으로 추가하려 하면 차단되고 카드가 추가되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-rename-start-Incident').click();
+    await dialog.getByTestId('entity-rename-form-Incident').getByLabel('Incident 타입 이름', { exact: true }).fill('Xyz');
+    await dialog.getByTestId('entity-rename-form-Incident').getByLabel('Incident 타입 이름 확인').click();
+    await expect(dialog.getByTestId('entity-edit-Xyz')).toBeVisible();
+
+    await dialog.getByTestId('new-entity-type-name').fill('Incident');
+    await dialog.getByTestId('add-entity-type').click();
+
+    await expect(page.getByText('다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다: Incident')).toBeVisible();
+    await expect(dialog.getByTestId('entity-edit-Incident')).toHaveCount(0);
+  });
+
+  // #304 회귀: 클라이언트 가드를 우회한 경로로 서버가 그래도 renames 400을 던지는 경우,
+  // 내부 검증 용어가 그대로 노출되면 안 된다 — 사용자 어휘로 치환해 보여준다.
+  test('서버가 renames 검증 400을 반환해도 내부 용어 대신 사용자 어휘 안내가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/ontology',
+      { message: '타입 리네임의 from이 여전히 엔티티 타입으로 남아 있습니다: Incident' },
+      { status: 400 },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-edit-Incident').getByLabel('설명').fill('서버 400 유도');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다: Incident')).toBeVisible();
+    await expect(page.getByText('타입 리네임의 from이')).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+  });
+
   test('편집 저장 중 버전 충돌(409) 시 에러 토스트가 표시되고 다이얼로그는 닫히지 않는다', async ({
     authenticatedPage: page,
   }) => {
