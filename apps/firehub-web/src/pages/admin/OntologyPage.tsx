@@ -88,7 +88,9 @@ export default function OntologyPage() {
     // Radix Tabs로 감싸 탭 a11y(role=tab)와 기존 E2E 셀렉터를 보존한다. 높이 체인 전 구간 min-h-0.
     <Tabs value={tab} onValueChange={setTab} className="flex h-full min-h-0 flex-col">
       {/* 툴바 — 좌: 패널 토글 + 제목 + 탭 전환, 우: 검색(인스턴스 탭 한정). */}
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
+      {/* 좁은 폭(max-sm)에서는 툴바를 줄바꿈하고 높이를 풀어 가로 스크롤을 없앤다(#345 SC 1.4.10).
+          sm 이상에서는 기존 한 줄 h-12 툴바 그대로. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 sm:h-12 sm:flex-nowrap sm:py-0">
         <Button
           variant="ghost"
           size="icon"

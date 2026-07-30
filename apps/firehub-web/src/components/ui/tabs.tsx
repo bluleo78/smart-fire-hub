@@ -24,7 +24,9 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "rounded-lg p-[3px] group-data-[orientation=horizontal]/tabs:h-9 data-[variant=line]:rounded-none group/tabs-list text-muted-foreground inline-flex w-fit items-center justify-center group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
+  // max-sm에서만 줄바꿈(#345 Reflow/SC 1.4.10) — 320px 폭에서 탭이 한 줄에 밀려 페이지가 가로 스크롤되는 것을 막는다.
+  // 높이는 고정 h-9 대신 max-sm 한정으로 auto로 풀어 두 번째 줄이 잘리지 않게 한다. sm 이상 데스크톱 표현은 그대로다.
+  "rounded-lg p-[3px] group-data-[orientation=horizontal]/tabs:h-9 max-sm:group-data-[orientation=horizontal]/tabs:h-auto max-sm:flex-wrap data-[variant=line]:rounded-none group/tabs-list text-muted-foreground inline-flex w-fit items-center justify-center group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
   {
     variants: {
       variant: {
