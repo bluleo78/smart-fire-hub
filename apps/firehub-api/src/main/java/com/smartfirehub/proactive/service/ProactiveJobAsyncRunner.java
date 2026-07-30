@@ -11,6 +11,7 @@ import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.settings.service.SettingsService;
 import java.time.LocalDateTime;
@@ -191,7 +192,13 @@ public class ProactiveJobAsyncRunner {
       }
 
       // 마지막 실행 시간 업데이트
-      proactiveJobRepository.updateLastExecuted(jobId, ProactiveTime.nowUtc(), null);
+      // 마지막 실행 시각과 함께 다음 실행 예정 시각도 갱신한다 (#348).
+      // 스케줄 등록 시점에 계산한 값은 이번 실행으로 소진됐으므로 여기서 다시 계산해야
+      // 목록의 "다음 실행"이 이미 지나간 시각을 가리키지 않는다.
+      proactiveJobRepository.updateLastExecuted(
+          jobId,
+          ProactiveTime.nowUtc(),
+          ProactiveCron.nextExecuteAtUtc(job.cronExpression(), job.timezone()));
 
       log.info("Proactive job {} executed successfully", jobId);
 

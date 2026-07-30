@@ -29,7 +29,7 @@ import {
 } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
-import { timeAgo } from '@/lib/formatters';
+import { parseUtcDate, timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
 
 function channelSummary(config: Record<string, unknown>): string {
@@ -181,8 +181,10 @@ export default function ProactiveJobListPage() {
                     {job.lastExecutedAt ? timeAgo(job.lastExecutedAt) : '-'}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
+                    {/* nextExecuteAt은 타임존 표기 없는 UTC 벽시계이므로 parseUtcDate로 해석한다.
+                        new Date()를 쓰면 브라우저 로컬(KST)로 파싱돼 9시간 어긋난다 (#348, #349). */}
                     {job.enabled && job.nextExecuteAt
-                      ? formatNextRunShort(new Date(job.nextExecuteAt), job.timezone)
+                      ? formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone)
                       : '-'}
                   </TableCell>
                   <TableCell>

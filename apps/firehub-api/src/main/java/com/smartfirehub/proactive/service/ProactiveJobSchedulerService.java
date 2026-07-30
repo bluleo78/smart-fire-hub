@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import jakarta.annotation.PostConstruct;
 import java.time.ZoneId;
 import java.util.List;
@@ -54,7 +55,23 @@ public class ProactiveJobSchedulerService {
   }
 
   public void registerSchedule(Long jobId, String cronExpression, String timezone) {
-    scheduledTasks.compute(
+    boolean registered = doRegister(jobId, cronExpression, timezone);
+
+    // 다음 실행 예정 시각을 DB에 반영한다 (#348).
+    // 등록/해제 경로(생성·수정·활성화 토글·부팅 시 reloadAllSchedules)가 모두 이 메서드를 지나므로
+    // 여기 한 곳만 채우면 "한 번도 실행되지 않은 잡"까지 포함해 전 행이 값을 갖는다.
+    // compute() 람다 밖에서 쓴다 — ConcurrentHashMap 의 bin lock 을 잡은 채 DB I/O 를 하지 않기 위함.
+    proactiveJobRepository.updateNextExecuteAt(
+        jobId, registered ? ProactiveCron.nextExecuteAtUtc(cronExpression, timezone) : null);
+  }
+
+  /**
+   * 실제 스케줄 등록. 등록에 성공하면 true.
+   *
+   * <p>DB 갱신과 분리한 이유는 {@link ConcurrentHashMap#compute} 람다 안에서 I/O 를 피하기 위함이다.
+   */
+  private boolean doRegister(Long jobId, String cronExpression, String timezone) {
+    return scheduledTasks.compute(
         jobId,
         (id, existing) -> {
           if (existing != null) {
@@ -86,7 +103,8 @@ public class ProactiveJobSchedulerService {
             log.error("Failed to register cron for proactive job {}: {}", jobId, e.getMessage());
             return null;
           }
-        });
+        })
+        != null;
   }
 
   public void unregisterSchedule(Long jobId) {
@@ -97,6 +115,9 @@ public class ProactiveJobSchedulerService {
           log.info("Unregistered proactive job schedule {}", jobId);
           return null;
         });
+    // 스케줄이 없어졌으므로 "다음 실행" 표시도 비운다 (#348).
+    // 비활성화/삭제 후에도 과거 계산값이 남아 있으면 곧 실행될 것처럼 보인다.
+    proactiveJobRepository.updateNextExecuteAt(jobId, null);
   }
 
   public void rescheduleJob(ProactiveJobResponse job) {

@@ -215,6 +215,22 @@ public class ProactiveJobRepository {
         .execute();
   }
 
+  /**
+   * 다음 실행 예정 시각만 갱신한다 (#348).
+   *
+   * <p>스케줄 등록/해제 시점에 호출된다. {@code updateLastExecuted} 와 달리 실행 이력을 건드리지 않으므로, 실행되지 않은 잡에도 값을 채울 수
+   * 있다. 스케줄이 해제되면 {@code null} 을 넣어 "다음 실행 없음"을 표현한다.
+   *
+   * <p>{@code updated_at} 은 갱신하지 않는다 — 사용자가 잡을 수정한 것이 아니라 스케줄러가 파생값을 다시 계산한 것뿐이라, 여기서 갱신하면 목록의
+   * "수정일"이 재부팅마다 흔들린다.
+   */
+  public void updateNextExecuteAt(Long id, LocalDateTime nextExecuteAt) {
+    dsl.update(PROACTIVE_JOB)
+        .set(PJ_NEXT_EXECUTE_AT, nextExecuteAt)
+        .where(PJ_ID.eq(id))
+        .execute();
+  }
+
   public void delete(Long id, Long userId) {
     dsl.deleteFrom(PROACTIVE_JOB).where(PJ_ID.eq(id).and(PJ_USER_ID.eq(userId))).execute();
   }
