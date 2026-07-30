@@ -21,6 +21,16 @@ export function createPropertyReviewItem(overrides: Partial<ReviewItemResponse> 
   };
 }
 
+// date 타입 속성 검수 항목 — 정정값 형식 검증(#311) 회귀 테스트용.
+export function createDatePropertyReviewItem(overrides: Partial<ReviewItemResponse> = {}): ReviewItemResponse {
+  return createPropertyReviewItem({
+    id: 5,
+    reason: "'작년 겨울쯤' 값을 date 타입으로 정규화하지 못했습니다.",
+    payload: { entityKey: '3:창고 화재', entityType: 'Incident', propertyName: 'occurredAt', dataType: 'date', rawText: '작년 겨울쯤', sourceChunkIds: [7] },
+    ...overrides,
+  });
+}
+
 // 저신뢰 엔티티 검수 항목(승인 시 그래프 적재) — signal은 low_confidence, score=confidence.
 export function createEntityReviewItem(overrides: Partial<ReviewItemResponse> = {}): ReviewItemResponse {
   return {

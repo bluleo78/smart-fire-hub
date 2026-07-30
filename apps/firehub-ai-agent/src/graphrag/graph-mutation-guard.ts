@@ -7,10 +7,22 @@
 // 0이면 GraphTargetMissingError를 던져 상위(라우트 → firehub-api → UI)로 실패를 전파한다.
 
 /**
+ * 승인 요청을 "지금 이 요청 그대로는 그래프에 반영할 수 없다"고 거절하는 상태의 상위 타입.
+ * 진짜 장애(502)와 달리 사람이 고칠 수 있는 4xx이므로, 라우트가 이 계열만 409 + 사유(message)로 매핑해
+ * firehub-api → 검수 UI 토스트까지 한국어 사유가 그대로 전달된다(#310, #311).
+ */
+export class GraphMutationRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GraphMutationRejectedError';
+  }
+}
+
+/**
  * 그래프 변경 대상 노드가 Neo4j에 없어 승인 적재를 반영할 수 없는 상태.
  * 일반 장애(502)와 구분해야 하므로 별도 타입으로 둔다 — 라우트가 이 타입만 409로 매핑한다.
  */
-export class GraphTargetMissingError extends Error {
+export class GraphTargetMissingError extends GraphMutationRejectedError {
   constructor(message: string) {
     super(message);
     this.name = 'GraphTargetMissingError';

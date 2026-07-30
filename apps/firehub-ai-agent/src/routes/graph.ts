@@ -7,7 +7,7 @@ import { setEntityProperty } from '../graphrag/property-mutation.js';
 import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
-import { GraphTargetMissingError } from '../graphrag/graph-mutation-guard.js';
+import { GraphMutationRejectedError } from '../graphrag/graph-mutation-guard.js';
 import { loadOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
@@ -18,14 +18,15 @@ const router = Router();
 
 /**
  * 그래프 변경 실패를 상태코드로 나눠 응답한다(#310).
- * - GraphTargetMissingError: 대상 노드 부재라 "지금 이 요청으로는 반영 불가"인 상태 충돌 → 409 + 사용자용 사유.
+ * - GraphMutationRejectedError 계열: "지금 이 요청으로는 반영 불가"인 상태 → 409 + 사용자용 사유.
+ *   대상 노드 부재(GraphTargetMissingError, #310)와 정정값 형식 위반(PropertyValueInvalidError, #311)이 여기 해당한다.
  *   firehub-api가 이 사유를 그대로 ErrorResponse.message로 올려 검수 UI 토스트에 노출하고, 항목은 pending으로 남는다.
  * - 그 외: 진짜 장애 → 502(무로그 502 금지 #308 — 항상 로그를 남긴다).
  */
 function respondMutationError(res: import('express').Response, opLabel: string, fallback: string, e: unknown): void {
   console.error(`[graph] ${opLabel} 실패:`, e);
-  if (e instanceof GraphTargetMissingError) {
-    res.status(409).json({ error: 'graph target missing', message: e.message });
+  if (e instanceof GraphMutationRejectedError) {
+    res.status(409).json({ error: 'graph mutation rejected', message: e.message });
     return;
   }
   res.status(502).json({ error: fallback });

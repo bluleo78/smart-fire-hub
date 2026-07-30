@@ -1,4 +1,4 @@
-import { createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createRelationReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
+import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createRelationReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -146,6 +146,74 @@ test.describe('AI 검수 인박스', () => {
     // 항목은 여전히 검수 대기 상태로 남아 있어야 한다.
     await expect(page.getByText('CAUSED_BY')).toBeVisible();
     await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
+  });
+
+  // #311 회귀 가드 — date 정정값은 "사람이 대신 정규화한 값"이므로 형식을 만족해야 한다.
+  // 무검증이던 시절엔 '작년겨울'이 그대로 그래프에 적재되어 정규화 검수 자체가 무의미해졌다.
+  test('date 속성에 형식을 벗어난 정정값을 넣으면 사유가 표시되고 정정 적용이 막힌다', async ({ authenticatedPage: page }) => {
+    let approveCalled = false;
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/5/approve', (route) => {
+      approveCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createDatePropertyReviewItem({ status: 'approved' })) });
+    });
+
+    await page.goto('/knowledge-graph/review');
+    await page.getByPlaceholder('YYYY-MM-DD').fill('작년겨울');
+
+    await expect(page.getByText('YYYY-MM-DD 형식의 날짜를 입력하세요(예: 2026-01-05).')).toBeVisible();
+    await expect(page.getByRole('button', { name: '정정 적용' })).toBeDisabled();
+    expect(approveCalled).toBe(false);
+  });
+
+  test('date 속성에 달력상 없는 날짜를 넣어도 막고, 유효한 날짜로 고치면 정정값이 전송된다', async ({ authenticatedPage: page }) => {
+    let sentBody: unknown = null;
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/5/approve', (route) => {
+      sentBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createDatePropertyReviewItem({ status: 'approved' })) });
+    });
+
+    await page.goto('/knowledge-graph/review');
+    const input = page.getByPlaceholder('YYYY-MM-DD');
+    await input.fill('2026-02-31');
+    await expect(page.getByText('존재하지 않는 날짜입니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '정정 적용' })).toBeDisabled();
+
+    await input.fill('2026-01-05');
+    await expect(page.getByText('존재하지 않는 날짜입니다.')).toHaveCount(0);
+    await page.getByRole('button', { name: '정정 적용' }).click();
+
+    await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBe('2026-01-05');
+  });
+
+  test('number 속성에 숫자가 아닌 정정값을 넣으면 서버 왕복 없이 사유가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
+    await page.goto('/knowledge-graph/review');
+    await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('삼천만원 정도');
+
+    await expect(page.getByText('숫자만 입력할 수 있습니다(예: 30000000).')).toBeVisible();
+    await expect(page.getByRole('button', { name: '정정 적용' })).toBeDisabled();
+  });
+
+  // 클라이언트를 우회한 요청(직접 API 호출 등)은 서버가 409 + 사유로 거절한다. 이때도 항목은 남아야 한다.
+  test('서버가 정정값 형식을 409로 거절하면 사유 토스트를 띄우고 항목이 목록에 남는다', async ({ authenticatedPage: page }) => {
+    const reason = '날짜 속성의 정정값은 YYYY-MM-DD 형식이어야 합니다(예: 2026-01-05). 입력값: "작년겨울"';
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/5/approve', (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 409, error: 'Conflict', message: reason, timestamp: '2026-07-30T00:00:00Z', path: '/api/v1/graphrag/review-items/5/approve' }),
+      }));
+
+    await page.goto('/knowledge-graph/review');
+    await page.getByPlaceholder('YYYY-MM-DD').fill('2026-01-05');
+    await page.getByRole('button', { name: '정정 적용' }).click();
+
+    await expect(page.getByText(reason)).toBeVisible();
+    await expect(page.getByText('검수를 승인했습니다.')).toHaveCount(0);
+    await expect(page.getByText('“작년 겨울쯤”')).toBeVisible();
   });
 
   test('관계 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {

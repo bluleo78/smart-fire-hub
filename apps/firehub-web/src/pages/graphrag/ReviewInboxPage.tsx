@@ -12,6 +12,7 @@ import {
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError } from '@/lib/api-error';
+import { validatePropertyCorrection } from '@/lib/property-correction';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
@@ -99,6 +100,11 @@ function ReviewRow(props: {
   const [showEvidence, setShowEvidence] = useState(false);
   const [correctedValue, setCorrectedValue] = useState('');
   const isProperty = row.itemType === 'property_normalization';
+  // 정정값 형식 검증(#311) — 위반이면 [정정 적용]을 막고 사유를 인라인으로 알린다.
+  // 서버 왕복 후 실패 토스트로 알던 것을 입력 시점으로 당긴다. 아직 아무것도 입력하지 않은 상태에서는
+  // 사유를 띄우지 않는다(빈 값은 오류가 아니라 미입력) — 대신 버튼은 그대로 비활성이다.
+  const propertyDataType = isProperty ? (row.payload as PropertyPayload).dataType : null;
+  const correctionError = propertyDataType ? validatePropertyCorrection(propertyDataType, correctedValue) : null;
   const isSynonym = row.itemType === 'synonym_merge';
   const isEntity = row.itemType === 'entity_extraction';
   const isRelation = row.itemType === 'relation_extraction';
@@ -111,7 +117,13 @@ function ReviewRow(props: {
         </TableCell>
         <TableCell className="max-w-md">
           {isSynonym && <SynonymContent payload={row.payload as SynonymPayload} rationale={row.reason} />}
-          {isProperty && <PropertyContent payload={row.payload as PropertyPayload} reason={row.reason} value={correctedValue} onChange={setCorrectedValue} />}
+          {isProperty && (
+            <PropertyContent
+              payload={row.payload as PropertyPayload} reason={row.reason}
+              value={correctedValue} onChange={setCorrectedValue}
+              error={correctedValue.trim() === '' ? null : correctionError}
+            />
+          )}
           {isEntity && <EntityContent payload={row.payload as EntityPayload} reason={row.reason} />}
           {isRelation && <RelationContent payload={row.payload as RelationPayload} reason={row.reason} />}
         </TableCell>
@@ -126,7 +138,7 @@ function ReviewRow(props: {
           </div>
         </TableCell>
         <TableCell className="text-right space-x-2 whitespace-nowrap">
-          <Button size="sm" disabled={processing || (isProperty && correctedValue.trim() === '')}
+          <Button size="sm" disabled={processing || (isProperty && correctionError !== null)}
             onClick={() => onApprove(row.id, isProperty ? correctedValue : undefined)}>
             {isProperty ? '정정 적용' : isEntity || isRelation ? '적재' : '승인'}
           </Button>
@@ -154,9 +166,9 @@ function SynonymContent({ payload, rationale }: { payload: SynonymPayload; ratio
 }
 
 function PropertyContent(props: {
-  payload: PropertyPayload; reason: string | null; value: string; onChange: (v: string) => void;
+  payload: PropertyPayload; reason: string | null; value: string; onChange: (v: string) => void; error: string | null;
 }) {
-  const { payload, reason, value, onChange } = props;
+  const { payload, reason, value, onChange, error } = props;
   return (
     <div className="space-y-1">
       <div><Badge variant="outline">{payload.entityType}.{payload.propertyName}</Badge> 원문: <span className="font-medium">“{payload.rawText}”</span></div>
@@ -164,7 +176,9 @@ function PropertyContent(props: {
       <Input
         className="max-w-xs" placeholder={payload.dataType === 'number' ? '정정 숫자(예: 30000000)' : payload.dataType === 'date' ? 'YYYY-MM-DD' : '정정 텍스트'}
         value={value} onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error !== null} aria-label={`${payload.propertyName} 정정값`}
       />
+      {error && <div className="text-xs text-destructive">{error}</div>}
     </div>
   );
 }
