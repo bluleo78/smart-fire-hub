@@ -183,9 +183,32 @@ export default function ProactiveJobListPage() {
                   <TableCell className="text-sm text-muted-foreground">
                     {/* nextExecuteAt은 타임존 표기 없는 UTC 벽시계이므로 parseUtcDate로 해석한다.
                         new Date()를 쓰면 브라우저 로컬(KST)로 파싱돼 9시간 어긋난다 (#348, #349). */}
-                    {job.enabled && job.nextExecuteAt
-                      ? formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone)
-                      : '-'}
+                    {!job.enabled ? (
+                      '-'
+                    ) : job.nextExecuteAt ? (
+                      formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone)
+                    ) : (
+                      /* 활성인데 다음 실행 시각이 없다 = 스케줄러에 등록되지 못한 상태 (#354).
+                         next_execute_at은 등록 성공 시에만 채워지므로 미등록의 관측 가능한 신호가 된다.
+                         이전에는 그냥 '-'로 보여서, 사용자는 '활성'만 믿고 매일 도는 줄 알았지만
+                         실제로는 한 번도 실행되지 않았고 그 사실이 부팅 ERROR 로그에만 남았다.
+                         '실패'로 단정하지 않는 이유: cron이 더 이상 발화하지 않는 경우도 같은 상태다. */
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className="text-destructive font-medium cursor-help"
+                              data-testid="schedule-unregistered"
+                            >
+                              미등록
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            스케줄러에 등록되지 않아 실행되지 않습니다. 실행 주기 설정을 확인하세요.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Switch

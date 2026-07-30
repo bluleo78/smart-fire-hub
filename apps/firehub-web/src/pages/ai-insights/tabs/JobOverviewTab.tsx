@@ -192,8 +192,24 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           <div className="grid grid-cols-2 gap-4">
             <ReadonlyCard label="스케줄" value={cronToLabel(job.cronExpression)} />
             <ReadonlyCard label="타임존" value={job.timezone} />
-            {job.nextExecuteAt && (
+            {job.nextExecuteAt ? (
               <ReadonlyCard label="다음 실행" value={formatDate(job.nextExecuteAt)} />
+            ) : (
+              job.enabled && (
+                /* 활성인데 다음 실행 시각이 없으면 스케줄러 미등록 상태다 (#354).
+                   목록과 같은 신호를 상세에도 노출해, '활성' 배지만 보고 도는 줄 아는 상황을 막는다. */
+                <ReadonlyCard
+                  label="다음 실행"
+                  value={
+                    <span
+                      className="text-destructive font-medium"
+                      data-testid="schedule-unregistered"
+                    >
+                      미등록 — 스케줄러에 등록되지 않아 실행되지 않습니다
+                    </span>
+                  }
+                />
+              )
             )}
             {job.lastExecutedAt && (
               <ReadonlyCard label="마지막 실행" value={formatDate(job.lastExecutedAt)} />

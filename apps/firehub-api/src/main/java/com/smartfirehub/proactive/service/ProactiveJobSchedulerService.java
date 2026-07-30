@@ -79,7 +79,12 @@ public class ProactiveJobSchedulerService {
           }
           String tz = timezone != null && !timezone.isBlank() ? timezone : "Asia/Seoul";
           try {
-            CronTrigger cronTrigger = new CronTrigger(cronExpression, ZoneId.of(tz));
+            // CronTrigger 는 6필드만 수용하는데 DB에는 5필드(Unix 표준)와 6필드가 섞여 있다(#347).
+            // 원시 문자열을 그대로 넘기면 5필드 레거시 잡이 등록에 실패해 enabled=true 인 채로
+            // 영구 미실행 상태가 된다(#354). 다음 실행 시각 계산(nextExecuteAtUtc)과 같은
+            // 정규화 규칙을 쓰게 하여 "표시값 = 실제 발화 시각" 불변식도 유지한다(#348).
+            CronTrigger cronTrigger =
+                new CronTrigger(ProactiveCron.normalize(cronExpression), ZoneId.of(tz));
             ScheduledFuture<?> future =
                 taskScheduler.schedule(
                     () -> {

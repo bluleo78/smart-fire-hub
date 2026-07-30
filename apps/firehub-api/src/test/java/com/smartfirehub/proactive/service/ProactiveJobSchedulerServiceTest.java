@@ -218,8 +218,9 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
   @Test
   @DisplayName("스케줄 등록에 실패하면 next_execute_at 을 채우지 않는다 — 실행되지 않을 잡에 미래 시각을 보이면 안 된다")
   void registerSchedule_whenCronCannotRegister_leavesNextExecuteAtNull() {
-    // 5필드 cron(#347 혼재)은 Spring CronTrigger 가 거부해 스케줄 자체가 등록되지 않는다.
+    // 파싱 불가능한 cron 은 Spring CronTrigger 가 거부해 스케줄 자체가 등록되지 않는다.
     // 이 경우 "다음 실행"을 채우면 실제로는 영영 돌지 않는 잡이 곧 실행될 것처럼 보인다.
+    // (#354 이전에는 5필드 cron 이 이 케이스였으나, 이제 정규화되어 정상 등록된다.)
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
@@ -227,8 +228,49 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
             testUserId);
     assertThat(readNextExecuteAt(created.id())).isNotNull();
 
-    schedulerService.registerSchedule(created.id(), "0 9 * * *", "Asia/Seoul");
+    schedulerService.registerSchedule(created.id(), "not a cron at all", "Asia/Seoul");
     assertThat(readNextExecuteAt(created.id())).isNull();
+  }
+
+  @Test
+  @DisplayName("5필드 cron 도 정규화되어 스케줄에 등록된다 (#354)")
+  void registerSchedule_withFiveFieldCron_registersAndPopulatesNextExecuteAt() {
+    // 검증 도입(#221) 이전에 만들어진 레거시 잡들은 5필드 cron('0 9 * * *')으로 저장돼 있다.
+    // 등록 경로가 원시 문자열을 CronTrigger 에 그대로 넘기던 때는 부팅 시 ERROR 만 남기고
+    // enabled=true 인 채 영구 미실행 상태가 됐다(#354). 정규화 후에는 정상 등록돼야 한다.
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            new CreateProactiveJobRequest(
+                "5필드 cron 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of()),
+            testUserId);
+
+    schedulerService.registerSchedule(created.id(), "0 9 * * *", "Asia/Seoul");
+
+    // 등록에 성공해야만 next_execute_at 이 채워진다 — 등록 성공의 관측 가능한 증거
+    LocalDateTime next = readNextExecuteAt(created.id());
+    assertThat(next).isNotNull();
+    assertThat(next).isAfter(LocalDateTime.now(ZoneOffset.UTC));
+    // 6필드로 쓴 동일 스케줄과 같은 시각이어야 한다 — 정규화가 의미를 바꾸지 않음을 확인
+    assertThat(next)
+        .isEqualTo(
+            com.smartfirehub.proactive.util.ProactiveCron.nextExecuteAtUtc(
+                "0 9 * * *", "Asia/Seoul"));
+  }
+
+  @Test
+  @DisplayName("UI 프리셋이 보내는 5필드 cron 으로도 잡을 생성할 수 있다 (#354)")
+  void createJob_withFiveFieldCron_succeeds() {
+    // 작업 편집 폼의 CRON_PRESETS 는 5필드('0 9 * * *')를 보내는데, 사전 검증이 원시 문자열을
+    // 파싱하던 때는 UI 프리셋으로 만든 잡이 400 으로 막혔다. 등록 경로와 같은 규칙을 써야 한다.
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            new CreateProactiveJobRequest(
+                "5필드 프리셋 잡", "프롬프트", null, "0 9 * * *", "Asia/Seoul", true, Map.of()),
+            testUserId);
+
+    // 사용자가 입력한 원문은 그대로 보존하고, 해석 시점에만 정규화한다
+    assertThat(created.cronExpression()).isEqualTo("0 9 * * *");
+    assertThat(readNextExecuteAt(created.id())).isNotNull();
   }
 
   @Test
