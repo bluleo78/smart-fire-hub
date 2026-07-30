@@ -45,6 +45,13 @@ export interface GraphNode { key: string; type: string; name: string; sourceChun
 export interface GraphEdge { subjectKey: string; type: string; objectKey: string; }
 export interface WholeGraph { nodes: GraphNode[]; edges: GraphEdge[]; }
 
+// Neo4j 수치 속성 → JS number. INTEGER면 Integer 객체(.toNumber), FLOAT면 이미 JS number로 돌아온다.
+// #308: 쓰기측이 plain number를 바인딩해 FLOAT(1.0)로 적재된 기존 데이터가 존재하므로, 쓰기측을 고쳐도
+// 읽기측 방어가 없으면 과거 노드 하나 때문에 그래프 전체 조회가 TypeError로 실패한다.
+function toJsNumber(v: unknown): number {
+  return neo4j.isInt(v) ? v.toNumber() : Number(v);
+}
+
 // 전체 지식그래프를 1회 읽어 노드/엣지로 반환한다.
 // 고립 노드(관계 없는 Entity)도 포함되도록 노드·엣지를 별도 쿼리로 읽는다.
 export async function readWholeGraph(): Promise<WholeGraph> {
@@ -63,7 +70,7 @@ export async function readWholeGraph(): Promise<WholeGraph> {
         key: r.get('key'), type: r.get('type'), name: r.get('name'),
         sourceChunkCount: r.get('sourceChunkCount').toNumber(), // neo4j Integer → JS number
         // 레거시 노드는 속성이 없어 schemaVersion이 null → undefined로 정규화(0/구버전과 구분).
-        ...(schemaVersion != null ? { schemaVersion: schemaVersion.toNumber() } : {}),
+        ...(schemaVersion != null ? { schemaVersion: toJsNumber(schemaVersion) } : {}),
       };
     });
     const edges: GraphEdge[] = edgeRes.records.map((r) => ({

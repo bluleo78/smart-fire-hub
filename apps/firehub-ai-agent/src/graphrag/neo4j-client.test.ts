@@ -5,19 +5,27 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 // 모듈 내부 지역 참조를 그대로 사용하므로 목킹이 가로채지 못한다.
 // 대신 실제 I/O 경계인 'neo4j-driver' 패키지를 목킹해 getDriver/getSession을
 // 실제로 거치면서 세션만 가짜로 대체한다.
+// #308: 드라이버를 통째로 가짜 객체로 대체하면 Integer 판별(isInt) 같은 실제 타입 의미가 사라져
+// "저장 타입이 무엇인가"에 달린 결함을 목이 통과시켜 버린다. driver()만 가짜 세션으로 갈아끼우고
+// int/isInt 등 값 헬퍼는 실제 구현을 그대로 쓴다.
 const runMock = vi.fn();
 const closeMock = vi.fn();
-vi.mock('neo4j-driver', () => ({
-  default: {
-    driver: () => ({ session: () => ({ run: runMock, close: closeMock }) }),
-    auth: { basic: () => ({}) },
-  },
-}));
+vi.mock('neo4j-driver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('neo4j-driver')>();
+  return {
+    ...actual,
+    default: {
+      ...actual.default,
+      driver: () => ({ session: () => ({ run: runMock, close: closeMock }) }),
+    },
+  };
+});
 
+import neo4j from 'neo4j-driver';
 import { readWholeGraph } from './neo4j-client.js';
 
-// neo4j Integer 흉내 — toNumber() 제공.
-const int = (n: number) => ({ toNumber: () => n });
+// 실제 neo4j Integer — INTEGER로 저장된 속성이 드라이버에서 돌아오는 형태.
+const int = (n: number) => neo4j.int(n);
 const rec = (obj: Record<string, unknown>) => ({ get: (k: string) => obj[k] });
 
 describe('readWholeGraph', () => {
@@ -55,6 +63,20 @@ describe('readWholeGraph', () => {
     const g = await readWholeGraph();
     expect(g.nodes[0].schemaVersion).toBe(3);
     expect(g.nodes[1]).not.toHaveProperty('schemaVersion');
+  });
+
+  // #308 회귀 가드: 쓰기측 버그로 FLOAT(1.0)로 적재된 기존 노드는 드라이버가 plain JS number로 돌려준다.
+  // 이때 .toNumber()를 호출하면 TypeError로 readWholeGraph 전체가 throw돼 그래프 조회가 502가 됐다.
+  // 위 테스트들이 int()만 흘려보내 이 경로를 놓쳤으므로, 실제 저장 타입(FLOAT)을 반영한 케이스를 둔다.
+  it('schemaVersion이 FLOAT(plain number)로 저장돼 있어도 throw 없이 number로 반환한다', async () => {
+    runMock
+      .mockResolvedValueOnce({ records: [
+        rec({ key: 'incident:a', type: 'Incident', name: '화재A', sourceChunkCount: int(1), schemaVersion: 1 }),
+      ] })
+      .mockResolvedValueOnce({ records: [] });
+
+    const g = await readWholeGraph();
+    expect(g.nodes[0].schemaVersion).toBe(1);
   });
 });
 

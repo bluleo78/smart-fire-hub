@@ -2,6 +2,7 @@
 // ingest 시 보류돼 그래프에 없던 엔티티를 as-extracted 타입/이름으로 노드 MERGE하고,
 // 함께 보류됐던 관계는 "상대 끝점이 이미 존재할 때만" MERGE한다(양쪽 보류 관계는 마지막 승인 시 생성).
 // loader.ts와 동일한 예약키 방어·sourceChunkIds 누적 관용구를 재사용한다.
+import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 import { EntityType, Ontology, RelationType, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
@@ -24,7 +25,9 @@ export interface AddEntityInput {
 export async function addEntity(ontology: Ontology, input: AddEntityInput): Promise<void> {
   const key = entityKey(entityTypeId(ontology, input.entityType), input.name);
   const props = sanitizeProperties(input.properties);
-  const schemaVersion = ontology.schemaVersion;
+  // plain JS number를 그대로 바인딩하면 Cypher FLOAT로 저장돼 읽기측 Integer 가정이 깨진다(#308).
+  // 노드/관계 쿼리 모두 이 값을 재사용하므로 한 번만 INTEGER로 감싼다.
+  const schemaVersion = neo4j.int(ontology.schemaVersion);
   const session = getSession();
   try {
     // 노드 MERGE(loader.ts 관용구) — 예약키 제거 속성 병합 + sourceChunkIds 누적(dedup).

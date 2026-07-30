@@ -19,7 +19,9 @@ const router = Router();
 router.get('/graph', internalAuth, async (_req, res) => {
   try {
     res.json(await readWholeGraph());
-  } catch {
+  } catch (e) {
+    // 무로그 502 금지(#308) — 로그가 없으면 원인 추적이 불가능하다.
+    console.error('[graph] readWholeGraph 실패:', e);
     res.status(502).json({ error: 'graph read failed' });
   }
 });
@@ -47,7 +49,8 @@ router.post('/graph/merge-entities', internalAuth, async (req, res) => {
     const ontology = await loadOntology(apiClient);
     await mergeEntities(ontology, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
     res.status(204).send();
-  } catch {
+  } catch (e) {
+    console.error('[graph] merge-entities 실패:', e);
     res.status(502).json({ error: 'entity merge failed' });
   }
 });
@@ -69,7 +72,8 @@ router.post('/graph/set-property', internalAuth, async (req, res) => {
   try {
     await setEntityProperty(parsed.data.entityKey, parsed.data.propertyName, parsed.data.dataType, parsed.data.value);
     res.status(204).send();
-  } catch {
+  } catch (e) {
+    console.error('[graph] set-property 실패:', e);
     res.status(502).json({ error: 'set property failed' });
   }
 });
@@ -107,7 +111,8 @@ router.post('/graph/add-entity', internalAuth, async (req, res) => {
       relations: parsed.data.relations.map((r) => ({ ...r, relType: r.relType as RelationType })) as AddEntityInput['relations'],
     });
     res.status(204).send();
-  } catch {
+  } catch (e) {
+    console.error('[graph] add-entity 실패:', e);
     res.status(502).json({ error: 'add entity failed' });
   }
 });
@@ -135,7 +140,8 @@ router.post('/graph/add-relation', internalAuth, async (req, res) => {
     await addRelation(ontology.schemaVersion, parsed.data.subjectKey, parsed.data.relType as RelationType,
       parsed.data.objectKey, parsed.data.sourceChunkIds);
     res.status(204).send();
-  } catch {
+  } catch (e) {
+    console.error('[graph] add-relation 실패:', e);
     res.status(502).json({ error: 'add relation failed' });
   }
 });

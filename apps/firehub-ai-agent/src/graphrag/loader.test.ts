@@ -9,6 +9,7 @@ vi.mock('./neo4j-client.js', () => ({
   getSession: () => ({ run: runMock, close: closeMock }),
 }));
 
+import neo4j from 'neo4j-driver';
 import { loadGraph } from './loader.js';
 import { entityKey } from './resolver.js';
 import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
@@ -77,8 +78,12 @@ describe('loadGraph', () => {
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     const [relCypher, relParams] = runMock.mock.calls[1];
     expect(nodeCypher).toContain('n.schemaVersion = $schemaVersion');
-    expect(nodeParams.schemaVersion).toBe(5);
     expect(relCypher).toContain('x.schemaVersion = $schemaVersion');
-    expect(relParams.schemaVersion).toBe(5);
+    // #308 회귀 가드: plain JS number를 바인딩하면 드라이버가 Cypher FLOAT(5.0)로 직렬화해
+    // 읽기측 Integer 가정이 깨진다. 값뿐 아니라 "Integer 타입으로 넘겼는지"를 검증한다.
+    expect(neo4j.isInt(nodeParams.schemaVersion)).toBe(true);
+    expect(nodeParams.schemaVersion.toNumber()).toBe(5);
+    expect(neo4j.isInt(relParams.schemaVersion)).toBe(true);
+    expect(relParams.schemaVersion.toNumber()).toBe(5);
   });
 });

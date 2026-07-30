@@ -1,6 +1,7 @@
 // ResolvedGraph를 Neo4j에 MERGE로 멱등 적재한다.
 // 모델: (:Entity {key,type,name,sourceChunkIds|sourceDatasetIds,schemaVersion})-[:REL {type,...}]->(:Entity)
 // 문서 파이프라인(loadGraph)은 provenance=sourceChunkIds, 표 투영(loadTableGraph)은 sourceDatasetIds.
+import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 import { ResolvedGraph } from './resolver.js';
 
@@ -39,6 +40,9 @@ async function mergeGraph(
     // 공유할 때 나중 적재가 더 낮은 버전으로 덮어쓸 수 있으나, 아직 이 값을 소비하는 재적재/drift 로직이
     // 없어 방어 로직은 추가하지 않는다(YAGNI, 슬라이스 5-4 설계 참조).
     const entities = graph.entities.map((e) => ({ ...e, properties: sanitizeProperties(e.properties) }));
+    // 드라이버는 plain JS number를 Cypher FLOAT로 직렬화한다 — 그대로 넘기면 schemaVersion이 1.0(FLOAT)로
+    // 저장돼 읽기측 Integer 가정이 깨진다(#308). 정수 의미가 명확한 값이므로 neo4j.int()로 INTEGER 바인딩한다.
+    const schemaVersionInt = neo4j.int(schemaVersion);
     await session.run(
       `UNWIND $entities AS e
        MERGE (n:Entity {key: e.key})
@@ -47,7 +51,7 @@ async function mergeGraph(
        SET n.${provField} =
          CASE WHEN $${provParam} IN coalesce(n.${provField}, [])
               THEN n.${provField} ELSE coalesce(n.${provField}, []) + $${provParam} END`,
-      { entities, [provParam]: provValue, schemaVersion },
+      { entities, [provParam]: provValue, schemaVersion: schemaVersionInt },
     );
     // 관계 MERGE — (subjectKey)-[:REL {type}]->(objectKey). provenance(provField) 동일 누적.
     // schemaVersion은 저장만 하고 읽기 API(GraphEdge)에는 노출하지 않는다(소비자 생기면 노출 — 노드측
@@ -60,7 +64,7 @@ async function mergeGraph(
        SET x.${provField} =
          CASE WHEN $${provParam} IN coalesce(x.${provField}, [])
               THEN x.${provField} ELSE coalesce(x.${provField}, []) + $${provParam} END`,
-      { rels: graph.relations, [provParam]: provValue, schemaVersion },
+      { rels: graph.relations, [provParam]: provValue, schemaVersion: schemaVersionInt },
     );
     return { nodes: graph.entities.length, relations: graph.relations.length };
   } finally { await session.close(); }

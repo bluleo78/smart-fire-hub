@@ -8,6 +8,7 @@ vi.mock('./neo4j-client.js', () => ({
   getSession: () => ({ run: runMock, close: closeMock }),
 }));
 
+import neo4j from 'neo4j-driver';
 import { loadTableGraph } from './loader.js';
 import { entityKey } from './resolver.js';
 import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
@@ -28,7 +29,9 @@ describe('loadTableGraph', () => {
     expect(nodeCypher).toContain('n.sourceDatasetIds');
     expect(nodeCypher).not.toContain('sourceChunkIds'); // 표 경로는 chunk provenance를 건드리지 않음
     expect(nodeParams.datasetId).toBe(77);
-    expect(nodeParams.schemaVersion).toBe(3);
+    // #308: FLOAT 저장을 막기 위해 Integer로 바인딩한다.
+    expect(neo4j.isInt(nodeParams.schemaVersion)).toBe(true);
+    expect(nodeParams.schemaVersion.toNumber()).toBe(3);
   });
 
   it('관계에도 sourceDatasetIds를 쓴다', async () => {
