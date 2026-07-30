@@ -385,4 +385,53 @@ test.describe('AI 검수 인박스', () => {
       await expect(page.getByTestId('review-decide-confirm')).toHaveCount(0);
     });
   });
+
+  // #337 회귀 가드 — #315의 `autoFocus`가 #328 포커스 복귀 훅의 트리거 캡처를 가로채
+  // 이 페이지의 확인 다이얼로그만 닫힘 후 포커스가 <body>로 떨어지던 결함.
+  // 세 경로(ESC / 취소 / 확정 후 행 소멸) 모두 키보드 사용자가 원래 위치로 돌아와야 한다.
+  test.describe('확인 다이얼로그 닫힘 후 포커스 복귀 (#337)', () => {
+    test('ESC로 닫으면 포커스가 트리거(승인) 버튼으로 돌아온다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+
+      // 키보드 전용 사용자와 동일한 경로 — 트리거에 포커스를 두고 Enter로 연다.
+      const trigger = page.getByRole('button', { name: '승인' });
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('review-decide-confirm-cancel')).toBeFocused();
+
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('review-decide-confirm')).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+
+    test('취소 버튼으로 닫으면 포커스가 트리거(거부) 버튼으로 돌아온다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+
+      const trigger = page.getByRole('button', { name: '거부' });
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('review-decide-confirm-cancel')).toBeFocused();
+
+      await page.keyboard.press('Enter'); // 기본 포커스가 취소이므로 Enter = 취소
+      await expect(page.getByTestId('review-decide-confirm')).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+
+    test('거부를 확정해 행이 사라지면 포커스가 표로 복귀한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await mockApi(page, 'POST', '/api/v1/graphrag/review-items/1/reject', createSynonymReviewItem({ status: 'rejected' }));
+      await page.goto('/knowledge-graph/review');
+
+      await page.getByRole('button', { name: '거부' }).focus();
+      await page.keyboard.press('Enter');
+      // 확정 직후 목록은 비게 되므로 트리거 자체가 사라진다 → restoreFocusRef(표)가 받아야 한다.
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+      await page.getByTestId('review-decide-confirm-action').click();
+
+      await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+      await expect(page.getByTestId('review-inbox-table')).toBeFocused();
+    });
+  });
 });

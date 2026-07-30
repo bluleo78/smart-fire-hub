@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -154,12 +154,38 @@ export default function ReviewInboxPage() {
   const [processingId, setProcessingId] = useState<number | null>(null);
   // 확인 다이얼로그는 페이지에 1개만 둔다(행마다 렌더하면 DOM이 부풀고, 확정 후 행이 사라질 때 언마운트 레이스가 생긴다).
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
+  // 확정 시 대상 행(=트리거 버튼)이 목록에서 사라지므로 포커스가 돌아갈 곳이 없다.
+  // 표를 대체 복귀 지점으로 넘겨 키보드 사용자가 페이지 맨 위로 튕기지 않게 한다 (#337).
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  /**
+   * 확정 후 목록이 갱신되어 대상 행이 사라지면, 그 행의 트리거 버튼을 잡고 있던 포커스가
+   * <body>로 떨어진다. 다이얼로그가 닫히는 시점에는 행이 아직 살아 있어
+   * 복귀 훅의 restoreFocusRef 폴백이 타지 않으므로 여기서 직접 표로 되돌린다 (#337).
+   * 실패(409 등)로 행이 남은 경우엔 포커스가 트리거에 그대로 있으므로 아무 것도 하지 않는다.
+   */
+  const restoreFocusIfRowGone = () => {
+    // 목록 재조회 후 React 리렌더가 언제 flush 될지는 프레임 단위로 보장되지 않는다.
+    // 첫 프레임에 아직 행이 살아 있으면 다음 프레임에 다시 확인한다(최대 3프레임).
+    // 그래도 포커스가 살아 있으면 실패로 행이 잔존한 경우이므로 손대지 않는다.
+    let frames = 0;
+    const check = () => {
+      const active = document.activeElement;
+      if (active && active !== document.body && active.isConnected) {
+        if (frames++ < 2) requestAnimationFrame(check);
+        return;
+      }
+      tableRef.current?.focus();
+    };
+    requestAnimationFrame(check);
+  };
 
   const doApprove = async (id: number, correctedValue?: string) => {
     setProcessingId(id);
     try {
       await approve.mutateAsync({ id, correctedValue });
       toast.success('검수를 승인했습니다.');
+      restoreFocusIfRowGone();
     } catch (err) { handleApiError(err, '승인 처리에 실패했습니다.'); }
     finally { setProcessingId(null); }
   };
@@ -168,6 +194,7 @@ export default function ReviewInboxPage() {
     try {
       await reject.mutateAsync(id);
       toast.success('검수를 거부했습니다.');
+      restoreFocusIfRowGone();
     } catch (err) { handleApiError(err, '거부 처리에 실패했습니다.'); }
     finally { setProcessingId(null); }
   };
@@ -205,7 +232,9 @@ export default function ReviewInboxPage() {
         </TabsList>
       </Tabs>
 
-      <Table>
+      {/* tabIndex=-1: Tab 순서는 건드리지 않으면서 프로그램적으로 포커스를 받을 수 있게 한다(#337 복귀 지점).
+          포커스 링은 지우지 않는다 — 복귀 지점이 보이지 않으면 SC 2.4.7 위반으로 결함을 바꿔 심는 셈이다. */}
+      <Table ref={tableRef} tabIndex={-1} data-testid="review-inbox-table">
         <TableHeader>
           <TableRow>
             <TableHead>종류</TableHead>
@@ -230,6 +259,7 @@ export default function ReviewInboxPage() {
       {/* 4개 조치(승인·적재·정정 적용·거부) 전부가 거치는 단일 확인 게이트. 그래프 변경/목록 소멸이 모두 비가역이라 조건부 스킵은 두지 않는다. */}
       <AlertDialog open={confirmTarget !== null} onOpenChange={(open) => !open && setConfirmTarget(null)}>
         <AlertDialogContent
+          restoreFocusRef={tableRef}
           data-testid="review-decide-confirm"
           data-action={confirmTarget?.action}
           data-item-type={confirmTarget?.row.itemType}
@@ -240,8 +270,11 @@ export default function ReviewInboxPage() {
             {copy?.summary && <div className="text-muted-foreground text-sm">{copy.summary}</div>}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            {/* 취소가 좌측·기본 포커스 — 비가역 조치에서 Enter 오입력이 곧바로 확정되지 않게 한다. */}
-            <AlertDialogCancel autoFocus data-testid="review-decide-confirm-cancel">취소</AlertDialogCancel>
+            {/* 취소가 좌측·기본 포커스 — 비가역 조치에서 Enter 오입력이 곧바로 확정되지 않게 한다.
+                기본 포커스는 Radix AlertDialog 가 onOpenAutoFocus 에서 Cancel 로 옮겨 주므로 별도 지정이 불필요하다.
+                여기에 `autoFocus` 를 두면 React 가 commit 단계에서 먼저 포커스를 옮겨
+                포커스 복귀 훅이 트리거 대신 이 버튼을 캡처한다 (이슈 #337). */}
+            <AlertDialogCancel data-testid="review-decide-confirm-cancel">취소</AlertDialogCancel>
             <AlertDialogAction
               data-testid="review-decide-confirm-action"
               className={cn(copy?.destructive && buttonVariants({ variant: 'destructive' }))}
