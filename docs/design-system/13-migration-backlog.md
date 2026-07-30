@@ -146,6 +146,24 @@ WCAG 2.2 AA 기준에 맞게 ARIA 속성을 추가하고 포커스 관리를 개
 
 ---
 
+## P2: 긴 폼 다이얼로그 = flex 3분할 + 푸터 고정
+
+### 작업 내용
+콘텐츠가 뷰포트를 크게 넘길 수 있는 다이얼로그는 `DialogContent`에 `max-h-[85vh] overflow-y-auto`를 걸어 헤더·본문·푸터를 통째로 스크롤시키지 않는다. 대신 `DialogContent`를 `flex max-h-[85vh] flex-col`로 두고 **본문 div만** `flex-1 overflow-y-auto`로 스크롤시켜 `DialogHeader`/`DialogFooter`를 형제로 고정한다. `sticky bottom-0`은 배경 겹침·그림자 처리를 추가로 요구하므로 쓰지 않는다.
+
+### 배경
+저장/취소 푸터가 스크롤 영역 안에 있으면 편집 위치와 저장 버튼이 화면에서 함께 보이지 않는다. `OntologyEditDialog`는 `scrollHeight=3754px`(뷰포트의 약 5배)라 저장 버튼이 `y≈3763px`에 놓였고, 저장하려면 3,000px을 스크롤해야 했다 (#303). 여기에 "닫으면 편집 전량 소실"이 겹치면 편집 자체를 회피하게 만든다.
+
+### 영향 범위
+- **적용 완료**: `OntologyEditDialog.tsx` (#303), 선례 `components/ai/widgets/ReportPreviewDialog.tsx:62`
+- **남은 후보**: `EditTriggerDialog.tsx:108`, `AddTriggerDialog.tsx:163`, `ProactiveJobsTab.tsx:329`, `AddRowDialog.tsx:57` — 모두 같은 `max-h-[85vh] overflow-y-auto` 관행이지만 콘텐츠가 짧아 현재는 체감 결함이 없다. **일괄 치환하지 않고**, 콘텐츠가 길어지는 시점에 개별 전환한다.
+- **주의**: shadcn `DialogContent`의 기본 `grid gap-4`를 덮어야 하므로 `flex flex-col`을 반드시 명시한다.
+
+### 함께 처리할 것
+- 긴 폼 다이얼로그는 닫기 가드(dirty일 때만 확인)도 함께 검토한다 — 푸터가 멀수록 실수로 닫을 여지가 크다 (#303).
+
+---
+
 ## ~~P3: index.css 중복 제거~~ ✅ 완료
 
 > **완료일**: 2026-04-08

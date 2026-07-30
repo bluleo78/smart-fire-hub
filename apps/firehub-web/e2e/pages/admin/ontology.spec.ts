@@ -1190,6 +1190,149 @@ test.describe('지식그래프 시각화 페이지', () => {
     const getBetween = events.slice(firstPut + 1, secondPut).includes('GET');
     expect(getBetween).toBe(true);
   });
+
+  // ⚠️ 회귀 테스트(#303) — 뷰포트 5배 길이 폼에서 (1) 실수로 닫아 편집 전량이 무경고로 사라지고
+  // (2) 저장 버튼이 3,700px 스크롤 끝에 있어 편집 위치와 절대 함께 보이지 않던 두 결함.
+  test('편집 후 ESC를 누르면 닫기 가드가 뜨고, 편집 계속하기를 고르면 편집이 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByLabel('도메인').fill('잃어버리면 안 되는 도메인');
+
+    await page.keyboard.press('Escape');
+
+    // 다이얼로그는 닫히지 않고 가드가 뜬다.
+    const guard = page.getByTestId('ontology-close-confirm');
+    await expect(guard).toBeVisible();
+    await expect(guard.getByText('지금 닫으면 편집한 내용이 모두 사라집니다.')).toBeVisible();
+    await expect(dialog).toBeVisible();
+
+    // 편집 계속하기 → 가드만 닫히고 편집 내용은 그대로.
+    await guard.getByRole('button', { name: '편집 계속하기' }).click();
+    await expect(guard).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('도메인')).toHaveValue('잃어버리면 안 되는 도메인');
+  });
+
+  // 이슈가 지목한 세 경로(취소·ESC·오버레이 클릭)가 모두 같은 가드를 타야 한다 — ESC만 막고
+  // 나머지가 새면 편집 유실은 그대로 남는다.
+  test('오버레이 클릭도 닫기 가드를 타고 다이얼로그가 닫히지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByLabel('도메인').fill('오버레이로 잃으면 안 되는 도메인');
+
+    // 다이얼로그는 y≈67px에서 시작하므로 (10,10)은 오버레이 영역이다.
+    await page.mouse.click(10, 10);
+
+    await expect(page.getByTestId('ontology-close-confirm')).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('도메인')).toHaveValue('오버레이로 잃으면 안 되는 도메인');
+  });
+
+  test('푸터 취소 버튼도 닫기 가드를 타고 다이얼로그가 닫히지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByLabel('도메인').fill('취소로 잃으면 안 되는 도메인');
+
+    await dialog.getByRole('button', { name: '취소' }).click();
+
+    await expect(page.getByTestId('ontology-close-confirm')).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('도메인')).toHaveValue('취소로 잃으면 안 되는 도메인');
+  });
+
+  test('닫기 가드에서 저장하지 않고 닫기를 고르면 다이얼로그가 닫히고 재오픈 시 원본이 복원된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByLabel('도메인').fill('폐기될 도메인');
+    await page.keyboard.press('Escape');
+
+    await page.getByTestId('ontology-close-confirm').getByRole('button', { name: '저장하지 않고 닫기' }).click();
+    await expect(dialog).toBeHidden();
+
+    // 재오픈 — OntologyPage가 key로 리마운트하므로 원본 값으로 돌아와 있다.
+    await page.getByRole('button', { name: '편집' }).click();
+    await expect(dialog.getByLabel('도메인')).toHaveValue(schema.domain);
+  });
+
+  test('편집하지 않은 상태의 ESC는 가드 없이 즉시 닫힌다', async ({ authenticatedPage: page }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await expect(dialog).toBeVisible();
+
+    await page.keyboard.press('Escape');
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('ontology-close-confirm')).toHaveCount(0);
+  });
+
+  // 리네임 인라인 입력에는 자체 Escape 핸들러가 있다 — ESC 한 번이 "리네임 취소 + 닫기 가드"를
+  // 동시에 트리거하면 안 된다. 리네임 중 ESC는 리네임만 취소하고 다이얼로그는 열린 채여야 한다.
+  test('타입 리네임 입력 중 ESC는 리네임만 취소하고 닫기 가드를 띄우지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await dialog.getByTestId('entity-rename-start-Incident').click();
+    await dialog.getByRole('textbox', { name: 'Incident 타입 이름' }).fill('사건');
+
+    await page.keyboard.press('Escape');
+
+    // 리네임 인라인 폼만 사라지고, 가드도 뜨지 않으며 다이얼로그는 그대로 열려 있다.
+    await expect(dialog.getByTestId('entity-rename-form-Incident')).toBeHidden();
+    await expect(page.getByTestId('ontology-close-confirm')).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    // 리네임은 확정되지 않았으므로 원래 타입명이 그대로 남는다.
+    await expect(dialog.getByTestId('entity-edit-Incident')).toBeVisible();
+  });
+
+  test('다이얼로그를 연 직후 스크롤하지 않아도 저장·취소 푸터가 뷰포트 안에 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '편집' }).click();
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await expect(dialog).toBeVisible();
+
+    // 수정 전에는 저장 버튼이 y≈3,763px(뷰포트 밖)에 있어 3,000px을 스크롤해야 닿았다.
+    await expect(dialog.getByRole('button', { name: '저장' })).toBeInViewport();
+    await expect(dialog.getByRole('button', { name: '취소' })).toBeInViewport();
+
+    // 본문을 끝까지 스크롤해도 푸터는 같은 자리에 고정되어 있다(스크롤 영역 밖 형제).
+    const footerTopBefore = await dialog.getByRole('button', { name: '저장' }).boundingBox();
+    await dialog.getByTestId('relations-editor').scrollIntoViewIfNeeded();
+    const footerTopAfter = await dialog.getByRole('button', { name: '저장' }).boundingBox();
+    expect(footerTopAfter?.y).toBeCloseTo(footerTopBefore?.y ?? 0, 0);
+    await expect(dialog.getByRole('button', { name: '저장' })).toBeInViewport();
+  });
 });
 
 /**

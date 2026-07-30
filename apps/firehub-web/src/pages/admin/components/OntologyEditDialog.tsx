@@ -2,6 +2,16 @@ import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -92,7 +102,49 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
   // 낡은 내용"이 짝지어져 남의 변경을 소리 없이 덮어쓰는 lost-update가 된다(#301).
   const [baseVersion, setBaseVersion] = useState(schema.schemaVersion);
   const [hasConflict, setHasConflict] = useState(false);
+  // 닫기 가드(#303) 확인 다이얼로그 노출 여부.
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const updateOntology = useUpdateOntology();
+
+  // ── 닫기 가드(#303) ──
+  // 이 폼은 뷰포트 5배 길이라 편집이 크게 누적된다. 실수로 ESC/오버레이/취소를 눌러 전량이
+  // 소리 없이 사라지는 것을 막기 위해, 원본과 달라졌을 때(dirty)만 확인을 거친다.
+  //
+  // baseline은 **마운트 시점에 한 번 얼려서** 잡는다(useState 지연 초기화). schema prop은 409
+  // 이후 재조회분으로 리마운트 없이 교체되므로(#301), 살아 있는 prop과 비교하면 기준선이 서버의
+  // 최신 내용으로 슬쩍 옮겨가 "편집했는데 dirty가 아님"이 될 수 있다.
+  const [pristine] = useState(() =>
+    JSON.stringify({
+      domain: schema.domain,
+      entities: schema.entities,
+      relations: schema.relations,
+      renames: {} as Record<string, string>,
+    }),
+  );
+  // 진행 중인 newTypeName/renameDraft 입력값은 dirty에 넣지 않는다 — 확정 전 임시값이다.
+  const isDirty = JSON.stringify({ domain, entities, relations, renames }) !== pristine;
+
+  /**
+   * 모든 닫기 경로(ESC·오버레이 클릭·X 버튼·푸터 취소)의 단일 진입점.
+   * dirty면 닫지 않고 확인 다이얼로그만 띄우고, 아니면 즉시 닫는다.
+   */
+  const requestClose = () => {
+    // 저장 진행 중에는 닫기 요청 자체를 무시한다(푸터 버튼 disabled와 같은 취지 —
+    // ESC/오버레이는 disabled의 보호를 받지 못하므로 여기서 막는다).
+    if (updateOntology.isPending) return;
+    if (isDirty) {
+      setConfirmingClose(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+
+  // 확인 시: 폼 리셋 코드는 두지 않는다 — OntologyPage가 열 때마다 key로 리마운트하므로
+  // 재진입은 이미 원본 상태다(위 JSDoc 참조).
+  const confirmDiscardAndClose = () => {
+    setConfirmingClose(false);
+    onOpenChange(false);
+  };
 
   // 409 후 useUpdateOntology가 ['ontology']를 무효화 → 재조회분이 (리마운트 없이) prop으로 도착하면
   // 이 값이 baseVersion보다 커진다. 그때서야 "덮어쓰고 저장"이 의미를 가진다.
@@ -321,8 +373,30 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
   const handleOverwrite = () => submit(latestVersion);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto" data-testid="ontology-edit-dialog">
+    <>
+    {/* onOpenChange: DialogContent 기본 X 버튼처럼 preventDefault할 이벤트가 없는 경로까지
+        포함해 모든 닫기를 requestClose로 모은다. 여는 방향(next=true)은 그대로 통과. */}
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}>
+      {/* flex 3분할(헤더/스크롤 본문/푸터) — DialogContent에서 overflow-y-auto를 걷어내고 본문만
+          스크롤시켜 저장·취소 푸터가 스크롤과 무관하게 항상 보이게 한다(#303).
+          shadcn DialogContent의 기본 `grid gap-4`를 덮어야 하므로 flex flex-col을 명시한다
+          (선례: ReportPreviewDialog.tsx:62). */}
+      <DialogContent
+        className="flex max-h-[85vh] max-w-2xl flex-col"
+        data-testid="ontology-edit-dialog"
+        onEscapeKeyDown={(e) => {
+          // 타입 리네임 인라인 입력 중 ESC는 리네임만 취소한다(자체 onKeyDown이 처리) —
+          // 여기서 preventDefault만 하고 가드를 띄우지 않는다. Radix가 ESC를 캡처 단계에서
+          // 듣더라도 입력의 stopPropagation에 의존하지 않고 우선순위가 지켜진다.
+          e.preventDefault();
+          if (renamingType !== null) return;
+          requestClose();
+        }}
+        onPointerDownOutside={(e) => {
+          e.preventDefault();
+          requestClose();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>지식 모델 편집</DialogTitle>
           <DialogDescription>
@@ -330,7 +404,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-6 py-2">
+        {/* 스크롤 영역은 이 본문 div 하나 — 헤더/푸터는 형제로 남아 고정된다(#303). */}
+        <div className="flex flex-1 flex-col gap-6 overflow-y-auto py-2 pr-1">
           {/* 충돌 복구 배너(#301) — 409 후 최신 스키마 재조회가 끝나면 "덮어쓰고 저장"으로
               편집 내용을 잃지 않고 재저장할 수 있다. 재조회 전에는 안내만 노출(액션 비활성). */}
           {hasConflict && (
@@ -379,7 +454,10 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                           e.preventDefault();
                           confirmRename();
                         } else if (e.key === 'Escape') {
+                          // 리네임 중 ESC는 리네임만 취소한다 — 다이얼로그 닫기 가드(#303)까지
+                          // 함께 트리거되지 않도록 여기서 이벤트를 소비한다.
                           e.preventDefault();
+                          e.stopPropagation();
                           cancelRename();
                         }
                       }}
@@ -656,8 +734,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={updateOntology.isPending}>
+        <DialogFooter className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={requestClose} disabled={updateOntology.isPending}>
             취소
           </Button>
           <Button onClick={handleSave} disabled={updateOntology.isPending}>
@@ -666,5 +744,26 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* 닫기 가드(#303) — DialogContent 안에 중첩하면 부모 Dialog가 닫히는 순간 함께 언마운트되므로
+        형제로 둔다. 버튼 카피는 둘 다 결과를 말한다(중립어 '취소/확인'은 이 맥락에서 편집 취소인지
+        닫기 취소인지 모호하다). 기본 포커스는 Radix 기본값대로 Cancel(=편집 계속하기)에 간다. */}
+    <AlertDialog open={confirmingClose} onOpenChange={setConfirmingClose}>
+      <AlertDialogContent data-testid="ontology-close-confirm">
+        <AlertDialogHeader>
+          <AlertDialogTitle>저장하지 않은 변경이 있습니다</AlertDialogTitle>
+          <AlertDialogDescription>
+            지금 닫으면 편집한 내용이 모두 사라집니다. 저장하지 않고 닫을까요?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>편집 계속하기</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={confirmDiscardAndClose}>
+            저장하지 않고 닫기
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
