@@ -58,6 +58,24 @@ describe('mergeEntities', () => {
     expect(runMock).toHaveBeenCalledTimes(1); // 노드 조회 1회만, 그래프 변경 호출 없음.
   });
 
+  // 정규화 후 두 이름의 key가 같은 경우 — 재배선/삭제는 불필요하지만 "대상이 아예 없음"과는 구별해야 한다(#316).
+  it('같은 키인데 그 노드가 그래프에 없으면 성공이 아니라 실패로 전파한다(#316)', async () => {
+    runMock.mockResolvedValueOnce({ records: [{ get: (k: string) => (k === 'matched' ? 0 : undefined) }] });
+
+    // 대소문자·공백만 다른 두 표기 → 정규화 후 같은 key.
+    await expect(mergeEntities(CORE_ONTOLOGY, 'Cause', '누전 ', '누전'))
+      .rejects.toThrow(GraphTargetMissingError);
+    expect(closeMock).toHaveBeenCalled(); // 조기 반환 경로도 세션을 닫아야 한다.
+  });
+
+  it('같은 키이고 노드가 존재하면 그래프를 건드리지 않고 성공한다(no-op 병합)', async () => {
+    runMock.mockResolvedValueOnce({ records: [{ get: (k: string) => (k === 'matched' ? 1 : undefined) }] });
+
+    await expect(mergeEntities(CORE_ONTOLOGY, 'Cause', '누전 ', '누전')).resolves.toBeUndefined();
+    expect(runMock).toHaveBeenCalledTimes(1); // 존재 확인 1회만 — 변경 쿼리 없음.
+    expect(runMock.mock.calls[0][0]).toContain('RETURN count(n) AS matched');
+  });
+
   it('pickCanonicalName의 타이브레이크(길이 동률 시 사전순)를 그대로 따른다', async () => {
     const nameA = '전기적 요인';
     const nameB = '분전반의 누전';

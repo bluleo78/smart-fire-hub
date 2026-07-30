@@ -4,7 +4,7 @@ import { getSession } from './neo4j-client.js';
 import { EntityType, Ontology, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
-import { GraphTargetMissingError } from './graph-mutation-guard.js';
+import { GraphTargetMissingError, affectedCount } from './graph-mutation-guard.js';
 
 interface EntityRow { key: string; sourceChunkIds: number[]; }
 interface RelRow { type: string; otherKey: string; sourceChunkIds: number[]; }
@@ -31,10 +31,24 @@ export async function mergeEntities(
   const typeId = entityTypeId(ontology, entityType);
   const keyA = entityKey(typeId, nameA);
   const keyB = entityKey(typeId, nameB);
-  if (keyA === keyB) return; // 이미 같은 키(정규화 후 동일 이름) — 병합 불필요.
 
   const session = getSession();
   try {
+    if (keyA === keyB) {
+      // 이미 같은 키(정규화 후 동일 이름) — 재배선/삭제할 것은 없다. 다만 "병합 불필요"와 "병합 대상이
+      // 아예 없음"은 다르다(#316): 그 노드조차 그래프에 없으면 예전에는 조용히 성공으로 보고돼 검수 항목이
+      // approved로 바뀌고 병합 결정이 유실됐다. 존재를 확인한 뒤에만 no-op 성공으로 처리한다.
+      const sameKeyRes = await session.run(
+        'MATCH (n:Entity {key: $key}) RETURN count(n) AS matched', { key: keyA },
+      );
+      if (affectedCount(sameKeyRes, 'matched') === 0) {
+        throw new GraphTargetMissingError(
+          `병합할 엔티티가 그래프에 없어 동의어를 병합할 수 없습니다(${nameA}).`,
+        );
+      }
+      return;
+    }
+
     const nodeRes = await session.run(
       'MATCH (n:Entity) WHERE n.key IN [$keyA, $keyB] RETURN n.key AS key, coalesce(n.sourceChunkIds, []) AS sourceChunkIds',
       { keyA, keyB },
