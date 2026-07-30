@@ -230,7 +230,12 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
         엔티티 {draft.entities.length}개 · 관계 {draft.relations.length}개
       </p>
 
-      {!mapping && (
+      {/*
+        빈 상태는 서버 저장본(mapping) 유무가 아니라 화면에 실제로 보이는 로컬 draft를 기준으로 판정한다.
+        서버 저장 전에 추가한 매핑도 요약·표에는 이미 반영되므로, mapping 기준으로 두면
+        "엔티티 1개"와 "아직 매핑이 없습니다"가 동시에 보인다. 저장 여부는 상태 배지가 따로 전달한다. (#298)
+      */}
+      {draft.entities.length === 0 && draft.relations.length === 0 && (
         <p className="text-sm text-muted-foreground" data-testid="mapping-empty">
           아직 매핑이 없습니다. 엔티티 매핑을 추가해 직접 만들거나, AI 채팅으로 자동 추론을 요청할 수 있습니다.
         </p>

@@ -125,6 +125,31 @@ test.describe('데이터셋 매핑 탭', () => {
     });
   });
 
+  // 회귀(#298): 빈 상태 문구가 서버 저장본이 아닌 로컬 draft를 기준으로 사라져야 한다.
+  test('저장 전이라도 엔티티를 추가하면 빈 상태 문구가 사라진다', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page);
+    // 저장된 매핑이 없는(404) 상태 — 이때 draft에만 엔티티가 생긴다.
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    await page.goto(MAPPING_URL);
+
+    await expect(page.getByTestId('mapping-empty')).toBeVisible();
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await dialog.getByTestId('entity-type-select').click();
+    await page.getByRole('option', { name: 'Damage' }).click();
+    await dialog.getByTestId('entity-name-column-select').click();
+    await page.getByRole('option', { name: 'damage_name' }).click();
+    await dialog.getByRole('button', { name: '확인' }).click();
+    await expect(dialog).toBeHidden();
+
+    // 초안 저장을 하지 않은 상태 — 요약은 1개인데 빈 상태 문구가 남아 있으면 안 된다.
+    await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 1개 · 관계 0개');
+    await expect(page.getByTestId('mapping-empty')).toHaveCount(0);
+    // 서버 저장 여부는 상태 배지가 계속 '없음'으로 전달한다.
+    await expect(page.getByTestId('mapping-status')).toHaveText('없음');
+  });
+
   test('속성 행에 컬럼/속성을 선택하지 않고 확인을 누르면 에러 메시지를 보여주고 다이얼로그를 닫지 않는다', async ({
     authenticatedPage: page,
   }) => {
