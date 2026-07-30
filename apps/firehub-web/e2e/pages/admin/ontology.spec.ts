@@ -1529,3 +1529,54 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     expect(inHiddenPanel).toBe(false);
   });
 });
+
+/**
+ * #328 회귀: 지식 모델 편집 다이얼로그를 닫으면 포커스가 `편집` 버튼으로 복귀해야 한다.
+ *
+ * 공유 컴포넌트(dialog.tsx)의 복귀 보정 외에, 이 화면에는 추가 원인이 있었다 —
+ * `<OntologyEditDialog key={editOpen ? 'open' : 'closed'}>` 가 **닫는 순간에도** key를 바꿔
+ * 리마운트시키는 바람에 복귀 경로가 끊겼다. key는 열 때만 바뀌어야 한다.
+ */
+test.describe('#328 지식 모델 편집 다이얼로그 포커스 복귀', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('변경 없이 Escape로 닫으면 포커스가 편집 버튼으로 복귀한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    const trigger = page.getByRole('button', { name: '편집' });
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('ontology-edit-dialog')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('ontology-edit-dialog')).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+
+  test('닫기 가드(중첩 확인)를 거쳐 닫아도 포커스가 편집 버튼으로 복귀한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+
+    const trigger = page.getByRole('button', { name: '편집' });
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByTestId('ontology-edit-dialog');
+    await expect(dialog).toBeVisible();
+
+    // 변경을 만들어 닫기 가드가 뜨도록 한 뒤, 중첩 확인에서 폐기를 선택한다.
+    await dialog.getByLabel('도메인').fill('포커스 복귀 검증용 도메인');
+    await page.keyboard.press('Escape');
+    await page.getByTestId('ontology-close-confirm').getByRole('button', { name: '저장하지 않고 닫기' }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('ontology-close-confirm')).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+});

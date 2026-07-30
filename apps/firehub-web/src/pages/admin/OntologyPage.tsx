@@ -53,6 +53,9 @@ export default function OntologyPage() {
   const [filterCollapsed, setFilterCollapsed] = useState(false); // 좌측 타입 필터 패널 접기
   const [grouped, setGrouped] = useState(false); // 타입 묶기(compound 번들)
   const [editOpen, setEditOpen] = useState(false); // 지식 모델 편집 다이얼로그(ADMIN 전용, ontology:write)
+  // 편집을 열 때마다 증가시켜 다이얼로그를 리마운트한다. 닫힐 때는 바뀌지 않아야 한다 —
+  // 닫는 순간 리마운트되면 포커스 복귀 이펙트가 끊겨 포커스가 <body>로 유실된다(#328).
+  const [editSession, setEditSession] = useState(0);
   const { isAdmin } = useAuth();
 
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
@@ -111,7 +114,12 @@ export default function OntologyPage() {
               // 편집 진입 시 최신 스키마를 먼저 확보한다(#301) — staleTime 5분 때문에 리마운트만으로는
               // 재조회가 일어나지 않아, 낡은 schemaVersion으로 편집을 시작하면 저장이 곧바로 409가 된다.
               // 재조회가 끝난 뒤 열어야 다이얼로그가 최신 원본으로 초기화된다(실패해도 캐시본으로 진행).
-              onClick={() => void refetchSchema().finally(() => setEditOpen(true))}
+              onClick={() =>
+                void refetchSchema().finally(() => {
+                  setEditSession((n) => n + 1);
+                  setEditOpen(true);
+                })
+              }
             >
               <Pencil className="h-4 w-4" />
               편집
@@ -193,10 +201,11 @@ export default function OntologyPage() {
         </div>
       </div>
 
-      {/* key: 열릴 때마다 리마운트해 폼 state를 최신 schema로 새로 시작한다(useEffect 동기화 대신). */}
+      {/* key: 열릴 때만 증가하는 세션 번호로 리마운트해 폼 state를 최신 schema로 새로 시작한다
+          (useEffect 동기화 대신). 닫힘 시에는 key가 그대로여야 포커스 복귀가 살아 있다(#328). */}
       {schema && (
         <OntologyEditDialog
-          key={editOpen ? 'open' : 'closed'}
+          key={editSession}
           schema={schema}
           open={editOpen}
           onOpenChange={setEditOpen}

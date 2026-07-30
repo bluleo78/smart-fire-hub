@@ -556,4 +556,87 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 0개');
     await expect(page.getByTestId('mapping-dirty')).toBeVisible();
   });
+  /**
+   * #328 회귀: 다이얼로그를 닫으면 포커스가 트리거로 복귀해야 한다(WCAG SC 2.4.3).
+   *
+   * 원인: Radix modal Content 는 onCloseAutoFocus 에서 preventDefault() 후
+   * `<Dialog.Trigger>` 가 채운 triggerRef 로만 복귀한다. 이 앱의 다이얼로그는 모두
+   * 외부 `open` prop 으로 제어되어 Trigger 가 없으므로 복귀가 no-op 이 되고,
+   * preventDefault 때문에 FocusScope 의 기본 복귀까지 막혀 포커스가 <body> 로 유실됐다.
+   */
+  test.describe('#328 다이얼로그 닫힘 포커스 복귀', () => {
+    test('엔티티 매핑 다이얼로그를 Escape로 닫으면 포커스가 추가 버튼으로 복귀한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      // 키보드 사용자와 동일하게 트리거에 포커스를 준 뒤 Enter 로 연다.
+      const trigger = page.getByRole('button', { name: '엔티티 매핑 추가' });
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('entity-mapping-dialog')).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('entity-mapping-dialog')).toBeHidden();
+      await expect(trigger).toBeFocused();
+    });
+
+    test('엔티티 수정 다이얼로그를 취소로 닫으면 포커스가 해당 행의 수정 버튼으로 복귀한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      const trigger = page.getByTestId('entity-row-Incident').getByRole('button', { name: '수정' });
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      const dialog = page.getByTestId('entity-mapping-dialog');
+      await expect(dialog).toBeVisible();
+
+      await dialog.getByRole('button', { name: '취소' }).click();
+      await expect(dialog).toBeHidden();
+      // 트리거가 살아 있으므로 대체 지점이 아니라 트리거 자신으로 돌아가야 한다.
+      await expect(trigger).toBeFocused();
+    });
+
+    test('삭제 확인을 취소하면 살아남은 행의 삭제 버튼으로 복귀한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      const trigger = page.getByTestId('entity-row-Incident').getByRole('button', { name: '삭제' });
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      const confirm = page.getByTestId('entity-delete-confirm');
+      await expect(confirm).toBeVisible();
+
+      await confirm.getByRole('button', { name: '취소' }).click();
+      await expect(confirm).toBeHidden();
+      await expect(trigger).toBeFocused();
+    });
+
+    test('삭제를 확인해 트리거 행이 사라지면 포커스가 표의 추가 버튼으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      const trigger = page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' });
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      const confirm = page.getByTestId('relation-delete-confirm');
+      await expect(confirm).toBeVisible();
+
+      await confirm.getByRole('button', { name: '삭제' }).click();
+      await expect(page.getByTestId('relation-row-OCCURRED_AT')).toHaveCount(0);
+      // 트리거가 언마운트됐으므로 restoreFocusRef 로 지정한 '관계 매핑 추가' 로 복귀한다.
+      await expect(page.getByRole('button', { name: '관계 매핑 추가' })).toBeFocused();
+    });
+  });
 });

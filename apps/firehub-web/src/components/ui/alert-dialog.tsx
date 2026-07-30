@@ -1,10 +1,11 @@
 "use client"
 
-import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
+import * as React from "react"
 
-import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { useDialogFocusRestore } from "@/components/ui/use-dialog-focus-restore"
+import { cn } from "@/lib/utils"
 
 function AlertDialog({
   ...props
@@ -47,16 +48,29 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  onOpenAutoFocus,
+  onCloseAutoFocus,
+  restoreFocusRef,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
+  /** 트리거가 닫힘과 함께 사라지는 경우(행 삭제 확인 등) 포커스를 대신 받을 요소 (이슈 #328). */
+  restoreFocusRef?: React.RefObject<HTMLElement | null>
 }) {
+  // 닫을 때 포커스를 트리거로 되돌린다 — 제어형(Trigger 없는) 다이얼로그에서 <body> 유실 방지.
+  const focusRestore = useDialogFocusRestore({
+    onOpenAutoFocus,
+    onCloseAutoFocus,
+    restoreFocusRef,
+  })
+
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         data-size={size}
+        {...focusRestore}
         className={cn(
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
           className

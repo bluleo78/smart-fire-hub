@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -63,6 +63,10 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
   const [deletingEntity, setDeletingEntity] = useState<DraftEntity | null>(null);
   // 활성 매핑을 초안으로 되돌리는 저장 확인 대기 상태.
   const [confirmingDemote, setConfirmingDemote] = useState(false);
+  // 삭제 확인 다이얼로그의 트리거(행의 '삭제' 버튼)는 확인과 동시에 행째로 사라진다.
+  // 그때 복귀할 대체 포커스 지점으로 각 표의 '추가' 버튼을 넘긴다(#328).
+  const entityAddRef = useRef<HTMLButtonElement | null>(null);
+  const relationAddRef = useRef<HTMLButtonElement | null>(null);
 
   const handleEntityAdd = () => {
     setEditingEntity(null);
@@ -260,6 +264,7 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
         onAdd={handleEntityAdd}
         onEdit={handleEntityEdit}
         onDelete={setDeletingEntity}
+        addButtonRef={entityAddRef}
       />
 
       {ontology && (
@@ -279,6 +284,7 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
         onAdd={handleRelationAdd}
         onEdit={handleRelationEdit}
         onDelete={setDeletingRelation}
+        addButtonRef={relationAddRef}
       />
 
       {ontology && (
@@ -293,7 +299,7 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
       )}
 
       <AlertDialog open={deletingEntity !== null} onOpenChange={(open) => !open && setDeletingEntity(null)}>
-        <AlertDialogContent data-testid="entity-delete-confirm">
+        <AlertDialogContent data-testid="entity-delete-confirm" restoreFocusRef={entityAddRef}>
           <AlertDialogHeader>
             <AlertDialogTitle>엔티티 매핑 삭제</AlertDialogTitle>
             <AlertDialogDescription>
@@ -311,7 +317,7 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
       </AlertDialog>
 
       <AlertDialog open={deletingRelation !== null} onOpenChange={(open) => !open && setDeletingRelation(null)}>
-        <AlertDialogContent data-testid="relation-delete-confirm">
+        <AlertDialogContent data-testid="relation-delete-confirm" restoreFocusRef={relationAddRef}>
           <AlertDialogHeader>
             <AlertDialogTitle>관계 매핑 삭제</AlertDialogTitle>
             <AlertDialogDescription>

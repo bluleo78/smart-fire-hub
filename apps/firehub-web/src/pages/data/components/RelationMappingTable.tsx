@@ -1,3 +1,5 @@
+import type { RefObject } from 'react';
+
 import { Button } from '../../../components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import type { DraftEntity, DraftRelation } from '../../../lib/mapping-spec';
@@ -9,6 +11,8 @@ interface RelationMappingTableProps {
   onAdd: () => void;
   onEdit: (relation: DraftRelation) => void;
   onDelete: (relation: DraftRelation) => void;
+  /** 삭제 확인 다이얼로그가 닫힐 때 사라진 행 대신 포커스를 받을 지점(#328). */
+  addButtonRef?: RefObject<HTMLButtonElement | null>;
 }
 
 /** 관계 매핑 목록. 끝점은 ID로 저장돼 있으므로 표시 시 엔티티를 조회해 라벨로 바꾼다. */
@@ -18,6 +22,7 @@ export function RelationMappingTable({
   onAdd,
   onEdit,
   onDelete,
+  addButtonRef,
 }: RelationMappingTableProps) {
   const labelOf = (id: string) => {
     const entity = entities.find((e) => e.id === id);
@@ -33,6 +38,7 @@ export function RelationMappingTable({
       <div className="flex items-center justify-between">
         <h3 className="text-base leading-6 font-semibold">관계 매핑 ({relations.length}개)</h3>
         <Button
+          ref={addButtonRef}
           variant="outline"
           size="sm"
           onClick={onAdd}
