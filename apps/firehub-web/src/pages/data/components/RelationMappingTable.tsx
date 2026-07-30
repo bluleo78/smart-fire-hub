@@ -24,6 +24,10 @@ export function RelationMappingTable({
     return entity ? entityLabel(entity) : '(삭제됨)';
   };
 
+  // 끝점으로 쓸 엔티티가 2개 미만이면 관계를 만들 수 없다.
+  // 비활성 버튼은 이유가 없으면 "고장난 버튼"으로 읽히므로 사유 문장을 함께 노출한다(#300).
+  const addDisabled = entities.length < 2;
+
   return (
     <div className="space-y-2" data-testid="relation-mapping-table">
       <div className="flex items-center justify-between">
@@ -32,12 +36,19 @@ export function RelationMappingTable({
           variant="outline"
           size="sm"
           onClick={onAdd}
-          // 끝점으로 쓸 엔티티가 2개 미만이면 관계를 만들 수 없다.
-          disabled={entities.length < 2}
+          disabled={addDisabled}
+          aria-describedby={addDisabled ? 'relation-add-hint' : undefined}
         >
           관계 매핑 추가
         </Button>
       </div>
+
+      {addDisabled && (
+        // 오류가 아니라 안내이므로 destructive를 쓰지 않는다.
+        <p id="relation-add-hint" className="text-sm text-muted-foreground">
+          엔티티 매핑을 2개 이상 추가하면 관계를 연결할 수 있습니다.
+        </p>
+      )}
 
       <div className="rounded-md border">
         <Table>

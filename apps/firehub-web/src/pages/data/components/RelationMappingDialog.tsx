@@ -93,7 +93,12 @@ export function RelationMappingDialog({
           <div className="space-y-2">
             <Label htmlFor="relation-subject">주어 엔티티 *</Label>
             <Select value={subjectId} onValueChange={(v) => handleEndpointChange('subjectId', v)}>
-              <SelectTrigger id="relation-subject" data-testid="relation-subject-select">
+              <SelectTrigger
+                id="relation-subject"
+                data-testid="relation-subject-select"
+                aria-invalid={form.formState.errors.subjectId ? true : undefined}
+                aria-describedby={form.formState.errors.subjectId ? 'relation-subject-error' : undefined}
+              >
                 <SelectValue placeholder="주어 엔티티를 선택하세요" />
               </SelectTrigger>
               <SelectContent>
@@ -105,14 +110,21 @@ export function RelationMappingDialog({
               </SelectContent>
             </Select>
             {form.formState.errors.subjectId && (
-              <p className="text-sm text-destructive">{form.formState.errors.subjectId.message}</p>
+              <p id="relation-subject-error" className="text-sm text-destructive">
+                {form.formState.errors.subjectId.message}
+              </p>
             )}
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="relation-object">목적어 엔티티 *</Label>
             <Select value={objectId} onValueChange={(v) => handleEndpointChange('objectId', v)}>
-              <SelectTrigger id="relation-object" data-testid="relation-object-select">
+              <SelectTrigger
+                id="relation-object"
+                data-testid="relation-object-select"
+                aria-invalid={form.formState.errors.objectId ? true : undefined}
+                aria-describedby={form.formState.errors.objectId ? 'relation-object-error' : undefined}
+              >
                 <SelectValue placeholder="목적어 엔티티를 선택하세요" />
               </SelectTrigger>
               <SelectContent>
@@ -124,7 +136,9 @@ export function RelationMappingDialog({
               </SelectContent>
             </Select>
             {form.formState.errors.objectId && (
-              <p className="text-sm text-destructive">{form.formState.errors.objectId.message}</p>
+              <p id="relation-object-error" className="text-sm text-destructive">
+                {form.formState.errors.objectId.message}
+              </p>
             )}
           </div>
 
@@ -134,7 +148,12 @@ export function RelationMappingDialog({
               value={form.watch('relation')}
               onValueChange={(v) => form.setValue('relation', v, { shouldValidate: true })}
             >
-              <SelectTrigger id="relation-type" data-testid="relation-type-select">
+              <SelectTrigger
+                id="relation-type"
+                data-testid="relation-type-select"
+                aria-invalid={form.formState.errors.relation ? true : undefined}
+                aria-describedby={form.formState.errors.relation ? 'relation-type-error' : undefined}
+              >
                 <SelectValue placeholder="관계를 선택하세요" />
               </SelectTrigger>
               <SelectContent>
@@ -151,7 +170,9 @@ export function RelationMappingDialog({
               </p>
             )}
             {form.formState.errors.relation && (
-              <p className="text-sm text-destructive">{form.formState.errors.relation.message}</p>
+              <p id="relation-type-error" className="text-sm text-destructive">
+                {form.formState.errors.relation.message}
+              </p>
             )}
           </div>
 

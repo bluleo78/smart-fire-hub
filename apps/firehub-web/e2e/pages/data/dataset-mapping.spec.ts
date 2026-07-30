@@ -171,7 +171,94 @@ test.describe('데이터셋 매핑 탭', () => {
     await dialog.getByRole('button', { name: '확인' }).click();
 
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('모든 속성 행에서 컬럼과 속성을 선택하세요.')).toBeVisible();
+    await expect(dialog.getByText('모든 속성 행에서 데이터셋 컬럼과 온톨로지 속성을 선택해야 합니다.')).toBeVisible();
+  });
+
+  // #300 회귀 — placeholder(지시문)와 오류(요건문)가 같은 문장이면 오류가 "새 정보"로 읽히지 않는다.
+  // 두 문구가 동시에, 서로 다른 문장으로 보이는 것까지 확인해야 규칙이 지켜졌다고 할 수 있다.
+  test('필수 셀렉트를 비운 채 확인하면 오류는 요건문으로 뜨고 placeholder 지시문은 그대로 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole('button', { name: '확인' }).click();
+
+    // 오류가 떠도 다이얼로그는 열려 있어야 한다(제출 차단).
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('엔티티 타입은 필수입니다')).toBeVisible();
+    await expect(dialog.getByText('이름 컬럼은 필수입니다')).toBeVisible();
+    // placeholder는 앱 전역 관행대로 지시문 그대로 — 오류와 문장이 달라야 한다.
+    await expect(dialog.getByTestId('entity-type-select')).toContainText('엔티티 타입을 선택하세요');
+    await expect(dialog.getByTestId('entity-name-column-select')).toContainText('이름으로 쓸 컬럼을 선택하세요');
+    // 오류 필드는 무효 상태와 설명 노드를 스크린리더에 연결한다.
+    await expect(dialog.getByTestId('entity-type-select')).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByTestId('entity-type-select')).toHaveAttribute('aria-describedby', 'entity-type-error');
+  });
+
+  // #300 회귀 — 속성 행의 라벨과 placeholder가 서로 다른 정보를 주는지 검증한다.
+  test('속성 행은 라벨과 placeholder가 서로 다른 문구로 컬럼/속성을 구분한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await dialog.getByTestId('entity-type-select').click();
+    await page.getByRole('option', { name: 'Damage' }).click();
+    await dialog.getByRole('button', { name: '속성 추가' }).click();
+
+    await expect(dialog.getByText('속성 매핑')).toBeVisible();
+    // 라벨은 htmlFor로 셀렉트와 연결되어 있어야 접근 이름이 잡힌다.
+    await expect(dialog.getByLabel('데이터셋 컬럼')).toHaveAttribute('id', 'property-column-0');
+    await expect(dialog.getByLabel('온톨로지 속성')).toHaveAttribute('id', 'property-name-0');
+    // placeholder는 라벨과 다른 문자열(명사구 축약)이어야 중복이 아니다.
+    await expect(dialog.getByTestId('property-column-select-0')).toContainText('컬럼 선택');
+    await expect(dialog.getByTestId('property-name-select-0')).toContainText('속성 선택');
+  });
+
+  // #300 회귀 — 비활성 버튼은 이유가 없으면 "고장난 버튼"으로 읽힌다.
+  test('엔티티가 2개 미만이면 관계 추가 비활성 사유를 안내하고, 2개 이상이면 안내가 사라진다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    // 저장된 매핑이 없는 상태 = 엔티티 0개 → 관계 추가 불가 + 사유 노출.
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, { message: '매핑이 없습니다' }, { status: 404 });
+    await page.goto(MAPPING_URL);
+
+    const table = page.getByTestId('relation-mapping-table');
+    const addButton = table.getByRole('button', { name: '관계 매핑 추가' });
+    const hint = page.locator('#relation-add-hint');
+
+    await expect(addButton).toBeDisabled();
+    await expect(hint).toHaveText('엔티티 매핑을 2개 이상 추가하면 관계를 연결할 수 있습니다.');
+    await expect(addButton).toHaveAttribute('aria-describedby', 'relation-add-hint');
+
+    // 엔티티를 2개 채우면 안내는 사라지고 버튼이 열린다.
+    for (const [type, nameColumn] of [
+      ['Damage', 'damage_name'],
+      ['Incident', 'incident_name'],
+    ]) {
+      await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+      const dialog = page.getByTestId('entity-mapping-dialog');
+      await dialog.getByTestId('entity-type-select').click();
+      await page.getByRole('option', { name: type, exact: true }).click();
+      await dialog.getByTestId('entity-name-column-select').click();
+      await page.getByRole('option', { name: nameColumn, exact: true }).click();
+      await dialog.getByRole('button', { name: '확인' }).click();
+      await expect(dialog).toBeHidden();
+    }
+
+    await expect(hint).toHaveCount(0);
+    await expect(addButton).toBeEnabled();
+    await expect(addButton).not.toHaveAttribute('aria-describedby', /.+/);
   });
 
   test('저장이 400으로 실패하면 백엔드의 한국어 메시지를 그대로 보여준다', async ({

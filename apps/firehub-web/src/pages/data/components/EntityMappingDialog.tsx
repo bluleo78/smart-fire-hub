@@ -87,7 +87,13 @@ export function EntityMappingDialog({
           <div className="space-y-2">
             <Label htmlFor="entity-type">엔티티 타입 *</Label>
             <Select value={entityType} onValueChange={handleEntityTypeChange}>
-              <SelectTrigger id="entity-type" data-testid="entity-type-select">
+              <SelectTrigger
+                id="entity-type"
+                data-testid="entity-type-select"
+                // 오류가 있을 때만 무효 상태와 설명 대상을 연결한다(없을 때 매달면 존재하지 않는 노드를 가리킨다).
+                aria-invalid={form.formState.errors.entityType ? true : undefined}
+                aria-describedby={form.formState.errors.entityType ? 'entity-type-error' : undefined}
+              >
                 <SelectValue placeholder="엔티티 타입을 선택하세요" />
               </SelectTrigger>
               <SelectContent>
@@ -99,7 +105,9 @@ export function EntityMappingDialog({
               </SelectContent>
             </Select>
             {form.formState.errors.entityType && (
-              <p className="text-sm text-destructive">{form.formState.errors.entityType.message}</p>
+              <p id="entity-type-error" className="text-sm text-destructive">
+                {form.formState.errors.entityType.message}
+              </p>
             )}
           </div>
 
@@ -109,7 +117,12 @@ export function EntityMappingDialog({
               value={form.watch('nameColumn')}
               onValueChange={(v) => form.setValue('nameColumn', v, { shouldValidate: true })}
             >
-              <SelectTrigger id="entity-name-column" data-testid="entity-name-column-select">
+              <SelectTrigger
+                id="entity-name-column"
+                data-testid="entity-name-column-select"
+                aria-invalid={form.formState.errors.nameColumn ? true : undefined}
+                aria-describedby={form.formState.errors.nameColumn ? 'entity-name-column-error' : undefined}
+              >
                 <SelectValue placeholder="이름으로 쓸 컬럼을 선택하세요" />
               </SelectTrigger>
               <SelectContent>
@@ -121,13 +134,16 @@ export function EntityMappingDialog({
               </SelectContent>
             </Select>
             {form.formState.errors.nameColumn && (
-              <p className="text-sm text-destructive">{form.formState.errors.nameColumn.message}</p>
+              <p id="entity-name-column-error" className="text-sm text-destructive">
+                {form.formState.errors.nameColumn.message}
+              </p>
             )}
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>속성</Label>
+              {/* 섹션 제목은 특정 입력을 가리키지 않으므로 htmlFor 없이 둔다. */}
+              <Label>속성 매핑</Label>
               <Button
                 type="button"
                 variant="outline"
@@ -145,13 +161,16 @@ export function EntityMappingDialog({
             {fields.map((field, index) => (
               <div key={field.id} className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
-                  <Label className="text-xs">컬럼</Label>
+                  <Label className="text-xs" htmlFor={`property-column-${index}`}>
+                    데이터셋 컬럼
+                  </Label>
                   <Select
                     value={form.watch(`properties.${index}.column`)}
                     onValueChange={(v) => form.setValue(`properties.${index}.column`, v, { shouldValidate: true })}
                   >
-                    <SelectTrigger data-testid={`property-column-select-${index}`}>
-                      <SelectValue placeholder="컬럼" />
+                    {/* 행 내부 셀렉트는 반폭(flex-1)이라 지시문 전문이 잘린다 — 이 화면 한정으로 명사구 축약. */}
+                    <SelectTrigger id={`property-column-${index}`} data-testid={`property-column-select-${index}`}>
+                      <SelectValue placeholder="컬럼 선택" />
                     </SelectTrigger>
                     <SelectContent>
                       {columns.map((c) => (
@@ -163,15 +182,17 @@ export function EntityMappingDialog({
                   </Select>
                 </div>
                 <div className="flex-1 space-y-1">
-                  <Label className="text-xs">속성</Label>
+                  <Label className="text-xs" htmlFor={`property-name-${index}`}>
+                    온톨로지 속성
+                  </Label>
                   <Select
                     value={form.watch(`properties.${index}.propertyName`)}
                     onValueChange={(v) =>
                       form.setValue(`properties.${index}.propertyName`, v, { shouldValidate: true })
                     }
                   >
-                    <SelectTrigger data-testid={`property-name-select-${index}`}>
-                      <SelectValue placeholder="속성" />
+                    <SelectTrigger id={`property-name-${index}`} data-testid={`property-name-select-${index}`}>
+                      <SelectValue placeholder="속성 선택" />
                     </SelectTrigger>
                     <SelectContent>
                       {availableProperties.map((p) => (
@@ -190,7 +211,9 @@ export function EntityMappingDialog({
             {form.formState.errors.properties && (
               // properties 에러는 행별 배열이거나(각 행의 column/propertyName 누락) 배열 자체 에러일 수 있어
               // 상세 위치 대신 공통 안내 메시지 하나로 사용자가 원인을 알 수 있게 한다.
-              <p className="text-sm text-destructive">모든 속성 행에서 컬럼과 속성을 선택하세요.</p>
+              <p className="text-sm text-destructive">
+                모든 속성 행에서 데이터셋 컬럼과 온톨로지 속성을 선택해야 합니다.
+              </p>
             )}
           </div>
 
