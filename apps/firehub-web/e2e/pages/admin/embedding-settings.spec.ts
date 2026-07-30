@@ -264,6 +264,34 @@ test.describe('임베딩 설정 검증', () => {
     await expect(page.getByText(/새 provider 기본값으로 교체되었습니다/)).toBeVisible();
   });
 
+  test('#322 provider를 되돌려도 덮어쓰인 값에 대한 안내가 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // OLLAMA → OPENAI → OLLAMA 왕복. provider는 원래 값으로 돌아오지만 그 사이 base_url이
+    // OLLAMA 기본값으로 덮여 사용자의 커스텀 주소(localhost)는 사라진 상태다.
+    // 안내를 original 비교로 유도하면 이 경로에서 문구가 사라져 "값이 말없이 바뀐" 상태가 된다.
+    await setupGetSettingsMock(page, LOCALHOST_EMBEDDING);
+    await openEmbeddingTab(page);
+
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+    await expect(page.locator('#embedding-base-url')).toHaveValue('https://api.openai.com');
+
+    await page.locator('#embedding-provider').click();
+    await page.getByRole('option', { name: 'Ollama' }).click();
+
+    // 커스텀 주소가 아니라 OLLAMA 기본값으로 덮인 상태 + 안내 문구 유지
+    await expect(page.locator('#embedding-base-url')).toHaveValue(
+      'http://host.docker.internal:11434',
+    );
+    await expect(page.getByText(/새 provider 기본값으로 교체되었습니다/)).toBeVisible();
+
+    // 되돌리기를 누르면 원래 값이 복원되고 안내도 사라진다
+    await page.getByRole('button', { name: '되돌리기' }).click();
+    await expect(page.locator('#embedding-base-url')).toHaveValue('http://localhost:11434');
+    await expect(page.getByText(/새 provider 기본값으로 교체되었습니다/)).toBeHidden();
+  });
+
   test('#322 OpenAI provider에 http Base URL을 직접 넣으면 저장이 막히고 오류가 표시된다', async ({
     authenticatedPage: page,
   }) => {

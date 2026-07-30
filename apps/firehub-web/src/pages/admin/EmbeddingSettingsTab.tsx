@@ -163,6 +163,10 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
   const [form, setForm] = useState<EmbeddingForm>(DEFAULT);
   const [original, setOriginal] = useState<EmbeddingForm>(DEFAULT);
   const [showApiKey, setShowApiKey] = useState(false);
+  // provider 전환으로 모델/Base URL이 덮어써졌는지 — 안내 문구 노출 조건.
+  // original과의 비교로 유도하지 않는 이유: A→B→A로 되돌아오면 provider는 original과 같아지지만
+  // 그 사이 모델/base_url은 A의 기본값으로 덮여 사용자의 커스텀 값이 사라진 상태라 안내가 필요하다.
+  const [providerJustSwitched, setProviderJustSwitched] = useState(false);
 
   // 서버에서 settings가 로드되면 폼 상태에 반영 — 서버 데이터 → 폼 state 초기화 패턴
   useEffect(() => {
@@ -183,9 +187,6 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
   const errors = validateEmbeddingForm(form);
   const hasValidationErrors = Object.keys(errors).length > 0;
 
-  // provider를 바꾼 직후에는 모델/Base URL이 새 provider 기본값으로 교체되었음을 안내한다.
-  const providerChanged = form['embedding.provider'] !== original['embedding.provider'];
-
   // 부모에 dirty 상태 보고 — SettingsPage가 라우터 가드(beforeunload 등)를 운영한다.
   useReportDirty(hasChanges, onReportDirty);
 
@@ -201,6 +202,7 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
   // api_key는 의도적으로 건드리지 않는다 — 지우면 임시로 provider를 바꿨다가 되돌릴 때
   // 서버에 저장된 키까지 빈 값으로 덮어써 유실되기 때문이다.
   const handleProviderChange = (next: string) => {
+    setProviderJustSwitched(Boolean(PROVIDER_DEFAULTS[next]));
     setForm((prev) => {
       const nextDefaults = PROVIDER_DEFAULTS[next];
       if (!nextDefaults) return { ...prev, 'embedding.provider': next };
@@ -227,6 +229,7 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
       {
         onSuccess: () => {
           setOriginal({ ...form });
+          setProviderJustSwitched(false);
           toast.success('임베딩 설정이 저장되었습니다.');
         },
         // 서버 검증(provider/base_url/api_key 정합성) 실패 사유를 그대로 노출한다.
@@ -238,6 +241,7 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
 
   const handleReset = () => {
     setForm({ ...original });
+    setProviderJustSwitched(false);
   };
 
   if (isLoading) {
@@ -274,7 +278,7 @@ export default function EmbeddingSettingsTab({ onReportDirty }: EmbeddingSetting
             </Select>
             <p className="text-sm text-muted-foreground">임베딩 생성에 사용할 provider</p>
             {/* provider 전환 시 모델/Base URL이 자동 교체됨을 알려 값이 사라진 것처럼 보이지 않게 한다 */}
-            {providerChanged && (
+            {providerJustSwitched && (
               <p className="text-sm text-amber-600 dark:text-amber-500" role="status">
                 provider를 변경하여 모델과 Base URL이 새 provider 기본값으로 교체되었습니다. 필요하면
                 직접 수정하세요.
