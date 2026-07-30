@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.repository;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -106,7 +107,7 @@ public class ProactiveMessageRepository {
   public void markAsRead(Long id, Long userId) {
     dsl.update(PROACTIVE_MESSAGE)
         .set(PM_READ, true)
-        .set(PM_READ_AT, LocalDateTime.now())
+        .set(PM_READ_AT, ProactiveTime.nowUtc())
         .where(PM_ID.eq(id).and(PM_USER_ID.eq(userId)))
         .execute();
   }
@@ -114,7 +115,7 @@ public class ProactiveMessageRepository {
   public void markAllAsRead(Long userId) {
     dsl.update(PROACTIVE_MESSAGE)
         .set(PM_READ, true)
-        .set(PM_READ_AT, LocalDateTime.now())
+        .set(PM_READ_AT, ProactiveTime.nowUtc())
         .where(PM_USER_ID.eq(userId).and(PM_READ.isFalse()))
         .execute();
   }

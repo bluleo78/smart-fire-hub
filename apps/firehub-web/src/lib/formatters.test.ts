@@ -327,6 +327,21 @@ describe('timeAgo / formatElapsedTime', () => {
     expect(timeAgo('2026-04-09T12:00:00Z')).toBe('2일 전');
   });
 
+  /**
+   * #349 회귀 — 타임존 표기가 없는 서버 LocalDateTime 문자열은 UTC로 해석해야 한다.
+   * 수정 전에는 `new Date(str)`가 브라우저 로컬 존으로 파싱해, KST 브라우저에서 방금 저장된 값이
+   * "9시간 전"으로 보였다. formatDate/formatRelativeTime과 해석이 일치하는지도 함께 고정한다.
+   */
+  it('timeAgo: 타임존 없는 문자열을 UTC로 해석한다 (#349)', () => {
+    // 시스템 시각 12:00:00Z 기준 5분 전 값 — 'Z' 유무와 무관하게 같은 결과여야 한다
+    expect(timeAgo('2026-04-11T11:55:00')).toBe('5분 전');
+    expect(timeAgo('2026-04-11T11:55:00')).toBe(timeAgo('2026-04-11T11:55:00Z'));
+  });
+
+  it('timeAgo와 formatRelativeTime이 같은 문자열을 같게 해석한다 (#349)', () => {
+    expect(timeAgo('2026-04-11T10:00:00')).toBe(formatRelativeTime('2026-04-11T10:00:00'));
+  });
+
   it('formatElapsedTime: 5초 미만은 "방금"', () => {
     expect(formatElapsedTime(3000)).toBe('방금');
   });

@@ -3,8 +3,14 @@
  * 여러 페이지에서 중복 정의되던 함수들을 통합.
  */
 
-/** 서버(UTC)에서 받은 LocalDateTime 문자열에 'Z'를 붙여 UTC로 파싱 */
-function parseUtcDate(dateStr: string): Date {
+/**
+ * 서버(UTC)에서 받은 LocalDateTime 문자열에 'Z'를 붙여 UTC로 파싱.
+ *
+ * 이 프로젝트의 날짜 계약: **타임존 표기가 없는 서버 문자열은 UTC로 간주한다.**
+ * 날짜 문자열을 다루는 코드는 `new Date(str)`(브라우저 로컬 존으로 해석)을 직접 쓰지 말고
+ * 반드시 이 헬퍼를 거쳐야 한다 — 그렇지 않으면 KST 브라우저에서 9시간 어긋난다 (#349).
+ */
+export function parseUtcDate(dateStr: string): Date {
   // 이미 타임존 정보가 있으면 그대로, 없으면 UTC로 간주
   if (/[Z+-]\d{0,4}$/.test(dateStr)) return new Date(dateStr);
   return new Date(dateStr + 'Z');
@@ -269,7 +275,9 @@ export function getStatusLabel(status: string): string {
  */
 export function formatDuration(startedAt: string, completedAt: string | null): string {
   if (!completedAt) return '-';
-  const diffMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  // 두 값 모두 서버 LocalDateTime 문자열이므로 동일한 파서를 거쳐야 한다 (#349).
+  // 차이만 쓰므로 결과는 같지만, 한쪽만 타임존 표기가 있는 경우를 방지한다.
+  const diffMs = parseUtcDate(completedAt).getTime() - parseUtcDate(startedAt).getTime();
   if (diffMs < 0) return '-';
   const seconds = Math.floor(diffMs / 1000);
   if (seconds < 60) return `${seconds}초`;
@@ -283,9 +291,13 @@ export function formatDuration(startedAt: string, completedAt: string | null): s
 
 /**
  * 상대 시간 포맷 (date string → "N분 전")
+ *
+ * 서버 LocalDateTime 문자열을 parseUtcDate로 해석한다 (#349). 이전에는 `new Date(dateStr)`을
+ * 직접 써서 타임존 없는 문자열을 브라우저 로컬(KST)로 파싱했고, UTC로 저장된 값에 대해
+ * 9시간 오래된 것처럼 표시됐다 — 같은 값을 formatDate는 UTC로, timeAgo는 로컬로 정반대 해석했다.
  */
 export function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const diff = Date.now() - parseUtcDate(dateStr).getTime();
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return '방금 전';
   if (minutes < 60) return `${minutes}분 전`;

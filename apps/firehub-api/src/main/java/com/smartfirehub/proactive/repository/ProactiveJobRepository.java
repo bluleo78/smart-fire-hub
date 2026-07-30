@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.repository;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -188,7 +189,7 @@ public class ProactiveJobRepository {
       Boolean enabled,
       Map<String, Object> config) {
     try {
-      var query = dsl.update(PROACTIVE_JOB).set(PJ_UPDATED_AT, LocalDateTime.now());
+      var query = dsl.update(PROACTIVE_JOB).set(PJ_UPDATED_AT, ProactiveTime.nowUtc());
       if (name != null) query = query.set(PJ_NAME, name);
       if (prompt != null) query = query.set(PJ_PROMPT, prompt);
       if (templateId != null) query = query.set(PJ_TEMPLATE_ID, templateId);
@@ -209,7 +210,7 @@ public class ProactiveJobRepository {
     dsl.update(PROACTIVE_JOB)
         .set(PJ_LAST_EXECUTED_AT, lastExecutedAt)
         .set(PJ_NEXT_EXECUTE_AT, nextExecuteAt)
-        .set(PJ_UPDATED_AT, LocalDateTime.now())
+        .set(PJ_UPDATED_AT, ProactiveTime.nowUtc())
         .where(PJ_ID.eq(id))
         .execute();
   }

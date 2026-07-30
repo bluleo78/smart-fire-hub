@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.repository;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -80,7 +81,7 @@ public class ProactiveJobExecutionRepository {
     dsl.update(PROACTIVE_JOB_EXECUTION)
         .set(PJE_STATUS, "FAILED")
         .set(PJE_ERROR_MESSAGE, errorMessage)
-        .set(PJE_COMPLETED_AT, LocalDateTime.now())
+        .set(PJE_COMPLETED_AT, ProactiveTime.nowUtc())
         .where(PJE_ID.eq(id))
         .execute();
   }

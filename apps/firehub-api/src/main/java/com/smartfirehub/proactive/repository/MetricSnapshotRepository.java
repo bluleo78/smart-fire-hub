@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.repository;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static com.smartfirehub.jooq.Tables.METRIC_SNAPSHOT;
 
 import java.time.LocalDateTime;
@@ -29,7 +30,7 @@ public class MetricSnapshotRepository {
 
   /** Find recent snapshots for a metric, ordered by collected_at DESC, limited to last N days */
   public List<MetricSnapshot> findRecent(Long jobId, String metricId, int days) {
-    LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
+    LocalDateTime cutoff = ProactiveTime.nowUtc().minusDays(days);
     return dsl.selectFrom(METRIC_SNAPSHOT)
         .where(
             METRIC_SNAPSHOT

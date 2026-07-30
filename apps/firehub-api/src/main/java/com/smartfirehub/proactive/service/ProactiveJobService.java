@@ -14,6 +14,7 @@ import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
@@ -308,7 +309,7 @@ public class ProactiveJobService {
                   "metricName", event.metricName(),
                   "currentValue", event.currentValue(),
                   "deviation", event.deviation()),
-              LocalDateTime.now());
+              ProactiveTime.nowUtc());
       sseEmitterRegistry.broadcast(event.userId(), notification);
     } catch (Exception e) {
       log.warn(
@@ -338,11 +339,11 @@ public class ProactiveJobService {
     if (lastExec == null) return false;
 
     int cooldownMinutes = getCooldownMinutes(jobId);
-    return LocalDateTime.now().isBefore(lastExec.plusMinutes(cooldownMinutes));
+    return ProactiveTime.nowUtc().isBefore(lastExec.plusMinutes(cooldownMinutes));
   }
 
   private void recordCooldown(Long jobId) {
-    lastAnomalyExecution.put(jobId, LocalDateTime.now());
+    lastAnomalyExecution.put(jobId, ProactiveTime.nowUtc());
   }
 
   private int getCooldownMinutes(Long jobId) {

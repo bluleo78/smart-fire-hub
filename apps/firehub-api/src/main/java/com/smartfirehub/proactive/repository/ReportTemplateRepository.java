@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.repository;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -121,7 +122,7 @@ public class ReportTemplateRepository {
     // 빌트인 템플릿(user_id IS NULL)은 수정 불가
     try {
       var query = dsl.update(REPORT_TEMPLATE);
-      var step = query.set(RT_UPDATED_AT, LocalDateTime.now());
+      var step = query.set(RT_UPDATED_AT, ProactiveTime.nowUtc());
       if (name != null) step = step.set(RT_NAME, name);
       if (description != null) step = step.set(RT_DESCRIPTION, description);
       if (sections != null) {

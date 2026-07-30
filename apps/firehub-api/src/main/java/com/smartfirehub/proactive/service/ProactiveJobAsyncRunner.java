@@ -11,6 +11,7 @@ import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.settings.service.SettingsService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -87,7 +88,7 @@ public class ProactiveJobAsyncRunner {
             : new AtomicBoolean(false);
 
     Long executionId = executionRepository.create(jobId);
-    executionRepository.updateStatus(executionId, "RUNNING", LocalDateTime.now(), null);
+    executionRepository.updateStatus(executionId, "RUNNING", ProactiveTime.nowUtc(), null);
 
     try {
       ProactiveJobResponse job =
@@ -148,7 +149,7 @@ public class ProactiveJobAsyncRunner {
 
       // 결과 저장
       Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});
-      executionRepository.updateResult(executionId, "COMPLETED", resultMap, LocalDateTime.now());
+      executionRepository.updateResult(executionId, "COMPLETED", resultMap, ProactiveTime.nowUtc());
 
       // DeliveryChannel 호출 (config.channels 필터링)
       List<String> configChannels = ProactiveConfigParser.getChannelTypes(job.config());
@@ -190,7 +191,7 @@ public class ProactiveJobAsyncRunner {
       }
 
       // 마지막 실행 시간 업데이트
-      proactiveJobRepository.updateLastExecuted(jobId, LocalDateTime.now(), null);
+      proactiveJobRepository.updateLastExecuted(jobId, ProactiveTime.nowUtc(), null);
 
       log.info("Proactive job {} executed successfully", jobId);
 

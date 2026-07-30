@@ -7,6 +7,7 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -74,7 +75,7 @@ public class ChatDeliveryChannel implements DeliveryChannel {
                   "PROACTIVE_JOB",
                   job.id(),
                   metadata,
-                  LocalDateTime.now());
+                  ProactiveTime.nowUtc());
 
           sseRegistry.broadcast(userId, event);
           log.info(

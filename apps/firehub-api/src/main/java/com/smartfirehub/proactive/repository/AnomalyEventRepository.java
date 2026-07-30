@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.repository;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.proactive.dto.AnomalyEvent;
@@ -35,7 +36,7 @@ public class AnomalyEventRepository {
         .set(field("stddev"), event.stddev())
         .set(field("deviation"), event.deviation())
         .set(field("sensitivity"), event.sensitivity())
-        .set(field("detected_at"), LocalDateTime.now())
+        .set(field("detected_at"), ProactiveTime.nowUtc())
         .execute();
   }
 

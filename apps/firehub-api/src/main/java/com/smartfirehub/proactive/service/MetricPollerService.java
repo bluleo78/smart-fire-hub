@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service;
 
+import com.smartfirehub.proactive.util.ProactiveTime;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.PIPELINE_EXECUTION;
 import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
@@ -127,7 +128,7 @@ public class MetricPollerService {
     // Check if pollingInterval has elapsed since last collection
     String pollKey = jobId + ":" + metricId;
     LocalDateTime lastPoll = lastPollTime.get(pollKey);
-    LocalDateTime now = LocalDateTime.now();
+    LocalDateTime now = ProactiveTime.nowUtc();
 
     if (lastPoll != null && lastPoll.plusSeconds(pollingIntervalSeconds).isAfter(now)) {
       return; // Not yet time to poll
@@ -194,7 +195,7 @@ public class MetricPollerService {
     return switch (metricKey) {
       case "pipeline_failure_rate" -> {
         // Failed / total pipeline executions in last 24 hours
-        LocalDateTime since = LocalDateTime.now().minusHours(24);
+        LocalDateTime since = ProactiveTime.nowUtc().minusHours(24);
         int total =
             dsl.selectCount()
                 .from(PIPELINE_EXECUTION)
@@ -216,7 +217,7 @@ public class MetricPollerService {
       }
       case "pipeline_execution_count" -> {
         // Count pipeline executions in last 24 hours
-        LocalDateTime since = LocalDateTime.now().minusHours(24);
+        LocalDateTime since = ProactiveTime.nowUtc().minusHours(24);
         yield (double)
             dsl.selectCount()
                 .from(PIPELINE_EXECUTION)
@@ -229,7 +230,7 @@ public class MetricPollerService {
       }
       case "active_user_count" -> {
         // Count distinct users who executed pipelines in last 24 hours
-        LocalDateTime since = LocalDateTime.now().minusHours(24);
+        LocalDateTime since = ProactiveTime.nowUtc().minusHours(24);
         yield (double)
             dsl.selectCount()
                 .from(
