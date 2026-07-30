@@ -17,6 +17,27 @@ import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
 
+// signal_type(DB enum) → 검수자용 한국어 레이블(#314).
+// 신호 컬럼은 종류마다 표기 수준이 달라선 안 되므로, 점수가 없는 신호도 반드시 이 표를 거쳐 한국어로 나간다.
+const SIGNAL_LABEL: Record<string, string> = {
+  similarity: '유사도',
+  low_confidence: '신뢰도',
+  normalization_failure: '정규화 실패',
+};
+
+/**
+ * 신호 셀 문구를 만든다. 점수가 있으면 `{레이블} {점수}`, 없으면 레이블만.
+ * 미지의 signalType은 원시 enum을 그대로 노출하지 않고 '기타'로 폴백해, 신호 종류가 늘어나도
+ * 영문 스네이크케이스가 한국어 UI에 새는 것을 구조적으로 막는다(#314).
+ */
+function formatSignal(signalType: string | null, signalScore: number | null): string {
+  if (signalType == null) return '-';
+  const label = SIGNAL_LABEL[signalType] ?? '기타';
+  if (signalScore == null) return label;
+  // 유사도는 소수 3자리, 그 외 신뢰도류는 2자리 — 기존 표기 관례 유지.
+  return `${label} ${signalScore.toFixed(signalType === 'similarity' ? 3 : 2)}`;
+}
+
 // AI가 수행한 불확실한 작업(동의어 병합·속성 정규화)을 사람이 원문 근거와 함께 검수·판단하는 인박스.
 export default function ReviewInboxPage() {
   // 탭 필터 — undefined면 전체, 아니면 해당 item_type만.
@@ -128,9 +149,7 @@ function ReviewRow(props: {
           {isRelation && <RelationContent payload={row.payload as RelationPayload} reason={row.reason} />}
         </TableCell>
         <TableCell className="text-sm text-muted-foreground">
-          {row.signalType === 'similarity' && row.signalScore != null ? `유사도 ${row.signalScore.toFixed(3)}`
-            : row.signalType === 'low_confidence' && row.signalScore != null ? `신뢰도 ${row.signalScore.toFixed(2)}`
-            : row.signalType ?? '-'}
+          {formatSignal(row.signalType, row.signalScore)}
           <div>
             <button type="button" className="text-primary underline text-xs" onClick={() => setShowEvidence((s) => !s)}>
               {showEvidence ? '근거 숨기기' : '원문 근거 보기'}

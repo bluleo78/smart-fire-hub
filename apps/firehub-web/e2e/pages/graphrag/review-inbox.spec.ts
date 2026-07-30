@@ -216,6 +216,25 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('“작년 겨울쯤”')).toBeVisible();
   });
 
+  // 신호 컬럼은 종류와 무관하게 한국어여야 한다 — 점수 없는 신호가 원시 enum으로 새던 회귀(#314).
+  test('점수 없는 속성 항목의 신호가 원시 enum 대신 한국어 레이블로 표시된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
+    await page.goto('/knowledge-graph/review');
+
+    await expect(page.getByText('정규화 실패')).toBeVisible();
+    await expect(page.getByText('normalization_failure')).toHaveCount(0);
+  });
+
+  test('매핑에 없는 signalType도 원시값 대신 기타로 폴백한다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [
+      createPropertyReviewItem({ signalType: 'some_future_signal', signalScore: null }),
+    ]);
+    await page.goto('/knowledge-graph/review');
+
+    await expect(page.getByText('기타')).toBeVisible();
+    await expect(page.getByText('some_future_signal')).toHaveCount(0);
+  });
+
   test('관계 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/4/evidence', [{ chunkId: 9, content: '노후 배선이 화재 원인으로 추정된다.' }]);
