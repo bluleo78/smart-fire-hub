@@ -1,6 +1,8 @@
+import { createSavedQueryList } from '../factories/analytics.factory';
+import { createPipelines } from '../factories/pipeline.factory';
 import { createSynonymReviewItem } from '../factories/reviewItem.factory';
 import { setupAdminAuth, setupOntologyMocks } from '../fixtures/admin.fixture';
-import { mockApi } from '../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 
 /**
@@ -51,6 +53,87 @@ test.describe('320px 리플로우 (#345)', () => {
     // 줄바꿈 도입이 데스크톱 표현을 바꾸지 않아야 한다 — 탭 5개가 한 줄(높이 36px)에 그대로 있어야 한다.
     const box = await page.locator('[data-slot=tabs-list]').boundingBox();
     expect(box?.height).toBeLessThan(45);
+    expect(await mainOverflow(page)).toBe(0);
+  });
+});
+
+/**
+ * SimplePagination 리플로우 회귀 가드 (#356).
+ *
+ * 페이지네이션 nav 폭은 표시 페이지 버튼 수에 비례해 커진다(처음/이전/다음/마지막 4개 + 페이지 버튼).
+ * 페이지 수가 적으면 320px 안에 우연히 들어가므로, 회귀 가드가 공허해지지 않도록
+ * 테스트는 **총 12페이지**(생략 부호 분기까지 타는 크기)를 모킹해 최대 폭 상태를 만든다.
+ */
+test.describe('320px 리플로우 — 페이지네이션 (#356)', () => {
+  /** 페이지네이션 nav 자체가 컨테이너 폭 안에 들어왔는지 + 버튼이 몇 개인지 */
+  const navFit = (page: import('@playwright/test').Page) =>
+    page.locator('nav[aria-label="페이지네이션"]').evaluate((el) => ({
+      fits: el.scrollWidth <= el.clientWidth + 1,
+      buttons: el.children.length,
+      wrap: getComputedStyle(el).flexWrap,
+      height: Math.round(el.getBoundingClientRect().height),
+    }));
+
+  test('쿼리 목록(건수+사이즈 표시형)이 320px에서 페이지 버튼을 줄바꿈한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 총 120건 / 페이지당 10건 = 12페이지 → 버튼이 최대치로 늘어난 상태
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse(createSavedQueryList(10), { totalElements: 120, size: 10 }),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto('/analytics/queries');
+    await expect(page.locator('nav[aria-label="페이지네이션"]')).toBeVisible();
+
+    const nav = await navFit(page);
+    // 공허한 통과 방지 — 버튼이 실제로 8개 이상인 상태에서만 의미 있는 단언이다.
+    expect(nav.buttons).toBeGreaterThanOrEqual(8);
+    expect(nav.wrap).toBe('wrap');
+    expect(nav.fits).toBe(true);
+    expect(await mainOverflow(page)).toBe(0);
+  });
+
+  test('파이프라인 목록(네비게이션만 표시형)이 320px에서 페이지 버튼을 줄바꿈한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // SimplePagination은 건수/사이즈 정보 유무에 따라 상위 레이아웃이 달라지므로 두 분기를 모두 검증한다.
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines',
+      createPageResponse(createPipelines(10), { totalElements: 120, size: 10 }),
+    );
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto('/pipelines');
+    await expect(page.locator('nav[aria-label="페이지네이션"]')).toBeVisible();
+
+    const nav = await navFit(page);
+    expect(nav.buttons).toBeGreaterThanOrEqual(8);
+    expect(nav.fits).toBe(true);
+    expect(await mainOverflow(page)).toBe(0);
+  });
+
+  test('데스크톱(1280px)에서는 페이지네이션이 기존대로 한 줄로 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse(createSavedQueryList(10), { totalElements: 120, size: 10 }),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+    await page.goto('/analytics/queries');
+    await expect(page.locator('nav[aria-label="페이지네이션"]')).toBeVisible();
+
+    // 줄바꿈은 max-sm 한정이어야 한다 — 공용 컴포넌트라 7개 목록 페이지의 데스크톱 표현이 걸려 있다.
+    const nav = await navFit(page);
+    expect(nav.wrap).toBe('nowrap');
+    expect(nav.height).toBeLessThan(45);
     expect(await mainOverflow(page)).toBe(0);
   });
 });

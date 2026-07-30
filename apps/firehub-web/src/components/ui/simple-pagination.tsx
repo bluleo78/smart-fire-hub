@@ -129,8 +129,13 @@ export function SimplePagination({
   }
 
   // 페이지 네비게이션 버튼들 (aria 명시를 위해 <nav> 사용)
+  // 버튼 폭 합계가 표시 페이지 수에 비례해 커지므로 320px 같은 좁은 뷰포트에서 가로로 넘친다
+  // (WCAG SC 1.4.10 Reflow). max-sm 한정으로만 줄바꿈시켜 sm 이상 데스크톱 한 줄 표현은 그대로 둔다.
   const nav = (
-    <nav className="flex items-center gap-1" aria-label="페이지네이션">
+    <nav
+      className="flex items-center gap-1 max-sm:flex-wrap max-sm:justify-center"
+      aria-label="페이지네이션"
+    >
       <Button
         variant="outline"
         size="sm"
