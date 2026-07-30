@@ -195,9 +195,11 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             {job.nextExecuteAt ? (
               <ReadonlyCard label="다음 실행" value={formatDate(job.nextExecuteAt)} />
             ) : (
-              job.enabled && (
-                /* 활성인데 다음 실행 시각이 없으면 스케줄러 미등록 상태다 (#354).
-                   목록과 같은 신호를 상세에도 노출해, '활성' 배지만 보고 도는 줄 아는 상황을 막는다. */
+              job.enabled &&
+              !!job.cronExpression?.trim() && (
+                /* 활성 + cron 이 있는데 다음 실행 시각이 없으면 스케줄러 미등록 상태다 (#354).
+                   목록과 같은 신호를 상세에도 노출해, '활성' 배지만 보고 도는 줄 아는 상황을 막는다.
+                   cron 이 없는 작업(triggerType=ANOMALY)은 등록 대상이 아니므로 제외한다. */
                 <ReadonlyCard
                   label="다음 실행"
                   value={

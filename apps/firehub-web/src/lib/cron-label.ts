@@ -133,6 +133,10 @@ function describeCron(fiveField: string): string | null {
  * 사람이 읽는 라벨이 아니라 미해석 폴백임이 화면에서 드러나게 한다.
  */
 export function cronToLabel(cron: string): string {
+  // 스케줄 없는 작업(triggerType=ANOMALY)은 cron이 비어 있다 — 표시할 주기가 없다는 뜻.
+  // 이 가드가 없으면 아래 trim()에서 TypeError 가 나 목록 페이지 전체가 죽는다.
+  if (!cron || !cron.trim()) return '-';
+
   const fiveField = toFiveField(cron);
   if (fiveField) {
     const known = LABELS[fiveField];

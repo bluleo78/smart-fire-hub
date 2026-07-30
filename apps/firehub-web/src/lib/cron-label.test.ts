@@ -45,6 +45,17 @@ describe('cronToLabel', () => {
     expect(cronToLabel('30 0 9 * * *')).toBe('주기: 30 0 9 * * *');
   });
 
+  /**
+   * triggerType=ANOMALY 작업은 cron 없이 저장된다(#38/#43). 정규화가 입력을 trim 하므로
+   * 가드가 없으면 TypeError 로 목록 페이지 전체가 죽는다.
+   */
+  it('cron이 비어 있으면 크래시 없이 "-"를 반환한다', () => {
+    expect(cronToLabel('')).toBe('-');
+    expect(cronToLabel('   ')).toBe('-');
+    expect(cronToLabel(null as unknown as string)).toBe('-');
+    expect(cronToLabel(undefined as unknown as string)).toBe('-');
+  });
+
   it('해석 불가 표현은 폴백임이 드러나게 감싼다', () => {
     expect(cronToLabel('0 9 1 1 *')).toBe('주기: 0 9 1 1 *');
     expect(cronToLabel('not a cron')).toBe('주기: not a cron');

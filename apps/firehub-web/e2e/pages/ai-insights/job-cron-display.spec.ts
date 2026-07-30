@@ -111,6 +111,31 @@ test.describe('스마트 작업 목록 — 스케줄 미등록 노출 (#354)', (
     await expect(row.getByTestId('schedule-unregistered')).toHaveCount(0);
   });
 
+  test('cron 없는 이상 탐지 작업은 미등록 경고 없이 정상 렌더링된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // triggerType=ANOMALY 작업은 cron 없이 저장되고(#38/#43) 스케줄러 등록 대상도 아니다.
+    // 등록 실패가 아니라 정상 구성이므로 경고를 띄우면 오탐이다.
+    // 또한 cron이 비어 있어도 라벨 변환이 크래시하지 않아야 한다 — 죽으면 목록 전체가 백지가 된다.
+    const job = createJob({
+      id: 4,
+      name: '이상 탐지 작업',
+      enabled: true,
+      triggerType: 'ANOMALY',
+      cronExpression: '',
+      nextExecuteAt: null,
+    });
+
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await page.goto('/ai-insights/jobs');
+
+    // 페이지가 살아 있고 행이 렌더된다 (크래시 회귀 방지)
+    const row = page.getByRole('row').filter({ hasText: '이상 탐지 작업' });
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('schedule-unregistered')).toHaveCount(0);
+  });
+
   test('비활성 작업은 미등록이 아니라 "-"로 표시된다', async ({ authenticatedPage: page }) => {
     // 비활성은 의도적으로 스케줄이 해제된 상태이므로 경고 대상이 아니다
     const job = createJob({

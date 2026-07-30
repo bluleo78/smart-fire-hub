@@ -183,7 +183,9 @@ export default function ProactiveJobListPage() {
                   <TableCell className="text-sm text-muted-foreground">
                     {/* nextExecuteAt은 타임존 표기 없는 UTC 벽시계이므로 parseUtcDate로 해석한다.
                         new Date()를 쓰면 브라우저 로컬(KST)로 파싱돼 9시간 어긋난다 (#348, #349). */}
-                    {!job.enabled ? (
+                    {!job.enabled || !job.cronExpression?.trim() ? (
+                      /* 스케줄 없는 작업(triggerType=ANOMALY)은 애초에 등록 대상이 아니므로
+                         next_execute_at이 비어 있는 게 정상이다 — 경고 대상에서 제외한다. */
                       '-'
                     ) : job.nextExecuteAt ? (
                       formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone)
