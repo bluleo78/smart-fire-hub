@@ -18,6 +18,7 @@ import {
 import { truncate, timestamp } from '../utils.js';
 import { processMessage } from './process-message.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
+import { totalInputTokens } from './token-usage.js';
 import {
   downloadChatFiles,
   cleanupChatFiles,
@@ -326,11 +327,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       if (msg.type === 'stream_event') {
         const evt = msg.event as { type: string; message?: { usage?: Record<string, number> } };
         if (evt.type === 'message_start' && evt.message?.usage) {
-          const u = evt.message.usage;
-          lastTurnContextTokens =
-            (u.input_tokens ?? 0) +
-            (u.cache_read_input_tokens ?? 0) +
-            (u.cache_creation_input_tokens ?? 0);
+          // #336: 세 경로가 같은 합산을 복제하던 것을 공용 헬퍼로 통일.
+          lastTurnContextTokens = totalInputTokens(evt.message.usage);
           // #277: 턴별 토큰을 누적해 임계 초과 시 cost_alarm 1회 emit(중단 안 함)
           cumulativeTokens += lastTurnContextTokens;
           if (

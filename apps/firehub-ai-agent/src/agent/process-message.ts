@@ -2,6 +2,8 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent } from './agent-sdk.js';
 import { truncate } from '../utils.js';
 import { MAX_BUDGET_USD } from '../constants.js';
+// 지역 변수 totalInputTokens와 이름이 겹치므로 별칭으로 들여온다.
+import { totalInputTokens as sumInputTokens } from './token-usage.js';
 
 export function processMessage(
   msg: SDKMessage,
@@ -130,10 +132,8 @@ export function processMessage(
       let totalOutputTokens = 0;
       if (resultMsg.usage) {
         const u = resultMsg.usage;
-        totalInputTokens =
-          (u.input_tokens ?? 0) +
-          (u.cache_read_input_tokens ?? 0) +
-          (u.cache_creation_input_tokens ?? 0);
+        // #336: 공용 헬퍼로 통일 (경로별 합산 누락 재발 방지).
+        totalInputTokens = sumInputTokens(u);
         totalOutputTokens = u.output_tokens ?? 0;
         console.log(
           `${tag()} 📊 Total tokens — input: ${u.input_tokens ?? 0}, output: ${totalOutputTokens}, cache_read: ${u.cache_read_input_tokens ?? 0}, cache_create: ${u.cache_creation_input_tokens ?? 0} (total_input: ${totalInputTokens})`,

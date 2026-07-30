@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto';
 import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
+import { totalInputTokens, type TokenUsageLike } from './token-usage.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
@@ -80,7 +81,8 @@ interface StreamJsonMessage {
     }>;
   };
   result?: string;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  // #336: 캐시 토큰까지 담는다 — 컨텍스트 사용량 칩은 캐시분을 포함한 전체 크기를 봐야 한다.
+  usage?: TokenUsageLike & { output_tokens?: number };
   delta?: { type?: string; text?: string };
   subtype?: string;
   cost_usd?: number;
@@ -435,7 +437,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       if (msg.type === 'result') {
         if (msg.session_id) claudeSessionId = msg.session_id;
         await saveTranscript();
-        const inputTokens = msg.usage?.input_tokens ?? 0;
+        // #336: 캐시 read/creation을 합산해야 실제 컨텍스트 크기가 나온다.
+        // input_tokens만 쓰면 캐시 히트 시 4 같은 값이 나와 칩이 상시 0%가 된다.
+        const inputTokens = totalInputTokens(msg.usage);
         const outputTokens = msg.usage?.output_tokens ?? 0;
         if ((msg.subtype as string) === 'error_max_budget_usd') {
           // #277: 예산 초과 전용 메시지
