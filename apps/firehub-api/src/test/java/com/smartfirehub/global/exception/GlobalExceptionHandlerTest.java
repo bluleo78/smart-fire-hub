@@ -1,5 +1,7 @@
 package com.smartfirehub.global.exception;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -203,6 +205,44 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.status").value(409))
         .andExpect(jsonPath("$.error").value("Conflict"))
         .andExpect(jsonPath("$.message").value("Data integrity violation"));
+  }
+
+  /**
+   * 분류되지 않은 제약조건 위반이라도 원문 DB 메시지(테이블·컬럼명)가 사용자 응답에 새면 안 된다 (#320). 상세는 서버 로그에만 남기고 응답은 일반화된 문구만
+   * 전달한다.
+   */
+  @Test
+  void dataIntegrityViolation_unclassifiedCause_doesNotLeakRawDbMessage() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-unclassified"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value(409))
+        .andExpect(jsonPath("$.message").value("Data integrity violation"))
+        .andExpect(jsonPath("$.message", not(containsString("dataset_mapping"))))
+        .andExpect(jsonPath("$.message", not(containsString("tenant_id"))))
+        .andExpect(jsonPath("$.message", not(containsString("relation"))));
+  }
+
+  /** 분류되는 세 원인의 사용자 메시지는 #320 수정 이후에도 그대로여야 한다. 체크 제약만 원문 concat 부분을 제거했다. */
+  @Test
+  void dataIntegrityViolation_classifiedCauses_keepStableMessagesWithoutRawDetail()
+      throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation/duplicate"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("Data integrity violation: duplicate entry"));
+
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation/fk"))
+        .andExpect(status().isConflict())
+        .andExpect(
+            jsonPath("$.message").value("Data integrity violation: referenced record not found"));
+
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation/check"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("Data integrity violation: constraint check failed"))
+        .andExpect(jsonPath("$.message", not(containsString("ck_dataset_status"))));
   }
 
   @Test

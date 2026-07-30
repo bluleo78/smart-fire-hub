@@ -21,6 +21,7 @@ import java.util.List;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -116,6 +117,36 @@ public class ExceptionStubController {
   @GetMapping("/data-integrity-violation")
   public void dataIntegrityViolation() {
     throw new DataIntegrityViolationException("Integrity error");
+  }
+
+  /**
+   * duplicate key / foreign key / check constraint 어디에도 분류되지 않는 제약조건 위반 (#320). 원문 DB 메시지에 테이블·컬럼명이
+   * 들어있어, 이것이 사용자 응답으로 새는지 검증하기 위한 스텁이다.
+   */
+  @GetMapping("/data-integrity-violation-unclassified")
+  public void dataIntegrityViolationUnclassified() {
+    throw new DataIntegrityViolationException(
+        "SQL [insert into ...]; not-null constraint",
+        new RuntimeException(
+            "ERROR: null value in column \"tenant_id\" of relation \"dataset_mapping\""
+                + " violates not-null constraint"));
+  }
+
+  /** 분류되는 세 원인(중복/FK/체크) — 사용자 메시지가 회귀하지 않는지 고정하기 위한 스텁 (#320). */
+  @GetMapping("/data-integrity-violation/{kind}")
+  public void dataIntegrityViolationClassified(@PathVariable String kind) {
+    String causeMsg =
+        switch (kind) {
+          case "duplicate" ->
+              "ERROR: duplicate key value violates unique constraint \"uk_dataset_name\"";
+          case "fk" ->
+              "ERROR: insert or update on table \"dataset_column\" violates foreign key"
+                  + " constraint \"fk_dataset\"";
+          default ->
+              "ERROR: new row for relation \"dataset\" violates check constraint"
+                  + " \"ck_dataset_status\"";
+        };
+    throw new DataIntegrityViolationException("SQL [...]", new RuntimeException(causeMsg));
   }
 
   @GetMapping("/account-locked")

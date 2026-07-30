@@ -133,9 +133,21 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
   }
 
+  /**
+   * DB 제약조건 위반을 409로 변환한다 (#320).
+   *
+   * <p>원문 DB 메시지에는 테이블·컬럼·제약조건 이름과 때로는 값 일부가 들어있으므로 <b>사용자 응답에는 절대 넣지 않는다</b>. 원인 분류(중복/FK/체크)만
+   * 응답에 담고, 진단에 필요한 원문은 서버 로그에만 남긴다 — ai-agent 호출 실패에 적용한 것과 같은 원칙(#313)이다.
+   *
+   * <p>이 분기는 예외 번역기가 등록되기 전(#312 이전)까지 도달 불가한 죽은 코드였으나, 번역기 등록 이후 해당 DSLContext를 쓰는 모든 jOOQ 경로에서 도달
+   * 가능해졌다.
+   */
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(
       DataIntegrityViolationException ex, HttpServletRequest request) {
+    // 클라이언트 입력이 유발하는 409이므로 error가 아닌 warn. 원문 메시지는 여기서만 노출된다.
+    log.warn("Data integrity violation on {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+
     String message = "Data integrity violation";
     if (ex.getCause() != null) {
       String causeMsg = ex.getCause().getMessage();
@@ -144,10 +156,10 @@ public class GlobalExceptionHandler {
       } else if (causeMsg != null && causeMsg.contains("foreign key")) {
         message = "Data integrity violation: referenced record not found";
       } else if (causeMsg != null && causeMsg.contains("check constraint")) {
-        message = "Data integrity violation: constraint check failed - " + causeMsg;
-      } else if (causeMsg != null) {
-        message = "Data integrity violation: " + causeMsg;
+        message = "Data integrity violation: constraint check failed";
       }
+      // 위 셋 중 어디에도 분류되지 않는 원인은 일반화된 기본 문구를 그대로 사용한다.
+      // (과거에는 causeMsg를 이어붙여 스키마 정보가 사용자에게 노출됐다)
     }
     ErrorResponse response = buildError(HttpStatus.CONFLICT, message, null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
