@@ -68,9 +68,14 @@ public class ReviewItemRepository {
         .fetchOptional(r -> r.get(STATUS));
   }
 
-  /** 검수 대기(pending) 목록 — itemType이 주어지면 해당 타입만, null이면 전체. 등록순. */
-  public List<ReviewItemRecord> findPending(String itemType) {
-    Condition where = STATUS.eq("pending");
+  /**
+   * 검수 항목 목록 — status로 필터하고, itemType이 주어지면 해당 타입만 추린다(null이면 전체 타입). 등록순.
+   *
+   * <p>status를 하드코딩했던 예전 구현은 컨트롤러가 받은 status 파라미터를 조용히 무시해, approved/rejected를
+   * 요청해도 pending 행을 돌려주는 조용한 오답이었다(#318). 허용값 검증은 서비스가 담당한다.
+   */
+  public List<ReviewItemRecord> findByStatus(String status, String itemType) {
+    Condition where = STATUS.eq(status);
     if (itemType != null) where = where.and(ITEM_TYPE.eq(itemType));
     return dsl.select(ID, ITEM_TYPE, STATUS, DATASET_ID, SIGNAL_TYPE, SIGNAL_SCORE, REASON, PAYLOAD, DECIDED_BY, DECIDED_AT, CREATED_AT)
         .from(T)

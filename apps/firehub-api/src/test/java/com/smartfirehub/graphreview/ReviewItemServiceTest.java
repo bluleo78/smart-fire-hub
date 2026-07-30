@@ -277,6 +277,32 @@ class ReviewItemServiceTest {
     assertThat(service.lookupRelation("a", "R", "b")).isEqualTo("none");
   }
 
+  // ── status 필터(#318) — 예전에는 컨트롤러가 받은 status를 서비스로 넘기지 않아 항상 pending이었다.
+  @Test
+  @DisplayName("status를 주면 그대로 필터에 쓰이고, 생략하면 pending으로 폴백한다")
+  void list_appliesStatusFilter_andDefaultsToPending() {
+    when(repo.findByStatus(anyString(), any())).thenReturn(List.of());
+
+    service.list("approved", "synonym_merge");
+    verify(repo).findByStatus("approved", "synonym_merge");
+
+    service.list(null, null);
+    verify(repo).findByStatus("pending", null);
+
+    // 빈 문자열도 "생략"으로 본다(쿼리스트링 status= 형태).
+    service.list("  ", "property_normalization");
+    verify(repo).findByStatus("pending", "property_normalization");
+  }
+
+  @Test
+  @DisplayName("허용되지 않은 status는 조용히 pending으로 대체하지 않고 400으로 거부한다")
+  void list_invalidStatus_throws() {
+    assertThatThrownBy(() -> service.list("deleted", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("지원하지 않는 status");
+    verify(repo, never()).findByStatus(anyString(), any());
+  }
+
   // --- helpers ---
   private static ReviewItemRecord record(String itemType, String payloadJson) {
     return new ReviewItemRecord(1L, itemType, "pending", null, null, null, null, payloadJson, null, null, LocalDateTime.now());

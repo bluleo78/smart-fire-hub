@@ -143,8 +143,23 @@ public class ReviewItemService {
     return repo.findDecisionStatus(RELATION, subjectKey + "|" + relType + "|" + objectKey).orElse("none");
   }
 
-  public List<ReviewItemResponse> listPending(String itemType) {
-    return repo.findPending(itemType).stream().map(this::toResponse).toList();
+  /** 조회 가능한 status 값 — 이 테이블에 실제로 쓰이는 값의 전부다(upsertPending/approve/reject). */
+  static final Set<String> LIST_STATUSES = Set.of("pending", "approved", "rejected");
+
+  /**
+   * 검수 항목 목록 — status/itemType 필터(둘 다 선택).
+   *
+   * <p>status를 생략하면 pending이다(#318 이전의 유일한 동작이자 웹 인박스의 기본값 — 생략을 "전체"로
+   * 해석하면 파라미터 없이 호출하던 기존 호출자의 결과가 조용히 달라진다). 허용되지 않은 값은
+   * IllegalArgumentException(400)으로 거부한다 — 받아놓고 무시하면 조용한 오답이 된다.
+   */
+  public List<ReviewItemResponse> list(String status, String itemType) {
+    String effective = (status == null || status.isBlank()) ? "pending" : status;
+    if (!LIST_STATUSES.contains(effective)) {
+      throw new IllegalArgumentException(
+          "지원하지 않는 status 값입니다: " + status + " (허용: pending, approved, rejected)");
+    }
+    return repo.findByStatus(effective, itemType).stream().map(this::toResponse).toList();
   }
 
   /** 승인 — item_type별 그래프 변경을 먼저 수행하고, 성공해야 status를 approved로 갱신한다(실패 시 pending 유지). */

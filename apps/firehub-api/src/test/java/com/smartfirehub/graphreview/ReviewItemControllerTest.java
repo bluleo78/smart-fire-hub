@@ -118,6 +118,42 @@ class ReviewItemControllerTest {
         .andExpect(status().isForbidden());
   }
 
+  // ── status 필터(#318) — 예전에는 파라미터를 받고도 버려 항상 pending을 돌려줬다.
+  @Test
+  void list_passesStatusFilterToService() throws Exception {
+    when(service.list("approved", "synonym_merge")).thenReturn(List.of(resp("approved")));
+
+    mockMvc.perform(get("/api/v1/graphrag/review-items")
+            .param("status", "approved").param("itemType", "synonym_merge")
+            .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].status").value("approved"));
+
+    verify(service).list("approved", "synonym_merge");
+  }
+
+  @Test
+  void list_withoutStatus_defaultsToPendingAtServiceLayer() throws Exception {
+    when(service.list(null, null)).thenReturn(List.of(resp("pending")));
+
+    mockMvc.perform(get("/api/v1/graphrag/review-items").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].status").value("pending"));
+
+    verify(service).list(null, null);
+  }
+
+  @Test
+  void list_invalidStatus_badRequest() throws Exception {
+    when(service.list(eq("bogus"), eq(null)))
+        .thenThrow(new IllegalArgumentException("지원하지 않는 status 값입니다: bogus (허용: pending, approved, rejected)"));
+
+    mockMvc.perform(get("/api/v1/graphrag/review-items").param("status", "bogus")
+            .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("지원하지 않는 status")));
+  }
+
   @Test
   void evidence_returnsChunks() throws Exception {
     when(service.evidence(1L)).thenReturn(List.of(

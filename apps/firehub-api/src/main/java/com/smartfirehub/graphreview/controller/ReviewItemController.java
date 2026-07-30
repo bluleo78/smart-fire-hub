@@ -79,13 +79,14 @@ public class ReviewItemController {
     return new RelationLookupResponse(service.lookupRelation(subjectKey, relType, objectKey));
   }
 
-  // 검수 대기 목록 — status/itemType 필터(둘 다 선택).
+  // 검수 항목 목록 — status/itemType 필터(둘 다 선택). status 생략 시 pending(#318 이전과 동일한 기본값),
+  // 허용되지 않은 status는 400. 예전에는 status를 받고도 버려 approved/rejected 요청에 pending을 돌려줬다.
   @GetMapping
   @RequirePermission("dataset:read")
-  public List<ReviewItemResponse> listPending(
+  public List<ReviewItemResponse> list(
       @RequestParam(required = false) String status,
       @RequestParam(required = false) String itemType) {
-    return service.listPending(itemType);
+    return service.list(status, itemType);
   }
 
   // 승인 — item_type별 그래프 변경 후 status 갱신. 속성은 correctedValue 필요.

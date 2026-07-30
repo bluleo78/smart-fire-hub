@@ -42,23 +42,23 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "first", "{}");
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "second(무시)", "{}");
 
-    var row = repo.findPending("synonym_merge").stream()
+    var row = repo.findByStatus("pending", "synonym_merge").stream()
         .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r))).findFirst().orElseThrow();
     assertThat(row.reason()).isEqualTo("first");
   }
 
   @Test
-  void findPending_filtersByItemType_andRoundTripsPayloadJson() {
+  void findByStatus_filtersByItemType_andRoundTripsPayloadJson() {
     repo.upsertPending("property_normalization", "TestKey|피해액", 12L, "normalization_failure", null,
         "정규화 실패", "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"rawText\":\"약 3천만\"}");
 
-    var props = repo.findPending("property_normalization").stream()
+    var props = repo.findByStatus("pending", "property_normalization").stream()
         .filter(r -> "TestKey|피해액".equals(dedupeKeyOf(r))).toList();
     assertThat(props).hasSize(1);
     assertThat(props.get(0).datasetId()).isEqualTo(12L);
     assertThat(props.get(0).payloadJson()).contains("\"rawText\"").contains("약 3천만");
     // 다른 타입 필터로는 안 나온다.
-    assertThat(repo.findPending("synonym_merge").stream().anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))).isFalse();
+    assertThat(repo.findByStatus("pending", "synonym_merge").stream().anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))).isFalse();
   }
 
   @Test
@@ -67,15 +67,18 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
         .get(0, Long.class);
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "r", "{}");
-    long id = repo.findPending("synonym_merge").stream()
+    long id = repo.findByStatus("pending", "synonym_merge").stream()
         .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r))).findFirst().orElseThrow().id();
 
     repo.updateStatus(id, "approved", userId);
 
     assertThat(repo.findById(id).orElseThrow().status()).isEqualTo("approved");
     assertThat(repo.findById(id).orElseThrow().decidedBy()).isEqualTo(userId);
-    assertThat(repo.findPending(null)).noneMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("pending", null)).noneMatch(r -> r.id().equals(id));
     assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b")).contains("approved");
+    // status 필터가 실제로 동작한다 — 예전에는 'pending' 하드코딩이라 approved 조회가 불가능했다(#318).
+    assertThat(repo.findByStatus("approved", null)).anyMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("rejected", null)).noneMatch(r -> r.id().equals(id));
   }
 
   // dedupe_key는 Record에 노출하지 않으므로(내부 조회 키) 테스트에선 id로 DB에서 직접 읽어 비교한다.
