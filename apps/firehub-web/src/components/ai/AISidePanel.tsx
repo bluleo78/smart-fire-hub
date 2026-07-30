@@ -7,6 +7,8 @@ import { useAI } from './AIProvider';
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 380;
+/** 키보드 화살표 1회당 폭 변화량(px) — #332 NodeDetailDrawer와 동일 단위 */
+const KEY_STEP = 16;
 
 /** Tailwind lg 브레이크포인트(1024px) 미만이면 모바일로 판정 */
 const MOBILE_MQ = '(max-width: 1023px)';
@@ -107,6 +109,27 @@ export function AISidePanel() {
     document.addEventListener('mouseup', handleMouseUp);
   }, [width]);
 
+  /**
+   * 키보드 폭 조절(#339) — 마우스 전용이던 핸들에 window-splitter 조작을 부여한다.
+   *
+   * 방향 규약: 이 패널은 오른쪽 고정이고 드래그 계산이 `startWidth + (startX - clientX)`라
+   * "왼쪽으로 끌면 넓어진다". 화살표도 이를 따라 ←가 폭 증가 / →가 폭 감소다(#332와 동일).
+   * aria-valuenow(=폭)와 화살표 방향이 반대로 보이지만, 사용자가 보는 것은 "핸들이 움직이는
+   * 방향"이므로 마우스와 일치시키는 편이 혼란이 적다.
+   */
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    let next: number | null = null;
+    if (e.key === 'ArrowLeft') next = width + KEY_STEP;
+    else if (e.key === 'ArrowRight') next = width - KEY_STEP;
+    // Home/End는 노출한 aria-valuemin/max에 맞춘다 — Home=최소 폭, End=최대 폭.
+    else if (e.key === 'Home') next = MIN_WIDTH;
+    else if (e.key === 'End') next = MAX_WIDTH;
+    if (next === null) return;
+    // 화살표/Home/End가 배경 스크롤로 새는 것을 막는다.
+    e.preventDefault();
+    setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, next)));
+  }, [width]);
+
   if (isMobile) {
     // 모바일: fixed 오버레이로 렌더링 — flex row 레이아웃에서 완전히 분리
     if (!isOpen) return null;
@@ -135,10 +158,21 @@ export function AISidePanel() {
       // 전 페이지에서 보이지 않는 탭 스톱이 남아 있었다. aria-hidden은 붙이지 않는다 — inert가 함의한다.
       inert={!isOpen}
     >
-      {/* Resize handle */}
+      {/* 좌측 리사이즈 핸들 — 마우스 드래그 + 키보드(←/→/Home/End) 양쪽 지원(#339, #332와 동일 처방).
+          폭 1px이라 기본 포커스 링이 보이지 않으므로 ring을 안쪽으로 명시한다.
+          접힌 패널에서는 부모의 inert가 이 탭 스톱까지 함께 제거한다(#333 회귀 방지). */}
       <div
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 z-10"
+        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary z-10"
         onMouseDown={handleMouseDown}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="AI 패널 폭 조절"
+        aria-valuenow={width}
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
+        data-testid="ai-side-panel-resize-handle"
       />
       <div className="h-full overflow-hidden">
         <AIChatPanel />

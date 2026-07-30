@@ -79,7 +79,15 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
               ))}
             </>
           )}
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={closeAI}>
+          {/* #341: 아이콘 전용 버튼이라 접근 가능한 이름이 없었다 — 스크린리더가 "버튼"으로만 읽음 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={closeAI}
+            aria-label="AI 어시스턴트 닫기"
+            title="닫기"
+          >
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>

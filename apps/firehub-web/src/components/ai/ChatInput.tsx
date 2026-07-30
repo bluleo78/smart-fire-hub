@@ -252,12 +252,30 @@ export function ChatInput({
           className="min-h-[44px] max-h-[150px] resize-none text-sm"
           rows={1}
         />
+        {/* #341: 전송/중단은 같은 자리에서 토글되므로 서로 다른 key를 줘서
+            스크린리더가 "이름이 바뀐 같은 버튼"이 아니라 교체된 컨트롤로 인지하게 한다. */}
         {isStreaming && onStop ? (
-          <Button onClick={onStop} variant="destructive" size="icon" className="shrink-0 h-[44px] w-[44px]">
+          <Button
+            key="stop"
+            onClick={onStop}
+            variant="destructive"
+            size="icon"
+            className="shrink-0 h-[44px] w-[44px]"
+            aria-label="응답 중단"
+            title="응답 중단"
+          >
             <StopCircle className="h-4 w-4" />
           </Button>
         ) : (
-          <Button onClick={handleSend} disabled={!canSend} size="icon" className="shrink-0 h-[44px] w-[44px]">
+          <Button
+            key="send"
+            onClick={handleSend}
+            disabled={!canSend}
+            size="icon"
+            className="shrink-0 h-[44px] w-[44px]"
+            aria-label="메시지 전송"
+            title="메시지 전송"
+          >
             <Send className="h-4 w-4" />
           </Button>
         )}
