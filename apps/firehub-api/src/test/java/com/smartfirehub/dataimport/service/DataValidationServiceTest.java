@@ -73,7 +73,7 @@ class DataValidationServiceTest {
   void convertValue_integer_invalidValue_throwsException() {
     assertThatThrownBy(() -> service.convertValue("abc", "INTEGER"))
         .isInstanceOf(Exception.class)
-        .hasMessageContaining("Invalid integer value");
+        .hasMessageContaining("정수 형식이 아닙니다");
   }
 
   @Test
@@ -98,7 +98,7 @@ class DataValidationServiceTest {
   void convertValue_decimal_invalidValue_throwsException() {
     assertThatThrownBy(() -> service.convertValue("xyz", "DECIMAL"))
         .isInstanceOf(Exception.class)
-        .hasMessageContaining("Invalid decimal value");
+        .hasMessageContaining("소수 형식이 아닙니다");
   }
 
   @Test
@@ -137,7 +137,7 @@ class DataValidationServiceTest {
   void convertValue_boolean_invalidValue_throwsException() {
     assertThatThrownBy(() -> service.convertValue("maybe", "BOOLEAN"))
         .isInstanceOf(Exception.class)
-        .hasMessageContaining("Invalid boolean value");
+        .hasMessageContaining("참/거짓 형식이 아닙니다");
   }
 
   // -----------------------------------------------------------------------
@@ -160,7 +160,7 @@ class DataValidationServiceTest {
   void convertValue_date_invalidValue_throwsException() {
     assertThatThrownBy(() -> service.convertValue("not-a-date", "DATE"))
         .isInstanceOf(Exception.class)
-        .hasMessageContaining("Invalid date value");
+        .hasMessageContaining("날짜 형식이 아닙니다");
   }
 
   // -----------------------------------------------------------------------
@@ -187,7 +187,7 @@ class DataValidationServiceTest {
   void convertValue_timestamp_invalidValue_throwsException() {
     assertThatThrownBy(() -> service.convertValue("not-a-timestamp", "TIMESTAMP"))
         .isInstanceOf(Exception.class)
-        .hasMessageContaining("Invalid timestamp value");
+        .hasMessageContaining("날짜시간 형식이 아닙니다");
   }
 
   // -----------------------------------------------------------------------
@@ -226,7 +226,7 @@ class DataValidationServiceTest {
     assertThat(result.errorCount()).isEqualTo(1);
     assertThat(result.validRows()).hasSize(2);
     assertThat(result.errors()).hasSize(1);
-    assertThat(result.errors().get(0)).contains("age").contains("Invalid integer value");
+    assertThat(result.errors().get(0)).contains("age").contains("정수 형식이 아닙니다");
   }
 
   @Test
@@ -245,7 +245,7 @@ class DataValidationServiceTest {
 
     assertThat(result.validCount()).isEqualTo(0);
     assertThat(result.errorCount()).isEqualTo(1);
-    assertThat(result.errors().get(0)).contains("name").contains("required but empty");
+    assertThat(result.errors().get(0)).contains("name").contains("필수 값이 비어 있습니다");
   }
 
   @Test
@@ -288,15 +288,15 @@ class DataValidationServiceTest {
 
   @Test
   void validate_nonNullDateColumn_zeroValue_reportsRequiredErrorNotInvalidDate() {
-    // (b) DATE non-null 컬럼 "0" → "required but empty" 계열 에러 (Invalid date value 아님)
+    // (b) DATE non-null 컬럼 "0" → "필수 값이 비어 있습니다" 계열 에러 ("날짜 형식이 아닙니다" 아님)
     List<DatasetColumnResponse> columns = List.of(col("event_date", "DATE", false));
 
     DataValidationService.ValidationResult result =
         service.validate(List.of(Map.of("event_date", "0")), columns);
 
     assertThat(result.errorCount()).isEqualTo(1);
-    assertThat(result.errors().get(0)).contains("required but empty");
-    assertThat(result.errors().get(0)).doesNotContain("Invalid date value");
+    assertThat(result.errors().get(0)).contains("필수 값이 비어 있습니다");
+    assertThat(result.errors().get(0)).doesNotContain("날짜 형식이 아닙니다");
   }
 
   @Test
@@ -376,7 +376,7 @@ class DataValidationServiceTest {
     DataValidationService.ValidationResult result = service.validate(rows, columns, 1000);
 
     assertThat(result.errorCount()).isEqualTo(1);
-    assertThat(result.errors().get(0)).contains("Row 1002");
+    assertThat(result.errors().get(0)).contains("1002행");
     // totalRows는 이번 호출(배치)의 행수만 반영 — 누적은 컨트롤러 책임
     assertThat(result.totalRows()).isEqualTo(2);
   }
@@ -394,7 +394,7 @@ class DataValidationServiceTest {
     DataValidationService.ValidationResult withoutBase = service.validate(rows, columns);
     DataValidationService.ValidationResult withZeroBase = service.validate(rows, columns, 0);
 
-    assertThat(withoutBase.errors().get(0)).contains("Row 2");
+    assertThat(withoutBase.errors().get(0)).contains("2행");
     assertThat(withoutBase.errors()).isEqualTo(withZeroBase.errors());
   }
 

@@ -313,8 +313,9 @@ public class DataImportService {
                   "importMode",
                   importMode.name()));
     } catch (DataIntegrityViolationException e) {
-      throw new ConcurrentImportException(
-          "An import is already in progress. Please wait for it to complete and try again.");
+      // 409 응답 메시지. 프론트가 자체 한국어 문구를 쓰긴 하지만, API를 직접 쓰는 경로(ai-agent·외부 호출)에도
+      // 그대로 노출되므로 저장소의 한국어 예외 메시지 관행에 맞춘다(#309).
+      throw new ConcurrentImportException("이미 진행 중인 임포트가 있습니다. 완료된 뒤 다시 시도해 주세요.");
     }
 
     // Save file to temp location for Jobrunr processing
@@ -523,22 +524,22 @@ public class DataImportService {
 
       if (!validationPassed) {
         // fail-fast: 검증 오류가 하나라도 있으면 전량 미적재. 첫 불량 행 상세를 메시지에 실어 원인 파악을 돕는다.
+        // 한국어 UI와 문구를 맞춘다(#309). 행/컬럼/값/사유의 정보 구조는 그대로 유지해 사용자가 어디를 고칠지 알 수 있게 한다.
         String sampleError =
             hasMappings
                 ? (detailErrorsAccum.isEmpty()
                     ? null
-                    : "Row "
-                        + detailErrorsAccum.get(0).rowNumber()
-                        + " column '"
+                    : detailErrorsAccum.get(0).rowNumber()
+                        + "행 '"
                         + detailErrorsAccum.get(0).columnName()
-                        + "' - "
+                        + "' 컬럼 - "
                         + detailErrorsAccum.get(0).error())
                 : (simpleErrorsAccum.isEmpty() ? null : simpleErrorsAccum.get(0));
         String failMessage =
-            "Import validation failed, no rows were loaded ("
+            "검증 실패로 한 행도 적재되지 않았습니다 (오류 "
                 + errorCountFinal
-                + " error(s) found)"
-                + (sampleError != null ? " — e.g. " + sampleError : "");
+                + "건)"
+                + (sampleError != null ? " — 예: " + sampleError : "");
         asyncJobService.failJob(jobId, failMessage);
 
         Object errorsForJson = hasMappings ? detailErrorsAccum : simpleErrorsAccum;

@@ -142,8 +142,8 @@ test.describe('임포트 잡 실패 — VALIDATING 단계 fail-fast', () => {
       successRows: null,
       errorRows: 1,
       errorDetails: errorDetailsJson,
-      // 백엔드 실패 메시지는 영어 고정 문구다 — 한국어로 단언하지 않는다.
-      errorMessage: 'Import validation failed, no rows were loaded (1 error(s) found)',
+      // 백엔드 실패 메시지는 한국어 고정 문구다(#309).
+      errorMessage: '검증 실패로 한 행도 적재되지 않았습니다 (오류 1건)',
       importedBy: 'testuser',
       startedAt: '2024-01-01T01:00:00Z',
       completedAt: '2024-01-01T01:00:05Z',
@@ -186,7 +186,7 @@ test.describe('임포트 잡 실패 — VALIDATING 단계 fail-fast', () => {
           progress: 20,
           metadata: {},
           message: null,
-          errorMessage: 'Import validation failed, no rows were loaded (1 error(s) found)',
+          errorMessage: '검증 실패로 한 행도 적재되지 않았습니다 (오류 1건)',
         });
         // 이 SSE 가 FAILED 를 보낸 뒤부터 히스토리 mock 이 FAILED 레코드를 노출하도록 전환한다 —
         // useImportDialog.ts 의 invalidateQueries(stage==='FAILED') 가 이 리페치를 트리거해야만
@@ -217,9 +217,9 @@ test.describe('임포트 잡 실패 — VALIDATING 단계 fail-fast', () => {
     await expect(importBtn).toBeEnabled({ timeout: 10_000 });
     await importBtn.click();
 
-    // 3단계 진행 화면 — 실패 카드 노출 대기 (영어 고정 메시지로 단언)
+    // 3단계 진행 화면 — 실패 카드 노출 대기 (한국어 고정 메시지로 단언, #309)
     await expect(
-      page.getByText('Import validation failed, no rows were loaded (1 error(s) found)'),
+      page.getByText('검증 실패로 한 행도 적재되지 않았습니다 (오류 1건)'),
     ).toBeVisible({ timeout: 10_000 });
 
     // 스텝퍼: "검증" 노드가 실패(빨강) 표시되어야 한다

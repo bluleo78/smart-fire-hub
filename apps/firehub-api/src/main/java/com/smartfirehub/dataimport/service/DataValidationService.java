@@ -34,6 +34,10 @@ public class DataValidationService {
           DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
           DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
 
+  // 필수값 누락 사유 문구. validate()가 요약 문자열을 조립할 때 이 값과 동일한지 비교해 문구를 분기하므로,
+  // 리터럴을 여러 곳에 흩뿌리지 않고 상수 하나로 묶어 두 곳이 어긋나지 않게 한다.
+  static final String REQUIRED_FIELD_EMPTY = "필수 값이 비어 있습니다";
+
   public ValidationResult validate(
       List<Map<String, String>> rows, List<DatasetColumnResponse> columns) {
     // 단일 파일 전체를 한 번에 검증하는 기존 호출 경로 — 오프셋 없이(0) 위임
@@ -56,7 +60,7 @@ public class DataValidationService {
 
       // 매핑 없는 경로도 매핑 경로(validateWithMapping/toRows)와 동일한 셀 변환 로직(convertRowOrNull)을
       // 공유한다 — 별도 인라인 변환 루프를 유지하면 두 경로가 갈라져 "검증 통과 == 값 변환 성공"이 어긋나는
-      // 미묘한 버그(Task2 핵심 위험)가 생긴다. 에러 형식은 기존 String 메시지 포맷을 그대로 유지한다.
+      // 미묘한 버그(Task2 핵심 위험)가 생긴다. 에러는 기존과 동일한 "행/컬럼/사유" 구조의 String 메시지로 조립한다.
       List<ValidationErrorDetail> rowErrors = new ArrayList<>();
       List<Object> convertedRow = convertRowOrNull(row, columns, rowIndex, rowErrors);
 
@@ -64,13 +68,13 @@ public class DataValidationService {
         validRows.add(convertedRow);
       } else {
         for (ValidationErrorDetail detail : rowErrors) {
-          // "Required field is empty"는 convertRowOrNull의 필수값 누락 메시지 — 기존 문구로 복원
+          // 한국어 UI와 문구를 맞추기 위해 요약 문자열도 한국어로 조립한다(#309).
+          // 필수값 누락은 값 자체가 없으므로 "값: ..."을 붙이지 않고 사유만 표기한다.
           String suffix =
-              "Required field is empty".equals(detail.error())
-                  ? "is required but empty"
+              REQUIRED_FIELD_EMPTY.equals(detail.error())
+                  ? REQUIRED_FIELD_EMPTY
                   : "- " + detail.error();
-          errors.add(
-              "Row " + detail.rowNumber() + ": column '" + detail.columnName() + "' " + suffix);
+          errors.add(detail.rowNumber() + "행 '" + detail.columnName() + "' 컬럼 " + suffix);
         }
       }
     }
@@ -85,7 +89,7 @@ public class DataValidationService {
 
   /**
    * 값이 "무의미한 날짜없음 표식"인지 판정한다. 레거시/공공 데이터에서 날짜 없음을 "0", "0000-00-00", "00000000",
-   * "0000/00/00", "00000000000000" 등으로 표기하는 경우가 있어, 어떤 포맷으로도 파싱되지 않아 "Invalid date value: 0"으로
+   * "0000/00/00", "00000000000000" 등으로 표기하는 경우가 있어, 어떤 포맷으로도 파싱되지 않아 "날짜 형식이 아닙니다: 0"으로
    * 거부되던 문제를 방지하기 위함이다.
    *
    * <p>과검출 방지: 구분자(-, /, 공백, :)를 제거한 뒤 남은 문자열이 최소 1자 이상이면서 전부 '0'인 경우에만 무의미값으로 판정한다. 유효한 날짜(예:
@@ -126,7 +130,7 @@ public class DataValidationService {
           // 천단위 콤마(예: "38,344") 제거 후 파싱. 임포트 데이터에 흔한 형식.
           yield Long.parseLong(value.replace(",", ""));
         } catch (NumberFormatException e) {
-          throw new Exception("Invalid integer value: " + value);
+          throw new Exception("정수 형식이 아닙니다: " + value);
         }
       }
       case "DECIMAL" -> {
@@ -134,7 +138,7 @@ public class DataValidationService {
           // 천단위 콤마 제거 후 파싱(소수 구분자는 마침표 전제). BigDecimal 은 콤마를 못 받음.
           yield new BigDecimal(value.replace(",", ""));
         } catch (NumberFormatException e) {
-          throw new Exception("Invalid decimal value: " + value);
+          throw new Exception("소수 형식이 아닙니다: " + value);
         }
       }
       case "BOOLEAN" -> {
@@ -145,7 +149,7 @@ public class DataValidationService {
           yield false;
         } else {
           throw new Exception(
-              "Invalid boolean value: " + value + " (expected: true/false/1/0/yes/no)");
+              "참/거짓 형식이 아닙니다: " + value + " (허용 값: true/false/1/0/yes/no)");
         }
       }
       case "DATE" -> {
@@ -159,9 +163,9 @@ public class DataValidationService {
         }
         if (date == null) {
           throw new Exception(
-              "Invalid date value: "
+              "날짜 형식이 아닙니다: "
                   + value
-                  + " (expected formats: yyyy-MM-dd, yyyy/MM/dd, dd-MM-yyyy, dd/MM/yyyy,"
+                  + " (허용 형식: yyyy-MM-dd, yyyy/MM/dd, dd-MM-yyyy, dd/MM/yyyy,"
                   + " MM/dd/yyyy, yyyyMMdd)");
         }
         yield date;
@@ -177,9 +181,9 @@ public class DataValidationService {
         }
         if (timestamp == null) {
           throw new Exception(
-              "Invalid timestamp value: "
+              "날짜시간 형식이 아닙니다: "
                   + value
-                  + " (expected formats: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO format)");
+                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO 형식)");
         }
         yield timestamp;
       }
@@ -187,7 +191,7 @@ public class DataValidationService {
         // GeoJSON string — pass through as-is (PostGIS will validate on INSERT)
         yield value;
       }
-      default -> throw new Exception("Unknown data type: " + dataType);
+      default -> throw new Exception("알 수 없는 데이터 타입입니다: " + dataType);
     };
   }
 
@@ -314,7 +318,7 @@ public class DataValidationService {
 
       // DATE/TIMESTAMP 컬럼의 "0", "0000-00-00" 등 무의미한 날짜없음 표식은 빈 값과 동일하게 취급하여
       // 아래의 기존 빈 값 처리 경로(필수면 에러, nullable이면 null 저장)를 타게 한다.
-      // "Invalid date value: 0" 형태로 거부하지 않기 위함.
+      // "날짜 형식이 아닙니다: 0" 형태로 거부하지 않기 위함.
       if (isDateOrTimestampType(column.dataType()) && isMeaninglessDateValue(rawValue)) {
         rawValue = null;
       }
@@ -326,7 +330,7 @@ public class DataValidationService {
                 rowIndex,
                 column.columnName(),
                 rawValue != null ? rawValue : "",
-                "Required field is empty"));
+                REQUIRED_FIELD_EMPTY));
         rowValid = false;
         continue;
       }
@@ -372,7 +376,7 @@ public class DataValidationService {
                   rowIndex,
                   pkCol,
                   value != null ? value : "",
-                  "Primary key column cannot be null or empty"));
+                  "기본키 컬럼은 비어 있을 수 없습니다"));
         }
       }
 
@@ -389,13 +393,12 @@ public class DataValidationService {
       // Detect duplicate keys within the file — last-write-wins in UPSERT mode
       if (!seenKeys.add(compositeKey)) {
         warnings.add(
-            "Row "
-                + rowIndex
-                + ": duplicate key value ("
+            rowIndex
+                + "행 기본키 값 중복 ("
                 + String.join(", ", pkColumns)
                 + ") = ("
                 + compositeKey.replace("\0", ", ")
-                + ") — last-write-wins in UPSERT mode");
+                + ") — UPSERT 모드에서는 마지막 행의 값이 적용됩니다");
       }
     }
 

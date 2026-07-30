@@ -55,7 +55,7 @@ class DataValidationServiceMappingTest {
   void convertValue_unknownType_throwsException() {
     assertThatThrownBy(() -> service.convertValue("value", "JSONB"))
         .isInstanceOf(Exception.class)
-        .hasMessageContaining("Unknown data type");
+        .hasMessageContaining("알 수 없는 데이터 타입입니다");
   }
 
   // -----------------------------------------------------------------------
@@ -180,7 +180,7 @@ class DataValidationServiceMappingTest {
 
     ValidationErrorDetail error = result.errors().get(0);
     assertThat(error.columnName()).isEqualTo("age");
-    assertThat(error.error()).contains("Required field");
+    assertThat(error.error()).contains("필수 값이 비어 있습니다");
   }
 
   @Test
@@ -195,7 +195,7 @@ class DataValidationServiceMappingTest {
 
     assertThat(result.validCount()).isEqualTo(0);
     assertThat(result.errorCount()).isEqualTo(1);
-    assertThat(result.errors().get(0).error()).contains("Invalid integer value");
+    assertThat(result.errors().get(0).error()).contains("정수 형식이 아닙니다");
   }
 
   @Test
@@ -327,11 +327,11 @@ class DataValidationServiceMappingTest {
 
     assertThat(vr.validRows()).hasSize(1);
     assertThat(vr.errorCount()).isEqualTo(2);
-    assertThat(vr.errors().get(0)).contains("Row 2").contains("name").contains("required but empty");
+    assertThat(vr.errors().get(0)).contains("2행").contains("name").contains("필수 값이 비어 있습니다");
     assertThat(vr.errors().get(1))
-        .contains("Row 3")
+        .contains("3행")
         .contains("age")
-        .contains("Invalid integer value");
+        .contains("정수 형식이 아닙니다");
   }
 
   // -----------------------------------------------------------------------
@@ -359,7 +359,7 @@ class DataValidationServiceMappingTest {
     ValidationErrorDetail err = result.errors().get(0);
     assertThat(err.rowNumber()).isEqualTo(1);
     assertThat(err.columnName()).isEqualTo("id");
-    assertThat(err.error()).contains("cannot be null or empty");
+    assertThat(err.error()).contains("기본키 컬럼은 비어 있을 수 없습니다");
   }
 
   @Test
@@ -369,7 +369,7 @@ class DataValidationServiceMappingTest {
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("id"));
 
     assertThat(result.warnings()).hasSize(1);
-    assertThat(result.warnings().get(0)).contains("duplicate key");
+    assertThat(result.warnings().get(0)).contains("기본키 값 중복");
   }
 
   @Test
@@ -395,6 +395,6 @@ class DataValidationServiceMappingTest {
     PkValidationResult result = service.validatePrimaryKeys(rows, List.of("id"));
 
     assertThat(result.errors()).hasSize(1);
-    assertThat(result.errors().get(0).error()).contains("cannot be null or empty");
+    assertThat(result.errors().get(0).error()).contains("기본키 컬럼은 비어 있을 수 없습니다");
   }
 }

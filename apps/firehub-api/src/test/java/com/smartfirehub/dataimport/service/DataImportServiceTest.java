@@ -150,7 +150,7 @@ class DataImportServiceTest extends IntegrationTestBase {
                 dataImportService.importFile(
                     testDatasetId, second, null, testUserId, "Test User", "127.0.0.1", "TestAgent"))
         .isInstanceOf(ConcurrentImportException.class)
-        .hasMessageContaining("already in progress");
+        .hasMessageContaining("이미 진행 중인 임포트가 있습니다");
   }
 
   @Test
@@ -530,7 +530,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
     Mockito.verify(asyncJobService).failJob(Mockito.eq("abort-test-job-id"), msg.capture());
     assertThat(msg.getValue())
-        .startsWith("Import validation failed, no rows were loaded (2000 error(s) found)");
+        .startsWith("검증 실패로 한 행도 적재되지 않았습니다 (오류 2000건)");
 
     // 대상 테이블에는 아무 행도 적재되지 않아야 한다(부분 적재 없음)
     var count =
