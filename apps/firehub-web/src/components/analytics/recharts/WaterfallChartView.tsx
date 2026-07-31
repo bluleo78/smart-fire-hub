@@ -40,10 +40,10 @@ export function WaterfallChartView({ data, config, height = 300 }: ChartViewProp
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <ComposedChart data={rows} barCategoryGap="30%">
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-        <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-        <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-        <ReferenceLine y={0} stroke="hsl(var(--border))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+        <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+        <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+        <ReferenceLine y={0} stroke="var(--border)" />
         <Tooltip
           contentStyle={TOOLTIP_CONTENT_STYLE}
           formatter={(_: unknown, __: string | undefined, props: { payload?: WaterfallRow }) => [

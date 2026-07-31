@@ -63,14 +63,14 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <ScatterChart margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-        {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
+        {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />}
         <XAxis
           dataKey="x"
           name={xAxis}
           type="number"
-          tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
           tickLine={false}
-          axisLine={{ stroke: 'hsl(var(--border))' }}
+          axisLine={{ stroke: 'var(--border)' }}
           label={
             config.xAxisLabel
               ? { value: config.xAxisLabel, position: 'insideBottom', offset: -4, fontSize: 12 }
@@ -81,7 +81,7 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
           dataKey="y"
           name={yAxis[0]}
           type="number"
-          tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
           tickLine={false}
           axisLine={false}
           label={
@@ -92,7 +92,7 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
         />
         <ZAxis range={[40, 40]} />
         <Tooltip
-          cursor={{ strokeDasharray: '3 3', stroke: 'hsl(var(--muted-foreground))' }}
+          cursor={{ strokeDasharray: '3 3', stroke: 'var(--muted-foreground)' }}
           contentStyle={TOOLTIP_CONTENT_STYLE}
         />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}

@@ -9,9 +9,9 @@ import type { ChartViewProps } from '../chart-view-props';
 /** CSS 변수를 읽어 Nivo theme 객체를 생성 */
 function useNivoTheme() {
   // CSS 변수 직접 읽기 — next-themes의 다크/라이트 전환에 따라 재계산
-  const textColor = 'hsl(var(--foreground))';
-  const gridColor = 'hsl(var(--border))';
-  const tooltipBg = 'hsl(var(--popover))';
+  const textColor = 'var(--foreground)';
+  const gridColor = 'var(--border)';
+  const tooltipBg = 'var(--popover)';
   return useMemo(() => ({
     text: { fontSize: 11, fill: textColor },
     axis: {

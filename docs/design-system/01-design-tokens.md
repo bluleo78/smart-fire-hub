@@ -25,6 +25,27 @@
 
 Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Properties)로 정의되며, 모든 색상은 [OKLch](https://oklch.com/) 색공간을 사용한다. OKLch는 인지적으로 균일한(perceptually uniform) 색공간으로, 명도(L), 채도(C), 색상각(h) 세 축으로 색상을 표현한다.
 
+> ### ⚠️ 토큰은 **완결된 색 함수**다 — `hsl()`로 감싸지 마라
+>
+> 이 프로젝트의 색 토큰 값은 `oklch(0.5 0 0)`처럼 **그 자체로 완결된 색 함수**다.
+> shadcn 초기 세대가 쓰던 HSL **성분값** 규약(`--muted-foreground: 0 0% 45%`)이 **아니다**.
+>
+> ```css
+> /* ❌ hsl(oklch(...)) → 무효 CSS. 브라우저가 선언을 통째로 버리고 initial 값으로 되돌린다.
+>       fill → rgb(0,0,0), stroke → none, background/border → 소실 */
+> fill: hsl(var(--muted-foreground));
+>
+> /* ✅ 래핑 없이 그대로 쓴다 */
+> fill: var(--muted-foreground);
+> ```
+>
+> `var(--X)`는 SVG **표현 속성**(`<line stroke="var(--border)">`)에서도 정상 해석되므로
+> recharts/nivo 차트도 동일하게 쓰면 된다.
+>
+> 실제 사고(#374): 차트 13종 전역이 `hsl(var(--X))`를 써서 다크 모드 축 라벨 대비가
+> **1.06~1.10:1**(SC 1.4.3 요구 4.5:1)까지 떨어졌고, `격자 표시` 토글이 라이트·다크 공통으로
+> 무동작했다(격자 `stroke: none`). 재발은 `src/styles/hsl-var-gate.test.ts`가 막는다.
+
 ### 1-1. Light Theme (`:root`)
 
 라이트 모드의 기본 색상 토큰이다. `:root` 선택자에 정의되며 기본값으로 적용된다.

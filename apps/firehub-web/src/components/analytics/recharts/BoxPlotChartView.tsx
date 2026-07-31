@@ -79,8 +79,8 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
             {/* Y축 */}
             {yTicks.map(t => (
               <g key={t} transform={`translate(0,${toY(t)})`}>
-                <line x1={0} x2={plotW} stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                <text x={-8} textAnchor="end" fontSize={10} fill="hsl(var(--muted-foreground))" dy="0.32em">
+                <line x1={0} x2={plotW} stroke="var(--border)" strokeDasharray="3 3" />
+                <text x={-8} textAnchor="end" fontSize={10} fill="var(--muted-foreground)" dy="0.32em">
                   {t.toFixed(1)}
                 </text>
               </g>
@@ -114,7 +114,7 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
                     stroke="#8884d8" strokeWidth={2.5} />
                   {/* X축 라벨 */}
                   <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={11}
-                    fill="hsl(var(--muted-foreground))">{s.category}</text>
+                    fill="var(--muted-foreground)">{s.category}</text>
                 </g>
               );
             })}

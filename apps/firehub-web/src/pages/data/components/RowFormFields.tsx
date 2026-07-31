@@ -28,7 +28,7 @@ export function RowFormFields({ columns, form, idPrefix, changedFields }: RowFor
           <div
             key={col.columnName}
             className="space-y-1.5"
-            style={isChanged ? { borderLeft: '3px solid hsl(var(--primary))', paddingLeft: '8px' } : undefined}
+            style={isChanged ? { borderLeft: '3px solid var(--primary)', paddingLeft: '8px' } : undefined}
           >
             <Label htmlFor={`${idPrefix}-${col.columnName}`}>
               {label}

@@ -45,14 +45,14 @@ export function HistogramChartView({ data, config, height = 300 }: ChartViewProp
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <BarChart data={binnedData} barCategoryGap={1}>
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
           label={config.xAxisLabel ? { value: config.xAxisLabel, position: 'insideBottom', offset: -4, fontSize: 11 } : undefined}
         />
         <YAxis
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
           label={config.yAxisLabel ? { value: config.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: 11 } : undefined}
         />
         <Tooltip

@@ -36,12 +36,12 @@ export function LineChartView({ config, data, height }: LineChartViewProps) {
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'} minWidth={200}>
       <LineChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
+        {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />}
         <XAxis
           dataKey={xAxis}
-          tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
           tickLine={false}
-          axisLine={{ stroke: 'hsl(var(--border))' }}
+          axisLine={{ stroke: 'var(--border)' }}
           label={
             config.xAxisLabel
               ? { value: config.xAxisLabel, position: 'insideBottom', offset: -4, fontSize: 12 }
@@ -49,7 +49,7 @@ export function LineChartView({ config, data, height }: LineChartViewProps) {
           }
         />
         <YAxis
-          tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
           tickLine={false}
           axisLine={false}
           width={80}

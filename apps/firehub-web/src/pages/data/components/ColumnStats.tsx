@@ -26,7 +26,7 @@ export function NumericMiniChart({ stats }: { stats: ColumnStatsResponse }) {
             y={20 - barH}
             width={`${w}%`}
             height={barH}
-            fill="hsl(var(--primary))"
+            fill="var(--primary)"
             opacity={0.7 + (barWidth / 100) * 0.3}
           />
         );

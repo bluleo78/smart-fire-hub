@@ -40,7 +40,7 @@ export function GaugeChartView({ data, config, height = 280 }: ChartViewProps) {
             dataKey="value"
             stroke="none"
           >
-            <Cell fill="hsl(var(--muted))" />
+            <Cell fill="var(--muted)" />
           </Pie>
           {/* 값 반원 */}
           <Pie
@@ -71,23 +71,23 @@ export function GaugeChartView({ data, config, height = 280 }: ChartViewProps) {
           y1={containerH * 0.75}
           x2={100 + 55 * Math.cos(needleAngleRad)}
           y2={containerH * 0.75 - 55 * Math.sin(needleAngleRad)}
-          stroke="hsl(var(--foreground))"
+          stroke="var(--foreground)"
           strokeWidth={2}
           strokeLinecap="round"
         />
-        <circle cx={100} cy={containerH * 0.75} r={4} fill="hsl(var(--foreground))" />
+        <circle cx={100} cy={containerH * 0.75} r={4} fill="var(--foreground)" />
         {/* 값 표시 */}
         <text
           x={100} y={containerH * 0.75 + 24}
           textAnchor="middle" fontSize={16} fontWeight={700}
-          fill="hsl(var(--foreground))"
+          fill="var(--foreground)"
         >
           {value.toLocaleString()}
         </text>
         <text
           x={100} y={containerH * 0.75 + 38}
           textAnchor="middle" fontSize={10}
-          fill="hsl(var(--muted-foreground))"
+          fill="var(--muted-foreground)"
         >
           {min} ~ {max}
         </text>

@@ -253,7 +253,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
               </colgroup>
               <thead className="bg-muted sticky top-0 z-10">
                 <tr>
-                  <th style={{ width: 40, padding: '8px', textAlign: 'center', borderBottom: '1px solid hsl(var(--border))' }}>
+                  <th style={{ width: 40, padding: '8px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
                     <Checkbox
                       checked={isAllSelected ? true : isIndeterminate ? 'indeterminate' : false}
                       onCheckedChange={(checked) => handleSelectAll(!!checked)}
@@ -274,7 +274,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                           textAlign: 'left',
                           fontSize: '0.875rem',
                           fontWeight: 600,
-                          borderBottom: '1px solid hsl(var(--border))',
+                          borderBottom: '1px solid var(--border)',
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -317,7 +317,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                       key={virtualRow.key}
                       data-index={virtualRow.index}
                       ref={rowVirtualizer.measureElement}
-                      style={{ height: virtualRow.size, background: isSelected ? 'hsl(var(--accent))' : undefined }}
+                      style={{ height: virtualRow.size, background: isSelected ? 'var(--accent)' : undefined }}
                       className="hover:bg-muted/50 transition-colors"
                       onDoubleClick={() => {
                         const rowData: Record<string, unknown> = {};
@@ -326,7 +326,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                       }}
                     >
                       <td
-                        style={{ width: 40, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid hsl(var(--border))', verticalAlign: 'middle' }}
+                        style={{ width: 40, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--border)', verticalAlign: 'middle' }}
                         onDoubleClick={(e) => e.stopPropagation()}
                       >
                         <Checkbox
@@ -347,7 +347,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                             style={{
                               padding: '0 12px',
                               fontSize: '0.875rem',
-                              borderBottom: '1px solid hsl(var(--border))',
+                              borderBottom: '1px solid var(--border)',
                               verticalAlign: 'middle',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',

@@ -14,13 +14,13 @@ export function RadarChartView({ data, config, height = 300 }: ChartViewProps) {
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <RadarChart data={data}>
-        <PolarGrid stroke="hsl(var(--border))" />
+        <PolarGrid stroke="var(--border)" />
         <PolarAngleAxis
           dataKey={config.xAxis}
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
         />
         <PolarRadiusAxis
-          tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+          tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
           axisLine={false}
         />
         <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />

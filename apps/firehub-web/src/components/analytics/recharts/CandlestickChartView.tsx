@@ -68,8 +68,8 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
             {/* Y축 그리드 + 눈금 */}
             {yTicks.map(t => (
               <g key={t} transform={`translate(0,${toY(t)})`}>
-                <line x1={0} x2={plotW} stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                <text x={-8} textAnchor="end" fontSize={10} fill="hsl(var(--muted-foreground))" dy="0.32em">
+                <line x1={0} x2={plotW} stroke="var(--border)" strokeDasharray="3 3" />
+                <text x={-8} textAnchor="end" fontSize={10} fill="var(--muted-foreground)" dy="0.32em">
                   {t.toFixed(2)}
                 </text>
               </g>
@@ -99,7 +99,7 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
                   />
                   {/* X 라벨 */}
                   <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={10}
-                    fill="hsl(var(--muted-foreground))">{c.label}</text>
+                    fill="var(--muted-foreground)">{c.label}</text>
                 </g>
               );
             })}

@@ -24,7 +24,7 @@ const CustomContent = (props: ContentProps) => {
     <g>
       <rect x={x} y={y} width={width} height={height}
         fill={COLORS[index % COLORS.length]} fillOpacity={0.85}
-        stroke="hsl(var(--background))" strokeWidth={2} rx={3} />
+        stroke="var(--background)" strokeWidth={2} rx={3} />
       {width > 60 && height > 30 && (
         <text x={x + width / 2} y={y + height / 2}
           textAnchor="middle" dominantBaseline="middle"
