@@ -10,8 +10,10 @@
 1. [Color Tokens — 색상 토큰](#1-color-tokens--색상-토큰)
    - 1-1. Light Theme (`:root`)
    - 1-2. Dark Theme (`.dark`)
-   - 1-3. 디자인 철학: 의도적 무채색 팔레트
-   - 1-4. 권장: Semantic Status Tokens (To-Be)
+   - 1-3. 역할 계약 (Role Contract)
+   - 1-4. Semantic Status Tokens
+   - 1-5. Theme Variants (ocean / sunset)
+   - 1-6. Domain & Accent Tokens
 2. [Hard-coded Color Audit — 하드코딩 색상 감사](#2-hard-coded-color-audit--하드코딩-색상-감사)
 3. [Border Radius Scale — 모서리 반경 스케일](#3-border-radius-scale--모서리-반경-스케일)
 4. [Z-Index Scale — 레이어 순서 스케일](#4-z-index-scale--레이어-순서-스케일)
@@ -26,12 +28,13 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 ### 1-1. Light Theme (`:root`)
 
 라이트 모드의 기본 색상 토큰이다. `:root` 선택자에 정의되며 기본값으로 적용된다.
+아래 값은 `apps/firehub-web/src/index.css`의 현행 정의와 일치한다(#365·#367·#370 반영).
 
 #### Core UI Tokens
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--background` | `oklch(1 0 0)` | 흰색 | 페이지 전체 배경 |
+| `--background` | `oklch(0.985 0.002 264)` | Near-white(살짝 푸른) | 페이지 전체 배경 |
 | `--foreground` | `oklch(0.145 0 0)` | Near-black | 기본 본문 텍스트 |
 | `--card` | `oklch(1 0 0)` | 흰색 | 카드 컴포넌트 배경 |
 | `--card-foreground` | `oklch(0.145 0 0)` | Near-black | 카드 내 텍스트 |
@@ -42,223 +45,258 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--primary` | `oklch(0.205 0 0)` | Near-black | 기본 브랜드 색상, CTA 버튼 배경 |
-| `--primary-foreground` | `oklch(0.985 0 0)` | Near-white | Primary 위 텍스트 |
-| `--secondary` | `oklch(0.97 0 0)` | 연한 회색 | 보조 버튼, 보조 배경 |
-| `--secondary-foreground` | `oklch(0.205 0 0)` | Near-black | Secondary 위 텍스트 |
-| `--muted` | `oklch(0.97 0 0)` | 연한 회색 | 음소거 배경, 비활성 영역 |
-| `--muted-foreground` | `oklch(0.556 0 0)` | 중간 회색 | 플레이스홀더, 부가 설명 텍스트 |
-| `--accent` | `oklch(0.97 0 0)` | 연한 회색 | hover·active 상태 배경 |
-| `--accent-foreground` | `oklch(0.205 0 0)` | Near-black | Accent 위 텍스트 |
-| `--destructive` | `oklch(0.577 0.245 27.325)` | 빨간색 | 위험·삭제 액션, 에러 상태 |
+| `--primary` | `oklch(0.45 0.2 264)` | 인디고 | 기본 브랜드 색상, CTA 버튼 배경 |
+| `--primary-foreground` | `oklch(0.985 0 0)` | Near-white | Primary 위 텍스트 (대비 7.54:1) |
+| `--secondary` | `oklch(0.965 0.005 264)` | 연한 회색 | 보조 버튼, 보조 배경 |
+| `--secondary-foreground` | `oklch(0.25 0 0)` | 어두운 회색 | Secondary 위 텍스트 |
+| `--muted` | `oklch(0.965 0.005 264)` | 연한 회색 | 음소거 배경, 비활성 영역 |
+| `--muted-foreground` | `oklch(0.5 0 0)` | 중간 회색 | 플레이스홀더, 부가 설명 텍스트 |
+| `--accent` | `oklch(0.955 0.01 264)` | 연한 회색 | hover·active 상태 배경 |
+| `--accent-foreground` | `oklch(0.25 0 0)` | 어두운 회색 | Accent 위 텍스트 |
+| `--destructive` | `oklch(0.53 0.22 27.325)` | 빨간색 | 위험·삭제 액션, 에러 상태 |
+| `--destructive-foreground` | `oklch(1 0 0)` | 흰색 | Destructive 배경 위 텍스트 (5.83:1) |
 
 #### Structural Tokens
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--border` | `oklch(0.922 0 0)` | 연한 회색 | 일반 테두리 |
-| `--input` | `oklch(0.922 0 0)` | 연한 회색 | Input 컴포넌트 테두리 |
-| `--ring` | `oklch(0.708 0 0)` | 중간-연한 회색 | 키보드 Focus ring |
+| `--border` | `oklch(0.94 0.005 264)` | 연한 회색 | 일반 테두리 |
+| `--input` | `oklch(0.92 0.005 264)` | 연한 회색 | Input 컴포넌트 테두리 |
+| `--ring` | `oklch(0.55 0.15 264)` | 인디고 | 키보드 Focus ring (배경 대비 4.76~4.98:1) |
+| `--radius` | `0.625rem` | — | 모서리 반경 기준값 |
 
 #### Chart Tokens
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--chart-1` | `oklch(0.646 0.222 41.116)` | 오렌지 | 차트 데이터 시리즈 1 |
-| `--chart-2` | `oklch(0.6 0.118 184.704)` | 틸(Teal) | 차트 데이터 시리즈 2 |
-| `--chart-3` | `oklch(0.398 0.07 227.392)` | 블루그레이 | 차트 데이터 시리즈 3 |
-| `--chart-4` | `oklch(0.828 0.189 84.429)` | 옐로그린 | 차트 데이터 시리즈 4 |
-| `--chart-5` | `oklch(0.769 0.188 70.08)` | 앰버(Amber) | 차트 데이터 시리즈 5 |
+| `--chart-1` | `oklch(0.45 0.2 264)` | 인디고 | 차트 데이터 시리즈 1 (primary와 동일) |
+| `--chart-2` | `oklch(0.55 0.15 195)` | 시안/틸 | 차트 데이터 시리즈 2 |
+| `--chart-3` | `oklch(0.5 0.18 300)` | 퍼플 | 차트 데이터 시리즈 3 |
+| `--chart-4` | `oklch(0.7 0.15 84)` | 앰버 | 차트 데이터 시리즈 4 |
+| `--chart-5` | `oklch(0.6 0.2 27)` | 레드 | 차트 데이터 시리즈 5 |
 
 #### Sidebar Tokens
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--sidebar` | `oklch(0.985 0 0)` | Near-white | 사이드바 배경 |
+| `--sidebar` | `oklch(1 0 0)` | 흰색 | 사이드바 배경 |
 | `--sidebar-foreground` | `oklch(0.145 0 0)` | Near-black | 사이드바 텍스트 |
-| `--sidebar-primary` | `oklch(0.205 0 0)` | Near-black | 사이드바 선택 항목 배경 |
+| `--sidebar-primary` | `oklch(0.45 0.2 264)` | 인디고 | 사이드바 선택 항목 배경 |
 | `--sidebar-primary-foreground` | `oklch(0.985 0 0)` | Near-white | 사이드바 선택 항목 텍스트 |
-| `--sidebar-accent` | `oklch(0.97 0 0)` | 연한 회색 | 사이드바 hover 배경 |
-| `--sidebar-accent-foreground` | `oklch(0.205 0 0)` | Near-black | 사이드바 hover 텍스트 |
-| `--sidebar-border` | `oklch(0.922 0 0)` | 연한 회색 | 사이드바 테두리 |
-| `--sidebar-ring` | `oklch(0.708 0 0)` | 중간-연한 회색 | 사이드바 focus ring |
+| `--sidebar-accent` | `oklch(0.955 0.015 264)` | 연한 회색 | 사이드바 hover 배경 |
+| `--sidebar-accent-foreground` | `oklch(0.25 0 0)` | 어두운 회색 | 사이드바 hover 텍스트 |
+| `--sidebar-border` | `oklch(0.94 0.005 264)` | 연한 회색 | 사이드바 테두리 |
+| `--sidebar-ring` | `oklch(0.55 0.15 264)` | 인디고 | 사이드바 focus ring |
 
 ---
 
 ### 1-2. Dark Theme (`.dark`)
 
-`.dark` 클래스가 `<html>` 또는 최상위 엘리먼트에 적용될 때 오버라이드되는 토큰이다.
+`.dark` 클래스가 `<html>`에 적용될 때 오버라이드되는 토큰이다.
+다크의 표면 토큰(`--card`·`--secondary`·`--muted`·`--accent`·`--border`·`--input`)은 **흰색 알파 합성**으로 정의되어, 어떤 테마 배경 위에서도 같은 위계를 만든다.
 
 #### Core UI Tokens (Dark)
 
-| Token | OKLch 값 | 근사 색상 |
-|-------|----------|-----------|
-| `--background` | `oklch(0.145 0 0)` | Near-black |
-| `--foreground` | `oklch(0.985 0 0)` | Near-white |
-| `--card` | `oklch(0.205 0 0)` | 매우 어두운 회색 |
-| `--card-foreground` | `oklch(0.985 0 0)` | Near-white |
-| `--popover` | `oklch(0.205 0 0)` | 매우 어두운 회색 |
-| `--popover-foreground` | `oklch(0.985 0 0)` | Near-white |
+| Token | OKLch 값 | 비고 |
+|-------|----------|------|
+| `--background` | `oklch(0.13 0.015 280)` | Near-black(보라 기미) |
+| `--foreground` | `oklch(0.93 0 0)` | Near-white |
+| `--card` | `oklch(1 0 0 / 3%)` | 배경 위 흰색 3% — 실색은 테마마다 다르다 |
+| `--card-foreground` | `oklch(0.93 0 0)` | Near-white |
+| `--popover` | `oklch(0.18 0.015 280)` | 불투명(팝오버는 뒤가 비치면 안 된다) |
+| `--popover-foreground` | `oklch(0.93 0 0)` | Near-white |
 
 #### Brand & Interaction Tokens (Dark)
 
-| Token | OKLch 값 | 근사 색상 |
-|-------|----------|-----------|
-| `--primary` | `oklch(0.922 0 0)` | 연한 회색 |
-| `--primary-foreground` | `oklch(0.205 0 0)` | 어두운 회색 |
-| `--secondary` | `oklch(0.269 0 0)` | 어두운 회색 |
-| `--secondary-foreground` | `oklch(0.985 0 0)` | Near-white |
-| `--muted` | `oklch(0.269 0 0)` | 어두운 회색 |
-| `--muted-foreground` | `oklch(0.708 0 0)` | 중간 회색 |
-| `--accent` | `oklch(0.269 0 0)` | 어두운 회색 |
-| `--accent-foreground` | `oklch(0.985 0 0)` | Near-white |
-| `--destructive` | `oklch(0.704 0.191 22.216)` | 밝은 빨간색 |
+| Token | OKLch 값 | 비고 |
+|-------|----------|------|
+| `--primary` | `oklch(0.65 0.2 264)` | 밝은 인디고 — 다크의 브랜드 정체성 |
+| `--primary-foreground` | `oklch(0.17 0.02 280)` | **근검정.** 밝은 액센트 위에 얹는 색 (#365, 5.64:1) |
+| `--secondary` | `oklch(1 0 0 / 5%)` | 흰색 5% |
+| `--secondary-foreground` | `oklch(0.93 0 0)` | Near-white |
+| `--muted` | `oklch(1 0 0 / 5%)` | 흰색 5% |
+| `--muted-foreground` | `oklch(0.6 0 0)` | 중간 회색 (배경 대비 5.09:1) |
+| `--accent` | `oklch(1 0 0 / 7%)` | 흰색 7% |
+| `--accent-foreground` | `oklch(0.93 0 0)` | Near-white |
+| `--destructive` | `oklch(0.704 0.191 22.216)` | 밝은 빨강 |
+| `--destructive-foreground` | `oklch(0.17 0.02 280)` | 근검정 (#367, 6.64:1) |
 
 #### Structural Tokens (Dark)
 
 | Token | OKLch 값 | 비고 |
 |-------|----------|------|
-| `--border` | `oklch(1 0 0 / 10%)` | 흰색 10% 알파 — 반투명 테두리 |
-| `--input` | `oklch(1 0 0 / 15%)` | 흰색 15% 알파 — Input 테두리 |
-| `--ring` | `oklch(0.556 0 0)` | 중간 회색 |
+| `--border` | `oklch(1 0 0 / 10%)` | 흰색 10% 알파 |
+| `--input` | `oklch(1 0 0 / 12%)` | 흰색 12% 알파 |
+| `--ring` | `oklch(0.65 0.2 264)` | `--primary`와 동일 값 (배경 대비 5.54~5.92:1) |
 
 #### Chart Tokens (Dark)
 
 | Token | OKLch 값 | 근사 색상 |
 |-------|----------|-----------|
-| `--chart-1` | `oklch(0.488 0.243 264.376)` | 인디고/블루 |
-| `--chart-2` | `oklch(0.696 0.17 162.48)` | 에메랄드 |
-| `--chart-3` | `oklch(0.769 0.188 70.08)` | 앰버 |
-| `--chart-4` | `oklch(0.627 0.265 303.9)` | 퍼플 |
-| `--chart-5` | `oklch(0.645 0.246 16.439)` | 빨간-오렌지 |
+| `--chart-1` | `oklch(0.65 0.2 264)` | 인디고 (다크 primary와 동일) |
+| `--chart-2` | `oklch(0.7 0.15 195)` | 시안 |
+| `--chart-3` | `oklch(0.65 0.2 300)` | 퍼플 |
+| `--chart-4` | `oklch(0.75 0.15 84)` | 앰버 |
+| `--chart-5` | `oklch(0.7 0.2 27)` | 레드 |
 
-> **참고**: 다크 모드에서는 차트 색상이 완전히 다른 색상으로 매핑된다. 라이트에서 오렌지였던 `--chart-1`이 다크에서 인디고로 바뀌는 등, 각 테마에서 최적의 가독성을 제공하도록 독립적으로 설계되어 있다.
+> 라이트/다크 모두 `--chart-1`은 그 테마의 `--primary`와 같은 값이다. 테마 변형(ocean/sunset)도 `--chart-1`을 함께 덮어써 차트 1번 시리즈가 브랜드 색을 따라간다.
 
 #### Sidebar Tokens (Dark)
 
-| Token | OKLch 값 | 근사 색상 |
-|-------|----------|-----------|
-| `--sidebar` | `oklch(0.205 0 0)` | 매우 어두운 회색 |
-| `--sidebar-foreground` | `oklch(0.985 0 0)` | Near-white |
-| `--sidebar-primary` | `oklch(0.488 0.243 264.376)` | 인디고/블루 (유색!) |
-| `--sidebar-primary-foreground` | `oklch(0.985 0 0)` | Near-white |
-| `--sidebar-accent` | `oklch(0.269 0 0)` | 어두운 회색 |
-| `--sidebar-accent-foreground` | `oklch(0.985 0 0)` | Near-white |
+| Token | OKLch 값 | 비고 |
+|-------|----------|------|
+| `--sidebar` | `oklch(0.14 0.02 280)` | 배경보다 살짝 밝은 면 |
+| `--sidebar-foreground` | `oklch(0.93 0 0)` | Near-white |
+| `--sidebar-primary` | `oklch(0.65 0.2 264)` | 밝은 인디고 |
+| `--sidebar-primary-foreground` | `oklch(0.17 0.02 280)` | 근검정 (#365) |
+| `--sidebar-accent` | `oklch(1 0 0 / 7%)` | 흰색 7% |
+| `--sidebar-accent-foreground` | `oklch(0.93 0 0)` | Near-white |
 | `--sidebar-border` | `oklch(1 0 0 / 10%)` | 흰색 10% 알파 |
-| `--sidebar-ring` | `oklch(0.556 0 0)` | 중간 회색 |
-
-> **참고**: 다크 모드에서 `--sidebar-primary`는 `oklch(0.488 0.243 264.376)` — 인디고 계열의 유색이다. 라이트 모드의 무채색 primary와 달리, 어두운 배경에서 사이드바 선택 항목을 명확하게 강조하기 위한 의도적인 예외이다.
+| `--sidebar-ring` | `oklch(0.65 0.2 264)` | 밝은 인디고 |
 
 ---
 
-### 1-3. 디자인 철학: 의도적 무채색 팔레트 (Intentional Achromatic Palette)
+### 1-3. 역할 계약 (Role Contract) — 토큰을 쓰기 전에 반드시 읽을 것
 
-**현재(As-Is)** Smart Fire Hub의 색상 시스템은 의도적으로 **무채색(achromatic)** 을 기반으로 설계되어 있다.
+색 토큰은 이름마다 **쓸 수 있는 자리가 정해져 있다.** 이 계약을 어기면 대비가 계산 불가능해지거나(알파) 전경/배경이 뒤바뀌어 WCAG AA를 깬다. #365·#366·#367·#368·#370이 전부 이 계약의 부재에서 나왔다.
 
-핵심 관찰:
+```
+--X              : 배경(도트·바·보더) 겸 "그 위에 --X-foreground를 얹는" 색.
+                   동시에 text-X 유틸의 전경으로도 쓰이므로,
+                   → 흰 카드 및 X/10 · X-subtle 틴트 위에서 4.5:1을 만족해야 한다.
+--X-foreground   : --X를 배경으로 깔았을 때 그 위에 올리는 색. 4.5:1.
+--X-subtle       : 배경 전용. 절대 전경으로 쓰지 않는다.
+알파 수식자      : text-* / ring-* / outline-* 에 금지.
+                   bg-* / border-* 에는 허용(장식·틴트 용도).
+```
 
-- **Destructive, Chart 토큰을 제외한 모든 토큰의 채도(Chroma)가 0**이다.
-  - `--background`, `--foreground`, `--primary`, `--secondary`, `--muted`, `--accent`, `--border`, `--input`, `--ring` — 모두 `oklch(L 0 0)` 형태이다.
-- OKLch에서 채도 0은 완전한 무채색(회색 계열)을 의미하며, 색상각(h)은 무의미하다.
+**결과적으로 지켜야 하는 것들**
 
-**색상이 허용되는 세 가지 영역**:
+- `--X-subtle`을 `text-*`에 쓰지 않는다. 배경 전용이다.
+- `text-muted-foreground/70` 처럼 전경에 알파를 붙이지 않는다. 위계는 **폰트 크기·굵기**로 표현한다.
+- 포커스 링에 알파를 붙이지 않는다(`ring-ring/50` ✗ → `ring-ring` ✓). `--ring` 원색은 6개 테마 조합 전부 3:1을 넉넉히 넘는다.
+- 라이트에서 `--X`는 "밝은 배경색"이 아니라 "흰 배경 위에서 읽히는 색"이다. 밝은 앰버를 `--warning`에 넣으면 도트가 1.66:1로 SC 1.4.11조차 못 넘긴다.
+- **예외(문서화된 것)**: `aria-invalid:ring-destructive/20` 계열. 포커스 표시가 아니라 오류 상태 보조 표시이고, 같은 요소의 `aria-invalid:border-destructive`가 3:1을 담당한다.
 
-| 영역 | 색상 | 근거 |
-|------|------|------|
-| `--destructive` | 빨간색 (`h≈27`) | 위험·삭제 액션의 보편적 신호 색상 |
-| `--chart-1` ~ `--chart-5` | 다양한 유색 | 데이터 시각화에서 시리즈 구별을 위한 필수 색상 |
-| Favorite star | 노란색(`fill-yellow-400`) | 즐겨찾기 상태를 나타내는 관용적 UI 패턴 |
+**자동 검증**
 
-**이 설계의 장점**:
+| 검사 | 위치 |
+|---|---|
+| 토큰 값 대비(라이트·다크 × indigo/ocean/sunset 6조합) | `apps/firehub-web/src/styles/design-tokens.contrast.test.ts` |
+| 알파 수식자 금지 게이트(allowlist 포함) | `apps/firehub-web/src/styles/alpha-utility-gate.test.ts` |
+| 포커스 링 실렌더 불투명도 + 테마 모드 버튼 a11y | `apps/firehub-web/e2e/pages/a11y-focus-theme-controls.spec.ts` |
 
-- **브랜드 중립성**: 다양한 조직·고객이 사용하는 데이터 허브 플랫폼으로서, 특정 브랜드 색상에 종속되지 않는다.
-- **콘텐츠 집중**: UI 크롬(chrome)이 무채색이므로, 차트·지도·데이터 등 실제 콘텐츠가 시각적으로 돋보인다.
-- **접근성**: 무채색 계열은 색각 이상자에게 동일하게 인식된다.
-- **다크 모드 일관성**: 채도가 없으므로 라이트/다크 테마 전환 시 색조 변화 없이 명도만 반전된다.
-
-**현재의 한계**:
-
-- `--success`, `--warning`, `--info` 등 **시맨틱 상태 토큰이 정의되어 있지 않다.**
-- 결과적으로 성공·경고·정보 상태를 나타낼 때 컴포넌트 레벨에서 Tailwind 유틸리티 클래스(`bg-green-100`, `text-amber-600` 등)를 직접 사용하는 패턴이 광범위하게 퍼져 있다.
-- 이는 다크 모드 대응 누락, 테마 전환 시 일관성 깨짐, 유지보수 어려움으로 이어진다.
+> 과거 이 문서는 "채도 0의 의도적 무채색 팔레트"를 기술했으나, 현재 팔레트는 인디고 브랜드 기반의 **유채색**이며 테마 변형(ocean/sunset)까지 갖고 있다. 무채색 서술은 폐기됐다.
 
 ---
 
-### 1-4. Semantic Status Tokens (구현 완료)
+### 1-4. Semantic Status Tokens
 
-Phase D-2에서 추가된 시맨틱 상태 토큰. `index.css`에 Light/Dark 모두 정의되어 있다.
+`index.css`에 Light/Dark 모두 정의되어 있다. 값은 1-3의 역할 계약을 만족하도록 잡혀 있다.
 
-#### 토큰 정의
+#### 토큰 정의 (현행)
 
 ```css
-/* ===== Semantic Status Tokens ===== */
-
 :root {
   /* Success */
-  --success: oklch(0.523 0.165 149.5);          /* 녹색 */
-  --success-foreground: oklch(0.985 0 0);        /* Near-white */
-  --success-subtle: oklch(0.95 0.05 149.5);      /* 연한 녹색 배경 */
+  --success: oklch(0.46 0.16 149.5);
+  --success-foreground: oklch(0.985 0 0);
+  --success-subtle: oklch(0.95 0.05 149.5);
 
   /* Warning */
-  --warning: oklch(0.84 0.16 84);               /* 앰버/황색 */
-  --warning-foreground: oklch(0.2 0 0);          /* Near-black */
-  --warning-subtle: oklch(0.97 0.04 84);         /* 연한 황색 배경 */
+  --warning: oklch(0.52 0.13 84);
+  --warning-foreground: oklch(0.985 0 0);
+  --warning-subtle: oklch(0.97 0.04 84);
 
   /* Info */
-  --info: oklch(0.55 0.15 240);                  /* 청색 */
-  --info-foreground: oklch(0.985 0 0);           /* Near-white */
-  --info-subtle: oklch(0.95 0.04 240);           /* 연한 청색 배경 */
+  --info: oklch(0.5 0.15 240);
+  --info-foreground: oklch(0.985 0 0);
+  --info-subtle: oklch(0.95 0.04 240);
+
+  /* Caution — warning(amber)보다 강한 주의 */
+  --caution: oklch(0.52 0.15 55);
+  --caution-foreground: oklch(0.985 0 0);
+  --caution-subtle: oklch(0.96 0.04 55);
 }
 
 .dark {
-  /* Success (Dark) */
-  --success: oklch(0.65 0.15 149.5);            /* 더 밝은 녹색 */
-  --success-foreground: oklch(0.985 0 0);        /* Near-white */
-  --success-subtle: oklch(0.2 0.04 149.5);       /* 어두운 녹색 배경 */
+  /* 다크는 밝은 액센트가 정체성이므로 배경 계열 값은 유지하고 전경만 근검정으로 뒤집는다 */
+  --success: oklch(0.65 0.15 149.5);
+  --success-foreground: oklch(0.17 0.02 280);
+  --success-subtle: oklch(0.2 0.04 149.5);
 
-  /* Warning (Dark) */
-  --warning: oklch(0.76 0.14 84);               /* 더 밝은 앰버 */
-  --warning-foreground: oklch(0.985 0 0);        /* Near-white */
-  --warning-subtle: oklch(0.2 0.04 84);          /* 어두운 황색 배경 */
+  --warning: oklch(0.76 0.14 84);
+  --warning-foreground: oklch(0.17 0.02 280);
+  --warning-subtle: oklch(0.2 0.04 84);
 
-  /* Info (Dark) */
-  --info: oklch(0.7 0.13 240);                  /* 더 밝은 청색 */
-  --info-foreground: oklch(0.985 0 0);           /* Near-white */
-  --info-subtle: oklch(0.2 0.04 240);            /* 어두운 청색 배경 */
+  --info: oklch(0.7 0.13 240);
+  --info-foreground: oklch(0.17 0.02 280);
+  --info-subtle: oklch(0.2 0.04 240);
+
+  --caution: oklch(0.78 0.13 55);
+  --caution-foreground: oklch(0.17 0.02 280);
+  --caution-subtle: oklch(0.2 0.04 55);
 }
 ```
+
+#### 라이트 테마 대비 (계산값)
+
+| 토큰 | hex | 흰 카드 위 텍스트 | `bg-X/10` 틴트 위 | `X-subtle` 위 | 도트/바 (1.4.11) | `--X-foreground` 위 |
+|---|---|---|---|---|---|---|
+| `--warning` | `#8c6000` | 5.54 | 4.84 | 5.06 | 5.54 | 5.31 |
+| `--success` | `#006e1c` | 6.47 | 5.58 | 5.70 | 6.47 | 6.20 |
+| `--destructive` | `#cd000f` | 5.83 | 4.87 | — | 5.83 | 5.58 |
+| `--info` | `#006aaf` | 5.71 | 4.94 | 4.93 | 5.71 | 5.47 |
+| `--caution` | `#a74a00` | 5.80 | 5.02 | 5.01 | 5.80 | 5.55 |
 
 #### 토큰 사용 패턴
 
-각 시맨틱 상태는 세 가지 토큰으로 구성된다:
-
 | 토큰 패턴 | 역할 | 사용 예 |
 |-----------|------|---------|
-| `--{status}` | 진한 상태 색상 (아이콘, 배지 배경) | `bg-success text-success-foreground` |
-| `--{status}-foreground` | 상태 배경 위 텍스트 | `<Badge variant="success">` |
-| `--{status}-subtle` | 연한 상태 배경 (알림 박스, 배너) | `bg-success-subtle text-success` |
+| `--{status}` | 상태 색상 — 아이콘·텍스트·도트·바·보더 | `text-success`, `bg-warning`(도트) |
+| `--{status}-foreground` | `bg-{status}` 배경 위 텍스트 | `bg-destructive text-destructive-foreground` |
+| `--{status}-subtle` | 연한 상태 배경 (알림 박스, 배지) | `bg-success-subtle text-success` |
 
-#### Tailwind CSS v4 매핑 (권장)
+#### Tailwind CSS v4 매핑
 
-`tailwind.config.ts` 또는 `@theme` 블록에서 다음과 같이 매핑한다:
+`@theme inline` 블록에서 CSS 변수를 유틸리티 색으로 노출한다. **`-foreground` 짝을 빠뜨리면 해당 `text-*-foreground` 유틸이 무효값이 되어 `--foreground`를 상속한다**(#367의 근본 원인).
 
 ```css
-@theme {
+@theme inline {
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
   --color-success-subtle: var(--success-subtle);
-  --color-warning: var(--warning);
-  --color-warning-foreground: var(--warning-foreground);
-  --color-warning-subtle: var(--warning-subtle);
-  --color-info: var(--info);
-  --color-info-foreground: var(--info-foreground);
-  --color-info-subtle: var(--info-subtle);
+  /* warning / info / caution 도 동일한 3종 세트 */
 }
 ```
 
-이후 `bg-success`, `text-warning`, `border-info-subtle` 등의 유틸리티 클래스를 사용할 수 있다.
+---
 
-### 1-5. Domain & Accent Tokens (구현 완료)
+### 1-5. Theme Variants — 테마 변형 (ocean / sunset)
+
+사용자가 사이드바 사용자 메뉴에서 고르는 색 테마. `<html>`에 `theme-ocean` / `theme-sunset` 클래스가 붙는다(기본 indigo는 클래스 없음 — `:root`/`.dark`의 기본값이 곧 indigo다).
+
+변형 블록은 `--primary` · `--ring` · `--sidebar-primary` · `--sidebar-ring` · `--chart-1` · `--accent` 계열만 덮어쓴다.
+
+| 조합 | `--primary` | hex | `--primary-foreground` 대비 |
+|---|---|---|---|
+| indigo 라이트 | `oklch(0.45 0.2 264)` | `#3730c4` | 7.54 |
+| ocean 라이트 | `oklch(0.52 0.14 195)` | `#008082` | 4.56 |
+| sunset 라이트 | `oklch(0.55 0.18 50)` | `#bf4500` | 4.95 |
+| indigo 다크 | `oklch(0.65 0.2 264)` | `#4e86ff` | 5.64 |
+| ocean 다크 | `oklch(0.75 0.12 195)` | `#2cc5c5` | 9.04 |
+| sunset 다크 | `oklch(0.72 0.15 50)` | `#ee8545` | 7.38 |
+
+> **중요**: 변형 블록은 `--primary-foreground`를 **재정의하지 않는다.** `.dark`의 값을 상속하므로, 다크 전경을 한 줄 고치면 세 테마가 모두 따라온다. 반대로 변형 블록에 전경을 따로 넣으면 이 상속이 끊어지니 넣지 말 것.
+>
+> ocean 라이트 4.56:1이 전체에서 가장 빠듯한 통과값이다. `--primary`의 L을 올리는 변경은 이 값을 먼저 확인하라.
+
+---
+
+
+### 1-6. Domain & Accent Tokens
 
 도메인 엔티티와 AI 관련 기능의 시각적 구분을 위한 시맨틱 토큰.
 
@@ -267,11 +305,11 @@ Phase D-2에서 추가된 시맨틱 상태 토큰. `index.css`에 Light/Dark 모
 | Token | Light 값 | Dark 값 | 용도 |
 |-------|----------|---------|------|
 | `--pipeline` | `oklch(0.52 0.14 195)` | `oklch(0.75 0.12 195)` | 파이프라인 엔티티 색상 |
-| `--pipeline-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | Pipeline 위 텍스트 |
+| `--pipeline-foreground` | `oklch(0.985 0 0)` | `oklch(0.17 0.02 280)` | Pipeline 위 텍스트 |
 | `--dataset` | `oklch(0.45 0.2 264)` | `oklch(0.7 0.17 264)` | 데이터셋 엔티티 색상 |
-| `--dataset-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | Dataset 위 텍스트 |
+| `--dataset-foreground` | `oklch(0.985 0 0)` | `oklch(0.17 0.02 280)` | Dataset 위 텍스트 |
 | `--dashboard-accent` | `oklch(0.48 0.2 300)` | `oklch(0.7 0.18 300)` | 대시보드 강조 색상 |
-| `--dashboard-accent-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | Dashboard accent 위 텍스트 |
+| `--dashboard-accent-foreground` | `oklch(0.985 0 0)` | `oklch(0.17 0.02 280)` | Dashboard accent 위 텍스트 |
 
 #### AI Accent Tokens
 
@@ -280,7 +318,7 @@ AI 관련 UI 요소(AI 분류 스텝, AI 상태 칩, AI 패널 등)에 사용하
 | Token | Light 값 | Dark 값 | 용도 |
 |-------|----------|---------|------|
 | `--ai-accent` | `oklch(0.52 0.18 293)` | `oklch(0.72 0.15 293)` | AI 기능 강조 색상 (보라색) |
-| `--ai-accent-foreground` | `oklch(0.985 0 0)` | `oklch(0.985 0 0)` | AI accent 위 텍스트 |
+| `--ai-accent-foreground` | `oklch(0.985 0 0)` | `oklch(0.17 0.02 280)` | AI accent 위 텍스트 |
 | `--ai-accent-subtle` | `oklch(0.96 0.03 293)` | `oklch(0.2 0.04 293)` | AI 기능 연한 배경 |
 
 사용 예:
@@ -300,8 +338,8 @@ orange 계열 주의/경고 색상. warning(amber)보다 강한 주의를 표현
 
 | Token | Light 값 | Dark 값 | 용도 |
 |-------|----------|---------|------|
-| `--caution` | `oklch(0.7 0.15 55)` | `oklch(0.78 0.13 55)` | 주의 색상 (오렌지) |
-| `--caution-foreground` | `oklch(0.2 0 0)` | `oklch(0.985 0 0)` | Caution 위 텍스트 |
+| `--caution` | `oklch(0.52 0.15 55)` | `oklch(0.78 0.13 55)` | 주의 색상 (오렌지) |
+| `--caution-foreground` | `oklch(0.985 0 0)` | `oklch(0.17 0.02 280)` | Caution 위 텍스트 |
 | `--caution-subtle` | `oklch(0.96 0.04 55)` | `oklch(0.2 0.04 55)` | 주의 연한 배경 |
 
 사용 예:

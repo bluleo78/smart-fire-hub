@@ -208,3 +208,29 @@ P3: 다크 모드 전수 검증 (P2 hex/rgb 교체 후)
 - P1: ✅ 하드코딩 Tailwind 색상 마이그레이션 + Typography 통일 완료
 - P2: ⬜ Hex/RGB 인라인 스타일 (~95건), Geist 폰트, 접근성, text-[10px] 재검토
 - P3: ✅ index.css 중복 제거 완료 / ⬜ 다크 모드 전수 검증
+
+---
+
+## a11y 색 대비 라운드 이연 항목 (2026-07-31, #365~#370)
+
+#365·#366·#367·#368·#369·#370 처리 시 디자이너가 명시적으로 범위 밖으로 이연한 항목이다.
+토큰 값·역할 계약의 현행 정의는 [`01-design-tokens.md` 1-3절](01-design-tokens.md)을 참조한다.
+
+| # | 항목 | 이연 사유 |
+|---|---|---|
+| A1 | `--chart-1~5` 대비 감사 | 데이터 시각화 색은 인접색 3:1(SC 1.4.11)과 색각이상 구분 가능성을 함께 봐야 해 별도 라운드가 필요하다 |
+| A2 | 다크 `--muted-foreground`(0.6) × `--accent`(흰 7%) = **4.48:1** | 4.5에 0.02 모자란 경계값. 보조 텍스트가 accent 표면 위에 놓이는 실제 사례를 찾지 못했다. 토큰을 올리면 앱 전체 보조 텍스트 위계가 흔들린다 |
+| A3 | 다크 `--muted-foreground` × 카드 **안**의 `bg-muted` 중첩 = **4.39:1** | A2와 같은 부류(표면 알파가 겹쳐 밝아지는 조합). `bg-muted`가 페이지 배경 위에 놓이는 정상 사용은 4.69:1로 통과한다 |
+| A4 | `text-foreground/60~80`, `text-primary/70`, `text-destructive/80` 등 **다른 토큰의 알파 텍스트 유틸** 7건 | 이번 라운드의 알파 금지 게이트는 `ring-*`/`outline-*` 전부 + `text-muted-foreground/*`만 막는다. 전수 감사 시 `alpha-utility-gate.test.ts`의 `ALPHA_UTIL` 정규식을 `(?:text\|ring\|outline)-[a-z][\w-]*`로 넓히면 된다 |
+| A5 | `text-yellow-400`(즐겨찾기 별) 등 남은 하드코딩 팔레트 13건 | 대부분 장식 아이콘 |
+
+### 규칙의 명시적 예외 (이연이 아니라 **확정된 예외**)
+
+- `aria-invalid:ring-destructive/20` · `dark:aria-invalid:ring-destructive/40` (button·input·select·badge 등)
+  — 알파 링이지만 포커스 인디케이터가 아니라 오류 상태 보조 표시이고, 같은 요소의
+  `aria-invalid:border-destructive`가 3:1을 담당하므로 SC 1.4.11 위반이 아니다.
+  `alpha-utility-gate.test.ts`가 이 접두를 제외하고 검사한다.
+- `Badge variant="destructive"`의 하드코딩 `text-white`
+  — `dark:bg-destructive/60`(알파 배경) 위에 얹히므로 다크 카드 기준 6.32:1로 통과한다.
+  **`text-destructive-foreground`로 바꾸지 말 것** — 어두운 전경이 어두운 반투명 배경에 얹혀 오히려 깨진다.
+- `alpha-utility-gate.test.ts`의 `ALLOWLIST` 6건 — `aria-hidden` 장식 아이콘과 `cursor-not-allowed` 비활성 항목.

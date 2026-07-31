@@ -376,7 +376,9 @@ export function AIStatusChip() {
           <Bell className="h-4 w-4 text-muted-foreground" />
           {unreadCount > 0 && (
             <span
-              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground"
+              // #367: 16px 원에 `99+` 3자를 9px로 넣으면 판독성이 낮아 한 단계 키운다.
+              // 벨 아이콘 위 절대배치라 레이아웃에는 영향이 없다.
+              className="absolute -top-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground"
               aria-live="polite"
             >
               {unreadCount > 99 ? '99+' : unreadCount}

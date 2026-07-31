@@ -34,6 +34,8 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  /* #367: 이 매핑이 없어 `text-destructive-foreground`가 무효값이 되고 --foreground를 상속했다 */
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -97,7 +99,9 @@
   --muted-foreground: oklch(0.5 0 0);
   --accent: oklch(0.955 0.01 264);
   --accent-foreground: oklch(0.25 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  /* #367: 흰 카드/틴트 위 텍스트·아이콘 대비 확보 (4.77 → 5.83) */
+  --destructive: oklch(0.53 0.22 27.325);
+  --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.94 0.005 264);
   --input: oklch(0.92 0.005 264);
   --ring: oklch(0.55 0.15 264);
@@ -114,13 +118,19 @@
   --sidebar-accent-foreground: oklch(0.25 0 0);
   --sidebar-border: oklch(0.94 0.005 264);
   --sidebar-ring: oklch(0.55 0.15 264);
-  --success: oklch(0.523 0.165 149.5);
+  /*
+   * #367/#370 역할 계약: `--X`는 배경(도트/바/보더)이자 `text-X` 전경으로 함께 쓰이므로
+   * 흰 카드 및 `bg-X/10`·`X-subtle` 틴트 위에서 4.5:1을 만족해야 한다.
+   * `--X-subtle`은 배경 전용이라 그대로 두고, `--X`의 명도만 내린다.
+   */
+  --success: oklch(0.46 0.16 149.5);
   --success-foreground: oklch(0.985 0 0);
   --success-subtle: oklch(0.95 0.05 149.5);
-  --warning: oklch(0.84 0.16 84);
-  --warning-foreground: oklch(0.2 0 0);
+  /* #370 본체: 밝은 앰버라 도트가 1.66:1로 SC 1.4.11(3:1)조차 못 넘겼다 → 5.54:1 */
+  --warning: oklch(0.52 0.13 84);
+  --warning-foreground: oklch(0.985 0 0); /* 배경이 어두워졌으므로 전경 반전 */
   --warning-subtle: oklch(0.97 0.04 84);
-  --info: oklch(0.55 0.15 240);
+  --info: oklch(0.5 0.15 240);
   --info-foreground: oklch(0.985 0 0);
   --info-subtle: oklch(0.95 0.04 240);
   --pipeline: oklch(0.52 0.14 195);
@@ -132,8 +142,8 @@
   --ai-accent: oklch(0.52 0.18 293);
   --ai-accent-foreground: oklch(0.985 0 0);
   --ai-accent-subtle: oklch(0.96 0.03 293);
-  --caution: oklch(0.7 0.15 55);
-  --caution-foreground: oklch(0.2 0 0);
+  --caution: oklch(0.52 0.15 55);
+  --caution-foreground: oklch(0.985 0 0); /* 배경이 어두워졌으므로 전경 반전 */
   --caution-subtle: oklch(0.96 0.04 55);
   /* 데이터 타입 시각화 토큰 — 스키마 탐색기에서 SQL 데이터 타입을 구분하는 색상 */
   --dtype-text: oklch(0.55 0.15 240);
@@ -153,7 +163,13 @@
   --popover: oklch(0.18 0.015 280);
   --popover-foreground: oklch(0.93 0 0);
   --primary: oklch(0.65 0.2 264);
-  --primary-foreground: oklch(0.985 0 0);
+  /*
+   * #365: 다크는 밝은 액센트가 정체성이므로 `--primary` 배경은 그대로 두고 전경을 뒤집는다.
+   * (배경을 어둡게 하면 --ring/--chart-1/글로우까지 연쇄로 흐려진다)
+   * 이 한 줄이 .theme-ocean.dark / .theme-sunset.dark까지 상속으로 덮는다 —
+   * 변형 블록은 --primary-foreground를 재정의하지 않는다. 3.26→5.64 / 2.03→9.04 / 2.49→7.38.
+   */
+  --primary-foreground: oklch(0.17 0.02 280);
   --secondary: oklch(1 0 0 / 5%);
   --secondary-foreground: oklch(0.93 0 0);
   --muted: oklch(1 0 0 / 5%);
@@ -161,6 +177,7 @@
   --accent: oklch(1 0 0 / 7%);
   --accent-foreground: oklch(0.93 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.17 0.02 280); /* #367: 다크 99+ 배지 2.36 → 6.64 */
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 12%);
   --ring: oklch(0.65 0.2 264);
@@ -172,31 +189,35 @@
   --sidebar: oklch(0.14 0.02 280);
   --sidebar-foreground: oklch(0.93 0 0);
   --sidebar-primary: oklch(0.65 0.2 264);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary-foreground: oklch(0.17 0.02 280); /* #365 */
   --sidebar-accent: oklch(1 0 0 / 7%);
   --sidebar-accent-foreground: oklch(0.93 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.65 0.2 264);
+  /*
+   * #370 역할 계약: 다크의 액센트 배경은 밝으므로 그 위에 얹는 -foreground는 근검정이어야 한다.
+   * 배경 계열 토큰 값은 그대로 두고 전경만 뒤집는다(대비 6.34~9.28).
+   */
   --success: oklch(0.65 0.15 149.5);
-  --success-foreground: oklch(0.985 0 0);
+  --success-foreground: oklch(0.17 0.02 280);
   --success-subtle: oklch(0.2 0.04 149.5);
   --warning: oklch(0.76 0.14 84);
-  --warning-foreground: oklch(0.985 0 0);
+  --warning-foreground: oklch(0.17 0.02 280);
   --warning-subtle: oklch(0.2 0.04 84);
   --info: oklch(0.7 0.13 240);
-  --info-foreground: oklch(0.985 0 0);
+  --info-foreground: oklch(0.17 0.02 280);
   --info-subtle: oklch(0.2 0.04 240);
   --pipeline: oklch(0.75 0.12 195);
-  --pipeline-foreground: oklch(0.985 0 0);
+  --pipeline-foreground: oklch(0.17 0.02 280);
   --dataset: oklch(0.7 0.17 264);
-  --dataset-foreground: oklch(0.985 0 0);
+  --dataset-foreground: oklch(0.17 0.02 280);
   --dashboard-accent: oklch(0.7 0.18 300);
-  --dashboard-accent-foreground: oklch(0.985 0 0);
+  --dashboard-accent-foreground: oklch(0.17 0.02 280);
   --ai-accent: oklch(0.72 0.15 293);
-  --ai-accent-foreground: oklch(0.985 0 0);
+  --ai-accent-foreground: oklch(0.17 0.02 280);
   --ai-accent-subtle: oklch(0.2 0.04 293);
   --caution: oklch(0.78 0.13 55);
-  --caution-foreground: oklch(0.985 0 0);
+  --caution-foreground: oklch(0.17 0.02 280);
   --caution-subtle: oklch(0.2 0.04 55);
   /* 데이터 타입 시각화 토큰 (다크 모드) */
   --dtype-text: oklch(0.7 0.13 240);
@@ -210,7 +231,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;
