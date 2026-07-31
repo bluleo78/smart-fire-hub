@@ -10,18 +10,14 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { formatYAxisTick, LINE_CURSOR_STYLE, TOOLTIP_CONTENT_STYLE } from './chart-styles';
-
-const DEFAULT_COLORS = [
-  '#8884d8',
-  '#82ca9d',
-  '#ffc658',
-  '#ff7300',
-  '#0088fe',
-  '#00C49F',
-  '#FFBB28',
-  '#FF8042',
-];
+import { CHART_LEGEND_FORMATTER } from './chart-legend';
+import {
+  CHART_SERIES_COLORS,
+  formatYAxisTick,
+  LINE_CURSOR_STYLE,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+} from './chart-styles';
 
 interface AreaChartViewProps {
   config: ChartConfig;
@@ -31,7 +27,7 @@ interface AreaChartViewProps {
 
 export function AreaChartView({ config, data, height }: AreaChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, stacked = false, colors } = config;
-  const palette = colors?.length ? colors : DEFAULT_COLORS;
+  const palette = colors?.length ? colors : CHART_SERIES_COLORS;
 
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'} minWidth={200}>
@@ -60,8 +56,8 @@ export function AreaChartView({ config, data, height }: AreaChartViewProps) {
               : undefined
           }
         />
-        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} cursor={LINE_CURSOR_STYLE} />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
+        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} cursor={LINE_CURSOR_STYLE} />
+        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
         {yAxis.map((col, i) => {
           const color = palette[i % palette.length];
           return (

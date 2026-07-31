@@ -78,7 +78,8 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
             {candles.map((c, i) => {
               const cx = toX(i);
               const bullish = c.close >= c.open;
-              const color = bullish ? 'hsl(142 72% 45%)' : 'hsl(0 72% 55%)';
+              // #375: 상승/하락은 시리즈가 아니라 의미(양/음)다 — 범주형 팔레트가 아닌 시맨틱 토큰을 쓴다.
+              const color = bullish ? 'var(--success)' : 'var(--destructive)';
               const bodyTop = toY(Math.max(c.open, c.close));
               const bodyBottom = toY(Math.min(c.open, c.close));
               const bodyH = Math.max(bodyBottom - bodyTop, 1);

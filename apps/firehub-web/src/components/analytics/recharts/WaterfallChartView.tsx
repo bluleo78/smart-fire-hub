@@ -6,7 +6,7 @@ Bar, CartesianGrid, Cell,   ComposedChart, ReferenceLine,
   ResponsiveContainer, Tooltip,
 XAxis, YAxis, } from 'recharts';
 
-import { TOOLTIP_CONTENT_STYLE } from '../chart-styles';
+import { TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 
 interface WaterfallRow {
@@ -46,6 +46,7 @@ export function WaterfallChartView({ data, config, height = 300 }: ChartViewProp
         <ReferenceLine y={0} stroke="var(--border)" />
         <Tooltip
           contentStyle={TOOLTIP_CONTENT_STYLE}
+          itemStyle={TOOLTIP_ITEM_STYLE}
           formatter={(_: unknown, __: string | undefined, props: { payload?: WaterfallRow }) => [
             props.payload?.value?.toLocaleString() ?? '', config.yAxis[0] ?? '',
           ] as [string, string]}
@@ -54,11 +55,11 @@ export function WaterfallChartView({ data, config, height = 300 }: ChartViewProp
         <Bar dataKey="base" stackId="wf" fill="transparent" />
         {/* 양수 bar (녹색) */}
         <Bar dataKey="positive" stackId="wf" radius={[2, 2, 0, 0]}>
-          {rows.map((_, i) => <Cell key={i} fill="hsl(142 72% 45%)" />)}
+          {rows.map((_, i) => <Cell key={i} fill="var(--success)" />)}
         </Bar>
         {/* 음수 bar (빨간색) */}
         <Bar dataKey="negative" stackId="wf" radius={[2, 2, 0, 0]}>
-          {rows.map((_, i) => <Cell key={i} fill="hsl(0 72% 55%)" />)}
+          {rows.map((_, i) => <Cell key={i} fill="var(--destructive)" />)}
         </Bar>
       </ComposedChart>
     </ResponsiveContainer>

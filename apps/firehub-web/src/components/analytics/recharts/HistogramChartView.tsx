@@ -5,7 +5,7 @@ import {
 Bar,   BarChart, CartesianGrid, ResponsiveContainer,
 Tooltip, XAxis, YAxis, } from 'recharts';
 
-import { BAR_CURSOR_STYLE,TOOLTIP_CONTENT_STYLE } from '../chart-styles';
+import { BAR_CURSOR_STYLE,TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 
 /** 수치 배열을 N개 구간으로 집계 */
@@ -57,10 +57,11 @@ export function HistogramChartView({ data, config, height = 300 }: ChartViewProp
         />
         <Tooltip
           contentStyle={TOOLTIP_CONTENT_STYLE}
+          itemStyle={TOOLTIP_ITEM_STYLE}
           cursor={BAR_CURSOR_STYLE}
           formatter={(v: number | undefined) => [v ?? 0, '빈도']}
         />
-        <Bar dataKey="count" fill="#8884d8" radius={[2, 2, 0, 0]} />
+        <Bar dataKey="count" fill="var(--chart-1)" radius={[2, 2, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

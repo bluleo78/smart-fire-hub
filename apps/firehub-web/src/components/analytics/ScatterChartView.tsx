@@ -11,15 +11,8 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { TOOLTIP_CONTENT_STYLE } from './chart-styles';
-
-const DEFAULT_COLORS = [
-  '#8884d8',
-  '#82ca9d',
-  '#ffc658',
-  '#ff7300',
-  '#0088fe',
-];
+import { CHART_LEGEND_FORMATTER } from './chart-legend';
+import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 
 interface ScatterChartViewProps {
   config: ChartConfig;
@@ -29,7 +22,7 @@ interface ScatterChartViewProps {
 
 export function ScatterChartView({ config, data, height }: ScatterChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, colors } = config;
-  const palette = colors?.length ? colors : DEFAULT_COLORS;
+  const palette = colors?.length ? colors : CHART_SERIES_COLORS;
 
   // If groupBy is present, split data into groups; otherwise render all in one scatter
   const { groupBy } = config;
@@ -94,8 +87,9 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
         <Tooltip
           cursor={{ strokeDasharray: '3 3', stroke: 'var(--muted-foreground)' }}
           contentStyle={TOOLTIP_CONTENT_STYLE}
+          itemStyle={TOOLTIP_ITEM_STYLE}
         />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
+        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
         {scatterGroups.map((g) => (
           <Scatter key={g.name} name={g.name} data={g.data} fill={g.color} opacity={0.7} />
         ))}

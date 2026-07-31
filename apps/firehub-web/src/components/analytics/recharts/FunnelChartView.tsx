@@ -2,25 +2,20 @@
 // 단계별 감소 수치를 깔때기 형태로 표현. config.xAxis = 단계명, config.yAxis[0] = 수치.
 import { Cell,Funnel, FunnelChart, LabelList, ResponsiveContainer, Tooltip } from 'recharts';
 
-import { TOOLTIP_CONTENT_STYLE } from '../chart-styles';
+import { CHART_SEQ_LABEL_COLOR, seqColor, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
-
-const COLORS = [
-  'hsl(220 70% 50%)', 'hsl(220 65% 58%)', 'hsl(220 60% 65%)',
-  'hsl(220 55% 72%)', 'hsl(220 50% 79%)', 'hsl(220 45% 85%)',
-];
 
 export function FunnelChartView({ data, config, height = 300 }: ChartViewProps) {
   const funnelData = data.map((d, i) => ({
     name: String(d[config.xAxis] ?? ''),
     value: Number(d[config.yAxis[0]] ?? 0),
-    fill: COLORS[i % COLORS.length],
+    fill: seqColor(i),
   }));
 
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'}>
       <FunnelChart>
-        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
+        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
         <Funnel dataKey="value" data={funnelData} isAnimationActive={false}>
           {funnelData.map((entry, i) => (
             <Cell key={i} fill={entry.fill} />
@@ -36,7 +31,7 @@ export function FunnelChartView({ data, config, height = 300 }: ChartViewProps) 
               const nw = Number(props.width ?? 0), nh = Number(props.height ?? 0);
               return (
               <text x={nx + nw / 2} y={ny + nh / 2} textAnchor="middle"
-                dominantBaseline="middle" fontSize={12} fill="#fff" fontWeight={500}>
+                dominantBaseline="middle" fontSize={12} fill={CHART_SEQ_LABEL_COLOR} fontWeight={500}>
                 {`${entry.name}: ${entry.value.toLocaleString()}`}
               </text>
               );

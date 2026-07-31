@@ -5,10 +5,9 @@ import {
 Radar,   RadarChart, ResponsiveContainer,
 Tooltip, } from 'recharts';
 
-import { TOOLTIP_CONTENT_STYLE } from '../chart-styles';
+import { CHART_LEGEND_FORMATTER } from '../chart-legend';
+import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
-
-const COLORS = ['hsl(220 70% 50%)', 'hsl(160 60% 45%)', 'hsl(30 80% 55%)', 'hsl(280 65% 60%)'];
 
 export function RadarChartView({ data, config, height = 300 }: ChartViewProps) {
   return (
@@ -23,19 +22,19 @@ export function RadarChartView({ data, config, height = 300 }: ChartViewProps) {
           tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
           axisLine={false}
         />
-        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
+        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
         {config.yAxis.map((key, i) => (
           <Radar
             key={key}
             name={key}
             dataKey={key}
-            stroke={COLORS[i % COLORS.length]}
-            fill={COLORS[i % COLORS.length]}
+            stroke={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
+            fill={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
             fillOpacity={0.2}
           />
         ))}
         {config.yAxis.length > 1 && config.showLegend !== false && (
-          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} formatter={CHART_LEGEND_FORMATTER} />
         )}
       </RadarChart>
     </ResponsiveContainer>

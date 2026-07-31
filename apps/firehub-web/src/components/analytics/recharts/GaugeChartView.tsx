@@ -54,7 +54,7 @@ export function GaugeChartView({ data, config, height = 280 }: ChartViewProps) {
             dataKey="value"
             stroke="none"
           >
-            <Cell fill="#8884d8" />
+            <Cell fill="var(--chart-1)" />
             <Cell fill="transparent" />
           </Pie>
         </PieChart>

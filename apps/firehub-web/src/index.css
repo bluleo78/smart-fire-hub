@@ -44,6 +44,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -111,11 +114,42 @@
    */
   --input: oklch(0.64 0.005 264);
   --ring: oklch(0.55 0.15 264);
-  --chart-1: oklch(0.45 0.2 264);
-  --chart-2: oklch(0.55 0.15 195);
-  --chart-3: oklch(0.5 0.18 300);
-  --chart-4: oklch(0.7 0.15 84);
-  --chart-5: oklch(0.6 0.2 27);
+  /*
+   * #375 차트 시리즈 팔레트 (범주형 8색, 테마 무관).
+   * 라이트는 흰 카드 위 SC 1.4.11(3:1)이 상한을 만든다 → 상대휘도 ≤ 0.30.
+   * hue를 균등 배치하는 대신 명도를 계단식으로 흩뜨렸다 — 색각이상에서 색상축이
+   * 무너져도 명도차가 남게 하기 위함이다(비색 부호화 자체는 #378 소관).
+   * 시리즈색은 브랜드가 아니라 **데이터 식별자**이므로 테마 변형(ocean/sunset)을
+   * 따라가지 않는다 — 테마를 바꿨다고 같은 계열의 색이 바뀌면 대시보드 인지가 깨진다.
+   */
+  --chart-1: oklch(0.52 0.19 264); /* 인디고 #2d5ed4 5.73:1 */
+  --chart-2: oklch(0.62 0.1 195); /* 틸     #1d9999 3.46:1 */
+  --chart-3: oklch(0.48 0.19 25); /* 레드   #b00a1d 7.22:1 */
+  --chart-4: oklch(0.64 0.11 85); /* 앰버   #ab8632 3.39:1 */
+  --chart-5: oklch(0.64 0.19 305); /* 퍼플   #a867e7 3.65:1 */
+  --chart-6: oklch(0.43 0.11 150); /* 그린   #10602d 7.68:1 */
+  --chart-7: oklch(0.47 0.09 235); /* 스카이 #186286 6.71:1 */
+  --chart-8: oklch(0.52 0.19 345); /* 마젠타 #ae2881 6.14:1 */
+  /*
+   * 시리즈 색 **위에** 얹는 라벨(트리맵 타일 등). 범주형 8색은 명도를 일부러 흩뜨렸으므로
+   * 라벨색이 색마다 다르다 — 흰 라벨은 세그먼트 휘도 ≤0.1833, 근검정은 ≥0.1967이 임계다.
+   */
+  --chart-1-foreground: oklch(1 0 0);
+  --chart-2-foreground: oklch(0.17 0.02 280);
+  --chart-3-foreground: oklch(1 0 0);
+  --chart-4-foreground: oklch(0.17 0.02 280);
+  --chart-5-foreground: oklch(0.17 0.02 280);
+  --chart-6-foreground: oklch(1 0 0);
+  --chart-7-foreground: oklch(1 0 0);
+  --chart-8-foreground: oklch(1 0 0);
+  /* 깔때기 등 순차 램프 — 흰 라벨이 6단 전부 4.5:1을 넘도록 휘도 상한 0.183으로 압축했다 */
+  --chart-seq-1: oklch(0.42 0.15 264);
+  --chart-seq-2: oklch(0.45 0.14 264);
+  --chart-seq-3: oklch(0.48 0.13 264);
+  --chart-seq-4: oklch(0.51 0.12 264);
+  --chart-seq-5: oklch(0.54 0.11 264);
+  --chart-seq-6: oklch(0.56 0.1 264);
+  --chart-seq-foreground: oklch(1 0 0);
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.45 0.2 264);
@@ -192,11 +226,35 @@
    */
   --input: oklch(0.52 0.01 280);
   --ring: oklch(0.65 0.2 264);
-  --chart-1: oklch(0.65 0.2 264);
-  --chart-2: oklch(0.7 0.15 195);
-  --chart-3: oklch(0.65 0.2 300);
-  --chart-4: oklch(0.75 0.15 84);
-  --chart-5: oklch(0.7 0.2 27);
+  /*
+   * #375: 다크 카드(#0d0e14) 기준 3:1. 라이트는 휘도 ≤0.30, 다크는 ≥0.114가 요구되어
+   * 두 밴드가 겹치지 않으므로 **양쪽에서 통하는 단일 값은 수학적으로 존재하지 않는다.**
+   */
+  --chart-1: oklch(0.6 0.19 264); /* #4377f0 4.71:1 (0.59는 라벨 4.50으로 AA 경계) */
+  --chart-2: oklch(0.75 0.12 195); /* #2cc5c5 9.08:1 */
+  --chart-3: oklch(0.74 0.15 25); /* #fb817a 7.82:1 */
+  --chart-4: oklch(0.85 0.16 85); /* #fdc436 12.04:1 */
+  --chart-5: oklch(0.71 0.18 305); /* #bc80fa 6.98:1 */
+  --chart-6: oklch(0.67 0.18 150); /* #14b254 6.90:1 */
+  --chart-7: oklch(0.85 0.08 235); /* #9ad7fb 12.37:1 */
+  --chart-8: oklch(0.62 0.19 345); /* #d14ba0 4.79:1 */
+  /* 다크 팔레트는 8색 전부 밝으므로 시리즈 위 라벨은 단일 근검정으로 뒤집는다 */
+  --chart-1-foreground: oklch(0.17 0.02 280);
+  --chart-2-foreground: oklch(0.17 0.02 280);
+  --chart-3-foreground: oklch(0.17 0.02 280);
+  --chart-4-foreground: oklch(0.17 0.02 280);
+  --chart-5-foreground: oklch(0.17 0.02 280);
+  --chart-6-foreground: oklch(0.17 0.02 280);
+  --chart-7-foreground: oklch(0.17 0.02 280);
+  --chart-8-foreground: oklch(0.17 0.02 280);
+  /* 다크 램프도 밝으므로 라벨을 근검정으로 반전 (#370 역할 계약과 동일 논리) */
+  --chart-seq-1: oklch(0.62 0.16 264);
+  --chart-seq-2: oklch(0.67 0.14 264);
+  --chart-seq-3: oklch(0.72 0.12 264);
+  --chart-seq-4: oklch(0.77 0.1 264);
+  --chart-seq-5: oklch(0.82 0.08 264);
+  --chart-seq-6: oklch(0.87 0.06 264);
+  --chart-seq-foreground: oklch(0.17 0.02 280);
   --sidebar: oklch(0.14 0.02 280);
   --sidebar-foreground: oklch(0.93 0 0);
   --sidebar-primary: oklch(0.65 0.2 264);
@@ -255,15 +313,17 @@
  * 이 토큰은 버튼 배경일 뿐 아니라 `text-primary`(아바타 이니셜·AI 칩·`원본` 배지)의 전경으로도
  * 쓰이는데, 0.52는 `bg-primary/10~15` 틴트 위에서 4.00~3.75:1로 AA(4.5:1)에 미달했다.
  * hue/chroma는 유지해 브랜드 인상을 보존하고 명도만 조정한다(역할 계약 §1-3).
- * 같은 값을 공유하는 --ring/--sidebar-primary/--sidebar-ring/--chart-1도 함께 내려
+ * 같은 값을 공유하는 --ring/--sidebar-primary/--sidebar-ring도 함께 내려
  * 사이드바 선택 항목과 아바타 틴트가 어긋나지 않게 한다.
+ * (#375: --chart-1 오버라이드는 삭제됐다 — 시리즈색은 브랜드가 아니라 데이터 식별자라
+ *  테마를 따라가지 않으며, ocean에서는 신설 --chart-2(hue 195)와 정면 충돌했다.
+ *  여기에 --chart-* 선언을 되살리지 말 것. contrast 테스트가 0건을 단언한다.)
  */
 .theme-ocean {
   --primary: oklch(0.46 0.14 195);
   --ring: oklch(0.46 0.14 195);
   --sidebar-primary: oklch(0.46 0.14 195);
   --sidebar-ring: oklch(0.46 0.14 195);
-  --chart-1: oklch(0.46 0.14 195);
   --accent: oklch(0.96 0.01 195);
   --sidebar-accent: oklch(0.96 0.01 195);
 }
@@ -277,7 +337,6 @@
   --sidebar-primary: oklch(0.75 0.12 195);
   --sidebar-ring: oklch(0.75 0.12 195);
   --sidebar-accent: oklch(0.75 0.12 195 / 7%);
-  --chart-1: oklch(0.75 0.12 195);
   --accent: oklch(0.75 0.12 195 / 7%);
 }
 
@@ -288,7 +347,6 @@
   --ring: oklch(0.5 0.18 50);
   --sidebar-primary: oklch(0.5 0.18 50);
   --sidebar-ring: oklch(0.5 0.18 50);
-  --chart-1: oklch(0.5 0.18 50);
   --accent: oklch(0.96 0.01 50);
   --sidebar-accent: oklch(0.96 0.01 50);
 }
@@ -302,7 +360,6 @@
   --sidebar-primary: oklch(0.72 0.15 50);
   --sidebar-ring: oklch(0.72 0.15 50);
   --sidebar-accent: oklch(0.72 0.15 50 / 7%);
-  --chart-1: oklch(0.72 0.15 50);
   --accent: oklch(0.72 0.15 50 / 7%);
 }
 

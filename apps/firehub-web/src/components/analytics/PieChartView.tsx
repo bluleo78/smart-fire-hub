@@ -8,18 +8,8 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { TOOLTIP_CONTENT_STYLE } from './chart-styles';
-
-const DEFAULT_COLORS = [
-  '#8884d8',
-  '#82ca9d',
-  '#ffc658',
-  '#ff7300',
-  '#0088fe',
-  '#00C49F',
-  '#FFBB28',
-  '#FF8042',
-];
+import { CHART_LEGEND_FORMATTER } from './chart-legend';
+import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 
 interface PieChartViewProps {
   chartType: ChartType;
@@ -30,7 +20,7 @@ interface PieChartViewProps {
 
 export function PieChartView({ chartType, config, data, height }: PieChartViewProps) {
   const { xAxis, yAxis, showLegend = true, colors } = config;
-  const palette = colors?.length ? colors : DEFAULT_COLORS;
+  const palette = colors?.length ? colors : CHART_SERIES_COLORS;
 
   // Use first yAxis value as the value key; xAxis as name key
   const valueKey = yAxis[0] ?? '';
@@ -62,9 +52,10 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
         </Pie>
         <Tooltip
           contentStyle={TOOLTIP_CONTENT_STYLE}
+          itemStyle={TOOLTIP_ITEM_STYLE}
           formatter={(value, name) => [value, name]}
         />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
+        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
       </PieChart>
     </ResponsiveContainer>
   );

@@ -10,18 +10,14 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
-import { BAR_CURSOR_STYLE, formatYAxisTick, TOOLTIP_CONTENT_STYLE } from './chart-styles';
-
-const DEFAULT_COLORS = [
-  '#8884d8',
-  '#82ca9d',
-  '#ffc658',
-  '#ff7300',
-  '#0088fe',
-  '#00C49F',
-  '#FFBB28',
-  '#FF8042',
-];
+import { CHART_LEGEND_FORMATTER } from './chart-legend';
+import {
+  BAR_CURSOR_STYLE,
+  CHART_SERIES_COLORS,
+  formatYAxisTick,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+} from './chart-styles';
 
 interface BarChartViewProps {
   config: ChartConfig;
@@ -31,7 +27,7 @@ interface BarChartViewProps {
 
 export function BarChartView({ config, data, height }: BarChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, stacked = false, colors } = config;
-  const palette = colors?.length ? colors : DEFAULT_COLORS;
+  const palette = colors?.length ? colors : CHART_SERIES_COLORS;
 
   return (
     <ResponsiveContainer width="100%" height={height ?? '100%'} minWidth={200}>
@@ -60,8 +56,8 @@ export function BarChartView({ config, data, height }: BarChartViewProps) {
               : undefined
           }
         />
-        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} cursor={BAR_CURSOR_STYLE} />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
+        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} cursor={BAR_CURSOR_STYLE} />
+        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} formatter={CHART_LEGEND_FORMATTER} />}
         {yAxis.map((col, i) => (
           <Bar
             key={col}

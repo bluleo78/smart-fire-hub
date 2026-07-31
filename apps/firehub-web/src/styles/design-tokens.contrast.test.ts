@@ -356,3 +356,93 @@ describe('#376 폼 컨트롤 경계', () => {
     expect(ringRatio).toBeGreaterThan(inputRatio);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 7. #375 — 차트 시리즈 팔레트
+//    `--chart-*`는 `--X` / `--X-subtle`과 다른 3번째 역할 계열이다:
+//    그래픽 객체 전용(3:1 기준), 전경 텍스트로 쓰지 않는다. 기준면은 항상 **카드**다
+//    (차트는 언제나 Card 안이고, 라이트/다크 모두 카드가 최악 조건이다).
+// ---------------------------------------------------------------------------
+
+const CHART_INDEXES = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+const SEQ_INDEXES = [1, 2, 3, 4, 5, 6] as const;
+
+describe('#375 차트 팔레트', () => {
+  it('디자이너 확정 hex를 재현한다', () => {
+    // 팔레트 값이 조용히 흔들리면 아래 대비 단언이 "다른 색에 대해" 통과할 수 있다.
+    // 확정안의 hex를 픽스처로 고정해 값 자체를 못 박는다.
+    expect(hex(token('indigo-light', '--chart-1'))).toBe('#2d5ed4');
+    expect(hex(token('indigo-light', '--chart-6'))).toBe('#10602d');
+    expect(hex(token('indigo-dark', '--chart-1'))).toBe('#4377f0');
+    expect(hex(token('indigo-dark', '--chart-8'))).toBe('#d14ba0');
+    expect(hex(token('indigo-light', '--chart-seq-6'))).toBe('#5673af');
+    expect(hex(token('indigo-dark', '--chart-seq-1'))).toBe('#5381e6');
+  });
+
+  it.each(ALL_THEMES.flatMap((t) => CHART_INDEXES.map((i) => [t, i] as const)))(
+    '%s: --chart-%i 마크가 카드 위 ≥ 3 (SC 1.4.11)',
+    (theme, i) => {
+      const c = token(theme, `--chart-${i}`);
+      expect(contrast(c, cardSurface(theme)), `${theme} #${i}=${hex(c)}`).toBeGreaterThanOrEqual(3);
+    }
+  );
+
+  it.each(ALL_THEMES.flatMap((t) => CHART_INDEXES.map((i) => [t, i] as const)))(
+    '%s: --chart-%i 위 라벨이 ≥ 4.5 (SC 1.4.3, 트리맵 타일 등)',
+    (theme, i) => {
+      const ratio = contrast(token(theme, `--chart-${i}-foreground`), token(theme, `--chart-${i}`));
+      expect(ratio, `${theme} #${i}`).toBeGreaterThanOrEqual(4.5);
+    }
+  );
+
+  it.each(DARK_THEMES)('%s: 다크 툴팁(팝오버)이 카드보다 밝아 최악 조건이므로 함께 단언한다', (theme) => {
+    for (const i of CHART_INDEXES) {
+      const ratio = contrast(token(theme, `--chart-${i}`), token(theme, '--popover'));
+      expect(ratio, `${theme} #${i}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each(ALL_THEMES.flatMap((t) => SEQ_INDEXES.map((i) => [t, i] as const)))(
+    '%s: 순차 램프 --chart-seq-%i 위 라벨이 ≥ 4.5 (깔때기)',
+    (theme, i) => {
+      const seg = token(theme, `--chart-seq-${i}`);
+      const ratio = contrast(token(theme, '--chart-seq-foreground'), seg);
+      expect(ratio, `${theme} seq-${i}=${hex(seg)}`).toBeGreaterThanOrEqual(4.5);
+    }
+  );
+
+  it.each(ALL_THEMES)('%s: 순차 램프 세그먼트도 카드 위 ≥ 3', (theme) => {
+    for (const i of SEQ_INDEXES) {
+      expect(contrast(token(theme, `--chart-seq-${i}`), cardSurface(theme))).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('순차 램프가 단조 증가한다 (클램프 정책의 전제)', () => {
+    for (const theme of ALL_THEMES) {
+      const lums = SEQ_INDEXES.map((i) => luminance(token(theme, `--chart-seq-${i}`)));
+      for (let i = 1; i < lums.length; i++) {
+        expect(lums[i], `${theme} seq-${i + 1}`).toBeGreaterThan(lums[i - 1]);
+      }
+    }
+  });
+
+  it('테마 변형 블록에 --chart-* 선언이 0건이다', () => {
+    // 이번 변경의 최대 함정: `.theme-ocean`의 `--chart-1`(hue 195)이 남아 있으면
+    // 신설 `--chart-2`(hue 195)와 같은 색으로 렌더된다. 시리즈색은 데이터 식별자이므로
+    // 테마를 따라가지 않는다 — 되살리면 여기서 red가 된다.
+    for (const [name, block] of [
+      ['.theme-ocean', OCEAN_LIGHT],
+      ['.theme-ocean.dark', OCEAN_DARK],
+      ['.theme-sunset', SUNSET_LIGHT],
+      ['.theme-sunset.dark', SUNSET_DARK],
+    ] as const) {
+      const chartKeys = Object.keys(block).filter((k) => k.startsWith('--chart-'));
+      expect(chartKeys, `${name}에 남은 차트 토큰`).toEqual([]);
+    }
+  });
+
+  it('차트 색은 소비 코드에서 bare var()로만 쓰인다 (hsl 래핑 금지, #374)', () => {
+    // `--chart-*`는 완결형 oklch()라 `hsl(var(--chart-N))`은 무효 CSS로 드롭된다.
+    expect(css).not.toMatch(/hsl\(\s*var\(--chart-/);
+  });
+});
