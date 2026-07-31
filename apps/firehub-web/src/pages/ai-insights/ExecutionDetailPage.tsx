@@ -181,19 +181,22 @@ export default function ExecutionDetailPage() {
         );
       })()}
 
-      {/* COMPLETED + HTML: 요약 섹션 + HTML 리포트 iframe */}
+      {/* COMPLETED 요약 섹션 — 마크다운으로 렌더링.
+          HTML 리포트(rawHtml) 유무와 무관하게 항상 렌더한다 (#363).
+          이전에는 rawHtml 분기 안에만 있어서, htmlContent 없이 sections만 있는
+          폴백 경로에서는 AI가 만든 총평이 화면 어디에도 나오지 않았다. */}
+      {execution.status === 'COMPLETED' && summary && (
+        <div className="rounded-lg border bg-muted/50 p-6" data-testid="execution-summary">
+          <h2 className="text-sm font-semibold mb-3">요약</h2>
+          <div className={PROSE_CLASSES}>
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{summary}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {/* COMPLETED + HTML: HTML 리포트 iframe */}
       {execution.status === 'COMPLETED' && rawHtml && (
         <>
-          {/* 요약 섹션 — 마크다운으로 렌더링 */}
-          {summary && (
-            <div className="rounded-lg border bg-muted/50 p-6">
-              <h2 className="text-sm font-semibold mb-3">요약</h2>
-              <div className={PROSE_CLASSES}>
-                <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{summary}</ReactMarkdown>
-              </div>
-            </div>
-          )}
-
           {/* HTML 리포트 영역 — 상단 바에 인쇄/PDF 버튼 + iframe */}
           <div className="rounded-lg border overflow-hidden">
             {/* 헤더 바: 리포트 제목 + 액션 버튼들 */}

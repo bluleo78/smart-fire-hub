@@ -16,6 +16,8 @@
       .section-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
       .section-content th, .section-content td { border: 1px solid #dee2e6; padding: 5px 8px; text-align: left; font-size: 9pt; }
       .section-content th { background-color: #f1f3f5; font-weight: 600; }
+      .summary-block { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 12px 14px; }
+      .summary-block .section-label { border-bottom: none; padding-bottom: 2px; margin-bottom: 6px; }
       .cards-row { margin-bottom: 10px; }
       .cards-row table { width: 100%; border-collapse: separate; border-spacing: 8px 0; }
       .card { text-align: center; padding: 10px 12px; border-radius: 4px; background-color: #f8f9fa; border: 1px solid #e9ecef; }
@@ -34,6 +36,13 @@
         &#160;·&#160;
         <span th:text="${generatedAt}">2026-01-01 09:00</span>
       </p>
+    </div>
+
+    <!-- 요약 블록 — 섹션보다 앞에 배치해 화면(ExecutionDetailPage)과 같은 순서로 읽히게 한다 (#363).
+         summary가 없으면 통째로 생략한다. -->
+    <div th:if="${summary != null}" class="section summary-block">
+      <div class="section-label">요약</div>
+      <div class="section-content" th:utext="${summary}">요약 내용</div>
     </div>
 
     <div th:each="section : ${sections}" class="section"

@@ -126,6 +126,16 @@ public class PdfExportService {
     Context ctx = new Context();
     ctx.setVariable("title", title);
     ctx.setVariable("jobName", jobName);
+    // AI가 생성한 총평. 화면(ExecutionDetailPage)과 동일한 값을 PDF에도 실어 두 경로의 내용을 맞춘다 (#363).
+    // effectiveSummary()를 쓰지 않는 이유: summary가 없으면 첫 섹션 content로 폴백하는데,
+    // 그 섹션은 바로 아래에서 다시 렌더되므로 같은 문단이 PDF에 두 번 찍힌다.
+    // 화면도 result.summary를 그대로 읽으므로(폴백 없음) 여기서도 원본 값만 사용한다.
+    // 섹션 본문과 같은 규칙으로 마크다운을 HTML로 변환한다 — 화면은 ReactMarkdown으로 렌더하므로
+    // 여기서 변환하지 않으면 PDF에만 `**굵게**` 같은 원시 기호가 노출된다.
+    String summary = result.summary();
+    ctx.setVariable(
+        "summary",
+        summary != null && !summary.isBlank() ? reportRenderUtils.markdownToHtml(summary) : null);
     ctx.setVariable("generatedAt", LocalDateTime.now().format(DISPLAY_FORMATTER));
     ctx.setVariable("sections", templateSections);
     // 화이트라벨링: PDF 템플릿 푸터의 브랜드명 표기에 사용
