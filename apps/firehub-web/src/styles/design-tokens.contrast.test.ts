@@ -325,3 +325,34 @@ describe('#366 muted-foreground', () => {
     ).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 6. #376 — 폼 컨트롤 경계(`--input`)는 표면 대비 3:1 (SC 1.4.11)
+//    컨트롤 배경이 표면과 1.00~1.06:1로 사실상 같으므로 보더가 유일한 식별 단서다.
+//    따라서 `--border`(장식 구분선)와 달리 `--input`은 3:1 계약을 진다.
+// ---------------------------------------------------------------------------
+
+describe('#376 폼 컨트롤 경계', () => {
+  /** 컨트롤이 실제로 앉는 표면들 — 페이지 배경 / 카드 / 다이얼로그·팝오버 */
+  const surfaces = (theme: string) => ({
+    background: token(theme, '--background'),
+    card: cardSurface(theme),
+    popover: token(theme, '--popover'),
+  });
+
+  it.each(ALL_THEMES)('%s: border-input이 모든 표면 위에서 ≥ 3', (theme) => {
+    const input = token(theme, '--input');
+    for (const [name, surface] of Object.entries(surfaces(theme))) {
+      const ratio = contrast(composite(input, surface), surface);
+      expect(ratio, `${theme}/${name} --input=${hex(input)} 표면=${hex(surface)}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each(ALL_THEMES)('%s: 비포커스 보더가 포커스 링보다 약하다(포커스 표시가 여전히 구별된다)', (theme) => {
+    // 보더를 3:1까지 올리면서 포커스 상태와의 구별이 사라지면 #368의 포커스 표시가 죽는다.
+    const surface = cardSurface(theme);
+    const inputRatio = contrast(composite(token(theme, '--input'), surface), surface);
+    const ringRatio = contrast(token(theme, '--ring'), surface);
+    expect(ringRatio).toBeGreaterThan(inputRatio);
+  });
+});
