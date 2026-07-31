@@ -228,6 +228,13 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
     (sm) => !anomalyConfig.metrics.some((m) => m.metricKey === sm.key),
   );
 
+  /* 이상 탐지가 켜져 있는데 메트릭이 하나도 없으면 폴러가 순회할 대상이 없어 영원히 발화하지 않는다 (#362).
+     MetricPollerService는 anomaly.metrics를 순회할 뿐이라 빈 리스트면 enabled=true여도 no-op다.
+     '활성' 배지만 보고 감시가 되고 있다고 믿는 조용한 오설정이므로, #354의 '미등록'과 같은 방식으로
+     파생 신호(활성 + 메트릭 0개)를 그대로 노출한다. 저장 자체는 막지 않는다 —
+     작업을 먼저 만들고 메트릭을 나중에 추가하는 흐름이 정당하고, 이미 저장된 행에는 차단이 아무 도움이 안 된다. */
+  const anomalyIdle = anomalyConfig.enabled && anomalyConfig.metrics.length === 0;
+
   // Read-only view
   if (!isEditing) {
     return (
@@ -239,8 +246,11 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
               <Activity className="h-4 w-4" />
               이상 탐지
             </h3>
-            <Badge variant={anomalyConfig.enabled ? 'default' : 'secondary'}>
-              {anomalyConfig.enabled ? '활성' : '비활성'}
+            <Badge
+              variant={anomalyIdle ? 'destructive' : anomalyConfig.enabled ? 'default' : 'secondary'}
+              data-testid={anomalyIdle ? 'anomaly-idle-badge' : undefined}
+            >
+              {anomalyIdle ? '미동작 — 메트릭 없음' : anomalyConfig.enabled ? '활성' : '비활성'}
             </Badge>
           </div>
 
@@ -263,7 +273,10 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">모니터링 메트릭</p>
                 {anomalyConfig.metrics.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">설정된 메트릭이 없습니다.</p>
+                  <p className="text-sm text-destructive" data-testid="anomaly-idle-hint">
+                    설정된 메트릭이 없습니다. 감시할 대상이 없어 이상 탐지가 실행되지 않습니다 — 편집에서
+                    메트릭을 추가하세요.
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {anomalyConfig.metrics.map((metric) => (
@@ -390,8 +403,17 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
               </div>
 
               {anomalyConfig.metrics.length === 0 ? (
-                <div className="text-center py-6 text-sm text-muted-foreground border rounded-lg border-dashed">
-                  모니터링할 메트릭을 추가하세요
+                /* 저장은 막지 않되(#362), 이 상태로 저장하면 이상 탐지가 돌지 않는다는 사실을
+                   저장 전에 알린다. 켜져 있을 때만 경고색으로 — 꺼진 상태의 빈 목록은 정상이다. */
+                <div
+                  className={`text-center py-6 text-sm border rounded-lg border-dashed ${
+                    anomalyIdle ? 'text-destructive border-destructive/50' : 'text-muted-foreground'
+                  }`}
+                  data-testid={anomalyIdle ? 'anomaly-idle-form-hint' : undefined}
+                >
+                  {anomalyIdle
+                    ? '메트릭이 없으면 이상 탐지가 실행되지 않습니다 — 모니터링할 메트릭을 추가하세요'
+                    : '모니터링할 메트릭을 추가하세요'}
                 </div>
               ) : (
                 <div className="space-y-2">

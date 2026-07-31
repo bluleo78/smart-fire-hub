@@ -59,6 +59,19 @@ function channelSummary(config: Record<string, unknown>): string {
   return parts.join(' / ') || '-';
 }
 
+/**
+ * 이상 탐지가 켜져 있는데 감시할 메트릭이 하나도 없는 상태인지 판정한다 (#362).
+ *
+ * <p>MetricPollerService는 anomaly.metrics를 순회할 뿐이라 빈 리스트면 enabled=true여도 절대 발화하지 않는다.
+ * 목록에도 같은 신호를 노출해, 상세를 열어보지 않고는 알 수 없던 조용한 오설정을 드러낸다.
+ * config는 임의 JSON이라 모든 단계를 옵셔널 체이닝으로 방어한다 — 예상과 다른 모양의 행 하나가
+ * 목록 전체를 백지로 만든 전례가 있다(94fe44b4). */
+function isAnomalyIdle(config: Record<string, unknown>): boolean {
+  const anomaly = config?.anomaly as { enabled?: unknown; metrics?: unknown } | undefined;
+  if (!anomaly || anomaly.enabled !== true) return false;
+  return !Array.isArray(anomaly.metrics) || anomaly.metrics.length === 0;
+}
+
 export default function ProactiveJobListPage() {
   const navigate = useNavigate();
   const { data: jobs = [], isLoading, isError } = useProactiveJobs();
@@ -174,6 +187,17 @@ export default function ProactiveJobListPage() {
                       <span className="text-xs text-muted-foreground">
                         {channelSummary(job.config)}
                       </span>
+                      {/* 이상 탐지가 켜졌지만 메트릭이 0개면 그 사실을 목록에서 바로 보이게 한다 (#362).
+                          '다음 실행' 칸이 아니라 작업명 아래에 두는 이유: 이상 탐지는 cron 스케줄과
+                          독립적이라, cron이 정상 등록된 작업의 '다음 실행'을 덮어쓰면 오히려 틀린 정보가 된다. */}
+                      {isAnomalyIdle(job.config) && (
+                        <span
+                          className="text-xs text-destructive font-medium"
+                          data-testid="anomaly-idle"
+                        >
+                          이상 탐지 미동작 — 메트릭 없음
+                        </span>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="text-sm">{cronToLabel(job.cronExpression)}</TableCell>
