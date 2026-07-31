@@ -73,6 +73,12 @@ test.describe('차트 색 토큰 해석 (#374)', () => {
         await renderPreviewChart(page);
         await setTheme(page, theme, mode);
 
+        // 테마가 실제로 걸렸는지 먼저 단언한다. 이게 없으면 6개 테스트가 전부
+        // 같은 테마를 재측정하고도 통과해(공허한 6조합 커버리지) 함정 A를 놓친다.
+        const rootClass = await page.evaluate(() => document.documentElement.className);
+        expect(rootClass).toContain(`theme-${theme}`);
+        expect(rootClass).toContain(mode);
+
         const measured = await page.evaluate(() => {
           const root = getComputedStyle(document.documentElement);
           const tick = document.querySelector('.recharts-cartesian-axis-tick-value');
@@ -82,13 +88,8 @@ test.describe('차트 색 토큰 해석 (#374)', () => {
             gridStroke: grid ? getComputedStyle(grid).stroke : null,
             tokenMutedFg: root.getPropertyValue('--muted-foreground').trim(),
             tokenBorder: root.getPropertyValue('--border').trim(),
-            // 테마가 실제로 적용됐는지 확인하는 판별면 — 모드별로 반드시 달라야 한다
-            rootBg: root.getPropertyValue('--background').trim(),
           };
         });
-
-        // 테마 전환이 실제로 반영됐는지(측정이 직전 테마를 보고 있지 않은지) 먼저 단언
-        expect(measured.rootBg).not.toBe('');
 
         // 축 눈금: initial 검정으로 떨어지지 않고 --muted-foreground 토큰과 일치
         expect(measured.tickFill).not.toBeNull();
