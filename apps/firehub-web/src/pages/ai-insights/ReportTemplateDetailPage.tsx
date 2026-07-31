@@ -33,12 +33,13 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   useCreateProactiveTemplate,
   useDeleteProactiveTemplate,
+  useProactiveJobs,
   useProactiveTemplate,
   useProactiveTemplates,
   useUpdateProactiveTemplate,
 } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError } from '@/lib/api-error';
-import { parseTemplateSections } from '@/lib/template-section-types';
+import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
 import { SectionPreview } from './components/SectionPreview';
@@ -57,6 +58,9 @@ export default function ReportTemplateDetailPage() {
 
   const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect } = useProactiveTemplate(templateId);
   const { data: templates = [], isLoading: isLoadingList } = useProactiveTemplates();
+  // 삭제 시 영향받는 스마트 작업을 고지하기 위한 조회 (#364)
+  // FK가 ON DELETE SET NULL이라 삭제 자체는 막히지 않고, 참조 작업이 조용히 기본 형식으로 전환된다.
+  const { data: allJobs = [] } = useProactiveJobs();
   // Fallback: use list data if single-item API fails
   const template = templateDirect ?? templates.find((t) => t.id === templateId);
   // 두 쿼리 중 하나라도 진행 중이면 "로딩 중"으로 본다 — 저장 직후 /templates/new → /templates/100 으로
@@ -184,13 +188,18 @@ export default function ReportTemplateDetailPage() {
     (tab: string) => {
       if (tab === 'builder' && activeTab === 'json') {
         const parsed = parseTemplateSections(structureJson);
-        if (parsed) {
-          setSuppressTreeSync(true);
-          tree.setSections(parsed);
-        } else {
+        if (!parsed) {
           toast.error('JSON 파싱 실패. 유효한 JSON을 입력하세요.');
           return;
         }
+        // 불량/중복 key를 빌더로 넘기기 전에 차단한다 (#361) — 넘어가면 트리 조작이 오작동한다
+        const keyError = validateSectionKeys(parsed);
+        if (keyError) {
+          toast.error(keyError);
+          return;
+        }
+        setSuppressTreeSync(true);
+        tree.setSections(parsed);
       }
       setActiveTab(tab as 'builder' | 'json');
     },
@@ -209,21 +218,11 @@ export default function ReportTemplateDetailPage() {
       resolvedSections = parsed;
     }
 
-    // 섹션 Key 유효성 검사 (#36)
-    const invalidKey = resolvedSections.find((s) => !/^[a-z][a-z0-9_]*$/.test(s.key));
-    if (invalidKey) {
-      toast.error(`섹션 Key "${invalidKey.key}"가 올바르지 않습니다. 영문 소문자, 숫자, 밑줄만 사용하세요.`);
+    // 섹션 Key 형식·중복 검사 (#36, #38) — 그룹 하위까지 트리 전역으로 검증한다 (#361)
+    const keyError = validateSectionKeys(resolvedSections);
+    if (keyError) {
+      toast.error(keyError);
       return;
-    }
-
-    // 섹션 Key 중복 검사 (#38)
-    const keySet = new Set<string>();
-    for (const s of resolvedSections) {
-      if (keySet.has(s.key)) {
-        toast.error(`섹션 Key가 중복되었습니다: "${s.key}"`);
-        return;
-      }
-      keySet.add(s.key);
     }
 
     const payload = {
@@ -331,6 +330,12 @@ export default function ReportTemplateDetailPage() {
   // 훅은 조건부 return 이전에 반드시 호출해야 한다 (Rules of Hooks 준수)
   const isBuiltin = template?.builtin ?? false;
   const sections = useMemo(() => parseTemplateSections(structureJson) ?? [], [structureJson]);
+
+  // 이 템플릿을 참조하는 스마트 작업 목록 (#364)
+  const affectedJobs = useMemo(
+    () => (isNew ? [] : allJobs.filter((j) => j.templateId === templateId)),
+    [allJobs, isNew, templateId],
+  );
 
   if (!isNew && isLoading) {
     return (
@@ -578,7 +583,35 @@ export default function ReportTemplateDetailPage() {
             <DialogTitle>템플릿 삭제</DialogTitle>
             <DialogDescription className="sr-only">리포트 템플릿을 삭제합니다. 되돌릴 수 없습니다.</DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">이 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.</p>
+          {/*
+            삭제 영향 범위 고지 (#364) — 삭제를 막지는 않는다(FK가 SET NULL이라 DB도 허용).
+            대신 어떤 템플릿인지와, 이 템플릿을 쓰는 작업이 기본 형식으로 전환된다는 사실을 알린다.
+          */}
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {template?.name ? `"${template.name}" 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.` : '이 템플릿을 삭제하시겠습니까? 되돌릴 수 없습니다.'}
+            </p>
+            {affectedJobs.length > 0 && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="template-delete-impact">
+                <p className="text-sm font-medium text-destructive">
+                  이 양식을 사용하는 스마트 작업 {affectedJobs.length}개가 기본 형식으로 전환됩니다.
+                </p>
+                <ul className="mt-2 space-y-1 text-sm text-muted-foreground list-disc list-inside">
+                  {affectedJobs.map((job) => (
+                    <li key={job.id}>
+                      <button
+                        type="button"
+                        className="underline underline-offset-2 hover:text-foreground"
+                        onClick={() => navigate(`/ai-insights/jobs/${job.id}`)}
+                      >
+                        {job.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>취소</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>

@@ -111,6 +111,8 @@ export async function setupTemplateDetailMocks(page: Page, templateId = 1) {
   await mockApi(page, 'GET', `/api/v1/proactive/templates/${templateId}`, template);
   await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+  // 삭제 다이얼로그가 사용처(스마트 작업)를 조회한다 (#364) — 기본은 참조 없음
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
 }
 
 /**

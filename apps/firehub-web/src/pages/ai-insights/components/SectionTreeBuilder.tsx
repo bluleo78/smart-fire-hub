@@ -39,7 +39,8 @@ interface SectionTreeBuilderProps {
   onSelect: (key: string) => void;
   onMove: (activeId: string, overId: string) => void;
   onAdd: (type: SectionType, parentKey?: string) => void;
-  onRemove: (key: string) => void;
+  /** 삭제 — 중복 key로 인한 오삭제를 막기 위해 인덱스 경로로 전달한다 (#361) */
+  onRemove: (path: number[]) => void;
   onToggleCollapse: (key: string) => void;
 }
 
@@ -98,15 +99,15 @@ export function SectionTreeBuilder({
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-              {flatItems.map(({ section, depth }) => (
+              {flatItems.map(({ section, depth, path }) => (
                 <SectionTreeItem
-                  key={section.key}
+                  key={path.join('.')}
                   section={section}
                   depth={depth}
                   isSelected={section.key === selectedKey}
                   isCollapsed={collapsedKeys.has(section.key)}
                   onSelect={() => onSelect(section.key)}
-                  onRemove={() => onRemove(section.key)}
+                  onRemove={() => onRemove(path)}
                   onToggleCollapse={() => onToggleCollapse(section.key)}
                   onAddChild={section.type === 'group' ? (type) => onAdd(type, section.key) : undefined}
                 />

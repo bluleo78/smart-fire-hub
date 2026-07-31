@@ -164,7 +164,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             <ReadonlyCard label="작업명" value={job.name} />
             <ReadonlyCard
               label="템플릿"
-              value={job.templateName ?? <span className="text-muted-foreground">없음</span>}
+              // 템플릿 미지정(또는 템플릿 삭제로 NULL이 된 경우)은 "없음"이 아니라
+              // 실제 동작인 "기본 형식"으로 명시한다 (#364)
+              value={job.templateName ?? <span className="text-muted-foreground">기본 형식</span>}
             />
             <ReadonlyCard label="생성일" value={formatDate(job.createdAt)} />
             <ReadonlyCard

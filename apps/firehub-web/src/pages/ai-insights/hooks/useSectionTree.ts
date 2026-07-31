@@ -8,6 +8,12 @@ export interface FlatItem {
   section: TemplateSection;
   depth: number;
   parentKey: string | null;
+  /**
+   * 루트부터의 인덱스 경로 (예: [1, 0] = 두 번째 최상위 섹션의 첫 자식) — #361
+   * key는 중복될 수 있어 노드를 유일하게 가리키지 못하므로, 삭제 같은 파괴적 동작은
+   * 이 경로를 기준으로 수행한다.
+   */
+  path: number[];
 }
 
 export function useSectionTree(initialSections: TemplateSection[]) {
@@ -18,15 +24,16 @@ export function useSectionTree(initialSections: TemplateSection[]) {
   // DFS flatten for dnd-kit — produces visible items respecting collapsed state
   const flatItems = useMemo<FlatItem[]>(() => {
     const result: FlatItem[] = [];
-    function walk(items: TemplateSection[], depth: number, parentKey: string | null) {
-      for (const item of items) {
-        result.push({ section: item, depth, parentKey });
+    function walk(items: TemplateSection[], depth: number, parentKey: string | null, base: number[]) {
+      items.forEach((item, index) => {
+        const path = [...base, index];
+        result.push({ section: item, depth, parentKey, path });
         if (item.type === 'group' && item.children && !collapsedKeys.has(item.key)) {
-          walk(item.children, depth + 1, item.key);
+          walk(item.children, depth + 1, item.key, path);
         }
-      }
+      });
     }
-    walk(sections, 0, null);
+    walk(sections, 0, null, []);
     return result;
   }, [sections, collapsedKeys]);
 
@@ -72,13 +79,18 @@ export function useSectionTree(initialSections: TemplateSection[]) {
     [generateKey],
   );
 
-  // Remove section (recursive search)
+  /**
+   * 섹션 삭제 — 인덱스 경로로 **정확히 그 노드 하나만** 제거한다 (#361).
+   * key 기준 필터는 중복 키가 존재할 때 무관한 섹션까지 함께 지워 무음 유실을 일으켰다.
+   */
   const removeSection = useCallback(
-    (key: string) => {
-      setSections((prev) => removeFromTree(prev, key));
-      if (selectedKey === key) setSelectedKey(null);
+    (path: number[]) => {
+      // 삭제 대상이 선택 중이었다면 선택 해제
+      const target = getAtPath(sections, path);
+      if (target && selectedKey === target.key) setSelectedKey(null);
+      setSections((prev) => removeAtPath(prev, path));
     },
-    [selectedKey],
+    [sections, selectedKey],
   );
 
   // Update section properties
@@ -93,15 +105,16 @@ export function useSectionTree(initialSections: TemplateSection[]) {
     setSections((prev) => {
       // collapsed 상태와 무관하게 전체 트리를 순회하여 flatItems 재계산
       const currentFlat: FlatItem[] = [];
-      function walkForFlat(items: TemplateSection[], depth: number, parentKey: string | null) {
-        for (const item of items) {
-          currentFlat.push({ section: item, depth, parentKey });
+      function walkForFlat(items: TemplateSection[], depth: number, parentKey: string | null, base: number[]) {
+        items.forEach((item, index) => {
+          const path = [...base, index];
+          currentFlat.push({ section: item, depth, parentKey, path });
           if (item.type === 'group' && item.children) {
-            walkForFlat(item.children, depth + 1, item.key);
+            walkForFlat(item.children, depth + 1, item.key, path);
           }
-        }
+        });
       }
-      walkForFlat(prev, 0, null);
+      walkForFlat(prev, 0, null, []);
 
       const moved = moveSectionInTree(prev, activeId, overId, currentFlat);
       if (!validateSectionDepth(moved)) {
@@ -154,6 +167,39 @@ function addToParent(
     }
     return s;
   });
+}
+
+/**
+ * 인덱스 경로가 가리키는 노드를 반환한다. 경로가 유효하지 않으면 null (#361).
+ */
+export function getAtPath(sections: TemplateSection[], path: number[]): TemplateSection | null {
+  if (path.length === 0) return null;
+  let current: TemplateSection | undefined = sections[path[0]];
+  for (let i = 1; i < path.length; i++) {
+    if (!current?.children) return null;
+    current = current.children[path[i]];
+  }
+  return current ?? null;
+}
+
+/**
+ * 인덱스 경로가 가리키는 노드 **하나만** 제거한다 (#361).
+ * key 기반 필터와 달리 동일 key가 여러 곳에 있어도 대상 외 노드는 보존된다.
+ */
+export function removeAtPath(sections: TemplateSection[], path: number[]): TemplateSection[] {
+  if (path.length === 0) return sections;
+  const [index, ...rest] = path;
+  if (index < 0 || index >= sections.length) return sections;
+
+  if (rest.length === 0) {
+    return sections.filter((_, i) => i !== index);
+  }
+
+  const target = sections[index];
+  if (!target.children) return sections;
+  return sections.map((s, i) =>
+    i === index ? { ...s, children: removeAtPath(s.children ?? [], rest) } : s,
+  );
 }
 
 function removeFromTree(sections: TemplateSection[], key: string): TemplateSection[] {

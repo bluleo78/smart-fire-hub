@@ -71,6 +71,7 @@ export function SectionTreeItem({
         isStatic && 'text-muted-foreground',
       )}
       onClick={onSelect}
+      data-testid="section-tree-item"
       {...attributes}
     >
       {/* Drag handle - visible on hover */}
@@ -156,6 +157,8 @@ export function SectionTreeItem({
         variant="ghost"
         size="icon"
         className="h-6 w-6 opacity-0 group-hover:opacity-100"
+        aria-label={`${section.label} 섹션 삭제`}
+        data-testid="section-delete"
         onClick={(e) => {
           e.stopPropagation();
           onRemove();

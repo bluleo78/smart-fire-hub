@@ -1,4 +1,4 @@
-import { createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
+import { createJob,createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
 import { setupTemplateDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -572,6 +572,8 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
     // DELETE API 캡처 — 다이얼로그 확인 버튼 클릭 시 호출되는지 검증
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+
     const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/proactive/templates/3', {}, { capture: true });
 
     await page.goto('/ai-insights/templates/3');
@@ -593,5 +595,168 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     // DELETE /api/v1/proactive/templates/3 가 실제로 호출되었는지 확인
     const deletedReq = await deleteCapture.waitForRequest();
     expect(deletedReq).toBeDefined();
+  });
+});
+
+/**
+ * 섹션 Key 트리 전역 검증 + 경로 기반 삭제 회귀 테스트 (#361)
+ *
+ * 이전 결함: 검증이 최상위 배열만 순회해 그룹 하위의 불량/중복 key가 그대로 저장되고,
+ * 중복 key 섹션을 삭제하면 같은 key를 가진 무관한 최상위 섹션까지 함께 사라졌다
+ * (트리에는 남아 보여 유실이 드러나지도 않았다).
+ */
+test.describe('리포트 템플릿 — 그룹 하위 섹션 Key 검증 및 삭제 (#361)', () => {
+  test('그룹 하위의 불량 key는 저장을 차단한다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({ id: 61, name: '중첩키 검증 템플릿', builtin: false, sections: [] });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/61', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+    // 저장(PUT)이 호출되면 안 된다 — 호출 여부를 캡처로 확인
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/proactive/templates/61', template, { capture: true });
+
+    await page.goto('/ai-insights/templates/61');
+    await expect(page.getByRole('heading', { name: '중첩키 검증 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // JSON 탭에서 그룹 하위에 불량 key를 넣는다
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    const editor = page.locator('.cm-content');
+    await expect(editor).toBeVisible({ timeout: 10000 });
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(
+      '{"sections":[{"key":"grp","type":"group","label":"그룹","children":[{"key":"BAD KEY!","type":"text","label":"불량키"}]}],"output_format":"markdown"}',
+    );
+
+    await page.getByRole('button', { name: '저장' }).click();
+
+    // 형식 오류 토스트가 뜨고 저장이 차단된다
+    await expect(page.getByText(/섹션 Key "BAD KEY!"가 올바르지 않습니다/)).toBeVisible({ timeout: 10000 });
+    expect(putCapture.requests).toHaveLength(0);
+  });
+
+  test('그룹 하위와 최상위에 걸친 중복 key는 저장을 차단한다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({ id: 62, name: '중복키 검증 템플릿', builtin: false, sections: [] });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/62', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/proactive/templates/62', template, { capture: true });
+
+    await page.goto('/ai-insights/templates/62');
+    await expect(page.getByRole('heading', { name: '중복키 검증 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    const editor = page.locator('.cm-content');
+    await expect(editor).toBeVisible({ timeout: 10000 });
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(
+      '{"sections":[{"key":"summary","type":"text","label":"요약"},{"key":"grp","type":"group","label":"그룹","children":[{"key":"summary","type":"text","label":"중복키"}]}],"output_format":"markdown"}',
+    );
+
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText(/섹션 Key가 중복되었습니다: "summary"/)).toBeVisible({ timeout: 10000 });
+    expect(putCapture.requests).toHaveLength(0);
+  });
+
+  test('중복 key가 이미 저장된 템플릿에서 그룹 하위 섹션만 삭제된다', async ({ authenticatedPage: page }) => {
+    // 서버에 이미 중복 key가 들어있는 상태를 모킹한다 (검증 도입 이전에 저장된 데이터)
+    const template = createTemplate({
+      id: 63,
+      name: '중복키 잔존 템플릿',
+      builtin: false,
+      sections: [
+        createTemplateSection({ key: 'summary', type: 'text', label: '최상위 요약' }),
+        {
+          ...createTemplateSection({ key: 'grp', type: 'group', label: '그룹' }),
+          children: [createTemplateSection({ key: 'summary', type: 'text', label: '그룹 하위 중복키' })],
+        },
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/63', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+
+    await page.goto('/ai-insights/templates/63');
+    await expect(page.getByRole('heading', { name: '중복키 잔존 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    const rows = page.getByTestId('section-tree-item');
+    await expect(rows).toHaveCount(3);
+
+    // 그룹 하위 중복키 행의 삭제 버튼만 클릭
+    await page.getByTestId('section-delete').and(page.getByRole('button', { name: '그룹 하위 중복키 섹션 삭제', exact: true })).click();
+
+    // 트리에서 해당 행만 사라지고 최상위 '최상위 요약'은 유지되어야 한다
+    await expect(rows).toHaveCount(2);
+    await expect(page.getByTestId('section-tree-item').filter({ hasText: '최상위 요약' })).toHaveCount(1);
+    await expect(page.getByTestId('section-tree-item').filter({ hasText: '그룹 하위 중복키' })).toHaveCount(0);
+
+    // 실제 데이터(JSON 탭)에서도 최상위 요약이 살아 있어야 한다 — 여기가 무음 유실 지점이었다
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    const editorText = await page.locator('.cm-content').innerText();
+    const parsed = JSON.parse(editorText);
+    expect(parsed.sections).toHaveLength(2);
+    expect(parsed.sections[0].label).toBe('최상위 요약');
+    expect(parsed.sections[1].children ?? []).toHaveLength(0);
+  });
+});
+
+/**
+ * 템플릿 삭제 시 사용처(스마트 작업) 고지 회귀 테스트 (#364)
+ * FK가 ON DELETE SET NULL이라 삭제는 허용하되, 영향받는 작업을 다이얼로그에서 알린다.
+ */
+test.describe('리포트 템플릿 삭제 영향 고지 (#364)', () => {
+  test('이 템플릿을 사용하는 작업이 있으면 다이얼로그가 개수와 이름을 알린다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({ id: 64, name: '사용 중 템플릿', builtin: false });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/64', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 101, templateId: 64, templateName: '사용 중 템플릿', name: '일일 화재 리포트' }),
+      createJob({ id: 102, templateId: 64, templateName: '사용 중 템플릿', name: '주간 요약 리포트' }),
+      // 다른 템플릿을 쓰는 작업은 집계에서 제외되어야 한다
+      createJob({ id: 103, templateId: 99, templateName: '다른 템플릿', name: '무관한 작업' }),
+    ]);
+
+    await page.goto('/ai-insights/templates/64');
+    await expect(page.getByRole('heading', { name: '사용 중 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '삭제' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // 어떤 템플릿인지 이름을 명시한다
+    await expect(dialog.getByText(/"사용 중 템플릿" 템플릿을 삭제하시겠습니까/)).toBeVisible();
+    // 영향 범위 — 참조 작업 2개(무관한 작업 제외)
+    const impact = page.getByTestId('template-delete-impact');
+    await expect(impact).toBeVisible();
+    await expect(impact.getByText('이 양식을 사용하는 스마트 작업 2개가 기본 형식으로 전환됩니다.')).toBeVisible();
+    await expect(impact.getByRole('button', { name: '일일 화재 리포트' })).toBeVisible();
+    await expect(impact.getByRole('button', { name: '주간 요약 리포트' })).toBeVisible();
+    await expect(impact.getByRole('button', { name: '무관한 작업' })).toHaveCount(0);
+  });
+
+  test('사용 중인 작업이 없으면 영향 안내가 표시되지 않는다', async ({ authenticatedPage: page }) => {
+    const template = createTemplate({ id: 65, name: '미사용 템플릿', builtin: false });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/65', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({ id: 104, templateId: null, templateName: null, name: '기본 형식 작업' }),
+    ]);
+
+    await page.goto('/ai-insights/templates/65');
+    await expect(page.getByRole('heading', { name: '미사용 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '삭제' }).click();
+
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByTestId('template-delete-impact')).toHaveCount(0);
   });
 });

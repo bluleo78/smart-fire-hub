@@ -146,3 +146,43 @@ export function flattenSections(sections: TemplateSection[]): TemplateSection[] 
   }
   return result;
 }
+
+/** 섹션 Key 허용 형식 — 영문 소문자로 시작, 이후 소문자/숫자/밑줄 */
+const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * 섹션 Key의 형식·유일성을 **트리 전역**에서 검증한다 (#361).
+ *
+ * 왜 트리 전역인가: `key`는 트리 전체의 식별자로 쓰인다(선택/삭제/드래그). 그룹 하위만
+ * 검증에서 빠지면 중복 키가 저장되고, 이후 삭제 시 같은 키를 가진 무관한 섹션까지
+ * 함께 지워지는 무음 데이터 유실이 발생한다.
+ *
+ * @returns 문제가 없으면 null, 있으면 사용자에게 보여줄 오류 메시지
+ */
+export function validateSectionKeys(sections: TemplateSection[]): string | null {
+  const seen = new Set<string>();
+  let error: string | null = null;
+
+  // 어느 그룹 하위인지 알려주기 위해 조상 라벨을 누적하며 순회한다
+  function walk(items: TemplateSection[], trail: string[]): void {
+    for (const item of items) {
+      if (error) return;
+      const where = trail.length > 0 ? ` (${trail.join(' > ')} 하위)` : '';
+      if (!SECTION_KEY_PATTERN.test(item.key ?? '')) {
+        error = `섹션 Key "${item.key}"가 올바르지 않습니다${where}. 영문 소문자, 숫자, 밑줄만 사용하세요.`;
+        return;
+      }
+      if (seen.has(item.key)) {
+        error = `섹션 Key가 중복되었습니다: "${item.key}"${where}`;
+        return;
+      }
+      seen.add(item.key);
+      if (item.children && item.children.length > 0) {
+        walk(item.children, [...trail, item.label ?? item.key]);
+      }
+    }
+  }
+
+  walk(sections, []);
+  return error;
+}
