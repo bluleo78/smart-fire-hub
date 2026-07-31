@@ -239,12 +239,20 @@
 }
 
 /* ===== OCEAN THEME ===== */
+/*
+ * #372: 라이트 `--primary`의 명도를 0.52 → 0.46으로 내렸다.
+ * 이 토큰은 버튼 배경일 뿐 아니라 `text-primary`(아바타 이니셜·AI 칩·`원본` 배지)의 전경으로도
+ * 쓰이는데, 0.52는 `bg-primary/10~15` 틴트 위에서 4.00~3.75:1로 AA(4.5:1)에 미달했다.
+ * hue/chroma는 유지해 브랜드 인상을 보존하고 명도만 조정한다(역할 계약 §1-3).
+ * 같은 값을 공유하는 --ring/--sidebar-primary/--sidebar-ring/--chart-1도 함께 내려
+ * 사이드바 선택 항목과 아바타 틴트가 어긋나지 않게 한다.
+ */
 .theme-ocean {
-  --primary: oklch(0.52 0.14 195);
-  --ring: oklch(0.52 0.14 195);
-  --sidebar-primary: oklch(0.52 0.14 195);
-  --sidebar-ring: oklch(0.52 0.14 195);
-  --chart-1: oklch(0.52 0.14 195);
+  --primary: oklch(0.46 0.14 195);
+  --ring: oklch(0.46 0.14 195);
+  --sidebar-primary: oklch(0.46 0.14 195);
+  --sidebar-ring: oklch(0.46 0.14 195);
+  --chart-1: oklch(0.46 0.14 195);
   --accent: oklch(0.96 0.01 195);
   --sidebar-accent: oklch(0.96 0.01 195);
 }
@@ -263,12 +271,13 @@
 }
 
 /* ===== SUNSET THEME ===== */
+/* #372: ocean과 같은 이유로 라이트 `--primary` 명도를 0.55 → 0.50으로 내렸다(틴트 위 4.29→5.21). */
 .theme-sunset {
-  --primary: oklch(0.55 0.18 50);
-  --ring: oklch(0.55 0.18 50);
-  --sidebar-primary: oklch(0.55 0.18 50);
-  --sidebar-ring: oklch(0.55 0.18 50);
-  --chart-1: oklch(0.55 0.18 50);
+  --primary: oklch(0.5 0.18 50);
+  --ring: oklch(0.5 0.18 50);
+  --sidebar-primary: oklch(0.5 0.18 50);
+  --sidebar-ring: oklch(0.5 0.18 50);
+  --chart-1: oklch(0.5 0.18 50);
   --accent: oklch(0.96 0.01 50);
   --sidebar-accent: oklch(0.96 0.01 50);
 }
@@ -358,8 +367,8 @@
 }
 
 @keyframes logo-pulse-ocean {
-  0%, 100% { box-shadow: 0 3px 10px oklch(0.52 0.14 195 / 30%); }
-  50% { box-shadow: 0 3px 20px oklch(0.52 0.14 195 / 50%); }
+  0%, 100% { box-shadow: 0 3px 10px oklch(0.46 0.14 195 / 30%); }
+  50% { box-shadow: 0 3px 20px oklch(0.46 0.14 195 / 50%); }
 }
 @keyframes logo-pulse-ocean-dark {
   0%, 100% { box-shadow: 0 3px 12px oklch(0.75 0.12 195 / 30%); }
@@ -369,8 +378,8 @@
 .dark .theme-ocean .logo-pulse, .theme-ocean.dark .logo-pulse { animation: logo-pulse-ocean-dark 3s ease-in-out infinite; }
 
 @keyframes logo-pulse-sunset {
-  0%, 100% { box-shadow: 0 3px 10px oklch(0.55 0.18 50 / 30%); }
-  50% { box-shadow: 0 3px 20px oklch(0.55 0.18 50 / 50%); }
+  0%, 100% { box-shadow: 0 3px 10px oklch(0.5 0.18 50 / 30%); }
+  50% { box-shadow: 0 3px 20px oklch(0.5 0.18 50 / 50%); }
 }
 @keyframes logo-pulse-sunset-dark {
   0%, 100% { box-shadow: 0 3px 12px oklch(0.72 0.15 50 / 30%); }

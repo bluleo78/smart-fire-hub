@@ -123,3 +123,80 @@ test.describe('테마 모드 버튼 접근성 (#369)', () => {
     await expect(light).toHaveAttribute('aria-pressed', 'false');
   });
 });
+
+/**
+ * #372 (WCAG SC 1.4.3): 라이트 테마 변형(ocean/sunset)의 `--primary`가 배경 밝기 기준으로
+ * 정해져 있어, 같은 토큰을 `bg-primary/10` 틴트 위 전경(`text-primary`)으로 재사용하는
+ * 아바타 이니셜·AI 상태 칩·`원본` 배지가 3.75~4.29:1로 AA에 미달했다.
+ *
+ * 토큰 값 자체의 대비는 단위 테스트(src/styles/design-tokens.contrast.test.ts)가 고정하지만,
+ * 그 계산은 틴트 기준면을 가정한다. 여기서는 **실제로 그려진 픽셀**을 캔버스로 합성해
+ * 브라우저가 최종 렌더한 색으로 대비를 재므로, 기준면 가정이 틀려도 회귀를 잡는다.
+ */
+test.describe('틴트 위 text-primary 대비 (#372)', () => {
+  /** 요소의 전경색과 부모 체인을 합성한 실제 배경색으로 WCAG 대비를 계산한다(브라우저 안에서 실행). */
+  const measure = (sel: string) => {
+    {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 4;
+      const ctx = cv.getContext('2d', { willReadFrequently: true })!;
+      // 알파를 다시 나누지 않고(un-premultiply 금지) 캔버스가 합성한 픽셀을 그대로 읽는다.
+      const px = (layers: string[]) => {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, 4, 4);
+        for (const c of layers) {
+          ctx.fillStyle = c;
+          ctx.fillRect(0, 0, 4, 4);
+        }
+        const d = ctx.getImageData(2, 2, 1, 1).data;
+        return [d[0], d[1], d[2]] as const;
+      };
+      const lum = ([r, g, b]: readonly number[]) => {
+        const f = (v: number) => {
+          const c = v / 255;
+          return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      };
+      const layers: string[] = [];
+      for (let n: Element | null = el; n; n = n.parentElement) {
+        const bg = getComputedStyle(n).backgroundColor;
+        if (bg && bg !== 'transparent' && !/rgba\(0, 0, 0, 0\)/.test(bg)) layers.unshift(bg);
+      }
+      const l1 = lum(px([getComputedStyle(el).color]));
+      const l2 = lum(px(layers));
+      const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
+      return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
+    }
+  };
+
+  for (const mode of ['light', 'dark']) {
+    for (const color of ['indigo', 'ocean', 'sunset']) {
+      test(`${mode}/${color}: 아바타 이니셜이 primary 틴트 위에서 4.5:1 이상`, async ({
+        authenticatedPage: page,
+      }) => {
+        await page.goto('/data/datasets');
+        const avatar = page.locator('[class*="bg-primary/10"]').first();
+        await expect(avatar).toBeVisible();
+
+        await page.evaluate(
+          ([m, c]) => {
+            const root = document.documentElement;
+            root.classList.remove('dark', 'light', 'theme-ocean', 'theme-sunset');
+            root.classList.add(m);
+            if (c !== 'indigo') root.classList.add(`theme-${c}`);
+          },
+          [mode, color]
+        );
+        // 클래스 변경 후 스타일 재계산이 반영될 때까지 기다린다(같은 틱 계산은 이전 값이 나온다).
+        await page.waitForTimeout(200);
+
+        const ratio = await page.evaluate(measure, '[class*="bg-primary/10"]');
+        expect(ratio, '아바타 이니셜을 찾지 못했다').not.toBeNull();
+        expect(ratio!, `${mode}/${color} 대비 ${ratio}`).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+});

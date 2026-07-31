@@ -191,6 +191,37 @@ describe('#365 primary 대비', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1-b. #372 — `--primary`도 시맨틱 토큰과 같은 역할 계약을 진다.
+//      아바타 이니셜·AI 상태 칩·`원본` 배지는 `bg-primary/10` 틴트 위의 `text-primary`다.
+//      틴트 기준면은 흰 카드가 아니라 **페이지 배경(`--background`)** 으로 잡는다 —
+//      실제 지점들이 앉는 면이 그쪽이고, 흰색(1.0)으로 계산하면 브라우저 실측보다
+//      0.15가량 낙관적으로 나와 통과해도 화면에서는 미달하는 공허한 단언이 된다.
+// ---------------------------------------------------------------------------
+
+describe('#372 primary 틴트 대비', () => {
+  it.each(ALL_THEMES)('%s: text-primary가 페이지 배경 위 bg-primary/10 틴트에서 ≥ 4.5', (theme) => {
+    const fg = token(theme, '--primary');
+    const tint = composite(withAlpha(fg, 0.1), token(theme, '--background'));
+    expect(
+      contrast(fg, tint),
+      `${theme} --primary=${hex(fg)} tint=${hex(tint)}`
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(ALL_THEMES)('%s: text-primary가 카드 위 bg-primary/10 틴트에서 ≥ 4.5', (theme) => {
+    const fg = token(theme, '--primary');
+    const tint = composite(withAlpha(fg, 0.1), cardSurface(theme));
+    expect(contrast(fg, tint), `${theme} --primary=${hex(fg)}`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(ALL_THEMES)('%s: sidebar-primary 틴트도 primary와 같은 값이라 함께 통과한다', (theme) => {
+    // 사이드바 아바타 이니셜은 `--sidebar-primary`가 아니라 `--primary` 틴트를 쓰지만,
+    // 두 토큰이 어긋나면 같은 사이드바 안에서 선택 항목과 아바타 색이 갈라진다.
+    expect(THEMES[theme]['--sidebar-primary']).toBe(THEMES[theme]['--primary']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. #367 / #370 — 시맨틱 상태 토큰
 //    역할 계약: `--X`는 배경 겸 전경이므로 카드 위 4.5:1을 만족해야 하고,
 //    `--X-foreground`는 `--X` 배경 위에서 4.5:1을 만족해야 한다.

@@ -96,6 +96,60 @@ describe('알파 수식자 금지 게이트', () => {
     expect(violations, `알파 수식자 위반:\n${violations.join('\n')}`).toEqual([]);
   });
 
+  /**
+   * #372: 전경에 알파가 금지되는 것과 짝을 이루는 규칙 —
+   * `text-X` 전경이 얹히는 **배경 틴트**는 역할 계약이 보장하는 `bg-X/10`을 넘지 않는다.
+   * 틴트가 진해질수록 전경과 배경이 같은 색으로 수렴해 대비가 무너진다
+   * (light/ocean `bg-primary/30 text-primary` = 3.68:1).
+   *
+   * 범위는 이번 라운드 대상인 `primary`로 한정한다. `bg-info/15 text-info`,
+   * `bg-destructive/20 text-destructive` 등 다른 토큰의 전수 감사는 별도 라운드다
+   * (→ docs/design-system/13-migration-backlog.md). 넓히려면 TOKEN을 정규식으로 바꾸면 된다.
+   */
+  it('text-primary 위에 깔리는 bg-primary 틴트가 10%를 넘지 않는다', () => {
+    /**
+     * 예외 — 전경이 텍스트가 아니라 아이콘(SVG `currentColor`)인 컨트롤.
+     * SC 1.4.3(4.5:1)이 아니라 SC 1.4.11(3:1)이 적용되고, 가장 진한 hover 30% 틴트에서도
+     * 6개 테마 조합 전부 3:1을 넘는다. 새 항목은 반드시 사유를 함께 적는다.
+     */
+    const ICON_ONLY: { file: string; reason: string }[] = [
+      {
+        file: 'components/ai/AIStatusChipDropdown.tsx',
+        reason: '전송 버튼 — 라벨 없는 아이콘 전용 컨트롤(SC 1.4.11 3:1 적용)',
+      },
+    ];
+    const violations: string[] = [];
+    for (const full of walk(SRC)) {
+      const rel = relative(SRC, full).split('\\').join('/');
+      if (ICON_ONLY.some((a) => a.file === rel)) continue;
+      readFileSync(full, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          for (const [util, pct] of line.matchAll(/\bbg-primary\/(\d{1,3})\b/g)) {
+            if (Number(pct) <= 10) continue;
+            // `text-primary-foreground`는 짝 토큰이라 제외 — 하이픈 뒤가 이어지면 다른 토큰이다.
+            if (!/\btext-primary(?![\w-])/.test(line)) continue;
+            violations.push(`${rel}:${i + 1}  ${util}`);
+          }
+        });
+    }
+    expect(violations, `과한 틴트 위 전경:\n${violations.join('\n')}`).toEqual([]);
+  });
+
+  /**
+   * AIStatusChip은 Tailwind 유틸이 아니라 인라인 `color-mix(..., transparent)`로 틴트를 만든다.
+   * (Tailwind v4는 알파 수식자를 `color-mix(... , transparent)` 원문으로 남기므로 위 정규식으로는
+   * 잡히지 않는다.) 칩 라벨은 같은 토큰의 원색을 전경으로 쓰므로 동일한 10% 한도를 적용한다.
+   */
+  it('AIStatusChip 상태별 배경 틴트가 10%를 넘지 않는다', () => {
+    const src = readFileSync(join(SRC, 'components/ai/AIStatusChip.tsx'), 'utf8');
+    const pcts = [...src.matchAll(/background: 'color-mix\(in oklch, var\(--[\w-]+\) (\d+)%/g)].map(
+      (m) => Number(m[1])
+    );
+    expect(pcts.length).toBeGreaterThanOrEqual(8); // 8개 상태 전부 잡혔는지(정규식 공허화 방지)
+    expect(pcts.filter((p) => p > 10)).toEqual([]);
+  });
+
   it('allowlist 항목이 실제로 존재한다 (죽은 예외 방지)', () => {
     for (const { file, util } of ALLOWLIST) {
       const src = readFileSync(join(SRC, file), 'utf8');

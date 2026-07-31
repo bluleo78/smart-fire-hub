@@ -292,7 +292,8 @@ export function ApiImportWizard({
                   i === step
                     ? 'bg-primary text-primary-foreground'
                     : i < step
-                    ? 'bg-primary/30 text-primary'
+                    ? // #372: 완료 스텝 숫자는 text-primary 전경이므로 배경 틴트는 역할 계약 한도인 10%까지만
+                      'bg-primary/10 text-primary'
                     : 'bg-muted text-muted-foreground'
                 }`}
               >

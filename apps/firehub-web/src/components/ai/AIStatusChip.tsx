@@ -26,16 +26,25 @@ function getChipState(ctx: {
   return 'idle';
 }
 
+/*
+ * 칩 배경 틴트는 전부 10%로 통일한다 (#372).
+ * 무엇: 칩 라벨은 `color: var(--primary|--warning|--destructive)`를 그대로 쓰는 전경이고,
+ *       배경은 같은 토큰의 틴트다. 틴트가 진할수록 전경-배경 명도차가 줄어 대비가 떨어진다.
+ * 왜:   디자인 토큰 역할 계약(docs/design-system/01-design-tokens.md §1-3)이 보장하는 한도는
+ *       `bg-X/10`까지다. 기존 15~30% 틴트에서는 라이트 모드 대비가 3.68~4.34:1로 AA(4.5:1)에
+ *       미달했다(ocean/sunset primary, warning, destructive 전부).
+ *       상태 구분은 배경 농도가 아니라 보더 농도·글로우가 담당하므로 시각적 위계는 유지된다.
+ */
 const chipStyles: Record<ChipState, React.CSSProperties> = {
   idle: {
-    background: 'color-mix(in oklch, var(--primary) 15%, transparent)',
+    background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
     border: '1px solid color-mix(in oklch, var(--primary) 30%, transparent)',
     color: 'var(--primary)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
   },
   streaming: {
-    background: 'color-mix(in oklch, var(--primary) 25%, transparent)',
+    background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
     border: '1px solid color-mix(in oklch, var(--primary) 50%, transparent)',
     color: 'var(--primary)',
     boxShadow: '0 0 12px color-mix(in oklch, var(--primary) 20%, transparent)',
@@ -43,42 +52,42 @@ const chipStyles: Record<ChipState, React.CSSProperties> = {
     WebkitBackdropFilter: 'blur(12px)',
   },
   thinking: {
-    background: 'color-mix(in oklch, var(--warning) 15%, transparent)',
+    background: 'color-mix(in oklch, var(--warning) 10%, transparent)',
     border: '1px solid color-mix(in oklch, var(--warning) 30%, transparent)',
     color: 'var(--warning)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
   },
   error: {
-    background: 'color-mix(in oklch, var(--destructive) 20%, transparent)',
+    background: 'color-mix(in oklch, var(--destructive) 10%, transparent)',
     border: '1px solid color-mix(in oklch, var(--destructive) 40%, transparent)',
     color: 'var(--destructive)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
   },
   side: {
-    background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
+    background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
     border: '1px solid var(--primary)',
     color: 'var(--primary)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
   },
   floating: {
-    background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
+    background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
     border: '1px solid var(--primary)',
     color: 'var(--primary)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
   },
   fullscreen: {
-    background: 'color-mix(in oklch, var(--primary) 30%, transparent)',
+    background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
     border: '1px solid var(--primary)',
     color: 'var(--primary)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
   },
   native: {
-    background: 'color-mix(in oklch, var(--primary) 20%, transparent)',
+    background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
     border: '1px solid color-mix(in oklch, var(--primary) 70%, transparent)',
     color: 'var(--primary)',
     backdropFilter: 'blur(12px)',
