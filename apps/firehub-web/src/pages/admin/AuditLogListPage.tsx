@@ -369,8 +369,14 @@ export default function AuditLogListPage() {
           </SelectContent>
         </Select>
 
-        {/* 날짜 범위 필터: 시작일 ~ 종료일 */}
-        <div className="flex items-center gap-2">
+        {/*
+          날짜 범위 필터: 시작일 ~ 종료일
+          max-sm:flex-wrap — 150px 고정 Input 2개 + `~`가 min-content 325px 덩어리라
+          320px(가용 272px)에서 <main>을 29px 넘겼다(#357, WCAG SC 1.4.10).
+          폭을 flex-1로 줄이면 123px가 되어 date input 내부 텍스트(mm/dd/yyyy)가 잘리므로,
+          줄바꿈으로 해결한다. max-sm 한정이라 sm 이상 데스크톱 표현은 그대로다.
+        */}
+        <div className="flex items-center gap-2 max-sm:flex-wrap">
           <Input
             type="date"
             aria-label="시작 날짜"

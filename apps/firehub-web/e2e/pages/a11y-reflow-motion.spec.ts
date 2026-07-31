@@ -1,7 +1,7 @@
 import { createSavedQueryList } from '../factories/analytics.factory';
 import { createPipelines } from '../factories/pipeline.factory';
 import { createSynonymReviewItem } from '../factories/reviewItem.factory';
-import { setupAdminAuth, setupOntologyMocks } from '../fixtures/admin.fixture';
+import { setupAdminAuth, setupAuditLogMocks, setupOntologyMocks } from '../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 
@@ -53,6 +53,72 @@ test.describe('320px 리플로우 (#345)', () => {
     // 줄바꿈 도입이 데스크톱 표현을 바꾸지 않아야 한다 — 탭 5개가 한 줄(높이 36px)에 그대로 있어야 한다.
     const box = await page.locator('[data-slot=tabs-list]').boundingBox();
     expect(box?.height).toBeLessThan(45);
+    expect(await mainOverflow(page)).toBe(0);
+  });
+});
+
+/**
+ * 감사 로그 날짜 범위 필터 리플로우 회귀 가드 (#357).
+ *
+ * 원인은 `w-[150px]` date Input 2개 + `~` 구분자를 담은 묶음의 min-content 폭이 325px로 고정되어
+ * 320px 뷰포트의 가용 폭(272px)을 넘긴 것. 표는 shadcn Table이 자체 overflow-x-auto 래퍼를
+ * 렌더하므로 원인이 아니다(SC 1.4.10 예외).
+ */
+test.describe('320px 리플로우 — 감사 로그 날짜 필터 (#357)', () => {
+  /**
+   * 날짜 범위 묶음(시작 날짜 Input의 부모)의 실측값.
+   *
+   * 넘치는 flex 자식은 스스로 늘어날 뿐 스크롤되지 않아 `scrollWidth === clientWidth`가 되므로,
+   * 묶음 자체의 `scrollWidth` 비교는 수정 전후 모두 통과하는 공허한 단언이다.
+   * 부모(필터 바) 폭과 직접 비교해야 초과를 잡을 수 있다.
+   */
+  const dateGroupFit = (page: import('@playwright/test').Page) =>
+    page.getByLabel('시작 날짜').evaluate((input) => {
+      const group = input.parentElement!;
+      return {
+        groupWidth: Math.round(group.getBoundingClientRect().width),
+        parentWidth: group.parentElement!.clientWidth,
+        wrap: getComputedStyle(group).flexWrap,
+        inputWidth: Math.round(input.getBoundingClientRect().width),
+      };
+    });
+
+  test('감사 로그가 320px에서 가로 스크롤 없이 표시된다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupAuditLogMocks(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto('/admin/audit-logs');
+    // 모킹이 어긋나 필터 바 자체가 안 그려지면 overflow 단언이 공허하게 통과하므로 먼저 확인한다.
+    await expect(page.getByLabel('시작 날짜')).toBeVisible();
+    await expect(page.getByLabel('종료 날짜')).toBeVisible();
+
+    const group = await dateGroupFit(page);
+    // 수정 메커니즘 자체를 명시적으로 고정한다 — mainOverflow만 보면 컨테이너 폭이 넉넉해지는
+    // 무관한 변경으로 가드가 조용히 공허해질 수 있다.
+    expect(group.wrap).toBe('wrap');
+    expect(group.groupWidth).toBeLessThanOrEqual(group.parentWidth + 1);
+    // 좁은 폭에서 날짜를 실제로 읽고 고를 수 있어야 한다 — 폭 축소가 아닌 줄바꿈으로 해결한 이유.
+    // flex-1로 줄이면 123px가 되어 date input 내부 텍스트가 잘린다.
+    expect(group.inputWidth).toBe(150);
+    expect(await mainOverflow(page)).toBe(0);
+  });
+
+  test('데스크톱(1280px)에서는 날짜 필터가 기존대로 한 줄 150px씩 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupAuditLogMocks(page);
+    await page.goto('/admin/audit-logs');
+    await expect(page.getByLabel('시작 날짜')).toBeVisible();
+
+    // 줄바꿈은 max-sm 한정이어야 한다 — 데스크톱 표현(150px 2개 + `~` 한 줄)은 그대로다.
+    const group = await dateGroupFit(page);
+    expect(group.wrap).toBe('nowrap');
+    expect(group.inputWidth).toBe(150);
+    const endWidth = await page
+      .getByLabel('종료 날짜')
+      .evaluate((el) => Math.round(el.getBoundingClientRect().width));
+    expect(endWidth).toBe(150);
     expect(await mainOverflow(page)).toBe(0);
   });
 });
