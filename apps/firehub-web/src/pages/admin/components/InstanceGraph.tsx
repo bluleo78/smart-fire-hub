@@ -5,7 +5,7 @@ import { Network, SearchX } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef } from 'react';
 
-import { colorForType } from '@/lib/ontology-colors';
+import { colorForType, contourForType, graphChrome } from '@/lib/ontology-colors';
 import type { GraphData, GraphNode } from '@/types/ontology';
 
 import GraphKeyboardList from './GraphKeyboardList';
@@ -31,17 +31,10 @@ interface Props {
   grouped?: boolean;
 }
 
-// 테마별 크롬 색상 — cytoscape 스타일시트는 CSS 변수를 못 읽으므로 리터럴로 계산한다.
-// 노드 라벨은 노드 아래(캔버스 배경 위)에 놓이므로 배경과 대비되는 텍스트 색을 쓴다.
-function chrome(isDark: boolean) {
-  return isDark
-    ? { label: '#e5e7eb', muted: '#8b847a', edge: '#3f3b36', ring: '#f1f5f9', surface: '#1b1917', bg: '#121110' }
-    : { label: '#1b1a17', muted: '#6b665d', edge: '#d3cfc7', ring: '#0f172a', surface: '#ffffff', bg: '#ffffff' };
-}
-
 // cytoscape 스타일시트 생성 — 노드 색은 data(color)(타입색), 라벨/엣지 색은 테마 크롬에서.
+// 크롬 색은 SchemaGraph와 공유하는 단일 소스(ontology-colors.ts)에서 가져온다 (#377).
 function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
-  const c = chrome(isDark);
+  const c = graphChrome(isDark);
   return [
     {
       selector: 'node',
@@ -58,8 +51,14 @@ function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
         'text-margin-y': 4,
         'text-wrap': 'ellipsis',
         'text-max-width': '120px',
+        // #377: 기존 보더는 표면색 헤일로(노드 겹침 분리용)였으나, 그 결과 원형의 경계가
+        // 타입색 자체뿐이라 라이트에서 Cause 2.15 / Equipment 2.54:1로 SC 1.4.11에 미달했다.
+        // 타입별 AA 검증 shade를 윤곽선으로 둘러 캔버스 대비 5:1 이상을 확보하면서
+        // 겹침 분리 기능도 유지한다.
+        // 윤곽선은 요소 data가 아니라 **스타일시트 함수 매퍼**로 계산한다 — 노드 data는
+        // 테마 전환 시 재생성되지 않지만(레이아웃 보존), 스타일시트는 테마마다 다시 만든다.
         'border-width': 2,
-        'border-color': c.surface,
+        'border-color': (ele: cytoscape.NodeSingular) => contourForType(ele.data('type'), isDark),
       },
     },
     { selector: 'node:selected', style: { 'border-color': c.ring, 'border-width': 3.5 } },
@@ -91,7 +90,9 @@ function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
         shape: 'round-rectangle',
         'background-color': 'data(color)',
         'background-opacity': 0.08,
-        'border-color': 'data(color)',
+        // #377: 타입 묶기 박스의 테두리도 base(500)로는 라이트에서 2.15:1까지 떨어진다.
+        // 부모 노드의 label이 곧 타입명이므로 같은 윤곽선 색을 쓴다.
+        'border-color': (ele: cytoscape.NodeSingular) => contourForType(ele.data('label'), isDark),
         'border-width': 1,
         label: 'data(label)',
         color: c.label,

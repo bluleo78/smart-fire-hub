@@ -37,6 +37,46 @@ export interface EntityColorSet {
   tint: string;   // 옅은 배경 tint(테마별 alpha)
 }
 
+/**
+ * 그래프 캔버스 크롬 색 — 단일 소스 (#377).
+ *
+ * 무엇: cytoscape 스타일시트가 CSS 변수를 못 읽으므로 리터럴로 들고 있어야 하는 색들.
+ * 왜:   InstanceGraph/SchemaGraph가 각자 `chrome()`을 중복 정의하고 있었고, 그 리터럴이
+ *       대비 기준 없이 잡혀 엣지가 라이트 1.55 / 다크 1.70:1이었다(SC 1.4.11 요구 3:1).
+ *       지식그래프에서 엣지는 장식이 아니라 **관계를 표현하는 핵심 콘텐츠**라 배경에
+ *       묻히면 화면의 목적 자체가 성립하지 않는다 → 라이트 4.09 / 다크 4.21로 올렸다.
+ *       값이 두 곳에 흩어져 있으면 다시 갈라지므로 여기로 모으고 단위 테스트로 고정한다.
+ */
+export function graphChrome(isDark: boolean) {
+  return isDark
+    ? {
+        label: '#e5e7eb',
+        muted: '#8b847a',
+        edge: '#7d766d', // was #3f3b36 (1.70:1) → 4.21:1 on #121110
+        ring: '#f1f5f9',
+        surface: '#1b1917',
+        bg: '#121110',
+      }
+    : {
+        label: '#1b1a17',
+        muted: '#6b665d',
+        edge: '#827d74', // was #d3cfc7 (1.55:1) → 4.09:1 on #ffffff
+        ring: '#0f172a',
+        surface: '#ffffff',
+        bg: '#ffffff',
+      };
+}
+
+/**
+ * 타입 노드의 윤곽선 색 (#377).
+ *
+ * base(500)는 라이트 캔버스에서 `Cause` 2.15 / `Equipment` 2.54:1이라 도형 경계로 쓸 수 없다.
+ * base 자체를 어둡게 바꾸면 범례 점·드로어 점까지 인상이 바뀌므로, **이미 AA를 검증해 둔**
+ * 테마별 텍스트 shade(라이트 700 / 다크 300)를 윤곽선으로 재사용해 경계만 확보한다.
+ */
+export const contourForType = (type: string, isDark: boolean): string =>
+  isDark ? (TEXT_DARK[type] ?? DEFAULT_TEXT_DARK) : (TEXT_LIGHT[type] ?? DEFAULT_TEXT_LIGHT);
+
 // 타입 + 테마(dark 여부)로 노드 색상 묶음을 계산한다.
 // light: 배경 10% tint + 700 텍스트, dark: 배경 14% tint + 300 텍스트 — 두 경우 모두 AA 대비 통과.
 export const entityColorSet = (type: string, isDark: boolean): EntityColorSet => {

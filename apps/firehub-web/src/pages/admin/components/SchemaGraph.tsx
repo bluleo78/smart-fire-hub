@@ -2,7 +2,7 @@ import cytoscape from 'cytoscape';
 import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef } from 'react';
 
-import { entityColorSet } from '@/lib/ontology-colors';
+import { contourForType, entityColorSet, graphChrome } from '@/lib/ontology-colors';
 import type { OntologySchema } from '@/types/ontology';
 
 import GraphKeyboardList from './GraphKeyboardList';
@@ -12,16 +12,10 @@ interface Props {
   onTypeClick?: (type: string) => void;
 }
 
-// 테마별 크롬 색상(엣지·라벨) — cytoscape 스타일시트는 CSS 변수를 못 읽으므로 리터럴로 계산한다.
-function chrome(isDark: boolean) {
-  return isDark
-    ? { muted: '#8b847a', edge: '#3f3b36', bg: '#121110' }
-    : { muted: '#6b665d', edge: '#d3cfc7', bg: '#ffffff' };
-}
-
-// 스키마 그래프 스타일시트 — 타입 노드는 data(bg/border/text)(테마별 tint·타입색·대비 텍스트), 엣지는 크롬 색.
+// 스키마 그래프 스타일시트 — 타입 노드는 data(bg/border/text)(테마별 tint·윤곽선·대비 텍스트), 엣지는 크롬 색.
+// 크롬 색은 InstanceGraph와 공유하는 단일 소스(ontology-colors.ts)에서 가져온다 (#377).
 function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
-  const c = chrome(isDark);
+  const c = graphChrome(isDark);
   return [
     {
       selector: 'node',
@@ -92,8 +86,10 @@ export default function SchemaGraph({ schema, onTypeClick }: Props) {
   // 요소(노드/엣지) — 노드 색은 테마·타입별 entityColorSet으로 미리 계산해 data에 싣는다.
   const elements = useMemo(() => {
     const nodes = schema.entities.map((e) => {
-      const { base, text, tint } = entityColorSet(e.type, isDark);
-      return { data: { id: e.type, label: e.type, bg: tint, border: base, text } };
+      // #377: 테두리는 base(500)가 아니라 윤곽선 색을 쓴다 — base는 라이트 tint 배경 위에서
+      // Cause 2.15 / Equipment 2.54:1로 SC 1.4.11(3:1)에 미달한다.
+      const { text, tint } = entityColorSet(e.type, isDark);
+      return { data: { id: e.type, label: e.type, bg: tint, border: contourForType(e.type, isDark), text } };
     });
     const edges = schema.relations.map((r, i) => ({
       data: { id: `t${i}`, source: r.subject, target: r.object, label: r.relation },
