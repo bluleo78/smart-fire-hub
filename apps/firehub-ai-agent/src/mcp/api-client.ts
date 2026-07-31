@@ -198,6 +198,17 @@ export class FireHubApiClient {
   async saveDatasetMapping(id: number, spec: import('../graphrag/table-projection.js').MappingSpec): Promise<void> {
     await this._datasets.saveDatasetMapping(id, spec);
   }
+
+  // 데이터셋↔온톨로지 바인딩 설정 위임(구축 파이프라인 1단계).
+  async bindDatasetOntology(id: number, ontologyId: number): Promise<void> {
+    await this._datasets.bindDatasetOntology(id, ontologyId);
+  }
+
+  // draft 매핑 활성화 위임(구축 파이프라인 3단계). 활성화된 매핑 상태를 반환한다.
+  async activateDatasetMapping(id: number): Promise<{ datasetId: number; ontologyId: number; status: string }> {
+    const m = await this._datasets.activateDatasetMapping(id);
+    return { datasetId: m.datasetId, ontologyId: m.ontologyId, status: m.status };
+  }
   createDataset(data: {
     name: string;
     tableName: string;
@@ -552,6 +563,15 @@ export class FireHubApiClient {
     return data;
   }
 
+  /**
+   * 온톨로지 목록 요약을 조회한다(GET /api/v1/ontologies, dataset:read).
+   * 바인딩 대상 ontologyId 를 에이전트가 스스로 고를 수 있게 하는 discovery 진입점.
+   */
+  async listOntologies(): Promise<{ id: number; domain: string; schemaVersion: number }[]> {
+    const { data } = await this.client.get<{ id: number; domain: string; schemaVersion: number }[]>('/ontologies');
+    return data;
+  }
+
   /** 표 투영용 — 특정 온톨로지를 id로 조회한다(GET /api/v1/ontology/{id}). */
   async getOntologyById(id: number): Promise<SerializedOntology> {
     const { data } = await this.client.get<SerializedOntology>(`/ontology/${id}`);
@@ -734,6 +754,41 @@ export class FireHubApiClient {
     return this._review.recordPendingRelation(item);
   }
 
+  /** 검수 인박스 목록(status 생략 시 서버 기본 pending). */
+  listReviewItems(status?: string, itemType?: string) {
+    return this._review.listReviewItems(status, itemType);
+  }
+
+  /** 검수 항목의 원문 청크 근거. */
+  getReviewItemEvidence(id: number) {
+    return this._review.getReviewItemEvidence(id);
+  }
+
+  /** 검수 승인 — 그래프를 실제로 변경한다(비가역). */
+  approveReviewItem(id: number, correctedValue?: string) {
+    return this._review.approveReviewItem(id, correctedValue);
+  }
+
+  /** 검수 거부 — 그래프 변경 없이 상태만 갱신. */
+  rejectReviewItem(id: number) {
+    return this._review.rejectReviewItem(id);
+  }
+
+  /** 데이터셋 그래프 적재 이력(GET /datasets/{id}/graph-ingests, dataset:read). */
+  async listGraphIngests(datasetId: number): Promise<GraphIngestHistory[]> {
+    const { data } = await this.client.get<GraphIngestHistory[]>(`/datasets/${datasetId}/graph-ingests`);
+    return data;
+  }
+
+  /**
+   * 온톨로지 스키마가 적재 시점보다 앞선(=재적재 필요) 데이터셋 목록
+   * (GET /graph-ingests/stale, dataset:read).
+   */
+  async listStaleGraphIngests(): Promise<StaleGraphIngest[]> {
+    const { data } = await this.client.get<StaleGraphIngest[]>('/graph-ingests/stale');
+    return data;
+  }
+
   listSmartJobs() {
     return this._proactive.listSmartJobs();
   }
@@ -843,4 +898,25 @@ export class FireHubApiClient {
   getExecution(jobId: number, executionId: number) {
     return this._proactive.getExecution(jobId, executionId);
   }
+}
+
+/** GraphRAG 적재 이력 한 건(GET /datasets/{id}/graph-ingests). */
+export interface GraphIngestHistory {
+  id: number;
+  datasetId: number;
+  ingestedAt: string;
+  schemaVersionAtIngest: number;
+  chunkCount: number;
+  nodeCount: number;
+  edgeCount: number;
+  extractionFailures: number;
+  status: string;
+}
+
+/** 재적재 필요(stale) 데이터셋 — 적재 시점 스키마가 현재 온톨로지 버전보다 낮다. */
+export interface StaleGraphIngest {
+  datasetId: number;
+  latestIngestedAt: string;
+  schemaVersionAtIngest: number;
+  currentSchemaVersion: number;
 }

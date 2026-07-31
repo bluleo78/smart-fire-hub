@@ -71,4 +71,46 @@ describe('datasetApi (via FireHubApiClient)', () => {
     const result = await client.listDatasets();
     expect(result).toEqual(mock);
   });
+
+  // 지식그래프 구축 파이프라인 — 바인딩/활성화 경로가 없으면 infer_mapping·project_table 이
+  // 서로를 막아 에이전트 단독으로 완결할 수 없다. 엔드포인트 계약을 고정한다.
+  describe('지식그래프 구축 엔드포인트', () => {
+    it('bindDatasetOntology calls PUT /datasets/:id/ontology with ontologyId body', async () => {
+      const scope = nock(BASE_URL).put('/datasets/7/ontology', { ontologyId: 3 }).reply(204);
+      await client.bindDatasetOntology(7, 3);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('activateDatasetMapping calls POST /datasets/:id/mapping/activate', async () => {
+      nock(BASE_URL)
+        .post('/datasets/7/mapping/activate')
+        .reply(200, { datasetId: 7, ontologyId: 3, spec: { entities: [], relations: [] }, status: 'active' });
+      const result = await client.activateDatasetMapping(7);
+      expect(result).toEqual({ datasetId: 7, ontologyId: 3, status: 'active' });
+    });
+
+    it('activateDatasetMapping 은 conformance 위반(400)을 전파한다', async () => {
+      nock(BASE_URL).post('/datasets/7/mapping/activate').reply(400, { message: 'conformance 위반' });
+      await expect(client.activateDatasetMapping(7)).rejects.toThrow();
+    });
+
+    it('listOntologies calls GET /ontologies', async () => {
+      const mock = [{ id: 1, domain: 'fire', schemaVersion: 3 }];
+      nock(BASE_URL).get('/ontologies').reply(200, mock);
+      const result = await client.listOntologies();
+      expect(result).toEqual(mock);
+    });
+
+    it('listGraphIngests calls GET /datasets/:id/graph-ingests', async () => {
+      const mock = [{ id: 1, datasetId: 7, ingestedAt: '2026-01-01T00:00:00', schemaVersionAtIngest: 2, chunkCount: 1, nodeCount: 2, edgeCount: 3, extractionFailures: 0, status: 'SUCCESS' }];
+      nock(BASE_URL).get('/datasets/7/graph-ingests').reply(200, mock);
+      expect(await client.listGraphIngests(7)).toEqual(mock);
+    });
+
+    it('listStaleGraphIngests calls GET /graph-ingests/stale', async () => {
+      const mock = [{ datasetId: 7, latestIngestedAt: '2026-01-01T00:00:00', schemaVersionAtIngest: 2, currentSchemaVersion: 3 }];
+      nock(BASE_URL).get('/graph-ingests/stale').reply(200, mock);
+      expect(await client.listStaleGraphIngests()).toEqual(mock);
+    });
+  });
 });

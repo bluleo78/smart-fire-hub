@@ -53,7 +53,7 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 
 세션 재개: `sessionId`가 있으면 `options.resume`에 전달하여 이전 대화를 이어감. Claude Code의 `~/.claude/projects/` 하위 JSONL 파일에 트랜스크립트 저장됨.
 
-**`src/mcp/firehub-mcp-server.ts`** — MCP 서버 정의. `createSdkMcpServer()`로 `firehub` 네임스페이스 서버 생성. 39개 도구를 `safeTool()` 래퍼로 등록 (에러 시 `isError: true` 반환). 도구 카테고리: 카테고리(3), 데이터셋(5), FILE 오브젝트(3: list_dataset_files·summarize_dataset_files·get_dataset_file_url), 데이터 조작(8), 파이프라인(6), 트리거(4), API 연결(5), 기타(2). Zod v4 스키마로 입력 검증.
+**`src/mcp/firehub-mcp-server.ts`** — MCP 서버 정의. `createSdkMcpServer()`로 `firehub` 네임스페이스 서버 생성. 도구를 `safeTool()` 래퍼로 등록 (에러 시 `isError: true` 반환). 도구 카테고리(각 `src/mcp/tools/*.ts` 가 실제 목록의 단일 출처 — 개수는 여기 적지 않는다): 카테고리, 데이터셋, FILE 오브젝트(list_dataset_files·summarize_dataset_files·get_dataset_file_url), 데이터 조작, 임포트, 분석, 문서, UI 위젯, 파이프라인, 트리거, API 연결, 관리자, 감사, 프로액티브, **GraphRAG**(질의: graphrag_query·graphrag_structured_query / 온톨로지 조회: graphrag_list_ontologies·graphrag_describe_ontology / 구축: graphrag_bind_ontology·graphrag_infer_mapping·graphrag_activate_mapping·graphrag_project_table·graphrag_ingest / 운영·검수: graphrag_ingest_history·graphrag_list_review_items·graphrag_review_evidence·graphrag_approve_review_item·graphrag_reject_review_item). 온톨로지 **쓰기**(`PUT /ontology`, `PUT /ontology/{id}`)는 의도적으로 미노출 — full-document 교체 + schemaVersion 낙관적 잠금 + `renames` 힌트가 entity_type_id 보존 여부를 좌우해, LLM 이 문서를 재생성하면 타입 동일성이 바뀌고 그래프까지 연쇄된다. 편집은 firehub-web UI 전용, 기타. Zod v4 스키마로 입력 검증. 파괴적·쓰기 도구는 `TOOL_PERMISSION_REQUIREMENTS` 로 권한 게이팅한다.
 
 **`src/mcp/api-client.ts`** — Axios 기반 HTTP 클라이언트. firehub-api의 `/api/v1/*` 엔드포인트 호출. `Authorization: Internal {token}` + `X-On-Behalf-Of: {userId}` 헤더로 내부 서비스 인증 및 사용자 대행.
 

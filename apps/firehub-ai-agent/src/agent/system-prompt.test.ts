@@ -562,3 +562,88 @@ describe('FILE_ATTACHMENT_PROMPT — 서브에이전트 위임 경계 (#269)', (
     expect(FILE_ATTACHMENT_PROMPT).toMatch(/start_import/);
   });
 });
+
+// GraphRAG 라우팅 회귀 가드.
+// 결함 배경: L1 라우팅 표가 "원인" 키워드를 data-analyst 로 **필수 위임**시키는 반면,
+// GraphRAG 절의 대표 예시가 "여러 화재의 공통 발화원인" 이었다. 표가 프롬프트 앞쪽에 있어
+// 우선순위상 이기므로, 관계 질문이 graphrag 도구를 가진 메인을 떠나 data-analyst 로 흘렀다.
+// 이 블록은 (a) 표에서 "원인" 단독 키워드 제거, (b) 표 직후 위임 금지 예외 명시,
+// (c) 메인 직접 처리 도구 목록에 graphrag 등재 — 세 계약을 고정한다.
+describe('SYSTEM_PROMPT — GraphRAG 라우팅 예외', () => {
+  const routingTable = SYSTEM_PROMPT.split('| 요청 유형 |')[1]?.split('**[라우팅 예외')[0] ?? '';
+
+  it('GraphRAG 도구 선택 규칙 절이 존재하고 조회 도구 2개를 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('지식 그래프(GraphRAG) 도구 선택 규칙');
+    expect(SYSTEM_PROMPT).toContain('graphrag_query');
+    expect(SYSTEM_PROMPT).toContain('graphrag_structured_query');
+  });
+
+  it('L1 라우팅 표의 data-analyst 키워드에서 "원인" 단독 키워드를 제거했다', () => {
+    expect(routingTable).not.toBe('');
+    expect(routingTable).toContain('data-analyst');
+    // 표 자체에는 "원인" 이 없어야 GraphRAG 절과 선점 충돌하지 않는다
+    expect(routingTable).not.toContain('"원인"');
+  });
+
+  it('라우팅 표 직후에 GraphRAG 위임 금지 예외를 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('[라우팅 예외');
+    const exception = SYSTEM_PROMPT.split('**[라우팅 예외')[1]?.split('**[내부 라우팅 가이드')[0] ?? '';
+    expect(exception).not.toBe('');
+    // 관계·경로 질문은 위임하지 않고 메인이 직접 graphrag 처리
+    expect(exception).toMatch(/관계.*경로|경로.*관계/s);
+    expect(exception).toContain('graphrag_query');
+    expect(exception).toMatch(/위임.*말고|위임 금지/);
+    expect(exception).toMatch(/직접/);
+    // 예외가 라우팅 표보다 뒤, "내부 라우팅 가이드" 보다 앞에 위치해야 우선순위가 성립
+    expect(SYSTEM_PROMPT.indexOf('| 요청 유형 |')).toBeLessThan(SYSTEM_PROMPT.indexOf('[라우팅 예외'));
+    expect(SYSTEM_PROMPT.indexOf('[라우팅 예외')).toBeLessThan(SYSTEM_PROMPT.indexOf('[내부 라우팅 가이드'));
+  });
+
+  it('"원인"·"왜" 키워드의 GraphRAG vs data-analyst 판별 기준을 제시한다', () => {
+    const exception = SYSTEM_PROMPT.split('**[라우팅 예외')[1]?.split('**[내부 라우팅 가이드')[0] ?? '';
+    expect(exception).toContain('원인');
+    expect(exception).toContain('data-analyst');
+    // 애매할 때의 fallback 경로가 있어야 dead-end 를 만들지 않는다
+    expect(exception).toMatch(/애매|우회/);
+  });
+
+  // 예외를 관계 질문으로만 좁히는 가드: 단순 수치 필터까지 GraphRAG 로 보내면
+  // 그래프가 부분 적재된 상태에서 누락된 결과를 "전부"로 답하는 silent wrong answer 가 된다.
+  it('단순 수치·조건 필터는 예외에서 배제하고 SQL(data-analyst) 로 보낸다', () => {
+    const exception = SYSTEM_PROMPT.split('**[라우팅 예외')[1]?.split('**[내부 라우팅 가이드')[0] ?? '';
+    expect(exception).toMatch(/단순 수치.*필터|수치·조건 필터/);
+    expect(exception).toMatch(/부분 적재/);
+    expect(exception).toMatch(/data-analyst/);
+    // structured_query 는 온톨로지 속성 대상일 때로 한정
+    expect(exception).toMatch(/온톨로지 속성/);
+  });
+
+  it('메인이 직접 처리하는 도구 목록에 graphrag 조회·검수 도구를 등재한다', () => {
+    const directTools = SYSTEM_PROMPT.split('메인 에이전트가 직접 처리하는 도구 목록')[1]?.split('## L1-1')[0] ?? '';
+    expect(directTools).not.toBe('');
+    expect(directTools).toContain('graphrag_query');
+    expect(directTools).toContain('graphrag_structured_query');
+    expect(directTools).toContain('graphrag_list_review_items');
+    expect(directTools).toContain('graphrag_ingest_history');
+  });
+
+  // 승인은 Neo4j 를 비가역적으로 바꾼다 — 삭제류와 동일한 2턴 가드 아래 있어야 한다.
+  // (인박스는 모델이 N건을 루프 승인하려 드는 전형적 지점이라 배치 금지를 함께 고정한다.)
+  it('검수 승인·거부를 L3 파괴 가드 표에 등재하고 일괄 승인을 금지한다', () => {
+    const guard = SYSTEM_PROMPT.split('### 트리거 매핑')[1]?.split('**위임 프롬프트 형식')[0] ?? '';
+    expect(guard).not.toBe('');
+    expect(guard).toContain('graphrag_approve_review_item');
+    expect(guard).toContain('graphrag_reject_review_item');
+    expect(guard).toMatch(/파괴/);
+    expect(guard).toMatch(/일괄 승인 금지|항목마다 별도 턴/);
+    // 근거 확인 선행 의무
+    expect(guard).toContain('graphrag_review_evidence');
+  });
+
+  it('GraphRAG 절이 L1 표보다 우선한다는 사실을 절 안에서도 재확인한다', () => {
+    const graphSection = SYSTEM_PROMPT.split('## 지식 그래프(GraphRAG) 도구 선택 규칙')[1]?.split('조회 흐름')[0] ?? '';
+    expect(graphSection).not.toBe('');
+    expect(graphSection).toMatch(/우선/);
+    expect(graphSection).toContain('data-analyst');
+  });
+});

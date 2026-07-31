@@ -543,6 +543,72 @@ describe('SL-DA: data-analyst subagent integration', () => {
     expect(prompt).toContain('chat-files');
     expect(prompt).toMatch(/start_import|dataset-manager/);
   });
+
+  // GraphRAG 연결: subagent tools 는 SDK 화이트리스트(deny-by-default)라 frontmatter 에
+  // 없으면 호출 자체가 불가능하다. data-analyst 가 분석 도중 관계·속성 질의를 보조
+  // 근거로 쓸 수 있도록 조회 계열 graphrag 도구 2개가 등록되어 있어야 한다.
+  it('SL-DA-GRAPHRAG: data-analyst 가 graphrag 조회 도구를 보유하고 사용 지침을 인라인한다', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const tools = agents['data-analyst'].tools;
+    expect(tools).toContain('mcp__firehub__graphrag_query');
+    expect(tools).toContain('mcp__firehub__graphrag_structured_query');
+    // 구축(쓰기) 계열은 분석 에이전트 범위 밖 — 권한 확대 방지
+    expect(tools).not.toContain('mcp__firehub__graphrag_ingest');
+    expect(tools).not.toContain('mcp__firehub__graphrag_project_table');
+
+    const prompt = agents['data-analyst'].prompt;
+    expect(prompt).toContain('graphrag_query');
+    expect(prompt).toContain('graphrag_structured_query');
+    // 근거 없을 때 환각 금지 + 우회 경로 지침
+    expect(prompt).toMatch(/환각/);
+    expect(prompt).toContain('sourceChunks');
+  });
+});
+
+// 지식그래프 구축 파이프라인은 dataset-manager 담당. frontmatter tools 는 deny-by-default
+// 화이트리스트라, 6단계 중 하나라도 빠지면 그 지점에서 파이프라인이 끊긴다.
+describe('SL-DM-GRAPHRAG: dataset-manager 지식그래프 구축 파이프라인', () => {
+  it('구축 6단계 도구를 모두 보유하고 질의 도구는 보유하지 않는다', () => {
+    resetSubagentCache();
+    const agents = loadSubagents(path.join(__dirname, 'subagents'));
+    const tools = agents['dataset-manager'].tools;
+
+    for (const name of [
+      'mcp__firehub__graphrag_list_ontologies',
+      'mcp__firehub__graphrag_describe_ontology',
+      'mcp__firehub__graphrag_bind_ontology',
+      'mcp__firehub__graphrag_infer_mapping',
+      'mcp__firehub__graphrag_activate_mapping',
+      'mcp__firehub__graphrag_project_table',
+    ]) {
+      expect(tools, `${name} 누락 — 파이프라인 단절`).toContain(name);
+    }
+    // 그래프 질의는 메인 담당, DOCUMENT 적재(고비용 LLM)는 범위 밖
+    expect(tools).not.toContain('mcp__firehub__graphrag_query');
+    expect(tools).not.toContain('mcp__firehub__graphrag_ingest');
+  });
+
+  it('프롬프트가 바인딩→추론→승인→활성화→투영 순서와 DESIGN 확인을 명시한다', () => {
+    resetSubagentCache();
+    const agents = loadSubagents(path.join(__dirname, 'subagents'));
+    const prompt = agents['dataset-manager'].prompt;
+
+    // 순서가 프롬프트 내에서 실제로 앞뒤로 배치되어야 모델이 단계를 건너뛰지 않는다
+    const order = [
+      'graphrag_bind_ontology',
+      'graphrag_infer_mapping',
+      'graphrag_activate_mapping',
+      'graphrag_project_table',
+    ].map((t) => prompt.indexOf(t));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+
+    // 활성화 전 사용자 승인(2턴 분리) 요구
+    expect(prompt).toMatch(/활성화할까요|승인/);
+  });
 });
 
 // ── SL-16: Graceful degradation across multiple subagents ────────────────────

@@ -127,8 +127,19 @@ const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   graphrag_ingest: PERMISSIONS.DATASET_WRITE,
   graphrag_project_table: PERMISSIONS.DATASET_WRITE,
   graphrag_infer_mapping: PERMISSIONS.DATASET_WRITE,
+  // 바인딩·활성화는 그래프 적재 기준을 바꾸므로 쓰기 권한으로 게이팅한다.
+  graphrag_bind_ontology: PERMISSIONS.DATASET_WRITE,
+  graphrag_activate_mapping: PERMISSIONS.DATASET_WRITE,
   graphrag_query: PERMISSIONS.DATASET_READ,
   graphrag_structured_query: PERMISSIONS.DATASET_READ,
+  graphrag_list_ontologies: PERMISSIONS.DATASET_READ,
+  graphrag_describe_ontology: PERMISSIONS.DATASET_READ,
+  graphrag_ingest_history: PERMISSIONS.DATASET_READ,
+  graphrag_list_review_items: PERMISSIONS.DATASET_READ,
+  graphrag_review_evidence: PERMISSIONS.DATASET_READ,
+  // 승인은 Neo4j 를 실제로 변경(비가역) — 거부와 함께 쓰기 권한으로 게이팅한다.
+  graphrag_approve_review_item: PERMISSIONS.DATASET_WRITE,
+  graphrag_reject_review_item: PERMISSIONS.DATASET_WRITE,
 };
 
 /**

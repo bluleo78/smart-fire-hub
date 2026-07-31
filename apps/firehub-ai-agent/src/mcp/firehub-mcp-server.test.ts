@@ -324,6 +324,53 @@ describe('destructive tool filtering', () => {
     expect(tools.find((t) => t.name === 'list_datasets')).toBeDefined();
   });
 
+  // GraphRAG 도구가 MCP 서버에 실제로 등록되고 권한 등급이 의도대로 갈리는지 고정한다.
+  // (등록 누락/권한 오분류는 프롬프트만으로는 드러나지 않아 회귀 가드가 필요하다.)
+  it('graphrag 도구가 등록되고 read/write 권한으로 분리 게이팅된다', () => {
+    const READ_TOOLS = [
+      'graphrag_query', 'graphrag_structured_query',
+      'graphrag_list_ontologies', 'graphrag_describe_ontology',
+      'graphrag_ingest_history', 'graphrag_list_review_items', 'graphrag_review_evidence',
+    ];
+    const WRITE_TOOLS = [
+      'graphrag_ingest', 'graphrag_project_table',
+      'graphrag_infer_mapping', 'graphrag_bind_ontology', 'graphrag_activate_mapping',
+      'graphrag_approve_review_item', 'graphrag_reject_review_item',
+    ];
+
+    // 권한 미지정(후방호환) — 전부 노출
+    const all = buildAllMcpTools(client);
+    for (const name of [...READ_TOOLS, ...WRITE_TOOLS]) {
+      expect(all.find((t) => t.name === name), `${name} 미등록`).toBeDefined();
+    }
+
+    // dataset:read 만 — 조회 계열만 남고 구축 계열은 제외
+    const readOnly = buildAllMcpTools(client, { userPermissions: ['dataset:read'] });
+    for (const name of READ_TOOLS) {
+      expect(readOnly.find((t) => t.name === name), `${name} 이 read 권한에서 사라짐`).toBeDefined();
+    }
+    for (const name of WRITE_TOOLS) {
+      expect(readOnly.find((t) => t.name === name), `${name} 이 read 권한에 노출됨`).toBeUndefined();
+    }
+
+    // dataset:write 보유 시 구축 계열 노출
+    const writer = buildAllMcpTools(client, { userPermissions: ['dataset:read', 'dataset:write'] });
+    for (const name of WRITE_TOOLS) {
+      expect(writer.find((t) => t.name === name), `${name} 이 write 권한에서 누락`).toBeDefined();
+    }
+  });
+
+  // 항목 4 회귀 가드: 도구 설명에 특정 온톨로지 속성을 하드코딩하면 온톨로지가 바뀌어도
+  // 모델은 옛 속성 하나만 알게 된다. 설명은 discovery 도구를 가리켜야 한다.
+  it('graphrag_structured_query 설명이 온톨로지 속성을 하드코딩하지 않는다', () => {
+    const tools = buildAllMcpTools(client);
+    const tool = tools.find((t) => t.name === 'graphrag_structured_query');
+    expect(tool).toBeDefined();
+    const description = (tool as unknown as { description: string }).description;
+    expect(description).not.toContain('피해액');
+    expect(description).toContain('graphrag_describe_ontology');
+  });
+
   // 필터 유틸 단위 테스트 (맵 직접 검증)
   it('filterToolsByPermissions: unknown tool names pass through', () => {
     const fake = [

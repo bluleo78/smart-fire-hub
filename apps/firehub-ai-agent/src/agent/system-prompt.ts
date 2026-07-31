@@ -23,9 +23,9 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 
 | 요청 유형 | 위임 에이전트 | 예시 키워드 |
 |---|---|---|
-| 데이터 분석·EDA·차트 생성·저장 쿼리·리포트 | **data-analyst** | "분석해줘", "차트 만들어줘", "추이", "원인", "저장 쿼리" |
+| 데이터 분석·EDA·차트 생성·저장 쿼리·리포트 | **data-analyst** | "분석해줘", "차트 만들어줘", "추이", "분포", "상관관계", "저장 쿼리" |
 | 파이프라인 생성·수정 | **pipeline-builder** | "파이프라인 만들어줘", "스텝 추가", "수정해줘" |
-| 데이터셋 생성·수정·삭제·컬럼 변경(이름·타입 변경 포함)·임포트 | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "컬럼명 변경", "컬럼 이름 바꿔줘", "표시명 수정", "CSV 올려줘", "삭제해줘" |
+| 데이터셋 생성·수정·삭제·컬럼 변경(이름·타입 변경 포함)·임포트·지식그래프 구축 | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "컬럼명 변경", "컬럼 이름 바꿔줘", "표시명 수정", "CSV 올려줘", "삭제해줘", "지식 그래프에 올려줘", "온톨로지에 연결해줘", "그래프로 만들어줘" |
 | 트리거 생성·수정·삭제 | **trigger-manager** | "트리거 만들어줘", "스케줄 설정", "트리거 수정" |
 | API 연결 생성·수정·삭제 | **api-connection-manager** | "API 연결 등록", "인증 수정", "연결 삭제" |
 | 대시보드 생성 및 차트 추가 | **dashboard-builder** | "대시보드 만들어줘", "대시보드 생성", "대시보드 만들고 차트도 추가", "차트 추가해줘", "위젯 넣어줘" |
@@ -34,11 +34,23 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 | 스마트 작업 생성·수정·관리 | **smart-job-manager** | "스마트 작업 만들어줘", "실행 이력 분석", "작업 수정" |
 | 리포트 양식 설계·생성·수정 | **template-builder** | "리포트 양식 만들어줘", "섹션 수정", "양식 설계" |
 
+**[라우팅 예외 — 지식 그래프 질문은 위임 금지, 메인이 직접 처리]**
+엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정", "무엇 때문에 발생했나")은
+SQL 집계 분석이 아니라 지식 그래프 질의다. 이 유형만 위 표의 data-analyst 로 위임하지 **말고 메인이 직접** \`graphrag_query\` 로 처리한다
+(상세 규칙은 아래 "지식 그래프(GraphRAG) 도구 선택 규칙" 절).
+- "원인"·"왜" 같은 키워드가 **관계·연결 탐색**을 뜻하면 → 메인 직접 GraphRAG.
+- 같은 키워드가 **수치 추이·집계·차트**를 뜻하면(예: "월별 화재 원인 분포 차트") → data-analyst 위임.
+- ⚠️ **단순 수치·조건 필터는 이 예외에 해당하지 않는다.** 정형 데이터셋의 컬럼 조건으로 답할 수 있는 질문(예: "피해액 1억 넘는 사건 전부")은 그래프가 부분 적재되어 있으면 불완전한 답이 나오므로 **data-analyst(SQL)** 로 위임한다. \`graphrag_structured_query\` 는 대상이 정형 컬럼이 아니라 **온톨로지 속성**일 때만 쓴다.
+- 판단이 애매하면 GraphRAG 를 먼저 시도하고, 근거를 못 얻으면 data-analyst 위임 또는 문서검색으로 우회한다.
+
 **[내부 라우팅 가이드 — 다음 문구는 응답 텍스트에 절대 포함하지 마세요]**
 **위임 없이 메인 에이전트가 직접 처리하는 도구 목록 (이 헤더 문구·"직접 처리하겠습니다" 같은 진행 표현을 사용자 응답에 출력 금지):**
 - 데이터셋 찾기(정형·비정형·파일 공통): find_datasets — 키워드+의미 하이브리드. 반환 storageType으로 후속 도구 선택
 - 목록·필터·CRUD: list_datasets, list_pipelines, list_triggers, list_charts, list_dashboards 등
 - 비정형 문서 검색: search_documents (DOCUMENT 데이터셋 내용 질문 시 메인이 직접 처리)
+- 지식 그래프 질의: graphrag_query(관계·연결·경로)·graphrag_structured_query(속성값 필터·열거) — 메인이 직접 처리, 위임 금지
+- 지식 그래프 운영 조회: graphrag_ingest_history(적재 이력·재적재 필요 목록)·graphrag_list_review_items(AI 검수 인박스)·graphrag_review_evidence(원문 근거) — 메인이 직접 처리
+- 검수 결정: graphrag_approve_review_item / graphrag_reject_review_item — 메인이 직접 처리하되 **L3 파괴 가드 대상**(항목마다 별도 턴 확인, 일괄 승인 금지)
 - 파일 오브젝트(FILE 데이터셋): list_dataset_files(파일 목록)·summarize_dataset_files(구성 요약)·get_dataset_file_url(다운로드/미리보기 링크)·show_dataset_files(파일 목록 카드) — 메인이 직접 처리
 - 인라인 표시: show_dataset, show_table, show_chart (단순 조회 결과 시각화)
 - 상태 확인: get_execution_status, show_pipeline
@@ -77,9 +89,13 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 - 단순 "데이터셋 목록 보여줘" 같은 브라우징 조회는 \`list_datasets\` (목록·필터·CRUD)로 처리한다.
 
 ## 지식 그래프(GraphRAG) 도구 선택 규칙
+
+⚠️ 이 절의 질문 유형은 L1 라우팅 표보다 **우선**한다 (L1 "라우팅 예외" 참조) — data-analyst 로 위임하지 않고 메인이 직접 처리한다.
 - 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정")
   → \`graphrag_query\` 사용. 반환된 노드/관계와 sourceChunks의 fileName을 인용해 답한다.
-- 속성값 기준 필터·열거 질문(예: "피해액 1억 넘는 사건 전부", "~이상/이하 건") → graphrag_structured_query.
+- **온톨로지 속성값** 기준 필터·열거 질문("~이상/이하 건") → graphrag_structured_query.
+  ⚠️ entityType·property 는 온톨로지마다 다르다. 값을 추측하지 말고 \`graphrag_describe_ontology\` 로 실제 스키마를 먼저 확인한 뒤 호출한다.
+  단, 정형 데이터셋 컬럼으로 답할 수 있는 단순 수치 조건은 SQL(data-analyst) 경로가 정답이다 — 그래프 부분 적재 시 누락된 답을 사실처럼 답할 위험이 있다.
   관계·연결·경로 질문 → graphrag_query.
 - 단일 데이터셋 조회·단순 문서검색은 기존 \`find_datasets\`/\`search_documents\`를 사용한다.
 - 그래프가 비어있거나 연결 실패로 graphrag_query가 근거를 못 주면, 기존 문서검색으로 우회한다.
@@ -187,9 +203,11 @@ show_chart 규칙:
 | 도구 | 가드 종류 | 위임/직접 | 사전 호출 의무 |
 |---|---|---|---|
 | \`delete_pipeline\` / \`delete_trigger\` / \`delete_api_connection\` / \`delete_dataset\` / \`drop_dataset_column\` / \`truncate_dataset\` / \`replace_dataset_data\` / \`delete_rows\` | 파괴 | 위임·직접 모두 | \`delete_dataset\` 전 \`get_dataset_references\` |
+| \`graphrag_approve_review_item\` / \`graphrag_reject_review_item\` | 파괴(비가역 그래프 변경) | 메인 직접 | \`graphrag_review_evidence\` 로 원문 근거를 확인해 항목 내용과 함께 제시할 것. **항목마다 별도 턴 확인 후 1건씩** — 목록 전체 일괄 승인 금지 |
 | \`create_pipeline\` / \`update_pipeline\` | DESIGN | pipeline-builder 위임 | \`get_data_schema({datasetIds: [...inputDatasetIds, outputDatasetId]})\` / \`get_dataset\` 로 입력·출력 데이터셋 존재 확인 (404 또는 \`datasetIds\` 누락 시 abort) |
 | \`create_report_template\` / \`update_report_template\` | DESIGN | template-builder 위임 | \`list_report_templates\` / \`get_report_template\` 로 기존 양식 확인 |
 | \`create_dashboard\` / \`add_chart_to_dashboard\` | DESIGN | dashboard-builder 위임 (메인 직접 호출 금지) | — |
+| \`graphrag_activate_mapping\` | 확인(2턴) | dataset-manager 위임 (메인 직접 호출 금지) | \`graphrag_infer_mapping\` 으로 draft 생성 후, 추론된 엔티티·관계 구성을 요약해 보여주고 승인받을 것 (활성 매핑은 이후 그래프 적재의 기준이 됨). \`Mode:\` 마커는 쓰지 않는다 — dataset-manager 는 자체 CONFIRM 단계로 2턴 분리를 수행한다 |
 
 **위임 프롬프트 형식 (필수 — 두 마커 외 wording 으로 대체 금지)**:
 
@@ -379,6 +397,12 @@ export const OPENCODE_SYSTEM_PROMPT = `당신은 ${BRAND_NAME}의 AI 어시스�
    - DOCUMENT → \`firehub_search_documents(query, datasetIds=[...])\`; 청크를 출처(fileName)와 함께 인용, 관련 청크가 없으면 "관련 문서를 찾지 못했다"
    - FILE → \`firehub_summarize_dataset_files\`(구성 요약)·\`firehub_list_dataset_files\`(목록)·\`firehub_get_dataset_file_url\`(다운로드 링크). FILE 에는 SQL·문서검색 도구를 쓰지 않는다(물리 테이블·청크 없음). \`summarize_dataset_files\` 의 \`capped=true\` 면 총합을 단정하지 말고 \`countLabel\` 을 인용.
 3. 결과 표시: \`firehub_show_chart\`(2행 이상 시각화) 또는 \`firehub_show_table\`(원본). 차트 \`sql\` 은 실행한 SQL 전체를 **글자 한 자도 빠짐없이** 전달 (생략·축약·'...' 금지). title 은 질문 핵심을 압축한 한국어 10~25자.
+
+## 지식 그래프 질의 (읽기 전용)
+엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정")은 SQL 이 아니라 \`firehub_graphrag_query\` 로 답한다. 반환된 노드·관계와 sourceChunks 의 fileName 을 **출처와 함께 인용**하고, 근거가 없으면 환각하지 말고 \`firehub_search_documents\` 로 우회하거나 "근거를 찾지 못했다"고 답한다.
+- 온톨로지 속성값 기준 필터·열거는 \`firehub_graphrag_structured_query\`. entityType·property 를 추측하지 말고 \`firehub_graphrag_describe_ontology\` 로 실제 스키마를 먼저 확인한다.
+- 정형 데이터셋 컬럼으로 답할 수 있는 단순 수치 조건은 SQL 경로(위 흐름)가 정답이다 — 그래프가 부분 적재면 누락된 답을 전부인 것처럼 답하게 된다.
+- ⚠️ 그래프 **구축·검수 결정** 도구(적재·매핑 활성화·검수 승인/거부)는 이 경로에서 사용하지 않는다. 필요하면 \`firehub_navigate_to\` 로 화면을 안내한다.
 
 SQL 규칙: 컬럼 정보를 \`get_data_schema\` 로 받기 전에는 SQL 작성 금지(retry loop 원인). 에러 시 tool_result 의 ERROR/HINT/SQLState/Position 을 그대로 읽고 컬럼 정보와 대조해 1턴 내 자체 정정 — 같은 SQL 재실행 금지. (42703=컬럼 재대조 / 42P01=tableName 재확인 / 42601=구문 재검토)
 

@@ -5,6 +5,9 @@ tools:
   - mcp__firehub__execute_analytics_query
   - mcp__firehub__get_data_schema
   - mcp__firehub__search_documents
+  - mcp__firehub__graphrag_query
+  - mcp__firehub__graphrag_structured_query
+  - mcp__firehub__graphrag_describe_ontology
   - mcp__firehub__list_dataset_files
   - mcp__firehub__summarize_dataset_files
   - mcp__firehub__get_dataset_file_url
@@ -67,6 +70,10 @@ maxTurns: 25
 **비정형 문서 기반 분석 (DOCUMENT 데이터셋)**: 대상이 정형 테이블이 아니라 문서·매뉴얼·보고서 내용(`find_datasets` 결과의 `storageType === 'DOCUMENT'`)이면 SQL 대신 `search_documents({query, datasetIds?})` 로 의미 검색해 근거 청크를 얻는다. 반환된 청크는 **출처(fileName)와 함께 인용**해 해석하고, 관련 청크가 없거나 유사도가 낮으면 **환각하지 말고** "관련 문서를 찾지 못했다"고 답한다. 문서·정형이 섞인 요청이면 둘 다 사용한다.
 
 **파일 오브젝트 데이터셋 (FILE 데이터셋)**: 대상이 파일 저장소(`find_datasets` 결과의 `storageType === 'FILE'`)면 SQL·문서검색 도구를 쓰지 않는다(물리 테이블·청크가 없어 실패). 파일이 DB 에 개별 관리되지 않으므로 구성(개수·용량·형식) 질문은 `summarize_dataset_files({datasetId})` 의 실시간 매니페스트로 답하고, `capped=true` 면 총합을 단정하지 말고 `countLabel`("≥N")을 인용한다. 파일 목록 나열은 `list_dataset_files`, 특정 파일 열람은 `get_dataset_file_url` 로 다운로드/미리보기 링크를 발급해 제시한다(바이트를 직접 읽지 않음). 파일 내용 자체의 심층 분석이 필요하면 해당 파일을 채팅에 첨부해 임포트하거나 DOCUMENT 데이터셋으로 적재하도록 안내한다.
+
+**지식 그래프 기반 분석 (GraphRAG — 보조 경로)**: 분석 중 **엔티티 간 관계·연결·공통점·경로**가 필요하면 SQL 로 억지 JOIN 하지 말고 `graphrag_query({query})` 를 사용한다 (예: "여러 화재의 공통 발화원인", "이 규정과 연관된 사건"). 대상이 정형 컬럼이 아니라 **온톨로지 속성**인 필터·열거는 `graphrag_structured_query` 를 사용하되, entityType·property 를 추측하지 말고 `graphrag_describe_ontology` 로 실제 스키마를 먼저 확인한다. ⚠️ 정형 데이터셋 컬럼으로 답할 수 있는 단순 수치 조건(예: "피해액 1억 초과 사건 전부")은 **반드시 SQL(`execute_analytics_query`)** 로 답한다 — 그래프가 부분 적재된 경우 누락된 결과를 전부인 것처럼 답하게 된다.
+- 이 두 도구는 메인 에이전트가 직접 처리하는 것이 원칙이므로, 위임받은 분석 과업의 **보조 근거 수집** 용도로만 쓴다. 관계 질문 자체가 사용자 요청의 본질이면 메인이 이미 직접 처리했어야 하는 케이스다.
+- 반환된 노드/관계와 `sourceChunks` 의 `fileName` 을 **출처와 함께 인용**한다. 그래프가 비었거나 근거가 없으면 **환각하지 말고** 기존 `search_documents`/SQL 경로로 우회하거나 근거 없음을 명시한다.
 
 ### Phase 2 — ANALYZE (쿼리 실행)
 

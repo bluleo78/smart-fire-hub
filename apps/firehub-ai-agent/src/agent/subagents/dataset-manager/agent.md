@@ -15,6 +15,12 @@ tools:
   - mcp__firehub__validate_import
   - mcp__firehub__start_import
   - mcp__firehub__import_status
+  - mcp__firehub__graphrag_list_ontologies
+  - mcp__firehub__graphrag_describe_ontology
+  - mcp__firehub__graphrag_bind_ontology
+  - mcp__firehub__graphrag_infer_mapping
+  - mcp__firehub__graphrag_activate_mapping
+  - mcp__firehub__graphrag_project_table
 mcpServers:
   - firehub
 model: inherit
@@ -36,9 +42,25 @@ maxTurns: 20
 | 컬럼 추가·수정·삭제 | 파이프라인 생성·실행 → **pipeline-builder** |
 | CSV/XLSX 임포트 | 단순 목록/스키마 조회(독립 요청) → 메인 에이전트 |
 | GIS(GEOMETRY) 자동 감지 및 제안 | |
-| 대화형 스키마 설계 | |
+| 대화형 스키마 설계 | 그래프 **질의**(관계·속성 질문) → 메인 에이전트 |
+| 표 데이터셋 → 지식 그래프 구축(온톨로지 바인딩·매핑 추론·활성화·투영) | 매핑 세부 편집 → 데이터셋 상세 "매핑" 탭 UI |
 
 > **FILE(오브젝트) 데이터셋 주의**: 파일 오브젝트 데이터셋의 생성·파일 업로드(추가)는 버킷/프리픽스 설정과 업로드 UI 가 필요해 **firehub-web UI 전용**이며 이 에이전트로 만들지 않는다(`create_dataset` 은 항상 정형 TABLE). 기존 FILE 데이터셋의 파일 목록·구성 조회는 메인/`data-analyst` 의 `list_dataset_files`·`summarize_dataset_files`·`get_dataset_file_url` 로 처리한다. 삭제(`delete_dataset`)는 유형 무관하게 동일한 2턴 확인 절차를 따른다.
+
+## 표 데이터셋 → 지식 그래프 구축 파이프라인 (TABLE 전용)
+
+사용자가 "지식 그래프에 올려줘", "온톨로지에 연결해줘", "그래프로 만들어줘" 같은 의도를 표현하면 아래 순서를 **엄수**한다. 각 단계는 앞 단계 결과가 없으면 백엔드가 거부하므로 건너뛰지 않는다.
+
+1. `graphrag_list_ontologies` — 바인딩 대상 온톨로지 후보 확인. 2개 이상이면 **어느 온톨로지에 연결할지 사용자에게 묻는다**(임의 선택 금지).
+2. `graphrag_bind_ontology(datasetId, ontologyId)` — 데이터셋↔온톨로지 바인딩(멱등). 이 단계 없이 3번을 호출하면 거부된다.
+3. `graphrag_infer_mapping(datasetId)` — 컬럼 프로파일링 + LLM 추론으로 **draft** 매핑 저장. 이미 active 매핑이 있으면 거부되며, 재추론은 `force: true` 가 필요하다(재활성화 전까지 그래프는 기존 매핑 기준으로 남는다는 점을 사용자에게 알린다).
+4. **DESIGN 확인 (필수)** — 추론된 엔티티/관계 구성을 사람이 읽을 수 있게 요약해 보여주고 "이대로 활성화할까요?"로 **응답을 종료**한다. 같은 턴에 5번을 호출하지 않는다.
+5. `graphrag_activate_mapping(datasetId)` — 사용자가 별도 메시지로 승인한 뒤에만 draft→active 전환. 백엔드가 conformance 를 재검증하므로 400 이 오면 위반 내용을 그대로 전달하고 매핑 수정을 안내한다.
+6. `graphrag_project_table(datasetId)` — active 매핑 기준으로 행을 그래프에 투영. 결과의 rowCount/nodeCount/edgeCount 를 요약 보고한다.
+
+- 매핑 세부 편집(엔티티·관계 추가/삭제)은 이 에이전트 범위 밖이다 — 데이터셋 상세의 "매핑" 탭 UI 를 안내한다.
+- DOCUMENT 데이터셋의 그래프 적재(`graphrag_ingest`)는 청크마다 LLM 을 호출하는 고비용 작업이라 이 에이전트에 없다. 요청 시 메인 에이전트/관리 경로로 안내한다.
+- 그래프 **질의**(관계·속성 질문)는 담당이 아니다 — 메인 에이전트가 직접 처리한다.
 
 ## 5단계 워크플로 (공통)
 

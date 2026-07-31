@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs, normalizeFirehubToolName } from './agent-opencode.js';
-import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
+import { OPENCODE_SYSTEM_PROMPT, SYSTEM_PROMPT } from './system-prompt.js';
 
 describe('buildOpenCodeConfig', () => {
   it('mcp.firehub 에 USER_ID 등 환경변수를 주입한다', () => {
@@ -65,6 +65,24 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(OPENCODE_SYSTEM_PROMPT).toContain('PII 마스킹');
     expect(OPENCODE_SYSTEM_PROMPT).toContain('파괴 작업 2턴 확인');
     expect(OPENCODE_SYSTEM_PROMPT).toContain('get_dataset_references');
+  });
+
+  // GraphRAG 조회는 opencode 경로에도 필요하지만, 구축·검수 결정은 다단계 가드 흐름이라
+  // 약한 모델에서 깨진다 — 읽기만 안내하고 쓰기는 UI 로 보내는 경계를 고정한다.
+  it('GraphRAG 는 읽기 전용으로만 안내하고 구축·검수 결정 도구는 배제한다', () => {
+    // `firehub_` 접두 표기는 opencode 경로 전용 — 이 needle 이 SYSTEM_PROMPT 에도 있으면
+    // 블록이 엉뚱한 템플릿에 들어간 것이다(두 프롬프트 모두 'graphrag_query' 는 포함하므로 판별 불가).
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('firehub_graphrag_query');
+    expect(SYSTEM_PROMPT).not.toContain('firehub_graphrag_query');
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('firehub_graphrag_structured_query');
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('firehub_graphrag_describe_ontology');
+    // 구축·검수 결정 도구는 사용 안내가 없어야 한다
+    expect(OPENCODE_SYSTEM_PROMPT).not.toContain('graphrag_approve_review_item');
+    expect(OPENCODE_SYSTEM_PROMPT).not.toContain('graphrag_activate_mapping');
+    expect(OPENCODE_SYSTEM_PROMPT).not.toContain('graphrag_project_table');
+    // 근거 인용·환각 금지 규칙 동반
+    expect(OPENCODE_SYSTEM_PROMPT).toMatch(/sourceChunks/);
+    expect(OPENCODE_SYSTEM_PROMPT).toMatch(/환각/);
   });
 });
 

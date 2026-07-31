@@ -156,5 +156,19 @@ export function createDatasetApi(client: AxiosInstance) {
     async saveDatasetMapping(id: number, spec: unknown): Promise<void> {
       await client.put(`/datasets/${id}/mapping`, spec);
     },
+    // 데이터셋↔온톨로지 바인딩 설정(PUT /datasets/{id}/ontology, 멱등 UPSERT).
+    // 왜 필요한가: 매핑 추론(graphrag_infer_mapping)이 바인딩 없으면 거부하므로, 바인딩 수단이
+    // 없으면 에이전트 단독으로는 구축 파이프라인을 시작조차 못 하는 데드엔드가 된다.
+    async bindDatasetOntology(id: number, ontologyId: number): Promise<void> {
+      await client.put(`/datasets/${id}/ontology`, { ontologyId });
+    },
+    // draft 매핑을 활성화(POST /datasets/{id}/mapping/activate). 백엔드가 conformance 재검증 후 전환.
+    // 표 투영(graphrag_project_table)이 active 만 허용하므로 파이프라인 완결에 필수.
+    async activateDatasetMapping(
+      id: number,
+    ): Promise<{ datasetId: number; ontologyId: number; spec: unknown; status: string }> {
+      const response = await client.post(`/datasets/${id}/mapping/activate`);
+      return response.data;
+    },
   };
 }

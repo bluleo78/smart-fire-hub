@@ -64,5 +64,47 @@ export function createReviewApi(client: AxiosInstance) {
     }): Promise<void> {
       await client.post('/graphrag/review-items/relation/pending', item);
     },
+
+    // ── 검수 인박스 소비측(기존에는 firehub-web 전용이라 에이전트가 등록만 하고 조회·결정은 못 했다) ──
+
+    // 검수 항목 목록. status 생략 시 서버 기본값 pending. 허용 외 status 는 서버가 400.
+    async listReviewItems(status?: string, itemType?: string): Promise<ReviewItem[]> {
+      const { data } = await client.get('/graphrag/review-items', { params: { status, itemType } });
+      return data;
+    },
+    // 판단 근거 — 항목이 유래한 원문 청크 스니펫.
+    async getReviewItemEvidence(id: number): Promise<{ chunkId: number; content: string }[]> {
+      const { data } = await client.get(`/graphrag/review-items/${id}/evidence`);
+      return data;
+    },
+    // 승인 — 그래프를 실제로 변경한 뒤 status 갱신(속성 항목은 correctedValue 필수).
+    async approveReviewItem(id: number, correctedValue?: string): Promise<ReviewItem> {
+      const { data } = await client.post(`/graphrag/review-items/${id}/approve`, { correctedValue });
+      return data;
+    },
+    // 거부 — 그래프 변경 없이 status 만 rejected.
+    async rejectReviewItem(id: number): Promise<ReviewItem> {
+      const { data } = await client.post(`/graphrag/review-items/${id}/reject`);
+      return data;
+    },
   };
+}
+
+/**
+ * 검수 항목 응답. payload 는 itemType 별로 형태가 다른 자유 JSON 이라 unknown 으로 두고,
+ * 호출부(MCP 도구)가 타입별로 정규화한다 — 여기서 타입을 좁히면 백엔드 payload 변경에
+ * 클라이언트가 조용히 어긋난다.
+ */
+export interface ReviewItem {
+  id: number;
+  itemType: string;
+  status: string;
+  datasetId: number | null;
+  signalType: string | null;
+  signalScore: number | null;
+  reason: string | null;
+  payload: Record<string, unknown>;
+  decidedBy: number | null;
+  decidedAt: string | null;
+  createdAt: string;
 }
