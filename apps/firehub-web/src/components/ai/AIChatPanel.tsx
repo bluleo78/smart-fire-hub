@@ -107,7 +107,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           <div className="h-full flex flex-col items-center justify-center px-4 text-center">
             <Sparkles className="h-8 w-8 text-muted-foreground/50 mb-3" />
             <p className="text-sm text-muted-foreground mb-1">AI 어시스턴트에게 물어보세요</p>
-            <p className="text-xs text-muted-foreground/70">무엇이든 질문해 보세요</p>
+            <p className="text-xs text-muted-foreground">무엇이든 질문해 보세요</p>
           </div>
         )}
 

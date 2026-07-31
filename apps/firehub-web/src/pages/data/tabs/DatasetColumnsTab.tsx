@@ -165,7 +165,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                         <ChevronRight
                           className={`h-3.5 w-3.5 transition-transform ${
                             isExpanded ? 'rotate-90' : ''
-                          } ${!hasData ? 'text-muted-foreground/30' : ''}`}
+                          } ${!hasData ? 'text-muted-foreground' : ''}`}
                         />
                       </Button>
                     </TableCell>

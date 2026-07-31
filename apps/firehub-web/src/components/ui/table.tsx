@@ -208,7 +208,7 @@ function SortableHeader({
         onClick={onSort}
         className={cn(
           "inline-flex items-center gap-1.5 -mx-2 px-2 py-1 rounded-sm",
-          "hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+          "hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           "transition-colors text-foreground font-medium"
         )}
       >

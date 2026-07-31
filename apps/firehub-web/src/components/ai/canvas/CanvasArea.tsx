@@ -92,7 +92,7 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
           <span className="text-xs font-medium text-muted-foreground">
             {activePage.label}
           </span>
-          <span className="text-xs text-muted-foreground/60">
+          <span className="text-xs text-muted-foreground">
             {activePage.widgets.length}개 위젯
           </span>
         </div>

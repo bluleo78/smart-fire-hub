@@ -48,7 +48,10 @@ interface UserNavProps {
 export function UserNav({ collapsed = false }: UserNavProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const { resolvedTheme, setTheme } = useTheme();
+  // theme = 사용자가 고른 설정('light'|'dark'|'system'), resolvedTheme = 실제 적용된 모드.
+  // #369: 선택 상태는 '설정'을 표시해야 하므로 theme을 쓴다. (resolvedTheme은 'system'을 절대
+  // 반환하지 않아, 시스템 버튼이 영영 선택 표시되지 않는 결함이 있었다)
+  const { theme, setTheme } = useTheme();
   const { themeColor, setThemeColor } = useThemeColor();
 
   if (!user) {
@@ -133,39 +136,48 @@ export function UserNav({ collapsed = false }: UserNavProps) {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-semibold text-muted-foreground w-7">모드</span>
-            <div className="flex-1 flex bg-muted rounded-md p-0.5">
+            <div className="flex-1 flex bg-muted rounded-md p-0.5" role="group" aria-label="테마 모드">
               <button
+                type="button"
                 onClick={() => setTheme('light')}
+                aria-label="라이트 모드"
+                aria-pressed={theme === 'light'}
                 className={cn(
                   'flex-1 flex items-center justify-center gap-1 rounded py-1 text-[10px] font-semibold transition-colors cursor-pointer',
-                  resolvedTheme === 'light'
+                  theme === 'light'
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <Sun className="h-3 w-3" />
+                <Sun className="h-3 w-3" aria-hidden="true" />
               </button>
               <button
+                type="button"
                 onClick={() => setTheme('dark')}
+                aria-label="다크 모드"
+                aria-pressed={theme === 'dark'}
                 className={cn(
                   'flex-1 flex items-center justify-center gap-1 rounded py-1 text-[10px] font-semibold transition-colors cursor-pointer',
-                  resolvedTheme === 'dark'
+                  theme === 'dark'
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <Moon className="h-3 w-3" />
+                <Moon className="h-3 w-3" aria-hidden="true" />
               </button>
               <button
+                type="button"
                 onClick={() => setTheme('system')}
+                aria-label="시스템 설정 따르기"
+                aria-pressed={theme === 'system'}
                 className={cn(
                   'flex-1 flex items-center justify-center gap-1 rounded py-1 text-[10px] font-semibold transition-colors cursor-pointer',
-                  resolvedTheme !== 'light' && resolvedTheme !== 'dark'
+                  theme === 'system'
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <Monitor className="h-3 w-3" />
+                <Monitor className="h-3 w-3" aria-hidden="true" />
               </button>
             </div>
           </div>

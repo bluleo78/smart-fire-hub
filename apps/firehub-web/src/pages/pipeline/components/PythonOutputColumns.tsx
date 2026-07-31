@@ -121,7 +121,7 @@ export default function PythonOutputColumns({
                     id={inputId}
                     className={[
                       'h-7 text-xs font-mono',
-                      error ? 'border-destructive focus-visible:ring-destructive/30' : '',
+                      error ? 'border-destructive focus-visible:ring-destructive' : '',
                     ]
                       .filter(Boolean)
                       .join(' ')}

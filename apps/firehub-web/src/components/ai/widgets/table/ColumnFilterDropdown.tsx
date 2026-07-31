@@ -61,7 +61,7 @@ export function ColumnFilterDropdown({
           'flex h-4 w-4 items-center justify-center rounded transition-colors',
           isActive
             ? 'text-primary'
-            : 'text-muted-foreground/50 hover:text-muted-foreground',
+            : 'text-muted-foreground hover:text-muted-foreground',
         )}
       >
         <ListFilter className="h-3 w-3" />
@@ -76,7 +76,7 @@ export function ColumnFilterDropdown({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               autoFocus
-              className="w-full rounded border border-border bg-muted/30 px-2 py-0.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
+              className="w-full rounded border border-border bg-muted/30 px-2 py-0.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
 

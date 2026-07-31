@@ -65,7 +65,7 @@ function NotificationItem({
   return (
     <button
       type="button"
-      className="w-full text-left group transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      className="w-full text-left group transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       style={{
         borderLeft: `3px solid ${isUnread ? 'var(--primary)' : 'transparent'}`,
         background: isUnread ? 'color-mix(in oklch, var(--primary) 4%, transparent)' : 'transparent',
@@ -103,14 +103,14 @@ function NotificationItem({
 
           {/* Job name */}
           {message.jobName && (
-            <span className="text-[10px] text-muted-foreground/70 block mb-0.5 truncate">
+            <span className="text-[11px] text-muted-foreground block mb-0.5 truncate">
               {message.jobName}
             </span>
           )}
 
           {/* Preview */}
           {preview && (
-            <p className="text-[11px] text-muted-foreground/80 leading-relaxed line-clamp-2">
+            <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">
               {preview}
             </p>
           )}
@@ -167,7 +167,7 @@ function DetailView({
       {/* Job name */}
       {message.jobName && (
         <div className="px-3 pt-2 pb-0">
-          <span className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+          <span className="text-[11px] text-muted-foreground uppercase tracking-wider">
             {message.jobName}
           </span>
         </div>
@@ -201,7 +201,7 @@ function DetailView({
           <>
             <button
               onClick={() => setReportModalOpen(true)}
-              className="flex items-center justify-center gap-1.5 w-full rounded-lg py-2 text-xs font-medium transition-colors hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              className="flex items-center justify-center gap-1.5 w-full rounded-lg py-2 text-xs font-medium transition-colors hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               style={{
                 background: 'var(--primary)',
                 color: 'var(--primary-foreground)',
@@ -224,7 +224,7 @@ function DetailView({
         <button
           type="button"
           onClick={() => onAskAI(message)}
-          className="flex items-center justify-center gap-1.5 w-full rounded-lg py-2 text-xs font-medium transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          className="flex items-center justify-center gap-1.5 w-full rounded-lg py-2 text-xs font-medium transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           style={{
             background: 'color-mix(in oklch, var(--primary) 10%, transparent)',
             color: 'var(--primary)',

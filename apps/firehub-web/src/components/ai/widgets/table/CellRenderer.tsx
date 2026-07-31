@@ -28,7 +28,7 @@ interface CellRendererProps {
 
 export function CellRenderer({ value, isNumericColumn }: CellRendererProps) {
   if (value === null || value === undefined) {
-    return <span className="text-muted-foreground/50">—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
 
   const isNumber =

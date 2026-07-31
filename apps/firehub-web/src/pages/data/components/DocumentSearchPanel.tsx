@@ -105,7 +105,7 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
                 {h.content}
               </p>
               {/* 펼침 상태 힌트 */}
-              <p className="mt-1 text-xs text-muted-foreground/70 select-none">
+              <p className="mt-1 text-xs text-muted-foreground select-none">
                 {isExpanded ? '▲ 접기' : '▼ 펼치기'}
               </p>
             </li>

@@ -457,7 +457,7 @@ export default function ApiConnectionDetailPage() {
                               type="button"
                               aria-label="키 값 마스킹 정책 안내"
                               data-testid="masked-key-help"
-                              className="text-muted-foreground/70 hover:text-foreground"
+                              className="text-muted-foreground hover:text-foreground"
                             >
                               <HelpCircle className="h-3.5 w-3.5" />
                             </button>
@@ -484,7 +484,7 @@ export default function ApiConnectionDetailPage() {
                             type="button"
                             aria-label="토큰 마스킹 정책 안내"
                             data-testid="masked-token-help"
-                            className="text-muted-foreground/70 hover:text-foreground"
+                            className="text-muted-foreground hover:text-foreground"
                           >
                             <HelpCircle className="h-3.5 w-3.5" />
                           </button>

@@ -103,7 +103,7 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
                         {/* 컬럼명 + 타입 보조 표시 (#111) — 사용자가 데이터 형태를 빠르게 파악 */}
                         <div className="flex flex-col">
                           <span>{col.displayName || col.columnName}</span>
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70 font-normal">
+                          <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-normal">
                             {col.dataType}
                           </span>
                         </div>
@@ -118,7 +118,7 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
                         <td key={col.columnName} className="px-3 py-2 whitespace-nowrap max-w-[200px] truncate">
                           {row[col.columnName] == null ? (
                             // null 값은 시각적으로 구분되는 dash로 표시 (빈 셀과 달리 null임을 명시)
-                            <span className="text-muted-foreground/50 italic text-xs select-none">-</span>
+                            <span className="text-muted-foreground italic text-xs select-none">-</span>
                           ) : String(row[col.columnName])}
                         </td>
                       ))}

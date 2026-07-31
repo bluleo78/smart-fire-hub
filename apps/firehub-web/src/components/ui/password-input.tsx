@@ -31,7 +31,7 @@ function PasswordInput({
         onClick={() => setVisible((v) => !v)}
         aria-label={visible ? '비밀번호 숨기기' : '비밀번호 보기'}
         // 클릭 영역을 충분히 확보 (44x36) — 모바일 탭 친화적
-        className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded-r-md"
+        className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-r-md"
         tabIndex={-1}
       >
         {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

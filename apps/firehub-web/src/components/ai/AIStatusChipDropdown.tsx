@@ -138,7 +138,7 @@ function QuickInput({
           }
         }}
         placeholder="AI에게 질문하기..."
-        className="flex-1 rounded-lg border border-border/50 bg-muted/30 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/60 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
+        className="flex-1 rounded-lg border border-border/50 bg-muted/30 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary transition-colors"
       />
       <button
         type="button"
@@ -229,7 +229,7 @@ export function AIStatusChipDropdown({
           {isAIOpen && lastPreview && (
             <div className="pt-1 border-t border-border/30">
               <span className="text-[10px] text-muted-foreground">마지막 응답</span>
-              <p className="text-xs text-muted-foreground/80 mt-0.5 leading-relaxed truncate">{lastPreview}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed truncate">{lastPreview}</p>
             </div>
           )}
           <TokenProgressBar contextTokens={contextTokens} />
@@ -308,7 +308,7 @@ export function AIStatusChipDropdown({
 
         {/* Footer */}
         <div className="flex items-center justify-center gap-2 pt-1 border-t border-border/30">
-          <span className="text-[10px] text-muted-foreground/60">
+          <span className="text-[11px] text-muted-foreground">
             {isAIOpen ? '⌘K 사이드 토글 | 클릭 모드 순환' : '⌘K 사이드 토글'}
           </span>
         </div>

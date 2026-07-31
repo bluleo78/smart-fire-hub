@@ -136,7 +136,7 @@ export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps
                 </button>
 
                 {!tableExpanded && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground/60 tabular-nums">
+                  <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
                     {table.columns.length}
                   </span>
                 )}
@@ -206,7 +206,7 @@ export function SchemaExplorer({ tables, onInsertAtCursor }: SchemaExplorerProps
                         <span className="flex-1 truncate" title={column.columnName}>
                           {column.displayName || column.columnName}
                         </span>
-                        <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                        <span className="shrink-0 text-[11px] text-muted-foreground">
                           {column.dataType}
                         </span>
                         <button
