@@ -1,6 +1,6 @@
 import { BarChart3, Download, Eye, History, Info, Plus, Star, Trash2 } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -102,15 +102,48 @@ export default function DatasetListPage() {
     [setSearchParams],
   );
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey !== key) {
-      patchParams({ sort: key, order: 'asc' });
+  /**
+   * 정렬 상태의 "다음 전이 기준값" — 렌더 클로저(sortKey/sortOrder) 대신 이 ref 를 본다. (#358)
+   *
+   * 왜: 헤더를 빠르게 연속 클릭하면 URL 반영(리렌더) 전에 다음 클릭 핸들러가 실행되는데,
+   * 그 핸들러는 이전 렌더의 sortOrder 를 그대로 들고 있어 전이가 유실된다
+   * (asc 에서 두 번 더 눌러도 desc→desc 로 계산되어 정렬이 해제되지 않음).
+   * react-router 의 setSearchParams 함수형 갱신도 prev 로 렌더 시점 스냅샷을 주므로 해결되지 않아,
+   * 클릭 시점에 동기적으로 전진하는 ref 를 별도의 기준값으로 둔다.
+   */
+  const sortStateRef = useRef<{ key: SortKey | null; order: SortDirection }>({
+    key: sortKey,
+    order: sortOrder,
+  });
+  /** 방금 URL 로 써 넣었으나 아직 렌더에 반영되지 않은 값 — 중간 상태로 ref 가 되감기는 것을 막는다. */
+  const pendingSortRef = useRef<{ key: SortKey | null; order: SortDirection } | null>(null);
+  const navigationType = useNavigationType();
+
+  // URL 이 외부 요인(딥링크·뒤로가기·다른 필터 변경)으로 바뀌면 ref 를 URL 기준으로 되돌린다.
+  // 단, 우리가 쓴 최신 값이 아직 도착하지 않았다면(pending) 중간 상태는 무시한다.
+  // POP(뒤로/앞으로)은 URL 이 절대적 기준이므로 pending 여부와 무관하게 즉시 동기화한다.
+  useEffect(() => {
+    const pending = pendingSortRef.current;
+    if (pending && navigationType !== 'POP') {
+      if (pending.key === sortKey && pending.order === sortOrder) pendingSortRef.current = null;
       return;
     }
-    // 같은 컬럼 재클릭 — asc → desc → none(원본 순서) 순환
-    if (sortOrder === 'asc') patchParams({ sort: key, order: 'desc' });
-    else if (sortOrder === 'desc') patchParams({ sort: null, order: null });
-    else patchParams({ sort: key, order: 'asc' });
+    pendingSortRef.current = null;
+    sortStateRef.current = { key: sortKey, order: sortOrder };
+  }, [sortKey, sortOrder, navigationType]);
+
+  const toggleSort = (key: SortKey) => {
+    const { key: curKey, order: curOrder } = sortStateRef.current;
+    // 같은 컬럼 재클릭 — asc → desc → none(원본 순서) 순환. 다른 컬럼이면 asc 부터.
+    let next: { key: SortKey | null; order: SortDirection };
+    if (curKey !== key) next = { key, order: 'asc' };
+    else if (curOrder === 'asc') next = { key, order: 'desc' };
+    else if (curOrder === 'desc') next = { key: null, order: 'none' };
+    else next = { key, order: 'asc' };
+
+    sortStateRef.current = next;
+    pendingSortRef.current = next;
+    patchParams({ sort: next.key, order: next.order === 'none' ? null : next.order });
   };
 
   const [previewOpen, setPreviewOpen] = useState(false);
