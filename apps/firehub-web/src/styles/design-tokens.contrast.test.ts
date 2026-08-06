@@ -446,3 +446,58 @@ describe('#375 차트 팔레트', () => {
     expect(css).not.toMatch(/hsl\(\s*var\(--chart-/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. 스크롤바 thumb — 작성자가 UA 스크롤바를 재정의하므로 SC 1.4.11(3:1)을 진다.
+//    OS 기본 스크롤바(macOS 마우스 연결 시 15px)를 8px 슬림으로 바꾸는 대가로
+//    "여기 스크롤된다"는 지각 가능성을 토큰 대비로 보증해야 한다.
+//    smart-dcim(SD-326)은 유휴 시 완전 투명이지만, firehub는 유휴 상태도
+//    3:1을 유지하는 쪽으로 의도적으로 다르게 간다 — 어포던스 상실을 피하기 위함.
+// ---------------------------------------------------------------------------
+
+describe('스크롤바 thumb 대비', () => {
+  /** 스크롤 컨테이너가 실제로 앉는 표면들 — 페이지 / 카드 / 다이얼로그·팝오버 / 사이드바 */
+  const surfaces = (theme: string) => ({
+    background: token(theme, '--background'),
+    card: cardSurface(theme),
+    popover: token(theme, '--popover'),
+    sidebar: token(theme, '--sidebar'),
+  });
+
+  it.each(ALL_THEMES)('%s: 유휴 thumb이 모든 표면 위에서 ≥ 3', (theme) => {
+    const thumb = token(theme, '--scrollbar-thumb');
+    for (const [name, surface] of Object.entries(surfaces(theme))) {
+      const ratio = contrast(composite(thumb, surface), surface);
+      expect(
+        ratio,
+        `${theme}/${name} --scrollbar-thumb=${hex(thumb)} 표면=${hex(surface)}`
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each(ALL_THEMES)('%s: 스크롤 중 thumb이 유휴보다 강해 상태 변화가 보인다', (theme) => {
+    const surface = cardSurface(theme);
+    const idle = contrast(composite(token(theme, '--scrollbar-thumb'), surface), surface);
+    const active = contrast(composite(token(theme, '--scrollbar-thumb-active'), surface), surface);
+    expect(active).toBeGreaterThan(idle);
+  });
+
+  it('트랙은 투명이고 thumb 색은 토큰으로만 지정된다 (하드코딩 회색 금지)', () => {
+    // #374~#377에서 색을 전부 시맨틱 토큰으로 옮겼다. 스크롤바만 예외를 두면
+    // 테마 전환 시 혼자 안 따라오고 대비 회귀도 이 테스트가 못 잡는다.
+    const block = css.slice(css.indexOf('::-webkit-scrollbar'));
+    const thumbRule = block.slice(block.indexOf('::-webkit-scrollbar-thumb'));
+    expect(thumbRule.slice(0, 200)).toMatch(/var\(--scrollbar-thumb\)/);
+    expect(css).toMatch(/::-webkit-scrollbar-track\s*\{[^}]*background:\s*transparent/);
+  });
+
+  it('WebKit 의사요소와 Firefox 프로퍼티가 함께 선언된다', () => {
+    // Firefox는 ::-webkit-*를 통째로 무시하고, WebKit은 scrollbar-width/color를 무시한다.
+    // 한쪽만 쓰면 그 엔진에서 두꺼운 OS 기본 스크롤바가 그대로 남는다.
+    expect(css).toMatch(/scrollbar-color:/);
+    expect(css).toMatch(/::-webkit-scrollbar\s*\{/);
+    // `scrollbar-width`는 상속되지 않으므로 `html`에만 걸면 중첩 스크롤 컨테이너가 누락된다
+    // (`scrollbar-color`는 상속되므로 html 한 곳으로 충분하다). 전체 셀렉터로 깔려 있어야 한다.
+    expect(css).toMatch(/\*\s*\{\s*scrollbar-width:\s*thin;\s*\}/);
+  });
+});

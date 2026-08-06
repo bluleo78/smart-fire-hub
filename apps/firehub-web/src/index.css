@@ -115,6 +115,15 @@
   --input: oklch(0.64 0.005 264);
   --ring: oklch(0.55 0.15 264);
   /*
+   * 스크롤바 thumb — UA 기본 스크롤바(macOS 마우스 연결 시 15px)를 8px로 재정의하는 대신
+   * 작성자가 지각 가능성을 책임진다(SC 1.4.11 3:1). `--border`(장식 구분선, 흰 표면 대비 1.2:1)를
+   * 재사용하면 얇아진 thumb이 사실상 안 보이므로 `--input`과 같은 계약의 전용 토큰을 둔다.
+   * -active는 스크롤 중 강조값이다 — 유휴에서도 3:1을 유지하므로 "스크롤 가능" 어포던스가 사라지지 않는다
+   * (smart-dcim SD-326은 유휴 완전 투명이지만 firehub는 의도적으로 다르게 간다).
+   */
+  --scrollbar-thumb: oklch(0.64 0.005 264);
+  --scrollbar-thumb-active: oklch(0.5 0.005 264);
+  /*
    * #375 차트 시리즈 팔레트 (범주형 8색, 테마 무관).
    * 라이트는 흰 카드 위 SC 1.4.11(3:1)이 상한을 만든다 → 상대휘도 ≤ 0.30.
    * hue를 균등 배치하는 대신 명도를 계단식으로 흩뜨렸다 — 색각이상에서 색상축이
@@ -226,6 +235,9 @@
    */
   --input: oklch(0.52 0.01 280);
   --ring: oklch(0.65 0.2 264);
+  /* 다크는 가장 밝은 표면인 팝오버(0.18)가 최악 조건이라 라이트보다 값을 올려 잡는다. */
+  --scrollbar-thumb: oklch(0.5 0.01 280);
+  --scrollbar-thumb-active: oklch(0.66 0.01 280);
   /*
    * #375: 다크 카드(#0d0e14) 기준 3:1. 라이트는 휘도 ≤0.30, 다크는 ≥0.114가 요구되어
    * 두 밴드가 겹치지 않으므로 **양쪽에서 통하는 단일 값은 수학적으로 존재하지 않는다.**
@@ -304,6 +316,69 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* ===== 스크롤바 =====
+ *
+ * 무엇: 앱 전역 스크롤바를 8px 슬림 + 투명 트랙으로 통일하고, 스크롤 중에는 thumb을 강조한다.
+ * 왜:   전역 규칙이 없어서 OS 기본 스크롤바가 그대로 노출됐다. macOS는 마우스가 연결되면
+ *       15px 클래식 스크롤바를 상시 표시하는데, 데이터 테이블처럼 내부 스크롤러가 있는 화면에서
+ *       콘텐츠 옆에 두꺼운 밝은 바가 붙어 보였다. (참고 구현: smart-dcim SD-326)
+ *
+ * 엔진별 갈라짐이 이 블록의 핵심이다 — Firefox는 `::-webkit-*`를 통째로 무시하고,
+ * WebKit/Blink는 `scrollbar-width`/`scrollbar-color`를 무시한다. 한쪽만 쓰면 그 엔진에서
+ * 두꺼운 OS 기본 스크롤바가 그대로 남으므로 **양쪽을 반드시 병기한다.**
+ *
+ * `@layer` 밖에 두는 이유: Tailwind 유틸리티가 레이어 우선순위로 이 규칙을 덮지 않게 하기 위함.
+ * 의사요소 셀렉터를 전역으로 두면 Radix가 body로 portal하는 다이얼로그/시트/팝오버까지 함께 적용된다.
+ */
+/*
+ * `scrollbar-width`는 **상속되지 않는다**(`scrollbar-color`는 상속된다). html에만 걸면
+ * Firefox에서 루트 스크롤러만 얇아지고 데이터 테이블·홈 카드 같은 중첩 `overflow-auto`
+ * 컨테이너에는 OS 기본 폭이 그대로 남는다 — 정작 두껍다고 지적된 곳이 전부 여기다.
+ * 그래서 폭은 `*`로 깔고, 색은 상속되므로 html 한 곳에서만 준다.
+ */
+* {
+  scrollbar-width: thin;
+}
+
+html {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+
+/*
+ * 스크롤 중 강조 — `data-scrolling`은 `lib/scrollbar-autohide.ts`가 캡처 단계 전역 리스너로
+ * 스크롤된 엘리먼트에 직접 세팅한다(스크롤 이벤트는 버블링하지 않으므로 캡처가 필수).
+ * 유휴 상태에서도 thumb은 3:1을 유지한다 — 완전히 숨기면 "여기 스크롤된다"는 어포던스가 사라진다.
+ */
+[data-scrolling='true'] {
+  scrollbar-color: var(--scrollbar-thumb-active) transparent;
+}
+
+[data-scrolling='true']::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+/* 스크롤바 전환은 장식이므로 감속 모션 설정을 존중한다. */
+@media (prefers-reduced-motion: reduce) {
+  ::-webkit-scrollbar-thumb {
+    transition: none;
   }
 }
 

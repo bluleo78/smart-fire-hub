@@ -34,9 +34,6 @@ import { useDatasets } from '../hooks/queries/useDatasets';
 import { useAuth } from '../hooks/useAuth';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
 
-const THIN_SCROLLBAR =
-  '[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border';
-
 function ActivityIcon({ eventType }: { eventType: string }) {
   const t = eventType.toUpperCase();
   if (t.includes('FAIL') || t.includes('ERROR')) return <XCircle className="h-4 w-4 text-destructive shrink-0" />;
@@ -232,7 +229,7 @@ export default function HomePage() {
           <Separator />
           <CardContent className="px-3 pt-1 pb-2">
             <div
-              className={`space-y-1.5 overflow-y-auto max-h-[11.5rem] pr-2 ${THIN_SCROLLBAR}`}
+              className="space-y-1.5 overflow-y-auto overscroll-contain max-h-[11.5rem] pr-2"
             >
               {attentionItems.map((item, idx) => (
                 <button
@@ -332,7 +329,7 @@ export default function HomePage() {
                   ))}
                 </div>
               ) : dashboardsData?.content && dashboardsData.content.length > 0 ? (
-                <div className={`overflow-y-auto max-h-[13rem] pr-2 ${THIN_SCROLLBAR}`}>
+                <div className="overflow-y-auto overscroll-contain max-h-[13rem] pr-2">
                   {dashboardsData.content.map((dashboard) => (
                     <button
                       key={dashboard.id}
@@ -383,7 +380,7 @@ export default function HomePage() {
                   ))}
                 </div>
               ) : datasetsData?.content && datasetsData.content.length > 0 ? (
-                <div className={`overflow-y-auto max-h-[13rem] pr-2 ${THIN_SCROLLBAR}`}>
+                <div className="overflow-y-auto overscroll-contain max-h-[13rem] pr-2">
                   {datasetsData.content.map((ds) => (
                     <button
                       key={ds.id}
@@ -539,7 +536,7 @@ export default function HomePage() {
               <div
                 ref={activityScrollRef}
                 data-testid="activity-feed-scroll"
-                className={`overflow-y-auto h-[32rem] pr-2 ${THIN_SCROLLBAR}`}
+                className="overflow-y-auto overscroll-contain h-[32rem] pr-2"
               >
                 {activityItems.map((item) => (
                   <div
