@@ -51,6 +51,15 @@ public class MappingService {
         .orElseThrow(() -> new IllegalArgumentException("활성화할 매핑이 없습니다: " + datasetId));
     MappingSpec spec = deserialize(stored.specJson());
     long ontologyId = validate(datasetId, spec); // 활성화 시점 스키마가 바뀌었을 수 있어 재검증
+
+    // 대상 온톨로지가 운영 중이 아니면 매핑을 활성화하지 않는다. 바인딩 가드(DatasetOntologyService)와
+    // 짝을 이뤄 "적재 경로에 들어가는 온톨로지는 active"를 보장한다. 상태 충돌이므로 409.
+    String ontologyStatus = ontologyRepository.findStatusById(ontologyId);
+    if (!"active".equals(ontologyStatus)) {
+      throw new IllegalStateException(
+          "연결된 온톨로지가 운영 중이 아니어서 매핑을 활성화할 수 없습니다. 현재 상태: " + ontologyStatus);
+    }
+
     mappingRepository.updateStatus(datasetId, "active", userId);
     return new MappingResponse(datasetId, ontologyId, spec, "active");
   }

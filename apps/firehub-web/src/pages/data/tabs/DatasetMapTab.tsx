@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { FeaturePopup } from '@/components/map/FeaturePopup';
 import { GeoJsonLayer } from '@/components/map/GeoJsonLayer';
 import { MapView } from '@/components/map/MapView';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { useDatasetData } from '@/hooks/queries/useDatasets';
 import { toFeatureCollection } from '@/lib/geo-utils';
 import type { DatasetDetailResponse, GeoJsonFeature } from '@/types/dataset';
@@ -63,12 +64,9 @@ export function DatasetMapTab({ dataset, datasetId }: DatasetMapTabProps) {
     <div className="space-y-3">
       {/* Warning banner: more than MAP_PAGE_SIZE rows */}
       {totalElements > MAP_PAGE_SIZE && (
-        <div className="flex items-start gap-2 rounded-md border border-warning/20 bg-warning-subtle px-3 py-2 text-sm text-warning">
-          <Info className="h-4 w-4 flex-shrink-0 mt-0.5" />
-          <span>
-            전체 {totalElements.toLocaleString()}건 중 최대 {MAP_PAGE_SIZE.toLocaleString()}건만 지도에 표시됩니다.
-          </span>
-        </div>
+        <InlineBanner icon={<Info />}>
+          전체 {totalElements.toLocaleString()}건 중 최대 {MAP_PAGE_SIZE.toLocaleString()}건만 지도에 표시됩니다.
+        </InlineBanner>
       )}
 
       {isError && (

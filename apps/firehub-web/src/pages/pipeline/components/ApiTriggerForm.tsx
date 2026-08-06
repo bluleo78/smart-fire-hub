@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -68,13 +69,9 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
     <div className="space-y-4">
       {generatedToken && (
         <div className="space-y-2">
-          <div className="rounded-md bg-warning-subtle border border-warning/20 p-3 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
-            <div className="text-sm text-warning">
-              <p className="font-medium">이 토큰은 다시 볼 수 없습니다</p>
-              <p className="mt-1">안전한 곳에 복사하여 저장하세요.</p>
-            </div>
-          </div>
+          <InlineBanner icon={<AlertTriangle />} title="이 토큰은 다시 볼 수 없습니다">
+            안전한 곳에 복사하여 저장하세요.
+          </InlineBanner>
 
           <div className="space-y-1.5">
             <Label>API 토큰</Label>

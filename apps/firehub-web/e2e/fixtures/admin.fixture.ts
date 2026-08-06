@@ -8,6 +8,7 @@ import {
   createSetting,
 } from '../factories/admin.factory';
 import { createAdminUserDetail, createRole, createUser, createUserDetail } from '../factories/auth.factory';
+import { createOntologySummaries } from '../factories/mapping.factory';
 import { createOntologyGraph, createOntologySchema } from '../factories/ontology.factory';
 import { createPageResponse, mockApi } from './api-mock';
 
@@ -176,10 +177,15 @@ export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1
 /**
  * 온톨로지 시각화 페이지 API 모킹
  * - 스키마(GET /api/v1/ontology)와 인스턴스 그래프(GET /api/v1/ontology/graph)를 모킹한다.
+ * - 온톨로지 선택기(Task 9)가 목록(GET /api/v1/ontologies)과 기본 선택(id=1) by-id 조회를
+ *   항상 호출하므로 이 둘도 함께 모킹한다 — 없으면 선택기가 비어 편집 버튼 등 스키마 탭
+ *   컨트롤이 전부 노출되지 않는다.
  */
 export async function setupOntologyMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
   await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+  await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+  await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
 }
 
 /**

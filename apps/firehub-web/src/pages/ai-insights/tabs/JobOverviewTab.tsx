@@ -10,6 +10,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -516,10 +517,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
 
       {/* 다음 실행 시간 — ANOMALY 전용 트리거에서는 불필요 (#38) */}
       {watch('triggerType') !== 'ANOMALY' && nextRunInfo && (
-        <div className="flex items-center gap-2 rounded-lg border border-info/20 bg-info-subtle p-3 text-sm text-info">
-          <span>📅</span>
-          <span>다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong></span>
-        </div>
+        <InlineBanner variant="info" icon={<span>📅</span>}>
+          다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong>
+        </InlineBanner>
       )}
 
       <Separator />

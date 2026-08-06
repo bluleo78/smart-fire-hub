@@ -8,6 +8,7 @@ import { datasetsApi } from '../../../api/datasets';
 import { Button } from '../../../components/ui/button';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { useAddColumn } from '../../../hooks/queries/useDatasets';
@@ -123,11 +124,9 @@ export function ColumnDialog({
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           {mode === 'edit' && hasData && (
-            <div className="rounded-md bg-warning-subtle border border-warning/20 p-3">
-              <p className="text-sm text-warning">
-                데이터가 있는 경우 필드명, 데이터 타입, 길이는 변경할 수 없습니다.
-              </p>
-            </div>
+            <InlineBanner>
+              데이터가 있는 경우 필드명, 데이터 타입, 길이는 변경할 수 없습니다.
+            </InlineBanner>
           )}
 
           <div className="space-y-2">

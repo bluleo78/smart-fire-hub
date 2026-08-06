@@ -4,7 +4,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-    baseline-version: 76
+    baseline-version: 79
   servlet:
     multipart:
       # 대용량 CSV/XLSX 임포트 허용. 미리보기는 CSV를 앞부분만 잘라 보내지만(413 회피),

@@ -1,5 +1,6 @@
 package com.smartfirehub.ontology;
 
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -135,17 +136,67 @@ class OntologyControllerTest {
         .andExpect(jsonPath("$.schemaVersion").value(2));
   }
 
-  // 목록 라우트 — dataset:read 권한으로 200, 리포지토리 findAllSummaries 스텁.
+  // 목록 라우트 — dataset:read 권한으로 200, 리포지토리 findAllSummaries("active") 스텁.
+  // (status 쿼리 파라미터 도입으로 무필터 기본값이 active-only가 됨 — 무인자 findAllSummaries()가 아니다.)
   @Test
   void 온톨로지_목록_라우트가_200() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
-    when(ontologyRepository.findAllSummaries())
-        .thenReturn(List.of(new OntologySummary(1L, "화재조사 보고서", 1)));
+    when(ontologyRepository.findAllSummaries("active"))
+        .thenReturn(
+            List.of(
+                new OntologySummary(
+                    1L, "화재조사 보고서", 1, "active", 0, 0, java.time.OffsetDateTime.now(), false)));
 
     mockMvc
         .perform(get("/api/v1/ontologies").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].id").value(1));
+        .andExpect(jsonPath("$[0].id").value(1))
+        // 리포지토리는 isDefault=false로 채워 넣지만(mock 위 코드) 서비스가 id=1을 보고 true로 덮어써야
+        // 한다 — OntologyService.withDefaultFlag의 계산과, boolean isDefault의 Jackson 직렬화 이름이
+        // "isDefault"로 유지되는지(isXxx 스트리핑 없이)를 함께 고정한다.
+        .andExpect(jsonPath("$[0].isDefault").value(true));
+  }
+
+  // 무필터 기본값은 active만 — 바인딩 후보 목록이 draft·archived를 집어가지 않게 한다.
+  @Test
+  void listOntologies_는_기본적으로_active만_조회한다() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+    when(ontologyRepository.findAllSummaries("active")).thenReturn(List.of());
+
+    mockMvc
+        .perform(get("/api/v1/ontologies").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    verify(ontologyRepository).findAllSummaries("active");
+  }
+
+  // 관리 다이얼로그는 status=all로 전체를 본다.
+  @Test
+  void listOntologies_는_status_all이면_필터_없이_조회한다() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+    when(ontologyRepository.findAllSummaries((String) null)).thenReturn(List.of());
+
+    mockMvc
+        .perform(
+            get("/api/v1/ontologies")
+                .param("status", "all")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    verify(ontologyRepository).findAllSummaries((String) null);
+  }
+
+  // 알 수 없는 상태 문자열은 400 — 오타가 조용히 빈 목록으로 새어나가지 않게 한다.
+  @Test
+  void listOntologies_는_알_수_없는_status를_거부한다() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+
+    mockMvc
+        .perform(
+            get("/api/v1/ontologies")
+                .param("status", "retired")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isBadRequest());
   }
 
   // id 스코프 단건 조회 — findById(2) 스텁.

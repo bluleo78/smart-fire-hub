@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
+import { InlineBanner } from '../../../components/ui/inline-banner';
 import { useExecuteQuery } from '../../../hooks/queries/useDatasets';
 import type { ErrorResponse } from '../../../types/auth';
 import type { DatasetColumnResponse, SqlQueryResponse } from '../../../types/dataset';
@@ -170,13 +171,10 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2 p-3 rounded-md bg-success-subtle text-success text-sm">
-              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-              <span>
-                {result.affectedRows}행이 영향 받았습니다.
-                <span className="text-muted-foreground ml-2">({result.executionTimeMs}ms)</span>
-              </span>
-            </div>
+            <InlineBanner variant="success" icon={<CheckCircle2 />}>
+              {result.affectedRows}행이 영향 받았습니다.
+              <span className="text-muted-foreground ml-2">({result.executionTimeMs}ms)</span>
+            </InlineBanner>
           )}
 
           <div className="flex gap-2 mt-2">

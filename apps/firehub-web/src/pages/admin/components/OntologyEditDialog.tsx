@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { useUpdateOntology } from '@/hooks/queries/useOntology';
+import { useUpdateOntologyById } from '@/hooks/queries/useOntology';
 import { extractApiError, isConflictError } from '@/lib/api-error';
 import type { EntityTypeDef, OntologySchema, Property, Triple, TypeRename } from '@/types/ontology';
 
@@ -33,6 +33,13 @@ interface OntologyEditDialogProps {
   schema: OntologySchema;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * 편집 대상 온톨로지 id. 항상 id 스코프 PUT(/ontology/{id})을 쓴다 — 유일한 호출부(OntologyPage)가
+   * selectedSchema(=useOntologyById(effectiveOntologyId), enabled: id != null)와 함께 마운트하므로
+   * 이 컴포넌트가 렌더될 때 id는 항상 존재한다. 전역 PUT(/ontology, id=1 고정)은 API 하위호환을
+   * 위해 백엔드에는 남아 있지만 이 화면은 더 이상 쓰지 않는다.
+   */
+  ontologyId: number;
 }
 
 // Neo4j 노드 예약 필드(loader.ts 모델) — 속성명으로 쓰면 적재 시 노드 정체성 필드가 깨진다.
@@ -88,7 +95,7 @@ const reusedNameMessage = (name: string) =>
  * 호출부(OntologyPage)가 다이얼로그가 열릴 때마다 이 컴포넌트에 key를 바꿔 리마운트시켜
  * 항상 최신 원본으로 새로 시작하게 한다.
  */
-export default function OntologyEditDialog({ schema, open, onOpenChange }: OntologyEditDialogProps) {
+export default function OntologyEditDialog({ schema, open, onOpenChange, ontologyId }: OntologyEditDialogProps) {
   const [domain, setDomain] = useState(schema.domain);
   const [entities, setEntities] = useState<EntityTypeDef[]>(schema.entities);
   const [relations, setRelations] = useState<Triple[]>(schema.relations);
@@ -104,7 +111,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
   const [hasConflict, setHasConflict] = useState(false);
   // 닫기 가드(#303) 확인 다이얼로그 노출 여부.
   const [confirmingClose, setConfirmingClose] = useState(false);
-  const updateOntology = useUpdateOntology();
+  const updateById = useUpdateOntologyById();
+  const isPending = updateById.isPending;
 
   // ── 닫기 가드(#303) ──
   // 이 폼은 뷰포트 5배 길이라 편집이 크게 누적된다. 실수로 ESC/오버레이/취소를 눌러 전량이
@@ -131,7 +139,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
   const requestClose = () => {
     // 저장 진행 중에는 닫기 요청 자체를 무시한다(푸터 버튼 disabled와 같은 취지 —
     // ESC/오버레이는 disabled의 보호를 받지 못하므로 여기서 막는다).
-    if (updateOntology.isPending) return;
+    if (isPending) return;
     if (isDirty) {
       setConfirmingClose(true);
       return;
@@ -146,8 +154,8 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
     onOpenChange(false);
   };
 
-  // 409 후 useUpdateOntology가 ['ontology']를 무효화 → 재조회분이 (리마운트 없이) prop으로 도착하면
-  // 이 값이 baseVersion보다 커진다. 그때서야 "덮어쓰고 저장"이 의미를 가진다.
+  // 409 후 useUpdateOntologyById가 ['ontology', id]를 무효화 → 재조회분이 (리마운트 없이) prop으로
+  // 도착하면 이 값이 baseVersion보다 커진다. 그때서야 "덮어쓰고 저장"이 의미를 가진다.
   const latestVersion = schema.schemaVersion;
   const isLatestLoaded = hasConflict && latestVersion !== baseVersion;
 
@@ -335,37 +343,36 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
       return;
     }
     const renamesPayload: TypeRename[] = Object.entries(renames).map(([from, to]) => ({ from, to }));
-    updateOntology.mutate(
-      { domain, schemaVersion: version, entities, relations, renames: renamesPayload },
-      {
-        onSuccess: () => {
-          toast.success('지식 모델이 저장되었습니다.');
-          onOpenChange(false);
-        },
-        onError: (error) => {
-          const message = extractApiError(error, '지식 모델 저장에 실패했습니다.');
-          // 서버의 내부 검증 용어(`타입 리네임의 from이 ...`)는 편집 화면에서 의미를 전달하지 못하므로
-          // 사용자 어휘로 바꿔 노출한다(#304). 그 외 메시지는 서버 문구를 그대로 살린다.
-          if (message.startsWith(SERVER_RENAME_REUSE_PREFIX)) {
-            // 서버 문구는 `...남아 있습니다: Incident` 형태지만, 이름 부분이 없더라도 내부 용어가
-            // 새어 나가지 않도록 콜론이 있을 때만 이름을 뽑고 없으면 이름 없는 안내로 떨어뜨린다.
-            const [, reused] = message.split(/:\s*/, 2);
-            toast.error(
-              reused
-                ? reusedNameMessage(reused)
-                : '다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다 — 이름 변경을 먼저 저장한 뒤 다시 시도하세요.',
-            );
-          } else {
-            toast.error(message);
-          }
-          if (isConflictError(error)) {
-            // 방금 시도한 버전을 기준선으로 확정 — 이후 재조회분이 도착해야 배너 액션이 열린다.
-            setBaseVersion(version);
-            setHasConflict(true);
-          }
-        },
+    const payload = { domain, schemaVersion: version, entities, relations, renames: renamesPayload };
+    const handlers = {
+      onSuccess: () => {
+        toast.success('지식 모델이 저장되었습니다.');
+        onOpenChange(false);
       },
-    );
+      onError: (error: unknown) => {
+        const message = extractApiError(error, '지식 모델 저장에 실패했습니다.');
+        // 서버의 내부 검증 용어(`타입 리네임의 from이 ...`)는 편집 화면에서 의미를 전달하지 못하므로
+        // 사용자 어휘로 바꿔 노출한다(#304). 그 외 메시지는 서버 문구를 그대로 살린다.
+        if (message.startsWith(SERVER_RENAME_REUSE_PREFIX)) {
+          // 서버 문구는 `...남아 있습니다: Incident` 형태지만, 이름 부분이 없더라도 내부 용어가
+          // 새어 나가지 않도록 콜론이 있을 때만 이름을 뽑고 없으면 이름 없는 안내로 떨어뜨린다.
+          const [, reused] = message.split(/:\s*/, 2);
+          toast.error(
+            reused
+              ? reusedNameMessage(reused)
+              : '다른 타입이 쓰던 이름은 같은 저장에서 재사용할 수 없습니다 — 이름 변경을 먼저 저장한 뒤 다시 시도하세요.',
+          );
+        } else {
+          toast.error(message);
+        }
+        if (isConflictError(error)) {
+          // 방금 시도한 버전을 기준선으로 확정 — 이후 재조회분이 도착해야 배너 액션이 열린다.
+          setBaseVersion(version);
+          setHasConflict(true);
+        }
+      },
+    };
+    updateById.mutate({ id: ontologyId, req: payload }, handlers);
   };
 
   const handleSave = () => submit(baseVersion);
@@ -425,7 +432,7 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
                   size="sm"
                   variant="destructive"
                   onClick={handleOverwrite}
-                  disabled={!isLatestLoaded || updateOntology.isPending}
+                  disabled={!isLatestLoaded || isPending}
                   data-testid="ontology-conflict-overwrite"
                 >
                   덮어쓰고 저장
@@ -757,11 +764,11 @@ export default function OntologyEditDialog({ schema, open, onOpenChange }: Ontol
         </div>
 
         <DialogFooter className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={requestClose} disabled={updateOntology.isPending}>
+          <Button variant="outline" onClick={requestClose} disabled={isPending}>
             취소
           </Button>
-          <Button onClick={handleSave} disabled={updateOntology.isPending}>
-            {updateOntology.isPending ? '저장 중...' : '저장'}
+          <Button onClick={handleSave} disabled={isPending}>
+            {isPending ? '저장 중...' : '저장'}
           </Button>
         </DialogFooter>
       </DialogContent>

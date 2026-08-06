@@ -40,7 +40,7 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 ## B. Custom Components
 
-`src/components/common/` 아래 6개의 프로젝트 전용 컴포넌트다.
+`src/components/ui/` 아래 7개의 프로젝트 전용 컴포넌트다.
 반복 패턴을 추상화하여 일관성을 확보한다.
 
 ---
@@ -191,6 +191,27 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
   )}
 </TableBody>
 ```
+
+---
+
+### 7. InlineBanner (`inline-banner.tsx`)
+
+**목적**: 맥락 안에서 지속되는 상태를 알리는 배너. 토스트와 인라인 에러 사이를 메운다.
+
+```tsx
+<InlineBanner icon={<AlertTriangle />} title="제목(선택)" actions={<Button size="sm">액션</Button>}>
+  본문
+</InlineBanner>
+```
+
+| Prop | 타입 | 설명 |
+|------|------|------|
+| `variant` | `"warning" \| "info" \| "success" \| "caution"` | 기본 `warning` |
+| `icon` | `ReactNode` | 선택. Lucide 아이콘을 넘기면 `h-4 w-4` + variant 색이 적용된다 |
+| `title` | `ReactNode` | 선택. `font-medium` 별도 노드로 렌더된다 |
+| `actions` | `ReactNode` | 선택. 우측 정렬 버튼 그룹 |
+
+상세 규칙은 [06-feedback-states.md §E](06-feedback-states.md)를 따른다.
 
 ---
 
@@ -412,8 +433,8 @@ DatasetWidget과 TableWidget이 공유하는 테이블 UI 컴포넌트.
 
 | 항목 | 우선순위 | 설명 |
 |------|----------|------|
-| Badge `success` variant | 높음 | 상태 뱃지 일관성 확보를 위해 필요 |
-| Badge `warning` variant | 높음 | 동일 |
-| Badge `info` variant | 중간 | 정보성 상태 표시 |
+| ~~Badge `success` variant~~ | ~~높음~~ | ~~상태 뱃지 일관성 확보를 위해 필요~~ → **완료** (`badge.tsx`) |
+| ~~Badge `warning` variant~~ | ~~높음~~ | ~~동일~~ → **완료** (`badge.tsx`) |
+| ~~Badge `info` variant~~ | ~~중간~~ | ~~정보성 상태 표시~~ → **완료** (`badge.tsx`) |
 | Toast 유틸 함수 표준화 | 중간 | `toast.success()`, `toast.error()` 래퍼 |
 | ~~DataTable 공통 컴포넌트~~ | ~~낮음~~ | ~~정렬/페이지네이션 통합 테이블~~ → **완료** (AI 위젯 `table/` 서브 컴포넌트로 구현) |

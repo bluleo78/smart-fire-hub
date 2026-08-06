@@ -58,6 +58,7 @@ function baseClient(overrides: Partial<any> = {}) {
     bindDatasetOntology: vi.fn().mockResolvedValue(undefined),
     getDatasetMapping: vi.fn().mockResolvedValue({ status: 'draft', ontologyId: 1, spec: {} }),
     activateDatasetMapping: vi.fn().mockResolvedValue({ datasetId: 900, ontologyId: 1, status: 'active' }),
+    createOntology: vi.fn().mockResolvedValue(7),
     ...overrides,
   };
 }
@@ -211,5 +212,69 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
       filters: [{ property: '피해액', operator: 'gte', value: 100000000 }],
     });
     expect(structuredQueryMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('graphrag_propose_ontology', () => {
+  const validArgs = {
+    domain: '건축물 안전점검',
+    entities: [
+      { type: 'Inspection', description: '점검 이벤트', naming: '문서마다 고유', resolution: 'exact', properties: [] },
+      { type: 'Facility', description: '점검 대상 시설', naming: '본문 표기 보존', resolution: 'embedding', properties: [] },
+    ],
+    relations: [{ subject: 'Inspection', relation: 'TARGETS', object: 'Facility', description: '점검 대상' }],
+  };
+
+  it('항상 draft 상태로 생성한다', async () => {
+    const client = baseClient();
+    const out = await findTool(client, 'graphrag_propose_ontology').handler(validArgs);
+
+    // status를 모델이 고르게 두면 안 된다 — 사람 검토 없이 운영에 들어간다.
+    expect(client.createOntology).toHaveBeenCalledWith(
+      expect.objectContaining({ domain: '건축물 안전점검', status: 'draft' }),
+    );
+    expect(out).toMatchObject({ ontologyId: 7, domain: '건축물 안전점검', status: 'draft' });
+  });
+
+  it('사람이 활성화해야 함을 반환값으로 안내한다', async () => {
+    const client = baseClient();
+    const out = (await findTool(client, 'graphrag_propose_ontology').handler(validArgs)) as { nextStep: string };
+    expect(out.nextStep).toMatch(/지식 모델/);
+  });
+
+  it('이미 같은 도메인이 있으면 사전 거부하고 생성하지 않는다', async () => {
+    // 백엔드도 409로 막지만, 여기서 막으면 에이전트가 같은 턴에 정정할 수 있다.
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([{ id: 1, domain: '건축물 안전점검', schemaVersion: 1 }]),
+    });
+    await expect(
+      findTool(client, 'graphrag_propose_ontology').handler(validArgs),
+    ).rejects.toThrow(/이미/);
+    expect(client.createOntology).not.toHaveBeenCalled();
+  });
+
+  it('같은 도메인이 archived 상태뿐이면 이름을 선점한 것으로 보지 않고 생성한다', async () => {
+    // 백엔드 부분 유니크 인덱스(WHERE status <> 'archived')와 정합 — archived는 이름을 선점하지 않는다.
+    // baseClient()의 listOntologies 목킹은 status 필드가 없어 undefined !== 'archived'로 우연히 통과했었다(갭).
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([
+        { id: 1, domain: '건축물 안전점검', schemaVersion: 1, status: 'archived' },
+      ]),
+    });
+    const out = await findTool(client, 'graphrag_propose_ontology').handler(validArgs);
+
+    expect(client.createOntology).toHaveBeenCalledWith(
+      expect.objectContaining({ domain: '건축물 안전점검', status: 'draft' }),
+    );
+    expect(out).toMatchObject({ ontologyId: 7, domain: '건축물 안전점검', status: 'draft' });
+  });
+
+  it('백엔드 권한 오류(403)를 그대로 전파한다', async () => {
+    const client = baseClient({
+      createOntology: vi.fn().mockRejectedValue(new Error('API 오류 (403): 권한이 없습니다')),
+    });
+    await expect(
+      findTool(client, 'graphrag_propose_ontology').handler(validArgs),
+    ).rejects.toThrow(/403/);
   });
 });

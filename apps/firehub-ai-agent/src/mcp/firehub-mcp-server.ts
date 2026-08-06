@@ -130,6 +130,8 @@ const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   // 바인딩·활성화는 그래프 적재 기준을 바꾸므로 쓰기 권한으로 게이팅한다.
   graphrag_bind_ontology: PERMISSIONS.DATASET_WRITE,
   graphrag_activate_mapping: PERMISSIONS.DATASET_WRITE,
+  // 신규 온톨로지 생성(초안). 최종 인가는 백엔드 ontology:write(ADMIN)가 별도로 판정한다.
+  graphrag_propose_ontology: PERMISSIONS.DATASET_WRITE,
   graphrag_query: PERMISSIONS.DATASET_READ,
   graphrag_structured_query: PERMISSIONS.DATASET_READ,
   graphrag_list_ontologies: PERMISSIONS.DATASET_READ,

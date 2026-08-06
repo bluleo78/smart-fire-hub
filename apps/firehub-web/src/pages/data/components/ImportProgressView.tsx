@@ -1,6 +1,7 @@
 import { CheckCircle2, Clock,Loader2, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import type { ImportProgress } from '@/hooks/queries/useImportProgress';
 import { getFailedPhase } from '@/hooks/queries/useImportProgress';
 import type { ValidationErrorDetail } from '@/types/dataImport';
@@ -170,12 +171,8 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
 
       {/* Status message */}
       {stage === 'COMPLETED' && (
-        <div className="rounded-md border border-success/20 bg-success-subtle p-4 space-y-2">
-          <div className="flex items-center gap-2 text-success font-medium">
-            <CheckCircle2 className="w-5 h-5" />
-            <span>임포트 완료</span>
-          </div>
-          <div className="text-sm text-muted-foreground space-y-1 pl-7">
+        <InlineBanner variant="success" icon={<CheckCircle2 />} title="임포트 완료">
+          <div className="text-muted-foreground space-y-1">
             {progress.totalRows !== undefined && (
               <p>전체: {progress.totalRows.toLocaleString()}행</p>
             )}
@@ -186,7 +183,7 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
               <p>오류: <span className="text-destructive font-medium">{progress.errorRows.toLocaleString()}행</span></p>
             )}
           </div>
-        </div>
+        </InlineBanner>
       )}
 
       {stage === 'FAILED' && (

@@ -501,3 +501,30 @@ describe('스크롤바 thumb 대비', () => {
     expect(css).toMatch(/\*\s*\{\s*scrollbar-width:\s*thin;\s*\}/);
   });
 });
+
+// ----------------------------------------------------------------------------
+// InlineBanner 경계 — 배너 틴트(`*-subtle`)는 페이지 배경과 1.05:1 수준이라 사실상 보이지 않는다.
+// 즉 배너의 경계를 만드는 유일한 요소가 보더이므로, 보더가 SC 1.4.11(3:1)을 넘어야 한다.
+// 기존 관용구는 `border-warning/20`(1.32:1) / `/30`(1.78:1)을 써서 미달이었다.
+// #375/#376/#377이 "경계는 3:1" 선례를 세운 것과 같은 계열의 요구다.
+// ----------------------------------------------------------------------------
+describe('InlineBanner 경계 대비', () => {
+  const BANNER_VARIANTS = ['warning', 'info', 'success', 'caution'] as const;
+
+  it.each(
+    ALL_THEMES.flatMap((theme) => BANNER_VARIANTS.map((name) => ({ theme, name })))
+  )('$theme/$name: border-$name 실색이 표면 대비 ≥ 3 (SC 1.4.11)', ({ theme, name }) => {
+    const border = token(theme, `--${name}`);
+    const surface = cardSurface(theme);
+    const ratio = contrast(border, surface);
+    expect(ratio, `${theme} border-${name}=${hex(border)} surface=${hex(surface)}`)
+      .toBeGreaterThanOrEqual(3);
+  });
+
+  // 알파 보더는 왜 못 쓰는지를 고정한다 — 누군가 "부드럽게" 되돌리려 할 때 이 테스트가 막는다.
+  it.each(ALL_THEMES)('%s: border-warning/20은 3:1에 미달한다(복원 금지 근거)', (theme) => {
+    const surface = cardSurface(theme);
+    const faded = composite(withAlpha(token(theme, '--warning'), 0.2), surface);
+    expect(contrast(faded, surface)).toBeLessThan(3);
+  });
+});

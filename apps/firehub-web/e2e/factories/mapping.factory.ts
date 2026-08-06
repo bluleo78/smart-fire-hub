@@ -43,12 +43,62 @@ export function createBinding(ontologyId: number | null = MAPPING_ONTOLOGY_ID): 
   return { datasetId: MAPPING_DATASET_ID, ontologyId };
 }
 
-/** 바인딩 드롭다운 선택지. */
-export function createOntologySummaries(): OntologySummary[] {
-  return [
-    { id: MAPPING_ONTOLOGY_ID, domain: '화재조사 보고서', schemaVersion: 1 },
-    { id: 2, domain: '건축물 대장', schemaVersion: 3 },
-  ];
+/** 바인딩 드롭다운·관리 다이얼로그 선택지. */
+export function createOntologySummaries(overrides?: OntologySummary[]): OntologySummary[] {
+  return (
+    overrides ?? [
+      {
+        id: MAPPING_ONTOLOGY_ID,
+        domain: '화재조사 보고서',
+        schemaVersion: 1,
+        status: 'active',
+        entityCount: 6,
+        datasetCount: 3,
+        updatedAt: '2026-04-12T09:00:00Z',
+        isDefault: true,
+      },
+      {
+        id: 2,
+        domain: '건축물 대장',
+        schemaVersion: 3,
+        status: 'active',
+        entityCount: 4,
+        datasetCount: 0,
+        updatedAt: '2026-08-01T09:00:00Z',
+        isDefault: false,
+      },
+    ]
+  );
+}
+
+/** 초안 온톨로지 — 배너·활성화 흐름 검증용. */
+export function createDraftOntologySummary(overrides?: Partial<OntologySummary>): OntologySummary {
+  return {
+    id: 3,
+    domain: '소방시설 점검',
+    schemaVersion: 1,
+    status: 'draft',
+    entityCount: 0,
+    datasetCount: 0,
+    updatedAt: '2026-08-06T09:00:00Z',
+    isDefault: false,
+    ...overrides,
+  };
+}
+
+/** 은퇴 온톨로지 — info 배너·복귀 흐름 검증용. */
+export function createArchivedOntologySummary(overrides?: Partial<OntologySummary>): OntologySummary {
+  return {
+    id: 4,
+    domain: '구 화재조사(2024)',
+    schemaVersion: 6,
+    status: 'archived',
+    entityCount: 6,
+    datasetCount: 2,
+    updatedAt: '2026-03-02T09:00:00Z',
+    isDefault: false,
+    ...overrides,
+  };
 }
 
 /** 엔티티 2개 + 관계 1개(Incident -OCCURRED_AT-> Building). */

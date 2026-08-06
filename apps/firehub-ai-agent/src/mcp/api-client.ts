@@ -566,9 +566,30 @@ export class FireHubApiClient {
   /**
    * 온톨로지 목록 요약을 조회한다(GET /api/v1/ontologies, dataset:read).
    * 바인딩 대상 ontologyId 를 에이전트가 스스로 고를 수 있게 하는 discovery 진입점.
+   * status 미지정 시 서버 기본값(active만)이 적용된다 — 바인딩 후보로 쓰는 것이 이 목록의 주 용도다.
    */
-  async listOntologies(): Promise<{ id: number; domain: string; schemaVersion: number }[]> {
-    const { data } = await this.client.get<{ id: number; domain: string; schemaVersion: number }[]>('/ontologies');
+  async listOntologies(
+    status?: 'active' | 'draft' | 'archived' | 'all',
+  ): Promise<{ id: number; domain: string; schemaVersion: number; status: string }[]> {
+    const { data } = await this.client.get<
+      { id: number; domain: string; schemaVersion: number; status: string }[]
+    >('/ontologies', { params: status ? { status } : undefined });
+    return data;
+  }
+
+  /**
+   * 신규 온톨로지를 생성한다(POST /api/v1/ontologies, ontology:write=ADMIN).
+   * 기존 온톨로지 편집(PUT)은 의도적으로 노출하지 않는다 — full-document 교체 + 낙관적 잠금 +
+   * renames 힌트가 entity_type_id 보존을 좌우해 LLM이 다루기에 위험하다. 신규 생성만 허용한다.
+   * 인가 주체는 X-On-Behalf-Of 헤더의 사용자이므로, 비-ADMIN이 부르면 백엔드가 403을 낸다.
+   */
+  async createOntology(body: {
+    domain: string;
+    entities: unknown[];
+    relations: unknown[];
+    status: 'draft' | 'active';
+  }): Promise<number> {
+    const { data } = await this.client.post<number>('/ontologies', body);
     return data;
   }
 

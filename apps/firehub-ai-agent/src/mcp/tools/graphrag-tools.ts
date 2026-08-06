@@ -223,6 +223,83 @@ export function registerGraphragTools(
       async () => jsonResult({ ontologies: await apiClient.listOntologies() }),
     ),
     safeTool(
+      'graphrag_propose_ontology',
+      '새 도메인 온톨로지를 **초안(draft)**으로 제안한다. 데이터셋에 맞는 기존 온톨로지가 없을 때만 사용. '
+        + '초안은 바인딩·적재에 쓰이지 않으며, 사람이 "지식 모델" 화면에서 검토 후 활성화해야 한다. '
+        + '기존 온톨로지 수정은 이 툴로 할 수 없다. 관리/구축 목적으로만 사용.',
+      {
+        domain: z.string().describe('온톨로지 도메인명(고유해야 함). 예: "건축물 안전점검"'),
+        entities: z
+          .array(
+            z.object({
+              type: z.string().describe('엔티티 타입명(영문 PascalCase 권장). 예: Inspection'),
+              description: z.string().describe('이 타입이 무엇을 가리키는지'),
+              naming: z.string().describe('이름 표기 규칙. 예: "본문에 등장한 표기를 그대로 사용한다."'),
+              resolution: z
+                .enum(['exact', 'embedding'])
+                .describe('동일성 판정 방식. 표기가 흔들리면 embedding, 정확 일치면 exact'),
+              properties: z
+                .array(
+                  z.object({
+                    name: z.string().describe('속성명(key/type/name/sourceChunkIds/schemaVersion은 예약어라 불가)'),
+                    description: z.string(),
+                    dataType: z.enum(['text', 'number', 'date']),
+                    unit: z.string().nullable().describe('단위(없으면 null). 예: "원", "㎡"'),
+                  }),
+                )
+                .describe('속성 목록(없으면 빈 배열)'),
+            }),
+          )
+          .describe('엔티티 타입 목록. 최소 1개 이상 제안할 것'),
+        relations: z
+          .array(
+            z.object({
+              subject: z.string().describe('주어 엔티티 타입명(entities에 있어야 함)'),
+              relation: z.string().describe('관계명(영문 SCREAMING_SNAKE_CASE 권장). 예: OCCURRED_AT'),
+              object: z.string().describe('목적어 엔티티 타입명(entities에 있어야 함)'),
+              description: z.string(),
+            }),
+          )
+          .describe('허용 관계(트리플) 목록. 없으면 빈 배열'),
+      },
+      async (args: {
+        domain: string;
+        entities: unknown[];
+        relations: unknown[];
+      }) => {
+        // 도메인 중복은 백엔드가 409로 막지만, 여기서 먼저 걸러야 에이전트가 같은 턴에 정정할 수 있다.
+        // 은퇴한 온톨로지는 이름을 선점하지 않으므로(V79 부분 유니크 인덱스가 archived 제외) 중복 판정에서도
+        // 뺀다 — listOntologies는 전체(all)를 받아온 뒤 여기서 status !== 'archived'로 걸러 살아있는 것만 본다.
+        const existing = await apiClient.listOntologies('all');
+        const clash = existing.find((o) => o.domain === args.domain && o.status !== 'archived');
+        if (clash) {
+          throw new Error(
+            `이미 "${args.domain}" 도메인의 온톨로지가 있습니다(id=${clash.id}, ${clash.status}). `
+              + '기존 것을 쓰려면 graphrag_bind_ontology 를, 이름을 바꾸려면 다른 도메인명을 사용하세요.',
+          );
+        }
+
+        // status는 인자로 받지 않고 항상 draft로 고정한다 — 모델이 고르게 두면 사람 검토를 건너뛴다.
+        const ontologyId = await apiClient.createOntology({
+          domain: args.domain,
+          entities: args.entities,
+          relations: args.relations,
+          status: 'draft',
+        });
+
+        return jsonResult({
+          ontologyId,
+          domain: args.domain,
+          status: 'draft',
+          entityCount: args.entities.length,
+          relationCount: args.relations.length,
+          nextStep:
+            '초안으로 저장했습니다. 사용자가 "지식 모델" 화면(/knowledge-graph/model)에서 내용을 검토하고 '
+            + '활성화해야 데이터셋에 연결할 수 있습니다. 에이전트는 활성화할 수 없습니다.',
+        });
+      },
+    ),
+    safeTool(
       'graphrag_describe_ontology',
       '온톨로지의 엔티티 타입·필터 가능 속성(이름/타입/단위)·허용 관계 트리플을 조회한다. '
         + 'graphrag_structured_query 의 entityType·property 인자를 정하기 전에 반드시 이 도구로 실제 스키마를 확인하라.',

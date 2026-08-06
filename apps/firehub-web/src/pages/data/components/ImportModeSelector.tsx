@@ -1,5 +1,6 @@
 import { AlertTriangle, KeyRound } from 'lucide-react';
 
+import { InlineBanner } from '../../../components/ui/inline-banner';
 import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
 import type { ImportMode } from '../../../types/dataImport';
 
@@ -48,10 +49,9 @@ export function ImportModeSelector({ importMode, hasPrimaryKey, onModeChange }: 
         </div>
       </RadioGroup>
       {importMode === 'REPLACE' && (
-        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle p-3 text-sm text-warning">
-          <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+        <InlineBanner icon={<AlertTriangle />}>
           <p className="text-xs">기존 데이터가 모두 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</p>
-        </div>
+        </InlineBanner>
       )}
     </div>
   );

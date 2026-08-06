@@ -49,6 +49,8 @@ class MappingServiceTest {
     // 기본 fixture: DS는 온톨로지 1에 바인딩, 온톨로지는 Incident/Building + OCCURRED_AT.
     // 속성은 dataType 축(number/date/text/미지정)별로 하나씩 두어 타입 conformance 검증을 커버한다.
     when(bindingRepository.findOntologyIdByDataset(DS)).thenReturn(Optional.of(1L));
+    // activate()가 상태 가드에서 조회하는 값 — 기본 fixture는 운영 중(active)으로 둔다.
+    when(ontologyRepository.findStatusById(1L)).thenReturn("active");
     when(ontologyRepository.findById(1L)).thenReturn(new OntologyResponse("화재조사", 1,
         List.of(
             new OntologyResponse.EntityType("Incident", "사건", "명명", "exact",
@@ -229,6 +231,16 @@ class MappingServiceTest {
   void activate_매핑없으면_400() {
     when(mappingRepository.findByDataset(DS)).thenReturn(Optional.empty());
     assertThatThrownBy(() -> service.activate(DS, 44L)).isInstanceOf(IllegalArgumentException.class);
+    verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());
+  }
+
+  @Test
+  void activate_온톨로지가_운영중이_아니면_409() {
+    // 바인딩 가드(DatasetOntologyService)와 짝을 이루는 매핑 활성화 가드 — 상태 충돌이므로 409.
+    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(
+        1L, "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}", "draft")));
+    when(ontologyRepository.findStatusById(1L)).thenReturn("archived");
+    assertThatThrownBy(() -> service.activate(DS, 44L)).isInstanceOf(IllegalStateException.class);
     verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());
   }
 }

@@ -2,6 +2,7 @@ import { AlertTriangle,Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -54,12 +55,9 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
       <div className="space-y-1.5">
         <Label>시크릿 키 (선택)</Label>
         {!isEditMode && (
-          <div className="rounded-md bg-warning-subtle border border-warning/20 p-3 flex items-start gap-2 mb-2">
-            <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
-            <p className="text-sm text-warning">
-              시크릿 키는 생성 시 한 번만 설정할 수 있습니다. 이후에는 다시 볼 수 없습니다.
-            </p>
-          </div>
+          <InlineBanner icon={<AlertTriangle />} className="mb-2">
+            시크릿 키는 생성 시 한 번만 설정할 수 있습니다. 이후에는 다시 볼 수 없습니다.
+          </InlineBanner>
         )}
         <Input
           type="password"

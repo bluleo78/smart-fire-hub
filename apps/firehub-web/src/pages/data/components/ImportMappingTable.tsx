@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowRight } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 import { Badge } from '../../../components/ui/badge';
+import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import type { ColumnMappingDto,ColumnMappingEntry } from '../../../types/dataImport';
@@ -50,15 +51,11 @@ export function ImportMappingTable({
         컬럼 매핑
       </h3>
       {hasUnmappedRequired && (
-        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle p-3 text-sm text-warning">
-          <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="font-medium">필수 필드가 매핑되지 않았습니다:</p>
-            <p className="text-xs mt-1">
-              {unmappedRequired.map((col) => col.displayName || col.columnName).join(', ')}
-            </p>
-          </div>
-        </div>
+        <InlineBanner icon={<AlertTriangle />} title="필수 필드가 매핑되지 않았습니다:">
+          <p className="text-xs">
+            {unmappedRequired.map((col) => col.displayName || col.columnName).join(', ')}
+          </p>
+        </InlineBanner>
       )}
       <div className="rounded-md border">
         <Table className="table-fixed">

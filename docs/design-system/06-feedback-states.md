@@ -275,12 +275,64 @@ import { Toaster } from "sonner";
 
 ---
 
+## E. Inline Banner
+
+**목적**: 맥락 안에서 지속되는 상태를 알린다. 토스트(일시적·전역)와 인라인 에러(필드 단위) 사이를 메운다.
+
+| 요소 | 값 |
+|------|-----|
+| 컨테이너 | `flex items-start gap-3 rounded-md border p-3 text-sm` |
+| 보더 | `border-{variant}` **실색** (알파 금지 — 아래 참조) |
+| 배경 | `bg-{variant}-subtle` |
+| 아이콘 | Lucide, 감싸는 `<span>`에 `[&>svg]:h-4 [&>svg]:w-4 mt-0.5 shrink-0 text-{variant}`, `aria-hidden="true"` (호출부는 크기 클래스를 주지 않는다 — 어떤 `ReactNode` 아이콘이든 동일하게 동작) |
+| 제목(선택) | `font-medium`, 본문과 **별개 노드** |
+| 본문 | `text-foreground` (무채색 — 채도는 아이콘·보더에만) |
+| 액션(선택) | 우측 정렬, `size="sm"`, 최대 2개 |
+| 접근성 | `role="status"` + `aria-live="polite"` |
+
+### variant
+
+| variant | 용도 |
+|---------|------|
+| `warning` | 주의를 요하는 중간 상태 (되돌릴 수 없는 작업, 일회성 노출) |
+| `info` | 정보성 안내 (표시 건수 제한, 은퇴 상태) |
+| `success` | 완료 상태의 지속적 표시 |
+| `caution` | `warning`보다 강한 주의 |
+
+### 사용 예
+
+```tsx
+<InlineBanner icon={<AlertTriangle />} title="이 토큰은 다시 볼 수 없습니다">
+  안전한 곳에 복사하여 저장하세요.
+</InlineBanner>
+
+<InlineBanner
+  variant="info"
+  icon={<Archive />}
+  actions={<Button size="sm" onClick={restore}>복귀</Button>}
+>
+  은퇴한 온톨로지입니다. 신규 바인딩은 할 수 없고, 기존 적재 데이터는 그대로 조회됩니다.
+</InlineBanner>
+```
+
+### 규칙
+
+- **보더에 알파를 쓰지 않는다.** `*-subtle` 틴트는 페이지 배경과 1.05:1 수준이라 사실상 보이지 않으므로, 배너의 경계를 만드는 것은 보더뿐이다. `border-warning/20`은 1.32:1로 SC 1.4.11(3:1)에 미달한다. 실색은 라이트 5.31:1 / 다크 9.28:1로 통과한다. 회귀 가드: `src/styles/inline-banner-gate.test.ts`에 테스트 2개가 있다.
+  1. `pages/` 하위에서 **같은 줄에** `-subtle` 배경과 알파 보더가 함께 있으면 배너 관용구로 판정한다. 단독으로 쓰인 `-subtle` 틴트(예: 단계 상태 칩)는 걸리지 않는다. 예외: `ai-insights/components/SectionPreview.tsx` (배너가 아니라 AI 리포트 섹션 미리보기의 스켈레톤 플레이스홀더).
+  2. `pages/` 하위에서 알파 보더(`border-{variant}/숫자`)는 `-subtle` 배경 동반 여부와 무관하게 **그 자체로** 판정한다 — 경계를 만드는 데 알파를 쓰는 것 자체가 금지 대상이다. 예외: 위 `SectionPreview.tsx`와 `settings/components/ChannelStatusBadge.tsx` (Badge 컴포넌트에 알파 보더를 쓴 것이지 배너가 아님).
+- **문구에 `⚠` 같은 글리프를 넣지 않는다** — 아이콘과 중복 안내가 된다.
+- **`role="alert"`(assertive)를 쓰지 않는다** — 배너는 오류가 아니라 지속 상태이며, assertive는 스크린리더의 현재 발화를 끊는다.
+- 액션 버튼에 `variant="destructive"` 실색을 쓰지 않는다 — 배너 톤과 층위가 충돌한다. 파괴적 액션은 `outline` 버튼 + `DeleteConfirmDialog` 경유.
+
+---
+
 ## 패턴 선택 가이드
 
-| 에러 유형 | 권장 패턴 |
+| 상황 | 권장 패턴 |
 |----------|----------|
 | 폼 필드 유효성 | Inline error (`text-destructive`) |
 | API 호출 실패 | `toast.error()` |
+| 맥락 안의 지속되는 상태·경고 | InlineBanner (`warning` / `info`) |
 | 위젯 렌더링 실패 | Error Boundary |
 | 페이지 로드 실패 | Full page error |
 | 데이터 없음 | Empty state (아이콘 + 메시지 + 액션) |

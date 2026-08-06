@@ -42,11 +42,12 @@ public class OntologyController {
     return ontologyService.updateOntology(request);
   }
 
-  // 온톨로지 목록(요약).
+  // 온톨로지 목록(요약). status 미지정 시 active만 — 바인딩 후보로 쓰이는 것이 이 목록의 주 용도다.
+  // 관리 화면은 ?status=all 로 전체를 조회한다.
   @GetMapping("/ontologies")
   @RequirePermission("dataset:read")
-  public List<OntologySummary> listOntologies() {
-    return ontologyService.listOntologies();
+  public List<OntologySummary> listOntologies(@RequestParam(required = false) String status) {
+    return ontologyService.listOntologies(status);
   }
 
   // id 스코프 단건 조회.
@@ -70,5 +71,13 @@ public class OntologyController {
   public OntologyResponse updateById(
       @PathVariable Long id, @RequestBody UpdateOntologyRequest request) {
     return ontologyService.updateOntology(id, request);
+  }
+
+  // 온톨로지 삭제(ADMIN 특권). 참조 중이거나 기본 온톨로지면 409.
+  @DeleteMapping("/ontology/{id}")
+  @RequirePermission("ontology:write")
+  public ResponseEntity<Void> delete(@PathVariable Long id) {
+    ontologyService.deleteOntology(id);
+    return ResponseEntity.noContent().build();
   }
 }

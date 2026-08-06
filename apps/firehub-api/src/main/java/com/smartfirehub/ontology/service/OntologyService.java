@@ -26,6 +26,10 @@ public class OntologyService {
   // ai-agent 무응답 시 서블릿 스레드 고갈 방지용 블로킹 타임아웃(getGraph 프록시 전용).
   private static final Duration BLOCK_TIMEOUT = Duration.ofSeconds(40);
 
+  // 온톨로지 생명주기 상태 전체 집합 — listOntologies(필터 검증)와 createOntology(status 검증)가
+  // 각자 다른 형태(List.contains vs 연쇄 equals)로 같은 판정을 중복하던 것을 하나로 통일했다.
+  private static final Set<String> VALID_STATUSES = Set.of("draft", "active", "archived");
+
   private final WebClient webClient;
   private final OntologyRepository ontologyRepository;
   private final AuditLogService auditLogService;
@@ -94,13 +98,63 @@ public class OntologyService {
   }
 
   // 온톨로지 목록(요약).
+  // statusParam: null 또는 미지정 → active만(바인딩 후보). "all" → 전체. 그 외는 해당 상태만.
+  // 기본값을 active로 둔 이유: 이 목록의 주 소비자가 "어디에 연결할까"를 고르는 화면이기 때문이다.
+  // 전체가 필요한 관리 화면만 명시적으로 all을 넘긴다.
+  public List<OntologySummary> listOntologies(String statusParam) {
+    String filter = (statusParam == null || statusParam.isBlank()) ? "active" : statusParam;
+    List<OntologySummary> summaries;
+    if ("all".equals(filter)) {
+      summaries = ontologyRepository.findAllSummaries((String) null);
+    } else {
+      if (!VALID_STATUSES.contains(filter)) {
+        throw new IllegalArgumentException("알 수 없는 상태입니다: " + filter);
+      }
+      summaries = ontologyRepository.findAllSummaries(filter);
+    }
+    // isDefault는 리포지토리가 모르는 서비스 판정이다 — "기본 온톨로지"의 기준(현재는 id=1)이 바뀌어도
+    // 프론트가 DEFAULT_ONTOLOGY_ID를 따로 들고 있지 않도록 여기서 계산해 채운다.
+    return summaries.stream().map(this::withDefaultFlag).toList();
+  }
+
+  private OntologySummary withDefaultFlag(OntologySummary s) {
+    return new OntologySummary(
+        s.id(), s.domain(), s.schemaVersion(), s.status(), s.entityCount(), s.datasetCount(),
+        s.updatedAt(), s.id() == DEFAULT_ONTOLOGY_ID);
+  }
+
+  // 하위호환 — 무인자 호출은 기본값(active)과 동일하게 동작한다.
+  // 주의: 이 서비스 메서드의 "무인자"는 active-only를 뜻하고, OntologyRepository의 무인자
+  // findAllSummaries()는 전체를 뜻한다 — 계층별로 무인자 기본값의 의미가 다르니 혼동하지 말 것.
   public List<OntologySummary> listOntologies() {
-    return ontologyRepository.findAllSummaries();
+    return listOntologies(null);
   }
 
   // 신규 온톨로지 생성 — 검증(IllegalArgumentException→400) 후 삽입, 새 id 반환.
   public long createOntology(CreateOntologyRequest req) {
-    validateCore(req.domain(), req.entities(), req.relations());
+    // 오타 등 알 수 없는 status 문자열이 통과하면 "active".equals(status)가 false가 되어 완전성
+    // 게이트를 조용히 건너뛰고, DB CHECK(status) 제약에서 500으로 터진다 — 여기서 400으로 막는다.
+    // VALID_STATUSES는 Set.of() 기반이라 contains(null)이 NPE를 던진다 — 이전 코드(String.equals 연쇄)는
+    // null을 안전하게 "알 수 없는 상태"로 처리했으므로, 그 동작을 유지하려면 null을 먼저 걸러야 한다.
+    if (req.status() == null || !VALID_STATUSES.contains(req.status())) {
+      throw new IllegalArgumentException("알 수 없는 상태입니다: " + req.status());
+    }
+    // 생성 시점에 archived를 지정하는 것은 의미가 없다 — 은퇴는 운영을 마친 뒤의 상태 전이다.
+    if ("archived".equals(req.status())) {
+      throw new IllegalArgumentException("archived 상태로는 온톨로지를 생성할 수 없습니다.");
+    }
+    // active로 만들 때만 완전성(엔티티 ≥1)까지 본다. draft는 빈 껍데기 생성을 허용한다.
+    validateCore(req.domain(), req.entities(), req.relations(), "active".equals(req.status()));
+
+    // 도메인 중복 사전 검사 — 검사 없이 부분 유니크 인덱스(V79)까지 내려가면 DataIntegrityViolationException이
+    // "Data integrity violation: duplicate entry" 라는 영문 DB 문구로 번역돼(#GlobalExceptionHandler)
+    // 생성 다이얼로그 도메인 필드 아래에 그대로 노출된다. 여기서 한국어 409로 먼저 막는다.
+    // 인덱스가 archived를 제외하므로 이 검사도 archived를 빼고 살아있는 것만 본다 — 그래야 은퇴한 온톨로지와
+    // 같은 이름의 후속 온톨로지를 만들 수 있다는 전제가 여기서도 깨지지 않는다.
+    if (ontologyRepository.existsLiveDomain(req.domain())) {
+      throw new IllegalStateException("이미 같은 도메인의 온톨로지가 있습니다: " + req.domain());
+    }
+
     long id = ontologyRepository.createOntology(req);
 
     // 감사 로그 — 신규 생성된 온톨로지의 실제 id를 entityId로 기록한다(레거시처럼 "1" 고정 아님).
@@ -127,10 +181,56 @@ public class OntologyService {
     return id;
   }
 
-  // id 스코프 편집 — 검증 + 낙관적 잠금(버전 불일치 IllegalStateException→409).
+  // 문서 적재 파이프라인이 단수 GET /ontology(하드코딩 findById(1L), 상태 미검사)로 의존하는 기본 온톨로지.
+  // 삭제뿐 아니라 은퇴도 막아야 "id=1은 항상 active"가 가정이 아닌 강제가 된다.
+  private static final long DEFAULT_ONTOLOGY_ID = 1L;
+
+  // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.
+  // 거부는 IllegalStateException(→409) — 잘못된 입력(400)이 아니라 현재 상태와의 충돌이다.
+  private void assertTransitionAllowed(long ontologyId, String from, String to) {
+    if (to == null || to.equals(from)) {
+      return; // 상태 변경 요청 아님
+    }
+    if ("draft".equals(to)) {
+      throw new IllegalStateException(
+          "이미 사용을 시작한 온톨로지는 초안으로 되돌릴 수 없습니다. 은퇴(archived)를 사용하세요.");
+    }
+    if ("archived".equals(to)) {
+      if (!"active".equals(from)) {
+        throw new IllegalStateException("운영 중인 온톨로지만 은퇴시킬 수 있습니다. 현재 상태: " + from);
+      }
+      if (ontologyId == DEFAULT_ONTOLOGY_ID) {
+        throw new IllegalStateException("기본 온톨로지는 은퇴시킬 수 없습니다. 문서 적재가 이 온톨로지에 의존합니다.");
+      }
+      return;
+    }
+    if ("active".equals(to)) {
+      return; // draft→active(활성화), archived→active(복귀) 모두 허용
+    }
+    throw new IllegalArgumentException("알 수 없는 상태입니다: " + to);
+  }
+
+  // id 스코프 편집 — 상태 전이 판정 + 검증 + 낙관적 잠금(버전 불일치 IllegalStateException→409).
   public OntologyResponse updateOntology(long ontologyId, UpdateOntologyRequest req) {
-    validate(req);
+    String current = ontologyRepository.findStatusById(ontologyId);
+    assertTransitionAllowed(ontologyId, current, req.status());
+
+    // 은퇴한 온톨로지의 스키마는 고칠 수 없다 — 그 스키마로 이미 적재된 데이터와 어긋나기 때문.
+    // 고쳐야 한다면 먼저 복귀(archived→active)시킨다. 복귀 요청 자체는 통과시켜야 하므로
+    // "상태 변경이 없는(=순수 스키마 편집) 요청"만 막는다.
+    boolean statusChanging = req.status() != null && !req.status().equals(current);
+    if ("archived".equals(current) && !statusChanging) {
+      throw new IllegalStateException("은퇴한 온톨로지는 편집할 수 없습니다. 먼저 복귀시키세요.");
+    }
+
+    // 결과 상태가 active면 완전성까지 검사한다 — 활성화·복귀가 완전성 게이트다.
+    String resulting = req.status() == null ? current : req.status();
+    validate(req, "active".equals(resulting));
+
     ontologyRepository.updateOntology(ontologyId, req);
+    if (statusChanging) {
+      ontologyRepository.updateStatus(ontologyId, req.status());
+    }
 
     // 감사 로그 — 편집 대상 온톨로지의 실제 id(ontologyId)를 entityId로 기록한다.
     var auth = SecurityContextHolder.getContext().getAuthentication();
@@ -156,6 +256,46 @@ public class OntologyService {
     return ontologyRepository.findById(ontologyId);
   }
 
+  // 온톨로지 삭제. 거부 사유는 두 가지뿐이다 — 참조 중이거나, 기본 온톨로지이거나.
+  // 상태는 사유가 아니다: 참조 없는 active를 못 지우면 잘못 활성화한 온톨로지를 회수할 수 없다.
+  // 참조가 있어 지울 수 없는 것은 은퇴(archived)로 물러나게 한다 — 삭제와 은퇴가 짝을 이뤄야
+  // 막다른 길이 생기지 않는다.
+  public void deleteOntology(long ontologyId) {
+    if (ontologyId == DEFAULT_ONTOLOGY_ID) {
+      throw new IllegalStateException("기본 온톨로지는 삭제할 수 없습니다. 문서 적재가 이 온톨로지에 의존합니다.");
+    }
+    // 존재 확인 — 없으면 400(IllegalArgumentException)으로 떨어진다.
+    ontologyRepository.findStatusById(ontologyId);
+
+    int references = ontologyRepository.countReferences(ontologyId);
+    if (references > 0) {
+      throw new IllegalStateException(
+          references + "개 데이터셋이 사용 중입니다. 은퇴(archived)를 사용하세요.");
+    }
+    ontologyRepository.deleteOntology(ontologyId);
+
+    // 감사 로그 — 삭제된 온톨로지의 id를 entityId로 기록한다.
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && auth.getPrincipal() instanceof Long userId) {
+      userRepository
+          .findById(userId)
+          .ifPresent(
+              u ->
+                  auditLogService.log(
+                      userId,
+                      u.username(),
+                      "ONTOLOGY_DELETE",
+                      "ontology",
+                      String.valueOf(ontologyId),
+                      "지식 모델 삭제 — ontologyId=" + ontologyId,
+                      null,
+                      null,
+                      "SUCCESS",
+                      null,
+                      null));
+    }
+  }
+
   // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
   // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
   // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
@@ -163,14 +303,20 @@ public class OntologyService {
       Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion");
 
   // 온톨로지 본문 공통 검증(생성/편집 공용) — domain, entity 타입, resolution, property, relation 참조 무결성.
+  // requireComplete=false(draft)면 "엔티티 최소 1개" 같은 완전성 규칙을 건너뛰고 형식 규칙만 본다.
+  // draft는 정의상 미완성이고, 완전성은 active로 전이할 때 게이트로 검사한다.
   private void validateCore(
       String domain,
       List<OntologyResponse.EntityType> entities,
-      List<OntologyResponse.Triple> relations) {
+      List<OntologyResponse.Triple> relations,
+      boolean requireComplete) {
     if (domain == null || domain.isBlank()) {
       throw new IllegalArgumentException("domain은 비어 있을 수 없습니다.");
     }
-    if (entities == null || entities.isEmpty()) {
+    if (entities == null) {
+      throw new IllegalArgumentException("entities는 null일 수 없습니다.");
+    }
+    if (requireComplete && entities.isEmpty()) {
       throw new IllegalArgumentException("엔티티 타입은 최소 1개 이상이어야 합니다.");
     }
     if (relations == null) {
@@ -251,7 +397,13 @@ public class OntologyService {
 
   // 편집 페이로드 검증 — DB CHECK/UNIQUE 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
   private void validate(UpdateOntologyRequest req) {
-    validateCore(req.domain(), req.entities(), req.relations());
+    validate(req, true);
+  }
+
+  // requireComplete=false는 draft를 유지한 채(활성화 없이) 스키마만 편집하는 경로용 — 완전성 게이트 없이
+  // 형식 검증만 적용한다. id 스코프 updateOntology가 결과 상태에 따라 이 플래그를 결정한다.
+  private void validate(UpdateOntologyRequest req, boolean requireComplete) {
+    validateCore(req.domain(), req.entities(), req.relations(), requireComplete);
 
     Set<String> seenTypes = new HashSet<>();
     for (var e : req.entities()) {

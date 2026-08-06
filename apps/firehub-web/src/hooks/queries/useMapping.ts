@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 
 import { mappingApi } from '@/api/mapping';
-import { ontologyApi } from '@/api/ontology';
 import type { MappingResponse, MappingSpec } from '@/types/mapping';
+
+// 온톨로지 관심사는 useOntology.ts가 소유한다. 기존 import 경로를 깨지 않도록 여기서 다시 내보낸다.
+export { useOntologyById, useOntologyList } from './useOntology';
 
 /**
  * 데이터셋 매핑 조회.
@@ -33,25 +35,6 @@ export function useBinding(datasetId: number) {
     queryKey: ['datasets', datasetId, 'ontology-binding'],
     queryFn: () => mappingApi.getBinding(datasetId).then((r) => r.data),
     enabled: !!datasetId,
-  });
-}
-
-/** 바인딩 선택지용 온톨로지 목록. 거의 변하지 않으므로 캐시를 오래 유지한다. */
-export function useOntologyList() {
-  return useQuery({
-    queryKey: ['ontologies'],
-    queryFn: () => ontologyApi.listOntologies().then((r) => r.data),
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-/** 바인딩된 온톨로지 스키마. 표 데이터셋은 id=1 고정이 아니므로 반드시 by-id로 읽는다. */
-export function useOntologyById(ontologyId: number | null | undefined) {
-  return useQuery({
-    queryKey: ['ontology', ontologyId],
-    queryFn: () => ontologyApi.getOntologyById(ontologyId as number).then((r) => r.data),
-    enabled: ontologyId != null,
-    staleTime: 5 * 60 * 1000,
   });
 }
 

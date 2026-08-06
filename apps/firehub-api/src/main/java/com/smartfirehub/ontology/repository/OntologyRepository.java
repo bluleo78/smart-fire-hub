@@ -33,6 +33,21 @@ public class OntologyRepository {
   private static final Field<Long> O_ID = field(name("ontology", "id"), Long.class);
   private static final Field<Integer> O_SCHEMA_VERSION = field(name("ontology", "schema_version"), Integer.class);
   private static final Field<OffsetDateTime> O_UPDATED_AT = field(name("ontology", "updated_at"), OffsetDateTime.class);
+  private static final Field<String> O_STATUS = field(name("ontology", "status"), String.class);
+
+  // 목록 요약의 카운트 조인 대상. dataset_ontology는 바인딩된 데이터셋 수를 센다.
+  private static final Table<?> DATASET_ONTOLOGY = table(name("dataset_ontology"));
+  private static final Field<Long> DO_ONTOLOGY_ID =
+      field(name("dataset_ontology", "ontology_id"), Long.class);
+
+  // 삭제 가능 여부 판정에 쓰는 또 다른 참조원 — 매핑(dataset_mapping)도 이 온톨로지에 묶여 있으면 삭제 불가.
+  private static final Table<?> DATASET_MAPPING = table(name("dataset_mapping"));
+  private static final Field<Long> DM_ONTOLOGY_ID =
+      field(name("dataset_mapping", "ontology_id"), Long.class);
+  private static final Field<Long> DO_DATASET_ID =
+      field(name("dataset_ontology", "dataset_id"), Long.class);
+  private static final Field<Long> DM_DATASET_ID =
+      field(name("dataset_mapping", "dataset_id"), Long.class);
 
   private static final Table<?> ENTITY_TYPE = table(name("ontology_entity_type"));
   private static final Field<Long> ET_ID = field(name("ontology_entity_type", "id"), Long.class);
@@ -105,12 +120,83 @@ public class OntologyRepository {
     return findById(1L);
   }
 
-  // 온톨로지 목록(요약). id 순.
-  public List<OntologySummary> findAllSummaries() {
-    return dsl.select(O_ID, O_DOMAIN, O_SCHEMA_VERSION)
+  // 온톨로지 목록(요약). id 순. statusFilter가 null이면 전체, 아니면 해당 상태만.
+  // 엔티티 수와 바인딩된 데이터셋 수는 상관 서브쿼리로 센다 — 온톨로지 행 수가 한 자릿수 규모라
+  // 조인 폭발 걱정이 없고, GROUP BY보다 읽기 쉽다.
+  public List<OntologySummary> findAllSummaries(String statusFilter) {
+    var entityCount =
+        field(
+            selectCount().from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(O_ID)));
+    var datasetCount =
+        field(
+            selectCount().from(DATASET_ONTOLOGY).where(DO_ONTOLOGY_ID.eq(O_ID)));
+
+    var condition = statusFilter == null ? noCondition() : O_STATUS.eq(statusFilter);
+
+    return dsl
+        .select(O_ID, O_DOMAIN, O_SCHEMA_VERSION, O_STATUS, entityCount, datasetCount, O_UPDATED_AT)
         .from(ONTOLOGY)
+        .where(condition)
         .orderBy(O_ID)
-        .fetch(r -> new OntologySummary(r.get(O_ID), r.get(O_DOMAIN), r.get(O_SCHEMA_VERSION)));
+        .fetch(
+            r ->
+                new OntologySummary(
+                    r.get(O_ID),
+                    r.get(O_DOMAIN),
+                    r.get(O_SCHEMA_VERSION),
+                    r.get(O_STATUS),
+                    r.get(entityCount),
+                    r.get(datasetCount),
+                    r.get(O_UPDATED_AT),
+                    false)); // isDefault는 리포지토리가 판정하지 않는다 — OntologyService가 채워 넣는다.
+  }
+
+  // 하위호환 — 인자 없는 호출은 전체 목록.
+  public List<OntologySummary> findAllSummaries() {
+    return findAllSummaries(null);
+  }
+
+  // 살아있는(archived 아님) 온톨로지 중 같은 도메인이 이미 있는지 — 생성 시 사전 중복 검사용.
+  // V79 부분 유니크 인덱스(status <> 'archived')와 정합해야 한다 — archived는 이름을 선점하지 않으므로
+  // 여기서도 제외해야, 은퇴한 온톨로지와 같은 이름의 후속 온톨로지를 만들 수 있다는 전제가 깨지지 않는다.
+  public boolean existsLiveDomain(String domain) {
+    return dsl.fetchExists(
+        dsl.selectOne().from(ONTOLOGY).where(O_DOMAIN.eq(domain)).and(O_STATUS.ne("archived")));
+  }
+
+  // 상태만 경량 조회 — 바인딩/활성화 가드가 본문 없이 상태만 확인할 때 쓴다.
+  public String findStatusById(long ontologyId) {
+    var record = dsl.select(O_STATUS).from(ONTOLOGY).where(O_ID.eq(ontologyId)).fetchOne();
+    if (record == null) {
+      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
+    }
+    return record.get(O_STATUS);
+  }
+
+  // 상태만 전이시킨다. 스키마 내용을 건드리지 않으므로 schema_version은 올리지 않는다
+  // (버전은 "스키마가 몇 번 바뀌었나"를 뜻하고, 적재 노드의 schemaVersion 스탬프와 짝을 이룬다).
+  public void updateStatus(long ontologyId, String status) {
+    dsl.update(ONTOLOGY)
+        .set(O_STATUS, status)
+        .set(O_UPDATED_AT, currentOffsetDateTime())
+        .where(O_ID.eq(ontologyId))
+        .execute();
+  }
+
+  // 이 온톨로지를 참조하는 데이터셋 수(distinct) — 바인딩(dataset_ontology) ∪ 매핑(dataset_mapping).
+  // 삭제 가능 여부의 유일한 판정 근거다(상태는 판정에 쓰지 않는다).
+  // 단순 합산이 아니라 dataset_id 기준 UNION(중복 제거)이어야 한다 — MappingService.save가 ontologyId를
+  // 바인딩에서 파생시키므로, 매핑이 있는 데이터셋은 반드시 같은 dataset_ontology 행도 함께 있다. 합산하면
+  // 매핑까지 만든 데이터셋 1개가 2로 집계돼 관리 다이얼로그의 datasetCount(바인딩만)와 어긋난다.
+  public int countReferences(long ontologyId) {
+    return dsl.fetchCount(
+        dsl.select(DO_DATASET_ID).from(DATASET_ONTOLOGY).where(DO_ONTOLOGY_ID.eq(ontologyId))
+            .union(dsl.select(DM_DATASET_ID).from(DATASET_MAPPING).where(DM_ONTOLOGY_ID.eq(ontologyId))));
+  }
+
+  // 온톨로지 삭제. entity_type/relation/property는 ON DELETE CASCADE로 함께 지워진다.
+  public void deleteOntology(long ontologyId) {
+    dsl.deleteFrom(ONTOLOGY).where(O_ID.eq(ontologyId)).execute();
   }
 
   // 온톨로지 존재 여부(바인딩 검증용).
@@ -142,6 +228,7 @@ public class OntologyRepository {
           tx.insertInto(ONTOLOGY)
               .set(O_DOMAIN, req.domain())
               .set(O_SCHEMA_VERSION, 1)
+              .set(O_STATUS, req.status())
               .set(O_UPDATED_AT, currentOffsetDateTime())
               .returning(O_ID)
               .fetchOne()

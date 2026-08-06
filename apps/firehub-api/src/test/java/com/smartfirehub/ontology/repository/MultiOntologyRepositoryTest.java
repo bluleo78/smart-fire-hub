@@ -88,4 +88,63 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
     List<OntologySummary> all = repository.findAllSummaries();
     assertThat(all).extracting(OntologySummary::id).contains(1L, createdId);
   }
+
+  @Test
+  void 목록_요약은_상태와_엔티티_개수와_수정일을_포함한다() {
+    CreateOntologyRequest req =
+        new CreateOntologyRequest(
+            "V79 요약 필드 테스트",
+            List.of(
+                new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of()),
+                new OntologyResponse.EntityType("Beta", "나", "표기 그대로", "embedding", List.of())),
+            List.of(),
+            "draft");
+    createdId = repository.createOntology(req);
+
+    var summary =
+        repository.findAllSummaries(null).stream()
+            .filter(s -> s.id().equals(createdId))
+            .findFirst()
+            .orElseThrow();
+
+    assertThat(summary.status()).isEqualTo("draft");
+    assertThat(summary.entityCount()).isEqualTo(2);
+    // 바인딩한 적이 없으므로 0. dataset_ontology 조인이 빠지면 여기서 걸린다.
+    assertThat(summary.datasetCount()).isZero();
+    assertThat(summary.updatedAt()).isNotNull();
+  }
+
+  @Test
+  void 목록_요약은_상태로_필터링된다() {
+    CreateOntologyRequest req =
+        new CreateOntologyRequest(
+            "V79 상태 필터 테스트",
+            List.of(new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of())),
+            List.of(),
+            "draft");
+    createdId = repository.createOntology(req);
+
+    // active 필터에는 잡히지 않고
+    assertThat(repository.findAllSummaries("active"))
+        .extracting(com.smartfirehub.ontology.dto.OntologySummary::id)
+        .doesNotContain(createdId);
+    // draft 필터에는 잡힌다
+    assertThat(repository.findAllSummaries("draft"))
+        .extracting(com.smartfirehub.ontology.dto.OntologySummary::id)
+        .contains(createdId);
+  }
+
+  @Test
+  void findStatusById는_저장된_상태를_반환한다() {
+    CreateOntologyRequest req =
+        new CreateOntologyRequest(
+            "V79 상태 조회 테스트",
+            List.of(new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of())),
+            List.of(),
+            "archived");
+    createdId = repository.createOntology(req);
+
+    assertThat(repository.findStatusById(createdId)).isEqualTo("archived");
+    assertThat(repository.findStatusById(1L)).isEqualTo("active");
+  }
 }

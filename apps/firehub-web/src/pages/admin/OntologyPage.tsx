@@ -1,4 +1,4 @@
-import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, Pencil } from 'lucide-react';
+import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, Pencil, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -6,13 +6,18 @@ import { Button } from '@/components/ui/button';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useOntologyGraph, useOntologySchema } from '@/hooks/queries/useOntology';
+import { useOntologyById, useOntologyGraph, useOntologyList, useOntologySchema } from '@/hooks/queries/useOntology';
 import { useAuth } from '@/hooks/useAuth';
 import type { GraphNode } from '@/types/ontology';
 
 import InstanceGraph from './components/InstanceGraph';
 import NodeDetailDrawer from './components/NodeDetailDrawer';
+import OntologyCreateDialog from './components/OntologyCreateDialog';
 import OntologyEditDialog from './components/OntologyEditDialog';
+import OntologyEmptyState from './components/OntologyEmptyState';
+import OntologyManageDialog from './components/OntologyManageDialog';
+import OntologySelect from './components/OntologySelect';
+import OntologyStatusBanner from './components/OntologyStatusBanner';
 import SchemaGraph from './components/SchemaGraph';
 import TypeFilterPanel from './components/TypeFilterPanel';
 
@@ -36,7 +41,7 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
 
 // 온톨로지 시각화 페이지 — 풀하이트 에디터 셸(툴바 + 좌측 타입 필터 + 캔버스 + 리사이즈 인스펙터), 읽기 전용.
 export default function OntologyPage() {
-  const { data: schema, isLoading: isSchemaLoading, isError: isSchemaError, refetch: refetchSchema } = useOntologySchema();
+  const { data: schema } = useOntologySchema();
   const { data: graph, isLoading: isGraphLoading, isError, refetch: refetchGraph } = useOntologyGraph();
 
   // 탭 상태는 URL(:view)에서 파생 — 사이드바 '그래프 탐색'(explore)/'지식 모델'(model) 항목과 하이라이트를 동기화한다.
@@ -57,6 +62,34 @@ export default function OntologyPage() {
   // 닫는 순간 리마운트되면 포커스 복귀 이펙트가 끊겨 포커스가 <body>로 유실된다(#328).
   const [editSession, setEditSession] = useState(0);
   const { isAdmin } = useAuth();
+
+  // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 id=1 기반이므로
+  // 이 선택은 스키마 탭에만 영향을 준다 — 여기까지 번지면 타입 필터가 조용히 어긋난다.
+  const [selectedOntologyId, setSelectedOntologyId] = useState<number | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const { data: ontologies } = useOntologyList('all');
+  // 선택 중이던 온톨로지가 관리 다이얼로그에서 삭제되면 목록에서 사라진다 — selectedOntologyId가
+  // 죽은 id를 그대로 들고 있으면 useOntologyById가 계속 404를 내 캔버스가 GraphError로 굳는다.
+  // setState+effect 대신 파생 계산으로 처리한다: 객체를 먼저 찾고 그 id를 파생시키면, 목록에 없는
+  // selectedOntologyId(삭제됨/미선택)는 find가 자연히 undefined를 반환해 폴백(첫 활성/첫 항목)으로
+  // 넘어간다 — 존재 여부를 별도로 추적할 필요가 없다.
+  const selectedOntology =
+    ontologies?.find((o) => o.id === selectedOntologyId) ??
+    ontologies?.find((o) => o.status === 'active') ??
+    ontologies?.[0] ??
+    null;
+  const effectiveOntologyId = selectedOntology?.id ?? null;
+
+  const {
+    data: selectedSchema,
+    isError: isSelectedSchemaError,
+    refetch: refetchSelectedSchema,
+  } = useOntologyById(effectiveOntologyId);
+
+  // 편집 가능 여부 — 편집 버튼과 빈 상태 CTA가 동일 조건을 각각 조합하던 것을 하나로 합쳤다.
+  // archived는 서버가 409로 거부하므로 애초에 진입점을 보여주지 않는다.
+  const canEdit = isAdmin && selectedOntology?.status !== 'archived';
 
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
 
@@ -106,9 +139,27 @@ export default function OntologyPage() {
           <TabsTrigger value="instance">그래프 탐색</TabsTrigger>
           <TabsTrigger value="schema">지식 모델</TabsTrigger>
         </TabsList>
-        <div className="ml-auto flex items-center gap-2">
-          {/* 지식 모델 편집(ADMIN 전용) — 스키마 탭에서만 노출. 서버도 ontology:write(ADMIN)로 재검증한다. */}
-          {tab === 'schema' && isAdmin && schema && (
+        {/* 온톨로지 선택기(고정 220px)까지 들어오며 항목이 늘었다 — 이 그룹도 outer 툴바처럼
+            max-sm에서 줄바꿈해야 320px 리플로우(#345)가 깨지지 않는다. */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:flex-nowrap">
+          {/* 온톨로지 선택기 — 스키마 탭 전용. 비-ADMIN도 볼 수 있지만 관리 진입점은 없다. */}
+          {tab === 'schema' && ontologies && ontologies.length > 0 && (
+            <OntologySelect
+              ontologies={ontologies}
+              value={effectiveOntologyId}
+              onChange={setSelectedOntologyId}
+              onManage={isAdmin ? () => setManageOpen(true) : undefined}
+            />
+          )}
+          {tab === 'schema' && isAdmin && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" />
+              새 온톨로지
+            </Button>
+          )}
+          {/* 지식 모델 편집(ADMIN 전용) — 스키마 탭에서만 노출. 서버도 ontology:write(ADMIN)로 재검증한다.
+              편집은 은퇴하지 않은 온톨로지에만 — archived는 서버가 409로 거부한다. */}
+          {tab === 'schema' && canEdit && selectedSchema && (
             <Button
               variant="outline"
               size="sm"
@@ -116,8 +167,10 @@ export default function OntologyPage() {
               // 편집 진입 시 최신 스키마를 먼저 확보한다(#301) — staleTime 5분 때문에 리마운트만으로는
               // 재조회가 일어나지 않아, 낡은 schemaVersion으로 편집을 시작하면 저장이 곧바로 409가 된다.
               // 재조회가 끝난 뒤 열어야 다이얼로그가 최신 원본으로 초기화된다(실패해도 캐시본으로 진행).
+              // 편집 대상은 선택된 온톨로지(selectedSchema)이므로 재조회도 그 쿼리를 겨냥한다 —
+              // 여기서 bare useOntologySchema(id=1)를 refetch하면 다른 온톨로지 편집 시 아무 효과가 없다.
               onClick={() =>
-                void refetchSchema().finally(() => {
+                void refetchSelectedSchema().finally(() => {
                   setEditSession((n) => n + 1);
                   setEditOpen(true);
                 })
@@ -149,9 +202,12 @@ export default function OntologyPage() {
 
       {/* 본문 — [좌측 타입 필터] · [그래프 캔버스 + 인스펙터]. */}
       <div className="flex min-h-0 flex-1">
-        {/* 좌측 타입 필터 패널 — resolution 그룹핑 + 개수 + 토글 필터(접기 가능). */}
+        {/* 좌측 타입 필터 패널 — resolution 그룹핑 + 개수 + 토글 필터(접기 가능).
+            스키마 탭에서는 캔버스(selectedSchema)와 같은 온톨로지의 타입을 보여줘야 한다 — 그렇지 않으면
+            선택된 온톨로지가 id=1이 아닐 때 캔버스와 필터 패널이 서로 다른 타입 어휘를 나란히 보여주게 된다.
+            인스턴스 탭은 여전히 bare schema(id=1) — Neo4j 적재 그래프가 그 기반이라 건드리지 않는다. */}
         <TypeFilterPanel
-          schema={schema}
+          schema={tab === 'schema' ? selectedSchema : schema}
           graph={graph}
           activeTypes={activeTypes}
           onToggle={toggleType}
@@ -164,12 +220,31 @@ export default function OntologyPage() {
           {/* min-w-0: flex 기본 min-width:auto 때문에 그래프가 안 줄어들어 인스펙터가 밖으로 잘리는 것을 막는다. */}
           <div className="relative min-w-0 flex-1">
             <TabsContent value="schema" className="m-0 h-full">
-              {isSchemaError ? (
-                <GraphError message="온톨로지를 불러오지 못했습니다." onRetry={() => refetchSchema()} />
-              ) : isSchemaLoading || !schema ? (
+              {isSelectedSchemaError ? (
+                <GraphError message="온톨로지를 불러오지 못했습니다." onRetry={() => refetchSelectedSchema()} />
+              ) : !selectedSchema || !selectedOntology ? (
                 <GraphLoading />
               ) : (
-                <SchemaGraph schema={schema} onTypeClick={drillDown} />
+                <div className="flex h-full flex-col p-3">
+                  {/* 비-active 상태 안내 — active면 null을 반환해 아무것도 차지하지 않는다. */}
+                  <OntologyStatusBanner ontology={selectedOntology} schema={selectedSchema} />
+                  <div className="min-h-0 flex-1">
+                    {selectedSchema.entities.length === 0 ? (
+                      <OntologyEmptyState
+                        onDefine={
+                          canEdit
+                            ? () => {
+                                setEditSession((n) => n + 1);
+                                setEditOpen(true);
+                              }
+                            : undefined
+                        }
+                      />
+                    ) : (
+                      <SchemaGraph schema={selectedSchema} onTypeClick={drillDown} />
+                    )}
+                  </div>
+                </div>
               )}
             </TabsContent>
             <TabsContent value="instance" className="m-0 h-full">
@@ -205,14 +280,29 @@ export default function OntologyPage() {
 
       {/* key: 열릴 때만 증가하는 세션 번호로 리마운트해 폼 state를 최신 schema로 새로 시작한다
           (useEffect 동기화 대신). 닫힘 시에는 key가 그대로여야 포커스 복귀가 살아 있다(#328). */}
-      {schema && (
+      {selectedSchema && effectiveOntologyId != null && (
         <OntologyEditDialog
           key={editSession}
-          schema={schema}
+          schema={selectedSchema}
+          ontologyId={effectiveOntologyId}
           open={editOpen}
           onOpenChange={setEditOpen}
         />
       )}
+
+      {/* 생성 성공 시 새 온톨로지를 곧바로 선택 상태로 만든다 — 사용자가 다시 찾아 고르지 않아도 되게. */}
+      <OntologyCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(id) => setSelectedOntologyId(id)}
+      />
+
+      {/* 관리 다이얼로그 — 행 클릭 시 해당 온톨로지를 선택 상태로 만들고 닫는다. */}
+      <OntologyManageDialog
+        open={manageOpen}
+        onOpenChange={setManageOpen}
+        onSelect={(id) => setSelectedOntologyId(id)}
+      />
     </Tabs>
   );
 }

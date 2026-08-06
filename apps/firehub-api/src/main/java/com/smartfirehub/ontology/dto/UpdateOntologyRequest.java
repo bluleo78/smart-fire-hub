@@ -10,20 +10,33 @@ import java.util.List;
 // OntologyRepository가 "이름이 바뀐 기존 행"을 매칭해 entity_type_id를 보존(UPDATE)할지, 새 항목으로
 // 볼지(INSERT) 판단하는 데 쓰인다(리포지토리의 매칭 기반 UPDATE/INSERT/DELETE 참조). Neo4j는 이제
 // entity_type_id 기반 key를 쓰므로 이 힌트와 무관하게 리네임의 영향을 받지 않는다.
+// status: null이면 "상태를 바꾸지 않음"(스키마만 편집). 값이 있으면 상태 전이를 함께 요청한다.
+// 전이 허용 여부는 OntologyService가 현재 상태와 대조해 판정한다.
 public record UpdateOntologyRequest(
     String domain,
     int schemaVersion,
     List<OntologyResponse.EntityType> entities,
     List<OntologyResponse.Triple> relations,
-    List<UpdateOntologyRequest.TypeRename> renames) {
+    List<UpdateOntologyRequest.TypeRename> renames,
+    String status) {
 
-  // 5-5 이전 호출부(4-인자) 하위호환 — renames 생략 시 빈 목록.
+  // 5-5 이전 호출부(4-인자) 하위호환 — renames 생략 시 빈 목록, 상태 변경 없음.
   public UpdateOntologyRequest(
       String domain,
       int schemaVersion,
       List<OntologyResponse.EntityType> entities,
       List<OntologyResponse.Triple> relations) {
-    this(domain, schemaVersion, entities, relations, List.of());
+    this(domain, schemaVersion, entities, relations, List.of(), null);
+  }
+
+  // status 도입 이전 호출부(5-인자) 하위호환 — 상태 변경 없음.
+  public UpdateOntologyRequest(
+      String domain,
+      int schemaVersion,
+      List<OntologyResponse.EntityType> entities,
+      List<OntologyResponse.Triple> relations,
+      List<UpdateOntologyRequest.TypeRename> renames) {
+    this(domain, schemaVersion, entities, relations, renames, null);
   }
 
   // renames가 null(구버전 클라이언트, 또는 JSON에 필드 자체가 없는 경우)이면 빈 목록으로 정규화.

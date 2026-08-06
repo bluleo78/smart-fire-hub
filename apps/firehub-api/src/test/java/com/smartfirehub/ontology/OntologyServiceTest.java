@@ -505,6 +505,17 @@ class OntologyServiceTest {
     verify(repository).createOntology(any());
   }
 
+  // 코드리뷰 결함 #1: 사전 검사가 리포지토리 existsLiveDomain을 거쳐 IllegalStateException(→409)으로
+  // 막는지 확인한다. 사전 검사 없이 INSERT까지 가면 DB 제약 위반이 영문 문구로 새어나간다.
+  @Test
+  void createOntology_는_도메인_중복이면_409를_던지고_INSERT를_시도하지_않는다() {
+    when(repository.existsLiveDomain("판매")).thenReturn(true);
+    assertThatThrownBy(() -> service.createOntology(validCreate()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("이미 같은 도메인의 온톨로지가 있습니다");
+    verify(repository, never()).createOntology(any());
+  }
+
   // 도메인 공백은 IllegalArgumentException(→400)이며 리포지토리를 호출하지 않는다.
   @Test
   void createOntology_도메인_공백이면_거부하고_리포지토리_미호출() {
@@ -515,6 +526,96 @@ class OntologyServiceTest {
             List.of());
     assertThatThrownBy(() -> service.createOntology(bad))
         .isInstanceOf(IllegalArgumentException.class);
+    verify(repository, never()).createOntology(any());
+  }
+
+  // draft로 생성할 때는 엔티티가 0개여도 통과해야 한다 — UI가 "도메인명만 받아 빈 껍데기를 만들고
+  // 편집기로 채우는" 흐름을 쓰기 때문. 완전성은 활성화 시점에 검사한다.
+  @Test
+  void createOntology_는_draft면_엔티티_0개를_허용한다() {
+    when(repository.createOntology(any())).thenReturn(42L);
+    var empty =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "빈 초안 도메인", List.of(), List.of(), "draft");
+
+    long id = service.createOntology(empty);
+
+    assertThat(id).isEqualTo(42L);
+    verify(repository).createOntology(any());
+  }
+
+  // active로 생성할 때는 기존 규칙 그대로 — 엔티티 최소 1개.
+  @Test
+  void createOntology_는_active면_엔티티_0개를_거부한다() {
+    var empty =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "빈 활성 도메인", List.of(), List.of(), "active");
+
+    assertThatThrownBy(() -> service.createOntology(empty))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("엔티티 타입은 최소 1개");
+    verify(repository, never()).createOntology(any());
+  }
+
+  // 형식 검증은 draft에도 적용된다 — 잘못된 resolution은 초안이라도 저장하면 안 된다.
+  @Test
+  void createOntology_는_draft여도_잘못된_resolution을_거부한다() {
+    var bad =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "잘못된 초안 도메인",
+            List.of(new OntologyResponse.EntityType("Incident", "설명", "명명", "invalid", List.of())),
+            List.of(),
+            "draft");
+
+    assertThatThrownBy(() -> service.createOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("resolution");
+    verify(repository, never()).createOntology(any());
+  }
+
+  // archived 상태로는 생성할 수 없다 — 은퇴는 운영을 마친 것에 대한 조치이지 생성 시점의 선택이 아니다.
+  @Test
+  void createOntology_는_archived_생성을_거부한다() {
+    var archived =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "은퇴 생성 시도 도메인",
+            List.of(new OntologyResponse.EntityType("Incident", "설명", "명명", "exact", List.of())),
+            List.of(),
+            "archived");
+
+    assertThatThrownBy(() -> service.createOntology(archived))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("archived");
+    verify(repository, never()).createOntology(any());
+  }
+
+  // 관계 참조 무결성은 형식 검증이라 draft에도 적용된다 — draft라고 존재하지 않는 엔티티 타입을
+  // 참조하는 관계까지 허용하면 안 된다(직전 태스크의 회귀 가드).
+  @Test
+  void createOntology_는_draft여도_존재하지_않는_타입을_참조하는_관계를_거부한다() {
+    var bad =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "존재하지 않는 타입 참조 draft 도메인",
+            List.of(new OntologyResponse.EntityType("Incident", "설명", "명명", "exact", List.of())),
+            List.of(new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "설명")),
+            "draft");
+
+    assertThatThrownBy(() -> service.createOntology(bad)).isInstanceOf(IllegalArgumentException.class);
+    verify(repository, never()).createOntology(any());
+  }
+
+  // draft/active/archived 외의 임의 문자열(오타 등)이 그대로 통과하면 "active".equals(status)가 false가
+  // 되어 완전성 게이트를 조용히 건너뛰고 DB CHECK 제약에서 500으로 터진다 — 생성 경로도 400으로 막는다.
+  @Test
+  void createOntology_는_알수없는_status를_거부한다() {
+    var bad =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "오타 status 도메인",
+            List.of(new OntologyResponse.EntityType("Incident", "설명", "명명", "exact", List.of())),
+            List.of(),
+            "acitve");
+
+    assertThatThrownBy(() -> service.createOntology(bad)).isInstanceOf(IllegalArgumentException.class);
     verify(repository, never()).createOntology(any());
   }
 

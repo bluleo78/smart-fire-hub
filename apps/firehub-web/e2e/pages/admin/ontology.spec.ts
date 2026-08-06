@@ -453,7 +453,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -489,7 +489,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -524,7 +524,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -563,7 +563,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -588,7 +588,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -624,7 +624,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -651,7 +651,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -681,7 +681,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -727,7 +727,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -766,7 +766,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -839,7 +839,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -874,7 +874,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -926,7 +926,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -960,7 +960,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -996,7 +996,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const capture = await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { ...schema, schemaVersion: schema.schemaVersion + 1 },
       { capture: true },
     );
@@ -1066,7 +1066,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await mockApi(
       page,
       'PUT',
-      '/api/v1/ontology',
+      '/api/v1/ontology/1',
       { message: '타입 리네임의 from이 여전히 엔티티 타입으로 남아 있습니다: Incident' },
       { status: 400 },
     );
@@ -1086,7 +1086,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     authenticatedPage: page,
   }) => {
     await setupOntologyMocks(page);
-    await mockApi(page, 'PUT', '/api/v1/ontology', { message: '지식 모델이 다른 사용자에 의해 이미 수정되었습니다.' }, { status: 409 });
+    await mockApi(page, 'PUT', '/api/v1/ontology/1', { message: '지식 모델이 다른 사용자에 의해 이미 수정되었습니다.' }, { status: 409 });
     await page.goto('/knowledge-graph/model');
 
     await page.getByRole('button', { name: '편집' }).click();
@@ -1120,7 +1120,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const putPayloads: UpdateOntologyRequest[] = [];
 
     await page.route(
-      (url) => url.pathname === '/api/v1/ontology',
+      (url) => url.pathname === '/api/v1/ontology/1',
       async (route) => {
         const method = route.request().method();
         if (method === 'GET') {
