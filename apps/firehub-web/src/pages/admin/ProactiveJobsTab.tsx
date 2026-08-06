@@ -326,7 +326,7 @@ export default function ProactiveJobsTab() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialog.open} onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain">
           <DialogHeader>
             <DialogTitle>{dialog.mode === 'create' ? '작업 추가' : '작업 수정'}</DialogTitle>
             <DialogDescription className="sr-only">

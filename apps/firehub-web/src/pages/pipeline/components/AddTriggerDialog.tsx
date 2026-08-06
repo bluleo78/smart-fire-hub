@@ -160,7 +160,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>
             {step === 1 ? '트리거 추가' : `트리거 추가 - ${typeInfo?.label}`}

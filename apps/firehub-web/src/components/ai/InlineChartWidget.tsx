@@ -255,7 +255,7 @@ export function InlineChartWidget({
             </DialogDescription>
           </DialogHeader>
           <div
-            className="max-h-[60vh] overflow-auto rounded-md"
+            className="max-h-[60vh] overflow-auto overscroll-contain rounded-md"
             data-testid="inline-chart-sql-dialog-content"
           >
             <SyntaxHighlighter

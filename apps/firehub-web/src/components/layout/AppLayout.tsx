@@ -22,12 +22,14 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { lazy, Suspense,useState } from 'react';
+import { lazy, Suspense,useRef,useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
+import { useActiveNavIntoView } from '../../hooks/useActiveNavIntoView';
 import { useAuth } from '../../hooks/useAuth';
 import { useBranding } from '../../hooks/useBranding';
 import { useNotificationStream } from '../../hooks/useNotificationStream';
+import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIStatusChip } from '../ai/AIStatusChip';
@@ -132,6 +134,9 @@ function NavItemLink({
     <Link
       to={item.href}
       onClick={onClick}
+      // 현재 페이지를 보조기술에도 알리고(WCAG SC 4.1.2), 동시에 사이드바를 활성 항목으로
+      // 스크롤할 때의 안정적인 셀렉터가 된다(클래스명은 스타일 변경에 취약하다).
+      aria-current={active ? 'page' : undefined}
       className={cn(
         'flex items-center rounded-md text-[13px] font-medium transition-colors',
         active
@@ -222,6 +227,15 @@ function NavSection({
 
 function AppLayoutInner() {
   useNotificationStream();
+  // 실제 스크롤 컨테이너는 window가 아니라 이 <main>이라 라우터/브라우저의 기본 스크롤 복원이
+  // 전혀 걸리지 않는다 — 직접 리셋·복원해야 이전 페이지의 스크롤 위치가 이월되지 않는다.
+  const mainRef = useRef<HTMLElement>(null);
+  useScrollRestoration(mainRef);
+  // 사이드바 nav는 항목 18개가 856px인데 가시 영역은 614px이라 242px가 항상 잘려 있다.
+  // 잘린 쪽에 있는 메뉴(예: 관리 > 설정)로 진입하면 활성 항목이 화면 밖(실측 top=872, nav 하단=670)에
+  // 있고 nav.scrollTop은 0이라, **지금 어느 메뉴에 있는지 화면에 아무 단서가 없었다.**
+  const navRef = useRef<HTMLElement>(null);
+  useActiveNavIntoView(navRef);
   const { isAdmin } = useAuth();
   const { brandName } = useBranding(); // 런타임 브랜드명 (사이드바 표시)
   const location = useLocation();
@@ -260,7 +274,13 @@ function AppLayoutInner() {
   const showNative = aiOpen && aiMode === 'native';
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    /*
+     * 셸 높이는 dvh — 100vh는 모바일 브라우저에서 주소창을 포함한 높이라 하단이 잘리고
+     * 스크롤 범위가 실제와 어긋난다. 셸이 dvh를 쓰려면 안쪽 페이지가 vh 매직넘버로 자기 높이를
+     * 재계산하지 않아야 한다(그러면 dvh < vh인 순간 페이지가 셸을 넘어 이중 스크롤이 된다).
+     * 데이터 탭의 calc(100vh - 300px)를 flex로 걷어낸 뒤에야 이 줄이 안전해졌다.
+     */
+    <div className="flex h-dvh overflow-hidden">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
@@ -327,7 +347,7 @@ function AppLayoutInner() {
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 overflow-y-auto py-2">
+            <nav ref={navRef} className="flex-1 overflow-y-auto overscroll-contain py-2">
               <div className="space-y-1">
                 {navItems.map((item) => (
                   <NavItemLink
@@ -447,7 +467,7 @@ function AppLayoutInner() {
               <AIFullScreen />
             </Suspense>
           ) : (
-            <main className="flex-1 p-6 pt-10 overflow-auto min-w-0">
+            <main ref={mainRef} className="flex-1 p-6 pt-10 overflow-auto min-w-0">
               <Suspense fallback={<PageSkeleton />}>
                 <Outlet />
               </Suspense>

@@ -215,7 +215,11 @@ function ResultTable({ result }: ResultTableProps) {
   }
 
   return (
-    <div className="rounded-md border overflow-auto" style={{ maxHeight: 320 }}>
+    /* scroll-pt-10: sticky thead 뒤로 행이 숨지 않도록 */
+    <div
+      className="rounded-md border overflow-auto overscroll-contain scroll-pt-10"
+      style={{ maxHeight: 320 }}
+    >
       <table className="w-full text-sm border-collapse">
         <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
           <tr>

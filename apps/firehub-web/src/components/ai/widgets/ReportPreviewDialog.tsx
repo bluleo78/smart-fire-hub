@@ -68,8 +68,14 @@ export default function ReportPreviewDialog({
           <p className="text-xs text-muted-foreground italic mt-1">"{question}"</p>
         </DialogHeader>
 
-        {/* 본문 — 섹션 전체를 스크롤 가능한 영역으로 표시 */}
-        <ScrollArea className="flex-1 overflow-auto pr-1">
+        {/*
+          본문 — 섹션 전체를 스크롤 가능한 영역으로 표시.
+          `overflow-auto`를 주면 안 된다: ScrollArea 루트는 overflow-hidden이어야 하고 실제 스크롤은
+          내부 Viewport가 담당한다(scroll-area.tsx:12). tailwind-merge가 루트의 overflow-hidden을
+          overflow-auto로 덮어쓰면 루트와 Viewport가 각각 스크롤하는 이중 스크롤이 된다.
+          min-h-0은 flex 자식이 기본 min-height:auto라 줄어들지 않는 것을 막는다.
+        */}
+        <ScrollArea className="min-h-0 flex-1 pr-1">
           <div className="space-y-4 py-2 pr-3">
             {sections.map((section, idx) => {
               const content = sectionContents?.[section.key];

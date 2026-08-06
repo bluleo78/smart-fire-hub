@@ -65,6 +65,9 @@ export default function DatasetDetailPage() {
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
+  // 자체 스크롤러를 가진 탭 — 페이지가 뷰포트 높이에 정확히 맞아야 이중 스크롤이 생기지 않는다.
+  // 현재는 데이터 탭(가상 스크롤 테이블)뿐이다.
+  const fillsHeight = activeTab === 'data';
 
   // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).
   // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 storageType 기반 validTabs를 재계산하여
@@ -193,8 +196,14 @@ export default function DatasetDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
+    /*
+     * `fillsHeight`인 탭만 뷰포트를 꽉 채우는 flex 컬럼이 된다.
+     * 데이터 탭은 가상 스크롤 테이블이 자체 스크롤러를 가지므로 남는 높이를 정확히 받아야
+     * 이중 스크롤이 생기지 않는다. 반면 정보·필드처럼 문서 흐름으로 길어지는 탭까지 함께 바꾸면
+     * 높이가 main에 고정돼 내용이 잘린다 — 그래서 탭별로 갈라 적용한다.
+     */
+    <div className={fillsHeight ? 'flex h-full min-h-0 flex-col gap-6' : 'space-y-6'}>
+      <div className={fillsHeight ? 'shrink-0' : undefined}>
         {/* 상위 경로 표시용 breadcrumb (#101) — 사용자가 현재 위치를 인지하고 상위 목록으로 빠르게 이동할 수 있도록 함 */}
         <Breadcrumb
           className="mb-3"
@@ -409,6 +418,7 @@ export default function DatasetDetailPage() {
       </div>
 
       <Tabs
+        className={fillsHeight ? 'flex min-h-0 flex-1 flex-col' : undefined}
         value={activeTab}
         onValueChange={(tab) => {
           // 탭 전환 시 URL ?tab= 파라미터도 동기화 (뒤로 가기·북마크·링크 공유 지원)
@@ -425,7 +435,7 @@ export default function DatasetDetailPage() {
           }, { replace: true });
         }}
       >
-        <TabsList className="border-b justify-start h-10">
+        <TabsList className="border-b justify-start h-10 shrink-0">
           <TabsTrigger value="info">정보</TabsTrigger>
           {isDocument ? (
             <TabsTrigger value="documents">문서</TabsTrigger>
@@ -453,7 +463,7 @@ export default function DatasetDetailPage() {
           </div>
         )}
         {activeTab === 'data' && (
-          <div className="mt-6">
+          <div className="mt-6 flex min-h-0 flex-1 flex-col">
             <DatasetDataTab dataset={dataset} datasetId={datasetId} />
           </div>
         )}

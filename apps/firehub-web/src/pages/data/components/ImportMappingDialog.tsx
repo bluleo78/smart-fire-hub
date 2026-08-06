@@ -66,7 +66,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
              * flex-1 overflow-y-auto: 컨텐츠 영역이 남은 공간을 차지하며 세로 스크롤된다.
              * min-h-0: flex 자식 요소의 기본 min-height 제약을 해제해 올바른 스크롤이 되도록 한다.
              */}
-            <div className="flex-1 overflow-y-auto min-h-0 space-y-6 min-w-0">
+            <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 space-y-6 min-w-0">
               <ImportMappingTable
                 suggestedMappings={previewData.suggestedMappings}
                 mappings={mappings}

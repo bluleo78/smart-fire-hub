@@ -235,7 +235,7 @@ export default function ApiConnectionListPage() {
                 새 연결
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto overscroll-contain">
               <DialogHeader>
                 <DialogTitle>새 API 연결 생성</DialogTitle>
                 <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>

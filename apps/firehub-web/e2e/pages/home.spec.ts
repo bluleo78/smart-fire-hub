@@ -611,4 +611,50 @@ test.describe('홈 페이지', () => {
     });
     expect(dsPadding).toBeGreaterThanOrEqual(6);
   });
+  test('활동 피드 높이가 뷰포트에 연동된다 (고정 32rem 회귀 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    // `h-[32rem]`(512px)은 화면 크기와 무관한 고정값이라, 낮은 화면에서 피드 하나가
+    // 뷰포트보다 커지는 구간이 생겼다. 홈은 main(457px)·피드(604px)·다른 카드(191px)가
+    // 동시에 스크롤되던 화면이라 이 고정값이 체감을 가장 악화시켰다.
+    // 내부 스크롤 자체는 #225에서 확정된 설계이므로 유지하고, 높이 산정만 검증한다.
+    await page.setViewportSize({ width: 1280, height: 600 });
+    // setupHomeMocks의 빈 활동 응답을 덮어써서 피드가 실제로 렌더되게 한다
+    await page.route(
+      (url) => url.pathname === '/api/v1/dashboard/activity',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: Array.from({ length: 30 }, (_, i) => ({
+              id: i + 1,
+              eventType: 'PIPELINE_SUCCESS',
+              title: `활동 ${i + 1}`,
+              description: `desc ${i + 1}`,
+              severity: 'INFO',
+              entityType: 'PIPELINE',
+              entityId: i + 1,
+              occurredAt: '2026-05-15T10:00:00',
+              isResolved: true,
+            })),
+            hasMore: false,
+          }),
+        });
+      }
+    );
+    await page.goto('/');
+
+    const feed = page.getByTestId('activity-feed-scroll');
+    await expect(feed).toBeVisible();
+
+    const { height, viewport } = await feed.evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      viewport: window.innerHeight,
+    }));
+
+    // 뷰포트 절반을 넘지 않아야 한다 — 넘으면 고정 픽셀 높이로 되돌아간 것이다.
+    expect(height).toBeLessThanOrEqual(viewport / 2 + 1);
+  });
 });

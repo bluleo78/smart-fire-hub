@@ -536,7 +536,13 @@ export default function HomePage() {
               <div
                 ref={activityScrollRef}
                 data-testid="activity-feed-scroll"
-                className="overflow-y-auto overscroll-contain h-[32rem] pr-2"
+                /*
+                 * 높이를 뷰포트에 연동한다. `h-[32rem]`(512px)은 화면 크기와 무관한 고정값이라
+                 * 홈에서 main(457px 오버플로)·이 피드(604px)·다른 카드(191px)가 동시에 스크롤됐고,
+                 * 화면이 낮을수록 나빠졌다(피드 하나가 뷰포트보다 커지는 구간이 생긴다).
+                 * 내부 스크롤 자체는 #225에서 확정된 설계라 유지하고, 높이 산정만 고친다.
+                 */
+                className="overflow-y-auto overscroll-contain max-h-[min(32rem,50dvh)] pr-2"
               >
                 {activityItems.map((item) => (
                   <div

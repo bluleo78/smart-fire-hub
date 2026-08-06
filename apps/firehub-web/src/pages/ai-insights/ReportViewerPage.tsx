@@ -42,7 +42,7 @@ export default function ReportViewerPage() {
   });
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex flex-col h-dvh bg-background">
       {/* 상단 고정 헤더 바 — 네비게이션 + 액션 버튼들 */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-background print:hidden">
         {/* 왼쪽: 뒤로가기 + 제목 */}

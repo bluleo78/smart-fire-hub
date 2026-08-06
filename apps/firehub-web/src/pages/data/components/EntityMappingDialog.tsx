@@ -104,7 +104,7 @@ export function EntityMappingDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto" data-testid="entity-mapping-dialog">
+      <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain" data-testid="entity-mapping-dialog">
         <DialogHeader>
           <DialogTitle>{initial ? '엔티티 매핑 수정' : '엔티티 매핑 추가'}</DialogTitle>
           <DialogDescription className="sr-only">

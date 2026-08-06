@@ -94,6 +94,13 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     // AddRowDialog 표시
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
 
+    // 다이얼로그 스크롤 영역은 overscroll-contain이어야 한다 — 없으면 다이얼로그 끝까지 스크롤했을 때
+    // 뒤 페이지로 스크롤이 전파된다(scroll chaining). 앱 전체에서 이 속성 사용처가 0건이었다.
+    const overscroll = await page
+      .getByRole('dialog')
+      .evaluate((el) => getComputedStyle(el).overscrollBehaviorY);
+    expect(overscroll).toBe('contain');
+
     // 필드 입력 (add- prefix, editable columns = name, amount)
     await page.locator('#add-name').fill('Carol');
     await page.locator('#add-amount').fill('30');

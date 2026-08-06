@@ -54,7 +54,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           {/* 브랜드 로고 — logoUrl 설정 시 이미지, 없으면 기본 아이콘(Flame) */}

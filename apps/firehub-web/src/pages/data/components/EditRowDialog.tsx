@@ -79,7 +79,7 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-h-[80vh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>행 편집 (ID: {rowId})</DialogTitle>
           <DialogDescription className="sr-only">선택한 행의 데이터를 편집합니다.</DialogDescription>

@@ -200,6 +200,19 @@ test.describe('AI 리포트 빌더 위젯', () => {
     // comparison 섹션 콘텐츠 확인 — bg-muted/50 배경으로 구분됨
     await expect(dialog.getByText(/₩5,000만 → ₩4,250만/)).toBeVisible();
 
+    // ScrollArea 루트가 스크롤하지 않는다 — 루트는 overflow-hidden이고 실제 스크롤은 내부
+    // Viewport가 담당한다. 루트에 `overflow-auto`를 주면 tailwind-merge가 이를 덮어써서
+    // 루트와 Viewport가 각각 스크롤하는 이중 스크롤이 된다.
+    // ScrollArea 루트에는 식별용 속성이 없으므로 Radix Viewport의 부모로 찾는다.
+    const scrollAreaRootOverflow = await dialog
+      .locator('[data-radix-scroll-area-viewport]')
+      .first()
+      .evaluate((el) => {
+        const root = el.parentElement;
+        return root ? getComputedStyle(root).overflowY : 'no-root';
+      });
+    expect(scrollAreaRootOverflow).toBe('hidden');
+
     // "닫기" 버튼으로 다이얼로그 닫기 — data-slot="button"인 푸터 닫기 버튼 (X sr-only 버튼과 구분)
     await dialog.locator('[data-slot="button"]:has-text("닫기")').click();
     await expect(dialog).not.toBeVisible();

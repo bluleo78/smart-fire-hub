@@ -209,7 +209,16 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const totalHeight = rowVirtualizer.getTotalSize();
 
   return (
-    <div className="space-y-4">
+    /*
+     * 뷰포트를 꽉 채우는 flex 컬럼 — 남는 높이를 전부 테이블에 준다.
+     * 이전에는 테이블 스크롤러 높이를 `calc(100vh - 300px)` 매직넘버로 잡았는데, 위쪽 크롬
+     * (브레드크럼+타이틀+파이프라인 칩+탭바+툴바)의 실제 높이보다 88px 작아서 main이 88px 넘쳤다.
+     * 그 결과 테이블(1636px)과 main(88px)이 동시에 스크롤되는 이중 스크롤이 됐다 —
+     * 테이블 끝에 닿으면 페이지가 딸려 움직여 헤더가 흔들렸다.
+     * 고정 요소는 shrink-0으로 못 박는다. 그러지 않으면 음수 공간이 basis:auto인 이쪽으로 몰려
+     * 툴바가 찌그러진다(테이블은 basis:0이라 덜 줄어든다).
+     */
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <DataTableToolbar
         dataSearch={dataSearch}
         onSearchChange={setDataSearch}
@@ -225,7 +234,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         <SqlQueryEditor datasetId={datasetId} columns={dataset.columns} />
       )}
 
-      <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-4">
         <h2 className="text-xl leading-7 font-semibold">데이터 ({totalElements.toLocaleString()}행)</h2>
       </div>
 
@@ -241,8 +250,16 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           <Loader2 className="animate-spin h-6 w-6 text-muted-foreground" />
         </Card>
       ) : columns.length > 0 && allRows.length > 0 ? (
-        <div ref={containerRef} className="rounded-md border overflow-x-auto">
-          <div ref={parentRef} style={{ maxHeight: 'calc(100vh - 300px)', overflow: 'auto' }}>
+        /* 바깥은 테두리·클리핑만 담당한다. 이전의 `overflow-x-auto`는 안쪽 div가 100% 폭 블록이라
+           절대 발동하지 않는 죽은 코드였다(테이블을 3000px로 강제해도 outerOverflowX=0). */
+        <div ref={containerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
+          {/*
+            scroll-pt-14(56px): sticky thead 뒤로 행이 숨지 않도록(가상 스크롤의 scrollToIndex 포함).
+            이 표의 헤더는 정렬 버튼 + 값 분포 바가 겹쳐 실측 54px다 — 다른 표(약 36px)보다 두꺼워서
+            일괄 40px로는 13px이 모자랐다. E2E가 "행이 헤더에 가리지 않는다"를 직접 단언하므로,
+            헤더 구성이 바뀌어 높이가 달라지면 이 값이 부족해지는 즉시 red가 된다.
+          */}
+          <div ref={parentRef} className="min-h-0 flex-1 overflow-auto overscroll-contain scroll-pt-14">
             <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
               <colgroup>
                 <col style={{ width: 40 }} />

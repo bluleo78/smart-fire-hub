@@ -129,7 +129,8 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
                 <span>({result.executionTimeMs}ms)</span>
               </div>
               {result.rows.length > 0 ? (
-                <div className="rounded-md border overflow-x-auto max-h-[300px] overflow-y-auto">
+                /* scroll-pt-10: sticky thead 뒤로 행이 숨지 않도록 */
+                <div className="rounded-md border overflow-x-auto max-h-[300px] overflow-y-auto overscroll-contain scroll-pt-10">
                   <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
                     <thead className="bg-muted/50 sticky top-0">
                       <tr>
