@@ -40,7 +40,7 @@ class OntologyDeleteTest extends IntegrationTestBase {
   }
 
   private long given(String domain, String status) {
-    createdId = OntologyTestSupport.createWithStatus(service, repository, domain, status);
+    createdId = OntologyTestSupport.createWithStatus(service, domain, status);
     return createdId;
   }
 

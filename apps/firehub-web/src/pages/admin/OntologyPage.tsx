@@ -227,7 +227,7 @@ export default function OntologyPage() {
               ) : (
                 <div className="flex h-full flex-col p-3">
                   {/* 비-active 상태 안내 — active면 null을 반환해 아무것도 차지하지 않는다. */}
-                  <OntologyStatusBanner ontology={selectedOntology} schema={selectedSchema} />
+                  <OntologyStatusBanner ontology={selectedOntology} />
                   <div className="min-h-0 flex-1">
                     {selectedSchema.entities.length === 0 ? (
                       <OntologyEmptyState

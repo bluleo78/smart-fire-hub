@@ -187,10 +187,8 @@ public class OntologyService {
 
   // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.
   // 거부는 IllegalStateException(→409) — 잘못된 입력(400)이 아니라 현재 상태와의 충돌이다.
+  // 호출 전제(changeStatus가 보장): to는 유효한 상태이고 from과 다르다.
   private void assertTransitionAllowed(long ontologyId, String from, String to) {
-    if (to == null || to.equals(from)) {
-      return; // 상태 변경 요청 아님
-    }
     if ("draft".equals(to)) {
       throw new IllegalStateException(
           "이미 사용을 시작한 온톨로지는 초안으로 되돌릴 수 없습니다. 은퇴(archived)를 사용하세요.");
@@ -204,33 +202,81 @@ public class OntologyService {
       }
       return;
     }
-    if ("active".equals(to)) {
-      return; // draft→active(활성화), archived→active(복귀) 모두 허용
-    }
-    throw new IllegalArgumentException("알 수 없는 상태입니다: " + to);
+    // 남은 경우는 to="active" — draft→active(활성화), archived→active(복귀) 모두 허용.
   }
 
-  // id 스코프 편집 — 상태 전이 판정 + 검증 + 낙관적 잠금(버전 불일치 IllegalStateException→409).
+  // 상태 전이 전용 경로 — 스키마를 건드리지 않으므로 schema_version을 올리지 않고, 단일 UPDATE라
+  // 원자적이며, 감사 로그도 편집이 아닌 상태 변경으로 남는다. 전이는 이 메서드로만 가능하다
+  // (PUT은 더 이상 status를 받지 않는다) — 두 경로를 남겨두면 낡은 경로로 위 문제들이 되살아난다.
+  public void changeStatus(long ontologyId, String target) {
+    if (target == null || !VALID_STATUSES.contains(target)) {
+      throw new IllegalArgumentException("알 수 없는 상태입니다: " + target);
+    }
+    // 존재하지 않는 id는 여기서 400으로 떨어진다.
+    String current = ontologyRepository.findStatusById(ontologyId);
+    if (target.equals(current)) {
+      return; // 멱등 — 같은 상태로의 요청은 성공으로 흘려보낸다.
+    }
+    assertTransitionAllowed(ontologyId, current, target);
+
+    if ("active".equals(target)) {
+      // active 진입은 완전성 게이트다. PUT 경로에서는 요청 본문을 검사했지만 이 경로엔 본문이 없다 —
+      // 저장된 스키마를 읽어 검사하지 않으면 엔티티 0개짜리 빈 초안이 그대로 활성화된다.
+      OntologyResponse persisted = ontologyRepository.findById(ontologyId);
+      validateCore(persisted.domain(), persisted.entities(), persisted.relations(), true);
+
+      // 도메인 선점 검사는 archived→active(복귀)에만 필요하다. 부분 유니크 인덱스가 archived를 빼므로
+      // 은퇴 중에 같은 도메인의 후속 온톨로지가 생겼을 수 있고, 그대로 복귀시키면 인덱스 위반이
+      // 영문 DB 문구로 새어나간다. draft 행은 이미 인덱스 안에 있어 자기 자신과 충돌하므로 검사하지 않는다.
+      // 문구가 "운영 중"이 아닌 이유: 인덱스는 draft도 포함하므로 같은 도메인의 초안이 있어도 충돌한다.
+      // 실제로 막히는 조건 그대로("살아 있는 온톨로지가 있다")를 말해야 사용자가 초안을 지우거나
+      // 이름을 바꾸는 등 올바른 다음 행동을 고를 수 있다.
+      if ("archived".equals(current) && ontologyRepository.existsLiveDomain(persisted.domain())) {
+        throw new IllegalStateException(
+            "같은 도메인의 온톨로지가 이미 있어 복귀시킬 수 없습니다(초안 포함): " + persisted.domain());
+      }
+    }
+
+    ontologyRepository.updateStatus(ontologyId, target);
+
+    // 감사 로그 — 스키마 편집(ONTOLOGY_UPDATE)과 구분되는 별도 액션으로 남긴다.
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && auth.getPrincipal() instanceof Long userId) {
+      userRepository
+          .findById(userId)
+          .ifPresent(
+              u ->
+                  auditLogService.log(
+                      userId,
+                      u.username(),
+                      "ONTOLOGY_STATUS_CHANGE",
+                      "ontology",
+                      String.valueOf(ontologyId),
+                      "지식 모델 상태 변경 — " + current + "→" + target,
+                      null,
+                      null,
+                      "SUCCESS",
+                      null,
+                      null));
+    }
+  }
+
+  // id 스코프 스키마 편집 — 검증 + 낙관적 잠금(버전 불일치 IllegalStateException→409).
+  // 상태 전이는 여기서 다루지 않는다(changeStatus 전용).
   public OntologyResponse updateOntology(long ontologyId, UpdateOntologyRequest req) {
     String current = ontologyRepository.findStatusById(ontologyId);
-    assertTransitionAllowed(ontologyId, current, req.status());
 
     // 은퇴한 온톨로지의 스키마는 고칠 수 없다 — 그 스키마로 이미 적재된 데이터와 어긋나기 때문.
-    // 고쳐야 한다면 먼저 복귀(archived→active)시킨다. 복귀 요청 자체는 통과시켜야 하므로
-    // "상태 변경이 없는(=순수 스키마 편집) 요청"만 막는다.
-    boolean statusChanging = req.status() != null && !req.status().equals(current);
-    if ("archived".equals(current) && !statusChanging) {
+    // 고쳐야 한다면 먼저 복귀(archived→active)시킨다.
+    if ("archived".equals(current)) {
       throw new IllegalStateException("은퇴한 온톨로지는 편집할 수 없습니다. 먼저 복귀시키세요.");
     }
 
-    // 결과 상태가 active면 완전성까지 검사한다 — 활성화·복귀가 완전성 게이트다.
-    String resulting = req.status() == null ? current : req.status();
-    validate(req, "active".equals(resulting));
+    // active 온톨로지의 편집은 완전성까지 지켜야 한다 — 이미 운영 중인 스키마를 빈 껍데기로 만들 수 없다.
+    // draft는 미완성인 채로 저장할 수 있다(완전성은 활성화 시점에 changeStatus가 검사한다).
+    validate(req, "active".equals(current));
 
     ontologyRepository.updateOntology(ontologyId, req);
-    if (statusChanging) {
-      ontologyRepository.updateStatus(ontologyId, req.status());
-    }
 
     // 감사 로그 — 편집 대상 온톨로지의 실제 id(ontologyId)를 entityId로 기록한다.
     var auth = SecurityContextHolder.getContext().getAuthentication();

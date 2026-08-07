@@ -50,7 +50,7 @@ class OntologyStatusEnforcementTest extends IntegrationTestBase {
   }
 
   private long given(String domain, String status) {
-    createdId = OntologyTestSupport.createWithStatus(service, repository, domain, status);
+    createdId = OntologyTestSupport.createWithStatus(service, domain, status);
     return createdId;
   }
 
@@ -101,7 +101,7 @@ class OntologyStatusEnforcementTest extends IntegrationTestBase {
     assertThat(activated.status()).isEqualTo("active");
 
     // 온톨로지를 archived로 전이 — 신규 바인딩(bind)만 막혀야 하고, 이미 active인 매핑 조회는 막히면 안 된다.
-    OntologyTestSupport.transitionTo(service, repository, ontologyId, "archived");
+    OntologyTestSupport.transitionTo(service, ontologyId, "archived");
 
     Optional<MappingResponse> reprojected = mappingService.get(TEST_DATASET_ID);
     assertThat(reprojected).isPresent();

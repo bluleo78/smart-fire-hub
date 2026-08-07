@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 
 import { ontologyApi } from '@/api/ontology';
 import { handleApiError, isConflictError } from '@/lib/api-error';
-import type { CreateOntologyRequest, OntologySchema, OntologyStatus, UpdateOntologyRequest } from '@/types/ontology';
+import type { CreateOntologyRequest, OntologyStatus, UpdateOntologyRequest } from '@/types/ontology';
 
 // 온톨로지 스키마(정적) — 캐시 오래 유지.
 export const useOntologySchema = () =>
@@ -46,7 +46,8 @@ export function useCreateOntology() {
 }
 
 /**
- * id 스코프 편집·상태 전이. 성공 시 해당 온톨로지 스키마와 목록을 함께 무효화한다.
+ * id 스코프 스키마 편집. 성공 시 해당 온톨로지 스키마와 목록을 함께 무효화한다.
+ * 상태 전이는 여기가 아니라 useOntologyStatusTransition(전용 PATCH)이 담당한다.
  * ['ontology', id]는 숫자 id라 ['ontology','graph']와 겹치지 않으므로 exact가 필요 없다.
  */
 export function useUpdateOntologyById() {
@@ -80,25 +81,30 @@ export function useUpdateOntologyById() {
 }
 
 /**
- * 상태 전이(활성화/복귀/은퇴) 공용 실행기 — useUpdateOntologyById(mutateAsync) → 성공 toast /
- * 실패 handleApiError 패턴을 OntologyStatusBanner(배너)와 OntologyManageDialog(관리 테이블)가
- * 각각 복붙하던 것을 추출했다. 성공 문구는 맥락마다 다르므로(배너는 도메인명 없이 "온톨로지가
- * 활성화되었습니다", 관리 다이얼로그는 도메인명을 포함) 호출부가 그대로 넘긴다.
+ * 상태 전이(활성화/복귀/은퇴) 공용 실행기 — OntologyStatusBanner(배너)와 OntologyManageDialog(관리
+ * 테이블)가 공유한다. 성공 문구는 맥락마다 다르므로(배너는 도메인명 없이 "온톨로지가 활성화되었습니다",
+ * 관리 다이얼로그는 도메인명을 포함) 호출부가 그대로 넘긴다.
+ *
+ * 전용 PATCH를 쓰므로 호출부가 대상 스키마를 미리 조회하지 않아도 된다 — 관리 테이블이 행마다
+ * useOntologyById로 N회 조회하던 것이 이 때문에 사라졌다.
+ * 무효화는 목록(['ontologies'])만 하면 된다: 상태는 OntologySummary에만 있고 ['ontology', id]가 담는
+ * OntologySchema에는 없다. 스키마도 변하지 않으므로 by-id 캐시를 털 이유가 없다.
  */
 export function useOntologyStatusTransition() {
-  const mutation = useUpdateOntologyById();
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: OntologyStatus }) =>
+      ontologyApi.updateOntologyStatus(id, status),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ontologies'] }),
+  });
   const transition = async (params: {
     id: number;
-    schema: OntologySchema;
     status: OntologyStatus;
     successMessage: string;
     failureMessage: string;
   }) => {
     try {
-      await mutation.mutateAsync({
-        id: params.id,
-        req: { ...params.schema, renames: [], status: params.status },
-      });
+      await mutation.mutateAsync({ id: params.id, status: params.status });
       toast.success(params.successMessage);
     } catch (error) {
       handleApiError(error, params.failureMessage);

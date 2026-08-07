@@ -36,7 +36,10 @@ import type { AuditLogResponse } from '@/types/auditLog';
 /**
  * 액션 유형 옵션 목록
  * - 백엔드(AuditLogService.log) 호출부에서 사용 중인 enum 전수: CREATE/UPDATE/DELETE/LOGIN/LOGOUT/IMPORT/EXECUTE/DATA_EXPORT/STATUS_CHANGE
+ *   + 온톨로지 도메인의 ONTOLOGY_* 4종.
  * - #109 회귀: DATA_EXPORT, STATUS_CHANGE 매핑 누락 보강.
+ * - ONTOLOGY_* 는 OntologyService가 처음부터 기록해 왔지만 매핑이 없어 영문 raw로 노출되고 있었다.
+ *   상태 전이를 ONTOLOGY_UPDATE에서 ONTOLOGY_STATUS_CHANGE로 분리하면서 함께 보강한다.
  */
 const ACTION_TYPES = [
   { value: 'CREATE', label: '생성' },
@@ -48,6 +51,10 @@ const ACTION_TYPES = [
   { value: 'EXECUTE', label: '실행' },
   { value: 'DATA_EXPORT', label: '데이터 내보내기' },
   { value: 'STATUS_CHANGE', label: '상태 변경' },
+  { value: 'ONTOLOGY_CREATE', label: '지식 모델 생성' },
+  { value: 'ONTOLOGY_UPDATE', label: '지식 모델 편집' },
+  { value: 'ONTOLOGY_STATUS_CHANGE', label: '지식 모델 상태 변경' },
+  { value: 'ONTOLOGY_DELETE', label: '지식 모델 삭제' },
 ];
 
 /**
@@ -65,6 +72,7 @@ const RESOURCES = [
   { value: 'data_import', label: '데이터 임포트' },
   { value: 'api_connection', label: 'API 연결' },
   { value: 'system', label: '시스템' },
+  { value: 'ontology', label: '지식 모델' },
 ];
 
 /** 결과 필터 옵션 목록 */

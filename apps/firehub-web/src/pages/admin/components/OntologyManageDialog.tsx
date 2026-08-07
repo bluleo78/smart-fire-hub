@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useDeleteOntology, useOntologyById, useOntologyList, useOntologyStatusTransition } from '@/hooks/queries/useOntology';
+import { useDeleteOntology, useOntologyList, useOntologyStatusTransition } from '@/hooks/queries/useOntology';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import { ONTOLOGY_STATUS_LABEL, type OntologyStatus, type OntologySummary } from '@/types/ontology';
@@ -128,11 +128,9 @@ export default function OntologyManageDialog({ open, onOpenChange, onSelect }: O
  * (활성화 전에 내용을 봐야 하는데 이 표는 내용을 보여주지 않는다).
  */
 function OntologyLifecycleAction({ ontology }: { ontology: OntologySummary }) {
-  // 전이 요청도 full-document PUT이라 현재 스키마를 함께 실어야 한다.
-  const { data: schema } = useOntologyById(ontology.status === 'draft' ? null : ontology.id);
-  const { transition } = useOntologyStatusTransition();
+  const { transition, isPending } = useOntologyStatusTransition();
 
-  if (ontology.status === 'draft' || !schema) return null;
+  if (ontology.status === 'draft') return null;
   // 기본 온톨로지는 은퇴도 금지 — 문서 적재가 의존한다. 판정은 서버(isDefault)가 내려준다.
   if (ontology.status === 'active' && ontology.isDefault) return null;
 
@@ -142,14 +140,13 @@ function OntologyLifecycleAction({ ontology }: { ontology: OntologySummary }) {
   const run = () =>
     transition({
       id: ontology.id,
-      schema,
       status: target,
       successMessage: `온톨로지 "${ontology.domain}"이(가) ${label}되었습니다.`,
       failureMessage: `온톨로지 ${label}에 실패했습니다.`,
     });
 
   return (
-    <Button variant="ghost" size="sm" onClick={run}>
+    <Button variant="ghost" size="sm" onClick={run} disabled={isPending}>
       {label}
     </Button>
   );

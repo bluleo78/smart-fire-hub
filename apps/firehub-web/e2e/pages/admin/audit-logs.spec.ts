@@ -523,6 +523,7 @@ test.describe('감사 로그 페이지', () => {
         createAuditLog({ id: 2, username: 'admin', actionType: 'STATUS_CHANGE', resource: 'system', description: 'desc-row2' }),
         createAuditLog({ id: 3, username: 'admin', actionType: 'CREATE', resource: 'api_connection', description: 'desc-row3' }),
         createAuditLog({ id: 4, username: 'admin', actionType: 'DATA_EXPORT', resource: 'dataset', description: 'desc-row4' }),
+        createAuditLog({ id: 5, username: 'admin', actionType: 'ONTOLOGY_STATUS_CHANGE', resource: 'ontology', description: 'desc-row5' }),
       ]),
     );
     await page.goto('/admin/audit-logs');
@@ -544,6 +545,12 @@ test.describe('감사 로그 페이지', () => {
     // 행 4: DATA_EXPORT → '데이터 내보내기'
     const row4 = page.getByRole('row').nth(4);
     await expect(row4.getByRole('cell', { name: '데이터 내보내기', exact: true })).toBeVisible();
+
+    // 행 5: ONTOLOGY_STATUS_CHANGE → '지식 모델 상태 변경', ontology → '지식 모델'.
+    // 온톨로지 액션·리소스는 백엔드가 처음부터 기록했지만 매핑이 없어 영문 raw로 노출되고 있었다.
+    const row5 = page.getByRole('row').nth(5);
+    await expect(row5.getByRole('cell', { name: '지식 모델 상태 변경', exact: true })).toBeVisible();
+    await expect(row5.getByRole('cell', { name: '지식 모델', exact: true })).toBeVisible();
   });
 
   test('알 수 없는 액션/리소스 enum은 raw 값 fallback으로 표시된다 (#109)', async ({ authenticatedPage: page }) => {

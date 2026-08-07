@@ -131,9 +131,12 @@ test.describe('온톨로지 생명주기', () => {
     await capture.waitForRequest();
   });
 
-  test('은퇴 요청은 status=archived를 담아 보낸다', async ({ authenticatedPage: page }) => {
-    const capture = await mockApi(page, 'PUT', '/api/v1/ontology/2', createOntologySchema(), { capture: true });
-    await mockApi(page, 'GET', '/api/v1/ontology/2', createOntologySchema({ domain: '건축물 대장' }));
+  test('은퇴 요청은 전용 PATCH로 status=archived만 보낸다', async ({ authenticatedPage: page }) => {
+    // 전이는 스키마 편집(PUT)이 아니라 PATCH /ontology/{id}/status 전용 경로다 — PUT으로 가면
+    // schema_version이 올라가 적재 노드가 전부 "구버전"으로 뒤집힌다.
+    const capture = await mockApi(page, 'PATCH', '/api/v1/ontology/2/status', null, { status: 204, capture: true });
+    // PUT이 호출되면 실패해야 한다 — 낡은 경로로 되돌아가는 회귀를 잡는 가드.
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/ontology/2', createOntologySchema(), { capture: true });
     await page.goto('/knowledge-graph/model');
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
@@ -145,7 +148,8 @@ test.describe('온톨로지 생명주기', () => {
       .click();
 
     const req = await capture.waitForRequest();
-    expect((req.payload as { status?: string }).status).toBe('archived');
+    expect(req.payload).toEqual({ status: 'archived' });
+    expect(putCapture.requests).toHaveLength(0);
   });
 
   test('참조 중 삭제 시도(409)는 사유를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
@@ -167,7 +171,7 @@ test.describe('온톨로지 생명주기', () => {
 
   test('초안 온톨로지는 warning 배너와 활성화 버튼을 보여준다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/ontology/3', createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }));
-    const capture = await mockApi(page, 'PUT', '/api/v1/ontology/3', createOntologySchema(), { capture: true });
+    const capture = await mockApi(page, 'PATCH', '/api/v1/ontology/3/status', null, { status: 204, capture: true });
     await page.goto('/knowledge-graph/model');
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
@@ -179,7 +183,27 @@ test.describe('온톨로지 생명주기', () => {
 
     await banner.getByRole('button', { name: '활성화' }).click();
     const req = await capture.waitForRequest();
-    expect((req.payload as { status?: string }).status).toBe('active');
+    // 본문은 status 하나뿐이어야 한다 — 스키마를 실어 보내면 전이 경로가 다시 본문 조회에 묶인다.
+    expect(req.payload).toEqual({ status: 'active' });
+  });
+
+  test('빈 초안 활성화가 400이면 서버 사유를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
+    // 완전성 게이트는 서버에만 있다 — 프론트가 본문을 안 보내게 된 뒤로는 더더욱 서버 메시지가 유일한 안내다.
+    await mockApi(page, 'GET', '/api/v1/ontology/3', createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }));
+    await mockApi(
+      page,
+      'PATCH',
+      '/api/v1/ontology/3/status',
+      { message: '엔티티 타입은 최소 1개 이상이어야 합니다.' },
+      { status: 400 },
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: /소방시설 점검/ }).click();
+    await page.getByTestId('ontology-status-banner').getByRole('button', { name: '활성화' }).click();
+
+    await expect(page.getByText('엔티티 타입은 최소 1개 이상이어야 합니다.')).toBeVisible();
   });
 
   test('은퇴 온톨로지는 info 배너를 보여주고 편집 버튼을 숨긴다', async ({ authenticatedPage: page }) => {

@@ -4,11 +4,10 @@ import { Button } from '@/components/ui/button';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { useOntologyStatusTransition } from '@/hooks/queries/useOntology';
 import { useAuth } from '@/hooks/useAuth';
-import type { OntologySchema, OntologySummary } from '@/types/ontology';
+import type { OntologySummary } from '@/types/ontology';
 
 interface OntologyStatusBannerProps {
   ontology: OntologySummary;
-  schema: OntologySchema;
 }
 
 /**
@@ -18,7 +17,7 @@ interface OntologyStatusBannerProps {
  * 배너의 설명 문구는 비-ADMIN에게도 유용하므로("왜 데이터셋에 연결할 수 없는지") 그대로 노출하되,
  * 상태 전이 액션(활성화/복귀)은 ADMIN 전용 — 스펙상 비-ADMIN에게 배너 액션을 노출하지 않는다.
  */
-export default function OntologyStatusBanner({ ontology, schema }: OntologyStatusBannerProps) {
+export default function OntologyStatusBanner({ ontology }: OntologyStatusBannerProps) {
   const { isAdmin } = useAuth();
   const { transition, isPending } = useOntologyStatusTransition();
 
@@ -33,7 +32,6 @@ export default function OntologyStatusBanner({ ontology, schema }: OntologyStatu
   const run = () =>
     transition({
       id: ontology.id,
-      schema,
       status: 'active',
       successMessage: `온톨로지가 ${actionLabel}되었습니다.`,
       failureMessage: `온톨로지 ${actionLabel}에 실패했습니다.`,

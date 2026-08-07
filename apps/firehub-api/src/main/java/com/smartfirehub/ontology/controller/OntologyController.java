@@ -6,6 +6,7 @@ import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
+import com.smartfirehub.ontology.dto.UpdateOntologyStatusRequest;
 import com.smartfirehub.ontology.service.OntologyService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +72,17 @@ public class OntologyController {
   public OntologyResponse updateById(
       @PathVariable Long id, @RequestBody UpdateOntologyRequest request) {
     return ontologyService.updateOntology(id, request);
+  }
+
+  // 상태 전이(활성화/은퇴/복귀, ADMIN 특권). 스키마 편집(PUT)과 분리된 전용 경로 —
+  // 전이가 schema_version을 올리지 않고, 단일 UPDATE라 원자적이며, 호출부가 본문을 먼저 조회할 필요가 없다.
+  // 허용되지 않는 전이는 409, 알 수 없는 상태·미완성 스키마 활성화는 400.
+  @PatchMapping("/ontology/{id}/status")
+  @RequirePermission("ontology:write")
+  public ResponseEntity<Void> changeStatus(
+      @PathVariable Long id, @RequestBody UpdateOntologyStatusRequest request) {
+    ontologyService.changeStatus(id, request.status());
+    return ResponseEntity.noContent().build();
   }
 
   // 온톨로지 삭제(ADMIN 특권). 참조 중이거나 기본 온톨로지면 409.

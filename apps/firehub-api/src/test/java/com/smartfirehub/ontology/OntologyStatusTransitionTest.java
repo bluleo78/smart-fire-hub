@@ -33,21 +33,26 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
 
   // 삭제 서비스(Task 5)에 의존하지 않도록 DSL로 직접 지운다 — 태스크 간 순서 결합을 만들지 않는다.
   // entity_type/relation은 ON DELETE CASCADE로 함께 사라진다.
+  // 도메인 충돌 테스트만 같은 이름의 온톨로지를 하나 더 만든다 — 함께 정리해야 다음 테스트를 오염시키지 않는다.
+  private Long successorId;
+
   @AfterEach
   void cleanup() {
     OntologyTestSupport.deleteRow(dsl, createdId);
+    OntologyTestSupport.deleteRow(dsl, successorId);
     createdId = null;
+    successorId = null;
   }
 
   // 엔티티 1개를 가진 온톨로지를 주어진 상태로 만든다.
   private long given(String domain, String status) {
-    createdId = OntologyTestSupport.createWithStatus(service, repository, domain, status);
+    createdId = OntologyTestSupport.createWithStatus(service, domain, status);
     return createdId;
   }
 
-  // 상태만 바꾸는 요청 — 본문은 현재 스키마를 그대로 실어 보낸다(full-document PUT이므로).
+  // 상태 전이 — 전용 경로(changeStatus). 본문을 실어 보내지 않는다.
   private void transitionTo(long id, String target) {
-    OntologyTestSupport.transitionTo(service, repository, id, target);
+    OntologyTestSupport.transitionTo(service, id, target);
   }
 
   @Test
@@ -106,7 +111,7 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
   @Test
   void 기본_온톨로지는_은퇴시킬_수_없다() {
     // id=1은 문서 적재가 단수 /ontology로 의존한다 — 은퇴시키면 적재가 조용히 깨진다.
-    assertThatThrownBy(() -> OntologyTestSupport.transitionTo(service, repository, 1L, "archived"))
+    assertThatThrownBy(() -> OntologyTestSupport.transitionTo(service, 1L, "archived"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("기본 온톨로지");
     assertThat(repository.findStatusById(1L)).isEqualTo("active");
@@ -125,9 +130,84 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
                         current.schemaVersion(),
                         current.entities(),
                         current.relations(),
-                        List.of(),
-                        null)))
+                        List.of())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("은퇴한 온톨로지");
+  }
+
+  @Test
+  void 상태_전이는_schema_version을_올리지_않는다() {
+    // 전이는 스키마를 바꾸지 않는다. 버전이 올라가면 이 온톨로지로 이미 적재된 노드의 schemaVersion
+    // 스탬프가 전부 "구버전"으로 뒤집힌다 — 전이를 full-document PUT에 얹었을 때 실제로 나던 결함이다.
+    long id = given("전이 테스트 버전 불변", "draft");
+    int before = repository.currentSchemaVersion(id);
+
+    transitionTo(id, "active");
+    assertThat(repository.currentSchemaVersion(id)).isEqualTo(before);
+
+    transitionTo(id, "archived");
+    assertThat(repository.currentSchemaVersion(id)).isEqualTo(before);
+  }
+
+  @Test
+  void 같은_도메인이_운영_중이면_복귀할_수_없다() {
+    // V79 부분 유니크 인덱스는 archived를 제외한다 — 은퇴 중에 같은 도메인의 후속을 세울 수 있다.
+    // 그 상태에서 옛것을 복귀시키면 인덱스 위반이 영문 DB 문구로 새어나가므로 한국어 409로 먼저 막는다.
+    String domain = "전이 테스트 복귀 충돌";
+    long archived = given(domain, "archived");
+    successorId = OntologyTestSupport.createWithStatus(service, domain, "active");
+
+    assertThatThrownBy(() -> transitionTo(archived, "active"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("이미 있어 복귀시킬 수 없습니다");
+    // 거부됐으니 상태도 그대로여야 한다(부분 커밋 없음).
+    assertThat(repository.findStatusById(archived)).isEqualTo("archived");
+  }
+
+  @Test
+  void 같은_도메인의_초안이_있어도_복귀할_수_없다() {
+    // V79 부분 유니크 인덱스는 draft도 포함한다 — 후속이 아직 초안이어도 복귀는 인덱스를 위반한다.
+    // "운영 중"만 막는다고 오해하면 여기서 영문 DB 문구가 새어나간다.
+    String domain = "전이 테스트 복귀 충돌(초안)";
+    long archived = given(domain, "archived");
+    successorId = OntologyTestSupport.createWithStatus(service, domain, "draft");
+
+    assertThatThrownBy(() -> transitionTo(archived, "active"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("초안 포함");
+    assertThat(repository.findStatusById(archived)).isEqualTo("archived");
+  }
+
+  @Test
+  void 은퇴한_동명_온톨로지가_있어도_초안은_활성화할_수_있다() {
+    // 두 행이 같은 도메인을 갖는 유일한 경로 — archived 예전 것 + 살아있는 후속.
+    // 후속 draft는 이미 인덱스 안에 있으므로 active로 올라가도 새 충돌이 생기지 않는다.
+    // 여기에 도메인 검사를 걸면 정상 흐름("은퇴시키고 같은 이름의 후속을 세운다")이 통째로 막힌다.
+    String domain = "전이 테스트 후속 활성화";
+    createdId = OntologyTestSupport.createWithStatus(service, domain, "archived");
+    successorId = OntologyTestSupport.createWithStatus(service, domain, "draft");
+
+    transitionTo(successorId, "active");
+    assertThat(repository.findStatusById(successorId)).isEqualTo("active");
+    assertThat(repository.findStatusById(createdId)).isEqualTo("archived");
+  }
+
+  @Test
+  void 알_수_없는_상태로는_전이할_수_없다() {
+    // 오타가 DB CHECK 제약까지 내려가 500이 되지 않도록 서비스에서 400으로 막는다.
+    long id = given("전이 테스트 알 수 없는 상태", "draft");
+    assertThatThrownBy(() -> transitionTo(id, "retired"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("알 수 없는 상태");
+    assertThatThrownBy(() -> transitionTo(id, null))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void 같은_상태로의_전이는_멱등이다() {
+    // 관리 목록에서 이미 활성인 행의 활성화를 다시 눌러도 409가 아니라 성공이어야 한다.
+    long id = given("전이 테스트 멱등", "active");
+    transitionTo(id, "active");
+    assertThat(repository.findStatusById(id)).isEqualTo("active");
   }
 }

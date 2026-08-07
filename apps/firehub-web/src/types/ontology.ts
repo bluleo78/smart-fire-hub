@@ -22,8 +22,8 @@ export const ONTOLOGY_STATUS_LABEL: Record<OntologyStatus, string> = {
 };
 
 // PUT /api/v1/ontology(/{id}) 요청 — OntologySchema에 renames(5-5)를 더한 형태(전체 교체, full-document 편집).
-// status를 넣으면 상태 전이를 함께 요청한다(생략 시 상태 유지).
-export type UpdateOntologyRequest = OntologySchema & { renames: TypeRename[]; status?: OntologyStatus };
+// 상태 전이는 이 요청에 포함하지 않는다 — PATCH /ontology/{id}/status 전용(ontologyApi.updateOntologyStatus).
+export type UpdateOntologyRequest = OntologySchema & { renames: TypeRename[] };
 
 // schemaVersion: 적재 당시 온톨로지 schema_version(5-4). 스탬프 도입 이전 레거시 노드는 null —
 // "값 없음"과 "구버전"을 UI가 혼동하지 않도록 별도 상태로 다룬다(NodeDetailDrawer 참조).

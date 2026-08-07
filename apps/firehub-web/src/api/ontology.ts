@@ -23,6 +23,10 @@ export const ontologyApi = {
   // 전역 PUT /ontology(id=1 고정)은 백엔드에 하위호환용으로 남아 있지만 웹은 항상 id 스코프로만 편집한다.
   updateOntologyById: (id: number, req: UpdateOntologyRequest) =>
     client.put<OntologySchema>(`/ontology/${id}`, req),
+  // 상태 전이(활성화/은퇴/복귀) — 스키마 편집과 분리된 전용 경로. 본문 없이 상태만 보내므로
+  // 호출부가 대상 온톨로지 스키마를 미리 조회할 필요가 없고, schema_version도 올라가지 않는다.
+  updateOntologyStatus: (id: number, status: OntologyStatus) =>
+    client.patch<void>(`/ontology/${id}/status`, { status }),
   // 삭제 — 참조 중이거나 기본 온톨로지면 409.
   deleteOntology: (id: number) => client.delete<void>(`/ontology/${id}`),
 };
