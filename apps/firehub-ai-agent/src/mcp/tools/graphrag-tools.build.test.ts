@@ -16,6 +16,13 @@ vi.mock('../../graphrag/structured-query.js', () => ({
   structuredQuery: (...a: unknown[]) => structuredQueryMock(...a),
 }));
 
+// registerGraphragTools 가 내부에서 createCliCompleter() 를 부르므로 주입 지점이 없다.
+// 모듈을 mock 해서 추론 프롬프트에 대한 LLM 응답을 테스트가 제어한다.
+const completeMock = vi.fn();
+vi.mock('../../graphrag/llm-cli.js', () => ({
+  createCliCompleter: () => (...a: unknown[]) => completeMock(...a),
+}));
+
 import { registerGraphragTools } from './graphrag-tools.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -276,5 +283,201 @@ describe('graphrag_propose_ontology', () => {
     await expect(
       findTool(client, 'graphrag_propose_ontology').handler(validArgs),
     ).rejects.toThrow(/403/);
+  });
+});
+
+describe('graphrag_infer_ontology', () => {
+  // 엔티티 1개짜리 최소 정상 LLM 응답.
+  const entityJson = (type: string) =>
+    '```json\n' +
+    JSON.stringify({
+      entities: [{ type, description: '', naming: '', resolution: 'embedding', properties: [] }],
+      relations: [],
+    }) +
+    '\n```';
+
+  it('문서 데이터셋 근거로 draft 온톨로지를 생성한다', async () => {
+    completeMock.mockResolvedValue(entityJson('Inspection'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockResolvedValue({ id: 2, name: '점검보고서', storageType: 'DOCUMENT' }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: '2026년 정기점검 결과 …' }]),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({
+      domain: '건축물 안전점검',
+      datasetIds: [2],
+    });
+    // status 를 모델이 고르게 두면 안 된다 — 사람 검토 없이 운영에 들어간다.
+    expect(client.createOntology).toHaveBeenCalledWith(
+      expect.objectContaining({ domain: '건축물 안전점검', status: 'draft' }),
+    );
+    expect(out).toMatchObject({ ontologyId: 7, status: 'draft', entityCount: 1 });
+    expect(out.basedOn).toEqual([{ datasetId: 2, name: '점검보고서', kind: 'document' }]);
+    // 근거가 실제로 프롬프트에 실렸는지 — 안 실리면 "데이터 근거" 라는 기능의 전제가 무너진다.
+    expect(completeMock.mock.calls[0][0]).toContain('2026년 정기점검 결과');
+  });
+
+  it('살아있는 동일 도메인이 있으면 생성하지 않는다', async () => {
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([{ id: 9, domain: '건축물 안전점검', status: 'draft' }]),
+      getDataset: vi.fn().mockResolvedValue({ id: 2, name: 'x', storageType: 'DOCUMENT' }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    });
+    await expect(
+      findTool(client, 'graphrag_infer_ontology').handler({ domain: '건축물 안전점검', datasetIds: [2] }),
+    ).rejects.toThrow(/id=9/);
+    expect(client.createOntology).not.toHaveBeenCalled();
+  });
+
+  it('같은 도메인이 archived 뿐이면 이름을 선점한 것으로 보지 않는다', async () => {
+    // 백엔드 부분 유니크 인덱스(WHERE status <> 'archived')와 정합.
+    completeMock.mockResolvedValue(entityJson('A'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([{ id: 9, domain: 'D', status: 'archived' }]),
+      getDataset: vi.fn().mockResolvedValue({ id: 2, name: 'x', storageType: 'DOCUMENT' }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [2] });
+    expect(out.ontologyId).toBe(7);
+  });
+
+  it('TABLE 데이터셋 하나만 주면 경고를 낸다', async () => {
+    // 표 하나만 보면 컬럼을 그대로 옮긴 온톨로지가 되기 쉽다 — 차단은 하지 않고 경고만.
+    completeMock.mockResolvedValue(entityJson('Building'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockResolvedValue({ id: 3, name: '건축물대장', storageType: 'TABLE' }),
+      queryDatasetData: vi.fn().mockResolvedValue({
+        columns: [{ columnName: 'bld_name', dataType: 'VARCHAR', isPrimaryKey: false }],
+        rows: [{ bld_name: '○○아파트' }],
+        totalPages: 1,
+      }),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [3] });
+    expect(out.warnings.join(' ')).toContain('표 데이터셋 하나');
+    expect(completeMock.mock.calls[0][0]).toContain('bld_name');
+  });
+
+  it('FILE 데이터셋은 스킵하고 skipped 에 기록한다', async () => {
+    completeMock.mockResolvedValue(entityJson('A'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockImplementation(async (id: number) =>
+        id === 4
+          ? { id: 4, name: '첨부파일', storageType: 'FILE' }
+          : { id: 2, name: '보고서', storageType: 'DOCUMENT' },
+      ),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [4, 2] });
+    expect(out.skipped).toHaveLength(1);
+    expect(out.skipped[0]).toMatchObject({ datasetId: 4 });
+    expect(out.basedOn).toHaveLength(1);
+  });
+
+  it('추론 결과가 비면 저장하지 않고 실패한다', async () => {
+    // 무용한 빈 draft 를 조용히 만들지 않는다.
+    completeMock.mockResolvedValue('설명뿐, JSON 없음');
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockResolvedValue({ id: 2, name: 'x', storageType: 'DOCUMENT' }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    });
+    await expect(
+      findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [2] }),
+    ).rejects.toThrow(/비었습니다/);
+    expect(client.createOntology).not.toHaveBeenCalled();
+  });
+
+  it('청크 0건인 DOCUMENT 데이터셋만 주면 근거로 인정하지 않고 실패한다', async () => {
+    // 청크가 없는데 "근거 있음"으로 통과시키면, LLM 이 도메인명만 보고 지어낸 온톨로지가
+    // basedOn 에 그 데이터셋을 달고 데이터 기반인 것처럼 반환된다 — 이 도구의 존재 이유가 무너진다.
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockResolvedValue({ id: 2, name: '빈문서', storageType: 'DOCUMENT' }),
+      listDocumentChunks: vi.fn().mockResolvedValue([]),
+    });
+    await expect(
+      findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [2] }),
+    ).rejects.toThrow(/근거로 쓸 수 있는 데이터셋이 없습니다/);
+    expect(client.createOntology).not.toHaveBeenCalled();
+    expect(completeMock).not.toHaveBeenCalled();
+  });
+
+  // review#2: 컬럼은 있는데 행이 0건이면 profileColumns가 nullRatio=0을 돌려줘 "근거 있음"으로
+  // 잘못 통과한다 — DOCUMENT의 빈 청크 스킵과 대칭으로 스킵해야 한다.
+  it('TABLE 데이터셋의 행이 0건이면 근거로 인정하지 않고 skipped에 기록한다', async () => {
+    completeMock.mockResolvedValue(entityJson('A'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockImplementation(async (id: number) => (id === 3
+        ? { id: 3, name: '빈테이블', storageType: 'TABLE' }
+        : { id: 2, name: '보고서', storageType: 'DOCUMENT' })),
+      queryDatasetData: vi.fn().mockResolvedValue({
+        columns: [{ columnName: 'bld_name', dataType: 'VARCHAR', isPrimaryKey: false }],
+        rows: [],
+        totalPages: 1,
+      }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [3, 2] });
+    expect(out.skipped).toContainEqual(expect.objectContaining({ datasetId: 3 }));
+    expect(out.basedOn).toEqual([{ datasetId: 2, name: '보고서', kind: 'document' }]);
+  });
+
+  // review#3: 중복 id를 넘겨도 같은 데이터셋을 두 번 세면 안 된다 — 특히 단일 TABLE 경고가
+  // evidence.length로 판정되므로, 중복 제거를 안 하면 이 경고가 조용히 안 걸린다.
+  it('중복된 datasetId를 넘겨도 한 번만 수집하고 단일 TABLE 경고가 뜬다', async () => {
+    completeMock.mockResolvedValue(entityJson('Building'));
+    const queryDatasetDataMock = vi.fn().mockResolvedValue({
+      columns: [{ columnName: 'bld_name', dataType: 'VARCHAR', isPrimaryKey: false }],
+      rows: [{ bld_name: '○○아파트' }],
+      totalPages: 1,
+    });
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockResolvedValue({ id: 3, name: '건축물대장', storageType: 'TABLE' }),
+      queryDatasetData: queryDatasetDataMock,
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [3, 3] });
+    expect(out.basedOn).toHaveLength(1);
+    expect(out.warnings.join(' ')).toContain('표 데이터셋 하나');
+    expect(queryDatasetDataMock).toHaveBeenCalledTimes(1);
+  });
+
+  // review#4: 모델이 지어낸 id 하나(404) 때문에 여러 데이터셋짜리 요청 전체가 죽으면 안 된다 —
+  // FILE 등 스킵 경로와 비대칭이었다.
+  it('데이터셋 1건 조회 오류는 skipped로 넘기고 나머지로 계속 진행한다', async () => {
+    completeMock.mockResolvedValue(entityJson('A'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockImplementation(async (id: number) => {
+        if (id === 999) throw new Error('데이터셋을 찾을 수 없습니다(404)');
+        return { id: 2, name: '보고서', storageType: 'DOCUMENT' };
+      }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [999, 2] });
+    expect(out.skipped).toContainEqual(expect.objectContaining({ datasetId: 999 }));
+    expect(out.basedOn).toEqual([{ datasetId: 2, name: '보고서', kind: 'document' }]);
+    expect(client.createOntology).toHaveBeenCalled();
+  });
+
+  it('청크가 상한(40)보다 많으면 앞뒤 청크를 고르게 포함해 40건을 표본으로 뽑는다', async () => {
+    // i % step 방식은 상한을 살짝 넘는 구간(41건/상한40)에서 표본이 21건까지 급감한다.
+    // 인덱스를 직접 계산해 min(len, cap) 건이 항상 뽑히고, 뒤쪽 청크도 표본에 들어가야 한다.
+    completeMock.mockResolvedValue(entityJson('A'));
+    const chunks = Array.from({ length: 41 }, (_, i) => ({ chunkId: i, content: `청크내용${i}` }));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: vi.fn().mockResolvedValue({ id: 2, name: '대용량문서', storageType: 'DOCUMENT' }),
+      listDocumentChunks: vi.fn().mockResolvedValue(chunks),
+    });
+    await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [2] });
+    const prompt = completeMock.mock.calls[0][0] as string;
+    // Math.floor((i*41)/40) 은 i=0..39 에서 0..39 를 고르게 훑는다(끝단은 39, 41건 중 마지막
+    // 청크 40은 반올림 특성상 빠지지만 바로 앞인 39까지는 포함돼 뒤쪽 편중 없이 골고루 뽑힌다).
+    expect(prompt).toContain('청크내용0'); // 앞쪽
+    expect(prompt).toContain('청크내용39'); // 뒤쪽 부근까지 포함
   });
 });

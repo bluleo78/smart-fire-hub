@@ -22,6 +22,7 @@ tools:
   - mcp__firehub__graphrag_activate_mapping
   - mcp__firehub__graphrag_project_table
   - mcp__firehub__graphrag_propose_ontology
+  - mcp__firehub__graphrag_infer_ontology
 mcpServers:
   - firehub
 model: inherit
@@ -53,7 +54,12 @@ maxTurns: 20
 사용자가 "지식 그래프에 올려줘", "온톨로지에 연결해줘", "그래프로 만들어줘" 같은 의도를 표현하면 아래 순서를 **엄수**한다. 각 단계는 앞 단계 결과가 없으면 백엔드가 거부하므로 건너뛰지 않는다.
 
 1. `graphrag_list_ontologies` — 바인딩 대상 온톨로지 후보 확인(활성 상태만 반환된다). 2개 이상이면 **어느 온톨로지에 연결할지 사용자에게 묻는다**(임의 선택 금지).
-1-a. **후보가 없거나 데이터셋 성격과 전혀 맞지 않으면** `graphrag_propose_ontology(domain, entities, relations)` 로 새 온톨로지를 **초안**으로 제안한다. 컬럼명·샘플값을 근거로 엔티티 타입과 관계를 구성한다. 제안 후에는 **사용자에게 "지식 모델" 화면에서 검토·활성화하도록 안내하고 응답을 종료한다** — 초안은 바인딩할 수 없고, 에이전트는 활성화할 수 없다. 활성화를 기다리며 다음 단계로 넘어가지 않는다.
+1-a. **후보가 없거나 데이터셋 성격과 전혀 맞지 않으면** 새 온톨로지를 **초안**으로 만든다.
+     근거로 삼을 데이터셋이 있으면 `graphrag_infer_ontology(domain, datasetIds, hint?)` 를 쓴다 —
+     관련 데이터셋을 **여러 개** 넘긴다(표 하나만 넘기면 컬럼을 그대로 옮긴 온톨로지가 되기 쉽다).
+     근거 데이터가 없으면 `graphrag_propose_ontology(domain, entities, relations)` 로 직접 저작한다.
+     제안 후에는 **사용자에게 "지식 모델" 화면에서 검토·활성화하도록 안내하고 응답을 종료한다.**
+     초안은 바인딩할 수 없고, 에이전트는 활성화할 수 없다. 활성화를 기다리며 다음 단계로 넘어가지 않는다.
 2. `graphrag_bind_ontology(datasetId, ontologyId)` — 데이터셋↔온톨로지 바인딩(멱등). 이 단계 없이 3번을 호출하면 거부된다.
 3. `graphrag_infer_mapping(datasetId)` — 컬럼 프로파일링 + LLM 추론으로 **draft** 매핑 저장. 이미 active 매핑이 있으면 거부되며, 재추론은 `force: true` 가 필요하다(재활성화 전까지 그래프는 기존 매핑 기준으로 남는다는 점을 사용자에게 알린다).
 4. **DESIGN 확인 (필수)** — 추론된 엔티티/관계 구성을 사람이 읽을 수 있게 요약해 보여주고 "이대로 활성화할까요?"로 **응답을 종료**한다. 같은 턴에 5번을 호출하지 않는다.

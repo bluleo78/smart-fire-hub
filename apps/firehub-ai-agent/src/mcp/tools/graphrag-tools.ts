@@ -12,8 +12,9 @@ import { projectTableDataset, DataPage } from '../../graphrag/table-projection.j
 import { deserializeOntology } from '../../graphrag/ontology.js';
 import { profileColumns } from '../../graphrag/column-profiler.js';
 import { inferMapping } from '../../graphrag/mapping-inference.js';
+import { inferOntology, DatasetEvidence } from '../../graphrag/ontology-inference.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
-import { loadOntology, loadOntologyWithSource } from '../../graphrag/ontology-source.js';
+import { loadOntology, loadOntologyWithSource, resolveDatasetOntology } from '../../graphrag/ontology-source.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
 import { link as semanticLink } from '../../graphrag/semantic-link.js';
 
@@ -55,6 +56,124 @@ export function summarizeReviewItem(item: {
   };
 }
 
+type TableColumn = { columnName: string; dataType: string; isPrimaryKey: boolean };
+
+/**
+ * TABLE 데이터셋의 행을 페이지네이션으로 표본 추출한다(200행/페이지, cap행 상한).
+ * 컬럼 메타는 첫 페이지에서만 수집한다(이후 페이지에도 같은 값이 반복되므로 중복 불필요).
+ * graphrag_infer_mapping 과 collectDatasetEvidence(graphrag_infer_ontology 용)가 동일한 루프를
+ * 각자 갖고 있어 드리프트 위험이 있었다 — 이 헬퍼로 통합한다.
+ */
+async function sampleTableRows(
+  apiClient: Pick<FireHubApiClient, 'queryDatasetData'>,
+  datasetId: number,
+  cap: number,
+): Promise<{ columns: TableColumn[]; rows: Record<string, unknown>[] }> {
+  const columns: TableColumn[] = [];
+  const rows: Record<string, unknown>[] = [];
+  let page = 0;
+  while (rows.length < cap) {
+    const resp = (await apiClient.queryDatasetData(datasetId, { page, size: 200, includeTotalCount: true })) as {
+      columns: TableColumn[]; rows: Record<string, unknown>[]; totalPages: number;
+    };
+    if (page === 0) columns.push(...resp.columns);
+    rows.push(...resp.rows);
+    page += 1;
+    if (page >= resp.totalPages || resp.rows.length === 0) break;
+  }
+  return { columns, rows };
+}
+
+// 데이터셋 1건에서 온톨로지 추론용 근거를 모은다.
+// TABLE 은 컬럼 프로파일(infer_mapping 과 동일 표본 규모), DOCUMENT 는 청크 표본,
+// FILE 등은 근거로 쓸 수 없어 { skipReason } 을 돌려 호출부가 skipped 에 기록하게 한다.
+const EVIDENCE_ROW_CAP = 600;        // 표 표본 행 상한(infer_mapping 과 동일)
+const EVIDENCE_CHUNKS_PER_DATASET = 40; // 문서 데이터셋당 청크 표본 상한
+const EVIDENCE_CHUNK_CHARS = 1500;   // 청크 1건 본문 절단 길이
+
+async function collectDatasetEvidence(
+  apiClient: FireHubApiClient,
+  datasetId: number,
+): Promise<DatasetEvidence | { skipReason: string }> {
+  const meta = (await apiClient.getDataset(datasetId)) as { name?: string; storageType?: string };
+  const name = meta?.name ?? `dataset:${datasetId}`;
+  const storageType = meta?.storageType;
+
+  if (storageType === 'TABLE') {
+    const { columns, rows: sampleRows } = await sampleTableRows(apiClient, datasetId, EVIDENCE_ROW_CAP);
+    // 행이 0건이면 컬럼만 있어도 근거가 없는 것과 같다 — profileColumns가 total=0일 때 nullRatio=0을
+    // 돌려줘 "null비율=0.00"이라는 사실과 다른 값이 프롬프트에 실리므로, DOCUMENT와 대칭으로 여기서 스킵한다.
+    if (sampleRows.length === 0) {
+      return { skipReason: '표에 행이 없습니다(적재 전이거나 빈 테이블)' };
+    }
+    const profiles = profileColumns(columns, sampleRows);
+    // 매핑 가능한 컬럼이 하나도 없으면 근거가 없는 것과 같다 — 아래 DOCUMENT 와 같은 이유로 스킵한다.
+    if (profiles.every((p) => p.ontologyDataType === null)) {
+      return { skipReason: '온톨로지 속성으로 쓸 수 있는 컬럼이 없습니다' };
+    }
+    return { datasetId, name, kind: 'table', profiles };
+  }
+
+  if (storageType === 'DOCUMENT') {
+    // listDocumentChunks 는 청크 **전체**를 반환한다. 그대로 넣으면 컨텍스트가 터지므로
+    // 균등 간격으로 표본을 뽑는다(앞부분 편중 방지) + 청크당 본문도 절단한다.
+    // 인덱스를 직접 계산하는 이유: i % step 방식은 상한을 살짝 넘는 구간에서 표본이 급감한다
+    // (41건/상한40 -> step=2 -> 21건만). 여기서는 항상 min(len, cap) 건을 고르게 뽑는다.
+    const all = await apiClient.listDocumentChunks(datasetId);
+    const take = Math.min(all.length, EVIDENCE_CHUNKS_PER_DATASET);
+    const chunks = Array.from({ length: take }, (_, i) =>
+      all[Math.floor((i * all.length) / take)].content.slice(0, EVIDENCE_CHUNK_CHARS),
+    ).filter((c) => c.trim() !== '');
+    // 청크가 0건이거나 전부 공백이면 근거가 없다. 여기서 스킵하지 않으면 evidence 에 빈 블록이
+    // 실려 "근거 있음"으로 통과하고, LLM 이 도메인 지식만으로 지어낸 온톨로지가 데이터 기반인 것처럼
+    // basedOn 에 실려 나간다 — 이 도구의 존재 이유가 무너지는 지점이다.
+    if (chunks.length === 0) {
+      return { skipReason: '문서 청크가 없습니다(적재 전이거나 본문이 비어 있음)' };
+    }
+    return { datasetId, name, kind: 'document', chunks };
+  }
+
+  return { skipReason: `근거로 쓸 수 없는 storageType: ${storageType ?? '알 수 없음'}` };
+}
+
+/**
+ * 새 온톨로지 도메인명이 아직 살아있는 온톨로지와 겹치지 않는지 확인한다.
+ * archived 는 이름을 선점하지 않으므로(V79 부분 유니크 인덱스가 archived 제외) 중복 판정에서 뺀다.
+ * 백엔드도 409로 막지만, 여기서 먼저 걸러야 에이전트가 같은 턴에 정정할 수 있다.
+ * onClashSuffix 는 겹칠 때 안내 문구 중 도구별로 달라지는 뒷부분("이름을 바꾸세요" vs
+ * "삭제 후 재시도" 등)만 넘긴다 — graphrag_propose_ontology 와 graphrag_infer_ontology 가
+ * 앞부분(겹침 사실 + bind_ontology 안내)은 공유하되 뒷부분 안내는 서로 다르기 때문이다.
+ */
+async function assertDomainAvailable(
+  apiClient: Pick<FireHubApiClient, 'listOntologies'>,
+  domain: string,
+  onClashSuffix: string,
+): Promise<void> {
+  const existing = await apiClient.listOntologies('all');
+  const clash = existing.find((o) => o.domain === domain && o.status !== 'archived');
+  if (clash) {
+    throw new Error(
+      `이미 "${domain}" 도메인의 온톨로지가 있습니다(id=${clash.id}, ${clash.status}). `
+        + `기존 것을 쓰려면 graphrag_bind_ontology 를, ${onClashSuffix}`,
+    );
+  }
+}
+
+/**
+ * 항상 draft 상태로 온톨로지를 생성한다 — status 는 인자로 받지 않는다.
+ * 모델이 status 를 고르게 두면 사람 검토를 건너뛰고 바로 운영에 들어갈 수 있어, 이 불변식을
+ * graphrag_propose_ontology 와 graphrag_infer_ontology 두 도구가 각자 지키게 두지 않고 여기 모은다.
+ */
+async function createDraftOntology(
+  apiClient: Pick<FireHubApiClient, 'createOntology'>,
+  domain: string,
+  entities: unknown[],
+  relations: unknown[],
+): Promise<{ ontologyId: number; domain: string; status: 'draft'; entityCount: number; relationCount: number }> {
+  const ontologyId = await apiClient.createOntology({ domain, entities, relations, status: 'draft' });
+  return { ontologyId, domain, status: 'draft', entityCount: entities.length, relationCount: relations.length };
+}
+
 /**
  * GraphRAG 관련 MCP 도구를 등록한다.
  * 엔티티/관계 추출 LLM 호출은 인증된 claude CLI 헤드리스 실행(createCliCompleter)에 위임한다.
@@ -75,7 +194,10 @@ export function registerGraphragTools(
       async (args: { datasetId: number }) => {
         // Neo4j 제약조건(유니크 키 등)을 먼저 보장한 뒤 적재를 수행한다.
         await bootstrapConstraints();
-        const ontology = await loadOntology(apiClient); // ingest 1회 fetch(실패 시 폴백)
+        // 데이터셋에 바인딩된 온톨로지로 적재한다(미바인딩이면 기본 온톨로지 폴백).
+        // ingest 당 1회 fetch → 청크 전반에 재사용.
+        const resolved = await resolveDatasetOntology(apiClient, args.datasetId);
+        const ontology = resolved.ontology;
         const summary = await ingestDataset(
           {
             listChunks: (id) => apiClient.listDocumentChunks(id),
@@ -113,7 +235,8 @@ export function registerGraphragTools(
         } catch (err) {
           console.warn('[graphrag] 적재 이력 기록 실패(무시하고 계속):', err);
         }
-        return jsonResult(summary);
+        // 어떤 스키마로 적재됐는지(바인딩/기본/번들 폴백) 사용자가 알 수 있도록 출처를 함께 노출한다.
+        return jsonResult({ ...summary, ontologyId: resolved.ontologyId, ontologySource: resolved.source });
       },
     ),
     safeTool(
@@ -180,21 +303,8 @@ export function registerGraphragTools(
         }
         const ontology = deserializeOntology(await apiClient.getOntologyById(binding.ontologyId));
         // 3) 컬럼 메타 + 행 표본을 동일 data 쿼리로 확보(최대 3페이지, ≤600행).
-        const columns: { columnName: string; dataType: string; isPrimaryKey: boolean }[] = [];
-        const sampleRows: Record<string, unknown>[] = [];
         const SAMPLE_ROW_CAP = 600;
-        let page = 0;
-        while (sampleRows.length < SAMPLE_ROW_CAP) {
-          const resp = (await apiClient.queryDatasetData(args.datasetId, {
-            page,
-            size: 200,
-            includeTotalCount: true,
-          })) as { columns: typeof columns; rows: Record<string, unknown>[]; totalPages: number };
-          if (page === 0) columns.push(...resp.columns); // 컬럼 메타는 첫 페이지에서 확보
-          sampleRows.push(...resp.rows);
-          page += 1;
-          if (page >= resp.totalPages || resp.rows.length === 0) break;
-        }
+        const { columns, rows: sampleRows } = await sampleTableRows(apiClient, args.datasetId, SAMPLE_ROW_CAP);
         // 4) 프로파일 → 5) 추론(자체 conformance 필터로 부적합분 드롭).
         const profiles = profileColumns(columns, sampleRows);
         const result = await inferMapping({ complete }, ontology, profiles);
@@ -267,35 +377,96 @@ export function registerGraphragTools(
         entities: unknown[];
         relations: unknown[];
       }) => {
-        // 도메인 중복은 백엔드가 409로 막지만, 여기서 먼저 걸러야 에이전트가 같은 턴에 정정할 수 있다.
-        // 은퇴한 온톨로지는 이름을 선점하지 않으므로(V79 부분 유니크 인덱스가 archived 제외) 중복 판정에서도
-        // 뺀다 — listOntologies는 전체(all)를 받아온 뒤 여기서 status !== 'archived'로 걸러 살아있는 것만 본다.
-        const existing = await apiClient.listOntologies('all');
-        const clash = existing.find((o) => o.domain === args.domain && o.status !== 'archived');
-        if (clash) {
-          throw new Error(
-            `이미 "${args.domain}" 도메인의 온톨로지가 있습니다(id=${clash.id}, ${clash.status}). `
-              + '기존 것을 쓰려면 graphrag_bind_ontology 를, 이름을 바꾸려면 다른 도메인명을 사용하세요.',
-          );
-        }
+        await assertDomainAvailable(apiClient, args.domain, '이름을 바꾸려면 다른 도메인명을 사용하세요.');
 
-        // status는 인자로 받지 않고 항상 draft로 고정한다 — 모델이 고르게 두면 사람 검토를 건너뛴다.
-        const ontologyId = await apiClient.createOntology({
-          domain: args.domain,
-          entities: args.entities,
-          relations: args.relations,
-          status: 'draft',
-        });
-
+        const created = await createDraftOntology(apiClient, args.domain, args.entities, args.relations);
         return jsonResult({
-          ontologyId,
-          domain: args.domain,
-          status: 'draft',
-          entityCount: args.entities.length,
-          relationCount: args.relations.length,
+          ...created,
           nextStep:
             '초안으로 저장했습니다. 사용자가 "지식 모델" 화면(/knowledge-graph/model)에서 내용을 검토하고 '
             + '활성화해야 데이터셋에 연결할 수 있습니다. 에이전트는 활성화할 수 없습니다.',
+        });
+      },
+    ),
+    safeTool(
+      'graphrag_infer_ontology',
+      '데이터셋(문서·표)의 실제 내용을 근거로 새 도메인 온톨로지를 **초안(draft)**으로 유도한다. '
+        + '맞는 기존 온톨로지가 없고 근거로 삼을 데이터셋이 있을 때 사용(근거가 없으면 graphrag_propose_ontology). '
+        + '초안은 바인딩·적재에 쓰이지 않으며 사람이 "지식 모델" 화면에서 검토 후 활성화해야 한다. '
+        + '기존 온톨로지 수정은 이 툴로 할 수 없다. 관리/구축 목적으로만 사용.',
+      {
+        domain: z.string().describe('온톨로지 도메인명(고유해야 함). 예: "건축물 안전점검"'),
+        datasetIds: z
+          .array(z.number())
+          .min(1)
+          .describe('근거로 삼을 데이터셋 ID 목록. 여러 개(문서+표 혼재)를 넘길수록 통합 개념이 잘 잡힌다'),
+        hint: z.string().optional().describe('설계 방향 힌트(선택). 예: "점검 이력과 지적사항 중심"'),
+      },
+      async (args: { domain: string; datasetIds: number[]; hint?: string }) => {
+        // 1) 도메인 충돌 사전 체크.
+        await assertDomainAvailable(
+          apiClient, args.domain,
+          '다시 만들려면 "지식 모델" 화면에서 기존 것을 삭제한 뒤 재시도하거나 다른 도메인명을 사용하세요'
+            + '(덮어쓰기는 지원하지 않습니다).',
+        );
+
+        // 2) 데이터셋별 근거 수집(FILE 등은 스킵하고 이유를 남긴다).
+        // 중복 id는 정규화한다 — [3, 3]처럼 같은 데이터셋이 두 번 들어오면 프롬프트/basedOn에 같은
+        // 블록이 중복되고, 무엇보다 evidence.length가 부풀어 아래 4)의 "단일 TABLE 경고"가
+        // 조용히 안 걸린다(바로 그 실패 모드를 감지해야 하는 가드가 무경고로 지나감).
+        const uniqueDatasetIds = [...new Set(args.datasetIds)];
+        const evidence: DatasetEvidence[] = [];
+        const skipped: { datasetId: number; reason: string }[] = [];
+        // 데이터셋별 수집은 서로 독립이라 동시에 돈다 — 순차로 돌면 데이터셋 수만큼 HTTP 왕복이
+        // 직렬로 쌓여, 여러 개를 넘기라고 안내하는 이 도구에서 LLM 호출 전 대기가 그대로 늘어난다.
+        // allSettled 라 한 건이 실패해도 나머지는 진행하고, map 순서가 보존돼 basedOn/skipped 순서는 그대로다.
+        const settled = await Promise.allSettled(uniqueDatasetIds.map((id) => collectDatasetEvidence(apiClient, id)));
+        settled.forEach((result, i) => {
+          const id = uniqueDatasetIds[i];
+          if (result.status === 'rejected') {
+            // 모델이 지어낸 id(404) 하나 때문에 여러 데이터셋짜리 요청 전체가 죽으면 안 된다 —
+            // FILE 등 스킵 경로와 비대칭이었다. 조회 실패도 스킵 사유로 남기고 나머지는 계속 진행한다.
+            const err = result.reason as Error;
+            skipped.push({ datasetId: id, reason: `근거 수집 실패: ${err?.message ?? String(result.reason)}` });
+            return;
+          }
+          if ('skipReason' in result.value) skipped.push({ datasetId: id, reason: result.value.skipReason });
+          else evidence.push(result.value);
+        });
+        if (evidence.length === 0) {
+          throw new Error('근거로 쓸 수 있는 데이터셋이 없습니다(문서 또는 표 데이터셋을 지정하세요).');
+        }
+
+        // 3) 추론 + 검증 필터.
+        const result = await inferOntology({ complete }, args.domain, args.hint, evidence);
+        if (result.entities.length === 0) {
+          throw new Error(
+            '추론 결과가 비었습니다(LLM 실패 또는 제안이 전부 검증에서 탈락). 온톨로지를 저장하지 않았습니다.',
+          );
+        }
+
+        // 4) 단일 TABLE 가드 — 차단하지 않고 경고. 표 하나만 보면 컬럼을 그대로 옮긴
+        //    온톨로지가 나와 매핑 레이어가 무의미해진다.
+        const warnings: string[] = [];
+        if (evidence.length === 1 && evidence[0].kind === 'table') {
+          warnings.push(
+            '표 데이터셋 하나만 근거로 삼았습니다. 컬럼 목록을 그대로 옮긴 온톨로지가 되기 쉬우니, '
+              + '관련 데이터셋을 더 넘기거나 문서 데이터셋을 포함해 다시 시도하는 것을 권합니다.',
+          );
+        }
+
+        // 5) draft 저장.
+        const created = await createDraftOntology(apiClient, args.domain, result.entities, result.relations);
+
+        return jsonResult({
+          ...created,
+          basedOn: evidence.map((e) => ({ datasetId: e.datasetId, name: e.name, kind: e.kind })),
+          skipped,
+          dropped: result.dropped,
+          warnings,
+          nextStep:
+            '초안으로 저장했습니다. 사용자가 "지식 모델" 화면(/knowledge-graph/model)에서 내용을 검토하고 '
+            + '활성화해야 데이터셋에 연결할 수 있습니다. 에이전트는 활성화·수정할 수 없습니다.',
         });
       },
     ),
