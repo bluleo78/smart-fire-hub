@@ -2,6 +2,7 @@ package com.smartfirehub.ontology.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
@@ -342,15 +343,13 @@ public class OntologyService {
     }
   }
 
-  // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
-  // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
-  // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
-  private static final Set<String> RESERVED_PROPERTY_NAMES =
-      Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion");
-
   // 온톨로지 본문 공통 검증(생성/편집 공용) — domain, entity 타입, resolution, property, relation 참조 무결성.
   // requireComplete=false(draft)면 "엔티티 최소 1개" 같은 완전성 규칙을 건너뛰고 형식 규칙만 본다.
   // draft는 정의상 미완성이고, 완전성은 active로 전이할 때 게이트로 검사한다.
+  // 요소 하나로 판정 가능한 규칙(타입명·resolution·속성·관계 형식)은 OntologyRules에 위임한다 —
+  // element 패키지(요소 단위 편집)와 문구·판정을 공유해야 프론트 e2e의 문구 단언이 두 경로에서
+  // 동시에 맞는다. 여기 남는 것은 여러 요소를 한꺼번에 봐야 하는 문서 단위 불변식뿐이다
+  // (완전성, 목록 전체 중복 스캔, 관계의 엔티티 참조 무결성).
   private void validateCore(
       String domain,
       List<OntologyResponse.EntityType> entities,
@@ -370,73 +369,41 @@ public class OntologyService {
     }
     Set<String> seenTypes = new HashSet<>();
     for (var e : entities) {
-      if (e.type() == null || e.type().isBlank()) {
-        throw new IllegalArgumentException("엔티티 타입명은 비어 있을 수 없습니다.");
-      }
+      // blank 검사만 먼저 부른다 — 중복 판정이 원래 위치(blank 다음, resolution 앞)를 지켜야
+      // 두 조건이 겹친 요청의 문구가 리팩터링 전과 같다. validateEntityTypeCommon 안에서 blank를
+      // 다시 검사하지만 이미 통과한 값이라 no-op이다.
+      OntologyRules.validateEntityTypeName(e.type());
       if (!seenTypes.add(e.type())) {
-        throw new IllegalArgumentException("중복된 엔티티 타입명: " + e.type());
+        throw OntologyRules.duplicateEntityTypeName(e.type());
       }
-      if (!"embedding".equals(e.resolution()) && !"exact".equals(e.resolution())) {
-        throw new IllegalArgumentException("resolution은 embedding 또는 exact여야 합니다: " + e.type());
-      }
-      // description/naming 컬럼은 NOT NULL(기본값 없음)이라 null이 그대로 INSERT되면 제약 위반으로
-      // 500이 새어나간다(#305). null만 막고 빈 문자열은 허용한다 — 컬럼 제약이 NOT NULL일 뿐이고
-      // 실제로 설명을 비워 저장한 기존 데이터가 정상 왕복(GET→PUT)돼야 하기 때문이다.
-      if (e.description() == null) {
-        throw new IllegalArgumentException("엔티티 설명(description)은 null일 수 없습니다: " + e.type());
-      }
-      if (e.naming() == null) {
-        throw new IllegalArgumentException("엔티티 명명 규칙(naming)은 null일 수 없습니다: " + e.type());
-      }
+      OntologyRules.validateEntityTypeCommon(e.type(), e.description(), e.naming(), e.resolution());
       if (e.properties() != null) {
         Set<String> seenPropNames = new HashSet<>();
         for (var p : e.properties()) {
-          // blank 검사를 예약어/중복보다 먼저 둔다 — 이름이 빈 속성이 2개면 ''끼리 충돌해
-          // "중복된 속성명"으로 오진단되고(실제 원인은 미입력), null이면 Set.of#contains가 NPE를 던져 500이 된다.
-          if (p.name() == null || p.name().isBlank()) {
-            throw new IllegalArgumentException("속성명은 비어 있을 수 없습니다: " + e.type());
-          }
-          if (RESERVED_PROPERTY_NAMES.contains(p.name())) {
-            throw new IllegalArgumentException("예약어는 속성명으로 쓸 수 없습니다: " + p.name());
-          }
+          OntologyRules.validatePropertyName(p.name(), e.type());
           if (!seenPropNames.add(p.name())) {
-            throw new IllegalArgumentException("중복된 속성명(" + e.type() + "): " + p.name());
+            throw OntologyRules.duplicatePropertyName(e.type(), p.name());
           }
-          // 속성 description도 NOT NULL 컬럼 — 엔티티와 동일하게 null만 차단한다(#305).
-          if (p.description() == null) {
-            throw new IllegalArgumentException(
-                "속성 설명(description)은 null일 수 없습니다(" + e.type() + "): " + p.name());
-          }
-          // dataType은 NOT NULL + CHECK(text|number|date)라 null은 애초에 저장 불가하다.
-          // 기존 코드가 null을 통과시켜 제약 위반 500이 났으므로 null도 400으로 거른다(#305).
-          if (p.dataType() == null || !List.of("text", "number", "date").contains(p.dataType())) {
-            throw new IllegalArgumentException("데이터 타입은 text|number|date 중 하나여야 합니다: " + p.name());
-          }
+          OntologyRules.validatePropertyCommon(p.description(), p.dataType(), e.type(), p.name());
         }
       }
     }
     Set<String> seenTriples = new HashSet<>();
     for (var r : relations) {
-      // 관계명 blank도 중복(tripleKey) 검사보다 먼저 — 빈 관계명 2건은 tripleKey가 같아
-      // "중복된 관계"로 오진단된다. 이름 없는 관계는 LLM 추출·표 투영이 참조할 수 없어 무의미하다.
-      if (r.relation() == null || r.relation().isBlank()) {
-        throw new IllegalArgumentException(
-            "관계명은 비어 있을 수 없습니다: " + r.subject() + " → " + r.object());
-      }
+      // 원본 순서(관계명 blank → subject 존재 → object 존재 → description null)를 그대로 지킨다 —
+      // subject/object 참조 무결성은 여러 엔티티를 함께 봐야 하는 문서 단위 불변식이라 여기 남아 있고,
+      // 그래서 validateRelationCommon(이름+description을 한 번에)을 통으로 못 쓰고 나눠서 부른다.
+      OntologyRules.validateRelationName(r.relation(), r.subject(), r.object());
       if (!seenTypes.contains(r.subject())) {
         throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(subject): " + r.subject());
       }
       if (!seenTypes.contains(r.object())) {
         throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(object): " + r.object());
       }
-      // 관계 description도 NOT NULL 컬럼 — 엔티티/속성과 동일하게 null만 차단한다(#305).
-      if (r.description() == null) {
-        throw new IllegalArgumentException(
-            "관계 설명(description)은 null일 수 없습니다: " + r.subject() + " → " + r.object());
-      }
+      OntologyRules.validateRelationDescription(r.description(), r.subject(), r.object());
       String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
       if (!seenTriples.add(tripleKey)) {
-        throw new IllegalArgumentException("중복된 관계: " + tripleKey);
+        throw OntologyRules.duplicateTriple(r.subject(), r.relation(), r.object());
       }
     }
   }

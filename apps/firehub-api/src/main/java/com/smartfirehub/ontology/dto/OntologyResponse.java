@@ -18,8 +18,26 @@ public record OntologyResponse(String domain, int schemaVersion, List<EntityType
   }
 
   // 엔티티 데이터 프로퍼티: 속성명·설명·데이터타입(text|number|date)·단위(nullable).
-  public record Property(String name, String description, String dataType, String unit) {}
+  // id: ontology_entity_property.id — 요소 단위 편집 API(PATCH/DELETE .../properties/{id})가
+  // 대상을 지목하는 주소다. 이름으로 지목하면 리네임과 동시 수정이 서로를 덮어쓴다.
+  public record Property(String name, String description, String dataType, String unit, Long id) {
 
-  // 온톨로지 관계(트리플) 정의: subject-relation-object.
-  public record Triple(String subject, String relation, String object, String description) {}
+    // id 도입 이전 호출부(4-인자) 하위호환 — 생략 시 null(신규 삽입 대상으로 취급).
+    public Property(String name, String description, String dataType, String unit) {
+      this(name, description, dataType, unit, null);
+    }
+  }
+
+  // 온톨로지 관계(트리플) 정의.
+  // subject/object는 사람이 읽는 타입 "이름"으로 계속 내보낸다 — ai-agent가 이 계약을 이름 기반으로
+  // 소비(추출 프롬프트·표 투영)하므로 빼면 그쪽 전체가 딸려온다.
+  // id/subjectTypeId/objectTypeId(V80): 저장은 FK 기반이며, 요소 단위 편집 API는 이 id들로 대화한다.
+  public record Triple(String subject, String relation, String object, String description,
+                       Long id, Long subjectTypeId, Long objectTypeId) {
+
+    // id 도입 이전 호출부(4-인자) 하위호환.
+    public Triple(String subject, String relation, String object, String description) {
+      this(subject, relation, object, description, null, null, null);
+    }
+  }
 }

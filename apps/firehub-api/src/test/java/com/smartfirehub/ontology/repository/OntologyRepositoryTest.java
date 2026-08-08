@@ -114,9 +114,53 @@ class OntologyRepositoryTest extends IntegrationTestBase {
         new UpdateOntologyRequest(original.domain(), 1, original.entities(), original.relations());
     repository.updateOntology(req);
 
+    // property.id / relation.id(트리플 자신의 PK)는 레거시 PUT이 여전히 delete-then-reinsert
+    // 방식이라 라운드트립마다 새로 발급된다(요소 단위 안정 id는 Task 3~5의 PATCH 경로가 보장).
+    // subjectTypeId/objectTypeId는 entity_type이 매칭 UPDATE로 보존되므로 원본과 같아야 한다.
     OntologyResponse res = repository.findOntology();
-    assertThat(res.entities()).isEqualTo(original.entities());
-    assertThat(res.relations()).isEqualTo(original.relations());
+    assertThat(res.entities()).usingRecursiveComparison()
+        .ignoringFields("properties.id")
+        .isEqualTo(original.entities());
+    assertThat(res.relations()).usingRecursiveComparison()
+        .ignoringFields("id")
+        .isEqualTo(original.relations());
+  }
+
+  // 계약 characterization: PUT 쓰기 경로는 이름 기준이다 — 본문에 subjectTypeId를 실어도 무시되고
+  // subject "이름"으로 다시 조회한 entity_type_id가 저장된다. GET→PUT 라운드트립을 하는 웹앱이
+  // Task 2에서 새로 노출된 id 필드를 그대로 들고 있다가 되돌려 보낼 수 있게 됐으므로, 이 계약을
+  // 문서화한 UpdateOntologyRequest 주석과 짝을 이뤄 고정한다. 훗날 쓰기 경로가 id 기반으로 바뀌면
+  // 이 테스트가 실패해 "의도된 변경"인지 반드시 확인하게 만드는 캐너리다.
+  @Test
+  void updateOntology_는_요청에_실린_subjectTypeId를_무시하고_이름_기준으로_저장한다() {
+    java.util.Map<String, Long> idByType = original.entities().stream()
+        .collect(java.util.stream.Collectors.toMap(
+            OntologyResponse.EntityType::type, OntologyResponse.EntityType::id));
+
+    OntologyResponse.Triple originalFirst = original.relations().get(0);
+    assertThat(originalFirst.subject()).isEqualTo("Incident"); // 전제: 첫 트리플은 Incident-OCCURRED_AT-Building.
+
+    // subject 이름은 그대로 "Incident"인데, subjectTypeId만 엉뚱한 타입(Building)의 id로 바꿔 보낸다.
+    long wrongSubjectTypeId = idByType.get("Building");
+    OntologyResponse.Triple tampered = new OntologyResponse.Triple(
+        originalFirst.subject(), originalFirst.relation(), originalFirst.object(),
+        originalFirst.description(), originalFirst.id(), wrongSubjectTypeId, originalFirst.objectTypeId());
+
+    List<OntologyResponse.Triple> relations = new java.util.ArrayList<>(original.relations());
+    relations.set(0, tampered);
+
+    UpdateOntologyRequest req = new UpdateOntologyRequest(original.domain(), 1, original.entities(), relations);
+    repository.updateOntology(req);
+
+    OntologyResponse res = repository.findOntology();
+    OntologyResponse.Triple stored = res.relations().stream()
+        .filter(t -> t.relation().equals("OCCURRED_AT")).findFirst().orElseThrow();
+
+    // 저장된 subjectTypeId는 요청에 실렸던 wrongSubjectTypeId가 아니라, subject 이름("Incident")으로
+    // 다시 찾은 entity_type_id다.
+    assertThat(stored.subject()).isEqualTo("Incident");
+    assertThat(stored.subjectTypeId()).isEqualTo(idByType.get("Incident"));
+    assertThat(stored.subjectTypeId()).isNotEqualTo(wrongSubjectTypeId);
   }
 
   // (5-2 a) 관계 추가: 새 트리플을 relations 배열에 더해 PUT하면 delete+reinsert로 그대로 반영된다.
@@ -290,9 +334,21 @@ class OntologyRepositoryTest extends IntegrationTestBase {
     List<OntologyResponse.EntityType> entities = new java.util.ArrayList<>(original.entities());
     entities.set(entities.indexOf(cause), renamed);
 
+    // V80: 관계는 FK로 타입을 참조하므로, 리네임 후 최종 엔티티 목록에 없는 옛 이름("Cause")을
+    // 그대로 들고 있으면 안 된다(OntologyService.validateCore도 최종 타입명 기준으로 검사한다).
+    // 실제 호출자라면 리네임과 함께 관계 텍스트도 새 이름으로 갱신해 보낸다.
+    List<OntologyResponse.Triple> relations =
+        original.relations().stream()
+            .map(r -> new OntologyResponse.Triple(
+                r.subject().equals("Cause") ? "RootCause" : r.subject(),
+                r.relation(),
+                r.object().equals("Cause") ? "RootCause" : r.object(),
+                r.description()))
+            .toList();
+
     UpdateOntologyRequest req =
         new UpdateOntologyRequest(
-            original.domain(), 1, entities, original.relations(),
+            original.domain(), 1, entities, relations,
             List.of(new UpdateOntologyRequest.TypeRename("Cause", "RootCause")));
     repository.updateOntology(req);
 

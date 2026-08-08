@@ -65,12 +65,16 @@ public class OntologyRepository {
   private static final Field<String> EP_DTYPE = field(name("ontology_entity_property", "data_type"), String.class);
   private static final Field<String> EP_UNIT = field(name("ontology_entity_property", "unit"), String.class);
   private static final Field<Integer> EP_ORDER = field(name("ontology_entity_property", "sort_order"), Integer.class);
+  // 요소 단위 편집 API(PATCH/DELETE .../properties/{id})가 속성을 지목하는 안정 id.
+  private static final Field<Long> EP_ID = field(name("ontology_entity_property", "id"), Long.class);
 
   private static final Table<?> RELATION = table(name("ontology_relation"));
+  private static final Field<Long> R_ID = field(name("ontology_relation", "id"), Long.class);
   private static final Field<Long> R_ONTOLOGY_ID = field(name("ontology_relation", "ontology_id"), Long.class);
-  private static final Field<String> R_SUBJECT = field(name("ontology_relation", "subject"), String.class);
+  // V80: subject/object는 타입 "이름"(TEXT)이 아니라 ontology_entity_type.id FK다.
+  private static final Field<Long> R_SUBJECT_ID = field(name("ontology_relation", "subject_type_id"), Long.class);
   private static final Field<String> R_RELATION = field(name("ontology_relation", "relation"), String.class);
-  private static final Field<String> R_OBJECT = field(name("ontology_relation", "object"), String.class);
+  private static final Field<Long> R_OBJECT_ID = field(name("ontology_relation", "object_type_id"), Long.class);
   private static final Field<String> R_DESC = field(name("ontology_relation", "description"), String.class);
   private static final Field<Integer> R_ORDER = field(name("ontology_relation", "sort_order"), Integer.class);
 
@@ -94,23 +98,36 @@ public class OntologyRepository {
             .fetch(r -> {
               // 각 엔티티 타입의 데이터 프로퍼티를 sort_order 순으로 조회한다.
               List<OntologyResponse.Property> props =
-                  dsl.select(EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT)
+                  dsl.select(EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT, EP_ID)
                       .from(ENTITY_PROP)
                       .where(EP_TYPE_ID.eq(r.get(ET_ID)))
                       .orderBy(EP_ORDER)
                       .fetch(p -> new OntologyResponse.Property(
-                          p.get(EP_NAME), p.get(EP_DESC), p.get(EP_DTYPE), p.get(EP_UNIT)));
+                          p.get(EP_NAME), p.get(EP_DESC), p.get(EP_DTYPE), p.get(EP_UNIT), p.get(EP_ID)));
               return new OntologyResponse.EntityType(
                   r.get(ET_TYPE), r.get(ET_DESC), r.get(ET_NAMING), r.get(ET_RES), props, r.get(ET_ID));
             });
 
+    // V80 이후 관계는 타입 id를 들고 있다. 읽기 계약(OntologyResponse.Triple)은 이름을 유지해야 하므로
+    // 위에서 이미 조회한 entities로 id→이름 맵을 만들어 되붙인다. 셀프 조인 2회보다 싸고 읽기 쉽다.
+    Map<Long, String> typeNameById = new HashMap<>();
+    for (var e : entities) {
+      typeNameById.put(e.id(), e.type());
+    }
+
     List<OntologyResponse.Triple> relations =
-        dsl.select(R_SUBJECT, R_RELATION, R_OBJECT, R_DESC)
+        dsl.select(R_ID, R_SUBJECT_ID, R_RELATION, R_OBJECT_ID, R_DESC)
             .from(RELATION)
             .where(R_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 관계만
             .orderBy(R_ORDER)
             .fetch(r -> new OntologyResponse.Triple(
-                r.get(R_SUBJECT), r.get(R_RELATION), r.get(R_OBJECT), r.get(R_DESC)));
+                typeNameById.get(r.get(R_SUBJECT_ID)),
+                r.get(R_RELATION),
+                typeNameById.get(r.get(R_OBJECT_ID)),
+                r.get(R_DESC),
+                r.get(R_ID),
+                r.get(R_SUBJECT_ID),
+                r.get(R_OBJECT_ID)));
 
     return new OntologyResponse(domain, schemaVersion, entities, relations);
   }
@@ -219,6 +236,19 @@ public class OntologyRepository {
     return currentSchemaVersion(1L);
   }
 
+  // 관계 삽입용 이름→id 해석. 관계는 V80 이후 FK를 요구하는데 쓰기 계약(UpdateOntologyRequest/
+  // CreateOntologyRequest)은 여전히 이름을 담고 있어, 저장 직전에 한 번 변환해야 한다.
+  // 매칭 실패는 IllegalArgumentException으로 올린다 — OntologyService.validateCore가 이미
+  // 참조 무결성을 검사하므로 여기 도달했다면 검증을 우회한 호출이고, FK 위반 500보다 400이 낫다.
+  private static long resolveTypeId(Map<String, Long> idByType, String typeName, String where) {
+    Long id = idByType.get(typeName);
+    if (id == null) {
+      throw new IllegalArgumentException(
+          "관계가 존재하지 않는 엔티티 타입을 참조합니다(" + where + "): " + typeName);
+    }
+    return id;
+  }
+
   // 신규 도메인 온톨로지 생성 — ontology 행(schema_version=1) + entity_type + relation을 원자 삽입.
   // id는 IDENTITY(V77)로 자동 발급되어 반환된다. sort_order는 요청 배열 순서로 매긴다.
   public long createOntology(CreateOntologyRequest req) {
@@ -234,6 +264,8 @@ public class OntologyRepository {
               .fetchOne()
               .get(O_ID);
 
+      // 관계 삽입에 쓸 이름→id 맵. 엔티티 타입을 넣으면서 함께 모은다(별도 재조회 불필요).
+      Map<String, Long> idByType = new HashMap<>();
       int etOrder = 0;
       for (var e : req.entities()) {
         long entityTypeId =
@@ -247,6 +279,7 @@ public class OntologyRepository {
                 .returning(ET_ID)
                 .fetchOne()
                 .get(ET_ID);
+        idByType.put(e.type(), entityTypeId);
         int epOrder = 0;
         List<OntologyResponse.Property> props = e.properties() == null ? List.of() : e.properties();
         for (var p : props) {
@@ -261,13 +294,14 @@ public class OntologyRepository {
         }
       }
 
+      // 관계는 엔티티 타입이 모두 삽입된 뒤에만 넣을 수 있다(FK).
       int rOrder = 0;
       for (var t : req.relations()) {
         tx.insertInto(RELATION)
             .set(R_ONTOLOGY_ID, ontologyId)
-            .set(R_SUBJECT, t.subject())
+            .set(R_SUBJECT_ID, resolveTypeId(idByType, t.subject(), "subject"))
             .set(R_RELATION, t.relation())
-            .set(R_OBJECT, t.object())
+            .set(R_OBJECT_ID, resolveTypeId(idByType, t.object(), "object"))
             .set(R_DESC, t.description())
             .set(R_ORDER, rOrder++)
             .execute();
@@ -277,8 +311,9 @@ public class OntologyRepository {
   }
 
   // 단일 온톨로지(id=1) 전체를 교체하는 full-document 편집(B-2b). 단일 트랜잭션 원자성:
-  // ① 낙관적 잠금 + 버전 증가(기대 버전과 일치할 때만) ② relation은 전량 재작성(id 안정성 불필요 —
-  // subject/object는 문자열 참조라 FK 없음) ③ entity_type은 매칭 기반 UPDATE/INSERT/DELETE로 id 보존(5-6).
+  // ① 낙관적 잠금 + 버전 증가(기대 버전과 일치할 때만) ② relation은 전량 재작성(V80: subject/object가
+  // entity_type_id FK라 엔티티 타입이 확정된 뒤에만 삽입 가능 — 그래서 삭제는 여기, 삽입은 ③ 이후로 미룬다)
+  // ③ entity_type은 매칭 기반 UPDATE/INSERT/DELETE로 id 보존(5-6).
   // 반환값 = 증가된 새 schema_version. 기대 버전 불일치 시 IllegalStateException → 409(전역 핸들러 규약).
   public int updateOntology(long ontologyId, UpdateOntologyRequest req) {
     return dsl.transactionResult(cfg -> {
@@ -298,19 +333,10 @@ public class OntologyRepository {
             "지식 모델이 다른 사용자에 의해 이미 수정되었습니다. 새로고침 후 다시 시도하세요.");
       }
 
-      // ② relation은 전량 재작성(기존과 동일 — subject/object는 문자열 참조라 entity_type_id와 무관).
+      // ② 관계는 전량 재작성한다. 삭제만 여기서 먼저 하는 이유: 아래 ③에서 타입을 지울 때
+      // FK CASCADE가 관계를 함께 지우려 드는데, 어차피 전량 재삽입할 것이므로 미리 비워
+      // CASCADE와 재삽입이 겹치지 않게 한다. 삽입은 타입이 확정된 뒤(④)에야 가능하다.
       tx.deleteFrom(RELATION).where(R_ONTOLOGY_ID.eq(ontologyId)).execute();
-      int rOrder = 0;
-      for (var t : req.relations()) {
-        tx.insertInto(RELATION)
-            .set(R_ONTOLOGY_ID, ontologyId)
-            .set(R_SUBJECT, t.subject())
-            .set(R_RELATION, t.relation())
-            .set(R_OBJECT, t.object())
-            .set(R_DESC, t.description())
-            .set(R_ORDER, rOrder++)
-            .execute();
-      }
 
       // ③ entity_type — 매칭 기반 UPDATE/INSERT/DELETE(5-6: entity_type_id를 시간축에서 안정적으로
       // 보존해 ai-agent가 Neo4j 노드 key를 이 id 기반으로 구성할 수 있게 한다. 타입명이 바뀌어도(리네임)
@@ -349,6 +375,9 @@ public class OntologyRepository {
         tx.deleteFrom(ENTITY_TYPE).where(ET_ID.in(removedIds)).execute(); // property는 CASCADE 삭제.
       }
 
+      // ④에서 관계를 삽입할 때 쓸 최종 이름→id 맵(리네임·신규 삽입 결과가 모두 반영된 상태).
+      Map<String, Long> finalIdByType = new HashMap<>();
+
       int etOrder = 0;
       for (int i = 0; i < req.entities().size(); i++) {
         var e = req.entities().get(i);
@@ -377,6 +406,7 @@ public class OntologyRepository {
                   .fetchOne()
                   .get(ET_ID);
         }
+        finalIdByType.put(e.type(), entityTypeId);
 
         // 속성은 id 안정성이 필요 없으므로 기존과 동일하게 해당 entityTypeId 기준 delete-then-reinsert.
         tx.deleteFrom(ENTITY_PROP).where(EP_TYPE_ID.eq(entityTypeId)).execute();
@@ -393,6 +423,19 @@ public class OntologyRepository {
               .set(EP_ORDER, epOrder++)
               .execute();
         }
+      }
+
+      // ④ 관계 삽입 — 타입이 전부 확정된 지금에야 FK를 만족한다.
+      int rOrder = 0;
+      for (var t : req.relations()) {
+        tx.insertInto(RELATION)
+            .set(R_ONTOLOGY_ID, ontologyId)
+            .set(R_SUBJECT_ID, resolveTypeId(finalIdByType, t.subject(), "subject"))
+            .set(R_RELATION, t.relation())
+            .set(R_OBJECT_ID, resolveTypeId(finalIdByType, t.object(), "object"))
+            .set(R_DESC, t.description())
+            .set(R_ORDER, rOrder++)
+            .execute();
       }
 
       return req.schemaVersion() + 1;

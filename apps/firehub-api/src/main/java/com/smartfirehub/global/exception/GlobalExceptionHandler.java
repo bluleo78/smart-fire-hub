@@ -20,6 +20,7 @@ import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
 import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.global.dto.ErrorResponse;
+import com.smartfirehub.ontology.exception.OntologyElementNotFoundException;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
@@ -182,6 +183,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(RoleNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleRoleNotFound(
       RoleNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /** 요소 단위 온톨로지 편집 — 이 온톨로지 안에 존재하지 않는 타입/속성/관계 id를 지목하면 404 반환. */
+  @ExceptionHandler(OntologyElementNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleOntologyElementNotFound(
+      OntologyElementNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }

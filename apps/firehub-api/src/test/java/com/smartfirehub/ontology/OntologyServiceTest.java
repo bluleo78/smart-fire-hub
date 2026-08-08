@@ -143,6 +143,24 @@ class OntologyServiceTest {
     verify(repository, org.mockito.Mockito.never()).updateOntology(any());
   }
 
+  // OntologyRules 추출(Task 3) 회귀 가드: 관계명은 유효하지만 description이 null이고 subject가
+  // 존재하지 않는 타입을 참조하는 경우, subject 참조 무결성 에러가 description 에러보다 먼저 떠야
+  // 원본 순서(관계명 blank → subject 존재 → object 존재 → description null)와 같다. OntologyRules로
+  // 검증 로직을 옮기면서 두 검사를 한 번에 묶어 부르면 이 순서가 조용히 뒤집힐 수 있다.
+  @Test
+  void updateOntology_는_관계명이_유효해도_description보다_subject_참조를_먼저_검사한다() {
+    UpdateOntologyRequest bad =
+        new UpdateOntologyRequest(
+            "d",
+            1,
+            List.of(new OntologyResponse.EntityType("Incident", "a", "n", "exact", List.of())),
+            List.of(new OntologyResponse.Triple("Ghost", "OCCURRED_AT", "Incident", null)));
+    assertThatThrownBy(() -> service.updateOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("관계가 존재하지 않는 엔티티 타입을 참조합니다(subject)");
+    verify(repository, org.mockito.Mockito.never()).updateOntology(any());
+  }
+
   // 편집 검증(5-2): 동일한 (subject, relation, object) 트리플이 중복되면 거부한다.
   @Test
   void updateOntology_는_중복된_관계를_거부한다() {

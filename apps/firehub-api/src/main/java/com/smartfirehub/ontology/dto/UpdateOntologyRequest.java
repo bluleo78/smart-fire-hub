@@ -12,6 +12,15 @@ import java.util.List;
 // entity_type_id 기반 key를 쓰므로 이 힌트와 무관하게 리네임의 영향을 받지 않는다.
 // 상태 전이는 이 계약에 포함하지 않는다 — PATCH /ontology/{id}/status 전용
 // (UpdateOntologyStatusRequest 주석에 분리 사유 정리).
+// id 필드 계약(Task 2에서 OntologyResponse.Property/Triple에 id/subjectTypeId/objectTypeId를 추가한 뒤):
+// 이 요청은 OntologyResponse의 레코드를 그대로 재사용하므로 본문에 그 id들을 실어 보낼 수 있지만,
+// 쓰기 경로(OntologyRepository.updateOntology)는 여전히 "이름" 기준으로 매칭한다 — 엔티티 타입은
+// entities[i].type 문자열로, 관계는 subject/object 이름(resolveTypeId)으로 대상을 찾는다.
+// 즉 본문에 담긴 id/subjectTypeId/objectTypeId는 조용히 무시되며 저장 결과에 아무 영향도 주지 않는다
+// (id 기반 매칭으로 바꾸는 것은 이 태스크의 범위가 아니라 요소 단위 PATCH API의 몫이다).
+// 또한 이 PUT은 ontology_entity_property/ontology_relation을 delete-then-reinsert하므로, 응답으로
+// 받았던 property.id / relation.id는 이 호출이 끝나는 순간 더 이상 유효하지 않다 — 클라이언트가 이어서
+// 요소 단위로 무언가를 지목하려면 저장 후 반드시 GET으로 재조회해 새 id를 얻어야 한다.
 public record UpdateOntologyRequest(
     String domain,
     int schemaVersion,
