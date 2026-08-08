@@ -8,8 +8,26 @@ import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { GraphMutationRejectedError } from '../graphrag/graph-mutation-guard.js';
-import { loadOntology } from '../graphrag/ontology-source.js';
+import { loadOntology, resolveDatasetOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
+
+/**
+ * entityType 문자열 → typeId 변환에 쓸 온톨로지를 고른다.
+ * datasetId 가 오면 그 데이터셋에 **바인딩된** 온톨로지를 쓴다 — resolver.ts 의 entityKey 는
+ * `<entity_type_id>:<name>` 이고, 적재는 바인딩된 온톨로지의 typeId 를 쓰므로(#resolveDatasetOntology
+ * 도입 배경), 기본 온톨로지로 변환하면 기본이 아닌 온톨로지에 바인딩된 데이터셋의 키와 어긋난다.
+ * datasetId 가 없으면(백엔드가 아직 이 필드를 보내지 않는 하위호환 경로) 기존처럼 기본 온톨로지로 폴백한다.
+ *
+ * 후속 과제: firehub-api 의 SynonymMergeClient·GraphMutationClient 가 승인 호출에 datasetId 를
+ * 실어 보내도록 고쳐야 이 폴백이 실제로 걷힌다. 그 전까지 기본이 아닌 온톨로지에 바인딩된
+ * 데이터셋의 검수 승인은 typeId 가 어긋난 채로 남는다.
+ */
+async function loadOntologyForMutation(apiClient: FireHubApiClient, datasetId?: number) {
+  if (datasetId != null) {
+    return (await resolveDatasetOntology(apiClient, datasetId)).ontology;
+  }
+  return loadOntology(apiClient);
+}
 
 // 온톨로지 시각화용 읽기 전용 + HITL 승인 병합 라우터. 온톨로지 스키마는 api DB 소유로 이관됨(이 라우트 제거).
 // 5-6: 엔티티 타입 리네임은 이제 순수 DB 연산(entity_type_id 보존)이라 Neo4j 마이그레이션 라우트가
@@ -47,6 +65,8 @@ const mergeBodySchema = z.object({
   entityType: z.string().min(1),
   nameA: z.string().min(1),
   nameB: z.string().min(1),
+  // 있으면 바인딩된 온톨로지로 typeId 를 변환한다 — 이유와 후속 과제는 loadOntologyForMutation 참고.
+  datasetId: z.number().optional(),
 });
 
 // HITL 승인된 근접쌍 동기 병합 — firehub-api(SynonymMergeClient)가 승인 시 호출한다.
@@ -63,7 +83,7 @@ router.post('/graph/merge-entities', internalAuth, async (req, res) => {
     const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
-    const ontology = await loadOntology(apiClient);
+    const ontology = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
     await mergeEntities(ontology, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
     res.status(204).send();
   } catch (e) {
@@ -103,6 +123,8 @@ const addEntityBodySchema = z.object({
     direction: z.enum(['out', 'in']),
     otherKey: z.string().min(1),
   })).default([]),
+  // 있으면 바인딩된 온톨로지로 typeId 를 변환한다 — 이유와 후속 과제는 loadOntologyForMutation 참고.
+  datasetId: z.number().optional(),
 });
 
 // HITL 승인된 저신뢰 엔티티를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
@@ -117,7 +139,7 @@ router.post('/graph/add-entity', internalAuth, async (req, res) => {
     const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
-    const ontology = await loadOntology(apiClient);
+    const ontology = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
     await addEntity(ontology, {
       entityType: parsed.data.entityType as EntityType,
       name: parsed.data.name,
@@ -139,6 +161,8 @@ const addRelationBodySchema = z.object({
   relType: z.string().min(1),
   objectKey: z.string().min(1),
   sourceChunkIds: z.array(z.number()).default([]),
+  // 있으면 바인딩된 온톨로지로 typeId 를 변환한다 — 이유와 후속 과제는 loadOntologyForMutation 참고.
+  datasetId: z.number().optional(),
 });
 
 // HITL 승인된 저신뢰 관계를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
@@ -153,7 +177,7 @@ router.post('/graph/add-relation', internalAuth, async (req, res) => {
     const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
-    const ontology = await loadOntology(apiClient);
+    const ontology = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
     // relType은 zod의 문자열 검사만 거친 값이므로 온톨로지 대조는 addRelation이 담당한다(#319).
     // 위반 시 OntologyConformanceError → respondMutationError가 409 + 한국어 사유로 매핑한다
     // (400이 아니라 409인 이유: firehub-api의 GraphMutationClient는 409만 사유 문구를 살려 올린다).
