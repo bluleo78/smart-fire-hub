@@ -24,9 +24,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// 지식 모델의 요소(타입·속성·관계) 단위 편집. 전체 스키마 원샷 PUT(OntologyService.updateOntology)과
-// 달리 한 요소만 바꾸므로 낙관적 잠금(baseVersion/409)이 필요 없다 — 서로 다른 요소를 고치는 것은
-// 충돌이 아니고, 같은 요소는 last-write-wins로 충분하다(편집자가 ADMIN 소수).
+// 지식 모델의 요소(타입·속성·관계) 단위 편집. 전체 스키마를 왕복시키던 원샷 PUT(OntologyService의
+// updateOntology — S2 Task 7에서 삭제됨)과 달리 한 요소만 바꾸므로 낙관적 잠금(baseVersion/409)이
+// 필요 없다 — 서로 다른 요소를 고치는 것은 충돌이 아니고, 같은 요소는 last-write-wins로 충분하다
+// (편집자가 ADMIN 소수).
 // 대신 모든 뮤테이션이 schema_version을 올려, 클라이언트가 "남이 바꿨는지"를 감지할 수 있게 한다.
 @Service
 @RequiredArgsConstructor
@@ -42,8 +43,8 @@ public class OntologyElementService {
   // 같은 코드를 부른다는 사실에서 나와야 한다.
 
   // 편집 가능 상태인지 확인하고 현재 status를 돌려준다.
-  // archived 거부 사유는 OntologyService.updateOntology와 동일하다 — 그 스키마로 이미 적재된
-  // 데이터와 어긋나기 때문이며, 고치려면 먼저 복귀시켜야 한다.
+  // archived 거부 사유: 그 스키마로 이미 적재된 데이터와 어긋나기 때문이며, 고치려면 먼저 복귀시켜야
+  // 한다(전체 스키마 PUT 시절에도 같은 이유로 거부했다 — 이제 이 규칙의 유일한 소유자가 여기다).
   public String assertEditable(long ontologyId) {
     String status = ontologyRepository.findStatusById(ontologyId);
     if ("archived".equals(status)) {

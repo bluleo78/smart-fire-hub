@@ -7,8 +7,6 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
-import com.smartfirehub.ontology.dto.OntologyResponse;
-import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -117,23 +115,9 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
     assertThat(repository.findStatusById(1L)).isEqualTo("active");
   }
 
-  @Test
-  void archived_온톨로지의_스키마는_편집할_수_없다() {
-    long id = given("전이 테스트 archived 편집", "archived");
-    OntologyResponse current = repository.findById(id);
-    assertThatThrownBy(
-            () ->
-                service.updateOntology(
-                    id,
-                    new UpdateOntologyRequest(
-                        "이름 바꾸기 시도",
-                        current.schemaVersion(),
-                        current.entities(),
-                        current.relations(),
-                        List.of())))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("은퇴한 온톨로지");
-  }
+  // (Task 7) 이 규칙(archived 편집 거부)의 원래 테스트는 전체 스키마 PUT(OntologyService.updateOntology)을
+  // 통해서였다. 그 PUT이 요소 단위 편집 API로 대체되며 삭제됐고, 같은 규칙(OntologyElementService
+  // .assertEditable)은 EntityTypeElementTest#archived_온톨로지는_요소_편집이_거부된다가 이어받았다.
 
   @Test
   void 상태_전이는_schema_version을_올리지_않는다() {

@@ -5,7 +5,6 @@ import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
-import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.dto.UpdateOntologyStatusRequest;
 import com.smartfirehub.ontology.service.OntologyService;
 import java.util.List;
@@ -14,8 +13,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 // 온톨로지 CRUD — 다중 온톨로지 지원(Task 3). 클래스 매핑을 /api/v1로 올려 복수형 /ontologies(목록·생성)와
-// 단수형 /ontology/{id}(단건 조회·편집)를 함께 표현한다. 기존 GET/PUT /ontology(id=1 하위호환)와
+// 단수형 /ontology/{id}(단건 조회·상태전이·삭제)를 함께 표현한다. 기존 GET /ontology(id=1 하위호환)와
 // GET /ontology/graph(ai-agent 프록시)는 문서 파이프라인 등 기존 호출부 회귀 방지를 위해 그대로 유지한다.
+// (S2 Task 7) 전체 스키마 교체 PUT /ontology, PUT /ontology/{id}는 요소 단위 편집 API
+// (OntologyElementController)로 완전히 대체되어 삭제됐다 — 웹이 더 이상 호출하지 않는다.
 @RestController
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
@@ -34,13 +35,6 @@ public class OntologyController {
   @RequirePermission("dataset:read")
   public GraphResponse getGraph() {
     return ontologyService.getGraph();
-  }
-
-  // [하위호환] 기본 온톨로지(id=1) 편집.
-  @PutMapping("/ontology")
-  @RequirePermission("ontology:write")
-  public OntologyResponse updateOntology(@RequestBody UpdateOntologyRequest request) {
-    return ontologyService.updateOntology(request);
   }
 
   // 온톨로지 목록(요약). status 미지정 시 active만 — 바인딩 후보로 쓰이는 것이 이 목록의 주 용도다.
@@ -64,14 +58,6 @@ public class OntologyController {
   public ResponseEntity<Long> create(@RequestBody CreateOntologyRequest request) {
     long id = ontologyService.createOntology(request);
     return ResponseEntity.status(201).body(id);
-  }
-
-  // id 스코프 편집(ADMIN 특권).
-  @PutMapping("/ontology/{id}")
-  @RequirePermission("ontology:write")
-  public OntologyResponse updateById(
-      @PathVariable Long id, @RequestBody UpdateOntologyRequest request) {
-    return ontologyService.updateOntology(id, request);
   }
 
   // 상태 전이(활성화/은퇴/복귀, ADMIN 특권). 스키마 편집(PUT)과 분리된 전용 경로 —

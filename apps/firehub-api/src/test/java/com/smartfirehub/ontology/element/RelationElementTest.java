@@ -107,6 +107,17 @@ class RelationElementTest extends OntologyElementTestSupport {
         .hasMessage("관계명은 비어 있을 수 없습니다: Sensor → Building");
   }
 
+  // (Task 7 리뷰 I-1) description은 NOT NULL 컬럼(#305) — null이 그대로 INSERT되면 제약 위반 500이
+  // 새어나간다. OntologyRules.validateRelationDescription이 요소 경로(addRelation)에서도 이 규칙을
+  // 막는지 고정한다.
+  @Test
+  void null_description을_가진_관계_추가는_거부된다() {
+    assertThatThrownBy(() -> elementService.addRelation(ontologyId,
+        new CreateRelationRequest(typeId("Sensor"), "NEAR", typeId("Building"), null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("관계 설명(description)은 null일 수 없습니다");
+  }
+
   @Test
   void 같은_트리플_중복_추가는_거부된다() {
     assertThatThrownBy(() -> elementService.addRelation(ontologyId,

@@ -5,13 +5,10 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
-import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -19,9 +16,11 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 // 온톨로지 DB 읽기/쓰기 — id로 지정한 온톨로지를 OntologyResponse 계약으로 조립한다(다중 온톨로지 지원).
-// 무인자 오버로드(findOntology/currentSchemaVersion/updateOntology)는 기존 단일 온톨로지(id=1) 호출부와의
+// 무인자 오버로드(findOntology/currentSchemaVersion)는 기존 단일 온톨로지(id=1) 호출부와의
 // 하위호환을 위해 findById(1L) 등으로 위임한다. sort_order 정렬로 ai-agent 프롬프트 조립 순서(바이트 동일성)를
 // 보존한다. plain-SQL DSL(생성 클래스 비의존).
+// (S2 Task 7) 전체 스키마 교체(entity_type/relation의 매칭 기반 UPDATE/INSERT/DELETE) updateOntology는
+// 요소 단위 편집(OntologyElementRepository)으로 대체되어 삭제됐다.
 @Repository
 @RequiredArgsConstructor
 public class OntologyRepository {
@@ -236,8 +235,8 @@ public class OntologyRepository {
     return currentSchemaVersion(1L);
   }
 
-  // 관계 삽입용 이름→id 해석. 관계는 V80 이후 FK를 요구하는데 쓰기 계약(UpdateOntologyRequest/
-  // CreateOntologyRequest)은 여전히 이름을 담고 있어, 저장 직전에 한 번 변환해야 한다.
+  // 관계 삽입용 이름→id 해석(createOntology 전용). 관계는 V80 이후 FK를 요구하는데 쓰기 계약
+  // (CreateOntologyRequest)은 여전히 이름을 담고 있어, 저장 직전에 한 번 변환해야 한다.
   // 매칭 실패는 IllegalArgumentException으로 올린다 — OntologyService.validateCore가 이미
   // 참조 무결성을 검사하므로 여기 도달했다면 검증을 우회한 호출이고, FK 위반 500보다 400이 낫다.
   private static long resolveTypeId(Map<String, Long> idByType, String typeName, String where) {
@@ -310,140 +309,4 @@ public class OntologyRepository {
     });
   }
 
-  // 단일 온톨로지(id=1) 전체를 교체하는 full-document 편집(B-2b). 단일 트랜잭션 원자성:
-  // ① 낙관적 잠금 + 버전 증가(기대 버전과 일치할 때만) ② relation은 전량 재작성(V80: subject/object가
-  // entity_type_id FK라 엔티티 타입이 확정된 뒤에만 삽입 가능 — 그래서 삭제는 여기, 삽입은 ③ 이후로 미룬다)
-  // ③ entity_type은 매칭 기반 UPDATE/INSERT/DELETE로 id 보존(5-6).
-  // 반환값 = 증가된 새 schema_version. 기대 버전 불일치 시 IllegalStateException → 409(전역 핸들러 규약).
-  public int updateOntology(long ontologyId, UpdateOntologyRequest req) {
-    return dsl.transactionResult(cfg -> {
-      DSLContext tx = using(cfg);
-
-      // ① 낙관적 잠금 + 버전 증가 + domain 갱신. 기대 버전과 일치할 때만 1행 갱신된다.
-      int updated =
-          tx.update(ONTOLOGY)
-              .set(O_DOMAIN, req.domain())
-              .set(O_SCHEMA_VERSION, O_SCHEMA_VERSION.plus(1))
-              .set(O_UPDATED_AT, currentOffsetDateTime())
-              .where(O_ID.eq(ontologyId).and(O_SCHEMA_VERSION.eq(req.schemaVersion())))
-              .execute();
-      if (updated == 0) {
-        // 기대 버전 불일치 = 다른 사용자가 먼저 수정(또는 잘못된 버전). 트랜잭션 롤백 → 자식 변경 없음.
-        throw new IllegalStateException(
-            "지식 모델이 다른 사용자에 의해 이미 수정되었습니다. 새로고침 후 다시 시도하세요.");
-      }
-
-      // ② 관계는 전량 재작성한다. 삭제만 여기서 먼저 하는 이유: 아래 ③에서 타입을 지울 때
-      // FK CASCADE가 관계를 함께 지우려 드는데, 어차피 전량 재삽입할 것이므로 미리 비워
-      // CASCADE와 재삽입이 겹치지 않게 한다. 삽입은 타입이 확정된 뒤(④)에야 가능하다.
-      tx.deleteFrom(RELATION).where(R_ONTOLOGY_ID.eq(ontologyId)).execute();
-
-      // ③ entity_type — 매칭 기반 UPDATE/INSERT/DELETE(5-6: entity_type_id를 시간축에서 안정적으로
-      // 보존해 ai-agent가 Neo4j 노드 key를 이 id 기반으로 구성할 수 있게 한다. 타입명이 바뀌어도(리네임)
-      // 같은 행을 UPDATE하므로 id가 그대로 유지되고, Neo4j는 더 이상 마이그레이션할 필요가 없다).
-      // 매칭 규칙: (a) 기존 타입명과 그대로 같으면 그 행 (b) req.renames()의 from→to 힌트가 가리키는
-      // 기존 행 (c) 매칭 안 되면 신규(새 id 발급). 매칭 안 된 기존 행은 삭제 대상(사용자가 지운 타입).
-      Map<String, Long> existingIdByType =
-          tx.select(ET_TYPE, ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))
-              .fetch().intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID));
-      // 이름 기반 renames의 한계: to가 중복되면 앞 항목이 덮어써져 그 from 행이 아래에서 DELETE된다.
-      // 구조적 해소는 id 기반 재설계(#304)의 몫이고, 그 전까지는 OntologyService.validate의
-      // to/from 중복 검사가 유일한 방어선이다(#306).
-      Map<String, String> renameToFrom = new HashMap<>();
-      for (var rename : req.renames()) {
-        renameToFrom.put(rename.to(), rename.from());
-      }
-
-      // 최종 목록의 각 엔티티가 매칭되는 기존 id(있다면)를 먼저 전부 계산한다(DB 쓰기 전, 순수 조회).
-      List<Long> matchedIds = new java.util.ArrayList<>();
-      for (var e : req.entities()) {
-        Long matchedId = existingIdByType.get(e.type());
-        if (matchedId == null) {
-          String fromName = renameToFrom.get(e.type());
-          if (fromName != null) matchedId = existingIdByType.get(fromName);
-        }
-        matchedIds.add(matchedId);
-      }
-
-      // 매칭 안 된 기존 행(=사용자가 삭제한 타입)을 먼저 삭제한다 — 리네임이 삭제된 타입의 옛 이름을
-      // 재사용하는 경우(예: "B" 삭제 + "A"를 "B"로 리네임) UPDATE보다 먼저 지워야 UNIQUE(ontology_id,type)
-      // 제약의 트랜잭션 내 순간 충돌을 피한다.
-      Set<Long> keptIds = new HashSet<>(matchedIds.stream().filter(java.util.Objects::nonNull).toList());
-      List<Long> removedIds =
-          existingIdByType.values().stream().filter(id -> !keptIds.contains(id)).toList();
-      if (!removedIds.isEmpty()) {
-        tx.deleteFrom(ENTITY_TYPE).where(ET_ID.in(removedIds)).execute(); // property는 CASCADE 삭제.
-      }
-
-      // ④에서 관계를 삽입할 때 쓸 최종 이름→id 맵(리네임·신규 삽입 결과가 모두 반영된 상태).
-      Map<String, Long> finalIdByType = new HashMap<>();
-
-      int etOrder = 0;
-      for (int i = 0; i < req.entities().size(); i++) {
-        var e = req.entities().get(i);
-        Long matchedId = matchedIds.get(i);
-        long entityTypeId;
-        if (matchedId != null) {
-          tx.update(ENTITY_TYPE)
-              .set(ET_TYPE, e.type())
-              .set(ET_DESC, e.description())
-              .set(ET_NAMING, e.naming())
-              .set(ET_RES, e.resolution())
-              .set(ET_ORDER, etOrder++)
-              .where(ET_ID.eq(matchedId))
-              .execute();
-          entityTypeId = matchedId;
-        } else {
-          entityTypeId =
-              tx.insertInto(ENTITY_TYPE)
-                  .set(ET_ONTOLOGY_ID, ontologyId)
-                  .set(ET_TYPE, e.type())
-                  .set(ET_DESC, e.description())
-                  .set(ET_NAMING, e.naming())
-                  .set(ET_RES, e.resolution())
-                  .set(ET_ORDER, etOrder++)
-                  .returning(ET_ID)
-                  .fetchOne()
-                  .get(ET_ID);
-        }
-        finalIdByType.put(e.type(), entityTypeId);
-
-        // 속성은 id 안정성이 필요 없으므로 기존과 동일하게 해당 entityTypeId 기준 delete-then-reinsert.
-        tx.deleteFrom(ENTITY_PROP).where(EP_TYPE_ID.eq(entityTypeId)).execute();
-        int epOrder = 0;
-        List<OntologyResponse.Property> props =
-            e.properties() == null ? List.of() : e.properties();
-        for (var p : props) {
-          tx.insertInto(ENTITY_PROP)
-              .set(EP_TYPE_ID, entityTypeId)
-              .set(EP_NAME, p.name())
-              .set(EP_DESC, p.description())
-              .set(EP_DTYPE, p.dataType())
-              .set(EP_UNIT, p.unit())
-              .set(EP_ORDER, epOrder++)
-              .execute();
-        }
-      }
-
-      // ④ 관계 삽입 — 타입이 전부 확정된 지금에야 FK를 만족한다.
-      int rOrder = 0;
-      for (var t : req.relations()) {
-        tx.insertInto(RELATION)
-            .set(R_ONTOLOGY_ID, ontologyId)
-            .set(R_SUBJECT_ID, resolveTypeId(finalIdByType, t.subject(), "subject"))
-            .set(R_RELATION, t.relation())
-            .set(R_OBJECT_ID, resolveTypeId(finalIdByType, t.object(), "object"))
-            .set(R_DESC, t.description())
-            .set(R_ORDER, rOrder++)
-            .execute();
-      }
-
-      return req.schemaVersion() + 1;
-    });
-  }
-
-  // 하위호환 — 기존 단일 온톨로지 편집 호출부(테스트 snapshot/restore, 레거시 PUT)는 id=1을 편집.
-  public int updateOntology(UpdateOntologyRequest req) {
-    return updateOntology(1L, req);
-  }
 }

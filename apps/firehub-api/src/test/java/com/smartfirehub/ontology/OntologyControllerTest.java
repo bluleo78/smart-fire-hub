@@ -4,7 +4,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -17,7 +16,6 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.ontology.controller.OntologyController;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
-import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.permission.service.PermissionService;
@@ -33,9 +31,13 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-// OntologyController PUT 엔드포인트 테스트 — GraphIngestControllerTest 패턴을 따라
-// @WebMvcTest + 인증/권한 mock으로 @RequirePermission("ontology:write") 게이팅과
-// 버전 충돌(409)/검증 실패(400) 매핑을 검증한다.
+// OntologyController 엔드포인트 테스트 — GraphIngestControllerTest 패턴을 따라
+// @WebMvcTest + 인증/권한 mock으로 @RequirePermission 게이팅을 검증한다.
+// (Task 7) 전체 스키마 교체 PUT(/ontology, /ontology/{id})은 요소 단위 편집 API로 대체되어 삭제됐다 —
+// 그 경로가 검증하던 검증 실패(400) 매핑은 element 패키지의 요소 단위 테스트(EntityTypeElementTest 등)가
+// 이어받는다. (Task 7 리뷰 I-4 정정) 버전 충돌(409)은 이어받은 것이 아니라 개념 자체가 사라졌다 — 요소
+// 단위 편집은 요소 하나만 바꾸므로 낙관적 잠금이 필요 없고(OntologyElementService 클래스 주석 참조),
+// 어떤 요소 요청 DTO에도 baseVersion 필드가 없다.
 @WebMvcTest(OntologyController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, OntologyService.class})
 class OntologyControllerTest {
@@ -50,90 +52,10 @@ class OntologyControllerTest {
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
 
-  private static final UpdateOntologyRequest VALID_REQUEST =
-      new UpdateOntologyRequest(
-          "화재조사 보고서",
-          1,
-          List.of(new OntologyResponse.EntityType("Incident", "설명", "명명", "exact", List.of())),
-          List.of());
-
   @BeforeEach
   void setUp() {
     when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
     when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
-  }
-
-  // (c) ontology:write 권한이 없으면(예: 일반 USER의 dataset:read만 보유) 403.
-  @Test
-  void updateOntology_는_ontology_write_권한이_없으면_403을_반환한다() throws Exception {
-    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
-
-    mockMvc
-        .perform(
-            put("/api/v1/ontology")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(VALID_REQUEST)))
-        .andExpect(status().isForbidden());
-  }
-
-  // (b) 리포지토리가 버전 충돌을 IllegalStateException으로 던지면 전역 핸들러가 409로 매핑한다.
-  @Test
-  void updateOntology_는_버전_충돌_시_409를_반환한다() throws Exception {
-    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
-    when(ontologyRepository.updateOntology(org.mockito.ArgumentMatchers.any()))
-        .thenThrow(new IllegalStateException("버전 충돌"));
-
-    mockMvc
-        .perform(
-            put("/api/v1/ontology")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(VALID_REQUEST)))
-        .andExpect(status().isConflict());
-  }
-
-  // (e) resolution이 embedding|exact가 아니면 서비스 검증에서 IllegalArgumentException → 400.
-  @Test
-  void updateOntology_는_잘못된_resolution이면_400을_반환한다() throws Exception {
-    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
-    UpdateOntologyRequest invalid =
-        new UpdateOntologyRequest(
-            "d",
-            1,
-            List.of(new OntologyResponse.EntityType("Incident", "d", "n", "invalid", List.of())),
-            List.of());
-
-    mockMvc
-        .perform(
-            put("/api/v1/ontology")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(invalid)))
-        .andExpect(status().isBadRequest());
-  }
-
-  // (a) 유효 요청 + 권한 보유 시 200과 갱신된 스키마 버전을 반환한다.
-  @Test
-  void updateOntology_는_유효하면_갱신본을_200으로_반환한다() throws Exception {
-    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
-    when(ontologyRepository.updateOntology(org.mockito.ArgumentMatchers.any())).thenReturn(2);
-    when(ontologyRepository.findOntology())
-        .thenReturn(
-            new OntologyResponse(
-                "화재조사 보고서",
-                2,
-                List.of(new OntologyResponse.EntityType("Incident", "설명", "명명", "exact", List.of())),
-                List.of()));
-
-    mockMvc
-        .perform(
-            put("/api/v1/ontology")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(VALID_REQUEST)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.schemaVersion").value(2));
   }
 
   // 목록 라우트 — dataset:read 권한으로 200, 리포지토리 findAllSummaries("active") 스텁.
@@ -254,29 +176,5 @@ class OntologyControllerTest {
                             List.of()))))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$").value(7));
-  }
-
-  // id 스코프 편집 — findById로 갱신본을 재조회해 200으로 반환한다.
-  @Test
-  void id_스코프_편집_라우트가_200() throws Exception {
-    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
-    when(ontologyRepository.updateOntology(org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
-        .thenReturn(2);
-    when(ontologyRepository.findById(2L))
-        .thenReturn(
-            new OntologyResponse(
-                "판매",
-                2,
-                List.of(new OntologyResponse.EntityType("Customer", "고객", "표기 그대로", "exact", List.of())),
-                List.of()));
-
-    mockMvc
-        .perform(
-            put("/api/v1/ontology/2")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(VALID_REQUEST)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.schemaVersion").value(2));
   }
 }

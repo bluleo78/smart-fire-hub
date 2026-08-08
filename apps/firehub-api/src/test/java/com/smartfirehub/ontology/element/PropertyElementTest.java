@@ -68,6 +68,26 @@ class PropertyElementTest extends OntologyElementTestSupport {
         .hasMessage("데이터 타입은 text|number|date 중 하나여야 합니다: model");
   }
 
+  // (Task 7 리뷰 I-1) description은 NOT NULL 컬럼(#305) — null이 그대로 INSERT되면 제약 위반 500이
+  // 새어나간다. OntologyRules.validatePropertyCommon이 요소 경로(addProperty)에서도 이 규칙을 막는지 고정한다.
+  @Test
+  void null_description을_가진_속성_추가는_거부된다() {
+    assertThatThrownBy(() -> elementService.addProperty(ontologyId, typeId("Sensor"),
+        new CreatePropertyRequest("model", null, "text", null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("속성 설명(description)은 null일 수 없습니다");
+  }
+
+  // (Task 7 리뷰 I-2) 컬럼 제약은 NOT NULL일 뿐 NOT BLANK가 아니다 — 빈 문자열 description은 허용해야
+  // 기존에 그렇게 저장된 데이터가 요소 경로로도 정상 왕복된다.
+  @Test
+  void 빈_문자열_description은_허용된다() {
+    var result = elementService.addProperty(ontologyId, typeId("Sensor"),
+        new CreatePropertyRequest("model", "", "text", null));
+
+    assertThat(result.property().description()).isEmpty();
+  }
+
   @Test
   void 속성_수정은_지정한_필드만_바꾸고_버전을_올린다() {
     long sensorId = typeId("Sensor");

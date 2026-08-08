@@ -103,6 +103,28 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
         .hasMessage("중복된 엔티티 타입명: Sensor");
   }
 
+  // (Task 7 리뷰 I-1) naming은 NOT NULL 컬럼(#305) — null이 그대로 INSERT되면 제약 위반 500이 새어나간다.
+  // OntologyRules.validateEntityTypeCommon이 요소 경로(addEntityType)에서도 이 규칙을 실제로 막는지 고정한다.
+  @Test
+  void null_naming을_가진_타입_추가는_거부된다() {
+    assertThatThrownBy(() -> elementService.addEntityType(ontologyId,
+        new CreateEntityTypeRequest("Gateway", "x", null, "exact")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("엔티티 명명 규칙(naming)은 null일 수 없습니다");
+  }
+
+  // (Task 7 리뷰 I-2) 컬럼 제약은 NOT NULL일 뿐 NOT BLANK가 아니다 — 빈 문자열 description/naming은
+  // 허용해야 기존에 그렇게 저장된 데이터가 요소 경로로도 정상 왕복(재조회→재저장)된다. 후일 blank까지
+  // 막는 강화가 들어오면 이 테스트가 먼저 깨져 "의도된 변경"인지 확인하게 만드는 캐너리다.
+  @Test
+  void 빈_문자열_description과_naming은_허용된다() {
+    var result = elementService.addEntityType(ontologyId,
+        new CreateEntityTypeRequest("Gateway", "", "", "exact"));
+
+    assertThat(result.entityType().description()).isEmpty();
+    assertThat(result.entityType().naming()).isEmpty();
+  }
+
   @Test
   void 리네임은_관계를_건드리지_않고_id를_보존한다() {
     long sensorId = typeId("Sensor");

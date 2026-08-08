@@ -18,8 +18,8 @@ import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
-// 요소 단위 온톨로지 쓰기 — 전체 스키마를 왕복시키는 OntologyRepository.updateOntology와 달리
-// 행 하나만 건드린다. 읽기는 OntologyRepository.findById를 그대로 쓴다(중복 조립 회피).
+// 요소 단위 온톨로지 쓰기 — 전체 스키마를 왕복시키던 OntologyRepository.updateOntology(S2 Task 7에서
+// 삭제됨)와 달리 행 하나만 건드린다. 읽기는 OntologyRepository.findById를 그대로 쓴다(중복 조립 회피).
 @Repository
 @RequiredArgsConstructor
 public class OntologyElementRepository {
