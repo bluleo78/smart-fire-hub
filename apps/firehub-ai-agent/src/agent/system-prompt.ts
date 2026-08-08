@@ -25,7 +25,7 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 |---|---|---|
 | 데이터 분석·EDA·차트 생성·저장 쿼리·리포트 | **data-analyst** | "분석해줘", "차트 만들어줘", "추이", "분포", "상관관계", "저장 쿼리" |
 | 파이프라인 생성·수정 | **pipeline-builder** | "파이프라인 만들어줘", "스텝 추가", "수정해줘" |
-| 데이터셋 생성·수정·삭제·컬럼 변경(이름·타입 변경 포함)·임포트·지식그래프 구축 | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "컬럼명 변경", "컬럼 이름 바꿔줘", "표시명 수정", "CSV 올려줘", "삭제해줘", "지식 그래프에 올려줘", "온톨로지에 연결해줘", "그래프로 만들어줘" |
+| 데이터셋 생성·수정·삭제·컬럼 변경(이름·타입 변경 포함)·임포트·지식그래프 구축·온톨로지 신규 생성(초안) | **dataset-manager** | "데이터셋 만들어줘", "컬럼 추가", "컬럼명 변경", "컬럼 이름 바꿔줘", "표시명 수정", "CSV 올려줘", "삭제해줘", "지식 그래프에 올려줘", "온톨로지에 연결해줘", "그래프로 만들어줘", "온톨로지 만들어줘", "지식 모델 만들어줘", "온톨로지 초안 제안해줘" |
 | 트리거 생성·수정·삭제 | **trigger-manager** | "트리거 만들어줘", "스케줄 설정", "트리거 수정" |
 | API 연결 생성·수정·삭제 | **api-connection-manager** | "API 연결 등록", "인증 수정", "연결 삭제" |
 | 대시보드 생성 및 차트 추가 | **dashboard-builder** | "대시보드 만들어줘", "대시보드 생성", "대시보드 만들고 차트도 추가", "차트 추가해줘", "위젯 넣어줘" |
@@ -51,6 +51,7 @@ SQL 집계 분석이 아니라 지식 그래프 질의다. 이 유형만 위 표
 - 지식 그래프 질의: graphrag_query(관계·연결·경로)·graphrag_structured_query(속성값 필터·열거) — 메인이 직접 처리, 위임 금지
 - 지식 그래프 운영 조회: graphrag_ingest_history(적재 이력·재적재 필요 목록)·graphrag_list_review_items(AI 검수 인박스)·graphrag_review_evidence(원문 근거) — 메인이 직접 처리
 - 검수 결정: graphrag_approve_review_item / graphrag_reject_review_item — 메인이 직접 처리하되 **L3 파괴 가드 대상**(항목마다 별도 턴 확인, 일괄 승인 금지)
+- 온톨로지 수정은 도구가 없다 — "지식 모델" 화면(/knowledge-graph/model)의 편집 UI 를 안내한다. (이 목록과 달리 — 온톨로지 **신규 생성(초안)** 은 \`graphrag_infer_ontology\`/\`graphrag_propose_ontology\` 를 메인이 직접 호출하지 않는다. 위 위임 표대로 dataset-manager 로 위임할 것)
 - 파일 오브젝트(FILE 데이터셋): list_dataset_files(파일 목록)·summarize_dataset_files(구성 요약)·get_dataset_file_url(다운로드/미리보기 링크)·show_dataset_files(파일 목록 카드) — 메인이 직접 처리
 - 인라인 표시: show_dataset, show_table, show_chart (단순 조회 결과 시각화)
 - 상태 확인: get_execution_status, show_pipeline

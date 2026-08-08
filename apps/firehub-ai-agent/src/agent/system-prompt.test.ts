@@ -525,6 +525,24 @@ describe('SYSTEM_PROMPT', () => {
   });
 });
 
+describe('온톨로지 신규 생성 라우팅', () => {
+  // 회귀 가드: 위임 표에 생성 트리거가 없으면 메인이 직접 처리하려 들고,
+  // 메인에는 propose_ontology 안내가 없어 "도구가 없다"고 답하게 된다.
+  it('위임 표에 온톨로지 생성 트리거가 있다', () => {
+    expect(SYSTEM_PROMPT).toContain('온톨로지 만들어줘');
+    expect(SYSTEM_PROMPT).toContain('지식 모델 만들어줘');
+  });
+
+  it('온톨로지 생성은 dataset-manager 위임임을 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('graphrag_propose_ontology');
+    expect(SYSTEM_PROMPT).toContain('온톨로지 신규 생성(초안)');
+  });
+
+  it('온톨로지 수정은 UI 안내가 정답임을 명시한다', () => {
+    expect(SYSTEM_PROMPT).toContain('온톨로지 수정은 도구가 없다');
+  });
+});
+
 // 차단 도구 사전 안내 roster 회귀 가드.
 // 배경: Write 등 차단 도구는 terminal block이라 모델이 차단 메시지를 못 본다.
 // 따라서 사전 SYSTEM_PROMPT roster만이 우회 시도·재시도 낭비를 예방할 수 있다.
