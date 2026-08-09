@@ -1,24 +1,28 @@
-import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, Pencil, Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, PenLine, Plus } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useOntologyById, useOntologyGraph, useOntologyList, useOntologySchema } from '@/hooks/queries/useOntology';
+import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
+import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import type { GraphNode } from '@/types/ontology';
 
 import InstanceGraph from './components/InstanceGraph';
+import EntityInspector from './components/model-editor/EntityInspector';
+import ModelOutline from './components/model-editor/ModelOutline';
+import RelationInspector from './components/model-editor/RelationInspector';
+import SaveStatusChip from './components/model-editor/SaveStatusChip';
 import NodeDetailDrawer from './components/NodeDetailDrawer';
 import OntologyCreateDialog from './components/OntologyCreateDialog';
-import OntologyEditDialog from './components/OntologyEditDialog';
 import OntologyEmptyState from './components/OntologyEmptyState';
 import OntologyManageDialog from './components/OntologyManageDialog';
 import OntologySelect from './components/OntologySelect';
 import OntologyStatusBanner from './components/OntologyStatusBanner';
-import SchemaGraph from './components/SchemaGraph';
+import SchemaGraph, { type SchemaGraphSelection } from './components/SchemaGraph';
 import TypeFilterPanel from './components/TypeFilterPanel';
 
 // 캔버스 로딩 중 표시하는 스켈레톤 — 컨테이너를 꽉 채워 레이아웃 시프트를 막는다.
@@ -39,9 +43,31 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-// 온톨로지 시각화 페이지 — 풀하이트 에디터 셸(툴바 + 좌측 타입 필터 + 캔버스 + 리사이즈 인스펙터), 읽기 전용.
+// 온톨로지 시각화 페이지 — 풀하이트 에디터 셸(툴바 + 좌측 타입 필터/아웃라인 + 캔버스 + 리사이즈
+// 인스펙터). 인스턴스 탭(그래프 탐색)은 여전히 읽기 전용이지만, 스키마 탭은 이제 이 페이지가 요소
+// 단위 편집기(수정 모드 토글, ModelOutline/EntityInspector/RelationInspector)를 직접 소유한다
+// (M-1, S2 최종 리뷰 — 전체 문서 모달을 제거한 Task 6부터 더 이상 "읽기 전용"이 아니었다).
 export default function OntologyPage() {
-  const { data: schema } = useOntologySchema();
+  // 온톨로지 목록 — 기본 온톨로지 id를 여기서 파생시킨다(아래 defaultOntologyId). schema/graph 훅보다
+  // 먼저 선언해야 그 파생값을 바로 아래에서 쓸 수 있다.
+  const { data: ontologies } = useOntologyList('all');
+  // 인스턴스 탭(Neo4j 적재 그래프)의 타입 어휘·schemaVersion 비교 기준 — 그래프 탐색이 어느 온톨로지를
+  // 보고 있는지와 무관하게 항상 기본 온톨로지 고정이다(레거시 bare 온톨로지 개념). 예전에는
+  // useOntologySchema()(bare GET /ontology)로 읽었지만, 그 응답은 서버에서 늘 기본 온톨로지였다 —
+  // useOntologyById(defaultOntologyId)로 바꿔도 같은 데이터를 같은 쿼리키로 읽을 뿐이다(S2 Step 1.5).
+  // (리뷰 MIN-1) id를 1로 하드코딩하지 않는다 — OntologySummary.isDefault가 정확히 이 매직넘버를
+  // 피하려고 서버가 계산해 내려주는 필드다(기본 온톨로지 판정 기준이 바뀌어도 프론트가 값을 다시
+  // 선언할 필요가 없도록). 목록 로딩 전 한 틱은 null이지만 useOntologyById가 enabled 가드를 이미 갖고
+  // 있어 안전하다.
+  // 이 마이그레이션으로 useOntology.ts의 레거시 PUT 뮤테이션이 bare ['ontology'] 키를 무효화해 주던
+  // 특례 분기가 더 이상 필요하지 않게 된다(이 페이지가 그 키를 아예 읽지 않으므로) — 그 분기 자체는
+  // useOntology.ts 쪽에서 함께 정리했다(MIN-2).
+  const defaultOntologyId = ontologies?.find((o) => o.isDefault)?.id ?? null;
+  const { data: schema } = useOntologyById(defaultOntologyId);
+  // 인스턴스 그래프(Neo4j 적재분)는 여전히 온톨로지 id로 스코프되지 않는 단일 엔드포인트다
+  // (getGraph()에 id 파라미터가 없다) — 그래서 selectedOntologyId를 바꿔도 이 쿼리는 영향을 받지 않고,
+  // 요소 단위 편집 뮤테이션도 이 키를 무효화할 이유가 없다(스키마 편집이 이미 적재된 그래프 노드를
+  // 다시 쓰지는 않으므로 — Neo4j 재적재는 별도 임포트 파이프라인의 몫이다).
   const { data: graph, isLoading: isGraphLoading, isError, refetch: refetchGraph } = useOntologyGraph();
 
   // 탭 상태는 URL(:view)에서 파생 — 사이드바 '그래프 탐색'(explore)/'지식 모델'(model) 항목과 하이라이트를 동기화한다.
@@ -57,18 +83,26 @@ export default function OntologyPage() {
   const [focusKey, setFocusKey] = useState<string | null>(null); // 관계 클릭 내비게이션 포커스 대상
   const [filterCollapsed, setFilterCollapsed] = useState(false); // 좌측 타입 필터 패널 접기
   const [grouped, setGrouped] = useState(false); // 타입 묶기(compound 번들)
-  const [editOpen, setEditOpen] = useState(false); // 지식 모델 편집 다이얼로그(ADMIN 전용, ontology:write)
-  // 편집을 열 때마다 증가시켜 다이얼로그를 리마운트한다. 닫힐 때는 바뀌지 않아야 한다 —
-  // 닫는 순간 리마운트되면 포커스 복귀 이펙트가 끊겨 포커스가 <body>로 유실된다(#328).
-  const [editSession, setEditSession] = useState(0);
+  // 요소 단위 편집기(모드 토글) — 3-pane(아웃라인/캔버스/인스펙터) 편집 셸을 켠다. 전체 문서를
+  // 왕복시키던 모달(OntologyEditDialog)은 Task 6에서 제거됐고, 이 토글이 유일한 편집 진입점이다.
+  const [modelEditMode, setModelEditMode] = useState(false);
+  // 편집기에서 선택된 요소(타입/관계) — 아웃라인 클릭과 캔버스 클릭이 이 하나의 state를 공유해 동기화된다.
+  const [modelSelected, setModelSelected] = useState<SchemaGraphSelection | null>(null);
+  // "새 관계 만들기" 폼이 열려 있는지(Task 5) — 새 관계는 끝점(주어/목적어)을 생성 시점에 정해야 해서
+  // 기존 요소를 지목하는 modelSelected(항상 실존하는 id)와 같은 모델에 담을 수 없다. ModelOutline의
+  // "관계 추가" 버튼이 이 state를 켠다.
+  const [creatingRelation, setCreatingRelation] = useState(false);
+  // "새 타입 만들기" 폼이 열려 있는지(S2 Task 6 백로그, Task 5 리뷰 M-8 이관) — creatingRelation과
+  // 대칭. 전체 문서 모달이 유일한 엔티티 타입 생성 경로였는데, 그 모달을 지우면서 이 상태가 그
+  // 자리를 대체한다.
+  const [creatingEntity, setCreatingEntity] = useState(false);
   const { isAdmin } = useAuth();
 
-  // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 id=1 기반이므로
+  // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 기본 온톨로지 기반이므로
   // 이 선택은 스키마 탭에만 영향을 준다 — 여기까지 번지면 타입 필터가 조용히 어긋난다.
   const [selectedOntologyId, setSelectedOntologyId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
-  const { data: ontologies } = useOntologyList('all');
   // 선택 중이던 온톨로지가 관리 다이얼로그에서 삭제되면 목록에서 사라진다 — selectedOntologyId가
   // 죽은 id를 그대로 들고 있으면 useOntologyById가 계속 404를 내 캔버스가 GraphError로 굳는다.
   // setState+effect 대신 파생 계산으로 처리한다: 객체를 먼저 찾고 그 id를 파생시키면, 목록에 없는
@@ -88,10 +122,65 @@ export default function OntologyPage() {
   } = useOntologyById(effectiveOntologyId);
 
   // 편집 가능 여부 — 편집 버튼과 빈 상태 CTA가 동일 조건을 각각 조합하던 것을 하나로 합쳤다.
-  // archived는 서버가 409로 거부하므로 애초에 진입점을 보여주지 않는다.
+  // archived는 서버가 409로 거부하므로 애초에 진입점을 보여주지 않는다. 모드 토글도 같은 조건을 재사용한다.
   const canEdit = isAdmin && selectedOntology?.status !== 'archived';
 
+  // 요소 단위 편집 뮤테이션(Task 1) — 이 훅은 OntologyPage에서 "단 한 번만" 호출하고 반환 객체
+  // 전체를 인스펙터(Task 4/5)에 prop으로 내려준다. 인스펙터가 이 훅을 다시 호출하면 saveState가
+  // 인스턴스마다 갈라져, 실제 뮤테이션은 인스펙터 쪽에서 일어나는데 이 saveState를 구독하는 툴바의
+  // SaveStatusChip은 영원히 idle에 머문다 — 자동 저장이 조용히 침묵한 것처럼 보인다(Task 3 리뷰
+  // IMP-1). effectiveOntologyId가 아직 null인 순간(목록 로딩 중)에도 훅 호출 자체는 규칙상 항상
+  // 실행되어야 하므로 더미 id(-1)를 넣는다 — canEdit이 selectedOntology 존재를 전제하므로 실제
+  // 저장 버튼/인스펙터는 그 시점엔 어차피 렌더되지 않아 무해하다.
+  const elementMutations = useOntologyElementMutations(effectiveOntologyId ?? -1);
+  const { saveState, retry, canRetry } = elementMutations;
+  // 3-pane 요소 편집기가 실제로 보여야 하는지 — 스키마 탭 + 토글 켜짐 + 권한까지 모두 갖춰야 한다.
+  // canEdit이 꺼지면(예: 관리 다이얼로그에서 archived로 전이) 토글 state와 무관하게 즉시 닫혀야 하므로
+  // modelEditMode를 곱해 파생시킨다(별도 effect로 끄는 대신).
+  const showEditor = tab === 'schema' && modelEditMode && canEdit;
+
+  // 온톨로지를 바꾸면 이전 선택/편집 상태가 새 컨텍스트에 잘못 남지 않도록 초기화한다.
+  // useEffect 대신 렌더 중 이전 값 비교(React 권장 패턴)로 처리한다 — setState-in-effect의
+  // 연쇄 렌더 없이 같은 커밋 안에서 리셋이 반영된다.
+  // 타입 삭제 확인 다이얼로그의 포커스 복귀 대상(M-2, Task 6 리뷰) — ModelOutline의 "타입 추가"
+  // 버튼에 붙는다(DeleteTypeConfirm.tsx 주석 참고). 선택이 바뀌어도 리마운트되지 않는 안정적인
+  // 대상이어야 하므로 훅 최상단에서 한 번만 만든다.
+  const addEntityTypeButtonRef = useRef<HTMLButtonElement>(null);
+  const prevOntologyIdRef = useRef(effectiveOntologyId);
+  if (prevOntologyIdRef.current !== effectiveOntologyId) {
+    prevOntologyIdRef.current = effectiveOntologyId;
+    if (modelEditMode) setModelEditMode(false);
+    if (modelSelected) setModelSelected(null);
+    if (creatingRelation) setCreatingRelation(false);
+    if (creatingEntity) setCreatingEntity(false);
+  }
+
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
+
+  // 인스펙터에 내려줄 선택된 엔티티 타입 — ModelOutline과 마찬가지로 id 없는 항목은 편집 대상이 될 수
+  // 없으므로 걸러낸다(요소 단위 편집 API가 id로 대화한다).
+  const selectedEntity =
+    modelSelected?.kind === 'entity'
+      ? selectedSchema?.entities.find(
+          (e): e is typeof e & { id: number } => e.id === modelSelected.id && e.id != null,
+        )
+      : undefined;
+  // 인스펙터에 내려줄 선택된 관계(Task 5) — 위 selectedEntity와 대칭. ModelOutline/SchemaGraph가
+  // id 없는 관계를 이미 걸러내므로 여기서 찾은 관계는 항상 id를 가진다.
+  const selectedRelation =
+    modelSelected?.kind === 'relation'
+      ? selectedSchema?.relations.find(
+          (r): r is typeof r & { id: number } => r.id === modelSelected.id && r.id != null,
+        )
+      : undefined;
+
+  // 아웃라인/캔버스에서 요소를 선택하면 "새 관계 만들기"/"새 타입 만들기" 폼이 열려 있어도 닫는다 —
+  // 셋을 동시에 보여줄 자리가 없다(인스펙터는 한 번에 하나만 보여준다).
+  const selectModelElement = (selection: SchemaGraphSelection) => {
+    setCreatingRelation(false);
+    setCreatingEntity(false);
+    setModelSelected(selection);
+  };
 
   // 인스펙터 관계 클릭 → 대상 노드를 인스펙터에 로드하고 캔버스에서 포커싱한다.
   const navigateTo = (key: string) => {
@@ -124,16 +213,20 @@ export default function OntologyPage() {
       {/* 좁은 폭(max-sm)에서는 툴바를 줄바꿈하고 높이를 풀어 가로 스크롤을 없앤다(#345 SC 1.4.10).
           sm 이상에서는 기존 한 줄 h-12 툴바 그대로. */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 sm:h-12 sm:flex-nowrap sm:py-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setFilterCollapsed((v) => !v)}
-          aria-label={filterCollapsed ? '타입 필터 펼치기' : '타입 필터 접기'}
-          aria-pressed={!filterCollapsed}
-        >
-          {filterCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-        </Button>
+        {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
+            받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤). */}
+        {!showEditor && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setFilterCollapsed((v) => !v)}
+            aria-label={filterCollapsed ? '타입 필터 펼치기' : '타입 필터 접기'}
+            aria-pressed={!filterCollapsed}
+          >
+            {filterCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </Button>
+        )}
         <h1 className="text-sm font-semibold">지식그래프</h1>
         <TabsList>
           <TabsTrigger value="instance">그래프 탐색</TabsTrigger>
@@ -157,29 +250,38 @@ export default function OntologyPage() {
               새 온톨로지
             </Button>
           )}
-          {/* 지식 모델 편집(ADMIN 전용) — 스키마 탭에서만 노출. 서버도 ontology:write(ADMIN)로 재검증한다.
-              편집은 은퇴하지 않은 온톨로지에만 — archived는 서버가 409로 거부한다. */}
+          {/* 요소 단위 편집기 모드 토글(S2) — 전체 문서를 왕복시키던 모달(OntologyEditDialog)은
+              Task 6에서 제거됐고, 이 토글이 유일한 편집 진입점이다. 라벨은 "편집"이 아니라 "수정
+              모드"를 그대로 유지한다 — 원래는 모달의 "편집" 버튼과 Playwright getByRole 부분 일치
+              strict mode 충돌을 피하기 위한 이름이었지만, 지금은 순전히 하위 호환 때문이다: 다수의
+              기존 E2E가 이미 "수정 모드" 텍스트로 이 버튼을 찾으므로 이름을 바꾸면 그 셀렉터가 전부
+              깨진다. 같은 canEdit 조건을 재사용한다: 비-ADMIN·archived 온톨로지에는 노출되지 않는다. */}
           {tab === 'schema' && canEdit && selectedSchema && (
             <Button
-              variant="outline"
+              variant={modelEditMode ? 'secondary' : 'outline'}
               size="sm"
               className="gap-1.5"
-              // 편집 진입 시 최신 스키마를 먼저 확보한다(#301) — staleTime 5분 때문에 리마운트만으로는
-              // 재조회가 일어나지 않아, 낡은 schemaVersion으로 편집을 시작하면 저장이 곧바로 409가 된다.
-              // 재조회가 끝난 뒤 열어야 다이얼로그가 최신 원본으로 초기화된다(실패해도 캐시본으로 진행).
-              // 편집 대상은 선택된 온톨로지(selectedSchema)이므로 재조회도 그 쿼리를 겨냥한다 —
-              // 여기서 bare useOntologySchema(id=1)를 refetch하면 다른 온톨로지 편집 시 아무 효과가 없다.
-              onClick={() =>
-                void refetchSelectedSchema().finally(() => {
-                  setEditSession((n) => n + 1);
-                  setEditOpen(true);
-                })
-              }
+              onClick={() => {
+                // 껐다 다시 켰을 때 이전 세션의 선택이 새어 나오지 않도록 토글 자체에서 초기화한다
+                // (온톨로지 전환 리셋과 별개 경로 — 저건 effectiveOntologyId가 바뀔 때만 돈다).
+                setModelEditMode((v) => !v);
+                setModelSelected(null);
+                setCreatingRelation(false);
+                setCreatingEntity(false);
+              }}
+              aria-pressed={modelEditMode}
             >
-              <Pencil className="h-4 w-4" />
-              편집
+              <PenLine className="h-4 w-4" />
+              수정 모드
             </Button>
           )}
+          {/* showEditor 여부와 무관하게 항상 마운트한다(IMP-2) — 편집기를 껐다 켤 때 saveState가
+              이미 idle이 아닌 채로 컴포넌트가 새로 생기면(리전과 초기 내용이 같은 순간에 나타나면)
+              스크린리더가 그 내용을 낭독하지 않는다. state가 계속 idle이면 시각적으로도 아무 것도
+              그리지 않으므로 편집 모드 밖에서 툴바에 잡음이 늘지 않는다. */}
+          {/* 404 실패는 saveState를 'error'로 만들지만 재시도 대상이 아니다(대상이 이미 삭제됨) —
+              canRetry로 그 경우만 걸러 dead 버튼을 그리지 않는다(Task 4 리뷰 I-2). */}
+          <SaveStatusChip state={saveState} onRetry={canRetry ? retry : undefined} />
           {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음). */}
           {tab === 'instance' && (
             <>
@@ -202,18 +304,41 @@ export default function OntologyPage() {
 
       {/* 본문 — [좌측 타입 필터] · [그래프 캔버스 + 인스펙터]. */}
       <div className="flex min-h-0 flex-1">
-        {/* 좌측 타입 필터 패널 — resolution 그룹핑 + 개수 + 토글 필터(접기 가능).
+        {/* 좌측 패널 — 편집 모드(showEditor)에서는 타입 필터 대신 아웃라인(타입/관계 목록)을 보여준다.
+            아웃라인은 selectedSchema만 다룬다(편집 대상이 항상 선택된 온톨로지이므로 bare schema 분기가 없다).
+            읽기 모드는 기존 그대로: resolution 그룹핑 + 개수 + 토글 필터(접기 가능).
             스키마 탭에서는 캔버스(selectedSchema)와 같은 온톨로지의 타입을 보여줘야 한다 — 그렇지 않으면
-            선택된 온톨로지가 id=1이 아닐 때 캔버스와 필터 패널이 서로 다른 타입 어휘를 나란히 보여주게 된다.
-            인스턴스 탭은 여전히 bare schema(id=1) — Neo4j 적재 그래프가 그 기반이라 건드리지 않는다. */}
-        <TypeFilterPanel
-          schema={tab === 'schema' ? selectedSchema : schema}
-          graph={graph}
-          activeTypes={activeTypes}
-          onToggle={toggleType}
-          onReset={() => setActiveTypes(new Set())}
-          collapsed={filterCollapsed}
-        />
+            선택된 온톨로지가 기본 온톨로지가 아닐 때 캔버스와 필터 패널이 서로 다른 타입 어휘를 나란히
+            보여주게 된다. 인스턴스 탭은 여전히 bare schema(기본 온톨로지) — Neo4j 적재 그래프가 그
+            기반이라 건드리지 않는다. */}
+        {showEditor && selectedSchema ? (
+          <ModelOutline
+            schema={selectedSchema}
+            selected={modelSelected}
+            onSelect={selectModelElement}
+            mutations={elementMutations}
+            onAddRelation={() => {
+              setModelSelected(null);
+              setCreatingEntity(false);
+              setCreatingRelation(true);
+            }}
+            onAddEntityType={() => {
+              setModelSelected(null);
+              setCreatingRelation(false);
+              setCreatingEntity(true);
+            }}
+            addEntityTypeButtonRef={addEntityTypeButtonRef}
+          />
+        ) : (
+          <TypeFilterPanel
+            schema={tab === 'schema' ? selectedSchema : schema}
+            graph={graph}
+            activeTypes={activeTypes}
+            onToggle={toggleType}
+            onReset={() => setActiveTypes(new Set())}
+            collapsed={filterCollapsed}
+          />
+        )}
 
         {/* 그래프 캔버스 + 인스펙터(도킹) 영역 — 드로어 도킹 검증용 testid 유지. */}
         <div className="flex min-w-0 flex-1 overflow-hidden" data-testid="instance-graph-panel">
@@ -231,17 +356,20 @@ export default function OntologyPage() {
                   <div className="min-h-0 flex-1">
                     {selectedSchema.entities.length === 0 ? (
                       <OntologyEmptyState
-                        onDefine={
-                          canEdit
-                            ? () => {
-                                setEditSession((n) => n + 1);
-                                setEditOpen(true);
-                              }
-                            : undefined
-                        }
+                        // 전체 문서 모달이 사라졌으므로(Task 6) "정의하기" CTA는 이제 수정 모드를 켜는
+                        // 것으로 대체한다 — 켜면 좌측 아웃라인의 "타입 추가" 버튼으로 첫 타입을 만들 수
+                        // 있다(ModelOutline, S2 Task 6 백로그).
+                        onDefine={canEdit ? () => setModelEditMode(true) : undefined}
                       />
                     ) : (
-                      <SchemaGraph schema={selectedSchema} onTypeClick={drillDown} />
+                      <SchemaGraph
+                        schema={selectedSchema}
+                        onTypeClick={drillDown}
+                        editing={showEditor}
+                        selected={modelSelected}
+                        onSelectEntity={(id) => selectModelElement({ kind: 'entity', id })}
+                        onSelectRelation={(id) => selectModelElement({ kind: 'relation', id })}
+                      />
                     )}
                   </div>
                 </div>
@@ -275,20 +403,64 @@ export default function OntologyPage() {
               currentSchemaVersion={schema?.schemaVersion}
             />
           )}
+          {/* 편집 모드 세 번째 pane — 타입/관계 인스펙터. 타입 선택은 Task 4의 EntityInspector, 관계
+              선택·생성은 Task 5의 RelationInspector가 채운다.
+              (리뷰 IMP-4) sm 미만에서는 ModelOutline과 마찬가지로 숨긴다 — w-64+w-80 고정폭 2개가
+              320px에서 캔버스를 폭 0으로 밀어내고 이 pane 자체는 화면 밖으로 잘려 나갔었다. */}
+          {showEditor && (
+            <div className="hidden w-80 shrink-0 overflow-y-auto border-l p-4 sm:block" data-testid="model-inspector">
+              {selectedEntity && selectedSchema ? (
+                <EntityInspector
+                  key={selectedEntity.id}
+                  schema={selectedSchema}
+                  entity={selectedEntity}
+                  mutations={elementMutations}
+                  onDeleted={() => setModelSelected(null)}
+                  restoreFocusRef={addEntityTypeButtonRef}
+                  status={selectedOntology?.status}
+                />
+              ) : selectedRelation && selectedSchema ? (
+                <RelationInspector
+                  key={selectedRelation.id}
+                  schema={selectedSchema}
+                  relation={selectedRelation}
+                  mutations={elementMutations}
+                  onDeleted={() => setModelSelected(null)}
+                  restoreFocusRef={addEntityTypeButtonRef}
+                />
+              ) : creatingRelation && selectedSchema ? (
+                <RelationInspector
+                  schema={selectedSchema}
+                  relation={null}
+                  mutations={elementMutations}
+                  onCreated={(id) => {
+                    setCreatingRelation(false);
+                    setModelSelected({ kind: 'relation', id });
+                  }}
+                  onCancel={() => setCreatingRelation(false)}
+                />
+              ) : creatingEntity && selectedSchema ? (
+                <EntityInspector
+                  schema={selectedSchema}
+                  entity={null}
+                  mutations={elementMutations}
+                  onCreated={(id) => {
+                    setCreatingEntity(false);
+                    setModelSelected({ kind: 'entity', id });
+                  }}
+                  onCancel={() => setCreatingEntity(false)}
+                />
+              ) : modelSelected ? (
+                // 선택된 id가 더 이상 스키마에 없는 경우(동시 편집으로 삭제됨 등) — 어느 종류였는지
+                // 구분할 수 없으므로 종류 무관 안내 문구로 대체한다.
+                <p className="text-sm text-muted-foreground">선택한 요소를 찾을 수 없습니다.</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">왼쪽에서 타입 또는 관계를 선택하세요.</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
-
-      {/* key: 열릴 때만 증가하는 세션 번호로 리마운트해 폼 state를 최신 schema로 새로 시작한다
-          (useEffect 동기화 대신). 닫힘 시에는 key가 그대로여야 포커스 복귀가 살아 있다(#328). */}
-      {selectedSchema && effectiveOntologyId != null && (
-        <OntologyEditDialog
-          key={editSession}
-          schema={selectedSchema}
-          ontologyId={effectiveOntologyId}
-          open={editOpen}
-          onOpenChange={setEditOpen}
-        />
-      )}
 
       {/* 생성 성공 시 새 온톨로지를 곧바로 선택 상태로 만든다 — 사용자가 다시 찾아 고르지 않아도 되게. */}
       <OntologyCreateDialog

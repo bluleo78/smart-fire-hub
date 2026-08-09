@@ -92,7 +92,9 @@ test.describe('온톨로지 생명주기', () => {
     await page.goto('/knowledge-graph/model');
 
     await expect(page.getByRole('button', { name: '새 온톨로지' })).toBeHidden();
-    await expect(page.getByRole('button', { name: '편집' })).toBeHidden();
+    // 전체 문서 모달과 그 "편집" 버튼은 Task 6에서 제거됐다 — 유일한 편집 진입점인 "수정 모드"
+    // 토글의 비-ADMIN 숨김을 대신 확인한다.
+    await expect(page.getByRole('button', { name: '수정 모드' })).toBeHidden();
 
     // draft 온톨로지를 선택해도 배너의 안내 문구는 보이되(비-ADMIN에게도 유용한 정보) 활성화 액션은 숨겨야 한다(스펙 271행).
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
@@ -216,12 +218,19 @@ test.describe('온톨로지 생명주기', () => {
     const banner = page.getByTestId('ontology-status-banner');
     await expect(banner).toHaveAttribute('data-variant', 'info');
     await expect(banner).toContainText('은퇴한 온톨로지');
-    // 은퇴 상태는 편집 불가 — 서버도 409로 거부하므로 버튼 자체를 숨긴다.
-    await expect(page.getByRole('button', { name: '편집' })).toBeHidden();
+    // 은퇴 상태는 편집 불가 — 서버도 409로 거부하므로 버튼 자체를 숨긴다. 전체 문서 모달의 "편집"
+    // 버튼은 Task 6에서 제거됐으므로 그 자리를 대체한 "수정 모드" 토글로 같은 게이팅을 확인한다.
+    await expect(page.getByRole('button', { name: '수정 모드' })).toBeHidden();
     await expect(banner.getByRole('button', { name: '복귀' })).toBeVisible();
   });
 
-  test('엔티티가 없으면 빈 상태 CTA가 편집기를 연다', async ({ authenticatedPage: page }) => {
+  // Task 6 이전에는 이 CTA가 전체 문서 모달(OntologyEditDialog)을 열었다 — 모달이 사라지면서
+  // "편집기를 연다"는 이제 수정 모드를 켜는 것을 뜻한다. 수정 모드에 들어가면 ModelOutline의
+  // "타입 추가" 버튼(S2 Task 6 백로그)으로 실제 첫 타입을 만들 수 있는지까지 입력→API→UI로 검증한다
+  // (빈 상태였던 캔버스가 SchemaGraph로 바뀌는 것까지 — CTA 클릭만으로는 아무것도 증명하지 않는다).
+  test('엔티티가 없으면 빈 상태 CTA가 수정 모드를 켜고, 첫 타입을 만들면 캔버스가 나타난다', async ({
+    authenticatedPage: page,
+  }) => {
     await mockApi(page, 'GET', '/api/v1/ontology/3', createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }));
     await page.goto('/knowledge-graph/model');
 
@@ -230,25 +239,57 @@ test.describe('온톨로지 생명주기', () => {
 
     await expect(page.getByText('아직 엔티티 타입이 없습니다')).toBeVisible();
     await page.getByRole('button', { name: '엔티티 타입 정의하기' }).click();
-    await expect(page.getByTestId('ontology-edit-dialog')).toBeVisible();
+
+    // 수정 모드가 켜지고 아웃라인이 나타난다 — 엔티티가 0개라 빈 상태는 그대로지만, 아웃라인의
+    // "타입 추가"로 첫 타입을 만들 수 있다.
+    await expect(page.getByRole('button', { name: '수정 모드' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('model-outline')).toContainText('타입 0개');
+
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/ontology/3/entity-types',
+      { schemaVersion: 2, entityType: { id: 1, type: 'Building', description: '', naming: '', resolution: 'embedding', properties: [] } },
+      { capture: true },
+    );
+    await page.getByRole('button', { name: '타입 추가' }).click();
+    await page.getByLabel('타입 이름').fill('Building');
+    await page.getByRole('button', { name: '타입 만들기' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toEqual({ type: 'Building', description: '', naming: '', resolution: 'embedding' });
+    // 엔티티가 생겼으니 빈 상태 대신 스키마 캔버스가 그려진다.
+    await expect(page.getByText('아직 엔티티 타입이 없습니다')).toHaveCount(0);
+    await expect(page.getByTestId('schema-graph')).toBeVisible();
   });
 
-  test('편집기 저장이 선택된 온톨로지 id로 전송된다', async ({ authenticatedPage: page }) => {
+  // 이전에는 전역 PUT /ontology가 아니라 id 스코프 PUT인지를 검증했다(#id=1을 실수로 덮어쓰는 회귀
+  // 가드). 요소 단위 편집(S2)으로 바뀐 뒤에도 같은 위험이 남는다 — useOntologyElementMutations가
+  // 기본 온톨로지(defaultOntologyId)가 아니라 실제 선택된 온톨로지(effectiveOntologyId)로 바인딩돼야
+  // 한다. 그래서 기본이 아닌 온톨로지(id=2)를 선택한 채로 편집해 PATCH가 /ontology/2/entity-types/…로
+  // 나가는지 확인한다 — 실수로 defaultOntologyId(id=1)에 바인딩됐다면 이 요청은 /ontology/1/…로
+  // 나가 이 테스트가 잡아낸다.
+  test('요소 편집이 선택된 온톨로지 id로 전송된다(기본 온톨로지가 아니어도)', async ({ authenticatedPage: page }) => {
     const schema = createOntologySchema({ domain: '건축물 대장', schemaVersion: 3 });
     await mockApi(page, 'GET', '/api/v1/ontology/2', schema);
-    // 전역 PUT /ontology가 아니라 id 스코프 PUT이어야 한다 — 아니면 id=1을 덮어쓴다.
-    const capture = await mockApi(page, 'PUT', '/api/v1/ontology/2', schema, { capture: true });
+    const capture = await mockApi(
+      page,
+      'PATCH',
+      '/api/v1/ontology/2/entity-types/1',
+      { schemaVersion: 4, entityType: { ...schema.entities[0], description: '수정됨' } },
+      { capture: true },
+    );
     await page.goto('/knowledge-graph/model');
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: '건축물 대장' }).click();
-    await page.getByRole('button', { name: '편집' }).click();
+    await page.getByRole('button', { name: '수정 모드' }).click();
+    await page.getByTestId('outline-entity-1').click();
 
-    const dialog = page.getByTestId('ontology-edit-dialog');
-    await dialog.getByTestId('entity-edit-Incident').getByLabel('설명').fill('수정됨');
-    await dialog.getByRole('button', { name: '저장' }).click();
+    await page.getByLabel('설명', { exact: true }).fill('수정됨');
+    await page.getByLabel('설명', { exact: true }).blur();
 
     const req = await capture.waitForRequest();
-    expect((req.payload as typeof schema).entities.find((e) => e.type === 'Incident')?.description).toBe('수정됨');
+    expect(req.payload).toEqual({ description: '수정됨' });
   });
 });

@@ -579,8 +579,9 @@ export class FireHubApiClient {
 
   /**
    * 신규 온톨로지를 생성한다(POST /api/v1/ontologies, ontology:write=ADMIN).
-   * 기존 온톨로지 편집(PUT)은 의도적으로 노출하지 않는다 — full-document 교체 + 낙관적 잠금 +
-   * renames 힌트가 entity_type_id 보존을 좌우해 LLM이 다루기에 위험하다. 신규 생성만 허용한다.
+   * 기존 온톨로지 편집은 의도적으로 노출하지 않는다 — 편집은 요소 단위 편집 API
+   * (firehub-web 전용, S2)가 담당하며 MCP는 신규 생성만 허용한다. (S2 Task 7에서 이전에 있던
+   * full-document 교체 PUT과 renames 힌트 자체가 서버에서 삭제됐다.)
    * 인가 주체는 X-On-Behalf-Of 헤더의 사용자이므로, 비-ADMIN이 부르면 백엔드가 403을 낸다.
    */
   async createOntology(body: {

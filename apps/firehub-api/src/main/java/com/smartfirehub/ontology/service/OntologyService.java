@@ -2,11 +2,11 @@ package com.smartfirehub.ontology.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
-import com.smartfirehub.ontology.dto.UpdateOntologyRequest;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.Duration;
@@ -53,42 +53,6 @@ public class OntologyService {
 
   // 온톨로지 스키마 — api DB에서 직접 조회(더 이상 ai-agent 프록시 아님).
   public OntologyResponse getOntology() {
-    return ontologyRepository.findOntology();
-  }
-
-  // 지식 모델 편집(B-2b 슬라이스 5-1) — full-document 교체 + schema_version 원자 증가.
-  // 검증 실패는 IllegalArgumentException(→400), 버전 충돌은 리포지토리에서 IllegalStateException(→409).
-  // 성공 시 audit 기록 후 갱신된 온톨로지를 재조회해 반환한다.
-  public OntologyResponse updateOntology(UpdateOntologyRequest req) {
-    validate(req);
-    int newVersion = ontologyRepository.updateOntology(req);
-
-    // 5-6: 타입 리네임은 이제 순수 DB 연산이다 — OntologyRepository가 entity_type_id를 UPDATE로
-    // 보존하므로(리네임돼도 같은 행), ai-agent는 이 id 기반으로 Neo4j 노드 key를 구성해 리네임에도
-    // key가 바뀌지 않는다. 5-5에서 있었던 "저장 직후 ai-agent에 Neo4j key 마이그레이션 동기 요청"은
-    // 더 이상 필요 없어 제거했다(renames는 검증에만 쓰이고 ai-agent로 전달되지 않음).
-
-    // 감사 로그 — 현재 인증 사용자(principal=Long userId). username은 best-effort 조회.
-    var auth = SecurityContextHolder.getContext().getAuthentication();
-    if (auth != null && auth.getPrincipal() instanceof Long userId) {
-      userRepository
-          .findById(userId)
-          .ifPresent(
-              u ->
-                  auditLogService.log(
-                      userId,
-                      u.username(),
-                      "ONTOLOGY_UPDATE",
-                      "ontology",
-                      "1",
-                      "지식 모델 편집 — schema_version " + (newVersion - 1) + "→" + newVersion,
-                      null,
-                      null,
-                      "SUCCESS",
-                      null,
-                      null));
-    }
-
     return ontologyRepository.findOntology();
   }
 
@@ -261,47 +225,6 @@ public class OntologyService {
     }
   }
 
-  // id 스코프 스키마 편집 — 검증 + 낙관적 잠금(버전 불일치 IllegalStateException→409).
-  // 상태 전이는 여기서 다루지 않는다(changeStatus 전용).
-  public OntologyResponse updateOntology(long ontologyId, UpdateOntologyRequest req) {
-    String current = ontologyRepository.findStatusById(ontologyId);
-
-    // 은퇴한 온톨로지의 스키마는 고칠 수 없다 — 그 스키마로 이미 적재된 데이터와 어긋나기 때문.
-    // 고쳐야 한다면 먼저 복귀(archived→active)시킨다.
-    if ("archived".equals(current)) {
-      throw new IllegalStateException("은퇴한 온톨로지는 편집할 수 없습니다. 먼저 복귀시키세요.");
-    }
-
-    // active 온톨로지의 편집은 완전성까지 지켜야 한다 — 이미 운영 중인 스키마를 빈 껍데기로 만들 수 없다.
-    // draft는 미완성인 채로 저장할 수 있다(완전성은 활성화 시점에 changeStatus가 검사한다).
-    validate(req, "active".equals(current));
-
-    ontologyRepository.updateOntology(ontologyId, req);
-
-    // 감사 로그 — 편집 대상 온톨로지의 실제 id(ontologyId)를 entityId로 기록한다.
-    var auth = SecurityContextHolder.getContext().getAuthentication();
-    if (auth != null && auth.getPrincipal() instanceof Long userId) {
-      userRepository
-          .findById(userId)
-          .ifPresent(
-              u ->
-                  auditLogService.log(
-                      userId,
-                      u.username(),
-                      "ONTOLOGY_UPDATE",
-                      "ontology",
-                      String.valueOf(ontologyId),
-                      "지식 모델 편집 — ontologyId=" + ontologyId,
-                      null,
-                      null,
-                      "SUCCESS",
-                      null,
-                      null));
-    }
-
-    return ontologyRepository.findById(ontologyId);
-  }
-
   // 온톨로지 삭제. 거부 사유는 두 가지뿐이다 — 참조 중이거나, 기본 온톨로지이거나.
   // 상태는 사유가 아니다: 참조 없는 active를 못 지우면 잘못 활성화한 온톨로지를 회수할 수 없다.
   // 참조가 있어 지울 수 없는 것은 은퇴(archived)로 물러나게 한다 — 삭제와 은퇴가 짝을 이뤄야
@@ -342,15 +265,19 @@ public class OntologyService {
     }
   }
 
-  // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
-  // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
-  // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
-  private static final Set<String> RESERVED_PROPERTY_NAMES =
-      Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion");
-
-  // 온톨로지 본문 공통 검증(생성/편집 공용) — domain, entity 타입, resolution, property, relation 참조 무결성.
+  // 온톨로지 본문 공통 검증 — domain, entity 타입, resolution, property, relation 참조 무결성.
   // requireComplete=false(draft)면 "엔티티 최소 1개" 같은 완전성 규칙을 건너뛰고 형식 규칙만 본다.
   // draft는 정의상 미완성이고, 완전성은 active로 전이할 때 게이트로 검사한다.
+  // 요소 하나로 판정 가능한 규칙(타입명·resolution·속성·관계 형식)은 OntologyRules에 위임한다 —
+  // element 패키지(요소 단위 편집)와 문구·판정을 공유해야 프론트 e2e의 문구 단언이 두 경로에서
+  // 동시에 맞는다. 여기 남는 것은 여러 요소를 한꺼번에 봐야 하는 문서 단위 불변식뿐이다
+  // (완전성, 목록 전체 중복 스캔, 관계의 엔티티 참조 무결성).
+  // (S2 Task 7) 전체 스키마 교체 PUT(updateOntology)이 요소 단위 편집 API로 대체되며 삭제됐지만,
+  // 이 메서드 자체는 살아 있다 — createOntology(생성)와 changeStatus(active 전이 게이트)가 여전히
+  // 문서 전체를 한 번에 검사해야 하기 때문이다. 같은 두 불변식(참조 무결성·완전성)은 요소 단위
+  // 편집 경로에서도 각각 OntologyElementService.addRelation(requireType)과
+  // deleteEntityType(countEntityTypes 가드)로 개별 보장된다(요소 단위 테스트: RelationElementTest,
+  // EntityTypeElementTest#active_온톨로지의_마지막_타입은_삭제할_수_없다).
   private void validateCore(
       String domain,
       List<OntologyResponse.EntityType> entities,
@@ -370,119 +297,41 @@ public class OntologyService {
     }
     Set<String> seenTypes = new HashSet<>();
     for (var e : entities) {
-      if (e.type() == null || e.type().isBlank()) {
-        throw new IllegalArgumentException("엔티티 타입명은 비어 있을 수 없습니다.");
-      }
+      // blank 검사만 먼저 부른다 — 중복 판정이 원래 위치(blank 다음, resolution 앞)를 지켜야
+      // 두 조건이 겹친 요청의 문구가 리팩터링 전과 같다. validateEntityTypeCommon 안에서 blank를
+      // 다시 검사하지만 이미 통과한 값이라 no-op이다.
+      OntologyRules.validateEntityTypeName(e.type());
       if (!seenTypes.add(e.type())) {
-        throw new IllegalArgumentException("중복된 엔티티 타입명: " + e.type());
+        throw OntologyRules.duplicateEntityTypeName(e.type());
       }
-      if (!"embedding".equals(e.resolution()) && !"exact".equals(e.resolution())) {
-        throw new IllegalArgumentException("resolution은 embedding 또는 exact여야 합니다: " + e.type());
-      }
-      // description/naming 컬럼은 NOT NULL(기본값 없음)이라 null이 그대로 INSERT되면 제약 위반으로
-      // 500이 새어나간다(#305). null만 막고 빈 문자열은 허용한다 — 컬럼 제약이 NOT NULL일 뿐이고
-      // 실제로 설명을 비워 저장한 기존 데이터가 정상 왕복(GET→PUT)돼야 하기 때문이다.
-      if (e.description() == null) {
-        throw new IllegalArgumentException("엔티티 설명(description)은 null일 수 없습니다: " + e.type());
-      }
-      if (e.naming() == null) {
-        throw new IllegalArgumentException("엔티티 명명 규칙(naming)은 null일 수 없습니다: " + e.type());
-      }
+      OntologyRules.validateEntityTypeCommon(e.type(), e.description(), e.naming(), e.resolution());
       if (e.properties() != null) {
         Set<String> seenPropNames = new HashSet<>();
         for (var p : e.properties()) {
-          // blank 검사를 예약어/중복보다 먼저 둔다 — 이름이 빈 속성이 2개면 ''끼리 충돌해
-          // "중복된 속성명"으로 오진단되고(실제 원인은 미입력), null이면 Set.of#contains가 NPE를 던져 500이 된다.
-          if (p.name() == null || p.name().isBlank()) {
-            throw new IllegalArgumentException("속성명은 비어 있을 수 없습니다: " + e.type());
-          }
-          if (RESERVED_PROPERTY_NAMES.contains(p.name())) {
-            throw new IllegalArgumentException("예약어는 속성명으로 쓸 수 없습니다: " + p.name());
-          }
+          OntologyRules.validatePropertyName(p.name(), e.type());
           if (!seenPropNames.add(p.name())) {
-            throw new IllegalArgumentException("중복된 속성명(" + e.type() + "): " + p.name());
+            throw OntologyRules.duplicatePropertyName(e.type(), p.name());
           }
-          // 속성 description도 NOT NULL 컬럼 — 엔티티와 동일하게 null만 차단한다(#305).
-          if (p.description() == null) {
-            throw new IllegalArgumentException(
-                "속성 설명(description)은 null일 수 없습니다(" + e.type() + "): " + p.name());
-          }
-          // dataType은 NOT NULL + CHECK(text|number|date)라 null은 애초에 저장 불가하다.
-          // 기존 코드가 null을 통과시켜 제약 위반 500이 났으므로 null도 400으로 거른다(#305).
-          if (p.dataType() == null || !List.of("text", "number", "date").contains(p.dataType())) {
-            throw new IllegalArgumentException("데이터 타입은 text|number|date 중 하나여야 합니다: " + p.name());
-          }
+          OntologyRules.validatePropertyCommon(p.description(), p.dataType(), e.type(), p.name());
         }
       }
     }
     Set<String> seenTriples = new HashSet<>();
     for (var r : relations) {
-      // 관계명 blank도 중복(tripleKey) 검사보다 먼저 — 빈 관계명 2건은 tripleKey가 같아
-      // "중복된 관계"로 오진단된다. 이름 없는 관계는 LLM 추출·표 투영이 참조할 수 없어 무의미하다.
-      if (r.relation() == null || r.relation().isBlank()) {
-        throw new IllegalArgumentException(
-            "관계명은 비어 있을 수 없습니다: " + r.subject() + " → " + r.object());
-      }
+      // 원본 순서(관계명 blank → subject 존재 → object 존재 → description null)를 그대로 지킨다 —
+      // subject/object 참조 무결성은 여러 엔티티를 함께 봐야 하는 문서 단위 불변식이라 여기 남아 있고,
+      // 그래서 validateRelationCommon(이름+description을 한 번에)을 통으로 못 쓰고 나눠서 부른다.
+      OntologyRules.validateRelationName(r.relation(), r.subject(), r.object());
       if (!seenTypes.contains(r.subject())) {
         throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(subject): " + r.subject());
       }
       if (!seenTypes.contains(r.object())) {
         throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(object): " + r.object());
       }
-      // 관계 description도 NOT NULL 컬럼 — 엔티티/속성과 동일하게 null만 차단한다(#305).
-      if (r.description() == null) {
-        throw new IllegalArgumentException(
-            "관계 설명(description)은 null일 수 없습니다: " + r.subject() + " → " + r.object());
-      }
+      OntologyRules.validateRelationDescription(r.description(), r.subject(), r.object());
       String tripleKey = r.subject() + "|" + r.relation() + "|" + r.object();
       if (!seenTriples.add(tripleKey)) {
-        throw new IllegalArgumentException("중복된 관계: " + tripleKey);
-      }
-    }
-  }
-
-  // 편집 페이로드 검증 — DB CHECK/UNIQUE 제약보다 먼저 걸러 명확한 400을 반환한다(500/DataIntegrity 방지).
-  private void validate(UpdateOntologyRequest req) {
-    validate(req, true);
-  }
-
-  // requireComplete=false는 draft를 유지한 채(활성화 없이) 스키마만 편집하는 경로용 — 완전성 게이트 없이
-  // 형식 검증만 적용한다. id 스코프 updateOntology가 결과 상태에 따라 이 플래그를 결정한다.
-  private void validate(UpdateOntologyRequest req, boolean requireComplete) {
-    validateCore(req.domain(), req.entities(), req.relations(), requireComplete);
-
-    Set<String> seenTypes = new HashSet<>();
-    for (var e : req.entities()) {
-      seenTypes.add(e.type());
-    }
-
-    // 타입 리네임(5-5) 무결성 — to는 최종 entities에 실존해야 하고, from은 리네임돼 사라졌어야 하므로
-    // 최종 entities에 존재하면 안 된다(잘못된 rename 의도가 Neo4j 마이그레이션으로 새는 것을 방지).
-    // to 중복도 금지한다 — 리포지토리가 renames를 to→from HashMap으로 뒤집기 때문에(같은 to의 앞 항목이
-    // 덮어써짐) 덮어써진 from의 기존 행이 "매칭 안 된 타입"으로 판정돼 DELETE된다. 그 행의 entity_type_id가
-    // 사라지면 이 id를 key로 삼는 Neo4j 노드 연결도 끊긴다(데이터 소실 경로). 검증이 유일한 방어선이다.
-    Set<String> seenFroms = new HashSet<>();
-    Set<String> seenTos = new HashSet<>();
-    for (var rename : req.renames()) {
-      if (rename.from() == null || rename.from().isBlank() || rename.to() == null || rename.to().isBlank()) {
-        throw new IllegalArgumentException("타입 리네임의 from/to는 비어 있을 수 없습니다.");
-      }
-      if (rename.from().equals(rename.to())) {
-        throw new IllegalArgumentException("타입 리네임의 from과 to가 동일합니다: " + rename.from());
-      }
-      if (!seenTypes.contains(rename.to())) {
-        throw new IllegalArgumentException(
-            "타입 리네임의 to가 최종 엔티티 타입에 없습니다: " + rename.to() + " (from " + rename.from() + ")");
-      }
-      if (seenTypes.contains(rename.from())) {
-        throw new IllegalArgumentException(
-            "타입 리네임의 from이 여전히 엔티티 타입으로 남아 있습니다: " + rename.from());
-      }
-      if (!seenFroms.add(rename.from())) {
-        throw new IllegalArgumentException("중복된 타입 리네임(from): " + rename.from());
-      }
-      if (!seenTos.add(rename.to())) {
-        throw new IllegalArgumentException("중복된 타입 리네임(to): " + rename.to());
+        throw OntologyRules.duplicateTriple(r.subject(), r.relation(), r.object());
       }
     }
   }

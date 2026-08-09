@@ -45,6 +45,31 @@ test.describe('320px 리플로우 (#345)', () => {
     expect(await mainOverflow(page)).toBe(0);
   });
 
+  // S2 Task 3 리뷰 IMP-4: 요소 편집기 모드(3-pane: 아웃라인 w-64 + 캔버스 + 인스펙터 w-80)는
+  // 읽기 모드보다 고정폭 패널이 하나 더 많아 320px에서 새로 리플로우가 깨질 수 있다.
+  // mainOverflow는 조상의 overflow-hidden에 가려 0을 보고하면서도 실제로는 캔버스가 폭 0으로
+  // 밀려나고 인스펙터가 화면 밖으로 잘려 나가는 상태를 놓칠 수 있었다(구현 중 실측) — 그래서
+  // mainOverflow 0인지 뿐 아니라 캔버스가 실제로 화면 안에서 양의 폭을 갖는지도 함께 확인한다.
+  // `> 0`은 캔버스가 1px로 밀려나도 통과하는 반쪽짜리 단언이었다(M-3, S2 최종 리뷰) — 실제 구현
+  // (sm:flex/sm:block)이 보장하는 것을 그대로 단언한다: 아웃라인/인스펙터가 실제로 숨겨져 320px
+  // 대부분을 캔버스가 차지하는지(실측 248px 안팎 — 컨테이너 padding 등을 뺀 값이라 320에 못
+  // 미치지만 리플로우가 깨졌을 때의 0~수px과는 자릿수가 다르다) + 폭이 있는지 함께 확인한다.
+  test('요소 편집기 모드(3-pane)도 320px에서 가로 스크롤 없이 표시된다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    expect(await mainOverflow(page)).toBe(0);
+    // 좁은 화면에서는 아웃라인/인스펙터를 접어 캔버스에 폭을 몰아준다 — 캔버스가 뷰포트 안에서
+    // 실제로 넓게 보여야 한다(1px로 밀려나 있으면 안 된다).
+    const canvasBox = await page.getByTestId('schema-graph').boundingBox();
+    expect(canvasBox!.width).toBeGreaterThan(200);
+    await expect(page.getByTestId('model-outline')).toBeHidden();
+    await expect(page.getByTestId('model-inspector')).toBeHidden();
+  });
+
   test('데스크톱(1280px)에서는 탭이 기존대로 한 줄로 유지된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
     await page.goto('/knowledge-graph/review');

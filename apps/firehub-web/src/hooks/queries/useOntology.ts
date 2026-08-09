@@ -2,12 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { ontologyApi } from '@/api/ontology';
-import { handleApiError, isConflictError } from '@/lib/api-error';
-import type { CreateOntologyRequest, OntologyStatus, UpdateOntologyRequest } from '@/types/ontology';
-
-// 온톨로지 스키마(정적) — 캐시 오래 유지.
-export const useOntologySchema = () =>
-  useQuery({ queryKey: ['ontology'], queryFn: () => ontologyApi.getOntology().then((r) => r.data), staleTime: 5 * 60 * 1000 });
+import { handleApiError } from '@/lib/api-error';
+import type { CreateOntologyRequest, OntologyStatus } from '@/types/ontology';
 
 // 전체 지식그래프.
 export const useOntologyGraph = () =>
@@ -42,41 +38,6 @@ export function useCreateOntology() {
   return useMutation({
     mutationFn: (req: CreateOntologyRequest) => ontologyApi.createOntology(req).then((r) => r.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ontologies'] }),
-  });
-}
-
-/**
- * id 스코프 스키마 편집. 성공 시 해당 온톨로지 스키마와 목록을 함께 무효화한다.
- * 상태 전이는 여기가 아니라 useOntologyStatusTransition(전용 PATCH)이 담당한다.
- * ['ontology', id]는 숫자 id라 ['ontology','graph']와 겹치지 않으므로 exact가 필요 없다.
- */
-export function useUpdateOntologyById() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, req }: { id: number; req: UpdateOntologyRequest }) =>
-      ontologyApi.updateOntologyById(id, req).then((r) => r.data),
-    onSuccess: (_data, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['ontology', id] });
-      queryClient.invalidateQueries({ queryKey: ['ontologies'] });
-      // id=1(레거시 기본 온톨로지)은 useOntologySchema/useOntologyGraph가 별도 키(['ontology'] bare,
-      // ['ontology','graph'])로도 캐싱한다 — by-id 무효화만으로는 이 레거시 키에 닿지 않아
-      // 지식그래프 시각화 페이지가 편집 직후 낡은 스키마·그래프를 보여준다.
-      // id!==1인 온톨로지는 레거시 키와 무관하므로 불필요한 재조회를 만들지 않는다.
-      // exact: true — ['ontology', 2] 같은 다른 by-id 캐시까지 쓸려나가지 않도록 bare ['ontology']만 겨냥한다.
-      // 이 분기는 임시가 아니다 — 지식그래프 시각화 페이지(useOntologySchema/useOntologyGraph)가
-      // bare 훅을 계속 쓰는 한 상시로 필요하다. 그 페이지가 by-id 훅으로 옮겨가기 전까지는 지우지 말 것.
-      if (id === 1) {
-        queryClient.invalidateQueries({ queryKey: ['ontology'], exact: true });
-        queryClient.invalidateQueries({ queryKey: ['ontology', 'graph'] });
-      }
-    },
-    // 409(버전 충돌) 시 캐시된 스키마는 이미 낡았다 —
-    // 해당 id의 캐시를 재조회해야 편집기의 latestVersion이 갱신되고 "덮어쓰고 저장"이 열린다(#301).
-    onError: (error, { id }) => {
-      if (isConflictError(error)) {
-        queryClient.invalidateQueries({ queryKey: ['ontology', id] });
-      }
-    },
   });
 }
 

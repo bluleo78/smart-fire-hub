@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useCreateOntology } from '@/hooks/queries/useOntology';
 import { extractApiError } from '@/lib/api-error';
+import { validateDomain } from '@/lib/ontology-validation';
 
 interface OntologyCreateDialogProps {
   open: boolean;
@@ -23,8 +24,8 @@ interface OntologyCreateDialogProps {
 
 /**
  * 신규 온톨로지 생성 — 도메인명 하나만 받는다.
- * 엔티티·관계는 여기서 받지 않는다. 편집기(OntologyEditDialog)에 이미 있는 폼을 중복 구현하지 않고,
- * 빈 draft를 만든 뒤 빈 상태 CTA로 편집기에 넘긴다.
+ * 엔티티·관계는 여기서 받지 않는다. 요소 단위 편집기(수정 모드)에 이미 있는 생성 폼(ModelOutline의
+ * "타입 추가"/"관계 추가")을 중복 구현하지 않고, 빈 draft를 만든 뒤 빈 상태 CTA로 편집기에 넘긴다.
  */
 export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: OntologyCreateDialogProps) {
   const [domain, setDomain] = useState('');
@@ -33,8 +34,11 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
 
   const submit = () => {
     const trimmed = domain.trim();
-    if (!trimmed) {
-      setError('도메인명을 입력하세요.');
+    // validateDomain(ontology-validation.ts)을 재사용한다(NEW-4, Task 6 리뷰 라운드2) — 여기서
+    // 문구를 따로 인라인해 두면 ModelOutline의 도메인 편집 화면과 문구가 갈라질 수 있다.
+    const domainError = validateDomain(trimmed);
+    if (domainError) {
+      setError(domainError);
       return;
     }
     setError(null);
