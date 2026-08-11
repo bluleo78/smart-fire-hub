@@ -5,6 +5,7 @@ import type {
   CreateReportTemplateRequest,
   ProactiveJob,
   ProactiveJobExecution,
+  ReportListItem,
   SmtpSettingsRequest,
   UpdateProactiveJobRequest,
   UpdateReportTemplateRequest,
@@ -22,6 +23,8 @@ const KEYS = {
   template: (id: number) => ['proactive', 'templates', id] as const,
   smtp: ['proactive', 'smtp'] as const,
   anomalyEvents: (jobId: number) => ['proactive', 'anomaly-events', jobId] as const,
+  reports: (params?: { limit?: number; offset?: number }) =>
+    ['proactive', 'reports', params] as const,
 };
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
@@ -117,6 +120,14 @@ export function useJobExecutions(
     queryFn: () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
     enabled: !!jobId,
     refetchInterval: options?.refetchInterval,
+  });
+}
+
+/** 잡 횡단 리포트 목록 조회 — 리포트 화면의 목록 탭에서 사용 */
+export function useReports(params?: { limit?: number; offset?: number }) {
+  return useQuery<ReportListItem[]>({
+    queryKey: KEYS.reports(params),
+    queryFn: () => proactiveApi.listReports(params).then((r) => r.data),
   });
 }
 
