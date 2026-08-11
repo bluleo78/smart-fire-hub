@@ -8,7 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import {
+  affectedRelationsFor,
   DATA_TYPES,
+  isLastActiveEntityType,
   RESOLUTIONS,
   validateEntityTypeName,
   validatePropertyName,
@@ -367,15 +369,15 @@ function EditEntityForm({
   };
 
   // 이 타입을 끝점으로 쓰는 관계 — 삭제 확인 다이얼로그가 "함께 지워질 관계"로 보여준다(FK CASCADE).
-  const affectedRelations = schema.relations.filter(
-    (r) => r.subjectTypeId === entity.id || r.objectTypeId === entity.id,
-  );
+  // OntologyPage(캔버스 Delete 키 삭제)와 계산이 완전히 같아 ontology-validation.ts로 옮겼다(리뷰 M-3).
+  const affectedRelations = affectedRelationsFor(schema, entity.id);
 
   const typeErrorId = `entity-type-name-error-${entity.id}`;
   // active 온톨로지의 마지막 엔티티 타입인지(M-4.2, S2 최종 리뷰) — 서버가 이 조합을 400으로
   // 거부하므로(OntologyElementService.deleteEntityType) 삭제 트리거를 미리 비활성화해 그 400
-  // 문구가 정상 사용 경로에 노출되지 않게 한다.
-  const isLastActiveType = schema.entities.length <= 1 && status === 'active';
+  // 문구가 정상 사용 경로에 노출되지 않게 한다. OntologyPage와 조건이 같아 ontology-validation.ts로
+  // 옮겼다(리뷰 M-3).
+  const isLastActiveType = isLastActiveEntityType(schema, status);
 
   return (
     <div className="flex flex-col gap-4" data-testid="entity-inspector">
