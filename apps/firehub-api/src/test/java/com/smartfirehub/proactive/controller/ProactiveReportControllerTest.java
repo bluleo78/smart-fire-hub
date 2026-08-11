@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.controller;
 
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -79,6 +80,9 @@ class ProactiveReportControllerTest {
             get("/api/v1/proactive/reports?limit=5&offset=10")
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
+    // Mockito 기본 응답(빈 리스트)과 스텁 응답이 같아 status만으로는 limit/offset 오배선을 못 잡는다 —
+    // 정확한 인자로 서비스가 호출됐는지 직접 검증한다
+    verify(proactiveJobService).getReports(1L, 5, 10);
   }
 
   @Test
