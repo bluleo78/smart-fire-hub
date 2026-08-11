@@ -225,10 +225,12 @@ test.describe('온톨로지 생명주기', () => {
   });
 
   // Task 6 이전에는 이 CTA가 전체 문서 모달(OntologyEditDialog)을 열었다 — 모달이 사라지면서
-  // "편집기를 연다"는 이제 수정 모드를 켜는 것을 뜻한다. 수정 모드에 들어가면 ModelOutline의
-  // "타입 추가" 버튼(S2 Task 6 백로그)으로 실제 첫 타입을 만들 수 있는지까지 입력→API→UI로 검증한다
-  // (빈 상태였던 캔버스가 SchemaGraph로 바뀌는 것까지 — CTA 클릭만으로는 아무것도 증명하지 않는다).
-  test('엔티티가 없으면 빈 상태 CTA가 수정 모드를 켜고, 첫 타입을 만들면 캔버스가 나타난다', async ({
+  // "편집기를 연다"는 이제 수정 모드를 켜는 것을 뜻한다. S3 Task 4부터는 수정 모드와 함께 생성 폼도
+  // 곧바로 열려("첫 타입 만들기") 아웃라인의 "타입 추가"를 다시 찾지 않고 바로 입력할 수 있는지까지
+  // 입력→API→UI로 검증한다(빈 상태였던 캔버스가 SchemaGraph로 바뀌는 것까지 — CTA 클릭만으로는
+  // 아무것도 증명하지 않는다). CTA 문구·예시 트리플 자체의 상세 검증은 ontology-canvas.spec.ts의
+  // 빈 상태 테스트가 맡는다 — 여기는 이 도메인(생명주기 전환에 따른 온톨로지 선택)과 결합된 시나리오다.
+  test('엔티티가 없으면 빈 상태 CTA가 수정 모드와 생성 폼을 함께 열고, 첫 타입을 만들면 캔버스가 나타난다', async ({
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/ontology/3', createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }));
@@ -238,12 +240,12 @@ test.describe('온톨로지 생명주기', () => {
     await page.getByRole('option', { name: /소방시설 점검/ }).click();
 
     await expect(page.getByText('아직 엔티티 타입이 없습니다')).toBeVisible();
-    await page.getByRole('button', { name: '엔티티 타입 정의하기' }).click();
+    await page.getByRole('button', { name: '첫 타입 만들기' }).click();
 
-    // 수정 모드가 켜지고 아웃라인이 나타난다 — 엔티티가 0개라 빈 상태는 그대로지만, 아웃라인의
-    // "타입 추가"로 첫 타입을 만들 수 있다.
+    // 수정 모드가 켜지고 생성 폼이 곧바로 열린다 — 엔티티가 0개라 캔버스 자리는 빈 상태 그대로지만,
+    // 인스펙터 pane에는 이미 "새 타입 만들기" 폼이 떠 있다(아웃라인의 "타입 추가"를 다시 누를 필요가 없다).
     await expect(page.getByRole('button', { name: '수정 모드' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByTestId('model-outline')).toContainText('타입 0개');
+    await expect(page.getByTestId('entity-inspector-create')).toBeVisible();
 
     const capture = await mockApi(
       page,
@@ -252,9 +254,10 @@ test.describe('온톨로지 생명주기', () => {
       { schemaVersion: 2, entityType: { id: 1, type: 'Building', description: '', naming: '', resolution: 'embedding', properties: [] } },
       { capture: true },
     );
-    await page.getByRole('button', { name: '타입 추가' }).click();
     await page.getByLabel('타입 이름').fill('Building');
-    await page.getByRole('button', { name: '타입 만들기' }).click();
+    // exact: true — 엔티티가 여전히 0개인 동안(POST 응답 전) 빈 상태 CTA("첫 타입 만들기")도 함께
+    // 떠 있어 부분 일치로는 strict mode 충돌이 난다.
+    await page.getByRole('button', { name: '타입 만들기', exact: true }).click();
 
     const req = await capture.waitForRequest();
     expect(req.payload).toEqual({ type: 'Building', description: '', naming: '', resolution: 'embedding' });

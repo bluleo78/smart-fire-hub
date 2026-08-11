@@ -51,17 +51,22 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
     // (Task 4) EntityInspector가 채워지면서 "타입 #2 선택됨" 플레이스홀더가 실제 편집 폼으로
     // 바뀌었다 — 인스펙터가 올바른 엔티티(Building)를 로드했는지는 타입 이름 필드값으로 확인한다.
     await expect(page.getByLabel('타입 이름')).toHaveValue('Building');
-    const selectedNodeIds = await page.evaluate(() => {
-      const cy = (window as unknown as { __ontologySchemaCy?: { $(sel: string): { map<T>(fn: (e: { id(): string }) => T): T[] } } })
+    // 캔버스 노드 id는 이제 타입 이름이 아니라 entityTypeId다(S3 Task 1) — 그 id 값 자체는 fixture의
+    // 엔티티 배열 순서에 우연히 결합된 구현 디테일이라, 여기서 검증하려는 건 "선택 동기화가 되는가"이지
+    // "id가 몇인가"가 아니다. 그래서 id 대신 사람이 읽는 label(타입 이름)로 단언한다 — id 스킴이 다시
+    // 바뀌어도 이 단언은 그대로 살아남는다.
+    const selectedNodeLabels = await page.evaluate(() => {
+      const cy = (window as unknown as { __ontologySchemaCy?: { $(sel: string): { map<T>(fn: (e: { data(k: string): unknown }) => T): T[] } } })
         .__ontologySchemaCy;
-      return cy ? cy.$(':selected').map((e) => e.id()) : [];
+      return cy ? cy.$(':selected').map((e) => e.data('label')) : [];
     });
-    expect(selectedNodeIds).toEqual(['Building']);
+    expect(selectedNodeLabels).toEqual(['Building']);
 
     // 반대 방향: 캔버스에서 다른 타입(Cause, id=3)을 탭 → 아웃라인의 선택 표시가 그쪽으로 옮겨간다.
+    // 셀렉터도 id가 아니라 label 속성으로 노드를 찾는다 — 같은 이유(fixture id 결합 회피).
     await page.evaluate(() => {
-      (window as unknown as { __ontologySchemaCy: { $(sel: string): { emit(e: string): void } } }).__ontologySchemaCy
-        .$('#Cause')
+      (window as unknown as { __ontologySchemaCy: { nodes(sel: string): { emit(e: string): void } } }).__ontologySchemaCy
+        .nodes('[label = "Cause"]')
         .emit('tap');
     });
     await expect(page.getByTestId('outline-entity-3')).toHaveAttribute('aria-current', 'true');
@@ -105,10 +110,12 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
     await page.goto('/knowledge-graph/model');
 
     // 수정 모드를 켜지 않은 채(기본 read 모드) 캔버스 노드를 탭한다 — 기존 드릴다운 브리지가 그대로 살아 있어야 한다.
+    // 캔버스 노드 id는 이제 타입 이름이 아니라 entityTypeId다(S3 Task 1) — id 값은 fixture 배정에 우연히
+    // 결합된 디테일이라 label(타입 이름) 속성으로 노드를 찾는다.
     await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', '6');
     await page.evaluate(() => {
-      (window as unknown as { __ontologySchemaCy: { $(sel: string): { emit(e: string): void } } }).__ontologySchemaCy
-        .$('#Incident')
+      (window as unknown as { __ontologySchemaCy: { nodes(sel: string): { emit(e: string): void } } }).__ontologySchemaCy
+        .nodes('[label = "Incident"]')
         .emit('tap');
     });
 
@@ -234,8 +241,9 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
     // 크래시하지 않는다 — 에러 바운더리가 뜨지 않고 캔버스가 정상 렌더된다.
     await expect(page.getByRole('heading', { name: '페이지를 불러오는 중 문제가 발생했습니다' })).toHaveCount(0);
     await expect(page.getByTestId('schema-graph')).toBeVisible();
-    // 걸러진 엣지가 조용히 사라지지 않는다 — console.warn으로 흔적이 남는다(SchemaGraph.tsx는 관계명이
-    // 아니라 소스/타깃 노드 id를 담는다 — 존재하지 않는 목적어 이름 자체가 원인 추적의 단서다).
+    // 걸러진 엣지가 조용히 사라지지 않는다 — console.warn으로 흔적이 남는다(SchemaGraph.tsx는 노드를
+    // id로 비교해 거르지만, 경고 문구에는 사람이 읽을 수 있게 소스/타깃 노드 "이름"을 담는다 —
+    // 존재하지 않는 목적어 이름 자체가 원인 추적의 단서다).
     await expect.poll(() => warnings.some((w) => w.includes('유령타입'))).toBe(true);
     // (리뷰 I-2) "정상 관계 6개는 그대로 보인다"는 주장은 위 단언만으로는 확인되지 않는다 — 필터가
     // 걸러낸 엣지 1건만 셀 뿐, 나머지 6건이 실제로 캔버스에 남아 있는지는 별도로 단언해야 한다.
@@ -1419,7 +1427,9 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
     );
     await page.getByRole('button', { name: '타입 추가' }).click();
     await page.getByLabel('타입 이름').fill('Incident');
-    await page.getByRole('button', { name: '타입 만들기' }).click();
+    // exact: true — 엔티티가 0개인 동안 캔버스 자리의 빈 상태(OntologyEmptyState, S3 Task 4)도 함께
+    // 떠 있어 "타입 만들기"를 부분 일치로 찾으면 그 CTA("첫 타입 만들기")와 strict mode 충돌이 난다.
+    await page.getByRole('button', { name: '타입 만들기', exact: true }).click();
 
     await capture.waitForRequest();
     await expect(page.getByTestId('outline-entity-1')).toBeVisible();

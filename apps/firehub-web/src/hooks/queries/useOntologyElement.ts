@@ -188,13 +188,15 @@ export function useOntologyElementMutations(ontologyId: number) {
         () => ontologyElementApi.updateEntityType(ontologyId, etId, req),
         (data) =>
           commitMutation(queryClient, queryKey, data.schemaVersion, (schema) => {
-            // relations[].subject/object는 타입 "이름"을 사람이 읽는 표시용으로 들고 있고,
-            // SchemaGraph는 그 이름을 그대로 cytoscape 노드/엣지 id로 쓴다(entityId 같은 숫자 id가
-            // 아니다). 타입을 리네임하면 entities[]는 여기서 새 이름으로 바뀌는데 relations[]를
-            // 그대로 두면 이름이 어긋나 "존재하지 않는 노드를 잇는 엣지"가 되어 캔버스가 크래시한다
-            // (Task 4 리뷰 C-2). 리네임 전 이름은 이 업데이터만 교체 전/후 스키마를 동시에 보고 있어
-            // 여기서 읽어야 한다 — 호출부(EntityInspector)에서 넘겨받으면 낙관적 갱신이 겹칠 때
-            // 어느 시점의 이름인지 보장할 수 없다.
+            // relations[].subject/object는 타입 "이름"을 사람이 읽는 표시용으로 들고 있다.
+            // (S3 Task 1 갱신) SchemaGraph의 cytoscape 노드/엣지 id는 더 이상 이 이름이 아니라
+            // entityTypeId라, 캔버스는 이 remap에 의존하지 않는다 — 리네임 후 remap을 생략해도
+            // 캔버스가 크래시하지는 않는다. 하지만 이 remap을 지우면 안 된다: ModelOutline·
+            // RelationInspector·GraphKeyboardList는 여전히 relations[].subject/object를 화면에
+            // 그대로 찍는 "이름 기반 표시 소비자"라, remap이 없으면 리네임 후 관계 목록이 옛 이름을
+            // 계속 보여준다(크래시가 아니라 조용한 표시 오류라 e2e가 놓치기 쉽다). 리네임 전 이름은
+            // 이 업데이터만 교체 전/후 스키마를 동시에 보고 있어 여기서 읽어야 한다 — 호출부
+            // (EntityInspector)에서 넘겨받으면 낙관적 갱신이 겹칠 때 어느 시점의 이름인지 보장할 수 없다.
             const prevEntity = schema.entities.find((e) => e.id === etId);
             const renamed = prevEntity != null && prevEntity.type !== data.entityType.type;
             return {

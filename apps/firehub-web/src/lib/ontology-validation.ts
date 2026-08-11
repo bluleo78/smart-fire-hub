@@ -12,7 +12,7 @@
  * 사용자에게 노출되는 일은 없어야 하고, 서버 검증은 동시 편집 레이스(#301류)에 대한 최종 방어선일
  * 뿐이어야 한다.
  */
-import type { Triple } from '@/types/ontology';
+import type { OntologySchema, OntologyStatus, Triple } from '@/types/ontology';
 
 // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
 // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
@@ -141,4 +141,25 @@ export function validateTripleUniqueness(
     return `중복된 관계: ${subject} -${relation}-> ${object}`;
   }
   return null;
+}
+
+/**
+ * 이 엔티티 타입을 끝점(주어/목적어)으로 쓰는 관계 — 삭제 시 FK CASCADE로 서버가 함께 지운다.
+ * 삭제 확인 다이얼로그(DeleteTypeConfirm)가 몇 개가, 어떤 이름으로 함께 사라지는지 미리 보여줄 때
+ * 쓴다. `EntityInspector`(트리거 기반 삭제)와 `OntologyPage`(캔버스 Delete 키 삭제, S3 Task 4)가
+ * 완전히 같은 계산을 각자 갖고 있었다(리뷰 M-3) — 한쪽만 고치면 조용히 어긋나므로 이 파일로 모은다.
+ */
+export function affectedRelationsFor(schema: OntologySchema, entityTypeId: number): Triple[] {
+  return schema.relations.filter((r) => r.subjectTypeId === entityTypeId || r.objectTypeId === entityTypeId);
+}
+
+/**
+ * active 온톨로지의 마지막 엔티티 타입인지 — 서버(OntologyElementService.deleteEntityType)가
+ * "엔티티 타입은 최소 1개 이상이어야 합니다."로 거부하는 조합과 정확히 같다. 삭제 트리거를 미리
+ * 비활성화하거나(EntityInspector) 캔버스 Delete 요청을 조용히 무시(OntologyPage)해 이 서버 문구가
+ * 정상 사용 경로에 노출되지 않게 한다(이 파일 헤더의 전역 제약). 두 호출부가 완전히 같은 조건식을
+ * 복제하고 있었다(리뷰 M-3).
+ */
+export function isLastActiveEntityType(schema: OntologySchema, status: OntologyStatus | undefined): boolean {
+  return schema.entities.length <= 1 && status === 'active';
 }

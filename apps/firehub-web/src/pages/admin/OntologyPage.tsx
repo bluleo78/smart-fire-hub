@@ -9,9 +9,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
+import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
 
 import InstanceGraph from './components/InstanceGraph';
+import DeleteTypeConfirm from './components/model-editor/DeleteTypeConfirm';
 import EntityInspector from './components/model-editor/EntityInspector';
 import ModelOutline from './components/model-editor/ModelOutline';
 import RelationInspector from './components/model-editor/RelationInspector';
@@ -96,6 +98,12 @@ export default function OntologyPage() {
   // 대칭. 전체 문서 모달이 유일한 엔티티 타입 생성 경로였는데, 그 모달을 지우면서 이 상태가 그
   // 자리를 대체한다.
   const [creatingEntity, setCreatingEntity] = useState(false);
+  // 캔버스 Delete 키로 요청된 엔티티 타입 삭제 확인(S3 Task 4) — EntityInspector가 이미 같은
+  // DeleteTypeConfirm을 트리거 버튼(entity-delete-trigger)으로 여는 인스턴스를 갖고 있지만, 그 트리거는
+  // sm 미만에서 숨겨지거나(인스펙터 pane 자체가 hidden sm:block) 생성 폼 등 다른 내용을 보여주는 중일
+  // 수 있어 캔버스 요청이 그 트리거에 기댈 수 없다 — controlled open(entity id 자체를 상태로 둔다)의
+  // 별도 인스턴스를 둔다. 관계 삭제는 확인이 없어(브리프 §상호작용) 별도 상태가 필요 없다.
+  const [canvasDeleteEntityId, setCanvasDeleteEntityId] = useState<number | null>(null);
   const { isAdmin } = useAuth();
 
   // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 기본 온톨로지 기반이므로
@@ -146,6 +154,13 @@ export default function OntologyPage() {
   // 버튼에 붙는다(DeleteTypeConfirm.tsx 주석 참고). 선택이 바뀌어도 리마운트되지 않는 안정적인
   // 대상이어야 하므로 훅 최상단에서 한 번만 만든다.
   const addEntityTypeButtonRef = useRef<HTMLButtonElement>(null);
+  // 캔버스 Delete의 in-flight 중복 요청 차단(리뷰 I-2) — SchemaGraph의 keydown 가드는 e.repeat와
+  // 모달 존재로 대부분을 막지만, 두 구멍이 남는다: (1) Radix AlertDialogAction은 클릭 즉시 다이얼로그를
+  // 닫으므로(exit 애니메이션이 끝나면 DOM에서도 사라진다) DELETE 응답을 기다리는 동안은 "모달이 열려
+  // 있다" 가드가 더 이상 성립하지 않는다. (2) 관계 삭제는 확인 다이얼로그 자체가 없어(브리프
+  // §상호작용) 응답을 기다리는 내내 아무 모달 가드도 없다. 두 경우 모두 응답 대기 중 같은 대상에
+  // 대한 재요청은 조용히 무시한다 — 키를 굳이 auto-repeat 없이 두 번 눌러도 마찬가지다.
+  const deletingElementKeysRef = useRef<Set<string>>(new Set());
   const prevOntologyIdRef = useRef(effectiveOntologyId);
   if (prevOntologyIdRef.current !== effectiveOntologyId) {
     prevOntologyIdRef.current = effectiveOntologyId;
@@ -153,6 +168,7 @@ export default function OntologyPage() {
     if (modelSelected) setModelSelected(null);
     if (creatingRelation) setCreatingRelation(false);
     if (creatingEntity) setCreatingEntity(false);
+    if (canvasDeleteEntityId != null) setCanvasDeleteEntityId(null);
   }
 
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
@@ -203,6 +219,58 @@ export default function OntologyPage() {
   const drillDown = (type: string) => {
     setActiveTypes(new Set([type]));
     setTab('instance');
+  };
+
+  // 캔버스 Delete 키가 요청한 엔티티 타입 삭제 확인 대상(S3 Task 4) — id만 상태로 들고 있고 실제
+  // entity/affectedRelations는 매 렌더 selectedSchema에서 파생한다(동시 편집으로 그 사이 타입이
+  // 사라지면 find가 undefined를 내 다이얼로그가 조용히 안 뜬다). affectedRelationsFor는
+  // EntityInspector와 공유하는 계산이다(ontology-validation.ts, 리뷰 M-3).
+  const canvasDeleteEntity =
+    canvasDeleteEntityId != null ? selectedSchema?.entities.find((e) => e.id === canvasDeleteEntityId) : undefined;
+  // entity.id가 아니라 canvasDeleteEntityId(상태로 들고 있던 number)를 쓴다 — EntityTypeDef.id는
+  // 레거시 폴백(엔티티에 id가 없는 스키마)을 감안해 타입상 optional이라 여기서 타입 좁히기가 안 된다.
+  const canvasDeleteAffectedRelations =
+    canvasDeleteEntity && selectedSchema && canvasDeleteEntityId != null
+      ? affectedRelationsFor(selectedSchema, canvasDeleteEntityId)
+      : [];
+
+  // 캔버스에서 Delete로 엔티티 타입 삭제를 요청 — EntityInspector의 isLastActiveType과 같은 조건
+  // (isLastActiveEntityType, ontology-validation.ts, 리뷰 M-3)을 선반영한다(서버가 400으로 거부하는
+  // "active 온톨로지의 마지막 타입" 삭제를 확인 다이얼로그까지 열어놓고 서버 문구로 되돌리면 이
+  // 파일 전역 제약을 어긴다). 통과하면 확인 다이얼로그를 연다 — 실제 삭제는 그 다이얼로그의
+  // onConfirm에서 일어난다(타입 삭제는 확인이 필수, 브리프 §상호작용).
+  const requestDeleteEntity = (entityTypeId: number) => {
+    if (!selectedSchema) return;
+    if (isLastActiveEntityType(selectedSchema, selectedOntology?.status)) return;
+    if (!selectedSchema.entities.some((e) => e.id === entityTypeId)) return;
+    // 같은 타입에 대한 삭제가 이미 진행 중이면(확인 다이얼로그가 닫힌 뒤 응답을 기다리는 구간,
+    // 리뷰 I-2) 다이얼로그를 다시 열지 않는다 — 다시 열면 사용자가 또 확인해 두 번째 DELETE가 나간다.
+    if (deletingElementKeysRef.current.has(`entity:${entityTypeId}`)) return;
+    setCanvasDeleteEntityId(entityTypeId);
+  };
+
+  // 캔버스에서 Delete로 관계 삭제를 요청 — 관계 삭제는 FK CASCADE로 함께 사라지는 것이 없어 확인
+  // 없이 즉시 나간다(브리프 §상호작용, RelationInspector의 relation-delete-trigger와 동일 규칙).
+  // 포커스 복귀는 EntityInspector/RelationInspector의 삭제 트리거와 같은 이유로 뮤테이션 성공 콜백
+  // 안에서 명시적으로 옮긴다(#328류 — 캔버스는 포커스 대상이 아니므로 남아 있는 컨트롤인 아웃라인의
+  // "타입 추가" 버튼으로 보낸다).
+  const requestDeleteRelation = (relationId: number) => {
+    // requestDeleteEntity와 대칭(리뷰 M-4) — 동시 편집으로 그 사이 관계가 이미 사라졌다면 조용히
+    // 무시한다. 없어도 치명적이진 않다(서버가 404 → "이미 삭제된 요소입니다" 토스트로 설계된 경로를
+    // 타므로) — 다만 이 검사가 없으면 같은 조작의 두 갈래(타입/관계)가 서로 다른 UX를 낸다.
+    if (!selectedSchema?.relations.some((r) => r.id === relationId)) return;
+    // 확인 다이얼로그가 없는 경로라 in-flight 차단이 유일한 중복 방어선이다(리뷰 I-2) — 없으면
+    // 응답을 기다리는 사이 Delete를 다시 눌러 같은 관계에 두 번째 DELETE가 나간다.
+    const key = `relation:${relationId}`;
+    if (deletingElementKeysRef.current.has(key)) return;
+    deletingElementKeysRef.current.add(key);
+    void elementMutations.deleteRelation(relationId).then((result) => {
+      if (!result) return;
+      if (modelSelected?.kind === 'relation' && modelSelected.id === relationId) setModelSelected(null);
+      addEntityTypeButtonRef.current?.focus();
+    }).finally(() => {
+      deletingElementKeysRef.current.delete(key);
+    });
   };
 
   return (
@@ -356,10 +424,22 @@ export default function OntologyPage() {
                   <div className="min-h-0 flex-1">
                     {selectedSchema.entities.length === 0 ? (
                       <OntologyEmptyState
-                        // 전체 문서 모달이 사라졌으므로(Task 6) "정의하기" CTA는 이제 수정 모드를 켜는
-                        // 것으로 대체한다 — 켜면 좌측 아웃라인의 "타입 추가" 버튼으로 첫 타입을 만들 수
-                        // 있다(ModelOutline, S2 Task 6 백로그).
-                        onDefine={canEdit ? () => setModelEditMode(true) : undefined}
+                        // 전체 문서 모달이 사라졌으므로(Task 6) CTA("첫 타입 만들기")는 수정 모드를
+                        // 켠다. S3 Task 4부터는 생성 폼(creatingEntity)까지 함께 열어 CTA 한 번으로
+                        // 첫 타입을 만드는 곳까지 도달한다 — 모드만 켜면 사용자가 아웃라인의 "타입
+                        // 추가"를 다시 찾아야 했다(OntologyEmptyState.tsx 주석 참고). 다만 인스펙터
+                        // pane 자체가 `hidden sm:block`이라(리뷰 M-4) sm 미만 폭에서는 생성 폼이 열려도
+                        // 화면에 보이지 않는다 — "수정 모드만 켜진" 것처럼 보인다. 이전 동작(모드만
+                        // 켜짐)보다 나빠지진 않지만 CTA 문구가 약속한 결과와는 어긋난다는 점을
+                        // 기록해 둔다.
+                        onDefine={
+                          canEdit
+                            ? () => {
+                                setModelEditMode(true);
+                                setCreatingEntity(true);
+                              }
+                            : undefined
+                        }
                       />
                     ) : (
                       <SchemaGraph
@@ -369,6 +449,56 @@ export default function OntologyPage() {
                         selected={modelSelected}
                         onSelectEntity={(id) => selectModelElement({ kind: 'entity', id })}
                         onSelectRelation={(id) => selectModelElement({ kind: 'relation', id })}
+                        // 캔버스 핸들 드래그 관계 생성(S3 Task 2) — SchemaGraph는 read 모드에도 쓰이는
+                        // 유일한 캔버스라 API 계층에 직접 묶지 않는다(팀 확인, task-2-brief 설계 노트
+                        // 논의). 제스처 감지·인라인 입력·로컬 검증은 SchemaGraph가 맡고, 실제 저장은
+                        // 여기서 mutations.addRelation을 호출해 처리한다 — RelationInspector의
+                        // CreateRelationForm과 정확히 같은 API 호출·응답 처리(성공 시 id로 선택 전환).
+                        // description은 빈 문자열로 시작한다(캔버스 드래그는 이름만 빠르게 정하는
+                        // 경로라 브리프가 그렇게 설계했다) — 필요하면 선택된 인스펙터에서 이어 쓴다.
+                        onConnect={async (subjectTypeId, objectTypeId, relationName) => {
+                          const result = await elementMutations.addRelation({
+                            subjectTypeId,
+                            relation: relationName,
+                            objectTypeId,
+                            description: '',
+                          });
+                          if (result?.relation.id == null) return false;
+                          // selectModelElement가 creatingRelation/creatingEntity/기존 modelSelected를
+                          // 함께 정리해 준다 — 아웃라인·캔버스 클릭 선택과 동일한 사후 정리.
+                          selectModelElement({ kind: 'relation', id: result.relation.id });
+                          return true;
+                        }}
+                        // 캔버스 인라인 리네임(S3 Task 3) — EntityInspector의 이름 필드(useAutosaveText)와
+                        // 정확히 같은 API 호출을 쓴다. 값이 안 바뀐 경우·중복 이름은 SchemaGraph가 이미
+                        // 걸러(validateEntityTypeName) 여기 도달하지 않으므로, 이 콜백은 호출·응답 처리만
+                        // 담당한다. 선택 상태는 건드리지 않는다 — 리네임은 이미 선택돼 있던(또는 아무것도
+                        // 선택 안 된) 노드의 이름만 바꾸는 조작이라, 관계 생성·타입 생성과 달리 "결과를
+                        // 이어서 편집하러 인스펙터를 열어야 한다"는 요구가 없다.
+                        onRenameEntity={async (entityTypeId, nextName) => {
+                          const result = await elementMutations.updateEntityType(entityTypeId, { type: nextName });
+                          return result != null;
+                        }}
+                        // 빈 캔버스 더블클릭 생성(S3 Task 3) — description/naming 빈 문자열 + resolution
+                        // 'embedding' 기본값은 CreateEntityTypeForm(EntityInspector.tsx)과 동일해야 한다는
+                        // 브리프 설계 노트를 그대로 따른다(두 생성 경로가 다른 기본값을 쓰면 안 된다).
+                        onCreateEntityAt={async (name) => {
+                          const result = await elementMutations.addEntityType({
+                            type: name,
+                            description: '',
+                            naming: '',
+                            resolution: 'embedding',
+                          });
+                          if (result?.entityType.id == null) return false;
+                          selectModelElement({ kind: 'entity', id: result.entityType.id });
+                          return true;
+                        }}
+                        // 캔버스 Delete 키 삭제(S3 Task 4) — 확인 여부가 다르고(타입=확인 필수,
+                        // 관계=즉시) 그 확인 다이얼로그도 API 계층 안에 있어 SchemaGraph는 요청만
+                        // 올려보낸다. 실제 처리는 위 requestDeleteEntity/requestDeleteRelation(이
+                        // 함수 스코프)이 맡는다.
+                        onRequestDeleteEntity={requestDeleteEntity}
+                        onRequestDeleteRelation={requestDeleteRelation}
                       />
                     )}
                   </div>
@@ -461,6 +591,47 @@ export default function OntologyPage() {
           )}
         </div>
       </div>
+
+      {/* 캔버스 Delete 키로 요청된 엔티티 타입 삭제 확인(S3 Task 4) — EntityInspector의 트리거 기반
+          인스턴스와 별개인 controlled 인스턴스다(위 canvasDeleteEntity 주석 참고). trigger를 넘기지
+          않으므로 AlertDialog가 open/onOpenChange로만 제어된다(DeleteTypeConfirm.tsx 참고) — Cancel/
+          Esc/바깥 클릭도 Radix가 onOpenChange(false)로 알려주므로 여기서 상태만 비우면 된다. */}
+      {canvasDeleteEntity && (
+        <DeleteTypeConfirm
+          entity={canvasDeleteEntity}
+          affectedRelations={canvasDeleteAffectedRelations}
+          open
+          onOpenChange={(o) => {
+            if (!o) setCanvasDeleteEntityId(null);
+          }}
+          restoreFocusRef={addEntityTypeButtonRef}
+          onConfirm={() => {
+            // entity.id가 아니라 canvasDeleteEntityId(상태로 들고 있던 number)를 쓴다 — EntityTypeDef.id는
+            // 레거시 폴백(엔티티에 id가 없는 스키마)을 감안해 타입상 optional이지만, 이 다이얼로그는
+            // requestDeleteEntity가 이미 id 있는 엔티티만 세운 상태라 실질적으로 항상 존재한다.
+            const entityTypeId = canvasDeleteEntityId;
+            if (entityTypeId == null) return;
+            // in-flight 중복 방지(리뷰 I-2) — AlertDialogAction은 클릭 즉시 다이얼로그를 닫으므로
+            // (canvasDeleteEntityId는 응답이 올 때까지 그대로 남지만) DELETE 응답을 기다리는 동안
+            // requestDeleteEntity가 다시 불려도 다이얼로그를 또 열지 않는다(위 requestDeleteEntity의
+            // 같은 키 검사). 여기서는 그 사이 이 onConfirm 자체가 다시 호출되는 경로(예: 같은
+            // AlertDialogAction을 빠르게 두 번 클릭)까지 막는다.
+            const key = `entity:${entityTypeId}`;
+            if (deletingElementKeysRef.current.has(key)) return;
+            deletingElementKeysRef.current.add(key);
+            void elementMutations.deleteEntityType(entityTypeId).then((result) => {
+              if (!result) return;
+              // 포커스를 먼저 옮긴 뒤 나머지 상태를 정리한다 — EntityInspector의 entity-delete-trigger와
+              // 같은 순서(#328류 회피, DeleteTypeConfirm.tsx restoreFocusRef 주석 참고).
+              addEntityTypeButtonRef.current?.focus();
+              setCanvasDeleteEntityId(null);
+              if (modelSelected?.kind === 'entity' && modelSelected.id === entityTypeId) setModelSelected(null);
+            }).finally(() => {
+              deletingElementKeysRef.current.delete(key);
+            });
+          }}
+        />
+      )}
 
       {/* 생성 성공 시 새 온톨로지를 곧바로 선택 상태로 만든다 — 사용자가 다시 찾아 고르지 않아도 되게. */}
       <OntologyCreateDialog

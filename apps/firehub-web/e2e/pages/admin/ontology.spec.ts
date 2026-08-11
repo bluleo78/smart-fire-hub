@@ -345,11 +345,13 @@ test.describe('지식그래프 시각화 페이지', () => {
     await page.goto('/knowledge-graph/model');
 
     // 스키마 탭의 'Incident' 타입 노드 tap → 드릴다운 브리지.
-    // 스키마도 Cytoscape(canvas)라 좌표 클릭 대신 cy에서 프로그래매틱 tap을 발생시킨다(노드 id = 타입명).
+    // 스키마도 Cytoscape(canvas)라 좌표 클릭 대신 cy에서 프로그래매틱 tap을 발생시킨다.
+    // 캔버스 노드 id는 이제 타입 이름이 아니라 entityTypeId다(S3 Task 1) — id 값은 fixture 배정에
+    // 우연히 결합된 디테일이라 label(타입 이름) 속성으로 노드를 찾는다.
     await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', '6');
     await page.evaluate(() => {
-      (window as unknown as { __ontologySchemaCy: { $(sel: string): { emit(e: string): void } } }).__ontologySchemaCy
-        .$('#Incident')
+      (window as unknown as { __ontologySchemaCy: { nodes(sel: string): { emit(e: string): void } } }).__ontologySchemaCy
+        .nodes('[label = "Incident"]')
         .emit('tap');
     });
 
