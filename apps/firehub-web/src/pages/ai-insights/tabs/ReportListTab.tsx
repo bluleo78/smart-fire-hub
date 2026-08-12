@@ -1,9 +1,7 @@
 import { Download, Zap } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
 
-import { proactiveApi } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,7 +15,7 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
-import { downloadBlob } from '@/lib/download';
+import { downloadReportPdf } from '@/hooks/useReportActions';
 import { formatDate, timeAgo } from '@/lib/formatters';
 
 /**
@@ -31,17 +29,9 @@ export default function ReportListTab() {
   const navigate = useNavigate();
   const [limit, setLimit] = useState(20);
   const { data: reports = [], isLoading } = useReports({ limit, offset: 0 });
-  // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 함께 본다
-  const { data: jobs = [] } = useProactiveJobs();
-
-  const handleDownload = async (jobId: number, executionId: number) => {
-    try {
-      const response = await proactiveApi.downloadExecutionPdf(jobId, executionId);
-      downloadBlob(`report-${executionId}.pdf`, response.data as Blob);
-    } catch {
-      toast.error('PDF 다운로드에 실패했습니다.');
-    }
-  };
+  // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
+  // 리포트가 하나라도 있으면 이 분기 자체가 필요 없으므로 요청을 내지 않는다.
+  const { data: jobs = [] } = useProactiveJobs({ enabled: !isLoading && reports.length === 0 });
 
   // 빈 상태는 두 갈래다 — 잡이 없는 사용자에게 "리포트가 없다"고만 하면 다음 행동을 알 수 없다
   const hasNoJobs = jobs.length === 0;
@@ -109,7 +99,7 @@ export default function ReportListTab() {
                         aria-label="PDF 다운로드"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void handleDownload(report.jobId, report.executionId);
+                          void downloadReportPdf(report.jobId, report.executionId);
                         }}
                       >
                         <Download className="h-4 w-4" />

@@ -23,6 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ProactiveReportController {
 
+  /** 한 번에 조회할 수 있는 리포트 최대 건수 — 과대 limit 요청으로 전량 조회되는 것을 막는다. */
+  private static final int MAX_LIMIT = 100;
+
   private final ProactiveJobService proactiveJobService;
 
   /** 인증 주체의 소유 잡이 생성한 리포트를 최신순으로 조회한다. */
@@ -33,6 +36,10 @@ public class ProactiveReportController {
       @RequestParam(defaultValue = "0") int offset,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    return ResponseEntity.ok(proactiveJobService.getReports(userId, limit, offset));
+    // 음수 limit 은 jOOQ 를 거쳐 Postgres 의 "LIMIT must not be negative" 로 터져 500 이 된다.
+    // 과대 요청도 전량 조회로 이어지므로 경계에서 클램프한다.
+    int safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+    int safeOffset = Math.max(offset, 0);
+    return ResponseEntity.ok(proactiveJobService.getReports(userId, safeLimit, safeOffset));
   }
 }

@@ -68,6 +68,17 @@ interface NavItem {
   icon: LucideIcon;
 }
 
+/**
+ * 메뉴 경로 별칭 — 메뉴 href 와 다른 경로를 쓰는 하위 화면을 해당 메뉴에 귀속시킨다.
+ *
+ * "리포트" 메뉴는 /ai-insights/reports 로 옮겼지만 양식 상세 편집기는 기존
+ * /ai-insights/templates/:id 경로를 그대로 쓴다. 별칭이 없으면 양식 편집 중에
+ * 사이드바에서 아무 항목도 활성으로 보이지 않는다.
+ */
+const NAV_ALIAS_PATHS: Record<string, string[]> = {
+  '/ai-insights/reports': ['/ai-insights/templates'],
+};
+
 const navItems: NavItem[] = [
   { label: '홈', href: '/', icon: Home },
 ];
@@ -260,7 +271,9 @@ function AppLayoutInner() {
 
   const isActive = (href: string) => {
     if (href === '/') return location.pathname === '/';
-    return location.pathname.startsWith(href);
+    if (location.pathname.startsWith(href)) return true;
+    // 메뉴 경로와 다른 경로를 쓰는 하위 화면도 해당 메뉴를 활성으로 표시한다
+    return (NAV_ALIAS_PATHS[href] ?? []).some((alias) => location.pathname.startsWith(alias));
   };
 
   const handleNavClick = () => {

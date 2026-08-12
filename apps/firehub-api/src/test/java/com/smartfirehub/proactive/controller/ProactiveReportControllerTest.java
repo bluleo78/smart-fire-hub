@@ -86,6 +86,27 @@ class ProactiveReportControllerTest {
   }
 
   @Test
+  void getReports_clampsNegativeAndOversizedParams() throws Exception {
+    mockAuth("proactive:read");
+
+    // 음수 limit 은 그대로 흘리면 Postgres 에서 "LIMIT must not be negative" 로 500 이 된다
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/reports?limit=-1&offset=-5")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+    verify(proactiveJobService).getReports(1L, 1, 0);
+
+    // 과대 limit 은 상한(100)으로 잘라 전량 조회를 막는다
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/reports?limit=100000")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+    verify(proactiveJobService).getReports(1L, 100, 0);
+  }
+
+  @Test
   void getReports_responseDoesNotContainHtmlContent() throws Exception {
     mockAuth("proactive:read");
     when(proactiveJobService.getReports(1L, 20, 0)).thenReturn(List.of(sampleReport()));

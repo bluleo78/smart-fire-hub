@@ -29,10 +29,17 @@ const KEYS = {
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
-export function useProactiveJobs() {
+/**
+ * 스마트 작업 목록 조회.
+ *
+ * options.enabled 로 조회를 미룰 수 있다 — 리포트 목록처럼 "잡이 하나라도 있는가"를
+ * 빈 상태에서만 알면 되는 화면이 불필요한 요청을 내지 않도록.
+ */
+export function useProactiveJobs(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: KEYS.jobs,
     queryFn: () => proactiveApi.getJobs().then((r) => r.data),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -123,9 +130,16 @@ export function useJobExecutions(
   });
 }
 
-/** 잡 횡단 리포트 목록 조회 — 리포트 화면의 목록 탭에서 사용 */
+/**
+ * 잡 횡단 리포트 목록 조회 — 리포트 화면의 목록 탭에서 사용.
+ *
+ * params가 쿼리 키에 포함되므로 "더 보기"로 limit을 늘리면 새 캐시 엔트리가 된다.
+ * keepPreviousData 없이는 그 순간 data가 undefined가 되어 이미 보고 있던 행들이
+ * 스켈레톤으로 바뀐다 — 목록이 깜빡이지 않도록 이전 데이터를 유지한다.
+ */
 export function useReports(params?: { limit?: number; offset?: number }) {
   return useQuery<ReportListItem[]>({
+    placeholderData: keepPreviousData,
     queryKey: KEYS.reports(params),
     queryFn: () => proactiveApi.listReports(params).then((r) => r.data),
   });
