@@ -9,6 +9,7 @@ import type {
   ProactiveJob,
   ProactiveJobExecution,
   ProactiveMessage,
+  ReportListItem,
   ReportTemplate,
   TemplateSection,
 } from '@/api/proactive';
@@ -69,6 +70,19 @@ export function createJob(overrides?: Partial<ProactiveJob>): ProactiveJob {
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     lastExecution: null,
+    ...overrides,
+  };
+}
+
+/** 전역 리포트 목록 행(ReportListItem) 객체 생성 */
+export function createReport(overrides?: Partial<ReportListItem>): ReportListItem {
+  return {
+    executionId: 11,
+    jobId: 3,
+    jobName: '월간 화재 통계',
+    title: '8월 화재 통계 리포트',
+    summary: '8월 화재 건수는 전월 대비 12% 감소했습니다.',
+    completedAt: '2026-08-10T09:00:00',
     ...overrides,
   };
 }

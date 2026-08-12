@@ -10,6 +10,21 @@ import { toast } from 'sonner';
 import { proactiveApi } from '@/api/proactive';
 import { downloadBlob } from '@/lib/download';
 
+/**
+ * 리포트 PDF를 내려받는다. 실패 시 토스트로 알린다.
+ *
+ * 훅과 분리해 둔 이유: 리포트 목록은 행마다 다운로드 버튼을 두는데, 훅은 map() 안에서
+ * 행별로 호출할 수 없다. 훅(단건 화면)과 목록이 같은 동작을 공유하도록 평범한 함수로 뺐다.
+ */
+export async function downloadReportPdf(jobId: number, executionId: number): Promise<void> {
+  try {
+    const response = await proactiveApi.downloadExecutionPdf(jobId, executionId);
+    downloadBlob(`report-${executionId}.pdf`, response.data as Blob);
+  } catch {
+    toast.error('PDF 다운로드에 실패했습니다.');
+  }
+}
+
 interface UseReportActionsOptions {
   jobId: number;
   executionId: number;
@@ -36,10 +51,7 @@ export function useReportActions({
   const handleDownloadPdf = useCallback(async () => {
     setDownloading(true);
     try {
-      const response = await proactiveApi.downloadExecutionPdf(jobId, executionId);
-      downloadBlob(`report-${executionId}.pdf`, response.data as Blob);
-    } catch {
-      toast.error('PDF 다운로드에 실패했습니다.');
+      await downloadReportPdf(jobId, executionId);
     } finally {
       setDownloading(false);
     }

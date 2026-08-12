@@ -171,7 +171,7 @@ export const NAVIGABLE_ROUTES: NavigableRoute[] = [
     type: 'ai_insights_templates',
     label: '리포트 양식',
     icon: '📄',
-    listPath: '/ai-insights/templates',
+    listPath: '/ai-insights/reports?tab=templates',
     aiDescription: 'AI 리포트의 출력 구조(템플릿)를 정의하거나 수정하려 할 때.',
     aiExamples: ['리포트 양식 보여줘', '리포트 템플릿 관리하고 싶어', 'AI 리포트 형식 설정'],
   },

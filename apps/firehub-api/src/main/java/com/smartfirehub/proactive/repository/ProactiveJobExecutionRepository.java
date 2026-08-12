@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
+import com.smartfirehub.proactive.dto.ReportListItemResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +46,13 @@ public class ProactiveJobExecutionRepository {
   /** 실제 전달된 채널 목록 (쉼표 구분 문자열, 예: "CHAT,EMAIL") */
   private static final Field<String> PJE_DELIVERED_CHANNELS =
       field(name("proactive_job_execution", "delivered_channels"), String.class);
+
+  // 리포트 목록 조회용 — 잡 소유자 검증과 잡 이름 표기를 위해 proactive_job 을 조인한다
+  private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
+  private static final Field<Long> PJ_ID = field(name("proactive_job", "id"), Long.class);
+  private static final Field<Long> PJ_USER_ID =
+      field(name("proactive_job", "user_id"), Long.class);
+  private static final Field<String> PJ_NAME = field(name("proactive_job", "name"), String.class);
 
   public Long create(Long jobId) {
     return dsl.insertInto(PROACTIVE_JOB_EXECUTION)
@@ -128,6 +136,46 @@ public class ProactiveJobExecutionRepository {
         .set(PJE_DELIVERED_CHANNELS, value)
         .where(PJE_ID.eq(executionId))
         .execute();
+  }
+
+  /**
+   * 사용자가 소유한 스마트 작업들이 생성한 리포트를 잡 횡단으로 조회한다.
+   *
+   * <p>"리포트"는 COMPLETED 이면서 result.htmlContent 가 실제로 있는 실행만을 뜻한다. htmlContent 가 없으면 뷰어가 404를
+   * 내므로 목록에 넣으면 빈 화면으로 이어진다.
+   *
+   * <p>본문(htmlContent)은 수십 KB이므로 SELECT 하지 않고 WHERE 절의 존재 판정에만 사용한다. 잡 스코핑이 없는
+   * 엔드포인트이므로 user_id 조건이 유일한 소유권 방어선이다.
+   */
+  public List<ReportListItemResponse> findReportsByUserId(Long userId, int limit, int offset) {
+    // result ->> 'htmlContent' / 'title' / 'summary' — JSONB 텍스트 추출
+    Field<String> htmlContent = field("{0} ->> 'htmlContent'", String.class, PJE_RESULT);
+    Field<String> title = field("{0} ->> 'title'", String.class, PJE_RESULT);
+    Field<String> summary = field("{0} ->> 'summary'", String.class, PJE_RESULT);
+
+    // ProactiveResult.effectiveTitle(jobName) 과 동일한 규칙을 SQL 로 재현
+    Field<String> effectiveTitle = coalesce(nullif(trim(title), val("")), PJ_NAME);
+
+    return dsl.select(PJE_ID, PJE_JOB_ID, PJ_NAME, effectiveTitle, summary, PJE_COMPLETED_AT)
+        .from(PROACTIVE_JOB_EXECUTION)
+        .join(PROACTIVE_JOB)
+        .on(PJE_JOB_ID.eq(PJ_ID))
+        .where(PJ_USER_ID.eq(userId))
+        .and(PJE_STATUS.eq("COMPLETED"))
+        .and(htmlContent.isNotNull())
+        .and(htmlContent.ne(""))
+        .orderBy(PJE_COMPLETED_AT.desc(), PJE_ID.desc())
+        .limit(limit)
+        .offset(offset)
+        .fetch(
+            r ->
+                new ReportListItemResponse(
+                    r.get(PJE_ID),
+                    r.get(PJE_JOB_ID),
+                    r.get(PJ_NAME),
+                    r.get(effectiveTitle),
+                    r.get(summary),
+                    r.get(PJE_COMPLETED_AT)));
   }
 
   private ProactiveJobExecutionResponse toResponse(org.jooq.Record r) {

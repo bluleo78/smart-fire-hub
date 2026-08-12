@@ -175,6 +175,16 @@ export interface SmtpSettingsRequest {
   'smtp.from_address'?: string;
 }
 
+/** 전역 리포트 목록의 행 1건. 본문(htmlContent)은 포함되지 않는다 — 뷰어에서 별도 조회한다. */
+export interface ReportListItem {
+  executionId: number;
+  jobId: number;
+  jobName: string;
+  title: string;
+  summary: string | null;
+  completedAt: string;
+}
+
 export const proactiveApi = {
   // Jobs (6 methods)
   getJobs: () => client.get<ProactiveJob[]>('/proactive/jobs'),
@@ -227,6 +237,9 @@ export const proactiveApi = {
   // HTML 리포트 조회 — 뷰어 페이지에서 sanitize 후 렌더링
   getExecutionHtml: (jobId: number, executionId: number) =>
     client.get<string>(`/proactive/jobs/${jobId}/executions/${executionId}/html`),
+  /** 잡 횡단 리포트 목록 — 사이드바 "리포트" 화면용 */
+  listReports: (params?: { limit?: number; offset?: number }) =>
+    client.get<ReportListItem[]>('/proactive/reports', { params }),
 
   // SMTP (3 methods)
   getSmtpSettings: () =>

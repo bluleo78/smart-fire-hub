@@ -15,8 +15,12 @@ test.describe('리포트 양식 목록 페이지', () => {
 
     await page.goto('/ai-insights/templates');
 
-    // 페이지 제목 확인
-    await expect(page.getByRole('heading', { name: '리포트 양식' })).toBeVisible();
+    // 리다이렉트 후 리포트 화면의 h1 + 양식 탭 활성 상태를 확인한다
+    await expect(page.getByRole('heading', { name: '리포트' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '리포트 양식' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
 
     // 기본 템플릿 섹션 확인
     await expect(page.getByText('기본 템플릿')).toBeVisible();

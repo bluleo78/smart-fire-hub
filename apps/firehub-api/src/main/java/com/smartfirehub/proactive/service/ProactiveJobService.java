@@ -7,6 +7,7 @@ import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.RecipientResponse;
+import com.smartfirehub.proactive.dto.ReportListItemResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
@@ -209,6 +210,16 @@ public class ProactiveJobService {
     return executionRepository
         .findById(executionId)
         .orElseThrow(() -> new ProactiveJobException("Execution을 찾을 수 없습니다: " + executionId));
+  }
+
+  /**
+   * 사용자가 소유한 모든 스마트 작업의 리포트를 잡 횡단으로 조회한다.
+   *
+   * <p>잡 단위 조회와 달리 getJob() 소유권 검증을 거치지 않으므로, 스코핑은 리포지토리 쿼리의 user_id 조건이 전담한다.
+   */
+  @Transactional(readOnly = true)
+  public List<ReportListItemResponse> getReports(Long userId, int limit, int offset) {
+    return executionRepository.findReportsByUserId(userId, limit, offset);
   }
 
   /**
