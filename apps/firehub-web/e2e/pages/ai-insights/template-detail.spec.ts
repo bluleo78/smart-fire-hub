@@ -314,8 +314,8 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     // toast.error 메시지 확인 — Sonner toast는 [data-sonner-toast] 속성으로 렌더링된다
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: /템플릿/ })).toBeVisible({ timeout: 10000 });
 
-    // 목록 페이지(/ai-insights/templates)로 이동 확인
-    await expect(page).toHaveURL(/\/ai-insights\/templates$/, { timeout: 5000 });
+    // 목록 페이지(/ai-insights/templates)는 이제 /ai-insights/reports?tab=templates로 리다이렉트된다
+    await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/, { timeout: 5000 });
   });
 
   /**
@@ -338,8 +338,9 @@ test.describe('리포트 템플릿 상세 페이지', () => {
       await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
 
       // 뒤로가기 클릭 → 다이얼로그 없이 즉시 이동
+      // 목록 경로(/ai-insights/templates)는 이제 /ai-insights/reports?tab=templates로 리다이렉트된다
       await page.getByRole('button', { name: '목록으로' }).click();
-      await expect(page).toHaveURL(/\/ai-insights\/templates$/);
+      await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/);
     });
 
     test('이름 입력 후 뒤로가기 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
@@ -405,7 +406,8 @@ test.describe('리포트 템플릿 상세 페이지', () => {
       // '이탈' 버튼 클릭 → 변경사항 버리고 목록으로 이동
       await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
 
-      await expect(page).toHaveURL(/\/ai-insights\/templates$/);
+      // 목록 경로(/ai-insights/templates)는 이제 /ai-insights/reports?tab=templates로 리다이렉트된다
+      await expect(page).toHaveURL(/\/ai-insights\/reports\?tab=templates$/);
     });
 
     test('템플릿 저장 성공 후 미저장 표시가 사라진다', async ({ authenticatedPage: page }) => {

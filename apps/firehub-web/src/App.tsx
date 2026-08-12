@@ -39,7 +39,7 @@ const ChartBuilderPage = lazy(() => import('./pages/analytics/ChartBuilderPage')
 const DashboardListPage = lazy(() => import('./pages/analytics/DashboardListPage'));
 const DashboardEditorPage = lazy(() => import('./pages/analytics/DashboardEditorPage'));
 const AiInsightJobsPage = lazy(() => import('./pages/ai-insights/AiInsightJobsPage'));
-const AiInsightTemplatesPage = lazy(() => import('./pages/ai-insights/AiInsightTemplatesPage'));
+const ReportsPage = lazy(() => import('./pages/ai-insights/ReportsPage'));
 const ProactiveJobDetailPage = lazy(() => import('./pages/ai-insights/ProactiveJobDetailPage'));
 const ReportTemplateDetailPage = lazy(() => import('./pages/ai-insights/ReportTemplateDetailPage'));
 const ExecutionDetailPage = lazy(() => import('./pages/ai-insights/ExecutionDetailPage'));
@@ -93,7 +93,12 @@ function App() {
               <Route path="/ai-insights/jobs" element={<AiInsightJobsPage />} />
               <Route path="/ai-insights/jobs/new" element={<ProactiveJobDetailPage />} />
               <Route path="/ai-insights/jobs/:id" element={<ProactiveJobDetailPage />} />
-              <Route path="/ai-insights/templates" element={<AiInsightTemplatesPage />} />
+              <Route path="/ai-insights/reports" element={<ReportsPage />} />
+              {/* 구 경로 유지 — 위젯 네비게이션·북마크가 이 경로를 참조한다 */}
+              <Route
+                path="/ai-insights/templates"
+                element={<Navigate to="/ai-insights/reports?tab=templates" replace />}
+              />
               <Route path="/ai-insights/templates/new" element={<ReportTemplateDetailPage />} />
               <Route path="/ai-insights/templates/:id" element={<ReportTemplateDetailPage />} />
               <Route path="/ai-insights/jobs/:jobId/executions/:executionId" element={<ExecutionDetailPage />} />

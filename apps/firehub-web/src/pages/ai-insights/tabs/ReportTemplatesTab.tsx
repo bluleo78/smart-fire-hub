@@ -1,10 +1,10 @@
 import { FileText, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-import { Badge } from '../../components/ui/badge';
-import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
-import { useProactiveTemplates } from '../../hooks/queries/useProactiveMessages';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useProactiveTemplates } from '@/hooks/queries/useProactiveMessages';
 
 function sectionCount(sections: unknown): number {
   return Array.isArray(sections) ? sections.length : 0;

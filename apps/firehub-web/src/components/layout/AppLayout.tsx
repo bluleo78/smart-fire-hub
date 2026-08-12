@@ -90,7 +90,7 @@ const automationNavItems: NavItem[] = [
 
 const aiInsightsNavItems: NavItem[] = [
   { label: '스마트 작업', href: '/ai-insights/jobs', icon: Zap },
-  { label: '리포트 양식', href: '/ai-insights/templates', icon: FileText },
+  { label: '리포트', href: '/ai-insights/reports', icon: FileText },
 ];
 
 // 지식그래프 — 관리(admin) 하위에서 최상위 그룹으로 승격. 인증 사용자면 접근 가능(읽기 전용).
