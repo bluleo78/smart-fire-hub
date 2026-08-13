@@ -25,6 +25,7 @@ import com.smartfirehub.proactive.service.ReportTemplateService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,8 +49,8 @@ class ReportTemplateControllerTest {
   @MockitoBean private JwtProperties jwtProperties;
 
   private void mockAuth(String... permissions) {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 

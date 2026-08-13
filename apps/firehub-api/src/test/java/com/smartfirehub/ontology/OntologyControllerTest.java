@@ -21,6 +21,7 @@ import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,8 +55,8 @@ class OntologyControllerTest {
 
   @BeforeEach
   void setUp() {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
   }
 
   // 목록 라우트 — dataset:read 권한으로 200, 리포지토리 findAllSummaries("active") 스텁.

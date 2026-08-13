@@ -3,8 +3,17 @@ server:
 
 spring:
   datasource:
+    # 런타임은 비특권 app_tenant 롤(RLS fail-closed). 마이그레이션은 아래 flyway(소유자 롤)로.
     url: jdbc:postgresql://localhost:5432/smartfirehub
-    username: app
+    username: app_tenant
+    password: app_tenant
+    hikari:
+      # V83 이 롤을 만들기 전(최초 기동) 기동 실패를 피하려고 시작 접속을 끄고 지연 접속한다.
+      initialization-fail-timeout: -1
+  flyway:
+    # 마이그레이션은 롤 생성·GRANT·백필이 필요하므로 소유자 롤(app)로 실행한다.
+    url: jdbc:postgresql://localhost:5432/smartfirehub
+    user: app
     password: app
 
 org:

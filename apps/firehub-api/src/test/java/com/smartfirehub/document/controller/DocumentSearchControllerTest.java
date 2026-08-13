@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,8 +41,8 @@ class DocumentSearchControllerTest {
   @BeforeEach
   void setUp() {
     // JWT "test-token" → userId 1L. 기본은 dataset:read 권한 부여.
-    when(jwtTokenProvider.validateAccessToken("test-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("test-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("test-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
   }
 

@@ -50,8 +50,8 @@ class DataImportControllerTest {
 
   @BeforeEach
   void setUp() {
-    when(jwtTokenProvider.validateAccessToken("test-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("test-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("test-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L))
         .thenReturn(Set.of("data:import", "dataset:read"));
     // UserRepository mock: userId 1 → name "testuser"

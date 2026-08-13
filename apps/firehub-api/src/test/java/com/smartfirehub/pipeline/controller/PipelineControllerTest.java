@@ -19,6 +19,7 @@ import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,8 +53,8 @@ class PipelineControllerTest {
 
   @BeforeEach
   void setUp() {
-    when(jwtTokenProvider.validateAccessToken("test-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("test-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("test-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L))
         .thenReturn(
             Set.of(

@@ -19,6 +19,7 @@ import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,8 +42,8 @@ class ProactiveMessageControllerTest {
 
   /** 인증 mock 설정 — 유효 토큰 + proactive:read 권한 부여 */
   private void mockAuth(String... permissions) {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 

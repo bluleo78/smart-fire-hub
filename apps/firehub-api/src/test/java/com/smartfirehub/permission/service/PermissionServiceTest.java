@@ -94,12 +94,25 @@ class PermissionServiceTest extends IntegrationTestBase {
   // getAllPermissions
   // =========================================================================
 
-  /** Flyway seed 데이터(39개, V74의 ontology:write 포함)가 모두 반환되어야 한다. */
+  /**
+   * Flyway seed 데이터가 모두 반환되어야 한다.
+   *
+   * <p>V74 의 ontology:write 까지 39개였고, V82(멀티 테넌시 P1)가 플랫폼 운영자 평면 권한 4개
+   * (platform:tenant:create|read|suspend, platform:member:read)를 추가해 43개가 되었다.
+   * 카운트만 단언하면 시딩이 깨져도 개수만 맞으면 통과하므로 신규 코드 존재도 함께 단언한다.
+   */
   @Test
   void getAllPermissions_returnAllSeedPermissions() {
     List<PermissionResponse> result = permissionService.getAllPermissions();
 
-    assertThat(result).hasSize(39);
+    assertThat(result).hasSize(43);
+    assertThat(result)
+        .extracting(PermissionResponse::code)
+        .contains(
+            "platform:tenant:create",
+            "platform:tenant:read",
+            "platform:tenant:suspend",
+            "platform:member:read");
   }
 
   /** 반환 목록은 id 오름차순으로 정렬되어야 한다. */

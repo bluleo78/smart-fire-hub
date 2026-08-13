@@ -19,6 +19,7 @@ import com.smartfirehub.notification.settings.dto.ChannelSettingResponse;
 import com.smartfirehub.notification.settings.dto.ChannelTestResult;
 import com.smartfirehub.permission.service.PermissionService;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,8 +56,8 @@ class ChannelSettingsControllerTest {
   /** 테스트 공통 JWT 인증 mock 설정. */
   @BeforeEach
   void setUp() {
-    when(jwtTokenProvider.validateAccessToken("test-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("test-token")).thenReturn(TEST_USER_ID);
+    when(jwtTokenProvider.parseAccessToken("test-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(TEST_USER_ID, null)));
     // 인증은 되지만 권한 체크 없는 엔드포인트 — 빈 Set으로 충분
     when(permissionService.getUserPermissions(TEST_USER_ID)).thenReturn(Set.of());
   }

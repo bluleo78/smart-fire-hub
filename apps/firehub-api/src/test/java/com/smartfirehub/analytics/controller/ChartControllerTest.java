@@ -26,6 +26,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,8 +50,8 @@ class ChartControllerTest {
   @MockitoBean private JwtProperties jwtProperties;
 
   private void mockAuth(String... permissions) {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 

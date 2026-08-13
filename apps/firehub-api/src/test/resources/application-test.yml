@@ -1,12 +1,20 @@
 spring:
   datasource:
+    # 런타임 트래픽은 비특권 app_tenant 롤로 흐른다(RLS 적용). 비번은 V83 이 만든 롤의 고정 비번과 일치해야 한다.
     url: jdbc:postgresql://localhost:5433/smartfirehub_test
-    username: app
-    password: app
+    username: app_tenant
+    password: app_tenant
     hikari:
       maximum-pool-size: 10
       minimum-idle: 1
+      # app_tenant 롤/GRANT 는 Flyway(app)가 만든다. 첫 부팅 시 마이그레이션 전 접속 실패를 피하려고
+      # 시작 접속 시도를 끄고 첫 쿼리에서 지연 접속한다.
+      initialization-fail-timeout: -1
   flyway:
+    # 마이그레이션은 롤 생성·GRANT·백필이 필요하므로 소유자 롤(app)로 실행한다.
+    url: jdbc:postgresql://localhost:5433/smartfirehub_test
+    user: app
+    password: app
     validate-on-migrate: false
 
 org:

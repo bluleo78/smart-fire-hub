@@ -14,6 +14,7 @@ import com.smartfirehub.ontology.element.dto.ElementDtos.PatchOntologyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.UpdateEntityTypeRequest;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.support.OntologyTestSupport;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,8 +39,8 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
 
   @BeforeEach
   void setUpAuth() {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
   }
 

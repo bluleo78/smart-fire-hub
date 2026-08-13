@@ -9,6 +9,7 @@ import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
+import com.smartfirehub.auth.exception.TenantAccessDeniedException;
 import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.ImportProcessingException;
@@ -169,6 +170,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(AccessDeniedException.class)
   public ResponseEntity<ErrorResponse> handleAccessDenied(
       AccessDeniedException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+  }
+
+  /** 소속되지 않았거나 정지된 테넌트 선택 시도 — 403 반환. */
+  @ExceptionHandler(TenantAccessDeniedException.class)
+  public ResponseEntity<ErrorResponse> handleTenantAccessDenied(
+      TenantAccessDeniedException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.FORBIDDEN, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
   }

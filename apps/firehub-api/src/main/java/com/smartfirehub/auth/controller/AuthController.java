@@ -1,11 +1,13 @@
 package com.smartfirehub.auth.controller;
 
 import com.smartfirehub.auth.dto.LoginRequest;
+import com.smartfirehub.auth.dto.SelectTenantRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -55,7 +57,13 @@ public class AuthController {
     TokenResponse token = authService.login(request);
     addRefreshTokenCookie(response, token.refreshToken());
     TokenResponse body =
-        new TokenResponse(token.accessToken(), null, token.tokenType(), token.expiresIn());
+        new TokenResponse(
+            token.accessToken(),
+            null,
+            token.tokenType(),
+            token.expiresIn(),
+            token.activeTenantId(),
+            token.memberships());
     return ResponseEntity.ok(body);
   }
 
@@ -69,7 +77,13 @@ public class AuthController {
     TokenResponse token = authService.refresh(refreshToken);
     addRefreshTokenCookie(response, token.refreshToken());
     TokenResponse body =
-        new TokenResponse(token.accessToken(), null, token.tokenType(), token.expiresIn());
+        new TokenResponse(
+            token.accessToken(),
+            null,
+            token.tokenType(),
+            token.expiresIn(),
+            token.activeTenantId(),
+            token.memberships());
     return ResponseEntity.ok(body);
   }
 
@@ -100,6 +114,39 @@ public class AuthController {
     Long userId = (Long) authentication.getPrincipal();
     Set<String> codes = permissionService.getUserPermissions(userId);
     return ResponseEntity.ok(List.copyOf(codes));
+  }
+
+  /**
+   * 선택 가능한 테넌트 목록. 테넌트 미선택 토큰으로도 호출할 수 있어야 하므로 권한을 요구하지 않는다.
+   */
+  @GetMapping("/memberships")
+  public ResponseEntity<List<MembershipResponse>> memberships(Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(authService.getMemberships(userId));
+  }
+
+  /**
+   * 활성 테넌트 선택/전환. 액세스·리프레시 토큰을 모두 재발급한다.
+   *
+   * <p>테넌트 미선택 토큰으로도 호출할 수 있어야 하므로 권한을 요구하지 않는다.
+   */
+  @PostMapping("/select-tenant")
+  public ResponseEntity<TokenResponse> selectTenant(
+      Authentication authentication,
+      @Valid @RequestBody SelectTenantRequest request,
+      HttpServletResponse response) {
+    Long userId = (Long) authentication.getPrincipal();
+    TokenResponse token = authService.selectTenant(userId, request.tenantId());
+    addRefreshTokenCookie(response, token.refreshToken());
+    TokenResponse body =
+        new TokenResponse(
+            token.accessToken(),
+            null,
+            token.tokenType(),
+            token.expiresIn(),
+            token.activeTenantId(),
+            token.memberships());
+    return ResponseEntity.ok(body);
   }
 
   private void addRefreshTokenCookie(HttpServletResponse response, @NonNull String refreshToken) {

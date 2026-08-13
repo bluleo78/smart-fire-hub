@@ -5,6 +5,8 @@ spring:
     enabled: true
     baseline-on-migrate: true
     baseline-version: 80
+    # 런타임 접속(spring.datasource)은 비특권 app_tenant 롤, 마이그레이션(spring.flyway)은 소유자 롤(app) —
+    # 실제 url/username/password 는 프로필별(test/local/prod)로 분리 정의한다.
   servlet:
     multipart:
       # 대용량 CSV/XLSX 임포트 허용. 미리보기는 CSV를 앞부분만 잘라 보내지만(413 회피),
@@ -17,6 +19,9 @@ server:
 
 org:
   jobrunr:
+    # 테이블 생성은 Flyway(V85)가 담당한다 — 런타임 롤(app_tenant)은 DDL 권한이 없다.
+    database:
+      skip-create: true
     background-job-server:
       enabled: true
       delete-succeeded-jobs-after: 720h

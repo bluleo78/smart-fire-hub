@@ -22,6 +22,7 @@ import com.smartfirehub.graphreview.dto.ReviewItemResponse;
 import com.smartfirehub.graphreview.service.ReviewItemService;
 import com.smartfirehub.permission.service.PermissionService;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,8 +46,8 @@ class ReviewItemControllerTest {
 
   @BeforeEach
   void setUp() {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read", "dataset:write"));
   }
 

@@ -1,7 +1,18 @@
 spring:
   datasource:
+    # 런타임은 비특권 app_tenant 롤(RLS fail-closed). 마이그레이션은 아래 flyway(소유자 롤)로.
     url: jdbc:postgresql://db:5432/${POSTGRES_DB:smartfirehub}
-    username: ${POSTGRES_USER:app}
+    username: ${POSTGRES_RUNTIME_USER:app_tenant}
+    # 기본값을 두지 않는다 — 이 롤은 모든 테이블에 DML 권한을 가지며, 비밀번호 동기화 콜백이
+    # 매 부팅마다 DB 비밀번호를 이 값으로 재적용한다. 기본값이 있으면 이 저장소에 공개된
+    # 값으로 계속 고정되어 더 안전한 값으로 바꿀 방법이 없다. 값이 없으면 부팅이 즉시 실패해야 한다.
+    password: ${POSTGRES_RUNTIME_PASSWORD}
+    hikari:
+      # V83 이 롤을 만들기 전(첫 배포) 기동 실패를 피하려고 시작 접속을 끄고 지연 접속한다.
+      initialization-fail-timeout: -1
+  flyway:
+    url: jdbc:postgresql://db:5432/${POSTGRES_DB:smartfirehub}
+    user: ${POSTGRES_USER:app}
     password: ${POSTGRES_PASSWORD}
 
 org:

@@ -21,6 +21,7 @@ import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.permission.service.PermissionService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,8 +61,8 @@ class GraphIngestControllerTest {
   @BeforeEach
   void setUp() {
     // 인증 mock — 유효 토큰 + dataset:read/write 권한을 PermissionInterceptor가 허용하도록 세팅한다.
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L))
         .thenReturn(Set.of("dataset:read", "dataset:write"));
   }

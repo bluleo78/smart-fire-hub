@@ -22,6 +22,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.user.dto.UserResponse;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -141,8 +142,8 @@ class AuthControllerTest {
 
   @Test
   void logout_returnsNoContent() throws Exception {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
 
     mockMvc
         .perform(post("/api/v1/auth/logout").header("Authorization", "Bearer valid-token"))
@@ -158,8 +159,8 @@ class AuthControllerTest {
    */
   @Test
   void getMyPermissions_returnsCodes() throws Exception {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(42L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(42L, null)));
     when(permissionService.getUserPermissions(42L))
         .thenReturn(Set.of("dataset:read", "dataset:delete"));
 

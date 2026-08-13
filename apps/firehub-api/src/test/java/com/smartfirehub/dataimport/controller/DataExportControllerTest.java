@@ -61,8 +61,8 @@ class DataExportControllerTest {
 
   /** 인증 mock — 유효 토큰 + data:export 권한 부여. */
   private void mockAuth() {
-    when(jwtTokenProvider.validateAccessToken("valid-token")).thenReturn(true);
-    when(jwtTokenProvider.getUserIdFromToken("valid-token")).thenReturn(1L);
+    when(jwtTokenProvider.parseAccessToken("valid-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("data:export"));
   }
 

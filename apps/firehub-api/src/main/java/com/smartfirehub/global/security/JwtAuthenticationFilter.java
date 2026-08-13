@@ -1,5 +1,6 @@
 package com.smartfirehub.global.security;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.permission.service.PermissionService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -54,20 +55,35 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       token = authHeader.substring(7);
     }
 
-    if (token != null) {
-      authenticateWithJwt(token);
-    } else if (StringUtils.hasText(authHeader) && authHeader.startsWith("Internal ")) {
-      authenticateWithInternalToken(authHeader.substring(9), request);
-    }
+    try {
+      if (token != null) {
+        authenticateWithJwt(token);
+      } else if (StringUtils.hasText(authHeader) && authHeader.startsWith("Internal ")) {
+        authenticateWithInternalToken(authHeader.substring(9), request);
+      }
 
-    filterChain.doFilter(request, response);
+      filterChain.doFilter(request, response);
+    } finally {
+      // 서블릿 컨테이너는 스레드를 풀에서 재사용한다. 정리하지 않으면 다음 요청이 이전 요청의
+      // 테넌트를 물려받아 크로스 테넌트 접근이 된다.
+      TenantContext.clear();
+    }
   }
 
   private void authenticateWithJwt(String token) {
-    if (jwtTokenProvider.validateAccessToken(token)) {
-      Long userId = jwtTokenProvider.getUserIdFromToken(token);
-      setSecurityContext(userId);
-    }
+    // validate/getUserId/getTenantId 를 각각 호출하면 같은 토큰을 3번 파싱(서명 검증 포함)하게
+    // 되므로, 요청마다 타는 이 경로에서는 1회 파싱 메서드로 합쳐서 호출한다.
+    jwtTokenProvider
+        .parseAccessToken(token)
+        .ifPresent(
+            principal -> {
+              // 서명된 tenant 클레임을 신뢰한다(요청마다 멤버십을 재조회하지 않는다). 멤버십/테넌트
+              // 정지는 select-tenant 와 refresh 에서 재검증되므로, 최대 액세스 토큰 만료 시간만큼
+              // 지연 반영된다. 클레임이 없으면 테넌트 미선택 토큰 — GUC 미설정으로 RLS 가
+              // fail-closed 한다.
+              TenantContext.set(principal.tenantId());
+              setSecurityContext(principal.userId());
+            });
   }
 
   private void authenticateWithInternalToken(String token, HttpServletRequest request) {
