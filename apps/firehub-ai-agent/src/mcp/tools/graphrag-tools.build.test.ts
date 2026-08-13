@@ -16,11 +16,11 @@ vi.mock('../../graphrag/structured-query.js', () => ({
   structuredQuery: (...a: unknown[]) => structuredQueryMock(...a),
 }));
 
-// registerGraphragTools 가 내부에서 createCliCompleter() 를 부르므로 주입 지점이 없다.
+// registerGraphragTools 가 내부에서 createCompleter() 를 부르므로 주입 지점이 없다.
 // 모듈을 mock 해서 추론 프롬프트에 대한 LLM 응답을 테스트가 제어한다.
 const completeMock = vi.fn();
-vi.mock('../../graphrag/llm-cli.js', () => ({
-  createCliCompleter: () => (...a: unknown[]) => completeMock(...a),
+vi.mock('../../graphrag/llm-completer.js', () => ({
+  createCompleter: () => (...a: unknown[]) => completeMock(...a),
 }));
 
 import { registerGraphragTools } from './graphrag-tools.js';

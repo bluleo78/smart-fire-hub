@@ -1,22 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import nock from 'nock';
-import { classifyBatch } from './classification-service.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const VALID_TOKEN = 'test-internal-token';
-const API_BASE_URL = 'http://localhost:8080/api/v1';
-const ANTHROPIC_API_URL = 'https://api.anthropic.com';
+// CompletionProvider를 목킹해 실제 Agent SDK 실행 없이 프롬프트 구성·응답 파싱·타입 강제만 검증한다.
+const completeMock = vi.fn();
+const createCompletionProviderMock = vi.fn((_config?: unknown) => ({
+  name: 'mock-completion',
+  complete: completeMock,
+}));
+vi.mock('../providers/provider-factory.js', () => ({
+  ProviderFactory: {
+    createCompletionProvider: (config?: unknown) => createCompletionProviderMock(config),
+  },
+}));
+
+const { classifyBatch } = await import('./classification-service.js');
+
+/** LLM이 JSON 배열 텍스트를 돌려준 것으로 가정한 completion 결과를 만든다. */
+function completionOf(payload: unknown, usage = { inputTokens: 200, outputTokens: 100 }) {
+  return { text: typeof payload === 'string' ? payload : JSON.stringify(payload), usage };
+}
+
+const CREDS = { oauthToken: 'oauth-token' };
+const MODEL = 'claude-sonnet-5';
 
 describe('classifyBatch', () => {
   beforeEach(() => {
-    process.env.ANTHROPIC_API_KEY = 'test-api-key';
-    nock.cleanAll();
-    nock.disableNetConnect();
-  });
-
-  afterEach(() => {
-    delete process.env.ANTHROPIC_API_KEY;
-    nock.cleanAll();
-    nock.enableNetConnect();
+    completeMock.mockReset();
+    createCompletionProviderMock.mockClear();
   });
 
   const validRequest = {
@@ -32,192 +41,151 @@ describe('classifyBatch', () => {
     ],
   };
 
-  const anthropicSuccessResponse = {
-    id: 'msg_123',
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify([
-          { source_id: 1, label: '긍정', confidence: 0.94, reason: '만족 표현' },
-          { source_id: 2, label: '부정', confidence: 0.91, reason: '불만 표현' },
-        ]),
-      },
-    ],
-    usage: { input_tokens: 200, output_tokens: 100 },
-  };
+  it('행을 분류하고 usage/model을 반환한다', async () => {
+    completeMock.mockResolvedValue(
+      completionOf([
+        { source_id: 1, label: '긍정', confidence: 0.94, reason: '만족 표현' },
+        { source_id: 2, label: '부정', confidence: 0.91, reason: '불만 표현' },
+      ]),
+    );
 
-  it('should classify rows successfully using env API key when settings API fails', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
-
-    nock(ANTHROPIC_API_URL)
-      .post('/v1/messages')
-      .reply(200, anthropicSuccessResponse);
-
-    const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
+    const result = await classifyBatch(validRequest, CREDS, MODEL);
 
     expect(result.results).toHaveLength(2);
     expect(result.results[0]).toMatchObject({ source_id: 1, label: '긍정', confidence: 0.94 });
     expect(result.results[1]).toMatchObject({ source_id: 2, label: '부정', confidence: 0.91 });
     expect(result.processed).toBe(2);
+    expect(result.model).toBe(MODEL);
     expect(result.usage.promptTokens).toBe(200);
     expect(result.usage.completionTokens).toBe(100);
   });
 
-  it('should use model from settings API when available', async () => {
-    nock(API_BASE_URL)
-      .get('/settings')
-      .query(true)
-      .reply(200, [
-        { key: 'ai.model', value: 'claude-sonnet-4-6' },
-        { key: 'ai.api_key', value: 'settings-api-key' },
-      ]);
+  it('자격증명과 모델을 CompletionProvider 생성에 전달한다', async () => {
+    completeMock.mockResolvedValue(completionOf([{ source_id: 1, label: 'a' }]));
 
-    let capturedBody: Record<string, unknown> = {};
-    nock(ANTHROPIC_API_URL)
-      .post('/v1/messages', (body: Record<string, unknown>) => {
-        capturedBody = body;
-        return true;
-      })
-      .reply(200, { ...anthropicSuccessResponse });
+    await classifyBatch(validRequest, { apiKey: 'sk-abc', oauthToken: 'oauth-xyz' }, 'claude-haiku-4-5');
 
-    const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
-
-    expect(capturedBody.model).toBe('claude-sonnet-4-6');
-    expect(result.model).toBe('claude-sonnet-4-6');
+    expect(createCompletionProviderMock).toHaveBeenCalledWith({
+      apiKey: 'sk-abc',
+      oauthToken: 'oauth-xyz',
+      model: 'claude-haiku-4-5',
+    });
   });
 
-  it('should throw when Anthropic API fails', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
-    nock(ANTHROPIC_API_URL).post('/v1/messages').replyWithError('Anthropic API unavailable');
+  it('자격증명이 비어 있어도 막지 않고 환경/키체인 폴백에 맡긴다', async () => {
+    // GraphRAG 경로와 동일한 계약 — 컨테이너 env 나 로컬 CLI 키체인에 인증이 있을 수 있다.
+    completeMock.mockResolvedValue(completionOf([{ source_id: 1, label: '긍정' }]));
 
-    await expect(classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN)).rejects.toThrow();
+    const result = await classifyBatch(validRequest, {}, MODEL);
+
+    expect(result.results[0].label).toBe('긍정');
+    expect(createCompletionProviderMock).toHaveBeenCalledWith({
+      apiKey: undefined,
+      oauthToken: undefined,
+      model: MODEL,
+    });
   });
 
-  it('should handle LLM response with markdown code blocks', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
+  it('OAuth 토큰만 있어도 동작한다 (prod 구성)', async () => {
+    completeMock.mockResolvedValue(completionOf([{ source_id: 1, label: '긍정' }]));
 
-    const responseWithCodeBlock = {
-      ...anthropicSuccessResponse,
-      content: [
-        {
-          type: 'text',
-          text:
-            '```json\n' +
-            JSON.stringify([
-              { source_id: 1, label: '긍정', confidence: 0.9, reason: '좋음' },
-              { source_id: 2, label: '부정', confidence: 0.85, reason: '나쁨' },
-            ]) +
-            '\n```',
-        },
-      ],
-    };
+    const result = await classifyBatch(validRequest, { oauthToken: 'oauth-only' }, MODEL);
 
-    nock(ANTHROPIC_API_URL).post('/v1/messages').reply(200, responseWithCodeBlock);
+    expect(result.results[0].label).toBe('긍정');
+  });
 
-    const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
+  it('completion이 실패하면 에러를 전파한다', async () => {
+    completeMock.mockRejectedValue(new Error('[completion] SDK 실행 실패'));
+
+    await expect(classifyBatch(validRequest, CREDS, MODEL)).rejects.toThrow(/SDK 실행 실패/);
+  });
+
+  it('마크다운 코드블록으로 감싼 응답을 처리한다', async () => {
+    completeMock.mockResolvedValue(
+      completionOf(
+        '```json\n' +
+          JSON.stringify([
+            { source_id: 1, label: '긍정', confidence: 0.9, reason: '좋음' },
+            { source_id: 2, label: '부정', confidence: 0.85, reason: '나쁨' },
+          ]) +
+          '\n```',
+      ),
+    );
+
+    const result = await classifyBatch(validRequest, CREDS, MODEL);
 
     expect(result.results[0].label).toBe('긍정');
     expect(result.results[1].label).toBe('부정');
   });
 
-  it('should apply type coercion: TEXT to string', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
+  it('빈 응답이면 에러를 던진다', async () => {
+    completeMock.mockResolvedValue(completionOf('   '));
 
-    nock(ANTHROPIC_API_URL)
-      .post('/v1/messages')
-      .reply(200, {
-        ...anthropicSuccessResponse,
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify([
-              { source_id: 1, label: 42, confidence: '0.9', reason: null },
-              { source_id: 2, label: true, confidence: '0.85', reason: 'ok' },
-            ]),
-          },
-        ],
-      });
+    await expect(classifyBatch(validRequest, CREDS, MODEL)).rejects.toThrow(/empty response/);
+  });
 
-    const result = await classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN);
+  it('JSON이 아니면 에러를 던진다', async () => {
+    completeMock.mockResolvedValue(completionOf('죄송합니다, 처리할 수 없습니다.'));
 
-    // label is TEXT → should be string
+    await expect(classifyBatch(validRequest, CREDS, MODEL)).rejects.toThrow(/Failed to parse/);
+  });
+
+  it('타입 강제: TEXT는 문자열, DECIMAL은 숫자, null은 null', async () => {
+    completeMock.mockResolvedValue(
+      completionOf([
+        { source_id: 1, label: 42, confidence: '0.9', reason: null },
+        { source_id: 2, label: true, confidence: '0.85', reason: 'ok' },
+      ]),
+    );
+
+    const result = await classifyBatch(validRequest, CREDS, MODEL);
+
     expect(typeof result.results[0].label).toBe('string');
     expect(result.results[0].label).toBe('42');
-    // confidence is DECIMAL → should be number
     expect(typeof result.results[0].confidence).toBe('number');
     expect(result.results[0].confidence).toBe(0.9);
-    // null TEXT → null
     expect(result.results[0].reason).toBeNull();
   });
 
-  it('should apply type coercion: INTEGER parsing', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
+  it('타입 강제: INTEGER 파싱', async () => {
+    completeMock.mockResolvedValue(completionOf([{ source_id: 1, count: '15' }]));
 
-    const intRequest = {
-      rows: [{ id: 1, value: '42' }],
-      prompt: 'extract integer',
-      outputColumns: [{ name: 'count', type: 'INTEGER' as const }],
-    };
-
-    nock(ANTHROPIC_API_URL)
-      .post('/v1/messages')
-      .reply(200, {
-        id: 'msg_1',
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify([{ source_id: 1, count: '15' }]),
-          },
-        ],
-        usage: { input_tokens: 50, output_tokens: 20 },
-      });
-
-    const result = await classifyBatch(intRequest, API_BASE_URL, VALID_TOKEN);
+    const result = await classifyBatch(
+      {
+        rows: [{ id: 1, value: '42' }],
+        prompt: 'extract integer',
+        outputColumns: [{ name: 'count', type: 'INTEGER' as const }],
+      },
+      CREDS,
+      MODEL,
+    );
 
     expect(result.results[0].count).toBe(15);
     expect(typeof result.results[0].count).toBe('number');
   });
 
-  it('should apply type coercion: BOOLEAN parsing', async () => {
-    nock(API_BASE_URL).get('/settings').query(true).replyWithError('connection refused');
+  it('타입 강제: BOOLEAN 파싱', async () => {
+    completeMock.mockResolvedValue(
+      completionOf([
+        { source_id: 1, is_positive: 'true' },
+        { source_id: 2, is_positive: false },
+      ]),
+    );
 
-    const boolRequest = {
-      rows: [{ id: 1, text: 'yes' }, { id: 2, text: 'no' }],
-      prompt: 'classify as true/false',
-      outputColumns: [{ name: 'is_positive', type: 'BOOLEAN' as const }],
-    };
-
-    nock(ANTHROPIC_API_URL)
-      .post('/v1/messages')
-      .reply(200, {
-        id: 'msg_1',
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify([
-              { source_id: 1, is_positive: 'true' },
-              { source_id: 2, is_positive: false },
-            ]),
-          },
+    const result = await classifyBatch(
+      {
+        rows: [
+          { id: 1, text: 'yes' },
+          { id: 2, text: 'no' },
         ],
-        usage: { input_tokens: 50, output_tokens: 20 },
-      });
-
-    const result = await classifyBatch(boolRequest, API_BASE_URL, VALID_TOKEN);
+        prompt: 'classify as true/false',
+        outputColumns: [{ name: 'is_positive', type: 'BOOLEAN' as const }],
+      },
+      CREDS,
+      MODEL,
+    );
 
     expect(result.results[0].is_positive).toBe(true);
     expect(result.results[1].is_positive).toBe(false);
-  });
-
-  it('should throw when API key is not configured', async () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    nock(API_BASE_URL)
-      .get('/settings')
-      .query(true)
-      .reply(200, [{ key: 'ai.model', value: 'claude-haiku-4-5-20251001' }]);
-
-    nock(API_BASE_URL).get('/settings/ai-api-key').replyWithError('not found');
-
-    await expect(classifyBatch(validRequest, API_BASE_URL, VALID_TOKEN)).rejects.toThrow('API key');
   });
 });

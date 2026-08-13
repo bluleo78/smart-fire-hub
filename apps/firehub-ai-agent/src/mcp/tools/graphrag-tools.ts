@@ -4,7 +4,7 @@ import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
-import { createCliCompleter } from '../../graphrag/llm-cli.js';
+import { createCompleter } from '../../graphrag/llm-completer.js';
 import { loadGraph, loadTableGraph } from '../../graphrag/loader.js';
 import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
@@ -176,15 +176,17 @@ async function createDraftOntology(
 
 /**
  * GraphRAG 관련 MCP 도구를 등록한다.
- * 엔티티/관계 추출 LLM 호출은 인증된 claude CLI 헤드리스 실행(createCliCompleter)에 위임한다.
- * (로컬은 macOS 키체인, prod는 CLAUDE_CODE_OAUTH_TOKEN 환경변수로 인증되며 API 키가 필요 없다.)
+ * 엔티티/관계 추출 등의 LLM 호출은 CompletionProvider(Agent SDK)에 위임한다 — 채팅 경로와 동일한
+ * 인증 규칙을 쓰기 위함이다. credentials 는 채팅 요청이 관리자 설정(DB)에서 받아온 값이 그대로
+ * 흘러온 것이며, 없으면 프로세스 환경/로컬 CLI 키체인 인증으로 폴백한다.
  */
 export function registerGraphragTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
+  credentials?: { apiKey?: string; oauthToken?: string },
 ) {
-  const complete = createCliCompleter();
+  const complete = createCompleter({ credentials });
 
   return [
     safeTool(

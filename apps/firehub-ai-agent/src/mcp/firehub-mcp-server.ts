@@ -175,6 +175,12 @@ export interface BuildToolsOptions {
    * `[]`면 권한 요구가 있는 도구는 전부 제외(fail-closed).
    */
   userPermissions?: string[];
+  /**
+   * 요청 단위 Anthropic 자격증명. GraphRAG 도구가 내부적으로 LLM completion 을 호출하므로
+   * 채팅 요청이 관리자 설정(DB)에서 받아온 자격증명을 그대로 흘려보내야 한다.
+   * 없으면 프로세스 환경으로 폴백한다(단독 스크립트·개발 환경).
+   */
+  credentials?: { apiKey?: string; oauthToken?: string };
 }
 
 /**
@@ -208,7 +214,7 @@ export function registerAllTools(
     ...registerProactiveTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAdminTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAuditTools(apiClient, safeToolFn, jsonResultFn),
-    ...registerGraphragTools(apiClient, safeToolFn, jsonResultFn),
+    ...registerGraphragTools(apiClient, safeToolFn, jsonResultFn, options.credentials),
   ];
   return filterToolsByPermissions(allTools, options.userPermissions);
 }

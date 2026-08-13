@@ -90,7 +90,14 @@ async function main(): Promise<void> {
   const safeTool = createMcpSafeTool(server, tracker);
 
   // Register all FireHub tools (공통 함수 사용)
-  registerAllTools(apiClient, safeTool, jsonResult);
+  // GraphRAG 도구는 LLM completion 을 호출하므로 자격증명이 필요하다. agent-cli 의 buildMcpConfig 가
+  // 이 프로세스 env 에 실어 보낸 값을 그대로 넘긴다(둘 다 없으면 provider 가 환경/키체인으로 폴백).
+  registerAllTools(apiClient, safeTool, jsonResult, {
+    credentials: {
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    },
+  });
 
   const transport = new StdioServerTransport();
 

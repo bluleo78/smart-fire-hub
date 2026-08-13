@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { extractGraph } from './extractor.js';
 import { CORE_ONTOLOGY } from './ontology.js';
-import type { CompleteFn } from './llm-cli.js';
+import type { CompleteFn } from './llm-completer.js';
 
 describe('extractGraph', () => {
   it('온톨로지 유효 엔티티/관계만 반환하고 무효분은 폐기한다', async () => {

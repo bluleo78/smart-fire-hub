@@ -1,5 +1,5 @@
 // LLM-as-judge — 원문 근거로 두 답변(A/B)을 정확성·근거성 1~5 채점 + 승자. 위치편향은 호출부 순서 스왑으로 완화.
-import type { CompleteFn } from '../llm-cli.js';
+import type { CompleteFn } from '../llm-completer.js';
 import { JudgeVerdict } from './types.js';
 
 export function buildJudgePrompt(

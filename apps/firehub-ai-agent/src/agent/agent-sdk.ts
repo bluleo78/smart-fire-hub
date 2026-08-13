@@ -124,7 +124,12 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       ? downloadChatFiles(apiClient, fileIds, chatFilesDir)
       : Promise.resolve(null),
   ]);
-  const firehubServer = createFireHubMcpServer(apiClient, { userPermissions });
+  // GraphRAG 도구는 내부적으로 LLM completion 을 호출하므로 요청 자격증명을 함께 넘긴다.
+  // (넘기지 않으면 컨테이너의 고정 env 만 보게 되어 채팅과 인증 경로가 갈라진다.)
+  const firehubServer = createFireHubMcpServer(apiClient, {
+    userPermissions,
+    credentials: { apiKey, oauthToken },
+  });
 
   const abortController = new AbortController();
   if (abortSignal) {

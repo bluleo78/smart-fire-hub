@@ -24,7 +24,7 @@ vi.mock('../../graphrag/ontology-source.js', () => ({
 }));
 vi.mock('../../graphrag/neo4j-client.js', () => ({ bootstrapConstraints: vi.fn() }));
 vi.mock('../../graphrag/extractor.js', () => ({ extractGraph: vi.fn() }));
-vi.mock('../../graphrag/llm-cli.js', () => ({ createCliCompleter: vi.fn(() => vi.fn()) }));
+vi.mock('../../graphrag/llm-completer.js', () => ({ createCompleter: vi.fn(() => vi.fn()) }));
 vi.mock('../../graphrag/loader.js', () => ({ loadGraph: vi.fn() }));
 
 import { registerGraphragTools } from './graphrag-tools.js';

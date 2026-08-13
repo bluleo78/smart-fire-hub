@@ -1,11 +1,11 @@
 // 청크 텍스트를 LLM에 넘겨 온톨로지 준수 엔티티/관계를 추출한다.
-// LLM 호출은 CompleteFn으로 주입받는다(기본 구현은 llm-cli.ts의 인증된 claude CLI 헤드리스 호출).
+// LLM 호출은 CompleteFn으로 주입받는다(기본 구현은 llm-completer.ts → CompletionProvider).
 // axios로 x-api-key를 직접 호출하던 방식은 prod에 유효한 API 키가 없어 제거했다.
 import {
   ExtractionResult, EntityType, RelationType, Ontology, PropertyReviewCandidate,
   isEntityType, isRelationType, isAllowedTriple, buildExtractionPrompt,
 } from './ontology.js';
-import type { CompleteFn } from './llm-cli.js';
+import type { CompleteFn } from './llm-completer.js';
 import { normalizePropertyChecked } from './property-normalizer.js';
 
 export interface ExtractOptions { complete: CompleteFn; ontology: Ontology; }

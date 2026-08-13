@@ -17,6 +17,11 @@ const classifyRequestSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())).min(1, 'rows must not be empty'),
   prompt: z.string().min(1),
   outputColumns: z.array(outputColumnSchema).min(1, 'outputColumns must not be empty'),
+  // 자격증명·모델은 firehub-api(AiAgentClient)가 관리자 설정에서 복호화해 바디로 주입한다 —
+  // 채팅(/agent/chat)과 동일한 패턴. ai-agent 가 설정을 역조회하지 않는다.
+  model: z.string().optional(),
+  apiKey: z.string().optional(),
+  oauthToken: z.string().optional(),
 });
 
 router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Response) => {
@@ -29,15 +34,18 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
     return;
   }
 
-  const { rows, prompt, outputColumns } = parseResult.data;
-
-  const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
-  const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-  const userId = parseInt(req.headers['x-on-behalf-of'] as string) || 1;
+  const { rows, prompt, outputColumns, model, apiKey, oauthToken } = parseResult.data;
 
   try {
-    const provider = ProviderFactory.createClassifyProvider(apiBaseUrl, internalToken);
-    const result = await provider.classify({ rows, prompt, outputColumns, userId });
+    const provider = ProviderFactory.createClassifyProvider();
+    const result = await provider.classify({
+      rows,
+      prompt,
+      outputColumns,
+      model,
+      apiKey,
+      oauthToken,
+    });
     res.json(result);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);

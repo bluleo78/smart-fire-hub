@@ -4,7 +4,7 @@
 // 검증 필터를 얇게 유지하는 이유: draft 생성은 백엔드에서 형식 검증만 받는다(활성화가 완전성 게이트).
 // 따라서 mapping-inference 처럼 백엔드 규칙을 통째로 재구현하지 않고, 실제로 400/409 를 유발하거나
 // DB 제약(UNIQUE)에 걸리는 것만 거른다.
-import type { CompleteFn } from './llm-cli.js';
+import type { CompleteFn } from './llm-completer.js';
 import type { ColumnProfile } from './column-profiler.js';
 import { parseJsonBlock } from './extractor.js';
 

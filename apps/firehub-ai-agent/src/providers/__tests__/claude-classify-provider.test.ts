@@ -21,18 +21,18 @@ describe('ClaudeClassifyProvider', () => {
     vi.clearAllMocks();
   });
 
-  // CC-01: classify() delegates to classifyBatch correctly
-  it('CC-01: classify() delegates to classifyBatch with correct arguments', async () => {
+  // CC-01: classify() 가 요청 바디의 자격증명·모델을 classifyBatch 로 그대로 넘기는지 검증
+  it('CC-01: classify() delegates to classifyBatch with credentials and model', async () => {
     mockClassifyBatch.mockResolvedValue(mockResponse);
 
-    const provider = new ClaudeClassifyProvider(
-      'http://localhost:8080/api/v1',
-      'test-token',
-    );
+    const provider = new ClaudeClassifyProvider();
     const options = {
       rows: [{ id: 1, free_comment: '서비스가 좋았습니다' }],
       prompt: '감성 분류하세요',
       outputColumns: [{ name: 'label', type: 'TEXT' as const }],
+      model: 'claude-haiku-4-5',
+      apiKey: 'sk-abc',
+      oauthToken: 'oauth-xyz',
       userId: 42,
     };
 
@@ -42,25 +42,26 @@ describe('ClaudeClassifyProvider', () => {
     expect(mockClassifyBatch).toHaveBeenCalledOnce();
     expect(mockClassifyBatch).toHaveBeenCalledWith(
       { rows: options.rows, prompt: options.prompt, outputColumns: options.outputColumns },
-      'http://localhost:8080/api/v1',
-      'test-token',
-      42,
+      { apiKey: 'sk-abc', oauthToken: 'oauth-xyz' },
+      'claude-haiku-4-5',
     );
   });
 
-  // CC-02: userId is passed through correctly
-  it('CC-02: userId is passed through to classifyBatch', async () => {
+  // CC-02: 모델 미지정 시 DEFAULT_MODEL 로 폴백하는지 검증
+  it('CC-02: falls back to DEFAULT_MODEL when model is omitted', async () => {
     mockClassifyBatch.mockResolvedValue(mockResponse);
 
-    const provider = new ClaudeClassifyProvider('http://api/v1', 'tok');
+    const provider = new ClaudeClassifyProvider();
     await provider.classify({
       rows: [{ id: 1 }],
       prompt: 'classify',
       outputColumns: [{ name: 'label', type: 'TEXT' as const }],
-      userId: 99,
+      oauthToken: 'tok',
     });
 
     const called = mockClassifyBatch.mock.calls[0];
-    expect(called[3]).toBe(99);
+    expect(called[1]).toEqual({ apiKey: undefined, oauthToken: 'tok' });
+    expect(typeof called[2]).toBe('string');
+    expect(called[2]).toBeTruthy();
   });
 });

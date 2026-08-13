@@ -1,7 +1,7 @@
 // 표 컬럼 프로파일 + 온톨로지를 LLM에 넘겨 매핑(MappingSpec)을 추론한다.
 // 백엔드 MappingService.validate()가 스펙 전체를 400으로 거부하므로, 여기서 규칙 2~6을
 // TS로 재구현해 부적합 제안을 버리고 통과분만 낸다(그래야 draft 저장이 항상 성공).
-import type { CompleteFn } from './llm-cli.js';
+import type { CompleteFn } from './llm-completer.js';
 import { Ontology, isEntityType, isAllowedTriple } from './ontology.js';
 import type { ColumnProfile } from './column-profiler.js';
 import type { MappingSpec } from './table-projection.js';

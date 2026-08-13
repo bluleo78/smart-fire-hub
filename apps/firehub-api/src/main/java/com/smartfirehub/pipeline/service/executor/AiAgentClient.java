@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.executor;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.settings.service.SettingsService;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -22,11 +23,15 @@ public class AiAgentClient {
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
+  private final SettingsService settingsService;
 
   @Value("${agent.internal-token}")
   private String internalToken;
 
-  public AiAgentClient(@Value("${agent.url}") String agentUrl, ObjectMapper objectMapper) {
+  public AiAgentClient(
+      @Value("${agent.url}") String agentUrl,
+      ObjectMapper objectMapper,
+      SettingsService settingsService) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
         WebClient.builder()
@@ -35,6 +40,7 @@ public class AiAgentClient {
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
             .build();
     this.objectMapper = objectMapper;
+    this.settingsService = settingsService;
   }
 
   public record ClassifyRequest(
@@ -49,13 +55,30 @@ public class AiAgentClient {
 
   public record ClassifyResponse(List<ClassifyRowResult> results, int processed, String model) {}
 
+  /**
+   * ai-agent 의 분류 엔드포인트를 호출한다.
+   *
+   * <p>자격증명(apiKey / oauthToken)과 모델은 여기서 관리자 설정(DB)에서 복호화해 요청 바디에 주입한다 —
+   * AiAgentProxyService(채팅)와 동일한 패턴이다. 이전에는 ai-agent 가 {@code /settings/ai-api-key} 를 역호출해
+   * 스스로 키를 가져왔는데, 그 엔드포인트는 {@code ai:settings}(ADMIN 전용) 권한을 요구하므로 비-ADMIN 사용자의
+   * 파이프라인이 조용히 실패했고 OAuth 토큰은 아예 전달되지 않았다.
+   */
   public ClassifyResponse classify(ClassifyRequest request, Long userId) {
     try {
-      Map<String, Object> body =
-          Map.of(
-              "rows", request.rows(),
-              "prompt", request.prompt(),
-              "outputColumns", request.outputColumns());
+      Map<String, Object> body = new java.util.HashMap<>();
+      body.put("rows", request.rows());
+      body.put("prompt", request.prompt());
+      body.put("outputColumns", request.outputColumns());
+      body.put("model", settingsService.getValue("ai.model").orElse("claude-sonnet-5"));
+      // OAuth 토큰이 있으면 ai-agent 가 구독 인증을 우선 선택한다(둘 다 보내도 무방).
+      settingsService
+          .getDecryptedApiKey()
+          .filter(key -> !key.isBlank())
+          .ifPresent(key -> body.put("apiKey", key));
+      settingsService
+          .getDecryptedCliOauthToken()
+          .filter(token -> !token.isBlank())
+          .ifPresent(token -> body.put("oauthToken", token));
 
       String responseBody =
           webClient

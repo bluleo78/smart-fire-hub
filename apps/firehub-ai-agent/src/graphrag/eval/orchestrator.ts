@@ -1,6 +1,6 @@
 // 평가 오케스트레이터 — 질문마다 양 경로 답변 생성, 순서 스왑 후 심판, graphrag/vector 관점으로 정규화.
 // deps 주입으로 라이브 의존(retrieve/searchDocuments/LLM) 없이 유닛테스트 가능.
-import type { CompleteFn } from '../llm-cli.js';
+import type { CompleteFn } from '../llm-completer.js';
 import { EvalQuestion, EvalResult } from './types.js';
 import { answerFromContext } from './answer.js';
 import { judge } from './judge.js';

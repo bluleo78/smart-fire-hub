@@ -100,10 +100,7 @@ describe('ProviderFactory', () => {
   describe('createClassifyProvider', () => {
     // PF-09: createClassifyProvider returns ClaudeClassifyProvider
     it('PF-09: createClassifyProvider returns ClaudeClassifyProvider', () => {
-      const provider = ProviderFactory.createClassifyProvider(
-        'http://localhost:8080/api/v1',
-        'test-token',
-      );
+      const provider = ProviderFactory.createClassifyProvider();
       expect(provider).toBeInstanceOf(ClaudeClassifyProvider);
       expect(provider.name).toBe('claude-classify');
     });

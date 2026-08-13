@@ -3,7 +3,7 @@
 // judge.ts와 동일하게 CLI 기반 CompleteFn을 감싼다.
 // HITL(사람 검수) 도입으로 same=true 판정도 즉시 병합하지 않고 rationale과 함께 대기열에 등록만 한다 —
 // 반환 타입이 boolean → {same, rationale}로 확장된 이유.
-import type { CompleteFn } from './llm-cli.js';
+import type { CompleteFn } from './llm-completer.js';
 import type { EntityType } from './ontology.js';
 
 export function buildLinkPrompt(nameA: string, nameB: string, entityType: EntityType): string {

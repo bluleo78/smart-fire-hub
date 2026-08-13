@@ -51,18 +51,33 @@ export function getTranscriptPath(sessionId: string): string {
 }
 
 
-function buildMcpConfig(userId: number, apiBaseUrl: string, internalToken: string): object {
+function buildMcpConfig(
+  userId: number,
+  apiBaseUrl: string,
+  internalToken: string,
+  credentials?: { apiKey?: string; oauthToken?: string },
+): object {
   const { command, args } = getStdioServerCommand();
+  // stdio MCP 서버는 별도 프로세스이고 env 를 여기서 명시적으로 구성한다.
+  // GraphRAG 도구가 내부적으로 LLM completion 을 호출하므로 요청 자격증명을 반드시 실어 보내야 한다 —
+  // 넣지 않으면 그 프로세스는 자격증명 없이 뜨고 GraphRAG 가 prod 에서 인증에 실패한다.
+  const env: Record<string, string> = {
+    API_BASE_URL: apiBaseUrl,
+    INTERNAL_SERVICE_TOKEN: internalToken,
+    USER_ID: String(userId),
+  };
+  if (credentials?.oauthToken?.trim()) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = credentials.oauthToken;
+  } else if (credentials?.apiKey?.trim()) {
+    env.ANTHROPIC_API_KEY = credentials.apiKey;
+  }
+
   return {
     mcpServers: {
       firehub: {
         command,
         args,
-        env: {
-          API_BASE_URL: apiBaseUrl,
-          INTERNAL_SERVICE_TOKEN: internalToken,
-          USER_ID: String(userId),
-        },
+        env,
       },
     },
   };
@@ -212,7 +227,14 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
   // 환경변수(API_BASE_URL, INTERNAL_SERVICE_TOKEN) 변경 시에도 최신 상태 유지
   const mcpConfigPath = join(userWorkDir, 'mcp.json');
-  await writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig(userId, apiBaseUrl, internalToken), null, 2));
+  await writeFile(
+    mcpConfigPath,
+    JSON.stringify(
+      buildMcpConfig(userId, apiBaseUrl, internalToken, { apiKey, oauthToken }),
+      null,
+      2,
+    ),
+  );
 
   const effectiveModel = model ?? DEFAULT_MODEL;
 

@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createCliCompleter } from '../llm-cli.js';
+import { createCompleter } from '../llm-completer.js';
 import { retrieve } from '../retriever.js';
 import { FireHubApiClient } from '../../mcp/api-client.js';
 import { loadQuestions } from './questions.js';
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   const evalUserId = Number(process.env.EVAL_USER_ID ?? '1');
   const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, evalUserId);
 
-  const complete = createCliCompleter();
+  const complete = createCompleter();
   const sourceDocs = loadSourceDocs();
   const questions = loadQuestions();
 
