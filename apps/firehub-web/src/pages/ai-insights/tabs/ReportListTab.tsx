@@ -49,15 +49,19 @@ export default function ReportListTab() {
   );
 
   return (
-    <div className="flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
-      <div className="flex-1 overflow-auto border rounded-md">
+    // 높이를 뷰포트에 고정하지 않는다 — 리포트가 몇 건뿐일 때 거대한 빈 상자가 남는다.
+    // 대신 최대 높이만 제한해 목록이 길어지면 내부 스크롤이 생기게 한다.
+    <div className="flex flex-col">
+      <div className="max-h-[calc(100vh-280px)] overflow-auto border rounded-md">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[50%]">제목</TableHead>
-              <TableHead className="w-[20%]">스마트 작업</TableHead>
-              <TableHead className="w-[18%]">생성일</TableHead>
-              <TableHead className="w-[12%] text-center">액션</TableHead>
+              <TableHead>제목</TableHead>
+              <TableHead className="w-[200px]">스마트 작업</TableHead>
+              <TableHead className="w-[240px]">생성일</TableHead>
+              {/* 아이콘 버튼 2개(각 h-8 + gap) 가 잘리지 않도록 고정 폭을 준다 —
+                  퍼센트 폭은 제목 컬럼에 밀려 액션이 화면 밖으로 나간다 */}
+              <TableHead className="w-[96px] text-center">액션</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -74,12 +78,11 @@ export default function ReportListTab() {
                     )
                   }
                 >
-                  <TableCell>
-                    <div className="text-sm font-medium">{report.title}</div>
+                  {/* 제목 셀은 유동 폭 — 픽셀 고정 대신 셀 폭을 따라 truncate 되게 한다 */}
+                  <TableCell className="max-w-0">
+                    <div className="text-sm font-medium truncate">{report.title}</div>
                     {report.summary && (
-                      <div className="text-xs text-muted-foreground truncate max-w-[520px]">
-                        {report.summary}
-                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{report.summary}</div>
                     )}
                   </TableCell>
                   <TableCell>
@@ -95,7 +98,7 @@ export default function ReportListTab() {
                     <div className="flex justify-center gap-1">
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="icon-sm"
                         aria-label="PDF 다운로드"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -107,7 +110,7 @@ export default function ReportListTab() {
                       {/* 잡 이름을 링크로 만들지 않는 대신, 잡으로 가는 경로를 액션으로 제공한다 */}
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="icon-sm"
                         aria-label="스마트 작업 보기"
                         onClick={(e) => {
                           e.stopPropagation();
