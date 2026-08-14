@@ -15,6 +15,7 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** 범용 검수 인박스 서비스 — 타입별 등록/조회, 승인 시 item_type별 액션 라우팅, 원문 근거 조회. */
 @Service
@@ -209,6 +210,8 @@ public class ReviewItemService {
   }
 
   /** 판단 근거 — dataset_id로 청크 전체를 읽어 payload.sourceChunkIds에 해당하는 원문만 반환. */
+  // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public List<EvidenceChunk> evidence(long id) {
     ReviewItemRecord row = repo.findById(id)
         .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));

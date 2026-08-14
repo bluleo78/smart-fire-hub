@@ -52,14 +52,16 @@ class DatasetEmbeddingServiceTest {
     when(embeddingFactory.current()).thenReturn(provider);
     when(provider.modelId()).thenReturn("bge-m3");
     when(provider.embed(any())).thenReturn(List.of(new float[1024]));
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory).reindexEmbedding(7L);
+    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory)
+        .reindexEmbedding(7L, 1L);
     verify(embeddingRepo).updateEmbedding(eq(7L), any(float[].class), eq("bge-m3"));
   }
 
   @Test
   void reindexEmbedding_삭제된_데이터셋이면_no_op이다() {
     when(metaReader.read(99L)).thenReturn(null);
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory).reindexEmbedding(99L);
+    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory)
+        .reindexEmbedding(99L, 1L);
     // 메타가 없으면 임베딩 생성·갱신을 시도하지 않는다(동기 경로에서 이미 제거됨).
     verifyNoInteractions(embeddingFactory);
     verifyNoInteractions(embeddingRepo);

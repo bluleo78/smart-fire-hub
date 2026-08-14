@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 데이터셋 카탈로그 검색 서비스 (DocumentSearchService 복제).
@@ -30,6 +31,8 @@ public class DatasetSearchService {
   private final EmbeddingProviderFactory embeddingFactory;
 
   /** mode 분기 진입점. mode null → HYBRID, topK 정규화 후 각 검색을 수행한다. */
+  // RLS 가 걸린 dataset_embedding 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public List<DatasetSearchHit> search(DatasetSearchRequest req) {
     if (req.query() == null || req.query().isBlank()) {
       throw new IllegalArgumentException("검색어가 비어 있습니다");

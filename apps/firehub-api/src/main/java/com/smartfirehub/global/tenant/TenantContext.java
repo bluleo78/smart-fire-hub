@@ -29,4 +29,43 @@ public final class TenantContext {
   public static void clear() {
     CURRENT.remove();
   }
+
+  /**
+   * 현재 테넌트를 반환하고, 없으면 예외를 던진다.
+   *
+   * <p>배경 잡 enqueue 처럼 "테넌트가 없으면 애초에 잘못된 호출"인 지점에서 쓴다. 조용히 null 을
+   * 흘려보내면 잡이 실행 시점에 0행으로 무동작해 원인 추적이 불가능해진다.
+   */
+  public static long require() {
+    Long tenantId = get();
+    if (tenantId == null) {
+      throw new IllegalStateException("테넌트 컨텍스트가 없는 상태에서 배경 잡을 예약할 수 없다");
+    }
+    return tenantId;
+  }
+
+  /**
+   * 주어진 테넌트로 작업을 실행하고, 끝나면 <b>진입 전 상태로 되돌린다</b>.
+   *
+   * <p>배경 잡 진입점(JobRunr {@code @Job})에서 쓴다. 손으로 {@code set} → {@code try} →
+   * {@code finally clear} 를 쓰면 "본문 첫 문장을 try 밖에 두면 컨텍스트가 샌다" 같은 규칙을 사람이
+   * 기억해야 하고, 실제로 그 실수가 한 번 있었다. 여기서 구조로 강제한다.
+   *
+   * <p>{@code clear()} 가 아니라 <b>복원</b>인 이유: 같은 메서드가 잡 진입점(진입 전 null)과 이미
+   * 컨텍스트가 있는 경로(예: {@code @Async} 리스너) 양쪽에서 불릴 수 있기 때문이다. 무조건 지우면
+   * 후자에서 호출자의 컨텍스트를 빼앗아, 그 뒤에 문장이 하나라도 추가되는 순간 조용히 0행이 된다.
+   */
+  public static void runScoped(long tenantId, Runnable work) {
+    Long previous = get();
+    set(tenantId);
+    try {
+      work.run();
+    } finally {
+      if (previous == null) {
+        clear();
+      } else {
+        set(previous);
+      }
+    }
+  }
 }

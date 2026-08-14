@@ -46,6 +46,9 @@ public class ApiConnectionHealthCheckScheduler {
    *
    * <p>각 연결을 독립적으로 처리하여 한 연결의 실패가 나머지 순회를 중단시키지 않도록 try-catch로 격리한다.
    */
+  // TODO(P2-b): 이 경로는 api_connection 을 읽는다. 그 테이블에 RLS 를 걸 때 TenantScopedRunner
+  // 순회를 함께 적용해야 한다 — 안 하면 헬스체크가 매번 대상 0건으로 돌아 UP/DOWN 알림이
+  // 영구히 누락된다.
   @Scheduled(fixedDelay = FIXED_DELAY_MS, initialDelay = INITIAL_DELAY_MS)
   public void runOnce() {
     List<Record> targets = repository.findHealthCheckable();

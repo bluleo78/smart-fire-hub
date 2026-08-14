@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.RequirePermission;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,6 +45,9 @@ public class FileObjectController {
   }
 
   /** 데이터셋 프리픽스 하위 오브젝트 목록(페이지네이션). */
+  // RLS 가 걸린 file_dataset_config 를 config()로 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // config()는 private 자기호출이라 그쪽엔 붙일 수 없고, 호출자인 이 메서드에 붙여야 한다.
+  @Transactional(readOnly = true)
   @GetMapping
   @RequirePermission("dataset:read")
   public ResponseEntity<ObjectListResponse> list(
@@ -57,6 +61,8 @@ public class FileObjectController {
   }
 
   /** 오브젝트 단건 presigned GET URL. key는 프리픽스 포함 전체 키. */
+  // RLS 가 걸린 file_dataset_config 를 config()로 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   @GetMapping("/url")
   @RequirePermission("dataset:read")
   public ResponseEntity<PresignedUrlResponse> presignedUrl(
@@ -72,6 +78,9 @@ public class FileObjectController {
   }
 
   /** 업로드용 presigned PUT URL을 배치로 발급한다. 앱이 키를 생성하여 프리픽스 격리·규약을 강제한다. */
+  // RLS 가 걸린 file_dataset_config 를 config()로 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // (presigned URL 발급만 하고 DB에는 쓰지 않으므로 readOnly)
+  @Transactional(readOnly = true)
   @PostMapping("/upload-urls")
   @RequirePermission("dataset:write")
   public ResponseEntity<UploadUrlResponse> createUploadUrls(

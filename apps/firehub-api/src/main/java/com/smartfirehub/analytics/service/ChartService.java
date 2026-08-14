@@ -23,6 +23,8 @@ public class ChartService {
   private final AnalyticsQueryExecutionService executionService;
 
   /** List charts with optional filters and pagination. */
+  // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public PageResponse<ChartResponse> list(
       String search,
       String chartType,
@@ -58,6 +60,10 @@ public class ChartService {
   }
 
   /** Get a single chart — owner or any shared chart. */
+  // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // 참고(자기호출): getChartData 가 이 메서드를 this. 로 직접 호출하지만, getChartData 도
+  // 아래에서 같은 @Transactional(readOnly=true)로 열려 있어 프록시를 안 타도 무해하다.
+  @Transactional(readOnly = true)
   public ChartResponse getById(Long id, Long userId) {
     return chartRepository
         .findById(id, userId)
@@ -99,6 +105,8 @@ public class ChartService {
   }
 
   /** Get a single chart without throwing — used for dashboard data loading. */
+  // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public java.util.Optional<com.smartfirehub.analytics.dto.ChartResponse> getByIdOptional(
       Long id, Long userId) {
     return chartRepository.findById(id, userId);
@@ -120,6 +128,8 @@ public class ChartService {
    * Execute the chart's linked saved query and return combined chart + query result. The user must
    * have access to the chart (owner or shared).
    */
+  // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public ChartDataResponse getChartData(Long id, Long userId) {
     ChartResponse chart = getById(id, userId);
     String sqlText =

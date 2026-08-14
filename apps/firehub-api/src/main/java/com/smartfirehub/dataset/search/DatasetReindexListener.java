@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,8 @@ public class DatasetReindexListener {
   @Async("indexExecutor")
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onDatasetChanged(DatasetChangedEvent event) {
-    embeddingService.reindexEmbedding(event.datasetId());
+    // @Async 경로는 TenantContextTaskDecorator 가 이미 컨텍스트를 세워 준다. 그 값을 그대로
+    // 넘긴다(같은 값을 다시 set 하는 것은 무해하다) — JobRunr 경로와 시그니처를 통일하기 위함.
+    embeddingService.reindexEmbedding(event.datasetId(), TenantContext.require());
   }
 }

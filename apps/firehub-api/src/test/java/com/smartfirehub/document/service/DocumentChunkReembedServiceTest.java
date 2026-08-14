@@ -12,9 +12,12 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.jobrunr.jobs.lambdas.JobLambda;
 import org.jobrunr.scheduling.JobScheduler;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -28,6 +31,17 @@ class DocumentChunkReembedServiceTest {
   @Mock EmbeddingProviderFactory embeddingFactory;
   @Mock JobScheduler jobScheduler;
   @Mock EmbeddingProvider provider;
+
+  @BeforeEach
+  void setTenant() {
+    // enqueue 시점에 TenantContext.require() 로 테넌트를 뽑아 페이로드에 실으므로 요청 스코프를 흉내낸다.
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
+  }
 
   @Test
   void reembedAll_데이터셋마다_잡을_enqueue하고_개수를_반환한다() {
@@ -53,7 +67,7 @@ class DocumentChunkReembedServiceTest {
 
     DocumentChunkReembedService service =
         new DocumentChunkReembedService(repository, embeddingFactory, jobScheduler);
-    service.reembedDataset(7L);
+    service.reembedDataset(7L, 1L);
 
     // 청크 id 순서를 유지한 채 현재 모델 식별자로 임베딩 배치 갱신이 호출된다.
     verify(repository).updateEmbeddingBatch(eq(List.of(10L, 11L)), any(), eq("bge-m3"));
@@ -65,7 +79,7 @@ class DocumentChunkReembedServiceTest {
 
     DocumentChunkReembedService service =
         new DocumentChunkReembedService(repository, embeddingFactory, jobScheduler);
-    service.reembedDataset(7L);
+    service.reembedDataset(7L, 1L);
 
     // 빈 데이터셋은 provider 호출/배치 갱신 없이 조기 반환한다.
     verify(repository, never()).updateEmbeddingBatch(any(), any(), any());

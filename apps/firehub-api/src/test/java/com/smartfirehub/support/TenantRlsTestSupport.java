@@ -1,11 +1,14 @@
 package com.smartfirehub.support;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import org.jooq.DSLContext;
 import org.jooq.Table;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -53,5 +56,118 @@ public final class TenantRlsTestSupport {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  // ── 도메인 RLS 테스트용 공용 헬퍼 ───────────────────────────────────────
+  //
+  // V87 부터 도메인 테이블의 tenant_id 에 tenant(id) FK 가 걸리므로, 더 이상 가짜 테넌트 id 로
+  // 행을 만들 수 없다. 실제 tenant 행을 만들어 써야 한다.
+
+  private static final Table<?> TENANT = table(name("tenant"));
+
+  /**
+   * 테스트 전용 ACTIVE 테넌트를 하나 만들고 id 를 반환한다.
+   *
+   * <p>`tenant` 은 테넌트 경계 위의 전역 테이블이라 RLS 가 없다(V81) — 컨텍스트 없이 직접
+   * insert/delete 할 수 있다. slug 는 실행마다 고유해야 공유 테스트 DB 에서 충돌하지 않는다.
+   */
+  public static long createActiveTenant(DSLContext dsl, String slugPrefix) {
+    long suffix = nextTenantId();
+    return dsl.insertInto(TENANT)
+        .set(field(name("slug"), String.class), slugPrefix + "-" + suffix)
+        .set(field(name("name"), String.class), "Test Tenant " + suffix)
+        .set(field(name("status"), String.class), "ACTIVE")
+        .returning(field(name("id"), Long.class))
+        .fetchOne()
+        .get(field(name("id"), Long.class));
+  }
+
+  /**
+   * 테스트 픽스처용 사용자를 하나 만들고 id 를 반환한다.
+   *
+   * <p>도메인 테이블 다수가 {@code created_by}/{@code uploaded_by} 를 NOT NULL 로 요구하는데,
+   * {@code "user"} 는 테넌트 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 없이 만들 수 있다.
+   * username/email 이 유니크라 접두사만으로는 부족해 실행마다 고유한 접미사를 붙인다.
+   */
+  public static Long insertUser(DSLContext dsl, String prefix) {
+    long suffix = nextTenantId();
+    return dsl.insertInto(table(name("user")))
+        .set(field(name("username"), String.class), prefix + suffix)
+        .set(field(name("password"), String.class), "pw")
+        .set(field(name("name"), String.class), "Test User")
+        .set(field(name("email"), String.class), prefix + suffix + "@example.com")
+        .returning(field(name("id"), Long.class))
+        .fetchOne()
+        .get(field(name("id"), Long.class));
+  }
+
+  /** 위에서 만든 사용자를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 도메인 정리 뒤에 부른다. */
+  public static void deleteUser(DSLContext dsl, Long userId) {
+    if (userId != null) {
+      dsl.deleteFrom(table(name("user"))).where(field(name("id"), Long.class).eq(userId)).execute();
+    }
+  }
+
+  /** 테스트가 만든 테넌트를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 마지막에 부른다. */
+  public static void deleteTenants(DSLContext dsl, Long... tenantIds) {
+    for (Long id : tenantIds) {
+      if (id != null) {
+        dsl.deleteFrom(TENANT).where(field(name("id"), Long.class).eq(id)).execute();
+      }
+    }
+  }
+
+  /**
+   * 한 테이블의 테넌트 격리를 <b>양방향</b>으로 단언한다.
+   *
+   * <p>단방향("타 테넌트에서 0행")만 보면 빈 테이블에서 공허하게 통과한다 — P1 에서 실제로 이
+   * 형태의 단언이 결함을 통과시킨 전례가 있다. 소유 테넌트에서 실제로 보이는 것을 함께 확인해야
+   * 단언이 의미를 갖는다. DEFAULT 가 GUC 에서 채워졌는지도 같이 본다.
+   *
+   * <p>PK 는 {@code id} 로 고정한다 — 현재 이 헬퍼로 검증하는 테이블은 전부 서로게이트 {@code id}
+   * PK 다. {@code dataset_id} 가 PK 인 테이블(dataset_embedding·file_dataset_config)을 실제로
+   * 검증하게 되면 그때 파라미터를 추가한다.
+   *
+   * @param insertReturningPk 소유 테넌트 컨텍스트 안에서 행을 만들고 PK 를 반환한다
+   */
+  public static void assertTwoSidedIsolation(
+      TransactionTemplate tx,
+      DSLContext dsl,
+      long ownerTenant,
+      long otherTenant,
+      String tableName,
+      Supplier<Long> insertReturningPk) {
+    final String pkColumn = "id";
+
+    Long pk = runInTenantTransaction(tx, ownerTenant, insertReturningPk);
+    assertThat(pk).as("%s: 픽스처가 행을 만들지 못했다", tableName).isNotNull();
+
+    Boolean visibleToOwner =
+        runInTenantTransaction(tx, ownerTenant, () -> rowExists(dsl, tableName, pkColumn, pk));
+    assertThat(visibleToOwner).as("%s: 소유 테넌트에서 자기 행이 보여야 한다", tableName).isTrue();
+
+    Boolean visibleToOther =
+        runInTenantTransaction(tx, otherTenant, () -> rowExists(dsl, tableName, pkColumn, pk));
+    assertThat(visibleToOther)
+        .as("%s: 다른 테넌트에서 남의 행이 보이면 격리 실패다", tableName)
+        .isFalse();
+
+    Long stored =
+        runInTenantTransaction(
+            tx,
+            ownerTenant,
+            () ->
+                dsl.select(field(name("tenant_id"), Long.class))
+                    .from(table(name(tableName)))
+                    .where(field(name(pkColumn), Long.class).eq(pk))
+                    .fetchOne(field(name("tenant_id"), Long.class)));
+    assertThat(stored)
+        .as("%s: tenant_id DEFAULT 가 GUC 에서 채워져야 한다", tableName)
+        .isEqualTo(ownerTenant);
+  }
+
+  /** 현재 테넌트 컨텍스트에서 해당 행이 보이는지 확인한다(RLS 적용 결과). */
+  public static boolean rowExists(DSLContext dsl, String tableName, String pkColumn, Long pk) {
+    return dsl.fetchCount(table(name(tableName)), field(name(pkColumn), Long.class).eq(pk)) > 0;
   }
 }

@@ -11,6 +11,7 @@ import org.jooq.Field;
 import org.jooq.Record4;
 import org.jooq.Table;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 데이터셋 메타를 검색 합본 빌더 입력({@link DatasetSourceTextBuilder.Input})으로 읽어온다. 없으면 null.
@@ -19,6 +20,10 @@ import org.springframework.stereotype.Component;
  * (생성 코드 의존 없이 public 스키마 테이블을 직접 가리킴).
  */
 @Component
+// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
+// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
+// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
+@Transactional
 public class DatasetMetaReader {
 
   private final DSLContext dsl;

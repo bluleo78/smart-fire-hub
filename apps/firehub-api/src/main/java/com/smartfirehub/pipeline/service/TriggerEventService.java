@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
@@ -25,24 +26,31 @@ public class TriggerEventService {
   private final DatasetRepository datasetRepository;
   private final DSLContext dsl;
   private final NotificationService notificationService;
+  private final TenantScopedRunner tenantScopedRunner;
 
   public TriggerEventService(
       TriggerRepository triggerRepository,
       @Lazy TriggerService triggerService,
       DatasetRepository datasetRepository,
       DSLContext dsl,
-      NotificationService notificationService) {
+      NotificationService notificationService,
+      TenantScopedRunner tenantScopedRunner) {
     this.triggerRepository = triggerRepository;
     this.triggerService = triggerService;
     this.datasetRepository = datasetRepository;
     this.dsl = dsl;
     this.notificationService = notificationService;
+    this.tenantScopedRunner = tenantScopedRunner;
   }
 
   /**
    * Handle pipeline completion events for chain triggers. @Async ensures chain trigger failures
    * don't affect upstream pipeline status.
    */
+  // TODO(P2-b): 이 경로는 pipeline_trigger 를 읽는다. @Async 라 TenantContextTaskDecorator 가
+  // 제출 스레드의 테넌트를 승계하지만, 이벤트 발행자가 배경 스레드면 승계할 테넌트가 없다.
+  // pipeline_trigger 에 RLS 를 걸 때 발행 경로를 함께 점검해야 한다 — 안 하면 PIPELINE_CHAIN
+  // 트리거가 하위 파이프라인을 조용히 실행하지 않는다.
   @Async
   @EventListener
   public void onPipelineCompleted(PipelineCompletedEvent event) {
@@ -72,9 +80,20 @@ public class TriggerEventService {
     }
   }
 
-  /** Poll dataset changes every 30 seconds. */
+  /**
+   * Poll dataset changes every 30 seconds.
+   *
+   * <p>원 HTTP 요청이 없는 경로라 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해 테넌트별로 돈다.
+   * 순회하지 않으면 RLS 가 pipeline_trigger·dataset 을 전부 차단해 이 트리거가 예외도 로그도 없이
+   * 영구히 발화하지 않는다.
+   */
   @Scheduled(fixedDelay = 30000)
   public void pollDatasetChanges() {
+    tenantScopedRunner.forEachActiveTenant(tenantId -> pollDatasetChangesForTenant());
+  }
+
+  /** 한 테넌트 범위의 DATASET_CHANGE 폴링 본문. 호출 시점에 TenantContext 가 설정돼 있어야 한다. */
+  private void pollDatasetChangesForTenant() {
     List<TriggerResponse> triggers = triggerRepository.findEnabledByType("DATASET_CHANGE");
 
     for (TriggerResponse trigger : triggers) {

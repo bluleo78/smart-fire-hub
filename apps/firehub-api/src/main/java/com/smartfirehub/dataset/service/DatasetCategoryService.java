@@ -19,10 +19,14 @@ public class DatasetCategoryService {
   private final DatasetCategoryRepository categoryRepository;
   private final DSLContext dsl;
 
+  // RLS 가 걸린 dataset_category 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public List<CategoryResponse> getAllCategories() {
     return categoryRepository.findAll();
   }
 
+  // RLS 가 걸린 dataset_category 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public CategoryResponse getCategoryById(Long id) {
     return categoryRepository
         .findById(id)

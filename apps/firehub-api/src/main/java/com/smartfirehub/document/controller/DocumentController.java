@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -39,6 +40,8 @@ public class DocumentController {
   }
 
   /** 데이터셋의 문서 목록(최신순). */
+  // RLS 가 걸린 document_file 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   @GetMapping
   @RequirePermission("dataset:read")
   public List<DocumentFileResponse> list(@PathVariable Long datasetId) {
@@ -46,6 +49,8 @@ public class DocumentController {
   }
 
   /** 단일 문서 상태/메타 조회. 없거나 다른 데이터셋 소속이면 404. */
+  // RLS 가 걸린 document_file 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   @GetMapping("/{documentId}")
   @RequirePermission("dataset:read")
   public ResponseEntity<DocumentFileResponse> get(
@@ -59,6 +64,8 @@ public class DocumentController {
   }
 
   /** 문서 삭제(document_chunk는 FK CASCADE, 원본 파일과 메타 정리). 없거나 다른 데이터셋 소속이면 404. */
+  // RLS 가 걸린 document_file 을 읽고 지운다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional
   @DeleteMapping("/{documentId}")
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> delete(

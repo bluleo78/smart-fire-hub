@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -61,6 +62,9 @@ class DataImportServiceTest extends IntegrationTestBase {
 
   @BeforeEach
   void setUp() {
+    // importFile()이 enqueue 시 TenantContext.require()로 테넌트를 뽑으므로 요청 스코프를 흉내낸다.
+    com.smartfirehub.global.tenant.TenantContext.set(1L);
+
     // Create test user
     testUserId =
         dsl.insertInto(USER)
@@ -92,6 +96,11 @@ class DataImportServiceTest extends IntegrationTestBase {
             testUserId);
 
     testDatasetId = dataset.id();
+  }
+
+  @AfterEach
+  void tearDown() {
+    com.smartfirehub.global.tenant.TenantContext.clear();
   }
 
   @Test
@@ -429,7 +438,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // When
     ExportRequest request = new ExportRequest(ExportFormat.CSV, null, null, null);
@@ -480,7 +490,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // Then: 1000행 전부 적재됐는지 확인
     var count =
@@ -524,7 +535,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // Then: fail-fast 메시지로 실패 처리되고, 첫 배치(2000행)까지만 검증했음을 오류 수로 확인
     ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
@@ -625,7 +637,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "UPSERT");
+        "UPSERT",
+        1L);
 
     // Then: 중복이 접혀 2행만 적재되고, A001의 label은 마지막 값 'second'여야 한다
     var rows =
@@ -690,7 +703,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "REPLACE");
+        "REPLACE",
+        1L);
 
     // Then: 중복이 접혀 2행만 남고, A001의 label은 마지막 값 'second'여야 한다
     var rows =
@@ -756,7 +770,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // Then: validate가 여러 번(배치 단위) 호출되고, 매 호출의 행 수가 BATCH_SIZE(2000) 이하여야 한다
     assertThat(batchSizesSeen).isNotEmpty();
@@ -825,7 +840,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // Then: 전체 행이 적재됐어야 한다
     var count =
@@ -904,7 +920,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "UPSERT");
+        "UPSERT",
+        1L);
 
     // Then: A001은 마지막 값('last')이 남고, 총 2499개 고유 row(2498 CODE + A001)가 있어야 한다
     var rows =
@@ -969,7 +986,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     String csv = "code,label\nA001,first\nA002,second\n";
     String filePath = createTempCsvFile(csv);
@@ -988,7 +1006,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "REPLACE");
+        "REPLACE",
+        1L);
 
     // Then: 기존 OLD001은 사라지고 새 2행만 존재
     var rows =
@@ -1030,7 +1049,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // 전량 무효(age가 필수 아니지만 name이 필수 — 비워서 위반)
     String invalidCsv = "name,age,email\n,20,a@x.com\n,21,b@x.com\n";
@@ -1050,7 +1070,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "REPLACE");
+        "REPLACE",
+        1L);
 
     // Then: 기존 데이터(Alice)가 여전히 존재해야 한다 — truncate가 발동하지 않았어야 함
     var rows =
@@ -1081,7 +1102,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     String csv = "name,age,email\nAlice,30,alice@example.com\nBob,25,bob@example.com\n";
     String filePath = createTempCsvFile(csv);
@@ -1100,7 +1122,8 @@ class DataImportServiceTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "REPLACE");
+        "REPLACE",
+        1L);
 
     // Then: Old는 사라지고 Alice/Bob만 존재
     var rows =

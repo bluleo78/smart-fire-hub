@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 문서 검색: mode 에 따라 벡터(SEMANTIC)·트라이그램(KEYWORD)·RRF 융합(HYBRID, 기본)으로 분기한다.
@@ -28,6 +29,8 @@ public class DocumentSearchService {
   private static final int CANDIDATE_POOL = 50;
   private static final int RRF_K = 60;
 
+  // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public List<DocumentSearchHit> search(DocumentSearchRequest request) {
     if (request.query() == null || request.query().isBlank()) {
       throw new IllegalArgumentException("검색어가 비어 있습니다");

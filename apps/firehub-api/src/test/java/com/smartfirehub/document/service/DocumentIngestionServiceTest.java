@@ -6,9 +6,12 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.document.repository.DocumentFileRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -29,6 +32,17 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
   @org.springframework.test.context.DynamicPropertySource
   static void props(org.springframework.test.context.DynamicPropertyRegistry r) {
     r.add("firehub.file.upload-dir", () -> tempDir.toString());
+  }
+
+  @BeforeEach
+  void setTenant() {
+    // upload() 가 enqueue 시 TenantContext.require() 로 테넌트를 뽑으므로 요청 스코프를 흉내낸다.
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
   }
 
   @Test
@@ -65,7 +79,7 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
     Long fileId =
         ingestionService.upload(datasetId, data, "report.txt", "text/plain", userId).id();
 
-    ingestionService.processIngestion(fileId);
+    ingestionService.processIngestion(fileId, 1L);
 
     var file = fileRepository.findById(fileId).orElseThrow();
     assertThat(file.status()).isEqualTo("COMPLETED");

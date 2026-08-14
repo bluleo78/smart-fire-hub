@@ -116,7 +116,8 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     // then: 첫 오류에서 중단 → target 테이블에 0행(부분 적재 없음), 잡은 실패 처리
     assertThat(countRows(tableName)).isZero();
@@ -147,7 +148,8 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         "Test User",
         "",
         "",
-        "APPEND");
+        "APPEND",
+        1L);
 
     assertThat(countRows(tableName)).isEqualTo(5000);
     Mockito.verify(asyncJobService, Mockito.never()).failJob(Mockito.anyString(), Mockito.anyString());

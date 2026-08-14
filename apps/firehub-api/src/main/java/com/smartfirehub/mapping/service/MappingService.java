@@ -19,6 +19,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 // 데이터셋 매핑 서비스 — 저장/활성화 시점에 온톨로지·컬럼·속성타입·트리플 conformance를 검증한다.
 // 수동 저작이므로 검수 인박스는 쓰지 않고 매핑 레코드 자체의 draft→active 라이프사이클로 관리한다.
@@ -33,6 +34,8 @@ public class MappingService {
   private final ObjectMapper objectMapper;
 
   // 매핑 저장(draft). conformance 검증 통과 시 JSONB로 직렬화해 upsert.
+  // RLS 가 걸린 dataset_column 을 validate()에서 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional
   public MappingResponse save(long datasetId, MappingSpec spec, Long userId) {
     long ontologyId = validate(datasetId, spec);
     mappingRepository.upsert(datasetId, ontologyId, serialize(spec), "draft", userId);
@@ -46,6 +49,8 @@ public class MappingService {
   }
 
   // draft→active 활성화. 존재 확인 + 재검증 후 상태 전환.
+  // RLS 가 걸린 dataset_column 을 validate()에서 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional
   public MappingResponse activate(long datasetId, Long userId) {
     StoredMapping stored = mappingRepository.findByDataset(datasetId)
         .orElseThrow(() -> new IllegalArgumentException("활성화할 매핑이 없습니다: " + datasetId));

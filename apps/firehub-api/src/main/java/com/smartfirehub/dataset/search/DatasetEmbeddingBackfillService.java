@@ -1,10 +1,13 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.transaction.AfterCommitRunner;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.scheduling.JobScheduler;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 관리자용 데이터셋 검색 인덱스 백필 오케스트레이터.
@@ -31,6 +34,9 @@ public class DatasetEmbeddingBackfillService {
    *
    * @return 처리 대상 데이터셋 수
    */
+  // RLS 가 걸린 dataset 을 읽고(findAllIds) source_text 를 쓴다(syncSourceText) — 트랜잭션이 없으면
+  // GUC 미설정으로 조용히 0행이 된다.
+  @Transactional
   public int backfillAll() {
     List<Long> ids = metaReader.findAllIds();
 
@@ -40,10 +46,18 @@ public class DatasetEmbeddingBackfillService {
     }
 
     // (2) 임베딩 재색인은 데이터셋별 잡으로 분산 enqueue(외부 호출 비용을 백그라운드로 이전).
-    for (Long id : ids) {
-      long datasetId = id; // 람다 캡처를 위한 final 지역 복사
-      jobScheduler.enqueue(() -> embeddingService.reindexEmbedding(datasetId));
-    }
+    // 배경 잡에는 요청 스코프의 테넌트가 승계되지 않으므로 페이로드에 실어 보낸다.
+    long tenantId = TenantContext.require();
+    // syncSourceText가 이번 트랜잭션에서 처음으로 dataset_embedding 행을 INSERT 한 데이터셋이 섞여
+    // 있을 수 있다. JobRunr는 이 트랜잭션에 합류하지 않으므로 커밋 전에 enqueue하면 워커가 아직
+    // 존재하지 않는 행에 UPDATE를 시도해 0행 갱신(조용한 실패)이 될 수 있다 — 커밋 이후로 미룬다.
+    AfterCommitRunner.run(
+        () -> {
+          for (Long id : ids) {
+            long datasetId = id; // 람다 캡처를 위한 final 지역 복사
+            jobScheduler.enqueue(() -> embeddingService.reindexEmbedding(datasetId, tenantId));
+          }
+        });
 
     log.info("Dataset embedding backfill scheduled: count={}", ids.size());
     return ids.size();

@@ -7,6 +7,7 @@ import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnapshot;
@@ -33,6 +34,7 @@ public class MetricPollerService {
   private final AnomalyDetector anomalyDetector;
   private final ApplicationEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
+  private final TenantScopedRunner tenantScopedRunner;
   // 데이터셋 메트릭 수집을 위한 SQL 실행 클라이언트
   private final com.smartfirehub.pipeline.service.executor.ExecutorClient executorClient;
 
@@ -41,13 +43,23 @@ public class MetricPollerService {
 
   private static final int HISTORY_DAYS = 30;
 
+  /**
+   * 이상탐지 메트릭 폴링.
+   *
+   * <p>원 HTTP 요청이 없어 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해 테넌트별로 돈다.
+   * 순회하지 않으면 RLS 가 proactive_job·dataset·pipeline_execution 을 전부 차단해 이상탐지가
+   * 예외도 로그도 없이 무동작이 된다.
+   */
   @Scheduled(fixedDelay = 30000)
   public void poll() {
-    try {
-      pollMetrics();
-    } catch (Exception e) {
-      log.error("MetricPollerService: polling failed", e);
-    }
+    tenantScopedRunner.forEachActiveTenant(
+        tenantId -> {
+          try {
+            pollMetrics();
+          } catch (Exception e) {
+            log.error("MetricPollerService: polling failed (tenant={})", tenantId, e);
+          }
+        });
   }
 
   @SuppressWarnings("unchecked")

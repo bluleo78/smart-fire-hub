@@ -7,9 +7,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.jobrunr.jobs.lambdas.JobLambda;
 import org.jobrunr.scheduling.JobScheduler;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
@@ -23,6 +26,17 @@ class DatasetEmbeddingBackfillServiceTest {
   @Mock DatasetMetaReader metaReader;
   @Mock DatasetEmbeddingService embeddingService;
   @Mock JobScheduler jobScheduler;
+
+  @BeforeEach
+  void setTenant() {
+    // backfillAll()이 enqueue 시 TenantContext.require()로 테넌트를 뽑으므로 요청 스코프를 흉내낸다.
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
+  }
 
   @Test
   void backfillAll_모든_syncSourceText가_첫_enqueue_이전에_호출된다() {

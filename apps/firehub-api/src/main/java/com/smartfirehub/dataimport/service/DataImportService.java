@@ -13,6 +13,8 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.notification.service.NotificationService;
 import java.nio.file.Files;
@@ -30,6 +32,7 @@ import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -70,10 +73,14 @@ public class DataImportService {
   private final TransactionTemplate transactionTemplate;
   private final NotificationService notificationService;
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportPreviewResponse previewImport(Long datasetId, MultipartFile file) throws Exception {
     return previewImport(datasetId, file, ParseOptions.defaults());
   }
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportPreviewResponse previewImport(
       Long datasetId, MultipartFile file, ParseOptions parseOptions) throws Exception {
     return previewImport(datasetId, file, parseOptions, false);
@@ -84,6 +91,8 @@ public class DataImportService {
    * 행수(countRows)는 잘린 마지막 행이 열린 따옴표로 끝나면 예외를 던질 수 있고 값도 부정확하므로 계산을 건너뛴다(totalRows=-1). totalRows는
    * 미리보기 UI에서 사용되지 않으며, 실제 전체 행수는 검증/임포트 시점에 전체 파일로 확정된다.
    */
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportPreviewResponse previewImport(
       Long datasetId, MultipartFile file, ParseOptions parseOptions, boolean partial)
       throws Exception {
@@ -141,11 +150,15 @@ public class DataImportService {
     }
   }
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportValidateResponse validateImport(
       Long datasetId, MultipartFile file, List<ColumnMappingEntry> mappings) throws Exception {
     return validateImport(datasetId, file, mappings, ParseOptions.defaults());
   }
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportValidateResponse validateImport(
       Long datasetId,
       MultipartFile file,
@@ -214,6 +227,8 @@ public class DataImportService {
     }
   }
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportStartResponse importFile(
       Long datasetId,
       MultipartFile file,
@@ -235,6 +250,8 @@ public class DataImportService {
         ImportMode.APPEND);
   }
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportStartResponse importFile(
       Long datasetId,
       MultipartFile file,
@@ -257,6 +274,8 @@ public class DataImportService {
         ImportMode.APPEND);
   }
 
+  // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
+  // 여기서 감싸면 파일 전송/외부 저장이 DB 커넥션을 잡은 채로 진행된다.
   public ImportStartResponse importFile(
       Long datasetId,
       MultipartFile file,
@@ -345,24 +364,36 @@ public class DataImportService {
     String finalMappingsPath = mappingsPath;
     // Use String for importMode so Jobrunr can serialize it without enum class issues
     String importModeName = importMode.name();
+    // 배경 잡에는 요청 스코프의 테넌트가 승계되지 않으므로 페이로드에 실어 보낸다.
+    long tenantId = TenantContext.require();
 
     // Enqueue Jobrunr job
-    jobScheduler.enqueue(
+    // JobRunr StorageProvider 는 DataSource 에서 자기 커넥션을 직접 얻어(DataSourceUtils 를
+    // 거치지 않음) 이 메서드의 스프링 트랜잭션에 합류하지 않는다. 즉 방금 만든 async_job 행이 이
+    // 트랜잭션의 커밋 전에는 다른 커넥션(백그라운드 워커)에 보이지 않을 수 있는데, 워커가 커밋보다
+    // 먼저 잡을 집어가면 processImport의 asyncJobService.updateProgress(jobId, ...)가 존재하지
+    // 않는 잡을 갱신하려다 조용히 실패한다. T3 이전에는 importFile()에 트랜잭션이 없어 createJob()이
+    // 즉시 커밋됐으므로 이 경합이 없었다 — 트랜잭션 경계를 추가하며 새로 생긴 회귀이므로 커밋 이후로
+    // enqueue 를 미룬다.
+    AfterCommitRunner.run(
         () ->
-            processImport(
-                jobId,
-                datasetId,
-                filePath,
-                finalMappingsPath,
-                parseOptsPath,
-                originalFilename,
-                fileSize,
-                upperFileType,
-                userId,
-                username,
-                ipAddress,
-                userAgent,
-                importModeName));
+            jobScheduler.enqueue(
+                () ->
+                    processImport(
+                        jobId,
+                        datasetId,
+                        filePath,
+                        finalMappingsPath,
+                        parseOptsPath,
+                        originalFilename,
+                        fileSize,
+                        upperFileType,
+                        userId,
+                        username,
+                        ipAddress,
+                        userAgent,
+                        importModeName,
+                        tenantId)));
 
     return new ImportStartResponse(jobId, "PENDING");
   }
@@ -381,15 +412,21 @@ public class DataImportService {
       String username,
       String ipAddress,
       String userAgent,
-      String importModeName) {
-    // Resolve dataset name once for notifications (used in both success and failure paths)
-    String datasetNameForNotification =
-        datasetRepository.findById(datasetId).map(d -> d.name()).orElse(String.valueOf(datasetId));
-
+      String importModeName,
+      long tenantId) {
+    // 잡 스레드에는 요청 컨텍스트가 없다. RLS가 걸린 dataset/data 테이블을 읽고 쓰려면 여기서 세워야 한다.
+    // 이 메서드에 @Transactional을 붙이면 안 된다 — 본문 시작 전에 트랜잭션이 열려 이미 늦는다.
+    TenantContext.set(tenantId);
     // UPSERT/REPLACE(PK 有)가 사용하는 staging 테이블명. finally에서 성공/실패 무관하게 항상 정리한다.
     String stagingTable = null;
+    // 알림 문구용 데이터셋 이름. 조회 자체가 실패해도 알림은 나가야 하므로 id 로 초기화한다.
+    String datasetNameForNotification = String.valueOf(datasetId);
 
     try {
+      // 이 조회는 반드시 try 안에 있어야 한다 — 밖에 두면 여기서 던져진 예외가 finally 를 거치지
+      // 않아 잡 워커 스레드에 TenantContext 가 남고, 다음 잡이 남의 테넌트로 실행된다.
+      datasetNameForNotification =
+          datasetRepository.findById(datasetId).map(d -> d.name()).orElse(String.valueOf(datasetId));
       asyncJobService.updateProgress(
           jobId, "PARSING", 10, "Parsing file...", Map.of("totalRows", 0, "processedRows", 0));
 
@@ -878,6 +915,7 @@ public class DataImportService {
       } catch (Exception e) {
         log.warn("Failed to delete temp file: {}", filePath, e);
       }
+      TenantContext.clear();
     }
   }
 

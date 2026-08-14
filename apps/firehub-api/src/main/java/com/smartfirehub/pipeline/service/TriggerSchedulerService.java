@@ -46,6 +46,9 @@ public class TriggerSchedulerService {
     this.taskScheduler = scheduler;
   }
 
+  // TODO(P2-b): 이 경로는 pipeline_trigger 를 읽는다. 그 테이블에 RLS 를 걸 때 TenantScopedRunner
+  // 순회를 함께 적용해야 한다 — 안 하면 재기동 시 SCHEDULE 트리거가 하나도 재등록되지 않고
+  // 예외도 로그도 없이 조용히 죽는다.
   @PostConstruct
   public void reloadAllSchedules() {
     List<TriggerResponse> schedules = triggerRepository.findEnabledByType("SCHEDULE");

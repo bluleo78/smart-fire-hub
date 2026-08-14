@@ -5,6 +5,7 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.global.security.RequirePermission;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,6 +20,8 @@ public class DocumentChunkController {
   private final DocumentChunkRepository chunkRepository;
 
   /** datasetId의 모든 청크를 (chunkId, content)로 반환한다. 페이지네이션 없음(스켈레톤 범위). */
+  // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   @GetMapping
   @RequirePermission("dataset:read")
   public List<ChunkContentResponse> list(@PathVariable Long datasetId) {

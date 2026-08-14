@@ -43,6 +43,8 @@ public class AnalyticsDashboardService {
   private final Cache<Long, AnalyticsQueryResponse> queryResultCache =
       Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(200).build();
 
+  // RLS 가 걸린 dashboard 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public com.smartfirehub.global.dto.PageResponse<DashboardResponse> list(
       String search, Boolean sharedOnly, Long userId, int page, int size) {
     List<DashboardResponse> content =
@@ -62,6 +64,10 @@ public class AnalyticsDashboardService {
         .orElseThrow(() -> new DashboardNotFoundException("Dashboard not found after insert"));
   }
 
+  // RLS 가 걸린 dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // 참고(자기호출): addWidget/updateWidget 이 이 메서드를 this. 로 직접 호출하지만, 두 호출자 모두
+  // 이미 @Transactional(쓰기)로 열려 있어 프록시를 안 타도 무해하다(같은 트랜잭션에 합류).
+  @Transactional(readOnly = true)
   public DashboardResponse getById(Long id, Long userId) {
     List<DashboardResponse.DashboardWidgetResponse> widgets =
         widgetRepository.findByDashboardId(id);
@@ -110,6 +116,8 @@ public class AnalyticsDashboardService {
     }
   }
 
+  // RLS 가 걸린 dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public DashboardDataResponse getDashboardData(Long dashboardId, Long userId) {
     // 1. Load dashboard + widgets
     List<DashboardResponse.DashboardWidgetResponse> widgets =

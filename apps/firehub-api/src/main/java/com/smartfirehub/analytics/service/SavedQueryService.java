@@ -25,6 +25,8 @@ public class SavedQueryService {
   private final AnalyticsQueryExecutionService executionService;
 
   /** List saved queries with optional filters and pagination. */
+  // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public PageResponse<SavedQueryListResponse> list(
       String search, String folder, Boolean sharedOnly, Long userId, int page, int size) {
     List<SavedQueryListResponse> content =
@@ -52,6 +54,10 @@ public class SavedQueryService {
   }
 
   /** Get a single saved query — owner or any shared query. */
+  // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  // 참고(자기호출): executeById 가 이 메서드를 this. 로 직접 호출하지만, executeById 가 이미
+  // @Transactional(쓰기)로 열려 있어 프록시를 안 타도 무해하다(같은 트랜잭션에 합류).
+  @Transactional(readOnly = true)
   public SavedQueryResponse getById(Long id, Long userId) {
     return savedQueryRepository
         .findById(id, userId)
@@ -138,6 +144,8 @@ public class SavedQueryService {
   }
 
   /** Get distinct folder names visible to the user. */
+  // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
+  @Transactional(readOnly = true)
   public List<String> getFolders(Long userId) {
     return savedQueryRepository.findDistinctFolders(userId);
   }
