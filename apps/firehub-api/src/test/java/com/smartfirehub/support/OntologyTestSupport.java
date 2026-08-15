@@ -9,6 +9,7 @@ import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.service.OntologyService;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 온톨로지 생명주기 테스트(OntologyDeleteTest/OntologyStatusEnforcementTest/OntologyStatusTransitionTest/
 // OntologyDomainDuplicateTest) 4개 파일이 반복하던 "엔티티 1개짜리 생성 요청"과 "단일 행 정리"만 공유한다.
@@ -45,8 +46,23 @@ public final class OntologyTestSupport {
 
   // 온톨로지 단일 행 삭제. id가 null이거나 시드 기본 온톨로지(id=1)면 아무것도 하지 않는다 —
   // null 가드 누락이 이전에 잔여 행을 남겨 다른 테스트를 오염시킨 전례가 있다.
-  public static void deleteRow(DSLContext dsl, Long id) {
+  //
+  // V102 가 ontology 에 RLS 를 건 뒤로 TransactionTemplate 을 받는다. GUC(app.tenant_id)는
+  // 트랜잭션이 열릴 때만 주입되므로, 트랜잭션 밖 DELETE 는 예외 없이 조용히 0행이 되고 정리가
+  // 통째로 무력화된다 — 그러면 entity_type/relation 테이블 전체를 스캔하는 OntologyMigrationTest 가
+  // 남의 픽스처까지 세어 실패한다(실제로 그렇게 깨졌다). 삭제만 트랜잭션으로 감싸는 것이 정답이고,
+  // 테스트 클래스에 @Transactional 을 붙이는 것은 프로덕션 배선 결함을 가리므로 금지다.
+  // 이름에 "AsDefaultTenant" 를 박아 둔 이유: 본문이 기본 테넌트 GUC 로 고정돼 있다. 다른 테넌트에서
+  // 만든 픽스처에 이 헬퍼를 쓰면 RLS 가 그 행을 가려 0행 삭제가 되고, 예외 없이 잔여 행이 남아
+  // 이 헬퍼가 애초에 고치려던 오염이 그대로 재발한다. 그런 픽스처는 직접 트랜잭션을 열어 지울 것.
+  public static void deleteRowAsDefaultTenant(TransactionTemplate tx, DSLContext dsl, Long id) {
     if (id == null || id == 1L) return;
-    dsl.deleteFrom(table(name("ontology"))).where(field(name("id"), Long.class).eq(id)).execute();
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        IntegrationTestBase.DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.deleteFrom(table(name("ontology")))
+                .where(field(name("id"), Long.class).eq(id))
+                .execute());
   }
 }

@@ -9,11 +9,13 @@ import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 싱글톤(id=1) 제약 해제 후, 서로 다른 온톨로지의 타입/관계가 섞이지 않는지(WHERE ontology_id 필터)
 // 판별한다. 온톨로지 1개만으론 판별력이 없으므로 반드시 2번째 온톨로지를 생성해 검증한다.
@@ -21,16 +23,23 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
 
   @Autowired private OntologyRepository repository;
   @Autowired private DSLContext dsl;
+  @Autowired private TransactionTemplate tx;
 
   private Long createdId;
 
   @AfterEach
   void cleanup() {
     // 롤백 없음 — 이 테스트가 만든 온톨로지(id≥2)를 직접 삭제(CASCADE로 타입/관계 함께 삭제).
+    // V102 이후 ontology 는 RLS 대상이라 트랜잭션(=GUC) 안에서 지워야 한다 — 밖에서는 조용히
+    // 0행이 되고, 남은 행이 entity_type 전체를 스캔하는 OntologyMigrationTest 를 오염시킨다.
     if (createdId != null) {
-      dsl.deleteFrom(table(name("ontology")))
-          .where(field(name("id"), Long.class).eq(createdId))
-          .execute();
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("ontology")))
+                  .where(field(name("id"), Long.class).eq(createdId))
+                  .execute());
     }
   }
 

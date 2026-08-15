@@ -1,5 +1,6 @@
 package com.smartfirehub.tenant;
 
+import static java.util.Map.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
@@ -9,7 +10,13 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.document.repository.DocumentFileRepository;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.graphingest.repository.GraphIngestRepository;
+import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.job.repository.AsyncJobRepository;
+import com.smartfirehub.mapping.repository.MappingRepository;
+import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
+import com.smartfirehub.ontology.element.OntologyElementRepository;
+import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
@@ -59,6 +66,12 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   @Autowired private ApiConnectionRepository apiConnectionRepository;
   @Autowired private AsyncJobRepository asyncJobRepository;
   @Autowired private ReportTemplateRepository reportTemplateRepository;
+  @Autowired private OntologyRepository ontologyRepository;
+  @Autowired private OntologyElementRepository ontologyElementRepository;
+  @Autowired private DatasetOntologyRepository datasetOntologyRepository;
+  @Autowired private MappingRepository mappingRepository;
+  @Autowired private GraphIngestRepository graphIngestRepository;
+  @Autowired private ReviewItemRepository reviewItemRepository;
 
   private TransactionTemplate tx;
   private long tenantId;
@@ -179,19 +192,36 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
    */
   @Test
   void backgroundPathRepositoriesKeepClassLevelTransactional() {
+    // Map.of 는 최대 10쌍까지만 오버로드가 있다. P2-d 에서 온톨로지·그래프 리포지토리가 계속
+    // 추가되면서 그 한계를 넘으므로 Map.ofEntries 로 바꾼다(쌍 개수 제한 없음).
     Map<String, Object> repositories =
-        Map.of(
-            "PipelineRepository", pipelineRepository,
-            "PipelineStepRepository", pipelineStepRepository,
-            "PipelineExecutionRepository", pipelineExecutionRepository,
-            "TriggerRepository", triggerRepository,
-            "TriggerEventRepository", triggerEventRepository,
-            "ApiConnectionRepository", apiConnectionRepository,
-            "AsyncJobRepository", asyncJobRepository,
+        Map.ofEntries(
+            entry("PipelineRepository", pipelineRepository),
+            entry("PipelineStepRepository", pipelineStepRepository),
+            entry("PipelineExecutionRepository", pipelineExecutionRepository),
+            entry("TriggerRepository", triggerRepository),
+            entry("TriggerEventRepository", triggerEventRepository),
+            entry("ApiConnectionRepository", apiConnectionRepository),
+            entry("AsyncJobRepository", asyncJobRepository),
             // report_template 은 V99 로 RLS 대상이 됐는데 유일한 배경 호출자
             // (ProactiveJobAsyncRunner.executeJob)에는 트랜잭션이 없었다. 이 맵에 없었기 때문에
             // 그 결함이 이 band 를 통과했다(최종 리뷰 Critical-1).
-            "ReportTemplateRepository", reportTemplateRepository);
+            entry("ReportTemplateRepository", reportTemplateRepository),
+            // ── P2-d(Task 2): 온톨로지 코어 ──
+            // OntologyService 에는 트랜잭션 경계가 없고 MCP 툴 핸들러도 마찬가지다. V102 가 정책을
+            // 켜면 GUC 미주입으로 조회는 조용히 0행, 생성은 tenant_id NOT NULL 위반이 된다.
+            entry("OntologyRepository", ontologyRepository),
+            entry("OntologyElementRepository", ontologyElementRepository),
+            // ── P2-d(Task 3): 바인딩·매핑·적재이력 ──
+            // MappingRepository 가 특히 위험하다 — save/activate 는 서비스 레벨 트랜잭션이 있어
+            // 쓰기는 성공하는데 get 만 0행이 되어 "저장했는데 미매핑으로 보인다"로 나타난다.
+            entry("DatasetOntologyRepository", datasetOntologyRepository),
+            entry("MappingRepository", mappingRepository),
+            entry("GraphIngestRepository", graphIngestRepository),
+            // ── P2-d(Task 4): 그래프 검수 인박스 ──
+            // 호출 지점이 10곳으로 가장 넓고 파손 형태가 세 가지다(추출 중단 / 중복 검수 항목
+            // 재생성 / update 0행인데 검수자에게는 성공으로 보고).
+            entry("ReviewItemRepository", reviewItemRepository));
 
     repositories.forEach(
         (label, bean) -> {

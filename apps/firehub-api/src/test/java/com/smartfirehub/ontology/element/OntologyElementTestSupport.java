@@ -11,6 +11,7 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 요소 편집 테스트 공통 픽스처. 시드 온톨로지(id=1)를 건드리면 다른 테스트가 함께 흔들리므로
 // 테스트마다 자기 draft 온톨로지를 새로 만든다. 도메인에 nanoTime을 붙이는 이유는 살아있는
@@ -21,6 +22,10 @@ abstract class OntologyElementTestSupport extends IntegrationTestBase {
   @Autowired protected OntologyRepository ontologyRepository;
   @Autowired protected OntologyService ontologyService;
   @Autowired protected DSLContext dsl;
+
+  // V102 이후 ontology 는 RLS 대상이다 — 픽스처 정리(deleteRow)가 GUC 를 받으려면 트랜잭션이 필요하다.
+  // 하위 테스트들도 자기 온톨로지를 지울 때 이 템플릿을 그대로 쓴다.
+  @Autowired protected TransactionTemplate tx;
 
   protected long ontologyId;
 
@@ -40,7 +45,7 @@ abstract class OntologyElementTestSupport extends IntegrationTestBase {
   // 우리 픽스처 행까지 세어 오염된다. FK CASCADE로 엔티티 타입·관계도 함께 지워진다.
   @AfterEach
   void deleteFixtureOntology() {
-    OntologyTestSupport.deleteRow(dsl, ontologyId);
+    OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, ontologyId);
   }
 
   protected long typeId(String type) {

@@ -14,6 +14,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 // 온톨로지 DB 읽기/쓰기 — id로 지정한 온톨로지를 OntologyResponse 계약으로 조립한다(다중 온톨로지 지원).
 // 무인자 오버로드(findOntology/currentSchemaVersion)는 기존 단일 온톨로지(id=1) 호출부와의
@@ -23,6 +24,10 @@ import org.springframework.stereotype.Repository;
 // 요소 단위 편집(OntologyElementRepository)으로 대체되어 삭제됐다.
 @Repository
 @RequiredArgsConstructor
+// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 OntologyService 와 MCP 툴 핸들러는 트랜잭션
+// 경계를 만들지 않는다. 여기서 열지 않으면 온톨로지 조회는 조용히 0행, 쓰기는 tenant_id NOT NULL
+// 위반이 된다. 지우지 말 것.
+@Transactional
 public class OntologyRepository {
 
   private final DSLContext dsl;

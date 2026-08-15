@@ -11,11 +11,13 @@ import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.OntologyTestSupport;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 삭제 규칙 검증 — 거부 사유는 "참조 중"과 "기본 온톨로지"뿐이고 상태는 사유가 아니다.
 class OntologyDeleteTest extends IntegrationTestBase {
@@ -27,15 +29,25 @@ class OntologyDeleteTest extends IntegrationTestBase {
   private Long createdId;
   private Long boundDatasetId;
 
+  // V101 이후 dataset_ontology/dataset_mapping 의 tenant_id 는 NOT NULL 이고 DEFAULT 가
+  // GUC app.tenant_id 에서 채워진다. GUC 는 트랜잭션 시작에서만 주입되므로 raw dsl 픽스처는
+  // 반드시 트랜잭션 안에서 돌려야 한다(클래스 레벨 @Transactional 은 금지 — 배선 결함을 가린다).
+  @Autowired private TransactionTemplate tx;
+
   @AfterEach
   void cleanup() {
     if (boundDatasetId != null) {
-      dsl.deleteFrom(table(name("dataset_ontology")))
-          .where(field(name("dataset_id"), Long.class).eq(boundDatasetId))
-          .execute();
+      final Long bound = boundDatasetId;
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("dataset_ontology")))
+                  .where(field(name("dataset_id"), Long.class).eq(bound))
+                  .execute());
       boundDatasetId = null;
     }
-    OntologyTestSupport.deleteRow(dsl, createdId);
+    OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, createdId);
     createdId = null;
   }
 
@@ -47,10 +59,14 @@ class OntologyDeleteTest extends IntegrationTestBase {
   // dataset_ontology는 FK 없이 dataset_id를 저장하므로(감사 테이블 패턴) 임의 id로 바인딩해도 된다.
   private void bindTo(long ontologyId, long datasetId) {
     boundDatasetId = datasetId;
-    dsl.insertInto(table(name("dataset_ontology")))
-        .set(field(name("dataset_id"), Long.class), datasetId)
-        .set(field(name("ontology_id"), Long.class), ontologyId)
-        .execute();
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("dataset_ontology")))
+                .set(field(name("dataset_id"), Long.class), datasetId)
+                .set(field(name("ontology_id"), Long.class), ontologyId)
+                .execute());
   }
 
   @Test
@@ -96,20 +112,30 @@ class OntologyDeleteTest extends IntegrationTestBase {
     long id = given("삭제 테스트 바인딩+매핑", "active");
     long datasetId = 999_002L;
     bindTo(id, datasetId);
-    dsl.insertInto(table(name("dataset_mapping")))
-        .set(field(name("dataset_id"), Long.class), datasetId)
-        .set(field(name("ontology_id"), Long.class), id)
-        .set(field(name("spec"), org.jooq.JSONB.class), org.jooq.JSONB.valueOf("{\"entities\":[],\"relations\":[]}"))
-        .execute();
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("dataset_mapping")))
+                .set(field(name("dataset_id"), Long.class), datasetId)
+                .set(field(name("ontology_id"), Long.class), id)
+                .set(
+                    field(name("spec"), org.jooq.JSONB.class),
+                    org.jooq.JSONB.valueOf("{\"entities\":[],\"relations\":[]}"))
+                .execute());
 
     try {
       assertThatThrownBy(() -> service.deleteOntology(id))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("1개 데이터셋이 사용 중입니다");
     } finally {
-      dsl.deleteFrom(table(name("dataset_mapping")))
-          .where(field(name("dataset_id"), Long.class).eq(datasetId))
-          .execute();
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("dataset_mapping")))
+                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                  .execute());
     }
   }
 

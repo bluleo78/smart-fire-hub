@@ -16,6 +16,7 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 상태 전이 규칙 검증. 허용 3종 / 거부 4종을 전수로 고정한다.
 // 실 DB를 쓰는 이유: 전이는 findStatusById → 규칙 판정 → updateStatus 의 왕복이라 mock으로는
@@ -27,6 +28,9 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
+  // V102 이후 ontology 는 RLS 대상이다 — deleteRow 가 GUC 를 받으려면 트랜잭션 템플릿이 필요하다.
+  @Autowired private TransactionTemplate tx;
+
   private Long createdId;
 
   // 삭제 서비스(Task 5)에 의존하지 않도록 DSL로 직접 지운다 — 태스크 간 순서 결합을 만들지 않는다.
@@ -36,8 +40,8 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
 
   @AfterEach
   void cleanup() {
-    OntologyTestSupport.deleteRow(dsl, createdId);
-    OntologyTestSupport.deleteRow(dsl, successorId);
+    OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, createdId);
+    OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, successorId);
     createdId = null;
     successorId = null;
   }

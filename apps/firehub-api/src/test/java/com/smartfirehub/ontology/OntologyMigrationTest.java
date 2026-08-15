@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -13,13 +14,25 @@ import org.jooq.Field;
 import org.jooq.Table;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // V71 시드 검증 — CORE_ONTOLOGY 원본이 순서·문자열 그대로 적재됐는지 확인한다(바이트 동일성 보증의 DB 측 근거).
 // V72 시드(엔티티 데이터 프로퍼티) 검증도 함께 포함한다.
+//
+// V102 로 온톨로지 8테이블에 RLS 가 걸린 뒤로는, 이 테스트가 직접 쏘는 raw dsl 조회도 정책의 대상이다.
+// GUC 는 트랜잭션이 열릴 때만 주입되므로 트랜잭션 밖 SELECT 는 "조용히 0행"이 된다. 그래서 raw 조회만
+// runInTenantTransaction 으로 감싼다 — 클래스 레벨 @Transactional 은 쓰지 않는다(프로덕션 배선 결함을
+// 테스트가 대신 공급해 영구히 가린다).
 class OntologyMigrationTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
   @Autowired private OntologyRepository ontologyRepository;
+  @Autowired private TransactionTemplate tx;
+
+  /** 시드 행은 기본 테넌트(1) 소유다 — 그 컨텍스트의 트랜잭션 안에서 읽어야 정책을 통과한다. */
+  private <T> T readAsDefaultTenant(java.util.function.Supplier<T> query) {
+    return TenantRlsTestSupport.runInTenantTransaction(tx, DEFAULT_TEST_TENANT_ID, query);
+  }
 
   private static final Table<?> ET = table(name("ontology_entity_type"));
   private static final Field<String> ET_TYPE = field(name("ontology_entity_type", "type"), String.class);
@@ -34,18 +47,22 @@ class OntologyMigrationTest extends IntegrationTestBase {
 
   @Test
   void 시드_엔티티는_원본_순서로_6개_적재된다() {
-    List<String> types = dsl.select(ET_TYPE).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_TYPE));
+    List<String> types =
+        readAsDefaultTenant(() -> dsl.select(ET_TYPE).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_TYPE)));
     assertThat(types).containsExactly("Incident", "Building", "Cause", "Damage", "Equipment", "Regulation");
     // resolution 정책 6종 전부 순서대로 검증한다. resolution 은 추출 프롬프트에 실리지 않아
     // "프롬프트 바이트 동일" 회귀가 커버하지 못하므로(오직 semantic-resolver 병합 정책에만 영향),
     // 여기서 Incident/Damage=exact, 나머지=embedding 을 명시적으로 단언해 시드 오류를 잡는다.
-    List<String> resolutions = dsl.select(ET_RES).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_RES));
+    List<String> resolutions =
+        readAsDefaultTenant(() -> dsl.select(ET_RES).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_RES)));
     assertThat(resolutions).containsExactly("exact", "embedding", "embedding", "exact", "embedding", "embedding");
   }
 
   @Test
   void 시드_관계는_원본_순서로_6개_적재된다() {
-    List<String> rels = dsl.select(REL_RELATION).from(REL).orderBy(REL_ORDER).fetch(r -> r.get(REL_RELATION));
+    List<String> rels =
+        readAsDefaultTenant(
+            () -> dsl.select(REL_RELATION).from(REL).orderBy(REL_ORDER).fetch(r -> r.get(REL_RELATION)));
     assertThat(rels).containsExactly(
         "OCCURRED_AT", "CAUSED_BY", "RESULTED_IN", "HAS_EQUIPMENT", "VIOLATED", "GOVERNED_BY");
   }
@@ -80,15 +97,18 @@ class OntologyMigrationTest extends IntegrationTestBase {
   @Test
   void V80_백필은_시드_관계를_올바른_타입_id_쌍으로_옮긴다() {
     Map<String, Long> idByType =
-        dsl.select(ET_TYPE, ET_ID).from(ET).fetch().intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID));
+        readAsDefaultTenant(
+            () -> dsl.select(ET_TYPE, ET_ID).from(ET).fetch().intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID)));
 
     List<String> actual =
-        dsl.select(REL_SUBJ_ID, REL_RELATION, REL_OBJ_ID)
-            .from(REL)
-            .orderBy(REL_ORDER)
-            .fetch(r -> nameOf(idByType, r.get(REL_SUBJ_ID))
-                + "|" + r.get(REL_RELATION)
-                + "|" + nameOf(idByType, r.get(REL_OBJ_ID)));
+        readAsDefaultTenant(
+            () ->
+                dsl.select(REL_SUBJ_ID, REL_RELATION, REL_OBJ_ID)
+                    .from(REL)
+                    .orderBy(REL_ORDER)
+                    .fetch(r -> nameOf(idByType, r.get(REL_SUBJ_ID))
+                        + "|" + r.get(REL_RELATION)
+                        + "|" + nameOf(idByType, r.get(REL_OBJ_ID))));
 
     assertThat(actual).containsExactly(
         "Incident|OCCURRED_AT|Building",

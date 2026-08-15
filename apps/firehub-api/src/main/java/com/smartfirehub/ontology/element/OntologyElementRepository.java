@@ -17,11 +17,16 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 // 요소 단위 온톨로지 쓰기 — 전체 스키마를 왕복시키던 OntologyRepository.updateOntology(S2 Task 7에서
 // 삭제됨)와 달리 행 하나만 건드린다. 읽기는 OntologyRepository.findById를 그대로 쓴다(중복 조립 회피).
 @Repository
 @RequiredArgsConstructor
+// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 OntologyElementService 와 MCP 툴 핸들러는
+// 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 요소 조회는 조용히 0행, 요소 쓰기는 tenant_id
+// NOT NULL 위반이 된다. 지우지 말 것.
+@Transactional
 public class OntologyElementRepository {
 
   private final DSLContext dsl;

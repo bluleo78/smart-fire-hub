@@ -16,12 +16,14 @@ import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.OntologyTestSupport;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Optional;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 상태 강제 검증 — 목록 필터가 아니라 bind()가 관문임을 고정한다.
 // 이 테스트가 없으면 "UI에서 안 보이니 괜찮다"는 소프트 보장으로 되돌아간다.
@@ -34,18 +36,26 @@ class OntologyStatusEnforcementTest extends IntegrationTestBase {
   @Autowired private DatasetOntologyService bindingService;
   @Autowired private MappingService mappingService;
   @Autowired private DSLContext dsl;
+  @Autowired private TransactionTemplate tx;
 
   private Long createdId;
 
   @AfterEach
   void cleanup() {
-    dsl.deleteFrom(table(name("dataset_mapping")))
-        .where(field(name("dataset_id"), Long.class).eq(TEST_DATASET_ID))
-        .execute();
-    dsl.deleteFrom(table(name("dataset_ontology")))
-        .where(field(name("dataset_id"), Long.class).eq(TEST_DATASET_ID))
-        .execute();
-    OntologyTestSupport.deleteRow(dsl, createdId);
+    // V102 이후 세 테이블 모두 RLS 대상이다 — 트랜잭션(=GUC) 밖 DELETE 는 조용히 0행이 되고
+    // 잔여 행이 다음 테스트를 오염시킨다. 정리만 감싼다(클래스 레벨 @Transactional 은 금지).
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          dsl.deleteFrom(table(name("dataset_mapping")))
+              .where(field(name("dataset_id"), Long.class).eq(TEST_DATASET_ID))
+              .execute();
+          dsl.deleteFrom(table(name("dataset_ontology")))
+              .where(field(name("dataset_id"), Long.class).eq(TEST_DATASET_ID))
+              .execute();
+        });
+    OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, createdId);
     createdId = null;
   }
 

@@ -6,21 +6,33 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.Optional;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // V78 dataset_mapping 저장/조회/상태변경 검증. dataset_id는 FK 없음(가짜 id 사용), ontology_id는 시드 id=1.
+//
+// V102 로 dataset_mapping 에 RLS 가 걸린 뒤로는 이 테스트가 직접 쏘는 raw dsl 조회·삭제도 정책의 대상이다.
+// GUC 는 트랜잭션이 열릴 때만 주입되므로 트랜잭션 밖에서는 조용히 0행이 된다. 검증 조회와 정리만
+// 트랜잭션으로 감싼다 — mappingRepository 호출은 그 자신의 클래스 레벨 @Transactional 이 도는지가
+// 검증 대상이므로 감싸지 않는다.
 class MappingRepositoryTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
   @Autowired private MappingRepository mappingRepository;
+  @Autowired private TransactionTemplate tx;
 
   private void cleanup(long datasetId) {
-    dsl.deleteFrom(table(name("dataset_mapping")))
-        .where(field(name("dataset_id"), Long.class).eq(datasetId))
-        .execute();
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.deleteFrom(table(name("dataset_mapping")))
+                .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                .execute());
   }
 
   @Test
@@ -46,8 +58,12 @@ class MappingRepositoryTest extends IntegrationTestBase {
     mappingRepository.upsert(datasetId, 1L, "{\"entities\":[],\"relations\":[]}", "draft", 42L);
     mappingRepository.upsert(datasetId, 1L, "{\"entities\":[{\"entityType\":\"X\"}],\"relations\":[]}", "draft", 43L);
     try {
-      int rows = dsl.selectCount().from(table(name("dataset_mapping")))
-          .where(field(name("dataset_id"), Long.class).eq(datasetId)).fetchOne(0, int.class);
+      int rows =
+          TenantRlsTestSupport.runInTenantTransaction(
+              tx,
+              DEFAULT_TEST_TENANT_ID,
+              () -> dsl.selectCount().from(table(name("dataset_mapping")))
+                  .where(field(name("dataset_id"), Long.class).eq(datasetId)).fetchOne(0, int.class));
       assertThat(rows).isEqualTo(1); // UNIQUE(dataset_id)
       assertThat(mappingRepository.findByDataset(datasetId).get().specJson().replaceAll("\\s", ""))
           .contains("\"entityType\":\"X\"");

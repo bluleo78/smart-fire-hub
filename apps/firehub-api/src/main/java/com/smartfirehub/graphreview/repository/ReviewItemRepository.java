@@ -15,6 +15,7 @@ import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * graph_review_item 읽기/쓰기 — 범용 AI 검수 인박스.
@@ -24,6 +25,11 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 @RequiredArgsConstructor
+// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 ReviewItemService(evidence 제외)와 MCP 추출
+// 툴은 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 세 갈래로 깨진다 — insertPending*: tenant_id
+// NOT NULL 위반으로 추출 중단, lookup*: 0행이라 승인 항목이 중복 재생성, updateStatus: 0행인데
+// 검수자에게는 성공으로 보고. 지우지 말 것.
+@Transactional
 public class ReviewItemRepository {
 
   private final DSLContext dsl;
@@ -41,6 +47,10 @@ public class ReviewItemRepository {
   private static final Field<Long> DECIDED_BY = field(name("graph_review_item", "decided_by"), Long.class);
   private static final Field<LocalDateTime> DECIDED_AT = field(name("graph_review_item", "decided_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> CREATED_AT = field(name("graph_review_item", "created_at"), LocalDateTime.class);
+  // V101 에서 uq_graph_review_item 이 (tenant_id, item_type, dedupe_key) 로 접혔다.
+  // ON CONFLICT 추론 대상을 새 인덱스와 맞추지 않으면 dedupe 가 런타임 오류로 터진다.
+  // 값은 컬럼 DEFAULT(GUC app.tenant_id)가 채우므로 INSERT 에서는 세팅하지 않는다.
+  private static final Field<Long> TENANT_ID = field(name("graph_review_item", "tenant_id"), Long.class);
 
   /** pending 항목을 upsert 등록한다. (item_type, dedupe_key)가 이미 있으면 무시한다(재적재 중복 방지). */
   public void upsertPending(
@@ -55,7 +65,7 @@ public class ReviewItemRepository {
         .set(REASON, reason)
         .set(PAYLOAD, JSONB.valueOf(payloadJson))
         .set(DEDUPE_KEY, dedupeKey)
-        .onConflict(ITEM_TYPE, DEDUPE_KEY)
+        .onConflict(TENANT_ID, ITEM_TYPE, DEDUPE_KEY)
         .doNothing()
         .execute();
   }

@@ -39,8 +39,14 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
 
   @BeforeEach
   void setUpAuth() {
+    // tenantId 를 반드시 채운다. null 이면 JwtAuthenticationFilter 가 TenantContext.set(null) 로
+    // IntegrationTestBase 가 세워 둔 테넌트를 지워 버리고, V101 의 tenant_id NOT NULL 위반이
+    // DataIntegrityViolationException → 409 로 새어나간다(테넌트 미선택 토큰을 흉내 내는 목이었다).
+    // 이 테스트가 검증하려는 것은 테넌트 미선택이 아니라 요소 CRUD 이므로 선택된 토큰을 흉내 낸다.
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(
+            Optional.of(
+                new JwtTokenProvider.AccessTokenPrincipal(1L, DEFAULT_TEST_TENANT_ID)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
   }
 
@@ -77,7 +83,7 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("이미 같은 도메인의 온톨로지가 있습니다: " + otherDomain);
     } finally {
-      OntologyTestSupport.deleteRow(dsl, otherId);
+      OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, otherId);
     }
   }
 

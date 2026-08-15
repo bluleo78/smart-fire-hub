@@ -13,6 +13,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * dataset_graph_ingest 읽기/쓰기 리포지토리.
@@ -22,6 +23,10 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 @RequiredArgsConstructor
+// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 GraphIngestService(record/history/findStale)는
+// 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 record 는 tenant_id NOT NULL 위반, findStale 은
+// 조용히 0행 — 즉 staleness 감지가 에러 없이 영원히 발화하지 않는다. 지우지 말 것.
+@Transactional
 public class GraphIngestRepository {
 
   private final DSLContext dsl;

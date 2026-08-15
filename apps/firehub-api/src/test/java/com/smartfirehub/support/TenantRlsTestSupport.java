@@ -1,6 +1,7 @@
 package com.smartfirehub.support;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
@@ -10,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
 import org.jooq.Table;
+import org.springframework.dao.DataAccessException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 // RLS/TenantContext 를 다루는 테스트(RlsIsolationTest/TenantContextGucTest/
@@ -143,9 +145,11 @@ public final class TenantRlsTestSupport {
    * 형태의 단언이 결함을 통과시킨 전례가 있다. 소유 테넌트에서 실제로 보이는 것을 함께 확인해야
    * 단언이 의미를 갖는다. DEFAULT 가 GUC 에서 채워졌는지도 같이 본다.
    *
-   * <p>PK 는 {@code id} 로 고정한다 — 현재 이 헬퍼로 검증하는 테이블은 전부 서로게이트 {@code id}
-   * PK 다. {@code dataset_id} 가 PK 인 테이블(dataset_embedding·file_dataset_config)을 실제로
-   * 검증하게 되면 그때 파라미터를 추가한다.
+   * <p>PK 컬럼 기본값은 {@code id} 다 — 대부분의 대상 테이블이 서로게이트 {@code id} PK 를 갖는다.
+   * 그렇지 않은 테이블({@code dataset_ontology} 처럼 {@code dataset_id} 로 행을 식별하는 경우)은
+   * 아래 오버로드로 식별 컬럼을 넘긴다. 그래야 그 테이블도 "소유 테넌트에서 보인다 + 남에게는 안
+   * 보인다 + tenant_id DEFAULT 가 GUC 에서 채워졌다" 세 다리를 똑같이 검증받는다(직접 만든 단방향
+   * 카운트로 대체하면 마지막 다리가 빠진다).
    *
    * @param insertReturningPk 소유 테넌트 컨텍스트 안에서 행을 만들고 PK 를 반환한다
    */
@@ -156,8 +160,23 @@ public final class TenantRlsTestSupport {
       long otherTenant,
       String tableName,
       Supplier<Long> insertReturningPk) {
-    final String pkColumn = "id";
+    assertTwoSidedIsolation(tx, dsl, ownerTenant, otherTenant, tableName, "id", insertReturningPk);
+  }
 
+  /**
+   * 위와 동일하되 행을 식별할 컬럼을 지정한다(서로게이트 {@code id} PK 가 없는 테이블용).
+   *
+   * @param pkColumn 행을 유일하게 식별하는 컬럼 이름. {@code insertReturningPk} 가 반환하는 값과
+   *     같은 컬럼이어야 한다.
+   */
+  public static void assertTwoSidedIsolation(
+      TransactionTemplate tx,
+      DSLContext dsl,
+      long ownerTenant,
+      long otherTenant,
+      String tableName,
+      String pkColumn,
+      Supplier<Long> insertReturningPk) {
     Long pk = runInTenantTransaction(tx, ownerTenant, insertReturningPk);
     assertThat(pk).as("%s: 픽스처가 행을 만들지 못했다", tableName).isNotNull();
 
@@ -198,6 +217,72 @@ public final class TenantRlsTestSupport {
     dsl.execute("delete from user_role where tenant_id = ?", tenantId);
     dsl.execute("delete from report_template where tenant_id = ?", tenantId);
     dsl.execute("delete from role where tenant_id = ?", tenantId);
+  }
+
+  /**
+   * 온톨로지·그래프 8테이블(P2-d)의 테넌트 행을 FK 순서대로 지운다. {@link #deleteRbacCascade} 와
+   * 같은 계약이다 — 호출자가 대상 테넌트 컨텍스트 트랜잭션 안에서 부른다.
+   *
+   * <p>RLS 가 이미 현재 테넌트 행만 보여 주지만 {@code where tenant_id = ?} 를 명시한다. V102 는
+   * FORCE RLS 를 쓰지 않으므로 테이블 소유 롤({@code app})로 접속하면 정책이 통째로 우회되고,
+   * 그때 WHERE 없는 DELETE 는 공유 테스트 DB 의 V71/V72/V80 시드까지 지워 무관한 테스트를 전부
+   * 무너뜨린다. WHERE 는 그 사고에 대한 안전장치다.
+   */
+  public static void deleteOntologyGraphCascade(DSLContext dsl, long tenantId) {
+    // ontology 를 참조하는 자식부터 지운다(ON DELETE CASCADE 가 있어도 명시적으로 지워야
+    // 정책이 자식까지 스코프하는지가 정리 단계에서 드러난다).
+    dsl.execute("delete from ontology_relation where tenant_id = ?", tenantId);
+    dsl.execute("delete from ontology_entity_property where tenant_id = ?", tenantId);
+    dsl.execute("delete from ontology_entity_type where tenant_id = ?", tenantId);
+    dsl.execute("delete from dataset_ontology where tenant_id = ?", tenantId);
+    dsl.execute("delete from dataset_mapping where tenant_id = ?", tenantId);
+    dsl.execute("delete from dataset_graph_ingest where tenant_id = ?", tenantId);
+    dsl.execute("delete from graph_review_item where tenant_id = ?", tenantId);
+    dsl.execute("delete from ontology where tenant_id = ?", tenantId);
+  }
+
+  /**
+   * 테넌트 컨텍스트가 비어 있으면 자기 행조차 보이지 않는지(fail-closed) 단언한다.
+   *
+   * <p>공유 테스트 DB 라 전체 카운트로는 단언할 수 없다(다른 세션이 동시에 쓴다). 소유 테넌트에서
+   * 방금 만든 행 하나가 컨텍스트 없이도 보이는지로 확인한다. 정책이 fail-open 이면 여기서 걸린다.
+   *
+   * @param insertReturningPk 소유 테넌트 컨텍스트 안에서 행을 만들고 {@code id} 를 반환한다
+   */
+  public static void assertFailsClosedWithoutContext(
+      TransactionTemplate tx,
+      DSLContext dsl,
+      long ownerTenant,
+      String tableName,
+      Supplier<Long> insertReturningPk) {
+    Long pk = runInTenantTransaction(tx, ownerTenant, insertReturningPk);
+    assertThat(pk).as("%s: 픽스처가 행을 만들지 못했다", tableName).isNotNull();
+
+    // tenantId=null 은 "컨텍스트가 빈 상태" 재현이다.
+    Boolean visible =
+        runInTenantTransaction(tx, null, () -> rowExists(dsl, tableName, "id", pk));
+
+    assertThat(visible)
+        .as("%s: 테넌트 컨텍스트 없이 행이 보이면 fail-open 이다", tableName)
+        .isFalse();
+  }
+
+  /**
+   * 다른 테넌트 id 를 명시한 INSERT 를 정책의 WITH CHECK 가 거부하는지 단언한다.
+   *
+   * <p>WITH CHECK 가 없으면 격리가 읽기에만 걸린 상태가 된다 — 한 테넌트가 남의 테넌트에 행을 심을
+   * 수 있다. 삽입 SQL 은 테이블마다 다르므로 호출자가 람다로 넘긴다(헬퍼는 트랜잭션·단언만 소유).
+   *
+   * @param crossTenantInsert {@code actingTenant} 컨텍스트 안에서 남의 tenant_id 로 INSERT 를 시도
+   */
+  public static void assertCrossTenantInsertRejected(
+      TransactionTemplate tx, long actingTenant, String tableName, Runnable crossTenantInsert) {
+    Throwable thrown =
+        catchThrowable(() -> runInTenantTransaction(tx, actingTenant, crossTenantInsert));
+
+    assertThat(thrown)
+        .as("%s: 다른 테넌트 id 로 INSERT 가 통과하면 WITH CHECK 가 없는 것이다", tableName)
+        .isInstanceOf(DataAccessException.class);
   }
 
   /** 현재 테넌트 컨텍스트에서 해당 행이 보이는지 확인한다(RLS 적용 결과). */

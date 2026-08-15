@@ -140,7 +140,7 @@ class RelationElementTest extends OntologyElementTestSupport {
           .isInstanceOf(OntologyElementNotFoundException.class)
           .hasMessageContaining("존재하지 않는 엔티티 타입입니다");
     } finally {
-      OntologyTestSupport.deleteRow(dsl, otherOntologyId);
+      OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, otherOntologyId);
     }
   }
 
@@ -160,7 +160,7 @@ class RelationElementTest extends OntologyElementTestSupport {
           .isInstanceOf(OntologyElementNotFoundException.class)
           .hasMessageContaining("존재하지 않는 엔티티 타입입니다");
     } finally {
-      OntologyTestSupport.deleteRow(dsl, otherOntologyId);
+      OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, otherOntologyId);
     }
   }
 
@@ -234,7 +234,7 @@ class RelationElementTest extends OntologyElementTestSupport {
           .isInstanceOf(OntologyElementNotFoundException.class)
           .hasMessageContaining("존재하지 않는 관계입니다");
     } finally {
-      OntologyTestSupport.deleteRow(dsl, otherOntologyId);
+      OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, otherOntologyId);
     }
   }
 
@@ -253,7 +253,7 @@ class RelationElementTest extends OntologyElementTestSupport {
           .isInstanceOf(OntologyElementNotFoundException.class)
           .hasMessageContaining("존재하지 않는 관계입니다");
     } finally {
-      OntologyTestSupport.deleteRow(dsl, otherOntologyId);
+      OntologyTestSupport.deleteRowAsDefaultTenant(tx, dsl, otherOntologyId);
     }
   }
 }

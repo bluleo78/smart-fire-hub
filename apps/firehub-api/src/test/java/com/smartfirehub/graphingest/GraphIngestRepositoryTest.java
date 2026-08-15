@@ -7,24 +7,34 @@ import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.graphingest.repository.GraphIngestRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** GraphIngestRepository 통합 테스트 — 실제 Postgres(smartfirehub_test) 대상. */
 class GraphIngestRepositoryTest extends IntegrationTestBase {
 
   @Autowired private GraphIngestRepository repo;
   @Autowired private DSLContext dsl;
+  @Autowired private TransactionTemplate tx;
 
   // IntegrationTestBase 는 롤백하지 않고 커밋하므로, 테스트 네임스페이스(dataset_id >= 9000)를
   // 매 테스트 전 정리해 재실행 시 누적 행으로 인한 실패(hasSize 등)를 방지한다.
+  //
+  // V102 이후 dataset_graph_ingest 는 RLS 대상이다 — 트랜잭션(=GUC) 밖 DELETE 는 조용히 0행이 되어
+  // 정리가 무력화되고, 다음 실행에서 hasSize(2) 가 깨진다. 정리만 감싼다.
   @BeforeEach
   void cleanupTestNamespace() {
-    dsl.deleteFrom(table(name("dataset_graph_ingest")))
-        .where(field(name("dataset_id"), Long.class).ge(9000L))
-        .execute();
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.deleteFrom(table(name("dataset_graph_ingest")))
+                .where(field(name("dataset_id"), Long.class).ge(9000L))
+                .execute());
   }
 
   @Test

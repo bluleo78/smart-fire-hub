@@ -6,15 +6,24 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // V77 마이그레이션이 dataset_ontology 테이블과 ontology IDENTITY를 정상 생성했는지 확인한다.
 class DatasetOntologyRepositoryTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
   @Autowired private DatasetOntologyRepository bindingRepository;
+
+  // V101 이후 dataset_ontology/ontology 의 tenant_id 는 NOT NULL 이고 DEFAULT 가 GUC
+  // app.tenant_id 에서 채워진다. GUC 는 트랜잭션 시작에서만 주입되므로, 리포지토리를 거치지 않는
+  // raw dsl 픽스처·정리 쿼리는 트랜잭션 안에서 돌려야 한다. 반대로 bindingRepository 호출은
+  // 리포지토리 자신의 클래스 레벨 @Transactional 이 경계를 열므로 감싸지 않는다 —
+  // 그 배선이 살아 있는지가 이 테스트가 증명하는 것이다.
+  @Autowired private TransactionTemplate tx;
 
   @Test
   void 바인딩_저장후_조회된다() {
@@ -23,9 +32,13 @@ class DatasetOntologyRepositoryTest extends IntegrationTestBase {
     try {
       assertThat(bindingRepository.findOntologyIdByDataset(datasetId)).contains(1L);
     } finally {
-      dsl.deleteFrom(table(name("dataset_ontology")))
-          .where(field(name("dataset_id"), Long.class).eq(datasetId))
-          .execute();
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("dataset_ontology")))
+                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                  .execute());
     }
   }
 
@@ -36,15 +49,23 @@ class DatasetOntologyRepositoryTest extends IntegrationTestBase {
     bindingRepository.bind(datasetId, 1L, 43L); // 같은 온톨로지 재바인딩(UPSERT 경로).
     try {
       assertThat(bindingRepository.findOntologyIdByDataset(datasetId)).contains(1L);
-      int rows =
-          dsl.selectCount().from(table(name("dataset_ontology")))
-              .where(field(name("dataset_id"), Long.class).eq(datasetId))
-              .fetchOne(0, int.class);
+      Integer rows =
+          TenantRlsTestSupport.runInTenantTransaction(
+              tx,
+              DEFAULT_TEST_TENANT_ID,
+              () ->
+                  dsl.selectCount().from(table(name("dataset_ontology")))
+                      .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                      .fetchOne(0, int.class));
       assertThat(rows).isEqualTo(1); // UNIQUE(dataset_id) — 중복 행 없음.
     } finally {
-      dsl.deleteFrom(table(name("dataset_ontology")))
-          .where(field(name("dataset_id"), Long.class).eq(datasetId))
-          .execute();
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("dataset_ontology")))
+                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                  .execute());
     }
   }
 
@@ -57,22 +78,34 @@ class DatasetOntologyRepositoryTest extends IntegrationTestBase {
   void V77_dataset_ontology_행을_저장하고_읽을수있다() {
     // 테이블 존재 + 컬럼 계약을 실제 삽입/조회 왕복으로 검증한다(항상-참 count 대신 의미 있는 단언).
     long datasetId = 998877L;
-    dsl.insertInto(table(name("dataset_ontology")))
-        .set(field(name("dataset_id"), Long.class), datasetId)
-        .set(field(name("ontology_id"), Long.class), 1L)
-        .set(field(name("bound_by"), Long.class), 42L)
-        .execute();
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("dataset_ontology")))
+                .set(field(name("dataset_id"), Long.class), datasetId)
+                .set(field(name("ontology_id"), Long.class), 1L)
+                .set(field(name("bound_by"), Long.class), 42L)
+                .execute());
     try {
       Long readOntologyId =
-          dsl.select(field(name("ontology_id"), Long.class))
-              .from(table(name("dataset_ontology")))
-              .where(field(name("dataset_id"), Long.class).eq(datasetId))
-              .fetchOne(0, Long.class);
+          TenantRlsTestSupport.runInTenantTransaction(
+              tx,
+              DEFAULT_TEST_TENANT_ID,
+              () ->
+                  dsl.select(field(name("ontology_id"), Long.class))
+                      .from(table(name("dataset_ontology")))
+                      .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                      .fetchOne(0, Long.class));
       assertThat(readOntologyId).isEqualTo(1L);
     } finally {
-      dsl.deleteFrom(table(name("dataset_ontology")))
-          .where(field(name("dataset_id"), Long.class).eq(datasetId))
-          .execute();
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("dataset_ontology")))
+                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                  .execute());
     }
   }
 
@@ -80,20 +113,28 @@ class DatasetOntologyRepositoryTest extends IntegrationTestBase {
   void 신규_온톨로지_INSERT시_id가_자동발급된다() {
     // id를 지정하지 않고 INSERT하면 IDENTITY(START 2)로 2 이상이 발급되어야 한다.
     Long newId =
-        dsl.insertInto(table(name("ontology")))
-            .set(field(name("domain"), String.class), "V77_IDENTITY_PROBE")
-            .set(field(name("schema_version"), Integer.class), 1)
-            .returning(field(name("id"), Long.class))
-            .fetchOne()
-            .get(field(name("id"), Long.class));
+        TenantRlsTestSupport.runInTenantTransaction(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                dsl.insertInto(table(name("ontology")))
+                    .set(field(name("domain"), String.class), "V77_IDENTITY_PROBE")
+                    .set(field(name("schema_version"), Integer.class), 1)
+                    .returning(field(name("id"), Long.class))
+                    .fetchOne()
+                    .get(field(name("id"), Long.class)));
     try {
       assertThat(newId).isGreaterThanOrEqualTo(2L);
     } finally {
       // 정리: 이 테스트가 만든 온톨로지 삭제(롤백 없음). 단언 실패 시에도 반드시 삭제되어야
       // 이후 재실행 시 domain UNIQUE 제약 위반(고아 행)이 발생하지 않는다.
-      dsl.deleteFrom(table(name("ontology")))
-          .where(field(name("id"), Long.class).eq(newId))
-          .execute();
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("ontology")))
+                  .where(field(name("id"), Long.class).eq(newId))
+                  .execute());
     }
   }
 }
