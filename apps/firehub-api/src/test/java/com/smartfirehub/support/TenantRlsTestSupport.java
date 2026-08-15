@@ -185,6 +185,21 @@ public final class TenantRlsTestSupport {
         .isEqualTo(ownerTenant);
   }
 
+  /**
+   * 테넌트의 RBAC 관련 행을 FK 순서대로 지운다({@code role_permission}/{@code user_role}/
+   * {@code report_template} → {@code role}). role 을 참조하는 자식부터 지워야 role 삭제가 FK 에
+   * 걸리지 않는다. 세 개의 RBAC 테스트가 각자 복붙하던 것을 모았다 — 특정 테스트가 그중 일부
+   * 테이블에 행을 만들지 않았어도, 없는 행을 지우는 DELETE 는 0행으로 끝나 안전하다.
+   *
+   * <p>호출자가 대상 테넌트 컨텍스트 트랜잭션 안에서 불러야 한다({@link #runInTenantTransaction}).
+   */
+  public static void deleteRbacCascade(DSLContext dsl, long tenantId) {
+    dsl.execute("delete from role_permission where tenant_id = ?", tenantId);
+    dsl.execute("delete from user_role where tenant_id = ?", tenantId);
+    dsl.execute("delete from report_template where tenant_id = ?", tenantId);
+    dsl.execute("delete from role where tenant_id = ?", tenantId);
+  }
+
   /** 현재 테넌트 컨텍스트에서 해당 행이 보이는지 확인한다(RLS 적용 결과). */
   public static boolean rowExists(DSLContext dsl, String tableName, String pkColumn, Long pk) {
     return dsl.fetchCount(table(name(tableName)), field(name(pkColumn), Long.class).eq(pk)) > 0;

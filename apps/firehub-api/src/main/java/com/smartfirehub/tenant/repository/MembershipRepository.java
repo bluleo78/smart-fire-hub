@@ -22,8 +22,14 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class MembershipRepository {
 
-  /** 회원가입 시 자동 가입되는 기본 테넌트. V81 마이그레이션에서 시드된 tenant.id=1(slug=default). */
-  private static final Long DEFAULT_TENANT_ID = 1L;
+  /**
+   * 회원가입 시 자동 가입되는 기본 테넌트. V81 마이그레이션에서 시드된 tenant.id=1(slug=default).
+   *
+   * <p>자가 가입 사용자가 합류하는 기본 워크스페이스. 회원가입의 역할 조회도 이 테넌트 컨텍스트에서
+   * 일어난다({@code AuthService.signup} 참고) — public 으로 승격해 트랜잭션 밖에서 미리 세팅할 수
+   * 있게 한다.
+   */
+  public static final long DEFAULT_TENANT_ID = 1L;
 
   private static final Table<?> MEMBERSHIP = table(name("membership"));
   private static final Table<?> TENANT = table(name("tenant"));

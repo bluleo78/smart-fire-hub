@@ -5,17 +5,14 @@ import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.AccountLockedException;
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.TenantAccessDeniedException;
-import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
-import com.smartfirehub.role.exception.RoleNotFoundException;
-import com.smartfirehub.role.repository.RoleRepository;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
@@ -41,7 +38,6 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 public class AuthService {
 
   private final UserRepository userRepository;
-  private final RoleRepository roleRepository;
   private final PasswordEncoder passwordEncoder;
   private final JwtTokenProvider jwtTokenProvider;
   private final JwtProperties jwtProperties;
@@ -49,50 +45,20 @@ public class AuthService {
   private final LoginAttemptService loginAttemptService;
   private final AuditLogService auditLogService;
   private final MembershipRepository membershipRepository;
+  private final SignupTransaction signupTransaction;
+  private final CurrentTransactionTenant currentTransactionTenant;
 
-  @Transactional
+  /**
+   * 회원가입.
+   *
+   * <p>트랜잭션이 없는 이유: /api/v1/auth/signup 은 permitAll 이라 JWT 가 없고 TenantContext 도
+   * 비어 있다. 그런데 내부에서 role 을 이름으로 조회하므로, role 에 RLS 가 걸리면 컨텍스트 없이는
+   * 0행이 되어 가입이 깨진다. GUC 는 트랜잭션이 열리는 순간(doBegin)에 확정되므로, 트랜잭션
+   * 경계보다 <b>바깥에서</b> 기본 테넌트를 세워야 한다.
+   */
   public UserResponse signup(SignupRequest request) {
-    if (userRepository.existsByUsername(request.username())) {
-      // 사용자에게 한국어 메시지 반환 — 영문 원문 메시지 노출 방지
-      throw new UsernameAlreadyExistsException("이미 사용 중인 아이디입니다.");
-    }
-    if (request.email() != null
-        && !request.email().isBlank()
-        && userRepository.existsByEmail(request.email())) {
-      // 사용자에게 한국어 메시지 반환 — 영문 원문 메시지 노출 방지
-      throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다.");
-    }
-
-    userRepository.acquireFirstUserLock();
-    boolean isFirstUser = userRepository.countAll(null) == 0;
-
-    String encodedPassword = passwordEncoder.encode(request.password());
-    UserResponse user =
-        userRepository.save(request.username(), request.email(), encodedPassword, request.name());
-
-    // Assign roles: first user gets ADMIN + USER, subsequent users get USER only
-    Long userRoleId =
-        roleRepository
-            .findByName("USER")
-            .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
-            .id();
-    userRepository.addRole(user.id(), userRoleId);
-
-    if (isFirstUser) {
-      Long adminRoleId =
-          roleRepository
-              .findByName("ADMIN")
-              .orElseThrow(() -> new RoleNotFoundException("System role not found: ADMIN"))
-              .id();
-      userRepository.addRole(user.id(), adminRoleId);
-    }
-
-    // 멤버십이 하나도 없으면 테넌트 미선택 토큰만 발급되어 RLS 가 모든 API 를 막는다(잠김).
-    // 자가 가입 사용자를 잠그지 않기 위해 가입과 동시에 기본 워크스페이스에 합류시킨다.
-    // 운영자가 다른 테넌트로 프로비저닝하는 것은 이후 단계에서 다룬다.
-    membershipRepository.createDefaultMembership(user.id());
-
-    return user;
+    return TenantContext.runScopedGet(
+        MembershipRepository.DEFAULT_TENANT_ID, () -> signupTransaction.execute(request));
   }
 
   @Transactional
@@ -137,14 +103,31 @@ public class AuthService {
     // 소속이 정확히 하나면 즉시 자동 선택해 테넌트 스코프 토큰을 바로 발급한다(선택 화면 생략).
     // 0개 또는 2개 이상이면 테넌트 미선택 토큰을 주고 클라이언트가 select-tenant 를 호출한다.
     List<MembershipResponse> memberships = membershipRepository.findActiveByUser(user.id());
-    Long activeTenantId = memberships.size() == 1 ? memberships.get(0).tenantId() : null;
+    Long activeTenantId = MembershipResponse.soleActiveTenant(memberships).orElse(null);
 
     // 로그인은 새 리프레시 토큰 패밀리를 시작한다.
     TokenResponse tokenResponse =
         issueTokenPair(user.id(), user.username(), activeTenantId, UUID.randomUUID(), memberships);
 
-    // 로그인 감사 로그 (#60/#92)
+    // 로그인 감사 로그 (#60/#92).
+    //
+    // 테넌트 컨텍스트 안에서 기록해야 하는 이유: /auth/login 은 permitAll 이라 JWT 도 TenantContext
+    // 도 없다. 그대로 쓰면 audit_log.tenant_id 가 NULL 이 되고, V99 의 형태 (b) USING 정책이 NULL
+    // 테넌트 행을 모든 테넌트 스코프 조회에서 감춘다 — 감사 화면·대시보드에 LOGOUT(JWT 아래에서
+    // 기록되어 테넌트가 붙는다)만 보이고 짝이 되는 LOGIN 이 사라진다.
+    //
+    // GUC 는 트랜잭션이 열리는 순간(doBegin)에만 심긴다. 이 메서드는 @Transactional 이라 트랜잭션이
+    // 이미 열린 뒤에야 activeTenantId 가 정해지므로, 여기서 TenantContext 를 세워도 효과가 없다.
+    // 그래서 현재 트랜잭션에 GUC 를 직접 심는다(CurrentTransactionTenant 주석 참고). 감사 기록은
+    // 로그인 성공이 확정되고 토큰까지 발급된 뒤 마지막에 일어나므로, 남은 문장에 GUC 가 붙어도
+    // 영향을 받는 조회가 없다.
+    //
+    // 활성 테넌트가 확정되지 않은 로그인(멤버십 0개 또는 2개 이상)과, 테넌트 해석 이전에 기록되는
+    // 로그인 실패 감사 행은 설계상 NULL 테넌트로 남는다 — 어느 테넌트의 사건인지 알 수 없기 때문이다.
     String[] requestInfo = extractRequestInfo();
+    if (activeTenantId != null) {
+      currentTransactionTenant.apply(activeTenantId);
+    }
     auditLogService.log(
         user.id(),
         user.username(),

@@ -75,9 +75,14 @@ class TriggerEventServiceTest extends IntegrationTestBase {
           dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(downstreamPipelineId)).execute();
           dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(upstreamPipelineId)).execute();
         });
-    // 트리거 발화가 감사 로그를 남긴다 — audit_log 는 아직 테넌트화 대상이 아니라 RLS 가 없다.
-    // 롤백이 없어졌으므로 user 를 지우기 전에 직접 정리해야 FK 로 막히지 않는다.
-    dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(testUserId)).execute();
+    // 트리거 발화가 감사 로그를 남긴다. 롤백이 없어졌으므로 user 를 지우기 전에 직접 정리해야
+    // FK 로 막히지 않는다. V99 부터 audit_log 에도 RLS 가 걸리므로(형태 b) 트랜잭션 밖의 bare
+    // delete 는 GUC 가 비어 NULL 테넌트 행만 지우고, 기본 테넌트 행이 남아 "user" 삭제가 FK 로
+    // 터진다 — 정리도 테넌트 컨텍스트 트랜잭션 안에서 한다.
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(testUserId)).execute());
     dsl.deleteFrom(USER).where(USER.ID.eq(testUserId)).execute();
   }
 

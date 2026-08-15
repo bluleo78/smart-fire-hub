@@ -16,7 +16,18 @@ import org.jooq.JSONB;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 감사 로그 저장소.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: {@code AuditLogService.log} 에는
+ * 트랜잭션이 없다. 로그인처럼 트랜잭션 안에서 호출되는 경로는 편승하지만, 알림·비동기 내보내기
+ * 경로는 편승할 트랜잭션이 없어 RLS 정책 아래에서 tenant_id DEFAULT 가 NULL 이 되고
+ * INSERT 가 WITH CHECK 를 통과하지 못한다. 전파는 REQUIRED 이므로 기존 경로의 동작은 불변이다.
+ * (이슈 #384-3)
+ */
+@Transactional
 @Repository
 @RequiredArgsConstructor
 public class AuditLogRepository {

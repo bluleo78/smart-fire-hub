@@ -15,10 +15,12 @@ import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.Map;
 import org.jooq.DSLContext;
+import org.jooq.JSONB;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,12 +58,14 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   @Autowired private TriggerEventRepository triggerEventRepository;
   @Autowired private ApiConnectionRepository apiConnectionRepository;
   @Autowired private AsyncJobRepository asyncJobRepository;
+  @Autowired private ReportTemplateRepository reportTemplateRepository;
 
   private TransactionTemplate tx;
   private long tenantId;
   private Long userId;
   private Long datasetId;
   private Long documentFileId;
+  private Long reportTemplateId;
 
   @BeforeEach
   void seed() {
@@ -75,6 +79,7 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
         () -> {
           datasetId = insertDataset();
           documentFileId = insertDocumentFile(datasetId);
+          reportTemplateId = insertReportTemplate();
         });
   }
 
@@ -86,6 +91,10 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
         () -> {
           dsl.deleteFrom(table(name("document_file"))).execute();
           dsl.deleteFrom(table(name("dataset"))).execute();
+          // 내가 심은 행만 지운다(공유 테스트 DB) — report_template 은 테넌트 1에도 실데이터가 있다.
+          dsl.deleteFrom(table(name("report_template")))
+              .where(field(name("id"), Long.class).eq(reportTemplateId))
+              .execute();
         });
     TenantRlsTestSupport.deleteUser(dsl, userId);
     TenantRlsTestSupport.deleteTenants(dsl, tenantId);
@@ -120,6 +129,26 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * V99 로 RLS 가 걸린 {@code report_template} 이 배경 잡 형태에서 읽히는지.
+   *
+   * <p>{@code ProactiveJobAsyncRunner.executeJob} 이 정확히 이 형태다: {@code @Async} 만 있고
+   * 트랜잭션이 없는 스레드에서 {@code reportTemplateRepository.findById(...)} 를 부른다. 리포지토리가
+   * 자기 트랜잭션을 열지 않으면 GUC 가 비어 0행이 되고, 예외 없이 {@code template = null} 이 되어
+   * 사용자의 sections·style 없는 리포트가 만들어진다(최종 리뷰 Critical-1).
+   */
+  @Test
+  void reportTemplateIsReadableFromBackgroundThreadShape() {
+    TenantContext.set(tenantId);
+    try {
+      assertThat(reportTemplateRepository.findById(reportTemplateId))
+          .as("배경 잡 형태에서 report_template 이 안 보이면 리포트가 양식 없이 생성된다")
+          .isPresent();
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   @Test
   void contextlessBackgroundReadStillSeesNothing() {
     // fail-closed 는 유지되어야 한다 — 리포지토리가 트랜잭션을 열더라도, 테넌트가 없으면
@@ -139,7 +168,11 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   // GUC 가 주입되지 않아 예외도 로그도 없이 조용히 0행이 된다.
 
   /**
-   * 배경 경로가 쓰는 리포지토리 7개가 클래스 레벨 @Transactional 을 유지하는지.
+   * 배경 경로가 쓰는 리포지토리 8개가 클래스 레벨 @Transactional 을 유지하는지.
+   *
+   * <p>ReportTemplateRepository 만 예외적으로 이미 RLS 대상이라 위
+   * {@link #reportTemplateIsReadableFromBackgroundThreadShape()} 의 행위 단언도 함께 걸려 있다.
+   * 나머지 7개는 아직 정책이 없어 메타데이터 단언만 가능하다.
    *
    * <p>애노테이션을 지우면 이 테스트가 실패한다 — 호출 결과만 보는 단언은 RLS 가 없는 지금
    * 언제나 통과하므로 가드가 되지 못한다. V96 이후에는 격리 자체가 이 배선에 달려 있다.
@@ -154,7 +187,11 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
             "TriggerRepository", triggerRepository,
             "TriggerEventRepository", triggerEventRepository,
             "ApiConnectionRepository", apiConnectionRepository,
-            "AsyncJobRepository", asyncJobRepository);
+            "AsyncJobRepository", asyncJobRepository,
+            // report_template 은 V99 로 RLS 대상이 됐는데 유일한 배경 호출자
+            // (ProactiveJobAsyncRunner.executeJob)에는 트랜잭션이 없었다. 이 맵에 없었기 때문에
+            // 그 결함이 이 band 를 통과했다(최종 리뷰 Critical-1).
+            "ReportTemplateRepository", reportTemplateRepository);
 
     repositories.forEach(
         (label, bean) -> {
@@ -190,6 +227,20 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
         .set(field(name("storage_type"), String.class), "DOCUMENT")
         .set(field(name("origin_type"), String.class), "SOURCE")
         .set(field(name("created_by"), Long.class), userId)
+        .returning(field(name("id"), Long.class))
+        .fetchOne()
+        .get(field(name("id"), Long.class));
+  }
+
+  /** V99 로 RLS 가 걸린 report_template 행. tenant_id 는 GUC DEFAULT 로 채워진다. */
+  private Long insertReportTemplate() {
+    long suffix = TenantRlsTestSupport.nextTenantId();
+    return dsl.insertInto(table(name("report_template")))
+        .set(field(name("name"), String.class), "배경경로양식-" + suffix)
+        .set(field(name("description"), String.class), "배경 잡 형태 검증용")
+        .set(field(name("sections"), JSONB.class), JSONB.valueOf("[]"))
+        .set(field(name("style"), String.class), "formal")
+        .set(field(name("user_id"), Long.class), userId)
         .returning(field(name("id"), Long.class))
         .fetchOne()
         .get(field(name("id"), Long.class));
