@@ -2,6 +2,7 @@ package com.smartfirehub.global.config;
 
 import com.smartfirehub.global.tenant.TenantContextTaskDecorator;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -15,14 +16,10 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  * 작업이 테넌트 없이 실행돼 RLS 가 전부 차단하고 예외 없이 0행이 된다. 데코레이터는 반드시
  * {@code initialize()} <b>앞</b>에 설정해야 한다(뒤에 두면 이미 만들어진 풀에 반영되지 않는다).
  *
- * <p><b>한정자 없는 {@code @Async} 는 이 세 풀 중 어느 것도 쓰지 않는다.</b> 이 클래스는
- * {@code AsyncConfigurer} 를 구현하지 않고, 세 빈 모두 이름이 {@code taskExecutor} 가 아니며 타입이
- * {@code Executor} 라 부트의 기본 실행자 자동설정도 물러난다. 결과적으로 한정자 없는
- * {@code @Async} 는 데코레이터가 없는 {@code SimpleAsyncTaskExecutor} 로 떨어진다.
- * 현재 해당하는 곳은 {@code TriggerEventService.onPipelineCompleted}(pipeline_trigger)와
- * {@code NotificationService}(notification_outbox) 두 곳이며, 두 테이블 모두 P2-a 에서 RLS 를 걸지
- * 않으므로 지금은 무해하다. <b>그 테이블에 RLS 를 걸 때(P2-b) 한정자를 붙이거나 데코레이터가 달린
- * {@code taskExecutor} 빈을 등록해야 한다</b> — 안 하면 조용히 무동작이 된다.
+ * <p><b>한정자 없는 {@code @Async}</b>(예: {@code TriggerEventService.onPipelineCompleted},
+ * {@code NotificationService.onPipelineCompleted})는 이름이 {@code taskExecutor} 인 {@link Executor}
+ * 빈을 찾는다. 그 이름의 빈이 없으면 Spring 은 데코레이터가 없는 {@code SimpleAsyncTaskExecutor} 로
+ * 폴백해 스레드에 테넌트가 승계되지 않는다(P2-b: {@link #taskExecutor()} 로 그 간극을 메운다).
  */
 @Configuration
 @EnableAsync
@@ -61,6 +58,30 @@ public class AsyncConfig {
     executor.setMaxPoolSize(4);
     executor.setQueueCapacity(500);
     executor.setThreadNamePrefix("dataset-index-");
+    executor.setTaskDecorator(new TenantContextTaskDecorator());
+    executor.initialize();
+    return executor;
+  }
+
+  /**
+   * 한정자 없는 @Async 가 쓰는 기본 풀. 이 빈이 없으면 Spring 은 데코레이터가 없는
+   * SimpleAsyncTaskExecutor 로 폴백하고, 그 스레드에는 테넌트가 승계되지 않아
+   * RLS 하에서 조용히 무동작이 된다(TriggerEventService.onPipelineCompleted 등).
+   */
+  @Bean(name = "taskExecutor")
+  public Executor taskExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    // 짧은 이벤트 처리 전용이라 스레드는 적게 두고, 대신 큐를 넉넉히 잡는다.
+    executor.setCorePoolSize(2);
+    executor.setMaxPoolSize(4);
+    executor.setQueueCapacity(500);
+    executor.setThreadNamePrefix("async-");
+    // 이 빈이 대체하는 SimpleAsyncTaskExecutor 는 큐가 무제한이었다. 유한 큐로 바꾸면서
+    // 기본 AbortPolicy 를 그대로 두면, 파이프라인이 한꺼번에 완료될 때 체인 트리거와 알림이
+    // TaskRejectedException 으로 유실된다. CallerRuns 로 호출자 스레드에서 처리해 유실을 막는다
+    // (호출자는 이미 테넌트 컨텍스트를 갖고 있으므로 격리도 그대로 유지된다).
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+    // setTaskDecorator 는 반드시 initialize() 앞이어야 한다 — 뒤에 두면 조용히 무효가 된다.
     executor.setTaskDecorator(new TenantContextTaskDecorator());
     executor.initialize();
     return executor;

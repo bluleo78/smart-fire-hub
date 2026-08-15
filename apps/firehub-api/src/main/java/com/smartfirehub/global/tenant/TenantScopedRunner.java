@@ -17,10 +17,10 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>이 클래스는 ThreadLocal 만 세운다 — 트랜잭션은 열지 않는다.</b> RLS GUC 는
  * {@code TenantAwareTransactionManager.doBegin} 에서만 주입되므로, 콜백 안의 DB 접근은 반드시
- * 트랜잭션 안에서 일어나야 한다. 이 저장소에서는 도메인 리포지토리에 클래스 레벨
- * {@code @Transactional} 이 붙어 있어 그 조건이 충족된다(REQUIRED 라 이미 열린 트랜잭션에는 합류).
- * 콜백이 리포지토리를 거치지 않고 {@code DSLContext} 를 직접 쓰면 GUC 가 비어 조용히 0행이 되니
- * 주의할 것 — 그 경우 콜백 안에서 {@code TransactionTemplate} 으로 감싸야 한다.
+ * 트랜잭션 안에서 일어나야 한다. 이 클래스 자체는 그것을 보장하지 않는다 — 콜백이 클래스 레벨
+ * {@code @Transactional} 이 붙은 리포지토리를 거치거나(REQUIRED 라 이미 열린 트랜잭션에는 합류)
+ * 콜백 안에서 {@code TransactionTemplate} 으로 직접 감싸야 GUC 가 주입된다. 콜백이 {@code
+ * DSLContext} 를 트랜잭션 없이 직접 쓰면 GUC 가 비어 조용히 0행이 되니 주의할 것.
  */
 @Slf4j
 @Component
@@ -32,15 +32,21 @@ public class TenantScopedRunner {
     this.tenantRepository = tenantRepository;
   }
 
+  /**
+   * ACTIVE 테넌트를 하나씩 컨텍스트에 세우고 작업을 실행한다. 한 테넌트가 실패해도 나머지는 계속한다.
+   *
+   * <p>정리는 {@link TenantContext#runScoped} 에 맡긴다 — 즉 {@code clear} 가 아니라 <b>진입 전 값
+   * 복원</b>이다. 오늘 호출자는 전부 {@code @Scheduled}/{@code @PostConstruct} 라 진입 전 값이 없어
+   * 결과가 같지만, 이미 테넌트가 있는 경로에서 "전 테넌트 대상 작업"을 부르는 호출자가 생기면
+   * 무조건 clear 는 <b>호출자의 컨텍스트를 빼앗아</b> 그 뒤 문장을 조용히 0행으로 만든다.
+   * 형제 헬퍼({@code runScoped}, {@code TenantContextTaskDecorator})와 의미론을 맞춰 그 함정을 닫는다.
+   */
   public void forEachActiveTenant(Consumer<Long> work) {
     for (Long tenantId : tenantRepository.findActiveTenantIds()) {
-      TenantContext.set(tenantId);
       try {
-        work.accept(tenantId);
+        TenantContext.runScoped(tenantId, () -> work.accept(tenantId));
       } catch (Exception e) {
         log.error("테넌트 {} 배경 작업 실패 — 나머지 테넌트는 계속 처리한다", tenantId, e);
-      } finally {
-        TenantContext.clear();
       }
     }
   }

@@ -22,6 +22,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
@@ -34,6 +35,9 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
   @Autowired private ApiConnectionService apiConnectionService;
   @Autowired private DSLContext dsl;
+
+  /** RLS 가 걸린 테이블을 테스트가 직접 만질 때 쓰는 트랜잭션 경계 — GUC 주입의 유일한 통로다. */
+  @Autowired private TransactionTemplate tx;
 
   @MockitoBean private SsrfProtectionService ssrfProtectionService;
 
@@ -64,7 +68,10 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
   @AfterEach
   void tearDown() {
-    dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
+    // V96 이후 api_connection 은 RLS 대상이라 트랜잭션 밖 삭제는 GUC 부재로 0행이 되고,
+    // 뒤이은 user 삭제가 FK 로 터진다. 도메인 정리는 테넌트 트랜잭션 안에서 한다.
+    tx.executeWithoutResult(
+        s -> dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute());
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 

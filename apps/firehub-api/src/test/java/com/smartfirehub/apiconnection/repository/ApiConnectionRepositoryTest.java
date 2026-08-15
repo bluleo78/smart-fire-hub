@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** ApiConnectionRepository 통합 테스트. Phase 9 리디자인: baseUrl/헬스체크 필드 저장, 상태 갱신, 헬스체크 대상 조회를 검증한다. */
 class ApiConnectionRepositoryTest extends IntegrationTestBase {
@@ -20,6 +21,9 @@ class ApiConnectionRepositoryTest extends IntegrationTestBase {
   @Autowired private ApiConnectionRepository repository;
 
   @Autowired private DSLContext dsl;
+
+  /** RLS 가 걸린 테이블을 테스트가 직접 만질 때 쓰는 트랜잭션 경계 — GUC 주입의 유일한 통로다. */
+  @Autowired private TransactionTemplate tx;
 
   private Long testUserId;
 
@@ -59,7 +63,10 @@ class ApiConnectionRepositoryTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     // FK 순서: api_connection 먼저 삭제 후 user 삭제
-    dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
+    // V96 이후 api_connection 은 RLS 대상이라 트랜잭션 밖 삭제는 GUC 부재로 0행이 되고,
+    // 뒤이은 user 삭제가 FK 로 터진다. 도메인 정리는 테넌트 트랜잭션 안에서 한다.
+    tx.executeWithoutResult(
+        s -> dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute());
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 
@@ -78,11 +85,15 @@ class ApiConnectionRepositoryTest extends IntegrationTestBase {
 
     assertThat(id).isNotNull();
 
+    // 검증 조회도 RLS 대상이다 — 트랜잭션 밖에서 읽으면 GUC 가 없어 정책이 전 행을 막고
+    // 조용히 null 이 돌아온다(행은 멀쩡히 저장돼 있다). 픽스처/검증만 트랜잭션으로 감싼다.
     Record record =
-        dsl.select(AC_BASE_URL, AC_HEALTH_CHECK_PATH)
-            .from(API_CONNECTION)
-            .where(field(name("api_connection", "id"), Long.class).eq(id))
-            .fetchOne();
+        tx.execute(
+            s ->
+                dsl.select(AC_BASE_URL, AC_HEALTH_CHECK_PATH)
+                    .from(API_CONNECTION)
+                    .where(field(name("api_connection", "id"), Long.class).eq(id))
+                    .fetchOne());
 
     assertThat(record).isNotNull();
     assertThat(record.get(AC_BASE_URL)).isEqualTo("https://api.example.com");
@@ -104,11 +115,14 @@ class ApiConnectionRepositoryTest extends IntegrationTestBase {
 
     repository.updateHealthStatus(id, "UP", 123L, null);
 
+    // 위와 같은 이유로 검증 조회는 테넌트 트랜잭션 안에서 한다.
     Record record =
-        dsl.select(AC_LAST_STATUS, AC_LAST_LATENCY_MS, AC_LAST_ERROR_MESSAGE)
-            .from(API_CONNECTION)
-            .where(field(name("api_connection", "id"), Long.class).eq(id))
-            .fetchOne();
+        tx.execute(
+            s ->
+                dsl.select(AC_LAST_STATUS, AC_LAST_LATENCY_MS, AC_LAST_ERROR_MESSAGE)
+                    .from(API_CONNECTION)
+                    .where(field(name("api_connection", "id"), Long.class).eq(id))
+                    .fetchOne());
 
     assertThat(record).isNotNull();
     assertThat(record.get(AC_LAST_STATUS)).isEqualTo("UP");
@@ -119,10 +133,12 @@ class ApiConnectionRepositoryTest extends IntegrationTestBase {
     repository.updateHealthStatus(id, "DOWN", null, "Connection refused");
 
     Record updated =
-        dsl.select(AC_LAST_STATUS, AC_LAST_LATENCY_MS, AC_LAST_ERROR_MESSAGE)
-            .from(API_CONNECTION)
-            .where(field(name("api_connection", "id"), Long.class).eq(id))
-            .fetchOne();
+        tx.execute(
+            s ->
+                dsl.select(AC_LAST_STATUS, AC_LAST_LATENCY_MS, AC_LAST_ERROR_MESSAGE)
+                    .from(API_CONNECTION)
+                    .where(field(name("api_connection", "id"), Long.class).eq(id))
+                    .fetchOne());
 
     assertThat(updated).isNotNull();
     assertThat(updated.get(AC_LAST_STATUS)).isEqualTo("DOWN");

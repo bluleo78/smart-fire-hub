@@ -35,26 +35,45 @@ public final class TenantRlsTestSupport {
 
   /**
    * 주어진 테넌트 컨텍스트를 설정하고 트랜잭션 안에서 action 을 실행한 뒤, 성공/예외 여부와 관계없이
-   * finally 에서 컨텍스트를 해제한다(결과 없음 버전).
+   * <b>진입 전 컨텍스트를 복원</b>한다(결과 없음 버전).
+   *
+   * <p>복원이지 {@code clear} 가 아니다. 대부분의 테스트는 {@code IntegrationTestBase} 가 기본
+   * 테넌트를 세워 둔 상태에서 이 헬퍼로 픽스처를 만들고, <b>그 다음에</b> 검증 대상(프로덕션 코드)을
+   * 트랜잭션 밖에서 호출한다. 여기서 지워 버리면 그 호출이 컨텍스트 없이 돌아 RLS 가 전 행을 막고
+   * 테스트가 "조용한 0행" 으로 실패한다 — 실제로 그 형태로 여러 테스트가 깨졌고, 호출자마다
+   * 컨텍스트를 다시 세우는 보상 코드가 복붙되고 있었다. 의미론을 {@link TenantContext#runScoped} 와
+   * 맞춰 그 보상을 없앤다.
    */
   public static void runInTenantTransaction(
       TransactionTemplate transactionTemplate, Long tenantId, Runnable action) {
-    TenantContext.set(tenantId);
-    try {
-      transactionTemplate.executeWithoutResult(status -> action.run());
-    } finally {
-      TenantContext.clear();
-    }
+    runInTenantTransaction(
+        transactionTemplate,
+        tenantId,
+        () -> {
+          transactionTemplate.executeWithoutResult(status -> action.run());
+          return null;
+        });
   }
 
   /** 위와 동일하되 트랜잭션 실행 결과를 반환한다(값 반환 버전). */
   public static <T> T runInTenantTransaction(
       TransactionTemplate transactionTemplate, Long tenantId, Supplier<T> action) {
-    TenantContext.set(tenantId);
+    if (tenantId != null) {
+      return TenantContext.runScopedGet(
+          tenantId, () -> transactionTemplate.execute(status -> action.get()));
+    }
+    // tenantId=null 은 "컨텍스트가 비어 있는 상태" 를 재현하려는 요청이다(fail-closed 검증용).
+    // 이때도 진입 전 값은 복원해야 호출한 테스트의 뒷부분이 영향을 받지 않는다.
+    Long previous = TenantContext.get();
+    TenantContext.clear();
     try {
       return transactionTemplate.execute(status -> action.get());
     } finally {
-      TenantContext.clear();
+      if (previous == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.set(previous);
+      }
     }
   }
 

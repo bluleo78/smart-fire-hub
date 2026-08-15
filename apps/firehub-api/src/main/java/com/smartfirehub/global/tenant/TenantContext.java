@@ -1,5 +1,7 @@
 package com.smartfirehub.global.tenant;
 
+import java.util.function.Supplier;
+
 /**
  * 현재 요청의 활성 테넌트를 보관하는 요청 스코프 홀더.
  *
@@ -56,10 +58,27 @@ public final class TenantContext {
    * 후자에서 호출자의 컨텍스트를 빼앗아, 그 뒤에 문장이 하나라도 추가되는 순간 조용히 0행이 된다.
    */
   public static void runScoped(long tenantId, Runnable work) {
+    runScopedGet(
+        tenantId,
+        () -> {
+          work.run();
+          return null;
+        });
+  }
+
+  /**
+   * {@link #runScoped(long, Runnable)} 과 동일한 복원 의미론(진입 전 값 복원, clear 아님)을 가지며
+   * 결과값을 돌려주는 변형.
+   *
+   * <p>인증 필터를 거치지 않는 외부 트리거 경로(permitAll)에서 쓴다. 그 경로는 테넌트를 해석한 뒤
+   * <b>응답</b>까지 그 컨텍스트 안에서 만들어야 하므로 값 반환이 필요하다. {@code runScoped} 는 이
+   * 메서드 위에 얹어 두 곳에 같은 try/finally 를 중복해 두지 않는다.
+   */
+  public static <T> T runScopedGet(long tenantId, Supplier<T> work) {
     Long previous = get();
     set(tenantId);
     try {
-      work.run();
+      return work.get();
     } finally {
       if (previous == null) {
         clear();

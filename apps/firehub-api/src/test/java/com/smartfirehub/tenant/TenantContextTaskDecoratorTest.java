@@ -26,6 +26,27 @@ class TenantContextTaskDecoratorTest {
     TenantContext.clear();
   }
 
+  /**
+   * 같은 스레드에서 인라인 실행될 때 호출자의 테넌트가 살아남는지.
+   *
+   * <p>기본 taskExecutor 는 거부 정책이 {@code CallerRunsPolicy} 라, 큐가 포화되면 작업이 워커가
+   * 아니라 <b>제출 스레드</b>에서 그대로 돈다. 정리를 무조건 clear 로 하면 그 순간 제출자의 테넌트가
+   * 지워지고, 뒤이어 제출되는 작업이 null 을 캡처해 fail-closed 로 조용히 무동작이 된다 —
+   * 파이프라인 완료 이벤트의 리스너 두 개가 정확히 이 순서로 제출된다. 그래서 정리는 clear 가 아니라
+   * 진입 전 값 복원이어야 한다. 이 테스트가 그 회귀를 막는다(무조건 clear 로 되돌리면 실패한다).
+   */
+  @Test
+  void inlineExecutionOnCallerThreadPreservesCallerTenant() {
+    TenantContext.set(7777L);
+
+    Runnable decorated = decorator.decorate(() -> {});
+    decorated.run(); // CallerRunsPolicy 가 하는 것과 동일 — 제출 스레드에서 그대로 실행
+
+    assertThat(TenantContext.get())
+        .as("인라인 실행이 호출자의 테넌트를 지우면 이후 제출이 fail-closed 로 무동작이 된다")
+        .isEqualTo(7777L);
+  }
+
   @Test
   void decoratedTaskSeesSubmitterTenant() throws Exception {
     TenantContext.set(4242L);

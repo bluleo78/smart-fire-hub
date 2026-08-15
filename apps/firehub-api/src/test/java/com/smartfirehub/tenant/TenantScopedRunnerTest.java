@@ -66,10 +66,34 @@ class TenantScopedRunnerTest extends IntegrationTestBase {
     assertThat(mismatches).isEmpty();
   }
 
+  /**
+   * 운영 형태(스케줄러 스레드 = 진입 전 컨텍스트 없음)에서 순회가 끝나면 컨텍스트가 남지 않아야
+   * 한다. 남으면 풀 스레드가 재사용될 때 다음 작업이 남의 테넌트로 돈다.
+   */
   @Test
-  void clearsContextAfterRun() {
+  void leavesNoContextWhenEnteredWithout() {
+    TenantContext.clear();
     runner.forEachActiveTenant(tenantId -> {});
     assertThat(TenantContext.get()).isNull();
+  }
+
+  /**
+   * 이미 테넌트가 있는 스레드에서 부르면 <b>진입 전 값이 복원</b>돼야 한다.
+   *
+   * <p>무조건 {@code clear} 하면 호출자의 컨텍스트를 빼앗아, 그 뒤 문장이 하나라도 추가되는 순간
+   * 조용히 0행이 된다 — 형제 헬퍼({@code TenantContext.runScoped}, {@code TenantContextTaskDecorator})
+   * 와 같은 의미론임을 여기서 고정한다. 마지막으로 순회된 테넌트가 남지 않는 것도 함께 본다.
+   */
+  @Test
+  void restoresPreviousContextWhenEnteredWithOne() {
+    long caller = 1L;
+    TenantContext.set(caller);
+
+    List<Long> visited = new ArrayList<>();
+    runner.forEachActiveTenant(visited::add);
+
+    assertThat(visited).isNotEmpty();
+    assertThat(TenantContext.get()).isEqualTo(caller);
   }
 
   @Test
@@ -89,7 +113,8 @@ class TenantScopedRunnerTest extends IntegrationTestBase {
 
     // 예외가 러너를 통과해 나가지 않고, 두 테넌트 모두 순회됐어야 한다.
     assertThat(observed).contains(tenantA, tenantB);
-    assertThat(TenantContext.get()).isNull();
+    // 실패 경로에서도 순회 중이던 테넌트가 남으면 안 된다(진입 전 값 = 기본 테넌트로 복원).
+    assertThat(TenantContext.get()).isEqualTo(DEFAULT_TEST_TENANT_ID);
   }
 
   /** 테스트 전용 ACTIVE 테넌트를 하나 만들고, cleanup 대상으로 등록한 뒤 발급된 id 를 반환한다. */

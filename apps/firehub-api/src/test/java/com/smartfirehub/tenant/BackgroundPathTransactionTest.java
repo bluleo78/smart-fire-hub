@@ -5,17 +5,29 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.document.repository.DocumentFileRepository;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.job.repository.AsyncJobRepository;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineRepository;
+import com.smartfirehub.pipeline.repository.PipelineStepRepository;
+import com.smartfirehub.pipeline.repository.TriggerEventRepository;
+import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -37,6 +49,13 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private DocumentFileRepository documentFileRepository;
+  @Autowired private PipelineRepository pipelineRepository;
+  @Autowired private PipelineStepRepository pipelineStepRepository;
+  @Autowired private PipelineExecutionRepository pipelineExecutionRepository;
+  @Autowired private TriggerRepository triggerRepository;
+  @Autowired private TriggerEventRepository triggerEventRepository;
+  @Autowired private ApiConnectionRepository apiConnectionRepository;
+  @Autowired private AsyncJobRepository asyncJobRepository;
 
   private TransactionTemplate tx;
   private long tenantId;
@@ -109,6 +128,55 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
     assertThat(datasetRepository.findById(datasetId))
         .as("테넌트 없이 보이면 fail-open 이다")
         .isEmpty();
+  }
+
+  // ── P2-b: pipeline/apiconnection/job 리포지토리 트랜잭션 경계 ────────────
+  //
+  // 이 7개 테이블에는 아직 RLS 가 없다(V87~V92 는 dataset/document/analytics 도메인만 대상).
+  // 그래서 "행이 보이는가"로는 아무것도 증명할 수 없다 — RLS 가 없으면 트랜잭션이 있든 없든
+  // 행이 보이기 때문이다. 대신 배선 자체를 직접 단언한다: 각 리포지토리가 트랜잭션 프록시이고
+  // 클래스 레벨 @Transactional 을 갖는가. 이 조건이 깨지면 V96(정책) 이후 배경 스레드에서
+  // GUC 가 주입되지 않아 예외도 로그도 없이 조용히 0행이 된다.
+
+  /**
+   * 배경 경로가 쓰는 리포지토리 7개가 클래스 레벨 @Transactional 을 유지하는지.
+   *
+   * <p>애노테이션을 지우면 이 테스트가 실패한다 — 호출 결과만 보는 단언은 RLS 가 없는 지금
+   * 언제나 통과하므로 가드가 되지 못한다. V96 이후에는 격리 자체가 이 배선에 달려 있다.
+   */
+  @Test
+  void backgroundPathRepositoriesKeepClassLevelTransactional() {
+    Map<String, Object> repositories =
+        Map.of(
+            "PipelineRepository", pipelineRepository,
+            "PipelineStepRepository", pipelineStepRepository,
+            "PipelineExecutionRepository", pipelineExecutionRepository,
+            "TriggerRepository", triggerRepository,
+            "TriggerEventRepository", triggerEventRepository,
+            "ApiConnectionRepository", apiConnectionRepository,
+            "AsyncJobRepository", asyncJobRepository);
+
+    repositories.forEach(
+        (label, bean) -> {
+          Class<?> targetClass = AopUtils.getTargetClass(bean);
+          assertThat(AnnotatedElementUtils.hasAnnotation(targetClass, Transactional.class))
+              .as("%s 에 클래스 레벨 @Transactional 이 없다 — 배경 스레드에서 GUC 가 주입되지 않는다", label)
+              .isTrue();
+          assertThat(AopUtils.isAopProxy(bean))
+              .as("%s 가 트랜잭션 프록시가 아니다 — 애노테이션이 있어도 적용되지 않는다", label)
+              .isTrue();
+        });
+  }
+
+  /**
+   * 이 테스트 클래스 자체에 트랜잭션이 없어야 한다 — 잡 스레드의 형태를 재현하기 위함이다.
+   *
+   * <p>클래스 레벨 @Transactional 을 붙이면 테스트 트랜잭션이 GUC 를 공급해 운영에 없는 조건이
+   * 만들어지고, 이 파일이 잡아야 할 결함이 영원히 보이지 않게 된다.
+   */
+  @Test
+  void testClassItselfRunsWithoutAmbientTransaction() {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
   }
 
   // ── 픽스처 ────────────────────────────────────────────────────────────

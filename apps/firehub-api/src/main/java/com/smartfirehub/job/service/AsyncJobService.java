@@ -19,6 +19,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
@@ -37,6 +38,7 @@ public class AsyncJobService {
 
   private final AsyncJobRepository asyncJobRepository;
   private final ObjectMapper objectMapper;
+  private final TransactionTemplate transactionTemplate;
 
   // jobId -> list of active SSE emitters
   private final ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters =
@@ -48,6 +50,9 @@ public class AsyncJobService {
   // jobId -> last persisted stage (force DB write on stage change)
   private final ConcurrentHashMap<String, String> lastPersistedStage = new ConcurrentHashMap<>();
 
+  // asyncJobRepository 를 경유하므로 리포지토리 클래스 레벨 @Transactional 로 이미 트랜잭션이 열린다(Task 1).
+  // 여기서의 @Transactional 은 결함 수정이 아니라 심층 방어(향후 리포지토리 미경유 로직 추가 시 안전망)다.
+  @Transactional
   public String createJob(
       String jobType,
       String resource,
@@ -71,6 +76,16 @@ public class AsyncJobService {
     return jobId;
   }
 
+  /**
+   * 진행률 갱신. <b>메서드 트랜잭션을 두지 않는다.</b>
+   *
+   * <p>DB 쓰기는 스테이지 변경 시 또는 {@code DB_UPDATE_INTERVAL} 회마다로 스로틀된다. 메서드에
+   * {@code @Transactional} 을 걸면 <b>쓰지 않는 호출까지</b> 커넥션을 빌리고 BEGIN/set_config/COMMIT
+   * 왕복을 한다 — 대용량 임포트에서 배치마다 불리므로 비용이 실질적이다. GUC 는 실제로 쓰는
+   * 순간 {@code asyncJobRepository}(클래스 레벨 {@code @Transactional}, Task 1)가 공급하므로
+   * 격리 관점의 손실은 없다. SSE 브로드캐스트도 트랜잭션 밖에 두어 느린 구독자가 커넥션을
+   * 붙잡지 않게 한다.
+   */
   public void updateProgress(
       String jobId, String stage, int progress, String message, Map<String, Object> metadata) {
     // Always emit SSE
@@ -90,6 +105,11 @@ public class AsyncJobService {
     }
   }
 
+  /**
+   * 완료 처리. 갱신 1건뿐이라 메서드 트랜잭션이 필요 없다 — 리포지토리가 자기 트랜잭션에서
+   * GUC 를 공급한다. SSE 브로드캐스트·emitter 종료를 트랜잭션 밖에 두는 것이 요점이다(느린
+   * 구독자가 DB 커넥션을 잡고 있지 않게).
+   */
   public void completeJob(String jobId, Map<String, Object> metadata) {
     asyncJobRepository.updateStageAndProgress(
         jobId, "COMPLETED", 100, "Completed", metadata != null ? metadata : Collections.emptyMap());
@@ -103,12 +123,24 @@ public class AsyncJobService {
     log.debug("Completed async job: jobId={}", jobId);
   }
 
+  /**
+   * 실패 처리. {@code findById} + {@code updateStageAndError} 두 호출은 한 트랜잭션이어야 진행률
+   * 보존이 원자적이므로 <b>그 두 호출만</b> {@link TransactionTemplate} 으로 묶는다. 메서드 전체를
+   * 트랜잭션으로 감싸면 뒤따르는 SSE 브로드캐스트·emitter 종료까지 트랜잭션 안에서 돌아, 느린
+   * 구독자(프록시 버퍼링·먹통 탭)가 DB 커넥션을 그만큼 붙잡는다.
+   */
   public void failJob(String jobId, String errorMessage) {
-    // Preserve last known progress for UI display
-    int lastProgress =
-        asyncJobRepository.findById(jobId).map(AsyncJobStatusResponse::progress).orElse(0);
-    // lastProgress를 DB에도 persist하여 SSE 이벤트와 REST 폴백 응답이 일치하도록 한다
-    asyncJobRepository.updateStageAndError(jobId, "FAILED", lastProgress, errorMessage);
+    Integer persisted =
+        transactionTemplate.execute(
+            status -> {
+              // Preserve last known progress for UI display
+              int progress =
+                  asyncJobRepository.findById(jobId).map(AsyncJobStatusResponse::progress).orElse(0);
+              // lastProgress를 DB에도 persist하여 SSE 이벤트와 REST 폴백 응답이 일치하도록 한다
+              asyncJobRepository.updateStageAndError(jobId, "FAILED", progress, errorMessage);
+              return progress;
+            });
+    int lastProgress = persisted == null ? 0 : persisted;
     updateCounters.remove(jobId);
     lastPersistedStage.remove(jobId);
 
@@ -126,6 +158,15 @@ public class AsyncJobService {
     log.debug("Failed async job: jobId={}, error={}", jobId, errorMessage);
   }
 
+  /**
+   * SSE 구독. <b>메서드 트랜잭션을 두지 않는다.</b>
+   *
+   * <p>DB 접근은 {@code asyncJobRepository.findById} 하나뿐이고, 리포지토리가 클래스 레벨
+   * {@code @Transactional}(Task 1)이라 그 호출이 자기 트랜잭션에서 GUC 를 공급한다. 반대로 메서드
+   * 전체를 트랜잭션으로 감싸면 마지막의 {@code safeSend}(클라이언트 소켓으로의 블로킹 쓰기)까지
+   * 트랜잭션 안에 들어가, 느린 구독자가 DB 커넥션을 그만큼 붙잡는다 — 형제 메서드
+   * ({@code updateProgress}·{@code completeJob}·{@code failJob})에서 이미 걷어낸 것과 같은 형태다.
+   */
   public SseEmitter subscribe(String jobId, Long userId) {
     // Single query — owner verification + current state
     AsyncJobStatusResponse status =

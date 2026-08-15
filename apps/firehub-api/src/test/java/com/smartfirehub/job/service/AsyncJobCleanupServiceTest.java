@@ -6,10 +6,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.*;
 
+import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.support.TenantScopedRunnerStubs;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -31,8 +34,20 @@ class AsyncJobCleanupServiceTest {
   /** AsyncJobService 모킹 — failJob 호출 검증 */
   @Mock private AsyncJobService asyncJobService;
 
+  /**
+   * 테넌트 순회 모킹 — P2-b 에서 정리 잡이 ACTIVE 테넌트를 순회하게 됐다. 실제 러너는 DB 에서 테넌트를
+   * 읽으므로 단위 테스트에서는 쓸 수 없고, 대신 콜백을 테넌트 1건으로 즉시 실행시켜 기존 검증(임계값·
+   * failJob 호출)이 그대로 의미를 갖게 한다.
+   */
+  @Mock private TenantScopedRunner tenantScopedRunner;
+
   /** 테스트 대상 서비스 */
   @InjectMocks private AsyncJobCleanupService asyncJobCleanupService;
+
+  @BeforeEach
+  void runCallbackForSingleTenant() {
+    TenantScopedRunnerStubs.stubSingleTenantIteration(tenantScopedRunner, 1L);
+  }
 
   // =========================================================================
   // failStaleJobs — 스테일 잡 실패 처리

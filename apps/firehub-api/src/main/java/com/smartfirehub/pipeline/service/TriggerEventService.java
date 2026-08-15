@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
@@ -16,6 +17,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Slf4j
 @Service
@@ -27,6 +29,8 @@ public class TriggerEventService {
   private final DSLContext dsl;
   private final NotificationService notificationService;
   private final TenantScopedRunner tenantScopedRunner;
+  // dsl 직접 조회 구간에 GUC 를 주입하기 위한 트랜잭션 경계.
+  private final TransactionTemplate transactionTemplate;
 
   public TriggerEventService(
       TriggerRepository triggerRepository,
@@ -34,26 +38,43 @@ public class TriggerEventService {
       DatasetRepository datasetRepository,
       DSLContext dsl,
       NotificationService notificationService,
-      TenantScopedRunner tenantScopedRunner) {
+      TenantScopedRunner tenantScopedRunner,
+      TransactionTemplate transactionTemplate) {
     this.triggerRepository = triggerRepository;
     this.triggerService = triggerService;
     this.datasetRepository = datasetRepository;
     this.dsl = dsl;
     this.notificationService = notificationService;
     this.tenantScopedRunner = tenantScopedRunner;
+    this.transactionTemplate = transactionTemplate;
   }
 
   /**
-   * Handle pipeline completion events for chain triggers. @Async ensures chain trigger failures
-   * don't affect upstream pipeline status.
+   * PIPELINE_CHAIN 트리거 처리 — 상위 파이프라인 완료 이벤트를 받아 하위 파이프라인을 발화한다.
+   * {@code @Async} 라 체인 트리거 실패가 상위 파이프라인 상태에 영향을 주지 않는다.
+   *
+   * <p><b>테넌트 승계(P2-b)</b>: 이 경로는 RLS 가 걸린 {@code pipeline_trigger} 를 읽는다. 한정자를
+   * {@code "taskExecutor"} 로 <b>명시</b>하는 이유는, 그 이름의 빈이 {@code AsyncConfig} 에
+   * {@link com.smartfirehub.global.tenant.TenantContextTaskDecorator} 와 함께 등록돼 있기
+   * 때문이다. 한정자가 없어도 Spring 은 같은 빈을 찾지만, 그 빈이 사라지면 조용히 데코레이터 없는
+   * {@code SimpleAsyncTaskExecutor} 로 폴백해 테넌트가 승계되지 않고 — 예외도 로그도 없이 —
+   * 체인 트리거가 영구히 발화하지 않는다. 명시해 두면 그때 기동 시점에 빈 해석이 실패한다.
+   *
+   * <p>발행자는 {@code PipelineAsyncRunner.executeAsync}(=`pipelineExecutor` 풀, 데코레이터 있음)
+   * 하나뿐이며 그 스레드에는 이미 테넌트가 있으므로, 여기까지 제출 시점 캡처로 승계된다. 이벤트
+   * 페이로드에 tenantId 를 싣지 않는 근거다.
    */
-  // TODO(P2-b): 이 경로는 pipeline_trigger 를 읽는다. @Async 라 TenantContextTaskDecorator 가
-  // 제출 스레드의 테넌트를 승계하지만, 이벤트 발행자가 배경 스레드면 승계할 테넌트가 없다.
-  // pipeline_trigger 에 RLS 를 걸 때 발행 경로를 함께 점검해야 한다 — 안 하면 PIPELINE_CHAIN
-  // 트리거가 하위 파이프라인을 조용히 실행하지 않는다.
-  @Async
+  @Async("taskExecutor")
   @EventListener
   public void onPipelineCompleted(PipelineCompletedEvent event) {
+    // 승계가 끊기면 아래 조회가 RLS 로 0행이 되어 원인 없는 무동작이 된다 — 진단 가능하게 남긴다.
+    if (TenantContext.get() == null) {
+      log.error(
+          "PIPELINE_CHAIN: 테넌트 컨텍스트 없이 완료 이벤트를 처리한다 (pipeline={}). "
+              + "체인 트리거가 조회되지 않아 하위 파이프라인이 실행되지 않는다.",
+          event.pipelineId());
+    }
+
     log.info(
         "Pipeline {} completed with status {}, checking chain triggers",
         event.pipelineId(),
@@ -186,7 +207,25 @@ public class TriggerEventService {
     }
   }
 
+  /**
+   * 모니터링 대상 데이터셋의 행 수 추정치를 모은다.
+   *
+   * <p><b>트랜잭션 경계(P2-b)</b>: 이 구간을 감싸는 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다.
+   * RLS 대상인 dataset 조회는 {@code datasetRepository}(클래스 레벨 {@code @Transactional}) 를 거치므로
+   * 이미 호출마다 GUC 가 주입되고, 여기서 {@code dsl} 로 직접 읽는 것은 {@code pg_stat_user_tables}
+   * (시스템 뷰 — RLS 무관, tenant_id 없음) 뿐이다. 감싸면 데이터셋 N 개에 대한 리포지토리 호출이
+   * 트랜잭션 하나에 합류한다("GUC 때문에 반드시 필요한 래핑" 은 아니라는 점을 분명히 남긴다).
+   *
+   * <p>트리거 발화({@code triggerService.fireTrigger})와 알림은 <b>이 트랜잭션 밖</b>에 남긴다 —
+   * 파이프라인 실행을 시작하는 작업이라 트랜잭션에 넣으면 그 동안 커넥션을 점유하고 실패 의미도 바뀐다.
+   */
   private Map<Long, Long> getRowCountEstimates(List<Long> datasetIds) {
+    Map<Long, Long> result =
+        transactionTemplate.execute(status -> collectRowCountEstimates(datasetIds));
+    return result == null ? Map.of() : result;
+  }
+
+  private Map<Long, Long> collectRowCountEstimates(List<Long> datasetIds) {
     Map<Long, Long> result = new HashMap<>();
 
     for (Long datasetId : datasetIds) {

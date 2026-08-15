@@ -6,6 +6,7 @@ import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -32,16 +33,20 @@ public class TriggerService {
 
   private final TriggerRepository triggerRepository;
   private final TriggerEventRepository triggerEventRepository;
+  // 비인증 경로의 테넌트 해석 전용. 해싱은 이 서비스에 남기고 조회만 위임한다.
+  private final TriggerTenantResolver triggerTenantResolver;
   private final PipelineService pipelineService;
   private final TriggerSchedulerService schedulerService;
 
   public TriggerService(
       TriggerRepository triggerRepository,
       TriggerEventRepository triggerEventRepository,
+      TriggerTenantResolver triggerTenantResolver,
       @Lazy PipelineService pipelineService,
       @Lazy TriggerSchedulerService schedulerService) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
+    this.triggerTenantResolver = triggerTenantResolver;
     this.pipelineService = pipelineService;
     this.schedulerService = schedulerService;
   }
@@ -382,6 +387,20 @@ public class TriggerService {
         dfsCheckCycle(downstreamPipelineId, targetPipelineId, visited, depth + 1);
       }
     }
+  }
+
+  /**
+   * 비인증 API 트리거 경로의 테넌트 해석. raw 토큰을 여기서 sha256 한 뒤 RLS 우회 해석기(V95)에
+   * 넘긴다.
+   *
+   * <p>해싱을 컨트롤러나 해석기로 옮기지 않는다 — 토큰 해시 형식은 {@code createTrigger} 와 이
+   * 클래스가 함께 정의하는 것이라, 형식이 바뀌면 한 곳만 고쳐야 한다.
+   *
+   * <p>{@code @Transactional} 이 없다. 이 호출은 테넌트 컨텍스트가 아직 없는 시점에 일어나고,
+   * definer 함수는 RLS 를 우회하므로 GUC 가 필요 없다.
+   */
+  public Optional<TriggerTenantResolver.TriggerRef> resolveTenantByApiToken(String rawToken) {
+    return triggerTenantResolver.resolveByApiToken(sha256Hash(rawToken));
   }
 
   /** Resolve API token: SHA-256 hash and lookup. */

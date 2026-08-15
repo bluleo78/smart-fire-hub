@@ -7,15 +7,22 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
-@Transactional
+/**
+ * <b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면
+ * {@code pollDatasetChanges} 같은 테넌트 순회 경로가 테스트 트랜잭션에 얹혀 모든 순회 패스가
+ * 테넌트 1 의 GUC 로 실행되고, 순회 배선을 지워도 통과하는 사각지대가 생긴다. 롤백이 사라졌으므로
+ * 픽스처는 {@link #cleanup()} 에서 직접 지우고 유니크 컬럼은 실행마다 고유하게 만든다.
+ */
 class TriggerEventServiceTest extends IntegrationTestBase {
 
   @Autowired private TriggerEventService triggerEventService;
@@ -28,18 +35,21 @@ class TriggerEventServiceTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
+  @Autowired private TransactionTemplate tx;
+
   private Long testUserId;
   private Long upstreamPipelineId;
   private Long downstreamPipelineId;
 
   @BeforeEach
   void setUp() {
+    String unique = String.valueOf(System.nanoTime());
     testUserId =
         dsl.insertInto(USER)
-            .set(USER.USERNAME, "event_test_user")
+            .set(USER.USERNAME, "event_test_user_" + unique)
             .set(USER.PASSWORD, "password")
             .set(USER.NAME, "Event Test User")
-            .set(USER.EMAIL, "event_test@example.com")
+            .set(USER.EMAIL, "event_test_" + unique + "@example.com")
             .returning(USER.ID)
             .fetchOne()
             .getId();
@@ -53,6 +63,22 @@ class TriggerEventServiceTest extends IntegrationTestBase {
         pipelineService.createPipeline(
             new CreatePipelineRequest("Downstream Pipeline", "Downstream", List.of()), testUserId);
     downstreamPipelineId = downstream.id();
+  }
+
+  @AfterEach
+  void cleanup() {
+    // pipeline 을 지우면 트리거·이벤트가 FK CASCADE 로 함께 사라진다. RLS 대상이라 트랜잭션 안에서.
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(downstreamPipelineId)).execute();
+          dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(upstreamPipelineId)).execute();
+        });
+    // 트리거 발화가 감사 로그를 남긴다 — audit_log 는 아직 테넌트화 대상이 아니라 RLS 가 없다.
+    // 롤백이 없어졌으므로 user 를 지우기 전에 직접 정리해야 FK 로 막히지 않는다.
+    dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(testUserId)).execute();
+    dsl.deleteFrom(USER).where(USER.ID.eq(testUserId)).execute();
   }
 
   @Test

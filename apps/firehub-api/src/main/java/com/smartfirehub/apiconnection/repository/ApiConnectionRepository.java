@@ -12,11 +12,16 @@ import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.UpdateSetMoreStep;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /** API 연결 정보 저장소. Phase 9 리디자인: baseUrl, 헬스체크 경로, 헬스체크 상태 필드 추가. */
 @Repository
 @RequiredArgsConstructor
 @lombok.extern.slf4j.Slf4j
+// 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
+// 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
+// REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
+@Transactional
 public class ApiConnectionRepository {
 
   private final DSLContext dsl;

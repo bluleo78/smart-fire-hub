@@ -25,6 +25,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
@@ -82,16 +84,19 @@ public class FileUploadService {
           "DOCUMENT", 10L * 1024 * 1024);
 
   private final DSLContext dsl;
+  private final TransactionTemplate transactionTemplate;
   private final String uploadDir;
   private final int maxFilesPerRequest;
   private final int expiryHours;
 
   public FileUploadService(
       DSLContext dsl,
+      TransactionTemplate transactionTemplate,
       @Value("${firehub.file.upload-dir:./uploads}") String uploadDir,
       @Value("${firehub.file.max-files-per-request:3}") int maxFilesPerRequest,
       @Value("${firehub.file.expiry-hours:24}") int expiryHours) {
     this.dsl = dsl;
+    this.transactionTemplate = transactionTemplate;
     this.uploadDir = uploadDir;
     this.maxFilesPerRequest = maxFilesPerRequest;
     this.expiryHours = expiryHours;
@@ -138,20 +143,26 @@ public class FileUploadService {
     Instant now = Instant.now();
     Instant expiresAt = now.plusSeconds((long) expiryHours * 3600);
 
+    // 디스크 쓰기(file.transferTo, 위)는 이미 끝났다 — 여기서부터 DB 삽입 구간만 TransactionTemplate 으로
+    // 감싸 GUC(app.tenant_id)가 주입된 트랜잭션 커넥션으로 insert 하되, 파일시스템 I/O 는 트랜잭션
+    // 경계 밖에 남긴다(느린 디스크 I/O 가 커넥션을 점유하는 것을 방지, 데이터임포트 서비스와 동일 패턴).
     Long fileId =
-        dsl.insertInto(UPLOADED_FILES)
-            .set(UPLOADED_FILES.ORIGINAL_NAME, originalName)
-            .set(UPLOADED_FILES.STORED_NAME, storedName)
-            .set(UPLOADED_FILES.MIME_TYPE, mimeType)
-            .set(UPLOADED_FILES.FILE_SIZE, file.getSize())
-            .set(UPLOADED_FILES.FILE_CATEGORY, category)
-            .set(UPLOADED_FILES.STORAGE_PATH, storagePath.toAbsolutePath().toString())
-            .set(UPLOADED_FILES.UPLOADED_BY, userId)
-            .set(UPLOADED_FILES.CREATED_AT, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
-            .set(UPLOADED_FILES.EXPIRES_AT, OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC))
-            .returning(UPLOADED_FILES.ID)
-            .fetchOne()
-            .getId();
+        transactionTemplate.execute(
+            status ->
+                dsl.insertInto(UPLOADED_FILES)
+                    .set(UPLOADED_FILES.ORIGINAL_NAME, originalName)
+                    .set(UPLOADED_FILES.STORED_NAME, storedName)
+                    .set(UPLOADED_FILES.MIME_TYPE, mimeType)
+                    .set(UPLOADED_FILES.FILE_SIZE, file.getSize())
+                    .set(UPLOADED_FILES.FILE_CATEGORY, category)
+                    .set(UPLOADED_FILES.STORAGE_PATH, storagePath.toAbsolutePath().toString())
+                    .set(UPLOADED_FILES.UPLOADED_BY, userId)
+                    .set(UPLOADED_FILES.CREATED_AT, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+                    .set(
+                        UPLOADED_FILES.EXPIRES_AT, OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC))
+                    .returning(UPLOADED_FILES.ID)
+                    .fetchOne()
+                    .getId());
 
     log.info(
         "File uploaded: id={}, name={}, category={}, size={}",
@@ -163,6 +174,9 @@ public class FileUploadService {
     return new FileUploadResponse(fileId, originalName, mimeType, file.getSize(), category, now);
   }
 
+  // dsl 직접 사용(리포지토리 미경유) — @Transactional 이 없으면 GUC 미주입으로 RLS 가 전 행을 가려
+  // 예외 없이 fetchOne()==null → FileNotFoundException 으로 오인된다. 실결함 수정.
+  @Transactional(readOnly = true)
   public FileUploadResponse getFileInfo(Long fileId, Long userId) {
     var record =
         dsl.selectFrom(UPLOADED_FILES)
@@ -187,6 +201,9 @@ public class FileUploadService {
   public record FileContentResult(
       Resource resource, String mimeType, String originalName, long size) {}
 
+  // dsl 직접 사용 — 실결함 수정. 아래 Files.exists/Files.size 는 메타데이터 확인만 하는 짧은 로컬 호출로,
+  // 실제 파일 스트리밍(FileSystemResource 소비)은 컨트롤러 응답 단계에서 트랜잭션 밖에 일어난다.
+  @Transactional(readOnly = true)
   public FileContentResult getFileContent(Long fileId, Long userId) throws IOException {
     var record =
         dsl.selectFrom(UPLOADED_FILES)

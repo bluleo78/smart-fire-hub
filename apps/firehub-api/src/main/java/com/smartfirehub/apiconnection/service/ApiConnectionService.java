@@ -3,7 +3,6 @@ package com.smartfirehub.apiconnection.service;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
@@ -17,7 +16,6 @@ import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.net.URI;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,10 +40,14 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Slf4j
 public class ApiConnectionService {
 
-  private static final Set<String> SENSITIVE_KEY_PARTS =
-      Set.of("key", "token", "secret", "password");
-
   private final ApiConnectionRepository repository;
+
+  /**
+   * 조회 전용 협력자. testConnection 이 조회를 자기호출하면 프록시가 우회돼 트랜잭션이 열리지 않으므로
+   * 별도 빈으로 분리해 두고 반드시 이 참조를 통해 호출한다.
+   */
+  private final ApiConnectionReader reader;
+
   private final EncryptionService encryptionService;
   private final ObjectMapper objectMapper;
   private final SsrfProtectionService ssrfProtectionService;
@@ -75,39 +77,24 @@ public class ApiConnectionService {
             normalizedBaseUrl,
             normalizeHealthCheckPath(request.healthCheckPath()));
 
-    return getById(id);
+    return reader.getById(id);
   }
 
   @Transactional(readOnly = true)
   public List<ApiConnectionResponse> getAll() {
-    return repository.findAll().stream().map(this::toResponse).toList();
+    return repository.findAll().stream().map(reader::toResponse).toList();
   }
 
+  /** 단건 조회. 실제 구현은 {@link ApiConnectionReader} 에 있고 여기서는 기존 호출자를 위해 위임만 한다. */
   @Transactional(readOnly = true)
   public ApiConnectionResponse getById(Long id) {
-    Record record =
-        repository
-            .findById(id)
-            .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
-    return toResponse(record);
+    return reader.getById(id);
   }
 
+  /** 복호화된 authConfig 조회. 구현은 {@link ApiConnectionReader} 에 있고 여기서는 위임만 한다. */
   @Transactional(readOnly = true)
   public Map<String, String> getDecryptedAuthConfig(Long id) {
-    Record record =
-        repository
-            .findById(id)
-            .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
-    String encryptedConfig = record.get(field(name("api_connection", "auth_config"), String.class));
-    Map<String, String> config = decryptToMap(encryptedConfig);
-    // authType 은 별도 컬럼이라 복호화된 Map 에 들어있지 않다. 호출자(Preview/Executor 등)가
-    // authType 으로 분기(API_KEY + placement=query 등)할 수 있도록 함께 합쳐 반환한다. (#113)
-    String authType = record.get(field(name("api_connection", "auth_type"), String.class));
-    if (authType != null) {
-      config = new HashMap<>(config);
-      config.putIfAbsent("authType", authType);
-    }
-    return config;
+    return reader.getDecryptedAuthConfig(id);
   }
 
   @Transactional
@@ -140,7 +127,7 @@ public class ApiConnectionService {
         normalizedBaseUrl,
         normalizeHealthCheckPath(request.healthCheckPath()));
 
-    return getById(id);
+    return reader.getById(id);
   }
 
   @Transactional
@@ -168,10 +155,18 @@ public class ApiConnectionService {
   /**
    * 저장된 API 연결의 헬스체크 경로로 GET 호출하여 상태를 반환하고 DB에 반영한다. healthCheckPath가 없으면 baseUrl 자체를 GET. 5초 타임아웃.
    * DB 쓰기(updateHealthStatus)는 내부적으로 자체 트랜잭션을 사용하므로 본 메서드는 트랜잭션 밖에서 HTTP를 수행하여 커넥션 풀 점유를 피한다.
+   *
+   * <p><b>이 메서드에 {@code @Transactional} 을 붙이면 안 된다.</b> 붙이는 순간 최대 5초짜리 외부
+   * HTTP 호출이 트랜잭션(=DB 커넥션) 안으로 들어와 커넥션 풀을 점유한다. 대신 조회는 별도 빈인
+   * {@link ApiConnectionReader} 를 통해 수행해 프록시를 실제로 통과시킨다(자기호출이면 프록시가
+   * 우회돼 트랜잭션이 열리지 않는다). DB 쓰기는 {@code repository.updateHealthStatus} 가 리포지토리
+   * 자신의 트랜잭션을 열어 처리하므로, HTTP 구간은 어떤 트랜잭션 안에도 들어가지 않는다.
    */
   public TestConnectionResponse testConnection(Long id) {
-    ApiConnectionResponse conn = getById(id);
-    Map<String, String> rawConfig = getDecryptedAuthConfig(id);
+    // ── 여기까지가 트랜잭션 구간(각 호출이 reader 프록시에서 자체 트랜잭션을 연다) ──
+    ApiConnectionResponse conn = reader.getById(id);
+    Map<String, String> rawConfig = reader.getDecryptedAuthConfig(id);
+    // ── 아래 HTTP 호출은 트랜잭션 밖이다 ──
     String baseUrl = UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath());
     // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113)
     String url = applyAuthQueryParams(baseUrl, conn.authType(), rawConfig);
@@ -469,27 +464,6 @@ public class ApiConnectionService {
     }
   }
 
-  private Map<String, String> decryptToMap(String encryptedConfig) {
-    try {
-      String json = encryptionService.decrypt(encryptedConfig);
-      return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
-    } catch (JsonProcessingException e) {
-      throw new ApiConnectionException("Failed to deserialize authConfig: " + e.getMessage());
-    }
-  }
-
-  private Map<String, String> maskAuthConfig(Map<String, String> authConfig) {
-    Map<String, String> masked = new HashMap<>();
-    for (Map.Entry<String, String> entry : authConfig.entrySet()) {
-      String key = entry.getKey().toLowerCase();
-      boolean isSensitive = SENSITIVE_KEY_PARTS.stream().anyMatch(key::contains);
-      masked.put(
-          entry.getKey(),
-          isSensitive ? encryptionService.maskValue(entry.getValue()) : entry.getValue());
-    }
-    return masked;
-  }
-
   private String fetchAuthType(Long id) {
     Record record =
         repository
@@ -498,25 +472,4 @@ public class ApiConnectionService {
     return record.get(field(name("api_connection", "auth_type"), String.class));
   }
 
-  private ApiConnectionResponse toResponse(Record r) {
-    String encryptedConfig = r.get(field(name("api_connection", "auth_config"), String.class));
-    Map<String, String> plainConfig = decryptToMap(encryptedConfig);
-    Map<String, String> masked = maskAuthConfig(plainConfig);
-
-    return new ApiConnectionResponse(
-        r.get(field(name("api_connection", "id"), Long.class)),
-        r.get(field(name("api_connection", "name"), String.class)),
-        r.get(field(name("api_connection", "description"), String.class)),
-        r.get(field(name("api_connection", "auth_type"), String.class)),
-        masked,
-        r.get(field(name("api_connection", "base_url"), String.class)),
-        r.get(field(name("api_connection", "health_check_path"), String.class)),
-        r.get(field(name("api_connection", "last_status"), String.class)),
-        r.get(field(name("api_connection", "last_checked_at"), LocalDateTime.class)),
-        r.get(field(name("api_connection", "last_latency_ms"), Long.class)),
-        r.get(field(name("api_connection", "last_error_message"), String.class)),
-        r.get(field(name("api_connection", "created_by"), Long.class)),
-        r.get(field(name("api_connection", "created_at"), LocalDateTime.class)),
-        r.get(field(name("api_connection", "updated_at"), LocalDateTime.class)));
-  }
 }

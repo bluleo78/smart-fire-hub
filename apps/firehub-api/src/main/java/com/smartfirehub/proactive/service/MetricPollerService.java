@@ -23,6 +23,7 @@ import org.jooq.JSONB;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @Slf4j
@@ -35,6 +36,8 @@ public class MetricPollerService {
   private final ApplicationEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
   private final TenantScopedRunner tenantScopedRunner;
+  // dsl 직접 경로에 GUC 를 주입하기 위한 트랜잭션 경계 — 순회만으로는 GUC 가 비어 있다.
+  private final TransactionTemplate transactionTemplate;
   // 데이터셋 메트릭 수집을 위한 SQL 실행 클라이언트
   private final com.smartfirehub.pipeline.service.executor.ExecutorClient executorClient;
 
@@ -62,24 +65,35 @@ public class MetricPollerService {
         });
   }
 
+  /**
+   * 한 테넌트 범위의 메트릭 폴링 본문.
+   *
+   * <p><b>트랜잭션 경계(P2-b)</b>: 이 경로는 리포지토리를 거치지 않고 {@code DSLContext} 를 직접 쓴다 —
+   * {@link TenantScopedRunner} 는 ThreadLocal 만 세우므로 GUC(app.tenant_id)는 여기서 트랜잭션을 열어야
+   * 주입된다. 다만 트랜잭션은 <b>DB 를 만지는 구간에만</b> 둔다: 데이터셋 메트릭은 {@code
+   * executorClient} HTTP 호출로 값을 수집하고 이상탐지 이벤트도 발행하므로, 전체를 한 트랜잭션으로
+   * 감싸면 외부 호출 동안 커넥션을 점유해 풀이 고갈된다.
+   */
   @SuppressWarnings("unchecked")
   private void pollMetrics() {
-    // 1. Query enabled proactive jobs with anomaly trigger type
+    // 1. Query enabled proactive jobs with anomaly trigger type — DB 구간이므로 트랜잭션 안에서 읽는다.
     var jobs =
-        dsl.select(
-                PROACTIVE_JOB.ID,
-                PROACTIVE_JOB.USER_ID,
-                PROACTIVE_JOB.CONFIG,
-                PROACTIVE_JOB.TRIGGER_TYPE)
-            .from(PROACTIVE_JOB)
-            .where(
-                PROACTIVE_JOB
-                    .ENABLED
-                    .isTrue()
-                    .and(PROACTIVE_JOB.TRIGGER_TYPE.in("ANOMALY", "BOTH")))
-            .fetch();
+        transactionTemplate.execute(
+            status ->
+                dsl.select(
+                        PROACTIVE_JOB.ID,
+                        PROACTIVE_JOB.USER_ID,
+                        PROACTIVE_JOB.CONFIG,
+                        PROACTIVE_JOB.TRIGGER_TYPE)
+                    .from(PROACTIVE_JOB)
+                    .where(
+                        PROACTIVE_JOB
+                            .ENABLED
+                            .isTrue()
+                            .and(PROACTIVE_JOB.TRIGGER_TYPE.in("ANOMALY", "BOTH")))
+                    .fetch());
 
-    if (jobs.isEmpty()) {
+    if (jobs == null || jobs.isEmpty()) {
       return;
     }
 
@@ -149,7 +163,10 @@ public class MetricPollerService {
     double value;
     if ("system".equals(source)) {
       String metricKey = (String) metric.getOrDefault("metricKey", metricId);
-      value = collectSystemMetric(metricKey);
+      // 시스템 메트릭은 dataset(V88)·pipeline_execution(V96) 등 RLS 테이블을 dsl 로 직접 집계한다 —
+      // 트랜잭션 안에서 실행해야 GUC 가 주입되고, 그러지 않으면 언제나 0 이 수집된다.
+      Double collected = transactionTemplate.execute(status -> collectSystemMetric(metricKey));
+      value = collected == null ? 0.0 : collected;
     } else if ("dataset".equals(source)) {
       // 데이터셋 메트릭: 사용자 정의 SQL을 executor를 통해 실행하여 숫자 1개를 수집한다
       String query = (String) metric.get("query");

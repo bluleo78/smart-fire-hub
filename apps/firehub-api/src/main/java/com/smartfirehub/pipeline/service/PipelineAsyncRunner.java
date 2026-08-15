@@ -131,6 +131,13 @@ public class PipelineAsyncRunner {
    * @param steps 파이프라인 스텝 목록
    * @param stepDependencyMap 스텝 ID → 의존 스텝 ID 목록 매핑
    * @param stepIdToStepExecId 스텝 ID → 스텝 실행 레코드 ID 매핑
+   * <p><b>트랜잭션 경계(P2-b Task 5)</b>: 이 메서드는 의도적으로 {@code @Transactional} 이 아니다.
+   * 파이프라인 실행은 수 분이 걸릴 수 있어 전체를 한 트랜잭션으로 감싸면 커넥션을 그만큼 점유한다.
+   * 상태 갱신({@code updateExecutionStatus}/{@code updateStepExecution})은 모두 <b>단일 행 쓰기</b>이고
+   * 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는 스텝 종료 후
+   * 한 번), 리포지토리의 클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 —
+   * 그 트랜잭션이 곧 RLS GUC 공급 지점이다.
+   *
    * @param userId 실행 요청 사용자 ID (Python/AI 권한 체크에 사용)
    * @param executorEnabled 외부 실행기 활성화 여부
    */
@@ -211,7 +218,10 @@ public class PipelineAsyncRunner {
           executionId, finalStatus, null, LocalDateTime.now(ZoneOffset.UTC));
       log.info("Pipeline execution {} completed with status: {}", executionId, finalStatus);
 
-      // 체인 트리거를 위한 완료 이벤트 발행
+      // 체인 트리거를 위한 완료 이벤트 발행.
+      // 이 스레드(pipelineExecutor)는 TenantContextTaskDecorator 로 테넌트를 승계받은 상태이고,
+      // @Async 리스너 제출도 이 스레드에서 일어나므로 테넌트가 그대로 이어진다 — 그래서 이벤트
+      // 페이로드에 tenantId 를 따로 싣지 않는다. (P2-b Task 5)
       applicationEventPublisher.publishEvent(
           new PipelineCompletedEvent(pipelineId, executionId, finalStatus, pipelineCreatedBy));
 

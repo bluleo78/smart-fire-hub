@@ -22,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * ApiConnectionService 통합 테스트. Phase 9: baseUrl 정규화, SSRF 검증(로컬 테스트 환경에서 localhost는 차단됨),
@@ -34,6 +35,9 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   @Autowired private ApiConnectionRepository apiConnectionRepository;
 
   @Autowired private DSLContext dsl;
+
+  /** RLS 가 걸린 테이블을 테스트가 직접 만질 때 쓰는 트랜잭션 경계 — GUC 주입의 유일한 통로다. */
+  @Autowired private TransactionTemplate tx;
 
   /**
    * SSRF 보호 서비스를 mock으로 교체 — 테스트 환경에서 DNS 해석이 불가한 외부 도메인 사용 허용. validateUrl은 아무 동작도 하지 않도록 기본
@@ -80,7 +84,11 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     // FK 순서: api_connection → user
-    dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
+    // V96 이후 api_connection 에는 RLS 정책이 걸려 있다 — 트랜잭션 밖에서 지우면 GUC 가 없어
+    // 정책이 전 행을 차단하고 0행 삭제로 조용히 끝난 뒤, 이어지는 user 삭제가 FK 로 터진다.
+    // 그래서 도메인 정리는 반드시 테넌트 트랜잭션 안에서 한다("user" 는 전역 테이블이라 무관).
+    tx.executeWithoutResult(
+        s -> dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute());
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 

@@ -6,9 +6,12 @@ import static org.mockito.Mockito.*;
 
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.support.TenantScopedRunnerStubs;
 import java.util.List;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -25,8 +28,18 @@ class ApiConnectionHealthCheckSchedulerTest {
   @Mock ApiConnectionRepository repository;
   @Mock ApiConnectionService connectionService;
   @Mock ApiConnectionNotifier notifier;
+  @Mock TenantScopedRunner tenantScopedRunner;
 
   @InjectMocks ApiConnectionHealthCheckScheduler scheduler;
+
+  /**
+   * 이 단위 테스트는 스케줄러의 라우팅 로직만 보므로 테넌트 순회는 1건으로 단순화한다. 실제 다중
+   * 테넌트 순회 검증은 {@code ApiConnectionTenantTest} 가 담당한다.
+   */
+  @BeforeEach
+  void stubSingleTenantIteration() {
+    TenantScopedRunnerStubs.stubSingleTenantIteration(tenantScopedRunner, 1L);
+  }
 
   // 테스트용 jOOQ Record 헬퍼 필드
   private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
