@@ -129,6 +129,57 @@ public final class TenantRlsTestSupport {
     }
   }
 
+  /**
+   * 사용자를 한 테넌트의 ACTIVE 멤버로 만든다.
+   *
+   * <p>{@code membership} 은 테넌트 경계 <b>위</b>의 전역 테이블(RLS 미적용)이라 컨텍스트·트랜잭션
+   * 없이 삽입된다. 이 삽입을 각 테스트가 손으로 쓰면 컬럼 구성이 제각각 드리프트하므로 여기로 모은다
+   * — 멤버십이 "정확히 1개"인지에 결과가 달라지는 테스트가 여럿이라 형태가 어긋나면 조용히
+   * 잘못된 이유로 초록이 된다.
+   */
+  public static void insertActiveMembership(DSLContext dsl, Long userId, long tenantId) {
+    dsl.insertInto(table(name("membership")))
+        .set(field(name("user_id"), Long.class), userId)
+        .set(field(name("tenant_id"), Long.class), tenantId)
+        .set(field(name("role"), String.class), "MEMBER")
+        .set(field(name("status"), String.class), "ACTIVE")
+        .execute();
+  }
+
+  /** 위에서 만든 멤버십을 사용자 단위로 지운다. {@link #deleteUser} 보다 먼저 불러야 FK 가 풀린다. */
+  public static void deleteMembership(DSLContext dsl, Long userId) {
+    if (userId != null) {
+      dsl.deleteFrom(table(name("membership")))
+          .where(field(name("user_id"), Long.class).eq(userId))
+          .execute();
+    }
+  }
+
+  /**
+   * 프로액티브 잡을 하나 만들고 id 를 반환한다. 호출자가 연 테넌트 컨텍스트/트랜잭션 안에서
+   * 실행되어야 하며, {@code tenant_id} 는 싣지 않고 GUC 파생 DEFAULT(V103)에 맡긴다 — 앱이 직접
+   * 실으면 GUC 와 어긋날 여지가 생겨 격리 단언이 무의미해진다.
+   *
+   * <p>{@code name} 은 접두사에 고유 접미사를 붙여 만든다(공유 테스트 DB 라 충돌 방지).
+   */
+  public static Long insertProactiveJob(DSLContext dsl, Long ownerUserId, String namePrefix) {
+    return (Long)
+        dsl.fetchValue(
+            "insert into proactive_job (user_id, name, prompt) values (?, ?, '테넌트 검증용')"
+                + " returning id",
+            ownerUserId,
+            namePrefix + "-" + nextTenantId());
+  }
+
+  /** 위 잡의 성공 실행 이력을 하나 만든다. 호출 규약은 {@link #insertProactiveJob} 과 같다. */
+  public static Long insertProactiveExecution(DSLContext dsl, Long jobId) {
+    return (Long)
+        dsl.fetchValue(
+            "insert into proactive_job_execution (job_id, status) values (?, 'SUCCESS')"
+                + " returning id",
+            jobId);
+  }
+
   /** 테스트가 만든 테넌트를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 마지막에 부른다. */
   public static void deleteTenants(DSLContext dsl, Long... tenantIds) {
     for (Long id : tenantIds) {
@@ -239,6 +290,33 @@ public final class TenantRlsTestSupport {
     dsl.execute("delete from dataset_graph_ingest where tenant_id = ?", tenantId);
     dsl.execute("delete from graph_review_item where tenant_id = ?", tenantId);
     dsl.execute("delete from ontology where tenant_id = ?", tenantId);
+  }
+
+  /**
+   * 프로액티브·AI 7테이블(P2-e)의 테넌트 행을 FK 순서대로 지운다. {@link #deleteOntologyGraphCascade}
+   * 와 같은 계약이다 — 호출자가 대상 테넌트 컨텍스트 트랜잭션 안에서 부른다.
+   *
+   * <p>순서가 중요하다: {@code proactive_message} → {@code proactive_job_execution} →
+   * {@code metric_snapshot}/{@code anomaly_event} → {@code proactive_job}. 전부 CASCADE FK 지만
+   * 명시적으로 지워야 정책이 자식까지 스코프하는지가 정리 단계에서 드러난다.
+   *
+   * <p>{@code ai_session} 은 {@code "user"} 로의 FK 가 <b>CASCADE 가 아니다</b> — 이 정리가 0행이
+   * 되면 뒤이은 {@link #deleteUser} 가 FK 위반으로 요란하게 터진다. 반대로 {@code proactive_job} 은
+   * CASCADE 라 사용자 삭제가 조용히 뒤처리를 해 준다. 그래서 이 헬퍼는 "터지지 않았으니 됐다"로
+   * 검증할 수 없고, 호출부가 반드시 테넌트 트랜잭션 안에서 불러야 한다.
+   *
+   * <p>{@code where tenant_id = ?} 를 명시하는 이유는 {@link #deleteOntologyGraphCascade} 와 같다 —
+   * V104 는 FORCE RLS 를 쓰지 않으므로 소유 롤로 접속하면 정책이 통째로 우회되고, 그때 WHERE 없는
+   * DELETE 는 공유 테스트 DB 의 남의 행까지 지운다.
+   */
+  public static void deleteProactiveAiCascade(DSLContext dsl, long tenantId) {
+    dsl.execute("delete from proactive_message where tenant_id = ?", tenantId);
+    dsl.execute("delete from proactive_job_execution where tenant_id = ?", tenantId);
+    dsl.execute("delete from metric_snapshot where tenant_id = ?", tenantId);
+    dsl.execute("delete from anomaly_event where tenant_id = ?", tenantId);
+    dsl.execute("delete from proactive_job where tenant_id = ?", tenantId);
+    dsl.execute("delete from ai_session where tenant_id = ?", tenantId);
+    dsl.execute("delete from ai_inference_cache where tenant_id = ?", tenantId);
   }
 
   /**

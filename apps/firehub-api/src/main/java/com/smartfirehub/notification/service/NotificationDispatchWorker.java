@@ -77,15 +77,28 @@ public class NotificationDispatchWorker {
       } catch (Throwable t) {
         // deliver 내부에서 미처 catch되지 않은 예외 — transient로 처리 후 재시도 스케줄
         int next = row.attemptCount() + 1;
-        if (backoff.exhausted(next)) {
-          outboxRepo.markPermanentFailure(
-              row.id(), "UNRECOVERABLE", t.getClass().getSimpleName() + ": " + t.getMessage());
-        } else {
-          outboxRepo.rescheduleTransient(
+        try {
+          if (backoff.exhausted(next)) {
+            outboxRepo.markPermanentFailure(
+                row.id(), "UNRECOVERABLE", t.getClass().getSimpleName() + ": " + t.getMessage());
+          } else {
+            outboxRepo.rescheduleTransient(
+                row.id(),
+                next,
+                Instant.now().plus(backoff.delayFor(next)),
+                t.getClass().getSimpleName() + ": " + t.getMessage());
+          }
+        } catch (Throwable bookkeepingFailure) {
+          // 한 행의 상태 기록 실패가 배치 전체를 멈추지 않게 한다.
+          // 왜 필요한가: 여기서 예외가 새면 남은 행이 그대로 SENDING 에 갇힌 채 폴링마다 같은 지점에서
+          // 죽어, outbox 가 조용히 영구 정지한다(실측: 공유 테스트 DB 에 due PENDING 2500여 건 적체).
+          // 그 적체를 만든 원인(status varchar(16) < 'PERMANENT_FAILURE' 17자)은 V105 에서 닫혔다.
+          // 그래도 이 방어는 남긴다 — 상태 기록이 실패할 이유는 폭 말고도 있다(연결 끊김, 데드락).
+          log.error(
+              "outbox {} 상태 기록 실패 — 이 행은 건너뛰고 배치를 계속한다 (원래 실패: {})",
               row.id(),
-              next,
-              Instant.now().plus(backoff.delayFor(next)),
-              t.getClass().getSimpleName() + ": " + t.getMessage());
+              t.toString(),
+              bookkeepingFailure);
         }
       }
     }

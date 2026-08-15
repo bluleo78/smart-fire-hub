@@ -17,7 +17,18 @@ import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 프로액티브 잡 실행 이력 저장소.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
+ * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 라 트랜잭션이 없으면 공급되지 않는다.
+ * 이 저장소의 주 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 은 {@code @Async} 만 있고
+ * 트랜잭션이 없어, 배선이 없으면 실행 이력이 조용히 남지 않는다. 전파 REQUIRED 이므로
+ * 컨트롤러 경로의 동작은 불변이다.
+ */
+@Transactional
 @Repository
 @RequiredArgsConstructor
 public class ProactiveJobExecutionRepository {

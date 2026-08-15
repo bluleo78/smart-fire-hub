@@ -10,11 +10,19 @@ import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 이상 탐지 이벤트 저장/조회 Repository. anomaly_event 테이블은 jOOQ 코드젠 대상이 아니므로 raw DSL(table/field 함수)을 사용한다.
  * proactive_job과 1:N 관계 — 하나의 작업에서 여러 이벤트가 발생할 수 있다.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
+ * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 인데 이 저장소의 쓰기 호출자는
+ * {@code ProactiveJobService} 의 {@code @EventListener} + {@code @Async("pipelineExecutor")}
+ * 리스너다 — 테넌트 컨텍스트는 {@code TenantContextTaskDecorator} 로 승계되지만 트랜잭션이
+ * 없어 GUC 가 공급되지 않는다. 전파 REQUIRED 이므로 기존 트랜잭션 안 호출은 불변이다.
  */
+@Transactional
 @Repository
 @RequiredArgsConstructor
 public class AnomalyEventRepository {

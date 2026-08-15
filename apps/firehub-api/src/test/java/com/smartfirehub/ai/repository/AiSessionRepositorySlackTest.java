@@ -59,8 +59,12 @@ class AiSessionRepositorySlackTest extends IntegrationTestBase {
 
   @AfterEach
   void tearDown() {
-    // FK 순서: ai_session 먼저 삭제 후 user 삭제
-    dsl.deleteFrom(AI_SESSION_TABLE).where(AS_USER_ID.eq(testUserId)).execute();
+    // FK 순서: ai_session 먼저 삭제 후 user 삭제.
+    // V104 이후 ai_session 은 RLS 대상이라 이 DELETE 는 반드시 테넌트 컨텍스트 + 트랜잭션 안에
+    // 있어야 한다 — 밖에서 지우면 GUC 가 없어 0행이 되고, ai_session_user_id_fkey 가 CASCADE 가
+    // 아니라서 뒤이은 사용자 삭제가 FK 위반으로 터진다.
+    inTenantFixture(() -> dsl.deleteFrom(AI_SESSION_TABLE).where(AS_USER_ID.eq(testUserId)).execute());
+    // "user" 는 전역 테이블이라 컨텍스트가 필요 없다.
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 

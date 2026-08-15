@@ -8,7 +8,17 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 메트릭 스냅샷 저장소.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
+ * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 인데 {@code MetricPollerService} 의
+ * 스냅샷 저장·조회는 기존 {@code TransactionTemplate} 경계 <b>밖</b>에 있다(테넌트 컨텍스트는
+ * 있으나 GUC 가 없다). 전파 REQUIRED 이므로 이미 트랜잭션 안인 호출의 동작은 불변이다.
+ */
+@Transactional
 @Repository
 @RequiredArgsConstructor
 public class MetricSnapshotRepository {

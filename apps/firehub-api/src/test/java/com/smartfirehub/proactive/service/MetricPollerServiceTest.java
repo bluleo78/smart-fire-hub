@@ -45,7 +45,12 @@ class MetricPollerServiceTest extends IntegrationTestBase {
 
   @AfterEach
   void tearDown() {
-    dsl.deleteFrom(PROACTIVE_JOB).where(PROACTIVE_JOB.USER_ID.eq(testUserId)).execute();
+    // V104 이후 proactive_job 은 RLS 대상이다 — 트랜잭션 밖에서 지우면 GUC 가 없어 0행 삭제가
+    // 되고 픽스처가 조용히 누적된다(user_id FK 가 CASCADE 라 아래 사용자 삭제가 뒤처리를 해 버려
+    // 이 테스트는 초록으로 남는다 — P2-d 에서 겪은 "원인과 증상이 떨어진" 누수 형태 그대로다).
+    inTenantFixture(
+        () -> dsl.deleteFrom(PROACTIVE_JOB).where(PROACTIVE_JOB.USER_ID.eq(testUserId)).execute());
+    // "user" 는 전역 테이블이라 컨텍스트가 필요 없다.
     dsl.deleteFrom(USER).where(USER.ID.eq(testUserId)).execute();
   }
 
@@ -195,14 +200,16 @@ class MetricPollerServiceTest extends IntegrationTestBase {
   /** config가 null인 job — 빈 Map으로 처리되어 anomalyConfig 없으므로 스킵 */
   @Test
   void poll_withNullConfig_skipsJob() {
-    dsl.insertInto(PROACTIVE_JOB)
-        .set(PROACTIVE_JOB.USER_ID, testUserId)
-        .set(PROACTIVE_JOB.NAME, "null config job")
-        .set(PROACTIVE_JOB.PROMPT, "prompt")
-        .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 * * * *")
-        .set(PROACTIVE_JOB.ENABLED, true)
-        .set(PROACTIVE_JOB.TRIGGER_TYPE, "ANOMALY")
-        .execute();
+    inTenantFixture(
+        () ->
+            dsl.insertInto(PROACTIVE_JOB)
+                .set(PROACTIVE_JOB.USER_ID, testUserId)
+                .set(PROACTIVE_JOB.NAME, "null config job")
+                .set(PROACTIVE_JOB.PROMPT, "prompt")
+                .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 * * * *")
+                .set(PROACTIVE_JOB.ENABLED, true)
+                .set(PROACTIVE_JOB.TRIGGER_TYPE, "ANOMALY")
+                .execute());
 
     metricPollerService.poll();
   }
@@ -222,15 +229,20 @@ class MetricPollerServiceTest extends IntegrationTestBase {
     metricPollerService.poll();
   }
 
+  // V103 이후 proactive_job.tenant_id 는 NOT NULL + GUC 파생 DEFAULT 다. 픽스처 삽입은
+  // 트랜잭션 안에서 GUC 를 공급해야 한다 — 검증 대상인 metricPollerService.poll() 은
+  // 여전히 이 경계 밖에서 호출된다(배선 결함을 가리지 않기 위함).
   private void insertAnomalyJob(String config, String triggerType) {
-    dsl.insertInto(PROACTIVE_JOB)
-        .set(PROACTIVE_JOB.USER_ID, testUserId)
-        .set(PROACTIVE_JOB.NAME, "Anomaly Job " + triggerType)
-        .set(PROACTIVE_JOB.PROMPT, "테스트 프롬프트")
-        .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 * * * *")
-        .set(PROACTIVE_JOB.ENABLED, true)
-        .set(PROACTIVE_JOB.TRIGGER_TYPE, triggerType)
-        .set(PROACTIVE_JOB.CONFIG, JSONB.valueOf(config))
-        .execute();
+    inTenantFixture(
+        () ->
+            dsl.insertInto(PROACTIVE_JOB)
+                .set(PROACTIVE_JOB.USER_ID, testUserId)
+                .set(PROACTIVE_JOB.NAME, "Anomaly Job " + triggerType)
+                .set(PROACTIVE_JOB.PROMPT, "테스트 프롬프트")
+                .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 * * * *")
+                .set(PROACTIVE_JOB.ENABLED, true)
+                .set(PROACTIVE_JOB.TRIGGER_TYPE, triggerType)
+                .set(PROACTIVE_JOB.CONFIG, JSONB.valueOf(config))
+                .execute());
   }
 }

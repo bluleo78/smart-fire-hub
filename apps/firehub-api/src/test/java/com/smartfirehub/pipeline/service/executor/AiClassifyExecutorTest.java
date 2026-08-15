@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
@@ -37,8 +38,11 @@ import org.jooq.SelectConditionStep;
 import org.jooq.SelectJoinStep;
 import org.jooq.SelectSelectStep;
 import org.jooq.SelectWhereStep;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * AiClassifyExecutor 단위 테스트. Spring 컨텍스트 없이 Mockito 로 실행한다. jOOQ DSLContext 는 fluent chain 이 많아
@@ -52,6 +56,7 @@ class AiClassifyExecutorTest {
   private DatasetRepository datasetRepository;
   private ObjectMapper objectMapper;
   private DSLContext dsl;
+  private TransactionTemplate transactionTemplate;
 
   private AiClassifyExecutor executor;
 
@@ -64,6 +69,15 @@ class AiClassifyExecutorTest {
     objectMapper = new ObjectMapper();
     dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
 
+    // TransactionTemplate 은 mock 이 아니라 실물을 쓴다. mock 이면 execute/executeWithoutResult 가
+    // 콜백을 아예 실행하지 않아 캐시 조회·쓰기가 통째로 사라지고, 아래 캐시 단언들이 조용히
+    // 무의미해진다 — 이 태스크가 잡으려는 결함과 같은 모양이다. 트랜잭션 매니저만 mock 이라
+    // 실제 트랜잭션은 열리지 않지만(getTransaction → null, commit(null) → no-op) 콜백은 돈다.
+    transactionTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
+
+    // processBatch 는 테넌트 컨텍스트가 없으면 즉시 실패한다(캐시가 테넌트별 파티션이므로).
+    TenantContext.set(1L);
+
     executor =
         new AiClassifyExecutor(
             aiAgentClient,
@@ -71,7 +85,13 @@ class AiClassifyExecutorTest {
             dataTableService,
             datasetRepository,
             objectMapper,
-            dsl);
+            dsl,
+            transactionTemplate);
+  }
+
+  @AfterEach
+  void tearDown() {
+    TenantContext.clear();
   }
 
   // -----------------------------------------------------------------------
@@ -204,6 +224,9 @@ class AiClassifyExecutorTest {
     when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
     when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
+    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(cachedRecord);
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
@@ -246,6 +269,9 @@ class AiClassifyExecutorTest {
     when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
     when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
+    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(cachedRecord);
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
@@ -285,6 +311,9 @@ class AiClassifyExecutorTest {
     when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
     when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
+    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
     // insert chain — return a deep-stubbed chain that always resolves
@@ -331,6 +360,9 @@ class AiClassifyExecutorTest {
     when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
     when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
+    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
     when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
@@ -366,6 +398,9 @@ class AiClassifyExecutorTest {
     when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
     when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
+    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
     when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));

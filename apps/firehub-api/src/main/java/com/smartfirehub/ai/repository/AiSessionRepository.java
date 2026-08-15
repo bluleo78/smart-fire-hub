@@ -12,10 +12,30 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * AI 세션 레포지토리. jOOQ DSLContext 기반 type-safe SQL로 ai_session 테이블을 관리한다. WEB(기본) 및 SLACK 채널 소스를 지원한다.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
+ * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 경로에서는
+ * 세션 INSERT 가 NOT NULL 위반으로 깨지고 조회는 조용히 0행이 된다. 전파 REQUIRED 이므로
+ * 컨트롤러 경로의 동작은 불변이다.
+ *
+ * <p><b>Slack inbound 는 이것으로 고쳐지지 않는다 — 오해하지 마라.</b> 이 어노테이션은 트랜잭션이
+ * 없다는 문제만 푼다. {@code SlackInboundService} 의 {@code @Async} 스레드에는 애초에
+ * {@link com.smartfirehub.global.tenant.TenantContext} 가 없고(원 요청이 permitAll Slack 웹훅이라
+ * 승계할 테넌트가 없다), {@code TenantAwareTransactionManager.doBegin} 은 컨텍스트가 null 이면
+ * GUC 를 <b>아예 세팅하지 않는다</b>. 즉 트랜잭션은 열리지만 여전히 조회 0행 / INSERT NOT NULL
+ * 위반이다. 7테이블 중 배경 쓰기 경로에 트랜잭션만 있고 <b>테넌트 해석이 없는 유일한 테이블</b>이
+ * {@code ai_session} 이다.
+ *
+ * <p>지금 무해한 이유는 오직 하나다: {@code @Async("slackInboundExecutor")} 가 가리키는 빈이
+ * 존재하지 않아(커밋 {@code 968a28c2} 에서 삭제) <b>Slack inbound 경로 자체가 죽어 있다</b>.
+ * P2-f 가 그 빈을 복원하는 순간 이것은 Critical 이 된다 — 복원과 <b>같은 커밋</b>에서 permitAll
+ * 웹훅의 테넌트 해석(팀 ID → 테넌트, V95 의 {@code SECURITY DEFINER} 패턴)을 함께 넣어야 한다.
  */
+@Transactional
 @Repository
 @RequiredArgsConstructor
 public class AiSessionRepository {

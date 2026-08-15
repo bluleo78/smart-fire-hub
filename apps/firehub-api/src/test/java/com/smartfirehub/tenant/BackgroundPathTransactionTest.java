@@ -22,6 +22,12 @@ import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.ai.repository.AiSessionRepository;
+import com.smartfirehub.proactive.repository.AnomalyEventRepository;
+import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
+import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
+import com.smartfirehub.proactive.repository.ProactiveJobRepository;
+import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -72,6 +78,12 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   @Autowired private MappingRepository mappingRepository;
   @Autowired private GraphIngestRepository graphIngestRepository;
   @Autowired private ReviewItemRepository reviewItemRepository;
+  @Autowired private ProactiveJobRepository proactiveJobRepository;
+  @Autowired private ProactiveJobExecutionRepository proactiveJobExecutionRepository;
+  @Autowired private ProactiveMessageRepository proactiveMessageRepository;
+  @Autowired private MetricSnapshotRepository metricSnapshotRepository;
+  @Autowired private AnomalyEventRepository anomalyEventRepository;
+  @Autowired private AiSessionRepository aiSessionRepository;
 
   private TransactionTemplate tx;
   private long tenantId;
@@ -174,14 +186,28 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
 
   // ── P2-b: pipeline/apiconnection/job 리포지토리 트랜잭션 경계 ────────────
   //
-  // 이 7개 테이블에는 아직 RLS 가 없다(V87~V92 는 dataset/document/analytics 도메인만 대상).
-  // 그래서 "행이 보이는가"로는 아무것도 증명할 수 없다 — RLS 가 없으면 트랜잭션이 있든 없든
-  // 행이 보이기 때문이다. 대신 배선 자체를 직접 단언한다: 각 리포지토리가 트랜잭션 프록시이고
-  // 클래스 레벨 @Transactional 을 갖는가. 이 조건이 깨지면 V96(정책) 이후 배경 스레드에서
-  // GUC 가 주입되지 않아 예외도 로그도 없이 조용히 0행이 된다.
+  // 배선 자체를 직접 단언한다: 각 리포지토리가 트랜잭션 프록시이고 클래스 레벨 @Transactional 을
+  // 갖는가. 이 조건이 깨지면 배경 스레드에서 GUC 가 주입되지 않아 예외도 로그도 없이 조용히 0행이 된다.
+  //
+  // ★ 이 메타데이터 단언을 "정책 오기 전의 임시방편" 으로 오해하지 마라 — 정반대다.
+  // (원래 이 자리에는 "이 테이블들에는 아직 RLS 가 없어 행 가시성으로는 증명할 수 없으니 임시로
+  //  메타데이터를 본다" 는 주석이 있었다. P2-e 최종 리뷰가 그 주석이 낡았을 뿐 아니라 방향이
+  //  반대라는 것을 실측으로 잡았다.)
+  //
+  // 정책이 생긴 지금도 행위 단언이 이 자리를 대신할 수 없다. 여기 등록된 리포지토리들의 행위
+  // 테스트가 **전부 클래스 레벨 @Transactional 을 달고 있기 때문이다**(P2-e 6개 기준:
+  // MetricSnapshotRepositoryTest, AnomalyEventRepositoryTest, ProactiveJobExecutionRepositoryTest,
+  // ProactiveMessageRepositoryTest, ProactiveJobSchedulerServiceTest, ProactiveJobServiceTest,
+  // AiSessionServiceTest — 저장소 전체로는 58개 클래스에 걸친 기존 상태다).
+  // 테스트 트랜잭션이 GUC 를 공급하고 리포지토리의 REQUIRED 가 거기 합류하므로,
+  // **프로덕션 리포지토리에서 @Transactional 을 지워도 그 테스트들은 전부 초록이다.**
+  //
+  // 즉 이 메타데이터 단언이 해당 리포지토리들의 **유일한 가드**다. "이제 정책이 있으니 행위
+  // 단언으로 바꾸자" 며 걷어내면 가드가 통째로 사라진다. 걷어내려면 먼저 그 행위 테스트들에서
+  // 클래스 레벨 @Transactional 을 떼어내야 한다.
 
   /**
-   * 배경 경로가 쓰는 리포지토리 8개가 클래스 레벨 @Transactional 을 유지하는지.
+   * 배경 경로가 쓰는 리포지토리들이 클래스 레벨 @Transactional 을 유지하는지.
    *
    * <p>ReportTemplateRepository 만 예외적으로 이미 RLS 대상이라 위
    * {@link #reportTemplateIsReadableFromBackgroundThreadShape()} 의 행위 단언도 함께 걸려 있다.
@@ -221,7 +247,21 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
             // ── P2-d(Task 4): 그래프 검수 인박스 ──
             // 호출 지점이 10곳으로 가장 넓고 파손 형태가 세 가지다(추출 중단 / 중복 검수 항목
             // 재생성 / update 0행인데 검수자에게는 성공으로 보고).
-            entry("ReviewItemRepository", reviewItemRepository));
+            entry("ReviewItemRepository", reviewItemRepository),
+            // ── P2-e(Task 3·4): 프로액티브 트리 + AI 세션 ──
+            // 배경 경로가 유난히 넓다: 부팅 재등록(@PostConstruct), 크론 발화(스케줄러 풀),
+            // 메트릭 폴러(@Scheduled), 이상탐지 리스너(@Async), outbox 워커(@Scheduled).
+            // 전부 앰비언트 트랜잭션이 없어 리포지토리가 스스로 열지 않으면 V104 이후
+            // 조회는 조용히 0행, 삽입은 tenant_id NOT NULL 위반이 된다.
+            entry("ProactiveJobRepository", proactiveJobRepository),
+            entry("ProactiveJobExecutionRepository", proactiveJobExecutionRepository),
+            // proactive_message 는 두 경로가 쓴다 — 살아 있는 ChatDeliveryChannel(pipelineExecutor,
+            // 컨텍스트만 있음)과 플래그로 잠든 ChatChannel(워커 스레드). 전자의 정합성은 전적으로
+            // 이 애노테이션에 달려 있다.
+            entry("ProactiveMessageRepository", proactiveMessageRepository),
+            entry("MetricSnapshotRepository", metricSnapshotRepository),
+            entry("AnomalyEventRepository", anomalyEventRepository),
+            entry("AiSessionRepository", aiSessionRepository));
 
     repositories.forEach(
         (label, bean) -> {

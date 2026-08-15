@@ -299,11 +299,15 @@ public class ProactiveJobService {
         event.deviation());
 
     // 이상 탐지 이벤트를 DB에 영속화한다 — 이력 조회 API에서 활용된다
-    // 저장 실패가 job 실행을 막지 않도록 예외를 포획한다
+    // 저장 실패가 job 실행을 막지 않도록 예외를 포획한다.
+    // ERROR 로 남기는 이유(P2-e): anomaly_event 는 V103/V104 로 tenant_id + RLS 대상이 됐다.
+    // 이 리스너는 @Async 스레드라 테넌트 컨텍스트·트랜잭션 배선이 어긋나면 NOT NULL 위반으로
+    // 전부 실패하는데, WARN 한 줄에 묻히면 이상탐지 이력이 통째로 비어 가는 것을 아무도 모른다.
+    // 스택트레이스도 함께 남긴다 — 메시지만으로는 RLS 위반과 다른 원인을 구분할 수 없다.
     try {
       anomalyEventRepository.save(event);
     } catch (Exception e) {
-      log.warn("Failed to save anomaly event for job {}: {}", event.jobId(), e.getMessage());
+      log.error("Failed to save anomaly event for job {}: {}", event.jobId(), e.getMessage(), e);
     }
 
     // 해당 사용자에게 SSE를 통해 실시간 이상 탐지 알림을 전송한다

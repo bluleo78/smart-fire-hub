@@ -15,7 +15,17 @@ import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 프로액티브 메시지(사용자 알림함) 저장소.
+ *
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
+ * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 발송
+ * 경로({@code @Scheduled} 디스패치 워커, {@code @Async} 잡 실행기)에서는 INSERT 가 NOT NULL
+ * 위반으로 깨진다. 전파 REQUIRED 이므로 컨트롤러 경로의 동작은 불변이다.
+ */
+@Transactional
 @Repository
 @RequiredArgsConstructor
 public class ProactiveMessageRepository {
