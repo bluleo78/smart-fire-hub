@@ -1,0 +1,14 @@
+-- notification_outbox.status 폭 확대: varchar(16) → varchar(32)
+--
+-- 무엇이 문제였나: V50 은 status 를 varchar(16) 으로 선언하면서, 같은 파일의
+-- chk_outbox_status CHECK 는 'PERMANENT_FAILURE'(17자)를 허용값으로 열거한다.
+-- 즉 컬럼이 절대 담을 수 없는 값을 제약이 허용하는 자기모순이라, markPermanentFailure 는
+-- 언제나 22001(value too long)로 실패해 왔다.
+--
+-- 왜 지금 고치나: 재시도가 소진된 행은 상태 기록 자체가 불가능해 SENDING 에 갇히고,
+-- stale-claim 리퍼가 PENDING 으로 되돌려 영구 루프에 빠진다(공유 테스트 DB 에 due PENDING
+-- 2500여 건 적체로 실증). P2-e 가 ChatChannel 에 영구 실패 반환을 2개 더 추가하면서
+-- 이 경로에 실제로 도달하는 빈도가 올라간다 — 밴드가 만든 의존이므로 같은 브랜치에서 닫는다.
+--
+-- 멀티 테넌시와는 무관한 별건 수정이라 별도 커밋으로 분리한다(단독 체리픽/되돌리기 가능).
+ALTER TABLE notification_outbox ALTER COLUMN status TYPE VARCHAR(32);
