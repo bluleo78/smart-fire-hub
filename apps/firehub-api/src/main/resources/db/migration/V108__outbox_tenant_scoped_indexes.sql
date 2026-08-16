@@ -37,10 +37,19 @@ CREATE INDEX idx_outbox_status_tenant
   ON notification_outbox (status, tenant_id);
 
 -- ③ idx_outbox_pending_due 제거 — 안전한 이유: ①이 같은 부분 조건(WHERE status='PENDING')에
---    tenant_id 선행 컬럼만 추가한 상위호환이라, 이 인덱스가 커버하던 스캔(claimDue·
---    countPendingByChannel·이 인덱스를 쓰던 다른 PENDING 부분 스캔)을 전부 ①이 대신한다.
---    V106 주석(192줄)이 "outbox_tenant_ids 의 DISTINCT tenant_id 스캔이 이 인덱스를 타야 한다"고
---    적어 뒀지만, 실측 결과 outbox_tenant_ids 는 status=ANY(...) 조건만 걸고 tenant_id 술어가
---    없어 idx_outbox_pending_due(next_attempt_at 만 키) 로는 애초에 index-only 가 안 됐다
---    (Seq Scan 이었다) — 그 역할은 ②가 대신한다.
-DROP INDEX idx_outbox_pending_due;
+--    tenant_id 선행 컬럼만 추가한 상위호환이라, claimDue·countPendingByChannel 이 쓰던 스캔은
+--    전부 ①이 대신한다.
+--
+--    outbox_tenant_ids 의 세 호출처는 구분해서 봐야 한다:
+--      - outbox_tenant_ids('{SENT,PERMANENT_FAILURE}')(NotificationRetentionJob) — 이 인자는
+--        idx_outbox_pending_due 의 부분 조건(status='PENDING')과 안 맞아 애초에 이 인덱스를 타지
+--        못하고 Seq Scan 이었다(적용 전 실측, 3885행/hit=599). V106 주석(192줄)이 "outbox_tenant_ids
+--        의 DISTINCT 스캔이 이 인덱스를 타야 한다"고 적은 것은 이 호출처 기준으로는 틀렸다.
+--      - outbox_tenant_ids('{PENDING}')(NotificationDispatchWorker·NotificationMetrics, 이 함수의
+--        핫패스 호출처) 는 반대다 — V106 저자가 맞았다. idx_outbox_pending_due 의 부분 조건이
+--        정확히 일치해 이 호출은 Seq Scan 을 피하고 있었다(다만 tenant_id 가 인덱스에 없어
+--        index-only 는 못 되고, PENDING 행마다 힙을 한 번씩 봐야 했다).
+--    ②(idx_outbox_status_tenant)는 이 PENDING 경로까지 포함해 세 호출처 전부를 Index Only Scan
+--    (Heap Fetches: 0, VACUUM 후 실측)으로 덮는다 — idx_outbox_pending_due 가 하던 일의 상위호환이라
+--    삭제해도 안전하다.
+DROP INDEX IF EXISTS idx_outbox_pending_due;
