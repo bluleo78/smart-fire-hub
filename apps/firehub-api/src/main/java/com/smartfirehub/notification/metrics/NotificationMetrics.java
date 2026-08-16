@@ -46,11 +46,12 @@ public class NotificationMetrics {
   private final Map<String, Integer> missPasses = new ConcurrentHashMap<>();
 
   /**
-   * 미출현 축출 임계 패스 수. 기본값 {@code 10} × 기본 스크레이프 주기
+   * 미출현 축출 임계 패스 수. 기본값 {@code 10} × 기본 갱신 주기
    * {@code notification.metrics.refresh_interval_ms:30000}(30초) = <b>약 5분</b>의 유예다.
    *
    * <p>드레인 후 곧바로 재적체되는 정상 흐름에서 게이지가 등록/해제를 반복하지 않을 만큼 길게,
-   * 그러나 삭제·휴면 테넌트의 잔재가 스크레이프 페이로드에 남는 시간은 짧게 잡은 절충값이다.
+   * 그러나 삭제·휴면 테넌트의 잔재가 메모리(아래 {@link #refreshPendingGauges} javadoc 의
+   * "축출" 참조)에 남는 시간은 짧게 잡은 절충값이다.
    *
    * <p><b>두 프로퍼티가 곱셈으로 묶여 있다</b> — {@code refresh_interval_ms} 를 바꾸면 이 값을
    * 그대로 둬도 실제 유예 시간(초 단위)이 함께 바뀐다. 유예 시간 자체를 고정하고 싶다면 이 값을
@@ -101,10 +102,16 @@ public class NotificationMetrics {
    * 사이 스크레이프가 들어오면 알람이 플랩한다. 그래서 이번 패스 값을 별도 맵에 모아 두고, 순회가
    * 끝난 뒤 게이지마다 한 번씩만 대입한다.
    *
-   * <p><b>축출(P2-g).</b> 삭제·휴면 테넌트의 (테넌트,채널) 게이지는 이전에는 영원히 남아 매 패스
-   * 순회 대상 + 매 스크레이프 페이로드에 실렸다. 이번 패스 값이 정해지지 않은 key 가 {@link
-   * #gaugeEvictionPasses} 패스 연속으로 반복되면 게이지를 완전히 제거한다({@code registry.remove} +
-   * {@code pendingGauges} 제거 — 맵만 지우고 registry 에 남기면 스크레이프 페이로드는 그대로다).
+   * <p><b>축출(P2-g).</b> 삭제·휴면 테넌트의 (테넌트,채널) 게이지는 이전에는 영원히 남아
+   * {@code pendingGauges} 맵과 {@link MeterRegistry} 미터에 <b>프로세스 수명 내내</b> 누적되고,
+   * 매 패스 스왑 순회 대상이 됐다 — 실제로 유효한 근거는 이 메모리 누적과 순회 비용이다.
+   * (스크레이프 페이로드가 함께 늘어나는 것도 사실이지만, 이건 Prometheus 등 exposition 레지스트리가
+   * 붙어 있을 때만 성립한다. 2026-08-17 검증: 이 앱은 {@code micrometer-registry-prometheus}
+   * 의존성이 없어 {@code /actuator/prometheus} 가 404 — 오늘은 스크레이프 자체가 존재하지 않는다.
+   * 나중에 그 의존성을 추가하면 이 근거의 나머지 절반도 함께 살아난다.) 이번 패스 값이 정해지지
+   * 않은 key 가 {@link #gaugeEvictionPasses} 패스 연속으로 반복되면 게이지를 완전히 제거한다
+   * ({@code registry.remove} + {@code pendingGauges} 제거 — 맵만 지우고 registry 에 남기면
+   * 메모리 누적이 고쳐지지 않는다).
    *
    * <p><b>즉시 축출하지 않고 유예를 두는 이유.</b> 드레인된 테넌트가 잠깐 0 이었다가 다시 쌓이는
    * 정상 흐름에서 곧바로 축출하면 게이지가 등록/해제를 반복해 스크레이프 사이 시계열이 끊긴다.
@@ -187,8 +194,9 @@ public class NotificationMetrics {
 
   /**
    * key 에 해당하는 게이지를 {@link MeterRegistry} 와 {@link #pendingGauges} 양쪽에서 완전히
-   * 제거한다. {@code pendingGauges} 에서만 지우면 이미 등록된 게이지는 레지스트리에 그대로
-   * 남아 스크레이프 페이로드가 줄지 않는다 — 그래서 {@code registry.remove} 를 반드시 함께 부른다.
+   * 제거한다. {@code pendingGauges} 에서만 지우면 이미 등록된 게이지는 레지스트리에 그대로 남아
+   * 메모리 누적이 고쳐지지 않는다(Prometheus 가 붙어 있다면 스크레이프 페이로드도 줄지 않는다)
+   * — 그래서 {@code registry.remove} 를 반드시 함께 부른다.
    */
   private void evict(String key) {
     int sep = key.indexOf('|');
