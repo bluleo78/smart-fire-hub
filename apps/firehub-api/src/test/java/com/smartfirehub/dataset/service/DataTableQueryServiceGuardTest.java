@@ -98,23 +98,24 @@ class DataTableQueryServiceGuardTest extends IntegrationTestBase {
   }
 
   // =========================================================================
-  // 알려진 미해결 격차 — pg_catalog 암묵적 검색 (이 밴드의 범위 밖, #385 후속 필요)
+  // pg_catalog 암묵적 검색 차단 — team lead 판정 2, 실제 배선 경로 레벨로 고정
   // =========================================================================
 
   /**
-   * 알려진 격차(회귀 아님): {@code pg_catalog} 는 {@code search_path} 에 무엇을 넣든 항상 암묵적으로 먼저 검색되므로,
-   * 미한정 이름이 {@code pg_catalog} 의 뷰/함수와 일치하면 AST 스키마 화이트리스트도 부분문자열 대조도 막지 못한다(실측: {@code
-   * SELECT * FROM pg_tables} 가 통과해 172행을 반환한다). 옛 부분문자열 검사도 리터럴 {@code "PG_CATALOG"} 문자열이 없는
-   * 이 형태는 원래 못 막았으므로 이 배선(#385 Task 3)이 만든 회귀는 아니다 — 이 테스트는 "AST 화이트리스트가 정본"이라는 현재
-   * 모델이 이 입력 형태에는 적용되지 않는다는 사실을 고정해 둔다. 진짜 닫으려면 미한정 이름을 {@code data} 스키마 카탈로그
-   * 존재 여부로 검증해야 한다(Task 2 R1 대안 2) — 이는 검증기 자체의 변경이라 이 태스크 범위 밖이다.
+   * {@code pg_catalog}는 {@code search_path} 설정과 무관하게 항상 암묵 검색되므로, 미한정 이름이 카탈로그 뷰와 일치하면
+   * 예전엔 통과했다(실측: {@code SELECT * FROM pg_tables} 가 172행 반환, 그중 104건이 {@code data}/{@code
+   * pg_catalog}/{@code information_schema} 밖 스키마 — team lead 실측, #385). {@link
+   * com.smartfirehub.pipeline.service.validator.SqlValidator}가 미한정 {@code pg_} 접두어 이름을 거부하도록
+   * 고쳐 이 경로에서도 막힘을 확인한다. 규칙 자체의 단위 테스트는 {@code SqlValidatorTest}에 있다 — 여기서는 실제 애드혹
+   * 쿼리 경로 배선을 통해서도 막히는지만 고정한다.
    */
   @Test
-  void executeQuery_unqualifiedPgCatalogView_currentlyPasses_knownGap() {
-    SqlQueryResponse response =
-        tx.execute(status -> dataTableQueryService.executeQuery("SELECT * FROM pg_tables", 10));
-
-    assertThat(response.error()).isNull();
+  void executeQuery_unqualifiedPgCatalogView_rejected() {
+    assertThatThrownBy(
+            () ->
+                tx.execute(
+                    status -> dataTableQueryService.executeQuery("SELECT * FROM pg_tables", 10)))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   // =========================================================================

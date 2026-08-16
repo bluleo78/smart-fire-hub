@@ -45,6 +45,13 @@ public class SqlValidator {
    * <p>⚠ 미한정 이름은 호출부가 {@code SET LOCAL search_path} 를 **단일 스키마**로 고정했을 때만 안전하다. 두 스키마(예:
    * {@code 'data', 'public'})를 세우는 호출부는 이 플래그를 켜면 안 된다 — 미한정 이름이 어느 스키마로 해석될지 애플리케이션 레이어에서 알 수 없기
    * 때문이다.
+   *
+   * <p>⚠⚠ 그 전제에도 예외가 하나 있다: {@code pg_catalog} 는 {@code search_path} 설정과 무관하게 **항상 암묵적으로
+   * 가장 먼저 검색된다**(PostgreSQL 고정 동작). 즉 {@code search_path = 'data'} 로만 좁혀도 미한정 {@code
+   * pg_tables}, {@code pg_roles} 같은 카탈로그 뷰는 여전히 해석된다 — 다른 스키마의 테이블 이름, 롤 목록 등이 새는 경로다
+   * (#385 Task 3 실측: {@code SELECT * FROM pg_tables} 가 172행을 반환, 그중 104건이 {@code data}/{@code
+   * pg_catalog}/{@code information_schema} 밖 스키마). {@link #requireDataSchemaOnly}가 미한정 이름의 {@code
+   * pg_} 접두어를 별도로 거부하는 이유가 이것이다 — 지우면 이 구멍이 다시 열린다.
    */
   private final boolean allowUnqualifiedTables;
 
@@ -137,6 +144,13 @@ public class SqlValidator {
    * <p>{@link TablesNamesFinder#getTables(Statement)}가 CTE 이름과 컬럼 alias는 자동으로 제외한 실제 테이블 FQN만 반환하므로
    * 그 문자열 셋만 검사하면 된다. 결과 형식 예: {@code "data.t"}, {@code "data.\"My Table\""}, {@code
    * "public.\"user\""}, {@code "t"}(스키마 없음).
+   *
+   * <p>미한정 이름이 {@code pg_} 로 시작하면 {@link #allowUnqualifiedTables} 값과 무관하게 항상 거부한다 — {@code
+   * pg_catalog} 는 {@code search_path} 설정을 타지 않고 항상 암묵 검색되므로({@link #allowUnqualifiedTables}
+   * 필드 문서 참고), 이 규칙이 없으면 미한정 허용 자체가 카탈로그 열람 경로가 된다. PostgreSQL 이 {@code pg_} 접두어를 시스템
+   * 카탈로그 전용으로 예약하고 있어 정당한 사용자 테이블과 충돌할 일이 거의 없다. strict 모드(미한정 전면 거부)에서는 이미
+   * 위 미한정 분기에서 걸러지므로 무동작이고, 한정된 {@code pg_catalog.x} 표기는 아래 스키마 화이트리스트가 막는다 — 이 규칙이
+   * 실효를 갖는 것은 permissive 모드(Task 3/4 배선)뿐이다.
    */
   private void requireDataSchemaOnly(Statement statement) {
     Set<String> tables;
@@ -149,10 +163,17 @@ public class SqlValidator {
       // 스키마/테이블 이름의 양쪽 따옴표만 제거 (식별자 인용 보정)
       int dot = fqn.indexOf('.');
       if (dot < 0) {
+        String name = stripQuotes(fqn);
+        if (name.toLowerCase().startsWith("pg_")) {
+          throw new UnsafeSqlException(
+              "테이블 참조에 스키마가 없습니다: '"
+                  + name
+                  + "'. pg_ 로 시작하는 이름은 search_path 설정과 무관하게 pg_catalog 로 해석될 수 있어 미한정 허용 여부와"
+                  + " 관계없이 거부됩니다.");
+        }
         if (allowUnqualifiedTables) {
           continue;
         }
-        String name = stripQuotes(fqn);
         throw new UnsafeSqlException(
             "테이블 참조에 스키마가 없습니다: '" + name + "'. " + allowedSchema + "." + name + " 형식으로 명시하세요.");
       }

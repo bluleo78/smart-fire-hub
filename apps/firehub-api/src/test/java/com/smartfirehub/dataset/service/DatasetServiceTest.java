@@ -513,6 +513,28 @@ class DatasetServiceTest extends IntegrationTestBase {
     assertThat(foundFailed).isTrue();
   }
 
+  /**
+   * 검증 실패(멀티 스테이트먼트, {@code SqlQueryException})는 {@code UnsafeSqlException}과 동일하게 이력에
+   * 남지 않는다 — 둘 다 {@code DataTableQueryService#executeQuery}가 예외를 던지고 {@link
+   * DatasetDataService#executeQuery}가 그것을 잡지 않으므로 {@code queryHistoryRepository.save} 에 도달하기
+   * 전에 전파된다(#385 Task 3). 파싱 실패 폴백을 두지 않기로 한 결정으로 생긴 이력 손실이 기존
+   * `SqlQueryException` 경로와의 새 비대칭이 아니라 원래 동작과의 정합임을 실측으로 고정한다.
+   */
+  @Test
+  void executeQuery_validationRejected_doesNotSaveHistory() {
+    DatasetDetailResponse dataset =
+        createTestDatasetWithData("Validation Reject Test", "validation_reject_test");
+    SqlQueryRequest request =
+        new SqlQueryRequest("SELECT 1; DROP TABLE data.validation_reject_test", 100);
+
+    assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
+        .isInstanceOf(com.smartfirehub.dataset.exception.SqlQueryException.class);
+
+    PageResponse<QueryHistoryResponse> history =
+        datasetDataService.getQueryHistory(dataset.id(), 0, 10);
+    assertThat(history.content()).isEmpty();
+  }
+
   @Test
   void executeQuery_nonExistentDataset_throwsNotFound() {
     SqlQueryRequest request = new SqlQueryRequest("SELECT 1", 100);

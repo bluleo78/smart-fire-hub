@@ -253,4 +253,26 @@ class SqlValidatorTest {
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("스키마");
   }
+
+  /**
+   * (5) permissive 모드에서도 미한정 {@code pg_} 접두어 이름은 거부된다.
+   *
+   * <p>{@code pg_catalog}는 {@code search_path} 설정과 무관하게 항상 암묵 검색되므로, 미한정 허용만으로는 카탈로그
+   * 열람(예: {@code pg_tables}로 다른 스키마 테이블 이름 나열, {@code pg_roles}로 롤 목록 나열)을 막지 못한다(#385
+   * Task 3 실측). 정상적인 미한정 사용자 테이블 이름은 계속 통과해야 한다(역방향 단언).
+   */
+  @Test
+  void rejects_unqualified_pg_prefixed_name_even_in_permissive_mode() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(() -> permissive.validate("SELECT * FROM pg_tables"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("pg_catalog");
+    assertThatThrownBy(() -> permissive.validate("SELECT * FROM pg_roles"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("pg_catalog");
+
+    // 역방향: 정상 미한정 사용자 테이블은 여전히 통과한다.
+    assertThatCode(() -> permissive.validate("SELECT * FROM customers")).doesNotThrowAnyException();
+  }
 }
