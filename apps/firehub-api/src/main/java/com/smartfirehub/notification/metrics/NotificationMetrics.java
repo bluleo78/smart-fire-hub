@@ -45,6 +45,17 @@ public class NotificationMetrics {
    */
   private final Map<String, Integer> missPasses = new ConcurrentHashMap<>();
 
+  /**
+   * 미출현 축출 임계 패스 수. 기본값 {@code 10} × 기본 스크레이프 주기
+   * {@code notification.metrics.refresh_interval_ms:30000}(30초) = <b>약 5분</b>의 유예다.
+   *
+   * <p>드레인 후 곧바로 재적체되는 정상 흐름에서 게이지가 등록/해제를 반복하지 않을 만큼 길게,
+   * 그러나 삭제·휴면 테넌트의 잔재가 스크레이프 페이로드에 남는 시간은 짧게 잡은 절충값이다.
+   *
+   * <p><b>두 프로퍼티가 곱셈으로 묶여 있다</b> — {@code refresh_interval_ms} 를 바꾸면 이 값을
+   * 그대로 둬도 실제 유예 시간(초 단위)이 함께 바뀐다. 유예 시간 자체를 고정하고 싶다면 이 값을
+   * 스케줄 주기에 맞춰 같이 조정해야 한다.
+   */
   private final int gaugeEvictionPasses;
 
   public NotificationMetrics(
@@ -68,7 +79,7 @@ public class NotificationMetrics {
    *
    * <p><b>왜 합산이 아니라 테넌트 태그인가.</b> 합산은 "어느 테넌트의 큐가 막혔는가"를 감춘다 —
    * 적체 알람의 목적 자체가 그것이라 합산 게이지는 알람으로 쓸 수 없다. 카디널리티는
-   * (PENDING 행을 가진 적 있는 테넌트) × (채널 5종)으로 제한된다. 폭발이 우려되면 태그를
+   * (PENDING 행을 가진 적 있는 테넌트) × (채널 4종)으로 제한된다. 폭발이 우려되면 태그를
    * 떼고 합산 + 테넌트별 최대치로 되돌리는 것이 다음 선택지다.
    *
    * <p><b>이 게이지에서 {@code 0} 은 세 상태를 뭉갠 값이다 — 읽는 쪽이 반드시 알아야 한다.</b>
@@ -102,6 +113,11 @@ public class NotificationMetrics {
    * next} 에 채워 넣었으므로 "값이 정해진" 것으로 취급되어 미출현 카운터가 리셋된다. 실패를
    * "목록에 없음"으로 잘못 처리하면, DB 가 흔들리는 동안 carry-forward 가 막으려던 거짓 음성(적체
    * 게이지가 0 으로 보이는 것)을 축출이 뒷문으로 되살리게 된다.
+   *
+   * <p>이 규칙의 직접적인 귀결로, <b>이미 드레인돼 0 을 보고하던 테넌트가 그 뒤로 조회에 계속
+   * 실패하면 그 게이지는 영원히 축출되지 않는다</b>(0 을 계속 이월할 뿐이다). 버그가 아니라
+   * 의도된 트레이드오프다 — 실패 중에는 "정말 드레인된 것"과 "적체가 있는데 관측이 안 되는 것"을
+   * 구분할 방법이 없으므로, 축출을 보류하는 쪽이 거짓 음성보다 안전하다.
    */
   @Scheduled(
       // 기동 직후 1회 실행이 기본(0). 노브 사유는 NotificationDispatchWorker.pollOnce 주석 참조.
