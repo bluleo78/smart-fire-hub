@@ -290,4 +290,20 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.error").value("Method Not Allowed"))
         .andExpect(jsonPath("$.message").value("지원하지 않는 HTTP 메서드입니다."));
   }
+
+  /**
+   * 데이터셋 애드혹 쿼리 경로(#385 Task 3)에서 SqlValidator 가 던지는 UnsafeSqlException 이 500 으로 새지 않고, 파이프라인
+   * SQL 스텝(#136)과 동일하게 400 + ErrorResponse 로 매핑되는지 고정한다. DatasetController → DatasetDataService
+   * → DataTableQueryService 어디에도 이 예외를 가로채는 try/catch 가 없으므로(코드 확인 완료), 이 핸들러 매핑이 실제 사용자
+   * 응답의 전부다.
+   */
+  @Test
+  void unsafeSql_returns400_notInternalServerError() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/unsafe-sql"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.error").value("Bad Request"))
+        .andExpect(jsonPath("$.message").value(containsString("public.user")));
+  }
 }
