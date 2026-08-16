@@ -17,19 +17,20 @@ import net.sf.jsqlparser.util.TablesNamesFinder;
 import org.springframework.stereotype.Component;
 
 /**
- * 파이프라인 SQL 스텝의 안전 정책 검증기.
+ * 사용자 작성 SQL 이 도는 여러 호출 문맥(파이프라인 SQL 스텝, 데이터셋 애드혹 쿼리, 애널리틱스)이 공유하는 안전 정책 검증기.
  *
  * <p>허용 규칙:
  *
  * <ul>
  *   <li>정확히 1개의 SQL 스테이트먼트 (trailing 세미콜론 외 추가 금지)
  *   <li>최상위 형태가 SELECT / INSERT / UPDATE / DELETE 중 하나
- *   <li>참조하는 모든 테이블이 명시적으로 {@code data.<name>} 형식
+ *   <li>참조하는 모든 테이블의 스키마가 {@link #allowedSchema}(문맥마다 다를 수 있음). 미한정(스키마 없음) 참조 허용 여부는 {@link
+ *       #allowUnqualifiedTables} 참조
  *   <li>위험 함수({@code pg_read_file}, {@code lo_import}, {@code dblink_connect} 등) 호출 금지
  * </ul>
  *
- * <p>이중 방어 — DB 역할({@code pipeline_executor})이 시스템 함수/스키마를 차단하지만, 애플리케이션 레이어에서 조기 차단하여 명확한 에러를
- * 제공한다. (#136)
+ * <p>이중 방어 — DB 역할({@code pipeline_executor} 등)이 시스템 함수/스키마를 차단하지만, 애플리케이션 레이어에서 조기 차단하여 명확한 에러를
+ * 제공한다. (#136, #385)
  */
 @Slf4j
 @Component
@@ -56,7 +57,7 @@ public class SqlValidator {
    * 허용 스키마와 미한정 테이블 허용 여부를 호출 문맥에서 주입받는 생성자.
    *
    * @param allowedSchema 참조를 허용할 유일한 스키마명
-   * @param allowUnqualifiedTables 스키마 없는 테이블 참조를 허용할지 여부
+   * @param allowUnqualifiedTables 스키마 없는 테이블 참조 허용 여부 — 안전 전제는 {@link #allowUnqualifiedTables} 참조
    */
   public SqlValidator(String allowedSchema, boolean allowUnqualifiedTables) {
     this.allowedSchema = allowedSchema;

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class SqlValidatorTest {
 
@@ -169,12 +171,46 @@ class SqlValidatorTest {
    */
   @Test
   void rejects_other_schema_reference_regardless_of_quoting_variant() {
+    // "허용되지 않는 스키마"로 좁혀 단언한다 — "data" 만 검사하면 미한정 거부 메시지("...data.user 형식으로...")에도
+    // 매치되어, 파서가 이 표기를 미한정으로 오분류해도(=검증 우회) 테스트가 초록으로 남는 결함이 있었다.
     assertThatThrownBy(() -> validator.validate("SELECT * FROM \"public\".\"user\""))
         .isInstanceOf(UnsafeSqlException.class)
-        .hasMessageContaining("data");
+        .hasMessageContaining("허용되지 않는 스키마");
     assertThatThrownBy(() -> validator.validate("SELECT * FROM public . \"user\""))
         .isInstanceOf(UnsafeSqlException.class)
-        .hasMessageContaining("data");
+        .hasMessageContaining("허용되지 않는 스키마");
+  }
+
+  /**
+   * (1-b) 위 거부가 permissive 모드({@code allowUnqualifiedTables=true})에서도 유지되는지 고정한다.
+   *
+   * <p>Task 3/4 가 배선할 모드가 바로 이 모드이며, 여기서 표기 변형이 오분류되면 "다른 에러"가 아니라 **통과**(=검증 우회)가 된다. 아래 다섯 형태는
+   * PostgreSQL 이 동등하게 해석하는 {@code public."user"} 변형이다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT * FROM \"public\".\"user\"",
+        "SELECT * FROM public . \"user\"",
+        "SELECT * FROM \"public\" . \"user\"",
+        "SELECT * FROM PUBLIC.\"user\"",
+        "SELECT * FROM smartfirehub.public.\"user\""
+      })
+  void rejects_other_schema_reference_variants_in_permissive_mode(String sql) {
+    SqlValidator permissive = new SqlValidator("data", true);
+    assertThatThrownBy(() -> permissive.validate(sql))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("허용되지 않는 스키마");
+  }
+
+  /** (1-c) {@code allowedSchema} 가 실제로 쓰인다 — "data" 하드코딩이 남아 있으면 이 케이스가 거꾸로 통과/거부된다. */
+  @Test
+  void allowed_schema_is_actually_parameterized() {
+    SqlValidator analytics = new SqlValidator("analytics", false);
+    assertThatCode(() -> analytics.validate("SELECT * FROM analytics.t")).doesNotThrowAnyException();
+    assertThatThrownBy(() -> analytics.validate("SELECT * FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("허용되지 않는 스키마");
   }
 
   /** (2) set_config / current_setting 호출은 BLOCKED_FUNCTIONS 에 의해 거부된다. */
