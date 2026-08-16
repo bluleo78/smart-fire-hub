@@ -23,9 +23,19 @@ import org.springframework.transaction.TransactionDefinition;
  * 필요한가 — 채널 도메인 리포지토리 5개가 공유하는 근거.</b> 위에 적은 대로 GUC 는 {@code doBegin}
  * 이 <b>트랜잭션이 열리는 순간에만</b> 주입한다. 그 리포지토리들을 부르는 경로(스케줄러·LISTEN
  * 스레드·메트릭 갱신 등)에는 앰비언트 트랜잭션이 없으므로, 리포지토리가 스스로 열지 않으면 GUC 가
- * 비고 그 결과 <b>쓰기는 {@code tenant_id} NOT NULL 위반(23502)</b>으로 죽고 <b>정책이 켜지면(V107)
- * 읽기는 예외도 로그도 없이 0행</b>이 된다. 인터페이스가 아니라 impl 클래스에 붙이는 것은 프록시
- * 대상 클래스에서 검사되기 때문이다.
+ * 비고 그 결과 <b>쓰기는 죽고</b> <b>정책이 켜지면(V107) 읽기는 예외도 로그도 없이 0행</b>이 된다.
+ * 인터페이스가 아니라 impl 클래스에 붙이는 것은 프록시 대상 클래스에서 검사되기 때문이다.
+ *
+ * <p><b>"쓰기가 죽는" SQLState 는 테이블에 따라 다르다 — {@code 23502} 하나로 적어 두면 진단이
+ * 어긋난다.</b> 이전 서술이 {@code 23502}(NOT NULL 위반)만 적고 있었으나 그것은 <b>정책이 그 INSERT
+ * 를 통과시키는 테이블에서만</b> 맞다. 대상 테이블에 {@code WITH CHECK} 가 걸려 있으면 NOT NULL
+ * 검사보다 정책이 <b>먼저</b> 걸려 {@code 42501}(insufficient_privilege)이 난다 — P2-g 에서
+ * {@code slack_workspace} 로 실측했다({@code app_tenant} 롤 + GUC 미설정 →
+ * {@code 42501: new row violates row-level security policy}). 즉 <b>{@code 42501} 을 보고 "권한
+ * 문제"라고 단정하지 말 것</b>: 컨텍스트 부재(배선 결함)와 타 테넌트 행 침범(권한 거부)이 같은
+ * SQLState 를 낸다. 둘을 SQLState 로는 가를 수 없으므로, 42501 을 4xx 로 바꾸는 코드는 반드시
+ * "호출자가 컨텍스트를 세웠다"는 전제 위에서만 좁게 써야 한다
+ * ({@code SlackOAuthService.upsertOrDeny} 가 그 예이며 근거를 그 javadoc 에 적어 두었다).
  *
  * <p><b>다만 그 애노테이션은 필요조건일 뿐 충분조건이 아니다.</b> {@code doBegin} 은
  * {@link TenantContext} 가 비어 있으면 GUC 를 <b>아예 심지 않고 조용히 return</b> 한다. 배경
