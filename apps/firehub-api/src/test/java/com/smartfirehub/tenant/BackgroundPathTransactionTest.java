@@ -197,19 +197,40 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           "TenantRepository");
 
   /**
-   * RLS 테이블을 만지지만 현재 모든 호출자가 요청 스코프 + 트랜잭션 안에 있는 리포지토리. (C)-2
+   * RLS 테이블을 만지지만 <b>모든 호출자가 트랜잭션 안에서 호출하는</b> 리포지토리. (C)-2
    *
-   * <p>⚠ <b>이 목록은 "검토 끝난 안전 목록" 이 아니라 "우연히 안전한 목록" 이다.</b> {@code role} /
-   * {@code role_permission} / {@code user_role} 은 엄연히 RLS 대상이고, {@code UserRepository} /
-   * {@code RoleRepository} 의 쓰기({@code addRole} / {@code removeRole} / {@code setRoles} /
-   * {@code countActiveAdmins} / {@code hasAdminRole})가 오늘 동작하는 이유는 <b>현재 호출자가 전부
-   * 요청 스코프라는 우연</b>일 뿐 구조적 보장이 아니다. 배경(잡·스케줄러·워커·리스너) 호출자가 하나만
-   * 생겨도 조회는 조용히 0행, 삽입은 {@code tenant_id} NOT NULL 위반(23502)으로 깨진다.
+   * <p><b>불변식을 정확히 하라: "배경 경로에서 도달하지 않는다" 가 아니다.</b> 배경 경로 도달
+   * 가능성과 트랜잭션 유무는 별개의 축이고, 여기서 필요한 조건은 후자뿐이다 — GUC 는 트랜잭션
+   * 시작 시점에만 주입되므로, 배경 스레드라도 호출 체인 어딘가에서 트랜잭션이 열리면 안전하다.
+   * (이 목록은 P2-g 초안에서 {@code REQUEST_SCOPED_ONLY_REPOSITORIES} 라는 이름과 "모든 호출자가
+   * 요청 스코프" 라는 서술을 달고 있었는데, 아래 반례들 때문에 <b>그 서술은 이미 거짓이었다</b>.)
    *
-   * <p>따라서 여기 있는 리포지토리에 배경 호출자를 추가하려면, 목록에서 빼고 해당 리포지토리에
-   * 클래스 레벨 {@code @Transactional} 을 붙이는 것이 먼저다.
+   * <p>실제로 배경 경로에서 도달하지만 다른 이유로 안전한 항목들 — 가장 먼저 의심할 셋이다:
+   *
+   * <ul>
+   *   <li>{@code PermissionRepository} — {@code PipelineAsyncRunner.java:452,643} 의
+   *       {@code @Async("pipelineExecutor")} 스레드가 {@code PermissionChecker.hasPermission} 을
+   *       부른다. 안전한 이유는 요청 스코프여서가 아니라 {@code PermissionChecker.java:22} 에
+   *       {@code @Transactional(readOnly = true)} 가 있어 <b>트랜잭션이 열리기 때문</b>이다.
+   *   <li>{@code UserRepository} — {@code EmailChannel.java:121}(outbox {@code @Scheduled}),
+   *       {@code EmailDeliveryChannel.java:92}, {@code ProactiveJobService.java:263} 이 배경에서
+   *       부른다. 안전한 이유는 그 경로가 {@code findById} / {@code findAllPaginated} 뿐이고
+   *       <b>{@code "user"} 테이블이 RLS 대상이 아니기 때문</b>이다.
+   *   <li>{@code RoleRepository} — 배경 호출자가 없다. 이 항목만 "요청 스코프 전용" 이 정확하다.
+   * </ul>
+   *
+   * <p>⚠ <b>그래도 이 목록은 "검토 끝난 안전 목록" 이 아니라 "우연히 안전한 목록" 이다.</b>
+   * 진짜 위험 지점은 {@code user_role} / {@code role} / {@code role_permission}(전부 RLS 대상)을
+   * 만지는 쓰기 메서드다 — {@code UserRepository} / {@code RoleRepository} 의 {@code addRole} /
+   * {@code removeRole} / {@code setRoles} / {@code countActiveAdmins} / {@code hasAdminRole} 이
+   * 오늘 동작하는 이유는 그 호출자가 {@code UserService} 와 {@code SignupTransaction} 둘뿐이고
+   * <b>둘 다 {@code @Transactional} 이라는 우연</b>일 뿐, 구조적 보장이 아니다.
+   *
+   * <p>따라서 여기 있는 리포지토리에 <b>트랜잭션 없는 호출자</b>가 하나라도 생기면(배경 여부와
+   * 무관하다) 조회는 조용히 0행, 삽입은 {@code tenant_id} NOT NULL 위반(23502)으로 깨진다. 그때는
+   * 목록에서 빼고 해당 리포지토리에 클래스 레벨 {@code @Transactional} 을 붙이는 것이 먼저다.
    */
-  private static final Set<String> REQUEST_SCOPED_ONLY_REPOSITORIES =
+  private static final Set<String> ALL_CALLERS_TRANSACTIONAL_REPOSITORIES =
       Set.of(
           "AnalyticsDashboardRepository",
           "ChartRepository",
@@ -238,7 +259,9 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   /** 세 허용목록의 합집합 — 클래스 레벨 @Transactional 이 없어도 되는 리포지토리 전부. */
   private static Set<String> allowedWithoutTransactional() {
     return Stream.of(
-            NO_RLS_TABLE_REPOSITORIES, REQUEST_SCOPED_ONLY_REPOSITORIES, SECURITY_DEFINER_RESOLVERS)
+            NO_RLS_TABLE_REPOSITORIES,
+            ALL_CALLERS_TRANSACTIONAL_REPOSITORIES,
+            SECURITY_DEFINER_RESOLVERS)
         .flatMap(Set::stream)
         .collect(Collectors.toUnmodifiableSet());
   }
@@ -257,6 +280,9 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   @Test
   void everyRepositoryBeanKeepsClassLevelTransactional() {
     // 목(@MockitoBean)으로 대체된 빈은 프로덕션 배선의 증거가 아니므로 제외한다.
+    // 목 정의는 MergedContextConfiguration 캐시 키의 일부라 다른 테스트 클래스의 목이 이 컨텍스트에
+    // 섞이는 일은 없다 — 이 필터가 발화하는 경우는 **이 클래스나 IntegrationTestBase 에 리포지토리
+    // 목이 추가될 때뿐**이다(그때 AopUtils.getTargetClass 가 Mockito 생성 클래스를 돌려준다).
     // 이름 패턴 매칭은 취약하니 Mockito 의 공개 API 로 판별한다.
     List<Object> realRepositoryBeans =
         applicationContext.getBeansWithAnnotation(Repository.class).values().stream()
