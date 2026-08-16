@@ -174,13 +174,26 @@ class SlackReinstallCrossTenantTest extends IntegrationTestBase {
         .isEqualTo(409);
 
     String body = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
-    // 먼저 양성 다리 — 일반 문구가 실제로 렌더링돼야 아래 음성 단언이 공허하지 않다.
-    // (바디가 비면 doesNotContain 아홉 개가 전부 통과해 가드가 조용히 죽는다.)
-    assertThat(body)
+    // 누출 검사 대상은 ErrorResponse 의 텍스트 필드다. timestamp 는 서버가 만드는 값이라
+    // 누출원이 될 수 없는데, 나노초까지 찍히는 숫자열이 테넌트 id(접두사 없는 정수)와 우발
+    // 일치하면 누출이 없어도 빨개진다 — 그 오탐을 없애려고 검사면에서 뺀다.
+    var json = objectMapper.readTree(body);
+    String leakSurface =
+        String.join(
+            " ",
+            json.path("message").asText(),
+            json.path("error").asText(),
+            json.path("path").asText(),
+            String.valueOf(json.path("errors")));
+
+    // 먼저 양성 다리 — 일반 문구가 실제로 검사면에 들어와야 아래 음성 단언이 공허하지 않다.
+    // (검사면이 비면 doesNotContain 아홉 개가 전부 통과해 가드가 조용히 죽는다.)
+    assertThat(leakSurface)
         .as("일반 문구가 담긴 ErrorResponse 가 실제로 내려가야 한다")
         .contains("Slack 워크스페이스를 설치할 수 없습니다.");
+
     // 다른 테넌트의 존재를 시사하는 어떤 흔적도 응답에 없어야 한다.
-    assertThat(body)
+    assertThat(leakSurface)
         .as("응답이 다른 테넌트의 설치 여부를 알려 주는 오라클이 되면 안 된다")
         .doesNotContain(teamId)
         .doesNotContain(String.valueOf(tenantA))

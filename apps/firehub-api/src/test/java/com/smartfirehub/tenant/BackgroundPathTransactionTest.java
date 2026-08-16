@@ -227,8 +227,16 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
    * <b>둘 다 {@code @Transactional} 이라는 우연</b>일 뿐, 구조적 보장이 아니다.
    *
    * <p>따라서 여기 있는 리포지토리에 <b>트랜잭션 없는 호출자</b>가 하나라도 생기면(배경 여부와
-   * 무관하다) 조회는 조용히 0행, 삽입은 {@code tenant_id} NOT NULL 위반(23502)으로 깨진다. 그때는
-   * 목록에서 빼고 해당 리포지토리에 클래스 레벨 {@code @Transactional} 을 붙이는 것이 먼저다.
+   * 무관하다) 조회는 조용히 0행, 삽입은 깨진다. 그때는 목록에서 빼고 해당 리포지토리에 클래스 레벨
+   * {@code @Transactional} 을 붙이는 것이 먼저다.
+   *
+   * <p><b>"삽입이 깨지는" SQLState 는 테이블에 따라 다르다 — {@code 23502} 하나로 적지 마라.</b>
+   * 정책이 그 INSERT 를 통과시키는 테이블에서만 {@code tenant_id} NOT NULL 위반({@code 23502})이
+   * 나고, 정책에 {@code WITH CHECK} 가 걸린 테이블에서는 그것이 NOT NULL 검사보다 <b>먼저</b> 걸려
+   * {@code 42501}(insufficient_privilege)이 난다({@code TenantAwareTransactionManager} 의 같은
+   * 문단 참조 — P2-g 에서 {@code slack_workspace} 로 실측). 위에 위험 지점으로 적은
+   * {@code role}/{@code role_permission}/{@code user_role} 은 <b>셋 다 {@code WITH CHECK} 대상</b>
+   * (`pg_policies.with_check is not null`)이라, 그 경로에서 실제로 볼 것은 {@code 42501} 이다.
    */
   private static final Set<String> ALL_CALLERS_TRANSACTIONAL_REPOSITORIES =
       Set.of(
@@ -324,7 +332,9 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
     assertThat(withoutClassLevelTransactional)
         .as(
             "클래스 레벨 @Transactional 이 없는 리포지토리가 허용목록 밖에 있다 — 배경 스레드에서"
-                + " GUC 가 주입되지 않아 조회는 조용히 0행, 삽입은 tenant_id NOT NULL 위반이 된다."
+                + " GUC 가 주입되지 않아 조회는 조용히 0행, 삽입은 실패한다(정책이 통과시키는"
+                + " 테이블은 tenant_id NOT NULL 위반 23502, WITH CHECK 가 걸린 테이블은 그것이"
+                + " 먼저 걸려 42501)."
                 + " 배경 호출자가 있으면 @Transactional 을 붙이고, 없으면 사유와 함께 허용목록에 등재하라")
         .isSubsetOf(allowed);
     // 역방향(staleness): 허용목록에 있는데 이미 @Transactional 이 붙었으면 목록에서 지워라.
