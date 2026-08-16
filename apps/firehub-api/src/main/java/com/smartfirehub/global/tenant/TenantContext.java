@@ -37,11 +37,28 @@ public final class TenantContext {
    *
    * <p>배경 잡 enqueue 처럼 "테넌트가 없으면 애초에 잘못된 호출"인 지점에서 쓴다. 조용히 null 을
    * 흘려보내면 잡이 실행 시점에 0행으로 무동작해 원인 추적이 불가능해진다.
+   *
+   * <p>메시지가 "배경 잡 예약" 문맥에 고정돼 있으므로, 다른 문맥에서는 {@link #require(String)}
+   * 를 직접 쓴다.
    */
   public static long require() {
+    return require("배경 잡 예약");
+  }
+
+  /**
+   * 현재 테넌트를 반환하고, 없으면 호출 문맥이 담긴 예외를 던진다.
+   *
+   * <p>{@link #require()} 의 메시지가 "배경 잡 예약" 하나에 하드코딩돼 있어, 다른 호출 지점(예:
+   * Slack 웹훅 본 처리)은 그 메시지를 쓸 수 없어 전용 예외 타입을 따로 만들었었다. 이 오버로드가
+   * 그 분기를 없앤다 — 호출부는 문맥 설명 문자열만 넘기면 되고, 예외 타입은
+   * {@link MissingTenantScopeException} 하나로 통일된다.
+   *
+   * @param where 이 호출이 무엇을 하려던 참이었는지 (로그·예외 메시지에 그대로 노출된다)
+   */
+  public static long require(String where) {
     Long tenantId = get();
     if (tenantId == null) {
-      throw new IllegalStateException("테넌트 컨텍스트가 없는 상태에서 배경 잡을 예약할 수 없다");
+      throw new MissingTenantScopeException(where);
     }
     return tenantId;
   }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.ai.repository.AiSessionRepository;
 import com.smartfirehub.ai.service.AiAgentBatchClient;
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.channels.SlackChannel;
 import com.smartfirehub.notification.channels.slack.SlackApiClient;
@@ -54,8 +55,8 @@ import org.springframework.stereotype.Service;
  *       값이 없다. 안전을 만드는 것은 {@code dispatch} 안의 해석이다. 다른 실행기와 형태를 맞추기
  *       위해 데코레이터를 다는 것은 무해하지만, 그것을 이 경로의 방어로 오해하지 말 것.
  *   <li>해석 없이 본 처리에 진입하지 못하도록 {@link #process} 첫 문장의 가드가
- *       <b>기계적으로</b> 막는다. 가드의 정확한 형태와 {@code TenantContext.require()} 를 쓰지 않는
- *       이유는 {@link #process} 에 한 곳에만 서술한다.
+ *       <b>기계적으로</b> 막는다. 가드는 {@link TenantContext#require(String)} 로 이 지점 전용 문맥
+ *       설명을 넘겨 쓴다 — 자세한 내용은 {@link #process} 에 한 곳에만 서술한다.
  * </ul>
  */
 @Service
@@ -150,9 +151,8 @@ public class SlackInboundService {
   /**
    * 이벤트 본 처리. <b>반드시 테넌트 컨텍스트 안에서 호출되어야 한다.</b>
    *
-   * <p>첫 문장의 {@code TenantContext.get() == null} 검사 +
-   * {@link MissingTenantScopeException} 이 그것을 기계적으로 강제한다 — 여기서 도는 모든
-   * 조회·삽입({@code slack_workspace}, {@code user_channel_binding}, {@code ai_session})이 RLS
+   * <p>첫 문장의 {@link TenantContext#require(String)} 이 그것을 기계적으로 강제한다 — 여기서 도는
+   * 모든 조회·삽입({@code slack_workspace}, {@code user_channel_binding}, {@code ai_session})이 RLS
    * 대상이라, 컨텍스트가 비면 예외가 아니라 <b>조용한 0행</b>이 되어 원인 추적이 불가능해진다.
    * 주석 대신 실행되는 가드를 두는 이유는 "경로가 죽어 있어 안전하다"는 상태에 기대지 않기
    * 위해서다.
@@ -162,14 +162,13 @@ public class SlackInboundService {
    * 회귀 보호를 준다. 그 단언이 없으면 가드를 지워도 아무것도 빨개지지 않고, 나중에 빈이 복원되는
    * 순간 {@code ai_session} 삽입이 조용히 죽는다.
    *
-   * <p>{@link TenantContext#require()} 를 쓰지 않는 이유: 그 메서드의 메시지가
+   * <p>무인자 {@link TenantContext#require()} 를 쓰지 않는 이유: 그 메서드의 메시지가
    * "배경 잡을 예약할 수 없다" 라 이 지점(웹훅 본 처리)과 맞지 않는다. 가드가 실제로 발화한 날
-   * 운영자가 JobRunr 를 뒤지게 만들지 않으려고 전용 예외·메시지를 쓴다.
+   * 운영자가 JobRunr 를 뒤지게 만들지 않으려고, 이 지점 전용 문맥 설명을 담은
+   * {@link TenantContext#require(String)} 오버로드를 쓴다.
    */
   void process(String teamId, JsonNode event) {
-    if (TenantContext.get() == null) {
-      throw new MissingTenantScopeException(teamId);
-    }
+    TenantContext.require("Slack inbound 본 처리 (team=" + teamId + ")");
 
     String channel = event.path("channel").asText();
     String slackUserId = event.path("user").asText();
@@ -255,17 +254,5 @@ public class SlackInboundService {
     // 6. 동일 스레드에 AI 응답 전송
     slackChannel.replyTo(workspace.id(), channel, threadTs, aiResponse);
     log.info("slack inbound — 응답 완료 (team={}, ts={}, sessionId={})", teamId, ts, agentSessionId);
-  }
-
-  /**
-   * 테넌트 스코프 없이 {@link #process} 에 진입했을 때 던진다.
-   *
-   * <p>일반 {@code IllegalStateException} 과 구분되는 타입인 이유는 {@link #dispatch} 의 catch 에서
-   * <b>배선 결함</b>과 <b>처리 중 운영 오류</b>를 갈라 로그로 남기기 위해서다.
-   */
-  static final class MissingTenantScopeException extends IllegalStateException {
-    MissingTenantScopeException(String teamId) {
-      super("테넌트 스코프 없이 Slack inbound 본 처리에 진입했다 (team=" + teamId + ")");
-    }
   }
 }
