@@ -28,6 +28,18 @@ public class RoutingResolver {
     this.bindingRepo = bindingRepo;
   }
 
+  /**
+   * <b>테넌트 컨텍스트가 반드시 있어야 한다(P2-f).</b> 아래 {@code preferenceRepo.isEnabled} 는
+   * 행이 없으면 기본 {@code true}, {@code bindingRepo.findActive} 는 0행이므로, 컨텍스트 없이 돌면
+   * 정책(V107) 이후 <b>모든 채널이 {@code BINDING_MISSING} 으로 스킵되고 CHAT 폴백만 남는</b> 조용한
+   * 열화가 된다(에러도 로그도 없다).
+   *
+   * <p>확인 결과 이 경로는 배선이 불필요하다: 유일한 호출자 {@code NotificationDispatcher.enqueue}
+   * 의 유일한 호출자는 {@code ProactiveJobAsyncRunner}({@code @Async("pipelineExecutor")}) 이고, 그
+   * 실행기는 {@code AsyncConfig} 에서 {@code TenantContextTaskDecorator} 를 달아 제출 스레드의
+   * 컨텍스트를 승계한다. 제출 스레드는 HTTP(JWT) 또는 P2-e 가 배선한 스케줄러라 둘 다 컨텍스트를
+   * 갖는다. <b>컨텍스트 없는 새 호출자를 붙이면 이 계약이 깨진다.</b>
+   */
   public ResolvedRouting resolve(Recipient recipient) {
     List<ChannelType> resolved = new ArrayList<>();
     Map<ChannelType, String> skipped = new EnumMap<>(ChannelType.class);

@@ -1,5 +1,7 @@
 package com.smartfirehub.notification.inbound;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -13,16 +15,20 @@ import com.smartfirehub.ai.dto.AiSessionResponse;
 import com.smartfirehub.ai.repository.AiSessionRepository;
 import com.smartfirehub.ai.service.AiAgentBatchClient;
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.channels.SlackChannel;
 import com.smartfirehub.notification.channels.slack.SlackApiClient;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository.SlackWorkspace;
+import com.smartfirehub.notification.repository.SlackWorkspaceTenantResolver;
+import com.smartfirehub.notification.repository.SlackWorkspaceTenantResolver.SlackWorkspaceRef;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +51,7 @@ class SlackInboundServiceTest {
 
   @Mock private UserChannelBindingRepository bindingRepo;
   @Mock private SlackWorkspaceRepository workspaceRepo;
+  @Mock private SlackWorkspaceTenantResolver tenantResolver;
   @Mock private AiSessionRepository aiSessionRepo;
   @Mock private AiAgentBatchClient aiAgentClient;
   @Mock private SlackApiClient slackApiClient;
@@ -63,10 +70,15 @@ class SlackInboundServiceTest {
   private static final String AGENT_SESSION_ID = "agent-session-abc";
   private static final String BOT_TOKEN = "xoxb-test-token";
   private static final String BOT_TOKEN_ENC = "enc::" + BOT_TOKEN;
+  private static final long TENANT_ID = 7L;
 
   /** 기본 stub 세팅 — 각 테스트에서 필요에 따라 override. */
   @BeforeEach
   void setUp() {
+    // 테넌트 해석 stub — permitAll 웹훅에는 컨텍스트가 없으므로 이것이 모든 처리의 전제다.
+    when(tenantResolver.resolveByTeamId(TEAM_ID))
+        .thenReturn(Optional.of(new SlackWorkspaceRef(1L, TENANT_ID)));
+
     // 워크스페이스 stub
     when(workspaceRepo.findByTeamId(TEAM_ID))
         .thenReturn(
@@ -231,5 +243,84 @@ class SlackInboundServiceTest {
         .postEphemeral(anyString(), anyString(), anyString(), anyString());
     verify(aiAgentClient, never()).chat(anyString(), anyLong(), anyString());
     verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("테넌트 해석 실패 — 이벤트를 조용히 버리고 DB 조회조차 하지 않는다")
+  void dispatch_tenantResolutionFails_dropsEventBeforeAnyQuery() {
+    // given: 해석기가 0행 (미등록 팀이거나 revoke 된 워크스페이스)
+    when(tenantResolver.resolveByTeamId(TEAM_ID)).thenReturn(Optional.empty());
+
+    // when
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    // then: 워크스페이스 조회 자체가 일어나지 않아야 한다. 이 순서가 핵심이다 —
+    // 해석 전에 조회하면 RLS 아래 조용한 0행이 되어 "unknown workspace" 로 오진된다.
+    verify(workspaceRepo, never()).findByTeamId(anyString());
+    // 외부로 어떤 반응도 내보내지 않는다 — 응답이 갈리면 team_id 존재 여부가 누출된다.
+    verify(slackApiClient, never())
+        .reactionsAdd(anyString(), anyString(), anyString(), anyString());
+    verify(slackApiClient, never())
+        .postEphemeral(anyString(), anyString(), anyString(), anyString());
+    verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("본 처리는 해석된 테넌트 컨텍스트 안에서 돈다 — 진입 전 컨텍스트는 복원된다")
+  void dispatch_runsBodyInsideResolvedTenantScope() {
+    // given: 컨텍스트가 없는 상태를 재현한다(permitAll 웹훅에는 JWT 가 없다).
+    TenantContext.clear();
+    // 본 처리 중에 실제로 보이는 테넌트 값을 리포지토리 호출 시점에 포착한다.
+    // 단순히 "예외가 안 났다" 로는 판별력이 없다 — 값 자체를 봐야 한다.
+    AtomicReference<Long> seenInWorkspaceLookup = new AtomicReference<>();
+    AtomicReference<Long> seenInSessionCreate = new AtomicReference<>();
+    when(workspaceRepo.findByTeamId(TEAM_ID))
+        .thenAnswer(
+            inv -> {
+              seenInWorkspaceLookup.set(TenantContext.get());
+              return Optional.of(
+                  new SlackWorkspace(
+                      1L, TEAM_ID, "TestWS", "B001", BOT_TOKEN_ENC, null, null, null, null));
+            });
+    when(aiSessionRepo.createSlackSession(
+            anyLong(), anyString(), anyString(), anyString(), anyString(), anyString()))
+        .thenAnswer(
+            inv -> {
+              seenInSessionCreate.set(TenantContext.get());
+              return 99L;
+            });
+
+    // when
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    // then: RLS 대상 조회·삽입이 모두 해석된 테넌트 안에서 일어났다.
+    assertThat(seenInWorkspaceLookup.get()).isEqualTo(TENANT_ID);
+    assertThat(seenInSessionCreate.get()).isEqualTo(TENANT_ID);
+    // 그리고 진입 전 상태(컨텍스트 없음)로 복원됐다 — 스레드 풀 재사용 시 남의 테넌트를
+    // 물려주지 않기 위한 조건이다.
+    assertThat(TenantContext.get()).isNull();
+  }
+
+  /**
+   * 가드 회귀 보호 — 컨텍스트 없이 본 처리에 진입하면 예외.
+   *
+   * <p><b>이 단언이 없으면 가드에 판별력이 0이다.</b> {@code dispatch} 를 통해 부르는 테스트는
+   * 전부 {@code runScoped} 가 컨텍스트를 세워 주므로 가드를 지워도 초록이다(리뷰 실측). 가드의
+   * 존재 이유는 "미래에 {@code slackInboundExecutor} 빈이 복원될 때의 기계적 방어" 이므로,
+   * 가장 필요한 시점에 보호가 없으면 안 된다. 그래서 {@code process} 를 직접 부른다.
+   */
+  @Test
+  @DisplayName("가드 — 테넌트 스코프 없이 process 에 진입하면 예외를 던진다")
+  void process_withoutTenantScope_throws() {
+    TenantContext.clear();
+
+    assertThatThrownBy(() -> service.process(TEAM_ID, makeEvent("hi")))
+        .isInstanceOf(IllegalStateException.class)
+        // 메시지가 이 지점을 가리켜야 한다 — 발화한 날 운영자가 JobRunr 를 뒤지면 안 된다.
+        .hasMessageContaining("Slack inbound")
+        .hasMessageContaining(TEAM_ID);
+
+    // 가드가 막았으므로 RLS 대상 조회는 한 번도 일어나지 않아야 한다.
+    verify(workspaceRepo, never()).findByTeamId(anyString());
   }
 }

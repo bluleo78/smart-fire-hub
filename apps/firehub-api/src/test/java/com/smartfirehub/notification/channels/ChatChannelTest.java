@@ -18,8 +18,6 @@ import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
-import com.smartfirehub.tenant.dto.MembershipResponse;
-import com.smartfirehub.tenant.repository.MembershipRepository;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,30 +32,22 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * ChatChannel — proactive_message INSERT + SSE broadcast 경로 검증.
  *
- * <p>P2-e 이후에는 저장 테넌트 해석도 이 채널의 책임이다(워커 스레드에는 컨텍스트가 없다). 그래서
- * 대부분의 케이스가 "수신자에게 ACTIVE 멤버십이 정확히 1개" 라는 전제를 세우고 시작한다.
+ * <p>P2-f 이후 이 채널은 테넌트를 해석하지 않는다 — outbox 워커가 행의 {@code tenant_id} 로 스코프를
+ * 열고 그 안에서 부른다. 그래서 멤버십 목이 필요 없다. 여기 남은 테넌트 관련 케이스는 R9 의
+ * execution 교차테넌트 검사 하나뿐이고, 그 검사가 <b>실제로 테넌트 스코프되는지</b>는 목으로 증명할
+ * 수 없어 {@code OutboxWorkerTenantScopeTest} 가 실제 DB·실제 RLS 위에서 맡는다.
  */
 @ExtendWith(MockitoExtension.class)
 class ChatChannelTest {
 
   @Mock private ProactiveMessageRepository messageRepo;
   @Mock private ProactiveJobExecutionRepository executionRepo;
-  @Mock private MembershipRepository membershipRepository;
   @Mock private SseEmitterRegistry sseRegistry;
 
   @InjectMocks private ChatChannel channel;
 
-  private static final long TENANT_ID = 7001L;
-
-  /** 수신자에게 ACTIVE 멤버십 1개를 준다 — 저장 테넌트가 모호하지 않은 정상 상태. */
-  private void givenSoleMembership(long userId) {
-    when(membershipRepository.findActiveByUser(userId))
-        .thenReturn(List.of(new MembershipResponse(TENANT_ID, "t", "T", "MEMBER")));
-  }
-
   @Test
   void deliver_insertsProactiveMessageAndBroadcastsSse() {
-    givenSoleMembership(99L);
     when(messageRepo.create(eq(99L), any(), eq("제목"), any(), eq("REPORT"))).thenReturn(42L);
 
     var result = channel.deliver(ctxWithUser(99L, Map.of()));
@@ -69,8 +59,7 @@ class ChatChannelTest {
 
   @Test
   void deliver_extractsExecutionIdFromMetadata() {
-    givenSoleMembership(99L);
-    // execution 이 수신자 테넌트에서 보여야 저장이 허용된다(R1 의 거부권 형태).
+    // execution 이 현재 테넌트 컨텍스트에서 보여야 저장이 허용된다(R9 의 교차테넌트 검사).
     when(executionRepo.findById(7L))
         .thenReturn(
             Optional.of(
@@ -95,7 +84,6 @@ class ChatChannelTest {
 
   @Test
   void deliver_repoFailure_returnsTransient() {
-    givenSoleMembership(99L);
     when(messageRepo.create(anyLong(), any(), anyString(), any(), anyString()))
         .thenThrow(new RuntimeException("DB down"));
 
@@ -107,7 +95,6 @@ class ChatChannelTest {
 
   @Test
   void deliver_sseFailure_stillReportsSent() {
-    givenSoleMembership(99L);
     when(messageRepo.create(anyLong(), any(), anyString(), any(), anyString())).thenReturn(42L);
     org.mockito.Mockito.doThrow(new RuntimeException("sse fail"))
         .when(sseRegistry)
@@ -120,7 +107,6 @@ class ChatChannelTest {
 
   @Test
   void deliver_contentMapIncludesCorrelationIdAndMetadata() {
-    givenSoleMembership(99L);
     when(messageRepo.create(anyLong(), any(), anyString(), any(), anyString())).thenReturn(42L);
 
     UUID corr = UUID.randomUUID();
@@ -137,35 +123,16 @@ class ChatChannelTest {
   }
 
   /**
-   * 수신자의 테넌트를 확정할 수 없으면 저장하지 않는다(P2-e, fail-closed).
+   * execution 이 <b>현재 테넌트 컨텍스트</b>에서 보이지 않으면 메시지를 만들지 않는다(R9).
    *
-   * <p>임의의 기본 테넌트로 떨어뜨리면 수신자가 속하지도 않은 워크스페이스에 메시지가 쌓이고, 정작
-   * 수신자에게는 RLS 로 0행이라 보이지 않는다 — 조용한 열화보다 눈에 띄는 영구 실패가 낫다.
+   * <p>{@code payload.metadata.executionId} 는 JSON 페이로드에서 파싱된 신뢰할 수 없는 입력이라,
+   * outbox 행의 테넌트와 그 execution 이 실제로 속한 테넌트가 어긋날 수 있다. FK 는 이것을
+   * <b>막지 못한다</b> — PostgreSQL 의 참조 무결성 검사는 RLS 를 우회하므로 보이지 않는 타 테넌트
+   * execution 을 참조해도 INSERT 가 통과한다. 이 명시 검사가 유일한 방어다. 그 사실 자체는 목이
+   * 아니라 실제 DB 위에서만 보이므로 {@code OutboxWorkerTenantScopeTest} 가 함께 고정한다.
    */
   @Test
-  void deliver_ambiguousTenant_returnsPermanentFailureWithoutInsert() {
-    when(membershipRepository.findActiveByUser(99L))
-        .thenReturn(
-            List.of(
-                new MembershipResponse(1L, "a", "A", "MEMBER"),
-                new MembershipResponse(2L, "b", "B", "MEMBER")));
-
-    var result = channel.deliver(ctxWithUser(99L, Map.of()));
-
-    assertThat(result).isInstanceOf(DeliveryResult.PermanentFailure.class);
-    verify(messageRepo, never()).create(anyLong(), any(), anyString(), any(), anyString());
-  }
-
-  /**
-   * execution 이 수신자 테넌트에서 보이지 않으면 메시지를 만들지 않는다(사전 판정 R1).
-   *
-   * <p>메시지의 테넌트 출처는 둘(수신자 / 그 메시지를 만들어낸 실행)이고 서로 어긋날 수 있다.
-   * execution 행 자체가 RLS 대상이라 "먼저 읽어 테넌트를 알아내는" 조회는 불가능하므로, 조회가 아니라
-   * <b>거부권</b>으로 우선순위를 구현한다 — 어긋나면 아예 저장하지 않는다.
-   */
-  @Test
-  void deliver_executionNotVisibleInRecipientTenant_returnsPermanentFailure() {
-    givenSoleMembership(99L);
+  void deliver_executionNotVisibleInCurrentTenant_returnsPermanentFailure() {
     when(executionRepo.findById(7L)).thenReturn(Optional.empty());
 
     var result = channel.deliver(ctxWithUser(99L, Map.of("executionId", 7L)));

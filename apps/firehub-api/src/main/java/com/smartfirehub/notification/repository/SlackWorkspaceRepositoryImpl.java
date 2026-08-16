@@ -6,9 +6,18 @@ import java.time.OffsetDateTime;
 import java.util.Optional;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
-/** Slack 워크스페이스 조회·upsert jOOQ 구현. revoked 행은 findByTeamId에서 제외. */
+/**
+ * Slack 워크스페이스 조회·upsert jOOQ 구현. revoked 행은 findByTeamId에서 제외.
+ *
+ * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> —
+ * {@link com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스
+ * 레벨 {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만
+ * 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
+ */
 @Repository
+@Transactional
 class SlackWorkspaceRepositoryImpl implements SlackWorkspaceRepository {
 
   private final DSLContext dsl;

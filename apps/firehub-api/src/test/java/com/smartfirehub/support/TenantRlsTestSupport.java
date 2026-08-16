@@ -7,6 +7,8 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.global.tenant.TenantContext;
+import java.sql.SQLException;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
@@ -180,10 +182,21 @@ public final class TenantRlsTestSupport {
             jobId);
   }
 
-  /** 테스트가 만든 테넌트를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 마지막에 부른다. */
+  /**
+   * 테스트가 만든 테넌트를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 마지막에 부른다.
+   *
+   * <p><b>{@code oauth_state} 는 여기서 함께 지운다.</b> V106 이 붙인 5개 채널 FK 중 어느 것도
+   * {@code ON DELETE CASCADE} 가 아닌데, 나머지 4개는 {@link #deleteChannelCascade} 가 맡는 반면
+   * {@code oauth_state} 는 그 cascade 에 넣지 않았다(RLS 대상이 아니고 TTL 만료 삭제 경로가 따로
+   * 있어 채널 cascade 의 일부로 보기 어렵다). 그 결과 "스크래치 테넌트에서 OAuth state 를
+   * issue/consume 하는" 테스트가 teardown 에서 {@code 23503} 으로 터진다 — 문제는 cascade 가 아니라
+   * <b>테넌트 teardown</b> 이므로 여기서 막는 것이 맞다. {@code where tenant_id = ?} 로 좁히므로
+   * 지우는 대상은 인자로 받은 테넌트의 행뿐이다.
+   */
   public static void deleteTenants(DSLContext dsl, Long... tenantIds) {
     for (Long id : tenantIds) {
       if (id != null) {
+        dsl.execute("delete from oauth_state where tenant_id = ?", id);
         dsl.deleteFrom(TENANT).where(field(name("id"), Long.class).eq(id)).execute();
       }
     }
@@ -274,10 +287,12 @@ public final class TenantRlsTestSupport {
    * 온톨로지·그래프 8테이블(P2-d)의 테넌트 행을 FK 순서대로 지운다. {@link #deleteRbacCascade} 와
    * 같은 계약이다 — 호출자가 대상 테넌트 컨텍스트 트랜잭션 안에서 부른다.
    *
-   * <p>RLS 가 이미 현재 테넌트 행만 보여 주지만 {@code where tenant_id = ?} 를 명시한다. V102 는
-   * FORCE RLS 를 쓰지 않으므로 테이블 소유 롤({@code app})로 접속하면 정책이 통째로 우회되고,
-   * 그때 WHERE 없는 DELETE 는 공유 테스트 DB 의 V71/V72/V80 시드까지 지워 무관한 테스트를 전부
-   * 무너뜨린다. WHERE 는 그 사고에 대한 안전장치다.
+   * <p><b>{@code where tenant_id = ?} 를 명시하는 이유 — 세 cascade 헬퍼의 공통 근거(정본).</b>
+   * RLS 가 이미 현재 테넌트 행만 보여 주지만, 이 프로젝트는 어느 테이블에도 FORCE RLS 를 쓰지
+   * 않으므로 테이블 소유 롤({@code app})로 접속하면 정책이 통째로 우회된다. 그때 WHERE 없는
+   * DELETE 는 공유 테스트 DB 의 남의 행 — 여기서는 V71/V72/V80 시드 — 까지 지워 무관한 테스트를
+   * 전부 무너뜨린다. WHERE 는 그 사고에 대한 안전장치다. 반대로 RLS 대상 테이블이므로
+   * <b>테넌트 컨텍스트 안에서</b> 불러야 정책이 켜진 뒤에도 같은 행을 지운다.
    */
   public static void deleteOntologyGraphCascade(DSLContext dsl, long tenantId) {
     // ontology 를 참조하는 자식부터 지운다(ON DELETE CASCADE 가 있어도 명시적으로 지워야
@@ -305,9 +320,8 @@ public final class TenantRlsTestSupport {
    * CASCADE 라 사용자 삭제가 조용히 뒤처리를 해 준다. 그래서 이 헬퍼는 "터지지 않았으니 됐다"로
    * 검증할 수 없고, 호출부가 반드시 테넌트 트랜잭션 안에서 불러야 한다.
    *
-   * <p>{@code where tenant_id = ?} 를 명시하는 이유는 {@link #deleteOntologyGraphCascade} 와 같다 —
-   * V104 는 FORCE RLS 를 쓰지 않으므로 소유 롤로 접속하면 정책이 통째로 우회되고, 그때 WHERE 없는
-   * DELETE 는 공유 테스트 DB 의 남의 행까지 지운다.
+   * <p>{@code where tenant_id = ?} 를 명시하는 이유는 {@link #deleteOntologyGraphCascade} 의
+   * 해당 문단과 같다(V104 도 FORCE RLS 를 쓰지 않는다).
    */
   public static void deleteProactiveAiCascade(DSLContext dsl, long tenantId) {
     dsl.execute("delete from proactive_message where tenant_id = ?", tenantId);
@@ -317,6 +331,63 @@ public final class TenantRlsTestSupport {
     dsl.execute("delete from proactive_job where tenant_id = ?", tenantId);
     dsl.execute("delete from ai_session where tenant_id = ?", tenantId);
     dsl.execute("delete from ai_inference_cache where tenant_id = ?", tenantId);
+  }
+
+  /**
+   * P2-f 채널 도메인 정리. 삭제 순서는 FK 역순 {@code notification_outbox} →
+   * {@code user_channel_binding} → {@code user_channel_preference} → {@code slack_workspace}.
+   *
+   * <p><b>왜 필요한가.</b> notification 테스트 패키지에는 정리 자체가 없어서 공유 테스트 DB 의
+   * {@code notification_outbox} 에 픽스처 잔재가 수천 행 쌓였다(2026-08-16 실측 3883행). 이 헬퍼는
+   * <b>새 누수만</b> 막는 용도다.
+   *
+   * <p><b>⚠ 반드시 테스트가 직접 만든 테넌트로 부를 것 — {@code DEFAULT_TEST_TENANT_ID}(=1) 로
+   * 부르면 안 된다.</b> 위 3883행은 V106 의 고아 폴백이 전부 테넌트 1 로 마감한 것이라(실측:
+   * {@code select tenant_id, count(*) ... group by 1} → {@code 1 | 3883}), 테넌트 1 로 부르는 순간
+   * <b>다른 세션이 만든 행까지 통째로 지운다</b>. {@code createActiveTenant}/{@code nextTenantId}
+   * 로 만든 테넌트만 넘겨라. 기존 테스트를 정리하려면 이 헬퍼가 아니라 그 테스트가 만든 키
+   * (user_id, correlation_id 등)로 좁힌 DELETE 를 써야 한다.
+   *
+   * <p>{@code where tenant_id = ?} 를 명시하는 이유는 {@link #deleteOntologyGraphCascade} 의
+   * 해당 문단과 같다.
+   *
+   * <p>{@code oauth_state} 는 <b>넣지 않았다</b>. RLS 대상이 아니고(V106 [R7]) TTL 만료 삭제 경로가
+   * 따로 있어 테넌트 단위 cascade 의 일부로 보기 어렵다 — 필요해지면 별도 헬퍼가 맞다.
+   */
+  public static void deleteChannelCascade(DSLContext dsl, long tenantId) {
+    // 경고를 주석으로만 두면 놓친다 — 기계적으로 막는다. 리터럴 1 은
+    // IntegrationTestBase.DEFAULT_TEST_TENANT_ID 값이다(support 패키지에서 그 상수를 참조하면
+    // 테스트 기반 클래스와 순환 의존이 생기므로 값을 직접 쓰고 이유를 여기 남긴다).
+    if (tenantId == 1L) {
+      throw new IllegalArgumentException(
+          "deleteChannelCascade 를 기본 테넌트(1)로 부르면 다른 세션이 만든 공유 테스트 DB 의 행까지"
+              + " 지운다(2026-08-16 실측: notification_outbox 3883행이 전부 tenant_id=1)."
+              + " 테스트가 직접 만든 테넌트로 부르거나, 자기가 만든 키로 좁힌 DELETE 를 쓸 것.");
+    }
+    dsl.execute("delete from notification_outbox where tenant_id = ?", tenantId);
+    dsl.execute("delete from user_channel_binding where tenant_id = ?", tenantId);
+    dsl.execute("delete from user_channel_preference where tenant_id = ?", tenantId);
+    dsl.execute("delete from slack_workspace where tenant_id = ?", tenantId);
+  }
+
+  /**
+   * 주어진 correlation 의 outbox 행을 "지금 due" 상태로 당긴다. 호출자는 대상 테넌트 컨텍스트
+   * 트랜잭션 안에서 부른다(RLS 대상 테이블).
+   *
+   * <p><b>왜 필요한가.</b> {@code next_attempt_at} 기본값은 <b>DB 의</b> {@code now()} 인데
+   * {@code claimDue} 는 <b>JVM 의</b> {@code OffsetDateTime.now()} 와 비교한다. 컨테이너 DB 시계가
+   * 호스트보다 수십 ms 앞서 있으면(2026-08-16 실측 +70ms) 방금 넣은 행이 아직 "미래"라 클레임되지
+   * 않아 테스트가 간헐 실패한다. 운영에서는 30초 주기 폴링이라 이 편차가 무해하므로 프로덕션을
+   * 고치는 대신 픽스처를 DB 시계 기준으로 당긴다.
+   *
+   * <p>P2-f 이전에는 이 함정이 보이지 않았다 — 클레임이 전역이라 공유 테스트 DB 의 오래된 적체가
+   * 항상 먼저 잡혀 단언이 남의 행으로 통과했기 때문이다.
+   */
+  public static void makeOutboxRowDue(DSLContext dsl, UUID correlationId) {
+    dsl.execute(
+        "update notification_outbox set next_attempt_at = now() - interval '1 minute'"
+            + " where correlation_id = ?",
+        correlationId);
   }
 
   /**
@@ -351,6 +422,14 @@ public final class TenantRlsTestSupport {
    * <p>WITH CHECK 가 없으면 격리가 읽기에만 걸린 상태가 된다 — 한 테넌트가 남의 테넌트에 행을 심을
    * 수 있다. 삽입 SQL 은 테이블마다 다르므로 호출자가 람다로 넘긴다(헬퍼는 트랜잭션·단언만 소유).
    *
+   * <p><b>왜 타입이 아니라 SQLSTATE 를 단언하는가(P2-f Task 6 리뷰 m1).</b> {@code
+   * DataAccessException} 타입만 보면 <b>무관한 제약 위반으로도 통과</b>한다 — 픽스처가 FK(23503)나
+   * 유니크(23505)를 건드리기만 해도 "정책이 거부했다"로 읽힌다. 정책 위반은 {@code 42501}
+   * ({@code insufficient_privilege}) 하나뿐이므로 그 값을 못박으면 형태 자체로 안전해진다. 메시지
+   * 문자열이 아니라 SQLSTATE 인 이유는 메시지가 PG 버전마다 흔들리기 때문이고, 드라이버 타입
+   * ({@code PSQLException})이 아니라 {@link SQLException} 인 이유는 SQLSTATE 만 필요한데 드라이버
+   * 클래스에 묶일 이유가 없기 때문이다.
+   *
    * @param crossTenantInsert {@code actingTenant} 컨텍스트 안에서 남의 tenant_id 로 INSERT 를 시도
    */
   public static void assertCrossTenantInsertRejected(
@@ -361,6 +440,31 @@ public final class TenantRlsTestSupport {
     assertThat(thrown)
         .as("%s: 다른 테넌트 id 로 INSERT 가 통과하면 WITH CHECK 가 없는 것이다", tableName)
         .isInstanceOf(DataAccessException.class);
+
+    SQLException sqlEx = findSqlException(thrown);
+    assertThat((Object) sqlEx)
+        .as("%s: SQLException 이 감싸져 있어야 SQLSTATE 를 볼 수 있다", tableName)
+        .isNotNull();
+    assertThat(sqlEx.getSQLState())
+        .as("%s: 42501(정책 위반)이 아니면 FK·유니크 같은 무관한 제약이 거부한 것이다", tableName)
+        .isEqualTo("42501");
+  }
+
+  /**
+   * 예외 체인에서 {@link SQLException} 을 찾는다 — jOOQ/Spring 이 여러 겹으로 감싼다.
+   *
+   * <p>SQLSTATE 로 단언하려는 테스트가 각자 복붙하던 순회를 여기로 모은다.
+   */
+  public static SQLException findSqlException(Throwable t) {
+    for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+      if (cur instanceof SQLException sql) {
+        return sql;
+      }
+      if (cur.getCause() == cur) {
+        break;
+      }
+    }
+    return null;
   }
 
   /** 현재 테넌트 컨텍스트에서 해당 행이 보이는지 확인한다(RLS 적용 결과). */

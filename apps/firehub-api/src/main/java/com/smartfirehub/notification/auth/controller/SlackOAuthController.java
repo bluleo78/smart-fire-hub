@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.auth.controller;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.OAuthStateService;
 import com.smartfirehub.notification.auth.SlackOAuthService;
@@ -64,6 +65,13 @@ public class SlackOAuthController {
    *
    * <p>state 소비로 CSRF 검증 후 oauth.v2.access를 호출하여 봇 토큰을 저장한다. 완료 후 창을 닫는 HTML 페이지를 반환한다.
    *
+   * <p><b>테넌트 복원 지점이다.</b> 이 경로는 permitAll 이라 Bearer 헤더가 없고 따라서
+   * {@code TenantContext} 도 없는데, {@code slack_workspace} 는 쓰기 대상(RLS + tenant_id NOT
+   * NULL)이다. 그래서 state 가 발급 시점의 테넌트를 함께 실어 오고(V106 [R7]) 여기서 되찾아
+   * {@link TenantContext#runScopedGet} 으로 컨텍스트를 세운다. 되찾지 못하면
+   * <b>fail-closed</b> — {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다. 사용자에게는
+   * 일반적인 오류만 보이고 구체 사유는 리포지토리 로그에 남는다.
+   *
    * @param code Slack에서 전달한 authorization_code
    * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)
    * @return 200 HTML (창 닫기 스크립트 포함) 또는 400 (유효하지 않은 state)
@@ -81,15 +89,24 @@ public class SlackOAuthController {
     }
 
     long installedByUserId = consumed.get().userId();
-    slackOAuthService.completeAuthorization(code, installedByUserId);
 
-    // 설치 완료 후 팝업 창 닫기
-    return ResponseEntity.ok()
-        .contentType(MediaType.TEXT_HTML)
-        .body(
-            "<html><body>Slack 워크스페이스 설치 완료."
-                + " 창을 닫아주세요."
-                + "<script>window.close();</script></body></html>");
+    // 인증 필터를 거치지 않는 경로라 테넌트 컨텍스트가 없다. state 가 실어 온 테넌트(V106 [R7])로
+    // 컨텍스트를 세운 뒤, slack_workspace upsert 를 포함한 나머지 전부를 그 안에서 수행한다.
+    // 컨트롤러 경계에서 세우는 것이 중요하다 — TenantAwareTransactionManager.doBegin 은 트랜잭션이
+    // 열리는 순간 GUC 를 심으므로, @Transactional 리포지토리 안쪽에서 세우면 이미 늦다.
+    return TenantContext.runScopedGet(
+        consumed.get().tenantId(),
+        () -> {
+          slackOAuthService.completeAuthorization(code, installedByUserId);
+
+          // 설치 완료 후 팝업 창 닫기
+          return ResponseEntity.ok()
+              .contentType(MediaType.TEXT_HTML)
+              .body(
+                  "<html><body>Slack 워크스페이스 설치 완료."
+                      + " 창을 닫아주세요."
+                      + "<script>window.close();</script></body></html>");
+        });
   }
 
   /**

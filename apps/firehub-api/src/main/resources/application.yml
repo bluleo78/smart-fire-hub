@@ -7,6 +7,14 @@ spring:
     baseline-version: 80
     # 런타임 접속(spring.datasource)은 비특권 app_tenant 롤, 마이그레이션(spring.flyway)은 소유자 롤(app) —
     # 실제 url/username/password 는 프로필별(test/local/prod)로 분리 정의한다.
+  task:
+    scheduling:
+      pool:
+        # @Scheduled 메서드가 36개인데 기본 풀 크기는 1이다. 한 스레드에 전부 직렬화되면 느린 잡
+        # 하나(예: 기동 직후 도는 게이지 갱신 — 테넌트 수 N 에 1+N 쿼리)가 아웃박스 폴링 같은
+        # 지연 민감 잡의 앞을 막는다. 4는 "동시에 돌 수 있어야 하는 잡"(아웃박스 폴링·스위퍼·
+        # 게이지 갱신·정리류)의 개수에서 왔다. 운영·개발 모두 같은 이유가 성립하므로 기본 프로필에 둔다.
+        size: 4
   servlet:
     multipart:
       # 대용량 CSV/XLSX 임포트 허용. 미리보기는 CSV를 앞부분만 잘라 보내지만(413 회피),

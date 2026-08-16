@@ -14,6 +14,11 @@ import com.smartfirehub.graphingest.repository.GraphIngestRepository;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import com.smartfirehub.mapping.repository.MappingRepository;
+import com.smartfirehub.notification.repository.NotificationOutboxRepository;
+import com.smartfirehub.notification.repository.OAuthStateRepository;
+import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
+import com.smartfirehub.notification.repository.UserChannelBindingRepository;
+import com.smartfirehub.notification.repository.UserChannelPreferenceRepository;
 import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
 import com.smartfirehub.ontology.element.OntologyElementRepository;
 import com.smartfirehub.ontology.repository.OntologyRepository;
@@ -84,6 +89,11 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   @Autowired private MetricSnapshotRepository metricSnapshotRepository;
   @Autowired private AnomalyEventRepository anomalyEventRepository;
   @Autowired private AiSessionRepository aiSessionRepository;
+  @Autowired private NotificationOutboxRepository notificationOutboxRepository;
+  @Autowired private SlackWorkspaceRepository slackWorkspaceRepository;
+  @Autowired private UserChannelBindingRepository userChannelBindingRepository;
+  @Autowired private UserChannelPreferenceRepository userChannelPreferenceRepository;
+  @Autowired private OAuthStateRepository oAuthStateRepository;
 
   private TransactionTemplate tx;
   private long tenantId;
@@ -255,13 +265,27 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
             // 조회는 조용히 0행, 삽입은 tenant_id NOT NULL 위반이 된다.
             entry("ProactiveJobRepository", proactiveJobRepository),
             entry("ProactiveJobExecutionRepository", proactiveJobExecutionRepository),
-            // proactive_message 는 두 경로가 쓴다 — 살아 있는 ChatDeliveryChannel(pipelineExecutor,
-            // 컨텍스트만 있음)과 플래그로 잠든 ChatChannel(워커 스레드). 전자의 정합성은 전적으로
-            // 이 애노테이션에 달려 있다.
+            // proactive_message 는 두 경로가 쓴다 — ChatDeliveryChannel(pipelineExecutor, 컨텍스트만
+            // 있음)과 ChatChannel(워커 스레드). P2-f Task 4 로 ChatChannel 이 스스로 테넌트를 해석해
+            // runScoped 로 감싸던 임시방편을 걷어내면서, 후자도 GUC 를 이 애노테이션에서만 받는다 —
+            // 워커가 연 TenantContext 는 트랜잭션이 열릴 때 비로소 GUC 로 심기기 때문이다.
+            // 즉 이제 두 경로의 정합성이 모두 전적으로 이 애노테이션에 달려 있다.
             entry("ProactiveMessageRepository", proactiveMessageRepository),
             entry("MetricSnapshotRepository", metricSnapshotRepository),
             entry("AnomalyEventRepository", anomalyEventRepository),
-            entry("AiSessionRepository", aiSessionRepository));
+            entry("AiSessionRepository", aiSessionRepository),
+            // ── P2-f(Task 2): 채널·알림 도메인 ──
+            // notification 패키지에는 @Transactional 이 하나도 없었다. 배경 경로는 여기서도 넓다:
+            // outbox 워커(@Scheduled + LISTEN 스레드), 좀비 리퍼(@Scheduled), 보존 삭제(크론),
+            // 메트릭 게이지 콜백(스크레이프 스레드). 앰비언트 트랜잭션이 없으면 GUC 가 주입되지
+            // 않아 V106 이후 조회는 조용히 0행, 삽입은 tenant_id NOT NULL 위반(23502)이 된다.
+            entry("NotificationOutboxRepository", notificationOutboxRepository),
+            entry("SlackWorkspaceRepository", slackWorkspaceRepository),
+            entry("UserChannelBindingRepository", userChannelBindingRepository),
+            entry("UserChannelPreferenceRepository", userChannelPreferenceRepository),
+            // oauth_state 는 RLS 대상이 아니지만(V106 [R7]) tenant_id 가 NOT NULL 이라
+            // INSERT 에 GUC 가 필요하다 — 그래서 4개가 아니라 5개다.
+            entry("OAuthStateRepository", oAuthStateRepository));
 
     repositories.forEach(
         (label, bean) -> {

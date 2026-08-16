@@ -24,6 +24,15 @@ org:
     dashboard:
       enabled: false
 
+notification:
+  scheduler:
+    # 알림 스케줄러 3종(워커 폴링·스위퍼·게이지 갱신)의 기동 1회 실행을 스위트 길이 밖으로 민다.
+    # 기동 폴링/스위핑이 다른 테스트의 스크래치 테넌트 행을 가로채는 것을 막고, 게이지 테스트가
+    # 값을 두 번 단언하는 사이 갱신이 끼어드는 것도 막는다. 프로덕션 기본값은 0(기동 즉시 1회)이며
+    # 이 노브의 실소비자는 테스트뿐이다 — jobrunr background-job-server·login-attempts cleanup 을
+    # 여기서 끄는 것과 같은 자리다.
+    initial_delay_ms: 3600000
+
 app:
   login-attempts:
     cleanup:

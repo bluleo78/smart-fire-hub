@@ -9,14 +9,21 @@ import java.util.List;
 import java.util.Optional;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * jOOQ 기반 user_channel_binding CRUD 구현.
  *
  * <p>findActive: status=ACTIVE인 binding을 1건 반환. upsert: ON CONFLICT ON CONSTRAINT uk_user_channel 시
  * 토큰·상태 갱신. findByUser: 사용자의 모든 binding 반환 (settings 화면용). revoke: status=REVOKED 업데이트.
+ *
+ * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> —
+ * {@link com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스
+ * 레벨 {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만
+ * 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
  */
 @Repository
+@Transactional
 class UserChannelBindingRepositoryImpl implements UserChannelBindingRepository {
 
   private final DSLContext dsl;

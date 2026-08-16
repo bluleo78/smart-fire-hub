@@ -22,18 +22,25 @@ import org.springframework.transaction.annotation.Transactional;
  * 세션 INSERT 가 NOT NULL 위반으로 깨지고 조회는 조용히 0행이 된다. 전파 REQUIRED 이므로
  * 컨트롤러 경로의 동작은 불변이다.
  *
- * <p><b>Slack inbound 는 이것으로 고쳐지지 않는다 — 오해하지 마라.</b> 이 어노테이션은 트랜잭션이
- * 없다는 문제만 푼다. {@code SlackInboundService} 의 {@code @Async} 스레드에는 애초에
+ * <p><b>Slack inbound — 해소됨(P2-f Task 5).</b> 이 어노테이션은 트랜잭션이 없다는 문제만 푼다.
+ * {@code SlackInboundService} 의 {@code @Async} 스레드에는 애초에
  * {@link com.smartfirehub.global.tenant.TenantContext} 가 없고(원 요청이 permitAll Slack 웹훅이라
  * 승계할 테넌트가 없다), {@code TenantAwareTransactionManager.doBegin} 은 컨텍스트가 null 이면
- * GUC 를 <b>아예 세팅하지 않는다</b>. 즉 트랜잭션은 열리지만 여전히 조회 0행 / INSERT NOT NULL
- * 위반이다. 7테이블 중 배경 쓰기 경로에 트랜잭션만 있고 <b>테넌트 해석이 없는 유일한 테이블</b>이
- * {@code ai_session} 이다.
+ * GUC 를 <b>아예 세팅하지 않는다</b>. 즉 트랜잭션만으로는 여전히 조회 0행 / INSERT NOT NULL
+ * 위반이었다.
  *
- * <p>지금 무해한 이유는 오직 하나다: {@code @Async("slackInboundExecutor")} 가 가리키는 빈이
- * 존재하지 않아(커밋 {@code 968a28c2} 에서 삭제) <b>Slack inbound 경로 자체가 죽어 있다</b>.
- * P2-f 가 그 빈을 복원하는 순간 이것은 Critical 이 된다 — 복원과 <b>같은 커밋</b>에서 permitAll
- * 웹훅의 테넌트 해석(팀 ID → 테넌트, V95 의 {@code SECURITY DEFINER} 패턴)을 함께 넣어야 한다.
+ * <p>이 구멍은 이제 <b>호출자 쪽에서</b> 막혀 있다. {@code SlackInboundService.dispatch} 가 본
+ * 처리에 들어가기 전에 {@code SlackWorkspaceTenantResolver}(V106 의 {@code SECURITY DEFINER}
+ * 함수, V95 패턴)로 {@code team_id → tenant_id} 를 해석하고 {@code TenantContext.runScoped} 안에서
+ * 나머지를 돌린다. 따라서 여기서 부르는 {@code createSlackSession}/{@code findBySlackContext} 는
+ * 올바른 테넌트 컨텍스트를 갖고 도착한다. 이전 판정("배경 쓰기 경로에 테넌트 해석이 없는 유일한
+ * 테이블")은 <b>더 이상 유효하지 않다</b>.
+ *
+ * <p>남은 사실 하나: {@code @Async("slackInboundExecutor")} 가 가리키는 빈은 여전히 존재하지
+ * 않는다(커밋 {@code 968a28c2} 에서 삭제) — 즉 Slack inbound 경로 자체가 죽어 있고, 복원은
+ * 테넌시가 아니라 기능 복구 작업이다. <b>복원 커밋이 테넌시 배선을 함께 넣어야 한다는 이전 요구는
+ * 이미 갚아졌다.</b> 복원할 때 확인할 것은 {@code SlackInboundService} 클래스 javadoc 의 계약
+ * 3항(특히 "{@code TenantContextTaskDecorator} 는 이 경로의 안전 조건이 아니다")이다.
  */
 @Transactional
 @Repository

@@ -20,6 +20,11 @@ import org.springframework.stereotype.Component;
  * <p>LISTEN 전용 커넥션은 HikariCP 풀 외부에서 {@link DriverManager#getConnection}으로 직접 획득한다. {@code
  * DataSourceUtils.getConnection()}을 사용하면 루프 실행 내내 풀 커넥션 1개를 점유하여 커넥션 풀 고갈(#174)이 발생하므로, 풀을 거치지 않는
  * 전용 소켓 커넥션을 사용한다.
+ *
+ * <p><b>테넌트 배선 제외(P2-f)</b>: 배경 스레드지만 도메인 행을 전혀 읽지 않고(LISTEN 만 한다)
+ * 트랜잭션 매니저 경로 자체가 없어 GUC 주입 지점이 존재하지 않는다 — RLS 의 영향을 받지 않으므로
+ * 컨텍스트를 붙이지 않는다. 테넌트 스코프는 {@code onNotify} 가 부르는
+ * {@link NotificationDispatchWorker#runOneBatch()} 안에서 열린다.
  */
 @Component
 public class OutboxListenerLoop {

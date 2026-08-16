@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.auth.controller;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.KakaoOAuthService;
 import com.smartfirehub.notification.auth.OAuthStateService;
@@ -60,6 +61,11 @@ public class KakaoOAuthController {
    *
    * <p>state 소비로 CSRF 검증 후 authorization_code를 토큰으로 교환하여 저장한다. 완료 후 창을 닫는 HTML 페이지를 반환한다.
    *
+   * <p><b>테넌트 복원 지점이다.</b> permitAll 이라 컨텍스트가 없는데 {@code user_channel_binding}
+   * 은 쓰기 대상(RLS + tenant_id NOT NULL)이다. state 가 실어 온 테넌트(V106 [R7])를 되찾아
+   * {@link TenantContext#runScopedGet} 으로 컨텍스트를 세운다. 되찾지 못하면 <b>fail-closed</b>
+   * — {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다.
+   *
    * @param code Kakao에서 전달한 authorization_code
    * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)
    * @return 200 HTML (창 닫기 스크립트 포함) 또는 400 (유효하지 않은 state)
@@ -76,13 +82,26 @@ public class KakaoOAuthController {
     }
 
     long userId = consumed.get().userId();
-    kakaoOAuthService.completeAuthorization(userId, code);
 
-    return ResponseEntity.ok()
-        .contentType(MediaType.TEXT_HTML)
-        .body(
-            "<html><body>카카오 연동 완료."
-                + " 창을 닫아주세요."
-                + "<script>window.close();</script></body></html>");
+    // 인증 필터를 거치지 않는 경로라 테넌트 컨텍스트가 없다. state 가 실어 온 테넌트(V106 [R7])로
+    // 컨텍스트를 세운 뒤 user_channel_binding upsert 를 그 안에서 수행한다. 컨트롤러 경계에서
+    // 세우는 이유는 TenantAwareTransactionManager.doBegin 이 트랜잭션 시작 시점에 GUC 를 읽기
+    // 때문이다 — @Transactional 리포지토리 안쪽에서 세우면 이미 늦다.
+    //
+    // Kakao 에는 이 경로가 유일한 해법이다. Slack 은 워크스페이스(team_id)라는 외부 식별자가 있어
+    // SECURITY DEFINER 해석기로도 테넌트를 되찾을 수 있지만, Kakao 에는 워크스페이스 개념이 없어
+    // 대안 식별자가 아예 없다. 이것이 oauth_state 를 이 밴드에 넣은 결정적 근거다.
+    return TenantContext.runScopedGet(
+        consumed.get().tenantId(),
+        () -> {
+          kakaoOAuthService.completeAuthorization(userId, code);
+
+          return ResponseEntity.ok()
+              .contentType(MediaType.TEXT_HTML)
+              .body(
+                  "<html><body>카카오 연동 완료."
+                      + " 창을 닫아주세요."
+                      + "<script>window.close();</script></body></html>");
+        });
   }
 }
