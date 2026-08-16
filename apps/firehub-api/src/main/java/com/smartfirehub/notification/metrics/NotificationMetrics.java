@@ -8,7 +8,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,8 +33,15 @@ public class NotificationMetrics {
   private final NotificationOutboxRepository outboxRepo;
   private final boolean outboxEnabled;
 
-  /** key = {@code tenantId + "|" + channel}. 값은 등록된 게이지가 바라보는 갱신 대상이다. */
-  private final Map<String, AtomicLong> pendingGauges = new ConcurrentHashMap<>();
+  /**
+   * 게이지 맵의 key. 예전에는 {@code tenantId + "|" + channel} 문자열이었는데, 축출 때 그 문자열을
+   * 다시 쪼개 태그를 복원해야 했다 — 이 클래스가 스스로 포맷한 값을 스스로 파싱하는 왕복이라
+   * 포맷과 파서가 따로 놀 여지가 있었다. 레코드로 들고 있으면 축출이 필드를 그대로 쓴다.
+   */
+  record GaugeKey(long tenantId, ChannelType channel) {}
+
+  /** 값은 등록된 게이지가 바라보는 갱신 대상이다. */
+  private final Map<GaugeKey, AtomicLong> pendingGauges = new ConcurrentHashMap<>();
 
   /**
    * key 별 "연속 미출현 패스 횟수". {@link #gaugeEvictionPasses} 에 도달하면 축출한다.
@@ -43,7 +49,7 @@ public class NotificationMetrics {
    * <p>실패로 carry-forward 된 key 는 이번 패스에도 "값이 정해진" 것으로 취급해 0 으로 리셋한다 —
    * 축출 후보가 아니라는 뜻이다(아래 {@link #refreshPendingGauges} javadoc 참조).
    */
-  private final Map<String, Integer> missPasses = new ConcurrentHashMap<>();
+  private final Map<GaugeKey, Integer> missPasses = new ConcurrentHashMap<>();
 
   /**
    * 미출현 축출 임계 패스 수. 기본값 {@code 10} × 기본 갱신 주기
@@ -67,7 +73,9 @@ public class NotificationMetrics {
     this.registry = registry;
     this.outboxRepo = outboxRepo;
     this.outboxEnabled = outboxEnabled;
-    this.gaugeEvictionPasses = gaugeEvictionPasses;
+    // 0·음수를 그대로 두면 첫 미출현 패스에서 바로 축출돼 유예 자체가 사라진다(드레인 후 재적체하는
+    // 정상 흐름에서 등록/해제가 반복된다). 최솟값 1 = "한 패스 미출현이면 축출"로 바닥을 친다.
+    this.gaugeEvictionPasses = Math.max(1, gaugeEvictionPasses);
   }
 
   /**
@@ -134,7 +142,7 @@ public class NotificationMetrics {
     if (!outboxEnabled) return;
 
     // 이번 패스의 값을 여기 모았다가 마지막에 스왑한다(위 javadoc — "전부 0" 창 방지).
-    Map<String, Long> next = new HashMap<>();
+    Map<GaugeKey, Long> next = new HashMap<>();
 
     for (Long tenantId : outboxRepo.tenantIdsWithStatus("PENDING")) {
       try {
@@ -149,16 +157,17 @@ public class NotificationMetrics {
                 // 값은 next 에 모으고, 게이지 등록만 미리 해 둔다(신규 (테넌트,채널) 대응).
                 gaugeFor(tenantId, ch);
                 // PENDING 이 없는 채널은 맵에 없다 — 아래 스왑이 0 으로 내리는 것과 의미가 같다.
-                next.put(gaugeKey(tenantId, ch), counts.getOrDefault(ch, 0L));
+                next.put(new GaugeKey(tenantId, ch), counts.getOrDefault(ch, 0L));
               }
             });
       } catch (Exception e) {
         // 한 테넌트의 조회 실패로 나머지 테넌트의 적체가 보이지 않게 되면 안 된다.
         // 실패한 테넌트는 직전 값을 그대로 이월한다 — 0 으로 두면 거짓 음성이다(위 javadoc).
         for (ChannelType ch : ChannelType.values()) {
-          AtomicLong previous = pendingGauges.get(gaugeKey(tenantId, ch));
+          GaugeKey key = new GaugeKey(tenantId, ch);
+          AtomicLong previous = pendingGauges.get(key);
           if (previous != null) {
-            next.put(gaugeKey(tenantId, ch), previous.get());
+            next.put(key, previous.get());
           }
         }
         Counter.builder("notification_metrics_refresh_failures_total").register(registry).increment();
@@ -170,13 +179,15 @@ public class NotificationMetrics {
     }
 
     // 스왑 + 축출 판정. 이번 패스에 값이 정해지지 않은 게이지 = 목록에서 사라진 테넌트 =
-    // 드레인(또는 소멸) → 0. key 집합을 먼저 스냅샷 떠 순회 중 evict() 의 remove 와 안전하게
-    // 분리한다(ConcurrentHashMap 이라도 순회하며 지우는 것과 별도 컬렉션을 도는 것을 섞지 않는다).
-    for (String key : new ArrayList<>(pendingGauges.keySet())) {
+    // 드레인(또는 소멸) → 0. ConcurrentHashMap 의 keySet 이터레이터는 weakly-consistent 라
+    // 순회 중 evict() 가 remove 해도 ConcurrentModificationException 이 없다 — 스냅샷 사본은 불필요.
+    for (GaugeKey key : pendingGauges.keySet()) {
       Long value = next.get(key);
       if (value != null) {
         // 값이 정해졌다 = 성공 갱신 또는 실패 carry-forward. 둘 다 축출 후보가 아니다.
-        pendingGauges.get(key).set(value);
+        // key 는 스냅샷이라 그 사이 사라졌을 수 있다 — 아래 유예 분기와 같은 방식으로 널을 막는다.
+        AtomicLong gauge = pendingGauges.get(key);
+        if (gauge != null) gauge.set(value);
         missPasses.remove(key);
         continue;
       }
@@ -198,34 +209,31 @@ public class NotificationMetrics {
    * 메모리 누적이 고쳐지지 않는다(Prometheus 가 붙어 있다면 스크레이프 페이로드도 줄지 않는다)
    * — 그래서 {@code registry.remove} 를 반드시 함께 부른다.
    */
-  private void evict(String key) {
-    int sep = key.indexOf('|');
-    String tenantIdTag = key.substring(0, sep);
-    String channelTag = key.substring(sep + 1);
+  private void evict(GaugeKey key) {
     registry
         .find("notification_outbox_pending_count")
-        .tag("tenant", tenantIdTag)
-        .tag("channel", channelTag)
+        .tags(tagsOf(key))
         .meters()
         .forEach(registry::remove);
     pendingGauges.remove(key);
     missPasses.remove(key);
-    log.info("PENDING 게이지 축출 — 테넌트 {} 채널 {} ({}패스 연속 미출현)", tenantIdTag, channelTag, gaugeEvictionPasses);
+    log.info(
+        "PENDING 게이지 축출 — 테넌트 {} 채널 {} ({}패스 연속 미출현)",
+        key.tenantId(),
+        key.channel(),
+        gaugeEvictionPasses);
   }
 
   /** (테넌트, 채널) 게이지를 처음 볼 때 등록하고 그 뒤로는 같은 {@link AtomicLong} 을 재사용한다. */
   private AtomicLong gaugeFor(long tenantId, ChannelType channel) {
     return pendingGauges.computeIfAbsent(
-        gaugeKey(tenantId, channel),
-        key ->
-            registry.gauge(
-                "notification_outbox_pending_count",
-                Tags.of("tenant", Long.toString(tenantId), "channel", channel.name()),
-                new AtomicLong()));
+        new GaugeKey(tenantId, channel),
+        key -> registry.gauge("notification_outbox_pending_count", tagsOf(key), new AtomicLong()));
   }
 
-  private static String gaugeKey(long tenantId, ChannelType channel) {
-    return tenantId + "|" + channel.name();
+  /** 등록과 축출이 같은 태그를 쓰도록 한 곳에서 만든다 — 어긋나면 축출이 조용히 아무것도 못 지운다. */
+  private static Tags tagsOf(GaugeKey key) {
+    return Tags.of("tenant", Long.toString(key.tenantId()), "channel", key.channel().name());
   }
 
   /** deliver 결과(SENT/TRANSIENT/PERMANENT_FAILURE) 소요 시간 기록. */

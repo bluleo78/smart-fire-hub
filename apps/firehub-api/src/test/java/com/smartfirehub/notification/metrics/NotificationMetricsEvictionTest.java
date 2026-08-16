@@ -54,7 +54,7 @@ class NotificationMetricsEvictionTest {
     assertThat(gaugeValue(registry)).as("축출 후 registry 에서 게이지를 찾을 수 없어야 한다").isNull();
     assertThat(pendingGaugesOf(metrics))
         .as("축출 후 pendingGauges 맵에도 남아 있으면 안 된다(맵만 지우고 registry 에 남는 누수 방지)")
-        .doesNotContainKey(TENANT_ID + "|" + ChannelType.CHAT.name());
+        .doesNotContainKey(chatKey());
   }
 
   @Test
@@ -70,7 +70,7 @@ class NotificationMetricsEvictionTest {
     metrics.refreshPendingGauges(); // 미출현 1회 (임계 3에 못 미침)
 
     assertThat(gaugeValue(registry)).as("유예 기간 안이므로 아직 살아 있어야 한다").isNotNull();
-    assertThat(pendingGaugesOf(metrics)).containsKey(TENANT_ID + "|" + ChannelType.CHAT.name());
+    assertThat(pendingGaugesOf(metrics)).containsKey(chatKey());
   }
 
   /**
@@ -105,7 +105,7 @@ class NotificationMetricsEvictionTest {
     assertThat(gaugeValue(registry))
         .as("조회 실패가 반복돼도 축출되면 안 되고, 직전 값(5)을 계속 이월해야 한다")
         .isEqualTo(5.0);
-    assertThat(pendingGaugesOf(metrics)).containsKey(TENANT_ID + "|" + ChannelType.CHAT.name());
+    assertThat(pendingGaugesOf(metrics)).containsKey(chatKey());
   }
 
   private Double gaugeValue(MeterRegistry registry) {
@@ -118,8 +118,14 @@ class NotificationMetricsEvictionTest {
     return gauge == null ? null : gauge.value();
   }
 
+  /** 게이지 맵 key. 프로덕션이 문자열 조립 대신 레코드를 쓰므로 테스트도 같은 레코드로 조회한다. */
+  private NotificationMetrics.GaugeKey chatKey() {
+    return new NotificationMetrics.GaugeKey(TENANT_ID, ChannelType.CHAT);
+  }
+
   @SuppressWarnings("unchecked")
-  private Map<String, AtomicLong> pendingGaugesOf(NotificationMetrics metrics) {
-    return (Map<String, AtomicLong>) ReflectionTestUtils.getField(metrics, "pendingGauges");
+  private Map<NotificationMetrics.GaugeKey, AtomicLong> pendingGaugesOf(NotificationMetrics metrics) {
+    return (Map<NotificationMetrics.GaugeKey, AtomicLong>)
+        ReflectionTestUtils.getField(metrics, "pendingGauges");
   }
 }
