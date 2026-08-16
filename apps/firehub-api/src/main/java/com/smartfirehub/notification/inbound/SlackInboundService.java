@@ -134,6 +134,14 @@ public class SlackInboundService {
     } catch (MissingTenantScopeException e) {
       // 배선 결함이지 운영 오류가 아니다. 아래 일반 catch 에 뭉뚱그리면 "예상치 못한 오류" 로 찍혀
       // 운영자가 엉뚱한 곳을 뒤진다 — 원인 추적 불가를 막으려던 가드가 오히려 오도하게 된다.
+      //
+      // ⚠ 이 catch 는 원래 process() 첫 문장의 진입 가드가 던지는 것을 잡기 위한 것이었다 — 그
+      // 시절엔 이 예외가 이 파일 안에서만 던져지는 센티널이라 "dispatch 의 해석·runScoped 배선이
+      // 깨졌다" 는 단정이 안전했다. 이제 MissingTenantScopeException 은 global/tenant 의 공용
+      // 타입(TenantContext.require(String))이라, process() 하위에서 그 메서드를 호출하는 지점이
+      // 생기면 이 catch 가 엉뚱한 원인을 로그에 단정하게 된다. 그런 호출이 생기는 순간 이 catch 를
+      // (예: 원인 구분 가능한 형태로) 다시 좁혀야 한다. 지금은 process() 하위에 그런 호출이 없다는
+      // 것이 이 로그 문구가 정확한 유일한 근거다.
       log.error(
           "slack inbound — 테넌트 스코프 없이 본 처리에 진입했다. dispatch 의 해석·runScoped 배선이"
               + " 깨졌다는 뜻이다 (team={}, ts={})",
