@@ -110,8 +110,9 @@ class NotificationMetricsTenantGaugeTest extends IntegrationTestBase {
 
     AtomicBoolean failCountPending = new AtomicBoolean(false);
     MeterRegistry isolated = new SimpleMeterRegistry();
+    // 축출 임계는 이 테스트의 관심사가 아니므로 프로퍼티 기본값(10)과 같은 값을 그대로 넘긴다.
     NotificationMetrics subject =
-        new NotificationMetrics(isolated, failingRepo(failCountPending), true);
+        new NotificationMetrics(isolated, failingRepo(failCountPending), true, 10);
 
     TenantContext.clear();
     subject.refreshPendingGauges();

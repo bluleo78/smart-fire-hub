@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,13 +37,25 @@ public class NotificationMetrics {
   /** key = {@code tenantId + "|" + channel}. 값은 등록된 게이지가 바라보는 갱신 대상이다. */
   private final Map<String, AtomicLong> pendingGauges = new ConcurrentHashMap<>();
 
+  /**
+   * key 별 "연속 미출현 패스 횟수". {@link #gaugeEvictionPasses} 에 도달하면 축출한다.
+   *
+   * <p>실패로 carry-forward 된 key 는 이번 패스에도 "값이 정해진" 것으로 취급해 0 으로 리셋한다 —
+   * 축출 후보가 아니라는 뜻이다(아래 {@link #refreshPendingGauges} javadoc 참조).
+   */
+  private final Map<String, Integer> missPasses = new ConcurrentHashMap<>();
+
+  private final int gaugeEvictionPasses;
+
   public NotificationMetrics(
       MeterRegistry registry,
       NotificationOutboxRepository outboxRepo,
-      @Value("${notification.outbox.enabled:false}") boolean outboxEnabled) {
+      @Value("${notification.outbox.enabled:false}") boolean outboxEnabled,
+      @Value("${notification.metrics.gauge_eviction_passes:10}") int gaugeEvictionPasses) {
     this.registry = registry;
     this.outboxRepo = outboxRepo;
     this.outboxEnabled = outboxEnabled;
+    this.gaugeEvictionPasses = gaugeEvictionPasses;
   }
 
   /**
@@ -76,6 +89,19 @@ public class NotificationMetrics {
    * 끝날 때까지 <b>모든 테넌트가 0</b> 으로 관측되는 창을 만든다(테넌트가 많으면 초 단위). 그
    * 사이 스크레이프가 들어오면 알람이 플랩한다. 그래서 이번 패스 값을 별도 맵에 모아 두고, 순회가
    * 끝난 뒤 게이지마다 한 번씩만 대입한다.
+   *
+   * <p><b>축출(P2-g).</b> 삭제·휴면 테넌트의 (테넌트,채널) 게이지는 이전에는 영원히 남아 매 패스
+   * 순회 대상 + 매 스크레이프 페이로드에 실렸다. 이번 패스 값이 정해지지 않은 key 가 {@link
+   * #gaugeEvictionPasses} 패스 연속으로 반복되면 게이지를 완전히 제거한다({@code registry.remove} +
+   * {@code pendingGauges} 제거 — 맵만 지우고 registry 에 남기면 스크레이프 페이로드는 그대로다).
+   *
+   * <p><b>즉시 축출하지 않고 유예를 두는 이유.</b> 드레인된 테넌트가 잠깐 0 이었다가 다시 쌓이는
+   * 정상 흐름에서 곧바로 축출하면 게이지가 등록/해제를 반복해 스크레이프 사이 시계열이 끊긴다.
+   *
+   * <p><b>실패는 축출 후보가 아니다.</b> 조회에 실패한 key 는 위에서 이미 직전 값을 이월해 {@code
+   * next} 에 채워 넣었으므로 "값이 정해진" 것으로 취급되어 미출현 카운터가 리셋된다. 실패를
+   * "목록에 없음"으로 잘못 처리하면, DB 가 흔들리는 동안 carry-forward 가 막으려던 거짓 음성(적체
+   * 게이지가 0 으로 보이는 것)을 축출이 뒷문으로 되살리게 된다.
    */
   @Scheduled(
       // 기동 직후 1회 실행이 기본(0). 노브 사유는 NotificationDispatchWorker.pollOnce 주석 참조.
@@ -120,8 +146,47 @@ public class NotificationMetrics {
       }
     }
 
-    // 스왑. 이번 패스에 값이 정해지지 않은 게이지 = 목록에서 사라진 테넌트 = 드레인 → 0.
-    pendingGauges.forEach((key, gauge) -> gauge.set(next.getOrDefault(key, 0L)));
+    // 스왑 + 축출 판정. 이번 패스에 값이 정해지지 않은 게이지 = 목록에서 사라진 테넌트 =
+    // 드레인(또는 소멸) → 0. key 집합을 먼저 스냅샷 떠 순회 중 evict() 의 remove 와 안전하게
+    // 분리한다(ConcurrentHashMap 이라도 순회하며 지우는 것과 별도 컬렉션을 도는 것을 섞지 않는다).
+    for (String key : new ArrayList<>(pendingGauges.keySet())) {
+      Long value = next.get(key);
+      if (value != null) {
+        // 값이 정해졌다 = 성공 갱신 또는 실패 carry-forward. 둘 다 축출 후보가 아니다.
+        pendingGauges.get(key).set(value);
+        missPasses.remove(key);
+        continue;
+      }
+      // 이번 패스 목록에 전혀 없었다 — 드레인/소멸 후보. 연속 횟수를 늘리고 임계 도달 시 축출한다.
+      int misses = missPasses.merge(key, 1, Integer::sum);
+      if (misses >= gaugeEvictionPasses) {
+        evict(key);
+      } else {
+        // 아직 유예 기간 — 드레인과 동일하게 0 으로만 내리고 게이지 자체는 남긴다.
+        AtomicLong gauge = pendingGauges.get(key);
+        if (gauge != null) gauge.set(0L);
+      }
+    }
+  }
+
+  /**
+   * key 에 해당하는 게이지를 {@link MeterRegistry} 와 {@link #pendingGauges} 양쪽에서 완전히
+   * 제거한다. {@code pendingGauges} 에서만 지우면 이미 등록된 게이지는 레지스트리에 그대로
+   * 남아 스크레이프 페이로드가 줄지 않는다 — 그래서 {@code registry.remove} 를 반드시 함께 부른다.
+   */
+  private void evict(String key) {
+    int sep = key.indexOf('|');
+    String tenantIdTag = key.substring(0, sep);
+    String channelTag = key.substring(sep + 1);
+    registry
+        .find("notification_outbox_pending_count")
+        .tag("tenant", tenantIdTag)
+        .tag("channel", channelTag)
+        .meters()
+        .forEach(registry::remove);
+    pendingGauges.remove(key);
+    missPasses.remove(key);
+    log.info("PENDING 게이지 축출 — 테넌트 {} 채널 {} ({}패스 연속 미출현)", tenantIdTag, channelTag, gaugeEvictionPasses);
   }
 
   /** (테넌트, 채널) 게이지를 처음 볼 때 등록하고 그 뒤로는 같은 {@link AtomicLong} 을 재사용한다. */
