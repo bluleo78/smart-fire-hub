@@ -265,14 +265,26 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
     assertThat(res.error()).contains("SQLState: 42P01");
   }
 
+  /**
+   * PSQLException 의 Position 필드 분해를 실제 DB 에러로 검증한다.
+   *
+   * <p>원래 입력은 {@code "SELECT FROMM data.exec_ext_test"}(파서 타이핑 오류)였다 — #385 Task 4 로
+   * {@link com.smartfirehub.pipeline.service.validator.SqlValidator}가 실행 경로 진입 이전에 배선되면서
+   * JSqlParser 가 이 문자열 자체를 파싱하지 못해 DB 까지 도달하지 못하게 됐다(R8: 파싱 실패 폴백 없음 — 승인된 트레이드오프,
+   * Task 3 의 동일 판단 참고). 그래서 "JSqlParser 는 통과하지만 Postgres 는 런타임에 syntax/타입 에러를 던지는" 입력으로
+   * 교체했다: 정수 컬럼에 문자열을 더하는 산술식은 문법적으로는 유효해 검증기를 통과하고, Postgres 실행 시점에 SQLState
+   * 22P02(invalid_text_representation)와 함께 Position 을 포함한 ServerErrorMessage 를 던진다(psql 실측 확인).
+   * 이 테스트의 목적(Position 분해)은 그대로 유지된다 — SQLState 값만 42601(파서 오류)에서 22P02(런타임 타입 오류)로
+   * 바뀌었다.
+   */
   @Test
-  void executeDirectly_syntaxError_includesPosition() {
+  void executeDirectly_runtimeTypeError_includesPosition() {
     AnalyticsQueryResponse res =
-        executionService.execute("SELECT FROMM data.exec_ext_test", 100, true);
+        executionService.execute("SELECT score + 'abc' FROM data.exec_ext_test", 100, true);
 
     assertThat(res.error()).isNotNull();
     assertThat(res.error()).contains("ERROR:");
-    assertThat(res.error()).contains("SQLState: 42601");
+    assertThat(res.error()).contains("SQLState: 22P02");
     assertThat(res.error()).containsPattern("Position: \\d+");
   }
 

@@ -6,9 +6,12 @@ import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.util.SqlValidationUtils;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,6 +32,13 @@ public class AnalyticsQueryExecutionService {
   private final DSLContext dsl;
   private final ExecutorClient executorClient;
 
+  /**
+   * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@code new}로 직접 생성한다(#385 Task 4). 스프링 컨텍스트의 무인자 {@link
+   * SqlValidator} 빈은 파이프라인 경로({@code allowedSchema="data"}, 미한정 거부)를 위한 것이라 여기서 재사용하면 안 된다 —
+   * 이 경로는 {@code allowUnqualifiedTables=true}가 필요하다(dev 실사용 쿼리 다수가 미한정, Task 2 실측).
+   */
+  private final SqlValidator sqlValidator = new SqlValidator("data", true);
+
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
 
@@ -41,8 +51,17 @@ public class AnalyticsQueryExecutionService {
    * Execute SQL against the data schema. Routes to executor service when executorEnabled=true,
    * otherwise executes directly via jOOQ.
    *
-   * <p>시스템 스키마 접근 차단은 executor/direct 경로 공통으로 이 메서드에서 수행한다. executor 경로는 Python 유효성 검사기를 사용하므로 Java
-   * 측 스키마 차단을 우회할 수 있다.
+   * <p>AST 기반 스키마/함수 화이트리스트 검증({@link SqlValidator})은 executor/direct 두 경로로 갈리기 **이전**에 이 메서드에서
+   * 공통 수행한다 — 기존 부분문자열 대조({@code contains("PUBLIC.")} 등)가 있던 자리다. 그 대조는 executor 경로에도 걸려 있었으므로(Python
+   * 유효성 검사기는 Java 측 스키마 차단을 우회할 수 있다), 자리를 그대로 지켜 executor 경로의 방어가 사라지지 않게 한다. 부분문자열 대조는
+   * PostgreSQL 이 허용하는 동등 표기 변형(따옴표, 점 주변 공백)에 뚫린다는 것이 실측됐다(#385 Task 3/4) — AST 스키마 화이트리스트가 정본이다.
+   *
+   * <p>{@code search_path}는 여전히 {@code 'data', 'public'} 두 스키마를 세운다({@link #executeDirectly} 참고) —
+   * {@code 'data'} 단독으로 좁히면 PostGIS 함수 해석이 깨진다는 것을 직접 실측했다({@code function
+   * st_asgeojson(public.geometry) does not exist}, geometry 컬럼 타입 자체도 {@code public} 스키마 소속). 따라서 이
+   * 검증기는 {@code allowUnqualifiedTables=true}로 미한정 이름을 허용하되, 미한정 이름이 {@code data}에 없고 {@code
+   * public}에만 있어 조용히 {@code public}으로 새는 경로는 {@link #executeDirectly}의 카탈로그 조회가 별도로 막는다(AST 는 이름
+   * 해석을 못 하므로 검증기 혼자서는 이 판단을 할 수 없다).
    *
    * @param sql raw SQL from user
    * @param maxRows maximum rows to return (1–10000)
@@ -50,21 +69,31 @@ public class AnalyticsQueryExecutionService {
    */
   @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
-    // 시스템 스키마/함수 직접 참조 차단 — executor/direct 경로 모두 적용 (#33/#34/#86/#90)
-    // executor 경로는 Python 측 차단만 있어 public 스키마 접근이 가능하므로 여기서 공통 차단
-    String upperSql = sql.toUpperCase();
-    if (upperSql.contains("PUBLIC.")
-        || upperSql.contains("INFORMATION_SCHEMA")
-        || upperSql.contains("PG_CATALOG")
-        || upperSql.contains("PG_READ_FILE")
-        || upperSql.contains("PG_EXECUTE")) {
-      return errorResponse("보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
+    String stripped;
+    String queryType;
+    try {
+      stripped = SqlValidationUtils.stripAndValidate(sql);
+      queryType = SqlValidationUtils.detectQueryType(stripped);
+    } catch (SqlQueryException e) {
+      return errorResponse(e.getMessage());
+    }
+
+    if (readOnly && !"SELECT".equals(queryType)) {
+      return errorResponse("AI 도구에서는 SELECT 쿼리만 실행할 수 있습니다. 데이터 수정은 웹 UI를 사용하세요.");
+    }
+
+    String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
+
+    try {
+      sqlValidator.validate(cleanSql);
+    } catch (UnsafeSqlException e) {
+      return errorResponse(e.getMessage());
     }
 
     if (executorEnabled) {
-      return executeViaExecutor(sql, maxRows, readOnly);
+      return executeViaExecutor(cleanSql, maxRows, readOnly);
     }
-    return executeDirectly(sql, maxRows, readOnly);
+    return executeDirectly(cleanSql, queryType, maxRows, readOnly);
   }
 
   private AnalyticsQueryResponse executeViaExecutor(String sql, int maxRows, boolean readOnly) {
@@ -88,30 +117,17 @@ public class AnalyticsQueryExecutionService {
     }
   }
 
-  private AnalyticsQueryResponse executeDirectly(String sql, int maxRows, boolean readOnly) {
-    String stripped;
-    String queryType;
+  private AnalyticsQueryResponse executeDirectly(
+      String cleanSql, String queryType, int maxRows, boolean readOnly) {
+    // 미한정 이름의 public 그림자 차단 — search_path='data','public' 이므로 AST 검증기
+    // (allowUnqualifiedTables=true)를 통과한 미한정 이름이 data 스키마엔 없고 public 스키마에만
+    // 있으면 조용히 public.<name>으로 해석된다(#385 R1). AST 는 이름 해석을 못 하므로 카탈로그
+    // 조회로만 판단 가능 — SET LOCAL search_path 를 세우기 전에 먼저 걸러 불필요한 savepoint를
+    // 만들지 않는다.
     try {
-      stripped = SqlValidationUtils.stripAndValidate(sql);
-      queryType = SqlValidationUtils.detectQueryType(stripped);
-    } catch (SqlQueryException e) {
+      rejectUnqualifiedNamesShadowedByPublic(cleanSql);
+    } catch (UnsafeSqlException e) {
       return errorResponse(e.getMessage());
-    }
-
-    if (readOnly && !"SELECT".equals(queryType)) {
-      return errorResponse("AI 도구에서는 SELECT 쿼리만 실행할 수 있습니다. 데이터 수정은 웹 UI를 사용하세요.");
-    }
-
-    String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
-
-    // 시스템 스키마/함수 직접 참조 차단 (#33/#34/#86 보안: 비밀번호 해시 유출, 파일 읽기 방지)
-    String upperSql = cleanSql.toUpperCase();
-    if (upperSql.contains("PUBLIC.")
-        || upperSql.contains("INFORMATION_SCHEMA")
-        || upperSql.contains("PG_CATALOG")
-        || upperSql.contains("PG_READ_FILE")
-        || upperSql.contains("PG_EXECUTE")) {
-      return errorResponse("보안 정책상 public 스키마 또는 시스템 스키마에 직접 접근할 수 없습니다.");
     }
 
     long startTime = System.currentTimeMillis();
@@ -225,6 +241,60 @@ public class AnalyticsQueryExecutionService {
         dsl.execute("SET LOCAL search_path TO public");
       } catch (Exception ignored) {
         // May fail if connection is broken; non-critical
+      }
+    }
+  }
+
+  /**
+   * 미한정 테이블 이름이 {@code data} 스키마엔 없고 {@code public} 스키마에만 있으면 거부한다 (#385 R1).
+   *
+   * <p>{@code search_path = 'data', 'public'}에서 미한정 이름은 {@code data}에 동명 테이블이 있으면 그쪽이 먼저 해석되어
+   * 안전하다. 문제는 {@code data}엔 없고 {@code public}에만 있는 경우 — {@link SqlValidator}의 {@code
+   * allowUnqualifiedTables=true}는 이름 해석을 하지 않으므로 이 쿼리를 그대로 통과시키고, 실행 시점에 조용히 {@code
+   * public.<name>}으로 풀려 다른 도메인 테이블(예: {@code public.role}, {@code public."user"})이 새는 경로가 된다.
+   *
+   * <p>반대로 {@code data}에도 {@code public}에도 없는 이름은 여기서 막지 않는다 — Postgres 가 그대로 "relation does
+   * not exist"(42P01)를 던지며, 그 결과는 새로운 노출이 아니다({@code
+   * executeDirectly_undefinedTable_returnsCleanErrorWithSqlState42P01} 계약 유지).
+   *
+   * <p>미한정 참조가 없는 쿼리(가장 흔한 경우 — 대부분의 프로그래밍 방식 쿼리는 {@code data.*}로 명시)는 카탈로그 조회를 아예
+   * 건너뛴다. 미한정 참조가 있는 쿼리만 쿼리 실행 전 1회 추가 카탈로그 조회 비용이 붙는다 — 애널리틱스 쿼리 UI는 초당 다건이 아닌
+   * 사용자 상호작용 경로라 이 비용은 무시할 만하다.
+   */
+  private void rejectUnqualifiedNamesShadowedByPublic(String cleanSql) {
+    Set<String> unqualified = sqlValidator.unqualifiedTableNames(cleanSql);
+    if (unqualified.isEmpty()) {
+      return;
+    }
+
+    String placeholders = String.join(",", java.util.Collections.nCopies(unqualified.size(), "?"));
+    String catalogSql =
+        "SELECT table_schema, table_name FROM information_schema.tables "
+            + "WHERE table_name IN ("
+            + placeholders
+            + ") AND table_schema IN ('data', 'public')";
+    var rows = dsl.fetch(catalogSql, unqualified.toArray());
+
+    Set<String> inData = new HashSet<>();
+    Set<String> inPublic = new HashSet<>();
+    for (var r : rows) {
+      String schema = r.get("table_schema", String.class);
+      String name = r.get("table_name", String.class);
+      if ("data".equals(schema)) {
+        inData.add(name);
+      } else if ("public".equals(schema)) {
+        inPublic.add(name);
+      }
+    }
+
+    for (String name : unqualified) {
+      if (!inData.contains(name) && inPublic.contains(name)) {
+        throw new UnsafeSqlException(
+            "테이블 참조에 스키마가 없습니다: '"
+                + name
+                + "'. data 스키마에 존재하지 않아 public 스키마로 해석될 수 있어 거부합니다. data."
+                + name
+                + " 형식으로 명시하세요.");
       }
     }
   }

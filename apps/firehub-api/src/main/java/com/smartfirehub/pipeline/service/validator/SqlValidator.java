@@ -197,6 +197,34 @@ public class SqlValidator {
   }
 
   /**
+   * {@code validate(sql)} 를 통과시킬 SQL 에서 미한정(스키마 없는) 테이블 이름만 추출한다(따옴표 제거, 소문자화).
+   *
+   * <p>애널리틱스 경로처럼 {@code search_path} 가 복수 스키마({@code 'data', 'public'})인 호출부는 AST 만으로는 미한정 이름이
+   * 실제로 어느 스키마로 해석될지 알 수 없다(이름 해석은 DB 카탈로그의 몫). 이 메서드는 그 판단에 필요한 "미한정 이름 목록"만
+   * 돌려준다 — 카탈로그 대조는 호출부(DB 접근 가능한 서비스 레이어)의 책임이다(#385 Task 4, R1 옵션 2).
+   *
+   * <p>{@code validate(sql)} 와 별개로 다시 파싱한다(추가 파싱 비용 발생) — 두 메서드가 같은 SQL 을 각자 파싱하는 것은 이 검증기를
+   * DB 접근 없는 순수 AST 컴포넌트로 유지하기 위한 트레이드오프다. 짧은 사용자 SQL 문 하나를 다시 파싱하는 비용은 이어지는 DB 카탈로그
+   * 조회·쿼리 실행 비용에 비해 무시할 만하다.
+   */
+  public Set<String> unqualifiedTableNames(String sql) {
+    Statement statement = parseSingleStatement(sql);
+    Set<String> tables;
+    try {
+      tables = new TablesNamesFinder<>().getTables(statement);
+    } catch (Exception e) {
+      throw new UnsafeSqlException("SQL 테이블 분석 실패: " + e.getMessage(), e);
+    }
+    Set<String> result = new java.util.LinkedHashSet<>();
+    for (String fqn : tables) {
+      if (fqn.indexOf('.') < 0) {
+        result.add(stripQuotes(fqn).toLowerCase());
+      }
+    }
+    return result;
+  }
+
+  /**
    * AST 내 모든 함수 호출이 deny-list({@link #BLOCKED_FUNCTIONS})에 포함되지 않는지 검사한다.
    *
    * <p>{@code TablesNamesFinder}의 traversal 인프라를 재활용하되, {@link Function} 노드만 가로챈다.
