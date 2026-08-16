@@ -499,7 +499,7 @@ class DatasetServiceTest extends IntegrationTestBase {
   @Test
   void executeQuery_executionError_savesHistory() {
     DatasetDetailResponse dataset =
-        createTestDatasetWithData("Syntax Error Test", "syntax_error_test");
+        createTestDatasetWithData("Execution Error Test", "execution_error_test");
     SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM non_existent_table_xyz", 100);
 
     SqlQueryResponse response = datasetDataService.executeQuery(dataset.id(), request, testUserId);
@@ -514,18 +514,42 @@ class DatasetServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 검증 실패(멀티 스테이트먼트, {@code SqlQueryException})는 {@code UnsafeSqlException}과 동일하게 이력에
-   * 남지 않는다 — 둘 다 {@code DataTableQueryService#executeQuery}가 예외를 던지고 {@link
-   * DatasetDataService#executeQuery}가 그것을 잡지 않으므로 {@code queryHistoryRepository.save} 에 도달하기
-   * 전에 전파된다(#385 Task 3). 파싱 실패 폴백을 두지 않기로 한 결정으로 생긴 이력 손실이 기존
-   * `SqlQueryException` 경로와의 새 비대칭이 아니라 원래 동작과의 정합임을 실측으로 고정한다.
+   * {@code SqlValidator} 거부({@code UnsafeSqlException}, 예: 다른 스키마 참조)는 이력에 남지 않는다 — {@code
+   * DataTableQueryService#executeQuery}가 {@code stripAndValidate} 통과 후 {@code sqlValidator.validate}
+   * 단계에서 예외를 던지고, {@link DatasetDataService#executeQuery}가 그것을 잡지 않으므로 {@code
+   * queryHistoryRepository.save}에 도달하기 전에 전파된다(#385 Task 3). 파싱 실패 폴백을 두지 않기로 한 결정으로 생긴
+   * 이력 손실이 새로 생긴 것이 아니라 이 예외 클래스가 원래 갖던 동작임을 고정한다.
+   *
+   * <p>입력은 반드시 {@code stripAndValidate}(키워드 화이트리스트·멀티 스테이트먼트 검사)를 통과해 {@code SqlValidator}
+   * 까지 도달하는 형태여야 한다 — 리뷰에서 지적된 대로, 세미콜론이 있는 멀티 스테이트먼트는 그 앞 단계에서 이미
+   * {@code SqlQueryException}으로 걸러져 이 경로를 검증하지 못한다.
    */
   @Test
-  void executeQuery_validationRejected_doesNotSaveHistory() {
+  void executeQuery_unsafeSqlRejected_doesNotSaveHistory() {
     DatasetDetailResponse dataset =
-        createTestDatasetWithData("Validation Reject Test", "validation_reject_test");
+        createTestDatasetWithData("Unsafe Sql Reject Test", "unsafe_sql_reject_test");
+    SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM \"public\".\"user\"", 100);
+
+    assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
+        .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
+
+    PageResponse<QueryHistoryResponse> history =
+        datasetDataService.getQueryHistory(dataset.id(), 0, 10);
+    assertThat(history.content()).isEmpty();
+  }
+
+  /**
+   * {@code stripAndValidate} 거부({@code SqlQueryException}, 예: 멀티 스테이트먼트)도 {@code
+   * UnsafeSqlException}과 동일하게 이력에 남지 않는다 — 같은 이유({@code DatasetDataService#executeQuery}에
+   * catch 없음)로 두 예외 경로가 대칭이다. 위 {@code executeQuery_unsafeSqlRejected_doesNotSaveHistory}와
+   * 짝을 이루는 테스트.
+   */
+  @Test
+  void executeQuery_sqlQueryExceptionRejected_doesNotSaveHistory() {
+    DatasetDetailResponse dataset =
+        createTestDatasetWithData("Multi Statement Reject Test", "multi_statement_reject_test");
     SqlQueryRequest request =
-        new SqlQueryRequest("SELECT 1; DROP TABLE data.validation_reject_test", 100);
+        new SqlQueryRequest("SELECT 1; DROP TABLE data.multi_statement_reject_test", 100);
 
     assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
         .isInstanceOf(com.smartfirehub.dataset.exception.SqlQueryException.class);

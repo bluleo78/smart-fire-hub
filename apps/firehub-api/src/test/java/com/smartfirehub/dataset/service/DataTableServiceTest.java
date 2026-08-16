@@ -435,7 +435,7 @@ class DataTableServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void executeQuery_syntaxError_returnsErrorMessage() {
+  void executeQuery_syntaxError_throwsUnsafeSqlException() {
     String tableName = "test_eq_syntax";
     tablesToCleanup.add(tableName);
     List<DatasetColumnRequest> columns =

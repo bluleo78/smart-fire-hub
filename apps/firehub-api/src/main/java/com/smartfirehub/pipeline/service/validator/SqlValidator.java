@@ -145,12 +145,15 @@ public class SqlValidator {
    * 그 문자열 셋만 검사하면 된다. 결과 형식 예: {@code "data.t"}, {@code "data.\"My Table\""}, {@code
    * "public.\"user\""}, {@code "t"}(스키마 없음).
    *
-   * <p>미한정 이름이 {@code pg_} 로 시작하면 {@link #allowUnqualifiedTables} 값과 무관하게 항상 거부한다 — {@code
-   * pg_catalog} 는 {@code search_path} 설정을 타지 않고 항상 암묵 검색되므로({@link #allowUnqualifiedTables}
-   * 필드 문서 참고), 이 규칙이 없으면 미한정 허용 자체가 카탈로그 열람 경로가 된다. PostgreSQL 이 {@code pg_} 접두어를 시스템
-   * 카탈로그 전용으로 예약하고 있어 정당한 사용자 테이블과 충돌할 일이 거의 없다. strict 모드(미한정 전면 거부)에서는 이미
-   * 위 미한정 분기에서 걸러지므로 무동작이고, 한정된 {@code pg_catalog.x} 표기는 아래 스키마 화이트리스트가 막는다 — 이 규칙이
-   * 실효를 갖는 것은 permissive 모드(Task 3/4 배선)뿐이다.
+   * <p>미한정 이름이 {@code pg_} 로 시작하면 {@link #allowUnqualifiedTables} 값과 무관하게 항상 거부한다(아래
+   * 미한정 분기보다 먼저 검사) — {@code pg_catalog} 는 {@code search_path} 설정을 타지 않고 항상 암묵 검색되므로({@link
+   * #allowUnqualifiedTables} 필드 문서 참고), 이 규칙이 없으면 미한정 허용 자체가 카탈로그 열람 경로가 된다. PostgreSQL 이
+   * {@code pg_} 접두어를 시스템 카탈로그 전용으로 예약하고 있어 정당한 사용자 테이블과 충돌할 일이 거의 없다.
+   *
+   * <p>strict 모드({@code allowUnqualifiedTables=false})에서는 이 검사를 지워도 **최종 결과(거부)는 바뀌지 않는다**
+   * — 바로 아래 미한정 분기가 어차피 모든 미한정 이름을 거부하기 때문이다(단, 에러 메시지는 이 pg_ 전용 메시지 대신 일반
+   * "스키마가 없습니다" 메시지로 바뀐다). 이 검사가 통과/거부 결과 자체를 바꾸는 것은 permissive 모드(Task 3/4 배선)뿐이다
+   * — 그래서 이 검사가 필요한 문맥은 permissive 모드지만, 검사 자체는 두 모드 모두에서 실행된다.
    */
   private void requireDataSchemaOnly(Statement statement) {
     Set<String> tables;
