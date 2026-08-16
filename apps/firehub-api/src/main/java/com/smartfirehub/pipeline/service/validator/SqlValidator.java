@@ -35,7 +35,33 @@ import org.springframework.stereotype.Component;
 @Component
 public class SqlValidator {
 
-  private static final String ALLOWED_SCHEMA = "data";
+  /** 허용 스키마. 호출 문맥마다 다를 수 있어 인스턴스 필드로 둔다(스레드 안전 — 생성 후 불변). */
+  private final String allowedSchema;
+
+  /**
+   * 스키마 없는(미한정) 테이블 참조를 허용할지 여부.
+   *
+   * <p>⚠ 미한정 이름은 호출부가 {@code SET LOCAL search_path} 를 **단일 스키마**로 고정했을 때만 안전하다. 두 스키마(예:
+   * {@code 'data', 'public'})를 세우는 호출부는 이 플래그를 켜면 안 된다 — 미한정 이름이 어느 스키마로 해석될지 애플리케이션 레이어에서 알 수 없기
+   * 때문이다.
+   */
+  private final boolean allowUnqualifiedTables;
+
+  /** 파이프라인 SQL 스텝 등 기존 호출부를 위한 기본 생성자. 기존 정책({@code allowedSchema="data"}, 미한정 거부)을 그대로 유지한다. */
+  public SqlValidator() {
+    this("data", false);
+  }
+
+  /**
+   * 허용 스키마와 미한정 테이블 허용 여부를 호출 문맥에서 주입받는 생성자.
+   *
+   * @param allowedSchema 참조를 허용할 유일한 스키마명
+   * @param allowUnqualifiedTables 스키마 없는 테이블 참조를 허용할지 여부
+   */
+  public SqlValidator(String allowedSchema, boolean allowUnqualifiedTables) {
+    this.allowedSchema = allowedSchema;
+    this.allowUnqualifiedTables = allowUnqualifiedTables;
+  }
 
   /**
    * SELECT 본문 등에서 호출 가능한 위험 함수 deny-list.
@@ -122,15 +148,18 @@ public class SqlValidator {
       // 스키마/테이블 이름의 양쪽 따옴표만 제거 (식별자 인용 보정)
       int dot = fqn.indexOf('.');
       if (dot < 0) {
+        if (allowUnqualifiedTables) {
+          continue;
+        }
         String name = stripQuotes(fqn);
         throw new UnsafeSqlException(
-            "테이블 참조에 스키마가 없습니다: '" + name + "'. data." + name + " 형식으로 명시하세요.");
+            "테이블 참조에 스키마가 없습니다: '" + name + "'. " + allowedSchema + "." + name + " 형식으로 명시하세요.");
       }
       String schema = stripQuotes(fqn.substring(0, dot));
       String name = stripQuotes(fqn.substring(dot + 1));
-      if (!ALLOWED_SCHEMA.equalsIgnoreCase(schema)) {
+      if (!allowedSchema.equalsIgnoreCase(schema)) {
         throw new UnsafeSqlException(
-            "허용되지 않는 스키마 참조: '" + schema + "." + name + "'. data 스키마만 사용할 수 있습니다.");
+            "허용되지 않는 스키마 참조: '" + schema + "." + name + "'. " + allowedSchema + " 스키마만 사용할 수 있습니다.");
       }
     }
   }

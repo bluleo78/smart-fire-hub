@@ -159,4 +159,62 @@ class SqlValidatorTest {
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("비어");
   }
+
+  // --- Task 1: 파라미터화(allowedSchema / allowUnqualifiedTables) 검증 ---
+
+  /**
+   * (1) 다른 스키마 참조는 표기 변형(따옴표, 점 주변 공백)과 무관하게 거부되어야 한다.
+   *
+   * <p>문자열 대조({@code contains("PUBLIC.")})는 이런 변형에 뚫리지만, AST 기반 검증기는 스키마 이름을 정규화해 비교하므로 뚫리지 않아야 한다.
+   */
+  @Test
+  void rejects_other_schema_reference_regardless_of_quoting_variant() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM \"public\".\"user\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("data");
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM public . \"user\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("data");
+  }
+
+  /** (2) set_config / current_setting 호출은 BLOCKED_FUNCTIONS 에 의해 거부된다. */
+  @Test
+  void rejects_set_config_and_current_setting_calls() {
+    assertThatThrownBy(() -> validator.validate("SELECT set_config('search_path', 'public', false)"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("set_config");
+    assertThatThrownBy(() -> validator.validate("SELECT current_setting('search_path')"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("current_setting");
+  }
+
+  /** (3) 롤 변경문(SET ROLE / RESET ROLE)은 SELECT/INSERT/UPDATE/DELETE 가 아니므로 문 타입 검사에서 거부된다. */
+  @Test
+  void rejects_role_change_statements() {
+    assertThatThrownBy(() -> validator.validate("SET ROLE app_tenant"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> validator.validate("RESET ROLE"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * (4) {@code allowUnqualifiedTables} 정책에 따라 스키마 없는 테이블 참조 허용 여부가 갈린다.
+   *
+   * <p>기본 생성자(무인자)는 기존 동작({@code allowUnqualifiedTables=false})을 그대로 유지해야 파이프라인 경로가 무변경이다.
+   */
+  @Test
+  void unqualified_table_reference_policy_is_configurable() {
+    SqlValidator permissive = new SqlValidator("data", true);
+    assertThatCode(() -> permissive.validate("SELECT * FROM t")).doesNotThrowAnyException();
+
+    SqlValidator strict = new SqlValidator("data", false);
+    assertThatThrownBy(() -> strict.validate("SELECT * FROM t"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("스키마");
+
+    // 기본(무인자) 생성자는 기존 동작(미한정 거부)을 그대로 유지한다.
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM t"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("스키마");
+  }
 }
