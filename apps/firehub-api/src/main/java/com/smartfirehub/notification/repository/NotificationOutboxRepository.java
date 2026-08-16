@@ -44,7 +44,8 @@ public interface NotificationOutboxRepository {
    * <p><b>{@code tenantId} 를 명시적으로 받는 이유.</b> 정책(V107)이 켜지기 전까지 이 쿼리는
    * 전역이라, 워커가 테넌트 A 의 컨텍스트에서 B 의 행을 클레임해 <b>A 로 배달</b>하는 창이 생긴다.
    * 컨텍스트만으로는 그 창이 닫히지 않으므로 술어를 직접 건다. 정책 이후에는 정책이 붙일 술어와
-   * 같아 중복이지만, {@code idx_outbox_pending_due} 계획을 바꾸지 않으므로 비용이 없다.
+   * 같아 중복이지만, V108 의 {@code idx_outbox_pending_tenant_due} 가 애초에 tenant_id 를 선행
+   * 컬럼으로 갖고 있어 이 술어가 바로 Index Cond 로 접힌다 — 계획을 바꾸지 않으므로 비용이 없다.
    * (배달 결과가 테넌트에 귀속되지 않는 전역 집합 연산 — 좀비 회수·보존 삭제 — 에는 같은 술어를
    * 걸지 않는다. 그쪽은 멱등이고 정책이 켜지면 자동으로 좁혀진다.)
    */

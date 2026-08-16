@@ -153,25 +153,12 @@ class ChannelDomainColumnTest extends IntegrationTestBase {
     }
   }
 
-  @Test
-  @DisplayName("idx_outbox_pending_due 는 테넌트 선행으로 접히지 않았다 — definer 스캔의 성능 전제")
-  void pendingDueIndexStaysGlobal() {
-    // V106 주석이 이 인덱스의 원형 유지를 outbox_tenant_ids 의 성능 전제로 선언한다:
-    // DISTINCT tenant_id 스캔에는 tenant_id 술어가 없으므로 (tenant_id, ...) 로 접으면
-    // 부분 인덱스의 선택성이 사라져 전 테이블 스캔이 된다. 다른 outbox 인덱스를 전부
-    // 테넌트 선행으로 바꾼 밴드였으므로, 이 하나만 예외라는 결정을 테스트가 말하게 한다.
-    var row =
-        dsl.fetchOne(
-            "select indexdef from pg_indexes where schemaname='public'"
-                + " and tablename='notification_outbox' and indexname='idx_outbox_pending_due'");
-    assertThat(row).as("idx_outbox_pending_due 가 존재하지 않는다").isNotNull();
-    String def = row.get("indexdef", String.class);
-    assertThat(def)
-        .as("idx_outbox_pending_due 가 테넌트 선행으로 접혔다 — definer 스캔이 인덱스를 타지 못한다")
-        .contains("(next_attempt_at)")
-        .doesNotContain("tenant_id");
-    assertThat(def).as("idx_outbox_pending_due 의 PENDING 부분 조건이 사라졌다").contains("PENDING");
-  }
+  // V106 이 여기서 "idx_outbox_pending_due 는 테넌트 선행으로 접으면 안 된다"고 선언했던 전제는
+  // P2-g(V108)의 실측으로 뒤집혔다: outbox_tenant_ids 는 WHERE 절에 tenant_id 술어가 아예 없어
+  // (next_attempt_at) 단일 키였던 이 인덱스로는 애초에 index-only 스캔이 되지 않았고 Seq Scan
+  // 이었다(EXPLAIN 실측, test DB, 2026-08-17). 그 역할은 V108 의 idx_outbox_status_tenant
+  // (status, tenant_id) 가 대신하고, idx_outbox_pending_due 자체는 V108 이 삭제했다.
+  // 후속 형태 단언은 OutboxIndexUsageTest 로 옮겼다 — 여기 남겨두면 사라진 인덱스를 찾다 실패한다.
 
   /** 제약 정의를 읽어 형태를 단언한다. 제약이 아니라 인덱스로 바뀌면 여기서 "존재하지 않는다"로 잡힌다. */
   private void assertConstraintDef(String constraintName, String expectedDef) {
