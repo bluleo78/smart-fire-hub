@@ -442,11 +442,11 @@ class DataTableServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     dataTableService.createTable(tableName, columns);
 
-    SqlQueryResponse response =
-        dataTableQueryService.executeQuery("SELECT * FORM " + tableName, 100);
-
-    assertThat(response.error()).isNotNull();
-    assertThat(response.rows()).isEmpty();
+    // "FORM" 오타는 파싱 자체가 불가능해 이제 SqlValidator 단계에서 UnsafeSqlException 으로 거부된다
+    // (#385 Task 3) — 예전처럼 DB 실행까지 도달해 error 필드로 반환되지 않는다.
+    assertThatThrownBy(
+            () -> dataTableQueryService.executeQuery("SELECT * FORM " + tableName, 100))
+        .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
   }
 
   @Test

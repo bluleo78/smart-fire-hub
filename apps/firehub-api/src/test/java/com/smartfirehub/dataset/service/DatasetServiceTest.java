@@ -487,11 +487,20 @@ class DatasetServiceTest extends IntegrationTestBase {
     assertThat(response.error()).isNull();
   }
 
+  /**
+   * DB 실행 단계 오류(존재하지 않는 테이블)는 이력에 실패로 기록된다.
+   *
+   * <p>예전에는 "FORM" 오타 같은 SQL 문법 오류도 DB 실행까지 도달해 이 경로로 기록됐지만, 이제 문법 오류는 검증기가 실행 전에
+   * {@code UnsafeSqlException}으로 거부하고(#385 Task 3) {@code DatasetDataService#executeQuery}는 그 예외를
+   * 잡지 않고 그대로 전파하므로 이력 저장 코드에 도달하지 못한다(폴백을 두지 않은 이유는 검증 우회 방지 —
+   * DataTableQueryService 주석 참고). 이 테스트는 "이력 저장" 자체를 검증하는 것이 목적이므로, 검증기를 통과하지만 실행
+   * 단계에서 실패하는 입력으로 바꾼다.
+   */
   @Test
-  void executeQuery_syntaxError_savesHistory() {
+  void executeQuery_executionError_savesHistory() {
     DatasetDetailResponse dataset =
         createTestDatasetWithData("Syntax Error Test", "syntax_error_test");
-    SqlQueryRequest request = new SqlQueryRequest("SELECT * FORM syntax_error_test", 100);
+    SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM non_existent_table_xyz", 100);
 
     SqlQueryResponse response = datasetDataService.executeQuery(dataset.id(), request, testUserId);
 

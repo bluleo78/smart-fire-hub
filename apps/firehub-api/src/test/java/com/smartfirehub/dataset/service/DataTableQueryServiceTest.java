@@ -269,14 +269,17 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * 보안/트랜잭션: SQL 문법 오류가 발생해도 SAVEPOINT 롤백으로 외부 트랜잭션이 중단되지 않는다. 오류 응답 반환 후 동일 트랜잭션에서 추가 쿼리를 실행할 수
-   * 있어야 한다.
+   * 보안/트랜잭션: DB 실행 단계에서만 드러나는 오류(0으로 나누기)가 발생해도 SAVEPOINT 롤백으로 외부 트랜잭션이 중단되지 않는다. 오류 응답 반환 후
+   * 동일 트랜잭션에서 추가 쿼리를 실행할 수 있어야 한다.
+   *
+   * <p>이 쿼리는 문법상 유효해 {@link com.smartfirehub.pipeline.service.validator.SqlValidator}를 통과하고 실제
+   * DB 실행 단계에서 실패한다(#385 Task 3). 문법 자체가 잘못된 SQL(옛 "FORM" 오타)은 이제 검증기 단계에서 {@link
+   * com.smartfirehub.pipeline.exception.UnsafeSqlException}으로 거부된다 — 아래 파싱 실패 케이스 참고.
    */
   @Test
   void executeQuery_sqlError_savepointRollback_transactionContinues() {
-    // 문법 오류 쿼리 실행
-    SqlQueryResponse errorResponse =
-        dataTableQueryService.executeQuery("SELECT * FORM invalid_syntax_table", 10);
+    // DB 실행 시점 오류(0으로 나누기) — 문법은 유효해 검증기를 통과하고 실행 단계에서 실패한다
+    SqlQueryResponse errorResponse = dataTableQueryService.executeQuery("SELECT 1/0", 10);
 
     assertThat(errorResponse.error()).isNotNull();
 
@@ -367,14 +370,19 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   // SQL 오류 케이스 (error 필드 반환)
   // =========================================================================
 
-  /** SQL 문법 오류는 SqlQueryException이 아니라 error 필드로 반환된다 */
+  /**
+   * SQL 문법 오류(파서가 애초에 파싱할 수 없는 문자열)는 error 필드가 아니라 {@link
+   * com.smartfirehub.pipeline.exception.UnsafeSqlException}으로 거부된다.
+   *
+   * <p>#385 Task 3 이전에는 이런 입력도 DB 실행까지 도달해 Postgres 문법 오류로 error 필드에 담겼다. 이제는 {@link
+   * com.smartfirehub.pipeline.service.validator.SqlValidator}가 stripAndValidate 직후 AST 파싱을 시도하고,
+   * 파싱 실패를 폴백 없이 그대로 거부한다 — 폴백을 두면 검증기 전체(스키마·차단 함수 검사)를 우회하는 새 경로가
+   * 되기 때문이다(DataTableQueryService 주석 참고).
+   */
   @Test
-  void executeQuery_syntaxError_returnsErrorField() {
-    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT * FORM broken_sql", 100);
-
-    assertThat(response.error()).isNotNull();
-    assertThat(response.rows()).isEmpty();
-    assertThat(response.executionTimeMs()).isGreaterThanOrEqualTo(0);
+  void executeQuery_unparsableSyntax_throwsUnsafeSqlException() {
+    assertThatThrownBy(() -> dataTableQueryService.executeQuery("SELECT * FORM broken_sql", 100))
+        .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
   }
 
   /** 존재하지 않는 컬럼 참조 오류는 error 필드로 반환된다 */
@@ -458,7 +466,10 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
         dataTableQueryService.executeQuery("SELECT * FROM " + testTableName, 100);
     assertThat(success.executionTimeMs()).isGreaterThanOrEqualTo(0);
 
-    SqlQueryResponse error = dataTableQueryService.executeQuery("SELECT * FORM broken_query", 100);
+    // 문법 오류("FORM" 오타)는 이제 검증기 단계에서 예외로 거부되므로(#385 Task 3), 여기서는 실행 단계
+    // 오류(존재하지 않는 테이블)로 error 필드 반환 경로의 executionTimeMs 를 검증한다.
+    SqlQueryResponse error =
+        dataTableQueryService.executeQuery("SELECT * FROM non_existent_table_xyz", 100);
     assertThat(error.executionTimeMs()).isGreaterThanOrEqualTo(0);
   }
 }

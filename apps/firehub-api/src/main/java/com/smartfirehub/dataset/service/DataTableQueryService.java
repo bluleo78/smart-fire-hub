@@ -2,7 +2,6 @@ package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.global.util.SqlValidationUtils;
-import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -43,20 +42,15 @@ public class DataTableQueryService {
     // 변형(따옴표로 감싼 "public", 점 주변 공백 등)에 뚫린다(#385 R3 실측). AST 기반 스키마 화이트리스트가
     // 정본이며, 아래 SqlValidator 가 스키마 허용목록·차단 함수(set_config 등)를 함께 검사한다.
     //
-    // 단, JSqlParser 가 애초에 파싱하지 못하는 문자열(순수 SQL 문법 오류)은 보안 위반이 아니라 사용자
-    // 오타이므로 여기서 거부하지 않고 기존처럼 DB 실행 단계로 넘긴다 — Postgres 가 더 정확한 오류 메시지를
-    // 내고, 이 메서드 자체가 실패를 error 필드로 반환하는 계약을 유지해야 호출자(DatasetDataService)의
-    // query_history 실패 기록 로직이 계속 동작한다(파서 단계에서 예외를 던지면 이 메서드 밖으로 전파돼 이력이
-    // 남지 않는다). 이 폴백이 새 우회 경로가 되지 않는 이유: 위 스키마·함수 위반 사례(동등 표기 변형 포함)는
-    // 전부 유효한 SQL 문법이라 항상 파싱에 성공하므로 이 catch 로 빠지지 않는다 — 오직 진짜로 파싱 불가능한
-    // 입력만 폴백된다.
-    try {
-      sqlValidator.validate(cleanSql);
-    } catch (UnsafeSqlException e) {
-      if (!(e.getCause() instanceof net.sf.jsqlparser.JSQLParserException)) {
-        throw e;
-      }
-    }
+    // 파싱 자체가 안 되는 문자열도 여기서 거부한다(폴백 없음) — "파싱 실패 시 DB 실행으로 넘긴다"는 대안은
+    // 검토했으나 채택하지 않았다(#385 Task 2 판정과 동일한 이유). 그 폴백은 검증기 전체(스키마·차단 함수
+    // 검사 포함)를 건너뛰므로, 공격자가 스키마 위반 쿼리에 JSqlParser 가 못 읽는(그러나 Postgres 는 실행하는)
+    // 구문을 일부러 섞어 검증 자체를 우회할 새 경로가 된다 — "이 R3 변형들은 전부 파싱된다"는 관찰은 이
+    // 순간의 테스트 케이스에만 성립하고 일반적으로 참임을 보장하지 못한다. 대가: 순수 오타(예: "FORM" 대신
+    // "FROM")도 이제 error 필드가 아니라 예외로 거부되고, query_history 에 실패 이력이 남지 않는다
+    // (DatasetDataService#executeQuery 가 이 예외를 잡지 않기 때문) — 이는 보안과 무관한 UX 회귀이지만
+    // 검증 우회 가능성보다 낫다고 판단했다.
+    sqlValidator.validate(cleanSql);
 
     long startTime = System.currentTimeMillis();
 
