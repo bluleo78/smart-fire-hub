@@ -21,6 +21,7 @@ import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
 import com.smartfirehub.file.exception.UnsupportedUploadFileTypeException;
 import com.smartfirehub.global.dto.ErrorResponse;
+import com.smartfirehub.notification.auth.exception.SlackWorkspaceInstallDeniedException;
 import com.smartfirehub.ontology.exception.OntologyElementNotFoundException;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
@@ -47,6 +48,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -164,6 +166,42 @@ public class GlobalExceptionHandler {
       // (과거에는 causeMsg를 이어붙여 스키마 정보가 사용자에게 노출됐다)
     }
     ErrorResponse response = buildError(HttpStatus.CONFLICT, message, null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
+  /**
+   * Slack 앱 설치가 RLS 에 막힌 경우 500 이 아니라 409 로 응답한다 (멀티 테넌시 P2-g).
+   *
+   * <p><b>왜 응답 문구가 일반적이어야 하는가 — 지우지 말 것.</b> "이미 다른 테넌트가 이 Slack 팀을
+   * 설치했다"고 알려 주면, 아무나 팀 ID 만 넣어 보고 <b>다른 테넌트의 설치 여부를 조회하는
+   * 오라클</b>이 된다(팀 ID 는 워크스페이스 관리자면 누구나 안다). 그래서 응답에는 원인·team_id·
+   * 상대 테넌트를 일절 싣지 않고, 진단에 필요한 정보는 아래 WARN 로그에만 남긴다 —
+   * {@link #handleDataIntegrityViolation} 이 DB 원문을 응답에서 걷어낸 것과 같은 원칙(#313)이다.
+   * 뒤에 오는 사람이 "메시지가 불친절하다"며 구체화하지 않도록 여기 근거를 박아 둔다.
+   *
+   * <p>{@code 42501} 전반이 아니라 <b>OAuth 설치 경로에서 변환된 전용 예외</b>만 받는다. RLS 거부를
+   * 통째로 4xx 로 바꾸면 컨텍스트 없는 배경 경로의 쓰기 같은 배선 결함까지 조용히 묻히는데, 그건
+   * 500 으로 시끄럽게 터져야 한다.
+   */
+  @ExceptionHandler(SlackWorkspaceInstallDeniedException.class)
+  public ResponseEntity<ErrorResponse> handleSlackWorkspaceInstallDenied(
+      SlackWorkspaceInstallDeniedException ex, HttpServletRequest request) {
+    // 서버측 로그는 구체적으로 — team_id·SQLState·요청 URI 를 남겨야 운영자가 원인을 짚는다.
+    // correlationId 는 MDC 로만 나른다(SlackInboundService.dispatch 선례). 응답 바디에는 넣지
+    // 않는다 — ErrorResponse 계약을 흔들고, 이 저장소에 그런 선례가 없다.
+    MDC.put("correlationId", "slack-install-denied-" + ex.getTeamId());
+    try {
+      log.warn(
+          "Slack workspace install denied by RLS (sqlstate=42501) on {}: teamId={}",
+          request.getRequestURI(),
+          ex.getTeamId(),
+          ex);
+    } finally {
+      MDC.remove("correlationId");
+    }
+
+    ErrorResponse response =
+        buildError(HttpStatus.CONFLICT, "Slack 워크스페이스를 설치할 수 없습니다.", null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 

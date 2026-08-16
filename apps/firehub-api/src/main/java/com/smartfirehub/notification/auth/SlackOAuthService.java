@@ -3,12 +3,15 @@ package com.smartfirehub.notification.auth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.notification.ChannelType;
+import com.smartfirehub.notification.auth.exception.SlackWorkspaceInstallDeniedException;
 import com.smartfirehub.notification.channels.slack.SlackApiClient;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
+import java.sql.SQLException;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -23,6 +26,9 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class SlackOAuthService {
+
+  /** PostgreSQL insufficient_privilege — RLS 정책 위반이 이 SQLState 로 온다. */
+  private static final String RLS_DENIED_SQLSTATE = "42501";
 
   private final SlackApiClient slackApiClient;
   private final SlackWorkspaceRepository slackWorkspaceRepo;
@@ -120,11 +126,38 @@ public class SlackOAuthService {
     // 봇 토큰을 AES-256-GCM으로 암호화하여 저장
     String botTokenEnc = encryption.encrypt(accessToken);
 
-    long workspaceId =
-        slackWorkspaceRepo.upsertFromOAuth(
-            teamId, teamName, botUserId, botTokenEnc, installedByUserId);
+    long workspaceId = upsertOrDeny(teamId, teamName, botUserId, botTokenEnc, installedByUserId);
 
     return new SlackWorkspaceInstalled(teamId, teamName, workspaceId);
+  }
+
+  /**
+   * upsert 를 수행하되, RLS 거부({@code 42501})만 전용 예외로 바꾼다.
+   *
+   * <p>다른 테넌트가 이미 설치한 팀을 (재)설치하면 전역 유니크 {@code team_id} 때문에 남의 행으로
+   * DO UPDATE 가 내려가고 정책에 막힌다 —
+   * {@link SlackWorkspaceInstallDeniedException} 의 설명 참조. fail-closed 라 보안상 안전하지만
+   * 500 으로 새어 나가면 운영자가 버그로 오인하므로 여기서 4xx 로 분류한다.
+   *
+   * <p><b>예외 클래스가 아니라 SQLState 로 판정하는 이유.</b> 실측하면 Spring 은 이 실패를
+   * {@code BadSqlGrammarException}(클래스 코드 42 → 문법 오류로 뭉뚱그림)으로 감싼다.
+   * {@code PermissionDeniedDataAccessException} 을 기대하는 코드는 영원히 발화하지 않는다. 반대로
+   * 클래스로 넓게 잡으면 진짜 문법 오류·권한 미부여(GRANT 누락)까지 4xx 로 묻힌다 — 그건 500 으로
+   * 터져야 하는 배선 결함이다. 그래서 근본 원인 {@code SQLException} 의 {@code 42501} 만 본다.
+   */
+  private long upsertOrDeny(
+      String teamId, String teamName, String botUserId, String botTokenEnc, long installedByUserId) {
+    try {
+      return slackWorkspaceRepo.upsertFromOAuth(
+          teamId, teamName, botUserId, botTokenEnc, installedByUserId);
+    } catch (DataAccessException ex) {
+      Throwable root = ex.getMostSpecificCause();
+      if (root instanceof SQLException sqle && RLS_DENIED_SQLSTATE.equals(sqle.getSQLState())) {
+        throw new SlackWorkspaceInstallDeniedException(teamId, ex);
+      }
+      // 그 외 DB 오류는 손대지 않는다 — 500 으로 시끄럽게 터지는 것이 맞다.
+      throw ex;
+    }
   }
 
   /**
