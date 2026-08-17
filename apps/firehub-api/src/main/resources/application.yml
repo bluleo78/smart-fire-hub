@@ -54,6 +54,13 @@ app:
       url: ${spring.datasource.url}
       username: pipeline_executor
       password: ${PIPELINE_EXECUTOR_PASSWORD:pipeline_exec_pwd}
+    # 테넌트별 파이프라인 실행 롤(pipeline_executor_t{id}) 비밀번호를 결정적으로 파생하는 HMAC 키.
+    # TenantPipelineRole/TenantPipelineDataSourceRegistry/RolePasswordSyncCallback 이 함께 쓴다.
+    role-password-secret: ${PIPELINE_ROLE_PASSWORD_SECRET:tenant-pipeline-role-dev-secret}
+    tenant-pool:
+      max-pools: ${PIPELINE_TENANT_POOL_MAX_POOLS:8}
+      max-size: ${PIPELINE_TENANT_POOL_MAX_SIZE:2}
+      idle-timeout-ms: ${PIPELINE_TENANT_POOL_IDLE_TIMEOUT_MS:600000}
   executor:
     enabled: true
     base-url: ${EXECUTOR_BASE_URL:http://localhost:8000}

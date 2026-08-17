@@ -1,7 +1,9 @@
 package com.smartfirehub.global.config;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Map;
 import org.flywaydb.core.api.callback.BaseCallback;
 import org.flywaydb.core.api.callback.Context;
 import org.flywaydb.core.api.callback.Event;
@@ -23,15 +25,37 @@ import org.flywaydb.core.api.callback.Event;
  * 동기화해야 로테이션에도 대응할 수 있어, 마이그레이션 SQL이 아닌 콜백으로 구현한다. {@code
  * AFTER_MIGRATE} 는 대기 중인 마이그레이션이 없어도 migrate() 호출 시 항상 실행되므로, 매 기동마다
  * 현재 환경변수 값으로 ALTER ROLE 이 재실행된다(멱등).
+ *
+ * <p><b>테넌트별 롤({@code pipeline_executor_t{tenantId}}) 확장.</b> 처음에는 롤 이름·비밀번호가
+ * 고정된 두 개(pipeline_executor, app_tenant)만 있었지만, 테넌트별 파이프라인 실행 롤은 ACTIVE
+ * 테넌트 목록에 따라 개수·이름이 런타임에 달라진다. 이 클래스는 그래서 "고정 롤 하나"만이 아니라
+ * {@link RolePasswordProvider} 로 "동기화 대상 목록을 커넥션에서 동적으로 계산"하는 경우도 지원하도록
+ * 확장했다 — 대상 계산이 마이그레이션 직후의 DB 상태(예: {@code tenant} 테이블)를 읽어야 하므로,
+ * 콜백이 실제로 실행되는 시점(= 커넥션이 있는 시점)까지 계산을 미뤄야 한다.
  */
 public class RolePasswordSyncCallback extends BaseCallback {
 
-  private final String roleName;
-  private final String password;
+  /** 동기화 대상 "롤 이름 → 비밀번호" 매핑을, 방금 마이그레이션이 끝난 커넥션으로부터 계산한다. */
+  @FunctionalInterface
+  public interface RolePasswordProvider {
+    Map<String, String> resolve(Connection connection) throws SQLException;
+  }
 
+  private final String callbackName;
+  private final RolePasswordProvider provider;
+
+  /** 이름·비밀번호가 고정된 롤 하나를 동기화한다 — pipeline_executor, app_tenant 처럼 정적인 롤용. */
   public RolePasswordSyncCallback(String roleName, String password) {
-    this.roleName = roleName;
-    this.password = password;
+    this(roleName + "PasswordSync", connection -> Map.of(roleName, password));
+  }
+
+  /**
+   * 동기화 대상(롤 이름·비밀번호 목록)을 커넥션에서 동적으로 계산해야 하는 경우의 생성자 — 예:
+   * ACTIVE 테넌트 테이블을 순회해 존재하는 {@code pipeline_executor_t{id}} 롤만 골라내는 경우.
+   */
+  public RolePasswordSyncCallback(String callbackName, RolePasswordProvider provider) {
+    this.callbackName = callbackName;
+    this.provider = provider;
   }
 
   @Override
@@ -41,13 +65,25 @@ public class RolePasswordSyncCallback extends BaseCallback {
 
   @Override
   public void handle(Event event, Context context) {
-    // 비밀번호는 트러스트된 환경변수 값이지만, SQL 리터럴 삽입이라 홑따옴표는 이스케이프한다.
+    Map<String, String> rolePasswords;
+    try {
+      rolePasswords = provider.resolve(context.getConnection());
+    } catch (SQLException e) {
+      throw new IllegalStateException(callbackName + " 동기화 대상 조회 실패", e);
+    }
+    for (Map.Entry<String, String> entry : rolePasswords.entrySet()) {
+      applyPassword(context.getConnection(), entry.getKey(), entry.getValue());
+    }
+  }
+
+  private void applyPassword(Connection connection, String roleName, String password) {
+    // 비밀번호는 트러스트된 값(환경변수 또는 HMAC 파생값)이지만, SQL 리터럴 삽입이라 홑따옴표는
+    // 이스케이프한다.
     String escapedPassword = password.replace("'", "''");
     // 롤 이름도 식별자로 안전하게 삽입하기 위해 큰따옴표로 감싸고 내부 큰따옴표를 두 배로 이스케이프한다.
-    // 오늘은 롤 이름이 고정된 소문자 리터럴이라 문제가 없지만, 이후 단계에서 테넌트별 롤
-    // (예: pipeline_executor_t{id})처럼 동적으로 생성되는 이름이 들어올 수 있어 미리 방어한다.
+    // 테넌트별 롤(pipeline_executor_t{id})처럼 동적으로 생성되는 이름이 들어오므로 방어가 실제로 쓰인다.
     String quotedRoleName = "\"" + roleName.replace("\"", "\"\"") + "\"";
-    try (Statement stmt = context.getConnection().createStatement()) {
+    try (Statement stmt = connection.createStatement()) {
       stmt.execute("ALTER ROLE " + quotedRoleName + " PASSWORD '" + escapedPassword + "'");
     } catch (SQLException e) {
       throw new IllegalStateException(roleName + " 비밀번호 동기화 실패", e);
@@ -56,6 +92,6 @@ public class RolePasswordSyncCallback extends BaseCallback {
 
   @Override
   public String getCallbackName() {
-    return roleName + "PasswordSync";
+    return callbackName;
   }
 }

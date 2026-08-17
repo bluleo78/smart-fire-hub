@@ -50,6 +50,15 @@ app:
       url: jdbc:postgresql://localhost:5433/smartfirehub_test
       username: pipeline_executor
       password: pipeline_exec_pwd
+    # 테넌트별 파이프라인 실행 롤(pipeline_executor_t{id}) 비밀번호 파생 HMAC 키.
+    # RolePasswordSyncCallback 이 이 값으로 매 기동마다 DB 쪽 비밀번호를 맞춘다(T1 TenantPipelineRole).
+    role-password-secret: test-tenant-pipeline-secret
+    tenant-pool:
+      # 상한을 작게 잡아 TenantPipelineDataSourceRegistryTest 가 소수의 가짜 테넌트로도 LRU 축출을
+      # 실제로 관측할 수 있게 한다. 이 레지스트리를 아직 이 태스크 외에는 아무도 쓰지 않는다.
+      max-pools: 3
+      max-size: 1
+      idle-timeout-ms: 600000
   executor:
     enabled: false  # tests use direct execution
 
