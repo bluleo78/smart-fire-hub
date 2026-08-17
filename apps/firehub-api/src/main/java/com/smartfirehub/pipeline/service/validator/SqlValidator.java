@@ -11,6 +11,7 @@ import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.Statements;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.insert.Insert;
+import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
 import net.sf.jsqlparser.statement.update.Update;
 import net.sf.jsqlparser.util.TablesNamesFinder;
@@ -31,6 +32,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>이중 방어 — DB 역할({@code pipeline_executor} 등)이 시스템 함수/스키마를 차단하지만, 애플리케이션 레이어에서 조기 차단하여 명확한 에러를
  * 제공한다. (#136, #385)
+ *
+ * <p><b>원리적 한계 — "AST 가 다 막아 준다"고 오해하지 말 것(#385 최종 리뷰 m5).</b> {@link #requireDataSchemaOnly}의
+ * 스키마 화이트리스트는 SQL 문법상 <i>테이블 참조 노드</i>로 나타나는 이름만 볼 수 있다. 인자가 **문자열 리터럴**인 함수 —
+ * {@code query_to_xml('SELECT ... FROM public.t', ...)}, {@code nextval('public.some_seq')},
+ * {@code 'public.v'::regclass} 등 — 는 그 문자열 안의 테이블 이름을 AST 파서가 볼 수 없다(문자열 리터럴 노드일 뿐 테이블
+ * 참조가 아니다). 이런 함수는 **deny-list({@link #BLOCKED_FUNCTIONS})가 유일한 방어**다 — 스키마 화이트리스트로
+ * 막을 수 있다고 가정하고 함수를 빠뜨리면 그 함수가 곧 우회 경로가 된다. 새 함수를 검토할 때 "인자가 문자열이고 그 문자열이 SQL
+ * 조각으로 재해석되는가"를 반드시 확인하라.
  */
 @Slf4j
 @Component
@@ -94,6 +103,26 @@ public class SqlValidator {
    * 점유**한다 — 커넥션 풀 고갈(DoS)로 이어질 수 있고 쿼리 UI 에 정당한 사용례가 없다. deny-list 는 파이프라인/애드혹/애널리틱스가
    * 공유하므로 파이프라인 SQL 스텝에도 함께 적용되는 것을 알고 받아들인 판정이다(dev 이력에 파이프라인에서 의도적 지연을 쓰는 사용례는
    * 없었다).
+   *
+   * <p>{@code query_to_xml} 계열(및 형제 {@code table_to_xml}/{@code database_to_xml}, 각각의
+   * {@code _and_xmlschema}/{@code _xmlschema} 변형, {@code pg_get_viewdef})도 최종 리뷰에서 추가했다 —
+   * **가장 심각한 우회였다**: 이 함수들은 인자로 **SQL 문자열 리터럴을 받아 그 안에서 별도 쿼리를 실행**한다. 그 문자열은
+   * {@link #requireDataSchemaOnly}가 순회하는 {@code TablesNamesFinder}의 테이블 목록에 절대 안 잡힌다 —
+   * AST 상 문자열 리터럴일 뿐 테이블 참조 노드가 아니기 때문이다. 실측: {@code search_path='data'} 로 좁힌 애드혹
+   * 경로에서도 {@code SELECT query_to_xml('SELECT count(*) c FROM public."user"', true, false, '')} 가
+   * 성공했다(`<c>7777</c>` 반환) — 스키마 화이트리스트를 완전히 무력화한다. DML 은 "non-volatile function"
+   * 오류로 자체 차단되지만 **임의 SELECT 전면 열람**은 열려 있었다. {@code pg_get_viewdef}(뷰 정의 노출)도 같은 성격 —
+   * 인자가 이름/oid 든 문자열이든 그 안에서 별도 조회를 도는 함수 계열은 원리적으로 AST 화이트리스트를 우회하므로 여기서만 막을 수
+   * 있다({@link #unqualifiedTableNames} 근처 클래스 상단 주석의 "원리적 한계" 참고). 이 함수들은 파이프라인 SQL
+   * 스텝에도 정당한 용도가 없다(테이블 값을 조회하는 것이 목적이면 일반 SELECT 로 충분) — 공유 deny-list 를 그대로 적용한다.
+   *
+   * <p>{@code resolve_trigger_tenant_by_token_hash} 등 정의자 함수 5개와 {@code query_to_xml} 계열은
+   * 파이프라인 SQL 스텝 경로(무인자 {@code SqlValidator}, strict 모드)에도 함께 걸린다 — deny-list 를 공유하기
+   * 때문이다. 파이프라인 replay 코퍼스({@code StoredUserSqlReplayTest})는 애드혹/애널리틱스 저장 쿼리만 덮고 파이프라인
+   * SQL 스텝 이력은 덮지 않으므로, 이 함수들이 기존 파이프라인 스텝에서 쓰인 적이 있는지는 이 초록 스위트로 보장되지 않는다.
+   * dev 파이프라인 SQL 스텝에 이 함수들을 호출하는 정당한 용도가 있다는 근거는 없었고(카탈로그 열람·정의자 함수 호출은 ETL
+   * 변환 로직에 필요할 이유가 없다), 있다면 차단이 옳은 방향이라 판단했다 — 근거가 이 판단을 뒤집으면 파이프라인 전용
+   * 예외를 검증기에 추가해야 한다(현재는 그런 신호가 없다).
    */
   static final Set<String> BLOCKED_FUNCTIONS =
       Set.of(
@@ -114,7 +143,17 @@ public class SqlValidator {
           "resolve_trigger_tenant_by_webhook_id",
           "provision_tenant_defaults",
           "resolve_slack_workspace_tenant_by_team_id",
-          "outbox_tenant_ids");
+          "outbox_tenant_ids",
+          "query_to_xml",
+          "query_to_xmlschema",
+          "query_to_xml_and_xmlschema",
+          "table_to_xml",
+          "table_to_xmlschema",
+          "table_to_xml_and_xmlschema",
+          "database_to_xml",
+          "database_to_xmlschema",
+          "database_to_xml_and_xmlschema",
+          "pg_get_viewdef");
 
   /** 검증 실패 시 {@link UnsafeSqlException}을 던진다. */
   public void validate(String scriptContent) {
@@ -126,6 +165,7 @@ public class SqlValidator {
     requireDmlOrSelect(statement);
     requireDataSchemaOnly(statement);
     requireNoBlockedFunctions(statement);
+    requireNoSelectInto(statement);
   }
 
   /** JSqlParser로 파싱하고 단일 스테이트먼트인지 확인한다. */
@@ -281,11 +321,53 @@ public class SqlValidator {
         // 함수 이름은 점 표기(schema.fn)일 수 있으므로 마지막 토큰만 사용
         int dot = fnName.lastIndexOf('.');
         String simple = dot >= 0 ? fnName.substring(dot + 1) : fnName;
-        if (BLOCKED_FUNCTIONS.contains(simple.toLowerCase())) {
+        // 따옴표 제거(식별자 인용 보정) — 최종 리뷰 지적(C2): 테이블 경로(stripQuotes 적용됨)와 달리
+        // 여기는 원래 이 보정이 없어 SELECT "pg_sleep"(5), "current_setting"(...),
+        // "resolve_trigger_tenant_by_token_hash"(...) 처럼 함수 이름을 따옴표로 감싸기만 해도
+        // deny-list 전체가 무력화됐다(psql 실측: 인용 형태가 그대로 실행됨). PostgreSQL 은 함수 호출에서도
+        // 따옴표 유무를 구분하지 않고 같은 함수로 해석하므로, 검증기도 똑같이 취급해야 한다.
+        String unquoted = stripQuotes(simple);
+        if (BLOCKED_FUNCTIONS.contains(unquoted.toLowerCase())) {
           throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
         }
       }
       return super.visit(function, context);
+    }
+  }
+
+  /**
+   * 최상위 {@code SELECT ... INTO <table>} / {@code SELECT ... INTO TEMP <table>} 형태를 거부한다.
+   * (#385 최종 리뷰 지적 M4)
+   *
+   * <p>JSqlParser 는 이 형태를 {@link net.sf.jsqlparser.statement.select.PlainSelect}로 그대로 모델링해
+   * {@link #requireDmlOrSelect}를 통과시키고, {@code TablesNamesFinder.getTables}는 INTO 대상 테이블을
+   * 결과에 포함하지 않는다 — 즉 {@link #requireDataSchemaOnly}의 스키마 화이트리스트가 INTO 대상에는
+   * 아예 적용되지 않는다. 실측: {@code SELECT * INTO public.pwned FROM data.t}가 검증기를 통과했고, 실제
+   * DB 에서 {@code SELECT 1 AS x INTO data.zz_probe}가 테이블을 생성했다. {@code public} 스키마로의 INTO 는
+   * GRANT 로만 막히는데, 그건 "AST 스키마 화이트리스트가 정본"이라는 이 클래스의 전제와 어긋난다. 더 나쁜 점 —
+   * {@code SqlValidationUtils.detectQueryType}은 이 문장을 {@code SELECT}로 분류해 애널리틱스의
+   * {@code readOnly=true}(MCP 도구) 게이트까지 통과시킨다. 사용자 SQL 경로(파이프라인/애드혹/애널리틱스) 어디에도
+   * INTO 로 새 테이블을 만드는 정당한 용도가 없으므로 전면 거부한다.
+   */
+  private void requireNoSelectInto(Statement statement) {
+    IntoTableFinder finder = new IntoTableFinder();
+    statement.accept(finder);
+  }
+
+  /** {@link PlainSelect}의 INTO 대상만 검사하는 visitor. UNION/서브쿼리 내부까지 재귀적으로 방문한다. */
+  private static final class IntoTableFinder extends TablesNamesFinder<Void> {
+    IntoTableFinder() {
+      init(true);
+    }
+
+    @Override
+    public <S> Void visit(PlainSelect plainSelect, S context) {
+      if ((plainSelect.getIntoTables() != null && !plainSelect.getIntoTables().isEmpty())
+          || plainSelect.getIntoTempTable() != null) {
+        throw new UnsafeSqlException(
+            "SELECT ... INTO 는 허용되지 않습니다. 조회 결과로 새 테이블을 만들 수 없습니다.");
+      }
+      return super.visit(plainSelect, context);
     }
   }
 }

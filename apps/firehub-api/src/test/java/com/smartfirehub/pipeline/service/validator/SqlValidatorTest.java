@@ -320,4 +320,71 @@ class SqlValidatorTest {
 
     assertThat(permissive.unqualifiedTableNames("SELECT * FROM data.t, u")).containsExactly("u");
   }
+
+  // --- 최종 리뷰 C1/C2/M4 — 각각 수정 전 실제로 통과했음을 실측한 우회 3종 ---
+
+  /**
+   * C1: {@code query_to_xml} 은 인자가 문자열 리터럴이라 그 안의 테이블 참조가 {@code
+   * TablesNamesFinder}에 절대 안 잡힌다 — 스키마 화이트리스트가 완전히 무력화된다. 실측(수정 전):
+   * {@code SELECT query_to_xml('SELECT count(*) c FROM public."user"', true, false, '')}가
+   * {@code search_path='data'} 애드혹 경로에서 성공해 {@code <c>7777</c>}를 반환했다. 함수 자체를
+   * {@code BLOCKED_FUNCTIONS}로 막는 것이 유일한 방어(형제 함수 계열 포함).
+   */
+  @Test
+  void rejects_query_to_xml_and_sibling_functions() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(
+            () ->
+                permissive.validate(
+                    "SELECT query_to_xml('SELECT count(*) c FROM public.\"user\"', true, false,"
+                        + " '')"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT table_to_xml('public.role', true, false, '')"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT pg_get_viewdef('public.some_view'::regclass)"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * C2: 함수 이름을 따옴표로 감싸면 {@code BlockedFunctionFinder}가 {@code toLowerCase()}만 하고 따옴표를 벗기지
+   * 않아 deny-list 전체가 뚫렸다. 실측(수정 전): 검증기가 {@code SELECT "pg_sleep"(5)}를 통과시켰고, DB 에서
+   * {@code SELECT "current_setting"('search_path')}가 {@code data, public}을 반환했으며,
+   * {@code SELECT "resolve_trigger_tenant_by_token_hash"('deadbeef')}가 실행됐다 — Task 4 에서 추가한
+   * 정의자 함수 5개(변경 함수 {@code provision_tenant_defaults} 포함)까지 따옴표 한 쌍으로 무력화됐다.
+   */
+  @Test
+  void rejects_quoted_blocked_function_names() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(() -> permissive.validate("SELECT \"pg_sleep\"(5)"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT \"current_setting\"('search_path')"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () ->
+                permissive.validate(
+                    "SELECT \"provision_tenant_defaults\"(1)"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * M4: {@code SELECT ... INTO}는 {@code Select}로 모델링돼 {@code requireDmlOrSelect}를 통과하고,
+   * {@code TablesNamesFinder.getTables}가 INTO 대상을 보고하지 않아 스키마 화이트리스트가 적용되지 않았다.
+   * 실측(수정 전): 검증기가 {@code SELECT * INTO public.pwned FROM data.t}를 통과시켰고, DB 에서
+   * {@code SELECT 1 AS x INTO data.zz_probe}가 실제로 테이블을 생성했다. {@code detectQueryType}이 이
+   * 문장을 SELECT 로 분류해 {@code readOnly=true}(MCP 도구) 게이트까지 통과한다는 점도 별도로 고정한다 —
+   * {@code validate()} 가 readOnly 여부와 무관하게 거부해야 그 게이트를 우회할 수 없다.
+   */
+  @Test
+  void rejects_select_into() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(() -> permissive.validate("SELECT * INTO public.pwned FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+    // readOnly 게이트가 이 문장을 SELECT 로 오분류해도(SqlValidationUtils.detectQueryType), validate()
+    // 자체가 무조건 거부하므로 readOnly=true 경로에서도 결과는 동일해야 한다 — 별도로 못박는다.
+    assertThatThrownBy(() -> permissive.validate("SELECT * INTO TEMP zz_probe FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
 }
