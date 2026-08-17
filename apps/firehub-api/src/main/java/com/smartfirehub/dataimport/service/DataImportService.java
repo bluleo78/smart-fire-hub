@@ -414,17 +414,57 @@ public class DataImportService {
       String userAgent,
       String importModeName,
       long tenantId) {
-    // 잡 스레드에는 요청 컨텍스트가 없다. RLS가 걸린 dataset/data 테이블을 읽고 쓰려면 여기서 세워야 한다.
+    // 잡 스레드에는 요청 컨텍스트가 없다. RLS가 걸린 dataset/data 테이블을 읽고 쓰려면 스코프가 필요하다.
+    // 손으로 set → try → finally clear 하지 않고 runScoped 로 감싼다 — 본문이 어디서 던지든 진입 전
+    // 상태로 되돌아가므로(진입 전이 null 이면 clear 와 동일), "컨텍스트가 새지 않게 하는 규칙"을 사람이
+    // 기억하는 대신 구조가 보장한다(TenantContext#runScoped 참조).
     // 이 메서드에 @Transactional을 붙이면 안 된다 — 본문 시작 전에 트랜잭션이 열려 이미 늦는다.
-    TenantContext.set(tenantId);
+    TenantContext.runScoped(
+        tenantId,
+        () ->
+            processImportScoped(
+                jobId,
+                datasetId,
+                filePath,
+                mappingsPath,
+                parseOptsPath,
+                fileName,
+                fileSize,
+                fileType,
+                userId,
+                username,
+                ipAddress,
+                userAgent,
+                importModeName));
+  }
+
+  /**
+   * 임포트 본문 — 항상 테넌트 스코프 <b>안에서</b> 호출된다({@link #processImport} 가 유일한 호출자).
+   *
+   * <p>스코프 수립/해제를 본문에서 분리한 이유: 본문이 500줄에 걸쳐 여러 트랜잭션과 재시도 억제 로직을
+   * 다루는데, 그 안에 컨텍스트 정리 책임까지 섞이면 "어느 문장이 try 안이어야 하는가" 를 사람이 계속
+   * 따져야 한다. 스코프는 호출부의 {@code runScoped} 가 구조로 보장한다.
+   */
+  private void processImportScoped(
+      String jobId,
+      Long datasetId,
+      String filePath,
+      String mappingsPath,
+      String parseOptsPath,
+      String fileName,
+      Long fileSize,
+      String fileType,
+      Long userId,
+      String username,
+      String ipAddress,
+      String userAgent,
+      String importModeName) {
     // UPSERT/REPLACE(PK 有)가 사용하는 staging 테이블명. finally에서 성공/실패 무관하게 항상 정리한다.
     String stagingTable = null;
     // 알림 문구용 데이터셋 이름. 조회 자체가 실패해도 알림은 나가야 하므로 id 로 초기화한다.
     String datasetNameForNotification = String.valueOf(datasetId);
 
     try {
-      // 이 조회는 반드시 try 안에 있어야 한다 — 밖에 두면 여기서 던져진 예외가 finally 를 거치지
-      // 않아 잡 워커 스레드에 TenantContext 가 남고, 다음 잡이 남의 테넌트로 실행된다.
       datasetNameForNotification =
           datasetRepository.findById(datasetId).map(d -> d.name()).orElse(String.valueOf(datasetId));
       asyncJobService.updateProgress(
@@ -915,7 +955,8 @@ public class DataImportService {
       } catch (Exception e) {
         log.warn("Failed to delete temp file: {}", filePath, e);
       }
-      TenantContext.clear();
+      // 여기서 TenantContext 를 지우지 않는다 — 스코프 해제는 호출부의 runScoped 가 담당한다.
+      // 이 정리(임시 파일·staging DROP)는 RLS 대상 테이블을 건드리므로 스코프 안이어야 한다.
     }
   }
 
