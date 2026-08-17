@@ -9,11 +9,10 @@
 ## Key Files
 - 앱별 상세: `apps/firehub-api/CLAUDE.md`, `apps/firehub-web/CLAUDE.md`, `apps/firehub-ai-agent/CLAUDE.md`
 - 아키텍처/통신/스택: `.claude/docs/architecture.md`
-- 팀 워크플로/계획 원칙: `.claude/docs/team-workflow.md`
+- 계획 원칙: `.claude/docs/plan-principles.md`
 - 배포/Docker 규칙: `.claude/docs/deploy.md`
 
 ## Rules
-- **팀 구성**: 업무 지시 시 `/task-start` 스킬 실행.
 - **한국어 주석 필수**: 클래스·메서드·주요 로직에 무엇을·왜 설명.
 - **커밋/배포 금지**: 사용자 명시적 승인 후에만 실행. 배포 시 반드시 `.claude/docs/deploy.md` 먼저 읽고 진행.
 - **테스트 필수**: backend/ai-agent → TC, frontend → Playwright E2E.
