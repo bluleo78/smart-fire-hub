@@ -29,6 +29,11 @@ app:
       url: jdbc:postgresql://db:5432/${POSTGRES_DB:smartfirehub}
       username: pipeline_executor
       password: ${PIPELINE_EXECUTOR_PASSWORD}
+    # 기본값을 의도적으로 두지 않는다 — 미설정 시 기동을 실패시킨다(형제 PIPELINE_EXECUTOR_PASSWORD 와 같은 규약).
+    # 베이스 application.yml 은 dev 편의용 폴백을 갖는데, 그 폴백값은 공개 저장소에 그대로 적혀 있다.
+    # prod 가 그것을 상속하면 테넌트별 롤 비밀번호가 누구나 계산할 수 있는 값으로 파생된다
+    # (모호하면 fail-closed — 이 이니셔티브의 확정 규율).
+    role-password-secret: ${PIPELINE_ROLE_PASSWORD_SECRET}
   executor:
     enabled: true
     base-url: ${EXECUTOR_BASE_URL:http://executor:8000}
