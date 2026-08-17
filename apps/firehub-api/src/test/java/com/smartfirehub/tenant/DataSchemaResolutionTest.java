@@ -299,8 +299,7 @@ class DataSchemaResolutionTest {
     // data." 규칙이 잡지 못하는 형태를 덮는 두 번째 규칙이다. 원문(이스케이프 해제 전)에 대해
     // 훑는 이유는 FORBIDDEN_BARE_LITERALS 주석 참조.
     List<String> offenders =
-        findOffendingLines(
-            BARE_LITERAL_PINS, line -> FORBIDDEN_BARE_LITERALS.stream().anyMatch(line::contains));
+        findExcessViolations(BARE_LITERAL_PINS, DataSchemaResolutionTest::countBareLiterals);
 
     assertThat(offenders)
         .as("맨몸 물리 스키마명을 적은 프로덕션 소스 — DataSchema 를 거쳐라 (예외는 핀 목록에만)")
@@ -311,13 +310,7 @@ class DataSchemaResolutionTest {
   @DisplayName("규약 가드 — 스키마명을 손으로 조립하는 곳이 핀 밖에 없다 (qualify() 우회 방지)")
   void noProductionSourceAssemblesQualifiedNameByHand() {
     List<String> offenders =
-        findOffendingLines(
-            HAND_ASSEMBLY_PINS,
-            line -> {
-              // 조립 탐지는 \" 를 푼 뒤에 한다 — 원문의 %s.\" 를 %s." 와 같게 보기 위해서다.
-              String normalized = unescape(line);
-              return HAND_ASSEMBLY_PATTERNS.stream().anyMatch(p -> p.matcher(normalized).find());
-            });
+        findExcessViolations(HAND_ASSEMBLY_PINS, DataSchemaResolutionTest::countHandAssemblies);
 
     assertThat(offenders)
         .as("스키마명을 손으로 이어 붙인 프로덕션 소스 — DataSchema.qualify(..) 를 쓰라 (예외는 핀 목록에만)")
@@ -330,6 +323,10 @@ class DataSchemaResolutionTest {
     // 역방향 단언(TenantSchemaConformanceTest 의 staleness 가드와 같은 장치). 다음 밴드가
     // SqlValidator 를 전환하면 핀은 아무것도 면제하지 않는 죽은 목록이 되는데, 그 상태를 조용히
     // 통과시키면 "핀 목록 = 남은 부채" 라는 문서로서의 값이 사라진다. 그래서 개수까지 못박는다.
+    //
+    // 이 테스트가 다루는 방향은 **핀이 낡았다(조각이 사라졌거나 개수가 줄었다)** 뿐이다. 반대
+    // 방향(새 위반 추가)은 규칙 자신이 예산 초과로 잡는다(findExcessViolations 주석 참조) —
+    // 두 방향의 메시지가 섞이면 새 누출을 들고 온 사람이 핀을 지워 면제로 바꿔 버린다.
     Stream.concat(BARE_LITERAL_PINS.stream(), HAND_ASSEMBLY_PINS.stream())
         .forEach(
             pin -> {
@@ -343,44 +340,89 @@ class DataSchemaResolutionTest {
               String code = stripComments(decodeUnicodeEscapes(read(matched.get(0))));
               assertThat(occurrences(code, pin.snippet()))
                   .as(
-                      "핀 %s → \"%s\" 의 출현 횟수가 달라졌다. 전환이 끝났으면 핀을 지워라 (근거: %s)",
+                      "핀 %s → \"%s\" 가 사라졌거나 줄었다(핀이 낡았다). 전환이 끝났으면 핀을 지워라 (근거: %s)",
                       pin.file(), pin.snippet(), pin.reason())
-                  .isEqualTo(pin.expectedCount());
+                  // 하한만 본다 — 개수가 **늘어난** 경우(=새 위반)는 규칙 자신이 예산 초과로 잡고,
+                  // 그쪽 메시지는 "고쳐라" 다. 여기서 상한까지 보면 새 위반에 대해 "핀을 지워라" 라는
+                  // 틀린 처방이 함께 뜬다(리뷰에서 지적된 바로 그 혼선).
+                  .isGreaterThanOrEqualTo(pin.expectedCount());
             });
   }
 
   // ── 스캔 유틸 ──────────────────────────────────────────────────────────
 
   /**
-   * 프로덕션 소스를 줄 단위로 훑어 {@code violates} 를 만족하는 줄을 모으되, 핀으로 못박은 코드
-   * 조각을 담은 줄은 뺀다. 핀을 <b>줄</b> 단위로 적용하는 이유: 파일 단위 면제는 그 파일에 새로
-   * 생기는 위반까지 영구히 숨긴다.
+   * 프로덕션 소스를 파일 단위로 훑어, <b>위반 개수가 핀이 허용한 예산을 넘는</b> 파일을 모은다.
+   *
+   * <p><b>왜 "줄에 핀 조각이 있으면 면제" 가 아니라 개수 예산인가 — 리뷰에서 잡힌 실제 결함이다.</b>
+   * 줄 단위 부분문자열 면제는 핀 조각을 <b>흡수기</b>로 만든다: {@code ReportRenderUtils} 의 핀 조각은
+   * {@code "data",} 인데, 새로 추가된 진짜 위반 {@code Map.of("data", true)} 도 그 조각을 담고 있어
+   * 조용히 면제됐다. 그러면 빨개지는 것은 이 규칙이 아니라 {@link #pinnedSitesAreNotStale()} 의 개수
+   * 단언이고, 그 메시지는 "핀을 지워라" 라고 말한다 — <b>새 누출을 들고 온 사람이 핀을 지워 시끄러운
+   * 실패를 영구 면제로 바꾸도록 유도한다.</b> 그래서 두 방향을 분리한다.
+   *
+   * <ul>
+   *   <li>위반이 예산보다 <b>많다</b> → 이 규칙이 빨개진다: "새 위반이 생겼다, 핀을 지우지 말고 고쳐라"
+   *   <li>핀 조각이 <b>사라졌다</b> → {@link #pinnedSitesAreNotStale()} 이 빨개진다: "핀을 지워라"
+   * </ul>
+   *
+   * <p>예산은 핀 조각 자체를 같은 계수기로 세서 만든다({@code expectedCount × 조각의 위반 개수}) —
+   * 규칙과 예산이 같은 정의를 쓰므로 한쪽만 바뀌어 어긋날 수 없다.
+   *
+   * @param countMatches 한 줄(또는 핀 조각) 안의 위반 개수를 세는 함수
    */
-  private static List<String> findOffendingLines(
-      List<PinnedSite> pins, java.util.function.Predicate<String> violates) {
+  private static List<String> findExcessViolations(
+      List<PinnedSite> pins, java.util.function.ToIntFunction<String> countMatches) {
     List<String> offenders = new java.util.ArrayList<>();
     for (Path path : productionJavaFiles()) {
       String relative = relativePath(path);
-      List<String> pinnedSnippets =
-          pins.stream()
-              .filter(pin -> relative.endsWith(pin.file()))
-              .map(PinnedSite::snippet)
-              .toList();
       // 주석·Javadoc 은 두 새 규칙의 대상이 아니다(stripComments 주석 참조). 유니코드 이스케이프를
       // 먼저 푸는 순서도 의도다 — 자바는 토큰화 전에 풀므로 // 는 실제로 주석이 된다.
       String[] lines = stripComments(decodeUnicodeEscapes(read(path))).split("\n", -1);
+      int observed = 0;
+      List<String> hits = new java.util.ArrayList<>();
       for (int i = 0; i < lines.length; i++) {
-        String line = lines[i];
-        if (!violates.test(line)) {
-          continue;
+        int found = countMatches.applyAsInt(lines[i]);
+        if (found > 0) {
+          observed += found;
+          hits.add(relative + ":" + (i + 1) + " → " + lines[i].strip());
         }
-        if (pinnedSnippets.stream().anyMatch(line::contains)) {
-          continue;
-        }
-        offenders.add(relative + ":" + (i + 1) + " → " + line.strip());
+      }
+      int budget =
+          pins.stream()
+              .filter(pin -> relative.endsWith(pin.file()))
+              .mapToInt(pin -> pin.expectedCount() * countMatches.applyAsInt(pin.snippet()))
+              .sum();
+      if (observed > budget) {
+        offenders.add(
+            relative
+                + ": 위반 "
+                + observed
+                + "건 > 핀 허용 "
+                + budget
+                + "건 — 새 위반이 생겼다(핀을 지우지 말고 위반을 고쳐라). 해당 줄: "
+                + hits);
       }
     }
     return offenders.stream().sorted().toList();
+  }
+
+  /** 한 줄 안의 맨몸 리터럴 개수. 규칙과 핀 예산이 <b>같은</b> 계수기를 쓰게 하려고 떼어 둔다. */
+  private static int countBareLiterals(String line) {
+    return FORBIDDEN_BARE_LITERALS.stream().mapToInt(token -> occurrences(line, token)).sum();
+  }
+
+  /** 한 줄 안의 손 조립 개수. {@code \"} 를 먼저 푸는 이유는 원문의 {@code %s.\"} 를 같게 보기 위해서다. */
+  private static int countHandAssemblies(String line) {
+    String normalized = unescape(line);
+    int count = 0;
+    for (Pattern pattern : HAND_ASSEMBLY_PATTERNS) {
+      Matcher matcher = pattern.matcher(normalized);
+      while (matcher.find()) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
@@ -532,15 +574,24 @@ class DataSchemaResolutionTest {
    * 같은 부류의 구멍을 <b>문서화로 남기지 않고 닫는다</b>: 디코딩 한 단계가 전부이고, 변이 테스트로
    * 닫혔음을 증명할 수 있기 때문이다.
    *
-   * <p><b>정확히 무엇이 열려 있었나</b>: 문자열 <i>리터럴</i> 경로({@code "data.\\u005C\\u0022"})는
-   * 이미 닫혀 있었다 — {@code \\u005C\\u0022} 는 {@code \"} 로 풀리고 {@link #unescape} 가 그것을
-   * 정규화한다. 남아 있던 구멍은 <b>주석</b> 경로뿐이다({@code "data.\\u0022"} 는 애초에 컴파일되지
-   * 않는다 — 리터럴이 조기 종료된다). 즉 이 디코더가 새로 막는 것은 주석·Javadoc 경로다.
+   * <p><b>정확히 무엇이 열려 있었나 — 두 경로 모두다</b>(초판 주석은 "주석 경로뿐" 이라고 적었는데
+   * 리뷰에서 실측으로 반증됐다. 낡은 근거는 낡은 처방과 같은 등급의 결함이므로 여기 정정해 둔다):
+   *
+   * <ul>
+   *   <li><b>문자열 리터럴 경로</b>: {@code "data.\\u005C\\u0022"} 는 컴파일 전에 {@code "data.\""}
+   *       가 되어 값이 {@code data."} 다. 그런데 원문에는 {@code \"} 도 {@code data."} 도 없으므로
+   *       {@link #unescape} 만 하던 예전 스캔은 <b>이걸 놓친다</b>. 디코더가 새로 막는다.
+   *       ({@code "data.\\u0022"} 는 리터럴이 조기 종료돼 애초에 컴파일되지 않는다 — 그쪽이 아니라
+   *       {@code \\u005C\\u0022} 가 실제 우회로다.)
+   *   <li><b>주석 경로</b>: {@code // data.\\u0022} 는 컴파일 시점에 {@code data."} 인 주석이 되고
+   *       역시 원문 스캔에 보이지 않는다.
+   * </ul>
    *
    * <p><b>근사(approximation)</b>: 앞선 역슬래시의 개수(짝/홀)를 따지지 않으므로, 리터럴 안의
    * {@code \\\\u0022}(문자 그대로의 백슬래시 + u0022)도 디코딩해 이론상 거짓 양성이 될 수 있다.
-   * 오늘 {@code src/main/java} 에 {@code \\u} 는 0건이므로 실측 거짓 양성도 0건이며, 거짓 양성은
-   * 시끄럽게 실패해 사람이 보게 되는 쪽이라 fail-closed 로 둔다.
+   * 오늘 {@code src/main/java} 의 {@code \\u} 는 1건뿐이고({@code ApiCallPreviewService} 의 Javadoc 이
+   * U+FFFD 를 언급하는 곳) 그것은 스키마 리터럴을 만들지 않으므로 실측 거짓 양성 0건이다. 설령
+   * 생겨도 거짓 양성은 시끄럽게 실패해 사람이 보게 되는 쪽이므로 fail-closed 로 둔다.
    */
   private static String decodeUnicodeEscapes(String source) {
     if (!source.contains("\\u")) {
