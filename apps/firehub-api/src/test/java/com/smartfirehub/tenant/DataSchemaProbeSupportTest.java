@@ -9,6 +9,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
@@ -50,25 +52,37 @@ class DataSchemaProbeSupportTest extends IntegrationTestBase {
   @Value("${spring.flyway.password}")
   private String ownerPassword;
 
-  // 이 테스트 인스턴스가 만든 이름만 담는다 — 정리 대상은 자기가 만든 것뿐이어야 한다.
-  private final String ownerProbe = DataSchemaProbeSupport.uniqueProbeName("owner");
-  private final String runtimeProbe = DataSchemaProbeSupport.uniqueProbeName("runtime");
-  private final String decoy = "p3decoy_" + TenantRlsTestSupport.nextTenantId();
+  // 이 테스트 메서드가 만든 이름만 담는다 — 정리 대상은 자기가 만든 것뿐이어야 한다.
+  // 인스턴스 필드로 이름을 미리 잡아 두지 않는 이유: 두 메서드가 같은 이름을 공유하는 순간
+  // createProbeTable 이 (IF NOT EXISTS 를 쓰지 않으므로) 중복 테이블 오류로 터지는데, 그 오류는
+  // 테스트 설계 문제가 아니라 DB 문제처럼 읽힌다. 이름은 항상 메서드 안에서 발급한다.
+  private final List<String> created = new ArrayList<>();
+
+  /** 프로브 이름을 하나 발급하고 정리 목록에 등록한다. */
+  private String newProbe(String label) {
+    String name = DataSchemaProbeSupport.uniqueProbeName(label);
+    created.add(name);
+    return name;
+  }
 
   @AfterEach
   void dropWhatThisTestCreated() throws SQLException {
-    // 소유자 자격증명으로 지운다. app 소유 프로브는 app_tenant 로는 DROP 이 안 되기 때문이다.
+    // 소유자 자격증명으로 지운다. app 소유 프로브는 app_tenant 로 DROP 할 수 없고, app 은
+    // SUPERUSER 라 app_tenant 가 만든 것까지 한 커넥션으로 정리할 수 있기 때문이다.
     withOwner(
         owner -> {
-          owner.execute("drop table if exists " + DATA_SCHEMA + "." + ownerProbe);
-          owner.execute("drop table if exists " + DATA_SCHEMA + "." + runtimeProbe);
-          owner.execute("drop table if exists " + DATA_SCHEMA + "." + decoy);
+          for (String name : created) {
+            owner.execute("drop table if exists " + DATA_SCHEMA + "." + name);
+          }
         });
   }
 
   @Test
   @DisplayName("프로브 테이블은 생성에 사용한 롤의 소유가 된다(app vs app_tenant 대비)")
   void createProbeTable_isOwnedByTheRequestedRole() throws SQLException {
+    String ownerProbe = newProbe("owner");
+    String runtimeProbe = newProbe("runtime");
+
     withOwner(owner -> DataSchemaProbeSupport.createProbeTable(owner, DATA_SCHEMA, ownerProbe));
     DataSchemaProbeSupport.createProbeTable(dsl, DATA_SCHEMA, runtimeProbe);
 
@@ -92,6 +106,8 @@ class DataSchemaProbeSupportTest extends IntegrationTestBase {
   @DisplayName("접두어 없는 이름은 drop 도 거부하고, 대상 테이블은 그대로 남는다")
   void dropProbeTable_refusesToDropWhatItDidNotCreate() throws SQLException {
     // 프로브가 아닌 테이블을 하나 만들어 둔다(우리가 만든 것이라 정리도 우리가 한다).
+    String decoy = "p3decoy_" + TenantRlsTestSupport.nextTenantId();
+    created.add(decoy);
     dsl.execute("create table " + DATA_SCHEMA + "." + decoy + " (id bigint primary key)");
 
     assertThatThrownBy(() -> DataSchemaProbeSupport.dropProbeTable(dsl, DATA_SCHEMA, decoy))
@@ -106,6 +122,7 @@ class DataSchemaProbeSupportTest extends IntegrationTestBase {
   @Test
   @DisplayName("drop 은 자기가 만든 프로브를 실제로 지운다")
   void dropProbeTable_removesTheProbeItCreated() {
+    String runtimeProbe = newProbe("dropme");
     DataSchemaProbeSupport.createProbeTable(dsl, DATA_SCHEMA, runtimeProbe);
     assertThat(DataSchemaProbeSupport.tableOwner(dsl, DATA_SCHEMA, runtimeProbe)).isNotNull();
 
