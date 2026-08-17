@@ -8,8 +8,10 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -20,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.expression.AnalyticExpression;
 import net.sf.jsqlparser.expression.Function;
 import net.sf.jsqlparser.expression.StringValue;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
@@ -203,9 +206,12 @@ public class SqlValidator {
   /**
    * 표준 SQL 내장 함수(집계/윈도/수학/문자열/날짜·시간/JSON/배열) — 손으로 큐레이션(아래 {@link
    * #ALLOWED_FUNCTIONS} 주석 참고). 파일/네트워크/GUC/세션/역할/카탈로그 정보를 노출하는 함수는 의도적으로
-   * 제외했다({@code current_setting}, {@code version}, {@code current_user}, {@code
-   * has_table_privilege}, {@code pg_typeof}, {@code obj_description} 등 — 이 중 어느 것도 애널리틱스/애드혹
-   * 쿼리에 정당한 필요가 없다).
+   * 제외했다({@code current_setting}, {@code version}, {@code has_table_privilege}, {@code
+   * pg_typeof}, {@code obj_description} 등 — 이 중 어느 것도 애널리틱스/애드혹 쿼리에 정당한 필요가 없다).
+   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema}는
+   * 여기서 "제외"한 게 아니라 애초에 함수가 아니라서 이 목록과 무관하다 — {@link
+   * #requireNoReservedPseudoColumns}가 별도로 막는다(#385 코드리뷰 m4, 예전엔 이 문서가 그 넷도
+   * "허용목록에서 제외한 함수"라고 잘못 적어 뒀었다).
    *
    * <p><b>필드 선언 순서 주의</b> — 이 필드와 {@link #POSTGIS_SAFE_FUNCTIONS}는 {@link #ALLOWED_FUNCTIONS}
    * 보다 <b>먼저</b> 선언돼야 한다. Java 는 static 필드를 선언 순서대로 초기화하므로, 반대 순서였을 때
@@ -300,8 +306,8 @@ public class SqlValidator {
    * 이 {@code "pg_sl\0065ep"} 를 <b>원문 그대로</b>(디코딩 없이) 돌려준다(스크래치 프로브 실측 후 삭제). 즉 이
    * 이름은 이미 어떤 deny-list 항목과도 매칭되지 않고, 어떤 허용목록 항목과도 매칭되지 않는다 — <b>허용목록은
    * "모르는 이름 = 거부"이므로 이 우회에 원리적으로 면역이다</b>(디코딩까지 갔다면 이 필드에 별도 이스케이프 거부
-   * 로직이 필요했겠지만 실측상 불필요 — 다만 {@link UnknownFunctionFinder}가 방어 심층으로 비표준 식별자 표기
-   * 자체를 별도로 거부한다).
+   * 로직이 필요했겠지만 실측상 불필요 — 다만 {@link #SIMPLE_IDENTIFIER} 검사가 방어 심층으로 비표준 식별자
+   * 표기 자체를 별도로 거부한다).
    *
    * <p><b>구성 — 두 출처의 합집합, 둘 다 손으로 열거하지 않는다(원칙적으로).</b>
    *
@@ -381,6 +387,16 @@ public class SqlValidator {
    * 표현식이면) 정적으로 검증할 수 없으므로 무조건 거부한다. 재재리뷰어가 {@code nextval('public.
    * slack_workspace_id_seq')}로 남의 시퀀스를 754→755 로 실제 진행시켰다 — 그냥 허용목록에 이름만 올리면
    * 안 되는 이유다.
+   *
+   * <p><b>미한정 시퀀스는 항상 거부한다(#385 코드리뷰 C2, 테이블과 다른 정책).</b> 처음엔 테이블과 같은 정책
+   * (permissive 모드에서 미한정 허용)을 그대로 가져다 썼는데, 애널리틱스는 {@code ("data", true)} +
+   * {@code search_path='data','public'}이라 {@code SELECT nextval('slack_workspace_id_seq')}가
+   * public 시퀀스를 실제로 증가시켰다(코드리뷰 실측). 테이블의 "public 그림자" 백스톱
+   * ({@code rejectUnqualifiedNamesShadowedByPublic})은 {@code Table} 노드만 보므로 시퀀스에는 적용되지
+   * 않고, executor 경로는 카탈로그 검사 자체가 없다 — 백스톱이 전혀 없다는 뜻이다. 시퀀스는 테이블과 달리
+   * dev 이력에 정당한 미한정 사용례가 없었다(코드리뷰 실측) — 그래서 "미한정도 카탈로그로 확인" 대신 더 단순한
+   * "항상 스키마 한정을 요구"로 간다. 이 정책 차이(테이블은 미한정 허용, 시퀀스는 미한정 거부) 자체가
+   * 옳다 — 시퀀스는 인자가 문자열이라 AST 로 이름 해석을 도울 방법이 원천적으로 없다.
    */
   private static final Set<String> SEQUENCE_FUNCTIONS = Set.of("nextval", "currval");
 
@@ -395,8 +411,9 @@ public class SqlValidator {
 
     AstNodeCollector collected = AstNodeCollector.collect(statement);
     requireDataSchemaOnly(collected.tableFqns());
-    requireNoBlockedFunctions(collected.functions());
-    requireOnlyKnownFunctions(collected.functions());
+    requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
+    requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
+    requireNoReservedPseudoColumns(collected.columns());
     requireNoSelectInto(collected.plainSelects());
   }
 
@@ -459,6 +476,16 @@ public class SqlValidator {
    */
   private void requireDataSchemaOnly(List<String> tableFqns) {
     for (String fqn : tableFqns) {
+      // m5(#385 코드리뷰) — 점이 2개 이상인 FQN(예: data.public.role, catalog.schema.table 형태)은
+      // 거부한다. indexOf('.')로 앞부분만 잘라 스키마로 검사하면 "data.public.role"이 스키마
+      // "data"(허용) + 이름 "public.role"(검사 안 됨)로 쪼개져 통과해버린다 — 오늘은 PostgreSQL 이
+      // "cross-database references are not implemented"로 막아 주지만, 이 클래스의 전제는 "AST
+      // 화이트리스트가 정본"이지 "DB 가 대신 막아 준다"가 아니다. 따옴표 안의 점(예: data."my.table")은
+      // 세지 않는다.
+      if (countUnquotedDots(fqn) > 1) {
+        throw new UnsafeSqlException(
+            "허용되지 않는 테이블 참조 표기(점이 2개 이상): '" + fqn + "'. 스키마.테이블 형식만 허용됩니다.");
+      }
       // 스키마/테이블 이름의 양쪽 따옴표만 제거 (식별자 인용 보정)
       int dot = fqn.indexOf('.');
       if (dot < 0) {
@@ -490,6 +517,28 @@ public class SqlValidator {
       return s.substring(1, s.length() - 1);
     }
     return s;
+  }
+
+  /** 따옴표 밖(top-level)의 {@code .} 개수만 센다 — {@code data."my.table"}의 따옴표 안 점은 세지 않는다. */
+  private static int countUnquotedDots(String s) {
+    int count = 0;
+    boolean inQuotes = false;
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c == '"') {
+        inQuotes = !inQuotes;
+      } else if (c == '.' && !inQuotes) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /** 함수 이름(schema.fn 표기 가능)에서 실제 함수명만 뽑아 정규화한다(마지막 dot 뒤 토큰, 따옴표 제거). */
+  private static String simpleFunctionName(String rawName) {
+    int dot = rawName.lastIndexOf('.');
+    String simple = dot >= 0 ? rawName.substring(dot + 1) : rawName;
+    return stripQuotes(simple);
   }
 
   /**
@@ -524,25 +573,38 @@ public class SqlValidator {
   /**
    * AST 내 모든 함수 호출이 deny-list({@link #BLOCKED_FUNCTIONS})에 포함되지 않는지 검사한다 — 알려진 위험
    * 함수에 더 구체적인 메시지를 주는 심층 방어. 정본은 {@link #requireOnlyKnownFunctions}(허용목록)다.
+   *
+   * <p>{@code analyticFunctionNames}(#385 코드리뷰 M3) — {@code SELECT count(*) OVER ()} 같은 윈도 호출은
+   * JSqlParser 5.0 에서 {@link Function} 이 아니라 {@code AnalyticExpression} 을 만든다. 이 함수 목록에도
+   * 같은 이름 정규화·대조를 적용하지 않으면 윈도 형태로 감싸는 것만으로 deny-list/허용목록 양쪽을 우회한다
+   * (PG 가 {@code OVER} 뒤에 집계/윈도 함수를 요구해 지금 당장 시연 가능한 익스플로잇은 아니지만, fail-closed
+   * 허용목록의 불변식 — "이름이 있으면 반드시 검사한다" — 이 깨진 상태였다).
    */
-  private void requireNoBlockedFunctions(List<Function> functions) {
+  private void requireNoBlockedFunctions(List<Function> functions, List<String> analyticFunctionNames) {
     for (Function function : functions) {
       String fnName = function.getName();
       if (fnName == null) {
         continue;
       }
-      // 함수 이름은 점 표기(schema.fn)일 수 있으므로 마지막 토큰만 사용
-      int dot = fnName.lastIndexOf('.');
-      String simple = dot >= 0 ? fnName.substring(dot + 1) : fnName;
-      // 따옴표 제거(식별자 인용 보정) — 최종 리뷰 지적(C2): 테이블 경로(stripQuotes 적용됨)와 달리
-      // 처음엔 이 보정이 없어 SELECT "pg_sleep"(5), "current_setting"(...),
-      // "resolve_trigger_tenant_by_token_hash"(...) 처럼 함수 이름을 따옴표로 감싸기만 해도
-      // deny-list 전체가 무력화됐다(psql 실측: 인용 형태가 그대로 실행됨). PostgreSQL 은 함수 호출에서도
-      // 따옴표 유무를 구분하지 않고 같은 함수로 해석하므로, 검증기도 똑같이 취급해야 한다.
-      String unquoted = stripQuotes(simple);
-      if (BLOCKED_FUNCTIONS.contains(unquoted.toLowerCase())) {
-        throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
+      requireNotBlocked(fnName);
+    }
+    for (String fnName : analyticFunctionNames) {
+      if (fnName == null) {
+        continue;
       }
+      requireNotBlocked(fnName);
+    }
+  }
+
+  private void requireNotBlocked(String fnName) {
+    // 따옴표 제거(식별자 인용 보정) — 최종 리뷰 지적(C2): 테이블 경로(stripQuotes 적용됨)와 달리
+    // 처음엔 이 보정이 없어 SELECT "pg_sleep"(5), "current_setting"(...),
+    // "resolve_trigger_tenant_by_token_hash"(...) 처럼 함수 이름을 따옴표로 감싸기만 해도
+    // deny-list 전체가 무력화됐다(psql 실측: 인용 형태가 그대로 실행됨). PostgreSQL 은 함수 호출에서도
+    // 따옴표 유무를 구분하지 않고 같은 함수로 해석하므로, 검증기도 똑같이 취급해야 한다.
+    String unquoted = simpleFunctionName(fnName);
+    if (BLOCKED_FUNCTIONS.contains(unquoted.toLowerCase())) {
+      throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
     }
   }
 
@@ -558,27 +620,71 @@ public class SqlValidator {
    * 에러 메시지가 "알려진 안전 함수 목록에 없습니다"가 되어 다음 사람이 "왜?"를 알기 어렵다. 이스케이프 표기 자체를
    * 먼저 잡으면 "유니코드 이스케이프는 거부됩니다"라는 원인이 바로 보인다 — 독립된 보안 경계가 두 겹이라는 뜻이
    * 아니다.
+   *
+   * <p>{@code analyticFunctionNames} — {@link #requireNoBlockedFunctions} 문서 참고(M3, {@code
+   * AnalyticExpression}은 {@link Function}이 아니라서 별도 목록으로 들어온다). 윈도 호출은 인자로 시퀀스
+   * 이름을 받을 문법이 없으므로 {@link #SEQUENCE_FUNCTIONS} 특례는 적용하지 않는다 — 이름 검사만 한다.
    */
-  private void requireOnlyKnownFunctions(List<Function> functions) {
+  private void requireOnlyKnownFunctions(List<Function> functions, List<String> analyticFunctionNames) {
     for (Function function : functions) {
       String fnName = function.getName();
       if (fnName == null) {
         continue;
       }
-      int dot = fnName.lastIndexOf('.');
-      String simple = dot >= 0 ? fnName.substring(dot + 1) : fnName;
-      String unquoted = stripQuotes(simple);
-      if (!SIMPLE_IDENTIFIER.matcher(unquoted).matches()) {
-        throw new UnsafeSqlException(
-            "허용되지 않는 함수 이름 표기: '" + fnName + "'. 유니코드 이스케이프 등 비표준 식별자 표기는 거부됩니다.");
-      }
+      String unquoted = simpleFunctionName(fnName);
+      requireSimpleIdentifierForm(unquoted, fnName);
       String lower = unquoted.toLowerCase();
       if (SEQUENCE_FUNCTIONS.contains(lower)) {
         requireSafeSequenceArgument(function, fnName);
         continue;
       }
-      if (!ALLOWED_FUNCTIONS.contains(lower)) {
-        throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 알려진 안전 함수 목록에 없습니다.");
+      requireKnownFunctionName(lower, fnName);
+    }
+    for (String fnName : analyticFunctionNames) {
+      if (fnName == null) {
+        continue;
+      }
+      String unquoted = simpleFunctionName(fnName);
+      requireSimpleIdentifierForm(unquoted, fnName);
+      requireKnownFunctionName(unquoted.toLowerCase(), fnName);
+    }
+  }
+
+  private void requireSimpleIdentifierForm(String unquoted, String rawName) {
+    if (!SIMPLE_IDENTIFIER.matcher(unquoted).matches()) {
+      throw new UnsafeSqlException(
+          "허용되지 않는 함수 이름 표기: '" + rawName + "'. 유니코드 이스케이프 등 비표준 식별자 표기는 거부됩니다.");
+    }
+  }
+
+  private void requireKnownFunctionName(String lower, String rawName) {
+    if (!ALLOWED_FUNCTIONS.contains(lower)) {
+      throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + rawName + "'. 알려진 안전 함수 목록에 없습니다.");
+    }
+  }
+
+  /**
+   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema} —
+   * PostgreSQL 예약 의사 상수(pseudo-constant). (#385 코드리뷰 m4)
+   *
+   * <p>이 이름들은 함수 호출이 아니라 {@link net.sf.jsqlparser.schema.Column}(한정자 없는 컬럼 참조)으로
+   * 파싱돼 {@link #requireOnlyKnownFunctions}의 함수 허용목록을 아예 지나가지 않는다 — 클래스 문서에 이
+   * 이름들이 "허용목록에서 의도적으로 제외했다"고 적어 뒀지만, 함수가 아니므로 애초에 허용목록 대조 대상이
+   * 아니었다(문서와 실제가 어긋남, 실측: 두 경로 모두 통과해 DB 롤 이름을 반환). 세션 정보 노출이 데이터
+   * 유출 자체는 아니지만 이 검증기의 "알려진 안전한 것만 통과"라는 불변식에 어긋나므로 명시적으로 막는다.
+   */
+  private static final Set<String> RESERVED_PSEUDO_CONSTANTS =
+      Set.of("current_user", "session_user", "current_catalog", "current_schema");
+
+  private void requireNoReservedPseudoColumns(List<Column> columns) {
+    for (Column column : columns) {
+      if (column.getTable() != null) {
+        continue; // 한정된 컬럼 참조(t.current_user 등)는 실제 컬럼명일 뿐 의사 상수가 아니다.
+      }
+      String name = stripQuotes(column.getColumnName()).toLowerCase();
+      if (RESERVED_PSEUDO_CONSTANTS.contains(name)) {
+        throw new UnsafeSqlException(
+            "허용되지 않는 참조: '" + column.getColumnName() + "'. 세션/역할 정보를 노출하는 의사 상수는 차단됩니다.");
       }
     }
   }
@@ -586,8 +692,9 @@ public class SqlValidator {
   /**
    * {@code nextval}/{@code currval} 의 인자가 안전한지 검사한다 — {@link #SEQUENCE_FUNCTIONS} 참고. 인자가
    * 정확히 하나의 문자열 리터럴이어야 하고(계산된 표현식이면 정적 검증이 불가능하므로 거부), 그 리터럴을 스키마
-   * 한정 이름으로 파싱해 {@link #allowedSchema}인지(한정된 경우) 또는 {@link #allowUnqualifiedTables}가 켜져
-   * 있는지(미한정인 경우, 테이블과 동일 정책) 확인한다.
+   * 한정 이름으로 파싱해 {@link #allowedSchema}인지 확인한다. 미한정 시퀀스는 {@link
+   * #allowUnqualifiedTables} 값과 무관하게 항상 거부한다(테이블과 다른 정책 — 위 {@link
+   * #SEQUENCE_FUNCTIONS} 문서의 "미한정 시퀀스는 항상 거부한다" 근거 참고).
    */
   private void requireSafeSequenceArgument(Function function, String fnName) {
     var params = function.getParameters();
@@ -602,11 +709,14 @@ public class SqlValidator {
     int dot = seqRef.lastIndexOf('.');
     if (dot < 0) {
       String name = stripQuotes(seqRef);
-      if (!allowUnqualifiedTables) {
-        throw new UnsafeSqlException(
-            "허용되지 않는 함수 호출: '" + fnName + "'. 시퀀스 참조에 스키마가 없습니다: '" + name + "'.");
-      }
-      return;
+      throw new UnsafeSqlException(
+          "허용되지 않는 함수 호출: '"
+              + fnName
+              + "'. 시퀀스 참조에 스키마를 명시하세요(예: "
+              + allowedSchema
+              + "."
+              + name
+              + ") — 미한정 시퀀스는 허용하지 않습니다.");
     }
     String schema = stripQuotes(seqRef.substring(0, dot));
     if (!allowedSchema.equalsIgnoreCase(schema)) {
@@ -678,9 +788,17 @@ public class SqlValidator {
 
     private final Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
     private final List<Function> functions = new ArrayList<>();
-    private final List<Table> tables = new ArrayList<>();
+    private final List<String> analyticFunctionNames = new ArrayList<>();
+    private final List<Column> columns = new ArrayList<>();
     private final List<PlainSelect> plainSelects = new ArrayList<>();
-    private final List<WithItem> withItems = new ArrayList<>();
+
+    /** 현재 방문 지점에서 유효한 CTE 별칭 스코프 스택 — 스코프 단위 처리 근거는 {@link #tableFqns} 문서 참고. */
+    private final Deque<Set<String>> cteScopeStack = new ArrayDeque<>();
+
+    /** {@code Table} 노드와 그 노드를 만난 시점에 유효했던 CTE 별칭 집합을 함께 보관한다. */
+    private record TableRef(Table table, Set<String> activeCteAliases) {}
+
+    private final List<TableRef> tables = new ArrayList<>();
 
     static AstNodeCollector collect(Statement statement) {
       AstNodeCollector collector = new AstNodeCollector();
@@ -692,30 +810,44 @@ public class SqlValidator {
       return functions;
     }
 
+    /** {@code AnalyticExpression}(윈도 호출)의 함수 이름 목록 — M3 문서는 {@link #requireNoBlockedFunctions} 참고. */
+    List<String> analyticFunctionNames() {
+      return analyticFunctionNames;
+    }
+
+    List<Column> columns() {
+      return columns;
+    }
+
     List<PlainSelect> plainSelects() {
       return plainSelects;
     }
 
     /**
-     * CTE 별칭을 제외한 실제 테이블 FQN 문자열 목록. {@code WITH cte AS (...) SELECT * FROM cte}에서
-     * {@code cte}는 진짜 테이블이 아니라 CTE 참조이므로 스키마 화이트리스트 대상에서 빼야 한다(예전
-     * {@code TablesNamesFinder}가 자동으로 해 주던 일). {@link WithItem}이 트리 전체에서 전수 수집되므로
-     * 스코프를 구분하지 않고 전역으로 제외한다 — 같은 쿼리 안에 CTE 별칭과 동명인 실제 테이블이 있는 극히
-     * 드문 경우에만 그 실제 테이블도 함께 빠지는 근사치이지만, 방향이 "덜 검사"이지 "우회 허용"은 아니고
-     * (그 이름이 다른 스키마 위반이었다면 원래도 CTE 정의 내부에서 이미 걸린다) 실용적 트레이드오프로 받아들였다.
+     * CTE 별칭을 <b>스코프 단위로</b> 제외한 실제 테이블 FQN 문자열 목록. (#385 코드리뷰 C1 — 전역 제외에서
+     * 스코프 인식으로 전환)
+     *
+     * <p><b>왜 전역 제외가 틀렸는가.</b> 최초 구현은 트리 전체에서 발견한 모든 CTE 별칭을 하나의 집합으로
+     * 모아 이름만 같으면 무조건 제외했다. 파생 테이블 안의 {@code WITH} 는 그 서브쿼리에만 스코프되는데,
+     * 코드리뷰 실측(PG, {@code search_path='data','public'}): {@code SELECT count(*) FROM (WITH role AS
+     * (SELECT 1 AS x) SELECT x FROM role) s, role} 가 {@code public.role} 3행을 반환했다 — 두 번째
+     * {@code role}(스코프 밖의 진짜 테이블)까지 "CTE 별칭과 이름이 같다"는 이유로 검사 목록에서 사라졌다.
+     * 스키마 화이트리스트뿐 아니라 {@code pg_} 접두어 가드도 같은 방식으로 뚫린다(CTE 이름을 {@code
+     * pg_roles} 로 지으면 스코프 밖의 진짜 {@code pg_roles} 참조까지 가드에서 빠진다).
+     *
+     * <p><b>수정 — CTE 별칭이 실제로 유효한 스코프에서 발견된 {@code Table}만 제외한다.</b> {@link
+     * #walk}가 {@code Select}(또는 그 하위 타입) 노드에 진입할 때 그 노드 자신의 {@code
+     * getWithItemsList()}로 별칭을 스코프 스택에 push 하고, 그 노드의 서브트리를 다 훑은 뒤 pop 한다. 각
+     * {@code Table}을 기록할 때 <b>그 시점에 유효했던 스코프 스냅샷</b>을 함께 저장해 두므로, 스코프 밖에서
+     * 만난 동명의 {@code Table}은 그 스냅샷에 별칭이 없어 제외되지 않는다. 정확한 스코프 추적이라 "이름이
+     * 같으면 fail-closed로 남긴다" 같은 근사치가 필요 없다.
      */
     List<String> tableFqns() {
-      Set<String> cteNames = new HashSet<>();
-      for (WithItem withItem : withItems) {
-        if (withItem.getAlias() != null && withItem.getAlias().getName() != null) {
-          cteNames.add(stripQuotes(withItem.getAlias().getName()).toLowerCase());
-        }
-      }
       List<String> result = new ArrayList<>();
-      for (Table table : tables) {
-        String fqn = table.getFullyQualifiedName();
-        if (fqn.indexOf('.') < 0 && cteNames.contains(stripQuotes(fqn).toLowerCase())) {
-          continue; // CTE 참조 — 실제 테이블이 아니다.
+      for (TableRef ref : tables) {
+        String fqn = ref.table().getFullyQualifiedName();
+        if (fqn.indexOf('.') < 0 && ref.activeCteAliases().contains(stripQuotes(fqn).toLowerCase())) {
+          continue; // 그 스코프에서 유효한 CTE 참조 — 실제 테이블이 아니다.
         }
         result.add(fqn);
       }
@@ -763,14 +895,40 @@ public class SqlValidator {
         return; // 이미 방문(사이클 방지)
       }
 
+      // 이 Select(또는 하위 타입 — PlainSelect/WithItem/ParenthesedSelect 등)가 자기 소유의 WITH 절을
+      // 갖고 있으면, 그 별칭들을 이 노드의 서브트리 전체(자기 자신의 WITH 정의 본문 포함 — RECURSIVE CTE 의
+      // 자기 참조도 여기서 자연스럽게 스코프 안에 들어온다)에서만 유효하도록 push 한다.
+      boolean pushedCteScope = false;
+      if (node instanceof Select select) {
+        List<WithItem> ownWithItems = select.getWithItemsList();
+        if (ownWithItems != null && !ownWithItems.isEmpty()) {
+          Set<String> combined = new HashSet<>(cteScopeStack.isEmpty() ? Set.of() : cteScopeStack.peek());
+          for (WithItem withItem : ownWithItems) {
+            if (withItem.getAlias() != null && withItem.getAlias().getName() != null) {
+              combined.add(stripQuotes(withItem.getAlias().getName()).toLowerCase());
+            }
+          }
+          cteScopeStack.push(Set.copyOf(combined));
+          pushedCteScope = true;
+        }
+      }
+
       if (node instanceof Function function) {
         functions.add(function);
+      } else if (node instanceof AnalyticExpression analytic) {
+        // M3(#385 코드리뷰) — SELECT count(*) OVER () 는 Function 이 아니라 AnalyticExpression 을 만든다
+        // (JSqlParser 5.0). 이름만 별도로 수집해 같은 정규화·대조 경로를 태운다(클래스 상단 관련 메서드
+        // 문서 참고).
+        if (analytic.getName() != null) {
+          analyticFunctionNames.add(analytic.getName());
+        }
       } else if (node instanceof Table table) {
-        tables.add(table);
+        Set<String> activeAliases = cteScopeStack.isEmpty() ? Set.of() : cteScopeStack.peek();
+        tables.add(new TableRef(table, activeAliases));
       } else if (node instanceof PlainSelect plainSelect) {
         plainSelects.add(plainSelect);
-      } else if (node instanceof WithItem withItem) {
-        withItems.add(withItem);
+      } else if (node instanceof Column column) {
+        columns.add(column);
       }
 
       // Column("t.id")/AllTableColumns("t.*") 의 getTable() 은 FROM/JOIN 소스가 아니라 이미 FROM/JOIN 이
@@ -782,19 +940,25 @@ public class SqlValidator {
       // 절 단위가 아니라 타입 단위 규칙이라 C1 이 겨냥한 "절을 몰라서 뚫리는" 사각과는 다른 종류다 —
       // Column/AllTableColumns 는 어느 절에 있든 이 필드의 의미가 같다.
       boolean isQualifierHolder = node instanceof Column || node instanceof AllTableColumns;
-      for (Method getter : gettersOf(node.getClass())) {
-        if (isQualifierHolder && getter.getName().equals("getTable")) {
-          continue;
+      try {
+        for (Method getter : gettersOf(node.getClass())) {
+          if (isQualifierHolder && getter.getName().equals("getTable")) {
+            continue;
+          }
+          try {
+            walk(getter.invoke(node), depth + 1);
+          } catch (UnsafeSqlException e) {
+            // 재재재리뷰 실측 버그: 이 catch 가 없으면 깊이 상한 초과로 던진 UnsafeSqlException 이 바로
+            // 아래 넓은 catch(RuntimeException)에 "게터 실패"로 오인돼 삼켜져 fail-closed 처방이 무력화됐다
+            // (재현: 169단 중첩에서도 계속 PASS). 검증 실패는 반드시 호출자까지 전파해야 한다.
+            throw e;
+          } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // 특정 상태에서만 값을 갖는 게터가 실패해도(또는 접근 불가여도) 순회는 계속한다.
+          }
         }
-        try {
-          walk(getter.invoke(node), depth + 1);
-        } catch (UnsafeSqlException e) {
-          // 재재재리뷰 실측 버그: 이 catch 가 없으면 깊이 상한 초과로 던진 UnsafeSqlException 이 바로
-          // 아래 넓은 catch(RuntimeException)에 "게터 실패"로 오인돼 삼켜져 fail-closed 처방이 무력화됐다
-          // (재현: 169단 중첩에서도 계속 PASS). 검증 실패는 반드시 호출자까지 전파해야 한다.
-          throw e;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-          // 특정 상태에서만 값을 갖는 게터가 실패해도(또는 접근 불가여도) 순회는 계속한다.
+      } finally {
+        if (pushedCteScope) {
+          cteScopeStack.pop();
         }
       }
     }

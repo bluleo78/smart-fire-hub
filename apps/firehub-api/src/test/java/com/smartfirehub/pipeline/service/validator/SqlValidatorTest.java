@@ -185,8 +185,10 @@ class SqlValidatorTest {
   /**
    * (1-b) 위 거부가 permissive 모드({@code allowUnqualifiedTables=true})에서도 유지되는지 고정한다.
    *
-   * <p>Task 3/4 가 배선할 모드가 바로 이 모드이며, 여기서 표기 변형이 오분류되면 "다른 에러"가 아니라 **통과**(=검증 우회)가 된다. 아래 다섯 형태는
-   * PostgreSQL 이 동등하게 해석하는 {@code public."user"} 변형이다.
+   * <p>Task 3/4 가 배선할 모드가 바로 이 모드이며, 여기서 표기 변형이 오분류되면 "다른 에러"가 아니라 **통과**(=검증 우회)가 된다. 아래 네 형태는
+   * PostgreSQL 이 동등하게 해석하는 {@code public."user"} 변형이다({@code smartfirehub.public."user"} 3파트
+   * 변형은 m5(#385 코드리뷰) 수정 후 다른 메시지("점이 2개 이상")로 먼저 거부되므로
+   * {@link #rejects_threePartTableName} 로 따로 뺐다).
    */
   @ParameterizedTest
   @ValueSource(
@@ -194,8 +196,7 @@ class SqlValidatorTest {
         "SELECT * FROM \"public\".\"user\"",
         "SELECT * FROM public . \"user\"",
         "SELECT * FROM \"public\" . \"user\"",
-        "SELECT * FROM PUBLIC.\"user\"",
-        "SELECT * FROM smartfirehub.public.\"user\""
+        "SELECT * FROM PUBLIC.\"user\""
       })
   void rejects_other_schema_reference_variants_in_permissive_mode(String sql) {
     SqlValidator permissive = new SqlValidator("data", true);
@@ -502,11 +503,16 @@ class SqlValidatorTest {
             () -> permissive.validate("SELECT currval('public.oauth_state_id_seq')"))
         .isInstanceOf(UnsafeSqlException.class);
 
-    // 미한정 — 테이블과 동일 정책(permissive 만 허용)
+    // 미한정 — C2(#385 코드리뷰) 수정 후에는 permissive 에서도 항상 거부한다. 처음엔 테이블과 같은 정책
+    // (permissive 허용)을 그대로 썼는데, 애널리틱스(("data", true) + search_path='data','public')에서
+    // SELECT nextval('slack_workspace_id_seq')가 public 시퀀스를 실제로 증가시켰다(코드리뷰 실측) —
+    // 시퀀스는 테이블과 달리 dev 이력에 정당한 미한정 사용례가 없어 항상 스키마 한정을 요구하기로 판단을
+    // 뒤집었다.
     assertThatThrownBy(() -> strict.validate("SELECT nextval('my_seq')"))
         .isInstanceOf(UnsafeSqlException.class);
-    assertThatCode(() -> permissive.validate("SELECT nextval('my_seq')"))
-        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> permissive.validate("SELECT nextval('my_seq')"))
+        .as("미한정 시퀀스는 permissive 모드에서도 거부되어야 한다(코드리뷰 C2)")
+        .isInstanceOf(UnsafeSqlException.class);
 
     // 계산된 표현식(리터럴 아님) — 항상 거부
     assertThatThrownBy(() -> permissive.validate("SELECT nextval(seq_name_column)"))
@@ -578,6 +584,131 @@ class SqlValidatorTest {
 
     assertThatCode(
             () -> permissive.validate("SELECT a FROM data.t WHERE a IN (SELECT a FROM data.t)"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 C1 — CTE 별칭은 스코프 단위로 제외한다(전역 제외 아님) ---
+
+  /**
+   * 실측(수정 전, PG {@code search_path='data','public'}): {@code SELECT count(*) FROM (WITH role AS
+   * (SELECT 1 AS x) SELECT x FROM role) s, role} 가 {@code public.role} 3행을 반환했다. 최초 구현은
+   * CTE 별칭 "role"을 트리 전역에서 걷어 스코프 밖의 두 번째 {@code role}(진짜 테이블 참조)까지 {@link
+   * SqlValidator#unqualifiedTableNames}에서 지워버렸다 — 애널리틱스 카탈로그 백스톱이 그 이름 자체를 못 봐서
+   * 무동작이 됐다. 스코프 인식 수정 후에는 스코프 밖 참조가 목록에 남아야 한다.
+   */
+  @Test
+  void unqualifiedTableNames_keepsOutOfScopeNameEvenIfSameAsCteAlias() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(
+            permissive.unqualifiedTableNames(
+                "SELECT count(*) FROM (WITH role AS (SELECT 1 AS x) SELECT x FROM role) s, role"))
+        .as("스코프 밖의 진짜 'role' 참조는 CTE 별칭과 이름이 같아도 목록에 남아야 한다")
+        .contains("role");
+  }
+
+  /** 같은 뿌리 — {@code pg_} 접두어 가드도 CTE 별칭 이름 충돌로 스코프 밖에서 뚫리면 안 된다. */
+  @Test
+  void rejects_pgPrefixedTable_evenWhenSameNameUsedAsCteAliasInDifferentScope() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatThrownBy(
+            () ->
+                strict.validate(
+                    "SELECT count(*) FROM (WITH pg_roles AS (SELECT 1 AS x) SELECT x FROM"
+                        + " pg_roles) s, pg_roles"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 양성 대조 — 스코프 안에서 CTE 를 참조하는 통상적인 쿼리는 여전히 통과해야 한다(회귀 방지). */
+  @Test
+  void allows_cteReference_withinItsOwnScope() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "SELECT x FROM (WITH cte AS (SELECT 1 AS x) SELECT x FROM cte) s"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 M3 — 윈도 호출(AnalyticExpression)도 함수 이름 검사 대상이다 ---
+
+  /**
+   * {@code SELECT count(*) OVER ()} 는 JSqlParser 5.0 에서 {@code Function} 이 아니라 {@code
+   * AnalyticExpression} 을 만든다 — 허용목록/deny-list/{@code SIMPLE_IDENTIFIER} 이스케이프 검사 셋 다
+   * 우회했다(수정 전). PG 가 {@code OVER} 뒤에 집계/윈도 함수를 요구해 지금 당장 시연 가능한 익스플로잇은
+   * 아니지만, 사용자 정의 public 집계처럼 알려지지 않은 이름이 무검사로 통과하면 안 된다.
+   */
+  @Test
+  void rejects_unknownAnalyticFunctionCall() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(
+            () -> permissive.validate("SELECT some_unknown_agg(a) OVER () FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 양성 대조 — 알려진 집계의 윈도 호출은 여전히 통과해야 한다. */
+  @Test
+  void allows_knownAggregateAsAnalyticExpression() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatCode(() -> permissive.validate("SELECT count(*) OVER () FROM data.t"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 m4 — current_user 등 의사 상수는 Column 노드라 함수 검사를 안 탄다 ---
+
+  /**
+   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema} 는
+   * 함수 호출이 아니라 한정자 없는 {@code Column} 으로 파싱돼 함수 허용목록을 아예 지나가지 않는다(수정
+   * 전 실측: 두 정책 모두 통과해 DB 롤 이름 반환).
+   */
+  @Test
+  void rejects_reservedPseudoConstants() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(() -> permissive.validate("SELECT current_user"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT session_user"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT current_catalog"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT current_schema"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 양성 대조 — 한정된 컬럼 참조(t.current_user 같은 실제 컬럼명)는 의사 상수가 아니므로 막지 않는다. */
+  @Test
+  void allows_qualifiedColumnNamedLikeReservedConstant() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatCode(() -> permissive.validate("SELECT t.current_user FROM data.t"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 m5 — 점이 2개 이상인 FQN(3파트 이름)은 거부한다 ---
+
+  /**
+   * {@code data.public.role} 은 {@code indexOf('.')}로 앞부분만 자르면 스키마 "data"(허용) + 이름
+   * "public.role"(미검사)로 쪼개져 통과해버린다. 오늘은 PostgreSQL 이 cross-database reference 를 막아
+   * 주지만, 이 클래스의 전제는 "AST 화이트리스트가 정본"이다.
+   */
+  @Test
+  void rejects_threePartTableName() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatThrownBy(() -> strict.validate("SELECT * FROM data.public.role"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 양성 대조 — 따옴표 안의 점(테이블 이름 자체에 점이 포함된 경우)은 여러 파트로 세지 않는다. */
+  @Test
+  void allows_quotedTableNameContainingDot() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(() -> strict.validate("SELECT * FROM data.\"my.table\""))
         .doesNotThrowAnyException();
   }
 }

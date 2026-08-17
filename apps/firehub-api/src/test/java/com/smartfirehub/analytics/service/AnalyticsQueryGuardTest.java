@@ -117,6 +117,25 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   }
 
   /**
+   * C1(#385 코드리뷰) — CTE 별칭을 전역으로 걷던 최초 구현은 스코프 밖의 동명 실테이블까지 검사 목록에서
+   * 지워버렸다. 코드리뷰 실측(PG, search_path='data','public'): {@code SELECT count(*) FROM (WITH role
+   * AS (SELECT 1 AS x) SELECT x FROM role) s, role} 가 {@code public.role} 3행을 반환했다 — 두 번째
+   * {@code role}(파생 테이블의 CTE 스코프 밖에 있는 진짜 테이블 참조)이 "CTE 별칭과 이름이 같다"는 이유로
+   * {@code unqualifiedTableNames()}에서 빠져 이 서비스의 카탈로그 백스톱(위 테스트가 검증하는 로직)이 그
+   * 이름 자체를 보지 못했다. 스코프 인식 수정 후에는 이 경로 레벨에서도 거부돼야 한다.
+   */
+  @Test
+  void execute_cteAliasCollisionWithOutOfScopeRealTable_rejected() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT count(*) FROM (WITH role AS (SELECT 1 AS x) SELECT x FROM role) s, role",
+            10,
+            false);
+
+    assertThat(response.error()).isNotNull();
+  }
+
+  /**
    * 리뷰 지적 — {@code information_schema.tables} 는 시퀀스(relkind {@code S})를 담지 않아 이전 구현이 이 케이스를
    * 놓쳤다(리뷰어 실측: {@code SELECT last_value, log_cnt FROM oauth_state_id_seq} 가 370/27 을 반환). {@code
    * pg_class.relkind}로 시퀀스까지 포함하도록 고친 뒤 이 케이스가 막히는지 실제 배선 레벨로 고정한다.
