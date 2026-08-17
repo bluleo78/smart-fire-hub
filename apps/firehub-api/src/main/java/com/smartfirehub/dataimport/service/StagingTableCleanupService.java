@@ -69,13 +69,13 @@ public class StagingTableCleanupService {
    * 정리 사이클 1회 = <b>게이트 판단 1회 + ACTIVE 테넌트 순회</b>. 스케줄러와 분리된 메서드로, 테스트가
    * 직접 호출해 게이트 동작을 검증할 수 있다.
    *
-   * <p><b>게이트는 순회 밖이다 — 의도된 선택이다.</b> 두 가지 이유가 있다. (1) {@code jobrunr_jobs}는
-   * JobRunr 소유의 전역 테이블로 {@code tenant_id} 도 RLS 정책도 없다 — 테넌트마다 물어봐도 같은 답이
-   * 나오므로 N번 묻는 것은 순전한 낭비다. (2) 더 중요한 이유: 루프 안에서 매번 판단하면 루프 도중에
-   * 임포트가 시작됐을 때 앞쪽 테넌트는 건너뛰고 뒤쪽 테넌트는 스윕하는 <b>일관성 없는 부분 스윕</b>이
-   * 된다. 오늘 {@code DataSchema.current()} 는 모든 테넌트에 대해 같은 물리 스키마를 돌려주므로, 그
-   * 뒤쪽 패스가 방금 시작된 임포트의 살아있는 staging 테이블을 DROP 할 수 있다 — 클래스 주석의
-   * "거짓 음성은 치명적" 비대칭이 바로 이 경우다. 사이클당 한 번의 결정이 유일하게 안전하다.
+   * <p><b>게이트는 진입 시 1회 + 테넌트마다 재확인한다.</b> 순회 전 1회만 묻는 것으로는 부족하다 —
+   * 테넌트가 N개면 "게이트 통과 → 목록 조회" 창이 루프 전체로 늘어나고, 루프 도중 시작된 임포트의
+   * <b>살아있는</b> staging 테이블이 뒤쪽 테넌트의 {@code findStagingTables()} 에 잡혀 DROP된다(오늘
+   * {@code DataSchema.current()} 는 모든 테넌트가 같은 물리 스키마를 공유하므로 남의 테넌트 것도 보인다).
+   * 테넌트마다 재확인하면 임포트가 시작된 뒤의 테넌트는 <b>건너뛰므로</b> 그 창이 원래 폭으로 좁혀진다 —
+   * 클래스 주석의 "거짓 음성은 치명적 / 과보수는 무해" 비대칭에서 과보수 쪽이다. {@code jobrunr_jobs}
+   * 카운트는 인덱스 한 번이라 30분 주기에 N번 묻는 비용은 무시할 수 있다.
    *
    * @return DROP한 테이블 총 개수(활성 작업이 있어 건너뛴 경우 0)
    */
@@ -85,19 +85,45 @@ public class StagingTableCleanupService {
       log.debug("활성 JobRunr 작업 존재 — 고아 staging 정리 건너뜀");
       return 0;
     }
-    return sweepActiveTenants();
+    return sweepActiveTenants(true);
   }
 
   /**
-   * ACTIVE 테넌트를 순회해 테넌트별 스윕을 실행한다. <b>게이트 판단은 호출자의 몫</b>이다 — 정책(이번
-   * 주기에 스윕해도 되는가)과 기계장치(모든 테넌트를 도는가)를 분리해 두면, 전역 JobRunr 상태에
-   * 의존하지 않고 순회 자체를 테스트로 고정할 수 있다({@code CleanupSchedulerTenantTest}).
+   * ACTIVE 테넌트를 순회해 테넌트별 스윕을 실행한다. <b>게이트를 전혀 묻지 않는다</b> — 정책(이번 주기에
+   * 스윕해도 되는가)과 기계장치(모든 테넌트를 도는가)를 분리해 두면, 전역 JobRunr 상태에 의존하지 않고
+   * 순회 자체를 테스트로 고정할 수 있다({@code CleanupSchedulerTenantTest}). 프로덕션 경로는 이 오버로드가
+   * 아니라 {@link #sweepOrphanedStagingTables()} 를 쓴다.
    *
    * @return DROP한 테이블 총 개수
    */
   public int sweepActiveTenants() {
+    return sweepActiveTenants(false);
+  }
+
+  /**
+   * 순회 본체.
+   *
+   * @param recheckGatePerTenant 테넌트마다 활성 작업 게이트를 재확인할지(프로덕션 경로는 true)
+   * @return DROP한 테이블 총 개수
+   */
+  private int sweepActiveTenants(boolean recheckGatePerTenant) {
     AtomicInteger total = new AtomicInteger();
-    tenantScopedRunner.forEachActiveTenant(tenantId -> total.addAndGet(sweepCurrentTenant()));
+    AtomicInteger visited = new AtomicInteger();
+    tenantScopedRunner.forEachActiveTenant(
+        tenantId -> {
+          visited.incrementAndGet();
+          if (recheckGatePerTenant && hasActiveJobs()) {
+            // 루프 도중 임포트가 시작됐다 → 이 테넌트 이후는 건너뛴다(살아있는 staging 보호).
+            log.debug("순회 중 활성 JobRunr 작업 감지 — 테넌트 {} 스윕 건너뜀", tenantId);
+            return;
+          }
+          total.addAndGet(sweepCurrentTenant());
+        });
+    if (visited.get() == 0) {
+      // ACTIVE 테넌트가 하나도 없으면 스윕은 무동작이다. 예전에는 무조건 1회 돌았으므로, 이 상태를
+      // "정리할 것이 없다"와 구분해 남긴다 — 조용한 영구 무동작이 이 서비스의 알려진 실패 모드다.
+      log.warn("ACTIVE 테넌트가 없어 고아 staging 스윕이 무동작 — 테넌트 상태 확인 필요");
+    }
     return total.get();
   }
 
