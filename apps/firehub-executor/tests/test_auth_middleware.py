@@ -14,6 +14,7 @@ _test_settings = Settings(
     db_user="pipeline_executor",
     db_password="",
     internal_service_token=TEST_TOKEN,
+    role_password_secret="test-tenant-pipeline-secret",
     nsjail_enabled=False,
 )
 

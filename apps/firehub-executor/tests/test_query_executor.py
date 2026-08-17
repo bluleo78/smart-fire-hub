@@ -43,7 +43,7 @@ def test_select_returns_rows_and_columns():
     )
     conn = make_conn(cursor)
 
-    result = execute_query("SELECT id, name FROM users", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("SELECT id, name FROM users", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is True
     assert result.columns == ["id", "name"]
@@ -57,7 +57,7 @@ def test_read_only_rejects_insert():
     conn = MagicMock()
     conn.cursor.return_value = MagicMock()
 
-    result = execute_query("INSERT INTO t VALUES (1)", max_rows=1000, read_only=True, conn=conn)
+    result = execute_query("INSERT INTO t VALUES (1)", max_rows=1000, read_only=True, conn=conn, tenant_id=1)
 
     assert result.success is False
     assert result.error is not None
@@ -71,7 +71,7 @@ def test_read_only_allows_select():
     )
     conn = make_conn(cursor)
 
-    result = execute_query("SELECT 1", max_rows=1000, read_only=True, conn=conn)
+    result = execute_query("SELECT 1", max_rows=1000, read_only=True, conn=conn, tenant_id=1)
 
     assert result.success is True
     assert result.query_type == "SELECT"
@@ -89,6 +89,7 @@ def test_with_query_treated_as_select():
         max_rows=1000,
         read_only=False,
         conn=conn,
+        tenant_id=1,
     )
 
     assert result.success is True
@@ -111,7 +112,7 @@ def test_limit_auto_added():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    execute_query("SELECT id FROM t", max_rows=500, read_only=False, conn=conn)
+    execute_query("SELECT id FROM t", max_rows=500, read_only=False, conn=conn, tenant_id=1)
 
     # Find the SELECT execution (not SET LOCAL / SAVEPOINT)
     select_calls = [s for s in executed_sqls if s.upper().startswith("SELECT") or "FROM" in s.upper()]
@@ -134,7 +135,7 @@ def test_limit_not_doubled():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    execute_query("SELECT id FROM t LIMIT 10", max_rows=500, read_only=False, conn=conn)
+    execute_query("SELECT id FROM t LIMIT 10", max_rows=500, read_only=False, conn=conn, tenant_id=1)
 
     select_calls = [s for s in executed_sqls if "FROM" in s.upper() and "LIMIT" in s.upper()]
     # Should not have two LIMIT keywords in the same statement
@@ -146,7 +147,7 @@ def test_dml_returns_affected_rows():
     cursor = make_cursor(rowcount=7)
     conn = make_conn(cursor)
 
-    result = execute_query("UPDATE t SET x = 1", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("UPDATE t SET x = 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is True
     assert result.affected_rows == 7
@@ -158,7 +159,7 @@ def test_dml_returns_affected_rows():
 def test_empty_query_rejected():
     conn = MagicMock()
 
-    result = execute_query("   ", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("   ", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is False
     assert result.error is not None
@@ -180,7 +181,7 @@ def test_savepoint_management_on_success():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn)
+    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert any("RELEASE SAVEPOINT analytics_query" in s for s in executed_sqls)
     assert not any("ROLLBACK TO SAVEPOINT analytics_query" in s for s in executed_sqls)
@@ -214,7 +215,7 @@ def test_savepoint_rollback_on_error():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    result = execute_query("SELECT bad syntax !!!", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("SELECT bad syntax !!!", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is False
     assert any("ROLLBACK TO SAVEPOINT analytics_query" in s for s in executed_sqls)
@@ -236,7 +237,7 @@ def test_search_path_set_and_restored():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn)
+    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert any("search_path = 'data', 'public'" in s for s in executed_sqls), \
         f"Expected search_path setup in: {executed_sqls}"
@@ -260,7 +261,7 @@ def test_statement_timeout_set():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn)
+    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert any("statement_timeout" in s and "30s" in s for s in executed_sqls), \
         f"Expected statement_timeout in: {executed_sqls}"
@@ -289,7 +290,7 @@ def test_numeric_text_not_misdetected_as_geometry():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    result = execute_query("SELECT report_date FROM survey", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("SELECT report_date FROM survey", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is True
     assert result.rows == [{"report_date": "20260131235609"}]
@@ -330,7 +331,7 @@ def test_geometry_column_wrapped_via_oid_on_success():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is True
     assert any("ST_AsGeoJSON" in s for s in executed_sqls)
@@ -363,7 +364,7 @@ def test_geometry_wrap_failure_falls_back_to_original_result():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.success is True
     assert result.rows == [{"geom": "0101000000DEADBEEF"}]
@@ -426,7 +427,7 @@ def test_geometry_detection_via_limit0():
     main_conn = MagicMock()
     main_conn.cursor.return_value = main_cursor
 
-    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=main_conn)
+    result = execute_query("SELECT geom FROM shapes", max_rows=1000, read_only=False, conn=main_conn, tenant_id=1)
 
     # Verify that wrapped SQL with ST_AsGeoJSON was attempted
     assert any("ST_AsGeoJSON" in s for s in executed_sqls), \
@@ -474,7 +475,7 @@ def test_execution_time_measured():
     )
     conn = make_conn(cursor)
 
-    result = execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn)
+    result = execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
 
     assert result.execution_time_ms >= 0
 
@@ -488,7 +489,7 @@ def test_truncated_flag_when_rows_equal_max_rows():
     )
     conn = make_conn(cursor)
 
-    result = execute_query("SELECT id FROM t", max_rows=max_rows, read_only=False, conn=conn)
+    result = execute_query("SELECT id FROM t", max_rows=max_rows, read_only=False, conn=conn, tenant_id=1)
 
     assert result.truncated is True
 
@@ -502,6 +503,6 @@ def test_truncated_flag_false_when_fewer_rows():
     )
     conn = make_conn(cursor)
 
-    result = execute_query("SELECT id FROM t LIMIT 10", max_rows=max_rows, read_only=False, conn=conn)
+    result = execute_query("SELECT id FROM t LIMIT 10", max_rows=max_rows, read_only=False, conn=conn, tenant_id=1)
 
     assert result.truncated is False

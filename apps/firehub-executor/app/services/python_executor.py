@@ -15,6 +15,7 @@ from app.config import Settings
 from app.db.connection import get_connection
 from app.schemas.responses import PythonExecuteResponse
 from app.services.db_utils import insert_batch
+from app.tenant import resolve_db_url, resolve_schema
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,27 @@ def execute_python(
     script: str,
     timeout: Optional[int],
     settings: Settings,
+    *,
+    tenant_id: int,
     output_table: Optional[str] = None,
     column_type_map: Optional[dict] = None,
 ) -> PythonExecuteResponse:
+    """사용자 Python 스크립트를 실행한다. ``tenant_id`` 는 **키워드 전용 필수** 인자다.
+
+    키워드 전용인 이유: 위치 인자로 두면 이관하지 않은 호출부가 값을 ``output_table`` 자리에
+    조용히 넣을 수 있다. 키워드 전용이면 누락이 곧 ``TypeError`` 다.
+
+    이 함수가 자식 프로세스에 넘기는 ``DB_URL``/``DB_SCHEMA`` 는 **테넌트별**이다 — 이 경로에는
+    SQL 문장 검증기가 없어서(사용자 코드가 psycopg2 로 임의 문장을 실행한다) 격리를 강제하는
+    유일한 수단이 접속 롤의 권한이다.
+    """
     effective_timeout = timeout if timeout is not None else settings.python_timeout
+
+    # nsjail 경로와 비nsjail 경로가 **같은 값**을 쓰도록 한 번만 파생한다.
+    # (두 경로가 각자 조립하면 배포 설정에 따라 접속 주체가 조용히 갈린다 — #270 주석이
+    #  "동작이 일치한다"고 보장하는 지점이므로 한쪽만 바꾸면 그 보장이 깨진다.)
+    tenant_db_url = resolve_db_url(tenant_id, settings)
+    tenant_schema = resolve_schema(tenant_id)
 
     script_path = None
     start = time.perf_counter()
@@ -69,8 +87,9 @@ def execute_python(
                 # DB 접근은 DB_URL 하나로 충분(psycopg2.connect(os.environ["DB_URL"])).
                 # 개별 자격증명 키(DB_USER/DB_PASSWORD/DB_HOST/...)는 공격 표면을 늘릴 뿐이라 주입하지 않는다.
                 # nsjail 비활성 경로(아래)도 동일하게 DB_URL 만 제공하므로 동작이 일치한다. (#270)
-                "--env", f"DB_URL=postgresql://{settings.db_user}:{settings.db_password}@{settings.db_host}:{settings.db_port}/{settings.db_name}",
-                "--env", "DB_SCHEMA=data",
+                # 자격증명은 공유 롤이 아니라 **요청 테넌트의 롤**이다(P3-b1).
+                "--env", f"DB_URL={tenant_db_url}",
+                "--env", f"DB_SCHEMA={tenant_schema}",
                 "--env", f"PYTHONPATH=/opt/python-packages",
                 "--env", "PATH=/usr/bin:/usr/local/bin",
                 "--env", "HOME=/tmp",
@@ -87,8 +106,9 @@ def execute_python(
             # nsjail 비활성 환경. DB_URL만 전달하고 개별 자격증명 키(DB_PASSWORD 등)는 제외.
             # DB_URL에도 패스워드가 포함되나, 개별 키 노출보다 공격 표면을 최소화. (#89)
             env = {
-                "DB_URL": f"postgresql://{settings.db_user}:{settings.db_password}@{settings.db_host}:{settings.db_port}/{settings.db_name}",
-                "DB_SCHEMA": "data",
+                # nsjail 경로와 **같은** 파생값을 쓴다(위 주석 참고).
+                "DB_URL": tenant_db_url,
+                "DB_SCHEMA": tenant_schema,
                 "PATH": "/usr/bin:/usr/local/bin",
                 "HOME": "/tmp",
                 "PYTHONDONTWRITEBYTECODE": "1",
@@ -112,7 +132,8 @@ def execute_python(
             if rows:
                 try:
                     _apply_type_conversion(rows, column_type_map)
-                    with get_connection() as conn:
+                    # 적재도 테넌트 롤로 — 스크립트가 남의 스키마에 쓰지 못하게 한다.
+                    with get_connection(tenant_id, settings) as conn:
                         insert_batch(conn, output_table, rows)
                         conn.commit()
                     rows_loaded = len(rows)

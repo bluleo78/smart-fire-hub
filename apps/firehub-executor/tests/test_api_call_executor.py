@@ -32,6 +32,7 @@ from app.validators.ssrf_protection import SsrfException
 
 def make_request(**kwargs) -> ApiCallExecuteRequest:
     defaults = dict(
+        tenant_id=1,
         url="http://public.example.com/api/data",
         method="GET",
         data_path="$.items",

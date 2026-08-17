@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Tuple
 
 from app.schemas.responses import QueryExecuteResponse
+from app.tenant import resolve_schema
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +70,16 @@ def _add_limit(sql: str, max_rows: int) -> str:
 
 
 def execute_query(
-    query: str, max_rows: int, read_only: bool, conn
+    query: str, max_rows: int, read_only: bool, conn, *, tenant_id: int
 ) -> QueryExecuteResponse:
+    """분석 쿼리를 실행한다. ``tenant_id`` 는 **키워드 전용 필수** 인자다.
+
+    스키마명을 인자로 받지 않고 ``tenant_id`` 로 파생하는 이유: 스키마 문자열을 파라미터로
+    받으면 "누가 그 값을 정했는가" 가 다시 흩어지고 조립점이 우회 가능한 장식이 된다
+    (Java 쪽 ``DataSchema`` 와 같은 규약).
+    """
     start = time.perf_counter()
+    schema = resolve_schema(tenant_id)
 
     # 1. Validate
     clean_sql = query.strip().rstrip(";").strip()
@@ -105,7 +113,10 @@ def execute_query(
 
     try:
         # 4. Transaction setup
-        cursor.execute("SET LOCAL search_path = 'data', 'public'")
+        # 스키마명은 테넌트에서 파생한다(하드코딩 'data' 제거). public 은 PostGIS 함수 때문에 유지.
+        # 스키마명은 resolve_schema 가 식별자 모양을 검증한 값이라 보간이 안전하다
+        # (사용자 입력이 아니라 리터럴+테넌트 id 에서만 파생된다).
+        cursor.execute(f"SET LOCAL search_path = '{schema}', 'public'")
         cursor.execute("SET LOCAL statement_timeout = '30s'")
         cursor.execute("SAVEPOINT analytics_query")
 
@@ -227,7 +238,7 @@ def execute_query(
         )
     finally:
         try:
-            cursor.execute("SET LOCAL search_path TO data")
+            cursor.execute(f"SET LOCAL search_path TO {schema}")
         except Exception:
             pass
         cursor.close()

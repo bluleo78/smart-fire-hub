@@ -6,6 +6,9 @@ from app.main import app
 
 
 TEST_TOKEN = "test-internal-token-secret"
+# Java 쪽 application-test.yml 의 app.pipeline.role-password-secret 과 같은 값 —
+# 두 언어의 비밀번호 파생이 일치함을 이 값으로 검증한다.
+TEST_ROLE_SECRET = "test-tenant-pipeline-secret"
 
 
 def get_test_settings() -> Settings:
@@ -16,6 +19,7 @@ def get_test_settings() -> Settings:
         db_user="pipeline_executor",
         db_password="",
         internal_service_token=TEST_TOKEN,
+        role_password_secret=TEST_ROLE_SECRET,
         nsjail_enabled=False,
     )
 

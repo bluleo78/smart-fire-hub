@@ -19,6 +19,7 @@ async def execute_python(
         request.script,
         request.timeout,
         settings,
+        tenant_id=request.tenant_id,
         output_table=request.output_table,
         column_type_map=request.column_type_map,
     )
