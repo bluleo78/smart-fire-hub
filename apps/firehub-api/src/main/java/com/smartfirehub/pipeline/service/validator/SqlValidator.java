@@ -486,7 +486,7 @@ public class SqlValidator {
    * 모든 실제 테이블 참조가 {@code data} 스키마인지 검사한다.
    *
    * <p>{@link AstNodeCollector#tableFqns()}가 CTE 별칭을 제외한 실제 테이블 FQN 문자열만 돌려주므로 그 목록만
-   * 검사하면 된다. 결과 형식 예: {@code "data.t"}, {@code "data.\"My Table\""}, {@code "public.\"user\""},
+   * 검사하면 된다. 결과 형식 예: {@code "스키마.t"}, {@code "스키마.\"My Table\""}, {@code "public.\"user\""},
    * {@code "t"}(스키마 없음).
    *
    * <p>미한정 이름이 {@code pg_} 로 시작하면 {@link #allowUnqualifiedTables} 값과 무관하게 항상 거부한다(아래
@@ -505,7 +505,7 @@ public class SqlValidator {
       // 거부한다. indexOf('.')로 앞부분만 잘라 스키마로 검사하면 "data.public.role"이 스키마
       // "data"(허용) + 이름 "public.role"(검사 안 됨)로 쪼개져 통과해버린다 — 오늘은 PostgreSQL 이
       // "cross-database references are not implemented"로 막아 주지만, 이 클래스의 전제는 "AST
-      // 화이트리스트가 정본"이지 "DB 가 대신 막아 준다"가 아니다. 따옴표 안의 점(예: data."my.table")은
+      // 화이트리스트가 정본"이지 "DB 가 대신 막아 준다"가 아니다. 따옴표 안의 점(예: 스키마."my.table")은
       // 세지 않는다.
       if (countUnquotedDots(fqn) > 1) {
         throw new UnsafeSqlException(
@@ -546,7 +546,7 @@ public class SqlValidator {
     return s;
   }
 
-  /** 따옴표 밖(top-level)의 {@code .} 개수만 센다 — {@code data."my.table"}의 따옴표 안 점은 세지 않는다. */
+  /** 따옴표 밖(top-level)의 {@code .} 개수만 센다 — {@code 스키마."my.table"}의 따옴표 안 점은 세지 않는다. */
   private static int countUnquotedDots(String s) {
     int count = 0;
     boolean inQuotes = false;

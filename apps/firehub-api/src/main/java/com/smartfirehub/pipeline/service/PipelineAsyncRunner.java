@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
@@ -423,8 +424,15 @@ public class PipelineAsyncRunner {
               matchedColumns.stream()
                   .map(col -> "\"" + col + "\"")
                   .collect(Collectors.joining(", "));
+          // 출력 테이블은 현재 테넌트의 데이터 스키마에 있다 — 스키마명을 직접 적지 않고
+          // DataSchema.qualify 로 조립한다(테이블명 인용·따옴표 이중화까지 그쪽이 책임진다).
           String wrappedSql =
-              "INSERT INTO data.\"" + outputTableName + "\" (" + columnList + ") " + sql;
+              "INSERT INTO "
+                  + DataSchema.qualify(outputTableName)
+                  + " ("
+                  + columnList
+                  + ") "
+                  + sql;
 
           if (executorEnabled) {
             var result = executorClient.executeSql(wrappedSql);
@@ -981,7 +989,9 @@ public class PipelineAsyncRunner {
                       new ScriptExecutionException(
                           "{{#" + stepNumber + "}} 참조 실패: 데이터셋 테이블을 찾을 수 없습니다"));
 
-      matcher.appendReplacement(result, Matcher.quoteReplacement("data.\"" + tableName + "\""));
+      // {{#n}} 참조를 실제 테이블 FQN 으로 치환한다 — 스키마는 현재 테넌트에서 파생시킨다.
+      matcher.appendReplacement(
+          result, Matcher.quoteReplacement(DataSchema.qualify(tableName)));
     }
     matcher.appendTail(result);
     return result.toString();
