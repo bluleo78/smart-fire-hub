@@ -121,4 +121,82 @@ class SqlValidatorSecurityDefinerConformanceTest extends IntegrationTestBase {
     assertThatCode(() -> new SqlValidator("data", true).validate("SELECT UPPER('x')"))
         .doesNotThrowAnyException();
   }
+
+  /**
+   * {@code query_to_xml} 계열(및 형제 {@code table_to_xml}/{@code database_to_xml}/{@code
+   * schema_to_xml}, 각 {@code _xmlschema}/{@code _and_xmlschema} 변형, {@code pg_get_viewdef}) —
+   * SqlValidator.BLOCKED_FUNCTIONS 에 정적으로 등재된 13개. 카탈로그에서 자동 발견하지 않는 이유: 이 함수들은
+   * "문자열 인자를 SQL 로 재해석한다"는 성질로 큐레이션된 것이라(#385 C1), {@code pg_catalog} 의 다른 모든
+   * stable 함수와 이 성질을 자동으로 구분할 카탈로그 신호가 없다(위 {@link SqlValidator#ALLOWED_FUNCTIONS}
+   * 주석의 "왜 pg_catalog 는 유도하지 않는가" 참고).
+   */
+  private static final Set<String> XML_FAMILY_FUNCTIONS =
+      Set.of(
+          "query_to_xml",
+          "query_to_xmlschema",
+          "query_to_xml_and_xmlschema",
+          "table_to_xml",
+          "table_to_xmlschema",
+          "table_to_xml_and_xmlschema",
+          "database_to_xml",
+          "database_to_xmlschema",
+          "database_to_xml_and_xmlschema",
+          "schema_to_xml",
+          "schema_to_xmlschema",
+          "schema_to_xml_and_xmlschema",
+          "pg_get_viewdef");
+
+  /**
+   * #385 재재리뷰 단계4 — 발견한 정의자 함수 + xml 계열을 <b>미인용·인용·유니코드 이스케이프(U&) 세 형태</b>로
+   * 실제 {@code validate()}에 태운다. 목록 대조만 하는 테스트는 C2(인용 우회)를 놓쳤던 전례가 있어 금지됐다 —
+   * 이제 재재리뷰가 찾은 {@code U&"pg_sl\0065ep"} 형태의 우회까지 구동으로 고정한다.
+   *
+   * <p>정본은 이제 {@link SqlValidator#ALLOWED_FUNCTIONS}(허용목록)이지만, 이 테스트는 여전히 "알려진 위험
+   * 함수가 세 형태 모두에서 막히는가"를 직접 증명한다 — 허용목록이 우연히 그 이름을 포함해버리는 회귀(예: 오타로
+   * {@code query_to_xml}을 안전 함수로 잘못 추가)까지 잡기 위해서다.
+   */
+  @Test
+  void dangerousFunctions_rejectedInAllThreeNotationForms() {
+    List<String> discoveredDefiners =
+        dsl.fetch(
+                "select p.proname from pg_proc p"
+                    + " join pg_namespace n on n.oid = p.pronamespace"
+                    + " where n.nspname = 'public' and p.prosecdef")
+            .getValues(0, String.class);
+    assertThat(discoveredDefiners).isNotEmpty();
+
+    Set<String> targets = new java.util.HashSet<>(discoveredDefiners);
+    targets.removeAll(ALLOWED_SECURITY_DEFINER_FUNCTIONS);
+    targets.addAll(XML_FAMILY_FUNCTIONS);
+
+    SqlValidator permissive = new SqlValidator("data", true);
+    org.assertj.core.api.SoftAssertions softly = new org.assertj.core.api.SoftAssertions();
+    for (String fn : targets) {
+      softly
+          .assertThatThrownBy(() -> permissive.validate("SELECT " + fn + "(1)"))
+          .as("미인용 '%s(1)' 이 거부되지 않았다", fn)
+          .isInstanceOf(UnsafeSqlException.class);
+      softly
+          .assertThatThrownBy(() -> permissive.validate("SELECT \"" + fn + "\"(1)"))
+          .as("인용 \"%s\"(1) 이 거부되지 않았다 — C2 와 같은 우회", fn)
+          .isInstanceOf(UnsafeSqlException.class);
+      softly
+          .assertThatThrownBy(() -> permissive.validate("SELECT " + uEscapeMiddleChar(fn) + "(1)"))
+          .as("U& 이스케이프 %s(1) 이 거부되지 않았다 — 재재리뷰가 찾은 우회", uEscapeMiddleChar(fn))
+          .isInstanceOf(UnsafeSqlException.class);
+    }
+    softly.assertAll();
+  }
+
+  /**
+   * 함수 이름 중간 한 글자를 PostgreSQL {@code U&"..."} 유니코드 이스케이프로 바꾼 함수 호출 표기를 만든다.
+   * 예: {@code pg_sleep} → {@code U&"pg_sl\0065ep"}(다섯 번째 글자 'e' → {@code \0065}). psql 로 실측한
+   * 우회 형태와 동일 패턴이다.
+   */
+  private static String uEscapeMiddleChar(String name) {
+    int mid = name.length() / 2;
+    char c = name.charAt(mid);
+    String hex = String.format("%04x", (int) c);
+    return "U&\"" + name.substring(0, mid) + "\\" + hex + name.substring(mid + 1) + "\"";
+  }
 }

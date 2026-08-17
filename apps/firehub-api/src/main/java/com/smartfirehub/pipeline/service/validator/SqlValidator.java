@@ -1,8 +1,15 @@
 package com.smartfirehub.pipeline.service.validator;
 
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.Function;
@@ -153,7 +160,161 @@ public class SqlValidator {
           "database_to_xml",
           "database_to_xmlschema",
           "database_to_xml_and_xmlschema",
+          "schema_to_xml",
+          "schema_to_xmlschema",
+          "schema_to_xml_and_xmlschema",
           "pg_get_viewdef");
+
+  /**
+   * 표준 SQL 내장 함수(집계/윈도/수학/문자열/날짜·시간/JSON/배열) — 손으로 큐레이션(아래 {@link
+   * #ALLOWED_FUNCTIONS} 주석 참고). 파일/네트워크/GUC/세션/역할/카탈로그 정보를 노출하는 함수는 의도적으로
+   * 제외했다({@code current_setting}, {@code version}, {@code current_user}, {@code
+   * has_table_privilege}, {@code pg_typeof}, {@code obj_description} 등 — 이 중 어느 것도 애널리틱스/애드혹
+   * 쿼리에 정당한 필요가 없다).
+   *
+   * <p><b>필드 선언 순서 주의</b> — 이 필드와 {@link #POSTGIS_SAFE_FUNCTIONS}는 {@link #ALLOWED_FUNCTIONS}
+   * 보다 <b>먼저</b> 선언돼야 한다. Java 는 static 필드를 선언 순서대로 초기화하므로, 반대 순서였을 때
+   * {@code buildAllowedFunctions()}가 아직 초기화 안 된 {@code null} 을 읽어 {@code
+   * NullPointerException}으로 전체 Spring 컨텍스트 기동이 깨졌다(실측 — 최초 구현에서 실제로 발생, 전체
+   * 스위트가 컨텍스트 로드 실패로 대량 적색화됨).
+   */
+  private static final Set<String> SQL_STANDARD_FUNCTIONS =
+      Set.of(
+          // 집계
+          "count", "sum", "avg", "min", "max", "array_agg", "string_agg", "json_agg", "jsonb_agg",
+          "json_object_agg", "jsonb_object_agg", "bool_and", "bool_or", "every", "bit_and",
+          "bit_or", "variance", "var_pop", "var_samp", "stddev", "stddev_pop", "stddev_samp",
+          "mode", "percentile_cont", "percentile_disc", "corr", "covar_pop", "covar_samp",
+          // 윈도
+          "row_number", "rank", "dense_rank", "percent_rank", "cume_dist", "ntile", "lag", "lead",
+          "first_value", "last_value", "nth_value",
+          // 수학
+          "abs", "ceil", "ceiling", "floor", "round", "trunc", "sign", "power", "sqrt", "cbrt",
+          "exp", "ln", "log", "log10", "mod", "pi", "radians", "degrees", "sin", "cos", "tan",
+          "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+          "gcd", "lcm", "factorial", "div", "width_bucket", "random", "greatest", "least",
+          // NULL/조건
+          "coalesce", "nullif",
+          // 문자열
+          "upper", "lower", "initcap", "length", "char_length", "character_length", "bit_length",
+          "octet_length", "trim", "ltrim", "rtrim", "btrim", "substring", "substr", "replace",
+          "translate", "concat", "concat_ws", "position", "strpos", "left", "right", "lpad",
+          "rpad", "split_part", "regexp_replace", "regexp_match", "regexp_matches",
+          "regexp_split_to_array", "regexp_split_to_table", "regexp_count", "regexp_instr",
+          "regexp_like", "regexp_substr", "format", "repeat", "reverse", "quote_ident",
+          "quote_literal", "quote_nullable", "ascii", "chr", "md5", "starts_with", "unaccent",
+          // 날짜/시간
+          "now", "current_date", "current_time", "current_timestamp", "localtime",
+          "localtimestamp", "date_trunc", "date_part", "to_char", "to_date", "to_timestamp",
+          "age", "make_date", "make_time", "make_timestamp", "make_timestamptz", "make_interval",
+          "justify_days", "justify_hours", "justify_interval", "timezone",
+          // 형변환
+          "to_number",
+          // JSON
+          "json_build_object", "jsonb_build_object", "json_build_array", "jsonb_build_array",
+          "json_extract_path", "jsonb_extract_path", "json_extract_path_text",
+          "jsonb_extract_path_text", "json_array_elements", "jsonb_array_elements",
+          "json_array_elements_text", "jsonb_array_elements_text", "json_each", "jsonb_each",
+          "json_each_text", "jsonb_each_text", "json_object_keys", "jsonb_object_keys",
+          "json_typeof", "jsonb_typeof", "row_to_json", "to_json", "to_jsonb",
+          "json_strip_nulls", "jsonb_strip_nulls", "jsonb_set", "jsonb_path_exists",
+          "jsonb_path_query", "jsonb_path_query_array", "jsonb_path_query_first",
+          // 배열
+          "array_length", "array_upper", "array_lower", "unnest", "array_to_string",
+          "string_to_array", "array_append", "array_prepend", "array_cat", "array_remove",
+          "array_replace", "array_position", "array_positions", "array_dims", "array_ndims",
+          "cardinality", "num_nonnulls", "num_nulls");
+
+  /**
+   * {@code postgis}/{@code postgis_topology} 확장 소유 함수 중 부작용 없는(provolatile ≠ volatile) 함수.
+   * {@code src/main/resources/sql-validator/postgis-safe-functions.txt}에서 로드 — 그 파일의 생성 쿼리와
+   * 이름 단위(오버로드 아님) 필터링 근거는 파일 헤더 주석 참고. 클래스로더 리소스를 못 찾으면(패키징 오류 등)
+   * 조용히 빈 집합으로 fail-open 되는 대신 예외를 던져 애플리케이션 기동 시점에 드러나게 한다.
+   */
+  private static final Set<String> POSTGIS_SAFE_FUNCTIONS = loadPostgisSafeFunctions();
+
+  /**
+   * 함수 허용목록의 정본 — 그 이하 함수는 전부 거부한다(fail-closed). (#385 재재리뷰 — deny-list 전면 폐기가 아니라 정본을
+   * 허용목록으로 바꾼다.)
+   *
+   * <p><b>왜 deny-list 를 정본으로 못 쓰는가.</b> 재재리뷰에서 이름 대조 자체를 무너뜨리는 우회 2건이 나왔다:
+   *
+   * <ol>
+   *   <li>{@code schema_to_xml('public', true, false, '')} — {@code public} 스키마 전체를 XML 로 덤프한다
+   *       (실측: 13,929,550자, {@code public."user"} 의 email·password 포함). 테이블 참조가 0개라 {@link
+   *       #requireDataSchemaOnly}가 아예 관여하지 않는다 — strict 모드에서도 통과했다.
+   *   <li>{@code U&"pg_sl\0065ep"(5)}(유니코드 이스케이프 식별자) — psql 실측으로 {@code
+   *       U&"current_sett\0069ng"(...)}, {@code U&"query_to_x\006Dl"(...)} 이 실제로 실행됐다. 이건 이름이
+   *       빠졌다는 문제가 아니라 <b>이름 대조라는 방식 자체가 무너지는 것</b>이다 — {@code \+XXXXXX}, {@code
+   *       UESCAPE} 절 등 표기 변형이 원리적으로 무한하다.
+   * </ol>
+   *
+   * <p><b>단계 0 실측 — JSqlParser 는 {@code U&} 이스케이프를 디코딩하지 않는다.</b> {@code Function#getName()}
+   * 이 {@code "pg_sl\0065ep"} 를 <b>원문 그대로</b>(디코딩 없이) 돌려준다(스크래치 프로브 실측 후 삭제). 즉 이
+   * 이름은 이미 어떤 deny-list 항목과도 매칭되지 않고, 어떤 허용목록 항목과도 매칭되지 않는다 — <b>허용목록은
+   * "모르는 이름 = 거부"이므로 이 우회에 원리적으로 면역이다</b>(디코딩까지 갔다면 이 필드에 별도 이스케이프 거부
+   * 로직이 필요했겠지만 실측상 불필요 — 다만 {@link UnknownFunctionFinder}가 방어 심층으로 비표준 식별자 표기
+   * 자체를 별도로 거부한다).
+   *
+   * <p><b>구성 — 두 출처의 합집합, 둘 다 손으로 열거하지 않는다(원칙적으로).</b>
+   *
+   * <ul>
+   *   <li>{@link #POSTGIS_SAFE_FUNCTIONS} — {@code postgis}/{@code postgis_topology} 확장 소유 함수 중
+   *       {@code provolatile <> 'v'}(부작용 없음)만, 카탈로그 쿼리 결과를 리소스 파일로 그대로 옮긴 것(생성
+   *       쿼리는 그 파일 헤더에 있다). {@code addgeometrycolumn}/{@code droptopology} 등 스키마를 바꾸는
+   *       위험 함수는 전부 volatile 이라 이 필터로 자동 제외됐다(실측).
+   *   <li>{@link #SQL_STANDARD_FUNCTIONS} — 표준 SQL 집계/수학/문자열/날짜/JSON 내장 함수. <b>이건 카탈로그
+   *       유도가 아니라 손으로 큐레이션했다</b> — {@code pg_catalog} 는 PostGIS 와 달리 provolatile 로 안전을
+   *       가를 수 없다({@code current_setting}/{@code pg_get_viewdef}/{@code table_to_xml}/{@code
+   *       database_to_xml} 이 전부 {@code provolatile='s'}(stable)로 표시돼 있어 그 필터로는 안 걸린다 —
+   *       psql 실측). 표준 함수 표면이 PostGIS 보다 훨씬 작고 안정적이라 손 큐레이션이 실용적이다.
+   * </ul>
+   *
+   * <p>새 함수를 추가하려면 "파일/네트워크/GUC/카탈로그 접근이 없는가", "문자열 인자를 SQL 로 재해석하지
+   * 않는가"(위 원리적 한계 참고)를 반드시 확인하라.
+   */
+  static final Set<String> ALLOWED_FUNCTIONS = buildAllowedFunctions();
+
+  private static Set<String> buildAllowedFunctions() {
+    Set<String> combined = new HashSet<>(SQL_STANDARD_FUNCTIONS);
+    combined.addAll(POSTGIS_SAFE_FUNCTIONS);
+    return Set.copyOf(combined);
+  }
+
+  private static Set<String> loadPostgisSafeFunctions() {
+    String resourcePath = "/sql-validator/postgis-safe-functions.txt";
+    try (InputStream in = SqlValidator.class.getResourceAsStream(resourcePath)) {
+      if (in == null) {
+        throw new IllegalStateException("리소스를 찾을 수 없습니다: " + resourcePath);
+      }
+      Set<String> names = new HashSet<>();
+      try (BufferedReader reader =
+          new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          String trimmed = line.strip();
+          if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+            continue;
+          }
+          names.add(trimmed.toLowerCase());
+        }
+      }
+      if (names.isEmpty()) {
+        throw new IllegalStateException("PostGIS 안전 함수 목록이 비어 있습니다: " + resourcePath);
+      }
+      return Set.copyOf(names);
+    } catch (IOException e) {
+      throw new IllegalStateException("PostGIS 안전 함수 목록 로드 실패: " + resourcePath, e);
+    }
+  }
+
+  /**
+   * 함수 이름이 순수 식별자 형태({@code [A-Za-z_][A-Za-z0-9_]*})인지 검사한다. {@code U&"..."} 유니코드
+   * 이스케이프, 백슬래시 등은 이 패턴에 안 걸려 별도의 명확한 에러로 거부된다 — {@link #ALLOWED_FUNCTIONS}
+   * 대조만으로도 결과적으로 막히지만("모르는 이름"이 되므로), 재발 방지 차원에서 이 우회 형태 자체를 이름 대며
+   * 거부하는 편이 다음 사람이 원인을 바로 알 수 있다.
+   */
+  private static final Pattern SIMPLE_IDENTIFIER = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
 
   /** 검증 실패 시 {@link UnsafeSqlException}을 던진다. */
   public void validate(String scriptContent) {
@@ -165,6 +326,7 @@ public class SqlValidator {
     requireDmlOrSelect(statement);
     requireDataSchemaOnly(statement);
     requireNoBlockedFunctions(statement);
+    requireOnlyKnownFunctions(statement);
     requireNoSelectInto(statement);
   }
 
@@ -329,6 +491,45 @@ public class SqlValidator {
         String unquoted = stripQuotes(simple);
         if (BLOCKED_FUNCTIONS.contains(unquoted.toLowerCase())) {
           throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + fnName + "'. 시스템/네트워크 접근 함수는 차단됩니다.");
+        }
+      }
+      return super.visit(function, context);
+    }
+  }
+
+  /**
+   * AST 내 모든 함수 호출이 {@link #ALLOWED_FUNCTIONS} 허용목록에 있는지 검사한다 — <b>이 검증의 정본</b>(#385
+   * 재재리뷰). {@link #requireNoBlockedFunctions}(deny-list)는 이 검사보다 먼저 실행돼 알려진 위험 함수에
+   * 더 구체적인 에러 메시지를 주는 심층 방어일 뿐이고, 최종 판단은 이 메서드가 한다 — 목록에 없으면 무조건
+   * 거부하므로 새 위험 함수가 추가돼도(또는 이름이 이스케이프로 위장돼도) 안전한 쪽으로 실패한다.
+   */
+  private void requireOnlyKnownFunctions(Statement statement) {
+    UnknownFunctionFinder finder = new UnknownFunctionFinder();
+    statement.accept(finder);
+  }
+
+  /** {@link Function} 호출을 {@link #ALLOWED_FUNCTIONS}와 대조하는 visitor. */
+  private static final class UnknownFunctionFinder extends TablesNamesFinder<Void> {
+    UnknownFunctionFinder() {
+      init(true);
+    }
+
+    @Override
+    public <S> Void visit(Function function, S context) {
+      String fnName = function.getName();
+      if (fnName != null) {
+        int dot = fnName.lastIndexOf('.');
+        String simple = dot >= 0 ? fnName.substring(dot + 1) : fnName;
+        String unquoted = stripQuotes(simple);
+        if (!SIMPLE_IDENTIFIER.matcher(unquoted).matches()) {
+          throw new UnsafeSqlException(
+              "허용되지 않는 함수 이름 표기: '"
+                  + fnName
+                  + "'. 유니코드 이스케이프 등 비표준 식별자 표기는 거부됩니다.");
+        }
+        if (!ALLOWED_FUNCTIONS.contains(unquoted.toLowerCase())) {
+          throw new UnsafeSqlException(
+              "허용되지 않는 함수 호출: '" + fnName + "'. 알려진 안전 함수 목록에 없습니다.");
         }
       }
       return super.visit(function, context);

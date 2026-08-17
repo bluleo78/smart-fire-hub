@@ -35,6 +35,7 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
 
   private static final String TEST_TABLE = "analytics_guard_test";
+  private static final String GEOM_TABLE = "analytics_guard_geom_test";
 
   @BeforeAll
   void setUp() {
@@ -42,11 +43,24 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
     dsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
     dsl.execute("CREATE TABLE data." + TEST_TABLE + " (id BIGSERIAL PRIMARY KEY, name TEXT)");
     dsl.execute("INSERT INTO data." + TEST_TABLE + " (name) VALUES ('Row1')");
+
+    // 공간 경로 픽스처(#385 최종 리뷰 단계3) — 허용목록 전환이 애널리틱스의 GeoJSON 래핑
+    // (public.ST_AsGeoJSON 호출, buildGeoJsonWrappedSql)과 사용자가 직접 쓰는 PostGIS 함수 호출을
+    // 깨지 않는지 확인해야 한다. StoredUserSqlReplayTest 코퍼스는 dev 이력에 공간 쿼리가 0건이라
+    // 이 경로를 전혀 덮지 않는다(원장 R1 명시) — 별도로 여기서 확인한다.
+    dsl.execute("DROP TABLE IF EXISTS data." + GEOM_TABLE);
+    dsl.execute(
+        "CREATE TABLE data." + GEOM_TABLE + " (id BIGSERIAL PRIMARY KEY, geom GEOMETRY(Point, 4326))");
+    dsl.execute(
+        "INSERT INTO data."
+            + GEOM_TABLE
+            + " (geom) VALUES (ST_SetSRID(ST_MakePoint(126.978, 37.566), 4326))");
   }
 
   @AfterAll
   void tearDown() {
     dsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
+    dsl.execute("DROP TABLE IF EXISTS data." + GEOM_TABLE);
   }
 
   // =========================================================================
@@ -165,5 +179,35 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
 
     assertThat(response.error()).isNotNull();
     assertThat(response.error()).contains("SQLState: 42P01");
+  }
+
+  // =========================================================================
+  // 공간 경로 — 함수 허용목록 전환이 PostGIS 사용을 깨지 않는지 (#385 최종 리뷰 단계3)
+  // =========================================================================
+
+  /** 회귀 방지: 사용자가 SQL 에서 직접 PostGIS 함수를 호출하는 정상 사용례가 허용목록 전환 후에도 통과해야 한다. */
+  @Test
+  void execute_userWrittenPostgisFunctionCall_stillPasses() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT ST_AsGeoJSON(geom) FROM data." + GEOM_TABLE, 10, false);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1);
+  }
+
+  /**
+   * 회귀 방지: geometry 컬럼을 raw 로 조회하면 jOOQ/JDBC 가 바이너리 파싱에 실패해 {@link
+   * AnalyticsQueryExecutionService#executeDirectly}가 자동으로 {@code public.ST_AsGeoJSON(...)}로 감싸
+   * 재시도한다({@code buildGeoJsonWrappedSql}). 이 래핑 SQL 은 사용자 입력이 아니라 애플리케이션이 이미
+   * {@code validate()}를 통과한 원본을 바탕으로 내부 생성한 것이라 재검증 대상은 아니지만, "우리 코드가
+   * 생성하는 SQL 도 실제로 성공하는가"(함수 허용목록 전환이 이 내부 경로를 깨지 않는가)를 실행 결과로 확인한다.
+   */
+  @Test
+  void execute_rawGeometrySelect_autoWrapsWithPostgisFunction_stillPasses() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT * FROM data." + GEOM_TABLE, 10, false);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1);
   }
 }
