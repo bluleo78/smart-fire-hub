@@ -682,4 +682,53 @@ class DataTableServiceTest extends IntegrationTestBase {
     assertThat(response.columns()).contains("name");
     assertThat(response.columns()).doesNotContain("id", "import_id", "created_at");
   }
+
+  // -------------------------------------------------------------------------
+  // 1-5. 스테이징 스왑 (createTempTable + swapTable) — 1 TC
+  //
+  // 이 경로는 임시 테이블·전용 시퀀스·원본 DROP·RENAME 을 각각 별개의 이름으로 다루는데, 기존
+  // 테스트는 DataTableService 를 모두 목으로 대체해 SQL 수준 커버리지가 0이었다(JaCoCo 실측).
+  // 스키마 한정을 한 곳이라도 빠뜨리면 DROP/RENAME 이 조용히 엉뚱한 대상을 향하므로 실제 DB 로 못박는다.
+  // -------------------------------------------------------------------------
+
+  @Test
+  void createTempTableThenSwap_replacesRowsAndRenamesSequence() {
+    String tableName = "test_swap_seq";
+    tablesToCleanup.add(tableName);
+    dataTableService.createTable(
+        tableName,
+        List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)));
+    dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "old")));
+
+    // 스테이징에 새 내용을 적재한 뒤 스왑한다 (REPLACE 적재 전략의 실제 순서)
+    dataTableService.createTempTable(tableName);
+    dataTableRowService.insertBatch(
+        tableName + "_tmp", List.of("name"), List.of(Map.of("name", "new")));
+    dataTableService.swapTable(tableName);
+
+    // 원본 이름이 스테이징 내용을 담는다 — DROP 과 RENAME 이 둘 다 올바른 스키마에 닿았다는 증거
+    List<String> names = dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+    assertThat(names).containsExactly("new");
+
+    // 시퀀스 리네임이 실제로 일어났다 — 빠뜨리면 아무 에러 없이 tmp 이름의 시퀀스가 남고,
+    // 다음 createTempTable 의 DROP SEQUENCE IF EXISTS 가 살아있는 시퀀스를 지우려 든다.
+    Long canonicalSeq =
+        dsl.selectCount()
+            .from("pg_sequences")
+            .where(
+                "schemaname = 'data' AND sequencename = '" + tableName + "_id_seq'")
+            .fetchOne(0, Long.class);
+    assertThat(canonicalSeq).as("스왑 후 시퀀스는 원본 이름 규약을 따라야 한다").isEqualTo(1);
+
+    Long tmpSeq =
+        dsl.selectCount()
+            .from("pg_sequences")
+            .where("schemaname = 'data' AND sequencename = '" + tableName + "_tmp_id_seq'")
+            .fetchOne(0, Long.class);
+    assertThat(tmpSeq).as("tmp 시퀀스 이름은 남아 있으면 안 된다").isEqualTo(0);
+
+    // 스왑된 테이블에 계속 삽입할 수 있다 (id DEFAULT nextval 이 살아있는 시퀀스를 가리킨다)
+    dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "after")));
+    assertThat(dataTableRowService.countRows(tableName)).isEqualTo(2);
+  }
 }

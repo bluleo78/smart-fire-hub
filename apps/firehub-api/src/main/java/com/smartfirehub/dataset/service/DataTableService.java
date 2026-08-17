@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.global.tenant.DataSchema;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -49,10 +50,10 @@ public class DataTableService {
     validateName(tableName);
 
     // Drop orphaned table if it exists (metadata already verified no dataset references it)
-    dsl.execute("DROP TABLE IF EXISTS data.\"" + tableName + "\"");
+    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tableName));
 
     StringBuilder sql = new StringBuilder();
-    sql.append("CREATE TABLE data.\"").append(tableName).append("\" (");
+    sql.append("CREATE TABLE ").append(DataSchema.qualify(tableName)).append(" (");
     sql.append("id BIGSERIAL PRIMARY KEY, ");
     sql.append("import_id BIGINT, ");
 
@@ -99,9 +100,9 @@ public class DataTableService {
       uniqueSql
           .append("CREATE UNIQUE INDEX \"ux_")
           .append(tableName)
-          .append("_pk\" ON data.\"")
-          .append(tableName)
-          .append("\" (");
+          .append("_pk\" ON ")
+          .append(DataSchema.qualify(tableName))
+          .append(" (");
       for (int i = 0; i < pkColumns.size(); i++) {
         if (i > 0) uniqueSql.append(", ");
         uniqueSql.append("\"").append(pkColumns.get(i).columnName()).append("\"");
@@ -123,7 +124,7 @@ public class DataTableService {
     }
 
     StringBuilder sql = new StringBuilder();
-    sql.append("ALTER TABLE data.\"").append(tableName).append("\" ");
+    sql.append("ALTER TABLE ").append(DataSchema.qualify(tableName)).append(" ");
     sql.append("ADD COLUMN \"").append(column.columnName()).append("\" ");
     sql.append(mapDataType(column.dataType(), column.maxLength()));
     if (!column.isNullable()) {
@@ -160,17 +161,17 @@ public class DataTableService {
         String sql =
             "CREATE INDEX IF NOT EXISTS \""
                 + indexName
-                + "\" ON data.\""
-                + tableName
-                + "\" (\""
+                + "\" ON "
+                + DataSchema.qualify(tableName)
+                + " (\""
                 + columnName
                 + "\")";
         dsl.execute(sql);
       }
     } else {
       // Drop both B-tree and GiST index variants
-      dsl.execute("DROP INDEX IF EXISTS data.\"" + indexName + "\"");
-      dsl.execute("DROP INDEX IF EXISTS data.\"" + indexName + "_gist\"");
+      dsl.execute("DROP INDEX IF EXISTS " + DataSchema.qualify(indexName));
+      dsl.execute("DROP INDEX IF EXISTS " + DataSchema.qualify(indexName + "_gist"));
     }
   }
 
@@ -182,9 +183,9 @@ public class DataTableService {
       String sql =
           "CREATE INDEX IF NOT EXISTS \""
               + indexName
-              + "\" ON data.\""
-              + tableName
-              + "\" (\""
+              + "\" ON "
+              + DataSchema.qualify(tableName)
+              + " (\""
               + columnName
               + "\")";
       dsl.execute(sql);
@@ -196,9 +197,9 @@ public class DataTableService {
     String sql =
         "CREATE INDEX IF NOT EXISTS \""
             + indexName
-            + "\" ON data.\""
-            + tableName
-            + "\" USING GIST (\""
+            + "\" ON "
+            + DataSchema.qualify(tableName)
+            + " USING GIST (\""
             + columnName
             + "\")";
     dsl.execute(sql);
@@ -210,7 +211,7 @@ public class DataTableService {
       validateName(col);
     }
     // Drop existing PK index if exists
-    String dropSql = "DROP INDEX IF EXISTS data.\"ux_" + tableName + "_pk\"";
+    String dropSql = "DROP INDEX IF EXISTS " + DataSchema.qualify("ux_" + tableName + "_pk");
     dsl.execute(dropSql);
 
     // Create new index if there are PK columns
@@ -218,9 +219,9 @@ public class DataTableService {
       StringBuilder sql = new StringBuilder();
       sql.append("CREATE UNIQUE INDEX \"ux_")
           .append(tableName)
-          .append("_pk\" ON data.\"")
-          .append(tableName)
-          .append("\" (");
+          .append("_pk\" ON ")
+          .append(DataSchema.qualify(tableName))
+          .append(" (");
       for (int i = 0; i < pkColumnNames.size(); i++) {
         if (i > 0) sql.append(", ");
         sql.append("\"").append(pkColumnNames.get(i)).append("\"");
@@ -238,16 +239,16 @@ public class DataTableService {
     if (pkColumnNames.isEmpty()) return;
 
     // Drop existing PK index if exists
-    String dropSql = "DROP INDEX IF EXISTS data.\"ux_" + tableName + "_pk\"";
+    String dropSql = "DROP INDEX IF EXISTS " + DataSchema.qualify("ux_" + tableName + "_pk");
     dsl.execute(dropSql);
 
     // CREATE INDEX CONCURRENTLY cannot run inside a transaction
     StringBuilder sql = new StringBuilder();
     sql.append("CREATE UNIQUE INDEX CONCURRENTLY \"ux_")
         .append(tableName)
-        .append("_pk\" ON data.\"")
-        .append(tableName)
-        .append("\" (");
+        .append("_pk\" ON ")
+        .append(DataSchema.qualify(tableName))
+        .append(" (");
     for (int i = 0; i < pkColumnNames.size(); i++) {
       if (i > 0) sql.append(", ");
       sql.append("\"").append(pkColumnNames.get(i)).append("\"");
@@ -258,39 +259,50 @@ public class DataTableService {
 
   public void dropTable(String tableName) {
     validateName(tableName);
-    String sql = "DROP TABLE IF EXISTS data.\"" + tableName + "\"";
+    String sql = "DROP TABLE IF EXISTS " + DataSchema.qualify(tableName);
     dsl.execute(sql);
   }
 
   /**
-   * Creates a temporary staging table {@code data."{tableName}_tmp"} with the same structure as the
-   * original table (using PostgreSQL's LIKE ... INCLUDING ALL). Used by the REPLACE load strategy
-   * to safely stage new data before swapping.
+   * Creates a temporary staging table {@code "{tableName}_tmp"} in the current tenant's data schema
+   * with the same structure as the original table (using PostgreSQL's LIKE ... INCLUDING ALL). Used
+   * by the REPLACE load strategy to safely stage new data before swapping.
    */
   public void createTempTable(String tableName) {
     validateName(tableName);
     String tmpName = tableName + "_tmp";
     // Drop any leftover temp table from a previous failed run
-    dsl.execute("DROP TABLE IF EXISTS data.\"" + tmpName + "\"");
+    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
     dsl.execute(
-        "CREATE TABLE data.\"" + tmpName + "\" (LIKE data.\"" + tableName + "\" INCLUDING ALL)");
+        "CREATE TABLE "
+            + DataSchema.qualify(tmpName)
+            + " (LIKE "
+            + DataSchema.qualify(tableName)
+            + " INCLUDING ALL)");
     // LIKE INCLUDING ALL shares the original SERIAL sequence, creating a dependency
     // that blocks DROP TABLE on the original. Give the temp table its own sequence.
     String tmpSeq = tmpName + "_id_seq";
-    dsl.execute("DROP SEQUENCE IF EXISTS data.\"" + tmpSeq + "\"");
-    dsl.execute("CREATE SEQUENCE data.\"" + tmpSeq + "\" OWNED BY data.\"" + tmpName + "\".id");
+    dsl.execute("DROP SEQUENCE IF EXISTS " + DataSchema.qualify(tmpSeq));
     dsl.execute(
-        "ALTER TABLE data.\""
-            + tmpName
-            + "\" ALTER COLUMN id SET DEFAULT nextval('data.\""
-            + tmpSeq
-            + "\"')");
+        "CREATE SEQUENCE "
+            + DataSchema.qualify(tmpSeq)
+            + " OWNED BY "
+            + DataSchema.qualify(tmpName)
+            + ".id");
+    // nextval 인자는 문자열 리터럴 안의 식별자다 — 여기서도 스키마를 한정해야 스왑 후 DEFAULT 가
+    // 엉뚱한 스키마의 시퀀스를 가리키지 않는다.
+    dsl.execute(
+        "ALTER TABLE "
+            + DataSchema.qualify(tmpName)
+            + " ALTER COLUMN id SET DEFAULT nextval('"
+            + DataSchema.qualify(tmpSeq)
+            + "')");
   }
 
   /**
-   * Atomically replaces {@code data."{tableName}"} with {@code data."{tableName}_tmp"} by dropping
-   * the original and renaming the tmp table inside a single transaction. Called only after all data
-   * has been successfully inserted into the tmp table.
+   * Atomically replaces {@code "{tableName}"} with {@code "{tableName}_tmp"} (both in the current
+   * tenant's data schema) by dropping the original and renaming the tmp table inside a single
+   * transaction. Called only after all data has been successfully inserted into the tmp table.
    */
   public void swapTable(String tableName) {
     validateName(tableName);
@@ -298,24 +310,31 @@ public class DataTableService {
     dsl.transaction(
         cfg -> {
           var txDsl = org.jooq.impl.DSL.using(cfg);
-          txDsl.execute("DROP TABLE data.\"" + tableName + "\"");
-          txDsl.execute("ALTER TABLE data.\"" + tmpName + "\" RENAME TO \"" + tableName + "\"");
-          // Rename the temp sequence to match the canonical naming convention
+          // 파괴 연산 — 스키마 해석이 틀리면 남의 테넌트 테이블을 지운다. 반드시 헬퍼 경유.
+          txDsl.execute("DROP TABLE " + DataSchema.qualify(tableName));
+          // RENAME TO 의 새 이름은 스키마를 붙이지 않는다(PostgreSQL 문법). 스키마는 원본을 따라간다.
+          txDsl.execute(
+              "ALTER TABLE " + DataSchema.qualify(tmpName) + " RENAME TO \"" + tableName + "\"");
+          // 시퀀스 리네임을 빠뜨리면 스왑 후 nextval 이 옛 이름의 시퀀스를 가리킨 채 조용히 동작한다.
           String tmpSeq = tmpName + "_id_seq";
           String seq = tableName + "_id_seq";
           txDsl.execute(
-              "ALTER SEQUENCE IF EXISTS data.\"" + tmpSeq + "\" RENAME TO \"" + seq + "\"");
+              "ALTER SEQUENCE IF EXISTS "
+                  + DataSchema.qualify(tmpSeq)
+                  + " RENAME TO \""
+                  + seq
+                  + "\"");
         });
   }
 
   /**
-   * Drops the temporary staging table {@code data."{tableName}_tmp"} if it exists. Called on
-   * failure to preserve the original table's data.
+   * Drops the temporary staging table {@code "{tableName}_tmp"} in the current tenant's data schema
+   * if it exists. Called on failure to preserve the original table's data.
    */
   public void dropTempTable(String tableName) {
     validateName(tableName);
     String tmpName = tableName + "_tmp";
-    dsl.execute("DROP TABLE IF EXISTS data.\"" + tmpName + "\"");
+    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
   }
 
   public void renameColumn(String tableName, String oldName, String newName) {
@@ -323,9 +342,9 @@ public class DataTableService {
     validateName(oldName);
     validateName(newName);
     String sql =
-        "ALTER TABLE data.\""
-            + tableName
-            + "\" RENAME COLUMN \""
+        "ALTER TABLE "
+            + DataSchema.qualify(tableName)
+            + " RENAME COLUMN \""
             + oldName
             + "\" TO \""
             + newName
@@ -339,7 +358,12 @@ public class DataTableService {
     validateName(newColName);
     String oldIndex = "idx_" + tableName + "_" + oldColName;
     String newIndex = "idx_" + tableName + "_" + newColName;
-    String sql = "ALTER INDEX IF EXISTS data.\"" + oldIndex + "\" RENAME TO \"" + newIndex + "\"";
+    String sql =
+        "ALTER INDEX IF EXISTS "
+            + DataSchema.qualify(oldIndex)
+            + " RENAME TO \""
+            + newIndex
+            + "\"";
     dsl.execute(sql);
   }
 
@@ -365,9 +389,9 @@ public class DataTableService {
 
     String newType = mapDataType(dataType, maxLength);
     String sql =
-        "ALTER TABLE data.\""
-            + tableName
-            + "\" ALTER COLUMN \""
+        "ALTER TABLE "
+            + DataSchema.qualify(tableName)
+            + " ALTER COLUMN \""
             + columnName
             + "\" TYPE "
             + newType
@@ -382,9 +406,9 @@ public class DataTableService {
     validateName(tableName);
     validateName(columnName);
     String sql =
-        "ALTER TABLE data.\""
-            + tableName
-            + "\" ALTER COLUMN \""
+        "ALTER TABLE "
+            + DataSchema.qualify(tableName)
+            + " ALTER COLUMN \""
             + columnName
             + "\" "
             + (nullable ? "DROP NOT NULL" : "SET NOT NULL");
@@ -394,7 +418,12 @@ public class DataTableService {
   public void dropColumn(String tableName, String columnName) {
     validateName(tableName);
     validateName(columnName);
-    String sql = "ALTER TABLE data.\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
+    String sql =
+        "ALTER TABLE "
+            + DataSchema.qualify(tableName)
+            + " DROP COLUMN \""
+            + columnName
+            + "\"";
     dsl.execute(sql);
   }
 
@@ -419,26 +448,26 @@ public class DataTableService {
 
     // CREATE TABLE AS SELECT (copies data + column types, but not constraints)
     String createSql =
-        "CREATE TABLE data.\""
-            + targetTable
-            + "\" AS SELECT "
+        "CREATE TABLE "
+            + DataSchema.qualify(targetTable)
+            + " AS SELECT "
             + colList
-            + " FROM data.\""
-            + sourceTable
-            + "\"";
+            + " FROM "
+            + DataSchema.qualify(sourceTable);
     dsl.execute(createSql);
 
     // Add system columns
-    dsl.execute("ALTER TABLE data.\"" + targetTable + "\" ADD COLUMN id BIGSERIAL PRIMARY KEY");
-    dsl.execute("ALTER TABLE data.\"" + targetTable + "\" ADD COLUMN import_id BIGINT");
+    dsl.execute(
+        "ALTER TABLE " + DataSchema.qualify(targetTable) + " ADD COLUMN id BIGSERIAL PRIMARY KEY");
+    dsl.execute("ALTER TABLE " + DataSchema.qualify(targetTable) + " ADD COLUMN import_id BIGINT");
 
     // Re-apply NOT NULL constraints (CTAS does not preserve them)
     for (DatasetColumnResponse col : columnDefs) {
       if (!col.isNullable()) {
         dsl.execute(
-            "ALTER TABLE data.\""
-                + targetTable
-                + "\" ALTER COLUMN \""
+            "ALTER TABLE "
+                + DataSchema.qualify(targetTable)
+                + " ALTER COLUMN \""
                 + col.columnName()
                 + "\" SET NOT NULL");
       }
@@ -464,10 +493,8 @@ public class DataTableService {
     // Check row count to decide whether to sample
     long rowCount = countRowsInternal(tableName);
     boolean sampled = rowCount > 100_000;
-    String fromClause =
-        sampled
-            ? "data.\"" + tableName + "\" TABLESAMPLE BERNOULLI(10)"
-            : "data.\"" + tableName + "\"";
+    String qualifiedTable = DataSchema.qualify(tableName);
+    String fromClause = sampled ? qualifiedTable + " TABLESAMPLE BERNOULLI(10)" : qualifiedTable;
 
     List<ColumnStatsResponse> result = new ArrayList<>();
 
@@ -623,7 +650,7 @@ public class DataTableService {
    * DataTableRowService.
    */
   private long countRowsInternal(String tableName) {
-    String sql = "SELECT COUNT(*) FROM data.\"" + tableName + "\"";
+    String sql = "SELECT COUNT(*) FROM " + DataSchema.qualify(tableName);
     Long count = dsl.fetchOne(sql).get(0, Long.class);
     return count != null ? count : 0L;
   }

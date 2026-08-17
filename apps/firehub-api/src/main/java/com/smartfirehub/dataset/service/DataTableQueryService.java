@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.ArrayList;
@@ -20,8 +21,9 @@ public class DataTableQueryService {
 
   /**
    * 데이터셋 애드혹 쿼리 전용 검증기 인스턴스 — {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접
-   * 생성한다(팩터리 도입 근거는 R1, #385). 아래 {@code SET LOCAL search_path = 'data'}(단일 스키마)가
-   * 미한정 허용의 안전 전제다 — 두 스키마를 세우면 안 된다.
+   * 생성한다(팩터리 도입 근거는 R1, #385). 아래 {@code SET LOCAL search_path} 가 현재 테넌트의 데이터
+   * 스키마 <b>하나만</b> 세우는 것이 미한정(스키마 없는) 테이블 참조 허용의 안전 전제다 — 두 스키마를
+   * 세우면 안 된다.
    */
   private final SqlValidator sqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 
@@ -52,8 +54,12 @@ public class DataTableQueryService {
 
     long startTime = System.currentTimeMillis();
 
+    // 스키마명은 한 번만 해석해 설정과 복원(finally)이 반드시 같은 값을 쓰게 한다. 여기서 미리
+    // 해석해 두면 테넌트 컨텍스트가 없을 때 finally 의 catch(ignored) 에 삼켜지지 않고 즉시 터진다.
+    String schema = DataSchema.current();
+
     // Restrict search_path to data schema only — prevents access to public schema tables
-    dsl.execute("SET LOCAL search_path = 'data'");
+    dsl.execute("SET LOCAL search_path = '" + schema + "'");
     dsl.execute("SET LOCAL statement_timeout = '30s'");
 
     // Use SAVEPOINT so that SQL errors don't abort the outer transaction.
@@ -118,8 +124,10 @@ public class DataTableQueryService {
     } finally {
       // Restore search_path so subsequent operations in the same transaction
       // (e.g. QueryHistoryRepository.save) can access public schema tables
+      // 복원을 빠뜨리거나 낡은 스키마명을 남기면, 같은 트랜잭션의 뒤 연산이 조용히 다른 스키마를
+      // 본다. public 이 앞에 오는 기존 우선순위를 그대로 유지한다.
       try {
-        dsl.execute("SET LOCAL search_path TO public, data");
+        dsl.execute("SET LOCAL search_path TO public, " + schema);
       } catch (Exception ignored) {
         // May fail if connection is broken; non-critical since transaction will end
       }

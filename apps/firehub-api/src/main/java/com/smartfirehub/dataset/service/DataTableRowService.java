@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
+import com.smartfirehub.global.tenant.DataSchema;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -102,7 +103,7 @@ public class DataTableRowService {
         sql.append(selectExpr(columns.get(i), columnTypes));
       }
     }
-    sql.append(" FROM data.\"").append(tableName).append("\"");
+    sql.append(" FROM ").append(DataSchema.qualify(tableName));
 
     Object[] params = buildSearchWhereClause(sql, columns, search, columnTypes);
 
@@ -221,7 +222,7 @@ public class DataTableRowService {
           .append(nearby.latitude())
           .append("), 4326)::geography)::double precision AS \"_distance\"");
     }
-    sql.append(" FROM data.\"").append(tableName).append("\"");
+    sql.append(" FROM ").append(DataSchema.qualify(tableName));
 
     // Build WHERE clause: search + spatial
     List<Object> paramList = new ArrayList<>();
@@ -334,7 +335,7 @@ public class DataTableRowService {
     }
 
     StringBuilder sql = new StringBuilder();
-    sql.append("SELECT COUNT(*) FROM data.\"").append(tableName).append("\"");
+    sql.append("SELECT COUNT(*) FROM ").append(DataSchema.qualify(tableName));
 
     List<Object> paramList = new ArrayList<>();
     boolean hasWhere = false;
@@ -406,7 +407,7 @@ public class DataTableRowService {
     dataTableService.validateName(tableName);
 
     StringBuilder sql = new StringBuilder();
-    sql.append("SELECT COUNT(*) FROM data.\"").append(tableName).append("\"");
+    sql.append("SELECT COUNT(*) FROM ").append(DataSchema.qualify(tableName));
 
     Object[] params = buildSearchWhereClause(sql, columns, search, columnTypes);
 
@@ -467,7 +468,7 @@ public class DataTableRowService {
       if (i > 0) sql.append(", ");
       sql.append("\"").append(pkColumnNames.get(i)).append("\"");
     }
-    sql.append(")) AS is_unique FROM data.\"").append(tableName).append("\"");
+    sql.append(")) AS is_unique FROM ").append(DataSchema.qualify(tableName));
     return Boolean.TRUE.equals(dsl.fetchOne(sql.toString()).get(0, Boolean.class));
   }
 
@@ -483,9 +484,9 @@ public class DataTableRowService {
       if (i > 0) sql.append(", ");
       sql.append("\"").append(pkColumnNames.get(i)).append("\"");
     }
-    sql.append(", COUNT(*) AS duplicate_count FROM data.\"")
-        .append(tableName)
-        .append("\" GROUP BY ");
+    sql.append(", COUNT(*) AS duplicate_count FROM ")
+        .append(DataSchema.qualify(tableName))
+        .append(" GROUP BY ");
     for (int i = 0; i < pkColumnNames.size(); i++) {
       if (i > 0) sql.append(", ");
       sql.append("\"").append(pkColumnNames.get(i)).append("\"");
@@ -524,7 +525,7 @@ public class DataTableRowService {
 
     // Build base INSERT statement once
     StringBuilder baseSql = new StringBuilder();
-    baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (");
+    baseSql.append("INSERT INTO ").append(DataSchema.qualify(tableName)).append(" (");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) baseSql.append(", ");
       baseSql.append("\"").append(columns.get(i)).append("\"");
@@ -588,7 +589,7 @@ public class DataTableRowService {
 
     // Build base INSERT statement once
     StringBuilder baseSql = new StringBuilder();
-    baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (");
+    baseSql.append("INSERT INTO ").append(DataSchema.qualify(tableName)).append(" (");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) baseSql.append(", ");
       baseSql.append("\"").append(columns.get(i)).append("\"");
@@ -657,7 +658,7 @@ public class DataTableRowService {
 
     // Build base INSERT statement with import_id prepended
     StringBuilder baseSql = new StringBuilder();
-    baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (import_id, ");
+    baseSql.append("INSERT INTO ").append(DataSchema.qualify(tableName)).append(" (import_id, ");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) baseSql.append(", ");
       baseSql.append("\"").append(columns.get(i)).append("\"");
@@ -723,7 +724,7 @@ public class DataTableRowService {
 
     // Build base INSERT statement with import_id prepended
     StringBuilder baseSql = new StringBuilder();
-    baseSql.append("INSERT INTO data.\"").append(tableName).append("\" (import_id, ");
+    baseSql.append("INSERT INTO ").append(DataSchema.qualify(tableName)).append(" (import_id, ");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) baseSql.append(", ");
       baseSql.append("\"").append(columns.get(i)).append("\"");
@@ -850,9 +851,9 @@ public class DataTableRowService {
     String placeholders = ph.toString();
 
     String sqlTemplate =
-        "INSERT INTO data.\""
-            + tableName
-            + "\" ("
+        "INSERT INTO "
+            + DataSchema.qualify(tableName)
+            + " ("
             + insertCols
             + ") VALUES "
             + "%ROWS%"
@@ -966,9 +967,9 @@ public class DataTableRowService {
     String placeholders = ph.toString();
 
     String sqlTemplate =
-        "INSERT INTO data.\""
-            + tableName
-            + "\" ("
+        "INSERT INTO "
+            + DataSchema.qualify(tableName)
+            + " ("
             + insertCols
             + ") VALUES "
             + "%ROWS%"
@@ -1025,14 +1026,15 @@ public class DataTableRowService {
   public int deleteRows(String tableName, List<Long> rowIds) {
     dataTableService.validateName(tableName);
     if (rowIds == null || rowIds.isEmpty()) return 0;
-    String sql = "DELETE FROM data.\"" + tableName + "\" WHERE id = ANY(?)";
+    String sql = "DELETE FROM " + DataSchema.qualify(tableName) + " WHERE id = ANY(?)";
     Long[] idArray = rowIds.toArray(new Long[0]);
     return dsl.execute(sql, (Object) idArray);
   }
 
   public void truncateTable(String tableName) {
     dataTableService.validateName(tableName);
-    String sql = "TRUNCATE TABLE data.\"" + tableName + "\"";
+    // 파괴 연산 — 스키마를 손으로 적지 않고 헬퍼로 한정한다(잘못 해석되면 교차 테넌트 삭제).
+    String sql = "TRUNCATE TABLE " + DataSchema.qualify(tableName);
     dsl.execute(sql);
   }
 
@@ -1051,7 +1053,7 @@ public class DataTableRowService {
     }
 
     StringBuilder sql = new StringBuilder();
-    sql.append("INSERT INTO data.\"").append(tableName).append("\" (");
+    sql.append("INSERT INTO ").append(DataSchema.qualify(tableName)).append(" (");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) sql.append(", ");
       sql.append("\"").append(columns.get(i)).append("\"");
@@ -1089,7 +1091,7 @@ public class DataTableRowService {
     }
 
     StringBuilder sql = new StringBuilder();
-    sql.append("UPDATE data.\"").append(tableName).append("\" SET ");
+    sql.append("UPDATE ").append(DataSchema.qualify(tableName)).append(" SET ");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) sql.append(", ");
       sql.append("\"")
@@ -1128,7 +1130,9 @@ public class DataTableRowService {
       if (i > 0) sql.append(", ");
       sql.append(selectExpr(columns.get(i), columnTypes));
     }
-    sql.append(", created_at FROM data.\"").append(tableName).append("\" WHERE id = ?");
+    sql.append(", created_at FROM ")
+        .append(DataSchema.qualify(tableName))
+        .append(" WHERE id = ?");
 
     var record = dsl.fetchOne(sql.toString(), rowId);
     if (record == null) {
@@ -1184,7 +1188,7 @@ public class DataTableRowService {
     Map<String, String> columnDdl = introspectColumnDdl(targetTableName, columns);
 
     StringBuilder sql = new StringBuilder();
-    sql.append("CREATE TABLE data.\"").append(stagingTable).append("\" (");
+    sql.append("CREATE TABLE ").append(DataSchema.qualify(stagingTable)).append(" (");
     sql.append("_seq BIGSERIAL");
     for (String col : columns) {
       sql.append(", \"").append(col).append("\" ").append(columnDdl.get(col));
@@ -1207,8 +1211,9 @@ public class DataTableRowService {
         "SELECT column_name, data_type, udt_name, character_maximum_length, "
             + "numeric_precision, numeric_scale "
             + "FROM information_schema.columns "
-            + "WHERE table_schema = 'data' AND table_name = ?";
-    var result = dsl.fetch(sql, tableName);
+            + "WHERE table_schema = ? AND table_name = ?";
+    // 스키마명을 리터럴로 박으면 개명 후 조용히 0행이 되고, 그 결과가 "Column not found" 로 둔갑한다.
+    var result = dsl.fetch(sql, DataSchema.current(), tableName);
 
     Map<String, String> ddlByColumn = new HashMap<>();
     for (var record : result) {
@@ -1274,7 +1279,7 @@ public class DataTableRowService {
     Map<String, String> columnTypes = introspectColumnDdl(stagingTable, columns);
 
     StringBuilder baseSql = new StringBuilder();
-    baseSql.append("INSERT INTO data.\"").append(stagingTable).append("\" (");
+    baseSql.append("INSERT INTO ").append(DataSchema.qualify(stagingTable)).append(" (");
     for (int i = 0; i < columns.size(); i++) {
       if (i > 0) baseSql.append(", ");
       baseSql.append("\"").append(columns.get(i)).append("\"");
@@ -1370,18 +1375,18 @@ public class DataTableRowService {
 
     String sql =
         "WITH promoted AS ("
-            + "INSERT INTO data.\""
-            + targetTableName
-            + "\" (import_id, "
+            + "INSERT INTO "
+            + DataSchema.qualify(targetTableName)
+            + " (import_id, "
             + colsList
             + ") "
             + "SELECT DISTINCT ON ("
             + pkList
             + ") ?::bigint, "
             + colsList
-            + " FROM data.\""
-            + stagingTable
-            + "\" "
+            + " FROM "
+            + DataSchema.qualify(stagingTable)
+            + " "
             + "ORDER BY "
             + pkList
             + ", _seq DESC "
@@ -1424,7 +1429,8 @@ public class DataTableRowService {
       throw new IllegalStateException("REPLACE promote requires at least one primary key column");
     }
 
-    dsl.execute("TRUNCATE TABLE data.\"" + targetTableName + "\"");
+    // 파괴 연산 — target 을 통째로 비운다. 반드시 헬퍼로 현재 테넌트 스키마에 한정한다.
+    dsl.execute("TRUNCATE TABLE " + DataSchema.qualify(targetTableName));
 
     StringBuilder pkList = new StringBuilder();
     for (int i = 0; i < pkColumns.size(); i++) {
@@ -1439,18 +1445,18 @@ public class DataTableRowService {
     }
 
     String sql =
-        "INSERT INTO data.\""
-            + targetTableName
-            + "\" ("
+        "INSERT INTO "
+            + DataSchema.qualify(targetTableName)
+            + " ("
             + colsList
             + ") "
             + "SELECT DISTINCT ON ("
             + pkList
             + ") "
             + colsList
-            + " FROM data.\""
-            + stagingTable
-            + "\" "
+            + " FROM "
+            + DataSchema.qualify(stagingTable)
+            + " "
             + "ORDER BY "
             + pkList
             + ", _seq DESC";
@@ -1461,6 +1467,6 @@ public class DataTableRowService {
   /** staging 테이블을 삭제한다. import job 완료(성공/실패 무관) 후 항상 호출되어야 한다. */
   public void dropStagingTable(String stagingTable) {
     dataTableService.validateName(stagingTable);
-    dsl.execute("DROP TABLE IF EXISTS data.\"" + stagingTable + "\"");
+    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(stagingTable));
   }
 }

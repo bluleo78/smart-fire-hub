@@ -441,6 +441,11 @@ class DataImportServiceTest extends IntegrationTestBase {
         "APPEND",
         1L);
 
+    // processImport 는 JobRunr 워커 스레드 재사용을 막으려고 finally 에서 TenantContext.clear() 한다.
+    // 이 테스트는 잡 본문을 같은 스레드에서 직접 호출하므로 setUp 이 세운 요청 스코프까지 지워진다 —
+    // 이어지는 export 는 별개의 요청이므로 스코프를 다시 세운다(프로덕션에서는 컨트롤러가 세운다).
+    com.smartfirehub.global.tenant.TenantContext.set(1L);
+
     // When
     ExportRequest request = new ExportRequest(ExportFormat.CSV, null, null, null);
     ExportResult result =
