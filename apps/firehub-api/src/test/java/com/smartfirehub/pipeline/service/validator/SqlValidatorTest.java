@@ -512,4 +512,72 @@ class SqlValidatorTest {
     assertThatThrownBy(() -> permissive.validate("SELECT nextval(seq_name_column)"))
         .isInstanceOf(UnsafeSqlException.class);
   }
+
+  // --- 재재재리뷰 C — 깊이 상한 도달은 fail-closed(거부), fail-open(조용한 통과) 아님 ---
+
+  /** {@code WHERE a IN (SELECT ...)} 를 {@code depth} 단 중첩하고 최내부에 {@code innermost}를 심는다. */
+  private static String deepNestedWhereIn(int depth, String innermost) {
+    StringBuilder sb = new StringBuilder("SELECT a FROM data.t WHERE a IN (");
+    for (int i = 0; i < depth; i++) {
+      sb.append("SELECT a FROM data.t WHERE a IN (");
+    }
+    sb.append(innermost);
+    sb.append(")".repeat(depth + 1));
+    return sb.toString();
+  }
+
+  /**
+   * 재재재리뷰 실측(수정 전 전부 통과) — {@code WHERE a IN (SELECT ...)} 169단 중첩 + 최내부 {@code FROM
+   * public.usr}. DB 는 같은 형태 200단을 실제로 실행해 {@code public."user"} 7853행을 반환했다. 최초 구현은
+   * {@code MAX_DEPTH} 도달 시 조용히 {@code return}(fail-open)해서 그 아래 서브트리 전체가 미검사 통과였다 —
+   * 스키마 화이트리스트가 뚫린다.
+   */
+  @Test
+  void rejects_schemaViolation_buriedBeyondMaxDepth() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(
+            () -> permissive.validate(deepNestedWhereIn(169, "SELECT a FROM public.usr")))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 같은 뿌리 — {@code SELECT ... INTO}를 깊이 묻어도 M4 차단이 유지돼야 한다(10단에선 이미 거부됨). */
+  @Test
+  void rejects_selectInto_buriedBeyondMaxDepth() {
+    SqlValidator permissive = new SqlValidator("data", true);
+    StringBuilder sql = new StringBuilder("SELECT a FROM data.t WHERE a IN (");
+    for (int i = 0; i < 169; i++) {
+      sql.append("SELECT a FROM data.t WHERE a IN (");
+    }
+    sql.append("SELECT a INTO public.pwned FROM data.t");
+    sql.append(")".repeat(170));
+
+    assertThatThrownBy(() -> permissive.validate(sql.toString())).isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * 같은 뿌리 — {@link SqlValidator#unqualifiedTableNames}이 깊이 상한 초과 시 <b>빈 집합을 조용히
+   * 반환</b>하는 쪽이 더 위험했다(호출부인 애널리틱스 카탈로그 대조가 "미한정 참조 없음"으로 잘못 읽는다).
+   * 이제 예외로 거부해 호출부가 그 사실을 알 수 있다.
+   */
+  @Test
+  void unqualifiedTableNames_throwsInsteadOfSilentlyEmpty_beyondMaxDepth() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(
+            () ->
+                permissive.unqualifiedTableNames(
+                    deepNestedWhereIn(169, "SELECT a FROM some_unqualified_table_xyz")))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 양성 대조 — 상한 근처에도 못 미치는 정상 중첩 쿼리는 여전히 통과해야 한다. */
+  @Test
+  void allows_ordinaryNestedSubquery_wellWithinMaxDepth() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatCode(
+            () -> permissive.validate("SELECT a FROM data.t WHERE a IN (SELECT a FROM data.t)"))
+        .doesNotThrowAnyException();
+  }
 }

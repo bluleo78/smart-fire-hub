@@ -70,6 +70,17 @@ import org.springframework.stereotype.Component;
  * 참조가 아니다). 이런 함수는 **deny-list({@link #BLOCKED_FUNCTIONS})가 유일한 방어**다 — 스키마 화이트리스트로
  * 막을 수 있다고 가정하고 함수를 빠뜨리면 그 함수가 곧 우회 경로가 된다. 새 함수를 검토할 때 "인자가 문자열이고 그 문자열이 SQL
  * 조각으로 재해석되는가"를 반드시 확인하라.
+ *
+ * <p><b>또 다른 심층 방어 손실 — 한정된 컬럼 참조({@code SELECT public.usr.email FROM data.t})는 이 검증기를
+ * 통과한다(#385 재재재리뷰 minor 2, 코드 변경 없이 기록만).</b> {@code public.usr.email} 은 {@link
+ * net.sf.jsqlparser.schema.Column}(테이블 한정자 "public.usr" + 컬럼 "email")로 파싱되고, {@code
+ * Column.getTable()} 은 위에서 이미 설명한 이유로(진짜 FROM 소스가 아니라 컬럼 한정자) {@link AstNodeCollector}가
+ * 의도적으로 walk 하지 않는다. 실측상 우회는 아니다 — {@code data.t} 에 실제로 존재하지 않는 테이블을 컬럼
+ * 한정자로 대면 PostgreSQL 이 "missing FROM-clause entry for table" 로 자연스럽게 거부한다(스스로 방어됨).
+ * 다만 이 검증기 레벨에서는 걸러지지 않으므로, DB 실행 전에 명확한 에러 메시지를 주는 조기 차단 계층 하나가
+ * 빠진 상태다 — 트레이드오프다: 컬럼 한정자를 일반 테이블 참조처럼 취급하면 정상 쿼리(별칭 있는 JOIN 등,
+ * {@code allows_cte_referencing_only_data_schema} 류)가 깨진다는 것을 이미 실측했으므로(Column/
+ * AllTableColumns 제외 로직 참고) 이 손실을 받아들인다.
  */
 @Slf4j
 @Component
@@ -397,6 +408,12 @@ public class SqlValidator {
     } catch (JSQLParserException e) {
       throw new UnsafeSqlException("SQL 파싱 실패: " + e.getMessage(), e);
     }
+    if (parsed == null) {
+      // 선행 결함(#385 재재재리뷰 minor 1) — 특정 입력(깊은 우편향 표현식 등)에서 parseStatements 가
+      // 예외 대신 null 을 돌려줄 수 있다. 이 null 검사가 없으면 바로 아래 parsed.getStatements() 에서
+      // NPE 가 새어 나가 컨트롤러 레벨에서 400 대신 500 이 된다 — UnsafeSqlException 으로 명시 변환한다.
+      throw new UnsafeSqlException("SQL 파싱 실패: 파서가 결과를 반환하지 않았습니다.");
+    }
 
     List<Statement> statements = parsed.getStatements();
     if (statements == null || statements.isEmpty()) {
@@ -636,8 +653,17 @@ public class SqlValidator {
    * 않도록 항등성 비교를 쓴다). 순회 대상은 {@code net.sf.jsqlparser} 패키지 소속 객체로 한정하고, 그중에서도
    * {@code net.sf.jsqlparser.parser} 패키지(JJTree 파서 내부 CST — {@code getASTNode()}가 돌려주는 {@code
    * SimpleNode} 등)는 명시적으로 제외한다 — AST 와 별개의 파서 내부 구조라 우리 관심사가 아니고, 자칫 파서
-   * 내부 대형 객체를 끌고 들어올 위험이 있다. 깊이 상한({@link #MAX_DEPTH})은 순수 방어용이다 — 단일 SQL 문의
-   * AST 크기는 작아 실제로 걸릴 일이 거의 없다.
+   * 내부 대형 객체를 끌고 들어올 위험이 있다.
+   *
+   * <p><b>깊이 상한 도달 = 거부(fail-closed), 조용한 통과가 아니다(#385 재재재리뷰 C).</b> 최초 구현은 상한
+   * 도달 시 그냥 {@code return} 해서 그 아래 서브트리 전체가 미검사 통과였다 — 재리뷰어 실측: {@code WHERE a
+   * IN (SELECT ...)} 를 169단 중첩하고 최내부에 {@code FROM public.usr} 를 심으면 검증기를 통과했고, DB 도
+   * 같은 형태 200단을 실제로 실행했다({@code public."user"} 7853행 반환). 같은 뿌리로 스키마 화이트리스트·
+   * INTO 차단·{@link #unqualifiedTableNames}(카탈로그 대조용 미한정 이름 목록)가 전부 조용히 무너졌다 —
+   * {@code unqualifiedTableNames}가 빈 집합을 반환하는 쪽이 특히 나빴다(호출부는 "미한정 참조 없음"으로
+   * 잘못 읽는다). 정상 SQL 은 이 상한 근처에 가지 않는다(재리뷰 실측: UNION×500 11ms, 1000컬럼 82ms, 40단
+   * CTE 3ms) — 그래서 상한을 올리는 것은 처방이 아니라 같은 버그의 숫자만 바꾸는 것이다. 상한 도달은 이제
+   * {@link UnsafeSqlException}을 던진다.
    *
    * <p>부수 효과 — 절 열거 방식({@code TablesNamesFinder} 상속)을 버리면서 그 유틸리티의 알려진 버그(윈도
    * 프레임 {@code ROWS BETWEEN ... PRECEDING}에서 {@code WindowOffset.getExpression()}이 null 일 때
@@ -697,8 +723,15 @@ public class SqlValidator {
     }
 
     private void walk(Object node, int depth) {
-      if (node == null || depth > MAX_DEPTH) {
+      if (node == null) {
         return;
+      }
+      if (depth > MAX_DEPTH) {
+        // fail-open 금지(#385 재재재리뷰 C) — 여기서 조용히 return 하면 그 아래 서브트리 전체가
+        // 미검사 통과였다(실측: 169단 중첩 서브쿼리 최내부의 public.usr 참조가 검증기를 통과, DB 도
+        // 200단을 실제 실행). 정상 SQL 은 이 상한 근처에 가지 않으므로(위 클래스 상단 문서의 벤치마크
+        // 참고) 거부가 곧 fail-closed 다.
+        throw new UnsafeSqlException("SQL 구조가 너무 깊게 중첩되어 있습니다(허용 깊이 " + MAX_DEPTH + " 초과).");
       }
       if (node instanceof Iterable<?> iterable) {
         for (Object element : iterable) {
@@ -755,6 +788,11 @@ public class SqlValidator {
         }
         try {
           walk(getter.invoke(node), depth + 1);
+        } catch (UnsafeSqlException e) {
+          // 재재재리뷰 실측 버그: 이 catch 가 없으면 깊이 상한 초과로 던진 UnsafeSqlException 이 바로
+          // 아래 넓은 catch(RuntimeException)에 "게터 실패"로 오인돼 삼켜져 fail-closed 처방이 무력화됐다
+          // (재현: 169단 중첩에서도 계속 PASS). 검증 실패는 반드시 호출자까지 전파해야 한다.
+          throw e;
         } catch (ReflectiveOperationException | RuntimeException ignored) {
           // 특정 상태에서만 값을 갖는 게터가 실패해도(또는 접근 불가여도) 순회는 계속한다.
         }
