@@ -33,6 +33,20 @@ class ScheduledTenantIterationTest {
     assertScheduled(com.smartfirehub.proactive.service.MetricPollerService.class, "poll");
   }
 
+  /**
+   * 고아 staging 스윕(P3-a Task 4 후속 F3). 스키마명을 {@code DataSchema} 로 파생시키게 된 뒤로는
+   * 순회 없이는 {@code MissingTenantScopeException} 만 나고 회수가 영구히 무동작이 된다.
+   *
+   * <p>이 테스트는 협력자 배선만 본다 — 순회가 실제로 도는지는
+   * {@code CleanupSchedulerTenantTest.stagingSweepIteratesTenantsInTransaction} 이 프로브로 고정한다.
+   */
+  @Test
+  void stagingTableCleanupServiceIteratesTenants() {
+    assertUsesRunner(com.smartfirehub.dataimport.service.StagingTableCleanupService.class);
+    assertScheduled(
+        com.smartfirehub.dataimport.service.StagingTableCleanupService.class, "scheduledSweep");
+  }
+
   private void assertUsesRunner(Class<?> type) {
     boolean hasRunnerField =
         Arrays.stream(type.getDeclaredFields())

@@ -12,6 +12,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.dashboard.job.PipelineExecutionTtlJob;
+import com.smartfirehub.dataimport.service.StagingTableCleanupService;
 import com.smartfirehub.file.service.FileCleanupService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.job.service.AsyncJobCleanupService;
@@ -79,6 +80,7 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   @Autowired private PipelineExecutionTtlJob pipelineExecutionTtlJob;
   @Autowired private MetricPollerService metricPollerService;
   @Autowired private TriggerEventService triggerEventService;
+  @Autowired private StagingTableCleanupService stagingTableCleanupService;
 
   private final SqlProbe probe = new SqlProbe();
   private ExecuteListenerProvider[] originalListenerProviders;
@@ -93,6 +95,15 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   private final List<String> asyncJobIds = new ArrayList<>();
   private Long proactiveJobId;
 
+  /**
+   * 내가 만들 고아 staging 테이블 이름. 스윕 정규식({@code stg_import_} + 정확히 32자리 hex)을 만족해야
+   * 대상이 되므로 UUID 의 hex 32자를 쓴다. 매 테스트마다 새로 뽑아 <b>내가 만든 것만</b> 지운다 —
+   * 공유 테스트 DB 에는 다른 세션의 테이블이 있을 수 있다.
+   */
+  private String stagingTableA;
+
+  private String stagingTableB;
+
   @BeforeEach
   void setUp() {
     tenantA = TenantRlsTestSupport.createActiveTenant(dsl, "cleanup-a");
@@ -101,6 +112,8 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
     userB = TenantRlsTestSupport.insertUser(dsl, "cleanupb");
     pipelineA = inTenant(tenantA, () -> insertPipeline(userA));
     pipelineB = inTenant(tenantB, () -> insertPipeline(userB));
+    stagingTableA = "stg_import_" + UUID.randomUUID().toString().replace("-", "");
+    stagingTableB = "stg_import_" + UUID.randomUUID().toString().replace("-", "");
 
     // 프로브를 공유 DSLContext 설정에 임시로 끼운다. 이 프로젝트의 DSLContext 는
     // PipelineSandboxDataSourceConfig 가 DefaultConfiguration 으로 직접 만들므로
@@ -118,6 +131,11 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   void cleanup() {
     dsl.configuration().set(originalListenerProviders);
     probe.disarm();
+
+    // 이 클래스에는 롤백이 없으므로 내가 만든 물리 테이블은 무조건 지운다 — 단언이 도중에 깨져도
+    // 공유 테스트 DB 에 누수되지 않게 한다(스윕이 이미 지웠다면 IF EXISTS 가 무해하게 통과).
+    dropStagingTableIfExists(stagingTableA);
+    dropStagingTableIfExists(stagingTableB);
 
     // 내가 만든 픽스처만 지운다(공유 테스트 DB).
     inTenant(
@@ -341,6 +359,49 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
         "pipeline_trigger", "TriggerEventService.pollDatasetChangesForTenant");
   }
 
+  /**
+   * 고아 staging 스윕이 테넌트를 순회하는지 고정한다(P3-a Task 4 후속 F3).
+   *
+   * <p><b>왜 이 테스트가 필요했나</b>: {@code findStagingTables()} 가 {@code DataSchema.current()} 로
+   * 스키마명을 파생시키게 된 순간, 컨텍스트가 없는 {@code @Scheduled} 진입점은
+   * {@code MissingTenantScopeException} 을 던져 스윕이 영구히 무동작이 됐다. 그런데 그 무동작은
+   * "정리할 고아가 없었다" 와 구분되지 않아 <b>어떤 테스트도 실패하지 않았다</b>.
+   *
+   * <p><b>왜 {@code sweepActiveTenants()} 를 부르고 {@code sweepOrphanedStagingTables()} 를 부르지
+   * 않는가</b>: 후자는 전역 {@code jobrunr_jobs} 게이트를 먼저 본다. 공유 테스트 DB 에는 다른
+   * 세션이 남긴 활성(ENQUEUED) 행이 수백 개 쌓여 있어(실측) 게이트가 상시 닫혀 있고, 그러면 이
+   * 테스트는 아무것도 검증하지 못하고 조용히 통과한다. 게이트를 열려면 남의 행을 지워야 하는데
+   * 그것은 공유 DB 에서 해서는 안 되는 일이다. 그래서 순회(기계장치)만 떼어 검증한다 —
+   * 게이트(정책)는 {@code StagingTableCleanupServiceTest} 가 자기 트랜잭션 안에서 검증한다.
+   *
+   * <p><b>단언의 의미를 오해하지 말 것</b>: {@code DataSchema.current()} 는 아직 상수 {@code data} 를
+   * 돌려주므로 두 테넌트의 스윕은 <b>같은 물리 스키마</b>를 본다. 따라서 "테넌트별 격리" 는 오늘
+   * 참이 아니며 그것을 주장하는 단언은 거짓 위안이다. 여기서 고정하는 것은 <b>테넌트 스코프 안에서
+   * 회수가 실제로 일어나는가</b>(행위) 와 <b>ACTIVE 테넌트를 실제로 순회했는가</b>(프로브) 두 가지다.
+   * 첫 테넌트의 패스가 두 테이블을 모두 지우므로, 순회를 판별하는 것은 프로브 층이다.
+   */
+  @Test
+  @DisplayName("고아 staging 스윕: 테넌트 스코프 안에서 회수되고, ACTIVE 테넌트를 순회한다")
+  void stagingSweepIteratesTenantsInTransaction() {
+    createStagingTable(stagingTableA);
+    createStagingTable(stagingTableB);
+    assertThat(stagingTableExists(stagingTableA)).as("픽스처가 실제로 생성돼야 한다").isTrue();
+    assertThat(stagingTableExists(stagingTableB)).as("픽스처가 실제로 생성돼야 한다").isTrue();
+
+    probe.arm();
+    int dropped = stagingTableCleanupService.sweepActiveTenants();
+    probe.disarm();
+
+    // 행위 단언: 테넌트 컨텍스트가 없으면 DataSchema.current() 가 던져 0개가 된다.
+    assertThat(dropped).as("고아 두 개가 회수돼야 한다").isGreaterThanOrEqualTo(2);
+    assertThat(stagingTableExists(stagingTableA)).as("고아 A 가 회수돼야 한다").isFalse();
+    assertThat(stagingTableExists(stagingTableB)).as("고아 B 가 회수돼야 한다").isFalse();
+
+    // 배선 단언: 순회를 되돌리면 관측 테넌트가 하나로 줄어 여기서 깨진다.
+    assertTouchedInTransactionForBothTenants(
+        "information_schema.tables", "StagingTableCleanupService.sweepCurrentTenant");
+  }
+
   // ── 배선 단언 ─────────────────────────────────────────────────────────
 
   /**
@@ -438,6 +499,32 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
         .returning(PIPELINE.ID)
         .fetchOne()
         .getId();
+  }
+
+  /**
+   * 고아 staging 테이블을 물리적으로 만든다(임포트 도중 프로세스가 죽은 상황의 재현).
+   *
+   * <p>테스트 소스는 규약 가드의 대상이 아니므로 물리 스키마명을 직접 쓴다 — 스윕이 실제로 그
+   * 스키마를 보는지 검사하는 것이 목적이라 {@code DataSchema} 를 거치면 검사가 순환한다.
+   */
+  private void createStagingTable(String name) {
+    dsl.execute("CREATE TABLE data.\"" + name + "\" (_seq BIGSERIAL, a TEXT)");
+  }
+
+  private void dropStagingTableIfExists(String name) {
+    if (name != null) {
+      dsl.execute("DROP TABLE IF EXISTS data.\"" + name + "\"");
+    }
+  }
+
+  private boolean stagingTableExists(String name) {
+    Long count =
+        dsl.fetchOne(
+                "SELECT count(*) FROM information_schema.tables "
+                    + "WHERE table_schema = 'data' AND table_name = ?",
+                name)
+            .get(0, Long.class);
+    return count != null && count > 0;
   }
 
   /** RLS(V88) 대상 dataset 행. SYSTEM 메트릭 dataset_total_count 가 세는 대상이다. */

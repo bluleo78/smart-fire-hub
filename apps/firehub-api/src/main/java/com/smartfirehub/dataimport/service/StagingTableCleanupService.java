@@ -2,12 +2,15 @@ package com.smartfirehub.dataimport.service;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.tenant.TenantScopedRunner;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 대용량 임포트 스트리밍 중 생성되는 staging 테이블({@code data.stg_import_<uuid>})의 고아(orphan) 정리 서비스.
@@ -37,6 +40,10 @@ public class StagingTableCleanupService {
 
   private final DSLContext dsl;
   private final DataTableRowService dataTableRowService;
+  // @Scheduled 경로에는 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해야 스키마명을 파생할 수 있다.
+  private final TenantScopedRunner tenantScopedRunner;
+  // 테넌트별 카탈로그 조회 구간의 트랜잭션 경계(아래 findStagingTables 주석 참고).
+  private final TransactionTemplate transactionTemplate;
 
   /** JobRunr 작업이 "활성"으로 간주되는 상태 집합(대기/예약/실행 중). 이 중 하나라도 있으면 정리를 건너뛴다. */
   private static final String ACTIVE_JOB_STATES = "('SCHEDULED', 'ENQUEUED', 'PROCESSING')";
@@ -44,6 +51,10 @@ public class StagingTableCleanupService {
   /**
    * 30분마다 고아 staging 테이블을 정리한다. 부팅 직후 초기화 잡음을 피하려 5분 지연 후 첫 실행한다. 스케줄 예외가 다음 주기를
    * 막지 않도록 sweep 실패는 로깅 후 삼킨다(고아 정리는 긴급하지 않으므로 다음 주기에 재시도된다).
+   *
+   * <p><b>원 HTTP 요청이 없는 경로라 승계할 테넌트가 없다</b> — 스키마명을 테넌트에서 파생시키게 된
+   * 뒤로는 순회가 필수다. 순회하지 않으면 {@code MissingTenantScopeException} 이 아래 catch 에 걸려
+   * 경고만 남고 고아 회수가 <b>영구히</b> 무동작이 된다(예외도 실패 테스트도 없는 누수).
    */
   @Scheduled(fixedRate = 1_800_000, initialDelay = 300_000)
   public void scheduledSweep() {
@@ -55,10 +66,18 @@ public class StagingTableCleanupService {
   }
 
   /**
-   * 활성 JobRunr 작업이 하나도 없을 때에 한해 현존하는 모든 {@code data.stg_import_<uuid>} 테이블을 DROP한다.
-   * 스케줄러와 분리된 순수 메서드로, 단위 테스트가 직접 호출해 게이트 동작을 검증할 수 있다.
+   * 정리 사이클 1회 = <b>게이트 판단 1회 + ACTIVE 테넌트 순회</b>. 스케줄러와 분리된 메서드로, 테스트가
+   * 직접 호출해 게이트 동작을 검증할 수 있다.
    *
-   * @return DROP한 테이블 개수(활성 작업이 있어 건너뛴 경우 0)
+   * <p><b>게이트는 순회 밖이다 — 의도된 선택이다.</b> 두 가지 이유가 있다. (1) {@code jobrunr_jobs}는
+   * JobRunr 소유의 전역 테이블로 {@code tenant_id} 도 RLS 정책도 없다 — 테넌트마다 물어봐도 같은 답이
+   * 나오므로 N번 묻는 것은 순전한 낭비다. (2) 더 중요한 이유: 루프 안에서 매번 판단하면 루프 도중에
+   * 임포트가 시작됐을 때 앞쪽 테넌트는 건너뛰고 뒤쪽 테넌트는 스윕하는 <b>일관성 없는 부분 스윕</b>이
+   * 된다. 오늘 {@code DataSchema.current()} 는 모든 테넌트에 대해 같은 물리 스키마를 돌려주므로, 그
+   * 뒤쪽 패스가 방금 시작된 임포트의 살아있는 staging 테이블을 DROP 할 수 있다 — 클래스 주석의
+   * "거짓 음성은 치명적" 비대칭이 바로 이 경우다. 사이클당 한 번의 결정이 유일하게 안전하다.
+   *
+   * @return DROP한 테이블 총 개수(활성 작업이 있어 건너뛴 경우 0)
    */
   public int sweepOrphanedStagingTables() {
     if (hasActiveJobs()) {
@@ -66,7 +85,29 @@ public class StagingTableCleanupService {
       log.debug("활성 JobRunr 작업 존재 — 고아 staging 정리 건너뜀");
       return 0;
     }
+    return sweepActiveTenants();
+  }
 
+  /**
+   * ACTIVE 테넌트를 순회해 테넌트별 스윕을 실행한다. <b>게이트 판단은 호출자의 몫</b>이다 — 정책(이번
+   * 주기에 스윕해도 되는가)과 기계장치(모든 테넌트를 도는가)를 분리해 두면, 전역 JobRunr 상태에
+   * 의존하지 않고 순회 자체를 테스트로 고정할 수 있다({@code CleanupSchedulerTenantTest}).
+   *
+   * @return DROP한 테이블 총 개수
+   */
+  public int sweepActiveTenants() {
+    AtomicInteger total = new AtomicInteger();
+    tenantScopedRunner.forEachActiveTenant(tenantId -> total.addAndGet(sweepCurrentTenant()));
+    return total.get();
+  }
+
+  /**
+   * 한 테넌트 범위의 스윕 본문. 호출 시점에 {@code TenantContext} 가 설정돼 있어야 한다 —
+   * {@link #findStagingTables()} 가 스키마명을 테넌트에서 파생시키기 때문이다.
+   *
+   * @return 이 테넌트에서 DROP한 테이블 개수
+   */
+  private int sweepCurrentTenant() {
     List<String> orphans = findStagingTables();
     if (orphans.isEmpty()) {
       return 0;
@@ -74,6 +115,10 @@ public class StagingTableCleanupService {
 
     // 활성 작업이 전혀 없으므로 현존하는 staging 테이블은 모두 고아로 확정 → 회수. dropStagingTable은 내부에서
     // validateName + DROP TABLE IF EXISTS를 수행하므로 개별 실패에도 안전하다.
+    //
+    // 이 루프는 트랜잭션으로 감싸지 않는다 — 감싸면 DROP 들이 한 트랜잭션에 묶여 하나가 실패할 때
+    // 나머지가 함께 롤백되고, 바로 위에서 말한 "개별 실패에도 안전하다"는 성질이 사라진다.
+    // DROP 은 RLS 대상이 아니라 GUC 도 필요 없다.
     for (String table : orphans) {
       dataTableRowService.dropStagingTable(table);
     }
@@ -98,15 +143,17 @@ public class StagingTableCleanupService {
     // 조회가 **예외도 로그도 없이 0행**을 돌려주고, 고아 staging 테이블이 영구히 누적된다 —
     // "정리할 것이 없다"와 구분되지 않으므로 어떤 테스트도 실패하지 않는다.
     //
-    // 테넌트 순회는 여기서 하지 않는다(P3-b 의 몫) — 지금은 리터럴만 파생으로 바꾼다. 그 결과
-    // 컨텍스트가 없는 @Scheduled 진입점에서는 MissingTenantScopeException 이 나고 scheduledSweep 의
-    // catch 가 이를 경고로 남긴다. 이는 Task 3 에서 dropStagingTable 이 이미 만든 상태와 같으며
-    // (거기서도 DataSchema.qualify 로 던진다), 던지는 지점이 DROP 루프보다 **앞으로** 당겨질 뿐이라
-    // 안전한 방향이다.
-    return dsl.fetch(
-            "SELECT table_name FROM information_schema.tables "
-                + "WHERE table_schema = ? AND table_name ~ '^stg_import_[0-9a-f]{32}$'",
-            DataSchema.current())
-        .getValues("table_name", String.class);
+    // 조회를 트랜잭션으로 감싸는 이유: TenantScopedRunner 는 ThreadLocal 만 세우고 GUC 는
+    // TenantAwareTransactionManager.doBegin 에서만 주입된다. information_schema 는 오늘 RLS
+    // 대상이 아니라 GUC 가 없어도 동작하지만, 스키마명을 테넌트에서 파생시키는 조회를 트랜잭션
+    // 경계 안에 두어야 형제 스케줄러(TriggerEventService.getRowCountEstimates)와 규약이 같아지고,
+    // 배선 회귀를 CleanupSchedulerTenantTest 의 프로브가 판별할 수 있다.
+    return transactionTemplate.execute(
+        status ->
+            dsl.fetch(
+                    "SELECT table_name FROM information_schema.tables "
+                        + "WHERE table_schema = ? AND table_name ~ '^stg_import_[0-9a-f]{32}$'",
+                    DataSchema.current())
+                .getValues("table_name", String.class));
   }
 }
