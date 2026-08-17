@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -12,6 +15,24 @@ import org.junit.jupiter.params.provider.ValueSource;
 class SqlValidatorTest {
 
   private final SqlValidator validator = new SqlValidator();
+
+  /**
+   * 무인자 생성자(= 프로덕션 파이프라인 정책) 검증기는 허용 스키마를 {@code DataSchema.current()} 로
+   * 해석하므로 <b>테넌트 컨텍스트를 요구</b>한다(P3-b1 R7). 이 클래스는 스프링 컨텍스트를 띄우지 않는
+   * 순수 단위 테스트라 {@code IntegrationTestBase} 의 테넌트 설정을 받지 못하므로 직접 세운다.
+   *
+   * <p>단언을 약화시키는 장치가 아니다 — 프로덕션에서 이 검증기가 호출되는 지점은 언제나 테넌트
+   * 스코프 안이며(요청 필터 또는 배경 잡의 테넌트 순회), 여기서 흉내 내는 것은 그 전제뿐이다.
+   */
+  @BeforeEach
+  void setTenantContext() {
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
 
   // --- 허용되는 구문 ---
 

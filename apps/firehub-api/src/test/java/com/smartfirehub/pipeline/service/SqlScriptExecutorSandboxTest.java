@@ -4,9 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
+import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.tenant.MissingTenantScopeException;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -76,8 +82,97 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
   @Test
   void pipelineDslContext_usesCorrectUser() {
-    // pipeline_executor가 연결한 사용자인지 확인
+    // pipeline_executor가 연결한 사용자인지 확인. 이 빈은 R5 에 따라 그대로 남아 있다(dev·prod 의
+    // 현행 경로) — SqlScriptExecutor 가 더 이상 이 빈을 쓰지 않는다는 사실은 아래 테넌트 롤 테스트가
+    // 고정한다.
     String currentUser = pipelineDsl.fetch("SELECT current_user").get(0).get(0, String.class);
     assertThat(currentUser).isEqualTo("pipeline_executor");
+  }
+
+  // ── P3-b1 Task 3: 테넌트별 롤·명시적 search_path 배선 ─────────────────────────
+
+  /**
+   * 관측용 가드 테이블. <b>컬럼 DEFAULT 로</b> 실행 세션의 {@code current_user} 와 {@code search_path}
+   * 를 기록한다 — 이게 이 테스트의 핵심 장치다.
+   *
+   * <p>왜 DEFAULT 인가: 프로덕션 경로({@link SqlScriptExecutor#execute})가 실행하는 SQL 은 {@code
+   * SqlValidator} 를 먼저 통과해야 하고, 그 검증기는 {@code current_setting} 같은 GUC 조회 함수를
+   * 차단한다(#385). 반면 컬럼 DEFAULT 는 <b>서버가 INSERT 시점에</b> 평가하므로 사용자 SQL 에 그
+   * 함수를 적을 필요가 없다 — 검증기 정책을 건드리지 않고 실행 세션의 신원·스키마를 관측할 수 있다.
+   */
+  private static final String GUARD_TABLE = "data.p3b_sql_exec_guard";
+
+  @Autowired private TenantPipelineDataSourceRegistry tenantPipelineDataSources;
+
+  /** 메인 애플리케이션 커넥션({@code app_tenant}) — 가드 테이블 DDL·검증 조회용. */
+  @Autowired private DSLContext dsl;
+
+  /**
+   * 가드 테이블을 만들고 테넌트 1 파이프라인 롤에만 명시적으로 권한을 준다.
+   *
+   * <p>DDL 은 트랜잭션 밖(autocommit)에서 실행돼야 다른 커넥션(테넌트 풀)에서 보인다. 이 클래스는
+   * 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로 그대로 커밋된다 — 공유 test DB 이므로
+   * <b>이 테스트가 만든 것만</b> 이름 접두어로 구분해 지운다.
+   */
+  @BeforeEach
+  void createGuardTable() {
+    dropGuardTable();
+    dsl.execute(
+        "CREATE TABLE "
+            + GUARD_TABLE
+            + " (n INT, who TEXT DEFAULT current_user,"
+            + " sp TEXT DEFAULT current_setting('search_path'))");
+    // 기본 권한(ALTER DEFAULT PRIVILEGES)에 의존하지 않고 명시적으로 준다 — 어떤 롤이 무엇을 갖는지
+    // 테스트를 읽는 사람이 바로 알 수 있어야 한다.
+    dsl.execute("GRANT INSERT, SELECT ON " + GUARD_TABLE + " TO pipeline_executor_t1");
+  }
+
+  @AfterEach
+  void dropGuardTable() {
+    dsl.execute("DROP TABLE IF EXISTS " + GUARD_TABLE);
+  }
+
+  @Test
+  void execute_runsAsTenantPipelineRole_andSetsDataSearchPath() {
+    // 프로덕션 경로로 INSERT 를 실행한다. 검증기(strict)를 통과하는 최소 DML 이다.
+    sqlScriptExecutor.execute("INSERT INTO " + GUARD_TABLE + " (n) VALUES (1)");
+
+    var row = dsl.fetch("SELECT who, sp FROM " + GUARD_TABLE).get(0);
+
+    // (1) 접속 신원이 공용 pipeline_executor 가 아니라 테넌트 1 전용 롤이다 — dslFor(tenantId) 배선
+    //     을 단일 pipelineDsl 로 되돌리면 이 단언이 깨진다(변이 테스트 대상).
+    assertThat(row.get("who", String.class)).isEqualTo("pipeline_executor_t1");
+    // (2) 실행 세션의 search_path 가 DataSchema.current() 와 일치한다.
+    //     ⚠ 오늘은 롤 레벨 기본값도 같은 값이라 이 단언만으로 "명시 SET 이 실행됐다"를 증명하지는
+    //     못한다(물리 스키마가 data 하나뿐 — P3-b1 R8/R5). 명시 실행 여부는 아래
+    //     tenantPool_setLocalSearchPath_isSessionSourced 가 pg_settings.source 로 구분한다.
+    assertThat(row.get("sp", String.class)).isEqualTo(DataSchema.current());
+  }
+
+  @Test
+  void tenantPool_setLocalSearchPath_isSessionSourced() {
+    // 명시적 SET LOCAL 이 "롤 기본값과 우연히 같은 값" 이 아니라 실제로 세션에 적용된 설정임을
+    // pg_settings.source 로 구분한다. 롤 레벨 ALTER ROLE ... IN DATABASE 설정은 source='database',
+    // 세션에서 SET 한 값은 source='session' 이다.
+    tenantPipelineDataSources
+        .dslFor(DEFAULT_TEST_TENANT_ID)
+        .transaction(
+            cfg -> {
+              cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
+              var row =
+                  cfg.dsl()
+                      .fetch("SELECT setting, source FROM pg_settings WHERE name = 'search_path'")
+                      .get(0);
+              assertThat(row.get("setting", String.class)).isEqualTo(DataSchema.current());
+              assertThat(row.get("source", String.class)).isEqualTo("session");
+            });
+  }
+
+  @Test
+  void execute_withoutTenantContext_failsClosed() {
+    // 테넌트가 없으면 조용히 기본 스키마·공용 롤로 떨어지지 않고 즉시 거부한다.
+    TenantContext.clear();
+    assertThatThrownBy(() -> sqlScriptExecutor.execute("SELECT 1"))
+        .isInstanceOf(MissingTenantScopeException.class);
   }
 }

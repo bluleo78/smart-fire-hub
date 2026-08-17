@@ -132,9 +132,10 @@ class DataSchemaResolutionTest {
   /**
    * {@link #FORBIDDEN_BARE_LITERALS} 규칙의 핀 목록.
    *
-   * <p>{@code SqlValidator} 두 곳은 <b>다음 밴드로 의도적으로 이연</b>했다 — 검증기는 생성 시점에
-   * 허용 스키마명을 인자로 받는 구조라 {@link DataSchema} 로 옮기려면 시그니처와 호출부까지 함께
-   * 손대야 하고, 그 표면은 이 밴드의 범위가 아니다.
+   * <p>{@code SqlValidator} 두 곳(무인자 생성자·정적 팩토리)은 <b>P3-b1 Task 3 에서 전환 완료</b>되어
+   * 핀이 사라졌다 — 검증기는 이제 허용 스키마를 {@code Supplier<String>}({@code DataSchema::current})
+   * 로 들고 검증 시점에 해석한다(싱글턴 생성 시점에는 테넌트 컨텍스트가 없어 값으로 받을 수 없다).
+   * 리터럴 2-인자 생성자는 <b>단위 테스트 전용</b>으로 남아 있으므로 프로덕션 소스에는 리터럴이 없다.
    *
    * <p>{@link DataSchema} 는 조립 지점 그 자체이므로 파일이 아니라 <b>그 한 줄</b>을 핀으로 둔다.
    * 파일 통째로 면제하면 조립 지점 안에서 늘어나는 리터럴이 보이지 않게 된다.
@@ -151,16 +152,6 @@ class DataSchemaResolutionTest {
               "PHYSICAL_SCHEMA = \"data\"",
               1,
               "물리 스키마명의 유일한 선언 지점 — P3-b 가 바꿀 그 한 줄"),
-          new PinnedSite(
-              "com/smartfirehub/pipeline/service/validator/SqlValidator.java",
-              "this(\"data\", false)",
-              1,
-              "검증기 기본 생성자 — 허용 스키마명 파라미터화는 다음 밴드로 이연"),
-          new PinnedSite(
-              "com/smartfirehub/pipeline/service/validator/SqlValidator.java",
-              "new SqlValidator(\"data\", true)",
-              1,
-              "검증기 정적 팩토리 — 위와 같은 이유로 이연"),
           new PinnedSite(
               "com/smartfirehub/embedding/OpenAiEmbeddingProvider.java",
               "resp.get(\"data\")",
@@ -197,7 +188,12 @@ class DataSchemaResolutionTest {
               "com/smartfirehub/analytics/service/AnalyticsQueryExecutionService.java",
               "\"SET LOCAL search_path = '\" + DataSchema.current() + \"', 'public'\"",
               1,
-              "search_path 식별자 목록 — 한정 이름이 아니라 qualify() 가 부적절한 자리"));
+              "search_path 식별자 목록 — 한정 이름이 아니라 qualify() 가 부적절한 자리"),
+          new PinnedSite(
+              "com/smartfirehub/pipeline/service/SqlScriptExecutor.java",
+              "\"SET LOCAL search_path = '\" + DataSchema.current() + \"'\"",
+              1,
+              "파이프라인 SQL 실행 직전 search_path — 위와 같은 이유(식별자 목록)로 조립이 맞다"));
 
   /** 순수 단위 테스트라도 ThreadLocal 은 포크를 공유한다 — 뒤따르는 테스트로 새지 않게 지운다. */
   @AfterEach

@@ -1,7 +1,9 @@
 package com.smartfirehub.pipeline.service.executor;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +27,26 @@ public class ExecutorClient {
   }
 
   /**
+   * 요청 본문에 현재 테넌트 id 를 실어 준다.
+   *
+   * <p><b>왜 필요한가.</b> executor 는 별도 프로세스(Python)라 API 의 {@link TenantContext}
+   * ThreadLocal 을 볼 수 없다. 그런데 executor 는 사용자 SQL·Python 을 <b>DB 에 직접</b> 실행하므로,
+   * 어느 테넌트의 자격증명·스키마로 접속해야 하는지 알아야 한다. 그 유일한 전달 경로가 요청 본문이다
+   * (필드명은 {@code tenantId} camelCase — executor 쪽이 이 이름을 소비한다).
+   *
+   * <p>테넌트가 없으면 <b>fail-closed</b> 로 즉시 예외를 던진다. 조용히 기본 테넌트로 떨어지면
+   * 배경 잡·트리거 경로가 남의 데이터에 쓰게 된다.
+   *
+   * <p>호출부가 넘긴 맵을 그대로 수정하지 않고 복사한다 — {@code Map.of(...)} 같은 불변 맵이 들어오고,
+   * 호출부의 맵을 몰래 바꾸면 재시도 로직에서 추적하기 어려운 부작용이 된다.
+   */
+  private Map<String, Object> withTenant(Map<String, Object> request) {
+    Map<String, Object> body = new LinkedHashMap<>(request);
+    body.put("tenantId", TenantContext.require("executor 실행 요청"));
+    return body;
+  }
+
+  /**
    * Python 실행 요청. POST /execute/python Timeout: 1890s (30분 nsjail + 60s subprocess + 30s HTTP
    * buffer)
    */
@@ -32,7 +54,7 @@ public class ExecutorClient {
     return webClient
         .post()
         .uri("/execute/python")
-        .bodyValue(request)
+        .bodyValue(withTenant(request))
         .retrieve()
         .bodyToMono(PythonExecuteResult.class)
         .timeout(Duration.ofSeconds(1890))
@@ -44,7 +66,7 @@ public class ExecutorClient {
     return webClient
         .post()
         .uri("/execute/query")
-        .bodyValue(Map.of("query", query, "max_rows", maxRows, "read_only", readOnly))
+        .bodyValue(withTenant(Map.of("query", query, "max_rows", maxRows, "read_only", readOnly)))
         .retrieve()
         .bodyToMono(QueryExecuteResult.class)
         .timeout(Duration.ofSeconds(35))
@@ -56,7 +78,7 @@ public class ExecutorClient {
     return webClient
         .post()
         .uri("/execute/sql")
-        .bodyValue(Map.of("query", query))
+        .bodyValue(withTenant(Map.of("query", query)))
         .retrieve()
         .bodyToMono(SqlExecuteResult.class)
         .timeout(Duration.ofSeconds(60))
@@ -68,7 +90,7 @@ public class ExecutorClient {
     return webClient
         .post()
         .uri("/execute/api-call")
-        .bodyValue(request)
+        .bodyValue(withTenant(request))
         .retrieve()
         .bodyToMono(ApiCallExecuteResult.class)
         .timeout(Duration.ofSeconds(3660))

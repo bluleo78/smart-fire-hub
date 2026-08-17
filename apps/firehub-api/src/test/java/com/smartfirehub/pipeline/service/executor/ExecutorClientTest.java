@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.global.tenant.MissingTenantScopeException;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +34,21 @@ class ExecutorClientTest {
   @BeforeEach
   void resetWireMock() {
     wireMock.resetAll();
+  }
+
+  /**
+   * executor 요청은 본문에 현재 테넌트 id 를 싣는다(P3-b1 Task 3) — 이 클래스는 스프링 컨텍스트를
+   * 띄우지 않는 순수 단위 테스트라 {@code IntegrationTestBase} 의 테넌트 설정을 받지 못하므로 직접
+   * 세운다. 프로덕션 호출부(요청 필터·배경 잡의 테넌트 순회)는 언제나 이 전제 안에서 호출한다.
+   */
+  @BeforeEach
+  void setTenantContext() {
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
   }
 
   private ExecutorClient executorClient() {
@@ -412,5 +430,52 @@ class ExecutorClientTest {
                             "output_table", "test_table",
                             "field_mappings", List.of())))
         .isInstanceOf(Exception.class);
+  }
+
+  // -------------------------------------------------------------------------
+  // 테넌트 전달 (P3-b1 Task 3)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 네 엔드포인트 전부가 본문에 {@code tenantId}(camelCase) 를 싣는지 고정한다. executor 는 별도
+   * 프로세스라 ThreadLocal 을 볼 수 없고, 이 필드가 그쪽에서 테넌트별 자격증명·스키마를 고르는 유일한
+   * 근거다. 필드명이 바뀌면 executor 쪽이 조용히 기본값으로 떨어지므로 이름까지 단언한다.
+   */
+  @Test
+  void allEndpoints_sendTenantIdInBody() {
+    stubOkFor("/execute/sql", "{\"success\": true}");
+    stubOkFor("/execute/query", "{\"success\": true}");
+    stubOkFor("/execute/python", "{\"success\": true}");
+    stubOkFor("/execute/api-call", "{\"success\": true}");
+
+    executorClient().executeSql("SELECT 1");
+    executorClient().executeQuery("SELECT 1", 10, true);
+    executorClient().executePython(Map.of("script", "pass"));
+    executorClient().executeApiCall(Map.of("url", "https://example.com"));
+
+    for (String path : List.of("/execute/sql", "/execute/query", "/execute/python", "/execute/api-call")) {
+      wireMock.verify(
+          postRequestedFor(urlEqualTo(path)).withRequestBody(matchingJsonPath("$.tenantId", equalTo("1"))));
+    }
+  }
+
+  /** 테넌트가 없으면 요청을 보내지 않고 즉시 실패한다 — 조용히 남의 테넌트로 실행되지 않게. */
+  @Test
+  void executeSql_withoutTenantContext_failsClosed() {
+    TenantContext.clear();
+
+    assertThatThrownBy(() -> executorClient().executeSql("SELECT 1"))
+        .isInstanceOf(MissingTenantScopeException.class);
+    wireMock.verify(0, postRequestedFor(urlEqualTo("/execute/sql")));
+  }
+
+  private void stubOkFor(String path, String body) {
+    wireMock.stubFor(
+        post(urlEqualTo(path))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(body)));
   }
 }

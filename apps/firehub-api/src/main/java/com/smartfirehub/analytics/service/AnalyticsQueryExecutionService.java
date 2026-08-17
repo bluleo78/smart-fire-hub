@@ -127,6 +127,17 @@ public class AnalyticsQueryExecutionService {
     }
   }
 
+  /**
+   * 사용자 SQL 을 API 자신의 커넥션으로 직접 실행하는 경로(executor 를 쓰지 않는 폴백·local 경로).
+   *
+   * <p><b>⚠ 테넌트별 파이프라인 롤 격리는 이 경로에 적용되지 않는다(P3-b1 Task 3 Step 4b).</b>
+   * 파이프라인 SQL 스텝은 P3-b1 부터 테넌트별 DB 롤({@code pipeline_executor_t{tenantId}}) 자격증명으로
+   * 접속하므로, 잘못된 문장이 검증기를 빠져나가도 DB 권한이 두 번째 벽으로 남는다. 그러나 이 메서드는
+   * 메인 애플리케이션 {@code DSLContext}(= {@code app_tenant} 롤) 로 실행한다 — 그 롤은 데이터셋 생성
+   * 시 {@code data} 스키마에 런타임 DDL 을 하는 주체라 권한을 좁힐 수 없고, 좁히면 데이터셋 생성이
+   * 깨진다. <b>따라서 이 경로의 통제는 RLS + {@link SqlValidator} 두 가지뿐이며, grant 계층의 이중
+   * 방어가 없다.</b> 이 경로를 grant 계층으로 덮는 것은 별도 과제다(#383/#384).
+   */
   private AnalyticsQueryResponse executeDirectly(
       String cleanSql, String queryType, int maxRows, boolean readOnly) {
     // 미한정 이름의 public 그림자 차단 — search_path='data','public' 이므로 AST 검증기

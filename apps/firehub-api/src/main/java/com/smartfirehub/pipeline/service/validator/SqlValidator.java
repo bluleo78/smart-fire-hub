@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service.validator;
 
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jsqlparser.JSQLParserException;
@@ -95,8 +97,20 @@ import org.springframework.stereotype.Component;
 @Component
 public class SqlValidator {
 
-  /** 허용 스키마. 호출 문맥마다 다를 수 있어 인스턴스 필드로 둔다(스레드 안전 — 생성 후 불변). */
-  private final String allowedSchema;
+  /**
+   * 허용 스키마를 <b>검증 시점에</b> 해석하는 공급자. 호출 문맥마다 다를 수 있어 인스턴스 필드로
+   * 둔다(스레드 안전 — 참조는 생성 후 불변이고, 공급자 구현은 부수효과 없이 값만 돌려준다).
+   *
+   * <p><b>왜 {@code String} 이 아니라 {@code Supplier<String>} 인가(P3-b1 R7).</b> 이 클래스는
+   * {@code @Component} <b>싱글턴</b>이고, 테넌트별 스키마명을 주는 {@link DataSchema#current()} 는
+   * 테넌트 컨텍스트를 <b>요구</b>한다(없으면 {@code MissingTenantScopeException}). 생성 시점에
+   * 스키마명을 확정하면 스프링이 빈을 만드는 그 순간(요청 밖 = 테넌트 없음)에 기동이 깨진다.
+   * {@code DataTableQueryService}/{@code AnalyticsQueryExecutionService} 가 {@link
+   * #forAdhocDataSchemaQueries()} 를 <b>필드 초기화</b>로 부르는 것도 같은 이유로 생성 시점이다.
+   * 그래서 값이 아니라 "값을 얻는 방법"을 들고, 실제 해석은 {@link #validate(String)} 가 호출되는
+   * 시점(= 항상 테넌트 스코프 안)으로 미룬다.
+   */
+  private final Supplier<String> allowedSchemaSupplier;
 
   /**
    * 스키마 없는(미한정) 테이블 참조를 허용할지 여부.
@@ -114,39 +128,68 @@ public class SqlValidator {
    */
   private final boolean allowUnqualifiedTables;
 
-  /** 파이프라인 SQL 스텝 등 기존 호출부를 위한 기본 생성자. 기존 정책({@code allowedSchema="data"}, 미한정 거부)을 그대로 유지한다. */
+  /**
+   * 파이프라인 SQL 스텝 등 기존 호출부를 위한 기본 생성자(= 스프링 빈). 정책은 그대로 유지한다 —
+   * 허용 스키마는 <b>현재 테넌트의 데이터 스키마</b>, 미한정 테이블 참조는 거부.
+   *
+   * <p>스키마명을 리터럴로 적지 않고 {@link DataSchema#current()} 에서 파생시킨다(P3-b1 R7). 리터럴을
+   * 남기면 P3-b2 가 스키마를 테넌트별로 개명하는 순간 이 검증기만 남의 스키마 이름을 허용하게 된다.
+   */
   public SqlValidator() {
-    this("data", false);
+    this(DataSchema::current, false);
   }
 
   /**
    * 허용 스키마와 미한정 테이블 허용 여부를 호출 문맥에서 주입받는 생성자.
    *
+   * <p>스키마명을 <b>고정 문자열</b>로 받는 형태를 유지한다 — 단위 테스트가 리터럴 정책({@code
+   * new SqlValidator("data", true)} 등)을 직접 세워 규칙 자체를 검증하는 용도다. 프로덕션 호출부는
+   * 이 생성자를 쓰지 않고 무인자 생성자나 {@link #forAdhocDataSchemaQueries()} 를 쓴다(둘 다 테넌트에서
+   * 파생한다).
+   *
    * @param allowedSchema 참조를 허용할 유일한 스키마명
    * @param allowUnqualifiedTables 스키마 없는 테이블 참조 허용 여부 — 안전 전제는 {@link #allowUnqualifiedTables} 참조
    */
   public SqlValidator(String allowedSchema, boolean allowUnqualifiedTables) {
-    this.allowedSchema = allowedSchema;
+    this(() -> allowedSchema, allowUnqualifiedTables);
+  }
+
+  /**
+   * 허용 스키마를 <b>검증 시점에</b> 해석하는 공급자를 주입받는 생성자 — 근거는 {@link
+   * #allowedSchemaSupplier} 참조.
+   */
+  private SqlValidator(Supplier<String> allowedSchemaSupplier, boolean allowUnqualifiedTables) {
+    this.allowedSchemaSupplier = allowedSchemaSupplier;
     this.allowUnqualifiedTables = allowUnqualifiedTables;
+  }
+
+  /**
+   * 이 검증 호출에서 허용할 스키마명. 호출마다 공급자에 다시 묻는다 — 싱글턴 검증기 하나가 여러
+   * 테넌트의 요청을 처리하므로, 한 번 해석해 캐시하면 첫 요청의 테넌트 스키마가 이후 모든 테넌트에
+   * 적용되는 크로스 테넌트 결함이 된다.
+   */
+  private String allowedSchema() {
+    return allowedSchemaSupplier.get();
   }
 
   /**
    * 데이터셋 애드혹 쿼리·애널리틱스 직접 실행 경로 전용 인스턴스를 만든다. (#385 코드리뷰 R1)
    *
    * <p>두 호출부({@code DataTableQueryService}, {@code AnalyticsQueryExecutionService})가 각자
-   * {@code new SqlValidator("data", true)}를 필드로 만들면서 "스프링 빈은 파이프라인 정책(무인자 =
-   * {@code allowedSchema="data"}, 미한정 거부)이라 재사용할 수 없다"는 거의 같은 근거 주석을 따로 적어
-   * 뒀다(이 저장소의 복붙 재발 패턴) — 근거를 이 팩터리 한 곳에만 남기고 호출부는 이 메서드만 부르게
-   * 한다. {@code data} 스키마만 허용하고 미한정(스키마 없음) 테이블·시퀀스 참조도 허용하는 정책이다.
-   * 검증기는 불변(생성자만 정책을 갖고 이후 상태가 없음)이라 각 호출부가 필드로 캐시해 재사용해도
-   * 스레드 안전하다.
+   * 리터럴 정책의 검증기를 필드로 만들면서 "스프링 빈은 파이프라인 정책(무인자 = 미한정 거부)이라
+   * 재사용할 수 없다"는 거의 같은 근거 주석을 따로 적어 뒀다(이 저장소의 복붙 재발 패턴) — 근거를
+   * 이 팩터리 한 곳에만 남기고 호출부는 이 메서드만 부르게 한다. <b>현재 테넌트의 데이터 스키마</b>만
+   * 허용하고 미한정(스키마 없음) 테이블·시퀀스 참조도 허용하는 정책이다. 검증기는 불변(생성자만
+   * 정책을 갖고 이후 상태가 없음)이라 각 호출부가 필드로 캐시해 재사용해도 스레드 안전하다 —
+   * 허용 스키마를 값이 아니라 공급자로 들기 때문에 <b>필드 초기화 시점에 테넌트가 없어도</b> 안전하다
+   * ({@link #allowedSchemaSupplier} 참조).
    *
    * <p>파이프라인 SQL 스텝은 이 팩터리를 쓰지 않는다 — 스프링이 관리하는 무인자 빈({@code
-   * allowedSchema="data"}, {@code allowUnqualifiedTables=false})이 그 경로의 정책이고, 애드혹/애널리틱스와
-   * 정책이 다르므로(미한정 허용 여부) 공유 빈을 쓰면 안 된다.
+   * allowUnqualifiedTables=false})이 그 경로의 정책이고, 애드혹/애널리틱스와 정책이 다르므로(미한정
+   * 허용 여부) 공유 빈을 쓰면 안 된다.
    */
   public static SqlValidator forAdhocDataSchemaQueries() {
-    return new SqlValidator("data", true);
+    return new SqlValidator(DataSchema::current, true);
   }
 
   /**
@@ -500,6 +543,9 @@ public class SqlValidator {
    * — 그래서 이 검사가 필요한 문맥은 permissive 모드지만, 검사 자체는 두 모드 모두에서 실행된다.
    */
   private void requireDataSchemaOnly(List<String> tableFqns) {
+    // 이 검증 호출 한 번 동안 쓸 스키마명을 한 번만 해석한다 — 참조가 여러 개인 쿼리에서 테이블마다
+    // 다른 값이 나오면(공급자가 문맥에 따라 달라지는 경우) 일부만 통과하는 일관성 결함이 된다.
+    String allowedSchema = allowedSchema();
     for (String fqn : tableFqns) {
       // m5(#385 코드리뷰) — 점이 2개 이상인 FQN(예: data.public.role, catalog.schema.table 형태)은
       // 거부한다. indexOf('.')로 앞부분만 잘라 스키마로 검사하면 "data.public.role"이 스키마
@@ -776,6 +822,7 @@ public class SqlValidator {
    * #SEQUENCE_FUNCTIONS} 문서의 "미한정 시퀀스는 항상 거부한다" 근거 참고).
    */
   private void requireSafeSequenceArgument(Function function, String fnName) {
+    String allowedSchema = allowedSchema();
     var params = function.getParameters();
     List<?> exprs = params == null ? List.of() : params.getExpressions();
     if (exprs.size() != 1 || !(exprs.get(0) instanceof StringValue literal)) {
