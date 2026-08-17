@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
  * <p>스프링 컨텍스트를 띄우지 않는 순수 단위 테스트다({@code TenantContextRequireTest} 와 같은 형태).
  * 검사 대상이 ThreadLocal 과 디스크의 소스 파일뿐이라 DB 도 빈도 필요 없다.
  *
- * <p><b>규약 가드는 세 규칙이다.</b> {@code data."}(한정 이름), 맨몸 {@code "data"}(리터럴 단독),
+ * <p><b>규약 가드는 세 규칙이다.</b> {@code data."}(한정 이름), 맨몸 {@code "data"}·{@code 'data'}(리터럴 단독),
  * 손 조립({@code current() + ".."}). Task 2 시점에 첫 규칙만 있었고 Task 3~4 가 ~90곳을
  * {@link DataSchema} 로 옮겨 초록이 됐는데, <b>그 초록이 "완료" 를 뜻하지 않았다</b> — 첫 규칙이
  * 구조적으로 못 보는 형태로 실제 리터럴이 남아 있었다. Task 5 가 나머지 두 규칙을 더해 초록의
@@ -74,17 +74,18 @@ class DataSchemaResolutionTest {
    * {@code "data"} 처럼 스키마명 단독으로 적힌 곳은 <b>구조적으로 보이지 않는다</b> — 그래서 Task 3~4
    * 가 끝나고 가드가 초록이 된 뒤에도 실제 리터럴이 남아 있었다. 이 규칙이 그 구멍을 막는다.
    *
-   * <p><b>{@code 'data'}(단일 인용)는 일부러 넣지 않는다.</b> 주석·Javadoc 의 산문이 스키마명을
-   * {@code 'data'} 로 지칭하는 곳이 아직 여러 곳 있고(예: {@code AnalyticsQueryExecutionService},
-   * {@code SqlValidator}), 산문은 개명 뒤 "틀린 문장" 이 될 뿐 동작 결함이 아니다. 산문 때문에
-   * 빌드가 깨지면 가드가 소음으로 취급돼 결국 꺼진다.
+   * <p>SQL 문자열 안의 {@code 'data'}(단일 인용)도 같은 규칙으로 잡는다 — {@code where table_schema
+   * = 'data'} 나 {@code search_path = 'data'} 는 진짜 스키마 리터럴인데 위 두 형태 어디에도 걸리지
+   * 않는다. 2026-08-17 실측: {@code src/main/java} 의 {@code 'data'} 11건은 <b>전부 주석·Javadoc</b>
+   * 이고(즉 코드 줄 0건) 그래서 이 규칙은 핀 없이 초록이다. 산문은 개명 뒤 "틀린 문장" 이 될 뿐
+   * 동작 결함이 아니므로 대상 밖이다 — 산문 때문에 빌드가 깨지면 가드는 소음이 되고 결국 꺼진다.
    *
    * <p>스캔은 <b>원문</b>에 대해 한다 — {@code \"} 를 먼저 풀면 메시지 안의 {@code \"data\"} 가
    * 거짓 양성이 된다. 또한 <b>주석·Javadoc 은 제외</b>한다({@link #stripComments}): 산문이
    * {@code allowedSchema="data"} 처럼 스키마명을 <i>인용</i>하는 곳이 5곳 있고, 산문은 개명 뒤
    * 틀린 문장이 될 뿐 동작 결함이 아니다.
    */
-  private static final String FORBIDDEN_BARE_LITERAL = "\"data\"";
+  private static final List<String> FORBIDDEN_BARE_LITERALS = List.of("\"data\"", "'data'");
 
   /**
    * 스키마명을 <b>손으로 조립</b>하는 형태를 잡는 정규식들.
@@ -103,10 +104,12 @@ class DataSchemaResolutionTest {
    * <p><b>남아 있는 우회로(알려진 잔여물)</b>: {@code String s = DataSchema.current();} 로 변수에
    * 담은 뒤 {@code s + "." + tbl} 로 조립하면 텍스트 스캔으로는 보이지 않는다. 이를 잡으려면
    * {@code *schema} 류 식별자를 휴리스틱으로 훑어야 하는데, 그러면 {@code SqlValidator} 의 <b>산문
-   * 메시지 조립</b>까지 걸려 산문을 가드에 넣는 셈이 된다(위 {@link #FORBIDDEN_BARE_LITERAL} 주석과
+   * 메시지 조립</b>까지 걸려 산문을 가드에 넣는 셈이 된다(위 {@link #FORBIDDEN_BARE_LITERALS} 주석과
    * 같은 이유로 거부). 오늘 실측 3곳의 변수 경유 연결은 모두 {@code search_path} 목록·오류 메시지라
    * 위험 형태가 아니며, 위험 형태가 되려면 리터럴이 {@code .} 로 시작해야 한다 — 그때는 리뷰에서
-   * 보인다. 휴리스틱을 넣는 대신 이 잔여물을 여기 적어 둔다.
+   * 보인다. {@code String.format("%s.%s", schema, tbl)} 도 같은 부류로 남는다 — 여기에 맞추려면
+   * 패턴이 {@code %s\.} 가 되어야 하고 그러면 로깅 포맷 전반이 거짓 양성이 된다. 휴리스틱을 넣는
+   * 대신 이 잔여물들을 여기 적어 둔다.
    */
   private static final List<Pattern> HAND_ASSEMBLY_PATTERNS =
       List.of(
@@ -127,7 +130,7 @@ class DataSchemaResolutionTest {
   private record PinnedSite(String file, String snippet, int expectedCount, String reason) {}
 
   /**
-   * {@link #FORBIDDEN_BARE_LITERAL} 규칙의 핀 목록.
+   * {@link #FORBIDDEN_BARE_LITERALS} 규칙의 핀 목록.
    *
    * <p>{@code SqlValidator} 두 곳은 <b>다음 밴드로 의도적으로 이연</b>했다 — 검증기는 생성 시점에
    * 허용 스키마명을 인자로 받는 구조라 {@link DataSchema} 로 옮기려면 시그니처와 호출부까지 함께
@@ -294,9 +297,10 @@ class DataSchemaResolutionTest {
   @DisplayName("규약 가드 — 핀으로 못박은 두 곳 밖에는 맨몸 \"data\" 리터럴이 없다")
   void noProductionSourceHoldsBareSchemaLiteralOutsidePinnedSites() {
     // data." 규칙이 잡지 못하는 형태를 덮는 두 번째 규칙이다. 원문(이스케이프 해제 전)에 대해
-    // 훑는 이유는 FORBIDDEN_BARE_LITERAL 주석 참조.
+    // 훑는 이유는 FORBIDDEN_BARE_LITERALS 주석 참조.
     List<String> offenders =
-        findOffendingLines(BARE_LITERAL_PINS, line -> line.contains(FORBIDDEN_BARE_LITERAL));
+        findOffendingLines(
+            BARE_LITERAL_PINS, line -> FORBIDDEN_BARE_LITERALS.stream().anyMatch(line::contains));
 
     assertThat(offenders)
         .as("맨몸 물리 스키마명을 적은 프로덕션 소스 — DataSchema 를 거쳐라 (예외는 핀 목록에만)")
@@ -336,7 +340,8 @@ class DataSchemaResolutionTest {
               assertThat(matched).as("핀이 가리키는 파일 %s", pin.file()).hasSize(1);
               // 개수도 코드 줄에서만 센다 — 주석의 인용(예: SqlValidator Javadoc 이 생성자 호출을
               // {@code ..} 로 인용한 곳)까지 세면 산문 수정이 이 역방향 단언을 깨뜨린다.
-              assertThat(occurrences(stripComments(decodeUnicodeEscapes(read(matched.get(0)))), pin.snippet()))
+              String code = stripComments(decodeUnicodeEscapes(read(matched.get(0))));
+              assertThat(occurrences(code, pin.snippet()))
                   .as(
                       "핀 %s → \"%s\" 의 출현 횟수가 달라졌다. 전환이 끝났으면 핀을 지워라 (근거: %s)",
                       pin.file(), pin.snippet(), pin.reason())
@@ -357,7 +362,10 @@ class DataSchemaResolutionTest {
     for (Path path : productionJavaFiles()) {
       String relative = relativePath(path);
       List<String> pinnedSnippets =
-          pins.stream().filter(pin -> relative.endsWith(pin.file())).map(PinnedSite::snippet).toList();
+          pins.stream()
+              .filter(pin -> relative.endsWith(pin.file()))
+              .map(PinnedSite::snippet)
+              .toList();
       // 주석·Javadoc 은 두 새 규칙의 대상이 아니다(stripComments 주석 참조). 유니코드 이스케이프를
       // 먼저 푸는 순서도 의도다 — 자바는 토큰화 전에 풀므로 // 는 실제로 주석이 된다.
       String[] lines = stripComments(decodeUnicodeEscapes(read(path))).split("\n", -1);
@@ -451,7 +459,9 @@ class DataSchemaResolutionTest {
   /** {@code needle} 의 출현 횟수. 핀의 "존재" 가 아니라 "개수" 를 못박기 위한 계수다. */
   private static int occurrences(String haystack, String needle) {
     int count = 0;
-    for (int from = haystack.indexOf(needle); from >= 0; from = haystack.indexOf(needle, from + 1)) {
+    for (int from = haystack.indexOf(needle);
+        from >= 0;
+        from = haystack.indexOf(needle, from + 1)) {
       count++;
     }
     return count;
@@ -539,8 +549,8 @@ class DataSchemaResolutionTest {
     Matcher matcher = UNICODE_ESCAPE.matcher(source);
     StringBuilder out = new StringBuilder();
     while (matcher.find()) {
-      matcher.appendReplacement(
-          out, Matcher.quoteReplacement(String.valueOf((char) Integer.parseInt(matcher.group(1), 16))));
+      char decoded = (char) Integer.parseInt(matcher.group(1), 16);
+      matcher.appendReplacement(out, Matcher.quoteReplacement(String.valueOf(decoded)));
     }
     matcher.appendTail(out);
     return out.toString();

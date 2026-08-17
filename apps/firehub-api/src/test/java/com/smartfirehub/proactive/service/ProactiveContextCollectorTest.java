@@ -98,7 +98,8 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
     inTenantFixture(null, () -> insertDatasetCreateAudit(nullTenantMarker));
     // 기본 테넌트에 데이터셋을 하나 심는다. 공유 테스트 DB 의 데이터셋 건수는 다른 테스트의 정리에
     // 따라 0 일 수 있어(실측 0건) "양수" 단언이 DB 상태에 의존하면 안 된다 — 픽스처로 보장한다.
-    Long ownerUserId = inTenantFixture(() -> TenantRlsTestSupport.insertUser(dsl, "proactive_guard_"));
+    Long ownerUserId =
+        inTenantFixture(() -> TenantRlsTestSupport.insertUser(dsl, "proactive_guard_"));
     Long datasetId = inTenantFixture(() -> insertDataset(ownerUserId));
     try {
       String context = contextCollector.collectContext(Map.of(), null);
