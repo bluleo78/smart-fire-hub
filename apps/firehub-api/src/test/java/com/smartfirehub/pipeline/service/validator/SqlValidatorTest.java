@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service.validator;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -274,5 +275,36 @@ class SqlValidatorTest {
 
     // 역방향: 정상 미한정 사용자 테이블은 여전히 통과한다.
     assertThatCode(() -> permissive.validate("SELECT * FROM customers")).doesNotThrowAnyException();
+  }
+
+  // --- unqualifiedTableNames — PG 식별자 폴딩 규칙 (#385 Task 4 리뷰 지적) ---
+
+  /** 따옴표 없는 이름은 소문자로 접힌다 — PG 파서가 따옴표 없는 식별자를 항상 소문자로 접기 때문. */
+  @Test
+  void unqualifiedTableNames_unquotedName_isLowercased() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(permissive.unqualifiedTableNames("SELECT * FROM Customers"))
+        .containsExactly("customers");
+  }
+
+  /**
+   * 따옴표로 감싼 혼합 대소문자 이름은 원문 그대로 보존된다 — 무조건 소문자화하면 {@code pg_class.relname}과 바이트 단위로
+   * 어긋나 호출부의 카탈로그 대조가 실패한다(리뷰 지적: {@code "MyTable"}은 소문자화하면 다른 이름이 된다).
+   */
+  @Test
+  void unqualifiedTableNames_quotedMixedCaseName_preservesCase() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(permissive.unqualifiedTableNames("SELECT * FROM \"MyTable\""))
+        .containsExactly("MyTable");
+  }
+
+  /** 스키마 한정 이름은 결과에서 제외된다 — 이 메서드는 미한정 이름만 돌려준다. */
+  @Test
+  void unqualifiedTableNames_qualifiedName_excluded() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(permissive.unqualifiedTableNames("SELECT * FROM data.t, u")).containsExactly("u");
   }
 }

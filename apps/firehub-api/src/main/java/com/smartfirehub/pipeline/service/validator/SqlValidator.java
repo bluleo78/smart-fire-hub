@@ -76,8 +76,19 @@ public class SqlValidator {
    *
    * <p>AST 통과(SELECT 형태)이지만 실제로는 파일/네트워크/DB 카탈로그를 노출하는 함수들. DB 역할이 EXECUTE 권한을 갖지 않더라도 애플리케이션 레이어에서
    * 조기 차단하여 명확한 에러를 제공한다.
+   *
+   * <p>{@code public} 스키마의 {@code SECURITY DEFINER} 함수 5개(RLS 를 의도적으로 우회하도록 설계된 함수 —
+   * {@code TenantSchemaConformanceTest.KNOWN_SECURITY_DEFINER_FUNCTIONS} 참고)도 여기 포함한다. 이 함수들은
+   * {@code PUBLIC EXECUTE} 권한을 갖고 있어(정상적인 permitAll 호출부를 위한 것) 미한정 호출이 실제로 실행된다(#385 Task 4
+   * 리뷰어 실측). {@code provision_tenant_defaults} 는 변경 함수라 위험이 특히 크다. deny-list 는 정확하고 값싸지만
+   * "새 definer 함수가 추가돼도 아무것도 빨개지지 않는" 사각을 못 막으므로, {@code
+   * SqlValidatorSecurityDefinerConformanceTest}가 {@code pg_proc}에서 이 5개를 전수 발견해 이 목록(또는 문서화된
+   * 허용목록)에 있는지 구조적으로 검사한다 — 이 목록을 손으로만 믿지 마라.
+   *
+   * <p>PostGIS 함수(예: {@code ST_AsGeoJSON})는 {@code SECURITY DEFINER}가 아니고 미한정 호출이 정상 사용례이므로
+   * 여기 포함하지 않는다 — {@code public} 함수 전면 차단은 하지 않는다.
    */
-  private static final Set<String> BLOCKED_FUNCTIONS =
+  static final Set<String> BLOCKED_FUNCTIONS =
       Set.of(
           "pg_read_file",
           "pg_read_binary_file",
@@ -90,7 +101,12 @@ public class SqlValidator {
           "dblink_connect_u",
           "dblink_exec",
           "current_setting",
-          "set_config");
+          "set_config",
+          "resolve_trigger_tenant_by_token_hash",
+          "resolve_trigger_tenant_by_webhook_id",
+          "provision_tenant_defaults",
+          "resolve_slack_workspace_tenant_by_team_id",
+          "outbox_tenant_ids");
 
   /** 검증 실패 시 {@link UnsafeSqlException}을 던진다. */
   public void validate(String scriptContent) {
@@ -197,11 +213,16 @@ public class SqlValidator {
   }
 
   /**
-   * {@code validate(sql)} 를 통과시킬 SQL 에서 미한정(스키마 없는) 테이블 이름만 추출한다(따옴표 제거, 소문자화).
+   * {@code validate(sql)} 를 통과시킬 SQL 에서 미한정(스키마 없는) 테이블 이름만 추출한다.
    *
    * <p>애널리틱스 경로처럼 {@code search_path} 가 복수 스키마({@code 'data', 'public'})인 호출부는 AST 만으로는 미한정 이름이
    * 실제로 어느 스키마로 해석될지 알 수 없다(이름 해석은 DB 카탈로그의 몫). 이 메서드는 그 판단에 필요한 "미한정 이름 목록"만
    * 돌려준다 — 카탈로그 대조는 호출부(DB 접근 가능한 서비스 레이어)의 책임이다(#385 Task 4, R1 옵션 2).
+   *
+   * <p><b>대소문자 규칙은 PostgreSQL 식별자 폴딩을 따른다</b> — 따옴표로 감싼 식별자는 원문 대소문자를 그대로 보존하고(PG 도 그렇게
+   * 저장한다), 따옴표 없는 식별자만 소문자화한다(PG 파서가 따옴표 없는 식별자를 항상 소문자로 접기 때문). 무조건 소문자화하면 {@code
+   * "MyTable"}처럼 인용된 혼합 대소문자 테이블을 호출부가 {@code pg_class.relname}과 대조할 때 놓친다(리뷰 지적) — 반환값이
+   * {@code pg_class.relname}과 바이트 단위로 일치해야 카탈로그 대조가 정확하다.
    *
    * <p>{@code validate(sql)} 와 별개로 다시 파싱한다(추가 파싱 비용 발생) — 두 메서드가 같은 SQL 을 각자 파싱하는 것은 이 검증기를
    * DB 접근 없는 순수 AST 컴포넌트로 유지하기 위한 트레이드오프다. 짧은 사용자 SQL 문 하나를 다시 파싱하는 비용은 이어지는 DB 카탈로그
@@ -218,7 +239,8 @@ public class SqlValidator {
     Set<String> result = new java.util.LinkedHashSet<>();
     for (String fqn : tables) {
       if (fqn.indexOf('.') < 0) {
-        result.add(stripQuotes(fqn).toLowerCase());
+        boolean quoted = fqn.length() >= 2 && fqn.startsWith("\"") && fqn.endsWith("\"");
+        result.add(quoted ? stripQuotes(fqn) : fqn.toLowerCase());
       }
     }
     return result;

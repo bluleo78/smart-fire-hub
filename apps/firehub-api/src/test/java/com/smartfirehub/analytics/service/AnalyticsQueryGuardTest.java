@@ -3,17 +3,13 @@ package com.smartfirehub.analytics.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
-import com.smartfirehub.dataset.dto.CreateDatasetRequest;
-import com.smartfirehub.dataset.dto.DatasetColumnRequest;
-import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.support.IntegrationTestBase;
-import java.util.List;
 import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 애널리틱스 직접 실행 경로({@link AnalyticsQueryExecutionService#execute})의 {@link
@@ -23,43 +19,34 @@ import org.springframework.transaction.annotation.Transactional;
  * 없음 — {@link AnalyticsQueryExecutionService#executorEnabled} 의 {@code @Value} 기본값 그대로) 이므로 이 클래스의
  * 모든 호출은 {@code executeDirectly} 경로를 탄다.
  *
- * <p>{@code @Transactional}을 클래스에 붙여 각 테스트를 롤백한다 — 이 서비스는 예외를 던지지 않고 {@link
- * AnalyticsQueryResponse#error()} 필드로 실패를 알리는 기존 계약이라({@code execute()}가 검증 실패도 캐치해 에러 응답으로 변환)
- * {@code DataTableQueryServiceGuardTest}처럼 `assertThatThrownBy`로 볼 수 없다 — 응답의 error 필드로 판정한다.
+ * <p><b>클래스 레벨 {@code @Transactional} 을 붙이지 않는다</b> — 이 이니셔티브에서 6회 재발한 패턴이다
+ * ({@code DataTableQueryServiceGuardTest} 가 이미 "붙이지 않는다"고 명시해 둔 것과 동일 이유): 클래스
+ * {@code @Transactional} 은 테스트 트랜잭션이 세션 GUC/카탈로그 가시성을 실제 프로덕션 커밋 경계와 다르게
+ * 만들어 배선 결함을 영구히 가릴 수 있다. 대신 {@link TestInstance.Lifecycle#PER_CLASS} + 인스턴스
+ * {@code @BeforeAll}/{@code @AfterAll} 로 픽스처를 **한 번만** 커밋하고 명시적으로 지운다 — 이 클래스의
+ * 모든 테스트는 SELECT 뿐이라(픽스처를 변형하는 테스트가 없다) 테스트 간 격리가 애초에 필요 없다.
+ * {@code DatasetService}(감사 로그·검색 색인 재구축까지 트리거)도 쓰지 않고 raw DDL 로 최소 픽스처만
+ * 만든다 — {@code DataTableQueryServiceGuardTest} 와 같은 이유.
  */
-@Transactional
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AnalyticsQueryGuardTest extends IntegrationTestBase {
 
   @Autowired private AnalyticsQueryExecutionService executionService;
-  @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
 
-  private Long testUserId;
+  private static final String TEST_TABLE = "analytics_guard_test";
 
-  @BeforeEach
+  @BeforeAll
   void setUp() {
-    testUserId =
-        dsl.insertInto(DSL.table(DSL.name("user")))
-            .set(DSL.field(DSL.name("user", "username"), String.class), "analyticsguard")
-            .set(DSL.field(DSL.name("user", "password"), String.class), "password")
-            .set(DSL.field(DSL.name("user", "name"), String.class), "Analytics Guard")
-            .set(DSL.field(DSL.name("user", "email"), String.class), "analyticsguard@example.com")
-            .returning(DSL.field(DSL.name("user", "id"), Long.class))
-            .fetchOne()
-            .get(DSL.field(DSL.name("user", "id"), Long.class));
+    // 이전 실행이 tearDown 도달 전에 죽었을 경우를 대비해 생성 전에도 정리한다(자기가 만든 테이블만).
+    dsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
+    dsl.execute("CREATE TABLE data." + TEST_TABLE + " (id BIGSERIAL PRIMARY KEY, name TEXT)");
+    dsl.execute("INSERT INTO data." + TEST_TABLE + " (name) VALUES ('Row1')");
+  }
 
-    datasetService.createDataset(
-        new CreateDatasetRequest(
-            "Analytics Guard DS",
-            "analytics_guard_test",
-            null,
-            null,
-            "TABLE",
-            "SOURCE",
-            List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)),
-            null),
-        testUserId);
-    dsl.execute("INSERT INTO data.analytics_guard_test (name) VALUES ('Row1')");
+  @AfterAll
+  void tearDown() {
+    dsl.execute("DROP TABLE IF EXISTS data." + TEST_TABLE);
   }
 
   // =========================================================================
@@ -115,6 +102,33 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
     assertThat(response.error()).isNotNull();
   }
 
+  /**
+   * 리뷰 지적 — {@code information_schema.tables} 는 시퀀스(relkind {@code S})를 담지 않아 이전 구현이 이 케이스를
+   * 놓쳤다(리뷰어 실측: {@code SELECT last_value, log_cnt FROM oauth_state_id_seq} 가 370/27 을 반환). {@code
+   * pg_class.relkind}로 시퀀스까지 포함하도록 고친 뒤 이 케이스가 막히는지 실제 배선 레벨로 고정한다.
+   * {@code oauth_state_id_seq} 는 {@code public} 스키마 실제 시퀀스이고 {@code data} 스키마엔 존재하지 않는다.
+   */
+  @Test
+  void execute_unqualifiedSequenceShadowedByPublicOnlySequence_rejected() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT last_value FROM oauth_state_id_seq", 10, false);
+
+    assertThat(response.error()).isNotNull();
+  }
+
+  /**
+   * 리뷰 지적 — 미한정 함수 호출은 전혀 막지 않고 있었다. {@code provision_tenant_defaults}는 {@code public} 의
+   * {@code SECURITY DEFINER} 변경 함수이고 {@code PUBLIC EXECUTE}를 갖고 있어(권한 실측) 미한정 호출이 실제로 실행된다.
+   * {@code SqlValidator.BLOCKED_FUNCTIONS}에 추가한 뒤 이 경로에서도 막히는지 고정한다.
+   */
+  @Test
+  void execute_unqualifiedSecurityDefinerFunctionCall_rejected() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT provision_tenant_defaults(1)", 10, false);
+
+    assertThat(response.error()).isNotNull();
+  }
+
   // =========================================================================
   // 회귀 방지 — 정상 미한정 쿼리는 여전히 통과한다
   // =========================================================================
@@ -123,7 +137,7 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   @Test
   void execute_unqualifiedDataTable_stillPasses() {
     AnalyticsQueryResponse response =
-        executionService.execute("SELECT * FROM analytics_guard_test", 100, false);
+        executionService.execute("SELECT * FROM " + TEST_TABLE, 100, false);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(1);
@@ -133,7 +147,7 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   @Test
   void execute_qualifiedDataTable_stillPasses() {
     AnalyticsQueryResponse response =
-        executionService.execute("SELECT * FROM data.analytics_guard_test", 100, false);
+        executionService.execute("SELECT * FROM data." + TEST_TABLE, 100, false);
 
     assertThat(response.error()).isNull();
     assertThat(response.rows()).hasSize(1);

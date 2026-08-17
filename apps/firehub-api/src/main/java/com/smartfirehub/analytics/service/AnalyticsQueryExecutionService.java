@@ -59,9 +59,18 @@ public class AnalyticsQueryExecutionService {
    * <p>{@code search_path}는 여전히 {@code 'data', 'public'} 두 스키마를 세운다({@link #executeDirectly} 참고) —
    * {@code 'data'} 단독으로 좁히면 PostGIS 함수 해석이 깨진다는 것을 직접 실측했다({@code function
    * st_asgeojson(public.geometry) does not exist}, geometry 컬럼 타입 자체도 {@code public} 스키마 소속). 따라서 이
-   * 검증기는 {@code allowUnqualifiedTables=true}로 미한정 이름을 허용하되, 미한정 이름이 {@code data}에 없고 {@code
-   * public}에만 있어 조용히 {@code public}으로 새는 경로는 {@link #executeDirectly}의 카탈로그 조회가 별도로 막는다(AST 는 이름
-   * 해석을 못 하므로 검증기 혼자서는 이 판단을 할 수 없다).
+   * 검증기는 {@code allowUnqualifiedTables=true}로 미한정 이름을 허용한다.
+   *
+   * <p><b>두 후속 검사의 적용 범위가 다르다 — 혼동하지 말 것.</b> {@code sqlValidator.validate(...)}(스키마 화이트리스트·차단
+   * 함수)는 위에서 말한 대로 executor/direct 공통이다. 반면 {@link #rejectUnqualifiedNamesShadowedByPublic}(미한정
+   * 이름이 {@code data}엔 없고 {@code public}에만 있어 조용히 새는 경로 차단)은 {@link #executeDirectly} 안에서만
+   * 호출된다 — {@code search_path='data','public'}은 이 서비스가 직접 여는 Java/jOOQ 커넥션에만 세팅되는 세션 상태이고,
+   * executor(Python) 경로는 별도 프로세스·별도 DB 커넥션으로 돌기 때문에 이 카탈로그 조회가 그 경로에는 애초에 적용될 수 없다.
+   * executor 경로가 오늘 이 구멍에서 안전한 이유는 별도다 — executor 가 사용하는 DB 역할({@code pipeline_executor})은
+   * {@code public.role}에 대한 SELECT 권한 자체가 없다({@code has_table_privilege('pipeline_executor',
+   * 'public.role','SELECT')} 실측 = {@code false}). 즉 그 경로에서 미한정 {@code role}이 {@code public.role}로
+   * 풀리더라도 GRANT 단계에서 permission denied 로 막힌다 — 이 판단이 뒤집히면(예: 향후 executor 역할에 더 넓은 public
+   * 권한이 부여되면) 이 카탈로그 조회를 executor 경로에도 확장해야 한다.
    *
    * @param sql raw SQL from user
    * @param maxRows maximum rows to return (1–10000)
@@ -260,6 +269,15 @@ public class AnalyticsQueryExecutionService {
    * <p>미한정 참조가 없는 쿼리(가장 흔한 경우 — 대부분의 프로그래밍 방식 쿼리는 {@code data.*}로 명시)는 카탈로그 조회를 아예
    * 건너뛴다. 미한정 참조가 있는 쿼리만 쿼리 실행 전 1회 추가 카탈로그 조회 비용이 붙는다 — 애널리틱스 쿼리 UI는 초당 다건이 아닌
    * 사용자 상호작용 경로라 이 비용은 무시할 만하다.
+   *
+   * <p><b>정본은 {@code pg_class}+{@code pg_namespace} 다 — {@code information_schema.tables} 가 아니다.</b>
+   * {@code information_schema.tables} 는 relkind {@code r/p/v/f}(테이블·파티션·뷰·외래 테이블)만 담고
+   * **시퀀스({@code S})는 담지 않는다**(리뷰어 실측: app_tenant 기준 public 가시/전체 = r 68/68, v 3/3,
+   * S 0/49). 그 결과 {@code SELECT last_value, log_cnt FROM oauth_state_id_seq}처럼 시퀀스를 미한정으로
+   * 참조하면 이전 구현(information_schema)에서는 검사 대상에 아예 안 잡혀 그대로 통과·실행됐다(실측: 값 반환
+   * 확인). {@code pg_class.relkind}를 {@code r/p/v/m/f/S}(테이블/파티션/뷰/구체화 뷰/외래 테이블/시퀀스)로
+   * 넓혀 이 사각을 없앤다 — 권한 때문에 {@code information_schema}에 안 보이던 객체도 이 카탈로그 조회는
+   * 여전히 존재 자체는 볼 수 있다({@code has_table_privilege}가 아니라 오브젝트 존재만 확인하면 되므로).
    */
   private void rejectUnqualifiedNamesShadowedByPublic(String cleanSql) {
     Set<String> unqualified = sqlValidator.unqualifiedTableNames(cleanSql);
@@ -269,17 +287,19 @@ public class AnalyticsQueryExecutionService {
 
     String placeholders = String.join(",", java.util.Collections.nCopies(unqualified.size(), "?"));
     String catalogSql =
-        "SELECT table_schema, table_name FROM information_schema.tables "
-            + "WHERE table_name IN ("
+        "SELECT n.nspname AS schema_name, c.relname AS rel_name "
+            + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            + "WHERE c.relname IN ("
             + placeholders
-            + ") AND table_schema IN ('data', 'public')";
+            + ") AND n.nspname IN ('data', 'public') "
+            + "AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')";
     var rows = dsl.fetch(catalogSql, unqualified.toArray());
 
     Set<String> inData = new HashSet<>();
     Set<String> inPublic = new HashSet<>();
     for (var r : rows) {
-      String schema = r.get("table_schema", String.class);
-      String name = r.get("table_name", String.class);
+      String schema = r.get("schema_name", String.class);
+      String name = r.get("rel_name", String.class);
       if ("data".equals(schema)) {
         inData.add(name);
       } else if ("public".equals(schema)) {
