@@ -68,6 +68,20 @@ public final class TenantPipelineRole {
    * @return 32자 소문자 hex 문자열
    */
   public static String password(long tenantId, String secret) {
+    // 빈 secret 을 거부한다 — 이것이 없으면 prod fail-closed 의도가 무력화된다.
+    //
+    // 왜 `@Value` 만으로는 부족한가: `application-prod.yml` 의 `${PIPELINE_ROLE_PASSWORD_SECRET}`
+    // 은 프로퍼티가 **부재**할 때만 실패한다. `.env` 에 `PIPELINE_ROLE_PASSWORD_SECRET=` 로 빈 값을
+    // 두거나 compose 가 미설정 변수를 보간하면 `""` 로 **정상 해석**된다. 그러면 빈 키로 HMAC 이
+    // 돌고, RolePasswordSyncCallback 이 그 **누구나 계산 가능한** 비밀번호를 모든 테넌트 롤에
+    // `ALTER ROLE ... PASSWORD` 로 실제로 써 버린다.
+    //
+    // Python 쪽 twin(`app/tenant.py` 의 resolve_password)은 이미 이 경우를 막고 있었다 —
+    // 한쪽만 막혀 있던 비대칭을 여기서 맞춘다.
+    if (secret == null || secret.isBlank()) {
+      throw new IllegalStateException(
+          "app.pipeline.role-password-secret 이 비어 있습니다 — 테넌트 롤 비밀번호가 예측 가능해지므로 기동을 중단한다");
+    }
     try {
       Mac mac = Mac.getInstance(HMAC_ALGORITHM);
       mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM));

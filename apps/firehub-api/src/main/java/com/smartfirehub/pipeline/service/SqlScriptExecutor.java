@@ -42,7 +42,6 @@ public class SqlScriptExecutor {
     sqlValidator.validate(scriptContent);
 
     long tenantId = TenantContext.require("파이프라인 SQL 실행");
-    DSLContext tenantDsl = tenantPipelineDataSources.dslFor(tenantId);
 
     try {
       log.info("Executing SQL script via tenant pipeline sandbox (tenant={})", tenantId);
@@ -58,11 +57,18 @@ public class SqlScriptExecutor {
       // SET LOCAL 은 트랜잭션 안에서만 유효하다 — autocommit 으로 실행하면 PostgreSQL 이 경고만 내고
       // 아무 효과가 없다. 그래서 SET 과 스크립트를 같은 트랜잭션으로 묶는다(트랜잭션 종료 시 자동
       // 복원되므로, 풀로 반납되는 커넥션에 search_path 가 남지 않는다).
-      tenantDsl.transaction(
-          cfg -> {
-            // search_path 는 한정 이름이 아니라 스키마 식별자 목록이므로 qualify() 가 아니라 current().
-            cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
-            cfg.dsl().execute(scriptContent);
+      // withTenantDsl 로 **대여**한다 — dslFor 를 직접 쓰면 이 트랜잭션이 도는 동안 다른 테넌트
+      // 요청이 상한을 넘겼을 때 이 풀이 축출·close() 되어 진행 중인 문장이 죽는다(코드리뷰 지적 3).
+      tenantPipelineDataSources.withTenantDsl(
+          tenantId,
+          tenantDsl -> {
+            tenantDsl.transaction(
+                cfg -> {
+                  // search_path 는 한정 이름이 아니라 스키마 식별자 목록이므로 qualify() 가 아니라 current().
+                  cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
+                  cfg.dsl().execute(scriptContent);
+                });
+            return null;
           });
       return "SQL executed successfully";
     } catch (Exception e) {

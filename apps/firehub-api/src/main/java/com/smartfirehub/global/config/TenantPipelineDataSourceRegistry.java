@@ -4,6 +4,7 @@ import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -40,7 +41,16 @@ import org.springframework.stereotype.Component;
  * DSLContext}), 맵에서는 사라져도 실제 DB 커넥션은 살아 있어 {@code max_connections} 을 계속
  * 갉아먹는 눈에 보이지 않는 누수가 된다. 이 클래스는 축출 시점에 즉시 {@code close()} 를 호출해
  * 그 커넥션들을 실제로 반납한다.
+ *
+ * <p><b>단, 사용 중인 풀은 닫지 않는다.</b> 그래서 프로덕션 호출부는 {@link #dslFor} 가 아니라
+ * {@link #withTenantDsl} 로 풀을 <b>대여</b>해야 한다 — 대여 구간에는 축출 후보에서 제외된다.
+ * 축출할 후보가 하나도 없으면 상한을 일시적으로 넘기고 경고만 남긴다: 상한은 커넥션 고갈을 늦추기
+ * 위한 값이지, 진행 중인 작업을 죽여서 지킬 값이 아니다.
+ *
+ * <p>컨텍스트 종료 시에는 {@link #closeAllPools} 가 남은 풀을 모두 닫는다 — LRU 축출만으로는
+ * 스프링 컨텍스트가 여러 번 뜨는 테스트 스위트에서 커넥션이 JVM 종료까지 남는다.
  */
+@Slf4j
 @Component
 public class TenantPipelineDataSourceRegistry {
 
@@ -52,11 +62,17 @@ public class TenantPipelineDataSourceRegistry {
 
   /**
    * 테넌트 id → (풀, DSLContext). {@code accessOrder=true} LinkedHashMap 으로 접근 순서를 유지해
-   * LRU 를 구현한다. {@link #removeEldestEntry} 가 상한 초과 시 가장 오래 전에 쓰인 항목을 스스로
-   * 제거하면서 그 풀을 닫는다. 이 맵은 스레드 안전하지 않으므로 모든 접근은 이 클래스의 synchronized
-   * 메서드를 통해서만 이뤄진다(동시 요청이 같은 테넌트 풀을 동시에 만드는 경합을 막는다).
+   * LRU 를 구현하고, 상한 초과 시 축출은 {@link #evictIfNeeded} 가 한다. 이 맵은 스레드 안전하지
+   * 않으므로 모든 접근은 이 클래스의 synchronized 메서드를 통해서만 이뤄진다(동시 요청이 같은 테넌트
+   * 풀을 동시에 만드는 경합을 막는다).
    */
   private final Map<Long, TenantPool> pools;
+
+  /**
+   * 테넌트 id → 현재 대여 중인 건수. {@link #withTenantDsl} 이 대여 구간에만 올리고, 0 이 되면
+   * 항목을 지운다. {@link #evictIfNeeded} 는 이 값이 0 인 풀만 축출 대상으로 삼는다.
+   */
+  private final Map<Long, Integer> inUse = new java.util.HashMap<>();
 
   public TenantPipelineDataSourceRegistry(
       @Value("${app.pipeline.datasource.url}") String jdbcUrl,
@@ -69,18 +85,10 @@ public class TenantPipelineDataSourceRegistry {
     this.maxPools = maxPools;
     this.maxSize = maxSize;
     this.idleTimeoutMs = idleTimeoutMs;
-    this.pools =
-        new LinkedHashMap<>(16, 0.75f, true) {
-          @Override
-          protected boolean removeEldestEntry(Map.Entry<Long, TenantPool> eldest) {
-            boolean overflow = size() > TenantPipelineDataSourceRegistry.this.maxPools;
-            if (overflow) {
-              // 맵에서 빠지기 직전에 닫아야 새 풀 생성과 옛 풀 종료 사이에 창(window)이 생기지 않는다.
-              eldest.getValue().dataSource().close();
-            }
-            return overflow;
-          }
-        };
+    // accessOrder=true 로 LRU 순서만 유지하고, 축출은 removeEldestEntry 가 아니라 evictIfNeeded 가
+    // 한다 — removeEldestEntry 는 "이 항목을 버릴지" 예/아니오만 답할 수 있어 **사용 중인 풀을
+    // 건너뛰고 다음 후보를 찾는 것이 불가능**하다(코드리뷰 지적 3).
+    this.pools = new LinkedHashMap<>(16, 0.75f, true);
   }
 
   /**
@@ -97,7 +105,95 @@ public class TenantPipelineDataSourceRegistry {
     if (existing != null) {
       return existing.dslContext();
     }
-    return pools.computeIfAbsent(tenantId, this::createPool).dslContext();
+    TenantPool created = pools.computeIfAbsent(tenantId, this::createPool);
+    evictIfNeeded(tenantId);
+    return created.dslContext();
+  }
+
+  /**
+   * 테넌트 풀을 **대여**해 작업을 실행한다 — 프로덕션 호출부가 써야 하는 정본 API.
+   *
+   * <p><b>왜 {@link #dslFor} 를 직접 쓰면 안 되는가(코드리뷰 지적 3).</b> {@code dslFor} 가 돌려준
+   * {@link DSLContext} 를 호출자가 **쓰고 있는 동안** 다른 테넌트들의 요청이 상한을 넘기면, 그
+   * 풀이 축출 대상으로 뽑혀 {@code close()} 되고 진행 중인 문장이 죽는다(느린 스텝일수록 LRU 상
+   * 오래된 항목이 되어 더 잘 뽑힌다). 이 메서드는 대여 구간에 사용 카운트를 올려 두어
+   * {@link #evictIfNeeded} 가 그 풀을 건너뛰게 만든다.
+   *
+   * <p>Python 쪽 twin(`app/db/connection.py` 의 `_evict_if_needed`)이 이미 같은 규칙으로 동작한다 —
+   * 한쪽만 갖고 있던 비대칭을 맞춘 것이다.
+   */
+  public <T> T withTenantDsl(long tenantId, java.util.function.Function<DSLContext, T> work) {
+    DSLContext dsl;
+    synchronized (this) {
+      dsl = dslFor(tenantId);
+      inUse.merge(tenantId, 1, Integer::sum);
+    }
+    try {
+      return work.apply(dsl);
+    } finally {
+      synchronized (this) {
+        // 0 이 되면 항목을 지워 맵이 테넌트 수만큼 자라지 않게 한다.
+        inUse.compute(tenantId, (k, v) -> (v == null || v <= 1) ? null : v - 1);
+      }
+    }
+  }
+
+  /**
+   * 상한을 넘겼으면 **사용 중이 아닌** 가장 오래된 풀을 닫는다.
+   *
+   * <p>{@code servingTenantId}(방금 이 호출을 위해 확보한 풀)는 반드시 제외한다 — 사용 카운트는
+   * 대여 구간에서만 올라가므로 이 시점엔 0 으로 보여, 다른 풀이 모두 바쁘면 **자기 자신이 뽑혀**
+   * 방금 만든 풀을 닫아 돌려주게 된다.
+   *
+   * <p>축출할 수 있는 풀이 없으면 <b>상한을 일시적으로 넘기고 경고만</b> 남긴다. 상한은 커넥션
+   * 고갈을 늦추기 위한 값이지, 진행 중인 작업을 죽여서 지킬 값이 아니다.
+   */
+  private void evictIfNeeded(long servingTenantId) {
+    while (pools.size() > maxPools) {
+      Long victim = null;
+      for (Long tenantId : pools.keySet()) { // accessOrder=true → 오래 전에 쓰인 것부터
+        if (tenantId != servingTenantId && inUse.getOrDefault(tenantId, 0) == 0) {
+          victim = tenantId;
+          break;
+        }
+      }
+      if (victim == null) {
+        log.warn(
+            "테넌트 커넥션 풀 상한({}) 초과 — 모든 풀이 사용 중이라 축출을 건너뜀 (현재 {}개)",
+            maxPools,
+            pools.size());
+        return;
+      }
+      TenantPool evicted = pools.remove(victim);
+      inUse.remove(victim);
+      try {
+        evicted.dataSource().close();
+      } catch (RuntimeException e) {
+        log.warn("테넌트 {} 커넥션 풀 축출 중 종료 실패", victim, e);
+      }
+    }
+  }
+
+  /**
+   * 컨텍스트 종료 시 남은 풀을 모두 닫는다.
+   *
+   * <p>없으면 풀이 <b>LRU 축출로만</b> 닫히므로, 스프링 컨텍스트가 여러 번 생성되는 테스트
+   * 스위트에서 컨텍스트마다 최대 {@code max-pools × max-size} 개의 커넥션이 JVM 종료까지 남아
+   * 이 클래스가 스스로 경고하는 {@code max_connections} 고갈을 실제로 일으킨다(코드리뷰 지적 4).
+   */
+  @jakarta.annotation.PreDestroy
+  public synchronized void closeAllPools() {
+    pools.values()
+        .forEach(
+            pool -> {
+              try {
+                pool.dataSource().close();
+              } catch (RuntimeException e) {
+                log.warn("테넌트 커넥션 풀 종료 실패", e);
+              }
+            });
+    pools.clear();
+    inUse.clear();
   }
 
   /** 현재 열려 있는 테넌트 풀 개수. 누수 없이 상한을 지키는지 테스트가 관측하는 용도. */

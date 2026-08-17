@@ -148,6 +148,13 @@ def _get_tenant_pool(
             pool = _create_tenant_pool(tenant_id, settings)
         # 다시 맨 뒤에 넣어 LRU 순서를 갱신한다.
         _tenant_pools[tenant_id] = pool
+        # **락을 놓기 전에** 사용 예약을 걸어 둔다(코드리뷰 지적 5).
+        #
+        # 예약이 없으면 창(window)이 생긴다: 이 함수가 풀을 돌려주고 락이 풀린 뒤 호출부가
+        # ``getconn()`` 하기까지 이 풀의 in_use 는 0 이다. 그 사이 다른 테넌트의 요청이 상한을
+        # 넘기면 이 풀이 축출 대상으로 뽑혀 ``closeall()`` 되고, 성공해야 할 요청이 PoolError 로
+        # 실패한다. ``serving_tenant_id`` 가드는 **같은 호출** 안에서만 유효해 이 창을 막지 못한다.
+        _tenant_pool_in_use[tenant_id] = _tenant_pool_in_use.get(tenant_id, 0) + 1
         _evict_if_needed(settings, serving_tenant_id=tenant_id)
         return pool
 
@@ -165,16 +172,14 @@ def get_connection(tenant_id: int, settings: Settings) -> Generator:
     pool = _get_tenant_pool(tenant_id, settings)
 
     conn = None
-    checked_out = False
+    # _get_tenant_pool 이 **락 안에서** 이미 예약을 걸어 뒀다(축출 창 방지). 따라서 여기서 다시
+    # 올리지 않고, 아래 finally 가 어떤 경로로든 반드시 한 번 내려 준다 — 예외로 빠져나가도
+    # 카운트가 남으면 그 테넌트의 풀이 영구히 축출 불가가 된다.
+    reserved = True
     try:
         conn = pool.getconn()
         if conn is None:
             raise RuntimeError("Connection pool exhausted — no available connections")
-        # 체크아웃 카운트는 커넥션을 실제로 손에 쥔 뒤에만 올린다. 실패 경로에서 올려 두면
-        # 카운트가 영구히 0 으로 돌아오지 않아 그 테넌트의 풀이 절대 축출되지 않는다.
-        with _tenant_lock:
-            _tenant_pool_in_use[tenant_id] = _tenant_pool_in_use.get(tenant_id, 0) + 1
-        checked_out = True
         if not _is_conn_alive(conn):
             pool.putconn(conn, close=True)
             conn = pool.getconn()
@@ -190,7 +195,7 @@ def get_connection(tenant_id: int, settings: Settings) -> Generator:
     finally:
         if conn is not None:
             pool.putconn(conn)
-        if checked_out:
+        if reserved:
             with _tenant_lock:
                 remaining = _tenant_pool_in_use.get(tenant_id, 1) - 1
                 if remaining <= 0:

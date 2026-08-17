@@ -191,11 +191,26 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
         .hasMessageContaining("p3b_absent_table");
   }
 
+  /**
+   * 테넌트가 없으면 조용히 기본 스키마·공용 롤로 떨어지지 않고 즉시 거부한다.
+   *
+   * <p><b>어디서 던지는지까지 단언하는 이유(코드리뷰 지적 6).</b> 예외 <i>클래스</i>만 단언하면 이
+   * 테스트는 공허하다 — {@code execute()} 의 첫 문장인 {@code sqlValidator.validate(...)} 가
+   * {@code allowedSchema()} → {@code DataSchema.current()} 를 거치며 이미 같은 예외를 던지므로,
+   * {@code SqlScriptExecutor} 의 {@code TenantContext.require(...)} 를 **지워도 초록으로 남는다**.
+   *
+   * <p>그래서 메시지로 <b>먼저 걸리는 지점이 검증기</b>임을 고정한다({@code TenantContext.require} 는
+   * 호출 문맥 문자열을 예외 메시지에 싣는다: 검증기 경로는 "data 스키마 식별자 해석",
+   * 실행기 경로는 "파이프라인 SQL 실행"). 이 순서가 바뀌면 빨개져 재검토를 강제한다.
+   *
+   * <p>덧붙여 {@code SqlScriptExecutor} 의 {@code require} 는 <b>2차 가드가 아니라 테넌트 id 취득</b>
+   * 이다(풀을 고르는 데 값이 필요하다) — 이 경로의 fail-closed 는 검증기가 담당한다.
+   */
   @Test
-  void execute_withoutTenantContext_failsClosed() {
-    // 테넌트가 없으면 조용히 기본 스키마·공용 롤로 떨어지지 않고 즉시 거부한다.
+  void execute_withoutTenantContext_failsClosedAtValidator() {
     TenantContext.clear();
     assertThatThrownBy(() -> sqlScriptExecutor.execute("SELECT 1"))
-        .isInstanceOf(MissingTenantScopeException.class);
+        .isInstanceOf(MissingTenantScopeException.class)
+        .hasMessageContaining("data 스키마 식별자 해석");
   }
 }

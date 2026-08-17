@@ -70,6 +70,11 @@ services:
       ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:?ENCRYPTION_MASTER_KEY is required}
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
       PIPELINE_EXECUTOR_PASSWORD: ${PIPELINE_EXECUTOR_PASSWORD:?PIPELINE_EXECUTOR_PASSWORD is required}
+      # 테넌트별 파이프라인 롤(pipeline_executor_t{id}) 비밀번호 파생 HMAC 키(P3-b1/V111).
+      # api 와 executor 가 각자 독립적으로 같은 비밀번호를 파생하므로 두 값이 **반드시 동일**해야 한다
+      # → .env 변수 하나를 두 서비스에 매핑한다(아래 executor 의 EXECUTOR_ROLE_PASSWORD_SECRET).
+      # 서로 다른 값을 넣으면 기동은 되고 모든 파이프라인 스텝이 DB 인증 실패한다.
+      PIPELINE_ROLE_PASSWORD_SECRET: ${PIPELINE_ROLE_PASSWORD_SECRET:?PIPELINE_ROLE_PASSWORD_SECRET is required}
       # FILE 오브젝트 데이터셋용 MinIO 접속 정보. MinIO 컨테이너는 MINIO_ROOT_USER/PASSWORD 이름을 쓰지만
       # API 는 MINIO_ACCESS_KEY/SECRET_KEY 를 읽으므로 여기서 두 이름을 매핑해준다(변수명 불일치 방지).
       MINIO_ENDPOINT: http://minio:9000
@@ -102,6 +107,10 @@ services:
       EXECUTOR_DB_NAME: ${POSTGRES_DB:-smartfirehub}
       EXECUTOR_DB_USER: pipeline_executor
       EXECUTOR_DB_PASSWORD: ${PIPELINE_EXECUTOR_PASSWORD}
+      # api 의 PIPELINE_ROLE_PASSWORD_SECRET 과 **같은 .env 변수**를 읽는다 — 이름만 다르고 값은
+      # 하나다. 두 서비스가 각자 HMAC 으로 테넌트 롤 비밀번호를 파생하므로 값이 갈리면 executor 가
+      # 모든 파이프라인 스텝에서 인증 실패한다(조용히 남의 테넌트에 붙는 일은 없다).
+      EXECUTOR_ROLE_PASSWORD_SECRET: ${PIPELINE_ROLE_PASSWORD_SECRET}
       EXECUTOR_INTERNAL_SERVICE_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
       EXECUTOR_NSJAIL_ENABLED: "true"
       EXECUTOR_NSJAIL_PATH: /usr/sbin/nsjail
