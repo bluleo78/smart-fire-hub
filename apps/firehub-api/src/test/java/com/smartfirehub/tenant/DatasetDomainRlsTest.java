@@ -118,48 +118,56 @@ class DatasetDomainRlsTest extends IntegrationTestBase {
   }
 
   @Test
-  void twoTenantsCanUseTheSameTableNameAndPreCheckAgreesWithInsert() {
-    // V109 가 idx_dataset_table_name 을 (tenant_id, table_name) 으로 접은 결과를 고정한다.
+  void twoTenantsCannotShareTableNameWhileDataSchemaIsShared() {
+    // idx_dataset_table_name 이 (tenant_id, table_name) 으로 접히지 않고 전역 유니크로
+    // 남아 있어야 한다는 것을 고정한다. 이 테스트는 "누군가 이 유니크를 앞당겨 접는 것"을
+    // 막는 가드다.
     //
-    // 접기 전에는 사전검사와 실제 INSERT 가 서로 다른 스코프를 보고 있었다:
-    // existsByTableName 은 RLS 로 스코프된 public.dataset 을 읽어 남의 테넌트 행을 못 보는데,
-    // 유니크 인덱스는 전역이었다 → 테넌트 B 가 A 의 이름을 고르면 사전검사는 "없다"(false)로
-    // 통과시키고 INSERT 가 23505 중복키로 죽었다. 사용자에게는 DuplicateDatasetNameException 도
-    // 아닌 원시 DB 오류로 보였고, 애초에 물리 테이블이 테넌트별로 갈라지면 존재하지도 않는
-    // 거짓 제약이었다. 접은 뒤에는 그 충돌이 사라져 사전검사와 INSERT 가 처음으로 일치한다.
+    // 왜 전역이어야 하는가: table_name 은 공유 data 스키마의 실제 테이블명이고,
+    // DataSchema.current() 는 오늘 상수 "data" 를 돌려준다(P3-b 에서야 data_t{tenantId} 가 된다).
+    // 즉 두 테넌트의 table_name='foo' 는 같은 물리 테이블 data."foo" 하나로 해석되며,
+    // data 스키마에는 RLS 가 없다. 이 상태에서 유니크를 접으면 —
+    //   existsByTableName(테넌트 스코프) 이 false 를 주고 → INSERT 도 통과하고 →
+    //   DataTableService.createTable 의 `DROP TABLE IF EXISTS` 가 앞선 테넌트의 물리 테이블을
+    //   지우고 빈 테이블로 재생성한 뒤, 예외 없이 커밋된다(데이터 소실 + 크로스 테넌트 공유).
+    // 지금은 이 INSERT 가 23505 로 먼저 죽어 그 DDL 에 도달하지 못하는 것이 유일한 방어다.
     //
-    // DatasetService.createDataset 을 타지 않는 이유: 그 경로는 사전검사 뒤에
-    // dataTableService.createTable 로 공유 data 스키마에 물리 테이블을 만들어, 두 번째 테넌트가
-    // 이 접기와 무관한 "relation already exists" 로 실패한다(그 해소는 P3-b 스키마 리네임 몫).
+    // 따라서 유니크 접기는 **스키마 분리와 같은 밴드에서** 해야 한다. V109 가 이것을 먼저
+    // 접었고 V110 이 되돌렸다 — 순서가 뒤바뀐 계획 결함이었다.
+    //
+    // DatasetService.createDataset 을 타지 않는 이유: 이 테스트가 검증하려는 것은 인덱스
+    // 계층의 거부이고, 서비스 경로는 그 앞에 물리 테이블 DDL 이 섞여 원인이 흐려진다.
     String sharedTableName = "tbl_shared_" + TenantRlsTestSupport.nextTenantId();
 
     TenantRlsTestSupport.runInTenantTransaction(
         tx, tenantA, () -> insertDatasetWithTableName("공유이름-A", sharedTableName));
 
+    // 사전검사는 RLS 스코프라 남의 테넌트 행을 보지 못한다 — 그래서 사전검사만으로는
+    // 물리 충돌을 막을 수 없고, 인덱스 계층의 거부가 반드시 필요하다.
     Boolean visibleToB =
         TenantRlsTestSupport.runInTenantTransaction(
             tx, tenantB, () -> datasetRepository.existsByTableName(sharedTableName));
     assertThat(visibleToB).as("RLS 가 남의 테넌트 table_name 을 숨겨야 한다").isFalse();
 
-    Throwable thrown =
+    Throwable crossTenantDuplicate =
         org.assertj.core.api.Assertions.catchThrowable(
             () ->
                 TenantRlsTestSupport.runInTenantTransaction(
                     tx, tenantB, () -> insertDatasetWithTableName("공유이름-B", sharedTableName)));
 
-    assertThat(thrown)
-        .as("사전검사가 통과시킨 table_name 의 INSERT 가 전역 유니크로 죽으면 접기가 안 된 것이다")
-        .isNull();
+    assertThat(crossTenantDuplicate)
+        .as("공유 data 스키마 동안 두 테넌트가 같은 table_name 을 가지면 물리 테이블이 충돌한다")
+        .isInstanceOf(DataAccessException.class);
 
-    // 접힌 인덱스가 테넌트 안에서는 여전히 유니크를 지켜야 한다(제약 자체를 잃으면 안 된다).
+    // 같은 테넌트 안 중복도 당연히 거부돼야 한다(전역 유니크가 이것까지 포함한다).
     Throwable sameTenantDuplicate =
         org.assertj.core.api.Assertions.catchThrowable(
             () ->
                 TenantRlsTestSupport.runInTenantTransaction(
-                    tx, tenantB, () -> insertDatasetWithTableName("공유이름-B2", sharedTableName)));
+                    tx, tenantA, () -> insertDatasetWithTableName("공유이름-A2", sharedTableName)));
 
     assertThat(sameTenantDuplicate)
-        .as("같은 테넌트 안 중복 table_name 은 여전히 거부돼야 한다")
+        .as("같은 테넌트 안 중복 table_name 은 거부돼야 한다")
         .isInstanceOf(DataAccessException.class);
   }
 

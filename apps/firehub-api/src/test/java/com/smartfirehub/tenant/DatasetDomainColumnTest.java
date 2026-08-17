@@ -42,16 +42,16 @@ class DatasetDomainColumnTest extends IntegrationTestBase {
   }
 
   @Test
-  void datasetNameAndTableNameUniquesAreScopedToTenant() {
+  void datasetNameUniqueIsScopedToTenantButTableNameIsNot() {
     assertThat(indexDef("dataset", "idx_dataset_name")).contains("tenant_id").contains("name");
 
-    // table_name 은 공유 data 스키마의 실제 테이블명이라 V87 시점에는 전역 유니크로 남겨 뒀지만,
-    // V109 가 (tenant_id, table_name) 으로 접었다 — P3-b 에서 data 스키마가 테넌트별로 갈라지면
-    // 같은 이름이 물리적으로 충돌하지 않기 때문이다. 리네임보다 접기를 먼저 해야 리네임이 이미
-    // 충돌하는 데이터를 만나지 않는다.
-    assertThat(indexDef("dataset", "idx_dataset_table_name"))
-        .contains("tenant_id")
-        .contains("table_name");
+    // table_name 은 공유 data 스키마의 실제 테이블명이라 **의도적으로** 전역 유니크로 남는다.
+    // DataSchema.current() 가 상수 "data" 를 돌려주는 동안(P3-b 에서야 테넌트별로 갈라진다)
+    // 두 테넌트의 같은 table_name 은 같은 물리 테이블 하나로 해석되고, data 스키마에는 RLS 가
+    // 없다. 접으면 DataTableService.createTable 의 DROP TABLE IF EXISTS 가 앞선 테넌트의 데이터를
+    // 조용히 지운다 — V109 가 앞당겨 접었다가 V110 으로 되돌린 이유다. 유니크 접기는 스키마
+    // 분리와 **같은 밴드**에서만 해야 한다.
+    assertThat(indexDef("dataset", "idx_dataset_table_name")).doesNotContain("tenant_id");
   }
 
   @Test

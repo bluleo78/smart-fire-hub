@@ -49,7 +49,20 @@ public class DataTableService {
   public void createTable(String tableName, List<DatasetColumnRequest> columns) {
     validateName(tableName);
 
-    // Drop orphaned table if it exists (metadata already verified no dataset references it)
+    // 고아 테이블(참조하는 dataset 행이 없는 물리 테이블)을 회수하기 위해 먼저 지운다.
+    //
+    // **이 DROP 이 안전한 근거는 idx_dataset_table_name 의 전역 유니크다.** 호출부의 사전검사
+    // (DatasetService 의 existsByTableName)는 RLS 로 스코프돼 남의 테넌트 행을 보지 못하므로,
+    // "이 이름을 참조하는 데이터셋이 없다"를 사전검사만으로는 보장할 수 없다. 전역 유니크가
+    // 있어 두 테넌트가 같은 table_name 을 가질 수 없고, 그래서 여기 도달했다는 사실이
+    // "남의 테넌트도 이 이름을 쓰지 않는다"를 뜻한다.
+    //
+    // 유니크를 (tenant_id, table_name) 으로 접으면 이 전제가 깨진다 — DataSchema.current() 가
+    // 상수 "data" 인 동안 두 테넌트의 같은 이름이 같은 물리 테이블로 해석되므로, 이 DROP 이
+    // 앞선 테넌트의 데이터를 예외 없이 지우고 커밋되는 경로가 열린다(V109 로 접었을 때의 코드 경로
+    // 추적 결과이며, 서비스 경로를 실행해 파괴를 재현하지는 않았다 — 인덱스 계층의 23505 소멸까지가
+    // 실측이다). 접기는 테넌트별 스키마 분리(P3-b)와 같은 커밋에서만 해야 하고, 그때 이 DROP 도
+    // 함께 재검토해야 한다.
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tableName));
 
     StringBuilder sql = new StringBuilder();
