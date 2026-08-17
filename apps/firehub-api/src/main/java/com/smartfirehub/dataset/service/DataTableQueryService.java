@@ -19,13 +19,11 @@ public class DataTableQueryService {
   private final DSLContext dsl;
 
   /**
-   * 데이터셋 애드혹 쿼리 전용 검증기 인스턴스. {@code data} 스키마만 허용하고 미한정(스키마 없음) 테이블 참조도 허용한다.
-   *
-   * <p>스프링 빈으로 등록된 {@link SqlValidator}(무인자 = 파이프라인 정책)와는 다른 문맥 정책이라 별도 인스턴스를 직접 생성한다. 아래 {@code
-   * SET LOCAL search_path = 'data'}(단일 스키마)가 미한정 허용의 안전 전제다 — 두 스키마를 세우면 안 된다. 검증기는 불변(생성자만
-   * 정책을 갖고 이후 상태가 없음)이라 필드로 재사용해도 스레드 안전하다. (#385)
+   * 데이터셋 애드혹 쿼리 전용 검증기 인스턴스 — {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접
+   * 생성한다(팩터리 도입 근거는 R1, #385). 아래 {@code SET LOCAL search_path = 'data'}(단일 스키마)가
+   * 미한정 허용의 안전 전제다 — 두 스키마를 세우면 안 된다.
    */
-  private final SqlValidator sqlValidator = new SqlValidator("data", true);
+  private final SqlValidator sqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 
   /**
    * Execute user-supplied SQL against the data schema. Security: rejects DDL, multi-statement

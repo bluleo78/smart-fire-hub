@@ -33,11 +33,11 @@ public class AnalyticsQueryExecutionService {
   private final ExecutorClient executorClient;
 
   /**
-   * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@code new}로 직접 생성한다(#385 Task 4). 스프링 컨텍스트의 무인자 {@link
-   * SqlValidator} 빈은 파이프라인 경로({@code allowedSchema="data"}, 미한정 거부)를 위한 것이라 여기서 재사용하면 안 된다 —
-   * 이 경로는 {@code allowUnqualifiedTables=true}가 필요하다(dev 실사용 쿼리 다수가 미한정, Task 2 실측).
+   * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@link SqlValidator#forAdhocDataSchemaQueries()}로
+   * 직접 생성한다(#385 Task 4, 팩터리 도입 근거는 R1). 스프링 컨텍스트의 무인자 {@link SqlValidator} 빈은
+   * 파이프라인 경로 전용이라 여기서 재사용하면 안 된다.
    */
-  private final SqlValidator sqlValidator = new SqlValidator("data", true);
+  private final SqlValidator sqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 
   @Value("${app.executor.enabled:false}")
   private boolean executorEnabled;
@@ -285,21 +285,28 @@ public class AnalyticsQueryExecutionService {
       return;
     }
 
-    String placeholders = String.join(",", java.util.Collections.nCopies(unqualified.size(), "?"));
-    String catalogSql =
-        "SELECT n.nspname AS schema_name, c.relname AS rel_name "
-            + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            + "WHERE c.relname IN ("
-            + placeholders
-            + ") AND n.nspname IN ('data', 'public') "
-            + "AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')";
-    var rows = dsl.fetch(catalogSql, unqualified.toArray());
+    // R2(#385 코드리뷰) — 손으로 "?,?,?" 자리표시자를 조립하는 대신 jOOQ 네이티브 컬렉션 바인딩
+    // (field.in(Collection))을 쓴다. 동작은 동일(파라미터 바인딩, 인젝션 경로 아님)하고 문자열 조립
+    // 실수(개수 불일치 등) 여지가 없다. pg_class/pg_namespace 는 jOOQ 코드젠 대상(public 스키마)이
+    // 아니라 DSL.table/field 로 이름만 참조한다.
+    var relnameField = field(name("c", "relname"), String.class);
+    var nspnameField = field(name("n", "nspname"), String.class);
+    var relkindField = field(name("c", "relkind"), String.class);
+    var rows =
+        dsl.select(nspnameField, relnameField)
+            .from(table(name("pg_class")).as("c"))
+            .join(table(name("pg_namespace")).as("n"))
+            .on(field(name("n", "oid")).eq(field(name("c", "relnamespace"))))
+            .where(relnameField.in(unqualified))
+            .and(nspnameField.in("data", "public"))
+            .and(relkindField.in("r", "p", "v", "m", "f", "S"))
+            .fetch();
 
     Set<String> inData = new HashSet<>();
     Set<String> inPublic = new HashSet<>();
     for (var r : rows) {
-      String schema = r.get("schema_name", String.class);
-      String name = r.get("rel_name", String.class);
+      String schema = r.get(nspnameField);
+      String name = r.get(relnameField);
       if ("data".equals(schema)) {
         inData.add(name);
       } else if ("public".equals(schema)) {

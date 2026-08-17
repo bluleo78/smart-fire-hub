@@ -125,6 +125,25 @@ public class SqlValidator {
   }
 
   /**
+   * 데이터셋 애드혹 쿼리·애널리틱스 직접 실행 경로 전용 인스턴스를 만든다. (#385 코드리뷰 R1)
+   *
+   * <p>두 호출부({@code DataTableQueryService}, {@code AnalyticsQueryExecutionService})가 각자
+   * {@code new SqlValidator("data", true)}를 필드로 만들면서 "스프링 빈은 파이프라인 정책(무인자 =
+   * {@code allowedSchema="data"}, 미한정 거부)이라 재사용할 수 없다"는 거의 같은 근거 주석을 따로 적어
+   * 뒀다(이 저장소의 복붙 재발 패턴) — 근거를 이 팩터리 한 곳에만 남기고 호출부는 이 메서드만 부르게
+   * 한다. {@code data} 스키마만 허용하고 미한정(스키마 없음) 테이블·시퀀스 참조도 허용하는 정책이다.
+   * 검증기는 불변(생성자만 정책을 갖고 이후 상태가 없음)이라 각 호출부가 필드로 캐시해 재사용해도
+   * 스레드 안전하다.
+   *
+   * <p>파이프라인 SQL 스텝은 이 팩터리를 쓰지 않는다 — 스프링이 관리하는 무인자 빈({@code
+   * allowedSchema="data"}, {@code allowUnqualifiedTables=false})이 그 경로의 정책이고, 애드혹/애널리틱스와
+   * 정책이 다르므로(미한정 허용 여부) 공유 빈을 쓰면 안 된다.
+   */
+  public static SqlValidator forAdhocDataSchemaQueries() {
+    return new SqlValidator("data", true);
+  }
+
+  /**
    * SELECT 본문 등에서 호출 가능한 위험 함수 deny-list.
    *
    * <p>AST 통과(SELECT 형태)이지만 실제로는 파일/네트워크/DB 카탈로그를 노출하는 함수들. DB 역할이 EXECUTE 권한을 갖지 않더라도 애플리케이션 레이어에서
