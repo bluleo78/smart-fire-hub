@@ -196,14 +196,18 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   }
 
   /**
-   * 회귀 방지: geometry 컬럼을 raw 로 조회하면 jOOQ/JDBC 가 바이너리 파싱에 실패해 {@link
-   * AnalyticsQueryExecutionService#executeDirectly}가 자동으로 {@code public.ST_AsGeoJSON(...)}로 감싸
-   * 재시도한다({@code buildGeoJsonWrappedSql}). 이 래핑 SQL 은 사용자 입력이 아니라 애플리케이션이 이미
-   * {@code validate()}를 통과한 원본을 바탕으로 내부 생성한 것이라 재검증 대상은 아니지만, "우리 코드가
-   * 생성하는 SQL 도 실제로 성공하는가"(함수 허용목록 전환이 이 내부 경로를 깨지 않는가)를 실행 결과로 확인한다.
+   * 회귀 방지(허용목록 가드 아님 — 리뷰 지적으로 정정): geometry 컬럼을 raw 로 조회하면 jOOQ/JDBC 가 바이너리
+   * 파싱에 실패해 {@link AnalyticsQueryExecutionService#executeDirectly}가 자동으로 {@code
+   * public.ST_AsGeoJSON(...)}로 감싸 재시도한다({@code buildGeoJsonWrappedSql}). <b>이 래핑 SQL 은
+   * {@code validate()}를 다시 타지 않는다</b> — 뮤테이션 테스트로 실측: {@code ALLOWED_FUNCTIONS}에서
+   * {@code st_asgeojson}을 빼도 이 테스트는 계속 초록이었다(사용자가 제출한 원본 SQL {@code SELECT * FROM
+   * data.t}에 애초에 그 함수 이름이 없으니 검증기가 볼 이유가 없다). 즉 이 테스트는 <b>허용목록을 가드하지
+   * 않는다</b> — 그건 위 {@link #execute_userWrittenPostgisFunctionCall_stillPasses}의 몫이다. 이 테스트가
+   * 실제로 잡는 것은 "raw geometry 조회 시 자동 래핑 폴백 메커니즘 자체가 여전히 DB 레벨에서 동작하는가"
+   * 뿐이다.
    */
   @Test
-  void execute_rawGeometrySelect_autoWrapsWithPostgisFunction_stillPasses() {
+  void execute_rawGeometrySelect_autoWrapFallback_stillWorksAtDbLevel() {
     AnalyticsQueryResponse response =
         executionService.execute("SELECT * FROM data." + GEOM_TABLE, 10, false);
 

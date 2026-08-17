@@ -387,4 +387,129 @@ class SqlValidatorTest {
     assertThatThrownBy(() -> permissive.validate("SELECT * INTO TEMP zz_probe FROM data.t"))
         .isInstanceOf(UnsafeSqlException.class);
   }
+
+  // --- 재재리뷰 C1 — 절 단위 visitor 가 놓쳤던 9개 위치. AstNodeCollector 전수 walk 로 고정 ---
+
+  /**
+   * C1 실측(수정 전 전부 통과): {@code ORDER BY}/{@code GROUP BY}/{@code LIMIT} 안의 함수·서브쿼리는
+   * {@code TablesNamesFinder} 기반 절 단위 visitor 가 아예 방문하지 않는 절이었다. {@code ORDER BY (SELECT
+   * count(*) FROM public.usr)}는 스키마 화이트리스트까지 뚫었다(테이블 참조가 FROM 절 밖에 있다는 이유만으로).
+   */
+  @Test
+  void rejects_dangerous_calls_in_orderBy_groupBy_limit() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(
+            () ->
+                permissive.validate(
+                    "SELECT a FROM data.t ORDER BY"
+                        + " query_to_xml('SELECT * FROM public.usr',true,false,'')"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT a FROM data.t GROUP BY pg_sleep(1)"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () ->
+                permissive.validate(
+                    "SELECT a FROM data.t LIMIT (SELECT count(*) FROM public.usr)"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () -> permissive.validate("SELECT a FROM data.t ORDER BY (SELECT count(*) FROM public.usr)"))
+        .as("서브쿼리 안 테이블 참조 — 스키마 화이트리스트까지 뚫렸던 케이스")
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * C1 실측(수정 전 전부 통과): {@code IS [NOT] NULL} 피연산자, {@code FILTER (WHERE ...)}, UPDATE/DELETE 의
+   * {@code WHERE}, {@code RETURNING} — 전부 절 단위 visitor 사각이었다.
+   */
+  @Test
+  void rejects_dangerous_calls_in_isNull_filter_whereReturning() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(
+            () -> permissive.validate("SELECT * FROM data.t WHERE pg_sleep(5) IS NULL"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () ->
+                permissive.validate(
+                    "SELECT count(*) FILTER (WHERE pg_sleep(1) IS NULL) FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () -> permissive.validate("UPDATE data.t SET a = 1 WHERE pg_sleep(5) IS NULL"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("DELETE FROM data.t WHERE pg_sleep(5) IS NULL"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () -> permissive.validate("INSERT INTO data.t (a) VALUES (1) RETURNING pg_sleep(5)"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * 부수 효과 회귀 방지: 절 단위 visitor({@code TablesNamesFinder} 상속)를 버리면서 그 유틸리티의 알려진
+   * 버그(윈도 프레임 {@code ROWS BETWEEN ... PRECEDING}에서 {@code WindowOffset.getExpression()}이 null 일
+   * 때 NPE)도 함께 사라졌다 — 정상 윈도 SQL 이 "SQL 테이블 분석 실패"로 오탐 거부되던 선행 결함이었다(재재리뷰어
+   * 실측, 이 diff 이전부터 존재). 리플렉션 순회는 null 을 만나면 그냥 멈추므로 해소된다.
+   */
+  @Test
+  void allows_windowFunctionWithRowsBetweenFrame_regressionFixed() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatCode(
+            () ->
+                permissive.validate(
+                    "SELECT sum(a) OVER (ORDER BY b ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)"
+                        + " FROM data.t"))
+        .doesNotThrowAnyException();
+  }
+
+  /**
+   * 회귀 방지: CTE 는 {@link AstNodeCollector}가 스키마 검사 대상에서 제외해야 한다 — 절 단위 visitor 시절엔
+   * {@code TablesNamesFinder}가 자동으로 처리해 주던 것을, 전수 walk 로 바꾸면서 직접 구현했다(CTE 별칭도
+   * 일반 {@code Table} 노드로 파싱되기 때문). strict 모드(미한정 거부)에서도 CTE 참조 자체는 스키마 위반으로
+   * 오인되면 안 된다.
+   */
+  @Test
+  void allows_cteReference_notMisclassifiedAsUnqualifiedTable() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(
+            () -> strict.validate("WITH cte AS (SELECT * FROM data.t) SELECT * FROM cte"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 재재리뷰 M2 — nextval/currval 리터럴 인자 검사 ---
+
+  /**
+   * nextval/currval 은 인자가 문자열 리터럴이라 그 안의 스키마를 AST 테이블 참조로는 볼 수 없다 — 그냥
+   * 허용목록에 이름만 올리면 {@code nextval('public.어떤_시퀀스')}로 남의 시퀀스를 조작할 수 있다(재재리뷰어가
+   * {@code nextval('public.slack_workspace_id_seq')}로 실제 754→755 진행시켰다). 리터럴을 파싱해 스키마를
+   * 검사하고, 계산된 표현식(리터럴이 아닌 인자)은 정적으로 검증할 수 없으므로 무조건 거부한다.
+   */
+  @Test
+  void nextval_literalArgument_checkedAgainstSchema() {
+    SqlValidator strict = new SqlValidator("data", false);
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    // data 스키마 한정 — 항상 허용
+    assertThatCode(() -> strict.validate("SELECT nextval('data.my_seq')"))
+        .doesNotThrowAnyException();
+
+    // public 스키마 한정 — 항상 거부(재재리뷰가 찾은 실제 우회)
+    assertThatThrownBy(
+            () -> strict.validate("SELECT nextval('public.slack_workspace_id_seq')"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () -> permissive.validate("SELECT currval('public.oauth_state_id_seq')"))
+        .isInstanceOf(UnsafeSqlException.class);
+
+    // 미한정 — 테이블과 동일 정책(permissive 만 허용)
+    assertThatThrownBy(() -> strict.validate("SELECT nextval('my_seq')"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatCode(() -> permissive.validate("SELECT nextval('my_seq')"))
+        .doesNotThrowAnyException();
+
+    // 계산된 표현식(리터럴 아님) — 항상 거부
+    assertThatThrownBy(() -> permissive.validate("SELECT nextval(seq_name_column)"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
 }
