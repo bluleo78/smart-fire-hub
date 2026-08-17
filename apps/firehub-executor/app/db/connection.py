@@ -175,7 +175,9 @@ def get_connection(tenant_id: int, settings: Settings) -> Generator:
     # _get_tenant_pool 이 **락 안에서** 이미 예약을 걸어 뒀다(축출 창 방지). 따라서 여기서 다시
     # 올리지 않고, 아래 finally 가 어떤 경로로든 반드시 한 번 내려 준다 — 예외로 빠져나가도
     # 카운트가 남으면 그 테넌트의 풀이 영구히 축출 불가가 된다.
-    reserved = True
+    #
+    # 플래그를 두지 않는다: 이 try 에 들어왔다는 것 자체가 예약이 성공했다는 뜻이다(_get_tenant_pool
+    # 이 실패하면 try 에 진입하지 못하므로 내릴 것도 없다).
     try:
         conn = pool.getconn()
         if conn is None:
@@ -195,10 +197,9 @@ def get_connection(tenant_id: int, settings: Settings) -> Generator:
     finally:
         if conn is not None:
             pool.putconn(conn)
-        if reserved:
-            with _tenant_lock:
-                remaining = _tenant_pool_in_use.get(tenant_id, 1) - 1
-                if remaining <= 0:
-                    _tenant_pool_in_use.pop(tenant_id, None)
-                else:
-                    _tenant_pool_in_use[tenant_id] = remaining
+        with _tenant_lock:
+            remaining = _tenant_pool_in_use.get(tenant_id, 1) - 1
+            if remaining <= 0:
+                _tenant_pool_in_use.pop(tenant_id, None)
+            else:
+                _tenant_pool_in_use[tenant_id] = remaining

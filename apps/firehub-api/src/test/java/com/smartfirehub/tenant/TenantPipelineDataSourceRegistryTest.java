@@ -31,21 +31,21 @@ class TenantPipelineDataSourceRegistryTest extends IntegrationTestBase {
 
   @Test
   @DisplayName("같은 테넌트는 같은 풀, 상한 초과는 LRU 축출+close, 테넌트1은 실제로 pipeline_executor_t1 로 접속한다")
-  void dslForCachesEvictsAndConnectsAsTenantRole() {
+  void dslForWithoutLeaseCachesEvictsAndConnectsAsTenantRole() {
     // (a) 같은 테넌트를 두 번 호출하면 같은 DSLContext 를 돌려준다 — 풀을 매번 새로 만들지 않는다.
-    DSLContext firstCallForA = registry.dslFor(FAKE_TENANT_A);
-    DSLContext secondCallForA = registry.dslFor(FAKE_TENANT_A);
+    DSLContext firstCallForA = registry.withTenantDsl(FAKE_TENANT_A, dsl -> dsl);
+    DSLContext secondCallForA = registry.withTenantDsl(FAKE_TENANT_A, dsl -> dsl);
     assertThat(secondCallForA).isSameAs(firstCallForA);
 
     // application-test.yml 의 app.pipeline.tenant-pool.max-pools=3. 삽입 순서(=LRU 순서, A 는
     // 재접근했지만 이후로는 건드리지 않는다)는 A(가장 오래됨) → B → C(가장 최근) 가 된다.
-    registry.dslFor(FAKE_TENANT_B);
-    registry.dslFor(FAKE_TENANT_C);
+    registry.withTenantDsl(FAKE_TENANT_B, dsl -> dsl);
+    registry.withTenantDsl(FAKE_TENANT_C, dsl -> dsl);
     assertThat(registry.poolCount()).isEqualTo(3);
 
     // (b) 상한을 넘는 네 번째 테넌트(D)를 요청하면 가장 오래 전에 쓰인 A 가 축출되고 close() 된다.
     // 풀 개수는 상한(3)을 그대로 유지한다.
-    registry.dslFor(FAKE_TENANT_D);
+    registry.withTenantDsl(FAKE_TENANT_D, dsl -> dsl);
     assertThat(registry.poolCount()).isEqualTo(3);
 
     // 축출 전에 잡아 둔 A 의 DSLContext 로 쿼리를 시도하면, 닫힌 HikariDataSource 에서 커넥션을
@@ -60,7 +60,7 @@ class TenantPipelineDataSourceRegistryTest extends IntegrationTestBase {
     // 기동(=이 테스트 클래스의 Spring 컨텍스트 부팅) 시 이미 test yml 의 role-password-secret 으로
     // pipeline_executor_t1 비밀번호를 맞춰 둔 상태라야 이 접속이 성공한다.
     String currentUser =
-        registry.dslFor(1L).select(field("current_user", String.class)).fetchOne(0, String.class);
+        registry.withTenantDsl(1L, dsl -> dsl).select(field("current_user", String.class)).fetchOne(0, String.class);
     assertThat(currentUser).isEqualTo("pipeline_executor_t1");
   }
 
@@ -68,7 +68,7 @@ class TenantPipelineDataSourceRegistryTest extends IntegrationTestBase {
    * 대여 중({@link TenantPipelineDataSourceRegistry#withTenantDsl}) 인 풀은 축출되지 않는다 —
    * 코드리뷰 지적 3 의 회귀 가드.
    *
-   * <p>왜 필요한가: LRU 최신성은 {@code dslFor}(스텝 시작) 에서만 갱신되므로, 오래 도는 스텝의 풀은
+   * <p>왜 필요한가: LRU 최신성은 {@code dslForWithoutLease}(스텝 시작) 에서만 갱신되므로, 오래 도는 스텝의 풀은
    * <b>바쁜 채로 늙는다</b>. 사용 카운트를 보지 않으면 그 풀이 축출 대상으로 뽑혀 {@code close()} 되고,
    * 진행 중인 문장이 엉뚱한 {@code ScriptExecutionException} 으로 죽는다.
    *
@@ -92,16 +92,17 @@ class TenantPipelineDataSourceRegistryTest extends IntegrationTestBase {
             leasedDsl -> {
               // 대여 구간 안에서 상한(3)을 여러 번 넘길 만큼 다른 테넌트 풀을 만든다.
               // 사용 카운트가 0 인 풀들만 축출돼야 하고 leased 는 건너뛰어져야 한다.
-              registry.dslFor(90102L);
-              registry.dslFor(90103L);
-              registry.dslFor(90104L);
-              registry.dslFor(90105L);
+              registry.withTenantDsl(90102L, dsl -> dsl);
+              registry.withTenantDsl(90103L, dsl -> dsl);
+              registry.withTenantDsl(90104L, dsl -> dsl);
+              registry.withTenantDsl(90105L, dsl -> dsl);
               return leasedDsl;
             });
 
     // 축출을 건너뛰었다면 같은 풀이 그대로 남아 같은 DSLContext 를 돌려준다.
     // 사용 카운트를 보지 않는 구현에서는 leased 가 가장 오래된 항목이라 가장 먼저 축출된다.
-    assertThat(registry.dslFor(leased))
+    DSLContext afterEviction = registry.withTenantDsl(leased, dsl -> dsl);
+    assertThat(afterEviction)
         .as("대여 중이던 풀은 축출되지 않아야 하므로 같은 DSLContext 인스턴스가 유지된다")
         .isSameAs(leasedDslContext);
   }

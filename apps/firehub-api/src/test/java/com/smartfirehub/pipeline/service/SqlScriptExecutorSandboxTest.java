@@ -144,7 +144,7 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
     var row = dsl.fetch("SELECT who, sp FROM " + GUARD_TABLE).get(0);
 
-    // (1) 접속 신원이 공용 pipeline_executor 가 아니라 테넌트 1 전용 롤이다 — dslFor(tenantId) 배선
+    // (1) 접속 신원이 공용 pipeline_executor 가 아니라 테넌트 1 전용 롤이다 — dslForWithoutLease(tenantId) 배선
     //     을 단일 pipelineDsl 로 되돌리면 이 단언이 깨진다(변이 테스트 대상).
     assertThat(row.get("who", String.class)).isEqualTo("pipeline_executor_t1");
     // (2) 실행 세션의 search_path 가 DataSchema.current() 와 일치한다.
@@ -159,9 +159,10 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
     // 명시적 SET LOCAL 이 "롤 기본값과 우연히 같은 값" 이 아니라 실제로 세션에 적용된 설정임을
     // pg_settings.source 로 구분한다. 롤 레벨 ALTER ROLE ... IN DATABASE 설정은 source='database',
     // 세션에서 SET 한 값은 source='session' 이다.
-    tenantPipelineDataSources
-        .dslFor(DEFAULT_TEST_TENANT_ID)
-        .transaction(
+    tenantPipelineDataSources.withTenantDsl(
+        DEFAULT_TEST_TENANT_ID,
+        leasedDsl -> {
+          leasedDsl.transaction(
             cfg -> {
               cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
               var row =
@@ -171,6 +172,8 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
               assertThat(row.get("setting", String.class)).isEqualTo(DataSchema.current());
               assertThat(row.get("source", String.class)).isEqualTo("session");
             });
+          return null;
+        });
   }
 
   /**

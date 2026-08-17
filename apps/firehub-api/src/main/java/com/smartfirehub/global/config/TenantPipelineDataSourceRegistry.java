@@ -42,10 +42,14 @@ import org.springframework.stereotype.Component;
  * 갉아먹는 눈에 보이지 않는 누수가 된다. 이 클래스는 축출 시점에 즉시 {@code close()} 를 호출해
  * 그 커넥션들을 실제로 반납한다.
  *
- * <p><b>단, 사용 중인 풀은 닫지 않는다.</b> 그래서 프로덕션 호출부는 {@link #dslFor} 가 아니라
- * {@link #withTenantDsl} 로 풀을 <b>대여</b>해야 한다 — 대여 구간에는 축출 후보에서 제외된다.
- * 축출할 후보가 하나도 없으면 상한을 일시적으로 넘기고 경고만 남긴다: 상한은 커넥션 고갈을 늦추기
- * 위한 값이지, 진행 중인 작업을 죽여서 지킬 값이 아니다.
+ * <p><b>단, 사용 중인 풀은 닫지 않는다.</b> 호출부는 {@link #withTenantDsl} 로 풀을 <b>대여</b>하고,
+ * 대여 구간의 풀은 축출 후보에서 제외된다. 축출할 후보가 하나도 없으면 상한을 일시적으로 넘기고
+ * 경고만 남긴다: 상한은 커넥션 고갈을 늦추기 위한 값이지, 진행 중인 작업을 죽여서 지킬 값이 아니다.
+ *
+ * <p><b>이 규약은 주석이 아니라 가시성으로 강제된다.</b> 대여하지 않고 {@link DSLContext} 만 얻는
+ * 경로({@code dslForWithoutLease})는 {@code private} 이다 — 공개해 두면 "쓰지 말라"는 Javadoc 만이
+ * 유일한 방어가 되고, 이 저장소에서 주석형 처방이 낡거나 무시된 전례가 여러 번 있었다. 공개 API 는
+ * {@link #withTenantDsl} 하나이므로 축출 안전성을 깨뜨리는 호출은 <b>컴파일되지 않는다</b>.
  *
  * <p>컨텍스트 종료 시에는 {@link #closeAllPools} 가 남은 풀을 모두 닫는다 — LRU 축출만으로는
  * 스프링 컨텍스트가 여러 번 뜨는 테스트 스위트에서 커넥션이 JVM 종료까지 남는다.
@@ -100,7 +104,7 @@ public class TenantPipelineDataSourceRegistry {
    * getNode} 경로를 쓴다 — 그래서 재사용 히트가 LRU 순서에 반영되지 않는 채로 남는다. 명시적으로
    * {@link Map#get} 을 먼저 호출해야 히트 시에도 접근 순서가 갱신된다.
    */
-  public synchronized DSLContext dslFor(long tenantId) {
+  private synchronized DSLContext dslForWithoutLease(long tenantId) {
     TenantPool existing = pools.get(tenantId);
     if (existing != null) {
       return existing.dslContext();
@@ -113,7 +117,7 @@ public class TenantPipelineDataSourceRegistry {
   /**
    * 테넌트 풀을 **대여**해 작업을 실행한다 — 프로덕션 호출부가 써야 하는 정본 API.
    *
-   * <p><b>왜 {@link #dslFor} 를 직접 쓰면 안 되는가(코드리뷰 지적 3).</b> {@code dslFor} 가 돌려준
+   * <p><b>왜 {@link #dslForWithoutLease} 를 직접 쓰면 안 되는가(코드리뷰 지적 3).</b> {@code dslForWithoutLease} 가 돌려준
    * {@link DSLContext} 를 호출자가 **쓰고 있는 동안** 다른 테넌트들의 요청이 상한을 넘기면, 그
    * 풀이 축출 대상으로 뽑혀 {@code close()} 되고 진행 중인 문장이 죽는다(느린 스텝일수록 LRU 상
    * 오래된 항목이 되어 더 잘 뽑힌다). 이 메서드는 대여 구간에 사용 카운트를 올려 두어
@@ -125,7 +129,7 @@ public class TenantPipelineDataSourceRegistry {
   public <T> T withTenantDsl(long tenantId, java.util.function.Function<DSLContext, T> work) {
     DSLContext dsl;
     synchronized (this) {
-      dsl = dslFor(tenantId);
+      dsl = dslForWithoutLease(tenantId);
       inUse.merge(tenantId, 1, Integer::sum);
     }
     try {

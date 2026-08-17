@@ -3,6 +3,7 @@ package com.smartfirehub.global.tenant;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -86,18 +87,11 @@ public final class TenantPipelineRole {
       Mac mac = Mac.getInstance(HMAC_ALGORITHM);
       mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM));
       byte[] digest = mac.doFinal(Long.toString(tenantId).getBytes(StandardCharsets.UTF_8));
-      return toHex(digest).substring(0, PASSWORD_LENGTH);
+      // HexFormat 은 이 저장소의 기존 관용구다(AuthService·OAuthStateService·AiClassifyExecutor 등 5곳).
+      return HexFormat.of().formatHex(digest).substring(0, PASSWORD_LENGTH);
     } catch (NoSuchAlgorithmException | InvalidKeyException e) {
       // HmacSHA256 은 모든 JVM 표준 프로바이더에 포함되므로 정상 실행 경로에서는 발생하지 않는다.
       throw new IllegalStateException("HMAC-SHA256 파생 실패", e);
     }
-  }
-
-  private static String toHex(byte[] bytes) {
-    StringBuilder sb = new StringBuilder(bytes.length * 2);
-    for (byte b : bytes) {
-      sb.append(String.format("%02x", b));
-    }
-    return sb.toString();
   }
 }
