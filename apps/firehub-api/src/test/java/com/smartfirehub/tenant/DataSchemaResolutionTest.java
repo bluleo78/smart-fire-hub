@@ -188,7 +188,9 @@ class DataSchemaResolutionTest {
       List.of(
           new PinnedSite(
               ALLOWED_FILE,
-              "current() + \".\\\"\" + tableName.replace",
+              // qualify() 의 파라미터명은 tableName → identifier 로 바뀌었다(테이블 전용이 아니라
+              // 인덱스·시퀀스도 한정하므로). 핀 문자열도 함께 따라가야 가드가 계속 그 한 줄을 본다.
+              "current() + \".\\\"\" + identifier.replace",
               1,
               "qualify() 본문 — 조립이 일어나야 하는 유일한 지점"),
           new PinnedSite(

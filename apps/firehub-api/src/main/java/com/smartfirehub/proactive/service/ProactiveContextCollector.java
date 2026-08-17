@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -32,25 +33,15 @@ public class ProactiveContextCollector {
     try {
       Map<String, Object> context = new HashMap<>();
 
-      // 4개 독립 호출을 병렬 실행. supplyAsync 는 공용 ForkJoinPool 을 쓰므로
-      // TenantContextTaskDecorator 가 붙은 @Async 풀과 달리 테넌트 컨텍스트가 승계되지 않는다 —
-      // 호출 스레드의 테넌트를 여기서 붙잡아 각 작업 안에서 다시 세운다. 세우지 않으면 RLS GUC 가
-      // 비어 대시보드 조회가 조용히 0행이 되고, DataSchema 를 거치는 조회는 예외를 던진다.
+      // 4개 독립 호출을 병렬 실행. 테넌트는 호출 스레드에서 붙잡아 각 작업 안에서 다시 세운다
+      // (이유는 scopedAsync 의 Javadoc 참고). require 는 반드시 호출 스레드에서 — 풀 스레드에서
+      // 부르면 컨텍스트가 비어 있어 그 자리에서 던진다.
       long tenantId = TenantContext.require("proactive 컨텍스트 수집");
-      var statsFuture =
-          CompletableFuture.supplyAsync(
-              () -> TenantContext.runScopedGet(tenantId, dashboardService::getStats));
-      var healthFuture =
-          CompletableFuture.supplyAsync(
-              () -> TenantContext.runScopedGet(tenantId, dashboardService::getSystemHealth));
-      var attentionFuture =
-          CompletableFuture.supplyAsync(
-              () -> TenantContext.runScopedGet(tenantId, dashboardService::getAttentionItems));
+      var statsFuture = scopedAsync(tenantId, dashboardService::getStats);
+      var healthFuture = scopedAsync(tenantId, dashboardService::getSystemHealth);
+      var attentionFuture = scopedAsync(tenantId, dashboardService::getAttentionItems);
       var activityFuture =
-          CompletableFuture.supplyAsync(
-              () ->
-                  TenantContext.runScopedGet(
-                      tenantId, () -> dashboardService.getActivityFeed(null, null, 0, 20)));
+          scopedAsync(tenantId, () -> dashboardService.getActivityFeed(null, null, 0, 20));
       CompletableFuture.allOf(statsFuture, healthFuture, attentionFuture, activityFuture).join();
 
       // 1. Dashboard stats
@@ -135,6 +126,21 @@ public class ProactiveContextCollector {
       log.error("Failed to collect proactive context", e);
       return "{}";
     }
+  }
+
+  /**
+   * 대시보드 조회 하나를 <b>테넌트를 다시 세운 채</b> 비동기로 실행한다.
+   *
+   * <p>왜 이 감싸기가 필요한가: {@code supplyAsync} 는 공용 {@code ForkJoinPool} 에서 돌고, 그 풀에는
+   * {@code TenantContextTaskDecorator} 가 붙은 {@code @Async} 풀과 달리 테넌트 컨텍스트 승계 장치가
+   * 없다. 세우지 않으면 RLS GUC 가 비어 대시보드 조회가 <b>예외도 로그도 없이</b> 0행이 되고,
+   * {@code DataSchema} 를 거치는 조회는 예외를 던진다. 네 곳이 같은 감싸기를 복붙하고 있었으므로
+   * 한 곳으로 모아 한 군데만 빠뜨리는 사고를 구조적으로 막는다.
+   *
+   * <p>executor 는 일부러 넘기지 않는다 — 기존 동작({@code supplyAsync} 의 기본 풀)을 그대로 유지한다.
+   */
+  private <T> CompletableFuture<T> scopedAsync(long tenantId, Supplier<T> call) {
+    return CompletableFuture.supplyAsync(() -> TenantContext.runScopedGet(tenantId, call));
   }
 
   /**
