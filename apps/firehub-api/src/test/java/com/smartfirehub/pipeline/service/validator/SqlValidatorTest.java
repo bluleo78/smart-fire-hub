@@ -711,4 +711,223 @@ class SqlValidatorTest {
     assertThatCode(() -> strict.validate("SELECT * FROM data.\"my.table\""))
         .doesNotThrowAnyException();
   }
+
+  /**
+   * m5 후속 — 미한정 이름 자체에 점이 포함된 경우({@code "my.table"})는 "스키마 없음" 메시지로 거부돼야
+   * 한다("허용되지 않는 스키마 참조"가 아니라). {@code indexOf('.')}가 따옴표 안의 점을 스키마 구분자로
+   * 오인해 엉뚱한 메시지를 냈던 결함(수정 전)을 고정한다.
+   */
+  @Test
+  void rejects_unqualifiedNameContainingDot_withCorrectMessage() {
+    SqlValidator strict = new SqlValidator();
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(() -> strict.validate("SELECT * FROM \"my.table\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("스키마가 없습니다")
+        .hasMessageNotContaining("허용되지 않는 스키마 참조");
+    assertThatCode(() -> permissive.validate("SELECT * FROM \"my.table\""))
+        .as("미한정 이름은 permissive 에서 정책대로 통과해야 한다(점이 있다고 다르게 취급하면 안 됨)")
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 후속 B1 — 자기그림자(self-shadowing) CTE ---
+
+  /**
+   * PostgreSQL 은 비재귀 CTE 의 본문을 <b>그 CTE 자신의 스코프 밖</b>에서 해석한다. psql 실측:
+   * {@code WITH "user" AS (SELECT * FROM "user") SELECT * FROM "user"} → 7900행대(= {@code
+   * public."user"} 전체), {@code WITH pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles}
+   * → 17행(pg_ 가드도 우회). 최초 스코프 구현은 노드 진입 즉시 전체 별칭을 push 해 이 케이스를 스코프
+   * 안으로 오분류했다 — {@code unqualifiedTableNames()}가 빈 집합을 반환해 카탈로그 백스톱도 무력화됐다.
+   */
+  @Test
+  void unqualifiedTableNames_doesNotHideSelfShadowingCteBody() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(
+            permissive.unqualifiedTableNames(
+                "WITH \"user\" AS (SELECT * FROM \"user\") SELECT * FROM \"user\""))
+        .as("비재귀 CTE 본문 안의 자기 이름 참조는 스코프 밖(진짜 테이블)이므로 목록에 남아야 한다")
+        .contains("user");
+  }
+
+  /** 같은 뿌리 — pg_ 가드는 자기그림자로도 뚫리면 안 된다(strict 모드에서 즉시 거부되는지 직접 확인). */
+  @Test
+  void rejects_selfShadowingCte_withPgPrefixedAlias() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatThrownBy(
+            () -> strict.validate("WITH pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 서브쿼리 안에 중첩해도 자기그림자가 재현되는지(스코프 계산이 중첩 깊이와 무관해야 한다). */
+  @Test
+  void unqualifiedTableNames_doesNotHideSelfShadowingCte_whenNestedInSubquery() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(
+            permissive.unqualifiedTableNames(
+                "SELECT * FROM (WITH \"user\" AS (SELECT * FROM \"user\") SELECT * FROM \"user\") s"))
+        .contains("user");
+  }
+
+  /** 양성 대조 — {@code RECURSIVE}로 표시된 CTE 의 자기 참조는 합법이므로 계속 허용해야 한다. */
+  @Test
+  void allows_recursiveCteSelfReference() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t WHERE n < 5)"
+                        + " SELECT * FROM t"))
+        .doesNotThrowAnyException();
+  }
+
+  /** 양성 대조 — 순차적으로 이전 CTE 를 참조하는(자기 자신 아님) 통상적인 다중 CTE 는 계속 허용해야 한다. */
+  @Test
+  void allows_sequentialCteReferencingEarlierCte() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "WITH a AS (SELECT * FROM data.t), b AS (SELECT * FROM a) SELECT * FROM b"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 후속 B2 — DML(WITH ... UPDATE/DELETE/INSERT) 회귀 ---
+
+  /**
+   * 이번 라운드가 만든 회귀 — {@code Update}/{@code Delete}/{@code Insert}는 {@code Select}가 아니라서
+   * 그들이 소유한 {@code getWithItemsList()}가 스코프 push 대상에서 빠졌다(예전 전역 수집 방식은 이 형태를
+   * 처리하고 있었다). {@code strict.validate()}가 정상 통과해야 한다(CTE 참조가 미한정 테이블로 오독되면
+   * 안 됨) — 세 DML 타입 전부 확인.
+   */
+  @Test
+  void allows_withUpdateDeleteInsert_cteNotMisreadAsUnqualifiedTable() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "WITH role AS (SELECT 1 AS x) UPDATE data.t SET a = 1 WHERE a IN (SELECT x"
+                        + " FROM role)"))
+        .as("WITH ... UPDATE")
+        .doesNotThrowAnyException();
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "WITH role AS (SELECT 1 AS x) DELETE FROM data.t WHERE a IN (SELECT x FROM"
+                        + " role)"))
+        .as("WITH ... DELETE")
+        .doesNotThrowAnyException();
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "WITH role AS (SELECT 1 AS x) INSERT INTO data.t (a) SELECT x FROM role"))
+        .as("WITH ... INSERT")
+        .doesNotThrowAnyException();
+  }
+
+  /** 같은 뿌리 — {@code unqualifiedTableNames()}도 DML-WITH 의 CTE 참조를 진짜 테이블로 새면 안 된다. */
+  @Test
+  void unqualifiedTableNames_excludesCteAlias_inDmlWithForms() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(
+            permissive.unqualifiedTableNames(
+                "WITH role AS (SELECT 1 AS x) UPDATE data.t SET a = 1 WHERE a IN (SELECT x FROM"
+                    + " role)"))
+        .as("role 은 스코프 안 CTE 참조라 목록에 없어야 한다")
+        .doesNotContain("role");
+  }
+
+  // --- 코드리뷰 후속 m4 — current_role / 미한정 user ---
+
+  @Test
+  void rejects_currentRoleAndBareUser() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatThrownBy(() -> permissive.validate("SELECT current_role"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate("SELECT user"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /**
+   * 양성 대조 — 인용된 {@code "user"}는 PG 가 의사 상수로 해석하지 않는다(psql 실측: {@code column "user"
+   * does not exist}가 나는 것은 quoting 이 있을 때 뿐이다). 진짜 컬럼일 수 있으므로 막지 않는다.
+   */
+  @Test
+  void allows_quotedUserColumnReference() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThatCode(() -> permissive.validate("SELECT \"user\" FROM data.t"))
+        .doesNotThrowAnyException();
+  }
+
+  // --- 코드리뷰 후속 B1 보강 — WITH 절 내부의 "전방 참조" 가시성 (비재귀 vs RECURSIVE) ---
+
+  /**
+   * 비재귀 WITH 에서 <b>뒤에 정의된</b> 별칭을 앞 항목이 참조하면, PostgreSQL 은 그것을 CTE 가 아니라 진짜
+   * 테이블로 해석한다. psql 실측({@code search_path='data','public'}):
+   *
+   * <pre>
+   * WITH b AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1 x) SELECT count(*) FROM b;  -- 17행
+   * </pre>
+   *
+   * 17행은 진짜 {@code pg_catalog.pg_roles} 다(뒤의 CTE 였다면 1행). 따라서 전방 참조를 스코프로 인정하면
+   * B1 과 똑같은 구멍이 "자기 자신" 대신 "뒤 형제" 자리로 옮겨갈 뿐이다 — 앞→뒤 단조(monotone) 규칙이
+   * 필요한 이유이고, 이 테스트가 그 규칙을 고정한다.
+   */
+  @Test
+  void rejects_nonRecursiveCte_forwardReferenceResolvesToRealTable() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatThrownBy(
+            () ->
+                strict.validate(
+                    "WITH b AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1 AS x)"
+                        + " SELECT * FROM b"))
+        .as("앞 항목이 참조한 pg_roles 는 뒤 CTE 가 아니라 진짜 카탈로그다 — pg_ 가드가 걸려야 한다")
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 같은 뿌리 — 카탈로그 백스톱이 보도록 미한정 이름 목록에도 전방 참조가 진짜 테이블로 남아야 한다. */
+  @Test
+  void unqualifiedTableNames_keepsForwardReferencedNameInNonRecursiveWith() {
+    SqlValidator permissive = new SqlValidator("data", true);
+
+    assertThat(
+            permissive.unqualifiedTableNames(
+                "WITH b AS (SELECT * FROM a), a AS (SELECT 1 AS x) SELECT * FROM b"))
+        .as("a 는 b 의 본문 시점에 아직 정의 전이라 진짜 테이블 참조다")
+        .contains("a");
+  }
+
+  /**
+   * 반대 방향 양성 대조 — {@code RECURSIVE} 절에서는 전방 참조가 <b>실제로 CTE 를 가리킨다</b>. psql 실측:
+   *
+   * <pre>
+   * WITH RECURSIVE b AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1 x) SELECT count(*) FROM b;
+   * </pre>
+   *
+   * 이 쿼리는 <b>1행</b>을 반환했다(진짜 카탈로그였다면 17행) — 즉 {@code WITH RECURSIVE} 는 목록 전체가
+   * 상호 참조 가능하다. 그래서 재귀 절에는 위의 단조 규칙을 적용하지 않는다(적용하면 합법 쿼리를 거부하는
+   * 오탐이 된다). 이 테스트가 그 비대칭을 고정한다.
+   */
+  @Test
+  void allows_recursiveCte_forwardReferenceBetweenSiblings() {
+    SqlValidator strict = new SqlValidator();
+
+    assertThatCode(
+            () ->
+                strict.validate(
+                    "WITH RECURSIVE b AS (SELECT * FROM c), c AS (SELECT 1 AS x)"
+                        + " SELECT * FROM b"))
+        .as("RECURSIVE 절의 전방 참조는 PG 가 CTE 로 해석한다 — 거부하면 오탐")
+        .doesNotThrowAnyException();
+  }
 }

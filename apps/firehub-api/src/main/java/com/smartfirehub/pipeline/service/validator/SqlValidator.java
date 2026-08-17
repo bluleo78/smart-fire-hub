@@ -84,6 +84,12 @@ import org.springframework.stereotype.Component;
  * 빠진 상태다 — 트레이드오프다: 컬럼 한정자를 일반 테이블 참조처럼 취급하면 정상 쿼리(별칭 있는 JOIN 등,
  * {@code allows_cte_referencing_only_data_schema} 류)가 깨진다는 것을 이미 실측했으므로(Column/
  * AllTableColumns 제외 로직 참고) 이 손실을 받아들인다.
+ *
+ * <p><b>이월 — {@code WITH c AS MATERIALIZED (...)}를 JSqlParser 가 못 파싱한다(#385 코드리뷰 후속,
+ * 고치지 않음).</b> PostgreSQL 12+ 의 합법 구문({@code MATERIALIZED}/{@code NOT MATERIALIZED} 힌트)인데
+ * 실측(JSqlParser 5.0): {@code ParseException: Encountered unexpected token: "MATERIALIZED"}.
+ * 이 검증기를 지나는 사용자가 이 구문을 쓰면 파싱 실패로 400 이 되어(R8, 파싱 실패 폴백 없음) 합법
+ * PG 문이 거부된다 — 밴드 범위 밖이라 지금은 고치지 않는다. 밴드 종료 시 별도 이슈로 올린다.
  */
 @Slf4j
 @Component
@@ -506,7 +512,9 @@ public class SqlValidator {
             "허용되지 않는 테이블 참조 표기(점이 2개 이상): '" + fqn + "'. 스키마.테이블 형식만 허용됩니다.");
       }
       // 스키마/테이블 이름의 양쪽 따옴표만 제거 (식별자 인용 보정)
-      int dot = fqn.indexOf('.');
+      // indexOfUnquotedDot 사용 — 순수 indexOf('.')는 "my.table"처럼 이름 자체에 점이 있는 미한정
+      // 테이블(따옴표 안의 점)을 "스키마.이름"으로 잘못 쪼개 엉뚱한 메시지를 냈다(위 m5 후속 정정).
+      int dot = indexOfUnquotedDot(fqn);
       if (dot < 0) {
         String name = stripQuotes(fqn);
         if (name.toLowerCase().startsWith("pg_")) {
@@ -553,6 +561,41 @@ public class SqlValidator {
     return count;
   }
 
+  /**
+   * 따옴표 밖(top-level)의 첫 {@code .} 위치를 찾는다. 없으면 -1.
+   *
+   * <p>m5 메시지 정정(#385 코드리뷰 후속) — {@link #requireDataSchemaOnly}가 이 헬퍼 대신 순수
+   * {@code String.indexOf('.')}을 썼을 때, {@code "my.table"}처럼 이름 자체에 점이 포함된 <b>미한정</b>
+   * 테이블(따옴표 안의 점)을 "스키마.이름 표기"로 잘못 쪼개 엉뚱한 "허용되지 않는 스키마 참조" 메시지를
+   * 냈다(거부/허용 여부 자체는 정책대로였지만 진단 메시지가 틀렸다). {@link #countUnquotedDots}로 이미
+   * 2개 이상인 표기는 먼저 걸러지므로, 여기서는 남은 유일한 점(있다면)의 위치만 따옴표를 무시하고 찾는다.
+   */
+  private static int indexOfUnquotedDot(String s) {
+    boolean inQuotes = false;
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c == '"') {
+        inQuotes = !inQuotes;
+      } else if (c == '.' && !inQuotes) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * PostgreSQL 식별자 폴딩 규칙 — 인용된 식별자는 원문 대소문자를 보존하고, 인용되지 않은 식별자만
+   * 소문자화한다(PG 파서가 인용 없는 식별자를 항상 소문자로 접기 때문). CTE 별칭 스코프 대조와 미한정
+   * 테이블 이름 정규화가 이 규칙을 공유한다(#385 코드리뷰 Medium — 전에는 CTE 별칭 등록만 무조건
+   * 소문자화해서 {@code WITH role AS (...) SELECT * FROM "ROLE"}처럼 인용된 혼합 대소문자 이름이
+   * 실제로는 CTE 참조가 아닌데도 별칭과 잘못 매칭되거나, 반대로 진짜 별칭 매칭이 빠지는 fail-open 여지가
+   * 있었다).
+   */
+  private static String foldIdentifier(String raw) {
+    boolean quoted = raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"");
+    return quoted ? stripQuotes(raw) : raw.toLowerCase();
+  }
+
   /** 함수 이름(schema.fn 표기 가능)에서 실제 함수명만 뽑아 정규화한다(마지막 dot 뒤 토큰, 따옴표 제거). */
   private static String simpleFunctionName(String rawName) {
     int dot = rawName.lastIndexOf('.');
@@ -581,9 +624,10 @@ public class SqlValidator {
     AstNodeCollector collected = AstNodeCollector.collect(statement);
     Set<String> result = new LinkedHashSet<>();
     for (String fqn : collected.tableFqns()) {
-      if (fqn.indexOf('.') < 0) {
-        boolean quoted = fqn.length() >= 2 && fqn.startsWith("\"") && fqn.endsWith("\"");
-        result.add(quoted ? stripQuotes(fqn) : fqn.toLowerCase());
+      // indexOfUnquotedDot 사용 — 순수 indexOf('.')는 "my.table"(따옴표 안에 점이 있는 미한정 테이블)을
+      // "점이 있으니 한정됐다"고 오판해 이 결과 집합에서 빠뜨렸다(m5 후속 정정과 같은 근본 원인).
+      if (indexOfUnquotedDot(fqn) < 0) {
+        result.add(foldIdentifier(fqn));
       }
     }
     return result;
@@ -683,27 +727,43 @@ public class SqlValidator {
   }
 
   /**
-   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema} —
-   * PostgreSQL 예약 의사 상수(pseudo-constant). (#385 코드리뷰 m4)
+   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema}/
+   * {@code current_role}/{@code user} — PostgreSQL 예약 의사 상수(pseudo-constant). (#385 코드리뷰 m4,
+   * `current_role`/`user` 는 코드리뷰 후속 지적으로 추가)
    *
    * <p>이 이름들은 함수 호출이 아니라 {@link net.sf.jsqlparser.schema.Column}(한정자 없는 컬럼 참조)으로
    * 파싱돼 {@link #requireOnlyKnownFunctions}의 함수 허용목록을 아예 지나가지 않는다 — 클래스 문서에 이
    * 이름들이 "허용목록에서 의도적으로 제외했다"고 적어 뒀지만, 함수가 아니므로 애초에 허용목록 대조 대상이
    * 아니었다(문서와 실제가 어긋남, 실측: 두 경로 모두 통과해 DB 롤 이름을 반환). 세션 정보 노출이 데이터
    * 유출 자체는 아니지만 이 검증기의 "알려진 안전한 것만 통과"라는 불변식에 어긋나므로 명시적으로 막는다.
+   *
+   * <p><b>인용된 형태는 의사 상수가 아니다(실측) — {@link #requireNoReservedPseudoColumns}가 인용 여부로
+   * 분기한다.</b> psql 실측: {@code SELECT "user"}, {@code SELECT "current_user"}는 둘 다 {@code column
+   * "user"/"current_user" does not exist}로 실패한다 — PG 는 <b>인용 없는 키워드 형태만</b> 의사 상수로
+   * 해석한다. 인용된 {@code "user"}는 진짜(존재한다면) 컬럼 참조이므로 막으면 안 된다 — 이 시스템은 실제로
+   * {@code user} 테이블이 있어 그 컬럼을 인용해 다루는 정상 쿼리를 깨뜨릴 수 있다. {@code user}를 이
+   * 목록에 추가하면서 생기는 유일한 트레이드오프는 "미한정 컬럼 이름이 우연히 {@code user}인 실제 컬럼을
+   * 인용 없이 참조하는" 드문 정상 쿼리가 거부되는 것인데, 세션 정보 노출 차단이 이 비용보다 낫다고 판단했다
+   * (dev 이력에 그런 사용례는 없었다).
    */
   private static final Set<String> RESERVED_PSEUDO_CONSTANTS =
-      Set.of("current_user", "session_user", "current_catalog", "current_schema");
+      Set.of(
+          "current_user", "session_user", "current_catalog", "current_schema", "current_role",
+          "user");
 
   private void requireNoReservedPseudoColumns(List<Column> columns) {
     for (Column column : columns) {
       if (column.getTable() != null) {
         continue; // 한정된 컬럼 참조(t.current_user 등)는 실제 컬럼명일 뿐 의사 상수가 아니다.
       }
-      String name = stripQuotes(column.getColumnName()).toLowerCase();
-      if (RESERVED_PSEUDO_CONSTANTS.contains(name)) {
+      String raw = column.getColumnName();
+      boolean quoted = raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"");
+      if (quoted) {
+        continue; // 인용된 형태는 PG 가 의사 상수로 해석하지 않는다(위 문서의 실측 참고) — 진짜 컬럼일 수 있다.
+      }
+      if (RESERVED_PSEUDO_CONSTANTS.contains(raw.toLowerCase())) {
         throw new UnsafeSqlException(
-            "허용되지 않는 참조: '" + column.getColumnName() + "'. 세션/역할 정보를 노출하는 의사 상수는 차단됩니다.");
+            "허용되지 않는 참조: '" + raw + "'. 세션/역할 정보를 노출하는 의사 상수는 차단됩니다.");
       }
     }
   }
@@ -865,7 +925,7 @@ public class SqlValidator {
       List<String> result = new ArrayList<>();
       for (TableRef ref : tables) {
         String fqn = ref.table().getFullyQualifiedName();
-        if (fqn.indexOf('.') < 0 && ref.activeCteAliases().contains(stripQuotes(fqn).toLowerCase())) {
+        if (indexOfUnquotedDot(fqn) < 0 && ref.activeCteAliases().contains(foldIdentifier(fqn))) {
           continue; // 그 스코프에서 유효한 CTE 참조 — 실제 테이블이 아니다.
         }
         result.add(fqn);
@@ -914,22 +974,48 @@ public class SqlValidator {
         return; // 이미 방문(사이클 방지)
       }
 
-      // 이 Select(또는 하위 타입 — PlainSelect/WithItem/ParenthesedSelect 등)가 자기 소유의 WITH 절을
-      // 갖고 있으면, 그 별칭들을 이 노드의 서브트리 전체(자기 자신의 WITH 정의 본문 포함 — RECURSIVE CTE 의
-      // 자기 참조도 여기서 자연스럽게 스코프 안에 들어온다)에서만 유효하도록 push 한다.
+      // 이 노드(Select/PlainSelect/WithItem/ParenthesedSelect 또는 Update/Delete/Insert)가 자기 소유의
+      // WITH 절을 가지면 그 별칭을 스코프 스택에 push 한다. (#385 코드리뷰 B1/B2)
+      //
+      // B1(자기그림자, self-shadowing) — 비재귀 CTE 의 본문은 PostgreSQL 이 "그 CTE 자신의 스코프 밖"에서
+      // 해석한다. {@code WITH "user" AS (SELECT * FROM "user") SELECT * FROM "user"} 의 안쪽 "user" 는
+      // CTE 자신이 아니라 바깥의 진짜 {@code public."user"} 를 가리킨다(psql 실측: 7967행 반환,
+      // {@code WITH pg_roles AS (SELECT * FROM pg_roles) ...} 는 17행 — pg_ 가드도 같은 경로로 뚫렸다).
+      // 최초 구현은 노드 진입 즉시 전체 별칭을 push 해 자기 본문 안에서도 자기 자신을 참조하는 것처럼
+      // 오분류했다({@code unqualifiedTableNames()}가 빈 집합을 반환해 카탈로그 백스톱까지 무력화됨). 수정:
+      // 비재귀 항목은 **그 항목의 본문을 walk 한 뒤에** 자기 별칭을 push 한다 — 항목 N 은 1..N-1 만 보고
+      // 자기 자신은 못 본다(PG 의 순차적 가시성과 일치). {@code RECURSIVE} 로 표시된 항목이 하나라도 있으면
+      // 그 WITH 절 전체를 재귀로 취급해(PG 의미상 WITH RECURSIVE 는 목록 전체가 상호 참조 가능) 본문을
+      // walk 하기 전에 전체 별칭을 미리 push 한다(자기/상호 참조가 합법이므로).
+      //
+      // B2(DML-WITH 회귀, 이번 스코프 전환이 새로 낸 결함) — Update/Delete/Insert 는 Select 가 아니라서
+      // {@code node instanceof Select} 만으로는 그들이 소유한 {@code getWithItemsList()}가 push 되지
+      // 않았다 — {@code WITH role AS (...) UPDATE data.t ...} 에서 CTE 별칭 "role"이 진짜 미한정 테이블로
+      // 오독돼 정당한 쿼리가 거부됐다(예전 전역 수집 방식은 이 형태를 처리하고 있었다 — 회귀였다).
+      // {@link #ownWithItemsOf}로 네 타입을 함께 처리한다.
       boolean pushedCteScope = false;
-      if (node instanceof Select select) {
-        List<WithItem> ownWithItems = select.getWithItemsList();
-        if (ownWithItems != null && !ownWithItems.isEmpty()) {
-          Set<String> combined = new HashSet<>(cteScopeStack.isEmpty() ? Set.of() : cteScopeStack.peek());
+      List<WithItem> ownWithItems = ownWithItemsOf(node);
+      if (ownWithItems != null && !ownWithItems.isEmpty()) {
+        Set<String> inherited = cteScopeStack.isEmpty() ? Set.of() : cteScopeStack.peek();
+        boolean recursive = ownWithItems.stream().anyMatch(WithItem::isRecursive);
+        if (recursive) {
+          Set<String> combined = new HashSet<>(inherited);
           for (WithItem withItem : ownWithItems) {
-            if (withItem.getAlias() != null && withItem.getAlias().getName() != null) {
-              combined.add(stripQuotes(withItem.getAlias().getName()).toLowerCase());
-            }
+            addAlias(combined, withItem);
           }
           cteScopeStack.push(Set.copyOf(combined));
-          pushedCteScope = true;
+        } else {
+          Set<String> running = new HashSet<>(inherited);
+          for (WithItem withItem : ownWithItems) {
+            // 이 항목은 이전 항목까지만 본다 — 자기 자신은 아직 running 에 없다(B1 의 핵심).
+            cteScopeStack.push(Set.copyOf(running));
+            walk(withItem, depth + 1);
+            cteScopeStack.pop();
+            addAlias(running, withItem);
+          }
+          cteScopeStack.push(Set.copyOf(running)); // 본문(메인 쿼리)은 전체 CTE 를 본다
         }
+        pushedCteScope = true;
       }
 
       if (node instanceof Function function) {
@@ -979,6 +1065,35 @@ public class SqlValidator {
         if (pushedCteScope) {
           cteScopeStack.pop();
         }
+      }
+    }
+
+    /**
+     * 노드가 소유한 {@code WITH} 절 목록을 돌려준다(없으면 {@code null}). {@code Select}(및 하위 타입)와
+     * {@code Update}/{@code Delete}/{@code Insert}가 각자 독립적으로 {@code getWithItemsList()}를 선언하고
+     * 있어(공통 상위 타입이 없다) 타입별로 나눠 확인한다 — B2(#385 코드리뷰)의 원인이 정확히 이 목록에서
+     * DML 세 타입이 빠졌던 것이었다.
+     */
+    private static List<WithItem> ownWithItemsOf(Object node) {
+      if (node instanceof Select select) {
+        return select.getWithItemsList();
+      }
+      if (node instanceof Update update) {
+        return update.getWithItemsList();
+      }
+      if (node instanceof Delete delete) {
+        return delete.getWithItemsList();
+      }
+      if (node instanceof Insert insert) {
+        return insert.getWithItemsList();
+      }
+      return null;
+    }
+
+    /** {@code WithItem}의 별칭을 PG 식별자 폴딩 규칙({@link SqlValidator#foldIdentifier})으로 집합에 더한다. */
+    private static void addAlias(Set<String> aliases, WithItem withItem) {
+      if (withItem.getAlias() != null && withItem.getAlias().getName() != null) {
+        aliases.add(foldIdentifier(withItem.getAlias().getName()));
       }
     }
 

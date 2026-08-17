@@ -136,6 +136,41 @@ class AnalyticsQueryGuardTest extends IntegrationTestBase {
   }
 
   /**
+   * B1(#385 재재재재리뷰) — 비재귀 CTE 는 자기 자신의 본문을 "자기 스코프 밖"에서 해석한다(PG 실측:
+   * {@code WITH "user" AS (SELECT * FROM "user") SELECT * FROM "user"} 가 {@code public."user"} 전체를
+   * 반환, 7900행대). 최초 스코프 전환 구현은 노드 진입 즉시 전체 별칭을 push 해 이 자기그림자(self-shadow)
+   * 케이스를 스코프 안으로 오분류했다 — 실제 애널리틱스 실행 경로에서 이 형태가 거부되는지 고정한다.
+   */
+  @Test
+  void execute_selfShadowingNonRecursiveCte_rejected() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "WITH \"user\" AS (SELECT * FROM \"user\") SELECT * FROM \"user\"", 10, false);
+
+    assertThat(response.error()).isNotNull();
+  }
+
+  /**
+   * B2(#385 재재재재리뷰) — 회귀 방지: {@code WITH ... UPDATE} 형태에서 CTE 참조가 진짜 미한정 테이블로
+   * 오독돼 정당한 쿼리가 거부되면 안 된다. {@code src} 의 id 로 자기 자신의 name 을 그대로 다시 쓰는
+   * 무해한 UPDATE — 픽스처 행 내용은 바뀌지 않는다.
+   */
+  @Test
+  void execute_dmlWithCte_stillPasses() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "WITH src AS (SELECT id FROM data."
+                + TEST_TABLE
+                + ") UPDATE data."
+                + TEST_TABLE
+                + " SET name = name WHERE id IN (SELECT id FROM src)",
+            10,
+            false);
+
+    assertThat(response.error()).isNull();
+  }
+
+  /**
    * 리뷰 지적 — {@code information_schema.tables} 는 시퀀스(relkind {@code S})를 담지 않아 이전 구현이 이 케이스를
    * 놓쳤다(리뷰어 실측: {@code SELECT last_value, log_cnt FROM oauth_state_id_seq} 가 370/27 을 반환). {@code
    * pg_class.relkind}로 시퀀스까지 포함하도록 고친 뒤 이 케이스가 막히는지 실제 배선 레벨로 고정한다.
