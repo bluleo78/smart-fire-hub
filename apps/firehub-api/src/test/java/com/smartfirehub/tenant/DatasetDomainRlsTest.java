@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -30,6 +31,7 @@ class DatasetDomainRlsTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private DatasetRepository datasetRepository;
 
   private TransactionTemplate tx;
   private long tenantA;
@@ -115,15 +117,67 @@ class DatasetDomainRlsTest extends IntegrationTestBase {
     assertThat(visible).as("테넌트 컨텍스트 없이 RLS 테이블이 보이면 fail-open 이다").isFalse();
   }
 
+  @Test
+  void twoTenantsCanUseTheSameTableNameAndPreCheckAgreesWithInsert() {
+    // V109 가 idx_dataset_table_name 을 (tenant_id, table_name) 으로 접은 결과를 고정한다.
+    //
+    // 접기 전에는 사전검사와 실제 INSERT 가 서로 다른 스코프를 보고 있었다:
+    // existsByTableName 은 RLS 로 스코프된 public.dataset 을 읽어 남의 테넌트 행을 못 보는데,
+    // 유니크 인덱스는 전역이었다 → 테넌트 B 가 A 의 이름을 고르면 사전검사는 "없다"(false)로
+    // 통과시키고 INSERT 가 23505 중복키로 죽었다. 사용자에게는 DuplicateDatasetNameException 도
+    // 아닌 원시 DB 오류로 보였고, 애초에 물리 테이블이 테넌트별로 갈라지면 존재하지도 않는
+    // 거짓 제약이었다. 접은 뒤에는 그 충돌이 사라져 사전검사와 INSERT 가 처음으로 일치한다.
+    //
+    // DatasetService.createDataset 을 타지 않는 이유: 그 경로는 사전검사 뒤에
+    // dataTableService.createTable 로 공유 data 스키마에 물리 테이블을 만들어, 두 번째 테넌트가
+    // 이 접기와 무관한 "relation already exists" 로 실패한다(그 해소는 P3-b 스키마 리네임 몫).
+    String sharedTableName = "tbl_shared_" + TenantRlsTestSupport.nextTenantId();
+
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx, tenantA, () -> insertDatasetWithTableName("공유이름-A", sharedTableName));
+
+    Boolean visibleToB =
+        TenantRlsTestSupport.runInTenantTransaction(
+            tx, tenantB, () -> datasetRepository.existsByTableName(sharedTableName));
+    assertThat(visibleToB).as("RLS 가 남의 테넌트 table_name 을 숨겨야 한다").isFalse();
+
+    Throwable thrown =
+        org.assertj.core.api.Assertions.catchThrowable(
+            () ->
+                TenantRlsTestSupport.runInTenantTransaction(
+                    tx, tenantB, () -> insertDatasetWithTableName("공유이름-B", sharedTableName)));
+
+    assertThat(thrown)
+        .as("사전검사가 통과시킨 table_name 의 INSERT 가 전역 유니크로 죽으면 접기가 안 된 것이다")
+        .isNull();
+
+    // 접힌 인덱스가 테넌트 안에서는 여전히 유니크를 지켜야 한다(제약 자체를 잃으면 안 된다).
+    Throwable sameTenantDuplicate =
+        org.assertj.core.api.Assertions.catchThrowable(
+            () ->
+                TenantRlsTestSupport.runInTenantTransaction(
+                    tx, tenantB, () -> insertDatasetWithTableName("공유이름-B2", sharedTableName)));
+
+    assertThat(sameTenantDuplicate)
+        .as("같은 테넌트 안 중복 table_name 은 여전히 거부돼야 한다")
+        .isInstanceOf(DataAccessException.class);
+  }
+
   // ── 픽스처 ────────────────────────────────────────────────────────────
 
 
   /** tenant_id 는 명시하지 않는다 — DEFAULT 가 GUC 에서 채우는 것을 함께 검증하기 위함이다. */
   private Long insertDataset(String namePrefix) {
+    return insertDatasetWithTableName(
+        namePrefix, "tbl_rls_" + TenantRlsTestSupport.nextTenantId());
+  }
+
+  /** table_name 을 호출자가 정하는 버전. 두 테넌트가 같은 이름을 쓰는 시나리오에 필요하다. */
+  private Long insertDatasetWithTableName(String namePrefix, String tableName) {
     long suffix = TenantRlsTestSupport.nextTenantId();
     return dsl.insertInto(table(name("dataset")))
         .set(field(name("name"), String.class), namePrefix + "-" + suffix)
-        .set(field(name("table_name"), String.class), "tbl_rls_" + suffix)
+        .set(field(name("table_name"), String.class), tableName)
         .set(field(name("storage_type"), String.class), "TABLE")
         .set(field(name("origin_type"), String.class), "SOURCE")
         .set(field(name("created_by"), Long.class), createdUserId)

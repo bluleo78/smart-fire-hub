@@ -42,13 +42,16 @@ class DatasetDomainColumnTest extends IntegrationTestBase {
   }
 
   @Test
-  void datasetNameUniqueIsScopedToTenantButTableNameIsNot() {
+  void datasetNameAndTableNameUniquesAreScopedToTenant() {
     assertThat(indexDef("dataset", "idx_dataset_name")).contains("tenant_id").contains("name");
 
-    // table_name 은 공유 data 스키마의 실제 테이블명이라 P3 까지 전역 유니크로 남는다.
-    // 이 단언은 "P3 로 미룬다"는 결정을 고정한다 — 앞당겨 바꾸면 두 테넌트가 같은 물리 테이블을
-    // 주장하게 된다.
-    assertThat(indexDef("dataset", "idx_dataset_table_name")).doesNotContain("tenant_id");
+    // table_name 은 공유 data 스키마의 실제 테이블명이라 V87 시점에는 전역 유니크로 남겨 뒀지만,
+    // V109 가 (tenant_id, table_name) 으로 접었다 — P3-b 에서 data 스키마가 테넌트별로 갈라지면
+    // 같은 이름이 물리적으로 충돌하지 않기 때문이다. 리네임보다 접기를 먼저 해야 리네임이 이미
+    // 충돌하는 데이터를 만나지 않는다.
+    assertThat(indexDef("dataset", "idx_dataset_table_name"))
+        .contains("tenant_id")
+        .contains("table_name");
   }
 
   @Test
