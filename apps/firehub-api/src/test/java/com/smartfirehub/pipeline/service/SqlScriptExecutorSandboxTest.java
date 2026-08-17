@@ -8,11 +8,11 @@ import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -113,9 +113,12 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
    * <p>DDL 은 트랜잭션 밖(autocommit)에서 실행돼야 다른 커넥션(테넌트 풀)에서 보인다. 이 클래스는
    * 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로 그대로 커밋된다 — 공유 test DB 이므로
    * <b>이 테스트가 만든 것만</b> 이름 접두어로 구분해 지운다.
+   *
+   * <p><b>{@code @BeforeEach} 가 아니라 필요한 테스트에서만 호출한다.</b> 공유 test DB 에 매 테스트마다
+   * DDL 을 걸면(이 클래스는 11건) 다른 워크트리 세션과 부딪히는 플레이크 창이 그만큼 넓어진다 —
+   * 이 저장소에서 이미 겪은 실패 형태다. 정리는 {@code @AfterEach} 가 무조건 하므로(IF EXISTS) 남지 않는다.
    */
-  @BeforeEach
-  void createGuardTable() {
+  private void createGuardTable() {
     dropGuardTable();
     dsl.execute(
         "CREATE TABLE "
@@ -134,6 +137,8 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
   @Test
   void execute_runsAsTenantPipelineRole_andSetsDataSearchPath() {
+    createGuardTable();
+
     // 프로덕션 경로로 INSERT 를 실행한다. 검증기(strict)를 통과하는 최소 DML 이다.
     sqlScriptExecutor.execute("INSERT INTO " + GUARD_TABLE + " (n) VALUES (1)");
 
@@ -166,6 +171,24 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
               assertThat(row.get("setting", String.class)).isEqualTo(DataSchema.current());
               assertThat(row.get("source", String.class)).isEqualTo("session");
             });
+  }
+
+  /**
+   * 런타임 SQL 실패(검증기는 통과, DB 가 거부)가 {@code ScriptExecutionException} 으로 감싸지면서
+   * <b>원인 메시지를 잃지 않는지</b> 고정한다.
+   *
+   * <p>왜 필요한가: 이 경로는 이제 {@code SET LOCAL search_path} 를 유효하게 만들기 위해 스크립트를
+   * jOOQ 트랜잭션으로 감싼다. 기존 실패 테스트는 전부 <b>검증기 단계</b>에서 끝나 트랜잭션에 진입조차
+   * 하지 않으므로, 트랜잭션 경계를 지나온 예외의 메시지가 파이프라인 실행 로그로 그대로 노출되는지는
+   * 아무도 보고 있지 않았다. {@code PipelineAsyncRunner} 가 이 메시지를 사용자에게 보여 준다.
+   */
+  @Test
+  void execute_runtimeSqlFailure_wrapsWithUnderlyingCause() {
+    assertThatThrownBy(
+            () -> sqlScriptExecutor.execute("INSERT INTO data.p3b_absent_table (n) VALUES (1)"))
+        .isInstanceOf(ScriptExecutionException.class)
+        // 원인 텍스트(관계 없음 = SQLSTATE 42P01)가 살아 있어야 사용자가 원인을 알 수 있다.
+        .hasMessageContaining("p3b_absent_table");
   }
 
   @Test
