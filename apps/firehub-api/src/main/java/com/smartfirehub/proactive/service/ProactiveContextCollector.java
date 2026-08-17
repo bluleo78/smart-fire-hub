@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dashboard.service.DashboardService;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
@@ -31,13 +32,25 @@ public class ProactiveContextCollector {
     try {
       Map<String, Object> context = new HashMap<>();
 
-      // 4개 독립 호출을 병렬 실행
-      var statsFuture = CompletableFuture.supplyAsync(() -> dashboardService.getStats());
-      var healthFuture = CompletableFuture.supplyAsync(() -> dashboardService.getSystemHealth());
+      // 4개 독립 호출을 병렬 실행. supplyAsync 는 공용 ForkJoinPool 을 쓰므로
+      // TenantContextTaskDecorator 가 붙은 @Async 풀과 달리 테넌트 컨텍스트가 승계되지 않는다 —
+      // 호출 스레드의 테넌트를 여기서 붙잡아 각 작업 안에서 다시 세운다. 세우지 않으면 RLS GUC 가
+      // 비어 대시보드 조회가 조용히 0행이 되고, DataSchema 를 거치는 조회는 예외를 던진다.
+      long tenantId = TenantContext.require("proactive 컨텍스트 수집");
+      var statsFuture =
+          CompletableFuture.supplyAsync(
+              () -> TenantContext.runScopedGet(tenantId, dashboardService::getStats));
+      var healthFuture =
+          CompletableFuture.supplyAsync(
+              () -> TenantContext.runScopedGet(tenantId, dashboardService::getSystemHealth));
       var attentionFuture =
-          CompletableFuture.supplyAsync(() -> dashboardService.getAttentionItems());
+          CompletableFuture.supplyAsync(
+              () -> TenantContext.runScopedGet(tenantId, dashboardService::getAttentionItems));
       var activityFuture =
-          CompletableFuture.supplyAsync(() -> dashboardService.getActivityFeed(null, null, 0, 20));
+          CompletableFuture.supplyAsync(
+              () ->
+                  TenantContext.runScopedGet(
+                      tenantId, () -> dashboardService.getActivityFeed(null, null, 0, 20)));
       CompletableFuture.allOf(statsFuture, healthFuture, attentionFuture, activityFuture).join();
 
       // 1. Dashboard stats

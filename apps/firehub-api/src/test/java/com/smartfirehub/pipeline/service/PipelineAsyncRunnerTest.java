@@ -12,6 +12,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
@@ -30,6 +31,8 @@ import java.util.Optional;
 import org.jooq.DSLContext;
 import org.jooq.Result;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -69,6 +72,24 @@ class PipelineAsyncRunnerTest {
   @Mock PythonScriptValidator pythonScriptValidator;
 
   @InjectMocks PipelineAsyncRunner runner;
+
+  /**
+   * 스텝 SQL 조립이 {@code DataSchema.current()} 를 거치면서 테넌트 컨텍스트를 요구하게 됐다.
+   * 운영에서는 {@code pipelineExecutor} 에 붙은 {@code TenantContextTaskDecorator} 가 호출 스레드의
+   * 컨텍스트를 승계하므로(AsyncConfig) 이 클래스가 세우는 것은 그 승계 결과를 흉내 내는 것이다.
+   *
+   * <p>DB 를 쓰지 않는 순수 목(mock) 테스트이므로 GUC·트랜잭션과는 무관하다 — 즉 "프로덕션 경로가
+   * 스스로 컨텍스트를 세우지 못한다"는 배선 결함을 가리지 않는다(승계 주체는 executor 데코레이터).
+   */
+  @BeforeEach
+  void setTenantContext() {
+    TenantContext.set(1L);
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
 
   // ------------------------------------------------------------------ //
   // executeAsync — 전체 파이프라인 흐름 테스트
