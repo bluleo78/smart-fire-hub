@@ -87,6 +87,13 @@ public class SqlValidator {
    *
    * <p>PostGIS 함수(예: {@code ST_AsGeoJSON})는 {@code SECURITY DEFINER}가 아니고 미한정 호출이 정상 사용례이므로
    * 여기 포함하지 않는다 — {@code public} 함수 전면 차단은 하지 않는다.
+   *
+   * <p>{@code pg_sleep} 도 차단한다(#385 Task 2 실측: dev {@code saved_query} 에 {@code SELECT
+   * pg_sleep(5)}가 저장돼 있었다 — 펜테스트 흔적으로 보인다). 데이터셋 애드혹/애널리틱스 두 경로 모두 {@code SET LOCAL
+   * statement_timeout='30s'}가 걸려 있어 쿼리 **지속 시간**은 묶이지만, {@code pg_sleep} 은 그 시간 동안 **커넥션을
+   * 점유**한다 — 커넥션 풀 고갈(DoS)로 이어질 수 있고 쿼리 UI 에 정당한 사용례가 없다. deny-list 는 파이프라인/애드혹/애널리틱스가
+   * 공유하므로 파이프라인 SQL 스텝에도 함께 적용되는 것을 알고 받아들인 판정이다(dev 이력에 파이프라인에서 의도적 지연을 쓰는 사용례는
+   * 없었다).
    */
   static final Set<String> BLOCKED_FUNCTIONS =
       Set.of(
@@ -94,6 +101,7 @@ public class SqlValidator {
           "pg_read_binary_file",
           "pg_ls_dir",
           "pg_stat_file",
+          "pg_sleep",
           "lo_import",
           "lo_export",
           "dblink",

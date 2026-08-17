@@ -4,10 +4,13 @@ import com.smartfirehub.dataset.exception.SqlQueryException;
 import java.util.Set;
 
 /**
- * Shared SQL validation utilities used by DataTableQueryService and AnalyticsQueryExecutionService.
+ * Shared SQL preprocessing utilities used by DataTableQueryService and AnalyticsQueryExecutionService.
  *
- * <p>Validates user-supplied SQL strings before execution: strips comments, rejects multi-statement
- * input, and enforces a keyword whitelist.
+ * <p><b>이 클래스는 보안 판정을 하지 않는다.</b> 하는 일은 주석 제거, 다중 문 거부, 첫 단어 기반 문 타입
+ * 판별(`detectQueryType`)뿐이다. 스키마 화이트리스트·차단 함수·`pg_*` 카탈로그 그림자 차단 등 실제 보안
+ * 판정은 {@link com.smartfirehub.pipeline.service.validator.SqlValidator}(AST 기반)가 전담한다. 이 클래스는
+ * 그 앞단에서 호출되는 전처리기일 뿐이며, 여기 남은 첫 단어 키워드 화이트리스트는 `SqlValidator` 를 우회할 수
+ * 없다는 전제하의 심층 방어(defense in depth)일 뿐 단독 방어선이 아니다(이슈 #385).
  */
 public final class SqlValidationUtils {
 

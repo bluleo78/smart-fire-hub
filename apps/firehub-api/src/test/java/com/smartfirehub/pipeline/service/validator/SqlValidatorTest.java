@@ -225,6 +225,19 @@ class SqlValidatorTest {
         .hasMessageContaining("current_setting");
   }
 
+  /**
+   * (2-b) {@code pg_sleep} 호출은 BLOCKED_FUNCTIONS 에 의해 거부된다(#385 Task 5, R5).
+   *
+   * <p>{@code statement_timeout} 이 쿼리 지속 시간은 묶어도 {@code pg_sleep} 이 점유하는 커넥션 자체는 막지 못하므로
+   * 애플리케이션 레이어에서 조기 차단한다. 공유 deny-list 라 파이프라인 경로(무인자 생성자)에도 함께 적용됨을 이 테스트로 고정한다.
+   */
+  @Test
+  void rejects_pg_sleep_call() {
+    assertThatThrownBy(() -> validator.validate("SELECT pg_sleep(5)"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("pg_sleep");
+  }
+
   /** (3) 롤 변경문(SET ROLE / RESET ROLE)은 SELECT/INSERT/UPDATE/DELETE 가 아니므로 문 타입 검사에서 거부된다. */
   @Test
   void rejects_role_change_statements() {
