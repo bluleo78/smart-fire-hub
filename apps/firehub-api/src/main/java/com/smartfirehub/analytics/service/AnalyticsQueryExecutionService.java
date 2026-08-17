@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
@@ -144,7 +145,9 @@ public class AnalyticsQueryExecutionService {
     // search_path에 data 스키마와 public 스키마(PostGIS 확장 함수 위치) 포함 (#121)
     // public 스키마 직접 참조(PUBLIC. prefix)는 보안상 여전히 차단되지만,
     // ST_AsGeoJSON 등 PostGIS 함수는 search_path를 통한 암묵적 참조로 사용 가능하도록 허용
-    dsl.execute("SET LOCAL search_path = 'data', 'public'");
+    // 데이터 스키마명은 현재 테넌트에서 파생시킨다(DataSchema.current() = 인용 없는 식별자).
+    // search_path 는 한정 이름이 아니라 스키마 식별자 목록이므로 qualify() 가 아니라 current() 다.
+    dsl.execute("SET LOCAL search_path = '" + DataSchema.current() + "', 'public'");
     dsl.execute("SET LOCAL statement_timeout = '30s'");
     dsl.execute("SAVEPOINT analytics_query");
 
@@ -289,6 +292,13 @@ public class AnalyticsQueryExecutionService {
     // (field.in(Collection))을 쓴다. 동작은 동일(파라미터 바인딩, 인젝션 경로 아님)하고 문자열 조립
     // 실수(개수 불일치 등) 여지가 없다. pg_class/pg_namespace 는 jOOQ 코드젠 대상(public 스키마)이
     // 아니라 DSL.table/field 로 이름만 참조한다.
+    // 카탈로그 필터의 스키마명 — 낡은 리터럴을 남기면 스키마가 분리되는 순간 이 조회가 **예외도
+    // 로그도 없이 0행**을 돌려주고, 그러면 아래 그림자 판정이 "data 에도 public 에도 없음" 으로
+    // 오판해 이 방어가 조용히 무력화된다. 그래서 현재 테넌트에서 파생시킨다.
+    // (early return 뒤에 놓은 것은 의도적이다 — 미한정 참조가 없어 아무 일도 하지 않던 경로에
+    //  테넌트 컨텍스트 요구를 새로 붙이지 않는다.)
+    String dataSchema = DataSchema.current();
+
     var relnameField = field(name("c", "relname"), String.class);
     var nspnameField = field(name("n", "nspname"), String.class);
     var relkindField = field(name("c", "relkind"), String.class);
@@ -298,7 +308,7 @@ public class AnalyticsQueryExecutionService {
             .join(table(name("pg_namespace")).as("n"))
             .on(field(name("n", "oid")).eq(field(name("c", "relnamespace"))))
             .where(relnameField.in(unqualified))
-            .and(nspnameField.in("data", "public"))
+            .and(nspnameField.in(dataSchema, "public"))
             .and(relkindField.in("r", "p", "v", "m", "f", "S"))
             .fetch();
 
@@ -307,7 +317,9 @@ public class AnalyticsQueryExecutionService {
     for (var r : rows) {
       String schema = r.get(nspnameField);
       String name = r.get(relnameField);
-      if ("data".equals(schema)) {
+      // 리터럴 대조가 아니라 위에서 파생시킨 스키마명과 비교한다 — 리터럴을 남기면 스키마가
+      // 분리된 뒤 이 분기가 **던지지 않고 조용히 else 로 떨어져** 잘못된 경로를 탄다.
+      if (dataSchema.equals(schema)) {
         inData.add(name);
       } else if ("public".equals(schema)) {
         inPublic.add(name);
@@ -316,11 +328,15 @@ public class AnalyticsQueryExecutionService {
 
     for (String name : unqualified) {
       if (!inData.contains(name) && inPublic.contains(name)) {
+        // 사용자 노출 메시지의 스키마명도 파생시킨다 — 리터럴로 두면 개명 뒤 "존재하지 않는
+        // 스키마를 쓰라고 안내하는" 틀린 문장이 된다.
         throw new UnsafeSqlException(
             "테이블 참조에 스키마가 없습니다: '"
                 + name
-                + "'. data 스키마에 존재하지 않아 public 스키마로 해석될 수 있어 거부합니다. data."
-                + name
+                + "'. "
+                + dataSchema
+                + " 스키마에 존재하지 않아 public 스키마로 해석될 수 있어 거부합니다. "
+                + DataSchema.qualify(name)
                 + " 형식으로 명시하세요.");
       }
     }
@@ -355,7 +371,9 @@ public class AnalyticsQueryExecutionService {
             .append("LEFT JOIN dataset d ON d.table_name = c.table_name ")
             .append("LEFT JOIN dataset_column dc ")
             .append("  ON dc.dataset_id = d.id AND dc.column_name = c.column_name ")
-            .append("WHERE c.table_schema = 'data' ");
+            // 스키마명은 현재 테넌트에서 파생 + 바인드 파라미터로 넘긴다. 낡은 리터럴을 남기면
+            // 스키마 분리 후 이 조회가 예외도 로그도 없이 0행이 되어 스키마 정보가 빈 응답이 된다.
+            .append("WHERE c.table_schema = ? ");
 
     if (datasetIds != null) {
       // datasetIds 는 컨트롤러에서 Long 타입으로 바인딩 — SQL injection 위험 없음
@@ -368,7 +386,7 @@ public class AnalyticsQueryExecutionService {
 
     sql.append("ORDER BY c.table_name, c.ordinal_position");
 
-    var infoRecords = dsl.fetch(sql.toString());
+    var infoRecords = dsl.fetch(sql.toString(), DataSchema.current());
 
     Map<String, SchemaInfoResponse.TableInfo> tableMap = new LinkedHashMap<>();
 

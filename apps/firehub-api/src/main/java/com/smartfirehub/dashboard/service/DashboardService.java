@@ -11,6 +11,7 @@ import com.smartfirehub.dashboard.dto.RecentImportResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.DatasetHealth;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
+import com.smartfirehub.global.tenant.DataSchema;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -328,7 +329,12 @@ public class DashboardService {
                 .on(
                     field("psu.relname", String.class)
                         .eq(D_TABLE_NAME)
-                        .and(field("psu.schemaname", String.class).eq("data")))
+                        // schemaname 도 현재 테넌트에서 파생시킨다 — 낡은 리터럴을 남기면 스키마가
+                        // 분리되는 순간 이 조인이 **예외도 로그도 없이 0행**이 되고, 빈 데이터셋
+                        // 개수가 조용히 0 으로 렌더링된다(오류로 보이지 않는 오답).
+                        .and(
+                            field("psu.schemaname", String.class)
+                                .eq(DataSchema.current())))
                 .where(field("psu.n_live_tup", Long.class).eq(0L)));
 
     DatasetHealth datasetHealth =

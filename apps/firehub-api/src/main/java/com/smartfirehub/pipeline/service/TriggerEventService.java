@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
@@ -236,10 +237,15 @@ public class TriggerEventService {
 
       String tableName = tableNameOpt.get();
       try {
+        // schemaname 도 리터럴이 아니라 현재 테넌트에서 파생시킨다. 낡은 리터럴을 남기면 스키마가
+        // 분리되는 순간 이 조회가 **예외도 로그도 없이 0행**을 돌려주고(아래 catch 조차 타지 않는다),
+        // row count 스냅샷이 비어 DATASET_CHANGE 트리거가 통째로 발화하지 않는다 — 아무도 신고하지
+        // 않는 무동작이 된다. 30초 폴링이라 조용한 실패의 비용이 특히 크다.
         Long rowCount =
             dsl.fetchOne(
-                    "SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = 'data' AND"
+                    "SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = ? AND"
                         + " relname = ?",
+                    DataSchema.current(),
                     tableName)
                 .get(0, Long.class);
         result.put(datasetId, rowCount);

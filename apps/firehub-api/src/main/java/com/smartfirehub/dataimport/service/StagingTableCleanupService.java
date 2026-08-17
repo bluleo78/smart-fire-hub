@@ -1,6 +1,7 @@
 package com.smartfirehub.dataimport.service;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.global.tenant.DataSchema;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -93,9 +94,19 @@ public class StagingTableCleanupService {
    * 형태만 매칭해, 우연히 같은 접두사로 시작하는 사용자 테이블을 실수로 삭제하지 않도록 한다.
    */
   private List<String> findStagingTables() {
+    // table_schema 도 현재 테넌트에서 파생시킨다. 낡은 리터럴을 남기면 스키마가 분리되는 순간 이
+    // 조회가 **예외도 로그도 없이 0행**을 돌려주고, 고아 staging 테이블이 영구히 누적된다 —
+    // "정리할 것이 없다"와 구분되지 않으므로 어떤 테스트도 실패하지 않는다.
+    //
+    // 테넌트 순회는 여기서 하지 않는다(P3-b 의 몫) — 지금은 리터럴만 파생으로 바꾼다. 그 결과
+    // 컨텍스트가 없는 @Scheduled 진입점에서는 MissingTenantScopeException 이 나고 scheduledSweep 의
+    // catch 가 이를 경고로 남긴다. 이는 Task 3 에서 dropStagingTable 이 이미 만든 상태와 같으며
+    // (거기서도 DataSchema.qualify 로 던진다), 던지는 지점이 DROP 루프보다 **앞으로** 당겨질 뿐이라
+    // 안전한 방향이다.
     return dsl.fetch(
             "SELECT table_name FROM information_schema.tables "
-                + "WHERE table_schema = 'data' AND table_name ~ '^stg_import_[0-9a-f]{32}$'")
+                + "WHERE table_schema = ? AND table_name ~ '^stg_import_[0-9a-f]{32}$'",
+            DataSchema.current())
         .getValues("table_name", String.class);
   }
 }

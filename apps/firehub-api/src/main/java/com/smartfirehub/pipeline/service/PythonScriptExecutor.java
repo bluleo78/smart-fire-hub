@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -50,7 +51,10 @@ public class PythonScriptExecutor {
       pb.environment().put("DB_URL", pipelineDbUrl);
       pb.environment().put("DB_USER", pipelineDbUser);
       pb.environment().put("DB_PASSWORD", pipelineDbPassword);
-      pb.environment().put("DB_SCHEMA", "data");
+      // DB_SCHEMA 는 **프로세스 경계를 넘어** 자식 파이썬이 실제로 접근할 스키마를 정한다. 리터럴을
+      // 남기면 Java 전용 리팩터링이 절대 잡지 못하는 자리가 되고, 스키마 분리 후 자식 프로세스만
+      // 남의(혹은 없는) 스키마를 보게 된다. 그래서 여기서도 현재 테넌트에서 파생시킨다.
+      pb.environment().put("DB_SCHEMA", DataSchema.current());
       pb.environment().put("PATH", "/usr/bin:/usr/local/bin");
       pb.environment().put("HOME", "/tmp");
 
