@@ -114,8 +114,9 @@ def execute_query(
     try:
         # 4. Transaction setup
         # 스키마명은 테넌트에서 파생한다(하드코딩 'data' 제거). public 은 PostGIS 함수 때문에 유지.
-        # 스키마명은 resolve_schema 가 식별자 모양을 검증한 값이라 보간이 안전하다
-        # (사용자 입력이 아니라 리터럴+테넌트 id 에서만 파생된다).
+        # 보간이 안전한 이유는 resolve_schema 가 _require_tenant_id 로 정규화한 값만 반환하기
+        # 때문이다(사용자 입력이 아니라 리터럴+테넌트 id 에서만 파생된다) — 식별자 모양 검증
+        # (_SAFE_IDENTIFIER)은 그 위의 휴면 방어선이다(tenant.py 참조).
         cursor.execute(f"SET LOCAL search_path = '{schema}', 'public'")
         cursor.execute("SET LOCAL statement_timeout = '30s'")
         cursor.execute("SAVEPOINT analytics_query")

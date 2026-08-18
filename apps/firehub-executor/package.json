@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "scripts": {
     "build": "echo 'no build step'",
-    "test": "python3 -m pytest tests/ -q"
+    "test": "if [ -x .venv/bin/python3 ]; then .venv/bin/python3 -m pytest tests/ -q; else python3 -m pytest tests/ -q; fi"
   }
 }

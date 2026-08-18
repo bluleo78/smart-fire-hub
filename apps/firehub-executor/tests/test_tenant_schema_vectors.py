@@ -7,7 +7,7 @@
 **왜 Java 를 호출하지 않고 값을 복제하는가**: executor 는 별도 프로세스이고 Java 코드를 부를 수
 없다. 스키마명을 요청 페이로드로 받으면 클라이언트 제공 식별자를 신뢰하게 되는 보안 후퇴다
 (기존 ``resolve_role``/``resolve_password`` 가 같은 이유로 이미 미러링이다 — ``app/tenant.py``
-모듈 Javadoc 참조). 드리프트 방어는 이 고정벡터 표를 양 언어에 같은 값으로 두고 대조하는
+모듈 docstring 참조). 드리프트 방어는 이 고정벡터 표를 양 언어에 같은 값으로 두고 대조하는
 것이다.
 """
 from __future__ import annotations

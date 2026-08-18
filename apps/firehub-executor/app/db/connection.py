@@ -189,7 +189,9 @@ def get_connection(tenant_id: int, settings: Settings) -> Generator:
             # 롤 레벨 search_path 가 이미 설정돼 있어도 세션에서 명시한다 — 롤 설정은 운영
             # 절차(마이그레이션)에 의존하는데, 스키마명의 출처는 코드 한 곳(resolve_schema)이어야
             # P3-b2 에서 바꿀 곳이 하나로 남는다.
-            # 보간이 안전한 이유는 resolve_schema 의 식별자 모양 검증에 있다.
+            # 보간이 안전한 이유는 resolve_schema 가 _require_tenant_id 로 정규화한 값만
+            # 반환하기 때문이다(data_t<양의 정수> 형태로 고정) — 식별자 모양 검증
+            # (_SAFE_IDENTIFIER)은 그 위의 휴면 방어선이다(tenant.py 참조).
             cur.execute(f"SET search_path TO {schema}")
         yield conn
     except pg_pool.PoolError as exc:

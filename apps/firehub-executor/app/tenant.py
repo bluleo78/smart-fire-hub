@@ -44,9 +44,18 @@ _ROLE_PREFIX = "pipeline_executor_t"
 _PASSWORD_LENGTH = 32
 
 # 인용 없이 SQL 에 끼워 넣어도 안전한 식별자 모양. resolve_schema 의 반환값이 `SET search_path`
-# 문장에 문자열 보간으로 들어가므로, 조립점에서 모양을 한 번 확인한다. P3-b2 이전에는 스키마명이
-# 상수라 이 가드가 항상 통과하는 no-op 이었지만, **오늘부터 실효된다** — 반환값이 테넌트 id 를
-# 문자열로 이어 붙인 파생값(`data_t{id}`)이 되므로, 이 정규식이 실제 방어선이 된다.
+# 문장에 문자열 보간으로 들어가므로, 조립점에서 모양을 한 번 확인한다.
+#
+# **왜 "오늘부터 실효된다"가 아니라 여전히 휴면 방어선인가(라운드 1 리뷰 정정 — 사거리를
+# 반대로 서술했었다).** 파생 경로(`_require_tenant_id` 통과 → `_LEGACY_SCHEMA_BY_TENANT` 조회
+# 또는 `_TENANT_SCHEMA_PREFIX` + 정수)는 `_require_tenant_id` 가 이미 bool 거부·정수 아님 거부·
+# 0 이하 거부를 마쳤으므로 항상 `data_t<양의 정수>` 형태만 만든다 — 이 정규식을 실패시킬 수
+# 있는 입력이 존재하지 않는다. 도달 불가능하다는 사실은 P3-b2 전후로 바뀌지 않았다. 이 가드가
+# **오늘 실제로 지키는 것은 파생 경로가 아니라 `_LEGACY_SCHEMA_BY_TENANT` 하드코딩 표**다 —
+# 거기에 실수로 `{5: "Legacy-Data"}` 같은 값을 넣으면 이 정규식이 그 자리에서 잡는다. 그리고
+# `_require_tenant_id` 가 미래에 느슨해질 경우를 위한 휴면 방어선이라는 값도 이전과 같다.
+# (보간 자체는 오늘도 안전하다 — 안전의 근거가 이 정규식이 아니라 `_require_tenant_id` 라는
+# 점이 뒤바뀌어 있었을 뿐이다.)
 _SAFE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
 
 
@@ -85,10 +94,10 @@ def resolve_schema(tenant_id: int) -> str:
     식별자를 그대로 신뢰**하게 되는 보안 후퇴다 — 이 스키마명은 뒤이어 ``SET search_path`` 문장에
     문자열 보간으로 들어가므로, 신뢰할 수 없는 입력을 그대로 꽂는 것과 같다. 기존
     ``resolve_role``/``resolve_password`` 가 정확히 같은 이유로 이미 Java 쪽 값을 페이로드로
-    받지 않고 독립적으로 재파생하고 있고, ``_SAFE_IDENTIFIER`` 검증도 원래 이 파생값을 방어하려고
-    존재한다(P3-b2 이전에는 상수만 통과시켜 사실상 no-op 이었고, 이 파생 전환부터 실효된다). 두
-    구현이 갈라지면 이 함수가 던지는 예외로 드러나거나(형태가 안전하지 않으면) 다른 테넌트의
-    스키마를 가리키는 조용한 격리 결함으로 드러난다 — 후자를 막는 것이 이 미러링의 존재 이유다.
+    받지 않고 독립적으로 재파생하고 있다. 보간이 안전한 근거는 ``_require_tenant_id`` 가 입력을
+    ``data_t<양의 정수>`` 형태로만 정규화하기 때문이고(``_SAFE_IDENTIFIER`` 는 그 위의 휴면
+    방어선 — 상세는 그 정의부 주석 참조), 두 구현이 갈라지면 다른 테넌트의 스키마를 가리키는
+    조용한 격리 결함으로 드러난다 — 그걸 막는 것이 이 미러링의 존재 이유다.
     """
     normalized = _require_tenant_id(tenant_id)
     schema = _LEGACY_SCHEMA_BY_TENANT.get(normalized, f"{_TENANT_SCHEMA_PREFIX}{normalized}")
