@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { readFileSync, existsSync } from 'fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
 
@@ -328,5 +330,109 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
       events.push(e as { type: string });
     }
     expect(events.filter((e) => e.type === 'cost_alarm')).toHaveLength(1);
+  });
+});
+
+/**
+ * 재개(resume) 경로의 레거시 트랜스크립트 취급 — 코드리뷰 MAJOR 회귀 가드.
+ *
+ * <p>테넌트 세그먼트를 cwd 에 끼우면서 claude CLI 의 프로젝트 디렉터리가 갈렸으므로, 예전 cwd 에서
+ * 만들어진 `claudeSessionId` 를 그대로 `--resume` 에 넘기면 CLI 가 "No conversation found" 로 죽고
+ * result.subtype 이 `error_during_execution` 으로 돌아온다. 그 subtype 을 처리하지 않으면 **빈
+ * 응답이 성공으로 보고**되고 낡은 id 가 다시 저장돼 그 세션이 영구히 같은 실패를 반복한다.
+ */
+describe('executeCliAgent — 레거시 트랜스크립트 재개 (코드리뷰 MAJOR)', () => {
+  let tempHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    spawnMock.mockReset();
+    tempHome = await mkdtemp(join(tmpdir(), 'firehub-cli-resume-'));
+    originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    await rm(tempHome, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  /** 지정 경로에 CliTranscript 를 심는다. */
+  async function seedTranscript(dir: string, sessionId: string, claudeSessionId: string) {
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, `${sessionId}.json`),
+      JSON.stringify({
+        claudeSessionId,
+        messages: [{ id: 'u1', role: 'user', content: '이전 질문', timestamp: '2026-01-01T00:00:00Z' }],
+      }),
+    );
+  }
+
+  async function runResume(sessionId: string): Promise<string[]> {
+    spawnMock.mockReturnValue(makeFakeChild());
+    const gen = executeCliAgent({
+      message: '이어서',
+      tenantId: 7,
+      userId: 1,
+      sessionId,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never);
+    for await (const _ of gen) {
+      /* drain */
+    }
+    return (spawnMock.mock.calls[0][1] as string[]) ?? [];
+  }
+
+  // CLI-RESUME-01: 레거시 경로에서 읽었으면 --resume 을 붙이지 않는다.
+  it('CLI-RESUME-01: drops the stale claudeSessionId when the transcript came from the legacy path', async () => {
+    const legacyDir = join(tempHome, '.firehub', 'transcripts');
+    await seedTranscript(legacyDir, 'cli-old', 'claude-sess-from-old-cwd');
+
+    const args = await runResume('cli-old');
+
+    expect(args).not.toContain('--resume');
+    expect(args).not.toContain('claude-sess-from-old-cwd');
+  });
+
+  // CLI-RESUME-02: 테넌트 경로에서 읽었으면 그대로 재개한다 — 위 가드가 정상 재개까지
+  // 죽이지 않는지 확인한다(이게 없으면 "항상 버린다" 로도 CLI-RESUME-01 이 통과한다).
+  it('CLI-RESUME-02: still resumes when the transcript is already tenant-scoped', async () => {
+    const tenantDir = join(tempHome, '.firehub', 'transcripts', 't7');
+    await seedTranscript(tenantDir, 'cli-new', 'claude-sess-current');
+
+    const args = await runResume('cli-new');
+
+    expect(args).toContain('--resume');
+    expect(args).toContain('claude-sess-current');
+  });
+
+  // CLI-RESUME-03: error_* subtype 은 조용한 done 이 아니라 error 로 나가야 한다.
+  it('CLI-RESUME-03: surfaces error_during_execution as an error event, not a silent done', async () => {
+    const child = makeFakeChildWithLines([
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        result: 'No conversation found with session ID: claude-sess-from-old-cwd',
+      }),
+    ]);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; message?: unknown }> = [];
+    for await (const ev of executeCliAgent({
+      message: '이어서',
+      tenantId: 7,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; message?: unknown });
+    }
+
+    expect(events.some((e) => e.type === 'error')).toBe(true);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import { ProviderFactory } from '../providers/index.js';
 import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { internalAuth } from '../middleware/auth.js';
+import { proactiveReportDir } from '../agent/tenant-paths.js';
 
 const router = Router();
 
@@ -313,14 +314,18 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
 
   const model = body.model || 'claude-haiku-4-5';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
-  // 챗과 같은 이유로 fail-closed — 전역 경로 폴백을 두지 않는다.
+  // 챗과 같은 이유로 fail-closed — 전역 경로 폴백을 두지 않는다. 판정 강도도 챗과 같이
+  // `tenantSegment()` 에 맞춘다(코드리뷰 지적) — 안 그러면 -1·1.5 가 통과해 400 대신 500 이 된다.
   const tenantId = body.tenantId;
-  if (!tenantId || typeof tenantId !== 'number') {
-    res.status(400).json({ error: 'tenantId is required and must be a number' });
+  if (typeof tenantId !== 'number' || !Number.isInteger(tenantId) || tenantId <= 0) {
+    res.status(400).json({ error: 'tenantId is required and must be a positive integer' });
     return;
   }
   // report-writer가 HTML 리포트 + 요약을 저장할 임시 디렉토리
-  const reportDir = `/tmp/proactive-report-${Date.now()}-${userId}`;
+  // 리포트 산출 디렉터리도 테넌트를 담는다(코드리뷰 지적). 같은 `tmpdir` 의 첨부 다운로드에는
+  // 세그먼트를 넣었는데 여기만 빼면, 한 테넌트의 에이전트가 Glob/Read 로 `proactive-report-*` 를
+  // 훑어 남의 리포트 본문을 읽을 수 있다 — tenant-paths.ts 가 없애려던 비대칭 그 자체다.
+  const reportDir = proactiveReportDir(tenantId, userId, Date.now());
   const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 

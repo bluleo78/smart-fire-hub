@@ -87,3 +87,17 @@ export function legacyAttachmentsDir(): string {
 export function sdkChatFilesDir(tenantId: number, userId: number, stamp: string | number): string {
   return join(tmpdir(), 'firehub-chat-files', tenantSegment(tenantId), `${userId}-${stamp}`);
 }
+
+/**
+ * 프로액티브 리포트(HTML + 요약)를 에이전트가 써 넣는 임시 디렉터리.
+ *
+ * <p>{@link sdkChatFilesDir} 와 같은 이유로 여기 모았다 — 같은 `tmpdir` 안에서 한 종류만
+ * 테넌트를 담으면, 도구(Glob/Read)를 가진 에이전트가 남은 한 종류를 통째로 열거할 수 있다.
+ */
+export function proactiveReportDir(
+  tenantId: number,
+  userId: number,
+  stamp: string | number,
+): string {
+  return join(tmpdir(), 'proactive-report', tenantSegment(tenantId), `${userId}-${stamp}`);
+}

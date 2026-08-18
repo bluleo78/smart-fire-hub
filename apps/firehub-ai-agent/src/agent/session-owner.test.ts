@@ -75,6 +75,31 @@ describe('session-owner', () => {
     expect(await checkSessionOwnership(2, 'sess-y')).toBe('other-tenant');
   });
 
+  // SO-08: 다른 테넌트가 이미 표식을 가진 세션은 두 번째 표식을 만들지 않는다(코드리뷰 지적).
+  // `/agent/chat` 은 sessionId 를 클라이언트 값 그대로 받으므로 이 방어가 없으면 표식이 양쪽에 생긴다.
+  it('SO-08: refuses to claim a session already marked by another tenant', async () => {
+    await claimSession(5, 'sess-a');
+
+    await claimSession(9, 'sess-a');
+
+    expect(await checkSessionOwnership(9, 'sess-a')).toBe('other-tenant');
+    expect(await checkSessionOwnership(5, 'sess-a')).toBe('owned');
+  });
+
+  // SO-09: 어떤 경로로든 표식이 둘 이상 생겼다면 판정은 **순서와 무관하게** other-tenant 여야 한다.
+  // 표식 파일을 직접 심어 claimSession 의 방어를 우회한 상태를 재현한다.
+  it('SO-09: a multi-tenant marker resolves to other-tenant regardless of iteration order', async () => {
+    const root = join(tempHome, '.firehub', 'session-owner');
+    await mkdir(join(root, 't5'), { recursive: true });
+    await mkdir(join(root, 't9'), { recursive: true });
+    await writeFile(join(root, 't5', 'sess-dup'), '');
+    await writeFile(join(root, 't9', 'sess-dup'), '');
+
+    // 양쪽 테넌트 모두 거부돼야 한다 — 자기 디렉터리에서 찾자마자 멈추면 한쪽은 owned 가 된다.
+    expect(await checkSessionOwnership(5, 'sess-dup')).toBe('other-tenant');
+    expect(await checkSessionOwnership(9, 'sess-dup')).toBe('other-tenant');
+  });
+
   // SO-07: 표식 기록 실패는 채팅을 죽이지 않는다(심층방어이지 1차 게이트가 아니다).
   // 표식 루트 자리에 파일을 놓아 mkdir 을 실패시킨다.
   it('SO-07: never throws when the marker cannot be written', async () => {

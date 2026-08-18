@@ -109,6 +109,24 @@ describe('Proactive routes — integration tests', () => {
     expect(res.body).toHaveProperty('error');
   });
 
+  // TC2b: 테넌트가 없거나 정수 양수가 아니면 400 (코드리뷰 지적). 느슨한 가드면 -1·1.5 가
+  // 통과해 tenantSegment 에서 터지고 400 대신 500 이 나간다.
+  it.each([undefined, -1, 1.5, 0])(
+    'TC2b: POST /agent/proactive rejects tenantId=%s with 400',
+    async (tenantId) => {
+      const app = createApp();
+      const res = await makeRequest(
+        app,
+        'POST',
+        '/agent/proactive',
+        { prompt: '분석', context: { data: 'test' }, tenantId },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+
+      expect(res.status).toBe(400);
+    },
+  );
+
   it('TC3: POST /agent/proactive with template returns structured 3-section response with cards', async () => {
     const cardsData = [
       { title: '카드1', value: '100', description: '설명1' },

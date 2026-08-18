@@ -214,13 +214,15 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   let saved: CliTranscript = { messages: [] };
   if (isResume) {
     // 레거시(테넌트 세그먼트 이전) 경로 폴백 포함 — CLI 와 같은 헬퍼를 쓴다.
-    const raw = (await readCliTranscript(tenantId, firehubSessionId)) as
-      | (CliTranscript & { opencodeSessionId?: string })
-      | null;
-    if (raw) {
-      saved = raw;
-      // 재개 시 opencode 세션 id 복원
-      opencodeSessionId = raw.opencodeSessionId;
+    const loaded = await readCliTranscript(tenantId, firehubSessionId);
+    if (loaded) {
+      saved = loaded.transcript as CliTranscript & { opencodeSessionId?: string };
+      // 레거시에서 읽었으면 하위 에이전트 세션 id 는 버린다 — CLI 경로와 같은 이유다
+      // (agent-cli.ts 의 fromLegacy 분기 주석 참조). 우리 트랜스크립트의 메시지는 유지되고,
+      // opencode 쪽 대화만 새로 시작한다.
+      opencodeSessionId = loaded.fromLegacy
+        ? undefined
+        : (saved as { opencodeSessionId?: string }).opencodeSessionId;
     }
   }
   const transcript = saved.messages;

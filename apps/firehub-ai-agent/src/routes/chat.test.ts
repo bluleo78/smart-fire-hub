@@ -223,6 +223,25 @@ describe('Chat routes — integration tests', () => {
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
+  // CR-T01b: 정수 양수가 아닌 테넌트도 400 이어야 한다(코드리뷰 지적). 느슨한 가드로 통과시키면
+  // SSE 헤더가 이미 나간 뒤 tenantSegment 에서 터져 클라이언트는 400 대신 error 이벤트를 본다.
+  it.each([-1, 1.5, 0, Number.POSITIVE_INFINITY])(
+    'CR-T01b: POST /agent/chat rejects tenantId=%s with 400',
+    async (tenantId) => {
+      const app = createApp();
+      const res = await makeRequest(
+        app,
+        'POST',
+        '/agent/chat',
+        { message: 'Hello', tenantId, userId: 1 },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockExecute).not.toHaveBeenCalled();
+    },
+  );
+
   // CR-T02: history 도 테넌트가 필수다 — 어느 테넌트 디렉터리를 읽을지 정해지지 않는다.
   it('CR-T02: GET /agent/history without tenantId returns 400', async () => {
     const app = createApp();

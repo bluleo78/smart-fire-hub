@@ -17,7 +17,7 @@
  * 다른 테넌트** 인 경우만 거부한다 — 이게 심층방어가 실제로 잡을 수 있는 유일한 사례이고,
  * 1차 게이트(API 소유권 검증)는 그대로 살아 있다.
  */
-import { mkdir, readdir, writeFile } from 'fs/promises';
+import { access, mkdir, readdir, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 import { tenantSegment } from './tenant-paths.js';
@@ -38,6 +38,17 @@ function ownerRoot(): string {
 export async function claimSession(tenantId: number, sessionId: string): Promise<void> {
   if (!SAFE_SESSION_ID.test(sessionId)) return;
   try {
+    // 이미 **다른 테넌트**가 표식을 가진 세션이면 두 번째 표식을 만들지 않는다(코드리뷰 지적).
+    // `/agent/chat` 은 sessionId 를 클라이언트가 준 값 그대로 받으므로, 내부 토큰을 가진 호출부가
+    // 테넌트 A 의 sessionId 를 tenantId=B 로 보내면 표식이 양쪽에 생긴다. 그러면 판정이 "먼저
+    // 발견된 디렉터리" 에 좌우돼 `owned` 가 나올 수 있고, 그 순간 표식은 자기가 막으려던 것을
+    // 통과시킨다. 여기서 거절하면 그 상태 자체가 만들어지지 않는다(판정 쪽에도 이중 안전장치가 있다).
+    if ((await checkSessionOwnership(tenantId, sessionId)) === 'other-tenant') {
+      console.warn(
+        `[SessionOwner] 세션 ${sessionId} 는 이미 다른 테넌트의 표식을 갖고 있다 — 테넌트 ${tenantId} 표식을 만들지 않는다`,
+      );
+      return;
+    }
     const dir = join(ownerRoot(), tenantSegment(tenantId));
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, sessionId), '');
@@ -52,9 +63,15 @@ export type SessionOwnership = 'owned' | 'other-tenant' | 'unknown';
 /**
  * 세션이 요청 테넌트의 것인지 판정한다.
  *
- * <p>먼저 요청 테넌트 디렉터리를 보고, 없으면 다른 테넌트 디렉터리들을 훑는다. "다른 테넌트에
- * 있다" 를 확인해야 `other-tenant` 와 `unknown` 을 구분할 수 있고, 그 구분이 곧 "거부할지
- * 1차 게이트에 맡길지" 를 가른다.
+ * <p>"다른 테넌트에 있다" 를 확인해야 `other-tenant` 와 `unknown` 을 구분할 수 있고, 그 구분이
+ * 곧 "거부할지 1차 게이트에 맡길지" 를 가른다. 그래서 자기 디렉터리에서 찾았다고 멈추지 않고
+ * **모든 테넌트 디렉터리를 끝까지 본다**(코드리뷰 지적) — 한 세션에 표식이 둘 이상이면 어느
+ * 쪽이 먼저 열거되는지에 판정이 좌우되므로, 그런 경우는 무조건 `other-tenant` 로 떨어뜨린다.
+ * {@link claimSession} 이 중복 생성을 막지만, 판정 쪽에서도 순서 의존을 남기지 않는다.
+ *
+ * <p>디렉터리 목록이 아니라 **파일 존재 확인**({@code access})을 쓴다 — 세션 수가 쌓이면
+ * `readdir` 은 그 테넌트의 전체 목록을 만들어 문자열 비교를 하므로 총 세션 수에 비례해 커진다.
+ * 확인 대상 경로는 이미 알고 있으니 테넌트 수만큼의 `access` 로 충분하다.
  */
 export async function checkSessionOwnership(
   tenantId: number,
@@ -69,15 +86,17 @@ export async function checkSessionOwnership(
     // 표식 디렉터리 자체가 없다 = 표식을 쓰기 시작하기 전 상태.
     return 'unknown';
   }
+  let mineHasIt = false;
+  let othersHaveIt = false;
   for (const dir of tenantDirs) {
-    let sessions: string[];
     try {
-      sessions = await readdir(join(ownerRoot(), dir));
+      await access(join(ownerRoot(), dir, sessionId));
     } catch {
       continue;
     }
-    if (!sessions.includes(sessionId)) continue;
-    return dir === mine ? 'owned' : 'other-tenant';
+    if (dir === mine) mineHasIt = true;
+    else othersHaveIt = true;
   }
-  return 'unknown';
+  if (othersHaveIt) return 'other-tenant';
+  return mineHasIt ? 'owned' : 'unknown';
 }

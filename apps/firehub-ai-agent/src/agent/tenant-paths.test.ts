@@ -7,6 +7,7 @@ import {
   legacyTranscriptDir,
   opencodeWorkspaceDir,
   tenantSegment,
+  proactiveReportDir,
   sdkChatFilesDir,
   transcriptDir,
   workspaceDir,
@@ -51,6 +52,15 @@ describe('tenant-paths', () => {
       join(tmpdir(), 'firehub-chat-files', 't7', '42-123'),
     );
     expect(() => sdkChatFilesDir(0, 42, 123)).toThrow(/전역 경로 폴백 금지/);
+  });
+
+  // TP-06: 프로액티브 리포트 디렉터리도 테넌트를 담는다 — 같은 tmpdir 안에서 한 종류만
+  // 세그먼트를 갖고 있으면 도구를 가진 에이전트가 나머지를 통째로 열거할 수 있다.
+  it('TP-06: the proactive report dir carries the tenant segment too', () => {
+    expect(proactiveReportDir(7, 42, 123)).toBe(
+      join(tmpdir(), 'proactive-report', 't7', '42-123'),
+    );
+    expect(() => proactiveReportDir(-1, 42, 123)).toThrow(/전역 경로 폴백 금지/);
   });
 
   // TP-04: 레거시 경로는 테넌트 디렉터리의 부모여야 한다 — 지연 이관 폴백과 TTL 순회가 둘 다

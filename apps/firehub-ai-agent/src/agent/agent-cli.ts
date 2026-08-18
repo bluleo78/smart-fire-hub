@@ -56,6 +56,12 @@ export function getTranscriptPath(tenantId: number, sessionId: string): string {
   return join(transcriptDir(tenantId), `${sessionId}.json`);
 }
 
+/** {@link readCliTranscript} 결과. `fromLegacy` 는 테넌트 세그먼트 이전 경로에서 읽었다는 뜻이다. */
+export interface LoadedCliTranscript {
+  transcript: CliTranscript;
+  fromLegacy: boolean;
+}
+
 /**
  * CLI 트랜스크립트를 읽는다. 테넌트 경로를 먼저 보고, 없으면 **세그먼트 도입 전 레거시 경로**를
  * 한 번 더 본다(없으면 `null`).
@@ -68,18 +74,22 @@ export function getTranscriptPath(tenantId: number, sessionId: string): string {
  * <p>이관이 안전한 근거: 이 경로에 도달하기 전 firehub-api 가 `ai_session` RLS +
  * `verifySessionOwnership` 으로 소유권을 검증한다 — 도달 가능한 호출자는 그 세션을 소유한
  * 테넌트의 사용자뿐이므로 요청 테넌트를 그 파일의 귀속으로 취급해도 된다.
+ *
+ * <p><b>`fromLegacy` 를 돌려주는 이유(코드리뷰 지적).</b> 우리 트랜스크립트의 메시지는 그대로
+ * 살리되 그 안의 **하위 에이전트 세션 id 는 버려야** 한다 — 아래 호출부 주석 참조.
  */
 export async function readCliTranscript(
   tenantId: number,
   sessionId: string,
-): Promise<CliTranscript | null> {
-  const candidates = [
-    getTranscriptPath(tenantId, sessionId),
-    join(legacyTranscriptDir(), `${sessionId}.json`),
+): Promise<LoadedCliTranscript | null> {
+  const candidates: Array<{ path: string; fromLegacy: boolean }> = [
+    { path: getTranscriptPath(tenantId, sessionId), fromLegacy: false },
+    { path: join(legacyTranscriptDir(), `${sessionId}.json`), fromLegacy: true },
   ];
   for (const candidate of candidates) {
     try {
-      return JSON.parse(await readFile(candidate, 'utf-8')) as CliTranscript;
+      const transcript = JSON.parse(await readFile(candidate.path, 'utf-8')) as CliTranscript;
+      return { transcript, fromLegacy: candidate.fromLegacy };
     } catch {
       continue;
     }
@@ -220,7 +230,25 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   let saved: CliTranscript = { messages: [] };
   if (isResume) {
     // 레거시 경로 폴백 포함 — 없으면 새로 시작한다(readCliTranscript javadoc 참조).
-    saved = (await readCliTranscript(tenantId, sessionId)) ?? { messages: [] };
+    const loaded = await readCliTranscript(tenantId, sessionId);
+    if (loaded) {
+      saved = loaded.transcript;
+      if (loaded.fromLegacy) {
+        // 레거시 트랜스크립트의 claudeSessionId 는 **버려야 한다**(코드리뷰 지적 MAJOR).
+        // claude CLI 는 대화를 cwd 파생 프로젝트 디렉터리(`~/.claude/projects/{...}`)에 두는데,
+        // 이 커밋이 cwd 에 테넌트 세그먼트를 끼웠으므로 예전 cwd 에서 만들어진 그 id 는 지금
+        // 프로젝트 디렉터리에서 찾을 수 없다. 그대로 `--resume` 에 넘기면 CLI 가
+        // "No conversation found with session ID" 로 죽고 result.subtype 이
+        // `error_during_execution` 으로 돌아온다 — 그리고 그 subtype 이 처리되지 않으면
+        // 빈 응답이 성공처럼 나가며, saveTranscript 가 같은 낡은 id 를 다시 써서 그 세션이
+        // **영구히** 같은 실패를 반복한다.
+        //
+        // 버려도 사용자가 보는 이력은 그대로다 — 화면의 대화는 우리 트랜스크립트의 messages 에서
+        // 오고, 버리는 것은 CLI 내부 대화 핸들뿐이다. 결과적으로 이 턴은 우리 이력을 유지한 채
+        // CLI 쪽 대화만 새로 시작한다(CLI 대화가 이미 정리된 세션에서 원래도 벌어지는 일이다).
+        saved.claudeSessionId = undefined;
+      }
+    }
   }
 
   const transcript = saved.messages;
@@ -512,7 +540,11 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             inputTokens,
             outputTokens,
           };
-        } else if (msg.subtype === 'error') {
+          // `error` 하나만 보면 안 된다(코드리뷰 지적): CLI 는 `error_during_execution` 같은
+          // 다른 error_* subtype 도 쓰는데, 그것들이 아래 else 로 빠지면 **빈 응답이 성공으로
+          // 보고된다**. 재개 실패가 정확히 그 형태였다. 접두사로 판정해 새 subtype 이 생겨도
+          // 조용히 성공으로 새지 않게 한다.
+        } else if ((msg.subtype as string | undefined)?.startsWith('error')) {
           yield {
             type: 'error',
             message: msg.result ?? 'CLI agent returned an error',

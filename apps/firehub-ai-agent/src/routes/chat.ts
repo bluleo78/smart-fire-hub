@@ -54,8 +54,13 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
 
   // 테넌트는 디스크 산출물 경로의 파생 입력이라 없으면 진행할 수 없다 — 전역 경로로 폴백하는
   // 대신 400 으로 거절한다(fail-closed). firehub-api 가 항상 실어 보낸다.
-  if (!tenantId || typeof tenantId !== 'number') {
-    res.status(400).json({ error: 'tenantId is required and must be a number' });
+  //
+  // 판정은 `tenantSegment()` 와 **같은 강도**여야 한다(코드리뷰 지적). `!tenantId ||
+  // typeof !== 'number'` 만 보면 -1·1.5·Infinity 가 통과했다가 제너레이터가 돌기 시작한
+  // 뒤에야 tenantSegment 에서 터지는데, 그 시점엔 200 + SSE 헤더가 이미 나가 있어 클라이언트는
+  // 의도한 400 대신 밋밋한 error 이벤트를 본다.
+  if (typeof tenantId !== 'number' || !Number.isInteger(tenantId) || tenantId <= 0) {
+    res.status(400).json({ error: 'tenantId is required and must be a positive integer' });
     return;
   }
 

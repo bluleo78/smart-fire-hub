@@ -103,12 +103,11 @@ export async function readSessionTranscript(
   };
 
   // CLI 에이전트 트랜스크립트 시도(테넌트 경로 → 레거시 경로 순).
-  const cli = (await readCliTranscript(tenantId, sessionId)) as
-    | CliTranscript
-    | HistoryMessage[]
-    | null;
+  const cli = await readCliTranscript(tenantId, sessionId);
   if (cli) {
-    const msgs = Array.isArray(cli) ? cli : (cli.messages ?? []);
+    // 아주 옛 포맷은 messages 래퍼 없이 배열 그대로 저장돼 있다 — 두 형태를 모두 받는다.
+    const parsed = cli.transcript as CliTranscript | HistoryMessage[];
+    const msgs = Array.isArray(parsed) ? parsed : (parsed.messages ?? []);
     return mergeAttachments(msgs);
   }
   // 없으면 SDK JSONL 경로로 폴백
