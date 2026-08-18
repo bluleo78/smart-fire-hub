@@ -26,12 +26,20 @@ import org.junit.jupiter.api.Test;
  * <p>스프링 컨텍스트를 띄우지 않는 순수 단위 테스트다({@code TenantContextRequireTest} 와 같은 형태).
  * 검사 대상이 ThreadLocal 과 디스크의 소스 파일뿐이라 DB 도 빈도 필요 없다.
  *
- * <p><b>규약 가드는 세 규칙이다.</b> {@code data."}(한정 이름), 맨몸 {@code "data"}·{@code 'data'}(리터럴 단독),
- * 손 조립({@code current() + ".."}). Task 2 시점에 첫 규칙만 있었고 Task 3~4 가 ~90곳을
- * {@link DataSchema} 로 옮겨 초록이 됐는데, <b>그 초록이 "완료" 를 뜻하지 않았다</b> — 첫 규칙이
- * 구조적으로 못 보는 형태로 실제 리터럴이 남아 있었다. Task 5 가 나머지 두 규칙을 더해 초록의
- * 의미를 맞췄다. 예외는 파일 단위가 아니라 {@link PinnedSite} 로 <b>개별 사이트</b>만 못박고,
- * 핀이 낡으면 {@link #pinnedSitesAreNotStale()} 이 빨개진다(허용목록을 뒤집은 역방향 단언).
+ * <p><b>규약 가드는 세 규칙이다(P3-a 시점).</b> {@code data."}(한정 이름), 맨몸 {@code "data"}·
+ * {@code 'data'}(리터럴 단독), 손 조립({@code current() + ".."}). Task 2 시점에 첫 규칙만
+ * 있었고 Task 3~4 가 ~90곳을 {@link DataSchema} 로 옮겨 초록이 됐는데, <b>그 초록이 "완료" 를
+ * 뜻하지 않았다</b> — 첫 규칙이 구조적으로 못 보는 형태로 실제 리터럴이 남아 있었다. Task 5 가
+ * 나머지 두 규칙을 더해 초록의 의미를 맞췄다. 예외는 파일 단위가 아니라 {@link PinnedSite} 로
+ * <b>개별 사이트</b>만 못박고, 핀이 낡으면 {@link #pinnedSitesAreNotStale()} 이 빨개진다
+ * (허용목록을 뒤집은 역방향 단언).
+ *
+ * <p><b>P3-b2 T2 가 네 번째 규칙을 더했다 — 카탈로그 기반 열거 금지.</b> 테넌트별 스키마 파생
+ * (P3-b2 T1)이 생기면서 "손 조립" 규칙도 {@code data_t} 접두사 우회로 확장됐고(위 손 조립
+ * 규칙과 같은 목록), 별도로 {@code information_schema.schemata}/{@code pg_namespace} 를
+ * {@code data_t} 패턴과 함께 써서 테넌트 스키마를 열거하려는 코드를 잡는 새 규칙
+ * ({@link #noProductionSourceEnumeratesTenantSchemasViaCatalog()})이 생겼다 — 그런 코드는
+ * 테넌트 1 의 {@code data} 를 구조적으로 못 찾는다({@link #CATALOG_ENUMERATION_TOKENS} 참조).
  */
 class DataSchemaResolutionTest {
 
@@ -110,12 +118,32 @@ class DataSchemaResolutionTest {
    * 보인다. {@code String.format("%s.%s", schema, tbl)} 도 같은 부류로 남는다 — 여기에 맞추려면
    * 패턴이 {@code %s\.} 가 되어야 하고 그러면 로깅 포맷 전반이 거짓 양성이 된다. 휴리스틱을 넣는
    * 대신 이 잔여물들을 여기 적어 둔다.
+   *
+   * <p><b>P3-b2 T2 확장 — 스키마 접두사({@code data_t})의 손조립도 같은 규칙으로 잡는다.</b>
+   * {@code current()} 가 물리 스키마 상수 하나였을 때는 조립 우회로가 {@code qualify()} 쪽 하나뿐
+   * 이었지만, 테넌트별 파생이 생긴 뒤로는 {@code "data_t" + tenantId} 형태로 파생 로직 자체를
+   * 손으로 복제하는 두 번째 우회로가 생긴다. 세 패턴을 추가한다:
+   *
+   * <ul>
+   *   <li>{@code "data_t" + }, {@code 'data_t' + } — 접두사 리터럴을 직접 이어 붙이는 형태
+   *   <li>{@code "_t" + tenantId} — 접미사만 따로 이어 붙이는 형태(예: {@code "data" + "_t" +
+   *       tenantId} 처럼 여러 조각으로 쪼개 만들어도 이 조각 하나로 걸린다)
+   *   <li>{@code TENANT_SCHEMA_PREFIX + } — {@link DataSchema#current()} 자신의 파생 로직이
+   *       바로 이 형태다. 이 패턴이 없으면 그 한 줄이 규약 가드에 구조적으로 보이지 않아, "조립
+   *       지점은 DataSchema 하나"라는 규약이 코드로 강제되지 않고 문서로만 남는다 — {@code
+   *       qualify()} 본문({@code current() + "."})을 이미 같은 이유로 핀 처리하고 있는 것과
+   *       대칭이다.
+   * </ul>
    */
   private static final List<Pattern> HAND_ASSEMBLY_PATTERNS =
       List.of(
           Pattern.compile("current\\(\\)\\s*\\+\\s*\""),
           Pattern.compile("\"\\s*\\+\\s*(?:DataSchema\\.)?current\\(\\)"),
-          Pattern.compile("%s\\.\""));
+          Pattern.compile("%s\\.\""),
+          Pattern.compile("\"data_t\"\\s*\\+"),
+          Pattern.compile("'data_t'\\s*\\+"),
+          Pattern.compile("\"_t\"\\s*\\+\\s*tenantId"),
+          Pattern.compile("TENANT_SCHEMA_PREFIX\\s*\\+"));
 
   /**
    * 규칙을 위반해도 되는 <b>개별 사이트</b>. 파일 단위 면제가 아니라 <b>정확한 코드 조각</b>을
@@ -169,11 +197,14 @@ class DataSchemaResolutionTest {
               "차트 스펙(Chart.js 계열) 의 필드명 2곳 — 동명이의"));
 
   /**
-   * {@link #HAND_ASSEMBLY_PATTERNS} 규칙의 핀 목록 — 조립이 <b>정당한</b> 두 곳뿐이다.
+   * {@link #HAND_ASSEMBLY_PATTERNS} 규칙의 핀 목록 — 조립이 <b>정당한</b> 곳들뿐이다.
    *
    * <p>{@code AnalyticsQueryExecutionService} 는 {@code search_path} 를 세운다. 이건 한정 이름이
    * 아니라 <b>스키마 식별자 목록</b>({@code '<schema>', 'public'})이므로 {@code qualify()} 를 쓰면
    * 오히려 틀린 SQL 이 된다 — 그래서 조립이 맞다.
+   *
+   * <p>{@code TENANT_SCHEMA_PREFIX + tenantId}({@code DataSchema.current()} 본문)도 핀이다 —
+   * 접두사에서 파생 스키마명을 만드는 유일한 합법 조립 지점이 바로 이 한 줄이다(P3-b2 T2).
    */
   private static final List<PinnedSite> HAND_ASSEMBLY_PINS =
       List.of(
@@ -185,6 +216,11 @@ class DataSchemaResolutionTest {
               1,
               "qualify() 본문 — 조립이 일어나야 하는 유일한 지점"),
           new PinnedSite(
+              ALLOWED_FILE,
+              "TENANT_SCHEMA_PREFIX + tenantId",
+              1,
+              "current() 본문 — data_t{id} 를 만드는 유일한 합법 조립 지점(P3-b2 T2)"),
+          new PinnedSite(
               "com/smartfirehub/analytics/service/AnalyticsQueryExecutionService.java",
               "\"SET LOCAL search_path = '\" + DataSchema.current() + \"', 'public'\"",
               1,
@@ -194,6 +230,36 @@ class DataSchemaResolutionTest {
               "\"SET LOCAL search_path = '\" + DataSchema.current() + \"'\"",
               1,
               "파이프라인 SQL 실행 직전 search_path — 위와 같은 이유(식별자 목록)로 조립이 맞다"));
+
+  /**
+   * 카탈로그로 테넌트 스키마를 <b>열거</b>하는 코드를 잡는다(P3-b2 T2, 신설).
+   *
+   * <p><b>왜 nit 이 아니라 진짜 결함 방지인가.</b> 테넌트 1 의 물리 스키마는 {@code data} 라서
+   * {@code data_t[0-9]+} 어떤 패턴에도 안 걸린다. "전 테넌트 스키마 순회"를 의도한 코드가
+   * {@code information_schema.schemata} 나 {@code pg_namespace} 를 {@code data_t} 패턴으로
+   * 필터링하면, 이 필터는 <b>구조적으로 테넌트 1 을 절대 찾지 못한다</b> — prod 에서 86개
+   * 테이블이 전부 들어 있는 바로 그 스키마를 조용히 빼먹는다. 정상적으로 만들어진 목록에서
+   * 우연히 하나가 빠지는 게 아니라, 필터 자체가 처음부터 그 스키마를 배제하도록 짜여 있다.
+   *
+   * <p><b>덤 — {@code LIKE} 의 {@code _} 는 단일 문자 와일드카드다.</b> {@code LIKE 'data_t%'}
+   * 는 {@code dataXt...} 도 잡는다. 진짜로 카탈로그를 훑어야 한다면 이스케이프({@code LIKE
+   * 'data\_t%'})하거나 정규식({@code ~ '^data_t[0-9]+$'})을 써야 한다. 이 가드는 그 실수 여부를
+   * 검사하지 않는다 — 애초에 카탈로그 열거 자체를 막아 그 실수가 나올 자리를 없앤다.
+   *
+   * <p>스캔은 <b>같은 줄</b>에서 두 토큰이 함께 나타나는지를 본다({@link #findExcessViolations}
+   * 와 같은 줄 단위 예산 구조를 그대로 재사용하기 위해서다). 오늘 프로덕션 소스의
+   * {@code pg_namespace} 사용(예: {@code TenantSchemaProvisioner.schemaExists},
+   * {@code hasCompleteDefaultPrivileges})은 전부 {@code nspname = ?} 형태의 단건 파라미터
+   * 조회이고 {@code data_t} 패턴과 같은 줄에 있지 않으므로 이 규칙에 걸리지 않는다(2026-08-18
+   * 실측 0건) — 핀이 필요 없다. {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않으므로
+   * 핀 목록이 비어 있다(빈 리스트 자체가 "오늘은 예외가 없다"는 정확한 상태다 — 억지로 자리만
+   * 차지하는 핀을 만들지 않는다).
+   */
+  private static final List<String> CATALOG_ENUMERATION_TOKENS =
+      List.of("information_schema.schemata", "pg_namespace");
+
+  /** {@link #CATALOG_ENUMERATION_TOKENS} 규칙의 핀 목록 — 오늘은 예외가 없다(실측 0건). */
+  private static final List<PinnedSite> CATALOG_ENUMERATION_PINS = List.of();
 
   /** 순수 단위 테스트라도 ThreadLocal 은 포크를 공유한다 — 뒤따르는 테스트로 새지 않게 지운다. */
   @AfterEach
@@ -319,6 +385,20 @@ class DataSchemaResolutionTest {
   }
 
   @Test
+  @DisplayName("규약 가드 — 카탈로그(pg_namespace/information_schema.schemata)로 data_t 패턴을 열거하는 코드가 없다")
+  void noProductionSourceEnumeratesTenantSchemasViaCatalog() {
+    List<String> offenders =
+        findExcessViolations(
+            CATALOG_ENUMERATION_PINS, DataSchemaResolutionTest::countCatalogEnumerations);
+
+    assertThat(offenders)
+        .as(
+            "카탈로그로 테넌트 스키마를 열거하는 프로덕션 소스 — 테넌트 1(data)을 구조적으로"
+                + " 놓친다. DataSchema 를 거치는 다른 방법을 쓰라 (예외는 핀 목록에만)")
+        .isEmpty();
+  }
+
+  @Test
   @DisplayName("핀 목록이 낡지 않았다 — 핀이 가리키는 코드가 사라지면 목록을 지우도록 빨개진다")
   void pinnedSitesAreNotStale() {
     // 역방향 단언(TenantSchemaConformanceTest 의 staleness 가드와 같은 장치). 다음 밴드가
@@ -328,7 +408,9 @@ class DataSchemaResolutionTest {
     // 이 테스트가 다루는 방향은 **핀이 낡았다(조각이 사라졌거나 개수가 줄었다)** 뿐이다. 반대
     // 방향(새 위반 추가)은 규칙 자신이 예산 초과로 잡는다(findExcessViolations 주석 참조) —
     // 두 방향의 메시지가 섞이면 새 누출을 들고 온 사람이 핀을 지워 면제로 바꿔 버린다.
-    Stream.concat(BARE_LITERAL_PINS.stream(), HAND_ASSEMBLY_PINS.stream())
+    Stream.concat(
+            Stream.concat(BARE_LITERAL_PINS.stream(), HAND_ASSEMBLY_PINS.stream()),
+            CATALOG_ENUMERATION_PINS.stream())
         .forEach(
             pin -> {
               List<Path> matched =
@@ -411,6 +493,18 @@ class DataSchemaResolutionTest {
   /** 한 줄 안의 맨몸 리터럴 개수. 규칙과 핀 예산이 <b>같은</b> 계수기를 쓰게 하려고 떼어 둔다. */
   private static int countBareLiterals(String line) {
     return FORBIDDEN_BARE_LITERALS.stream().mapToInt(token -> occurrences(line, token)).sum();
+  }
+
+  /**
+   * 한 줄 안에 카탈로그 토큰({@link #CATALOG_ENUMERATION_TOKENS})과 {@code data_t} 패턴이
+   * <b>함께</b> 나타나면 1, 아니면 0. 둘 다 있어야 "카탈로그로 data_t 패턴을 열거"하는 형태가
+   * 되므로 존재 개수가 아니라 동시 출현 여부를 센다 — 카탈로그 토큰만 있는 정상적인 단건 조회
+   * ({@code nspname = ?})는 이 규칙의 대상이 아니다.
+   */
+  private static int countCatalogEnumerations(String line) {
+    boolean hasCatalogToken = CATALOG_ENUMERATION_TOKENS.stream().anyMatch(line::contains);
+    boolean hasTenantSchemaPattern = line.contains("data_t");
+    return (hasCatalogToken && hasTenantSchemaPattern) ? 1 : 0;
   }
 
   /** 한 줄 안의 손 조립 개수. {@code \"} 를 먼저 푸는 이유는 원문의 {@code %s.\"} 를 같게 보기 위해서다. */
