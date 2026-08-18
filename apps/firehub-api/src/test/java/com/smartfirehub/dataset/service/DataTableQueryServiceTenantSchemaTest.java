@@ -141,44 +141,13 @@ class DataTableQueryServiceTenantSchemaTest extends IntegrationTestBase {
     } finally {
       TenantRlsTestSupport.cleanupAll(
           // dataset 삭제가 query_history 를 CASCADE 로 함께 지운다(V24).
-          () -> deleteOwnDatasetRows(tenantId),
-          () -> deleteOwnAuditLogRows(tenantId),
+          () -> TenantRlsTestSupport.deleteOwnDatasetRows(dsl, tx, tenantId),
+          () -> TenantRlsTestSupport.deleteOwnAuditLogRows(dsl, tx, tenantId),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId),
           () -> TenantRlsTestSupport.deleteUser(dsl, userId));
     }
   }
 
-  /**
-   * {@code datasetService.createDataset} 이 만든 카탈로그 행을 지운다(RLS 스코프). {@code WHERE
-   * tenant_id = ?} 를 명시하는 이유는 {@code DataTableServiceTenantUniqueTest
-   * #deleteOwnDatasetRows} 와 같다(라운드 1 리뷰 nit) — RLS 만으로도 오늘은 안전하지만
-   * (fail-closed), 이 밴드가 R7 하드가드까지 만들며 지킨 "조건 없는 삭제 금지" 규율과 결을
-   * 맞춘다.
-   */
-  private void deleteOwnDatasetRows(long tenantId) {
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx,
-        tenantId,
-        () ->
-            dsl.deleteFrom(DSL.table(DSL.name("dataset")))
-                .where(DSL.field(DSL.name("tenant_id"), Long.class).eq(tenantId))
-                .execute());
-  }
 
-  /**
-   * {@code datasetService.createDataset} 이 남긴 감사 로그를 지운다 — {@code
-   * audit_log_user_id_fkey}/{@code fk_audit_log_tenant} 에 cascade 가 없어 남겨 두면 user·tenant
-   * 삭제가 FK 위반으로 실패한다(P3-b2 T5 에서 같은 함정을 겪고 고친 패턴, {@code
-   * DataTableServiceTenantUniqueTest} 참조). {@code WHERE tenant_id = ?} 근거도 동일.
-   */
-  private void deleteOwnAuditLogRows(long tenantId) {
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx,
-        tenantId,
-        () ->
-            dsl.deleteFrom(DSL.table(DSL.name("audit_log")))
-                .where(DSL.field(DSL.name("tenant_id"), Long.class).eq(tenantId))
-                .execute());
-  }
 }

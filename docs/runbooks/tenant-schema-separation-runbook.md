@@ -536,6 +536,36 @@ venv 를 훅에 배선하려면 최소한: (a) 모든 개발자 환경에 `apps/
    가드 대상이 일치한다. 이 밴드에서 하지 않은 이유: 최종 전체 리뷰 통과 후의 구조 변경이고,
    `ALTER DEFAULT PRIVILEGES` 를 테넌트 1 의 hot path(모든 `createTable`)로 올리는 비용을
    실측하지 않았다.
+9. **"테넌트 1 = `data`" 특수 케이스가 Java·Python 두 곳에 손코딩돼 있다(simplify 패스 ALTITUDE
+   축)** — `DataSchema.LEGACY_SCHEMA_BY_TENANT` 와 `app/tenant.py` 의 `_LEGACY_SCHEMA_BY_TENANT`.
+   갈라지면 크로스 테넌트 스키마 오접속이고, 이를 지키는 것은 타입도 단일 진입점도 아니라
+   `TenantSchemaVectorConformanceTest`(Java 가 `tenant.py` 소스를 파싱해 대조)뿐이다. **옳은
+   고도**는 `tenant` 테이블에 스키마명 컬럼을 두어(신규 마이그레이션) 파생 규칙 자체를 없애는
+   것 — 사실이 코드 두 벌이 아니라 데이터 한 행이 된다. 이행 비용이 작지 않다: 캐시 계층(요청당
+   `DataSchema.current()` 호출이 많다), Python executor 는 별도 프로세스라 DB 조회 경로가 새로
+   필요하거나 API 가 페이로드로 내려야 하는데 그건 지금 일부러 피한 "클라이언트 제공 식별자
+   신뢰" 문제를 되살린다, 그리고 `DataSchemaResolutionTest` 의 개수 PIN 가드를 재설계해야 한다.
+   현 상태는 "틀린 설계" 가 아니라 **이연된 올바른 설계의 임시 근사**로 읽어라. P3-c 후속 슬라이스
+   후보.
+10. **`ensureCurrentTenantSchema()` 배선이 관례로만 지켜진다(simplify 패스 ALTITUDE 축)** —
+    프로덕션 호출부는 `DataTableService.createTable` 한 곳뿐이고, 다른 물리 테이블 생성 경로
+    (`createTempTable`·`cloneTable`·staging·executor 의 swap)는 전부 "이미 존재하는 데이터셋의
+    스키마 안에서만 동작한다"는 **암묵 불변식**에 기대어 안전하다(오늘 모든 경로를 추적해 확인함).
+    그런데 그 불변식은 타입도 강제도 아니다 — 예컨대 스텝 SQL 이 `CREATE TABLE ... AS` 를 직접
+    실행하는 기능이 생기면(`SqlScriptExecutor` 는 이미 임의 스크립트를 실행한다) 조용히 배선을
+    우회하고 신규 테넌트에서 늦게 터진다. 근본 비대칭: "스키마명을 조립하는 유일한 지점" 은
+    `DataSchema` 인데 "스키마가 존재하게 만드는 지점" 은 다른 클래스에 있다. 정공법(배선을
+    `DataSchema` 로 옮기기)은 정적 유틸 → 인스턴스 전환이라 호출부 수십 곳을 건드리는 큰
+    리팩터다. **싼 중간안**: `DataSchema.qualify`/`current` 를 호출하는 프로덕션 클래스 목록을
+    핀하는 규약 가드를 하나 더 두어, 새 클래스가 등장하면 사람이 배선 여부를 검토하게 한다
+    (이 밴드가 이미 쓰는 패턴이라 비용이 낮다).
+11. **`schemaOwnerDataSource` 오용 방지를 자바 접근 제어로 구조화(§3 방안 A 보다 훨씬 싸다)** —
+    지금은 평범한 public `@Bean DataSource` 를 `@Qualifier` 로 노출하고 소스 스캔 화이트리스트
+    (`SchemaOwnerDataSourceExposureGuardTest`)로 감지한다. 대안: 설정 클래스를 `global.tenant`
+    패키지로 옮기고 `DataSource` 를 감싼 **package-private** 타입을 그 패키지 안에서만 정의해
+    `@Bean` 도 package-private 으로 선언한다 — 다른 패키지는 그 타입을 참조조차 못 하므로
+    화이트리스트가 소스 스캔이 아니라 **컴파일러**가 된다. 완료되면 가드 테스트를 삭제할 수
+    있다. 스프링이 package-private `@Bean`·타입을 문제없이 처리하는지는 확인하지 않았다.
 
 ---
 

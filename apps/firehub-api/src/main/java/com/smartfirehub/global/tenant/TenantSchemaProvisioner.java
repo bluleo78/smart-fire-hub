@@ -57,42 +57,29 @@ public class TenantSchemaProvisioner {
     // 진입 시점 상태를 먼저 잡아 둔다 — catch 블록의 R11 재개정 판정(아래)이 이 값을 쓴다.
     boolean existedBefore = schemaExists(schema);
 
-    // 단락 판정을 순수 함수(shouldSkipProvisioning)로 뽑아 둔다(최종 전체 리뷰 B1).
+    // 단락 판정이 지키는 두 불변식(상세 이력은 progress.md 원장 R9·R12·B1):
     //
-    // 왜: 이 조건은 밴드 안에서 세 번 다시 쓰였는데(R9 최초 단락 → R12 롤 부재/USAGE 판정 →
-    // R12 재개정 hasCompleteDefaultPrivileges), 그동안 이 조건 자체를 검증하는 테스트가 하나도
-    // 없었다. isIdempotent 는 "예외 없음"만 보고 grantsRequiredPrivileges 는 권한만 보므로,
-    // 이 조건을 통째로 지워도(=매번 6문장을 재실행) 둘 다 초록으로 남는다 — 그런데 이 조건이
-    // 지키는 것은 테넌트 1(data, 이미 실제 데이터가 있는 유일한 스키마)의 모든 createTable
-    // 호출마다 GRANT/ALTER DEFAULT PRIVILEGES 가 86개 테이블을 상대로 재실행되지 않게 막는
-    // 것이다 — AccessExclusiveLock 을 테이블마다 잡으므로, 지워지면 임포트 중 데이터셋 생성이
-    // 락 대기·데드락으로 번진다(R9 가 막으려던 바로 그 결함).
+    // 1) **테넌트 1(data)에 락 폭풍을 내지 않는다.** 아래 부여 블록의 GRANT ... ON ALL TABLES 는
+    //    대상 테이블마다 AccessExclusiveLock 을 잡는다. prod 의 data 에는 테이블이 86개 있으므로
+    //    (실측) 단락이 없으면 createTable 마다 그 락을 다시 걸었다 풀며, 동시에 임포트가 돌면
+    //    락 대기·데드락으로 번진다.
+    // 2) **자가치유 경로를 닫지 않는다.** 신규 테넌트의 pipeline_executor_t{id} 생성은 운영자
+    //    절차(#383)라 첫 데이터셋 생성 시점에는 없는 것이 흔하고, 그때 executor 대상 문장들은
+    //    전부 건너뛴다. 그래서 "스키마가 있으면 끝" 으로 단락시키면 롤이 나중에 생겨도 다시
+    //    들어오지 않아(FlywayCallbackConfig 는 비밀번호만 동기화한다) 그 테넌트의 파이프라인이
+    //    에러 없이 영구히 안 돈다. "USAGE 보유" 로 판정해도 같은 함정이 남는다 — 운영자가 1차
+    //    조치로 GRANT USAGE 만 손으로 주면 그 순간 영구 단락된다. 그래서 치유 완료의 정의를
+    //    "테이블·시퀀스 기본 권한이 둘 다 걸려 있는가"(hasCompleteDefaultPrivileges)로 잡는다 —
+    //    GRANT ... ON ALL TABLES 는 갓 만든 스키마에서 no-op 이라 기본 권한만이 진짜 완료다.
     //
-    // 이 조건을 테넌트 1(data) 로 살아있는 DB 에서 재현할 수 없는 이유는 catch 블록의
-    // shouldSwallowCreationRace 와 같다(app 이 슈퍼유저라 DB 로 재현 불가) — 게다가 이 조건은
-    // "테넌트 1(data) 을 절대 건드리지 않는다"는 테스트 규율 자체와 충돌한다
-    // (TenantSchemaProvisionerTest 클래스 Javadoc 참조). 그래서 판정 로직을 순수 함수로 뽑아
-    // shouldSkipProvisioning + 결정표(TenantSchemaProvisionerSkipDecisionTest)로 직접
-    // 검증한다 — DB 무접촉, data 무접근.
+    // 판정을 순수 함수로 뽑아 둔 이유: 이 조건을 살아있는 DB 로 재현하려면 테넌트 1 의 data 를
+    // 건드려야 하는데 그건 테스트 규율이 금지한다(TenantSchemaProvisionerTest 클래스 Javadoc).
+    // 그래서 결정표(TenantSchemaProvisionerSkipDecisionTest)로 판정만 직접 검증하고, 판정이
+    // 실제로 단락을 일으키는지는 TenantSchemaProvisionerTest
+    // #skipsProvisioningOnceDefaultPrivilegesAreComplete 가 신규 스키마에서 행동으로 확인한다.
     //
-    // 신규 테넌트가 첫 데이터셋을 만드는 시점에는 pipeline_executor_t{id} 가 아직 없다(롤 생성은
-    // 운영자 절차, #383). 그러면 아래 executor 대상 grant 6문장은 전부 건너뛰고 스키마만 만들어
-    // 진다. 여기서 단순히 "스키마가 있으면 끝"으로 단락시키면, 운영자가 나중에 롤을 만들어도
-    // 이 메서드가 그 스키마에 다시 들어오지 않아 — 자가치유 경로가 없다(FlywayCallbackConfig 는
-    // 비밀번호만 동기화하고 권한은 건드리지 않는다) — 그 테넌트의 파이프라인이 에러 없이 영구히
-    // 안 돌게 된다.
-    //
-    // 처음엔 "롤이 USAGE 를 갖고 있는가"로 치유 완료를 판정했는데, 이것도 중간 상태에 갇힌다:
-    // 운영자가 파이프라인의 permission denied 를 보고 가장 자연스러운 1차 조치로 GRANT USAGE
-    // 만 손으로 주면, 그 순간부터 이 메서드가 영구히 단락돼 ALTER DEFAULT PRIVILEGES 는 끝내
-    // 안 걸린다 — 증상이 "그 테넌트의 일부(나중에 만든) 데이터셋만 파이프라인이 안 됨"이라
-    // 추적이 더 어렵다(라운드 2 리뷰). 그래서 치유 완료 판정을 "USAGE 보유" 가 아니라 "테이블·
-    // 시퀀스 기본 권한이 둘 다 이미 걸려 있는가"(hasCompleteDefaultPrivileges)로 바꿨다 —
-    // GRANT ... ON ALL TABLES 는 갓 만든 스키마에서 no-op 이라 이게 진짜 "완료" 의 정의다.
-    //
-    // 아래 두 값을 existedBefore 로 먼저 가드하는 이유는 원래 && / || 단락 평가가 하던 것과
-    // 똑같이 불필요한 카탈로그 조회를 피하기 위해서다(existedBefore=false 면 롤 존재·기본
-    // 권한 여부를 알 이유가 없다 — 어차피 스키마를 새로 만들어야 한다).
+    // 아래 두 값을 existedBefore 로 먼저 가드하는 것은 && / || 단락 평가와 같은 목적이다 —
+    // existedBefore=false 면 어차피 스키마를 새로 만들어야 하므로 카탈로그를 더 볼 이유가 없다.
     boolean roleExistsNow = existedBefore && roleExists(ownerDsl, executorRole);
     boolean hasCompletePrivilegesNow =
         existedBefore && roleExistsNow && hasCompleteDefaultPrivileges(schema, executorRole);
@@ -136,41 +123,30 @@ public class TenantSchemaProvisioner {
                   "ALTER DEFAULT PRIVILEGES FOR ROLE {0} IN SCHEMA {1}"
                       + " GRANT USAGE ON SEQUENCES TO {2}",
                   name(RUNTIME_ROLE), name(schema), name(executorRole));
-              // 최종 전체 리뷰 B4 — 런북 절차(REVOKE ALL ON SCHEMA public FROM
-              // pipeline_executor_t<id>)가 스키마 부재로 실패하고, 그 뒤 이 자가치유 블록이
-              // executor 대상 grant 6문장을 대신 걸어 주지만 이 REVOKE 는 그 6문장 안에
-              // 없었다 — 신규 테넌트만 V32·V111 이 일부러 세운 방어선("파이프라인 실행 롤은
-              // public 메타데이터를 읽으면 안 된다")이 조용히 빠지는 비대칭이었다. 여기에
-              // 추가해 자가치유 범위에 포함시킨다 — 멱등이다(REVOKE 는 이미 없는 권한을 다시
-              // 회수해도 오류가 아니다).
+              // V32·V111 이 세운 방어선을 신규 테넌트에도 적용한다 — 파이프라인 실행 롤은
+              // public 메타데이터를 읽으면 안 된다. 멱등이다(없는 권한을 회수해도 오류가 아니다).
               //
-              // ⚠ 자가치유 범위의 한계(코드리뷰 지적 — 이전 주석은 "운영자가 그 한 줄을
-              // 빠뜨려도 코드가 대신 걸어 준다"고 단언했는데 그건 **부분 실행에는 거짓**이다).
-              // 위 단락 판정(shouldSkipProvisioning)이 보는 것은 executor 롤의 기본 권한
-              // 완료 여부뿐이므로, 운영자가 런북 §1-4 에서 ALTER DEFAULT PRIVILEGES 둘까지만
-              // 실행하고 이 REVOKE 를 빠뜨리면 그 순간부터 이 블록에 다시 들어오지 않는다 —
-              // REVOKE 는 끝내 걸리지 않는다. 자가치유가 성립하는 것은 §1-4 를 **전부
-              // 생략**했을 때다. 런북 §1-4 경고와 §6-8 백로그에 기록했다.
+              // ⚠ 자가치유 범위의 한계: 위 단락 판정은 executor 롤의 **기본 권한 완료 여부만**
+              // 본다. 그래서 운영자가 런북 §1-4 를 부분 실행해 ALTER DEFAULT PRIVILEGES 둘까지
+              // 걸고 이 REVOKE 를 빠뜨리면 그 순간부터 이 블록에 다시 들어오지 않아 REVOKE 가
+              // 끝내 걸리지 않는다. 자가치유가 성립하는 것은 §1-4 를 **전부 생략**했을 때다
+              // (런북 §1-4 경고, 정공법은 §6-8 백로그).
               tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(executorRole));
             }
           });
     } catch (DataAccessException e) {
-      // 경합 흡수(R11, 라운드 2 리뷰로 재개정) — "지금 존재하는가" 가 아니라 "들어올 때 없었는데
-      // 지금은 있는가" 로 판정한다.
+      // 경합 흡수의 범위는 "진짜 생성 경합" 하나다 — 판정 기준이 "지금 존재하는가" 가 아니라
+      // "들어올 때 없었는데 지금은 있는가" 인 것이 핵심이다(상세 이력은 progress.md 원장 R11).
       //
-      // 라운드 1 은 "예외가 나도 스키마가 지금 존재하면 삼킨다"로 개정했는데, 이게 B1 의
-      // 자가치유 경로와 결합하면 무너진다: 자가치유 경로는 **진입 시점에 이미 스키마가
-      // 존재한다**(existedBefore=true). 그러면 트랜잭션 안에서 무슨 이유로 실패하든
-      // schemaExists(schema) 가 항상 참이라 무조건 삼켜지고 메서드가 조용히 정상 반환한다 —
-      // 권한 부여가 실패해도(예: 동시에 롤이 드롭됨, 데드락, statement timeout) 성공으로
-      // 보고되고 다음 호출도 같은 실패를 반복한다. B1 이 막으려던 바로 그 무성 실패를 이
-      // catch 가 다시 열어 버린 것이다.
+      // existedBefore=false 이고 지금은 존재하면 다른 트랜잭션이 막 만든 것이므로
+      // (CREATE SCHEMA IF NOT EXISTS 의 경쟁 조건 — 실측 SQLSTATE 23505,
+      // pg_namespace_nspname_index) 성공과 같은 상태다. 그래서 삼킨다.
       //
-      // 그래서 흡수 대상을 "진짜 생성 경합"으로 좁힌다: existedBefore 가 false(들어올 때
-      // 없었다)이고 지금은 존재하면(다른 트랜잭션이 막 만들었다) 그건 CREATE SCHEMA IF NOT
-      // EXISTS 의 경쟁 조건(23505, pg_namespace_nspname_index)이므로 성공과 같은 상태다.
-      // existedBefore 가 true(자가치유 경로)면 무슨 예외든 항상 전파한다 — 실패를 조용히
-      // 삼키지 않는 것이 정확성이다.
+      // existedBefore=true 면 무슨 예외든 **항상 전파한다.** 그 경로는 자가치유 경로이고
+      // (진입 시점에 스키마가 이미 있다) 거기서 "지금 존재하는가" 로 판정하면 트랜잭션이 무슨
+      // 이유로 실패해도(롤 동시 드롭, 데드락, statement timeout) 조건이 항상 참이라 전부
+      // 삼켜져 조용히 정상 반환한다 — 권한 부여 실패가 성공으로 보고되고 다음 호출도 같은
+      // 실패를 반복한다. 단락 판정이 막으려던 무성 실패를 catch 가 다시 여는 셈이다.
       // 존재 재확인을 조건식 안에서 하지 않는다(코드리뷰 지적) — 그 조회는 크기 1 인 소유자
       // 풀에서 커넥션을 새로 얻으므로, 원래 실패가 "커넥션 사망·풀 고갈·타임아웃" 이었다면
       // 이 확인도 같이 터진다. 조건식 안에서 터지면 새 예외가 e 를 대체해 버려서, 바로 위
@@ -209,10 +185,8 @@ public class TenantSchemaProvisioner {
 
   /**
    * catch 블록의 판정을 순수 함수로 뽑아 둔다 — DB 없이 결정표를 직접 단위 테스트하기
-   * 위해서다(라운드 2 리뷰: "자가치유 실패가 전파되는지"를 검증하는 테스트가 두 라운드 동안
-   * 없었다). {@code app} 롤이 이 저장소의 test/dev DB 에서 슈퍼유저라(실측)
-   * 권한(ACL) 기반 실패를 살아있는 DB 에서 재현할 방법이 사실상 없어(슈퍼유저는 GRANT 류를
-   * 항상 통과시킨다), 판정 로직 자체를 이렇게 분리해 직접 검증한다.
+   * 위해서다. {@code app} 롤이 이 저장소의 test·dev DB 에서 슈퍼유저라(실측) 권한(ACL) 기반
+   * 실패를 살아있는 DB 로 재현할 방법이 사실상 없다(슈퍼유저는 GRANT 류를 항상 통과시킨다).
    *
    * @param existedBefore {@code ensureCurrentTenantSchema} 진입 시점에 스키마가 이미 있었는가
    * @param existsNow 트랜잭션 실패 직후 스키마가 존재하는가
@@ -230,21 +204,8 @@ public class TenantSchemaProvisioner {
   record HasCompleteDefaultPrivileges(boolean value) {}
 
   /**
-   * {@code ensureCurrentTenantSchema} 진입부의 단락 판정을 순수 함수로 뽑아 둔다(최종 전체
-   * 리뷰 B1 — 이 조건은 밴드 안에서 세 번 다시 쓰였는데 그동안 검증하는 테스트가 없었다).
-   *
-   * <p><b>왜 이 판정이 테넌트 1(data) 을 살아있는 DB 로 지키는 유일한 코드 한 줄인가.</b>
-   * 이 조건이 {@code false} 를 돌려주면(=단락하지 않으면) 아래 6문장(GRANT ON ALL TABLES,
-   * ALTER DEFAULT PRIVILEGES ×2 등)이 재실행된다 — 신규 테넌트에서는 무해하지만(테이블이
-   * 거의 없다), 테넌트 1 의 물리 스키마 {@code data} 는 prod 에 86개 테이블이 있다(실측).
-   * {@code GRANT} 는 대상 테이블마다 {@code AccessExclusiveLock} 을 잡으므로, 이 조건이
-   * 잘못 단순화되면 테넌트 1 의 {@code createTable} 호출마다 86개 테이블에 락을 다시 걸었다
-   * 풀며, 동시에 임포트가 돌고 있으면 락 대기·데드락으로 번진다(R9 가 원래 막으려던 결함).
-   *
-   * <p>이 조건은 {@code TenantSchemaProvisionerTest} 가 "테넌트 1 로는 절대 시험하지 않는다"
-   * 는 규율(공유 test DB 의 {@code data} 파괴 방지)과 정면으로 충돌해 살아있는 DB 로 재현할
-   * 수 없다 — 그래서 {@link #shouldSwallowCreationRace} 와 같은 방식으로 판정 로직만 뽑아
-   * {@code TenantSchemaProvisionerSkipDecisionTest} 의 결정표로 직접 검증한다.
+   * {@code ensureCurrentTenantSchema} 진입부의 단락 판정. 이 판정이 지키는 두 불변식과 순수
+   * 함수로 뽑은 이유는 호출부 주석에 있다.
    *
    * @param existedBefore 진입 시점에 스키마가 이미 있었는가
    * @param roleExists executor 롤이 존재하는가(스키마가 없으면 항상 {@code false} 로 들어온다

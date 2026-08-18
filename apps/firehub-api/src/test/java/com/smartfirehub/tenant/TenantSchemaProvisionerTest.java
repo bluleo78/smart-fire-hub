@@ -113,12 +113,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     tenantId = TENANT_BASE + 1;
     TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
     schema = TenantContext.runScopedGet(tenantId, DataSchema::current); // → "data_t{id}"
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
     assertThat(schemaExists(schema)).isTrue();
   }
 
@@ -128,13 +123,8 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     tenantId = TENANT_BASE + 2;
     TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
     schema = TenantContext.runScopedGet(tenantId, DataSchema::current);
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          provisioner.ensureCurrentTenantSchema(); // 두 번째 호출도 예외 없이 끝나야 한다
-          return null;
-        });
+    provision(tenantId);
+    provision(tenantId); // 두 번째 호출도 예외 없이 끝나야 한다
     assertThat(schemaExists(schema)).isTrue();
   }
 
@@ -188,12 +178,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
         .as("스트레이 grant 시뮬레이션이 실제로 롤 전용 ACL 항목을 남겼는지 확인")
         .isTrue();
 
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
     // 런타임 롤이 이 스키마 안에 데이터셋 테이블을 만드는 주체다.
     assertThat(hasSchemaPrivilege("app_tenant", schema, "CREATE")).isTrue();
     assertThat(hasSchemaPrivilege("app_tenant", schema, "USAGE")).isTrue();
@@ -224,12 +209,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
 
     // 1차 — 롤이 아직 없는 상태에서 프로비저닝한다. 스키마만 생기고 executor 대상 grant 는
     // 전부 건너뛴다(정상 동작 — 위 grantsRequiredPrivileges 의 전제와 같다).
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
     assertThat(schemaExists(schema)).isTrue();
     assertThat(roleExistsInDb(executorRole)).as("아직 롤을 만들지 않았다").isFalse();
 
@@ -238,12 +218,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
 
     // 2차 — 스키마는 이미 있지만, 롤이 이 스키마의 기본 권한을 아직 못 받았으므로 단락 조건
     // (R12)이 거짓이 되어 grant 블록이 다시 실행돼야 한다.
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
 
     assertThat(hasSchemaPrivilege(executorRole, schema, "USAGE"))
         .as("자가치유로 뒤늦게 USAGE 가 걸려야 한다")
@@ -271,12 +246,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     executorRole = TenantPipelineRole.roleName(tenantId);
 
     // 1차 — 롤 없이 프로비저닝해 스키마만 만든다.
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
 
     // 운영자가 롤을 만들고, "권한 없음" 을 본 가장 자연스러운 1차 조치로 USAGE 만 손으로
     // 준다 — ALTER DEFAULT PRIVILEGES 는 아직 걸지 않은 중간 상태를 재현한다.
@@ -291,12 +261,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
         .isFalse();
 
     // 2차 — USAGE 만으로는 "완료"로 오판하지 않고 다시 들어가 기본 권한까지 마저 걸어야 한다.
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
 
     assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r"))
         .as("자가치유로 테이블 기본 권한이 뒤늦게 걸려야 한다")
@@ -333,12 +298,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     roleCreatedByThisTest = TenantRlsTestSupport.ensureRoleExists(ownerDsl(), executorRole);
 
     // 1차 — 롤이 이미 있으므로 6문장이 전부 걸려 "기본 권한 완료" 상태가 된다.
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
     assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r"))
         .as("전제 확인 — 1차 프로비저닝으로 테이블 기본 권한이 걸려 있어야 한다")
         .isTrue();
@@ -354,12 +314,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
         .isTrue();
 
     // 2차 — 완료 상태이므로 단락해야 한다.
-    TenantContext.runScopedGet(
-        tenantId,
-        () -> {
-          provisioner.ensureCurrentTenantSchema();
-          return null;
-        });
+    provision(tenantId);
 
     assertThat(publicSchemaHasRoleSpecificAclEntry(executorRole))
         .as("단락했다면 REVOKE 가 돌지 않아 표식이 남아 있어야 한다 — 사라졌으면 단락 판정이 죽은 것")
@@ -382,6 +337,21 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(owner, "public"))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  /**
+   * 테넌트 스코프를 열고 프로비저너를 한 번 부른다. {@code runScopedGet} 이 {@code Supplier} 를
+   * 요구해서 생기는 {@code return null;} 의식이 여섯 테스트에 그대로 복붙돼 있었다(simplify 패스
+   * SIMPLIFICATION 축) — 일곱 번째 테스트를 쓰는 사람이 의도가 아니라 보일러플레이트를 복사하지
+   * 않게 한다.
+   */
+  private void provision(long tenantId) {
+    TenantContext.runScopedGet(
+        tenantId,
+        () -> {
+          provisioner.ensureCurrentTenantSchema();
+          return null;
+        });
   }
 
   // ── 검증 전용 헬퍼 ──────────────────────────────────────────────────────

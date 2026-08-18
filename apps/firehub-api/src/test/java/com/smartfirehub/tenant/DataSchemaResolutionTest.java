@@ -294,33 +294,17 @@ class DataSchemaResolutionTest {
    * 결과 텍스트는 하나로 붙어 있다고 보는 것이다. 다른 두 규칙(맨몸 리터럴·손조립)은 건드리지
    * 않는다 — 그쪽은 이미 줄 단위로도 실제 우회를 잡고 있고, 예산 인프라({@link
    * #findExcessViolations})를 이 규칙 때문에 문장 단위로 바꾸면 두 규칙의 리포팅(정확한 줄
-   * 번호)이 부정확해진다. 이 규칙은 핀 목록이 비어 있어 그 인프라를 아예 안 쓰므로 독립적으로
-   * 넓힐 수 있었다.
+   * 번호)이 부정확해진다. 이 규칙은 그 인프라를 아예 안 쓰므로 독립적으로 넓힐 수 있었다 —
+   * 대가로 <b>이 규칙에는 핀(면제) 개념이 없다</b>(런북 §5).
    *
    * <p>오늘 프로덕션 소스의 {@code pg_namespace} 사용(예: {@code TenantSchemaProvisioner.
    * schemaExists}, {@code hasCompleteDefaultPrivileges}, {@code AnalyticsQueryExecutionService}
    * 의 {@code pg_class}+{@code pg_namespace} 인트로스펙션)은 전부 {@code data_t} 패턴을 참조하지
-   * 않으므로 이 규칙에 걸리지 않는다(2026-08-18 재실측 0건, 문장 단위 스캔으로도 동일) — 핀이
-   * 필요 없다. {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않으므로 핀 목록이 비어
-   * 있다(빈 리스트 자체가 "오늘은 예외가 없다"는 정확한 상태다 — 억지로 자리만 차지하는 핀을
-   * 만들지 않는다).
+   * 않으므로 이 규칙에 걸리지 않는다(2026-08-18 재실측 0건, 문장 단위 스캔으로도 동일).
+   * {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않는다.
    */
   private static final List<String> CATALOG_ENUMERATION_TOKENS =
       List.of("information_schema.schemata", "pg_namespace");
-
-  /**
-   * {@link #CATALOG_ENUMERATION_TOKENS} 규칙의 핀 목록 — 오늘은 예외가 없다(실측 0건).
-   *
-   * <p><b>이 목록은 죽어 있다(라운드 2 리뷰 BLOCKER) — 채워도 아무 효과가 없다.</b> 이 규칙의
-   * 본문({@link #noProductionSourceEnumeratesTenantSchemasViaCatalog()})은 다른 두 규칙과
-   * 달리 {@link #findExcessViolations}(줄 단위 예산 인프라)를 부르지 않고 문장 단위로 직접
-   * 순회한다 — 그래서 핀 목록을 <b>아예 읽지 않는다</b>. 누군가 정당한 예외를 만나 관례대로 여기
-   * 핀을 추가해도 규칙은 계속 빨갛다. 핀을 실제로 존중하게 하려면 예산 인프라를 문장 단위로
-   * 다시 끌어와야 하는데, 이 라운드에서는 택하지 않는다(범위 밖) — 대신 아래 단언으로 "핀 목록이
-   * 비어 있어야 한다"는 가정을 강제해, 누가 핀을 추가하는 순간 "이 규칙은 핀을 지원하지 않는다"
-   * 를 즉시 알게 한다.
-   */
-  private static final List<PinnedSite> CATALOG_ENUMERATION_PINS = List.of();
 
   /** 순수 단위 테스트라도 ThreadLocal 은 포크를 공유한다 — 뒤따르는 테스트로 새지 않게 지운다. */
   @AfterEach
@@ -448,14 +432,11 @@ class DataSchemaResolutionTest {
   @Test
   @DisplayName("규약 가드 — 카탈로그(pg_namespace/information_schema.schemata)로 data_t 패턴을 열거하는 코드가 없다")
   void noProductionSourceEnumeratesTenantSchemasViaCatalog() {
-    // 이 규칙은 findExcessViolations(줄 단위 예산 인프라)를 쓰지 않는다 — 문장(세미콜론) 단위로
-    // 스캔 범위를 넓히는 데 그 인프라를 건드릴 이유가 없어서다(클래스 Javadoc 참조). 그런데
-    // 그 결과 아래 루프는 CATALOG_ENUMERATION_PINS 를 전혀 참조하지 않는다 — 핀 목록이 죽어
-    // 있다는 뜻이다(라운드 2 리뷰 BLOCKER, 핀 필드의 Javadoc 참조). 누가 관례대로 핀을 추가해도
-    // 조용히 무시되는 상태를 막기 위해, 핀 목록이 항상 비어 있어야 한다는 가정을 여기서 강제한다.
-    assertThat(CATALOG_ENUMERATION_PINS)
-        .as("이 규칙은 핀을 지원하지 않는다(findExcessViolations 미사용) — 핀을 추가하지 마라")
-        .isEmpty();
+    // ⚠ 이 규칙은 **핀(면제)을 지원하지 않는다.** 다른 두 규칙과 달리 findExcessViolations(줄
+    // 단위 예산 인프라)를 쓰지 않고 문장(세미콜론) 단위로 직접 순회한다 — 스캔 범위를 문장으로
+    // 넓히는 데 그 인프라를 건드릴 이유가 없어서다(클래스 Javadoc 참조). 정당한 예외가 생기면
+    // 핀 목록을 만드는 것이 아니라 예산 인프라를 문장 단위로 다시 끌어와야 한다
+    // (docs/runbooks/tenant-schema-separation-runbook.md §5).
     List<String> offenders = new java.util.ArrayList<>();
     for (Path path : productionJavaFiles()) {
       String relative = relativePath(path);
@@ -489,9 +470,7 @@ class DataSchemaResolutionTest {
     // 이 테스트가 다루는 방향은 **핀이 낡았다(조각이 사라졌거나 개수가 줄었다)** 뿐이다. 반대
     // 방향(새 위반 추가)은 규칙 자신이 예산 초과로 잡는다(findExcessViolations 주석 참조) —
     // 두 방향의 메시지가 섞이면 새 누출을 들고 온 사람이 핀을 지워 면제로 바꿔 버린다.
-    Stream.concat(
-            Stream.concat(BARE_LITERAL_PINS.stream(), HAND_ASSEMBLY_PINS.stream()),
-            CATALOG_ENUMERATION_PINS.stream())
+    Stream.concat(BARE_LITERAL_PINS.stream(), HAND_ASSEMBLY_PINS.stream())
         .forEach(
             pin -> {
               List<Path> matched =

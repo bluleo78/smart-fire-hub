@@ -90,12 +90,12 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
     TenantRlsTestSupport.cleanupAll(
         // dataset 카탈로그 행을 먼저 지운다 — fk_dataset_tenant 에 ON DELETE CASCADE 가 없어
         // deleteTenants 가 이 행보다 먼저 tenant 를 지우려 하면 FK 위반으로 실패한다.
-        () -> ifPresent(tenantA, this::deleteOwnDatasetRows),
-        () -> ifPresent(tenantB, this::deleteOwnDatasetRows),
+        () -> ifPresent(tenantA, id -> TenantRlsTestSupport.deleteOwnDatasetRows(dsl, tx, id)),
+        () -> ifPresent(tenantB, id -> TenantRlsTestSupport.deleteOwnDatasetRows(dsl, tx, id)),
         // datasetService.createDataset 이 감사 로그를 남긴다 — audit_log_user_id_fkey /
         // fk_audit_log_tenant 에도 cascade 가 없어 user·tenant 삭제보다 먼저 지워야 한다.
-        () -> ifPresent(tenantA, this::deleteOwnAuditLogRows),
-        () -> ifPresent(tenantB, this::deleteOwnAuditLogRows),
+        () -> ifPresent(tenantA, id -> TenantRlsTestSupport.deleteOwnAuditLogRows(dsl, tx, id)),
+        () -> ifPresent(tenantB, id -> TenantRlsTestSupport.deleteOwnAuditLogRows(dsl, tx, id)),
         () -> {
           String[] schemas =
               Stream.of(schemaA, schemaB).filter(Objects::nonNull).toArray(String[]::new);
@@ -189,47 +189,7 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
-  /**
-   * 이 테스트가 만든 {@code dataset} 카탈로그 행을 지운다(RLS 스코프라 해당 테넌트 행만
-   * 보인다). {@code dataset_column} 은 {@code ON DELETE CASCADE} 로 함께 사라진다. {@code
-   * deleteTenants} 보다 반드시 먼저 호출해야 한다 — {@code fk_dataset_tenant} 에는 cascade 가
-   * 없다.
-   *
-   * <p><b>{@code WHERE tenant_id = ?} 를 명시하는 이유(라운드 1 리뷰 nit).</b> RLS 만으로도
-   * 오늘은 확실히 안전하다(실측: {@code dataset} 은 {@code relrowsecurity=t}, 이 헬퍼가 쓰는
-   * {@code dsl} 은 소유자 {@code app} 이 아니라 {@code app_tenant} 로 접속하고 그 롤은 {@code
-   * rolbypassrls=f}다 — GUC 가 없으면 fail-closed 로 "아무것도 안 지운다" 방향이라 폭발
-   * 반경이 닫혀 있다). 그런데 같은 support 클래스의 {@code deleteTenants} 는 {@code where
-   * tenant_id = ?} 를 명시하고, 이 밴드는 정확히 "조건 없는 삭제가 위험하다"는 이유로 R7
-   * 하드가드까지 만들었다 — WHERE 없는 DELETE 를 새로 심어 그 규율과 어긋나는 선례를 남기지
-   * 않는다.
-   */
-  private void deleteOwnDatasetRows(long tenantId) {
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx,
-        tenantId,
-        () ->
-            dsl.deleteFrom(DSL.table(DSL.name("dataset")))
-                .where(DSL.field(DSL.name("tenant_id"), Long.class).eq(tenantId))
-                .execute());
-  }
 
-  /**
-   * {@code datasetService.createDataset} 이 남긴 이 테스트 테넌트의 감사 로그를 지운다 —
-   * {@code audit_log_user_id_fkey}/{@code fk_audit_log_tenant} 에 cascade 가 없어 남겨 두면
-   * user·tenant 삭제가 FK 위반으로 실패한다({@code TriggerEventServiceTest} 의 같은 패턴
-   * 참조). {@code WHERE tenant_id = ?} 를 명시하는 이유는 {@link #deleteOwnDatasetRows} 와
-   * 같다.
-   */
-  private void deleteOwnAuditLogRows(long tenantId) {
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx,
-        tenantId,
-        () ->
-            dsl.deleteFrom(DSL.table(DSL.name("audit_log")))
-                .where(DSL.field(DSL.name("tenant_id"), Long.class).eq(tenantId))
-                .execute());
-  }
 
   private static CreateDatasetRequest newRequest(String name, String tableName) {
     return new CreateDatasetRequest(

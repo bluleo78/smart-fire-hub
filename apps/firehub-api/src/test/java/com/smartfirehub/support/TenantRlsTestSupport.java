@@ -205,6 +205,54 @@ public final class TenantRlsTestSupport {
   }
 
   /**
+   * {@code DatasetService.createDataset} 이 만든 {@code dataset} 카탈로그 행을 지운다(RLS
+   * 스코프). {@code dataset_column}·{@code query_history} 는 {@code ON DELETE CASCADE} 로 함께
+   * 사라진다. {@link #deleteTenants} 보다 반드시 먼저 부른다 — {@code fk_dataset_tenant} 에는
+   * cascade 가 없다.
+   *
+   * <p><b>{@code WHERE tenant_id = ?} 를 명시하는 이유.</b> RLS 만으로도 오늘은 확실히 안전하다
+   * (실측: {@code dataset} 은 {@code relrowsecurity=t}, 이 헬퍼가 받는 {@code dsl} 은 소유자
+   * {@code app} 이 아니라 {@code app_tenant} 로 접속하고 그 롤은 {@code rolbypassrls=f} 다 —
+   * GUC 가 없으면 fail-closed 로 "아무것도 안 지운다" 방향이라 폭발 반경이 닫혀 있다). 그런데
+   * {@link #deleteTenants} 도 {@code where tenant_id = ?} 를 명시하고, 이 밴드는 정확히
+   * "조건 없는 삭제가 위험하다"는 이유로 R7 하드가드까지 만들었다 — WHERE 없는 DELETE 를 새로
+   * 심어 그 규율과 어긋나는 선례를 남기지 않는다.
+   *
+   * <p>승격 이유(simplify 패스 REUSE 축): 이 메서드와 {@link #deleteOwnAuditLogRows} 가 두 테스트
+   * 파일에 바이트 단위로 동일하게 복붙돼 있었고, 두 파일의 Javadoc 이 서로를 "같은 함정을 겪고
+   * 고친 패턴" 이라고 교차 인용하면서도 승격되지 않았다. 같은 밴드에서 {@link #ensureRoleExists}
+   * · {@link #cleanupAll} 은 정확히 같은 이유로 이미 승격됐다 — 세 번째 테스트가 또 복붙하거나
+   * 한쪽만 고쳐져 FK 순서·WHERE 절이 어긋나는 것을 막는다.
+   */
+  public static void deleteOwnDatasetRows(
+      DSLContext dsl, TransactionTemplate transactionTemplate, long tenantId) {
+    runInTenantTransaction(
+        transactionTemplate,
+        tenantId,
+        () ->
+            dsl.deleteFrom(table(name("dataset")))
+                .where(field(name("tenant_id"), Long.class).eq(tenantId))
+                .execute());
+  }
+
+  /**
+   * {@code DatasetService.createDataset} 이 남긴 이 테넌트의 감사 로그를 지운다 — {@code
+   * audit_log_user_id_fkey}/{@code fk_audit_log_tenant} 에 cascade 가 없어 남겨 두면 user·tenant
+   * 삭제가 FK 위반({@code 23503})으로 실패한다. {@code WHERE tenant_id = ?} 근거와 승격 이유는
+   * {@link #deleteOwnDatasetRows} 와 같다.
+   */
+  public static void deleteOwnAuditLogRows(
+      DSLContext dsl, TransactionTemplate transactionTemplate, long tenantId) {
+    runInTenantTransaction(
+        transactionTemplate,
+        tenantId,
+        () ->
+            dsl.deleteFrom(table(name("audit_log")))
+                .where(field(name("tenant_id"), Long.class).eq(tenantId))
+                .execute());
+  }
+
+  /**
    * 한 테이블의 테넌트 격리를 <b>양방향</b>으로 단언한다.
    *
    * <p>단방향("타 테넌트에서 0행")만 보면 빈 테이블에서 공허하게 통과한다 — P1 에서 실제로 이
