@@ -42,16 +42,19 @@ class DatasetDomainColumnTest extends IntegrationTestBase {
   }
 
   @Test
-  void datasetNameUniqueIsScopedToTenantButTableNameIsNot() {
+  void datasetNameAndTableNameUniquesAreBothScopedToTenant() {
     assertThat(indexDef("dataset", "idx_dataset_name")).contains("tenant_id").contains("name");
 
-    // table_name 은 공유 data 스키마의 실제 테이블명이라 **의도적으로** 전역 유니크로 남는다.
-    // DataSchema.current() 가 상수 "data" 를 돌려주는 동안(P3-b 에서야 테넌트별로 갈라진다)
-    // 두 테넌트의 같은 table_name 은 같은 물리 테이블 하나로 해석되고, data 스키마에는 RLS 가
-    // 없다. 접으면 DataTableService.createTable 의 DROP TABLE IF EXISTS 가 앞선 테넌트의 데이터를
-    // 조용히 지운다 — V109 가 앞당겨 접었다가 V110 으로 되돌린 이유다. 유니크 접기는 스키마
-    // 분리와 **같은 밴드**에서만 해야 한다.
-    assertThat(indexDef("dataset", "idx_dataset_table_name")).doesNotContain("tenant_id");
+    // P3-b2 T5(V112)가 이 단언을 뒤집었다 — 예전 이름은
+    // datasetNameUniqueIsScopedToTenantButTableNameIsNot 이었고 "table_name 은 의도적으로
+    // 전역 유니크로 남는다"를 고정했다. 그 전제(DataSchema.current() 가 상수 "data")는
+    // P3-b2 T1(커밋 266c002b)이 테넌트별 물리 스키마로 갈라놓으면서 사라졌다 — 물리 충돌이
+    // 구조적으로 불가능해졌으므로, table_name 유니크도 이제 dataset_name 과 같은 형태로
+    // (tenant_id, table_name) 로 접는 것이 맞다(V109 가 먼저 이 접기를 했다가 순서가 틀려
+    // V110 으로 되돌려졌고, V112 가 스키마 분리 이후에 다시 접었다 — task-1-report.md 와
+    // V109/V110/V112 마이그레이션 헤더 참조). 크로스 테넌트 동명 table_name 허용과 데이터
+    // 손실 부재는 DataTableServiceTenantUniqueTest 가 실제 DDL 경로로 고정한다.
+    assertThat(indexDef("dataset", "idx_dataset_table_name")).contains("tenant_id");
   }
 
   @Test

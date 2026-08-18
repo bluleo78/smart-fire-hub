@@ -1,0 +1,42 @@
+-- P3-b2 T5: dataset.table_name 유니크를 테넌트 안으로 접는다(D6 순서 — 스키마 분리 이후).
+--
+-- 무엇을: V2 가 만든 전역 UNIQUE INDEX idx_dataset_table_name(table_name) 을 버리고
+--         (tenant_id, table_name) 유니크로 다시 만든다. V109 가 같은 일을 먼저 했다가
+--         V110 으로 되돌려졌는데, 그때는 물리 스키마 분리가 아직 없어(DataSchema.current() 가
+--         상수 "data") 접는 순간 두 테넌트가 같은 물리 테이블로 해석돼 데이터 손실 경로가
+--         열렸다. 지금은 다르다 — P3-b2 T1(커밋 266c002b)이 DataSchema.current() 를
+--         data_t{tenantId} 로 바꿔 물리 스키마가 테넌트별로 이미 갈라져 있다.
+--
+-- 실측(2026-08-18, 이 마이그레이션 작성 직전):
+--   select indexname, indexdef from pg_indexes where tablename='dataset' and indexname like '%table_name%';
+--   idx_dataset_table_name | CREATE UNIQUE INDEX idx_dataset_table_name ON public.dataset
+--                            USING btree (table_name)
+--   V110 이 남긴 상태와 정확히 일치함을 확인했다(V109 가 다시 적용된 적이 없다는 뜻).
+--
+-- 왜 지금은 안전한가: table_name 은 이제 "물리 스키마 안의" 테이블명일 뿐이다.
+--   DataSchema.qualify(tableName) 이 항상 현재 테넌트의 스키마(data_t{tenantId})로 완전히
+--   한정하므로, 두 테넌트가 같은 table_name='foo' 를 골라도 실제로는 서로 다른 물리 테이블
+--   (data_t1."foo" 와 data_t2."foo")을 가리킨다 — 물리 충돌이 구조적으로 불가능해졌다.
+--   DataTableService.createTable 의 DROP TABLE IF EXISTS 도 항상 qualify() 를 거치므로 이
+--   DROP 이 회수하는 "고아 테이블"은 같은 테넌트 안의 것뿐이다(재검토 근거는
+--   DataTableService.createTable 코드 주석 참조).
+--
+-- 한 커밋에서 함께 처리한 것(V110 이 요구한 바로 그것 — "table_name 을 키로 삼는 다른 DDL
+-- 경로도 전역 유니크에 기대고 있다"): DataTableService/DataTableRowService 의 모든
+-- DROP TABLE/CREATE TABLE/RENAME/TRUNCATE 경로를 전수 점검했다 — 전부 이미
+-- DataSchema.qualify()/DataSchema.current() 를 거쳐 테넌트 스키마로 한정돼 있었다(Task 1 이
+-- 스키마 분리 때 이미 배선함). 새로 고칠 코드는 없었고, DROP TABLE IF EXISTS 위의 낡은 위험
+-- 경고 주석만 "이제 안전한 이유"로 갱신했다.
+--
+-- 42P10 위험 없음: V109 의 근거와 동일(대상이 UNIQUE CONSTRAINT 가 아니라 UNIQUE INDEX 라
+--   onConflictOnConstraint 대상이 될 수 없고, dataset INSERT 는 DatasetRepository.save 하나뿐).
+--
+-- DataTableServiceTenantUniqueTest 가 twoTenantsCanUseSameTableName(유니크 접기 자체)과
+-- recreatingOneTenantsTableLeavesTheOthersRowsIntact(데이터 손실 경로 부재, 행 단위 단언)를
+-- 고정한다. DatasetDomainRlsTest.twoTenantsCannotShareTableNameWhileDataSchemaIsShared 와
+-- DatasetDomainColumnTest.datasetNameUniqueIsScopedToTenantButTableNameIsNot 은 "앞당겨 접기
+-- 방지" 가드였고 이 마이그레이션으로 그 전제가 뒤집히므로 같은 커밋에서 새 불변식으로 갱신한다.
+
+DROP INDEX IF EXISTS idx_dataset_table_name;
+
+CREATE UNIQUE INDEX idx_dataset_table_name ON dataset (tenant_id, table_name);

@@ -56,18 +56,23 @@ public class DataTableService {
 
     // 고아 테이블(참조하는 dataset 행이 없는 물리 테이블)을 회수하기 위해 먼저 지운다.
     //
-    // **이 DROP 이 안전한 근거는 idx_dataset_table_name 의 전역 유니크다.** 호출부의 사전검사
-    // (DatasetService 의 existsByTableName)는 RLS 로 스코프돼 남의 테넌트 행을 보지 못하므로,
-    // "이 이름을 참조하는 데이터셋이 없다"를 사전검사만으로는 보장할 수 없다. 전역 유니크가
-    // 있어 두 테넌트가 같은 table_name 을 가질 수 없고, 그래서 여기 도달했다는 사실이
-    // "남의 테넌트도 이 이름을 쓰지 않는다"를 뜻한다.
+    // P3-b2 T5 재검토(V112) — 이 DROP 이 이제 안전한 근거는 물리 스키마 분리다. 예전(V109/V110
+    // 시점)에는 idx_dataset_table_name 이 전역 유니크였고 DataSchema.current() 가 상수 "data" 를
+    // 돌려줘 모든 테넌트가 같은 물리 스키마를 공유했다 — 그 상태에서 유니크를 (tenant_id,
+    // table_name) 으로 접으면 두 테넌트의 같은 이름이 data 스키마의 같은 물리 테이블로 해석되고,
+    // 이 DROP 이 앞선 테넌트의 데이터를 예외 없이 지우고 커밋되는 경로가 열렸다(그래서 V109 가
+    // V110 으로 되돌려졌다 — task-1-report.md/V110 참조).
     //
-    // 유니크를 (tenant_id, table_name) 으로 접으면 이 전제가 깨진다 — DataSchema.current() 가
-    // 상수 "data" 인 동안 두 테넌트의 같은 이름이 같은 물리 테이블로 해석되므로, 이 DROP 이
-    // 앞선 테넌트의 데이터를 예외 없이 지우고 커밋되는 경로가 열린다(V109 로 접었을 때의 코드 경로
-    // 추적 결과이며, 서비스 경로를 실행해 파괴를 재현하지는 않았다 — 인덱스 계층의 23505 소멸까지가
-    // 실측이다). 접기는 테넌트별 스키마 분리(P3-b)와 같은 커밋에서만 해야 하고, 그때 이 DROP 도
-    // 함께 재검토해야 한다.
+    // 지금은 다르다: DataSchema.current() 가 테넌트별 물리 스키마(data_t{tenantId})를 돌려주므로
+    // (P3-b2 T1, 커밋 266c002b), qualify(tableName) 이 이미 "현재 테넌트의 스키마 안의 그 이름"
+    // 으로 완전히 한정한다 — 다른 테넌트가 같은 tableName 으로 만든 물리 테이블은 애초에
+    // 이 DROP 문의 대상 범위(다른 스키마)에 들지 않는다. 그래서 V112 가 유니크를 (tenant_id,
+    // table_name) 으로 접어도(=서로 다른 테넌트가 같은 table_name 을 카탈로그 행 레벨에서 공유해도)
+    // 물리적으로는 서로 다른 테이블을 가리키므로 크로스 테넌트 데이터 손실은 일어나지 않는다 —
+    // recreatingOneTenantsTableLeavesTheOthersRowsIntact(DataTableServiceTenantUniqueTest)가
+    // 이걸 행 단위로 고정한다. 이 DROP 이 회수하는 "고아 테이블"은 여전히 같은 테넌트 안의
+    // 것뿐이다(DatasetRepository.existsByTableName 이 이제 RLS 스코프 = 물리 스코프와 정확히
+    // 일치하므로).
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tableName));
 
     StringBuilder sql = new StringBuilder();
