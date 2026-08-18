@@ -586,6 +586,11 @@ class SqlValidatorTest {
    * 같은 뿌리 — {@link SqlValidator#unqualifiedTableNames}이 깊이 상한 초과 시 <b>빈 집합을 조용히
    * 반환</b>하는 쪽이 더 위험했다(호출부인 애널리틱스 카탈로그 대조가 "미한정 참조 없음"으로 잘못 읽는다).
    * 이제 예외로 거부해 호출부가 그 사실을 알 수 있다.
+   *
+   * <p>중첩 단수는 600 단(#387-4 이전엔 169 단) — 상한이 {@code MAX_TRAVERSAL_DEPTH}(순회 깊이, 이전 이름
+   * {@code MAX_DEPTH})로 500→1500 상향되면서(위 클래스 상단 문서 참고) 169 단(순회 깊이 실측 514)은 더 이상
+   * 상한을 넘지 못한다. 600 단(순회 깊이 실측 약 1807)으로 올려 여전히 상한을 확실히 넘긴다 — 이 메서드는
+   * {@code requireDataSchemaOnly} 같은 별도 검사가 없어서 상한 자체가 유일한 방어선이다.
    */
   @Test
   void unqualifiedTableNames_throwsInsteadOfSilentlyEmpty_beyondMaxDepth() {
@@ -594,7 +599,7 @@ class SqlValidatorTest {
     assertThatThrownBy(
             () ->
                 permissive.unqualifiedTableNames(
-                    deepNestedWhereIn(169, "SELECT a FROM some_unqualified_table_xyz")))
+                    deepNestedWhereIn(600, "SELECT a FROM some_unqualified_table_xyz")))
         .isInstanceOf(UnsafeSqlException.class);
   }
 
@@ -606,6 +611,47 @@ class SqlValidatorTest {
     assertThatCode(
             () -> permissive.validate("SELECT a FROM data.t WHERE a IN (SELECT a FROM data.t)"))
         .doesNotThrowAnyException();
+  }
+
+  // --- #387-4 — 깊이 상한은 SQL 중첩이 아니라 리플렉션 순회 홉 수를 센다 ---
+
+  /**
+   * 평평한 OR 연쇄가 "너무 깊게 중첩됨"으로 거부되지 않는다(#387-4).
+   *
+   * <p>이전 상한 500(당시 이름 {@code MAX_DEPTH})은 SQL 중첩이 아니라 리플렉션 순회 홉을 세고 있어, 중첩이
+   * 0 인 이 쿼리가 450항은 통과하고 500항은 거부됐다({@code OrExpression}이 left-deep 이진 트리를 만들기
+   * 때문). 800항으로 잡아 이전 임계를 확실히 넘긴다.
+   */
+  @Test
+  void allows_flat_or_chain_that_previously_tripped_depth_limit() {
+    StringBuilder sql = new StringBuilder("SELECT * FROM data.t WHERE ");
+    for (int i = 0; i < 800; i++) {
+      if (i > 0) {
+        sql.append(" OR ");
+      }
+      sql.append("a = ").append(i);
+    }
+    assertThatCode(() -> new SqlValidator().validate(sql.toString())).doesNotThrowAnyException();
+  }
+
+  /**
+   * 상한 자체는 살아 있어야 한다 — {@code StackOverflowError}(500)가 아니라 거부(400)로 끝난다(#387-4).
+   *
+   * <p>새 상한({@code MAX_TRAVERSAL_DEPTH} = 1500)을 확실히 넘기도록 5000항을 쓴다 — 실측한
+   * {@code StackOverflowError} 임계(테스트 스레드 기준 최소 약 5,390)보다 한참 낮은 지점에서 먼저 거부돼야
+   * 한다.
+   */
+  @Test
+  void rejects_expression_beyond_traversal_limit_without_stack_overflow() {
+    StringBuilder sql = new StringBuilder("SELECT * FROM data.t WHERE ");
+    for (int i = 0; i < 5000; i++) {
+      if (i > 0) {
+        sql.append(" OR ");
+      }
+      sql.append("a = ").append(i);
+    }
+    assertThatThrownBy(() -> new SqlValidator().validate(sql.toString()))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   // --- 코드리뷰 C1 — CTE 별칭은 스코프 단위로 제외한다(전역 제외 아님) ---
@@ -887,6 +933,40 @@ class SqlValidatorTest {
 
     assertThatCode(() -> permissive.validate("SELECT \"user\" FROM data.t"))
         .doesNotThrowAnyException();
+  }
+
+  // --- #387-3 — 문법적으로 의사 상수가 될 수 없는 이름 선언 자리의 맨몸 user 는 허용한다 ---
+
+  /** INSERT 대상 컬럼 목록의 user 는 의사 상수가 될 수 없는 자리다(#387-3). */
+  @Test
+  void allows_user_as_insert_target_column() {
+    assertThatCode(
+            () -> new SqlValidator().validate("INSERT INTO data.t (user, amount) VALUES ('a', 1)"))
+        .doesNotThrowAnyException();
+  }
+
+  /** CTE 컬럼 별칭 목록의 user 도 이름 선언 자리다(#387-3). */
+  @Test
+  void allows_user_as_cte_column_alias() {
+    assertThatCode(
+            () ->
+                new SqlValidator()
+                    .validate("WITH c(user, n) AS (SELECT a, b FROM data.t) SELECT n FROM c"))
+        .doesNotThrowAnyException();
+  }
+
+  /** 값 자리의 맨몸 user 는 계속 거부한다 — 사용자 판정(차단 유지, #387-3). */
+  @Test
+  void still_rejects_bare_user_in_select_list() {
+    assertThatThrownBy(() -> new SqlValidator().validate("SELECT user FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** ORDER BY 의 맨몸 user 도 계속 거부한다(#387-3). */
+  @Test
+  void still_rejects_bare_user_in_order_by() {
+    assertThatThrownBy(() -> new SqlValidator().validate("SELECT a FROM data.t ORDER BY user"))
+        .isInstanceOf(UnsafeSqlException.class);
   }
 
   // --- 코드리뷰 후속 B1 보강 — WITH 절 내부의 "전방 참조" 가시성 (비재귀 vs RECURSIVE) ---

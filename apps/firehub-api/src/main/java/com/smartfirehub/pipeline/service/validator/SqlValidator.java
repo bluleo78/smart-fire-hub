@@ -41,6 +41,7 @@ import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.select.AllTableColumns;
 import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.select.SelectItem;
 import net.sf.jsqlparser.statement.select.WithItem;
 import net.sf.jsqlparser.statement.update.Update;
 import org.springframework.stereotype.Component;
@@ -512,15 +513,23 @@ public class SqlValidator {
       throw new UnsafeSqlException("SQL 스크립트가 비어 있습니다.");
     }
 
-    Statement statement = parseSingleStatement(scriptContent);
-    requireDmlOrSelect(statement);
+    try {
+      Statement statement = parseSingleStatement(scriptContent);
+      requireDmlOrSelect(statement);
 
-    AstNodeCollector collected = AstNodeCollector.collect(statement);
-    requireDataSchemaOnly(collected.tableFqns());
-    requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
-    requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
-    requireNoReservedPseudoColumns(collected.columns());
-    requireNoSelectInto(collected.plainSelects());
+      AstNodeCollector collected = AstNodeCollector.collect(statement);
+      requireDataSchemaOnly(collected.tableFqns());
+      requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
+      requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
+      requireNoReservedPseudoColumns(collected.columns(), collected.declarationColumns());
+      requireNoSelectInto(collected.plainSelects());
+    } catch (StackOverflowError e) {
+      // 순회 깊이 상한(MAX_TRAVERSAL_DEPTH)이 1차 통제이고 이것은 2차 방어다(#387-4). 상한을 스택 한계보다
+      // 높게 잡는 실수가 생겨도 날 StackOverflowError(500)가 아니라 거부(400)로 내보낸다. walk() 이
+      // RuntimeException 만 삼키므로 Error 는 여기까지 그대로 올라온다 — validate 경계에서는 스택이 완전히
+      // 풀린 상태라 잡아도 안전하다.
+      throw new UnsafeSqlException("SQL 표현식이 너무 복잡해 정적 검증을 완료할 수 없습니다.");
+    }
   }
 
   /** JSqlParser로 파싱하고 단일 스테이트먼트인지 확인한다. */
@@ -825,18 +834,32 @@ public class SqlValidator {
    * 분기한다.</b> psql 실측: {@code SELECT "user"}, {@code SELECT "current_user"}는 둘 다 {@code column
    * "user"/"current_user" does not exist}로 실패한다 — PG 는 <b>인용 없는 키워드 형태만</b> 의사 상수로
    * 해석한다. 인용된 {@code "user"}는 진짜(존재한다면) 컬럼 참조이므로 막으면 안 된다 — 이 시스템은 실제로
-   * {@code user} 테이블이 있어 그 컬럼을 인용해 다루는 정상 쿼리를 깨뜨릴 수 있다. {@code user}를 이
-   * 목록에 추가하면서 생기는 유일한 트레이드오프는 "미한정 컬럼 이름이 우연히 {@code user}인 실제 컬럼을
-   * 인용 없이 참조하는" 드문 정상 쿼리가 거부되는 것인데, 세션 정보 노출 차단이 이 비용보다 낫다고 판단했다
-   * (dev 이력에 그런 사용례는 없었다).
+   * {@code user} 테이블이 있어 그 컬럼을 인용해 다루는 정상 쿼리를 깨뜨릴 수 있다.
+   *
+   * <p><b>맨몸 {@code user} 차단은 유지한다(#387-3, 사용자 판정).</b> {@code user}를 목록에 추가하면서 생기는
+   * 트레이드오프가 "드문" 정상 쿼리 거부에 그친다고 적었던 이전 서술은 틀렸다 — 데이터셋 컬럼명 규칙상 {@code
+   * user}는 흔히 생길 수 있는 이름이다. 그래도 부분 해제(예: {@code user}만 허용목록에서 뺌)는 성립하지
+   * 않는다 — PostgreSQL 에서 {@code user}는 {@code current_user}의 정확한 동의어라, {@code user}를 빼면
+   * 나머지 다섯 개를 막는 의미가 없어진다(누구든 {@code user}로 우회해 세션/역할 정보를 그대로 읽는다). 그래서
+   * 값이 오는 자리의 맨몸 {@code user}(예: {@code SELECT user}, {@code ORDER BY user})는 계속 거부한다.
+   *
+   * <p><b>단, 문법적으로 의사 상수가 될 수 없는 두 자리는 예외다.</b> {@code INSERT INTO t (user, ...) VALUES
+   * ...}의 대상 컬럼 목록과 {@code WITH c(user) AS (...)}의 CTE 컬럼 별칭 목록은 순수 이름 선언 자리라 그
+   * 위치에 세션 정보를 읽는 표현식이 올 수 있는 문법 자체가 없다 — 값 판단이 아니라 문법이 이미 막아 준다.
+   * {@link AstNodeCollector}가 이 두 위치의 {@code Column}을 {@code declarationColumns}로 따로 표시해 두면
+   * {@link #requireNoReservedPseudoColumns}가 그 집합만 건너뛴다({@code columns} 자체는 다른 검사가 쓸 수
+   * 있으니 그대로 둔다).
    */
   private static final Set<String> RESERVED_PSEUDO_CONSTANTS =
       Set.of(
           "current_user", "session_user", "current_catalog", "current_schema", "current_role",
           "user");
 
-  private void requireNoReservedPseudoColumns(List<Column> columns) {
+  private void requireNoReservedPseudoColumns(List<Column> columns, Set<Column> declarationColumns) {
     for (Column column : columns) {
+      if (declarationColumns.contains(column)) {
+        continue; // INSERT 대상 컬럼 목록 / CTE 컬럼 별칭 목록 — 문법적으로 의사 상수가 될 수 없는 이름 선언 자리(#387-3).
+      }
       if (column.getTable() != null) {
         continue; // 한정된 컬럼 참조(t.current_user 등)는 실제 컬럼명일 뿐 의사 상수가 아니다.
       }
@@ -947,7 +970,25 @@ public class SqlValidator {
    */
   private static final class AstNodeCollector {
     private static final String PARSER_INTERNAL_PACKAGE = "net.sf.jsqlparser.parser";
-    private static final int MAX_DEPTH = 500;
+
+    /**
+     * 재귀 순회 깊이 상한. <b>SQL 중첩 단계가 아니라 리플렉션 순회 홉 수</b>다(#387-4).
+     *
+     * <p>왜 이 값인가: 이 상한이 지키는 것은 보안이 아니라 {@link #walk}의 <b>자바 스택</b>이다. 총 작업량은
+     * {@code visited} 집합이 이미 한정한다(같은 노드를 두 번 걷지 않는다). 실측(JUnit 테스트 워커 스레드, 기본
+     * 스택 크기)으로 평평한 {@code WHERE a=0 OR a=1 OR ...} 연쇄가 {@code StackOverflowError}를 내는 순회
+     * 깊이는 JIT 예열 상태에 따라 약 5,390~15,325 사이로 변동했다 — 예열 전(인터프리터 모드) 쪽이 스택 프레임이
+     * 커서 더 얕은 깊이에서 넘쳤다. 더 작은 쪽(예열 전 최소 관측치 약 5,390)을 기준으로 삼아 그 1/3 을도 못
+     * 미치는 1500 을 상한으로 잡았다. 기본 스택 크기의 순수 {@code new Thread}에서는 항상 더 깊은 약 15,438
+     * 에서 넘쳐 테스트 스레드 쪽이 더 보수적이었다(작은 쪽 채택).
+     *
+     * <p>이전 값 500 은 <b>SQL 중첩</b> 상한으로 의도됐지만 실제로는 getter 한 홉마다 1 씩 늘어난다. 그래서
+     * 중첩이 전혀 없는 평평한 {@code WHERE a=0 OR a=1 OR ...}가 450항은 통과하고 500항은 거부됐다 — {@code
+     * OrExpression}이 left-deep 이진 트리를 만들기 때문이다. 근거로 삼았던 벤치마크(UNION×500, 컬럼 1000개,
+     * 40단 CTE)는 전부 깊이가 낮은 평평한 구조라 이 경로를 건드리지 못했다.
+     */
+    private static final int MAX_TRAVERSAL_DEPTH = 1500;
+
     private static final Map<Class<?>, List<Method>> GETTER_CACHE = new ConcurrentHashMap<>();
 
     private final Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -955,6 +996,14 @@ public class SqlValidator {
     private final List<String> analyticFunctionNames = new ArrayList<>();
     private final List<Column> columns = new ArrayList<>();
     private final List<PlainSelect> plainSelects = new ArrayList<>();
+
+    /**
+     * 이름 선언 자리(문법적으로 의사 상수가 될 수 없는 위치)에 나온 {@code Column} 노드 — {@code INSERT} 대상
+     * 컬럼 목록과 CTE 컬럼 별칭 목록. (#387-3) {@code columns} 리스트 자체는 그대로 채우되(다른 검사가 쓸 수
+     * 있으므로 — 실측: 현재는 {@link #requireNoReservedPseudoColumns} 하나뿐이지만 앞으로 늘어날 수 있어
+     * 안전하게 유지한다) 항등성으로 이 집합에 속하면 의사 상수 검사에서만 건너뛴다.
+     */
+    private final Set<Column> declarationColumns = Collections.newSetFromMap(new IdentityHashMap<>());
 
     /** 현재 방문 지점에서 유효한 CTE 별칭 스코프 스택 — 스코프 단위 처리 근거는 {@link #tableFqns} 문서 참고. */
     private final Deque<Set<String>> cteScopeStack = new ArrayDeque<>();
@@ -981,6 +1030,11 @@ public class SqlValidator {
 
     List<Column> columns() {
       return columns;
+    }
+
+    /** {@link #declarationColumns} 참고 — 이름 선언 자리라 의사 상수 검사 대상이 아닌 {@code Column} 집합. */
+    Set<Column> declarationColumns() {
+      return declarationColumns;
     }
 
     List<PlainSelect> plainSelects() {
@@ -1022,12 +1076,14 @@ public class SqlValidator {
       if (node == null) {
         return;
       }
-      if (depth > MAX_DEPTH) {
+      if (depth > MAX_TRAVERSAL_DEPTH) {
         // fail-open 금지(#385 재재재리뷰 C) — 여기서 조용히 return 하면 그 아래 서브트리 전체가
         // 미검사 통과였다(실측: 169단 중첩 서브쿼리 최내부의 public.usr 참조가 검증기를 통과, DB 도
         // 200단을 실제 실행). 정상 SQL 은 이 상한 근처에 가지 않으므로(위 클래스 상단 문서의 벤치마크
         // 참고) 거부가 곧 fail-closed 다.
-        throw new UnsafeSqlException("SQL 구조가 너무 깊게 중첩되어 있습니다(허용 깊이 " + MAX_DEPTH + " 초과).");
+        throw new UnsafeSqlException(
+            "SQL 표현식이 너무 복잡합니다(순회 깊이 " + MAX_TRAVERSAL_DEPTH + " 초과). "
+                + "긴 OR/AND 연쇄는 IN 목록으로 바꾸면 깊이가 크게 줄어듭니다.");
       }
       if (node instanceof Iterable<?> iterable) {
         for (Object element : iterable) {
@@ -1119,6 +1175,24 @@ public class SqlValidator {
         plainSelects.add(plainSelect);
       } else if (node instanceof Column column) {
         columns.add(column);
+      } else if (node instanceof Insert insert) {
+        // INSERT 대상 컬럼 목록은 이름 선언 자리다 — 실측(jsqlparser 5.0): getColumns() 가 그 자리의
+        // 컬럼들을 직접 Column 노드로 돌려준다(#387-3).
+        List<Column> targetColumns = insert.getColumns();
+        if (targetColumns != null) {
+          declarationColumns.addAll(targetColumns);
+        }
+      } else if (node instanceof WithItem withItem) {
+        // CTE 컬럼 별칭 목록도 이름 선언 자리다 — 실측(jsqlparser 5.0): getWithItemList() 가 SelectItem 목록을
+        // 돌려주고 각 SelectItem.getExpression() 이 Column 노드다(#387-3).
+        List<SelectItem<?>> aliasList = withItem.getWithItemList();
+        if (aliasList != null) {
+          for (SelectItem<?> aliasItem : aliasList) {
+            if (aliasItem.getExpression() instanceof Column aliasColumn) {
+              declarationColumns.add(aliasColumn);
+            }
+          }
+        }
       }
 
       // Column("t.id")/AllTableColumns("t.*") 의 getTable() 은 FROM/JOIN 소스가 아니라 이미 FROM/JOIN 이
