@@ -39,10 +39,14 @@ def test_role_name_convention():
     assert resolve_role(42) == "pipeline_executor_t42"
 
 
-def test_schema_is_shared_data_until_p3b2():
-    """오늘 물리 스키마는 여전히 data 하나다(P3-b1 R8). P3-b2 에서 이 단언이 바뀐다."""
+def test_schema_is_tenant_specific_since_p3b2():
+    """P3-b2 부터 테넌트 1 만 레거시 data 를 유지하고, 그 외는 data_t{id} 를 받는다.
+
+    상세 고정벡터(1, 2, 7, 43259)는 tests/test_tenant_schema_vectors.py 가 별도로 고정한다 —
+    이 테스트는 "더 이상 전 테넌트가 같은 스키마를 공유하지 않는다"는 계약 자체만 못박는다.
+    """
     assert resolve_schema(1) == "data"
-    assert resolve_schema(2) == "data"
+    assert resolve_schema(2) == "data_t2"
 
 
 # ---------------------------------------------------------------------------

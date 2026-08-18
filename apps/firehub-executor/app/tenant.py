@@ -27,9 +27,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # 런타임 순환 임포트를 피하려고 타입 검사에서만 불러온다.
     from app.config import Settings
 
-# 오늘의 물리 스키마명. Java 쪽 DataSchema.PHYSICAL_SCHEMA 와 같은 값이며,
-# P3-b2 에서 `data_t{tenantId}` 로 개명될 때 두 곳을 함께 바꾼다.
-_PHYSICAL_SCHEMA = "data"
+# 기본(레거시) 테넌트의 물리 스키마 매핑. Java 쪽 DataSchema.LEGACY_SCHEMA_BY_TENANT 와 같은 값
+# 이다 — 테넌트 1 은 멀티 테넌시 도입 이전부터 존재하던 유일한 워크스페이스라 데이터가 처음부터
+# data 스키마에 있고, 이 매핑 덕분에 리네임이 필요 없다.
+_LEGACY_SCHEMA_BY_TENANT = {1: "data"}
+
+# 신규 테넌트 스키마 접두사. Java 쪽 DataSchema.TENANT_SCHEMA_PREFIX 와 같은 값이며, 롤 이름
+# 접두사(_ROLE_PREFIX)와 같은 형태다.
+_TENANT_SCHEMA_PREFIX = "data_t"
 
 # 테넌트별 파이프라인 실행 롤 이름의 접두사. Java 쪽 TenantPipelineRole.roleName 과 동일.
 _ROLE_PREFIX = "pipeline_executor_t"
@@ -39,8 +44,9 @@ _ROLE_PREFIX = "pipeline_executor_t"
 _PASSWORD_LENGTH = 32
 
 # 인용 없이 SQL 에 끼워 넣어도 안전한 식별자 모양. resolve_schema 의 반환값이 `SET search_path`
-# 문장에 문자열 보간으로 들어가므로, 조립점에서 모양을 한 번 확인한다. 오늘은 상수라 항상
-# 통과하지만, P3-b2 에서 이름이 파생값(`data_t{id}`)이 되면 이 가드가 실제 방어선이 된다.
+# 문장에 문자열 보간으로 들어가므로, 조립점에서 모양을 한 번 확인한다. P3-b2 이전에는 스키마명이
+# 상수라 이 가드가 항상 통과하는 no-op 이었지만, **오늘부터 실효된다** — 반환값이 테넌트 id 를
+# 문자열로 이어 붙인 파생값(`data_t{id}`)이 되므로, 이 정규식이 실제 방어선이 된다.
 _SAFE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
 
 
@@ -66,15 +72,26 @@ def _require_tenant_id(tenant_id: object) -> int:
 
 
 def resolve_schema(tenant_id: int) -> str:
-    """테넌트의 데이터 스키마 식별자(인용 없음)를 돌려준다.
+    """테넌트의 데이터 스키마 식별자(인용 없음)를 돌려준다 — Java ``DataSchema.current()`` 의
+    Python 미러.
 
-    **테넌트 id 를 실제로 요구하면서 반환값에 쓰지 않는 이유**는 Java 쪽 ``DataSchema.current()``
-    와 같다 — 오늘 물리 스키마는 ``data`` 하나뿐이지만, P3-b2 가 ``data_t{tenantId}`` 로 개명하는
-    순간 테넌트 id 없이는 답을 만들 수 없다. 지금부터 요구해 두면 테넌트를 모르는 경로가 그때
-    한꺼번에 터지지 않고 지금 하나씩 드러난다.
+    테넌트 1 은 ``_LEGACY_SCHEMA_BY_TENANT`` 에 있는 값(=``data``)을, 그 외 테넌트는
+    ``_TENANT_SCHEMA_PREFIX`` + tenant_id 로 파생된 값을 돌려준다. 특수 분기가 아니라 조회다
+    (Java 쪽과 동일한 구조).
+
+    **왜 이 값을 요청 페이로드로 받지 않고 여기서 다시 파생하는가** — 이 판단은 되돌리지 말 것.
+    executor 는 별도 프로세스라 Java 의 ``DataSchema`` 를 직접 호출할 수 없다. 그렇다고 API 서버가
+    계산한 스키마명을 페이로드에 실어 내려보내면, executor 는 **클라이언트(호출자)가 제공한
+    식별자를 그대로 신뢰**하게 되는 보안 후퇴다 — 이 스키마명은 뒤이어 ``SET search_path`` 문장에
+    문자열 보간으로 들어가므로, 신뢰할 수 없는 입력을 그대로 꽂는 것과 같다. 기존
+    ``resolve_role``/``resolve_password`` 가 정확히 같은 이유로 이미 Java 쪽 값을 페이로드로
+    받지 않고 독립적으로 재파생하고 있고, ``_SAFE_IDENTIFIER`` 검증도 원래 이 파생값을 방어하려고
+    존재한다(P3-b2 이전에는 상수만 통과시켜 사실상 no-op 이었고, 이 파생 전환부터 실효된다). 두
+    구현이 갈라지면 이 함수가 던지는 예외로 드러나거나(형태가 안전하지 않으면) 다른 테넌트의
+    스키마를 가리키는 조용한 격리 결함으로 드러난다 — 후자를 막는 것이 이 미러링의 존재 이유다.
     """
-    _require_tenant_id(tenant_id)
-    schema = _PHYSICAL_SCHEMA
+    normalized = _require_tenant_id(tenant_id)
+    schema = _LEGACY_SCHEMA_BY_TENANT.get(normalized, f"{_TENANT_SCHEMA_PREFIX}{normalized}")
     if not _SAFE_IDENTIFIER.fullmatch(schema):
         raise TenantResolutionError(f"스키마명이 안전한 식별자 모양이 아닙니다: {schema!r}")
     return schema

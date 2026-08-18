@@ -208,7 +208,8 @@ def test_fallback_env_uses_tenant_role_credentials():
 
     env = mock_run.call_args[1]["env"]
     assert env["DB_URL"] == EXPECTED_TENANT_2_URL
-    assert env["DB_SCHEMA"] == "data"
+    # P3-b2 — 테넌트 2 는 data_t2 를 받는다(테넌트 1 만 레거시 data 를 유지).
+    assert env["DB_SCHEMA"] == "data_t2"
     # 공유 롤 자격증명(settings.db_user/db_password)이 스크립트로 새지 않는다.
     assert "pipeline_executor:" not in env["DB_URL"]
     assert settings.db_password not in env["DB_URL"]
@@ -228,7 +229,8 @@ def test_nsjail_env_uses_tenant_role_credentials():
         if tok == "--env" and i + 1 < len(cmd)
     )
     assert envs["DB_URL"] == EXPECTED_TENANT_2_URL
-    assert envs["DB_SCHEMA"] == "data"
+    # P3-b2 — 테넌트 2 는 data_t2 를 받는다(테넌트 1 만 레거시 data 를 유지).
+    assert envs["DB_SCHEMA"] == "data_t2"
     assert settings.db_password not in envs["DB_URL"]
 
 
