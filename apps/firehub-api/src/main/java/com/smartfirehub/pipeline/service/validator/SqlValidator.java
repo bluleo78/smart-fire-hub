@@ -41,7 +41,6 @@ import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.select.AllTableColumns;
 import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
-import net.sf.jsqlparser.statement.select.SelectItem;
 import net.sf.jsqlparser.statement.select.WithItem;
 import net.sf.jsqlparser.statement.update.Update;
 import org.springframework.stereotype.Component;
@@ -345,7 +344,9 @@ public class SqlValidator {
           "cardinality", "num_nonnulls", "num_nulls", "generate_series",
           // 형변환/인코딩 — bytea<->text 변환일 뿐 카탈로그·세션 접근이 없다(#387-2).
           "encode", "decode",
-          // UUID — 코어(PG13+)/uuid-ossp 확장, 무작위 생성일 뿐 정보 노출이 없다(#387-2).
+          // UUID — 코어(PG13+)/uuid-ossp 확장, 무작위 생성일 뿐 정보 노출이 없다(#387-2). uuid_generate_v4
+          // 는 uuid-ossp 확장 소유인데 이 저장소 마이그레이션은 그 확장을 설치하지 않는다(F8, 수정 라운드
+          // 1) — 설치된 환경에서만 동작한다. 보안 문제도 아니고 목록에서 뺄 이유도 없다.
           "gen_random_uuid", "uuid_generate_v4",
           // JSON 추가 — 배열 길이·정렬 출력일 뿐 새 카테고리는 아니다(#387-2).
           "json_array_length", "jsonb_array_length", "array_to_json", "jsonb_pretty",
@@ -353,9 +354,13 @@ public class SqlValidator {
           "to_tsvector", "plainto_tsquery", "ts_rank",
           // 시간 버케팅 — 코어(PG14+)(#387-2).
           "date_bin",
-          // 유사도/거리 — pg_trgm/fuzzystrmatch 확장, 문자열 비교만 한다(#387-2).
+          // 유사도/거리 — pg_trgm/fuzzystrmatch 확장, 문자열 비교만 한다(#387-2). levenshtein 은
+          // fuzzystrmatch 확장 소유인데 이 저장소 마이그레이션은 그 확장을 설치하지 않는다(F8, 수정 라운드
+          // 1) — 설치된 환경에서만 동작한다.
           "similarity", "levenshtein",
-          // 해시 — pgcrypto 확장(digest)/코어 PG11+(sha256), md5 와 동일 성격이다(#387-2).
+          // 해시 — pgcrypto 확장(digest)/코어 PG11+(sha256), md5 와 동일 성격이다(#387-2). digest 는
+          // pgcrypto 확장 소유인데 이 저장소 마이그레이션은 그 확장을 설치하지 않는다(F8, 수정 라운드 1) —
+          // 설치된 환경에서만 동작한다.
           "digest", "sha256");
 
   /**
@@ -527,21 +532,34 @@ public class SqlValidator {
       throw new UnsafeSqlException("SQL 스크립트가 비어 있습니다.");
     }
 
-    try {
-      Statement statement = parseSingleStatement(scriptContent);
-      requireDmlOrSelect(statement);
+    Statement statement = parseSingleStatement(scriptContent);
+    requireDmlOrSelect(statement);
 
-      AstNodeCollector collected = AstNodeCollector.collect(statement);
-      requireDataSchemaOnly(collected.tableFqns());
-      requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
-      requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
-      requireNoReservedPseudoColumns(collected.columns(), collected.declarationColumns());
-      requireNoSelectInto(collected.plainSelects());
+    AstNodeCollector collected = collectSafely(statement);
+    requireDataSchemaOnly(collected.tableFqns());
+    requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
+    requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
+    requireNoReservedPseudoColumns(collected.columns());
+    requireNoSelectInto(collected.plainSelects());
+  }
+
+  /**
+   * {@link AstNodeCollector#collect}를 {@link StackOverflowError}로부터 보호하는 단일 진입점(F3, 수정
+   * 라운드 1). {@link #validate}와 {@link #unqualifiedTableNames} 둘 다 같은 {@code collect}를 부르는데,
+   * 이전에는 {@code validate}만 이 방어를 갖고 있었다 — 순회 깊이 상한(MAX_TRAVERSAL_DEPTH)을 스택
+   * 한계보다 높게 잡는 실수가 생기면 한쪽은 거부(400)로, 다른 쪽은 그대로 {@code StackOverflowError}(500)로
+   * 갈렸다. 그 실수가 생겨도 두 진입점이 같은 결과(거부)를 내도록 방어를 한 곳으로 모은다.
+   *
+   * <p>상한 자체가 1차 통제이고 이것은 2차 방어다 — {@code walk()}이 {@code RuntimeException}만 삼키므로
+   * {@code Error}는 이 경계까지 그대로 올라온다(여기서는 스택이 완전히 풀린 상태라 잡아도 안전하다). {@code e}를
+   * 버리지 않고 {@code log.warn}으로 남긴다 — 실제 버그(상한 오설정 등)에서 온 SOE 라면 그 기원이 로그
+   * 없이는 완전히 소실된다.
+   */
+  private static AstNodeCollector collectSafely(Statement statement) {
+    try {
+      return AstNodeCollector.collect(statement);
     } catch (StackOverflowError e) {
-      // 순회 깊이 상한(MAX_TRAVERSAL_DEPTH)이 1차 통제이고 이것은 2차 방어다(#387-4). 상한을 스택 한계보다
-      // 높게 잡는 실수가 생겨도 날 StackOverflowError(500)가 아니라 거부(400)로 내보낸다. walk() 이
-      // RuntimeException 만 삼키므로 Error 는 여기까지 그대로 올라온다 — validate 경계에서는 스택이 완전히
-      // 풀린 상태라 잡아도 안전하다.
+      log.warn("SQL AST 순회 중 StackOverflowError 발생 — 순회 깊이 상한 설정을 점검하세요.", e);
       throw new UnsafeSqlException("SQL 표현식이 너무 복잡해 정적 검증을 완료할 수 없습니다.");
     }
   }
@@ -634,8 +652,17 @@ public class SqlValidator {
         if (allowUnqualifiedTables) {
           continue;
         }
+        // F9(수정 라운드 1) — name 이 점을 포함한 인용 이름(예: "my.table")이면 인용 없이 이어 붙였을 때
+        // "<스키마>.my.table"이 되어 유효하지 않은 SQL 을 권하게 된다(#387-5 와 같은 계열). 시퀀스 쪽
+        // (requireSafeSequenceArgument)이 이미 같은 문제를 인용으로 고쳤으므로 같은 방식을 따른다.
         throw new UnsafeSqlException(
-            "테이블 참조에 스키마가 없습니다: '" + name + "'. " + allowedSchema + "." + name + " 형식으로 명시하세요.");
+            "테이블 참조에 스키마가 없습니다: '"
+                + name
+                + "'. "
+                + allowedSchema
+                + ".\""
+                + name
+                + "\" 형식으로 명시하세요.");
       }
       String schema = stripQuotes(fqn.substring(0, dot));
       String name = stripQuotes(fqn.substring(dot + 1));
@@ -728,7 +755,7 @@ public class SqlValidator {
    */
   public Set<String> unqualifiedTableNames(String sql) {
     Statement statement = parseSingleStatement(sql);
-    AstNodeCollector collected = AstNodeCollector.collect(statement);
+    AstNodeCollector collected = collectSafely(statement);
     Set<String> result = new LinkedHashSet<>();
     for (String fqn : collected.tableFqns()) {
       // indexOfUnquotedDot 사용 — 순수 indexOf('.')는 "my.table"(따옴표 안에 점이 있는 미한정 테이블)을
@@ -857,23 +884,30 @@ public class SqlValidator {
    * 나머지 다섯 개를 막는 의미가 없어진다(누구든 {@code user}로 우회해 세션/역할 정보를 그대로 읽는다). 그래서
    * 값이 오는 자리의 맨몸 {@code user}(예: {@code SELECT user}, {@code ORDER BY user})는 계속 거부한다.
    *
-   * <p><b>단, 문법적으로 의사 상수가 될 수 없는 두 자리는 예외다.</b> {@code INSERT INTO t (user, ...) VALUES
-   * ...}의 대상 컬럼 목록과 {@code WITH c(user) AS (...)}의 CTE 컬럼 별칭 목록은 순수 이름 선언 자리라 그
-   * 위치에 세션 정보를 읽는 표현식이 올 수 있는 문법 자체가 없다 — 값 판단이 아니라 문법이 이미 막아 준다.
-   * {@link AstNodeCollector}가 이 두 위치의 {@code Column}을 {@code declarationColumns}로 따로 표시해 두면
-   * {@link #requireNoReservedPseudoColumns}가 그 집합만 건너뛴다({@code columns} 자체는 다른 검사가 쓸 수
-   * 있으니 그대로 둔다).
+   * <p><b>"INSERT 대상 컬럼 목록·CTE 컬럼 별칭 목록은 예외 처리가 필요하다"는 이전 판단은 틀렸다(수정
+   * 라운드 1, F1 — jsqlparser 로만 재고 PostgreSQL 로 재지 않은 결과).</b> 이 여섯 이름은 전부 PG 예약어라
+   * 그 두 자리(문법상 {@code ColId}를 요구)에 맨몸으로 <b>올 수 없다</b> — PG16 실측:
+   *
+   * <pre>{@code
+   * INSERT INTO zz (user, amount) VALUES ('a',1);    -- ERROR: syntax error at or near "user"
+   * WITH c(user, n) AS (SELECT 1,2) SELECT n FROM c; -- ERROR: syntax error at or near "user"
+   * WITH c("user", n) AS (SELECT 1,2) SELECT n FROM c; -- 정상 동작(인용형은 통과)
+   * }</pre>
+   *
+   * 검증기가 이 형태를 거부하는 것은 오탐이 아니라 <b>PG 가 먼저 거부하는 SQL</b>이다 — 즉 카브아웃은
+   * 발동 조건 자체가 존재하지 않는 죽은 코드였다(도달 불가능해서 보안 회귀는 아니었다). 근거를 잘못 세운
+   * 이유는 파서(jsqlparser)가 판다는 것이 DB 가 받는다는 근거가 아니기 때문이다 — 이 파일이 이미 {@code
+   * WITH ... AS MATERIALIZED}(PG 합법인데 jsqlparser 가 못 팜, 클래스 상단 문서 참고)로 반대 방향의 괴리를
+   * 기록해 두었다. 정당한 {@code user} 컬럼 소유자의 탈출구는 여전히 인용형 {@code "user"}이고, 그건 이미
+   * 통과한다({@link #requireNoReservedPseudoColumns} 참고).
    */
   private static final Set<String> RESERVED_PSEUDO_CONSTANTS =
       Set.of(
           "current_user", "session_user", "current_catalog", "current_schema", "current_role",
           "user");
 
-  private void requireNoReservedPseudoColumns(List<Column> columns, Set<Column> declarationColumns) {
+  private void requireNoReservedPseudoColumns(List<Column> columns) {
     for (Column column : columns) {
-      if (declarationColumns.contains(column)) {
-        continue; // INSERT 대상 컬럼 목록 / CTE 컬럼 별칭 목록 — 문법적으로 의사 상수가 될 수 없는 이름 선언 자리(#387-3).
-      }
       if (column.getTable() != null) {
         continue; // 한정된 컬럼 참조(t.current_user 등)는 실제 컬럼명일 뿐 의사 상수가 아니다.
       }
@@ -883,8 +917,15 @@ public class SqlValidator {
         continue; // 인용된 형태는 PG 가 의사 상수로 해석하지 않는다(위 문서의 실측 참고) — 진짜 컬럼일 수 있다.
       }
       if (RESERVED_PSEUDO_CONSTANTS.contains(raw.toLowerCase())) {
+        // F2(수정 라운드 1) — 이 이름의 실제 컬럼을 가진 사용자에게 탈출구(인용)를 알려준다. 차단 자체는
+        // 유지한다(#387-3 사용자 판정) — 안내만 보강한다.
         throw new UnsafeSqlException(
-            "허용되지 않는 참조: '" + raw + "'. 세션/역할 정보를 노출하는 의사 상수는 차단됩니다.");
+            "허용되지 않는 참조: '"
+                + raw
+                + "'. 세션/역할 정보를 노출하는 의사 상수는 차단됩니다. 같은 이름의 실제 컬럼을 참조하려면 큰따옴표로"
+                + " 인용하세요(예: \""
+                + raw
+                + "\").");
       }
     }
   }
@@ -989,9 +1030,11 @@ public class SqlValidator {
    * 같은 형태 200단을 실제로 실행했다({@code public."user"} 7853행 반환). 같은 뿌리로 스키마 화이트리스트·
    * INTO 차단·{@link #unqualifiedTableNames}(카탈로그 대조용 미한정 이름 목록)가 전부 조용히 무너졌다 —
    * {@code unqualifiedTableNames}가 빈 집합을 반환하는 쪽이 특히 나빴다(호출부는 "미한정 참조 없음"으로
-   * 잘못 읽는다). 정상 SQL 은 이 상한 근처에 가지 않는다(재리뷰 실측: UNION×500 11ms, 1000컬럼 82ms, 40단
-   * CTE 3ms) — 그래서 상한을 올리는 것은 처방이 아니라 같은 버그의 숫자만 바꾸는 것이다. 상한 도달은 이제
-   * {@link UnsafeSqlException}을 던진다.
+   * 잘못 읽는다). 상한 도달은 이제 {@link UnsafeSqlException}을 던진다 — 상한의 의미와 근거는 {@link
+   * #MAX_TRAVERSAL_DEPTH} Javadoc 참고(F4, 수정 라운드 1 — 이전 버전은 여기서 "정상 SQL 은 이 상한 근처에
+   * 가지 않는다"는 벤치마크를 근거로 들었는데, 그 벤치마크가 전부 평평한 구조라 이 경로를 못 건드렸다는
+   * 사실이 바로 아래 {@code MAX_TRAVERSAL_DEPTH} Javadoc 에 나온다 — 두 문서가 정면 충돌하던 허위 산문을
+   * 정리했다).
    *
    * <p>부수 효과 — 절 열거 방식({@code TablesNamesFinder} 상속)을 버리면서 그 유틸리티의 알려진 버그(윈도
    * 프레임 {@code ROWS BETWEEN ... PRECEDING}에서 {@code WindowOffset.getExpression()}이 null 일 때
@@ -1028,15 +1071,6 @@ public class SqlValidator {
     private final List<Column> columns = new ArrayList<>();
     private final List<PlainSelect> plainSelects = new ArrayList<>();
 
-    /**
-     * 이름 선언 자리(문법적으로 의사 상수가 될 수 없는 위치)에 나온 {@code Column} 노드 — {@code INSERT} 대상
-     * 컬럼 목록과 CTE 컬럼 별칭 목록. (#387-3) {@code columns} 리스트 자체는 그대로 채우되(다른 검사가 쓸 수
-     * 있으므로 — 실측: 현재는 {@link #requireNoReservedPseudoColumns} 하나뿐이지만 앞으로 늘어날 수 있어
-     * 안전하게 유지한다) 항등성으로 이 집합에 속하면 의사 상수 검사에서만 건너뛴다.
-     */
-    private final Set<Column> declarationColumns =
-        Collections.newSetFromMap(new IdentityHashMap<>());
-
     /** 현재 방문 지점에서 유효한 CTE 별칭 스코프 스택 — 스코프 단위 처리 근거는 {@link #tableFqns} 문서 참고. */
     private final Deque<Set<String>> cteScopeStack = new ArrayDeque<>();
 
@@ -1062,11 +1096,6 @@ public class SqlValidator {
 
     List<Column> columns() {
       return columns;
-    }
-
-    /** {@link #declarationColumns} 참고 — 이름 선언 자리라 의사 상수 검사 대상이 아닌 {@code Column} 집합. */
-    Set<Column> declarationColumns() {
-      return declarationColumns;
     }
 
     List<PlainSelect> plainSelects() {
@@ -1111,11 +1140,15 @@ public class SqlValidator {
       if (depth > MAX_TRAVERSAL_DEPTH) {
         // fail-open 금지(#385 재재재리뷰 C) — 여기서 조용히 return 하면 그 아래 서브트리 전체가
         // 미검사 통과였다(실측: 169단 중첩 서브쿼리 최내부의 public.usr 참조가 검증기를 통과, DB 도
-        // 200단을 실제 실행). 정상 SQL 은 이 상한 근처에 가지 않으므로(위 클래스 상단 문서의 벤치마크
-        // 참고) 거부가 곧 fail-closed 다.
+        // 200단을 실제 실행). 상한의 의미와 근거는 클래스 상단 MAX_TRAVERSAL_DEPTH Javadoc 참고(F4,
+        // 수정 라운드 1 — 이전 문구는 "정상 SQL 은 이 상한 근처에 가지 않는다"고 했지만 그 벤치마크가
+        // 이 경로를 못 건드렸다는 사실이 그 Javadoc 에 있다).
         throw new UnsafeSqlException(
+            // F5(수정 라운드 1) — 이전 문구는 두 가지가 틀렸었다: (a) a=1 AND b=2 ... 형태의 AND 연쇄는
+            // 원리적으로 IN 으로 못 바꾼다, (b) 이미 IN 을 쓰고 있는 깊은 중첩 서브쿼리에도 "IN 으로
+            // 바꾸라"는 무의미한 조언을 줬다(#387-5 계열 재발). 조건을 좁혀 긴 OR 연쇄 한정으로만 조언한다.
             "SQL 표현식이 너무 복잡합니다(순회 깊이 " + MAX_TRAVERSAL_DEPTH + " 초과). "
-                + "긴 OR/AND 연쇄는 IN 목록으로 바꾸면 깊이가 크게 줄어듭니다.");
+                + "긴 OR 연쇄라면 IN 목록으로 줄일 수 있습니다.");
       }
       if (node instanceof Iterable<?> iterable) {
         for (Object element : iterable) {
@@ -1207,24 +1240,6 @@ public class SqlValidator {
         plainSelects.add(plainSelect);
       } else if (node instanceof Column column) {
         columns.add(column);
-      } else if (node instanceof Insert insert) {
-        // INSERT 대상 컬럼 목록은 이름 선언 자리다 — 실측(jsqlparser 5.0): getColumns() 가 그 자리의
-        // 컬럼들을 직접 Column 노드로 돌려준다(#387-3).
-        List<Column> targetColumns = insert.getColumns();
-        if (targetColumns != null) {
-          declarationColumns.addAll(targetColumns);
-        }
-      } else if (node instanceof WithItem withItem) {
-        // CTE 컬럼 별칭 목록도 이름 선언 자리다 — 실측(jsqlparser 5.0): getWithItemList() 가 SelectItem 목록을
-        // 돌려주고 각 SelectItem.getExpression() 이 Column 노드다(#387-3).
-        List<SelectItem<?>> aliasList = withItem.getWithItemList();
-        if (aliasList != null) {
-          for (SelectItem<?> aliasItem : aliasList) {
-            if (aliasItem.getExpression() instanceof Column aliasColumn) {
-              declarationColumns.add(aliasColumn);
-            }
-          }
-        }
       }
 
       // Column("t.id")/AllTableColumns("t.*") 의 getTable() 은 FROM/JOIN 소스가 아니라 이미 FROM/JOIN 이

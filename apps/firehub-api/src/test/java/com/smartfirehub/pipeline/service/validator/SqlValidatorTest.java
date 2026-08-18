@@ -618,28 +618,39 @@ class SqlValidatorTest {
    * public.usr}. DB 는 같은 형태 200단을 실제로 실행해 {@code public."user"} 7853행을 반환했다. 최초 구현은
    * {@code MAX_DEPTH} 도달 시 조용히 {@code return}(fail-open)해서 그 아래 서브트리 전체가 미검사 통과였다 —
    * 스키마 화이트리스트가 뚫린다.
+   *
+   * <p>중첩 단수는 600 단이다(F6, 수정 라운드 1 — 이전엔 169 단). 상한이 {@code MAX_TRAVERSAL_DEPTH}(순회
+   * 깊이)로 500→1500 상향되면서 169 단(순회 깊이 실측 약 514)은 더 이상 상한에 닿지 않아 이 가드가
+   * "상한 지점 아래에 묻힌 위반이 조용히 통과하는가"를 더 이상 지키지 못하는 상태였다 — 600 단(순회 깊이
+   * 실측 약 1807)으로 올려 여전히 상한을 확실히 넘긴다.
    */
   @Test
   void rejects_schemaViolation_buriedBeyondMaxDepth() {
     SqlValidator permissive = new SqlValidator("data", true);
 
     assertThatThrownBy(
-            () -> permissive.validate(deepNestedWhereIn(169, "SELECT a FROM public.usr")))
-        .isInstanceOf(UnsafeSqlException.class);
+            () -> permissive.validate(deepNestedWhereIn(600, "SELECT a FROM public.usr")))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("순회 깊이");
   }
 
-  /** 같은 뿌리 — {@code SELECT ... INTO}를 깊이 묻어도 M4 차단이 유지돼야 한다(10단에선 이미 거부됨). */
+  /**
+   * 같은 뿌리 — {@code SELECT ... INTO}를 깊이 묻어도 M4 차단이 유지돼야 한다(10단에선 이미 거부됨). 중첩
+   * 단수는 위 {@link #rejects_schemaViolation_buriedBeyondMaxDepth}와 같은 이유로 600 단이다(F6).
+   */
   @Test
   void rejects_selectInto_buriedBeyondMaxDepth() {
     SqlValidator permissive = new SqlValidator("data", true);
     StringBuilder sql = new StringBuilder("SELECT a FROM data.t WHERE a IN (");
-    for (int i = 0; i < 169; i++) {
+    for (int i = 0; i < 600; i++) {
       sql.append("SELECT a FROM data.t WHERE a IN (");
     }
     sql.append("SELECT a INTO public.pwned FROM data.t");
-    sql.append(")".repeat(170));
+    sql.append(")".repeat(601));
 
-    assertThatThrownBy(() -> permissive.validate(sql.toString())).isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> permissive.validate(sql.toString()))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("순회 깊이");
   }
 
   /**
@@ -660,7 +671,8 @@ class SqlValidatorTest {
             () ->
                 permissive.unqualifiedTableNames(
                     deepNestedWhereIn(600, "SELECT a FROM some_unqualified_table_xyz")))
-        .isInstanceOf(UnsafeSqlException.class);
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("순회 깊이");
   }
 
   /** 양성 대조 — 상한 근처에도 못 미치는 정상 중첩 쿼리는 여전히 통과해야 한다. */
@@ -711,7 +723,8 @@ class SqlValidatorTest {
       sql.append("a = ").append(i);
     }
     assertThatThrownBy(() -> new SqlValidator().validate(sql.toString()))
-        .isInstanceOf(UnsafeSqlException.class);
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("순회 깊이");
   }
 
   // --- 코드리뷰 C1 — CTE 별칭은 스코프 단위로 제외한다(전역 제외 아님) ---
@@ -995,25 +1008,11 @@ class SqlValidatorTest {
         .doesNotThrowAnyException();
   }
 
-  // --- #387-3 — 문법적으로 의사 상수가 될 수 없는 이름 선언 자리의 맨몸 user 는 허용한다 ---
-
-  /** INSERT 대상 컬럼 목록의 user 는 의사 상수가 될 수 없는 자리다(#387-3). */
-  @Test
-  void allows_user_as_insert_target_column() {
-    assertThatCode(
-            () -> new SqlValidator().validate("INSERT INTO data.t (user, amount) VALUES ('a', 1)"))
-        .doesNotThrowAnyException();
-  }
-
-  /** CTE 컬럼 별칭 목록의 user 도 이름 선언 자리다(#387-3). */
-  @Test
-  void allows_user_as_cte_column_alias() {
-    assertThatCode(
-            () ->
-                new SqlValidator()
-                    .validate("WITH c(user, n) AS (SELECT a, b FROM data.t) SELECT n FROM c"))
-        .doesNotThrowAnyException();
-  }
+  // --- 수정 라운드 1 F1 — INSERT 대상 컬럼/CTE 컬럼 별칭 카브아웃 되돌림(#387-3 재검토) ---
+  // allows_user_as_insert_target_column / allows_user_as_cte_column_alias 는 삭제됐다. 그 두 자리는
+  // PG 예약어라 맨몸 user 가 문법적으로 올 수 없다(PG16 실측 — RESERVED_PSEUDO_CONSTANTS 문서 참고).
+  // "예외 처리가 필요하다"는 이전 전제가 틀렸으므로 카브아웃과 그 카브아웃을 초록으로 고정하던 테스트를
+  // 함께 되돌린다.
 
   /** 값 자리의 맨몸 user 는 계속 거부한다 — 사용자 판정(차단 유지, #387-3). */
   @Test
