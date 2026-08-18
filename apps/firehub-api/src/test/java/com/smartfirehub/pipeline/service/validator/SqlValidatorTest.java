@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -537,6 +538,65 @@ class SqlValidatorTest {
 
     // 계산된 표현식(리터럴 아님) — 항상 거부
     assertThatThrownBy(() -> permissive.validate("SELECT nextval(seq_name_column)"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  // --- #387-2 — 함수 허용목록 보강 ---
+
+  /**
+   * #387-2 로 추가한 안전 함수들이 통과한다.
+   *
+   * <p>주의: 이 목록은 <b>오늘 알려진 16개</b>를 닫을 뿐이다. 이슈의 진단대로 큐레이션 허용목록은
+   * LLM 이 새로 쓰는 SQL 의 함수 집합을 원리적으로 한정하지 못한다 — 이 테스트가 초록이라고
+   * "함수 허용목록 문제가 해결됐다"고 읽으면 안 된다.
+   */
+  @Test
+  void allows_functions_added_for_issue_387() {
+    List<String> exprs =
+        List.of(
+            "encode(a::bytea, 'hex')", "decode(a, 'hex')", "gen_random_uuid()",
+            "uuid_generate_v4()", "json_array_length(a::json)", "jsonb_array_length(a::jsonb)",
+            "array_to_json(ARRAY[1,2])", "jsonb_pretty(a::jsonb)", "to_tsvector(a)",
+            "plainto_tsquery(a)", "ts_rank(to_tsvector(a), plainto_tsquery(a))",
+            "date_bin('1 hour', a::timestamp, '2000-01-01'::timestamp)", "similarity(a, b)",
+            "levenshtein(a, b)", "digest(a, 'sha256')", "sha256(a::bytea)");
+    for (String expr : exprs) {
+      assertThatCode(() -> new SqlValidator().validate("SELECT " + expr + " FROM data.t"))
+          .as("허용되어야 하는 함수: %s", expr)
+          .doesNotThrowAnyException();
+    }
+  }
+
+  /** pg_typeof 는 의도적으로 제외된 상태를 유지한다(카탈로그 정보 노출, 파일 Javadoc 277-278). */
+  @Test
+  void still_rejects_pg_typeof() {
+    assertThatThrownBy(() -> new SqlValidator().validate("SELECT pg_typeof(a) FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  // --- #387-5 — 시퀀스 인자의 인용 식별자 점 파싱 ---
+
+  /** 인용 식별자 안의 점을 스키마 구분자로 오인하지 않는다(#387-5). */
+  @Test
+  void accepts_sequence_with_dot_inside_quoted_name() {
+    assertThatCode(
+            () -> new SqlValidator().validate("SELECT nextval('data.\"my.seq\"') FROM data.t"))
+        .doesNotThrowAnyException();
+  }
+
+  /** 다단 FQN 시퀀스는 거부한다 — 테이블 경로와 같은 규칙(requireDataSchemaOnly 선례). */
+  @Test
+  void rejects_sequence_with_multiple_unquoted_dots() {
+    assertThatThrownBy(
+            () -> new SqlValidator().validate("SELECT nextval('db.data.seq') FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  /** 스키마 밖 시퀀스는 계속 거부한다(회귀 가드). */
+  @Test
+  void still_rejects_sequence_outside_allowed_schema() {
+    assertThatThrownBy(
+            () -> new SqlValidator().validate("SELECT nextval('public.seq') FROM data.t"))
         .isInstanceOf(UnsafeSqlException.class);
   }
 

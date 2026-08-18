@@ -342,7 +342,21 @@ public class SqlValidator {
           "array_length", "array_upper", "array_lower", "unnest", "array_to_string",
           "string_to_array", "array_append", "array_prepend", "array_cat", "array_remove",
           "array_replace", "array_position", "array_positions", "array_dims", "array_ndims",
-          "cardinality", "num_nonnulls", "num_nulls", "generate_series");
+          "cardinality", "num_nonnulls", "num_nulls", "generate_series",
+          // 형변환/인코딩 — bytea<->text 변환일 뿐 카탈로그·세션 접근이 없다(#387-2).
+          "encode", "decode",
+          // UUID — 코어(PG13+)/uuid-ossp 확장, 무작위 생성일 뿐 정보 노출이 없다(#387-2).
+          "gen_random_uuid", "uuid_generate_v4",
+          // JSON 추가 — 배열 길이·정렬 출력일 뿐 새 카테고리는 아니다(#387-2).
+          "json_array_length", "jsonb_array_length", "array_to_json", "jsonb_pretty",
+          // 전문검색 — 인자로 받은 텍스트만 다루고 카탈로그를 열람하지 않는다(#387-2).
+          "to_tsvector", "plainto_tsquery", "ts_rank",
+          // 시간 버케팅 — 코어(PG14+)(#387-2).
+          "date_bin",
+          // 유사도/거리 — pg_trgm/fuzzystrmatch 확장, 문자열 비교만 한다(#387-2).
+          "similarity", "levenshtein",
+          // 해시 — pgcrypto 확장(digest)/코어 PG11+(sha256), md5 와 동일 성격이다(#387-2).
+          "digest", "sha256");
 
   /**
    * {@code postgis}/{@code postgis_topology} 확장 소유 함수 중 부작용 없는(provolatile ≠ volatile) 함수.
@@ -881,6 +895,16 @@ public class SqlValidator {
    * 한정 이름으로 파싱해 {@link #allowedSchema}인지 확인한다. 미한정 시퀀스는 {@link
    * #allowUnqualifiedTables} 값과 무관하게 항상 거부한다(테이블과 다른 정책 — 위 {@link
    * #SEQUENCE_FUNCTIONS} 문서의 "미한정 시퀀스는 항상 거부한다" 근거 참고).
+   *
+   * <p><b>인용 식별자의 점 처리(#387-5)</b> — 이전에는 {@code String.lastIndexOf('.')}로 스키마
+   * 구분자를 찾았다. {@code requireDataSchemaOnly}가 같은 문제로 이미 {@link #indexOfUnquotedDot}/
+   * {@link #countUnquotedDots}로 고쳤던 결함을 여기는 그대로 갖고 있었다 — {@code
+   * data."my.seq"}처럼 인용된 시퀀스명 안에 점이 있으면 마지막 점을 스키마 구분자로 오인해 스키마를
+   * {@code my}(존재하지 않음)로, 이름을 {@code seq"}로 잘못 쪼갠다. 결과는 우회가 아니라 <b>틀린
+   * 거부</b>였다(fail-closed 라 보안 구멍은 아니지만, 정당한 인용 시퀀스명을 오진단으로 막는다).
+   * {@link #indexOfUnquotedDot}로 인용 밖 첫 점만 구분자로 취급하도록 바꾸고, {@code
+   * requireDataSchemaOnly}의 선례를 따라 점이 2개 이상인 다단 FQN(예: {@code db.data.seq})은 별도로
+   * 거부한다.
    */
   private void requireSafeSequenceArgument(Function function, String fnName) {
     String allowedSchema = allowedSchema();
@@ -893,7 +917,11 @@ public class SqlValidator {
               + "'. 시퀀스 이름은 문자열 리터럴 하나여야 합니다(계산된 표현식은 정적으로 검증할 수 없어 거부됩니다).");
     }
     String seqRef = literal.getValue();
-    int dot = seqRef.lastIndexOf('.');
+    if (countUnquotedDots(seqRef) > 1) {
+      throw new UnsafeSqlException(
+          "허용되지 않는 함수 호출: '" + fnName + "'. 시퀀스 참조는 스키마 한 단계까지만 허용합니다: '" + seqRef + "'.");
+    }
+    int dot = indexOfUnquotedDot(seqRef);
     if (dot < 0) {
       String name = stripQuotes(seqRef);
       throw new UnsafeSqlException(
@@ -901,9 +929,9 @@ public class SqlValidator {
               + fnName
               + "'. 시퀀스 참조에 스키마를 명시하세요(예: "
               + allowedSchema
-              + "."
+              + ".\""
               + name
-              + ") — 미한정 시퀀스는 허용하지 않습니다.");
+              + "\") — 미한정 시퀀스는 허용하지 않습니다.");
     }
     String schema = stripQuotes(seqRef.substring(0, dot));
     if (!allowedSchema.equalsIgnoreCase(schema)) {
