@@ -116,6 +116,19 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
    * 자체는 롤이 없으면 건너뛴다. 이 테스트는 스키마·런타임 롤(app_tenant) 권한만 검증하고,
    * executor 롤 대상 권한(defaultAclExists)은 롤을 직접 만들어 검증한다. 롤이 <b>나중에</b>
    * 생기는 경우의 자가치유는 {@link #selfHealsWhenExecutorRoleAppearsLater()} 가 별도로 다룬다.
+   *
+   * <p><b>{@code REVOKE ALL ON SCHEMA public FROM executorRole}(최종 전체 리뷰 B4) 검증이
+   * {@code has_schema_privilege} 가 아니라 {@code aclexplode} 로 롤 전용 ACL 항목을 직접 보는
+   * 이유.</b> 리뷰가 처음 제안한 검증은 {@code has_schema_privilege(executorRole, 'public',
+   * 'USAGE')} 가 {@code false} 인지였는데, <b>실측해 보니 이 함수는 REVOKE 여부와 무관하게
+   * 항상 {@code true} 다</b> — {@code public} 스키마의 {@code nspacl} 에 {@code PUBLIC} 의사
+   * 롤 자체가 이미 {@code =U/pg_database_owner}(USAGE)를 갖고 있어서(PG15+ 기본값), 특정
+   * 롤에서만 REVOKE 해도 PUBLIC 경유 권한이 남는다(직접 프로브로 재현: {@code CREATE ROLE} →
+   * {@code REVOKE ALL ON SCHEMA public} → {@code has_schema_privilege(...,'USAGE')} 여전히
+   * {@code true}). {@code DataSchemaGrantIsolationTest:225-231} 가 V32/V111 의 같은 REVOKE 에
+   * 대해 이미 기록해 둔 바로 그 함정이다 — 제안된 단언을 그대로 넣으면 REVOKE 가 정확히
+   * 실행돼도 실패하는 거짓 실패 테스트가 됐을 것이다. 그래서 이 REVOKE 문의 실제 관측 가능한
+   * 효과(스트레이 롤 전용 GRANT 를 지운다)를 스트레이 상태를 직접 만들어 확인한다.
    */
   @Test
   void grantsRequiredPrivileges() {
@@ -126,6 +139,14 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     AtomicBoolean createdRole = new AtomicBoolean(false);
     try {
       createdRole.set(TenantRlsTestSupport.ensureRoleExists(ownerDsl(), executorRole));
+      // 스트레이 grant 시뮬레이션 — 운영자가 실수로(또는 낡은 절차로) 이 롤에 public 스키마
+      // 권한을 명시적으로 준 상태를 재현한다. provisioner 의 REVOKE 가 이 롤 전용 ACL 항목을
+      // 지워야 한다.
+      ownerDsl().execute("GRANT USAGE ON SCHEMA public TO " + executorRole);
+      assertThat(publicSchemaHasRoleSpecificAclEntry(executorRole))
+          .as("스트레이 grant 시뮬레이션이 실제로 롤 전용 ACL 항목을 남겼는지 확인")
+          .isTrue();
+
       TenantContext.runScopedGet(
           tenantId,
           () -> {
@@ -138,6 +159,10 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
       // app_tenant 가 만들 미래 테이블·시퀀스 각각에 대한 기본 권한 항목이 존재하는가.
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r")).isTrue();
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S")).isTrue();
+      // B4 — REVOKE ALL ON SCHEMA public 이 실행돼 스트레이 롤 전용 항목이 사라졌는가.
+      assertThat(publicSchemaHasRoleSpecificAclEntry(executorRole))
+          .as("provisioner 의 REVOKE ALL ON SCHEMA public 이 롤 전용 ACL 항목을 지웠어야 한다")
+          .isFalse();
     } finally {
       TenantRlsTestSupport.cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
@@ -298,6 +323,26 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
 
   private boolean hasSchemaPrivilege(String role, String schema, String privilege) {
     Object result = dsl.fetchValue("select has_schema_privilege(?, ?, ?)", role, schema, privilege);
+    return Boolean.TRUE.equals(result);
+  }
+
+  /**
+   * {@code public} 스키마의 ACL 에 지정한 롤을 grantee 로 하는 항목이 있는지 {@code
+   * aclexplode} 로 직접 본다(최종 전체 리뷰 B4) — {@code has_schema_privilege} 를 쓰지 않는
+   * 이유는 {@link #grantsRequiredPrivileges} Javadoc 참조(PUBLIC 의사 롤 자체가 이미 USAGE 를
+   * 가지고 있어 그 함수는 REVOKE 여부와 무관하게 항상 {@code true} 다). {@code aclexplode} 는
+   * PUBLIC 부여를 {@code grantee=0} 으로 표현하므로 {@code pg_roles} 와 조인하면 실제 이름이
+   * 있는 롤(=PUBLIC 이 아닌 특정 롤) 항목만 남는다.
+   */
+  private boolean publicSchemaHasRoleSpecificAclEntry(String roleName) {
+    Object result =
+        dsl.fetchValue(
+            "select exists ("
+                + "  select 1 from pg_namespace n, aclexplode(n.nspacl) a"
+                + "  join pg_roles r on r.oid = a.grantee"
+                + "  where n.nspname = 'public' and r.rolname = ?"
+                + ")",
+            roleName);
     return Boolean.TRUE.equals(result);
   }
 

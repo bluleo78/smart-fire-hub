@@ -40,6 +40,17 @@
 -- 42P10 위험 없음: V109 의 근거와 동일(대상이 UNIQUE CONSTRAINT 가 아니라 UNIQUE INDEX 라
 --   onConflictOnConstraint 대상이 될 수 없고, dataset INSERT 는 DatasetRepository.save 하나뿐).
 --
+-- ⚠ 이 근거는 접는 방향(이 마이그레이션) 전용이다 — 되돌리는 방향(전역 유니크 재생성)에는
+--   적용되지 않는다(최종 전체 리뷰 A2). "옛 인덱스가 새 인덱스보다 엄격히 강하다"는 한쪽
+--   방향으로만 성립한다: 신규 테넌트가 기존 테넌트와 같은 table_name 을 단 한 번이라도 쓰는
+--   순간부터, 그 데이터를 놓고 전역 유니크를 다시 만들면 23505 로 실패한다. V110(=V109
+--   되돌리기)을 이 밴드 여러 곳(원장·런북·이 파일의 위쪽 문맥)이 되돌림의 선례로 인용하는데,
+--   "V110 처럼 되돌리면 된다"로 추론하면 안 된다 — V110 이 성공한 것은 구조적 보장이 아니라
+--   그 사이 아무도 중복 table_name 을 만들지 않은 우연이었다. 되돌리려면 먼저
+--   `select tenant_id, table_name from dataset group by 2 having count(*)>1` 로 중복을
+--   해소해야 하고, 그 해소는 물리 테이블 리네임(data_t{a}.foo 와 data_t{b}.foo 중 하나를
+--   다른 table_name 으로 바꾸는 것)을 수반한다 — 단순 DDL 두 줄로 끝나지 않는다.
+--
 -- DataTableServiceTenantUniqueTest 가 twoTenantsCanUseSameTableName(유니크 접기 자체)과
 -- recreatingOneTenantsTableLeavesTheOthersRowsIntact(데이터 손실 경로 부재, 행 단위 단언)를
 -- 고정한다. DatasetDomainRlsTest.twoTenantsCannotShareTableNameWhileDataSchemaIsShared 와
