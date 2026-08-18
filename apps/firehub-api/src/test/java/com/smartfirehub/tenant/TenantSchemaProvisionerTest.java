@@ -160,6 +160,9 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
     String schema = TenantContext.runScopedGet(tenantId, DataSchema::current);
     String executorRole = TenantPipelineRole.roleName(tenantId);
+    // 이 테스트는 항상 자기가 롤을 만든다(위에서 roleExistsInDb 로 부재를 먼저 단언한다) —
+    // 그래도 grantsRequiredPrivileges 와 정리 규율을 맞추려고 플래그로 감싼다(라운드 2 리뷰 nit).
+    AtomicBoolean createdRole = new AtomicBoolean(false);
     try {
       // 1차 — 롤이 아직 없는 상태에서 프로비저닝한다. 스키마만 생기고 executor 대상 grant 는
       // 전부 건너뛴다(정상 동작 — 위 grantsRequiredPrivileges 의 전제와 같다).
@@ -174,9 +177,10 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
 
       // 운영자가 뒤늦게 롤을 만든다(#383 절차의 재현).
       ownerDsl().execute("CREATE ROLE " + executorRole + " NOLOGIN");
+      createdRole.set(true);
 
-      // 2차 — 스키마는 이미 있지만, 롤이 이 스키마에 아직 USAGE 가 없으므로 단락 조건(R12)이
-      // 거짓이 되어 grant 블록이 다시 실행돼야 한다.
+      // 2차 — 스키마는 이미 있지만, 롤이 이 스키마의 기본 권한을 아직 못 받았으므로 단락 조건
+      // (R12)이 거짓이 되어 grant 블록이 다시 실행돼야 한다.
       TenantContext.runScopedGet(
           tenantId,
           () -> {
@@ -189,6 +193,70 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
           .isTrue();
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r")).isTrue();
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S")).isTrue();
+    } finally {
+      cleanupAll(
+          () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
+          () -> {
+            if (createdRole.get()) {
+              ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole);
+            }
+          },
+          () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
+    }
+  }
+
+  /**
+   * 자가치유 재개정(라운드 2 리뷰 SHOULD-FIX) — 운영자가 "권한 없음" 증상을 보고 가장 자연스러운
+   * 1차 조치로 {@code GRANT USAGE ON SCHEMA} 만 손으로 줘도, 다음 프로비저닝 호출이 남은
+   * {@code ALTER DEFAULT PRIVILEGES} 까지 마저 건다.
+   *
+   * <p>왜 필요한가: 치유 완료 판정을 {@code has_schema_privilege(..., 'USAGE')} 로만 봤을 때는
+   * 이 시나리오에서 영구 단락에 갇혔다 — USAGE 는 있지만 기본 권한이 없는 중간 상태가
+   * "완료"로 오판되어, 그 테넌트에서 <b>나중에 만들어지는</b> 테이블만 executor 에게 계속 안
+   * 보이는 조용한 실패가 됐다(증상이 부분적이라 원인 추적이 더 어렵다). 치유 완료 판정을
+   * {@code pg_default_acl} 항목(테이블·시퀀스 둘 다) 존재로 바꿔 이 함정을 없앤다.
+   */
+  @Test
+  void selfHealsWhenOnlyUsageWasGrantedManually() {
+    long tenantId = TENANT_BASE + 5;
+    TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
+    String schema = TenantContext.runScopedGet(tenantId, DataSchema::current);
+    String executorRole = TenantPipelineRole.roleName(tenantId);
+    try {
+      // 1차 — 롤 없이 프로비저닝해 스키마만 만든다.
+      TenantContext.runScopedGet(
+          tenantId,
+          () -> {
+            provisioner.ensureCurrentTenantSchema();
+            return null;
+          });
+
+      // 운영자가 롤을 만들고, "권한 없음" 을 본 가장 자연스러운 1차 조치로 USAGE 만 손으로
+      // 준다 — ALTER DEFAULT PRIVILEGES 는 아직 걸지 않은 중간 상태를 재현한다.
+      ownerDsl().execute("CREATE ROLE " + executorRole + " NOLOGIN");
+      ownerDsl().execute("GRANT USAGE ON SCHEMA " + schema + " TO " + executorRole);
+
+      // 함정 상태가 실제로 재현됐는지 먼저 확인한다 — 이게 없으면 아래 자가치유 단언이
+      // "애초에 완료 상태였다"로도 통과하는 공허한 테스트가 된다.
+      assertThat(hasSchemaPrivilege(executorRole, schema, "USAGE")).isTrue();
+      assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r"))
+          .as("함정 상태 재현 확인 — 기본 권한은 아직 없어야 한다")
+          .isFalse();
+
+      // 2차 — USAGE 만으로는 "완료"로 오판하지 않고 다시 들어가 기본 권한까지 마저 걸어야 한다.
+      TenantContext.runScopedGet(
+          tenantId,
+          () -> {
+            provisioner.ensureCurrentTenantSchema();
+            return null;
+          });
+
+      assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r"))
+          .as("자가치유로 테이블 기본 권한이 뒤늦게 걸려야 한다")
+          .isTrue();
+      assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S"))
+          .as("자가치유로 시퀀스 기본 권한이 뒤늦게 걸려야 한다")
+          .isTrue();
     } finally {
       cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
@@ -287,13 +355,19 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
    * 영구히 남고, 다음 실행의 {@code insertActiveTenant} 가 중복 키로 깨져 수동 DB 수술 전까지
    * 복구되지 않는다. 각 단계를 독립적으로 실행해 하나가 실패해도 나머지가 최대한 정리되게 하고,
    * 실패는 모아서 마지막에 하나로 알린다(억제된 예외로 전부 보존).
+   *
+   * <p>{@code RuntimeException} 이 아니라 {@code Throwable} 을 잡는다(라운드 2 리뷰 nit) —
+   * 정리 단계 안에서 {@code AssertionError}(단언 실패는 {@code Error} 계층이다) 가 나면
+   * {@code RuntimeException} 만 잡던 버전은 그 즉시 나머지 단계를 스킵했다. 이 메서드의
+   * 목적 자체가 "한 단계가 어떻게 실패하든 나머지는 최대한 정리한다"이므로 예외 계층을
+   * 좁힐 이유가 없다.
    */
   private void cleanupAll(Runnable... steps) {
     RuntimeException combined = null;
     for (Runnable step : steps) {
       try {
         step.run();
-      } catch (RuntimeException e) {
+      } catch (Throwable e) {
         if (combined == null) {
           combined = new IllegalStateException("정리 단계 중 일부가 실패했다", e);
         } else {
