@@ -141,9 +141,16 @@ public class TenantSchemaProvisioner {
               // executor 대상 grant 6문장을 대신 걸어 주지만 이 REVOKE 는 그 6문장 안에
               // 없었다 — 신규 테넌트만 V32·V111 이 일부러 세운 방어선("파이프라인 실행 롤은
               // public 메타데이터를 읽으면 안 된다")이 조용히 빠지는 비대칭이었다. 여기에
-              // 추가해 자가치유 범위에 포함시킨다 — 멱등이고(REVOKE 는 이미 없는 권한을 다시
-              // 회수해도 오류가 아니다), 런북 운영자가 그 한 줄을 빠뜨리거나 순서를 틀려도
-              // 첫 데이터셋 생성 시점에 코드가 대신 걸어 준다.
+              // 추가해 자가치유 범위에 포함시킨다 — 멱등이다(REVOKE 는 이미 없는 권한을 다시
+              // 회수해도 오류가 아니다).
+              //
+              // ⚠ 자가치유 범위의 한계(코드리뷰 지적 — 이전 주석은 "운영자가 그 한 줄을
+              // 빠뜨려도 코드가 대신 걸어 준다"고 단언했는데 그건 **부분 실행에는 거짓**이다).
+              // 위 단락 판정(shouldSkipProvisioning)이 보는 것은 executor 롤의 기본 권한
+              // 완료 여부뿐이므로, 운영자가 런북 §1-4 에서 ALTER DEFAULT PRIVILEGES 둘까지만
+              // 실행하고 이 REVOKE 를 빠뜨리면 그 순간부터 이 블록에 다시 들어오지 않는다 —
+              // REVOKE 는 끝내 걸리지 않는다. 자가치유가 성립하는 것은 §1-4 를 **전부
+              // 생략**했을 때다. 런북 §1-4 경고와 §6-8 백로그에 기록했다.
               tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(executorRole));
             }
           });
@@ -164,7 +171,19 @@ public class TenantSchemaProvisioner {
       // EXISTS 의 경쟁 조건(23505, pg_namespace_nspname_index)이므로 성공과 같은 상태다.
       // existedBefore 가 true(자가치유 경로)면 무슨 예외든 항상 전파한다 — 실패를 조용히
       // 삼키지 않는 것이 정확성이다.
-      if (!shouldSwallowCreationRace(new ExistedBefore(existedBefore), new ExistsNow(schemaExists(schema)))) {
+      // 존재 재확인을 조건식 안에서 하지 않는다(코드리뷰 지적) — 그 조회는 크기 1 인 소유자
+      // 풀에서 커넥션을 새로 얻으므로, 원래 실패가 "커넥션 사망·풀 고갈·타임아웃" 이었다면
+      // 이 확인도 같이 터진다. 조건식 안에서 터지면 새 예외가 e 를 대체해 버려서, 바로 위
+      // R11 재개정이 드러내려는 근본 원인이 사라진다. 확인 실패는 suppressed 로 붙이고 원래
+      // 예외를 그대로 던진다.
+      boolean existsNow;
+      try {
+        existsNow = schemaExists(schema);
+      } catch (RuntimeException probeFailure) {
+        e.addSuppressed(probeFailure);
+        throw e;
+      }
+      if (!shouldSwallowCreationRace(new ExistedBefore(existedBefore), new ExistsNow(existsNow))) {
         throw e;
       }
     }
@@ -266,7 +285,10 @@ public class TenantSchemaProvisioner {
    *
    * <p><b>테스트의 {@code defaultAclExists} 와 SQL 을 공유하지 않는다.</b> 같은 함수를 프로덕션과
    * 테스트가 함께 쓰면, 그 함수 자체가 틀렸을 때 테스트가 그 결함을 잡지 못한다(라운드 2 리뷰
-   * 지시) — 그래서 이 메서드는 독립적으로 같은 판정을 다시 구현한다.
+   * 지시) — 그래서 이 메서드는 독립적으로 같은 판정을 다시 구현한다. 두 구현이 어긋나지 않는지는
+   * {@code TenantSchemaProvisionerTest.skipsProvisioningOnceDefaultPrivilegesAreComplete} 가
+   * 행동으로 대조한다(코드리뷰 지적 — 그 전까지 이 메서드는 검증하는 테스트가 하나도 없어
+   * {@code return false} 변이가 스위트를 통과했다).
    */
   private boolean hasCompleteDefaultPrivileges(String schema, String roleName) {
     Object result =
@@ -298,6 +320,14 @@ public class TenantSchemaProvisioner {
             schema,
             RUNTIME_ROLE,
             roleName + "=%");
-    return Boolean.TRUE.equals(result);
+    // Boolean.TRUE.equals 로 조용히 false 로 떨어뜨리지 않는다(코드리뷰 지적). false 는
+    // "단락하지 않는다" = 6문장 재실행이므로, 테넌트 1(data, 86 테이블)에서 R9 가 막으려던
+    // 락 폭풍이 그대로 돌아온다. select exists(...) 는 항상 boolean 한 행을 돌려주므로,
+    // 아니라면 구조적으로 뭔가 틀린 것 — 조용히 넘기지 않고 터뜨린다.
+    if (!(result instanceof Boolean complete)) {
+      throw new IllegalStateException(
+          "기본 권한 완료 판정 조회가 boolean 이 아닌 값을 돌려줬다: " + result);
+    }
+    return complete;
   }
 }

@@ -70,6 +70,12 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
   private String executorRole;
   private boolean roleCreatedByThisTest;
 
+  // 프로비저닝 뒤에 남겨 두는 스트레이 public grant 를 정리해야 하는지
+  // (skipsProvisioningOnceDefaultPrivilegesAreComplete 전용). 이 grant 가 남아 있으면
+  // PostgreSQL 이 DROP ROLE 을 거부하므로("privileges for schema public" 의존성) 롤 삭제
+  // **전에** 회수해야 한다.
+  private boolean strayPublicGrantNeedsRevoke;
+
   /** DROP SCHEMA 는 소유자(app)만 할 수 있다 — 런타임 롤(app_tenant)은 스키마 소유자가 아니다. */
   private DSLContext ownerDsl() {
     return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
@@ -81,6 +87,11 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
         () -> {
           if (schema != null) {
             TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema);
+          }
+        },
+        () -> {
+          if (executorRole != null && strayPublicGrantNeedsRevoke) {
+            ownerDsl().execute("REVOKE ALL ON SCHEMA public FROM " + executorRole);
           }
         },
         () -> {
@@ -292,6 +303,66 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
         .isTrue();
     assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S"))
         .as("자가치유로 시퀀스 기본 권한이 뒤늦게 걸려야 한다")
+        .isTrue();
+  }
+
+  /**
+   * 단락이 실제로 일어난다 — 기본 권한이 완료된 상태에서 다시 부르면 부여 블록을 재실행하지
+   * 않는다(코드리뷰 지적: {@code hasCompleteDefaultPrivileges} 를 검증하는 테스트가 하나도
+   * 없어서, 그 메서드를 {@code return false} 로 변이시켜도 스위트 전체가 초록이었다).
+   *
+   * <p><b>왜 단락 여부를 이렇게 관측하는가.</b> 단락은 정의상 "아무 일도 하지 않는다" 라서
+   * 직접 관측할 수 없다. 그래서 <b>프로비저닝이 끝난 뒤에</b> 스트레이 public grant 를 심고
+   * 다시 호출한다 — 단락하면 부여 블록의 {@code REVOKE ALL ON SCHEMA public} 이 돌지 않으므로
+   * 스트레이가 <b>남아 있어야</b> 한다. {@code hasCompleteDefaultPrivileges} 가 {@code false} 를
+   * 돌려주는 변이(또는 단락 조건 자체의 삭제)는 그 REVOKE 를 실행시켜 스트레이를 지우므로 이
+   * 단언이 즉시 빨개진다 — 변이로 확인함.
+   *
+   * <p>이 단락이 지키는 것: 테넌트 1 의 물리 스키마 {@code data} 에는 테이블이 86개 있고
+   * {@code GRANT ... ON ALL TABLES} 는 테이블마다 {@code AccessExclusiveLock} 을 잡는다. 단락이
+   * 죽으면 데이터셋 생성마다 그 락 폭풍이 재현된다(R9 가 막으려던 결함). 그 시나리오 자체는
+   * 공유 test DB 의 {@code data} 를 건드리므로 재현하지 않고(클래스 Javadoc 규율), 판정이 살아
+   * 있다는 사실만 신규 스키마에서 확인한다.
+   */
+  @Test
+  void skipsProvisioningOnceDefaultPrivilegesAreComplete() {
+    tenantId = TENANT_BASE + 6;
+    TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
+    schema = TenantContext.runScopedGet(tenantId, DataSchema::current);
+    executorRole = TenantPipelineRole.roleName(tenantId);
+    roleCreatedByThisTest = TenantRlsTestSupport.ensureRoleExists(ownerDsl(), executorRole);
+
+    // 1차 — 롤이 이미 있으므로 6문장이 전부 걸려 "기본 권한 완료" 상태가 된다.
+    TenantContext.runScopedGet(
+        tenantId,
+        () -> {
+          provisioner.ensureCurrentTenantSchema();
+          return null;
+        });
+    assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r"))
+        .as("전제 확인 — 1차 프로비저닝으로 테이블 기본 권한이 걸려 있어야 한다")
+        .isTrue();
+    assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S"))
+        .as("전제 확인 — 1차 프로비저닝으로 시퀀스 기본 권한이 걸려 있어야 한다")
+        .isTrue();
+
+    // 프로비저닝 **이후에** 스트레이 grant 를 심는다 — 2차 호출이 단락하는지를 가리는 표식.
+    ownerDsl().execute("GRANT USAGE ON SCHEMA public TO " + executorRole);
+    strayPublicGrantNeedsRevoke = true;
+    assertThat(publicSchemaHasRoleSpecificAclEntry(executorRole))
+        .as("표식 심기가 실제로 롤 전용 ACL 항목을 남겼는지 확인")
+        .isTrue();
+
+    // 2차 — 완료 상태이므로 단락해야 한다.
+    TenantContext.runScopedGet(
+        tenantId,
+        () -> {
+          provisioner.ensureCurrentTenantSchema();
+          return null;
+        });
+
+    assertThat(publicSchemaHasRoleSpecificAclEntry(executorRole))
+        .as("단락했다면 REVOKE 가 돌지 않아 표식이 남아 있어야 한다 — 사라졌으면 단락 판정이 죽은 것")
         .isTrue();
   }
 
