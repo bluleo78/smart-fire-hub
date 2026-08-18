@@ -21,6 +21,15 @@
 --   DROP 이 회수하는 "고아 테이블"은 같은 테넌트 안의 것뿐이다(재검토 근거는
 --   DataTableService.createTable 코드 주석 참조).
 --
+-- 이 접기가 기존 데이터를 위반할 수 없는 이유(라운드 1 리뷰 — "test DB 를 확인했다"보다 강한
+-- 근거, dev·prod 에도 그대로 적용된다): 옛 인덱스(전역 UNIQUE(table_name))는 새 인덱스
+-- (UNIQUE(tenant_id, table_name))보다 엄격히 강한 제약이다 — table_name 하나만으로도 유니크한
+-- 행 집합은, 거기에 tenant_id 를 더해도 당연히 유니크하다(더 넓은 키로 유니크성이 깨질 수는
+-- 없다). 즉 옛 제약을 만족하던 어떤 기존 행 집합도 새 제약을 자동으로 만족하므로, 이 DROP
+-- INDEX + CREATE UNIQUE INDEX 는 기존 데이터가 무엇이든 실패할 수 없다 — 이것이 V109 가 42P10
+-- 위험 없음을 논증한 것과 같은 종류의 구조적 근거이고, test DB 실측(아래)은 그 근거를
+-- 재확인했을 뿐 근거 자체가 아니다.
+--
 -- 한 커밋에서 함께 처리한 것(V110 이 요구한 바로 그것 — "table_name 을 키로 삼는 다른 DDL
 -- 경로도 전역 유니크에 기대고 있다"): DataTableService/DataTableRowService 의 모든
 -- DROP TABLE/CREATE TABLE/RENAME/TRUNCATE 경로를 전수 점검했다 — 전부 이미

@@ -54,7 +54,15 @@ class DatasetDomainColumnTest extends IntegrationTestBase {
     // V110 으로 되돌려졌고, V112 가 스키마 분리 이후에 다시 접었다 — task-1-report.md 와
     // V109/V110/V112 마이그레이션 헤더 참조). 크로스 테넌트 동명 table_name 허용과 데이터
     // 손실 부재는 DataTableServiceTenantUniqueTest 가 실제 DDL 경로로 고정한다.
-    assertThat(indexDef("dataset", "idx_dataset_table_name")).contains("tenant_id");
+    // 라운드 1 리뷰 BLOCKER — tenant_id 만 보면 인덱스가 (tenant_id) 단독이어도 통과한다(한
+    // 테넌트가 데이터셋을 둘 이상 못 만드는 심각한 파괴인데 초록이 되는 형태). UNIQUE·
+    // table_name 도 함께 확인해 위 idx_dataset_name 단언과 같은 엄격도로 맞춘다. 실측
+    // (2026-08-18): CREATE UNIQUE INDEX idx_dataset_table_name ON public.dataset USING btree
+    // (tenant_id, table_name).
+    assertThat(indexDef("dataset", "idx_dataset_table_name"))
+        .contains("UNIQUE")
+        .contains("tenant_id")
+        .contains("table_name");
   }
 
   @Test
