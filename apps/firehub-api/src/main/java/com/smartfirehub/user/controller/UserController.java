@@ -17,10 +17,14 @@ public class UserController {
 
   private final UserService userService;
 
+  /**
+   * 자기 프로필 조회. 전역 정체성 경로이므로 테넌트 멤버십으로 좁히지 않는다 — 관리 경로인
+   * {@code GET /{id}} 와 달리 {@code getMyProfile} 을 쓰는 이유다.
+   */
   @GetMapping("/me")
   public ResponseEntity<UserDetailResponse> getMyProfile(Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    UserDetailResponse user = userService.getUserById(userId);
+    UserDetailResponse user = userService.getMyProfile(userId);
     return ResponseEntity.ok(user);
   }
 

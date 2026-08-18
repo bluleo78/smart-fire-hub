@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
@@ -258,9 +259,15 @@ public class ProactiveJobService {
     asyncRunner.executeJob(jobId, userId);
   }
 
+  /**
+   * 알림 수신자 후보 검색. <b>현재 테넌트 멤버만</b> 나온다 — {@code "user"} 는 전역 테이블이라 RLS
+   * 가 걸러 주지 못하므로, 좁히지 않으면 이 피커가 다른 테넌트 사용자의 이름·이메일을 그대로
+   * 노출한다.
+   */
   @Transactional(readOnly = true)
   public List<RecipientResponse> searchRecipients(String search) {
-    return userRepository.findAllPaginated(search, 0, 20).stream()
+    long tenantId = TenantContext.require("알림 수신자 검색");
+    return userRepository.findAllPaginated(tenantId, search, 0, 20).stream()
         .map(u -> new RecipientResponse(u.id(), u.name(), u.email()))
         .toList();
   }

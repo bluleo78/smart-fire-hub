@@ -1,5 +1,8 @@
 import axios from 'axios';
 
+import type { TokenResponse } from '../types/auth';
+import { publishTenantSession } from './tenant-session';
+
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
@@ -73,12 +76,28 @@ client.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const { data } = await axios.post('/api/v1/auth/refresh', null, {
+        const { data } = await axios.post<TokenResponse>('/api/v1/auth/refresh', null, {
           withCredentials: true,
         });
         const newAccessToken = data.accessToken;
+        const newTenantId = data.activeTenantId ?? null;
 
         setAccessToken(newAccessToken);
+        // 새 토큰의 테넌트 상태를 AuthContext 로 흘린다. refresh 는 멤버십/테넌트 상태를 재검증해
+        // 정지된 경우 activeTenantId=null 로 **강등**하는데, 그 신호를 여기서 버리면 UI 는 이유를
+        // 모른 채 전 API 403 루프에 빠진다(tenant-session.ts 주석 참조).
+        publishTenantSession({
+          activeTenantId: newTenantId,
+          memberships: data.memberships ?? [],
+        });
+
+        // 강등됐다면 대기 중인 요청을 재시도하지 않는다. 테넌트 없는 토큰으로 보내면 GUC 가 비어
+        // 전부 403 이 확정이고, 그 사이 게이트가 다시 그려질 뿐이다 — 확실히 실패할 요청 뭉치를
+        // 보내 403 폭탄과 그만큼의 에러 토스트를 만드는 대신 여기서 끊는다.
+        if (newTenantId === null) {
+          processQueue(error, null);
+          return Promise.reject(error);
+        }
 
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         processQueue(null, newAccessToken);

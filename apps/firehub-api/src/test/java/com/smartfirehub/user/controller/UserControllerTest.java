@@ -63,7 +63,8 @@ class UserControllerTest {
             true,
             LocalDateTime.now(),
             List.of(new RoleResponse(1L, "USER", "Regular user", true)));
-    when(userService.getUserById(1L)).thenReturn(detail);
+    // /me 는 전역 정체성 경로이므로 테넌트로 좁히지 않는 getMyProfile 을 탄다.
+    when(userService.getMyProfile(1L)).thenReturn(detail);
 
     mockMvc
         .perform(get("/api/v1/users/me").header("Authorization", "Bearer valid-token"))

@@ -49,6 +49,7 @@ import {
   TooltipTrigger,
 } from '../ui/tooltip';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
+import { TenantSwitcher } from './TenantSwitcher';
 import { UserNav } from './UserNav';
 
 const AISidePanel = lazy(() =>
@@ -437,8 +438,11 @@ function AppLayoutInner() {
               )}
             </nav>
 
-            {/* Bottom anchor: UserNav */}
+            {/* Bottom anchor: TenantSwitcher + UserNav.
+                둘을 같은 border-t 블록에 넣는다 — TenantSwitcher 는 조건에 따라 null 을
+                반환하므로 별도 래퍼를 두면 빈 테두리 상자만 남을 수 있다. */}
             <div className="shrink-0 border-t">
+              <TenantSwitcher collapsed={collapsed} />
               <UserNav collapsed={collapsed} />
             </div>
           </div>

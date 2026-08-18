@@ -3,6 +3,7 @@ import MCR from 'monocart-coverage-reports';
 
 import type { TokenResponse, UserResponse } from '../../src/types/auth';
 import type { RoleResponse } from '../../src/types/role';
+import type { MembershipResponse } from '../../src/types/tenant';
 import type { UserDetailResponse } from '../../src/types/user';
 import { coverageOptions } from '../coverage-config';
 import { mockApi } from './api-mock';
@@ -25,11 +26,28 @@ export const MOCK_USER: UserResponse = {
   createdAt: '2026-01-01T00:00:00',
 };
 
-/** 모킹용 토큰 응답 — TokenResponse 타입으로 API 스펙 정합성 보장 / 다른 테스트에서 재사용 가능하도록 export */
+/** 모킹용 멤버십 — 전환 UI 와 워크스페이스 선택 화면이 읽는 목록의 기본값 */
+export const MOCK_MEMBERSHIP: MembershipResponse = {
+  tenantId: 1,
+  tenantSlug: 'test-workspace',
+  tenantName: '테스트 워크스페이스',
+  role: 'OWNER',
+};
+
+/**
+ * 모킹용 토큰 응답 — TokenResponse 타입으로 API 스펙 정합성 보장 / 다른 테스트에서 재사용 가능하도록 export
+ *
+ * <p>`activeTenantId` 는 **반드시 non-null** 이어야 한다. null 이면 `ProtectedRoute` 가 테넌트
+ * 미선택으로 판단해 워크스페이스 선택 화면을 그리므로, 인증을 전제로 한 모든 spec 이 대상 화면에
+ * 도달하지 못한다. 멤버십을 1개만 두는 것도 의도적이다 — 2개 이상이면 전환 UI 가 드롭다운으로
+ * 바뀌어 사이드바 스냅샷·클릭 대상이 달라진다.
+ */
 export const MOCK_TOKEN_RESPONSE: TokenResponse = {
   accessToken: 'mock-jwt-access-token',
   tokenType: 'Bearer',
   expiresIn: 3600,
+  activeTenantId: MOCK_MEMBERSHIP.tenantId,
+  memberships: [MOCK_MEMBERSHIP],
 };
 
 /** 모킹용 역할 정보 */

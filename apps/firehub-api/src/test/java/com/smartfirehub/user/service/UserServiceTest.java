@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
@@ -40,6 +41,19 @@ class UserServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    joinDefaultTenant(testUserId);
+  }
+
+  /**
+   * 픽스처 사용자를 기본 테넌트의 ACTIVE 멤버로 만든다.
+   *
+   * <p>사용자 관리 경로(목록·상세·역할부여·활성화)는 {@code "user"} 가 전역 테이블이라 RLS 로 덮을
+   * 수 없어 {@code membership} 조인으로 테넌트를 좁힌다. 멤버십이 없으면 이 테스트의 픽스처는 관리
+   * 경로에서 "없는 사용자"(404)로 보인다 — 운영에서도 회원가입이 곧바로 기본 테넌트에 가입시키므로
+   * (SignupTransaction) 멤버십이 있는 상태가 정상이다.
+   */
+  private void joinDefaultTenant(Long userId) {
+    TenantRlsTestSupport.insertActiveMembership(dsl, userId, DEFAULT_TEST_TENANT_ID);
   }
 
   @Test
@@ -180,6 +194,7 @@ class UserServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    joinDefaultTenant(adminUserId);
 
     dsl.insertInto(USER_ROLE)
         .set(USER_ROLE.USER_ID, adminUserId)
@@ -213,6 +228,7 @@ class UserServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    joinDefaultTenant(secondAdminId);
 
     dsl.insertInto(USER_ROLE)
         .set(USER_ROLE.USER_ID, secondAdminId)

@@ -45,7 +45,9 @@ public class SignupTransaction {
     }
 
     userRepository.acquireFirstUserLock();
-    boolean isFirstUser = userRepository.countAll(null) == 0;
+    // 전역(테넌트 무관) 판정이어야 한다 — "시스템 최초 사용자에게 ADMIN" 이라는 부트스트랩 의미다.
+    // countAll 은 현재 테넌트 멤버로 좁혀지므로 여기서 쓰면 "이 테넌트의 첫 멤버" 로 뜻이 바뀐다.
+    boolean isFirstUser = !userRepository.existsAnyUser();
 
     String encodedPassword = passwordEncoder.encode(request.password());
     UserResponse user =

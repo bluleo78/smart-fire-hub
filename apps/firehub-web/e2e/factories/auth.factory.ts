@@ -27,6 +27,12 @@ export function createTokenResponse(overrides?: Partial<TokenResponse>): TokenRe
     accessToken: 'mock-access-token-12345',
     tokenType: 'Bearer',
     expiresIn: 3600,
+    // 테넌트 선택 완료 상태가 기본값이다 — null 이면 게이트가 워크스페이스 선택 화면을 그려
+    // 대상 화면에 도달하지 못한다. 미선택 상태를 검증하는 테스트만 override 로 null 을 준다.
+    activeTenantId: 1,
+    memberships: [
+      { tenantId: 1, tenantSlug: 'test-workspace', tenantName: '테스트 워크스페이스', role: 'OWNER' },
+    ],
     ...overrides,
   };
 }

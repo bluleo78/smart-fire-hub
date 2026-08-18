@@ -2,7 +2,11 @@ package com.smartfirehub.user.repository;
 
 import static com.smartfirehub.jooq.Tables.*;
 import static org.jooq.impl.DSL.count;
-import static org.jooq.impl.DSL.trueCondition;
+import static org.jooq.impl.DSL.exists;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.selectOne;
+import static org.jooq.impl.DSL.table;
 import static org.jooq.impl.DSL.val;
 
 import com.smartfirehub.global.util.LikePatternUtils;
@@ -13,14 +17,52 @@ import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
 @RequiredArgsConstructor
 public class UserRepository {
 
+  /**
+   * 멤버십 테이블 참조 — jOOQ 코드젠 대상이 아니라 이름으로 만든다.
+   *
+   * <p>{@code membership} 은 {@code MembershipRepository} 도 같은 방식(=생성 클래스 없음)으로
+   * 참조한다. 테넌트 선택 <b>전에</b> 조회돼야 하는 전역 테이블이라 RLS 가 없고, 코드젠이 도는
+   * {@code public} 스키마에 있으면서도 도메인 테이블과 다른 계층에 속한다.
+   */
+  private static final Table<?> MEMBERSHIP = table(name("membership"));
+
+  private static final Field<Long> M_USER_ID = field(name("membership", "user_id"), Long.class);
+  private static final Field<Long> M_TENANT_ID = field(name("membership", "tenant_id"), Long.class);
+  private static final Field<String> M_STATUS = field(name("membership", "status"), String.class);
+
   private final DSLContext dsl;
+
+  /**
+   * "이 사용자가 주어진 테넌트의 ACTIVE 멤버인가" 를 {@code "user"} 행에 대해 판정하는 술어.
+   *
+   * <p><b>왜 RLS 가 아니라 명시적 조인인가:</b> {@code "user"} 는 설계상 <b>전역</b> 테이블이다
+   * (tenant_id 컬럼도, RLS 정책도 없다 — 한 사람이 여러 테넌트에 속할 수 있어야 하고, 로그인은
+   * 테넌트가 정해지기 <b>전에</b> 사용자를 찾아야 하기 때문이다). 즉 다른 도메인 테이블처럼 GUC
+   * 기반 RLS 로 덮을 수 없는 유일한 경로이며, 테넌트 경계는 이렇게 애플리케이션 쿼리에서 직접
+   * 세워야 한다. 이 술어가 빠지면 한 테넌트의 ADMIN 이 다른 테넌트 사용자를 전부 열람·수정할 수
+   * 있다.
+   *
+   * <p>{@code tenant.status} 는 보지 않는다 — 테넌트 활성 여부는 로그인/테넌트 선택 시점의
+   * 게이트이고({@code MembershipRepository.hasActiveMembership}), 여기까지 왔다는 것은 그 게이트를
+   * 이미 통과했다는 뜻이다. 목록 술어를 단순하게 유지한다.
+   */
+  private Condition memberOfTenant(long tenantId) {
+    return exists(
+        selectOne()
+            .from(MEMBERSHIP)
+            .where(M_USER_ID.eq(USER.ID))
+            .and(M_TENANT_ID.eq(tenantId))
+            .and(M_STATUS.eq("ACTIVE")));
+  }
 
   private UserResponse mapToUserResponse(Record r) {
     return new UserResponse(
@@ -75,8 +117,16 @@ public class UserRepository {
         dsl.selectOne().from(USER).where(USER.EMAIL.eq(email).and(USER.ID.ne(excludeUserId))));
   }
 
-  public boolean existsById(Long id) {
-    return dsl.fetchExists(dsl.selectOne().from(USER).where(USER.ID.eq(id)));
+  /**
+   * 사용자가 한 명이라도 있는지 (테넌트 무관, 전역).
+   *
+   * <p>회원가입의 "첫 사용자에게 ADMIN 부여" 판정에만 쓴다. 예전에는 {@code countAll(null) == 0}
+   * 이었는데, {@code countAll} 이 현재 테넌트 소속으로 좁혀지면서 그 판정이 "이 테넌트의 첫 멤버"
+   * 로 바뀌어 버린다 — 부트스트랩 의미(시스템 최초 사용자)와 다르다. 전역이라는 사실을 이름으로
+   * 드러내 분리한다.
+   */
+  public boolean existsAnyUser() {
+    return dsl.fetchExists(dsl.selectOne().from(USER));
   }
 
   /**
@@ -98,8 +148,16 @@ public class UserRepository {
         .fetchOne(this::mapToUserResponse);
   }
 
-  public List<UserResponse> findAllPaginated(String search, int page, int size) {
-    Condition condition = trueCondition();
+  /**
+   * 사용자 목록 — <b>현재 테넌트에 ACTIVE 멤버십이 있는 사용자만</b>.
+   *
+   * <p>tenantId 를 인자로 받는 이유: 이 코드베이스의 리포지토리는 {@code TenantContext} 를 직접
+   * 읽지 않는다({@code MembershipRepository} 도 인자로 받는다). ThreadLocal 과 트랜잭션 GUC 가
+   * 어긋날 수 있는 경로가 실제로 존재하므로({@code CurrentTransactionTenant} 참고), 테넌트 해석은
+   * 트랜잭션 경계를 아는 서비스 레이어에서 한 번만 한다.
+   */
+  public List<UserResponse> findAllPaginated(long tenantId, String search, int page, int size) {
+    Condition condition = memberOfTenant(tenantId);
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -121,8 +179,9 @@ public class UserRepository {
         .fetch(this::mapToUserResponse);
   }
 
-  public long countAll(String search) {
-    Condition condition = trueCondition();
+  /** {@link #findAllPaginated} 의 총건수. 같은 테넌트 술어를 반드시 함께 적용해야 페이지가 맞는다. */
+  public long countAll(long tenantId, String search) {
+    Condition condition = memberOfTenant(tenantId);
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
