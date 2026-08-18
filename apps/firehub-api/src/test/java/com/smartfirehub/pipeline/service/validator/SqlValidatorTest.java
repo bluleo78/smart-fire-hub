@@ -951,4 +951,52 @@ class SqlValidatorTest {
         .as("RECURSIVE 절의 전방 참조는 PG 가 CTE 로 해석한다 — 거부하면 오탐")
         .doesNotThrowAnyException();
   }
+
+  /**
+   * 파싱 실패가 OS 스레드를 남기지 않음을 증명한다(#387-1).
+   *
+   * <p>왜 이 형태인가: jsqlparser 5.0 의 {@code parseStatements(String)} 은 내부에서 만든 {@code
+   * ExecutorService} 를 {@code try/finally} 없이 종료해, 파싱이 예외를 던지면 non-daemon 코어 스레드가 영구히 남는다(이슈
+   * 실측: 실패 200회 → 151스레드 잔존). 그래서 단언은 "여전히 거부한다"가 아니라 <b>스레드 수가 기준선으로 돌아온다</b>여야
+   * 한다 — 전자는 누수에 대해 아무것도 말하지 않는다.
+   *
+   * <p>스레드 종료는 비동기라 즉시 단언하면 플레이크가 된다 → 최대 5초까지 폴링한다.
+   */
+  @Test
+  void failed_parses_do_not_leak_os_threads() {
+    SqlValidator validator = new SqlValidator();
+    long baseline = liveThreadCount();
+
+    // 파싱 자체가 실패하는(문법이 깨진) SQL 200회. 검증 단계에서 거부되는 SQL 이 아니라
+    // 파서가 예외를 던지는 SQL 이어야 누수 경로를 탄다.
+    for (int i = 0; i < 200; i++) {
+      final int n = i;
+      assertThatThrownBy(() -> validator.validate("SELECT FROM WHERE ((( " + n))
+          .isInstanceOf(UnsafeSqlException.class);
+    }
+
+    long peak = baseline;
+    long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+    while (System.nanoTime() < deadline) {
+      peak = liveThreadCount();
+      if (peak <= baseline + 8) {
+        break; // 여유 8개는 테스트 실행기·JIT 등 무관한 스레드 변동 허용치
+      }
+      try {
+        Thread.sleep(100);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        break;
+      }
+    }
+
+    assertThat(peak)
+        .as("파싱 실패 200회 뒤 살아 있는 스레드 수가 기준선으로 돌아와야 한다(기준선 %d)", baseline)
+        .isLessThanOrEqualTo(baseline + 8);
+  }
+
+  /** 이 JVM 에 살아 있는 스레드 수. 누수 판정의 유일한 관측 수단이다. */
+  private static long liveThreadCount() {
+    return Thread.getAllStackTraces().keySet().stream().filter(Thread::isAlive).count();
+  }
 }

@@ -20,6 +20,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
@@ -409,6 +413,40 @@ public class SqlValidator {
     return Set.copyOf(combined);
   }
 
+  /**
+   * 파싱 타임아웃 실행용 스레드 풀. <b>검증기가 소유한다</b>(#387-1).
+   *
+   * <p>왜 필요한가: jsqlparser 5.0 의 {@code CCJSqlParserUtil.parseStatements(String)} 은 내부에서
+   * {@code Executors.newSingleThreadExecutor()} 를 만들고 파싱 <i>뒤에</i> {@code shutdown()} 한다 —
+   * {@code try/finally} 가 아니다. 따라서 파싱이 예외를 던지면 executor 가 종료되지 않고 non-daemon
+   * 코어 스레드가 영구히 남는다(실측: 실패 200회 → 151스레드). 3-인자 오버로드에 우리가 만든 풀을
+   * 넘기면 jsqlparser 는 그 풀을 종료하지 않고, 스레드는 풀에 반납돼 재사용된다.
+   *
+   * <p>왜 {@code static} 인가: 이 클래스는 Spring 싱글턴 빈이기도 하지만 {@link
+   * #forAdhocDataSchemaQueries()} 정적 팩토리로도 만들어진다. 인스턴스 필드로 두면 누가 요청마다
+   * 검증기를 만드는 순간 "실패할 때만 누수"가 "생성할 때마다 누수"로 악화된다.
+   *
+   * <p>왜 단일 스레드가 아닌가: executor 의 목적이 <b>타임아웃</b>이므로, 단일 스레드를 공유하면 한
+   * 파싱이 타임아웃까지 매달릴 때 동시 호출자가 그 뒤에 줄을 서서 실효 타임아웃이 배로 늘어난다.
+   * 소비자가 셋(파이프라인 스텝, 데이터셋 애드혹 쿼리, 애널리틱스)이라 동시 호출이 실제로 일어난다.
+   *
+   * <p>왜 데몬 + 이름인가: 데몬이라 JVM 종료를 막지 않는다(공유 정적 자원이라 특정 빈의
+   * {@code @PreDestroy} 로 닫으면 나머지 검증기가 깨진다). 이름을 붙이지 않으면 이 풀도
+   * {@code pool-N-thread-M} 이라 누수 회귀 테스트가 우리 스레드와 남의 스레드를 구분하지 못한다.
+   */
+  private static final ExecutorService PARSE_EXECUTOR =
+      Executors.newCachedThreadPool(
+          new ThreadFactory() {
+            private final AtomicInteger seq = new AtomicInteger();
+
+            @Override
+            public Thread newThread(Runnable r) {
+              Thread t = new Thread(r, "sql-validator-parse-" + seq.incrementAndGet());
+              t.setDaemon(true);
+              return t;
+            }
+          });
+
   private static Set<String> loadPostgisSafeFunctions() {
     String resourcePath = "/sql-validator/postgis-safe-functions.txt";
     try (InputStream in = SqlValidator.class.getResourceAsStream(resourcePath)) {
@@ -489,7 +527,7 @@ public class SqlValidator {
   private Statement parseSingleStatement(String sql) {
     Statements parsed;
     try {
-      parsed = CCJSqlParserUtil.parseStatements(sql);
+      parsed = CCJSqlParserUtil.parseStatements(sql, PARSE_EXECUTOR, null);
     } catch (JSQLParserException e) {
       throw new UnsafeSqlException("SQL 파싱 실패: " + e.getMessage(), e);
     }
