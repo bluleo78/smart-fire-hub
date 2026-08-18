@@ -132,11 +132,29 @@ public class TenantSchemaProvisioner {
       // EXISTS 의 경쟁 조건(23505, pg_namespace_nspname_index)이므로 성공과 같은 상태다.
       // existedBefore 가 true(자가치유 경로)면 무슨 예외든 항상 전파한다 — 실패를 조용히
       // 삼키지 않는 것이 정확성이다.
-      if (!shouldSwallowCreationRace(existedBefore, schemaExists(schema))) {
+      if (!shouldSwallowCreationRace(new ExistedBefore(existedBefore), new ExistsNow(schemaExists(schema)))) {
         throw e;
       }
     }
   }
+
+  /**
+   * {@link #shouldSwallowCreationRace} 의 첫 번째 인자를 감싼다(라운드 3 리뷰 N7).
+   *
+   * <p><b>왜 {@code boolean} 두 개가 아니라 타입 두 개인가 — 다음 사람이 "쓸데없이 감쌌다"고
+   * 되돌리지 말 것.</b> 인자가 둘 다 {@code boolean} 이면 호출부에서 순서를 바꿔도(예:
+   * {@code shouldSwallowCreationRace(schemaExists(schema), existedBefore)}) 컴파일이 통과하고,
+   * {@link TenantSchemaProvisionerSwallowDecisionTest} 의 결정표 테스트도 그대로 초록을
+   * 유지한다(그 테스트는 정적 메서드를 직접 호출하므로 실제 호출부의 인자 순서 실수를 못
+   * 잡는다). 그 변이의 실제 피해: 진짜 생성 경합에서 삼키지 않고 그대로 전파해, 한 테넌트가
+   * 데이터셋 두 개를 동시에 만드는 흔한 경로에서 23505 가 사용자에게 그대로 노출된다. 두
+   * 값을 별도 타입으로 감싸면 순서를 바꾸는 순간 컴파일 에러가 나 이 변이 자체가 성립하지
+   * 않는다.
+   */
+  record ExistedBefore(boolean value) {}
+
+  /** {@link #shouldSwallowCreationRace} 의 두 번째 인자를 감싼다 — 이유는 {@link ExistedBefore} 참조. */
+  record ExistsNow(boolean value) {}
 
   /**
    * catch 블록의 판정을 순수 함수로 뽑아 둔다 — DB 없이 결정표를 직접 단위 테스트하기
@@ -146,12 +164,12 @@ public class TenantSchemaProvisioner {
    * 항상 통과시킨다), 판정 로직 자체를 이렇게 분리해 직접 검증한다.
    *
    * @param existedBefore {@code ensureCurrentTenantSchema} 진입 시점에 스키마가 이미 있었는가
-   * @param existsAfterFailure 트랜잭션 실패 직후 스키마가 존재하는가
+   * @param existsNow 트랜잭션 실패 직후 스키마가 존재하는가
    * @return 진짜 생성 경합(existedBefore=false 인데 지금은 존재)이면 {@code true}(삼킨다).
    *     {@code existedBefore=true}(자가치유 경로)면 결과와 무관하게 항상 {@code false}(전파한다).
    */
-  static boolean shouldSwallowCreationRace(boolean existedBefore, boolean existsAfterFailure) {
-    return !existedBefore && existsAfterFailure;
+  static boolean shouldSwallowCreationRace(ExistedBefore existedBefore, ExistsNow existsNow) {
+    return !existedBefore.value() && existsNow.value();
   }
 
   /** 소유자 커넥션으로 pg_namespace 를 조회해 스키마 존재 여부를 확인한다. */

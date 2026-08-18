@@ -2,6 +2,8 @@ package com.smartfirehub.global.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.tenant.TenantSchemaProvisioner.ExistedBefore;
+import com.smartfirehub.global.tenant.TenantSchemaProvisioner.ExistsNow;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +24,12 @@ import org.junit.jupiter.api.Test;
  * shouldSwallowCreationRace} 는 package-private 이라 이 테스트는 <b>같은 패키지</b>
  * ({@code com.smartfirehub.global.tenant})에 둔다 — {@code com.smartfirehub.tenant} 의 다른
  * 프로비저너 테스트들과 패키지가 다른 것은 의도다.
+ *
+ * <p><b>인자가 {@code boolean} 두 개가 아니라 {@link ExistedBefore}/{@link ExistsNow} 타입인
+ * 이유(라운드 3 리뷰 N7).</b> 둘 다 {@code boolean} 이면 실제 호출부({@code
+ * ensureCurrentTenantSchema} 의 catch 블록)에서 인자 순서를 바꿔도 컴파일이 통과하고, 이
+ * 결정표 테스트도 정적 메서드를 직접 호출하므로 그 실수를 잡지 못한다 — 타입으로 감싸면
+ * 순서를 바꾸는 순간 호출부 자체가 컴파일 에러가 난다.
  */
 class TenantSchemaProvisionerSwallowDecisionTest {
 
@@ -31,10 +39,14 @@ class TenantSchemaProvisionerSwallowDecisionTest {
     // existedBefore=true 는 B1 이 연 자가치유 경로다. 트랜잭션이 왜 실패했든(권한 문제, 동시
     // 롤 드롭, 데드락, 타임아웃) 조용히 삼키면 권한이 영영 안 걸린 채 성공으로 보고된다 —
     // 그 무성 실패를 막는 것이 이 단언의 목적이다.
-    assertThat(TenantSchemaProvisioner.shouldSwallowCreationRace(true, true))
+    assertThat(
+            TenantSchemaProvisioner.shouldSwallowCreationRace(
+                new ExistedBefore(true), new ExistsNow(true)))
         .as("자가치유 경로 — 실패 후 스키마가 여전히 존재해도 삼키지 않는다")
         .isFalse();
-    assertThat(TenantSchemaProvisioner.shouldSwallowCreationRace(true, false))
+    assertThat(
+            TenantSchemaProvisioner.shouldSwallowCreationRace(
+                new ExistedBefore(true), new ExistsNow(false)))
         .as("자가치유 경로 — 스키마가 사라졌다면 더더욱 삼키지 않는다")
         .isFalse();
   }
@@ -45,7 +57,9 @@ class TenantSchemaProvisionerSwallowDecisionTest {
     // existedBefore=false 인데 실패 직후 존재한다는 것은, 이 호출과 동시에 다른 트랜잭션이
     // CREATE SCHEMA IF NOT EXISTS 로 먼저 만들었다는 뜻이다(23505, pg_namespace_nspname_index)
     // — 그건 성공과 같은 상태이므로 삼킨다.
-    assertThat(TenantSchemaProvisioner.shouldSwallowCreationRace(false, true))
+    assertThat(
+            TenantSchemaProvisioner.shouldSwallowCreationRace(
+                new ExistedBefore(false), new ExistsNow(true)))
         .as("들어올 때 없었고 실패 후 존재한다 — 다른 트랜잭션이 먼저 만든 진짜 생성 경합")
         .isTrue();
   }
@@ -53,7 +67,9 @@ class TenantSchemaProvisionerSwallowDecisionTest {
   @Test
   @DisplayName("들어올 때도 없었고 실패 후에도 없으면 삼키지 않는다 — 진짜 실패다")
   void neitherExistedIsNeverSwallowed() {
-    assertThat(TenantSchemaProvisioner.shouldSwallowCreationRace(false, false))
+    assertThat(
+            TenantSchemaProvisioner.shouldSwallowCreationRace(
+                new ExistedBefore(false), new ExistsNow(false)))
         .as("스키마가 끝내 안 생겼다 — 생성 경합이 아니라 진짜 실패이므로 전파한다")
         .isFalse();
   }

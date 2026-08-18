@@ -549,4 +549,83 @@ public final class TenantRlsTestSupport {
       ownerDsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
   }
+
+  /**
+   * 지정한 롤이 없으면 최소 권한(NOLOGIN)으로 만든다.
+   *
+   * <p>신규 테넌트의 파이프라인 실행 롤({@code pipeline_executor_t{id}})은 운영자 절차(#383)로
+   * 만들어지므로 test DB 에 미리 없을 수 있다. 프로비저닝 테스트가 권한 부여를 검증하려면
+   * 롤이 실재해야 하므로, 없으면 이 헬퍼가 최소 권한으로 만들어 준다.
+   *
+   * <p>라운드 3 리뷰 N8 로 {@code TenantSchemaProvisionerTest} 의 private 헬퍼에서 여기로
+   * 승격했다 — Task 5 가 같은 프로비저닝 테스트 패턴을 그대로 재사용한다.
+   *
+   * @return 이 메서드가 롤을 새로 만들었으면 {@code true}(호출자가 {@link
+   *     #dropRoleIfCreatedByThisTest} 로 정리해야 함). 이미 있었으면 {@code false} — 이 경우
+   *     호출자가 만든 것이 아니므로 절대 지우면 안 된다(운영자가 미리 만들어 둔 실행 롤일 수
+   *     있다).
+   */
+  public static boolean ensureRoleExists(DSLContext ownerDsl, String roleName) {
+    boolean exists =
+        ownerDsl.fetchExists(
+            ownerDsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
+    if (exists) {
+      return false;
+    }
+    ownerDsl.execute("CREATE ROLE " + roleName + " NOLOGIN");
+    return true;
+  }
+
+  /**
+   * {@link #ensureRoleExists} 가 <b>이 테스트에서 실제로 만들었을 때만</b> 롤을 지운다.
+   *
+   * <p>라운드 2 리뷰가 "정리 규율이 테스트마다 다르다"고 지적한 것을 라운드 3 이 다시 잡았다
+   * (같은 파일 안에서도 재발) — 플래그 없이 {@code DROP ROLE IF EXISTS} 를 무조건 실행하면,
+   * 무작위 id 라 확률은 낮아도 다른 세션이 만든 동명의 롤(원칙적으로 테넌트 id 가 다르면 롤
+   * 이름도 다르지만, 운영자가 미리 만들어 둔 실행 롤을 이 테스트가 우연히 재사용한 경우 등)을
+   * 지울 수 있다. 헬퍼로 뽑아 세 테스트(그리고 Task 5)가 같은 규율을 강제로 따르게 한다 —
+   * "이 테스트를 짤 때마다 플래그를 손으로 잘 챙겨야 한다"가 아니라 시그니처 자체가 강제한다.
+   *
+   * @param createdByThisTest {@link #ensureRoleExists} 의 반환값을 그대로 넘긴다.
+   */
+  public static void dropRoleIfCreatedByThisTest(
+      DSLContext ownerDsl, String roleName, boolean createdByThisTest) {
+    if (createdByThisTest) {
+      ownerDsl.execute("DROP ROLE IF EXISTS " + roleName);
+    }
+  }
+
+  /**
+   * 정리 단계들을 <b>서로 독립적으로</b> 실행한다(라운드 1 리뷰 should-fix 5, 라운드 3 리뷰 N8
+   * 로 {@code TenantSchemaProvisionerTest} 에서 여기로 승격 — Task 5 가 재사용한다).
+   *
+   * <p>순차 {@code finally} 블록에서 한 단계가 던지면 뒤따르는 정리가 전부 스킵된다 — 예를 들어
+   * 스키마 드롭이 일시적으로 실패하면 테넌트 행 삭제가 안 불려 고정/무작위 id 가 영구히 남고,
+   * 다음 실행의 픽스처 삽입이 중복 키로 깨져 수동 DB 수술 전까지 복구되지 않는다. 각 단계를
+   * 독립적으로 실행해 하나가 실패해도 나머지가 최대한 정리되게 하고, 실패는 모아서 마지막에
+   * 하나로 알린다(억제된 예외로 전부 보존).
+   *
+   * <p>{@code RuntimeException} 이 아니라 {@code Throwable} 을 잡는다(라운드 2 리뷰 nit) —
+   * 정리 단계 안에서 {@code AssertionError}(단언 실패는 {@code Error} 계층이다)가 나면
+   * {@code RuntimeException} 만 잡던 버전은 그 즉시 나머지 단계를 스킵했다. 이 메서드의 목적
+   * 자체가 "한 단계가 어떻게 실패하든 나머지는 최대한 정리한다"이므로 예외 계층을 좁힐 이유가
+   * 없다.
+   */
+  public static void cleanupAll(Runnable... steps) {
+    RuntimeException combined = null;
+    for (Runnable step : steps) {
+      try {
+        step.run();
+      } catch (Throwable e) {
+        if (combined == null) {
+          combined = new IllegalStateException("정리 단계 중 일부가 실패했다", e);
+        } else {
+          combined.addSuppressed(e);
+        }
+      }
+    }
+    if (combined != null) {
+      throw combined;
+    }
+  }
 }

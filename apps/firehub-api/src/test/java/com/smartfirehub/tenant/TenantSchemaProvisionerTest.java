@@ -29,6 +29,11 @@ import org.springframework.beans.factory.annotation.Qualifier;
  * 참조). 이 대역이라야 {@code data_t{id}} 가 파생되어 삭제 가드
  * ({@link TenantRlsTestSupport#dropSchemasCreatedByThisTest})를 통과한다. 테넌트 1 로
  * 프로비저너를 시험하면 {@code data} 자체를 건드리게 되므로 절대 쓰지 않는다.
+ *
+ * <p><b>역할 생성/정리·독립 정리 규율은 {@link TenantRlsTestSupport} 의 헬퍼로 승격돼 있다</b>
+ * (라운드 3 리뷰 N8) — {@code ensureRoleExists}/{@code dropRoleIfCreatedByThisTest}/
+ * {@code cleanupAll}. 이 클래스는 그 헬퍼를 그대로 쓴다. Task 5 도 새 헬퍼를 만들지 말고 이걸
+ * 재사용한다.
  */
 class TenantSchemaProvisionerTest extends IntegrationTestBase {
 
@@ -63,7 +68,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
           });
       assertThat(schemaExists(schema)).isTrue();
     } finally {
-      cleanupAll(
+      TenantRlsTestSupport.cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
@@ -85,7 +90,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
           });
       assertThat(schemaExists(schema)).isTrue();
     } finally {
-      cleanupAll(
+      TenantRlsTestSupport.cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
@@ -120,7 +125,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     String executorRole = TenantPipelineRole.roleName(tenantId);
     AtomicBoolean createdRole = new AtomicBoolean(false);
     try {
-      createdRole.set(ensureExecutorRoleExists(executorRole));
+      createdRole.set(TenantRlsTestSupport.ensureRoleExists(ownerDsl(), executorRole));
       TenantContext.runScopedGet(
           tenantId,
           () -> {
@@ -134,13 +139,11 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r")).isTrue();
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S")).isTrue();
     } finally {
-      cleanupAll(
+      TenantRlsTestSupport.cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
-          () -> {
-            if (createdRole.get()) {
-              ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole);
-            }
-          },
+          () ->
+              TenantRlsTestSupport.dropRoleIfCreatedByThisTest(
+                  ownerDsl(), executorRole, createdRole.get()),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
   }
@@ -160,8 +163,6 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
     String schema = TenantContext.runScopedGet(tenantId, DataSchema::current);
     String executorRole = TenantPipelineRole.roleName(tenantId);
-    // 이 테스트는 항상 자기가 롤을 만든다(위에서 roleExistsInDb 로 부재를 먼저 단언한다) —
-    // 그래도 grantsRequiredPrivileges 와 정리 규율을 맞추려고 플래그로 감싼다(라운드 2 리뷰 nit).
     AtomicBoolean createdRole = new AtomicBoolean(false);
     try {
       // 1차 — 롤이 아직 없는 상태에서 프로비저닝한다. 스키마만 생기고 executor 대상 grant 는
@@ -176,8 +177,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
       assertThat(roleExistsInDb(executorRole)).as("아직 롤을 만들지 않았다").isFalse();
 
       // 운영자가 뒤늦게 롤을 만든다(#383 절차의 재현).
-      ownerDsl().execute("CREATE ROLE " + executorRole + " NOLOGIN");
-      createdRole.set(true);
+      createdRole.set(TenantRlsTestSupport.ensureRoleExists(ownerDsl(), executorRole));
 
       // 2차 — 스키마는 이미 있지만, 롤이 이 스키마의 기본 권한을 아직 못 받았으므로 단락 조건
       // (R12)이 거짓이 되어 grant 블록이 다시 실행돼야 한다.
@@ -194,13 +194,11 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "r")).isTrue();
       assertThat(defaultAclExists(schema, "app_tenant", executorRole, "S")).isTrue();
     } finally {
-      cleanupAll(
+      TenantRlsTestSupport.cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
-          () -> {
-            if (createdRole.get()) {
-              ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole);
-            }
-          },
+          () ->
+              TenantRlsTestSupport.dropRoleIfCreatedByThisTest(
+                  ownerDsl(), executorRole, createdRole.get()),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
   }
@@ -222,6 +220,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
     TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
     String schema = TenantContext.runScopedGet(tenantId, DataSchema::current);
     String executorRole = TenantPipelineRole.roleName(tenantId);
+    AtomicBoolean createdRole = new AtomicBoolean(false);
     try {
       // 1차 — 롤 없이 프로비저닝해 스키마만 만든다.
       TenantContext.runScopedGet(
@@ -233,7 +232,7 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
 
       // 운영자가 롤을 만들고, "권한 없음" 을 본 가장 자연스러운 1차 조치로 USAGE 만 손으로
       // 준다 — ALTER DEFAULT PRIVILEGES 는 아직 걸지 않은 중간 상태를 재현한다.
-      ownerDsl().execute("CREATE ROLE " + executorRole + " NOLOGIN");
+      createdRole.set(TenantRlsTestSupport.ensureRoleExists(ownerDsl(), executorRole));
       ownerDsl().execute("GRANT USAGE ON SCHEMA " + schema + " TO " + executorRole);
 
       // 함정 상태가 실제로 재현됐는지 먼저 확인한다 — 이게 없으면 아래 자가치유 단언이
@@ -258,9 +257,11 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
           .as("자가치유로 시퀀스 기본 권한이 뒤늦게 걸려야 한다")
           .isTrue();
     } finally {
-      cleanupAll(
+      TenantRlsTestSupport.cleanupAll(
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
-          () -> ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole),
+          () ->
+              TenantRlsTestSupport.dropRoleIfCreatedByThisTest(
+                  ownerDsl(), executorRole, createdRole.get()),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
   }
@@ -330,53 +331,5 @@ class TenantSchemaProvisionerTest extends IntegrationTestBase {
             objType,
             granteeRole + "=%");
     return Boolean.TRUE.equals(result);
-  }
-
-  /**
-   * 신규 테넌트 롤은 운영자 절차(#383)로 만들어지므로 test DB 에 미리 없을 수 있다. 이 테스트는
-   * ALTER DEFAULT PRIVILEGES 가 executor 롤을 실제로 지정하는지를 봐야 하므로, 없으면 최소 권한
-   * 롤을 직접 만들고 테스트가 끝나면 지운다.
-   *
-   * @return 이 메서드가 롤을 새로 만들었으면 true(호출자가 정리해야 함)
-   */
-  private boolean ensureExecutorRoleExists(String roleName) {
-    if (roleExistsInDb(roleName)) {
-      return false;
-    }
-    ownerDsl().execute("CREATE ROLE " + roleName + " NOLOGIN");
-    return true;
-  }
-
-  /**
-   * 정리 단계들을 <b>서로 독립적으로</b> 실행한다(라운드 1 리뷰 should-fix 5).
-   *
-   * <p>순차 {@code finally} 블록에서 한 단계가 던지면 뒤따르는 정리가 전부 스킵된다 — 예를 들어
-   * 스키마 드롭이 일시적으로 실패하면 {@code deleteTenants} 가 안 불려 테넌트 행이 고정 id 로
-   * 영구히 남고, 다음 실행의 {@code insertActiveTenant} 가 중복 키로 깨져 수동 DB 수술 전까지
-   * 복구되지 않는다. 각 단계를 독립적으로 실행해 하나가 실패해도 나머지가 최대한 정리되게 하고,
-   * 실패는 모아서 마지막에 하나로 알린다(억제된 예외로 전부 보존).
-   *
-   * <p>{@code RuntimeException} 이 아니라 {@code Throwable} 을 잡는다(라운드 2 리뷰 nit) —
-   * 정리 단계 안에서 {@code AssertionError}(단언 실패는 {@code Error} 계층이다) 가 나면
-   * {@code RuntimeException} 만 잡던 버전은 그 즉시 나머지 단계를 스킵했다. 이 메서드의
-   * 목적 자체가 "한 단계가 어떻게 실패하든 나머지는 최대한 정리한다"이므로 예외 계층을
-   * 좁힐 이유가 없다.
-   */
-  private void cleanupAll(Runnable... steps) {
-    RuntimeException combined = null;
-    for (Runnable step : steps) {
-      try {
-        step.run();
-      } catch (Throwable e) {
-        if (combined == null) {
-          combined = new IllegalStateException("정리 단계 중 일부가 실패했다", e);
-        } else {
-          combined.addSuppressed(e);
-        }
-      }
-    }
-    if (combined != null) {
-      throw combined;
-    }
   }
 }
