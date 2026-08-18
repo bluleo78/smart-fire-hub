@@ -8,14 +8,21 @@ import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRole;
+import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
+import javax.sql.DataSource;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 
 class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
@@ -215,5 +222,108 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
     assertThatThrownBy(() -> sqlScriptExecutor.execute("SELECT 1"))
         .isInstanceOf(MissingTenantScopeException.class)
         .hasMessageContaining("data 스키마 식별자 해석");
+  }
+
+  // ── P3-b2 T4: search_path 조립 지점 실측 회귀 가드(접미사 붙은 테넌트) ────────────────────
+
+  /**
+   * 위 {@code execute_runsAsTenantPipelineRole_andSetsDataSearchPath} 는 테넌트 1(물리 스키마
+   * {@code data}, 접미사 없음)로만 돈다 — {@code SET LOCAL search_path = '" + DataSchema.current()
+   * + "'"}(인용 있음, 콤마 목록 없음) 조립이 <b>숫자 접미사가 붙은</b> 스키마({@code data_t{id}})
+   * 에서도 실제로 그 스키마의 테이블을 해석하는지는 이 클래스의 기존 테스트 어디도 증명하지 않는다.
+   *
+   * <p>Task 4 의 psql 직접 실측(작은따옴표 인용 스키마명이 숫자를 포함해도 identical 하게 해석됨)
+   * 을 실제 프로덕션 경로(jOOQ + 테넌트별 커넥션 풀)로 한 번 더 확인한다 — <b>무변경 판정</b>의
+   * 근거를 코드로도 고정한다.
+   *
+   * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는 이 파일의 관례를 그대로 따른다 — 새 테넌트
+   * 롤로 로그인하려면 그 롤·스키마·권한이 <b>커밋</b>돼 있어야 하고(별도 커넥션이 봐야 하므로),
+   * 클래스 레벨 트랜잭션 안에 있으면 롤백돼 보이지 않는다.
+   */
+  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
+
+  @Autowired private TenantSchemaProvisioner provisioner;
+
+  @Autowired
+  @Qualifier("schemaOwnerDataSource")
+  private DataSource schemaOwnerDataSource;
+
+  /** 롤 비밀번호 파생 HMAC 키 — {@code DataSchemaGrantIsolationTest} 와 같은 이유로 하드코딩하지 않는다. */
+  @Value("${app.pipeline.role-password-secret}")
+  private String rolePasswordSecret;
+
+  private DSLContext ownerDsl() {
+    return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
+  }
+
+  @Test
+  void execute_runsAsTenantPipelineRole_andSetsDataSearchPath_forSuffixedTenant() {
+    long tenantId = TENANT_BASE + 1;
+    TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
+    String schema = TenantContext.runScopedGet(tenantId, DataSchema::current); // "data_t{tenantId}"
+    String executorRole = TenantPipelineRole.roleName(tenantId);
+    String guardTable = schema + ".p3b_sql_exec_guard_suffixed";
+
+    try {
+      // LOGIN 롤을 먼저 만든다 — ensureCurrentTenantSchema() 는 executorRole 이 "이미 존재해야"
+      // ALTER DEFAULT PRIVILEGES 를 함께 건다(TenantSchemaProvisioner 참조). 비밀번호는 T1 의
+      // 파생 규약으로 계산한 값(하드코딩 금지) — TenantPipelineDataSourceRegistry 가 같은 함수로
+      // 계산한 값으로 접속을 시도하므로 반드시 일치해야 한다.
+      ownerDsl()
+          .execute(
+              "CREATE ROLE "
+                  + executorRole
+                  + " LOGIN PASSWORD '"
+                  + TenantPipelineRole.password(tenantId, rolePasswordSecret)
+                  + "'");
+      String db = ownerDsl().fetch("SELECT current_database()").get(0).get(0, String.class);
+      ownerDsl().execute("GRANT CONNECT ON DATABASE \"" + db + "\" TO " + executorRole);
+
+      TenantContext.runScopedGet(
+          tenantId,
+          () -> {
+            provisioner.ensureCurrentTenantSchema();
+            return null;
+          });
+
+      // 관측용 가드 테이블 — 기존 테스트와 동일한 장치(컬럼 DEFAULT 로 세션의 current_user·
+      // search_path 를 기록한다). app_tenant 로 만들고 executorRole 에 명시적으로 권한을 준다.
+      dsl.execute(
+          "CREATE TABLE "
+              + guardTable
+              + " (n INT, who TEXT DEFAULT current_user,"
+              + " sp TEXT DEFAULT current_setting('search_path'))");
+      dsl.execute("GRANT INSERT, SELECT ON " + guardTable + " TO " + executorRole);
+
+      // 검증 대상 호출도 테넌트 N 컨텍스트 안에서 해야 한다 — SqlValidator 싱글턴이 검증 시점에
+      // DataSchema.current() 를 다시 묻으므로(위 클래스 Javadoc 참조), 컨텍스트가 비어 있으면
+      // 기본 테넌트(1)로 떨어져 "data_t{id} 스키마 참조 거부"로 실패한다.
+      TenantContext.runScopedGet(
+          tenantId,
+          () -> {
+            sqlScriptExecutor.execute("INSERT INTO " + guardTable + " (n) VALUES (1)");
+            return null;
+          });
+
+      var row = dsl.fetch("SELECT who, sp FROM " + guardTable).get(0);
+      // 실측 판정: 인용된 단일 스키마 조립이 숫자 접미사 스키마에서도 정확히 그 스키마 하나로
+      // 해석된다(psql 프로브가 SHOW 로 확인한 것을 여기서는 실제 테이블 조회로 확인한다).
+      assertThat(row.get("who", String.class)).isEqualTo(executorRole);
+      assertThat(row.get("sp", String.class)).isEqualTo(schema);
+    } finally {
+      TenantRlsTestSupport.cleanupAll(
+          () -> dsl.execute("DROP TABLE IF EXISTS " + guardTable),
+          () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
+          () -> {
+            // 이 테스트가 만든 롤이므로 무조건 지운다(ensureRoleExists 의 "만들었을 때만" 규율과
+            // 달리, 여기서는 CREATE ROLE 을 이 테스트가 직접·무조건 호출했다).
+            ownerDsl().execute("REVOKE ALL ON DATABASE \"" +
+                ownerDsl().fetch("SELECT current_database()").get(0).get(0, String.class) + "\" FROM "
+                + executorRole);
+            ownerDsl().execute("DROP OWNED BY " + executorRole);
+            ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole);
+          },
+          () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
+    }
   }
 }

@@ -158,6 +158,14 @@ public class AnalyticsQueryExecutionService {
     // ST_AsGeoJSON 등 PostGIS 함수는 search_path를 통한 암묵적 참조로 사용 가능하도록 허용
     // 데이터 스키마명은 현재 테넌트에서 파생시킨다(DataSchema.current() = 인용 없는 식별자).
     // search_path 는 한정 이름이 아니라 스키마 식별자 목록이므로 qualify() 가 아니라 current() 다.
+    //
+    // P3-b2 T4 — 무변경 판정(실측 근거). current() 가 숫자 접미사 스키마(data_t{id})를 돌려주게
+    // 된 뒤에도 이 손 조립이 여전히 올바른지 PostgreSQL 로 직접 확인했다: 작은따옴표로 인용한
+    // 스키마명은 숫자를 포함해도(예: 'data_t900000123') 인용 없는 형태와 동일하게 해석되고,
+    // 콤마로 이은 두 번째 스키마('public')도 문제없이 병기된다(실측: SHOW search_path 로 확인한
+    // 문자열이 그대로 실제 테이블 조회에도 반영됨). AnalyticsQueryExecutionServiceTenantSchemaTest
+    // 가 접미사 붙은 테넌트로 이 문장을 실제 프로덕션 경로로 재확인한다. 그래서 이 줄은 고치지
+    // 않는다 — 인용이 이미 있어 안전하다.
     dsl.execute("SET LOCAL search_path = '" + DataSchema.current() + "', 'public'");
     dsl.execute("SET LOCAL statement_timeout = '30s'");
     dsl.execute("SAVEPOINT analytics_query");
