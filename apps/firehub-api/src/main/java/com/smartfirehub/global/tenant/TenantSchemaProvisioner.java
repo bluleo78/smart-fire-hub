@@ -3,7 +3,6 @@ package com.smartfirehub.global.tenant;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 
-import java.sql.SQLException;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -29,9 +28,6 @@ public class TenantSchemaProvisioner {
   /** 새 스키마의 런타임 CRUD 주체. RLS 를 지는 이 롤에 스키마 USAGE·CREATE 를 준다. */
   private static final String RUNTIME_ROLE = "app_tenant";
 
-  /** CREATE SCHEMA IF NOT EXISTS 가 경합으로 던지는 duplicate_schema SQLSTATE. */
-  private static final String SQLSTATE_DUPLICATE_SCHEMA = "42P06";
-
   /**
    * 소유자 롤(app) 자격증명으로 여는 DSLContext.
    *
@@ -56,17 +52,28 @@ public class TenantSchemaProvisioner {
   public void ensureCurrentTenantSchema() {
     String schema = DataSchema.current(); // 컨텍스트 없으면 여기서 터진다
     long tenantId = TenantContext.require("테넌트 스키마 프로비저닝");
+    String executorRole = TenantPipelineRole.roleName(tenantId);
 
-    // 존재 확인 후 즉시 반환 — 이것이 최적화가 아니라 정확성이다. 아래 GRANT·ALTER DEFAULT
-    // PRIVILEGES 는 CREATE 와 달리 "이미 있으면 no-op" 이 아니라 매번 실제로 실행되고 락을 잡는다.
-    // 단락 없이 두면 모든 createTable 호출마다(테스트 스위트 전체에서 수천 번, prod 에서는 86개
-    // 테이블이 든 data 스키마를 상대로) 반복 실행된다. 스키마가 이미 있으면 권한은 생성 시점에
-    // 이미 걸렸으므로 건너뛰는 것이 맞다.
-    if (schemaExists(schema)) {
+    // 단락 조건(R12) — 단순 schemaExists 가 아니다.
+    //
+    // 신규 테넌트가 첫 데이터셋을 만드는 시점에는 pipeline_executor_t{id} 가 아직 없다(롤 생성은
+    // 운영자 절차, #383). 그러면 아래 executor 대상 grant 6문장은 전부 건너뛰고 스키마만 만들어
+    // 진다. 여기서 단순히 "스키마가 있으면 끝"으로 단락시키면, 운영자가 나중에 롤을 만들어도
+    // 이 메서드가 그 스키마에 다시 들어오지 않아 — 자가치유 경로가 없다(FlywayCallbackConfig 는
+    // 비밀번호만 동기화하고 권한은 건드리지 않는다) — 그 테넌트의 파이프라인이 에러 없이 영구히
+    // 안 돌게 된다.
+    //
+    // 그래서 "스키마가 있다" 만으로는 부족하고, "롤이 아직 없거나(당장 해 줄 게 없다) 롤이
+    // 이미 이 스키마에 USAGE 를 갖고 있다(이미 grant 됐다)"를 추가로 확인한다. 두 조건 모두
+    // 거짓인 경우 — 즉 롤은 생겼는데 아직 이 스키마에 권한이 없는 경우 — 에만 grant 블록을
+    // 다시 실행해 자가치유한다. 카탈로그 조회가 하나(has_schema_privilege) 늘 뿐이고, 정상
+    // 상태(권한이 이미 걸린 상태)에서는 여전히 grant 를 재실행하지 않으므로 R9 의 의도(락을
+    // 잡는 ALTER DEFAULT PRIVILEGES 를 매 호출마다 돌리지 않는다)는 그대로 유지된다.
+    if (schemaExists(schema)
+        && (!roleExists(ownerDsl, executorRole) || hasSchemaUsage(executorRole, schema))) {
       return;
     }
 
-    String executorRole = TenantPipelineRole.roleName(tenantId);
     try {
       ownerDsl.transaction(
           cfg -> {
@@ -80,7 +87,7 @@ public class TenantSchemaProvisioner {
             // executorRole 이 아직 없을 수 있다 — 신규 테넌트 롤 생성은 운영자 절차(#383)이지
             // 이 프로비저너가 만드는 것이 아니다. 없다고 실패시키면, 롤이 아직 프로비저닝되지
             // 않은 테넌트 하나 때문에 데이터셋 생성 전체가 막힌다(FlywayCallbackConfig.roleExists
-            // 와 같은 판단).
+            // 와 같은 판단). 롤이 나중에 생기면 위 단락 조건이 다시 이 블록으로 들여보낸다.
             if (roleExists(tx, executorRole)) {
               tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(executorRole));
               tx.execute(
@@ -103,10 +110,19 @@ public class TenantSchemaProvisioner {
             }
           });
     } catch (DataAccessException e) {
-      // 42P06 = duplicate_schema. CREATE SCHEMA IF NOT EXISTS 는 PostgreSQL 에서 경합에 안전하지
-      // 않다(CREATE TABLE IF NOT EXISTS 와 같은 창). 한 테넌트에서 데이터셋 두 개를 동시에 만들면
-      // 둘 다 존재 확인을 통과하고 하나가 42P06 으로 진다. 그건 성공과 같은 상태이므로 삼킨다.
-      if (!SQLSTATE_DUPLICATE_SCHEMA.equals(sqlStateOf(e))) {
+      // 경합 흡수(R11, 2026-08-18 실측으로 개정) — SQLSTATE 목록이 아니라 "지금 스키마가 실제로
+      // 존재하는가"로 판정한다.
+      //
+      // CREATE SCHEMA IF NOT EXISTS 는 PostgreSQL 에서 경합에 안전하지 않다(CREATE TABLE IF NOT
+      // EXISTS 와 같은 창). 한 테넌트에서 데이터셋 두 개를 동시에 만들면 둘 다 위 존재 확인을
+      // 통과하고 하나가 진다. 애초 구현은 이 경합이 42P06(duplicate_schema)을 낸다고 가정하고
+      // 그 코드만 삼켰는데, 두 세션 동시 실행으로 직접 재현한 결과 실제로 던져지는 것은
+      // **23505**(unique_violation, pg_namespace_nspname_index)였다 — 42P06 은 이 경로(IF NOT
+      // EXISTS + 선행 존재 확인)에서 도달 불가능한 죽은 분기였다. SQLSTATE 를 하나 더 목록에
+      // 추가하는 대신 판정 방식 자체를 바꾼다: 예외가 나도 스키마가 실제로 존재하면 그건 이미
+      // 다른 트랜잭션이 만든 것이므로 성공과 같은 상태다. PG 버전이 SQLSTATE 를 바꿔도 이 판정은
+      // 깨지지 않는다.
+      if (!schemaExists(schema)) {
         throw e;
       }
     }
@@ -127,16 +143,10 @@ public class TenantSchemaProvisioner {
         dsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
   }
 
-  /** 예외 체인에서 SQLException 을 찾아 SQLSTATE 를 돌려준다. jOOQ/Spring 이 여러 겹으로 감싼다. */
-  private static String sqlStateOf(Throwable t) {
-    for (Throwable cur = t; cur != null; cur = cur.getCause()) {
-      if (cur instanceof SQLException sql) {
-        return sql.getSQLState();
-      }
-      if (cur.getCause() == cur) {
-        break;
-      }
-    }
-    return null;
+  /** executor 롤이 이 스키마에 이미 USAGE 를 갖고 있는지 확인한다(R12 자가치유 단락 조건). */
+  private boolean hasSchemaUsage(String roleName, String schema) {
+    Object result =
+        ownerDsl.fetchValue("select has_schema_privilege(?, ?, 'USAGE')", roleName, schema);
+    return Boolean.TRUE.equals(result);
   }
 }

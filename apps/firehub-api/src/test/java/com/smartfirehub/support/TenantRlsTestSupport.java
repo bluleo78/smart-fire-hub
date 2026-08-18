@@ -9,6 +9,7 @@ import static org.jooq.impl.DSL.table;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.sql.SQLException;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -480,6 +481,28 @@ public final class TenantRlsTestSupport {
   // 대역 밖에서 프로비저너를 시험하면 삭제 가드(dropSchemasCreatedByThisTest)를 통과하지 못한다.
 
   /**
+   * 스키마 프로비저닝 테스트 전용 테넌트 id 기저를 무작위로 하나 뽑는다.
+   *
+   * <p><b>왜 고정 리터럴(900_000_001 등)을 쓰면 안 되는가(라운드 1 리뷰 실측).</b> 이 저장소는
+   * 여러 워크트리가 같은 공유 test DB 를 동시에 쓴다. 두 워크트리가 같은 테스트 클래스를
+   * 동시에 돌리면 고정 id 는 같은 스키마({@code data_t900000003})·같은 롤을 노려, 늦게 온 쪽의
+   * {@code ensureExecutorRoleExists} 가 "이미 있다"고 판단해 정리를 건너뛰고, 먼저 끝난 쪽이
+   * 상대가 아직 쓰고 있는 스키마를 드롭하는 교차 실패가 재현됐다. 호출하는 테스트 클래스가
+   * 이 메서드를 정적 필드로 <b>한 번만</b> 받아 오프셋(+1, +2, ...)을 더해 쓰면, 클래스 안의
+   * 테스트끼리는 오프셋으로 구분되고 서로 다른 프로세스(워크트리)는 서로 다른 기저를 뽑으므로
+   * 충돌 확률이 사실상 0이 된다.
+   *
+   * <p>Task 5 도 같은 프로비저닝 테스트 패턴을 재사용하므로 이 헬퍼를 그대로 쓴다.
+   *
+   * @return 900_000_000 이상 999_900_000 미만의 무작위 값. 오프셋을 더해도(호출부가 보통 한
+   *     자릿수 오프셋만 쓴다) 900_000_000~999_999_999 대역과 {@code ^data_t[0-9]+$} 가드 안에
+   *     여유 있게 머물도록 상한에 100,000 의 여백을 둔다.
+   */
+  public static long randomSchemaProvisioningTenantIdBase() {
+    return ThreadLocalRandom.current().nextLong(900_000_000L, 999_900_000L);
+  }
+
+  /**
    * 지정한 id 로 ACTIVE 테넌트를 만든다. {@link #createActiveTenant} 와 달리 id 를 호출자가
    * 정한다 — 스키마 프로비저닝 테스트는 파생된 스키마명({@code data_t{id}})이 삭제 가드의
    * {@code ^data_t[0-9]+$} 를 통과해야 하므로, 900_000_xxx 대역의 id 를 직접 지정해야 한다.
@@ -510,6 +533,10 @@ public final class TenantRlsTestSupport {
    *     소유자가 아니므로 DROP SCHEMA 권한이 없다 — {@code schemaOwnerDataSource} 로 만들어야 한다.
    */
   public static void dropSchemasCreatedByThisTest(DSLContext ownerDsl, String... schemas) {
+    // 검증을 전부 먼저 끝내고 나서 드롭한다(라운드 1 리뷰 nit) — 검증과 드롭을 한 루프에서
+    // 섞으면 앞쪽 스키마를 이미 지운 뒤에야 뒤쪽의 이름 위반이 발견돼, 정리가 절반만 되고
+    // 예외가 나는 상태가 된다. 전부 검증 → 전부 드롭 순서면 이름이 하나라도 잘못됐을 때
+    // 아무것도 지우지 않고 즉시 실패한다(부분 정리보다 안전).
     for (String schema : schemas) {
       if (!TENANT_SCHEMA_NAME.matcher(schema).matches()) {
         throw new IllegalArgumentException(
@@ -517,6 +544,8 @@ public final class TenantRlsTestSupport {
                 + " 스키마 삭제 사고 방지): "
                 + schema);
       }
+    }
+    for (String schema : schemas) {
       ownerDsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
   }
