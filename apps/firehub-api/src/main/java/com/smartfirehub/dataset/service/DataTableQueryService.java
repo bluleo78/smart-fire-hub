@@ -61,7 +61,8 @@ public class DataTableQueryService {
     // Restrict search_path to data schema only — prevents access to public schema tables
     //
     // P3-b2 T4 — 무변경 판정(실측 근거). 인용된 단일 스키마 조립은 숫자 접미사가 붙어도
-    // (data_t{id}) 그대로 해석된다 — PostgreSQL 로 직접 확인했고(psql SHOW search_path 프로브),
+    // (data_t{id}) 그대로 해석된다 — data_t900000123 라는 한 이름으로 PostgreSQL 로 직접
+    // 확인했다(psql SHOW search_path 프로브, 자릿수 자체는 해석에 영향 없음).
     // DataTableQueryServiceTenantSchemaTest 가 접미사 붙은 테넌트로 실제 프로덕션 경로를 재확인
     // 한다. 고치지 않는다.
     dsl.execute("SET LOCAL search_path = '" + schema + "'");
@@ -133,12 +134,15 @@ public class DataTableQueryService {
       // 본다. public 이 앞에 오는 기존 우선순위를 그대로 유지한다.
       //
       // P3-b2 T4 — 무변경 판정(실측 근거). 이 문장은 네 지점 중 유일하게 <b>인용이 없다</b>
-      // (무인용 식별자 목록). PostgreSQL 로 직접 확인한 결과 무인용 식별자도 숫자로 시작하지 않는
-      // 한(스키마명은 항상 "data" 또는 "data_t"+숫자라 첫 글자가 항상 문자다) 인용된 형태와
-      // 동일하게 해석된다 — 무인용 식별자는 소문자로 폴딩될 뿐인데 이 스키마명은 이미 전부
-      // 소문자다(DataSchemaTenantResolutionTest.derivedNamesAreSafeUnquotedIdentifiers 가 그
-      // 전제를 고정). DataTableQueryServiceTenantSchemaTest 가 이 복원 문장 직후 SHOW search_path 로 접미사
-      // 붙은 테넌트에서 "public, data_t{id}" 를 실측 확인한다. 고치지 않는다.
+      // (무인용 식별자 목록). data_t900000123 라는 한 이름으로 PostgreSQL 로 직접 확인한 결과
+      // 무인용 식별자도 숫자로 시작하지 않는 한(스키마명은 항상 "data" 또는 "data_t"+숫자라
+      // 첫 글자가 항상 문자다) 인용된 형태와 동일하게 해석된다(자릿수 자체는 해석에 영향 없음)
+      // — 무인용 식별자는 소문자로 폴딩될 뿐인데 이 스키마명은 이미 전부 소문자다
+      // (DataSchemaTenantResolutionTest.derivedNamesAreSafeUnquotedIdentifiers 가 그 전제를
+      // 고정). DataTableQueryServiceTenantSchemaTest 가 이 복원 문장 <b>직후, 같은 트랜잭션
+      // 안에서</b> public 스키마 테이블(query_history)에 저장이 성공하는지로 접미사 붙은
+      // 테넌트에서도 이 복원이 실제로 실행됨을 확인한다(복원이 실패했다면 그 저장 자체가
+      // 스키마를 못 찾아 실패했을 것이다). 고치지 않는다.
       try {
         dsl.execute("SET LOCAL search_path TO public, " + schema);
       } catch (Exception ignored) {

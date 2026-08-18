@@ -32,6 +32,25 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   @Qualifier("pipelineDslContext")
   private DSLContext pipelineDsl;
 
+  // ── P3-b2 T4: search_path 조립 지점 실측 회귀 가드에서 쓰는 필드(라운드 2 리뷰 NIT-3 —
+  // 테스트 메서드들 사이에 흩어져 있던 것을 클래스 상단으로 모았다) ────────────────────────
+
+  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
+
+  @Autowired private TenantSchemaProvisioner provisioner;
+
+  @Autowired
+  @Qualifier("schemaOwnerDataSource")
+  private DataSource schemaOwnerDataSource;
+
+  /** 롤 비밀번호 파생 HMAC 키 — {@code DataSchemaGrantIsolationTest} 와 같은 이유로 하드코딩하지 않는다. */
+  @Value("${app.pipeline.role-password-secret}")
+  private String rolePasswordSecret;
+
+  private DSLContext ownerDsl() {
+    return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
+  }
+
   @Test
   void execute_selectFromDataSchema_succeeds() {
     // pipeline_executor는 data 스키마에서 SELECT 가능. 여기서는 search_path=data 영구 설정과 함께
@@ -225,36 +244,20 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   }
 
   // ── P3-b2 T4: search_path 조립 지점 실측 회귀 가드(접미사 붙은 테넌트) ────────────────────
-
-  /**
-   * 위 {@code execute_runsAsTenantPipelineRole_andSetsDataSearchPath} 는 테넌트 1(물리 스키마
-   * {@code data}, 접미사 없음)로만 돈다 — {@code SET LOCAL search_path = '" + DataSchema.current()
-   * + "'"}(인용 있음, 콤마 목록 없음) 조립이 <b>숫자 접미사가 붙은</b> 스키마({@code data_t{id}})
-   * 에서도 실제로 그 스키마의 테이블을 해석하는지는 이 클래스의 기존 테스트 어디도 증명하지 않는다.
-   *
-   * <p>Task 4 의 psql 직접 실측(작은따옴표 인용 스키마명이 숫자를 포함해도 identical 하게 해석됨)
-   * 을 실제 프로덕션 경로(jOOQ + 테넌트별 커넥션 풀)로 한 번 더 확인한다 — <b>무변경 판정</b>의
-   * 근거를 코드로도 고정한다.
-   *
-   * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는 이 파일의 관례를 그대로 따른다 — 새 테넌트
-   * 롤로 로그인하려면 그 롤·스키마·권한이 <b>커밋</b>돼 있어야 하고(별도 커넥션이 봐야 하므로),
-   * 클래스 레벨 트랜잭션 안에 있으면 롤백돼 보이지 않는다.
-   */
-  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
-
-  @Autowired private TenantSchemaProvisioner provisioner;
-
-  @Autowired
-  @Qualifier("schemaOwnerDataSource")
-  private DataSource schemaOwnerDataSource;
-
-  /** 롤 비밀번호 파생 HMAC 키 — {@code DataSchemaGrantIsolationTest} 와 같은 이유로 하드코딩하지 않는다. */
-  @Value("${app.pipeline.role-password-secret}")
-  private String rolePasswordSecret;
-
-  private DSLContext ownerDsl() {
-    return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
-  }
+  //
+  // 위 execute_runsAsTenantPipelineRole_andSetsDataSearchPath 는 테넌트 1(물리 스키마 data,
+  // 접미사 없음)로만 돈다 — SET LOCAL search_path = '" + DataSchema.current() + "'"(인용 있음,
+  // 콤마 목록 없음) 조립이 숫자 접미사가 붙은 스키마(data_t{id})에서도 실제로 그 스키마의
+  // 테이블을 해석하는지는 이 클래스의 기존 테스트 어디도 증명하지 않는다.
+  //
+  // Task 4 의 psql 직접 실측(작은따옴표 인용 스키마명이 숫자를 포함해도 identical 하게 해석됨)
+  // 을 실제 프로덕션 경로(jOOQ + 테넌트별 커넥션 풀)로 한 번 더 확인한다 — 무변경 판정의 근거를
+  // 코드로도 고정한다.
+  //
+  // 클래스 레벨 @Transactional 을 쓰지 않는 이 파일의 관례를 그대로 따른다 — 새 테넌트 롤로
+  // 로그인하려면 그 롤·스키마·권한이 커밋돼 있어야 하고(별도 커넥션이 봐야 하므로), 클래스
+  // 레벨 트랜잭션 안에 있으면 롤백돼 보이지 않는다. 이 절에서 쓰는 필드(TENANT_BASE·
+  // provisioner·schemaOwnerDataSource·rolePasswordSecret)는 클래스 상단으로 옮겨 뒀다.
 
   @Test
   void execute_runsAsTenantPipelineRole_andSetsDataSearchPath_forSuffixedTenant() {
@@ -315,8 +318,13 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
           () -> dsl.execute("DROP TABLE IF EXISTS " + guardTable),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           () -> {
-            // 이 테스트가 만든 롤이므로 무조건 지운다(ensureRoleExists 의 "만들었을 때만" 규율과
-            // 달리, 여기서는 CREATE ROLE 을 이 테스트가 직접·무조건 호출했다).
+            // R22(라운드 2 리뷰 확정) — 이 롤은 무조건 생성·삭제한다, ensureRoleExists 의
+            // "만들었을 때만" 플래그 패턴을 쓰지 않는다. 규율: 롤이 LOGIN 을 필요로 하면 무조건
+            // 생성/삭제, 아니면 플래그 패턴. ensureRoleExists 는 NOLOGIN 만 만들어
+            // SqlScriptExecutor 가 실제로 로그인해야 하는 이 롤의 요구를 못 채운다 — 헬퍼를
+            // 확장하는 것은 이 밴드 범위에서 이득이 없고, 무작위 900,000,000+ 대역 id 라 이
+            // 롤이 사전에 존재할 확률은 무시할 만하다(DataSchemaGrantIsolationTest 가 고정
+            // 리터럴 id 로 같은 근거를 이미 쓰고 있다).
             ownerDsl().execute("REVOKE ALL ON DATABASE \"" +
                 ownerDsl().fetch("SELECT current_database()").get(0).get(0, String.class) + "\" FROM "
                 + executorRole);

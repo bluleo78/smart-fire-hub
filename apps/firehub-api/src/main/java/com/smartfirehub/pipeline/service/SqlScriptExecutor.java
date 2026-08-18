@@ -67,8 +67,9 @@ public class SqlScriptExecutor {
                   // search_path 는 한정 이름이 아니라 스키마 식별자 목록이므로 qualify() 가 아니라 current().
                   //
                   // P3-b2 T4 — 무변경 판정(실측 근거). 인용된 단일 스키마 조립은 숫자 접미사가
-                  // 붙어도(data_t{id}) 그대로 해석된다 — PostgreSQL 로 직접 확인했고(psql SHOW
-                  // search_path 프로브), SqlScriptExecutorSandboxTest 의
+                  // 붙어도(data_t{id}) 그대로 해석된다 — data_t900000123 라는 한 이름으로 PostgreSQL
+                  // 로 직접 확인했다(psql SHOW search_path 프로브, 자릿수 자체는 해석에 영향 없음).
+                  // SqlScriptExecutorSandboxTest 의
                   // execute_runsAsTenantPipelineRole_andSetsDataSearchPath_forSuffixedTenant 가
                   // 실제 테넌트 파이프라인 롤·커넥션 풀로 재확인한다. 고치지 않는다.
                   cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
