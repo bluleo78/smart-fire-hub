@@ -16,6 +16,7 @@ export class ClaudeCliChatProvider implements ChatProvider {
   async *execute(options: ChatProviderOptions): AsyncGenerator<SSEEvent> {
     const cliOptions: CliAgentOptions = {
       message: options.message,
+      tenantId: options.tenantId,
       sessionId: options.sessionId,
       userId: options.userId,
       fileIds: options.fileIds,

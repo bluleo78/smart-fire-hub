@@ -22,7 +22,7 @@ describe('ClaudeSdkChatProvider', () => {
     mockExecuteAgent.mockReturnValue(makeStream([{ type: 'done' }]));
 
     const provider = new ClaudeSdkChatProvider('sk-test', DEFAULT_MODEL);
-    const gen = provider.execute({ message: 'hello', userId: 1 });
+    const gen = provider.execute({ message: 'hello', tenantId: 1, userId: 1 });
 
     expect(typeof gen[Symbol.asyncIterator]).toBe('function');
 
@@ -38,6 +38,7 @@ describe('ClaudeSdkChatProvider', () => {
     const provider = new ClaudeSdkChatProvider('sk-from-constructor', DEFAULT_MODEL);
     for await (const _ of provider.execute({
       message: 'test message',
+      tenantId: 1,
       userId: 42,
       sessionId: 'sess-1',
     })) { /* consume */ }
@@ -55,7 +56,7 @@ describe('ClaudeSdkChatProvider', () => {
     mockExecuteAgent.mockReturnValue(makeStream([{ type: 'done' }]));
 
     const provider = new ClaudeSdkChatProvider('sk-test', 'my-default-model');
-    for await (const _ of provider.execute({ message: 'hi', userId: 1 })) { /* consume */ }
+    for await (const _ of provider.execute({ message: 'hi', tenantId: 1, userId: 1 })) { /* consume */ }
 
     const called = mockExecuteAgent.mock.calls[0][0];
     expect(called.model).toBe('my-default-model');
@@ -68,6 +69,7 @@ describe('ClaudeSdkChatProvider', () => {
     const provider = new ClaudeSdkChatProvider('sk-test', DEFAULT_MODEL);
     for await (const _ of provider.execute({
       message: 'hi',
+      tenantId: 1,
       userId: 1,
       model: 'claude-opus-4-6',
     })) { /* consume */ }

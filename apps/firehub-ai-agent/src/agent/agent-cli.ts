@@ -7,7 +7,7 @@
  */
 import { spawn } from 'child_process';
 import { mkdir, readFile, readdir, writeFile, unlink } from 'fs/promises';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
@@ -18,6 +18,8 @@ import { totalInputTokens, type TokenUsageLike } from './token-usage.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
+import { legacyTranscriptDir, transcriptDir, workspaceDir } from './tenant-paths.js';
+import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
@@ -39,15 +41,50 @@ export interface CliTranscript {
 
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
 
-export function getTranscriptDir(): string {
-  return join(homedir(), '.firehub', 'transcripts');
+export function getTranscriptDir(tenantId: number): string {
+  return transcriptDir(tenantId);
 }
 
-export function getTranscriptPath(sessionId: string): string {
+/**
+ * 트랜스크립트 파일 경로. 세그먼트 검증은 두 층 모두 필요하다 — `sessionId` 는 HTTP 경로 변수에서
+ * 오므로 경로 이탈(`../`)을 여기서 막고, `tenantId` 는 {@link transcriptDir} 가 fail-closed 로 막는다.
+ */
+export function getTranscriptPath(tenantId: number, sessionId: string): string {
   if (!SAFE_SESSION_ID.test(sessionId)) {
     throw new Error(`Invalid sessionId: ${sessionId}`);
   }
-  return join(getTranscriptDir(), `${sessionId}.json`);
+  return join(transcriptDir(tenantId), `${sessionId}.json`);
+}
+
+/**
+ * CLI 트랜스크립트를 읽는다. 테넌트 경로를 먼저 보고, 없으면 **세그먼트 도입 전 레거시 경로**를
+ * 한 번 더 본다(없으면 `null`).
+ *
+ * <p><b>레거시 폴백이 있어야 하는 이유는 재개(resume) 다.</b> 폴백 없이 테넌트 경로만 읽으면
+ * 과거 세션을 이어 말할 때 `saved` 가 빈 값이 되어, 그 세션의 지난 대화가 조용히 사라진 채
+ * 새 트랜스크립트가 테넌트 경로에 덮여 쓰인다 — 열람(history)뿐 아니라 재개도 같은 구멍을 갖는다.
+ * 읽기만 폴백하고 쓰기는 항상 테넌트 경로로 가므로, 이어 말한 세션은 자연히 이관된다(지연 이관).
+ *
+ * <p>이관이 안전한 근거: 이 경로에 도달하기 전 firehub-api 가 `ai_session` RLS +
+ * `verifySessionOwnership` 으로 소유권을 검증한다 — 도달 가능한 호출자는 그 세션을 소유한
+ * 테넌트의 사용자뿐이므로 요청 테넌트를 그 파일의 귀속으로 취급해도 된다.
+ */
+export async function readCliTranscript(
+  tenantId: number,
+  sessionId: string,
+): Promise<CliTranscript | null> {
+  const candidates = [
+    getTranscriptPath(tenantId, sessionId),
+    join(legacyTranscriptDir(), `${sessionId}.json`),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(await readFile(candidate, 'utf-8')) as CliTranscript;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 
@@ -114,6 +151,7 @@ export interface CliAgentOptions extends AgentOptions {
 export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator<SSEEvent> {
   const {
     message,
+    tenantId,
     userId,
     fileIds,
     model,
@@ -132,11 +170,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const isResume = !!options.sessionId;
   const sessionId = options.sessionId ?? `cli-${randomUUID()}`;
   yield { type: 'init', sessionId };
+  // 세션 귀속 표식 — /agent/history 심층방어 게이트가 읽는다(session-owner.ts 참조).
+  await claimSession(tenantId, sessionId);
 
   // 첨부 파일 다운로드 및 메시지 변환
   let enhancedMessage = message || '';
-  // 사용자별 격리된 작업 디렉토리 (세션 간 파일 유지, 소스 코드 접근 차단)
-  const userWorkDir = join(homedir(), '.firehub', 'workspaces', String(userId));
+  // 테넌트·사용자별 격리된 작업 디렉토리 (세션 간 파일 유지, 소스 코드 접근 차단).
+  // 같은 사용자가 두 테넌트에 속하면 두 워크스페이스가 분리된다 — claude CLI 의 cwd 이기도 해서
+  // SDK 트랜스크립트가 쌓이는 `~/.claude/projects/{cwd 파생}` 프로젝트 디렉터리까지 함께 갈린다.
+  const userWorkDir = workspaceDir(tenantId, userId);
   await mkdir(userWorkDir, { recursive: true });
   const chatFilesDir = join(userWorkDir, 'chat-files', String(Date.now()));
   let downloadedFiles: Awaited<ReturnType<typeof downloadChatFiles>>['files'] = [];
@@ -152,7 +194,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
     // 첨부 파일 메타데이터 사이드카 저장 (히스토리에서 첨부 표시용)
     if (files.length > 0) {
-      saveSessionAttachments(sessionId, toAttachmentMeta(files)).catch(() => {});
+      saveSessionAttachments(tenantId, sessionId, toAttachmentMeta(files)).catch(() => {});
       const imageFiles = files.filter((f) => f.mimeType.startsWith('image/'));
       const nonImageFiles = files.filter((f) => !f.mimeType.startsWith('image/'));
 
@@ -173,13 +215,12 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     }
   }
 
-  const transcriptPath = getTranscriptPath(sessionId);
+  const transcriptPath = getTranscriptPath(tenantId, sessionId);
 
   let saved: CliTranscript = { messages: [] };
   if (isResume) {
-    try {
-      saved = JSON.parse(await readFile(transcriptPath, 'utf-8')) as CliTranscript;
-    } catch { /* 파일 없으면 새로 시작 */ }
+    // 레거시 경로 폴백 포함 — 없으면 새로 시작한다(readCliTranscript javadoc 참조).
+    saved = (await readCliTranscript(tenantId, sessionId)) ?? { messages: [] };
   }
 
   const transcript = saved.messages;
@@ -221,7 +262,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const saveTranscript = async () => {
     commitAssistant();
     if (transcript.length <= 1) return;
-    await mkdir(getTranscriptDir(), { recursive: true });
+    await mkdir(getTranscriptDir(tenantId), { recursive: true });
     await writeFile(transcriptPath, JSON.stringify({ claudeSessionId, messages: transcript }));
   };
 

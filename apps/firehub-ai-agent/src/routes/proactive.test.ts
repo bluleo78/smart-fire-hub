@@ -88,6 +88,7 @@ describe('Proactive routes — integration tests', () => {
     const app = createApp();
     const res = await makeRequest(app, 'POST', '/agent/proactive', {
       prompt: 'Analyze this',
+      tenantId: 1,
       context: { data: 'test' },
     });
 
@@ -133,6 +134,7 @@ describe('Proactive routes — integration tests', () => {
       '/agent/proactive',
       {
         prompt: '데이터를 분석해주세요',
+        tenantId: 1,
         context: { metric: 42 },
         template: {
           sections: [
@@ -180,6 +182,7 @@ describe('Proactive routes — integration tests', () => {
       '/agent/proactive',
       {
         prompt: '간단히 분석해주세요',
+        tenantId: 1,
         context: { value: 'test' },
       },
       { Authorization: `Internal ${VALID_TOKEN}` },
@@ -219,7 +222,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '일간 KPI 리포트', context: { value: 'test' } },
+      { prompt: '일간 KPI 리포트', tenantId: 1, context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -244,7 +247,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '일간 KPI 리포트', context: { value: 'test' } },
+      { prompt: '일간 KPI 리포트', tenantId: 1, context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -273,7 +276,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '운영 리포트', context: { value: 'test' } },
+      { prompt: '운영 리포트', tenantId: 1, context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 

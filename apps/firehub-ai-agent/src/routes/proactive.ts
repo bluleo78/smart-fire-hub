@@ -30,6 +30,8 @@ interface ProactiveRequest {
   model?: string;
   apiKey?: string;
   userId?: number;
+  /** 실행 테넌트. 에이전트의 디스크 산출물 경로 파생 입력 — firehub-api 가 실어 보낸다. */
+  tenantId?: number;
   agentType?: string;
   oauthToken?: string;
 }
@@ -311,6 +313,12 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
 
   const model = body.model || 'claude-haiku-4-5';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
+  // 챗과 같은 이유로 fail-closed — 전역 경로 폴백을 두지 않는다.
+  const tenantId = body.tenantId;
+  if (!tenantId || typeof tenantId !== 'number') {
+    res.status(400).json({ error: 'tenantId is required and must be a number' });
+    return;
+  }
   // report-writer가 HTML 리포트 + 요약을 저장할 임시 디렉토리
   const reportDir = `/tmp/proactive-report-${Date.now()}-${userId}`;
   const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir);
@@ -326,6 +334,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
 
   const events = provider.execute({
     message: initialUserMessage,
+    tenantId,
     userId,
     model,
     systemPrompt: systemPrompt,

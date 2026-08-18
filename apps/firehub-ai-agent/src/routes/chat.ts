@@ -5,6 +5,7 @@ import { ProviderFactory } from '../providers/index.js';
 import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
+import { checkSessionOwnership } from '../agent/session-owner.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +24,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
   const {
     message,
     sessionId,
+    tenantId,
     userId,
     fileIds,
     model,
@@ -47,6 +49,13 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
 
   if (!userId || typeof userId !== 'number') {
     res.status(400).json({ error: 'userId is required and must be a number' });
+    return;
+  }
+
+  // 테넌트는 디스크 산출물 경로의 파생 입력이라 없으면 진행할 수 없다 — 전역 경로로 폴백하는
+  // 대신 400 으로 거절한다(fail-closed). firehub-api 가 항상 실어 보낸다.
+  if (!tenantId || typeof tenantId !== 'number') {
+    res.status(400).json({ error: 'tenantId is required and must be a number' });
     return;
   }
 
@@ -89,6 +98,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     const events = provider.execute({
       message: message || '',
       sessionId: sessionId || undefined,
+      tenantId,
       userId,
       fileIds: hasFileIds ? (fileIds as number[]) : undefined,
       model,
@@ -142,9 +152,32 @@ router.get('/sessions', internalAuth, (_req: Request, res: Response) => {
 });
 
 // Session history endpoint
+/**
+ * 세션 대화 이력.
+ *
+ * <p><b>테넌트는 쿼리스트링으로 받는다</b> — GET 이라 바디를 쓸 수 없다. firehub-api 가
+ * `?tenantId=` 를 붙여 호출한다.
+ *
+ * <p><b>이 게이트는 심층방어다.</b> 1차 게이트는 firehub-api 의
+ * `verifySessionOwnership` + `ai_session` RLS 이고, 여기서는 세션 귀속 표식이 **다른 테넌트를
+ * 가리킬 때만** 404 로 막는다. 표식이 없는 세션(세그먼트 도입 전)은 통과시킨다 — 막으면 과거
+ * 이력이 전부 사라지는 기능 회귀가 된다(`session-owner.ts` 참조). 존재를 알려 주지 않기 위해
+ * 403 이 아니라 404 를 쓴다.
+ */
 router.get('/history/:sessionId', internalAuth, async (req: Request, res: Response) => {
+  const sessionId = req.params.sessionId as string;
+  const tenantId = Number(req.query.tenantId);
+  if (!Number.isInteger(tenantId) || tenantId <= 0) {
+    res.status(400).json({ error: 'tenantId query parameter is required' });
+    return;
+  }
   try {
-    const messages = await readSessionTranscript(req.params.sessionId as string);
+    if ((await checkSessionOwnership(tenantId, sessionId)) === 'other-tenant') {
+      console.warn(`[Agent] History 거부 — 세션 ${sessionId} 은 테넌트 ${tenantId} 의 것이 아니다`);
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const messages = await readSessionTranscript(tenantId, sessionId);
     res.json(messages);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);

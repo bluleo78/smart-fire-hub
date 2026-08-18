@@ -7,8 +7,7 @@
  * 인증(OpenCode→모델)은 배포 환경 opencode auth 에 의존(옵션 3) — 키 주입 없음.
  */
 import { spawn } from 'child_process';
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import { homedir } from 'os';
+import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
@@ -17,7 +16,14 @@ import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 // 트랜스크립트: CLI 와 동일 포맷/경로로 저장하면 history 엔드포인트가 그대로 읽는다.
-import { getTranscriptDir, getTranscriptPath, type CliTranscript } from './agent-cli.js';
+import {
+  getTranscriptDir,
+  getTranscriptPath,
+  readCliTranscript,
+  type CliTranscript,
+} from './agent-cli.js';
+import { opencodeWorkspaceDir } from './tenant-paths.js';
+import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 // 주: model/provider 는 배포 측 전역 opencode 설정 상속(옵션 3)이라 DEFAULT_MODEL 미사용.
 
@@ -192,7 +198,7 @@ export function buildOpenCodeRunArgs(
 
 export async function* executeOpenCodeAgent(options: ChatProviderOptions): AsyncGenerator<SSEEvent> {
   // fileIds(첨부)는 v1 범위 외 — 의도적으로 destructure 하지 않음.
-  const { message, userId, systemPrompt, overrideSystemPrompt, abortSignal } = options;
+  const { message, tenantId, userId, systemPrompt, overrideSystemPrompt, abortSignal } = options;
 
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
@@ -204,15 +210,18 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   let opencodeSessionId: string | undefined;
 
   // 대화 이력: CLI 와 동일한 CliTranscript JSON 으로 저장 → history 엔드포인트가 그대로 읽음.
-  const transcriptPath = getTranscriptPath(firehubSessionId);
+  const transcriptPath = getTranscriptPath(tenantId, firehubSessionId);
   let saved: CliTranscript = { messages: [] };
   if (isResume) {
-    try {
-      const raw = JSON.parse(await readFile(transcriptPath, 'utf-8')) as CliTranscript & { opencodeSessionId?: string };
+    // 레거시(테넌트 세그먼트 이전) 경로 폴백 포함 — CLI 와 같은 헬퍼를 쓴다.
+    const raw = (await readCliTranscript(tenantId, firehubSessionId)) as
+      | (CliTranscript & { opencodeSessionId?: string })
+      | null;
+    if (raw) {
       saved = raw;
       // 재개 시 opencode 세션 id 복원
       opencodeSessionId = raw.opencodeSessionId;
-    } catch { /* 파일 없으면 새로 시작 */ }
+    }
   }
   const transcript = saved.messages;
   const nowIso = () => new Date().toISOString();
@@ -236,13 +245,14 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   const saveTranscript = async () => {
     commitAssistant();
     if (transcript.length <= 1) return;
-    await mkdir(getTranscriptDir(), { recursive: true });
+    await mkdir(getTranscriptDir(tenantId), { recursive: true });
     // opencodeSessionId 를 함께 저장해 재개 시 --session 에 활용
     await writeFile(transcriptPath, JSON.stringify({ messages: transcript, opencodeSessionId }));
   };
 
   // 사용자별 격리 작업 디렉토리 (소스 접근 차단, 세션 간 파일 유지)
-  const userWorkDir = join(homedir(), '.firehub', 'workspaces-opencode', String(userId));
+  // CLI 경로와 같은 이유로 테넌트 세그먼트를 끼운다(tenant-paths.ts 단일 파생 지점).
+  const userWorkDir = opencodeWorkspaceDir(tenantId, userId);
   await mkdir(userWorkDir, { recursive: true });
 
   // opencode.json 생성 (요청별 USER_ID 주입 + permission 잠금, model 은 전역 상속)
@@ -285,6 +295,8 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   // isResume 가 아닌 경우 여기서 임시 firehubSessionId 를 먼저 emit 하고
   // opencodeSessionId 캡처 후 트랜스크립트 저장 시 함께 보존.
   yield { type: 'init', sessionId: firehubSessionId };
+  // 세션 귀속 표식 — /agent/history 심층방어 게이트가 읽는다(session-owner.ts 참조).
+  await claimSession(tenantId, firehubSessionId);
   try {
     for await (const line of rl) {
       const trimmed = line.trim();

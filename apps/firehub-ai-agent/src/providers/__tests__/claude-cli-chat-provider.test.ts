@@ -20,7 +20,7 @@ describe('ClaudeCliChatProvider', () => {
     mockExecuteCliAgent.mockReturnValue(makeStream([{ type: 'done' }]));
 
     const provider = new ClaudeCliChatProvider(true);
-    for await (const _ of provider.execute({ message: 'hello', userId: 1 })) { /* consume */ }
+    for await (const _ of provider.execute({ message: 'hello', tenantId: 1, userId: 1 })) { /* consume */ }
 
     expect(mockExecuteCliAgent).toHaveBeenCalledOnce();
     const called = mockExecuteCliAgent.mock.calls[0][0];
@@ -33,7 +33,7 @@ describe('ClaudeCliChatProvider', () => {
     mockExecuteCliAgent.mockReturnValue(makeStream([{ type: 'done' }]));
 
     const provider = new ClaudeCliChatProvider(false, 'sk-cli-api-key');
-    for await (const _ of provider.execute({ message: 'hello', userId: 2 })) { /* consume */ }
+    for await (const _ of provider.execute({ message: 'hello', tenantId: 1, userId: 2 })) { /* consume */ }
 
     expect(mockExecuteCliAgent).toHaveBeenCalledOnce();
     const called = mockExecuteCliAgent.mock.calls[0][0];
@@ -56,6 +56,7 @@ describe('ClaudeCliChatProvider', () => {
     const provider = new ClaudeCliChatProvider(true, undefined, 'oauth-token');
     const options = {
       message: 'test',
+      tenantId: 1,
       userId: 10,
       sessionId: 'sess-abc',
       model: 'claude-haiku-4-5-20251001',

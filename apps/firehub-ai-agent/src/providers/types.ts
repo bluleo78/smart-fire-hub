@@ -8,6 +8,11 @@ export type SSEEvent = {
 export interface ChatProviderOptions {
   message: string;
   sessionId?: string;
+  /**
+   * 실행 테넌트. 디스크 산출물 경로가 이 값에서 파생되므로 **필수**다(`AgentOptions.tenantId` 주석 참조).
+   * 경로 스코핑 전용 — API 로 되돌아오는 호출의 테넌트는 API 가 멤버십에서 다시 파생한다.
+   */
+  tenantId: number;
   userId: number;
   fileIds?: number[];
   model?: string;

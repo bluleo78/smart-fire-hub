@@ -2,6 +2,7 @@ package com.smartfirehub.ai.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.service.SettingsService;
 import java.io.IOException;
 import java.time.Duration;
@@ -121,10 +122,24 @@ public class AiAgentProxyService {
     }
   }
 
+  /**
+   * ai-agent 의 세션 트랜스크립트를 가져온다.
+   *
+   * <p>테넌트를 쿼리 파라미터로 실어 보낸다 — ai-agent 는 트랜스크립트를 테넌트별 디렉터리에
+   * 저장하므로 어느 테넌트의 것을 읽을지 알아야 하고, 동시에 세션 귀속 표식과 대조하는 심층방어
+   * 게이트의 입력이 된다. 1차 소유권 검증은 호출 전에 {@code verifySessionOwnership} 이 이미
+   * 수행한다({@code AiController.getSessionMessages}).
+   */
   public String getSessionHistory(String sessionId) {
+    long tenantId = TenantContext.require("AI 세션 이력 조회");
     return webClient
         .get()
-        .uri("/agent/history/{sessionId}", sessionId)
+        .uri(
+            uriBuilder ->
+                uriBuilder
+                    .path("/agent/history/{sessionId}")
+                    .queryParam("tenantId", tenantId)
+                    .build(sessionId))
         .header("Authorization", "Internal " + internalToken)
         .retrieve()
         .bodyToMono(String.class)
@@ -141,6 +156,12 @@ public class AiAgentProxyService {
       String screenContext) {
     emitter.onTimeout(() -> emitter.completeWithError(new RuntimeException("SSE timeout")));
     emitter.onError(e -> log.error("[AI Chat] SseEmitter error", e));
+
+    // 실행 테넌트를 여기서 확정한다 — 이 메서드는 아직 요청 스레드이므로 컨텍스트가 살아 있고,
+    // 아래 Flux 구독은 다른 스레드로 넘어가므로 그때 읽으면 이미 비어 있다. ai-agent 는 이 값으로
+    // 워크스페이스·트랜스크립트 경로를 테넌트별로 가른다(경로 스코핑 전용 — MCP 도구가 되돌아올 때의
+    // 테넌트는 API 가 멤버십에서 다시 파생한다).
+    long tenantId = TenantContext.require("AI 챗 프록시");
 
     Map<String, String> aiSettings = new HashMap<>(settingsService.getAsMap("ai"));
     aiSettings.remove("ai.api_key");
@@ -187,6 +208,7 @@ public class AiAgentProxyService {
     requestBody.put("message", message != null ? message : "");
     requestBody.put("sessionId", sessionId != null ? sessionId : "");
     requestBody.put("userId", userId);
+    requestBody.put("tenantId", tenantId);
     if (fileIds != null && !fileIds.isEmpty()) {
       requestBody.put("fileIds", fileIds);
     }

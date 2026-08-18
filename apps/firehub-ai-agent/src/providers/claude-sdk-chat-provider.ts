@@ -14,6 +14,7 @@ export class ClaudeSdkChatProvider implements ChatProvider {
   async *execute(options: ChatProviderOptions): AsyncGenerator<SSEEvent> {
     const agentOptions: AgentOptions = {
       message: options.message,
+      tenantId: options.tenantId,
       sessionId: options.sessionId,
       userId: options.userId,
       fileIds: options.fileIds,

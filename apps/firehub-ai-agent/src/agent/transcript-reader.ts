@@ -1,9 +1,9 @@
-import { readFile, readdir, access } from 'fs/promises';
+import { readdir, access } from 'fs/promises';
 import { createReadStream } from 'fs';
 import readline from 'readline';
 import path from 'path';
 import os from 'os';
-import { getTranscriptPath } from './agent-cli.js';
+import { readCliTranscript } from './agent-cli.js';
 import type { CliTranscript } from './agent-cli.js';
 import { loadSessionAttachments } from './file-downloader.js';
 
@@ -35,6 +35,13 @@ export interface HistoryMessage {
  * Claude SDK는 실행 시 cwd를 기반으로 프로젝트 디렉터리를 결정하는데,
  * Node.js 프로세스의 cwd(/app)와 다를 수 있다. 따라서 모든 프로젝트
  * 디렉터리를 스캔하여 sessionId와 일치하는 파일을 찾는다.
+ *
+ * <p><b>이 스캔은 테넌트로 좁혀지지 않는다 — 의도된 한계다.</b> CLI 경로는 cwd 가 테넌트별
+ * 워크스페이스라 프로젝트 디렉터리까지 갈리지만, SDK 경로는 cwd 를 지정하지 않아 모든 테넌트가
+ * 한 프로젝트 디렉터리를 공유한다. 경로로는 귀속을 알 수 없으므로 SDK 세션의 테넌트 판정은
+ * `session-owner.ts` 의 표식이 담당하고(라우트에서 스캔 전에 먼저 걸린다), 1차 게이트는 여전히
+ * firehub-api 의 `verifySessionOwnership` + `ai_session` RLS 다. SDK 실행에 테넌트별 cwd 를
+ * 주는 것이 정공법이지만 SDK 의 세션 재개 경로가 프로젝트 디렉터리에 묶여 있어 별건으로 둔다.
  */
 async function findTranscriptFilePath(sessionId: string): Promise<string | null> {
   const projectsDir = path.join(os.homedir(), '.claude', 'projects');
@@ -74,9 +81,12 @@ function stripFileMetadata(text: string): string {
   return match?.[1]?.trim() || text;
 }
 
-export async function readSessionTranscript(sessionId: string): Promise<HistoryMessage[]> {
+export async function readSessionTranscript(
+  tenantId: number,
+  sessionId: string,
+): Promise<HistoryMessage[]> {
   // 사이드카에서 첨부 파일 메타데이터 로드
-  const attachments = await loadSessionAttachments(sessionId);
+  const attachments = await loadSessionAttachments(tenantId, sessionId);
 
   /** 사이드카 첨부 정보를 메시지에 병합 — 이미 attachments가 있는 메시지는 건너뜀 (CLI transcript 직접 저장분) */
   const mergeAttachments = (messages: HistoryMessage[]): HistoryMessage[] => {
@@ -92,15 +102,16 @@ export async function readSessionTranscript(sessionId: string): Promise<HistoryM
     return messages;
   };
 
-  // CLI 에이전트 트랜스크립트 시도
-  try {
-    const data = await readFile(getTranscriptPath(sessionId), 'utf-8');
-    const parsed = JSON.parse(data) as CliTranscript | HistoryMessage[];
-    const msgs = Array.isArray(parsed) ? parsed : (parsed.messages ?? []);
+  // CLI 에이전트 트랜스크립트 시도(테넌트 경로 → 레거시 경로 순).
+  const cli = (await readCliTranscript(tenantId, sessionId)) as
+    | CliTranscript
+    | HistoryMessage[]
+    | null;
+  if (cli) {
+    const msgs = Array.isArray(cli) ? cli : (cli.messages ?? []);
     return mergeAttachments(msgs);
-  } catch {
-    // 파일 없으면 SDK JSONL 경로로 폴백
   }
+  // 없으면 SDK JSONL 경로로 폴백
 
   // SDK 에이전트 JSONL 트랜스크립트 — 모든 프로젝트 디렉터리에서 탐색
   const filePath = await findTranscriptFilePath(sessionId);

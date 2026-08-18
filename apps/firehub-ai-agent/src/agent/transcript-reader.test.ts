@@ -55,7 +55,7 @@ describe('readSessionTranscript', () => {
     (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
     (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
-    const messages = await readSessionTranscript('test-session');
+    const messages = await readSessionTranscript(1, 'test-session');
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe('user');
     expect(messages[0].content).toBe('Hello');
@@ -67,7 +67,7 @@ describe('readSessionTranscript', () => {
     (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
     (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(''));
 
-    const messages = await readSessionTranscript('empty-session');
+    const messages = await readSessionTranscript(1, 'empty-session');
     expect(messages).toEqual([]);
   });
 
@@ -77,7 +77,7 @@ describe('readSessionTranscript', () => {
     const { access } = await import('fs/promises');
     (access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
 
-    const messages = await readSessionTranscript('nonexistent-session');
+    const messages = await readSessionTranscript(1, 'nonexistent-session');
     expect(messages).toEqual([]);
   });
 
@@ -106,7 +106,7 @@ describe('readSessionTranscript', () => {
     (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
     (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
-    const messages = await readSessionTranscript('filter-session');
+    const messages = await readSessionTranscript(1, 'filter-session');
     // tool_result user message should be excluded
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe('user');
@@ -158,7 +158,7 @@ describe('readSessionTranscript', () => {
     (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
     (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
-    const messages = await readSessionTranscript('chart-session');
+    const messages = await readSessionTranscript(1, 'chart-session');
     expect(messages).toHaveLength(3);
 
     // User message
@@ -215,7 +215,7 @@ describe('readSessionTranscript', () => {
     (readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
     (createReadStream as ReturnType<typeof vi.fn>).mockReturnValue(makeJsonlStream(jsonl));
 
-    const messages = await readSessionTranscript('tool-only-session');
+    const messages = await readSessionTranscript(1, 'tool-only-session');
     expect(messages).toHaveLength(3);
 
     // Assistant message with only toolCalls (no text)

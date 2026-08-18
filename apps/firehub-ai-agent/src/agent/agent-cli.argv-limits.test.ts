@@ -51,6 +51,7 @@ describe('executeCliAgent — spawn argv 크기 한계 (#260 회귀 가드)', ()
   it('실제 subagent 정의로 spawn 호출 시 모든 인자가 MAX_ARG_STRLEN 미만이어야 한다', async () => {
     const gen = executeCliAgent({
       message: 'test',
+      tenantId: 1,
       userId: 8888,
       useSubscription: false,
       apiKey: 'sk-test',
@@ -79,6 +80,7 @@ describe('executeCliAgent — spawn argv 크기 한계 (#260 회귀 가드)', ()
   it('subagent 정의를 인라인 인자(--agents)로 전달해서는 안 된다 (#260)', async () => {
     const gen = executeCliAgent({
       message: 'test',
+      tenantId: 1,
       userId: 8889,
       useSubscription: false,
       apiKey: 'sk-test',

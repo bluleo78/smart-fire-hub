@@ -2,6 +2,7 @@ package com.smartfirehub.ai.service;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.when;
 
@@ -9,6 +10,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.global.tenant.MissingTenantScopeException;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.Duration;
@@ -136,7 +139,48 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
                     postRequestedFor(urlEqualTo("/agent/chat"))
                         .withRequestBody(matchingJsonPath("$.oauthToken", equalTo("oat-test")))
                         .withRequestBody(matchingJsonPath("$.agentType", equalTo("sdk")))
+                        // 테넌트가 body 에 실려야 ai-agent 가 디스크 경로를 테넌트별로 가른다.
+                        .withRequestBody(
+                            matchingJsonPath(
+                                "$.tenantId", equalTo(String.valueOf(DEFAULT_TEST_TENANT_ID))))
                         .withRequestBody(notMatching(".*cliOauthToken.*"))));
+  }
+
+  /**
+   * 세션 이력 조회가 테넌트를 쿼리 파라미터로 실어 보내는지 확인한다.
+   *
+   * <p>ai-agent 는 트랜스크립트를 테넌트별 디렉터리에 저장하므로 이 값이 없으면 400 이고, 값이
+   * 틀리면 남의 테넌트 디렉터리를 뒤진다 — 경로 파생 입력이라 URL 에 실렸는지 자체가 계약이다.
+   */
+  @Test
+  void getSessionHistory_sendsTenantIdAsQueryParam() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/agent/history/sess-1"))
+            .willReturn(aResponse().withStatus(200).withBody("[]")));
+
+    String body = aiAgentProxyService.getSessionHistory("sess-1");
+
+    assertThat(body).isEqualTo("[]");
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/agent/history/sess-1"))
+            .withQueryParam("tenantId", equalTo(String.valueOf(DEFAULT_TEST_TENANT_ID))));
+  }
+
+  /**
+   * 테넌트 컨텍스트가 없으면 이력 조회 자체가 실패해야 한다(fail-closed).
+   *
+   * <p>여기서 조용히 진행하면 ai-agent 가 어느 테넌트의 디렉터리를 볼지 알 수 없는 상태로 호출을
+   * 받게 된다. {@code IntegrationTestBase} 가 매 테스트마다 기본 테넌트를 심으므로, 이 테스트는
+   * 그것을 명시적으로 비워 운영의 "필터를 안 거친 경로" 상태를 재현한다.
+   */
+  @Test
+  void getSessionHistory_withoutTenantContext_failsClosed() {
+    TenantContext.clear();
+
+    assertThatThrownBy(() -> aiAgentProxyService.getSessionHistory("sess-1"))
+        .isInstanceOf(MissingTenantScopeException.class);
+    // ai-agent 로 요청이 나가지 않았음을 함께 확인한다 — 던지기만 하고 이미 호출했다면 의미가 없다.
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/agent/history/sess-1")));
   }
 
   // 주: opencode 의 streamChat 자격증명 우회(missingCredential=false) 검증은

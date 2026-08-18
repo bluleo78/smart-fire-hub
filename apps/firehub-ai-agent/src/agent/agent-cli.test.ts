@@ -122,6 +122,7 @@ describe('executeCliAgent — Tier2 연속 실패 강제중단 (#271)', () => {
     const events: Array<{ type: string; message?: unknown }> = [];
     for await (const ev of executeCliAgent({
       message: 'test',
+      tenantId: 1,
       userId: 1,
       useSubscription: false,
       apiKey: 'sk-test',
@@ -164,6 +165,7 @@ describe('executeCliAgent — #240 subagent registration', () => {
   it('subagent 정의가 cwd .claude/agents/<name>.md 파일로 작성되어야 한다 (#240, #260)', async () => {
     const gen = executeCliAgent({
       message: 'test',
+      tenantId: 1,
       userId: 9999, // 고정 userId — userWorkDir 경로 예측 가능
       useSubscription: false,
       apiKey: 'sk-test',
@@ -200,6 +202,7 @@ describe('executeCliAgent — #240 subagent registration', () => {
   it('spawn된 claude CLI 인자: --allowed-tools 미전달, --disallowed-tools 만 명시 차단 (#266)', async () => {
     const gen = executeCliAgent({
       message: 'test',
+      tenantId: 1,
       userId: 1,
       useSubscription: false,
       apiKey: 'sk-test',
@@ -234,6 +237,7 @@ describe('executeCliAgent — #240 subagent registration', () => {
   it('system-prompt-file 의 내용에 buildSubagentGuide 결과가 부착되어야 한다 (#259)', async () => {
     const gen = executeCliAgent({
       message: 'test',
+      tenantId: 1,
       userId: 1,
       useSubscription: false,
       apiKey: 'sk-test',
@@ -272,6 +276,7 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
     const events: Array<{ type: string }> = [];
     for await (const e of executeCliAgent({
       message: 'hi',
+      tenantId: 1,
       userId: 1,
       useSubscription: false,
       apiKey: 'sk-test',
@@ -292,6 +297,7 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
     const events: Array<{ type: string; message?: string }> = [];
     for await (const e of executeCliAgent({
       message: 'hi',
+      tenantId: 1,
       userId: 1,
       useSubscription: false,
       apiKey: 'sk-test',
@@ -314,6 +320,7 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
     const events: Array<{ type: string }> = [];
     for await (const e of executeCliAgent({
       message: 'hi',
+      tenantId: 1,
       userId: 1,
       useSubscription: false,
       apiKey: 'sk-test',

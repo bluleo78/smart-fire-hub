@@ -12,8 +12,16 @@ vi.mock('../providers/index.js', () => ({
   },
 }));
 
+const mockReadTranscript = vi.fn();
 vi.mock('../agent/transcript-reader.js', () => ({
-  readSessionTranscript: vi.fn().mockResolvedValue([]),
+  readSessionTranscript: (...args: unknown[]) => mockReadTranscript(...args),
+}));
+
+// 세션 귀속 표식은 파일시스템을 읽으므로 목으로 막고 라우트 게이트만 검증한다.
+// 표식 자체의 3상태 판정은 session-owner.test.ts 가 실제 파일로 커버한다.
+const mockCheckOwnership = vi.fn();
+vi.mock('../agent/session-owner.js', () => ({
+  checkSessionOwnership: (...args: unknown[]) => mockCheckOwnership(...args),
 }));
 
 // child_process.execFile 모킹 — 실제 claude CLI 호출 방지
@@ -92,6 +100,9 @@ describe('Chat routes — integration tests', () => {
   beforeEach(() => {
     process.env.INTERNAL_SERVICE_TOKEN = VALID_TOKEN;
     vi.clearAllMocks();
+    // 기본값: 표식 없음 = 레거시 세션 → 통과, 트랜스크립트는 빈 배열.
+    mockCheckOwnership.mockResolvedValue('unknown');
+    mockReadTranscript.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -163,7 +174,7 @@ describe('Chat routes — integration tests', () => {
       app,
       'POST',
       '/agent/chat',
-      { message: 'Hello', userId: 42, apiKey: 'sk-from-client' },
+      { message: 'Hello', tenantId: 1, userId: 42, apiKey: 'sk-from-client' },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -184,7 +195,7 @@ describe('Chat routes — integration tests', () => {
       app,
       'POST',
       '/agent/chat',
-      { message: 'Hello world', userId: 99, apiKey: 'sk-test' },
+      { message: 'Hello world', tenantId: 1, userId: 99, apiKey: 'sk-test' },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -192,6 +203,60 @@ describe('Chat routes — integration tests', () => {
     const calledWith = mockExecute.mock.calls[0][0];
     expect(calledWith.message).toBe('Hello world');
     expect(calledWith.userId).toBe(99);
+    // 테넌트가 provider 까지 흘러야 디스크 경로가 테넌트별로 갈린다.
+    expect(calledWith.tenantId).toBe(1);
+  });
+
+  // CR-T01: 테넌트가 없으면 400 — ai-agent 는 이 값으로 디스크 경로를 가르므로 전역 경로
+  // 폴백을 두지 않는다(fail-closed). provider 는 호출되지 않아야 한다.
+  it('CR-T01: POST /agent/chat without tenantId returns 400 and never calls the provider', async () => {
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { message: 'Hello', userId: 1 },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  // CR-T02: history 도 테넌트가 필수다 — 어느 테넌트 디렉터리를 읽을지 정해지지 않는다.
+  it('CR-T02: GET /agent/history without tenantId returns 400', async () => {
+    const app = createApp();
+    const res = await makeRequest(app, 'GET', '/agent/history/sess-1', undefined, {
+      Authorization: `Internal ${VALID_TOKEN}`,
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockReadTranscript).not.toHaveBeenCalled();
+  });
+
+  // CR-T03: 표식이 다른 테넌트를 가리키면 404. 존재를 알려 주지 않기 위해 403 이 아니다.
+  it('CR-T03: GET /agent/history returns 404 when the session belongs to another tenant', async () => {
+    mockCheckOwnership.mockResolvedValue('other-tenant');
+    const app = createApp();
+    const res = await makeRequest(app, 'GET', '/agent/history/sess-1?tenantId=5', undefined, {
+      Authorization: `Internal ${VALID_TOKEN}`,
+    });
+
+    expect(res.status).toBe(404);
+    // 거부했다면 트랜스크립트를 읽지 않았어야 한다 — 읽고 나서 버리면 게이트가 아니다.
+    expect(mockReadTranscript).not.toHaveBeenCalled();
+  });
+
+  // CR-T04: 표식이 없는 레거시 세션은 통과시킨다. 여기서 막으면 세그먼트 도입 전 이력이
+  // 전부 안 보이는 기능 회귀가 된다(1차 게이트는 firehub-api 의 소유권 검증이다).
+  it('CR-T04: GET /agent/history passes through when no ownership marker exists', async () => {
+    const app = createApp();
+    const res = await makeRequest(app, 'GET', '/agent/history/legacy-sess?tenantId=5', undefined, {
+      Authorization: `Internal ${VALID_TOKEN}`,
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockReadTranscript).toHaveBeenCalledWith(5, 'legacy-sess');
   });
 });
 

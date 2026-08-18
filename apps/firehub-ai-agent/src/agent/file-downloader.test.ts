@@ -304,6 +304,14 @@ describe('formatAttachmentLine / buildNonImageAttachmentSection (refs #264)', ()
   });
 });
 
+/**
+ * `readdir(base, { withFileTypes: true })` 가 돌려주는 Dirent 를 흉내낸다.
+ * 구현이 파일과 테넌트 하위 디렉터리를 구분하려면 타입 정보가 필요하다.
+ */
+function dirent(name: string, kind: 'file' | 'dir' = 'file') {
+  return { name, isFile: () => kind === 'file', isDirectory: () => kind === 'dir' };
+}
+
 describe('purgeExpiredSessionAttachments', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -323,7 +331,7 @@ describe('purgeExpiredSessionAttachments', () => {
 
   // FD-P02: TTL 이내 파일은 삭제하지 않음
   it('FD-P02: does not delete files within TTL', async () => {
-    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-abc.json']);
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([dirent('session-abc.json')]);
     // mtimeMs = 현재 시각 (만료 안 됨)
     (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: Date.now() });
 
@@ -334,7 +342,10 @@ describe('purgeExpiredSessionAttachments', () => {
 
   // FD-P03: TTL 초과 파일은 삭제
   it('FD-P03: deletes expired sidecar files older than 7 days', async () => {
-    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['old-session.json', 'recent.json']);
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+      dirent('old-session.json'),
+      dirent('recent.json'),
+    ]);
     const EIGHT_DAYS_AGO = Date.now() - 8 * 24 * 60 * 60 * 1000;
     (fs.stat as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({ mtimeMs: EIGHT_DAYS_AGO }) // old-session.json → 만료
@@ -348,7 +359,10 @@ describe('purgeExpiredSessionAttachments', () => {
 
   // FD-P04: .json 확장자가 아닌 파일은 무시
   it('FD-P04: ignores non-json files in the directory', async () => {
-    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session.json', 'README.txt']);
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+      dirent('session.json'),
+      dirent('README.txt'),
+    ]);
     (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: 0 }); // 무조건 만료
 
     await purgeExpiredSessionAttachments();
@@ -358,9 +372,28 @@ describe('purgeExpiredSessionAttachments', () => {
     expect(fs.unlink).toHaveBeenCalledTimes(1);
   });
 
+  // FD-P06: 테넌트 하위 디렉터리도 함께 훑는다 — 자기 테넌트만 돌면 요청이 오지 않는
+  // 테넌트의 만료 사이드카가 영구히 남아 TTL 이 무력화된다.
+  it('FD-P06: sweeps tenant subdirectories, not just the base directory', async () => {
+    (fs.readdir as ReturnType<typeof vi.fn>)
+      // 베이스: 레거시 파일 1개 + 테넌트 디렉터리 2개
+      .mockResolvedValueOnce([dirent('legacy.json'), dirent('t1', 'dir'), dirent('t7', 'dir')])
+      .mockResolvedValueOnce(['t1-session.json']) // t1 하위
+      .mockResolvedValueOnce(['t7-session.json']); // t7 하위
+    (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: 0 }); // 전부 만료
+
+    await purgeExpiredSessionAttachments();
+
+    const unlinked = (fs.unlink as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(unlinked).toHaveLength(3);
+    expect(unlinked.some((p) => p.endsWith('legacy.json'))).toBe(true);
+    expect(unlinked.some((p) => p.includes('t1') && p.endsWith('t1-session.json'))).toBe(true);
+    expect(unlinked.some((p) => p.includes('t7') && p.endsWith('t7-session.json'))).toBe(true);
+  });
+
   // FD-P05: 개별 파일 처리 실패는 전체를 중단하지 않음
   it('FD-P05: continues purging other files when one file fails', async () => {
-    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['a.json', 'b.json']);
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([dirent('a.json'), dirent('b.json')]);
     const EIGHT_DAYS_AGO = Date.now() - 8 * 24 * 60 * 60 * 1000;
     (fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ mtimeMs: EIGHT_DAYS_AGO });
     (fs.unlink as ReturnType<typeof vi.fn>)

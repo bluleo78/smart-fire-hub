@@ -1,8 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs/promises';
-import os from 'os';
-import path from 'path';
 import { FireHubApiClient } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
@@ -27,6 +25,8 @@ import {
   formatAttachmentLine,
 } from './file-downloader.js';
 import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { claimSession } from './session-owner.js';
+import { sdkChatFilesDir } from './tenant-paths.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
 
 import type { SSEEvent } from '../providers/types.js';
@@ -48,6 +48,16 @@ if (!('ENABLE_EXPERIMENTAL_MCP_CLI' in process.env) || process.env.ENABLE_EXPERI
 export interface AgentOptions {
   message: string;
   sessionId?: string;
+  /**
+   * 실행 테넌트. **필수다** — 디스크 산출물 경로가 이 값에서 파생되므로(`tenant-paths.ts`),
+   * 선택 필드로 두면 전달을 빠뜨린 호출부가 조용히 전역 경로를 쓰게 된다. 컴파일러가 모든
+   * 호출부를 대신 훑도록 필수로 봉인한다.
+   *
+   * <p><b>경로 스코핑 전용이다.</b> MCP 도구가 firehub-api 로 되돌아올 때 API 는 이 값을 믿지
+   * 않고 `X-On-Behalf-Of` 사용자의 멤버십에서 서버측으로 다시 파생한다(설계서 §4.4 — 내부
+   * 토큰은 만능 자격증명이라 헤더로 받은 테넌트를 신뢰할 수 없다).
+   */
+  tenantId: number;
   userId: number;
   fileIds?: number[];
   model?: string;
@@ -91,6 +101,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const {
     message,
     sessionId,
+    tenantId,
     userId,
     fileIds,
     model,
@@ -117,7 +128,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   // 세션 사용자 권한 조회 + 첨부 파일 다운로드를 병렬 실행한다.
   // 두 작업은 서로 독립적이므로 순차 대기할 필요가 없다.
   // 권한 조회 실패 시 빈 배열로 폴백해 파괴 도구를 차단한다(fail-closed).
-  const chatFilesDir = path.join(os.tmpdir(), 'firehub-chat-files', `${userId}-${Date.now()}`);
+  const chatFilesDir = sdkChatFilesDir(tenantId, userId, Date.now());
   const [userPermissions, downloadResult] = await Promise.all([
     fetchSessionPermissionsFailClosed(apiClient, tag),
     fileIds?.length
@@ -397,9 +408,21 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
             haltMessage = buildHaltMessage(lastToolName, resultText);
           }
         }
-        // init 이벤트에서 sessionId 확보 → 첨부 파일 메타데이터 사이드카 저장
+        // init 이벤트에서 sessionId 확보 → 세션 귀속 표식 기록.
+        //
+        // 이 경로에 표식이 **꼭** 필요하다. CLI 경로는 cwd 가 테넌트별 워크스페이스라 SDK
+        // 트랜스크립트의 프로젝트 디렉터리까지 갈리지만, 여기서는 cwd 를 지정하지 않아 모든
+        // 테넌트가 `~/.claude/projects/{cwd 파생}` 한 곳을 공유한다 — 경로로는 귀속을 알 수 없어
+        // `findTranscriptFilePath` 가 전 프로젝트 디렉터리를 훑는다. 표식이 없으면
+        // `/agent/history` 의 심층방어가 이 기본 경로(agentType 기본값 = sdk)에서만 통째로
+        // 비어 버린다(session-owner.ts 참조).
+        if (event.type === 'init' && event.sessionId) {
+          void claimSession(tenantId, String(event.sessionId));
+        }
+        // 첨부 파일 메타데이터 사이드카 저장
         if (event.type === 'init' && event.sessionId && downloadResult?.files.length) {
           saveSessionAttachments(
+            tenantId,
             String(event.sessionId),
             toAttachmentMeta(downloadResult.files),
           ).catch((err) => console.warn(`${tag()} 첨부 메타 저장 실패:`, err));

@@ -1,7 +1,8 @@
 import fs from 'fs/promises';
-import os from 'os';
+import type { Dirent } from 'fs';
 import path from 'path';
 import { FireHubApiClient } from '../mcp/api-client.js';
+import { attachmentsDir, legacyAttachmentsDir } from './tenant-paths.js';
 
 export interface DownloadedFile {
   fileId: number;
@@ -109,68 +110,104 @@ export function toAttachmentMeta(files: DownloadedFile[]): AttachmentMeta[] {
   }));
 }
 
-/** 세션별 첨부 메타데이터 사이드카 파일 경로 */
-const ATTACHMENTS_DIR = path.join(os.homedir(), '.firehub', 'session-attachments');
-
 /** 사이드카 파일 TTL: 7일 이상 된 파일은 만료로 간주 */
 const SIDECAR_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-function attachmentPath(sessionId: string): string {
-  return path.join(ATTACHMENTS_DIR, `${sessionId}.json`);
+function attachmentPath(tenantId: number, sessionId: string): string {
+  return path.join(attachmentsDir(tenantId), `${sessionId}.json`);
 }
 
 /**
  * 만료된 사이드카 파일 일괄 삭제.
  * TTL(7일)을 초과한 *.json 파일을 비동기로 제거한다.
  * saveSessionAttachments 호출 시 백그라운드에서 실행되어 디스크 누수를 방지한다.
+ *
+ * <p><b>왜 전 테넌트를 도는가.</b> 이 함수는 호출한 테넌트의 저장 직후에 불리는데, 자기 테넌트만
+ * 훑으면 요청이 오지 않는 테넌트의 만료 사이드카는 영구히 남는다(TTL 자체가 무력화된다). TTL
+ * 정리는 파일 나이만 보는 순수 파일시스템 작업이라 테넌트 의미가 필요 없으므로, 베이스
+ * 디렉터리의 `t*` 하위와 **테넌트 세그먼트 도입 전에 루트에 흩어진 레거시 파일**을 함께 훑는다.
  */
 export async function purgeExpiredSessionAttachments(): Promise<void> {
-  let entries: string[];
+  const base = legacyAttachmentsDir();
+  let entries: Dirent[];
   try {
-    entries = await fs.readdir(ATTACHMENTS_DIR);
+    entries = await fs.readdir(base, { withFileTypes: true });
   } catch {
     // 디렉터리가 없으면 정리 불필요
     return;
   }
+
+  // 베이스에 바로 놓인 파일 = 테넌트 세그먼트 도입 전 레거시 사이드카. 하위 디렉터리 = 테넌트별.
+  // 베이스의 목록은 위에서 이미 받았으므로 다시 readdir 하지 않는다.
+  const groups: Array<{ dir: string; names: string[] }> = [
+    { dir: base, names: entries.filter((e) => e.isFile()).map((e) => e.name) },
+  ];
+  for (const entry of entries.filter((e) => e.isDirectory())) {
+    const dir = path.join(base, entry.name);
+    try {
+      groups.push({ dir, names: await fs.readdir(dir) });
+    } catch {
+      // 한 테넌트 디렉터리를 못 읽어도 나머지 정리는 계속한다.
+    }
+  }
+
   const now = Date.now();
   await Promise.allSettled(
-    entries
-      .filter((name) => name.endsWith('.json'))
-      .map(async (name) => {
-        const filePath = path.join(ATTACHMENTS_DIR, name);
-        try {
-          const stat = await fs.stat(filePath);
-          if (now - stat.mtimeMs > SIDECAR_TTL_MS) {
-            await fs.unlink(filePath);
+    groups.flatMap(({ dir, names }) =>
+      names
+        .filter((name) => name.endsWith('.json'))
+        .map(async (name) => {
+          const filePath = path.join(dir, name);
+          try {
+            const stat = await fs.stat(filePath);
+            if (now - stat.mtimeMs > SIDECAR_TTL_MS) {
+              await fs.unlink(filePath);
+            }
+          } catch {
+            // 개별 파일 실패는 무시 (이미 삭제된 경우 등)
           }
-        } catch {
-          // 개별 파일 실패는 무시 (이미 삭제된 경우 등)
-        }
-      }),
+        }),
+    ),
   );
 }
 
 /** 세션에 연결된 첨부 파일 메타데이터를 사이드카 파일로 저장 */
 export async function saveSessionAttachments(
+  tenantId: number,
   sessionId: string,
   attachments: AttachmentMeta[],
 ): Promise<void> {
   if (attachments.length === 0) return;
-  await fs.mkdir(ATTACHMENTS_DIR, { recursive: true });
+  await fs.mkdir(attachmentsDir(tenantId), { recursive: true });
   // 기존 첨부에 추가 (멀티턴 대응)
-  const existing = await loadSessionAttachments(sessionId);
+  const existing = await loadSessionAttachments(tenantId, sessionId);
   const merged = [...existing, ...attachments];
-  await fs.writeFile(attachmentPath(sessionId), JSON.stringify(merged));
+  await fs.writeFile(attachmentPath(tenantId, sessionId), JSON.stringify(merged));
   // 만료된 사이드카 파일 백그라운드 정리 (디스크 누수 방지)
   purgeExpiredSessionAttachments().catch(() => {});
 }
 
-/** 세션의 첨부 파일 메타데이터 로드 (없으면 빈 배열) */
-export async function loadSessionAttachments(sessionId: string): Promise<AttachmentMeta[]> {
-  try {
-    const data = await fs.readFile(attachmentPath(sessionId), 'utf-8');
-    return JSON.parse(data) as AttachmentMeta[];
-  } catch {
-    return [];
+/**
+ * 세션의 첨부 파일 메타데이터 로드 (없으면 빈 배열).
+ *
+ * <p>테넌트 경로에 없으면 세그먼트 도입 전 레거시 경로를 한 번 더 본다 — 과거 세션의 첨부 표시가
+ * 조용히 사라지지 않게 하기 위한 읽기 전용 폴백이다(쓰기는 항상 테넌트 경로로만 간다).
+ */
+export async function loadSessionAttachments(
+  tenantId: number,
+  sessionId: string,
+): Promise<AttachmentMeta[]> {
+  const candidates = [
+    attachmentPath(tenantId, sessionId),
+    path.join(legacyAttachmentsDir(), `${sessionId}.json`),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const data = await fs.readFile(candidate, 'utf-8');
+      return JSON.parse(data) as AttachmentMeta[];
+    } catch {
+      continue;
+    }
   }
+  return [];
 }

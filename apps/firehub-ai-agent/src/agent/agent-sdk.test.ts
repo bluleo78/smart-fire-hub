@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, readdir, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { processMessage } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MAX_BUDGET_USD, COST_ALARM_TOKENS } from '../constants.js';
@@ -369,6 +372,7 @@ describe('executeAgent', () => {
     const events: unknown[] = [];
     for await (const event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-test-key',
     })) {
@@ -424,6 +428,7 @@ describe('executeAgent', () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const _event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-test-key',
     })) {
@@ -488,6 +493,7 @@ describe('executeAgent', () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const _event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-test-key',
     })) {
@@ -573,6 +579,7 @@ describe('executeAgent', () => {
     const events: { type: string; message?: unknown }[] = [];
     for await (const event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-test-key',
     })) {
@@ -627,6 +634,7 @@ describe('executeAgent', () => {
     const events: { type: string }[] = [];
     for await (const event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-test-key',
     })) {
@@ -646,6 +654,7 @@ describe('executeAgent', () => {
     const events: unknown[] = [];
     for await (const event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       // no apiKey
     })) {
@@ -685,6 +694,7 @@ describe('executeAgent', () => {
     const events: unknown[] = [];
     for await (const event of executeAgent({
       message: 'hi',
+      tenantId: 1,
       userId: 1,
       oauthToken: 'oat-1',
       apiKey: 'sk-should-be-dropped',
@@ -724,6 +734,7 @@ describe('executeAgent', () => {
 
     for await (const _event of executeAgent({
       message: 'hi',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-1',
     })) {
@@ -744,7 +755,7 @@ describe('executeAgent', () => {
     const { executeAgent } = await import('./agent-sdk.js');
 
     const events: unknown[] = [];
-    for await (const event of executeAgent({ message: 'hi', userId: 1 })) {
+    for await (const event of executeAgent({ message: 'hi', tenantId: 1, userId: 1 })) {
       events.push(event);
     }
 
@@ -759,7 +770,7 @@ describe('executeAgent', () => {
     }
     mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
     const { executeAgent } = await import('./agent-sdk.js');
-    for await (const _e of executeAgent({ message: 'hi', userId: 1, apiKey: 'sk-test' } as never)) {
+    for await (const _e of executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-test' } as never)) {
       void _e;
     }
     const opts = (mockQuery.mock.calls[0][0] as { options: { maxBudgetUsd?: number } }).options;
@@ -779,7 +790,7 @@ describe('executeAgent', () => {
     mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
     const { executeAgent } = await import('./agent-sdk.js');
     const events: Array<{ type: string }> = [];
-    for await (const e of executeAgent({ message: 'hi', userId: 1, apiKey: 'sk-test' } as never)) {
+    for await (const e of executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-test' } as never)) {
       events.push(e as { type: string });
     }
     expect(events.filter((e) => e.type === 'cost_alarm')).toHaveLength(1);
@@ -797,7 +808,7 @@ describe('executeAgent', () => {
     mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
     const { executeAgent } = await import('./agent-sdk.js');
     const events: Array<{ type: string }> = [];
-    for await (const e of executeAgent({ message: 'hi', userId: 1, apiKey: 'sk-test' } as never)) {
+    for await (const e of executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-test' } as never)) {
       events.push(e as { type: string });
     }
     expect(events.filter((e) => e.type === 'cost_alarm')).toHaveLength(0);
@@ -871,6 +882,7 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
     const events: unknown[] = [];
     for await (const event of executeAgent({
       message: 'hello',
+      tenantId: 1,
       userId: 1,
       apiKey: 'sk-test',
     })) {
@@ -888,5 +900,72 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
     // 두 번째 인자는 { userPermissions: [] } 여야 한다
     const options = callArgs?.[1] as { userPermissions?: string[] } | undefined;
     expect(options?.userPermissions).toEqual([]);
+  });
+});
+
+/**
+ * SDK 경로가 세션 귀속 표식을 실제로 남기는지 확인한다.
+ *
+ * <p><b>왜 이 테스트가 따로 필요한가.</b> `session-owner.test.ts` 는 모듈을 직접 부르고
+ * `chat.test.ts` 는 판정 함수를 목으로 막는다 — 둘 다 "에이전트를 실행하면 표식이 생긴다" 는
+ * 배선은 검증하지 못한다. 그리고 표식이 정말 필요한 곳이 바로 이 경로다: CLI 는 cwd 가
+ * 테넌트별이라 프로젝트 디렉터리까지 갈리지만 SDK 는 cwd 를 지정하지 않아 모든 테넌트가 한
+ * 디렉터리를 공유하고, `agentType` 기본값이 `sdk` 다. 여기 배선이 빠지면 기본 경로에서만
+ * 심층방어가 통째로 사라진다.
+ */
+describe('executeAgent — 세션 귀속 표식 배선', () => {
+  let tempHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'firehub-agent-sdk-owner-'));
+    originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    await rm(tempHome, { recursive: true, force: true });
+  });
+
+  // AS-OWN-01: init 이벤트의 sessionId 가 요청 테넌트 디렉터리에 표식으로 남는다.
+  it('AS-OWN-01: writes the ownership marker under the requesting tenant', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const mockQuery = vi.mocked(query);
+
+    async function* fakeStream() {
+      yield { type: 'system', subtype: 'init', session_id: 'sdk-sess-1' };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sdk-sess-1',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+
+    const { executeAgent } = await import('./agent-sdk.js');
+    for await (const _e of executeAgent({
+      message: 'hi',
+      tenantId: 7,
+      userId: 1,
+      apiKey: 'sk-test',
+    })) {
+      // drain
+    }
+
+    // 표식은 실패해도 채팅을 죽이지 않는 fire-and-forget 이라 기록이 한 틱 늦을 수 있다.
+    await vi.waitFor(async () => {
+      const markers = await readdir(join(tempHome, '.firehub', 'session-owner', 't7'));
+      expect(markers).toContain('sdk-sess-1');
+    });
+    // 다른 테넌트 디렉터리에는 생기지 않아야 한다 — 생겼다면 테넌트 파생이 틀린 것이다.
+    await expect(readdir(join(tempHome, '.firehub', 'session-owner', 't1'))).rejects.toThrow();
   });
 });

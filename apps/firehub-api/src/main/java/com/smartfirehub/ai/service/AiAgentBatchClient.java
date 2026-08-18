@@ -1,5 +1,6 @@
 package com.smartfirehub.ai.service;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.util.Map;
@@ -71,6 +72,8 @@ public class AiAgentBatchClient {
                 Map.of(
                     "sessionId", agentSessionId,
                     "userId", userId,
+                    // ai-agent 의 경로 파생 입력 — 없으면 400 이다(전역 경로 폴백을 두지 않는다).
+                    "tenantId", TenantContext.require("AI 배치 챗"),
                     "message", text,
                     "stream", false))
             .retrieve()
