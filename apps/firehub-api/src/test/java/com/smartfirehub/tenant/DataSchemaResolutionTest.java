@@ -92,8 +92,16 @@ class DataSchemaResolutionTest {
    * 거짓 양성이 된다. 또한 <b>주석·Javadoc 은 제외</b>한다({@link #stripComments}): 산문이
    * {@code allowedSchema="data"} 처럼 스키마명을 <i>인용</i>하는 곳이 5곳 있고, 산문은 개명 뒤
    * 틀린 문장이 될 뿐 동작 결함이 아니다.
+   *
+   * <p><b>P3-b2 T2 라운드 1 리뷰 NIT — {@code "data_t"} 를 추가했다.</b> 손조립 규칙 넷(
+   * {@link #HAND_ASSEMBLY_PATTERNS})은 전부 {@code + tenantId} 류의 <i>사용</i> 형태만 잡는다.
+   * 이름만 다른 상수 선언({@code private static final String SCHEMA_PREFIX = "data_t";})은
+   * 그 자체로는 아무 데도 안 걸린다 — 그 상수를 실제로 이어 붙이는 줄에서만 걸린다. 접두사
+   * <i>선언</i> 자체를 클론하는 것도 막으려면 맨몸 리터럴 목록에 {@code "data_t"} 를 추가해야
+   * 한다. 2026-08-18 실측: {@code src/main/java} 전체에서 {@code "data_t"} 리터럴은
+   * {@link DataSchema}{@code .java:37}(원본 선언) 단 한 곳뿐이라 핀 하나로 오탐 없이 막힌다.
    */
-  private static final List<String> FORBIDDEN_BARE_LITERALS = List.of("\"data\"", "'data'");
+  private static final List<String> FORBIDDEN_BARE_LITERALS = List.of("\"data\"", "'data'", "\"data_t\"");
 
   /**
    * 스키마명을 <b>손으로 조립</b>하는 형태를 잡는 정규식들.
@@ -181,6 +189,12 @@ class DataSchemaResolutionTest {
               1,
               "물리 스키마명의 유일한 선언 지점 — P3-b2 가 테넌트 1(레거시)에 고정한 그 한 줄"),
           new PinnedSite(
+              ALLOWED_FILE,
+              "TENANT_SCHEMA_PREFIX = \"data_t\"",
+              1,
+              "신규 테넌트 스키마 접두사의 유일한 선언 지점(P3-b2 T2 라운드 1 NIT) — 이름만 바꾼"
+                  + " 클론 상수 선언을 이 핀 밖에서 잡는다"),
+          new PinnedSite(
               "com/smartfirehub/embedding/OpenAiEmbeddingProvider.java",
               "resp.get(\"data\")",
               1,
@@ -232,7 +246,8 @@ class DataSchemaResolutionTest {
               "파이프라인 SQL 실행 직전 search_path — 위와 같은 이유(식별자 목록)로 조립이 맞다"));
 
   /**
-   * 카탈로그로 테넌트 스키마를 <b>열거</b>하는 코드를 잡는다(P3-b2 T2, 신설).
+   * 카탈로그로 테넌트 스키마를 <b>열거</b>하는 코드를 잡는다(P3-b2 T2, 신설. 라운드 1 리뷰로
+   * 토큰 경계·스캔 범위 개정).
    *
    * <p><b>왜 nit 이 아니라 진짜 결함 방지인가.</b> 테넌트 1 의 물리 스키마는 {@code data} 라서
    * {@code data_t[0-9]+} 어떤 패턴에도 안 걸린다. "전 테넌트 스키마 순회"를 의도한 코드가
@@ -241,19 +256,43 @@ class DataSchemaResolutionTest {
    * 테이블이 전부 들어 있는 바로 그 스키마를 조용히 빼먹는다. 정상적으로 만들어진 목록에서
    * 우연히 하나가 빠지는 게 아니라, 필터 자체가 처음부터 그 스키마를 배제하도록 짜여 있다.
    *
+   * <p><b>이 가드가 실제로 잡는 것 — 과장하지도 축소하지도 않는다(라운드 1 리뷰 지적).</b>
+   * 잡는 것: {@code information_schema.schemata}/{@code pg_namespace} 와 {@code data_t}
+   * 패턴(이스케이프된 밑줄 {@code data\_t} 포함, {@code data_type} 같은 무관한 식별자는 제외 —
+   * 아래 {@link #countCatalogEnumerations} 참조)이 <b>같은 문장(세미콜론으로 구분한 단위) 안</b>
+   * 에 함께 있는 코드. 못 잡는 것: {@code LIKE 'data%'} 처럼 {@code data_t} 라고 철자하지 않은
+   * 다른 형태의 열거(여전히 테넌트 1 을 못 찾는 것은 같지만, 이 가드는 {@code data_t} 패턴
+   * <i>철자</i>만 검사한다), {@code nspname <> 'public'} 같은 배제 조건, 그리고 세미콜론이
+   * 문자열 리터럴 안에 있어 문장 경계 분리 자체가 어긋나는 극히 드문 경우(이 경우는 <b>놓치는</b>
+   * 방향으로만 실패한다 — 오탐이 아니라 미탐이 늘어난다).
+   *
    * <p><b>덤 — {@code LIKE} 의 {@code _} 는 단일 문자 와일드카드다.</b> {@code LIKE 'data_t%'}
    * 는 {@code dataXt...} 도 잡는다. 진짜로 카탈로그를 훑어야 한다면 이스케이프({@code LIKE
-   * 'data\_t%'})하거나 정규식({@code ~ '^data_t[0-9]+$'})을 써야 한다. 이 가드는 그 실수 여부를
-   * 검사하지 않는다 — 애초에 카탈로그 열거 자체를 막아 그 실수가 나올 자리를 없앤다.
+   * 'data\_t%'})하거나 정규식({@code ~ '^data_t[0-9]+$'})을 써야 한다. 이 가드는 <b>철자 형태와
+   * 무관하게</b> 카탈로그+{@code data_t} 조합 자체를 막으므로, 이스케이프를 옳게 했는지는 따로
+   * 검사하지 않아도 된다 — 옳게 했어도 걸린다({@link #countCatalogEnumerations} 가 이스케이프된
+   * 밑줄을 정규화해서 본다).
    *
-   * <p>스캔은 <b>같은 줄</b>에서 두 토큰이 함께 나타나는지를 본다({@link #findExcessViolations}
-   * 와 같은 줄 단위 예산 구조를 그대로 재사용하기 위해서다). 오늘 프로덕션 소스의
-   * {@code pg_namespace} 사용(예: {@code TenantSchemaProvisioner.schemaExists},
-   * {@code hasCompleteDefaultPrivileges})은 전부 {@code nspname = ?} 형태의 단건 파라미터
-   * 조회이고 {@code data_t} 패턴과 같은 줄에 있지 않으므로 이 규칙에 걸리지 않는다(2026-08-18
-   * 실측 0건) — 핀이 필요 없다. {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않으므로
-   * 핀 목록이 비어 있다(빈 리스트 자체가 "오늘은 예외가 없다"는 정확한 상태다 — 억지로 자리만
-   * 차지하는 핀을 만들지 않는다).
+   * <p><b>스캔 범위 — 같은 줄이 아니라 같은 문장(라운드 1 리뷰로 개정).</b> 이 리포의 지배적
+   * SQL 조립 스타일은 줄머리 {@code + "} 다줄 연결이다(2026-08-18 리뷰 실측: {@code src/main/java}
+   * 35개 파일, 텍스트 블록은 프로덕션에 0개). "같은 줄" 기준이면 이 스타일에 정면으로 무력화되고,
+   * 하필 이 밴드가 방금 쓴 {@code TenantSchemaProvisioner.hasCompleteDefaultPrivileges} 자신이
+   * {@code pg_namespace} 를 그 스타일로 쓴다 — 20줄 옆에서. 그래서 스캔 단위를 세미콜론으로 나눈
+   * <b>문장</b>으로 넓히고, 문장 안에서 인접한 문자열 리터럴 연결({@code "..." + "..."})을
+   * {@link #foldStringConcatenation} 으로 접어 한 덩어리로 본다 — 다줄로 쪼개 적어도 조립된
+   * 결과 텍스트는 하나로 붙어 있다고 보는 것이다. 다른 두 규칙(맨몸 리터럴·손조립)은 건드리지
+   * 않는다 — 그쪽은 이미 줄 단위로도 실제 우회를 잡고 있고, 예산 인프라({@link
+   * #findExcessViolations})를 이 규칙 때문에 문장 단위로 바꾸면 두 규칙의 리포팅(정확한 줄
+   * 번호)이 부정확해진다. 이 규칙은 핀 목록이 비어 있어 그 인프라를 아예 안 쓰므로 독립적으로
+   * 넓힐 수 있었다.
+   *
+   * <p>오늘 프로덕션 소스의 {@code pg_namespace} 사용(예: {@code TenantSchemaProvisioner.
+   * schemaExists}, {@code hasCompleteDefaultPrivileges}, {@code AnalyticsQueryExecutionService}
+   * 의 {@code pg_class}+{@code pg_namespace} 인트로스펙션)은 전부 {@code data_t} 패턴을 참조하지
+   * 않으므로 이 규칙에 걸리지 않는다(2026-08-18 재실측 0건, 문장 단위 스캔으로도 동일) — 핀이
+   * 필요 없다. {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않으므로 핀 목록이 비어
+   * 있다(빈 리스트 자체가 "오늘은 예외가 없다"는 정확한 상태다 — 억지로 자리만 차지하는 핀을
+   * 만들지 않는다).
    */
   private static final List<String> CATALOG_ENUMERATION_TOKENS =
       List.of("information_schema.schemata", "pg_namespace");
@@ -387,9 +426,24 @@ class DataSchemaResolutionTest {
   @Test
   @DisplayName("규약 가드 — 카탈로그(pg_namespace/information_schema.schemata)로 data_t 패턴을 열거하는 코드가 없다")
   void noProductionSourceEnumeratesTenantSchemasViaCatalog() {
-    List<String> offenders =
-        findExcessViolations(
-            CATALOG_ENUMERATION_PINS, DataSchemaResolutionTest::countCatalogEnumerations);
+    // 이 규칙은 findExcessViolations(줄 단위 예산 인프라)를 쓰지 않는다 — 핀 목록이 항상
+    // 비어 있어(CATALOG_ENUMERATION_PINS) 예산이 필요 없고, 문장(세미콜론) 단위로 스캔 범위를
+    // 넓히는 데 그 인프라를 건드릴 이유가 없다(클래스 Javadoc 참조).
+    List<String> offenders = new java.util.ArrayList<>();
+    for (Path path : productionJavaFiles()) {
+      String relative = relativePath(path);
+      String stripped = stripComments(decodeUnicodeEscapes(read(path)));
+      // 문 단위로 나눠 각 문 안에서만 문자열 연결을 접는다 — 파일 전체를 하나로 접으면 서로
+      // 무관한 두 문장(예: 한 곳의 pg_namespace 조회와 다른 곳의 data_type 언급)이 우연히 같은
+      // 파일에 있다는 이유만으로 오탐이 난다. 세미콜론이 문자열 리터럴 안에 있으면 이 분리가
+      // 어긋나지만, 그 실패 방향은 "일부를 놓친다" 쪽이라 안전하다(클래스 Javadoc 참조).
+      for (String statement : stripped.split(";")) {
+        if (countCatalogEnumerations(foldStringConcatenation(statement)) > 0) {
+          offenders.add(relative + ": " + statement.strip().replaceAll("\\s+", " "));
+          break; // 파일당 한 번만 보고하면 충분하다
+        }
+      }
+    }
 
     assertThat(offenders)
         .as(
@@ -496,15 +550,50 @@ class DataSchemaResolutionTest {
   }
 
   /**
-   * 한 줄 안에 카탈로그 토큰({@link #CATALOG_ENUMERATION_TOKENS})과 {@code data_t} 패턴이
-   * <b>함께</b> 나타나면 1, 아니면 0. 둘 다 있어야 "카탈로그로 data_t 패턴을 열거"하는 형태가
-   * 되므로 존재 개수가 아니라 동시 출현 여부를 센다 — 카탈로그 토큰만 있는 정상적인 단건 조회
-   * ({@code nspname = ?})는 이 규칙의 대상이 아니다.
+   * 텍스트 조각(문장 또는 그 안의 접은 문자열) 안에 카탈로그 토큰({@link
+   * #CATALOG_ENUMERATION_TOKENS})과 {@code data_t} 패턴이 <b>함께</b> 나타나면 1, 아니면 0.
+   * 둘 다 있어야 "카탈로그로 data_t 패턴을 열거"하는 형태가 되므로 존재 개수가 아니라 동시
+   * 출현 여부를 센다 — 카탈로그 토큰만 있는 정상적인 단건 조회({@code nspname = ?})는 이
+   * 규칙의 대상이 아니다.
+   *
+   * <p><b>{@code data_t} 판정을 정규식으로 바꿨다(라운드 1 리뷰 BLOCKER).</b> 단순
+   * {@code contains("data_t")} 는 양방향으로 어긋났다:
+   *
+   * <ul>
+   *   <li><b>놓친다</b>: 이스케이프를 옳게 한 {@code LIKE 'data\_t%'} 는 소스에 {@code
+   *       data\\_t}(백슬래시 포함)로 적혀 {@code data_t} 부분문자열이 없다 — 그런데 이스케이프를
+   *       옳게 해도 열거는 여전히 구조적으로 틀리다. 그래서 백슬래시를 먼저 지워 정규화한다
+   *       (raw 소스의 {@code \\} 든 {@code \}) 든 전부 지운다 — 이 규칙의 목적상 이스케이프
+   *       여부는 무관하다).
+   *   <li><b>과잉으로 잡는다</b>: {@code data_t} 는 {@code data_type} 의 부분문자열이다.
+   *       프로덕션에 {@code data_type} 이 여럿 있다({@code DataTableRowService},
+   *       {@code AnalyticsQueryExecutionService}, {@code OntologyRepository}). 그래서
+   *       {@code data_t} 뒤에 알파벳이 오면(={@code data_type} 처럼 진짜 단어의 일부이면)
+   *       제외한다({@code (?![a-zA-Z])}) — 뒤에 숫자나 SQL 와일드카드({@code %}, {@code '})가
+   *       오는 진짜 테넌트 패턴({@code data_t2}, {@code data_t%})은 그대로 잡힌다.
+   * </ul>
    */
-  private static int countCatalogEnumerations(String line) {
-    boolean hasCatalogToken = CATALOG_ENUMERATION_TOKENS.stream().anyMatch(line::contains);
-    boolean hasTenantSchemaPattern = line.contains("data_t");
+  private static final Pattern TENANT_SCHEMA_PATTERN_TOKEN = Pattern.compile("data_t(?![a-zA-Z])");
+
+  private static int countCatalogEnumerations(String text) {
+    boolean hasCatalogToken = CATALOG_ENUMERATION_TOKENS.stream().anyMatch(text::contains);
+    // 이스케이프된 밑줄(단일 \ 또는 자바 소스상의 \\)을 지워, 이스케이프 여부와 무관하게 같은
+    // 패턴으로 본다.
+    String withoutBackslashes = text.replace("\\", "");
+    boolean hasTenantSchemaPattern = TENANT_SCHEMA_PATTERN_TOKEN.matcher(withoutBackslashes).find();
     return (hasCatalogToken && hasTenantSchemaPattern) ? 1 : 0;
+  }
+
+  /**
+   * 인접한 문자열 리터럴 연결({@code "..." + "..."})을 하나로 접는다 — 카탈로그 규칙 전용
+   * 정규화다(라운드 1 리뷰). 이 리포의 지배적 SQL 스타일이 줄머리 {@code + "} 다줄 연결이라,
+   * 문장을 통째로 넘겨도 리터럴이 여러 조각으로 쪼개져 있으면 {@code data_t} 패턴이 카탈로그
+   * 토큰과 다른 리터럴 조각에 나뉘어 있을 수 있다. 닫는 따옴표–공백(개행 포함)–{@code +}–공백–
+   * 여는 따옴표 형태를 통째로 지우면, 조립된 결과 텍스트가 실제로 실행될 SQL 과 같은 순서로
+   * 하나로 이어진다.
+   */
+  private static String foldStringConcatenation(String statement) {
+    return statement.replaceAll("\"\\s*\\+\\s*\"", "");
   }
 
   /** 한 줄 안의 손 조립 개수. {@code \"} 를 먼저 푸는 이유는 원문의 {@code %s.\"} 를 같게 보기 위해서다. */
