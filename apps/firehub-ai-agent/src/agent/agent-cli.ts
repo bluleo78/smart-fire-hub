@@ -18,7 +18,12 @@ import { totalInputTokens, type TokenUsageLike } from './token-usage.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
-import { legacyTranscriptDir, transcriptDir, workspaceDir } from './tenant-paths.js';
+import {
+  isSafeSessionId,
+  legacyTranscriptDir,
+  transcriptDir,
+  workspaceDir,
+} from './tenant-paths.js';
 import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
@@ -33,16 +38,17 @@ import {
 import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
 
-/** CLI 트랜스크립트 파일 형식 */
+/**
+ * CLI·OpenCode 공용 트랜스크립트 파일 형식.
+ *
+ * <p>하위 에이전트 세션 id 는 경로별로 다르지만(claude / opencode) **같은 봉투**에 담긴다 —
+ * `/agent/history` 가 두 경로의 파일을 같은 코드로 읽는 계약이라 형식을 갈라 두면 안 된다.
+ * 예전에는 OpenCode 필드가 이 타입에 없어 호출부가 같은 값을 두 번 캐스트했다.
+ */
 export interface CliTranscript {
   claudeSessionId?: string;
+  opencodeSessionId?: string;
   messages: HistoryMessage[];
-}
-
-const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
-
-export function getTranscriptDir(tenantId: number): string {
-  return transcriptDir(tenantId);
 }
 
 /**
@@ -50,7 +56,7 @@ export function getTranscriptDir(tenantId: number): string {
  * 오므로 경로 이탈(`../`)을 여기서 막고, `tenantId` 는 {@link transcriptDir} 가 fail-closed 로 막는다.
  */
 export function getTranscriptPath(tenantId: number, sessionId: string): string {
-  if (!SAFE_SESSION_ID.test(sessionId)) {
+  if (!isSafeSessionId(sessionId)) {
     throw new Error(`Invalid sessionId: ${sessionId}`);
   }
   return join(transcriptDir(tenantId), `${sessionId}.json`);
@@ -87,14 +93,38 @@ export async function readCliTranscript(
     { path: join(legacyTranscriptDir(), `${sessionId}.json`), fromLegacy: true },
   ];
   for (const candidate of candidates) {
+    let parsed: unknown;
     try {
-      const transcript = JSON.parse(await readFile(candidate.path, 'utf-8')) as CliTranscript;
-      return { transcript, fromLegacy: candidate.fromLegacy };
+      parsed = JSON.parse(await readFile(candidate.path, 'utf-8'));
     } catch {
       continue;
     }
+    // 아주 옛 파일은 봉투 없이 메시지 배열만 저장돼 있다. **여기서** 정규화한다 — 소비자마다
+    // 하면 아는 쪽만 처리하고 모르는 쪽은 `messages` 가 undefined 가 된다(재개 경로가 그랬다).
+    const transcript: CliTranscript = Array.isArray(parsed)
+      ? { messages: parsed as HistoryMessage[] }
+      : (parsed as CliTranscript);
+    return { transcript, fromLegacy: candidate.fromLegacy };
   }
   return null;
+}
+
+/**
+ * 트랜스크립트를 테넌트 경로에 저장한다(디렉터리 생성 포함).
+ *
+ * <p>CLI 와 OpenCode 가 **같은 봉투·같은 경로**로 써야 `/agent/history` 가 한 코드로 읽는다 —
+ * 그 계약을 지키는 코드가 두 곳에 흩어져 있으면 P5 가 새로 추가한 세 번째 불변식(테넌트
+ * 세그먼트)처럼 양쪽을 손으로 맞춰야 한다. 저장할지 말지(첫 턴 스킵 등)는 호출부 정책이라
+ * 여기서 판단하지 않는다.
+ */
+export async function writeCliTranscript(
+  tenantId: number,
+  sessionId: string,
+  envelope: CliTranscript,
+): Promise<void> {
+  const path = getTranscriptPath(tenantId, sessionId);
+  await mkdir(transcriptDir(tenantId), { recursive: true });
+  await writeFile(path, JSON.stringify(envelope));
 }
 
 
@@ -181,7 +211,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const sessionId = options.sessionId ?? `cli-${randomUUID()}`;
   yield { type: 'init', sessionId };
   // 세션 귀속 표식 — /agent/history 심층방어 게이트가 읽는다(session-owner.ts 참조).
-  await claimSession(tenantId, sessionId);
+  // `await` 하지 않는다: 표식은 best-effort 심층방어라 실패해도 채팅을 죽이지 않기로 했는데,
+  // 기다리면 그 파일 작업이 매 턴 응답 지연에 들어간다(SDK 경로와 동일한 처리).
+  void claimSession(tenantId, sessionId);
 
   // 첨부 파일 다운로드 및 메시지 변환
   let enhancedMessage = message || '';
@@ -225,7 +257,11 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     }
   }
 
-  const transcriptPath = getTranscriptPath(tenantId, sessionId);
+  // 진입 시점에 세션 id 를 검증한다 — 경로 조립(쓰기/읽기)까지 미루면 요청 처리를 한참
+  // 진행한 뒤에 터진다. 경로 자체는 읽기·쓰기 헬퍼가 각자 만든다.
+  if (!isSafeSessionId(sessionId)) {
+    throw new Error(`Invalid sessionId: ${sessionId}`);
+  }
 
   let saved: CliTranscript = { messages: [] };
   if (isResume) {
@@ -290,8 +326,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const saveTranscript = async () => {
     commitAssistant();
     if (transcript.length <= 1) return;
-    await mkdir(getTranscriptDir(tenantId), { recursive: true });
-    await writeFile(transcriptPath, JSON.stringify({ claudeSessionId, messages: transcript }));
+    await writeCliTranscript(tenantId, sessionId, { claudeSessionId, messages: transcript });
   };
 
   // 환경변수(API_BASE_URL, INTERNAL_SERVICE_TOKEN) 변경 시에도 최신 상태 유지

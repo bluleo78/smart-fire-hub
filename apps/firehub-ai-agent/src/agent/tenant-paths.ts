@@ -21,6 +21,40 @@ function firehubRoot(): string {
 }
 
 /**
+ * 산출물 종류(카테고리)의 루트. 테넌트 경로와 레거시 경로가 **같은 카테고리 문자열**을
+ * 공유하도록 한 곳으로 모은다 — 따로 적어 두면 카테고리 이름을 바꿀 때 한쪽만 고쳐도
+ * 컴파일러가 못 잡고(디스크 I/O 라) 레거시 폴백이 조용히 엉뚱한 디렉터리를 보게 된다.
+ */
+function categoryRoot(category: string): string {
+  return join(firehubRoot(), category);
+}
+
+/**
+ * 경로 세그먼트로 쓸 수 있는 테넌트인지 판정한다. **경로 판정의 유일한 권위**다.
+ *
+ * <p>라우트의 400 가드가 이 술어를 재사용해야 한다 — 라우트가 더 느슨하면 나쁜 값이 통과해
+ * {@link tenantSegment} 에서 나중에 터지고(챗은 SSE 헤더가 나간 뒤라 400 이 불가능하다),
+ * 더 엄격하면 멀쩡한 요청을 막는다. 술어를 복제하고 주석으로 "같은 강도로 맞춰라" 라고 적는
+ * 방식은 이미 한 번 어긋났다(코드리뷰 지적).
+ *
+ * <p>타입 가드로 둔 덕에 호출부는 `typeof` 를 따로 쓰지 않아도 `number` 로 좁혀진다.
+ */
+export function isValidTenantId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+/**
+ * 경로 세그먼트·표식 파일명으로 쓸 수 있는 세션 id 인지 판정한다.
+ *
+ * <p>여기 두는 이유: 이 규칙은 **경로 조립 입력 검증**(경로 이탈 `../` 차단)이라 경로 파생과
+ * 같은 경계에 있다. 예전에는 `agent-cli.ts` 와 `session-owner.ts` 가 같은 정규식을 각자
+ * 정의했는데, 보안 경계 값이 두 벌이면 한쪽만 완화됐을 때 두 모듈의 "안전한 id" 기준이 갈린다.
+ */
+export function isSafeSessionId(sessionId: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
+}
+
+/**
  * 경로에 넣을 테넌트 세그먼트를 만든다.
  *
  * <p><b>fail-closed</b>: 테넌트가 없거나 정수 양수가 아니면 전역 경로로 폴백하지 않고 던진다.
@@ -28,7 +62,7 @@ function firehubRoot(): string {
  * 되는데, 그건 이 모듈이 막으려는 상태 그 자체다 — 조용한 공유보다 시끄러운 실패가 낫다.
  */
 export function tenantSegment(tenantId: unknown): string {
-  if (typeof tenantId !== 'number' || !Number.isInteger(tenantId) || tenantId <= 0) {
+  if (!isValidTenantId(tenantId)) {
     throw new Error(
       `테넌트가 없어 경로를 만들 수 없다(전역 경로 폴백 금지): tenantId=${String(tenantId)}`,
     );
@@ -38,22 +72,22 @@ export function tenantSegment(tenantId: unknown): string {
 
 /** claude CLI 의 cwd 로 쓰이는 사용자 작업 디렉터리. */
 export function workspaceDir(tenantId: number, userId: number): string {
-  return join(firehubRoot(), 'workspaces', tenantSegment(tenantId), String(userId));
+  return join(categoryRoot('workspaces'), tenantSegment(tenantId), String(userId));
 }
 
 /** OpenCode 경로 전용 작업 디렉터리(CLI 와 별도 트리로 유지된 기존 관례를 그대로 둔다). */
 export function opencodeWorkspaceDir(tenantId: number, userId: number): string {
-  return join(firehubRoot(), 'workspaces-opencode', tenantSegment(tenantId), String(userId));
+  return join(categoryRoot('workspaces-opencode'), tenantSegment(tenantId), String(userId));
 }
 
 /** CLI 트랜스크립트(JSON) 디렉터리. */
 export function transcriptDir(tenantId: number): string {
-  return join(firehubRoot(), 'transcripts', tenantSegment(tenantId));
+  return join(legacyTranscriptDir(), tenantSegment(tenantId));
 }
 
 /** 세션 첨부 메타데이터 사이드카 디렉터리. */
 export function attachmentsDir(tenantId: number): string {
-  return join(firehubRoot(), 'session-attachments', tenantSegment(tenantId));
+  return join(legacyAttachmentsDir(), tenantSegment(tenantId));
 }
 
 /**
@@ -66,12 +100,12 @@ export function attachmentsDir(tenantId: number): string {
  * 그 파일의 귀속으로 취급해도 된다.
  */
 export function legacyTranscriptDir(): string {
-  return join(firehubRoot(), 'transcripts');
+  return categoryRoot('transcripts');
 }
 
 /** 테넌트 세그먼트가 없던 시절의 첨부 사이드카 디렉터리. 읽기 폴백 전용. */
 export function legacyAttachmentsDir(): string {
-  return join(firehubRoot(), 'session-attachments');
+  return categoryRoot('session-attachments');
 }
 
 /**

@@ -1,35 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'fs/promises';
-import { tmpdir } from 'os';
+import { describe, it, expect } from 'vitest';
+import { mkdir, stat, utimes, writeFile } from 'fs/promises';
 import { join } from 'path';
+import { useTempHome } from './temp-home.fixture.js';
+import { claimSession, checkSessionOwnership } from './session-owner.js';
 
 /**
  * 표식 판정은 실제 디렉터리 구조를 읽는 동작이므로 `fs` 를 목으로 막지 않고 임시 HOME 을 만들어
  * 진짜 파일로 검증한다. 목으로 하면 "readdir 을 몇 번 부르는가" 를 고정하게 되어, 구현을 조금만
  * 바꿔도 깨지면서 정작 판정 결과는 검증하지 못한다.
+ *
+ * <p>`os.homedir()` 는 모듈 로드 시점이 아니라 호출 시점에 HOME 을 읽으므로 동적 재임포트가
+ * 필요 없다 — 평범한 정적 임포트로 충분하다.
  */
-let tempHome: string;
-let originalHome: string | undefined;
-let claimSession: typeof import('./session-owner.js').claimSession;
-let checkSessionOwnership: typeof import('./session-owner.js').checkSessionOwnership;
-
-beforeEach(async () => {
-  tempHome = await mkdtemp(join(tmpdir(), 'firehub-session-owner-'));
-  originalHome = process.env.HOME;
-  process.env.HOME = tempHome;
-  // os.homedir() 는 모듈 로드 시점이 아니라 호출 시점에 HOME 을 읽으므로 재임포트가 필요 없다.
-  const mod = await import('./session-owner.js');
-  claimSession = mod.claimSession;
-  checkSessionOwnership = mod.checkSessionOwnership;
-});
-
-afterEach(async () => {
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
-  await rm(tempHome, { recursive: true, force: true });
-});
-
 describe('session-owner', () => {
+  const home = useTempHome('firehub-session-owner');
   // SO-01: 자기 테넌트가 기록한 세션은 owned.
   it('SO-01: reports owned for a session claimed by the same tenant', async () => {
     await claimSession(5, 'sess-a');
@@ -89,7 +73,7 @@ describe('session-owner', () => {
   // SO-09: 어떤 경로로든 표식이 둘 이상 생겼다면 판정은 **순서와 무관하게** other-tenant 여야 한다.
   // 표식 파일을 직접 심어 claimSession 의 방어를 우회한 상태를 재현한다.
   it('SO-09: a multi-tenant marker resolves to other-tenant regardless of iteration order', async () => {
-    const root = join(tempHome, '.firehub', 'session-owner');
+    const root = join(home.path, '.firehub', 'session-owner');
     await mkdir(join(root, 't5'), { recursive: true });
     await mkdir(join(root, 't9'), { recursive: true });
     await writeFile(join(root, 't5', 'sess-dup'), '');
@@ -100,11 +84,27 @@ describe('session-owner', () => {
     expect(await checkSessionOwnership(9, 'sess-dup')).toBe('other-tenant');
   });
 
+  // SO-10: 이미 내 표식이 있으면 다시 쓰지 않는다(효율 지적). 매 턴 불리는 함수라 단락이 없으면
+  // 멀티턴 대화가 턴마다 전 테넌트 스캔 + 쓰기를 반복한다. 단락은 "아무 일도 안 함" 이라 직접
+  // 관측할 수 없으므로, 표식 파일의 mtime 을 과거로 밀어 두고 재호출 후에도 그대로인지로 본다.
+  it('SO-10: does not rewrite an existing marker for the same tenant', async () => {
+    await claimSession(5, 'sess-a');
+    const marker = join(home.path, '.firehub', 'session-owner', 't5', 'sess-a');
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+    await utimes(marker, past, past);
+    const before = (await stat(marker)).mtimeMs;
+
+    await claimSession(5, 'sess-a');
+
+    // 단락했다면 다시 쓰지 않으므로 mtime 이 유지된다. 다시 썼다면 현재 시각으로 갱신된다.
+    expect((await stat(marker)).mtimeMs).toBe(before);
+  });
+
   // SO-07: 표식 기록 실패는 채팅을 죽이지 않는다(심층방어이지 1차 게이트가 아니다).
   // 표식 루트 자리에 파일을 놓아 mkdir 을 실패시킨다.
   it('SO-07: never throws when the marker cannot be written', async () => {
-    await mkdir(join(tempHome, '.firehub'), { recursive: true });
-    await writeFile(join(tempHome, '.firehub', 'session-owner'), 'not a directory');
+    await mkdir(join(home.path, '.firehub'), { recursive: true });
+    await writeFile(join(home.path, '.firehub', 'session-owner'), 'not a directory');
 
     await expect(claimSession(5, 'sess-a')).resolves.toBeUndefined();
     // 판정도 던지지 않고 unknown 으로 떨어져 1차 게이트에 맡긴다.

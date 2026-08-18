@@ -113,6 +113,20 @@ export function toAttachmentMeta(files: DownloadedFile[]): AttachmentMeta[] {
 /** 사이드카 파일 TTL: 7일 이상 된 파일은 만료로 간주 */
 const SIDECAR_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * 스윕 최소 간격과 직전 실행 시각.
+ *
+ * <p>왜 필요한가: 스윕은 첨부가 붙은 **매 요청**마다(어느 테넌트든) 불리는데, 판정 기준인 7일
+ * TTL 은 몇 분 사이에 바뀌지 않는다. 간격 제한이 없으면 동시 트래픽만큼 전 테넌트 트리 순회가
+ * 겹쳐 돌며 순수 낭비 I/O 가 된다(테넌트 수에 비례해 커진다).
+ *
+ * <p>왜 {@link purgeExpiredSessionAttachments} 안이 아니라 호출부인가: 그 함수는 "시키면 훑는다"
+ * 로 남겨 두는 편이 테스트하기 쉽고(모듈 상태 리셋 훅이 필요 없다), "얼마나 자주 시킬지" 는
+ * 호출 정책이라 호출부에 두는 것이 맞다.
+ */
+const PURGE_MIN_INTERVAL_MS = 30 * 60 * 1000;
+let lastPurgeAt = 0;
+
 function attachmentPath(tenantId: number, sessionId: string): string {
   return path.join(attachmentsDir(tenantId), `${sessionId}.json`);
 }
@@ -183,8 +197,12 @@ export async function saveSessionAttachments(
   const existing = await loadSessionAttachments(tenantId, sessionId);
   const merged = [...existing, ...attachments];
   await fs.writeFile(attachmentPath(tenantId, sessionId), JSON.stringify(merged));
-  // 만료된 사이드카 파일 백그라운드 정리 (디스크 누수 방지)
-  purgeExpiredSessionAttachments().catch(() => {});
+  // 만료된 사이드카 파일 백그라운드 정리 (디스크 누수 방지). 간격 제한은 위 상수 주석 참조.
+  const now = Date.now();
+  if (now - lastPurgeAt >= PURGE_MIN_INTERVAL_MS) {
+    lastPurgeAt = now;
+    purgeExpiredSessionAttachments().catch(() => {});
+  }
 }
 
 /**

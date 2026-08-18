@@ -16,13 +16,8 @@ import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 // 트랜스크립트: CLI 와 동일 포맷/경로로 저장하면 history 엔드포인트가 그대로 읽는다.
-import {
-  getTranscriptDir,
-  getTranscriptPath,
-  readCliTranscript,
-  type CliTranscript,
-} from './agent-cli.js';
-import { opencodeWorkspaceDir } from './tenant-paths.js';
+import { readCliTranscript, writeCliTranscript, type CliTranscript } from './agent-cli.js';
+import { isSafeSessionId, opencodeWorkspaceDir } from './tenant-paths.js';
 import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 // 주: model/provider 는 배포 측 전역 opencode 설정 상속(옵션 3)이라 DEFAULT_MODEL 미사용.
@@ -210,19 +205,21 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   let opencodeSessionId: string | undefined;
 
   // 대화 이력: CLI 와 동일한 CliTranscript JSON 으로 저장 → history 엔드포인트가 그대로 읽음.
-  const transcriptPath = getTranscriptPath(tenantId, firehubSessionId);
+  // 진입 시점에 세션 id 를 검증한다 — 경로 조립(쓰기/읽기)까지 미루면 요청 처리를 한참
+  // 진행한 뒤에 터진다. 경로 자체는 읽기·쓰기 헬퍼가 각자 만든다.
+  if (!isSafeSessionId(firehubSessionId)) {
+    throw new Error(`Invalid sessionId: ${firehubSessionId}`);
+  }
   let saved: CliTranscript = { messages: [] };
   if (isResume) {
     // 레거시(테넌트 세그먼트 이전) 경로 폴백 포함 — CLI 와 같은 헬퍼를 쓴다.
     const loaded = await readCliTranscript(tenantId, firehubSessionId);
     if (loaded) {
-      saved = loaded.transcript as CliTranscript & { opencodeSessionId?: string };
+      saved = loaded.transcript;
       // 레거시에서 읽었으면 하위 에이전트 세션 id 는 버린다 — CLI 경로와 같은 이유다
       // (agent-cli.ts 의 fromLegacy 분기 주석 참조). 우리 트랜스크립트의 메시지는 유지되고,
       // opencode 쪽 대화만 새로 시작한다.
-      opencodeSessionId = loaded.fromLegacy
-        ? undefined
-        : (saved as { opencodeSessionId?: string }).opencodeSessionId;
+      opencodeSessionId = loaded.fromLegacy ? undefined : saved.opencodeSessionId;
     }
   }
   const transcript = saved.messages;
@@ -247,9 +244,8 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   const saveTranscript = async () => {
     commitAssistant();
     if (transcript.length <= 1) return;
-    await mkdir(getTranscriptDir(tenantId), { recursive: true });
     // opencodeSessionId 를 함께 저장해 재개 시 --session 에 활용
-    await writeFile(transcriptPath, JSON.stringify({ messages: transcript, opencodeSessionId }));
+    await writeCliTranscript(tenantId, firehubSessionId, { messages: transcript, opencodeSessionId });
   };
 
   // 사용자별 격리 작업 디렉토리 (소스 접근 차단, 세션 간 파일 유지)

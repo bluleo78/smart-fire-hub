@@ -6,6 +6,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
+import { isValidTenantId } from '../agent/tenant-paths.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -55,11 +56,10 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
   // 테넌트는 디스크 산출물 경로의 파생 입력이라 없으면 진행할 수 없다 — 전역 경로로 폴백하는
   // 대신 400 으로 거절한다(fail-closed). firehub-api 가 항상 실어 보낸다.
   //
-  // 판정은 `tenantSegment()` 와 **같은 강도**여야 한다(코드리뷰 지적). `!tenantId ||
-  // typeof !== 'number'` 만 보면 -1·1.5·Infinity 가 통과했다가 제너레이터가 돌기 시작한
-  // 뒤에야 tenantSegment 에서 터지는데, 그 시점엔 200 + SSE 헤더가 이미 나가 있어 클라이언트는
-  // 의도한 400 대신 밋밋한 error 이벤트를 본다.
-  if (typeof tenantId !== 'number' || !Number.isInteger(tenantId) || tenantId <= 0) {
+  // 판정은 경로 파생과 **같은 술어**를 쓴다(`isValidTenantId`) — 복제해 두면 여기가 더 느슨할 때
+  // 나쁜 값이 통과해 제너레이터가 돌기 시작한 뒤 tenantSegment 에서 터지고, 그 시점엔 200 + SSE
+  // 헤더가 이미 나가 있어 클라이언트는 의도한 400 대신 밋밋한 error 이벤트를 본다.
+  if (!isValidTenantId(tenantId)) {
     res.status(400).json({ error: 'tenantId is required and must be a positive integer' });
     return;
   }
@@ -172,7 +172,7 @@ router.get('/sessions', internalAuth, (_req: Request, res: Response) => {
 router.get('/history/:sessionId', internalAuth, async (req: Request, res: Response) => {
   const sessionId = req.params.sessionId as string;
   const tenantId = Number(req.query.tenantId);
-  if (!Number.isInteger(tenantId) || tenantId <= 0) {
+  if (!isValidTenantId(tenantId)) {
     res.status(400).json({ error: 'tenantId query parameter is required' });
     return;
   }

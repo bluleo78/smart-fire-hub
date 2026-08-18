@@ -20,6 +20,7 @@ import {
   cleanupChatFiles,
   toAttachmentMeta,
   purgeExpiredSessionAttachments,
+  saveSessionAttachments,
   formatAttachmentLine,
   buildNonImageAttachmentSection,
 } from './file-downloader.js';
@@ -402,5 +403,42 @@ describe('purgeExpiredSessionAttachments', () => {
 
     await expect(purgeExpiredSessionAttachments()).resolves.toBeUndefined();
     expect(fs.unlink).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 사이드카 스윕 호출 간격 제한 — 효율 지적 회귀 가드.
+ *
+ * <p>스윕은 첨부가 붙은 매 요청마다 불리는데 판정 기준인 7일 TTL 은 몇 분 사이에 바뀌지 않는다.
+ * 간격 제한이 없으면 동시 트래픽만큼 전 테넌트 트리 순회가 겹쳐 돈다. 간격 제한은 "아무 일도
+ * 안 함" 이라 직접 관측할 수 없으므로, 스윕의 진입 지점인 `readdir` 호출 횟수로 본다.
+ *
+ * <p>이 describe 는 **파일 마지막**에 있어야 한다 — 간격 제한이 모듈 수준 상태라, 앞선 저장이
+ * 이미 스윕을 소모했다면 첫 단언이 무의미해진다(첫 저장이 스윕을 돌린다는 것까지 여기서 본다).
+ */
+describe('saveSessionAttachments — 스윕 간격 제한', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (fs.mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // loadSessionAttachments 의 두 후보 읽기를 모두 실패시켜 빈 배열로 만든다.
+    (fs.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    (fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
+  const meta = [{ id: 1, name: 'a.csv', mimeType: 'text/csv', fileSize: 10, category: 'csv' }];
+
+  // FD-T01: 연속 저장에서 스윕은 한 번만 돈다.
+  it('FD-T01: sweeps on the first save and skips it on an immediately following save', async () => {
+    await saveSessionAttachments(3, 'sess-1', meta);
+    // 스윕은 fire-and-forget 이라 다음 틱에 readdir 이 걸린다.
+    await new Promise((resolve) => setImmediate(resolve));
+    const afterFirst = (fs.readdir as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(afterFirst).toBe(1);
+
+    await saveSessionAttachments(3, 'sess-2', meta);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect((fs.readdir as ReturnType<typeof vi.fn>).mock.calls.length).toBe(afterFirst);
   });
 });

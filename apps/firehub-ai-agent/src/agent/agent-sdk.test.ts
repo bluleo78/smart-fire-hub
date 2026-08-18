@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readdir, rm } from 'fs/promises';
-import { tmpdir } from 'os';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readdir } from 'fs/promises';
 import { join } from 'path';
+import { useTempHome } from './temp-home.fixture.js';
 import { processMessage } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MAX_BUDGET_USD, COST_ALARM_TOKENS } from '../constants.js';
@@ -914,20 +914,7 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
  * 심층방어가 통째로 사라진다.
  */
 describe('executeAgent — 세션 귀속 표식 배선', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
-
-  beforeEach(async () => {
-    tempHome = await mkdtemp(join(tmpdir(), 'firehub-agent-sdk-owner-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
-  });
-
-  afterEach(async () => {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    await rm(tempHome, { recursive: true, force: true });
-  });
+  const home = useTempHome('firehub-agent-sdk-owner');
 
   // AS-OWN-01: init 이벤트의 sessionId 가 요청 테넌트 디렉터리에 표식으로 남는다.
   it('AS-OWN-01: writes the ownership marker under the requesting tenant', async () => {
@@ -962,10 +949,10 @@ describe('executeAgent — 세션 귀속 표식 배선', () => {
 
     // 표식은 실패해도 채팅을 죽이지 않는 fire-and-forget 이라 기록이 한 틱 늦을 수 있다.
     await vi.waitFor(async () => {
-      const markers = await readdir(join(tempHome, '.firehub', 'session-owner', 't7'));
+      const markers = await readdir(join(home.path, '.firehub', 'session-owner', 't7'));
       expect(markers).toContain('sdk-sess-1');
     });
     // 다른 테넌트 디렉터리에는 생기지 않아야 한다 — 생겼다면 테넌트 파생이 틀린 것이다.
-    await expect(readdir(join(tempHome, '.firehub', 'session-owner', 't1'))).rejects.toThrow();
+    await expect(readdir(join(home.path, '.firehub', 'session-owner', 't1'))).rejects.toThrow();
   });
 });

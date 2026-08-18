@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import { ProviderFactory } from '../providers/index.js';
 import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { internalAuth } from '../middleware/auth.js';
-import { proactiveReportDir } from '../agent/tenant-paths.js';
+import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 
 const router = Router();
 
@@ -314,10 +314,10 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
 
   const model = body.model || 'claude-haiku-4-5';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
-  // 챗과 같은 이유로 fail-closed — 전역 경로 폴백을 두지 않는다. 판정 강도도 챗과 같이
-  // `tenantSegment()` 에 맞춘다(코드리뷰 지적) — 안 그러면 -1·1.5 가 통과해 400 대신 500 이 된다.
+  // 챗과 같은 이유로 fail-closed — 전역 경로 폴백을 두지 않는다. 판정은 경로 파생과 같은
+  // 술어를 쓴다(복제하면 여기가 느슨해져 400 대신 500 이 된다).
   const tenantId = body.tenantId;
-  if (typeof tenantId !== 'number' || !Number.isInteger(tenantId) || tenantId <= 0) {
+  if (!isValidTenantId(tenantId)) {
     res.status(400).json({ error: 'tenantId is required and must be a positive integer' });
     return;
   }

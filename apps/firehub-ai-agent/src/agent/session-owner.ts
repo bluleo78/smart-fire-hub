@@ -12,6 +12,14 @@
  * `~/.claude/projects/{cwd 파생}/{sessionId}.jsonl` 에 직접 쓰고 그 디렉터리엔 테넌트 개념이
  * 없다. 두 경로를 같은 규칙으로 게이팅하려면 우리가 소유하는 표식이 하나 필요하다.
  *
+ * <p><b>알려진 한계 — 이 표식은 컨테이너 로컬 디스크에만 산다.</b> 오늘 ai-agent 는 단일
+ * 인스턴스에 볼륨 마운트가 없어 동작하지만, 레플리카를 늘리거나 컨테이너를 재기동하면 표식이
+ * 공유되지 않아 판정이 조용히 `unknown` 으로 후퇴한다 — 기능은 죽지 않고 심층방어만 사라진다.
+ * 권위 있는 정보(`ai_session.tenant_id` + RLS)는 이미 firehub-api 의 DB 에 있으므로, 정공법은
+ * firehub-api 에 "세션-테넌트 일치 확인" 내부 엔드포인트를 두고 여기서 그걸 묻는 것이다(그러면
+ * 별도 저장소·무한 성장·인스턴스 간 불일치가 모두 사라진다). 이번 밴드에서는 범위를 이유로
+ * 파일 표식을 택했고, 이 문단이 그 부채의 기록이다.
+ *
  * <p><b>표식이 없는 세션은 거부하지 않는다.</b> 세그먼트 도입 전에 만들어진 세션은 표식이 없고,
  * 그것을 fail-closed 로 막으면 과거 이력이 전부 안 보이게 된다(기능 회귀). 표식이 **있는데
  * 다른 테넌트** 인 경우만 거부한다 — 이게 심층방어가 실제로 잡을 수 있는 유일한 사례이고,
@@ -20,9 +28,7 @@
 import { access, mkdir, readdir, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
-import { tenantSegment } from './tenant-paths.js';
-
-const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+import { isSafeSessionId, tenantSegment } from './tenant-paths.js';
 
 function ownerRoot(): string {
   return join(homedir(), '.firehub', 'session-owner');
@@ -36,8 +42,17 @@ function ownerRoot(): string {
  * 자체가 죽는 편이 더 나쁘다. 표식이 없으면 아래 판정이 "미지"로 떨어져 1차 게이트만 남는다.
  */
 export async function claimSession(tenantId: number, sessionId: string): Promise<void> {
-  if (!SAFE_SESSION_ID.test(sessionId)) return;
+  if (!isSafeSessionId(sessionId)) return;
   try {
+    const dir = join(ownerRoot(), tenantSegment(tenantId));
+    // 이미 내 표식이 있으면 즉시 끝낸다. 이 함수는 세션 생성 시점이 아니라 **매 턴** 불리므로,
+    // 이 단락이 없으면 멀티턴 대화가 턴마다 전 테넌트 스캔 + mkdir + writeFile 을 반복한다.
+    try {
+      await access(join(dir, sessionId));
+      return;
+    } catch {
+      // 표식이 없다 — 아래에서 만든다.
+    }
     // 이미 **다른 테넌트**가 표식을 가진 세션이면 두 번째 표식을 만들지 않는다(코드리뷰 지적).
     // `/agent/chat` 은 sessionId 를 클라이언트가 준 값 그대로 받으므로, 내부 토큰을 가진 호출부가
     // 테넌트 A 의 sessionId 를 tenantId=B 로 보내면 표식이 양쪽에 생긴다. 그러면 판정이 "먼저
@@ -49,7 +64,6 @@ export async function claimSession(tenantId: number, sessionId: string): Promise
       );
       return;
     }
-    const dir = join(ownerRoot(), tenantSegment(tenantId));
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, sessionId), '');
   } catch {
@@ -77,7 +91,7 @@ export async function checkSessionOwnership(
   tenantId: number,
   sessionId: string,
 ): Promise<SessionOwnership> {
-  if (!SAFE_SESSION_ID.test(sessionId)) return 'other-tenant';
+  if (!isSafeSessionId(sessionId)) return 'other-tenant';
   const mine = tenantSegment(tenantId);
   let tenantDirs: string[];
   try {

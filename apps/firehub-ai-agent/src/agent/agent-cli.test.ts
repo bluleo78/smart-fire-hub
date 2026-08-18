@@ -12,8 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { readFileSync, existsSync } from 'fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
-import { tmpdir } from 'os';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { useTempHome } from './temp-home.fixture.js';
 import { join } from 'path';
 import { MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
 
@@ -342,20 +342,13 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
  * 응답이 성공으로 보고**되고 낡은 id 가 다시 저장돼 그 세션이 영구히 같은 실패를 반복한다.
  */
 describe('executeCliAgent — 레거시 트랜스크립트 재개 (코드리뷰 MAJOR)', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
+  const home = useTempHome('firehub-cli-resume');
 
-  beforeEach(async () => {
+  beforeEach(() => {
     spawnMock.mockReset();
-    tempHome = await mkdtemp(join(tmpdir(), 'firehub-cli-resume-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
   });
 
-  afterEach(async () => {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    await rm(tempHome, { recursive: true, force: true });
+  afterEach(() => {
     vi.clearAllMocks();
   });
 
@@ -389,7 +382,7 @@ describe('executeCliAgent — 레거시 트랜스크립트 재개 (코드리뷰 
 
   // CLI-RESUME-01: 레거시 경로에서 읽었으면 --resume 을 붙이지 않는다.
   it('CLI-RESUME-01: drops the stale claudeSessionId when the transcript came from the legacy path', async () => {
-    const legacyDir = join(tempHome, '.firehub', 'transcripts');
+    const legacyDir = join(home.path, '.firehub', 'transcripts');
     await seedTranscript(legacyDir, 'cli-old', 'claude-sess-from-old-cwd');
 
     const args = await runResume('cli-old');
@@ -401,13 +394,50 @@ describe('executeCliAgent — 레거시 트랜스크립트 재개 (코드리뷰 
   // CLI-RESUME-02: 테넌트 경로에서 읽었으면 그대로 재개한다 — 위 가드가 정상 재개까지
   // 죽이지 않는지 확인한다(이게 없으면 "항상 버린다" 로도 CLI-RESUME-01 이 통과한다).
   it('CLI-RESUME-02: still resumes when the transcript is already tenant-scoped', async () => {
-    const tenantDir = join(tempHome, '.firehub', 'transcripts', 't7');
+    const tenantDir = join(home.path, '.firehub', 'transcripts', 't7');
     await seedTranscript(tenantDir, 'cli-new', 'claude-sess-current');
 
     const args = await runResume('cli-new');
 
     expect(args).toContain('--resume');
     expect(args).toContain('claude-sess-current');
+  });
+
+  // CLI-RESUME-04: 봉투 없는 옛 배열 포맷도 재개된다. 정규화를 소비자(transcript-reader)에만
+  // 두면 이 경로는 `saved.messages` 가 undefined 가 되어 이어 말하기가 깨진다 — 그래서
+  // readCliTranscript 가 발생지에서 정규화한다.
+  it('CLI-RESUME-04: resumes a legacy array-shaped transcript without an envelope', async () => {
+    const dir = join(home.path, '.firehub', 'transcripts', 't7');
+    await mkdir(dir, { recursive: true });
+    // 봉투(`{claudeSessionId, messages}`) 없이 메시지 배열만 저장된 옛 파일.
+    await writeFile(
+      join(dir, 'cli-array.json'),
+      JSON.stringify([
+        { id: 'u1', role: 'user', content: '옛 질문', timestamp: '2026-01-01T00:00:00Z' },
+      ]),
+    );
+
+    spawnMock.mockReturnValue(makeFakeChild());
+    const events: Array<{ type: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '이어서',
+      tenantId: 7,
+      userId: 1,
+      sessionId: 'cli-array',
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string });
+    }
+
+    // 던지지 않고 정상 진행했다는 것 자체가 검증 대상이다(정규화 전에는 messages 가 undefined 라
+    // transcript.push 에서 TypeError 가 났다).
+    expect(events.some((e) => e.type === 'init')).toBe(true);
+    // 옛 메시지가 보존된 채 새 트랜스크립트가 테넌트 경로에 저장돼야 한다.
+    const saved = JSON.parse(await readFile(join(dir, 'cli-array.json'), 'utf-8')) as {
+      messages: Array<{ content: string }>;
+    };
+    expect(saved.messages[0].content).toBe('옛 질문');
   });
 
   // CLI-RESUME-03: error_* subtype 은 조용한 done 이 아니라 error 로 나가야 한다.
