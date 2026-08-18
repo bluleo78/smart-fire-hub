@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 public class DataTableService {
 
   private final DSLContext dsl;
+  private final TenantSchemaProvisioner schemaProvisioner;
   private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
 
   private String mapDataType(String dataType, Integer maxLength) {
@@ -48,6 +50,9 @@ public class DataTableService {
 
   public void createTable(String tableName, List<DatasetColumnRequest> columns) {
     validateName(tableName);
+    // 스키마가 없으면 만든다 — 신규 테넌트의 첫 데이터셋 생성이 여기서 지연 생성을 트리거한다.
+    // DROP TABLE IF EXISTS(바로 아래)가 대상 스키마 자체를 요구하므로 반드시 그보다 먼저다.
+    schemaProvisioner.ensureCurrentTenantSchema();
 
     // 고아 테이블(참조하는 dataset 행이 없는 물리 테이블)을 회수하기 위해 먼저 지운다.
     //

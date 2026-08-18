@@ -11,6 +11,7 @@ import java.sql.SQLException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import org.jooq.DSLContext;
 import org.jooq.Table;
 import org.springframework.dao.DataAccessException;
@@ -470,5 +471,53 @@ public final class TenantRlsTestSupport {
   /** 현재 테넌트 컨텍스트에서 해당 행이 보이는지 확인한다(RLS 적용 결과). */
   public static boolean rowExists(DSLContext dsl, String tableName, String pkColumn, Long pk) {
     return dsl.fetchCount(table(name(tableName)), field(name(pkColumn), Long.class).eq(pk)) > 0;
+  }
+
+  // ── 테넌트 스키마 프로비저닝 테스트용 공용 헬퍼(P3-b2 Task 1) ─────────────────
+  //
+  // TenantSchemaProvisionerTest 가 처음 도입했고, Task 5(DataTableService DROP·REPLACE 경로 감사)가
+  // 그대로 재사용한다. data_t{id} 파생이 900_000_xxx 대역에서만 성립하므로(DataSchema 규약), 이
+  // 대역 밖에서 프로비저너를 시험하면 삭제 가드(dropSchemasCreatedByThisTest)를 통과하지 못한다.
+
+  /**
+   * 지정한 id 로 ACTIVE 테넌트를 만든다. {@link #createActiveTenant} 와 달리 id 를 호출자가
+   * 정한다 — 스키마 프로비저닝 테스트는 파생된 스키마명({@code data_t{id}})이 삭제 가드의
+   * {@code ^data_t[0-9]+$} 를 통과해야 하므로, 900_000_xxx 대역의 id 를 직접 지정해야 한다.
+   * slug 는 id 자체로 고유하므로 별도 접미사가 필요 없다.
+   */
+  public static void insertActiveTenant(DSLContext dsl, long tenantId) {
+    dsl.insertInto(TENANT)
+        .set(field(name("id"), Long.class), tenantId)
+        .set(field(name("slug"), String.class), "schema-provision-" + tenantId)
+        .set(field(name("name"), String.class), "Schema Provision Test " + tenantId)
+        .set(field(name("status"), String.class), "ACTIVE")
+        .execute();
+  }
+
+  /** {@link #dropSchemasCreatedByThisTest} 가 이름을 검증하는 정규식. 테넌트 스키마 명명 규약({@code
+   * DataSchema.TENANT_SCHEMA_PREFIX})과 정확히 일치해야 한다. */
+  private static final Pattern TENANT_SCHEMA_NAME = Pattern.compile("^data_t[0-9]+$");
+
+  /**
+   * 테스트가 만든 테넌트 스키마를 지운다.
+   *
+   * <p><b>하드 가드(R7):</b> 이름이 {@code ^data_t[0-9]+$} 에 맞지 않으면 드롭하지 않고 {@link
+   * IllegalArgumentException} 을 던진다. 이 가드가 없으면 단 한 줄의 실수로 공유 test DB 의
+   * {@code data}(그리고 dev·prod 의 기존 테이블)가 사라진다. {@code dropHelperRefusesNonTenantSchemas}
+   * 가 이 가드 자체의 비공허성을 변이로 증명한다.
+   *
+   * @param ownerDsl 스키마 소유자(app) 자격증명으로 연 DSLContext. 런타임 롤(app_tenant)은 스키마
+   *     소유자가 아니므로 DROP SCHEMA 권한이 없다 — {@code schemaOwnerDataSource} 로 만들어야 한다.
+   */
+  public static void dropSchemasCreatedByThisTest(DSLContext ownerDsl, String... schemas) {
+    for (String schema : schemas) {
+      if (!TENANT_SCHEMA_NAME.matcher(schema).matches()) {
+        throw new IllegalArgumentException(
+            "dropSchemasCreatedByThisTest 는 data_t{id} 형태의 이름만 지운다(공유 test DB 의 data"
+                + " 스키마 삭제 사고 방지): "
+                + schema);
+      }
+      ownerDsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
   }
 }

@@ -149,9 +149,9 @@ class DataSchemaResolutionTest {
       List.of(
           new PinnedSite(
               ALLOWED_FILE,
-              "PHYSICAL_SCHEMA = \"data\"",
+              "Map.of(1L, \"data\")",
               1,
-              "물리 스키마명의 유일한 선언 지점 — P3-b 가 바꿀 그 한 줄"),
+              "물리 스키마명의 유일한 선언 지점 — P3-b2 가 테넌트 1(레거시)에 고정한 그 한 줄"),
           new PinnedSite(
               "com/smartfirehub/embedding/OpenAiEmbeddingProvider.java",
               "resp.get(\"data\")",
@@ -211,11 +211,14 @@ class DataSchemaResolutionTest {
   }
 
   @Test
-  @DisplayName("current() 는 컨텍스트가 있으면 오늘의 물리 스키마 'data' 를 돌려준다")
+  @DisplayName("current() 는 컨텍스트가 있으면 기본 테넌트(1)의 물리 스키마 'data' 를 돌려준다")
   void current_returnsPhysicalSchemaWhenScoped() {
     // 위 테스트만 있으면 "무조건 던지는" 구현도 통과한다. 긍정 단언으로 계약의 반쪽을 못박는다.
-    String schema = TenantContext.runScopedGet(4242L, DataSchema::current);
-    assertThat(schema).as("P3-a 시점의 물리 스키마는 아직 테넌트별로 나뉘지 않았다").isEqualTo("data");
+    // 테넌트별 파생(1→data, 그 외→data_t{id})의 상세 규약은 DataSchemaTenantResolutionTest 가
+    // DB 통합 테스트로 고정한다 — 여기는 스프링 컨텍스트 없는 순수 단위 테스트라 기본 테넌트
+    // 경로 하나만 회귀 가드로 남긴다.
+    String schema = TenantContext.runScopedGet(1L, DataSchema::current);
+    assertThat(schema).as("테넌트 1 은 리네임 없이 기존 data 스키마를 그대로 쓴다").isEqualTo("data");
   }
 
   @Test
@@ -233,9 +236,9 @@ class DataSchemaResolutionTest {
     // data."a""b" — 인용부호가 든 테이블명이 SQL 을 탈출하지 못한다.
     // PostgreSQL 의 인용 식별자 규칙상 안쪽 " 는 "" 로 이중화해야 하며, 그러지 않으면 식별자가
     // 조기 종료돼 뒤따르는 문자열이 SQL 문법으로 해석된다.
-    assertThat(TenantContext.runScopedGet(4242L, () -> DataSchema.qualify("a\"b")))
+    assertThat(TenantContext.runScopedGet(1L, () -> DataSchema.qualify("a\"b")))
         .isEqualTo("data.\"a\"\"b\"");
-    assertThat(TenantContext.runScopedGet(4242L, () -> DataSchema.qualify("sensor_reading")))
+    assertThat(TenantContext.runScopedGet(1L, () -> DataSchema.qualify("sensor_reading")))
         .as("따옴표가 없는 평범한 이름도 항상 인용된다 — 예약어 테이블명을 위해")
         .isEqualTo("data.\"sensor_reading\"");
   }
@@ -263,7 +266,7 @@ class DataSchemaResolutionTest {
     assertThat(allowed).as("예외 대상 %s 가 스캔 결과에 정확히 하나 있어야 한다", ALLOWED_FILE).hasSize(1);
     assertThat(read(allowed.get(0)))
         .as("예외 파일이 물리 스키마명을 담고 있지 않다 — 조립 지점이 여기가 아니거나 경로가 낡았다")
-        .contains("PHYSICAL_SCHEMA = \"data\"");
+        .contains("Map.of(1L, \"data\")");
   }
 
   @Test

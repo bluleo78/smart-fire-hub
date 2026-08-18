@@ -1,5 +1,7 @@
 package com.smartfirehub.global.tenant;
 
+import java.util.Map;
+
 /**
  * 동적 사용자 테이블이 사는 <b>물리 스키마명을 조립하는 유일한 지점</b>.
  *
@@ -11,37 +13,43 @@ package com.smartfirehub.global.tenant;
  * <p><b>호출부는 스키마명을 문자열로 주고받지 않는다.</b> 스키마명을 파라미터로 받는 메서드를
  * 만드는 순간 "누가 그 값을 정했는가" 가 다시 흩어지고, 이 클래스는 우회 가능한 장식이 된다.
  * 이 규약은 {@code DataSchemaResolutionTest} 의 규약 가드가 소스 스캔으로 강제한다.
+ *
+ * <p><b>P3-b2: 물리 스키마가 테넌트별로 나뉜다.</b> 테넌트 1(멀티 테넌시 도입 이전부터 존재하던
+ * 유일한 워크스페이스)은 기존 {@code data} 스키마를 그대로 쓰고, 그 외 테넌트는 {@code
+ * data_t{tenantId}} 를 받는다. 리네임은 없다 — 기존 데이터는 있던 자리에 그대로 있다.
  */
 public final class DataSchema {
 
   /**
-   * 오늘의 물리 스키마명. <b>이 상수를 참조하는 곳은 {@link #current()} 하나뿐이어야 한다</b> —
-   * P3-b 에서 바꿀 지점을 한 줄로 유지하기 위해서다.
+   * 기본(레거시) 테넌트의 물리 스키마 매핑.
+   *
+   * <p>테넌트 1 은 멀티 테넌시 도입 이전부터 존재하던 유일한 워크스페이스이고, 그 데이터는
+   * 처음부터 {@code data} 스키마에 있다. 이 매핑을 설정(application-*.yml)으로 빼지 않는 이유:
+   * 프로필마다 값이 갈라지면 prod 가 실제로 쓰는 매핑이 테스트에서 한 번도 실행되지 않는다.
+   * "테넌트 1 = data" 는 환경 변수가 아니라 되돌릴 수 없는 역사적 사실이다.
+   *
+   * <p>이 맵 덕분에 스키마 <b>리네임이 필요 없다</b> — 기존 데이터는 있던 자리에 그대로 있고,
+   * 신규 테넌트만 새 스키마를 받는다.
    */
-  private static final String PHYSICAL_SCHEMA = "data";
+  private static final Map<Long, String> LEGACY_SCHEMA_BY_TENANT = Map.of(1L, "data");
+
+  /** 신규 테넌트 스키마 접두사. 롤 이름 규약({@code pipeline_executor_t{id}})과 같은 형태다. */
+  private static final String TENANT_SCHEMA_PREFIX = "data_t";
 
   private DataSchema() {}
 
   /**
    * 현재 테넌트의 데이터 스키마 식별자를 돌려준다(인용 없음).
    *
-   * <p><b>왜 테넌트 id 를 실제로 요구하면서 그 값을 쓰지 않는가 — 이게 이 클래스의 핵심 설계다.</b>
-   * 오늘 물리 스키마는 {@code data} 하나뿐이므로 테넌트 id 는 반환값에 영향을 주지 않는다. 겉보기엔
-   * 불필요한 의식(ceremony)이다. 그러나 P3-b 가 스키마를 {@code data_t{tenantId}} 로 개명하는 순간
-   * 이 메서드는 테넌트 id 없이는 답을 만들 수 없게 된다. 그때 가서 요구하기 시작하면, 컨텍스트가
-   * 비어 있던 모든 경로(배경 잡·permitAll 트리거·스케줄러)가 <b>한꺼번에</b> 처음으로 터진다 —
-   * 그것도 테스트가 아니라 dev 에서. 지금 요구해 두면 그 경로들이 이번 밴드의 테스트 스위트에서
-   * 하나씩 드러난다. 즉 "쓰지 않는 인자" 가 아니라 <b>P3-b 의 실패를 앞당겨 받는 장치</b>다.
-   *
-   * <p>P3-b 에서 바뀌는 것: 아래 반환문이 {@code PHYSICAL_SCHEMA + "_t" + tenantId} 가 된다.
-   * 호출부는 한 곳도 바뀌지 않는다.
+   * <p>테넌트 1 은 {@link #LEGACY_SCHEMA_BY_TENANT} 에 있는 값(={@code data})을, 그 외 테넌트는
+   * {@link #TENANT_SCHEMA_PREFIX} + tenantId 로 파생된 값을 돌려준다. 특수 분기가 아니라 조회다.
    *
    * @throws MissingTenantScopeException 테넌트 컨텍스트가 없을 때. 조용히 기본 스키마로 떨어지지
    *     않는다 — 그 폴백이 곧 크로스 테넌트 접근이 된다.
    */
   public static String current() {
-    TenantContext.require("data 스키마 식별자 해석");
-    return PHYSICAL_SCHEMA;
+    long tenantId = TenantContext.require("data 스키마 식별자 해석");
+    return LEGACY_SCHEMA_BY_TENANT.getOrDefault(tenantId, TENANT_SCHEMA_PREFIX + tenantId);
   }
 
   /**
