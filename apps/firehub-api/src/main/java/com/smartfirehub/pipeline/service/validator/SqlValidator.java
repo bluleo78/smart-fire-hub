@@ -898,13 +898,16 @@ public class SqlValidator {
    *
    * <p><b>인용 식별자의 점 처리(#387-5)</b> — 이전에는 {@code String.lastIndexOf('.')}로 스키마
    * 구분자를 찾았다. {@code requireDataSchemaOnly}가 같은 문제로 이미 {@link #indexOfUnquotedDot}/
-   * {@link #countUnquotedDots}로 고쳤던 결함을 여기는 그대로 갖고 있었다 — {@code
-   * data."my.seq"}처럼 인용된 시퀀스명 안에 점이 있으면 마지막 점을 스키마 구분자로 오인해 스키마를
-   * {@code my}(존재하지 않음)로, 이름을 {@code seq"}로 잘못 쪼갠다. 결과는 우회가 아니라 <b>틀린
-   * 거부</b>였다(fail-closed 라 보안 구멍은 아니지만, 정당한 인용 시퀀스명을 오진단으로 막는다).
+   * {@link #countUnquotedDots}로 고쳤던 결함을 여기는 그대로 갖고 있었다 — 허용 스키마를 앞에 붙인
+   * {@code <스키마>."my.seq"}처럼 인용된 시퀀스명 안에 점이 있으면 마지막 점을 스키마 구분자로 오인해
+   * 스키마를 {@code my}(존재하지 않음)로, 이름을 {@code seq"}로 잘못 쪼갠다. 결과는 우회가 아니라
+   * <b>틀린 거부</b>였다(fail-closed 라 보안 구멍은 아니지만, 정당한 인용 시퀀스명을 오진단으로 막는다).
    * {@link #indexOfUnquotedDot}로 인용 밖 첫 점만 구분자로 취급하도록 바꾸고, {@code
-   * requireDataSchemaOnly}의 선례를 따라 점이 2개 이상인 다단 FQN(예: {@code db.data.seq})은 별도로
-   * 거부한다.
+   * requireDataSchemaOnly}의 선례를 따라 점이 2개 이상인 다단 FQN(예: {@code db.<스키마>.seq})은
+   * 별도로 거부한다.
+   *
+   * <p>※ 예시에 물리 스키마명을 직접 적지 않는 이유: {@code DataSchemaResolutionTest} 의 규약 가드가
+   * {@code DataSchema} 밖의 프로덕션 소스에서 한정 이름 리터럴을 금지한다(P3-a). 주석도 스캔 대상이다.
    */
   private void requireSafeSequenceArgument(Function function, String fnName) {
     String allowedSchema = allowedSchema();
@@ -1006,8 +1009,8 @@ public class SqlValidator {
      * {@code visited} 집합이 이미 한정한다(같은 노드를 두 번 걷지 않는다). 실측(JUnit 테스트 워커 스레드, 기본
      * 스택 크기)으로 평평한 {@code WHERE a=0 OR a=1 OR ...} 연쇄가 {@code StackOverflowError}를 내는 순회
      * 깊이는 JIT 예열 상태에 따라 약 5,390~15,325 사이로 변동했다 — 예열 전(인터프리터 모드) 쪽이 스택 프레임이
-     * 커서 더 얕은 깊이에서 넘쳤다. 더 작은 쪽(예열 전 최소 관측치 약 5,390)을 기준으로 삼아 그 1/3 을도 못
-     * 미치는 1500 을 상한으로 잡았다. 기본 스택 크기의 순수 {@code new Thread}에서는 항상 더 깊은 약 15,438
+     * 커서 더 얕은 깊이에서 넘쳤다. 더 작은 쪽(예열 전 최소 관측치 약 5,390)을 기준으로 삼아, 그 1/3(약 1,797)
+     * 에도 못 미치는 1500 을 상한으로 잡았다. 기본 스택 크기의 순수 {@code new Thread}에서는 항상 더 깊은 약 15,438
      * 에서 넘쳐 테스트 스레드 쪽이 더 보수적이었다(작은 쪽 채택).
      *
      * <p>이전 값 500 은 <b>SQL 중첩</b> 상한으로 의도됐지만 실제로는 getter 한 홉마다 1 씩 늘어난다. 그래서
@@ -1031,7 +1034,8 @@ public class SqlValidator {
      * 있으므로 — 실측: 현재는 {@link #requireNoReservedPseudoColumns} 하나뿐이지만 앞으로 늘어날 수 있어
      * 안전하게 유지한다) 항등성으로 이 집합에 속하면 의사 상수 검사에서만 건너뛴다.
      */
-    private final Set<Column> declarationColumns = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Column> declarationColumns =
+        Collections.newSetFromMap(new IdentityHashMap<>());
 
     /** 현재 방문 지점에서 유효한 CTE 별칭 스코프 스택 — 스코프 단위 처리 근거는 {@link #tableFqns} 문서 참고. */
     private final Deque<Set<String>> cteScopeStack = new ArrayDeque<>();
