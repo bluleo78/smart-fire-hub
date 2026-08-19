@@ -43,7 +43,7 @@ class ProactiveMessageControllerTest {
   /** 인증 mock 설정 — 유효 토큰 + proactive:read 권한 부여 */
   private void mockAuth(String... permissions) {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 

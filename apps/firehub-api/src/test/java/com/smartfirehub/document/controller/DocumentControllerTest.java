@@ -46,7 +46,7 @@ class DocumentControllerTest {
   void setUp() {
     // JWT "test-token" → userId 1L, 권한은 문서 엔드포인트 전체를 커버하도록 부여한다.
     when(jwtTokenProvider.parseAccessToken("test-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L))
         .thenReturn(Set.of("data:import", "dataset:read", "dataset:write"));
   }

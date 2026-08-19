@@ -62,7 +62,7 @@ class GraphIngestControllerTest {
   void setUp() {
     // 인증 mock — 유효 토큰 + dataset:read/write 권한을 PermissionInterceptor가 허용하도록 세팅한다.
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L))
         .thenReturn(Set.of("dataset:read", "dataset:write"));
   }

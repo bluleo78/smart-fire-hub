@@ -143,7 +143,7 @@ class AuthControllerTest {
   @Test
   void logout_returnsNoContent() throws Exception {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
 
     mockMvc
         .perform(post("/api/v1/auth/logout").header("Authorization", "Bearer valid-token"))
@@ -160,7 +160,7 @@ class AuthControllerTest {
   @Test
   void getMyPermissions_returnsCodes() throws Exception {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(42L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(42L, null, false)));
     when(permissionService.getUserPermissions(42L))
         .thenReturn(Set.of("dataset:read", "dataset:delete"));
 

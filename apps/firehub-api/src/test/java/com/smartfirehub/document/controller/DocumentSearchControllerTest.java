@@ -42,7 +42,7 @@ class DocumentSearchControllerTest {
   void setUp() {
     // JWT "test-token" → userId 1L. 기본은 dataset:read 권한 부여.
     when(jwtTokenProvider.parseAccessToken("test-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
   }
 

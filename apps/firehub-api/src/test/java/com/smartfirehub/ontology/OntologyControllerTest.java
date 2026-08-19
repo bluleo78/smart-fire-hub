@@ -56,7 +56,7 @@ class OntologyControllerTest {
   @BeforeEach
   void setUp() {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
   }
 
   // 목록 라우트 — dataset:read 권한으로 200, 리포지토리 findAllSummaries("active") 스텁.

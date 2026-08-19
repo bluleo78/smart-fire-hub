@@ -48,7 +48,7 @@ class MappingControllerTest {
   @BeforeEach
   void setUp() {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
   }
 
   private static MappingResponse resp(String status) {

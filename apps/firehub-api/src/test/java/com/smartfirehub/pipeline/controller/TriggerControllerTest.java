@@ -48,7 +48,7 @@ class TriggerControllerTest {
   @BeforeEach
   void setUp() {
     when(jwtTokenProvider.parseAccessToken("test-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L))
         .thenReturn(Set.of("trigger:read", "trigger:write", "trigger:delete"));
   }

@@ -61,6 +61,55 @@ public class JwtTokenProvider {
     return builder.signWith(key).compact();
   }
 
+  /**
+   * 플랫폼(운영자) 액세스 토큰. {@code platform: true} 를 싣고 {@code tenant} 클레임은 <b>싣지
+   * 않는다</b>.
+   *
+   * <p>왜 tenant 를 비우는가: 운영자 평면은 전역 테이블만 만진다. 클레임이 실리면 필터가
+   * TenantContext 를 세워 운영자 요청이 특정 테넌트의 RLS 안에서 돌게 되고, 그 테넌트의 도메인
+   * 데이터가 운영자에게 열린다 — 설계서 §4 가 크로스테넌트 도메인 조회를 제공하지 않기로 한 결정과
+   * 어긋난다. 비어 있으면 GUC 미설정 → RLS 전면 차단(fail-closed)이다.
+   */
+  public String generatePlatformAccessToken(Long userId, String username) {
+    Date now = new Date();
+    return Jwts.builder()
+        .subject(userId.toString())
+        .claim("username", username)
+        .claim("type", "access")
+        .claim("platform", true)
+        .issuedAt(now)
+        .expiration(new Date(now.getTime() + accessExpiration))
+        .signWith(key)
+        .compact();
+  }
+
+  /** 플랫폼 리프레시 토큰. 마찬가지로 tenant 클레임이 없다. */
+  public String generatePlatformRefreshToken(Long userId) {
+    Date now = new Date();
+    return Jwts.builder()
+        .subject(userId.toString())
+        .claim("type", "refresh")
+        .claim("platform", true)
+        .issuedAt(now)
+        .expiration(new Date(now.getTime() + refreshExpiration))
+        .signWith(key)
+        .compact();
+  }
+
+  /**
+   * 토큰이 플랫폼 평면인지.
+   *
+   * <p>리프레시 경로에서 평면을 검사하는 데 쓴다 — 테넌트 리프레시 토큰으로 플랫폼 토큰을 받아
+   * 평면을 갈아타는 승격 경로를 막는다.
+   */
+  public boolean isPlatformToken(String token) {
+    try {
+      return Boolean.TRUE.equals(parseClaims(token).get("platform", Boolean.class));
+    } catch (JwtException | IllegalArgumentException e) {
+      return false;
+    }
+  }
+
   public Long getUserIdFromToken(String token) {
     String subject = parseClaims(token).getSubject();
     return Long.parseLong(subject);
@@ -103,8 +152,16 @@ public class JwtTokenProvider {
     return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
   }
 
-  /** 액세스 토큰을 한 번만 파싱해 인증에 필요한 값을 함께 돌려준다. */
-  public record AccessTokenPrincipal(Long userId, Long tenantId) {}
+  /**
+   * 액세스 토큰을 한 번만 파싱해 인증에 필요한 값을 함께 돌려준다.
+   *
+   * <p>{@code platform} 은 평면 표식이다 — true 면 운영자 평면 토큰이고 {@code tenantId} 는 null 이다.
+   *
+   * <p><b>2인자 축약 생성자를 일부러 두지 않는다.</b> 평면을 생략할 수 있게 만들면 기본값(false)이
+   * 두 곳에 존재하게 되고, 운영자 평면 검증을 쓰려던 호출처가 평면을 빼먹은 채 조용히 테넌트 평면을
+   * 받는다. 모든 생성 지점이 평면을 명시하게 해서 그 실수를 컴파일 단계에서 막는다.
+   */
+  public record AccessTokenPrincipal(Long userId, Long tenantId, boolean platform) {}
 
   /**
    * 액세스 토큰을 1회 파싱해 userId 와 tenantId 를 함께 추출한다.
@@ -123,7 +180,10 @@ public class JwtTokenProvider {
       Long userId = Long.parseLong(claims.getSubject());
       Number tenant = claims.get("tenant", Number.class);
       Long tenantId = tenant == null ? null : tenant.longValue();
-      return Optional.of(new AccessTokenPrincipal(userId, tenantId));
+      // 클레임이 없거나 true 가 아니면 테넌트 평면이다 — 기본값을 false 로 둬야 평면 가드가
+      // 알 수 없는 토큰 형태에 대해 fail-closed 한다.
+      boolean platform = Boolean.TRUE.equals(claims.get("platform", Boolean.class));
+      return Optional.of(new AccessTokenPrincipal(userId, tenantId, platform));
     } catch (JwtException | IllegalArgumentException e) {
       return Optional.empty();
     }

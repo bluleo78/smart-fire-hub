@@ -2,6 +2,7 @@ package com.smartfirehub.global.security;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.platform.repository.PlatformRoleRepository;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import jakarta.servlet.FilterChain;
@@ -31,16 +32,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private final JwtTokenProvider jwtTokenProvider;
   private final PermissionService permissionService;
   private final MembershipRepository membershipRepository;
+  private final PlatformRoleRepository platformRoleRepository;
   private final String internalToken;
 
   public JwtAuthenticationFilter(
       JwtTokenProvider jwtTokenProvider,
       @Lazy PermissionService permissionService,
       @Lazy MembershipRepository membershipRepository,
+      @Lazy PlatformRoleRepository platformRoleRepository,
       @Value("${agent.internal-token:}") String internalToken) {
     this.jwtTokenProvider = jwtTokenProvider;
     this.permissionService = permissionService;
     this.membershipRepository = membershipRepository;
+    this.platformRoleRepository = platformRoleRepository;
     this.internalToken = internalToken;
   }
 
@@ -83,6 +87,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         .parseAccessToken(token)
         .ifPresent(
             principal -> {
+              if (principal.platform()) {
+                // 운영자 평면: TenantContext 를 세우지 않는다. 세우면 운영자 요청이 그 테넌트의
+                // RLS 안에서 돌아 도메인 데이터가 열린다(설계서 §4 는 크로스테넌트 도메인 조회를
+                // 제공하지 않기로 결정했다). 컨텍스트가 비어 있음 = GUC 미설정 = fail-closed 다.
+                setPlatformSecurityContext(principal.userId());
+                return;
+              }
               // 서명된 tenant 클레임을 신뢰한다(요청마다 멤버십을 재조회하지 않는다). 멤버십/테넌트
               // 정지는 select-tenant 와 refresh 에서 재검증되므로, 최대 액세스 토큰 만료 시간만큼
               // 지연 반영된다. 클레임이 없으면 테넌트 미선택 토큰 — GUC 미설정으로 RLS 가
@@ -146,6 +157,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
           memberships.size());
     }
     return tenantId;
+  }
+
+  /**
+   * 운영자 평면의 SecurityContext. 권한은 플랫폼 평면에서만 로딩한다.
+   *
+   * <p>테넌트 권한을 함께 싣지 않는 이유: 두 평면의 authority 가 한 집합에 섞이면 평면 가드 밖에서는
+   * 구분할 수 없게 되고, 운영자 토큰으로 테넌트 API 를 호출할 수 있게 된다. 반대로 테넌트 권한을
+   * 로딩하려면 GUC 가 필요한데 운영자 요청에는 테넌트 컨텍스트가 없다 — 어차피 0행이 된다.
+   */
+  private void setPlatformSecurityContext(Long userId) {
+    Set<String> permissions = platformRoleRepository.findPlatformPermissionCodes(userId);
+    List<SimpleGrantedAuthority> authorities =
+        permissions.stream().map(SimpleGrantedAuthority::new).toList();
+    SecurityContextHolder.getContext()
+        .setAuthentication(new PlatformAuthentication(userId, authorities));
   }
 
   private void setSecurityContext(Long userId) {

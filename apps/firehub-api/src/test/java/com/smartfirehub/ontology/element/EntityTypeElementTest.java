@@ -46,7 +46,7 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
         .thenReturn(
             Optional.of(
-                new JwtTokenProvider.AccessTokenPrincipal(1L, DEFAULT_TEST_TENANT_ID)));
+                new JwtTokenProvider.AccessTokenPrincipal(1L, DEFAULT_TEST_TENANT_ID, false)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("ontology:write"));
   }
 

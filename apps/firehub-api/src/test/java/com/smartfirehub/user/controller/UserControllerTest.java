@@ -47,7 +47,7 @@ class UserControllerTest {
 
   private void mockAuthentication(String... permissions) {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 

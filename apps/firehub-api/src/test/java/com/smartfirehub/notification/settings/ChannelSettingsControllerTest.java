@@ -57,7 +57,7 @@ class ChannelSettingsControllerTest {
   @BeforeEach
   void setUp() {
     when(jwtTokenProvider.parseAccessToken("test-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(TEST_USER_ID, null)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(TEST_USER_ID, null, false)));
     // 인증은 되지만 권한 체크 없는 엔드포인트 — 빈 Set으로 충분
     when(permissionService.getUserPermissions(TEST_USER_ID)).thenReturn(Set.of());
   }
