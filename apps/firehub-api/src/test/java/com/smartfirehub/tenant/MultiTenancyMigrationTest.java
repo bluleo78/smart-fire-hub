@@ -135,7 +135,10 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
                 """)
             .get(0, Integer.class);
 
-    assertThat(platformPermissions).isEqualTo(4);
+    // V82 가 4건(tenant:create/read/suspend, member:read), V113 이 2건
+    // (settings:read/write)을 추가해 6건이다. 이 숫자를 고정해 두는 이유는 카탈로그에 권한을
+    // 추가하면서 SUPER_ADMIN 연결을 빼먹는 실수를 잡기 위함이다 — 아래 단언이 그 짝이다.
+    assertThat(platformPermissions).isEqualTo(6);
     assertThat(grantedToSuperAdmin).isEqualTo(platformPermissions);
   }
 }

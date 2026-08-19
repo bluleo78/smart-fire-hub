@@ -319,10 +319,16 @@ public final class TenantRlsTestSupport {
   }
 
   /**
-   * 테넌트의 RBAC 관련 행을 FK 순서대로 지운다({@code role_permission}/{@code user_role}/
-   * {@code report_template} → {@code role}). role 을 참조하는 자식부터 지워야 role 삭제가 FK 에
-   * 걸리지 않는다. 세 개의 RBAC 테스트가 각자 복붙하던 것을 모았다 — 특정 테스트가 그중 일부
-   * 테이블에 행을 만들지 않았어도, 없는 행을 지우는 DELETE 는 0행으로 끝나 안전하다.
+   * <b>{@code provision_tenant_defaults} 가 만드는 행 전부</b>를 FK 순서대로 지운다
+   * ({@code role_permission}/{@code user_role}/{@code report_template}/{@code dataset_category} →
+   * {@code role}). role 을 참조하는 자식부터 지워야 role 삭제가 FK 에 걸리지 않는다. 세 개의 RBAC
+   * 테스트가 각자 복붙하던 것을 모았다 — 특정 테스트가 그중 일부 테이블에 행을 만들지 않았어도,
+   * 없는 행을 지우는 DELETE 는 0행으로 끝나 안전하다.
+   *
+   * <p><b>이 목록은 프로비저닝 함수와 함께 움직여야 한다.</b> V113 이 함수에
+   * {@code dataset_category} 시드를 추가했을 때 여기를 같이 고치지 않아, 정리 단계가 그 행을 남기고
+   * 이어지는 {@code tenant} 삭제가 FK 로 터졌다(테스트 3건 실패). 이름은 RBAC 이지만 실제 계약은
+   * "프로비저닝이 남긴 것을 되돌린다"다 — 함수에 시드 테이블을 추가하면 여기에도 추가한다.
    *
    * <p>호출자가 대상 테넌트 컨텍스트 트랜잭션 안에서 불러야 한다({@link #runInTenantTransaction}).
    */
@@ -330,6 +336,9 @@ public final class TenantRlsTestSupport {
     dsl.execute("delete from role_permission where tenant_id = ?", tenantId);
     dsl.execute("delete from user_role where tenant_id = ?", tenantId);
     dsl.execute("delete from report_template where tenant_id = ?", tenantId);
+    // V113 의 기본 카테고리 시드. dataset_category 는 tenant FK 를 잡으므로 남기면 tenant 삭제가
+    // 터진다. dataset 이 이 카테고리를 참조하고 있으면 그 테스트가 자기 dataset 을 먼저 지워야 한다.
+    dsl.execute("delete from dataset_category where tenant_id = ?", tenantId);
     dsl.execute("delete from role where tenant_id = ?", tenantId);
   }
 
