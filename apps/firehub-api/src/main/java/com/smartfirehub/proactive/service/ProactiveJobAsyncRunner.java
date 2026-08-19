@@ -115,8 +115,12 @@ public class ProactiveJobAsyncRunner {
         }
       }
 
-      // AI 설정 조회
-      Map<String, String> aiSettings = settingsService.getAsMap("ai.");
+      // AI 설정 조회.
+      // 프리픽스에 마침표를 붙이지 않는다 — findByPrefix 가 스스로 prefix + ".%" 로 패턴을 만들기
+      // 때문에 "ai." 를 넘기면 "ai..%" 가 되어 **0행**을 매칭한다. 그래서 이 잡은 저장된
+      // ai.agent_type 을 한 번도 읽지 못하고 항상 아래 "sdk" 폴백으로 갔다(선재 결함, P7-b Task 8).
+      // 수정 후 저장된 값을 존중하므로 agent_type=cli 인 환경에서 실행 형태가 실제로 바뀐다.
+      Map<String, String> aiSettings = settingsService.getAsMap("ai");
       String apiKey = settingsService.getDecryptedApiKey().orElse("");
       String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
       String oauthToken = null;

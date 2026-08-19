@@ -27,14 +27,12 @@ public class SettingsController {
     return ResponseEntity.ok(settingsService.getByPrefix(prefix));
   }
 
-  @GetMapping("/ai-api-key")
-  @RequirePermission("ai:settings")
-  public ResponseEntity<java.util.Map<String, String>> getDecryptedAiApiKey() {
-    return settingsService
-        .getDecryptedApiKey()
-        .map(key -> ResponseEntity.ok(java.util.Map.of("apiKey", key)))
-        .orElse(ResponseEntity.ok(java.util.Map.of("apiKey", "")));
-  }
+  // GET /ai-api-key 는 P7-b Task 7 에서 삭제했다. ai:settings 를 가진 테넌트 관리자에게
+  // ai.api_key 복호화 평문을 그대로 돌려주던 경로인데, P7-b 가 ai.api_key 를 플랫폼 소유로
+  // 확정하므로 그대로 두면 "테넌트 관리자가 플랫폼 자격증명을 평문으로 읽는다"가 된다.
+  // 다른 모든 읽기 경로는 maskSecret 을 지나 **** 만 내보내는데 여기만 예외였다.
+  // 소비자는 없었다(web 의 #ai-api-key 는 입력 필드 HTML id, ai-agent 는 역호출 구조를 이미 버렸다).
+  // 키가 설정됐는지 여부가 필요하면 GET /settings?prefix=ai 의 마스킹된 값으로 판별한다.
 
   @PutMapping
   @RequirePermission("ai:settings")

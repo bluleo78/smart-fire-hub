@@ -74,26 +74,32 @@ class SettingsControllerTest {
         .andExpect(jsonPath("$[0].value").value("claude"));
   }
 
+  /**
+   * {@code GET /api/v1/settings/ai-api-key} 는 <b>삭제됐다</b>(P7-b Task 7) — 404 여야 한다.
+   *
+   * <p>이 경로는 {@code ai:settings} 권한을 가진 <b>테넌트</b> 관리자에게 {@code ai.api_key} 의
+   * <b>복호화 평문</b>을 그대로 돌려줬다. P7-b 가 {@code ai.api_key} 를 플랫폼 소유로 확정하는
+   * 순간 그것은 "테넌트 관리자가 플랫폼 자격증명을 평문으로 읽는다"가 되어, 이 밴드가 세우는
+   * 경계를 정면으로 무력화한다(다른 모든 읽기 경로는 {@code maskSecret} 을 지나 {@code ****} 만
+   * 내보낸다 — 이 엔드포인트만 예외였다).
+   *
+   * <p>소비자가 없다는 것을 확인하고 지웠다: web 의 {@code #ai-api-key} 는 입력 필드의 HTML id 일
+   * 뿐이고, ai-agent 는 이 경로를 역호출하던 구조를 이미 버렸다(호출부에 그 사실이 주석으로 남아
+   * 있다). 즉 기능 손실이 없다.
+   *
+   * <p><b>404 가 아니라 405 다.</b> Task 5 가 추가한 {@code DELETE /api/v1/settings/{key}} 매핑이
+   * 이 경로를 {@code key="ai-api-key"} 로 흡수하므로, GET 은 "매핑 없음"이 아니라 "메서드 불허"가
+   * 된다. 실측으로 확인한 값을 단언한다 — 삭제 후 상태를 연역으로 404 라고 적으면 테스트가 처음부터
+   * 실패한다(실제로 그렇게 적어 한 번 실패했다). 참고로 그 {@code DELETE} 로 이 경로를 부르면
+   * 존재하지 않는 오버라이드 키를 지우려는 멱등 호출이 되어 아무 일도 일어나지 않는다.
+   */
   @Test
-  void getDecryptedAiApiKey_whenPresent_returnsKey() throws Exception {
+  void getDecryptedAiApiKey_endpointRemoved_returnsMethodNotAllowed() throws Exception {
     mockAuth("ai:settings");
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.of("sk-test"));
 
     mockMvc
         .perform(get("/api/v1/settings/ai-api-key").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.apiKey").value("sk-test"));
-  }
-
-  @Test
-  void getDecryptedAiApiKey_whenEmpty_returnsBlank() throws Exception {
-    mockAuth("ai:settings");
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.empty());
-
-    mockMvc
-        .perform(get("/api/v1/settings/ai-api-key").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.apiKey").value(""));
+        .andExpect(status().isMethodNotAllowed());
   }
 
   @Test

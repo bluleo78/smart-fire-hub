@@ -198,4 +198,25 @@ class SettingsResolutionTest extends IntegrationTestBase {
       deleteTenants(dsl, tenantA, tenantB);
     }
   }
+
+  /**
+   * 프리픽스에 마침표를 붙이면 아무것도 매칭하지 않는다 — {@code ProactiveJobAsyncRunner} 가 빠졌던
+   * 함정의 회귀 가드(Task 8).
+   *
+   * <p>{@code findByPrefix} 가 스스로 {@code prefix + ".%"} 를 만들기 때문에 {@code "ai."} 는
+   * {@code "ai..%"} 가 되어 <b>예외 없이 빈 맵</b>을 돌려준다. 조용한 빈 결과는 호출부에서 폴백
+   * 기본값으로 흡수되므로(그 잡은 {@code agent_type} 을 항상 {@code "sdk"} 로 읽었다) 로그에도
+   * 흔적이 남지 않는다. 두 형태를 같은 테스트에서 대조해 두면, 누군가 다시 마침표를 붙였을 때
+   * "왜 설정이 안 먹지"를 런타임에서 추적하지 않아도 된다.
+   */
+  @Test
+  void 프리픽스에_마침표를_붙이면_조용히_빈_맵이_된다() {
+    assertThat(settingsService.getAsMap("ai"))
+        .as("마침표 없는 형태가 올바르다")
+        .containsKey("ai.agent_type");
+
+    assertThat(settingsService.getAsMap("ai."))
+        .as("마침표를 붙이면 ai..%% 패턴이 되어 0행 — 이 형태를 쓰면 안 된다")
+        .isEmpty();
+  }
 }
