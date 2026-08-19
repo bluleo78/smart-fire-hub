@@ -56,6 +56,17 @@ class TenantSettingsSchemaTest extends IntegrationTestBase {
             dsl.fetchValue("select qual from pg_policies where tablename = 'tenant_settings'");
     assertThat(qual).contains("app.tenant_id");
     assertThat(qual).doesNotContain("IS NOT DISTINCT FROM");
+
+    // WITH CHECK 는 pg_policies 의 별도 컬럼(with_check)이다 — qual 만 읽으면 <b>쓰기 쪽 절반이
+    // 전혀 검증되지 않는다</b>. V114 는 USING 과 WITH CHECK 를 각각 선언하는데, WITH CHECK 를
+    // (true) 로 바꿔도 qual 단언은 그대로 통과한다. 그러면 테넌트 커넥션이 <b>남의 tenant_id 로
+    // 행을 INSERT</b> 할 수 있고, 읽을 수는 없으니 아무도 눈치채지 못한다.
+    String withCheck =
+        (String)
+            dsl.fetchValue("select with_check from pg_policies where tablename = 'tenant_settings'");
+    assertThat(withCheck).isNotNull();
+    assertThat(withCheck).contains("app.tenant_id");
+    assertThat(withCheck).doesNotContain("IS NOT DISTINCT FROM");
   }
 
   @Test

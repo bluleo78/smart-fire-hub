@@ -68,16 +68,36 @@ public class SettingsRepository {
     return dsl.select(VALUE).from(SYSTEM_SETTINGS).where(KEY.eq(key)).fetchOptional(VALUE);
   }
 
+  /**
+   * 플랫폼 기본값을 저장한다. <b>UPDATE 가 아니라 upsert 다.</b>
+   *
+   * <p>이전에는 {@code UPDATE ... WHERE key = ?} 였다. 그러면 <b>행이 없는 키를 쓰면 0행이 갱신되고,
+   * 예외도 없이 성공으로 끝난다</b> — 호출부는 {@code updatePlatformSettings} 를 지나 204 를 돌려주고
+   * 운영자는 저장됐다고 믿는다. 실제로 {@code ai.session_max_tokens} 가 이 상태였다: 화이트리스트
+   * ({@code ALLOWED_AI_KEYS})에도 있고 값 검증도 통과하지만 어떤 마이그레이션도 시드하지 않아
+   * <b>플랫폼 운영자가 영원히 설정할 수 없는 키</b>였다({@code getAll} 도 {@code system_settings} 를
+   * 읽으므로 목록에 나타나지도 않았다).
+   *
+   * <p>시드 행을 하나 추가하는 것으로도 그 키는 고쳐지지만, 그러면 <b>다음에 화이트리스트에 키를
+   * 추가하면서 시드를 잊는 사람</b>이 같은 함정에 다시 빠진다. 그래서 "쓸 수 있는 키인가"의 판단을
+   * 시드 행 존재 여부가 아니라 {@code ALLOWED_*} 화이트리스트 한 곳에만 두도록 저장소 쪽을 고쳤다.
+   * 임의의 키가 생기는 것은 아니다 — 화이트리스트 밖의 키는 여기 도달하기 전에 거부된다.
+   */
   public void updateSettings(Map<String, String> settings, Long userId) {
     dsl.transaction(
         tx -> {
           var ctx = tx.dsl();
           for (var entry : settings.entrySet()) {
-            ctx.update(SYSTEM_SETTINGS)
+            ctx.insertInto(SYSTEM_SETTINGS)
+                .set(KEY, entry.getKey())
                 .set(VALUE, entry.getValue())
                 .set(UPDATED_AT, currentLocalDateTime())
                 .set(UPDATED_BY, userId)
-                .where(KEY.eq(entry.getKey()))
+                .onConflict(KEY)
+                .doUpdate()
+                .set(VALUE, entry.getValue())
+                .set(UPDATED_AT, currentLocalDateTime())
+                .set(UPDATED_BY, userId)
                 .execute();
           }
         });

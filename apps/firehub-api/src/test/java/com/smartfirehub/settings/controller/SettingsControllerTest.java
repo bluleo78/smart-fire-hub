@@ -1,9 +1,9 @@
 package com.smartfirehub.settings.controller;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -114,10 +114,20 @@ class SettingsControllerTest {
         .andExpect(status().isMethodNotAllowed());
   }
 
+  /**
+   * 테넌트 쓰기는 <b>테넌트 평면 서비스 메서드</b>로 흘러야 한다.
+   *
+   * <p>이전 버전은 {@code doNothing()} 스텁 + 204 단언뿐이었다. void 메서드의 mock 은 원래
+   * 아무것도 하지 않으므로 그 스텁은 의미가 없고, {@code verify} 가 없으니 <b>핸들러가 어느
+   * 서비스 메서드를 부르는지가 전혀 고정되지 않았다</b>. 그 상태에서 핸들러를
+   * {@code updatePlatformSettings} 로 바꾸면 — 즉 한 테넌트의 저장이 전역 18행을 덮어쓰는,
+   * 이 밴드가 없애려는 바로 그 결함으로 되돌아가면 — mock 이 삼키고 204 가 나가며 저장소의
+   * 모든 테스트가 녹색으로 남는다. 그래서 호출 대상과 인자를 명시적으로 검증하고, 플랫폼
+   * 경로가 호출되지 <b>않는다</b>는 음성 단언까지 둔다.
+   */
   @Test
-  void updateSettings_validBody_returnsNoContent() throws Exception {
+  void updateSettings_validBody_routesToTenantPlaneService() throws Exception {
     mockAuth("ai:settings");
-    doNothing().when(settingsService).updateSettings(any(), anyLong());
     UpdateSettingsRequest body = new UpdateSettingsRequest(Map.of("ai.max_turns", "10"));
 
     mockMvc
@@ -127,17 +137,23 @@ class SettingsControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(body)))
         .andExpect(status().isNoContent());
+
+    verify(settingsService).updateSettings(Map.of("ai.max_turns", "10"), 1L);
+    verify(settingsService, never()).updatePlatformSettings(any(), any());
   }
 
   /** 오버라이드가 있든 없든 204다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다. */
   @Test
   void clearOverride_returnsNoContent() throws Exception {
     mockAuth("ai:settings");
-    doNothing().when(settingsService).clearOverride("ai.model");
 
     mockMvc
         .perform(delete("/api/v1/settings/ai.model").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
+
+    // verify 로 호출 자체와 키 인자를 고정한다. 204 만 단언하면 핸들러에서 clearOverride 호출을
+    // 통째로 지워도(=기능이 컨트롤러에서 사라져도) 통과하고, 경로 변수 전달 회귀도 놓친다.
+    verify(settingsService).clearOverride("ai.model");
   }
 
   /**

@@ -209,19 +209,42 @@ class SettingsResolutionTest extends IntegrationTestBase {
    *
    * <p>오버라이드 값 쪽은 검사하지 않는다 — 비밀 키 4개는 전부 플랫폼 잠금이라 오버라이드 행으로
    * 존재할 수 없다. 이 사실이 곧 "이 누락이 어떤 기존 테스트에도 걸리지 않은" 이유였다.
+   *
+   * <p><b>먼저 진짜 키를 저장한다.</b> 테스트 DB 의 {@code ai.api_key} 시드 값은 빈 문자열이라,
+   * 값이 있을 때만 단언하는 형태로 두면 <b>단언이 한 줄도 실행되지 않는</b> 공허한 테스트가 된다
+   * (실제로 그렇게 쓰여 있었다). 그 상태에서는 {@code getResolvedByPrefix} 의 {@code maskSecret}
+   * 을 통째로 지워도 이 테스트가 녹색으로 남는다 — 즉 막으려던 유출을 전혀 막지 못한다.
+   * 조건부 가드 대신 값을 만들어 두고 <b>무조건</b> 단언한다.
+   *
+   * <p>공유 테스트 DB 이므로 원래 값을 저장했다가 {@code finally} 에서 그대로 되돌린다.
    */
   @Test
   void getResolvedByPrefix_는_비밀_키를_마스킹한다() {
-    assertThat(settingsService.getResolvedByPrefix("ai"))
-        .filteredOn(s -> "ai.api_key".equals(s.key()))
-        .allSatisfy(
-            s -> {
-              if (s.value() != null && !s.value().isEmpty()) {
-                assertThat(s.value()).startsWith("****");
-                // 암호문은 "iv:ciphertext" 형태이므로 콜론이 없다는 것이 곧 암호문이 아니라는 뜻이다.
-                assertThat(s.value()).doesNotContain(":");
-              }
-            });
+    String original = rawSystemSettingValue("ai.api_key");
+    try {
+      // 평문을 넣으면 서비스가 암호화해 저장한다 — 마스킹이 없으면 이 암호문이 그대로 응답에 실린다.
+      settingsService.updatePlatformSettings(java.util.Map.of("ai.api_key", "sk-real-secret"), null);
+      // 전제 확인: 저장된 원문이 실제로 암호문("iv:ciphertext")이어야 이 테스트가 의미를 갖는다.
+      assertThat(rawSystemSettingValue("ai.api_key")).contains(":");
+
+      var apiKey =
+          settingsService.getResolvedByPrefix("ai").stream()
+              .filter(s -> "ai.api_key".equals(s.key()))
+              .findFirst()
+              .orElseThrow(() -> new AssertionError("ai.api_key 가 프리픽스 조회 결과에 없다"));
+
+      assertThat(apiKey.value()).startsWith("****");
+      // 암호문은 "iv:ciphertext" 형태이므로 콜론이 없다는 것이 곧 암호문이 아니라는 뜻이다.
+      assertThat(apiKey.value()).doesNotContain(":");
+      assertThat(apiKey.value()).doesNotContain("sk-real-secret");
+    } finally {
+      dsl.execute("update system_settings set value = ? where key = ?", original, "ai.api_key");
+    }
+  }
+
+  private String rawSystemSettingValue(String key) {
+    var row = dsl.fetchOne("select value from system_settings where key = ?", key);
+    return row == null ? null : row.get(0, String.class);
   }
 
   /**

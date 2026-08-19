@@ -54,26 +54,37 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
   /**
    * 비밀값은 마스킹된 채로 반환된다.
    *
-   * <p>test DB 의 비밀 키들은 비어 있어 마스킹 결과가 빈 문자열이다. 그래서 "무엇이 아닌가"를
-   * 단언한다 — 암호문({@code iv:ciphertext} 형태의 Base64)이 그대로 새는 것을 잡는다.
+   * <p><b>먼저 진짜 키를 저장한다.</b> test DB 의 {@code ai.api_key} 시드 값은 빈 문자열이라,
+   * "값이 있을 때만 단언한다"는 형태로 두면 조건이 항상 거짓이 되어 <b>유출 단언이 한 번도
+   * 실행되지 않는다</b>(실제로 그렇게 쓰여 있었다). 그 상태에서는 {@code SettingsService.getAll}
+   * 의 {@code maskSecret} 을 지워도 이 테스트가 녹색으로 남아, 막으려던 암호문 유출을 전혀
+   * 막지 못한다. 값을 만들어 두고 <b>무조건</b> 단언한다.
+   *
+   * <p>공유 test DB 이므로 원래 값을 {@code finally} 에서 그대로 되돌린다.
    */
   @Test
   void getSettings_doesNotLeakCiphertext() throws Exception {
-    String ciphertext =
-        dsl.fetchOne("select value from system_settings where key = 'ai.api_key'").get(0, String.class);
+    String original = rawValue("ai.api_key");
+    try {
+      settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-platform-secret"), null);
+      String ciphertext = rawValue("ai.api_key");
+      // 전제 확인: 저장된 원본이 실제 암호문이어야 이 단언이 의미를 갖는다.
+      assertThat(ciphertext).contains(":");
 
-    String body =
-        mockMvc
-            .perform(
-                get("/api/platform/settings")
-                    .header("Authorization", "Bearer " + operatorToken()))
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+      String body =
+          mockMvc
+              .perform(
+                  get("/api/platform/settings")
+                      .header("Authorization", "Bearer " + operatorToken()))
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
 
-    assertThat(body).contains("ai.api_key");
-    if (ciphertext != null && !ciphertext.isBlank()) {
+      assertThat(body).contains("ai.api_key");
       assertThat(body).doesNotContain(ciphertext);
+      assertThat(body).doesNotContain("sk-platform-secret");
+    } finally {
+      restoreRawValue("ai.api_key", original);
     }
   }
 

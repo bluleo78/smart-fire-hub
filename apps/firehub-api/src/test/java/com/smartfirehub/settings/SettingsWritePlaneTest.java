@@ -118,6 +118,37 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     assertDoesNotThrow(() -> settingsService.clearOverride("ai.model"));
   }
 
+  /**
+   * 플랫폼 쓰기는 <b>시드 행이 없는 키도</b> 실제로 저장해야 한다.
+   *
+   * <p>이 테스트를 쓰기 전 저장소의 {@code updateSettings} 는 {@code UPDATE ... WHERE key = ?} 였다.
+   * 행이 없으면 0행이 갱신되고 <b>예외 없이 성공으로 끝난다</b> — 운영자는 204 를 받고 저장됐다고
+   * 믿지만 아무 일도 일어나지 않는다. {@code ai.session_max_tokens} 가 정확히 그 상태였다:
+   * {@code ALLOWED_AI_KEYS} 에 있고 값 검증(1000~200000)도 통과하는데 어떤 마이그레이션도 시드하지
+   * 않아, <b>플랫폼 운영자가 영원히 설정할 수 없는 키</b>였다. 이 밴드가 테넌트에게만 재정의를
+   * 허용한 6키 중 하나라서, 플랫폼 기본값을 못 정하는 것은 2단 상속의 윗단이 비어 있다는 뜻이다.
+   *
+   * <p>정리는 <b>내가 만든 행만</b> 지운다 — 공유 테스트 DB 이므로 시드 행에는 손대지 않는다.
+   */
+  @Test
+  void 플랫폼_쓰기는_시드_행이_없는_키도_저장한다() {
+    String key = "ai.session_max_tokens";
+    // 전제 확인: 이 키는 시드되어 있지 않다. 언젠가 시드되면 이 테스트의 의미가 달라지므로
+    // 조용히 통과시키지 않고 전제 자체를 단언한다.
+    assertThat(rawSystemSettingValue(key)).isNull();
+
+    try {
+      settingsService.updatePlatformSettings(Map.of(key, "50000"), null);
+
+      // UPDATE-only 였다면 여기서 여전히 null 이고, 그 사이 예외는 하나도 나지 않았다.
+      assertThat(rawSystemSettingValue(key)).isEqualTo("50000");
+      // 운영자 목록(getAll)에도 나타나야 한다 — 보이지 않으면 고칠 수도 없다.
+      assertThat(settingsService.getAll().stream().map(s -> s.key())).contains(key);
+    } finally {
+      dsl.execute("delete from system_settings where key = ?", key);
+    }
+  }
+
   private String rawSystemSettingValue(String key) {
     var row = dsl.fetchOne("select value from system_settings where key = ?", key);
     return row == null ? null : row.get(0, String.class);
