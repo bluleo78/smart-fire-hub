@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -134,10 +135,20 @@ class SettingsControllerTest {
         .andExpect(jsonPath("$[0].key").value("smtp.host"));
   }
 
+  /**
+   * 테넌트 평면 SMTP 쓰기는 403 이다(P7-b Task 5).
+   *
+   * <p>이전 버전은 서비스를 {@code doNothing()} 으로 스텁하고 204 를 단언했다 — 서비스가 실제로는
+   * 항상 거부하게 된 뒤에도 <b>스텁 때문에 계속 통과하는</b> 테스트였다. 즉 "이 엔드포인트는
+   * 성공한다"는 거짓을 고정하고 있었다. 실제 서비스가 던지는 예외를 재현해, 그것이
+   * {@code GlobalExceptionHandler} 를 지나 500 이 아니라 <b>403</b> 으로 나가는지까지 확인한다.
+   */
   @Test
-  void updateSmtpSettings_returnsNoContent() throws Exception {
+  void updateSmtpSettings_onTenantPlane_returnsForbidden() throws Exception {
     mockAuth("settings:write");
-    doNothing().when(settingsService).updateSmtpSettings(any(), eq(1L));
+    doThrow(new org.springframework.security.access.AccessDeniedException("SMTP 설정은 플랫폼 관리자만 변경할 수 있습니다"))
+        .when(settingsService)
+        .updateSmtpSettings(any(), eq(1L));
 
     mockMvc
         .perform(
@@ -145,7 +156,7 @@ class SettingsControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("smtp.host", "localhost"))))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isForbidden());
   }
 
   @Test

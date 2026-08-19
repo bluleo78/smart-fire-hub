@@ -88,9 +88,13 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.host", "evil.example"), null))
         .isInstanceOf(AccessDeniedException.class);
 
-    // 컨텍스트가 없으면(플랫폼 평면) 여전히 통과해야 한다 — 회귀 가드.
+    // 컨텍스트가 없어도 거부한다 — 이것이 핵심 단언이다.
+    // "컨텍스트 없음 = 플랫폼이므로 허용"으로 판정하면 배경 경로(JobRunr·@Async·@Scheduled·스레드
+    // 홉 이후)가 전부 플랫폼으로 오인되어 공유 SMTP 자격증명 쓰기가 열린다. 플랫폼 관리자는
+    // updatePlatformSettings 를 쓰므로 이 경로는 무조건 닫혀 있어야 한다.
     TenantContext.clear();
-    assertDoesNotThrow(() -> settingsService.updateSmtpSettings(Map.of(), null));
+    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.host", "evil.example"), null))
+        .isInstanceOf(AccessDeniedException.class);
   }
 
   @Test

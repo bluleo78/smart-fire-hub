@@ -391,18 +391,22 @@ public class SettingsService {
    * 막으면 나중에 또 다른 호출 경로가 추가돼도 함께 막힌다 — 컨트롤러 애노테이션 하나만 지우면
    * 뚫리는 방식보다 안전하다.
    *
-   * <p>판정은 {@code TenantContext.get() != null} 이다 — 테넌트 인증 요청은 {@code
-   * JwtAuthenticationFilter} 가 컨텍스트를 세우고, 플랫폼 인증 요청({@code PlatformPlaneFilter},
-   * P7-a)은 세우지 않는다. 이 저장소 계층의 "컨텍스트 없음 = 플랫폼" 계약({@link #resolveOverrides}
-   * 참고)과 같은 신호를 재사용한 것이라 새 개념을 추가하지 않는다.
+   * <p><b>거부는 무조건이다 — 조건을 두지 않는다.</b> 이 메서드는 테넌트 평면 엔드포인트
+   * ({@code PUT /api/v1/settings/smtp})의 진입점이고, 플랫폼 경로는 {@link #updatePlatformSettings}
+   * → {@link #applyPlatformSmtpSettings} 로 흐르며 여기를 <b>지나지 않는다</b>. 따라서 "언제
+   * 허용하는가"를 판정할 필요 자체가 없다.
+   *
+   * <p>처음 구현은 {@code TenantContext.get() != null} 일 때만 거부했다. 그것은 "테넌트 컨텍스트가
+   * 없으면 플랫폼이다"라는 추론인데 <b>성립하지 않는다</b> — 컨텍스트 부재는 배경 경로(JobRunr
+   * {@code @Job}·{@code @Async}·{@code @Scheduled}·스레드 홉 이후)의 모습과 구별되지 않는다. P7-a 가
+   * 평면을 인증 <b>타입</b>({@code PlatformAuthentication})으로 판정하기로 정한 이유가 정확히 이것이고
+   * ("평면 표식 양방향 함정"), 같은 신호를 {@link #resolveOverrides} 는 <b>읽기</b>의 안전한 폴백으로
+   * 쓰는데 여기서는 공유 자격증명 <b>쓰기</b> 허용으로 쓰게 되어 위험 방향이 반대였다.
    */
   @Transactional
   public void updateSmtpSettings(Map<String, String> settings, Long userId) {
-    if (TenantContext.get() != null) {
-      throw new org.springframework.security.access.AccessDeniedException(
-          "SMTP 설정은 플랫폼 관리자만 변경할 수 있습니다");
-    }
-    applyPlatformSmtpSettings(settings, userId);
+    throw new org.springframework.security.access.AccessDeniedException(
+        "SMTP 설정은 플랫폼 관리자만 변경할 수 있습니다");
   }
 
   /**
