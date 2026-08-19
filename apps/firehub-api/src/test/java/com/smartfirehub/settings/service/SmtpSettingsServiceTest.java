@@ -3,10 +3,12 @@ package com.smartfirehub.settings.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,11 +16,26 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * SettingsService SMTP 관련 메서드 커버리지 보강 테스트. getSmtpSettings / updateSmtpSettings / getSmtpConfig /
  * 유효성 검증을 검증한다.
+ *
+ * <p><b>P7-b Task 5 이후 이 클래스 전체가 플랫폼 평면 호출을 재현한다.</b> {@code updateSmtpSettings}
+ * 는 이제 {@code TenantContext} 가 있으면(테넌트 평면) 즉시 거부한다 — SMTP 는 발신 도메인 신뢰도를
+ * 전 테넌트가 공유하는 완전한 플랫폼 잠금이기 때문이다. 이 파일이 검증하는 것(화이트리스트·포트
+ * 범위·마스킹·암호화)은 여전히 유효한 로직이지만, 이제는 플랫폼 관리자가 부르는 경로에서만
+ * 발생하므로 {@link #clearTenantContextForPlatformSmtpCalls} 로 기본 테넌트 컨텍스트를 지운다.
  */
 @Transactional
 class SmtpSettingsServiceTest extends IntegrationTestBase {
 
   @Autowired private SettingsService settingsService;
+
+  /**
+   * {@link IntegrationTestBase} 가 세운 기본 테넌트 컨텍스트를 지운다. 서브클래스 {@code @BeforeEach}
+   * 는 JUnit5 규약상 상위 클래스 것보다 나중에 실행되므로, 여기서 지우는 것이 마지막 상태가 된다.
+   */
+  @BeforeEach
+  void clearTenantContextForPlatformSmtpCalls() {
+    TenantContext.clear();
+  }
 
   @Test
   void getSmtpSettings_returnsSmtpKeys() {

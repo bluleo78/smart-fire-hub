@@ -98,8 +98,19 @@ public class TenantSettingsRepository {
         .execute();
   }
 
-  /** 현재 테넌트의 오버라이드를 지운다. 반환값은 삭제된 행 수 — 0 이면 오버라이드가 없었다. */
+  /**
+   * 현재 테넌트의 오버라이드를 지운다. 반환값은 삭제된 행 수 — 0 이면 오버라이드가 없었다.
+   *
+   * <p><b>{@link #findValue}/{@link #findByPrefix} 와 달리 tenant_id 를 SQL 에 명시한다.</b> 읽기는
+   * 컨텍스트가 없어도(배경 잡) 정상 분기이므로 RLS 에게만 맡기면 되지만({@link #upsert} 위 문서
+   * 참고), 이 메서드는 <b>쓰기</b>다 — {@code SECURITY DEFINER}/테스트 픽스처처럼 RLS 를 우회하는
+   * 소유자 권한 {@code DSLContext} 로 호출되면 {@code WHERE key = ?} 만으로는 <b>전 테넌트의 같은
+   * 키 행이 전부 삭제된다</b>. {@link #upsert} 가 이미 {@code TenantContext.require} 로 테넌트를
+   * 명시하는 것과 대칭을 맞춰, 삭제도 어떤 권한의 커넥션으로 실행되든 자기 테넌트 행만 지우게
+   * 한다.
+   */
   public int delete(String key) {
-    return dsl.deleteFrom(TENANT_SETTINGS).where(KEY.eq(key)).execute();
+    long tenantId = TenantContext.require("tenant_settings 오버라이드 삭제");
+    return dsl.deleteFrom(TENANT_SETTINGS).where(KEY.eq(key)).and(TENANT_ID.eq(tenantId)).execute();
   }
 }

@@ -13,6 +13,13 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * SettingsService CLI OAuth 토큰 및 추가 AI 설정 유효성 검증 테스트. validateValues() 내의 나머지 분기(agent_type,
  * session_max_tokens, max_tokens)를 커버한다.
+ *
+ * <p><b>P7-b Task 5 이후</b> {@code ai.cli_oauth_token}/{@code ai.agent_type} 은 플랫폼 잠금 키라
+ * {@code updatePlatformSettings} 로만 쓸 수 있다 — 이 두 키를 다루는 테스트만 그쪽으로 옮겼다.
+ * 나머지(테넌트 오버라이드 6키: system_prompt/model/max_turns/temperature/max_tokens/
+ * session_max_tokens)는 여전히 {@code updateSettings} 를 부른다 — {@code getValue} 가 오버라이드를
+ * 우선 해석하므로(기본 테넌트 컨텍스트가 서 있는 이 테스트 환경에서) 검증 로직이 같다면 결과
+ * 단언은 그대로 유효하다.
  */
 @Transactional
 class SettingsServiceCliTokenTest extends IntegrationTestBase {
@@ -21,7 +28,7 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
 
   @Test
   void updateSettings_cliOauthToken_encryptsBeforeStore() {
-    settingsService.updateSettings(Map.of("ai.cli_oauth_token", "oauth-test-token-abc"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "oauth-test-token-abc"), null);
 
     Optional<String> raw = settingsService.getValue("ai.cli_oauth_token");
     assertThat(raw).isPresent();
@@ -32,7 +39,7 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
 
   @Test
   void getDecryptedCliOauthToken_returnsOriginal() {
-    settingsService.updateSettings(Map.of("ai.cli_oauth_token", "my-cli-token-xyz"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "my-cli-token-xyz"), null);
 
     Optional<String> result = settingsService.getDecryptedCliOauthToken();
 
@@ -50,14 +57,15 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
   @Test
   void updateSettings_agentType_validValues_success() {
     // sdk, cli, cli-api 모두 허용
-    settingsService.updateSettings(Map.of("ai.agent_type", "sdk"), null);
-    settingsService.updateSettings(Map.of("ai.agent_type", "cli"), null);
-    settingsService.updateSettings(Map.of("ai.agent_type", "cli-api"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.agent_type", "sdk"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.agent_type", "cli"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.agent_type", "cli-api"), null);
   }
 
   @Test
   void updateSettings_agentType_invalidValue_throwsIllegalArgument() {
-    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.agent_type", "unknown"), 1L))
+    assertThatThrownBy(
+            () -> settingsService.updatePlatformSettings(Map.of("ai.agent_type", "unknown"), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("에이전트 유형은");
   }
@@ -134,13 +142,13 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
   @Test
   void updateSettings_cliOauthToken_maskedValue_skipsUpdate() {
     // 먼저 토큰 저장
-    settingsService.updateSettings(Map.of("ai.cli_oauth_token", "real-cli-token-stored"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "real-cli-token-stored"), null);
     Optional<String> encrypted = settingsService.getValue("ai.cli_oauth_token");
     assertThat(encrypted).isPresent();
     String encryptedValue = encrypted.get();
 
     // masked 값 전송 시 업데이트 스킵
-    settingsService.updateSettings(Map.of("ai.cli_oauth_token", "****masked"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "****masked"), null);
 
     Optional<String> afterMasked = settingsService.getValue("ai.cli_oauth_token");
     assertThat(afterMasked).isPresent().hasValue(encryptedValue);

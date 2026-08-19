@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -106,6 +107,17 @@ class SettingsControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(body)))
+        .andExpect(status().isNoContent());
+  }
+
+  /** 오버라이드가 있든 없든 204다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다. */
+  @Test
+  void clearOverride_returnsNoContent() throws Exception {
+    mockAuth("ai:settings");
+    doNothing().when(settingsService).clearOverride("ai.model");
+
+    mockMvc
+        .perform(delete("/api/v1/settings/ai.model").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
   }
 

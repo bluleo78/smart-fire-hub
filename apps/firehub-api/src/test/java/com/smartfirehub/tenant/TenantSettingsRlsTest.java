@@ -6,10 +6,16 @@ import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransacti
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import javax.sql.DataSource;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -24,6 +30,10 @@ class TenantSettingsRlsTest extends IntegrationTestBase {
   @Autowired private TenantSettingsRepository repository;
   @Autowired private TransactionTemplate transactionTemplate;
   @Autowired private org.jooq.DSLContext dsl;
+
+  @Autowired
+  @Qualifier("schemaOwnerDataSource")
+  private DataSource schemaOwnerDataSource;
 
   @Test
   void 두_테넌트의_오버라이드는_서로_보이지_않는다() {
@@ -79,6 +89,54 @@ class TenantSettingsRlsTest extends IntegrationTestBase {
       assertThat(byPrefix).hasSize(1).containsEntry("ai.model", "second");
     } finally {
       deleteTenants(dsl, a);
+    }
+  }
+
+  /**
+   * {@code delete} 가 RLS 를 우회하는 소유자 롤 커넥션으로 호출돼도 자기 테넌트 행만 지운다
+   * (carried-over 리뷰 지적, Task 5).
+   *
+   * <p><b>왜 owner 커넥션이 필요한가.</b> 일반 커넥션(app_tenant, NOBYPASSRLS)에서는 정책이 이미
+   * {@code tenant_id} 로 행을 걸러 주므로 {@code WHERE key = ?} 만으로도 우연히 안전해 보인다 —
+   * 진짜 결함(전체 SQL 이 tenant_id 를 전혀 언급하지 않는 것)은 RLS 자체를 우회하는 경로
+   * ({@code schemaOwnerDataSource}, 테스트 픽스처·{@code SECURITY DEFINER} 함수가 실제로 쓰는
+   * 권한)로만 드러난다. {@link #findValue}/{@link #findByPrefix}(읽기)와 달리 {@code delete}(쓰기)는
+   * SQL 에 {@code tenant_id} 를 명시해야 하는 이유가 이것이다.
+   */
+  @Test
+  void delete_는_owner_커넥션에서도_다른_테넌트_행을_지우지_않는다() {
+    long a = createActiveTenant(dsl, "ts-del-a");
+    long b = createActiveTenant(dsl, "ts-del-b");
+    try {
+      runInTenantTransaction(transactionTemplate, a, () -> repository.upsert("ai.model", "model-a", null));
+      runInTenantTransaction(transactionTemplate, b, () -> repository.upsert("ai.model", "model-b", null));
+
+      DSLContext ownerDsl = DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
+      TenantSettingsRepository ownerRepository = new TenantSettingsRepository(ownerDsl);
+
+      TenantContext.set(a);
+      try {
+        ownerRepository.delete("ai.model");
+      } finally {
+        TenantContext.clear();
+      }
+
+      // 테넌트 a 의 행은 지워졌고, 테넌트 b 의 행은 살아 있어야 한다. owner 커넥션은 RLS 를 우회하므로
+      // 트랜잭션 밖에서 그대로 읽어도 두 테넌트 행이 모두 보인다.
+      assertThat(
+              ownerDsl
+                  .fetchOptional("select value from tenant_settings where tenant_id = ? and key = ?", a, "ai.model")
+                  .map(r -> r.get(0, String.class)))
+          .as("delete 가 자기 테넌트(a) 행은 지웠어야 한다")
+          .isEmpty();
+      assertThat(
+              ownerDsl
+                  .fetchOptional("select value from tenant_settings where tenant_id = ? and key = ?", b, "ai.model")
+                  .map(r -> r.get(0, String.class)))
+          .as("delete 가 tenant_id 를 SQL 에 명시하지 않으면 여기서 테넌트 b 의 행까지 지워진다")
+          .contains("model-b");
+    } finally {
+      deleteTenants(dsl, a, b);
     }
   }
 

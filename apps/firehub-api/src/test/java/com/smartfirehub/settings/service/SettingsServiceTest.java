@@ -14,6 +14,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * <b>P7-b Task 5 이후 이 파일 전체가 {@code updatePlatformSettings} 를 검증한다.</b> 여기서 쓰는 키
+ * (ai.api_key, ai.agent_type, embedding.* 등)는 전부 플랫폼 잠금이라 이제 {@code updateSettings}
+ * (테넌트 평면, 6키 화이트리스트)로는 저장할 수 없다 — 저장 대상이 {@code updateSettings} 에서
+ * {@code updatePlatformSettings} 로 옮겨졌을 뿐, 검증·마스킹·암호화 로직 자체는 그대로다(재사용).
+ * 테넌트 평면 6키 쓰기는 {@code SettingsWritePlaneTest} 가 검증한다.
+ */
 @Transactional
 class SettingsServiceTest extends IntegrationTestBase {
 
@@ -37,7 +44,7 @@ class SettingsServiceTest extends IntegrationTestBase {
     Map<String, String> update = Map.of("ai.max_turns", "10");
 
     // when / then: no exception
-    settingsService.updateSettings(update, null);
+    settingsService.updatePlatformSettings(update, null);
 
     // verify the value was persisted within this transaction
     List<SettingResponse> settings = settingsService.getByPrefix("ai");
@@ -52,7 +59,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   void updateSettings_invalidKey_throwsIllegalArgumentException() {
     Map<String, String> update = Map.of("unknown.key", "value");
 
-    assertThatThrownBy(() -> settingsService.updateSettings(update, 1L))
+    assertThatThrownBy(() -> settingsService.updatePlatformSettings(update, 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("허용되지 않는 설정 키");
   }
@@ -62,7 +69,7 @@ class SettingsServiceTest extends IntegrationTestBase {
     // ai.max_turns must be 1~50; 0 is invalid
     Map<String, String> update = Map.of("ai.max_turns", "0");
 
-    assertThatThrownBy(() -> settingsService.updateSettings(update, 1L))
+    assertThatThrownBy(() -> settingsService.updatePlatformSettings(update, 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("최대 턴 수는 1에서 50 사이");
   }
@@ -72,7 +79,7 @@ class SettingsServiceTest extends IntegrationTestBase {
     // ai.temperature must be 0.0~1.0; 1.5 is invalid
     Map<String, String> update = Map.of("ai.temperature", "1.5");
 
-    assertThatThrownBy(() -> settingsService.updateSettings(update, 1L))
+    assertThatThrownBy(() -> settingsService.updatePlatformSettings(update, 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Temperature는 0.0에서 1.0 사이");
   }
@@ -82,7 +89,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void updateSettings_apiKey_encryptsBeforeStore() {
     // when: store a plain-text API key
-    settingsService.updateSettings(Map.of("ai.api_key", "sk-test-plain-key"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-plain-key"), null);
 
     // then: the raw value in DB is NOT the plain text — it is an encrypted iv:ciphertext blob
     Optional<String> rawStored = settingsService.getValue("ai.api_key");
@@ -98,7 +105,7 @@ class SettingsServiceTest extends IntegrationTestBase {
 
   @Test
   void updateSettings_apiKey_emptyValue_throwsValidation() {
-    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.api_key", ""), null))
+    assertThatThrownBy(() -> settingsService.updatePlatformSettings(Map.of("ai.api_key", ""), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("API 키는 비어있을 수 없습니다");
   }
@@ -106,7 +113,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void getByPrefix_apiKey_returnsMasked() {
     // given: store a real API key first
-    settingsService.updateSettings(Map.of("ai.api_key", "sk-test-abcdefghij"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-abcdefghij"), null);
 
     // when: retrieve via getByPrefix
     List<SettingResponse> settings = settingsService.getByPrefix("ai");
@@ -122,7 +129,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void getDecryptedApiKey_returnsOriginal() {
     // given: encrypt and persist
-    settingsService.updateSettings(Map.of("ai.api_key", "sk-original-secret"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-original-secret"), null);
 
     // when
     Optional<String> decrypted = settingsService.getDecryptedApiKey();
@@ -166,7 +173,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void getAsMap_withMixedValues_returnsMappedCorrectly() {
     // given: 정상 값이 있는 설정을 업데이트한다
-    settingsService.updateSettings(Map.of("ai.max_turns", "15"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.max_turns", "15"), null);
 
     // when: getAsMap 호출
     Map<String, String> result = settingsService.getAsMap("ai");
@@ -183,7 +190,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void updateSettings_opencode_agentType_허용() {
     // ai.agent_type = "opencode" 저장이 예외 없이 통과해야 한다
-    assertDoesNotThrow(() -> settingsService.updateSettings(Map.of("ai.agent_type", "opencode"), null));
+    assertDoesNotThrow(() -> settingsService.updatePlatformSettings(Map.of("ai.agent_type", "opencode"), null));
     assertThat(settingsService.getAsMap("ai")).containsEntry("ai.agent_type", "opencode");
   }
 
@@ -191,7 +198,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   void updateSettings_invalidAgentType_throwsIllegalArgumentException() {
     // opencode 허용 후에도 잘못된 값은 예외가 발생해야 한다
     assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("ai.agent_type", "unknown-type"), 1L))
+            () -> settingsService.updatePlatformSettings(Map.of("ai.agent_type", "unknown-type"), 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("에이전트 유형은 sdk, cli, cli-api, opencode 중 하나여야 합니다");
   }
@@ -201,14 +208,14 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void embeddingProviderRejectsInvalidValue() {
     assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("embedding.provider", "INVALID"), 1L))
+            () -> settingsService.updatePlatformSettings(Map.of("embedding.provider", "INVALID"), 1L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void embeddingApiKeyIsMaskedOnRead() {
     // updated_by FK 제약 때문에 test DB에 존재하지 않는 userId 대신 null 사용 (기존 테스트 관례)
-    settingsService.updateSettings(Map.of("embedding.api_key", "secret-key-123"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "secret-key-123"), null);
     var settings = settingsService.getByPrefix("embedding");
     var apiKey =
         settings.stream()
@@ -223,13 +230,13 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void updateSettings_apiKey_maskedValue_skipsUpdate() {
     // given: store a real key first
-    settingsService.updateSettings(Map.of("ai.api_key", "sk-real-key-stored"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-real-key-stored"), null);
     Optional<String> encryptedAfterFirstStore = settingsService.getValue("ai.api_key");
     assertThat(encryptedAfterFirstStore).isPresent();
     String encryptedValue = encryptedAfterFirstStore.get();
 
     // when: send a masked value (as the frontend does when the user has not changed the key)
-    settingsService.updateSettings(Map.of("ai.api_key", "****abcd"), null);
+    settingsService.updatePlatformSettings(Map.of("ai.api_key", "****abcd"), null);
 
     // then: the stored encrypted value must NOT have changed
     Optional<String> encryptedAfterMaskedUpdate = settingsService.getValue("ai.api_key");
@@ -243,7 +250,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   void embeddingOpenAiRejectsNonHttpsBaseUrl() {
     assertThatThrownBy(
             () ->
-                settingsService.updateSettings(
+                settingsService.updatePlatformSettings(
                     Map.of(
                         "embedding.provider", "OPENAI",
                         "embedding.model", "text-embedding-3-small",
@@ -259,7 +266,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   void embeddingOpenAiAcceptsHttpsBaseUrlWithApiKey() {
     assertDoesNotThrow(
         () ->
-            settingsService.updateSettings(
+            settingsService.updatePlatformSettings(
                 Map.of(
                     "embedding.provider", "OPENAI",
                     "embedding.model", "text-embedding-3-small",
@@ -275,7 +282,7 @@ class SettingsServiceTest extends IntegrationTestBase {
     // 시드 상태에서 embedding.api_key 는 빈 값이므로 페이로드에서도 빈 값을 보낸다
     assertThatThrownBy(
             () ->
-                settingsService.updateSettings(
+                settingsService.updatePlatformSettings(
                     Map.of(
                         "embedding.provider", "OPENAI",
                         "embedding.base_url", "https://api.openai.com",
@@ -288,12 +295,12 @@ class SettingsServiceTest extends IntegrationTestBase {
   /** api_key 를 아예 보내지 않아도 저장된 키가 있으면 통과해야 한다 — 마스킹 흐름 회귀 방지. */
   @Test
   void embeddingOpenAiAcceptsOmittedApiKeyWhenStoredKeyExists() {
-    settingsService.updateSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
 
     // 프론트는 마스킹된 키를 페이로드에서 제거하므로 api_key 없이 provider 만 바뀌는 요청이 온다
     assertDoesNotThrow(
         () ->
-            settingsService.updateSettings(
+            settingsService.updatePlatformSettings(
                 Map.of(
                     "embedding.provider", "OPENAI",
                     "embedding.base_url", "https://api.openai.com"),
@@ -303,11 +310,11 @@ class SettingsServiceTest extends IntegrationTestBase {
   /** 마스킹 값(****)은 "기존 키 유지"이므로 OPENAI 저장이 통과해야 한다. */
   @Test
   void embeddingOpenAiAcceptsMaskedApiKeyWhenStoredKeyExists() {
-    settingsService.updateSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
 
     assertDoesNotThrow(
         () ->
-            settingsService.updateSettings(
+            settingsService.updatePlatformSettings(
                 Map.of(
                     "embedding.provider", "OPENAI",
                     "embedding.base_url", "https://api.openai.com",
@@ -320,11 +327,11 @@ class SettingsServiceTest extends IntegrationTestBase {
   /** 저장된 키가 있어도 사용자가 명시적으로 빈 값을 보내면 키 삭제이므로 거부한다. */
   @Test
   void embeddingOpenAiRejectsExplicitBlankApiKeyEvenWithStoredKey() {
-    settingsService.updateSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
 
     assertThatThrownBy(
             () ->
-                settingsService.updateSettings(
+                settingsService.updatePlatformSettings(
                     Map.of(
                         "embedding.provider", "OPENAI",
                         "embedding.base_url", "https://api.openai.com",
@@ -338,7 +345,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void embeddingRejectsMalformedBaseUrl() {
     assertThatThrownBy(
-            () -> settingsService.updateSettings(Map.of("embedding.base_url", "localhost:11434"), null))
+            () -> settingsService.updatePlatformSettings(Map.of("embedding.base_url", "localhost:11434"), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("http://");
   }
@@ -348,7 +355,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   void embeddingOllamaAcceptsLocalHttpBaseUrlWithoutApiKey() {
     assertDoesNotThrow(
         () ->
-            settingsService.updateSettings(
+            settingsService.updatePlatformSettings(
                 Map.of(
                     "embedding.provider", "OLLAMA",
                     "embedding.model", "bge-m3",

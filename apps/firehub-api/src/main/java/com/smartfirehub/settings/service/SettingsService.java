@@ -20,6 +20,13 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SettingsService {
 
+  /**
+   * <b>플랫폼 쓰기 경로({@link #updatePlatformSettings})의 화이트리스트다(P7-b 이전에는
+   * {@link #updateSettings} 자신의 화이트리스트였다).</b> 테넌트가 오버라이드할 수 있는 6키
+   * ({@link SettingsOverridePolicy#tenantOverridableKeys}) 는 이 9키의 <b>부분집합</b>이다 —
+   * {@code ai.api_key}/{@code ai.agent_type}/{@code ai.cli_oauth_token} 은 여기 있지만 테넌트
+   * 화이트리스트에는 없다(과금 주체·실행 형태라 플랫폼이 갖는다).
+   */
   private static final Set<String> ALLOWED_AI_KEYS =
       Set.of(
           "ai.model",
@@ -32,6 +39,7 @@ public class SettingsService {
           "ai.agent_type",
           "ai.cli_oauth_token");
 
+  /** SMTP 6키는 전부 플랫폼 잠금이라 테넌트 화이트리스트에 대응하는 부분집합이 없다 — 근거는 {@link #ALLOWED_AI_KEYS} 와 같다. */
   private static final Set<String> ALLOWED_SMTP_KEYS =
       Set.of(
           "smtp.host",
@@ -42,6 +50,7 @@ public class SettingsService {
           "smtp.from_address");
 
   // 임베딩 provider 설정 키 (V63 시드). embedding.api_key 는 ai.api_key 와 동일하게 암호화/마스킹 처리한다.
+  // 4키 전부 플랫폼 잠금이라 테넌트 화이트리스트에 대응하는 부분집합이 없다 — 근거는 ALLOWED_AI_KEYS 와 같다.
   private static final Set<String> ALLOWED_EMBEDDING_KEYS =
       Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
 
@@ -210,13 +219,79 @@ public class SettingsService {
     return candidates;
   }
 
+  /**
+   * <b>테넌트 평면</b> 쓰기. {@link SettingsOverridePolicy#isTenantOverridable} 화이트리스트(6키)만
+   * 받아 {@code tenant_settings} 에 저장한다 — {@code system_settings}(전역 18행)는 절대 건드리지
+   * 않는다. 이 구분이 이 밴드의 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전 테넌트에 적용됨).
+   *
+   * <p>거부 메시지에 키 이름을 넣는다 — web 이 어느 필드가 잠겼는지 사용자에게 보여줄 수 있어야
+   * 하기 때문이다. 플랫폼 잠금 키(비밀 키·SMTP·embedding.*) 는 {@link #updatePlatformSettings} 로만
+   * 바뀐다.
+   *
+   * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
+   * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다. 반대로
+   * 마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 테넌트 오버라이드 허용 6키 중
+   * {@link #SECRET_KEYS} 에 속하는 키가 하나도 없기 때문이다(비밀 키는 전부 플랫폼 잠금).
+   *
+   * <p>{@code @Transactional} 이 필수다 — {@code tenant_settings} 는 RLS 테이블이라 GUC 가
+   * 트랜잭션이 열릴 때만 주입된다({@code TenantAwareTransactionManager.doBegin}). 트랜잭션 없이
+   * {@link TenantSettingsRepository#upsert} 를 부르면 GUC 없는 커넥션에서 INSERT 가 정책 위반으로
+   * 거부된다.
+   */
+  @Transactional
   public void updateSettings(Map<String, String> settings, Long userId) {
     for (String key : settings.keySet()) {
-      if (!ALLOWED_AI_KEYS.contains(key) && !ALLOWED_EMBEDDING_KEYS.contains(key)) {
+      if (!SettingsOverridePolicy.isTenantOverridable(key)) {
+        throw new IllegalArgumentException("플랫폼 관리자만 변경할 수 있는 설정입니다: " + key);
+      }
+    }
+
+    validateValues(settings);
+
+    settings.forEach((key, value) -> tenantSettingsRepository.upsert(key, value, userId));
+  }
+
+  /**
+   * <b>플랫폼 평면</b> 쓰기(운영자 전용, Task 6). AI·임베딩·SMTP 18키 전체를 대상으로 하고
+   * {@code system_settings} 에 쓴다. 세 서브 화이트리스트({@link #ALLOWED_AI_KEYS} /
+   * {@link #ALLOWED_EMBEDDING_KEYS} / {@link #ALLOWED_SMTP_KEYS}) 의 합집합이 아닌 키는 즉시
+   * 거부한다.
+   *
+   * <p>키를 두 그룹(AI+임베딩 / SMTP)으로 나눠 각자의 검증·마스킹·암호화 로직에 위임한다 — 그
+   * 로직은 Task 5 이전에 {@link #updateSettings}/{@code updateSmtpSettings} 가 쓰던 것과
+   * <b>동일한 코드</b>다({@link #applyPlatformAiEmbeddingSettings}, {@link #applyPlatformSmtpSettings}
+   * 로 이름만 옮겼다). 플랫폼 경로가 검증을 다시 구현하면 두 평면(테넌트/플랫폼)의 "유효한 값"
+   * 판정이 갈라진다.
+   */
+  @Transactional
+  public void updatePlatformSettings(Map<String, String> settings, Long userId) {
+    for (String key : settings.keySet()) {
+      if (!ALLOWED_AI_KEYS.contains(key)
+          && !ALLOWED_EMBEDDING_KEYS.contains(key)
+          && !ALLOWED_SMTP_KEYS.contains(key)) {
         throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
       }
     }
 
+    Map<String, String> aiEmbedding =
+        settings.entrySet().stream()
+            .filter(e -> ALLOWED_AI_KEYS.contains(e.getKey()) || ALLOWED_EMBEDDING_KEYS.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    Map<String, String> smtp =
+        settings.entrySet().stream()
+            .filter(e -> ALLOWED_SMTP_KEYS.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    if (!aiEmbedding.isEmpty()) applyPlatformAiEmbeddingSettings(aiEmbedding, userId);
+    if (!smtp.isEmpty()) applyPlatformSmtpSettings(smtp, userId);
+  }
+
+  /**
+   * {@link #updateSettings} 가 P7-b 이전까지 하던 일 그대로다(AI+임베딩 검증·마스킹·암호화 후
+   * {@code system_settings} 갱신) — 이름만 "테넌트 쓰기"에서 "플랫폼 쓰기"로 바뀌었다. 지금은
+   * {@link #updatePlatformSettings} 만 부른다.
+   */
+  private void applyPlatformAiEmbeddingSettings(Map<String, String> settings, Long userId) {
     boolean hasMaskedApiKey = isMaskedApiKey(settings.get("ai.api_key"));
     boolean hasMaskedCliToken = isMaskedApiKey(settings.get("ai.cli_oauth_token"));
     boolean hasMaskedEmbeddingKey = isMaskedApiKey(settings.get("embedding.api_key"));
@@ -239,6 +314,16 @@ public class SettingsService {
     if (!toUpdate.isEmpty()) {
       settingsRepository.updateSettings(toUpdate, userId);
     }
+  }
+
+  /**
+   * 테넌트 오버라이드를 지운다 = 상속 복귀. {@code tenant_settings} 에 행이 있으면 지우고, 없으면
+   * 아무 일도 하지 않는다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다(호출부인
+   * {@code DELETE /api/v1/settings/{key}} 는 있든 없든 204 를 돌려준다).
+   */
+  @Transactional
+  public void clearOverride(String key) {
+    tenantSettingsRepository.delete(key);
   }
 
   private static boolean isMaskedApiKey(String value) {
@@ -297,8 +382,35 @@ public class SettingsService {
         .collect(Collectors.toList());
   }
 
+  /**
+   * SMTP 는 발신 도메인 신뢰도를 전 테넌트가 공유하므로 완전한 플랫폼 잠금이다 — 테넌트 평면에서는
+   * 호출 자체를 거부한다.
+   *
+   * <p><b>컨트롤러가 아니라 서비스에서 막는다.</b> {@code SettingsController}(테넌트 평면)와
+   * {@code PlatformSettingsController}(플랫폼 평면) 양쪽 모두 결국 이 메서드로 수렴하므로, 여기서
+   * 막으면 나중에 또 다른 호출 경로가 추가돼도 함께 막힌다 — 컨트롤러 애노테이션 하나만 지우면
+   * 뚫리는 방식보다 안전하다.
+   *
+   * <p>판정은 {@code TenantContext.get() != null} 이다 — 테넌트 인증 요청은 {@code
+   * JwtAuthenticationFilter} 가 컨텍스트를 세우고, 플랫폼 인증 요청({@code PlatformPlaneFilter},
+   * P7-a)은 세우지 않는다. 이 저장소 계층의 "컨텍스트 없음 = 플랫폼" 계약({@link #resolveOverrides}
+   * 참고)과 같은 신호를 재사용한 것이라 새 개념을 추가하지 않는다.
+   */
   @Transactional
   public void updateSmtpSettings(Map<String, String> settings, Long userId) {
+    if (TenantContext.get() != null) {
+      throw new org.springframework.security.access.AccessDeniedException(
+          "SMTP 설정은 플랫폼 관리자만 변경할 수 있습니다");
+    }
+    applyPlatformSmtpSettings(settings, userId);
+  }
+
+  /**
+   * {@link #updateSmtpSettings} 가 P7-b 이전까지 하던 검증·마스킹·암호화 로직 그대로다. 이름만
+   * "플랫폼 쓰기 본체"로 옮겼고, {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이
+   * 바로 이 메서드를 부른다.
+   */
+  private void applyPlatformSmtpSettings(Map<String, String> settings, Long userId) {
     for (String key : settings.keySet()) {
       if (!ALLOWED_SMTP_KEYS.contains(key)) {
         throw new IllegalArgumentException("허용되지 않는 SMTP 설정 키: " + key);

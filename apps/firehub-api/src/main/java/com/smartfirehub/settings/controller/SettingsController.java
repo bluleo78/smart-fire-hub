@@ -45,6 +45,17 @@ public class SettingsController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * 테넌트 오버라이드를 지워 플랫폼 값으로 되돌린다. <b>멱등</b> — 오버라이드가 이미 없어도(=이미
+   * 상속 중) 204 다. "상속 중" 은 오류 상태가 아니므로 404 로 만들지 않는다.
+   */
+  @DeleteMapping("/{key}")
+  @RequirePermission("ai:settings")
+  public ResponseEntity<Void> clearOverride(@PathVariable String key) {
+    settingsService.clearOverride(key);
+    return ResponseEntity.noContent().build();
+  }
+
   @GetMapping("/smtp")
   @RequirePermission("settings:write")
   public ResponseEntity<List<SettingResponse>> getSmtpSettings() {
