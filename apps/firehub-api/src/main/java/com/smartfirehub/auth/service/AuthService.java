@@ -9,7 +9,6 @@ import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.exception.TenantAccessDeniedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
-import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -19,11 +18,7 @@ import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -315,13 +310,13 @@ public class AuthService {
     return new String[] {null, null};
   }
 
+  /**
+   * 저장용 토큰 해시.
+   *
+   * <p>구현은 {@link RefreshTokenHasher} 로 옮겼다 — 운영자 평면(P7-a)이 같은 {@code refresh_token}
+   * 테이블을 쓰므로 두 평면이 반드시 같은 해시를 만들어야 한다.
+   */
   private String hashToken(String token) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
-      return HexFormat.of().formatHex(hash);
-    } catch (NoSuchAlgorithmException e) {
-      throw new CryptoException("SHA-256 not available", e);
-    }
+    return RefreshTokenHasher.hash(token);
   }
 }
