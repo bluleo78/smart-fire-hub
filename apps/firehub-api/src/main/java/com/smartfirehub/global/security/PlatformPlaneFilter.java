@@ -5,10 +5,12 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.Set;
+import java.util.List;
 import org.springframework.lang.NonNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -31,7 +33,24 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 public class PlatformPlaneFilter extends OncePerRequestFilter {
 
-  private static final String PLATFORM_PREFIX = "/api/platform/";
+  /**
+   * 평면 판정을 <b>{@code SecurityConfig} 와 같은 매처</b>로 한다.
+   *
+   * <p>직접 {@code getRequestURI().startsWith("/api/platform/")} 로 대조하면 안 된다. {@code
+   * getRequestURI()} 는 <b>디코딩되지 않은</b> 원본 URI 인데, 이 스택의 다른 모든 판정
+   * ({@code SecurityConfig} 의 {@code requestMatchers}, MVC 핸들러 매핑)은 <b>디코딩된</b> 경로를
+   * 본다. 그래서 {@code GET /api/%70latform/tenants} 는 이 필터에게는 "플랫폼 경로가 아님"으로,
+   * 시큐리티와 MVC 에게는 "플랫폼 경로"로 보인다 — 테넌트 토큰이 평면 검사를 건너뛰고
+   * 운영자 컨트롤러에 도달하는 우회로다({@code %70} = {@code p}, StrictHttpFirewall 차단 대상
+   * 아님). 남는 방어는 권한 검사뿐인데, 이 클래스의 존재 이유가 바로 "권한 검사로는 부족하다"다.
+   *
+   * <p>매처를 쓰면 {@code server.servlet.context-path} 설정(원본 URI 에는 컨텍스트 경로가 포함되지만
+   * 매처는 그것을 제외한 경로를 본다)과 대소문자·트레일링 슬래시 처리까지 시큐리티 설정과 자동으로
+   * 일치한다 — 아래 면제 목록이 {@code SecurityConfig} 의 permitAll 목록과 "1:1 로 일치"해야 하는
+   * 불변식을 손으로 지키는 대신 같은 문법·같은 구현으로 지킨다.
+   */
+  private static final RequestMatcher PLATFORM_PLANE =
+      new AntPathRequestMatcher("/api/platform/**");
 
   /**
    * 평면 검사 면제 경로. {@code SecurityConfig} 의 플랫폼 permitAll 목록과 <b>1:1 로 일치</b>해야 한다.
@@ -41,8 +60,10 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
    * {@code auth != null} 인데 평면이 어긋나 403 이 되고, 운영자가 로그인 자체를 못 한다 — 실제로
    * 밟게 되는 경로다.
    */
-  private static final Set<String> PLANE_CHECK_EXEMPT =
-      Set.of("/api/platform/auth/login", "/api/platform/auth/refresh");
+  private static final List<RequestMatcher> PLANE_CHECK_EXEMPT =
+      List.of(
+          new AntPathRequestMatcher("/api/platform/auth/login"),
+          new AntPathRequestMatcher("/api/platform/auth/refresh"));
 
   @Override
   protected void doFilterInternal(
@@ -51,8 +72,8 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
       @NonNull FilterChain filterChain)
       throws ServletException, IOException {
     Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-    if (auth != null && !PLANE_CHECK_EXEMPT.contains(request.getRequestURI())) {
-      boolean platformRequest = request.getRequestURI().startsWith(PLATFORM_PREFIX);
+    if (auth != null && !isExempt(request)) {
+      boolean platformRequest = PLATFORM_PLANE.matches(request);
       boolean platformToken = auth instanceof PlatformAuthentication;
       if (platformRequest != platformToken) {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
@@ -62,5 +83,13 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
       }
     }
     filterChain.doFilter(request, response);
+  }
+
+  /** 면제 경로 여부. 목록이 두 개뿐이라 순회로 충분하다. */
+  private static boolean isExempt(HttpServletRequest request) {
+    for (RequestMatcher exempt : PLANE_CHECK_EXEMPT) {
+      if (exempt.matches(request)) return true;
+    }
+    return false;
   }
 }

@@ -11,15 +11,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.security.PlatformPlaneFilter;
 import com.smartfirehub.support.IntegrationTestBase;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -122,6 +129,41 @@ class PlatformPlaneIsolationTest extends IntegrationTestBase {
         .perform(
             get("/api/platform/does-not-exist").header("Authorization", "Bearer " + platformToken))
         .andExpect(status().isNotFound());
+  }
+
+  /**
+   * 퍼센트 인코딩으로 평면 판정을 속일 수 없다.
+   *
+   * <p>{@code getRequestURI()} 는 디코딩되지 않은 원본이고 {@code SecurityConfig}·MVC 는 디코딩된
+   * 경로를 본다. 그래서 {@code /api/%70latform/tenants}({@code %70}={@code p})는 필터에게만 "플랫폼
+   * 경로가 아님"으로 보여 평면 검사를 건너뛰고 운영자 컨트롤러에 도달할 수 있었다. StrictHttpFirewall
+   * 은 {@code %2F}·{@code ..}·{@code ;} 는 막지만 인코딩된 <b>일반 문자</b>는 막지 않는다.
+   *
+   * <p>필터를 직접 호출하는 이유: MockMvc 는 URI 를 정규화할 수 있어 Tomcat 의 실제 동작(원본 URI 와
+   * 디코딩된 servletPath 가 다르다)을 재현하지 못한다. 여기서는 그 둘을 명시적으로 갈라 놓고,
+   * 체인이 <b>호출되지 않았음</b>을 단언한다 — 상태코드만 보면 공허해지는 자리다.
+   */
+  @Test
+  void percentEncodedPlatformPathIsStillPlaneChecked() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/%70latform/tenants");
+    // Tomcat 재현: 원본 URI 는 인코딩된 채, servletPath 는 디코딩된 채 온다.
+    request.setRequestURI("/api/%70latform/tenants");
+    request.setServletPath("/api/platform/tenants");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    // 테넌트 평면 인증을 심는다 — 이것이 운영자 경로에 닿으면 안 된다.
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(1L, null, List.of()));
+    AtomicBoolean chainInvoked = new AtomicBoolean(false);
+    try {
+      new PlatformPlaneFilter()
+          .doFilter(request, response, (req, res) -> chainInvoked.set(true));
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+
+    assertThat(chainInvoked).isFalse();
+    assertThat(response.getStatus()).isEqualTo(403);
   }
 
   /**
