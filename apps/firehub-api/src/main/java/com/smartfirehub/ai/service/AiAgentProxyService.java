@@ -168,7 +168,7 @@ public class AiAgentProxyService {
     // — 같은 논리라면 지웠어야 할 ai.cli_oauth_token 은 남아 있어, "비밀 키를 맵에서 지운다"는
     // 규칙이 이미 절반만 지켜진 상태였다. 절반만 지켜지는 규칙은 지키고 있다는 착각만 준다.
     // 비밀 키는 아래에서 apiKeyOpt / cliTokenOpt 로 명시적으로만 실린다.
-    Map<String, String> aiSettings = new HashMap<>(settingsService.getAsMap("ai"));
+    Map<String, String> aiSettings = settingsService.getAsMap("ai");
     String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
 
     // 인증 수단 검증: cli/sdk=OAuth 토큰(sdk는 API 키와 양자택일), cli-api=API 키, opencode=배포측 인증(검증 불필요)

@@ -1,5 +1,8 @@
 package com.smartfirehub.platform;
 
+import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
+import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -64,10 +67,10 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
    */
   @Test
   void getSettings_doesNotLeakCiphertext() throws Exception {
-    String original = rawValue("ai.api_key");
+    String original = rawSystemSettingValue(dsl, "ai.api_key");
     try {
       settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-platform-secret"), null);
-      String ciphertext = rawValue("ai.api_key");
+      String ciphertext = rawSystemSettingValue(dsl, "ai.api_key");
       // 전제 확인: 저장된 원본이 실제 암호문이어야 이 단언이 의미를 갖는다.
       assertThat(ciphertext).contains(":");
 
@@ -84,7 +87,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
       assertThat(body).doesNotContain(ciphertext);
       assertThat(body).doesNotContain("sk-platform-secret");
     } finally {
-      restoreRawValue("ai.api_key", original);
+      restoreSystemSettingValue(dsl, "ai.api_key", original);
     }
   }
 
@@ -106,7 +109,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
    */
   @Test
   void 운영자는_플랫폼_잠금_키를_쓸_수_있다() throws Exception {
-    String original = rawValue("embedding.model");
+    String original = rawSystemSettingValue(dsl, "embedding.model");
     try {
       mockMvc
           .perform(
@@ -118,7 +121,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
 
       assertThat(settingsService.getValue("embedding.model")).contains("text-embedding-3-large");
     } finally {
-      restoreRawValue("embedding.model", original);
+      restoreSystemSettingValue(dsl, "embedding.model", original);
     }
   }
 
@@ -131,7 +134,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
    */
   @Test
   void 마스킹된_비밀값은_저장되지_않는다() throws Exception {
-    String original = rawValue("ai.api_key");
+    String original = rawSystemSettingValue(dsl, "ai.api_key");
     try {
       mockMvc
           .perform(
@@ -160,7 +163,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
       // 마스크를 그대로 되돌려 보냈으니 복호화 값은 원래 실제 키와 같아야 한다.
       assertThat(settingsService.getDecryptedApiKey()).hasValue("sk-live-secret-value");
     } finally {
-      restoreRawValue("ai.api_key", original);
+      restoreSystemSettingValue(dsl, "ai.api_key", original);
     }
   }
 
@@ -187,16 +190,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
     return new ObjectMapper().writeValueAsString(settings);
   }
 
-  /** {@code system_settings.value} 원본(암호화된 그대로)을 읽는다. 복원용. */
-  private String rawValue(String key) {
-    var row = dsl.fetchOne("select value from system_settings where key = ?", key);
-    return row == null ? null : row.get(0, String.class);
-  }
 
-  /** 테스트가 바꾼 값을 원복한다. 공유 test DB 라 커밋된 변경을 남기면 이후 실행이 깨진다. */
-  private void restoreRawValue(String key, String original) {
-    dsl.execute("update system_settings set value = ? where key = ?", original, key);
-  }
 
   private String operatorToken() {
     return jwtTokenProvider.generatePlatformAccessToken(createUser(true), "ops");

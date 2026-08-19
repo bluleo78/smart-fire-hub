@@ -1,5 +1,8 @@
 package com.smartfirehub.settings;
 
+import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
+import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
@@ -220,12 +223,12 @@ class SettingsResolutionTest extends IntegrationTestBase {
    */
   @Test
   void getResolvedByPrefix_는_비밀_키를_마스킹한다() {
-    String original = rawSystemSettingValue("ai.api_key");
+    String original = rawSystemSettingValue(dsl, "ai.api_key");
     try {
       // 평문을 넣으면 서비스가 암호화해 저장한다 — 마스킹이 없으면 이 암호문이 그대로 응답에 실린다.
       settingsService.updatePlatformSettings(java.util.Map.of("ai.api_key", "sk-real-secret"), null);
       // 전제 확인: 저장된 원문이 실제로 암호문("iv:ciphertext")이어야 이 테스트가 의미를 갖는다.
-      assertThat(rawSystemSettingValue("ai.api_key")).contains(":");
+      assertThat(rawSystemSettingValue(dsl, "ai.api_key")).contains(":");
 
       var apiKey =
           settingsService.getResolvedByPrefix("ai").stream()
@@ -238,14 +241,10 @@ class SettingsResolutionTest extends IntegrationTestBase {
       assertThat(apiKey.value()).doesNotContain(":");
       assertThat(apiKey.value()).doesNotContain("sk-real-secret");
     } finally {
-      dsl.execute("update system_settings set value = ? where key = ?", original, "ai.api_key");
+      restoreSystemSettingValue(dsl, "ai.api_key", original);
     }
   }
 
-  private String rawSystemSettingValue(String key) {
-    var row = dsl.fetchOne("select value from system_settings where key = ?", key);
-    return row == null ? null : row.get(0, String.class);
-  }
 
   /**
    * 프리픽스에 마침표를 붙이면 아무것도 매칭하지 않는다 — {@code ProactiveJobAsyncRunner} 가 빠졌던

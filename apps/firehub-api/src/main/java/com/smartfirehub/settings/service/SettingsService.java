@@ -111,14 +111,14 @@ public class SettingsService {
    * <p><b>화이트리스트를 읽기 쪽에서도 확인한다.</b> 쓰기에서 막았으니 읽기는 안 봐도 된다는
    * 것은 "지금 DB 에 잠긴 키의 오버라이드 행이 없다"는 가정에 기대는 것인데, 화이트리스트가
    * 좁아지면(키를 플랫폼으로 회수하면) 그 가정이 깨진다. 읽기에서 다시 보면 회수가 즉시
-   * 효력을 갖는다. 이 판정은 {@link #resolveOverrides} 하나에 있고 {@link #getAsMap}·
+   * 효력을 갖는다. 이 판정은 {@link #resolveOverride} 하나에 있고 {@link #getAsMap}·
    * {@link #getResolvedByPrefix} 가 같은 헬퍼를 공유한다 — 세 곳에 복사하면 화이트리스트가
    * 좁아질 때 일부만 반영되는 드리프트가 생긴다.
    */
   @Transactional(readOnly = true)
   public Optional<String> getValue(String key) {
-    Map<String, String> override = resolveOverrides(Set.of(key));
-    if (override.containsKey(key)) return Optional.of(override.get(key));
+    Optional<String> override = resolveOverride(key);
+    if (override.isPresent()) return override;
     return settingsRepository.getValue(key);
   }
 
@@ -198,20 +198,20 @@ public class SettingsService {
    * TenantContext.get() == null} 가드 두 줄이 전부이고, {@link #resolveOverridesByPrefix} 도 정확히
    * 같은 두 조건을 검사한다 — 판정 기준이 두 곳에 있는 것처럼 보이지만 실제 규칙("화이트리스트가
    * 허용하는가")은 {@link SettingsOverridePolicy} 하나에만 있고, 여기 있는 것은 "그 결과를 어떤
-   * 모양(단일 값 vs 맵)으로 조회하느냐"라는 조회 전략 차이일 뿐이다.
+   * 모양(단일 키 vs 프리픽스)으로 조회하느냐"라는 조회 전략 차이일 뿐이다.
+   *
+   * <p>인자가 <b>키 하나</b>인 것은 의도적이다. 예전에는 {@code Set<String>} 을 받아 루프를 돌았는데,
+   * 호출부가 늘 1개짜리 집합을 넘기면서도 시그니처만은 "여러 키를 줘도 된다"고 말해 프리픽스당
+   * N+1 을 다시 부르는 초대장이었다(실제로 한 번 그렇게 되어 collapse 해야 했다). 여러 키가
+   * 필요하면 {@link #resolveOverridesByPrefix} 를 쓴다.
    *
    * <p>컨텍스트가 없으면(배경 잡 경로) 즉시 빈 맵을 돌려준다 — DB 조회조차 하지 않는다. "컨텍스트
    * 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약을 이 한 곳에서만 표현한다.
    */
-  private Map<String, String> resolveOverrides(Set<String> keys) {
-    if (TenantContext.get() == null) return Map.of();
-    Map<String, String> resolved = new HashMap<>();
-    for (String key : keys) {
-      if (SettingsOverridePolicy.isTenantOverridable(key)) {
-        tenantSettingsRepository.findValue(key).ifPresent(v -> resolved.put(key, v));
-      }
-    }
-    return resolved;
+  private Optional<String> resolveOverride(String key) {
+    if (TenantContext.get() == null) return Optional.empty();
+    if (!SettingsOverridePolicy.isTenantOverridable(key)) return Optional.empty();
+    return tenantSettingsRepository.findValue(key);
   }
 
   /**

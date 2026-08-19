@@ -40,7 +40,7 @@ public class SettingsRepository {
   public List<SettingResponse> findByPrefix(String prefix) {
     return dsl.select(KEY, VALUE, DESCRIPTION, UPDATED_AT)
         .from(SYSTEM_SETTINGS)
-        .where(KEY.like(LikePatternUtils.escape(prefix) + ".%", '\\'))
+        .where(KEY.like(LikePatternUtils.settingKeyPrefixPattern(prefix), '\\'))
         .orderBy(KEY)
         .fetch(
             r ->

@@ -7,7 +7,6 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.settings.service.SettingsService;
 import jakarta.validation.Valid;
 import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -88,8 +87,10 @@ public class AiController {
   @GetMapping("/auth-status")
   @RequirePermission("ai:settings")
   public ResponseEntity<String> getAuthStatus() {
-    Map<String, String> aiSettings = settingsService.getAsMap("ai");
-    String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+    // 여기서 읽는 것은 ai.agent_type 하나뿐이라 프리픽스 맵이 필요 없다(쿼리 1회로 충분).
+    // 그 키는 플랫폼 잠금이라 테넌트 오버라이드 해석이 원리적으로 결과를 바꾸지 않는다.
+    // ProactiveJobAsyncRunner 에 적용한 것과 같은 정리를 이 호출자에도 맞춘다.
+    String agentType = settingsService.getValue("ai.agent_type").orElse("sdk");
     // cli, 또는 (sdk 이고 OAuth 토큰이 설정된 경우) 토큰 검증. 그 외 API 키 검증.
     boolean useTokenVerification =
         "cli".equals(agentType)

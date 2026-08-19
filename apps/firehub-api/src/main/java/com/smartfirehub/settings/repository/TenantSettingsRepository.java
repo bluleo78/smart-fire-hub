@@ -78,7 +78,7 @@ public class TenantSettingsRepository {
     Map<String, String> result = new LinkedHashMap<>();
     dsl.select(KEY, VALUE)
         .from(TENANT_SETTINGS)
-        .where(KEY.like(LikePatternUtils.escape(prefix) + ".%", '\\'))
+        .where(KEY.like(LikePatternUtils.settingKeyPrefixPattern(prefix), '\\'))
         .orderBy(KEY)
         .fetch()
         .forEach(r -> result.put(r.get(KEY), r.get(VALUE)));

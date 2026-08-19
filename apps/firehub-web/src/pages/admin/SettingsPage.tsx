@@ -35,7 +35,6 @@ import {
 import {
   BUILTIN_AI_DEFAULTS,
   indexSettingsByKey,
-  isTenantEditableAiKey,
   resolveSettingFieldState,
 } from '../../lib/settings-fields';
 import type { ResolvedSettingResponse } from '../../types/settings';
@@ -209,12 +208,19 @@ export default function SettingsPage() {
   // 필드 상태 판정 — 배지·disabled·검증·저장 대상이 모두 이 한 곳을 거쳐 서로 어긋나지 않게 한다.
   const fieldState = (key: keyof AISettingsForm) => resolveSettingFieldState(key, settings[key]);
 
-  // 입력 가능 여부 = 서버가 편집 가능이라고 말했고(플래그가 권위) + 저장 페이로드에 실제로 담기는
-  // 키다. 두 조건을 모두 요구하는 이유는 양방향 어긋남을 둘 다 막기 위해서다:
-  //  - 서버가 잠금이라 했는데 입력이 열려 있으면 "배지는 잠금인데 타이핑은 된다"가 된다.
-  //  - 서버가 열어줬어도 페이로드에 담지 않는 키면 "입력은 되는데 저장이 무시된다"가 된다.
-  const isEditable = (key: keyof AISettingsForm) =>
-    fieldState(key) !== 'locked' && isTenantEditableAiKey(key);
+  // 입력 가능 여부도 서버 플래그 하나로 판정한다 — 배지·disabled·저장·dirty 가 전부 fieldState
+  // 한 곳을 지난다.
+  //
+  // 예전에는 여기에 `&& isTenantEditableAiKey(key)` 가 붙어 있었다. 저장 페이로드가 web 상수로
+  // 구동되던 시절에는 그 conjunct 가 "입력은 되는데 저장이 무시된다"를 막는 fail-closed 였지만,
+  // 페이로드가 fieldState 로 옮겨간 뒤에는 막을 대상이 사라졌고 오히려 **배지와 입력이 서로 다른
+  // 말을 하게** 만든다: 서버가 어떤 키를 열어 주면 배지는 "기본값 사용 중"인데 입력창은 영구히
+  // 비활성이고 이유를 알려 주는 안내문도 없다.
+  //
+  // 안전한 이유: tenantEditable 플래그와 쓰기 검증이 **둘 다 백엔드 SettingsOverridePolicy 한
+  // 곳에서 나온다.** 플래그가 열려 있다고 말하면 그 키의 저장은 실제로 통과한다 — 플래그가
+  // 쓰기 규칙보다 앞서 갈 수 없는 구조라, 서버를 믿는 것이 곧 fail-closed 다.
+  const isEditable = (key: keyof AISettingsForm) => fieldState(key) !== 'locked';
 
   // 값이 비어 있어도 오류로 보지 않는 필드: DB 행도 코드 기본값도 없어 적용되는 값이 정말 없는 키.
   // 비어 있는 상태가 곧 "재정의 없음"이라 정상이고, 저장 페이로드에서도 제외된다.

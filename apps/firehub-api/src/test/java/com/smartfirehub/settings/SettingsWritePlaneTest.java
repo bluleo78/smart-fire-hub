@@ -1,5 +1,8 @@
 package com.smartfirehub.settings;
 
+import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
+import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
@@ -48,7 +51,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   @Test
   void 테넌트_쓰기는_tenant_settings_에_들어가고_system_settings_는_그대로다() {
     testTenant = createActiveTenant(dsl, "swp-write");
-    String platformValueBefore = rawSystemSettingValue("ai.model");
+    String platformValueBefore = rawSystemSettingValue(dsl, "ai.model");
 
     TenantContext.set(testTenant);
     settingsService.updateSettings(Map.of("ai.model", "tenant-only-model"), null);
@@ -60,7 +63,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         .contains("tenant-only-model");
 
     // system_settings 는 이 쓰기 전후로 완전히 그대로다 — 이 밴드가 고치는 결함의 핵심.
-    assertThat(rawSystemSettingValue("ai.model")).isEqualTo(platformValueBefore);
+    assertThat(rawSystemSettingValue(dsl, "ai.model")).isEqualTo(platformValueBefore);
   }
 
   @Test
@@ -135,17 +138,17 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     String key = "ai.session_max_tokens";
     // 전제 확인: 이 키는 시드되어 있지 않다. 언젠가 시드되면 이 테스트의 의미가 달라지므로
     // 조용히 통과시키지 않고 전제 자체를 단언한다.
-    assertThat(rawSystemSettingValue(key)).isNull();
+    assertThat(rawSystemSettingValue(dsl, key)).isNull();
 
     try {
       settingsService.updatePlatformSettings(Map.of(key, "50000"), null);
 
       // UPDATE-only 였다면 여기서 여전히 null 이고, 그 사이 예외는 하나도 나지 않았다.
-      assertThat(rawSystemSettingValue(key)).isEqualTo("50000");
+      assertThat(rawSystemSettingValue(dsl, key)).isEqualTo("50000");
       // 운영자 목록(getAll)에도 나타나야 한다 — 보이지 않으면 고칠 수도 없다.
       assertThat(settingsService.getAll().stream().map(s -> s.key())).contains(key);
     } finally {
-      dsl.execute("delete from system_settings where key = ?", key);
+      deleteSystemSetting(dsl, key);
     }
   }
 
@@ -175,9 +178,9 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
           () ->
               settingsService.updatePlatformSettings(
                   Map.of("ai.session_max_tokens", "10000"), null));
-      assertThat(rawSystemSettingValue("ai.session_max_tokens")).isEqualTo("10000");
+      assertThat(rawSystemSettingValue(dsl, "ai.session_max_tokens")).isEqualTo("10000");
     } finally {
-      dsl.execute("delete from system_settings where key = ?", "ai.session_max_tokens");
+      deleteSystemSetting(dsl, "ai.session_max_tokens");
     }
   }
 
@@ -199,7 +202,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     // 테스트를 돌리면 쓰기가 실제로 커밋된 뒤 단언이 실패한다** — 공유 test DB 에서는 그 순간
     // ai.model 이 "hijacked" 로 남아 무관한 테스트들이 줄줄이 깨진다(실제로 한 번 겪었다).
     // 변이 실험까지 안전하도록 값을 미리 붙잡아 두고 finally 에서 되돌린다.
-    String original = rawSystemSettingValue("ai.model");
+    String original = rawSystemSettingValue(dsl, "ai.model");
     var tenantAuth =
         new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
             1L, null, java.util.List.of());
@@ -211,7 +214,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
           .isInstanceOf(AccessDeniedException.class);
     } finally {
       org.springframework.security.core.context.SecurityContextHolder.clearContext();
-      dsl.execute("update system_settings set value = ? where key = ?", original, "ai.model");
+      restoreSystemSettingValue(dsl, "ai.model", original);
     }
   }
 
@@ -235,8 +238,4 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         .hasMessageContaining("ai.model");
   }
 
-  private String rawSystemSettingValue(String key) {
-    var row = dsl.fetchOne("select value from system_settings where key = ?", key);
-    return row == null ? null : row.get(0, String.class);
-  }
 }
