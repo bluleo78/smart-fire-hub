@@ -37,8 +37,6 @@ import {
   indexSettingsByKey,
   isTenantEditableAiKey,
   resolveSettingFieldState,
-  TENANT_EDITABLE_AI_KEYS,
-  type TenantEditableAiKey,
 } from '../../lib/settings-fields';
 import type { ResolvedSettingResponse } from '../../types/settings';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
@@ -88,15 +86,22 @@ const EMPTY_VALUES: AISettingsForm = {
   'ai.session_max_tokens': '',
 };
 
-// 편집 가능 키의 화면 표시 이름 — 저장이 거부된 필드를 이름으로 지목하는 데 쓴다.
-// "어떤 필드가 문제인지" 말해주지 않으면 사용자가 6개 중 무엇을 고쳐야 할지 알 수 없다.
-const EDITABLE_FIELD_LABELS: Record<TenantEditableAiKey, string> = {
+// 필드의 화면 표시 이름 — 저장이 거부된 필드를 이름으로 지목하는 데 쓴다.
+// "어떤 필드가 문제인지" 말해주지 않으면 사용자가 무엇을 고쳐야 할지 알 수 없다.
+//
+// 편집 허용 6키뿐 아니라 폼의 9키 전부를 담는다. 저장 대상 판정이 web 상수가 아니라 서버
+// 플래그(fieldState)로 바뀌었으므로, 서버가 지금 잠겨 있는 키를 열어 주면 그 키도 이 목록에
+// 나타날 수 있다 — 6키만 담아 두면 그때 이름 대신 undefined 가 사용자에게 보인다.
+const FIELD_LABELS: Record<keyof AISettingsForm, string> = {
   'ai.system_prompt': '시스템 프롬프트',
   'ai.model': '모델',
   'ai.temperature': 'Temperature',
   'ai.max_turns': '최대 턴 수',
   'ai.max_tokens': '최대 응답 토큰',
   'ai.session_max_tokens': '세션 최대 토큰',
+  'ai.agent_type': '에이전트 유형',
+  'ai.api_key': 'API 키',
+  'ai.cli_oauth_token': 'OAuth 토큰',
 };
 
 /**
@@ -278,9 +283,20 @@ export default function SettingsPage() {
     //
     // 값이 빈 키도 제외한다 — 빈 문자열 오버라이드 행은 "재정의 없음"과 다른 상태이고,
     // 상속으로 되돌리는 조작은 재정의 해제(DELETE)가 담당한다.
+    //
+    // 저장 대상 판정의 권위도 <b>서버 플래그</b>다. 예전에는 이 루프가 web 의
+    // TENANT_EDITABLE_AI_KEYS 상수를 돌았는데, 그러면 표시는 서버가 구동하고 저장은 web 사본이
+    // 구동해 둘이 갈라진다 — 백엔드 정책에 7번째 키를 추가하고 Java 만 고치면, 화면은 그 필드를
+    // 편집 가능하게 보여주면서 저장 페이로드에서는 조용히 빼버린다. 이 밴드가 이미 두 번 고친
+    // "성공처럼 보이는 무동작"이 그대로 재도입된다. 그래서 폼이 아는 키 전부를 돌면서
+    // fieldState 로 거른다 — 상수는 "응답에 아예 없는 키"의 폴백 판정에만 남는다.
     const settingsToSave: Record<string, string> = {};
-    const droppedChangedKeys: TenantEditableAiKey[] = [];
-    TENANT_EDITABLE_AI_KEYS.forEach((key) => {
+    const droppedChangedKeys: (keyof AISettingsForm)[] = [];
+    (Object.keys(form) as (keyof AISettingsForm)[]).forEach((key) => {
+      if (fieldState(key) === 'locked') {
+        // 서버가 잠금이라 한 키는 보내지 않는다 — 보내면 서버가 키 이름을 명시해 400 을 던진다.
+        return;
+      }
       if (form[key] === original[key]) {
         // 손대지 않은 키 — 상속 중이면 상속을 유지하고, 이미 재정의 중이면 그 값이 그대로 남는다.
         return;
@@ -299,7 +315,7 @@ export default function SettingsPage() {
     // 따라(isBlankAllowed) 빈 값을 의도적으로 허용하므로 그 구멍이 조용한 무저장이 되지 않도록
     // 페이로드를 만든 뒤 한 번 더 대조한다. 앞의 규칙이 바뀌어도 이 대조는 계속 성립한다.
     if (droppedChangedKeys.length > 0) {
-      const names = droppedChangedKeys.map((key) => EDITABLE_FIELD_LABELS[key]).join(', ');
+      const names = droppedChangedKeys.map((key) => FIELD_LABELS[key]).join(', ');
       toast.error(
         `${names}을(를) 비워 둔 채로는 저장할 수 없습니다. 플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요.`,
       );
@@ -363,7 +379,11 @@ export default function SettingsPage() {
   };
 
   // dirty 판정도 편집 가능 6키만 본다 — 잠긴 필드는 바뀔 수 없지만, 판정 근거를 한 집합으로 통일한다.
-  const hasChanges = TENANT_EDITABLE_AI_KEYS.some((key) => form[key] !== original[key]);
+  // dirty 판정도 저장 대상과 같은 기준을 쓴다 — 서버가 잠갔다고 한 키는 세지 않는다.
+  // 두 기준이 갈리면 "저장 버튼은 활성인데 보낼 것이 없다"(또는 그 반대)가 생긴다.
+  const hasChanges = (Object.keys(form) as (keyof AISettingsForm)[]).some(
+    (key) => fieldState(key) !== 'locked' && form[key] !== original[key],
+  );
 
   // 탭별 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다 (이슈 #86).
   // P7-b 이후 이메일·임베딩 탭은 편집 자체가 불가능해 dirty 가 될 수 없으므로 보고자가 AI 탭뿐이다.

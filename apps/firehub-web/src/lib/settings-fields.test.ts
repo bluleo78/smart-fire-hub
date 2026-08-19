@@ -26,9 +26,16 @@ function setting(
 }
 
 describe('TENANT_EDITABLE_AI_KEYS', () => {
-  // 백엔드 SettingsOverridePolicy 화이트리스트와 정확히 같아야 한다 — 넓으면 400 을 부르고,
-  // 좁으면 편집 가능한 항목이 화면에서 사라진다.
-  it('백엔드 화이트리스트 6키와 일치한다', () => {
+  // 주의: 이것은 **백엔드 계약 테스트가 아니다.** 같은 파일 안의 리터럴 배열과 대조할 뿐이라,
+  // 백엔드 SettingsOverridePolicy 를 어떻게 바꿔도 절대 빨개지지 않는다. 예전 이름과 주석은
+  // "백엔드와 일치한다"고 주장해서, 존재하지 않는 보호가 있는 것처럼 보이게 했다 — 그 착각이
+  // 오히려 위험하므로 이름과 문구를 실제 하는 일로 낮춘다.
+  //
+  // 백엔드 정책이 넓어지거나 좁아졌을 때의 실제 방어는 이 상수가 아니라 **서버가 내리는
+  // tenantEditable 플래그**다. 표시(배지·disabled)와 저장 페이로드가 모두 그 플래그로 구동되므로
+  // (SettingsPage 의 fieldState), 이 상수는 "응답에 아예 없는 키"의 폴백 판정에만 남는다.
+  // 그 폴백 동작은 아래 resolveSettingFieldState 케이스들이 검증한다.
+  it('폴백 판정에 쓰는 6키 상수의 내용이 바뀌지 않았다(회귀 가드, 백엔드 대조 아님)', () => {
     expect([...TENANT_EDITABLE_AI_KEYS].sort()).toEqual(
       [
         'ai.max_tokens',

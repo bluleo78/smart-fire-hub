@@ -1,7 +1,5 @@
 import type { Page } from '@playwright/test';
 
-import { TENANT_EDITABLE_AI_KEYS } from '@/lib/settings-fields';
-
 import { createAiSettings } from '../../factories/admin.factory';
 import {
   setupAdminAuth,
@@ -261,11 +259,13 @@ test.describe('설정 페이지', () => {
         // 2단 상속을 세우는 밴드에서 UI 가 상속을 없애는 셈이므로 여기서 못 박는다.
         // 부분 단언(toMatchObject)으로 두면 나머지 5키가 섞여 들어와도 통과한다.
         expect(Object.keys(settings)).toEqual(['ai.max_turns']);
-        // 경계 단언 1-b: 페이로드의 모든 키가 화이트리스트 소속이어야 한다. 위 단언은 이 시나리오의
-        // 키 하나를 고정하지만, 이쪽은 어떤 시나리오로 바뀌어도 계속 성립하는 불변식이다 —
-        // 새 필드를 저장 대상에 추가하면서 화이트리스트에 넣는 것을 잊으면 여기서 걸린다.
+        // 경계 단언 1-b: 페이로드에는 서버가 tenantEditable=false 로 내린 키가 절대 없어야 한다.
+        // 이 픽스처에서 잠긴 키는 3개이므로 그 셋의 부재로 불변식을 표현한다. 예전에는 web 상수
+        // TENANT_EDITABLE_AI_KEYS 소속인지를 물었는데, 저장 대상 판정 자체가 그 상수로 이뤄지던
+        // 시절의 단언이라 **같은 사본을 사본으로 검증**하는 동어반복이었다. 지금은 판정 권위가
+        // 서버 플래그로 옮겨졌으므로 단언도 서버가 내린 사실을 기준으로 세운다.
         for (const key of Object.keys(settings)) {
-          expect([...TENANT_EDITABLE_AI_KEYS]).toContain(key);
+          expect(['ai.agent_type', 'ai.api_key', 'ai.cli_oauth_token']).not.toContain(key);
         }
         // 경계 단언 2: 잠긴 3키는 어떤 경우에도 담기지 않는다. 위 단언이 이미 배제하지만,
         // 화이트리스트 상수가 잘못 바뀌거나 "전 키 저장"으로 되돌아가는 회귀까지 잡기 위해 명시한다.
