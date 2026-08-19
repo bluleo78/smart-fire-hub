@@ -60,6 +60,13 @@ public class SettingsController {
   /**
    * 테넌트 오버라이드를 지워 플랫폼 값으로 되돌린다. <b>멱등</b> — 오버라이드가 이미 없어도(=이미
    * 상속 중) 204 다. "상속 중" 은 오류 상태가 아니므로 404 로 만들지 않는다.
+   *
+   * <p><b>이 매핑은 이 컨트롤러의 미매핑 하위 경로를 전부 삼키는 catch-all 이다.</b> 예컨대
+   * {@code DELETE /api/v1/settings/smtp} 는 {@code /smtp} 에 DELETE 매핑이 없으므로 여기로 들어와
+   * {@code key="smtp"} 가 된다(동작상 무해하다 — {@code tenant_settings} 에 그런 키가 없어 0행 삭제
+   * 후 204). Task 7 도 같은 흡수를 밟았다: 삭제한 {@code GET /ai-api-key} 가 404 가 아니라 405 가
+   * 된 이유가 이것이다. <b>이 컨트롤러에 하위 경로를 추가하는 사람은 매번 이 흡수를 고려해야
+   * 한다</b> — 권한 게이트가 {@code ai:settings} 로 바뀌어 버리는 경로가 생길 수 있다.
    */
   @DeleteMapping("/{key}")
   @RequirePermission("ai:settings")

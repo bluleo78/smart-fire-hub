@@ -27,7 +27,9 @@ public class SettingsService {
    * {@code ai.api_key}/{@code ai.agent_type}/{@code ai.cli_oauth_token} 은 여기 있지만 테넌트
    * 화이트리스트에는 없다(과금 주체·실행 형태라 플랫폼이 갖는다).
    */
-  private static final Set<String> ALLOWED_AI_KEYS =
+  // 패키지 가시성: SettingsOverridePolicyTest 가 "테넌트 6키 ⊆ 플랫폼 9키" 불변식을
+  // 실행 가능한 단언으로 고정한다(javadoc 문장만으로는 깨져도 아무도 모른다).
+  static final Set<String> ALLOWED_AI_KEYS =
       Set.of(
           "ai.model",
           "ai.max_turns",
@@ -248,6 +250,7 @@ public class SettingsService {
    */
   @Transactional
   public void updateSettings(Map<String, String> settings, Long userId) {
+    rejectNullValues(settings);
     for (String key : settings.keySet()) {
       if (!SettingsOverridePolicy.isTenantOverridable(key)) {
         throw new IllegalArgumentException("플랫폼 관리자만 변경할 수 있는 설정입니다: " + key);
@@ -274,6 +277,7 @@ public class SettingsService {
   @Transactional
   public void updatePlatformSettings(Map<String, String> settings, Long userId) {
     requirePlatformPlane();
+    rejectNullValues(settings);
     for (String key : settings.keySet()) {
       if (!ALLOWED_AI_KEYS.contains(key)
           && !ALLOWED_EMBEDDING_KEYS.contains(key)
@@ -333,6 +337,27 @@ public class SettingsService {
   @Transactional
   public void clearOverride(String key) {
     tenantSettingsRepository.delete(key);
+  }
+
+  /**
+   * 값이 {@code null} 인 키를 <b>검증 계층에서</b> 거부한다.
+   *
+   * <p>그냥 흘려보내면 저장 계층까지 내려가 NPE 가 되어 <b>클라이언트 오류가 500 으로 보고된다</b>:
+   * 테넌트 경로는 {@link TenantSettingsRepository#upsert} 의 {@code Objects.requireNonNull} 에서,
+   * 플랫폼 경로는 {@link #encryptIfSecret} 의 {@code value.isBlank()} 에서 터진다.
+   * {@code validateValues} 는 {@code ai.model} 같은 free-form 키를 그냥 통과시키므로
+   * {@code {"ai.model": null}} 이 실제로 거기까지 도달한다.
+   *
+   * <p>저장 계층의 fail-fast 자체는 옳다 — "오버라이드 삭제는 {@code delete} 로"라는 통로 분리를
+   * 강제한다. 여기서 미리 거르는 것은 그 fail-fast 를 없애려는 게 아니라, <b>같은 실수가 400 으로
+   * 보고되게</b> 하려는 것이다.
+   */
+  private static void rejectNullValues(Map<String, String> settings) {
+    for (var entry : settings.entrySet()) {
+      if (entry.getValue() == null) {
+        throw new IllegalArgumentException("설정 값은 null 일 수 없습니다: " + entry.getKey());
+      }
+    }
   }
 
   /**

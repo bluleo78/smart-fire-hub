@@ -120,9 +120,10 @@ public class ProactiveJobAsyncRunner {
       // 때문에 "ai." 를 넘기면 "ai..%" 가 되어 **0행**을 매칭한다. 그래서 이 잡은 저장된
       // ai.agent_type 을 한 번도 읽지 못하고 항상 아래 "sdk" 폴백으로 갔다(선재 결함, P7-b Task 8).
       // 수정 후 저장된 값을 존중하므로 agent_type=cli 인 환경에서 실행 형태가 실제로 바뀐다.
-      Map<String, String> aiSettings = settingsService.getAsMap("ai");
+      // 여기서 실제로 읽는 것은 ai.agent_type 하나뿐이라 프리픽스 맵이 필요 없다(쿼리 1회로 충분).
+      // 게다가 그 키는 플랫폼 잠금이라 테넌트 오버라이드 해석이 원리적으로 결과를 바꾸지 않는다.
       String apiKey = settingsService.getDecryptedApiKey().orElse("");
-      String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+      String agentType = settingsService.getValue("ai.agent_type").orElse("sdk");
       String oauthToken = null;
       // cli 또는 sdk 에서 구독 OAuth 토큰을 조회해 전달(sdk 는 OAuth 우선).
       if ("cli".equals(agentType) || "sdk".equals(agentType)) {

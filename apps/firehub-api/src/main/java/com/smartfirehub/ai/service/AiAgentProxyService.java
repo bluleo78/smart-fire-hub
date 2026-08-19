@@ -163,8 +163,12 @@ public class AiAgentProxyService {
     // 테넌트는 API 가 멤버십에서 다시 파생한다).
     long tenantId = TenantContext.require("AI 챗 프록시");
 
+    // aiSettings 는 이후 키 단위로만 읽히고(아래 requestBody 조립) 맵 자체가 요청 바디에 실리지
+    // 않는다. 그래서 예전의 aiSettings.remove("ai.api_key") 는 아무것도 막지 못하는 흔적기관이었다
+    // — 같은 논리라면 지웠어야 할 ai.cli_oauth_token 은 남아 있어, "비밀 키를 맵에서 지운다"는
+    // 규칙이 이미 절반만 지켜진 상태였다. 절반만 지켜지는 규칙은 지키고 있다는 착각만 준다.
+    // 비밀 키는 아래에서 apiKeyOpt / cliTokenOpt 로 명시적으로만 실린다.
     Map<String, String> aiSettings = new HashMap<>(settingsService.getAsMap("ai"));
-    aiSettings.remove("ai.api_key");
     String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
 
     // 인증 수단 검증: cli/sdk=OAuth 토큰(sdk는 API 키와 양자택일), cli-api=API 키, opencode=배포측 인증(검증 불필요)

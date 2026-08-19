@@ -195,6 +195,11 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
    */
   @Test
   void 플랫폼_쓰기는_테넌트_인증이_놓여_있으면_거부된다() {
+    // 원복 준비: 이 테스트가 성공하면 아무것도 쓰이지 않는다. 그러나 **가드를 제거하는 변이
+    // 테스트를 돌리면 쓰기가 실제로 커밋된 뒤 단언이 실패한다** — 공유 test DB 에서는 그 순간
+    // ai.model 이 "hijacked" 로 남아 무관한 테스트들이 줄줄이 깨진다(실제로 한 번 겪었다).
+    // 변이 실험까지 안전하도록 값을 미리 붙잡아 두고 finally 에서 되돌린다.
+    String original = rawSystemSettingValue("ai.model");
     var tenantAuth =
         new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
             1L, null, java.util.List.of());
@@ -206,7 +211,28 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
           .isInstanceOf(AccessDeniedException.class);
     } finally {
       org.springframework.security.core.context.SecurityContextHolder.clearContext();
+      dsl.execute("update system_settings set value = ? where key = ?", original, "ai.model");
     }
+  }
+
+  /**
+   * 값이 {@code null} 이면 500 이 아니라 400 계열(IllegalArgumentException)이어야 한다.
+   *
+   * <p>{@code validateValues} 가 {@code ai.model} 을 free-form 으로 두므로 {@code null} 이 저장
+   * 계층까지 내려가 NPE 가 되고, 클라이언트 오류가 <b>서버 오류로 보고</b>됐다. 두 쓰기 경로가
+   * 서로 다른 지점에서 터지던 것(테넌트는 {@code upsert} 의 requireNonNull, 플랫폼은
+   * {@code encryptIfSecret} 의 isBlank)을 진입부 한 곳으로 모았다.
+   */
+  @Test
+  void null_값은_저장_계층까지_가지_않고_거부된다() {
+    testTenant = createActiveTenant(dsl, "swp-null");
+    TenantContext.set(testTenant);
+
+    var withNull = new java.util.HashMap<String, String>();
+    withNull.put("ai.model", null);
+    assertThatThrownBy(() -> settingsService.updateSettings(withNull, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("ai.model");
   }
 
   private String rawSystemSettingValue(String key) {

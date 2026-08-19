@@ -5,7 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -37,9 +37,14 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>클래스 레벨 {@code @Transactional} 을 지우지 말 것</b> — {@code
  * BackgroundPathTransactionTest} 가 전수 검사한다. GUC 는 트랜잭션이 열릴 때만 주입되므로
  * ({@code TenantAwareTransactionManager.doBegin}), 트랜잭션 없이 이 리포지토리를 부르면 조회는
- * 조용히 0행이 되고 삽입은 정책 위반(42501)으로 실패한다. 지금은 호출자({@code SettingsService})가
- * 전부 {@code @Transactional} 이라 무해하지만, 배경 경로에서 직접 부르는 호출자가 하나 생기는
- * 순간 그 실패는 <b>조용한 0행</b>으로 나타난다 — 그래서 리포지토리 쪽에 붙여 둔다.
+ * 조용히 0행이 되고 삽입은 정책 위반(42501)으로 실패한다.
+ *
+ * <p><b>다만 이 애노테이션이 사주는 것은 "트랜잭션이 있다"까지다 — "테넌트 컨텍스트가 채워져
+ * 있다"가 아니다.</b> {@code doBegin} 은 {@link TenantContext} 가 비어 있으면 GUC 를 아예 심지
+ * 않고 조용히 지나간다. 따라서 컨텍스트 없이 부르는 배경 경로는 {@code @Transactional} 이
+ * 있어도 <b>여전히 조용한 0행</b>을 얻는다. 이 문장을 이렇게 정정해 두는 이유는, 예전 문구가
+ * "리포지토리에 애노테이션이 있으니 배경 경로도 안전하다"고 읽히게 쓰여 있었기 때문이다 —
+ * 컨텍스트를 세우는 책임은 여전히 호출자에게 있다.
  */
 @Repository
 @RequiredArgsConstructor
@@ -68,10 +73,13 @@ public class TenantSettingsRepository {
    * 로 프리픽스 자체에 든 LIKE 특수문자를 이스케이프한다.
    */
   public Map<String, String> findByPrefix(String prefix) {
-    Map<String, String> result = new HashMap<>();
+    // LinkedHashMap + ORDER BY key: 이 맵의 키가 getResolvedByPrefix 응답 뒤에 그대로
+    // 덧붙으므로, HashMap 이면 오버라이드 전용 키의 순서가 호출마다 달라진다.
+    Map<String, String> result = new LinkedHashMap<>();
     dsl.select(KEY, VALUE)
         .from(TENANT_SETTINGS)
         .where(KEY.like(LikePatternUtils.escape(prefix) + ".%", '\\'))
+        .orderBy(KEY)
         .fetch()
         .forEach(r -> result.put(r.get(KEY), r.get(VALUE)));
     return result;
