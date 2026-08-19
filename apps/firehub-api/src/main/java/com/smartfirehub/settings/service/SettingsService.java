@@ -1,8 +1,12 @@
 package com.smartfirehub.settings.service;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.repository.SettingsRepository;
+import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,6 +58,7 @@ public class SettingsService {
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
+  private final TenantSettingsRepository tenantSettingsRepository;
 
   @Transactional(readOnly = true)
   public List<SettingResponse> getByPrefix(String prefix) {
@@ -85,8 +90,24 @@ public class SettingsService {
     return setting;
   }
 
+  /**
+   * 설정 값 해석. {@code tenant_settings} 에 값이 있으면 그 값, 없으면 {@code system_settings}.
+   *
+   * <p><b>컨텍스트가 없으면 예외를 던지지 않는다.</b> {@code TenantContext.require()} 를 쓰면
+   * JobRunr {@code @Job}·{@code @Async}·{@code @Scheduled} 배경 경로가 전멸한다(설계서 §4.5,
+   * P3-a·P2-g 에서 두 번 겪음). 컨텍스트 없음은 "플랫폼 기본값"이라는 정상 분기다.
+   *
+   * <p><b>화이트리스트를 읽기 쪽에서도 확인한다.</b> 쓰기에서 막았으니 읽기는 안 봐도 된다는
+   * 것은 "지금 DB 에 잠긴 키의 오버라이드 행이 없다"는 가정에 기대는 것인데, 화이트리스트가
+   * 좁아지면(키를 플랫폼으로 회수하면) 그 가정이 깨진다. 읽기에서 다시 보면 회수가 즉시
+   * 효력을 갖는다. 이 판정은 {@link #resolveOverrides} 하나에 있고 {@link #getAsMap}·
+   * {@link #getResolvedByPrefix} 가 같은 헬퍼를 공유한다 — 세 곳에 복사하면 화이트리스트가
+   * 좁아질 때 일부만 반영되는 드리프트가 생긴다.
+   */
   @Transactional(readOnly = true)
   public Optional<String> getValue(String key) {
+    Map<String, String> override = resolveOverrides(Set.of(key));
+    if (override.containsKey(key)) return Optional.of(override.get(key));
     return settingsRepository.getValue(key);
   }
 
@@ -94,10 +115,65 @@ public class SettingsService {
   public Map<String, String> getAsMap(String prefix) {
     // system_settings.value 컬럼은 nullable이므로 null value가 있으면 Collectors.toMap이 NPE를 발생시킨다.
     // null value는 빈 문자열로 대체하고, 중복 키 발생 시 나중 값(b)을 사용하는 merge function을 지정한다.
-    return settingsRepository.findByPrefix(prefix).stream()
-        .collect(
-            Collectors.toMap(
-                SettingResponse::key, s -> s.value() != null ? s.value() : "", (a, b) -> b));
+    Map<String, String> platform =
+        settingsRepository.findByPrefix(prefix).stream()
+            .collect(
+                Collectors.toMap(
+                    SettingResponse::key, s -> s.value() != null ? s.value() : "", (a, b) -> b));
+
+    // AI 채팅·프로액티브 잡이 실제로 읽는 경로다. 오버라이드를 여기서 빠뜨리면 화면(getResolvedByPrefix)
+    // 에는 오버라이드가 보이는데 실제 호출(getAsMap)은 플랫폼 값으로 나가는 어긋남이 생긴다.
+    Map<String, String> overrides = resolveOverrides(platform.keySet());
+    Map<String, String> resolved = new HashMap<>(platform);
+    resolved.putAll(overrides);
+    return resolved;
+  }
+
+  /**
+   * 프리픽스에 속한 설정을 {@code overridden}/{@code tenantEditable} 플래그와 함께 해석한다. web
+   * 목록 화면 전용 — 실제 런타임 호출부는 {@link #getValue}/{@link #getAsMap} 을 쓴다.
+   */
+  @Transactional(readOnly = true)
+  public List<ResolvedSettingResponse> getResolvedByPrefix(String prefix) {
+    List<SettingResponse> platform = settingsRepository.findByPrefix(prefix);
+    Set<String> keys = platform.stream().map(SettingResponse::key).collect(Collectors.toSet());
+    Map<String, String> overrides = resolveOverrides(keys);
+
+    return platform.stream()
+        .map(
+            s -> {
+              boolean overridden = overrides.containsKey(s.key());
+              String value = overridden ? overrides.get(s.key()) : s.value();
+              return new ResolvedSettingResponse(
+                  s.key(),
+                  value,
+                  s.description(),
+                  s.updatedAt(),
+                  overridden,
+                  SettingsOverridePolicy.isTenantOverridable(s.key()));
+            })
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * 오버라이드 판정의 <b>단일 출처</b>. 주어진 키 집합 중 "테넌트 컨텍스트가 있고 + 화이트리스트가
+   * 허용하는" 키만 {@code tenant_settings} 값으로 채워 돌려준다. {@link #getValue}·{@link #getAsMap}·
+   * {@link #getResolvedByPrefix} 세 곳이 이 판정을 각자 복사하면, 화이트리스트가 좁아지거나
+   * 컨텍스트 없음 처리가 바뀔 때 한 곳만 고쳐지고 나머지가 어긋나는 사고가 난다(이 판정이 이
+   * 밴드의 핵심 회귀 지점이라 특히 위험하다).
+   *
+   * <p>컨텍스트가 없으면(배경 잡 경로) 즉시 빈 맵을 돌려준다 — DB 조회조차 하지 않는다. "컨텍스트
+   * 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약을 이 한 곳에서만 표현한다.
+   */
+  private Map<String, String> resolveOverrides(Set<String> keys) {
+    if (TenantContext.get() == null) return Map.of();
+    Map<String, String> resolved = new HashMap<>();
+    for (String key : keys) {
+      if (SettingsOverridePolicy.isTenantOverridable(key)) {
+        tenantSettingsRepository.findValue(key).ifPresent(v -> resolved.put(key, v));
+      }
+    }
+    return resolved;
   }
 
   public void updateSettings(Map<String, String> settings, Long userId) {
@@ -149,11 +225,19 @@ public class SettingsService {
     return value;
   }
 
+  /**
+   * {@code ai.api_key} 는 {@link SettingsOverridePolicy} 화이트리스트에 없는 플랫폼 잠금 키다 —
+   * {@link #getValue} 가 해석기를 타더라도 {@link #resolveOverrides} 가 항상 빈 결과를 주므로 여기
+   * 결과는 바뀌지 않는다. 장래에 {@code ai.api_key} 가 BYO(Bring Your Own) 키 정책으로 테넌트에
+   * 열리면(정책 화이트리스트 추가), 이 메서드가 "어느 테넌트의 키를 복호화하는가"를 다시 따져야
+   * 하는 지점이 된다.
+   */
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedApiKey() {
     return getValue("ai.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
+  /** {@code ai.cli_oauth_token} 도 플랫폼 잠금 키다 — 근거는 {@link #getDecryptedApiKey} 와 같다. */
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedCliOauthToken() {
     return getValue("ai.cli_oauth_token").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
@@ -162,6 +246,9 @@ public class SettingsService {
   /**
    * 임베딩 provider 인증용 복호화된 API 키. OpenAI 등 인증이 필요한 provider 에서만 사용하며, Ollama(로컬)는 빈 값이라
    * empty 를 반환한다. 키는 절대 ai-agent 로 내려보내지 않고 api 내부(EmbeddingProviderFactory)에서만 쓴다.
+   *
+   * <p>{@code embedding.*} 4키도 화이트리스트에 없는 플랫폼 잠금 키다(모델 교체가 벡터 차원을 바꿔
+   * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다) — 근거는 {@link #getDecryptedApiKey} 와 같다.
    */
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedEmbeddingApiKey() {
@@ -219,6 +306,12 @@ public class SettingsService {
     }
   }
 
+  /**
+   * SMTP 6키는 전부 화이트리스트에 없는 플랫폼 잠금 키다(발신 도메인 신뢰도를 전 테넌트가 공유한다)
+   * — {@code settingsRepository} 를 직접 읽고 해석기({@link #resolveOverrides})를 아예 타지 않으므로
+   * 이 사실이 지금은 무해하지만, 장래에 SMTP 가 테넌트별로 열리면 이 메서드도 해석기를 타도록
+   * 바뀌어야 한다.
+   */
   @Transactional(readOnly = true)
   public Map<String, String> getSmtpConfig() {
     return settingsRepository.findByPrefix("smtp").stream()
