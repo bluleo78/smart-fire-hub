@@ -41,6 +41,22 @@ public class SettingsRepository {
                     r.get(KEY), r.get(VALUE), r.get(DESCRIPTION), r.get(UPDATED_AT)));
   }
 
+  /**
+   * 전체 설정 행.
+   *
+   * <p>{@link #findByPrefix} 로는 대신할 수 없다 — 그것은 {@code prefix + ".%"} 패턴을 쓰므로 빈
+   * 프리픽스가 아무것도 매칭하지 않는다. 운영자 평면이 18키 전체를 한 번에 보여 주기 위해 필요하다.
+   */
+  public List<SettingResponse> findAll() {
+    return dsl.select(KEY, VALUE, DESCRIPTION, UPDATED_AT)
+        .from(SYSTEM_SETTINGS)
+        .orderBy(KEY)
+        .fetch(
+            r ->
+                new SettingResponse(
+                    r.get(KEY), r.get(VALUE), r.get(DESCRIPTION), r.get(UPDATED_AT)));
+  }
+
   public Optional<String> getValue(String key) {
     return dsl.select(VALUE).from(SYSTEM_SETTINGS).where(KEY.eq(key)).fetchOptional(VALUE);
   }

@@ -47,21 +47,33 @@ public class SettingsService {
   @Transactional(readOnly = true)
   public List<SettingResponse> getByPrefix(String prefix) {
     return settingsRepository.findByPrefix(prefix).stream()
-        .map(
-            setting -> {
-              if ("ai.api_key".equals(setting.key())
-                  || "ai.cli_oauth_token".equals(setting.key())
-                  || "embedding.api_key".equals(setting.key())) {
-                String masked =
-                    setting.value() == null || setting.value().isBlank()
-                        ? ""
-                        : encryptionService.maskValue(encryptionService.decrypt(setting.value()));
-                return new SettingResponse(
-                    setting.key(), masked, setting.description(), setting.updatedAt());
-              }
-              return setting;
-            })
+        .map(this::maskSecret)
         .collect(Collectors.toList());
+  }
+
+  /**
+   * 전체 설정(18키). 운영자 평면이 플랫폼 기본값을 한 화면에 보여 주기 위해 쓴다.
+   *
+   * <p>마스킹은 {@link #getByPrefix} 와 <b>같은 함수</b>를 지난다 — 복사해 두면 한쪽에 비밀 키가
+   * 추가될 때 다른 쪽이 평문을 노출한다.
+   */
+  @Transactional(readOnly = true)
+  public List<SettingResponse> getAll() {
+    return settingsRepository.findAll().stream().map(this::maskSecret).collect(Collectors.toList());
+  }
+
+  /** 비밀값은 복호화 후 마스킹해서 내보낸다. 평문도, 암호문도 응답에 실리지 않는다. */
+  private SettingResponse maskSecret(SettingResponse setting) {
+    if ("ai.api_key".equals(setting.key())
+        || "ai.cli_oauth_token".equals(setting.key())
+        || "embedding.api_key".equals(setting.key())) {
+      String masked =
+          setting.value() == null || setting.value().isBlank()
+              ? ""
+              : encryptionService.maskValue(encryptionService.decrypt(setting.value()));
+      return new SettingResponse(setting.key(), masked, setting.description(), setting.updatedAt());
+    }
+    return setting;
   }
 
   @Transactional(readOnly = true)
