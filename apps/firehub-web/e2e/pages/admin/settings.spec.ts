@@ -17,7 +17,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 검증 대상은 "무엇이 보이는가"가 아니라 P7-b 가 세운 계약이다:
  *  - `GET /settings?prefix=ai` 의 `overridden`/`tenantEditable` 플래그가 필드 상태(상속/재정의/잠금)로
  *    정확히 번역되는가
- *  - `PUT /settings` 페이로드가 테넌트 편집 허용 6키만 담고 잠긴 3키는 절대 담지 않는가(밴드 핵심 경계)
+ *  - `PUT /settings` 페이로드가 편집 허용 6키 중 바꾼 키만 담고, 잠긴 3키와 미편집 키는 담지 않는가
+ *    (밴드 핵심 경계 — 미편집 키를 보내면 상속이 끊긴다)
  *  - `DELETE /settings/{key}` 가 그 필드 하나만 상속으로 되돌리고 다른 필드의 미저장 편집을 건드리지 않는가
  *  - 이메일·임베딩 탭이 전면 잠금이고 저장 경로가 화면에서 사라졌는가(진단용 연결 테스트는 유지)
  *
@@ -194,12 +195,15 @@ test.describe('설정 페이지', () => {
   });
 
   /**
-   * 계약 5(밴드 핵심 경계): 저장 페이로드는 화이트리스트 6키만 담는다.
-   * 잠긴 3키(agent_type/api_key/cli_oauth_token)가 새면 테넌트가 플랫폼 자산을 덮어쓰는 경로가 된다.
+   * 계약 5(밴드 핵심 경계): 저장 페이로드는 편집 허용 6키 중 <b>실제로 바꾼 키만</b> 담는다.
+   * 두 가지가 걸려 있다 — (1) 잠긴 3키(agent_type/api_key/cli_oauth_token)가 새면 테넌트가 플랫폼
+   * 자산을 덮어쓰는 경로가 된다. (2) 편집하지 않은 키까지 보내면 그 키들이 tenant_settings 에
+   * 기록되어 상속이 조용히 끊기고, 이후 플랫폼 기본값 변경이 이 테넌트에 전파되지 않는다 —
+   * 2단 상속을 세우는 밴드에서 UI 가 상속을 없애는 셈이 된다.
    */
   test.describe('저장 페이로드 경계', () => {
     test(
-      '설정 변경 후 저장하면 화이트리스트 6키만 PUT 되고 잠긴 키는 담기지 않는다',
+      '설정 변경 후 저장하면 바꾼 키만 PUT 되고 잠긴 키·미편집 키는 담기지 않는다',
       { tag: '@smoke' },
       async ({ authenticatedPage: page }) => {
         await setupSettingsMocks(page);
@@ -219,18 +223,30 @@ test.describe('설정 페이지', () => {
         const req = await saveCapture.waitForRequest();
         const settings = (req.payload as { settings: Record<string, string> }).settings;
 
-        // 경계 단언: 키 집합이 화이트리스트와 **정확히** 일치해야 한다.
-        // toMatchObject/부분 단언으로 두면 ai.api_key 가 섞여 들어와도 통과한다.
-        expect(Object.keys(settings).sort()).toEqual([...TENANT_EDITABLE_AI_KEYS].sort());
-        // 잠긴 3키는 명시적으로도 못 박는다(화이트리스트 상수가 잘못 바뀌는 경우까지 잡기 위해)
+        // 경계 단언 1: 페이로드는 **바꾼 키 하나만** 담는다.
+        // 편집하지 않은 키까지 보내면 그 키들이 같은 값으로 tenant_settings 에 기록되어 상속이
+        // 조용히 끊기고, 그 뒤로 플랫폼 기본값 변경이 이 테넌트에 영원히 전파되지 않는다.
+        // 2단 상속을 세우는 밴드에서 UI 가 상속을 없애는 셈이므로 여기서 못 박는다.
+        // 부분 단언(toMatchObject)으로 두면 나머지 5키가 섞여 들어와도 통과한다.
+        expect(Object.keys(settings)).toEqual(['ai.max_turns']);
+        // 경계 단언 1-b: 페이로드의 모든 키가 화이트리스트 소속이어야 한다. 위 단언은 이 시나리오의
+        // 키 하나를 고정하지만, 이쪽은 어떤 시나리오로 바뀌어도 계속 성립하는 불변식이다 —
+        // 새 필드를 저장 대상에 추가하면서 화이트리스트에 넣는 것을 잊으면 여기서 걸린다.
+        for (const key of Object.keys(settings)) {
+          expect([...TENANT_EDITABLE_AI_KEYS]).toContain(key);
+        }
+        // 경계 단언 2: 잠긴 3키는 어떤 경우에도 담기지 않는다. 위 단언이 이미 배제하지만,
+        // 화이트리스트 상수가 잘못 바뀌거나 "전 키 저장"으로 되돌아가는 회귀까지 잡기 위해 명시한다.
         expect(settings).not.toHaveProperty('ai.agent_type');
         expect(settings).not.toHaveProperty('ai.api_key');
         expect(settings).not.toHaveProperty('ai.cli_oauth_token');
+        // 편집 가능하지만 손대지 않은 키도 담기지 않는다 — 특히 응답에 아예 없던
+        // ai.session_max_tokens 가 첫 저장에 딸려 들어가 재정의로 굳는 일이 없어야 한다.
+        expect(settings).not.toHaveProperty('ai.session_max_tokens');
+        expect(settings).not.toHaveProperty('ai.temperature');
 
         // 입력 → payload 값 검증
         expect(settings['ai.max_turns']).toBe('15');
-        // 응답에 없던 키도 코드 기본값이 실제 적용값이므로 그대로 저장된다
-        expect(settings['ai.session_max_tokens']).toBe('50000');
 
         await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
       },
