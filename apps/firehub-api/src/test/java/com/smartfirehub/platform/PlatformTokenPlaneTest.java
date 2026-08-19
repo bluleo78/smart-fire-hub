@@ -12,6 +12,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.security.PlatformAuthentication;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
@@ -152,12 +153,10 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
 
   /** 플랫폼 SUPER_ADMIN 을 가진 사용자를 만든다. test DB 는 platform_user_role 이 0행이다. */
   private long createUserWithSuperAdmin() {
-    long userId = createPlainUser();
-    dsl.execute(
-        "insert into platform_user_role (user_id, platform_role_id)"
-            + " select ?, id from platform_role where name = 'SUPER_ADMIN'"
-            + " on conflict do nothing",
-        userId);
+    long userId =
+        TenantRlsTestSupport.insertUserWithPassword(
+            dsl, "p7a-tok-" + System.nanoTime(), "{noop}x");
+    TenantRlsTestSupport.grantPlatformSuperAdmin(dsl, userId);
     return userId;
   }
 

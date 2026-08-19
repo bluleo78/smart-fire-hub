@@ -1,9 +1,6 @@
 package com.smartfirehub.platform;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -11,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import jakarta.servlet.http.Cookie;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
@@ -215,21 +213,9 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
    */
   private String createUser(boolean platformRole) {
     String uniq = "p7a-auth-" + System.nanoTime();
-    long userId =
-        dsl.insertInto(table(name("user")))
-            .set(field(name("username")), uniq)
-            .set(field(name("email")), uniq + "@example.com")
-            .set(field(name("password")), passwordEncoder.encode(PASSWORD))
-            .set(field(name("name")), uniq)
-            .returning(field(name("id"), Long.class))
-            .fetchOne()
-            .get(field(name("id"), Long.class));
+    long userId = TenantRlsTestSupport.insertUserWithPassword(dsl, uniq, passwordEncoder.encode(PASSWORD));
     if (platformRole) {
-      dsl.execute(
-          "insert into platform_user_role (user_id, platform_role_id)"
-              + " select ?, id from platform_role where name = 'SUPER_ADMIN'"
-              + " on conflict do nothing",
-          userId);
+      TenantRlsTestSupport.grantPlatformSuperAdmin(dsl, userId);
     }
     return uniq;
   }

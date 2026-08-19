@@ -1,6 +1,7 @@
 package com.smartfirehub.global.config;
 
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
+import com.smartfirehub.global.security.PlatformAuthPaths;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.PlatformPlaneFilter;
 import jakarta.servlet.DispatcherType;
@@ -62,9 +63,10 @@ public class SecurityConfig {
                     // 운영자 평면. 토큰 발급 경로만 public 이고 나머지는 전부 인증 필수다.
                     // 이 매처가 없으면 /api/platform/** 은 /api/v1/** 에 걸리지 않고 아래
                     // anyRequest().permitAll() 로 흘러 무인증 전면 개방이 된다.
-                    .requestMatchers("/api/platform/auth/login", "/api/platform/auth/refresh")
+                    .requestMatchers(
+                        PlatformAuthPaths.PUBLIC_PATTERNS.toArray(String[]::new))
                     .permitAll()
-                    .requestMatchers("/api/platform/**")
+                    .requestMatchers(PlatformAuthPaths.PLATFORM_PATTERN)
                     .authenticated()
                     .requestMatchers("/api/v1/**")
                     .authenticated()

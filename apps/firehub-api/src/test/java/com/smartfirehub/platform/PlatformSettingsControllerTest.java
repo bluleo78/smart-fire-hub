@@ -1,15 +1,13 @@
 package com.smartfirehub.platform;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -111,22 +109,11 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
 
   /** 검증용 사용자. 공유 test DB 라 나노초로 유일화한다. */
   private long createUser(boolean platformRole) {
-    String uniq = "p7a-set-" + System.nanoTime();
     long userId =
-        dsl.insertInto(table(name("user")))
-            .set(field(name("username")), uniq)
-            .set(field(name("email")), uniq + "@example.com")
-            .set(field(name("password")), "{noop}x")
-            .set(field(name("name")), uniq)
-            .returning(field(name("id"), Long.class))
-            .fetchOne()
-            .get(field(name("id"), Long.class));
+        TenantRlsTestSupport.insertUserWithPassword(
+            dsl, "p7a-set-" + System.nanoTime(), "{noop}x");
     if (platformRole) {
-      dsl.execute(
-          "insert into platform_user_role (user_id, platform_role_id)"
-              + " select ?, id from platform_role where name = 'SUPER_ADMIN'"
-              + " on conflict do nothing",
-          userId);
+      TenantRlsTestSupport.grantPlatformSuperAdmin(dsl, userId);
     }
     return userId;
   }

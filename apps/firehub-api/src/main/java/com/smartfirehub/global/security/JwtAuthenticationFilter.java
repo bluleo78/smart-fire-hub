@@ -167,19 +167,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
    * 로딩하려면 GUC 가 필요한데 운영자 요청에는 테넌트 컨텍스트가 없다 — 어차피 0행이 된다.
    */
   private void setPlatformSecurityContext(Long userId) {
-    Set<String> permissions = platformRoleRepository.findPlatformPermissionCodes(userId);
-    List<SimpleGrantedAuthority> authorities =
-        permissions.stream().map(SimpleGrantedAuthority::new).toList();
     SecurityContextHolder.getContext()
-        .setAuthentication(new PlatformAuthentication(userId, authorities));
+        .setAuthentication(
+            new PlatformAuthentication(
+                userId, authorities(platformRoleRepository.findPlatformPermissionCodes(userId))));
   }
 
   private void setSecurityContext(Long userId) {
-    Set<String> permissions = permissionService.getUserPermissions(userId);
-    List<SimpleGrantedAuthority> authorities =
-        permissions.stream().map(SimpleGrantedAuthority::new).toList();
-    UsernamePasswordAuthenticationToken authentication =
-        new UsernamePasswordAuthenticationToken(userId, null, authorities);
-    SecurityContextHolder.getContext().setAuthentication(authentication);
+    SecurityContextHolder.getContext()
+        .setAuthentication(
+            new UsernamePasswordAuthenticationToken(
+                userId, null, authorities(permissionService.getUserPermissions(userId))));
+  }
+
+  /** 권한 코드 집합을 Spring Security authority 로 옮긴다. 두 평면이 같은 변환을 쓴다. */
+  private static List<SimpleGrantedAuthority> authorities(Set<String> permissions) {
+    return permissions.stream().map(SimpleGrantedAuthority::new).toList();
   }
 }

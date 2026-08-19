@@ -42,6 +42,7 @@ public class AuthService {
   private final MembershipRepository membershipRepository;
   private final SignupTransaction signupTransaction;
   private final CurrentTransactionTenant currentTransactionTenant;
+  private final RefreshTokenRotation refreshTokenRotation;
 
   /**
    * 회원가입.
@@ -153,30 +154,8 @@ public class AuthService {
       throw new InvalidTokenException("유효하지 않거나 만료된 토큰입니다.");
     }
 
-    String tokenHash = hashToken(rawRefreshToken);
-
-    // Token reuse detection: if the token was already revoked, an attacker may have
-    // stolen a previously used token. Revoke the entire token family for safety.
-    if (refreshTokenRepository.isTokenRevoked(tokenHash)) {
-      refreshTokenRepository
-          .findFamilyIdByTokenHash(tokenHash)
-          .ifPresent(refreshTokenRepository::revokeByFamilyId);
-      // 이미 사용된 토큰 재사용 시도 — 보안 이슈, 한국어 메시지 반환
-      throw new InvalidTokenException("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
-    }
-
-    if (!refreshTokenRepository.existsValidToken(tokenHash)) {
-      // 폐기된 토큰으로 갱신 시도 — 한국어 메시지 반환
-      throw new InvalidTokenException("만료되었거나 폐기된 토큰입니다. 다시 로그인해 주세요.");
-    }
-
-    // Look up the family before revoking the current token
-    UUID familyId =
-        refreshTokenRepository
-            .findFamilyIdByTokenHash(tokenHash)
-            .orElseThrow(() -> new InvalidTokenException("토큰 정보를 찾을 수 없습니다. 다시 로그인해 주세요."));
-
-    refreshTokenRepository.revokeByTokenHash(tokenHash);
+    // 회전·재사용 탐지는 두 평면이 공유하는 정책이다(RefreshTokenRotation 주석 참고).
+    UUID familyId = refreshTokenRotation.revokeAndGetFamily(hashToken(rawRefreshToken));
 
     Long userId = jwtTokenProvider.getUserIdFromToken(rawRefreshToken);
     UserResponse user =

@@ -57,11 +57,6 @@ public class PlatformTenantRepository {
         tenantId);
   }
 
-  /** 사용자가 존재하는지. 없는 사용자를 Owner 로 지정하면 아무도 못 들어가는 테넌트가 된다. */
-  public boolean userExists(long userId) {
-    return dsl.fetchExists(
-        dsl.selectOne().from(table(name("user"))).where(field(name("id"), Long.class).eq(userId)));
-  }
 
   /** slug 가 이미 쓰이고 있는지. UNIQUE 위반을 500 이 아니라 400 으로 돌려주기 위해 미리 본다. */
   public boolean slugExists(String slug) {

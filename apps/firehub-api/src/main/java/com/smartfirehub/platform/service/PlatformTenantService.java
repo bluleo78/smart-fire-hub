@@ -6,6 +6,7 @@ import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.exception.TenantNotFoundException;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
+import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ public class PlatformTenantService {
 
   private final PlatformTenantRepository tenantRepository;
   private final TenantProvisioningService provisioningService;
+  private final UserRepository userRepository;
 
   /**
    * 신규 테넌트를 만들고 초기 Owner 와 기본 시드를 채운다.
@@ -41,7 +43,9 @@ public class PlatformTenantService {
    */
   @Transactional
   public TenantSummaryResponse create(CreateTenantRequest request) {
-    if (!tenantRepository.userExists(request.ownerUserId())) {
+    // 사용자 존재 확인은 기존 UserRepository 를 쓴다 — 같은 전역 테이블에 조회를 하나 더 만들면
+    // 나중에 사용자 조회 규칙이 바뀔 때 이쪽만 남는다.
+    if (userRepository.findById(request.ownerUserId()).isEmpty()) {
       // Owner 없는 테넌트는 아무도 들어갈 수 없다 — 만들기 전에 막는다.
       throw new IllegalArgumentException("존재하지 않는 사용자입니다: " + request.ownerUserId());
     }

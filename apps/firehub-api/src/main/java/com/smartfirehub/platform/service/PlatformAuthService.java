@@ -7,6 +7,7 @@ import com.smartfirehub.auth.exception.InvalidTokenException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.auth.service.LoginAttemptService;
 import com.smartfirehub.auth.service.RefreshTokenHasher;
+import com.smartfirehub.auth.service.RefreshTokenRotation;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.platform.dto.PlatformMeResponse;
@@ -42,6 +43,7 @@ public class PlatformAuthService {
   private final RefreshTokenRepository refreshTokenRepository;
   private final LoginAttemptService loginAttemptService;
   private final PlatformRoleRepository platformRoleRepository;
+  private final RefreshTokenRotation refreshTokenRotation;
 
   /**
    * 운영자 로그인.
@@ -97,24 +99,9 @@ public class PlatformAuthService {
       throw new InvalidTokenException("유효하지 않거나 만료된 토큰입니다.");
     }
 
-    String tokenHash = RefreshTokenHasher.hash(rawRefreshToken);
-
-    // 이미 폐기된 토큰이 다시 오면 탈취를 의심해 패밀리 전체를 폐기한다(테넌트 평면과 같은 정책).
-    if (refreshTokenRepository.isTokenRevoked(tokenHash)) {
-      refreshTokenRepository
-          .findFamilyIdByTokenHash(tokenHash)
-          .ifPresent(refreshTokenRepository::revokeByFamilyId);
-      throw new InvalidTokenException("이미 사용된 토큰입니다. 다시 로그인해 주세요.");
-    }
-    if (!refreshTokenRepository.existsValidToken(tokenHash)) {
-      throw new InvalidTokenException("만료되었거나 폐기된 토큰입니다. 다시 로그인해 주세요.");
-    }
-
+    // 회전·재사용 탐지는 두 평면이 공유하는 정책이다(RefreshTokenRotation 주석 참고).
     UUID familyId =
-        refreshTokenRepository
-            .findFamilyIdByTokenHash(tokenHash)
-            .orElseThrow(() -> new InvalidTokenException("토큰 정보를 찾을 수 없습니다. 다시 로그인해 주세요."));
-    refreshTokenRepository.revokeByTokenHash(tokenHash);
+        refreshTokenRotation.revokeAndGetFamily(RefreshTokenHasher.hash(rawRefreshToken));
 
     Long userId = jwtTokenProvider.getUserIdFromToken(rawRefreshToken);
     UserResponse user =

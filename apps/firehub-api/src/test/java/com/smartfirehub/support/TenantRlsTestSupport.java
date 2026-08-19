@@ -126,6 +126,39 @@ public final class TenantRlsTestSupport {
         .get(field(name("id"), Long.class));
   }
 
+  /**
+   * username 과 비밀번호를 직접 지정해 사용자를 만든다. 운영자 평면 테스트용.
+   *
+   * <p>{@link #insertUser(DSLContext, String)} 를 못 쓰는 이유: 그쪽은 비밀번호를 {@code "pw"} 로
+   * 고정해서 넣는데, 로그인 흐름 테스트는 {@code PasswordEncoder} 로 인코딩한 값이 필요하다. 또
+   * username 을 호출자가 알아야 로그인 요청을 만들 수 있으므로 생성 대신 <b>받는다</b>.
+   */
+  public static long insertUserWithPassword(DSLContext dsl, String username, String password) {
+    return dsl.insertInto(table(name("user")))
+        .set(field(name("username"), String.class), username)
+        .set(field(name("email"), String.class), username + "@example.com")
+        .set(field(name("password"), String.class), password)
+        .set(field(name("name"), String.class), username)
+        .returning(field(name("id"), Long.class))
+        .fetchOne()
+        .get(field(name("id"), Long.class));
+  }
+
+  /**
+   * 사용자에게 플랫폼 SUPER_ADMIN 롤을 부여한다.
+   *
+   * <p>test DB 의 {@code platform_user_role} 은 0행이다(V113 은 롤과 권한만 만들고 사람은 붙이지
+   * 않는다 — 새 환경에서 아무도 로그인할 수 없는 것이 의도된 상태다). 그래서 운영자 평면 테스트는
+   * 매번 이 부여를 직접 해야 한다.
+   */
+  public static void grantPlatformSuperAdmin(DSLContext dsl, long userId) {
+    dsl.execute(
+        "insert into platform_user_role (user_id, platform_role_id)"
+            + " select ?, id from platform_role where name = 'SUPER_ADMIN'"
+            + " on conflict do nothing",
+        userId);
+  }
+
   /** 위에서 만든 사용자를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 도메인 정리 뒤에 부른다. */
   public static void deleteUser(DSLContext dsl, Long userId) {
     if (userId != null) {

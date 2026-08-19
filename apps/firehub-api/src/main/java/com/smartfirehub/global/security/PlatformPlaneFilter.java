@@ -46,20 +46,20 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
    *
    * <p>매처를 쓰면 {@code server.servlet.context-path} 설정(원본 URI 에는 컨텍스트 경로가 포함되지만
    * 매처는 그것을 제외한 경로를 본다)과 대소문자·트레일링 슬래시 처리까지 시큐리티 설정과 자동으로
-   * 일치한다 — 아래 면제 목록이 {@code SecurityConfig} 의 permitAll 목록과 "1:1 로 일치"해야 하는
-   * 불변식을 지키기 쉽게 만든다.
+   * 일치한다.
    *
-   * <p>단, {@code HttpSecurity.requestMatchers(String)} 이 만드는 매처는 이 클래스가 쓰는
+   * <p>패턴 문자열은 {@link PlatformAuthPaths} 에서 가져와 {@code SecurityConfig} 와 공유한다.
+   * 단, {@code HttpSecurity.requestMatchers(String)} 이 만드는 매처는 이 클래스가 쓰는
    * {@link AntPathRequestMatcher} 와 <b>같은 구현이 아니다</b>(기본 루트 서블릿 매핑에서는 동작이
-   * 같다). 따라서 면제 목록이 permitAll 목록과 1:1 이라는 보장은 여전히 <b>사람이</b> 지킨다 —
-   * 그 사실이 {@code PlatformPlaneIsolationTest.platformAuthPathsAreExemptFromPlaneCheck} 로
-   * 검증되는 이유다. 한쪽만 고치면 그 테스트가 깨진다.
+   * 같다). 즉 <b>목록</b>의 어긋남은 상수 공유가 막고, <b>매처 동작</b>의 어긋남은
+   * {@code PlatformPlaneIsolationTest.platformAuthPathsAreExemptFromPlaneCheck} 가 잡는다.
    */
   private static final RequestMatcher PLATFORM_PLANE =
-      new AntPathRequestMatcher("/api/platform/**");
+      new AntPathRequestMatcher(PlatformAuthPaths.PLATFORM_PATTERN);
 
   /**
-   * 평면 검사 면제 경로. {@code SecurityConfig} 의 플랫폼 permitAll 목록과 <b>1:1 로 일치</b>해야 한다.
+   * 평면 검사 면제 경로. {@link PlatformAuthPaths} 를 통해 {@code SecurityConfig} 의 permitAll 목록과
+   * <b>같은 출처</b>를 공유한다 — 한쪽만 고치는 실수가 아예 불가능해진다.
    *
    * <p>왜 면제가 필요한가: 이 두 경로는 인증 없이 호출되는 것이 정상이지만, 같은 호스트에서
    * firehub-web 을 열어 둔 브라우저는 살아 있는 <b>테넌트</b> Bearer 를 함께 보낸다. 그러면
@@ -67,9 +67,9 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
    * 밟게 되는 경로다.
    */
   private static final List<RequestMatcher> PLANE_CHECK_EXEMPT =
-      List.of(
-          new AntPathRequestMatcher("/api/platform/auth/login"),
-          new AntPathRequestMatcher("/api/platform/auth/refresh"));
+      PlatformAuthPaths.PUBLIC_PATTERNS.stream()
+          .map(pattern -> (RequestMatcher) new AntPathRequestMatcher(pattern))
+          .toList();
 
   @Override
   protected void doFilterInternal(
