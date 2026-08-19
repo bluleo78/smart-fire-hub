@@ -1,15 +1,44 @@
 import type { Page } from '@playwright/test';
 
-import { createSetting } from '../../factories/admin.factory';
-import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
+import { TENANT_EDITABLE_AI_KEYS } from '@/lib/settings-fields';
+
+import { createAiSettings } from '../../factories/admin.factory';
+import {
+  setupAdminAuth,
+  setupSettingsMocks,
+  setupSmtpSettingsMocks,
+} from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
- * 설정 페이지 E2E 테스트
- * - 설정 로드, 탭 전환, 저장 버튼 동작을 검증한다.
- * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
+ * 설정 페이지 E2E 테스트 (P7-b 설정 2단 상속)
+ *
+ * 검증 대상은 "무엇이 보이는가"가 아니라 P7-b 가 세운 계약이다:
+ *  - `GET /settings?prefix=ai` 의 `overridden`/`tenantEditable` 플래그가 필드 상태(상속/재정의/잠금)로
+ *    정확히 번역되는가
+ *  - `PUT /settings` 페이로드가 테넌트 편집 허용 6키만 담고 잠긴 3키는 절대 담지 않는가(밴드 핵심 경계)
+ *  - `DELETE /settings/{key}` 가 그 필드 하나만 상속으로 되돌리고 다른 필드의 미저장 편집을 건드리지 않는가
+ *  - 이메일·임베딩 탭이 전면 잠금이고 저장 경로가 화면에서 사라졌는가(진단용 연결 테스트는 유지)
+ *
+ * AdminRoute 통과를 위해 ADMIN 역할로 users/me 를 오버라이드한다.
  */
+
+/**
+ * 필드 한 개를 감싸는 컨테이너(라벨+배지+입력+안내문).
+ *
+ * 잠금 안내문("플랫폼 운영자만 변경할 수 있는 항목입니다.")과 배지 문구는 여러 필드에 동일하게
+ * 반복되므로, 컨테이너로 스코프를 좁히지 않으면 "어느 필드가 잠겼는지"를 전혀 검증하지 못한다.
+ */
+const fieldBox = (page: Page, inputId: string) =>
+  page.locator('div.space-y-2', { has: page.locator(`#${inputId}`) });
+
+/** 시스템 프롬프트는 배지·재정의 해제 버튼이 카드 제목 줄에 있어 카드 단위로 스코프를 잡는다. */
+const systemPromptCard = (page: Page) =>
+  page.locator('div.card-hover', { has: page.locator('#ai-system-prompt') });
+
+const LOCKED_NOTE = '플랫폼 운영자만 변경할 수 있는 항목입니다.';
+
 test.describe('설정 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
@@ -27,6 +56,7 @@ test.describe('설정 페이지', () => {
     await expect(page.getByRole('tab', { name: '일반' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '이메일' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '임베딩' })).toBeVisible();
   });
 
   test('모든 탭에 아이콘이 렌더링된다 (UI 일관성)', async ({ authenticatedPage: page }) => {
@@ -34,17 +64,12 @@ test.describe('설정 페이지', () => {
     await setupSettingsMocks(page);
     await page.goto('/admin/settings');
 
-    // 탭 목록 확인 — 각 탭 내에 svg 아이콘이 있어야 한다
-    const generalTab = page.getByRole('tab', { name: '일반' });
-    const aiTab = page.getByRole('tab', { name: 'AI 에이전트' });
-    const emailTab = page.getByRole('tab', { name: '이메일' });
-
-    await expect(generalTab.locator('svg')).toBeVisible();
-    await expect(aiTab.locator('svg')).toBeVisible();
-    await expect(emailTab.locator('svg')).toBeVisible();
+    for (const name of ['일반', 'AI 에이전트', '이메일', '임베딩']) {
+      await expect(page.getByRole('tab', { name }).locator('svg')).toBeVisible();
+    }
   });
 
-  test('AI 에이전트 탭이 기본으로 선택되고 설정 항목이 렌더링된다', async ({
+  test('AI 에이전트 탭이 기본 선택되고 서버 응답 값이 각 필드에 반영된다', async ({
     authenticatedPage: page,
   }) => {
     await setupSettingsMocks(page);
@@ -55,12 +80,16 @@ test.describe('설정 페이지', () => {
       'aria-selected',
       'true',
     );
-
-    // 모델 설정 카드 확인
     await expect(page.getByText('모델 설정')).toBeVisible();
 
-    // 에이전트 유형 셀렉트 확인
-    await expect(page.getByLabel('에이전트 유형')).toBeVisible();
+    // 응답 → UI 반영 검증. 모델은 코드값(claude-sonnet-5)이 사람이 읽는 라벨로 표시되어야 한다.
+    await expect(page.locator('#ai-model')).toContainText('Claude Sonnet 5');
+    await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+    await expect(page.locator('#ai-temperature')).toHaveValue('1.0');
+    await expect(page.locator('#ai-max-tokens')).toHaveValue('16384');
+    await expect(page.locator('#ai-system-prompt')).toHaveValue(
+      '당신은 도움이 되는 AI 어시스턴트입니다.',
+    );
   });
 
   test('일반 탭 클릭 시 탭 내용이 전환된다', async ({ authenticatedPage: page }) => {
@@ -74,411 +103,413 @@ test.describe('설정 페이지', () => {
     await expect(page.getByText('준비 중입니다')).toBeVisible();
   });
 
-  test('설정값 변경 시 저장 버튼이 활성화된다', async ({ authenticatedPage: page }) => {
-    await setupSettingsMocks(page);
-    await page.goto('/admin/settings');
-
-    // 초기 상태에서 저장 버튼 비활성화 확인 (변경 사항 없음)
-    await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
-
-    // 최대 턴 수 필드 값 변경
-    await page.getByLabel('최대 턴 수').fill('15');
-
-    // 변경 후 저장 버튼 활성화 확인
-    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
-  });
-
-  test('되돌리기 버튼 클릭 시 변경 사항이 초기화된다', async ({ authenticatedPage: page }) => {
-    await setupSettingsMocks(page);
-    await page.goto('/admin/settings');
-
-    // 최대 턴 수 필드 변경
-    const maxTurnsInput = page.getByLabel('최대 턴 수');
-    await maxTurnsInput.fill('20');
-
-    // 되돌리기 버튼 클릭
-    await page.getByRole('button', { name: '되돌리기' }).click();
-
-    // 원래 값(10)으로 복원되는지 확인
-    await expect(maxTurnsInput).toHaveValue('10');
-  });
-
-  test('저장 성공 시 toast 메시지가 표시된다', async ({ authenticatedPage: page }) => {
-    await setupSettingsMocks(page);
-    // 설정 저장 API 캡처 설정 — goto 이전에 등록해야 한다
-    const capture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
-    // verifyAuth 호출 모킹
-    await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
-
-    await page.goto('/admin/settings');
-
-    // AI 에이전트 탭이 기본으로 선택되어 있음 — 탭 로드 대기
-    await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
-
-    // API 키 입력 (validate: api_key가 비어있으면 저장 불가)
-    // getByLabel은 "API 키 보기" 버튼도 매칭하므로 id로 명시적 선택
-    const apiKeyInput = page.locator('#ai-api-key');
-    await apiKeyInput.fill('sk-ant-test-key-12345');
-
-    // 시스템 프롬프트 입력 (validate: 비어있으면 저장 불가)
-    const systemPromptTextarea = page.getByPlaceholder('시스템 프롬프트를 입력하세요...');
-    await systemPromptTextarea.fill('당신은 도움이 되는 AI 어시스턴트입니다.');
-
-    // 저장 버튼이 활성화될 때까지 대기 후 클릭
-    const saveButton = page.getByRole('button', { name: '저장' }).first();
-    await expect(saveButton).toBeEnabled({ timeout: 3000 });
-    await saveButton.click();
-
-    // Sonner toast 메시지 확인
-    await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
-
-    // PUT /api/v1/settings payload 검증 — 변경한 키들이 포함되어 있어야 한다
-    const req = capture.lastRequest();
-    if (req) {
-      // 저장 payload에 settings 배열 또는 객체가 포함되어야 한다
-      expect(req.payload).toBeTruthy();
-    }
-  });
-
-  test('이메일 탭 — SMTP 설정 폼이 렌더링된다', async ({ authenticatedPage: page }) => {
-    await setupSettingsMocks(page);
-    // SMTP 설정 API 모킹 — 이메일 탭 진입 시 호출
-    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
-      { key: 'smtp.host', value: 'smtp.gmail.com', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.username', value: 'user@example.com', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.password', value: '****masked****', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.from_address', value: 'noreply@example.com', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
-    ]);
-
-    await page.goto('/admin/settings');
-
-    // 이메일 탭 클릭
-    await page.getByRole('tab', { name: '이메일' }).click();
-
-    // SMTP 서버 설정 카드 제목 확인
-    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
-
-    // 폼 필드가 서버 데이터로 채워졌는지 확인
-    await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
-    await expect(page.locator('#smtp-port')).toHaveValue('587');
-    await expect(page.locator('#smtp-username')).toHaveValue('user@example.com');
-    await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
-  });
-
-  test('이메일 탭 — SMTP 설정 저장 시 PUT /api/v1/settings/smtp 가 호출된다', async ({ authenticatedPage: page }) => {
-    await setupSettingsMocks(page);
-    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
-      { key: 'smtp.host', value: '', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.username', value: '', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.password', value: '', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.from_address', value: '', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
-    ]);
-    // PUT 캡처 — goto 이전에 등록
-    const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings/smtp', {}, { capture: true });
-
-    await page.goto('/admin/settings');
-    await page.getByRole('tab', { name: '이메일' }).click();
-    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
-
-    // 호스트 입력 → 변경 감지로 저장 버튼 활성화
-    await page.locator('#smtp-host').fill('smtp.example.com');
-
-    // 저장 버튼 활성화 후 클릭 (SMTP 탭 내 저장 버튼)
-    const saveBtn = page.getByRole('button', { name: '저장' }).first();
-    await expect(saveBtn).toBeEnabled({ timeout: 3000 });
-    await saveBtn.click();
-
-    // PUT API 호출 검증
-    const req = await saveCapture.waitForRequest();
-    expect(req.url.pathname).toBe('/api/v1/settings/smtp');
-    // payload에 smtp.host 키가 포함되어 있어야 한다
-    expect(req.payload).toMatchObject({ 'smtp.host': 'smtp.example.com' });
-
-    // toast 성공 메시지 확인
-    await expect(page.getByText('SMTP 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-  });
-
-  test('이메일 탭 — SMTP 호스트 빈값으로 저장 시 에러 toast가 표시되고 API가 호출되지 않는다', async ({ authenticatedPage: page }) => {
-    // 이슈 #46 회귀 방지: smtp.host="" 빈값으로 저장 가능한 버그 수정 검증
-    await setupSettingsMocks(page);
-    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
-      { key: 'smtp.host', value: 'smtp.gmail.com', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.username', value: '', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.password', value: '', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.from_address', value: '', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
-    ]);
-    // PUT 캡처 — API가 호출되지 않아야 한다
-    const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings/smtp', {}, { capture: true });
-
-    await page.goto('/admin/settings');
-    await page.getByRole('tab', { name: '이메일' }).click();
-    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
-
-    // SMTP 호스트를 빈값으로 지운다
-    await page.locator('#smtp-host').fill('');
-
-    // 저장 버튼 활성화 확인 (변경 사항 있음)
-    const saveBtn = page.getByRole('button', { name: '저장' }).first();
-    await expect(saveBtn).toBeEnabled({ timeout: 3000 });
-    await saveBtn.click();
-
-    // 에러 toast 메시지 확인
-    await expect(page.getByText('SMTP 호스트를 입력하세요.')).toBeVisible({ timeout: 5000 });
-
-    // PUT API 가 호출되지 않아야 한다 (검증 실패로 early return)
-    expect(saveCapture.lastRequest()).toBeUndefined();
-  });
-
-  test('이메일 탭 — 테스트 발송 버튼 클릭 시 POST /api/v1/settings/smtp/test 가 호출된다', async ({ authenticatedPage: page }) => {
-    await setupSettingsMocks(page);
-    await mockApi(page, 'GET', '/api/v1/settings/smtp', [
-      { key: 'smtp.host', value: 'smtp.example.com', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.username', value: 'user@example.com', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.password', value: '****masked****', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
-      { key: 'smtp.from_address', value: 'noreply@example.com', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
-    ]);
-    // POST 캡처
-    const testCapture = await mockApi(page, 'POST', '/api/v1/settings/smtp/test', {}, { capture: true });
-
-    await page.goto('/admin/settings');
-    await page.getByRole('tab', { name: '이메일' }).click();
-    await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
-
-    // 변경 없는 상태에서 "테스트 발송" 버튼이 활성화됨
-    const testBtn = page.getByRole('button', { name: '테스트 발송' });
-    await expect(testBtn).toBeEnabled({ timeout: 3000 });
-    await testBtn.click();
-
-    // POST /api/v1/settings/smtp/test 가 호출되었는지 검증
-    const req = await testCapture.waitForRequest();
-    expect(req.url.pathname).toBe('/api/v1/settings/smtp/test');
-
-    // toast 성공 메시지 확인
-    await expect(page.getByText('테스트 이메일이 발송되었습니다.')).toBeVisible({ timeout: 5000 });
-  });
-
   /**
-   * OpenCode 에이전트 유형 선택 시 키 입력 UI 숨김 검증.
-   * - opencode 선택 시 API 키/OAuth 입력창 대신 안내 메시지가 표시되어야 한다.
+   * 계약 1·2: 응답 플래그(`overridden`/`tenantEditable`)가 필드 상태로 번역되는지.
+   * 세 상태(상속/재정의/잠금)와 응답에 아예 없는 키(내장 기본값)를 모두 덮는다.
    */
-  test.describe('OpenCode 에이전트 유형', () => {
-    test('OpenCode 선택 시 키 입력 UI가 숨겨지고 안내 메시지가 표시된다', { tag: '@smoke' }, async ({
+  test.describe('필드 상태 — 상속 / 재정의 / 잠금', () => {
+    test('상속 중인 필드는 "기본값 사용 중" 배지 + 편집 가능 + 재정의 해제 버튼 없음', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
       await page.goto('/admin/settings');
 
-      // AI 에이전트 탭이 기본으로 선택되어 있는지 확인
-      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
-
-      // 에이전트 유형 셀렉트를 클릭해 드롭다운 열기
-      await page.getByLabel('에이전트 유형').click();
-
-      // OpenCode 옵션 선택
-      await page.getByRole('option', { name: 'OpenCode' }).click();
-
-      // API 키 입력창이 사라졌는지 확인
-      await expect(page.locator('#ai-api-key')).not.toBeVisible();
-
-      // OAuth 토큰 입력창도 사라졌는지 확인
-      await expect(page.locator('#ai-cli-oauth-token')).not.toBeVisible();
-
-      // OpenCode 안내 메시지가 표시되어야 한다
-      await expect(
-        page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
-      ).toBeVisible();
+      const box = fieldBox(page, 'ai-max-turns');
+      await expect(box.getByText('기본값 사용 중')).toBeVisible();
+      await expect(page.locator('#ai-max-turns')).toBeEnabled();
+      // 지울 오버라이드가 없으므로 해제 버튼이 붙어서는 안 된다 — 이 음성 단언이 없으면
+      // 버튼이 전 필드에 붙는 회귀를 놓친다.
+      await expect(box.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
+      // 상속 중인 필드에 잠금 안내문이 새어 나오면 안 된다
+      await expect(box.getByText(LOCKED_NOTE)).toHaveCount(0);
     });
 
-    test('OpenCode에서 다른 유형으로 변경 시 해당 입력 UI가 다시 표시된다', async ({
+    test('재정의된 필드는 "테넌트 재정의 적용됨" 배지 + 재정의 해제 버튼이 붙는다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 같은 키가 재정의 상태로 내려오면(overridden: true) 값도 오버라이드 값이 보여야 한다
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
+      });
+      await page.goto('/admin/settings');
+
+      const box = fieldBox(page, 'ai-max-turns');
+      await expect(box.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(page.locator('#ai-max-turns')).toHaveValue('25');
+      await expect(page.locator('#ai-max-turns')).toBeEnabled();
+      await expect(box.getByRole('button', { name: '재정의 해제' })).toBeVisible();
+
+      // 다른 편집 가능 필드는 여전히 상속 상태여야 한다(재정의가 필드 단위임을 고정)
+      await expect(fieldBox(page, 'ai-temperature').getByText('기본값 사용 중')).toBeVisible();
+    });
+
+    test('플랫폼 전용 키는 Lock 배지 + 비활성 입력 + 고정 안내문 네 겹으로 표시된다', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
       await page.goto('/admin/settings');
 
-      // OpenCode로 변경
-      await page.getByLabel('에이전트 유형').click();
-      await page.getByRole('option', { name: 'OpenCode' }).click();
+      // tenantEditable: false 로 내려오는 3키 — 색이 아니라 아이콘+텍스트+비활성+안내문으로 전달
+      for (const inputId of ['ai-agent-type', 'ai-api-key', 'ai-cli-oauth-token']) {
+        const box = fieldBox(page, inputId);
+        const badge = box.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음');
+        await expect(badge).toBeVisible();
+        // 색 단독 전달 금지 — 배지 안에 Lock 아이콘이 함께 있어야 한다
+        await expect(badge.locator('svg')).toBeVisible();
+        await expect(box.getByText(LOCKED_NOTE)).toBeVisible();
+        await expect(page.locator(`#${inputId}`)).toBeDisabled();
+        // 잠긴 필드에는 해제할 테넌트 재정의가 존재할 수 없다
+        await expect(box.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
+      }
+    });
 
-      // 안내 메시지 확인
-      await expect(
-        page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
-      ).toBeVisible();
+    test('응답에 없는 ai.session_max_tokens 는 "내장 기본값" 배지와 코드 기본값 50000 을 보여준다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 이 키는 어떤 마이그레이션도 시드하지 않아 프리픽스 조회 응답에서 빠진다(플랫폼 행 없음).
+      // 그래도 백엔드 코드 폴백(50000)이 실제로 적용되므로 화면은 값 + "내장 기본값"을 보여야 한다.
+      // 빈칸이나 잠금으로 떨어지면 결함이다(없는 키를 falsy 로 흘리면 잠김으로 뒤집힌다).
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
 
-      // SDK 유형으로 변경
-      await page.getByLabel('에이전트 유형').click();
-      await page.getByRole('option', { name: 'Claude Agent SDK' }).click();
+      const box = fieldBox(page, 'ai-session-max-tokens');
+      await expect(box.getByText('내장 기본값')).toBeVisible();
+      await expect(page.locator('#ai-session-max-tokens')).toHaveValue('50000');
+      await expect(page.locator('#ai-session-max-tokens')).toBeEnabled();
+    });
 
-      // API 키 입력창이 다시 표시되어야 한다
-      await expect(page.locator('#ai-api-key')).toBeVisible();
+    test('시스템 프롬프트 카드도 상태 배지를 카드 제목 줄에 표시한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.system_prompt': { overridden: true, value: '테넌트 전용 프롬프트' } }),
+      });
+      await page.goto('/admin/settings');
 
-      // 안내 메시지는 숨겨져야 한다
-      await expect(
-        page.getByText('배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.'),
-      ).not.toBeVisible();
+      const card = systemPromptCard(page);
+      await expect(card.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(card.getByRole('button', { name: '재정의 해제' })).toBeVisible();
+      await expect(page.locator('#ai-system-prompt')).toHaveValue('테넌트 전용 프롬프트');
     });
   });
 
   /**
-   * SDK 에이전트 유형 선택 시 OAuth 토큰 + API 키 필드 동시 노출 검증.
-   * - sdk는 OAuth·API 키 둘 다 지원(OAuth 우선)하므로 두 입력창이 모두 보여야 한다.
-   * - OAuth 토큰 저장 시 PUT payload에 ai.cli_oauth_token 키가 담기는지 검증한다.
+   * 계약 5(밴드 핵심 경계): 저장 페이로드는 화이트리스트 6키만 담는다.
+   * 잠긴 3키(agent_type/api_key/cli_oauth_token)가 새면 테넌트가 플랫폼 자산을 덮어쓰는 경로가 된다.
    */
-  test.describe('SDK 에이전트 유형', () => {
-    /**
-     * cli-api 상태로 설정을 로드한 뒤 실제로 sdk로 전환하는 onChange를 발생시켜
-     * 분기(필드 노출)가 전환 시점에 정확히 동작하는지 검증한다.
-     * (setupSettingsMocks는 초기값이 이미 sdk라 재선택은 onChange를 트리거하지 않으므로 별도 모킹 사용)
-     */
-    test('cli-api에서 sdk로 전환 시 OAuth 토큰과 API 키 필드가 모두 노출되고 저장된다', { tag: '@smoke' }, async ({
+  test.describe('저장 페이로드 경계', () => {
+    test(
+      '설정 변경 후 저장하면 화이트리스트 6키만 PUT 되고 잠긴 키는 담기지 않는다',
+      { tag: '@smoke' },
+      async ({ authenticatedPage: page }) => {
+        await setupSettingsMocks(page);
+        // PUT 캡처 — goto 이전에 등록해야 첫 저장을 놓치지 않는다
+        const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+        // 저장 성공 후 화면이 호출하는 인증 상태 조회
+        await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
+
+        await page.goto('/admin/settings');
+        await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+
+        await page.locator('#ai-max-turns').fill('15');
+        const saveButton = page.getByRole('button', { name: '저장' });
+        await expect(saveButton).toBeEnabled();
+        await saveButton.click();
+
+        const req = await saveCapture.waitForRequest();
+        const settings = (req.payload as { settings: Record<string, string> }).settings;
+
+        // 경계 단언: 키 집합이 화이트리스트와 **정확히** 일치해야 한다.
+        // toMatchObject/부분 단언으로 두면 ai.api_key 가 섞여 들어와도 통과한다.
+        expect(Object.keys(settings).sort()).toEqual([...TENANT_EDITABLE_AI_KEYS].sort());
+        // 잠긴 3키는 명시적으로도 못 박는다(화이트리스트 상수가 잘못 바뀌는 경우까지 잡기 위해)
+        expect(settings).not.toHaveProperty('ai.agent_type');
+        expect(settings).not.toHaveProperty('ai.api_key');
+        expect(settings).not.toHaveProperty('ai.cli_oauth_token');
+
+        // 입력 → payload 값 검증
+        expect(settings['ai.max_turns']).toBe('15');
+        // 응답에 없던 키도 코드 기본값이 실제 적용값이므로 그대로 저장된다
+        expect(settings['ai.session_max_tokens']).toBe('50000');
+
+        await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+      },
+    );
+
+    test('변경 전에는 저장 버튼이 비활성이고 편집 가능 필드를 바꾸면 활성화된다', async ({
       authenticatedPage: page,
     }) => {
-      await mockApi(page, 'GET', '/api/v1/settings', [
-        createSetting({ key: 'ai.agent_type', value: 'cli-api', description: '에이전트 유형' }),
-        createSetting({ key: 'ai.model', value: 'claude-sonnet-4-6', description: '모델' }),
-        createSetting({ key: 'ai.max_turns', value: '10', description: '최대 턴 수' }),
-        createSetting({ key: 'ai.system_prompt', value: '당신은 도움이 되는 AI 어시스턴트입니다.', description: '시스템 프롬프트' }),
-        createSetting({ key: 'ai.temperature', value: '1.0', description: 'Temperature' }),
-        createSetting({ key: 'ai.max_tokens', value: '16384', description: '최대 응답 토큰' }),
-        createSetting({ key: 'ai.session_max_tokens', value: '50000', description: '세션 최대 토큰' }),
-        createSetting({ key: 'ai.api_key', value: '****masked****', description: 'API 키' }),
-        createSetting({ key: 'ai.cli_oauth_token', value: '', description: 'OAuth 토큰' }),
-      ]);
-      // 저장 PUT 캡처 — goto 이전에 등록
-      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
-      await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
-
+      await setupSettingsMocks(page);
       await page.goto('/admin/settings');
-      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
 
-      // 전환 전: cli-api 상태이므로 OAuth 토큰 입력창은 보이지 않아야 한다
-      await expect(page.locator('#ai-cli-oauth-token')).not.toBeVisible();
-      await expect(page.locator('#ai-api-key')).toBeVisible();
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+      await page.locator('#ai-max-turns').fill('15');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    });
 
-      // 에이전트 유형을 sdk로 실제 전환 (cli-api -> sdk 실제 onChange 발생)
-      await page.getByLabel('에이전트 유형').click();
-      await page.getByRole('option', { name: 'Claude Agent SDK' }).click();
+    test('되돌리기 버튼 클릭 시 변경 사항이 서버 값으로 초기화된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
 
-      // 전환 후: OAuth 토큰 필드와 API 키 필드가 모두 노출되어야 한다
-      await expect(page.locator('#ai-cli-oauth-token')).toBeVisible();
-      await expect(page.locator('#ai-api-key')).toBeVisible();
+      const maxTurnsInput = page.locator('#ai-max-turns');
+      await maxTurnsInput.fill('20');
+      await page.getByRole('button', { name: '되돌리기' }).click();
 
-      // OAuth 토큰 입력 후 저장
-      await page.locator('#ai-cli-oauth-token').fill('sk-ant-oat01-xyz');
-      const saveButton = page.getByRole('button', { name: '저장' }).first();
-      await expect(saveButton).toBeEnabled({ timeout: 3000 });
-      await saveButton.click();
-
-      // PUT payload에 ai.cli_oauth_token이 담겨야 한다
-      const req = await saveCapture.waitForRequest();
-      expect((req.payload as { settings: Record<string, string> }).settings['ai.cli_oauth_token']).toBe(
-        'sk-ant-oat01-xyz',
-      );
+      // 서버가 준 원래 값(10)으로 복원 + dirty 해제
+      await expect(maxTurnsInput).toHaveValue('10');
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
     });
 
     /**
-     * 이슈: sdk 모드에서 OAuth 토큰만 입력해도 validate()가 API 키를 강제 요구해
-     * OAuth 전용 설정을 저장할 수 없던 버그(회귀 방지).
+     * 계약 6: 편집한 필드를 비우고 저장하면 성공이 아니라 오류다.
+     *
+     * 실측 결론: 편집 가능 6키 중 5키(max_turns/temperature/max_tokens/session_max_tokens/
+     * system_prompt)는 `validate()` 가 빈 값을 먼저 잡아 필드 아래 인라인 오류 + 공통 토스트로
+     * 막고, 남은 `ai.model` 은 Select 라 UI 에서 비울 수단이 없다. 즉 "페이로드에서 빠진 키를
+     * 이름으로 지목하는" 경로(handleSave 의 droppedChangedKeys)는 UI 로 도달할 수 없다.
+     * 그래서 도달 가능한 경로 — 인라인 오류가 필드를 지목 + PUT 미발생 — 를 고정한다.
      */
-    test('sdk 모드에서 API 키 없이 OAuth 토큰만 입력해도 저장된다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page); // 초기값 agent_type=sdk, api_key=****masked****
-      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
-      await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
-
-      await page.goto('/admin/settings');
-      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
-
-      // API 키를 비우고(짧은/빈 값) OAuth 토큰만 채운다
-      const apiKeyInput = page.locator('#ai-api-key');
-      await apiKeyInput.fill('');
-      await page.locator('#ai-cli-oauth-token').fill('sk-ant-oat01-onlytoken');
-
-      const saveButton = page.getByRole('button', { name: '저장' }).first();
-      await expect(saveButton).toBeEnabled({ timeout: 3000 });
-      await saveButton.click();
-
-      // 검증 에러 없이 저장 성공 toast가 보여야 한다
-      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
-
-      const req = await saveCapture.waitForRequest();
-      expect((req.payload as { settings: Record<string, string> }).settings['ai.cli_oauth_token']).toBe(
-        'sk-ant-oat01-onlytoken',
-      );
-    });
-
-    /**
-     * sdk 모드에서 API 키와 OAuth 토큰이 모두 비어있으면 저장이 차단되어야 한다.
-     */
-    test('sdk 모드에서 API 키와 OAuth 토큰이 모두 비어있으면 저장이 차단된다', async ({
+    test('편집 가능 필드를 비우고 저장하면 필드에 오류가 붙고 PUT 이 발생하지 않는다', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
       const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
 
       await page.goto('/admin/settings');
-      await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
+      await page.locator('#ai-max-turns').fill('');
 
-      // API 키, OAuth 토큰 모두 비운다 (기존 마스킹된 API 키를 지우는 것만으로 dirty 상태가 된다)
-      await page.locator('#ai-api-key').fill('');
-      await page.locator('#ai-cli-oauth-token').fill('');
-
-      const saveButton = page.getByRole('button', { name: '저장' }).first();
-      await expect(saveButton).toBeEnabled({ timeout: 3000 });
+      const saveButton = page.getByRole('button', { name: '저장' });
+      await expect(saveButton).toBeEnabled();
       await saveButton.click();
 
-      // 에러 toast 확인 및 PUT 미호출 확인
+      // 어떤 필드가 문제인지 그 필드 옆에서 알려준다
+      await expect(
+        fieldBox(page, 'ai-max-turns').getByText('1~50 사이의 정수를 입력하세요'),
+      ).toBeVisible();
       await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+      // 성공 토스트가 뜨지 않고, 저장 요청 자체가 나가지 않아야 한다(가짜 성공 금지)
+      await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
       expect(saveCapture.lastRequest()).toBeUndefined();
     });
   });
 
   /**
-   * 이슈 #86 회귀 방지 — 미저장 변경사항 이탈 가드.
-   * 이메일 탭에서 dirty 상태로 사이드바 메뉴를 클릭하면 AlertDialog가 떠야 하며,
-   * 취소 시 머무르고(값 보존), 이탈 시 다른 페이지로 이동한다.
+   * 계약 4: `DELETE /settings/{key}` 는 확인 다이얼로그를 지나며, 그 필드 하나만 상속으로 되돌린다.
    */
-  test.describe('이슈 #86 — 미저장 변경 가드', () => {
-    async function setupEmailTabDirty(page: Page) {
+  test.describe('재정의 해제', () => {
+    test('확인 다이얼로그를 지나 DELETE 가 호출되고 해당 필드만 상속으로 돌아온다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 해제 후 화면은 GET 을 다시 읽어 배지를 갱신한다. 그래서 모킹 응답도 "해제된 뒤" 상태로
+      // 바뀌어야 한다 — 아니면 배지가 그대로여서 앱이 아니라 모킹을 디버깅하게 된다.
+      let cleared = false;
+      await setupSettingsMocks(page, {
+        ai: () =>
+          cleared
+            ? createAiSettings()
+            : createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
+      });
+
+      // DELETE 는 204 no-content 라 본문이 없다 — mockApi 는 항상 JSON 본문을 붙이므로 직접 라우팅한다.
+      const deletedPaths: string[] = [];
+      await page.route(
+        (url) => url.pathname.startsWith('/api/v1/settings/ai.'),
+        (route) => {
+          if (route.request().method() !== 'DELETE') return route.fallback();
+          deletedPaths.push(new URL(route.request().url()).pathname);
+          cleared = true;
+          return route.fulfill({ status: 204 });
+        },
+      );
+
+      await page.goto('/admin/settings');
+      await expect(page.locator('#ai-max-turns')).toHaveValue('25');
+
+      // 다른 필드에 미저장 편집을 남긴다 — 해제가 이걸 날려버리면 안 된다
+      await page.locator('#ai-temperature').fill('0.3');
+
+      await fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }).click();
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByText('재정의 해제')).toBeVisible();
+      await dialog.getByRole('button', { name: '되돌리기' }).click();
+
+      // 요청 경로 검증 — 키가 URL 세그먼트로 인코딩되어 나간다
+      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/ai.max_turns']);
+
+      // 해당 필드만 플랫폼 값(10) + 상속 배지로 전환
+      await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+      await expect(fieldBox(page, 'ai-max-turns').getByText('기본값 사용 중')).toBeVisible();
+      await expect(
+        fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }),
+      ).toHaveCount(0);
+      await expect(page.getByText('플랫폼 기본값으로 되돌렸습니다.')).toBeVisible({ timeout: 5000 });
+
+      // 핵심: 다른 필드의 미저장 편집은 그대로 남아 있어야 한다(전체 폼 재시드 회귀 방지)
+      await expect(page.locator('#ai-temperature')).toHaveValue('0.3');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    });
+
+    test('다이얼로그에서 취소하면 DELETE 가 호출되지 않고 재정의가 유지된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
+      });
+      const deletedPaths: string[] = [];
+      await page.route(
+        (url) => url.pathname.startsWith('/api/v1/settings/ai.'),
+        (route) => {
+          if (route.request().method() !== 'DELETE') return route.fallback();
+          deletedPaths.push(new URL(route.request().url()).pathname);
+          return route.fulfill({ status: 204 });
+        },
+      );
+
+      await page.goto('/admin/settings');
+      await fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+
+      expect(deletedPaths).toEqual([]);
+      await expect(page.locator('#ai-max-turns')).toHaveValue('25');
+      await expect(fieldBox(page, 'ai-max-turns').getByText('테넌트 재정의 적용됨')).toBeVisible();
+    });
+  });
+
+  /**
+   * 에이전트 유형에 따른 키 필드 분기.
+   * P7-b 이후 유형 자체가 플랫폼 소유라 사용자가 바꿀 수 없으므로, 분기는 **서버 값이 구동**한다.
+   * (예전 스펙은 사용자가 Select 를 바꿔 분기를 확인했지만 그 조작은 더 이상 존재하지 않는다.)
+   */
+  test.describe('에이전트 유형별 키 필드 분기 (서버 값 구동)', () => {
+    test('agent_type=sdk 면 OAuth 토큰과 API 키가 모두 노출되고 둘 다 잠금이다', async ({
+      authenticatedPage: page,
+    }) => {
       await setupSettingsMocks(page);
-      await mockApi(page, 'GET', '/api/v1/settings/smtp', [
-        { key: 'smtp.host', value: '', description: 'SMTP 호스트', updatedAt: '2024-01-01T00:00:00Z' },
-        { key: 'smtp.port', value: '587', description: '포트', updatedAt: '2024-01-01T00:00:00Z' },
-        { key: 'smtp.username', value: '', description: '사용자 이름', updatedAt: '2024-01-01T00:00:00Z' },
-        { key: 'smtp.password', value: '', description: '비밀번호', updatedAt: '2024-01-01T00:00:00Z' },
-        { key: 'smtp.starttls', value: 'true', description: 'STARTTLS', updatedAt: '2024-01-01T00:00:00Z' },
-        { key: 'smtp.from_address', value: '', description: '발신자 주소', updatedAt: '2024-01-01T00:00:00Z' },
-      ]);
+      await page.goto('/admin/settings');
+
+      // 유형 자체를 테넌트가 바꿀 수 없다 — 분기가 서버 값으로만 결정된다는 전제
+      await expect(page.locator('#ai-agent-type')).toBeDisabled();
+      await expect(page.locator('#ai-cli-oauth-token')).toBeVisible();
+      await expect(page.locator('#ai-cli-oauth-token')).toBeDisabled();
+      await expect(page.locator('#ai-api-key')).toBeVisible();
+      await expect(page.locator('#ai-api-key')).toBeDisabled();
+    });
+
+    test('agent_type=cli-api 면 API 키만 노출된다', async ({ authenticatedPage: page }) => {
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.agent_type': { value: 'cli-api' } }),
+      });
+      await page.goto('/admin/settings');
+
+      await expect(page.locator('#ai-api-key')).toBeVisible();
+      await expect(page.locator('#ai-cli-oauth-token')).toHaveCount(0);
+    });
+
+    test('agent_type=opencode 면 키 입력 UI 없이 안내 문구만 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page, {
+        ai: createAiSettings({ 'ai.agent_type': { value: 'opencode' } }),
+      });
+      await page.goto('/admin/settings');
+
+      await expect(page.locator('#ai-api-key')).toHaveCount(0);
+      await expect(page.locator('#ai-cli-oauth-token')).toHaveCount(0);
+      await expect(
+        page.getByText(
+          '배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.',
+        ),
+      ).toBeVisible();
+    });
+  });
+
+  /**
+   * 계약 3: 이메일 탭은 전면 잠금이다. 저장 경로(버튼·PUT)는 화면에서 사라졌고,
+   * 값을 노출하지 않는 진단 액션(연결 테스트)만 남는다.
+   */
+  test.describe('이메일 탭 — 플랫폼 전용', () => {
+    test('SMTP 값이 표시되지만 6필드 전부 잠금이고 저장 경로가 없다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await setupSmtpSettingsMocks(page);
 
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();
       await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
 
-      // dirty 상태 만들기 — SMTP 호스트에 입력
-      await page.locator('#smtp-host').fill('smtp.test.com');
-      // 저장 버튼 활성화로 dirty 감지 확인
-      await expect(page.getByRole('button', { name: '저장' }).first()).toBeEnabled({
-        timeout: 3000,
-      });
-    }
+      // 응답 → UI 반영(읽기는 계속 동작해야 한다)
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await expect(page.locator('#smtp-port')).toHaveValue('587');
+      await expect(page.locator('#smtp-username')).toHaveValue('user@example.com');
+      await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
 
-    test('이메일 탭 dirty 상태에서 사이드바 메뉴 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      // 6필드 전부 비활성(스위치 포함)
+      for (const id of ['smtp-host', 'smtp-port', 'smtp-username', 'smtp-password', 'smtp-from']) {
+        await expect(page.locator(`#${id}`)).toBeDisabled();
+      }
+      await expect(page.locator('#smtp-starttls')).toBeDisabled();
+
+      // 저장 버튼 행이 배너로 대체되었다 — 남겨 두면 누르는 순간 403 을 받는 버튼이 된다
+      await expect(page.getByText('플랫폼 전용 설정').first()).toBeVisible();
+      await expect(page.getByRole('button', { name: '저장' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '되돌리기' })).toHaveCount(0);
+    });
+
+    test('연결 테스트는 계속 동작한다 (POST /settings/smtp/test)', async ({
       authenticatedPage: page,
     }) => {
-      await setupEmailTabDirty(page);
+      await setupSettingsMocks(page);
+      await setupSmtpSettingsMocks(page);
+      const testCapture = await mockApi(
+        page,
+        'POST',
+        '/api/v1/settings/smtp/test',
+        { success: true },
+        { capture: true },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+
+      const testBtn = page.getByRole('button', { name: '연결 테스트' });
+      await expect(testBtn).toBeEnabled();
+      await testBtn.click();
+
+      const req = await testCapture.waitForRequest();
+      expect(req.url.pathname).toBe('/api/v1/settings/smtp/test');
+      await expect(page.getByText('SMTP 연결에 성공했습니다.')).toBeVisible({ timeout: 5000 });
+    });
+  });
+
+  /**
+   * 이슈 #86 회귀 방지 — 미저장 변경사항 이탈 가드.
+   * P7-b 로 이메일 탭이 dirty 가 될 수 없게 되었으므로 진입점을 AI 탭으로 옮겼다(가드 시나리오는 유지).
+   */
+  test.describe('이슈 #86 — 미저장 변경 가드', () => {
+    async function setupAiTabDirty(page: Page) {
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+      await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+
+      // dirty 상태 만들기 — 편집 가능한 최대 턴 수를 변경
+      await page.locator('#ai-max-turns').fill('20');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    }
+
+    test('dirty 상태에서 사이드바 메뉴 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupAiTabDirty(page);
 
       // 사이드바 "홈" 링크 클릭 (사이드바 nav 영역으로 한정)
       await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
 
-      // AlertDialog 표시 검증
       await expect(page.getByRole('alertdialog')).toBeVisible();
       await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
       // URL은 그대로 /admin/settings 유지 (즉시 이동되지 않아야 함)
@@ -488,60 +519,35 @@ test.describe('설정 페이지', () => {
     test('이탈 다이얼로그에서 취소 클릭 시 페이지에 머무르고 입력값이 보존된다', async ({
       authenticatedPage: page,
     }) => {
-      await setupEmailTabDirty(page);
+      await setupAiTabDirty(page);
 
       await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
       await expect(page.getByRole('alertdialog')).toBeVisible();
 
-      // 취소 클릭
       await page.getByRole('button', { name: '취소' }).click();
       await expect(page.getByRole('alertdialog')).toBeHidden();
 
-      // URL 동일, 입력값 보존
       expect(new URL(page.url()).pathname).toBe('/admin/settings');
-      await expect(page.locator('#smtp-host')).toHaveValue('smtp.test.com');
+      await expect(page.locator('#ai-max-turns')).toHaveValue('20');
     });
 
     test('이탈 다이얼로그에서 이탈 클릭 시 변경값을 버리고 다른 페이지로 이동한다', async ({
       authenticatedPage: page,
     }) => {
-      await setupEmailTabDirty(page);
+      await setupAiTabDirty(page);
 
       await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
       await expect(page.getByRole('alertdialog')).toBeVisible();
 
-      // 이탈 클릭
       await page.getByRole('button', { name: '이탈' }).click();
 
-      // 홈("/")으로 이동 확인
       await expect(page).toHaveURL(/\/$/);
-    });
-
-    test('AI 에이전트 탭 dirty 상태에서도 가드가 동작한다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page);
-      await page.goto('/admin/settings');
-
-      // AI 에이전트 탭은 기본 선택 — max_turns 변경
-      await page.getByLabel('최대 턴 수').fill('20');
-      await expect(page.getByRole('button', { name: '저장' }).first()).toBeEnabled({
-        timeout: 3000,
-      });
-
-      // 사이드바 메뉴 클릭
-      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
-
-      // 다이얼로그 표시 + URL 보존
-      await expect(page.getByRole('alertdialog')).toBeVisible();
-      expect(new URL(page.url()).pathname).toBe('/admin/settings');
     });
 
     test('변경 없는(clean) 상태에서는 메뉴 이동이 정상적으로 즉시 이루어진다', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
-      await mockApi(page, 'GET', '/api/v1/settings/smtp', []);
       await page.goto('/admin/settings');
       await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toBeVisible();
 

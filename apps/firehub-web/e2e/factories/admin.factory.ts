@@ -7,7 +7,7 @@
 import type { ApiConnectionResponse } from '@/types/api-connection';
 import type { AuditLogResponse } from '@/types/auditLog';
 import type { PermissionResponse, RoleDetailResponse } from '@/types/role';
-import type { SettingResponse } from '@/types/settings';
+import type { ResolvedSettingResponse, SettingResponse } from '@/types/settings';
 
 /** 권한(Permission) 응답 객체 생성 */
 export function createPermission(overrides?: Partial<PermissionResponse>): PermissionResponse {
@@ -85,6 +85,81 @@ export function createSetting(overrides?: Partial<SettingResponse>): SettingResp
     updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,
   };
+}
+
+/**
+ * `GET /api/v1/settings?prefix=...` 가 내려주는 해석된 설정 1건.
+ *
+ * 기본값을 `overridden: false, tenantEditable: true`(= 상속 중 + 편집 가능)로 둔다.
+ * 두 플래그를 빠뜨리면 `resolveSettingFieldState` 가 `tenantEditable` falsy 를 보고 전 필드를
+ * **잠김**으로 판정하므로, 플래그 없는 픽스처로 쓴 스펙은 결함을 정상으로 고정해 버린다.
+ */
+export function createResolvedSetting(
+  overrides?: Partial<ResolvedSettingResponse>,
+): ResolvedSettingResponse {
+  return {
+    key: 'app.name',
+    value: 'Smart Fire Hub',
+    description: '애플리케이션 이름',
+    updatedAt: '2024-01-01T00:00:00Z',
+    overridden: false,
+    tenantEditable: true,
+    ...overrides,
+  };
+}
+
+/**
+ * AI 설정 탭이 실제 서버에서 받는 목록을 재현한다 — 혼합 상태(상속 5 + 잠금 3)가 기본이다.
+ *
+ * - `ai.agent_type` / `ai.api_key` / `ai.cli_oauth_token` → 플랫폼 전용(`tenantEditable: false`).
+ *   실행 형태·과금 주체·비밀값이라 테넌트가 바꿀 수 없다.
+ * - 나머지 5키 → 편집 가능 + 상속 중(`overridden: false`). 재정의 상태가 필요한 테스트는
+ *   `patch` 로 그 키만 `overridden: true` 로 바꾼다.
+ * - **`ai.session_max_tokens` 는 일부러 넣지 않는다.** 어떤 마이그레이션도 이 키를 시드하지 않아
+ *   프리픽스 조회 응답에서 빠진다(플랫폼 행도 오버라이드도 없음). 여기에 넣으면 실제로 존재할 수
+ *   없는 상태를 테스트하게 된다 — 화면은 "내장 기본값" 배지 + 50000 을 보여야 한다.
+ * - `ai.model` 값은 `MODEL_OPTIONS` 에 실재하는 코드여야 한다. 목록에 없는 코드를 주면 Select 가
+ *   placeholder 를 렌더해 모델 표시에 대한 단언이 무의미해진다(되돌리지 말 것).
+ */
+export function createAiSettings(
+  patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
+): ResolvedSettingResponse[] {
+  const base: ResolvedSettingResponse[] = [
+    createResolvedSetting({ key: 'ai.agent_type', value: 'sdk', description: '에이전트 유형', tenantEditable: false }),
+    createResolvedSetting({ key: 'ai.api_key', value: '****masked****', description: 'API 키', tenantEditable: false }),
+    createResolvedSetting({ key: 'ai.cli_oauth_token', value: '', description: 'OAuth 토큰', tenantEditable: false }),
+    createResolvedSetting({ key: 'ai.model', value: 'claude-sonnet-5', description: '모델' }),
+    createResolvedSetting({ key: 'ai.max_turns', value: '10', description: '최대 턴 수' }),
+    createResolvedSetting({ key: 'ai.temperature', value: '1.0', description: 'Temperature' }),
+    createResolvedSetting({ key: 'ai.max_tokens', value: '16384', description: '최대 응답 토큰' }),
+    createResolvedSetting({
+      key: 'ai.system_prompt',
+      value: '당신은 도움이 되는 AI 어시스턴트입니다.',
+      description: '시스템 프롬프트',
+    }),
+  ];
+  return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
+}
+
+/**
+ * 임베딩 설정 4키 — P7-b 이후 전부 플랫폼 전용이라 `tenantEditable: false` 로 내려온다.
+ * `api_key` 는 백엔드가 마스킹해서 준다.
+ */
+export function createEmbeddingSettings(
+  patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
+): ResolvedSettingResponse[] {
+  const base: ResolvedSettingResponse[] = [
+    createResolvedSetting({ key: 'embedding.provider', value: 'OLLAMA', description: 'provider', tenantEditable: false }),
+    createResolvedSetting({ key: 'embedding.model', value: 'bge-m3', description: '모델', tenantEditable: false }),
+    createResolvedSetting({
+      key: 'embedding.base_url',
+      value: 'http://host.docker.internal:11434',
+      description: 'base url',
+      tenantEditable: false,
+    }),
+    createResolvedSetting({ key: 'embedding.api_key', value: '****masked****', description: 'API 키', tenantEditable: false }),
+  ];
+  return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
 }
 
 /** AuditLogResponse 여러 개를 한 번에 생성 */

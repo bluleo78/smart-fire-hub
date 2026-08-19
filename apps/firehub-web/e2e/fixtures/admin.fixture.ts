@@ -1,8 +1,12 @@
 import type { Page } from '@playwright/test';
 
+import type { ResolvedSettingResponse } from '@/types/settings';
+
 import {
+  createAiSettings,
   createApiConnections,
   createAuditLogs,
+  createEmbeddingSettings,
   createPermissions,
   createRoleDetail,
   createSetting,
@@ -114,22 +118,64 @@ export async function setupAuditLogMocks(page: Page, count = 5) {
   await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users));
 }
 
+/** 목록 자체 또는 "호출 시점에 목록을 만드는 함수" 둘 다 받는다 — 재정의 해제 후 재조회처럼 응답이 바뀌는 경우를 위해. */
+type SettingsSource = ResolvedSettingResponse[] | (() => ResolvedSettingResponse[]);
+
+const resolveSource = (source: SettingsSource) =>
+  typeof source === 'function' ? source() : source;
+
 /**
- * 설정 페이지 API 모킹
- * - AI 설정 목록을 모킹한다.
+ * 설정 페이지 API 모킹 — `GET /api/v1/settings` 를 `prefix` 쿼리로 분기한다.
+ *
+ * 실제 백엔드와 같은 한 엔드포인트를 쓰되 prefix 로 다른 목록을 주는 이유: AI 탭과 임베딩 탭이
+ * 같은 경로를 서로 다른 prefix 로 호출하므로, path 만 보는 `mockApi` 로는 둘을 구분할 수 없다.
+ * GET 이 아닌 메서드(PUT/DELETE)는 `route.fallback()` 으로 다음 핸들러(캡처용 모킹)에 넘긴다.
+ *
+ * `ai`/`embedding` 에 함수를 넘기면 호출 시점마다 평가되므로, DELETE 후 재조회에서 "그 키만
+ * 상속으로 돌아온" 응답을 줄 수 있다.
  */
-export async function setupSettingsMocks(page: Page) {
-  await mockApi(page, 'GET', '/api/v1/settings', [
-    createSetting({ key: 'ai.agent_type', value: 'sdk', description: '에이전트 유형' }),
-    createSetting({ key: 'ai.model', value: 'claude-sonnet-4-6', description: '모델' }),
-    createSetting({ key: 'ai.max_turns', value: '10', description: '최대 턴 수' }),
-    createSetting({ key: 'ai.system_prompt', value: '당신은 도움이 되는 AI 어시스턴트입니다.', description: '시스템 프롬프트' }),
-    createSetting({ key: 'ai.temperature', value: '1.0', description: 'Temperature' }),
-    createSetting({ key: 'ai.max_tokens', value: '16384', description: '최대 응답 토큰' }),
-    createSetting({ key: 'ai.session_max_tokens', value: '50000', description: '세션 최대 토큰' }),
-    createSetting({ key: 'ai.api_key', value: '****masked****', description: 'API 키' }),
-    createSetting({ key: 'ai.cli_oauth_token', value: '', description: 'OAuth 토큰' }),
-  ]);
+export async function setupSettingsMocks(
+  page: Page,
+  options: { ai?: SettingsSource; embedding?: SettingsSource } = {},
+) {
+  const ai = options.ai ?? createAiSettings();
+  const embedding = options.embedding ?? createEmbeddingSettings();
+  await page.route(
+    (url) => url.pathname === '/api/v1/settings',
+    (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const prefix = new URL(route.request().url()).searchParams.get('prefix');
+      const body = prefix === 'embedding' ? resolveSource(embedding) : resolveSource(ai);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
+    },
+  );
+}
+
+/**
+ * 이메일 탭(SMTP) 조회 모킹.
+ * SMTP 는 프리픽스 조회가 아니라 전용 `GET /settings/smtp` 를 쓰므로 플래그 없는
+ * `SettingResponse` 형태다(P7-b 에서도 그대로 유지 — 권한이 `settings:write` 라 갈아타지 않았다).
+ */
+export async function setupSmtpSettingsMocks(page: Page, overrides: Partial<Record<string, string>> = {}) {
+  const values: Record<string, string> = {
+    'smtp.host': 'smtp.gmail.com',
+    'smtp.port': '587',
+    'smtp.username': 'user@example.com',
+    'smtp.password': '****masked****',
+    'smtp.starttls': 'true',
+    'smtp.from_address': 'noreply@example.com',
+    ...overrides,
+  };
+  await mockApi(
+    page,
+    'GET',
+    '/api/v1/settings/smtp',
+    Object.entries(values).map(([key, value]) => createSetting({ key, value, description: key })),
+  );
 }
 
 /**
