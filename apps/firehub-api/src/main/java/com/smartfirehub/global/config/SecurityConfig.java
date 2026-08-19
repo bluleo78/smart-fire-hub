@@ -58,6 +58,13 @@ public class SecurityConfig {
                     // OAuth 콜백은 외부 서비스(Kakao/Slack)에서 리다이렉트되므로 Bearer 헤더 없음
                     .requestMatchers("/api/v1/oauth/kakao/callback", "/api/v1/oauth/slack/callback")
                     .permitAll()
+                    // 운영자 평면. 토큰 발급 경로만 public 이고 나머지는 전부 인증 필수다.
+                    // 이 매처가 없으면 /api/platform/** 은 /api/v1/** 에 걸리지 않고 아래
+                    // anyRequest().permitAll() 로 흘러 무인증 전면 개방이 된다.
+                    .requestMatchers("/api/platform/auth/login", "/api/platform/auth/refresh")
+                    .permitAll()
+                    .requestMatchers("/api/platform/**")
+                    .authenticated()
                     .requestMatchers("/api/v1/**")
                     .authenticated()
                     .anyRequest()
