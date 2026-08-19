@@ -30,24 +30,21 @@ export function isTenantEditableAiKey(key: string): key is TenantEditableAiKey {
 }
 
 /**
- * 서버 응답에 키가 없을 때 <b>실제로 적용되는</b> 코드 수준 기본값.
- * 출처는 백엔드 `AiAgentProxyService`(L226~232) 의 `getOrDefault`/`parseIntSafe` 3인자다 —
- * `system_settings` 에 행이 없고 오버라이드도 없으면 이 값으로 AI 호출이 나간다.
+ * DB 행이 없어서 <b>화면이 대신 보여줘야 하는</b> 코드 수준 기본값.
  *
- * 이 맵이 필요한 이유: `ai.session_max_tokens` 는 어떤 마이그레이션도 시드하지 않아 프리픽스
- * 조회 결과에 <b>아예 나타나지 않는다</b>(플랫폼 행도 오버라이드 행도 없으므로 합집합에서 빠진다).
- * 그때 화면을 비워 두면 "아무 값도 적용되지 않는다"고 읽히는데 실제로는 50000 이 적용되고 있어
- * 사실과 다르다. 그래서 값도 이 기본값으로 보여주고 배지도 "내장 기본값"으로 구분한다.
+ * <b>왜 이 한 키뿐인가</b>: `ai.session_max_tokens` 는 <b>어떤 마이그레이션도 시드하지 않는다</b>
+ * (`db/migration` 전체에서 이 키가 등장하는 파일이 없다). 그래서 프리픽스 조회 응답에서 유일하게
+ * 빠지는 AI 키이고, 이 맵이 실제로 읽히는 유일한 키다. 나머지 AI 키는 전부 `system_settings` 에
+ * non-null 값으로 시드돼 있어(V15/V31/V40/V41/V68) 항상 서버 값이 내려온다.
+ * 그런데도 값은 적용된다 — 백엔드가 이 키에 코드 폴백(50000)을 쓰기 때문이다. 화면을 비워 두면
+ * "아무 값도 적용되지 않는다"고 읽히므로 값과 "내장 기본값" 배지를 함께 보여준다.
  *
- * `ai.system_prompt` 은 여기 없다 — 백엔드가 null 을 그대로 넘겨 코드 기본값이 존재하지 않는다.
- * 비밀 키(api_key/cli_oauth_token)도 없다.
+ * <b>백엔드 기본값 목록을 여기 복사하지 않는 이유</b>: 백엔드가 기본값을 바꿔도 이쪽은 아무것도
+ * 깨지지 않는다 — 주석으로 동기화하는 중복은 이미 어긋난 중복이고, 그 결과는 "적용되지도 않는
+ * 숫자를 화면이 자신 있게 보여주는 것"이다. 도달하지도 않는 키까지 들고 있으면 그 위험만 커지고
+ * 얻는 것은 없다. 이 한 줄은 시드 행이 없다는 사실 때문에 불가피한 예외다.
  */
 export const BUILTIN_AI_DEFAULTS: Record<string, string> = {
-  'ai.agent_type': 'sdk',
-  'ai.model': 'claude-sonnet-5',
-  'ai.max_turns': '10',
-  'ai.temperature': '1.0',
-  'ai.max_tokens': '16384',
   'ai.session_max_tokens': '50000',
 };
 
