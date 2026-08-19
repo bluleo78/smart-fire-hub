@@ -4,24 +4,30 @@ import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.service.SettingsService;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 플랫폼 기본 설정 <b>조회</b>(운영자 전용). 18키 전체를 돌려주고 비밀값은 마스킹된다.
+ * 플랫폼 기본 설정 조회·쓰기(운영자 전용). 18키 전체를 대상으로 {@code system_settings} 를 읽고
+ * 쓴다.
  *
- * <p><b>쓰기는 의도적으로 없다 — P7-b 로 미룬다.</b> 테넌트 ADMIN 의 {@code /api/v1/settings} 쓰기
- * 경로가 P7-b 까지 살아 있어서, 지금 플랫폼 쓰기를 함께 열면 <b>같은 전역 18행을 두 평면이 조율 없이
- * 쓴다</b> — 오늘의 결함(한 테넌트가 저장하면 전 테넌트에 적용)에 last-write-wins 경쟁을 하나 더
- * 얹는 셈이라 지금보다 엄격히 나쁘다. 편집 능력 자체는 기존 경로로 이미 존재하므로 잃는 기능은 없다.
- * P7-b 가 {@code tenant_settings} 와 오버라이드 화이트리스트를 넣을 때 쓰기를 정상 경로로 만든다
- * ({@code platform:settings:write} 권한 코드는 V113 에서 이미 만들어 뒀다).
+ * <p><b>쓰기(P7-b Task 6)</b>: {@code PUT} 은 {@link SettingsService#updatePlatformSettings} 로
+ * 위임한다 — 검증·마스킹·암호화 로직은 Task 5 가 {@code SettingsService} 에 남겨 둔 것과
+ * <b>동일한 코드</b>를 재사용한다(플랫폼 쓰기가 검증을 다시 구현하면 테넌트 평면과 값 규칙이
+ * 어긋난다). 테넌트 ADMIN 의 {@code /api/v1/settings} 쓰기는 Task 5 부터 화이트리스트 6키로
+ * 좁혀져 {@code tenant_settings} 만 건드리므로, 이 엔드포인트와 같은 전역 18행을 두고 경쟁하지
+ * 않는다.
  *
- * <p>설계서 §4.5 참고 — 이 밴드가 끝난 시점에도 설정의 테넌트 구분 결함은 그대로 남아 있고, 이
- * 밴드는 그것을 고칠 <b>자리</b>를 만든다.
+ * <p>설계서 §4.5 참고 — 이 밴드가 끝난 시점에 설정의 테넌트 구분 결함(한 테넌트의 저장이 전
+ * 테넌트에 적용되던 문제)은 해소된다. 테넌트 평면은 자기 오버라이드만, 플랫폼 평면은 이 엔드포인트로
+ * 전역 기본값만 쓴다.
  */
 @RestController
 @RequestMapping("/api/platform/settings")
@@ -35,5 +41,19 @@ public class PlatformSettingsController {
   @RequirePermission("platform:settings:read")
   public ResponseEntity<List<SettingResponse>> getAll() {
     return ResponseEntity.ok(settingsService.getAll());
+  }
+
+  /**
+   * 플랫폼 기본 설정 갱신. AI·임베딩·SMTP 키를 한 번에 받을 수 있다(부분 갱신 허용). 마스킹된
+   * 센티널({@code ****xxxx})은 "기존 값 유지"로 해석되어 살아 있는 자격증명을 덮어쓰지 않는다
+   * ({@code SettingsService} 의 {@code isMaskedApiKey} 필터를 그대로 지난다).
+   */
+  @PutMapping
+  @RequirePermission("platform:settings:write")
+  public ResponseEntity<Void> updateAll(
+      Authentication authentication, @RequestBody Map<String, String> settings) {
+    Long userId = (Long) authentication.getPrincipal();
+    settingsService.updatePlatformSettings(settings, userId);
+    return ResponseEntity.noContent().build();
   }
 }
