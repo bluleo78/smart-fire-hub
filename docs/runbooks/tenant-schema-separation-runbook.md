@@ -21,6 +21,12 @@ main 에 병합되지 않았고, prod 에는 배포되지 않았다.**
 
 ## 1. 신규 테넌트 프로비저닝 절차 (운영자 SQL)
 
+> **P7-a 이후 정정 (2026-08-19).** 이제 **테넌트 생성 API 가 있다** —
+> `POST /api/platform/tenants` (§6 참고). 아래 SQL 절차는 여전히 유효하고 멱등하므로 API 를 쓸 수
+> 없는 상황(운영자 계정 없음, 앱 미배포)의 폴백으로 남겨 둔다. 다만 아래 "호출자가 0개다" 라는
+> 실측은 P7-a 에서 낡았다 — `PlatformTenantService.create` 가 `provisionDefaults` 를 부른다.
+> **API 를 쓰면 1-1·1-2 를 대신하며, 한 트랜잭션이라 좀비 테넌트가 남지 않는다.**
+
 **앱에는 테넌트를 생성하는 API 나 배치가 없다.** `TenantProvisioningService.provisionDefaults`
 는 프로덕션 호출자가 0개임을 확인했다(실측):
 
@@ -591,3 +597,72 @@ venv 를 훅에 배선하려면 최소한: (a) 모든 개발자 환경에 `apps/
   SQL 을 실제로 순서대로 돌려 실패/성공을 확인하지는 않았다 — 그 경로는 여전히 확인하지
   않았다.
 - **§3 의 방안 B(빈 노출 축소)가 스프링 표준 메커니즘만으로 실제로 가능한지 검증하지 않았다.**
+
+---
+
+## 6. 운영자 평면 (P7-a, 2026-08-19)
+
+`/api/platform/**` 이 신설됐다. 테넌트 평면(`/api/v1/**`)과 **토큰·권한·쿠키가 모두 분리**되며,
+평면이 어긋난 요청은 403 으로 끊긴다.
+
+### 6-1. 최초 SUPER_ADMIN 부트스트랩 — 신규 환경에서 반드시 필요
+
+V82 가 기존 전역 `ADMIN` 롤 보유자를 `SUPER_ADMIN` 으로 승격해 뒀다. 그래서 dev DB 는 3명이
+있지만, **그런 사용자가 없던 환경은 `platform_user_role` 이 0행이고 그러면 아무도 운영자
+로그인을 할 수 없다**(test DB 가 실제로 그 상태다 — 실측). 신규/빈 환경에서는 첫 운영자를
+직접 만들어야 한다:
+
+```sql
+INSERT INTO platform_user_role (user_id, platform_role_id)
+SELECT u.id, pr.id
+FROM "user" u, platform_role pr
+WHERE u.email = '<운영자 이메일>' AND pr.name = 'SUPER_ADMIN'
+ON CONFLICT DO NOTHING;
+```
+
+확인:
+
+```sql
+SELECT u.username, p.code
+FROM platform_user_role pur
+JOIN "user" u  ON u.id = pur.user_id
+JOIN platform_role_permission prp ON prp.platform_role_id = pur.platform_role_id
+JOIN permission p ON p.id = prp.permission_id
+ORDER BY 1, 2;
+```
+
+`SUPER_ADMIN` 은 V82 의 4건 + V113 의 2건 = **6건**을 보유한다:
+`platform:member:read`, `platform:settings:read`, `platform:settings:write`,
+`platform:tenant:create`, `platform:tenant:read`, `platform:tenant:suspend`.
+
+### 6-2. 엔드포인트
+
+| 메서드·경로 | 권한 | 비고 |
+|---|---|---|
+| `POST /api/platform/auth/login` | (public) | 플랫폼 롤 보유자만 성공. 실패 응답은 자격증명 오류와 구분되지 않는다(계정 열거 방지) |
+| `POST /api/platform/auth/refresh` | (public) | 쿠키 `platformRefreshToken`. 테넌트 리프레시 토큰은 거부된다 |
+| `POST /api/platform/auth/logout` | 인증만 | 이 사용자의 리프레시 토큰 전부 폐기 |
+| `GET /api/platform/auth/me` | 인증만 | 보유 권한 포함 |
+| `GET /api/platform/tenants` | `platform:tenant:read` | 멤버 수 집계 포함 |
+| `GET /api/platform/tenants/{id}` | `platform:tenant:read` | 도메인 데이터는 포함하지 않는다 |
+| `POST /api/platform/tenants` | `platform:tenant:create` | 행 + 초기 Owner + 기본 시드가 한 트랜잭션 |
+| `POST /api/platform/tenants/{id}/suspend` | `platform:tenant:suspend` | |
+| `POST /api/platform/tenants/{id}/activate` | `platform:tenant:suspend` | 같은 상태 스위치의 양방향이라 같은 권한 |
+| `GET /api/platform/tenants/{id}/members` | `platform:member:read` | 표시용 `membership.role` |
+| `GET /api/platform/settings` | `platform:settings:read` | 18키 전체, 비밀값 마스킹. **쓰기는 P7-b** |
+
+### 6-3. 반드시 알아야 할 세 가지
+
+1. **정지는 즉시 반영되지 않는다.** `tenant.status = 'SUSPENDED'` 는 `select-tenant` 와
+   `refresh` 에서 재검증되므로, **이미 발급된 액세스 토큰은 만료(기본 30분)까지 유효하다.**
+   즉시 차단이 필요하면 별도 조치(리프레시 토큰 폐기 + 만료 단축 또는 서버측 차단 목록)가
+   필요하며 P7-a 범위 밖이다. 사고 대응 시에는 해당 사용자들의 리프레시 토큰을 폐기해
+   30분 뒤 확실히 끊기게 만드는 것이 현재 할 수 있는 최선이다.
+2. **테넌트 생성은 데이터 스키마(`data_t{id}`)를 만들지 않는다.** `TenantSchemaProvisioner` 는
+   의도적으로 지연 생성이며(§1-7), 첫 데이터셋 생성 시점에 스키마와 권한이 함께 만들어진다.
+   생성 직후 `data_t{id}` 가 없는 것은 정상이다.
+3. **운영자 로그인은 감사 로그를 남기지 않는다(P7-a 의 의도된 이연).** 테넌트 로그인은
+   `audit_log` 에 기록하면서 GUC 로 테넌트를 붙이지만, 운영자에게는 테넌트가 없어 NULL 테넌트
+   행이 된다. `audit_log` 정책은 형태 (b)(`IS NOT DISTINCT FROM`)라 **GUC 가 빈 조회에서 NULL
+   테넌트 행이 매칭된다** — 즉 운영자 감사 행을 넣으려면 그 가시성 규칙을 먼저 정해야 한다.
+   그 결정 전까지 운영자 행위 추적은 애플리케이션 로그에 의존한다.

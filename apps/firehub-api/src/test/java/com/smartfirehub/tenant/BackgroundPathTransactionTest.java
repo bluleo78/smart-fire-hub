@@ -194,7 +194,16 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           // membership / tenant 는 테넌시 자체를 정의하는 메타 테이블이라 RLS 대상이 아니다
           // (자기 자신을 정책으로 가리면 테넌트 해석이 불가능해진다).
           "MembershipRepository",
-          "TenantRepository");
+          "TenantRepository",
+          // 운영자 평면(P7-a). tenant / membership / "user" 만 만지고 세 테이블 모두 RLS 대상이
+          // 아니다 — 그래서 GUC 가 필요 없다. 트랜잭션 경계는 PlatformTenantService 가 잡는다
+          // (테넌트 생성이 여러 쓰기를 원자적으로 묶어야 하므로 리포지토리가 아니라 서비스가
+          // 경계여야 한다).
+          //
+          // ⚠ 이 리포지토리에 RLS 테이블 조회를 추가하려면 이 항목을 지우고 클래스 레벨
+          // @Transactional 을 붙여야 한다. 운영자 요청은 테넌트 컨텍스트가 비어 있어 GUC 가
+          // 심기지 않으므로, RLS 테이블을 읽으면 예외 없이 조용히 0행이 된다.
+          "PlatformTenantRepository");
 
   /**
    * RLS 테이블을 만지지만 <b>모든 호출자가 트랜잭션 안에서 호출하는</b> 리포지토리. (C)-2
