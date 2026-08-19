@@ -38,6 +38,7 @@ import {
   isTenantEditableAiKey,
   resolveSettingFieldState,
   TENANT_EDITABLE_AI_KEYS,
+  type TenantEditableAiKey,
 } from '../../lib/settings-fields';
 import type { ResolvedSettingResponse } from '../../types/settings';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
@@ -85,6 +86,17 @@ const EMPTY_VALUES: AISettingsForm = {
   'ai.temperature': '',
   'ai.max_tokens': '',
   'ai.session_max_tokens': '',
+};
+
+// 편집 가능 키의 화면 표시 이름 — 저장이 거부된 필드를 이름으로 지목하는 데 쓴다.
+// "어떤 필드가 문제인지" 말해주지 않으면 사용자가 6개 중 무엇을 고쳐야 할지 알 수 없다.
+const EDITABLE_FIELD_LABELS: Record<TenantEditableAiKey, string> = {
+  'ai.system_prompt': '시스템 프롬프트',
+  'ai.model': '모델',
+  'ai.temperature': 'Temperature',
+  'ai.max_turns': '최대 턴 수',
+  'ai.max_tokens': '최대 응답 토큰',
+  'ai.session_max_tokens': '세션 최대 토큰',
 };
 
 /**
@@ -255,16 +267,36 @@ export default function SettingsPage() {
       return;
     }
 
+    // 페이로드는 테넌트 편집 허용 6키만 담는다. 잠긴 키를 보내면 서버가 키 이름을 명시해 400 을
+    // 던지므로 "저장은 되는데 서버가 거부"가 아니라 "거부될 필드는 시도조차 하지 않는다"로 만든다.
+    // 값이 빈 키도 제외한다 — 빈 문자열 오버라이드 행은 "재정의 없음"과 다른 상태이고,
+    // 상속으로 되돌리는 조작은 재정의 해제(DELETE)가 담당한다.
+    const settingsToSave: Record<string, string> = {};
+    const droppedChangedKeys: TenantEditableAiKey[] = [];
+    TENANT_EDITABLE_AI_KEYS.forEach((key) => {
+      if (form[key].trim() !== '') {
+        settingsToSave[key] = form[key];
+      } else if (form[key] !== original[key]) {
+        // 사용자가 방금 비운 키다. 그냥 빼고 저장하면 "저장했다"고 말하면서 아무것도 쓰지 않고,
+        // dirty 플래그까지 지워 저장 버튼이 회색이 된다 — 사용자는 반영된 줄 알고 화면을 떠나는데
+        // 옛 오버라이드가 그대로 적용된다. 그래서 제외 자체를 오류로 만든다.
+        droppedChangedKeys.push(key);
+      }
+    });
+    // 왜 validate() 와 별도인가: validate() 는 "입력값이 규칙에 맞는가"를 보고, 이 검사는
+    // "만든 페이로드가 사용자가 방금 한 편집을 실제로 담고 있는가"를 본다. validate() 는 상태에
+    // 따라(isBlankAllowed) 빈 값을 의도적으로 허용하므로 그 구멍이 조용한 무저장이 되지 않도록
+    // 페이로드를 만든 뒤 한 번 더 대조한다. 앞의 규칙이 바뀌어도 이 대조는 계속 성립한다.
+    if (droppedChangedKeys.length > 0) {
+      const names = droppedChangedKeys.map((key) => EDITABLE_FIELD_LABELS[key]).join(', ');
+      toast.error(
+        `${names}을(를) 비워 둔 채로는 저장할 수 없습니다. 플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요.`,
+      );
+      return;
+    }
+
     setIsSaving(true);
     try {
-      // 페이로드는 테넌트 편집 허용 6키만 담는다. 잠긴 키를 보내면 서버가 키 이름을 명시해 400 을
-      // 던지므로 "저장은 되는데 서버가 거부"가 아니라 "거부될 필드는 시도조차 하지 않는다"로 만든다.
-      // 값이 빈 키도 제외한다 — 빈 문자열 오버라이드 행은 "재정의 없음"과 다른 상태이고,
-      // 상속으로 되돌리는 조작은 재정의 해제(DELETE)가 담당한다.
-      const settingsToSave: Record<string, string> = {};
-      TENANT_EDITABLE_AI_KEYS.forEach((key) => {
-        if (form[key].trim() !== '') settingsToSave[key] = form[key];
-      });
       await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
       toast.success('설정이 저장되었습니다.');
