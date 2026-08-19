@@ -149,6 +149,66 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * {@code ai.session_max_tokens} 의 유효 범위는 <b>web 의 검증과 같아야 한다</b>(10,000~200,000).
+   *
+   * <p>백엔드 하한이 1000 이던 시절에는 이 어긋남이 도달 불가였다 — 시드 행이 없고 저장소가
+   * UPDATE-only 라 이 키를 <b>아무도 저장할 수 없었기 때문</b>이다. 저장 경로를 upsert 로 연
+   * 순간 그 잠재 결함이 함께 깨어난다: 운영자가 5000 을 저장하면 테넌트 설정 화면이 그 값으로
+   * 시드되고, web 의 하한 10000 에 걸려 <b>사용자가 그 필드를 건드리지도 않았는데 temperature
+   * 하나 고치려던 저장이 통째로 막힌다</b>. 잠긴 경로를 여는 수정은 그 끝에 있던 결함을 같이
+   * 깨운다 — 그래서 두 하한이 같다는 것을 여기서 못 박는다.
+   */
+  @Test
+  void 세션_최대_토큰_하한은_web_과_같은_10000_이다() {
+    // web 이 거부하는 값(5000)은 백엔드도 거부해야 한다 — 저장돼 버리면 화면이 잠긴다.
+    assertThatThrownBy(
+            () ->
+                settingsService.updatePlatformSettings(
+                    Map.of("ai.session_max_tokens", "5000"), null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("10000");
+
+    // 경계값은 통과해야 한다. 정리는 내가 만든 행만 지운다(공유 test DB).
+    try {
+      assertDoesNotThrow(
+          () ->
+              settingsService.updatePlatformSettings(
+                  Map.of("ai.session_max_tokens", "10000"), null));
+      assertThat(rawSystemSettingValue("ai.session_max_tokens")).isEqualTo("10000");
+    } finally {
+      dsl.execute("delete from system_settings where key = ?", "ai.session_max_tokens");
+    }
+  }
+
+  /**
+   * 플랫폼 쓰기는 <b>서비스 레벨에서도</b> 평면을 확인한다.
+   *
+   * <p>이 메서드는 전 테넌트가 공유하는 {@code system_settings} 18행을 쓴다 — 이 밴드에서 가장
+   * 위험한 쓰기다. 그런데 보호가 컨트롤러 애노테이션과 {@code PlatformPlaneFilter} 에만 있었다:
+   * {@code /api/v1/**} 경로에 이 메서드를 부르는 호출자가 하나 생기면 필터는 그 경로를 보지 않고
+   * 메서드는 아무것도 묻지 않는다. {@code updateSmtpSettings} 는 이미 서비스에서 막고 있었으므로
+   * 원칙은 있었고 적용만 빠져 있었다.
+   *
+   * <p>판정은 인증 <b>타입</b>으로 한다 — 테넌트 인증이 놓여 있으면 거부. "인증 없음"은 거부하지
+   * 않는다(배경 잡·직접 호출이 그 상태이고, 테넌트 HTTP 요청은 반드시 인증이 채워진다).
+   */
+  @Test
+  void 플랫폼_쓰기는_테넌트_인증이_놓여_있으면_거부된다() {
+    var tenantAuth =
+        new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+            1L, null, java.util.List.of());
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(tenantAuth);
+    try {
+      assertThatThrownBy(
+              () -> settingsService.updatePlatformSettings(Map.of("ai.model", "hijacked"), null))
+          .isInstanceOf(AccessDeniedException.class);
+    } finally {
+      org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+  }
+
   private String rawSystemSettingValue(String key) {
     var row = dsl.fetchOne("select value from system_settings where key = ?", key);
     return row == null ? null : row.get(0, String.class);

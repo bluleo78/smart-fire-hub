@@ -273,6 +273,7 @@ public class SettingsService {
    */
   @Transactional
   public void updatePlatformSettings(Map<String, String> settings, Long userId) {
+    requirePlatformPlane();
     for (String key : settings.keySet()) {
       if (!ALLOWED_AI_KEYS.contains(key)
           && !ALLOWED_EMBEDDING_KEYS.contains(key)
@@ -332,6 +333,29 @@ public class SettingsService {
   @Transactional
   public void clearOverride(String key) {
     tenantSettingsRepository.delete(key);
+  }
+
+  /**
+   * 플랫폼 평면에서 호출됐는지 <b>서비스 레벨에서</b> 확인한다.
+   *
+   * <p>{@link #updateSmtpSettings} 의 javadoc 이 "컨트롤러가 아니라 서비스에서 막는다 — 애노테이션
+   * 하나만 지우면 뚫리는 방식보다 안전하다"고 선언해 놓고, 정작 <b>전 테넌트가 공유하는 18행을
+   * 쓰는 가장 위험한 메서드</b>는 컨트롤러 애노테이션과 {@code PlatformPlaneFilter} 에만 기대고
+   * 있었다. {@code /api/v1/**} 경로에 이 메서드를 부르는 호출자가 하나 생기면 필터는 그 경로를
+   * 보지 않고 메서드는 평면을 묻지 않는다.
+   *
+   * <p><b>평면은 인증 "타입"으로 판정한다</b>({@link PlatformAuthentication} 인가) — 표식의 부재로
+   * 판정하지 않는다(P7-a 의 양방향 함정). 인증이 <b>아예 없는</b> 경우는 통과시킨다: 테넌트 HTTP
+   * 요청은 {@code JwtAuthenticationFilter} 가 반드시 인증을 채우므로 "인증 없음"은 테넌트일 수
+   * 없고, 배경 잡·부트스트랩·서비스 직접 호출이 여기 해당한다. 없음을 거부로 바꾸면
+   * {@code TenantContext.get() != null} 로 평면을 판정하다 실패했던 것과 같은 종류의 오판이 된다.
+   */
+  private void requirePlatformPlane() {
+    var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && !(auth instanceof com.smartfirehub.global.security.PlatformAuthentication)) {
+      throw new org.springframework.security.access.AccessDeniedException(
+          "플랫폼 설정은 플랫폼 운영자만 변경할 수 있습니다");
+    }
   }
 
   private static boolean isMaskedApiKey(String value) {
@@ -506,8 +530,14 @@ public class SettingsService {
             }
             case "ai.session_max_tokens" -> {
               int v = Integer.parseInt(value);
-              if (v < 1000 || v > 200000)
-                throw new IllegalArgumentException("세션 최대 토큰 수는 1000에서 200000 사이여야 합니다");
+              // 하한은 web 의 검증(10,000~200,000)과 반드시 같아야 한다. 예전 값은 1000 이었고,
+              // 그 차이는 이 키를 아무도 저장할 수 없던 동안(시드 행 없음 + UPDATE-only) 도달
+              // 불가라 드러나지 않았다. 저장소를 upsert 로 고쳐 경로가 열리는 순간, 운영자가
+              // 5000 을 넣으면 테넌트 화면이 그 값으로 시드되고 web 하한 10000 에 걸려 —
+              // 사용자가 그 필드를 건드리지도 않았는데 다른 필드 저장까지 전부 막힌다.
+              // 하한을 올리는 방향이라 회귀 위험은 0 이다: 1000~9999 를 저장한 사람이 존재할 수 없다.
+              if (v < 10000 || v > 200000)
+                throw new IllegalArgumentException("세션 최대 토큰 수는 10000에서 200000 사이여야 합니다");
             }
             case "ai.system_prompt" -> {
               if (value == null || value.isBlank())
