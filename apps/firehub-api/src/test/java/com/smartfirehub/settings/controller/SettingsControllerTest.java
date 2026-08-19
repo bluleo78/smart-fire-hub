@@ -140,6 +140,26 @@ class SettingsControllerTest {
         .andExpect(status().isNoContent());
   }
 
+  /**
+   * {@code ai:settings} 가 <b>없으면</b> 재정의 해제는 403 이다.
+   *
+   * <p>이 파일의 다른 모든 테스트는 필요한 권한을 항상 부여하고 시작한다. 그래서 어느 테스트도
+   * "{@code @RequirePermission} 이 실제로 집행되는가"와 "애너테이션은 붙어 있지만 경로가
+   * {@code PermissionInterceptor} 에 등록되지 않아 그냥 통과하는가"를 <b>구별하지 못한다</b>. P7-a 가
+   * 정확히 그 함정(인터셉터 경로 등록 누락)을 한 번 겪었으므로, 이 밴드가 새로 추가한 유일한 쓰기
+   * 경로에는 거부 쪽 단언을 하나 둔다. 여기서 204 가 나오면 애너테이션은 장식일 뿐이고, 권한 없는
+   * 테넌트 관리자가 오버라이드를 조용히 지울 수 있다는 뜻이다 — 이 밴드가 세우려는 경계가 그대로
+   * 무너진다.
+   */
+  @Test
+  void clearOverride_withoutPermission_returnsForbidden() throws Exception {
+    mockAuth("dataset:read");
+
+    mockMvc
+        .perform(delete("/api/v1/settings/ai.model").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden());
+  }
+
   @Test
   void getSmtpSettings_returnsList() throws Exception {
     mockAuth("settings:write");
