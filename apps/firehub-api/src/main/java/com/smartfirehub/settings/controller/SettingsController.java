@@ -1,6 +1,7 @@
 package com.smartfirehub.settings.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
@@ -21,10 +22,23 @@ public class SettingsController {
 
   private final SettingsService settingsService;
 
+  /**
+   * 테넌트 화면용 설정 조회. <b>해석된</b> 값(오버라이드가 있으면 그 값)과 함께
+   * {@code overridden}/{@code tenantEditable} 플래그를 돌려준다.
+   *
+   * <p>P7-b 이전에는 {@code getByPrefix} 를 불러 <b>플랫폼 기본값만</b> 돌려줬다. 그대로 두면
+   * 테넌트가 오버라이드를 저장한 뒤 화면을 다시 불러도 예전 값이 그대로 보여서 <b>저장이 아무
+   * 일도 하지 않은 것처럼</b> 보인다 — 쓰기 경로만 고치고 읽기 경로를 잊으면 생기는 어긋남이다.
+   *
+   * <p>엔드포인트를 새로 만들지 않고 이 자리를 교체한 이유: 소비자가 web 설정 화면 하나뿐이고,
+   * 운영자 평면은 이미 {@code GET /api/platform/settings}({@code getAll}) 를 쓴다. 두 개를 두면
+   * "어느 쪽이 진짜 화면용인가"가 계속 갈린다. 대신 응답 형태가 바뀌므로 web 의 타입 정의와
+   * Playwright 스펙이 함께 바뀐다.
+   */
   @GetMapping
   @RequirePermission("ai:settings")
-  public ResponseEntity<List<SettingResponse>> getSettings(@RequestParam String prefix) {
-    return ResponseEntity.ok(settingsService.getByPrefix(prefix));
+  public ResponseEntity<List<ResolvedSettingResponse>> getSettings(@RequestParam String prefix) {
+    return ResponseEntity.ok(settingsService.getResolvedByPrefix(prefix));
   }
 
   // GET /ai-api-key 는 P7-b Task 7 에서 삭제했다. ai:settings 를 가진 테넌트 관리자에게

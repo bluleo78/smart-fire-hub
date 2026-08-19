@@ -153,10 +153,18 @@ public class SettingsService {
    * 나타나야 한다. 그런 키는 {@code description}/{@code updatedAt} 을 줄 시스템 설정 행이 없으므로
    * {@code null} 이다({@link TenantSettingsRepository#findByPrefix} 가 값만 주고 갱신 시각은 주지
    * 않아 오버라이드 쪽에서도 채울 수 없다).
+   *
+   * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 {@code prefix=ai} 조회가
+   * {@code ai.api_key} 의 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
+   * 기록하듯 이 프로젝트는 정확히 그 사고를 이미 한 번 냈다({@code getSmtpSettings} 만 마스킹하고
+   * {@code getAll} 은 빠뜨렸던 건). 오버라이드 값은 마스킹하지 않아도 된다 — 비밀 키 4개는 전부
+   * 플랫폼 잠금이라 오버라이드 행으로 존재할 수 없다. 그것이 이 누락이 어떤 테스트에도 걸리지
+   * 않았던 이유이기도 하다.
    */
   @Transactional(readOnly = true)
   public List<ResolvedSettingResponse> getResolvedByPrefix(String prefix) {
-    List<SettingResponse> platform = settingsRepository.findByPrefix(prefix);
+    List<SettingResponse> platform =
+        settingsRepository.findByPrefix(prefix).stream().map(this::maskSecret).toList();
     Map<String, SettingResponse> platformByKey =
         platform.stream().collect(Collectors.toMap(SettingResponse::key, s -> s));
     Map<String, String> overrides = resolveOverridesByPrefix(prefix);

@@ -19,6 +19,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
@@ -58,11 +59,20 @@ class SettingsControllerTest {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 
+  /**
+   * 테넌트 조회는 <b>해석된</b> 값과 플래그를 돌려준다(P7-b).
+   *
+   * <p>이전에는 {@code getByPrefix}(플랫폼 기본값만)를 스텁했다. 그대로 두면 오버라이드를 저장한
+   * 뒤에도 화면이 예전 값을 보여주는 어긋남을 이 테스트가 승인하게 된다 — 컨트롤러가 어느 서비스
+   * 메서드를 부르는지가 곧 계약이므로, 스텁 대상 자체가 단언의 일부다.
+   */
   @Test
-  void getSettings_withPrefix_returnsList() throws Exception {
+  void getSettings_withPrefix_returnsResolvedValuesWithFlags() throws Exception {
     mockAuth("ai:settings");
-    SettingResponse s = new SettingResponse("ai.model", "claude", "desc", LocalDateTime.now());
-    when(settingsService.getByPrefix("ai")).thenReturn(List.of(s));
+    ResolvedSettingResponse s =
+        new ResolvedSettingResponse(
+            "ai.model", "tenant-model", "desc", LocalDateTime.now(), true, true);
+    when(settingsService.getResolvedByPrefix("ai")).thenReturn(List.of(s));
 
     mockMvc
         .perform(
@@ -71,7 +81,9 @@ class SettingsControllerTest {
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].key").value("ai.model"))
-        .andExpect(jsonPath("$[0].value").value("claude"));
+        .andExpect(jsonPath("$[0].value").value("tenant-model"))
+        .andExpect(jsonPath("$[0].overridden").value(true))
+        .andExpect(jsonPath("$[0].tenantEditable").value(true));
   }
 
   /**

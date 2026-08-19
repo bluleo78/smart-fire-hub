@@ -200,6 +200,31 @@ class SettingsResolutionTest extends IntegrationTestBase {
   }
 
   /**
+   * {@code getResolvedByPrefix} 도 비밀 키를 마스킹한다.
+   *
+   * <p>이 경로는 web 설정 화면이 실제로 부르는 경로다({@code GET /api/v1/settings?prefix=ai}).
+   * 마스킹을 빠뜨리면 {@code ai.api_key} 의 <b>AES 암호문이 그대로</b> 응답에 실린다. 이 프로젝트는
+   * 정확히 그 사고를 이미 한 번 냈다 — {@code getSmtpSettings} 만 마스킹하고 {@code getAll} 은
+   * 빠뜨려서 암호문이 나갔다. 읽기 경로를 새로 만들 때마다 같은 실수가 가능하므로 경로별로 단언한다.
+   *
+   * <p>오버라이드 값 쪽은 검사하지 않는다 — 비밀 키 4개는 전부 플랫폼 잠금이라 오버라이드 행으로
+   * 존재할 수 없다. 이 사실이 곧 "이 누락이 어떤 기존 테스트에도 걸리지 않은" 이유였다.
+   */
+  @Test
+  void getResolvedByPrefix_는_비밀_키를_마스킹한다() {
+    assertThat(settingsService.getResolvedByPrefix("ai"))
+        .filteredOn(s -> "ai.api_key".equals(s.key()))
+        .allSatisfy(
+            s -> {
+              if (s.value() != null && !s.value().isEmpty()) {
+                assertThat(s.value()).startsWith("****");
+                // 암호문은 "iv:ciphertext" 형태이므로 콜론이 없다는 것이 곧 암호문이 아니라는 뜻이다.
+                assertThat(s.value()).doesNotContain(":");
+              }
+            });
+  }
+
+  /**
    * 프리픽스에 마침표를 붙이면 아무것도 매칭하지 않는다 — {@code ProactiveJobAsyncRunner} 가 빠졌던
    * 함정의 회귀 가드(Task 8).
    *
