@@ -11,7 +11,7 @@ export const settingsApi = {
 
   // 테넌트 오버라이드 삭제 = 플랫폼 기본값으로 복귀. 멱등(이미 상속 중이어도 204).
   clearOverride: (key: string) =>
-    client.delete(`/settings/${encodeURIComponent(key)}`),
+    client.delete(`/settings/overrides/${encodeURIComponent(key)}`),
 
   verifyAuthStatus: () =>
     client.get<{ valid: boolean; email?: string; subscriptionType?: string }>('/ai/auth-status'),

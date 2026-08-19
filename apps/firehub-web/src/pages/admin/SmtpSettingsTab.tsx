@@ -25,6 +25,12 @@ interface SmtpForm {
   'smtp.from_address': string;
 }
 
+// 탭 상단과 하단(원래 저장 버튼 자리) 두 곳에 같은 배너를 둔다 — 스크롤 위치와 무관하게
+// 편집 불가를 알리기 위해서다. 배치는 의도적이지만 문구까지 두 벌일 이유는 없다:
+// 카피 수정이 한쪽만 반영되면 스크롤 위치에 따라 탭이 다른 말을 하게 된다.
+const LOCKED_NOTICE =
+  '이메일(SMTP) 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만 있고, 테넌트에서 변경할 수 없습니다.';
+
 const EMPTY: SmtpForm = {
   'smtp.host': '',
   'smtp.port': '',
@@ -87,8 +93,7 @@ export default function SmtpSettingsTab() {
     <div className="space-y-6">
       {/* 탭 상단 배너 — 스크롤하지 않아도 편집 불가를 먼저 알린다 */}
       <PlatformLockedBanner>
-        이메일(SMTP) 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만
-        있고, 테넌트에서 변경할 수 없습니다.
+        {LOCKED_NOTICE}
       </PlatformLockedBanner>
 
       <Card className="card-hover">
@@ -216,8 +221,7 @@ export default function SmtpSettingsTab() {
 
       {/* 원래 저장/되돌리기 버튼 행이 있던 자리 — 배너로 대체하고 진단용 연결 테스트만 남긴다 */}
       <PlatformLockedBanner>
-        이메일(SMTP) 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만
-        있고, 테넌트에서 변경할 수 없습니다.
+        {LOCKED_NOTICE}
       </PlatformLockedBanner>
 
       <div className="flex items-center gap-3">

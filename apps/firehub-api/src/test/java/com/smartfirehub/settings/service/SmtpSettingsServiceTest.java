@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>기본 테넌트 컨텍스트를 지우는 것({@link #clearTenantContextForPlatformSmtpCalls})은 이제
  * <b>허용을 얻기 위한 조건이 아니다</b> — 운영자 요청이 테넌트 컨텍스트 없이 도착한다는 사실을
  * 재현하는 것뿐이고, 거부 판정이 컨텍스트에 다시 의존하기 시작하면 그 회귀는
- * {@link #updateSmtpSettings_tenantPlaneEntryPoint_alwaysRejects} 가 잡는다.
+ * 그 회귀는 이제 SettingsControllerTest 의 라우트 부재(405) 단언이 대신 잡는다.
  */
 @Transactional
 class SmtpSettingsServiceTest extends IntegrationTestBase {
@@ -109,18 +109,11 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
         .hasMessageContaining("허용되지 않는 설정 키");
   }
 
-  /**
-   * 테넌트 평면 SMTP 쓰기는 <b>컨텍스트가 없어도</b> 거부된다.
-   *
-   * <p>이 클래스는 {@code @BeforeEach} 로 테넌트 컨텍스트를 지우므로, 여기서 거부가 확인되면
-   * "컨텍스트 없음 = 플랫폼이므로 허용"이라는 판정이 되살아나는 회귀를 잡는다.
-   */
-  @Test
-  void updateSmtpSettings_tenantPlaneEntryPoint_alwaysRejects() {
-    assertThatThrownBy(
-            () -> settingsService.updateSmtpSettings(Map.of("smtp.host", "evil.example"), 1L))
-        .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
-  }
+  // 테넌트 평면 SMTP 쓰기 진입점 테스트는 삭제했다 — 그 진입점(서비스 메서드 + PUT /smtp 라우트)이
+  // 이제 존재하지 않는다. 거부가 런타임 예외에서 구조로 바뀌었으므로 "거부되는가"를 물을 대상 자체가
+  // 없다. 라우트 부재는 SettingsControllerTest 가 405 로 지킨다.
+
+
 
   @Test
   void updateSmtpSettings_password_encryptsBeforeStore() {

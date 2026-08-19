@@ -1,10 +1,8 @@
 package com.smartfirehub.settings.controller;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -87,32 +85,30 @@ class SettingsControllerTest {
   }
 
   /**
-   * {@code GET /api/v1/settings/ai-api-key} 는 <b>삭제됐다</b>(P7-b Task 7) — 404 여야 한다.
+   * {@code GET /api/v1/settings/ai-api-key} 는 <b>삭제됐다</b>(P7-b Task 7) — 404 다.
    *
    * <p>이 경로는 {@code ai:settings} 권한을 가진 <b>테넌트</b> 관리자에게 {@code ai.api_key} 의
    * <b>복호화 평문</b>을 그대로 돌려줬다. P7-b 가 {@code ai.api_key} 를 플랫폼 소유로 확정하는
    * 순간 그것은 "테넌트 관리자가 플랫폼 자격증명을 평문으로 읽는다"가 되어, 이 밴드가 세우는
    * 경계를 정면으로 무력화한다(다른 모든 읽기 경로는 {@code maskSecret} 을 지나 {@code ****} 만
-   * 내보낸다 — 이 엔드포인트만 예외였다).
+   * 내보낸다 — 이 엔드포인트만 예외였다). 소비자가 없다는 것을 확인하고 지웠다.
    *
-   * <p>소비자가 없다는 것을 확인하고 지웠다: web 의 {@code #ai-api-key} 는 입력 필드의 HTML id 일
-   * 뿐이고, ai-agent 는 이 경로를 역호출하던 구조를 이미 버렸다(호출부에 그 사실이 주석으로 남아
-   * 있다). 즉 기능 손실이 없다.
-   *
-   * <p><b>404 가 아니라 405 다.</b> Task 5 가 추가한 {@code DELETE /api/v1/settings/{key}} 매핑이
-   * 이 경로를 {@code key="ai-api-key"} 로 흡수하므로, GET 은 "매핑 없음"이 아니라 "메서드 불허"가
-   * 된다. 실측으로 확인한 값을 단언한다 — 삭제 후 상태를 연역으로 404 라고 적으면 테스트가 처음부터
-   * 실패한다(실제로 그렇게 적어 한 번 실패했다). 참고로 그 {@code DELETE} 로 이 경로를 부르면
-   * 존재하지 않는 오버라이드 키를 지우려는 멱등 호출이 되어 아무 일도 일어나지 않는다.
+   * <p><b>이 단언은 405 였다가 404 로 돌아왔고, 그 왕복 자체가 기록할 값어치가 있다.</b> Task 5 가
+   * {@code DELETE /{key}} 를 추가했을 때 그 매핑이 이 경로를 {@code key="ai-api-key"} 로 삼켜
+   * "매핑 없음"이 아니라 "메서드 불허"가 됐다(그때 405 를 실측으로 확인해 고쳤다). simplify 리뷰가
+   * 그 흡수를 구조적 위험으로 지적해 경로를 {@code /overrides/{key}} 로 옮기자, 흡수가 사라지고
+   * 삭제된 엔드포인트가 다시 정직하게 404 가 된다. 즉 <b>이 404 는 catch-all 이 없어졌다는
+   * 증거</b>이기도 하다.
    */
   @Test
-  void getDecryptedAiApiKey_endpointRemoved_returnsMethodNotAllowed() throws Exception {
+  void getDecryptedAiApiKey_endpointRemoved_returnsNotFound() throws Exception {
     mockAuth("ai:settings");
 
     mockMvc
         .perform(get("/api/v1/settings/ai-api-key").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isMethodNotAllowed());
+        .andExpect(status().isNotFound());
   }
+
 
   /**
    * 테넌트 쓰기는 <b>테넌트 평면 서비스 메서드</b>로 흘러야 한다.
@@ -148,7 +144,7 @@ class SettingsControllerTest {
     mockAuth("ai:settings");
 
     mockMvc
-        .perform(delete("/api/v1/settings/ai.model").header("Authorization", "Bearer valid-token"))
+        .perform(delete("/api/v1/settings/overrides/ai.model").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
 
     // verify 로 호출 자체와 키 인자를 고정한다. 204 만 단언하면 핸들러에서 clearOverride 호출을
@@ -172,7 +168,7 @@ class SettingsControllerTest {
     mockAuth("dataset:read");
 
     mockMvc
-        .perform(delete("/api/v1/settings/ai.model").header("Authorization", "Bearer valid-token"))
+        .perform(delete("/api/v1/settings/overrides/ai.model").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isForbidden());
   }
 
@@ -190,19 +186,20 @@ class SettingsControllerTest {
   }
 
   /**
-   * 테넌트 평면 SMTP 쓰기는 403 이다(P7-b Task 5).
+   * 테넌트 평면 SMTP 쓰기 <b>라우트 자체가 없다</b>(P7-b) — 405 다.
    *
-   * <p>이전 버전은 서비스를 {@code doNothing()} 으로 스텁하고 204 를 단언했다 — 서비스가 실제로는
-   * 항상 거부하게 된 뒤에도 <b>스텁 때문에 계속 통과하는</b> 테스트였다. 즉 "이 엔드포인트는
-   * 성공한다"는 거짓을 고정하고 있었다. 실제 서비스가 던지는 예외를 재현해, 그것이
-   * {@code GlobalExceptionHandler} 를 지나 500 이 아니라 <b>403</b> 으로 나가는지까지 확인한다.
+   * <p>이 테스트는 세 번 바뀌었고 그 궤적이 곧 교훈이다. 처음에는 {@code doNothing()} 스텁 + 204
+   * 단언이라 서비스가 <b>항상 거부</b>하게 된 뒤에도 계속 통과했다(거짓을 고정하는 테스트).
+   * 다음에는 실제 예외를 재현해 403 을 단언했다. 지금은 라우트와 서비스 메서드를 아예 지웠으므로
+   * 405 다 — 거부가 런타임 예외가 아니라 <b>구조</b>가 됐고, 다음 호출자는 403 이 아니라 컴파일
+   * 에러를 받는다. 이 밴드의 논지가 "런타임에서 조용한 경로가 문제"라는 것이므로 이 방향이 맞다.
+   *
+   * <p>{@code AccessDeniedException} → 403 매핑은 {@link #clearOverride_withoutPermission_returnsForbidden}
+   * 이 계속 지킨다 — 그 단언까지 함께 잃지 않도록 확인하고 지웠다.
    */
   @Test
-  void updateSmtpSettings_onTenantPlane_returnsForbidden() throws Exception {
+  void updateSmtpSettings_routeRemoved_returnsMethodNotAllowed() throws Exception {
     mockAuth("settings:write");
-    doThrow(new org.springframework.security.access.AccessDeniedException("SMTP 설정은 플랫폼 관리자만 변경할 수 있습니다"))
-        .when(settingsService)
-        .updateSmtpSettings(any(), eq(1L));
 
     mockMvc
         .perform(
@@ -210,8 +207,9 @@ class SettingsControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("smtp.host", "localhost"))))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isMethodNotAllowed());
   }
+
 
   @Test
   void testSmtpSettings_whenHostBlank_returnsFailureMessage() throws Exception {

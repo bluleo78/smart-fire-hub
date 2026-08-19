@@ -61,14 +61,16 @@ public class SettingsController {
    * 테넌트 오버라이드를 지워 플랫폼 값으로 되돌린다. <b>멱등</b> — 오버라이드가 이미 없어도(=이미
    * 상속 중) 204 다. "상속 중" 은 오류 상태가 아니므로 404 로 만들지 않는다.
    *
-   * <p><b>이 매핑은 이 컨트롤러의 미매핑 하위 경로를 전부 삼키는 catch-all 이다.</b> 예컨대
-   * {@code DELETE /api/v1/settings/smtp} 는 {@code /smtp} 에 DELETE 매핑이 없으므로 여기로 들어와
-   * {@code key="smtp"} 가 된다(동작상 무해하다 — {@code tenant_settings} 에 그런 키가 없어 0행 삭제
-   * 후 204). Task 7 도 같은 흡수를 밟았다: 삭제한 {@code GET /ai-api-key} 가 404 가 아니라 405 가
-   * 된 이유가 이것이다. <b>이 컨트롤러에 하위 경로를 추가하는 사람은 매번 이 흡수를 고려해야
-   * 한다</b> — 권한 게이트가 {@code ai:settings} 로 바뀌어 버리는 경로가 생길 수 있다.
+   * <p><b>경로가 {@code /overrides/{key}} 인 이유.</b> 처음에는 {@code /{key}} 였는데, 그러면 이
+   * 컨트롤러의 <b>미매핑 하위 경로를 전부 삼키는 catch-all</b> 이 된다. 실제로 {@code DELETE
+   * /settings/smtp} 가 {@code key="smtp"} 로 흡수됐고, Task 7 에서 삭제한 {@code GET /ai-api-key} 가
+   * 404 가 아니라 405 가 된 것도 같은 흡수였다. 무해한 사례만 있었지만 위험은 구조적이다 —
+   * 이 컨트롤러에 하위 경로를 추가하는 사람이 <b>매번</b> 그 흡수를 기억해야 하고, 잊으면 새 경로가
+   * 조용히 {@code ai:settings} 권한 게이트를 물려받는다(P7-a 의 "인터셉터 경로 등록 누락"과 같은
+   * 계열). 세그먼트를 하나 두면 흡수가 <b>불가능</b>해지므로, 사람의 주의력에 맡기던 것을 라우팅으로
+   * 옮긴다.
    */
-  @DeleteMapping("/{key}")
+  @DeleteMapping("/overrides/{key}")
   @RequirePermission("ai:settings")
   public ResponseEntity<Void> clearOverride(@PathVariable String key) {
     settingsService.clearOverride(key);
@@ -81,14 +83,11 @@ public class SettingsController {
     return ResponseEntity.ok(settingsService.getSmtpSettings());
   }
 
-  @PutMapping("/smtp")
-  @RequirePermission("settings:write")
-  public ResponseEntity<Void> updateSmtpSettings(
-      Authentication authentication, @RequestBody Map<String, String> settings) {
-    Long userId = (Long) authentication.getPrincipal();
-    settingsService.updateSmtpSettings(settings, userId);
-    return ResponseEntity.noContent().build();
-  }
+  // PUT /smtp 는 삭제했다(P7-b). SMTP 6키는 전부 플랫폼 소유이므로 테넌트 평면에서 이 경로는
+  // 항상 거부였는데, "항상 던지는 서비스 메서드 + 그것을 부르는 라우트"로 두면 거부가 런타임
+  // 예외로만 존재한다. 라우트와 메서드를 지우면 거부가 구조가 된다 — 다음 호출자는 403 이 아니라
+  // 컴파일 에러를 받는다. 이 밴드의 논지 자체가 "런타임에서 조용한 경로가 문제"라는 것이다.
+  // 플랫폼 운영자 경로는 PUT /api/platform/settings 다.
 
   @PostMapping("/smtp/test")
   @RequirePermission("settings:write")

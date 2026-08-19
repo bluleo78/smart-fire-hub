@@ -91,6 +91,28 @@ const EMPTY_VALUES: AISettingsForm = {
 // 편집 허용 6키뿐 아니라 폼의 9키 전부를 담는다. 저장 대상 판정이 web 상수가 아니라 서버
 // 플래그(fieldState)로 바뀌었으므로, 서버가 지금 잠겨 있는 키를 열어 주면 그 키도 이 목록에
 // 나타날 수 있다 — 6키만 담아 두면 그때 이름 대신 undefined 가 사용자에게 보인다.
+// 숫자 필드 검증 규칙. 하한·상한은 백엔드 SettingsService.validateValues 와 반드시 같아야 한다 —
+// 어긋나면 "운영자가 저장한 값 때문에 테넌트가 아무 필드도 저장 못 하는" 상태가 만들어진다
+// (session_max_tokens 가 실제로 그랬다: backend 1000 vs web 10000).
+const NUMBER_RULES: {
+  key: keyof AISettingsForm;
+  min: number;
+  max: number;
+  integer: boolean;
+  message: string;
+}[] = [
+  { key: 'ai.max_turns', min: 1, max: 50, integer: true, message: '1~50 사이의 정수를 입력하세요' },
+  { key: 'ai.temperature', min: 0, max: 1, integer: false, message: '0.0~1.0 사이의 값을 입력하세요' },
+  { key: 'ai.max_tokens', min: 1, max: 65536, integer: true, message: '1~65536 사이의 정수를 입력하세요' },
+  {
+    key: 'ai.session_max_tokens',
+    min: 10000,
+    max: 200000,
+    integer: true,
+    message: '10,000~200,000 사이의 정수를 입력하세요',
+  },
+];
+
 const FIELD_LABELS: Record<keyof AISettingsForm, string> = {
   'ai.system_prompt': '시스템 프롬프트',
   'ai.model': '모델',
@@ -196,13 +218,18 @@ export default function SettingsPage() {
     fetchSettings();
   }, [fetchSettings]);
 
-  // 배지 상태(overridden)만 다시 읽는다 — 폼 값은 건드리지 않으므로 입력 중인 내용이 사라지지 않는다.
-  const refreshMeta = useCallback(() => {
-    settingsApi
-      .getByPrefix('ai')
-      .then(({ data }) => setSettings(indexSettingsByKey(data)))
-      // 배지 갱신 실패는 저장 결과를 뒤집지 않는다 — 다음 진입 때 다시 읽힌다.
-      .catch(() => undefined);
+  // 배지 상태(overridden)만 다시 읽고 인덱싱된 맵을 돌려준다 — 폼 값은 건드리지 않으므로
+  // 입력 중인 내용이 사라지지 않는다. 반환값이 있는 이유: handleClearOverride 가 삭제 직후
+  // 플랫폼 값을 알아야 하는데, 그 조회를 여기서 또 손으로 재구현하면 세 번째 사본이 된다.
+  //
+  // 실패를 여기서 삼키지 않는다. handleSave 는 배지 갱신 실패를 무시해도 되지만(다음 진입 때
+  // 다시 읽힌다) handleClearOverride 는 그렇지 않다 — 삼키면 해제가 조용한 무동작이 되어
+  // 이 밴드가 두 번 고친 "성공처럼 보이는 무동작"이 되살아난다. 그래서 삼킴은 호출부에 둔다.
+  const refreshMeta = useCallback(async () => {
+    const { data } = await settingsApi.getByPrefix('ai');
+    const byKey = indexSettingsByKey(data);
+    setSettings(byKey);
+    return byKey;
   }, []);
 
   // 필드 상태 판정 — 배지·disabled·검증·저장 대상이 모두 이 한 곳을 거쳐 서로 어긋나지 않게 한다.
@@ -222,11 +249,12 @@ export default function SettingsPage() {
   // 쓰기 규칙보다 앞서 갈 수 없는 구조라, 서버를 믿는 것이 곧 fail-closed 다.
   const isEditable = (key: keyof AISettingsForm) => fieldState(key) !== 'locked';
 
-  // 값이 비어 있어도 오류로 보지 않는 필드: DB 행도 코드 기본값도 없어 적용되는 값이 정말 없는 키.
-  // 비어 있는 상태가 곧 "재정의 없음"이라 정상이고, 저장 페이로드에서도 제외된다.
-  // (코드 기본값이 있는 키는 조회 시 그 값으로 채워지므로 애초에 비어 있지 않다.)
-  const isBlankAllowed = (key: keyof AISettingsForm) =>
-    form[key].trim() === '' && fieldState(key) === 'no-default';
+  // isBlankAllowed 는 제거했다. DB 행도 코드 기본값도 없는 'no-default' 상태에서만 참이 되는데,
+  // AI 8키는 V15/V69 에서 전부 non-null 로 시드돼 있고 유일하게 시드가 없는
+  // ai.session_max_tokens 는 BUILTIN_AI_DEFAULTS 가 덮어 'builtin-default' 가 된다.
+  // 즉 편집 가능 키 중 어느 것도 그 상태에 도달하지 못해, 다섯 개의 검증 분기가 전부
+  // "항상 참인 가드" 안에 들어 있었다 — 읽는 사람이 그 가드가 살아 있는 경우를 지키는지
+  // 판단할 수 없다. (순수 함수 쪽 5상태는 단위 테스트가 지키므로 그대로 둔다.)
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
@@ -235,35 +263,24 @@ export default function SettingsPage() {
     // 저장 대상이 아니고 테넌트가 고칠 수도 없으므로, 여기서 검증하면 "고칠 수 없는 오류" 때문에
     // temperature 같은 편집 가능 필드의 저장까지 영구히 막힌다(플랫폼이 sdk + api_key 미설정인
     // 상태가 실제로 존재한다).
-    if (!isBlankAllowed('ai.max_turns')) {
-      const maxTurns = Number(form['ai.max_turns']);
-      if (form['ai.max_turns'].trim() === '' || isNaN(maxTurns) || maxTurns < 1 || maxTurns > 50 || !Number.isInteger(maxTurns)) {
-        newErrors['ai.max_turns'] = '1~50 사이의 정수를 입력하세요';
+    // 숫자 4필드는 검증 모양이 같아 표로 한 번만 돈다. 네 벌로 복사돼 있던 시절에는 하한 하나가
+    // 백엔드와 어긋난 것(session_max_tokens 1000 vs 10000)을 아무도 못 봤다 — 같은 규칙이 네 곳에
+    // 흩어져 있으면 한 곳만 틀려도 눈에 띄지 않는다.
+    NUMBER_RULES.forEach(({ key, min, max, integer, message }) => {
+      const raw = form[key];
+      const n = Number(raw);
+      if (
+        raw.trim() === '' ||
+        isNaN(n) ||
+        n < min ||
+        n > max ||
+        (integer && !Number.isInteger(n))
+      ) {
+        newErrors[key] = message;
       }
-    }
+    });
 
-    if (!isBlankAllowed('ai.temperature')) {
-      const temperature = Number(form['ai.temperature']);
-      if (form['ai.temperature'].trim() === '' || isNaN(temperature) || temperature < 0 || temperature > 1) {
-        newErrors['ai.temperature'] = '0.0~1.0 사이의 값을 입력하세요';
-      }
-    }
-
-    if (!isBlankAllowed('ai.max_tokens')) {
-      const maxTokens = Number(form['ai.max_tokens']);
-      if (form['ai.max_tokens'].trim() === '' || isNaN(maxTokens) || maxTokens < 1 || maxTokens > 65536 || !Number.isInteger(maxTokens)) {
-        newErrors['ai.max_tokens'] = '1~65536 사이의 정수를 입력하세요';
-      }
-    }
-
-    if (!isBlankAllowed('ai.session_max_tokens')) {
-      const sessionMaxTokens = Number(form['ai.session_max_tokens']);
-      if (form['ai.session_max_tokens'].trim() === '' || isNaN(sessionMaxTokens) || sessionMaxTokens < 10000 || sessionMaxTokens > 200000 || !Number.isInteger(sessionMaxTokens)) {
-        newErrors['ai.session_max_tokens'] = '10,000~200,000 사이의 정수를 입력하세요';
-      }
-    }
-
-    if (!isBlankAllowed('ai.system_prompt') && !form['ai.system_prompt'].trim()) {
+    if (!form['ai.system_prompt'].trim()) {
       newErrors['ai.system_prompt'] = '시스템 프롬프트를 입력하세요';
     }
 
@@ -317,9 +334,8 @@ export default function SettingsPage() {
       }
     });
     // 왜 validate() 와 별도인가: validate() 는 "입력값이 규칙에 맞는가"를 보고, 이 검사는
-    // "만든 페이로드가 사용자가 방금 한 편집을 실제로 담고 있는가"를 본다. validate() 는 상태에
-    // 따라(isBlankAllowed) 빈 값을 의도적으로 허용하므로 그 구멍이 조용한 무저장이 되지 않도록
-    // 페이로드를 만든 뒤 한 번 더 대조한다. 앞의 규칙이 바뀌어도 이 대조는 계속 성립한다.
+    // "만든 페이로드가 사용자가 방금 한 편집을 실제로 담고 있는가"를 본다. 검증 규칙이 나중에 완화되어도
+    // 이 대조는 계속 성립해야 하므로 페이로드를 만든 뒤 한 번 더 확인한다. 앞의 규칙이 바뀌어도 이 대조는 계속 성립한다.
     if (droppedChangedKeys.length > 0) {
       const names = droppedChangedKeys.map((key) => FIELD_LABELS[key]).join(', ');
       toast.error(
@@ -334,7 +350,7 @@ export default function SettingsPage() {
       setOriginal({ ...form });
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
-      refreshMeta();
+      refreshMeta().catch(() => undefined);
       verifyAuth();
     } catch {
       toast.error('설정 저장에 실패했습니다.');
@@ -352,9 +368,7 @@ export default function SettingsPage() {
     setIsClearing(true);
     try {
       await settingsApi.clearOverride(key);
-      const { data } = await settingsApi.getByPrefix('ai');
-      const byKey = indexSettingsByKey(data);
-      setSettings(byKey);
+      const byKey = await refreshMeta();
       // 해제 후 값도 조회와 같은 폴백을 거친다 — 코드 기본값이 있는 키를 빈칸으로 만들면
       // 실제 적용값(예: 50000)과 화면이 어긋난다.
       const restored = byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? '';
@@ -384,7 +398,6 @@ export default function SettingsPage() {
     setErrors({});
   };
 
-  // dirty 판정도 편집 가능 6키만 본다 — 잠긴 필드는 바뀔 수 없지만, 판정 근거를 한 집합으로 통일한다.
   // dirty 판정도 저장 대상과 같은 기준을 쓴다 — 서버가 잠갔다고 한 키는 세지 않는다.
   // 두 기준이 갈리면 "저장 버튼은 활성인데 보낼 것이 없다"(또는 그 반대)가 생긴다.
   const hasChanges = (Object.keys(form) as (keyof AISettingsForm)[]).some(

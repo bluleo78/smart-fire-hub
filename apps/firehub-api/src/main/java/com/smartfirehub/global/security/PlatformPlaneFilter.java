@@ -80,7 +80,7 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
     Authentication auth = SecurityContextHolder.getContext().getAuthentication();
     if (auth != null && !isExempt(request)) {
       boolean platformRequest = PLATFORM_PLANE.matches(request);
-      boolean platformToken = auth instanceof PlatformAuthentication;
+      boolean platformToken = PlatformAuthentication.isCurrent();
       if (platformRequest != platformToken) {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         // charset 을 명시해야 한다. 다른 에러 본문은 Jackson 컨버터를 지나며 UTF-8 이 붙지만

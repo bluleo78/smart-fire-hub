@@ -391,7 +391,7 @@ test.describe('설정 페이지', () => {
       // DELETE 는 204 no-content 라 본문이 없다 — mockApi 는 항상 JSON 본문을 붙이므로 직접 라우팅한다.
       const deletedPaths: string[] = [];
       await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/ai.'),
+        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
         (route) => {
           if (route.request().method() !== 'DELETE') return route.fallback();
           deletedPaths.push(new URL(route.request().url()).pathname);
@@ -413,7 +413,7 @@ test.describe('설정 페이지', () => {
       await dialog.getByRole('button', { name: '되돌리기' }).click();
 
       // 요청 경로 검증 — 키가 URL 세그먼트로 인코딩되어 나간다
-      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/ai.max_turns']);
+      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/overrides/ai.max_turns']);
 
       // 해당 필드만 플랫폼 값(10) + 상속 배지로 전환
       await expect(page.locator('#ai-max-turns')).toHaveValue('10');
@@ -436,7 +436,7 @@ test.describe('설정 페이지', () => {
       });
       const deletedPaths: string[] = [];
       await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/ai.'),
+        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
         (route) => {
           if (route.request().method() !== 'DELETE') return route.fallback();
           deletedPaths.push(new URL(route.request().url()).pathname);

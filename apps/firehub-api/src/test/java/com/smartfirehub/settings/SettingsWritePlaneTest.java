@@ -82,23 +82,11 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         .hasMessageContaining("플랫폼 관리자만 변경할 수 있는 설정입니다: embedding.model");
   }
 
-  @Test
-  void SMTP_쓰기는_테넌트_평면에서_거부된다() {
-    testTenant = createActiveTenant(dsl, "swp-smtp");
-    TenantContext.set(testTenant);
+  // SMTP 쓰기 거부 테스트는 삭제했다 — 테넌트 평면 SMTP 쓰기 메서드 자체가 사라졌다.
+  // 이 테스트의 핵심 단언("컨텍스트 없음을 플랫폼으로 오인하지 않는다")은
+  // 플랫폼_쓰기는_테넌트_인증이_놓여_있으면_거부된다 가 인증 타입 기준으로 이어받는다.
 
-    // 컨트롤러가 아니라 서비스에서 막는다 — 호출 경로가 하나 더 생겨도 함께 막힌다.
-    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.host", "evil.example"), null))
-        .isInstanceOf(AccessDeniedException.class);
 
-    // 컨텍스트가 없어도 거부한다 — 이것이 핵심 단언이다.
-    // "컨텍스트 없음 = 플랫폼이므로 허용"으로 판정하면 배경 경로(JobRunr·@Async·@Scheduled·스레드
-    // 홉 이후)가 전부 플랫폼으로 오인되어 공유 SMTP 자격증명 쓰기가 열린다. 플랫폼 관리자는
-    // updatePlatformSettings 를 쓰므로 이 경로는 무조건 닫혀 있어야 한다.
-    TenantContext.clear();
-    assertThatThrownBy(() -> settingsService.updateSmtpSettings(Map.of("smtp.host", "evil.example"), null))
-        .isInstanceOf(AccessDeniedException.class);
-  }
 
   @Test
   void 오버라이드_삭제는_상속으로_되돌린다() {

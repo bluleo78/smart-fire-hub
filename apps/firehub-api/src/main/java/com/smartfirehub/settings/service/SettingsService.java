@@ -3,6 +3,7 @@ package com.smartfirehub.settings.service;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
+import com.smartfirehub.global.security.PlatformAuthentication;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
@@ -13,6 +14,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -59,7 +62,7 @@ public class SettingsService {
   /**
    * 암호화 저장되는 비밀 키의 집합. 마스킹 판정의 <b>단일 출처</b>다.
    *
-   * <p>{@code smtp.password} 가 빠져 있었다. {@code updateSmtpSettings} 는 이 키를 암호화해
+   * <p>{@code smtp.password} 가 빠져 있었다. 플랫폼 SMTP 쓰기는 이 키를 암호화해
    * 저장하는데 {@link #maskSecret} 이 그것을 모르면 {@code getAll}/{@code getByPrefix("smtp")} 가
    * <b>암호문을 그대로</b> 내보낸다({@link #getSmtpSettings} 만 별도로 마스킹하고 있었다 — 즉 이
    * 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
@@ -111,14 +114,19 @@ public class SettingsService {
    * <p><b>화이트리스트를 읽기 쪽에서도 확인한다.</b> 쓰기에서 막았으니 읽기는 안 봐도 된다는
    * 것은 "지금 DB 에 잠긴 키의 오버라이드 행이 없다"는 가정에 기대는 것인데, 화이트리스트가
    * 좁아지면(키를 플랫폼으로 회수하면) 그 가정이 깨진다. 읽기에서 다시 보면 회수가 즉시
-   * 효력을 갖는다. 이 판정은 {@link #resolveOverride} 하나에 있고 {@link #getAsMap}·
+   * 효력을 갖는다. 이 판정은 {@link #getValue} 와 {@link #resolveOverridesByPrefix} 각각에 있고 {@link #getAsMap}·
    * {@link #getResolvedByPrefix} 가 같은 헬퍼를 공유한다 — 세 곳에 복사하면 화이트리스트가
    * 좁아질 때 일부만 반영되는 드리프트가 생긴다.
    */
   @Transactional(readOnly = true)
   public Optional<String> getValue(String key) {
-    Optional<String> override = resolveOverride(key);
-    if (override.isPresent()) return override;
+    // 컨텍스트가 없으면(배경 잡 경로) DB 조회조차 하지 않고 플랫폼 값으로 간다 —
+    // "컨텍스트 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약이다. 화이트리스트를 읽기에서 다시
+    // 보는 이유는 위 javadoc 참고(키를 플랫폼으로 회수하면 즉시 효력을 갖는다).
+    if (TenantContext.get() != null && SettingsOverridePolicy.isTenantOverridable(key)) {
+      Optional<String> override = tenantSettingsRepository.findValue(key);
+      if (override.isPresent()) return override;
+    }
     return settingsRepository.getValue(key);
   }
 
@@ -192,27 +200,7 @@ public class SettingsService {
         .collect(Collectors.toList());
   }
 
-  /**
-   * 오버라이드 판정의 <b>단일 출처(단일 키 형태)</b>. {@link #getValue} 전용 — 화이트리스트+컨텍스트
-   * 판정 자체는 {@link SettingsOverridePolicy#isTenantOverridable} 와 이 메서드의 {@code
-   * TenantContext.get() == null} 가드 두 줄이 전부이고, {@link #resolveOverridesByPrefix} 도 정확히
-   * 같은 두 조건을 검사한다 — 판정 기준이 두 곳에 있는 것처럼 보이지만 실제 규칙("화이트리스트가
-   * 허용하는가")은 {@link SettingsOverridePolicy} 하나에만 있고, 여기 있는 것은 "그 결과를 어떤
-   * 모양(단일 키 vs 프리픽스)으로 조회하느냐"라는 조회 전략 차이일 뿐이다.
-   *
-   * <p>인자가 <b>키 하나</b>인 것은 의도적이다. 예전에는 {@code Set<String>} 을 받아 루프를 돌았는데,
-   * 호출부가 늘 1개짜리 집합을 넘기면서도 시그니처만은 "여러 키를 줘도 된다"고 말해 프리픽스당
-   * N+1 을 다시 부르는 초대장이었다(실제로 한 번 그렇게 되어 collapse 해야 했다). 여러 키가
-   * 필요하면 {@link #resolveOverridesByPrefix} 를 쓴다.
-   *
-   * <p>컨텍스트가 없으면(배경 잡 경로) 즉시 빈 맵을 돌려준다 — DB 조회조차 하지 않는다. "컨텍스트
-   * 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약을 이 한 곳에서만 표현한다.
-   */
-  private Optional<String> resolveOverride(String key) {
-    if (TenantContext.get() == null) return Optional.empty();
-    if (!SettingsOverridePolicy.isTenantOverridable(key)) return Optional.empty();
-    return tenantSettingsRepository.findValue(key);
-  }
+
 
   /**
    * 오버라이드 판정의 <b>프리픽스 형태</b>. {@link #getAsMap}·{@link #getResolvedByPrefix} 가
@@ -269,7 +257,7 @@ public class SettingsService {
    * 거부한다.
    *
    * <p>키를 두 그룹(AI+임베딩 / SMTP)으로 나눠 각자의 검증·마스킹·암호화 로직에 위임한다 — 그
-   * 로직은 Task 5 이전에 {@link #updateSettings}/{@code updateSmtpSettings} 가 쓰던 것과
+   * 로직은 Task 5 이전에 {@link #updateSettings} 와 옛 테넌트 평면 SMTP 쓰기가 쓰던 것과
    * <b>동일한 코드</b>다({@link #applyPlatformAiEmbeddingSettings}, {@link #applyPlatformSmtpSettings}
    * 로 이름만 옮겼다). 플랫폼 경로가 검증을 다시 구현하면 두 평면(테넌트/플랫폼)의 "유효한 값"
    * 판정이 갈라진다.
@@ -363,7 +351,7 @@ public class SettingsService {
   /**
    * 플랫폼 평면에서 호출됐는지 <b>서비스 레벨에서</b> 확인한다.
    *
-   * <p>{@link #updateSmtpSettings} 의 javadoc 이 "컨트롤러가 아니라 서비스에서 막는다 — 애노테이션
+   * <p>이 밴드는 "컨트롤러가 아니라 서비스에서 막는다 — 애노테이션
    * 하나만 지우면 뚫리는 방식보다 안전하다"고 선언해 놓고, 정작 <b>전 테넌트가 공유하는 18행을
    * 쓰는 가장 위험한 메서드</b>는 컨트롤러 애노테이션과 {@code PlatformPlaneFilter} 에만 기대고
    * 있었다. {@code /api/v1/**} 경로에 이 메서드를 부르는 호출자가 하나 생기면 필터는 그 경로를
@@ -376,10 +364,9 @@ public class SettingsService {
    * {@code TenantContext.get() != null} 로 평면을 판정하다 실패했던 것과 같은 종류의 오판이 된다.
    */
   private void requirePlatformPlane() {
-    var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-    if (auth != null && !(auth instanceof com.smartfirehub.global.security.PlatformAuthentication)) {
-      throw new org.springframework.security.access.AccessDeniedException(
-          "플랫폼 설정은 플랫폼 운영자만 변경할 수 있습니다");
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && !PlatformAuthentication.isCurrent()) {
+      throw new AccessDeniedException("플랫폼 설정은 플랫폼 운영자만 변경할 수 있습니다");
     }
   }
 
@@ -431,43 +418,21 @@ public class SettingsService {
     return getValue("embedding.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
-  /** SMTP 설정. 마스킹은 {@link #maskSecret} 을 지난다 — 여기서 따로 판정하면 목록이 또 어긋난다. */
+  /**
+   * SMTP 설정. 본문이 {@link #getByPrefix} 와 바이트 단위로 같아서 <b>위임</b>한다 — 마스킹 경로를
+   * 두 벌 두면 한쪽만 고치는 사고가 난다. 이 프로젝트는 정확히 그 사고를 이미 냈다({@code
+   * getSmtpSettings} 만 마스킹하고 {@code getAll} 은 빠뜨려 암호문이 나갔다). 덤으로 프로덕션
+   * 호출자가 0이던 {@link #getByPrefix} 가 다시 실사용 경로가 된다.
+   */
   @Transactional(readOnly = true)
   public List<SettingResponse> getSmtpSettings() {
-    return settingsRepository.findByPrefix("smtp").stream()
-        .map(this::maskSecret)
-        .collect(Collectors.toList());
+    return getByPrefix("smtp");
   }
 
-  /**
-   * SMTP 는 발신 도메인 신뢰도를 전 테넌트가 공유하므로 완전한 플랫폼 잠금이다 — 테넌트 평면에서는
-   * 호출 자체를 거부한다.
-   *
-   * <p><b>컨트롤러가 아니라 서비스에서 막는다.</b> {@code SettingsController}(테넌트 평면)와
-   * {@code PlatformSettingsController}(플랫폼 평면) 양쪽 모두 결국 이 메서드로 수렴하므로, 여기서
-   * 막으면 나중에 또 다른 호출 경로가 추가돼도 함께 막힌다 — 컨트롤러 애노테이션 하나만 지우면
-   * 뚫리는 방식보다 안전하다.
-   *
-   * <p><b>거부는 무조건이다 — 조건을 두지 않는다.</b> 이 메서드는 테넌트 평면 엔드포인트
-   * ({@code PUT /api/v1/settings/smtp})의 진입점이고, 플랫폼 경로는 {@link #updatePlatformSettings}
-   * → {@link #applyPlatformSmtpSettings} 로 흐르며 여기를 <b>지나지 않는다</b>. 따라서 "언제
-   * 허용하는가"를 판정할 필요 자체가 없다.
-   *
-   * <p>처음 구현은 {@code TenantContext.get() != null} 일 때만 거부했다. 그것은 "테넌트 컨텍스트가
-   * 없으면 플랫폼이다"라는 추론인데 <b>성립하지 않는다</b> — 컨텍스트 부재는 배경 경로(JobRunr
-   * {@code @Job}·{@code @Async}·{@code @Scheduled}·스레드 홉 이후)의 모습과 구별되지 않는다. P7-a 가
-   * 평면을 인증 <b>타입</b>({@code PlatformAuthentication})으로 판정하기로 정한 이유가 정확히 이것이고
-   * ("평면 표식 양방향 함정"), 같은 신호를 {@link #resolveOverrides} 는 <b>읽기</b>의 안전한 폴백으로
-   * 쓰는데 여기서는 공유 자격증명 <b>쓰기</b> 허용으로 쓰게 되어 위험 방향이 반대였다.
-   */
-  @Transactional
-  public void updateSmtpSettings(Map<String, String> settings, Long userId) {
-    throw new org.springframework.security.access.AccessDeniedException(
-        "SMTP 설정은 플랫폼 관리자만 변경할 수 있습니다");
-  }
+
 
   /**
-   * {@link #updateSmtpSettings} 가 P7-b 이전까지 하던 검증·마스킹·암호화 로직 그대로다. 이름만
+   * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 검증·마스킹·암호화 로직 그대로다. 이름만
    * "플랫폼 쓰기 본체"로 옮겼고, {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이
    * 바로 이 메서드를 부른다.
    */

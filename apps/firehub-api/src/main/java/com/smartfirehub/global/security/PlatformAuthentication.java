@@ -17,6 +17,24 @@ import org.springframework.security.core.GrantedAuthority;
  */
 public class PlatformAuthentication extends UsernamePasswordAuthenticationToken {
 
+  /**
+   * 지금 요청이 <b>플랫폼 평면</b>인가. 판정 기준은 인증 <b>타입</b>이다 — 표식의 부재로 판정하지
+   * 않는다(P7-a 의 양방향 함정, 그리고 {@code TenantContext} 부재로 평면을 판정하다 실패한 전례).
+   *
+   * <p>인증이 <b>없는</b> 경우는 {@code false} 다. 호출부가 그것을 거부로 볼지 통과로 볼지는 각자
+   * 정한다 — 테넌트 HTTP 요청은 {@code JwtAuthenticationFilter} 가 반드시 인증을 채우므로 "없음"은
+   * 배경 잡·부트스트랩이고, 그것을 거부로 바꾸면 배경 경로가 통째로 막힌다.
+   *
+   * <p>이 술어가 여기 있는 이유: 같은 {@code instanceof} 검사가 {@code PlatformPlaneFilter} 와
+   * {@code SettingsService} 두 곳에 생겼다. 이 프로젝트가 반복해서 다시 배우는 규칙("평면은 인증
+   * 타입으로 판정한다")이 집을 두 개 가지면, 한쪽만 고치는 순간 규칙이 갈린다.
+   */
+  public static boolean isCurrent() {
+    return org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication()
+        instanceof PlatformAuthentication;
+  }
+
   public PlatformAuthentication(Long userId, Collection<? extends GrantedAuthority> authorities) {
     super(userId, null, authorities);
   }
