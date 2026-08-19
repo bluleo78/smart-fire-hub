@@ -8,8 +8,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.smartfirehub.auth.repository.RefreshTokenRepository;
+import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
+import jakarta.servlet.http.Cookie;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +35,7 @@ class PlatformPlaneIsolationTest extends IntegrationTestBase {
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private DSLContext dsl;
+  @Autowired private RefreshTokenRepository refreshTokenRepository;
 
   /**
    * 테넌트 토큰으로는 운영자 평면에 도달할 수 없다.
@@ -116,6 +122,36 @@ class PlatformPlaneIsolationTest extends IntegrationTestBase {
         .perform(
             get("/api/platform/does-not-exist").header("Authorization", "Bearer " + platformToken))
         .andExpect(status().isNotFound());
+  }
+
+  /**
+   * <b>유효하게 저장된</b> 플랫폼 리프레시 토큰으로 테넌트 갱신 경로를 탈 수 없다.
+   *
+   * <p>{@code refresh_token} 은 전역 테이블이라 두 평면이 같은 회전·재사용 탐지 기계를 공유한다.
+   * 그래서 저장·서명 모두 유효한 운영자 리프레시 토큰을 {@code /api/v1/auth/refresh} 에 넣으면,
+   * 평면 검사가 없는 한 <b>200 과 함께 테넌트 액세스 토큰이 나온다</b> — 평면 표식이 조용히 사라진다.
+   * 토큰을 실제로 저장해 두는 이유가 이것이다. 저장하지 않으면 가드를 지워도 "없는 토큰" 으로 같은
+   * 401 이 나와 단언이 공허해진다.
+   */
+  @Test
+  void platformRefreshTokenCannotRefreshOnTenantPlane() throws Exception {
+    long userId = platformUser();
+    String platformRefresh = jwtTokenProvider.generatePlatformRefreshToken(userId);
+    refreshTokenRepository.save(
+        userId,
+        RefreshTokenHasher.hash(platformRefresh),
+        LocalDateTime.now().plusDays(1),
+        UUID.randomUUID());
+
+    String body =
+        mockMvc
+            .perform(post("/api/v1/auth/refresh").cookie(new Cookie("refreshToken", platformRefresh)))
+            .andExpect(status().is4xxClientError())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    assertThat(body).doesNotContain("accessToken");
   }
 
   /**

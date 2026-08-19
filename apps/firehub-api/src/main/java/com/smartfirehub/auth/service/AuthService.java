@@ -145,6 +145,13 @@ public class AuthService {
       // 만료되었거나 유효하지 않은 리프레시 토큰 — 한국어 메시지 반환
       throw new InvalidTokenException("유효하지 않거나 만료된 토큰입니다.");
     }
+    // 평면 대칭. PlatformAuthService.refresh 가 테넌트 토큰을 거부하는 것과 짝을 이룬다.
+    // refresh_token 테이블은 전역이라 두 평면이 같은 회전 기계를 공유하는데, 이 검사가 없으면
+    // 운영자 리프레시 토큰을 테넌트 갱신 경로에 넣어 같은 패밀리를 테넌트 토큰으로 갈아탈 수 있다.
+    // (권한 상승은 아니지만 평면 표식이 조용히 사라지므로, 표식은 한쪽에서만 지켜서는 안 된다.)
+    if (jwtTokenProvider.isPlatformToken(rawRefreshToken)) {
+      throw new InvalidTokenException("유효하지 않거나 만료된 토큰입니다.");
+    }
 
     String tokenHash = hashToken(rawRefreshToken);
 
