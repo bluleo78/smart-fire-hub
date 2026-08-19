@@ -7,13 +7,21 @@ import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.security.PlatformAuthentication;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** 플랫폼 토큰이 테넌트 클레임을 갖지 않고, 플랫폼 권한이 별도 경로로 로딩되는지 검증한다. */
@@ -24,6 +32,7 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
   @Autowired private PlatformRoleRepository platformRoleRepository;
   @Autowired private DSLContext dsl;
   @Autowired private MockMvc mockMvc;
+  @Autowired private JwtAuthenticationFilter jwtAuthenticationFilter;
 
   /**
    * 플랫폼 토큰에는 tenant 클레임이 없어야 한다.
@@ -87,15 +96,52 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
   }
 
   /**
-   * 필터의 평면 분기가 실제로 인증을 세우는지 요청 경로로 검증한다.
+   * 필터가 플랫폼 토큰으로 <b>{@link PlatformAuthentication} 과 플랫폼 권한</b>을 세우는지 검증한다.
    *
-   * <p>왜 단위 검증만으로 부족한가: 위 테스트들은 토큰 발급기와 리포지토리만 만진다. 필터가 platform
-   * 클레임을 보고 {@code setPlatformSecurityContext} 로 갈라지지 않으면(그리고 그 경로가 테넌트 권한
-   * 조회를 타면) 아무 단위 테스트도 깨지지 않는다. 여기서 401 이 아니게 되는 것이 곧 "tenant 클레임
-   * 없이도 인증이 섰다"는 증거다. 경로가 아직 없으므로 404 가 정상 — Task 4/5 가 컨트롤러를 붙인다.
+   * <p><b>이 테스트가 평면 분기의 유일한 커버리지다.</b> 위의 단위 검증들은 발급기와 리포지토리만
+   * 만지므로, 필터에서 {@code if (principal.platform())} 블록을 지워도 전부 통과한다. 아래
+   * {@code platformTokenIsAuthenticatedAtAll} 도 마찬가지다 — 분기가 없으면 테넌트 경로가
+   * {@code TenantContext.set(null)} 로 흐르고, GUC 미설정 탓에 테넌트 권한 조회가 0행이 되어 <b>권한이
+   * 빈 채로 인증은 서므로</b> 그 요청도 여전히 404 다.
+   *
+   * <p>두 분기를 실제로 가르는 것은 (1) Authentication 의 <b>타입</b>과 (2) 실린 <b>권한 집합</b>
+   * 둘뿐이라 그 둘을 단언한다. {@code TenantContext} 로는 가를 수 없다 — {@code set(null)} 과 "세우지
+   * 않음"이 구별되지 않고, {@link IntegrationTestBase} 가 {@code @BeforeEach} 로 테넌트 1 을 미리
+   * 세워 두기 때문이다.
+   *
+   * <p>MockMvc 가 아니라 필터를 직접 호출하고 <b>체인 안에서</b> 컨텍스트를 캡처한다 — 필터는
+   * {@code finally} 에서 컨텍스트를 정리하므로 호출이 끝난 뒤에 보면 이미 비어 있다.
    */
   @Test
-  void platformTokenAuthenticatesWithoutTenantClaim() throws Exception {
+  void platformTokenYieldsPlatformAuthenticationWithPlatformAuthorities() throws Exception {
+    long userId = createUserWithSuperAdmin();
+    String token = jwtTokenProvider.generatePlatformAccessToken(userId, "ops");
+
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/platform/tenants");
+    request.addHeader("Authorization", "Bearer " + token);
+    AtomicReference<Authentication> captured = new AtomicReference<>();
+
+    jwtAuthenticationFilter.doFilter(
+        request,
+        new MockHttpServletResponse(),
+        (req, res) -> captured.set(SecurityContextHolder.getContext().getAuthentication()));
+
+    assertThat(captured.get()).isInstanceOf(PlatformAuthentication.class);
+    assertThat(captured.get().getPrincipal()).isEqualTo(userId);
+    assertThat(captured.get().getAuthorities())
+        .extracting(GrantedAuthority::getAuthority)
+        .contains("platform:tenant:create", "platform:settings:write");
+  }
+
+  /**
+   * 플랫폼 토큰이 인증 자체를 통과하는지(=401 이 아닌지)만 보는 얕은 가드.
+   *
+   * <p>Task 2 의 {@code PlatformPlaneSecurityTest} 가 "토큰 없으면 401" 을 잡으므로 그 반대편을 잡아
+   * 둔다. 경로가 아직 없어 404 가 정상 — Task 4/5 가 컨트롤러를 붙인다. <b>평면 분기의 증거는 아니다</b>
+   * (위 테스트 주석 참고).
+   */
+  @Test
+  void platformTokenIsAuthenticatedAtAll() throws Exception {
     long userId = createUserWithSuperAdmin();
     String token = jwtTokenProvider.generatePlatformAccessToken(userId, "ops");
 
