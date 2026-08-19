@@ -82,6 +82,17 @@ describe('resolveSettingFieldState', () => {
     ).toBe('locked');
   });
 
+  it('화이트리스트 소속이어도 서버가 tenantEditable=false 라 하면 잠금이다', () => {
+    // 계약: 응답이 있을 때 편집 가능 여부의 권위는 **서버 플래그**이지 화면의 화이트리스트 사본이
+    // 아니다. 백엔드 SettingsService.getValue 는 읽을 때마다 화이트리스트를 다시 확인하므로,
+    // 플랫폼이 키를 회수하면 그 즉시 tenantEditable=false 가 내려온다. 화면이 자기 상수를
+    // 우선하면 입력창이 열린 채 남고 사용자는 저장 시 400 을 받는다.
+    // 위 두 케이스(api_key·smtp.host)는 플래그와 화이트리스트가 같은 답을 주어 이 구분을 못 한다.
+    expect(
+      resolveSettingFieldState('ai.model', setting('ai.model', { tenantEditable: false })),
+    ).toBe('locked');
+  });
+
   it('편집 가능 + 오버라이드 없음 → 상속 중', () => {
     expect(resolveSettingFieldState('ai.temperature', setting('ai.temperature'))).toBe('inherited');
   });

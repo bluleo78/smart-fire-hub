@@ -28,7 +28,6 @@ import {
   useReindexAllEmbeddings,
 } from '../../hooks/queries/useEmbedding';
 import { useEmbeddingSettings } from '../../hooks/queries/useEmbeddingSettings';
-import { indexSettingsByKey, resolveSettingFieldState } from '../../lib/settings-fields';
 import { PlatformLockedBanner, PlatformLockedNote, SettingFieldLabel } from './settings-lock';
 
 interface EmbeddingForm {
@@ -113,10 +112,6 @@ export default function EmbeddingSettingsTab() {
     setForm(values);
   }, [settings]);
 
-  // 잠금 표시의 근거는 서버가 내려주는 tenantEditable 플래그다 — 화면이 정책 사본을 들고 있지 않다.
-  const byKey = indexSettingsByKey(settings ?? []);
-  const fieldState = (key: keyof EmbeddingForm) => resolveSettingFieldState(key, byKey[key]);
-
   if (isLoading) {
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;
   }
@@ -137,10 +132,17 @@ export default function EmbeddingSettingsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* 아래 4필드의 `state="locked"` 는 SMTP 탭과 같은 이유로 의도적인 하드코딩이다.
+              `embedding.*` 4키는 정책상 전부 균일하게 플랫폼 잠금이라 데이터로 구동할 편차가 없다 —
+              서버 플래그를 읽어도 항상 같은 답이 오고, 입력은 어차피 `disabled` 로 고정돼 있어
+              "서버가 정한다"는 말만 남고 실제로 정하는 것은 아무것도 없었다.
+              대가: 정책이 바뀌어 `embedding.*` 중 하나라도 테넌트에 열리면 이 탭은 따라가지 않는다.
+              그때는 AI 탭처럼 `resolveSettingFieldState` 로 상태를 구동하고 `disabled` 도 함께
+              풀어야 한다(한쪽만 고치면 배지와 조작 가능 여부가 어긋난다). */}
           {/* Provider — 읽기 전용. Select 를 유지하는 이유는 저장된 코드값(OLLAMA)을 사람이 읽는
               라벨(Ollama)로 보여주기 위해서다. */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-provider" state={fieldState('embedding.provider')}>
+            <SettingFieldLabel htmlFor="embedding-provider" state="locked">
               Provider
             </SettingFieldLabel>
             <Select value={form['embedding.provider']} disabled>
@@ -163,7 +165,7 @@ export default function EmbeddingSettingsTab() {
 
           {/* Model */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-model" state={fieldState('embedding.model')}>
+            <SettingFieldLabel htmlFor="embedding-model" state="locked">
               모델
             </SettingFieldLabel>
             <Input
@@ -181,7 +183,7 @@ export default function EmbeddingSettingsTab() {
 
           {/* Base URL */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-base-url" state={fieldState('embedding.base_url')}>
+            <SettingFieldLabel htmlFor="embedding-base-url" state="locked">
               Base URL
             </SettingFieldLabel>
             <Input
@@ -199,7 +201,7 @@ export default function EmbeddingSettingsTab() {
 
           {/* API Key — 서버에서 **** 로 마스킹되어 내려오고 편집도 불가하므로 표시/숨기기 토글을 두지 않는다 */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-api-key" state={fieldState('embedding.api_key')}>
+            <SettingFieldLabel htmlFor="embedding-api-key" state="locked">
               API 키
             </SettingFieldLabel>
             <Input
