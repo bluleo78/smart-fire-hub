@@ -41,6 +41,17 @@ public class SettingsService {
   private static final Set<String> ALLOWED_EMBEDDING_KEYS =
       Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
 
+  /**
+   * 암호화 저장되는 비밀 키의 집합. 마스킹 판정의 <b>단일 출처</b>다.
+   *
+   * <p>{@code smtp.password} 가 빠져 있었다. {@code updateSmtpSettings} 는 이 키를 암호화해
+   * 저장하는데 {@link #maskSecret} 이 그것을 모르면 {@code getAll}/{@code getByPrefix("smtp")} 가
+   * <b>암호문을 그대로</b> 내보낸다({@link #getSmtpSettings} 만 별도로 마스킹하고 있었다 — 즉 이
+   * 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
+   */
+  private static final Set<String> SECRET_KEYS =
+      Set.of("ai.api_key", "ai.cli_oauth_token", "embedding.api_key", "smtp.password");
+
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
 
@@ -64,9 +75,7 @@ public class SettingsService {
 
   /** 비밀값은 복호화 후 마스킹해서 내보낸다. 평문도, 암호문도 응답에 실리지 않는다. */
   private SettingResponse maskSecret(SettingResponse setting) {
-    if ("ai.api_key".equals(setting.key())
-        || "ai.cli_oauth_token".equals(setting.key())
-        || "embedding.api_key".equals(setting.key())) {
+    if (SECRET_KEYS.contains(setting.key())) {
       String masked =
           setting.value() == null || setting.value().isBlank()
               ? ""
@@ -159,21 +168,11 @@ public class SettingsService {
     return getValue("embedding.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
+  /** SMTP 설정. 마스킹은 {@link #maskSecret} 을 지난다 — 여기서 따로 판정하면 목록이 또 어긋난다. */
   @Transactional(readOnly = true)
   public List<SettingResponse> getSmtpSettings() {
     return settingsRepository.findByPrefix("smtp").stream()
-        .map(
-            setting -> {
-              if ("smtp.password".equals(setting.key())) {
-                String masked =
-                    setting.value() == null || setting.value().isBlank()
-                        ? ""
-                        : encryptionService.maskValue(encryptionService.decrypt(setting.value()));
-                return new SettingResponse(
-                    setting.key(), masked, setting.description(), setting.updatedAt());
-              }
-              return setting;
-            })
+        .map(this::maskSecret)
         .collect(Collectors.toList());
   }
 

@@ -132,10 +132,25 @@ public class PlatformAuthService {
     return issue(userId, user.username(), familyId);
   }
 
-  /** 이 사용자의 모든 리프레시 토큰을 폐기한다. 운영자 로그아웃. */
+  /**
+   * 운영자 로그아웃. 제시된 리프레시 토큰의 <b>패밀리만</b> 폐기한다.
+   *
+   * <p>{@code revokeAllByUserId} 를 쓰지 않는 이유: {@code refresh_token} 은 전역 테이블이고 평면
+   * 컬럼이 없어서 사용자 단위 폐기는 <b>평면을 가리지 않는다</b>. 운영자이면서 일반 사용자인 계정이
+   * 운영자 콘솔에서 로그아웃하면 firehub-web 세션까지 끊긴다 — 쿠키 이름과 path 를 평면별로 분리해
+   * "서로의 세션을 끊지 않게" 만든 것을 로그아웃이 되돌리는 셈이다. 패밀리 단위 폐기는 회전 체인이
+   * 로그인마다 새로 시작되므로 정확히 이 콘솔 세션만 끊는다.
+   *
+   * <p>쿠키가 없으면 서버 측에 끊을 세션이 특정되지 않으므로 아무것도 폐기하지 않는다(컨트롤러가
+   * 쿠키를 지우고, 액세스 토큰은 만료로 사라진다). 평면별 전체 로그아웃이 필요해지면
+   * {@code refresh_token} 에 평면 컬럼이 필요하다 — P7-b/c 백로그.
+   */
   @Transactional
-  public void logout(Long userId) {
-    refreshTokenRepository.revokeAllByUserId(userId);
+  public void logout(String rawRefreshToken) {
+    if (rawRefreshToken == null || rawRefreshToken.isBlank()) return;
+    refreshTokenRepository
+        .findFamilyIdByTokenHash(RefreshTokenHasher.hash(rawRefreshToken))
+        .ifPresent(refreshTokenRepository::revokeByFamilyId);
   }
 
   /** 현재 운영자 정보와 보유 권한. */

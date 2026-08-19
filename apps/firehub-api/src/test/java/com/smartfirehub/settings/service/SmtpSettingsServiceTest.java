@@ -46,6 +46,30 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
     assertThat(config).containsEntry("smtp.from_address", "noreply@example.com");
   }
 
+  /**
+   * {@code getAll} 도 {@code smtp.password} 를 마스킹한다.
+   *
+   * <p>운영자 평면의 {@code GET /api/platform/settings} 가 쓰는 경로다. 마스킹 판정이
+   * {@code getSmtpSettings} 안에만 있었을 때 이 경로는 <b>AES 암호문을 그대로</b> 내보냈다 —
+   * 비밀 키 목록을 두 곳에서 관리한 결과다. 이제 두 메서드가 같은 함수를 지난다.
+   */
+  @Test
+  void getAll_masksSmtpPassword() {
+    settingsService.updateSmtpSettings(Map.of("smtp.password", "secret-smtp-pass"), null);
+
+    assertThat(settingsService.getAll())
+        .filteredOn(s -> "smtp.password".equals(s.key()))
+        .hasSize(1)
+        .first()
+        .satisfies(
+            s -> {
+              // 마스킹 형태이고, 평문도 암호문(iv:ciphertext Base64)도 아니다.
+              assertThat(s.value()).startsWith("****");
+              assertThat(s.value()).doesNotContain("secret-smtp-pass");
+              assertThat(s.value()).doesNotContain(":");
+            });
+  }
+
   @Test
   void updateSmtpSettings_invalidKey_throwsIllegalArgument() {
     Map<String, String> update = Map.of("ai.model", "gpt-4");

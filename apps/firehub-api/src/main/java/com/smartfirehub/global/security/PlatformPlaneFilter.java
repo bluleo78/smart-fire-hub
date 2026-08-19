@@ -34,7 +34,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class PlatformPlaneFilter extends OncePerRequestFilter {
 
   /**
-   * 평면 판정을 <b>{@code SecurityConfig} 와 같은 매처</b>로 한다.
+   * 평면 판정을 <b>{@code SecurityConfig} 와 같은 Ant 패턴 문법·같은 디코딩된 경로</b>로 한다.
    *
    * <p>직접 {@code getRequestURI().startsWith("/api/platform/")} 로 대조하면 안 된다. {@code
    * getRequestURI()} 는 <b>디코딩되지 않은</b> 원본 URI 인데, 이 스택의 다른 모든 판정
@@ -47,7 +47,13 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
    * <p>매처를 쓰면 {@code server.servlet.context-path} 설정(원본 URI 에는 컨텍스트 경로가 포함되지만
    * 매처는 그것을 제외한 경로를 본다)과 대소문자·트레일링 슬래시 처리까지 시큐리티 설정과 자동으로
    * 일치한다 — 아래 면제 목록이 {@code SecurityConfig} 의 permitAll 목록과 "1:1 로 일치"해야 하는
-   * 불변식을 손으로 지키는 대신 같은 문법·같은 구현으로 지킨다.
+   * 불변식을 지키기 쉽게 만든다.
+   *
+   * <p>단, {@code HttpSecurity.requestMatchers(String)} 이 만드는 매처는 이 클래스가 쓰는
+   * {@link AntPathRequestMatcher} 와 <b>같은 구현이 아니다</b>(기본 루트 서블릿 매핑에서는 동작이
+   * 같다). 따라서 면제 목록이 permitAll 목록과 1:1 이라는 보장은 여전히 <b>사람이</b> 지킨다 —
+   * 그 사실이 {@code PlatformPlaneIsolationTest.platformAuthPathsAreExemptFromPlaneCheck} 로
+   * 검증되는 이유다. 한쪽만 고치면 그 테스트가 깨진다.
    */
   private static final RequestMatcher PLATFORM_PLANE =
       new AntPathRequestMatcher("/api/platform/**");
@@ -77,7 +83,9 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
       boolean platformToken = auth instanceof PlatformAuthentication;
       if (platformRequest != platformToken) {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-        response.setContentType("application/json");
+        // charset 을 명시해야 한다. 다른 에러 본문은 Jackson 컨버터를 지나며 UTF-8 이 붙지만
+        // 여기는 직접 쓰므로 생략하면 컨테이너 기본 인코딩(ISO-8859-1)으로 나가 한글이 깨진다.
+        response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write("{\"error\":\"Forbidden\",\"message\":\"평면이 일치하지 않습니다\"}");
         return;
       }

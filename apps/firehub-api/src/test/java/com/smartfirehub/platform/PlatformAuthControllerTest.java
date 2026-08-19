@@ -5,8 +5,13 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.auth.repository.RefreshTokenRepository;
+import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.support.IntegrationTestBase;
+import jakarta.servlet.http.Cookie;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +31,67 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
+  @Autowired private ObjectMapper objectMapper;
+  @Autowired private RefreshTokenRepository refreshTokenRepository;
 
   private static final String PASSWORD = "P7aOpsPassw0rd!";
+
+  /**
+   * 운영자 로그아웃은 <b>테넌트 세션을 끊지 않는다</b>.
+   *
+   * <p>{@code refresh_token} 은 전역 테이블이고 평면 컬럼이 없다. 그래서 사용자 단위 폐기
+   * ({@code revokeAllByUserId})를 쓰면 운영자이면서 일반 사용자인 계정이 콘솔에서 로그아웃할 때
+   * firehub-web 세션까지 끊긴다 — 쿠키를 평면별로 분리해 세션이 서로를 끊지 않게 만든 설계를
+   * 로그아웃이 되돌리는 셈이다. 여기서는 같은 사용자로 두 평면에 로그인한 뒤 운영자만 로그아웃하고,
+   * <b>테넌트 리프레시가 여전히 동작하는지</b>로 판정한다(폐기 여부를 상태코드로 직접 본다).
+   */
+  @Test
+  void platformLogoutDoesNotKillTenantSession() throws Exception {
+    String username = createUser(true);
+
+    String tenantRefresh = cookieValue(tenantLogin(username), "refreshToken");
+    MockHttpServletResponse platformLogin = login(username, PASSWORD);
+    String platformRefresh = cookieValue(platformLogin, "platformRefreshToken");
+    String platformAccess = accessToken(platformLogin);
+
+    mockMvc
+        .perform(
+            post("/api/platform/auth/logout")
+                .header("Authorization", "Bearer " + platformAccess)
+                .cookie(new Cookie("platformRefreshToken", platformRefresh)))
+        .andExpect(status().isNoContent());
+
+    // 폐기 여부를 저장소에서 직접 본다. 테넌트 갱신 엔드포인트로 판정하면 멤버십 상태 같은
+    // 무관한 규칙(테넌트 미선택 등)이 섞여 무엇을 검증하는지 흐려진다.
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(platformRefresh)))
+        .as("운영자 세션은 끊겼어야 한다")
+        .isTrue();
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(tenantRefresh)))
+        .as("테넌트 세션은 살아 있어야 한다 — 사용자 단위 폐기였다면 이것도 true 가 된다")
+        .isFalse();
+  }
+
+  /** 테넌트 평면 로그인(발급기 직접 호출이 아니라 실제 로그인). 두 평면 동시 로그인 상태를 만든다. */
+  private MockHttpServletResponse tenantLogin(String username) throws Exception {
+    return mockMvc
+        .perform(
+            post("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"username\":\"%s\",\"password\":\"%s\"}".formatted(username, PASSWORD)))
+        .andReturn()
+        .getResponse();
+  }
+
+  private String cookieValue(MockHttpServletResponse response, String name) {
+    Cookie cookie = response.getCookie(name);
+    assertThat(cookie).as("쿠키 %s 가 없다", name).isNotNull();
+    return cookie.getValue();
+  }
+
+  private String accessToken(MockHttpServletResponse response) throws Exception {
+    return objectMapper.readTree(response.getContentAsString()).get("accessToken").asText();
+  }
 
   /** 플랫폼 롤 보유자는 로그인해 액세스 토큰과 보유 권한을 받는다. */
   @Test
@@ -114,12 +178,12 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
    */
   @Test
   void refresh_rejectsTenantRefreshToken() throws Exception {
-    String tenantRefresh = tenantRefreshTokenFor(createUser(true));
+    String tenantRefresh = cookieValue(tenantLogin(createUser(true)), "refreshToken");
 
     MockHttpServletResponse response =
         mockMvc
             .perform(post("/api/platform/auth/refresh").cookie(
-                new jakarta.servlet.http.Cookie("platformRefreshToken", tenantRefresh)))
+                new Cookie("platformRefreshToken", tenantRefresh)))
             .andReturn()
             .getResponse();
 
@@ -143,21 +207,6 @@ class PlatformAuthControllerTest extends IntegrationTestBase {
         .getResponse();
   }
 
-  /** 테넌트 평면 리프레시 토큰을 정식 경로로 얻는다(발급기 직접 호출이 아니라 실제 로그인). */
-  private String tenantRefreshTokenFor(String username) throws Exception {
-    MockHttpServletResponse response =
-        mockMvc
-            .perform(
-                post("/api/v1/auth/login")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        "{\"username\":\"%s\",\"password\":\"%s\"}".formatted(username, PASSWORD)))
-            .andReturn()
-            .getResponse();
-    jakarta.servlet.http.Cookie cookie = response.getCookie("refreshToken");
-    assertThat(cookie).as("테넌트 로그인이 리프레시 쿠키를 내려야 한다").isNotNull();
-    return cookie.getValue();
-  }
 
   /**
    * 검증용 사용자를 만든다. 공유 test DB 라 username/email 을 나노초로 유일화한다.

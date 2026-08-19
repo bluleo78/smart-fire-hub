@@ -81,11 +81,17 @@ public class PlatformAuthController {
     return ResponseEntity.ok(withoutRefreshToken(token));
   }
 
-  /** 운영자 로그아웃. 이 사용자의 리프레시 토큰을 전부 폐기하고 쿠키를 지운다. */
+  /**
+   * 운영자 로그아웃. 이 콘솔 세션의 리프레시 패밀리만 폐기하고 쿠키를 지운다.
+   *
+   * <p>사용자 단위로 폐기하지 않는 이유는 {@code PlatformAuthService.logout} 주석 참고 —
+   * {@code refresh_token} 에 평면 컬럼이 없어 사용자 단위 폐기는 테넌트 세션까지 끊는다.
+   */
   @PostMapping("/logout")
-  public ResponseEntity<Void> logout(Authentication authentication, HttpServletResponse response) {
-    Long userId = (Long) authentication.getPrincipal();
-    platformAuthService.logout(userId);
+  public ResponseEntity<Void> logout(
+      @CookieValue(name = PLATFORM_REFRESH_COOKIE, required = false) String refreshToken,
+      HttpServletResponse response) {
+    platformAuthService.logout(refreshToken);
     clearRefreshCookie(response);
     return ResponseEntity.noContent().build();
   }
