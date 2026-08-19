@@ -111,6 +111,15 @@ public class SettingsService {
     return settingsRepository.getValue(key);
   }
 
+  /**
+   * <b>교집합이 아니라 합집합.</b> {@code system_settings} 에 행이 없는 오버라이드 허용 키(예:
+   * {@code ai.session_max_tokens} — 어떤 마이그레이션도 이 키를 시드하지 않았고
+   * {@code SettingsRepository.updateSettings} 가 UPDATE-only 라 오늘 이 키에 쓰면 0행이 갱신된다)는
+   * 플랫폼 맵을 먼저 만들고 그 키 집합만 오버라이드 조회에 넘기면 <b>절대 드러나지 않는다</b>.
+   * 오버라이드 자체를 프리픽스로 통째로 가져와 덮어써야, 플랫폼 행이 없는 키의 오버라이드도 결과에
+   * 나타난다. AI 채팅·프로액티브 잡이 실제로 읽는 경로라 이 구멍은 "오버라이드를 저장했는데 실제
+   * 호출은 여전히 하드코딩 폴백을 쓴다"는 형태로 조용히 발현한다.
+   */
   @Transactional(readOnly = true)
   public Map<String, String> getAsMap(String prefix) {
     // system_settings.value 컬럼은 nullable이므로 null value가 있으면 Collectors.toMap이 NPE를 발생시킨다.
@@ -121,9 +130,7 @@ public class SettingsService {
                 Collectors.toMap(
                     SettingResponse::key, s -> s.value() != null ? s.value() : "", (a, b) -> b));
 
-    // AI 채팅·프로액티브 잡이 실제로 읽는 경로다. 오버라이드를 여기서 빠뜨리면 화면(getResolvedByPrefix)
-    // 에는 오버라이드가 보이는데 실제 호출(getAsMap)은 플랫폼 값으로 나가는 어긋남이 생긴다.
-    Map<String, String> overrides = resolveOverrides(platform.keySet());
+    Map<String, String> overrides = resolveOverridesByPrefix(prefix);
     Map<String, String> resolved = new HashMap<>(platform);
     resolved.putAll(overrides);
     return resolved;
@@ -132,35 +139,47 @@ public class SettingsService {
   /**
    * 프리픽스에 속한 설정을 {@code overridden}/{@code tenantEditable} 플래그와 함께 해석한다. web
    * 목록 화면 전용 — 실제 런타임 호출부는 {@link #getValue}/{@link #getAsMap} 을 쓴다.
+   *
+   * <p>{@link #getAsMap} 과 같은 이유로 합집합이다 — 플랫폼 행이 없는 오버라이드 키도 목록에
+   * 나타나야 한다. 그런 키는 {@code description}/{@code updatedAt} 을 줄 시스템 설정 행이 없으므로
+   * {@code null} 이다({@link TenantSettingsRepository#findByPrefix} 가 값만 주고 갱신 시각은 주지
+   * 않아 오버라이드 쪽에서도 채울 수 없다).
    */
   @Transactional(readOnly = true)
   public List<ResolvedSettingResponse> getResolvedByPrefix(String prefix) {
     List<SettingResponse> platform = settingsRepository.findByPrefix(prefix);
-    Set<String> keys = platform.stream().map(SettingResponse::key).collect(Collectors.toSet());
-    Map<String, String> overrides = resolveOverrides(keys);
+    Map<String, SettingResponse> platformByKey =
+        platform.stream().collect(Collectors.toMap(SettingResponse::key, s -> s));
+    Map<String, String> overrides = resolveOverridesByPrefix(prefix);
 
-    return platform.stream()
+    // 순서는 플랫폼 키 먼저(기존 화면 순서 유지) + 플랫폼에 없는 오버라이드 전용 키를 뒤에 덧붙인다.
+    java.util.LinkedHashSet<String> allKeys = new java.util.LinkedHashSet<>(platformByKey.keySet());
+    allKeys.addAll(overrides.keySet());
+
+    return allKeys.stream()
         .map(
-            s -> {
-              boolean overridden = overrides.containsKey(s.key());
-              String value = overridden ? overrides.get(s.key()) : s.value();
+            key -> {
+              SettingResponse platformRow = platformByKey.get(key);
+              boolean overridden = overrides.containsKey(key);
+              String value = overridden ? overrides.get(key) : platformRow.value();
               return new ResolvedSettingResponse(
-                  s.key(),
+                  key,
                   value,
-                  s.description(),
-                  s.updatedAt(),
+                  platformRow != null ? platformRow.description() : null,
+                  platformRow != null ? platformRow.updatedAt() : null,
                   overridden,
-                  SettingsOverridePolicy.isTenantOverridable(s.key()));
+                  SettingsOverridePolicy.isTenantOverridable(key));
             })
         .collect(Collectors.toList());
   }
 
   /**
-   * 오버라이드 판정의 <b>단일 출처</b>. 주어진 키 집합 중 "테넌트 컨텍스트가 있고 + 화이트리스트가
-   * 허용하는" 키만 {@code tenant_settings} 값으로 채워 돌려준다. {@link #getValue}·{@link #getAsMap}·
-   * {@link #getResolvedByPrefix} 세 곳이 이 판정을 각자 복사하면, 화이트리스트가 좁아지거나
-   * 컨텍스트 없음 처리가 바뀔 때 한 곳만 고쳐지고 나머지가 어긋나는 사고가 난다(이 판정이 이
-   * 밴드의 핵심 회귀 지점이라 특히 위험하다).
+   * 오버라이드 판정의 <b>단일 출처(단일 키 형태)</b>. {@link #getValue} 전용 — 화이트리스트+컨텍스트
+   * 판정 자체는 {@link SettingsOverridePolicy#isTenantOverridable} 와 이 메서드의 {@code
+   * TenantContext.get() == null} 가드 두 줄이 전부이고, {@link #resolveOverridesByPrefix} 도 정확히
+   * 같은 두 조건을 검사한다 — 판정 기준이 두 곳에 있는 것처럼 보이지만 실제 규칙("화이트리스트가
+   * 허용하는가")은 {@link SettingsOverridePolicy} 하나에만 있고, 여기 있는 것은 "그 결과를 어떤
+   * 모양(단일 값 vs 맵)으로 조회하느냐"라는 조회 전략 차이일 뿐이다.
    *
    * <p>컨텍스트가 없으면(배경 잡 경로) 즉시 빈 맵을 돌려준다 — DB 조회조차 하지 않는다. "컨텍스트
    * 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약을 이 한 곳에서만 표현한다.
@@ -174,6 +193,21 @@ public class SettingsService {
       }
     }
     return resolved;
+  }
+
+  /**
+   * 오버라이드 판정의 <b>프리픽스 형태</b>. {@link #getAsMap}·{@link #getResolvedByPrefix} 가
+   * 공유한다. {@link TenantSettingsRepository#findByPrefix} 로 <b>한 번의 쿼리</b>에 후보를 전부
+   * 가져온 뒤 화이트리스트로 걸러낸다 — 키마다 {@code findValue} 를 부르던 이전 구현은 프리픽스당
+   * N+1 쿼리를 냈다.
+   *
+   * <p>컨텍스트가 없으면 즉시 빈 맵(쿼리 없음) — {@link #resolveOverrides} 와 같은 계약이다.
+   */
+  private Map<String, String> resolveOverridesByPrefix(String prefix) {
+    if (TenantContext.get() == null) return Map.of();
+    Map<String, String> candidates = tenantSettingsRepository.findByPrefix(prefix);
+    candidates.keySet().removeIf(key -> !SettingsOverridePolicy.isTenantOverridable(key));
+    return candidates;
   }
 
   public void updateSettings(Map<String, String> settings, Long userId) {

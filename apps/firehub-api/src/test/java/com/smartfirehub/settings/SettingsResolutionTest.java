@@ -113,6 +113,73 @@ class SettingsResolutionTest extends IntegrationTestBase {
   }
 
   @Test
+  void getAsMap_은_플랫폼_행이_없는_오버라이드_전용_키도_보여준다() {
+    // Fix round 1: ai.session_max_tokens 는 어떤 마이그레이션도 system_settings 에 시드하지 않았다
+    // (V15/V31/V40/V41 이 다른 ai.* 키는 시드해도 이 키는 빠져 있다). 화이트리스트에는 있으므로
+    // 테넌트가 오버라이드할 수 있는데, platform.keySet() 만 오버라이드 조회에 넘기던 이전 구현은
+    // 플랫폼 행이 없는 이 키의 오버라이드를 절대 드러내지 못했다(교집합). 합집합이어야 통과한다.
+    testTenant = createActiveTenant(dsl, "sr-asmap-only");
+    runInTenantTransaction(
+        transactionTemplate,
+        testTenant,
+        () -> tenantSettingsRepository.upsert("ai.session_max_tokens", "12345", null));
+
+    TenantContext.set(testTenant);
+    var resolved = settingsService.getAsMap("ai");
+    assertThat(resolved).containsEntry("ai.session_max_tokens", "12345");
+  }
+
+  @Test
+  void getResolvedByPrefix_은_플랫폼_행이_없는_오버라이드_전용_키를_overridden으로_보여준다() {
+    testTenant = createActiveTenant(dsl, "sr-resolved-only");
+    runInTenantTransaction(
+        transactionTemplate,
+        testTenant,
+        () -> tenantSettingsRepository.upsert("ai.session_max_tokens", "54321", null));
+
+    TenantContext.set(testTenant);
+    var resolved = settingsService.getResolvedByPrefix("ai");
+    var entry =
+        resolved.stream()
+            .filter(r -> r.key().equals("ai.session_max_tokens"))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("ai.session_max_tokens 가 목록에 없다 — 합집합이 아니라 교집합이다"));
+
+    assertThat(entry.value()).isEqualTo("54321");
+    assertThat(entry.overridden()).isTrue();
+    assertThat(entry.tenantEditable()).isTrue();
+  }
+
+  @Test
+  void 프리픽스_경로도_잠긴_키_오버라이드는_무시한다() {
+    // 단일 키 조회(findValue)에서 프리픽스 조회(findByPrefix)로 바꾸면서 화이트리스트 필터가
+    // 새어나가면 안 된다 — 합집합으로 바뀐 것이 "잠긴 키까지 전부 노출"로 변질되지 않았는지 확인.
+    testTenant = createActiveTenant(dsl, "sr-locked-prefix");
+    // 저장소는 화이트리스트를 모른다(서비스만 안다) — upsert 로 직접 잠긴 키를 심어 재현한다.
+    runInTenantTransaction(
+        transactionTemplate,
+        testTenant,
+        () -> tenantSettingsRepository.upsert("ai.api_key", "sneaky-key", null));
+    try {
+      TenantContext.set(testTenant);
+
+      var asMap = settingsService.getAsMap("ai");
+      assertThat(asMap.get("ai.api_key")).isNotEqualTo("sneaky-key");
+
+      var resolved = settingsService.getResolvedByPrefix("ai");
+      var apiKeyEntry =
+          resolved.stream().filter(r -> r.key().equals("ai.api_key")).findFirst().orElseThrow();
+      assertThat(apiKeyEntry.overridden()).isFalse();
+      assertThat(apiKeyEntry.value()).isNotEqualTo("sneaky-key");
+    } finally {
+      // upsert 로 심은 오버라이드 행을 명시적으로 정리한다(deleteTenants 가 tenant_settings 를
+      // cascade 로 지우긴 하지만, 여기서 직접 지워 이 테스트의 의도를 코드로 남긴다).
+      runInTenantTransaction(
+          transactionTemplate, testTenant, () -> tenantSettingsRepository.delete("ai.api_key"));
+    }
+  }
+
+  @Test
   void 다른_테넌트로_전환하면_각자의_오버라이드만_보인다() {
     // 세 상태 전이가 실제로 컨텍스트에 반응하는지 — 캐싱/고정 등으로 값이 굳어 있지 않은지 확인한다.
     long tenantA = createActiveTenant(dsl, "sr-a");
