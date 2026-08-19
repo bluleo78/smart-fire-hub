@@ -14,6 +14,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 테넌트 설정 오버라이드 저장소.
@@ -32,9 +33,17 @@ import org.springframework.stereotype.Repository;
  * <p>{@code SettingsRepository} 와 같은 스타일(정적 {@code Table}/{@code Field} 이름 상수 + 생성
  * jOOQ 클래스 미사용)을 따른다 — 두 저장소가 같은 패키지에서 다른 스타일을 쓰면 읽는 사람이
  * 매번 "왜 여기만 다르지"를 물어야 한다.
+ *
+ * <p><b>클래스 레벨 {@code @Transactional} 을 지우지 말 것</b> — {@code
+ * BackgroundPathTransactionTest} 가 전수 검사한다. GUC 는 트랜잭션이 열릴 때만 주입되므로
+ * ({@code TenantAwareTransactionManager.doBegin}), 트랜잭션 없이 이 리포지토리를 부르면 조회는
+ * 조용히 0행이 되고 삽입은 정책 위반(42501)으로 실패한다. 지금은 호출자({@code SettingsService})가
+ * 전부 {@code @Transactional} 이라 무해하지만, 배경 경로에서 직접 부르는 호출자가 하나 생기는
+ * 순간 그 실패는 <b>조용한 0행</b>으로 나타난다 — 그래서 리포지토리 쪽에 붙여 둔다.
  */
 @Repository
 @RequiredArgsConstructor
+@Transactional
 public class TenantSettingsRepository {
 
   private final DSLContext dsl;
