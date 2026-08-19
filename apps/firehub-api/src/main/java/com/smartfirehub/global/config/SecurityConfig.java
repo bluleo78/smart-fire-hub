@@ -2,6 +2,7 @@ package com.smartfirehub.global.config;
 
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
+import com.smartfirehub.global.security.PlatformPlaneFilter;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
@@ -85,7 +86,10 @@ public class SecurityConfig {
                                   + authException.getMessage()
                                   + "\"}");
                     }))
-        .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+        .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+        // 평면 교차 차단은 인증이 세워진 뒤에 판정해야 하므로 JWT 필터 바로 뒤에 놓는다.
+        // @Component 로 두면 서블릿 체인에도 자동 등록돼 두 번 도므로 여기서만 배선한다.
+        .addFilterAfter(new PlatformPlaneFilter(), JwtAuthenticationFilter.class);
 
     return http.build();
   }
