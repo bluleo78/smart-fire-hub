@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Mail, Send } from 'lucide-react';
+import { Mail, Send } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -8,12 +8,13 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Switch } from '../../components/ui/switch';
+import { useSmtpSettings, useTestSmtpSettings } from '../../hooks/queries/useProactiveMessages';
 import {
-  useSmtpSettings,
-  useTestSmtpSettings,
-  useUpdateSmtpSettings,
-} from '../../hooks/queries/useProactiveMessages';
-import { type ReportDirty, useReportDirty } from '../../hooks/useUnsavedChangesGuard';
+  PlatformLockedBanner,
+  PlatformLockedNote,
+  SettingFieldLabel,
+  SettingStateBadge,
+} from './settings-lock';
 
 interface SmtpForm {
   'smtp.host': string;
@@ -24,71 +25,44 @@ interface SmtpForm {
   'smtp.from_address': string;
 }
 
-const DEFAULT: SmtpForm = {
+const EMPTY: SmtpForm = {
   'smtp.host': '',
-  'smtp.port': '587',
+  'smtp.port': '',
   'smtp.username': '',
   'smtp.password': '',
   'smtp.starttls': 'true',
   'smtp.from_address': '',
 };
 
-interface SmtpSettingsTabProps {
-  // 부모(SettingsPage)에 dirty 상태를 보고하여 라우터 이동 가드를 활성화한다 (이슈 #86).
-  onReportDirty?: ReportDirty;
-}
-
-export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps = {}) {
+/**
+ * 이메일(SMTP) 설정 탭 — P7-b 이후 **전 필드 플랫폼 전용(읽기 전용)**.
+ *
+ * SMTP 6키는 발신 도메인 신뢰도를 전 테넌트가 공유하므로 테넌트가 바꿀 수 없다. 백엔드
+ * `PUT /settings/smtp` 는 테넌트 평면에서 항상 403 이므로, 저장 경로(저장 버튼·dirty 보고·mutation)를
+ * 화면에서 통째로 제거했다 — 남겨 두면 누르는 순간 403 을 받는 버튼이 된다.
+ * "연결 테스트"는 값을 노출하지 않는 진단 액션이라 유지한다.
+ *
+ * 값 조회는 `GET /settings/smtp` 를 그대로 쓴다(`settings:write` 권한). 프리픽스 조회
+ * (`GET /settings?prefix=smtp`, `ai:settings` 권한)로 갈아타면 이 탭을 열 수 있는 사람이 바뀐다.
+ * 오버라이드는 백엔드에서 화이트리스트로 걸러지므로 SMTP 키에는 존재할 수 없고, 따라서 이
+ * 엔드포인트의 값이 곧 실제 적용 값이다(해석 결과와 어긋날 여지가 없다).
+ */
+export default function SmtpSettingsTab() {
   const { data: settings, isLoading } = useSmtpSettings();
-  const updateMutation = useUpdateSmtpSettings();
   const testMutation = useTestSmtpSettings();
 
-  const [form, setForm] = useState<SmtpForm>(DEFAULT);
-  const [original, setOriginal] = useState<SmtpForm>(DEFAULT);
-  const [showPassword, setShowPassword] = useState(false);
-
+  const [form, setForm] = useState<SmtpForm>(EMPTY);
   // 서버에서 settings가 로드되면 폼 상태에 반영 — 서버 데이터 → 폼 state 초기화 패턴
   useEffect(() => {
     if (!settings) return;
-    const values = { ...DEFAULT };
+    const values = { ...EMPTY };
     settings.forEach((s) => {
       const key = s.key as keyof SmtpForm;
       if (key in values) values[key] = s.value ?? '';
     });
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm(values);
-     
-    setOriginal(values);
   }, [settings]);
-
-  const hasChanges = JSON.stringify(form) !== JSON.stringify(original);
-
-  // 부모에 dirty 상태 보고 — SettingsPage가 라우터 가드(useBlocker) + beforeunload를 운영한다.
-  useReportDirty(hasChanges, onReportDirty);
-
-  const updateField = (key: keyof SmtpForm, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleSave = async () => {
-    // SMTP 호스트는 필수값 — 빈값으로 저장되는 것을 방지한다 (이슈 #46)
-    if (!form['smtp.host'].trim()) {
-      toast.error('SMTP 호스트를 입력하세요.');
-      return;
-    }
-
-    const toSave = { ...form };
-    if (toSave['smtp.password'].startsWith('****')) {
-      delete (toSave as Partial<SmtpForm>)['smtp.password'];
-    }
-    updateMutation.mutate(toSave, {
-      onSuccess: () => {
-        setOriginal({ ...form });
-        toast.success('SMTP 설정이 저장되었습니다.');
-      },
-      onError: () => toast.error('SMTP 설정 저장에 실패했습니다.'),
-    });
-  };
 
   const handleTest = () => {
     testMutation.mutate(undefined, {
@@ -96,12 +70,12 @@ export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps 
         // 서버가 200 OK라도 success=false면 실패 (비정상 응답 처리)
         const data = res.data as { success?: boolean; message?: string } | undefined;
         if (data?.success === false) {
-          toast.error(data.message ?? '테스트 발송에 실패했습니다.');
+          toast.error(data.message ?? '연결 테스트에 실패했습니다.');
         } else {
-          toast.success('테스트 이메일이 발송되었습니다.');
+          toast.success('SMTP 연결에 성공했습니다.');
         }
       },
-      onError: () => toast.error('테스트 발송에 실패했습니다.'),
+      onError: () => toast.error('연결 테스트에 실패했습니다.'),
     });
   };
 
@@ -111,6 +85,12 @@ export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps 
 
   return (
     <div className="space-y-6">
+      {/* 탭 상단 배너 — 스크롤하지 않아도 편집 불가를 먼저 알린다 */}
+      <PlatformLockedBanner>
+        이메일(SMTP) 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만
+        있고, 테넌트에서 변경할 수 없습니다.
+      </PlatformLockedBanner>
+
       <Card className="card-hover">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -121,83 +101,90 @@ export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps 
         <CardContent className="space-y-6">
           {/* Host */}
           <div className="space-y-2">
-            <Label htmlFor="smtp-host">SMTP 호스트</Label>
+            <SettingFieldLabel htmlFor="smtp-host" state="locked">
+              SMTP 호스트
+            </SettingFieldLabel>
             <Input
               id="smtp-host"
               className="max-w-md"
               value={form['smtp.host']}
-              onChange={(e) => updateField('smtp.host', e.target.value)}
+              disabled
               placeholder="smtp.gmail.com"
             />
+            <PlatformLockedNote />
           </div>
 
           <Separator />
 
           {/* Port */}
           <div className="space-y-2">
-            <Label htmlFor="smtp-port">포트</Label>
+            <SettingFieldLabel htmlFor="smtp-port" state="locked">
+              포트
+            </SettingFieldLabel>
             <Input
               id="smtp-port"
               type="number"
               className="max-w-[120px]"
               value={form['smtp.port']}
-              onChange={(e) => updateField('smtp.port', e.target.value)}
+              disabled
               placeholder="587"
             />
+            <PlatformLockedNote />
           </div>
 
           <Separator />
 
           {/* Username */}
           <div className="space-y-2">
-            <Label htmlFor="smtp-username">사용자 이름</Label>
+            <SettingFieldLabel htmlFor="smtp-username" state="locked">
+              사용자 이름
+            </SettingFieldLabel>
             <Input
               id="smtp-username"
               className="max-w-md"
               value={form['smtp.username']}
-              onChange={(e) => updateField('smtp.username', e.target.value)}
+              disabled
               placeholder="user@example.com"
             />
+            <PlatformLockedNote />
           </div>
 
           <Separator />
 
-          {/* Password */}
+          {/* Password — 서버에서 **** 로 마스킹되어 내려오고 편집도 불가하므로 표시/숨기기 토글을 두지 않는다 */}
           <div className="space-y-2">
-            <Label htmlFor="smtp-password">비밀번호</Label>
-            <div className="relative max-w-md">
-              <Input
-                id="smtp-password"
-                type={showPassword ? 'text' : 'password'}
-                className="pr-10 focus-visible:ring-2"
-                value={form['smtp.password']}
-                onChange={(e) => updateField('smtp.password', e.target.value)}
-                placeholder="••••••••"
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
+            <SettingFieldLabel htmlFor="smtp-password" state="locked">
+              비밀번호
+            </SettingFieldLabel>
+            <Input
+              id="smtp-password"
+              type="password"
+              className="max-w-md"
+              value={form['smtp.password']}
+              disabled
+              placeholder="••••••••"
+            />
+            <PlatformLockedNote />
           </div>
 
           <Separator />
 
-          {/* STARTTLS */}
+          {/* STARTTLS — Switch 는 라벨 오른쪽에 놓이는 배치라 SettingFieldLabel 대신
+              라벨+배지를 왼쪽 열에 직접 조합한다(배지 자체는 동일 컴포넌트를 재사용). */}
           <div className="flex items-center justify-between max-w-md">
             <div className="space-y-1">
-              <Label htmlFor="smtp-starttls">STARTTLS 사용</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Label htmlFor="smtp-starttls">STARTTLS 사용</Label>
+                <SettingStateBadge state="locked" />
+              </div>
               <p className="text-sm text-muted-foreground">TLS 암호화로 SMTP 연결 보안</p>
+              <PlatformLockedNote />
             </div>
             <Switch
               id="smtp-starttls"
               aria-label="STARTTLS 사용"
               checked={form['smtp.starttls'] === 'true'}
-              onCheckedChange={(checked) => updateField('smtp.starttls', checked ? 'true' : 'false')}
+              disabled
             />
           </div>
 
@@ -205,30 +192,32 @@ export default function SmtpSettingsTab({ onReportDirty }: SmtpSettingsTabProps 
 
           {/* From Address */}
           <div className="space-y-2">
-            <Label htmlFor="smtp-from">발신자 주소</Label>
+            <SettingFieldLabel htmlFor="smtp-from" state="locked">
+              발신자 주소
+            </SettingFieldLabel>
             <Input
               id="smtp-from"
               className="max-w-md"
               value={form['smtp.from_address']}
-              onChange={(e) => updateField('smtp.from_address', e.target.value)}
+              disabled
               placeholder="noreply@example.com"
             />
             <p className="text-sm text-muted-foreground">이메일 발신자로 표시되는 주소</p>
+            <PlatformLockedNote />
           </div>
         </CardContent>
       </Card>
 
+      {/* 원래 저장/되돌리기 버튼 행이 있던 자리 — 배너로 대체하고 진단용 연결 테스트만 남긴다 */}
+      <PlatformLockedBanner>
+        이메일(SMTP) 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만
+        있고, 테넌트에서 변경할 수 없습니다.
+      </PlatformLockedBanner>
+
       <div className="flex items-center gap-3">
-        <Button onClick={handleSave} disabled={updateMutation.isPending || !hasChanges}>
-          {updateMutation.isPending ? '저장 중...' : '저장'}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={handleTest}
-          disabled={testMutation.isPending || hasChanges}
-        >
+        <Button variant="outline" onClick={handleTest} disabled={testMutation.isPending}>
           <Send className="h-4 w-4" />
-          {testMutation.isPending ? '발송 중...' : '테스트 발송'}
+          {testMutation.isPending ? '테스트 중...' : '연결 테스트'}
         </Button>
       </div>
     </div>

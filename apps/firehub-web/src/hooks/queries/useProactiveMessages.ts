@@ -6,7 +6,6 @@ import type {
   ProactiveJob,
   ProactiveJobExecution,
   ReportListItem,
-  SmtpSettingsRequest,
   UpdateProactiveJobRequest,
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
@@ -283,16 +282,8 @@ export function useSmtpSettings() {
   });
 }
 
-export function useUpdateSmtpSettings() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: SmtpSettingsRequest) =>
-      proactiveApi.updateSmtpSettings(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.smtp });
-    },
-  });
-}
+// SMTP 저장 훅은 없다 — P7-b 에서 SMTP 6키가 플랫폼 소유로 확정되어 테넌트 평면의
+// PUT /settings/smtp 가 항상 403 이다. 호출 지점을 남겨 두면 403 을 받는 버튼이 된다.
 
 export function useTestSmtpSettings() {
   return useMutation({

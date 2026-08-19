@@ -166,15 +166,6 @@ export interface UpdateReportTemplateRequest {
   style?: string;
 }
 
-export interface SmtpSettingsRequest {
-  'smtp.host'?: string;
-  'smtp.port'?: string;
-  'smtp.username'?: string;
-  'smtp.password'?: string;
-  'smtp.starttls'?: string;
-  'smtp.from_address'?: string;
-}
-
 /** 전역 리포트 목록의 행 1건. 본문(htmlContent)은 포함되지 않는다 — 뷰어에서 별도 조회한다. */
 export interface ReportListItem {
   executionId: number;
@@ -241,12 +232,11 @@ export const proactiveApi = {
   listReports: (params?: { limit?: number; offset?: number }) =>
     client.get<ReportListItem[]>('/proactive/reports', { params }),
 
-  // SMTP (3 methods)
+  // SMTP (2 methods) — 저장(PUT /settings/smtp)은 P7-b 에서 테넌트 평면 403 이 되어 제거했다.
+  // 연결 테스트는 값을 노출하지 않는 진단 액션이라 유지한다.
   getSmtpSettings: () =>
     client.get<Array<{ key: string; value: string; description: string | null; updatedAt: string }>>(
       '/settings/smtp',
     ),
-  updateSmtpSettings: (data: SmtpSettingsRequest) =>
-    client.put('/settings/smtp', data),
   testSmtpSettings: () => client.post('/settings/smtp/test'),
 };
