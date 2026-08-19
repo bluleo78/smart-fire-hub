@@ -33,6 +33,7 @@ import {
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
 import {
+  BUILTIN_AI_DEFAULTS,
   indexSettingsByKey,
   isTenantEditableAiKey,
   resolveSettingFieldState,
@@ -71,9 +72,9 @@ interface AISettingsForm {
   'ai.session_max_tokens': string;
 }
 
-// 폼 초기값은 전부 빈 문자열이다. 예전에는 여기에 하드코딩 기본값(예: session_max_tokens '50000')을
-// 넣었는데, 그러면 서버에 그 키의 행이 아예 없을 때도 입력창에 50000이 보여서 "기본값 없음" 배지와
-// 화면이 서로 모순된다(스펙 §5). 값은 서버 응답만이 채운다.
+// 조회 전 초기값은 전부 빈 문자열이다. 조회 후에는 "서버 값 → 코드 기본값(BUILTIN_AI_DEFAULTS)
+// → 빈 문자열" 순으로 채운다. 코드 기본값까지 보여주는 이유는 그 값이 실제로 적용되고 있기
+// 때문이고, 그 사실은 "내장 기본값" 배지가 함께 알린다.
 const EMPTY_VALUES: AISettingsForm = {
   'ai.api_key': '',
   'ai.cli_oauth_token': '',
@@ -84,15 +85,6 @@ const EMPTY_VALUES: AISettingsForm = {
   'ai.temperature': '',
   'ai.max_tokens': '',
   'ai.session_max_tokens': '',
-};
-
-// 값이 없는 편집 가능 필드에 힌트로만 노출하는 예시값 — 폼 상태에는 절대 들어가지 않는다.
-// (예전 하드코딩 기본값을 placeholder 로 격하시킨 것)
-const PLACEHOLDERS: Record<string, string> = {
-  'ai.max_turns': '10',
-  'ai.temperature': '1.0',
-  'ai.max_tokens': '16384',
-  'ai.session_max_tokens': '50000',
 };
 
 /**
@@ -168,11 +160,11 @@ export default function SettingsPage() {
     try {
       const { data } = await settingsApi.getByPrefix('ai');
       const byKey = indexSettingsByKey(data);
-      // 응답에 없는 키·값이 null 인 키는 빈 문자열로 둔다. "null"/"undefined" 문자열이 입력창에
-      // 렌더되는 일을 원천 차단하고, 값이 없다는 사실을 배지("기본값 없음")가 대신 말한다.
+      // 서버 값 → 코드 기본값 → 빈 문자열 순으로 채운다. null 폴백을 반드시 거치므로
+      // "null"/"undefined" 문자열이 입력창에 렌더되는 일은 없다.
       const values = { ...EMPTY_VALUES };
       (Object.keys(values) as (keyof AISettingsForm)[]).forEach((key) => {
-        values[key] = byKey[key]?.value ?? '';
+        values[key] = byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? '';
       });
       setSettings(byKey);
       setForm(values);
@@ -207,8 +199,9 @@ export default function SettingsPage() {
   const isEditable = (key: keyof AISettingsForm) =>
     fieldState(key) !== 'locked' && isTenantEditableAiKey(key);
 
-  // 값이 비어 있어도 오류로 보지 않는 필드: 플랫폼 기본값 행 자체가 없는 키(예: ai.session_max_tokens).
+  // 값이 비어 있어도 오류로 보지 않는 필드: DB 행도 코드 기본값도 없어 적용되는 값이 정말 없는 키.
   // 비어 있는 상태가 곧 "재정의 없음"이라 정상이고, 저장 페이로드에서도 제외된다.
+  // (코드 기본값이 있는 키는 조회 시 그 값으로 채워지므로 애초에 비어 있지 않다.)
   const isBlankAllowed = (key: keyof AISettingsForm) =>
     form[key].trim() === '' && fieldState(key) === 'no-default';
 
@@ -297,7 +290,9 @@ export default function SettingsPage() {
       const { data } = await settingsApi.getByPrefix('ai');
       const byKey = indexSettingsByKey(data);
       setSettings(byKey);
-      const restored = byKey[key]?.value ?? '';
+      // 해제 후 값도 조회와 같은 폴백을 거친다 — 코드 기본값이 있는 키를 빈칸으로 만들면
+      // 실제 적용값(예: 50000)과 화면이 어긋난다.
+      const restored = byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? '';
       setForm((prev) => ({ ...prev, [formKey]: restored }));
       setOriginal((prev) => ({ ...prev, [formKey]: restored }));
       setErrors((prev) => {
@@ -578,7 +573,6 @@ export default function SettingsPage() {
                   max={50}
                   className="w-full max-w-md"
                   value={form['ai.max_turns']}
-                  placeholder={PLACEHOLDERS['ai.max_turns']}
                   disabled={!isEditable('ai.max_turns')}
                   onChange={(e) => updateField('ai.max_turns', e.target.value)}
                 />
@@ -607,7 +601,6 @@ export default function SettingsPage() {
                   step={0.1}
                   className="w-full max-w-md"
                   value={form['ai.temperature']}
-                  placeholder={PLACEHOLDERS['ai.temperature']}
                   disabled={!isEditable('ai.temperature')}
                   onChange={(e) => updateField('ai.temperature', e.target.value)}
                 />
@@ -635,7 +628,6 @@ export default function SettingsPage() {
                   max={65536}
                   className="w-full max-w-md"
                   value={form['ai.max_tokens']}
-                  placeholder={PLACEHOLDERS['ai.max_tokens']}
                   disabled={!isEditable('ai.max_tokens')}
                   onChange={(e) => updateField('ai.max_tokens', e.target.value)}
                 />
@@ -664,7 +656,6 @@ export default function SettingsPage() {
                   step={10000}
                   className="w-full max-w-md"
                   value={form['ai.session_max_tokens']}
-                  placeholder={PLACEHOLDERS['ai.session_max_tokens']}
                   disabled={!isEditable('ai.session_max_tokens')}
                   onChange={(e) => updateField('ai.session_max_tokens', e.target.value)}
                 />

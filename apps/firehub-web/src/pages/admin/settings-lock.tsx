@@ -25,9 +25,13 @@ export function SettingStateBadge({ state }: { state: SettingFieldState }) {
   if (state === 'overridden') {
     return <Badge variant="info">테넌트 재정의 적용됨</Badge>;
   }
+  if (state === 'builtin-default') {
+    // "기본값 사용 중"(DB 행 상속)과 구분한다 — 이 키는 플랫폼에 시드된 행이 없고, 코드에 박힌
+    // 기본값이 적용되고 있다. "기본값 없음"이라고 하면 아무 값도 적용되지 않는다는 거짓이 된다.
+    return <Badge variant="outline">내장 기본값</Badge>;
+  }
   if (state === 'no-default') {
-    // "기본값 사용 중"과 구분한다 — 뒤에 실제 값이 적용되고 있는 것처럼 오해하면 안 된다.
-    // 이 키는 플랫폼에도 시드된 행이 없다.
+    // DB 행도 코드 기본값도 없는 경우 — 정말 적용되는 값이 없다.
     return <Badge variant="outline">기본값 없음</Badge>;
   }
   return <Badge variant="outline">기본값 사용 중</Badge>;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ResolvedSettingResponse } from '../types/settings';
 import {
+  BUILTIN_AI_DEFAULTS,
   indexSettingsByKey,
   isTenantEditableAiKey,
   resolveSettingFieldState,
@@ -47,6 +48,28 @@ describe('TENANT_EDITABLE_AI_KEYS', () => {
   });
 });
 
+describe('BUILTIN_AI_DEFAULTS', () => {
+  // 백엔드 AiAgentProxyService(L226~232)의 폴백 인자와 값이 같아야 한다 — 어긋나면 화면이
+  // 실제 적용되지 않는 값을 "내장 기본값"이라고 보여준다.
+  it('AiAgentProxyService 의 코드 폴백 값과 일치한다', () => {
+    expect(BUILTIN_AI_DEFAULTS).toEqual({
+      'ai.agent_type': 'sdk',
+      'ai.model': 'claude-sonnet-5',
+      'ai.max_turns': '10',
+      'ai.temperature': '1.0',
+      'ai.max_tokens': '16384',
+      'ai.session_max_tokens': '50000',
+    });
+  });
+
+  it('코드 폴백이 없는 키는 담지 않는다', () => {
+    // system_prompt 는 null 이 그대로 전달되고, 비밀 키에는 기본값이라는 개념이 없다.
+    ['ai.system_prompt', 'ai.api_key', 'ai.cli_oauth_token'].forEach((key) =>
+      expect(BUILTIN_AI_DEFAULTS[key]).toBeUndefined(),
+    );
+  });
+});
+
 describe('resolveSettingFieldState', () => {
   it('tenantEditable=false 면 값과 무관하게 잠금이다', () => {
     expect(
@@ -74,15 +97,28 @@ describe('resolveSettingFieldState', () => {
     ).toBe('inherited');
   });
 
-  it('value=null 이면 기본값 없음이다', () => {
+  it('DB 값이 없고 코드 기본값이 있으면 내장 기본값이다', () => {
+    // 응답에서 아예 빠지는 ai.session_max_tokens 의 실제 상황 — AiAgentProxyService 가 50000 을
+    // 적용하고 있으므로 "기본값 없음"이 아니다.
+    expect(resolveSettingFieldState('ai.session_max_tokens', undefined)).toBe('builtin-default');
     expect(
       resolveSettingFieldState('ai.max_turns', setting('ai.max_turns', { value: null })),
-    ).toBe('no-default');
+    ).toBe('builtin-default');
   });
 
-  it('응답에 없는 편집 허용 키는 기본값 없음이다', () => {
-    // 플랫폼 시드 행도 오버라이드도 없는 ai.session_max_tokens 의 실제 상황.
-    expect(resolveSettingFieldState('ai.session_max_tokens', undefined)).toBe('no-default');
+  it('DB 값도 코드 기본값도 없으면 기본값 없음이다', () => {
+    // ai.system_prompt 은 백엔드가 null 을 그대로 넘겨 코드 기본값이 없다.
+    expect(
+      resolveSettingFieldState('ai.system_prompt', setting('ai.system_prompt', { value: null })),
+    ).toBe('no-default');
+    expect(resolveSettingFieldState('ai.system_prompt', undefined)).toBe('no-default');
+  });
+
+  it('응답에 없는 편집 허용 키를 잠금으로 떨어뜨리지 않는다', () => {
+    // 조회 miss 를 falsy 로 흘리면 편집 가능한 키가 잠긴 것으로 뒤집힌다 — 그 반대를 단언한다.
+    TENANT_EDITABLE_AI_KEYS.forEach((key) => {
+      expect(resolveSettingFieldState(key, undefined)).not.toBe('locked');
+    });
   });
 
   it('응답에 없는 잠금 키는 잠금으로 남는다(fail-closed)', () => {

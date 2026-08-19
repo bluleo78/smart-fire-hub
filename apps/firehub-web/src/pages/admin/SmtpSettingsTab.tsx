@@ -99,6 +99,12 @@ export default function SmtpSettingsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* 아래 6필드의 `state="locked"` 는 의도적으로 하드코딩이다 — 서버 플래그로 바꾸지 말 것.
+              AI 탭은 키마다 상태가 달라 서버 `tenantEditable` 을 따라야 하지만, SMTP 6키는 정책상
+              전부 균일하게 플랫폼 잠금이라 데이터로 구동할 편차가 없다. 플래그를 받으려면 읽기를
+              `GET /settings?prefix=smtp` 로 옮겨야 하는데, 그 엔드포인트의 권한은 `ai:settings` 이고
+              여기서 쓰는 `GET /settings/smtp` 는 `settings:write` 다 — 갈아타면 한쪽만 가진 역할에서
+              탭 전체가 403 이 된다. 표시를 데이터로 구동하려다 화면을 못 여는 사람을 만드는 셈이다. */}
           {/* Host */}
           <div className="space-y-2">
             <SettingFieldLabel htmlFor="smtp-host" state="locked">
