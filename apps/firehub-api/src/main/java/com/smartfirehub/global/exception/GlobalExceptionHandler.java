@@ -412,6 +412,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
   }
 
+  /** 운영자 평면에서 대상 테넌트가 없을 때 404. */
+  @ExceptionHandler(com.smartfirehub.platform.exception.TenantNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleTenantNotFound(
+      com.smartfirehub.platform.exception.TenantNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
   @ExceptionHandler(IllegalArgumentException.class)
   public ResponseEntity<ErrorResponse> handleIllegalArgument(
       IllegalArgumentException ex, HttpServletRequest request) {
