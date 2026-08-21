@@ -101,14 +101,24 @@ public class SettingsService {
 
   /** 비밀값은 복호화 후 마스킹해서 내보낸다. 평문도, 암호문도 응답에 실리지 않는다. */
   private SettingResponse maskSecret(SettingResponse setting) {
-    if (SECRET_KEYS.contains(setting.key())) {
-      String masked =
-          setting.value() == null || setting.value().isBlank()
-              ? ""
-              : encryptionService.maskValue(encryptionService.decrypt(setting.value()));
-      return new SettingResponse(setting.key(), masked, setting.description(), setting.updatedAt());
-    }
-    return setting;
+    String masked = maskIfSecret(setting.key(), setting.value());
+    if (masked == setting.value()) return setting;
+    return new SettingResponse(setting.key(), masked, setting.description(), setting.updatedAt());
+  }
+
+  /**
+   * 마스킹 판정의 <b>값 단위</b> 형태. {@link #maskSecret}(플랫폼 행)과
+   * {@link #getResolvedByPrefix}(테넌트 오버라이드 값)가 공유한다 — 오버라이드 쪽에 판정을 복사하면
+   * {@link #SECRET_KEYS} 에 키가 추가될 때 한쪽만 반영되어 다시 암호문이 새어 나간다.
+   *
+   * <p>비밀 키가 아니면 <b>받은 참조를 그대로</b> 돌려준다. {@link #maskSecret} 이 그 동일성으로
+   * "마스킹이 일어났는가"를 판정해 불필요한 DTO 재생성을 피한다.
+   */
+  private String maskIfSecret(String key, String value) {
+    if (!SECRET_KEYS.contains(key)) return value;
+    return value == null || value.isBlank()
+        ? ""
+        : encryptionService.maskValue(encryptionService.decrypt(value));
   }
 
   /**
@@ -174,9 +184,15 @@ public class SettingsService {
    * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 {@code prefix=ai} 조회가
    * {@code ai.api_key} 의 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
    * 기록하듯 이 프로젝트는 정확히 그 사고를 이미 한 번 냈다({@code getSmtpSettings} 만 마스킹하고
-   * {@code getAll} 은 빠뜨렸던 건). 오버라이드 값은 마스킹하지 않아도 된다 — 비밀 키 4개는 전부
-   * 플랫폼 잠금이라 오버라이드 행으로 존재할 수 없다. 그것이 이 누락이 어떤 테스트에도 걸리지
-   * 않았던 이유이기도 하다.
+   * {@code getAll} 은 빠뜨렸던 건).
+   *
+   * <p><b>오버라이드 값도 {@link #maskIfSecret} 을 지난다.</b> P7-c1 이전 이 자리에는 "오버라이드
+   * 값은 마스킹하지 않아도 된다 — 비밀 키 4개는 전부 플랫폼 잠금이라 오버라이드 행으로 존재할 수
+   * 없다"고 적혀 있었고, 그 전제는 당시 참이었다. <b>P7-c1 Task 1 이 {@code smtp.*} 6키를 테넌트
+   * 오버라이드로 열면서 그 전제가 죽었다</b> — {@code smtp.password} 는 {@link #SECRET_KEYS} 의
+   * 원소이므로 이제 오버라이드 행으로 실재하고, 마스킹을 빠뜨리면 <b>테넌트 자기 비밀번호의 AES
+   * 암호문이 그대로 응답에 실린다</b>. 그 문단은 "이 누락이 어떤 테스트에도 걸리지 않았던 이유"까지
+   * 스스로 적어 두고 있었다.
    */
   @Transactional(readOnly = true)
   public List<ResolvedSettingResponse> getResolvedByPrefix(String prefix) {
@@ -195,7 +211,9 @@ public class SettingsService {
             key -> {
               SettingResponse platformRow = platformByKey.get(key);
               boolean overridden = overrides.containsKey(key);
-              String value = overridden ? overrides.get(key) : platformRow.value();
+              // 플랫폼 행은 위에서 이미 maskSecret 을 지났고, 오버라이드 값은 여기서 지난다.
+              String value =
+                  overridden ? maskIfSecret(key, overrides.get(key)) : platformRow.value();
               return new ResolvedSettingResponse(
                   key,
                   value,
@@ -235,9 +253,13 @@ public class SettingsService {
    * 로만 바뀐다.
    *
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
-   * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다. 반대로
-   * 마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 테넌트 오버라이드 허용 6키 중
-   * {@link #SECRET_KEYS} 에 속하는 키가 하나도 없기 때문이다(비밀 키는 전부 플랫폼 잠금).
+   * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다.
+   *
+   * <p><b>SMTP 키는 {@link #normalizeSmtpWrite} 를 추가로 지난다.</b> P7-c1 이전 이 자리에는
+   * "마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 허용 키 중 {@link #SECRET_KEYS}
+   * 에 속하는 키가 하나도 없다"고 적혀 있었고, Task 1 이 {@code smtp.*} 를 열면서 그 근거가
+   * 죽었다({@code smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에
+   * 깨웠다 — 평문 저장·마스크 센티널 덮어쓰기·포트 검증 부재.
    *
    * <p>{@code @Transactional} 이 필수다 — {@code tenant_settings} 는 RLS 테이블이라 GUC 가
    * 트랜잭션이 열릴 때만 주입된다({@code TenantAwareTransactionManager.doBegin}). 트랜잭션 없이
@@ -255,7 +277,18 @@ public class SettingsService {
 
     validateValues(settings);
 
-    settings.forEach((key, value) -> tenantSettingsRepository.upsert(key, value, userId));
+    // SMTP 키만 정규화(포트 검증·센티널 제거·암호화)를 지난다. 정규화 결과를 나머지 키와 합친 뒤
+    // **여기서만** 저장 대상을 정한다 — 쓰기까지 헬퍼에 넣으면 두 평면이 저장 대상에서 갈라질 때
+    // 조용히 어긋난다(플랫폼은 system_settings, 테넌트는 tenant_settings).
+    Map<String, String> toWrite = new HashMap<>(settings);
+    toWrite.keySet().removeAll(ALLOWED_SMTP_KEYS);
+    toWrite.putAll(
+        normalizeSmtpWrite(
+            settings.entrySet().stream()
+                .filter(e -> ALLOWED_SMTP_KEYS.contains(e.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))));
+
+    toWrite.forEach((key, value) -> tenantSettingsRepository.upsert(key, value, userId));
   }
 
   /**
@@ -383,14 +416,20 @@ public class SettingsService {
   }
 
   /**
-   * 비밀 값(ai.api_key, ai.cli_oauth_token, embedding.api_key)은 저장 전 암호화한다. embedding.api_key 는 Ollama
-   * 로컬 등 키가 불필요한 경우 빈 문자열일 수 있으므로, 빈 값은 암호화하지 않고 그대로 둔다(빈 ciphertext 복호화 실패 방지).
+   * 비밀 값(ai.api_key, ai.cli_oauth_token, embedding.api_key, smtp.password)은 저장 전 암호화한다.
+   * embedding.api_key 는 Ollama 로컬 등 키가 불필요한 경우, smtp.password 는 인증 없는 릴레이를 쓰는 경우
+   * 빈 문자열일 수 있으므로, 빈 값은 암호화하지 않고 그대로 둔다(빈 ciphertext 복호화 실패 방지).
+   *
+   * <p><b>암호화 판정은 여기 하나뿐이다.</b> P7-c1 이전에는 {@code smtp.password} 암호화가
+   * {@code applyPlatformSmtpSettings} 안에 따로 있었고(같은 판정의 두 번째 자리), 테넌트 평면이
+   * 열렸을 때 그 사본이 따라오지 않아 <b>평문이 저장됐다</b>. 새 비밀 키는 {@link #SECRET_KEYS} 와
+   * 이 메서드 두 곳만 고친다.
    */
   private String encryptIfSecret(String key, String value) {
     if ("ai.api_key".equals(key) || "ai.cli_oauth_token".equals(key)) {
       return encryptionService.encrypt(value);
     }
-    if ("embedding.api_key".equals(key)) {
+    if ("embedding.api_key".equals(key) || "smtp.password".equals(key)) {
       return value.isBlank() ? value : encryptionService.encrypt(value);
     }
     return value;
@@ -440,9 +479,11 @@ public class SettingsService {
 
 
   /**
-   * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 검증·마스킹·암호화 로직 그대로다. 이름만
-   * "플랫폼 쓰기 본체"로 옮겼고, {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이
-   * 바로 이 메서드를 부른다.
+   * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 로직 그대로다. 이름만 "플랫폼 쓰기 본체"로 옮겼고,
+   * {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이 바로 이 메서드를 부른다.
+   *
+   * <p>검증·센티널·암호화는 {@link #normalizeSmtpWrite} 로 빠졌고 여기 남은 것은 <b>플랫폼 전용</b>
+   * 두 가지다: 플랫폼 화이트리스트 판정과 {@code system_settings} 쓰기.
    */
   private void applyPlatformSmtpSettings(Map<String, String> settings, Long userId) {
     for (String key : settings.keySet()) {
@@ -451,6 +492,31 @@ public class SettingsService {
       }
     }
 
+    Map<String, String> toUpdate = normalizeSmtpWrite(settings);
+
+    if (!toUpdate.isEmpty()) {
+      settingsRepository.updateSettings(toUpdate, userId);
+    }
+  }
+
+  /**
+   * SMTP 쓰기의 <b>평면 공통</b> 부분: 포트 범위 검증 · 마스크 센티널 제거 · 비밀번호 암호화.
+   * {@link #applyPlatformSmtpSettings}(→ {@code system_settings})와 {@link #updateSettings}
+   * (→ {@code tenant_settings})가 함께 부른다.
+   *
+   * <p><b>쓰기는 일부러 여기 없다.</b> 두 평면은 저장소가 다르고, 저장 대상까지 공유하면 한쪽이
+   * 바뀔 때 다른 쪽이 조용히 따라가거나 조용히 어긋난다. 실제로 이 결함 자체가 "플랫폼 경로에만
+   * 있던 검증·암호화가 새로 열린 테넌트 경로에 없었던 것"이다 — 공유 범위를 값 변환까지로 좁히고,
+   * 어느 테이블에 쓰는지는 호출부가 각자 정한다.
+   *
+   * <p><b>센티널은 현재 값과 비교하지 않고 페이로드에서 떨어뜨린다.</b> {@code ****} 로 시작하는
+   * 값은 "화면이 받은 마스크를 그대로 돌려보냈다 = 사용자가 안 고쳤다"는 뜻이라 현재 값이 무엇이든
+   * 결론이 같다. 비교하려면 현재 값을 읽어야 하고, 그러려면 이 헬퍼가 <b>어느 저장소를 읽을지</b>
+   * 알아야 한다 — 위에서 밀어낸 평면 지식이 읽기 쪽 문으로 다시 들어온다.
+   *
+   * <p>입력 맵은 건드리지 않고 새 맵을 만든다({@code Map.of} 로 온 불변 맵이 흔하다).
+   */
+  private Map<String, String> normalizeSmtpWrite(Map<String, String> settings) {
     // smtp.port 범위 검증 — 1~65535 범위를 벗어나면 400 Bad Request
     if (settings.containsKey("smtp.port")) {
       String portStr = settings.get("smtp.port");
@@ -464,33 +530,29 @@ public class SettingsService {
       }
     }
 
-    boolean hasMaskedPassword = isMaskedApiKey(settings.get("smtp.password"));
-
-    Map<String, String> filtered =
-        settings.entrySet().stream()
-            .filter(e -> !(hasMaskedPassword && "smtp.password".equals(e.getKey())))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-    Map<String, String> toUpdate =
-        filtered.entrySet().stream()
-            .collect(
-                Collectors.toMap(
-                    Map.Entry::getKey,
-                    e ->
-                        "smtp.password".equals(e.getKey()) && !e.getValue().isBlank()
-                            ? encryptionService.encrypt(e.getValue())
-                            : e.getValue()));
-
-    if (!toUpdate.isEmpty()) {
-      settingsRepository.updateSettings(toUpdate, userId);
-    }
+    Map<String, String> normalized = new HashMap<>();
+    settings.forEach(
+        (key, value) -> {
+          // 마스크 센티널이면 그 키만 통째로 버린다 — 저장하면 살아 있는 비밀번호가 문자열
+          // "****abcd" 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
+          if ("smtp.password".equals(key) && isMaskedApiKey(value)) return;
+          normalized.put(key, encryptIfSecret(key, value));
+        });
+    return normalized;
   }
 
   /**
-   * SMTP 6키는 전부 화이트리스트에 없는 플랫폼 잠금 키다(발신 도메인 신뢰도를 전 테넌트가 공유한다)
-   * — {@code settingsRepository} 를 직접 읽고 해석기({@link #resolveOverrides})를 아예 타지 않으므로
-   * 이 사실이 지금은 무해하지만, 장래에 SMTP 가 테넌트별로 열리면 이 메서드도 해석기를 타도록
-   * 바뀌어야 한다.
+   * 실제 메일 발송이 쓰는 SMTP 접속 정보. <b>플랫폼 값만</b> 읽는다.
+   *
+   * <p>이 javadoc 에는 "SMTP 6키는 전부 플랫폼 잠금이라 해석기를 타지 않아도 무해하지만, 장래에
+   * SMTP 가 테넌트별로 열리면 이 메서드도 해석기를 타도록 바뀌어야 한다"고 적혀 있었다.
+   * <b>P7-c1 Task 1 이 그 "장래"를 만들었다</b> — 6키는 이제 테넌트 오버라이드 허용이다. 그런데 이
+   * 메서드는 여전히 {@code settingsRepository} 를 직접 읽으므로, 테넌트가 자기 SMTP 를 저장해도
+   * 발송은 플랫폼 자격증명으로 나간다(화면은 {@code overridden=true} 라고 보고한다).
+   *
+   * <p>Task 2 에서 이 부분을 고치지 <b>않은</b> 이유: 해석기로 바꾸는 것은 비밀값 취급이 아니라
+   * 메일 발송 semantics 변경이고, 발송 경로 전환은 별도 태스크의 범위다. 이 주석은 그 전환이 아직
+   * 안 됐다는 사실을 숨기지 않기 위해 남긴다.
    */
   @Transactional(readOnly = true)
   public Map<String, String> getSmtpConfig() {

@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
+import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
@@ -35,6 +36,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   @Autowired private TenantSettingsRepository tenantSettingsRepository;
   @Autowired private TransactionTemplate transactionTemplate;
   @Autowired private DSLContext dsl;
+  @Autowired private EncryptionService encryptionService;
 
   private Long testTenant;
 
@@ -226,4 +228,108 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         .hasMessageContaining("ai.model");
   }
 
+  /**
+   * 테넌트가 저장한 SMTP 비밀번호는 암호문으로 저장되고, 읽기 경로에서는 마스킹돼 나온다.
+   *
+   * <p><b>두 단언을 한 테스트에 두는 이유.</b> 암호화와 마스킹은 한 변경의 두 끝이다 —
+   * {@code maskSecret} 이 {@code decrypt} 를 부르므로 마스킹만 먼저 고치면 평문 행에서
+   * 복호화가 터지고, 암호화만 먼저 고치면 암호문이 그대로 새어 나간다. 따로 두면 한쪽만
+   * 고쳐진 창을 아무도 못 본다.
+   *
+   * <p>평문을 {@code :} 없이·8자보다 길게 고른 것은 의도적이다. {@code :} 가 들어 있으면
+   * "암호문은 {@code iv:ciphertext} 라 {@code :} 를 포함한다"는 전제 확인이 공허해지고, 8자보다
+   * 짧으면 마스킹 결과({@code "****" + 뒤 4글자})가 평문을 통째로 포함해 "평문이 안 실린다"는
+   * 단언이 올바른 코드에서도 실패한다.
+   */
+  @Test
+  void 테넌트_SMTP_비밀번호는_암호화_저장되고_마스킹되어_읽힌다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-enc");
+    TenantContext.set(testTenant);
+    String plain = "tenant-smtp-secret";
+
+    settingsService.updateSettings(Map.of("smtp.password", plain), null);
+
+    // (1) 저장된 원시 값은 평문이 아니라 암호문이다.
+    String stored = tenantRawValue("smtp.password").orElseThrow();
+    assertThat(stored).isNotEqualTo(plain);
+    assertThat(stored).contains(":"); // 이 프로젝트 암호문 형식은 iv:ciphertext 다.
+    assertThat(encryptionService.decrypt(stored)).isEqualTo(plain);
+
+    // (2) 읽기 경로는 마스킹한다 — 평문도, 암호문도 응답에 실리지 않는다.
+    String read = resolvedSmtpValue("smtp.password");
+    assertThat(read).startsWith("****");
+    assertThat(read).doesNotContain(plain);
+    assertThat(read).doesNotContain(stored);
+  }
+
+  /**
+   * 마스킹된 센티널을 그대로 PUT 해도 살아 있는 테넌트 비밀번호를 덮어쓰지 않는다.
+   *
+   * <p>실제 UI 흐름이다: 화면은 {@code GET} 으로 {@code ****abcd} 를 받아 폼에 채우고, 사용자가
+   * 다른 필드만 고쳐 폼 전체를 다시 보낸다. 방어가 없으면 비밀번호가 문자열 {@code ****abcd} 로
+   * 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
+   */
+  @Test
+  void 테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-mask");
+    TenantContext.set(testTenant);
+    String plain = "real-tenant-password";
+
+    settingsService.updateSettings(Map.of("smtp.password", plain), null);
+    String ciphertextBefore = tenantRawValue("smtp.password").orElseThrow();
+
+    String fromScreen = resolvedSmtpValue("smtp.password");
+    // 되돌려 보내는 값이 정말 센티널인지 **먼저** 못 박는다. 이 단언이 없으면 마스킹이 없는
+    // 상태에서도 "평문을 다시 저장했더니 값이 그대로다"로 통과해 버리는 공허한 테스트가 된다.
+    assertThat(fromScreen).startsWith("****");
+
+    settingsService.updateSettings(
+        Map.of("smtp.host", "smtp.tenant.example.com", "smtp.password", fromScreen), null);
+
+    // 비밀번호는 손대지 않은 그대로다(암호문 동일 + 복호화하면 원래 평문).
+    String after = tenantRawValue("smtp.password").orElseThrow();
+    assertThat(after).isEqualTo(ciphertextBefore);
+    assertThat(encryptionService.decrypt(after)).isEqualTo(plain);
+
+    // 같은 요청의 다른 필드는 정상 저장된다 — 센티널 때문에 페이로드 전체가 버려지면 안 된다.
+    assertThat(tenantRawValue("smtp.host")).contains("smtp.tenant.example.com");
+  }
+
+  /**
+   * {@code smtp.port} 범위 검증이 테넌트 평면에도 적용된다.
+   *
+   * <p>검증이 플랫폼 경로에만 있던 동안 테넌트는 {@code 99999} 를 저장할 수 있었다 — 저장은
+   * 성공하고 실패는 한참 뒤 메일 발송에서 드러난다.
+   */
+  @Test
+  void 테넌트_SMTP_포트_범위를_벗어나면_거부된다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-port");
+    TenantContext.set(testTenant);
+
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("smtp.port", "99999"), null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("65535");
+
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("smtp.port", "not-a-port"), null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not-a-port");
+
+    // 거부는 무동작이어야 한다 — 검증보다 쓰기가 먼저면 잘못된 값이 행으로 남는다.
+    assertThat(tenantRawValue("smtp.port")).isEmpty();
+  }
+
+  /** 테넌트 오버라이드 행의 <b>저장된 그대로</b>의 값(암호화됐다면 암호문). */
+  private java.util.Optional<String> tenantRawValue(String key) {
+    return runInTenantTransaction(
+        transactionTemplate, testTenant, () -> tenantSettingsRepository.findValue(key));
+  }
+
+  /** 화면이 실제로 받는 값 — {@code getResolvedByPrefix("smtp")} 결과에서 한 키를 꺼낸다. */
+  private String resolvedSmtpValue(String key) {
+    return settingsService.getResolvedByPrefix("smtp").stream()
+        .filter(s -> key.equals(s.key()))
+        .findFirst()
+        .orElseThrow()
+        .value();
+  }
 }

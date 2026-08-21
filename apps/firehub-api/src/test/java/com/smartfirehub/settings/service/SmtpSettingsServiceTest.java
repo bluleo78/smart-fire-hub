@@ -17,11 +17,17 @@ import org.springframework.transaction.annotation.Transactional;
  * SettingsService SMTP 관련 메서드 커버리지 보강 테스트. getSmtpSettings / updateSmtpSettings / getSmtpConfig /
  * 유효성 검증을 검증한다.
  *
- * <p><b>P7-b Task 5 이후 이 클래스 전체가 플랫폼 평면 호출을 재현한다.</b> SMTP 6키는 발신 도메인
- * 신뢰도를 전 테넌트가 공유하므로 완전한 플랫폼 잠금이고, 테넌트 평면 진입점
- * ({@code updateSmtpSettings})은 <b>무조건</b> 거부한다. 따라서 검증 대상 로직(화이트리스트·포트
- * 범위·마스킹·암호화)에 도달하는 유일한 경로는 {@code updatePlatformSettings} 이며, 이 파일의 쓰기
- * 호출은 전부 그것을 쓴다.
+ * <p><b>이 클래스가 덮는 것은 플랫폼 평면이다.</b> 쓰기 호출은 전부
+ * {@code updatePlatformSettings}(→ {@code system_settings})를 쓴다.
+ *
+ * <p>P7-c1(2026-08-22) 이전 이 자리에는 "SMTP 6키는 발신 도메인 신뢰도를 전 테넌트가 공유하므로
+ * 완전한 플랫폼 잠금이고, 따라서 검증 대상 로직(화이트리스트·포트 범위·마스킹·암호화)에 도달하는
+ * <b>유일한</b> 경로는 {@code updatePlatformSettings}"라고 적혀 있었다. <b>Task 1 이 6키를 테넌트
+ * 오버라이드로 재분류하면서 그 '유일한 경로'가 둘이 됐다</b> — 테넌트 평면
+ * ({@code updateSettings} → {@code tenant_settings})이 같은 검증·센티널·암호화 로직
+ * ({@code normalizeSmtpWrite})을 공유한다. 그쪽 계약은
+ * {@code SettingsWritePlaneTest} 가 덮는다(암호화·마스킹·센티널·포트 3건). 여기의 녹색은
+ * "공유 추출이 플랫폼 동작을 바꾸지 않았다"는 증거로 읽으면 된다.
  *
  * <p>기본 테넌트 컨텍스트를 지우는 것({@link #clearTenantContextForPlatformSmtpCalls})은 이제
  * <b>허용을 얻기 위한 조건이 아니다</b> — 운영자 요청이 테넌트 컨텍스트 없이 도착한다는 사실을
