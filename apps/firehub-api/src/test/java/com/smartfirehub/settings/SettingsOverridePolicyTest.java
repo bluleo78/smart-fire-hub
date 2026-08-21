@@ -12,21 +12,23 @@ import org.junit.jupiter.api.Test;
 class SettingsOverridePolicyTest {
 
   @Test
-  void 오버라이드_허용_키는_6개다() {
+  void 오버라이드_허용_키는_12개다() {
+    // P7-c1(2026-08-22): smtp.* 6키가 플랫폼 잠금에서 테넌트 오버라이드 허용으로 재분류됐다.
     assertThat(SettingsOverridePolicy.tenantOverridableKeys())
         .containsExactlyInAnyOrder(
             "ai.system_prompt", "ai.model", "ai.temperature",
-            "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens");
+            "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens",
+            "smtp.host", "smtp.port", "smtp.username",
+            "smtp.password", "smtp.starttls", "smtp.from_address");
   }
 
   @Test
   void 플랫폼_잠금_키는_거부된다() {
-    // 자격증명·임베딩·SMTP 는 전부 플랫폼 소유다. embedding.model 은 벡터 차원을 바꿔
-    // 기존 임베딩 전량을 무효화하므로 특히 테넌트에게 줄 수 없다.
+    // 자격증명·임베딩은 플랫폼 소유다. embedding.model 은 벡터 차원을 바꿔 기존 임베딩
+    // 전량을 무효화하므로 특히 테넌트에게 줄 수 없다. smtp.* 는 P7-c1 로 더 이상 여기 없다.
     assertThat(SettingsOverridePolicy.isTenantOverridable("ai.api_key")).isFalse();
     assertThat(SettingsOverridePolicy.isTenantOverridable("ai.agent_type")).isFalse();
     assertThat(SettingsOverridePolicy.isTenantOverridable("embedding.model")).isFalse();
-    assertThat(SettingsOverridePolicy.isTenantOverridable("smtp.password")).isFalse();
   }
 
   @Test

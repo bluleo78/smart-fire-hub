@@ -25,13 +25,15 @@ public class SettingsService {
 
   /**
    * <b>플랫폼 쓰기 경로({@link #updatePlatformSettings})의 화이트리스트다(P7-b 이전에는
-   * {@link #updateSettings} 자신의 화이트리스트였다).</b> 테넌트가 오버라이드할 수 있는 6키
-   * ({@link SettingsOverridePolicy#tenantOverridableKeys}) 는 이 9키의 <b>부분집합</b>이다 —
-   * {@code ai.api_key}/{@code ai.agent_type}/{@code ai.cli_oauth_token} 은 여기 있지만 테넌트
-   * 화이트리스트에는 없다(과금 주체·실행 형태라 플랫폼이 갖는다).
+   * {@link #updateSettings} 자신의 화이트리스트였다).</b> 테넌트 오버라이드 허용 키
+   * ({@link SettingsOverridePolicy#tenantOverridableKeys}) 는 이 9키를 포함한 세 서브
+   * 화이트리스트({@link #ALLOWED_AI_KEYS}/{@link #ALLOWED_SMTP_KEYS}/{@link #ALLOWED_EMBEDDING_KEYS})
+   * 의 <b>합집합의 부분집합</b>이다 — {@code ai.api_key}/{@code ai.agent_type}/
+   * {@code ai.cli_oauth_token} 은 여기 있지만 테넌트 화이트리스트에는 없다(과금 주체·실행 형태라
+   * 플랫폼이 갖는다).
    */
-  // 패키지 가시성: SettingsOverridePolicyTest 가 "테넌트 6키 ⊆ 플랫폼 9키" 불변식을
-  // 실행 가능한 단언으로 고정한다(javadoc 문장만으로는 깨져도 아무도 모른다).
+  // 패키지 가시성: SettingsKeyWhitelistInvariantTest 가 "테넌트 허용 키 ⊆ 플랫폼 쓰기 가능 키
+  // 합집합" 불변식을 실행 가능한 단언으로 고정한다(javadoc 문장만으로는 깨져도 아무도 모른다).
   static final Set<String> ALLOWED_AI_KEYS =
       Set.of(
           "ai.model",
@@ -44,8 +46,12 @@ public class SettingsService {
           "ai.agent_type",
           "ai.cli_oauth_token");
 
-  /** SMTP 6키는 전부 플랫폼 잠금이라 테넌트 화이트리스트에 대응하는 부분집합이 없다 — 근거는 {@link #ALLOWED_AI_KEYS} 와 같다. */
-  private static final Set<String> ALLOWED_SMTP_KEYS =
+  /**
+   * SMTP 6키. P7-c1(2026-08-22)부터 전부 테넌트 오버라이드 허용이다 — {@link
+   * SettingsOverridePolicy#tenantOverridableKeys} 참조. 패키지 가시성 이유는 {@link
+   * #ALLOWED_AI_KEYS} 와 같다.
+   */
+  static final Set<String> ALLOWED_SMTP_KEYS =
       Set.of(
           "smtp.host",
           "smtp.port",
@@ -56,7 +62,8 @@ public class SettingsService {
 
   // 임베딩 provider 설정 키 (V63 시드). embedding.api_key 는 ai.api_key 와 동일하게 암호화/마스킹 처리한다.
   // 4키 전부 플랫폼 잠금이라 테넌트 화이트리스트에 대응하는 부분집합이 없다 — 근거는 ALLOWED_AI_KEYS 와 같다.
-  private static final Set<String> ALLOWED_EMBEDDING_KEYS =
+  // 패키지 가시성 이유는 ALLOWED_AI_KEYS 와 같다(SettingsKeyWhitelistInvariantTest 가 읽는다).
+  static final Set<String> ALLOWED_EMBEDDING_KEYS =
       Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
 
   /**
@@ -218,13 +225,14 @@ public class SettingsService {
   }
 
   /**
-   * <b>테넌트 평면</b> 쓰기. {@link SettingsOverridePolicy#isTenantOverridable} 화이트리스트(6키)만
-   * 받아 {@code tenant_settings} 에 저장한다 — {@code system_settings}(전역 18행)는 절대 건드리지
-   * 않는다. 이 구분이 이 밴드의 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전 테넌트에 적용됨).
+   * <b>테넌트 평면</b> 쓰기. {@link SettingsOverridePolicy#isTenantOverridable} 화이트리스트
+   * (12키: {@code ai.*} 6 + {@code smtp.*} 6, P7-c1 재분류 이후)만 받아 {@code tenant_settings}
+   * 에 저장한다 — {@code system_settings}(전역 18행)는 절대 건드리지 않는다. 이 구분이 이 밴드의
+   * 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전 테넌트에 적용됨).
    *
    * <p>거부 메시지에 키 이름을 넣는다 — web 이 어느 필드가 잠겼는지 사용자에게 보여줄 수 있어야
-   * 하기 때문이다. 플랫폼 잠금 키(비밀 키·SMTP·embedding.*) 는 {@link #updatePlatformSettings} 로만
-   * 바뀐다.
+   * 하기 때문이다. 플랫폼 잠금 키(자격증명·{@code embedding.*}) 는 {@link #updatePlatformSettings}
+   * 로만 바뀐다.
    *
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
    * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다. 반대로
