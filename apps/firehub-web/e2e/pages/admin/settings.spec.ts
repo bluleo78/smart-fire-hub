@@ -841,10 +841,19 @@ test.describe('설정 페이지', () => {
       expect(new URL(page.url()).pathname).toBe('/admin/settings');
     });
 
-    test('이메일 탭을 떠나면 그 탭의 dirty 보고가 해제된다', async ({ authenticatedPage: page }) => {
+    test('이메일 탭을 떠난 뒤에는 유령 이탈 다이얼로그가 뜨지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
       // Radix TabsContent 는 비활성 탭을 언마운트한다 — 폼 state 를 소유한 SMTP 탭이 사라지면서
       // 편집 내용도 함께 사라지는데, 합산기에 남은 dirty=true 를 지우지 않으면 **존재하지 않는
-      // 변경** 때문에 이탈 다이얼로그가 뜬다.
+      // 변경** 때문에 이탈 다이얼로그가 뜬다. 이 테스트가 고정하는 것은 그 유령 다이얼로그의
+      // 부재뿐이다.
+      //
+      // **편집 유실 자체는 이 테스트가 옳다고 말하는 것이 아니다.** 탭을 바꾸면 SMTP 미저장
+      // 편집이 경고 없이 사라지는데(AI 탭은 폼 state 를 SettingsPage 가 소유해 살아남는다 —
+      // 비대칭이다), 그 손실은 P7-c1 이 이메일 탭을 편집 가능하게 열면서 처음 생긴 경로이고
+      // 후속 과제다. 누군가 그 손실을 고치더라도 이 단언(유령 다이얼로그 부재)은 계속 참이어야
+      // 한다 — 빨개진다면 고치는 쪽이 아니라 이 테스트를 다시 볼 것.
       await setupSettingsMocks(page);
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();

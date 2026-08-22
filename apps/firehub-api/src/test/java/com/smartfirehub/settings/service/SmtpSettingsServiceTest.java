@@ -111,7 +111,8 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
 
   // 테넌트 평면 SMTP 쓰기 진입점 테스트는 삭제했다 — 그 진입점(서비스 메서드 + PUT /smtp 라우트)이
   // 이제 존재하지 않는다. 거부가 런타임 예외에서 구조로 바뀌었으므로 "거부되는가"를 물을 대상 자체가
-  // 없다. 라우트 부재는 SettingsControllerTest 가 405 로 지킨다.
+  // 없다. 라우트 부재는 SettingsControllerTest 가 404 로 지킨다(GET 까지 사라져 경로 자체가
+  // 매핑되지 않으므로 405 가 아니다 — 405 에 기대면 GET 이 되살아나도 조용히 통과한다).
 
 
 
