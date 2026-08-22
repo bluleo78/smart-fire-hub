@@ -86,7 +86,7 @@ const SMTP_CONNECTION_KEYS: (keyof SmtpForm)[] = [
   'smtp.starttls',
 ];
 
-// 포트 범위는 백엔드 `SettingsService.normalizeSmtpPayload`(1~65535)와 반드시 같아야 한다 —
+// 포트 범위는 백엔드 `SettingsService.validateSmtpPort`(1~65535)와 반드시 같아야 한다 —
 // 어긋나면 한쪽이 통과시킨 값을 다른 쪽이 거부해 "저장했는데 400" 또는 그 반대가 된다.
 const PORT_MIN = 1;
 const PORT_MAX = 65535;
@@ -192,6 +192,21 @@ export default function SmtpSettingsTab({
     return byKey;
   }, []);
 
+  /**
+   * 연결 5키의 폼 값을 <b>서버 해석</b>으로 다시 시드하는 updater 를 만든다.
+   *
+   * 저장 후(번들 전환)와 번들 해제 후, 두 경로가 이 하나를 공유한다. 예전에는 글자까지 같은
+   * 클로저가 두 벌이었고 한쪽 주석이 "두 경로가 다른 방식으로 폼을 맞추면 한쪽만 고쳐지는 사고가
+   * 난다"고 적어 두고 있었다 — <b>주석으로 동기화하는 중복은 이미 어긋난 중복</b>이다.
+   */
+  const reseedConnection = (byKey: Record<string, ResolvedSettingResponse>) => (prev: SmtpForm) => {
+    const next = { ...prev };
+    SMTP_CONNECTION_KEYS.forEach((key) => {
+      next[key] = byKey[key]?.value ?? EMPTY[key];
+    });
+    return next;
+  };
+
   // 필드 상태 판정 — 서버 응답 1건에서 나온다.
   const fieldState = (key: keyof SmtpForm) => resolveSettingFieldState(key, settings[key]);
 
@@ -233,9 +248,17 @@ export default function SmtpSettingsTab({
    *
    * 폼 값이 아니라 <b>서버가 내려준 값</b>을 본다 — 사용자가 지금 타이핑한 내용은 아직 저장되지
    * 않았고, 이 노트가 말하는 것은 "지금 실제로 적용 중인 해석"이다.
+   *
+   * <b>멤버십을 스스로 확인한다.</b> 지금 호출부가 전부 연결 키만 넘기는 것은 사실이지만, 정합을
+   * 호출 규율에만 두면 누가 `smtp.from_address` 에 이 노트를 다는 순간 거짓말이 된다 —
+   * 그 필드는 의도적으로 번들 <b>밖</b>이고 키 단위로 상속되므로, 번들이 재정의된 상태에서
+   * 비어 있다고 해서 "플랫폼 값이 사용되지 않습니다"가 참이 되지 않는다. 이 탭이 배지에서
+   * 없앤 종류의 거짓말이 노트로 되돌아온다.
    */
   const isEmptyInBundle = (key: keyof SmtpForm) =>
-    connectionGroupState === 'overridden' && (settings[key]?.value ?? '') === '';
+    SMTP_CONNECTION_KEYS.includes(key) &&
+    connectionGroupState === 'overridden' &&
+    (settings[key]?.value ?? '') === '';
 
   // 저장 전 예고(§2): 아직 상속 중인데 연결 5키 중 하나라도 손댔다면, 저장이 5키 전부를 테넌트
   // 평면으로 옮긴다는 사실을 미리 말한다. 배지는 이 시점에도 `기본값 사용 중` 이다 — 저장 전에는
@@ -330,17 +353,9 @@ export default function SmtpSettingsTab({
           if (!wasInherited) return;
           const nowOverridden = SMTP_CONNECTION_KEYS.some((key) => byKey[key]?.overridden === true);
           if (!nowOverridden) return;
-          // `handleClearConnectionBundle` 과 같은 재시드다 — 서버 해석이 유일한 권위이고,
-          // 두 경로가 다른 방식으로 폼을 맞추면 한쪽만 고쳐지는 사고가 난다.
-          const reseed = (prev: SmtpForm) => {
-            const next = { ...prev };
-            SMTP_CONNECTION_KEYS.forEach((key) => {
-              next[key] = byKey[key]?.value ?? EMPTY[key];
-            });
-            return next;
-          };
-          setForm(reseed);
-          setOriginal(reseed);
+          const seed = reseedConnection(byKey);
+          setForm(seed);
+          setOriginal(seed);
         })
         .catch(() => undefined);
     } catch {
@@ -404,15 +419,9 @@ export default function SmtpSettingsTab({
       // 성공·실패 어느 쪽이든 서버에서 다시 읽는다 — 화면 상태가 실제 행 상태에서 파생되므로
       // 부분 실패도 자동으로 올바르게 그려진다.
       const byKey = await refreshMeta();
-      const restore = (prev: SmtpForm) => {
-        const next = { ...prev };
-        SMTP_CONNECTION_KEYS.forEach((key) => {
-          next[key] = byKey[key]?.value ?? EMPTY[key];
-        });
-        return next;
-      };
-      setForm(restore);
-      setOriginal(restore);
+      const seed = reseedConnection(byKey);
+      setForm(seed);
+      setOriginal(seed);
       setErrors((prev) => {
         const next = { ...prev };
         SMTP_CONNECTION_KEYS.forEach((key) => delete next[key]);
