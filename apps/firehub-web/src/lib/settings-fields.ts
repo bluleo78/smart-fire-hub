@@ -5,6 +5,9 @@ import type { ResolvedSettingResponse } from '../types/settings';
  * 백엔드 `SettingsOverridePolicy` 화이트리스트와 동일하며, `PUT /settings` 는 이 12키 외의 키가
  * 오면 키 이름을 명시해 400 으로 거부한다.
  *
+ * <b>이 사본은 P7-c1 에서 6키 → 12키로 두 배가 됐다</b>(`smtp.*` 6키 재분류). 코드젠도 계약
+ * 테스트도 없다는 사실은 아래에 그대로이고, 사본이 커진 만큼 어긋날 표면도 커졌다는 뜻이다.
+ *
  * <b>AI 전용이 아니다</b>: P7-c1 이 `smtp.*` 6키를 테넌트 오버라이드 허용으로 재분류하면서
  * 목록이 AI 6 + SMTP 6 이 됐다. 예전 이름(`TENANT_EDITABLE_AI_KEYS`)을 그대로 두면 SMTP 키를
  * 넣는 것이 이름과 어긋나고, 넣지 않으면 아래 폴백이 SMTP 키를 `locked` 로 떨어뜨린다.

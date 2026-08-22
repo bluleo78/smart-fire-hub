@@ -450,7 +450,7 @@ export default function SmtpSettingsTab({
   // 연결 5키는 그룹 머리의 버튼 하나가 대신하므로 여기 오지 않는다(§3).
   const clearAction = (key: keyof SmtpForm) =>
     !SMTP_CONNECTION_KEYS.includes(key) && fieldState(key) === 'overridden' ? (
-      <ClearOverrideButton settingKey={key} onConfirm={handleClearOverride} disabled={isClearing} />
+      <ClearOverrideButton onConfirm={() => handleClearOverride(key)} disabled={isClearing} />
     ) : undefined;
 
   const handleReset = () => {
@@ -484,6 +484,20 @@ export default function SmtpSettingsTab({
   const emptyConnectionLabels = (['smtp.username', 'smtp.password'] as const)
     .filter((key) => isEmptyInBundle(key))
     .map((key) => FIELD_LABELS[key]);
+
+  /**
+   * 번들이 재정의됐는데 <b>저장된</b> 호스트가 비어 있다 — 연결 테스트가 접속을 <b>시도조차 하지
+   * 않는</b> 상태다(#390 item 4).
+   *
+   * <b>왜 별도 분기인가</b>: 이 상태에서 자격증명 안내("인증 없이 접속을 시도합니다")를 띄우면
+   * 실패 원인을 <b>잘못 지목한다</b>. 서버는 호스트가 비면 `POST /settings/smtp/test` 에서
+   * "SMTP 호스트가 설정되지 않았습니다" 로 즉시 돌아오고, 인증은 시도되지도 않는다. 사용자는
+   * 있지도 않은 인증 문제를 고치려고 사용자 이름·비밀번호를 채우게 된다.
+   *
+   * <b>도달 경로는 평범하다</b>: 테넌트가 포트만("우리는 465 를 쓴다") 또는 비밀번호만 재정의하면
+   * 번들이 나머지 연결 키를 빈 값으로 채우고 호스트가 빈 값이 된다.
+   */
+  const hostEmptyInBundle = isEmptyInBundle('smtp.host');
 
   const handleTest = () => {
     testMutation.mutate(undefined, {
@@ -545,7 +559,6 @@ export default function SmtpSettingsTab({
                 <SettingStateBadge state={connectionGroupState} />
                 {connectionGroupState === 'overridden' && (
                   <ClearOverrideButton
-                    settingKey="smtp.connection"
                     onConfirm={handleClearConnectionBundle}
                     disabled={isClearing}
                     label="연결 설정 전체 재정의 해제"
@@ -740,11 +753,20 @@ export default function SmtpSettingsTab({
               버튼을 막지 않는 이유: 지금 실제로 적용 중인 값을 확인하려는 것도 유효한 용도라
               (AI 탭의 "인증 확인"이 dirty 에서 비활성인 것과 다르다) 막으면 그 진단을 없앤다.
               대신 dirty 인 동안 무엇으로 테스트하는지 문자열로 알려 거짓 결과 해석을 막는다. */}
-          {/* 두 안내를 한 슬롯에서 **배타적으로** 보여준다 — 나란히 뜨면 어느 쪽이 지금 문제인지
-              흐려진다. 빈 자격증명 쪽이 우선순위가 높다(§5). 버튼은 어느 경우에도 막지 않는다:
-              무인증 릴레이는 합법적 최종 상태라 그 구성에서 테스트를 못 하게 막으면 정당한 설정을
-              검증할 길이 사라진다. */}
-          {emptyConnectionLabels.length > 0 ? (
+          {/* 세 안내를 한 슬롯에서 **배타적으로** 보여준다 — 나란히 뜨면 어느 쪽이 지금 문제인지
+              흐려진다(§5 가 정한 단일 슬롯 + 우선순위 모델을 그대로 확장했다). 순서:
+              (1) 빈 호스트 — 접속을 시도조차 하지 않으므로 가장 앞이다. 자격증명 안내를 대신
+                  띄우면 있지도 않은 인증 문제를 지목한다(#390 item 4).
+              (2) 빈 자격증명 — 접속은 하되 인증 없이 한다.
+              (3) dirty — 무엇으로 테스트하는지.
+              버튼은 어느 경우에도 막지 않는다: 무인증 릴레이는 합법적 최종 상태라 그 구성에서
+              테스트를 못 하게 막으면 정당한 설정을 검증할 길이 사라진다. */}
+          {hostEmptyInBundle ? (
+            <p className="max-w-md text-sm text-muted-foreground">
+              SMTP 호스트가 비어 있어 접속을 시도하지 않습니다 — 호스트를 입력하고 저장한 뒤 다시
+              테스트하세요.
+            </p>
+          ) : emptyConnectionLabels.length > 0 ? (
             <p className="max-w-md text-sm text-muted-foreground">
               {`${emptyConnectionLabels.join('·')}이(가) 비어 있어 인증 없이 접속을 시도합니다. 인증이 필요한 서버라면 실패가 정상입니다 — 값을 입력하고 저장한 뒤 다시 테스트하세요.`}
             </p>

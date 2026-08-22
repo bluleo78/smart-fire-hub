@@ -1016,6 +1016,45 @@ test.describe('설정 페이지', () => {
       await expect(page.getByText('저장 전 값이 아니라 마지막 저장값으로 테스트합니다')).toHaveCount(0);
     });
 
+    test('호스트가 빈 번들 상태에서는 접속을 시도하지 않는다고 알린다', async ({
+      authenticatedPage: page,
+    }) => {
+      // #390 item 4. 도달 경로는 평범하다: 테넌트가 **포트만** 재정의하면("우리는 465 를 쓴다")
+      // 번들이 나머지 연결 키를 빈 값으로 채워 호스트가 빈다. 이때 자격증명 안내를 띄우면
+      // 실패 원인을 잘못 지목한다 — 서버는 호스트가 비면 접속을 시도조차 하지 않고
+      // "SMTP 호스트가 설정되지 않았습니다" 로 돌아온다.
+      await setupSettingsMocks(page, {
+        smtp: createSmtpSettings(
+          {},
+          {
+            connectionOverridden: {
+              'smtp.host': '',
+              'smtp.port': '465',
+              'smtp.username': '',
+              'smtp.password': '',
+              'smtp.starttls': 'true',
+            },
+          },
+        ),
+      });
+      await openEmailTab(page, '');
+
+      const hostNotice = page.getByText('접속을 시도하지 않습니다', { exact: false });
+      await expect(hostNotice).toBeVisible();
+      await expect(hostNotice).toContainText('SMTP 호스트가 비어 있어');
+
+      // **배타적 슬롯**: 자격증명도 함께 비어 있지만 그 안내는 뜨지 않는다. 둘 다 뜨면 어느 쪽이
+      // 지금 문제인지 흐려지고, 사용자는 있지도 않은 인증 문제를 고치려 든다.
+      await expect(page.getByText('인증 없이 접속을 시도합니다', { exact: false })).toHaveCount(0);
+      // 버튼은 여전히 막지 않는다 — 지금 적용 중인 값을 확인하려는 것도 유효한 용도다.
+      await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
+
+      // dirty 가 되어도 우선순위가 유지된다(dirty 안내가 끼어들지 않는다).
+      await page.locator('#smtp-port').fill('587');
+      await expect(hostNotice).toBeVisible();
+      await expect(page.getByText('저장 전 값이 아니라 마지막 저장값으로 테스트합니다')).toHaveCount(0);
+    });
+
     test('연결 테스트는 계속 동작한다 (POST /settings/smtp/test)', async ({
       authenticatedPage: page,
     }) => {

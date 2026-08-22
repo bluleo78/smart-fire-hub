@@ -340,7 +340,7 @@ export default function SettingsPage() {
   // 재정의 중인 필드에만 해제 버튼을 붙인다 — 상속 중인 필드에는 지울 오버라이드가 없다.
   const clearAction = (key: keyof AISettingsForm) =>
     fieldState(key) === 'overridden' ? (
-      <ClearOverrideButton settingKey={key} onConfirm={handleClearOverride} disabled={isClearing} />
+      <ClearOverrideButton onConfirm={() => handleClearOverride(key)} disabled={isClearing} />
     ) : undefined;
 
   const handleReset = () => {

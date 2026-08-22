@@ -114,17 +114,24 @@ export function PlatformLockedBanner({ children }: { children: ReactNode }) {
  * 문구의 "이 항목"(단수)이 거짓이 된다. 그렇다고 번들 전용 컴포넌트를 복사해 만들면 확인 동작이
  * 다시 두 벌이 되어, 위 문단이 경고하는 그 사고가 난다. 그래서 <b>기본값이 있는 선택 prop</b>으로
  * 넓힌다 — AI 탭 호출부는 아무것도 넘기지 않고 동작이 그대로다.
+ *
+ * <b>`settingKey` 를 받지 않는 이유(#390 item 6)</b>: 예전 시그니처는 `settingKey: string` 을 받아
+ * `onConfirm(settingKey)` 로 되돌려 줬다. 그런데 번들 해제에는 되돌려 줄 <b>단일 키가 존재하지
+ * 않아</b> 호출부가 `"smtp.connection"` 이라는 <b>실재하지 않는 키</b>를 넘기고 있었고, 그것이
+ * 동작한 이유는 그 핸들러가 인자를 무시했기 때문뿐이다. prop 이름은 "실재하는 설정 키"를 약속하는데
+ * 값은 허구였다 — 타입은 통과하고 사람만 속는 형태다. 인자 없는 `onConfirm` 으로 좁히면 <b>허구를
+ * 넘길 자리 자체가 사라진다</b>. 어느 키를 지울지는 호출부가 이미 알고 있으므로 클로저로 묶으면 되고,
+ * 그 편이 "이 버튼이 무엇을 지우는가"를 호출부에서 읽게 만든다.
  */
 export function ClearOverrideButton({
-  settingKey,
   onConfirm,
   disabled,
   label = '재정의 해제',
   dialogTitle = '재정의 해제',
   dialogDescription = '이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은 사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.',
 }: {
-  settingKey: string;
-  onConfirm: (key: string) => void;
+  /** 확인 다이얼로그를 지난 뒤 실행할 동작. 무엇을 지우는지는 호출부가 클로저로 묶는다. */
+  onConfirm: () => void;
   disabled?: boolean;
   /** 버튼에 표시할 문구. 번들 해제는 범위를 라벨에 박아 누르기 전에 알린다. */
   label?: string;
@@ -147,7 +154,7 @@ export function ClearOverrideButton({
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
           {/* destructive 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다 */}
-          <AlertDialogAction onClick={() => onConfirm(settingKey)}>되돌리기</AlertDialogAction>
+          <AlertDialogAction onClick={onConfirm}>되돌리기</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
