@@ -77,17 +77,18 @@ public class SettingsController {
     return ResponseEntity.noContent().build();
   }
 
-  @GetMapping("/smtp")
-  @RequirePermission("settings:write")
-  public ResponseEntity<List<SettingResponse>> getSmtpSettings() {
-    return ResponseEntity.ok(settingsService.getSmtpSettings());
-  }
-
-  // PUT /smtp 는 삭제했다(P7-b). SMTP 6키는 전부 플랫폼 소유이므로 테넌트 평면에서 이 경로는
-  // 항상 거부였는데, "항상 던지는 서비스 메서드 + 그것을 부르는 라우트"로 두면 거부가 런타임
-  // 예외로만 존재한다. 라우트와 메서드를 지우면 거부가 구조가 된다 — 다음 호출자는 403 이 아니라
-  // 컴파일 에러를 받는다. 이 밴드의 논지 자체가 "런타임에서 조용한 경로가 문제"라는 것이다.
-  // 플랫폼 운영자 경로는 PUT /api/platform/settings 다.
+  // GET /smtp 는 삭제했다(P7-c1). 이 라우트는 `getByPrefix("smtp")` 를 돌려줬는데 그 경로는
+  // <b>테넌트 오버라이드 해석기를 타지 않는다</b> — Task 3 가 발송 경로(getSmtpConfig)를 해석기로
+  // 옮긴 뒤로는 "메일은 테넌트 값으로 나가는데 화면은 플랫폼 값을 보여주는" 어긋남을 만드는
+  // 라우트가 됐다. 유일한 소비자였던 web SMTP 탭이 GET /settings?prefix=smtp(해석 + 플래그)로
+  // 옮겨가 소비자도 0이 됐다. "아무도 안 쓰면서 틀린 값을 주는 경로"를 남기면 다음 호출자가
+  // 조용히 그 값을 믿는다 — PUT /smtp 를 지울 때와 같은 이유로 구조에서 없앤다.
+  //
+  // PUT /smtp 도 삭제돼 있다(P7-b). SMTP 6키가 전부 플랫폼 소유이던 시절 테넌트 평면에서 항상
+  // 거부였고, "항상 던지는 서비스 메서드 + 그것을 부르는 라우트"는 거부를 런타임 예외로만 남긴다.
+  // 지금 SMTP 쓰기는 다른 키들과 같은 PUT /settings(테넌트) / PUT /api/platform/settings(플랫폼)다.
+  //
+  // POST /smtp/test 는 남는다 — 값을 노출하지 않는 진단 액션이고 저장된 설정으로 접속한다.
 
   @PostMapping("/smtp/test")
   @RequirePermission("settings:write")

@@ -7,7 +7,7 @@
 import type { ApiConnectionResponse } from '@/types/api-connection';
 import type { AuditLogResponse } from '@/types/auditLog';
 import type { PermissionResponse, RoleDetailResponse } from '@/types/role';
-import type { ResolvedSettingResponse, SettingResponse } from '@/types/settings';
+import type { ResolvedSettingResponse } from '@/types/settings';
 
 /** 권한(Permission) 응답 객체 생성 */
 export function createPermission(overrides?: Partial<PermissionResponse>): PermissionResponse {
@@ -76,17 +76,6 @@ export function createApiConnection(overrides?: Partial<ApiConnectionResponse>):
   };
 }
 
-/** 설정(Setting) 응답 객체 생성 */
-export function createSetting(overrides?: Partial<SettingResponse>): SettingResponse {
-  return {
-    key: 'app.name',
-    value: 'Smart Fire Hub',
-    description: '애플리케이션 이름',
-    updatedAt: '2024-01-01T00:00:00Z',
-    ...overrides,
-  };
-}
-
 /**
  * `GET /api/v1/settings?prefix=...` 가 내려주는 해석된 설정 1건.
  *
@@ -136,6 +125,33 @@ export function createAiSettings(
       key: 'ai.system_prompt',
       value: '당신은 도움이 되는 AI 어시스턴트입니다.',
       description: '시스템 프롬프트',
+    }),
+  ];
+  return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
+}
+
+/**
+ * SMTP 설정 6키 — P7-c1 에서 **테넌트 오버라이드 허용**으로 재분류되어 전부 `tenantEditable: true` 다.
+ *
+ * - 기본은 전 키 상속 중(`overridden: false`). 재정의 상태가 필요한 테스트는 `patch` 로 그 키만
+ *   `overridden: true` 로 바꾼다.
+ * - `smtp.password` 는 백엔드가 **오버라이드 값까지 마스킹**해서 준다(Task 2). 그래서 픽스처도
+ *   평문이 아니라 `****` 형태를 준다 — 평문을 주면 "화면이 비밀번호를 그대로 받는다"는 존재할 수
+ *   없는 상태를 테스트하게 되고, 마스크 센티널이 저장에서 빠지는 경로도 재현되지 않는다.
+ */
+export function createSmtpSettings(
+  patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
+): ResolvedSettingResponse[] {
+  const base: ResolvedSettingResponse[] = [
+    createResolvedSetting({ key: 'smtp.host', value: 'smtp.gmail.com', description: '발신 메일 서버 주소' }),
+    createResolvedSetting({ key: 'smtp.port', value: '587', description: '포트' }),
+    createResolvedSetting({ key: 'smtp.username', value: 'user@example.com', description: '사용자 이름' }),
+    createResolvedSetting({ key: 'smtp.password', value: '****masked****', description: '비밀번호' }),
+    createResolvedSetting({ key: 'smtp.starttls', value: 'true', description: 'STARTTLS 사용' }),
+    createResolvedSetting({
+      key: 'smtp.from_address',
+      value: 'noreply@example.com',
+      description: '발신자 주소',
     }),
   ];
   return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));

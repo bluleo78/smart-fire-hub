@@ -18,7 +18,6 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
-import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
 import java.time.LocalDateTime;
@@ -35,8 +34,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * SettingsController WebMvcTest — JaCoCo LINE 커버리지 보강용. 핵심 경로(getSettings / getDecryptedAiApiKey /
- * updateSettings / getSmtpSettings / updateSmtpSettings / testSmtpSettings) 각각의 성공 분기만 커버한다.
+ * SettingsController WebMvcTest — JaCoCo LINE 커버리지 보강용. 핵심 경로(getSettings /
+ * getDecryptedAiApiKey / updateSettings / clearOverride / testSmtpSettings) 각각의 성공 분기만 커버한다.
  */
 @WebMvcTest(SettingsController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
@@ -172,33 +171,23 @@ class SettingsControllerTest {
         .andExpect(status().isForbidden());
   }
 
-  @Test
-  void getSmtpSettings_returnsList() throws Exception {
-    mockAuth("settings:write");
-    when(settingsService.getSmtpSettings())
-        .thenReturn(
-            List.of(new SettingResponse("smtp.host", "localhost", null, LocalDateTime.now())));
-
-    mockMvc
-        .perform(get("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].key").value("smtp.host"));
-  }
-
   /**
-   * 테넌트 평면 SMTP 쓰기 <b>라우트 자체가 없다</b>(P7-b) — 405 다.
+   * {@code /settings/smtp} 에는 <b>어떤 메서드의 라우트도 없다</b> — 404 다.
    *
-   * <p>이 테스트는 세 번 바뀌었고 그 궤적이 곧 교훈이다. 처음에는 {@code doNothing()} 스텁 + 204
+   * <p>이 테스트는 네 번 바뀌었고 그 궤적이 곧 교훈이다. 처음에는 {@code doNothing()} 스텁 + 204
    * 단언이라 서비스가 <b>항상 거부</b>하게 된 뒤에도 계속 통과했다(거짓을 고정하는 테스트).
-   * 다음에는 실제 예외를 재현해 403 을 단언했다. 지금은 라우트와 서비스 메서드를 아예 지웠으므로
-   * 405 다 — 거부가 런타임 예외가 아니라 <b>구조</b>가 됐고, 다음 호출자는 403 이 아니라 컴파일
-   * 에러를 받는다. 이 밴드의 논지가 "런타임에서 조용한 경로가 문제"라는 것이므로 이 방향이 맞다.
+   * 다음에는 실제 예외를 재현해 403 을 단언했고, P7-b 가 쓰기 라우트를 지운 뒤에는 405 였다
+   * (GET 이 남아 있어 경로 자체는 매핑돼 있었기 때문이다). P7-c1 이 그 GET 마저 지워
+   * — 해석기를 타지 않아 <b>틀린 값</b>을 주면서 소비자도 0이 된 경로였다 — 이제 404 다.
+   *
+   * <p>단언값(405→404)이 바뀐 것 자체가 검증 대상이다. 405 를 그대로 두면 "경로에 무언가 매핑돼
+   * 있다"는 사실에 기대는 셈이라, GET 이 되살아나도 테스트는 조용히 통과한다.
    *
    * <p>{@code AccessDeniedException} → 403 매핑은 {@link #clearOverride_withoutPermission_returnsForbidden}
    * 이 계속 지킨다 — 그 단언까지 함께 잃지 않도록 확인하고 지웠다.
    */
   @Test
-  void updateSmtpSettings_routeRemoved_returnsMethodNotAllowed() throws Exception {
+  void smtpRoutes_removed_returnNotFound() throws Exception {
     mockAuth("settings:write");
 
     mockMvc
@@ -207,7 +196,11 @@ class SettingsControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("smtp.host", "localhost"))))
-        .andExpect(status().isMethodNotAllowed());
+        .andExpect(status().isNotFound());
+
+    mockMvc
+        .perform(get("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isNotFound());
   }
 
 

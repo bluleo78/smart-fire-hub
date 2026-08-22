@@ -232,11 +232,9 @@ export const proactiveApi = {
   listReports: (params?: { limit?: number; offset?: number }) =>
     client.get<ReportListItem[]>('/proactive/reports', { params }),
 
-  // SMTP (2 methods) — 저장(PUT /settings/smtp)은 P7-b 에서 테넌트 평면 403 이 되어 제거했다.
+  // SMTP 는 연결 테스트 하나만 남았다. 저장(PUT /settings/smtp)은 P7-b 에서, 조회(GET
+  // /settings/smtp)는 P7-c1 에서 사라졌다 — 조회는 해석기를 타지 않아 테넌트 오버라이드가 있어도
+  // 플랫폼 값을 돌려줬다. 화면은 이제 `settingsApi.getByPrefix('smtp')` 로 해석된 값을 읽는다.
   // 연결 테스트는 값을 노출하지 않는 진단 액션이라 유지한다.
-  getSmtpSettings: () =>
-    client.get<Array<{ key: string; value: string; description: string | null; updatedAt: string }>>(
-      '/settings/smtp',
-    ),
   testSmtpSettings: () => client.post('/settings/smtp/test'),
 };

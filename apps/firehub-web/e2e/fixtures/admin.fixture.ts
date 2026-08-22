@@ -9,7 +9,7 @@ import {
   createEmbeddingSettings,
   createPermissions,
   createRoleDetail,
-  createSetting,
+  createSmtpSettings,
 } from '../factories/admin.factory';
 import { createAdminUserDetail, createRole, createUser, createUserDetail } from '../factories/auth.factory';
 import { createOntologySummaries } from '../factories/mapping.factory';
@@ -127,54 +127,50 @@ const resolveSource = (source: SettingsSource) =>
 /**
  * 설정 페이지 API 모킹 — `GET /api/v1/settings` 를 `prefix` 쿼리로 분기한다.
  *
- * 실제 백엔드와 같은 한 엔드포인트를 쓰되 prefix 로 다른 목록을 주는 이유: AI 탭과 임베딩 탭이
- * 같은 경로를 서로 다른 prefix 로 호출하므로, path 만 보는 `mockApi` 로는 둘을 구분할 수 없다.
+ * 실제 백엔드와 같은 한 엔드포인트를 쓰되 prefix 로 다른 목록을 주는 이유: AI·이메일·임베딩 세 탭이
+ * 같은 경로를 서로 다른 prefix 로 호출하므로, path 만 보는 `mockApi` 로는 셋을 구분할 수 없다.
  * GET 이 아닌 메서드(PUT/DELETE)는 `route.fallback()` 으로 다음 핸들러(캡처용 모킹)에 넘긴다.
  *
- * `ai`/`embedding` 에 함수를 넘기면 호출 시점마다 평가되므로, DELETE 후 재조회에서 "그 키만
- * 상속으로 돌아온" 응답을 줄 수 있다.
+ * 어느 항목에 함수를 넘기면 호출 시점마다 평가되므로, DELETE 후 재조회에서 "그 키만 상속으로
+ * 돌아온" 응답을 줄 수 있다.
+ *
+ * <b>모르는 prefix 는 던진다.</b> 예전에는 `embedding` 이 아니면 전부 AI 목록으로 흘렸는데,
+ * P7-c1 에서 이메일 탭이 `prefix=smtp` 로 옮겨오자 그 폴백이 **AI 설정 6건을 SMTP 응답인 척**
+ * 돌려주게 됐다 — 스펙은 "SMTP 필드가 비어 있다"로 실패하고, 원인은 화면이 아니라 픽스처다.
+ * 라우팅되지 않은 prefix 를 조용히 다른 목록으로 대체하면 그 진단이 매번 늦어진다.
  */
 export async function setupSettingsMocks(
   page: Page,
-  options: { ai?: SettingsSource; embedding?: SettingsSource } = {},
+  options: { ai?: SettingsSource; embedding?: SettingsSource; smtp?: SettingsSource } = {},
 ) {
-  const ai = options.ai ?? createAiSettings();
-  const embedding = options.embedding ?? createEmbeddingSettings();
+  const sources: Record<string, SettingsSource> = {
+    ai: options.ai ?? createAiSettings(),
+    embedding: options.embedding ?? createEmbeddingSettings(),
+    smtp: options.smtp ?? createSmtpSettings(),
+  };
   await page.route(
     (url) => url.pathname === '/api/v1/settings',
     (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
-      const prefix = new URL(route.request().url()).searchParams.get('prefix');
-      const body = prefix === 'embedding' ? resolveSource(embedding) : resolveSource(ai);
+      const prefix = new URL(route.request().url()).searchParams.get('prefix') ?? '';
+      const source = sources[prefix];
+      if (!source) {
+        // 라우트 핸들러에서 throw 하면 요청이 그대로 매달려 "타임아웃"으로만 보인다. 이유를 본문에
+        // 실어 500 으로 끊어야 실패 화면에서 원인이 읽힌다.
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            message: `설정 모킹에 등록되지 않은 prefix: "${prefix}" — 픽스처에 목록을 추가하세요.`,
+          }),
+        });
+      }
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(body),
+        body: JSON.stringify(resolveSource(source)),
       });
     },
-  );
-}
-
-/**
- * 이메일 탭(SMTP) 조회 모킹.
- * SMTP 는 프리픽스 조회가 아니라 전용 `GET /settings/smtp` 를 쓰므로 플래그 없는
- * `SettingResponse` 형태다(P7-b 에서도 그대로 유지 — 권한이 `settings:write` 라 갈아타지 않았다).
- */
-export async function setupSmtpSettingsMocks(page: Page, overrides: Partial<Record<string, string>> = {}) {
-  const values: Record<string, string> = {
-    'smtp.host': 'smtp.gmail.com',
-    'smtp.port': '587',
-    'smtp.username': 'user@example.com',
-    'smtp.password': '****masked****',
-    'smtp.starttls': 'true',
-    'smtp.from_address': 'noreply@example.com',
-    ...overrides,
-  };
-  await mockApi(
-    page,
-    'GET',
-    '/api/v1/settings/smtp',
-    Object.entries(values).map(([key, value]) => createSetting({ key, value, description: key })),
   );
 }
 

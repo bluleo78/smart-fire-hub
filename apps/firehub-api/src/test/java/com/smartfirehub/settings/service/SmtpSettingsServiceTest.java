@@ -4,9 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.support.IntegrationTestBase;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,7 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * SettingsService SMTP 관련 메서드 커버리지 보강 테스트. getSmtpSettings / updateSmtpSettings / getSmtpConfig /
+ * SettingsService SMTP 관련 메서드 커버리지 보강 테스트. updatePlatformSettings / getSmtpConfig /
  * 유효성 검증을 검증한다.
  *
  * <p><b>이 클래스가 덮는 것은 플랫폼 평면이다.</b> 쓰기 호출은 전부
@@ -48,13 +46,9 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
     TenantContext.clear();
   }
 
-  @Test
-  void getSmtpSettings_returnsSmtpKeys() {
-    List<SettingResponse> settings = settingsService.getSmtpSettings();
-
-    assertThat(settings).isNotEmpty();
-    assertThat(settings).allSatisfy(s -> assertThat(s.key()).startsWith("smtp."));
-  }
+  // getSmtpSettings_returnsSmtpKeys 는 삭제했다 — 그 메서드(와 GET /settings/smtp 라우트)가
+  // P7-c1 에서 사라졌다. "smtp 프리픽스로 조회하면 smtp 키만 온다"는 주장은 {@code getByPrefix}
+  // 의 성질이고 SettingsServiceTest 가 ai/embedding 프리픽스로 이미 지킨다.
 
   @Test
   void updateSmtpSettings_validKeys_updatesSuccessfully() {
@@ -78,7 +72,7 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
    * {@code getAll} 도 {@code smtp.password} 를 마스킹한다.
    *
    * <p>운영자 평면의 {@code GET /api/platform/settings} 가 쓰는 경로다. 마스킹 판정이
-   * {@code getSmtpSettings} 안에만 있었을 때 이 경로는 <b>AES 암호문을 그대로</b> 내보냈다 —
+   * SMTP 전용 읽기 메서드 안에만 있었을 때 이 경로는 <b>AES 암호문을 그대로</b> 내보냈다 —
    * 비밀 키 목록을 두 곳에서 관리한 결과다. 이제 두 메서드가 같은 함수를 지난다.
    */
   @Test
@@ -121,20 +115,10 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
 
 
 
-  @Test
-  void updateSmtpSettings_password_encryptsBeforeStore() {
-    Map<String, String> update = Map.of("smtp.password", "secret-smtp-pass");
-
-    settingsService.updatePlatformSettings(update, null);
-
-    // getSmtpSettings should mask the password
-    List<SettingResponse> settings = settingsService.getSmtpSettings();
-    assertThat(settings)
-        .filteredOn(s -> "smtp.password".equals(s.key()))
-        .hasSize(1)
-        .first()
-        .satisfies(s -> assertThat(s.value()).startsWith("****"));
-  }
+  // updateSmtpSettings_password_encryptsBeforeStore 는 삭제했다. 이 테스트가 하던 주장은
+  // "플랫폼에 저장한 비밀번호가 읽기 응답에서 마스킹된다" 하나였고, 관측 창구가 지금 없는
+  // getSmtpSettings 였다. 같은 주장을 <b>더 엄격하게</b>(평문도 암호문도 아님까지) 하는
+  // getAll_masksSmtpPassword 가 바로 위에 있으므로 창구만 바꿔 옮기면 중복이 된다.
 
   @Test
   void updateSmtpSettings_maskedPassword_skipsUpdate() {

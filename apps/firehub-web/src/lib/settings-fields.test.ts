@@ -4,9 +4,9 @@ import type { ResolvedSettingResponse } from '../types/settings';
 import {
   BUILTIN_AI_DEFAULTS,
   indexSettingsByKey,
-  isTenantEditableAiKey,
+  isTenantEditableKey,
   resolveSettingFieldState,
-  TENANT_EDITABLE_AI_KEYS,
+  TENANT_EDITABLE_KEYS,
 } from './settings-fields';
 
 // 응답 1건을 만드는 헬퍼 — 판정에 쓰이는 필드만 인자로 받는다.
@@ -25,7 +25,7 @@ function setting(
   };
 }
 
-describe('TENANT_EDITABLE_AI_KEYS', () => {
+describe('TENANT_EDITABLE_KEYS', () => {
   // 주의: 이것은 **백엔드 계약 테스트가 아니다.** 같은 파일 안의 리터럴 배열과 대조할 뿐이라,
   // 백엔드 SettingsOverridePolicy 를 어떻게 바꿔도 절대 빨개지지 않는다. 예전 이름과 주석은
   // "백엔드와 일치한다"고 주장해서, 존재하지 않는 보호가 있는 것처럼 보이게 했다 — 그 착각이
@@ -35,8 +35,8 @@ describe('TENANT_EDITABLE_AI_KEYS', () => {
   // tenantEditable 플래그**다. 표시(배지·disabled)와 저장 페이로드가 모두 그 플래그로 구동되므로
   // (SettingsPage 의 fieldState), 이 상수는 "응답에 아예 없는 키"의 폴백 판정에만 남는다.
   // 그 폴백 동작은 아래 resolveSettingFieldState 케이스들이 검증한다.
-  it('폴백 판정에 쓰는 6키 상수의 내용이 바뀌지 않았다(회귀 가드, 백엔드 대조 아님)', () => {
-    expect([...TENANT_EDITABLE_AI_KEYS].sort()).toEqual(
+  it('폴백 판정에 쓰는 12키 상수의 내용이 바뀌지 않았다(회귀 가드, 백엔드 대조 아님)', () => {
+    expect([...TENANT_EDITABLE_KEYS].sort()).toEqual(
       [
         'ai.max_tokens',
         'ai.max_turns',
@@ -44,13 +44,21 @@ describe('TENANT_EDITABLE_AI_KEYS', () => {
         'ai.session_max_tokens',
         'ai.system_prompt',
         'ai.temperature',
+        'smtp.from_address',
+        'smtp.host',
+        'smtp.password',
+        'smtp.port',
+        'smtp.starttls',
+        'smtp.username',
       ].sort(),
     );
   });
 
   it('플랫폼 잠금 키는 편집 허용 키가 아니다', () => {
-    ['ai.agent_type', 'ai.api_key', 'ai.cli_oauth_token', 'smtp.host', 'embedding.model'].forEach(
-      (key) => expect(isTenantEditableAiKey(key)).toBe(false),
+    // smtp.* 는 P7-c1 에서 허용으로 넘어갔으므로 이 목록에서 뺐다 — 남겨 두면 재분류를 되돌리는
+    // 방향으로 테스트가 잠근다.
+    ['ai.agent_type', 'ai.api_key', 'ai.cli_oauth_token', 'embedding.model'].forEach((key) =>
+      expect(isTenantEditableKey(key)).toBe(false),
     );
   });
 });
@@ -143,7 +151,7 @@ describe('resolveSettingFieldState', () => {
 
   it('응답에 없는 편집 허용 키를 잠금으로 떨어뜨리지 않는다', () => {
     // 조회 miss 를 falsy 로 흘리면 편집 가능한 키가 잠긴 것으로 뒤집힌다 — 그 반대를 단언한다.
-    TENANT_EDITABLE_AI_KEYS.forEach((key) => {
+    TENANT_EDITABLE_KEYS.forEach((key) => {
       expect(resolveSettingFieldState(key, undefined)).not.toBe('locked');
     });
   });

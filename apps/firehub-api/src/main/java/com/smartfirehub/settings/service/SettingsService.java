@@ -71,7 +71,7 @@ public class SettingsService {
    *
    * <p>{@code smtp.password} 가 빠져 있었다. 플랫폼 SMTP 쓰기는 이 키를 암호화해
    * 저장하는데 {@link #maskSecret} 이 그것을 모르면 {@code getAll}/{@code getByPrefix("smtp")} 가
-   * <b>암호문을 그대로</b> 내보낸다({@link #getSmtpSettings} 만 별도로 마스킹하고 있었다 — 즉 이
+   * <b>암호문을 그대로</b> 내보낸다(당시 SMTP 전용 읽기 메서드만 별도로 마스킹하고 있었다 — 즉 이
    * 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
    */
   private static final Set<String> SECRET_KEYS =
@@ -183,7 +183,7 @@ public class SettingsService {
    *
    * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 {@code prefix=ai} 조회가
    * {@code ai.api_key} 의 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
-   * 기록하듯 이 프로젝트는 정확히 그 사고를 이미 한 번 냈다({@code getSmtpSettings} 만 마스킹하고
+   * 기록하듯 이 프로젝트는 정확히 그 사고를 이미 한 번 냈다(SMTP 전용 읽기 메서드만 마스킹하고
    * {@code getAll} 은 빠뜨렸던 건).
    *
    * <p><b>오버라이드 값도 {@link #maskIfSecret} 을 지난다.</b> P7-c1 이전 이 자리에는 "오버라이드
@@ -481,18 +481,6 @@ public class SettingsService {
     return getValue("embedding.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
-  /**
-   * SMTP 설정. 본문이 {@link #getByPrefix} 와 바이트 단위로 같아서 <b>위임</b>한다 — 마스킹 경로를
-   * 두 벌 두면 한쪽만 고치는 사고가 난다. 이 프로젝트는 정확히 그 사고를 이미 냈다({@code
-   * getSmtpSettings} 만 마스킹하고 {@code getAll} 은 빠뜨려 암호문이 나갔다). 덤으로 프로덕션
-   * 호출자가 0이던 {@link #getByPrefix} 가 다시 실사용 경로가 된다.
-   */
-  @Transactional(readOnly = true)
-  public List<SettingResponse> getSmtpSettings() {
-    return getByPrefix("smtp");
-  }
-
-
 
   /**
    * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 로직 그대로다. 이름만 "플랫폼 쓰기 본체"로 옮겼고,
@@ -574,8 +562,8 @@ public class SettingsService {
    * 메일이 나간다. 그 전까지는 저장도 되고 화면도 {@code overridden=true} 라고 보고하는데 발송만
    * 플랫폼 자격증명으로 나가는, <b>저장·표시·동작 셋 중 둘만 맞는 무동작</b>이었다.
    *
-   * <p><b>화면용 읽기와 발송용 읽기는 요구가 정반대다.</b> {@link #getResolvedByPrefix}·
-   * {@link #getSmtpSettings} 는 같은 데이터를 <b>마스킹</b>해서 내보내고(응답에 평문도 암호문도
+   * <p><b>화면용 읽기와 발송용 읽기는 요구가 정반대다.</b> {@link #getResolvedByPrefix} 는 같은
+   * 데이터를 <b>마스킹</b>해서 내보내고(응답에 평문도 암호문도
    * 실리면 안 된다), 이 메서드는 <b>복호화</b>해서 내보낸다(SMTP 인증에 평문이 필요하다). 그래서
    * 마스킹을 타는 {@link #getResolvedByPrefix} 를 재사용할 수 없고, 마스킹 없는 해석 경로인
    * {@link #getAsMap} 위에 복호화를 얹는다.

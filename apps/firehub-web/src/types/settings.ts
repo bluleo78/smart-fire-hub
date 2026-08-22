@@ -1,9 +1,6 @@
-export interface SettingResponse {
-  key: string;
-  value: string;
-  description: string;
-  updatedAt: string;
-}
+// 플래그 없는 `SettingResponse`(백엔드 DTO)는 web 에서 지웠다 — 마지막 소비자였던
+// `GET /settings/smtp` 가 P7-c1 에서 사라졌고, 화면이 읽는 모든 설정은 이제 해석된
+// `ResolvedSettingResponse` 다.
 
 /**
  * 테넌트 설정 화면용 "해석된" 설정 1건 — 백엔드 `ResolvedSettingResponse` DTO와 1:1 대응.

@@ -1,7 +1,19 @@
-import { Lock } from 'lucide-react';
+import { Lock, RotateCcw } from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Label } from '../../components/ui/label';
 import type { SettingFieldState } from '../../lib/settings-fields';
@@ -70,7 +82,9 @@ export function PlatformLockedNote() {
 }
 
 /**
- * 탭 전체가 플랫폼 전용일 때(이메일 6/6, 임베딩 4/4) 쓰는 배너.
+ * 탭 전체가 플랫폼 전용일 때(임베딩 4/4) 쓰는 배너.
+ * 이메일 탭은 P7-c1 에서 6키가 전부 테넌트 오버라이드 허용으로 열려 이 배너를 뗐다 — 필드별
+ * 배지 체계와 "탭 전체 잠금" 카피는 공존할 수 없다.
  * 탭 상단과 하단(원래 저장 버튼 자리) 두 곳에 배치해, 스크롤 위치와 무관하게 편집 불가를 알린다.
  *
  * "다른 화면에서 변경하세요"/"관리자에게 문의" 류 문구는 넣지 않는다 — 운영자 전용 화면도,
@@ -81,5 +95,52 @@ export function PlatformLockedBanner({ children }: { children: ReactNode }) {
     <InlineBanner variant="info" icon={<Lock />} title="플랫폼 전용 설정">
       {children}
     </InlineBanner>
+  );
+}
+
+/**
+ * 재정의 해제 버튼 + 확인 다이얼로그.
+ *
+ * - 배치 저장(PUT)에 얹지 않고 즉시 DELETE 를 호출한다 — 오버라이드 삭제는 "빈 문자열 저장"과
+ *   다른 연산이라 PUT payload 로 표현할 수 없다.
+ * - `DeleteConfirmDialog` 래퍼를 쓰지 않는 이유: 고정 문구가 "되돌릴 수 없습니다"인데 재정의
+ *   해제는 언제든 다시 재정의할 수 있어 사실과 어긋난다. 그래서 원본 프리미티브로 문구를 짠다.
+ * - 확인을 받는 이유: system_prompt 처럼 공들여 입력한 긴 텍스트가 즉시 사라질 수 있다.
+ *
+ * P7-c1 에서 `SettingsPage` 안의 로컬 함수에서 이 파일로 옮겼다 — 이메일 탭도 같은 버튼을 쓰는데,
+ * 복사하면 확인 문구와 동작이 두 벌이 되어 한쪽만 고치는 사고가 난다.
+ */
+export function ClearOverrideButton({
+  settingKey,
+  onConfirm,
+  disabled,
+}: {
+  settingKey: string;
+  onConfirm: (key: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button type="button" variant="ghost" size="sm" disabled={disabled}>
+          <RotateCcw className="h-3.5 w-3.5" />
+          재정의 해제
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>재정의 해제</AlertDialogTitle>
+          <AlertDialogDescription>
+            이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은
+            사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>취소</AlertDialogCancel>
+          {/* destructive 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다 */}
+          <AlertDialogAction onClick={() => onConfirm(settingKey)}>되돌리기</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

@@ -20,7 +20,6 @@ const KEYS = {
   unreadCount: ['proactive', 'unread-count'] as const,
   templates: ['proactive', 'templates'] as const,
   template: (id: number) => ['proactive', 'templates', id] as const,
-  smtp: ['proactive', 'smtp'] as const,
   anomalyEvents: (jobId: number) => ['proactive', 'anomaly-events', jobId] as const,
   reports: (params?: { limit?: number; offset?: number }) =>
     ['proactive', 'reports', params] as const,
@@ -275,15 +274,10 @@ export function useDeleteProactiveTemplate() {
 
 // ── SMTP ──────────────────────────────────────────────────────────────────────
 
-export function useSmtpSettings() {
-  return useQuery({
-    queryKey: KEYS.smtp,
-    queryFn: () => proactiveApi.getSmtpSettings().then((r) => r.data),
-  });
-}
-
-// SMTP 저장 훅은 없다 — P7-b 에서 SMTP 6키가 플랫폼 소유로 확정되어 테넌트 평면의
-// PUT /settings/smtp 가 항상 403 이다. 호출 지점을 남겨 두면 403 을 받는 버튼이 된다.
+// SMTP 조회·저장 훅은 없다. 두 조작 모두 SMTP 전용 엔드포인트가 아니라 <b>일반 설정 경로</b>를
+// 쓰기 때문이다(P7-c1): 읽기는 `settingsApi.getByPrefix('smtp')`, 저장은 `settingsApi.update`
+// (PUT /settings) 다. SMTP 전용 읽기/쓰기 경로를 되살리면 화이트리스트·마스킹·오버라이드 해석이
+// 두 벌이 되고, 실제로 그 두 벌 때문에 "메일은 테넌트 값으로 나가는데 화면은 플랫폼 값"이 생겼다.
 
 export function useTestSmtpSettings() {
   return useMutation({

@@ -1,24 +1,23 @@
 import type { Page } from '@playwright/test';
 
-import { createAiSettings } from '../../factories/admin.factory';
-import {
-  setupAdminAuth,
-  setupSettingsMocks,
-  setupSmtpSettingsMocks,
-} from '../../fixtures/admin.fixture';
+import { createAiSettings, createSmtpSettings } from '../../factories/admin.factory';
+import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
- * 설정 페이지 E2E 테스트 (P7-b 설정 2단 상속)
+ * 설정 페이지 E2E 테스트 (P7-b 설정 2단 상속 + P7-c1 SMTP 재분류)
  *
- * 검증 대상은 "무엇이 보이는가"가 아니라 P7-b 가 세운 계약이다:
- *  - `GET /settings?prefix=ai` 의 `overridden`/`tenantEditable` 플래그가 필드 상태(상속/재정의/잠금)로
+ * 검증 대상은 "무엇이 보이는가"가 아니라 두 밴드가 세운 계약이다:
+ *  - `GET /settings?prefix=...` 의 `overridden`/`tenantEditable` 플래그가 필드 상태(상속/재정의/잠금)로
  *    정확히 번역되는가
- *  - `PUT /settings` 페이로드가 편집 허용 6키 중 바꾼 키만 담고, 잠긴 3키와 미편집 키는 담지 않는가
+ *  - `PUT /settings` 페이로드가 편집 허용 키 중 바꾼 키만 담고, 잠긴 키와 미편집 키는 담지 않는가
  *    (밴드 핵심 경계 — 미편집 키를 보내면 상속이 끊긴다)
- *  - `DELETE /settings/{key}` 가 그 필드 하나만 상속으로 되돌리고 다른 필드의 미저장 편집을 건드리지 않는가
- *  - 이메일·임베딩 탭이 전면 잠금이고 저장 경로가 화면에서 사라졌는가(진단용 연결 테스트는 유지)
+ *  - `DELETE /settings/overrides/{key}` 가 그 필드 하나만 상속으로 되돌리고 다른 필드의 미저장 편집을
+ *    건드리지 않는가
+ *  - 이메일 탭(SMTP 6키)이 AI 탭과 같은 상속/재정의 편집 화면인가 — P7-c1 이 이 6키를 열었다.
+ *    비밀번호 마스크 센티널이 저장에서 빠지는가, 빈 값 규칙이 키마다 다른가가 이 탭 고유의 경계다.
+ *  - 임베딩 탭이 전면 잠금이고 저장 경로가 화면에서 사라졌는가
  *
  * AdminRoute 통과를 위해 ADMIN 역할로 users/me 를 오버라이드한다.
  */
@@ -504,43 +503,254 @@ test.describe('설정 페이지', () => {
   });
 
   /**
-   * 계약 3: 이메일 탭은 전면 잠금이다. 저장 경로(버튼·PUT)는 화면에서 사라졌고,
-   * 값을 노출하지 않는 진단 액션(연결 테스트)만 남는다.
+   * 계약 3(P7-c1): 이메일 탭은 AI 탭과 같은 상속/재정의 편집 화면이다.
+   *
+   * 이 describe 는 P7-b 시절 "6필드 전부 잠금 + 저장 경로 없음"을 단언하던 블록을 **대체**한다 —
+   * 그 단언들은 지금 전부 거짓이므로 남겨 두면 밴드가 되돌려진 것처럼 보인다.
+   * SMTP 고유의 경계 셋을 덮는다: 비밀번호 마스크 센티널, 키마다 다른 빈 값 규칙,
+   * "연결 테스트는 저장된 값으로 돈다"는 안내.
    */
-  test.describe('이메일 탭 — 플랫폼 전용', () => {
-    test('SMTP 값이 표시되지만 6필드 전부 잠금이고 저장 경로가 없다', async ({
+  test.describe('이메일 탭 — 상속/재정의 편집', () => {
+    /** 이메일 탭을 열고 첫 필드가 채워질 때까지 기다린다 — 모든 SMTP 시나리오의 공통 진입. */
+    async function openEmailTab(page: Page) {
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+    }
+
+    /**
+     * STARTTLS 는 Switch 라 라벨/배지가 `div.space-y-2` 가 아닌 별도 열에 있어 `fieldBox` 로
+     * 잡히지 않는다. 배지 문구가 6필드에 반복되므로 스코프 없이 단언하면 "어느 필드의 배지인지"를
+     * 전혀 검증하지 못한다.
+     */
+    const starttlsBox = (page: Page) =>
+      page.locator('div.space-y-1', { has: page.locator('label[for="smtp-starttls"]') });
+
+    test('상속 상태의 6필드가 전부 편집 가능하고 저장 경로가 존재한다', { tag: '@smoke' }, async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
-      await setupSmtpSettingsMocks(page);
+      await openEmailTab(page);
 
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
-      await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
-
-      // 응답 → UI 반영(읽기는 계속 동작해야 한다)
-      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      // 응답 → UI 반영
       await expect(page.locator('#smtp-port')).toHaveValue('587');
       await expect(page.locator('#smtp-username')).toHaveValue('user@example.com');
       await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
+      // 비밀번호는 서버가 마스킹해서 준 값이 그대로 시드된다(평문이 아니다)
+      await expect(page.locator('#smtp-password')).toHaveValue('****masked****');
 
-      // 6필드 전부 비활성(스위치 포함)
+      // 계약: 6키 전부 실제로 조작 가능해야 한다 — 하나라도 잠기면 재분류가 반쪽이다
       for (const id of ['smtp-host', 'smtp-port', 'smtp-username', 'smtp-password', 'smtp-from']) {
-        await expect(page.locator(`#${id}`)).toBeDisabled();
+        await expect(page.locator(`#${id}`)).toBeEnabled();
       }
-      await expect(page.locator('#smtp-starttls')).toBeDisabled();
+      await expect(page.locator('#smtp-starttls')).toBeEnabled();
 
-      // 저장 버튼 행이 배너로 대체되었다 — 남겨 두면 누르는 순간 403 을 받는 버튼이 된다
-      await expect(page.getByText('플랫폼 전용 설정').first()).toBeVisible();
-      await expect(page.getByRole('button', { name: '저장' })).toHaveCount(0);
-      await expect(page.getByRole('button', { name: '되돌리기' })).toHaveCount(0);
+      // 배지는 전부 상속. Switch 필드도 같은 체계를 따른다.
+      await expect(fieldBox(page, 'smtp-host').getByText('기본값 사용 중')).toBeVisible();
+      await expect(starttlsBox(page).getByText('기본값 사용 중')).toBeVisible();
+
+      // 전면 잠금 배너·잠금 안내문은 사라졌고 저장/되돌리기 행이 돌아왔다
+      await expect(page.getByText('플랫폼 전용 설정')).toHaveCount(0);
+      await expect(page.getByText(LOCKED_NOTE)).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '저장' })).toBeVisible();
+      await expect(page.getByRole('button', { name: '되돌리기' })).toBeVisible();
+      // 상속 중인 필드에는 지울 오버라이드가 없다
+      await expect(page.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
+    });
+
+    test('재정의된 SMTP 필드는 배지가 바뀌고 재정의 해제 버튼이 붙는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page, {
+        smtp: createSmtpSettings({
+          'smtp.host': { overridden: true, value: 'smtp.ourcompany.com' },
+        }),
+      });
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+
+      const box = fieldBox(page, 'smtp-host');
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+      await expect(box.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(box.getByRole('button', { name: '재정의 해제' })).toBeVisible();
+      // 재정의는 필드 단위다 — 나머지는 여전히 상속이어야 한다
+      await expect(fieldBox(page, 'smtp-port').getByText('기본값 사용 중')).toBeVisible();
+    });
+
+    test('바꾼 SMTP 키만 PUT 되고 손대지 않은 비밀번호 마스크는 담기지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      const req = await saveCapture.waitForRequest();
+      const settings = (req.payload as { settings: Record<string, string> }).settings;
+      expect(Object.keys(settings)).toEqual(['smtp.host']);
+      expect(settings['smtp.host']).toBe('smtp.ourcompany.com');
+      // 핵심: 마스킹 값(`****masked****`)이 비밀번호로 저장되면 살아 있는 비밀번호가 문자열
+      // "****" 로 덮여 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다. 백엔드에도 센티널 필터가
+      // 있지만(심층 방어) 정상 경로는 **애초에 보내지 않는 것**이다.
+      expect(settings).not.toHaveProperty('smtp.password');
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+    });
+
+    test('저장이 성공하면 그 필드의 배지가 "테넌트 재정의 적용됨"으로 바뀐다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 저장 후 배지를 다시 읽지 않으면 화면은 "기본값 사용 중"이라고 계속 말한다 — 저장은 됐는데
+      // 표시만 틀린, 이 밴드가 반복해서 잡아 온 "둘 중 하나만 맞는" 모양이다. 그래서 저장 성공
+      // 토스트가 아니라 **배지 전환**까지 단언한다.
+      let saved = false;
+      await setupSettingsMocks(page, {
+        smtp: () =>
+          saved
+            ? createSmtpSettings({
+                'smtp.host': { overridden: true, value: 'smtp.ourcompany.com' },
+              })
+            : createSmtpSettings(),
+      });
+      await page.route(
+        (url) => url.pathname === '/api/v1/settings',
+        (route) => {
+          if (route.request().method() !== 'PUT') return route.fallback();
+          saved = true;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        },
+      );
+
+      await openEmailTab(page);
+      await expect(fieldBox(page, 'smtp-host').getByText('기본값 사용 중')).toBeVisible();
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+      await expect(fieldBox(page, 'smtp-host').getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(
+        fieldBox(page, 'smtp-host').getByRole('button', { name: '재정의 해제' }),
+      ).toBeVisible();
+    });
+
+    test('비밀번호를 새로 입력하면 그 값이 그대로 전송된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-password').fill('new-secret');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      const req = await saveCapture.waitForRequest();
+      const settings = (req.payload as { settings: Record<string, string> }).settings;
+      expect(Object.keys(settings)).toEqual(['smtp.password']);
+      expect(settings['smtp.password']).toBe('new-secret');
+    });
+
+    test('smtp.host 를 비우고 저장하면 거부되고 PUT 이 나가지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      let putCount = 0;
+      await page.route(
+        (url) => url.pathname === '/api/v1/settings',
+        (route) => {
+          if (route.request().method() !== 'PUT') return route.fallback();
+          putCount += 1;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        },
+      );
+      await openEmailTab(page);
+
+      await page.locator('#smtp-host').fill('');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 그냥 빼고 저장하면 "저장했다"면서 아무것도 안 쓰고 dirty 까지 지운다 — 그래서 거부다.
+      await expect(
+        page.getByText('플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요', { exact: false }),
+      ).toBeVisible({ timeout: 5000 });
+      expect(putCount).toBe(0);
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    });
+
+    test('smtp.username 은 비워도 빈 문자열로 저장된다 — 인증 없는 릴레이', async ({
+      authenticatedPage: page,
+    }) => {
+      // 빈 값 규칙은 키 단위 화이트리스트다. username/password 는 "비어 있음"이 합법적 최종
+      // 상태이므로 host 와 반대로 동작해야 한다 — 뭉뚱그리면 둘 중 하나가 반드시 틀린다.
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-username').fill('');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      const req = await saveCapture.waitForRequest();
+      const settings = (req.payload as { settings: Record<string, string> }).settings;
+      expect(Object.keys(settings)).toEqual(['smtp.username']);
+      expect(settings['smtp.username']).toBe('');
+    });
+
+    test('SMTP 재정의 해제 시 DELETE 가 나가고 그 필드만 상속으로 돌아온다', async ({
+      authenticatedPage: page,
+    }) => {
+      let cleared = false;
+      await setupSettingsMocks(page, {
+        smtp: () =>
+          cleared
+            ? createSmtpSettings()
+            : createSmtpSettings({ 'smtp.host': { overridden: true, value: 'smtp.ourcompany.com' } }),
+      });
+      const deletedPaths: string[] = [];
+      await page.route(
+        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
+        (route) => {
+          if (route.request().method() !== 'DELETE') return route.fallback();
+          deletedPaths.push(new URL(route.request().url()).pathname);
+          cleared = true;
+          return route.fulfill({ status: 204 });
+        },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+
+      // 다른 필드의 미저장 편집이 해제에 휩쓸리면 안 된다
+      await page.locator('#smtp-port').fill('2525');
+
+      await fieldBox(page, 'smtp-host').getByRole('button', { name: '재정의 해제' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: '되돌리기' }).click();
+
+      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/overrides/smtp.host']);
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await expect(fieldBox(page, 'smtp-host').getByText('기본값 사용 중')).toBeVisible();
+      await expect(page.locator('#smtp-port')).toHaveValue('2525');
+    });
+
+    test('편집 중에는 연결 테스트가 "마지막 저장값으로 테스트한다"고 알리되 막지는 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      await openEmailTab(page);
+
+      const notice = page.getByText('저장 전 값이 아니라 마지막 저장값으로 테스트합니다');
+      await expect(notice).toHaveCount(0);
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await expect(notice).toBeVisible();
+      // 버튼은 막지 않는다 — 지금 적용 중인 값을 확인하려는 것도 유효한 용도다
+      await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
     });
 
     test('연결 테스트는 계속 동작한다 (POST /settings/smtp/test)', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
-      await setupSmtpSettingsMocks(page);
       const testCapture = await mockApi(
         page,
         'POST',
@@ -549,9 +759,7 @@ test.describe('설정 페이지', () => {
         { capture: true },
       );
 
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
-      await expect(page.getByText('SMTP 서버 설정')).toBeVisible();
+      await openEmailTab(page);
 
       const testBtn = page.getByRole('button', { name: '연결 테스트' });
       await expect(testBtn).toBeEnabled();
@@ -618,6 +826,36 @@ test.describe('설정 페이지', () => {
       await page.getByRole('button', { name: '이탈' }).click();
 
       await expect(page).toHaveURL(/\/$/);
+    });
+
+    test('이메일 탭의 미저장 편집도 이탈 가드에 잡힌다', async ({ authenticatedPage: page }) => {
+      // P7-c1 로 이메일 탭이 다시 dirty 가 될 수 있게 됐다 — 이슈 #86 의 원래 무대가 돌아온 셈이라
+      // 보고 경로가 실제로 이어져 있는지 확인한다.
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      expect(new URL(page.url()).pathname).toBe('/admin/settings');
+    });
+
+    test('이메일 탭을 떠나면 그 탭의 dirty 보고가 해제된다', async ({ authenticatedPage: page }) => {
+      // Radix TabsContent 는 비활성 탭을 언마운트한다 — 폼 state 를 소유한 SMTP 탭이 사라지면서
+      // 편집 내용도 함께 사라지는데, 합산기에 남은 dirty=true 를 지우지 않으면 **존재하지 않는
+      // 변경** 때문에 이탈 다이얼로그가 뜬다.
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+
+      await page.getByRole('tab', { name: 'AI 에이전트' }).click();
+      await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.getByRole('alertdialog')).toBeHidden();
     });
 
     test('변경 없는(clean) 상태에서는 메뉴 이동이 정상적으로 즉시 이루어진다', async ({

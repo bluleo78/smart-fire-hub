@@ -3,17 +3,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -39,7 +28,12 @@ import {
 } from '../../lib/settings-fields';
 import type { ResolvedSettingResponse } from '../../types/settings';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
-import { PlatformLockedNote, SettingFieldLabel, SettingStateBadge } from './settings-lock';
+import {
+  ClearOverrideButton,
+  PlatformLockedNote,
+  SettingFieldLabel,
+  SettingStateBadge,
+} from './settings-lock';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
 const AGENT_TYPE_OPTIONS = [
@@ -124,50 +118,6 @@ const FIELD_LABELS: Record<keyof AISettingsForm, string> = {
   'ai.api_key': 'API 키',
   'ai.cli_oauth_token': 'OAuth 토큰',
 };
-
-/**
- * 재정의 해제 버튼 + 확인 다이얼로그.
- *
- * - 배치 저장(PUT)에 얹지 않고 즉시 DELETE 를 호출한다 — 오버라이드 삭제는 "빈 문자열 저장"과
- *   다른 연산이라 PUT payload 로 표현할 수 없다.
- * - `DeleteConfirmDialog` 래퍼를 쓰지 않는 이유: 고정 문구가 "되돌릴 수 없습니다"인데 재정의
- *   해제는 언제든 다시 재정의할 수 있어 사실과 어긋난다. 그래서 원본 프리미티브로 문구를 짠다.
- * - 확인을 받는 이유: system_prompt 처럼 공들여 입력한 긴 텍스트가 즉시 사라질 수 있다.
- */
-function ClearOverrideButton({
-  settingKey,
-  onConfirm,
-  disabled,
-}: {
-  settingKey: string;
-  onConfirm: (key: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" disabled={disabled}>
-          <RotateCcw className="h-3.5 w-3.5" />
-          재정의 해제
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>재정의 해제</AlertDialogTitle>
-          <AlertDialogDescription>
-            이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은
-            사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>취소</AlertDialogCancel>
-          {/* destructive 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다 */}
-          <AlertDialogAction onClick={() => onConfirm(settingKey)}>되돌리기</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
@@ -405,10 +355,11 @@ export default function SettingsPage() {
   );
 
   // 탭별 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다 (이슈 #86).
-  // P7-b 이후 이메일·임베딩 탭은 편집 자체가 불가능해 dirty 가 될 수 없으므로 보고자가 AI 탭뿐이다.
-  // 합산기 구조는 유지한다 — 장래에 편집 가능한 탭이 추가되면 그대로 다시 붙는다.
+  // P7-c1 로 이메일 탭이 다시 편집 가능해져 보고자가 둘(AI·이메일)이 됐다. 임베딩 탭은 여전히
+  // 전면 잠금이라 dirty 가 될 수 없어 보고자가 없다.
   const { isAnyDirty, makeReporter } = useDirtyAggregator();
   const aiReporter = makeReporter('ai');
+  const smtpReporter = makeReporter('smtp');
   useEffect(() => {
     aiReporter(hasChanges);
   }, [aiReporter, hasChanges]);
@@ -794,11 +745,11 @@ export default function SettingsPage() {
             </Button>
           </div>
         </TabsContent>
-        {/* 이메일 탭 — 플랫폼 전용(전 필드 읽기 전용)이라 dirty 보고자가 없다 */}
+        {/* 이메일 탭 — P7-c1 로 편집 가능해져 자기 dirty 를 합산기에 보고한다 */}
         <TabsContent value="email" className="mt-6">
-          <SmtpSettingsTab />
+          <SmtpSettingsTab onDirtyChange={smtpReporter} />
         </TabsContent>
-        {/* 임베딩 탭 — 위와 동일 */}
+        {/* 임베딩 탭 — 전면 잠금이라 dirty 보고자가 없다 */}
         <TabsContent value="embedding" className="mt-6">
           <EmbeddingSettingsTab />
         </TabsContent>
