@@ -130,23 +130,42 @@ export function createAiSettings(
   return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
 }
 
+/** SMTP **연결 번들** 5키 — 백엔드 `SettingsService.SMTP_CONNECTION_KEYS` 와 같은 집합이다. */
+const SMTP_CONNECTION_KEYS = [
+  'smtp.host',
+  'smtp.port',
+  'smtp.username',
+  'smtp.password',
+  'smtp.starttls',
+];
+
 /**
  * SMTP 설정 6키 — P7-c1 에서 **테넌트 오버라이드 허용**으로 재분류되어 전부 `tenantEditable: true` 다.
  *
- * - 기본은 전 키 상속 중(`overridden: false`). 재정의 상태가 필요한 테스트는 `patch` 로 그 키만
- *   `overridden: true` 로 바꾼다.
+ * - 기본은 전 키 상속 중(`overridden: false`). `smtp.from_address` 는 키 단위 상속이므로 그 키의
+ *   재정의 상태는 `patch` 로 만든다.
  * - `smtp.password` 는 백엔드가 **오버라이드 값까지 마스킹**해서 준다(Task 2). 그래서 픽스처도
  *   평문이 아니라 `****` 형태를 준다 — 평문을 주면 "화면이 비밀번호를 그대로 받는다"는 존재할 수
  *   없는 상태를 테스트하게 되고, 마스크 센티널이 저장에서 빠지는 경로도 재현되지 않는다.
+ *   길이 8(`****` + 마지막 4글자)인 것도 의도다: Task 5 가 백엔드 센티널 판정을
+ *   `EncryptionService.maskValue` 의 **형태**(길이 4 또는 8)로 좁혔으므로, 그 밖의 길이는 서버가
+ *   만들 수 없는 마스크다.
+ *
+ * **`connectionOverridden` 노브(Task 5)**: 연결 5키는 서버가 **원자적으로** 해석한다 — 하나라도
+ * 테넌트 행이 있으면 5키 전부가 `overridden: true` 로 내려오고, **행이 없는 키는 플랫폼 값이
+ * 아니라 `value: ''`** 다. 이 노브에 값을 준 키만 그 값을 갖고 나머지 연결 키는 빈 값이 된다.
+ * `patch` 로 `smtp.host` 하나만 `overridden: true` 로 만드는 것은 **서버가 만들 수 없는 응답**이라
+ * 그렇게 쓰면 안 된다.
  */
 export function createSmtpSettings(
   patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
+  options: { connectionOverridden?: Record<string, string> } = {},
 ): ResolvedSettingResponse[] {
   const base: ResolvedSettingResponse[] = [
     createResolvedSetting({ key: 'smtp.host', value: 'smtp.gmail.com', description: '발신 메일 서버 주소' }),
     createResolvedSetting({ key: 'smtp.port', value: '587', description: '포트' }),
     createResolvedSetting({ key: 'smtp.username', value: 'user@example.com', description: '사용자 이름' }),
-    createResolvedSetting({ key: 'smtp.password', value: '****masked****', description: '비밀번호' }),
+    createResolvedSetting({ key: 'smtp.password', value: '****3f2a', description: '비밀번호' }),
     createResolvedSetting({ key: 'smtp.starttls', value: 'true', description: 'STARTTLS 사용' }),
     createResolvedSetting({
       key: 'smtp.from_address',
@@ -154,7 +173,14 @@ export function createSmtpSettings(
       description: '발신자 주소',
     }),
   ];
-  return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
+  const bundle = options.connectionOverridden;
+  return base.map((s) => {
+    const withBundle =
+      bundle && SMTP_CONNECTION_KEYS.includes(s.key)
+        ? { ...s, overridden: true, value: bundle[s.key] ?? '' }
+        : s;
+    return patch[s.key] ? { ...withBundle, ...patch[s.key] } : withBundle;
+  });
 }
 
 /**

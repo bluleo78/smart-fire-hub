@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { settingsApi } from '../../api/settings';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
@@ -64,10 +65,47 @@ const FIELD_LABELS: Record<keyof SmtpForm, string> = {
  */
 const BLANK_ALLOWED_KEYS: (keyof SmtpForm)[] = ['smtp.username', 'smtp.password'];
 
+/**
+ * SMTP <b>연결 번들</b> 5키 — 백엔드 `SettingsService.SMTP_CONNECTION_KEYS` 와 같은 집합이다.
+ *
+ * `{호스트, 포트, 사용자 이름, 비밀번호, STARTTLS}` 는 <b>한 서버에 대한 한 벌의 접속 정보</b>라
+ * 서버가 이 5키를 <b>원자적으로</b> 해석한다: 하나라도 재정의되면 5키 전부가 테넌트 평면에서
+ * 해석되고, 행이 없는 키는 플랫폼 값이 아니라 빈 값이 된다. 키 단위로 상속하면 A 서버의 주소와
+ * B 서버의 자격증명이 섞여 <b>전 테넌트 공용 SMTP 계정</b>이 테넌트가 지정한 호스트로 나간다.
+ *
+ * <b>화면이 이 목록을 갖는 이유는 해석이 아니라 배치다.</b> 해석의 권위는 전적으로 서버 플래그이고
+ * (아래 `connectionGroupState` 는 서버가 내려준 `overridden` 만 읽는다), 이 상수가 정하는 것은
+ * "어느 필드가 그룹 테두리 안에 들어가는가" 뿐이다. `smtp.from_address` 는 접속과 무관한 표시
+ * 값이라 번들이 아니며, 그룹 밖에서 개별 배지·개별 해제 버튼을 유지한다.
+ */
+const SMTP_CONNECTION_KEYS: (keyof SmtpForm)[] = [
+  'smtp.host',
+  'smtp.port',
+  'smtp.username',
+  'smtp.password',
+  'smtp.starttls',
+];
+
 // 포트 범위는 백엔드 `SettingsService.normalizeSmtpPayload`(1~65535)와 반드시 같아야 한다 —
 // 어긋나면 한쪽이 통과시킨 값을 다른 쪽이 거부해 "저장했는데 400" 또는 그 반대가 된다.
 const PORT_MIN = 1;
 const PORT_MAX = 65535;
+
+/**
+ * 번들 안에서 <b>비어 있는 항목</b>임을 알리는 정적 노트(디자인 스펙 §1-1 신설 어휘).
+ *
+ * 배지가 아니라 노트인 이유: 배지 문자열은 어휘를 영구히 넓혀 AI 탭까지 따라와야 하는 부담을
+ * 만들지만, 노트는 이 화면 안에 머문다. 빈 입력창은 시각적으로 "아직 안 채운 칸"과 구별되지
+ * 않으므로 이 텍스트가 유일한 전달 경로다 — 그래서 각 입력의 `aria-describedby` 에 포함한다.
+ */
+function EmptyInBundleNote({ id, show }: { id: string; show: boolean }) {
+  if (!show) return null;
+  return (
+    <p id={id} className="text-sm text-muted-foreground">
+      이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.
+    </p>
+  );
+}
 
 /**
  * 이메일(SMTP) 설정 탭 — P7-c1 이후 <b>테넌트 상속/재정의 편집 화면</b>.
@@ -105,6 +143,9 @@ export default function SmtpSettingsTab({
   // 서버 응답을 키로 인덱싱해 보관한다 — 배지 상태(overridden/tenantEditable)의 근거.
   const [settings, setSettings] = useState<Record<string, ResolvedSettingResponse>>({});
   const [errors, setErrors] = useState<Partial<Record<keyof SmtpForm, string>>>({});
+  // 번들 해제의 **부분 실패**만 담는다. 토스트로 끝내지 않는 이유: 이 중간 상태는 사용자가 다시
+  // 조작해야 하는 상태인데 토스트는 사라지고 스크린리더 사용자가 놓칠 수 있다(§6).
+  const [bundleClearError, setBundleClearError] = useState<string | null>(null);
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -139,9 +180,58 @@ export default function SmtpSettingsTab({
     return byKey;
   }, []);
 
-  // 필드 상태 판정 — 배지·disabled·저장 대상·dirty 가 모두 이 한 곳을 거쳐 서로 어긋나지 않게 한다.
+  // 필드 상태 판정 — 서버 응답 1건에서 나온다.
   const fieldState = (key: keyof SmtpForm) => resolveSettingFieldState(key, settings[key]);
-  const isEditable = (key: keyof SmtpForm) => fieldState(key) !== 'locked';
+
+  /**
+   * 연결 번들의 그룹 상태. 해석이 번들 단위인데 배지가 필드 단위면 배지가 거짓말을 한다 —
+   * 호스트가 재정의된 상태에서 `비밀번호` 옆의 `기본값 사용 중` 은 "그 플랫폼 비밀번호는 쓰이지
+   * 않는다"는 사실과 정면으로 어긋난다.
+   *
+   * <b>`locked` 가 하나라도 섞이면 그룹 전체가 `locked` 다(fail-closed).</b> `SettingsOverridePolicy`
+   * 가 6키를 함께 열었으므로 오늘 이 조합은 오지 않지만, 서버가 5키 중 일부만
+   * `tenantEditable=false` 로 내려주는 모순 상태에서 나머지 4키를 편집 가능하게 그리면 사용자가
+   * 저장할 수 없는 폼을 채우게 된다. 모호하면 잠그는 쪽이다.
+   *
+   * <b>`overridden` 판정은 서버 플래그만 읽는다.</b> 서버가 번들 재정의 상태에서 5키 전부를
+   * `overridden=true` + 행 없는 키는 `value=''` 로 내려주므로("이 키는 테넌트 평면에서 해석된다"가
+   * 플래그의 뜻이다), 화면이 값의 빈 여부로 상태를 다시 추론할 일이 없다. 서버가 단일 권위여야
+   * web 이 파생을 틀려도 거짓말이 나가지 않는다.
+   */
+  const connectionGroupState: 'locked' | 'overridden' | 'inherited' = SMTP_CONNECTION_KEYS.some(
+    (key) => fieldState(key) === 'locked',
+  )
+    ? 'locked'
+    : SMTP_CONNECTION_KEYS.some((key) => fieldState(key) === 'overridden')
+      ? 'overridden'
+      : 'inherited';
+
+  /**
+   * 배지·disabled·저장 대상·dirty 가 <b>모두</b> 이 한 곳을 거친다 — 연결 5키는 그룹 상태,
+   * 나머지는 개별 상태다. 두 갈래를 호출부마다 다시 조합하면 "화면은 잠갔는데 저장은 보낸다" 같은
+   * 어긋남이 생긴다.
+   */
+  const effectiveState = (key: keyof SmtpForm) =>
+    SMTP_CONNECTION_KEYS.includes(key) ? connectionGroupState : fieldState(key);
+  const isEditable = (key: keyof SmtpForm) => effectiveState(key) !== 'locked';
+
+  /**
+   * 번들이 재정의됐는데 이 키에는 테넌트 행이 없어 <b>빈 값으로 해석되는</b> 상태.
+   * 키 단위 모델에는 대응하는 상태가 없다(예전이라면 `기본값 사용 중` 이었다).
+   *
+   * 폼 값이 아니라 <b>서버가 내려준 값</b>을 본다 — 사용자가 지금 타이핑한 내용은 아직 저장되지
+   * 않았고, 이 노트가 말하는 것은 "지금 실제로 적용 중인 해석"이다.
+   */
+  const isEmptyInBundle = (key: keyof SmtpForm) =>
+    connectionGroupState === 'overridden' && (settings[key]?.value ?? '') === '';
+
+  // 저장 전 예고(§2): 아직 상속 중인데 연결 5키 중 하나라도 손댔다면, 저장이 5키 전부를 테넌트
+  // 평면으로 옮긴다는 사실을 미리 말한다. 배지는 이 시점에도 `기본값 사용 중` 이다 — 저장 전에는
+  // 서버에 행이 없고 실제로 아직 플랫폼 값으로 메일이 나가므로, 배지를 미리 뒤집으면 거짓이면서
+  // 반증도 안 되는 화면이 된다.
+  const bundleTransitionPending =
+    connectionGroupState === 'inherited' &&
+    SMTP_CONNECTION_KEYS.some((key) => form[key] !== original[key]);
 
   const updateField = (key: keyof SmtpForm, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -190,7 +280,7 @@ export default function SmtpSettingsTab({
     const settingsToSave: Record<string, string> = {};
     const droppedChangedKeys: (keyof SmtpForm)[] = [];
     (Object.keys(form) as (keyof SmtpForm)[]).forEach((key) => {
-      if (fieldState(key) === 'locked') return;
+      if (effectiveState(key) === 'locked') return;
       if (form[key] === original[key]) return;
       if (form[key].trim() !== '' || BLANK_ALLOWED_KEYS.includes(key)) {
         settingsToSave[key] = form[key];
@@ -246,9 +336,71 @@ export default function SmtpSettingsTab({
     }
   };
 
+  /**
+   * 연결 5키 <b>전체</b>의 재정의를 해제한다 — 그룹 머리의 버튼 하나가 5번의 DELETE 를 발행한다.
+   *
+   * <b>번들 삭제 엔드포인트는 없다</b>(백엔드 변경은 이 태스크 범위 밖). 그래서 부분 실패가
+   * 실재하고, 반드시 화면에 그려야 한다: 그 중간 상태는 원자 해석 아래에서 <b>안전하지만</b>
+   * (행이 하나라도 남으면 5키가 전부 테넌트 평면에서 해석되고 행 없는 키는 빈 값이다) 사용자가
+   * 보기엔 "해제했는데 아직 재정의 배지"다. 안전하다는 사실과 아직 안 끝났다는 사실을 둘 다 말한다.
+   *
+   * 5키를 <b>조건 없이</b> 지운다. 서버가 번들 재정의 상태에서 5키 전부를 `overridden=true` 로
+   * 내려주므로 화면은 어느 키에 실제 행이 있는지 알 수 없고, 알 필요도 없다 — `clearOverride` 는
+   * 행이 없으면 아무 일도 하지 않는 멱등한 성공이다(백엔드 `SettingsService.clearOverride`).
+   */
+  const handleClearConnectionBundle = async () => {
+    setIsClearing(true);
+    setBundleClearError(null);
+    const failedLabels: string[] = [];
+    for (const key of SMTP_CONNECTION_KEYS) {
+      try {
+        await settingsApi.clearOverride(key);
+      } catch {
+        failedLabels.push(FIELD_LABELS[key]);
+      }
+    }
+
+    try {
+      // 성공·실패 어느 쪽이든 서버에서 다시 읽는다 — 화면 상태가 실제 행 상태에서 파생되므로
+      // 부분 실패도 자동으로 올바르게 그려진다.
+      const byKey = await refreshMeta();
+      const restore = (prev: SmtpForm) => {
+        const next = { ...prev };
+        SMTP_CONNECTION_KEYS.forEach((key) => {
+          next[key] = byKey[key]?.value ?? EMPTY[key];
+        });
+        return next;
+      };
+      setForm(restore);
+      setOriginal(restore);
+      setErrors((prev) => {
+        const next = { ...prev };
+        SMTP_CONNECTION_KEYS.forEach((key) => delete next[key]);
+        return next;
+      });
+
+      if (failedLabels.length > 0) {
+        const message =
+          '일부 항목만 해제되었습니다. 남은 항목은 아직 우리 조직 값으로 적용됩니다 — 다시 시도하세요.';
+        setBundleClearError(message);
+        toast.error(message);
+      } else {
+        toast.success('플랫폼 기본값으로 되돌렸습니다.');
+      }
+    } catch {
+      // 재조회가 실패하면 화면이 지금 어느 상태인지 알 수 없다 — 성공이라고 말하지 않는다.
+      const message = '재정의 해제 결과를 확인하지 못했습니다. 새로고침 후 다시 확인하세요.';
+      setBundleClearError(message);
+      toast.error(message);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
   // 재정의 중인 필드에만 해제 버튼을 붙인다 — 상속 중인 필드에는 지울 오버라이드가 없다.
+  // 연결 5키는 그룹 머리의 버튼 하나가 대신하므로 여기 오지 않는다(§3).
   const clearAction = (key: keyof SmtpForm) =>
-    fieldState(key) === 'overridden' ? (
+    !SMTP_CONNECTION_KEYS.includes(key) && fieldState(key) === 'overridden' ? (
       <ClearOverrideButton settingKey={key} onConfirm={handleClearOverride} disabled={isClearing} />
     ) : undefined;
 
@@ -259,7 +411,7 @@ export default function SmtpSettingsTab({
 
   // dirty 판정도 저장 대상과 같은 기준을 쓴다 — 서버가 잠갔다고 한 키는 세지 않는다.
   const hasChanges = (Object.keys(form) as (keyof SmtpForm)[]).some(
-    (key) => fieldState(key) !== 'locked' && form[key] !== original[key],
+    (key) => effectiveState(key) !== 'locked' && form[key] !== original[key],
   );
 
   // 이탈 가드(이슈 #86)에 dirty 를 보고한다. <b>언마운트 시 반드시 해제한다</b> — 탭을 바꾸면
@@ -269,6 +421,17 @@ export default function SmtpSettingsTab({
     onDirtyChange(hasChanges);
     return () => onDirtyChange(false);
   }, [onDirtyChange, hasChanges]);
+
+  /**
+   * 번들이 재정의됐는데 <b>저장된</b> 값이 비어 있는 연결 키의 이름들. 비어 있는 키를 실제로
+   * 나열해야 "무엇을 채우면 되는가"가 화면에 있다.
+   *
+   * `smtp.starttls` 는 값이 비어도 인증과 무관하므로 안내에서 뺀다 — 넣으면 "STARTTLS 를 채우면
+   * 인증이 된다"고 읽힌다.
+   */
+  const emptyConnectionLabels = (['smtp.host', 'smtp.port', 'smtp.username', 'smtp.password'] as const)
+    .filter((key) => isEmptyInBundle(key))
+    .map((key) => FIELD_LABELS[key]);
 
   const handleTest = () => {
     testMutation.mutate(undefined, {
@@ -302,128 +465,178 @@ export default function SmtpSettingsTab({
           {/* 탭 전체 맥락 한 줄 — 배너가 아니라 일반 텍스트다. 필드별 배지가 상태를 말하므로
               "탭 전체가 잠겼다"고 말하던 배너 두 개는 제거했다(공존하면 서로 다른 말을 한다). */}
           <p className="text-sm text-muted-foreground">
-            SMTP 설정은 플랫폼 기본값을 따르며, 필요한 항목만 우리 조직 값으로 재정의할 수 있습니다.
+            SMTP 설정은 플랫폼 기본값을 따르며, 필요하면 우리 조직 값으로 재정의할 수 있습니다.
           </p>
 
-          {/* Host */}
-          <div className="space-y-2">
-            <SettingFieldLabel
-              htmlFor="smtp-host"
-              state={fieldState('smtp.host')}
-              action={clearAction('smtp.host')}
-            >
-              SMTP 호스트
-            </SettingFieldLabel>
-            <Input
-              id="smtp-host"
-              className="max-w-md"
-              value={form['smtp.host']}
-              disabled={!isEditable('smtp.host')}
-              onChange={(e) => updateField('smtp.host', e.target.value)}
-              placeholder="smtp.gmail.com"
-            />
-            <p className="text-sm text-muted-foreground">발신 메일 서버 주소</p>
-          </div>
+          {/* 연결 5키는 하나의 `fieldset` 으로 묶는다. 그룹 경계를 테두리로만 전달하면 스크린리더
+              사용자가 "비밀번호 필드 하나"만 만났을 때 그것이 묶음의 일부라는 사실을 듣지 못한다 —
+              `legend` 는 그룹 안 어느 필드에 도착하든 함께 읽힌다(§6). */}
+          <fieldset
+            className="space-y-6 rounded-md border p-4"
+            aria-describedby={
+              bundleTransitionPending
+                ? 'smtp-connection-desc smtp-connection-warning'
+                : 'smtp-connection-desc'
+            }
+          >
+            <legend className="flex flex-wrap items-center gap-2 px-1 text-sm font-medium">
+              연결 설정
+              {/* 범위는 배지가 아니라 이 보조 문구가 짊어진다 — 배지 문자열을 새로 만들면 AI 탭까지
+                  따라와야 하는 어휘 부담이 영구히 생긴다. */}
+              <span className="font-normal text-muted-foreground">5개 항목이 함께 적용됩니다</span>
+            </legend>
 
-          <Separator />
-
-          {/* Port */}
-          <div className="space-y-2">
-            <SettingFieldLabel
-              htmlFor="smtp-port"
-              state={fieldState('smtp.port')}
-              action={clearAction('smtp.port')}
-            >
-              포트
-            </SettingFieldLabel>
-            <Input
-              id="smtp-port"
-              type="number"
-              min={PORT_MIN}
-              max={PORT_MAX}
-              className="max-w-[120px]"
-              value={form['smtp.port']}
-              disabled={!isEditable('smtp.port')}
-              onChange={(e) => updateField('smtp.port', e.target.value)}
-              placeholder="587"
-            />
-            {errors['smtp.port'] && (
-              <p className="text-sm text-destructive">{errors['smtp.port']}</p>
-            )}
-          </div>
-
-          <Separator />
-
-          {/* Username */}
-          <div className="space-y-2">
-            <SettingFieldLabel
-              htmlFor="smtp-username"
-              state={fieldState('smtp.username')}
-              action={clearAction('smtp.username')}
-            >
-              사용자 이름
-            </SettingFieldLabel>
-            <Input
-              id="smtp-username"
-              className="max-w-md"
-              value={form['smtp.username']}
-              disabled={!isEditable('smtp.username')}
-              onChange={(e) => updateField('smtp.username', e.target.value)}
-              placeholder="user@example.com"
-            />
-            <p className="text-sm text-muted-foreground">인증 없는 릴레이라면 비워 둘 수 있습니다</p>
-          </div>
-
-          <Separator />
-
-          {/* Password — 마스킹된 값이 그대로 시드된다. 표시/숨기기 토글을 두지 않는 이유는
-              눌러도 보여줄 평문이 서버에서 오지 않기 때문이다(편집 가능해져도 마찬가지). */}
-          <div className="space-y-2">
-            <SettingFieldLabel
-              htmlFor="smtp-password"
-              state={fieldState('smtp.password')}
-              action={clearAction('smtp.password')}
-            >
-              비밀번호
-            </SettingFieldLabel>
-            <Input
-              id="smtp-password"
-              type="password"
-              className="max-w-md"
-              value={form['smtp.password']}
-              disabled={!isEditable('smtp.password')}
-              onChange={(e) => updateField('smtp.password', e.target.value)}
-            />
-            {/* 마스킹은 자물쇠 아이콘 같은 시각 단서를 쓰지 않으므로 "설정됨/안 됨"을 전달하는
-                경로가 이 텍스트뿐이다. 값 유무로 분기한다. */}
-            <p className="text-sm text-muted-foreground">
-              {form['smtp.password'] === ''
-                ? '설정된 비밀번호가 없습니다 (인증 없는 SMTP)'
-                : '현재 비밀번호가 설정되어 있습니다. 값을 바꾸려면 새 비밀번호를 입력하세요.'}
-            </p>
-          </div>
-
-          <Separator />
-
-          {/* STARTTLS — Switch 는 라벨 오른쪽에 놓이는 배치라 SettingFieldLabel 대신
-              라벨+배지+해제버튼을 왼쪽 열에 직접 조합한다(구성 요소는 동일 컴포넌트를 재사용). */}
-          <div className="flex items-center justify-between max-w-md">
-            <div className="space-y-1">
+            <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Label htmlFor="smtp-starttls">STARTTLS 사용</Label>
-                <SettingStateBadge state={fieldState('smtp.starttls')} />
-                {clearAction('smtp.starttls')}
+                {/* 그룹 배지 하나 + 필드 배지 0개. 다섯 필드가 전부 같은 배지를 달면 오히려
+                    "각각 독립적으로 그런 상태다"로 읽혀 고치려던 오해를 배지가 다시 심는다. */}
+                <SettingStateBadge state={connectionGroupState} />
+                {connectionGroupState === 'overridden' && (
+                  <ClearOverrideButton
+                    settingKey="smtp.connection"
+                    onConfirm={handleClearConnectionBundle}
+                    disabled={isClearing}
+                    label="연결 설정 전체 재정의 해제"
+                    dialogTitle="연결 설정 재정의 해제"
+                    /* 5개 항목을 이름으로 나열한다 — "이 그룹"이라고 쓰면 사용자가 그룹 경계를
+                       스크롤 밖에서 추정해야 한다. 비밀번호는 화면에 평문이 없어 다시 칠 수 없으므로
+                       "복구할 수 없으며" 한 마디를 번들 문구에만 더한다. */
+                    dialogDescription="SMTP 호스트, 포트, 사용자 이름, 비밀번호, STARTTLS 5개 항목의 테넌트 설정이 모두 삭제되고 플랫폼 기본값으로 전환됩니다. 입력한 비밀번호는 복구할 수 없으며, 필요하면 언제든 다시 재정의할 수 있습니다."
+                  />
+                )}
               </div>
-              <p className="text-sm text-muted-foreground">TLS 암호화로 SMTP 연결 보안</p>
+              <p id="smtp-connection-desc" className="text-sm text-muted-foreground">
+                {connectionGroupState === 'overridden'
+                  ? '이 5개 항목은 우리 조직 값으로 적용되고 있습니다. 플랫폼 기본값은 이 중 어느 항목에도 더 이상 사용되지 않습니다.'
+                  : '호스트·포트·사용자 이름·비밀번호·STARTTLS 는 한 서버에 대한 한 벌의 접속 정보이므로 항상 함께 적용됩니다. 지금은 플랫폼 기본값을 그대로 쓰고 있습니다.'}
+              </p>
+              {/* 부분 실패는 토스트 한 번으로 끝내지 않는다 — 사용자가 다시 조작해야 하는 상태다(§6). */}
+              {bundleClearError && (
+                <p className="text-sm text-destructive">{bundleClearError}</p>
+              )}
             </div>
-            <Switch
-              id="smtp-starttls"
-              aria-label="STARTTLS 사용"
-              checked={form['smtp.starttls'] === 'true'}
-              disabled={!isEditable('smtp.starttls')}
-              onCheckedChange={(checked) => updateField('smtp.starttls', checked ? 'true' : 'false')}
-            />
-          </div>
+
+            {/* 저장 예고(§2). 상태 전환은 저장 후에 그리고, 지금은 무슨 일이 일어날지만 말한다. */}
+            {bundleTransitionPending && (
+              <InlineBanner id="smtp-connection-warning" variant="warning">
+                저장하면 연결 설정 5개 항목이 모두 우리 조직 값으로 전환됩니다. 입력하지 않은 항목은
+                빈 값이 되며, 플랫폼의 사용자 이름·비밀번호는 더 이상 사용되지 않습니다. 인증이 필요한
+                서버라면 지금 사용자 이름과 비밀번호도 함께 입력하세요.
+              </InlineBanner>
+            )}
+
+            {/* Host */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-host">SMTP 호스트</Label>
+              <Input
+                id="smtp-host"
+                className="max-w-md"
+                value={form['smtp.host']}
+                disabled={!isEditable('smtp.host')}
+                onChange={(e) => updateField('smtp.host', e.target.value)}
+                placeholder="smtp.gmail.com"
+                aria-describedby={
+                  isEmptyInBundle('smtp.host') ? 'smtp-host-desc smtp-host-empty' : 'smtp-host-desc'
+                }
+              />
+              <p id="smtp-host-desc" className="text-sm text-muted-foreground">
+                발신 메일 서버 주소
+              </p>
+              <EmptyInBundleNote id="smtp-host-empty" show={isEmptyInBundle('smtp.host')} />
+            </div>
+
+            {/* Port */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-port">포트</Label>
+              <Input
+                id="smtp-port"
+                type="number"
+                min={PORT_MIN}
+                max={PORT_MAX}
+                className="max-w-[120px]"
+                value={form['smtp.port']}
+                disabled={!isEditable('smtp.port')}
+                onChange={(e) => updateField('smtp.port', e.target.value)}
+                placeholder="587"
+                aria-describedby={isEmptyInBundle('smtp.port') ? 'smtp-port-empty' : undefined}
+              />
+              {errors['smtp.port'] && (
+                <p className="text-sm text-destructive">{errors['smtp.port']}</p>
+              )}
+              <EmptyInBundleNote id="smtp-port-empty" show={isEmptyInBundle('smtp.port')} />
+            </div>
+
+            {/* Username */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-username">사용자 이름</Label>
+              <Input
+                id="smtp-username"
+                className="max-w-md"
+                value={form['smtp.username']}
+                disabled={!isEditable('smtp.username')}
+                onChange={(e) => updateField('smtp.username', e.target.value)}
+                placeholder="user@example.com"
+                aria-describedby={
+                  isEmptyInBundle('smtp.username')
+                    ? 'smtp-username-desc smtp-username-empty'
+                    : 'smtp-username-desc'
+                }
+              />
+              <p id="smtp-username-desc" className="text-sm text-muted-foreground">
+                인증 없는 릴레이라면 비워 둘 수 있습니다
+              </p>
+              <EmptyInBundleNote id="smtp-username-empty" show={isEmptyInBundle('smtp.username')} />
+            </div>
+
+            {/* Password — 마스킹된 값이 그대로 시드된다. 표시/숨기기 토글을 두지 않는 이유는
+                눌러도 보여줄 평문이 서버에서 오지 않기 때문이다. */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-password">비밀번호</Label>
+              <Input
+                id="smtp-password"
+                type="password"
+                className="max-w-md"
+                value={form['smtp.password']}
+                disabled={!isEditable('smtp.password')}
+                onChange={(e) => updateField('smtp.password', e.target.value)}
+                aria-describedby="smtp-password-desc"
+              />
+              {/* 번들 재정의 상태의 빈 비밀번호는 §1-1 노트가 기존 두 분기를 **대체**한다 —
+                  "설정된 비밀번호가 없습니다 (인증 없는 SMTP)"는 사용자가 의도해서 비운 것처럼
+                  읽혀, 실제로는 자격증명 없이 릴레이를 시도하게 된 위험을 감춘다. */}
+              {isEmptyInBundle('smtp.password') ? (
+                <EmptyInBundleNote id="smtp-password-desc" show />
+              ) : (
+                <p id="smtp-password-desc" className="text-sm text-muted-foreground">
+                  {form['smtp.password'] === ''
+                    ? '설정된 비밀번호가 없습니다 (인증 없는 SMTP)'
+                    : '현재 비밀번호가 설정되어 있습니다. 값을 바꾸려면 새 비밀번호를 입력하세요.'}
+                </p>
+              )}
+            </div>
+
+            {/* STARTTLS — Switch 는 라벨 오른쪽에 놓이는 배치라 왼쪽 열에 라벨+설명을 직접 조합한다. */}
+            <div className="flex items-center justify-between max-w-md">
+              <div className="space-y-1">
+                <Label htmlFor="smtp-starttls">STARTTLS 사용</Label>
+                <p className="text-sm text-muted-foreground">TLS 암호화로 SMTP 연결 보안</p>
+                <EmptyInBundleNote
+                  id="smtp-starttls-empty"
+                  show={isEmptyInBundle('smtp.starttls')}
+                />
+              </div>
+              <Switch
+                id="smtp-starttls"
+                aria-label="STARTTLS 사용"
+                checked={form['smtp.starttls'] === 'true'}
+                disabled={!isEditable('smtp.starttls')}
+                onCheckedChange={(checked) => updateField('smtp.starttls', checked ? 'true' : 'false')}
+                aria-describedby={
+                  isEmptyInBundle('smtp.starttls') ? 'smtp-starttls-empty' : undefined
+                }
+              />
+            </div>
+          </fieldset>
 
           <Separator />
 
@@ -444,7 +657,10 @@ export default function SmtpSettingsTab({
               onChange={(e) => updateField('smtp.from_address', e.target.value)}
               placeholder="noreply@example.com"
             />
-            <p className="text-sm text-muted-foreground">이메일 발신자로 표시되는 주소</p>
+            {/* 그룹 밖 + 개별 배지 + 개별 해제 버튼. 구분은 구조가 하고, 텍스트가 한 번 더 말한다(§4). */}
+            <p className="text-sm text-muted-foreground">
+              이메일 발신자로 표시되는 주소. 접속 정보와 무관하게 이 항목만 따로 재정의할 수 있습니다.
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -465,10 +681,20 @@ export default function SmtpSettingsTab({
               버튼을 막지 않는 이유: 지금 실제로 적용 중인 값을 확인하려는 것도 유효한 용도라
               (AI 탭의 "인증 확인"이 dirty 에서 비활성인 것과 다르다) 막으면 그 진단을 없앤다.
               대신 dirty 인 동안 무엇으로 테스트하는지 문자열로 알려 거짓 결과 해석을 막는다. */}
-          {hasChanges && (
-            <p className="text-sm text-muted-foreground">
-              저장 전 값이 아니라 마지막 저장값으로 테스트합니다
+          {/* 두 안내를 한 슬롯에서 **배타적으로** 보여준다 — 나란히 뜨면 어느 쪽이 지금 문제인지
+              흐려진다. 빈 자격증명 쪽이 우선순위가 높다(§5). 버튼은 어느 경우에도 막지 않는다:
+              무인증 릴레이는 합법적 최종 상태라 그 구성에서 테스트를 못 하게 막으면 정당한 설정을
+              검증할 길이 사라진다. */}
+          {emptyConnectionLabels.length > 0 ? (
+            <p className="max-w-md text-sm text-muted-foreground">
+              {`${emptyConnectionLabels.join('·')}이(가) 비어 있어 인증 없이 접속을 시도합니다. 인증이 필요한 서버라면 실패가 정상입니다 — 값을 입력하고 저장한 뒤 다시 테스트하세요.`}
             </p>
+          ) : (
+            hasChanges && (
+              <p className="text-sm text-muted-foreground">
+                저장 전 값이 아니라 마지막 저장값으로 테스트합니다
+              </p>
+            )
           )}
           <Button variant="outline" onClick={handleTest} disabled={testMutation.isPending}>
             <Send className="h-4 w-4" />

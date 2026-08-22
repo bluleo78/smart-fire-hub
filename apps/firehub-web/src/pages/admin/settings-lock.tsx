@@ -109,31 +109,40 @@ export function PlatformLockedBanner({ children }: { children: ReactNode }) {
  *
  * P7-c1 에서 `SettingsPage` 안의 로컬 함수에서 이 파일로 옮겼다 — 이메일 탭도 같은 버튼을 쓰는데,
  * 복사하면 확인 문구와 동작이 두 벌이 되어 한쪽만 고치는 사고가 난다.
+ *
+ * <b>문구를 prop 으로 받는 이유(Task 5)</b>: SMTP 연결 5키는 <b>번들 단위</b>로 해제되므로 고정
+ * 문구의 "이 항목"(단수)이 거짓이 된다. 그렇다고 번들 전용 컴포넌트를 복사해 만들면 확인 동작이
+ * 다시 두 벌이 되어, 위 문단이 경고하는 그 사고가 난다. 그래서 <b>기본값이 있는 선택 prop</b>으로
+ * 넓힌다 — AI 탭 호출부는 아무것도 넘기지 않고 동작이 그대로다.
  */
 export function ClearOverrideButton({
   settingKey,
   onConfirm,
   disabled,
+  label = '재정의 해제',
+  dialogTitle = '재정의 해제',
+  dialogDescription = '이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은 사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.',
 }: {
   settingKey: string;
   onConfirm: (key: string) => void;
   disabled?: boolean;
+  /** 버튼에 표시할 문구. 번들 해제는 범위를 라벨에 박아 누르기 전에 알린다. */
+  label?: string;
+  dialogTitle?: string;
+  dialogDescription?: ReactNode;
 }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
         <Button type="button" variant="ghost" size="sm" disabled={disabled}>
           <RotateCcw className="h-3.5 w-3.5" />
-          재정의 해제
+          {label}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>재정의 해제</AlertDialogTitle>
-          <AlertDialogDescription>
-            이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은
-            사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{dialogTitle}</AlertDialogTitle>
+          <AlertDialogDescription>{dialogDescription}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>

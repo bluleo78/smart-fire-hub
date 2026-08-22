@@ -519,12 +519,15 @@ test.describe('설정 페이지', () => {
     }
 
     /**
-     * STARTTLS 는 Switch 라 라벨/배지가 `div.space-y-2` 가 아닌 별도 열에 있어 `fieldBox` 로
-     * 잡히지 않는다. 배지 문구가 6필드에 반복되므로 스코프 없이 단언하면 "어느 필드의 배지인지"를
-     * 전혀 검증하지 못한다.
+     * 연결 5키를 감싸는 `fieldset`(Task 5). 그룹 배지·그룹 해제 버튼·그룹 설명문·경고 배너가 전부
+     * 이 안에 있고, 배지 문구는 `발신자 주소` 와 겹치므로 스코프 없이 단언하면 어느 쪽 배지인지
+     * 검증하지 못한다.
      */
-    const starttlsBox = (page: Page) =>
-      page.locator('div.space-y-1', { has: page.locator('label[for="smtp-starttls"]') });
+    const connectionGroup = (page: Page) =>
+      page.locator('fieldset', { has: page.locator('#smtp-host') });
+
+    // starttlsBox 헬퍼는 삭제했다 — STARTTLS 는 이제 그룹 안이라 개별 배지가 없고, 그 헬퍼가
+    // 존재하는 유일한 이유가 "그 필드의 배지를 스코프로 잡는 것"이었다.
 
     test('상속 상태의 6필드가 전부 편집 가능하고 저장 경로가 존재한다', { tag: '@smoke' }, async ({
       authenticatedPage: page,
@@ -537,7 +540,7 @@ test.describe('설정 페이지', () => {
       await expect(page.locator('#smtp-username')).toHaveValue('user@example.com');
       await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
       // 비밀번호는 서버가 마스킹해서 준 값이 그대로 시드된다(평문이 아니다)
-      await expect(page.locator('#smtp-password')).toHaveValue('****masked****');
+      await expect(page.locator('#smtp-password')).toHaveValue('****3f2a');
 
       // 계약: 6키 전부 실제로 조작 가능해야 한다 — 하나라도 잠기면 재분류가 반쪽이다
       for (const id of ['smtp-host', 'smtp-port', 'smtp-username', 'smtp-password', 'smtp-from']) {
@@ -545,9 +548,13 @@ test.describe('설정 페이지', () => {
       }
       await expect(page.locator('#smtp-starttls')).toBeEnabled();
 
-      // 배지는 전부 상속. Switch 필드도 같은 체계를 따른다.
-      await expect(fieldBox(page, 'smtp-host').getByText('기본값 사용 중')).toBeVisible();
-      await expect(starttlsBox(page).getByText('기본값 사용 중')).toBeVisible();
+      // 연결 5키는 그룹 배지 하나가 상태를 말한다. 개별 필드 배지를 단언하던 예전 줄
+      // (`fieldBox(page,'smtp-host')` / `starttlsBox(page)`)은 번들 모델에서 거짓이라 제거했다 —
+      // 배지가 필드 단위면 "이 비밀번호는 플랫폼 것" 같은 거짓말을 그린다.
+      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(page.getByText('5개 항목이 함께 적용됩니다')).toBeVisible();
+      // 발신자 주소는 그룹 밖에서 개별 배지를 유지한다.
+      await expect(fieldBox(page, 'smtp-from').getByText('기본값 사용 중')).toBeVisible();
 
       // 전면 잠금 배너·잠금 안내문은 사라졌고 저장/되돌리기 행이 돌아왔다
       await expect(page.getByText('플랫폼 전용 설정')).toHaveCount(0);
@@ -555,26 +562,78 @@ test.describe('설정 페이지', () => {
       await expect(page.getByRole('button', { name: '저장' })).toBeVisible();
       await expect(page.getByRole('button', { name: '되돌리기' })).toBeVisible();
       // 상속 중인 필드에는 지울 오버라이드가 없다
-      await expect(page.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
     });
 
-    test('재정의된 SMTP 필드는 배지가 바뀌고 재정의 해제 버튼이 붙는다', async ({
+    test('번들이 재정의되면 그룹 배지 하나만 바뀌고 연결 5키에 개별 배지가 없다', async ({
       authenticatedPage: page,
     }) => {
+      // 서버는 호스트 한 키만 저장돼도 연결 5키 전부를 overridden=true 로 내려주고, 행이 없는
+      // 키는 value='' 다(원자 해석). 픽스처도 그 응답을 그대로 재현한다.
       await setupSettingsMocks(page, {
-        smtp: createSmtpSettings({
-          'smtp.host': { overridden: true, value: 'smtp.ourcompany.com' },
-        }),
+        smtp: createSmtpSettings(
+          {},
+          { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
+        ),
       });
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();
 
-      const box = fieldBox(page, 'smtp-host');
+      const group = connectionGroup(page);
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
-      await expect(box.getByText('테넌트 재정의 적용됨')).toBeVisible();
-      await expect(box.getByRole('button', { name: '재정의 해제' })).toBeVisible();
-      // 재정의는 필드 단위다 — 나머지는 여전히 상속이어야 한다
-      await expect(fieldBox(page, 'smtp-port').getByText('기본값 사용 중')).toBeVisible();
+      await expect(group.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(
+        group.getByRole('button', { name: '연결 설정 전체 재정의 해제' }),
+      ).toBeVisible();
+
+      // **핵심**: 배지도 해제 버튼도 그룹에 하나씩뿐이다. 필드마다 반복되면 "각각 독립적으로
+      // 그런 상태다"로 읽혀 원자 해석을 오해하게 만든다.
+      await expect(group.getByText('테넌트 재정의 적용됨')).toHaveCount(1);
+      await expect(group.getByText('기본값 사용 중')).toHaveCount(0);
+      await expect(group.getByRole('button', { name: /재정의 해제/ })).toHaveCount(1);
+
+      // 행이 없는 연결 키는 플랫폼 값이 아니라 빈 값이고, 그 사실을 노트가 말한다.
+      await expect(page.locator('#smtp-port')).toHaveValue('');
+      await expect(page.locator('#smtp-username')).toHaveValue('');
+      await expect(
+        group.getByText('이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.'),
+      ).toHaveCount(4);
+      // 비밀번호 안내는 "설정된 비밀번호가 없습니다"가 아니라 위 노트로 **대체**된다 —
+      // 그 문구는 사용자가 의도해서 비운 것처럼 읽혀 위험을 감춘다.
+      await expect(page.getByText('설정된 비밀번호가 없습니다 (인증 없는 SMTP)')).toHaveCount(0);
+
+      // 발신자 주소는 번들 밖이라 여전히 상속 + 개별 배지다.
+      await expect(fieldBox(page, 'smtp-from').getByText('기본값 사용 중')).toBeVisible();
+      await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
+    });
+
+    test('상속 중에 호스트를 입력하면 저장 전 경고 배너가 뜬다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 전환 순간의 정직함(§2): 타이핑 시점에는 아무 상태도 바뀌지 않았다고 그리고, 저장이
+      // 무슨 일을 하는지만 예고한다. 배지를 미리 뒤집으면 거짓이면서 반증도 안 되는 화면이 된다.
+      await setupSettingsMocks(page);
+      await openEmailTab(page);
+
+      const warning = page.getByText('저장하면 연결 설정 5개 항목이 모두 우리 조직 값으로', {
+        exact: false,
+      });
+      await expect(warning).toHaveCount(0);
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+
+      await expect(warning).toBeVisible();
+      // 배지는 아직 상속이다 — 저장 전에는 서버에 행이 없고 실제로 플랫폼 값으로 메일이 나간다.
+      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      // 어떤 필드도 사전 채움되지 않는다: 플랫폼 값을 채워 두면 저장 시 플랫폼과 같은 테넌트 행이
+      // 4개 기록돼 상속이 조용히 끊긴다.
+      await expect(page.locator('#smtp-port')).toHaveValue('587');
+
+      // 발신자 주소만 고치는 경우에는 뜨지 않는다 — 번들 밖이다.
+      await page.locator('#smtp-host').fill('smtp.gmail.com');
+      await expect(warning).toHaveCount(0);
+      await page.locator('#smtp-from').fill('other@example.com');
+      await expect(warning).toHaveCount(0);
     });
 
     test('바꾼 SMTP 키만 PUT 되고 손대지 않은 비밀번호 마스크는 담기지 않는다', async ({
@@ -589,16 +648,18 @@ test.describe('설정 페이지', () => {
 
       const req = await saveCapture.waitForRequest();
       const settings = (req.payload as { settings: Record<string, string> }).settings;
+      // 번들이라고 5키를 전부 보내지 않는다 — 원자성은 **해석기의 책임**이고, 화면이 빈 행을
+      // 만들어 흉내 내면 플랫폼과 같은 값의 테넌트 행이 생겨 상속이 조용히 끊긴다.
       expect(Object.keys(settings)).toEqual(['smtp.host']);
       expect(settings['smtp.host']).toBe('smtp.ourcompany.com');
-      // 핵심: 마스킹 값(`****masked****`)이 비밀번호로 저장되면 살아 있는 비밀번호가 문자열
+      // 핵심: 마스킹 값(`****3f2a`)이 비밀번호로 저장되면 살아 있는 비밀번호가 문자열
       // "****" 로 덮여 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다. 백엔드에도 센티널 필터가
       // 있지만(심층 방어) 정상 경로는 **애초에 보내지 않는 것**이다.
       expect(settings).not.toHaveProperty('smtp.password');
       await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
     });
 
-    test('저장이 성공하면 그 필드의 배지가 "테넌트 재정의 적용됨"으로 바뀐다', async ({
+    test('저장이 성공하면 그룹 배지가 "테넌트 재정의 적용됨"으로 바뀐다', async ({
       authenticatedPage: page,
     }) => {
       // 저장 후 배지를 다시 읽지 않으면 화면은 "기본값 사용 중"이라고 계속 말한다 — 저장은 됐는데
@@ -608,9 +669,10 @@ test.describe('설정 페이지', () => {
       await setupSettingsMocks(page, {
         smtp: () =>
           saved
-            ? createSmtpSettings({
-                'smtp.host': { overridden: true, value: 'smtp.ourcompany.com' },
-              })
+            ? createSmtpSettings(
+                {},
+                { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
+              )
             : createSmtpSettings(),
       });
       await page.route(
@@ -623,16 +685,20 @@ test.describe('설정 페이지', () => {
       );
 
       await openEmailTab(page);
-      await expect(fieldBox(page, 'smtp-host').getByText('기본값 사용 중')).toBeVisible();
+      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
 
       await page.locator('#smtp-host').fill('smtp.ourcompany.com');
       await page.getByRole('button', { name: '저장' }).click();
 
       await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
-      await expect(fieldBox(page, 'smtp-host').getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
       await expect(
-        fieldBox(page, 'smtp-host').getByRole('button', { name: '재정의 해제' }),
+        connectionGroup(page).getByRole('button', { name: '연결 설정 전체 재정의 해제' }),
       ).toBeVisible();
+      // 저장 후에는 경고 배너가 사라진다(dirty 해소 + 상태 전환 완료).
+      await expect(
+        page.getByText('저장하면 연결 설정 5개 항목이 모두 우리 조직 값으로', { exact: false }),
+      ).toHaveCount(0);
     });
 
     test('비밀번호를 새로 입력하면 그 값이 그대로 전송된다', async ({
@@ -695,15 +761,21 @@ test.describe('설정 페이지', () => {
       expect(settings['smtp.username']).toBe('');
     });
 
-    test('SMTP 재정의 해제 시 DELETE 가 나가고 그 필드만 상속으로 돌아온다', async ({
+    test('그룹 해제 버튼은 연결 5키에 대해 DELETE 를 발행하고 전부 상속으로 돌아온다', async ({
       authenticatedPage: page,
     }) => {
+      // 필드별 해제를 단언하던 예전 테스트를 **대체**한다. 번들 삭제 엔드포인트가 없으므로 화면이
+      // 5번의 DELETE 를 순차 발행하는 것이 계약이고, 어느 키에 실제 행이 있는지 화면은 알 수 없다
+      // (서버가 5키 전부 overridden=true 로 내려준다) — 그래서 조건 없이 5번 지운다.
       let cleared = false;
       await setupSettingsMocks(page, {
         smtp: () =>
           cleared
             ? createSmtpSettings()
-            : createSmtpSettings({ 'smtp.host': { overridden: true, value: 'smtp.ourcompany.com' } }),
+            : createSmtpSettings(
+                {},
+                { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
+              ),
       });
       const deletedPaths: string[] = [];
       await page.route(
@@ -720,16 +792,111 @@ test.describe('설정 페이지', () => {
       await page.getByRole('tab', { name: '이메일' }).click();
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
 
-      // 다른 필드의 미저장 편집이 해제에 휩쓸리면 안 된다
-      await page.locator('#smtp-port').fill('2525');
+      // 그룹 밖의 미저장 편집은 번들 해제에 휩쓸리면 안 된다.
+      await page.locator('#smtp-from').fill('kept@example.com');
 
-      await fieldBox(page, 'smtp-host').getByRole('button', { name: '재정의 해제' }).click();
+      await connectionGroup(page)
+        .getByRole('button', { name: '연결 설정 전체 재정의 해제' })
+        .click();
+      // 확인 문구가 5개 항목을 **이름으로 나열**한다 — "이 그룹"이라고 쓰면 사용자가 경계를
+      // 스크롤 밖에서 추정해야 한다.
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog.getByText('SMTP 호스트, 포트, 사용자 이름, 비밀번호, STARTTLS', { exact: false })).toBeVisible();
+      await expect(dialog.getByText('복구할 수 없으며', { exact: false })).toBeVisible();
+      await dialog.getByRole('button', { name: '되돌리기' }).click();
+
+      await expect
+        .poll(() => [...deletedPaths].sort())
+        .toEqual([
+          '/api/v1/settings/overrides/smtp.host',
+          '/api/v1/settings/overrides/smtp.password',
+          '/api/v1/settings/overrides/smtp.port',
+          '/api/v1/settings/overrides/smtp.starttls',
+          '/api/v1/settings/overrides/smtp.username',
+        ]);
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await expect(page.locator('#smtp-port')).toHaveValue('587');
+      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(page.locator('#smtp-from')).toHaveValue('kept@example.com');
+    });
+
+    test('그룹 해제 중 하나가 실패하면 부분 실패 문구가 화면에 남는다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 이 중간 상태는 원자 해석 아래에서 **안전하지만**(행이 하나라도 남으면 5키가 전부 테넌트
+      // 평면에서 해석된다) 사용자가 보기엔 "해제했는데 아직 재정의 배지"다. 토스트 한 번으로
+      // 뭉개면 스크린리더 사용자가 놓치고, 다시 조작해야 하는 상태라는 사실이 사라진다.
+      await setupSettingsMocks(page, {
+        // 재조회에서도 여전히 번들 재정의 상태다 — 일부만 지워졌으므로.
+        smtp: () =>
+          createSmtpSettings({}, { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } }),
+      });
+      await page.route(
+        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
+        (route) => {
+          if (route.request().method() !== 'DELETE') return route.fallback();
+          const failing = new URL(route.request().url()).pathname.endsWith('smtp.password');
+          return route.fulfill({ status: failing ? 500 : 204 });
+        },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+
+      await connectionGroup(page)
+        .getByRole('button', { name: '연결 설정 전체 재정의 해제' })
+        .click();
       await page.getByRole('alertdialog').getByRole('button', { name: '되돌리기' }).click();
 
-      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/overrides/smtp.host']);
+      // 토스트가 아니라 **그룹 머리에 남는 텍스트**로도 있어야 한다.
+      await expect(
+        connectionGroup(page).getByText('일부 항목만 해제되었습니다', { exact: false }),
+      ).toBeVisible({ timeout: 8000 });
+      // 안전하다는 사실도 함께 말한다 — 남은 항목은 아직 테넌트 값으로 적용된다.
+      await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
+    });
+
+    test('발신자 주소는 그룹 밖에서 개별 배지·개별 해제 버튼을 유지한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // §4: 구분은 **구조**가 한다. 안쪽(테두리 있는 그룹, 배지 0개) vs 바깥(배지 1개 + 개별 해제).
+      let cleared = false;
+      await setupSettingsMocks(page, {
+        smtp: () =>
+          cleared
+            ? createSmtpSettings()
+            : createSmtpSettings({
+                'smtp.from_address': { overridden: true, value: 'ours@ourcompany.com' },
+              }),
+      });
+      const deletedPaths: string[] = [];
+      await page.route(
+        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
+        (route) => {
+          if (route.request().method() !== 'DELETE') return route.fallback();
+          deletedPaths.push(new URL(route.request().url()).pathname);
+          cleared = true;
+          return route.fulfill({ status: 204 });
+        },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-from')).toHaveValue('ours@ourcompany.com');
+
+      const box = fieldBox(page, 'smtp-from');
+      await expect(box.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      // 연결 5키는 상속 그대로다 — from_address 는 번들이 아니므로 5키를 끌고 들어가지 않는다.
+      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
-      await expect(fieldBox(page, 'smtp-host').getByText('기본값 사용 중')).toBeVisible();
-      await expect(page.locator('#smtp-port')).toHaveValue('2525');
+
+      await box.getByRole('button', { name: '재정의 해제' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: '되돌리기' }).click();
+
+      // 딱 한 키만 지운다 — 개별 해제가 번들 해제로 번지면 안 된다.
+      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/overrides/smtp.from_address']);
+      await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
     });
 
     test('편집 중에는 연결 테스트가 "마지막 저장값으로 테스트한다"고 알리되 막지는 않는다', async ({
@@ -745,6 +912,36 @@ test.describe('설정 페이지', () => {
       await expect(notice).toBeVisible();
       // 버튼은 막지 않는다 — 지금 적용 중인 값을 확인하려는 것도 유효한 용도다
       await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
+    });
+
+    test('자격증명이 빈 번들 상태에서는 연결 테스트가 무인증 시도임을 알린다', async ({
+      authenticatedPage: page,
+    }) => {
+      // §5 우선순위: 빈 자격증명 안내가 dirty 안내보다 먼저다. 두 문구가 나란히 뜨면 어느 쪽이
+      // 지금 문제인지 흐려진다. 버튼은 여전히 막지 않는다 — 무인증 릴레이는 합법적 최종 상태라
+      // 그 구성에서 테스트를 못 하게 막으면 정당한 설정을 검증할 길이 사라진다.
+      await setupSettingsMocks(page, {
+        smtp: createSmtpSettings(
+          {},
+          { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com', 'smtp.port': '2525' } },
+        ),
+      });
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+
+      // 비어 있는 키를 **이름으로 나열**한다 — 그래야 "무엇을 채우면 되는가"가 화면에 있다.
+      // host/port 는 채워져 있으므로 목록에서 빠져야 한다.
+      const notice = page.getByText('인증 없이 접속을 시도합니다', { exact: false });
+      await expect(notice).toBeVisible();
+      await expect(notice).toContainText('사용자 이름·비밀번호');
+      await expect(notice).not.toContainText('SMTP 호스트');
+      await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
+
+      // dirty 가 되어도 이 안내가 유지되고 dirty 안내가 나란히 뜨지 않는다(배타적 슬롯).
+      await page.locator('#smtp-host').fill('smtp.other.com');
+      await expect(notice).toBeVisible();
+      await expect(page.getByText('저장 전 값이 아니라 마지막 저장값으로 테스트합니다')).toHaveCount(0);
     });
 
     test('연결 테스트는 계속 동작한다 (POST /settings/smtp/test)', async ({
