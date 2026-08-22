@@ -55,16 +55,37 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     return "EMAIL";
   }
 
+  /**
+   * <b>SMTP 설정 조회와 빈 호스트 판정은 아래 {@code try} 밖에 둔다 — 그 위치가 이 수정의 핵심이다.</b>
+   *
+   * <p>예전에는 빈 호스트를 {@code log.debug} 한 줄 + 맨 {@code return} 으로 넘겼다. 그런데 이
+   * 메서드가 <b>정상 반환</b>하면 호출부({@code ProactiveJobAsyncRunner:181})가 EMAIL 을
+   * {@code deliveredChannels} 에 담고, 그 목록이 {@code updateDeliveredChannels} 로 실행 기록에
+   * 저장된다 — <b>한 통도 안 나갔는데 실행 기록은 "EMAIL 로 전달됨"이라고 남는다.</b> 로그가 안
+   * 보이는 정도가 아니라 기록이 적극적으로 거짓말을 한다.
+   *
+   * <p>같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure(UNRECOVERABLE, "SMTP 호스트
+   * 미설정")} 을 돌려주므로 실제로 보인다. 두 소비자가 같은 조건에 대해 가시성이 달랐고, P7-c1 의
+   * 원자 해석이 이 상태를 <b>도달 가능하게</b> 만들었다(그 전에는 플랫폼 host 가 항상 해석돼
+   * 빈 호스트가 올 수 없었다). 밴드의 안전 성질이 "미설정 연결은 <b>눈에 보이게</b> 실패한다"인데
+   * 이 경로에서만 보이지 않았다.
+   *
+   * <p>예외를 던지면 호출부의 {@code catch} 가 {@code log.warn} 으로 채널·잡 id 와 함께 남기고,
+   * <b>EMAIL 을 {@code deliveredChannels} 에 담지 않는다</b> — 로그와 실행 기록 양쪽이 동시에
+   * 정직해진다. 새 배관을 만들지 않고 이미 있는 통로를 쓴다.
+   *
+   * <p>{@code getSmtpConfig()} 자체의 실패도 이제 함께 전파된다. 예전에는 아래 {@code catch} 가
+   * 삼키고 정상 반환해 <b>같은 거짓 기록</b>을 남겼다 — 같은 결함의 두 번째 서식지라 함께 닫는다.
+   */
   @Override
   public void deliver(ProactiveJobResponse job, Long executionId, ProactiveResult result) {
-    try {
-      Map<String, String> smtp = settingsService.getSmtpConfig();
-      String host = smtp.getOrDefault("smtp.host", "");
-      if (host.isBlank()) {
-        log.debug("EmailDeliveryChannel skipped: SMTP host is not configured");
-        return;
-      }
+    Map<String, String> smtp = settingsService.getSmtpConfig();
+    String host = smtp.getOrDefault("smtp.host", "");
+    if (host.isBlank()) {
+      throw new IllegalStateException("SMTP 호스트 미설정 — 이메일 리포트를 발송할 수 없습니다");
+    }
 
+    try {
       // config에서 EMAIL 채널의 수신자 목록 구성
       List<String> toAddresses = new ArrayList<>();
 

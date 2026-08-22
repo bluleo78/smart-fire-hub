@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service.delivery;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -80,14 +81,28 @@ class EmailDeliveryChannelTest {
     return new UserResponse(id, "user" + id, email, name, true, null);
   }
 
+  /**
+   * 빈 호스트는 <b>조용한 건너뛰기가 아니라 예외</b>다(#390 item 5).
+   *
+   * <p>예전 이름은 {@code deliver_smtpNotConfigured_skips} 였고 "정상 반환한다"를 계약처럼 말했다.
+   * 그런데 정상 반환은 호출부({@code ProactiveJobAsyncRunner})가 EMAIL 을
+   * {@code deliveredChannels} 에 담아 <b>실행 기록에 "전달됨"으로 남기는</b> 것을 뜻한다 —
+   * 한 통도 안 나갔는데. 같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure} 를
+   * 돌려주므로 두 소비자의 가시성이 어긋나 있었다.
+   *
+   * <p>P7-c1 의 원자 해석이 이 상태를 도달 가능하게 만들었다(포트만·비밀번호만 재정의하면 번들이
+   * {@code smtp.host} 를 빈 값으로 채운다). 그 전에는 플랫폼 host 가 항상 해석돼 불가능했다.
+   */
   @Test
-  void deliver_smtpNotConfigured_skips() {
-    // smtp.host blank -> should return immediately without calling userRepository
+  void deliver_smtpNotConfigured_throwsSoRunnerDoesNotRecordDelivery() {
     Map<String, Object> config = Map.of("channels", List.of("EMAIL"));
     ProactiveJobResponse job = makeJob(1L, config);
 
-    emailDeliveryChannel.deliver(job, 1L, makeResult());
+    assertThatThrownBy(() -> emailDeliveryChannel.deliver(job, 1L, makeResult()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("SMTP 호스트 미설정");
 
+    // 던지기 전에 아무 일도 하지 않는다 — 수신자 조회조차 가지 않는다.
     verify(userRepository, never()).findById(anyLong());
   }
 

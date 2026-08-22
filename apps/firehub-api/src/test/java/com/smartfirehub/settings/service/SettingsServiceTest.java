@@ -27,14 +27,12 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Autowired private SettingsService settingsService;
   @Autowired private EncryptionService encryptionService;
 
-  @Test
-  void getByPrefix_aiPrefix_returnsAiSettings() {
-    List<SettingResponse> settings = settingsService.getByPrefix("ai");
-
-    // Flyway migrations seed at least the ai.* keys
-    assertThat(settings).isNotEmpty();
-    assertThat(settings).allSatisfy(s -> assertThat(s.key()).startsWith("ai."));
-  }
+  // getByPrefix_aiPrefix_returnsAiSettings 는 삭제했다 — 그 메서드가 P7-c1 에서 사라졌다(호출자 0).
+  // 그 테스트가 지키던 "프리픽스 조회는 그 프리픽스 키만 준다"는 성질은 **살아 있는 경로**에서
+  // 이미 고정돼 있다: 같은 파일의 getAsMap_withNullValue_returnsEmptyString 이 getAsMap("ai") 에
+  // 대해 글자까지 같은 단언(allSatisfy startsWith("ai."))을 하고,
+  // SettingsResolutionTest.프리픽스에_마침표를_붙이면_조용히_빈_맵이_된다 가 경계까지 본다.
+  // 마스킹 계약은 아래 getAll_apiKey_returnsMasked 로 옮겼다(같은 maskSecret 을 지난다).
 
   @Test
   void updateSettings_validKey_updatesSuccessfully() {
@@ -46,8 +44,8 @@ class SettingsServiceTest extends IntegrationTestBase {
     // when / then: no exception
     settingsService.updatePlatformSettings(update, null);
 
-    // verify the value was persisted within this transaction
-    List<SettingResponse> settings = settingsService.getByPrefix("ai");
+    // 저장 확인은 운영자 평면이 실제로 쓰는 읽기(getAll)로 한다.
+    List<SettingResponse> settings = settingsService.getAll();
     assertThat(settings)
         .filteredOn(s -> "ai.max_turns".equals(s.key()))
         .hasSize(1)
@@ -110,13 +108,19 @@ class SettingsServiceTest extends IntegrationTestBase {
         .hasMessageContaining("API 키는 비어있을 수 없습니다");
   }
 
+  /**
+   * 마스킹 계약은 <b>살아 있는 읽기 경로</b>에서 지킨다. 예전에는 {@code getByPrefix} 로 물었는데
+   * 그 메서드는 P7-c1 에서 호출자가 0이 되어 사라졌다 — 죽은 경로를 지키는 테스트는 계약을
+   * 지키는 것처럼 보이지만 아무도 지나가지 않는 문을 잠그는 것이다. {@code getAll} 은 운영자
+   * 평면({@code GET /api/platform/settings})이 실제로 부르는 경로다.
+   */
   @Test
-  void getByPrefix_apiKey_returnsMasked() {
+  void getAll_apiKey_returnsMasked() {
     // given: store a real API key first
     settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-abcdefghij"), null);
 
-    // when: retrieve via getByPrefix
-    List<SettingResponse> settings = settingsService.getByPrefix("ai");
+    // when: retrieve via getAll
+    List<SettingResponse> settings = settingsService.getAll();
 
     // then: ai.api_key value must start with "****" (masked)
     assertThat(settings)
@@ -216,7 +220,7 @@ class SettingsServiceTest extends IntegrationTestBase {
   void embeddingApiKeyIsMaskedOnRead() {
     // updated_by FK 제약 때문에 test DB에 존재하지 않는 userId 대신 null 사용 (기존 테스트 관례)
     settingsService.updatePlatformSettings(Map.of("embedding.api_key", "secret-key-123"), null);
-    var settings = settingsService.getByPrefix("embedding");
+    var settings = settingsService.getAll();
     var apiKey =
         settings.stream()
             .filter(s -> s.key().equals("embedding.api_key"))

@@ -70,7 +70,7 @@ public class SettingsService {
    * 암호화 저장되는 비밀 키의 집합. 마스킹 판정의 <b>단일 출처</b>다.
    *
    * <p>{@code smtp.password} 가 빠져 있었다. 플랫폼 SMTP 쓰기는 이 키를 암호화해
-   * 저장하는데 {@link #maskSecret} 이 그것을 모르면 {@code getAll}/{@code getByPrefix("smtp")} 가
+   * 저장하는데 {@link #maskSecret} 이 그것을 모르면 {@code getAll}/{@code getResolvedByPrefix} 가
    * <b>암호문을 그대로</b> 내보낸다(당시 SMTP 전용 읽기 메서드만 별도로 마스킹하고 있었다 — 즉 이
    * 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
    */
@@ -123,18 +123,19 @@ public class SettingsService {
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
 
-  @Transactional(readOnly = true)
-  public List<SettingResponse> getByPrefix(String prefix) {
-    return settingsRepository.findByPrefix(prefix).stream()
-        .map(this::maskSecret)
-        .collect(Collectors.toList());
-  }
-
   /**
-   * 전체 설정(18키). 운영자 평면이 플랫폼 기본값을 한 화면에 보여 주기 위해 쓴다.
+   * 전체 설정(18키). 운영자 평면({@code GET /api/platform/settings})이 플랫폼 기본값을 한 화면에
+   * 보여 주기 위해 쓴다.
    *
-   * <p>마스킹은 {@link #getByPrefix} 와 <b>같은 함수</b>를 지난다 — 복사해 두면 한쪽에 비밀 키가
-   * 추가될 때 다른 쪽이 평문을 노출한다.
+   * <p>P7-c1 이전 이 위에 {@code getByPrefix(prefix)} 가 있었다. 마지막 실사용 호출자였던
+   * {@code getSmtpSettings()} 를 Task 4 가 지우면서 프로덕션 호출자가 0이 됐고, 이 밴드가 죽인
+   * 코드를 이 밴드가 치운다. 남은 프리픽스 읽기는 <b>{@link #getResolvedByPrefix}</b> 다 —
+   * 테넌트 화면이 실제로 부르는 경로이고, 오버라이드를 해석하지 않는 {@code getByPrefix} 를
+   * 그 자리에 쓰는 것이 정확히 Task 4 가 고친 결함이었다(화면은 플랫폼 값을 보여주는데 메일은
+   * 테넌트 값으로 나가는 어긋남).
+   *
+   * <p>되살리고 싶어지면 <b>{@link #getResolvedByPrefix} 로 충분한지 먼저 묻는다.</b> 플랫폼 평면
+   * 전용 프리픽스 조회가 정말 필요한 날 다시 만드는 비용은 네 줄이고, 그때는 호출자가 있다.
    */
   @Transactional(readOnly = true)
   public List<SettingResponse> getAll() {

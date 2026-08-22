@@ -144,8 +144,10 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
                   .content(objectMapperContent(Map.of("ai.api_key", "sk-live-secret-value"))))
           .andExpect(status().isNoContent());
 
-      // 운영자 UI 가 GET 으로 받는 마스킹된 값 형태를 그대로 재현한다.
-      String masked = settingsService.getByPrefix("ai").stream()
+      // 운영자 UI 가 GET 으로 받는 마스킹된 값 형태를 그대로 재현한다 — 그 라우트가 부르는
+      // 메서드(getAll)를 그대로 쓴다. 예전에는 getByPrefix 를 썼는데 그 메서드는 운영자 UI 가
+      // 부르지 않는 경로였고(P7-c1 에서 호출자 0으로 삭제됐다), 재현이라면서 다른 문을 열고 있었다.
+      String masked = settingsService.getAll().stream()
           .filter(s -> "ai.api_key".equals(s.key()))
           .findFirst()
           .orElseThrow()
