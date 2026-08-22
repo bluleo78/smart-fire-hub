@@ -672,8 +672,11 @@ export default function SmtpSettingsTab({
                 <Label htmlFor="smtp-starttls">STARTTLS 사용</Label>
                 <p className="text-sm text-muted-foreground">TLS 암호화로 SMTP 연결 보안</p>
                 {/* 이 필드에는 빈 항목 노트가 없다. 번들 채움이 `smtp.starttls` 만 'true' 로
-                    채우므로(RULING F) 서버가 이 키를 빈 값으로 내려보낼 길이 자체가 없다 —
-                    노트를 달아 두면 도달 불가 방어 코드가 된다. */}
+                    채우므로(RULING F) **번들 채움으로는** 이 키가 빈 값으로 내려올 수 없다 —
+                    노트를 달아 두면 도달 불가 방어 코드가 된다.
+                    ("어떤 경로로도 불가능"이라고는 적지 않는다: PUT 으로 빈 문자열을 직접 보내면
+                    행이 실재해 채움을 건너뛰고 그대로 해석된다. 다만 그것은 'false' 를 보내는 것과
+                    같은 명시적 조작이고, Switch 가 꺼짐으로 그려져 화면이 거짓말을 하지 않는다.) */}
               </div>
               <Switch
                 id="smtp-starttls"
