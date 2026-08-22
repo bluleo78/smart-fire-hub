@@ -266,4 +266,107 @@ class SettingsResolutionTest extends IntegrationTestBase {
         .as("마침표를 붙이면 ai..%% 패턴이 되어 0행 — 이 형태를 쓰면 안 된다")
         .isEmpty();
   }
+
+  /**
+   * 테넌트가 저장한 SMTP 설정이 <b>실제 발송 경로</b>에 반영된다.
+   *
+   * <p>이 단언이 없으면 "저장은 성공하고 화면도 재정의됐다고 보여주는데 메일만 플랫폼 SMTP 로
+   * 나가는" 상태를 아무도 못 본다 — 저장·표시·동작 셋 중 둘만 맞는 무동작이다.
+   * {@code getSmtpConfig} 는 발송 3경로(알림 채널·프로액티브 리포트·연결 테스트)가 공유하는
+   * 유일한 설정 진입점이라, 여기 한 곳이 곧 실제 동작이다.
+   *
+   * <p><b>복호화까지 단언한다.</b> Task 2 가 테넌트 오버라이드 {@code smtp.password} 도 암호화해
+   * 저장하게 만들었으므로, 해석기만 태우고 복호화 자리를 안 옮기면 발송이 <b>암호문으로 인증을
+   * 시도</b>해 조용히 실패한다. 그래서 픽스처를 {@code tenantSettingsRepository.upsert}(평문)가
+   * 아니라 실제 쓰기 경로인 {@code updateSettings} 로 만들고, 저장된 원문이 정말 암호문인지를
+   * 먼저 확인한다 — 그 전제 단언이 없으면 평문 저장으로 퇴행해도 이 테스트가 녹색으로 남는다.
+   */
+  @Test
+  void 테넌트_SMTP_오버라이드가_발송_설정에_반영된다() {
+    testTenant = createActiveTenant(dsl, "sr-smtp");
+    // 전제: 플랫폼 smtp.port 시드가 비어 있지 않아야 "부분 오버라이드가 나머지를 안 지운다"는
+    // 단언이 공허해지지 않는다(빈 문자열끼리 비교하면 무엇도 증명하지 못한다).
+    String platformPort = rawSystemSettingValue(dsl, "smtp.port");
+    assertThat(platformPort).as("플랫폼 smtp.port 시드가 있어야 이 테스트가 의미를 갖는다").isNotBlank();
+
+    // 검증 대상과 마찬가지로 감싸지 않고 부른다 — updateSettings 자신의 @Transactional 이
+    // 이 시점의 TenantContext 로 GUC 를 받는다.
+    TenantContext.set(testTenant);
+    settingsService.updateSettings(
+        java.util.Map.of("smtp.host", "tenant-smtp.example.com", "smtp.password", "tenant-pw"),
+        null);
+
+    // 전제 확인: tenant_settings 에 저장된 원문이 암호문("iv:ciphertext")이어야 한다.
+    assertThat(rawTenantSettingValue("smtp.password"))
+        .as("오버라이드 smtp.password 가 암호화 저장되지 않았다 — 복호화 단언이 무의미해진다")
+        .contains(":");
+
+    var config = settingsService.getSmtpConfig();
+    assertThat(config).containsEntry("smtp.host", "tenant-smtp.example.com");
+    // 발송용 읽기는 복호화된 평문이어야 한다(마스킹도 암호문도 아니다).
+    assertThat(config).containsEntry("smtp.password", "tenant-pw");
+    // 오버라이드하지 않은 키는 플랫폼 값 그대로 — 부분 오버라이드가 나머지를 지우지 않는다.
+    assertThat(config).containsEntry("smtp.port", platformPort);
+  }
+
+  /**
+   * 오버라이드 {@code smtp.password} 가 <b>빈 문자열</b>이면 복호화하지 않는다.
+   *
+   * <p>인증 없는 릴레이를 쓰는 테넌트가 실제로 이 상태다. 빈 값은 {@code encryptIfSecret} 이
+   * 암호화하지 않고 그대로 두므로, 읽기에서 무조건 복호화하면 빈 ciphertext 복호화 실패로
+   * <b>SMTP 설정 조회 자체가 터진다</b>(발송 전체가 멈춘다). 기존 플랫폼 경로에 있던
+   * {@code !isBlank()} 가드를 오버라이드 경로에도 똑같이 적용했는지 고정한다.
+   */
+  @Test
+  void 빈_오버라이드_비밀번호는_복호화하지_않는다() {
+    testTenant = createActiveTenant(dsl, "sr-smtp-blank");
+    TenantContext.set(testTenant);
+    settingsService.updateSettings(
+        java.util.Map.of("smtp.host", "relay.example.com", "smtp.password", ""), null);
+
+    // 전제: 빈 값은 암호화되지 않은 채 저장돼 있다.
+    assertThat(rawTenantSettingValue("smtp.password")).isEmpty();
+
+    var config = settingsService.getSmtpConfig();
+    assertThat(config).containsEntry("smtp.password", "");
+    assertThat(config).containsEntry("smtp.host", "relay.example.com");
+  }
+
+  /**
+   * 테넌트 컨텍스트가 없으면 플랫폼 SMTP 로 폴백한다(예외를 던지지 않는다).
+   *
+   * <p>설계서 §4.5: 해석기는 배경 경로에서 <b>컨텍스트 없음 분기를 명시</b>한다.
+   * 여기서 {@code TenantContext.require()} 를 부르면 배경 잡이 영구 무동작이나 42501 이 된다
+   * (P3-a·P2-g 에서 두 번 겪었다). 알림 발송 워커·프로액티브 리포트가 이 경로를 탄다.
+   */
+  @Test
+  void 컨텍스트_없으면_플랫폼_SMTP_로_폴백한다() {
+    String platformPort = rawSystemSettingValue(dsl, "smtp.port");
+    assertThat(platformPort).isNotBlank();
+
+    TenantContext.clear();
+    var config = settingsService.getSmtpConfig();
+    assertThat(config).containsEntry("smtp.port", platformPort);
+    assertThat(config).containsKey("smtp.host");
+  }
+
+  /**
+   * RLS 가 걸린 {@code tenant_settings} 의 <b>저장된 원문</b>을 읽는다(암호화 여부 전제 확인용).
+   * GUC 가 필요하므로 반드시 테넌트 트랜잭션 안에서 조회한다.
+   */
+  private String rawTenantSettingValue(String key) {
+    String[] holder = new String[1];
+    runInTenantTransaction(
+        transactionTemplate,
+        testTenant,
+        () -> {
+          var row =
+              dsl.fetchOne(
+                  "select value from tenant_settings where tenant_id = ? and key = ?",
+                  testTenant,
+                  key);
+          holder[0] = row == null ? null : row.get(0, String.class);
+        });
+    return holder[0];
+  }
 }

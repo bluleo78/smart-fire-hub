@@ -565,32 +565,48 @@ public class SettingsService {
   }
 
   /**
-   * 실제 메일 발송이 쓰는 SMTP 접속 정보. <b>플랫폼 값만</b> 읽는다.
+   * 실제 메일 발송이 쓰는 SMTP 접속 정보. <b>테넌트 오버라이드를 해석</b>하고 비밀값을
+   * <b>복호화</b>해서 돌려준다.
    *
-   * <p>이 javadoc 에는 "SMTP 6키는 전부 플랫폼 잠금이라 해석기를 타지 않아도 무해하지만, 장래에
-   * SMTP 가 테넌트별로 열리면 이 메서드도 해석기를 타도록 바뀌어야 한다"고 적혀 있었다.
-   * <b>P7-c1 Task 1 이 그 "장래"를 만들었다</b> — 6키는 이제 테넌트 오버라이드 허용이다. 그런데 이
-   * 메서드는 여전히 {@code settingsRepository} 를 직접 읽으므로, 테넌트가 자기 SMTP 를 저장해도
-   * 발송은 플랫폼 자격증명으로 나간다(화면은 {@code overridden=true} 라고 보고한다).
+   * <p>P7-c1 이전 이 자리에는 "SMTP 6키는 전부 플랫폼 잠금이라 해석기를 타지 않아도 무해하지만,
+   * 장래에 SMTP 가 테넌트별로 열리면 이 메서드도 해석기를 타도록 바뀌어야 한다"고 적혀 있었다.
+   * Task 1 이 6키를 열었고 이 태스크가 그 전환을 마쳤다 — 이제 테넌트가 저장한 SMTP 로 실제
+   * 메일이 나간다. 그 전까지는 저장도 되고 화면도 {@code overridden=true} 라고 보고하는데 발송만
+   * 플랫폼 자격증명으로 나가는, <b>저장·표시·동작 셋 중 둘만 맞는 무동작</b>이었다.
    *
-   * <p>Task 2 에서 이 부분을 고치지 <b>않은</b> 이유: 해석기로 바꾸는 것은 비밀값 취급이 아니라
-   * 메일 발송 semantics 변경이고, 발송 경로 전환은 별도 태스크의 범위다. 이 주석은 그 전환이 아직
-   * 안 됐다는 사실을 숨기지 않기 위해 남긴다.
+   * <p><b>화면용 읽기와 발송용 읽기는 요구가 정반대다.</b> {@link #getResolvedByPrefix}·
+   * {@link #getSmtpSettings} 는 같은 데이터를 <b>마스킹</b>해서 내보내고(응답에 평문도 암호문도
+   * 실리면 안 된다), 이 메서드는 <b>복호화</b>해서 내보낸다(SMTP 인증에 평문이 필요하다). 그래서
+   * 마스킹을 타는 {@link #getResolvedByPrefix} 를 재사용할 수 없고, 마스킹 없는 해석 경로인
+   * {@link #getAsMap} 위에 복호화를 얹는다.
+   *
+   * <p>복호화가 오버라이드 값에도 걸려야 하는 이유: Task 2 가 테넌트 오버라이드
+   * {@code smtp.password} 도 암호화해 저장하게 만들었다. 해석기만 태우고 복호화를 플랫폼 값에만
+   * 남겨 두면 테넌트 SMTP 인증이 <b>암호문으로</b> 시도돼 발송이 조용히 실패한다.
+   *
+   * <p>{@code @Transactional} 을 떼지 말 것 — {@link #getAsMap} 을 자기 호출로 부르므로 프록시를
+   * 지나지 않는다. {@code tenant_settings}(RLS) 조회에 GUC 를 주입하는 트랜잭션은 <b>이 애노테이션</b>이 연다.
    */
   @Transactional(readOnly = true)
   public Map<String, String> getSmtpConfig() {
-    return settingsRepository.findByPrefix("smtp").stream()
+    return getAsMap("smtp").entrySet().stream()
         .collect(
-            Collectors.toMap(
-                SettingResponse::key,
-                setting -> {
-                  if ("smtp.password".equals(setting.key())
-                      && setting.value() != null
-                      && !setting.value().isBlank()) {
-                    return encryptionService.decrypt(setting.value());
-                  }
-                  return setting.value() != null ? setting.value() : "";
-                }));
+            Collectors.toMap(Map.Entry::getKey, e -> decryptIfSecret(e.getKey(), e.getValue())));
+  }
+
+  /**
+   * 복호화 판정의 <b>값 단위</b> 형태 — {@link #encryptIfSecret} 의 역방향이고 판정 기준도 같은
+   * {@link #SECRET_KEYS} 다. 키 이름을 따로 나열하면 새 비밀 키가 추가될 때 쓰기만 암호화하고
+   * 읽기는 암호문을 그대로 흘리는 비대칭이 생긴다.
+   *
+   * <p><b>빈 값은 복호화하지 않는다.</b> {@code smtp.password} 는 인증 없는 릴레이에서 빈 문자열일
+   * 수 있고, {@link #encryptIfSecret} 이 그 값을 암호화하지 않고 그대로 두므로 빈 ciphertext 를
+   * 복호화하려 들면 SMTP 설정 조회 자체가 터진다(= 발송 전체 정지). 플랫폼 경로에 있던
+   * {@code !isBlank()} 가드를 그대로 옮겨 온 것이다.
+   */
+  private String decryptIfSecret(String key, String value) {
+    if (!SECRET_KEYS.contains(key)) return value;
+    return value == null || value.isBlank() ? "" : encryptionService.decrypt(value);
   }
 
   private void validateValues(Map<String, String> settings) {
