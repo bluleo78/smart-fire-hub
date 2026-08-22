@@ -46,7 +46,7 @@ public class PlatformSettingsController {
   /**
    * 플랫폼 기본 설정 갱신. AI·임베딩·SMTP 키를 한 번에 받을 수 있다(부분 갱신 허용). 마스킹된
    * 센티널({@code ****xxxx})은 "기존 값 유지"로 해석되어 살아 있는 자격증명을 덮어쓰지 않는다
-   * ({@code SettingsService} 의 {@code isMaskedApiKey} 필터를 그대로 지난다).
+   * ({@code SettingsService} 의 {@code dropMaskSentinels} 필터를 그대로 지난다).
    */
   @PutMapping
   @RequirePermission("platform:settings:write")

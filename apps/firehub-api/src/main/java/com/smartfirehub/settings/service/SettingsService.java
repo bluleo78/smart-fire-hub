@@ -141,10 +141,19 @@ public class SettingsService {
     return settingsRepository.findAll().stream().map(this::maskSecret).collect(Collectors.toList());
   }
 
-  /** 비밀값은 복호화 후 마스킹해서 내보낸다. 평문도, 암호문도 응답에 실리지 않는다. */
+  /**
+   * 비밀값은 복호화 후 마스킹해서 내보낸다. 평문도, 암호문도 응답에 실리지 않는다.
+   *
+   * <p>"마스킹이 일어났는가"를 <b>키로</b> 판정한다. 예전에는 {@code maskIfSecret} 의 반환 참조가
+   * 입력과 같은지(`==`)로 판정했는데, 그 성질은 정작 노리던 자리에서 성립하지 않았다 — 비밀 키의
+   * 값이 빈 문자열이면 {@code maskIfSecret} 이 <b>리터럴</b> {@code ""} 를 돌려주고 JDBC 가 만든
+   * 문자열과는 `==` 가 거짓이라 DTO 를 어차피 다시 만든다. 관측 결과는 같지만 두 메서드가 성립하지
+   * 않는 성질을 계약으로 붙들고 있었고, 그 결합은 {@code maskIfSecret} 이 언젠가 비밀 아닌 키에도
+   * 손을 대는 순간 <b>조용히</b> 전 행 재생성으로 바뀐다.
+   */
   private SettingResponse maskSecret(SettingResponse setting) {
+    if (!SECRET_KEYS.contains(setting.key())) return setting;
     String masked = maskIfSecret(setting.key(), setting.value());
-    if (masked == setting.value()) return setting;
     return new SettingResponse(setting.key(), masked, setting.description(), setting.updatedAt());
   }
 
@@ -153,8 +162,8 @@ public class SettingsService {
    * {@link #getResolvedByPrefix}(테넌트 오버라이드 값)가 공유한다 — 오버라이드 쪽에 판정을 복사하면
    * {@link #SECRET_KEYS} 에 키가 추가될 때 한쪽만 반영되어 다시 암호문이 새어 나간다.
    *
-   * <p>비밀 키가 아니면 <b>받은 참조를 그대로</b> 돌려준다. {@link #maskSecret} 이 그 동일성으로
-   * "마스킹이 일어났는가"를 판정해 불필요한 DTO 재생성을 피한다.
+   * <p>비밀 키가 아니면 값을 그대로 돌려주므로 <b>어떤 키에 적용해도 무해</b>하다 —
+   * {@link #encryptSecrets} 와 같은 성질이라 호출부가 미리 키를 걸러낼 필요가 없다.
    */
   private String maskIfSecret(String key, String value) {
     if (!SECRET_KEYS.contains(key)) return value;
@@ -179,6 +188,7 @@ public class SettingsService {
    */
   @Transactional(readOnly = true)
   public Optional<String> getValue(String key) {
+    rejectBundleKey(key);
     // 컨텍스트가 없으면(배경 잡 경로) DB 조회조차 하지 않고 플랫폼 값으로 간다 —
     // "컨텍스트 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약이다. 화이트리스트를 읽기에서 다시
     // 보는 이유는 위 javadoc 참고(키를 플랫폼으로 회수하면 즉시 효력을 갖는다).
@@ -187,6 +197,36 @@ public class SettingsService {
       if (override.isPresent()) return override;
     }
     return settingsRepository.getValue(key);
+  }
+
+  /**
+   * SMTP 연결 번들 키를 <b>단일 키로 조회하는 것 자체를 거부한다.</b>
+   *
+   * <p>해석 진입점은 둘이다 — {@link #getValue}(키 하나)와 {@link #resolveOverridesByPrefix}
+   * (프리픽스 통째). 원자 해석 규칙은 <b>뒤쪽에만</b> 있고, 있을 수 있는 자리도 거기뿐이다:
+   * "5키가 함께 움직인다"는 규칙은 5키를 한꺼번에 봐야 판정할 수 있어서, 키 하나만 받는 이 경로는
+   * 원리적으로 그 규칙을 지킬 수 없다. 실제로 호스트만 재정의된 테넌트에서
+   * {@code getAsMap("smtp").get("smtp.password")} 는 {@code ""}(안전)를 주는데
+   * {@code getValue("smtp.password")} 는 <b>플랫폼 암호문</b>(상속 폴백)을 준다.
+   *
+   * <p><b>오늘 이 경로로 SMTP 키가 들어오는 프로덕션 호출부는 없다</b>(전수 실측: 호출부 4곳이
+   * 전부 {@code ai.*}/{@code embedding.*} 리터럴). 그런데도 막는 이유는 "오늘은 그런 호출부가
+   * 없다"가 <b>이 밴드가 방금 죽인 문장</b>이기 때문이다 — 도달 불가에 기댄 안전이 이 코드베이스에서
+   * 이미 여러 번 배신했고, 이 밴드의 원 결함 자체가 그 형태였다.
+   *
+   * <p><b>왜 {@code getAsMap} 으로 조용히 위임하지 않는가.</b> 위임하면 {@code getValue("smtp.password")}
+   * 가 "동작하게" 되고, 다음 사람은 그 위에 키 단위 SMTP 읽기 경로를 짓는다 — 번들 규칙이 존재하는
+   * 이유가 정확히 "연결 키를 키 단위로 해석하지 않는다"인데, API 표면이 그 반대를 허락하게 된다.
+   * 거부하면 불변식이 호출 시점에 보인다. 모호하면 fail-closed 다.
+   *
+   * <p>{@code smtp.from_address} 는 <b>막지 않는다</b> — 번들이 아니라 키 단위 상속이므로
+   * {@link #getValue} 가 옳은 답을 준다.
+   */
+  private static void rejectBundleKey(String key) {
+    if (SMTP_CONNECTION_KEYS.contains(key)) {
+      throw new IllegalArgumentException(
+          "SMTP 연결 설정은 단일 키로 해석할 수 없습니다(연결 5키는 함께 해석된다). getSmtpConfig() 를 쓰세요: " + key);
+    }
   }
 
   /**
@@ -336,7 +376,8 @@ public class SettingsService {
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
    * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다.
    *
-   * <p><b>SMTP 키는 {@link #normalizeSmtpPayload} 를, 모든 키는 {@link #encryptSecrets} 를 지난다.</b> P7-c1 이전 이 자리에는
+   * <p><b>모든 키가 {@link #dropMaskSentinels}·{@link #validateSmtpPort}·{@link #encryptSecrets} 를
+   * 지난다</b>(셋 다 키로 스스로 가드하므로 SMTP 부분맵을 떼어낼 필요가 없다). P7-c1 이전 이 자리에는
    * "마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 허용 키 중 {@link #SECRET_KEYS}
    * 에 속하는 키가 하나도 없다"고 적혀 있었고, Task 1 이 {@code smtp.*} 를 열면서 그 근거가
    * 죽었다({@code smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에
@@ -356,22 +397,16 @@ public class SettingsService {
       }
     }
 
-    validateValues(settings);
-
-    // SMTP 키만 정규화(포트 검증·센티널 제거)를 지난다 — 그 두 규칙은 SMTP 고유다.
-    Map<String, String> merged = new HashMap<>(settings);
-    merged.keySet().removeAll(ALLOWED_SMTP_KEYS);
-    merged.putAll(
-        normalizeSmtpPayload(
-            settings.entrySet().stream()
-                .filter(e -> ALLOWED_SMTP_KEYS.contains(e.getKey()))
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))));
-
-    // 암호화는 **합친 맵 전체**가 지난다. SMTP 부분맵에만 걸면 "암호화 대상인가"의 답이
-    // SECRET_KEYS 가 아니라 프리픽스에서 나오고, SMTP 아닌 비밀 키가 테넌트에 열리는 순간
-    // 평문으로 저장된다(BYO 키 정책 → ai.api_key 화이트리스트 한 줄). 오늘 그 조합은 존재하지
-    // 않지만, "오늘은 그런 키가 없다"가 바로 이 밴드가 방금 죽인 문장이다.
-    Map<String, String> toWrite = encryptSecrets(merged);
+    // 세 값 변환이 **맵 전체**를 지난다. 셋 다 키로 스스로 가드하므로(센티널은 SECRET_KEYS,
+    // 포트 검증은 smtp.port 유무) SMTP 부분맵을 떼었다 다시 합칠 이유가 없다 — 그 분리·재병합은
+    // 하지 않아도 되는 일을 열 줄로 하고 있었다. 프리픽스로 미리 갈라 놓으면 "이 변환 대상인가"의
+    // 답이 키가 아니라 프리픽스에서 나오고, SMTP 아닌 비밀 키가 테넌트에 열리는 순간 평문으로
+    // 저장된다(BYO 키 정책 → ai.api_key 화이트리스트 한 줄). 아래 applyPlatformSmtpSettings 도
+    // 같은 형태다.
+    Map<String, String> payload = dropMaskSentinels(settings);
+    validateValues(payload);
+    validateSmtpPort(payload);
+    Map<String, String> toWrite = encryptSecrets(payload);
 
     // 저장 대상은 **여기서만** 정한다 — 쓰기까지 공유 헬퍼에 넣으면 두 평면이 저장 대상에서
     // 갈라질 때 조용히 어긋난다(플랫폼은 system_settings, 테넌트는 tenant_settings).
@@ -421,17 +456,10 @@ public class SettingsService {
    * {@link #updatePlatformSettings} 만 부른다.
    */
   private void applyPlatformAiEmbeddingSettings(Map<String, String> settings, Long userId) {
-    boolean hasMaskedApiKey = isMaskedApiKey(settings.get("ai.api_key"));
-    boolean hasMaskedCliToken = isMaskedApiKey(settings.get("ai.cli_oauth_token"));
-    boolean hasMaskedEmbeddingKey = isMaskedApiKey(settings.get("embedding.api_key"));
-
-    // Skip validation and save for masked values (unchanged by user)
-    Map<String, String> filtered =
-        settings.entrySet().stream()
-            .filter(e -> !(hasMaskedApiKey && "ai.api_key".equals(e.getKey())))
-            .filter(e -> !(hasMaskedCliToken && "ai.cli_oauth_token".equals(e.getKey())))
-            .filter(e -> !(hasMaskedEmbeddingKey && "embedding.api_key".equals(e.getKey())))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    // 센티널 드롭은 검증보다 **먼저**다 — 사용자가 안 고친 키를 검증하면 "API 키는 비어있을 수
+    // 없습니다" 같은 규칙이 마스크 문자열에 걸린다. 키를 세 개 나열하던 boolean+filter 세 벌은
+    // dropMaskSentinels 가 SECRET_KEYS 로 대신한다(그 셋은 전부 SECRET_KEYS 의 원소다).
+    Map<String, String> filtered = dropMaskSentinels(settings);
     validateValues(filtered);
     validateEmbeddingConsistency(filtered);
 
@@ -511,7 +539,7 @@ public class SettingsService {
    * <p><b>저장소를 읽어 현재 값과 비교하지 않는 이유</b>: 그러려면 이 판정이 <b>어느 평면</b>
    * (플랫폼 {@code system_settings} / 테넌트 {@code tenant_settings})을 읽어야 하는지 알아야 하고,
    * Task 2 가 의도적으로 밀어낸 평면 지식이 읽기 쪽 문으로 다시 들어온다
-   * ({@link #normalizeSmtpPayload} javadoc 참고).
+   * ({@link #dropMaskSentinels} javadoc 참고).
    *
    * <p><b>남는 잔여 위험</b>: 진짜 비밀번호가 우연히 길이 8 이고 {@code ****} 로 시작하면 여전히
    * 조용히 드롭된다. 저장소를 읽지 않는 한 닫을 수 없는 구멍이고, 확률이 무시할 만하다.
@@ -520,7 +548,7 @@ public class SettingsService {
    * 공유하므로 플랫폼 평면 동작이 함께 좁아진다 — <b>의도된 개선이다</b>(같은 결함이 그 세 키에도
    * 있었다).
    */
-  private static boolean isMaskedApiKey(String value) {
+  private static boolean isMaskSentinel(String value) {
     return value != null
         && value.startsWith("****")
         && (value.length() == 4 || value.length() == 8);
@@ -594,9 +622,10 @@ public class SettingsService {
    * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 로직 그대로다. 이름만 "플랫폼 쓰기 본체"로 옮겼고,
    * {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이 바로 이 메서드를 부른다.
    *
-   * <p>검증·센티널은 {@link #normalizeSmtpPayload} 로, 암호화는 {@link #encryptSecrets} 로 빠졌고
-   * 여기 남은 것은 <b>플랫폼 전용</b> 두 가지다: 플랫폼 화이트리스트 판정과
-   * {@code system_settings} 쓰기.
+   * <p>검증·센티널·암호화는 {@link #validateValues}·{@link #validateSmtpPort}·
+   * {@link #dropMaskSentinels}·{@link #encryptSecrets} 로 빠졌고 — 넷 다 {@link #updateSettings}
+   * (테넌트 평면)와 <b>같은 순서로</b> 지난다 — 여기 남은 것은 <b>플랫폼 전용</b> 두 가지다:
+   * 플랫폼 화이트리스트 판정과 {@code system_settings} 쓰기.
    */
   private void applyPlatformSmtpSettings(Map<String, String> settings, Long userId) {
     for (String key : settings.keySet()) {
@@ -605,7 +634,14 @@ public class SettingsService {
       }
     }
 
-    Map<String, String> toUpdate = encryptSecrets(normalizeSmtpPayload(settings));
+    // validateValues 를 여기서도 부른다. 예전에는 플랫폼 경로에서 AI/임베딩 그룹만 검증을
+    // 지나고 SMTP 그룹은 건너뛰었는데, 테넌트 경로는 전체 키를 지나므로 두 평면의 "유효한 값"
+    // 판정이 비대칭이었다. validateValues 에 smtp case 가 하나도 없어 오늘은 공허하지만, 누가
+    // smtp case 를 추가하는 날 **플랫폼 경로만** 조용히 검증을 건너뛴다.
+    Map<String, String> payload = dropMaskSentinels(settings);
+    validateValues(payload);
+    validateSmtpPort(payload);
+    Map<String, String> toUpdate = encryptSecrets(payload);
 
     if (!toUpdate.isEmpty()) {
       settingsRepository.updateSettings(toUpdate, userId);
@@ -613,51 +649,62 @@ public class SettingsService {
   }
 
   /**
-   * SMTP 쓰기의 <b>평면 공통</b> 부분: 포트 범위 검증 · 마스크 센티널 제거.
-   * {@link #applyPlatformSmtpSettings}(→ {@code system_settings})와 {@link #updateSettings}
-   * (→ {@code tenant_settings})가 함께 부른다.
+   * 화면이 돌려보낸 <b>마스크 센티널</b>을 페이로드에서 떨어뜨린다 — 두 쓰기 평면이 공유한다.
    *
-   * <p><b>쓰기는 일부러 여기 없다.</b> 두 평면은 저장소가 다르고, 저장 대상까지 공유하면 한쪽이
-   * 바뀔 때 다른 쪽이 조용히 따라가거나 조용히 어긋난다. 실제로 이 결함 자체가 "플랫폼 경로에만
-   * 있던 검증·암호화가 새로 열린 테넌트 경로에 없었던 것"이다 — 공유 범위를 값 변환까지로 좁히고,
-   * 어느 테이블에 쓰는지는 호출부가 각자 정한다.
+   * <p><b>판정 근거는 {@link #SECRET_KEYS} 다.</b> 예전에는 이 질문이 키 이름 나열로, 그것도
+   * <b>두 곳에서 따로</b> 답해지고 있었다: 플랫폼 경로는 {@code ai.api_key}/{@code ai.cli_oauth_token}/
+   * {@code embedding.api_key} 를 {@code boolean} 세 벌 + {@code filter} 세 벌로, SMTP 경로는
+   * {@code normalizeSmtpPayload} 안에서 {@code "smtp.password".equals(key)} 로. 그래서
+   * {@link #SECRET_KEYS} 에 다섯 번째 키를 추가하면 암호화·복호화·마스킹은 <b>자동으로</b> 맞는데
+   * 센티널 드롭만 따라오지 않았다 — 화면이 돌려보낸 {@code ****ab3f} 가 살아 있는 비밀 위에
+   * 암호화되어 저장된다. {@link #encryptIfSecret} javadoc 이 "이 밴드가 고친 결함이 정확히 그
+   * 형태였다"고 적어 둔 그 모양이, 같은 파일 안에서 한 자리만 옮겨 살아남아 있었다.
    *
-   * <p><b>센티널은 현재 값과 비교하지 않고 페이로드에서 떨어뜨린다.</b> {@code ****} 로 시작하는
-   * 값은 "화면이 받은 마스크를 그대로 돌려보냈다 = 사용자가 안 고쳤다"는 뜻이라 현재 값이 무엇이든
+   * <p>비밀 키가 아니면 아무것도 하지 않으므로 <b>어떤 맵에 적용해도 무해</b>하다
+   * ({@link #encryptSecrets} 와 같은 성질) — 그래서 호출부가 "이 그룹은 비밀이 들어올 수 있는
+   * 그룹인가"를 프리픽스로 미리 판단할 필요가 없고, 그 판단이 바로 이 밴드가 고친 결함의 모양이다.
+   *
+   * <p><b>센티널은 현재 값과 비교하지 않고 그냥 떨어뜨린다.</b> {@link #isMaskSentinel} 이 참이면
+   * "화면이 받은 마스크를 그대로 돌려보냈다 = 사용자가 안 고쳤다"는 뜻이라 현재 값이 무엇이든
    * 결론이 같다. 비교하려면 현재 값을 읽어야 하고, 그러려면 이 헬퍼가 <b>어느 저장소를 읽을지</b>
-   * 알아야 한다 — 위에서 밀어낸 평면 지식이 읽기 쪽 문으로 다시 들어온다.
-   *
-   * <p><b>암호화는 여기 없다.</b> 여기서 하면 "암호화 대상인가"의 답이 키의 비밀 여부가 아니라
-   * <b>SMTP 프리픽스에 속하는가</b>가 되어, SMTP 가 아닌 비밀 키가 테넌트에 열리는 순간 평문으로
-   * 저장된다 — {@link SettingsOverridePolicy} javadoc 이 적어 둔 BYO 키 정책이 그 트리거다
-   * ({@code ai.api_key} 가 화이트리스트 한 줄로 열린다). 암호화는 두 호출부가 저장 직전에
-   * {@link #encryptSecrets} 로 <b>맵 전체</b>에 적용한다.
+   * 알아야 한다 — 두 평면이 공유하는 자리에 평면 지식이 읽기 쪽 문으로 다시 들어온다.
    *
    * <p>입력 맵은 건드리지 않고 새 맵을 만든다({@code Map.of} 로 온 불변 맵이 흔하다).
    */
-  private Map<String, String> normalizeSmtpPayload(Map<String, String> settings) {
-    // smtp.port 범위 검증 — 1~65535 범위를 벗어나면 400 Bad Request
-    if (settings.containsKey("smtp.port")) {
-      String portStr = settings.get("smtp.port");
-      try {
-        int port = Integer.parseInt(portStr);
-        if (port < 1 || port > 65535) {
-          throw new IllegalArgumentException("SMTP 포트 번호는 1에서 65535 사이여야 합니다. 입력값: " + port);
-        }
-      } catch (NumberFormatException e) {
-        throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
-      }
-    }
-
-    Map<String, String> normalized = new HashMap<>();
+  private static Map<String, String> dropMaskSentinels(Map<String, String> settings) {
+    Map<String, String> kept = new HashMap<>();
     settings.forEach(
         (key, value) -> {
-          // 마스크 센티널이면 그 키만 통째로 버린다 — 저장하면 살아 있는 비밀번호가 문자열
+          // 드롭하면 그 키는 저장 대상에서 통째로 빠진다 — 저장하면 살아 있는 비밀번호가 문자열
           // "****abcd" 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
-          if ("smtp.password".equals(key) && isMaskedApiKey(value)) return;
-          normalized.put(key, value);
+          if (SECRET_KEYS.contains(key) && isMaskSentinel(value)) return;
+          kept.put(key, value);
         });
-    return normalized;
+    return kept;
+  }
+
+  /**
+   * {@code smtp.port} 범위 검증(1~65535) — 두 쓰기 평면이 공유한다. 키가 없으면 아무것도 하지
+   * 않으므로 <b>어떤 맵에 적용해도 무해</b>하다.
+   *
+   * <p>검증이 플랫폼 경로에만 있던 동안 테넌트는 {@code 99999} 를 저장할 수 있었다 — 저장은
+   * 성공하고 실패는 한참 뒤 메일 발송에서 드러난다.
+   *
+   * <p><b>쓰기는 일부러 여기 없다.</b> 두 평면은 저장소가 다르고, 저장 대상까지 공유하면 한쪽이
+   * 바뀔 때 다른 쪽이 조용히 따라가거나 조용히 어긋난다. 실제로 이 밴드의 결함 자체가 "플랫폼
+   * 경로에만 있던 검증·암호화가 새로 열린 테넌트 경로에 없었던 것"이다.
+   */
+  private static void validateSmtpPort(Map<String, String> settings) {
+    if (!settings.containsKey("smtp.port")) return;
+    String portStr = settings.get("smtp.port");
+    try {
+      int port = Integer.parseInt(portStr);
+      if (port < 1 || port > 65535) {
+        throw new IllegalArgumentException("SMTP 포트 번호는 1에서 65535 사이여야 합니다. 입력값: " + port);
+      }
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
+    }
   }
 
   /**

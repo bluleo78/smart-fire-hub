@@ -2,7 +2,6 @@ package com.smartfirehub.settings.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
-import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.dto.UpdateSettingsRequest;
 import com.smartfirehub.settings.service.SettingsService;
 import jakarta.validation.Valid;

@@ -7,6 +7,7 @@ import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
@@ -591,6 +592,38 @@ class SettingsResolutionTest extends IntegrationTestBase {
             .orElseThrow();
     assertThat(starttls.value()).isEqualTo("true");
     assertThat(starttls.overridden()).isTrue();
+  }
+
+  /**
+   * <b>해석 진입점이 둘인데 원자 규칙은 하나에만 있다</b>는 사실을 계약으로 고정한다:
+   * {@code getValue} 로 SMTP 연결 키를 조회하는 것 자체가 거부된다.
+   *
+   * <p>{@code getValue} 는 키 하나만 받으므로 "5키가 함께 움직인다"를 <b>원리적으로</b> 지킬 수
+   * 없다. 막지 않으면 호스트만 재정의된 테넌트에서 {@code getAsMap("smtp").get("smtp.password")}
+   * 는 {@code ""}(안전)를 주는데 {@code getValue("smtp.password")} 는 플랫폼 암호문을 준다 —
+   * 이 밴드가 존재하는 이유가 된 바로 그 키에서 두 공개 경로가 다른 답을 낸다.
+   *
+   * <p><b>오늘 이 경로로 SMTP 키가 들어오는 프로덕션 호출부는 없다</b>(전수 실측). 그러니 이
+   * 테스트가 지키는 것은 살아 있는 결함이 아니라 <b>불변식</b>이다 — 그리고 그것이 요점이다:
+   * "오늘은 그런 호출부가 없다"는 이 밴드가 방금 죽인 문장이고, 다음 사람이
+   * {@code getValue("smtp.password")} 를 쓰는 순간 유출이 되살아난다. javadoc 이 아니라
+   * <b>깨지는 테스트</b>로 고정해야 그 순간이 코드리뷰가 아니라 CI 에서 잡힌다.
+   */
+  @Test
+  void getValue_로_SMTP_연결_키를_조회하면_거부된다() {
+    for (String key :
+        java.util.List.of(
+            "smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls")) {
+      assertThatThrownBy(() -> settingsService.getValue(key))
+          .as("%s 가 단일 키로 해석되면 번들 규칙을 우회한다", key)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(key);
+    }
+
+    // from_address 는 번들이 아니라 키 단위 상속이므로 막지 않는다 — 과잉 차단이 아님을 고정한다.
+    assertThat(settingsService.getValue("smtp.from_address")).isNotNull();
+    // 다른 프리픽스도 그대로다(가드가 SMTP 밖으로 새지 않았다).
+    assertThat(settingsService.getValue("ai.model")).isPresent();
   }
 
   /**

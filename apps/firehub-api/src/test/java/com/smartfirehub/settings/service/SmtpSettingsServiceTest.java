@@ -23,7 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <b>유일한</b> 경로는 {@code updatePlatformSettings}"라고 적혀 있었다. <b>Task 1 이 6키를 테넌트
  * 오버라이드로 재분류하면서 그 '유일한 경로'가 둘이 됐다</b> — 테넌트 평면
  * ({@code updateSettings} → {@code tenant_settings})이 같은 검증·센티널·암호화 로직
- * ({@code normalizeSmtpWrite})을 공유한다. 그쪽 계약은
+ * ({@code dropMaskSentinels}·{@code validateSmtpPort}·{@code encryptSecrets})을 공유한다. 그쪽 계약은
  * {@code SettingsWritePlaneTest} 가 덮는다(암호화·마스킹·센티널·포트 3건). 여기의 녹색은
  * "공유 추출이 플랫폼 동작을 바꾸지 않았다"는 증거로 읽으면 된다.
  *
