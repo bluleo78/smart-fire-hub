@@ -995,10 +995,13 @@ test.describe('설정 페이지', () => {
       // §5 우선순위: 빈 자격증명 안내가 dirty 안내보다 먼저다. 두 문구가 나란히 뜨면 어느 쪽이
       // 지금 문제인지 흐려진다. 버튼은 여전히 막지 않는다 — 무인증 릴레이는 합법적 최종 상태라
       // 그 구성에서 테스트를 못 하게 막으면 정당한 설정을 검증할 길이 사라진다.
+      // **포트를 일부러 비운다.** 포트에 값을 주면 아래 `not.toContainText('포트')` 가 "포트가
+      // 애초에 안 비어서" 통과해 버려, 나열 대상을 자격증명 2키로 좁힌 것을 아무것도 고정하지
+      // 못한다(공허한 부정 단언 — 이 밴드가 반복해서 기록해 온 실패 방식이다).
       await setupSettingsMocks(page, {
         smtp: createSmtpSettings(
           {},
-          { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com', 'smtp.port': '2525' } },
+          { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
         ),
       });
       await page.goto('/admin/settings');
@@ -1011,8 +1014,17 @@ test.describe('설정 페이지', () => {
       const notice = page.getByText('인증 없이 접속을 시도합니다', { exact: false });
       await expect(notice).toBeVisible();
       await expect(notice).toContainText('사용자 이름·비밀번호');
-      await expect(notice).not.toContainText('SMTP 호스트');
+      // 포트는 지금 **비어 있는데도** 나열되지 않아야 한다 — 빈 포트는 인증과 무관하게 587 로
+      // 대체되므로, 나열하면 "인증 없이 접속한다"는 문장이 포트 탓이라고 거짓을 말한다.
+      // 그 사실은 포트 필드의 노트가 따로 전달한다.
+      await expect(page.locator('#smtp-port')).toHaveValue('');
       await expect(notice).not.toContainText('포트');
+      await expect(
+        connectionGroup(page).getByText('기본 포트 587 로 접속합니다.', { exact: false }),
+      ).toBeVisible();
+      // `SMTP 호스트` 에 대한 부정 단언은 두지 않는다 — 이 시나리오에서 호스트는 채워져 있어
+      // 어떤 구현에서도 나열될 수 없다(공허하다). 빈 호스트는 인증이 아니라 발송 자체가
+      // 실패하는 다른 상태이고, 이 안내가 덮는 범위가 아니다.
       await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
 
       // dirty 가 되어도 이 안내가 유지되고 dirty 안내가 나란히 뜨지 않는다(배타적 슬롯).
