@@ -76,11 +76,17 @@ public class EmailChannel implements Channel {
     String subject = payload.title() == null ? brandName + " 알림" : payload.title();
     String htmlBody = buildHtmlBody(payload);
 
-    // SMTP 설정 맵 구성 — firehub-channel이 사용하는 필드명으로 변환
+    // SMTP 설정 맵 구성 — firehub-channel이 사용하는 필드명으로 변환.
+    // 빈 포트를 반드시 걸러야 한다: getOrDefault 는 **키가 없을 때만** 587 을 주는데, P7-c1 Task 5 의
+    // 연결 번들 규칙이 "호스트만 재정의" 상태에서 smtp.port 를 키가 있는 채로 빈 값으로 내려보낸다.
+    // 그러면 Integer.parseInt("") 가 NumberFormatException 을 던지고, 이 줄은 아래 try 블록 밖이라
+    // 발송 워커로 그대로 튀어나간다 — 번들 규칙이 약속한 "눈에 보이는 발송 실패"가 처리되지 않은
+    // 예외로 바뀐다. 형태는 EmailDeliveryChannel:176 / SettingsController:107 과 같다.
+    String portStr = smtp.getOrDefault("smtp.port", "587");
     Map<String, Object> smtpConfig =
         Map.of(
             "host", host,
-            "port", Integer.parseInt(smtp.getOrDefault("smtp.port", "587")),
+            "port", portStr.isBlank() ? 587 : Integer.parseInt(portStr),
             "secure", Boolean.parseBoolean(smtp.getOrDefault("smtp.starttls", "true")),
             "user", smtp.getOrDefault("smtp.username", ""),
             "pass", smtp.getOrDefault("smtp.password", ""));

@@ -93,6 +93,47 @@ class EmailChannelTest {
     assertThat(result).isInstanceOf(DeliveryResult.TransientFailure.class);
   }
 
+  /**
+   * <b>연결 번들 규칙이 만든 새 상태</b>: 테넌트가 {@code smtp.host} 만 재정의하면 나머지 연결
+   * 4키가 <b>키는 있고 값은 빈</b> 상태로 내려온다(P7-c1 Task 5). 그 조합은 이 커밋 이전에는
+   * 존재할 수 없었다 — V42 가 {@code smtp.port='587'} 로 시드하고 쓰기 검증(1~65535)이 빈 포트를
+   * 거부하므로 발송기에 빈 포트가 도달할 길이 없었다.
+   *
+   * <p>{@code getOrDefault} 는 <b>키가 없을 때만</b> 기본값을 준다. 그래서 빈 값을 따로 걸러내지
+   * 않으면 {@code Integer.parseInt("")} 가 터지고, 그 줄은 {@code try} 블록 <b>밖</b>이라
+   * {@code DeliveryResult} 로 변환되지 못한 채 발송 워커로 튀어나간다 — 번들 규칙이 약속한
+   * "인증 없는 릴레이 시도 → 눈에 보이는 발송 실패"가 처리되지 않은 예외로 바뀐다.
+   *
+   * <p>호스트 미설정 가드는 이 경로를 막아 주지 <b>못한다</b>. 시나리오의 정의상 호스트는
+   * 테넌트가 넣은 non-blank 값이라 가드를 통과하고 포트 줄까지 내려온다.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void deliver_번들로_비워진_포트에도_예외없이_기본포트로_발송한다() {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "tenant-relay.example.com",
+                "smtp.port", "",
+                "smtp.username", "",
+                "smtp.password", "",
+                "smtp.starttls", ""));
+
+    var result = channel.deliver(ctx(null, "to@example.com"));
+
+    assertThat(result).isInstanceOf(DeliveryResult.Sent.class);
+    ArgumentCaptor<Map<String, Object>> recipientCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(channelHttpClient).send(eq("EMAIL"), recipientCaptor.capture(), any(Map.class));
+    Map<String, Object> smtpConfig =
+        (Map<String, Object>) recipientCaptor.getValue().get("smtpConfig");
+    assertThat(smtpConfig.get("port")).isEqualTo(587);
+    // 자격증명이 비어 있으므로 무인증 릴레이로 시도된다 — 이것이 번들 규칙이 의도한 결과다.
+    assertThat(smtpConfig.get("user")).isEqualTo("");
+    assertThat(smtpConfig.get("pass")).isEqualTo("");
+    // 빈 starttls 는 꺼짐이다(Boolean.parseBoolean("") == false) — 화면의 Switch 표시와 일치한다.
+    assertThat(smtpConfig.get("secure")).isEqualTo(false);
+  }
+
   /** 화이트라벨링: 제목 미지정 시 subject가 주입된 브랜드명 기반("Acme 알림")으로 구성되어야 한다. */
   @Test
   @SuppressWarnings("unchecked")
