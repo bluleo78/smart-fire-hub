@@ -175,6 +175,39 @@ export async function setupSettingsMocks(
 }
 
 /**
+ * `DELETE /api/v1/settings/overrides/{key}` 캡처 라우트.
+ *
+ * <b>왜 `mockApi` 를 못 쓰나</b>: `mockApi` 는 pathname **완전 일치**인데 이 경로는 키가 뒤에
+ * 붙는 프리픽스 매칭이고, DELETE 는 204 no-content 라 본문이 없다(`mockApi` 는 항상 JSON 본문을
+ * 붙인다). 그래서 직접 라우팅해야 하는데, 그 결과 같은 블록이 `settings.spec.ts` 에 5벌 있었다.
+ *
+ * @param failOn 이 키로 끝나는 DELETE 만 500 을 준다 — 번들 해제의 **부분 실패**를 재현한다.
+ *   실패한 키는 `deletedPaths` 에 담기지 않는다(이름이 사실이어야 한다).
+ * @returns 성공한 DELETE 의 pathname 이 순서대로 쌓이는 배열. 재조회 응답을 분기해야 하는
+ *   테스트는 별도 boolean 대신 `deletedPaths.length > 0` 을 읽으면 된다 — 플래그와 배열이
+ *   따로 놀 여지가 사라진다.
+ */
+export async function captureOverrideDeletes(
+  page: Page,
+  options: { failOn?: string } = {},
+): Promise<{ deletedPaths: string[] }> {
+  const deletedPaths: string[] = [];
+  await page.route(
+    (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
+    (route) => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      const pathname = new URL(route.request().url()).pathname;
+      if (options.failOn !== undefined && pathname.endsWith(options.failOn)) {
+        return route.fulfill({ status: 500 });
+      }
+      deletedPaths.push(pathname);
+      return route.fulfill({ status: 204 });
+    },
+  );
+  return { deletedPaths };
+}
+
+/**
  * API 연결 목록 페이지 API 모킹
  * - API 연결 목록 + selectable 슬림 목록을 모킹한다.
  */

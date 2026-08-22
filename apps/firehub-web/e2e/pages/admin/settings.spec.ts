@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { createAiSettings, createSmtpSettings } from '../../factories/admin.factory';
+import { captureOverrideDeletes } from '../../fixtures/admin.fixture';
 import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -379,25 +380,15 @@ test.describe('설정 페이지', () => {
     }) => {
       // 해제 후 화면은 GET 을 다시 읽어 배지를 갱신한다. 그래서 모킹 응답도 "해제된 뒤" 상태로
       // 바뀌어야 한다 — 아니면 배지가 그대로여서 앱이 아니라 모킹을 디버깅하게 된다.
-      let cleared = false;
+      // 재조회 응답 분기를 별도 boolean 이 아니라 캡처 배열에서 읽는다 — 플래그와 배열이 따로
+      // 놀 여지가 사라지고, "DELETE 가 나갔다"의 근거가 한 곳이 된다.
+      const { deletedPaths } = await captureOverrideDeletes(page);
       await setupSettingsMocks(page, {
         ai: () =>
-          cleared
+          deletedPaths.length > 0
             ? createAiSettings()
             : createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
       });
-
-      // DELETE 는 204 no-content 라 본문이 없다 — mockApi 는 항상 JSON 본문을 붙이므로 직접 라우팅한다.
-      const deletedPaths: string[] = [];
-      await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
-        (route) => {
-          if (route.request().method() !== 'DELETE') return route.fallback();
-          deletedPaths.push(new URL(route.request().url()).pathname);
-          cleared = true;
-          return route.fulfill({ status: 204 });
-        },
-      );
 
       await page.goto('/admin/settings');
       await expect(page.locator('#ai-max-turns')).toHaveValue('25');
@@ -433,15 +424,7 @@ test.describe('설정 페이지', () => {
       await setupSettingsMocks(page, {
         ai: createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
       });
-      const deletedPaths: string[] = [];
-      await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
-        (route) => {
-          if (route.request().method() !== 'DELETE') return route.fallback();
-          deletedPaths.push(new URL(route.request().url()).pathname);
-          return route.fulfill({ status: 204 });
-        },
-      );
+      const { deletedPaths } = await captureOverrideDeletes(page);
 
       await page.goto('/admin/settings');
       await fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }).click();
@@ -511,11 +494,16 @@ test.describe('설정 페이지', () => {
    * "연결 테스트는 저장된 값으로 돈다"는 안내.
    */
   test.describe('이메일 탭 — 상속/재정의 편집', () => {
-    /** 이메일 탭을 열고 첫 필드가 채워질 때까지 기다린다 — 모든 SMTP 시나리오의 공통 진입. */
-    async function openEmailTab(page: Page) {
+    /**
+     * 이메일 탭을 열고 첫 필드가 채워질 때까지 기다린다 — 모든 SMTP 시나리오의 공통 진입.
+     *
+     * 기대 호스트를 인자로 받는 이유: 번들이 재정의된 픽스처는 호스트가 플랫폼 기본값이 아니라
+     * 테넌트 값이다. 기본값만 기다리게 두면 그 시나리오들이 같은 3줄을 다시 인라인하게 된다.
+     */
+    async function openEmailTab(page: Page, expectedHost = 'smtp.gmail.com') {
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();
-      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await expect(page.locator('#smtp-host')).toHaveValue(expectedHost);
     }
 
     /**
@@ -571,13 +559,17 @@ test.describe('설정 페이지', () => {
       // 서버는 호스트 한 키만 저장돼도 연결 5키 전부를 overridden=true 로 내려주고, 행이 없는
       // 키는 value='' 다(원자 해석). 픽스처도 그 응답을 그대로 재현한다.
       await setupSettingsMocks(page, {
-        smtp: createSmtpSettings(
-          {},
-          { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
-        ),
+        smtp: createSmtpSettings({}, { connectionOverridden: {
+            // 서버가 실제로 내려보내는 5키를 **전부** 적는다 — 팩토리는 더 이상 채움 규칙을
+            // 갖고 있지 않다. 호스트만 저장한 테넌트의 응답이 글자 그대로 이 모양이다.
+            'smtp.host': 'smtp.ourcompany.com',
+            'smtp.port': '',
+            'smtp.username': '',
+            'smtp.password': '',
+            'smtp.starttls': 'true',
+          } }),
       });
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
+      await openEmailTab(page, 'smtp.ourcompany.com');
 
       const group = connectionGroup(page);
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
@@ -661,8 +653,11 @@ test.describe('설정 페이지', () => {
                 {
                   connectionOverridden: {
                     'smtp.host': 'smtp.ourcompany.com',
+                    'smtp.port': '',
                     'smtp.username': 'tenant-user@ourcompany.com',
+                    // 서버는 비밀번호를 마스킹해서 준다(평문을 내려보내지 않는다).
                     'smtp.password': '****ss1!',
+                    'smtp.starttls': 'true',
                   },
                 },
               )
@@ -730,10 +725,15 @@ test.describe('설정 페이지', () => {
       await setupSettingsMocks(page, {
         smtp: () =>
           saved
-            ? createSmtpSettings(
-                {},
-                { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
-              )
+            ? createSmtpSettings({}, { connectionOverridden: {
+            // 서버가 실제로 내려보내는 5키를 **전부** 적는다 — 팩토리는 더 이상 채움 규칙을
+            // 갖고 있지 않다. 호스트만 저장한 테넌트의 응답이 글자 그대로 이 모양이다.
+            'smtp.host': 'smtp.ourcompany.com',
+            'smtp.port': '',
+            'smtp.username': '',
+            'smtp.password': '',
+            'smtp.starttls': 'true',
+          } })
             : createSmtpSettings(),
       });
       await page.route(
@@ -842,30 +842,23 @@ test.describe('설정 페이지', () => {
       // 필드별 해제를 단언하던 예전 테스트를 **대체**한다. 번들 삭제 엔드포인트가 없으므로 화면이
       // 5번의 DELETE 를 순차 발행하는 것이 계약이고, 어느 키에 실제 행이 있는지 화면은 알 수 없다
       // (서버가 5키 전부 overridden=true 로 내려준다) — 그래서 조건 없이 5번 지운다.
-      let cleared = false;
+      const { deletedPaths } = await captureOverrideDeletes(page);
       await setupSettingsMocks(page, {
         smtp: () =>
-          cleared
+          deletedPaths.length > 0
             ? createSmtpSettings()
-            : createSmtpSettings(
-                {},
-                { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
-              ),
+            : createSmtpSettings({}, { connectionOverridden: {
+            // 서버가 실제로 내려보내는 5키를 **전부** 적는다 — 팩토리는 더 이상 채움 규칙을
+            // 갖고 있지 않다. 호스트만 저장한 테넌트의 응답이 글자 그대로 이 모양이다.
+            'smtp.host': 'smtp.ourcompany.com',
+            'smtp.port': '',
+            'smtp.username': '',
+            'smtp.password': '',
+            'smtp.starttls': 'true',
+          } }),
       });
-      const deletedPaths: string[] = [];
-      await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
-        (route) => {
-          if (route.request().method() !== 'DELETE') return route.fallback();
-          deletedPaths.push(new URL(route.request().url()).pathname);
-          cleared = true;
-          return route.fulfill({ status: 204 });
-        },
-      );
 
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
-      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+      await openEmailTab(page, 'smtp.ourcompany.com');
 
       // 그룹 밖의 미저장 편집은 번들 해제에 휩쓸리면 안 된다.
       await page.locator('#smtp-from').fill('kept@example.com');
@@ -903,21 +896,19 @@ test.describe('설정 페이지', () => {
       // 뭉개면 스크린리더 사용자가 놓치고, 다시 조작해야 하는 상태라는 사실이 사라진다.
       await setupSettingsMocks(page, {
         // 재조회에서도 여전히 번들 재정의 상태다 — 일부만 지워졌으므로.
-        smtp: () =>
-          createSmtpSettings({}, { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } }),
+        smtp: () => createSmtpSettings({}, { connectionOverridden: {
+            // 서버가 실제로 내려보내는 5키를 **전부** 적는다 — 팩토리는 더 이상 채움 규칙을
+            // 갖고 있지 않다. 호스트만 저장한 테넌트의 응답이 글자 그대로 이 모양이다.
+            'smtp.host': 'smtp.ourcompany.com',
+            'smtp.port': '',
+            'smtp.username': '',
+            'smtp.password': '',
+            'smtp.starttls': 'true',
+          } }),
       });
-      await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
-        (route) => {
-          if (route.request().method() !== 'DELETE') return route.fallback();
-          const failing = new URL(route.request().url()).pathname.endsWith('smtp.password');
-          return route.fulfill({ status: failing ? 500 : 204 });
-        },
-      );
+      await captureOverrideDeletes(page, { failOn: 'smtp.password' });
 
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
-      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+      await openEmailTab(page, 'smtp.ourcompany.com');
 
       await connectionGroup(page)
         .getByRole('button', { name: '연결 설정 전체 재정의 해제' })
@@ -936,28 +927,17 @@ test.describe('설정 페이지', () => {
       authenticatedPage: page,
     }) => {
       // §4: 구분은 **구조**가 한다. 안쪽(테두리 있는 그룹, 배지 0개) vs 바깥(배지 1개 + 개별 해제).
-      let cleared = false;
+      const { deletedPaths } = await captureOverrideDeletes(page);
       await setupSettingsMocks(page, {
         smtp: () =>
-          cleared
+          deletedPaths.length > 0
             ? createSmtpSettings()
             : createSmtpSettings({
                 'smtp.from_address': { overridden: true, value: 'ours@ourcompany.com' },
               }),
       });
-      const deletedPaths: string[] = [];
-      await page.route(
-        (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
-        (route) => {
-          if (route.request().method() !== 'DELETE') return route.fallback();
-          deletedPaths.push(new URL(route.request().url()).pathname);
-          cleared = true;
-          return route.fulfill({ status: 204 });
-        },
-      );
 
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
+      await openEmailTab(page);
       await expect(page.locator('#smtp-from')).toHaveValue('ours@ourcompany.com');
 
       const box = fieldBox(page, 'smtp-from');
@@ -999,14 +979,17 @@ test.describe('설정 페이지', () => {
       // 애초에 안 비어서" 통과해 버려, 나열 대상을 자격증명 2키로 좁힌 것을 아무것도 고정하지
       // 못한다(공허한 부정 단언 — 이 밴드가 반복해서 기록해 온 실패 방식이다).
       await setupSettingsMocks(page, {
-        smtp: createSmtpSettings(
-          {},
-          { connectionOverridden: { 'smtp.host': 'smtp.ourcompany.com' } },
-        ),
+        smtp: createSmtpSettings({}, { connectionOverridden: {
+            // 서버가 실제로 내려보내는 5키를 **전부** 적는다 — 팩토리는 더 이상 채움 규칙을
+            // 갖고 있지 않다. 호스트만 저장한 테넌트의 응답이 글자 그대로 이 모양이다.
+            'smtp.host': 'smtp.ourcompany.com',
+            'smtp.port': '',
+            'smtp.username': '',
+            'smtp.password': '',
+            'smtp.starttls': 'true',
+          } }),
       });
-      await page.goto('/admin/settings');
-      await page.getByRole('tab', { name: '이메일' }).click();
-      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+      await openEmailTab(page, 'smtp.ourcompany.com');
 
       // 비어 있는 **자격증명** 키를 이름으로 나열한다 — 그래야 "무엇을 채우면 되는가"가 화면에
       // 있다. 연결 5키 전부를 나열하면 거짓이 된다: 빈 포트는 인증과 무관하게 587 로 대체되고

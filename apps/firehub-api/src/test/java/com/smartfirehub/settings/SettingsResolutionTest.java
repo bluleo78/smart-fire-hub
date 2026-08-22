@@ -2,6 +2,7 @@ package com.smartfirehub.settings;
 
 import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
 import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.resolvedSetting;
 import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
@@ -10,9 +11,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.SettingsTestSupport;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -238,11 +241,7 @@ class SettingsResolutionTest extends IntegrationTestBase {
       // 전제 확인: 저장된 원문이 실제로 암호문("iv:ciphertext")이어야 이 테스트가 의미를 갖는다.
       assertThat(rawSystemSettingValue(dsl, "ai.api_key")).contains(":");
 
-      var apiKey =
-          settingsService.getResolvedByPrefix("ai").stream()
-              .filter(s -> "ai.api_key".equals(s.key()))
-              .findFirst()
-              .orElseThrow(() -> new AssertionError("ai.api_key 가 프리픽스 조회 결과에 없다"));
+      var apiKey = resolvedSetting(settingsService, "ai", "ai.api_key");
 
       assertThat(apiKey.value()).startsWith("****");
       // 암호문은 "iv:ciphertext" 형태이므로 콜론이 없다는 것이 곧 암호문이 아니라는 뜻이다.
@@ -311,7 +310,7 @@ class SettingsResolutionTest extends IntegrationTestBase {
         null);
 
     // 전제 확인: tenant_settings 에 저장된 원문이 암호문("iv:ciphertext")이어야 한다.
-    assertThat(rawTenantSettingValue("smtp.password"))
+    assertThat(rawTenantSettingValue("smtp.password").orElseThrow())
         .as("오버라이드 smtp.password 가 암호화 저장되지 않았다 — 복호화 단언이 무의미해진다")
         .contains(":");
 
@@ -468,29 +467,23 @@ class SettingsResolutionTest extends IntegrationTestBase {
       TenantContext.set(testTenant);
       settingsService.updateSettings(java.util.Map.of("smtp.host", "tenant-relay.example.com"), null);
 
-      var byKey =
-          settingsService.getResolvedByPrefix("smtp").stream()
-              .collect(
-                  java.util.stream.Collectors.toMap(
-                      com.smartfirehub.settings.dto.ResolvedSettingResponse::key, r -> r));
-
       for (String key :
           java.util.List.of(
               "smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls")) {
-        assertThat(byKey.get(key).overridden())
+        assertThat(resolvedSmtp(key).overridden())
             .as("%s 가 overridden=false 면 화면이 쓰이지도 않는 플랫폼 값에 '기본값 사용 중'을 단다", key)
             .isTrue();
       }
-      assertThat(byKey.get("smtp.host").value()).isEqualTo("tenant-relay.example.com");
+      assertThat(resolvedSmtp("smtp.host").value()).isEqualTo("tenant-relay.example.com");
       // 행이 없는 키는 빈 값이다 — 비밀번호는 빈 값이라 마스킹도 걸리지 않는다("****" 가 아니다).
-      assertThat(byKey.get("smtp.port").value()).isEmpty();
-      assertThat(byKey.get("smtp.username").value()).isEmpty();
-      assertThat(byKey.get("smtp.password").value()).isEmpty();
+      assertThat(resolvedSmtp("smtp.port").value()).isEmpty();
+      assertThat(resolvedSmtp("smtp.username").value()).isEmpty();
+      assertThat(resolvedSmtp("smtp.password").value()).isEmpty();
       // starttls 만 예외로 "true" 다(RULING F) — 보안 토글이라 빈 값이 덜 안전한 방향이다.
       // 화면의 Switch 도 이 값을 그대로 읽어 켜짐으로 그린다.
-      assertThat(byKey.get("smtp.starttls").value()).isEqualTo("true");
+      assertThat(resolvedSmtp("smtp.starttls").value()).isEqualTo("true");
       // from_address 는 번들 밖이므로 상속 그대로다.
-      assertThat(byKey.get("smtp.from_address").overridden()).isFalse();
+      assertThat(resolvedSmtp("smtp.from_address").overridden()).isFalse();
     } finally {
       restoreSystemSettingValue(dsl, "smtp.password", originalPassword);
     }
@@ -512,7 +505,8 @@ class SettingsResolutionTest extends IntegrationTestBase {
         java.util.Map.of("smtp.host", "relay.example.com", "smtp.password", ""), null);
 
     // 전제: 빈 값은 암호화되지 않은 채 저장돼 있다.
-    assertThat(rawTenantSettingValue("smtp.password")).isEmpty();
+    // 행은 **있고** 값이 빈 문자열이다 — "행이 없다"와 구별해야 한다(빈 값은 암호화하지 않는다).
+    assertThat(rawTenantSettingValue("smtp.password")).hasValue("");
 
     var config = settingsService.getSmtpConfig();
     assertThat(config).containsEntry("smtp.password", "");
@@ -574,7 +568,7 @@ class SettingsResolutionTest extends IntegrationTestBase {
     // 규칙을 지워도 통과하는 공허한 테스트가 된다.
     assertThat(rawTenantSettingValue("smtp.starttls"))
         .as("starttls 행이 있으면 이 테스트는 채움 규칙이 아니라 저장을 검증하게 된다")
-        .isNull();
+        .isEmpty();
 
     var config = settingsService.getSmtpConfig();
     // 발송 경로: 자격증명은 테넌트 값 그대로 실리고, 암호화는 켜진 채다.
@@ -585,13 +579,8 @@ class SettingsResolutionTest extends IntegrationTestBase {
         .containsEntry("smtp.starttls", "true");
 
     // 화면 경로도 같은 값을 본다 — Switch 가 켜짐으로 그려지는 근거.
-    var starttls =
-        settingsService.getResolvedByPrefix("smtp").stream()
-            .filter(r -> "smtp.starttls".equals(r.key()))
-            .findFirst()
-            .orElseThrow();
-    assertThat(starttls.value()).isEqualTo("true");
-    assertThat(starttls.overridden()).isTrue();
+    assertThat(resolvedSmtp("smtp.starttls").value()).isEqualTo("true");
+    assertThat(resolvedSmtp("smtp.starttls").overridden()).isTrue();
   }
 
   /**
@@ -626,23 +615,13 @@ class SettingsResolutionTest extends IntegrationTestBase {
     assertThat(settingsService.getValue("ai.model")).isPresent();
   }
 
-  /**
-   * RLS 가 걸린 {@code tenant_settings} 의 <b>저장된 원문</b>을 읽는다(암호화 여부 전제 확인용).
-   * GUC 가 필요하므로 반드시 테넌트 트랜잭션 안에서 조회한다.
-   */
-  private String rawTenantSettingValue(String key) {
-    String[] holder = new String[1];
-    runInTenantTransaction(
-        transactionTemplate,
-        testTenant,
-        () -> {
-          var row =
-              dsl.fetchOne(
-                  "select value from tenant_settings where tenant_id = ? and key = ?",
-                  testTenant,
-                  key);
-          holder[0] = row == null ? null : row.get(0, String.class);
-        });
-    return holder[0];
+  /** {@code prefix=smtp} 를 채워 넣는 얇은 위임 — 본체는 {@code SettingsTestSupport} 다. */
+  private ResolvedSettingResponse resolvedSmtp(String key) {
+    return resolvedSetting(settingsService, "smtp", key);
+  }
+
+  /** 이 클래스의 {@code testTenant} 를 채워 넣는 얇은 위임 — 본체는 {@code SettingsTestSupport} 다. */
+  private java.util.Optional<String> rawTenantSettingValue(String key) {
+    return SettingsTestSupport.rawTenantSettingValue(dsl, transactionTemplate, testTenant, key);
   }
 }

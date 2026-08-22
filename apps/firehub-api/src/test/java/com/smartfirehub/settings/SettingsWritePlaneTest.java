@@ -2,6 +2,7 @@ package com.smartfirehub.settings;
 
 import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
 import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.resolvedSetting;
 import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
@@ -15,6 +16,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.SettingsTestSupport;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -413,18 +415,20 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     assertThat(encryptionService.decrypt(stored)).isEqualTo("mixed-secret");
   }
 
-  /** 테넌트 오버라이드 행의 <b>저장된 그대로</b>의 값(암호화됐다면 암호문). */
+  /**
+   * 이 클래스의 {@code testTenant} 를 채워 넣는 얇은 위임 — 본체는 {@code SettingsTestSupport} 다.
+   *
+   * <p>본체가 저장소가 아니라 raw SQL 을 쓰도록 바뀌었다. 이 헬퍼가 답하는 질문은 "저장소가 무엇을
+   * 돌려주나"가 아니라 <b>"테이블에 무엇이 들어갔나"</b>(암호화·센티널 드롭의 전제 확인)이므로,
+   * 저장소를 지나면 언젠가 저장소가 값을 변형하는 날 그 변형이 전제 단언에 그대로 반영되어
+   * 아무것도 검증하지 못한다.
+   */
   private java.util.Optional<String> tenantRawValue(String key) {
-    return runInTenantTransaction(
-        transactionTemplate, testTenant, () -> tenantSettingsRepository.findValue(key));
+    return SettingsTestSupport.rawTenantSettingValue(dsl, transactionTemplate, testTenant, key);
   }
 
-  /** 화면이 실제로 받는 값 — {@code getResolvedByPrefix("smtp")} 결과에서 한 키를 꺼낸다. */
+  /** 화면이 실제로 받는 값 — 본체는 {@code SettingsTestSupport.resolvedSetting} 이다. */
   private String resolvedSmtpValue(String key) {
-    return settingsService.getResolvedByPrefix("smtp").stream()
-        .filter(s -> key.equals(s.key()))
-        .findFirst()
-        .orElseThrow()
-        .value();
+    return resolvedSetting(settingsService, "smtp", key).value();
   }
 }

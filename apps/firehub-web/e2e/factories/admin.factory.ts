@@ -137,7 +137,18 @@ const SMTP_CONNECTION_KEYS = [
   'smtp.username',
   'smtp.password',
   'smtp.starttls',
-];
+] as const;
+
+/**
+ * 번들이 재정의된 상태의 연결 5키 값 — **5키 전부를 명시해야 한다**(빈 값도 명시).
+ *
+ * 예전에는 팩토리가 백엔드의 **채움 규칙 자체**를 재구현했다(`bundle[key] ?? FILL[key] ?? ''`).
+ * 목이 서버 동작을 인코딩하는 것은 목의 본질이지만, **알고리즘**을 복제하면 백엔드가 채움 값을
+ * 바꿔도 팩토리는 서버가 만들 수 없는 응답을 조용히 계속 만들고 스펙은 초록으로 남는다 —
+ * 키 목록이 어긋나면 스펙이 빨개지는 것과 달리, 알고리즘이 어긋나면 **초록인 채로 거짓이 고정된다**.
+ * 그래서 규칙을 지우고 타입으로 강제한다: 각 스펙이 자기가 시험하는 서버 응답을 글자 그대로 보여준다.
+ */
+type SmtpConnectionValues = Record<(typeof SMTP_CONNECTION_KEYS)[number], string>;
 
 /**
  * SMTP 설정 6키 — P7-c1 에서 **테넌트 오버라이드 허용**으로 재분류되어 전부 `tenantEditable: true` 다.
@@ -152,19 +163,17 @@ const SMTP_CONNECTION_KEYS = [
  *   만들 수 없는 마스크다.
  *
  * **`connectionOverridden` 노브(Task 5)**: 연결 5키는 서버가 **원자적으로** 해석한다 — 하나라도
- * 테넌트 행이 있으면 5키 전부가 `overridden: true` 로 내려오고, **행이 없는 키는 플랫폼 값이
- * 아니라 `value: ''`** 다. 이 노브에 값을 준 키만 그 값을 갖고 나머지 연결 키는 빈 값이 된다.
+ * 테넌트 행이 있으면 5키 전부가 `overridden: true` 로 내려온다. 이 노브를 주면 5키가 전부
+ * `overridden: true` 가 되고 값은 **호출부가 5키 모두 명시한다**(`SmtpConnectionValues` 참조).
  * `patch` 로 `smtp.host` 하나만 `overridden: true` 로 만드는 것은 **서버가 만들 수 없는 응답**이라
  * 그렇게 쓰면 안 된다.
- *
- * **`smtp.starttls` 만 빈 값이 아니라 `'true'` 로 채운다(RULING F)**: 그 키는 자격증명이 아니라
- * 보안 토글이라 빈 값이 *덜* 안전한 방향이고, 그래서 백엔드
- * `SettingsService.BUNDLE_FILL_VALUES` 가 이 키만 `"true"` 로 채운다. 여기서 `''` 를 주면 서버가
- * 만들 수 없는 응답으로 화면을 시험하게 된다.
  */
+const isConnectionKey = (key: string): key is keyof SmtpConnectionValues =>
+  (SMTP_CONNECTION_KEYS as readonly string[]).includes(key);
+
 export function createSmtpSettings(
   patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
-  options: { connectionOverridden?: Record<string, string> } = {},
+  options: { connectionOverridden?: SmtpConnectionValues } = {},
 ): ResolvedSettingResponse[] {
   const base: ResolvedSettingResponse[] = [
     createResolvedSetting({ key: 'smtp.host', value: 'smtp.gmail.com', description: '발신 메일 서버 주소' }),
@@ -178,18 +187,10 @@ export function createSmtpSettings(
       description: '발신자 주소',
     }),
   ];
-  // 백엔드 SettingsService.BUNDLE_FILL_VALUES 와 같다 — 행이 없는 연결 키의 채움 값.
-  const BUNDLE_FILL_VALUES: Record<string, string> = { 'smtp.starttls': 'true' };
   const bundle = options.connectionOverridden;
   return base.map((s) => {
     const withBundle =
-      bundle && SMTP_CONNECTION_KEYS.includes(s.key)
-        ? {
-            ...s,
-            overridden: true,
-            value: bundle[s.key] ?? BUNDLE_FILL_VALUES[s.key] ?? '',
-          }
-        : s;
+      bundle && isConnectionKey(s.key) ? { ...s, overridden: true, value: bundle[s.key] } : s;
     return patch[s.key] ? { ...withBundle, ...patch[s.key] } : withBundle;
   });
 }
