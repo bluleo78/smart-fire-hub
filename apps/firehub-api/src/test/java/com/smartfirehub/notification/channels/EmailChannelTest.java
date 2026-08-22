@@ -110,6 +110,9 @@ class EmailChannelTest {
   @Test
   @SuppressWarnings("unchecked")
   void deliver_번들로_비워진_포트에도_예외없이_기본포트로_발송한다() {
+    // starttls 가 "" 가 아니라 "true" 인 것은 오타가 아니다 — 번들 채움이 이 키만 "true" 로
+    // 채우므로(RULING F: 보안 토글이라 빈 값이 덜 안전한 방향) 서버가 "" 를 내려보낼 길이 없다.
+    // "" 로 두면 존재할 수 없는 응답으로 계약을 지키는 척하는 픽스처가 된다.
     when(settingsService.getSmtpConfig())
         .thenReturn(
             Map.of(
@@ -117,7 +120,7 @@ class EmailChannelTest {
                 "smtp.port", "",
                 "smtp.username", "",
                 "smtp.password", "",
-                "smtp.starttls", ""));
+                "smtp.starttls", "true"));
 
     var result = channel.deliver(ctx(null, "to@example.com"));
 
@@ -130,8 +133,8 @@ class EmailChannelTest {
     // 자격증명이 비어 있으므로 무인증 릴레이로 시도된다 — 이것이 번들 규칙이 의도한 결과다.
     assertThat(smtpConfig.get("user")).isEqualTo("");
     assertThat(smtpConfig.get("pass")).isEqualTo("");
-    // 빈 starttls 는 꺼짐이다(Boolean.parseBoolean("") == false) — 화면의 Switch 표시와 일치한다.
-    assertThat(smtpConfig.get("secure")).isEqualTo(false);
+    // 번들이 채운 starttls 는 켜짐이다 — 자격증명이 비어 있어도 암호화까지 함께 꺼지지는 않는다.
+    assertThat(smtpConfig.get("secure")).isEqualTo(true);
   }
 
   /** 화이트라벨링: 제목 미지정 시 subject가 주입된 브랜드명 기반("Acme 알림")으로 구성되어야 한다. */

@@ -98,11 +98,23 @@ const PORT_MAX = 65535;
  * 만들지만, 노트는 이 화면 안에 머문다. 빈 입력창은 시각적으로 "아직 안 채운 칸"과 구별되지
  * 않으므로 이 텍스트가 유일한 전달 경로다 — 그래서 각 입력의 `aria-describedby` 에 포함한다.
  */
-function EmptyInBundleNote({ id, show }: { id: string; show: boolean }) {
+function EmptyInBundleNote({
+  id,
+  show,
+  extra,
+}: {
+  id: string;
+  show: boolean;
+  /**
+   * 비어 있을 때 <b>실제로 적용되는 값</b>이 따로 있는 키만 채운다. 포트가 그렇다 — 소비자 3곳이
+   * 전부 빈 포트를 587 로 대체하므로, 이 문장이 없으면 "포트가 없어서 못 나간다"로 읽힌다.
+   */
+  extra?: string;
+}) {
   if (!show) return null;
   return (
     <p id={id} className="text-sm text-muted-foreground">
-      이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.
+      이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.{extra ? ` ${extra}` : ''}
     </p>
   );
 }
@@ -296,13 +308,41 @@ export default function SmtpSettingsTab({
       return;
     }
 
+    // 저장이 번들을 상속 → 재정의로 <b>전환</b>시켰는지 판정하려면 저장 **전** 상태가 필요하다.
+    const wasInherited = connectionGroupState === 'inherited';
+
     setIsSaving(true);
     try {
       await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
-      refreshMeta().catch(() => undefined);
+      refreshMeta()
+        .then((byKey) => {
+          // 번들 전환이 일어났다면 **연결 5키의 값도** 다시 시드해야 한다. `refreshMeta` 는
+          // `settings`(플래그)만 갱신하고 `form` 은 건드리지 않으므로, 그냥 두면 입력창은 옛
+          // 플랫폼 값(포트 587·플랫폼 사용자 이름·플랫폼 마스크·스위치)을 계속 보여주는데 그
+          // 아래 노트는 "이 항목은 비어 있습니다"라고 말한다 — 이 태스크가 배지에서 제거한
+          // 거짓말이 **필드 값 자체로** 옮겨온 것이다(디자인 스펙 §1 위반).
+          //
+          // 전환하지 않은 저장에서는 재시드하지 않는다. 값이 어차피 같아 화면은 변하지 않으면서,
+          // 저장 중에 사용자가 다른 필드에 입력한 내용을 덮어쓸 창만 넓어진다.
+          if (!wasInherited) return;
+          const nowOverridden = SMTP_CONNECTION_KEYS.some((key) => byKey[key]?.overridden === true);
+          if (!nowOverridden) return;
+          // `handleClearConnectionBundle` 과 같은 재시드다 — 서버 해석이 유일한 권위이고,
+          // 두 경로가 다른 방식으로 폼을 맞추면 한쪽만 고쳐지는 사고가 난다.
+          const reseed = (prev: SmtpForm) => {
+            const next = { ...prev };
+            SMTP_CONNECTION_KEYS.forEach((key) => {
+              next[key] = byKey[key]?.value ?? EMPTY[key];
+            });
+            return next;
+          };
+          setForm(reseed);
+          setOriginal(reseed);
+        })
+        .catch(() => undefined);
     } catch {
       toast.error('설정 저장에 실패했습니다.');
     } finally {
@@ -423,13 +463,16 @@ export default function SmtpSettingsTab({
   }, [onDirtyChange, hasChanges]);
 
   /**
-   * 번들이 재정의됐는데 <b>저장된</b> 값이 비어 있는 연결 키의 이름들. 비어 있는 키를 실제로
-   * 나열해야 "무엇을 채우면 되는가"가 화면에 있다.
+   * 번들이 재정의됐는데 <b>저장된</b> 값이 비어 있는 <b>자격증명</b> 키의 이름들. 비어 있는 키를
+   * 실제로 나열해야 "무엇을 채우면 되는가"가 화면에 있다.
    *
-   * `smtp.starttls` 는 값이 비어도 인증과 무관하므로 안내에서 뺀다 — 넣으면 "STARTTLS 를 채우면
-   * 인증이 된다"고 읽힌다.
+   * <b>연결 5키 전부가 아니라 자격증명 2키만 보는 이유</b>: 이 안내가 하는 말은 "인증 없이 접속을
+   * 시도한다"이고, 그 원인이 될 수 있는 것은 `사용자 이름`·`비밀번호` 뿐이다. 나머지 셋을 넣으면
+   * 거짓이 된다 — 빈 `포트` 는 인증과 무관하고 소비자가 587 로 대체하며(그 사실은 포트 필드의
+   * 노트가 따로 말한다), 빈 `호스트` 는 인증이 아니라 발송 자체가 실패하는 다른 문제이고,
+   * `STARTTLS` 는 애초에 빈 값이 될 수 없다(번들 채움이 'true' 로 채운다, RULING F).
    */
-  const emptyConnectionLabels = (['smtp.host', 'smtp.port', 'smtp.username', 'smtp.password'] as const)
+  const emptyConnectionLabels = (['smtp.username', 'smtp.password'] as const)
     .filter((key) => isEmptyInBundle(key))
     .map((key) => FIELD_LABELS[key]);
 
@@ -519,9 +562,13 @@ export default function SmtpSettingsTab({
             {/* 저장 예고(§2). 상태 전환은 저장 후에 그리고, 지금은 무슨 일이 일어날지만 말한다. */}
             {bundleTransitionPending && (
               <InlineBanner id="smtp-connection-warning" variant="warning">
-                저장하면 연결 설정 5개 항목이 모두 우리 조직 값으로 전환됩니다. 입력하지 않은 항목은
-                빈 값이 되며, 플랫폼의 사용자 이름·비밀번호는 더 이상 사용되지 않습니다. 인증이 필요한
-                서버라면 지금 사용자 이름과 비밀번호도 함께 입력하세요.
+                {/* "입력하지 않은 항목은 빈 값이 된다"고 뭉뚱그리면 STARTTLS 까지 꺼진다는 뜻이
+                    되는데, 번들 채움은 그 키만 켜진 채로 둔다(RULING F). 그래서 빈 값이 되는 네
+                    키를 이름으로 한정한다 — 문장을 늘리지 않으면서 거짓을 없애는 쪽이다. */}
+                저장하면 연결 설정 5개 항목이 모두 우리 조직 값으로 전환됩니다. 입력하지 않은
+                호스트·포트·사용자 이름·비밀번호는 빈 값이 되며, 플랫폼의 사용자 이름·비밀번호는 더
+                이상 사용되지 않습니다. 인증이 필요한 서버라면 지금 사용자 이름과 비밀번호도 함께
+                입력하세요.
               </InlineBanner>
             )}
 
@@ -563,7 +610,11 @@ export default function SmtpSettingsTab({
               {errors['smtp.port'] && (
                 <p className="text-sm text-destructive">{errors['smtp.port']}</p>
               )}
-              <EmptyInBundleNote id="smtp-port-empty" show={isEmptyInBundle('smtp.port')} />
+              <EmptyInBundleNote
+                id="smtp-port-empty"
+                show={isEmptyInBundle('smtp.port')}
+                extra="기본 포트 587 로 접속합니다."
+              />
             </div>
 
             {/* Username */}
@@ -620,10 +671,9 @@ export default function SmtpSettingsTab({
               <div className="space-y-1">
                 <Label htmlFor="smtp-starttls">STARTTLS 사용</Label>
                 <p className="text-sm text-muted-foreground">TLS 암호화로 SMTP 연결 보안</p>
-                <EmptyInBundleNote
-                  id="smtp-starttls-empty"
-                  show={isEmptyInBundle('smtp.starttls')}
-                />
+                {/* 이 필드에는 빈 항목 노트가 없다. 번들 채움이 `smtp.starttls` 만 'true' 로
+                    채우므로(RULING F) 서버가 이 키를 빈 값으로 내려보낼 길이 자체가 없다 —
+                    노트를 달아 두면 도달 불가 방어 코드가 된다. */}
               </div>
               <Switch
                 id="smtp-starttls"
@@ -631,9 +681,6 @@ export default function SmtpSettingsTab({
                 checked={form['smtp.starttls'] === 'true'}
                 disabled={!isEditable('smtp.starttls')}
                 onCheckedChange={(checked) => updateField('smtp.starttls', checked ? 'true' : 'false')}
-                aria-describedby={
-                  isEmptyInBundle('smtp.starttls') ? 'smtp-starttls-empty' : undefined
-                }
               />
             </div>
           </fieldset>

@@ -485,7 +485,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
       assertThat(byKey.get("smtp.port").value()).isEmpty();
       assertThat(byKey.get("smtp.username").value()).isEmpty();
       assertThat(byKey.get("smtp.password").value()).isEmpty();
-      assertThat(byKey.get("smtp.starttls").value()).isEmpty();
+      // starttls 만 예외로 "true" 다(RULING F) — 보안 토글이라 빈 값이 덜 안전한 방향이다.
+      // 화면의 Switch 도 이 값을 그대로 읽어 켜짐으로 그린다.
+      assertThat(byKey.get("smtp.starttls").value()).isEqualTo("true");
       // from_address 는 번들 밖이므로 상속 그대로다.
       assertThat(byKey.get("smtp.from_address").overridden()).isFalse();
     } finally {
@@ -532,6 +534,63 @@ class SettingsResolutionTest extends IntegrationTestBase {
     var config = settingsService.getSmtpConfig();
     assertThat(config).containsEntry("smtp.port", platformPort);
     assertThat(config).containsKey("smtp.host");
+  }
+
+  /**
+   * <b>RULING F 회귀 가드</b>: 호스트·사용자 이름·비밀번호를 재정의해도 {@code smtp.starttls} 는
+   * <b>켜진 채로</b> 해석된다.
+   *
+   * <p>이것이 밴드 리뷰가 찾은 MUST-FIX 다. 테넌트 ADMIN 이 자기 회사 SMTP 자격증명을 채워 저장하는
+   * 것은 <b>이 화면의 가장 흔한 정상 조작</b>인데, 그때 STARTTLS 스위치는 화면에 켜짐으로 보이므로
+   * (플랫폼 값 {@code 'true'} 가 폼에 시드된다) 손댈 이유가 없고, web 은 바뀐 키만 보내므로
+   * {@code smtp.starttls} 행이 생기지 않는다. 번들이 그 키를 빈 값으로 채우면 세 소비자가 전부
+   * 꺼짐으로 읽어({@code Boolean.parseBoolean("")}, {@code "true".equalsIgnoreCase("")})
+   * <b>테넌트가 방금 입력한 자격증명이 평문 채널로</b> 나간다. 발송은 성공하므로 아무도 못 본다.
+   *
+   * <p><b>이 상태를 덮는 테스트가 백엔드에도 E2E 에도 없었다.</b> 바로 위
+   * {@code getResolvedByPrefix_는_번들...} 은 호스트 하나만 재정의하는 화면 경로를 보고,
+   * {@code 호스트만_재정의해도...} 는 자격증명이 <b>비는</b> 쪽만 본다 — 자격증명이 <b>채워진</b>
+   * 상태에서 암호화가 꺼지는 조합은 둘 다 지나쳤다.
+   *
+   * <p>발송 경로({@code getSmtpConfig})와 화면 경로({@code getResolvedByPrefix})를 한 테스트에서
+   * 함께 단언한다. 규칙이 한 곳에 있으므로 둘은 갈라질 수 없지만, 갈라지지 않는다는 것이 이
+   * 태스크의 주장이므로 그 주장 자체를 고정한다.
+   */
+  @Test
+  void 자격증명을_재정의해도_STARTTLS_는_켜진_채로_해석된다() {
+    testTenant = createActiveTenant(dsl, "sr-smtp-tls");
+    TenantContext.set(testTenant);
+    // 사용자가 실제로 하는 조작: 호스트·사용자 이름·비밀번호만 채우고 스위치는 건드리지 않는다.
+    settingsService.updateSettings(
+        java.util.Map.of(
+            "smtp.host", "smtp.ourcompany.com",
+            "smtp.username", "tenant-user@ourcompany.com",
+            "smtp.password", "tenant-real-password"),
+        null);
+
+    // 전제 확인: 사용자가 스위치를 안 건드렸으므로 tenant_settings 에 starttls 행이 없다.
+    // 이 단언이 없으면 "행이 있어서 true 인" 경우와 "채움이 true 인" 경우를 구별하지 못해
+    // 규칙을 지워도 통과하는 공허한 테스트가 된다.
+    assertThat(rawTenantSettingValue("smtp.starttls"))
+        .as("starttls 행이 있으면 이 테스트는 채움 규칙이 아니라 저장을 검증하게 된다")
+        .isNull();
+
+    var config = settingsService.getSmtpConfig();
+    // 발송 경로: 자격증명은 테넌트 값 그대로 실리고, 암호화는 켜진 채다.
+    assertThat(config).containsEntry("smtp.username", "tenant-user@ourcompany.com");
+    assertThat(config).containsEntry("smtp.password", "tenant-real-password");
+    assertThat(config)
+        .as("테넌트가 방금 입력한 자격증명이 STARTTLS 없이 평문으로 나간다")
+        .containsEntry("smtp.starttls", "true");
+
+    // 화면 경로도 같은 값을 본다 — Switch 가 켜짐으로 그려지는 근거.
+    var starttls =
+        settingsService.getResolvedByPrefix("smtp").stream()
+            .filter(r -> "smtp.starttls".equals(r.key()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(starttls.value()).isEqualTo("true");
+    assertThat(starttls.overridden()).isTrue();
   }
 
   /**

@@ -156,6 +156,11 @@ const SMTP_CONNECTION_KEYS = [
  * 아니라 `value: ''`** 다. 이 노브에 값을 준 키만 그 값을 갖고 나머지 연결 키는 빈 값이 된다.
  * `patch` 로 `smtp.host` 하나만 `overridden: true` 로 만드는 것은 **서버가 만들 수 없는 응답**이라
  * 그렇게 쓰면 안 된다.
+ *
+ * **`smtp.starttls` 만 빈 값이 아니라 `'true'` 로 채운다(RULING F)**: 그 키는 자격증명이 아니라
+ * 보안 토글이라 빈 값이 *덜* 안전한 방향이고, 그래서 백엔드
+ * `SettingsService.BUNDLE_FILL_VALUES` 가 이 키만 `"true"` 로 채운다. 여기서 `''` 를 주면 서버가
+ * 만들 수 없는 응답으로 화면을 시험하게 된다.
  */
 export function createSmtpSettings(
   patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
@@ -173,11 +178,17 @@ export function createSmtpSettings(
       description: '발신자 주소',
     }),
   ];
+  // 백엔드 SettingsService.BUNDLE_FILL_VALUES 와 같다 — 행이 없는 연결 키의 채움 값.
+  const BUNDLE_FILL_VALUES: Record<string, string> = { 'smtp.starttls': 'true' };
   const bundle = options.connectionOverridden;
   return base.map((s) => {
     const withBundle =
       bundle && SMTP_CONNECTION_KEYS.includes(s.key)
-        ? { ...s, overridden: true, value: bundle[s.key] ?? '' }
+        ? {
+            ...s,
+            overridden: true,
+            value: bundle[s.key] ?? BUNDLE_FILL_VALUES[s.key] ?? '',
+          }
         : s;
     return patch[s.key] ? { ...withBundle, ...patch[s.key] } : withBundle;
   });

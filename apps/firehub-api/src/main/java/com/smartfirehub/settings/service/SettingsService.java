@@ -96,6 +96,29 @@ public class SettingsService {
   private static final Set<String> SMTP_CONNECTION_KEYS =
       Set.of("smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls");
 
+  /**
+   * 번들 채움 값이 <b>빈 문자열이 아닌</b> 키. 여기 없는 연결 키는 전부 {@code ""} 로 채운다 —
+   * {@link #applySmtpConnectionBundle} 참고.
+   *
+   * <p><b>{@code smtp.starttls} 만 {@code "true"} 인 이유(밴드 리뷰 RULING F).</b> 나머지 네 키는
+   * <b>자격증명이거나 주소</b>라 "비어 있음 = 설정되지 않음"이고, 이 태스크가 얻어낸 안전 성질은
+   * 정확히 그 미설정이 <b>눈에 보이게 실패</b>한다는 것이다. {@code smtp.starttls} 는 자격증명이
+   * 아니라 <b>보안 토글</b>이고, 이 키에서만 빈 값이 <b>덜</b> 안전한 방향이다 — 발송은 그대로
+   * 성공하면서 암호화만 조용히 꺼진다("조용한 노출").
+   *
+   * <p>구체적으로 막는 시나리오: 테넌트 ADMIN 이 호스트·사용자 이름·비밀번호를 자기 회사 값으로
+   * 채워 저장한다. STARTTLS 스위치는 화면에 <b>켜짐</b>으로 보이므로(플랫폼 값 {@code 'true'} 가
+   * 폼에 시드된다) 손댈 이유가 없고, web 은 바뀐 키만 보내므로 {@code smtp.starttls} 행이 생기지
+   * 않는다. 빈 값으로 채우면 <b>테넌트가 방금 입력한 자격증명이 평문 채널로</b> 나간다 — 브리프
+   * §1-4 가 원 결함의 "약한 이면"으로 지목한 형태를, 관측자만 플랫폼에서 테넌트로 바꿔 재생산하는
+   * 셈이다.
+   *
+   * <p>"플랫폼 값을 쓰지 않는다"는 목적이 이 키에서는 빈 값을 요구하지 않는다 — <b>withhold 할
+   * 비밀이 없고</b>, 플랫폼 값 자체도 {@code 'true'}(V42 시드)다. TLS 를 정말 끄려는 테넌트는
+   * 스위치를 내려 {@code 'false'} 행을 만들면 되고, 그것은 명시적 조작이라 조용하지 않다.
+   */
+  private static final Map<String, String> BUNDLE_FILL_VALUES = Map.of("smtp.starttls", "true");
+
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
@@ -272,7 +295,9 @@ public class SettingsService {
   /**
    * SMTP 연결 5키를 <b>원자적으로</b> 해석한다: {@link #SMTP_CONNECTION_KEYS} 중 <b>하나라도</b>
    * 테넌트 행이 있으면 5키 <b>전부</b>를 테넌트 평면에서 해석한다. 행이 없는 키는 <b>빈 문자열</b>로
-   * 채운다. 하나도 없으면 아무것도 하지 않는다(5키 전부 플랫폼 상속).
+   * 채우되, {@link #BUNDLE_FILL_VALUES} 에 있는 키({@code smtp.starttls} → {@code "true"})만
+   * 예외다 — 그 키는 자격증명이 아니라 보안 토글이라 빈 값이 <b>덜</b> 안전한 방향이기 때문이고,
+   * 근거는 그 상수의 javadoc 에 있다. 하나도 없으면 아무것도 하지 않는다(5키 전부 플랫폼 상속).
    *
    * <p><b>왜 플랫폼 폴백이 아니라 빈 값인가.</b> 채우지 않고 두면 상위 {@code putAll} 이 플랫폼
    * 값을 그대로 남기므로 <b>유출이 그대로 남는다</b> — 이 규칙이 막으려던 바로 그 상태다. 빈 값으로
@@ -294,7 +319,8 @@ public class SettingsService {
   private static void applySmtpConnectionBundle(Map<String, String> overrides) {
     boolean bundleOverridden = overrides.keySet().stream().anyMatch(SMTP_CONNECTION_KEYS::contains);
     if (!bundleOverridden) return;
-    SMTP_CONNECTION_KEYS.forEach(key -> overrides.putIfAbsent(key, ""));
+    SMTP_CONNECTION_KEYS.forEach(
+        key -> overrides.putIfAbsent(key, BUNDLE_FILL_VALUES.getOrDefault(key, "")));
   }
 
   /**

@@ -595,9 +595,18 @@ test.describe('설정 페이지', () => {
       // 행이 없는 연결 키는 플랫폼 값이 아니라 빈 값이고, 그 사실을 노트가 말한다.
       await expect(page.locator('#smtp-port')).toHaveValue('');
       await expect(page.locator('#smtp-username')).toHaveValue('');
+      // 4가 아니라 **3**이다 — `smtp.starttls` 는 번들 채움이 'true' 로 채우므로(RULING F)
+      // 빈 값이 될 수 없고, 따라서 그 필드에는 노트가 붙지 않는다.
       await expect(
-        group.getByText('이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.'),
-      ).toHaveCount(4);
+        group.getByText('이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.', {
+          exact: false,
+        }),
+      ).toHaveCount(3);
+      // 보안 토글은 켜진 채로 남는다. 자격증명이 비었다고 암호화까지 함께 꺼지면, 이 태스크가
+      // 막으려던 "조용한 평문 전송"을 관측자만 바꿔 재생산하게 된다.
+      await expect(page.locator('#smtp-starttls')).toBeChecked();
+      // 포트 노트는 실제로 적용되는 값을 함께 말한다 — "비어 있다"만 있으면 "못 나간다"로 읽힌다.
+      await expect(group.getByText('기본 포트 587 로 접속합니다.', { exact: false })).toBeVisible();
       // 비밀번호 안내는 "설정된 비밀번호가 없습니다"가 아니라 위 노트로 **대체**된다 —
       // 그 문구는 사용자가 의도해서 비운 것처럼 읽혀 위험을 감춘다.
       await expect(page.getByText('설정된 비밀번호가 없습니다 (인증 없는 SMTP)')).toHaveCount(0);
@@ -634,6 +643,58 @@ test.describe('설정 페이지', () => {
       await expect(warning).toHaveCount(0);
       await page.locator('#smtp-from').fill('other@example.com');
       await expect(warning).toHaveCount(0);
+    });
+
+    test('자격증명만 채워 저장해도 STARTTLS 스위치는 켜진 채로 남는다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 밴드 리뷰 MUST-FIX 1(RULING F)의 화면 쪽 회귀 가드. 사용자가 하는 조작은 "호스트·사용자
+      // 이름·비밀번호를 우리 회사 값으로 채운다"뿐이고 스위치는 손대지 않는다 — 화면에 켜짐으로
+      // 보이므로 손댈 이유가 없다. 그래서 PUT 에 smtp.starttls 가 없고, 서버가 그 키를 빈 값으로
+      // 채우면 방금 입력한 자격증명이 평문으로 나간다. 발송은 성공하므로 아무도 못 본다.
+      let saved = false;
+      await setupSettingsMocks(page, {
+        smtp: () =>
+          saved
+            ? createSmtpSettings(
+                {},
+                {
+                  connectionOverridden: {
+                    'smtp.host': 'smtp.ourcompany.com',
+                    'smtp.username': 'tenant-user@ourcompany.com',
+                    'smtp.password': '****ss1!',
+                  },
+                },
+              )
+            : createSmtpSettings(),
+      });
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await page.route(
+        (url) => url.pathname === '/api/v1/settings',
+        (route) => {
+          if (route.request().method() !== 'PUT') return route.fallback();
+          saved = true;
+          return route.fallback();
+        },
+      );
+      await openEmailTab(page);
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.locator('#smtp-username').fill('tenant-user@ourcompany.com');
+      await page.locator('#smtp-password').fill('real-password');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 스위치를 건드리지 않았으므로 페이로드에 없다 — 이것이 이 결함의 전제다.
+      const req = await saveCapture.waitForRequest();
+      const settings = (req.payload as { settings: Record<string, string> }).settings;
+      expect(settings).not.toHaveProperty('smtp.starttls');
+
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+      await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
+      // 전환 후에도 암호화는 켜진 채다.
+      await expect(page.locator('#smtp-starttls')).toBeChecked();
+      // 자격증명이 실린 상태이므로 무인증 안내는 뜨지 않는다.
+      await expect(page.getByText('인증 없이 접속을 시도합니다', { exact: false })).toHaveCount(0);
     });
 
     test('바꾼 SMTP 키만 PUT 되고 손대지 않은 비밀번호 마스크는 담기지 않는다', async ({
@@ -699,6 +760,20 @@ test.describe('설정 페이지', () => {
       await expect(
         page.getByText('저장하면 연결 설정 5개 항목이 모두 우리 조직 값으로', { exact: false }),
       ).toHaveCount(0);
+
+      // **배지만이 아니라 값도** 서버 해석으로 다시 시드돼야 한다(밴드 리뷰 MUST-FIX 2).
+      // 재시드가 없으면 입력창은 옛 플랫폼 값(포트 587·플랫폼 사용자 이름·플랫폼 마스크)을 계속
+      // 보여주는데 그 아래 노트는 "이 항목은 비어 있습니다"라고 말한다 — 이 태스크가 배지에서
+      // 제거한 거짓말이 필드 값 자체로 옮겨온 것이다.
+      await expect(page.locator('#smtp-port')).toHaveValue('');
+      await expect(page.locator('#smtp-username')).toHaveValue('');
+      await expect(page.locator('#smtp-password')).toHaveValue('');
+      // starttls 는 채움 값이 'true' 라 켜진 채로 재시드된다(RULING F).
+      await expect(page.locator('#smtp-starttls')).toBeChecked();
+      // 재시드가 dirty 를 만들면 안 된다 — form 과 original 을 같은 값으로 맞춰야 한다.
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+      // 이제 무인증 안내와 화면이 일치한다: 비어 있다고 말하는 칸이 실제로 비어 있다.
+      await expect(page.getByText('인증 없이 접속을 시도합니다', { exact: false })).toBeVisible();
     });
 
     test('비밀번호를 새로 입력하면 그 값이 그대로 전송된다', async ({
@@ -930,12 +1005,14 @@ test.describe('설정 페이지', () => {
       await page.getByRole('tab', { name: '이메일' }).click();
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
 
-      // 비어 있는 키를 **이름으로 나열**한다 — 그래야 "무엇을 채우면 되는가"가 화면에 있다.
-      // host/port 는 채워져 있으므로 목록에서 빠져야 한다.
+      // 비어 있는 **자격증명** 키를 이름으로 나열한다 — 그래야 "무엇을 채우면 되는가"가 화면에
+      // 있다. 연결 5키 전부를 나열하면 거짓이 된다: 빈 포트는 인증과 무관하게 587 로 대체되고
+      // (그 사실은 포트 필드의 노트가 따로 말한다), STARTTLS 는 빈 값이 될 수 없다.
       const notice = page.getByText('인증 없이 접속을 시도합니다', { exact: false });
       await expect(notice).toBeVisible();
       await expect(notice).toContainText('사용자 이름·비밀번호');
       await expect(notice).not.toContainText('SMTP 호스트');
+      await expect(notice).not.toContainText('포트');
       await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
 
       // dirty 가 되어도 이 안내가 유지되고 dirty 안내가 나란히 뜨지 않는다(배타적 슬롯).
