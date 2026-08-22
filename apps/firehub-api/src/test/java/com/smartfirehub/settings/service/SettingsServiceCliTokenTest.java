@@ -147,8 +147,12 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
     assertThat(encrypted).isPresent();
     String encryptedValue = encrypted.get();
 
-    // masked 값 전송 시 업데이트 스킵
-    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "****masked"), null);
+    // masked 값 전송 시 업데이트 스킵.
+    // Task 5 가 센티널 판정을 EncryptionService.maskValue 의 **형태**(길이 4 또는 8)로 좁혔다 —
+    // 예전 값 "****masked"(길이 10)는 서버가 만들 수 없는 마스크였고, 이제는 센티널이 아니라
+    // 사용자가 새로 입력한 토큰으로 저장된다. 화면이 실제로 되돌려 보내는 형태
+    // (maskValue("real-cli-token-stored") == "****ored")로 바꾼다.
+    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "****ored"), null);
 
     Optional<String> afterMasked = settingsService.getValue("ai.cli_oauth_token");
     assertThat(afterMasked).isPresent().hasValue(encryptedValue);

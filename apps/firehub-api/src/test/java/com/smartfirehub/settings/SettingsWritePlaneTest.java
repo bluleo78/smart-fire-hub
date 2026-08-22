@@ -296,6 +296,36 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   }
 
   /**
+   * {@code ****} 로 <b>시작하지만 마스크 형태가 아닌</b> 비밀번호는 실제로 저장된다.
+   *
+   * <p>Task 5 이전 판정은 {@code value.startsWith("****")} 뿐이었다. 사용자가 비밀번호를
+   * {@code ****Str0ngPass} 로 <b>새로 입력</b>하면 센티널로 오인해 키를 통째로 드롭하고, 예외 없이
+   * 204 가 나가 화면이 "설정이 저장되었습니다" 토스트를 띄운다 — 저장된 것은 없고 메일은 옛
+   * 비밀번호로 계속 나간다. 전형적인 "성공처럼 보이는 무동작"이다.
+   *
+   * <p>판정을 {@code EncryptionService.maskValue} 가 만드는 <b>형태</b>(길이 4 또는 8)로 좁혀서
+   * 닫았다. 여기 평문은 길이 14 라 두 형태 어디에도 해당하지 않는다.
+   *
+   * <p>같은 요청에 <b>진짜 센티널</b>도 한 번 더 태우지 않는 이유: 그 계약은 바로 위
+   * {@link #테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다} 가 실제 마스크(길이 8)로 고정한다.
+   * 두 테스트가 각자 한 방향씩 맡아야 좁히기가 <b>너무 많이</b> 좁혔을 때도 걸린다.
+   */
+  @Test
+  void 마스크_형태가_아닌_별표_시작_비밀번호는_실제로_저장된다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-not-sentinel");
+    TenantContext.set(testTenant);
+    // 길이 14 — maskValue 가 만드는 4/8 어디에도 해당하지 않으므로 센티널이 아니다.
+    String plain = "****Str0ngPass";
+    assertThat(plain.length()).isNotIn(4, 8);
+
+    settingsService.updateSettings(Map.of("smtp.password", plain), null);
+
+    // 드롭되지 않고 실제로 행이 생겼고, 암호화된 원문을 복호화하면 사용자가 입력한 그 값이다.
+    String stored = tenantRawValue("smtp.password").orElseThrow();
+    assertThat(encryptionService.decrypt(stored)).isEqualTo(plain);
+  }
+
+  /**
    * {@code smtp.port} 범위 검증이 테넌트 평면에도 적용된다.
    *
    * <p>검증이 플랫폼 경로에만 있던 동안 테넌트는 {@code 99999} 를 저장할 수 있었다 — 저장은

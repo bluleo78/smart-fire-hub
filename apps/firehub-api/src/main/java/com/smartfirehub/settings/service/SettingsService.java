@@ -77,6 +77,25 @@ public class SettingsService {
   private static final Set<String> SECRET_KEYS =
       Set.of("ai.api_key", "ai.cli_oauth_token", "embedding.api_key", "smtp.password");
 
+  /**
+   * SMTP <b>연결 번들</b> 5키. {@link #ALLOWED_SMTP_KEYS} 6키에서 {@code smtp.from_address} 를 뺀
+   * 나머지다.
+   *
+   * <p><b>왜 원자적인가.</b> {@code {host, port, username, password, starttls}} 는 <b>한 서버에
+   * 대한 한 벌의 접속 정보</b>다. 이것을 키 단위로 상속하면 A 서버의 주소와 B 서버의 자격증명이
+   * 섞인다 — 테넌트 ADMIN 이 {@code smtp.host} 한 필드만 자기가 통제하는 서버로 바꿔 저장하면,
+   * {@code username}/{@code password} 는 여전히 플랫폼 값으로 해석되고 {@link #getSmtpConfig} 가
+   * 그것을 평문 복호화해 그 호스트로 SMTP AUTH 를 보낸다. <b>전 테넌트 공용 SMTP 계정의
+   * 자격증명이 테넌트가 지정한 서버로 전달된다.</b> {@code smtp.starttls=false} 만 재정의하는
+   * 약한 변종도 뿌리가 같다 — 공용 자격증명이 평문 채널로 나간다.
+   *
+   * <p><b>왜 {@code smtp.from_address} 는 예외인가.</b> 접속과 무관한 <b>표시 값</b>이라 자격증명
+   * 묶음에 속하지 않는다. 6키 전부를 묶으면 "발신자 주소만 바꾸고 싶다"는 정당한 사용이 5키
+   * 전체 재정의를 강요당한다.
+   */
+  private static final Set<String> SMTP_CONNECTION_KEYS =
+      Set.of("smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls");
+
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
@@ -234,12 +253,48 @@ public class SettingsService {
    * N+1 쿼리를 냈다.
    *
    * <p>컨텍스트가 없으면 즉시 빈 맵(쿼리 없음) — {@link #resolveOverrides} 와 같은 계약이다.
+   * 배경 경로(JobRunr·{@code @Scheduled})는 이 분기로 나가므로 아래 번들 규칙도 함께 건너뛴다 —
+   * 오버라이드가 없으면 애초에 섞일 자격증명이 없다.
+   *
+   * <p><b>SMTP 연결 번들 규칙이 여기 한 곳에 있는 이유.</b> 오버라이드 맵을 돌려주기 직전에
+   * 적용하면 {@link #getAsMap}(발송 경로)과 {@link #getResolvedByPrefix}(화면 경로)가 <b>같은
+   * 해석</b>을 자동으로 공유한다. 두 곳에 각각 넣으면 한쪽만 고쳐질 때 "화면은 상속이라는데
+   * 발송은 테넌트 값"(또는 그 반대)이 되고, 그것이 이 밴드가 반복해서 잡아 온 실패 유형이다.
    */
   private Map<String, String> resolveOverridesByPrefix(String prefix) {
     if (TenantContext.get() == null) return Map.of();
     Map<String, String> candidates = tenantSettingsRepository.findByPrefix(prefix);
     candidates.keySet().removeIf(key -> !SettingsOverridePolicy.isTenantOverridable(key));
+    applySmtpConnectionBundle(candidates);
     return candidates;
+  }
+
+  /**
+   * SMTP 연결 5키를 <b>원자적으로</b> 해석한다: {@link #SMTP_CONNECTION_KEYS} 중 <b>하나라도</b>
+   * 테넌트 행이 있으면 5키 <b>전부</b>를 테넌트 평면에서 해석한다. 행이 없는 키는 <b>빈 문자열</b>로
+   * 채운다. 하나도 없으면 아무것도 하지 않는다(5키 전부 플랫폼 상속).
+   *
+   * <p><b>왜 플랫폼 폴백이 아니라 빈 값인가.</b> 채우지 않고 두면 상위 {@code putAll} 이 플랫폼
+   * 값을 그대로 남기므로 <b>유출이 그대로 남는다</b> — 이 규칙이 막으려던 바로 그 상태다. 빈 값으로
+   * 채워야 "호스트만 바꾸고 자격증명은 안 넣음"의 결과가 플랫폼 비밀번호 유출이 아니라
+   * <b>인증 없는 릴레이 시도 → 눈에 보이는 발송 실패</b>가 된다. 기본값이 안전한 쪽으로 뒤집힌다.
+   * {@code null} 이 아니라 빈 문자열인 것도 필수다 — {@link #getSmtpConfig} 의
+   * {@code Collectors.toMap} 은 null 값에 NPE 를 내고, 그러면 유출 대신 발송 경로 전체가 500 이 된다.
+   *
+   * <p><b>부수 효과: {@link #getResolvedByPrefix} 의 {@code overridden} 플래그가 5키 모두 참이
+   * 된다. 그것이 의도다.</b> 이 플래그의 뜻은 "이 키는 테넌트 평면에서 해석된다"이고, 채워 넣지
+   * 않으면 화면이 행 없는 키에 {@code 기본값 사용 중} 배지를 다는데 그 플랫폼 값은 실제로 쓰이지
+   * 않는다 — 원 결함의 거짓말을 화면에 재생산하는 셈이다. 서버가 단일 권위여야 web 이 파생을
+   * 틀려도 거짓말이 나가지 않는다.
+   *
+   * <p>맵을 제자리에서 고친다. 호출부가 넘기는 것은 {@link TenantSettingsRepository#findByPrefix}
+   * 가 새로 만든 가변 {@code LinkedHashMap} 이고, {@code prefix} 판정이 이미 그 위에서 끝났다 —
+   * SMTP 아닌 프리픽스 조회에는 애초에 이 키들이 들어 있을 수 없다(패턴이 {@code prefix + ".%"}).
+   */
+  private static void applySmtpConnectionBundle(Map<String, String> overrides) {
+    boolean bundleOverridden = overrides.keySet().stream().anyMatch(SMTP_CONNECTION_KEYS::contains);
+    if (!bundleOverridden) return;
+    SMTP_CONNECTION_KEYS.forEach(key -> overrides.putIfAbsent(key, ""));
   }
 
   /**
@@ -414,8 +469,35 @@ public class SettingsService {
     }
   }
 
+  /**
+   * 값이 <b>우리가 만든 마스크 그 자체</b>인지 판정한다 — "화면이 받은 마스크를 그대로 돌려보냈다
+   * = 사용자가 안 고쳤다"의 근거이고, 참이면 그 키를 페이로드에서 통째로 드롭한다.
+   *
+   * <p><b>{@code startsWith("****")} 만으로는 안 된다.</b> 사용자가 비밀번호를
+   * {@code ****Str0ngPass} 로 <b>새로 입력</b>하면 센티널로 오인해 키를 드롭하고, 예외 없이 204 가
+   * 나가 화면이 "설정이 저장되었습니다" 토스트를 띄운다 — 저장된 것은 없고 메일은 옛 비밀번호로
+   * 계속 나간다. 전형적인 "성공처럼 보이는 무동작"이다.
+   *
+   * <p>그래서 판정을 <b>형태</b>로 좁힌다. {@link EncryptionService#maskValue} 가 만드는 마스크는
+   * 두 형태뿐이다: 원본이 4글자 미만이면 {@code ****}(길이 4), 아니면 {@code ****} + 마지막 4글자
+   * (길이 8). 그 밖의 길이는 우리 마스크일 수 없다.
+   *
+   * <p><b>저장소를 읽어 현재 값과 비교하지 않는 이유</b>: 그러려면 이 판정이 <b>어느 평면</b>
+   * (플랫폼 {@code system_settings} / 테넌트 {@code tenant_settings})을 읽어야 하는지 알아야 하고,
+   * Task 2 가 의도적으로 밀어낸 평면 지식이 읽기 쪽 문으로 다시 들어온다
+   * ({@link #normalizeSmtpPayload} javadoc 참고).
+   *
+   * <p><b>남는 잔여 위험</b>: 진짜 비밀번호가 우연히 길이 8 이고 {@code ****} 로 시작하면 여전히
+   * 조용히 드롭된다. 저장소를 읽지 않는 한 닫을 수 없는 구멍이고, 확률이 무시할 만하다.
+   *
+   * <p>{@code ai.api_key}/{@code ai.cli_oauth_token}/{@code embedding.api_key} 도 같은 판정을
+   * 공유하므로 플랫폼 평면 동작이 함께 좁아진다 — <b>의도된 개선이다</b>(같은 결함이 그 세 키에도
+   * 있었다).
+   */
   private static boolean isMaskedApiKey(String value) {
-    return value != null && value.startsWith("****");
+    return value != null
+        && value.startsWith("****")
+        && (value.length() == 4 || value.length() == 8);
   }
 
   /**
@@ -571,6 +653,11 @@ public class SettingsService {
    * <p>복호화가 오버라이드 값에도 걸려야 하는 이유: Task 2 가 테넌트 오버라이드
    * {@code smtp.password} 도 암호화해 저장하게 만들었다. 해석기만 태우고 복호화를 플랫폼 값에만
    * 남겨 두면 테넌트 SMTP 인증이 <b>암호문으로</b> 시도돼 발송이 조용히 실패한다.
+   *
+   * <p><b>연결 5키는 원자적으로 해석된다</b> — {@link #applySmtpConnectionBundle} 참고. 그 규칙이
+   * 없으면 이 메서드가 "테넌트가 지정한 호스트 + 플랫폼 공용 자격증명"을 조합해 내보내고, 그
+   * 조합이 곧 이 태스크가 닫은 보안 결함이다. 규칙은 여기가 아니라 {@link #resolveOverridesByPrefix}
+   * 한 곳에 있다 — 화면 경로와 해석이 갈라지지 않게 하기 위해서다.
    *
    * <p>{@code @Transactional} 을 떼지 말 것 — {@link #getAsMap} 을 자기 호출로 부르므로 프록시를
    * 지나지 않는다. {@code tenant_settings}(RLS) 조회에 GUC 를 주입하는 트랜잭션은 <b>이 애노테이션</b>이 연다.

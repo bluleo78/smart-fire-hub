@@ -307,7 +307,14 @@ class SettingsServiceTest extends IntegrationTestBase {
                 null));
   }
 
-  /** 마스킹 값(****)은 "기존 키 유지"이므로 OPENAI 저장이 통과해야 한다. */
+  /**
+   * 마스킹 값(****)은 "기존 키 유지"이므로 OPENAI 저장이 통과해야 한다.
+   *
+   * <p>Task 5 가 센티널 판정을 {@code EncryptionService.maskValue} 의 <b>형태</b>(길이 4 또는 8)로
+   * 좁혔다. 예전 값 {@code "****key"}(길이 7)는 서버가 만들 수 없는 마스크라, 그대로 두면 이제
+   * 진짜 키로 저장돼 이 테스트가 지키려던 "덮어쓰지 않는다"를 스스로 깬다. 실제 마스크
+   * ({@code maskValue("sk-stored-key") == "****-key"})로 바꾼다.
+   */
   @Test
   void embeddingOpenAiAcceptsMaskedApiKeyWhenStoredKeyExists() {
     settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-stored-key"), null);
@@ -318,7 +325,7 @@ class SettingsServiceTest extends IntegrationTestBase {
                 Map.of(
                     "embedding.provider", "OPENAI",
                     "embedding.base_url", "https://api.openai.com",
-                    "embedding.api_key", "****key"),
+                    "embedding.api_key", "****-key"),
                 null));
     // 마스킹 값이 실제 키를 덮어쓰지 않았는지 확인
     assertThat(settingsService.getDecryptedEmbeddingApiKey()).hasValue("sk-stored-key");

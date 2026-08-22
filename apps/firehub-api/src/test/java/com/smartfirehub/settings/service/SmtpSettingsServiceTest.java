@@ -131,8 +131,11 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
     // Password should be decrypted in getSmtpConfig
     assertThat(config1.get("smtp.password")).isEqualTo("real-smtp-password");
 
-    // Now send a masked password (frontend behavior when unchanged)
-    settingsService.updatePlatformSettings(Map.of("smtp.password", "****masked"), null);
+    // Now send a masked password (frontend behavior when unchanged).
+    // Task 5 가 센티널 판정을 maskValue 의 **형태**(길이 4 또는 8)로 좁혔다 — 예전 값
+    // "****masked"(길이 10)는 이제 센티널이 아니라 진짜 비밀번호로 저장되므로, 화면이 실제로
+    // 되돌려 보내는 형태(= maskValue("real-smtp-password") == "****word")로 바꾼다.
+    settingsService.updatePlatformSettings(Map.of("smtp.password", "****word"), null);
 
     // Password should remain unchanged
     Map<String, String> config2 = settingsService.getSmtpConfig();

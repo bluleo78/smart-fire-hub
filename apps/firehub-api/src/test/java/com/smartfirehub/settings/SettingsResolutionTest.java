@@ -287,12 +287,18 @@ class SettingsResolutionTest extends IntegrationTestBase {
    * 시도</b>해 조용히 실패한다. 그래서 픽스처를 {@code tenantSettingsRepository.upsert}(평문)가
    * 아니라 실제 쓰기 경로인 {@code updateSettings} 로 만들고, 저장된 원문이 정말 암호문인지를
    * 먼저 확인한다 — 그 전제 단언이 없으면 평문 저장으로 퇴행해도 이 테스트가 녹색으로 남는다.
+   *
+   * <p><b>마지막 단언은 Task 5 에서 뒤집혔다.</b> 예전에는 "오버라이드하지 않은 키는 플랫폼 값
+   * 그대로 — 부분 오버라이드가 나머지를 지우지 않는다"며 {@code smtp.port == platformPort} 를
+   * 단언했다. <b>그 문장이 곧 밴드 리뷰가 찾은 보안 결함이었다</b>: 테넌트가 지정한 호스트에
+   * 플랫폼 공용 자격증명이 붙는다. 이제 연결 5키는 원자적으로 해석되므로 행이 없는 키는 플랫폼
+   * 값이 아니라 빈 값이다. 단언을 지우지 않고 <b>반대로</b> 남긴다 — 규칙이 되돌아가면 여기서 걸린다.
    */
   @Test
   void 테넌트_SMTP_오버라이드가_발송_설정에_반영된다() {
     testTenant = createActiveTenant(dsl, "sr-smtp");
-    // 전제: 플랫폼 smtp.port 시드가 비어 있지 않아야 "부분 오버라이드가 나머지를 안 지운다"는
-    // 단언이 공허해지지 않는다(빈 문자열끼리 비교하면 무엇도 증명하지 못한다).
+    // 전제: 플랫폼 smtp.port 시드가 비어 있지 않아야 "번들이 플랫폼 값을 쓰지 않는다"는 단언이
+    // 공허해지지 않는다(빈 문자열끼리 비교하면 무엇도 증명하지 못한다).
     String platformPort = rawSystemSettingValue(dsl, "smtp.port");
     assertThat(platformPort).as("플랫폼 smtp.port 시드가 있어야 이 테스트가 의미를 갖는다").isNotBlank();
 
@@ -312,8 +318,179 @@ class SettingsResolutionTest extends IntegrationTestBase {
     assertThat(config).containsEntry("smtp.host", "tenant-smtp.example.com");
     // 발송용 읽기는 복호화된 평문이어야 한다(마스킹도 암호문도 아니다).
     assertThat(config).containsEntry("smtp.password", "tenant-pw");
-    // 오버라이드하지 않은 키는 플랫폼 값 그대로 — 부분 오버라이드가 나머지를 지우지 않는다.
-    assertThat(config).containsEntry("smtp.port", platformPort);
+    // 연결 번들: 행이 없는 연결 키는 플랫폼 값(587)이 아니라 빈 값이다.
+    assertThat(config)
+        .as("행 없는 연결 키가 플랫폼 값으로 채워지면 테넌트 호스트에 플랫폼 접속 정보가 붙는다")
+        .containsEntry("smtp.port", "");
+  }
+
+  /**
+   * <b>연결 번들 규칙의 핵심 보안 단언</b>: {@code smtp.host} 하나만 재정의해도 플랫폼
+   * {@code smtp.password} 가 발송 설정에 <b>실리지 않는다</b>.
+   *
+   * <p>이것이 밴드 리뷰가 찾은 MUST-FIX 다. 키 단위 상속에서는 테넌트 ADMIN 이 호스트 한 필드만
+   * 자기 서버로 바꿔 저장하면, {@code getSmtpConfig} 가 그 호스트 + <b>플랫폼 공용 계정의 평문
+   * 비밀번호</b>를 조합해 내보내고 발송(또는 연결 테스트 한 번)이 그 자격증명을 남의 서버로
+   * 넘겨준다. 성공/실패까지 응답으로 확인된다.
+   *
+   * <p><b>플랫폼 비밀번호를 먼저 진짜로 저장한다.</b> {@code system_settings} 의 SMTP 시드는 V42
+   * 기준 {@code ''} 라(port·starttls 만 예외), 그대로 두고 "빈 값이다"를 단언하면 <b>빈 문자열끼리
+   * 비교하는 공허한 테스트</b>가 된다 — 번들 규칙을 통째로 지워도 녹색으로 남는다. 공유 test DB
+   * 이므로 {@code finally} 에서 원본으로 되돌린다.
+   */
+  @Test
+  void 호스트만_재정의해도_플랫폼_SMTP_자격증명은_발송에_실리지_않는다() {
+    String originalPassword = rawSystemSettingValue(dsl, "smtp.password");
+    String originalUsername = rawSystemSettingValue(dsl, "smtp.username");
+    try {
+      // 플랫폼 평면에 진짜 자격증명을 심는다(updatePlatformSettings 가 비밀번호를 암호화 저장한다).
+      settingsService.updatePlatformSettings(
+          java.util.Map.of(
+              "smtp.password", "platform-shared-password",
+              "smtp.username", "platform-shared-user"),
+          null);
+      // 전제 확인: 플랫폼 값이 실제로 non-blank 여야 아래 "빈 값" 단언이 의미를 갖는다.
+      assertThat(rawSystemSettingValue(dsl, "smtp.password")).isNotBlank();
+      assertThat(rawSystemSettingValue(dsl, "smtp.username")).isEqualTo("platform-shared-user");
+
+      testTenant = createActiveTenant(dsl, "sr-smtp-bundle");
+      TenantContext.set(testTenant);
+      // 테넌트는 **호스트 한 필드만** 자기가 통제하는 서버로 바꾼다.
+      settingsService.updateSettings(
+          java.util.Map.of("smtp.host", "attacker-controlled.example.com"), null);
+
+      var config = settingsService.getSmtpConfig();
+      assertThat(config).containsEntry("smtp.host", "attacker-controlled.example.com");
+      // (1) 비밀번호: 플랫폼 공용 비밀번호가 아니라 빈 값이다.
+      assertThat(config)
+          .as("플랫폼 공용 SMTP 비밀번호가 테넌트가 지정한 호스트로 나간다")
+          .containsEntry("smtp.password", "");
+      // (2) 사용자 이름: 빈 값이어야 SMTP AUTH 자체가 시도되지 않는다
+      //     (SettingsController.testSmtpSettings 가 username 유무로 mail.smtp.auth 를 정한다).
+      assertThat(config)
+          .as("사용자 이름이 남아 있으면 mail.smtp.auth=true 로 인증이 시도된다")
+          .containsEntry("smtp.username", "");
+    } finally {
+      restoreSystemSettingValue(dsl, "smtp.password", originalPassword);
+      restoreSystemSettingValue(dsl, "smtp.username", originalUsername);
+    }
+  }
+
+  /**
+   * {@code smtp.from_address} 는 <b>번들이 아니다</b> — 연결 5키를 재정의해도 발신자 주소는 여전히
+   * 플랫폼 값으로 해석된다.
+   *
+   * <p>접속과 무관한 표시 값이라 자격증명 묶음에 속하지 않는다. 6키를 통째로 묶으면 "발신자 주소만
+   * 바꾸고 싶다"는 정당한 사용이 5키 전체 재정의를 강요당한다 — 밴드가 명시적으로 기각한 대안이다.
+   *
+   * <p>플랫폼 {@code smtp.from_address} 시드는 {@code ''} 라 먼저 진짜 값을 심는다. 안 그러면
+   * "빈 값 == 빈 값" 이 되어 번들이 과잉 발동해도 통과한다.
+   */
+  @Test
+  void 발신자_주소는_연결_번들에_휩쓸리지_않는다() {
+    String originalFrom = rawSystemSettingValue(dsl, "smtp.from_address");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of("smtp.from_address", "platform-noreply@example.com"), null);
+      assertThat(rawSystemSettingValue(dsl, "smtp.from_address")).isNotBlank();
+
+      testTenant = createActiveTenant(dsl, "sr-smtp-from");
+      TenantContext.set(testTenant);
+      settingsService.updateSettings(java.util.Map.of("smtp.host", "tenant-relay.example.com"), null);
+
+      assertThat(settingsService.getSmtpConfig())
+          .as("from_address 가 번들에 끌려 들어가면 발신자 주소만 바꾸는 정당한 사용이 깨진다")
+          .containsEntry("smtp.from_address", "platform-noreply@example.com");
+    } finally {
+      restoreSystemSettingValue(dsl, "smtp.from_address", originalFrom);
+    }
+  }
+
+  /**
+   * 번들 규칙이 <b>과잉 발동하지 않는다</b>: 연결 5키를 하나도 재정의하지 않고
+   * {@code smtp.from_address} 만 재정의하면 5키는 전부 플랫폼 값 그대로다.
+   *
+   * <p>이 단언이 없으면 "SMTP 프리픽스에 오버라이드 행이 하나라도 있으면 5키를 비운다"는 잘못된
+   * 구현도 위 두 테스트를 통과한다 — 그리고 그 구현은 발신자 주소만 바꾼 테넌트의 <b>메일 발송을
+   * 통째로 멈춘다</b>.
+   *
+   * <p>플랫폼 host/username 시드가 {@code ''} 라 여기서도 먼저 진짜 값을 심는다.
+   */
+  @Test
+  void 발신자_주소만_재정의하면_연결_5키는_플랫폼_값_그대로다() {
+    String originalHost = rawSystemSettingValue(dsl, "smtp.host");
+    String originalUsername = rawSystemSettingValue(dsl, "smtp.username");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of("smtp.host", "platform-smtp.example.com", "smtp.username", "platform-user"),
+          null);
+      String platformPort = rawSystemSettingValue(dsl, "smtp.port");
+      assertThat(platformPort).isNotBlank();
+
+      testTenant = createActiveTenant(dsl, "sr-smtp-from-only");
+      TenantContext.set(testTenant);
+      settingsService.updateSettings(
+          java.util.Map.of("smtp.from_address", "tenant-noreply@example.com"), null);
+
+      var config = settingsService.getSmtpConfig();
+      assertThat(config).containsEntry("smtp.from_address", "tenant-noreply@example.com");
+      assertThat(config).containsEntry("smtp.host", "platform-smtp.example.com");
+      assertThat(config).containsEntry("smtp.username", "platform-user");
+      assertThat(config).containsEntry("smtp.port", platformPort);
+    } finally {
+      restoreSystemSettingValue(dsl, "smtp.host", originalHost);
+      restoreSystemSettingValue(dsl, "smtp.username", originalUsername);
+    }
+  }
+
+  /**
+   * 화면 경로({@code getResolvedByPrefix})도 <b>같은 해석</b>을 본다: 번들 재정의 상태에서 연결
+   * 5키가 전부 {@code overridden=true} 로 내려가고, 행이 없는 키의 {@code value} 는 {@code ""} 다.
+   *
+   * <p><b>이것이 의도다.</b> 플래그의 뜻은 "이 키는 테넌트 평면에서 해석된다"이고, 채워 넣지 않으면
+   * 화면이 {@code 기본값 사용 중} 배지를 다는데 그 플랫폼 값은 실제로 쓰이지 않는다 — 원 결함의
+   * 거짓말을 화면에 재생산하는 셈이다. 서버가 단일 권위여야 web 이 파생을 틀려도 거짓말이 나가지
+   * 않는다.
+   *
+   * <p>{@code smtp.from_address} 는 같은 응답에서 {@code overridden=false} 로 남아야 한다 —
+   * 그 대비가 "규칙이 다르다"를 화면이 그릴 수 있는 유일한 근거다.
+   */
+  @Test
+  void getResolvedByPrefix_는_번들_재정의_시_연결_5키를_전부_overridden으로_내려준다() {
+    String originalPassword = rawSystemSettingValue(dsl, "smtp.password");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of("smtp.password", "platform-shared-password"), null);
+      assertThat(rawSystemSettingValue(dsl, "smtp.password")).isNotBlank();
+
+      testTenant = createActiveTenant(dsl, "sr-smtp-resolved");
+      TenantContext.set(testTenant);
+      settingsService.updateSettings(java.util.Map.of("smtp.host", "tenant-relay.example.com"), null);
+
+      var byKey =
+          settingsService.getResolvedByPrefix("smtp").stream()
+              .collect(
+                  java.util.stream.Collectors.toMap(
+                      com.smartfirehub.settings.dto.ResolvedSettingResponse::key, r -> r));
+
+      for (String key :
+          java.util.List.of(
+              "smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls")) {
+        assertThat(byKey.get(key).overridden())
+            .as("%s 가 overridden=false 면 화면이 쓰이지도 않는 플랫폼 값에 '기본값 사용 중'을 단다", key)
+            .isTrue();
+      }
+      assertThat(byKey.get("smtp.host").value()).isEqualTo("tenant-relay.example.com");
+      // 행이 없는 키는 빈 값이다 — 비밀번호는 빈 값이라 마스킹도 걸리지 않는다("****" 가 아니다).
+      assertThat(byKey.get("smtp.port").value()).isEmpty();
+      assertThat(byKey.get("smtp.username").value()).isEmpty();
+      assertThat(byKey.get("smtp.password").value()).isEmpty();
+      assertThat(byKey.get("smtp.starttls").value()).isEmpty();
+      // from_address 는 번들 밖이므로 상속 그대로다.
+      assertThat(byKey.get("smtp.from_address").overridden()).isFalse();
+    } finally {
+      restoreSystemSettingValue(dsl, "smtp.password", originalPassword);
+    }
   }
 
   /**
