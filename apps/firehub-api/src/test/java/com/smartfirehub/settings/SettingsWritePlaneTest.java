@@ -318,6 +318,37 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     assertThat(tenantRawValue("smtp.port")).isEmpty();
   }
 
+  /**
+   * 인증 없는 SMTP 릴레이를 위해 <b>빈 비밀번호는 합법이다</b> — 저장도 되고, 읽어도 터지지 않는다.
+   *
+   * <p>암호화·마스킹을 붙이면서 함께 깨지기 쉬운 지점이다. 빈 값을 암호화하면 나중에 빈
+   * ciphertext 를 복호화하려다 실패하고, 마스킹에서 {@code decrypt("")} 를 부르면 설정 화면 전체가
+   * 500 이 된다 — <b>진짜 값만 쓰는 테스트로는 둘 다 안 걸린다</b>. 그래서 쓰기와 읽기 양쪽을
+   * 빈 값으로 한 번 지나가게 한다.
+   *
+   * <p>{@code smtp.username} 은 {@code SECRET_KEYS} 가 아니라 암호화·마스킹이 아예 닿지 않는다.
+   * 여기서 단언하는 것은 "빈 값도 저장된다"가 아니라 <b>진짜 값이 평문 그대로 읽힌다</b>는 것이다 —
+   * 장래에 누가 마스킹 판정을 {@code smtp.} 프리픽스 전체로 넓히면 사용자명이 {@code ****} 로
+   * 보이고 복호화 실패까지 따라온다.
+   */
+  @Test
+  void 인증_없는_릴레이를_위해_빈_SMTP_비밀번호도_저장되고_읽힌다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-blank");
+    TenantContext.set(testTenant);
+
+    settingsService.updateSettings(
+        Map.of("smtp.host", "relay.internal", "smtp.username", "relay-user", "smtp.password", ""),
+        null);
+
+    // 빈 값은 암호화하지 않는다 — 빈 ciphertext 는 나중에 복호화할 수 없다.
+    assertThat(tenantRawValue("smtp.password")).contains("");
+    // 읽기 경로가 decrypt("") 로 터지지 않고 빈 값을 그대로 돌려준다.
+    assertThat(resolvedSmtpValue("smtp.password")).isEmpty();
+
+    // 비밀 키가 아닌 사용자명은 마스킹 없이 평문 그대로 읽힌다.
+    assertThat(resolvedSmtpValue("smtp.username")).isEqualTo("relay-user");
+  }
+
   /** 테넌트 오버라이드 행의 <b>저장된 그대로</b>의 값(암호화됐다면 암호문). */
   private java.util.Optional<String> tenantRawValue(String key) {
     return runInTenantTransaction(
