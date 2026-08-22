@@ -255,7 +255,7 @@ public class SettingsService {
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
    * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다.
    *
-   * <p><b>SMTP 키는 {@link #normalizeSmtpWrite} 를 추가로 지난다.</b> P7-c1 이전 이 자리에는
+   * <p><b>SMTP 키는 {@link #normalizeSmtpPayload} 를, 모든 키는 {@link #encryptSecrets} 를 지난다.</b> P7-c1 이전 이 자리에는
    * "마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 허용 키 중 {@link #SECRET_KEYS}
    * 에 속하는 키가 하나도 없다"고 적혀 있었고, Task 1 이 {@code smtp.*} 를 열면서 그 근거가
    * 죽었다({@code smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에
@@ -277,17 +277,23 @@ public class SettingsService {
 
     validateValues(settings);
 
-    // SMTP 키만 정규화(포트 검증·센티널 제거·암호화)를 지난다. 정규화 결과를 나머지 키와 합친 뒤
-    // **여기서만** 저장 대상을 정한다 — 쓰기까지 헬퍼에 넣으면 두 평면이 저장 대상에서 갈라질 때
-    // 조용히 어긋난다(플랫폼은 system_settings, 테넌트는 tenant_settings).
-    Map<String, String> toWrite = new HashMap<>(settings);
-    toWrite.keySet().removeAll(ALLOWED_SMTP_KEYS);
-    toWrite.putAll(
-        normalizeSmtpWrite(
+    // SMTP 키만 정규화(포트 검증·센티널 제거)를 지난다 — 그 두 규칙은 SMTP 고유다.
+    Map<String, String> merged = new HashMap<>(settings);
+    merged.keySet().removeAll(ALLOWED_SMTP_KEYS);
+    merged.putAll(
+        normalizeSmtpPayload(
             settings.entrySet().stream()
                 .filter(e -> ALLOWED_SMTP_KEYS.contains(e.getKey()))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))));
 
+    // 암호화는 **합친 맵 전체**가 지난다. SMTP 부분맵에만 걸면 "암호화 대상인가"의 답이
+    // SECRET_KEYS 가 아니라 프리픽스에서 나오고, SMTP 아닌 비밀 키가 테넌트에 열리는 순간
+    // 평문으로 저장된다(BYO 키 정책 → ai.api_key 화이트리스트 한 줄). 오늘 그 조합은 존재하지
+    // 않지만, "오늘은 그런 키가 없다"가 바로 이 밴드가 방금 죽인 문장이다.
+    Map<String, String> toWrite = encryptSecrets(merged);
+
+    // 저장 대상은 **여기서만** 정한다 — 쓰기까지 공유 헬퍼에 넣으면 두 평면이 저장 대상에서
+    // 갈라질 때 조용히 어긋난다(플랫폼은 system_settings, 테넌트는 tenant_settings).
     toWrite.forEach((key, value) -> tenantSettingsRepository.upsert(key, value, userId));
   }
 
@@ -348,10 +354,7 @@ public class SettingsService {
     validateValues(filtered);
     validateEmbeddingConsistency(filtered);
 
-    Map<String, String> toUpdate =
-        filtered.entrySet().stream()
-            .collect(
-                Collectors.toMap(Map.Entry::getKey, e -> encryptIfSecret(e.getKey(), e.getValue())));
+    Map<String, String> toUpdate = encryptSecrets(filtered);
 
     if (!toUpdate.isEmpty()) {
       settingsRepository.updateSettings(toUpdate, userId);
@@ -426,13 +429,26 @@ public class SettingsService {
    * 이 메서드 두 곳만 고친다.
    */
   private String encryptIfSecret(String key, String value) {
-    if ("ai.api_key".equals(key) || "ai.cli_oauth_token".equals(key)) {
-      return encryptionService.encrypt(value);
-    }
-    if ("embedding.api_key".equals(key) || "smtp.password".equals(key)) {
-      return value.isBlank() ? value : encryptionService.encrypt(value);
-    }
-    return value;
+    // 암호화 대상인지는 **오직 SECRET_KEYS 가** 정한다 — 키 이름을 하나씩 나열하면 새 비밀 키가
+    // 추가될 때 이 목록이 따라오지 않는다(이 밴드가 고친 결함이 정확히 그 형태였다).
+    if (!SECRET_KEYS.contains(key)) return value;
+
+    // 여기서 키를 다시 보는 것은 "암호화할까"가 아니라 "빈 값도 암호화할까"뿐이다.
+    // ai.api_key 는 빈 값을 validateValues 가 이미 거부하고, ai.cli_oauth_token 은 빈 값도
+    // 암호화하던 기존 동작을 유지한다(SettingsServiceCliTokenTest 가 그 왕복을 고정한다).
+    boolean encryptEvenIfBlank = "ai.api_key".equals(key) || "ai.cli_oauth_token".equals(key);
+    return !encryptEvenIfBlank && value.isBlank() ? value : encryptionService.encrypt(value);
+  }
+
+  /**
+   * 맵 전체를 {@link #encryptIfSecret} 에 통과시킨다. 비밀 키가 아니면 값이 그대로 나오므로
+   * <b>어떤 맵에 적용해도 무해</b>하고, 그래서 두 쓰기 경로가 "이 그룹은 비밀이 들어올 수 있는
+   * 그룹인가"를 프리픽스로 미리 판단할 필요가 없다 — 그 판단이 바로 이 밴드가 고친 결함의 모양이다.
+   */
+  private Map<String, String> encryptSecrets(Map<String, String> settings) {
+    return settings.entrySet().stream()
+        .collect(
+            Collectors.toMap(Map.Entry::getKey, e -> encryptIfSecret(e.getKey(), e.getValue())));
   }
 
   /**
@@ -482,8 +498,9 @@ public class SettingsService {
    * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 로직 그대로다. 이름만 "플랫폼 쓰기 본체"로 옮겼고,
    * {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이 바로 이 메서드를 부른다.
    *
-   * <p>검증·센티널·암호화는 {@link #normalizeSmtpWrite} 로 빠졌고 여기 남은 것은 <b>플랫폼 전용</b>
-   * 두 가지다: 플랫폼 화이트리스트 판정과 {@code system_settings} 쓰기.
+   * <p>검증·센티널은 {@link #normalizeSmtpPayload} 로, 암호화는 {@link #encryptSecrets} 로 빠졌고
+   * 여기 남은 것은 <b>플랫폼 전용</b> 두 가지다: 플랫폼 화이트리스트 판정과
+   * {@code system_settings} 쓰기.
    */
   private void applyPlatformSmtpSettings(Map<String, String> settings, Long userId) {
     for (String key : settings.keySet()) {
@@ -492,7 +509,7 @@ public class SettingsService {
       }
     }
 
-    Map<String, String> toUpdate = normalizeSmtpWrite(settings);
+    Map<String, String> toUpdate = encryptSecrets(normalizeSmtpPayload(settings));
 
     if (!toUpdate.isEmpty()) {
       settingsRepository.updateSettings(toUpdate, userId);
@@ -500,7 +517,7 @@ public class SettingsService {
   }
 
   /**
-   * SMTP 쓰기의 <b>평면 공통</b> 부분: 포트 범위 검증 · 마스크 센티널 제거 · 비밀번호 암호화.
+   * SMTP 쓰기의 <b>평면 공통</b> 부분: 포트 범위 검증 · 마스크 센티널 제거.
    * {@link #applyPlatformSmtpSettings}(→ {@code system_settings})와 {@link #updateSettings}
    * (→ {@code tenant_settings})가 함께 부른다.
    *
@@ -514,9 +531,15 @@ public class SettingsService {
    * 결론이 같다. 비교하려면 현재 값을 읽어야 하고, 그러려면 이 헬퍼가 <b>어느 저장소를 읽을지</b>
    * 알아야 한다 — 위에서 밀어낸 평면 지식이 읽기 쪽 문으로 다시 들어온다.
    *
+   * <p><b>암호화는 여기 없다.</b> 여기서 하면 "암호화 대상인가"의 답이 키의 비밀 여부가 아니라
+   * <b>SMTP 프리픽스에 속하는가</b>가 되어, SMTP 가 아닌 비밀 키가 테넌트에 열리는 순간 평문으로
+   * 저장된다 — {@link SettingsOverridePolicy} javadoc 이 적어 둔 BYO 키 정책이 그 트리거다
+   * ({@code ai.api_key} 가 화이트리스트 한 줄로 열린다). 암호화는 두 호출부가 저장 직전에
+   * {@link #encryptSecrets} 로 <b>맵 전체</b>에 적용한다.
+   *
    * <p>입력 맵은 건드리지 않고 새 맵을 만든다({@code Map.of} 로 온 불변 맵이 흔하다).
    */
-  private Map<String, String> normalizeSmtpWrite(Map<String, String> settings) {
+  private Map<String, String> normalizeSmtpPayload(Map<String, String> settings) {
     // smtp.port 범위 검증 — 1~65535 범위를 벗어나면 400 Bad Request
     if (settings.containsKey("smtp.port")) {
       String portStr = settings.get("smtp.port");
@@ -536,7 +559,7 @@ public class SettingsService {
           // 마스크 센티널이면 그 키만 통째로 버린다 — 저장하면 살아 있는 비밀번호가 문자열
           // "****abcd" 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
           if ("smtp.password".equals(key) && isMaskedApiKey(value)) return;
-          normalized.put(key, encryptIfSecret(key, value));
+          normalized.put(key, value);
         });
     return normalized;
   }

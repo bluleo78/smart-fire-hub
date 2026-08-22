@@ -349,6 +349,40 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     assertThat(resolvedSmtpValue("smtp.username")).isEqualTo("relay-user");
   }
 
+  /**
+   * 한 요청에 SMTP 키와 비 SMTP 키가 섞여 와도 <b>둘 다</b> 저장되고, 암호화는 키의 비밀 여부로만
+   * 갈린다.
+   *
+   * <p>테넌트 쓰기는 SMTP 부분맵만 떼어 정규화한 뒤 다시 합치므로, 합치는 단계가 어긋나면
+   * <b>비 SMTP 키가 조용히 사라진다</b>(예외 없이 204). 그 회귀를 여기서 잡는다.
+   *
+   * <p><b>이 테스트가 덮지 <i>못하는</i> 것</b>: "암호화 판정이 프리픽스가 아니라 {@code SECRET_KEYS}
+   * 에서 나온다"는 성질은 오늘 <b>도달 불가</b>다 — 테넌트 오버라이드 허용 12키 중 비밀 키는
+   * {@code smtp.password} 하나뿐이라, 프리픽스로 판정해도 결과가 같다. 그 성질을 증명하려면
+   * SMTP 가 아닌 비밀 키가 테넌트에 열려야 하고, 그 문은 {@code SettingsOverridePolicy} javadoc 이
+   * 예고한 BYO 키 정책({@code ai.api_key})이다. 억지 테스트 대신 판정의 근거를 코드에서 읽히게 뒀다
+   * ({@code encryptIfSecret} 의 첫 줄이 {@code SECRET_KEYS.contains(key)} 이고, 두 쓰기 경로가
+   * 부분맵이 아니라 <b>합친 맵 전체</b>에 {@code encryptSecrets} 를 적용한다).
+   */
+  @Test
+  void SMTP_와_비_SMTP_키가_섞인_저장은_둘_다_반영된다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-mixed");
+    TenantContext.set(testTenant);
+
+    settingsService.updateSettings(
+        Map.of("ai.model", "mixed-model", "smtp.port", "2525", "smtp.password", "mixed-secret"),
+        null);
+
+    // 비 SMTP 키는 평문 그대로 살아남는다(비밀 키가 아니므로 암호화 대상이 아니다).
+    assertThat(tenantRawValue("ai.model")).contains("mixed-model");
+    assertThat(tenantRawValue("smtp.port")).contains("2525");
+
+    // 비밀 키만 암호화된다.
+    String stored = tenantRawValue("smtp.password").orElseThrow();
+    assertThat(stored).isNotEqualTo("mixed-secret");
+    assertThat(encryptionService.decrypt(stored)).isEqualTo("mixed-secret");
+  }
+
   /** 테넌트 오버라이드 행의 <b>저장된 그대로</b>의 값(암호화됐다면 암호문). */
   private java.util.Optional<String> tenantRawValue(String key) {
     return runInTenantTransaction(
