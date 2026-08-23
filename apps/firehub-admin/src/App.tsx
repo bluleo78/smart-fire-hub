@@ -1,12 +1,62 @@
-/**
- * firehub-admin 루트. Task 1 단계에서는 "빌드·기동·테스트 배선이 살아 있다"만 증명한다.
- * 라우팅/인증/셸은 Task 3 에서 이 파일을 교체하며 들어온다.
- */
+import { ThemeProvider } from 'next-themes';
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+
+import { AdminShell } from './components/AdminShell';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { Skeleton } from './components/ui/skeleton';
+import { Toaster } from './components/ui/sonner';
+import { AuthProvider } from './hooks/AuthContext';
+
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+
+function PageSkeleton() {
+  return (
+    <div className="space-y-6">
+      <Skeleton className="h-9 w-64" />
+      <Skeleton className="h-96 w-full" />
+    </div>
+  );
+}
+
+/** Task 6 이 실 페이지로 교체한다. */
+function TenantListPlaceholder() {
+  return <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">테넌트</h1>;
+}
+
+/** Task 9 가 실 페이지로 교체한다. */
+function SettingsPlaceholder() {
+  return <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">플랫폼 설정</h1>;
+}
+
 function App() {
   return (
-    <main className="mx-auto max-w-5xl p-6 pt-10">
-      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">운영자 콘솔</h1>
-    </main>
+    // 운영자 콘솔은 데스크톱 전용이고 테마 토글 UI 를 두지 않는다. 그래도 OS 다크 모드를
+    // 따라가야 index.css 의 .dark 토큰이 살아난다.
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                <Suspense fallback={<PageSkeleton />}>
+                  <LoginPage />
+                </Suspense>
+              }
+            />
+            <Route element={<ProtectedRoute />}>
+              <Route element={<AdminShell />}>
+                <Route path="/" element={<Navigate to="/tenants" replace />} />
+                <Route path="/tenants" element={<TenantListPlaceholder />} />
+                <Route path="/settings" element={<SettingsPlaceholder />} />
+              </Route>
+            </Route>
+          </Routes>
+          <Toaster />
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
 
