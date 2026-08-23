@@ -93,7 +93,9 @@ public class SettingsService {
    * 묶음에 속하지 않는다. 6키 전부를 묶으면 "발신자 주소만 바꾸고 싶다"는 정당한 사용이 5키
    * 전체 재정의를 강요당한다.
    */
-  private static final Set<String> SMTP_CONNECTION_KEYS =
+  // 패키지 가시성: SettingsKeyWhitelistInvariantTest 가 "연결 5키 ⊆ 테넌트 허용 키" 불변식을
+  // 실행 가능한 단언으로 고정한다(ALLOWED_AI_KEYS 등과 같은 이유).
+  static final Set<String> SMTP_CONNECTION_KEYS =
       Set.of("smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls");
 
   /**
@@ -356,6 +358,15 @@ public class SettingsService {
    * <p>맵을 제자리에서 고친다. 호출부가 넘기는 것은 {@link TenantSettingsRepository#findByPrefix}
    * 가 새로 만든 가변 {@code LinkedHashMap} 이고, {@code prefix} 판정이 이미 그 위에서 끝났다 —
    * SMTP 아닌 프리픽스 조회에는 애초에 이 키들이 들어 있을 수 없다(패턴이 {@code prefix + ".%"}).
+   *
+   * <p><b>채움은 화이트리스트를 다시 보지 않는다 — 의도적이고, 그 대가는 테스트가 진다.</b>
+   * 이 메서드는 호출부가 {@code isTenantOverridable} 로 거른 <b>뒤에</b> 돌면서 5키를 무조건
+   * 채우므로, 연결 키 하나가 플랫폼으로 <b>회수</b>되면 방금 걸러낸 키가 되살아난다. 여기서
+   * 거르는 쪽이 자연스러워 보이지만 <b>더 위험하다</b>: 회수된 키를 빼면 그 키가 상속 폴백으로
+   * 플랫폼 값이 되어 "테넌트 호스트 + 플랫폼 자격증명"이라는 이 태스크가 닫은 유출이 되살아난다.
+   * 지금 동작(빈 값 + web 의 그룹 fail-closed 잠금)은 안전한 쪽 실패이고, 진짜 문제는 그 상태가
+   * <b>조용히</b> 배포될 수 있다는 것뿐이라 <b>빌드를 깨뜨리는 쪽</b>으로 막는다 —
+   * {@code SettingsKeyWhitelistInvariantTest.연결_번들_5키는_전부_테넌트_오버라이드_허용키다}.
    */
   private static void applySmtpConnectionBundle(Map<String, String> overrides) {
     boolean bundleOverridden = overrides.keySet().stream().anyMatch(SMTP_CONNECTION_KEYS::contains);

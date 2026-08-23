@@ -172,6 +172,33 @@ class SettingsControllerTest {
   }
 
   /**
+   * 연결 테스트는 <b>저장과 같은 권한</b>({@code ai:settings})을 요구한다.
+   *
+   * <p>P7-c1 이전 이 라우트만 {@code settings:write} 를 요구했다. SMTP 쓰기가
+   * {@code PUT /settings}({@code ai:settings})로 옮겨간 뒤 <b>같은 탭의 저장과 테스트가 서로 다른
+   * 권한</b>을 요구하게 됐고, 그러면 {@code ai:settings} 만 가진 롤이 SMTP 자격증명을 저장해 놓고
+   * 바로 옆 버튼에서 403 을 받는다. 두 권한 다 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은
+   * <b>런타임에 편집 가능</b>하므로 "그런 롤은 존재할 수 없다"에 기댈 수 없다.
+   *
+   * <p>거부 쪽도 함께 단언한다 — 허용만 보면 애너테이션을 통째로 지워도 통과한다.
+   */
+  @Test
+  void testSmtpSettings_usesSamePermissionAsSave() throws Exception {
+    // 저장 권한만 있어도 테스트가 된다(같은 탭의 두 버튼이 갈라지지 않는다).
+    mockAuth("ai:settings");
+    when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", ""));
+    mockMvc
+        .perform(post("/api/v1/settings/smtp/test").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk());
+
+    // 옛 권한만 가진 롤은 이제 거부된다 — 그 롤은 GET 조차 못 해 이 탭을 열 수 없다.
+    mockAuth("settings:write");
+    mockMvc
+        .perform(post("/api/v1/settings/smtp/test").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden());
+  }
+
+  /**
    * {@code /settings/smtp} 에는 <b>어떤 메서드의 라우트도 없다</b> — 404 다.
    *
    * <p>이 테스트는 네 번 바뀌었고 그 궤적이 곧 교훈이다. 처음에는 {@code doNothing()} 스텁 + 204
@@ -188,7 +215,7 @@ class SettingsControllerTest {
    */
   @Test
   void smtpRoutes_removed_returnNotFound() throws Exception {
-    mockAuth("settings:write");
+    mockAuth("ai:settings");
 
     mockMvc
         .perform(
@@ -206,7 +233,7 @@ class SettingsControllerTest {
 
   @Test
   void testSmtpSettings_whenHostBlank_returnsFailureMessage() throws Exception {
-    mockAuth("settings:write");
+    mockAuth("ai:settings");
     // 호스트가 비어 있으면 컨트롤러가 success=false 응답을 즉시 반환 — JavaMailSender 생성 로직을 타지 않음
     when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", ""));
 
@@ -218,7 +245,7 @@ class SettingsControllerTest {
 
   @Test
   void testSmtpSettings_invalidHost_returnsCaughtError() throws Exception {
-    mockAuth("settings:write");
+    mockAuth("ai:settings");
     // 실제 연결이 실패하도록 존재하지 않는 호스트를 넣어 JavaMailSenderImpl 경로 전체를 타게 한다
     when(settingsService.getSmtpConfig())
         .thenReturn(

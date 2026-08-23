@@ -89,8 +89,23 @@ public class SettingsController {
   //
   // POST /smtp/test 는 남는다 — 값을 노출하지 않는 진단 액션이고 저장된 설정으로 접속한다.
 
+  /**
+   * SMTP 연결 테스트. <b>권한은 이 컨트롤러의 나머지 세 라우트와 같은 {@code ai:settings} 다.</b>
+   *
+   * <p>P7-c1 이전에는 이 라우트만 {@code settings:write} 를 요구했다. 당시에는 SMTP 쓰기가
+   * {@code PUT /settings/smtp}(같은 권한)였으므로 짝이 맞았는데, Task 4 가 SMTP 쓰기를
+   * {@code PUT /settings}({@code ai:settings})로 옮기면서 <b>같은 탭의 저장과 테스트가 서로 다른
+   * 권한을 요구하게</b> 됐다. 두 권한 모두 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은
+   * 런타임에 편집 가능하므로, {@code ai:settings} 만 가진 롤은 SMTP 자격증명을 저장해 놓고
+   * 바로 옆 "연결 테스트" 버튼에서 403 을 받는다.
+   *
+   * <p>테스트 쪽을 저장 쪽에 맞춘다(그 반대가 아니다). 이 라우트가 하는 일은 <b>방금 저장한 값으로
+   * 접속해 보는 것</b>이고, 저장할 수 있는 사람은 이미 그 접속을 발송으로 일으킬 수 있다 — 즉
+   * {@code ai:settings} 보유자에게 새로 생기는 능력이 없다. 반대로 {@code settings:write} 만 가진
+   * 롤은 이 탭을 <b>열지도</b> 못한다({@code GET} 이 {@code ai:settings} 를 요구한다).
+   */
   @PostMapping("/smtp/test")
-  @RequirePermission("settings:write")
+  @RequirePermission("ai:settings")
   public ResponseEntity<Map<String, Object>> testSmtpSettings(Authentication authentication) {
     // SMTP 연결 테스트 — 현재 설정으로 실제 연결 확인
     try {

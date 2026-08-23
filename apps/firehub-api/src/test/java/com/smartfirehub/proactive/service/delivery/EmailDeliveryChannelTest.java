@@ -90,8 +90,10 @@ class EmailDeliveryChannelTest {
    * 한 통도 안 나갔는데. 같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure} 를
    * 돌려주므로 두 소비자의 가시성이 어긋나 있었다.
    *
-   * <p>P7-c1 의 원자 해석이 이 상태를 도달 가능하게 만들었다(포트만·비밀번호만 재정의하면 번들이
-   * {@code smtp.host} 를 빈 값으로 채운다). 그 전에는 플랫폼 host 가 항상 해석돼 불가능했다.
+   * <p><b>흔한 상태다.</b> {@code V42:108} 이 {@code smtp.host} 를 빈 문자열로 시드하므로 운영자가
+   * SMTP 를 설정하지 않은 <b>모든 배포</b>가 이미 여기를 지난다. P7-c1 의 원자 해석은 도달 경로를
+   * 하나 더 얹었을 뿐이다(포트만·비밀번호만 재정의하면 번들이 호스트를 빈 값으로 채운다).
+   * 그래서 이 계약 변경의 영향은 새 번들 상태가 아니라 <b>기존 미설정 배포 전체</b>에 미친다.
    */
   @Test
   void deliver_smtpNotConfigured_throwsSoRunnerDoesNotRecordDelivery() {
