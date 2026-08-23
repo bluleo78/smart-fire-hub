@@ -29,7 +29,10 @@ export default defineConfig({
   webServer: {
     command: `pnpm exec vite --port ${PW_PORT} --strictPort`,
     url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
+    // 항상 새 서버를 띄운다. 이 리포지토리는 남아 있던 dev 서버가 **다른 워크트리의 코드**를
+    // 서빙해 테스트가 엉뚱한 빌드를 검증한 전례가 반복됐다(stale 서버 함정). 재사용을 끄면
+    // 그 부류가 통째로 사라지고, 냉시동 비용은 실측 2.3초라 값이 싸다.
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });
