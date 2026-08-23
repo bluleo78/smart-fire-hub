@@ -155,9 +155,23 @@ export default function SmtpSettingsTab({
   // 서버 응답을 키로 인덱싱해 보관한다 — 배지 상태(overridden/tenantEditable)의 근거.
   const [settings, setSettings] = useState<Record<string, ResolvedSettingResponse>>({});
   const [errors, setErrors] = useState<Partial<Record<keyof SmtpForm, string>>>({});
-  // 번들 해제의 **부분 실패**만 담는다. 토스트로 끝내지 않는 이유: 이 중간 상태는 사용자가 다시
-  // 조작해야 하는 상태인데 토스트는 사라지고 스크린리더 사용자가 놓칠 수 있다(§6).
-  const [bundleClearError, setBundleClearError] = useState<string | null>(null);
+  /**
+   * <b>"지금 화면이 서버 상태와 다를 수 있다"</b>를 알리는 지속 안내. 토스트로 끝내지 않는 이유:
+   * 둘 다 사용자가 다시 조작해야 하는 상태인데 토스트는 사라지고 스크린리더 사용자가 놓칠 수
+   * 있다(§6). 두 흐름이 한 슬롯을 공유한다 — 번들 해제 **부분 실패**와 저장 후 **재조회 실패**.
+   */
+  const [staleNotice, setStaleNotice] = useState<string | null>(null);
+
+  /**
+   * 최초 조회 실패. <b>폼을 그리지 않기 위해</b> 별도 상태로 둔다(#code-review Major 2).
+   *
+   * 실패를 토스트로만 알리면 `settings={}` · `form=EMPTY` 인 채로 화면이 그려지는데, 그러면 모든
+   * 키가 `no-default` 로 판정돼 연결 그룹이 `inherited` 가 되고 5필드가 <b>편집 가능한 빈 칸</b>으로
+   * 보인다 — "아직 아무것도 설정되지 않았다"와 시각적으로 구별되지 않는다. 거기서 호스트를 입력해
+   * 저장하면 호스트만 든 번들 오버라이드가 만들어지고, 서버는 그 테넌트의 사용자 이름·비밀번호·
+   * 포트를 <b>전부 빈 값으로</b> 해석하게 된다. 조회 실패가 파괴적 저장을 부르는 경로다.
+   */
+  const [loadError, setLoadError] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -171,7 +185,10 @@ export default function SmtpSettingsTab({
       setSettings(byKey);
       setForm(values);
       setOriginal(values);
+      setLoadError(false);
     } catch {
+      // 폼을 그리지 않는다 — 이유는 loadError 선언부 참고(빈 편집 가능 폼이 파괴적 저장을 부른다).
+      setLoadError(true);
       toast.error('설정을 불러오는데 실패했습니다.');
     } finally {
       setIsLoading(false);
@@ -325,8 +342,16 @@ export default function SmtpSettingsTab({
     });
     if (droppedChangedKeys.length > 0) {
       const names = droppedChangedKeys.map((key) => FIELD_LABELS[key]).join(', ');
+      // 탈출구 안내는 **지금 화면에 실제로 있는 것**을 가리켜야 한다. "재정의 해제"는 그 필드가
+      // 재정의 상태일 때만 존재한다 — 연결 키는 그룹이 `overridden` 일 때만 그룹 머리에 버튼이
+      // 뜨고, 상속 중이면 지울 오버라이드도 버튼도 없다(상속된 포트 587 이나 호스트를 비운 경우가
+      // 그렇다). 그 상태에서 "재정의 해제를 쓰세요"는 없는 컨트롤을 가리키는 셈이고, 실제 탈출구는
+      // dirty 인 동안 항상 있는 "되돌리기"다.
+      const anyInherited = droppedChangedKeys.some((key) => effectiveState(key) !== 'overridden');
       toast.error(
-        `${names}을(를) 비워 둔 채로는 저장할 수 없습니다. 플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요.`,
+        anyInherited
+          ? `${names}을(를) 비워 둔 채로는 저장할 수 없습니다. 입력을 취소하려면 "되돌리기"를 사용하세요.`
+          : `${names}을(를) 비워 둔 채로는 저장할 수 없습니다. 플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요.`,
       );
       return;
     }
@@ -338,6 +363,7 @@ export default function SmtpSettingsTab({
     try {
       await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
+      setStaleNotice(null);
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
       refreshMeta()
@@ -357,7 +383,19 @@ export default function SmtpSettingsTab({
           setForm(seed);
           setOriginal(seed);
         })
-        .catch(() => undefined);
+        .catch(() => {
+          // **저장은 성공했고 다시 그리기가 실패했다.** 이 둘을 뭉뚱그리면 안 된다:
+          // 바깥 catch 로 넘겨 "저장 실패" 토스트를 띄우면 실제로 저장된 값을 사용자가 되돌리려
+          // 들고, 그냥 삼키면 화면이 조용히 거짓말을 한다 — 배지는 `기본값 사용 중`, 그룹 문구는
+          // "플랫폼 기본값을 쓰고 있습니다", 폼은 플랫폼 사용자 이름·마스크를 계속 보여주는데
+          // 서버는 이미 그 테넌트를 **빈 자격증명 번들**로 옮긴 상태다. 경고 배너도 함께 사라진다
+          // (setOriginal 이 이미 돌아 dirty 가 풀렸다). 그래서 저장 성공은 성공대로 두고,
+          // 무엇이 실패했고 무엇을 해야 하는지를 따로 말한다.
+          const message =
+            '저장은 완료됐지만 화면을 다시 읽지 못했습니다. 지금 보이는 값은 서버 상태와 다를 수 있습니다 — 새로고침하세요.';
+          setStaleNotice(message);
+          toast.error(message);
+        });
     } catch {
       toast.error('설정 저장에 실패했습니다.');
     } finally {
@@ -405,7 +443,7 @@ export default function SmtpSettingsTab({
    */
   const handleClearConnectionBundle = async () => {
     setIsClearing(true);
-    setBundleClearError(null);
+    setStaleNotice(null);
     const failedLabels: string[] = [];
     for (const key of SMTP_CONNECTION_KEYS) {
       try {
@@ -431,7 +469,7 @@ export default function SmtpSettingsTab({
       if (failedLabels.length > 0) {
         const message =
           '일부 항목만 해제되었습니다. 남은 항목은 아직 우리 조직 값으로 적용됩니다 — 다시 시도하세요.';
-        setBundleClearError(message);
+        setStaleNotice(message);
         toast.error(message);
       } else {
         toast.success('플랫폼 기본값으로 되돌렸습니다.');
@@ -439,7 +477,7 @@ export default function SmtpSettingsTab({
     } catch {
       // 재조회가 실패하면 화면이 지금 어느 상태인지 알 수 없다 — 성공이라고 말하지 않는다.
       const message = '재정의 해제 결과를 확인하지 못했습니다. 새로고침 후 다시 확인하세요.';
-      setBundleClearError(message);
+      setStaleNotice(message);
       toast.error(message);
     } finally {
       setIsClearing(false);
@@ -518,6 +556,21 @@ export default function SmtpSettingsTab({
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;
   }
 
+  // 조회 실패는 **종단 상태**다. 편집 가능한 빈 폼 대신 원인과 재시도만 보여준다.
+  if (loadError) {
+    return (
+      <div className="space-y-4 py-8 text-center">
+        <p className="text-sm text-muted-foreground">
+          SMTP 설정을 불러오지 못했습니다. 지금 적용 중인 값을 확인할 수 없어 편집을 열지 않습니다.
+        </p>
+        <Button variant="outline" onClick={fetchSettings}>
+          <RotateCcw className="h-4 w-4" />
+          다시 시도
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Card className="card-hover">
@@ -576,9 +629,7 @@ export default function SmtpSettingsTab({
                   : '호스트·포트·사용자 이름·비밀번호·STARTTLS 는 한 서버에 대한 한 벌의 접속 정보이므로 항상 함께 적용됩니다. 지금은 플랫폼 기본값을 그대로 쓰고 있습니다.'}
               </p>
               {/* 부분 실패는 토스트 한 번으로 끝내지 않는다 — 사용자가 다시 조작해야 하는 상태다(§6). */}
-              {bundleClearError && (
-                <p className="text-sm text-destructive">{bundleClearError}</p>
-              )}
+              {staleNotice && <p className="text-sm text-destructive">{staleNotice}</p>}
             </div>
 
             {/* 저장 예고(§2). 상태 전환은 저장 후에 그리고, 지금은 무슨 일이 일어날지만 말한다. */}

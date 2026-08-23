@@ -811,8 +811,10 @@ test.describe('설정 페이지', () => {
       await page.getByRole('button', { name: '저장' }).click();
 
       // 그냥 빼고 저장하면 "저장했다"면서 아무것도 안 쓰고 dirty 까지 지운다 — 그래서 거부다.
+      // 안내가 가리키는 탈출구는 **상속 중**이라 "되돌리기"다(코드리뷰 Minor 4). 예전에는 이
+      // 자리에서도 "재정의 해제"를 안내했는데, 상속 중에는 지울 오버라이드도 그 버튼도 없다.
       await expect(
-        page.getByText('플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요', { exact: false }),
+        page.getByText('입력을 취소하려면 "되돌리기"를 사용하세요', { exact: false }),
       ).toBeVisible({ timeout: 5000 });
       expect(putCount).toBe(0);
       await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
@@ -1053,6 +1055,116 @@ test.describe('설정 페이지', () => {
       await page.locator('#smtp-port').fill('587');
       await expect(hostNotice).toBeVisible();
       await expect(page.getByText('저장 전 값이 아니라 마지막 저장값으로 테스트합니다')).toHaveCount(0);
+    });
+
+    test('설정 조회가 실패하면 편집 가능한 빈 폼 대신 재시도 화면이 뜬다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 코드리뷰 Major 2. 토스트만 띄우고 폼을 그리면 5필드가 **편집 가능한 빈 칸**이 되어
+      // "아직 아무것도 설정되지 않았다"와 구별되지 않는다. 거기서 호스트만 입력해 저장하면
+      // 그 테넌트의 사용자 이름·비밀번호·포트가 전부 빈 값으로 해석된다 — 조회 실패가 파괴적
+      // 저장을 부르는 경로다.
+      // **등록 순서가 중요하다**: Playwright 는 나중에 등록된 라우트가 먼저 매칭되므로,
+      // 이 오버라이드가 setupSettingsMocks 보다 **뒤**에 와야 smtp GET 을 가로챈다.
+      await setupSettingsMocks(page);
+      // **호출 횟수가 아니라 플래그로 분기한다.** React StrictMode 가 dev 에서 effect 를 두 번
+      // 실행하므로 최초 마운트만으로 GET 이 2회 나간다 — "첫 번째만 실패" 로 짜면 두 번째가
+      // 성공해 화면이 정상 폼으로 복구되고, 검증하려던 상태에 도달하지 못한다(실제로 겪었다).
+      let failing = true;
+      await page.route(
+        (url) => url.pathname === '/api/v1/settings',
+        (route) => {
+          if (route.request().method() !== 'GET') return route.fallback();
+          const prefix = new URL(route.request().url()).searchParams.get('prefix') ?? '';
+          if (prefix !== 'smtp') return route.fallback();
+          if (failing) return route.fulfill({ status: 500, body: '{}' });
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createSmtpSettings()),
+          });
+        },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+
+      // 폼이 아예 없다 — 입력창도 저장 버튼도 그리지 않는다.
+      await expect(page.getByText('SMTP 설정을 불러오지 못했습니다', { exact: false })).toBeVisible();
+      await expect(page.locator('#smtp-host')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '저장' })).toHaveCount(0);
+
+      // 재시도가 있고, 성공하면 정상 폼으로 돌아온다.
+      failing = false;
+      await page.getByRole('button', { name: '다시 시도' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await expect(page.getByRole('button', { name: '저장' })).toBeVisible();
+    });
+
+    test('저장 후 재조회가 실패하면 저장 성공과 별개로 화면이 낡았다고 알린다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 코드리뷰 Major 1. 저장은 성공했고 **다시 그리기**가 실패했다. 삼키면 배지는
+      // `기본값 사용 중`, 그룹 문구는 "플랫폼 기본값을 쓰고 있습니다", 폼은 플랫폼 사용자 이름을
+      // 계속 보여주는데 서버는 이미 그 테넌트를 빈 자격증명 번들로 옮긴 상태다.
+      // 등록 순서: setupSettingsMocks 를 먼저 깔고 그 위에 이 오버라이드를 얹는다(나중이 이긴다).
+      await setupSettingsMocks(page);
+      // 호출 횟수가 아니라 플래그로 분기한다 — StrictMode 가 최초 마운트에서 GET 을 두 번 내므로
+      // "두 번째부터 실패" 로 짜면 저장 전에 이미 실패해 다른 상태를 시험하게 된다.
+      let refetchFails = false;
+      await page.route(
+        (url) => url.pathname === '/api/v1/settings',
+        (route) => {
+          const method = route.request().method();
+          if (method === 'PUT') {
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+          }
+          if (method !== 'GET') return route.fallback();
+          const prefix = new URL(route.request().url()).searchParams.get('prefix') ?? '';
+          if (prefix !== 'smtp') return route.fallback();
+          if (refetchFails) return route.fulfill({ status: 500, body: '{}' });
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createSmtpSettings()),
+          });
+        },
+      );
+      await openEmailTab(page);
+      // 최초 조회가 끝난 뒤에만 재조회를 실패시킨다.
+      refetchFails = true;
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 저장 성공은 성공대로 말한다 — "저장 실패"로 뭉뚱그리면 사용자가 저장된 값을 되돌리려 든다.
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+      // 그리고 화면이 낡았다는 사실을 **지속 안내**로 남긴다(토스트만으로는 사라진다).
+      await expect(
+        connectionGroup(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+      ).toBeVisible({ timeout: 8000 });
+      await expect(
+        connectionGroup(page).getByText('새로고침하세요', { exact: false }),
+      ).toBeVisible();
+    });
+
+    test('상속 중인 필드를 비우면 없는 "재정의 해제" 대신 "되돌리기"를 안내한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 코드리뷰 Minor 4. 상속 중에는 지울 오버라이드도, 그룹 해제 버튼도 화면에 없다.
+      await setupSettingsMocks(page);
+      await openEmailTab(page);
+
+      // 전제: 지금 화면에 "재정의 해제" 류 버튼이 하나도 없다 — 안내가 가리킬 대상이 없다.
+      await expect(page.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
+
+      await page.locator('#smtp-port').fill('');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.getByText('"되돌리기"를 사용하세요', { exact: false })).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(page.getByText('"재정의 해제"를 사용하세요', { exact: false })).toHaveCount(0);
     });
 
     test('연결 테스트는 계속 동작한다 (POST /settings/smtp/test)', async ({
