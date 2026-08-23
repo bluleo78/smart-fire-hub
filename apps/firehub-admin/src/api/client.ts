@@ -42,6 +42,15 @@ function processQueue(error: unknown, token: string | null = null) {
   failedQueue = [];
 }
 
+/**
+ * 명시적 로그아웃 시 401 재시도 대기 큐를 비운다(L3). 큐 경로는 `originalRequest.headers`
+ * 에 토큰을 직접 박아 두므로, 로그아웃이 `accessToken` 을 null 로 만든 뒤에도 이미 대기 중인
+ * 재시도는 그 헤더를 그대로 들고 나갈 수 있다 — 큐를 비워 그 재시도들을 취소한다.
+ */
+export function cancelQueuedRequests() {
+  processQueue(new Error('Logged out — cancelling queued retries'), null);
+}
+
 client.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -58,6 +67,10 @@ client.interceptors.response.use(
         if (failedQueue.length >= MAX_QUEUE_SIZE) {
           return Promise.reject(new Error('Too many queued requests'));
         }
+        // 큐에서 풀려 재시도한 요청은 `_retry` 를 세우지 않는다(L4, 결정 완료·수정 안 함).
+        // 그 재시도가 다시 401 이면 refresh 를 한 번 더 몰고 갈 수 있지만 유계다 — 동시 요청
+        // N 건이면 최대 N 회 순차 refresh 로 끝나고(무한 루프 아님), firehub-web `client.ts` 와
+        // 동일한 성질이라 이 밴드에서 갈라놓지 않는다.
         return new Promise<string>((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         }).then((token) => {

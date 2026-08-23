@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { AUTH_FLAG_KEY, setAccessToken } from '../api/client';
+import { AUTH_FLAG_KEY, cancelQueuedRequests, setAccessToken } from '../api/client';
 import { platformAuthApi } from '../api/platform-auth';
 import type { PlatformMeResponse, PlatformTokenResponse } from '../types/platform';
 import { AuthContext } from './auth-context-value';
@@ -34,11 +34,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let ignore = false;
 
     const initAuth = async () => {
-      if (!localStorage.getItem(AUTH_FLAG_KEY)) {
-        setIsLoading(false);
-        return;
-      }
       try {
+        // localStorage 접근 자체가 던질 수 있다(시크릿 모드 저장소 차단 등) — try 밖에 두면
+        // setIsLoading(false) 가 영영 안 돌아 화면이 스켈레톤에 영구 고착된다(L1).
+        if (!localStorage.getItem(AUTH_FLAG_KEY)) {
+          setIsLoading(false);
+          return;
+        }
         const { data: tokens } = await deduplicatedRefresh();
         if (ignore) return;
         setAccessToken(tokens.accessToken);
@@ -63,8 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     const { data: tokens } = await platformAuthApi.login({ username, password });
     setAccessToken(tokens.accessToken);
-    localStorage.setItem(AUTH_FLAG_KEY, 'true');
     const { data: identity } = await platformAuthApi.me();
+    // 플래그는 me() 성공 뒤에 세운다(L2) — 먼저 세우면 me() 실패 시 `hasAdminSession=true`
+    // 인데 `me===null` 인 어긋난 상태가 남는다.
+    localStorage.setItem(AUTH_FLAG_KEY, 'true');
     setMe(identity);
   }, []);
 
@@ -73,6 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await platformAuthApi.logout();
     } finally {
       setAccessToken(null);
+      // 대기 중인 401 재시도 큐를 비운다(L3) — 안 그러면 로그아웃 이후에도 이미 베어러가
+      // 박힌 재시도가 나갈 수 있다.
+      cancelQueuedRequests();
       localStorage.removeItem(AUTH_FLAG_KEY);
       setMe(null);
     }
