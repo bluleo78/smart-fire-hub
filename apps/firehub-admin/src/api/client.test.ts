@@ -187,6 +187,7 @@ describe('client.ts — 401 재시도 큐', () => {
   it('5) 로그아웃이 대기 중인 재시도 큐를 취소한다(L3)', async () => {
     let resolveRefresh: (() => void) | undefined;
     let refreshCalls = 0;
+    let otherCalls = 0;
 
     const adapter = makeAdapter(async (config) => {
       if (config.url === '/api/platform/auth/refresh') {
@@ -200,6 +201,16 @@ describe('client.ts — 401 재시도 큐', () => {
       if (config.url === '/protected') {
         return { status: 401 };
       }
+      if (config.url === '/other') {
+        // 큐가 실제로 취소되는지만 가려내려면, 취소되지 않았을 때 이 요청이 '성공'할 수
+        // 있어야 한다 — 그래야 reject 의 유일한 원인이 취소 자체가 된다. 스크립트가 없어
+        // 매번 'unexpected url' 로 던져지던 이전 버전은 취소 여부와 무관하게 항상 실패해
+        // `cancelQueuedRequests()` 를 no-op 으로 바꿔도 테스트가 그대로 초록이었다(공허).
+        otherCalls += 1;
+        // 1번째 호출은 401 로 큐에 태우고, (취소되지 않았다면) 재시도인 2번째 호출은 성공시킨다.
+        if (otherCalls === 1) return { status: 401 };
+        return { status: 200, data: { ok: '/other' } };
+      }
       throw new Error(`unexpected url: ${config.url}`);
     });
     client.defaults.adapter = adapter;
@@ -208,9 +219,21 @@ describe('client.ts — 401 재시도 큐', () => {
     setAccessToken('old-token');
 
     const first = client.get('/protected'); // 이 요청이 refresh 를 시작시킨다.
+    // 이 시나리오에서 `first` 는 결국 거부된다(재시도도 401). 아래에서 뒤늦게
+    // `expect(first).rejects` 로 단언하기 전까지의 마이크로태스크 구간에 핸들러가 없다고
+    // vitest/Node 가 "Unhandled Rejection" 으로 오탐하는 것을 막기 위해 즉시 빈 catch 를
+    // 붙여 둔다 — 실제 단언은 아래에서 그대로 한다(프라미스는 여러 번 관찰해도 무해하다).
+    first.catch(() => {});
     // 첫 요청이 인터셉터를 타고 refresh 를 시작할 때까지 한 틱 기다린다.
     await new Promise((r) => setTimeout(r, 0));
-    const second = client.get('/other'); // isRefreshing===true 라 큐에 쌓인다.
+    const second = client.get('/other'); // isRefreshing===true 라 큐에 쌓인다. 정상 성공하는
+    // 엔드포인트이므로, 이 요청이 reject 된다면 그 이유는 오직 큐 취소뿐이다.
+    // /other 가 자신의 401 응답을 받고 "isRefreshing" 을 확인해 큐에 들어갈 때까지 한 틱
+    // 더 기다린다 — 안 그러면 refresh 완료 처리(`finally { isRefreshing = false }` 는
+    // 재시도 완료를 기다리지 않고 `return client(originalRequest)` 직후 곧바로 실행된다)가
+    // 먼저 끝나 버려 /other 가 큐를 타지 않고 스스로 새 refresh 를 시작해 테스트가 멈춘다
+    // (실측: resolveRefresh 를 재사용할 수 없어 두 번째 refresh 가 영원히 pending).
+    await new Promise((r) => setTimeout(r, 0));
 
     // refresh 가 끝나기 전에 로그아웃 — 큐를 비운다.
     cancelQueuedRequests();
