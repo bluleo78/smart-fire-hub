@@ -192,6 +192,7 @@ export default function SmtpSettingsTab({
       setForm(values);
       setOriginal(values);
       setLoadError(false);
+      setStaleNotice(null);
     } catch {
       // 폼을 그리지 않는다 — 이유는 loadError 선언부 참고(빈 편집 가능 폼이 파괴적 저장을 부른다).
       setLoadError(true);
@@ -212,6 +213,11 @@ export default function SmtpSettingsTab({
     const { data } = await settingsApi.getByPrefix('smtp');
     const byKey = indexSettingsByKey(data);
     setSettings(byKey);
+    // **화면이 실제로 새로워진 그 지점에서** 낡음 안내를 지운다. 호출부마다 지우면 하나를
+    // 빠뜨리는데, 실제로 빠뜨렸다 — `handleClearOverride` 와 `fetchSettings` 가 안 지워서
+    // "새로고침하세요" 가 성공적인 단일 키 해제 + 재조회 뒤에도 살아남았다. 조건이 사라진 뒤에도
+    // 남는 안내는 이 커밋들이 없애려던 "화면이 조용히 거짓말한다"의 또 다른 판본이다.
+    setStaleNotice(null);
     return byKey;
   }, []);
 
@@ -369,7 +375,6 @@ export default function SmtpSettingsTab({
     try {
       await settingsApi.update({ settings: settingsToSave });
       setOriginal({ ...form });
-      setStaleNotice(null);
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
       refreshMeta()
@@ -449,7 +454,8 @@ export default function SmtpSettingsTab({
    */
   const handleClearConnectionBundle = async () => {
     setIsClearing(true);
-    setStaleNotice(null);
+    // 여기서 안내를 지우지 않는다 — 성공적인 재조회가 `refreshMeta` 안에서 지우고, 실패하면
+    // 아래에서 새 안내를 세운다. 시작 시점에 한 번 더 지우면 "지우는 자리"가 다시 여러 곳이 된다.
     const failedLabels: string[] = [];
     for (const key of SMTP_CONNECTION_KEYS) {
       try {
@@ -530,18 +536,30 @@ export default function SmtpSettingsTab({
     .map((key) => FIELD_LABELS[key]);
 
   /**
-   * 번들이 재정의됐는데 <b>저장된</b> 호스트가 비어 있다 — 연결 테스트가 접속을 <b>시도조차 하지
-   * 않는</b> 상태다(#390 item 4).
+   * 연결 테스트 옆 안내 <b>한 줄</b>. 세 조건이 <b>배타적</b>이고 우선순위가 있다 — 그래서 셋을
+   * 마크업 세 벌이 아니라 <b>문자열 하나</b>로 고른다. 예전에는 중첩 삼항이 같은 `<p>` 를 두 번
+   * 쓰고 세 번째 arm 만 `max-w-md` 를 빠뜨리고 있었는데, 그 드리프트가 이 모양이 부르는 것이다.
    *
-   * <b>왜 별도 분기인가</b>: 이 상태에서 자격증명 안내("인증 없이 접속을 시도합니다")를 띄우면
-   * 실패 원인을 <b>잘못 지목한다</b>. 서버는 호스트가 비면 `POST /settings/smtp/test` 에서
-   * "SMTP 호스트가 설정되지 않았습니다" 로 즉시 돌아오고, 인증은 시도되지도 않는다. 사용자는
-   * 있지도 않은 인증 문제를 고치려고 사용자 이름·비밀번호를 채우게 된다.
+   * 우선순위:
+   * 1. <b>빈 호스트</b> — 접속을 <b>시도조차 하지 않는</b> 상태라 가장 앞이다(#390 item 4).
+   *    여기서 자격증명 안내를 띄우면 실패 원인을 잘못 지목한다: 서버는 호스트가 비면
+   *    `POST /settings/smtp/test` 에서 "SMTP 호스트가 설정되지 않았습니다" 로 즉시 돌아오고 인증은
+   *    시도되지도 않는데, 사용자는 있지도 않은 인증 문제를 고치려 사용자 이름·비밀번호를 채운다.
+   *    도달 경로는 평범하다 — 테넌트가 포트만("우리는 465 를 쓴다") 또는 비밀번호만 재정의하면
+   *    번들이 나머지 연결 키를 빈 값으로 채워 호스트가 빈다.
+   * 2. <b>빈 자격증명</b> — 접속은 하되 인증 없이 한다.
+   * 3. <b>dirty</b> — 무엇으로 테스트하는지.
    *
-   * <b>도달 경로는 평범하다</b>: 테넌트가 포트만("우리는 465 를 쓴다") 또는 비밀번호만 재정의하면
-   * 번들이 나머지 연결 키를 빈 값으로 채우고 호스트가 빈 값이 된다.
+   * 버튼은 어느 경우에도 막지 않는다: 무인증 릴레이는 합법적 최종 상태라 그 구성에서 테스트를
+   * 못 하게 막으면 정당한 설정을 검증할 길이 사라진다.
    */
-  const hostEmptyInBundle = isEmptyInBundle('smtp.host');
+  const testNotice = isEmptyInBundle('smtp.host')
+    ? 'SMTP 호스트가 비어 있어 접속을 시도하지 않습니다 — 호스트를 입력하고 저장한 뒤 다시 테스트하세요.'
+    : emptyConnectionLabels.length > 0
+      ? `${emptyConnectionLabels.join('·')}이(가) 비어 있어 인증 없이 접속을 시도합니다. 인증이 필요한 서버라면 실패가 정상입니다 — 값을 입력하고 저장한 뒤 다시 테스트하세요.`
+      : hasChanges
+        ? '저장 전 값이 아니라 마지막 저장값으로 테스트합니다'
+        : null;
 
   const handleTest = () => {
     testMutation.mutate(undefined, {
@@ -593,6 +611,19 @@ export default function SmtpSettingsTab({
             SMTP 설정은 플랫폼 기본값을 따르며, 필요하면 우리 조직 값으로 재정의할 수 있습니다.
           </p>
 
+          {/* "지금 화면을 믿지 말고 다시 읽어라" 안내. 토스트 한 번으로 끝내지 않는 이유는
+              사용자가 다시 조작해야 하는 상태이고 토스트는 사라지기 때문이다(§6).
+
+              **탭 범위에 둔다.** 예전에는 연결 그룹 `fieldset` 안에 있었는데, 그 자리는 원래
+              입주자(번들 해제 부분 실패 — 연결 전용 사건)에게만 맞았다. 저장 후 재조회 실패는
+              폼 전체 사건이라, `smtp.from_address` 하나만 저장하고 재조회가 실패하면 번들과
+              아무 상관 없는 경고가 "지금은 플랫폼 기본값을 그대로 쓰고 있습니다" 문단 밑에
+              붙어 사용자가 연결 설정이 잘못됐다고 읽는다. 상태는 탭 범위가 됐는데 표시만
+              그룹 범위에 남아 있었다. */}
+          {staleNotice && (
+            <InlineBanner variant="warning">{staleNotice}</InlineBanner>
+          )}
+
           {/* 연결 5키는 하나의 `fieldset` 으로 묶는다. 그룹 경계를 테두리로만 전달하면 스크린리더
               사용자가 "비밀번호 필드 하나"만 만났을 때 그것이 묶음의 일부라는 사실을 듣지 못한다 —
               `legend` 는 그룹 안 어느 필드에 도착하든 함께 읽힌다(§6). */}
@@ -634,8 +665,6 @@ export default function SmtpSettingsTab({
                   ? '이 5개 항목은 우리 조직 값으로 적용되고 있습니다. 플랫폼 기본값은 이 중 어느 항목에도 더 이상 사용되지 않습니다.'
                   : '호스트·포트·사용자 이름·비밀번호·STARTTLS 는 한 서버에 대한 한 벌의 접속 정보이므로 항상 함께 적용됩니다. 지금은 플랫폼 기본값을 그대로 쓰고 있습니다.'}
               </p>
-              {/* 부분 실패는 토스트 한 번으로 끝내지 않는다 — 사용자가 다시 조작해야 하는 상태다(§6). */}
-              {staleNotice && <p className="text-sm text-destructive">{staleNotice}</p>}
             </div>
 
             {/* 저장 예고(§2). 상태 전환은 저장 후에 그리고, 지금은 무슨 일이 일어날지만 말한다. */}
@@ -810,30 +839,8 @@ export default function SmtpSettingsTab({
               버튼을 막지 않는 이유: 지금 실제로 적용 중인 값을 확인하려는 것도 유효한 용도라
               (AI 탭의 "인증 확인"이 dirty 에서 비활성인 것과 다르다) 막으면 그 진단을 없앤다.
               대신 dirty 인 동안 무엇으로 테스트하는지 문자열로 알려 거짓 결과 해석을 막는다. */}
-          {/* 세 안내를 한 슬롯에서 **배타적으로** 보여준다 — 나란히 뜨면 어느 쪽이 지금 문제인지
-              흐려진다(§5 가 정한 단일 슬롯 + 우선순위 모델을 그대로 확장했다). 순서:
-              (1) 빈 호스트 — 접속을 시도조차 하지 않으므로 가장 앞이다. 자격증명 안내를 대신
-                  띄우면 있지도 않은 인증 문제를 지목한다(#390 item 4).
-              (2) 빈 자격증명 — 접속은 하되 인증 없이 한다.
-              (3) dirty — 무엇으로 테스트하는지.
-              버튼은 어느 경우에도 막지 않는다: 무인증 릴레이는 합법적 최종 상태라 그 구성에서
-              테스트를 못 하게 막으면 정당한 설정을 검증할 길이 사라진다. */}
-          {hostEmptyInBundle ? (
-            <p className="max-w-md text-sm text-muted-foreground">
-              SMTP 호스트가 비어 있어 접속을 시도하지 않습니다 — 호스트를 입력하고 저장한 뒤 다시
-              테스트하세요.
-            </p>
-          ) : emptyConnectionLabels.length > 0 ? (
-            <p className="max-w-md text-sm text-muted-foreground">
-              {`${emptyConnectionLabels.join('·')}이(가) 비어 있어 인증 없이 접속을 시도합니다. 인증이 필요한 서버라면 실패가 정상입니다 — 값을 입력하고 저장한 뒤 다시 테스트하세요.`}
-            </p>
-          ) : (
-            hasChanges && (
-              <p className="text-sm text-muted-foreground">
-                저장 전 값이 아니라 마지막 저장값으로 테스트합니다
-              </p>
-            )
-          )}
+          {/* 우선순위·배타성의 근거는 testNotice 선언부에 있다 — 여기서는 고른 문자열을 그릴 뿐이다. */}
+          {testNotice && <p className="max-w-md text-sm text-muted-foreground">{testNotice}</p>}
           <Button variant="outline" onClick={handleTest} disabled={testMutation.isPending}>
             <Send className="h-4 w-4" />
             {testMutation.isPending ? '테스트 중...' : '연결 테스트'}

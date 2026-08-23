@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { createAiSettings, createSmtpSettings } from '../../factories/admin.factory';
-import { captureOverrideDeletes } from '../../fixtures/admin.fixture';
+import { captureOverrideDeletes, SETTINGS_FETCH_ERROR } from '../../fixtures/admin.fixture';
 import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -514,6 +514,13 @@ test.describe('설정 페이지', () => {
     const connectionGroup = (page: Page) =>
       page.locator('fieldset', { has: page.locator('#smtp-host') });
 
+    /**
+     * 이메일 탭 패널. 낡음 안내는 **토스트에도 같은 문구**가 뜨므로, 지속 안내가 화면에 남는지
+     * 단언하려면 스코프가 필요하다 — 스코프 없이 쓰면 토스트만으로도 통과해 "지속"을 증명하지 못한다
+     * (실제로 strict mode 위반으로 드러났다).
+     */
+    const emailPanel = (page: Page) => page.getByRole('tabpanel', { name: '이메일' });
+
     // starttlsBox 헬퍼는 삭제했다 — STARTTLS 는 이제 그룹 안이라 개별 배지가 없고, 그 헬퍼가
     // 존재하는 유일한 이유가 "그 필드의 배지를 스코프로 잡는 것"이었다.
 
@@ -606,6 +613,79 @@ test.describe('설정 페이지', () => {
       // 발신자 주소는 번들 밖이라 여전히 상속 + 개별 배지다.
       await expect(fieldBox(page, 'smtp-from').getByText('기본값 사용 중')).toBeVisible();
       await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
+    });
+
+    test('발신자 주소만 저장하고 재조회가 실패해도 안내가 연결 그룹에 붙지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      // simplify2 S2/A1 이 드러낸 경로. `smtp.from_address` 는 **의도적으로** 번들 밖이므로,
+      // 그 키 하나만 저장하고 재조회가 실패하는 상태가 실재한다. 안내 슬롯이 연결 fieldset 안에
+      // 있으면 번들과 아무 상관 없는 경고가 "지금은 플랫폼 기본값을 그대로 쓰고 있습니다" 문단
+      // 밑에 붙어, 사용자는 연결 설정이 잘못됐다고 읽는다.
+      let refetchFails = false;
+      await setupSettingsMocks(page, {
+        smtp: () => (refetchFails ? SETTINGS_FETCH_ERROR : createSmtpSettings()),
+      });
+      await mockApi(page, 'PUT', '/api/v1/settings', {});
+      await openEmailTab(page);
+      refetchFails = true;
+
+      await page.locator('#smtp-from').fill('ours@ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+      await expect(
+        emailPanel(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+      ).toBeVisible({ timeout: 8000 });
+      // 연결 그룹은 이 실패와 무관하다 — 안내가 그 안에 있으면 안 된다.
+      await expect(
+        connectionGroup(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+      ).toHaveCount(0);
+      // 그룹 설명문은 여전히 "플랫폼 기본값을 그대로 쓰고 있습니다" 다 — 그 옆에 경고가 붙으면
+      // 두 문장이 서로를 부정하는 것처럼 읽힌다.
+      await expect(
+        connectionGroup(page).getByText('지금은 플랫폼 기본값을 그대로 쓰고 있습니다', {
+          exact: false,
+        }),
+      ).toBeVisible();
+    });
+
+    test('재조회가 성공하면 낡음 안내가 사라진다', async ({ authenticatedPage: page }) => {
+      // simplify2 S2. 예전에는 안내를 호출부마다 지웠고 두 곳(`fetchSettings`·`handleClearOverride`)을
+      // 빠뜨려, 성공적인 단일 키 해제 + 재조회 뒤에도 "새로고침하세요" 가 살아남았다 — 조건이
+      // 사라진 뒤에도 남는 안내는 이 커밋들이 없애려던 "화면이 조용히 거짓말한다"의 또 다른 판본이다.
+      // 지금은 화면이 실제로 새로워지는 그 지점(`refreshMeta` 성공)에서 한 번만 지운다.
+      let refetchFails = false;
+      await setupSettingsMocks(page, {
+        smtp: () =>
+          refetchFails
+            ? SETTINGS_FETCH_ERROR
+            : createSmtpSettings({
+                'smtp.from_address': { overridden: true, value: 'ours@ourcompany.com' },
+              }),
+      });
+      await mockApi(page, 'PUT', '/api/v1/settings', {});
+      const { deletedPaths } = await captureOverrideDeletes(page);
+      await openEmailTab(page);
+
+      // (1) 저장 + 재조회 실패로 낡음 안내를 띄운다.
+      refetchFails = true;
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+      await expect(
+        emailPanel(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+      ).toBeVisible({ timeout: 8000 });
+
+      // (2) 이제 재조회가 성공하는 조작(단일 키 재정의 해제)을 한다.
+      refetchFails = false;
+      await fieldBox(page, 'smtp-from').getByRole('button', { name: '재정의 해제' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: '되돌리기' }).click();
+      await expect.poll(() => deletedPaths.length).toBeGreaterThan(0);
+
+      // (3) 화면이 다시 읽혔으므로 안내는 사라져야 한다.
+      await expect(
+        emailPanel(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+      ).toHaveCount(0);
     });
 
     test('상속 중에 호스트를 입력하면 저장 전 경고 배너가 뜬다', async ({
@@ -807,6 +887,10 @@ test.describe('설정 페이지', () => {
       );
       await openEmailTab(page);
 
+      // 전제: 지금 화면에 "재정의 해제" 류 버튼이 하나도 없다 — 안내가 가리킬 대상이 없다는 뜻이고,
+      // 아래 문구 단언은 그 사실 위에서만 의미를 갖는다.
+      await expect(page.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
+
       await page.locator('#smtp-host').fill('');
       await page.getByRole('button', { name: '저장' }).click();
 
@@ -816,6 +900,7 @@ test.describe('설정 페이지', () => {
       await expect(
         page.getByText('입력을 취소하려면 "되돌리기"를 사용하세요', { exact: false }),
       ).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('"재정의 해제"를 사용하세요', { exact: false })).toHaveCount(0);
       expect(putCount).toBe(0);
       await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
     });
@@ -917,10 +1002,15 @@ test.describe('설정 페이지', () => {
         .click();
       await page.getByRole('alertdialog').getByRole('button', { name: '되돌리기' }).click();
 
-      // 토스트가 아니라 **그룹 머리에 남는 텍스트**로도 있어야 한다.
+      // 토스트가 아니라 **화면에 남는 텍스트**로도 있어야 한다. 슬롯은 연결 그룹 안이 아니라
+      // 탭 범위다 — 이 안내가 붙는 사건이 그룹 전용이 아니기 때문이다(아래 저장 후 재조회 실패
+      // 테스트가 그 이유를 직접 보여준다).
+      await expect(
+        emailPanel(page).getByText('일부 항목만 해제되었습니다', { exact: false }),
+      ).toBeVisible({ timeout: 8000 });
       await expect(
         connectionGroup(page).getByText('일부 항목만 해제되었습니다', { exact: false }),
-      ).toBeVisible({ timeout: 8000 });
+      ).toHaveCount(0);
       // 안전하다는 사실도 함께 말한다 — 남은 항목은 아직 테넌트 값으로 적용된다.
       await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
     });
@@ -1064,27 +1154,13 @@ test.describe('설정 페이지', () => {
       // "아직 아무것도 설정되지 않았다"와 구별되지 않는다. 거기서 호스트만 입력해 저장하면
       // 그 테넌트의 사용자 이름·비밀번호·포트가 전부 빈 값으로 해석된다 — 조회 실패가 파괴적
       // 저장을 부르는 경로다.
-      // **등록 순서가 중요하다**: Playwright 는 나중에 등록된 라우트가 먼저 매칭되므로,
-      // 이 오버라이드가 setupSettingsMocks 보다 **뒤**에 와야 smtp GET 을 가로챈다.
-      await setupSettingsMocks(page);
       // **호출 횟수가 아니라 플래그로 분기한다.** React StrictMode 가 dev 에서 effect 를 두 번
       // 실행하므로 최초 마운트만으로 GET 이 2회 나간다 — "첫 번째만 실패" 로 짜면 두 번째가
       // 성공해 화면이 정상 폼으로 복구되고, 검증하려던 상태에 도달하지 못한다(실제로 겪었다).
       let failing = true;
-      await page.route(
-        (url) => url.pathname === '/api/v1/settings',
-        (route) => {
-          if (route.request().method() !== 'GET') return route.fallback();
-          const prefix = new URL(route.request().url()).searchParams.get('prefix') ?? '';
-          if (prefix !== 'smtp') return route.fallback();
-          if (failing) return route.fulfill({ status: 500, body: '{}' });
-          return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(createSmtpSettings()),
-          });
-        },
-      );
+      await setupSettingsMocks(page, {
+        smtp: () => (failing ? SETTINGS_FETCH_ERROR : createSmtpSettings()),
+      });
 
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();
@@ -1107,29 +1183,13 @@ test.describe('설정 페이지', () => {
       // 코드리뷰 Major 1. 저장은 성공했고 **다시 그리기**가 실패했다. 삼키면 배지는
       // `기본값 사용 중`, 그룹 문구는 "플랫폼 기본값을 쓰고 있습니다", 폼은 플랫폼 사용자 이름을
       // 계속 보여주는데 서버는 이미 그 테넌트를 빈 자격증명 번들로 옮긴 상태다.
-      // 등록 순서: setupSettingsMocks 를 먼저 깔고 그 위에 이 오버라이드를 얹는다(나중이 이긴다).
-      await setupSettingsMocks(page);
       // 호출 횟수가 아니라 플래그로 분기한다 — StrictMode 가 최초 마운트에서 GET 을 두 번 내므로
       // "두 번째부터 실패" 로 짜면 저장 전에 이미 실패해 다른 상태를 시험하게 된다.
       let refetchFails = false;
-      await page.route(
-        (url) => url.pathname === '/api/v1/settings',
-        (route) => {
-          const method = route.request().method();
-          if (method === 'PUT') {
-            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-          }
-          if (method !== 'GET') return route.fallback();
-          const prefix = new URL(route.request().url()).searchParams.get('prefix') ?? '';
-          if (prefix !== 'smtp') return route.fallback();
-          if (refetchFails) return route.fulfill({ status: 500, body: '{}' });
-          return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(createSmtpSettings()),
-          });
-        },
-      );
+      await setupSettingsMocks(page, {
+        smtp: () => (refetchFails ? SETTINGS_FETCH_ERROR : createSmtpSettings()),
+      });
+      await mockApi(page, 'PUT', '/api/v1/settings', {});
       await openEmailTab(page);
       // 최초 조회가 끝난 뒤에만 재조회를 실패시킨다.
       refetchFails = true;
@@ -1141,30 +1201,45 @@ test.describe('설정 페이지', () => {
       await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
       // 그리고 화면이 낡았다는 사실을 **지속 안내**로 남긴다(토스트만으로는 사라진다).
       await expect(
-        connectionGroup(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+        emailPanel(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
       ).toBeVisible({ timeout: 8000 });
+      await expect(emailPanel(page).getByText('새로고침하세요', { exact: false })).toBeVisible();
+      // **자리를 고정한다.** 이 안내는 연결 그룹 사건이 아니므로 그 fieldset 안에 있으면 안 된다 —
+      // 아래 from_address 테스트가 그 자리 오류의 실제 결과를 보여준다.
       await expect(
-        connectionGroup(page).getByText('새로고침하세요', { exact: false }),
-      ).toBeVisible();
+        connectionGroup(page).getByText('화면을 다시 읽지 못했습니다', { exact: false }),
+      ).toHaveCount(0);
     });
 
-    test('상속 중인 필드를 비우면 없는 "재정의 해제" 대신 "되돌리기"를 안내한다', async ({
+    test('재정의된 필드를 비우면 화면에 실제로 있는 "재정의 해제"를 안내한다', async ({
       authenticatedPage: page,
     }) => {
-      // 코드리뷰 Minor 4. 상속 중에는 지울 오버라이드도, 그룹 해제 버튼도 화면에 없다.
-      await setupSettingsMocks(page);
+      // 코드리뷰 Minor 4 의 **반대 arm**. 상속 중 arm 은 위 `smtp.host 를 비우고 저장하면…` 이
+      // 덮으므로, 이 테스트는 재정의 중 arm 하나만 맡는다 — 두 테스트가 같은 arm 을 겹쳐 지키고
+      // 다른 arm 이 비어 있던 상태를 없앤다.
+      //
+      // `smtp.from_address` 는 번들 밖이라 **개별** 재정의 해제 버튼을 갖는다. 즉 이 상태에서는
+      // 안내가 가리키는 컨트롤이 실제로 화면에 있고, 그래서 "재정의 해제" 문구가 참이다.
+      await setupSettingsMocks(page, {
+        smtp: createSmtpSettings({
+          'smtp.from_address': { overridden: true, value: 'ours@ourcompany.com' },
+        }),
+      });
       await openEmailTab(page);
 
-      // 전제: 지금 화면에 "재정의 해제" 류 버튼이 하나도 없다 — 안내가 가리킬 대상이 없다.
-      await expect(page.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
+      // 전제: 그 필드에 해제 버튼이 실재한다 — 이 단언이 없으면 문구가 참인지 알 수 없다.
+      await expect(
+        fieldBox(page, 'smtp-from').getByRole('button', { name: '재정의 해제' }),
+      ).toBeVisible();
 
-      await page.locator('#smtp-port').fill('');
+      // from_address 는 빈 값 허용 화이트리스트에 없으므로 비우면 거부된다.
+      await page.locator('#smtp-from').fill('');
       await page.getByRole('button', { name: '저장' }).click();
 
-      await expect(page.getByText('"되돌리기"를 사용하세요', { exact: false })).toBeVisible({
-        timeout: 5000,
-      });
-      await expect(page.getByText('"재정의 해제"를 사용하세요', { exact: false })).toHaveCount(0);
+      await expect(
+        page.getByText('플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요', { exact: false }),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('"되돌리기"를 사용하세요', { exact: false })).toHaveCount(0);
     });
 
     test('연결 테스트는 계속 동작한다 (POST /settings/smtp/test)', async ({

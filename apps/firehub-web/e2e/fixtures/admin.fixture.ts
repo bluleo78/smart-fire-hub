@@ -118,8 +118,20 @@ export async function setupAuditLogMocks(page: Page, count = 5) {
   await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users));
 }
 
-/** 목록 자체 또는 "호출 시점에 목록을 만드는 함수" 둘 다 받는다 — 재정의 해제 후 재조회처럼 응답이 바뀌는 경우를 위해. */
-type SettingsSource = ResolvedSettingResponse[] | (() => ResolvedSettingResponse[]);
+/**
+ * 목록 자체 또는 "호출 시점에 목록을 만드는 함수" 둘 다 받는다 — 재정의 해제 후 재조회처럼 응답이
+ * 바뀌는 경우를 위해.
+ *
+ * 함수형은 목록 대신 {@link SETTINGS_FETCH_ERROR} 를 돌려줄 수 있다. 조회 **실패**를 재현하는
+ * 시나리오(최초 로드 실패, 저장 후 재조회 실패)가 그 하나를 표현하지 못해 스펙마다 프리픽스·메서드
+ * 분기를 손으로 다시 구현하고 있었다 — 그 분기 계약이 세 곳에 흩어지던 것을 여기 하나로 되돌린다.
+ */
+type SettingsSource =
+  | ResolvedSettingResponse[]
+  | (() => ResolvedSettingResponse[] | typeof SETTINGS_FETCH_ERROR);
+
+/** 이 값을 돌려주면 해당 GET 이 500 으로 떨어진다. */
+export const SETTINGS_FETCH_ERROR = 'error' as const;
 
 const resolveSource = (source: SettingsSource) =>
   typeof source === 'function' ? source() : source;
@@ -165,10 +177,14 @@ export async function setupSettingsMocks(
           }),
         });
       }
+      const resolved = resolveSource(source);
+      if (resolved === SETTINGS_FETCH_ERROR) {
+        return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      }
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(resolveSource(source)),
+        body: JSON.stringify(resolved),
       });
     },
   );
