@@ -1,4 +1,5 @@
-import axios, { type AxiosRequestConfig } from 'axios';
+import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosHeaders } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AUTH_FLAG_KEY, cancelQueuedRequests, client, getAccessToken, setAccessToken } from './client';
@@ -17,19 +18,38 @@ interface FakeResult {
   data?: unknown;
 }
 
-/** url(+ method) 별 스크립트를 등록해 커스텀 axios adapter 를 만든다. */
-function makeAdapter(script: (config: AxiosRequestConfig) => FakeResult | Promise<FakeResult>) {
-  return async (config: AxiosRequestConfig) => {
+/**
+ * url(+ method) 별 스크립트를 등록해 커스텀 axios adapter 를 만든다.
+ *
+ * 가짜 응답을 `AxiosResponse` 실제 계약에 맞춰 구성한다(`as any` 로 뭉개지 않는다) —
+ * `config` 를 `InternalAxiosRequestConfig`(headers 가 필수인 정규화된 타입)로 받고,
+ * 응답/에러의 `headers` 는 `AxiosHeaders` 인스턴스로 채운다. 그래야 이 테스트가 검증하는
+ * 것이 실제 axios 어댑터 계약과 어긋나지 않는다.
+ */
+function makeAdapter(
+  script: (config: InternalAxiosRequestConfig) => FakeResult | Promise<FakeResult>,
+) {
+  return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
     const result = await script(config);
     if (result.status >= 200 && result.status < 300) {
-      return { data: result.data ?? {}, status: result.status, statusText: 'OK', headers: {}, config };
+      return {
+        data: result.data ?? {},
+        status: result.status,
+        statusText: 'OK',
+        headers: new AxiosHeaders(),
+        config,
+      };
     }
-    // axios 응답 인터셉터가 보는 것은 `error.response.status` 뿐이다 — 최소 모양만 흉내낸다.
-    return Promise.reject({
+    // axios 응답 인터셉터가 보는 것은 `error.response.status` 뿐이지만, 흉내내는 모양 자체는
+    // 실제 `AxiosResponse` 형태를 그대로 채운다.
+    const response: AxiosResponse = {
+      data: result.data ?? {},
+      status: result.status,
+      statusText: '',
+      headers: new AxiosHeaders(),
       config,
-      response: { status: result.status, data: result.data ?? {}, headers: {}, config },
-      isAxiosError: true,
-    });
+    };
+    return Promise.reject({ config, response, isAxiosError: true });
   };
 }
 
