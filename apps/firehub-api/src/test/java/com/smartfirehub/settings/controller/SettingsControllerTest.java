@@ -180,17 +180,15 @@ class SettingsControllerTest {
    * 바로 옆 버튼에서 403 을 받는다. 두 권한 다 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은
    * <b>런타임에 편집 가능</b>하므로 "그런 롤은 존재할 수 없다"에 기댈 수 없다.
    *
-   * <p>거부 쪽도 함께 단언한다 — 허용만 보면 애너테이션을 통째로 지워도 통과한다.
+   * <p><b>허용 쪽은 여기서 다시 단언하지 않는다.</b> 아래
+   * {@link #testSmtpSettings_whenHostBlank_returnsFailureMessage} 가 이미 {@code ai:settings} 로
+   * 이 라우트에 도달해 200 을 받고, 거기에 더해 {@code $.success == false} 까지 본다 — 더 강한
+   * 단언이 같은 파일에 있는데 약한 사본을 하나 더 두면 두 테스트가 허용 경로를 지키는 것처럼
+   * 보이면서 실제로는 하나만 일한다. 새 정보는 <b>거부</b> 쪽뿐이고, 이 javadoc 이 논증하는 것도
+   * 그쪽이다.
    */
   @Test
-  void testSmtpSettings_usesSamePermissionAsSave() throws Exception {
-    // 저장 권한만 있어도 테스트가 된다(같은 탭의 두 버튼이 갈라지지 않는다).
-    mockAuth("ai:settings");
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", ""));
-    mockMvc
-        .perform(post("/api/v1/settings/smtp/test").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isOk());
-
+  void testSmtpSettings_rejectsOldPermission() throws Exception {
     // 옛 권한만 가진 롤은 이제 거부된다 — 그 롤은 GET 조차 못 해 이 탭을 열 수 없다.
     mockAuth("settings:write");
     mockMvc

@@ -365,7 +365,8 @@ public class SettingsService {
    * 거르는 쪽이 자연스러워 보이지만 <b>더 위험하다</b>: 회수된 키를 빼면 그 키가 상속 폴백으로
    * 플랫폼 값이 되어 "테넌트 호스트 + 플랫폼 자격증명"이라는 이 태스크가 닫은 유출이 되살아난다.
    * 지금 동작(빈 값 + web 의 그룹 fail-closed 잠금)은 안전한 쪽 실패이고, 진짜 문제는 그 상태가
-   * <b>조용히</b> 배포될 수 있다는 것뿐이라 <b>빌드를 깨뜨리는 쪽</b>으로 막는다 —
+   * <b>조용히</b> 배포될 수 있다는 것뿐이라 <b>{@code test} 태스크를 깨뜨리는 쪽</b>으로 막는다
+   * (컴파일 에러가 아니다) —
    * {@code SettingsKeyWhitelistInvariantTest.연결_번들_5키는_전부_테넌트_오버라이드_허용키다}.
    */
   private static void applySmtpConnectionBundle(Map<String, String> overrides) {

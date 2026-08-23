@@ -5,9 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
-import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.support.IntegrationTestBase;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -45,12 +43,7 @@ class SettingsServiceTest extends IntegrationTestBase {
     settingsService.updatePlatformSettings(update, null);
 
     // 저장 확인은 운영자 평면이 실제로 쓰는 읽기(getAll)로 한다.
-    List<SettingResponse> settings = settingsService.getAll();
-    assertThat(settings)
-        .filteredOn(s -> "ai.max_turns".equals(s.key()))
-        .hasSize(1)
-        .first()
-        .satisfies(s -> assertThat(s.value()).isEqualTo("10"));
+    assertThat(valueOf("ai.max_turns")).isEqualTo("10");
   }
 
   @Test
@@ -119,15 +112,8 @@ class SettingsServiceTest extends IntegrationTestBase {
     // given: store a real API key first
     settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-abcdefghij"), null);
 
-    // when: retrieve via getAll
-    List<SettingResponse> settings = settingsService.getAll();
-
     // then: ai.api_key value must start with "****" (masked)
-    assertThat(settings)
-        .filteredOn(s -> "ai.api_key".equals(s.key()))
-        .hasSize(1)
-        .first()
-        .satisfies(s -> assertThat(s.value()).startsWith("****"));
+    assertThat(valueOf("ai.api_key")).startsWith("****");
   }
 
   @Test
@@ -220,15 +206,25 @@ class SettingsServiceTest extends IntegrationTestBase {
   void embeddingApiKeyIsMaskedOnRead() {
     // updated_by FK 제약 때문에 test DB에 존재하지 않는 userId 대신 null 사용 (기존 테스트 관례)
     settingsService.updatePlatformSettings(Map.of("embedding.api_key", "secret-key-123"), null);
-    var settings = settingsService.getAll();
-    var apiKey =
-        settings.stream()
-            .filter(s -> s.key().equals("embedding.api_key"))
-            .findFirst()
-            .orElseThrow();
-    assertThat(apiKey.value()).doesNotContain("secret-key-123");
+    assertThat(valueOf("embedding.api_key")).doesNotContain("secret-key-123");
     // ai.api_key 마스킹 테스트와 동일하게 마스킹 포맷(****)도 검증한다
-    assertThat(apiKey.value()).startsWith("****");
+    assertThat(valueOf("embedding.api_key")).startsWith("****");
+  }
+
+  /**
+   * 운영자 평면 읽기({@code getAll}, 18키 전부)에서 한 키의 값을 꺼낸다.
+   *
+   * <p>{@code getByPrefix} 삭제로 세 단언이 {@code getAll} + 키 필터로 옮겨오면서 <b>같은 단계가
+   * 두 가지 철자</b>로 남았다({@code filteredOn/hasSize/first/satisfies} 와
+   * {@code stream/filter/findFirst/orElseThrow}). 같은 것을 묻는 세 테스트가 서로 다른 것을 묻는
+   * 것처럼 읽히고, {@code getAll} 이 18키를 돌려주므로 새 단언마다 필터를 손으로 다시 쓰게 된다.
+   */
+  private String valueOf(String key) {
+    return settingsService.getAll().stream()
+        .filter(s -> key.equals(s.key()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError(key + " 가 getAll 결과에 없다"))
+        .value();
   }
 
   @Test
