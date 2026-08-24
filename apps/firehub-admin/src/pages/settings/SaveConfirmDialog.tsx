@@ -38,6 +38,9 @@ export function SaveConfirmDialog({ open, onOpenChange, diff, onConfirm }: SaveC
         <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
           {diff.map((d) => (
             <li key={d.key} className="flex flex-wrap items-baseline gap-1">
+              {/* ai.api_key/embedding.api_key 처럼 카탈로그 라벨이 우연히 같은 키가 있어
+                  탭 그룹을 함께 보여준다(리뷰 L1) — 그래야 바이트까지 같은 두 줄이 안 생긴다. */}
+              <span className="text-xs text-muted-foreground">{d.group} ·</span>
               <span className="font-medium">{d.label}</span>
               <span className="text-muted-foreground">
                 {d.secret ? d.after : `${d.before || '(비어 있음)'} → ${d.after || '(비어 있음)'}`}

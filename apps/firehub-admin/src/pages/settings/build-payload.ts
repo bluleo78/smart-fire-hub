@@ -1,13 +1,26 @@
-import { ALL_SETTING_KEYS, SETTING_CATALOG } from '@/lib/settings-catalog';
+import { ALL_SETTING_KEYS, SETTING_CATALOG, SETTINGS_TABS } from '@/lib/settings-catalog';
 
 export interface SettingDiff {
   key: string;
   label: string;
+  /**
+   * 이 키가 속한 탭 라벨(`SETTINGS_TABS`). 다이얼로그가 여러 탭의 변경을 한 목록에 모으는데,
+   * `ai.api_key` 와 `embedding.api_key` 처럼 카탈로그 라벨이 우연히 같은 키가 둘 있다
+   * (리뷰 L1) — 라벨만 보여주면 "API 키 값 변경됨" 이 바이트까지 같은 두 줄로 겹쳐 어느 쪽이
+   * 바뀌었는지 구별할 수 없다. 카탈로그 라벨 자체는 바꾸지 않는다(각 탭 안에서는 이미 고유하고,
+   * `SettingField`·E2E 가 그 라벨로 필드를 찾는다) — 다이얼로그에서만 그룹을 덧붙여 구별한다.
+   */
+  group: string;
   /** 비밀 키는 항상 빈 문자열이다 — 이전 값을 화면에 절대 싣지 않는다. */
   before: string;
   after: string;
   secret: boolean;
 }
+
+/** 키 → 소속 탭 라벨. `SettingDiff.group` 을 채우는 데만 쓴다. */
+const TAB_LABEL_OF_KEY: Record<string, string> = Object.fromEntries(
+  SETTINGS_TABS.flatMap((tab) => tab.keys.map((key) => [key, tab.label])),
+);
 
 /**
  * 서버 `SettingsService.isMaskSentinel` 의 사본: `****` 로 시작하고 길이가 정확히 4 또는 8.
@@ -17,7 +30,7 @@ export interface SettingDiff {
  * 순간 조용한 결함 두 개가 동시에 열린다 — 길이가 4/8 이면 서버가 키를 드롭해 "204 성공 +
  * 아무 일도 없음"이 되고, 길이가 다르면 마스크 문자열이 진짜 비밀번호로 저장된다.
  */
-function isMaskSentinel(value: string): boolean {
+export function isMaskSentinel(value: string): boolean {
   return value.startsWith('****') && (value.length === 4 || value.length === 8);
 }
 
@@ -46,10 +59,10 @@ export function buildSettingsPayload(
     if (spec.secret) {
       if (cleared.has(key)) {
         payload[key] = '';
-        diff.push({ key, label: spec.label, before: '', after: '값 삭제됨', secret: true });
+        diff.push({ key, label: spec.label, group: TAB_LABEL_OF_KEY[key], before: '', after: '값 삭제됨', secret: true });
       } else if (value !== '' && !isMaskSentinel(value)) {
         payload[key] = value;
-        diff.push({ key, label: spec.label, before: '', after: '값 변경됨', secret: true });
+        diff.push({ key, label: spec.label, group: TAB_LABEL_OF_KEY[key], before: '', after: '값 변경됨', secret: true });
       }
       continue;
     }
@@ -57,7 +70,7 @@ export function buildSettingsPayload(
     const before = original[key] ?? '';
     if (value === before) continue;
     payload[key] = value;
-    diff.push({ key, label: spec.label, before, after: value, secret: false });
+    diff.push({ key, label: spec.label, group: TAB_LABEL_OF_KEY[key], before, after: value, secret: false });
   }
 
   return { payload, diff };

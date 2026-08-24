@@ -163,10 +163,32 @@ test.describe('플랫폼 설정 — 비밀값과 저장', () => {
     await expect(
       dialog.getByText(
         '1개 항목을 변경합니다. 이 값은 전 테넌트에 적용되며, 해당 항목을 재정의하지 않은 모든 워크스페이스가 즉시 영향을 받습니다.',
+        { exact: true },
       ),
     ).toBeVisible();
-    await expect(dialog.getByText('최대 턴 수')).toBeVisible();
-    await expect(dialog.getByText('20 → 30')).toBeVisible();
+    await expect(dialog.getByText('최대 턴 수', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('20 → 30', { exact: true })).toBeVisible();
+  });
+
+  test('탭이 다른 두 API 키를 동시에 바꾸면 확인 다이얼로그가 탭 이름으로 구별한다(리뷰 L1)', async ({
+    authenticatedPage: page,
+  }) => {
+    // ai.api_key 와 embedding.api_key 는 카탈로그 라벨이 둘 다 'API 키' 다. 하나만 바꾸면
+    // 다이얼로그에 한 줄만 뜨니 구별할 필요 자체가 생기지 않는다 — 반드시 둘을 동시에 바꿔야
+    // 라벨 충돌이 실제로 드러난다.
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+
+    await page.getByLabel('API 키').fill('n3wAnthropicKey');
+    await page.getByRole('tab', { name: '임베딩' }).click();
+    await page.getByLabel('API 키').fill('n3wEmbeddingKey');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    // 라벨은 두 줄 다 'API 키' 로 같지만, 탭 이름이 붙어 있어 실제로는 구별된다.
+    await expect(dialog.getByText('API 키', { exact: true })).toHaveCount(2);
+    await expect(dialog.getByText('AI 에이전트 ·')).toBeVisible();
+    await expect(dialog.getByText('임베딩 ·')).toBeVisible();
   });
 
   test('비밀 키의 이전/새 값은 다이얼로그에 절대 나오지 않는다', async ({ authenticatedPage: page }) => {
@@ -269,5 +291,74 @@ test.describe('플랫폼 설정 — 비밀값과 저장', () => {
 
     await expect(page.getByLabel('최대 턴 수')).toHaveValue('20');
     await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+  });
+
+  test('저장 성공 후 재조회로 지우기 표시·값이 실제로 초기화된다(M2, 재시드 경로 실제 검증)', async ({
+    authenticatedPage: page,
+  }) => {
+    // mockApi 는 매 요청마다 같은 참조의 body 를 돌려주므로 react-query 의 structural sharing 이
+    // 같은 참조를 유지해 재시드 블록(`data !== seededFrom`)이 한 번도 안 돈다 — 그래서 여기서는
+    // page.route 를 직접 써서 두 번째 GET 이 다른 참조·다른 내용을 주도록 만든다.
+    let getCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/platform/settings',
+      (route) => {
+        if (route.request().method() === 'GET') {
+          getCount += 1;
+          const body =
+            getCount === 1
+              ? SEEDED_18
+              : SEEDED_18.map((s) => (s.key === 'smtp.password' ? { ...s, value: '' } : s));
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(body),
+          });
+        }
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({ status: 204, contentType: 'application/json', body: '{}' });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/settings');
+    await page.getByRole('tab', { name: '이메일(SMTP)' }).click();
+    await expect(page.getByText('현재 설정됨 · ****cd34')).toBeVisible();
+
+    await page.getByRole('button', { name: '지우기' }).click();
+    await expect(page.getByText('저장하면 이 값이 삭제됩니다.')).toBeVisible();
+
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('플랫폼 기본값이 저장되었습니다.')).toBeVisible();
+
+    // 재조회(두 번째 GET, 다른 참조)가 도착하면 재시드 블록이 실제로 돌아 cleared 표시가
+    // 초기화되고 새 데이터('설정되지 않음')가 반영된다. cleared 가 리셋되지 않았다면
+    // "저장하면 이 값이 삭제됩니다." 가 여전히 남아 있어야 한다(양성 대조군).
+    await expect(page.getByText('저장하면 이 값이 삭제됩니다.')).toHaveCount(0);
+    await expect(page.getByText('설정되지 않음').first()).toBeVisible();
+    expect(getCount).toBeGreaterThanOrEqual(2);
+  });
+
+  test('확인 다이얼로그를 거치지 않으면 PUT 이 나가지 않는다(다이얼로그가 실질 관문이다, M2)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    const capture = await mockApi(page, 'PUT', '/api/platform/settings', {}, { status: 204, capture: true });
+    await page.goto('/settings');
+
+    await page.getByLabel('최대 턴 수').fill('30');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(capture.lastRequest()).toBeUndefined();
+
+    // 취소해도 여전히 PUT 이 없어야 한다 — 다이얼로그가 열리는 것 자체가 아니라 '확인'
+    // 클릭이 관문이다.
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    await page.waitForTimeout(300);
+    expect(capture.lastRequest()).toBeUndefined();
   });
 });

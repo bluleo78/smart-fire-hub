@@ -16,6 +16,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { badgeKindOf, type SettingSpec } from '@/lib/settings-catalog';
 
+import { isMaskSentinel } from './build-payload';
+
 export interface SettingFieldProps {
   spec: SettingSpec;
   /** 현재 편집 중인 값. 비밀 키는 "새로 입력한 값"이고 마스크가 아니다(Task 10). */
@@ -123,13 +125,34 @@ export function SettingField({
             {/*
               `지우기` 는 명시적으로 빈 문자열을 보내는 조작이다. `ai.api_key` 는 서버가 빈 값을
               거부하므로 버튼 자체를 렌더하지 않는다 — 보여주고 400 으로 실패시키는 것보다 낫다.
+              (리뷰 L4) 눌렀을 때 입력창의 값도 함께 지운다 — 안 지우면 비활성화된 입력창에
+              방금 타이핑한 문자가 그대로 남아, 실제로 보내는 값(빈 문자열)과 화면이 어긋난다.
             */}
             {!disabled && !cleared && spec.clearable && maskedValue && onClear && (
-              <Button type="button" variant="ghost" size="sm" onClick={onClear}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onClear();
+                  onChange('');
+                }}
+              >
                 지우기
               </Button>
             )}
           </div>
+          {/*
+            (리뷰 L5) 사용자가 우연히 `****`/`****last4` 형태의 값을 타이핑하면 `buildSettingsPayload`
+            가 서버 `isMaskSentinel` 과 같은 규칙으로 그 값을 조용히 드롭한다(마스크로 오인되지
+            않게 하려는 안전장치가, 여기서는 "왜 저장이 안 되는지 설명 없는 막다른 길"이 된다).
+            드롭 자체는 서버 동작과 일치하므로 유지하되, 이유를 알려준다.
+          */}
+          {!cleared && value !== '' && isMaskSentinel(value) && (
+            <p className="text-sm text-destructive">
+              이 값은 마스크 표시(****)와 형태가 같아 저장되지 않습니다. 다른 값을 입력하세요.
+            </p>
+          )}
         </div>
       ) : spec.kind === 'switch' ? (
         <Switch

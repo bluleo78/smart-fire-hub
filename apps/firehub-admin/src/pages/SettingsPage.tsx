@@ -155,6 +155,11 @@ export default function SettingsPage() {
     if (!form || !original) return;
     setConfirmOpen(false);
     const { payload } = buildSettingsPayload(form, original, cleared);
+    // 다이얼로그가 열려 있는 동안 백그라운드 refetch(재시딩)가 도착하면 form/original 이
+    // 되돌아가 payload 가 빈 채로 여기 도달할 수 있다. 빈 페이로드를 PUT 하면 서버는 아무것도
+    // 안 쓰고 204 를 주는데 saveMutation.onSuccess 가 "저장되었습니다" 를 띄운다 —
+    // "성공처럼 보이는 무동작" 이므로 handleSaveClick(:149)과 같은 형태로 여기서도 막는다.
+    if (Object.keys(payload).length === 0) return;
     saveMutation.mutate(payload);
   };
 
