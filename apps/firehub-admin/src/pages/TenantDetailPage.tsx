@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
+import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,6 +53,8 @@ export default function TenantDetailPage() {
   const tenantQuery = useQuery({
     queryKey: ['platform-tenant', tenantId],
     queryFn: () => tenantsApi.get(tenantId).then((r) => r.data),
+    // 403(테넌트 조회 권한 없음)은 재시도해도 결과가 같다 — membersQuery(:62)와 같은 근거(M-2).
+    retry: false,
   });
 
   const membersQuery = useQuery({
@@ -99,6 +102,20 @@ export default function TenantDetailPage() {
         <Skeleton className="h-9 w-64" />
         <Skeleton className="h-40 w-full" />
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  // 403 은 재시도해도 소용없는데 아래 포괄 분기(:126)로 흘리면 "다시 시도" 버튼을 주는
+  // 실패로 잘못 보인다(M-2). 같은 파일의 membersQuery(:212)는 이미 이 분기를 갖고 있었다 —
+  // 여기 없던 것은 태스크 간이 아니라 **파일 안** 불일치였다.
+  if (tenantQuery.isError && isForbidden(tenantQuery.error)) {
+    return (
+      <div className="space-y-4">
+        <PermissionDeniedBanner />
+        <Link to="/tenants" className="text-sm underline">
+          목록으로 돌아가기
+        </Link>
       </div>
     );
   }

@@ -139,6 +139,27 @@ test.describe('테넌트 상세', () => {
     await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
   });
 
+  test('테넌트 상세 조회 403 이면 다시 시도 버튼이 아니라 권한 배너를 보여준다(M-2)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 양성 대조군은 바로 아래 500 테스트다 — 같은 화면·같은 실패 위치에서 500 은
+    // "다시 시도" 버튼을 주고, 403 은 재시도해도 소용없으므로 권한 배너로 갈려야 한다.
+    const capture = await mockApi(page, 'GET', '/api/platform/tenants/1', {}, { status: 403, capture: true });
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+    await page.goto('/tenants/1');
+
+    await expect(
+      page.getByRole('status').filter({ hasText: '이 작업을 수행할 권한이 없습니다.' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '다시 시도' })).not.toBeVisible();
+
+    // retry:false 검증. 전역 기본값(retry:1, retryDelay 기본식 1000*2^0=1000ms)이 여전히
+    // 적용되면 403 이 ~1초 뒤 한 번 더 나간다 — 그 지연보다 넉넉히 기다려야 이 단언이 비지
+    // 않는다(500ms 는 재시도 지연보다 짧아 retry:false 유무와 무관하게 통과해 공허했다).
+    await page.waitForTimeout(1500);
+    expect(capture.requests.length).toBe(1);
+  });
+
   test('테넌트 상세 조회 500 은 "찾을 수 없습니다"가 아니라 실패 문구를 보여준다', async ({
     authenticatedPage: page,
   }) => {

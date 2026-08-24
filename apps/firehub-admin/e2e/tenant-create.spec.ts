@@ -1,6 +1,6 @@
 import { createPlatformUser, createTenant } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
-import { expect, test } from './fixtures/auth.fixture';
+import { expect, loginAs, test } from './fixtures/auth.fixture';
 
 test.describe('테넌트 생성', () => {
   test('폼과 도움말이 렌더된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
@@ -244,6 +244,44 @@ test.describe('테넌트 생성', () => {
     // 프런트가 문구를 다시 쓰지 않는다 — 서버가 유일한 판정자다.
     await expect(page.getByText('이미 사용 중인 slug 입니다: hanbit')).toBeVisible();
     await expect(page).toHaveURL('/tenants/new');
+  });
+
+  test('생성 권한이 없으면 폼 대신 권한 배너를 보여준다(M-1)', async ({ page }) => {
+    await loginAs(page, ['platform:tenant:read']);
+    const capture = await mockApi(page, 'POST', '/api/platform/tenants', createTenant(), { capture: true });
+    await page.goto('/tenants/new');
+
+    await expect(page.getByRole('heading', { name: '테넌트 생성' })).toBeVisible();
+    // role 까지 고정한다 — TenantListPage/SettingsPage 의 403 테스트와 같은 근거.
+    await expect(
+      page.getByRole('status').filter({ hasText: '이 작업을 수행할 권한이 없습니다.' }),
+    ).toBeVisible();
+    // 양성 대조군: 배너만 얹히고 폼은 여전히 그려지는 변이를 잡는다 — 폼 필드/제출 버튼이
+    // 실제로 없어야 한다.
+    await expect(page.getByLabel('이름')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: '테넌트 생성' })).not.toBeVisible();
+    expect(capture.requests.length).toBe(0);
+  });
+
+  test('제출 후 서버가 403 을 주면 일반 실패가 아니라 권한 메시지를 보여준다(M-1)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 라우트 게이트를 통과한 뒤(전 권한 보유) 서버가 그래도 403 을 주는 경합 상황을 대비한
+    // 심층방어 분기. 위 '기타 실패는 토스트로 알린다'(500) 테스트가 양성 대조군이다 —
+    // 같은 화면에서 500 은 일반 문구, 403 은 권한 문구여야 한다.
+    await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+    await mockApi(page, 'POST', '/api/platform/tenants', {}, { status: 403 });
+    await page.goto('/tenants/new');
+
+    await page.getByLabel('이름').fill('한빛소방서');
+    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('초기 Owner').fill('박소');
+    await page.waitForTimeout(400);
+    await page.getByRole('option', { name: /박소유/ }).click();
+    await page.getByRole('button', { name: '테넌트 생성' }).click();
+
+    await expect(page.getByText('이 작업을 수행할 권한이 없습니다.')).toBeVisible();
+    await expect(page.getByText('테넌트 생성에 실패했습니다.')).not.toBeVisible();
   });
 
   test('기타 실패는 토스트로 알린다', async ({ authenticatedPage: page }) => {
