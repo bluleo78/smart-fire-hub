@@ -12,7 +12,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "lint": "eslint .",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b --noEmit && tsc --noEmit -p tsconfig.e2e.json",
     "clean": "rm -rf dist",
     "preview": "vite preview"
   },
