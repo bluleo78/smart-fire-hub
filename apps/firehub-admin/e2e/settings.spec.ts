@@ -116,3 +116,158 @@ test.describe('플랫폼 설정 — 카탈로그와 상태', () => {
     await expect(page.getByText('마지막 변경: 2026-08-19 14:02')).toBeVisible();
   });
 });
+
+test.describe('플랫폼 설정 — 비밀값과 저장', () => {
+  test('비밀 필드는 빈 입력창 + 마스크 힌트로 그린다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+
+    // 마스크를 입력창 초기값으로 쓰지 않는다.
+    await expect(page.getByLabel('API 키')).toHaveValue('');
+    await expect(page.getByLabel('API 키')).toHaveAttribute('placeholder', '새 값을 입력하면 교체됩니다');
+    await expect(
+      page.getByText('현재 설정됨 · ****ab12 · 삭제할 수 없으며 교체만 가능합니다'),
+    ).toBeVisible();
+    // ai.api_key 는 서버가 빈 값을 거부하므로 지우기 버튼이 없다.
+    await expect(page.getByRole('button', { name: '지우기' })).toHaveCount(0);
+
+    // 값이 없는 비밀 키
+    await expect(page.getByText('설정되지 않음').first()).toBeVisible();
+  });
+
+  test('smtp.password 는 비밀이면서 테넌트 재정의 가능 배지를 함께 받는다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+    await page.getByRole('tab', { name: '이메일(SMTP)' }).click();
+
+    await expect(page.getByLabel('비밀번호', { exact: true })).toHaveValue('');
+    await expect(page.getByText('현재 설정됨 · ****cd34')).toBeVisible();
+    await expect(page.getByRole('button', { name: '지우기' })).toBeVisible();
+  });
+
+  test('변경이 없으면 저장 버튼이 비활성이다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+    await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+  });
+
+  test('저장 전 확인 다이얼로그가 변경 개수와 diff 를 보여준다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+
+    await page.getByLabel('최대 턴 수').fill('30');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByText('플랫폼 기본값 저장')).toBeVisible();
+    await expect(
+      dialog.getByText(
+        '1개 항목을 변경합니다. 이 값은 전 테넌트에 적용되며, 해당 항목을 재정의하지 않은 모든 워크스페이스가 즉시 영향을 받습니다.',
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByText('최대 턴 수')).toBeVisible();
+    await expect(dialog.getByText('20 → 30')).toBeVisible();
+  });
+
+  test('비밀 키의 이전/새 값은 다이얼로그에 절대 나오지 않는다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+    await page.getByRole('tab', { name: '이메일(SMTP)' }).click();
+
+    await page.getByLabel('비밀번호', { exact: true }).fill('n3wPassw0rd');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByText('값 변경됨')).toBeVisible();
+    await expect(dialog.getByText('n3wPassw0rd')).toHaveCount(0);
+    await expect(dialog.getByText('****cd34')).toHaveCount(0);
+  });
+
+  test('확인 후 변경된 키만 PUT 으로 나간다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    const capture = await mockApi(page, 'PUT', '/api/platform/settings', {}, { status: 204, capture: true });
+    await page.goto('/settings');
+
+    await page.getByLabel('최대 턴 수').fill('30');
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    // 미편집 키까지 보내면 그 키에 플랫폼 행이 새로 써져 테넌트 상속이 끊긴다.
+    expect(req.payload).toEqual({ 'ai.max_turns': '30' });
+    await expect(page.getByText('플랫폼 기본값이 저장되었습니다.')).toBeVisible();
+  });
+
+  test('STARTTLS 스위치는 리터럴 문자열을 보낸다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    const capture = await mockApi(page, 'PUT', '/api/platform/settings', {}, { status: 204, capture: true });
+    await page.goto('/settings');
+    await page.getByRole('tab', { name: '이메일(SMTP)' }).click();
+
+    await page.getByRole('switch').click();
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    // JSON boolean 이나 "on" 을 보내면 200 으로 저장되고 다운스트림에서 STARTTLS 가 조용히 꺼진다.
+    expect(req.payload).toEqual({ 'smtp.starttls': 'false' });
+  });
+
+  test('지우기는 빈 문자열을 명시적으로 보낸다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    const capture = await mockApi(page, 'PUT', '/api/platform/settings', {}, { status: 204, capture: true });
+    await page.goto('/settings');
+    await page.getByRole('tab', { name: '이메일(SMTP)' }).click();
+
+    await page.getByRole('button', { name: '지우기' }).click();
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toEqual({ 'smtp.password': '' });
+  });
+
+  test('검증 실패는 저장을 막고 필드 아래 문구를 띄운다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    const capture = await mockApi(page, 'PUT', '/api/platform/settings', {}, { status: 204, capture: true });
+    await page.goto('/settings');
+
+    await page.getByLabel('최대 턴 수').fill('51');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('1~50 사이의 정수를 입력하세요')).toBeVisible();
+    await expect(page.getByText('입력값을 확인하세요.')).toBeVisible();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    await page.waitForTimeout(300);
+    expect(capture.lastRequest()).toBeUndefined();
+  });
+
+  test('서버 400 메시지를 토스트에 그대로 싣는다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await mockApi(
+      page,
+      'PUT',
+      '/api/platform/settings',
+      { status: 400, error: 'Bad Request', message: 'OpenAI 임베딩 provider 에는 API 키가 필요합니다' },
+      { status: 400 },
+    );
+    await page.goto('/settings');
+
+    await page.getByLabel('최대 턴 수').fill('30');
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('OpenAI 임베딩 provider 에는 API 키가 필요합니다')).toBeVisible();
+  });
+
+  test('되돌리기는 편집을 원복한다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
+    await page.goto('/settings');
+
+    await page.getByLabel('최대 턴 수').fill('30');
+    await page.getByRole('button', { name: '되돌리기' }).click();
+
+    await expect(page.getByLabel('최대 턴 수')).toHaveValue('20');
+    await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+  });
+});

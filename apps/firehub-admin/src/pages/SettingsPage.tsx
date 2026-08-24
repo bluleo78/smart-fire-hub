@@ -1,5 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 
 import { settingsApi } from '@/api/settings';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
@@ -15,8 +17,11 @@ import { isForbidden } from '@/lib/http-errors';
 // `validateSettingValue` 는 여기서 import 하지 않는다 — 그것을 쓰는 `validateForm` 은
 // `@/lib/settings-form` 으로 옮겨졌다(react-refresh/only-export-components).
 import { ALL_SETTING_KEYS, SETTING_CATALOG, SETTINGS_TABS } from '@/lib/settings-catalog';
-import type { SettingResponse } from '@/types/platform';
+import { validateForm } from '@/lib/settings-form';
+import type { ErrorResponse, SettingResponse } from '@/types/platform';
 
+import { buildSettingsPayload, type SettingDiff } from './settings/build-payload';
+import { SaveConfirmDialog } from './settings/SaveConfirmDialog';
 import { SettingField } from './settings/SettingField';
 
 /**
@@ -64,6 +69,15 @@ export default function SettingsPage() {
    * 그래서 재초기화 신호를 <b>응답 객체의 정체성</b>에 건다 — 새 응답이 도착한 순간에만 세운다.
    */
   const [seededFrom, setSeededFrom] = useState<SettingResponse[] | null>(null);
+  /**
+   * `지우기` 표시된 비밀 키. 저장 시 빈 문자열로 나간다.
+   *
+   * <b>다른 Task 10 훅들과 달리 여기서 선언한다</b>: 바로 아래 재시딩 블록이 렌더 중
+   * `setCleared` 를 호출하는데, 그 블록이 파일에서 `setValue` 정의보다 앞에 있다(조기 반환보다는
+   * 위이므로 rules-of-hooks 는 지킨다). 다른 위치(설계 문서가 가리키는 `setValue` 뒤)에 두면
+   * 재시딩 블록이 아직 선언되지 않은 `setCleared` 를 참조해 TDZ `ReferenceError` 가 난다.
+   */
+  const [cleared, setCleared] = useState<Set<string>>(new Set());
 
   // 렌더 중 setState — 파생 상태를 즉시 반영하는 React 권장 패턴이다.
   if (data && data !== seededFrom) {
@@ -72,7 +86,7 @@ export default function SettingsPage() {
     setForm(next);
     setOriginal(next);
     setErrors({});
-    // Task 10 이 여기에 `setCleared(new Set());` 한 줄을 더한다.
+    setCleared(new Set());
   }
 
   const byKey = useMemo(
@@ -96,6 +110,64 @@ export default function SettingsPage() {
       return next;
     });
   };
+
+  const queryClient = useQueryClient();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingDiff, setPendingDiff] = useState<SettingDiff[]>([]);
+
+  const saveMutation = useMutation({
+    mutationFn: (payload: Record<string, string>) => settingsApi.update(payload),
+    onSuccess: () => {
+      toast.success('플랫폼 기본값이 저장되었습니다.');
+      // 폼을 여기서 손대지 않는다. Task 9 의 `seededFrom` 정체성 비교가 **새 응답이 도착한
+      // 순간** 폼·original·cleared·errors 를 한 번에 다시 세운다. 여기서 setForm(null) 이나
+      // setCleared(new Set()) 를 하면 refetch 가 오기 전 낡은 data 로 폼이 세워져 방금 저장한
+      // 값이 한 틱 되돌아간 것처럼 보인다.
+      void queryClient.invalidateQueries({ queryKey: ['platform-settings'] });
+    },
+    onError: (error) => {
+      // 400 은 서버 메시지를 그대로 싣는다 — 프런트가 재현할 수 없는 교차 검증이 있다
+      // (예: "OpenAI 임베딩 provider 에는 API 키가 필요합니다").
+      if (axios.isAxiosError(error) && error.response?.status === 400) {
+        const message = (error.response.data as ErrorResponse | undefined)?.message;
+        toast.error(message ?? '설정 저장에 실패했습니다.');
+        return;
+      }
+      toast.error('설정 저장에 실패했습니다.');
+    },
+  });
+
+  const handleSaveClick = () => {
+    if (!form || !original) return;
+    const found = validateForm(form, original);
+    if (Object.keys(found).length > 0) {
+      setErrors(found);
+      toast.error('입력값을 확인하세요.');
+      return;
+    }
+    const { diff } = buildSettingsPayload(form, original, cleared);
+    if (diff.length === 0) return;
+    setPendingDiff(diff);
+    setConfirmOpen(true);
+  };
+
+  const handleConfirmSave = () => {
+    if (!form || !original) return;
+    setConfirmOpen(false);
+    const { payload } = buildSettingsPayload(form, original, cleared);
+    saveMutation.mutate(payload);
+  };
+
+  const handleRevert = () => {
+    setForm(original);
+    setCleared(new Set());
+    setErrors({});
+  };
+
+  const { diff: currentDiff } = form && original
+    ? buildSettingsPayload(form, original, cleared)
+    : { diff: [] as SettingDiff[] };
+  const hasChanges = currentDiff.length > 0;
 
   if (isError && isForbidden(error)) {
     return (
@@ -172,6 +244,18 @@ export default function SettingsPage() {
                           byKey[key] === undefined &&
                           SETTING_CATALOG[key].builtinDefault !== undefined
                         }
+                        maskedValue={byKey[key]?.value ?? null}
+                        cleared={cleared.has(key)}
+                        onClear={
+                          SETTING_CATALOG[key].clearable
+                            ? () =>
+                                setCleared((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(key);
+                                  return next;
+                                })
+                            : undefined
+                        }
                       />
                     </div>
                   ))}
@@ -187,7 +271,23 @@ export default function SettingsPage() {
         })}
       </Tabs>
 
-      {/* 저장 버튼과 확인 다이얼로그는 Task 10 이 붙인다. */}
+      {canWrite && (
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={handleRevert} disabled={!hasChanges}>
+            되돌리기
+          </Button>
+          <Button onClick={handleSaveClick} disabled={!hasChanges || saveMutation.isPending}>
+            저장
+          </Button>
+        </div>
+      )}
+
+      <SaveConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        diff={pendingDiff}
+        onConfirm={handleConfirmSave}
+      />
     </div>
   );
 }
