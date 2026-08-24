@@ -19,27 +19,45 @@ export interface SettingSpec {
   /**
    * 빈 문자열 저장이 합법인가.
    *
-   * false 인 키는 7개다:
+   * false 인 키는 10개다:
    * - `ai.api_key` — 서버 `validateValues` 가 "API 키는 비어있을 수 없습니다" 로 거부한다.
    * - `ai.system_prompt` — 같은 이유("시스템 프롬프트는 비어있을 수 없습니다").
    * - `smtp.starttls` — 스위치라 값이 항상 `'true'`/`'false'` 둘 중 하나다. 비울 대상이 없다.
+   * - `embedding.model` · `embedding.base_url` — 서버 `validateEmbeddingConsistency` 가 페이로드에
+   *   키가 있으면 blank 를 거부한다(리뷰 M2).
    * - `ai.max_turns` · `ai.max_tokens` · `ai.session_max_tokens` · `ai.temperature` —
    *   서버가 이 네 키에 `Integer.parseInt` / `Double.parseDouble` 을 **무조건** 호출한다
-   *   (`SettingsService.validateValues`). 빈 문자열이 도달하면 `NumberFormatException` 으로
-   *   500 이 난다. 그래서 `지우기` 를 렌더하지 않고, 아래 `validate` 가 빈 값을 **거부**한다.
-   *
-   * 반대로 `smtp.port` 는 서버 switch 의 `default -> {}` 로 떨어지는 키다. 빈 값이 안전하므로
-   * 지울 수 있고, 그래서 allowEmpty=true 를 **명시**한다(숫자 키의 기본값은 반대다).
+   *   (`SettingsService.validateValues`). 빈 문자열이 도달하면 `NumberFormatException`
+   *   (`IllegalArgumentException` 의 서브클래스)이 `GlobalExceptionHandler.handleIllegalArgument`
+   *   를 거쳐 **400** 으로 거부된다(500 이 아니다) — 가드 자체는 옳지만, 서버가 던지는 영문 미번역
+   *   예외 문구보다 클라이언트가 먼저 막아 한국어 안내를 주는 편이 낫다. 그래서 `지우기` 를 렌더하지
+   *   않고, 아래 `validate` 가 빈 값을 **거부**한다.
+   * - `smtp.port` — **정정(리뷰 H2, 2026-08-24): 서버가 이 키도 검증한다.** 최초 조사가
+   *   `validateValues` 스위치에 `smtp.port` case 가 없는 것만 보고 "서버 미검증"이라 잘못 결론
+   *   냈다. 실제로는 별도 메서드 `SettingsService.validateSmtpPort`(710행)가 두 쓰기 경로
+   *   (테넌트 421행, 플랫폼 656행) 모두에서 호출되어 빈 값·비숫자·1~65535 범위 밖을
+   *   `IllegalArgumentException` 으로 거부한다. 그래서 이 키도 지울 수 없다.
    */
   clearable: boolean;
   /**
    * 값 경계 검증.
    *
-   * 원칙은 "서버 `validateValues` 와 같은 경계" 다 — 어긋나면 사용자가 이유 없이 막힌다.
-   * 다만 **의도적으로 서버보다 엄격한 키가 두 개** 있고, 이는 사실로 기록해 둔다:
-   * - `smtp.port` — 서버에 case 가 없다(`default -> {}`). 1~65535 는 클라이언트만의 규칙이다.
-   * - `ai.model` — 서버는 자유 문자열로 둔다. 3개 옵션 제한은 select 드롭다운만의 규칙이다.
-   * 나머지 키의 경계는 서버와 1:1 이어야 한다.
+   * 원칙은 "서버와 같은 경계" 다 — 어긋나면 사용자가 이유 없이 막히거나(더 엄격), 클라이언트를
+   * 지나 서버 예외 문구를 그대로 보게 된다(더 느슨).
+   *
+   * **의도적으로 서버보다 엄격한 키는 `ai.model` 하나뿐이다** — 서버는 자유 문자열로 두고
+   * 3개 옵션 제한은 select 드롭다운만의 규칙이다.
+   *
+   * `smtp.port` 는 예전에 "서버 미검증이라 클라이언트만 엄격"으로 여기 기재돼 있었으나
+   * **틀렸다(리뷰 H2 정정)**: `SettingsService.validateSmtpPort` 가 같은 1~65535 범위를
+   * 서버에서도 강제한다. 지금은 경계가 서버와 1:1 이다 — 목록에서 뺀다.
+   *
+   * `embedding.model`/`embedding.base_url` 은 **알려진 예외로 서버보다 느슨하다(리뷰 M2)**:
+   * 서버 `validateEmbeddingConsistency` 가 blank 를 거부하고 `base_url` 에 http(s) 스킴을
+   * 강제하며, `provider === 'OPENAI'` 일 때는 `base_url` 이 https 여야 한다는 **필드 간** 규칙까지
+   * 있다. 이 카탈로그의 `validate` 는 필드 하나만 보는 함수라 provider 값을 알 수 없어 그 조건부
+   * 규칙은 구현할 수 없다 — blank 거부와 http(s) 스킴 검사까지만 맞추고, provider 조건부 https
+   * 강제는 **의도적으로 클라이언트에 없다**(서버가 저장 시점에 400 으로 잡아준다).
    */
   validate?: (value: string) => string | undefined;
 }
@@ -50,16 +68,25 @@ const EMPTY_NUMBER_MESSAGE = '값을 비워 둘 수 없습니다. 숫자를 입�
 /**
  * 정수 검증 공통.
  *
- * `allowEmpty` 기본값이 **false** 인 이유: 서버가 `ai.max_turns`/`ai.max_tokens`/
- * `ai.session_max_tokens` 에 `Integer.parseInt` 를 무조건 부르므로 빈 값을 통과시키면
- * 클라이언트를 지나 서버에서 `NumberFormatException` 이 난다. 빈 값이 실제로 안전한 키
- * (`smtp.port` — 서버 case 없음)만 명시적으로 `true` 를 넘긴다.
+ * 빈 값은 전부 거부한다. `intRange` 를 쓰는 숫자 키 4개(`ai.max_turns`/`ai.max_tokens`/
+ * `ai.session_max_tokens`/`smtp.port`) 모두 서버가 값을 무조건 파싱한다 —
+ * `ai.*` 세 키는 `SettingsService.validateValues` 의 `Integer.parseInt`, `smtp.port` 는
+ * 별도 메서드 `validateSmtpPort`(리뷰 H2 정정: 이전에는 이 키만 서버 미검증이라 믿고
+ * 빈 값을 허용했으나, 실측 결과 서버가 여기도 검증한다). 빈 값이 실제로 안전한 숫자 키는
+ * 이 카탈로그에 하나도 없다.
+ *
+ * 형태 검증은 `Integer.parseInt` 와 같은 것만 통과시킨다(리뷰 H1 정정): 선행 부호(`+`/`-`)
+ * 다음 십진수 숫자만 허용하고, 공백·소수점·지수 표기는 전부 거부한다. `Number(value)` 를
+ * 바로 쓰면 `" 20 "`·`"20.0"`·`"1e3"` 를 모두 유효한 숫자로 통과시켜 서버보다 느슨해진다 —
+ * 서버는 이 넷을 전부 `NumberFormatException` 으로 거부하므로, 그 문자열이 클라이언트를
+ * 통과하면 사용자는 번역되지 않은 서버 예외 문구(`For input string: "20.0"`)를 그대로 본다.
  */
-function intRange(min: number, max: number, message: string, allowEmpty = false) {
+function intRange(min: number, max: number, message: string) {
   return (value: string): string | undefined => {
-    if (value.trim() === '') return allowEmpty ? undefined : EMPTY_NUMBER_MESSAGE;
+    if (value.trim() === '') return EMPTY_NUMBER_MESSAGE;
+    if (!/^[+-]?\d+$/.test(value)) return message;
     const n = Number(value);
-    if (!Number.isInteger(n) || n < min || n > max) return message;
+    if (n < min || n > max) return message;
     return undefined;
   };
 }
@@ -84,7 +111,8 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: '최대 턴 수',
     kind: 'number',
     secret: false,
-    // 서버가 parseInt 를 무조건 부른다 — 비우면 500 이므로 지우기를 렌더하지 않는다.
+    // 서버가 parseInt 를 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
+    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
     clearable: false,
     validate: intRange(1, 50, '1~50 사이의 정수를 입력하세요'),
   },
@@ -101,7 +129,8 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: 'Temperature',
     kind: 'number',
     secret: false,
-    // 서버가 parseDouble 을 무조건 부른다 — 비우면 500 이므로 지우기를 렌더하지 않는다.
+    // 서버가 parseDouble 을 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
+    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
     clearable: false,
     validate: (value) => {
       if (value.trim() === '') return EMPTY_NUMBER_MESSAGE;
@@ -115,7 +144,8 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: '최대 응답 토큰',
     kind: 'number',
     secret: false,
-    // 서버가 parseInt 를 무조건 부른다 — 비우면 500 이므로 지우기를 렌더하지 않는다.
+    // 서버가 parseInt 를 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
+    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
     clearable: false,
     validate: intRange(1, 65536, '1~65536 사이의 정수를 입력하세요'),
   },
@@ -125,7 +155,8 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     kind: 'number',
     builtinDefault: '50000',
     secret: false,
-    // 서버가 parseInt 를 무조건 부른다 — 비우면 500 이므로 지우기를 렌더하지 않는다.
+    // 서버가 parseInt 를 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
+    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
     clearable: false,
     validate: intRange(10000, 200000, '10,000~200,000 사이의 정수를 입력하세요'),
   },
@@ -166,10 +197,12 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: '포트',
     kind: 'number',
     secret: false,
-    // 서버 switch 의 default -> {} 로 떨어지는 키다. 빈 값이 안전하므로 지울 수 있고,
-    // 그래서 allowEmpty=true 를 **명시**한다(숫자 키의 기본값은 반대다).
-    clearable: true,
-    validate: intRange(1, 65535, '1~65535 사이의 정수를 입력하세요', true),
+    // 정정(리뷰 H2, 2026-08-24): 서버 SettingsService.validateSmtpPort(710행)가
+    // 두 쓰기 경로(테넌트 421행, 플랫폼 656행) 모두에서 이 키를 검증한다 — 빈 값·비숫자·
+    // 1~65535 범위 밖을 전부 거부한다. "서버 switch 에 case 없음"은 validateValues 스위치만
+    // 본 오판이었다. 서버가 지운 값을 거부하므로 클라이언트도 지울 수 없다.
+    clearable: false,
+    validate: intRange(1, 65535, '1~65535 사이의 정수를 입력하세요'),
   },
   'smtp.username': { key: 'smtp.username', label: '사용자 이름', kind: 'text', secret: false, clearable: true },
   'smtp.password': { key: 'smtp.password', label: '비밀번호', kind: 'secret', secret: true, clearable: true },
@@ -195,8 +228,31 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     secret: false,
     clearable: true,
   },
-  'embedding.model': { key: 'embedding.model', label: '모델', kind: 'text', secret: false, clearable: true },
-  'embedding.base_url': { key: 'embedding.base_url', label: '기본 URL', kind: 'text', secret: false, clearable: true },
+  'embedding.model': {
+    key: 'embedding.model',
+    label: '모델',
+    kind: 'text',
+    secret: false,
+    // 서버 validateEmbeddingConsistency 가 키가 페이로드에 있으면 blank 를 거부한다(리뷰 M2).
+    clearable: false,
+    validate: (value) => (value.trim() === '' ? '임베딩 모델은 비어있을 수 없습니다' : undefined),
+  },
+  'embedding.base_url': {
+    key: 'embedding.base_url',
+    label: '기본 URL',
+    kind: 'text',
+    secret: false,
+    // 서버 validateEmbeddingConsistency 가 blank 거부 + http(s) 스킴을 강제한다(리뷰 M2).
+    // provider 가 OPENAI 일 때만 https 를 강제하는 조건부 규칙은 필드 단일 validate 로 표현할
+    // 수 없어(provider 값을 모른다) 의도적으로 클라이언트에 없다 — 서버가 저장 시점에 400 으로 잡는다.
+    clearable: false,
+    validate: (value) => {
+      if (value.trim() === '') return '임베딩 Base URL 은 비어있을 수 없습니다';
+      if (!/^https?:\/\/.+/i.test(value))
+        return '임베딩 Base URL 은 http:// 또는 https:// 로 시작하는 올바른 주소여야 합니다';
+      return undefined;
+    },
+  },
   'embedding.api_key': {
     key: 'embedding.api_key',
     label: 'API 키',

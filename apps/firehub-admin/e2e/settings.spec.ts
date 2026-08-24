@@ -1,28 +1,9 @@
-import { createSetting } from './factories/platform.factory';
+// SEEDED_18 은 e2e/factories/platform.factory.ts 로 옮겼다(리뷰 L2) — 스펙 파일에서 export 하면
+// 다른 스펙이 import 하는 순간 Playwright 가 이 파일도 테스트 파일로 등록해 settings.spec.ts 의
+// 테스트가 함께 중복 실행된다.
+import { SEEDED_18 } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
-
-/** 서버 시드 18행. `ai.session_max_tokens` 는 **일부러 빠져 있다** — 어떤 마이그레이션도 시드하지 않는다. */
-export const SEEDED_18 = [
-  createSetting('ai.model', 'claude-sonnet-5', 'AI 에이전트 사용 모델'),
-  createSetting('ai.max_turns', '20', '최대 턴 수'),
-  createSetting('ai.system_prompt', '당신은 소방 데이터 분석가입니다.', '시스템 프롬프트'),
-  createSetting('ai.temperature', '0.7', '샘플링 온도'),
-  createSetting('ai.max_tokens', '8192', '최대 응답 토큰'),
-  createSetting('ai.api_key', '****ab12', 'Anthropic API Key'),
-  createSetting('ai.agent_type', 'cli', '에이전트 유형'),
-  createSetting('ai.cli_oauth_token', '', 'CLI OAuth 토큰'),
-  createSetting('smtp.host', 'smtp.example.com', 'SMTP 호스트'),
-  createSetting('smtp.port', '587', 'SMTP 포트'),
-  createSetting('smtp.username', 'mailer', 'SMTP 사용자'),
-  createSetting('smtp.password', '****cd34', 'SMTP 비밀번호'),
-  createSetting('smtp.starttls', 'true', 'STARTTLS 사용 여부'),
-  createSetting('smtp.from_address', 'no-reply@example.com', '보낸 사람 주소'),
-  createSetting('embedding.provider', 'OLLAMA', '임베딩 provider'),
-  createSetting('embedding.model', 'bge-m3', '임베딩 모델'),
-  createSetting('embedding.base_url', 'http://localhost:11434', '임베딩 base URL'),
-  createSetting('embedding.api_key', '', '임베딩 API Key'),
-];
 
 test.describe('플랫폼 설정 — 카탈로그와 상태', () => {
   test('탭 3개와 안내 배너가 나온다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
@@ -41,13 +22,28 @@ test.describe('플랫폼 설정 — 카탈로그와 상태', () => {
     await expect(page.getByRole('tab')).toHaveCount(3);
   });
 
-  test('배지 두 종류가 항상 붙는다', async ({ authenticatedPage: page }) => {
+  test('배지 두 종류가 항상 붙는다 — 19필드 전부(개수로 단언, 리뷰 L1)', async ({
+    authenticatedPage: page,
+  }) => {
     await mockApi(page, 'GET', '/api/platform/settings', SEEDED_18);
     await page.goto('/settings');
 
-    // ai.model = 테넌트 재정의 가능, ai.agent_type = 전역 고정
-    await expect(page.getByText('테넌트 재정의 가능').first()).toBeVisible();
-    await expect(page.getByText('전역 고정').first()).toBeVisible();
+    // .first() 두 번은 "존재한다"만 증명하고 "전부에 붙는다"는 증명하지 못한다 — 어느 필드가
+    // 배지를 빼먹어도 초록이다. 탭마다 (테넌트 재정의 가능 배지 수 + 전역 고정 배지 수)가
+    // 그 탭의 필드 수와 정확히 같은지 개수로 단언한다. AI 9 / SMTP 6 / 임베딩 4 = 19.
+    const tabFieldCounts: Record<string, number> = { 'AI 에이전트': 9, '이메일(SMTP)': 6, '임베딩': 4 };
+    let totalBadges = 0;
+    for (const [tabName, fieldCount] of Object.entries(tabFieldCounts)) {
+      await page.getByRole('tab', { name: tabName }).click();
+      const overridable = await page.getByText('테넌트 재정의 가능').count();
+      const fixed = await page.getByText('전역 고정').count();
+      expect(overridable + fixed).toBe(fieldCount);
+      totalBadges += overridable + fixed;
+    }
+    expect(totalBadges).toBe(19);
+
+    // 안내 문구도 여전히 확인한다 — 두 종류가 각기 다른 문구를 낸다는 대조군.
+    await page.getByRole('tab', { name: 'AI 에이전트' }).click();
     await expect(
       page
         .getByText(
