@@ -9,6 +9,7 @@ import { Toaster } from './components/ui/sonner';
 import { AuthProvider } from './hooks/AuthContext';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const TenantListPage = lazy(() => import('./pages/TenantListPage'));
 
 function PageSkeleton() {
   return (
@@ -17,11 +18,6 @@ function PageSkeleton() {
       <Skeleton className="h-96 w-full" />
     </div>
   );
-}
-
-/** Task 6 이 실 페이지로 교체한다. */
-function TenantListPlaceholder() {
-  return <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">테넌트</h1>;
 }
 
 /** Task 9 가 실 페이지로 교체한다. */
@@ -48,7 +44,14 @@ function App() {
             <Route element={<ProtectedRoute />}>
               <Route element={<AdminShell />}>
                 <Route path="/" element={<Navigate to="/tenants" replace />} />
-                <Route path="/tenants" element={<TenantListPlaceholder />} />
+                <Route
+                  path="/tenants"
+                  element={
+                    <Suspense fallback={<PageSkeleton />}>
+                      <TenantListPage />
+                    </Suspense>
+                  }
+                />
                 <Route path="/settings" element={<SettingsPlaceholder />} />
               </Route>
             </Route>
