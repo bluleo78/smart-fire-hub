@@ -141,4 +141,24 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
     assertThat(platformPermissions).isEqualTo(6);
     assertThat(grantedToSuperAdmin).isEqualTo(platformPermissions);
   }
+
+  @Test
+  @DisplayName("플랫폼 롤은 SUPER_ADMIN 하나뿐이다 — 두 번째 롤이 생기면 이 단언이 터진다")
+  void onlyOnePlatformRoleExists() {
+    // 이 단언은 PlatformUserController(platform:member:read 재사용 판단의 근거)와
+    // 정확히 짝을 이루는 트립와이어다. 그 컨트롤러 javadoc 은 "platform_role 이 SUPER_ADMIN
+    // 하나뿐이라 그 롤이 category='platform' 권한을 이미 전부 가지므로 platform:member:read
+    // 를 재사용해도 오늘은 아무것도 좁혀지지 않는다"고 근거를 대는데, 그 전제("하나뿐")를
+    // 지금까지 어떤 테스트도 직접 단언하지 않았다 — 위 두 테스트는 SUPER_ADMIN 행의 속성만
+    // 본다. 새 플랫폼 롤을 시드하는 마이그레이션이 들어오면 이 테스트가 실패해야 하고,
+    // 그 실패는 "PlatformUserController 를 열어 platform:member:read 재사용이 아직
+    // 유효한지 재검토하라 — 무효하면 새 롤 전용 권한(예: platform:user:read)을 신설하고
+    // V113 패턴(코드 명시 + ON CONFLICT DO NOTHING)을 따르라"는 신호다. 이 단언 자체를
+    // 지우거나 숫자만 올려서 통과시키는 것은 트립와이어를 해체하는 것이므로 금지 — 재검토
+    // 후 컨트롤러의 권한 결정을 실제로 바꾼 뒤에만 이 값을 갱신한다.
+    Integer platformRoleCount =
+        dsl.fetchOne("select count(*) from platform_role").get(0, Integer.class);
+
+    assertThat(platformRoleCount).isEqualTo(1);
+  }
 }
