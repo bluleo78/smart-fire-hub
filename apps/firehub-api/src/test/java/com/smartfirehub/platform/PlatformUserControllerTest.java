@@ -1,6 +1,9 @@
 package com.smartfirehub.platform;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -195,6 +198,72 @@ class PlatformUserControllerTest extends IntegrationTestBase {
     List<Long> ids =
         objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
     assertThat(ids).doesNotContain(delta);
+  }
+
+  @Test
+  void excludesInactiveUsers() throws Exception {
+    // 대조군(활성)과 실험군(비활성)을 같은 marker 로 심는다. 대조군이 잡혀야 "marker 검색 자체가
+    // 결과를 낸다"가 고정되고, 그래야 실험군 부재가 "필터가 걸렀다"인지 "애초에 아무것도 안
+    // 잡혔다"인지 구별된다.
+    long active = createUser(marker + "-golf", false);
+    long inactive = createUser(marker + "-hotel", false);
+    dsl.update(table(name("user")))
+        .set(field(name("is_active"), Boolean.class), false)
+        .where(field(name("id"), Long.class).eq(inactive))
+        .execute();
+
+    String body =
+        mockMvc
+            .perform(get("/api/platform/users").param("q", marker)
+                .header("Authorization", "Bearer " + operatorToken))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    List<Long> ids =
+        objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
+    assertThat(ids).contains(active).doesNotContain(inactive);
+  }
+
+  @Test
+  void exactEmailMatchSortsFirstThenAlphabetical() throws Exception {
+    // id 오름차순(삽입 순)으로는 [userZ, userY, userExact] 가 나온다. 이메일 정확일치 우선 +
+    // 이메일 오름차순 정렬이라면 [userExact, userY, userZ] 여야 한다 — 두 정렬 규칙이 서로 다른
+    // 답을 내도록 일부러 정확일치 대상을 가장 나중에(가장 큰 id 로) 심는다.
+    long userZ = createUser(marker + "-userz", false);
+    long userY = createUser(marker + "-usery", false);
+    long userExact = createUser(marker + "-userexact", false);
+
+    String q = marker + "@search.example";
+    // 셋 다 이메일에 q 를 부분문자열로 포함시켜 같은 검색어로 모두 잡히게 하되, userExact 만
+    // q 와 완전히 같게 해서 "정확일치" 조건을 인위적으로 만든다. "aaa-"/"zzz-" 접두사로 알파벳
+    // tie-break 도 같이 고정한다(rank 가 같은 둘 중 "aaa-" 가 먼저 와야 한다).
+    dsl.update(table(name("user")))
+        .set(field(name("email"), String.class), "zzz-" + q)
+        .where(field(name("id"), Long.class).eq(userZ))
+        .execute();
+    dsl.update(table(name("user")))
+        .set(field(name("email"), String.class), "aaa-" + q)
+        .where(field(name("id"), Long.class).eq(userY))
+        .execute();
+    dsl.update(table(name("user")))
+        .set(field(name("email"), String.class), q)
+        .where(field(name("id"), Long.class).eq(userExact))
+        .execute();
+
+    String body =
+        mockMvc
+            .perform(get("/api/platform/users").param("q", q)
+                .header("Authorization", "Bearer " + operatorToken))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    List<Long> ids =
+        objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
+    assertThat(ids).containsExactly(userExact, userY, userZ);
   }
 
   @Test
