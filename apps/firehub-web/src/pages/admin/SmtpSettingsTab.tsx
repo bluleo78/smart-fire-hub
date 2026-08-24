@@ -11,18 +11,21 @@ import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Switch } from '../../components/ui/switch';
 import { useTestSmtpSettings } from '../../hooks/queries/useProactiveMessages';
-import { indexSettingsByKey, resolveSettingFieldState } from '../../lib/settings-fields';
+import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
+import type { SettingFieldState } from '../../lib/settings-fields';
 import type { ResolvedSettingResponse } from '../../types/settings';
 import { ClearOverrideButton, SettingFieldLabel, SettingStateBadge } from './settings-lock';
 
-interface SmtpForm {
+// `interface` 가 아니라 `type` 인 이유는 `AISettingsForm` 과 같다 — 훅의 제약을 만족시키는
+// 암묵적 인덱스 시그니처는 타입 별칭에만 붙는다. keyof 는 그대로 6개 리터럴이다.
+type SmtpForm = {
   'smtp.host': string;
   'smtp.port': string;
   'smtp.username': string;
   'smtp.password': string;
   'smtp.starttls': string;
   'smtp.from_address': string;
-}
+};
 
 // 조회 전 초기값. starttls 만 'true' 인 이유: Switch 는 빈 문자열을 표현할 수 없어 조회 전에도
 // 켜짐/꺼짐 중 하나를 그려야 하고, 플랫폼 기본값이 켜짐이다.
@@ -63,7 +66,7 @@ const FIELD_LABELS: Record<keyof SmtpForm, string> = {
  * <b>`smtp.port` 를 넣지 않는 이유</b>: 비운 채 저장하면 위 거부 경로로 가는 것이 맞다. 범위 검증은
  * `validate()` 가 따로 담당한다.
  */
-const BLANK_ALLOWED_KEYS: (keyof SmtpForm)[] = ['smtp.username', 'smtp.password'];
+const BLANK_ALLOWED_KEYS: ReadonlySet<keyof SmtpForm> = new Set(['smtp.username', 'smtp.password']);
 
 /**
  * SMTP <b>연결 번들</b> 5키 — 백엔드 `SettingsService.SMTP_CONNECTION_KEYS` 와 같은 집합이다.
@@ -85,6 +88,47 @@ const SMTP_CONNECTION_KEYS: (keyof SmtpForm)[] = [
   'smtp.password',
   'smtp.starttls',
 ];
+
+/**
+ * 연결 번들의 그룹 상태. 해석이 번들 단위인데 배지가 필드 단위면 배지가 거짓말을 한다 —
+ * 호스트가 재정의된 상태에서 `비밀번호` 옆의 `기본값 사용 중` 은 "그 플랫폼 비밀번호는 쓰이지
+ * 않는다"는 사실과 정면으로 어긋난다.
+ *
+ * <b>`locked` 가 하나라도 섞이면 그룹 전체가 `locked` 다(fail-closed).</b> `SettingsOverridePolicy`
+ * 가 6키를 함께 열었으므로 오늘 이 조합은 오지 않지만, 서버가 5키 중 일부만
+ * `tenantEditable=false` 로 내려주는 모순 상태에서 나머지 4키를 편집 가능하게 그리면 사용자가
+ * 저장할 수 없는 폼을 채우게 된다. 모호하면 잠그는 쪽이다.
+ *
+ * <b>`overridden` 판정은 서버 플래그만 읽는다.</b> 서버가 번들 재정의 상태에서 5키 전부를
+ * `overridden=true` + 행 없는 키는 `value=''` 로 내려주므로("이 키는 테넌트 평면에서 해석된다"가
+ * 플래그의 뜻이다), 화면이 값의 빈 여부로 상태를 다시 추론할 일이 없다. 서버가 단일 권위여야
+ * web 이 파생을 틀려도 거짓말이 나가지 않는다.
+ *
+ * <b>모듈 레벨 순수 함수인 이유</b>: 훅의 `resolveState` 로 넘기려면 컴포넌트 밖에 있어야 하고,
+ * 밖에 있으면 렌더마다 새 참조가 되지도 않는다. 이 파일 밖으로는 내보내지 않는다 —
+ * 컴포넌트 파일에서 값을 export 하면 `react-refresh/only-export-components` 가 붙는다.
+ */
+function resolveConnectionGroupState(
+  fieldState: (key: keyof SmtpForm) => SettingFieldState,
+): 'locked' | 'overridden' | 'inherited' {
+  if (SMTP_CONNECTION_KEYS.some((key) => fieldState(key) === 'locked')) return 'locked';
+  if (SMTP_CONNECTION_KEYS.some((key) => fieldState(key) === 'overridden')) return 'overridden';
+  return 'inherited';
+}
+
+/**
+ * 훅에 넘기는 상태 치환기 — 연결 5키는 그룹 상태, 나머지는 개별 상태다.
+ * 배지·disabled·저장 대상·dirty 가 <b>모두</b> 이 하나를 거친다. 두 갈래를 호출부마다 다시
+ * 조합하면 "화면은 잠갔는데 저장은 보낸다" 같은 어긋남이 생긴다.
+ */
+function resolveSmtpState(
+  key: keyof SmtpForm,
+  fieldState: (k: keyof SmtpForm) => SettingFieldState,
+): SettingFieldState {
+  return SMTP_CONNECTION_KEYS.includes(key)
+    ? resolveConnectionGroupState(fieldState)
+    : fieldState(key);
+}
 
 // 포트 범위는 백엔드 `SettingsService.validateSmtpPort`(1~65535)와 반드시 같아야 한다 —
 // 어긋나면 한쪽이 통과시킨 값을 다른 쪽이 거부해 "저장했는데 400" 또는 그 반대가 된다.
@@ -153,14 +197,7 @@ export default function SmtpSettingsTab({
 }) {
   const testMutation = useTestSmtpSettings();
 
-  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-  const [form, setForm] = useState<SmtpForm>(EMPTY);
-  const [original, setOriginal] = useState<SmtpForm>(EMPTY);
-  // 서버 응답을 키로 인덱싱해 보관한다 — 배지 상태(overridden/tenantEditable)의 근거.
-  const [settings, setSettings] = useState<Record<string, ResolvedSettingResponse>>({});
-  const [errors, setErrors] = useState<Partial<Record<keyof SmtpForm, string>>>({});
   /**
    * <b>"지금 화면이 서버 상태와 다를 수 있다"</b>를 알리는 지속 안내. 토스트로 끝내지 않는 이유:
    * 둘 다 사용자가 다시 조작해야 하는 상태인데 토스트는 사라지고 스크린리더 사용자가 놓칠 수
@@ -168,58 +205,55 @@ export default function SmtpSettingsTab({
    */
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
 
+  // 안내를 지우는 자리를 한 곳으로 묶는다 — 화면이 실제로 새로워진 그 지점(훅의 메타 갱신
+  // 직후)에서만 지운다. 호출부마다 지우면 하나를 빠뜨리는데, 실제로 빠뜨렸다: 예전에는
+  // `handleClearOverride` 와 최초 조회가 안 지워서 "새로고침하세요" 가 성공적인 단일 키 해제 +
+  // 재조회 뒤에도 살아남았다. 조건이 사라진 뒤에도 남는 안내는 "화면이 조용히 거짓말한다"의
+  // 또 다른 판본이다.
+  const clearStaleNotice = useCallback(() => setStaleNotice(null), []);
+
   /**
-   * 최초 조회 실패. <b>폼을 그리지 않기 위해</b> 별도 상태로 둔다(#code-review Major 2).
+   * 이 탭의 <b>필드 단위</b> 폼 상태 기계 — AI 탭(`SettingsPage`)과 같은 훅이다.
    *
-   * 실패를 토스트로만 알리면 `settings={}` · `form=EMPTY` 인 채로 화면이 그려지는데, 그러면 모든
-   * 키가 `no-default` 로 판정돼 연결 그룹이 `inherited` 가 되고 5필드가 <b>편집 가능한 빈 칸</b>으로
-   * 보인다 — "아직 아무것도 설정되지 않았다"와 시각적으로 구별되지 않는다. 거기서 호스트를 입력해
-   * 저장하면 호스트만 든 번들 오버라이드가 만들어지고, 서버는 그 테넌트의 사용자 이름·비밀번호·
-   * 포트를 <b>전부 빈 값으로</b> 해석하게 된다. 조회 실패가 파괴적 저장을 부르는 경로다.
+   * <b>번들(연결 5키) 개념은 훅에 없다.</b> 훅이 여는 유일한 구멍이 `resolveState` 이고, 거기에
+   * `resolveSmtpState` 를 끼워 "연결 5키는 그룹 상태로 판정"을 얹는다. 그룹 배지·그룹 해제
+   * 버튼·번들 전환 재시드·낡음 안내·연결 테스트 안내는 전부 이 파일에 남아 훅의 반환값
+   * <b>위에 얹히는 레이어</b>가 된다.
+   *
+   * <b>`loadFailed` 로 무엇을 할지도 이 파일이 정한다.</b> 훅은 보고만 한다. AI 탭은 toast 만
+   * 띄우고 폴백 값으로 렌더하지만 이 탭은 폼 자체를 그리지 않는다(아래 종단 화면) — 여기에는
+   * 서버가 마스킹해 내려주는 비밀번호가 있어 "빈 폼"이 곧 자격증명 덮어쓰기이기 때문이다.
    */
-  const [loadError, setLoadError] = useState(false);
-
-  const fetchSettings = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const { data } = await settingsApi.getByPrefix('smtp');
-      const byKey = indexSettingsByKey(data);
-      const values = { ...EMPTY };
-      (Object.keys(values) as (keyof SmtpForm)[]).forEach((key) => {
-        values[key] = byKey[key]?.value ?? EMPTY[key];
-      });
-      setSettings(byKey);
-      setForm(values);
-      setOriginal(values);
-      setLoadError(false);
-      setStaleNotice(null);
-    } catch {
-      // 폼을 그리지 않는다 — 이유는 loadError 선언부 참고(빈 편집 가능 폼이 파괴적 저장을 부른다).
-      setLoadError(true);
-      toast.error('설정을 불러오는데 실패했습니다.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
-
-  // 배지 상태만 다시 읽는다 — 폼 값은 건드리지 않으므로 입력 중인 내용이 사라지지 않는다.
-  // 실패를 여기서 삼키지 않는 이유: 재정의 해제는 이 조회로 결과를 확정하므로, 삼키면 해제가
-  // "성공처럼 보이는 무동작"이 된다. 삼킴 여부는 호출부가 정한다.
-  const refreshMeta = useCallback(async () => {
-    const { data } = await settingsApi.getByPrefix('smtp');
-    const byKey = indexSettingsByKey(data);
-    setSettings(byKey);
-    // **화면이 실제로 새로워진 그 지점에서** 낡음 안내를 지운다. 호출부마다 지우면 하나를
-    // 빠뜨리는데, 실제로 빠뜨렸다 — `handleClearOverride` 와 `fetchSettings` 가 안 지워서
-    // "새로고침하세요" 가 성공적인 단일 키 해제 + 재조회 뒤에도 살아남았다. 조건이 사라진 뒤에도
-    // 남는 안내는 이 커밋들이 없애려던 "화면이 조용히 거짓말한다"의 또 다른 판본이다.
-    setStaleNotice(null);
-    return byKey;
-  }, []);
+  const {
+    isLoading,
+    loadFailed,
+    isClearing,
+    setIsClearing,
+    settings,
+    form,
+    setForm,
+    original,
+    setOriginal,
+    errors,
+    setErrors,
+    fieldState,
+    effectiveState,
+    isEditable,
+    hasChanges,
+    updateField,
+    handleReset,
+    handleClearOverride,
+    buildChangedPayload,
+    commitSaved,
+    refreshMeta,
+    retryInitialLoad,
+  } = useSettingsOverrideForm<SmtpForm>({
+    prefix: 'smtp',
+    defaults: EMPTY,
+    blankAllowed: BLANK_ALLOWED_KEYS,
+    resolveState: resolveSmtpState,
+    onMetaRefreshed: clearStaleNotice,
+  });
 
   /**
    * 연결 5키의 폼 값을 <b>서버 해석</b>으로 다시 시드하는 updater 를 만든다.
@@ -236,40 +270,9 @@ export default function SmtpSettingsTab({
     return next;
   };
 
-  // 필드 상태 판정 — 서버 응답 1건에서 나온다.
-  const fieldState = (key: keyof SmtpForm) => resolveSettingFieldState(key, settings[key]);
-
-  /**
-   * 연결 번들의 그룹 상태. 해석이 번들 단위인데 배지가 필드 단위면 배지가 거짓말을 한다 —
-   * 호스트가 재정의된 상태에서 `비밀번호` 옆의 `기본값 사용 중` 은 "그 플랫폼 비밀번호는 쓰이지
-   * 않는다"는 사실과 정면으로 어긋난다.
-   *
-   * <b>`locked` 가 하나라도 섞이면 그룹 전체가 `locked` 다(fail-closed).</b> `SettingsOverridePolicy`
-   * 가 6키를 함께 열었으므로 오늘 이 조합은 오지 않지만, 서버가 5키 중 일부만
-   * `tenantEditable=false` 로 내려주는 모순 상태에서 나머지 4키를 편집 가능하게 그리면 사용자가
-   * 저장할 수 없는 폼을 채우게 된다. 모호하면 잠그는 쪽이다.
-   *
-   * <b>`overridden` 판정은 서버 플래그만 읽는다.</b> 서버가 번들 재정의 상태에서 5키 전부를
-   * `overridden=true` + 행 없는 키는 `value=''` 로 내려주므로("이 키는 테넌트 평면에서 해석된다"가
-   * 플래그의 뜻이다), 화면이 값의 빈 여부로 상태를 다시 추론할 일이 없다. 서버가 단일 권위여야
-   * web 이 파생을 틀려도 거짓말이 나가지 않는다.
-   */
-  const connectionGroupState: 'locked' | 'overridden' | 'inherited' = SMTP_CONNECTION_KEYS.some(
-    (key) => fieldState(key) === 'locked',
-  )
-    ? 'locked'
-    : SMTP_CONNECTION_KEYS.some((key) => fieldState(key) === 'overridden')
-      ? 'overridden'
-      : 'inherited';
-
-  /**
-   * 배지·disabled·저장 대상·dirty 가 <b>모두</b> 이 한 곳을 거친다 — 연결 5키는 그룹 상태,
-   * 나머지는 개별 상태다. 두 갈래를 호출부마다 다시 조합하면 "화면은 잠갔는데 저장은 보낸다" 같은
-   * 어긋남이 생긴다.
-   */
-  const effectiveState = (key: keyof SmtpForm) =>
-    SMTP_CONNECTION_KEYS.includes(key) ? connectionGroupState : fieldState(key);
-  const isEditable = (key: keyof SmtpForm) => effectiveState(key) !== 'locked';
+  // 그룹 배지·그룹 해제 버튼·그룹 설명문이 읽는 값. 훅에 `resolveState` 로 넘긴 것과 <b>같은</b>
+  // 함수를 쓴다 — 표시용 그룹 상태와 저장/dirty 를 지배하는 그룹 상태가 갈라질 자리를 없앤다.
+  const connectionGroupState = resolveConnectionGroupState(fieldState);
 
   /**
    * 번들이 재정의됐는데 이 키에는 테넌트 행이 없어 <b>빈 값으로 해석되는</b> 상태.
@@ -296,17 +299,6 @@ export default function SmtpSettingsTab({
   const bundleTransitionPending =
     connectionGroupState === 'inherited' &&
     SMTP_CONNECTION_KEYS.some((key) => form[key] !== original[key]);
-
-  const updateField = (key: keyof SmtpForm, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-    if (errors[key]) {
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-    }
-  };
 
   /**
    * 입력값 규칙 검증. 지금은 포트 범위 하나뿐이다.
@@ -337,21 +329,9 @@ export default function SmtpSettingsTab({
       return;
     }
 
-    // 페이로드는 <b>이번에 바꾼 키만</b> 담는다. 6키를 전부 보내면 사용자가 호스트 하나를 고쳐도
-    // 나머지 5키가 같은 값으로 tenant_settings 에 기록되어 상속이 조용히 끊긴다 — 그 뒤로는
-    // 플랫폼이 기본값을 바꿔도 이 테넌트에는 영원히 전파되지 않는다.
-    // 저장 대상 판정의 권위는 서버 플래그(fieldState)다 — web 상수로 거르면 표시와 저장이 갈라진다.
-    const settingsToSave: Record<string, string> = {};
-    const droppedChangedKeys: (keyof SmtpForm)[] = [];
-    (Object.keys(form) as (keyof SmtpForm)[]).forEach((key) => {
-      if (effectiveState(key) === 'locked') return;
-      if (form[key] === original[key]) return;
-      if (form[key].trim() !== '' || BLANK_ALLOWED_KEYS.includes(key)) {
-        settingsToSave[key] = form[key];
-      } else {
-        droppedChangedKeys.push(key);
-      }
-    });
+    // 페이로드 조립(잠긴 키 제외·미편집 키 제외·빈 값 거부 목록)은 훅이 한다 — 이 규칙이
+    // AI 탭과 갈라지면 한쪽만 고치는 사고가 난다.
+    const { payload, droppedChangedKeys } = buildChangedPayload();
     if (droppedChangedKeys.length > 0) {
       const names = droppedChangedKeys.map((key) => FIELD_LABELS[key]).join(', ');
       // 탈출구 안내는 **지금 화면에 실제로 있는 것**을 가리켜야 한다. "재정의 해제"는 그 필드가
@@ -373,8 +353,8 @@ export default function SmtpSettingsTab({
 
     setIsSaving(true);
     try {
-      await settingsApi.update({ settings: settingsToSave });
-      setOriginal({ ...form });
+      await settingsApi.update({ settings: payload });
+      commitSaved();
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
       refreshMeta()
@@ -411,32 +391,6 @@ export default function SmtpSettingsTab({
       toast.error('설정 저장에 실패했습니다.');
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  /**
-   * 재정의 해제 — DELETE 후 해당 키 하나만 서버 값으로 되돌린다.
-   * 전체 폼을 다시 시드하지 않는 이유: 다른 필드에 입력 중이던 미저장 변경을 조용히 날려버린다.
-   */
-  const handleClearOverride = async (key: string) => {
-    const formKey = key as keyof SmtpForm;
-    setIsClearing(true);
-    try {
-      await settingsApi.clearOverride(key);
-      const byKey = await refreshMeta();
-      const restored = byKey[key]?.value ?? EMPTY[formKey];
-      setForm((prev) => ({ ...prev, [formKey]: restored }));
-      setOriginal((prev) => ({ ...prev, [formKey]: restored }));
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[formKey];
-        return next;
-      });
-      toast.success('플랫폼 기본값으로 되돌렸습니다.');
-    } catch {
-      toast.error('재정의 해제에 실패했습니다.');
-    } finally {
-      setIsClearing(false);
     }
   };
 
@@ -502,16 +456,6 @@ export default function SmtpSettingsTab({
     !SMTP_CONNECTION_KEYS.includes(key) && fieldState(key) === 'overridden' ? (
       <ClearOverrideButton onConfirm={() => handleClearOverride(key)} disabled={isClearing} />
     ) : undefined;
-
-  const handleReset = () => {
-    setForm({ ...original });
-    setErrors({});
-  };
-
-  // dirty 판정도 저장 대상과 같은 기준을 쓴다 — 서버가 잠갔다고 한 키는 세지 않는다.
-  const hasChanges = (Object.keys(form) as (keyof SmtpForm)[]).some(
-    (key) => effectiveState(key) !== 'locked' && form[key] !== original[key],
-  );
 
   // 이탈 가드(이슈 #86)에 dirty 를 보고한다. <b>언마운트 시 반드시 해제한다</b> — 탭을 바꾸면
   // Radix 가 이 컴포넌트를 언마운트해 편집 내용도 함께 사라지는데, 합산기에 남은 true 를 지우지
@@ -581,13 +525,13 @@ export default function SmtpSettingsTab({
   }
 
   // 조회 실패는 **종단 상태**다. 편집 가능한 빈 폼 대신 원인과 재시도만 보여준다.
-  if (loadError) {
+  if (loadFailed) {
     return (
       <div className="space-y-4 py-8 text-center">
         <p className="text-sm text-muted-foreground">
           SMTP 설정을 불러오지 못했습니다. 지금 적용 중인 값을 확인할 수 없어 편집을 열지 않습니다.
         </p>
-        <Button variant="outline" onClick={fetchSettings}>
+        <Button variant="outline" onClick={retryInitialLoad}>
           <RotateCcw className="h-4 w-4" />
           다시 시도
         </Button>

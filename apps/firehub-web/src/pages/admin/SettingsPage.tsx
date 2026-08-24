@@ -17,16 +17,12 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
+import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
 import {
   useDirtyAggregator,
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
-import {
-  BUILTIN_AI_DEFAULTS,
-  indexSettingsByKey,
-  resolveSettingFieldState,
-} from '../../lib/settings-fields';
-import type { ResolvedSettingResponse } from '../../types/settings';
+import { BUILTIN_AI_DEFAULTS } from '../../lib/settings-fields';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import {
   ClearOverrideButton,
@@ -50,9 +46,15 @@ const MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
 ];
 
-// 인덱스 시그니처(`[key: string]: string`)를 두지 않는다 — keyof 가 string|number 로 넓어져
-// 키를 설정 키 문자열로 다루는 곳마다 타입이 무너진다. 폼 키는 이 9개로 닫혀 있다.
-interface AISettingsForm {
+// 인덱스 시그니처(`[key: string]: string`)를 <b>명시하지 않는다</b> — 명시하면 keyof 가
+// string|number 로 넓어져 키를 설정 키 문자열로 다루는 곳마다 타입이 무너진다. 폼 키는 이 9개로
+// 닫혀 있다.
+//
+// `interface` 가 아니라 `type` 인 이유: `useSettingsOverrideForm<F extends SettingsFormShape>` 의
+// 제약(`Record<string, string>`)은 <b>암묵적</b> 인덱스 시그니처로 만족되는데, TS 는 그것을
+// 타입 별칭에만 준다(interface 는 선언 병합으로 나중에 넓어질 수 있어 주지 않는다).
+// keyof 는 그대로 9개 리터럴이므로 위 문단의 성질은 유지된다.
+type AISettingsForm = {
   'ai.api_key': string;
   'ai.cli_oauth_token': string;
   'ai.agent_type': string;
@@ -62,7 +64,7 @@ interface AISettingsForm {
   'ai.temperature': string;
   'ai.max_tokens': string;
   'ai.session_max_tokens': string;
-}
+};
 
 // 조회 전 초기값은 전부 빈 문자열이다. 조회 후에는 "서버 값 → 코드 기본값(BUILTIN_AI_DEFAULTS)
 // → 빈 문자열" 순으로 채운다. 코드 기본값까지 보여주는 이유는 그 값이 실제로 적용되고 있기
@@ -77,6 +79,17 @@ const EMPTY_VALUES: AISettingsForm = {
   'ai.temperature': '',
   'ai.max_tokens': '',
   'ai.session_max_tokens': '',
+};
+
+/**
+ * 훅에 넘기는 시드 폴백 한 벌. 예전 코드의 `byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? ''`
+ * <b>두 단 폴백을 미리 합쳐</b> 훅의 한 단(`?? defaults[key]`)으로 만든다.
+ *
+ * 모듈 레벨 상수여야 한다 — 훅 계약이 그렇게 요구한다(인라인 객체는 렌더마다 새 참조).
+ */
+const AI_DEFAULTS: AISettingsForm = {
+  ...EMPTY_VALUES,
+  'ai.session_max_tokens': BUILTIN_AI_DEFAULTS['ai.session_max_tokens'] ?? '',
 };
 
 // 필드의 화면 표시 이름 — 저장이 거부된 필드를 이름으로 지목하는 데 쓴다.
@@ -120,16 +133,32 @@ const FIELD_LABELS: Record<keyof AISettingsForm, string> = {
 };
 
 export default function SettingsPage() {
-  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [form, setForm] = useState<AISettingsForm>(EMPTY_VALUES);
-  const [original, setOriginal] = useState<AISettingsForm>(EMPTY_VALUES);
-  // 서버 응답을 키로 인덱싱해 보관한다 — 배지 상태(overridden/tenantEditable)와 description 폴백의 근거.
-  const [settings, setSettings] = useState<Record<string, ResolvedSettingResponse>>({});
-  const [errors, setErrors] = useState<Partial<Record<keyof AISettingsForm, string>>>({});
-  const [isClearing, setIsClearing] = useState(false);
   const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+
+  /**
+   * AI 탭의 폼 상태 기계 — 이메일 탭과 <b>같은 훅</b>을 쓴다. 조회 실패 시 이 탭은 종단 화면을
+   * 만들지 않고 toast 만으로 알린 뒤 폴백 값으로 렌더한다(비대칭은 의도된 것이다: 이 탭에는
+   * 서버가 마스킹해 내려주는 자격증명 필드가 없어 "빈 폼"이 덮어쓰기를 부르지 않는다).
+   */
+  const {
+    isLoading,
+    settings,
+    form,
+    errors,
+    setErrors,
+    isClearing,
+    fieldState,
+    isEditable,
+    hasChanges,
+    updateField,
+    handleReset,
+    handleClearOverride,
+    buildChangedPayload,
+    commitSaved,
+    refreshMeta,
+  } = useSettingsOverrideForm<AISettingsForm>({ prefix: 'ai', defaults: AI_DEFAULTS });
 
   const verifyAuth = useCallback(async () => {
     setIsVerifying(true);
@@ -142,62 +171,6 @@ export default function SettingsPage() {
       setIsVerifying(false);
     }
   }, []);
-
-  const fetchSettings = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const { data } = await settingsApi.getByPrefix('ai');
-      const byKey = indexSettingsByKey(data);
-      // 서버 값 → 코드 기본값 → 빈 문자열 순으로 채운다. null 폴백을 반드시 거치므로
-      // "null"/"undefined" 문자열이 입력창에 렌더되는 일은 없다.
-      const values = { ...EMPTY_VALUES };
-      (Object.keys(values) as (keyof AISettingsForm)[]).forEach((key) => {
-        values[key] = byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? '';
-      });
-      setSettings(byKey);
-      setForm(values);
-      setOriginal(values);
-    } catch {
-      toast.error('설정을 불러오는데 실패했습니다.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
-
-  // 배지 상태(overridden)만 다시 읽고 인덱싱된 맵을 돌려준다 — 폼 값은 건드리지 않으므로
-  // 입력 중인 내용이 사라지지 않는다. 반환값이 있는 이유: handleClearOverride 가 삭제 직후
-  // 플랫폼 값을 알아야 하는데, 그 조회를 여기서 또 손으로 재구현하면 세 번째 사본이 된다.
-  //
-  // 실패를 여기서 삼키지 않는다. handleSave 는 배지 갱신 실패를 무시해도 되지만(다음 진입 때
-  // 다시 읽힌다) handleClearOverride 는 그렇지 않다 — 삼키면 해제가 조용한 무동작이 되어
-  // 이 밴드가 두 번 고친 "성공처럼 보이는 무동작"이 되살아난다. 그래서 삼킴은 호출부에 둔다.
-  const refreshMeta = useCallback(async () => {
-    const { data } = await settingsApi.getByPrefix('ai');
-    const byKey = indexSettingsByKey(data);
-    setSettings(byKey);
-    return byKey;
-  }, []);
-
-  // 필드 상태 판정 — 배지·disabled·검증·저장 대상이 모두 이 한 곳을 거쳐 서로 어긋나지 않게 한다.
-  const fieldState = (key: keyof AISettingsForm) => resolveSettingFieldState(key, settings[key]);
-
-  // 입력 가능 여부도 서버 플래그 하나로 판정한다 — 배지·disabled·저장·dirty 가 전부 fieldState
-  // 한 곳을 지난다.
-  //
-  // 예전에는 여기에 `&& isTenantEditableAiKey(key)` 가 붙어 있었다. 저장 페이로드가 web 상수로
-  // 구동되던 시절에는 그 conjunct 가 "입력은 되는데 저장이 무시된다"를 막는 fail-closed 였지만,
-  // 페이로드가 fieldState 로 옮겨간 뒤에는 막을 대상이 사라졌고 오히려 **배지와 입력이 서로 다른
-  // 말을 하게** 만든다: 서버가 어떤 키를 열어 주면 배지는 "기본값 사용 중"인데 입력창은 영구히
-  // 비활성이고 이유를 알려 주는 안내문도 없다.
-  //
-  // 안전한 이유: tenantEditable 플래그와 쓰기 검증이 **둘 다 백엔드 SettingsOverridePolicy 한
-  // 곳에서 나온다.** 플래그가 열려 있다고 말하면 그 키의 저장은 실제로 통과한다 — 플래그가
-  // 쓰기 규칙보다 앞서 갈 수 없는 구조라, 서버를 믿는 것이 곧 fail-closed 다.
-  const isEditable = (key: keyof AISettingsForm) => fieldState(key) !== 'locked';
 
   // isBlankAllowed 는 제거했다. DB 행도 코드 기본값도 없는 'no-default' 상태에서만 참이 되는데,
   // AI 8키는 V15/V69 에서 전부 non-null 로 시드돼 있고 유일하게 시드가 없는
@@ -245,47 +218,13 @@ export default function SettingsPage() {
       return;
     }
 
-    // 페이로드는 테넌트 편집 허용 6키 중 <b>실제로 바뀐 키만</b> 담는다. 잠긴 키를 보내면 서버가
-    // 키 이름을 명시해 400 을 던지므로 "저장은 되는데 서버가 거부"가 아니라 "거부될 필드는 시도조차
-    // 하지 않는다"로 만든다.
+    // 페이로드 조립(잠긴 키 제외·미편집 키 제외·빈 값 거부 목록)은 훅이 한다 — 이 규칙이
+    // 이메일 탭과 갈라지면 한쪽만 고치는 사고가 난다.
     //
-    // 바뀐 키만 보내는 것이 이 화면의 핵심이다. 6키를 전부 보내면 사용자가 temperature 하나를
-    // 고쳐도 나머지 5키가 같은 값으로 tenant_settings 에 기록되어 <b>상속이 조용히 끊긴다</b> —
-    // 그 뒤로는 플랫폼이 기본값을 바꿔도 이 테넌트에는 영원히 전파되지 않는다. 2단 상속을 만드는
-    // 밴드의 UI 가 정작 상속을 없애는 셈이어서, 편집하지 않은 키는 보내지 않는다.
-    //
-    // 값이 빈 키도 제외한다 — 빈 문자열 오버라이드 행은 "재정의 없음"과 다른 상태이고,
-    // 상속으로 되돌리는 조작은 재정의 해제(DELETE)가 담당한다.
-    //
-    // 저장 대상 판정의 권위도 <b>서버 플래그</b>다. 예전에는 이 루프가 web 의
-    // TENANT_EDITABLE_AI_KEYS 상수를 돌았는데, 그러면 표시는 서버가 구동하고 저장은 web 사본이
-    // 구동해 둘이 갈라진다 — 백엔드 정책에 7번째 키를 추가하고 Java 만 고치면, 화면은 그 필드를
-    // 편집 가능하게 보여주면서 저장 페이로드에서는 조용히 빼버린다. 이 밴드가 이미 두 번 고친
-    // "성공처럼 보이는 무동작"이 그대로 재도입된다. 그래서 폼이 아는 키 전부를 돌면서
-    // fieldState 로 거른다 — 상수는 "응답에 아예 없는 키"의 폴백 판정에만 남는다.
-    const settingsToSave: Record<string, string> = {};
-    const droppedChangedKeys: (keyof AISettingsForm)[] = [];
-    (Object.keys(form) as (keyof AISettingsForm)[]).forEach((key) => {
-      if (fieldState(key) === 'locked') {
-        // 서버가 잠금이라 한 키는 보내지 않는다 — 보내면 서버가 키 이름을 명시해 400 을 던진다.
-        return;
-      }
-      if (form[key] === original[key]) {
-        // 손대지 않은 키 — 상속 중이면 상속을 유지하고, 이미 재정의 중이면 그 값이 그대로 남는다.
-        return;
-      }
-      if (form[key].trim() !== '') {
-        settingsToSave[key] = form[key];
-      } else {
-        // 사용자가 방금 비운 키다. 그냥 빼고 저장하면 "저장했다"고 말하면서 아무것도 쓰지 않고,
-        // dirty 플래그까지 지워 저장 버튼이 회색이 된다 — 사용자는 반영된 줄 알고 화면을 떠나는데
-        // 옛 오버라이드가 그대로 적용된다. 그래서 제외 자체를 오류로 만든다.
-        droppedChangedKeys.push(key);
-      }
-    });
-    // 왜 validate() 와 별도인가: validate() 는 "입력값이 규칙에 맞는가"를 보고, 이 검사는
-    // "만든 페이로드가 사용자가 방금 한 편집을 실제로 담고 있는가"를 본다. 검증 규칙이 나중에 완화되어도
-    // 이 대조는 계속 성립해야 하므로 페이로드를 만든 뒤 한 번 더 확인한다. 앞의 규칙이 바뀌어도 이 대조는 계속 성립한다.
+    // 왜 validate() 와 별도인가: validate() 는 "입력값이 규칙에 맞는가"를 보고, 아래 검사는
+    // "만든 페이로드가 사용자가 방금 한 편집을 실제로 담고 있는가"를 본다. 검증 규칙이 나중에
+    // 완화되어도 이 대조는 계속 성립해야 하므로 페이로드를 만든 뒤 한 번 더 확인한다.
+    const { payload, droppedChangedKeys } = buildChangedPayload();
     if (droppedChangedKeys.length > 0) {
       const names = droppedChangedKeys.map((key) => FIELD_LABELS[key]).join(', ');
       toast.error(
@@ -296,8 +235,8 @@ export default function SettingsPage() {
 
     setIsSaving(true);
     try {
-      await settingsApi.update({ settings: settingsToSave });
-      setOriginal({ ...form });
+      await settingsApi.update({ settings: payload });
+      commitSaved();
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
       refreshMeta().catch(() => undefined);
@@ -309,50 +248,11 @@ export default function SettingsPage() {
     }
   };
 
-  /**
-   * 재정의 해제 — DELETE 후 해당 키 하나만 서버 값으로 되돌린다.
-   * 전체 폼을 다시 시드하지 않는 이유: 다른 필드에 입력 중이던 미저장 변경을 조용히 날려버린다.
-   */
-  const handleClearOverride = async (key: string) => {
-    const formKey = key as keyof AISettingsForm;
-    setIsClearing(true);
-    try {
-      await settingsApi.clearOverride(key);
-      const byKey = await refreshMeta();
-      // 해제 후 값도 조회와 같은 폴백을 거친다 — 코드 기본값이 있는 키를 빈칸으로 만들면
-      // 실제 적용값(예: 50000)과 화면이 어긋난다.
-      const restored = byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? '';
-      setForm((prev) => ({ ...prev, [formKey]: restored }));
-      setOriginal((prev) => ({ ...prev, [formKey]: restored }));
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[formKey];
-        return next;
-      });
-      toast.success('플랫폼 기본값으로 되돌렸습니다.');
-    } catch {
-      toast.error('재정의 해제에 실패했습니다.');
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
   // 재정의 중인 필드에만 해제 버튼을 붙인다 — 상속 중인 필드에는 지울 오버라이드가 없다.
   const clearAction = (key: keyof AISettingsForm) =>
     fieldState(key) === 'overridden' ? (
       <ClearOverrideButton onConfirm={() => handleClearOverride(key)} disabled={isClearing} />
     ) : undefined;
-
-  const handleReset = () => {
-    setForm({ ...original });
-    setErrors({});
-  };
-
-  // dirty 판정도 저장 대상과 같은 기준을 쓴다 — 서버가 잠갔다고 한 키는 세지 않는다.
-  // 두 기준이 갈리면 "저장 버튼은 활성인데 보낼 것이 없다"(또는 그 반대)가 생긴다.
-  const hasChanges = (Object.keys(form) as (keyof AISettingsForm)[]).some(
-    (key) => fieldState(key) !== 'locked' && form[key] !== original[key],
-  );
 
   // 탭별 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다 (이슈 #86).
   // P7-c1 로 이메일 탭이 다시 편집 가능해져 보고자가 둘(AI·이메일)이 됐다. 임베딩 탭은 여전히
@@ -364,17 +264,6 @@ export default function SettingsPage() {
     aiReporter(hasChanges);
   }, [aiReporter, hasChanges]);
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(isAnyDirty);
-
-  const updateField = (key: keyof AISettingsForm, value: string) => {
-    setForm(prev => ({ ...prev, [key]: value }));
-    if (errors[key]) {
-      setErrors(prev => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-    }
-  };
 
   if (isLoading) {
     return (
