@@ -29,7 +29,7 @@ app:
   encryption:
     master-key: ${ENCRYPTION_MASTER_KEY:bG9jYWwtZGV2LW1hc3Rlci1rZXktZm9yLWVuY3J5cHQ=}
   cors:
-    allowed-origins: http://localhost:5173,http://localhost:5020
+    allowed-origins: http://localhost:5173,http://localhost:5020,http://localhost:5050
   pipeline:
     datasource:
       url: jdbc:postgresql://localhost:5432/smartfirehub

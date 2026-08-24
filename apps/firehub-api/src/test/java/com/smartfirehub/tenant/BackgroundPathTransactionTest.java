@@ -203,7 +203,13 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           // ⚠ 이 리포지토리에 RLS 테이블 조회를 추가하려면 이 항목을 지우고 클래스 레벨
           // @Transactional 을 붙여야 한다. 운영자 요청은 테넌트 컨텍스트가 비어 있어 GUC 가
           // 심기지 않으므로, RLS 테이블을 읽으면 예외 없이 조용히 0행이 된다.
-          "PlatformTenantRepository");
+          "PlatformTenantRepository",
+          // 운영자 평면 사용자 검색(P7-c2a Task 5). "user" 하나만 만지고 그 테이블은 tenant_id
+          // 컬럼도 RLS 정책도 없는 전역 테이블이다(V1 이후 변경 없음) — 로그인이 테넌트 결정
+          // 이전에 사용자를 찾아야 하고 한 사람이 여러 테넌트에 속할 수 있어야 하기 때문이다.
+          // role/user_role(RLS) 은 절대 조인하지 않는다 — 조인하면 이 항목을 지우고 클래스 레벨
+          // @Transactional 을 붙여야 한다.
+          "PlatformUserRepository");
 
   /**
    * RLS 테이블을 만지지만 <b>모든 호출자가 트랜잭션 안에서 호출하는</b> 리포지토리. (C)-2
