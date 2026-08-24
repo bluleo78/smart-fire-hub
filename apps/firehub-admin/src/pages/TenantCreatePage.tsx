@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
@@ -27,6 +27,7 @@ import type { ErrorResponse, PlatformUserResponse } from '@/types/platform';
  */
 export default function TenantCreatePage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   // `owner` 는 **표시 전용** 상태다(픽커가 이름·이메일을 그리는 데 필요). 검증에 쓰이는 값은
   // 폼 필드 `ownerUserId` 이고, 그 판정자는 zod 하나다.
   const [owner, setOwner] = useState<PlatformUserResponse | null>(null);
@@ -60,6 +61,13 @@ export default function TenantCreatePage() {
     mutationFn: (data: CreateTenantFormData) => tenantsApi.create(data).then((r) => r.data),
     onSuccess: (tenant) => {
       toast.success('테넌트가 생성되었습니다.');
+      // 전역 staleTime(30_000)이 있어 무효화 없이 목록으로 돌아가면 방금 만든 테넌트가
+      // 최대 30초간 안 보인다 — 운영자는 생성이 실패했다고 오판해 중복 생성을 시도할 수 있다.
+      // TenantDetailPage 의 정지/활성화 무효화와 같은 대상(`platform-tenants`)을 쓴다.
+      // `platform-tenant`(상세, id 별)는 무효화하지 않는다 — 방금 만든 id 는 캐시에
+      // 존재한 적이 없는 새 쿼리 키라 무효화할 대상이 없다(정지/활성화는 이미 캐시된
+      // 기존 상세를 갱신하는 경우라 다르다).
+      void queryClient.invalidateQueries({ queryKey: ['platform-tenants'] });
       navigate(`/tenants/${tenant.id}`, { replace: true });
     },
     onError: (error) => {

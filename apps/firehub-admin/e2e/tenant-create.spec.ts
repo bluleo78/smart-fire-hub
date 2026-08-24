@@ -132,6 +132,76 @@ test.describe('테넌트 생성', () => {
     await expect(page.getByText('검색 결과가 없습니다.')).not.toBeVisible();
   });
 
+  test('생성 후 목록으로 돌아가면 새 테넌트가 즉시 보인다(캐시 무효화)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록 응답이 생성 전후로 달라야 이 단언이 공허하지 않다 — 항상 같은 목록을 주면
+    // 무효화가 있든 없든 통과해 버린다. 1회차는 새 테넌트가 없는 목록, 2회차부터는
+    // 있는 목록을 준다. 무효화가 없으면 staleTime(30_000) 때문에 재조회가 안 일어나
+    // 1회차 응답이 그대로 남아 이 테스트가 빨개진다.
+    const beforeList = [createTenant({ id: 1, name: '기존테넌트', slug: 'existing' })];
+    const afterList = [
+      ...beforeList,
+      createTenant({ id: 7, name: '한빛소방서', slug: 'hanbit' }),
+    ];
+    let listCallCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/platform/tenants',
+      (route) => {
+        if (route.request().method() !== 'GET') {
+          return route.fallback();
+        }
+        listCallCount += 1;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(listCallCount === 1 ? beforeList : afterList),
+        });
+      },
+    );
+    await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+    await mockApi(
+      page,
+      'POST',
+      '/api/platform/tenants',
+      createTenant({ id: 7, name: '한빛소방서', slug: 'hanbit' }),
+      { status: 201 },
+    );
+    await mockApi(
+      page,
+      'GET',
+      '/api/platform/tenants/7',
+      createTenant({ id: 7, name: '한빛소방서', slug: 'hanbit' }),
+    );
+    await mockApi(page, 'GET', '/api/platform/tenants/7/members', []);
+
+    // 먼저 목록을 방문해 1회차(기존 테넌트만 있는) 응답을 캐시에 채운다.
+    // 이후 이동은 반드시 앱 내부 링크/버튼 클릭이어야 한다 — `page.goto()` 로 경로를 바꾸면
+    // 브라우저가 실제로 다시 로드되어(SPA 클라이언트 라우팅이 아니라 서버 왕복) QueryClient
+    // 인메모리 캐시가 통째로 사라진다. 그러면 무효화가 있든 없든 재방문 시 무조건 새로
+    // 조회하게 되어 이 테스트가 아무것도 증명하지 못한다.
+    await page.goto('/tenants');
+    await expect(page.getByRole('cell', { name: '기존테넌트', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '한빛소방서', exact: true })).not.toBeVisible();
+
+    await page.getByRole('link', { name: '테넌트 생성' }).click();
+    // 지연 로딩된 페이지가 완전히 마운트되기 전에 입력하면 react-hook-form 의 register
+    // ref 가 아직 붙지 않은 엔드포인트에 값을 채우는 꼴이 되어 조용히 빈 채로 남는다
+    // (실측: heading 대기 없이 곧장 fill 하면 제출 시 이름·slug 가 비어 있었다).
+    await expect(page.getByRole('heading', { name: '테넌트 생성' })).toBeVisible();
+    await page.getByLabel('이름').fill('한빛소방서');
+    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('초기 Owner').fill('박소');
+    await page.waitForTimeout(400);
+    await page.getByRole('option', { name: /박소유/ }).click();
+    await page.getByRole('button', { name: '테넌트 생성' }).click();
+    await expect(page).toHaveURL('/tenants/7');
+
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await expect(page).toHaveURL('/tenants');
+    await expect(page.getByRole('cell', { name: '한빛소방서', exact: true })).toBeVisible();
+  });
+
   test('생성에 성공하면 상세로 이동하고 토스트를 띄운다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
     const created = createTenant({ id: 7, name: '한빛소방서', slug: 'hanbit' });
