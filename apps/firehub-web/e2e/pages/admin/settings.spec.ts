@@ -1379,30 +1379,77 @@ test.describe('설정 페이지', () => {
       }
     });
 
-    test('이메일 탭을 떠난 뒤에는 유령 이탈 다이얼로그가 뜨지 않는다', async ({
+    test('이메일 탭이 clean 상태면 탭을 옮긴 뒤 떠나도 이탈 다이얼로그가 뜨지 않는다', async ({
       authenticatedPage: page,
     }) => {
-      // Radix TabsContent 는 비활성 탭을 언마운트한다 — 폼 state 를 소유한 SMTP 탭이 사라지면서
-      // 편집 내용도 함께 사라지는데, 합산기에 남은 dirty=true 를 지우지 않으면 **존재하지 않는
-      // 변경** 때문에 이탈 다이얼로그가 뜬다. 이 테스트가 고정하는 것은 그 유령 다이얼로그의
-      // 부재뿐이다.
+      // **이 테스트는 재작성판이다.** 예전 판은 이메일 탭에 편집을 남긴 채 탭을 옮겨 다이얼로그
+      // 부재를 단언했고, 자기 주석에 "누군가 편집 유실을 고치더라도 이 단언은 계속 참이어야
+      // 한다 — 빨개진다면 고치는 쪽이 아니라 이 테스트를 다시 볼 것"이라는 탈출구를 남겼다.
+      // #390-2b 가 그 유실을 고쳤고, 지금 그 탈출구를 쓴다.
       //
-      // **편집 유실 자체는 이 테스트가 옳다고 말하는 것이 아니다.** 탭을 바꾸면 SMTP 미저장
-      // 편집이 경고 없이 사라지는데(AI 탭은 폼 state 를 SettingsPage 가 소유해 살아남는다 —
-      // 비대칭이다), 그 손실은 P7-c1 이 이메일 탭을 편집 가능하게 열면서 처음 생긴 경로이고
-      // 후속 과제다. 누군가 그 손실을 고치더라도 이 단언(유령 다이얼로그 부재)은 계속 참이어야
-      // 한다 — 빨개진다면 고치는 쪽이 아니라 이 테스트를 다시 볼 것.
+      // 왜 예전 판이 틀렸나: 그 시나리오는 진짜 불변식("이탈 다이얼로그는 실제 미저장 변경이
+      // 있을 때에만 뜬다")과 당시 결함("탭 전환이 편집을 죽인다")이 **우연히 같은 결과를 내서**
+      // 둘을 구별하지 못했다. 편집이 살아남는 지금 거기서 뜨는 다이얼로그는 유령이 아니라
+      // 정확한 경고다(바로 아래 테스트가 그것을 단언한다).
+      //
+      // 그래서 이 판은 이메일 탭을 **진짜로 clean** 하게 만든 뒤 같은 불변식만 고정한다 —
+      // 변경 전후 모두 참인 단언이다.
       await setupSettingsMocks(page);
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+
+      // **양성 대조군**: 이 화면에서 dirty 가 실제로 관측 가능하다는 것을 같은 테스트 안에서
+      // 증명한다. 이것이 없으면 아래 부재 단언은 "이 탭은 애초에 아무것도 못 한다"로도 통과한다.
       await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+      // 되돌리기로 진짜 clean 하게 만든다.
+      //
+      // 선택자 근거(실측): `createResolvedSetting` 의 기본값이 `overridden: false`,
+      // `tenantEditable: true` 이고 `createSmtpSettings()` 는 6키 전부 그 기본값을 쓴다
+      // (`e2e/factories/admin.factory.ts`). 따라서 이 픽스처에서는 그룹 배지가 `inherited` 라
+      // 그룹 해제 버튼도, 발신자 주소의 개별 해제 버튼도 렌더되지 않는다 — `ClearOverrideButton`
+      // 의 확인 다이얼로그 액션도 같은 문자열('되돌리기')을 쓰지만 그 버튼 자체가 없다.
+      // 즉 '되돌리기' 이름을 가진 보이는 버튼은 리셋 하나뿐이라 strict mode 위반이 없다.
+      await page.getByRole('button', { name: '되돌리기' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
 
       await page.getByRole('tab', { name: 'AI 에이전트' }).click();
       await expect(page.locator('#ai-max-turns')).toHaveValue('10');
 
       await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      // 이탈이 실제로 일어났음을 먼저 고정한다 — 다이얼로그가 막아 세운 경우와
+      // "아무 데도 안 갔는데 다이얼로그도 없다"를 구별하는 것이 이 순서다.
       await expect(page).toHaveURL(/\/$/);
       await expect(page.getByRole('alertdialog')).toBeHidden();
+    });
+
+    test('이메일 탭의 미저장 편집은 다른 탭으로 옮긴 뒤에도 이탈 가드에 잡힌다', async ({
+      authenticatedPage: page,
+    }) => {
+      // #390-2b 로 상태가 **실제로 살아 있다는 유일한 증거**다. 폼 state 가 탭 언마운트로
+      // 사라지면(또는 dirty 보고자가 언마운트 클린업으로 false 를 쏘면) 이 다이얼로그가 뜨지
+      // 않는다 — 그때 결함은 유실에서 **경고 누락**으로 모습만 바꾼 것이다.
+      await setupSettingsMocks(page);
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+      await page.getByRole('tab', { name: 'AI 에이전트' }).click();
+      await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+      // AI 탭은 손대지 않았다 — 여기서 뜨는 다이얼로그의 원인이 이메일 탭임을 고정한다.
+      // 이 단언이 없으면 AI 탭이 어쩌다 dirty 여도 테스트가 통과해 무엇을 증명하는지 흐려진다.
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      expect(new URL(page.url()).pathname).toBe('/admin/settings');
     });
 
     test('변경 없는(clean) 상태에서는 메뉴 이동이 정상적으로 즉시 이루어진다', async ({
