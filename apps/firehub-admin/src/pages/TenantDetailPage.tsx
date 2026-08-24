@@ -30,9 +30,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateTimeMinute } from '@/lib/formatters';
-import { isForbidden } from '@/lib/http-errors';
+import { isForbidden, isNotFound } from '@/lib/http-errors';
 
 /**
  * 테넌트 상세.
@@ -102,13 +103,32 @@ export default function TenantDetailPage() {
     );
   }
 
-  if (tenantQuery.isError || !tenantQuery.data) {
+  // 404("없음")와 그 외 실패(500·네트워크 등, "불러오지 못함")를 구별한다 — 뭉뚱그리면
+  // 일시적 장애가 영구적인 "존재하지 않음"으로 보여 운영자를 오도한다.
+  if (tenantQuery.isError && isNotFound(tenantQuery.error)) {
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">테넌트를 찾을 수 없습니다.</p>
         <Link to="/tenants" className="text-sm underline">
           목록으로 돌아가기
         </Link>
+      </div>
+    );
+  }
+
+  if (tenantQuery.isError || !tenantQuery.data) {
+    return (
+      <div className="space-y-4">
+        {/* TenantListPage 의 조회 실패 문구와 같은 어휘를 쓴다. */}
+        <p className="text-sm text-muted-foreground">데이터를 불러오는데 실패했습니다.</p>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => void tenantQuery.refetch()}>
+            다시 시도
+          </Button>
+          <Link to="/tenants" className="text-sm underline">
+            목록으로 돌아가기
+          </Link>
+        </div>
       </div>
     );
   }
@@ -192,6 +212,19 @@ export default function TenantDetailPage() {
           {membersQuery.isError && isForbidden(membersQuery.error) ? (
             // 기본 정보는 그대로 두고 멤버 카드만 바꾼다 — 나머지 화면을 날릴 이유가 없다.
             <InlineBanner variant="info">멤버를 조회할 권한이 없습니다.</InlineBanner>
+          ) : membersQuery.isError ? (
+            // 403 이 아닌 실패(500·네트워크 등)를 "멤버 0명"으로 보여주면 안 된다 — 못 불러온
+            // 것과 실제로 없는 것은 다르다. TenantListPage 조회 실패 문구와 같은 어휘를 쓴다.
+            <InlineBanner
+              variant="caution"
+              actions={
+                <Button variant="outline" size="sm" onClick={() => void membersQuery.refetch()}>
+                  다시 시도
+                </Button>
+              }
+            >
+              데이터를 불러오는데 실패했습니다.
+            </InlineBanner>
           ) : (
             <>
               <p className="text-sm text-muted-foreground">
@@ -208,7 +241,10 @@ export default function TenantDetailPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {membersQuery.data && membersQuery.data.length > 0 ? (
+                    {membersQuery.isLoading ? (
+                      // 로딩 중을 "0명"으로 보여주지 않는다 — 위 에러 분기와 같은 이유다.
+                      <TableSkeletonRows columns={4} rows={3} />
+                    ) : membersQuery.data && membersQuery.data.length > 0 ? (
                       membersQuery.data.map((m) => (
                         <TableRow key={m.userId}>
                           <TableCell className="font-medium" title={`userId: ${m.userId}`}>

@@ -12,3 +12,16 @@ export function isForbidden(error: unknown): boolean {
     (error as { response?: { status?: number } }).response?.status === 403
   );
 }
+
+/**
+ * axios 에러가 404 인지 판정한다. "존재하지 않음"과 "불러오지 못함(500/네트워크)"을 구별하는
+ * 화면(예: 테넌트 상세)에서 쓴다 — 둘을 뭉뚱그리면 일시적 장애를 영구적인 "없음"으로 보여준다.
+ */
+export function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    (error as { response?: { status?: number } }).response?.status === 404
+  );
+}
