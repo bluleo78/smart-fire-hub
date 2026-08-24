@@ -152,29 +152,59 @@ class PlatformUserControllerTest extends IntegrationTestBase {
   @Test
   void escapesLikeWildcards() throws Exception {
     // '%' 를 이스케이프하지 않으면 이 검색어가 전 사용자를 긁는다.
-    long delta = createUser(marker + "-delta", false);
-
     mockMvc
         .perform(get("/api/platform/users").param("q", "%")
             .header("Authorization", "Bearer " + operatorToken))
         // 2자 미만이라 하한에서 먼저 걸린다.
         .andExpect(status().isBadRequest());
 
-    String body =
+    long delta = createUser(marker + "-delta", false);
+
+    // 리터럴 대조군: 쿼리 자체는 정상 동작해서 delta 를 찾는다는 것을 먼저 확인한다.
+    String literalBody =
         mockMvc
-            .perform(get("/api/platform/users").param("q", "%%")
+            .perform(get("/api/platform/users").param("q", marker + "-delta")
                 .header("Authorization", "Bearer " + operatorToken))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
             .getContentAsString();
+    List<Long> literalIds =
+        objectMapper.readTree(literalBody).findValuesAsText("id").stream()
+            .map(Long::valueOf)
+            .toList();
+    assertThat(literalIds).contains(delta);
 
-    // 결과가 0건이라고 단언하지 않는다 — 공유 test DB 에 이름/이메일에 리터럴 '%' 가 든 행이
-    // 있으면 간헐 실패한다. 검증하고 싶은 성질은 "이스케이프가 동작한다" 이므로, 방금 만든
-    // 사용자가 '%%' 검색에 걸리지 **않는지**만 본다(이스케이프가 없으면 반드시 걸린다).
+    // 본검증: '_' 는 LIKE 에서 임의의 한 글자와 매치되는 와일드카드다. 이스케이프가 없으면
+    // "<marker>-delt_" 가 "<marker>-delta" 의 밑줄 자리에 'a' 를 매치시켜 delta 를 잡는다.
+    // 이스케이프가 있으면 리터럴 밑줄을 요구하므로 아무도 안 잡혀야 한다.
+    //
+    // ORDER BY … LIMIT 20 이 증거를 가릴 수 없는 이유: marker 가 나노초로 유일해서 이 검색어에
+    // 매치되는 행은 이 테스트가 심은 것(0~1개)뿐이다 — 공유 test DB 에 다른 11,795행이 있어도
+    // 그 행들은 이 marker 문자열을 갖지 않으므로 후보에 아예 오르지 않는다. 예전 버전은 "%%" 를
+    // 써서 검색 결과가 전체 사용자(수천 행)가 됐고, 그중 가장 오래된 20명만 반환되는 바람에
+    // 방금 만든 delta 는 이스케이프 여부와 무관하게 항상 그 20명 밖이었다(공허 테스트).
+    String body =
+        mockMvc
+            .perform(get("/api/platform/users").param("q", marker + "-delt_")
+                .header("Authorization", "Bearer " + operatorToken))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     List<Long> ids =
         objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
     assertThat(ids).doesNotContain(delta);
+  }
+
+  @Test
+  void rejectsQueryLongerThanLimit() throws Exception {
+    String tooLong = marker + "a".repeat(101);
+
+    mockMvc
+        .perform(get("/api/platform/users").param("q", tooLong)
+            .header("Authorization", "Bearer " + operatorToken))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -188,13 +218,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
         .andExpect(status().isForbidden());
   }
 
-  @Test
-  void tenantTokenCannotReachPlatformPlane() throws Exception {
-    String tenantToken = jwtTokenProvider.generateAccessToken(1L, "user", 1L);
-
-    mockMvc
-        .perform(get("/api/platform/users").param("q", marker)
-            .header("Authorization", "Bearer " + tenantToken))
-        .andExpect(status().isForbidden());
-  }
+  // tenantTokenCannotReachPlatformPlane 는 이 파일에 두지 않는다. PlatformPlaneFilter 는
+  // 컨트롤러보다 앞서 도는 라우트 무관 필터라 이 컨트롤러가 존재하기 전에도(404 이전에) 이미
+  // 403 을 줬다 — 실제로 이 파일 작성 초기(TDD Step 2) 기록에 그 증거가 남아 있다. 같은
+  // 단언이 PlatformPlaneIsolationTest.tenantTokenCannotReachPlatformPlane(다른 라우트,
+  // /api/platform/tenants)에 이미 있고 그걸로 평면 격리 자체는 충분히 고정된다. 여기 다시
+  // 둬도 이 컨트롤러 고유의 무엇도 검증하지 못한다.
 }

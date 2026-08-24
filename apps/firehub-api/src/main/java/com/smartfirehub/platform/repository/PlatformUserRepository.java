@@ -3,11 +3,13 @@ package com.smartfirehub.platform.repository;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
+import static org.jooq.impl.DSL.when;
 
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.platform.dto.PlatformUserResponse;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -38,31 +40,41 @@ public class PlatformUserRepository {
   /**
    * 이메일/이름 부분일치 검색.
    *
-   * @param q 검색어. 하한 검사는 서비스가 이미 마쳤다고 가정한다.
+   * <p><b>정렬은 id 오름차순(=가입 순)이 아니다.</b> 상한(20)이 있는 한 정렬이 "잘렸을 때 무엇이
+   * 남는가"를 결정한다 — 가입 순으로 자르면 넓은 검색어에서 매번 가장 오래된 20명만 보이고,
+   * 운영자가 찾는 사람은 영원히 화면 밖이다. 대신 이메일 정확일치를 최우선으로 올리고, 그 다음
+   * 이메일·이름 오름차순으로 둔다. 동순위가 남을 수 있어 id 를 마지막 tie-breaker 로 둬 정렬을
+   * 결정적으로 만든다(그래야 상한 절단이 매 호출 같은 20건을 자른다).
+   *
+   * <p>비활성({@code is_active = false}) 사용자는 제외한다 — 로그인할 수 없는 계정을 테넌트
+   * Owner 로 지정하면 아무도 못 들어가는 테넌트가 생긴다. 응답 필드를 넓히지 않으므로(그냥
+   * WHERE 조건일 뿐 응답에 활성 여부를 싣지 않는다) 열거 표면은 커지지 않는다.
+   *
+   * @param q 검색어. 하한/상한 길이 검사는 서비스가 이미 마쳤다고 가정한다.
    * @param limit 결과 상한. 호출자가 항상 유한한 값을 준다.
    */
   public List<PlatformUserResponse> search(String q, int limit) {
     // LIKE 메타문자(%, _, \)를 이스케이프하지 않으면 "%" 한 글자가 전 사용자를 긁는다.
     String pattern = LikePatternUtils.containsPattern(q);
 
+    Field<Long> idField = field(name("u", "id"), Long.class);
+    Field<String> emailField = field(name("u", "email"), String.class);
+    Field<String> nameField = field(name("u", "name"), String.class);
+    Field<Boolean> isActiveField = field(name("u", "is_active"), Boolean.class);
+
+    // 이메일이 검색어와 정확히(대소문자 무시) 같으면 0, 아니면 1 — ORDER BY 에서 0 이 먼저 온다.
+    Field<Integer> exactEmailMatchRank = when(emailField.equalIgnoreCase(q), 0).otherwise(1);
+
     return dsl
-        .select(
-            field(name("u", "id"), Long.class),
-            field(name("u", "email"), String.class),
-            field(name("u", "name"), String.class))
+        .select(idField, emailField, nameField)
         .from(table(name("user")).as("u"))
         .where(
-            field(name("u", "email"), String.class)
+            emailField
                 .likeIgnoreCase(pattern, '\\')
-                .or(field(name("u", "name"), String.class).likeIgnoreCase(pattern, '\\')))
-        // 정렬을 고정해야 상한 절단이 결정적이다. id 오름차순 = 생성 순.
-        .orderBy(field(name("u", "id"), Long.class).asc())
+                .or(nameField.likeIgnoreCase(pattern, '\\')))
+        .and(isActiveField.isTrue())
+        .orderBy(exactEmailMatchRank.asc(), emailField.asc(), nameField.asc(), idField.asc())
         .limit(limit)
-        .fetch(
-            r ->
-                new PlatformUserResponse(
-                    r.get(field(name("u", "id"), Long.class)),
-                    r.get(field(name("u", "email"), String.class)),
-                    r.get(field(name("u", "name"), String.class))));
+        .fetch(r -> new PlatformUserResponse(r.get(idField), r.get(emailField), r.get(nameField)));
   }
 }

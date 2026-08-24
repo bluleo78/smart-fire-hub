@@ -21,6 +21,15 @@ public class PlatformUserService {
   static final int MIN_QUERY_LENGTH = 2;
 
   /**
+   * 검색어 최대 길이.
+   *
+   * <p>상한이 없으면 임의로 긴 문자열을 계속 받아준다 — 응답을 넓히는 결함은 아니지만, 방어적
+   * 상한을 하나도 두지 않을 이유도 없다. email/name 컬럼이 각각 255/50자라 100자면 이미
+   * 넉넉하다.
+   */
+  static final int MAX_QUERY_LENGTH = 100;
+
+  /**
    * 결과 상한.
    *
    * <p>페이징을 주지 않는 대신 상한을 둔다. 20건 안에서 못 찾으면 운영자가 검색어를 좁히는 편이
@@ -31,14 +40,15 @@ public class PlatformUserService {
   private final PlatformUserRepository userRepository;
 
   /**
-   * @throws IllegalArgumentException 검색어가 없거나 {@value #MIN_QUERY_LENGTH} 자 미만일 때 —
-   *     전역 예외 처리기가 400 으로 바꾼다.
+   * @throws IllegalArgumentException 검색어가 없거나 길이가 {@value #MIN_QUERY_LENGTH}~
+   *     {@value #MAX_QUERY_LENGTH} 자 범위 밖일 때 — 전역 예외 처리기가 400 으로 바꾼다.
    */
   @Transactional(readOnly = true)
   public List<PlatformUserResponse> search(String q) {
     String trimmed = q == null ? "" : q.trim();
-    if (trimmed.length() < MIN_QUERY_LENGTH) {
-      throw new IllegalArgumentException("검색어는 " + MIN_QUERY_LENGTH + "자 이상이어야 합니다");
+    if (trimmed.length() < MIN_QUERY_LENGTH || trimmed.length() > MAX_QUERY_LENGTH) {
+      throw new IllegalArgumentException(
+          "검색어는 " + MIN_QUERY_LENGTH + "~" + MAX_QUERY_LENGTH + "자 사이여야 합니다");
     }
     return userRepository.search(trimmed, MAX_RESULTS);
   }

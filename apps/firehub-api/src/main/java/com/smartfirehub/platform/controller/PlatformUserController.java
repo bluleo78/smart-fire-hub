@@ -32,7 +32,7 @@ public class PlatformUserController {
   private final PlatformUserService userService;
 
   /**
-   * 이메일/이름 부분일치 검색. 하한 2자, 상한 20건.
+   * 이메일/이름 부분일치 검색. 하한 2자, 상한 100자, 결과 <b>최대 20건</b>.
    *
    * <p>{@code q} 를 {@code required = false} 로 받는다 — {@code required = true}(기본값)이면
    * 파라미터 부재 시 Spring 이 {@code MissingServletRequestParameterException} 을 던지는데, 이
@@ -41,6 +41,12 @@ public class PlatformUserController {
    * 서비스에 넘기면 서비스의 하한 검사가 {@link IllegalArgumentException} 을 던지고, 그건 이미
    * 전역 핸들러가 400 으로 바꾼다 — 새 핸들러를 추가하지 않고도 "파라미터를 잊은 호출"이 전
    * 사용자 덤프로 성공하는 일을 막는다.
+   *
+   * <p><b>이 API 를 쓰는 화면(Task 8, 테넌트 생성 Owner 검색)에 정적 안내가 필요하다</b>:
+   * 결과가 20건에서 그냥 잘리고 "더보기"/페이징이 없으므로, 화면에 "최대 20건까지 표시됩니다.
+   * 찾는 사용자가 없으면 검색어를 더 구체적으로 입력하세요" 류의 문구를 넣어야 한다 — 그래야
+   * 운영자가 "결과 없음"과 "20건 뒤에 잘림"을 구별할 수 있다. 정렬은 이메일 정확일치 우선 +
+   * 이메일/이름 오름차순이라 자주 찾는 사용자가 잘려나가는 상황은 완화되지만 없어지지는 않는다.
    */
   @GetMapping
   @RequirePermission("platform:member:read")
