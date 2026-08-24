@@ -10,6 +10,7 @@ import { AuthProvider } from './hooks/AuthContext';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const TenantListPage = lazy(() => import('./pages/TenantListPage'));
+const TenantDetailPage = lazy(() => import('./pages/TenantDetailPage'));
 
 function PageSkeleton() {
   return (
@@ -49,6 +50,14 @@ function App() {
                   element={
                     <Suspense fallback={<PageSkeleton />}>
                       <TenantListPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/tenants/:id"
+                  element={
+                    <Suspense fallback={<PageSkeleton />}>
+                      <TenantDetailPage />
                     </Suspense>
                   }
                 />
