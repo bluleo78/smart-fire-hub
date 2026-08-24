@@ -119,15 +119,3 @@ export async function mockApi(
     };
   }
 }
-
-/**
- * 여러 API 엔드포인트를 한 번에 모킹한다.
- */
-export async function mockApis(
-  page: Page,
-  mocks: Array<{ method: HttpMethod; path: string; body: unknown; options?: MockApiOptions }>,
-): Promise<void> {
-  for (const mock of mocks) {
-    await mockApi(page, mock.method, mock.path, mock.body, mock.options);
-  }
-}

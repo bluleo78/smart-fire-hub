@@ -1,3 +1,4 @@
+import { AUTH_FLAG_KEY } from '../src/api/client';
 import { createTokenResponse } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
@@ -58,14 +59,14 @@ test.describe('운영자 콘솔 셸', () => {
     // false 로 수렴해 버려 이 변이를 구분하지 못한다(실측 확인함). 그래서 `removeItem` 을
     // 이 키에 한해 무력화해 "실패해도 플래그가 남는" 상황을 인위적으로 만든다 — 이 상태에서도
     // 권위가 `me` 라면 여전히 /login 으로 가야 하고, 권위가 플래그라면(변이) 셸이 그려진다.
-    await page.addInitScript(() => {
-      localStorage.setItem('hasAdminSession', 'true');
+    await page.addInitScript((key: string) => {
+      localStorage.setItem(key, 'true');
       const nativeRemoveItem = Storage.prototype.removeItem;
-      Storage.prototype.removeItem = function (key: string) {
-        if (key === 'hasAdminSession') return;
-        nativeRemoveItem.call(this, key);
+      Storage.prototype.removeItem = function (removedKey: string) {
+        if (removedKey === key) return;
+        nativeRemoveItem.call(this, removedKey);
       };
-    });
+    }, AUTH_FLAG_KEY);
     await mockApi(page, 'POST', '/api/platform/auth/refresh', createTokenResponse());
     await mockApi(page, 'GET', '/api/platform/auth/me', { message: 'Unauthorized' }, { status: 401 });
 
@@ -73,7 +74,9 @@ test.describe('운영자 콘솔 셸', () => {
 
     // 플래그는 여전히 'true' 다(무력화했으므로) — 그런데도 서버가 신원을 확정하지 못했으니
     // /login 으로 가야 한다는 것이 이 테스트의 핵심 단언이다.
-    await expect(page.evaluate(() => localStorage.getItem('hasAdminSession'))).resolves.toBe('true');
+    await expect(page.evaluate((key) => localStorage.getItem(key), AUTH_FLAG_KEY)).resolves.toBe(
+      'true',
+    );
     await expect(page).toHaveURL('/login');
     // 셸에서만 나오는 요소(계정 메뉴 버튼)가 한 번도 그려지지 않았는지도 함께 본다 —
     // LoginPage 스텁도 "운영자 콘솔" 문자열을 쓰므로 그 문자열만으로는 셸 렌더 여부를 가릴 수 없다.

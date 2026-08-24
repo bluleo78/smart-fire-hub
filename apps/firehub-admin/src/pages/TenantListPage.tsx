@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { tenantsApi } from '@/api/tenants';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
+import { TenantStatusBadge } from '@/components/TenantStatusBadge';
 import { Button } from '@/components/ui/button';
 import { SearchInput } from '@/components/ui/search-input';
 import {
@@ -15,7 +16,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SimplePagination } from '@/components/ui/simple-pagination';
-import { StatusBadge } from '@/components/ui/status-badge';
 import {
   Table,
   TableBody,
@@ -171,12 +171,7 @@ export default function TenantListPage() {
                     {t.slug}
                   </TableCell>
                   <TableCell>
-                    {/* 정지 테넌트야말로 운영자가 찾아야 하는 행이라 흐리게 죽이지 않는다(D-2). */}
-                    {t.status === 'ACTIVE' ? (
-                      <StatusBadge type="active">활성</StatusBadge>
-                    ) : (
-                      <StatusBadge type="warning">정지됨</StatusBadge>
-                    )}
+                    <TenantStatusBadge status={t.status} />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{t.memberCount}</TableCell>
                   <TableCell>{formatDateOnly(t.createdAt)}</TableCell>

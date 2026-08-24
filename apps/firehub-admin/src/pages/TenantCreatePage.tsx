@@ -1,6 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -9,17 +8,15 @@ import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
 import { OwnerPicker } from '@/components/OwnerPicker';
-import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import { useAuth } from '@/hooks/useAuth';
-import { isForbidden } from '@/lib/http-errors';
+import { isForbidden, serverMessage } from '@/lib/http-errors';
 import type { CreateTenantFormData } from '@/lib/validations/tenant';
 import { createTenantSchema } from '@/lib/validations/tenant';
-import type { ErrorResponse, PlatformUserResponse } from '@/types/platform';
+import type { PlatformUserResponse } from '@/types/platform';
 
 /**
  * 테넌트 생성. 서버는 테넌트 행 + 초기 Owner + 기본 시드를 한 트랜잭션으로 만든다.
@@ -31,7 +28,6 @@ import type { ErrorResponse, PlatformUserResponse } from '@/types/platform';
 export default function TenantCreatePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { hasPermission } = useAuth();
   // `owner` 는 **표시 전용** 상태다(픽커가 이름·이메일을 그리는 데 필요). 검증에 쓰이는 값은
   // 폼 필드 `ownerUserId` 이고, 그 판정자는 zod 하나다.
   const [owner, setOwner] = useState<PlatformUserResponse | null>(null);
@@ -75,17 +71,15 @@ export default function TenantCreatePage() {
       navigate(`/tenants/${tenant.id}`, { replace: true });
     },
     onError: (error) => {
-      if (axios.isAxiosError(error) && error.response?.status === 400) {
-        const message = (error.response.data as ErrorResponse | undefined)?.message;
-        if (message) {
-          setServerFieldError(message);
-          return;
-        }
+      const message = serverMessage(error);
+      if (message) {
+        setServerFieldError(message);
+        return;
       }
-      // 라우트 게이트가 열린 뒤(폼을 보고 있는 동안) 권한이 회수되는 경합처럼, 게이트를
-      // 통과했는데도 서버가 403 을 주는 경우를 대비한 심층방어(M-1). 일반 실패 토스트로
-      // 뭉뚱그리면 운영자가 서버 장애로 오인해 재시도를 반복한다 — PermissionDeniedBanner 와
-      // 같은 문구를 쓴다.
+      // 라우트 게이트(App.tsx)가 열린 뒤(폼을 보고 있는 동안) 권한이 회수되는 경합처럼,
+      // 게이트를 통과했는데도 서버가 403 을 주는 경우를 대비한 심층방어(M-1). 일반 실패
+      // 토스트로 뭉뚱그리면 운영자가 서버 장애로 오인해 재시도를 반복한다 —
+      // PermissionDeniedBanner 와 같은 문구를 쓴다.
       if (isForbidden(error)) {
         toast.error('이 작업을 수행할 권한이 없습니다.');
         return;
@@ -99,18 +93,6 @@ export default function TenantCreatePage() {
     setServerFieldError(null);
     createMutation.mutate(data);
   };
-
-  // 라우트 자체가 게이트되지 않으면(M-1) URL 로 직접 열었을 때 폼 전체가 그려지고, 다 채워
-  // 제출한 뒤에야 403 을 만난다 — TenantListPage/SettingsPage 와 같은 형태(제목 + 배너)로
-  // 진입 시점에 막는다.
-  if (!hasPermission('platform:tenant:create')) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">테넌트 생성</h1>
-        <PermissionDeniedBanner />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">

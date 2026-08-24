@@ -1,6 +1,8 @@
 import { Flame } from 'lucide-react';
+import { Suspense } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 
+import { PageSkeleton } from '@/components/PageSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -76,7 +78,13 @@ export function AdminShell() {
             이 콘솔에서 접근 가능한 메뉴가 없습니다. 플랫폼 관리자에게 권한을 요청하세요.
           </p>
         ) : (
-          <Outlet />
+          // 이 경계가 셸(헤더·nav·계정 메뉴) **안**에 있어야 한다 — 페이지 전환마다
+          // lazy 컴포넌트가 로드되는 동안 셸은 그대로 두고 <main> 안쪽만 스켈레톤으로
+          // 바뀌게 하려는 것이다. `App.tsx` 에서 `<Routes>` 전체를 감싸면 이 셸까지
+          // 스켈레톤으로 대체된다.
+          <Suspense fallback={<PageSkeleton />}>
+            <Outlet />
+          </Suspense>
         )}
       </main>
     </div>

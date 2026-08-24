@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
+import { TenantStatusBadge } from '@/components/TenantStatusBadge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,7 +22,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StatusBadge } from '@/components/ui/status-badge';
 import {
   Table,
   TableBody,
@@ -50,18 +50,17 @@ export default function TenantDetailPage() {
   const { hasPermission } = useAuth();
   const [isSuspendDialogOpen, setIsSuspendDialogOpen] = useState(false);
 
+  // 4xx(권한 없음 등)는 재시도해도 결과가 같다 — 이 사실은 화면이 아니라 상태코드의
+  // 성질이므로 전역 기본값(main.tsx 의 `retry`)이 판정한다. 화면별로 `retry: false` 를
+  // 반복하지 않는다.
   const tenantQuery = useQuery({
     queryKey: ['platform-tenant', tenantId],
     queryFn: () => tenantsApi.get(tenantId).then((r) => r.data),
-    // 403(테넌트 조회 권한 없음)은 재시도해도 결과가 같다 — membersQuery(:62)와 같은 근거(M-2).
-    retry: false,
   });
 
   const membersQuery = useQuery({
     queryKey: ['platform-tenant-members', tenantId],
     queryFn: () => tenantsApi.members(tenantId).then((r) => r.data),
-    // 403(멤버 조회 권한 없음)은 재시도해도 결과가 같다.
-    retry: false,
   });
 
   /**
@@ -166,11 +165,7 @@ export default function TenantDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">{tenant.name}</h1>
-        {isActive ? (
-          <StatusBadge type="active">활성</StatusBadge>
-        ) : (
-          <StatusBadge type="warning">정지됨</StatusBadge>
-        )}
+        <TenantStatusBadge status={tenant.status} />
 
         {hasPermission('platform:tenant:suspend') && (
           <div className="ml-auto">
@@ -207,11 +202,7 @@ export default function TenantDetailPage() {
             <span className="font-mono text-[13px]">{tenant.slug}</span>
             <span className="text-muted-foreground">상태</span>
             <span>
-              {isActive ? (
-                <StatusBadge type="active">활성</StatusBadge>
-              ) : (
-                <StatusBadge type="warning">정지됨</StatusBadge>
-              )}
+              <TenantStatusBadge status={tenant.status} />
             </span>
             <span className="text-muted-foreground">멤버 수</span>
             <span className="tabular-nums">{tenant.memberCount}</span>

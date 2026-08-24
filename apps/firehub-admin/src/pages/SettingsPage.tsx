@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -13,12 +12,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateTimeMinute } from '@/lib/formatters';
-import { isForbidden } from '@/lib/http-errors';
+import { isForbidden, serverMessage } from '@/lib/http-errors';
 // `validateSettingValue` 는 여기서 import 하지 않는다 — 그것을 쓰는 `validateForm` 은
 // `@/lib/settings-form` 으로 옮겨졌다(react-refresh/only-export-components).
 import { ALL_SETTING_KEYS, SETTING_CATALOG, SETTINGS_TABS } from '@/lib/settings-catalog';
 import { validateForm } from '@/lib/settings-form';
-import type { ErrorResponse, SettingResponse } from '@/types/platform';
+import type { SettingResponse } from '@/types/platform';
 
 import { buildSettingsPayload, type SettingDiff } from './settings/build-payload';
 import { SaveConfirmDialog } from './settings/SaveConfirmDialog';
@@ -53,7 +52,6 @@ export default function SettingsPage() {
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['platform-settings'],
     queryFn: () => settingsApi.getAll().then((r) => r.data),
-    retry: false,
   });
 
   const [form, setForm] = useState<Record<string, string> | null>(null);
@@ -128,12 +126,7 @@ export default function SettingsPage() {
     onError: (error) => {
       // 400 은 서버 메시지를 그대로 싣는다 — 프런트가 재현할 수 없는 교차 검증이 있다
       // (예: "OpenAI 임베딩 provider 에는 API 키가 필요합니다").
-      if (axios.isAxiosError(error) && error.response?.status === 400) {
-        const message = (error.response.data as ErrorResponse | undefined)?.message;
-        toast.error(message ?? '설정 저장에 실패했습니다.');
-        return;
-      }
-      toast.error('설정 저장에 실패했습니다.');
+      toast.error(serverMessage(error) ?? '설정 저장에 실패했습니다.');
     },
   });
 

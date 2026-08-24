@@ -1,5 +1,6 @@
 import { type Page, test as base } from '@playwright/test';
 
+import { AUTH_FLAG_KEY } from '../../src/api/client';
 import { createPlatformMe, createTokenResponse } from '../factories/platform.factory';
 import { mockApi } from './api-mock';
 
@@ -17,9 +18,11 @@ async function setupAuthMocks(page: Page, permissions?: string[]) {
 }
 
 async function enterAuthenticatedState(page: Page) {
-  await page.addInitScript(() => {
-    localStorage.setItem('hasAdminSession', 'true');
-  });
+  // addInitScript 의 함수는 브라우저 컨텍스트에서 직렬화되어 실행된다 — Node 쪽 클로저를
+  // 그대로 못 읽으므로 키 이름은 두 번째 인자로 넘긴다(R-5: 앱 소스와 달라지면 안 된다).
+  await page.addInitScript((key: string) => {
+    localStorage.setItem(key, 'true');
+  }, AUTH_FLAG_KEY);
 }
 
 type AuthFixtures = {

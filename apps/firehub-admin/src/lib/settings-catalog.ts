@@ -111,8 +111,7 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: '최대 턴 수',
     kind: 'number',
     secret: false,
-    // 서버가 parseInt 를 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
-    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
+    // 비우면 400(서버가 parseInt 를 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
     clearable: false,
     validate: intRange(1, 50, '1~50 사이의 정수를 입력하세요'),
   },
@@ -129,8 +128,7 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: 'Temperature',
     kind: 'number',
     secret: false,
-    // 서버가 parseDouble 을 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
-    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
+    // 비우면 400(서버가 parseDouble 을 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
     clearable: false,
     validate: (value) => {
       if (value.trim() === '') return EMPTY_NUMBER_MESSAGE;
@@ -144,8 +142,7 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     label: '최대 응답 토큰',
     kind: 'number',
     secret: false,
-    // 서버가 parseInt 를 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
-    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
+    // 비우면 400(서버가 parseInt 를 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
     clearable: false,
     validate: intRange(1, 65536, '1~65536 사이의 정수를 입력하세요'),
   },
@@ -155,8 +152,7 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     kind: 'number',
     builtinDefault: '50000',
     secret: false,
-    // 서버가 parseInt 를 무조건 부른다 — 비우면 400 으로 거부된다(500 아님, 리뷰 M1 정정).
-    // 영문 미번역 예외 문구를 보느니 클라이언트가 먼저 막는 편이 낫다. 지우기를 렌더하지 않는다.
+    // 비우면 400(서버가 parseInt 를 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
     clearable: false,
     validate: intRange(10000, 200000, '10,000~200,000 사이의 정수를 입력하세요'),
   },
