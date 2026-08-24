@@ -99,14 +99,17 @@ class PermissionServiceTest extends IntegrationTestBase {
    *
    * <p>V74 의 ontology:write 까지 39개였고, V82(멀티 테넌시 P1)가 플랫폼 운영자 평면 권한 4개
    * (platform:tenant:create|read|suspend, platform:member:read)를 추가해 43개, V113(P7-a)이
-   * platform:settings:read|write 를 추가해 45개가 되었다.
+   * platform:settings:read|write 를 추가해 45개가 되었다. V116(P7-c2b)이 아무 라우트도
+   * 게이팅하지 않는 고아 권한 'settings:write' 를 제거해 <b>44개</b>다 — 그 권한이 정말
+   * 사라졌는지는 MultiTenancyMigrationTest#orphanSettingsWritePermissionIsGone 이 코드로 직접
+   * 단언한다.
    * 카운트만 단언하면 시딩이 깨져도 개수만 맞으면 통과하므로 신규 코드 존재도 함께 단언한다.
    */
   @Test
   void getAllPermissions_returnAllSeedPermissions() {
     List<PermissionResponse> result = permissionService.getAllPermissions();
 
-    assertThat(result).hasSize(45);
+    assertThat(result).hasSize(44);
     assertThat(result)
         .extracting(PermissionResponse::code)
         .contains(

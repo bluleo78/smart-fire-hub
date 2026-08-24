@@ -1,0 +1,39 @@
+-- V116: 고아 권한 'settings:write' 를 권한 카탈로그에서 제거한다.
+--
+-- 무엇: permission 테이블의 code = 'settings:write' 행 1건을 지운다. 이 권한을 참조하는
+--       role_permission(테넌트 평면) 과 platform_role_permission(플랫폼 평면) 의
+--       permission_id FK 가 **둘 다 ON DELETE CASCADE** 이므로, V42 가 각 테넌트 ADMIN 롤에
+--       시드해 둔 부여 행도 DB 가 함께 정리한다. 따로 먼저 지울 필요가 없다.
+--       permission 을 참조하는 FK 는 이 둘이 전부이므로 그 밖의 테이블에는 닿지 않는다.
+--
+-- 왜: 이 코드를 요구하는 @RequirePermission 이 프로덕션 코드에 **하나도 없다**.
+--     SettingsController 의 네 라우트(조회·저장·재정의 해제·SMTP 연결 테스트)는 P7-c1 이후
+--     전부 'ai:settings' 하나를 쓴다. 그런데 부여 행은 살아 있어서, 전 테넌트의 ADMIN 롤이
+--     아무도 쓰지 않는 이 권한을 **이미 갖고 있다**. 누군가 나중에
+--     @RequirePermission("settings:write") 를 한 줄 붙이면 아무도 권한을 부여하지 않았는데
+--     모든 테넌트 관리자에게 즉시 열린다 — 이름이 '시스템 설정 변경'이라 그 한 줄은 자연스러워
+--     보인다. 즉 "남겨 둬도 아무것도 안 깨진다"가 아니라, **부여 행이 살아 있다는 것 자체가
+--     위험**이다.
+--
+-- 신규 테넌트 프로비저닝에 미치는 영향: 없다. V98 의 provision_tenant_defaults_function 은
+--     권한 코드를 하드코딩하지 않고 테넌트 1 의 role_permission 을 그대로 복제한다
+--     (INSERT ... SELECT). 원본 부여 행이 cascade 로 사라지므로 복제 대상에서도 자연히 빠진다.
+--
+-- 건드리지 않는 것: 'platform:settings:write' 는 프리픽스가 다른 **별개 권한**이다(V113 이
+--     시드했고 PlatformSettingsController 가 실제로 요구한다). 이 문장의 WHERE 는 코드 완전
+--     일치라 그쪽에 닿지 않는다. 'ai:settings' 도 마찬가지로 무관하다.
+--
+-- 되돌리는 법: 이 파일을 편집하면 checksum mismatch 로 부팅이 깨진다. 반드시 **새 마이그레이션**
+--     으로 아래를 실행한다.
+--       INSERT INTO permission (code, description, category)
+--       VALUES ('settings:write', '시스템 설정 변경', 'settings')
+--       ON CONFLICT (code) DO NOTHING;
+--       INSERT INTO role_permission (tenant_id, role_id, permission_id)
+--       SELECT r.tenant_id, r.id, p.id FROM role r, permission p
+--       WHERE r.name = 'ADMIN' AND p.code = 'settings:write'
+--       ON CONFLICT DO NOTHING;
+--     (V42 원본과 달리 role 과 role_permission 은 P1 이후 테넌트 스코프라 tenant_id 를 함께
+--      채워야 한다. 그리고 부여 행이 정말 필요한지 — 즉 그 권한을 요구하는 라우트가 실제로
+--      생겼는지 — 를 먼저 확인할 것.)
+
+DELETE FROM permission WHERE code = 'settings:write';

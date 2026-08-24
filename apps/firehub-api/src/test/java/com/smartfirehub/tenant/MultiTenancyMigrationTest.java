@@ -161,4 +161,43 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
 
     assertThat(platformRoleCount).isEqualTo(1);
   }
+
+  @Test
+  @DisplayName("고아 권한 settings:write 는 카탈로그에 존재하지 않는다 (V116)")
+  void orphanSettingsWritePermissionIsGone() {
+    // 왜 DB 를 직접 보는가: SettingsControllerTest 의 mockAuth("settings:write") 는
+    // PermissionService 가 @MockitoBean 인 순수 스텁이라 permission 테이블을 전혀 조회하지
+    // 않는다 — 행을 지워도 초록, 안 지워도 초록이라 삭제를 **증명하지 못한다**.
+    //
+    // 왜 지웠나: 이 코드를 요구하는 @RequirePermission 이 프로덕션에 하나도 없는데
+    // (SettingsController 의 네 라우트는 전부 ai:settings 다), V42 가 전 테넌트의 ADMIN 롤에
+    // 이 권한을 시드해 두었다. 누군가 나중에 @RequirePermission("settings:write") 를 한 줄
+    // 붙이면 아무도 권한을 부여하지 않았는데 모든 테넌트 관리자에게 즉시 열린다 — 이름이
+    // '시스템 설정 변경'이라 그 한 줄은 자연스러워 보인다.
+    //
+    // 부여 행(role_permission)은 여기서 세지 않는다. 그 테이블은 RLS 대상이 되어 테넌트를
+    // 세우지 않은 이 커넥션에서는 조회가 조건과 무관하게 0행이 된다 — 세어 봐야 삭제를
+    // 증명하지 않는 공허한 단언이 하나 늘 뿐이다. cascade 는 FK 정의
+    // (role_permission.permission_id / platform_role_permission.permission_id 가 둘 다
+    // ON DELETE CASCADE)가 DB 수준에서 보장한다.
+    Integer catalogRows =
+        dsl.fetchOne("select count(*) from permission where code = 'settings:write'")
+            .get(0, Integer.class);
+    assertThat(catalogRows).isZero();
+
+    // 양성 대조군 — 같은 모양의 조회가 실재하는 권한은 실제로 찾아낸다. 이것이 없으면 위
+    // 단언은 오타난 컬럼명이나 잘못된 테이블로도 통과한다.
+    Integer control =
+        dsl.fetchOne("select count(*) from permission where code = 'ai:settings'")
+            .get(0, Integer.class);
+    assertThat(control).isEqualTo(1);
+
+    // 플랫폼 평면의 'platform:settings:write' 는 전혀 다른 권한이며 살아 있어야 한다
+    // (V113 이 시드했고 PlatformSettingsController 가 실제로 요구한다). 프리픽스만 다른
+    // 두 코드를 섞어 지우는 사고를 여기서 막는다.
+    Integer platformCounterpart =
+        dsl.fetchOne("select count(*) from permission where code = 'platform:settings:write'")
+            .get(0, Integer.class);
+    assertThat(platformCounterpart).isEqualTo(1);
+  }
 }
