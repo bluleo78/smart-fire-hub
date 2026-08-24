@@ -18,6 +18,7 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
+import { useSmtpSettingsForm } from '../../hooks/useSmtpSettingsForm';
 import {
   useDirtyAggregator,
   useUnsavedChangesGuard,
@@ -254,15 +255,28 @@ export default function SettingsPage() {
       <ClearOverrideButton onConfirm={() => handleClearOverride(key)} disabled={isClearing} />
     ) : undefined;
 
+  /**
+   * 이메일 탭의 폼 상태도 <b>페이지가 소유한다</b>. Radix `TabsContent` 가 비활성 탭을
+   * 언마운트하므로 탭이 상태를 갖고 있으면 탭 전환이 미저장 편집을 죽인다 — AI 탭은 여기서
+   * 살아남는데 이메일 탭만 죽는 비대칭이었고, 고쳐야 할 것은 계약을 어긴 쪽이다(#390-2b).
+   */
+  const smtp = useSmtpSettingsForm();
+
   // 탭별 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다 (이슈 #86).
-  // P7-c1 로 이메일 탭이 다시 편집 가능해져 보고자가 둘(AI·이메일)이 됐다. 임베딩 탭은 여전히
-  // 전면 잠금이라 dirty 가 될 수 없어 보고자가 없다.
+  // 두 탭 모두 상태를 이 페이지가 소유하므로 보고도 페이지가 직접 한다 — 언마운트 클린업으로
+  // dirty 를 false 로 되돌리던 보정은 사라졌다. 살아 있는 편집을 dirty 아님으로 보고하면
+  // 이탈 가드가 침묵해 결함이 유실에서 경고 누락으로 모습만 바뀐다.
+  // 임베딩 탭은 여전히 전면 잠금이라 dirty 가 될 수 없어 보고자가 없다.
   const { isAnyDirty, makeReporter } = useDirtyAggregator();
   const aiReporter = makeReporter('ai');
   const smtpReporter = makeReporter('smtp');
+  const smtpHasChanges = smtp.base.hasChanges;
   useEffect(() => {
     aiReporter(hasChanges);
   }, [aiReporter, hasChanges]);
+  useEffect(() => {
+    smtpReporter(smtpHasChanges);
+  }, [smtpReporter, smtpHasChanges]);
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(isAnyDirty);
 
   if (isLoading) {
@@ -635,8 +649,9 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
         {/* 이메일 탭 — P7-c1 로 편집 가능해져 자기 dirty 를 합산기에 보고한다 */}
+        {/* 이메일 탭 — 폼 상태는 페이지가 소유한다(탭 전환에도 편집이 살아남는다) */}
         <TabsContent value="email" className="mt-6">
-          <SmtpSettingsTab onDirtyChange={smtpReporter} />
+          <SmtpSettingsTab state={smtp} />
         </TabsContent>
         {/* 임베딩 탭 — 전면 잠금이라 dirty 보고자가 없다 */}
         <TabsContent value="embedding" className="mt-6">

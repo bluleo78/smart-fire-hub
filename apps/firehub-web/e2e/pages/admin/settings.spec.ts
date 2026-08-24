@@ -1336,6 +1336,49 @@ test.describe('설정 페이지', () => {
       expect(new URL(page.url()).pathname).toBe('/admin/settings');
     });
 
+    test('이메일 탭 입력은 다른 탭에 다녀와도 그대로 남는다', async ({
+      authenticatedPage: page,
+    }) => {
+      // #390-2b 회귀 가드. Radix TabsContent 는 비활성 탭을 언마운트하므로, 폼 state 를
+      // SmtpSettingsTab 자신이 소유하던 시절에는 탭을 바꾸는 순간 미저장 편집이 경고 없이
+      // 사라졌다. 무게가 다른 이유: `smtp.password` 는 대개 메일 제공자 콘솔에서 앱 비밀번호를
+      // 새로 발급받아 붙여넣은 값이라, 복구가 "다시 타이핑"이 아니라 다른 시스템을 한 번 더
+      // 다녀오는 일이다.
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+
+      await page.locator('#smtp-host').fill('smtp.ourcompany.com');
+      await page.locator('#smtp-password').fill('new-app-password');
+
+      await page.getByRole('tab', { name: 'AI 에이전트' }).click();
+      await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+      await page.getByRole('tab', { name: '이메일' }).click();
+
+      // 값이 살아 있다.
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+      await expect(page.locator('#smtp-password')).toHaveValue('new-app-password');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+      // 값만 살아나는 것으로는 부족하다 — `original` 이 재마운트에서 새 마스크로 다시 시드되면
+      // 저장 대상 판정(form === original → 제외)이 무너져 편집이 조용히 누락되거나 마스크가
+      // 값처럼 실린다. 그래서 왕복 **뒤에** 실제 PUT 페이로드를 본다.
+      await page.getByRole('button', { name: '저장' }).click();
+      const req = await saveCapture.waitForRequest();
+      const settings = (req.payload as { settings: Record<string, string> }).settings;
+
+      expect(Object.keys(settings).sort()).toEqual(['smtp.host', 'smtp.password']);
+      expect(settings['smtp.host']).toBe('smtp.ourcompany.com');
+      expect(settings['smtp.password']).toBe('new-app-password');
+      // 마스크 센티널이 페이로드에 실리는 경로는 없다.
+      for (const value of Object.values(settings)) {
+        expect(value.startsWith('****')).toBe(false);
+      }
+    });
+
     test('이메일 탭을 떠난 뒤에는 유령 이탈 다이얼로그가 뜨지 않는다', async ({
       authenticatedPage: page,
     }) => {
