@@ -12,6 +12,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'));
 const TenantListPage = lazy(() => import('./pages/TenantListPage'));
 const TenantCreatePage = lazy(() => import('./pages/TenantCreatePage'));
 const TenantDetailPage = lazy(() => import('./pages/TenantDetailPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 function PageSkeleton() {
   return (
@@ -20,11 +21,6 @@ function PageSkeleton() {
       <Skeleton className="h-96 w-full" />
     </div>
   );
-}
-
-/** Task 9 가 실 페이지로 교체한다. */
-function SettingsPlaceholder() {
-  return <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">플랫폼 설정</h1>;
 }
 
 function App() {
@@ -70,7 +66,14 @@ function App() {
                     </Suspense>
                   }
                 />
-                <Route path="/settings" element={<SettingsPlaceholder />} />
+                <Route
+                  path="/settings"
+                  element={
+                    <Suspense fallback={<PageSkeleton />}>
+                      <SettingsPage />
+                    </Suspense>
+                  }
+                />
               </Route>
             </Route>
           </Routes>
