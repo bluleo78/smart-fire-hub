@@ -109,7 +109,7 @@ class PermissionServiceTest extends IntegrationTestBase {
   void getAllPermissions_returnAllSeedPermissions() {
     List<PermissionResponse> result = permissionService.getAllPermissions();
 
-    assertThat(result).hasSize(44);
+    assertThat(result).hasSize(42);
     assertThat(result)
         .extracting(PermissionResponse::code)
         .contains(
@@ -151,14 +151,19 @@ class PermissionServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * "user" 카테고리 권한 5개(user:read, user:read:self, user:write:self, user:write, user:delete)가 반환되어야
-   * 한다.
+   * "user" 카테고리 권한 3개(user:read, user:write, user:write:self)가 반환되어야 한다.
+   *
+   * <p>V117 이 {@code user:delete} 와 {@code user:read:self} 를 지워 5개에서 3개가 됐다. 둘 다
+   * 코드가 요구하지 않는 고아였다 — 삭제 라우트는 존재하지 않고(활성 전환은 {@code user:write}),
+   * {@code GET /users/me} 는 권한 게이트가 없다. <b>코드까지 단언하는 이유</b>: 개수만 세면
+   * 누군가 고아를 되살리면서 다른 하나를 지워도 통과한다.
    */
   @Test
-  void getPermissionsByCategory_userCategory_returns5Permissions() {
+  void getPermissionsByCategory_userCategory_returns3Permissions() {
     List<PermissionResponse> result = permissionService.getPermissionsByCategory("user");
 
-    assertThat(result).hasSize(5);
+    assertThat(result).extracting(PermissionResponse::code)
+        .containsExactlyInAnyOrder("user:read", "user:write", "user:write:self");
     assertThat(result).extracting(PermissionResponse::category).containsOnly("user");
   }
 
@@ -226,17 +231,22 @@ class PermissionServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * USER 역할(id=2)을 가진 사용자는 USER 역할에 할당된 권한만 반환해야 한다. Flyway seed 기준 USER 역할에는 user:read:self,
-   * user:write:self 등 최소 권한이 포함된다.
+   * USER 역할(id=2)을 가진 사용자는 USER 역할에 할당된 권한만 반환해야 한다.
+   *
+   * <p><b>여기서 {@code user:delete} 를 부재 목록에 두지 않는다.</b> V117 이 그 권한을 카탈로그에서
+   * 지웠으므로, 부재 단언에 남겨 두면 <b>어떤 롤에도 없는 코드</b>를 검사하는 셈이 되어 조용히
+   * 공허해진다(무슨 짓을 해도 통과한다). 부재를 단언할 대상은 <b>실재하면서 이 롤에는 없어야
+   * 하는</b> 권한이어야 한다 — {@code role:delete}·{@code dataset:delete} 가 그렇다.
    */
   @Test
   void getUserPermissions_userRole_returnsUserRolePermissions() {
     Set<String> result = permissionService.getUserPermissions(userUserId);
 
-    // USER 역할에 할당된 권한 코드 확인
-    assertThat(result).isNotEmpty();
-    // ADMIN 전용 권한(user:delete 등)은 포함되지 않아야 함
-    assertThat(result).doesNotContain("user:delete", "role:delete", "dataset:delete");
+    // 양성 대조군 — USER 롤이 실제로 가진 권한. 이것이 없으면 아래 부재 단언은 "조회가 빈
+    // 집합을 줬다"와 "그 권한이 없다"를 구별하지 못한다.
+    assertThat(result).contains("user:write:self");
+    // 실재하지만 ADMIN 전용인 권한은 USER 롤에 없어야 한다.
+    assertThat(result).doesNotContain("role:delete", "dataset:delete");
   }
 
   /** 역할이 없는 사용자는 빈 Set을 반환해야 한다. */

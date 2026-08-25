@@ -1,0 +1,36 @@
+-- V117: 고아 권한 'user:delete' 와 'user:read:self' 를 권한 카탈로그에서 제거한다.
+--
+-- 무엇: permission 테이블의 두 행을 지운다. role_permission(테넌트 평면) 과
+--       platform_role_permission(플랫폼 평면) 의 permission_id FK 가 둘 다 ON DELETE CASCADE
+--       이므로 부여 행도 DB 가 함께 정리한다. permission 을 참조하는 FK 는 그 둘이 전부다.
+--
+-- 왜: V116 과 정확히 같은 부류다 — 코드가 요구하지 않는 권한이 롤에 부여된 채 남아 있다.
+--
+--     'user:delete': @RequirePermission("user:delete") 가 프로덕션에 하나도 없다. 이름에 맞는
+--       라우트인 사용자 활성/비활성 전환(PUT /api/v1/users/{id}/active)은 'user:write' 로
+--       게이팅되고, 사용자 하드 삭제 라우트는 애초에 존재하지 않는다. ADMIN 롤에 부여돼 있다.
+--
+--     'user:read:self': 자기 정보 조회(GET /api/v1/users/me)는 인증만 요구하고 권한 게이트가
+--       없다 — 즉 이 권한은 아무것도 지키지 않는다. USER·ADMIN 양쪽에 부여돼 있다.
+--
+--     위험은 "남겨 둬도 안 깨진다"가 아니라 **부여 행이 살아 있다는 것 자체**다. 누군가 나중에
+--     @RequirePermission("user:delete") 를 한 줄 붙이면 아무도 권한을 부여하지 않았는데 전
+--     테넌트 ADMIN 에게 즉시 열린다. 이름이 그 동작에 정확히 맞아 보이므로 그 한 줄은 자연스럽다.
+--
+-- 어떻게 찾았나(재현 가능): DB 의 permission.code 전체와 소스의 권한 리터럴 전체를 대조했다.
+--     44건 중 이 둘만 코드 참조 0건이었다. 그 대조를 이제
+--     PermissionCatalogUsageTest 가 매 빌드 수행하므로, 다음 고아는 쌓이기 전에 잡힌다.
+--
+-- 건드리지 않는 것: 같은 'user' 카테고리의 'user:read'·'user:write'·'user:write:self' 는 실제로
+--     UserController 가 요구한다(카테고리 5건 → 3건이 된다). WHERE 는 코드 완전 일치다.
+--
+-- 되돌리는 법: 이 파일을 편집하면 checksum mismatch 로 부팅이 깨진다. 반드시 새 마이그레이션으로.
+--       INSERT INTO permission (code, description, category) VALUES
+--         ('user:delete', '사용자 삭제', 'user'),
+--         ('user:read:self', '자기 정보 조회', 'user')
+--       ON CONFLICT (code) DO NOTHING;
+--     부여 행은 role 과 role_permission 이 P1 이후 테넌트 스코프이므로 tenant_id 를 함께 채운다.
+--     그리고 부여 전에 그 권한을 요구하는 라우트가 실제로 생겼는지 먼저 확인할 것 —
+--     PermissionCatalogUsageTest 가 참조 없는 권한을 거부한다.
+
+DELETE FROM permission WHERE code IN ('user:delete', 'user:read:self');
