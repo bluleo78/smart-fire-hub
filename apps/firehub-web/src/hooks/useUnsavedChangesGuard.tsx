@@ -164,25 +164,14 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
  */
 export type ReportDirty = (dirty: boolean) => void;
 
-/**
- * 자식 컴포넌트가 자체 dirty 상태를 부모에 보고할 때 onReportDirty를 호출한다.
- * 이 헬퍼는 단순한 useEffect 래퍼로, 컴포넌트 본문에서 dirty 변화 시 자동 보고한다.
- */
-export function useReportDirty(isDirty: boolean, onReportDirty?: ReportDirty) {
-  useEffect(() => {
-    onReportDirty?.(isDirty);
-    // 언마운트 시 dirty=false로 클리어 (탭 전환·페이지 이탈 시 유령 dirty 방지)
-    return () => onReportDirty?.(false);
-  }, [isDirty, onReportDirty]);
-}
 
 /**
  * 여러 자식의 dirty 상태를 합산하는 헬퍼 훅.
- * 각 자식이 useReportDirty로 보고한 dirty 상태를 모아 OR-합으로 return.
+ * 각 자식이 makeReporter 로 받은 함수로 보고한 dirty 상태를 모아 OR-합으로 return.
  */
 export function useDirtyAggregator() {
   const [dirtyMap, setDirtyMap] = useState<Record<string, boolean>>({});
-  // 동일 key에 대해 동일 함수 참조를 유지하여 useReportDirty의 effect가 매 렌더 재실행되는 것을 방지한다.
+  // 동일 key에 대해 동일 함수 참조를 유지하여 소비자의 보고 effect 가 매 렌더 재실행되는 것을 방지한다.
   const reportersRef = useRef<Record<string, ReportDirty>>({});
 
   const makeReporter = useCallback((key: string): ReportDirty => {

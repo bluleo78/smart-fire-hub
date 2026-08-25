@@ -22,5 +22,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts"]
+  // vite.config.ts 외에 vitest/playwright 설정도 포함한다. 이 셋은 모두 Node 컨텍스트에서
+  // 실행되는 빌드·테스트 도구 설정인데, 예전에는 vite.config.ts 만 있어서 나머지 둘이
+  // **어떤 tsconfig project 의 include 에도 없었다** — `tsc -b` 가 아예 보지 않으므로
+  // 타입이 깨져도 게이트가 통과했다(이 밴드가 닫은 사각 2곳과 같은 종류의 세 번째 구멍).
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }
