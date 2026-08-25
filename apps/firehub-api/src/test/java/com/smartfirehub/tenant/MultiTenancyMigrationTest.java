@@ -185,8 +185,12 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
             .get(0, Integer.class);
     assertThat(catalogRows).isZero();
 
-    // 양성 대조군 — 같은 모양의 조회가 실재하는 권한은 실제로 찾아낸다. 이것이 없으면 위
-    // 단언은 오타난 컬럼명이나 잘못된 테이블로도 통과한다.
+    // 양성 대조군 — 같은 모양의 조회가 실재하는 권한은 실제로 찾아낸다. 오타난 컬럼·테이블은
+    // 대조군 없이도 예외로 터지니 여기서 막는 것은 그게 아니다. 이 커넥션은 app_tenant 롤로
+    // 흐르는데(application-test.yml), 만약 permission 이 role_permission 처럼 RLS 대상이라면
+    // 테넌트를 세우지 않은 이 커넥션에서는 **모든** count 가 조건과 무관하게 0 이 되어 위
+    // isZero() 는 V116 을 돌렸든 안 돌렸든 통과한다. 대조군이 1 을 반환한다는 것이 "이 조회는
+    // 실제로 행을 볼 수 있다"의 증거이고, 그래서 위 0 은 "안 보인다"가 아니라 "없다"를 뜻한다.
     Integer control =
         dsl.fetchOne("select count(*) from permission where code = 'ai:settings'")
             .get(0, Integer.class);
