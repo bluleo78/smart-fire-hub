@@ -20,7 +20,6 @@ vi.mock('../api/settings', () => ({
     getByPrefix: vi.fn(),
     update: vi.fn(),
     clearOverride: vi.fn(),
-    verifyAuthStatus: vi.fn(),
   },
 }));
 
@@ -37,11 +36,13 @@ type DemoForm = {
 // 모듈 레벨 상수 — 훅 계약이 요구한다(인라인 객체 금지).
 const DEMO_DEFAULTS: DemoForm = { 'demo.host': '', 'demo.password': '' };
 
+// 플래그는 **이름 있는 인자**로 받는다. 위치 불리언(`row(k, v, false, false)`)은 호출부에서
+// 어느 쪽이 overridden 이고 어느 쪽이 tenantEditable 인지 읽을 수 없고, 두 값을 맞바꿔 써도
+// 타입이 통과한다 — 이 훅의 계약이 정확히 그 두 플래그의 해석이므로 값싸게 틀릴 자리를 없앤다.
 const row = (
   key: string,
   value: string | null,
-  overridden = false,
-  tenantEditable = true,
+  { overridden = false, tenantEditable = true }: { overridden?: boolean; tenantEditable?: boolean } = {},
 ): ResolvedSettingResponse => ({
   key,
   value,
@@ -161,7 +162,7 @@ describe('useSettingsOverrideForm', () => {
     expect(result.current.isEditable('demo.password')).toBe(true);
 
     mockedGet.mockResolvedValue({
-      data: [row('demo.host', 'x', false, false), row('demo.password', '****3f2a')],
+      data: [row('demo.host', 'x', { tenantEditable: false }), row('demo.password', '****3f2a')],
     } as never);
     await act(async () => {
       await result.current.refreshMeta();

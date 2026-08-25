@@ -180,10 +180,7 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
     // 증명하지 않는 공허한 단언이 하나 늘 뿐이다. cascade 는 FK 정의
     // (role_permission.permission_id / platform_role_permission.permission_id 가 둘 다
     // ON DELETE CASCADE)가 DB 수준에서 보장한다.
-    Integer catalogRows =
-        dsl.fetchOne("select count(*) from permission where code = 'settings:write'")
-            .get(0, Integer.class);
-    assertThat(catalogRows).isZero();
+    assertThat(permissionCount("settings:write")).isZero();
 
     // 양성 대조군 — 같은 모양의 조회가 실재하는 권한은 실제로 찾아낸다. 오타난 컬럼·테이블은
     // 대조군 없이도 예외로 터지니 여기서 막는 것은 그게 아니다. 이 커넥션은 app_tenant 롤로
@@ -191,17 +188,21 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
     // 테넌트를 세우지 않은 이 커넥션에서는 **모든** count 가 조건과 무관하게 0 이 되어 위
     // isZero() 는 V116 을 돌렸든 안 돌렸든 통과한다. 대조군이 1 을 반환한다는 것이 "이 조회는
     // 실제로 행을 볼 수 있다"의 증거이고, 그래서 위 0 은 "안 보인다"가 아니라 "없다"를 뜻한다.
-    Integer control =
-        dsl.fetchOne("select count(*) from permission where code = 'ai:settings'")
-            .get(0, Integer.class);
-    assertThat(control).isEqualTo(1);
+    assertThat(permissionCount("ai:settings")).isEqualTo(1);
 
     // 플랫폼 평면의 'platform:settings:write' 는 전혀 다른 권한이며 살아 있어야 한다
     // (V113 이 시드했고 PlatformSettingsController 가 실제로 요구한다). 프리픽스만 다른
     // 두 코드를 섞어 지우는 사고를 여기서 막는다.
-    Integer platformCounterpart =
-        dsl.fetchOne("select count(*) from permission where code = 'platform:settings:write'")
-            .get(0, Integer.class);
-    assertThat(platformCounterpart).isEqualTo(1);
+    assertThat(permissionCount("platform:settings:write")).isEqualTo(1);
+  }
+
+  /**
+   * 권한 카탈로그에서 코드 하나의 행 수를 센다.
+   *
+   * <p>바인드 파라미터를 쓴다 — 위 세 호출은 전부 리터럴이지만, 문자열을 이어 붙이는 형태로
+   * 두면 다음 사람이 변수를 넣는 순간 이 테스트가 SQL 조립 예제가 된다.
+   */
+  private int permissionCount(String code) {
+    return dsl.fetchOne("select count(*) from permission where code = ?", code).get(0, Integer.class);
   }
 }

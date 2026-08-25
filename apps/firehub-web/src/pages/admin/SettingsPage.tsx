@@ -648,7 +648,6 @@ export default function SettingsPage() {
             </Button>
           </div>
         </TabsContent>
-        {/* 이메일 탭 — P7-c1 로 편집 가능해져 자기 dirty 를 합산기에 보고한다 */}
         {/* 이메일 탭 — 폼 상태는 페이지가 소유한다(탭 전환에도 편집이 살아남는다) */}
         <TabsContent value="email" className="mt-6">
           <SmtpSettingsTab state={smtp} />
