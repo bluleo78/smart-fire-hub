@@ -1347,6 +1347,22 @@ test.describe('설정 페이지', () => {
       await setupSettingsMocks(page);
       const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
 
+      // `prefix=smtp` GET 횟수를 센다. **이것이 `original` 재시드를 잡는 유일한 표면이다** —
+      // 아래 페이로드 단언은 재시드를 검출하지 못한다(`original` 만 새 마스크로 덮여도 폼 값과는
+      // 여전히 달라 같은 키·같은 값이 그대로 실린다). 나중에 등록한 핸들러가 먼저 돌고
+      // `fallback()` 이 setupSettingsMocks 의 핸들러로 넘긴다.
+      let smtpGetCount = 0;
+      await page.route(
+        (url) => url.pathname === '/api/v1/settings',
+        (route) => {
+          const req = route.request();
+          if (req.method() === 'GET' && new URL(req.url()).searchParams.get('prefix') === 'smtp') {
+            smtpGetCount += 1;
+          }
+          return route.fallback();
+        },
+      );
+
       await page.goto('/admin/settings');
       await page.getByRole('tab', { name: '이메일' }).click();
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
@@ -1363,9 +1379,13 @@ test.describe('설정 페이지', () => {
       await expect(page.locator('#smtp-password')).toHaveValue('new-app-password');
       await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
 
-      // 값만 살아나는 것으로는 부족하다 — `original` 이 재마운트에서 새 마스크로 다시 시드되면
-      // 저장 대상 판정(form === original → 제외)이 무너져 편집이 조용히 누락되거나 마스크가
-      // 값처럼 실린다. 그래서 왕복 **뒤에** 실제 PUT 페이로드를 본다.
+      // 값이 살아 있다고 끝이 아니다 — `original` 이 왕복 중 새 마스크로 다시 시드되면 저장 대상
+      // 판정(form === original → 제외)이 무너져 편집이 조용히 누락되거나 마스크가 값처럼 실린다.
+      // **그 재시드를 잡는 것은 아래 페이로드 단언이 아니라 이 GET 횟수다**(위 카운터 주석 참고):
+      // 훅이 최초 1회만 조회하므로 탭을 오가도 1회여야 한다.
+      expect(smtpGetCount).toBe(1);
+
+      // 페이로드는 다른 것을 지킨다 — 바꾼 키만 담기고 마스크 센티널이 실리지 않는지.
       await page.getByRole('button', { name: '저장' }).click();
       const req = await saveCapture.waitForRequest();
       const settings = (req.payload as { settings: Record<string, string> }).settings;
