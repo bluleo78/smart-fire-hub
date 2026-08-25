@@ -3,7 +3,6 @@ import { toast } from 'sonner';
 
 import { settingsApi } from '../api/settings';
 import type { SettingFieldState } from '../lib/settings-fields';
-import type { ResolvedSettingResponse } from '../types/settings';
 import type { SettingsOverrideForm } from './useSettingsOverrideForm';
 import { useSettingsOverrideForm } from './useSettingsOverrideForm';
 
@@ -190,9 +189,8 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
   const {
     settings,
     form,
-    setForm,
     original,
-    setOriginal,
+    resyncFromServer,
     setErrors,
     setIsClearing,
     fieldState,
@@ -210,14 +208,6 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
    * 클로저가 두 벌이었고 한쪽 주석이 "두 경로가 다른 방식으로 폼을 맞추면 한쪽만 고쳐지는 사고가
    * 난다"고 적어 두고 있었다 — <b>주석으로 동기화하는 중복은 이미 어긋난 중복</b>이다.
    */
-  const reseedConnection = (byKey: Record<string, ResolvedSettingResponse>) => (prev: SmtpForm) => {
-    const next = { ...prev };
-    SMTP_CONNECTION_KEYS.forEach((key) => {
-      next[key] = byKey[key]?.value ?? EMPTY[key];
-    });
-    return next;
-  };
-
   // 그룹 배지·그룹 해제 버튼·그룹 설명문이 읽는 값. 훅에 `resolveState` 로 넘긴 것과 <b>같은</b>
   // 함수를 쓴다 — 표시용 그룹 상태와 저장/dirty 를 지배하는 그룹 상태가 갈라질 자리를 없앤다.
   const connectionGroupState = resolveConnectionGroupState(fieldState);
@@ -314,9 +304,7 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
           if (!wasInherited) return;
           const nowOverridden = SMTP_CONNECTION_KEYS.some((key) => byKey[key]?.overridden === true);
           if (!nowOverridden) return;
-          const seed = reseedConnection(byKey);
-          setForm(seed);
-          setOriginal(seed);
+          resyncFromServer(SMTP_CONNECTION_KEYS, byKey);
         })
         .catch(() => {
           // **저장은 성공했고 다시 그리기가 실패했다.** 이 둘을 뭉뚱그리면 안 된다:
@@ -368,14 +356,7 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
       // 성공·실패 어느 쪽이든 서버에서 다시 읽는다 — 화면 상태가 실제 행 상태에서 파생되므로
       // 부분 실패도 자동으로 올바르게 그려진다.
       const byKey = await refreshMeta();
-      const seed = reseedConnection(byKey);
-      setForm(seed);
-      setOriginal(seed);
-      setErrors((prev) => {
-        const next = { ...prev };
-        SMTP_CONNECTION_KEYS.forEach((key) => delete next[key]);
-        return next;
-      });
+      resyncFromServer(SMTP_CONNECTION_KEYS, byKey);
 
       if (failedLabels.length > 0) {
         const message =

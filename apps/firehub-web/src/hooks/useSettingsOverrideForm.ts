@@ -57,9 +57,20 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
   setIsClearing: Dispatch<SetStateAction<boolean>>;
   settings: Record<string, ResolvedSettingResponse>;
   form: F;
-  setForm: Dispatch<SetStateAction<F>>;
   original: F;
-  setOriginal: Dispatch<SetStateAction<F>>;
+  /**
+   * 서버에서 다시 읽은 값으로 지정한 키들을 <b>확정</b>한다 — `form` 과 `original` 을 <b>같은
+   * 값으로 함께</b> 덮고 그 키의 검증 오류를 지운다.
+   *
+   * <b>왜 `setForm`/`setOriginal` 을 따로 내주지 않는가</b>: 이 둘이 갈라지는 것이 이 밴드가
+   * 막으려던 결함 그 자체다. `original` 만 새 마스크로 갱신되면 실제 편집이 "안 바뀐 키"로
+   * 조용히 누락되고, `form` 만 갱신되면 마스크가 값처럼 저장 대상에 오른다. 쌍으로만 움직이는
+   * 연산이므로 <b>쌍을 깨뜨릴 수 없는 형태로</b>만 노출한다.
+   *
+   * 값은 조회와 <b>같은 폴백</b>을 거친다(서버 값 → `defaults`) — 코드 기본값이 있는 키를
+   * 빈칸으로 만들면 실제 적용값과 화면이 어긋난다.
+   */
+  resyncFromServer: (keys: readonly (keyof F)[], byKey: Record<string, ResolvedSettingResponse>) => void;
   errors: Partial<Record<keyof F, string>>;
   setErrors: Dispatch<SetStateAction<Partial<Record<keyof F, string>>>>;
   fieldState: (key: keyof F) => SettingFieldState;
@@ -212,21 +223,30 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
    * 재정의 해제 — DELETE 후 해당 키 하나만 서버 값으로 되돌린다.
    * 전체 폼을 다시 시드하지 않는 이유: 다른 필드에 입력 중이던 미저장 변경을 조용히 날려버린다.
    */
+  /** 서버 값으로 지정 키들을 확정한다. `form`·`original` 을 같은 값으로 함께 덮는다. */
+  const resyncFromServer = (
+    keys: readonly (keyof F)[],
+    byKey: Record<string, ResolvedSettingResponse>,
+  ) => {
+    const patch = {} as Partial<Record<keyof F, string>>;
+    keys.forEach((key) => {
+      patch[key] = byKey[key as string]?.value ?? defaultsRef.current[key];
+    });
+    setForm((prev) => ({ ...prev, ...patch }) as F);
+    setOriginal((prev) => ({ ...prev, ...patch }) as F);
+    setErrors((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => delete next[key]);
+      return next;
+    });
+  };
+
   const handleClearOverride = async (key: keyof F) => {
     setIsClearing(true);
     try {
       await settingsApi.clearOverride(key as string);
       const byKey = await refreshMeta();
-      // 해제 후 값도 조회와 같은 폴백을 거친다 — 코드 기본값이 있는 키를 빈칸으로 만들면
-      // 실제 적용값과 화면이 어긋난다.
-      const restored = byKey[key as string]?.value ?? defaultsRef.current[key];
-      setForm((prev) => ({ ...prev, [key]: restored }) as F);
-      setOriginal((prev) => ({ ...prev, [key]: restored }) as F);
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
+      resyncFromServer([key], byKey);
       toast.success('플랫폼 기본값으로 되돌렸습니다.');
     } catch {
       toast.error('재정의 해제에 실패했습니다.');
@@ -277,9 +297,8 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
     setIsClearing,
     settings,
     form,
-    setForm,
     original,
-    setOriginal,
+    resyncFromServer,
     errors,
     setErrors,
     fieldState,
