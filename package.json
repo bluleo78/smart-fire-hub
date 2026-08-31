@@ -40,6 +40,9 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "@types/node": "^24.10.1"
+    }
   }
 }
