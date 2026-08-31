@@ -75,6 +75,30 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(page.getByTestId('mapping-empty')).toHaveCount(0);
   });
 
+  // 회귀(#399): 은퇴한 온톨로지에 바인딩된 매핑을 편집 중이라는 사실이 이 탭 밖에서는 보이지 않았다
+  // (관리 다이얼로그는 ADMIN 전용). OntologyStatusBanner를 재사용해 status=archived면 안내가 떠야 한다.
+  test('온톨로지가 은퇴 상태면 매핑 탭에 경고 배너를 보여준다 (#399)', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', '/api/v1/ontologies', [
+      {
+        id: MAPPING_ONTOLOGY_ID,
+        domain: '화재조사 보고서',
+        schemaVersion: 1,
+        status: 'archived',
+        entityCount: 6,
+        datasetCount: 3,
+        updatedAt: '2026-04-12T09:00:00Z',
+        isDefault: true,
+      },
+    ]);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    await page.goto(MAPPING_URL);
+
+    const banner = page.getByTestId('ontology-status-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('은퇴한 온톨로지');
+  });
+
   test('엔티티 매핑을 추가하고 저장하면 spec 구조가 그대로 PUT 페이로드에 담긴다', async ({
     authenticatedPage: page,
   }) => {

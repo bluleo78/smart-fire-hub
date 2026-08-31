@@ -1,5 +1,16 @@
 import { toast } from 'sonner';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -145,9 +156,42 @@ function OntologyLifecycleAction({ ontology }: { ontology: OntologySummary }) {
       failureMessage: `온톨로지 ${label}에 실패했습니다.`,
     });
 
+  // 은퇴(archived)는 삭제만큼 되돌리기 번거로운 전이(재활성화 필요)이고, 참조 중인 데이터셋이
+  // 있어도 서버가 항상 허용하므로 실수로 누르는 걸 막을 게이트가 프론트에 없으면 사고가 난다(#399).
+  // 삭제(DeleteConfirmDialog)와 동일하게 확인 다이얼로그를 거치되, 차단하지는 않고 영향 범위(참조
+  // 데이터셋 수)만 고지한다 — 차단 여부는 백엔드 정책 결정 사안이라 이슈 수정 범위 밖이다.
+  // 복귀(active로 되돌리기)는 파괴적이지 않으므로 기존처럼 즉시 실행한다.
+  if (target !== 'archived') {
+    return (
+      <Button variant="ghost" size="sm" onClick={run} disabled={isPending}>
+        {label}
+      </Button>
+    );
+  }
+
   return (
-    <Button variant="ghost" size="sm" onClick={run} disabled={isPending}>
-      {label}
-    </Button>
+    <AlertDialog>
+      <AlertDialogTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="sm" disabled={isPending}>
+          {label}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>온톨로지 은퇴</AlertDialogTitle>
+          <AlertDialogDescription>
+            &quot;{ontology.domain}&quot; 온톨로지를 은퇴시키겠습니까? 은퇴 후에는 신규 데이터셋 바인딩이
+            불가능하며, 기존 적재 데이터는 보존됩니다.
+            {ontology.datasetCount > 0 && (
+              <> {ontology.datasetCount}개 데이터셋이 이 온톨로지를 사용 중입니다.</>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>취소</AlertDialogCancel>
+          <AlertDialogAction onClick={run}>은퇴</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

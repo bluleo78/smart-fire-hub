@@ -133,7 +133,9 @@ test.describe('온톨로지 생명주기', () => {
     await capture.waitForRequest();
   });
 
-  test('은퇴 요청은 전용 PATCH로 status=archived만 보낸다', async ({ authenticatedPage: page }) => {
+  test('은퇴는 확인 다이얼로그를 거친 뒤 전용 PATCH로 status=archived만 보낸다 (#399)', async ({
+    authenticatedPage: page,
+  }) => {
     // 전이는 스키마 편집(PUT)이 아니라 PATCH /ontology/{id}/status 전용 경로다 — PUT으로 가면
     // schema_version이 올라가 적재 노드가 전부 "구버전"으로 뒤집힌다.
     const capture = await mockApi(page, 'PATCH', '/api/v1/ontology/2/status', null, { status: 204, capture: true });
@@ -143,15 +145,47 @@ test.describe('온톨로지 생명주기', () => {
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
-    await page
-      .getByTestId('ontology-manage-dialog')
-      .getByRole('row', { name: /건축물 대장/ })
-      .getByRole('button', { name: '은퇴' })
-      .click();
+    const row = page.getByTestId('ontology-manage-dialog').getByRole('row', { name: /건축물 대장/ });
+    await row.getByRole('button', { name: '은퇴' }).click();
+
+    // 삭제와 마찬가지로 확인 다이얼로그가 뜨고, 버튼 클릭만으로는 아직 요청이 나가지 않아야 한다(#399).
+    const confirmDialog = page.getByRole('alertdialog');
+    await expect(confirmDialog).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+
+    await confirmDialog.getByRole('button', { name: '은퇴', exact: true }).click();
 
     const req = await capture.waitForRequest();
     expect(req.payload).toEqual({ status: 'archived' });
     expect(putCapture.requests).toHaveLength(0);
+  });
+
+  test('은퇴 확인 다이얼로그는 참조 중인 데이터셋 수를 고지한다 (#399)', async ({ authenticatedPage: page }) => {
+    // 참조가 있어도 은퇴 자체는 항상 허용된다(백엔드는 기본 온톨로지 여부만 검사) — 프론트가
+    // 확인 다이얼로그에서 영향 범위(참조 데이터셋 수)를 보여줘 실수 클릭을 막는지만 검증한다.
+    await mockApi(page, 'GET', '/api/v1/ontologies', [
+      {
+        id: 7,
+        domain: '설비 점검',
+        schemaVersion: 2,
+        status: 'active',
+        entityCount: 5,
+        datasetCount: 4,
+        updatedAt: '2026-07-01T09:00:00Z',
+        isDefault: false,
+      },
+    ]);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: /온톨로지 관리/ }).click();
+
+    await page
+      .getByTestId('ontology-manage-dialog')
+      .getByRole('row', { name: /설비 점검/ })
+      .getByRole('button', { name: '은퇴' })
+      .click();
+
+    await expect(page.getByRole('alertdialog')).toContainText('4개 데이터셋이 이 온톨로지를 사용 중입니다');
   });
 
   test('참조 중 삭제 시도(409)는 사유를 토스트로 보여준다', async ({ authenticatedPage: page }) => {

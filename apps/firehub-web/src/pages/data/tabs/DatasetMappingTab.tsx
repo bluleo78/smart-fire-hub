@@ -18,6 +18,7 @@ import {
   useBinding,
   useMapping,
   useOntologyById,
+  useOntologyList,
   useSaveMapping,
 } from '../../../hooks/queries/useMapping';
 import { handleApiError } from '../../../lib/api-error';
@@ -25,6 +26,7 @@ import type { DraftEntity, DraftRelation, MappingDraft } from '../../../lib/mapp
 import { countRelationsReferencing, emptyDraft, entityLabel, nextDraftId, removeEntity, toDraft, toSpec } from '../../../lib/mapping-spec';
 import type { EntityMappingFormData, RelationMappingFormData } from '../../../lib/validations/mapping';
 import type { DatasetDetailResponse } from '../../../types/dataset';
+import OntologyStatusBanner from '../../admin/components/OntologyStatusBanner';
 import { EntityMappingDialog } from '../components/EntityMappingDialog';
 import { EntityMappingTable } from '../components/EntityMappingTable';
 import { OntologyBindingCard } from '../components/OntologyBindingCard';
@@ -48,6 +50,10 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
   const { data: binding, isLoading: bindingLoading } = useBinding(datasetId);
   const ontologyId = binding?.ontologyId ?? null;
   const { data: ontology } = useOntologyById(ontologyId);
+  // status는 useOntologyById(스키마)에는 없고 목록 요약(OntologySummary)에만 있다 — 이 온톨로지가
+  // 은퇴(archived)됐다는 걸 이 탭에서 알려주려면 'all' 목록에서 찾아야 한다(#399).
+  const { data: ontologiesAll } = useOntologyList('all');
+  const ontologySummary = ontologiesAll?.find((o) => o.id === ontologyId);
   const { data: mapping, isLoading: mappingLoading } = useMapping(datasetId);
   const saveMapping = useSaveMapping(datasetId);
   const activateMapping = useActivateMapping(datasetId);
@@ -243,6 +249,13 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
           </Button>
         </div>
       </div>
+
+      {/*
+        데이터셋 소유자는 자기 매핑이 의존하는 온톨로지가 은퇴됐다는 사실을 이 화면 밖에서는 알 방법이
+        없다(관리 다이얼로그는 ADMIN 전용) — draft/archived 모두 동일한 배너 컴포넌트가 안내한다(#399).
+        active면 배너 자체가 null을 반환하므로 평소엔 아무것도 렌더링되지 않는다.
+      */}
+      {ontologySummary && <OntologyStatusBanner ontology={ontologySummary} />}
 
       <p className="text-sm text-muted-foreground" data-testid="mapping-summary">
         엔티티 {draft.entities.length}개 · 관계 {draft.relations.length}개
