@@ -11,8 +11,10 @@
  * 반드시 이 헬퍼를 거쳐야 한다 — 그렇지 않으면 KST 브라우저에서 9시간 어긋난다 (#349).
  */
 export function parseUtcDate(dateStr: string): Date {
-  // 이미 타임존 정보가 있으면 그대로, 없으면 UTC로 간주
-  if (/[Z+-]\d{0,4}$/.test(dateStr)) return new Date(dateStr);
+  // 이미 타임존 정보가 있으면 그대로, 없으면 UTC로 간주.
+  // 콜론 포함 오프셋(+09:00 등)도 인식해야 한다 — 이전 정규식은 숫자 런 앞에 콜론이 끼면
+  // 매치하지 못해 "+09:00Z"처럼 Z를 중복 추가, Invalid Date를 유발했다 (#397).
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(dateStr)) return new Date(dateStr);
   return new Date(dateStr + 'Z');
 }
 

@@ -40,6 +40,19 @@ describe('formatDate', () => {
     const result = formatDate('2026-04-11T00:00:00Z');
     expect(typeof result).toBe('string');
   });
+
+  // #397 회귀: 콜론 포함 오프셋(+09:00)을 타임존 "없음"으로 오판해 'Z'를 중복 추가하고
+  // Invalid Date가 되던 버그. OffsetDateTime을 직렬화하는 백엔드 필드(예: OntologySummary.updatedAt)에서 발생.
+  it('콜론 포함 타임존 오프셋(+09:00)이 있는 문자열도 Invalid Date 없이 처리', () => {
+    const result = formatDate('2026-08-30T12:34:56.789012+09:00');
+    expect(result).not.toBe('-');
+    expect(result.toLowerCase()).not.toContain('invalid');
+  });
+
+  it('콜론 포함 음수 오프셋(-05:00)이 있는 문자열도 Invalid Date 없이 처리', () => {
+    const result = formatDate('2026-08-30T12:34:56-05:00');
+    expect(result.toLowerCase()).not.toContain('invalid');
+  });
 });
 
 describe('formatDateShort', () => {
@@ -214,6 +227,17 @@ describe('formatDateTime / formatDateTimeMinute / formatDateOnly', () => {
   it('formatDateTime — UTC 문자열을 zero-pad 절대시간으로', () => {
     const result = formatDateTime('2026-04-11T03:05:09Z');
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  // #397 회귀: 콜론 포함 오프셋(+09:00)이 "-"(Invalid Date)로 새지 않아야 한다.
+  it('formatDateTime — 콜론 포함 오프셋(+09:00)도 정상 포맷', () => {
+    const result = formatDateTime('2026-08-30T12:34:56.789012+09:00');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('formatDateOnly — 콜론 포함 오프셋(+09:00)도 정상 포맷', () => {
+    const result = formatDateOnly('2026-08-30T12:34:56.789012+09:00');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it('formatDateTimeMinute — 분 단위 16자', () => {
