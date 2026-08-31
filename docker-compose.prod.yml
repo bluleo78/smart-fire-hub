@@ -66,6 +66,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-smartfirehub}
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # 런타임 접속은 비특권 롤 app_tenant(RLS fail-closed, V83). application-prod.yml 이
+      # 기본값 없이 ${POSTGRES_RUNTIME_PASSWORD} 를 읽으므로 이 매핑이 없으면 컨텍스트 로딩이 실패한다.
+      # compose 의 .env 는 ${...} 치환용이라 여기서 명시하지 않으면 컨테이너에 주입되지 않는다.
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:?ENCRYPTION_MASTER_KEY is required}
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
