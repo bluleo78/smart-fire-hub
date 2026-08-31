@@ -1,3 +1,5 @@
+import { useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -13,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  REVIEW_ITEMS_QUERY_KEY,
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError } from '@/lib/api-error';
@@ -41,6 +44,20 @@ function formatSignal(signalType: string | null, signalScore: number | null): st
   if (signalScore == null) return label;
   // 유사도는 소수 3자리, 그 외 신뢰도류는 2자리 — 기존 표기 관례 유지.
   return `${label} ${signalScore.toFixed(signalType === 'similarity' ? 3 : 2)}`;
+}
+
+/**
+ * getPendingOrThrow가 던지는 "이미 처리된 항목입니다(status=...): {id}" 메시지만 식별한다(#398).
+ * 같은 409라도 관계 끝점 누락·정정값 형식 위반 같은 다른 원인은 서버가 알려준 구체 사유를
+ * 그대로 보여줘야 하므로(#310, #311 회귀 가드) 이 접두사로만 좁혀 판단한다.
+ */
+function isAlreadyProcessedConflict(err: unknown): boolean {
+  return (
+    axios.isAxiosError(err)
+    && err.response?.status === 409
+    && typeof err.response.data?.message === 'string'
+    && err.response.data.message.startsWith('이미 처리된 항목입니다')
+  );
 }
 
 /** 확인 다이얼로그가 제어하는 대상 — 어떤 행을, 어떤 조치로, (속성이면) 어떤 정정값으로 확정할지. */
@@ -151,6 +168,7 @@ export default function ReviewInboxPage() {
   const { data: pending, isLoading } = useReviewItemsPending(filter);
   const approve = useApproveReviewItem();
   const reject = useRejectReviewItem();
+  const queryClient = useQueryClient();
   const [processingId, setProcessingId] = useState<number | null>(null);
   // 확인 다이얼로그는 페이지에 1개만 둔다(행마다 렌더하면 DOM이 부풀고, 확정 후 행이 사라질 때 언마운트 레이스가 생긴다).
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
@@ -180,13 +198,29 @@ export default function ReviewInboxPage() {
     requestAnimationFrame(check);
   };
 
+  /**
+   * 다른 세션이 같은 항목을 먼저 처리해 409(이미 처리됨)가 나면, 백엔드 원문 메시지에 담긴
+   * 내부 DB row id를 그대로 노출하지 않고 검수자 친화적 문구로 대체한다. 또한 목록 쿼리를
+   * invalidate해 stale 행을 제거한다 — 무효화하지 않으면 같은 행을 다시 눌러도 항상 같은
+   * 409만 반복되는 죽은 UI로 남는다(#398). 그 외 409(끝점 누락·정정값 형식 위반 등)는
+   * 서버가 준 구체 사유를 그대로 보여줘야 하므로 기존 handleApiError 경로를 유지한다(#310, #311).
+   */
+  const reportFailure = (err: unknown, fallback: string) => {
+    if (isAlreadyProcessedConflict(err)) {
+      toast.error('이미 다른 사용자가 처리한 항목입니다. 목록을 새로고침했습니다.');
+      void queryClient.invalidateQueries({ queryKey: [REVIEW_ITEMS_QUERY_KEY] });
+      return;
+    }
+    handleApiError(err, fallback);
+  };
+
   const doApprove = async (id: number, correctedValue?: string) => {
     setProcessingId(id);
     try {
       await approve.mutateAsync({ id, correctedValue });
       toast.success('검수를 승인했습니다.');
       restoreFocusIfRowGone();
-    } catch (err) { handleApiError(err, '승인 처리에 실패했습니다.'); }
+    } catch (err) { reportFailure(err, '승인 처리에 실패했습니다.'); }
     finally { setProcessingId(null); }
   };
   const doReject = async (id: number) => {
@@ -195,7 +229,7 @@ export default function ReviewInboxPage() {
       await reject.mutateAsync(id);
       toast.success('검수를 거부했습니다.');
       restoreFocusIfRowGone();
-    } catch (err) { handleApiError(err, '거부 처리에 실패했습니다.'); }
+    } catch (err) { reportFailure(err, '거부 처리에 실패했습니다.'); }
     finally { setProcessingId(null); }
   };
 

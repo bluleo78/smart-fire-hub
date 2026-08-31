@@ -250,6 +250,43 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('노후 배선이 화재 원인으로 추정된다.')).toBeVisible();
   });
 
+  // #398 회귀 가드 — 다른 세션이 같은 항목을 먼저 처리하면 서버가
+  // "이미 처리된 항목입니다(status=rejected): {id}" 형태로 409를 준다. 이때는
+  // (1) 내부 DB row id를 그대로 노출하지 않고 검수자 친화적 문구로 대체하고
+  // (2) pending 목록을 무효화해 stale 행을 제거해야 한다 — 그렇지 않으면 같은 행을
+  // 다시 눌러도 항상 같은 409만 반복되는 죽은 UI로 남는다.
+  test('이미 처리된 항목 거부 시 내부 id 없는 문구를 띄우고 목록을 새로고침해 행을 제거한다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem({ id: 51 })]);
+    await page.route((url) => url.pathname === '/api/v1/graphrag/review-items/51/reject', (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          status: 409, error: 'Conflict',
+          message: '이미 처리된 항목입니다(status=rejected): 51',
+          timestamp: '2026-08-31T00:00:00Z', path: '/api/v1/graphrag/review-items/51/reject',
+        }),
+      }));
+
+    await page.goto('/knowledge-graph/review');
+    await expect(page.getByText('전기적 요인')).toBeVisible();
+
+    // 실패 응답 이후 재조회(invalidate)에서는 다른 세션이 이미 처리했다는 사실이 반영되어 목록이 빈다.
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+
+    await page.getByRole('button', { name: '거부' }).click();
+    await page.getByTestId('review-decide-confirm-action').click();
+
+    // 내부 row id(51)가 그대로 노출되는 백엔드 원문 메시지가 아니라 검수자 친화적 문구여야 한다.
+    await expect(page.getByText('이미 다른 사용자가 처리한 항목입니다. 목록을 새로고침했습니다.')).toBeVisible();
+    await expect(page.getByText('이미 처리된 항목입니다')).toHaveCount(0);
+    await expect(page.getByText(': 51')).toHaveCount(0);
+
+    // stale 행이 목록에서 사라져야 한다 — 남아있으면 재클릭해도 같은 409만 반복되는 죽은 UI가 된다.
+    await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+    await expect(page.getByText('전기적 요인')).toHaveCount(0);
+  });
+
   // #315 — 승인/적재/정정 적용/거부 4개 조치는 그래프를 바꾸거나(비가역) 항목을 목록에서 영구히 없앤다.
   // 행 높이가 낮고 버튼이 인접해 오클릭 위험이 실재하므로 전건 확인 게이트를 둔다.
   test.describe('확정 전 확인 다이얼로그 (#315)', () => {
