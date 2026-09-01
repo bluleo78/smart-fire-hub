@@ -2,6 +2,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -374,14 +375,14 @@ function EditRelationForm({
         />
       </div>
 
-      {/* 엔티티 타입 삭제(DeleteTypeConfirm)와 달리 확인 다이얼로그가 없다 — 관계 삭제는 FK CASCADE로
-          함께 사라지는 다른 요소가 없다(브리프: "관계 삭제는 확인 없이 즉시(파급 없음)"). */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="gap-1.5 text-destructive"
-        data-testid="relation-delete-trigger"
-        onClick={() =>
+      {/* FK CASCADE로 함께 사라지는 다른 요소는 없지만(엔티티 타입 삭제와 달리 파급 목록은 없다),
+          실수 클릭 시 확인 절차·복구 수단이 전혀 없다는 결함(#419)을 막기 위해 범용
+          DeleteConfirmDialog(엔티티 타입 삭제의 DeleteTypeConfirm과 같은 AlertDialog 패턴)를
+          적용한다. 커스텀 본문(함께 지워질 목록)이 필요 없으므로 전용 컴포넌트 대신 범용을 그대로 쓴다. */}
+      <DeleteConfirmDialog
+        entityName="관계"
+        itemName={`${relation.subject} → ${relation.relation} → ${relation.object}`}
+        onConfirm={() =>
           void mutations.deleteRelation(relation.id).then((result) => {
             // 포커스를 먼저 옮긴 뒤 onDeleted를 호출한다(I-1, S2 최종 리뷰) — EntityInspector의
             // 타입 삭제(#328류, restoreFocusRef)와 동일한 순서. onDeleted가 먼저 실행되면 부모가
@@ -393,10 +394,13 @@ function EditRelationForm({
             }
           })
         }
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        관계 삭제
-      </Button>
+        trigger={
+          <Button variant="outline" size="sm" className="gap-1.5 text-destructive" data-testid="relation-delete-trigger">
+            <Trash2 className="h-3.5 w-3.5" />
+            관계 삭제
+          </Button>
+        }
+      />
     </div>
   );
 }

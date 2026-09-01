@@ -473,6 +473,8 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
       { capture: true },
     );
     await existingRow.getByLabel('Damage 속성 삭제').click();
+    // #419 — 속성 삭제도 관계 삭제와 마찬가지로 확인 다이얼로그를 거친 뒤에만 요청이 나간다.
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await deleteCapture.waitForRequest();
     // 삭제 성공 → 행이 화면에서도 사라진다(M-1, Task 6 리뷰) — 요청이 나간 것만으로는 캐시 갱신이
     // entities[].properties에서 실제로 걸러내는지 증명하지 않는다.
@@ -501,6 +503,7 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     );
 
     await page.getByTestId('property-row-1').getByLabel('Damage 속성 삭제').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByTestId('property-row-1')).toHaveCount(0);
     const activeElement = await page.evaluate(() => ({
       tag: document.activeElement?.tagName,
@@ -574,6 +577,7 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     // 그 사이 기존 속성(id=1)을 즉시 응답으로 삭제한다.
     await mockApi(page, 'DELETE', '/api/v1/ontology/1/entity-types/4/properties/1', createVersionOnly());
     await page.getByTestId('property-row-1').getByLabel('Damage 속성 삭제').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByTestId('property-row-1')).toHaveCount(0);
 
     const activeElement = await page.evaluate(() => ({
@@ -1313,14 +1317,37 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
     expect(called).toBe(false);
   });
 
-  test('관계 삭제는 확인 없이 즉시 나간다(파급 없음 — 확인 다이얼로그 없음)', async ({ authenticatedPage: page }) => {
+  // #419 — 이전에는 확인 없이 클릭 즉시 DELETE가 나갔다(실수 클릭 시 복구 수단 전무). 엔티티 타입
+  // 삭제(DeleteTypeConfirm)와 같은 AlertDialog 확인 패턴을 범용 DeleteConfirmDialog로 적용했다.
+  test('관계 삭제는 확인 다이얼로그를 거친 뒤에만 DELETE가 나간다(취소 시 요청 없음)', async ({
+    authenticatedPage: page,
+  }) => {
     await openRelationInspector(page, 4); // HAS_EQUIPMENT(Building→Equipment)
+    let called = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontology/1/relations/4',
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        called = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createVersionOnly()) });
+      },
+    );
+
+    await page.getByTestId('relation-delete-trigger').click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByRole('alertdialog').getByText('Building → HAS_EQUIPMENT → Equipment')).toBeVisible();
+
+    // 취소하면 요청이 전혀 안 나간다 — 확인 없이 즉시 삭제되던 원래 결함(#419)의 핵심.
+    await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    expect(called).toBe(false);
+    await expect(page.getByTestId('relation-delete-trigger')).toBeVisible();
+
     const capture = await mockApi(page, 'DELETE', '/api/v1/ontology/1/relations/4', createVersionOnly(), {
       capture: true,
     });
-
     await page.getByTestId('relation-delete-trigger').click();
-    // 엔티티 타입 삭제(DeleteTypeConfirm)와 달리 확인 다이얼로그가 뜨지 않는다 — 클릭 즉시 요청이 나간다.
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await capture.waitForRequest();
 
     // 삭제 성공 → 선택이 비워지고 인스펙터가 빈 안내 문구로 돌아간다 + 아웃라인에서도 사라진다.
@@ -1352,6 +1379,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
     );
 
     await page.getByTestId('relation-delete-trigger').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByText('왼쪽에서 타입 또는 관계를 선택하세요.')).toBeVisible();
     const activeElement = await page.evaluate(() => ({
       tag: document.activeElement?.tagName,

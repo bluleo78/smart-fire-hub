@@ -2,6 +2,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -114,15 +115,24 @@ function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete }
           onBlur={unitField.onBlur}
           className="w-20"
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          onClick={onDelete}
-          aria-label={`${entityType} 속성 삭제`}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        {/* 확인 없이 즉시 삭제되던 결함(#419) — 엔티티 타입 삭제(DeleteTypeConfirm)와 동일한
+            AlertDialog 패턴을 범용 DeleteConfirmDialog로 적용한다. 속성 삭제는 FK CASCADE 파급이
+            없어(커스텀 목록 불필요) 전용 컴포넌트 대신 범용을 그대로 쓴다. */}
+        <DeleteConfirmDialog
+          entityName="속성"
+          itemName={`${entityType}.${property.name}`}
+          onConfirm={onDelete}
+          trigger={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              aria-label={`${entityType} 속성 삭제`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          }
+        />
       </div>
       <Input
         aria-label={`${entityType} 속성 설명`}
