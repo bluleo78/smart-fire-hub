@@ -25,7 +25,8 @@ function findTool(apiClient: any, name: string) {
   return tool!;
 }
 
-// itemType 별 payload 형태(백엔드 ReviewItemService 가 만드는 실제 키에 맞춤).
+// summarizeReviewItem 은 도구 핸들러 안에서 normalizeReviewItem(짧은 이름 변환) 뒤에만 호출되므로,
+// 여기서는 이미 짧은 이름으로 정규화된 입력을 직접 검증한다.
 const ITEMS = [
   {
     id: 1, itemType: 'synonym', status: 'pending', datasetId: 5, signalType: 'similarity',
@@ -49,16 +50,23 @@ const ITEMS = [
   },
 ];
 
+// 백엔드(ReviewItemService)가 실제로 item_type 컬럼에 쓰는 긴 이름 — apiClient.listReviewItems 목의
+// 반환값은 이 형태여야 normalizeReviewItem 의 변환 자체를 테스트할 수 있다(ITEMS 의 짧은 이름을 그대로
+// 쓰면 우연히 통과해 이 매핑이 깨져도 회귀를 못 잡는다 — 과거 #427 인접 결함이 바로 이 형태로 숨어 있었다).
+const RAW_ITEMS = ITEMS.map((item, i) => ({
+  ...item, itemType: ['synonym_merge', 'property_normalization', 'entity_extraction', 'relation_extraction'][i],
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function baseClient(overrides: Partial<any> = {}) {
   return {
-    listReviewItems: vi.fn().mockResolvedValue(ITEMS),
+    listReviewItems: vi.fn().mockResolvedValue(RAW_ITEMS),
     getReviewItemEvidence: vi.fn().mockResolvedValue([{ chunkId: 11, content: '원문 스니펫' }]),
     approveReviewItem: vi.fn().mockImplementation(async (id: number) => ({
-      ...ITEMS.find((i) => i.id === id)!, status: 'approved',
+      ...RAW_ITEMS.find((i) => i.id === id)!, status: 'approved',
     })),
     rejectReviewItem: vi.fn().mockImplementation(async (id: number) => ({
-      ...ITEMS.find((i) => i.id === id)!, status: 'rejected',
+      ...RAW_ITEMS.find((i) => i.id === id)!, status: 'rejected',
     })),
     listGraphIngests: vi.fn().mockResolvedValue([
       { id: 1, datasetId: 5, ingestedAt: '2026-01-01T00:00:00', schemaVersionAtIngest: 2, chunkCount: 10, nodeCount: 30, edgeCount: 20, extractionFailures: 0, status: 'SUCCESS' },
@@ -102,10 +110,20 @@ describe('graphrag_list_review_items', () => {
   it('필터를 그대로 전달하고 정규화된 항목을 반환한다', async () => {
     const client = baseClient();
     const out = await findTool(client, 'graphrag_list_review_items').handler({ status: 'pending', itemType: 'synonym' });
-    expect(client.listReviewItems).toHaveBeenCalledWith('pending', 'synonym');
+    // 도구는 LLM이 쓰는 짧은 이름('synonym')을 백엔드 item_type 컬럼값('synonym_merge')으로 변환해 보낸다(#427 인접 결함).
+    expect(client.listReviewItems).toHaveBeenCalledWith('pending', 'synonym_merge');
     expect(out.items[0].summary).toContain('동의어');
     // 원본 payload 는 흘리지 않는다
     expect(out.items[0].payload).toBeUndefined();
+  });
+
+  // 백엔드가 긴 이름('synonym_merge' 등)으로 돌려줘도 도구 출력은 LLM 스키마와 일치하는 짧은 이름이어야
+  // summary switch(짧은 이름 기준)가 제대로 걸린다 — 안 걸리면 전 항목이 "알 수 없는 항목 타입"으로 샌다.
+  it('백엔드가 돌려준 긴 itemType 을 짧은 이름으로 정규화해 반환한다', async () => {
+    const client = baseClient();
+    const out = await findTool(client, 'graphrag_list_review_items').handler({});
+    expect(out.items.map((i: { itemType: string }) => i.itemType)).toEqual(['synonym', 'property', 'entity', 'relation']);
+    for (const item of out.items) expect(item.summary).not.toContain('알 수 없는 항목 타입');
   });
 
   // 조용한 절단은 "전부 처리했다"는 오답으로 이어진다.

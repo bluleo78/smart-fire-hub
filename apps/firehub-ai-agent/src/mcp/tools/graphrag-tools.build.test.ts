@@ -66,6 +66,7 @@ function baseClient(overrides: Partial<any> = {}) {
     getDatasetMapping: vi.fn().mockResolvedValue({ status: 'draft', ontologyId: 1, spec: {} }),
     activateDatasetMapping: vi.fn().mockResolvedValue({ datasetId: 900, ontologyId: 1, status: 'active' }),
     createOntology: vi.fn().mockResolvedValue(7),
+    listReviewItems: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
 }
@@ -232,6 +233,78 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
       filters: [{ property: '피해액', operator: 'gte', value: 100000000 }],
     });
     expect(structuredQueryMock).toHaveBeenCalledTimes(1);
+  });
+
+  // #427: 빈 결과가 "데이터 없음"인지 "정규화 실패로 검수 대기 중"인지 구분 안 되는 결함.
+  // property_normalization pending 항목이 요청된 entityType+property 와 일치하면
+  // 빈 entities 와 함께 pendingReview 신호를 실어야 LLM 이 오답("없음")을 내지 않는다.
+  describe('빈 결과 + 검수 대기(pendingReview) 신호(#427)', () => {
+    it('일치하는 property pending 항목이 있으면 pendingReview 로 알린다', async () => {
+      const client = baseClient({
+        listReviewItems: vi.fn().mockResolvedValue([
+          {
+            id: 1, itemType: 'property', status: 'pending', datasetId: 122,
+            signalScore: null, reason: "'180000000' 값을 date 타입으로 정규화하지 못했습니다.",
+            payload: { entityType: 'Incident', propertyName: '피해액', dataType: 'date', rawText: '180000000' },
+            createdAt: '2026-09-01T00:00:00Z', decidedBy: null, decidedAt: null,
+          },
+          {
+            id: 2, itemType: 'property', status: 'pending', datasetId: 122,
+            signalScore: null, reason: "'250000000' 값을 date 타입으로 정규화하지 못했습니다.",
+            payload: { entityType: 'Incident', propertyName: '피해액', dataType: 'date', rawText: '250000000' },
+            createdAt: '2026-09-01T00:00:01Z', decidedBy: null, decidedAt: null,
+          },
+          // 다른 엔티티/속성 조합은 매칭에서 제외돼야 한다.
+          {
+            id: 3, itemType: 'property', status: 'pending', datasetId: 122,
+            signalScore: null, reason: '무관',
+            payload: { entityType: 'Building', propertyName: '높이', dataType: 'date', rawText: '10' },
+            createdAt: '2026-09-01T00:00:02Z', decidedBy: null, decidedAt: null,
+          },
+        ]),
+      });
+      const out = await findTool(client, 'graphrag_structured_query').handler({
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
+      });
+      // toDbItemType('property') → 'property_normalization' — 백엔드 item_type 컬럼의 실제 값(#427 인접 결함).
+      expect(client.listReviewItems).toHaveBeenCalledWith('pending', 'property_normalization');
+      expect(out.entities).toEqual([]);
+      expect(out.pendingReview).toEqual({ count: 2, properties: ['피해액'] });
+    });
+
+    it('일치하는 pending 항목이 없으면 pendingReview 를 넣지 않는다', async () => {
+      const client = baseClient({ listReviewItems: vi.fn().mockResolvedValue([]) });
+      const out = await findTool(client, 'graphrag_structured_query').handler({
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
+      });
+      expect(out).not.toHaveProperty('pendingReview');
+    });
+
+    it('결과가 이미 있으면 검수 목록을 조회하지 않는다(불필요한 API 호출 방지)', async () => {
+      structuredQueryMock.mockResolvedValue({
+        entities: [{ key: 'k1', type: 'Incident', name: '사건1', properties: { 피해액: 180000000 } }],
+        sourceChunkIds: [1], truncated: false,
+      });
+      const client = baseClient({ listReviewItems: vi.fn().mockResolvedValue([]) });
+      const out = await findTool(client, 'graphrag_structured_query').handler({
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
+      });
+      expect(client.listReviewItems).not.toHaveBeenCalled();
+      expect(out).not.toHaveProperty('pendingReview');
+    });
+
+    it('검수 목록 조회가 실패해도 주 결과는 그대로 반환한다(부가 신호이므로 조용히 무시)', async () => {
+      const client = baseClient({ listReviewItems: vi.fn().mockRejectedValue(new Error('down')) });
+      const out = await findTool(client, 'graphrag_structured_query').handler({
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
+      });
+      expect(out.entities).toEqual([]);
+      expect(out).not.toHaveProperty('pendingReview');
+    });
   });
 });
 

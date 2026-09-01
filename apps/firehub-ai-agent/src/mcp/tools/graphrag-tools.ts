@@ -19,6 +19,34 @@ import { structuredQuery, Filter, Operator } from '../../graphrag/structured-que
 import { link as semanticLink } from '../../graphrag/semantic-link.js';
 
 /**
+ * MCP 도구가 LLM에 노출하는 itemType 짧은 이름 ↔ 백엔드 DB의 실제 item_type 값 매핑.
+ *
+ * 왜 필요한가: 백엔드(ReviewItemService)는 item_type 컬럼에 'synonym_merge' 같은 긴 이름을 쓰지만,
+ * 도구 스키마는 LLM 프롬프트를 짧게 유지하려 'synonym' 같은 짧은 이름을 쓴다. 이 매핑이 없으면
+ * ① listReviewItems(status, itemType) 필터가 itemType 을 그대로 서버에 보내 항상 매칭 실패(빈 배열)로
+ *    조용히 새고(#427이 의존하는 findPendingPropertyReview도 이 경로를 탄다),
+ * ② 서버가 돌려주는 item.itemType(긴 이름)이 summarizeReviewItem 의 switch(짧은 이름) 어디에도 안 걸려
+ *    모든 항목이 "알 수 없는 항목 타입"으로 표시되며,
+ * ③ graphrag_approve_review_item 의 property 타입 판별(target.itemType === 'property')도 항상 거짓이 돼
+ *    정정값(correctedValue) 필수/금지 가드가 뒤집힌다.
+ */
+const ITEM_TYPE_TO_DB: Record<string, string> = {
+  synonym: 'synonym_merge', property: 'property_normalization',
+  entity: 'entity_extraction', relation: 'relation_extraction',
+};
+const ITEM_TYPE_FROM_DB: Record<string, string> = Object.fromEntries(
+  Object.entries(ITEM_TYPE_TO_DB).map(([short, db]) => [db, short]),
+);
+/** LLM이 쓰는 짧은 itemType을 서버 필터 파라미터용 긴 이름으로 변환(모르는 값은 그대로 통과). */
+function toDbItemType(itemType?: string): string | undefined {
+  return itemType == null ? itemType : (ITEM_TYPE_TO_DB[itemType] ?? itemType);
+}
+/** 서버가 돌려준 항목의 itemType(긴 이름)을 LLM이 아는 짧은 이름으로 되돌린다(모르는 값은 그대로 통과). */
+function normalizeReviewItem<T extends { itemType: string }>(item: T): T {
+  return { ...item, itemType: ITEM_TYPE_FROM_DB[item.itemType] ?? item.itemType };
+}
+
+/**
  * 검수 항목을 타입별로 정규화한다.
  *
  * 왜 payload 를 그대로 흘리지 않는가: payload 는 itemType 마다 필드가 다른 자유 JSON 이라,
@@ -54,6 +82,37 @@ export function summarizeReviewItem(item: {
     // 속성 항목 승인은 정정값이 필요하므로 원문을 별도 필드로도 노출한다.
     ...(item.itemType === 'property' ? { rawText: s('rawText') } : {}),
   };
+}
+
+/**
+ * 구조적 질의가 빈 결과를 반환했을 때, 요청된 entityType+property 조합에 대해
+ * 정규화 실패로 검수 대기(pending) 중인 항목이 있는지 확인한다(#427).
+ *
+ * 왜 필요한가: normalizePropertyChecked 가 값 파싱에 실패하면 속성이 엔티티에 기록되지 않고
+ * graph_review_item 에만 쌓인다 — 그래프 관점에서는 "그런 값이 없다"와 구별 불가능한 빈 결과가
+ * 나온다. 조회 실패를 삼키지 않고 호출부(LLM)가 "데이터 없음"과 "정규화 실패로 보류 중"을
+ * 구분해 답할 수 있도록 신호를 함께 반환한다.
+ *
+ * 검수 목록 조회 자체가 실패해도(네트워크 등) 주 조회 결과를 막지 않는다 — 부가 신호이므로
+ * 실패 시 pendingReview 를 생략하고 조용히 넘어간다.
+ */
+async function findPendingPropertyReview(
+  apiClient: Pick<FireHubApiClient, 'listReviewItems'>,
+  entityType: string,
+  propertyNames: string[],
+): Promise<{ count: number; properties: string[] } | undefined> {
+  try {
+    const pending = await apiClient.listReviewItems('pending', toDbItemType('property'));
+    const matched = pending.filter((item) => {
+      const p = item.payload ?? {};
+      return p.entityType === entityType && propertyNames.includes(String(p.propertyName ?? ''));
+    });
+    if (matched.length === 0) return undefined;
+    const properties = [...new Set(matched.map((item) => String(item.payload?.propertyName ?? '')))];
+    return { count: matched.length, properties };
+  } catch {
+    return undefined;
+  }
 }
 
 type TableColumn = { columnName: string; dataType: string; isPrimaryKey: boolean };
@@ -579,7 +638,8 @@ export function registerGraphragTools(
         limit: z.number().min(1).max(100).optional().describe('반환 최대 건수(기본 30)'),
       },
       async (args: { status?: string; itemType?: string; limit?: number }) => {
-        const items = await apiClient.listReviewItems(args.status, args.itemType);
+        const items = (await apiClient.listReviewItems(args.status, toDbItemType(args.itemType)))
+          .map(normalizeReviewItem);
         const limit = args.limit ?? 30;
         return jsonResult({
           total: items.length,
@@ -613,7 +673,7 @@ export function registerGraphragTools(
         // 항목 타입을 **먼저 확정**한 뒤 인자 정합성을 본다.
         // 조건부로만 검사하면, correctedValue 를 들고 synonym 항목을 승인하는 경우
         // 백엔드가 그 값을 조용히 무시한 채 엔티티를 병합해 버린다(비가역 오적재).
-        const pending = await apiClient.listReviewItems('pending');
+        const pending = (await apiClient.listReviewItems('pending')).map(normalizeReviewItem);
         const target = pending.find((i) => i.id === args.id);
         if (!target) {
           throw new Error(
@@ -638,14 +698,15 @@ export function registerGraphragTools(
           );
         }
         const decided = await apiClient.approveReviewItem(args.id, args.correctedValue);
-        return jsonResult(summarizeReviewItem(decided));
+        return jsonResult(summarizeReviewItem(normalizeReviewItem(decided)));
       },
     ),
     safeTool(
       'graphrag_reject_review_item',
       '검수 항목을 거부한다(그래프는 변경되지 않고 상태만 rejected). 항목마다 사용자 확인 후 1건씩 호출하라.',
       { id: z.number().describe('거부할 검수 항목 ID') },
-      async (args: { id: number }) => jsonResult(summarizeReviewItem(await apiClient.rejectReviewItem(args.id))),
+      async (args: { id: number }) =>
+        jsonResult(summarizeReviewItem(normalizeReviewItem(await apiClient.rejectReviewItem(args.id)))),
     ),
     safeTool(
       'graphrag_query',
@@ -678,7 +739,10 @@ export function registerGraphragTools(
       '지식 그래프의 엔티티를 온톨로지 속성값 술어로 필터·열거한다("~이상/이하/포함"). '
         + '반환된 entities(이름+속성값)를 인용해 답하라. 관계·경로 질문은 graphrag_query 를 쓸 것. '
         + '필터 가능한 entityType·property 는 온톨로지마다 다르므로 하드코딩하지 말고 '
-        + 'graphrag_describe_ontology 로 확인한 값만 사용하라(정형 데이터셋 컬럼 조건은 SQL 경로가 정답).',
+        + 'graphrag_describe_ontology 로 확인한 값만 사용하라(정형 데이터셋 컬럼 조건은 SQL 경로가 정답). '
+        + 'entities 가 빈 배열이고 pendingReview 필드가 함께 오면 "데이터 없음"이 아니라 '
+        + '해당 속성의 정규화 실패로 검수 대기 중인 값이 있다는 뜻이다 — graphrag_list_review_items(itemType: "property") '
+        + '로 확인한 뒤 "결과 없음"이 아니라 "데이터 불완전(검수 대기 N건)"으로 답하라.',
       {
         ontologyId: z.number().optional()
           .describe('속성 화이트리스트로 쓸 온톨로지 id(생략 시 기본 온톨로지). 대상이 기본이 아닌 온톨로지에 바인딩된 경우 반드시 지정'),
@@ -719,6 +783,14 @@ export function registerGraphragTools(
           );
         }
         const result = await structuredQuery(ontology, args.entityType, args.filters as Filter[]);
+        // 빈 결과 = "조건에 맞는 데이터 없음"과 "정규화 실패로 검수 대기 중" 두 원인이 뒤섞일 수 있다(#427).
+        // 검수 대기 항목이 있으면 pendingReview 로 신호를 실어 LLM 이 둘을 구분하게 한다.
+        if (result.entities.length === 0) {
+          const pendingReview = await findPendingPropertyReview(
+            apiClient, args.entityType, args.filters.map((f) => f.property),
+          );
+          if (pendingReview) return jsonResult({ ...result, pendingReview });
+        }
         return jsonResult(result);
       },
     ),
