@@ -580,9 +580,19 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           // 보고된다**. 재개 실패가 정확히 그 형태였다. 접두사로 판정해 새 subtype 이 생겨도
           // 조용히 성공으로 새지 않게 한다.
         } else if ((msg.subtype as string | undefined)?.startsWith('error')) {
+          // #410: CLI OAuth 토큰 만료/무효 시 msg.result 에 "Not logged in · Please run /login" 류
+          // 원문 영문 문구가 그대로 담겨 있다. 검사 없이 넘기면 이 문구가 그대로 채팅 버블에 노출된다.
+          // 원인 문자열은 서버 로그에 남기고, 사용자에게는 한국어 안내 메시지로 치환해 내보낸다.
+          const rawResult = msg.result ?? 'CLI agent returned an error';
+          const isAuthFailure = /not logged in|please run \/login/i.test(rawResult);
+          if (isAuthFailure) {
+            console.warn(`[CLI Agent] [auth-failure] subtype=${msg.subtype} result=${rawResult}`);
+          }
           yield {
             type: 'error',
-            message: msg.result ?? 'CLI agent returned an error',
+            message: isAuthFailure
+              ? 'AI 에이전트 인증이 만료되었습니다. 관리자에게 문의하거나 설정 > AI 에이전트에서 OAuth 토큰을 갱신해 주세요.'
+              : rawResult,
             inputTokens,
             outputTokens,
           };

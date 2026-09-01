@@ -311,6 +311,35 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
     expect(String(errs[0].message)).toContain('비용 한도');
   });
 
+  it('CLI-AUTH-ERR: result.result 에 "Not logged in" 포함 시 한국어 인증 안내 error 이벤트 (#410)', async () => {
+    const lines = [
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        session_id: 's',
+        result: 'Not logged in · Please run /login',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; message?: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; message?: string });
+    }
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    // 원문 영문 문구가 아니라 한국어 안내로 치환되어야 한다.
+    expect(String(errs[0].message)).not.toContain('Not logged in');
+    expect(String(errs[0].message)).toContain('인증이 만료');
+  });
+
   it('CLI-ALARM: 턴 수가 임계 초과 시 cost_alarm 1회', async () => {
     const lines: string[] = [];
     for (let i = 0; i < COST_ALARM_TURNS + 2; i++) {
