@@ -288,6 +288,10 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
           ontology={ontology}
           columns={dataset.columns}
           initial={editingEntity}
+          // 자기 자신(수정 대상)은 제외 — 아니면 수정 다이얼로그를 열자마자 자기 타입이 목록에서 사라진다.
+          usedEntityTypes={draft.entities
+            .filter((e) => e.id !== editingEntity?.id)
+            .map((e) => e.entityType)}
           onSubmit={handleEntitySubmit}
         />
       )}

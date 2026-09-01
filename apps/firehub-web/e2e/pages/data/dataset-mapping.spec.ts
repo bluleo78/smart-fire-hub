@@ -149,6 +149,56 @@ test.describe('데이터셋 매핑 탭', () => {
     });
   });
 
+  // 회귀(#408): 이미 매핑된 엔티티 타입을 다시 매핑하면 그래프 투영 시 노드가 조각나므로
+  // 드롭다운 단계에서부터 재선택할 수 없어야 한다(서버 conformance와 별개의 UX 방어선).
+  test('이미 매핑된 엔티티 타입은 "엔티티 매핑 추가" 다이얼로그 드롭다운에서 제외된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({
+      spec: {
+        entities: [{ entityType: 'Incident', nameColumn: 'incident_name', properties: [] }],
+        relations: [],
+      },
+    }));
+    await page.goto(MAPPING_URL);
+
+    await page.getByRole('button', { name: '엔티티 매핑 추가' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByTestId('entity-type-select').click();
+    await expect(page.getByRole('option', { name: 'Incident' })).toHaveCount(0);
+    await expect(page.getByRole('option', { name: 'Building' })).toBeVisible();
+  });
+
+  // 회귀(#408): 수정 다이얼로그에서는 자기 자신의 타입은 계속 선택 가능해야 한다(다른 항목과의
+  // 중복만 막아야지, "값을 바꾸지 않고 확인"까지 막히면 안 된다).
+  test('엔티티 수정 다이얼로그에서는 자기 자신의 엔티티 타입이 드롭다운에 남아있다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({
+      spec: {
+        entities: [
+          { entityType: 'Incident', nameColumn: 'incident_name', properties: [] },
+          { entityType: 'Building', nameColumn: 'building_name', properties: [] },
+        ],
+        relations: [],
+      },
+    }));
+    await page.goto(MAPPING_URL);
+
+    await page.getByTestId('entity-row-Incident').getByRole('button', { name: '수정' }).click();
+    const dialog = page.getByTestId('entity-mapping-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByTestId('entity-type-select').click();
+    // 자기 자신(Incident)은 보이고, 다른 항목이 이미 쓴 타입(Building)은 보이지 않는다.
+    await expect(page.getByRole('option', { name: 'Incident' })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'Building' })).toHaveCount(0);
+  });
+
   // 회귀(#298): 빈 상태 문구가 서버 저장본이 아닌 로컬 draft를 기준으로 사라져야 한다.
   test('저장 전이라도 엔티티를 추가하면 빈 상태 문구가 사라진다', async ({ authenticatedPage: page }) => {
     await setupMappingMocks(page);

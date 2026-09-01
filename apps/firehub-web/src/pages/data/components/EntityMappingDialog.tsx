@@ -20,6 +20,12 @@ interface EntityMappingDialogProps {
   columns: DatasetColumnResponse[];
   /** null이면 추가, 값이 있으면 수정. */
   initial: DraftEntity | null;
+  /**
+   * 이미 매핑된 엔티티 타입 목록(수정 대상 자기 자신은 제외하고 부모가 계산해 전달).
+   * 같은 타입을 두 번 매핑하면 그래프 투영 시 identity key가 갈려 노드가 조각나므로(#408),
+   * 드롭다운에서부터 재선택할 수 없게 걸러 서버 conformance 오류(400)를 예방한다.
+   */
+  usedEntityTypes: string[];
   onSubmit: (data: EntityMappingFormData) => void;
 }
 
@@ -36,6 +42,7 @@ export function EntityMappingDialog({
   ontology,
   columns,
   initial,
+  usedEntityTypes,
   onSubmit,
 }: EntityMappingDialogProps) {
   const form = useForm<EntityMappingFormData>({
@@ -60,6 +67,9 @@ export function EntityMappingDialog({
 
   const entityType = form.watch('entityType');
   const availableProperties = ontology.entities.find((e) => e.type === entityType)?.properties ?? [];
+  // 이미 매핑된 타입은 드롭다운에서 제외한다(#408) — usedEntityTypes는 부모가 자기 자신(수정 대상)을
+  // 뺀 값을 넘겨주므로 현재 선택값이 사라지는 일은 없다.
+  const selectableEntities = ontology.entities.filter((e) => !usedEntityTypes.includes(e.type));
 
   // 엔티티 타입이 바뀌면 이전 타입의 속성은 그 타입에 존재하지 않으므로 비운다(무효 조합 방지).
   // properties는 useFieldArray로 관리되는 배열이므로, 직접 setValue하는 대신
@@ -126,13 +136,16 @@ export function EntityMappingDialog({
                 <SelectValue placeholder="엔티티 타입을 선택하세요" />
               </SelectTrigger>
               <SelectContent>
-                {ontology.entities.map((e) => (
+                {selectableEntities.map((e) => (
                   <SelectItem key={e.type} value={e.type}>
                     {e.type}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {selectableEntities.length === 0 && !entityType && (
+              <p className="text-sm text-muted-foreground">모든 엔티티 타입이 이미 매핑되었습니다.</p>
+            )}
             {form.formState.errors.entityType && (
               <p id="entity-type-error" className="text-sm text-destructive">
                 {form.formState.errors.entityType.message}

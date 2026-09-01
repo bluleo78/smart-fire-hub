@@ -11,6 +11,7 @@ import com.smartfirehub.mapping.repository.StoredMapping;
 import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.repository.OntologyRepository;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -84,10 +85,18 @@ public class MappingService {
         .collect(Collectors.toMap(OntologyResponse.EntityType::type, Function.identity()));
 
     List<MappingSpec.EntityMapping> entities = spec.entities() == null ? List.of() : spec.entities();
+    // 동일 엔티티 타입을 서로 다른 nameColumn으로 두 번 매핑하면 그래프 투영(table-projection.ts)
+    // 단계에서 매핑 항목마다 별도 identity key가 계산돼 같은 타입의 노드가 조각난다(#408).
+    // "한 엔티티 타입 = 한 매핑 항목"을 conformance 규칙으로 강제해 애초에 조각날 상태를 차단한다.
+    Set<String> seenEntityTypes = new HashSet<>();
     for (MappingSpec.EntityMapping em : entities) {
       OntologyResponse.EntityType et = typeByName.get(em.entityType());
       if (et == null) {
         throw new IllegalArgumentException("온톨로지에 없는 엔티티 타입: " + em.entityType());
+      }
+      if (!seenEntityTypes.add(em.entityType())) {
+        throw new IllegalArgumentException(
+            "엔티티 타입 '" + em.entityType() + "'가 이미 매핑되어 있습니다. 같은 타입은 한 번만 매핑할 수 있습니다.");
       }
       if (!columns.contains(em.nameColumn())) {
         throw new IllegalArgumentException("데이터셋에 없는 컬럼(nameColumn): " + em.nameColumn());

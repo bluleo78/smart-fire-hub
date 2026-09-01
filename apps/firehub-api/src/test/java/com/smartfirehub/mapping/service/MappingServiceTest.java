@@ -125,6 +125,33 @@ class MappingServiceTest {
     assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
   }
 
+  // --- 엔티티 타입 중복 매핑 conformance (#408) ---
+
+  @Test
+  void save_동일엔티티타입_중복매핑은_400() {
+    MappingSpec bad = new MappingSpec(
+        List.of(
+            new MappingSpec.EntityMapping("Incident", "id", List.of()),
+            new MappingSpec.EntityMapping("Incident", "bld", List.of())), // 같은 타입, 다른 nameColumn
+        List.of());
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Incident");
+    verify(mappingRepository, never()).upsert(anyLong(), anyLong(), anyString(), anyString(), any());
+  }
+
+  @Test
+  void activate_동일엔티티타입_중복매핑은_400이고_상태전환없음() {
+    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(1L,
+        "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]},"
+            + "{\"entityType\":\"Incident\",\"nameColumn\":\"bld\",\"properties\":[]}],\"relations\":[]}",
+        "draft")));
+    assertThatThrownBy(() -> service.activate(DS, 44L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Incident");
+    verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());
+  }
+
   // --- 속성 dataType conformance (#324) ---
 
   @Test
