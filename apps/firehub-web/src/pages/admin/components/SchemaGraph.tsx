@@ -1,7 +1,7 @@
 import cytoscape from 'cytoscape';
 import edgehandles from 'cytoscape-edgehandles';
 import { useTheme } from 'next-themes';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { contourForType, entityColorSet, graphChrome } from '@/lib/ontology-colors';
 import { validateEntityTypeName, validateRelationName, validateTripleUniqueness } from '@/lib/ontology-validation';
@@ -49,6 +49,10 @@ interface Props {
   // 호출·확인 다이얼로그 오픈)는 OntologyPage의 몫이다.
   onRequestDeleteEntity?: (entityTypeId: number) => void;
   onRequestDeleteRelation?: (relationId: number) => void;
+  // 좌측 타입 필터 패널(TypeFilterPanel)이 공유하는 활성 타입 집합(#411) — 빈 Set/미전달은 전체
+  // 활성(TypeFilterPanel/InstanceGraph와 동일한 "빈 Set = 전체" 규약)이다. 인스턴스 탭과 달리 이
+  // 컴포넌트는 이전까지 이 prop을 받지 않아, 칩을 꺼도 스키마 캔버스만 변화가 없었다(#411 원인).
+  activeTypes?: Set<string>;
 }
 
 // 드래그로 막 이어진 두 타입 — 관계명을 아직 입력하지 않은 상태. CanvasInlineInput을 이 좌표에 띄운다.
@@ -158,6 +162,7 @@ export default function SchemaGraph({
   onCreateEntityAt,
   onRequestDeleteEntity,
   onRequestDeleteRelation,
+  activeTypes,
 }: Props) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
@@ -245,13 +250,31 @@ export default function SchemaGraph({
   // entityId 값이 같아지지만, 폴백 분기(`name:${type}`)에서는 entityId가 undefined라 서로 다르다.
   // 선택 동기화 effect가 쓰는 셀렉터(cy.nodes('[entityId = N]'))를 건드리면 회귀 원인이 두 갈래가
   // 되므로 필드는 유지한다.
+  // 타입 필터(#411) — activeTypes가 비어 있거나 안 넘어오면 전체 활성(TypeFilterPanel/InstanceGraph와
+  // 동일 규약). 캔버스(elements)뿐 아니라 대체 목록(keyboardItems)·data-node-count·aria-label도 같은
+  // 집합을 참조해야 "칩은 꺼졌는데 목록/카운트는 그대로"인 반쪽 필터가 되지 않는다.
+  // isTypeActive(type)은 "사용자가 이 타입을 껐는가"만 판단한다 — schema.entities에 그 타입이 실재
+  // 하는지는 별개 문제(N-3 회귀 가드: 존재하지 않는 목적어를 가리키는 관계는 아래 elements의
+  // "orphaned" 방어망이 따로 걸러 console.warn을 남긴다). 이 둘을 하나로 합치면(activeEntities에서
+  // 파생한 이름 집합으로 관계를 거르면) 실재하지 않는 유령 타입이 활성 집합에 아예 없다는 이유로
+  // orphaned 관계가 조용히 사라져 그 경고가 못 뜬다 — 실제로 이 회귀를 겪었다(ontology-editor.spec.ts
+  // "N-3 회귀 가드").
+  const isTypeActive = useCallback((type: string) => !activeTypes || activeTypes.size === 0 || activeTypes.has(type), [activeTypes]);
+  const activeEntities = useMemo(() => schema.entities.filter((e) => isTypeActive(e.type)), [schema.entities, isTypeActive]);
+  const activeRelations = useMemo(
+    () => schema.relations.filter((r) => isTypeActive(r.subject) && isTypeActive(r.object)),
+    [schema.relations, isTypeActive],
+  );
+
   const elements = useMemo(() => {
+    // 엔티티·관계를 여기서 먼저 걸러 두면 필터로 빠진 관계가 아래 "존재하지 않는 노드를 가리키는 관계"
+    // 경고(orphaned)로 잘못 잡히지 않는다 — 그 경고는 실제 데이터 정합성 문제 전용이다.
     // id 해소 — 서버는 항상 채워 주지만 타입상 옵셔널이라(레거시 목 데이터) 폴백이 필요하다.
     // 폴백 id에 접두사를 붙이는 이유: 숫자 id와 섞였을 때 "3"(진짜 id)과 이름이 "3"인 타입이 충돌하는
     // 것을 막는다. Number()로 되돌릴 수 없는 형태여야 호출부가 조용히 잘못된 id를 보내지 않는다.
     const nodeIdFor = (id: number | undefined, type: string) => (id != null ? String(id) : `name:${type}`);
-    const idByName = new Map(schema.entities.map((e) => [e.type, nodeIdFor(e.id, e.type)]));
-    const nodes = schema.entities.map((e) => {
+    const idByName = new Map(activeEntities.map((e) => [e.type, nodeIdFor(e.id, e.type)]));
+    const nodes = activeEntities.map((e) => {
       // #377: 테두리는 base(500)가 아니라 윤곽선 색을 쓴다 — base는 라이트 tint 배경 위에서
       // Cause 2.15 / Equipment 2.54:1로 SC 1.4.11(3:1)에 미달한다.
       const { text, tint } = entityColorSet(e.type, isDark);
@@ -275,7 +298,7 @@ export default function SchemaGraph({
     // 않게" 하는 게 아니라(그건 각 업데이터의 몫) "생기더라도 페이지 전체가 죽지 않게" 거르는 것이다.
     const nodeIds = new Set(nodes.map((n) => n.data.id));
     const orphaned: string[] = [];
-    const edges = schema.relations
+    const edges = activeRelations
       .map((r, i) => ({
         data: {
           id: `t${i}`,
@@ -305,7 +328,7 @@ export default function SchemaGraph({
       );
     }
     return [...nodes, ...edges];
-  }, [schema, isDark]);
+  }, [activeEntities, activeRelations, isDark]);
 
   // cy 인스턴스 생성(mount 시 1회) — tap 핸들러 바인딩 + dev용 window 노출. unmount 시 파기.
   useEffect(() => {
@@ -530,8 +553,8 @@ export default function SchemaGraph({
     cy.style(buildStylesheet(isDark));
     cy.elements().remove();
     cy.add(elements);
-    if (schema.entities.length > 0) cy.layout(BREADTHFIRST_LAYOUT).run();
-  }, [elements, isDark, schema.entities.length]);
+    if (activeEntities.length > 0) cy.layout(BREADTHFIRST_LAYOUT).run();
+  }, [elements, isDark, activeEntities.length]);
 
   // read 모드에서는 cy의 tap-자체선택을 꺼 둔다(리뷰 MIN-3) — cytoscape는 autounselectify가 꺼져
   // 있으면(기본값) tap만으로도 스스로 :selected를 건다. 노드는 read 모드에서 드릴다운으로 TabsContent가
@@ -593,17 +616,20 @@ export default function SchemaGraph({
   }, [selected, elements]);
 
   // 캔버스 텍스트 대체 목록(#326) — 타입별 인접 관계 수를 라벨에 담아 드릴다운을 키보드로도 가능하게 한다.
+  // 캔버스(elements)와 같은 activeEntities/activeRelations를 참조한다 — 타입 필터(#411)가 걸리면
+  // 캔버스에서 사라진 타입·관계가 이 대체 목록에도 똑같이 사라져야 SR 사용자가 "필터가 안 먹힌다"고
+  // 오인하지 않는다(InstanceGraph의 대체 목록·검색 동기화 원칙과 동일, #405/#404 계열).
   const keyboardItems = useMemo(() => {
     const degree = new Map<string, number>();
-    for (const r of schema.relations) {
+    for (const r of activeRelations) {
       degree.set(r.subject, (degree.get(r.subject) ?? 0) + 1);
       degree.set(r.object, (degree.get(r.object) ?? 0) + 1);
     }
-    return schema.entities.map((e) => ({
+    return activeEntities.map((e) => ({
       id: e.type,
       label: `${e.type} — 관계 ${degree.get(e.type) ?? 0}개`,
     }));
-  }, [schema]);
+  }, [activeEntities, activeRelations]);
 
   // CanvasInlineInput 커밋 — 검증 순서는 validateRelationName → validateTripleUniqueness(브리프 설계
   // 노트). 로컬 검증이 실패하면 CanvasInlineInput이 이 함수를 아예 부르지 않으므로(validate prop이
@@ -688,7 +714,7 @@ export default function SchemaGraph({
     // CanvasInlineInput의 좌표계 원점이기도 하다 — renderedPosition()이 이 박스 기준이라, 입력을
     // 다른 곳(예: 부모 OntologyPage)에 렌더하면 좌표가 어긋난다. CanvasInlineInput을 이 컴포넌트
     // 안에서 렌더해야 하는 진짜 이유가 이거다.
-    <div className="relative h-full w-full" data-testid="schema-graph" data-node-count={schema.entities.length}>
+    <div className="relative h-full w-full" data-testid="schema-graph" data-node-count={activeEntities.length}>
       {/* canvas는 대체 텍스트가 없어 접근성 트리에서 제외 — 텍스트 대체물은 GraphKeyboardList가 담당한다. */}
       <div ref={containerRef} className="h-full w-full" aria-hidden="true" />
 
@@ -765,7 +791,7 @@ export default function SchemaGraph({
           가야 한다 — 그대로 onTypeClick(드릴다운)에 묶어 두면 마우스는 선택, 키보드는 인스턴스 탭으로
           이탈해 편집기가 닫혀 버린다(리뷰 IMP-3, 같은 컨트롤이 모드에 따라 반대로 동작하는 오동작). */}
       <GraphKeyboardList
-        label={`지식 모델 타입 ${schema.entities.length}개, 관계 ${schema.relations.length}개`}
+        label={`지식 모델 타입 ${activeEntities.length}개, 관계 ${activeRelations.length}개`}
         items={keyboardItems}
         onActivate={
           editing

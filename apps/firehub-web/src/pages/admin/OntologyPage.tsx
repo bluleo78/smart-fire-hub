@@ -462,6 +462,10 @@ export default function OntologyPage() {
                       <SchemaGraph
                         schema={selectedSchema}
                         onTypeClick={drillDown}
+                        // 타입 필터 패널(#411) — 인스턴스 탭(InstanceGraph)에만 전달되던 activeTypes를
+                        // 스키마 탭에도 흘려보낸다. 칩을 꺼서 필터를 걸면 스키마 캔버스에서도 해당
+                        // 타입 노드/트리플이 실제로 숨어야 한다(그전엔 칩 상태만 바뀌고 캔버스는 무반응).
+                        activeTypes={activeTypes}
                         editing={showEditor}
                         selected={modelSelected}
                         onSelectEntity={(id) => selectModelElement({ kind: 'entity', id })}

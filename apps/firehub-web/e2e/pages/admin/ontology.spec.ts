@@ -665,6 +665,42 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     );
   });
 
+  // (#411) 타입 필터 패널은 인스턴스 탭(그래프 탐색)에서만 동작하고 스키마 탭(지식 모델)에서는 칩
+  // 상태만 바뀔 뿐 캔버스가 무반응이었다 — SchemaGraph가 activeTypes를 전혀 소비하지 않았기 때문.
+  // 스키마 탭에서 칩을 꺼서 캔버스 노드/관계 수가 실제로 줄어드는지, 접근성 대체 목록(aria-label)도
+  // 같이 갱신되는지 검증한다.
+  test('스키마 탭에서도 타입 필터 칩을 끄면 캔버스에서 해당 타입이 사라진다(#411)', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', String(schema.entities.length));
+
+    const typeList = page.getByTestId('schema-graph-type-list');
+    await expect(typeList).toHaveAttribute(
+      'aria-label',
+      `지식 모델 타입 ${schema.entities.length}개, 관계 ${schema.relations.length}개`,
+    );
+
+    // Building은 OCCURRED_AT(Incident→Building)·HAS_EQUIPMENT(Building→Equipment) 2개 트리플의
+    // 끝점이다 — 꺼지면 노드 6→5, 관계 6→4가 되어야 한다(#411 이전에는 6/6 그대로였다).
+    await page.getByTestId('type-filter-list').getByRole('button', { name: /^Building/ }).click();
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', '5');
+    await expect(typeList).toHaveAttribute('aria-label', '지식 모델 타입 5개, 관계 4개');
+    // 대체 목록(키보드 드릴다운용)에도 Building 항목이 더 이상 없어야 한다 — 캔버스와 목록이 어긋나면
+    // 스크린리더 사용자에게는 필터가 반쪽만 적용된 것처럼 보인다.
+    await expect(typeList.locator('[data-graph-item]', { hasText: 'Building' })).toHaveCount(0);
+
+    // 다시 켜면 원상 복구된다.
+    await page.getByTestId('type-filter-list').getByRole('button', { name: /^Building/ }).click();
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', String(schema.entities.length));
+    await expect(typeList).toHaveAttribute(
+      'aria-label',
+      `지식 모델 타입 ${schema.entities.length}개, 관계 ${schema.relations.length}개`,
+    );
+  });
+
   test('접힌 타입 필터 패널은 inert로 포커스 순서에서 제거된다(보이지 않는 탭 스톱 없음)', async ({
     authenticatedPage: page,
   }) => {
