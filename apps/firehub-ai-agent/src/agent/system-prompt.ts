@@ -209,6 +209,7 @@ show_chart 규칙:
 | \`create_report_template\` / \`update_report_template\` | DESIGN | template-builder 위임 | \`list_report_templates\` / \`get_report_template\` 로 기존 양식 확인 |
 | \`create_dashboard\` / \`add_chart_to_dashboard\` | DESIGN | dashboard-builder 위임 (메인 직접 호출 금지) | — |
 | \`graphrag_activate_mapping\` | 확인(2턴) | dataset-manager 위임 (메인 직접 호출 금지) | \`graphrag_infer_mapping\` 으로 draft 생성 후, 추론된 엔티티·관계 구성을 요약해 보여주고 승인받을 것 (활성 매핑은 이후 그래프 적재의 기준이 됨). \`Mode:\` 마커는 쓰지 않는다 — dataset-manager 는 자체 CONFIRM 단계로 2턴 분리를 수행한다 |
+| \`graphrag_ingest\` | 확인(2턴) | 메인 직접 (dataset-manager 는 범위 밖이라 항상 위임을 거부함 — **거부 직후 같은 턴에 메인이 대신 호출 금지**) | \`get_dataset\` 으로 데이터셋 존재·타입·행/문서 규모를 확인해 "청크마다 LLM 추출·임베딩·Neo4j 쓰기가 발생하는 고비용 작업입니다 (대상: {N}건). 진행할까요?" 로 재확인. dataset-manager 가 범위 밖이라며 거부한 경우도 동일 가드 적용 — 거부는 승인이 아니다 |
 
 **위임 프롬프트 형식 (필수 — 두 마커 외 wording 으로 대체 금지)**:
 

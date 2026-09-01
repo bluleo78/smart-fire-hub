@@ -658,6 +658,15 @@ describe('SYSTEM_PROMPT — GraphRAG 라우팅 예외', () => {
     expect(guard).toContain('graphrag_review_evidence');
   });
 
+  // #424: dataset-manager 가 DOCUMENT 데이터셋의 graphrag_ingest 위임을 거부해도,
+  // 메인이 같은 턴에 확인 없이 대신 호출해버리는 결함이 있었다 — 트리거 매핑에 항목을 추가해 막는다.
+  it('graphrag_ingest 를 L3 확인 가드 표에 등재하고 dataset-manager 거부가 승인이 아님을 명시한다', () => {
+    const guard = SYSTEM_PROMPT.split('### 트리거 매핑')[1]?.split('**위임 프롬프트 형식')[0] ?? '';
+    expect(guard).not.toBe('');
+    expect(guard).toContain('graphrag_ingest');
+    expect(guard).toMatch(/거부 직후 같은 턴에 메인이 대신 호출 금지|거부는 승인이 아니다/);
+  });
+
   it('GraphRAG 절이 L1 표보다 우선한다는 사실을 절 안에서도 재확인한다', () => {
     const graphSection = SYSTEM_PROMPT.split('## 지식 그래프(GraphRAG) 도구 선택 규칙')[1]?.split('조회 흐름')[0] ?? '';
     expect(graphSection).not.toBe('');
