@@ -4,6 +4,7 @@ import {
   createArchivedOntologySummary,
   createDraftOntologySummary,
   createOntologySummaries,
+  MAPPING_ONTOLOGY_ID,
 } from '../../factories/mapping.factory';
 import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
@@ -118,6 +119,63 @@ test.describe('온톨로지 생명주기', () => {
     // 기본 온톨로지(id=1)는 삭제 불가 사유가 버튼 대신 표시된다.
     await expect(fireRow.getByText('기본 온톨로지')).toBeVisible();
     await expect(fireRow.getByRole('button', { name: '삭제' })).toBeHidden();
+  });
+
+  // 회귀 방지(#416) — 도메인명이 매우 긴 온톨로지가 관리 다이얼로그 테이블에 있으면 도메인 셀이
+  // 줄바꿈 없이 한 줄로 truncate 돼야 한다. TableCell에 max-width가 없으면 텍스트가 그대로 렌더돼
+  // 다이얼로그(sm:max-w-3xl) 전체 레이아웃이 무너진다(원본 결함, #409와 동일 패턴이나 다른 컴포넌트).
+  // scrollWidth > clientWidth로 "잘려서 넘치는 텍스트가 있다"는 사실을, height로 "그 셀이 한 줄
+  // 높이만 차지한다"는 사실을 각각 확인해야 truncate가 실제로 적용됐다는 증거가 된다.
+  test('도메인명이 매우 긴 온톨로지도 관리 다이얼로그에서 한 줄로 truncate 된다(회귀, #416)', async ({
+    authenticatedPage: page,
+  }) => {
+    const longDomain = '가나다라마바사아자차'.repeat(50);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/ontologies',
+      createOntologySummaries([
+        {
+          id: MAPPING_ONTOLOGY_ID,
+          domain: '화재조사 보고서',
+          schemaVersion: 1,
+          status: 'active',
+          entityCount: 6,
+          datasetCount: 3,
+          updatedAt: '2026-04-12T09:00:00Z',
+          isDefault: true,
+        },
+        {
+          id: 99,
+          domain: longDomain,
+          schemaVersion: 1,
+          status: 'draft',
+          entityCount: 0,
+          datasetCount: 0,
+          updatedAt: '2026-08-01T09:00:00Z',
+          isDefault: false,
+        },
+      ]),
+    );
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: /온톨로지 관리/ }).click();
+
+    const dialog = page.getByTestId('ontology-manage-dialog');
+    const longRow = dialog.getByRole('row', { name: new RegExp(longDomain.slice(0, 20)) });
+    // truncate 대상은 title 속성이 붙은 도메인 셀이다 — hover로 잘린 전체 이름을 확인할 수 있어야 한다.
+    const domainCell = longRow.locator('td[title]').first();
+    await expect(domainCell).toHaveAttribute('title', longDomain);
+
+    const { scrollWidth, clientWidth, height } = await domainCell.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, height: rect.height };
+    });
+    // 텍스트가 잘려 넘친다(= truncate 대상이 실제로 존재) + 셀은 한 줄 높이만 차지한다(= 줄바꿈되지
+    // 않았다). 둘 다 참이어야 max-width+truncate가 실제로 동작한 것이다.
+    expect(scrollWidth).toBeGreaterThan(clientWidth);
+    // 셀 패딩(p-2)을 감안해도 두 줄 이상으로 줄바꿈되면 60px를 넘긴다 — 한 줄임을 넉넉히 보장한다.
+    expect(height).toBeLessThan(60);
   });
 
   test('참조가 없는 온톨로지는 삭제할 수 있다', async ({ authenticatedPage: page }) => {

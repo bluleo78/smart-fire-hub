@@ -94,7 +94,12 @@ export default function OntologyManageDialog({ open, onOpenChange, onSelect }: O
                     onOpenChange(false);
                   }}
                 >
-                  <TableCell>{o.domain}</TableCell>
+                  {/* 도메인명 길이 상한이 없어(#416, #409의 동일 증상) 긴 이름이 그대로 렌더되면
+                      테이블/다이얼로그 레이아웃이 무너진다 — max-width + truncate 로 한 줄
+                      말줄임 처리하고, 잘린 전체 이름은 title로 노출한다. */}
+                  <TableCell className="max-w-[240px] truncate" title={o.domain}>
+                    {o.domain}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={o.status === 'active' ? 'secondary' : o.status === 'draft' ? 'warning' : 'outline'}>
                       {ONTOLOGY_STATUS_LABEL[o.status]}
