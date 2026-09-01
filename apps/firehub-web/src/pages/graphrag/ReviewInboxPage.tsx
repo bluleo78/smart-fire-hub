@@ -165,7 +165,11 @@ function buildConfirmCopy(target: ConfirmTarget): {
 export default function ReviewInboxPage() {
   // 탭 필터 — undefined면 전체, 아니면 해당 item_type만.
   const [filter, setFilter] = useState<ReviewItemType | undefined>(undefined);
-  const { data: pending, isLoading } = useReviewItemsPending(filter);
+  const {
+    data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage,
+  } = useReviewItemsPending(filter);
+  // 무한스크롤 페이지 배열을 표가 쓰는 단일 목록으로 펼친다(#422).
+  const pending = data?.pages.flat();
   const approve = useApproveReviewItem();
   const reject = useRejectReviewItem();
   const queryClient = useQueryClient();
@@ -290,6 +294,20 @@ export default function ReviewInboxPage() {
           ))}
         </TableBody>
       </Table>
+
+      {/* 페이지당 50건씩 무한스크롤(#422) — pending 큐가 커져도 한 번에 전량을 불러오지 않는다.
+          hasNextPage는 직전 페이지가 꽉 찼는지로 추론되므로(useReviewItemsPending), 마지막 페이지가
+          정확히 50건으로 끝나면 "더 보기"가 한 번 더 보이고 빈 응답으로 사라진다(더 보기 UX 표준 트레이드오프). */}
+      {hasNextPage && (
+        <button
+          type="button"
+          onClick={() => fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="mx-auto block rounded-md border px-4 py-2 text-sm hover:bg-accent"
+        >
+          {isFetchingNextPage ? '불러오는 중…' : '더 보기'}
+        </button>
+      )}
 
       {/* 4개 조치(승인·적재·정정 적용·거부) 전부가 거치는 단일 확인 게이트. 그래프 변경/목록 소멸이 모두 비가역이라 조건부 스킵은 두지 않는다. */}
       <AlertDialog open={confirmTarget !== null} onOpenChange={(open) => !open && setConfirmTarget(null)}>

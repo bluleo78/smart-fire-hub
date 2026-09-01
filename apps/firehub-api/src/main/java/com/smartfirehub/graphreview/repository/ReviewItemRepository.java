@@ -83,15 +83,23 @@ public class ReviewItemRepository {
    *
    * <p>status를 하드코딩했던 예전 구현은 컨트롤러가 받은 status 파라미터를 조용히 무시해, approved/rejected를
    * 요청해도 pending 행을 돌려주는 조용한 오답이었다(#318). 허용값 검증은 서비스가 담당한다.
+   *
+   * <p>limit이 null이면(호출자가 페이지 파라미터를 안 준 경우) 기존과 동일하게 전체를 반환한다 — opt-in
+   * 페이지네이션(#422). offset은 limit이 있을 때만 의미가 있다(null이면 0으로 취급).
+   * CREATED_AT은 대량 인제스트마다 동시에 여러 행이 꽂혀 유일하지 않다 — ID를 2차 정렬키로 넣지 않으면
+   * 페이지 경계에서 동시각 행이 누락되거나 중복될 수 있다.
    */
-  public List<ReviewItemRecord> findByStatus(String status, String itemType) {
+  public List<ReviewItemRecord> findByStatus(String status, String itemType, Integer offset, Integer limit) {
     Condition where = STATUS.eq(status);
     if (itemType != null) where = where.and(ITEM_TYPE.eq(itemType));
-    return dsl.select(ID, ITEM_TYPE, STATUS, DATASET_ID, SIGNAL_TYPE, SIGNAL_SCORE, REASON, PAYLOAD, DECIDED_BY, DECIDED_AT, CREATED_AT)
+    var query = dsl.select(ID, ITEM_TYPE, STATUS, DATASET_ID, SIGNAL_TYPE, SIGNAL_SCORE, REASON, PAYLOAD, DECIDED_BY, DECIDED_AT, CREATED_AT)
         .from(T)
         .where(where)
-        .orderBy(CREATED_AT)
-        .fetch(this::toRecord);
+        .orderBy(CREATED_AT, ID);
+    if (limit != null) {
+      return query.limit(limit).offset(offset == null ? 0 : offset).fetch(this::toRecord);
+    }
+    return query.fetch(this::toRecord);
   }
 
   public Optional<ReviewItemRecord> findById(long id) {

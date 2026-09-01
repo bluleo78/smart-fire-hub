@@ -147,20 +147,38 @@ public class ReviewItemService {
   /** 조회 가능한 status 값 — 이 테이블에 실제로 쓰이는 값의 전부다(upsertPending/approve/reject). */
   static final Set<String> LIST_STATUSES = Set.of("pending", "approved", "rejected");
 
+  /** size 파라미터의 상한 — pending 큐가 수천 건으로 불어나도 한 응답이 무제한으로 커지지 않게 막는다(#422). */
+  static final int MAX_PAGE_SIZE = 200;
+
   /**
-   * 검수 항목 목록 — status/itemType 필터(둘 다 선택).
+   * 검수 항목 목록 — status/itemType 필터(둘 다 선택) + page/size(둘 다 선택, opt-in).
    *
    * <p>status를 생략하면 pending이다(#318 이전의 유일한 동작이자 웹 인박스의 기본값 — 생략을 "전체"로
    * 해석하면 파라미터 없이 호출하던 기존 호출자의 결과가 조용히 달라진다). 허용되지 않은 값은
    * IllegalArgumentException(400)으로 거부한다 — 받아놓고 무시하면 조용한 오답이 된다.
+   *
+   * <p>size를 생략하면(page도 함께 무시) 기존과 동일하게 전체를 반환한다 — ai-agent(MCP)의
+   * listReviewItems 호출자는 페이지 파라미터를 보내지 않으므로 응답 스키마·개수 모두 그대로다(#422).
+   * size를 주면 1..{@link #MAX_PAGE_SIZE} 범위여야 하고, page는 0 이상이어야 한다.
    */
-  public List<ReviewItemResponse> list(String status, String itemType) {
+  public List<ReviewItemResponse> list(String status, String itemType, Integer page, Integer size) {
     String effective = (status == null || status.isBlank()) ? "pending" : status;
     if (!LIST_STATUSES.contains(effective)) {
       throw new IllegalArgumentException(
           "지원하지 않는 status 값입니다: " + status + " (허용: pending, approved, rejected)");
     }
-    return repo.findByStatus(effective, itemType).stream().map(this::toResponse).toList();
+    Integer offset = null;
+    if (size != null) {
+      if (size < 1 || size > MAX_PAGE_SIZE) {
+        throw new IllegalArgumentException("size는 1.." + MAX_PAGE_SIZE + " 범위여야 합니다: " + size);
+      }
+      int effectivePage = (page == null) ? 0 : page;
+      if (effectivePage < 0) {
+        throw new IllegalArgumentException("page는 0 이상이어야 합니다: " + page);
+      }
+      offset = effectivePage * size;
+    }
+    return repo.findByStatus(effective, itemType, offset, size).stream().map(this::toResponse).toList();
   }
 
   /** 승인 — item_type별 그래프 변경을 먼저 수행하고, 성공해야 status를 approved로 갱신한다(실패 시 pending 유지). */

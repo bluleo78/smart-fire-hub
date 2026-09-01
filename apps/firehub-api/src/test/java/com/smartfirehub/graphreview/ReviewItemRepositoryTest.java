@@ -58,7 +58,7 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "first", "{}");
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "second(무시)", "{}");
 
-    var row = repo.findByStatus("pending", "synonym_merge").stream()
+    var row = repo.findByStatus("pending", "synonym_merge", null, null).stream()
         .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r))).findFirst().orElseThrow();
     assertThat(row.reason()).isEqualTo("first");
   }
@@ -68,13 +68,13 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     repo.upsertPending("property_normalization", "TestKey|피해액", 12L, "normalization_failure", null,
         "정규화 실패", "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"rawText\":\"약 3천만\"}");
 
-    var props = repo.findByStatus("pending", "property_normalization").stream()
+    var props = repo.findByStatus("pending", "property_normalization", null, null).stream()
         .filter(r -> "TestKey|피해액".equals(dedupeKeyOf(r))).toList();
     assertThat(props).hasSize(1);
     assertThat(props.get(0).datasetId()).isEqualTo(12L);
     assertThat(props.get(0).payloadJson()).contains("\"rawText\"").contains("약 3천만");
     // 다른 타입 필터로는 안 나온다.
-    assertThat(repo.findByStatus("pending", "synonym_merge").stream().anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))).isFalse();
+    assertThat(repo.findByStatus("pending", "synonym_merge", null, null).stream().anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))).isFalse();
   }
 
   @Test
@@ -83,18 +83,52 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
         "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
         .get(0, Long.class);
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "r", "{}");
-    long id = repo.findByStatus("pending", "synonym_merge").stream()
+    long id = repo.findByStatus("pending", "synonym_merge", null, null).stream()
         .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r))).findFirst().orElseThrow().id();
 
     repo.updateStatus(id, "approved", userId);
 
     assertThat(repo.findById(id).orElseThrow().status()).isEqualTo("approved");
     assertThat(repo.findById(id).orElseThrow().decidedBy()).isEqualTo(userId);
-    assertThat(repo.findByStatus("pending", null)).noneMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("pending", null, null, null)).noneMatch(r -> r.id().equals(id));
     assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b")).contains("approved");
     // status 필터가 실제로 동작한다 — 예전에는 'pending' 하드코딩이라 approved 조회가 불가능했다(#318).
-    assertThat(repo.findByStatus("approved", null)).anyMatch(r -> r.id().equals(id));
-    assertThat(repo.findByStatus("rejected", null)).noneMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("approved", null, null, null)).anyMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("rejected", null, null, null)).noneMatch(r -> r.id().equals(id));
+  }
+
+  // ── page/size(opt-in, #422) ── limit/offset 이 실제로 행 수를 제한하고, orderBy(CREATED_AT, ID) 2차
+  // 정렬키 덕에 동시각 삽입 행에서도 경계 없이 전량을 커버한다(중복·누락 없음)를 검증한다.
+  @Test
+  void findByStatus_withLimit_boundsRowCountAndCoversAllPagesWithoutOverlap() {
+    // 공유 test DB에는 다른 테스트가 남긴 pending 행이 섞여 있을 수 있다(참고: 공유 test DB 오염 함정).
+    // item_type을 이 테스트 전용 값으로 써서 실제 4종(synonym_merge 등)과 절대 겹치지 않게 격리한다 —
+    // repo.findByStatus 자체는 item_type 값을 검증하지 않으므로(허용값 검증은 서비스 계층) 가능하다.
+    String isolatedType = "test_pagination_marker";
+    for (int i = 0; i < 5; i++) {
+      repo.upsertPending(isolatedType, "TestPage|" + i, null, "similarity", 0.5, "r", "{}");
+    }
+
+    var page0 = repo.findByStatus("pending", isolatedType, 0, 2);
+    assertThat(page0).hasSize(2);
+    var page1 = repo.findByStatus("pending", isolatedType, 2, 2);
+    assertThat(page1).hasSize(2);
+    var page2 = repo.findByStatus("pending", isolatedType, 4, 2);
+    // 마지막 페이지는 남은 1건만 — 요청한 size보다 적게 와도 됨을 확인.
+    assertThat(page2).hasSize(1);
+
+    var ids0 = page0.stream().map(ReviewItemRecord::id).toList();
+    var ids1 = page1.stream().map(ReviewItemRecord::id).toList();
+    var ids2 = page2.stream().map(ReviewItemRecord::id).toList();
+    // 세 페이지를 합치면 limit 없이 조회한 전체와 정확히 일치해야 한다(중복도 누락도 없이).
+    var all = repo.findByStatus("pending", isolatedType, null, null).stream()
+        .map(ReviewItemRecord::id).toList();
+    var paged = new java.util.ArrayList<Long>();
+    paged.addAll(ids0);
+    paged.addAll(ids1);
+    paged.addAll(ids2);
+    assertThat(paged).hasSize(all.size());
+    assertThat(new java.util.HashSet<>(paged)).isEqualTo(new java.util.HashSet<>(all));
   }
 
   // dedupe_key는 Record에 노출하지 않으므로(내부 조회 키) 테스트에선 id로 DB에서 직접 읽어 비교한다.

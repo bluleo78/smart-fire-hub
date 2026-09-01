@@ -281,26 +281,67 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("status를 주면 그대로 필터에 쓰이고, 생략하면 pending으로 폴백한다")
   void list_appliesStatusFilter_andDefaultsToPending() {
-    when(repo.findByStatus(anyString(), any())).thenReturn(List.of());
+    when(repo.findByStatus(anyString(), any(), any(), any())).thenReturn(List.of());
 
-    service.list("approved", "synonym_merge");
-    verify(repo).findByStatus("approved", "synonym_merge");
+    service.list("approved", "synonym_merge", null, null);
+    verify(repo).findByStatus("approved", "synonym_merge", null, null);
 
-    service.list(null, null);
-    verify(repo).findByStatus("pending", null);
+    service.list(null, null, null, null);
+    verify(repo).findByStatus("pending", null, null, null);
 
     // 빈 문자열도 "생략"으로 본다(쿼리스트링 status= 형태).
-    service.list("  ", "property_normalization");
-    verify(repo).findByStatus("pending", "property_normalization");
+    service.list("  ", "property_normalization", null, null);
+    verify(repo).findByStatus("pending", "property_normalization", null, null);
   }
 
   @Test
   @DisplayName("허용되지 않은 status는 조용히 pending으로 대체하지 않고 400으로 거부한다")
   void list_invalidStatus_throws() {
-    assertThatThrownBy(() -> service.list("deleted", null))
+    assertThatThrownBy(() -> service.list("deleted", null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("지원하지 않는 status");
-    verify(repo, never()).findByStatus(anyString(), any());
+    verify(repo, never()).findByStatus(anyString(), any(), any(), any());
+  }
+
+  // ── page/size(opt-in, #422) — pending 큐가 무제한으로 불어나는 것을 막기 위한 페이지네이션.
+  @Test
+  @DisplayName("size를 생략하면 offset 없이 전체를 요청한다(ai-agent 등 기존 호출자 하위호환)")
+  void list_withoutSize_passesNullOffsetAndLimit() {
+    when(repo.findByStatus(anyString(), any(), any(), any())).thenReturn(List.of());
+    service.list("pending", null, null, null);
+    verify(repo).findByStatus("pending", null, null, null);
+  }
+
+  @Test
+  @DisplayName("size를 주면 page*size를 offset으로 계산해 전달한다(page 생략 시 0)")
+  void list_withSize_computesOffsetFromPage() {
+    when(repo.findByStatus(anyString(), any(), any(), any())).thenReturn(List.of());
+
+    service.list("pending", null, null, 20);
+    verify(repo).findByStatus("pending", null, 0, 20);
+
+    service.list("pending", null, 2, 20);
+    verify(repo).findByStatus("pending", null, 40, 20);
+  }
+
+  @Test
+  @DisplayName("size가 범위를 벗어나면 400으로 거부한다")
+  void list_sizeOutOfRange_throws() {
+    assertThatThrownBy(() -> service.list("pending", null, null, 0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("size는");
+    assertThatThrownBy(() -> service.list("pending", null, null, 201))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("size는");
+    verify(repo, never()).findByStatus(anyString(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName("page가 음수면 400으로 거부한다")
+  void list_negativePage_throws() {
+    assertThatThrownBy(() -> service.list("pending", null, -1, 20))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("page는");
   }
 
   // --- helpers ---

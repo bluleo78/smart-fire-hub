@@ -12,6 +12,51 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('“수천만원대”')).toBeVisible();
   });
 
+  // #422 — pending 큐가 페이지 크기(50)를 넘기면 무한스크롤로 나머지를 이어 불러온다.
+  test.describe('무한스크롤 페이지네이션 (#422)', () => {
+    test('첫 페이지가 꽉 차면 "더 보기"가 나타나고, 클릭 시 page=1로 다음 페이지를 요청해 이어붙인다', async ({ authenticatedPage: page }) => {
+      // 첫 페이지(size=50) 응답은 꽉 채워 hasMore를 유도한다. 두 번째 페이지는 1건만 반환해 이어붙임을 확인한다.
+      const page0Items = Array.from({ length: 50 }, (_, i) =>
+        createSynonymReviewItem({ id: i + 1, payload: { entityType: 'Cause', nameA: `요인${i}`, nameB: `누전${i}` } }));
+      const page1Items = [createSynonymReviewItem({ id: 999, payload: { entityType: 'Cause', nameA: '마지막페이지항목', nameB: '누전999' } })];
+
+      const requestedPages: (string | null)[] = [];
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const params = new URL(route.request().url()).searchParams;
+        requestedPages.push(params.get('page'));
+        // page/size가 opt-in이라는 것을 함께 확인 — 백엔드 계약대로 size=50이 항상 실려간다.
+        expect(params.get('size')).toBe('50');
+        const body = params.get('page') === '1' ? page1Items : page0Items;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await expect(page.getByText('요인0')).toBeVisible();
+      await expect(page.getByText('마지막페이지항목')).toHaveCount(0);
+
+      const moreButton = page.getByRole('button', { name: '더 보기' });
+      await expect(moreButton).toBeVisible();
+      await moreButton.click();
+
+      // 두 번째 페이지가 로드되어 기존 50건 위에 이어붙는다(교체가 아니라 누적).
+      await expect(page.getByText('마지막페이지항목')).toBeVisible();
+      await expect(page.getByText('요인0')).toBeVisible();
+      expect(requestedPages).toEqual(['0', '1']);
+
+      // 두 번째 페이지가 size(50)보다 적어 hasMore가 false로 떨어져 버튼이 사라진다.
+      await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+    });
+
+    test('전체 pending이 페이지 크기 미만이면 "더 보기"가 나타나지 않는다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+
+      await expect(page.getByText('전기적 요인')).toBeVisible();
+      await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+    });
+  });
+
   test('동의어 승인 시 approve API를 호출하고 목록에서 사라진다', async ({ authenticatedPage: page }) => {
     let approveCalled = false;
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);

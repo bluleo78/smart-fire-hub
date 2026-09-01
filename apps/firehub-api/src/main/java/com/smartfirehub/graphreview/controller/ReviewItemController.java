@@ -81,12 +81,16 @@ public class ReviewItemController {
 
   // 검수 항목 목록 — status/itemType 필터(둘 다 선택). status 생략 시 pending(#318 이전과 동일한 기본값),
   // 허용되지 않은 status는 400. 예전에는 status를 받고도 버려 approved/rejected 요청에 pending을 돌려줬다.
+  // page/size(둘 다 선택, opt-in) — 생략하면 기존과 동일하게 전체를 반환한다(#422). 웹 인박스는 무한스크롤을
+  // 위해 넘기고, ai-agent(MCP) listReviewItems 호출자는 안 넘겨 기존 동작·응답 스키마가 그대로 유지된다.
   @GetMapping
   @RequirePermission("dataset:read")
   public List<ReviewItemResponse> list(
       @RequestParam(required = false) String status,
-      @RequestParam(required = false) String itemType) {
-    return service.list(status, itemType);
+      @RequestParam(required = false) String itemType,
+      @RequestParam(required = false) Integer page,
+      @RequestParam(required = false) Integer size) {
+    return service.list(status, itemType, page, size);
   }
 
   // 승인 — item_type별 그래프 변경 후 status 갱신. 속성은 correctedValue 필요.

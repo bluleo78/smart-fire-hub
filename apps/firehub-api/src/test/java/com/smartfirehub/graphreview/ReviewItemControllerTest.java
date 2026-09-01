@@ -122,7 +122,7 @@ class ReviewItemControllerTest {
   // ── status 필터(#318) — 예전에는 파라미터를 받고도 버려 항상 pending을 돌려줬다.
   @Test
   void list_passesStatusFilterToService() throws Exception {
-    when(service.list("approved", "synonym_merge")).thenReturn(List.of(resp("approved")));
+    when(service.list("approved", "synonym_merge", null, null)).thenReturn(List.of(resp("approved")));
 
     mockMvc.perform(get("/api/v1/graphrag/review-items")
             .param("status", "approved").param("itemType", "synonym_merge")
@@ -130,29 +130,43 @@ class ReviewItemControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].status").value("approved"));
 
-    verify(service).list("approved", "synonym_merge");
+    verify(service).list("approved", "synonym_merge", null, null);
   }
 
   @Test
   void list_withoutStatus_defaultsToPendingAtServiceLayer() throws Exception {
-    when(service.list(null, null)).thenReturn(List.of(resp("pending")));
+    when(service.list(null, null, null, null)).thenReturn(List.of(resp("pending")));
 
     mockMvc.perform(get("/api/v1/graphrag/review-items").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].status").value("pending"));
 
-    verify(service).list(null, null);
+    verify(service).list(null, null, null, null);
   }
 
   @Test
   void list_invalidStatus_badRequest() throws Exception {
-    when(service.list(eq("bogus"), eq(null)))
+    when(service.list(eq("bogus"), eq(null), eq(null), eq(null)))
         .thenThrow(new IllegalArgumentException("지원하지 않는 status 값입니다: bogus (허용: pending, approved, rejected)"));
 
     mockMvc.perform(get("/api/v1/graphrag/review-items").param("status", "bogus")
             .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("지원하지 않는 status")));
+  }
+
+  // ── page/size(opt-in, #422) — 웹 인박스 무한스크롤이 넘기는 파라미터가 서비스로 그대로 전달되는지.
+  @Test
+  void list_passesPageAndSizeToService() throws Exception {
+    when(service.list(null, null, 1, 20)).thenReturn(List.of(resp("pending")));
+
+    mockMvc.perform(get("/api/v1/graphrag/review-items")
+            .param("page", "1").param("size", "20")
+            .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].status").value("pending"));
+
+    verify(service).list(null, null, 1, 20);
   }
 
   @Test
