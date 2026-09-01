@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { createOntologySummaries } from '../../factories/mapping.factory';
+import { createOntologySummaries,MAPPING_ONTOLOGY_ID } from '../../factories/mapping.factory';
 import {
   createEntityTypeDeletion,
   createEntityTypeMutation,
@@ -1212,6 +1212,66 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
 
     expect(deleteRequested).toBe(false);
     expect(await getEdgeCount(page)).toBe(beforeEdgeCount);
+  });
+
+  // 회귀 방지(#409) — 도메인명이 매우 긴 온톨로지가 목록에 있으면 옵션이 줄바꿈 없이 한 줄로
+  // truncate 돼야 한다. renderItem의 텍스트 <span>에 max-width가 없으면 텍스트가 그대로 여러 줄로
+  // 렌더돼 드롭다운 전체 레이아웃이 무너진다(원본 결함). scrollWidth > clientWidth로 "화면에 잘려서
+  // 넘치는 텍스트가 있다"는 사실을, offsetHeight로 "그 옵션 행이 한 줄 높이만 차지한다"는 사실을
+  // 각각 확인해야 truncate가 실제로 적용됐다는 증거가 된다(단순히 텍스트가 보이는지만 확인하면 줄바꿈
+  // 상태도 통과해버려 결함을 못 잡는다).
+  test('도메인명이 매우 긴 온톨로지도 선택 드롭다운에서 한 줄로 truncate 된다(회귀, #409)', async ({
+    authenticatedPage: page,
+  }) => {
+    const longDomain = '가나다라마바사아자차'.repeat(50);
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/ontologies',
+      createOntologySummaries([
+        {
+          id: MAPPING_ONTOLOGY_ID,
+          domain: '화재조사 보고서',
+          schemaVersion: 1,
+          status: 'active',
+          entityCount: 6,
+          datasetCount: 3,
+          updatedAt: '2026-04-12T09:00:00Z',
+          isDefault: true,
+        },
+        {
+          id: 99,
+          domain: longDomain,
+          schemaVersion: 1,
+          status: 'draft',
+          entityCount: 0,
+          datasetCount: 0,
+          updatedAt: '2026-08-01T09:00:00Z',
+          isDefault: false,
+        },
+      ]),
+    );
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    const longOption = page.getByRole('option', { name: longDomain });
+    await expect(longOption).toBeVisible();
+
+    // truncate 대상은 옵션 안의 텍스트 <span>이다(title도 이 span에 붙는다 — 바깥 role="option"
+    // div가 아니라 그 텍스트를 감싸는 자식에 있어야 실제로 잘린 이름을 hover로 확인할 수 있다).
+    const textSpan = longOption.locator('span[title]');
+    await expect(textSpan).toHaveAttribute('title', longDomain);
+
+    const { scrollWidth, clientWidth, height } = await textSpan.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, height: rect.height };
+    });
+    // 텍스트가 잘려 넘친다(= truncate 대상이 실제로 존재) + 텍스트 행은 한 줄 높이만 차지한다(=
+    // 줄바꿈되지 않았다). 둘 다 참이어야 max-width+truncate가 실제로 동작한 것이다.
+    expect(scrollWidth).toBeGreaterThan(clientWidth);
+    expect(height).toBeLessThan(30);
   });
 
   // (리뷰 I-1(a)) 이 테스트는 가드 ①(편집 모드) 자체를 단독으로 증명하지 못한다 — 읽기 모드에서는

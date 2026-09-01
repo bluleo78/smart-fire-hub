@@ -43,8 +43,12 @@ export default function OntologySelect({ ontologies, value, onChange, onManage }
     const variant = STATUS_BADGE_VARIANT[o.status];
     return (
       <SelectItem key={o.id} value={String(o.id)}>
-        <span className="flex items-center gap-2">
-          {o.domain}
+        {/* 도메인명 길이 상한이 없어(#409) 긴 이름이 그대로 줄바꿈되면 드롭다운 레이아웃이 무너진다 —
+            max-width + truncate 로 한 줄 말줄임 처리하고, 잘린 전체 이름은 title로 노출한다. */}
+        <span className="flex items-center gap-2 max-w-[280px]">
+          <span className="min-w-0 truncate" title={o.domain}>
+            {o.domain}
+          </span>
           {variant && <Badge variant={variant}>{ONTOLOGY_STATUS_LABEL[o.status]}</Badge>}
         </span>
       </SelectItem>
