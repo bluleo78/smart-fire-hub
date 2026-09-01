@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -25,6 +26,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useDeleteOntology, useOntologyList, useOntologyStatusTransition } from '@/hooks/queries/useOntology';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
+import { groupOntologiesByStatus } from '@/lib/ontology-grouping';
 import { ONTOLOGY_STATUS_LABEL, type OntologyStatus, type OntologySummary } from '@/types/ontology';
 
 interface OntologyManageDialogProps {
@@ -52,6 +54,9 @@ function deleteBlockReason(o: OntologySummary): string | null {
 export default function OntologyManageDialog({ open, onOpenChange, onSelect }: OntologyManageDialogProps) {
   const { data: ontologies } = useOntologyList('all');
   const deleteOntology = useDeleteOntology();
+  // 활성/초안/은퇴가 섞인 채 임의 순서로 나열되던 불일치(#417) — 헤더의 OntologySelect와
+  // 동일한 그룹핑 기준(groupOntologiesByStatus)을 적용해 활성 → 초안 → 은퇴 순 섹션으로 보여준다.
+  const groups = groupOntologiesByStatus(ontologies ?? []);
 
   const handleDelete = async (o: OntologySummary) => {
     try {
@@ -83,55 +88,65 @@ export default function OntologyManageDialog({ open, onOpenChange, onSelect }: O
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(ontologies ?? []).map((o) => {
-              const blocked = deleteBlockReason(o);
-              return (
-                <TableRow
-                  key={o.id}
-                  className="cursor-pointer"
-                  onClick={() => {
-                    onSelect(o.id);
-                    onOpenChange(false);
-                  }}
-                >
-                  {/* 도메인명 길이 상한이 없어(#416, #409의 동일 증상) 긴 이름이 그대로 렌더되면
-                      테이블/다이얼로그 레이아웃이 무너진다 — max-width + truncate 로 한 줄
-                      말줄임 처리하고, 잘린 전체 이름은 title로 노출한다. */}
-                  <TableCell className="max-w-[240px] truncate" title={o.domain}>
-                    {o.domain}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={o.status === 'active' ? 'secondary' : o.status === 'draft' ? 'warning' : 'outline'}>
-                      {ONTOLOGY_STATUS_LABEL[o.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{o.entityCount}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {o.datasetCount > 0 ? `${o.datasetCount}개 데이터셋` : '없음'}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{formatDate(o.updatedAt)}</TableCell>
-                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-2">
-                      <OntologyLifecycleAction ontology={o} />
-                      {blocked ? (
-                        <span className="text-xs text-muted-foreground">{blocked}</span>
-                      ) : (
-                        <DeleteConfirmDialog
-                          entityName="온톨로지"
-                          itemName={o.domain}
-                          onConfirm={() => handleDelete(o)}
-                          trigger={
-                            <Button variant="ghost" size="sm">
-                              삭제
-                            </Button>
-                          }
-                        />
-                      )}
-                    </div>
+            {groups.map((group) => (
+              <Fragment key={`group-${group.status}`}>
+                {/* 섹션 헤더 — 상태 그룹 경계를 표로 보여준다. colSpan은 헤더 컬럼 수(6)와 맞춘다. */}
+                <TableRow key={`group-${group.status}`} className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="bg-muted/50 py-1.5 text-xs font-medium text-muted-foreground">
+                    {group.label} {group.items.length}
                   </TableCell>
                 </TableRow>
-              );
-            })}
+                {group.items.map((o) => {
+                  const blocked = deleteBlockReason(o);
+                  return (
+                    <TableRow
+                      key={o.id}
+                      className="cursor-pointer"
+                      onClick={() => {
+                        onSelect(o.id);
+                        onOpenChange(false);
+                      }}
+                    >
+                      {/* 도메인명 길이 상한이 없어(#416, #409의 동일 증상) 긴 이름이 그대로 렌더되면
+                          테이블/다이얼로그 레이아웃이 무너진다 — max-width + truncate 로 한 줄
+                          말줄임 처리하고, 잘린 전체 이름은 title로 노출한다. */}
+                      <TableCell className="max-w-[240px] truncate" title={o.domain}>
+                        {o.domain}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={o.status === 'active' ? 'secondary' : o.status === 'draft' ? 'warning' : 'outline'}>
+                          {ONTOLOGY_STATUS_LABEL[o.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{o.entityCount}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {o.datasetCount > 0 ? `${o.datasetCount}개 데이터셋` : '없음'}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{formatDate(o.updatedAt)}</TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end gap-2">
+                          <OntologyLifecycleAction ontology={o} />
+                          {blocked ? (
+                            <span className="text-xs text-muted-foreground">{blocked}</span>
+                          ) : (
+                            <DeleteConfirmDialog
+                              entityName="온톨로지"
+                              itemName={o.domain}
+                              onConfirm={() => handleDelete(o)}
+                              trigger={
+                                <Button variant="ghost" size="sm">
+                                  삭제
+                                </Button>
+                              }
+                            />
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </Fragment>
+            ))}
           </TableBody>
         </Table>
       </DialogContent>

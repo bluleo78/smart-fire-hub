@@ -121,6 +121,47 @@ test.describe('온톨로지 생명주기', () => {
     await expect(fireRow.getByRole('button', { name: '삭제' })).toBeHidden();
   });
 
+  // 회귀 방지(#417) — 관리 다이얼로그 테이블이 헤더의 OntologySelect(활성/초안·은퇴 그룹핑)와
+  // 다른 정보 구조(그룹핑 없음)를 갖던 불일치. 활성 → 초안 → 은퇴 순 섹션 헤더가 나타나고,
+  // 각 그룹 아래에 해당 상태의 온톨로지만 놓이는지 순서까지 확인한다(단순 존재 확인이 아님).
+  test('관리 다이얼로그가 활성/초안/은퇴 섹션으로 그룹핑된다(회귀, #417)', async ({ authenticatedPage: page }) => {
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: /온톨로지 관리/ }).click();
+
+    const dialog = page.getByTestId('ontology-manage-dialog');
+    await expect(dialog).toBeVisible();
+
+    // beforeEach 목킹: 활성 2건(화재조사 보고서, 건축물 대장) + 초안 1건(소방시설 점검) +
+    // 은퇴 1건(구 화재조사(2024)) — 원래 순서(활성→활성→초안→은퇴)와 그룹 순서가 우연히
+    // 같지 않도록, 그룹 헤더가 실제로 상태별 경계를 나누고 있는지 행 텍스트 순서로 검증한다.
+    const rowTexts = await dialog.locator('table tbody tr').allTextContents();
+    const trimmed = rowTexts.map((t) => t.trim());
+
+    const activeHeaderIdx = trimmed.findIndex((t) => t.startsWith('활성 '));
+    const draftHeaderIdx = trimmed.findIndex((t) => t.startsWith('초안 '));
+    const archivedHeaderIdx = trimmed.findIndex((t) => t.startsWith('은퇴 '));
+    expect(activeHeaderIdx).toBeGreaterThanOrEqual(0);
+    expect(draftHeaderIdx).toBeGreaterThan(activeHeaderIdx);
+    expect(archivedHeaderIdx).toBeGreaterThan(draftHeaderIdx);
+
+    const fireIdx = trimmed.findIndex((t) => t.includes('화재조사 보고서'));
+    const buildingIdx = trimmed.findIndex((t) => t.includes('건축물 대장'));
+    const inspectionIdx = trimmed.findIndex((t) => t.includes('소방시설 점검'));
+    const oldFireIdx = trimmed.findIndex((t) => t.includes('구 화재조사(2024)'));
+
+    // 활성 항목들은 활성 헤더 다음 & 초안 헤더 이전에 놓인다.
+    expect(fireIdx).toBeGreaterThan(activeHeaderIdx);
+    expect(fireIdx).toBeLessThan(draftHeaderIdx);
+    expect(buildingIdx).toBeGreaterThan(activeHeaderIdx);
+    expect(buildingIdx).toBeLessThan(draftHeaderIdx);
+    // 초안 항목은 초안 헤더와 은퇴 헤더 사이.
+    expect(inspectionIdx).toBeGreaterThan(draftHeaderIdx);
+    expect(inspectionIdx).toBeLessThan(archivedHeaderIdx);
+    // 은퇴 항목은 은퇴 헤더 다음.
+    expect(oldFireIdx).toBeGreaterThan(archivedHeaderIdx);
+  });
+
   // 회귀 방지(#416) — 도메인명이 매우 긴 온톨로지가 관리 다이얼로그 테이블에 있으면 도메인 셀이
   // 줄바꿈 없이 한 줄로 truncate 돼야 한다. TableCell에 max-width가 없으면 텍스트가 그대로 렌더돼
   // 다이얼로그(sm:max-w-3xl) 전체 레이아웃이 무너진다(원본 결함, #409와 동일 패턴이나 다른 컴포넌트).

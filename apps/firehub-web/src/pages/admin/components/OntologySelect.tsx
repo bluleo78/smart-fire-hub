@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { groupOntologiesByStatus } from '@/lib/ontology-grouping';
 import { ONTOLOGY_STATUS_LABEL, type OntologySummary } from '@/types/ontology';
 
 interface OntologySelectProps {
@@ -36,8 +37,12 @@ const STATUS_BADGE_VARIANT: Record<string, 'warning' | 'secondary' | undefined> 
  * 활성/그 외를 그룹으로 나눠 "지금 쓸 수 있는 것"이 위에 오게 한다.
  */
 export default function OntologySelect({ ontologies, value, onChange, onManage }: OntologySelectProps) {
-  const active = ontologies.filter((o) => o.status === 'active');
-  const others = ontologies.filter((o) => o.status !== 'active');
+  // groupOntologiesByStatus는 활성 → 초안 → 은퇴 순으로 묶는다 — 이 컴포넌트는 활성만 별도 그룹으로
+  // 떼어내고 나머지(초안·은퇴)는 그 순서 그대로 하나로 합쳐, 관리 다이얼로그(OntologyManageDialog)와
+  // 같은 그룹핑 소스를 공유한다(#417).
+  const groups = groupOntologiesByStatus(ontologies);
+  const active = groups.find((g) => g.status === 'active')?.items ?? [];
+  const others = groups.filter((g) => g.status !== 'active').flatMap((g) => g.items);
 
   const renderItem = (o: OntologySummary) => {
     const variant = STATUS_BADGE_VARIANT[o.status];
