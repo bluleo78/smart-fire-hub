@@ -278,9 +278,11 @@ export default function OntologyPage() {
     // Radix Tabs로 감싸 탭 a11y(role=tab)와 기존 E2E 셀렉터를 보존한다. 높이 체인 전 구간 min-h-0.
     <Tabs value={tab} onValueChange={setTab} className="flex h-full min-h-0 flex-col">
       {/* 툴바 — 좌: 패널 토글 + 제목 + 탭 전환, 우: 검색(인스턴스 탭 한정). */}
-      {/* 좁은 폭(max-sm)에서는 툴바를 줄바꿈하고 높이를 풀어 가로 스크롤을 없앤다(#345 SC 1.4.10).
-          sm 이상에서는 기존 한 줄 h-12 툴바 그대로. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 sm:h-12 sm:flex-nowrap sm:py-0">
+      {/* 좁은 폭(max-md)에서는 툴바를 줄바꿈하고 높이를 풀어 가로 스크롤을 없앤다(#345 SC 1.4.10).
+          md 이상에서는 기존 한 줄 h-12 툴바 그대로. 원래 경계는 sm(640px)이었으나, 항목
+          (아이콘+제목+탭 2개+검색/온톨로지 선택기+버튼들)이 640~768px 대역엔 실제로 한 줄에
+          들어가지 못해 h1이 형제 요소에 밀려 세로로 찌그러졌다(#402) — md(768px)로 완화. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 md:h-12 md:flex-nowrap md:py-0">
         {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤). */}
         {!showEditor && (
@@ -295,14 +297,17 @@ export default function OntologyPage() {
             {filterCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </Button>
         )}
-        <h1 className="text-sm font-semibold">지식그래프</h1>
+        {/* whitespace-nowrap 없으면 640~900px 대역에서 한글(CJK) 텍스트가 글자 단위로
+            줄바꿈 기회를 허용해 min-content가 사실상 "1글자 폭"이 되고, 형제 요소(탭·아이콘)에
+            밀려 h1이 세로로 찌그러진다(#402). shrink-0으로 다른 flex item에 밀려 줄어드는 것도 막는다. */}
+        <h1 className="shrink-0 text-sm font-semibold whitespace-nowrap">지식그래프</h1>
         <TabsList>
           <TabsTrigger value="instance">그래프 탐색</TabsTrigger>
           <TabsTrigger value="schema">지식 모델</TabsTrigger>
         </TabsList>
         {/* 온톨로지 선택기(고정 220px)까지 들어오며 항목이 늘었다 — 이 그룹도 outer 툴바처럼
-            max-sm에서 줄바꿈해야 320px 리플로우(#345)가 깨지지 않는다. */}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:flex-nowrap">
+            max-md에서 줄바꿈해야 320px 리플로우(#345)와 640~900px 겹침(#402)이 깨지지 않는다. */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 md:flex-nowrap">
           {/* 온톨로지 선택기 — 스키마 탭 전용. 비-ADMIN도 볼 수 있지만 관리 진입점은 없다. */}
           {tab === 'schema' && ontologies && ontologies.length > 0 && (
             <OntologySelect

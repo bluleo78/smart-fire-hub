@@ -83,6 +83,77 @@ test.describe('320px 리플로우 (#345)', () => {
 });
 
 /**
+ * 지식그래프 툴바 — 태블릿 폭(~700px) 겹침 회귀 가드 (#402).
+ *
+ * 원인은 `<h1>지식그래프</h1>`에 whitespace-nowrap이 없던 것 — 컨테이너의 sm:flex-nowrap은
+ * 형제 요소 사이의 줄바꿈만 막을 뿐, 개별 자식의 텍스트 자체가 CJK 글자 단위로 줄어드는 것은
+ * 막지 못해 h1이 12px로 찌그러지고 햄버거 아이콘·탭 레이블과 겹쳤다. 수정은 h1에
+ * whitespace-nowrap shrink-0을 추가하고, 툴바 전체의 줄바꿈 브레이크포인트를 sm(640px)에서
+ * md(768px)로 완화해 640~768px 대역에서 항목이 실제로 들어갈 자리가 없을 때는 줄바꿈하도록 했다.
+ */
+test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
+  /**
+   * h1 제목의 실측값 + 툴바 자체가 뷰포트 폭 안에 들어왔는지.
+   *
+   * mainOverflow(<main> 전체 기준)는 이 페이지의 ReactFlow 캔버스가 초기 노드 배치→dagre
+   * 레이아웃 정착 사이에 일시적으로 폭을 넓게 잡는 타이밍 특성이 있어(병렬 워커로 CPU가
+   * 몰릴 때만 재현) 이 이슈와 무관한 이유로 플레이크가 난다 — 그래서 여기서는 캔버스를
+   * 제외한 툴바 자체의 scrollWidth/clientWidth로 판정 범위를 좁힌다.
+   */
+  const titleFit = (page: import('@playwright/test').Page) =>
+    page.locator('h1').evaluate((h1) => {
+      const toolbar = h1.closest('div')!;
+      return {
+        text: h1.textContent,
+        whiteSpace: getComputedStyle(h1).whiteSpace,
+        width: Math.round(h1.getBoundingClientRect().width),
+        toolbarWrap: getComputedStyle(toolbar).flexWrap,
+        toolbarFits: toolbar.scrollWidth <= toolbar.clientWidth + 1,
+      };
+    });
+
+  test('700px(태블릿 폭)에서 제목이 줄바꿈되지 않고 찌그러지지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 700, height: 1000 });
+    await page.goto('/knowledge-graph/model');
+    await expect(page.locator('[data-slot=tabs-list]')).toBeVisible();
+
+    const title = await titleFit(page);
+    // 공허한 통과 방지 — 실제 텍스트가 렌더링된 상태에서 폭이 붕괴(≈12px)하지 않았는지 확인한다.
+    expect(title.text).toBe('지식그래프');
+    expect(title.whiteSpace).toBe('nowrap');
+    expect(title.width).toBeGreaterThan(40);
+    expect(title.toolbarFits).toBe(true);
+  });
+
+  test('데스크톱(1280px)에서는 툴바가 기존대로 한 줄(h-12)로 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    // 병렬 워커 간 기본 뷰포트 크기가 흔들리는 걸 피하려고 명시적으로 고정한다.
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/knowledge-graph/model');
+    await expect(page.locator('[data-slot=tabs-list]')).toBeVisible();
+
+    const title = await titleFit(page);
+    // 브레이크포인트 완화(sm→md)가 데스크톱 표현을 바꾸지 않아야 한다 — 1280px는 완화 전(sm)과
+    // 완화 후(md) 기준 모두 nowrap 구간이라 이 값 자체는 변경으로 바뀌지 않는다. 스키마 탭은
+    // 온톨로지 선택기(고정 220px)+버튼 여럿이 붙어 툴바 실폭이 빠듯한 기존 상태라, toolbarFits는
+    // 병렬 워커의 폰트 메트릭 타이밍에 따라 경계선에서 흔들려(#402와 무관한 기존 특성) 여기서는
+    // 단언하지 않는다 — 이 이슈의 회귀 지표는 wrap 여부와 h-12 높이 유지다.
+    expect(title.toolbarWrap).toBe('nowrap');
+    const toolbarHeight = await page
+      .locator('h1')
+      .evaluate((h1) => Math.round(h1.closest('div')!.getBoundingClientRect().height));
+    expect(toolbarHeight).toBeLessThan(55);
+  });
+});
+
+/**
  * 감사 로그 날짜 범위 필터 리플로우 회귀 가드 (#357).
  *
  * 원인은 `w-[150px]` date Input 2개 + `~` 구분자를 담은 묶음의 min-content 폭이 325px로 고정되어
