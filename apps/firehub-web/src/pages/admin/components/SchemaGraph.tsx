@@ -3,12 +3,13 @@ import edgehandles from 'cytoscape-edgehandles';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { contourForType, entityColorSet, graphChrome } from '@/lib/ontology-colors';
+import { contourForType, entityColorSet } from '@/lib/ontology-colors';
 import { validateEntityTypeName, validateRelationName, validateTripleUniqueness } from '@/lib/ontology-validation';
 import type { OntologySchema } from '@/types/ontology';
 
 import GraphKeyboardList from './GraphKeyboardList';
 import CanvasInlineInput from './model-editor/CanvasInlineInput';
+import { buildStylesheet } from './schema-graph-stylesheet';
 
 // cytoscape.use는 확장을 cytoscape 모듈 자체에 등록한다(인스턴스가 아니라 라이브러리 전역) —
 // 컴포넌트 effect 안에서 부르면 마운트할 때마다 같은 확장을 중복 등록해 "already registered" 류
@@ -82,55 +83,6 @@ interface PendingRename {
 interface PendingCreate {
   x: number;
   y: number;
-}
-
-// 스키마 그래프 스타일시트 — 타입 노드는 data(bg/border/text)(테마별 tint·윤곽선·대비 텍스트), 엣지는 크롬 색.
-// 크롬 색은 InstanceGraph와 공유하는 단일 소스(ontology-colors.ts)에서 가져온다 (#377).
-function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
-  const c = graphChrome(isDark);
-  return [
-    {
-      selector: 'node',
-      style: {
-        shape: 'round-rectangle',
-        'background-color': 'data(bg)',
-        'border-color': 'data(border)',
-        'border-width': 1.5,
-        label: 'data(label)',
-        color: 'data(text)',
-        'font-size': 12,
-        'font-weight': 600,
-        'text-valign': 'center',
-        'text-halign': 'center',
-        width: 'label',
-        height: 'label',
-        padding: '10px',
-        'text-wrap': 'ellipsis',
-        'text-max-width': '150px',
-      },
-    },
-    {
-      selector: 'edge',
-      style: {
-        width: 1.5,
-        'line-color': c.edge,
-        'target-arrow-color': c.edge,
-        'target-arrow-shape': 'triangle',
-        'arrow-scale': 0.9,
-        'curve-style': 'bezier',
-        label: 'data(label)',
-        'font-size': 11,
-        color: c.muted,
-        'text-background-color': c.bg,
-        'text-background-opacity': 0.8,
-        'text-background-padding': '2px',
-      },
-    },
-    // 편집 모드 선택 강조 — cytoscape 내장 :selected 상태를 그대로 쓴다(InstanceGraph와 동일 패턴).
-    // read 모드는 selected를 절대 넘기지 않으므로(.select()가 호출되지 않으므로) 이 규칙은 조용히 무관하다.
-    { selector: 'node:selected', style: { 'border-color': c.ring, 'border-width': 3 } },
-    { selector: 'edge:selected', style: { 'line-color': c.ring, 'target-arrow-color': c.ring, width: 2.5 } },
-  ];
 }
 
 // 계층형(하향) 배치 — 소규모 타입 DAG이므로 내장 breadthfirst로 충분(신규 의존성 없음).
