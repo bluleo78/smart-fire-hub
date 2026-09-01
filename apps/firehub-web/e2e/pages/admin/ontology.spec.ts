@@ -589,6 +589,28 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     await expect(list.locator('[data-graph-item]')).toHaveText(/강남타워 \(Building\)/);
   });
 
+  // (#405) 이름 검색으로 상대 노드가 화면에서 사라져도, 남은 노드의 "관계 N개"는 실제 전체 관계 수를
+  // 유지해야 한다 — filteredEdges(화면에 그릴 엣지)로 degree를 계산하면 상대 노드가 안 보인다는 이유만
+  // 으로 "관계 0개"가 되어 사용자가 "이 노드는 고립돼 있다"고 오인한다.
+  test('이름 검색으로 상대 노드가 가려져도 관계 수는 실제 값을 유지한다(#405)', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(graph.nodes.length));
+
+    const list = page.getByTestId('instance-graph-node-list');
+    // '2026-03'은 incident-1(강남구 오피스텔 화재(2026-03-02))에만 매칭 — 인접한 building/cause/
+    // damage/regulation 4개 노드는 모두 화면에서 사라진다.
+    await page.getByPlaceholder('이름 검색').fill('2026-03');
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '1');
+    await expect(list.locator('[data-graph-item]')).toHaveCount(1);
+    // 상대 노드가 전부 가려졌어도 incident-1은 여전히 4개 관계(OCCURRED_AT/CAUSED_BY/RESULTED_IN/
+    // VIOLATED)를 가진다 — "관계 0개"로 표시되면 회귀.
+    await expect(list.locator('[data-graph-item]')).toHaveText(/관계 4개/);
+  });
+
   test('지식 모델 탭에서도 키보드로 타입 드릴다운이 가능하다', async ({ authenticatedPage: page }) => {
     const schema = createOntologySchema();
     await setupOntologyMocks(page);

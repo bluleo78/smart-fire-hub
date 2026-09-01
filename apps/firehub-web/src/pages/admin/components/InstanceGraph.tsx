@@ -150,9 +150,13 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
 
   // 캔버스 텍스트 대체 목록(#326) — 필터·검색 결과와 동일한 노드만 노출한다(숨긴 노드가 SR에 새면 안 됨).
   // 라벨에 타입·인접 관계 수를 함께 담아, 시각으로만 알 수 있던 정보를 키보드/SR 사용자도 얻게 한다.
+  // (#405) degree는 반드시 graph.edges(필터되지 않은 전체)로 계산한다 — filteredEdges로 계산하면
+  // "상대 노드가 검색어에 매칭되지 않아 화면에서 사라짐"과 "이 노드가 관계가 없음"이 뒤섞여, 실제로는
+  // 관계가 있는 노드도 검색 필터링만으로 "관계 0개"처럼 보이게 된다. filteredEdges는 캔버스에 실제로
+  // 그릴 엣지 선정에만 쓴다(아래 cy.add 이펙트).
   const keyboardItems = useMemo(() => {
     const degree = new Map<string, number>();
-    for (const e of filteredEdges) {
+    for (const e of graph.edges) {
       degree.set(e.subjectKey, (degree.get(e.subjectKey) ?? 0) + 1);
       degree.set(e.objectKey, (degree.get(e.objectKey) ?? 0) + 1);
     }
@@ -160,7 +164,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
       id: n.key,
       label: `${n.name} (${n.type}) — 관계 ${degree.get(n.key) ?? 0}개`,
     }));
-  }, [filteredNodes, filteredEdges]);
+  }, [filteredNodes, graph.edges]);
 
   // 대체 목록 항목 활성화 → 캔버스 tap과 동일한 선택 경로.
   const selectByKey = (key: string) => {
