@@ -1,5 +1,5 @@
 import { createOntologySummaries } from '../../factories/mapping.factory';
-import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
+import { createEntityTypeMutation, createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import {
   setupAdminAuth,
   setupOntologyGraphErrorMock,
@@ -699,6 +699,44 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
       'aria-label',
       `지식 모델 타입 ${schema.entities.length}개, 관계 ${schema.relations.length}개`,
     );
+  });
+
+  // (#412) activeTypes가 이미 "부분 선택"(일부 타입만 끈) 상태에서 새 엔티티 타입을 추가하면, 사용자가
+  // 그 타입을 필터로 건드린 적이 없는데도 자동으로 unpressed(꺼짐)로 나타나던 결함. OntologyPage가
+  // 스키마의 타입 목록 변화를 렌더 중 이전 값과 비교해 activeTypes가 비어있지 않을 때만 새 타입을
+  // 합류시키도록 고쳤다 — 이 테스트는 그 동기화가 실제로 동작하는지 검증한다.
+  test('타입 필터가 부분 선택된 상태에서 새 타입을 추가하면 그 타입은 자동으로 숨겨지지 않는다(#412)', async ({
+    authenticatedPage: page,
+  }) => {
+    const schema = createOntologySchema();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', String(schema.entities.length));
+
+    const typeList = page.getByTestId('type-filter-list');
+    // Damage를 꺼서 activeTypes를 "부분 선택" 상태로 만든다(빈 Set이 아니게).
+    await typeList.getByRole('button', { name: /^Damage/ }).click();
+    await expect(typeList.getByRole('button', { name: /^Damage/ })).toHaveAttribute('aria-pressed', 'false');
+
+    // 수정 모드로 들어가 새 타입(Sensor)을 만든다 — 필터를 손댄 적은 없다.
+    await page.getByRole('button', { name: '수정 모드' }).click();
+    await page.getByRole('button', { name: '타입 추가' }).click();
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/ontology/1/entity-types',
+      createEntityTypeMutation({ id: 7, type: 'Sensor', description: '', naming: '', resolution: 'embedding', properties: [] }),
+    );
+    await page.getByLabel('타입 이름').fill('Sensor');
+    await page.getByRole('button', { name: '타입 만들기' }).click();
+    await expect(page.getByTestId('outline-entity-7')).toBeVisible();
+
+    // 수정 모드를 종료해 필터 패널로 돌아온다.
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    // 방금 만든 Sensor는 활성(pressed) 상태여야 한다 — 사용자가 끈 Damage만 계속 꺼져 있어야 한다.
+    await expect(typeList.getByRole('button', { name: /^Sensor/ })).toHaveAttribute('aria-pressed', 'true');
+    await expect(typeList.getByRole('button', { name: /^Damage/ })).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('접힌 타입 필터 패널은 inert로 포커스 순서에서 제거된다(보이지 않는 탭 스톱 없음)', async ({

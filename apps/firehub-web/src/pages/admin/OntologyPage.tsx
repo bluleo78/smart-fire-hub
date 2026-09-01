@@ -171,6 +171,30 @@ export default function OntologyPage() {
     if (canvasDeleteEntityId != null) setCanvasDeleteEntityId(null);
   }
 
+  // (#412) activeTypes 자동 동기화 — TypeFilterPanel이 실제로 렌더링하는 스키마(탭에 따라
+  // selectedSchema 또는 schema)의 타입 목록이 바뀌면, "부분 선택"(activeTypes가 빈 Set이 아닌)
+  // 상태일 때만 새로 추가된 타입을 activeTypes에 합류시킨다. 그러지 않으면 사용자가 건드린 적
+  // 없는 새 타입이 "구체화된 activeTypes 목록에 없다"는 이유만으로 첫 등장부터 꺼진 채 나타난다
+  // (TypeFilterPanel.isActive는 activeTypes.size===0 || activeTypes.has(t)로 판정). 빈 Set(전체
+  // 표시) 상태에서는 그대로 둔다 — 빈 Set 자체가 이미 "새 타입 포함 전체 표시"를 의미하므로 손댈
+  // 필요가 없다. allTypes 정의(entities.map(e => e.type))는 TypeFilterPanel.tsx의 계산과 반드시
+  // 같아야 새 타입 판별이 어긋나지 않는다.
+  // 렌더 중 이전 값 비교 패턴(useEffect 대신, 위 prevOntologyIdRef와 동일한 취지)이지만, "이전 타입
+  // 목록"을 diff에 실제로 써야 해서(단순 비교·리셋이 아니라 추가분 계산) ref가 아니라 state로 이전
+  // 값을 들고 있는다 — react-hooks/refs 린트 규칙이 렌더 중 ref.current 값을 콜백/파생 계산에
+  // 재사용하는 것을 금지하기 때문이다(순수 비교·대입만 허용). React 공식 문서의 "이전 props/state를
+  // 저장" 패턴을 그대로 따른다.
+  const filterSchema = tab === 'schema' ? selectedSchema : schema;
+  const currentTypeNames = useMemo(() => (filterSchema?.entities ?? []).map((e) => e.type), [filterSchema]);
+  const [prevTypeNames, setPrevTypeNames] = useState(currentTypeNames);
+  if (currentTypeNames !== prevTypeNames) {
+    setPrevTypeNames(currentTypeNames);
+    const addedTypes = currentTypeNames.filter((t) => !prevTypeNames.includes(t));
+    if (addedTypes.length > 0 && activeTypes.size > 0) {
+      setActiveTypes(new Set([...activeTypes, ...addedTypes]));
+    }
+  }
+
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
 
   // 인스펙터에 내려줄 선택된 엔티티 타입 — ModelOutline과 마찬가지로 id 없는 항목은 편집 대상이 될 수
