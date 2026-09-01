@@ -29,12 +29,17 @@ const RESOLUTION_LABEL: Record<string, string> = {
 export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, onReset, collapsed }: Props) {
   const [filter, setFilter] = useState('');
 
-  // resolution별로 타입을 그룹화(스키마 없으면 색상표 키로 단일 그룹).
+  // resolution별로 타입을 그룹화.
+  // (#407) schema 자체가 아직 안 온 "로딩 중"(undefined)에만 색상표 키로 스켈레톤을 보여준다.
+  // schema는 왔지만 entities가 빈 배열인 경우는 "정상적으로 비어있는 온톨로지"이므로 데모 타입으로
+  // 대체하지 않고 빈 그룹(= 빈 목록)을 그대로 반환해야 한다 — 예전엔 두 상태를 entities.length===0
+  // 하나로 뭉뚱그려 판별해, 방금 만든 빈 초안 온톨로지에서도 이전 온톨로지의 데모 타입 6종이 실재하는
+  // 것처럼 표시됐다.
   const groups = useMemo(() => {
-    const entities = schema?.entities ?? [];
-    if (entities.length === 0) {
+    if (!schema) {
       return [{ label: '타입', types: Object.keys(ENTITY_TYPE_COLORS) }];
     }
+    const entities = schema.entities ?? [];
     const byResolution = new Map<string, string[]>();
     for (const e of entities) {
       const list = byResolution.get(e.resolution) ?? [];

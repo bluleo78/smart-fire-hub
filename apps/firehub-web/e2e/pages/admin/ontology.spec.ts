@@ -415,6 +415,32 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectNodeCount(page, graph.nodes.length);
   });
 
+  // (#407) 빈 초안 온톨로지로 전환하면 좌측 타입 필터 패널도 진짜로 비어야 한다 — 예전에는
+  // entities.length===0을 "로딩 중"과 동일하게 취급해 이전 온톨로지의 데모 타입 6종(색상표 키)을
+  // 그대로 남겨 보여줬다(실재하지 않는 타입이 존재하는 것처럼 보이는 회귀).
+  test('빈 초안 온톨로지로 전환하면 타입 필터 패널에 이전 온톨로지의 타입이 남지 않는다(#407)', async ({
+    authenticatedPage: page,
+  }) => {
+    const emptySchema = createOntologySchema({ domain: '테스트', entities: [], relations: [] });
+    await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
+    await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
+    await mockApi(page, 'GET', '/api/v1/ontology/2', emptySchema);
+    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+    await page.goto('/knowledge-graph/model');
+
+    // 전환 전: 기본 온톨로지(id=1) 기준 6타입이 보인다.
+    await expect(page.getByTestId('type-filter-list').getByRole('button')).toHaveCount(6);
+
+    // 빈 초안 온톨로지(id=2)로 전환.
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: '건축물 대장' }).click();
+
+    // 좌측 타입 필터 패널에는 이전 온톨로지의 데모 타입이 하나도 남지 않아야 한다(토글 버튼 0개).
+    await expect(page.getByTestId('type-filter-list').getByRole('button')).toHaveCount(0);
+    await expect(page.getByTestId('type-filter-list').getByText('Incident')).toHaveCount(0);
+  });
+
   test('인스턴스 그래프 조회 실패 시 에러 문구가 표시되고 페이지가 크래시하지 않는다', async ({
     authenticatedPage: page,
   }) => {
