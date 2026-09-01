@@ -241,8 +241,9 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
           <Button
             variant="outline"
             onClick={handleActivate}
-            // 저장된 매핑이 없으면 활성화할 대상 자체가 없다.
-            disabled={!mapping || activateMapping.isPending}
+            // 저장된 매핑이 없거나 이미 활성 상태면 활성화할 대상 자체가 없다(#400).
+            // 편집해 dirty가 되면 초안 저장을 거쳐야 하므로, active 상태에서는 재클릭이 항상 무의미하다.
+            disabled={!mapping || mapping.status === 'active' || activateMapping.isPending}
             data-testid="mapping-activate-button"
           >
             {activateMapping.isPending ? '활성화 중...' : '활성화'}

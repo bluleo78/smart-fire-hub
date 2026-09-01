@@ -476,6 +476,26 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(page.getByTestId('mapping-status')).toHaveText('활성');
   });
 
+  // 회귀(#400): 이미 활성 상태에서는 재클릭해도 재검증·재활성화 요청이 발생하지 않아야 한다.
+  test('이미 활성 상태면 활성화 버튼이 비활성화돼 재클릭으로 재요청이 발생하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    const capture = await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping/activate`,
+      createMappingResponse({ status: 'active' }),
+      { capture: true },
+    );
+    await page.goto(MAPPING_URL);
+
+    await expect(page.getByTestId('mapping-status')).toHaveText('활성');
+    await expect(page.getByTestId('mapping-activate-button')).toBeDisabled();
+    expect(capture.requests.length).toBe(0);
+  });
+
   test('엔티티 타입을 바꾸면 이전 타입의 속성 행이 사라지고, 저장 페이로드에도 남지 않는다', async ({
     authenticatedPage: page,
   }) => {
