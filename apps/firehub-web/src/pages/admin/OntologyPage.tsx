@@ -444,6 +444,9 @@ export default function OntologyPage() {
             onToggle={toggleType}
             onReset={() => setActiveTypes(new Set())}
             collapsed={filterCollapsed}
+            // (#413) 이름 검색 배지 반영 — 검색 UI가 인스턴스 탭에만 있으므로 그 탭에서만 전달한다.
+            // 스키마 탭은 검색어 입력 자체가 불가능하니 항상 빈 문자열(=전체 개수)로 둔다.
+            search={tab === 'instance' ? search : ''}
           />
         )}
 

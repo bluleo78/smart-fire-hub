@@ -15,6 +15,10 @@ interface Props {
   onToggle: (type: string, allTypes: string[]) => void;
   onReset: () => void;
   collapsed: boolean;
+  // (#413) 툴바의 이름 검색어 — InstanceGraph가 캔버스에 적용하는 것과 같은 값을 받아 타입별
+  // 개수 배지에도 반영한다. 스키마 탭처럼 검색 UI가 없는 호출부는 넘기지 않아도 되며, 그 경우
+  // 배지는 지금처럼 전체 개수를 보여준다(생략 시 빈 문자열과 동일하게 동작).
+  search?: string;
 }
 
 // resolution(임베딩/정확) 코드 → 표시 라벨. 그룹 헤더로 사용한다.
@@ -26,7 +30,7 @@ const RESOLUTION_LABEL: Record<string, string> = {
 // 좌측 타입 필터 패널 — flat 칩 범례(TypeLegend)를 대체.
 // resolution별 그룹핑 + 패널 내 검색 + 개수 표시 + 토글 필터(빈 activeTypes = 전체 활성).
 // 접기(collapsed) 시 폭 0으로 트랜지션해 캔버스를 넓힌다.
-export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, onReset, collapsed }: Props) {
+export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, onReset, collapsed, search = '' }: Props) {
   const [filter, setFilter] = useState('');
 
   // resolution별로 타입을 그룹화.
@@ -57,7 +61,13 @@ export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, 
   const allTypes = useMemo(() => groups.flatMap((g) => g.types), [groups]);
 
   // 타입별 노드 개수(그래프 로드 후에만 표시).
-  const countByType = (t: string) => graph?.nodes.filter((n) => n.type === t).length ?? 0;
+  // (#413) InstanceGraph가 캔버스에 적용하는 이름 검색(name 부분일치, 대소문자 무시)과 동일한
+  // 조건으로 세어야 한다 — 그렇지 않으면 검색 결과가 0건인데 배지만 전체 개수를 그대로 보여줘
+  // 사용자가 데이터가 존재한다고 오인한다.
+  const searchQuery = search.trim().toLowerCase();
+  const countByType = (t: string) =>
+    graph?.nodes.filter((n) => n.type === t && (searchQuery === '' || n.name.toLowerCase().includes(searchQuery)))
+      .length ?? 0;
   // 필터 활성 여부 — 빈 activeTypes는 전체 활성으로 본다.
   const isActive = (t: string) => activeTypes.size === 0 || activeTypes.has(t);
   // 패널 내 검색어로 타입 이름을 부분일치 필터.

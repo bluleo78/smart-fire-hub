@@ -615,6 +615,33 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     await expect(list.locator('[data-graph-item]')).toHaveText(/강남타워 \(Building\)/);
   });
 
+  // (#413) 좌측 타입 필터 패널의 타입별 개수 배지는 항상 graph.nodes 전체 기준으로만 세어
+  // 이름 검색과 무관하게 고정돼 있었다 — 검색 결과가 0건인데도 배지는 "1"을 그대로 보여줘
+  // 사용자가 데이터가 존재한다고 오인할 수 있었다. 배지가 캔버스와 같은 검색 조건을 반영해야 한다.
+  test('타입별 개수 배지는 이름 검색 결과를 반영한다(#413)', async ({ authenticatedPage: page }) => {
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/explore');
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+
+    const typeList = page.getByTestId('type-filter-list');
+    // 검색 전: Incident 2개, Building 1개(전체 그래프 기준).
+    await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveText('Incident2');
+    await expect(typeList.getByRole('button', { name: /^Building/ })).toHaveText('Building1');
+
+    // 어떤 노드에도 매칭되지 않는 검색어 — 캔버스는 "조건에 맞는 노드가 없습니다"를 보여주고,
+    // 배지도 전부 0으로 떨어져야 한다.
+    await page.getByPlaceholder('이름 검색').fill('존재하지않는이름XYZ123');
+    await expect(page.getByText('조건에 맞는 노드가 없습니다.')).toBeVisible();
+    await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveText('Incident0');
+    await expect(typeList.getByRole('button', { name: /^Building/ })).toHaveText('Building0');
+
+    // '강남'은 Incident 1건(강남구 오피스텔 화재) + Building 1건(강남타워)에만 매칭 — 부분 검색도
+    // 정확히 반영돼야 한다.
+    await page.getByPlaceholder('이름 검색').fill('강남');
+    await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveText('Incident1');
+    await expect(typeList.getByRole('button', { name: /^Building/ })).toHaveText('Building1');
+  });
+
   // (#405) 이름 검색으로 상대 노드가 화면에서 사라져도, 남은 노드의 "관계 N개"는 실제 전체 관계 수를
   // 유지해야 한다 — filteredEdges(화면에 그릴 엣지)로 degree를 계산하면 상대 노드가 안 보인다는 이유만
   // 으로 "관계 0개"가 되어 사용자가 "이 노드는 고립돼 있다"고 오인한다.
