@@ -67,8 +67,13 @@ export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, 
   return (
     <div
       className={cn(
-        'flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200',
-        collapsed ? 'w-0 border-r-0' : 'w-64',
+        // (#414) sm(640px) 미만에서는 collapsed 상태와 무관하게 항상 숨긴다 — w-64(256px) + 캔버스
+        // 최소폭(280px, OntologyPage.tsx의 min-w-[280px])이 536px로, 640px부터는 이 조합이 항상
+        // 들어가지만 그 미만(모바일 375px 등)에서는 캔버스가 뷰포트 밖으로 밀리거나 슬리버로
+        // 압착된다. ModelOutline/인스펙터가 xl 미만에서 숨는 것(#403)과 같은 패턴 — 다만 이 패널은
+        // 실사용 폭이 더 좁아(576px가 아니라 536px) sm이면 충분하다.
+        'hidden shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 sm:flex',
+        collapsed ? 'sm:w-0 sm:border-r-0' : 'sm:w-64',
       )}
       data-testid="type-filter-panel"
       // inert: 접힌 패널의 내부 컨트롤을 포커스 순서와 접근성 트리에서 동시에 제거한다(#327).

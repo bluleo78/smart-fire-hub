@@ -217,6 +217,76 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
 });
 
 /**
+ * 지식그래프 읽기 모드 TypeFilterPanel — 모바일 폭(375px) 캔버스 압착 회귀 가드 (#414).
+ *
+ * 원인은 TypeFilterPanel(w-64, 256px)이 어떤 브레이크포인트에도 반응하지 않고 collapsed=false를
+ * 기본값으로 펼쳐진 채 렌더링된 것 — 캔버스 최소폭(280px, OntologyPage.tsx min-w-[280px])과
+ * 합쳐 536px가 되어 375px 뷰포트에서 캔버스가 슬리버로 압착되거나 밖으로 밀렸다. 수정은
+ * ModelOutline/인스펙터가 이미 쓰는 xl 브레이크포인트 숨김 패턴(#403)과 같은 방식으로,
+ * TypeFilterPanel을 sm(640px) 미만에서 collapsed 상태와 무관하게 항상 숨긴다(536px < 640px이므로
+ * sm부터는 펼쳐져도 항상 들어간다). 패널을 여는 토글 버튼도 sm 미만에서는 죽은 컨트롤이 되지 않도록
+ * 함께 숨긴다.
+ */
+test.describe('지식그래프 TypeFilterPanel 모바일 폭 캔버스 압착 (#414)', () => {
+  test('375px(모바일)에서는 지식 모델 탭의 TypeFilterPanel이 숨고 캔버스가 넓게 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByTestId('type-filter-panel')).toBeHidden();
+    // 패널을 열 수단(토글 버튼)도 이 폭에서는 죽은 컨트롤이 되지 않도록 함께 숨어야 한다.
+    await expect(page.getByRole('button', { name: '타입 필터 접기' })).toBeHidden();
+    const canvasBox = await page.getByTestId('schema-graph').boundingBox();
+    expect(canvasBox!.width).toBeGreaterThan(300);
+  });
+
+  test('375px(모바일)에서는 그래프 탐색 탭의 TypeFilterPanel도 숨고 캔버스가 넓게 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/knowledge-graph/explore');
+
+    await expect(page.getByTestId('type-filter-panel')).toBeHidden();
+    const canvasBox = await page.getByTestId('instance-graph').boundingBox();
+    expect(canvasBox!.width).toBeGreaterThan(300);
+  });
+
+  test('640px(sm 경계) 이상에서는 TypeFilterPanel이 기존대로 펼쳐진 채 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 640, height: 900 });
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+    await expect(page.getByRole('button', { name: '타입 필터 접기' })).toBeVisible();
+    const panelBox = await page.getByTestId('type-filter-panel').boundingBox();
+    expect(panelBox!.width).toBeGreaterThan(200);
+  });
+
+  test('640px(sm 경계)에서도 토글 버튼으로 접기/펼치기가 기존대로 동작한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 640, height: 900 });
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+    await page.getByRole('button', { name: '타입 필터 접기' }).click();
+    await expect(page.getByTestId('type-filter-panel')).toBeHidden();
+    await page.getByRole('button', { name: '타입 필터 펼치기' }).click();
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
+  });
+});
+
+/**
  * 감사 로그 날짜 범위 필터 리플로우 회귀 가드 (#357).
  *
  * 원인은 `w-[150px]` date Input 2개 + `~` 구분자를 담은 묶음의 min-content 폭이 325px로 고정되어

@@ -316,12 +316,14 @@ export default function OntologyPage() {
           들어가지 못해 h1이 형제 요소에 밀려 세로로 찌그러졌다(#402) — md(768px)로 완화. */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 md:h-12 md:flex-nowrap md:py-0">
         {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
-            받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤). */}
+            받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
+            (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
+            이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다. */}
         {!showEditor && (
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="hidden h-8 w-8 sm:inline-flex"
             onClick={() => setFilterCollapsed((v) => !v)}
             aria-label={filterCollapsed ? '타입 필터 펼치기' : '타입 필터 접기'}
             aria-pressed={!filterCollapsed}
@@ -449,9 +451,9 @@ export default function OntologyPage() {
         <div className="flex min-w-0 flex-1 overflow-hidden" data-testid="instance-graph-panel">
           {/* min-w-[280px]: flex 기본 min-width:auto 때문에 그래프가 안 줄어들어 인스펙터가 밖으로
               잘리는 것을 막으면서(원래 min-w-0의 목적), 동시에 캔버스 자체가 280px 밑으로는 줄어들지
-              않게 하한을 둔다(#403 방어 가드) — ModelOutline/인스펙터는 lg 미만에서 숨지만, 읽기 모드의
-              TypeFilterPanel(w-64, 펼침 상태)은 반응형으로 숨지 않으므로 이 하한이 없으면 좁은 폭에서
-              캔버스가 다시 압착될 수 있다. */}
+              않게 하한을 둔다(#403 방어 가드) — ModelOutline/인스펙터는 xl 미만에서 숨고, 읽기 모드의
+              TypeFilterPanel도 이제(#414) sm 미만에서 함께 숨는다. 이 하한은 그 두 브레이크포인트
+              사이에서 패널이 펼침 상태로 남아 있는 폭 대역(sm~xl)에 대한 추가 방어선이다. */}
           <div className="relative min-w-[280px] flex-1">
             <TabsContent value="schema" className="m-0 h-full">
               {isSelectedSchemaError ? (
