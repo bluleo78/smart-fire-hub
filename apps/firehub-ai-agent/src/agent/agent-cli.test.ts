@@ -340,6 +340,69 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
     expect(String(errs[0].message)).toContain('인증이 만료');
   });
 
+  it('CLI-AUTH-ERR-TEXT: 일반 assistant text 블록으로 인증 실패 문구가 오고 세션이 success 로 끝나는 경우도 한국어 안내로 치환 (#410 회귀)', async () => {
+    // 크로스체크 재현: subtype=error* 경로가 아니라 assistant text 블록으로
+    // "Failed to authenticate..." 가 오고, result.subtype 은 success(=done) 로 끝난다.
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'Failed to authenticate. API Error: 401 OAuth access token is invalid.' },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; message?: string; content?: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; message?: string; content?: string });
+    }
+    // 원문 영문 문구가 'text' 이벤트로도, 다른 어떤 이벤트로도 노출되면 안 된다.
+    const leaked = events.some(
+      (e) =>
+        (typeof e.content === 'string' && /oauth access token is invalid/i.test(e.content)) ||
+        (typeof e.message === 'string' && /oauth access token is invalid/i.test(e.message)),
+    );
+    expect(leaked).toBe(false);
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    expect(String(errs[0].message)).toContain('인증이 만료');
+  });
+
+  it('CLI-AUTH-ERR-DELTA: stream_event text_delta 로 인증 실패 문구가 조각나 오는 경우도 한국어 안내로 치환 (#410 회귀)', async () => {
+    const lines = [
+      JSON.stringify({ type: 'stream_event', delta: { type: 'text_delta', text: 'Failed to authenticate. ' } }),
+      JSON.stringify({ type: 'stream_event', delta: { type: 'text_delta', text: 'Please run /login' } }),
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; message?: string; content?: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; message?: string; content?: string });
+    }
+    const textEvents = events.filter((e) => e.type === 'text');
+    expect(textEvents.length).toBe(0);
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    expect(String(errs[0].message)).toContain('인증이 만료');
+  });
+
   it('CLI-ALARM: 턴 수가 임계 초과 시 cost_alarm 1회', async () => {
     const lines: string[] = [];
     for (let i = 0; i < COST_ALARM_TURNS + 2; i++) {

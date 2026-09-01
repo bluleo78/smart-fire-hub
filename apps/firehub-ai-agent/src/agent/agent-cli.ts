@@ -39,6 +39,20 @@ import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
 
 /**
+ * #410: CLI OAuth 토큰 만료/무효 시 원문 영문 인증 실패 문구가 그대로 노출되던 결함의 패턴.
+ *
+ * 최초 수정은 `result` 메시지의 `subtype`이 `error*` 인 경로만 검사했으나, 실제로는 CLI 가
+ * 인증 실패를 일반 `assistant` text 블록이나 `stream_event` text_delta 로 흘리고 세션 자체는
+ * `success`(=done) 로 끝내는 경로가 있어(#410 크로스체크 회귀) 두 경로 모두에서 이 패턴을 검사한다.
+ */
+const AUTH_FAILURE_PATTERN =
+  /not logged in|please run \/login|failed to authenticate|oauth access token is invalid/i;
+
+/** 인증 실패 시 사용자에게 노출할 한국어 안내. 원본 영문 문구는 서버 로그에만 남긴다. */
+const AUTH_FAILURE_KOREAN_MESSAGE =
+  'AI 에이전트 인증이 만료되었습니다. 관리자에게 문의하거나 설정 > AI 에이전트에서 OAuth 토큰을 갱신해 주세요.';
+
+/**
  * CLI·OpenCode 공용 트랜스크립트 파일 형식.
  *
  * <p>하위 에이전트 세션 id 는 경로별로 다르지만(claude / opencode) **같은 봉투**에 담긴다 —
@@ -297,6 +311,10 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // #277 소프트 알람: 턴 수 누적 + 1회 emit 플래그
   let costTurnCount = 0;
   let costAlarmEmitted = false;
+  // #410 회귀: CLI 인증 실패가 result.subtype=error* 경로가 아니라 일반 assistant text
+  // 이벤트로만 오고 세션이 done(성공)으로 끝나는 경우가 있어, 텍스트 경로에서도 검사한다.
+  // 한 응답 내에서 여러 delta/블록에 걸쳐 중복 치환하지 않도록 플래그로 1회만 처리.
+  let authFailureDetected = false;
 
   // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
   const userMsg: HistoryMessage = {
@@ -462,6 +480,22 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       // Stream text deltas
       if (msg.type === 'stream_event' && msg.delta?.type === 'text_delta' && msg.delta.text) {
         assistantText += msg.delta.text;
+        // #410: 이미 이번 응답에서 인증 실패로 판정했으면 이후 델타는 원문 조각이 섞여 있을 수
+        // 있으므로 더 이상 사용자에게 그대로 흘리지 않는다(한국어 안내는 아래서 1회만 emit됨).
+        if (authFailureDetected) {
+          continue;
+        }
+        if (AUTH_FAILURE_PATTERN.test(assistantText)) {
+          authFailureDetected = true;
+          console.warn(`[CLI Agent] [auth-failure] stream_event text=${assistantText}`);
+          yield { type: 'error', message: AUTH_FAILURE_KOREAN_MESSAGE };
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
         yield { type: 'text', content: msg.delta.text };
         continue;
       }
@@ -496,6 +530,22 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             };
           } else if (block.type === 'text' && block.text) {
             assistantText += block.text;
+            // #410: stream_event 델타를 안 쓰는 CLI 경로(또는 델타 없이 완성된 블록으로만 오는
+            // 경우)에서도 동일하게 인증 실패 패턴을 검사해 원문 노출을 막는다.
+            if (authFailureDetected) {
+              continue;
+            }
+            if (AUTH_FAILURE_PATTERN.test(block.text)) {
+              authFailureDetected = true;
+              console.warn(`[CLI Agent] [auth-failure] assistant text=${block.text}`);
+              yield { type: 'error', message: AUTH_FAILURE_KOREAN_MESSAGE };
+              try {
+                child.kill('SIGTERM');
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
             yield { type: 'text', content: block.text };
           }
         }
@@ -584,15 +634,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           // 원문 영문 문구가 그대로 담겨 있다. 검사 없이 넘기면 이 문구가 그대로 채팅 버블에 노출된다.
           // 원인 문자열은 서버 로그에 남기고, 사용자에게는 한국어 안내 메시지로 치환해 내보낸다.
           const rawResult = msg.result ?? 'CLI agent returned an error';
-          const isAuthFailure = /not logged in|please run \/login/i.test(rawResult);
+          const isAuthFailure = AUTH_FAILURE_PATTERN.test(rawResult);
           if (isAuthFailure) {
             console.warn(`[CLI Agent] [auth-failure] subtype=${msg.subtype} result=${rawResult}`);
           }
           yield {
             type: 'error',
-            message: isAuthFailure
-              ? 'AI 에이전트 인증이 만료되었습니다. 관리자에게 문의하거나 설정 > AI 에이전트에서 OAuth 토큰을 갱신해 주세요.'
-              : rawResult,
+            message: isAuthFailure ? AUTH_FAILURE_KOREAN_MESSAGE : rawResult,
             inputTokens,
             outputTokens,
           };
