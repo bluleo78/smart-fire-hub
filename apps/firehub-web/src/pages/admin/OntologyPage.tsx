@@ -207,12 +207,20 @@ export default function OntologyPage() {
   };
 
   // 범례 클릭 → 타입 필터 토글.
-  const toggleType = (t: string) =>
+  // (#404) "빈 Set = 전체 표시" 관례와 "add/remove만 하는 toggle"이 결합하면, 기본(전체 표시)
+  // 상태에서 이미 pressed인 버튼 하나를 클릭했을 때 "그것만 끔"이 아니라 "그것만 남기고 전부
+  // 끔"이 되어버렸다(빈 Set에 클릭한 타입 하나만 add되므로). 이를 막으려면 빈 Set(전체 활성)
+  // 상태에서의 첫 클릭은 "전체 타입 목록으로 채운 뒤 클릭한 타입만 제거"해야 사용자 기대("이
+  // 타입 하나만 끈다")와 일치한다. allTypes는 TypeFilterPanel이 실제로 렌더링 중인(현재
+  // 탭·스키마 기준) 전체 타입 목록을 그대로 넘겨준다 — 여기서 별도로 재계산하면 두 곳의
+  // "전체 타입" 정의가 어긋날 위험이 있다.
+  const toggleType = (t: string, allTypes: string[]) =>
     setActiveTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(t)) next.delete(t);
-      else next.add(t);
-      return next;
+      const base = prev.size === 0 ? new Set(allTypes) : new Set(prev);
+      if (base.has(t)) base.delete(t);
+      else base.add(t);
+      // 토글 결과 전체 타입이 다시 모두 포함되면 "전체 표시" 관례를 유지하기 위해 빈 Set으로 되돌린다.
+      return base.size === allTypes.length ? new Set() : base;
     });
 
   // 스키마 탭에서 타입 클릭 → 인스턴스 탭으로 이동하며 해당 타입만 필터(드릴다운 브리지).

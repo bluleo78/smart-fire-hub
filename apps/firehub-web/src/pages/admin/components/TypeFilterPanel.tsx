@@ -9,7 +9,10 @@ interface Props {
   schema?: OntologySchema;
   graph?: GraphData;
   activeTypes: Set<string>;
-  onToggle: (type: string) => void;
+  // (#404) 클릭한 타입뿐 아니라 이 패널이 알고 있는 전체 타입 목록(allTypes)도 함께 넘긴다 —
+  // "빈 Set = 전체 표시" 상태에서 하나를 끄려면 호출자가 "전체 목록 - 클릭한 타입"을 계산해야
+  // 하는데, 그 전체 목록의 단일 원본은 이 패널의 groups다(빈 스키마 폴백 등 예외를 이미 알고 있음).
+  onToggle: (type: string, allTypes: string[]) => void;
   onReset: () => void;
   collapsed: boolean;
 }
@@ -43,6 +46,10 @@ export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, 
       types,
     }));
   }, [schema]);
+
+  // groups에 속한 전체 타입(검색 필터와 무관) — onToggle 호출 시 "빈 Set=전체" 해석에 쓸
+  // 전체 타입 목록으로 그대로 전달한다(#404).
+  const allTypes = useMemo(() => groups.flatMap((g) => g.types), [groups]);
 
   // 타입별 노드 개수(그래프 로드 후에만 표시).
   const countByType = (t: string) => graph?.nodes.filter((n) => n.type === t).length ?? 0;
@@ -94,7 +101,7 @@ export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, 
                     <button
                       key={t}
                       type="button"
-                      onClick={() => onToggle(t)}
+                      onClick={() => onToggle(t, allTypes)}
                       aria-pressed={active}
                       className={cn(
                         'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted',

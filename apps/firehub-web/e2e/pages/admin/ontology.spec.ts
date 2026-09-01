@@ -361,7 +361,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectNodeCount(page, incidentCount);
   });
 
-  test('범례에서 타입 버튼 클릭 시 인스턴스 노드 집합이 해당 타입만으로 필터링된다', async ({
+  test('범례에서 타입 버튼 클릭 시 그 타입만 숨겨지고 나머지는 그대로 표시된다(#404)', async ({
     authenticatedPage: page,
   }) => {
     const graph = createOntologyGraph();
@@ -370,15 +370,22 @@ test.describe('지식그래프 시각화 페이지', () => {
     await page.goto('/knowledge-graph/model');
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
-    // 초기: 전체 노드(7개) 표시
+    // 초기: 전체 노드(7개) 표시, 모든 타입 버튼이 pressed(빈 activeTypes = 전체 활성).
     await expectNodeCount(page, graph.nodes.length);
-
-    // 타입 필터 패널에서 'Building' 타입 버튼 클릭 → 필터 토글(Building만 활성)
     const panel = page.getByTestId('type-filter-panel');
-    await panel.getByRole('button', { name: /Building/ }).click();
+    const buildingButton = panel.getByRole('button', { name: /Building/ });
+    await expect(buildingButton).toHaveAttribute('aria-pressed', 'true');
 
-    // Building 타입 노드만 남아야 한다 (모킹 그래프 기준 1개)
-    await expectNodeCount(page, buildingCount);
+    // (#404 회귀 가드) 기본(전체 표시) 상태에서 pressed인 'Building' 버튼을 클릭하면 "그 타입만
+    // 남기고 전부 숨김"이 아니라 "그 타입 하나만 숨김"이어야 한다 — 나머지 타입 노드는 그대로 남는다.
+    await buildingButton.click();
+    await expect(buildingButton).toHaveAttribute('aria-pressed', 'false');
+    await expectNodeCount(page, graph.nodes.length - buildingCount);
+
+    // 다시 클릭하면 전체 타입이 모두 켜진 상태로 복귀 → "빈 Set = 전체" 관례에 따라 전체 노드가 되돌아온다.
+    await buildingButton.click();
+    await expect(buildingButton).toHaveAttribute('aria-pressed', 'true');
+    await expectNodeCount(page, graph.nodes.length);
   });
 
   test('타입 필터 패널 — resolution 그룹 헤더 표시 + "전체" 리셋 복원', async ({
@@ -397,9 +404,11 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(panel.getByText('임베딩 해소')).toBeVisible();
 
     // 타입 토글 시 '전체' 리셋 버튼이 등장하고, 클릭하면 전체 필터로 복원된다(입력→처리→출력).
+    // 기본(전체 표시) 상태의 토글은 "그 타입만 숨김"이므로(#404), Building을 끄면 Building을
+    // 제외한 나머지가 남는다.
     await expect(panel.getByRole('button', { name: '전체' })).toHaveCount(0);
     await panel.getByRole('button', { name: /Building/ }).click();
-    await expectNodeCount(page, buildingCount);
+    await expectNodeCount(page, graph.nodes.length - buildingCount);
     const reset = panel.getByRole('button', { name: '전체' });
     await expect(reset).toBeVisible();
     await reset.click();
@@ -572,8 +581,9 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     await expect(list.locator('[data-graph-item]')).toHaveCount(2);
     await expect(list).toHaveAttribute('aria-label', /노드 2개/);
 
-    // 타입 필터 — Building만 켜면 검색과 교집합이 되어 1건만 남는다.
-    await page.getByTestId('type-filter-list').getByRole('button', { name: /^Building/ }).click();
+    // 타입 필터 — 기본(전체 표시) 상태에서 'Incident'를 끄면(#404: 그 타입만 숨김) 검색 결과 중
+    // Incident가 빠지고 Building만 남아 교집합이 1건이 된다.
+    await page.getByTestId('type-filter-list').getByRole('button', { name: /^Incident/ }).click();
     await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', '1');
     await expect(list.locator('[data-graph-item]')).toHaveCount(1);
     await expect(list.locator('[data-graph-item]')).toHaveText(/강남타워 \(Building\)/);
