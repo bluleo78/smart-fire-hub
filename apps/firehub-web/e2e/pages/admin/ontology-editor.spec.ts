@@ -265,6 +265,64 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
 });
 
 /**
+ * ModelOutline — 타입/관계 검색(#415).
+ * 읽기 모드 TypeFilterPanel에는 있던 "타입 검색"이 수정 모드 아웃라인에는 없어, 온톨로지가 커지면
+ * 스크롤로만 탐색해야 했다. TypeFilterPanel과 동일한 패턴(SearchInput + 클라이언트 부분일치)으로
+ * 타입/관계 섹션 각각에 검색 입력을 추가했다 — 검색어 입력 → 목록이 즉시 걸러지는지 검증한다.
+ */
+test.describe('ModelOutline — 타입/관계 검색', () => {
+  test('타입 검색어를 입력하면 일치하는 타입만 남고, 지우면 전체가 돌아온다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    const entityList = page.getByTestId('model-outline-entities');
+    // 초기 상태 — factory의 6개 타입이 모두 보인다.
+    await expect(entityList.getByRole('button')).toHaveCount(6);
+
+    await page.getByLabel('타입 검색').fill('build');
+    // 부분일치 + 대소문자 무시 — "Building" 하나만 남는다.
+    await expect(entityList.getByRole('button')).toHaveCount(1);
+    await expect(page.getByTestId('outline-entity-2')).toContainText('Building');
+    await expect(page.getByTestId('outline-entity-1')).toHaveCount(0); // Incident는 걸러짐
+
+    // 검색어를 지우면 전체 목록이 돌아온다.
+    await page.getByLabel('타입 검색').fill('');
+    await expect(entityList.getByRole('button')).toHaveCount(6);
+
+    // 아무 타입에도 매치되지 않는 검색어 — 빈 상태 안내 문구가 보인다.
+    await page.getByLabel('타입 검색').fill('존재하지않는타입');
+    await expect(entityList.getByRole('button')).toHaveCount(0);
+    await expect(entityList).toContainText('검색 결과가 없습니다.');
+  });
+
+  test('관계 검색은 subject → relation → object 전체 텍스트를 대상으로 부분일치한다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    const relationList = page.getByTestId('model-outline-relations');
+    // 초기 상태 — factory의 6개 관계가 모두 보인다.
+    await expect(relationList.getByRole('button')).toHaveCount(6);
+
+    // relation 필드(가운데 텍스트)로 검색 — subject/object가 아닌 relation 자체 매칭도 되는지 확인.
+    await page.getByLabel('관계 검색').fill('equipment');
+    // HAS_EQUIPMENT(Building→Equipment)와 GOVERNED_BY(Equipment→Regulation) 둘 다 "equipment"를 포함한다
+    // (하나는 relation 이름에, 하나는 subject 이름에).
+    await expect(relationList.getByRole('button')).toHaveCount(2);
+    await expect(page.getByTestId('outline-relation-4')).toContainText('Building → HAS_EQUIPMENT → Equipment');
+    await expect(page.getByTestId('outline-relation-6')).toContainText('Equipment → GOVERNED_BY → Regulation');
+    await expect(page.getByTestId('outline-relation-1')).toHaveCount(0); // OCCURRED_AT은 걸러짐
+
+    // 검색어를 지우면 전체 목록이 돌아온다.
+    await page.getByLabel('관계 검색').fill('');
+    await expect(relationList.getByRole('button')).toHaveCount(6);
+  });
+});
+
+/**
  * ModelOutline — 도메인명 자동 저장(I-1, Task 6 리뷰).
  * 전체 문서 모달(OntologyEditDialog)의 `#ontology-domain` 입력이 유일한 도메인 편집 경로였는데,
  * 모달을 지우면서(Task 6) patchDomain 뮤테이션·API가 부르는 UI 없이 죽은 코드로 남을 뻔했다.

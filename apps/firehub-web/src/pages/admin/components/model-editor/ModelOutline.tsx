@@ -1,8 +1,10 @@
 import { Plus } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchInput } from '@/components/ui/search-input';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { validateDomain } from '@/lib/ontology-validation';
 import { cn } from '@/lib/utils';
@@ -48,6 +50,28 @@ export default function ModelOutline({
 }: Props) {
   const entities = schema.entities.filter((e): e is typeof e & { id: number } => e.id != null);
   const relations = schema.relations.filter((r): r is typeof r & { id: number } => r.id != null);
+
+  // 타입/관계 검색어(#415) — TypeFilterPanel과 동일한 패턴(SearchInput + 클라이언트 부분일치
+  // 필터). 온톨로지가 커지면(수십~수백 타입/관계) 스크롤만으로 탐색하기 어려워, 아웃라인에도
+  // 같은 검색 UX를 제공한다. 타입/관계는 서로 다른 텍스트 축(이름 vs subject→relation→object)을
+  // 대상으로 하므로 검색어 state를 분리한다.
+  const [entityFilter, setEntityFilter] = useState('');
+  const [relationFilter, setRelationFilter] = useState('');
+  const entityQuery = entityFilter.trim().toLowerCase();
+  const relationQuery = relationFilter.trim().toLowerCase();
+  const filteredEntities = useMemo(
+    () => entities.filter((e) => entityQuery === '' || e.type.toLowerCase().includes(entityQuery)),
+    [entities, entityQuery],
+  );
+  const filteredRelations = useMemo(
+    () =>
+      relations.filter(
+        (r) =>
+          relationQuery === '' ||
+          `${r.subject} → ${r.relation} → ${r.object}`.toLowerCase().includes(relationQuery),
+      ),
+    [relations, relationQuery],
+  );
 
   // 도메인명 자동 저장(I-1, Task 6 리뷰) — 전체 문서 모달이 유일한 도메인 편집 경로였는데, 모달을
   // 지우면서 편집 수단이 통째로 사라졌었다(patchDomain 뮤테이션·API는 있었지만 부르는 UI가 없었음).
@@ -113,8 +137,19 @@ export default function ModelOutline({
               </Button>
             )}
           </div>
+          {entities.length > 0 && (
+            <div className="px-2 pb-1.5">
+              <SearchInput
+                placeholder="타입 검색"
+                aria-label="타입 검색"
+                value={entityFilter}
+                onChange={setEntityFilter}
+                className="h-7 w-full text-xs"
+              />
+            </div>
+          )}
           <div className="space-y-0.5" data-testid="model-outline-entities">
-            {entities.map((e) => {
+            {filteredEntities.map((e) => {
               const active = isSelected('entity', e.id);
               return (
                 <button
@@ -132,6 +167,9 @@ export default function ModelOutline({
                 </button>
               );
             })}
+            {entities.length > 0 && filteredEntities.length === 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">검색 결과가 없습니다.</p>
+            )}
           </div>
         </div>
 
@@ -151,8 +189,19 @@ export default function ModelOutline({
               </Button>
             )}
           </div>
+          {relations.length > 0 && (
+            <div className="px-2 pb-1.5">
+              <SearchInput
+                placeholder="관계 검색"
+                aria-label="관계 검색"
+                value={relationFilter}
+                onChange={setRelationFilter}
+                className="h-7 w-full text-xs"
+              />
+            </div>
+          )}
           <div className="space-y-0.5" data-testid="model-outline-relations">
-            {relations.map((r) => {
+            {filteredRelations.map((r) => {
               const active = isSelected('relation', r.id);
               return (
                 <button
@@ -172,6 +221,9 @@ export default function ModelOutline({
                 </button>
               );
             })}
+            {relations.length > 0 && filteredRelations.length === 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">검색 결과가 없습니다.</p>
+            )}
           </div>
         </div>
       </div>
