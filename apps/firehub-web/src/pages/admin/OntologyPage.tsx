@@ -415,8 +415,12 @@ export default function OntologyPage() {
 
         {/* 그래프 캔버스 + 인스펙터(도킹) 영역 — 드로어 도킹 검증용 testid 유지. */}
         <div className="flex min-w-0 flex-1 overflow-hidden" data-testid="instance-graph-panel">
-          {/* min-w-0: flex 기본 min-width:auto 때문에 그래프가 안 줄어들어 인스펙터가 밖으로 잘리는 것을 막는다. */}
-          <div className="relative min-w-0 flex-1">
+          {/* min-w-[280px]: flex 기본 min-width:auto 때문에 그래프가 안 줄어들어 인스펙터가 밖으로
+              잘리는 것을 막으면서(원래 min-w-0의 목적), 동시에 캔버스 자체가 280px 밑으로는 줄어들지
+              않게 하한을 둔다(#403 방어 가드) — ModelOutline/인스펙터는 lg 미만에서 숨지만, 읽기 모드의
+              TypeFilterPanel(w-64, 펼침 상태)은 반응형으로 숨지 않으므로 이 하한이 없으면 좁은 폭에서
+              캔버스가 다시 압착될 수 있다. */}
+          <div className="relative min-w-[280px] flex-1">
             <TabsContent value="schema" className="m-0 h-full">
               {isSelectedSchemaError ? (
                 <GraphError message="온톨로지를 불러오지 못했습니다." onRetry={() => refetchSelectedSchema()} />
@@ -540,10 +544,13 @@ export default function OntologyPage() {
           )}
           {/* 편집 모드 세 번째 pane — 타입/관계 인스펙터. 타입 선택은 Task 4의 EntityInspector, 관계
               선택·생성은 Task 5의 RelationInspector가 채운다.
-              (리뷰 IMP-4) sm 미만에서는 ModelOutline과 마찬가지로 숨긴다 — w-64+w-80 고정폭 2개가
-              320px에서 캔버스를 폭 0으로 밀어내고 이 pane 자체는 화면 밖으로 잘려 나갔었다. */}
+              (리뷰 IMP-4, #403로 xl 완화) sm(640px) 미만뿐 아니라 태블릿·좁은 데스크톱 폭(sm~lg 대역,
+              예 834px)까지 숨긴다 — w-64+w-80 고정폭 2개(576px)가 sm 기준에서는 640~1024px 사이 폭에서
+              캔버스를 200px 안팎으로 짓눌러 스키마 그래프를 사실상 못 읽게 만들었다(#403). AppLayout
+              사이드바(펼침 시 240px)까지 겹치면 1024px에서도 여전히 짓눌리므로(실측) xl(1280px) 이상에서만
+              3-pane을 동시에 보여주고, 그 미만에서는 ModelOutline과 함께 숨겨 캔버스 전체 폭을 확보한다. */}
           {showEditor && (
-            <div className="hidden w-80 shrink-0 overflow-y-auto border-l p-4 sm:block" data-testid="model-inspector">
+            <div className="hidden w-80 shrink-0 overflow-y-auto border-l p-4 xl:block" data-testid="model-inspector">
               {selectedEntity && selectedSchema ? (
                 <EntityInspector
                   key={selectedEntity.id}

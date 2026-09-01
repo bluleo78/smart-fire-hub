@@ -64,11 +64,16 @@ export default function ModelOutline({
     selected?.kind === kind && selected.id === id;
 
   return (
-    // (리뷰 IMP-4) sm 미만에서는 숨긴다 — 아웃라인(w-64)+캔버스+인스펙터(w-80)를 모두 고정폭으로 두면
-    // 320px 뷰포트에서 캔버스가 폭 0으로 밀려나고 인스펙터가 화면 밖으로 잘려 나간다. <main> 자체는
-    // 조상 노드의 overflow-hidden에 가려 스크롤로 드러나지 않아 SC 1.4.10 게이트를 통과하면서도 실사용은
-    // 불가능한 상태였다 — 좁은 화면에서는 캔버스에 집중하고 넓은 화면(sm 이상)에서만 3-pane을 보여준다.
-    <div className="hidden w-64 shrink-0 flex-col overflow-hidden border-r sm:flex" data-testid="model-outline">
+    // (리뷰 IMP-4, #403로 xl 완화) sm(640px) 미만뿐 아니라 태블릿·좁은 데스크톱 폭까지 숨긴다 —
+    // 아웃라인(w-64)+캔버스+인스펙터(w-80)를 모두 고정폭으로 두면 320px 뷰포트에서 캔버스가 폭 0으로
+    // 밀려나고 인스펙터가 화면 밖으로 잘려 나간다. <main> 자체는 조상 노드의 overflow-hidden에 가려
+    // 스크롤로 드러나지 않아 SC 1.4.10 게이트를 통과하면서도 실사용은 불가능한 상태였다. 처음엔 sm(640px)
+    // 을 기준으로 삼았으나, w-64+w-80(합 576px)이 640~1024px 폭에서도 캔버스를 200px 안팎으로 짓눌러
+    // 태블릿 세로(예 834px)에서 스키마 그래프를 사실상 읽을 수 없었다(#403). AppLayout 사이드바(펼침
+    // 시 lg:w-60=240px)까지 더하면 1024px에서도 아웃라인+인스펙터+사이드바가 이미 816px를 차지해
+    // 캔버스가 여전히 짓눌리므로(실측), lg(1024px)가 아니라 xl(1280px) 이상에서만 3-pane을 보여줘야
+    // 사이드바+두 패널을 빼고도 캔버스에 충분한 폭이 남는다.
+    <div className="hidden w-64 shrink-0 flex-col overflow-hidden border-r xl:flex" data-testid="model-outline">
       <div className="flex flex-col gap-1.5 px-4 pt-4 pb-2">
         <span className="text-xs font-medium uppercase text-muted-foreground">지식 모델</span>
         <Label htmlFor="model-outline-domain" className="sr-only">

@@ -51,7 +51,7 @@ test.describe('320px 리플로우 (#345)', () => {
   // 밀려나고 인스펙터가 화면 밖으로 잘려 나가는 상태를 놓칠 수 있었다(구현 중 실측) — 그래서
   // mainOverflow 0인지 뿐 아니라 캔버스가 실제로 화면 안에서 양의 폭을 갖는지도 함께 확인한다.
   // `> 0`은 캔버스가 1px로 밀려나도 통과하는 반쪽짜리 단언이었다(M-3, S2 최종 리뷰) — 실제 구현
-  // (sm:flex/sm:block)이 보장하는 것을 그대로 단언한다: 아웃라인/인스펙터가 실제로 숨겨져 320px
+  // (xl:flex/xl:block, #403로 sm에서 완화)이 보장하는 것을 그대로 단언한다: 아웃라인/인스펙터가 실제로 숨겨져 320px
   // 대부분을 캔버스가 차지하는지(실측 248px 안팎 — 컨테이너 padding 등을 뺀 값이라 320에 못
   // 미치지만 리플로우가 깨졌을 때의 0~수px과는 자릿수가 다르다) + 폭이 있는지 함께 확인한다.
   test('요소 편집기 모드(3-pane)도 320px에서 가로 스크롤 없이 표시된다', async ({ authenticatedPage: page }) => {
@@ -150,6 +150,69 @@ test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
       .locator('h1')
       .evaluate((h1) => Math.round(h1.closest('div')!.getBoundingClientRect().height));
     expect(toolbarHeight).toBeLessThan(55);
+  });
+});
+
+/**
+ * 지식 모델 3-pane 편집기 — sm~lg 태블릿·좁은 데스크톱 폭 캔버스 압착 회귀 가드 (#403).
+ *
+ * 원인은 ModelOutline(w-64)·인스펙터(w-80, 합 576px)가 `sm:flex`/`sm:block`으로 640px부터 즉시
+ * 나타난 것 — 640~1024px 사이(태블릿 세로 폭 포함)에서는 두 패널이 동시에 보이면서 가운데 캔버스가
+ * 200px 안팎으로 짓눌려 스키마 그래프(타입 노드·관계 엣지)를 사실상 읽을 수 없었다. 수정은 두 패널의
+ * 브레이크포인트를 `sm`(640px)에서 `xl`(1280px)로 완화해, 그 미만 폭에서는 320px 리플로우와 동일하게
+ * 캔버스에 폭을 몰아준다. `lg`(1024px)가 아니라 `xl`을 택한 이유는 AppLayout 사이드바(펼침 시 240px)
+ * 까지 겹치면 1024px 뷰포트에서도 아웃라인+인스펙터+사이드바가 이미 816px를 차지해 캔버스가 여전히
+ * 짓눌리는 것을 실측했기 때문이다(수정 전 lg 시도에서 이 테스트가 실패하며 드러남). 캔버스 wrapper에는
+ * 방어적으로 `min-w-[280px]`도 추가했다.
+ */
+test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭 캔버스 압착 (#403)', () => {
+  test('834px(iPad Air 세로)에서 아웃라인/인스펙터가 숨고 캔버스가 넓게 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 834, height: 1112 });
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    // 수정 전에는 이 폭에서 아웃라인/인스펙터가 sm:flex/sm:block으로 이미 나타나 캔버스가
+    // 210px 안팎으로 압착됐다(#403 실측) — xl 완화 후에는 둘 다 숨고 캔버스가 뷰포트 대부분을 차지한다.
+    await expect(page.getByTestId('model-outline')).toBeHidden();
+    await expect(page.getByTestId('model-inspector')).toBeHidden();
+    const canvasBox = await page.getByTestId('schema-graph').boundingBox();
+    expect(canvasBox!.width).toBeGreaterThan(700);
+  });
+
+  // 1024px(구 lg 경계)에서는 AppLayout 사이드바(펼침 시 240px)까지 겹치면 3-pane을 보여줘도 캔버스가
+  // 여전히 짓눌린다는 것을 실측으로 확인했다 — 그래서 이 폭에서는 계속 숨겨져야 한다(xl 미만).
+  test('1024px(구 lg 경계)에서는 사이드바까지 감안해 여전히 아웃라인/인스펙터가 숨는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    await expect(page.getByTestId('model-outline')).toBeHidden();
+    await expect(page.getByTestId('model-inspector')).toBeHidden();
+  });
+
+  test('1280px(xl 경계) 이상에서는 사이드바를 포함해도 3-pane이 모두 넉넉하게 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+
+    await expect(page.getByTestId('model-outline')).toBeVisible();
+    await expect(page.getByTestId('model-inspector')).toBeVisible();
+    const canvasBox = await page.getByTestId('schema-graph').boundingBox();
+    // xl 기준폭(1280) - 사이드바(240, 펼침) - 아웃라인(256) - 인스펙터(320) - 여백 ≈ 400px대 —
+    // 최소 하한(280px)보다 충분히 넓어야 한다.
+    expect(canvasBox!.width).toBeGreaterThan(280);
   });
 });
 
