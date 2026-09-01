@@ -123,7 +123,13 @@ export class FireHubApiClient {
         console.error(
           `[MCP API] ${status || 'NETWORK_ERROR'} ${error.config?.method?.toUpperCase()} ${error.config?.url} - ${apiMessage}`,
         );
-        throw new Error(`${API_ERROR_PREFIX} (${status}): ${apiMessage}`);
+        // 원본 axios 에러의 HTTP status를 status 프로퍼티로 보존해서 던진다.
+        // (과거엔 순수 Error로만 재던져 error.response가 유실됐고, 호출부가
+        //  "404=아직 없음(정상)" 같은 상태코드 판별을 못 해 항상 재throw하는 결함이 있었다 — #423)
+        throw Object.assign(new Error(`${API_ERROR_PREFIX} (${status}): ${apiMessage}`), {
+          status,
+          response: error.response,
+        });
       },
     );
 

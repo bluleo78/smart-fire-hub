@@ -289,7 +289,11 @@ export function registerGraphragTools(
         try {
           existing = await apiClient.getDatasetMapping(args.datasetId);
         } catch (err) {
-          const status = (err as { response?: { status?: number } })?.response?.status;
+          // api-client 인터셉터가 던지는 에러는 status를 직접 실어 보낸다(#423).
+          // response.status는 과거 형태/직접 axios 에러 호환을 위한 폴백.
+          const status =
+            (err as { status?: number; response?: { status?: number } })?.status ??
+            (err as { response?: { status?: number } })?.response?.status;
           if (status !== 404) throw err; // 404만 "매핑 없음"으로 취급, 그 외 에러는 전파
         }
         if (existing?.status === 'active' && !args.force) {

@@ -29,9 +29,15 @@ const ontologyWire = {
   relations: [],
 };
 
-// axios 404 형태 에러.
+// api-client.ts 인터셉터가 실제로 던지는 404 에러 형태.
+// (#423) 순수 axios AxiosError가 아니라 인터셉터가 감싼 Error + status 프로퍼티이며
+// .response는 원본 AxiosError.response를 그대로 보존한다 — 이 shape과 어긋나면
+// graphrag_infer_mapping의 404 판별(err.status)이 실제로 통과하는지 테스트가 못 잡는다.
 function notFound() {
-  return Object.assign(new Error('Request failed with status code 404'), { response: { status: 404 } });
+  return Object.assign(new Error('API 오류 (404): Request failed with status code 404'), {
+    status: 404,
+    response: { status: 404 },
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -101,7 +107,7 @@ describe('graphrag_infer_mapping', () => {
   });
 
   it('getDatasetMapping이 404가 아닌 에러면 그대로 전파', async () => {
-    const boom = Object.assign(new Error('500'), { response: { status: 500 } });
+    const boom = Object.assign(new Error('500'), { status: 500, response: { status: 500 } });
     const client = baseClient({ getDatasetMapping: vi.fn().mockRejectedValue(boom) });
     await expect(findTool(client).handler({ datasetId: 900 })).rejects.toThrow('500');
     expect(client.saveDatasetMapping).not.toHaveBeenCalled();

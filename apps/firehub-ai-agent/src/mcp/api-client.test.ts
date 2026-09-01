@@ -540,4 +540,15 @@ describe('FireHubApiClient', () => {
 
     await expect(client.listDatasets()).rejects.toThrow(/API 오류 \(500\): Internal Server Error/);
   });
+
+  // (#423) 인터셉터가 순수 Error로만 재던지면서 error.response(status 포함)를 유실해,
+  // 호출부가 "404=아직 없음(정상)" 같은 상태코드 분기 판별을 못 하던 결함의 회귀 가드.
+  it('should preserve HTTP status on the thrown error for callers to branch on', async () => {
+    nock(BASE_URL).get('/datasets/10/mapping').reply(404, { message: 'not found' });
+
+    await client.getDatasetMapping(10).catch((err: unknown) => {
+      expect((err as { status?: number }).status).toBe(404);
+      expect((err as { response?: { status?: number } }).response?.status).toBe(404);
+    });
+  });
 });
