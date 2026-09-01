@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -102,8 +103,13 @@ export default function OntologyPage() {
   // DeleteTypeConfirm을 트리거 버튼(entity-delete-trigger)으로 여는 인스턴스를 갖고 있지만, 그 트리거는
   // sm 미만에서 숨겨지거나(인스펙터 pane 자체가 hidden sm:block) 생성 폼 등 다른 내용을 보여주는 중일
   // 수 있어 캔버스 요청이 그 트리거에 기댈 수 없다 — controlled open(entity id 자체를 상태로 둔다)의
-  // 별도 인스턴스를 둔다. 관계 삭제는 확인이 없어(브리프 §상호작용) 별도 상태가 필요 없다.
+  // 별도 인스턴스를 둔다.
   const [canvasDeleteEntityId, setCanvasDeleteEntityId] = useState<number | null>(null);
+  // 캔버스/아웃라인 Delete 키로 요청된 관계 삭제 확인(#420) — RelationInspector의 "관계 삭제" 버튼도
+  // 같은 DeleteConfirmDialog(범용)를 트리거 기반으로 이미 갖고 있지만(#419), 그 트리거 역시 인스펙터
+  // pane이 숨겨지거나 다른 내용을 보여주는 중일 수 있어 캔버스/아웃라인 요청이 기댈 수 없다 —
+  // canvasDeleteEntityId와 대칭인 controlled open 인스턴스를 별도로 둔다.
+  const [canvasDeleteRelationId, setCanvasDeleteRelationId] = useState<number | null>(null);
   const { isAdmin } = useAuth();
 
   // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 기본 온톨로지 기반이므로
@@ -169,6 +175,7 @@ export default function OntologyPage() {
     if (creatingRelation) setCreatingRelation(false);
     if (creatingEntity) setCreatingEntity(false);
     if (canvasDeleteEntityId != null) setCanvasDeleteEntityId(null);
+    if (canvasDeleteRelationId != null) setCanvasDeleteRelationId(null);
   }
 
   // (#412) activeTypes 자동 동기화 — TypeFilterPanel이 실제로 렌더링하는 스키마(탭에 따라
@@ -265,6 +272,11 @@ export default function OntologyPage() {
     canvasDeleteEntity && selectedSchema && canvasDeleteEntityId != null
       ? affectedRelationsFor(selectedSchema, canvasDeleteEntityId)
       : [];
+  // 캔버스/아웃라인 Delete 키가 요청한 관계 삭제 확인 대상(#420) — canvasDeleteEntity와 대칭으로 id만
+  // 상태로 들고 실제 relation은 매 렌더 selectedSchema에서 파생한다(동시 편집으로 그 사이 관계가
+  // 사라지면 find가 undefined를 내 다이얼로그가 조용히 안 뜬다).
+  const canvasDeleteRelation =
+    canvasDeleteRelationId != null ? selectedSchema?.relations.find((r) => r.id === canvasDeleteRelationId) : undefined;
 
   // 캔버스에서 Delete로 엔티티 타입 삭제를 요청 — EntityInspector의 isLastActiveType과 같은 조건
   // (isLastActiveEntityType, ontology-validation.ts, 리뷰 M-3)을 선반영한다(서버가 400으로 거부하는
@@ -281,28 +293,19 @@ export default function OntologyPage() {
     setCanvasDeleteEntityId(entityTypeId);
   };
 
-  // 캔버스에서 Delete로 관계 삭제를 요청 — 관계 삭제는 FK CASCADE로 함께 사라지는 것이 없어 확인
-  // 없이 즉시 나간다(브리프 §상호작용, RelationInspector의 relation-delete-trigger와 동일 규칙).
-  // 포커스 복귀는 EntityInspector/RelationInspector의 삭제 트리거와 같은 이유로 뮤테이션 성공 콜백
-  // 안에서 명시적으로 옮긴다(#328류 — 캔버스는 포커스 대상이 아니므로 남아 있는 컨트롤인 아웃라인의
-  // "타입 추가" 버튼으로 보낸다).
+  // 캔버스/아웃라인에서 Delete로 관계 삭제를 요청 — requestDeleteEntity와 대칭(#420, 이전에는
+  // 여기서 확인 없이 곧바로 deleteRelation을 호출했으나, 인스펙터 "관계 삭제" 버튼(#419)과 같은
+  // DeleteConfirmDialog 확인 절차를 거치도록 통일한다). 통과하면 확인 다이얼로그를 연다 — 실제
+  // 삭제는 그 다이얼로그의 onConfirm에서 일어난다.
   const requestDeleteRelation = (relationId: number) => {
-    // requestDeleteEntity와 대칭(리뷰 M-4) — 동시 편집으로 그 사이 관계가 이미 사라졌다면 조용히
-    // 무시한다. 없어도 치명적이진 않다(서버가 404 → "이미 삭제된 요소입니다" 토스트로 설계된 경로를
-    // 타므로) — 다만 이 검사가 없으면 같은 조작의 두 갈래(타입/관계)가 서로 다른 UX를 낸다.
+    // 동시 편집으로 그 사이 관계가 이미 사라졌다면 조용히 무시한다. 없어도 치명적이진 않다(서버가
+    // 404 → "이미 삭제된 요소입니다" 토스트로 설계된 경로를 타므로) — 다만 이 검사가 없으면 같은
+    // 조작의 두 갈래(타입/관계)가 서로 다른 UX를 낸다.
     if (!selectedSchema?.relations.some((r) => r.id === relationId)) return;
-    // 확인 다이얼로그가 없는 경로라 in-flight 차단이 유일한 중복 방어선이다(리뷰 I-2) — 없으면
-    // 응답을 기다리는 사이 Delete를 다시 눌러 같은 관계에 두 번째 DELETE가 나간다.
-    const key = `relation:${relationId}`;
-    if (deletingElementKeysRef.current.has(key)) return;
-    deletingElementKeysRef.current.add(key);
-    void elementMutations.deleteRelation(relationId).then((result) => {
-      if (!result) return;
-      if (modelSelected?.kind === 'relation' && modelSelected.id === relationId) setModelSelected(null);
-      addEntityTypeButtonRef.current?.focus();
-    }).finally(() => {
-      deletingElementKeysRef.current.delete(key);
-    });
+    // 같은 관계에 대한 삭제가 이미 진행 중이면(확인 다이얼로그가 닫힌 뒤 응답을 기다리는 구간,
+    // 리뷰 I-2) 다이얼로그를 다시 열지 않는다 — 다시 열면 사용자가 또 확인해 두 번째 DELETE가 나간다.
+    if (deletingElementKeysRef.current.has(`relation:${relationId}`)) return;
+    setCanvasDeleteRelationId(relationId);
   };
 
   return (
@@ -679,6 +682,42 @@ export default function OntologyPage() {
               addEntityTypeButtonRef.current?.focus();
               setCanvasDeleteEntityId(null);
               if (modelSelected?.kind === 'entity' && modelSelected.id === entityTypeId) setModelSelected(null);
+            }).finally(() => {
+              deletingElementKeysRef.current.delete(key);
+            });
+          }}
+        />
+      )}
+
+      {/* 캔버스/아웃라인 Delete 키로 요청된 관계 삭제 확인(#420) — RelationInspector의 트리거 기반
+          인스턴스(#419)와 별개인 controlled 인스턴스다(위 canvasDeleteRelation 주석 참고). trigger를
+          넘기지 않으므로 AlertDialog가 open/onOpenChange로만 제어된다 — Cancel/Esc/바깥 클릭도 Radix가
+          onOpenChange(false)로 알려주므로 여기서 상태만 비우면 된다. */}
+      {canvasDeleteRelation && (
+        <DeleteConfirmDialog
+          entityName="관계"
+          itemName={`${canvasDeleteRelation.subject} → ${canvasDeleteRelation.relation} → ${canvasDeleteRelation.object}`}
+          open
+          onOpenChange={(o) => {
+            if (!o) setCanvasDeleteRelationId(null);
+          }}
+          restoreFocusRef={addEntityTypeButtonRef}
+          onConfirm={() => {
+            const relationId = canvasDeleteRelationId;
+            if (relationId == null) return;
+            // in-flight 중복 방지(리뷰 I-2, canvasDeleteEntity의 onConfirm과 동일 패턴) —
+            // AlertDialogAction은 클릭 즉시 다이얼로그를 닫으므로 DELETE 응답을 기다리는 동안 이
+            // onConfirm이 다시 호출되는 경로까지 막는다.
+            const key = `relation:${relationId}`;
+            if (deletingElementKeysRef.current.has(key)) return;
+            deletingElementKeysRef.current.add(key);
+            void elementMutations.deleteRelation(relationId).then((result) => {
+              if (!result) return;
+              // 포커스를 먼저 옮긴 뒤 나머지 상태를 정리한다 — RelationInspector의
+              // relation-delete-trigger와 같은 순서(#328류 회피).
+              addEntityTypeButtonRef.current?.focus();
+              setCanvasDeleteRelationId(null);
+              if (modelSelected?.kind === 'relation' && modelSelected.id === relationId) setModelSelected(null);
             }).finally(() => {
               deletingElementKeysRef.current.delete(key);
             });

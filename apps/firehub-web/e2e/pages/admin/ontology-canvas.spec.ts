@@ -884,9 +884,11 @@ test.describe('SchemaGraph — 캔버스 인라인 리네임 + 빈 곳 더블클
 });
 
 /**
- * 캔버스 Delete 키 삭제(S3 Task 4) — Task 2/3의 두 번째/세 번째 캔버스 편집 경로에 이은 마지막 조작
- * 경로. 타입 삭제는 기존 DeleteTypeConfirm(EntityInspector의 트리거 기반 인스턴스와 별개인 controlled
- * 인스턴스, OntologyPage.tsx)으로 확인을 받고, 관계 삭제는 확인 없이 즉시 나간다(브리프 §상호작용).
+ * 캔버스 Delete 키 삭제(S3 Task 4, #420으로 관계 경로 갱신) — Task 2/3의 두 번째/세 번째 캔버스 편집
+ * 경로에 이은 마지막 조작 경로. 타입 삭제는 기존 DeleteTypeConfirm(EntityInspector의 트리거 기반
+ * 인스턴스와 별개인 controlled 인스턴스, OntologyPage.tsx)으로 확인을 받고, 관계 삭제도(#420부터)
+ * RelationInspector의 트리거 기반 DeleteConfirmDialog(#419)와 별개인 controlled 인스턴스로 같은
+ * 확인 절차를 거친다 — 이전에는 확인 없이 즉시 나갔다(#419 회귀 갭).
  * SchemaGraph.tsx의 keydown 핸들러가 지키는 네 가드(편집 모드/hasAnyPendingInput/활성 요소/열린
  * 모달) 각각을 개별 테스트로 증명한다 — "동작한다"만 있고 "엉뚱한 데서 동작하지 않는다"가 없으면
  * 미완이라는 팀의 사전 경고를 그대로 따른다.
@@ -994,7 +996,42 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
     await expect(page.getByText('왼쪽에서 타입 또는 관계를 선택하세요.')).toBeVisible();
   });
 
-  test('엣지 선택 후 Delete는 확인 없이 즉시 관계를 지운다', async ({ authenticatedPage: page }) => {
+  test('엣지 선택 후 Delete를 누르면 관계 삭제 확인 다이얼로그가 뜬다(#420)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await enterEditMode(page);
+
+    await selectEdgeByLabel(page, 'OCCURRED_AT');
+    await expect(page.getByTestId('relation-inspector')).toBeVisible();
+
+    let called = false;
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/ontology/1/relations/'),
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        called = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createVersionOnly()) });
+      },
+    );
+
+    await page.keyboard.press('Delete');
+
+    // #419 이전에는 이 경로가 확인 없이 곧바로 DELETE를 보냈다(#420 회귀 갭) — 이제는 인스펙터 버튼
+    // 경로와 동일하게 alertdialog가 뜨고, 취소하면 요청이 전혀 나가지 않는다.
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByRole('alertdialog').getByText('Incident → OCCURRED_AT → Building')).toBeVisible();
+    expect(called).toBe(false);
+
+    await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    expect(called).toBe(false);
+    await expect(page.getByTestId('relation-inspector')).toBeVisible();
+  });
+
+  test('엣지 삭제 확인 다이얼로그에서 확인하면 DELETE가 나가고 관계가 사라진다(#420)', async ({
+    authenticatedPage: page,
+  }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.goto('/knowledge-graph/model');
@@ -1005,14 +1042,15 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
     await selectEdgeByLabel(page, 'OCCURRED_AT');
     await expect(page.getByTestId('relation-inspector')).toBeVisible();
 
+    await page.keyboard.press('Delete');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
     const capture = await mockApi(page, 'DELETE', `/api/v1/ontology/1/relations/${relationId}`, createVersionOnly(), {
       capture: true,
     });
-    await page.keyboard.press('Delete');
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
 
     await capture.waitForRequest();
-    // 엔티티 타입 삭제(DeleteTypeConfirm)와 달리 확인 다이얼로그가 전혀 뜨지 않는다.
-    await expect(page.getByTestId('entity-delete-confirm')).toHaveCount(0);
     await expect.poll(() => getEdgeCount(page)).toBe(before - 1);
     await expect(page.getByText('왼쪽에서 타입 또는 관계를 선택하세요.')).toBeVisible();
   });
