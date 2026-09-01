@@ -80,8 +80,21 @@ describe('graphrag_list_ontologies', () => {
     const client = baseClient();
     const out = await findTool(client, 'graphrag_list_ontologies').handler({});
     expect(client.listOntologies).toHaveBeenCalledTimes(1);
+    expect(client.listOntologies).toHaveBeenCalledWith(undefined);
     expect(out.ontologies).toHaveLength(2);
     expect(out.ontologies[0]).toMatchObject({ id: 1, domain: 'fire' });
+  });
+
+  // #426: status 인자가 apiClient 로 그대로 전달돼야 archived/draft 온톨로지도 조회할 수 있다.
+  // 인자 없는 호출은 서버 기본값(active만)에 묶여 있어, 이름이 일치하는 archived 온톨로지가
+  // 있어도 "존재하지 않음"으로 오답하는 게 근본 원인이었다.
+  it('status 인자를 apiClient.listOntologies 로 그대로 전달한다', async () => {
+    const client = baseClient();
+    await findTool(client, 'graphrag_list_ontologies').handler({ status: 'all' });
+    expect(client.listOntologies).toHaveBeenCalledWith('all');
+
+    await findTool(client, 'graphrag_list_ontologies').handler({ status: 'archived' });
+    expect(client.listOntologies).toHaveBeenCalledWith('archived');
   });
 });
 

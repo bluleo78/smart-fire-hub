@@ -334,9 +334,16 @@ export function registerGraphragTools(
     ),
     safeTool(
       'graphrag_list_ontologies',
-      '등록된 온톨로지 목록(id·도메인·스키마버전)을 조회한다. 데이터셋에 온톨로지를 바인딩하기 전 대상 id를 고를 때 사용.',
-      {},
-      async () => jsonResult({ ontologies: await apiClient.listOntologies() }),
+      '등록된 온톨로지 목록(id·도메인·스키마버전·상태)을 조회한다. 데이터셋에 온톨로지를 바인딩하기 전 대상 id를 고를 때 사용. '
+        + 'status 를 생략하면 active만 반환된다(바인딩 후보 조회 시 기본값) — 사용자가 지칭한 이름이 active 목록에 없으면 '
+        + 'status:"all" 로 재조회해 draft/archived 상태로 존재하는지 반드시 확인할 것. "존재하지 않는다"고 단정하기 전 필수 절차.',
+      {
+        status: z
+          .enum(['active', 'draft', 'archived', 'all'])
+          .optional()
+          .describe('필터할 온톨로지 상태. 생략 시 active만 반환(서버 기본값). archived/draft 존재 여부 확인 시 "all" 사용.'),
+      },
+      async (args) => jsonResult({ ontologies: await apiClient.listOntologies(args.status) }),
     ),
     safeTool(
       'graphrag_propose_ontology',
