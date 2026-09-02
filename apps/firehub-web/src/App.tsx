@@ -128,7 +128,10 @@ function App() {
             </Route>
           </Route>
         </Routes>
-        <Toaster />
+        {/* richColors: 성공/오류/경고 토스트가 서로 다른 배경색을 갖도록 한다 (06-feedback-states §D).
+            이게 없으면 ui/sonner.tsx가 고정한 --normal-bg(var(--popover))가 모든 종류에 적용돼
+            아이콘만 다르고 배경이 같아, 오류 토스트가 시각적으로 오류로 읽히지 않는다. */}
+        <Toaster richColors />
       </AuthProvider>
     </BrowserRouter>
     </ThemeColorProvider>

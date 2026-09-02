@@ -87,7 +87,7 @@ export default function PythonOutputColumns({
       {/* Column list or empty state */}
       {columns.length === 0 ? (
         <div
-          className="flex flex-col items-center justify-center py-5 border border-dashed rounded-md gap-1.5"
+          className="flex flex-col items-center justify-center py-6 border border-dashed rounded-md gap-1.5"
           role="status"
           aria-label="출력 컬럼 없음"
         >

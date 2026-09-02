@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
-import { Clock,Columns, Database, Edit, Tag } from 'lucide-react';
+import { Clock,Columns, Database, Pencil, Tag } from 'lucide-react';
 import React, { useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -134,7 +134,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
           {!isEditing && dataset.originType !== 'TEMP' && (
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-              <Edit className="h-4 w-4" />
+              <Pencil className="h-4 w-4" />
               수정
             </Button>
           )}
