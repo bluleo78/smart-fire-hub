@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { colorForType } from '@/lib/ontology-colors';
+import type { TypePalette } from '@/lib/ontology-colors';
 import type { GraphEdge, GraphNode } from '@/types/ontology';
 
 interface Props {
@@ -14,6 +14,9 @@ interface Props {
   onNavigate?: (key: string) => void;
   // 현재 온톨로지 schema_version — node.schemaVersion과 비교해 구버전 적재 여부를 표시(5-4).
   currentSchemaVersion?: number;
+  // (#396) 타입 색 팔레트 — 캔버스·타입 필터와 같은 인스턴스를 받아야 인스펙터의 점 색이
+  // 캔버스 노드와 일치한다.
+  palette: TypePalette;
 }
 
 // 인스펙터 리사이즈 폭 범위(px) — AI 패널 규약(w-80=320)을 기본값으로 한다.
@@ -35,6 +38,7 @@ export default function NodeDetailDrawer({
   onClose,
   onNavigate,
   currentSchemaVersion,
+  palette,
 }: Props) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   // 드래그 시작점(clientX)과 시작 폭을 보관 — null이면 드래그 중 아님.
@@ -131,7 +135,7 @@ export default function NodeDetailDrawer({
       <div className="p-4">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-full" style={{ background: colorForType(node.type) }} />
+            <span className="h-3 w-3 rounded-full" style={{ background: palette.color(node.type) }} />
             <h3 className="text-sm font-semibold">{node.type}</h3>
           </div>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="닫기">

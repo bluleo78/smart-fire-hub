@@ -5,7 +5,7 @@ import { Network, SearchX } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef } from 'react';
 
-import { colorForType } from '@/lib/ontology-colors';
+import type { TypePalette } from '@/lib/ontology-colors';
 import type { GraphData, GraphNode } from '@/types/ontology';
 
 import GraphKeyboardList from './GraphKeyboardList';
@@ -30,6 +30,8 @@ interface Props {
   focusKey?: string | null;
   // 타입 묶기 — true면 타입별 compound 부모로 묶고 접어(bundle) hairball을 줄인다.
   grouped?: boolean;
+  // (#396) 타입 색 팔레트 — OntologyPage가 현재 온톨로지 타입 목록으로 한 번 만들어 내려준다.
+  palette: TypePalette;
 }
 
 // fcose 레이아웃 옵션 — 겹침 방지(nodeRepulsion/nodeSeparation)를 내장 제공한다.
@@ -51,7 +53,7 @@ const FIT_PADDING = 40;
 // 인스턴스 그래프 캔버스 — 개체·관계를 Cytoscape.js(Canvas, fcose 레이아웃)로 렌더링한다.
 // activeTypes(빈 Set이면 전체)·search(이름 부분일치, 대소문자 무시)로 필터링하며, 노드 tap 시 상세 드로어 오픈을 위임한다.
 // 캔버스는 DOM 노드가 없으므로 테스트/디버그를 위해 컨테이너에 data-node-count를 노출하고, dev에서 cy 인스턴스를 window에 싣는다.
-export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect, focusKey, grouped }: Props) {
+export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect, focusKey, grouped, palette }: Props) {
   const { resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -59,6 +61,9 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   // tap 핸들러가 최신 콜백·노드맵을 참조하도록 ref로 보관(핸들러는 mount 시 1회만 바인딩).
   const onSelectRef = useRef(onNodeSelect);
   const nodeMapRef = useRef<Map<string, GraphNode>>(new Map());
+  // 생성 effect(mount 1회)가 최초 스타일시트를 만들 때만 쓰는 팔레트 참조 — 이후 팔레트가 바뀌면
+  // 아래 테마/팔레트 effect가 스타일시트를 통째로 다시 적용하므로 stale해질 여지가 없다.
+  const paletteRef = useRef(palette);
 
   // 타입 토글·검색 필터 적용(activeTypes 비어 있으면 전체 표시).
   const { filteredNodes, filteredEdges } = useMemo(() => {
@@ -102,6 +107,9 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     onSelectRef.current = onNodeSelect;
   }, [onNodeSelect]);
   useEffect(() => {
+    paletteRef.current = palette;
+  }, [palette]);
+  useEffect(() => {
     nodeMapRef.current = nodeMap;
   }, [nodeMap]);
 
@@ -111,7 +119,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     if (!container) return;
     const cy = cytoscape({
       container,
-      style: buildStylesheet(resolvedTheme === 'dark'),
+      style: buildStylesheet(resolvedTheme === 'dark', paletteRef.current),
       minZoom: 0.2,
       maxZoom: 2.5,
       wheelSensitivity: 0.2,
@@ -177,7 +185,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     // 타입 묶기 ON: 화면에 존재하는 타입마다 compound 부모 노드를 만들고 각 노드에 parent를 부여한다.
     const parents = grouped
       ? [...new Set(filteredNodes.map((n) => n.type))].map((type) => ({
-          data: { id: `grp:${type}`, label: type, isGroup: true, color: colorForType(type) },
+          data: { id: `grp:${type}`, label: type, isGroup: true, color: palette.color(type) },
         }))
       : [];
     cy.add([
@@ -187,7 +195,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           id: n.key,
           label: n.name,
           type: n.type,
-          color: colorForType(n.type),
+          color: palette.color(n.type),
           parent: grouped ? `grp:${n.type}` : undefined,
         },
       })),
@@ -206,12 +214,12 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
       }
       layout.run();
     }
-  }, [filteredNodes, filteredEdges, grouped]);
+  }, [filteredNodes, filteredEdges, grouped, palette]);
 
   // 테마 전환 → 스타일시트만 갱신(레이아웃은 유지해 노드 위치가 흔들리지 않게 한다).
   useEffect(() => {
-    cyRef.current?.style(buildStylesheet(resolvedTheme === 'dark'));
-  }, [resolvedTheme]);
+    cyRef.current?.style(buildStylesheet(resolvedTheme === 'dark', palette));
+  }, [resolvedTheme, palette]);
 
   // 관계 내비게이션 포커스 — focusKey 변경 시 해당 노드를 선택하고 화면 중앙으로 이동한다.
   // getElementById는 셀렉터 파싱이 없어 콜론(:) 포함 키도 안전하다(cy.$('#..')는 이스케이프 필요).

@@ -3,7 +3,7 @@ import edgehandles from 'cytoscape-edgehandles';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { contourForType, entityColorSet } from '@/lib/ontology-colors';
+import type { TypePalette } from '@/lib/ontology-colors';
 import { validateEntityTypeName, validateRelationName, validateTripleUniqueness } from '@/lib/ontology-validation';
 import type { OntologySchema } from '@/types/ontology';
 
@@ -54,6 +54,10 @@ interface Props {
   // 활성(TypeFilterPanel/InstanceGraph와 동일한 "빈 Set = 전체" 규약)이다. 인스턴스 탭과 달리 이
   // 컴포넌트는 이전까지 이 prop을 받지 않아, 칩을 꺼도 스키마 캔버스만 변화가 없었다(#411 원인).
   activeTypes?: Set<string>;
+  // (#396) 타입 색 팔레트 — OntologyPage가 현재 온톨로지의 전체 타입 목록으로 한 번 만들어
+  // 타입 필터 패널·인스펙터와 함께 공유한다. 이 캔버스가 schema.entities로 팔레트를 자체
+  // 생성하면 필터로 타입을 끈 순간(activeEntities가 줄어듦) 남은 타입들의 색이 통째로 밀린다.
+  palette: TypePalette;
 }
 
 // 드래그로 막 이어진 두 타입 — 관계명을 아직 입력하지 않은 상태. CanvasInlineInput을 이 좌표에 띄운다.
@@ -115,6 +119,7 @@ export default function SchemaGraph({
   onRequestDeleteEntity,
   onRequestDeleteRelation,
   activeTypes,
+  palette,
 }: Props) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
@@ -229,13 +234,13 @@ export default function SchemaGraph({
     const nodes = activeEntities.map((e) => {
       // #377: 테두리는 base(500)가 아니라 윤곽선 색을 쓴다 — base는 라이트 tint 배경 위에서
       // Cause 2.15 / Equipment 2.54:1로 SC 1.4.11(3:1)에 미달한다.
-      const { text, tint } = entityColorSet(e.type, isDark);
+      const { text, tint } = palette.colorSet(e.type, isDark);
       return {
         data: {
           id: nodeIdFor(e.id, e.type),
           label: e.type,
           bg: tint,
-          border: contourForType(e.type, isDark),
+          border: palette.contour(e.type, isDark),
           text,
           entityId: e.id,
         },
@@ -280,7 +285,7 @@ export default function SchemaGraph({
       );
     }
     return [...nodes, ...edges];
-  }, [activeEntities, activeRelations, isDark]);
+  }, [activeEntities, activeRelations, isDark, palette]);
 
   // cy 인스턴스 생성(mount 시 1회) — tap 핸들러 바인딩 + dev용 window 노출. unmount 시 파기.
   useEffect(() => {

@@ -1,13 +1,13 @@
 import type cytoscape from 'cytoscape';
 
-import { contourForType, graphChrome } from '@/lib/ontology-colors';
+import { graphChrome, type TypePalette } from '@/lib/ontology-colors';
 
 // cytoscape 스타일시트 생성 — 노드 색은 data(color)(타입색), 라벨/엣지 색은 테마 크롬에서.
 // 크롬 색은 SchemaGraph와 공유하는 단일 소스(ontology-colors.ts)에서 가져온다 (#377).
 // 컴포넌트 파일(.tsx)에서 분리한 이유: react-refresh는 컴포넌트 외 export가 섞이면 fast refresh가
 // 깨진다는 lint 규칙(react-refresh/only-export-components)이 있어, 유닛 테스트에서 직접 호출할 수
 // 있도록 export가 필요한 순수 함수는 별도 모듈로 뺀다 (#418).
-export function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
+export function buildStylesheet(isDark: boolean, palette: TypePalette): cytoscape.StylesheetJson {
   const c = graphChrome(isDark);
   return [
     {
@@ -32,7 +32,7 @@ export function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
         // 윤곽선은 요소 data가 아니라 **스타일시트 함수 매퍼**로 계산한다 — 노드 data는
         // 테마 전환 시 재생성되지 않지만(레이아웃 보존), 스타일시트는 테마마다 다시 만든다.
         'border-width': 2,
-        'border-color': (ele: cytoscape.NodeSingular) => contourForType(ele.data('type'), isDark),
+        'border-color': (ele: cytoscape.NodeSingular) => palette.contour(ele.data('type'), isDark),
       },
     },
     { selector: 'node:selected', style: { 'border-color': c.ring, 'border-width': 3.5 } },
@@ -69,7 +69,7 @@ export function buildStylesheet(isDark: boolean): cytoscape.StylesheetJson {
         'background-opacity': 0.08,
         // #377: 타입 묶기 박스의 테두리도 base(500)로는 라이트에서 2.15:1까지 떨어진다.
         // 부모 노드의 label이 곧 타입명이므로 같은 윤곽선 색을 쓴다.
-        'border-color': (ele: cytoscape.NodeSingular) => contourForType(ele.data('label'), isDark),
+        'border-color': (ele: cytoscape.NodeSingular) => palette.contour(ele.data('label'), isDark),
         'border-width': 1,
         label: 'data(label)',
         color: c.label,

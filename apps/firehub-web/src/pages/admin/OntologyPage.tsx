@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
+import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
 
@@ -201,6 +202,16 @@ export default function OntologyPage() {
       setActiveTypes(new Set([...activeTypes, ...addedTypes]));
     }
   }
+
+  // (#396) 타입 색 팔레트 — 현재 탭이 실제로 보여주는 온톨로지의 전체 타입 목록(currentTypeNames)
+  // 하나로 만들어 캔버스(SchemaGraph/InstanceGraph)·타입 필터 패널·인스펙터에 그대로 내려준다.
+  // 소비처가 각자 타입 목록을 모아 팔레트를 만들면 같은 타입이 화면마다 다른 색이 된다(특히
+  // SchemaGraph는 필터로 걸러진 목록만 알고, TypeFilterPanel은 검색으로 더 걸러진 목록만 안다).
+  // createTypePalette가 입력을 정렬해 색을 배정하므로 배열 순서에는 의존하지 않는다.
+  // 알려진 한계: 두 탭이 서로 다른 온톨로지를 보여주므로(스키마 탭=선택 온톨로지, 인스턴스 탭=기본
+  // 온톨로지) 두 온톨로지에 이름이 같은 타입이 있으면 탭 간 색이 다를 수 있다 — 각 화면 안에서는
+  // 항상 구분된다는 것이 이 수정의 계약이다.
+  const typePalette = useMemo(() => createTypePalette(currentTypeNames), [currentTypeNames]);
 
   const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
 
@@ -450,6 +461,7 @@ export default function OntologyPage() {
             // (#413) 이름 검색 배지 반영 — 검색 UI가 인스턴스 탭에만 있으므로 그 탭에서만 전달한다.
             // 스키마 탭은 검색어 입력 자체가 불가능하니 항상 빈 문자열(=전체 개수)로 둔다.
             search={tab === 'instance' ? search : ''}
+            palette={typePalette}
           />
         )}
 
@@ -552,6 +564,7 @@ export default function OntologyPage() {
                         // 함수 스코프)이 맡는다.
                         onRequestDeleteEntity={requestDeleteEntity}
                         onRequestDeleteRelation={requestDeleteRelation}
+                        palette={typePalette}
                       />
                     )}
                   </div>
@@ -571,6 +584,7 @@ export default function OntologyPage() {
                   onNodeSelect={setSelected}
                   focusKey={focusKey}
                   grouped={grouped}
+                  palette={typePalette}
                 />
               )}
             </TabsContent>
@@ -584,6 +598,7 @@ export default function OntologyPage() {
               onClose={() => setSelected(null)}
               onNavigate={navigateTo}
               currentSchemaVersion={schema?.schemaVersion}
+              palette={typePalette}
             />
           )}
           {/* 편집 모드 세 번째 pane — 타입/관계 인스펙터. 타입 선택은 Task 4의 EntityInspector, 관계
