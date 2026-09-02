@@ -5,12 +5,45 @@ import { MAX_BUDGET_USD } from '../constants.js';
 // 지역 변수 totalInputTokens와 이름이 겹치므로 별칭으로 들여온다.
 import { totalInputTokens as sumInputTokens } from './token-usage.js';
 
+// L3 DESIGN 가드 subagent(#428) — SDK Agent 도구로 위임된 subagent 는 parent_tool_use_id 가
+// 위임 tool_use 의 id 로 채워진 채 같은 top-level query() 스트림에 인터리브된다. subagent 가
+// 이미 자기 턴을 텍스트로 마쳤는데, 메인(parent_tool_use_id=null) 이 같은 응답 턴에서 이를
+// 재요약해 별도 text 를 또 출력하면 사용자에게 동일 확인이 두 번 노출된다(코디네이터
+// 완료-notification 처리가 "결과 보고"로 흘러 재서술을 유발). 애초에 이 문제 클래스에
+// "확인 질문으로 끝났는지"를 문구로 판별할 필요가 없다 — DESIGN 모드로 위임된 이상 subagent
+// 텍스트 자체가 항상 이번 위임의 최종 사용자 응답이므로, 내용에 관계없이 무조건 메인의
+// 후속 재서술을 억제한다. (최초 구현은 "생성할까요|진행할까요" 정규식으로 확인 질문만
+// 골라 억제했으나, 라이브 재현 3회 중 1회가 "생성해도 될지" 같은 동의어 표현으로 정규식을
+// 피해가 중복이 재발함을 확인 — #428 검증 로그. 문구 매칭은 LLM 표현 변주에 근본적으로
+// 취약하므로 제거하고 구조적 판별자(parent_tool_use_id)만으로 억제한다.)
+export const DESIGN_GUARD_SUBAGENT_TYPES = new Set(['pipeline-builder', 'template-builder', 'dashboard-builder']);
+
+/**
+ * processMessage 호출 간 유지되는 상태 — 한 HTTP 요청(executeAgent 1회 호출)의 수명과 일치한다.
+ * agent-sdk.ts 가 요청마다 새로 생성해 각 processMessage 호출에 전달한다.
+ */
+export interface DesignGuardRelayState {
+  /** 메인이 DESIGN 가드 subagent 에 위임한 Agent tool_use id 집합(위임 시점에 채움) */
+  pendingGuardToolUseIds: Set<string>;
+  /** 위 위임 중 하나라도 텍스트로 완료됐으면 true(문구 내용 불문) — 이후
+   *  메인(parent_tool_use_id=null)의 text 이벤트를 이번 요청이 끝날 때까지 억제한다 */
+  suppressMainText: boolean;
+}
+
+export function createDesignGuardRelayState(): DesignGuardRelayState {
+  return { pendingGuardToolUseIds: new Set(), suppressMainText: false };
+}
+
 export function processMessage(
   msg: SDKMessage,
   tag: () => string,
   hasStreamedText: boolean,
+  relayState: DesignGuardRelayState = createDesignGuardRelayState(),
 ): SSEEvent[] {
   const events: SSEEvent[] = [];
+  // SDKMessage 유니온 중 parent_tool_use_id 를 갖는 타입(assistant/user/stream_event)에서만
+  // 존재 — 메인 top-level 메시지는 null, subagent 위임 메시지는 위임 tool_use id.
+  const parentToolUseId = 'parent_tool_use_id' in msg ? (msg as { parent_tool_use_id: string | null }).parent_tool_use_id : null;
 
   switch (msg.type) {
     case 'system': {
@@ -55,12 +88,30 @@ export function processMessage(
         for (const block of msg.message.content) {
           if (block.type === 'text' && 'text' in block) {
             console.log(`${tag()} ◀ Text: "${truncate(String(block.text))}"`);
-            if (!hasStreamedText) {
+            // #428: subagent(parent_tool_use_id 있음) 텍스트가 위임 목록에 있으면 문구 내용과
+            // 무관하게 이 요청이 끝날 때까지 메인(parent 없음)의 후속 text 를 억제한다.
+            if (parentToolUseId && relayState.pendingGuardToolUseIds.has(parentToolUseId)) {
+              relayState.suppressMainText = true;
+              console.log(`${tag()} 🔇 DESIGN 가드 subagent 완료 감지 — 메인 재요약 억제(#428)`);
+            }
+            const isSuppressedMainText = !parentToolUseId && relayState.suppressMainText;
+            if (!hasStreamedText && !isSuppressedMainText) {
               events.push({ type: 'text', content: block.text });
             }
           } else if (block.type === 'tool_use' && 'name' in block) {
             const input = 'input' in block ? block.input : {};
             console.log(`${tag()} ◀ Tool call: ${block.name}(${truncate(JSON.stringify(input))})`);
+            // #428: 메인이 DESIGN 가드 subagent 에 위임하는 순간(Agent tool_use) 을 기록해,
+            // 해당 subagent 의 완료 텍스트를 이후 parent_tool_use_id 로 식별할 수 있게 한다.
+            if (
+              !parentToolUseId &&
+              block.name === 'Agent' &&
+              'id' in block &&
+              typeof (input as { subagent_type?: unknown })?.subagent_type === 'string' &&
+              DESIGN_GUARD_SUBAGENT_TYPES.has((input as { subagent_type: string }).subagent_type)
+            ) {
+              relayState.pendingGuardToolUseIds.add(String((block as { id: string }).id));
+            }
             events.push({
               type: 'tool_use',
               toolName: block.name,
@@ -178,10 +229,16 @@ export function processMessage(
       if (event.type === 'content_block_delta' && 'delta' in event) {
         const delta = event.delta;
         if (delta.type === 'text_delta' && 'text' in delta) {
-          events.push({
-            type: 'text',
-            content: delta.text,
-          });
+          // #428: 실제 사용자 노출 텍스트는 대부분 이 델타 스트림으로 나간다. DESIGN 가드
+          // subagent 가 이미 확인 질문으로 마쳤다면(relayState.suppressMainText), 메인
+          // (parent_tool_use_id=null) 의 후속 델타는 억제해 중복 확인 노출을 차단한다.
+          const isSuppressedMainDelta = !parentToolUseId && relayState.suppressMainText;
+          if (!isSuppressedMainDelta) {
+            events.push({
+              type: 'text',
+              content: delta.text,
+            });
+          }
         }
       } else if (event.type === 'message_delta') {
         const delta = event as { type: string; usage?: { output_tokens?: number } };

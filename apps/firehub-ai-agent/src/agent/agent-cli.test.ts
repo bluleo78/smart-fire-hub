@@ -139,6 +139,98 @@ describe('executeCliAgent — Tier2 연속 실패 강제중단 (#271)', () => {
   });
 });
 
+describe('executeCliAgent — #428 DESIGN 가드 subagent 결과 중복 relay 억제', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('pipeline-builder 위임 완료 후 메인이 같은 요청에서 재요약하면 억제한다(문구 변형 포함)', async () => {
+    const delegateToolUseId = 'toolu_delegate_1';
+    const lines: string[] = [
+      // 메인이 pipeline-builder 에 위임(Agent tool_use, parent 없음)
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'pipeline-builder', prompt: 'Mode: DESIGN\n...' },
+            },
+          ],
+        },
+      }),
+      // subagent 자신의 완료 텍스트 — parent_tool_use_id = 위임 tool_use id.
+      // 실제 라이브 재현에서 관찰된 동의어 표현("생성해도 될지")을 사용해, 정규식 기반
+      // 판별이었다면 놓쳤을 케이스를 회귀 가드로 고정한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateToolUseId,
+        message: {
+          content: [{ type: 'text', text: '## 설계안 ...\n이 설계 그대로 생성해도 될지 확인 부탁드립니다.' }],
+        },
+      }),
+      // 메인이 같은 요청 안에서 재요약을 시도(parent 없음) — 억제 대상
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '## 설계안 재요약 ...\n이대로 생성할까요?' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '파이프라인 만들어줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // subagent 자신의 확인 텍스트는 그대로 노출되고, 메인의 재요약은 억제되어 정확히 1개만 남는다.
+    expect(texts).toEqual(['## 설계안 ...\n이 설계 그대로 생성해도 될지 확인 부탁드립니다.']);
+  });
+
+  it('pipeline-builder 위임이 없으면 메인 텍스트를 억제하지 않는다', async () => {
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '일반 응답입니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '안녕',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['일반 응답입니다.']);
+  });
+});
+
 describe('executeCliAgent — #240 subagent registration', () => {
   beforeEach(() => {
     spawnMock.mockReset();

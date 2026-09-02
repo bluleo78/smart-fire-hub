@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { processMessage } from './process-message.js';
+import { processMessage, createDesignGuardRelayState } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MAX_BUDGET_USD } from '../constants.js';
 
@@ -259,5 +259,124 @@ describe('processMessage', () => {
     const result = processMessage(msg, tag, false);
 
     expect(result).toEqual([]);
+  });
+
+  // #428: DESIGN 가드 subagent(pipeline-builder 등) 완료 후 메인의 중복 확인 재요약 억제
+  describe('#428 DESIGN 가드 subagent 결과 중복 relay 억제', () => {
+    // 위임 tool_use(Agent, subagent_type=pipeline-builder) 메시지 — parent_tool_use_id 없음(메인)
+    const delegateMsg = (toolUseId: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: toolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'pipeline-builder', prompt: 'Mode: DESIGN\n...' },
+            },
+          ],
+        },
+      }) as unknown as SDKMessage;
+
+    // subagent 자신의 확인 질문 완료 메시지 — parent_tool_use_id = 위임 tool_use id
+    const subagentConfirmMsg = (toolUseId: string, text: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: toolUseId,
+        message: { content: [{ type: 'text', text }] },
+      }) as unknown as SDKMessage;
+
+    // 메인의 스트리밍 텍스트 델타 — parent_tool_use_id 없음(메인)
+    const mainDeltaMsg = (text: string) =>
+      ({
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+      }) as unknown as SDKMessage;
+
+    it('PM-428a: 위임 전 메인 델타는 그대로 통과한다', () => {
+      const state = createDesignGuardRelayState();
+      const result = processMessage(mainDeltaMsg('진행 중입니다'), tag, false, state);
+      expect(result).toEqual([{ type: 'text', content: '진행 중입니다' }]);
+    });
+
+    it('PM-428b: subagent 가 확인 질문으로 완료하면 이후 메인 델타를 억제한다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_1';
+
+      // 1) 메인이 pipeline-builder 에 위임
+      processMessage(delegateMsg(toolUseId), tag, false, state);
+      expect(state.pendingGuardToolUseIds.has(toolUseId)).toBe(true);
+
+      // 2) subagent 가 확인 질문으로 자기 턴을 마침
+      const confirmResult = processMessage(
+        subagentConfirmMsg(toolUseId, '## 설계안 ...\n이대로 생성할까요? (예 / 수정 요청)'),
+        tag,
+        true, // 이미 델타로 스트리밍됐다고 가정 — 이 경로는 상태만 갱신
+        state,
+      );
+      expect(state.suppressMainText).toBe(true);
+      // hasStreamedText=true 이므로 이 assistant 블록 자체는 원래도 emit 되지 않는다
+      expect(confirmResult).toEqual([]);
+
+      // 3) 메인이 같은 턴에서 재요약을 시도해도 억제된다
+      const mainResult = processMessage(mainDeltaMsg('이대로 생성할까요? 다시 물어봅니다'), tag, false, state);
+      expect(mainResult).toEqual([]);
+    });
+
+    it('PM-428c: 확인 질문 문구가 아니어도(내용 무관) subagent 완료 시 억제한다 — 정규식 매칭 제거 회귀 가드', () => {
+      // 라이브 재현에서 실제로 관찰된 케이스: "생성할까요"/"진행할까요" 정규식을 피해가는
+      // 동의어 표현("생성해도 될지")도 여전히 subagent 의 최종 응답이므로 억제되어야 한다.
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_2';
+
+      processMessage(delegateMsg(toolUseId), tag, false, state);
+      processMessage(
+        subagentConfirmMsg(toolUseId, '어느 쪽으로 진행할지, 그리고 이 설계 그대로 생성해도 될지 확인 부탁드립니다.'),
+        tag,
+        true,
+        state,
+      );
+      expect(state.suppressMainText).toBe(true);
+
+      const mainResult = processMessage(mainDeltaMsg('## 설계안 재요약'), tag, false, state);
+      expect(mainResult).toEqual([]);
+    });
+
+    it('PM-428e: 확인 질문 없이(에러/거부로) 끝난 subagent 완료도 동일하게 억제한다', () => {
+      // subagent 완료 텍스트는 내용에 관계없이 이번 위임의 최종 응답이므로, 에러/거부
+      // 텍스트라 해도 메인이 별도 재서술을 덧붙이는 것은 동일하게 중복이다.
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_2b';
+
+      processMessage(delegateMsg(toolUseId), tag, false, state);
+      processMessage(
+        subagentConfirmMsg(toolUseId, '이 요청은 범위 밖이라 처리할 수 없습니다.'),
+        tag,
+        true,
+        state,
+      );
+      expect(state.suppressMainText).toBe(true);
+
+      const mainResult = processMessage(mainDeltaMsg('추가 안내를 드릴게요'), tag, false, state);
+      expect(mainResult).toEqual([]);
+    });
+
+    it('PM-428d: subagent 자신의 확인 텍스트(비스트리밍 fallback)는 억제 대상이 아니다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_3';
+
+      processMessage(delegateMsg(toolUseId), tag, false, state);
+      // hasStreamedText=false 인 비스트리밍 fallback 경로에서도 subagent 자신의 텍스트는 emit 된다
+      const result = processMessage(
+        subagentConfirmMsg(toolUseId, '이대로 생성할까요?'),
+        tag,
+        false,
+        state,
+      );
+      expect(result).toEqual([{ type: 'text', content: '이대로 생성할까요?' }]);
+    });
   });
 });

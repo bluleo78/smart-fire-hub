@@ -18,6 +18,7 @@ import { totalInputTokens, type TokenUsageLike } from './token-usage.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
+import { DESIGN_GUARD_SUBAGENT_TYPES } from './process-message.js';
 import {
   isSafeSessionId,
   legacyTranscriptDir,
@@ -179,6 +180,7 @@ interface StreamJsonMessage {
   message?: {
     content?: Array<{
       type: string;
+      id?: string;
       name?: string;
       input?: unknown;
       tool_use_id?: string;
@@ -193,6 +195,9 @@ interface StreamJsonMessage {
   subtype?: string;
   cost_usd?: number;
   session_id?: string;
+  // #428: claude CLI(`claude -p --output-format stream-json`)도 Agent SDK 와 동일하게
+  // subagent 로 위임된 메시지에 위임 tool_use 의 id 를 채워 흘려보낸다(top-level 메인은 null).
+  parent_tool_use_id?: string | null;
 }
 
 export interface CliAgentOptions extends AgentOptions {
@@ -315,6 +320,14 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 이벤트로만 오고 세션이 done(성공)으로 끝나는 경우가 있어, 텍스트 경로에서도 검사한다.
   // 한 응답 내에서 여러 delta/블록에 걸쳐 중복 치환하지 않도록 플래그로 1회만 처리.
   let authFailureDetected = false;
+  // #428: L3 DESIGN 가드 subagent(pipeline-builder 등)에 위임한 뒤, subagent 가 이미 텍스트로
+  // 자기 턴을 마쳤는데 메인(parent_tool_use_id=null)이 같은 요청 안에서 이를 재요약해 별도
+  // 텍스트를 또 출력하면 사용자에게 동일 확인이 두 번 노출된다(라이브 재현으로 확인). CLI 로
+  // 스폰된 claude 프로세스의 stream-json 출력도 SDK 와 동일하게 parent_tool_use_id 로 위임된
+  // 하위 턴을 구분해 흘려보내므로, 위임 tool_use id 를 기록해두고 그 id 를 parent 로 갖는
+  // 텍스트가 한 번이라도 도착하면(문구 내용 불문) 이후 메인(parent 없음)의 텍스트를 억제한다.
+  const pendingDesignGuardToolUseIds = new Set<string>();
+  let suppressMainText = false;
 
   // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
   const userMsg: HistoryMessage = {
@@ -496,6 +509,11 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           }
           return;
         }
+        // #428: DESIGN 가드 subagent 가 이미 텍스트로 완료했으면, 이후 메인(parent 없음)의
+        // 델타는 재요약 중복이므로 억제한다.
+        if (!msg.parent_tool_use_id && suppressMainText) {
+          continue;
+        }
         yield { type: 'text', content: msg.delta.text };
         continue;
       }
@@ -523,6 +541,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               name: toolName,
               input: (block.input as Record<string, unknown>) ?? {},
             });
+            // #428: 메인이 DESIGN 가드 subagent 에 위임하는 순간(Agent tool_use, subagent_type
+            // 이 화이트리스트에 포함)을 기록해, 이후 그 subagent 의 완료 텍스트를
+            // parent_tool_use_id 로 식별할 수 있게 한다.
+            if (
+              !msg.parent_tool_use_id &&
+              toolName === 'Agent' &&
+              block.id &&
+              DESIGN_GUARD_SUBAGENT_TYPES.has(String((block.input as { subagent_type?: unknown })?.subagent_type))
+            ) {
+              pendingDesignGuardToolUseIds.add(block.id);
+            }
             yield {
               type: 'tool_use',
               toolName,
@@ -545,6 +574,14 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
                 /* ignore */
               }
               return;
+            }
+            // #428: subagent(parent_tool_use_id 있음) 텍스트가 위임 목록에 있으면 문구 내용과
+            // 무관하게 이후 메인(parent 없음)의 텍스트를 억제한다 — subagent 텍스트 자체는 그대로 emit.
+            if (msg.parent_tool_use_id && pendingDesignGuardToolUseIds.has(msg.parent_tool_use_id)) {
+              suppressMainText = true;
+            }
+            if (!msg.parent_tool_use_id && suppressMainText) {
+              continue;
             }
             yield { type: 'text', content: block.text };
           }

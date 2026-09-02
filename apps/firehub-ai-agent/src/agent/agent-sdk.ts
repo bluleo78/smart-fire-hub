@@ -14,7 +14,7 @@ import {
   COST_ALARM_TURNS,
 } from '../constants.js';
 import { truncate, timestamp } from '../utils.js';
-import { processMessage } from './process-message.js';
+import { processMessage, createDesignGuardRelayState } from './process-message.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 import { totalInputTokens } from './token-usage.js';
 import {
@@ -310,6 +310,9 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   let lastToolName = '';
   let firstTextReceived = false;
   let hasStreamedText = false;
+  // #428: DESIGN 가드 subagent(pipeline-builder 등)가 이미 확인 질문으로 응답을 마쳤을 때
+  // 메인이 같은 요청 안에서 이를 재요약해 중복 확인을 노출하지 않도록 하는 요청-스코프 상태.
+  const designGuardRelayState = createDesignGuardRelayState();
   let lastTurnContextTokens = 0;
   // Tier2 강제중단용 연속 실패 트래커 (도구 이름은 lastToolName 재사용)
   const haltTracker = createTracker();
@@ -365,7 +368,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
         }
       }
 
-      const events = processMessage(msg, tag, hasStreamedText);
+      const events = processMessage(msg, tag, hasStreamedText, designGuardRelayState);
       for (const event of events) {
         // Tier2 halt 판정 결과를 이벤트 처리 후 사용하기 위한 플래그
         let haltNow = false;
