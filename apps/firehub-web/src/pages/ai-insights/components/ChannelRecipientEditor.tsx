@@ -1,4 +1,5 @@
 import { Bell, FileDown, Info, Mail, MessageSquare, Slack } from 'lucide-react';
+import { useId } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -53,6 +54,9 @@ export default function ChannelRecipientEditor({
   onChange,
   disabled,
 }: ChannelRecipientEditorProps) {
+  // 접근성: 그룹 라벨↔위젯 연결용 id 접두사 (#432)
+  const baseId = useId();
+
   const getChannel = (type: ChannelConfigValues['type']) =>
     channels.find((c) => c.type === type);
 
@@ -170,8 +174,13 @@ export default function ChannelRecipientEditor({
               수신자를 지정하지 않으면 본인에게만 전달됩니다
             </p>
 
-            <div className="space-y-1">
-              <Label className="text-xs">등록 사용자</Label>
+            {/* UserCombobox / EmailTagInput 은 id prop 을 받지 않는 복합 위젯이라
+                htmlFor 를 걸 대상이 없다. 대신 제목을 span 으로 두고 래퍼를 role=group +
+                aria-labelledby 로 묶어 스크린리더가 이름을 읽게 한다 (#432, 명세 규칙 3 폴백) */}
+            <div className="space-y-1" role="group" aria-labelledby={`${baseId}-email-users`}>
+              <span id={`${baseId}-email-users`} className="block text-xs leading-none font-medium">
+                등록 사용자
+              </span>
               <UserCombobox
                 selectedUserIds={channel.recipientUserIds}
                 onChange={(ids) => updateChannel(type, { recipientUserIds: ids })}
@@ -180,8 +189,10 @@ export default function ChannelRecipientEditor({
               />
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs">외부 이메일</Label>
+            <div className="space-y-1" role="group" aria-labelledby={`${baseId}-email-external`}>
+              <span id={`${baseId}-email-external`} className="block text-xs leading-none font-medium">
+                외부 이메일
+              </span>
               <EmailTagInput
                 emails={channel.recipientEmails}
                 onChange={(emails) => updateChannel(type, { recipientEmails: emails })}

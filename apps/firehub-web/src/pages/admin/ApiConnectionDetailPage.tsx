@@ -1,5 +1,5 @@
 import { ArrowLeft, Copy, HelpCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -47,6 +47,11 @@ export default function ApiConnectionDetailPage() {
   const testMutation = useTestApiConnection();
   // 마지막 "지금 확인" 응답을 저장 — 상태코드/응답 본문/헤더/요청 URL 노출 (#76)
   const [lastTestResult, setLastTestResult] = useState<TestConnectionResponse | null>(null);
+
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
+  // 하드코딩 대신 useId() 를 써서 같은 폼이 여러 번 렌더돼도 id 충돌이 없게 한다.
+  // 조기 return(로딩/미존재) 이 아래에 있으므로 반드시 훅 구간 최상단에서 호출한다.
+  const baseId = useId();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -299,7 +304,9 @@ export default function ApiConnectionDetailPage() {
             {lastTestResult.requestUrl && (
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs text-muted-foreground">요청 URL</Label>
+                  {/* 대응하는 입력 컨트롤이 없는 표시 전용 제목이라 label 이 아닌 span 으로 둔다 (#432).
+                      Label 기본 스타일(leading-none/font-medium)을 직접 보충해 시각 결과를 유지. */}
+                  <span className="text-xs leading-none font-medium text-muted-foreground">요청 URL</span>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -344,7 +351,8 @@ export default function ApiConnectionDetailPage() {
               lastTestResult.responseBodyPreview !== undefined && (
                 <div className="space-y-1" data-testid="test-result-body">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">응답 본문</Label>
+                    {/* 위와 동일 — <pre> 출력의 제목일 뿐 입력 컨트롤이 없다 (#432) */}
+                    <span className="text-xs leading-none font-medium text-muted-foreground">응답 본문</span>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -376,17 +384,18 @@ export default function ApiConnectionDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>연결 이름</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+            <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
+            <Input id={`${baseId}-name`} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label>설명</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" />
+            <Label htmlFor={`${baseId}-description`}>설명</Label>
+            <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" />
           </div>
           {/* Base URL: 외부 API 기본 주소 */}
           <div className="space-y-2">
-            <Label>Base URL</Label>
+            <Label htmlFor={`${baseId}-base-url`}>Base URL</Label>
             <Input
+              id={`${baseId}-base-url`}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://api.example.com"
@@ -394,13 +403,16 @@ export default function ApiConnectionDetailPage() {
           </div>
           {/* 헬스체크 경로 */}
           <div className="space-y-2">
-            <Label>헬스체크 경로</Label>
+            <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로</Label>
             <Input
+              id={`${baseId}-health-path`}
               value={healthCheckPath}
               onChange={(e) => setHealthCheckPath(e.target.value)}
               placeholder="/health (선택)"
+              /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
+              aria-describedby={`${baseId}-health-path-help`}
             />
-            <p className="text-xs text-muted-foreground">
+            <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
               10분마다 자동 상태 점검. 비워두면 점검 안 함.
             </p>
           </div>
@@ -503,9 +515,10 @@ export default function ApiConnectionDetailPage() {
             /* 편집 모드 */
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>인증 유형</Label>
+                <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
                 <Select value={authType} onValueChange={(v) => setAuthType(v as 'API_KEY' | 'BEARER')}>
-                  <SelectTrigger>
+                  {/* shadcn Select 는 트리거가 실제 포커스 대상이라 id 를 트리거에 건다 */}
+                  <SelectTrigger id={`${baseId}-auth-type`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -518,9 +531,9 @@ export default function ApiConnectionDetailPage() {
               {authType === 'API_KEY' && (
                 <>
                   <div className="space-y-2">
-                    <Label>위치</Label>
+                    <Label htmlFor={`${baseId}-placement`}>위치</Label>
                     <Select value={placement} onValueChange={setPlacement}>
-                      <SelectTrigger>
+                      <SelectTrigger id={`${baseId}-placement`}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -530,8 +543,12 @@ export default function ApiConnectionDetailPage() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>{placement === 'query' ? '파라미터 이름' : '헤더 이름'}</Label>
+                    {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
+                    <Label htmlFor={`${baseId}-auth-name`}>
+                      {placement === 'query' ? '파라미터 이름' : '헤더 이름'}
+                    </Label>
                     <Input
+                      id={`${baseId}-auth-name`}
                       placeholder={placement === 'query' ? 'api_key' : 'Authorization'}
                       value={placement === 'query' ? paramName : headerName}
                       onChange={(e) =>
@@ -542,8 +559,9 @@ export default function ApiConnectionDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>키 값</Label>
+                    <Label htmlFor={`${baseId}-api-key`}>키 값</Label>
                     <Input
+                      id={`${baseId}-api-key`}
                       type="password"
                       placeholder="새 API 키를 입력하세요"
                       value={apiKey}
@@ -555,8 +573,9 @@ export default function ApiConnectionDetailPage() {
 
               {authType === 'BEARER' && (
                 <div className="space-y-2">
-                  <Label>Bearer Token</Label>
+                  <Label htmlFor={`${baseId}-token`}>Bearer Token</Label>
                   <Input
+                    id={`${baseId}-token`}
                     type="password"
                     placeholder="새 토큰을 입력하세요"
                     value={token}

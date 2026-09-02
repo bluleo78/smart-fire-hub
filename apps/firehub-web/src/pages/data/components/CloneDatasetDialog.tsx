@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2 } from 'lucide-react';
+import { useId } from 'react';
 import { Controller,useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -37,6 +38,10 @@ type CloneFormData = z.infer<typeof cloneSchema>;
 export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDatasetDialogProps) {
   const navigate = useNavigate();
   const cloneDataset = useCloneDataset();
+
+  // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432).
+  // 다이얼로그는 같은 폼이 여러 번 마운트될 수 있어 하드코딩 id 는 실제로 충돌한다.
+  const baseId = useId();
 
   const form = useForm<CloneFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,12 +92,19 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="clone-name">데이터셋 이름 *</Label>
+            {/* 오류 문구를 aria-describedby/aria-invalid 로 입력에 연결한다 (#432, §J). */}
             <Input
               id="clone-name"
+              aria-invalid={!!form.formState.errors.name}
+              aria-describedby={
+                form.formState.errors.name ? `${baseId}-name-error` : undefined
+              }
               {...form.register('name')}
             />
             {form.formState.errors.name && (
-              <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
+              <p id={`${baseId}-name-error`} className="text-sm text-destructive">
+                {form.formState.errors.name.message}
+              </p>
             )}
           </div>
 
@@ -100,13 +112,22 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
             <Label htmlFor="clone-tableName">테이블 이름 *</Label>
             <Input
               id="clone-tableName"
+              aria-invalid={!!form.formState.errors.tableName}
+              // 도움말은 항상, 오류 문구는 있을 때만 연결한다.
+              aria-describedby={
+                form.formState.errors.tableName
+                  ? `${baseId}-tableName-help ${baseId}-tableName-error`
+                  : `${baseId}-tableName-help`
+              }
               {...form.register('tableName')}
             />
-            <p className="text-xs text-muted-foreground">
+            <p id={`${baseId}-tableName-help`} className="text-xs text-muted-foreground">
               &#9432; 영소문자, 숫자, _ 만 허용
             </p>
             {form.formState.errors.tableName && (
-              <p className="text-sm text-destructive">{form.formState.errors.tableName.message}</p>
+              <p id={`${baseId}-tableName-error`} className="text-sm text-destructive">
+                {form.formState.errors.tableName.message}
+              </p>
             )}
           </div>
 
@@ -126,12 +147,20 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
               render={({ field }) => (
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-sm">데이터 포함</Label>
-                    <p className="text-xs text-muted-foreground">
+                    <Label htmlFor={`${baseId}-includeData`} className="text-sm">
+                      데이터 포함
+                    </Label>
+                    {/* 설명 문구를 aria-describedby 로 스위치에 연결한다 (#432, §J). */}
+                    <p id={`${baseId}-includeData-help`} className="text-xs text-muted-foreground">
                       {(dataset.rowCount ?? 0).toLocaleString()}행의 데이터를 복제
                     </p>
                   </div>
-                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  <Switch
+                    id={`${baseId}-includeData`}
+                    aria-describedby={`${baseId}-includeData-help`}
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
                 </div>
               )}
             />
@@ -142,14 +171,24 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
               render={({ field }) => (
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-sm">태그 포함</Label>
+                    <Label htmlFor={`${baseId}-includeTags`} className="text-sm">
+                      태그 포함
+                    </Label>
                     {dataset.tags.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
+                      <p id={`${baseId}-includeTags-help`} className="text-xs text-muted-foreground">
                         {dataset.tags.join(', ')}
                       </p>
                     )}
                   </div>
-                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  {/* 태그 목록은 조건부라 없을 때는 describedby 를 걸지 않는다. */}
+                  <Switch
+                    id={`${baseId}-includeTags`}
+                    aria-describedby={
+                      dataset.tags.length > 0 ? `${baseId}-includeTags-help` : undefined
+                    }
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
                 </div>
               )}
             />

@@ -409,7 +409,9 @@ export default function ProactiveJobsTab() {
 
             {/* Target scope */}
             <div className="space-y-2">
-              <Label>분석 대상</Label>
+              {/* 라디오 두 개를 묶는 그룹 제목이라 단일 컨트롤이 없다 → label 이 아닌 span (#432).
+                  Label 기본 스타일을 직접 지정해 시각 결과를 유지한다. */}
+              <span className="text-sm leading-none font-medium">분석 대상</span>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -436,7 +438,8 @@ export default function ProactiveJobsTab() {
 
             {/* Delivery channels */}
             <div className="space-y-2">
-              <Label>전달 채널</Label>
+              {/* 체크박스 두 개를 묶는 그룹 제목 — 위와 같은 이유로 span (#432) */}
+              <span className="text-sm leading-none font-medium">전달 채널</span>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <Checkbox

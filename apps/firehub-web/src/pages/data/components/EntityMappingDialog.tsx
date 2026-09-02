@@ -184,8 +184,11 @@ export function EntityMappingDialog({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              {/* 섹션 제목은 특정 입력을 가리키지 않으므로 htmlFor 없이 둔다. */}
-              <Label>속성 매핑</Label>
+              {/*
+                섹션 제목이라 가리킬 단일 입력이 없다 — 의미상 label 이 아니므로 span 으로 둔다 (#432).
+                Label 기본 스타일(text-sm/leading-none/font-medium)을 보충해 시각 결과를 유지한다.
+              */}
+              <span className="flex items-center gap-2 text-sm leading-none font-medium">속성 매핑</span>
               <Button
                 type="button"
                 variant="outline"

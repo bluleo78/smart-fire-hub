@@ -1,5 +1,5 @@
 import { Trash2,X } from 'lucide-react';
-import { lazy, Suspense, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useId, useMemo, useRef, useState } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
 const AiClassifyStepConfig = lazy(() => import('./AiClassifyStepConfig'));
@@ -76,6 +76,20 @@ export default function StepConfigPanel({
   // 스텝 삭제 확인 다이얼로그 표시 여부 — 실수 삭제 방지 (rules-of-hooks: early return 이전 선언)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
+  // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 기존 하드코딩 id(step-name 등)는 E2E 회귀를 피해 유지하고,
+  // 새로 연결하는 것만 useId 로 만든다. (rules-of-hooks: early return 이전 선언)
+  const baseId = useId();
+  const scriptTypeId = `${baseId}-script-type`;
+  const scriptLabelId = `${baseId}-script-label`;
+  // DatasetCombobox 는 Popover 트리거 버튼(labelable)에 id 를 심어 라벨과 연결한다.
+  const inputDatasetsId = `${baseId}-input-datasets`;
+  const outputDatasetId = `${baseId}-output-dataset`;
+  const outputDatasetHelpId = `${baseId}-output-dataset-help`;
+  const outputDatasetErrorId = `${baseId}-output-dataset-error`;
+  const loadStrategyId = `${baseId}-load-strategy`;
+  const loadStrategyHelpId = `${baseId}-load-strategy-help`;
+  const dependenciesLabelId = `${baseId}-dependencies-label`;
+
   const inputDatasetOptions = useMemo<DatasetOption[]>(() => {
     if (!step) return [];
     const prevStepDatasets: DatasetOption[] = [];
@@ -129,7 +143,13 @@ export default function StepConfigPanel({
               {/* Name — 헤더의 Input이 단일 편집 진입점. 우측 패널은 읽기 전용으로만 표시하여
                   Ctrl+A 등으로 두 Input이 동시에 dispatch하는 중복 문자열 버그(#32) 방지. */}
               <div className="space-y-1.5">
-                <Label>이름</Label>
+                {/*
+                  읽기 전용 표시라 대응하는 입력 요소가 없다 — Label 컴포넌트 대신 span 으로 둔다 (#432).
+                  className 은 shadcn Label 기본 스타일을 그대로 옮겨 시각 결과를 유지한다.
+                */}
+                <span className="flex items-center gap-2 text-sm leading-none font-medium select-none">
+                  이름
+                </span>
                 <p className="text-sm">{state.name || '-'}</p>
               </div>
 
@@ -267,7 +287,7 @@ export default function StepConfigPanel({
 
           {/* Script type */}
           <div className="space-y-1.5">
-            <Label>스크립트 타입</Label>
+            <Label htmlFor={scriptTypeId}>스크립트 타입</Label>
             <Select
               value={step.scriptType}
               disabled={readOnly}
@@ -275,7 +295,7 @@ export default function StepConfigPanel({
                 handleUpdateStep({ scriptType: value as EditorStep['scriptType'] })
               }
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger id={scriptTypeId} className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -324,7 +344,17 @@ export default function StepConfigPanel({
             <>
               <Separator />
               <div className="space-y-1.5">
-                <Label>스크립트</Label>
+                {/*
+                  CodeMirror(ScriptEditor)는 id 를 받을 수 있는 폼 컨트롤이 아니라 htmlFor 대상이 못 된다.
+                  라벨에 id 를 주고 에디터 래퍼에 role="group" + aria-labelledby 로 이름을 준다 (#432).
+                  className 은 shadcn Label 기본 스타일을 그대로 옮겨 시각 결과를 유지한다.
+                */}
+                <span
+                  id={scriptLabelId}
+                  className="flex items-center gap-2 text-sm leading-none font-medium select-none"
+                >
+                  스크립트
+                </span>
                 {otherSteps.length > 0 && (
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -346,15 +376,17 @@ export default function StepConfigPanel({
                     </p>
                   </div>
                 )}
-                <Suspense fallback={<Skeleton className="h-[200px]" />}>
-                  <ScriptEditor
-                    value={step.scriptContent}
-                    onChange={(value) => handleUpdateStep({ scriptContent: value })}
-                    language={step.scriptType}
-                    readOnly={readOnly}
-                    insertTextRef={insertTextRef}
-                  />
-                </Suspense>
+                <div role="group" aria-labelledby={scriptLabelId}>
+                  <Suspense fallback={<Skeleton className="h-[200px]" />}>
+                    <ScriptEditor
+                      value={step.scriptContent}
+                      onChange={(value) => handleUpdateStep({ scriptContent: value })}
+                      language={step.scriptType}
+                      readOnly={readOnly}
+                      insertTextRef={insertTextRef}
+                    />
+                  </Suspense>
+                </div>
                 {scriptContentError && (
                   <p className="text-sm text-destructive">{scriptContentError}</p>
                 )}
@@ -366,7 +398,7 @@ export default function StepConfigPanel({
 
           {/* Output dataset */}
           <div className="space-y-1.5">
-            <Label>출력 데이터셋</Label>
+            <Label htmlFor={outputDatasetId}>출력 데이터셋</Label>
             <Select
               value={step.outputDatasetId?.toString() ?? '__auto__'}
               onValueChange={(value) =>
@@ -376,7 +408,20 @@ export default function StepConfigPanel({
               }
               disabled={readOnly}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger
+                id={outputDatasetId}
+                className="w-full"
+                /* 자동 생성 안내문·검증 오류를 조건부로 연결한다 */
+                aria-describedby={
+                  [
+                    step.outputDatasetId === null ? outputDatasetHelpId : null,
+                    outputDatasetIdError ? outputDatasetErrorId : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' ') || undefined
+                }
+                aria-invalid={!!outputDatasetIdError}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -389,12 +434,12 @@ export default function StepConfigPanel({
               </SelectContent>
             </Select>
             {step.outputDatasetId === null && (
-              <p className="text-xs text-muted-foreground">
+              <p id={outputDatasetHelpId} className="text-xs text-muted-foreground">
                 실행 시 스텝 결과에 맞는 임시 데이터셋이 자동 생성됩니다
               </p>
             )}
             {outputDatasetIdError && (
-              <p className="text-sm text-destructive">{outputDatasetIdError}</p>
+              <p id={outputDatasetErrorId} className="text-sm text-destructive">{outputDatasetIdError}</p>
             )}
           </div>
 
@@ -420,13 +465,17 @@ export default function StepConfigPanel({
 
           {/* Load strategy */}
           <div className="space-y-1.5">
-            <Label>로드 전략</Label>
+            <Label htmlFor={loadStrategyId}>로드 전략</Label>
             <Select
               value={step.loadStrategy ?? 'REPLACE'}
               disabled={readOnly}
               onValueChange={(value) => handleUpdateStep({ loadStrategy: value })}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger
+                id={loadStrategyId}
+                className="w-full"
+                aria-describedby={loadStrategyHelpId}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -434,7 +483,7 @@ export default function StepConfigPanel({
                 <SelectItem value="APPEND">추가 (Append)</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p id={loadStrategyHelpId} className="text-xs text-muted-foreground">
               {(step.loadStrategy ?? 'REPLACE') === 'REPLACE'
                 ? '출력 테이블을 비운 후 새로 생성합니다'
                 : '기존 데이터에 새 데이터를 추가합니다'}
@@ -447,8 +496,9 @@ export default function StepConfigPanel({
 
               {/* Input datasets */}
               <div className="space-y-1.5">
-                <Label>입력 데이터셋</Label>
+                <Label htmlFor={inputDatasetsId}>입력 데이터셋</Label>
                 <DatasetCombobox
+                  id={inputDatasetsId}
                   mode="multi"
                   datasets={inputDatasetOptions}
                   value={step.inputDatasetIds}
@@ -469,8 +519,18 @@ export default function StepConfigPanel({
 
           {/* Dependencies (read-only) */}
           <div className="space-y-1.5">
-            <Label>의존성 (읽기 전용)</Label>
-            <div className="space-y-1">
+            {/*
+              읽기 전용 목록 제목이라 대응하는 입력 요소가 없다 — Label 컴포넌트 대신 span 으로 두고
+              목록에 role="group" + aria-labelledby 로 이름을 준다 (#432).
+              className 은 shadcn Label 기본 스타일을 그대로 옮겨 시각 결과를 유지한다.
+            */}
+            <span
+              id={dependenciesLabelId}
+              className="flex items-center gap-2 text-sm leading-none font-medium select-none"
+            >
+              의존성 (읽기 전용)
+            </span>
+            <div className="space-y-1" role="group" aria-labelledby={dependenciesLabelId}>
               {step.dependsOnTempIds.length === 0 ? (
                 <p className="text-sm text-muted-foreground">(없음)</p>
               ) : (

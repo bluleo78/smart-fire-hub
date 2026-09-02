@@ -1,5 +1,5 @@
 import { CheckCircle2, Plus, Trash2, XCircle } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -54,6 +54,10 @@ export default function ApiConnectionListPage() {
   const createMutation = useCreateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const refreshAllMutation = useRefreshAllApiConnections();
+
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
+  // 다이얼로그가 여러 번 열리거나 다른 폼과 공존해도 id 가 겹치지 않도록 useId() 로 만든다.
+  const baseId = useId();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState('');
@@ -242,16 +246,18 @@ export default function ApiConnectionListPage() {
               </DialogHeader>
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label>연결 이름</Label>
+                  <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
                   <Input
+                    id={`${baseId}-name`}
                     placeholder="예: Make.com API"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>설명 (선택)</Label>
+                  <Label htmlFor={`${baseId}-description`}>설명 (선택)</Label>
                   <Input
+                    id={`${baseId}-description`}
                     placeholder="연결에 대한 설명"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
@@ -260,8 +266,9 @@ export default function ApiConnectionListPage() {
 
                 {/* Base URL: 외부 API의 기본 URL */}
                 <div className="space-y-2">
-                  <Label>Base URL *</Label>
+                  <Label htmlFor={`${baseId}-base-url`}>Base URL *</Label>
                   <Input
+                    id={`${baseId}-base-url`}
                     placeholder="https://api.example.com"
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
@@ -270,21 +277,25 @@ export default function ApiConnectionListPage() {
 
                 {/* 헬스체크 경로: 10분마다 자동 상태 점검 */}
                 <div className="space-y-2">
-                  <Label>헬스체크 경로 (선택)</Label>
+                  <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로 (선택)</Label>
                   <Input
+                    id={`${baseId}-health-path`}
                     placeholder="/health"
                     value={healthCheckPath}
                     onChange={(e) => setHealthCheckPath(e.target.value)}
+                    /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
+                    aria-describedby={`${baseId}-health-path-help`}
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
                     10분마다 자동 상태 점검. 비워두면 점검 안 함.
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>인증 유형</Label>
+                  <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
                   <Select value={authType} onValueChange={(v) => setAuthType(v as 'API_KEY' | 'BEARER')}>
-                    <SelectTrigger>
+                    {/* shadcn Select 는 트리거가 실제 포커스 대상이라 id 를 트리거에 건다 */}
+                    <SelectTrigger id={`${baseId}-auth-type`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -297,9 +308,9 @@ export default function ApiConnectionListPage() {
                 {authType === 'API_KEY' && (
                   <>
                     <div className="space-y-2">
-                      <Label>위치</Label>
+                      <Label htmlFor={`${baseId}-placement`}>위치</Label>
                       <Select value={placement} onValueChange={setPlacement}>
-                        <SelectTrigger>
+                        <SelectTrigger id={`${baseId}-placement`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -309,8 +320,12 @@ export default function ApiConnectionListPage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>{placement === 'query' ? '파라미터 이름' : '헤더 이름'}</Label>
+                      {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
+                      <Label htmlFor={`${baseId}-auth-name`}>
+                        {placement === 'query' ? '파라미터 이름' : '헤더 이름'}
+                      </Label>
                       <Input
+                        id={`${baseId}-auth-name`}
                         placeholder={placement === 'query' ? 'api_key' : 'Authorization'}
                         value={placement === 'query' ? paramName : headerName}
                         onChange={(e) =>
@@ -321,8 +336,9 @@ export default function ApiConnectionListPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>키 값</Label>
+                      <Label htmlFor={`${baseId}-api-key`}>키 값</Label>
                       <Input
+                        id={`${baseId}-api-key`}
                         type="password"
                         placeholder="API 키를 입력하세요"
                         value={apiKey}
@@ -334,8 +350,9 @@ export default function ApiConnectionListPage() {
 
                 {authType === 'BEARER' && (
                   <div className="space-y-2">
-                    <Label>Bearer Token</Label>
+                    <Label htmlFor={`${baseId}-token`}>Bearer Token</Label>
                     <Input
+                      id={`${baseId}-token`}
                       type="password"
                       placeholder="토큰을 입력하세요"
                       value={token}

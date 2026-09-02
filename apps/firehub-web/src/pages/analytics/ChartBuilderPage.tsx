@@ -1,5 +1,5 @@
 import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Play,Save } from 'lucide-react';
-import { useCallback,useEffect, useRef, useState } from 'react';
+import { useCallback,useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -428,6 +428,9 @@ export default function ChartBuilderPage() {
   const chartId = id ? parseInt(id, 10) : null;
   const isNew = !chartId;
 
+  // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 하드코딩 대신 useId 로 충돌을 원천 차단한다.
+  const baseId = useId();
+
   // Pre-selected query from URL (?queryId=123)
   const initialQueryId = searchParams.get('queryId')
     ? parseInt(searchParams.get('queryId')!, 10)
@@ -809,12 +812,17 @@ export default function ChartBuilderPage() {
             </CardHeader>
             <CardContent className="px-4 space-y-3">
               <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">저장된 쿼리</Label>
+                <Label htmlFor={`${baseId}-saved-query`} className="text-xs text-muted-foreground">
+                  저장된 쿼리
+                </Label>
                 <Select
                   value={selectedQueryId ? String(selectedQueryId) : NO_QUERY}
                   onValueChange={handleQueryChange}
                 >
-                  <SelectTrigger className="h-8 text-sm w-full truncate">
+                  <SelectTrigger
+                    id={`${baseId}-saved-query`}
+                    className="h-8 text-sm w-full truncate"
+                  >
                     <SelectValue placeholder="쿼리 선택" />
                   </SelectTrigger>
                   <SelectContent>

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
-import { useEffect,useState } from 'react';
+import { useEffect,useId,useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -42,6 +42,8 @@ export default function UserDetailPage() {
   const [isTogglingActive, setIsTogglingActive] = useState(false);
   // 비활성화 확인 다이얼로그 표시 상태 — 활성→비활성 방향일 때만 열린다
   const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
+  // 접근성: 활성 상태 스위치의 라벨↔컨트롤 연결용 id (#432). 조기 return 이 아래에 있으므로 훅 구간에서 호출.
+  const activeSwitchId = useId();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -218,11 +220,12 @@ export default function UserDetailPage() {
         <CardContent>
           <div className="flex items-center gap-3">
             <Switch
+              id={activeSwitchId}
               checked={user.isActive}
               onCheckedChange={handleSwitchChange}
               disabled={isTogglingActive}
             />
-            <Label>{user.isActive ? '활성' : '비활성'}</Label>
+            <Label htmlFor={activeSwitchId}>{user.isActive ? '활성' : '비활성'}</Label>
           </div>
         </CardContent>
       </Card>

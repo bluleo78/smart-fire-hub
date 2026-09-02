@@ -1,5 +1,5 @@
 import { ChevronDown, Sparkles } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 
 import type { ProactiveJob, ReportTemplate, TemplateSection, TriggerType } from '@/api/proactive';
@@ -99,6 +99,9 @@ function generateAutoTemplate(question: string): TemplateSection[] {
 
 export default function JobOverviewTab({ job, isNew, isEditing, form, templates, onChange }: JobOverviewTabProps) {
   const { register, watch, setValue, formState: { errors } } = form;
+  // 접근성: 그룹 라벨↔위젯 연결용 id 접두사 (#432).
+  // 기존 하드코딩 id(job-name, mode-manual 등)는 E2E 계약이라 그대로 둔다.
+  const baseId = useId();
   // dirty 마킹 헬퍼 — onChange가 없으면 no-op (이슈 #59)
   const markDirty = useCallback(() => onChange?.(), [onChange]);
   const channels = watch('config.channels');
@@ -286,8 +289,13 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
       {/* 작성 모드 선택 (신규 생성 시에만) */}
       {isNew && (
         <div className="space-y-3">
-          <Label>작성 모드</Label>
+          {/* 라디오 그룹 전체의 제목이라 단일 입력이 없다 — span 으로 두고
+              role=radiogroup 루트에 aria-labelledby 로 이름을 연결한다 (#432) */}
+          <span id={`${baseId}-creation-mode-label`} className="block text-sm leading-none font-medium">
+            작성 모드
+          </span>
           <RadioGroup
+            aria-labelledby={`${baseId}-creation-mode-label`}
             value={creationMode}
             onValueChange={(v) => setCreationMode(v as CreationMode)}
             className="flex gap-4"
@@ -526,7 +534,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
 
       {/* 전달 채널 */}
       <div className="space-y-2">
-        <Label>전달 채널 및 수신자</Label>
+        {/* 채널 편집기는 체크박스 여러 개의 묶음이라 대응하는 단일 입력이 없다 —
+            각 채널 체크박스가 자체 라벨을 갖고 있으므로 여기는 섹션 제목 span 으로 둔다 (#432) */}
+        <span className="block text-sm leading-none font-medium">전달 채널 및 수신자</span>
         <ChannelRecipientEditor
           channels={channels}
           onChange={(updated) => {

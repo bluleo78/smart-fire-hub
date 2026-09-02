@@ -1,5 +1,5 @@
 import { AlertTriangle,Check, Copy } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,14 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
   const [ipInput, setIpInput] = useState('');
   // IP 입력 값이 유효하지 않을 때 표시할 에러 메시지
   const [ipError, setIpError] = useState('');
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 추가/수정 다이얼로그 양쪽에서 렌더되므로 useId.
+  const baseId = useId();
+  const tokenLabelId = `${baseId}-token-label`;
+  const curlLabelId = `${baseId}-curl-label`;
+  const ipId = `${baseId}-ip`;
+  const ipHelpId = `${baseId}-ip-help`;
+  const ipErrorId = `${baseId}-ip-error`;
+  const allowedIpsErrorId = `${baseId}-allowed-ips-error`;
 
   const handleCopy = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -74,8 +82,18 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
           </InlineBanner>
 
           <div className="space-y-1.5">
-            <Label>API 토큰</Label>
-            <div className="flex gap-2">
+            {/*
+              읽기 전용 code 표시라 대응하는 입력 요소가 없다 — Label 컴포넌트 대신 span 으로 두고
+              표시 영역에 role="group" + aria-labelledby 로 이름을 준다 (#432).
+              className 은 shadcn Label 기본 스타일을 그대로 옮겨 시각 결과를 유지한다.
+            */}
+            <span
+              id={tokenLabelId}
+              className="flex items-center gap-2 text-sm leading-none font-medium select-none"
+            >
+              API 토큰
+            </span>
+            <div className="flex gap-2" role="group" aria-labelledby={tokenLabelId}>
               <code className="flex-1 bg-muted px-3 py-2 rounded-md text-sm font-mono break-all">
                 {generatedToken}
               </code>
@@ -91,8 +109,14 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
           </div>
 
           <div className="space-y-1.5">
-            <Label>curl 예시</Label>
-            <div className="bg-muted px-3 py-2 rounded-md">
+            {/* 위와 같은 이유로 span 요소 + role="group" (대응 입력 요소 없음, #432) */}
+            <span
+              id={curlLabelId}
+              className="flex items-center gap-2 text-sm leading-none font-medium select-none"
+            >
+              curl 예시
+            </span>
+            <div className="bg-muted px-3 py-2 rounded-md" role="group" aria-labelledby={curlLabelId}>
               <code className="text-xs font-mono break-all">{curlExample}</code>
             </div>
           </div>
@@ -106,12 +130,24 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
       )}
 
       <div className="space-y-2">
-        <Label>IP 제한 (선택)</Label>
-        <p className="text-xs text-muted-foreground">
+        <Label htmlFor={ipId}>IP 제한 (선택)</Label>
+        <p id={ipHelpId} className="text-xs text-muted-foreground">
           비워두면 모든 IP에서 호출 가능합니다.
         </p>
         <div className="flex gap-2">
           <Input
+            id={ipId}
+            /* 도움말·형식 오류·서버 검증 오류를 조건부로 모두 연결한다 */
+            aria-describedby={
+              [
+                ipHelpId,
+                ipError ? ipErrorId : null,
+                errors?.allowedIps ? allowedIpsErrorId : null,
+              ]
+                .filter(Boolean)
+                .join(' ')
+            }
+            aria-invalid={!!ipError || !!errors?.allowedIps}
             value={ipInput}
             onChange={(e) => {
               setIpInput(e.target.value);
@@ -132,7 +168,7 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
         </div>
         {/* IP 형식 오류 메시지 */}
         {ipError && (
-          <p className="text-sm text-destructive">{ipError}</p>
+          <p id={ipErrorId} className="text-sm text-destructive">{ipError}</p>
         )}
         {config.allowedIps.length > 0 && (
           <div className="flex flex-wrap gap-1">
@@ -144,7 +180,7 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
           </div>
         )}
         {errors?.allowedIps && (
-          <p className="text-sm text-destructive">{errors.allowedIps}</p>
+          <p id={allowedIpsErrorId} className="text-sm text-destructive">{errors.allowedIps}</p>
         )}
       </div>
     </div>

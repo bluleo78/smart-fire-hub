@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, Database, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 
 import type { AnomalyConfig, Sensitivity } from '@/api/proactive';
@@ -142,6 +142,11 @@ function AnomalyHistorySection({ jobId }: { jobId: number }) {
 export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange }: JobMonitoringTabProps) {
   const { watch, setValue } = form;
   const anomalyConfig: AnomalyConfig = (watch('config.anomaly') as AnomalyConfig | undefined) ?? DEFAULT_ANOMALY_CONFIG;
+
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
+  // 이 탭은 작업 상세/신규에서 재사용되므로 하드코딩 id 대신 useId()로 충돌을 막는다.
+  // (이미 하드코딩 id 로 E2E 가 의존하는 sensitivity·cooldown·custom-* 은 그대로 둔다)
+  const baseId = useId();
 
   // 시스템 메트릭 Select 리셋용 키 — 메트릭 추가 후 값을 초기화하기 위해 증가시킨다
   const [selectKey, setSelectKey] = useState(0);
@@ -308,15 +313,21 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
       <div className="rounded-lg border p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
-            <Label className="text-sm font-semibold flex items-center gap-2">
+            <Label
+              htmlFor={`${baseId}-anomaly-enabled`}
+              className="text-sm font-semibold flex items-center gap-2"
+            >
               <Activity className="h-4 w-4" />
               이상 탐지
             </Label>
-            <p className="text-xs text-muted-foreground">
+            {/* 도움말 문구 — aria-describedby 로 Switch 에 연결한다 (§J) */}
+            <p id={`${baseId}-anomaly-enabled-desc`} className="text-xs text-muted-foreground">
               메트릭 이상 발생 시 자동으로 분석을 실행합니다
             </p>
           </div>
           <Switch
+            id={`${baseId}-anomaly-enabled`}
+            aria-describedby={`${baseId}-anomaly-enabled-desc`}
             checked={anomalyConfig.enabled}
             onCheckedChange={(checked) => updateAnomaly({ enabled: checked })}
           />
@@ -366,7 +377,9 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
             {/* 모니터링 메트릭 */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>모니터링 메트릭</Label>
+                {/* 대응하는 단일 입력이 없는 그룹 제목이라 label 이 아니라 span 이다 (#432).
+                    Label 기본 스타일(text-sm/leading-none/font-medium)을 그대로 재현한다. */}
+                <span className="block text-sm leading-none font-medium">모니터링 메트릭</span>
                 <div className="flex items-center gap-2">
                   {/* 시스템 메트릭 추가 Select
                       key를 addSystemMetric 호출마다 증가시켜 Radix Select를 리마운트하면
@@ -427,8 +440,16 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
                       </Badge>
                       <span className="text-sm font-medium flex-1">{metric.name}</span>
                       <div className="flex items-center gap-2">
-                        <Label className="text-xs text-muted-foreground shrink-0">폴링 주기</Label>
+                        {/* 반복 렌더되는 메트릭 행이므로 안정 키(metric.id)를 id 에 끼워
+                            행 간 id 충돌을 막는다 (#432). metric.id 는 crypto.randomUUID() 라 안정적. */}
+                        <Label
+                          htmlFor={`${baseId}-metric-${metric.id}-interval`}
+                          className="text-xs text-muted-foreground shrink-0"
+                        >
+                          폴링 주기
+                        </Label>
                         <Input
+                          id={`${baseId}-metric-${metric.id}-interval`}
                           type="number"
                           min={60}
                           className="w-20 h-8 text-xs"

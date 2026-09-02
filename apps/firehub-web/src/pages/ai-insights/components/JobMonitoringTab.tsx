@@ -1,5 +1,5 @@
 import { BarChart3, Plus, X } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import type { AnomalyConfig, AnomalyMetricConfig, Sensitivity } from '@/api/proactive';
 import { SYSTEM_METRICS } from '@/api/proactive';
@@ -49,6 +49,9 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
     ...DEFAULT_ANOMALY_CONFIG,
     ...((config.anomaly as Partial<AnomalyConfig>) ?? {}),
   };
+
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 하드코딩 id 는 같은 폼이 여러 번 렌더될 때 충돌한다.
+  const baseId = useId();
 
   const [addFormType, setAddFormType] = useState<AddFormType>(null);
 
@@ -115,12 +118,15 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
       {/* Enable/Disable toggle */}
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
-          <Label className="text-sm font-medium">이상 감지 활성화</Label>
-          <p className="text-xs text-muted-foreground">
+          <Label htmlFor={`${baseId}-enabled`} className="text-sm font-medium">이상 감지 활성화</Label>
+          {/* 도움말 문구 — aria-describedby 로 Switch 에 연결 (§J) */}
+          <p id={`${baseId}-enabled-desc`} className="text-xs text-muted-foreground">
             메트릭을 모니터링하고 이상 발생 시 리포트를 생성합니다.
           </p>
         </div>
         <Switch
+          id={`${baseId}-enabled`}
+          aria-describedby={`${baseId}-enabled-desc`}
           checked={anomaly.enabled}
           onCheckedChange={(checked) => updateAnomaly({ enabled: checked })}
           disabled={readonly}
@@ -136,13 +142,14 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
           <div className="grid grid-cols-2 gap-4">
             {/* Sensitivity */}
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">감도</Label>
+              <Label htmlFor={`${baseId}-sensitivity`} className="text-sm font-medium">감도</Label>
               <Select
                 value={anomaly.sensitivity}
                 onValueChange={(value) => updateAnomaly({ sensitivity: value as Sensitivity })}
                 disabled={readonly}
               >
-                <SelectTrigger>
+                {/* shadcn Select 는 SelectTrigger 가 실제 포커스 대상이라 id 를 여기 건다 */}
+                <SelectTrigger id={`${baseId}-sensitivity`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -157,9 +164,10 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
 
             {/* Cooldown */}
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">재알림 방지</Label>
+              <Label htmlFor={`${baseId}-cooldown`} className="text-sm font-medium">재알림 방지</Label>
               <div className="flex items-center gap-2">
                 <Input
+                  id={`${baseId}-cooldown`}
                   type="number"
                   min={1}
                   value={anomaly.cooldownMinutes}
@@ -176,7 +184,8 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
 
           {/* Metric list */}
           <div className="space-y-3">
-            <Label className="text-sm font-medium">모니터링 메트릭</Label>
+            {/* 아래는 카드 목록 묶음이라 대응하는 단일 입력이 없다 — 그룹 제목 span (#432) */}
+            <span className="block text-sm leading-none font-medium">모니터링 메트릭</span>
 
             {anomaly.metrics.length === 0 && (
               <p className="text-sm text-muted-foreground py-4 text-center">
@@ -236,12 +245,13 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
           {!readonly && addFormType === 'system' && (
             <Card>
               <CardContent className="pt-4 space-y-4">
-                <Label className="text-sm font-medium">시스템 메트릭 추가</Label>
+                {/* 폼 섹션 제목 — 대응하는 단일 입력이 없어 span (#432) */}
+                <span className="block text-sm leading-none font-medium">시스템 메트릭 추가</span>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">메트릭</Label>
+                    <Label htmlFor={`${baseId}-sys-metric`} className="text-xs text-muted-foreground">메트릭</Label>
                     <Select value={systemMetricKey} onValueChange={setSystemMetricKey}>
-                      <SelectTrigger>
+                      <SelectTrigger id={`${baseId}-sys-metric`}>
                         <SelectValue placeholder="메트릭 선택" />
                       </SelectTrigger>
                       <SelectContent>
@@ -254,9 +264,10 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">폴링 간격</Label>
+                    <Label htmlFor={`${baseId}-sys-interval`} className="text-xs text-muted-foreground">폴링 간격</Label>
                     <div className="flex items-center gap-2">
                       <Input
+                        id={`${baseId}-sys-interval`}
                         type="number"
                         min={60}
                         value={systemPollingInterval}
@@ -283,19 +294,22 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
           {!readonly && addFormType === 'dataset' && (
             <Card>
               <CardContent className="pt-4 space-y-4">
-                <Label className="text-sm font-medium">데이터셋 메트릭 추가</Label>
+                {/* 폼 섹션 제목 — 대응하는 단일 입력이 없어 span (#432) */}
+                <span className="block text-sm leading-none font-medium">데이터셋 메트릭 추가</span>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">메트릭 이름</Label>
+                    <Label htmlFor={`${baseId}-ds-name`} className="text-xs text-muted-foreground">메트릭 이름</Label>
                     <Input
+                      id={`${baseId}-ds-name`}
                       value={datasetMetricName}
                       onChange={(e) => setDatasetMetricName(e.target.value)}
                       placeholder="예: 일별 매출 합계"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">데이터셋 ID</Label>
+                    <Label htmlFor={`${baseId}-ds-id`} className="text-xs text-muted-foreground">데이터셋 ID</Label>
                     <Input
+                      id={`${baseId}-ds-id`}
                       type="number"
                       min={1}
                       value={datasetId}
@@ -305,8 +319,9 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">SQL 쿼리</Label>
+                  <Label htmlFor={`${baseId}-ds-query`} className="text-xs text-muted-foreground">SQL 쿼리</Label>
                   <Textarea
+                    id={`${baseId}-ds-query`}
                     value={datasetQuery}
                     onChange={(e) => setDatasetQuery(e.target.value)}
                     placeholder="SELECT COUNT(*) as value FROM ..."
@@ -315,9 +330,10 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">폴링 간격</Label>
+                  <Label htmlFor={`${baseId}-ds-interval`} className="text-xs text-muted-foreground">폴링 간격</Label>
                   <div className="flex items-center gap-2">
                     <Input
+                      id={`${baseId}-ds-interval`}
                       type="number"
                       min={60}
                       value={datasetPollingInterval}

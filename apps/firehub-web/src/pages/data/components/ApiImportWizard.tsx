@@ -1,5 +1,5 @@
 import { Loader2,Play, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -86,6 +86,11 @@ export function ApiImportWizard({
 }: ApiImportWizardProps) {
   const navigate = useNavigate();
   const createApiImport = useCreateApiImport(datasetId);
+
+  // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432).
+  // 위저드는 같은 폼이 스텝마다 다시 마운트되고 다이얼로그가 중첩될 수 있어
+  // 하드코딩 id 를 쓰면 실제로 충돌한다 — useId 로 인스턴스마다 고유하게 만든다.
+  const baseId = useId();
 
   const [step, setStep] = useState(0);
 
@@ -315,8 +320,9 @@ export function ApiImportWizard({
         {step === 0 && (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>URL *</Label>
+              <Label htmlFor={`${baseId}-url`}>URL *</Label>
               <Input
+                id={`${baseId}-url`}
                 placeholder="https://api.example.com/v1/data"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
@@ -325,9 +331,9 @@ export function ApiImportWizard({
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>HTTP 메서드</Label>
+                <Label htmlFor={`${baseId}-method`}>HTTP 메서드</Label>
                 <Select value={method} onValueChange={setMethod}>
-                  <SelectTrigger>
+                  <SelectTrigger id={`${baseId}-method`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -337,8 +343,9 @@ export function ApiImportWizard({
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>데이터 경로 (JSONPath)</Label>
+                <Label htmlFor={`${baseId}-dataPath`}>데이터 경로 (JSONPath)</Label>
                 <Input
+                  id={`${baseId}-dataPath`}
                   placeholder="$.data.items"
                   value={dataPath}
                   onChange={(e) => setDataPath(e.target.value)}
@@ -348,9 +355,11 @@ export function ApiImportWizard({
 
             {/* Auth */}
             <div className="space-y-2 border rounded-md p-3">
-              <Label className="text-sm font-medium">인증</Label>
+              <Label htmlFor={`${baseId}-authType`} className="text-sm font-medium">
+                인증
+              </Label>
               <Select value={authType} onValueChange={setAuthType}>
-                <SelectTrigger>
+                <SelectTrigger id={`${baseId}-authType`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -400,8 +409,18 @@ export function ApiImportWizard({
             </div>
 
             {/* Headers */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">헤더</Label>
+            {/*
+              키/값 입력이 여러 행 반복되는 묶음이라 가리킬 단일 입력이 없다 —
+              label 대신 span 으로 두고 group 컨테이너에 aria-labelledby 로 이름을 준다 (#432).
+              Label 기본 스타일(flex/leading-none)을 보충해 시각 결과를 유지한다.
+            */}
+            <div className="space-y-2" role="group" aria-labelledby={`${baseId}-headers`}>
+              <span
+                id={`${baseId}-headers`}
+                className="flex items-center gap-2 leading-none text-sm font-medium"
+              >
+                헤더
+              </span>
               {headers.map((pair, i) => (
                 <div key={i} className="flex gap-2 items-center">
                   <Input
@@ -433,8 +452,14 @@ export function ApiImportWizard({
             </div>
 
             {/* Query Params */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">쿼리 파라미터</Label>
+            {/* 헤더와 같은 이유로 그룹 제목 — span + role=group (#432). */}
+            <div className="space-y-2" role="group" aria-labelledby={`${baseId}-queryParams`}>
+              <span
+                id={`${baseId}-queryParams`}
+                className="flex items-center gap-2 leading-none text-sm font-medium"
+              >
+                쿼리 파라미터
+              </span>
               {queryParams.map((pair, i) => (
                 <div key={i} className="flex gap-2 items-center">
                   <Input
@@ -468,8 +493,9 @@ export function ApiImportWizard({
             {/* Body (POST only) */}
             {method === 'POST' && (
               <div className="space-y-1.5">
-                <Label>요청 바디 (JSON)</Label>
+                <Label htmlFor={`${baseId}-body`}>요청 바디 (JSON)</Label>
                 <Textarea
+                  id={`${baseId}-body`}
                   className="text-xs font-mono"
                   rows={4}
                   placeholder='{"key": "value"}'
@@ -501,8 +527,14 @@ export function ApiImportWizard({
             {previewResult && <ApiCallPreview result={previewResult} />}
 
             {/* Field Mappings */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">필드 매핑</Label>
+            {/* 매핑 행 묶음의 그룹 제목 — 단일 컨트롤이 없으므로 span + role=group (#432). */}
+            <div className="space-y-2" role="group" aria-labelledby={`${baseId}-fieldMappings`}>
+              <span
+                id={`${baseId}-fieldMappings`}
+                className="flex items-center gap-2 leading-none text-sm font-medium"
+              >
+                필드 매핑
+              </span>
               <p className="text-xs text-muted-foreground">
                 테스트 호출 후 자동으로 채워집니다. 직접 수정할 수도 있습니다.
               </p>
@@ -668,8 +700,9 @@ export function ApiImportWizard({
         {step === 3 && (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>파이프라인 이름</Label>
+              <Label htmlFor={`${baseId}-pipelineName`}>파이프라인 이름</Label>
               <Input
+                id={`${baseId}-pipelineName`}
                 value={pipelineName}
                 onChange={(e) => setPipelineName(e.target.value)}
                 placeholder={`${datasetName} API Import`}
@@ -677,9 +710,9 @@ export function ApiImportWizard({
             </div>
 
             <div className="space-y-1.5">
-              <Label>적재 전략</Label>
+              <Label htmlFor={`${baseId}-loadStrategy`}>적재 전략</Label>
               <Select value={loadStrategy} onValueChange={setLoadStrategy}>
-                <SelectTrigger>
+                <SelectTrigger id={`${baseId}-loadStrategy`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -715,20 +748,28 @@ export function ApiImportWizard({
               {scheduleEnabled && (
                 <div className="space-y-2 pt-1">
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Cron 표현식</Label>
+                    <Label htmlFor={`${baseId}-cron`} className="text-xs">
+                      Cron 표현식
+                    </Label>
+                    {/* 예시 문구를 aria-describedby 로 입력에 연결한다 (#432, §J). */}
                     <Input
+                      id={`${baseId}-cron`}
+                      aria-describedby={`${baseId}-cron-help`}
                       placeholder="0 0 * * * (매일 자정)"
                       value={cronExpression}
                       onChange={(e) => setCronExpression(e.target.value)}
                       className="font-mono text-sm"
                     />
-                    <p className="text-xs text-muted-foreground">
+                    <p id={`${baseId}-cron-help`} className="text-xs text-muted-foreground">
                       예: <code>0 9 * * 1-5</code> — 평일 오전 9시
                     </p>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs">스케줄 이름 (선택)</Label>
+                    <Label htmlFor={`${baseId}-scheduleName`} className="text-xs">
+                      스케줄 이름 (선택)
+                    </Label>
                     <Input
+                      id={`${baseId}-scheduleName`}
                       placeholder="매일 API 동기화"
                       value={scheduleName}
                       onChange={(e) => setScheduleName(e.target.value)}

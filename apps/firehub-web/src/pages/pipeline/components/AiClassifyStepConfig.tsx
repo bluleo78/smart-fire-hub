@@ -8,7 +8,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -112,6 +112,12 @@ export default function AiClassifyStepConfig({
   onChange,
   readOnly,
 }: AiClassifyStepConfigProps) {
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 스텝마다 이 패널이 다시 렌더되므로 하드코딩 id 는 충돌한다.
+  const baseId = useId();
+  const batchSizeId = `${baseId}-batch-size`;
+  const batchSizeHelpId = `${baseId}-batch-size-help`;
+  const onErrorId = `${baseId}-on-error`;
+
   const primaryDatasetId = inputDatasetIds[0] ?? 0;
   const { data: datasetDetail, isLoading: columnsLoading } = useDataset(primaryDatasetId);
   const columns = datasetDetail?.columns ?? [];
@@ -347,8 +353,10 @@ export default function AiClassifyStepConfig({
       >
         <div className="space-y-2">
           <div className="space-y-1.5">
-            <Label className="text-xs">배치 크기 (1~100)</Label>
+            <Label htmlFor={batchSizeId} className="text-xs">배치 크기 (1~100)</Label>
             <Input
+              id={batchSizeId}
+              aria-describedby={batchSizeHelpId}
               className="h-8 text-xs"
               type="number"
               min={1}
@@ -360,17 +368,17 @@ export default function AiClassifyStepConfig({
                 update('batchSize', v);
               }}
             />
-            <p className="text-xs text-muted-foreground">한 번에 처리할 행 수 (기본값: 20)</p>
+            <p id={batchSizeHelpId} className="text-xs text-muted-foreground">한 번에 처리할 행 수 (기본값: 20)</p>
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs">오류 처리</Label>
+            <Label htmlFor={onErrorId} className="text-xs">오류 처리</Label>
             <Select
               value={onError}
               disabled={readOnly}
               onValueChange={(v) => update('onError', v as AiClassifyConfig['onError'])}
             >
-              <SelectTrigger className="h-8 text-xs w-full">
+              <SelectTrigger id={onErrorId} className="h-8 text-xs w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

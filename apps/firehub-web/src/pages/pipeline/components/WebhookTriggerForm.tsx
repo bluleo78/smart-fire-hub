@@ -1,5 +1,5 @@
 import { AlertTriangle,Check, Copy } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { InlineBanner } from '@/components/ui/inline-banner';
@@ -18,6 +18,12 @@ interface WebhookTriggerFormProps {
 
 export default function WebhookTriggerForm({ config, onChange, isEditMode, errors }: WebhookTriggerFormProps) {
   const [copied, setCopied] = useState(false);
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 추가/수정 다이얼로그 양쪽에서 렌더되므로 useId.
+  const baseId = useId();
+  const urlLabelId = `${baseId}-url-label`;
+  const secretId = `${baseId}-secret`;
+  const secretNoteId = `${baseId}-secret-note`;
+  const secretErrorId = `${baseId}-secret-error`;
 
   const webhookUrl = config.webhookId
     ? `${window.location.origin}/api/v1/triggers/webhook/${config.webhookId}`
@@ -35,8 +41,18 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
     <div className="space-y-4">
       {config.webhookId && (
         <div className="space-y-1.5">
-          <Label>웹훅 URL</Label>
-          <div className="flex gap-2">
+          {/*
+            읽기 전용 code 표시라 대응하는 입력 요소가 없다 — Label 컴포넌트 대신 span 으로 둔다 (#432).
+            표시 영역에 role="group" + aria-labelledby 를 걸어 스크린리더가 이름을 읽게 한다.
+            className 은 shadcn Label 기본 스타일을 그대로 옮겨 시각 결과를 유지한다.
+          */}
+          <span
+            id={urlLabelId}
+            className="flex items-center gap-2 text-sm leading-none font-medium select-none"
+          >
+            웹훅 URL
+          </span>
+          <div className="flex gap-2" role="group" aria-labelledby={urlLabelId}>
             <code className="flex-1 bg-muted px-3 py-2 rounded-md text-sm font-mono break-all">
               {webhookUrl}
             </code>
@@ -53,26 +69,34 @@ export default function WebhookTriggerForm({ config, onChange, isEditMode, error
       )}
 
       <div className="space-y-1.5">
-        <Label>시크릿 키 (선택)</Label>
+        <Label htmlFor={secretId}>시크릿 키 (선택)</Label>
         {!isEditMode && (
           <InlineBanner icon={<AlertTriangle />} className="mb-2">
             시크릿 키는 생성 시 한 번만 설정할 수 있습니다. 이후에는 다시 볼 수 없습니다.
           </InlineBanner>
         )}
         <Input
+          id={secretId}
           type="password"
           value={config.secret ?? ''}
           onChange={(e) => onChange({ ...config, secret: e.target.value })}
           placeholder="HMAC-SHA256 서명 검증에 사용할 시크릿 키"
           disabled={isEditMode}
+          /* 수정 모드 안내문과 오류 문구를 조건부로 연결한다 */
+          aria-describedby={
+            [isEditMode ? secretNoteId : null, errors?.secret ? secretErrorId : null]
+              .filter(Boolean)
+              .join(' ') || undefined
+          }
+          aria-invalid={!!errors?.secret}
         />
         {isEditMode && (
-          <p className="text-xs text-muted-foreground">
+          <p id={secretNoteId} className="text-xs text-muted-foreground">
             시크릿 키는 수정할 수 없습니다. 변경이 필요하면 트리거를 삭제 후 재생성하세요.
           </p>
         )}
         {errors?.secret && (
-          <p className="text-sm text-destructive">{errors.secret}</p>
+          <p id={secretErrorId} className="text-sm text-destructive">{errors.secret}</p>
         )}
       </div>
 

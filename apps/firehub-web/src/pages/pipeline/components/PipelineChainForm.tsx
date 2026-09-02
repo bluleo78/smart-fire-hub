@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +30,11 @@ interface PipelineChainFormProps {
 export default function PipelineChainForm({ pipelineId, config, onChange, errors }: PipelineChainFormProps) {
   const [open, setOpen] = useState(false);
   const { data: pipelinesData } = usePipelines({ size: 1000 });
+  // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 추가/수정 다이얼로그 양쪽에서 렌더되므로 useId.
+  const baseId = useId();
+  const upstreamId = `${baseId}-upstream`;
+  const upstreamErrorId = `${baseId}-upstream-error`;
+  const conditionLabelId = `${baseId}-condition-label`;
 
   const pipelines = (pipelinesData?.content ?? []).filter((p) => p.id !== pipelineId);
   const selected = pipelines.find((p) => p.id === config.upstreamPipelineId);
@@ -37,13 +42,16 @@ export default function PipelineChainForm({ pipelineId, config, onChange, errors
   return (
     <div className="space-y-4">
       <div className="space-y-1.5">
-        <Label>선행 파이프라인</Label>
+        <Label htmlFor={upstreamId}>선행 파이프라인</Label>
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button
+              id={upstreamId}
               variant="outline"
               role="combobox"
               aria-expanded={open}
+              aria-describedby={errors?.upstreamPipelineId ? upstreamErrorId : undefined}
+              aria-invalid={!!errors?.upstreamPipelineId}
               className={cn(
                 'w-full justify-between font-normal',
                 errors?.upstreamPipelineId && 'border-destructive',
@@ -85,13 +93,24 @@ export default function PipelineChainForm({ pipelineId, config, onChange, errors
           </PopoverContent>
         </Popover>
         {errors?.upstreamPipelineId && (
-          <p className="text-sm text-destructive">{errors.upstreamPipelineId}</p>
+          <p id={upstreamErrorId} className="text-sm text-destructive">{errors.upstreamPipelineId}</p>
         )}
       </div>
 
       <div className="space-y-2">
-        <Label>트리거 조건</Label>
+        {/*
+          라디오 그룹 전체의 제목이라 대응하는 단일 컨트롤이 없다 — Label 컴포넌트 대신 span 으로 두고
+          RadioGroup 에 aria-labelledby 로 연결한다 (#432).
+          className 은 shadcn Label 기본 스타일을 그대로 옮겨 시각 결과를 유지한다.
+        */}
+        <span
+          id={conditionLabelId}
+          className="flex items-center gap-2 text-sm leading-none font-medium select-none"
+        >
+          트리거 조건
+        </span>
         <RadioGroup
+          aria-labelledby={conditionLabelId}
           value={config.condition}
           onValueChange={(val) => onChange({ ...config, condition: val as TriggerCondition })}
         >

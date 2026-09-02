@@ -1,6 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 import cronstrue from 'cronstrue/i18n';
-import { useMemo } from 'react';
+import { useId, useMemo } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +48,15 @@ export default function CronExpressionInput({
   onTimezoneChange,
   error,
 }: CronExpressionInputProps) {
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
+  // 이 컴포넌트는 추가/수정 트리거 다이얼로그 양쪽에서 렌더될 수 있어 하드코딩 id 는 충돌한다.
+  const baseId = useId();
+  const cronId = `${baseId}-cron`;
+  const cronDescId = `${baseId}-cron-desc`;
+  const cronErrorId = `${baseId}-cron-error`;
+  const timezoneId = `${baseId}-timezone`;
+  const nextRunsId = `${baseId}-next-runs`;
+
   const { description, parseError } = useMemo(() => {
     if (!value.trim()) return { description: '', parseError: null as string | null };
     try {
@@ -82,18 +91,26 @@ export default function CronExpressionInput({
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <Label>Cron 표현식</Label>
+        <Label htmlFor={cronId}>Cron 표현식</Label>
         <Input
+          id={cronId}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0 9 * * *"
           className={displayError ? 'border-destructive' : undefined}
+          /* 설명(사람이 읽는 cron 해석)과 오류 문구를 모두 스크린리더에 연결한다 — 둘 다 조건부 렌더 */
+          aria-describedby={
+            [description ? cronDescId : null, displayError ? cronErrorId : null]
+              .filter(Boolean)
+              .join(' ') || undefined
+          }
+          aria-invalid={!!displayError}
         />
         {description && (
-          <p className="text-sm text-muted-foreground">{description}</p>
+          <p id={cronDescId} className="text-sm text-muted-foreground">{description}</p>
         )}
         {displayError && (
-          <p className="text-sm text-destructive">{displayError}</p>
+          <p id={cronErrorId} className="text-sm text-destructive">{displayError}</p>
         )}
       </div>
 
@@ -113,9 +130,9 @@ export default function CronExpressionInput({
       </div>
 
       <div className="space-y-1.5">
-        <Label>타임존</Label>
+        <Label htmlFor={timezoneId}>타임존</Label>
         <Select value={timezone} onValueChange={onTimezoneChange}>
-          <SelectTrigger className="w-full">
+          <SelectTrigger id={timezoneId} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -130,8 +147,18 @@ export default function CronExpressionInput({
 
       {nextExecutions.length > 0 && (
         <div className="space-y-1.5">
-          <Label className="text-muted-foreground text-xs">다음 5회 실행 예정</Label>
-          <ul className="space-y-0.5">
+          {/*
+            대응하는 단일 입력 요소가 없는 목록 제목이라 Label 컴포넌트가 아니라 span 으로 둔다 (#432).
+            className 은 shadcn Label 기본 스타일(flex/leading-none/font-medium/select-none)을
+            그대로 옮겨 시각 결과를 유지하고, 크기는 기존대로 text-xs 를 쓴다.
+          */}
+          <span
+            id={nextRunsId}
+            className="flex items-center gap-2 leading-none font-medium select-none text-muted-foreground text-xs"
+          >
+            다음 5회 실행 예정
+          </span>
+          <ul className="space-y-0.5" aria-labelledby={nextRunsId}>
             {nextExecutions.map((time, i) => (
               <li key={i} className="text-xs text-muted-foreground font-mono">
                 {i + 1}. {time}

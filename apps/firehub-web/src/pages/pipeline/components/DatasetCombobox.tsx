@@ -27,6 +27,8 @@ interface SingleProps {
   onChange: (value: number | null) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** 트리거 버튼의 id. 호출처의 `<Label htmlFor>` 과 짝을 이룬다 (#432). */
+  id?: string;
 }
 
 interface MultiProps {
@@ -36,12 +38,16 @@ interface MultiProps {
   onChange: (value: number[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** 트리거 버튼의 id. 호출처의 `<Label htmlFor>` 과 짝을 이룬다 (#432). */
+  id?: string;
 }
 
 type DatasetComboboxProps = SingleProps | MultiProps;
 
 export default function DatasetCombobox(props: DatasetComboboxProps) {
-  const { mode, datasets, placeholder = '데이터셋 선택', disabled = false } = props;
+  // id 는 single/multi 두 분기 모두의 트리거 버튼에 전달해야 한다 —
+  // single 분기가 early-return 이라 한쪽만 걸면 조용히 절반만 연결된다 (#432).
+  const { mode, datasets, placeholder = '데이터셋 선택', disabled = false, id } = props;
   const [open, setOpen] = useState(false);
 
   if (mode === 'single') {
@@ -61,6 +67,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
+            id={id}
             variant="outline"
             role="combobox"
             aria-expanded={open}
@@ -125,6 +132,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id}
           variant="outline"
           role="combobox"
           aria-expanded={open}

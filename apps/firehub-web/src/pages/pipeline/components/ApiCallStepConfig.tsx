@@ -10,7 +10,7 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { toast } from 'sonner';
 
 import { client } from '@/api/client';
@@ -273,6 +273,10 @@ export default function ApiCallStepConfig({
   onConnectionChange,
   readOnly,
 }: ApiCallStepConfigProps) {
+  // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
+  // 이 패널은 스텝이 바뀔 때마다 key 로 재마운트되고 여러 곳에서 재사용될 수 있어 하드코딩 id 는 충돌한다.
+  const baseId = useId();
+
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   // selectable 엔드포인트: 일반 사용자도 접근 가능 (파이프라인 에디터 권한)
@@ -450,16 +454,18 @@ export default function ApiCallStepConfig({
         {selectedConn && (
           <div className="space-y-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">URL *</Label>
+              <Label htmlFor={`${baseId}-base-url`} className="text-xs">URL *</Label>
               <Input
+                id={`${baseId}-base-url`}
                 value={selectedConn.baseUrl}
                 disabled
                 className="text-xs h-8 font-mono bg-muted"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">추가 경로</Label>
+              <Label htmlFor={`${baseId}-path`} className="text-xs">추가 경로</Label>
               <Input
+                id={`${baseId}-path`}
                 placeholder="/v1/data (선택)"
                 value={path}
                 disabled={readOnly}
@@ -473,8 +479,9 @@ export default function ApiCallStepConfig({
         {/* inline 모드: full URL 직접 입력 */}
         {apiConnectionId === null && (
           <div className="space-y-1.5">
-            <Label className="text-xs">URL *</Label>
+            <Label htmlFor={`${baseId}-custom-url`} className="text-xs">URL *</Label>
             <Input
+              id={`${baseId}-custom-url`}
               placeholder="https://api.example.com/v1/data"
               value={customUrl}
               disabled={readOnly}
@@ -486,9 +493,9 @@ export default function ApiCallStepConfig({
 
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1.5">
-            <Label className="text-xs">HTTP 메서드</Label>
+            <Label htmlFor={`${baseId}-method`} className="text-xs">HTTP 메서드</Label>
             <Select value={method} disabled={readOnly} onValueChange={(v) => update('method', v)}>
-              <SelectTrigger className="h-8 text-xs w-full">
+              <SelectTrigger id={`${baseId}-method`} className="h-8 text-xs w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -498,8 +505,11 @@ export default function ApiCallStepConfig({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">데이터 경로</Label>
+            <Label htmlFor={`${baseId}-data-path`} className="text-xs">데이터 경로</Label>
             <Input
+              id={`${baseId}-data-path`}
+              /* 아래 JSONPath 안내문은 데이터 경로 필드만 설명한다 (2열 그리드 밖에 있어 시각적으로만 떨어져 있음) */
+              aria-describedby={`${baseId}-data-path-help`}
               placeholder="$.data.items"
               value={dataPath}
               disabled={readOnly}
@@ -508,7 +518,7 @@ export default function ApiCallStepConfig({
             />
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">
+        <p id={`${baseId}-data-path-help`} className="text-xs text-muted-foreground">
           JSONPath 형식으로 데이터 배열의 경로를 지정하세요
         </p>
       </div>
@@ -702,7 +712,7 @@ export default function ApiCallStepConfig({
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <div className="flex-1 space-y-1">
-              <Label className="text-xs">유형</Label>
+              <Label htmlFor={`${baseId}-pagination-type`} className="text-xs">유형</Label>
               <Select
                 value={pagination.type}
                 disabled={readOnly}
@@ -710,7 +720,7 @@ export default function ApiCallStepConfig({
                   handlePaginationChange({ type: v as 'NONE' | 'OFFSET' })
                 }
               >
-                <SelectTrigger className="h-8 text-xs w-full">
+                <SelectTrigger id={`${baseId}-pagination-type`} className="h-8 text-xs w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -721,7 +731,7 @@ export default function ApiCallStepConfig({
             </div>
             {pagination.type === 'OFFSET' && !readOnly && (
               <div className="flex-1 space-y-1">
-                <Label className="text-xs">프리셋</Label>
+                <Label htmlFor={`${baseId}-pagination-preset`} className="text-xs">프리셋</Label>
                 <Select
                   value=""
                   onValueChange={(v) => {
@@ -732,7 +742,7 @@ export default function ApiCallStepConfig({
                     }
                   }}
                 >
-                  <SelectTrigger className="h-8 text-xs w-full">
+                  <SelectTrigger id={`${baseId}-pagination-preset`} className="h-8 text-xs w-full">
                     <SelectValue placeholder="프리셋 선택" />
                   </SelectTrigger>
                   <SelectContent>
@@ -748,8 +758,9 @@ export default function ApiCallStepConfig({
             <div className="space-y-1.5">
               <div className="grid grid-cols-2 gap-1.5">
                 <div className="space-y-1">
-                  <Label className="text-xs">페이지 크기</Label>
+                  <Label htmlFor={`${baseId}-page-size`} className="text-xs">페이지 크기</Label>
                   <Input
+                    id={`${baseId}-page-size`}
                     className="h-7 text-xs"
                     type="number"
                     value={pagination.pageSize ?? 100}
@@ -760,8 +771,9 @@ export default function ApiCallStepConfig({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">총 건수 경로</Label>
+                  <Label htmlFor={`${baseId}-total-path`} className="text-xs">총 건수 경로</Label>
                   <Input
+                    id={`${baseId}-total-path`}
                     className="h-7 text-xs"
                     placeholder="$.meta.totalCount"
                     value={pagination.totalPath ?? ''}
@@ -770,8 +782,9 @@ export default function ApiCallStepConfig({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Offset 파라미터</Label>
+                  <Label htmlFor={`${baseId}-offset-param`} className="text-xs">Offset 파라미터</Label>
                   <Input
+                    id={`${baseId}-offset-param`}
                     className="h-7 text-xs"
                     placeholder="offset"
                     value={pagination.offsetParam ?? 'offset'}
@@ -780,8 +793,9 @@ export default function ApiCallStepConfig({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Limit 파라미터</Label>
+                  <Label htmlFor={`${baseId}-limit-param`} className="text-xs">Limit 파라미터</Label>
                   <Input
+                    id={`${baseId}-limit-param`}
                     className="h-7 text-xs"
                     placeholder="limit"
                     value={pagination.limitParam ?? 'limit'}
@@ -801,8 +815,9 @@ export default function ApiCallStepConfig({
       <Section title="고급 설정" icon={<Settings2 className="h-3.5 w-3.5" />}>
         <div className="grid grid-cols-2 gap-1.5">
           <div className="space-y-1">
-            <Label className="text-xs">재시도 횟수</Label>
+            <Label htmlFor={`${baseId}-max-retries`} className="text-xs">재시도 횟수</Label>
             <Input
+              id={`${baseId}-max-retries`}
               className="h-7 text-xs"
               type="number"
               value={retry.maxRetries}
@@ -811,8 +826,9 @@ export default function ApiCallStepConfig({
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">요청 타임아웃 (ms)</Label>
+            <Label htmlFor={`${baseId}-timeout-ms`} className="text-xs">요청 타임아웃 (ms)</Label>
             <Input
+              id={`${baseId}-timeout-ms`}
               className="h-7 text-xs"
               type="number"
               value={timeoutMs}
@@ -821,8 +837,9 @@ export default function ApiCallStepConfig({
             />
           </div>
           <div className="space-y-1 col-span-2">
-            <Label className="text-xs">최대 실행 시간 (ms)</Label>
+            <Label htmlFor={`${baseId}-max-duration-ms`} className="text-xs">최대 실행 시간 (ms)</Label>
             <Input
+              id={`${baseId}-max-duration-ms`}
               className="h-7 text-xs"
               type="number"
               value={maxDurationMs}
