@@ -96,9 +96,12 @@ describe('디자인 가이드라인 게이트', () => {
       const src = readFileSync(file, 'utf8');
       for (const tag of findLabelOpeningTags(src)) {
         if (/\bhtmlFor\b/.test(tag.text)) continue;
-        const key = `${rel(file)}:${tag.line}`;
+        // 예외 키는 파일 + 라벨 텍스트다(라인번호 아님 — #443). 라인번호로 잡으면
+        // 위쪽에 줄이 늘 때마다 무고한 실패가 나고, 반대로 다른 htmlFor 없는 <Label>
+        // 이 우연히 그 라인에 오면 **조용히 면제**된다.
+        const key = `${rel(file)}#${labelTextOf(src, tag)}`;
         if (LABEL_HTMLFOR_ALLOWLIST.has(key)) continue;
-        offenders.push(key);
+        offenders.push(`${key} (${rel(file)}:${tag.line})`);
       }
     }
     expect(
@@ -153,7 +156,12 @@ describe('디자인 가이드라인 게이트', () => {
 });
 
 /**
- * htmlFor 없이 쓰이는 것이 정당한 <Label> 의 예외 목록. `상대경로:라인번호` 로 고정한다.
+ * htmlFor 없이 쓰이는 것이 정당한 <Label> 의 예외 목록. `상대경로#라벨텍스트` 로 고정한다.
+ *
+ * **라인번호로 키잉하지 않는 이유 (#443)**: 라인번호는 두 방향으로 다 나쁘다.
+ *  - 위쪽에 줄이 하나 늘면 예외가 어긋나 무고한 실패가 난다.
+ *  - 반대로 htmlFor 없는 다른 <Label> 이 우연히 그 라인에 오면 **조용히 면제**된다.
+ * 라벨 텍스트로 잡으면 양쪽 다 사라진다.
  *
  * 예외 사유는 단 하나 — **대응하는 단일 입력 요소가 없는 그룹/섹션 제목**이다.
  * (래핑 `<Label>…<Input/></Label>` 형태는 이 코드베이스에 0건이라 예외 사유가 아니다.)
@@ -164,8 +172,29 @@ const LABEL_HTMLFOR_ALLOWLIST = new Set<string>([
   // 그런데 이 <Label> 은 `tabIndex={-1}` + ref 로 **속성 행 삭제 후 포커스 폴백 대상**이고,
   // e2e/pages/admin/ontology-editor.spec.ts 가 `{ tag: 'LABEL', text: '속성' }` 로
   // 태그 자체를 단언한다. <span> 으로 바꾸면 그 회귀 테스트가 깨지므로 현 형태를 유지한다.
-  'pages/admin/components/model-editor/EntityInspector.tsx:455',
+  'pages/admin/components/model-editor/EntityInspector.tsx#속성',
 ]);
+
+/**
+ * `<Label ...>` 여는 태그 바로 뒤의 라벨 텍스트를 뽑는다 — ALLOWLIST 의 키.
+ *
+ * 닫는 `</Label>` 까지의 내용에서 JSX 표현식(`{...}`)과 중첩 태그를 걷어내고 남은 평문을
+ * 공백 정규화해 돌려준다. 평문이 없으면(전부 표현식인 동적 라벨) 빈 문자열이 되는데,
+ * 그런 라벨은 안정된 키가 없으므로 애초에 예외로 등록할 수 없다 — 의도된 동작이다.
+ */
+function labelTextOf(src: string, tag: { text: string; line: number }): string {
+  const start = src.indexOf(tag.text);
+  if (start === -1) return '';
+  const bodyStart = start + tag.text.length;
+  const close = src.indexOf('</Label>', bodyStart);
+  if (close === -1) return '';
+  return src
+    .slice(bodyStart, close)
+    .replace(/\{[^}]*\}/g, ' ') // JSX 표현식 제거
+    .replace(/<[^>]*>/g, ' ') // 중첩 태그 제거
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /**
  * 소스에서 `<Label ...>` 여는 태그를 전부 찾는다.

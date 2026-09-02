@@ -157,19 +157,32 @@ export default function StepConfigPanel({
 
               {/* Description */}
               <div className="space-y-1.5">
-                <Label htmlFor="pipeline-description">설명</Label>
+                {/*
+                  읽기 전용일 때는 짝이 될 입력 요소가 없으므로 Label 대신 span 으로 둔다 (#442).
+                  Label 을 남기면 htmlFor 가 가리키는 id 가 DOM 에 없어(dangling) 스크린리더가
+                  이름을 연결하지 못하고 라벨 클릭도 무동작이다. 라벨과 짝 요소를 한 삼항 안에
+                  묶어 두 분기가 따로 갈라지지 않게 한다. 위 "이름" 이 이미 같은 형태다.
+                */}
                 {readOnly ? (
-                  <p className="text-sm whitespace-pre-wrap">{state.description || '-'}</p>
+                  <>
+                    <span className="flex items-center gap-2 text-sm leading-none font-medium select-none">
+                      설명
+                    </span>
+                    <p className="text-sm whitespace-pre-wrap">{state.description || '-'}</p>
+                  </>
                 ) : (
-                  <Textarea
-                    id="pipeline-description"
-                    value={state.description}
-                    onChange={(e) =>
-                      dispatch({ type: 'SET_META', payload: { description: e.target.value } })
-                    }
-                    placeholder="파이프라인 설명을 입력하세요"
-                    rows={4}
-                  />
+                  <>
+                    <Label htmlFor="pipeline-description">설명</Label>
+                    <Textarea
+                      id="pipeline-description"
+                      value={state.description}
+                      onChange={(e) =>
+                        dispatch({ type: 'SET_META', payload: { description: e.target.value } })
+                      }
+                      placeholder="파이프라인 설명을 입력하세요"
+                      rows={4}
+                    />
+                  </>
                 )}
               </div>
 
