@@ -57,7 +57,7 @@ export class PageErrorBoundary extends Component<Props, State> {
             </p>
           </div>
           <Button variant="outline" onClick={this.handleRetry}>
-            <RefreshCw className="mr-2 h-4 w-4" />
+            <RefreshCw className=" h-4 w-4" />
             다시 시도
           </Button>
         </div>

@@ -106,6 +106,50 @@ describe('디자인 가이드라인 게이트', () => {
       '09-form-patterns.md §J — <Label htmlFor={id}> + 입력 요소 id={id} 로 연결하세요 (id 는 useId())',
     ).toEqual([]);
   });
+
+  /**
+   * 07-iconography.md §4 아이콘-텍스트 간격:
+   * "`gap-*`으로 간격을 제어한다. `margin`이나 `padding`을 아이콘에 직접 적용하지 않는다."
+   *
+   * 이게 취향이 아니라 실제 시각 결함인 이유: shadcn `Button` 은 기저 클래스에 이미
+   * `gap-2`(size="sm" 은 `gap-1.5`)를 갖고 있다. 그 안의 아이콘에 `mr-2` 를 덧붙이면
+   * 간격이 8px 이 아니라 **16px** 로 벌어져, 같은 화면에서 margin 이 붙은 버튼과 안 붙은
+   * 버튼의 간격이 두 배 차이 난다. #436 시점에 이 형태가 약 20건이었다.
+   *
+   * 검사 대상은 **Lucide 아이콘 컴포넌트**로 좁힌다. 임의의 대문자 컴포넌트까지 잡으면
+   * Badge·FreshnessBar 처럼 아이콘이 아닌 인접 요소의 정당한 margin 까지 걸려서,
+   * 게이트를 느슨하게 만들고 싶어지는 압력이 생긴다.
+   */
+  it('아이콘에 margin 을 직접 걸지 않는다 (컨테이너의 gap-* 으로 제어)', () => {
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      const src = readFileSync(file, 'utf8');
+      // 이 파일이 lucide 에서 가져온 아이콘 이름들 (`X as Y` 는 별칭 Y 로 쓰인다)
+      const icons = new Set<string>();
+      for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'lucide-react'/g)) {
+        for (const raw of m[1].split(',')) {
+          const parts = raw.trim().split(/\s+as\s+/);
+          const local = (parts[1] ?? parts[0]).trim();
+          if (local) icons.add(local);
+        }
+      }
+      if (icons.size === 0) continue;
+
+      const lines = src.split('\n');
+      lines.forEach((line, i) => {
+        const m = /<([A-Z][A-Za-z0-9_]*)\b[^>]*className="([^"]*)"/.exec(line);
+        if (!m) return;
+        if (!icons.has(m[1])) return;
+        // 음수 margin(-ml-2 등)은 컨테이너 패딩 상쇄용이라 간격 규칙과 다른 목적이다.
+        if (!/(?:^|\s)m[rl]-[0-9]/.test(m[2])) return;
+        offenders.push(`${rel(file)}:${i + 1} <${m[1]}>`);
+      });
+    }
+    expect(
+      offenders,
+      '07-iconography.md §4 — 아이콘의 margin 을 지우고 컨테이너에 gap-* 을 주세요',
+    ).toEqual([]);
+  });
 });
 
 /**

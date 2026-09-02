@@ -231,11 +231,11 @@ export function JobMonitoringTab({ config, onChange, readonly }: JobMonitoringTa
                 onClick={() => setAddFormType('system')}
                 disabled={availableSystemMetrics.length === 0}
               >
-                <Plus className="size-4 mr-1" />
+                <Plus className="size-4" />
                 시스템 메트릭 추가
               </Button>
               <Button variant="outline" size="sm" onClick={() => setAddFormType('dataset')}>
-                <Plus className="size-4 mr-1" />
+                <Plus className="size-4" />
                 데이터셋 메트릭
               </Button>
             </div>

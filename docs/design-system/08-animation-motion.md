@@ -183,7 +183,7 @@ Tailwind를 사용하는 경우 조건부 클래스로 적용할 수 있다.
 
 // 버튼 내 스피너
 <Button disabled={isPending}>
-  {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
   저장
 </Button>
 

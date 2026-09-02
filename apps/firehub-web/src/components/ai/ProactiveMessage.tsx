@@ -100,7 +100,7 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
                 setReportModalOpen(true);
               }}
             >
-              <ExternalLink className="h-3 w-3 mr-1" />
+              <ExternalLink className="h-3 w-3" />
               리포트 보기
             </Button>
             <ReportModal

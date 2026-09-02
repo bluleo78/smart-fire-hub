@@ -277,19 +277,19 @@ export default function HomePage() {
       <section aria-labelledby="home-quick-actions-heading" className="flex flex-wrap gap-2">
         <h2 id="home-quick-actions-heading" className="sr-only">퀵 액션</h2>
         <Button variant="outline" size="sm" onClick={() => navigate('/data/datasets/new')}>
-          <Database className="h-4 w-4 mr-2" />
+          <Database className="h-4 w-4" />
           새 데이터셋
         </Button>
         <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
-          <ListChecks className="h-4 w-4 mr-2" />
+          <ListChecks className="h-4 w-4" />
           파이프라인 목록
         </Button>
         <Button variant="outline" size="sm" onClick={() => navigate('/analytics/queries')}>
-          <Terminal className="h-4 w-4 mr-2" />
+          <Terminal className="h-4 w-4" />
           SQL 편집기
         </Button>
         <Button variant="outline" size="sm" onClick={() => navigate('/analytics/dashboards')}>
-          <LayoutDashboard className="h-4 w-4 mr-2" />
+          <LayoutDashboard className="h-4 w-4" />
           대시보드 관리
         </Button>
       </section>
@@ -389,7 +389,7 @@ export default function HomePage() {
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm truncate group-hover:text-foreground">{ds.name}</span>
-                        <FreshnessBar lastUpdated={ds.createdAt} className="ml-2" />
+                        <FreshnessBar lastUpdated={ds.createdAt} className="" />
                         <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
                           {ds.storageType === 'DOCUMENT' ? '문서' : ds.originType === 'DERIVED' ? '파생' : '원본'}
                         </Badge>

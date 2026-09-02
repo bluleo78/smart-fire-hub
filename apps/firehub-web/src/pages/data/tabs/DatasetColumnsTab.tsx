@@ -109,7 +109,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
         <div className="flex items-center gap-2">
           {/* 기본 키 일괄 설정 — 복합 PK 변경 진입점 (#117) */}
           <Button variant="outline" onClick={() => setPrimaryKeysOpen(true)}>
-            <KeyRound className="mr-1 h-4 w-4" />
+            <KeyRound className=" h-4 w-4" />
             기본 키 설정
           </Button>
           <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>

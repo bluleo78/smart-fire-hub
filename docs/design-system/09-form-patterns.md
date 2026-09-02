@@ -224,7 +224,7 @@ function MyForm({ onSuccess }: { onSuccess: () => void }) {
           취소
         </Button>
         <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
           저장
         </Button>
       </div>
@@ -327,7 +327,7 @@ const onSubmit = form.handleSubmit(async (data) => {
 // 버튼 disabled 처리
 <Button type="submit" disabled={form.formState.isSubmitting}>
   {form.formState.isSubmitting && (
-    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+    <Loader2 className="h-4 w-4 animate-spin" />
   )}
   저장
 </Button>

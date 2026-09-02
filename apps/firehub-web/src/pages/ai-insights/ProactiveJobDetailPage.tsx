@@ -309,7 +309,7 @@ export default function ProactiveJobDetailPage() {
         </div>
         <p className="text-muted-foreground text-sm">요청하신 작업이 존재하지 않거나 삭제되었습니다.</p>
         <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
-          <ArrowLeft className="h-4 w-4 mr-1" />
+          <ArrowLeft className="h-4 w-4" />
           목록으로 돌아가기
         </Button>
       </div>
@@ -359,7 +359,7 @@ export default function ProactiveJobDetailPage() {
                 onClick={handleClone}
                 disabled={cloneMutation.isPending}
               >
-                <Copy className="h-3.5 w-3.5 mr-1" />
+                <Copy className="h-3.5 w-3.5" />
                 복제
               </Button>
               <Button
@@ -411,7 +411,7 @@ export default function ProactiveJobDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">개요</TabsTrigger>
           <TabsTrigger value="monitoring">
-            <Activity className="h-3.5 w-3.5 mr-1.5" />
+            <Activity className="h-3.5 w-3.5" />
             모니터링
           </TabsTrigger>
           {!isNew && <TabsTrigger value="executions">실행 이력</TabsTrigger>}

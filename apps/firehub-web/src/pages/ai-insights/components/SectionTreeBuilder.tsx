@@ -137,7 +137,7 @@ export function SectionTreeBuilder({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="flex-1 border-dashed">
-              <Plus className="h-3.5 w-3.5 mr-1" /> 섹션 추가
+              <Plus className="h-3.5 w-3.5" /> 섹션 추가
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -156,7 +156,7 @@ export function SectionTreeBuilder({
           className="flex-1 border-dashed"
           onClick={() => onAdd('group' as SectionType)}
         >
-          <Plus className="h-3.5 w-3.5 mr-1" /> 그룹 추가
+          <Plus className="h-3.5 w-3.5" /> 그룹 추가
         </Button>
       </div>
     </div>

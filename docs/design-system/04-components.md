@@ -314,7 +314,7 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
   {/* 추가 필터 버튼 (선택) */}
   <Button variant="outline" size="sm">
-    <Filter className="h-4 w-4 mr-2" />
+    <Filter className="h-4 w-4" />
     필터
   </Button>
 </div>

@@ -265,7 +265,7 @@ export default function ReportBuilderWidget({
             className="flex-1"
             onClick={() => setPreviewOpen(true)}
           >
-            <Eye className="mr-1 h-3.5 w-3.5" />
+            <Eye className=" h-3.5 w-3.5" />
             미리보기
           </Button>
           <Button
@@ -280,7 +280,7 @@ export default function ReportBuilderWidget({
               })
             }
           >
-            <Save className="mr-1 h-3.5 w-3.5" />
+            <Save className=" h-3.5 w-3.5" />
             저장
           </Button>
         </div>

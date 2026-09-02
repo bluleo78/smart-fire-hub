@@ -384,13 +384,13 @@ export default function ReportTemplateDetailPage() {
           {!isNew && !isEditing && (
             <>
               <Button variant="outline" size="sm" onClick={handleClone} disabled={createMutation.isPending}>
-                <Copy className="h-3.5 w-3.5 mr-1" />
+                <Copy className="h-3.5 w-3.5" />
                 복제
               </Button>
               {!isBuiltin && (
                 <>
                   <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-                    <Pencil className="h-3.5 w-3.5 mr-1" />
+                    <Pencil className="h-3.5 w-3.5" />
                     편집
                   </Button>
                   <Button
@@ -399,7 +399,7 @@ export default function ReportTemplateDetailPage() {
                     onClick={() => setDeleteDialogOpen(true)}
                     disabled={deleteMutation.isPending}
                   >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    <Trash2 className="h-3.5 w-3.5" />
                     삭제
                   </Button>
                 </>

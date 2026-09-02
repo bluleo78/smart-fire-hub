@@ -342,7 +342,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             onClick={handleGenerateTemplate}
             disabled={!businessQuestion.trim() || isGenerating}
           >
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+            <Sparkles className="h-3.5 w-3.5" />
             {isGenerating ? '생성 중...' : '템플릿 자동 생성'}
           </Button>
 

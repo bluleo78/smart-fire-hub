@@ -230,7 +230,7 @@ function ConnectionCombobox({
           <span className={cn('truncate', !selected && 'text-muted-foreground')}>
             {selected ? `${selected.name} — ${selected.baseUrl}` : '직접 입력'}
           </span>
-          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+          <ChevronsUpDown className=" h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
@@ -860,7 +860,7 @@ export default function ApiCallStepConfig({
           disabled={readOnly || previewLoading}
           onClick={handlePreview}
         >
-          <Play className="h-4 w-4 mr-2" />
+          <Play className="h-4 w-4" />
           {previewLoading ? '호출 중...' : '테스트 호출'}
         </Button>
 

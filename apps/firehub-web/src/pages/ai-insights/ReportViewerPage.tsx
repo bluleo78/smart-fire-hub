@@ -104,7 +104,7 @@ export default function ReportViewerPage() {
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-              <ArrowLeft className="h-4 w-4 mr-1" />
+              <ArrowLeft className="h-4 w-4" />
               돌아가기
             </Button>
           </div>
@@ -115,7 +115,7 @@ export default function ReportViewerPage() {
             <p className="text-sm">리포트가 없습니다.</p>
             <Button variant="outline" size="sm" asChild>
               <Link to={`/ai-insights/jobs/${jobIdNum}`}>
-                <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                <ExternalLink className="h-3.5 w-3.5" />
                 작업 상세 보기
               </Link>
             </Button>

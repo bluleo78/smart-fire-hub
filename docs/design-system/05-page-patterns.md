@@ -25,7 +25,7 @@ export default function XxxListPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">페이지 제목</h1>
         <Button>
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="h-4 w-4" />
           새로 만들기
         </Button>
       </div>

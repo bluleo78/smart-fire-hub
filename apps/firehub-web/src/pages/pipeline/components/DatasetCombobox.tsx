@@ -77,7 +77,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
             <span className={cn('truncate', !selected && 'text-muted-foreground')}>
               {selected ? `${selected.name} (${selected.tableName})` : placeholder}
             </span>
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <ChevronsUpDown className=" h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-full p-0" align="start">
@@ -164,7 +164,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
               ))
             )}
           </div>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <ChevronsUpDown className=" h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-full p-0" align="start">

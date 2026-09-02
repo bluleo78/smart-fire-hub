@@ -517,9 +517,9 @@ export function ApiImportWizard({
               onClick={handlePreview}
             >
               {previewLoading ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Play className="h-4 w-4 mr-2" />
+                <Play className="h-4 w-4" />
               )}
               {previewLoading ? '호출 중...' : '테스트 호출'}
             </Button>
@@ -685,9 +685,9 @@ export function ApiImportWizard({
                   onClick={handlePreview}
                 >
                   {previewLoading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Play className="h-4 w-4 mr-2" />
+                    <Play className="h-4 w-4" />
                   )}
                   테스트 호출
                 </Button>
@@ -795,7 +795,7 @@ export function ApiImportWizard({
             ) : (
               <Button onClick={handleComplete} disabled={createApiImport.isPending}>
                 {createApiImport.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : null}
                 완료
               </Button>

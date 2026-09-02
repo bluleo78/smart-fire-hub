@@ -607,7 +607,7 @@ export default function DashboardEditorPage() {
             </div>
             {!isEditing && (
               <Button variant="outline" onClick={handleStartEdit}>
-                <Pencil className="h-4 w-4 mr-2" />
+                <Pencil className="h-4 w-4" />
                 편집 모드
               </Button>
             )}

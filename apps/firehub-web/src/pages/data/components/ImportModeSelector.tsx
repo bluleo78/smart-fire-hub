@@ -29,9 +29,9 @@ export function ImportModeSelector({ importMode, hasPrimaryKey, onModeChange }: 
         <div className={`flex items-start space-x-3 rounded-md border p-3 ${!hasPrimaryKey ? 'opacity-50' : ''}`}>
           <RadioGroupItem value="UPSERT" id="mode-upsert" className="mt-0.5" disabled={!hasPrimaryKey} />
           <div className="space-y-0.5">
-            <label htmlFor="mode-upsert" className={`text-sm font-medium ${hasPrimaryKey ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+            <label htmlFor="mode-upsert" className={`flex items-center gap-1 text-sm font-medium ${hasPrimaryKey ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
               업서트 (Upsert)
-              {!hasPrimaryKey && <KeyRound className="inline h-3 w-3 ml-1 text-muted-foreground" />}
+              {!hasPrimaryKey && <KeyRound className="h-3 w-3 text-muted-foreground" />}
             </label>
             <p className="text-xs text-muted-foreground">
               {hasPrimaryKey

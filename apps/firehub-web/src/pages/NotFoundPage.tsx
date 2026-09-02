@@ -21,12 +21,12 @@ export default function NotFoundPage() {
       <div className="flex gap-2 mt-2">
         {/* 이전 페이지로 — 사용자가 잘못 클릭한 경우 빠르게 복귀 */}
         <Button variant="outline" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4 mr-1" />
+          <ArrowLeft className="h-4 w-4" />
           이전 페이지로
         </Button>
         {/* 홈으로 — 컨텍스트를 잃은 경우의 안전한 시작점 */}
         <Button onClick={() => navigate('/')}>
-          <Home className="h-4 w-4 mr-1" />
+          <Home className="h-4 w-4" />
           홈으로 가기
         </Button>
       </div>

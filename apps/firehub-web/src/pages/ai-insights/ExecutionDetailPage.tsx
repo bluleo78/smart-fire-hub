@@ -73,7 +73,7 @@ export default function ExecutionDetailPage() {
       <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">
         <p className="text-sm">실행 정보를 찾을 수 없습니다.</p>
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4 mr-1" />
+          <ArrowLeft className="h-4 w-4" />
           돌아가기
         </Button>
       </div>
