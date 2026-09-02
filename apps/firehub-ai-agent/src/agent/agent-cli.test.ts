@@ -407,6 +407,106 @@ describe('executeCliAgent — #428/#429 subagent 결과 중복 relay 억제 (화
     const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
     expect(texts).toEqual(['## 설계안 ...\n이대로 생성할까요?']);
   });
+
+  it('#430: SendMessage 로 재개한 비동기 subagent 가 지연 완료(task_notification)되면, 메인이 이미 직접 완료 보고를 한 뒤라도 재서술을 억제한다', async () => {
+    // #428/#429는 같은 요청 안에서 Agent 로 위임 → parent_tool_use_id 로 태깅된 텍스트가
+    // 인터리브되는 경우를 다뤘다. #430은 다른 턴(별도 HTTP 요청)에서 시작된 비동기 subagent 를
+    // SendMessage 로 재개했는데, 메인이 그 완료를 기다리지 않고 스스로 도구를 호출해 먼저
+    // 완료 보고를 한 뒤, 뒤늦게 도착한 system/task_notification 때문에 같은 내용을 또
+    // 보고하던 실제 라이브 재현 패턴을 고정한다.
+    const sendMessageToolUseId = 'toolu_sendmsg_1';
+    const lines: string[] = [
+      // 메인이 이전 턴에 pin된 subagent 를 SendMessage 로 재개(parent 없음)
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_use', id: sendMessageToolUseId, name: 'SendMessage', input: { to: 'a60d5da10faae7e5b' } },
+          ],
+        },
+      }),
+      // 메인이 위임 완료를 기다리지 않고 스스로 도구를 호출해 먼저 완료 보고를 한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_create_job', name: 'mcp__firehub__create_proactive_job', input: {} }],
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: "'파이프라인 실패율 주간 체크' 스마트 작업이 등록됐습니다." }] },
+      }),
+      // 뒤늦게 비동기 subagent 완료 알림 도착 — SendMessage 의 tool_use id 를 참조.
+      JSON.stringify({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'a60d5da10faae7e5b',
+        tool_use_id: sendMessageToolUseId,
+        status: 'completed',
+      }),
+      // 메인이 뒤늦은 알림을 보고 같은 내용을 다시 보고하려는 시도 — 억제 대상.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: "'파이프라인 실패율 주간 체크' 스마트 작업이 등록됐습니다." }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '네, 이대로 생성해주세요.',
+      tenantId: 1,
+      userId: 1,
+      sessionId: 'cli-existing-session',
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    expect(texts).toEqual(["'파이프라인 실패율 주간 체크' 스마트 작업이 등록됐습니다."]);
+  });
+
+  it('#430: task_notification 의 tool_use_id 가 위임 목록에 없으면(무관한 알림) 메인 텍스트를 억제하지 않는다', async () => {
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'unrelated-task',
+        tool_use_id: 'toolu_never_registered',
+        status: 'completed',
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '일반 응답입니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '안녕',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['일반 응답입니다.']);
+  });
 });
 
 describe('executeCliAgent — #240 subagent registration', () => {

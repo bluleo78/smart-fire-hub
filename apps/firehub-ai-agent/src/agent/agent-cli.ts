@@ -197,6 +197,13 @@ interface StreamJsonMessage {
   // #428: claude CLI(`claude -p --output-format stream-json`)도 Agent SDK 와 동일하게
   // subagent 로 위임된 메시지에 위임 tool_use 의 id 를 채워 흘려보낸다(top-level 메인은 null).
   parent_tool_use_id?: string | null;
+  // #430: 이전 요청(턴)에서 `Agent`/`SendMessage` 로 위임한 비동기 subagent 가 **이번 요청
+  // 진행 중에** 뒤늦게 완료되면, 인터리브된 assistant 메시지가 아니라 이 top-level
+  // `system/task_notification` 메시지로 알려온다 — 어느 위임(tool_use id)의 완료인지는
+  // `tool_use_id` 로 식별한다.
+  task_id?: string;
+  tool_use_id?: string;
+  status?: string;
 }
 
 export interface CliAgentOptions extends AgentOptions {
@@ -496,7 +503,6 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // Skip non-JSON lines (e.g. debug output)
         continue;
       }
-
       // Stream text deltas
       if (msg.type === 'stream_event' && msg.delta?.type === 'text_delta' && msg.delta.text) {
         assistantText += msg.delta.text;
@@ -555,9 +561,11 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               suppressMainText = false;
               console.log('[CLI Agent] [design-guard] 메인 새 tool_use 발행 — 재요약 억제 해제(#429)');
             }
-            // #428/#429: 메인이 Agent 로 위임하는 순간(subagent_type 불문)을 기록해, 이후 그
-            // subagent 의 완료 텍스트를 parent_tool_use_id 로 식별할 수 있게 한다.
-            if (!msg.parent_tool_use_id && toolName === 'Agent' && block.id) {
+            // #428/#429/#430: 메인이 `Agent`(신규 위임) 또는 `SendMessage`(이전 턴에 pin해둔
+            // 비동기 subagent 재개)를 발행하는 순간(subagent_type 불문)을 기록해, 이후 그
+            // subagent 의 완료를 parent_tool_use_id(동기 인터리브) 또는 tool_use_id(비동기
+            // task_notification, #430) 로 식별할 수 있게 한다.
+            if (!msg.parent_tool_use_id && (toolName === 'Agent' || toolName === 'SendMessage') && block.id) {
               pendingDesignGuardToolUseIds.add(block.id);
             }
             yield {
@@ -635,6 +643,23 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           }
         }
         continue;
+      }
+
+      // #430: 이전 턴(별도 HTTP 요청)에서 `SendMessage`/`Agent` 로 위임/재개한 비동기 subagent
+      // 가 **이번 요청 처리 도중** 뒤늦게 완료되면, 인터리브된 assistant 메시지가 아니라 이
+      // top-level `system/task_notification` 으로 알려온다. 그 사이 메인이 같은 작업을 직접
+      // 처리하고 이미 완료 보고를 했더라도(예: 위임을 기다리지 않고 도구를 스스로 호출)
+      // 뒤늦게 도착한 알림을 메인이 다시 사용자에게 요약해 보고하면 완료 보고가 중복된다.
+      // #428/#429 와 동일하게 그 위임 tool_use id 가 pendingDesignGuardToolUseIds 에 있으면
+      // (문구 내용 불문) 이후 메인의 재서술을 억제한다.
+      if (
+        msg.type === 'system' &&
+        msg.subtype === 'task_notification' &&
+        msg.tool_use_id &&
+        pendingDesignGuardToolUseIds.has(msg.tool_use_id)
+      ) {
+        suppressMainText = true;
+        console.log(`[CLI Agent] [design-guard] 비동기 subagent 지연 완료 알림 감지 — 메인 재요약 억제(#430)`);
       }
 
       // Turn boundary — commit current assistant message, start new one
