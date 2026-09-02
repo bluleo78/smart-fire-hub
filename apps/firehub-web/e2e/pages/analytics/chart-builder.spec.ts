@@ -24,6 +24,24 @@ test.describe('차트 빌더 페이지', () => {
     await expect(page.getByRole('button', { name: '저장' })).toBeVisible();
   });
 
+  // 회귀 방지(#433): 툴바 제목이 <span> 이라 문서 개요에 heading 이 없던 결함.
+  // 신규/기존 두 분기 모두 h1 을 정확히 1개만 내야 한다(중복 h1 도 회귀).
+  test('툴바 제목이 h1 heading 으로 렌더된다 (#433)', async ({ authenticatedPage: page }) => {
+    await setupNewChartBuilderMocks(page);
+    await page.goto('/analytics/charts/new');
+
+    const newH1 = page.getByRole('heading', { level: 1 });
+    await expect(newH1).toHaveCount(1);
+    await expect(newH1).toHaveText('새 차트');
+
+    await setupChartBuilderMocks(page, 1);
+    await page.goto('/analytics/charts/1');
+
+    const savedH1 = page.getByRole('heading', { level: 1 });
+    await expect(savedH1).toHaveCount(1);
+    await expect(savedH1).toHaveText('테스트 차트');
+  });
+
   test('기존 차트 로드 시 차트 이름이 툴바에 표시된다', async ({ authenticatedPage: page }) => {
     // 차트 ID=1 관련 API 모킹
     await setupChartBuilderMocks(page, 1);

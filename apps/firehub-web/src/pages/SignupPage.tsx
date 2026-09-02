@@ -9,7 +9,7 @@ import { extractApiError } from '@/lib/api-error';
 import type { ErrorResponse } from '@/types/auth';
 
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent, CardHeader } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
@@ -56,7 +56,10 @@ export default function SignupPage() {
     <div className="flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">회원가입</CardTitle>
+          {/* CardTitle 은 components/ui/card.tsx 에서 <div> 를 렌더하므로 heading 이 아니다.
+              인증 화면은 카드가 곧 페이지라 문서 개요에 h1 이 하나는 있어야 하므로
+              CardTitle 대신 h1 을 직접 쓴다 (05-page-patterns §E, #433). */}
+          <h1 className="text-2xl leading-8 font-semibold tracking-tight">회원가입</h1>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

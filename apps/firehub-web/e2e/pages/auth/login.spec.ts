@@ -21,6 +21,16 @@ test.describe('로그인 페이지', () => {
     await expect(page.getByText('계정이 없으신가요? 회원가입')).toBeVisible();
   });
 
+  // 회귀 방지(#433): 제목이 CardTitle(<div>)로 렌더돼 문서 개요에 heading 이 없던 결함.
+  // 존재 여부만이 아니라 "정확히 1개"와 접근 가능한 이름까지 단언해야 공허해지지 않는다.
+  test('페이지 제목이 h1 heading 으로 렌더된다 (#433)', async ({ authMockedPage: page }) => {
+    await page.goto('/login');
+
+    const h1 = page.getByRole('heading', { level: 1 });
+    await expect(h1).toHaveCount(1);
+    await expect(h1).toHaveText('Smart Fire Hub');
+  });
+
   test('로그인 성공 시 홈 페이지로 이동한다', async ({ authMockedPage: page }) => {
     await page.goto('/login');
 

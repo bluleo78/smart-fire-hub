@@ -21,6 +21,16 @@ test.describe('회원가입 페이지', () => {
     await expect(page.getByRole('button', { name: '회원가입' })).toBeVisible();
   });
 
+  // 회귀 방지(#433): 제목이 CardTitle(<div>)로 렌더돼 문서 개요에 heading 이 없던 결함.
+  // "회원가입" 문자열은 버튼에도 있으므로 role=heading + level 로 한정해야 의미가 있다.
+  test('페이지 제목이 h1 heading 으로 렌더된다 (#433)', async ({ authMockedPage: page }) => {
+    await page.goto('/signup');
+
+    const h1 = page.getByRole('heading', { level: 1 });
+    await expect(h1).toHaveCount(1);
+    await expect(h1).toHaveText('회원가입');
+  });
+
   test('회원가입 성공 시 홈 페이지로 이동한다', async ({ authMockedPage: page }) => {
     // 회원가입 API 성공 응답 모킹 — capture: true로 요청 payload를 캡처한다
     // signup()은 내부적으로 login()을 자동 호출하므로 회원가입 성공 시 '/'로 이동한다

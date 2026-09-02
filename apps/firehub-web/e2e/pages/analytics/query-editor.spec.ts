@@ -27,6 +27,24 @@ test.describe('쿼리 에디터 페이지', () => {
     await expect(page.getByRole('button', { name: '실행' })).toBeVisible();
   });
 
+  // 회귀 방지(#433): 툴바 제목이 <span> 이라 문서 개요에 heading 이 없던 결함.
+  // 신규/기존 두 분기 모두 h1 을 정확히 1개만 내야 한다(중복 h1 도 회귀).
+  test('툴바 제목이 h1 heading 으로 렌더된다 (#433)', async ({ authenticatedPage: page }) => {
+    await setupNewQueryEditorMocks(page);
+    await page.goto('/analytics/queries/new');
+
+    const newH1 = page.getByRole('heading', { level: 1 });
+    await expect(newH1).toHaveCount(1);
+    await expect(newH1).toHaveText('새 쿼리');
+
+    await setupQueryEditorMocks(page, 1);
+    await page.goto('/analytics/queries/1');
+
+    const savedH1 = page.getByRole('heading', { level: 1 });
+    await expect(savedH1).toHaveCount(1);
+    await expect(savedH1).toHaveText('테스트 쿼리');
+  });
+
   test('기존 쿼리 로드 시 쿼리 이름이 툴바에 표시된다', async ({ authenticatedPage: page }) => {
     // 기존 쿼리 ID=1 관련 API 모킹
     await setupQueryEditorMocks(page, 1);

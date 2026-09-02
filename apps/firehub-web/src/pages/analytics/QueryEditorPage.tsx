@@ -681,7 +681,9 @@ export default function QueryEditorPage() {
         <div className="flex-1 min-w-0 flex flex-col">
           {savedQuery ? (
             <div className="flex items-center gap-2">
-              <span className="text-lg font-semibold truncate">{savedQuery.name}</span>
+              {/* 문서 개요에 페이지 heading 이 하나는 있어야 한다(02-typography §2.2, #433).
+                  툴바 내 제목이라 시각 크기(text-lg)는 그대로 두고 태그만 h1 으로 올린다. */}
+              <h1 className="text-lg font-semibold truncate">{savedQuery.name}</h1>
               {savedQuery.folder && (
                 <Badge variant="outline" className="text-xs">
                   {savedQuery.folder}
@@ -694,7 +696,7 @@ export default function QueryEditorPage() {
               )}
             </div>
           ) : (
-            <span className="font-semibold text-muted-foreground">새 쿼리</span>
+            <h1 className="font-semibold text-muted-foreground">새 쿼리</h1>
           )}
           {/* 미저장 변경사항 표시 — ChartBuilderPage와 동일한 시각 패턴 (이슈 #57) */}
           {isDirty && (
