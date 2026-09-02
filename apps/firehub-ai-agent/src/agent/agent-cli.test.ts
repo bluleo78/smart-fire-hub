@@ -41,9 +41,14 @@ vi.mock('./subagent-loader.js', async () => {
         description: '데이터셋 매니저',
         prompt: '당신은 데이터셋 매니저입니다.',
       },
+      'smart-job-manager': {
+        description: '스마트 작업 매니저',
+        prompt: '당신은 스마트 작업 매니저입니다.',
+      },
     })),
     buildSubagentGuide: vi.fn(
-      () => '\n\n## 전문 에이전트 활용\n\n### pipeline-builder\n파이프라인 빌더\n\n### dataset-manager\n데이터셋 매니저\n\n',
+      () =>
+        '\n\n## 전문 에이전트 활용\n\n### pipeline-builder\n파이프라인 빌더\n\n### dataset-manager\n데이터셋 매니저\n\n### smart-job-manager\n스마트 작업 매니저\n\n',
     ),
   };
 });
@@ -139,7 +144,7 @@ describe('executeCliAgent — Tier2 연속 실패 강제중단 (#271)', () => {
   });
 });
 
-describe('executeCliAgent — #428 DESIGN 가드 subagent 결과 중복 relay 억제', () => {
+describe('executeCliAgent — #428/#429 subagent 결과 중복 relay 억제 (화이트리스트 폐지)', () => {
   beforeEach(() => {
     spawnMock.mockReset();
   });
@@ -228,6 +233,179 @@ describe('executeCliAgent — #428 DESIGN 가드 subagent 결과 중복 relay �
     }
 
     expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['일반 응답입니다.']);
+  });
+
+  it('#429: smart-job-manager(화이트리스트 밖 subagent) 위임 완료 후 메인 재요약도 억제한다', async () => {
+    const delegateToolUseId = 'toolu_delegate_sjm';
+    const lines: string[] = [
+      // 메인이 smart-job-manager 에 위임(Agent tool_use, parent 없음) — pipeline-builder 등
+      // 3개 화이트리스트에 없는 subagent_type 이라는 점이 이 테스트의 핵심.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'smart-job-manager', prompt: '스마트 작업 만들어줘' },
+            },
+          ],
+        },
+      }),
+      // subagent 자신의 완료 텍스트(설계안 + 확인 질문).
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateToolUseId,
+        message: {
+          content: [{ type: 'text', text: '## 설계안 ...\n이대로 생성할까요?' }],
+        },
+      }),
+      // 메인이 같은 요청 안에서 재요약을 시도(parent 없음) — 억제 대상.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '## 설계안 재요약 ...\n확인 부탁드립니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '스마트 작업 만들어줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    expect(texts).toEqual(['## 설계안 ...\n이대로 생성할까요?']);
+  });
+
+  it('#429: subagent 완료 후 메인이 새 tool_use 를 발행하면 억제를 해제하고 이후 메인 텍스트를 emit 한다', async () => {
+    const delegateToolUseId = 'toolu_delegate_reset';
+    const lines: string[] = [
+      // 메인이 pipeline-builder 에 위임.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'pipeline-builder', prompt: 'Mode: DESIGN\n...' },
+            },
+          ],
+        },
+      }),
+      // subagent 완료 텍스트 — 억제 플래그가 세팅된다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateToolUseId,
+        message: { content: [{ type: 'text', text: '파이프라인을 생성했습니다.' }] },
+      }),
+      // 메인이 새 도구(다른 subagent 위임이 아닌 일반 도구)를 호출 — 재서술이 아니라 실제
+      // 다음 작업이라는 구조적 증거이므로 이 시점에 억제가 해제되어야 한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_run', name: 'mcp__firehub__run_pipeline', input: { pipelineId: 1 } }],
+        },
+      }),
+      // run_pipeline 결과에 대한 메인의 정당한 보고 — 억제되지 않고 emit 되어야 한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '파이프라인 실행을 시작했습니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '파이프라인 만들고 바로 실행해줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    expect(texts).toEqual(['파이프라인을 생성했습니다.', '파이프라인 실행을 시작했습니다.']);
+  });
+
+  it('#429: subagent 내부 tool_use(parent 있음)는 억제를 해제하지 않는다', async () => {
+    const delegateToolUseId = 'toolu_delegate_internal';
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'smart-job-manager', prompt: '스마트 작업 만들어줘' },
+            },
+          ],
+        },
+      }),
+      // subagent 완료 텍스트 — 억제 플래그 세팅.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateToolUseId,
+        message: { content: [{ type: 'text', text: '## 설계안 ...\n이대로 생성할까요?' }] },
+      }),
+      // subagent 가 완료 *후* 내부적으로 또 다른 도구를 호출하는 비정상 케이스를 가정해도
+      // (parent_tool_use_id 가 위임 id) 메인의 억제 상태에는 영향이 없어야 한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateToolUseId,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_internal', name: 'mcp__firehub__list_proactive_jobs', input: {} }],
+        },
+      }),
+      // 메인의 재요약 시도 — 여전히 억제되어야 한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '## 설계안 재요약 ...\n확인 부탁드립니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '스마트 작업 만들어줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    expect(texts).toEqual(['## 설계안 ...\n이대로 생성할까요?']);
   });
 });
 

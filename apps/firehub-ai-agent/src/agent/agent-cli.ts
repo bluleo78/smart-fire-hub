@@ -18,7 +18,6 @@ import { totalInputTokens, type TokenUsageLike } from './token-usage.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
-import { DESIGN_GUARD_SUBAGENT_TYPES } from './process-message.js';
 import {
   isSafeSessionId,
   legacyTranscriptDir,
@@ -320,12 +319,20 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 이벤트로만 오고 세션이 done(성공)으로 끝나는 경우가 있어, 텍스트 경로에서도 검사한다.
   // 한 응답 내에서 여러 delta/블록에 걸쳐 중복 치환하지 않도록 플래그로 1회만 처리.
   let authFailureDetected = false;
-  // #428: L3 DESIGN 가드 subagent(pipeline-builder 등)에 위임한 뒤, subagent 가 이미 텍스트로
-  // 자기 턴을 마쳤는데 메인(parent_tool_use_id=null)이 같은 요청 안에서 이를 재요약해 별도
-  // 텍스트를 또 출력하면 사용자에게 동일 확인이 두 번 노출된다(라이브 재현으로 확인). CLI 로
-  // 스폰된 claude 프로세스의 stream-json 출력도 SDK 와 동일하게 parent_tool_use_id 로 위임된
-  // 하위 턴을 구분해 흘려보내므로, 위임 tool_use id 를 기록해두고 그 id 를 parent 로 갖는
-  // 텍스트가 한 번이라도 도착하면(문구 내용 불문) 이후 메인(parent 없음)의 텍스트를 억제한다.
+  // #428/#429: Agent 로 위임된 subagent(subagent_type 불문)가 이미 텍스트로 자기 턴을 마쳤는데
+  // 메인(parent_tool_use_id=null)이 같은 요청 안에서 이를 재요약해 별도 텍스트를 또 출력하면
+  // 사용자에게 동일 확인이 두 번 노출된다(라이브 재현으로 확인). CLI 로 스폰된 claude 프로세스의
+  // stream-json 출력도 SDK 와 동일하게 parent_tool_use_id 로 위임된 하위 턴을 구분해 흘려보내
+  // 므로, 위임 tool_use id 를 기록해두고 그 id 를 parent 로 갖는 텍스트가 한 번이라도 도착하면
+  // (문구 내용 불문) 이후 메인(parent 없음)의 텍스트를 억제한다.
+  //
+  // #429: 최초 구현은 pipeline-builder/template-builder/dashboard-builder 3개로 좁힌
+  // 화이트리스트였으나, 같은 재서술 패턴이 smart-job-manager 등 화이트리스트 밖 subagent 에서도
+  // 재현되어 화이트리스트를 폐지하고 Agent 위임 전체에 적용한다. suppressMainText 는 한 번
+  // 세팅되면 유지되므로, 메인이 새 tool_use 를 발행하면(= 재서술이 아니라 실제 다음 작업을
+  // 하고 있다는 구조적 증거) 그 시점에 해제한다 — 그래야 "subagent 완료 후 메인이 추가 도구
+  // 호출을 거쳐 결과를 보고"하는 정당한 시나리오(예: 파이프라인 생성 후 바로 실행)까지 영구
+  // 억제하지 않는다.
   const pendingDesignGuardToolUseIds = new Set<string>();
   let suppressMainText = false;
 
@@ -541,15 +548,16 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               name: toolName,
               input: (block.input as Record<string, unknown>) ?? {},
             });
-            // #428: 메인이 DESIGN 가드 subagent 에 위임하는 순간(Agent tool_use, subagent_type
-            // 이 화이트리스트에 포함)을 기록해, 이후 그 subagent 의 완료 텍스트를
-            // parent_tool_use_id 로 식별할 수 있게 한다.
-            if (
-              !msg.parent_tool_use_id &&
-              toolName === 'Agent' &&
-              block.id &&
-              DESIGN_GUARD_SUBAGENT_TYPES.has(String((block.input as { subagent_type?: unknown })?.subagent_type))
-            ) {
+            // #429: 메인(parent 없음)이 새 tool_use 를 발행하면 그 시점에 억제를 해제한다 — 새
+            // 도구 호출은 메인이 이전 subagent 응답을 재서술하는 게 아니라 실제로 다음 작업을
+            // 하고 있다는 구조적 증거다. subagent 내부 tool_use(parent 있음)는 해제 대상이 아니다.
+            if (!msg.parent_tool_use_id && suppressMainText) {
+              suppressMainText = false;
+              console.log('[CLI Agent] [design-guard] 메인 새 tool_use 발행 — 재요약 억제 해제(#429)');
+            }
+            // #428/#429: 메인이 Agent 로 위임하는 순간(subagent_type 불문)을 기록해, 이후 그
+            // subagent 의 완료 텍스트를 parent_tool_use_id 로 식별할 수 있게 한다.
+            if (!msg.parent_tool_use_id && toolName === 'Agent' && block.id) {
               pendingDesignGuardToolUseIds.add(block.id);
             }
             yield {
@@ -575,8 +583,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               }
               return;
             }
-            // #428: subagent(parent_tool_use_id 있음) 텍스트가 위임 목록에 있으면 문구 내용과
-            // 무관하게 이후 메인(parent 없음)의 텍스트를 억제한다 — subagent 텍스트 자체는 그대로 emit.
+            // #428/#429: subagent(parent_tool_use_id 있음) 텍스트가 위임 목록에 있으면 문구
+            // 내용과 무관하게 이후 메인(parent 없음)의 텍스트를 억제한다(subagent_type 불문) —
+            // subagent 텍스트 자체는 그대로 emit.
             if (msg.parent_tool_use_id && pendingDesignGuardToolUseIds.has(msg.parent_tool_use_id)) {
               suppressMainText = true;
             }

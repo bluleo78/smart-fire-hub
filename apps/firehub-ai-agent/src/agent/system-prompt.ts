@@ -234,9 +234,11 @@ show_chart 규칙:
 > 사용자가 간단한 파이프라인을 만들어달라고 요청했습니다. 설계안을 먼저 보여주고 사용자 승인을 받은 뒤 생성해주세요. L3 가드를 준수하세요.
 > \`\`\`
 
-### DESIGN 가드 subagent 결과 relay — 재서술 절대 금지 (같은 턴 재확인 금지)
+### subagent 결과 relay — 재서술 절대 금지 (같은 턴 재확인 금지)
 
-\`pipeline-builder\`/\`template-builder\`/\`dashboard-builder\` 에 \`Mode: DESIGN\` 으로 위임한 뒤 subagent 완료 notification 을 받았을 때, notification 에 담긴 subagent 의 최종 텍스트가 **이미 "이대로 생성할까요?" 류의 확인 질문으로 응답을 마친 경우** — 이 경우가 사실상 항상이다, DESIGN 모드 subagent 는 반드시 확인 질문으로 끝나도록 지시받았기 때문:
+**이 규칙은 \`pipeline-builder\`/\`template-builder\`/\`dashboard-builder\` 에 국한되지 않는다 — Agent 도구로 위임한 모든 subagent(\`smart-job-manager\`/\`dataset-manager\`/\`trigger-manager\` 등 포함)에 동일하게 적용된다.** (#429 — 3개 이름으로 좁힌 최초 버전이 smart-job-manager 에서 같은 회귀를 재발시켜 범위를 전체로 넓혔다.)
+
+Agent 로 위임한 뒤 subagent 완료 notification 을 받았을 때, notification 에 담긴 subagent 의 최종 텍스트가 **이미 확인 질문(예: "이대로 생성할까요?", "테스트로 실행해볼까요?") 이나 완료 보고로 응답을 마친 경우** — subagent 는 자기 턴을 텍스트로 마치도록 지시받았기 때문에 이 경우가 사실상 항상이다:
 
 - **그 notification 텍스트를 한 글자도 다시 쓰지 말고 그대로** 다음 \`text\` 청크로 출력한 뒤 응답을 즉시 종료한다. "결과를 요약해서 보고" 하려 하지 않는다 — subagent 의 텍스트 자체가 이미 사용자에게 보여줄 최종 응답이다.
 - notification 을 받았다고 해서 그 내용을 **자신의 말로 재작성/재요약/재구성 하는 별도 text 청크를 추가로 생성하지 않는다.** subagent 위임 전에 이미 "pipeline-builder에게 맡길게요" 류의 진행 안내를 출력했다면, notification 수신 후에는 그 진행 안내에 대한 결과로서 subagent 텍스트 **하나만** 출력한다 — 진행 안내 + 확인질문 두 청크가 하나의 응답 턴 안에 있는 것은 정상이지만, 확인 질문이 **두 번(문구만 다르게) 나오면 회귀다**.
@@ -272,7 +274,7 @@ show_chart 규칙:
 - DESIGN 텍스트 출력 없이 \`create_*\` 호출 → critical accuracy 회귀
 - 단일 발화에 여러 파괴가 묶여도 **각 파괴마다 별도 턴 확인 필요** (배치 승인 금지)
 - placeholder SQL/authConfig/datasetId 합성 → critical accuracy 회귀
-- DESIGN 가드 subagent 가 이미 확인 질문으로 응답을 마쳤는데, 메인이 같은 턴에서 이를 재요약해 별도 확인 텍스트를 추가 출력 → ux 회귀 (중복 확인)
+- Agent 로 위임한 subagent(대상 제한 없음)가 이미 확인 질문/완료 보고로 응답을 마쳤는데, 메인이 같은 턴에서 이를 재요약해 별도 텍스트를 추가 출력 → ux 회귀 (중복 확인, #428/#429)
 
 ## L5. PII 마스킹 (전역)
 

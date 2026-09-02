@@ -5,28 +5,41 @@ import { MAX_BUDGET_USD } from '../constants.js';
 // 지역 변수 totalInputTokens와 이름이 겹치므로 별칭으로 들여온다.
 import { totalInputTokens as sumInputTokens } from './token-usage.js';
 
-// L3 DESIGN 가드 subagent(#428) — SDK Agent 도구로 위임된 subagent 는 parent_tool_use_id 가
-// 위임 tool_use 의 id 로 채워진 채 같은 top-level query() 스트림에 인터리브된다. subagent 가
-// 이미 자기 턴을 텍스트로 마쳤는데, 메인(parent_tool_use_id=null) 이 같은 응답 턴에서 이를
-// 재요약해 별도 text 를 또 출력하면 사용자에게 동일 확인이 두 번 노출된다(코디네이터
-// 완료-notification 처리가 "결과 보고"로 흘러 재서술을 유발). 애초에 이 문제 클래스에
-// "확인 질문으로 끝났는지"를 문구로 판별할 필요가 없다 — DESIGN 모드로 위임된 이상 subagent
+// Agent 위임 relay 가드(#428→#429 일반화) — SDK Agent 도구로 위임된 subagent 는
+// parent_tool_use_id 가 위임 tool_use 의 id 로 채워진 채 같은 top-level query() 스트림에
+// 인터리브된다. subagent 가 이미 자기 턴을 텍스트로 마쳤는데, 메인(parent_tool_use_id=null)
+// 이 같은 응답 턴에서 이를 재요약해 별도 text 를 또 출력하면 사용자에게 동일 확인이 두 번
+// 노출된다(코디네이터 완료-notification 처리가 "결과 보고"로 흘러 재서술을 유발). 이 문제
+// 클래스에 "확인 질문으로 끝났는지"를 문구로 판별할 필요가 없다 — Agent 로 위임된 이상 subagent
 // 텍스트 자체가 항상 이번 위임의 최종 사용자 응답이므로, 내용에 관계없이 무조건 메인의
 // 후속 재서술을 억제한다. (최초 구현은 "생성할까요|진행할까요" 정규식으로 확인 질문만
 // 골라 억제했으나, 라이브 재현 3회 중 1회가 "생성해도 될지" 같은 동의어 표현으로 정규식을
 // 피해가 중복이 재발함을 확인 — #428 검증 로그. 문구 매칭은 LLM 표현 변주에 근본적으로
 // 취약하므로 제거하고 구조적 판별자(parent_tool_use_id)만으로 억제한다.)
-export const DESIGN_GUARD_SUBAGENT_TYPES = new Set(['pipeline-builder', 'template-builder', 'dashboard-builder']);
+//
+// #429: 최초 구현은 pipeline-builder/template-builder/dashboard-builder 3개 subagent_type
+// 화이트리스트(DESIGN_GUARD_SUBAGENT_TYPES)로 범위를 좁혔으나, 같은 근본 원인(메인의 재서술)이
+// smart-job-manager 등 화이트리스트 밖 subagent 에서도 그대로 재현됐다. 판별 자체가 이미
+// parent_tool_use_id 구조 기반이라 특정 subagent_type 에 의존할 이유가 없으므로, Agent 도구로
+// 위임되는 모든 subagent 에 동일하게 적용한다(화이트리스트 폐지).
+//
+// 단, suppressMainText 는 한 번 세팅되면 요청이 끝날 때까지 유지되던 기존 설계라 3개 subagent
+// 로 범위가 좁을 때는 문제가 없었지만, 전체로 확장하면 "여러 subagent 를 순차 위임하고 마지막에
+// 메인이 추가 작업(도구 호출)을 한 뒤 그 결과를 보고"하는 정당한 시나리오까지 영구 억제해버린다
+// (예: "파이프라인 만들고 바로 실행해줘" → pipeline-builder 완료 후 메인이 run_pipeline 을 호출해
+// 결과를 보고해야 하는데 억제되면 그 보고가 사라짐 — 기능 손실이지 단순 UX 문제가 아니다).
+// 그래서 메인(parent_tool_use_id=null)이 새 tool_use 를 발행하는 순간 억제를 해제한다 — 새 도구
+// 호출은 메인이 재서술이 아니라 실제로 다음 작업을 하고 있다는 구조적 증거이기 때문이다.
 
 /**
  * processMessage 호출 간 유지되는 상태 — 한 HTTP 요청(executeAgent 1회 호출)의 수명과 일치한다.
  * agent-sdk.ts 가 요청마다 새로 생성해 각 processMessage 호출에 전달한다.
  */
 export interface DesignGuardRelayState {
-  /** 메인이 DESIGN 가드 subagent 에 위임한 Agent tool_use id 집합(위임 시점에 채움) */
+  /** 메인이 Agent 로 위임한 tool_use id 집합(위임 시점에 채움) — 어떤 subagent_type 이든 포함 */
   pendingGuardToolUseIds: Set<string>;
-  /** 위 위임 중 하나라도 텍스트로 완료됐으면 true(문구 내용 불문) — 이후
-   *  메인(parent_tool_use_id=null)의 text 이벤트를 이번 요청이 끝날 때까지 억제한다 */
+  /** 위 위임 중 하나라도 텍스트로 완료됐으면 true(문구 내용 불문) — 이후 메인이 새 tool_use 를
+   *  발행하기 전까지 메인(parent_tool_use_id=null)의 text 이벤트를 억제한다 */
   suppressMainText: boolean;
 }
 
@@ -101,14 +114,21 @@ export function processMessage(
           } else if (block.type === 'tool_use' && 'name' in block) {
             const input = 'input' in block ? block.input : {};
             console.log(`${tag()} ◀ Tool call: ${block.name}(${truncate(JSON.stringify(input))})`);
-            // #428: 메인이 DESIGN 가드 subagent 에 위임하는 순간(Agent tool_use) 을 기록해,
-            // 해당 subagent 의 완료 텍스트를 이후 parent_tool_use_id 로 식별할 수 있게 한다.
+            // #429: 메인(parent_tool_use_id=null)이 새 tool_use 를 발행하면 그 시점에 억제를
+            // 해제한다 — 새 도구 호출은 메인이 이전 subagent 응답을 재서술하는 게 아니라 실제로
+            // 다음 작업을 하고 있다는 구조적 증거다. subagent 내부 tool_use(parentToolUseId 있음)
+            // 는 메인의 작업이 아니므로 해제 대상이 아니다.
+            if (!parentToolUseId && relayState.suppressMainText) {
+              relayState.suppressMainText = false;
+              console.log(`${tag()} 🔊 메인 새 tool_use 발행 — 재요약 억제 해제(#429)`);
+            }
+            // #428/#429: 메인이 Agent 로 위임하는 순간(subagent_type 불문) 을 기록해, 해당
+            // subagent 의 완료 텍스트를 이후 parent_tool_use_id 로 식별할 수 있게 한다.
             if (
               !parentToolUseId &&
               block.name === 'Agent' &&
               'id' in block &&
-              typeof (input as { subagent_type?: unknown })?.subagent_type === 'string' &&
-              DESIGN_GUARD_SUBAGENT_TYPES.has((input as { subagent_type: string }).subagent_type)
+              typeof (input as { subagent_type?: unknown })?.subagent_type === 'string'
             ) {
               relayState.pendingGuardToolUseIds.add(String((block as { id: string }).id));
             }

@@ -379,4 +379,102 @@ describe('processMessage', () => {
       expect(result).toEqual([{ type: 'text', content: '이대로 생성할까요?' }]);
     });
   });
+
+  // #429: 3개 subagent_type 화이트리스트를 폐지하고 Agent 로 위임되는 모든 subagent 에
+  // 동일하게 relay 억제를 적용 + 메인의 새 tool_use 로 억제를 해제하는 회귀 가드.
+  describe('#429 relay 억제 화이트리스트 폐지 + 새 tool_use 로 해제', () => {
+    const delegateMsg = (toolUseId: string, subagentType: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: toolUseId,
+              name: 'Agent',
+              input: { subagent_type: subagentType, prompt: '...' },
+            },
+          ],
+        },
+      }) as unknown as SDKMessage;
+
+    const subagentConfirmMsg = (toolUseId: string, text: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: toolUseId,
+        message: { content: [{ type: 'text', text }] },
+      }) as unknown as SDKMessage;
+
+    const mainDeltaMsg = (text: string) =>
+      ({
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+      }) as unknown as SDKMessage;
+
+    // 메인(parent 없음)의 새 tool_use 메시지 — Agent 가 아닌 일반 도구도 포함.
+    const mainToolUseMsg = (toolUseId: string, name: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_use', id: toolUseId, name, input: {} }],
+        },
+      }) as unknown as SDKMessage;
+
+    it('PM-429a: smart-job-manager(3개 화이트리스트 밖) 위임 완료 후에도 메인 재요약을 억제한다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_sjm_1';
+
+      processMessage(delegateMsg(toolUseId, 'smart-job-manager'), tag, false, state);
+      expect(state.pendingGuardToolUseIds.has(toolUseId)).toBe(true);
+
+      processMessage(subagentConfirmMsg(toolUseId, '## 설계안 ...\n이대로 생성할까요?'), tag, true, state);
+      expect(state.suppressMainText).toBe(true);
+
+      const mainResult = processMessage(mainDeltaMsg('## 설계안 재요약 ...\n확인 부탁드립니다.'), tag, false, state);
+      expect(mainResult).toEqual([]);
+    });
+
+    it('PM-429b: subagent 완료 후 메인이 새 tool_use 를 발행하면 억제가 해제되고 이후 메인 텍스트는 emit 된다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_reset_1';
+
+      processMessage(delegateMsg(toolUseId, 'pipeline-builder'), tag, false, state);
+      processMessage(subagentConfirmMsg(toolUseId, '파이프라인을 생성했습니다.'), tag, true, state);
+      expect(state.suppressMainText).toBe(true);
+
+      // 메인이 새 도구(run_pipeline)를 호출 — 재서술이 아니라 실제 다음 작업이라는 구조적 증거.
+      processMessage(mainToolUseMsg('toolu_run', 'mcp__firehub__run_pipeline'), tag, false, state);
+      expect(state.suppressMainText).toBe(false);
+
+      // 억제가 해제됐으므로 이후 메인 텍스트는 정상적으로 emit 된다.
+      const mainResult = processMessage(mainDeltaMsg('파이프라인 실행을 시작했습니다.'), tag, false, state);
+      expect(mainResult).toEqual([{ type: 'text', content: '파이프라인 실행을 시작했습니다.' }]);
+    });
+
+    it('PM-429c: subagent 내부 tool_use(parent 있음)는 억제를 해제하지 않는다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_internal_1';
+
+      processMessage(delegateMsg(toolUseId, 'smart-job-manager'), tag, false, state);
+      processMessage(subagentConfirmMsg(toolUseId, '## 설계안 ...\n이대로 생성할까요?'), tag, true, state);
+      expect(state.suppressMainText).toBe(true);
+
+      // subagent 내부 tool_use — parent_tool_use_id 가 위임 id 이므로 메인의 새 작업이 아니다.
+      const internalToolUseMsg = {
+        type: 'assistant',
+        parent_tool_use_id: toolUseId,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_internal_call', name: 'mcp__firehub__list_proactive_jobs', input: {} }],
+        },
+      } as unknown as SDKMessage;
+      processMessage(internalToolUseMsg, tag, false, state);
+      expect(state.suppressMainText).toBe(true);
+
+      const mainResult = processMessage(mainDeltaMsg('## 설계안 재요약 ...\n확인 부탁드립니다.'), tag, false, state);
+      expect(mainResult).toEqual([]);
+    });
+  });
 });
