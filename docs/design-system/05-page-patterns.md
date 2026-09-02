@@ -23,7 +23,7 @@ export default function XxxListPage() {
     <div className="space-y-6">
       {/* 페이지 헤더 */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">페이지 제목</h1>
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">페이지 제목</h1>
         <Button>
           <Plus className="h-4 w-4 mr-2" />
           새로 만들기
@@ -138,7 +138,7 @@ export default function XxxDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold truncate">{item.name}</h1>
+          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight truncate">{item.name}</h1>
           <p className="text-sm text-muted-foreground">{item.description}</p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -234,7 +234,7 @@ export default function XxxFormPage() {
   return (
     <div className="space-y-6">
       {/* 페이지 제목 */}
-      <h1 className="text-2xl font-bold">새로 만들기</h1>
+      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새로 만들기</h1>
 
       <Card>
         <CardHeader>
@@ -288,9 +288,11 @@ export default function XxxFormPage() {
 
 ```tsx
 // As-Is: 에러 메시지를 각 컴포넌트 안에서 직접 렌더링
+// (색은 시맨틱 토큰으로 적었다 — 이 예시의 논점은 "인라인 vs FormField" 이지 색이 아닌데,
+//  border-red-500 처럼 P1 에서 제거한 하드코딩 팔레트를 예시로 남기면 그게 다시 유입된다)
 <div>
-  <Input {...register("name")} className={errors.name ? "border-red-500" : ""} />
-  {errors.name && <p className="text-sm text-red-500">{errors.name.message}</p>}
+  <Input {...register("name")} className={errors.name ? "border-destructive" : ""} />
+  {errors.name && <p className="text-[0.8rem] font-medium text-destructive">{errors.name.message}</p>}
 </div>
 
 // To-Be: FormField 컴포넌트로 통일
@@ -389,7 +391,10 @@ export default function AuthPage() {
           <div className="flex justify-center mb-4">
             <img src="/logo.svg" alt="Smart Fire Hub" className="h-10" />
           </div>
-          <CardTitle className="text-2xl font-bold">로그인</CardTitle>
+          {/* `CardTitle` 은 `<div>` 를 렌더하므로(components/ui/card.tsx) 그 자체로는 heading 이
+              아니다. 인증 화면은 카드가 곧 페이지라 문서 개요에 h1 이 하나는 있어야 하므로
+              CardTitle 대신 h1 을 직접 쓴다 (#433). */}
+          <h1 className="text-2xl leading-8 font-semibold tracking-tight">로그인</h1>
           <CardDescription>계정에 로그인하세요</CardDescription>
         </CardHeader>
 

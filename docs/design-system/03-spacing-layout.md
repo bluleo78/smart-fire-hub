@@ -293,7 +293,7 @@ const ResponsiveGridLayout = WidthProvider(Responsive)
 ```tsx
 {/* Form / Settings 페이지 */}
 <div className="max-w-2xl mx-auto space-y-6">
-  <h1 className="text-2xl font-bold">설정</h1>
+  <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">설정</h1>
   <form className="space-y-4">{/* ... */}</form>
 </div>
 

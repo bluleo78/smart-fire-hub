@@ -149,7 +149,7 @@ UI 컨트롤에 붙는 레이블. 본문 텍스트와 달리 line-height보다 �
 
 | As-Is 클래스 조합 | 용도 | To-Be Semantic Name | To-Be 클래스 조합 |
 |-----------------|------|---------------------|-----------------|
-| `text-2xl font-bold` | 페이지 h1 | `heading-section` | `text-2xl leading-8 font-semibold tracking-tight` |
+| `text-2xl font-bold` | 페이지 h1 | `heading-page` | `text-[28px] leading-[36px] font-semibold tracking-tight` |
 | `text-2xl font-bold` | 통계 숫자 (홈) | `data-number` (확대) | `text-2xl font-mono tabular-nums font-semibold` |
 | `text-lg font-semibold` | Dialog/Sheet 제목 | `heading-card` | `text-xl leading-7 font-semibold` |
 | `text-base font-semibold` | 섹션 헤딩 | `heading-group` | `text-base leading-6 font-semibold` |
