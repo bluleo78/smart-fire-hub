@@ -14,18 +14,37 @@ import { describe, expect, it } from 'vitest';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * `components/ui/` 중 **shadcn CLI 가 생성한** 파일들. 이들만 검사에서 제외한다.
+ *
+ * 왜 디렉터리 통째로 제외하지 않는가 (#448): 같은 디렉터리에 프로젝트가 직접 작성한
+ * 컴포넌트가 섞여 있다(한국어 주석 + shadcn 표준 목록에 없는 이름). 통째로 빼면 그 파일들이
+ * **영구히 보이지 않는 자리**가 되어, #436 이 25건을 고치는 동안 `searchable-select.tsx` 의
+ * `ml-2` 하나만 조용히 살아남는 일이 실제로 벌어졌다.
+ *
+ * 새 shadcn 컴포넌트를 `npx shadcn` 으로 추가하면 여기에 이름을 넣어야 한다. 넣지 않으면
+ * 게이트가 그 파일을 검사하는데, 그건 안전한 방향의 실패다(시끄럽게 알려준다).
+ */
+const SHADCN_GENERATED = new Set([
+  'avatar.tsx', 'badge.tsx', 'button.tsx', 'card.tsx', 'checkbox.tsx', 'collapsible.tsx',
+  'command.tsx', 'dropdown-menu.tsx', 'input.tsx', 'label.tsx', 'popover.tsx',
+  'radio-group.tsx', 'scroll-area.tsx', 'select.tsx', 'separator.tsx', 'skeleton.tsx',
+  'sonner.tsx', 'switch.tsx', 'textarea.tsx', 'tooltip.tsx',
+]);
+
 /** src/ 하위의 소스 파일을 모은다(테스트 파일과 shadcn 생성물은 제외). */
 function collectSources(dir: string): string[] {
+  const inUiDir = dir.endsWith(join('components', 'ui'));
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      if (entry === 'ui' && dir.endsWith('components')) continue; // shadcn 생성물
       out.push(...collectSources(full));
       continue;
     }
     if (!/\.tsx?$/.test(entry)) continue;
     if (/\.test\.tsx?$/.test(entry)) continue;
+    if (inUiDir && SHADCN_GENERATED.has(entry)) continue;
     out.push(full);
   }
   return out;
@@ -42,11 +61,25 @@ describe('디자인 가이드라인 게이트', () => {
    * 간격 유틸(p/m/gap/space)만 본다. `h-5`·`w-5` 는 간격이 아니라 아이콘 크기(20px)이고
    * 07-iconography.md 의 크기 스케일에 정식으로 들어 있으므로 걸러지면 안 된다.
    */
-  it('20px 간격(-5) 을 쓰지 않는다', () => {
-    const spacing5 = /\b(?:p|m|gap|space)[xytrbl]?-5\b/;
-    const offenders = FILES.filter((f) => spacing5.test(readFileSync(f, 'utf8')));
+  it('20px 간격(-5, 20px 임의값) 을 쓰지 않는다', () => {
+    // `space-y-5`·`gap-x-5` 같은 **축 형태**를 반드시 포함해야 한다 (#448).
+    // 03 문서가 이름으로 지목한 `space-5` 는 Tailwind 에 존재하지 않는 클래스라,
+    // 축 형태를 빼면 게이트가 금지 대상의 실제 유입 경로를 통째로 놓친다.
+    // `p-[20px]` 같은 임의값 표기도 같은 20px 이므로 함께 막는다.
+    const SPACING_20 = /(?:^|[\s'"`])-?(?:p|m|gap|space)(?:[trblxy]|-[xy])?-(?:5|\[20px\])(?![\w-])/;
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      const src = readFileSync(file, 'utf8');
+      // className 값 안만 본다 — 파일 전체 텍스트를 보면 주석·문자열의 `gap-5` 언급까지
+      // 위반으로 잡혀(거짓 양성) 게이트를 느슨하게 만들고 싶어진다 (#448).
+      for (const tag of findOpeningTags(src, () => true)) {
+        if (classNameValuesOf(tag.text).some((v) => SPACING_20.test(v))) {
+          offenders.push(`${rel(file)}:${tag.line} <${tag.name}>`);
+        }
+      }
+    }
     expect(
-      offenders.map(rel),
+      offenders,
       '03-spacing-layout.md 의 승인 스케일에 20px 은 없다 — 16px(-4) 또는 24px(-6) 을 쓰세요',
     ).toEqual([]);
   });
@@ -124,6 +157,10 @@ describe('디자인 가이드라인 게이트', () => {
    * 게이트를 느슨하게 만들고 싶어지는 압력이 생긴다.
    */
   it('아이콘에 margin 을 직접 걸지 않는다 (컨테이너의 gap-* 으로 제어)', () => {
+    // 축(mx/my)까지 포함한다. `mr-`/`ml-` 만 보면 `mx-2` 로 우회된다 (#448).
+    // 음수 margin(`-ml-2`)은 컨테이너 패딩 상쇄용이라 간격 규칙과 목적이 다르므로 제외 —
+    // 그래서 앞에 `-` 가 붙지 않은 경우만 본다.
+    const ICON_MARGIN = /(?:^|[\s'"`])m[rlxy]-[0-9]/;
     const offenders: string[] = [];
     for (const file of FILES) {
       const src = readFileSync(file, 'utf8');
@@ -138,15 +175,13 @@ describe('디자인 가이드라인 게이트', () => {
       }
       if (icons.size === 0) continue;
 
-      const lines = src.split('\n');
-      lines.forEach((line, i) => {
-        const m = /<([A-Z][A-Za-z0-9_]*)\b[^>]*className="([^"]*)"/.exec(line);
-        if (!m) return;
-        if (!icons.has(m[1])) return;
-        // 음수 margin(-ml-2 등)은 컨테이너 패딩 상쇄용이라 간격 규칙과 다른 목적이다.
-        if (!/(?:^|\s)m[rl]-[0-9]/.test(m[2])) return;
-        offenders.push(`${rel(file)}:${i + 1} <${m[1]}>`);
-      });
+      // 줄 단위가 아니라 **태그 단위**로 본다 — prettier 가 prop 이 늘어난 태그를 여러 줄로
+      // 쪼개면 태그명과 className 이 다른 줄에 놓여 줄 매칭이 통째로 실패한다 (#448).
+      for (const tag of findOpeningTags(src, (name) => icons.has(name))) {
+        if (classNameValuesOf(tag.text).some((v) => ICON_MARGIN.test(v))) {
+          offenders.push(`${rel(file)}:${tag.line} <${tag.name}>`);
+        }
+      }
     }
     expect(
       offenders,
@@ -197,26 +232,32 @@ function labelTextOf(src: string, tag: { text: string; line: number }): string {
 }
 
 /**
- * 소스에서 `<Label ...>` 여는 태그를 전부 찾는다.
+ * 소스에서 여는 JSX 태그를 전부 찾는다. `accept` 로 태그명을 걸러 쓴다.
  *
  * 왜 정규식 한 줄이 아니라 스캐너인가:
- *  1) prettier 가 prop 이 늘어난 태그를 여러 줄로 쪼개므로 **줄 단위 매칭이면 자기 자신의
- *     수정 결과가 위반으로 잡힌다**(게이트를 느슨하게 만들고 싶어지는 함정).
+ *  1) prettier 가 prop 이 늘어난 태그를 여러 줄로 쪼개므로 **줄 단위 매칭이면 태그명과
+ *     className 이 다른 줄에 놓여 통째로 못 본다** (#448 에서 실증됨). 게이트를 느슨하게
+ *     만들고 싶어지는 함정이라 애초에 태그 단위로 본다.
  *  2) `className={cn(a > b ? ...)}` 처럼 prop 값 안의 `>` 를 태그 끝으로 오인하면 안 된다.
  *     중괄호 깊이와 따옴표를 추적해 깊이 0 의 `>` 만 태그 끝으로 본다.
- *  3) `<LabelPrimitive`·`<LabelList`(recharts) 같은 다른 컴포넌트가 걸리면 안 되므로
- *     `Label` 다음 문자가 식별자가 아닌 경우만 인정한다.
+ *  3) 주석·문자열 안의 `<Foo` 는 태그가 아니지만, JSX 파일에서 그 형태가 우연히 나올 확률이
+ *     낮고 걸려도 className 이 없어 무해하므로 별도 처리하지 않는다.
  */
-function findLabelOpeningTags(src: string): { text: string; line: number }[] {
-  const found: { text: string; line: number }[] = [];
+function findOpeningTags(
+  src: string,
+  accept: (name: string) => boolean,
+): { name: string; text: string; line: number }[] {
+  const found: { name: string; text: string; line: number }[] = [];
   for (let i = 0; i < src.length; i++) {
-    if (!src.startsWith('<Label', i)) continue;
-    const next = src[i + 6];
-    if (next === undefined || /[A-Za-z0-9_$]/.test(next)) continue; // <LabelPrimitive / <LabelList 제외
+    if (src[i] !== '<') continue;
+    const m = /^<([A-Za-z][A-Za-z0-9_.$]*)/.exec(src.slice(i, i + 64));
+    if (!m) continue;
+    const name = m[1];
+    if (!accept(name)) continue;
     let depth = 0;
     let quote: string | null = null;
     let end = -1;
-    for (let j = i + 6; j < src.length; j++) {
+    for (let j = i + m[0].length; j < src.length; j++) {
       const ch = src[j];
       if (quote) {
         if (ch === '\\') j++;
@@ -232,11 +273,39 @@ function findLabelOpeningTags(src: string): { text: string; line: number }[] {
       }
     }
     if (end === -1) continue;
-    found.push({
-      text: src.slice(i, end + 1),
-      line: src.slice(0, i).split('\n').length,
-    });
+    found.push({ name, text: src.slice(i, end + 1), line: src.slice(0, i).split('\n').length });
     i = end;
   }
   return found;
+}
+
+/** `<Label ...>` 여는 태그만 (`<LabelPrimitive`·`<LabelList` 같은 다른 컴포넌트는 제외). */
+function findLabelOpeningTags(src: string): { text: string; line: number }[] {
+  return findOpeningTags(src, (name) => name === 'Label');
+}
+
+/**
+ * 여는 태그에서 className 으로 지정된 **문자열 리터럴들**을 뽑는다.
+ *
+ * `className="a b"` 리터럴뿐 아니라 `className={cn('a', cond && 'b')}` 안의 리터럴까지 본다 —
+ * 리터럴만 보면 `cn('mr-2', ...)` 형태로 게이트가 통째로 우회된다 (#448 에서 실증됨).
+ * 템플릿 리터럴의 `${...}` 보간부는 정적으로 알 수 없으므로 걷어내고 고정 부분만 검사한다.
+ */
+function classNameValuesOf(tagText: string): string[] {
+  const at = tagText.indexOf('className');
+  if (at === -1) return [];
+  const rest = tagText.slice(at + 'className'.length).replace(/^\s*=\s*/, '');
+  if (rest.startsWith('"') || rest.startsWith("'")) {
+    const q = rest[0];
+    const close = rest.indexOf(q, 1);
+    return close === -1 ? [] : [rest.slice(1, close)];
+  }
+  if (!rest.startsWith('{')) return [];
+  // 표현식 전체에서 문자열 리터럴을 전부 긁는다(cn/clsx/삼항/템플릿 모두 같은 취급).
+  const values: string[] = [];
+  for (const m of rest.matchAll(/'([^'\\]*)'|"([^"\\]*)"|`([^`]*)`/g)) {
+    const v = m[1] ?? m[2] ?? m[3];
+    if (v !== undefined) values.push(v.replace(/\$\{[^}]*\}/g, ' '));
+  }
+  return values;
 }

@@ -127,7 +127,7 @@ export default function UserCombobox({
                   >
                     <Check
                       className={cn(
-                        'h-4 w-4 mr-2',
+                        'h-4 w-4',
                         selectedUserIds.includes(u.userId) ? 'opacity-100' : 'opacity-0',
                       )}
                     />
