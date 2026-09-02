@@ -78,4 +78,92 @@ describe('디자인 가이드라인 게이트', () => {
     }
     expect(offenders, '07-iconography.md §7.2 가 금지한 아이콘 별칭입니다').toEqual([]);
   });
+
+  /**
+   * 09-form-patterns.md §J 접근성:
+   * "`<label>` 과 `<input>` 은 반드시 연결되어야 한다 (`htmlFor` + `id` 또는 래핑)."
+   *
+   * 연결이 없으면 스크린리더가 필드 이름을 읽지 못하고 라벨 클릭으로 포커스도 가지 않는다.
+   * #432 시점에 전역 113건이 형제 관계로만 놓여 있었다. 손으로만 고치면 다음 기능에서
+   * 다시 유입되므로 테스트가 지킨다.
+   *
+   * id 는 `useId()` 로 만든다 — 다이얼로그·위저드 스텝은 같은 폼이 여러 번 렌더돼
+   * 하드코딩 id 가 실제로 충돌한다. (반복 행은 `${baseId}-${index}-필드` 형태)
+   */
+  it('<Label> 은 반드시 htmlFor 로 입력 요소와 연결한다', () => {
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      const src = readFileSync(file, 'utf8');
+      for (const tag of findLabelOpeningTags(src)) {
+        if (/\bhtmlFor\b/.test(tag.text)) continue;
+        const key = `${rel(file)}:${tag.line}`;
+        if (LABEL_HTMLFOR_ALLOWLIST.has(key)) continue;
+        offenders.push(key);
+      }
+    }
+    expect(
+      offenders,
+      '09-form-patterns.md §J — <Label htmlFor={id}> + 입력 요소 id={id} 로 연결하세요 (id 는 useId())',
+    ).toEqual([]);
+  });
 });
+
+/**
+ * htmlFor 없이 쓰이는 것이 정당한 <Label> 의 예외 목록. `상대경로:라인번호` 로 고정한다.
+ *
+ * 예외 사유는 단 하나 — **대응하는 단일 입력 요소가 없는 그룹/섹션 제목**이다.
+ * (래핑 `<Label>…<Input/></Label>` 형태는 이 코드베이스에 0건이라 예외 사유가 아니다.)
+ * 존재하지 않는 컨트롤로 htmlFor 를 억지로 걸면 스크린리더가 더 나빠지므로 그대로 둔다.
+ */
+const LABEL_HTMLFOR_ALLOWLIST = new Set<string>([
+  // "속성" 섹션 제목. 아래는 속성 행 목록 + "속성 추가" 버튼이라 짝지을 단일 컨트롤이 없다.
+  // 그런데 이 <Label> 은 `tabIndex={-1}` + ref 로 **속성 행 삭제 후 포커스 폴백 대상**이고,
+  // e2e/pages/admin/ontology-editor.spec.ts 가 `{ tag: 'LABEL', text: '속성' }` 로
+  // 태그 자체를 단언한다. <span> 으로 바꾸면 그 회귀 테스트가 깨지므로 현 형태를 유지한다.
+  'pages/admin/components/model-editor/EntityInspector.tsx:455',
+]);
+
+/**
+ * 소스에서 `<Label ...>` 여는 태그를 전부 찾는다.
+ *
+ * 왜 정규식 한 줄이 아니라 스캐너인가:
+ *  1) prettier 가 prop 이 늘어난 태그를 여러 줄로 쪼개므로 **줄 단위 매칭이면 자기 자신의
+ *     수정 결과가 위반으로 잡힌다**(게이트를 느슨하게 만들고 싶어지는 함정).
+ *  2) `className={cn(a > b ? ...)}` 처럼 prop 값 안의 `>` 를 태그 끝으로 오인하면 안 된다.
+ *     중괄호 깊이와 따옴표를 추적해 깊이 0 의 `>` 만 태그 끝으로 본다.
+ *  3) `<LabelPrimitive`·`<LabelList`(recharts) 같은 다른 컴포넌트가 걸리면 안 되므로
+ *     `Label` 다음 문자가 식별자가 아닌 경우만 인정한다.
+ */
+function findLabelOpeningTags(src: string): { text: string; line: number }[] {
+  const found: { text: string; line: number }[] = [];
+  for (let i = 0; i < src.length; i++) {
+    if (!src.startsWith('<Label', i)) continue;
+    const next = src[i + 6];
+    if (next === undefined || /[A-Za-z0-9_$]/.test(next)) continue; // <LabelPrimitive / <LabelList 제외
+    let depth = 0;
+    let quote: string | null = null;
+    let end = -1;
+    for (let j = i + 6; j < src.length; j++) {
+      const ch = src[j];
+      if (quote) {
+        if (ch === '\\') j++;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') quote = ch;
+      else if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      else if (ch === '>' && depth === 0) {
+        end = j;
+        break;
+      }
+    }
+    if (end === -1) continue;
+    found.push({
+      text: src.slice(i, end + 1),
+      line: src.slice(0, i).split('\n').length,
+    });
+    i = end;
+  }
+  return found;
+}

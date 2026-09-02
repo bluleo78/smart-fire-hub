@@ -946,4 +946,50 @@ test.describe('API 연결 페이지', () => {
     await page.waitForTimeout(300);
     expect(putCalled).toBe(false);
   });
+
+  test('폼 라벨이 입력 요소와 연결돼 있다 — 접근 가능한 이름 + 라벨 클릭 포커스 (#432)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이슈 #432 회귀 테스트:
+    // 이전에는 <Label> 이 입력과 형제로만 놓여 있어(htmlFor/id 부재) 스크린리더가
+    // 필드 이름을 읽지 못했고 라벨을 클릭해도 포커스가 가지 않았다.
+    // 정적 게이트(src/styles/design-guideline-gate.test.ts)가 소스 형태를 막고,
+    // 이 테스트는 **실제 브라우저에서 연결이 성립하는지**를 확인한다 —
+    // htmlFor 가 있어도 가리키는 id 가 없으면 게이트는 통과하지만 접근성은 여전히 깨진다.
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+
+    await page.getByRole('button', { name: '새 연결' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+
+    // 1) 접근 가능한 이름으로 입력을 찾을 수 있어야 한다 (연결 전에는 매칭 자체가 불가능했다).
+    const nameInput = page.getByLabel('연결 이름', { exact: true });
+    await nameInput.fill('접근성 검증용 연결');
+    await expect(nameInput).toHaveValue('접근성 검증용 연결');
+
+    // 2) 라벨을 클릭하면 그 입력이 포커스를 받아야 한다.
+    //    Select 트리거가 아니라 일반 <Input> 으로 검증한다 — Select 는 클릭이
+    //    드롭다운을 여는 부수효과가 있어 포커스 단언이 흐려진다.
+    const baseUrlInput = page.getByLabel('Base URL *', { exact: true });
+    await dialog.getByText('Base URL *', { exact: true }).click();
+    await expect(baseUrlInput).toBeFocused();
+
+    // 3) 다이얼로그의 모든 <label> 이 실재하는 컨트롤을 가리켜야 한다 (dangling htmlFor 방지).
+    //    id 중복도 함께 본다 — useId() 대신 하드코딩 id 로 되돌아가면 여기서 잡힌다.
+    const associations = await dialog.evaluate((root) => {
+      const labels = [...root.querySelectorAll('label')];
+      const ids = [...root.querySelectorAll('[id]')].map((el) => el.id);
+      return {
+        unlinked: labels.filter((l) => !l.htmlFor).map((l) => l.textContent?.trim() ?? ''),
+        dangling: labels
+          .filter((l) => l.htmlFor && !root.querySelector(`#${CSS.escape(l.htmlFor)}`))
+          .map((l) => l.htmlFor),
+        duplicatedIds: [...new Set(ids.filter((v, i) => ids.indexOf(v) !== i))],
+      };
+    });
+    expect(associations.unlinked).toEqual([]);
+    expect(associations.dangling).toEqual([]);
+    expect(associations.duplicatedIds).toEqual([]);
+  });
 });
