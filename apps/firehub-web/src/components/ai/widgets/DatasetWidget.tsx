@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronsUpDown,ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown,ChevronUp, Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { datasetsApi } from '../../../api/datasets';
@@ -10,6 +10,7 @@ import { ColumnFilterDropdown } from './table/ColumnFilterDropdown';
 import { ExportDropdown } from './table/ExportDropdown';
 import { Pagination } from './table/Pagination';
 import type { WidgetProps } from './types';
+import { WidgetLoading } from './WidgetLoading';
 import { WidgetShell } from './WidgetShell';
 
 interface ShowDatasetInput {
@@ -157,7 +158,7 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
   if (isLoading) {
     return (
       <WidgetShell title="데이터셋 불러오는 중..." icon="📦" displayMode={displayMode} onNavigate={onNavigate}>
-        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">로딩 중...</div>
+        <WidgetLoading label="데이터셋 불러오는 중" />
       </WidgetShell>
     );
   }
@@ -245,8 +246,13 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
             <tbody>
               {dataLoading ? (
                 <tr>
+                  {/* 표 chrome(헤더·페이지네이션)은 이미 렌더된 상태의 부분 로딩이라
+                      스켈레톤이 아니라 인라인 스피너를 쓴다(06-feedback-states §A.4, #434). */}
                   <td colSpan={visibleCols.length + (hiddenColCount > 0 ? 1 : 0)} className="px-3 py-4 text-center text-muted-foreground">
-                    로딩 중...
+                    <span className="inline-flex items-center justify-center" role="status">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      <span className="sr-only">데이터 불러오는 중</span>
+                    </span>
                   </td>
                 </tr>
               ) : rows.length === 0 ? (

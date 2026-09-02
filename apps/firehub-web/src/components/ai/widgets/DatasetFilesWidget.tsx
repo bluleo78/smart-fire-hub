@@ -4,6 +4,7 @@ import { datasetsApi } from '../../../api/datasets';
 import { useObjectList } from '../../../hooks/queries/useObjects';
 import { formatObjectDate, formatObjectSize, openObjectInNewTab } from '../../../lib/objectFile';
 import type { WidgetProps } from './types';
+import { WidgetRowsSkeleton } from './WidgetLoading';
 import { WidgetShell } from './WidgetShell';
 
 /** show_dataset_files 도구 입력 — 표시할 FILE 데이터셋 ID만 받는다(Reference 패턴). */
@@ -44,9 +45,9 @@ export default function DatasetFilesWidget({
   if (isLoading) {
     return (
       <WidgetShell title={title} icon="📁" displayMode={displayMode} onNavigate={onNavigate}>
-        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-          불러오는 중...
-        </div>
+        {/* 최종 본문이 파일 행 목록이라 행 모양을 미리 안다 → 스켈레톤(#434).
+            첫 페이지 크기를 모르므로 카드 높이(max-h-250px)에 들어가는 5행으로 고정한다. */}
+        <WidgetRowsSkeleton rows={5} label="파일 목록 불러오는 중" />
       </WidgetShell>
     );
   }

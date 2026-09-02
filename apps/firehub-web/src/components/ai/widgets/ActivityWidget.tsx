@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { dashboardApi } from '../../../api/dashboard';
 import type { WidgetProps } from './types';
+import { WidgetRowsSkeleton } from './WidgetLoading';
 import { WidgetShell } from './WidgetShell';
 
 interface ShowActivityInput {
@@ -48,7 +49,8 @@ export default function ActivityWidget({ input, onNavigate, displayMode }: Widge
   if (isLoading) {
     return (
       <WidgetShell title="최근 활동" icon="🕐" displayMode={displayMode} onNavigate={onNavigate}>
-        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">로딩 중...</div>
+        {/* 최종 본문이 활동 size 개의 행 목록이라 행 모양을 미리 안다 → 스켈레톤(#434). */}
+        <WidgetRowsSkeleton rows={size} label="최근 활동 불러오는 중" />
       </WidgetShell>
     );
   }

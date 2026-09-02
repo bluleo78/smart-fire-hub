@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { dashboardApi } from '../../../api/dashboard';
 import type { WidgetProps } from './types';
+import { WidgetLoading } from './WidgetLoading';
 import { WidgetShell } from './WidgetShell';
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -31,7 +32,7 @@ export default function DashboardWidget({ onNavigate, displayMode }: WidgetProps
   if (isLoading) {
     return (
       <WidgetShell title="시스템 현황" icon="📈" displayMode={displayMode} onNavigate={onNavigate} navigateTo="/">
-        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">로딩 중...</div>
+        <WidgetLoading label="시스템 현황 불러오는 중" />
       </WidgetShell>
     );
   }

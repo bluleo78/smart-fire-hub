@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { pipelinesApi } from '../../../api/pipelines';
 import type { WidgetProps } from './types';
+import { WidgetLoading } from './WidgetLoading';
 import { WidgetShell } from './WidgetShell';
 
 interface ShowPipelineInput {
@@ -72,7 +73,7 @@ export default function PipelineStatusWidget({ input, onNavigate, displayMode }:
   if (isLoading) {
     return (
       <WidgetShell title="파이프라인 불러오는 중..." icon="⚙️" displayMode={displayMode} onNavigate={onNavigate}>
-        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">로딩 중...</div>
+        <WidgetLoading label="파이프라인 불러오는 중" />
       </WidgetShell>
     );
   }
