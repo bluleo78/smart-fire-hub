@@ -287,6 +287,19 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('some_future_signal')).toHaveCount(0);
   });
 
+  // #478 — low_confidence 신호인데 confidence가 null로 저장되면 "신뢰도"라는 라벨만 남아
+  // "신뢰도가 낮다"와 "값 자체가 없다"를 검수자가 구분할 수 없었다. 점수 없음을 명시적으로 표기해야 한다.
+  test('저신뢰 신호인데 confidence가 null이면 값 없음을 명시적으로 표시한다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [
+      createEntityReviewItem({ signalScore: null }),
+    ]);
+    await page.goto('/knowledge-graph/review');
+
+    await expect(page.getByText('신뢰도 정보 없음')).toBeVisible();
+    // "신뢰도"만 단독으로 남아 점수 유무를 구분 못 하던 회귀를 막는다.
+    await expect(page.getByText('신뢰도', { exact: true })).toHaveCount(0);
+  });
+
   test('관계 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/4/evidence', [{ chunkId: 9, content: '노후 배선이 화재 원인으로 추정된다.' }]);

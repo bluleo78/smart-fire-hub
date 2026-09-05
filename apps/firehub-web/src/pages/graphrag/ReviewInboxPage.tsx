@@ -41,7 +41,9 @@ const SIGNAL_LABEL: Record<string, string> = {
 function formatSignal(signalType: string | null, signalScore: number | null): string {
   if (signalType == null) return '-';
   const label = SIGNAL_LABEL[signalType] ?? '기타';
-  if (signalScore == null) return label;
+  // 점수가 없을 때 레이블만 남으면 "신뢰도가 낮다"와 "값 자체가 없다"를 구분할 수 없다(#478).
+  // "정보 없음"을 덧붙여 값 부재를 명시적으로 표시한다.
+  if (signalScore == null) return `${label} 정보 없음`;
   // 유사도는 소수 3자리, 그 외 신뢰도류는 2자리 — 기존 표기 관례 유지.
   return `${label} ${signalScore.toFixed(signalType === 'similarity' ? 3 : 2)}`;
 }
