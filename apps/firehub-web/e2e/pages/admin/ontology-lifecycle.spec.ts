@@ -1,4 +1,4 @@
-import type { CreateOntologyRequest } from '@/types/ontology';
+import type { CreateOntologyRequest, OntologySummary } from '@/types/ontology';
 
 import {
   createArchivedOntologySummary,
@@ -405,6 +405,84 @@ test.describe('온톨로지 생명주기', () => {
   // 한다. 그래서 기본이 아닌 온톨로지(id=2)를 선택한 채로 편집해 PATCH가 /ontology/2/entity-types/…로
   // 나가는지 확인한다 — 실수로 defaultOntologyId(id=1)에 바인딩됐다면 이 요청은 /ontology/1/…로
   // 나가 이 테스트가 잡아낸다.
+  // 회귀 방지(#454) — 온톨로지가 많고 뷰포트가 낮으면 다이얼로그에 스크롤 컨테이너가 없어
+  // 제목/닫기 버튼(위)과 마지막 행의 액션(아래)이 모두 뷰포트 밖으로 잘려 도달 불가능했다.
+  // 표만 스크롤되는 별도 컨테이너로 감쌌는지, DialogHeader는 항상 뷰포트 안에 남는지 확인한다.
+  test('온톨로지가 많고 뷰포트가 낮아도 표만 스크롤되고 헤더는 항상 보인다(회귀, #454)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 활성 1 + 초안 다수 + 은퇴 1 — 낮은 뷰포트(1000x480)에서 확실히 넘치도록 초안을 10개로 늘린다.
+    const many: OntologySummary[] = [
+      {
+        id: MAPPING_ONTOLOGY_ID,
+        domain: '화재조사 보고서',
+        schemaVersion: 1,
+        status: 'active',
+        entityCount: 6,
+        datasetCount: 3,
+        updatedAt: '2026-04-12T09:00:00Z',
+        isDefault: true,
+      },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        id: 100 + i,
+        domain: `초안 온톨로지 ${i}`,
+        schemaVersion: 1,
+        status: 'draft' as const,
+        entityCount: 0,
+        datasetCount: 0,
+        updatedAt: '2026-08-01T09:00:00Z',
+        isDefault: false,
+      })),
+      {
+        id: 200,
+        domain: '마지막 은퇴 온톨로지',
+        schemaVersion: 2,
+        status: 'archived',
+        entityCount: 1,
+        datasetCount: 0,
+        updatedAt: '2026-01-01T09:00:00Z',
+        isDefault: false,
+      },
+    ];
+    await mockApi(page, 'GET', '/api/v1/ontologies', many);
+    await page.setViewportSize({ width: 1000, height: 480 });
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: /온톨로지 관리/ }).click();
+
+    const dialog = page.getByTestId('ontology-manage-dialog');
+    await expect(dialog).toBeVisible();
+
+    // 다이얼로그 자체는 뷰포트 높이 이하로 제한돼 있어야 한다 — 원본 결함은 이 상한이 아예 없어
+    // 콘텐츠가 뷰포트를 넘어 잘렸다.
+    const dialogBox = await dialog.boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.height).toBeLessThanOrEqual(480);
+
+    // 표 스크롤 컨테이너가 실제로 넘쳐서 스크롤 가능해야 한다(= 콘텐츠가 갇혀있지 않고 접근 가능).
+    const scrollContainer = page.getByTestId('ontology-manage-dialog-scroll');
+    const { scrollHeight, clientHeight } = await scrollContainer.evaluate((el) => ({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }));
+    expect(scrollHeight).toBeGreaterThan(clientHeight);
+
+    // 제목과 닫기 버튼은 스크롤과 무관하게 항상 뷰포트 안에 있어야 한다(헤더가 스크롤 컨테이너 밖).
+    await expect(page.getByRole('heading', { name: '온톨로지 관리' })).toBeVisible();
+    const closeButton = dialog.getByRole('button', { name: '닫기' });
+    const closeBox = await closeButton.boundingBox();
+    expect(closeBox).not.toBeNull();
+    expect(closeBox!.y).toBeGreaterThanOrEqual(0);
+    expect(closeBox!.y + closeBox!.height).toBeLessThanOrEqual(480);
+
+    // 마지막 행(은퇴된 온톨로지의 "복귀" 액션)까지 스크롤해 클릭 가능한지 확인한다 — 이 버튼이
+    // scrollIntoViewIfNeeded 없이 이미 뷰포트 안에 있다면 스크롤 컨테이너가 잘못 잡힌 것이다.
+    const lastRow = dialog.getByRole('row', { name: /마지막 은퇴 온톨로지/ });
+    await lastRow.getByRole('button', { name: '복귀' }).scrollIntoViewIfNeeded();
+    await expect(lastRow.getByRole('button', { name: '복귀' })).toBeVisible();
+  });
+
   test('요소 편집이 선택된 온톨로지 id로 전송된다(기본 온톨로지가 아니어도)', async ({ authenticatedPage: page }) => {
     const schema = createOntologySchema({ domain: '건축물 대장', schemaVersion: 3 });
     await mockApi(page, 'GET', '/api/v1/ontology/2', schema);
