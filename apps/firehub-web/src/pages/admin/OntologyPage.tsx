@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
+import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
@@ -112,6 +113,16 @@ export default function OntologyPage() {
   // canvasDeleteEntityId와 대칭인 controlled open 인스턴스를 별도로 둔다.
   const [canvasDeleteRelationId, setCanvasDeleteRelationId] = useState<number | null>(null);
   const { isAdmin } = useAuth();
+
+  // (#484) 지식 모델 3-pane 인스펙터(아웃라인 도메인명 + 타입/관계 인스펙터의 자동저장 필드)에
+  // useUnsavedChangesGuard를 연결한다. 파이프라인 에디터 등 이슈 #86에서 도입된 다른 5개 편집기와
+  // 동일한 패턴(SettingsPage의 useDirtyAggregator 재사용) — 필드별 draft!==committed(디바운스
+  // 대기/PATCH in-flight 포함)를 'outline'/'entity'/'relation' 세 슬롯으로 OR-합산해, 자동저장이
+  // 아직 서버에 반영되지 않은 상태로 사이드바 링크·뒤로가기·새로고침으로 이탈하면 확인 다이얼로그를
+  // 띄운다. 각 인스펙터는 언마운트 시 자기 슬롯을 false로 되돌려(EntityInspector/RelationInspector/
+  // ModelOutline 내부 cleanup) 선택 전환·생성 폼 전환 뒤에 유령 dirty가 남지 않는다.
+  const { isAnyDirty: isModelEditorDirty, makeReporter: makeModelDirtyReporter } = useDirtyAggregator();
+  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(modelEditMode && isModelEditorDirty);
 
   // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 기본 온톨로지 기반이므로
   // 이 선택은 스키마 탭에만 영향을 준다 — 여기까지 번지면 타입 필터가 조용히 어긋난다.
@@ -449,6 +460,7 @@ export default function OntologyPage() {
               setCreatingEntity(true);
             }}
             addEntityTypeButtonRef={addEntityTypeButtonRef}
+            onDirtyChange={makeModelDirtyReporter('outline')}
           />
         ) : (
           <TypeFilterPanel
@@ -619,6 +631,7 @@ export default function OntologyPage() {
                   onDeleted={() => setModelSelected(null)}
                   restoreFocusRef={addEntityTypeButtonRef}
                   status={selectedOntology?.status}
+                  onDirtyChange={makeModelDirtyReporter('entity')}
                 />
               ) : selectedRelation && selectedSchema ? (
                 <RelationInspector
@@ -628,6 +641,7 @@ export default function OntologyPage() {
                   mutations={elementMutations}
                   onDeleted={() => setModelSelected(null)}
                   restoreFocusRef={addEntityTypeButtonRef}
+                  onDirtyChange={makeModelDirtyReporter('relation')}
                 />
               ) : creatingRelation && selectedSchema ? (
                 <RelationInspector
@@ -753,6 +767,10 @@ export default function OntologyPage() {
         onOpenChange={setManageOpen}
         onSelect={(id) => setSelectedOntologyId(id)}
       />
+
+      {/* (#484) 지식 모델 편집기 자동저장 이탈 가드 — 다이얼로그 자체는 useUnsavedChangesGuard가
+          소유하며 여기서는 렌더 위치만 정한다. */}
+      {unsavedChangesDialog}
     </Tabs>
   );
 }

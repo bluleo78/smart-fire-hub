@@ -1,11 +1,12 @@
 import { Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchInput } from '@/components/ui/search-input';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
+import type { ReportDirty } from '@/hooks/useUnsavedChangesGuard';
 import { validateDomain } from '@/lib/ontology-validation';
 import { cn } from '@/lib/utils';
 import type { OntologySchema } from '@/types/ontology';
@@ -33,6 +34,9 @@ interface Props {
   // 트리거가 삭제 성공과 함께 사라지므로, 선택과 무관하게 항상 남아 있는 이 버튼이 대신 받는다
   // (DatasetMappingTab의 entityAddRef와 같은 패턴). OntologyPage가 소유하고 여기서는 ref만 붙인다.
   addEntityTypeButtonRef?: React.RefObject<HTMLButtonElement | null>;
+  // 도메인명 필드의 dirty(#484) — OntologyPage가 useDirtyAggregator로 다른 인스펙터 필드들과
+  // OR-합산해 useUnsavedChangesGuard에 연결한다. 미전달 시(선택 안 함) 그냥 보고를 건너뛴다.
+  onDirtyChange?: ReportDirty;
 }
 
 // 편집 모드 좌측 아웃라인 — 타입/관계를 목록으로 보여주고 클릭 시 선택 상태를 갱신한다.
@@ -47,6 +51,7 @@ export default function ModelOutline({
   onAddRelation,
   onAddEntityType,
   addEntityTypeButtonRef,
+  onDirtyChange,
 }: Props) {
   const entities = schema.entities.filter((e): e is typeof e & { id: number } => e.id != null);
   const relations = schema.relations.filter((r): r is typeof r & { id: number } => r.id != null);
@@ -83,6 +88,15 @@ export default function ModelOutline({
     validateDomain,
     true,
   );
+
+  // (#484) 도메인 필드가 dirty해지는 순간(입력 중/디바운스 대기/PATCH in-flight)을 부모에 보고한다.
+  useEffect(() => {
+    onDirtyChange?.(domainField.isDirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domainField.isDirty]);
+  // 언마운트 시(온톨로지 전환으로 아웃라인 자체가 사라질 때) false로 되돌려, 이미 사라진 필드의
+  // dirty가 부모의 OR-합산에 계속 남아 있는 것을 막는다(마운트마다 재구독하지 않도록 deps=[]).
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const isSelected = (kind: SchemaGraphSelection['kind'], id: number) =>
     selected?.kind === kind && selected.id === id;

@@ -49,6 +49,13 @@ export function useAutosaveText(
   const [draft, setDraft] = useState(serverValue);
   const [committed, setCommitted] = useState(serverValue);
   const [prevServerValue, setPrevServerValue] = useState(serverValue);
+  // (#484) 아직 응답을 받지 못한 onCommit 호출 개수 — commit()은 요청을 던지자마자(응답을 기다리지
+  // 않고) committed를 낙관적으로 draft까지 전진시키므로(N-2 실패 롤백 로직이 그 전제 위에 있다),
+  // draft!==committed만으로는 "PATCH가 아직 서버에 도달하지 않았을 수 있는" 이 구간을 잡지 못한다
+  // — 디바운스 타이머가 막 발화한 순간(committed:=value가 동기 실행됨)과 실제 fetch 완료 사이의
+  // 창이 그대로 "dirty 아님"으로 보고돼, 그 사이 이탈하면 #484가 재현하는 정확한 그 경쟁 상태가 된다.
+  // 카운터(불리언 아님)인 이유: 사용자가 연속 편집해 겹친 커밋 여러 개가 동시에 in-flight일 수 있다.
+  const [pendingCount, setPendingCount] = useState(0);
   // 디바운스 타이머 핸들만 담는다 — 이벤트 핸들러(onChange)와 commit(blur/타이머 콜백)에서만
   // 읽고 쓰므로 "렌더 중 ref 접근" 규칙에 걸리지 않는다.
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,13 +99,20 @@ export function useAutosaveText(
     // 요구해 매 서버값 변경마다 commit이 재생성되기 때문이다 — prevServerValue는 이미 이 훅의
     // state라 deps에 자연스럽게 넣을 수 있다.
     setCommitted(value);
+    // (#484) 요청을 던지는 시점에 카운트를 올리고, 응답(성공/실패 불문)이 오면 내린다 — try/finally로
+    // 감싸 onCommit이 예외를 던져도(네트워크 단절 등) 카운트가 영원히 걸려 있지 않게 한다.
+    setPendingCount((n) => n + 1);
     void (async () => {
-      const result = await onCommit(value);
-      if (result === undefined) {
-        // 실패 — 이 값을 dirty로 되돌려 다음 blur/디바운스가 재시도하게 한다. 함수형 업데이트로
-        // 감싸는 이유: 그 사이 사용자가 또 편집해 committed가 이미 더 앞으로 갔다면(current !== value)
-        // 그 최신 상태를 덮어쓰지 않기 위해서다.
-        setCommitted((current) => (current === value ? prevServerValue : current));
+      try {
+        const result = await onCommit(value);
+        if (result === undefined) {
+          // 실패 — 이 값을 dirty로 되돌려 다음 blur/디바운스가 재시도하게 한다. 함수형 업데이트로
+          // 감싸는 이유: 그 사이 사용자가 또 편집해 committed가 이미 더 앞으로 갔다면(current !== value)
+          // 그 최신 상태를 덮어쓰지 않기 위해서다.
+          setCommitted((current) => (current === value ? prevServerValue : current));
+        }
+      } finally {
+        setPendingCount((n) => n - 1);
       }
     })();
   }, [draft, committed, onCommit, validate, trim, prevServerValue]);
@@ -125,5 +139,20 @@ export function useAutosaveText(
 
   // 에러 표시도 커밋과 같은 정규화 규칙을 쓴다 — 그렇지 않으면 "  type  "이 화면엔 에러 없이
   // 보이다가 blur 시점에만 조용히 저장이 막혀 사용자가 원인을 알 수 없다.
-  return { value: draft, onChange, onBlur: commit, error: validate?.(trim ? draft.trim() : draft) ?? null };
+  //
+  // isDirty(#484): draft !== committed(입력 중/blur 전/디바운스 대기 중)이거나 pendingCount > 0
+  // (디바운스가 막 발화해 committed는 이미 전진했지만 fetch 응답은 아직 안 온 상태) 둘 중 하나라도
+  // 참이면 "아직 서버에 확정 반영됐다고 보장할 수 없다"는 뜻이다. draft!==committed만 봤다면 commit()
+  // 진입 순간(setCommitted가 동기 실행되는 시점)부터 실제 응답 도착까지의 창이 통째로 "clean"으로
+  // 오판돼, 그 사이 이탈하면 #484가 재현하는 바로 그 경쟁 상태(무경고 유실)가 다시 열린다.
+  // 이 값을 상위(OntologyPage)가 여러 필드/행에 걸쳐 OR-합산해 useUnsavedChangesGuard에 연결하면,
+  // 자동저장 완료를 기다리지 않고 페이지를 이탈할 때(사이드바 링크·뒤로가기·새로고침) 확인
+  // 다이얼로그를 띄울 수 있다 — 이 훅 자체는 이탈을 막지 않는다(호출부 책임).
+  return {
+    value: draft,
+    onChange,
+    onBlur: commit,
+    error: validate?.(trim ? draft.trim() : draft) ?? null,
+    isDirty: draft !== committed || pendingCount > 0,
+  };
 }

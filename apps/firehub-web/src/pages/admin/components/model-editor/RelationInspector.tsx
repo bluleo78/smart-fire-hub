@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
+import type { ReportDirty } from '@/hooks/useUnsavedChangesGuard';
 import { validateRelationName, validateTripleUniqueness } from '@/lib/ontology-validation';
 import type { OntologySchema, Triple } from '@/types/ontology';
 
@@ -31,6 +32,10 @@ interface Props {
   // 같은 문제를 겪었고(#328류, restoreFocusRef) 이 컴포넌트만 그 대응이 빠져 있었다 — OntologyPage가
   // ModelOutline의 "타입 추가" 버튼을 그대로 내려준다(타입 삭제와 동일한 대체 대상).
   restoreFocusRef?: React.RefObject<HTMLElement | null>;
+  // (#484) 이름/설명 필드 중 하나라도 dirty면 알려준다 — OntologyPage가 useDirtyAggregator로
+  // 다른 인스펙터/아웃라인과 OR-합산해 useUnsavedChangesGuard에 연결한다. relation===null(생성 폼)은
+  // 자동저장이 아니므로 보고하지 않는다.
+  onDirtyChange?: ReportDirty;
 }
 
 // 끝점(주어/목적어) 선택 — 생성 폼 전용. 엔티티 타입 목록에서 고른다. id 없는 타입(이론상 없어야
@@ -265,6 +270,7 @@ export default function RelationInspector({
   onCancel,
   onDeleted,
   restoreFocusRef,
+  onDirtyChange,
 }: Props) {
   // relation === null: ModelOutline의 "관계 추가" 버튼으로 진입한 생성 폼.
   if (relation === null) {
@@ -278,6 +284,7 @@ export default function RelationInspector({
       mutations={mutations}
       onDeleted={onDeleted}
       restoreFocusRef={restoreFocusRef}
+      onDirtyChange={onDirtyChange}
     />
   );
 }
@@ -295,12 +302,14 @@ function EditRelationForm({
   mutations,
   onDeleted,
   restoreFocusRef,
+  onDirtyChange,
 }: {
   schema: OntologySchema;
   relation: Triple & { id: number };
   mutations: OntologyElementMutations;
   onDeleted?: () => void;
   restoreFocusRef?: React.RefObject<HTMLElement | null>;
+  onDirtyChange?: ReportDirty;
 }) {
   const nameField = useAutosaveText(
     relation.relation,
@@ -316,6 +325,16 @@ function EditRelationForm({
   const descriptionField = useAutosaveText(relation.description, (value) =>
     mutations.updateRelation(relation.id, { description: value }),
   );
+
+  // (#484) 이름/설명 필드 중 하나라도 dirty면 부모에 보고하고, 언마운트 시(다른 관계 선택으로
+  // key={relation.id}가 바뀌거나 다른 종류 선택/생성 폼 전환) false로 되돌려 유령 dirty를 막는다
+  // (EntityInspector의 EditEntityForm과 동일한 패턴).
+  const isAnyDirty = nameField.isDirty || descriptionField.isDirty;
+  useEffect(() => {
+    onDirtyChange?.(isAnyDirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAnyDirty]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const nameErrorId = `relation-name-error-${relation.id}`;
 

@@ -1521,3 +1521,102 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
     await expect(page.getByTestId('outline-entity-1')).toBeVisible();
   });
 });
+
+// (#484) 지식 모델 3-pane 인스펙터의 자동저장(디바운스/PATCH in-flight) 이탈 가드 회귀 테스트.
+// 다른 5개 편집기(파이프라인/리포트/프로액티브 잡/쿼리/차트, 이슈 #86)와 동일한
+// useUnsavedChangesGuard + useDirtyAggregator 패턴을 지식 모델 편집기(ModelOutline 도메인명 +
+// EntityInspector/RelationInspector 자동저장 필드)에도 연결했는지 검증한다 — 원인은 이 가드가
+// 아예 배선돼 있지 않아 blur/디바운스가 아직 끝나지 않은 입력이 이탈 시 무경고로 유실되던 것이었다.
+test.describe('지식 모델 편집기 — 자동저장 이탈 가드(#484)', () => {
+  async function openInspector(page: import('@playwright/test').Page, entityId: number) {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+    await page.getByTestId(`outline-entity-${entityId}`).click();
+  }
+
+  test('설명 필드를 blur/디바운스 전에 두고 사이드바로 이동하면 이탈 다이얼로그가 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInspector(page, 2); // Building
+
+    // PATCH가 나가도(디바운스가 먼저 발화해도) in-flight 응답을 아직 못 받은 채로 남겨둔다 — #484의
+    // 핵심 회귀 지점: commit()이 committed를 응답 전에 낙관적으로 전진시키므로(useAutosaveText.ts),
+    // draft!==committed만 보면 이 창에서 "clean"으로 오판된다. isPending으로 그 창까지 잡는지 검증한다.
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontology/1/entity-types/2',
+      async (route) => {
+        if (route.request().method() !== 'PATCH') return route.fallback();
+        await new Promise((resolve) => setTimeout(resolve, 5000)); // 테스트 시간 내내 응답하지 않는다.
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) });
+      },
+    );
+
+    // fill()은 blur를 발생시키지 않는다 — onChange만 거쳐 draft가 committed와 달라져(isDirty) 곧바로
+    // dirty 상태가 된다. 이후 디바운스(400ms)가 자연히 발화해도 위 route가 응답을 보류하므로 PATCH가
+    // in-flight 상태로 남아, "blur 전/디바운스 대기 중"과 "PATCH in-flight" 두 창을 모두 검증한다.
+    await page.getByLabel('설명', { exact: true }).fill('변경된 설명');
+
+    // 사이드바 "그래프 탐색" 링크 클릭(SPA 이동) — useUnsavedChangesGuard의 document click capture가 가로챈다.
+    await page.getByRole('navigation').getByRole('link', { name: '그래프 탐색' }).click();
+
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    // 가로챘으므로 URL은 그대로 지식 모델 화면에 머문다.
+    expect(new URL(page.url()).pathname).toBe('/knowledge-graph/model');
+  });
+
+  test('이탈 다이얼로그에서 취소하면 페이지에 머무르고 입력값이 그대로 보존된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInspector(page, 2);
+
+    await page.getByLabel('설명', { exact: true }).fill('변경된 설명');
+    await page.getByRole('navigation').getByRole('link', { name: '그래프 탐색' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).toBeHidden();
+
+    expect(new URL(page.url()).pathname).toBe('/knowledge-graph/model');
+    await expect(page.getByLabel('설명', { exact: true })).toHaveValue('변경된 설명');
+  });
+
+  test('이탈 다이얼로그에서 이탈을 확정하면 변경값을 버리고 다른 탭으로 이동한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInspector(page, 2);
+
+    await page.getByLabel('설명', { exact: true }).fill('변경된 설명');
+    await page.getByRole('navigation').getByRole('link', { name: '그래프 탐색' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+
+    await page.getByRole('button', { name: '이탈' }).click();
+
+    await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+  });
+
+  test('저장 완료(clean) 상태에서는 사이드바 이동이 다이얼로그 없이 즉시 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInspector(page, 2);
+
+    // blur까지 마쳐 committed와 draft가 같아지면(clean) 이탈 가드가 걸리지 않아야 한다 — 이 훅이
+    // 모든 이탈을 무조건 막는 게 아니라 dirty일 때만 개입한다는 것을 보장하는 대비군(contrast) 테스트.
+    await mockApi(
+      page,
+      'PATCH',
+      '/api/v1/ontology/1/entity-types/2',
+      createEntityTypeMutation({ id: 2, type: 'Building', description: '변경된 설명', naming: '본문 표기 보존', resolution: 'embedding', properties: [] }),
+    );
+    await page.getByLabel('설명', { exact: true }).fill('변경된 설명');
+    await page.getByLabel('설명', { exact: true }).blur();
+    await page.waitForTimeout(50); // useAutosaveText commit()이 committed를 낙관적으로 전진시키는 시점까지 대기
+
+    await page.getByRole('navigation').getByRole('link', { name: '그래프 탐색' }).click();
+
+    await expect(page.getByRole('alertdialog')).toBeHidden();
+    await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+  });
+});

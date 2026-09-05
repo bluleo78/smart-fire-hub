@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
+import { type ReportDirty,useDirtyAggregator } from '@/hooks/useUnsavedChangesGuard';
 import {
   affectedRelationsFor,
   DATA_TYPES,
@@ -44,6 +45,10 @@ interface Props {
   // 400으로 거부한다. 로컬에서 이 조건을 몰라 삭제 트리거를 그대로 활성화해 두면 이 파일 전역
   // 제약(서버 문구가 정상 사용에 노출되면 안 된다)을 어긴다. 생성 폼(entity===null)에는 필요 없다.
   status?: OntologyStatus;
+  // (#484) 이 타입의 모든 자동저장 필드(타입명/설명/명명규칙 + 속성 행들) 중 하나라도 dirty면
+  // 알려준다 — OntologyPage가 useDirtyAggregator로 다른 인스펙터/아웃라인과 OR-합산해
+  // useUnsavedChangesGuard에 연결한다. entity===null(생성 폼)은 자동저장이 아니므로 보고하지 않는다.
+  onDirtyChange?: ReportDirty;
 }
 
 interface PropertyRowProps {
@@ -59,12 +64,15 @@ interface PropertyRowProps {
     unit?: string;
   }) => unknown;
   onDelete: () => void;
+  // (#484) 이 행(이름/단위/설명 3필드 OR)의 dirty 상태를 부모(EditEntityForm)의 useDirtyAggregator에
+  // 보고한다 — 행마다 key(property.id)로 makeReporter를 받아 독립적으로 보고한다.
+  onDirtyChange: ReportDirty;
 }
 
 // 속성 한 행 — 이름/타입/단위/설명을 각각 독립적으로 자동 저장한다. 배열 안에서 훅을 쓰므로
 // 반드시 별도 컴포넌트로 분리해야 한다(같은 렌더에서 훅 호출 횟수가 배열 길이에 따라 달라지면
 // react-hooks 규칙 위반) — key={property.id}로 속성이 추가/삭제될 때만 마운트/언마운트된다.
-function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete }: PropertyRowProps) {
+function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, onDirtyChange }: PropertyRowProps) {
   const nameField = useAutosaveText(
     property.name,
     (name) => onUpdate({ name }),
@@ -76,6 +84,17 @@ function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete }
   // onUpdate에 실어 보낸다.
   const unitField = useAutosaveText(property.unit ?? '', (unit) => onUpdate({ unit }));
   const descriptionField = useAutosaveText(property.description, (description) => onUpdate({ description }));
+
+  // (#484) 이 행의 세 필드 중 하나라도 dirty면 부모에 OR로 보고한다. property.id가 key라
+  // 행이 삭제/재정렬돼도 makeReporter가 안정적으로 같은 슬롯을 갱신한다.
+  const rowIsDirty = nameField.isDirty || unitField.isDirty || descriptionField.isDirty;
+  useEffect(() => {
+    onDirtyChange(rowIsDirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowIsDirty]);
+  // 행 삭제로 언마운트될 때 슬롯을 false로 비워, 삭제 당시 dirty였던 값이 aggregator에 유령으로
+  // 남아 다른 행이 모두 clean인데도 이탈 가드가 계속 뜨는 것을 막는다.
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   const nameErrorId = `property-name-error-${property.id}`;
 
@@ -287,6 +306,7 @@ export default function EntityInspector({
   onCancel,
   restoreFocusRef,
   status,
+  onDirtyChange,
 }: Props) {
   if (entity === null) {
     return <CreateEntityTypeForm schema={schema} mutations={mutations} onCreated={onCreated} onCancel={onCancel} />;
@@ -299,6 +319,7 @@ export default function EntityInspector({
       onDeleted={onDeleted}
       restoreFocusRef={restoreFocusRef}
       status={status}
+      onDirtyChange={onDirtyChange}
     />
   );
 }
@@ -313,6 +334,7 @@ function EditEntityForm({
   onDeleted,
   restoreFocusRef,
   status,
+  onDirtyChange,
 }: {
   schema: OntologySchema;
   entity: EntityTypeDef & { id: number };
@@ -320,6 +342,7 @@ function EditEntityForm({
   onDeleted?: () => void;
   restoreFocusRef?: React.RefObject<HTMLElement | null>;
   status?: OntologyStatus;
+  onDirtyChange?: ReportDirty;
 }) {
   const existingTypeNames = schema.entities.map((e) => e.type);
 
@@ -333,6 +356,20 @@ function EditEntityForm({
     mutations.updateEntityType(entity.id, { description }),
   );
   const namingField = useAutosaveText(entity.naming, (naming) => mutations.updateEntityType(entity.id, { naming }));
+
+  // (#484) 타입명/설명/명명규칙 3필드 + 속성 행들(가변 개수)의 dirty를 한데 OR-합산한다.
+  // 속성 행은 key(property.id)로 makeReporter를 받아 독립 슬롯을 유지하므로, 행이 추가/삭제돼도
+  // 다른 행의 보고와 충돌하지 않는다.
+  const { isAnyDirty: isAnyRowDirty, makeReporter: makePropertyReporter } = useDirtyAggregator();
+  const isAnyDirty = typeField.isDirty || descriptionField.isDirty || namingField.isDirty || isAnyRowDirty;
+  useEffect(() => {
+    onDirtyChange?.(isAnyDirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAnyDirty]);
+  // 언마운트 시(다른 타입 선택으로 key={entity.id}가 바뀌거나, 생성 폼/다른 종류 선택으로 전환될 때)
+  // 반드시 false로 되돌린다 — 그렇지 않으면 이미 사라진 이 폼의 마지막 dirty 값이 OntologyPage의
+  // 합산에 계속 남아, 실제로는 저장할 게 없는데도 이탈 가드가 계속 뜨는 유령 dirty가 된다.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // 새 속성 추가 폼 — 자동 저장 대상이 아니라 명시적 버튼 클릭으로만 커밋되는 별도 상태.
   const [newProp, setNewProp] = useState({ name: '', dataType: 'text' as 'text' | 'number' | 'date', unit: '', description: '' });
@@ -478,6 +515,7 @@ function EditEntityForm({
               property={prop}
               existingNames={entity.properties.map((p) => p.name)}
               onUpdate={(req) => mutations.updateProperty(entity.id, prop.id, req)}
+              onDirtyChange={makePropertyReporter(String(prop.id))}
               onDelete={() =>
                 void mutations.deleteProperty(entity.id, prop.id).then((result) => {
                   // 삭제 성공 시에만 옮긴다 — 실패하면 행이 그대로 남아 있으므로 포커스를 옮길
