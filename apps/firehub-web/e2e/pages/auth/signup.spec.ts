@@ -10,7 +10,8 @@ test.describe('회원가입 페이지', () => {
   test('회원가입 페이지가 올바르게 렌더링된다', async ({ authMockedPage: page }) => {
     await page.goto('/signup');
 
-    // 페이지 제목 확인 — CardTitle은 div이므로 first()로 제목 요소 한정 (버튼과 구분)
+    // 페이지 제목 확인 — "회원가입" 문자열이 제목(h1)과 버튼에 중복되므로 first()로 한정
+    // (제목이 h1으로 렌더되는지 자체는 아래 #433 회귀 테스트가 getByRole(heading)으로 별도 검증)
     await expect(page.getByText('회원가입').first()).toBeVisible();
     // 입력 필드 존재 확인
     await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
