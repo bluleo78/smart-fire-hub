@@ -281,7 +281,58 @@ function AttachmentPreview({ attachment }: { attachment: AIAttachment }) {
 
 const REMARK_PLUGINS = [remarkGfm];
 
+/**
+ * 마크다운 내 앵커(`a`) 커스텀 렌더러 (#470)
+ * - 이 앱은 BrowserRouter SPA이므로 기본 `<a href>` 클릭은 풀 페이지 리로드를 유발해
+ *   채팅 세션 상태(스트리밍 상태, 미전송 첨부파일 등)를 초기화시킨다.
+ * - 내부 경로(상대 경로 또는 같은 origin)는 `useNavigate()`로 클라이언트 사이드 전환하고,
+ *   외부 URL은 새 탭에서 열리게 분기해 위젯의 `navigate_to` 도구(useNavigate 기반)와 경험을 통일한다.
+ */
+function MarkdownLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const navigate = useNavigate();
+  const { mode, setMode } = useAI();
+
+  if (!href) {
+    return <a>{children}</a>;
+  }
+
+  let isInternal = href.startsWith('/') && !href.startsWith('//');
+  let internalPath = href;
+  if (!isInternal) {
+    try {
+      const url = new URL(href, window.location.origin);
+      if (url.origin === window.location.origin) {
+        isInternal = true;
+        internalPath = `${url.pathname}${url.search}${url.hash}`;
+      }
+    } catch {
+      isInternal = false;
+    }
+  }
+
+  if (isInternal) {
+    const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+      e.preventDefault();
+      // fullscreen 모드에서는 이동 대상 화면을 보이게 side 모드로 축소 (RenderToolCall의 handleNavigate와 동일 규약)
+      if (mode === 'fullscreen') setMode('side');
+      navigate(internalPath);
+    };
+    return (
+      <a href={internalPath} onClick={handleClick}>
+        {children}
+      </a>
+    );
+  }
+
+  return (
+    <a href={href} target="_blank" rel="noreferrer">
+      {children}
+    </a>
+  );
+}
+
 const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+  a: MarkdownLink,
   table({ children }) {
     return (
       <div className="overflow-x-auto my-2">

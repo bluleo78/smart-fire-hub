@@ -724,3 +724,92 @@ test.describe('ToolCallDisplay — isError 실패 표시', () => {
     await expect(page.getByText(/#7\b/)).not.toBeVisible();
   });
 });
+
+test.describe('MessageBubble — 마크다운 링크 클라이언트 사이드 전환 (#470)', () => {
+  /**
+   * MB-16 (#470): 어시스턴트 응답의 마크다운 내부 링크는 풀 페이지 리로드가 아니라
+   * React Router의 SPA 네비게이션으로 전환되어야 한다.
+   * 검증 방법: 클릭 전 window에 마커를 심어두고, 클릭 후에도 마커가 남아있으면
+   * document가 리로드되지 않았다는(=SPA 전환) 증거가 된다.
+   */
+  test('MB-16 (#470): 내부 경로 마크다운 링크 클릭 → SPA 전환(풀 리로드 없음)', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-16-session');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-16-session' }),
+            sseEvent({
+              type: 'text',
+              content: '온톨로지 초안이 생성되었습니다. [지식 모델 화면](/knowledge-graph/model)에서 검토해주세요.',
+            }),
+            sseEvent({ type: 'done', inputTokens: 10 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('온톨로지 초안 알려줘');
+    await chatInput.press('Enter');
+
+    const link = page.getByRole('link', { name: '지식 모델 화면' });
+    await link.waitFor({ state: 'visible', timeout: 10_000 });
+
+    // 리로드 여부 판별용 마커 — document가 새로 로드되면 사라진다.
+    await page.evaluate(() => {
+      (window as unknown as { __noReloadMarker__?: boolean }).__noReloadMarker__ = true;
+    });
+
+    await link.click();
+
+    // SPA 네비게이션 확인: URL은 이동했지만 window 마커는 유지되어야 한다 (풀 리로드 없음).
+    await expect(page).toHaveURL(/\/knowledge-graph\/model$/);
+    const markerSurvived = await page.evaluate(
+      () => (window as unknown as { __noReloadMarker__?: boolean }).__noReloadMarker__ === true,
+    );
+    expect(markerSurvived).toBe(true);
+  });
+
+  /**
+   * MB-17 (#470): 외부 URL 마크다운 링크는 새 탭(target="_blank")으로 열리도록 렌더링되어야 한다.
+   */
+  test('MB-17 (#470): 외부 URL 마크다운 링크 → target=_blank로 렌더링', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'mb-17-session');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: [
+            sseEvent({ type: 'init', sessionId: 'mb-17-session' }),
+            sseEvent({
+              type: 'text',
+              content: '참고 자료는 [공식 문서](https://example.com/docs)를 확인해주세요.',
+            }),
+            sseEvent({ type: 'done', inputTokens: 10 }),
+          ].join(''),
+        });
+      },
+    );
+
+    await openChatPanel(page);
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('참고 자료 알려줘');
+    await chatInput.press('Enter');
+
+    const link = page.getByRole('link', { name: '공식 문서' });
+    await link.waitFor({ state: 'visible', timeout: 10_000 });
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noreferrer');
+  });
+});
