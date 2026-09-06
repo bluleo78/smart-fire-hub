@@ -18,4 +18,15 @@ describe('SchemaGraph buildStylesheet', () => {
     expect(edgeRule?.style['text-wrap']).toBe('ellipsis');
     expect(edgeRule?.style['text-max-width']).toBeTruthy();
   });
+
+  // #507: 엣지 라벨 배경(text-background-color)이 리터럴 고정값이 아니라 실제 페이지 배경
+  // (--background 계산값)을 따라가는지 확인 — 테마 컬러(indigo/ocean/sunset)마다 달라지는 값이다.
+  it('background 인자를 넘기면 엣지 라벨 배경이 그 값을 따른다', () => {
+    const stylesheet = buildStylesheet(true, 'oklch(0.12 0.015 210)') as Array<{
+      selector: string;
+      style: Record<string, unknown>;
+    }>;
+    const edgeRule = stylesheet.find((rule) => rule.selector === 'edge');
+    expect(edgeRule?.style['text-background-color']).toBe('oklch(0.12 0.015 210)');
+  });
 });

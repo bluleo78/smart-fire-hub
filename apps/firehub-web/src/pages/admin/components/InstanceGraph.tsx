@@ -5,6 +5,7 @@ import { Network, SearchX } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef } from 'react';
 
+import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 import type { TypePalette } from '@/lib/ontology-colors';
 import type { GraphData, GraphNode } from '@/types/ontology';
 
@@ -55,6 +56,9 @@ const FIT_PADDING = 40;
 // 캔버스는 DOM 노드가 없으므로 테스트/디버그를 위해 컨테이너에 data-node-count를 노출하고, dev에서 cy 인스턴스를 window에 싣는다.
 export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect, focusKey, grouped, palette }: Props) {
   const { resolvedTheme } = useTheme();
+  // (#507) 실제 페이지 배경(--background)을 읽어 엣지 라벨 배경(text-background-color)에 반영 —
+  // 테마 컬러(indigo/ocean/sunset)마다 다른 실제 배경과 리터럴 크롬 색이 어긋나던 문제 수정.
+  const canvasBackground = useCanvasBackground();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const expandCollapseRef = useRef<ExpandCollapseApi | null>(null); // 타입 묶기 API
@@ -126,7 +130,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     if (!container) return;
     const cy = cytoscape({
       container,
-      style: buildStylesheet(resolvedTheme === 'dark', paletteRef.current),
+      style: buildStylesheet(resolvedTheme === 'dark', paletteRef.current, canvasBackground),
       minZoom: 0.2,
       maxZoom: 2.5,
       wheelSensitivity: 0.2,
@@ -255,8 +259,8 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
 
   // 테마 전환 → 스타일시트만 갱신(레이아웃은 유지해 노드 위치가 흔들리지 않게 한다).
   useEffect(() => {
-    cyRef.current?.style(buildStylesheet(resolvedTheme === 'dark', palette));
-  }, [resolvedTheme, palette]);
+    cyRef.current?.style(buildStylesheet(resolvedTheme === 'dark', palette, canvasBackground));
+  }, [resolvedTheme, palette, canvasBackground]);
 
   // 관계 내비게이션 포커스 — focusKey 변경 시 해당 노드를 선택하고 화면 중앙으로 이동한다.
   // getElementById는 셀렉터 파싱이 없어 콜론(:) 포함 키도 안전하다(cy.$('#..')는 이스케이프 필요).

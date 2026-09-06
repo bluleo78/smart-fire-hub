@@ -7,8 +7,13 @@ import { graphChrome, type TypePalette } from '@/lib/ontology-colors';
 // 컴포넌트 파일(.tsx)에서 분리한 이유: react-refresh는 컴포넌트 외 export가 섞이면 fast refresh가
 // 깨진다는 lint 규칙(react-refresh/only-export-components)이 있어, 유닛 테스트에서 직접 호출할 수
 // 있도록 export가 필요한 순수 함수는 별도 모듈로 뺀다 (#418).
-export function buildStylesheet(isDark: boolean, palette: TypePalette): cytoscape.StylesheetJson {
-  const c = graphChrome(isDark);
+// background: (#507) 실제 페이지 배경(--background) 계산값. 자세한 이유는 graphChrome 참고.
+export function buildStylesheet(
+  isDark: boolean,
+  palette: TypePalette,
+  background?: string,
+): cytoscape.StylesheetJson {
+  const c = graphChrome(isDark, background);
   return [
     {
       selector: 'node',

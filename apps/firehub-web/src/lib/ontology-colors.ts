@@ -132,8 +132,15 @@ export function createTypePalette(types: readonly string[]): TypePalette {
  *       지식그래프에서 엣지는 장식이 아니라 **관계를 표현하는 핵심 콘텐츠**라 배경에
  *       묻히면 화면의 목적 자체가 성립하지 않는다 → 라이트 4.09 / 다크 4.21로 올렸다.
  *       값이 두 곳에 흩어져 있으면 다시 갈라지므로 여기로 모으고 단위 테스트로 고정한다.
+ *
+ * @param background (#507) 실제 캔버스 배경색(`getComputedStyle`로 읽은 `--background` 값,
+ *   예: `oklch(0.13 0.015 280)`). 테마 컬러(indigo/ocean/sunset)마다 `--background`가 달라서
+ *   엣지 라벨 배경(`text-background-color`)이 항상 이 값을 따라가야 캔버스 배경과 일치한다.
+ *   생략하면(호출부가 아직 읽지 못했거나 단위 테스트) 기존 리터럴 폴백(`#121110`/`#ffffff`)을
+ *   쓴다 — 대비 회귀 테스트(`ontology-colors.contrast.test.ts`)가 hex 연산으로 이 폴백값을
+ *   전제하므로 폴백 리터럴 자체는 그대로 둔다.
  */
-export function graphChrome(isDark: boolean) {
+export function graphChrome(isDark: boolean, background?: string) {
   return isDark
     ? {
         label: '#e5e7eb',
@@ -141,7 +148,7 @@ export function graphChrome(isDark: boolean) {
         edge: '#7d766d', // was #3f3b36 (1.70:1) → 4.21:1 on #121110
         ring: '#f1f5f9',
         surface: '#1b1917',
-        bg: '#121110',
+        bg: background || '#121110',
       }
     : {
         label: '#1b1a17',
@@ -149,6 +156,6 @@ export function graphChrome(isDark: boolean) {
         edge: '#827d74', // was #d3cfc7 (1.55:1) → 4.09:1 on #ffffff
         ring: '#0f172a',
         surface: '#ffffff',
-        bg: '#ffffff',
+        bg: background || '#ffffff',
       };
 }

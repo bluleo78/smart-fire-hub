@@ -3,6 +3,7 @@ import edgehandles from 'cytoscape-edgehandles';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 import type { TypePalette } from '@/lib/ontology-colors';
 import { validateEntityTypeName, validateRelationName, validateTripleUniqueness } from '@/lib/ontology-validation';
 import type { OntologySchema } from '@/types/ontology';
@@ -123,6 +124,9 @@ export default function SchemaGraph({
 }: Props) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
+  // (#507) 실제 페이지 배경(--background)을 읽어 엣지 라벨 배경(text-background-color)에 반영 —
+  // 테마 컬러(indigo/ocean/sunset)마다 다른 실제 배경과 리터럴 크롬 색이 어긋나던 문제 수정.
+  const canvasBackground = useCanvasBackground();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const ehRef = useRef<ReturnType<cytoscape.Core['edgehandles']> | null>(null);
@@ -293,7 +297,7 @@ export default function SchemaGraph({
     if (!container) return;
     const cy = cytoscape({
       container,
-      style: buildStylesheet(isDark),
+      style: buildStylesheet(isDark, canvasBackground),
       minZoom: 0.2,
       maxZoom: 2.5,
       wheelSensitivity: 0.2,
@@ -507,11 +511,11 @@ export default function SchemaGraph({
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    cy.style(buildStylesheet(isDark));
+    cy.style(buildStylesheet(isDark, canvasBackground));
     cy.elements().remove();
     cy.add(elements);
     if (activeEntities.length > 0) cy.layout(BREADTHFIRST_LAYOUT).run();
-  }, [elements, isDark, activeEntities.length]);
+  }, [elements, isDark, canvasBackground, activeEntities.length]);
 
   // read 모드에서는 cy의 tap-자체선택을 꺼 둔다(리뷰 MIN-3) — cytoscape는 autounselectify가 꺼져
   // 있으면(기본값) tap만으로도 스스로 :selected를 건다. 노드는 read 모드에서 드릴다운으로 TabsContent가

@@ -70,6 +70,21 @@ describe('#377 그래프 엣지', () => {
   });
 });
 
+describe('#507 graphChrome 실제 배경 주입', () => {
+  it.each(MODES)('$name: background 인자를 넘기면 bg가 그 값으로 바뀐다', ({ isDark }) => {
+    const c = graphChrome(isDark, 'oklch(0.12 0.015 210)');
+    expect(c.bg).toBe('oklch(0.12 0.015 210)');
+  });
+
+  it.each(MODES)('$name: background를 생략하면 기존 리터럴 폴백을 그대로 쓴다', ({ isDark }) => {
+    const withNoArg = graphChrome(isDark);
+    const withEmptyArg = graphChrome(isDark, '');
+    const fallback = isDark ? '#121110' : '#ffffff';
+    expect(withNoArg.bg).toBe(fallback);
+    expect(withEmptyArg.bg).toBe(fallback);
+  });
+});
+
 describe('#377 노드 윤곽선 (#396 팔레트 12칸 전수)', () => {
   // 팔레트 엔트리를 직접 순회한다 — createTypePalette를 통해 합성 타입명으로 돌리면
   // localeCompare 정렬이 T0,T1,T10,T11,T2... 순서라 "i번째 타입 = PALETTE[i]" 가정이 어긋난다.
