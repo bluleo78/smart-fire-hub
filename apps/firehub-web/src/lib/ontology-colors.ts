@@ -69,22 +69,39 @@ export interface TypePalette {
   colorSet(type: string, isDark: boolean): EntityColorSet;
 }
 
+// 타입 이름 문자열을 32bit 정수 해시로 변환한다(FNV-1a).
+// 왜: 팔레트 인덱스를 "정렬 순서"가 아니라 "타입 이름 자체"에서만 뽑아내야, 다른 타입이
+//   추가/삭제돼도 이 타입의 색이 흔들리지 않는다(#493). djb2류(곱셈 33 + XOR)는 데모 6종
+//   (Building/Cause/Damage/Equipment/Incident/Regulation)만으로도 mod 12 결과가 3개나
+//   겹치는 등 실사용 이름 길이대에서 눈에 띄게 몰린다 — FNV-1a는 바이트마다 XOR 후 소수
+//   곱셈(0x01000193)을 적용해 아바란치가 훨씬 고르며, 짧은 영문 식별자 해싱의 표준 선택지다.
+//   `>>> 0`으로 부호 없는 32bit 정수로 고정해 모듈로 연산이 항상 음수 없이 나온다.
+function hashTypeName(type: string): number {
+  let hash = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < type.length; i++) {
+    hash ^= type.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193); // FNV prime
+  }
+  return hash >>> 0;
+}
+
 /**
- * 타입 목록에서 결정적 색 배정 팔레트를 만든다 (#396).
+ * 타입 목록에서 결정적 색 배정 팔레트를 만든다 (#396, #493).
  *
- * 무엇: 입력 타입들을 정렬해 얻은 순서 i에 `PALETTE[i % PALETTE.length]`를 배정한다.
- * 왜 정렬하는가: 호출처마다(스키마 탭 vs 인스턴스 탭, 서버 응답 순서, 편집으로 추가된 타입의
- *   위치) 넘기는 배열의 **순서가 다르다**. 배열 순서를 그대로 인덱스로 쓰면 같은 타입이 화면·
- *   시점마다 다른 색을 갖게 된다. localeCompare로 정렬한 복사본을 기준으로 삼으면 "같은 타입
- *   집합이면 언제나 같은 색"이 보장된다(입력 배열 자체는 건드리지 않는다 — 호출처의 allTypes는
- *   #412 activeTypes 동기화의 입력이라 순서·동일성이 유지돼야 한다).
+ * 무엇: 타입 이름 자체를 해시해 `PALETTE[hash(type) % PALETTE.length]`를 배정한다.
+ * 왜 해시인가: 이전(#396) 구현은 "정렬 순서 인덱스"를 색의 근거로 삼았는데, 이는 타입 자신의
+ *   정체성과 무관한 값이라 타입 하나를 추가/삭제/리네임하면 정렬 위치가 바뀌는 다른 모든 타입의
+ *   색까지 함께 바뀌었다(#493). 해시는 타입 이름 하나만으로 정해지므로 타입 집합의 다른 원소가
+ *   바뀌어도 이 타입의 색은 그대로다 — "같은 타입 집합이면 같은 색"(#396)에 더해 "집합이 바뀌어도
+ *   기존 타입 색은 안정적"이라는 불변식을 추가로 만족한다(해시 충돌로 서로 다른 두 타입이 같은
+ *   색을 받을 수는 있음 — #444와 공유하는 절충).
  * 목록에 없는 타입은 회색 폴백으로 떨어진다(예: 스키마에 없는 타입이 섞인 인스턴스 그래프 노드).
  */
 export function createTypePalette(types: readonly string[]): TypePalette {
-  // 복사 → 정렬 → 중복 제거. 중복 제거를 정렬 뒤에 해도 첫 등장 순서가 곧 정렬 순서라 동일하다.
-  const ordered = [...new Set([...types].sort((a, b) => a.localeCompare(b)))];
+  // 중복 제거만 하고 정렬하지 않는다 — 색이 이름 해시로만 정해지므로 순서는 더 이상 의미가 없다.
+  const uniqueTypes = [...new Set(types)];
   const entryByType = new Map<string, PaletteEntry>(
-    ordered.map((type, i) => [type, PALETTE[i % PALETTE.length]]),
+    uniqueTypes.map((type) => [type, PALETTE[hashTypeName(type) % PALETTE.length]]),
   );
 
   const color = (type: string) => entryByType.get(type)?.base ?? DEFAULT_TYPE_COLOR;

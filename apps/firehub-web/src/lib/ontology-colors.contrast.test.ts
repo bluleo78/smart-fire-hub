@@ -117,14 +117,19 @@ describe('#377 노드 윤곽선 (#396 팔레트 12칸 전수)', () => {
 });
 
 /**
- * (#396) 인덱스 기반 색 배정 회귀 테스트.
+ * (#396, #493) 해시 기반 색 배정 회귀 테스트.
  *
- * 왜: 예전 구현은 6개 데모 타입명 리터럴 키 룩업이라, 사용자가 만든 온톨로지의 타입 대부분이
- *     회색 하나로 뭉개졌다. 아래 세 성질(순서 무관 안정성 / 12색 초과 시 순환 / 목록 밖 폴백)이
- *     이 교체가 실제로 문제를 푼다는 근거다.
+ * 왜: 예전 구현(#396)은 6개 데모 타입명 리터럴 키 룩업이라, 사용자가 만든 온톨로지의 타입 대부분이
+ *     회색 하나로 뭉개졌다. 그 대체(정렬 인덱스)는 사용자가 만든 온톨로지 대부분에서 색이 갈리게는
+ *     했지만, 타입 하나를 추가/삭제하면 정렬 위치가 바뀌는 다른 모든 타입의 색까지 함께 바뀌는
+ *     문제를 재도입했다(#493). 이제는 타입 이름 자체를 해시해 인덱스를 정하므로, 아래 성질들
+ *     (집합 순서 무관 / **타입 집합 변화에도 개별 타입 색 고정** / 12색 초과 시 재사용 / 목록 밖
+ *     폴백)이 이 교체가 실제로 문제를 푼다는 근거다.
  */
-describe('#396 createTypePalette', () => {
-  const TYPES = ['FireIncident', 'Facility', 'FireCause', 'FireProtectionSystem', 'InvestigationReport', 'Region', 'FireStatistic', 'Violation', 'Damage'];
+describe('#396 / #493 createTypePalette', () => {
+  // 해시 mod 12 인덱스가 서로 겹치지 않는 것을 사전에 확인해 둔 9개 타입명 — "회색으로 뭉개지지
+  // 않는다" 단언이 우연한 해시 충돌로 깨지는 것을 피한다.
+  const TYPES = ['FireIncident', 'Facility', 'FireCause', 'QATestType', 'Suspect', 'Evidence', 'Weapon', 'District', 'Municipality'];
 
   it('같은 타입 집합을 다른 순서로 넣어도 타입별 색이 같다', () => {
     const a = createTypePalette(TYPES);
@@ -143,15 +148,29 @@ describe('#396 createTypePalette', () => {
     expect(colors).not.toContain(DEFAULT_TYPE_COLOR);
   });
 
-  it('12개를 넘는 타입에서는 팔레트가 순환한다', () => {
-    // 정렬 순서를 명시적으로 만들기 위해 사전순이 곧 인덱스가 되는 이름을 쓴다(A,B,...,P).
+  it('#493: 타입을 추가/삭제해도 기존 타입의 색은 바뀌지 않는다', () => {
+    // 이슈 재현 시나리오 그대로: ExplorerTestType 추가 전/후로 Incident·QATestType 색이 같아야 한다.
+    const before = createTypePalette(['Building', 'Cause', 'Damage', 'Equipment', 'ExplorerTestType', 'Incident', 'QATestType', 'Regulation']);
+    const after = createTypePalette(['Building', 'Cause', 'Damage', 'Equipment', 'Incident', 'QATestType', 'Regulation']);
+    expect(after.color('Incident')).toBe(before.color('Incident'));
+    expect(after.color('QATestType')).toBe(before.color('QATestType'));
+    expect(after.contour('Incident', false)).toBe(before.contour('Incident', false));
+    expect(after.contour('QATestType', false)).toBe(before.contour('QATestType', false));
+
+    // 타입을 더 추가해도 마찬가지다 (집합의 다른 원소 유무와 무관).
+    const withMore = createTypePalette(['Incident', 'QATestType', 'NewlyAddedType', 'AnotherNewType']);
+    expect(withMore.color('Incident')).toBe(before.color('Incident'));
+    expect(withMore.color('QATestType')).toBe(before.color('QATestType'));
+  });
+
+  it('12개를 넘는 타입에서도 팔레트 안의 색만 배정한다(폴백 회색으로 떨어지지 않는다)', () => {
     const many = Array.from({ length: 16 }, (_, i) => String.fromCharCode(65 + i));
     const palette = createTypePalette(many);
-    expect(palette.color('A')).toBe(PALETTE[0].base);
-    expect(palette.color('M')).toBe(PALETTE[0].base); // 13번째 → 0번으로 순환
-    expect(palette.color('P')).toBe(PALETTE[3].base); // 16번째 → 3번
-    // 순환이지 폴백이 아니다 — 13번째 이후도 회색이 되면 안 된다.
-    expect(many.map((t) => palette.color(t))).not.toContain(DEFAULT_TYPE_COLOR);
+    const colors = many.map((t) => palette.color(t));
+    expect(colors).not.toContain(DEFAULT_TYPE_COLOR);
+    for (const c of colors) {
+      expect(PALETTE.map((p) => p.base)).toContain(c);
+    }
   });
 
   it('목록에 없는 타입은 회색 폴백을 받는다', () => {
@@ -162,7 +181,7 @@ describe('#396 createTypePalette', () => {
     expect(palette.colorSet('없는타입', false).tint).toBe('rgba(100, 116, 139, 0.1)');
   });
 
-  it('중복 타입명이 섞여도 뒤 타입의 색이 밀리지 않는다', () => {
+  it('중복 타입명이 섞여도 색이 밀리지 않는다', () => {
     const withDupes = createTypePalette(['B', 'A', 'B', 'C']);
     const clean = createTypePalette(['A', 'B', 'C']);
     for (const t of ['A', 'B', 'C']) expect(withDupes.color(t), t).toBe(clean.color(t));

@@ -21,17 +21,22 @@ import { expect, test } from '../../fixtures/auth.fixture';
 /** 폴백 회색(DEFAULT_TYPE_COLOR #64748b)의 computed 표기 — 이 색으로 뭉개지는 것이 곧 결함이다. */
 const FALLBACK_GRAY = 'rgb(100, 116, 139)';
 
-/** 이슈 재현에 쓰인 "화재안전 통합 v2" 초안 온톨로지의 타입 9종 — 데모 6종과 겹치는 이름은 Damage뿐. */
+/**
+ * 이슈 재현에 쓰인 "화재안전 통합 v2" 초안 온톨로지의 타입 9종.
+ * (#493) 색 배정이 정렬 인덱스 대신 이름 해시(FNV-1a mod 12)로 바뀌면서, 해시값이 우연히 겹치는
+ * 이름 조합은 "9개 전부 다른 색"이라는 이 테스트의 전제를 깨뜨릴 수 있다. 그래서 여기 9개는
+ * hash(type) % 12가 서로 겹치지 않는 것을 사전에 확인해 둔 이름들이다.
+ */
 const CUSTOM_TYPE_NAMES = [
   'FireIncident',
   'Facility',
   'FireCause',
-  'FireProtectionSystem',
-  'InvestigationReport',
-  'Region',
-  'FireStatistic',
-  'Violation',
-  'Damage',
+  'District',
+  'Municipality',
+  'Ward',
+  'IncidentStat',
+  'ResponseMetric',
+  'SprinklerSystem',
 ];
 
 function createCustomEntities(): EntityTypeDef[] {
