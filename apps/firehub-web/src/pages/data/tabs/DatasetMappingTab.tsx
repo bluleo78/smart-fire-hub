@@ -232,10 +232,16 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
 
   return (
     <div className="space-y-4" data-testid="mapping-tab">
-      <div className="flex items-center justify-between">
+      {/*
+        좁은 폭(모바일)에서 제목+설명과 배지/버튼 그룹이 한 줄을 두고 공간을 다투면
+        설명 span이 단어 중간에서 강제 줄바꿈되는 문제가 있었다(#506).
+        flex-col로 세로 배치하고 sm 이상에서만 가로 배치로 전환한다.
+      */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-xl leading-7 font-semibold">
           지식그래프 매핑
-          <span className="ml-2 text-sm font-normal text-muted-foreground">
+          {/* break-keep으로 한국어 단어 단위 줄바꿈을 유지해 단어 중간 절단을 방지한다. */}
+          <span className="ml-2 block text-sm font-normal break-keep text-muted-foreground sm:inline">
             온톨로지: {ontology?.domain ?? `#${ontologyId}`} · 테이블: {dataset.tableName}
           </span>
         </h2>

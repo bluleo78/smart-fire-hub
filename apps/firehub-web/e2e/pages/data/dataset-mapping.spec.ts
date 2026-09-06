@@ -99,6 +99,30 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(banner).toContainText('은퇴한 온톨로지');
   });
 
+  // 회귀(#506): 375px 모바일 뷰포트에서 헤더의 온톨로지/테이블 설명 span이 배지·버튼 그룹과
+  // 한 줄에서 공간을 다투다 ~129px로 짓눌려 한국어 단어 중간에서 줄바꿈됐다.
+  // flex-col(모바일)/flex-row(sm 이상) 전환 + break-keep으로 고쳤는지 검증한다.
+  test('375px 뷰포트에서 헤더 설명 텍스트가 단어 중간에서 잘리지 않는다 (#506)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    await page.goto(MAPPING_URL);
+
+    const description = page.getByText('온톨로지: 화재조사 보고서 · 테이블:', { exact: false });
+    await expect(description).toBeVisible();
+
+    const box = await description.boundingBox();
+    expect(box).not.toBeNull();
+    // 단어 중간 줄바꿈이 벌어지던 실측치(~129px)보다 충분히 넓어야 한다 — 최소한
+    // "온톨로지: 화재조사" 정도는 한 줄에 들어갈 폭(뷰포트 375px에서 여유 있게 250px 이상).
+    expect(box!.width).toBeGreaterThan(250);
+
+    // 원인이었던 word-break 강제 절단이 아니라 break-keep(word-break: keep-all)으로
+    // 단어 단위 줄바꿈이 유지되는지 계산된 스타일로도 확인한다.
+    const wordBreak = await description.evaluate((el) => getComputedStyle(el).wordBreak);
+    expect(wordBreak).toBe('keep-all');
+  });
+
   test('엔티티 매핑을 추가하고 저장하면 spec 구조가 그대로 PUT 페이로드에 담긴다', async ({
     authenticatedPage: page,
   }) => {
