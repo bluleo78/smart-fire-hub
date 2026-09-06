@@ -37,16 +37,31 @@ interface Props {
 
 // fcose 레이아웃 옵션 — 겹침 방지(nodeRepulsion/nodeSeparation)를 내장 제공한다.
 // 코어 타입에 fcose 옵션이 없어 단언(cast)으로 전달한다.
+// (#508) randomize:true를 주면 fcose가 내부적으로 spectral(고유벡터) 초기 배치를 실행하는데,
+// 사건→피해→원인→시설→장비→법규로 이어지는 체인형(선형) 그래프에서는 라플라시안 선행
+// 고유벡터가 거의 선형이라 배치 결과가 대각선 하나로 붕괴한다. quality를 'draft'/'proof'로
+// 바꿔도 동일한 spectral 계산 경로를 타므로 붕괴가 재현됨을 확인했다(라이브러리 소스 확인 +
+// 실제 재현 데이터로 검증). randomize:false는 fcose의 spectral 계산 자체를 건너뛰고 cy에 이미
+// 있는 노드 좌표를 그대로 시작점 삼아 incremental CoSE(힘 기반) 리파인만 수행하므로,
+// cy.add 시 캐시가 없는(=새로) 나타난 노드에 우리가 직접 비-일직선 랜덤 좌표를 흩뿌려 주면
+// (아래 randomScatterPosition) spectral 붕괴 경로를 완전히 우회할 수 있다.
 const FCOSE_LAYOUT = {
   name: 'fcose',
   animate: false,
   quality: 'default',
-  randomize: true,
+  randomize: false,
   nodeSeparation: 80,
   idealEdgeLength: 90,
   padding: 32,
   fit: true,
 } as unknown as cytoscape.LayoutOptions;
+
+// 캐시된 좌표가 없는(=새로 나타난) 노드의 CoSE 리파인 시작점 — 원점 근처에 겹쳐 놓으면 힘-기반
+// 알고리즘이 대칭을 못 깨고 다시 일직선/뭉침으로 수렴할 수 있어, 노드 수에 비례해 넓게 흩뿌린다.
+function randomScatterPosition(nodeCount: number): { x: number; y: number } {
+  const spread = 120 * Math.sqrt(Math.max(nodeCount, 1));
+  return { x: (Math.random() - 0.5) * spread, y: (Math.random() - 0.5) * spread };
+}
 
 // 리사이즈 후 재맞춤 시 노드가 경계에 붙지 않도록 주는 여백(px).
 const FIT_PADDING = 40;
@@ -223,9 +238,10 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           color: palette.color(n.type),
           parent: grouped ? `grp:${n.type}` : undefined,
         },
-        // 캐시된 좌표가 있으면 그 자리에 다시 배치 — 없으면(새로 나타난 노드) cytoscape 기본값에서 시작해
-        // 아래 레이아웃이 빈 자리를 찾아준다.
-        position: positionsRef.current.get(n.key),
+        // 캐시된 좌표가 있으면 그 자리에 다시 배치 — 없으면(새로 나타난 노드) (#508) 원점에 겹쳐
+        // 놓지 않고 랜덤 흩뿌림 좌표에서 시작시켜, 아래 레이아웃(CoSE 힘 기반 리파인)이 대칭
+        // 붕괴 없이 빈 자리를 찾아가게 한다.
+        position: positionsRef.current.get(n.key) ?? randomScatterPosition(filteredNodes.length),
       })),
       ...filteredEdges.map((e, i) => ({
         data: { id: `e${i}`, source: e.subjectKey, target: e.objectKey, label: e.type },
@@ -242,9 +258,10 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           if (!n.data('isGroup') && positionsRef.current.has(n.id())) n.lock();
         });
       }
-      const layout = cy.layout(
-        isNewGraph ? FCOSE_LAYOUT : ({ ...FCOSE_LAYOUT, randomize: false } as unknown as cytoscape.LayoutOptions),
-      );
+      // (#508) 신규 로드든 부분 재배치든 항상 randomize:false로 fcose의 spectral 초기 배치를
+      // 우회한다 — 새로 나타난 노드는 이미 cy.add에서 randomScatterPosition으로 흩뿌려 뒀으므로
+      // CoSE 힘 기반 리파인만으로 충분히 자연스럽게 자리를 잡는다.
+      const layout = cy.layout(FCOSE_LAYOUT);
       layout.one('layoutstop', () => {
         cy.nodes().unlock();
         // 배치 완료 후, 묶기 모드면 모든 타입 부모를 접어 번들(메타노드)로 축약한다.

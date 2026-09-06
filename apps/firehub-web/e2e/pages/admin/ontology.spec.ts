@@ -394,6 +394,60 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(afterFilter.y).toBeCloseTo(draggedPosition.y, 5);
   });
 
+  // (#508) 사건→피해→원인→시설→장비→법규처럼 순차적으로 이어지는 체인형(선형) 위상의 그래프에서
+  // fcose의 spectral 초기 배치가 라플라시안 선행 고유벡터 붕괴로 노드 전체를 하나의 대각선(y≈x+c)
+  // 위에 늘어놓던 회귀 가드. 30노드 체인 그래프를 모킹해, 렌더된 좌표들이 한 직선 위에 몰리지
+  // 않고(=x-y 편차가 노드마다 달라야 함) 2차원으로 퍼져 있는지 검증한다.
+  test('체인형 위상 그래프(30노드)가 기본 진입 시 하나의 대각선으로 붕괴하지 않는다(#508)', async ({
+    authenticatedPage: page,
+  }) => {
+    // Incident → Damage → Cause → Building → Equipment → Regulation → (다음 Incident) 순으로
+    // 이어지는 순차 체인 30개 노드 — 이슈에서 보고된 실제 데이터셋(30노드/32관계, 체인형 위상)을 재현한다.
+    const chainTypes = ['Incident', 'Damage', 'Cause', 'Building', 'Equipment', 'Regulation'] as const;
+    const nodes = Array.from({ length: 30 }, (_, i) => ({
+      key: `chain-${i}`,
+      type: chainTypes[i % chainTypes.length],
+      name: `노드 ${i}`,
+      sourceChunkCount: 1,
+      schemaVersion: 1,
+    }));
+    const edges = Array.from({ length: 29 }, (_, i) => ({
+      subjectKey: `chain-${i}`,
+      type: 'NEXT',
+      objectKey: `chain-${i + 1}`,
+    }));
+    await setupOntologyMocks(page);
+    await mockApi(page, 'GET', '/api/v1/ontology/graph', { nodes, edges });
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+    await expectNodeCount(page, nodes.length);
+
+    // fcose layoutstop을 기다린 뒤 좌표를 읽는다 — 비동기 레이아웃이 끝나기 전에 읽으면 아직 초기값일 수 있다.
+    await page.waitForFunction(() => {
+      const cy = (window as unknown as { __ontologyCy?: { nodes(): { length: number } } }).__ontologyCy;
+      return !!cy && cy.nodes().length === 30;
+    });
+    await page.waitForTimeout(500); // layoutstop 콜백(unlock 등) 완료 대기 — 이벤트 훅이 없어 짧게 대기.
+
+    type PositionsCy = { nodes(): { map<T>(f: (n: { position(): { x: number; y: number } }) => T): T[] } };
+    const positions = await page.evaluate(
+      () => (window as unknown as { __ontologyCy: PositionsCy }).__ontologyCy.nodes().map((n) => n.position()),
+    );
+
+    expect(positions).toHaveLength(30);
+    // 회귀 시 모든 노드의 (x - y) 편차가 사실상 상수(대각선 y=x+c)였다 — 정상이라면 노드마다 편차가
+    // 크게 달라야 한다(전부 같은 직선 위에 있지 않음).
+    const residuals = positions.map((p) => p.x - p.y);
+    const maxResidual = Math.max(...residuals);
+    const minResidual = Math.min(...residuals);
+    expect(maxResidual - minResidual).toBeGreaterThan(50);
+    // 각 축의 좌표 분산도 있어야 한다(한 점에 뭉치거나 한 축으로만 퍼지는 것도 방지).
+    const xs = positions.map((p) => p.x);
+    const ys = positions.map((p) => p.y);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(50);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(50);
+  });
+
   test('스키마 탭에서 Incident 타입 클릭 시 인스턴스 탭으로 드릴다운되어 Incident 노드만 표시된다', async ({
     authenticatedPage: page,
   }) => {
