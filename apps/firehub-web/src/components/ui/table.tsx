@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react"
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
@@ -51,21 +51,43 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
           {...props}
         />
       </div>
-      {/* 좌측 페이드 — 스크롤이 시작된 후에만 표시 */}
+      {/* 좌측 페이드 + 힌트 — 스크롤이 시작된 후에만 표시.
+          이슈 #505: 배경색(거의 흰색)에서 투명으로 가는 그라데이션만으로는
+          명도 차이가 거의 없어 육안 식별이 사실상 불가능했다. 페이드 폭을 넓히고
+          테두리·그림자가 있는 원형 배지 안에 chevron 아이콘을 얹어 배경색과
+          무관하게 식별 가능한 신호를 추가한다. */}
       {overflow.canScrollLeft && (
-        <div
-          aria-hidden="true"
-          data-slot="table-fade-left"
-          className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-background to-transparent"
-        />
+        <>
+          <div
+            aria-hidden="true"
+            data-slot="table-fade-left"
+            className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-background via-background/80 to-transparent"
+          />
+          <div
+            aria-hidden="true"
+            data-slot="table-scroll-hint-left"
+            className="pointer-events-none absolute left-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border bg-background shadow-sm"
+          >
+            <ChevronLeft className="h-3.5 w-3.5 text-foreground" />
+          </div>
+        </>
       )}
-      {/* 우측 페이드 + 힌트 — 잘린 컬럼이 있을 때만 표시 */}
+      {/* 우측 페이드 + 힌트 — 잘린 컬럼이 있을 때만 표시 (이슈 #505 참고) */}
       {overflow.canScrollRight && (
-        <div
-          aria-hidden="true"
-          data-slot="table-fade-right"
-          className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent"
-        />
+        <>
+          <div
+            aria-hidden="true"
+            data-slot="table-fade-right"
+            className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background via-background/80 to-transparent"
+          />
+          <div
+            aria-hidden="true"
+            data-slot="table-scroll-hint-right"
+            className="pointer-events-none absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border bg-background shadow-sm"
+          >
+            <ChevronRight className="h-3.5 w-3.5 text-foreground" />
+          </div>
+        </>
       )}
     </div>
   )

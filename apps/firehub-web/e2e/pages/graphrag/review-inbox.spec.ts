@@ -660,4 +660,45 @@ test.describe('AI 검수 인박스', () => {
       await expect(page.locator(`#${describedBy!}`)).toHaveAttribute('role', 'alert');
     });
   });
+
+  // #505 — 375px 모바일 뷰포트에서 승인/거부 조치 컬럼이 가로 스크롤 뒤에 숨는데,
+  // 우측 페이드 그라데이션만으로는 배경색과 명도 차이가 거의 없어 스크롤 가능하다는
+  // 신호가 육안으로 식별되지 않았다. 스크롤 유도 배지(chevron)가 실제로 렌더링되고,
+  // 스크롤 후 조치 버튼이 노출되는지 검증한다.
+  test.describe('모바일 뷰포트 가로 스크롤 힌트 (#505)', () => {
+    test('375px 뷰포트에서 스크롤 가능 시 우측 힌트 배지가 보이고, 스크롤하면 조치 버튼이 드러난다', async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width: 375, height: 700 });
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+
+      const table = page.getByTestId('review-inbox-table');
+      await expect(table).toBeVisible();
+
+      const container = page.locator('[data-slot="table-container"]');
+      // 스크롤 가능 여부(scrollWidth > clientWidth)가 실제로 성립하는 좁은 뷰포트인지 먼저 확인.
+      await expect.poll(async () =>
+        container.evaluate((el) => el.scrollWidth > el.clientWidth)
+      ).toBe(true);
+
+      // canScrollRight=true 일 때만 렌더링되는 우측 힌트 배지 — 배경색과 무관하게 식별 가능해야 한다.
+      const rightHint = page.locator('[data-slot="table-scroll-hint-right"]');
+      await expect(rightHint).toBeVisible();
+
+      // 조치(거부) 버튼은 초기에는 화면 밖(가로 스크롤 뒤)에 있다.
+      const rejectButton = page.getByRole('button', { name: /거부$/ }).first();
+      const beforeBox = await rejectButton.boundingBox();
+      expect(beforeBox).not.toBeNull();
+      expect(beforeBox!.x).toBeGreaterThanOrEqual(375);
+
+      // 힌트를 따라 우측 끝까지 스크롤하면 조치 버튼이 뷰포트 안으로 들어온다.
+      await container.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      await expect.poll(async () => {
+        const box = await rejectButton.boundingBox();
+        return box !== null && box.x >= 0 && box.x < 375;
+      }).toBe(true);
+
+      // 끝까지 스크롤했으니 더 이상 스크롤할 곳이 없어 우측 힌트는 사라진다.
+      await expect(rightHint).toHaveCount(0);
+    });
+  });
 });
