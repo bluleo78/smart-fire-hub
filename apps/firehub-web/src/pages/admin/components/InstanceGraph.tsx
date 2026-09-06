@@ -64,6 +64,13 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   // 생성 effect(mount 1회)가 최초 스타일시트를 만들 때만 쓰는 팔레트 참조 — 이후 팔레트가 바뀌면
   // 아래 테마/팔레트 effect가 스타일시트를 통째로 다시 적용하므로 stale해질 여지가 없다.
   const paletteRef = useRef(palette);
+  // (#496) 노드 id → 마지막 캔버스 좌표 캐시. 검색/타입 필터로 요소를 지웠다 다시 그릴 때
+  // 이 좌표를 복원해, 사용자가 드래그로 옮긴 위치가 필터 조작만으로 초기화되지 않게 한다.
+  const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // 직전 렌더의 graph 참조 — 참조가 바뀌면(온톨로지 전환 등 실제 새 데이터셋 로드) "완전히 새로운
+  // 그래프"로 간주해 좌표 캐시를 비우고 fcose를 randomize:true로 전체 재배치한다. 참조가 그대로면
+  // (검색/타입 필터/묶기 토글 등 파생 상태만 바뀐 경우) 기존 좌표를 유지한다.
+  const prevGraphRef = useRef<GraphData | null>(null);
 
   // 타입 토글·검색 필터 적용(activeTypes 비어 있으면 전체 표시).
   const { filteredNodes, filteredEdges } = useMemo(() => {
@@ -178,9 +185,23 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   }, []);
 
   // 필터 결과(요소) 갱신 → 요소 교체 후 fcose 재배치. grouped면 타입별 compound 부모로 묶는다.
+  // (#496) graph 참조가 바뀐 "진짜 새 데이터셋" 로드일 때만 전체 랜덤 재배치를 하고,
+  // 검색/타입 필터처럼 같은 graph에서 파생된 부분집합만 바뀐 경우엔 기존 노드 위치를 그대로 복원한다.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
+    const isNewGraph = prevGraphRef.current !== graph;
+    prevGraphRef.current = graph;
+    if (isNewGraph) {
+      // 새 데이터셋 로드 — 이전 그래프의 좌표는 의미가 없으므로 캐시를 비운다.
+      positionsRef.current.clear();
+    } else {
+      // 필터/묶기 등으로 인한 재렌더 — 지우기 전에 현재 캔버스에 실제로 보이는 좌표를 캐시에 반영한다
+      // (드래그는 React state를 거치지 않고 cy를 직접 변형하므로, 여기서 캡처해야 최신 값을 놓치지 않는다).
+      cy.nodes().forEach((n) => {
+        if (!n.data('isGroup')) positionsRef.current.set(n.id(), { x: n.position('x'), y: n.position('y') });
+      });
+    }
     cy.elements().remove();
     // 타입 묶기 ON: 화면에 존재하는 타입마다 compound 부모 노드를 만들고 각 노드에 parent를 부여한다.
     const parents = grouped
@@ -198,23 +219,39 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           color: palette.color(n.type),
           parent: grouped ? `grp:${n.type}` : undefined,
         },
+        // 캐시된 좌표가 있으면 그 자리에 다시 배치 — 없으면(새로 나타난 노드) cytoscape 기본값에서 시작해
+        // 아래 레이아웃이 빈 자리를 찾아준다.
+        position: positionsRef.current.get(n.key),
       })),
       ...filteredEdges.map((e, i) => ({
         data: { id: `e${i}`, source: e.subjectKey, target: e.objectKey, label: e.type },
       })),
     ]);
-    if (filteredNodes.length > 0) {
-      const layout = cy.layout(FCOSE_LAYOUT);
-      // 배치 완료 후, 묶기 모드면 모든 타입 부모를 접어 번들(메타노드)로 축약한다.
-      if (grouped) {
-        layout.one('layoutstop', () => {
-          expandCollapseRef.current?.collapseAll();
-          cy.fit(undefined, FIT_PADDING);
+    // 좌표 캐시에 없던(=새로 나타난) 노드가 있으면 그 노드만 배치할 최소한의 레이아웃이 필요하다.
+    const hasNewNodes = filteredNodes.some((n) => !positionsRef.current.has(n.key));
+    const needsLayout = filteredNodes.length > 0 && (isNewGraph || hasNewNodes || grouped);
+    if (needsLayout) {
+      if (!isNewGraph) {
+        // 기존 위치가 있던 노드는 잠가 레이아웃이 건드리지 못하게 한다 — 결과적으로 새 노드만
+        // 배치 대상이 되는 partial-layout이 되어, 드래그로 옮긴 위치가 유지된다.
+        cy.nodes().forEach((n) => {
+          if (!n.data('isGroup') && positionsRef.current.has(n.id())) n.lock();
         });
       }
+      const layout = cy.layout(
+        isNewGraph ? FCOSE_LAYOUT : ({ ...FCOSE_LAYOUT, randomize: false } as unknown as cytoscape.LayoutOptions),
+      );
+      layout.one('layoutstop', () => {
+        cy.nodes().unlock();
+        // 배치 완료 후, 묶기 모드면 모든 타입 부모를 접어 번들(메타노드)로 축약한다.
+        if (grouped) {
+          expandCollapseRef.current?.collapseAll();
+          cy.fit(undefined, FIT_PADDING);
+        }
+      });
       layout.run();
     }
-  }, [filteredNodes, filteredEdges, grouped, palette]);
+  }, [filteredNodes, filteredEdges, grouped, palette, graph]);
 
   // 테마 전환 → 스타일시트만 갱신(레이아웃은 유지해 노드 위치가 흔들리지 않게 한다).
   useEffect(() => {

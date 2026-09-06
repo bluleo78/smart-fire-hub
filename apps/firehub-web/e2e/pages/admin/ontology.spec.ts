@@ -336,6 +336,64 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(flatTotal).toBe(graph.nodes.length);
   });
 
+  // (#496) 검색/타입 필터 조작이 fcose 레이아웃을 randomize:true로 재실행해, 드래그로 옮긴 노드
+  // 위치가 필터를 만질 때마다 초기화되던 회귀 가드. graph 참조가 그대로인(=같은 데이터셋) 필터
+  // 재렌더에서는 기존 좌표가 그대로 보존돼야 한다. fcose 최초 배치는 비결정적이므로 절대 좌표를
+  // 단언하지 않고, "드래그로 직접 설정한 좌표가 필터 조작 후에도 그대로인가"만 검증한다.
+  test('노드를 드래그로 옮긴 뒤 검색/타입 필터를 조작해도 위치가 유지된다(#496)', async ({
+    authenticatedPage: page,
+  }) => {
+    const graph = createOntologyGraph();
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    type PositionCy = {
+      getElementById(id: string): {
+        empty(): boolean;
+        position(pos?: { x: number; y: number }): { x: number; y: number };
+      };
+    };
+    const targetKey = graph.nodes[0].key;
+    const draggedPosition = { x: 321.5, y: -87.25 };
+
+    // 드래그를 시뮬레이션 — 사용자가 마우스로 옮긴 결과와 동일하게 cy 노드 좌표를 직접 설정한다.
+    await page.evaluate(
+      ({ id, pos }) => {
+        (window as unknown as { __ontologyCy: PositionCy }).__ontologyCy.getElementById(id).position(pos);
+      },
+      { id: targetKey, pos: draggedPosition },
+    );
+
+    // 이름 검색 한 글자 입력 — 필터로 인한 재렌더를 유발한다(수정 전에는 여기서 fcose가 랜덤 재배치됐다).
+    await page.getByPlaceholder('이름 검색').fill(graph.nodes[0].name[0]);
+    await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', /^[1-9]/);
+
+    const afterSearch = await page.evaluate(
+      (id) => (window as unknown as { __ontologyCy: PositionCy }).__ontologyCy.getElementById(id).position(),
+      targetKey,
+    );
+    expect(afterSearch.x).toBeCloseTo(draggedPosition.x, 5);
+    expect(afterSearch.y).toBeCloseTo(draggedPosition.y, 5);
+
+    // 검색 초기화 후 타입 필터도 조작 — 마찬가지로 위치가 유지돼야 한다.
+    await page.getByPlaceholder('이름 검색').fill('');
+    await expectNodeCount(page, graph.nodes.length);
+    const otherType = graph.nodes.find((n) => n.type !== graph.nodes[0].type)?.type;
+    if (otherType) {
+      const panel = page.getByTestId('type-filter-panel');
+      await panel.getByRole('button', { name: new RegExp(otherType) }).click();
+    }
+
+    const afterFilter = await page.evaluate(
+      (id) => (window as unknown as { __ontologyCy: PositionCy }).__ontologyCy.getElementById(id).position(),
+      targetKey,
+    );
+    expect(afterFilter.x).toBeCloseTo(draggedPosition.x, 5);
+    expect(afterFilter.y).toBeCloseTo(draggedPosition.y, 5);
+  });
+
   test('스키마 탭에서 Incident 타입 클릭 시 인스턴스 탭으로 드릴다운되어 Incident 노드만 표시된다', async ({
     authenticatedPage: page,
   }) => {
