@@ -32,6 +32,7 @@ import {
 } from '../../hooks/queries/useDatasets';
 import { useAuth } from '../../hooks/useAuth';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
 import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
 import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
@@ -65,6 +66,11 @@ export default function DatasetDetailPage() {
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
+  // 매핑 탭의 미저장 편집 여부. DatasetMappingTab은 탭 전환 시 완전히 unmount되어 자체적으론
+  // 이탈을 막을 수 없으므로, 부모인 이 페이지가 값을 받아 탭 전환·라우트 이탈을 가로챈다(#502).
+  const [mappingDirty, setMappingDirty] = useState(false);
+  // 사이드바 링크 클릭 등 SPA 라우트 이탈·브라우저 뒤로가기·새로고침/탭 닫기를 가드한다.
+  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(mappingDirty);
   // 자체 스크롤러를 가진 탭 — 페이지가 뷰포트 높이에 정확히 맞아야 이중 스크롤이 생기지 않는다.
   // 현재는 데이터 탭(가상 스크롤 테이블)뿐이다.
   const fillsHeight = activeTab === 'data';
@@ -421,6 +427,17 @@ export default function DatasetDetailPage() {
         className={fillsHeight ? 'flex min-h-0 flex-1 flex-col' : undefined}
         value={activeTab}
         onValueChange={(tab) => {
+          // 매핑 탭에 미저장 변경이 있는 채로 다른 탭으로 이동하면 편집 내용이 경고 없이
+          // 소실된다(#502) — 탭 전환 자체는 라우팅이 아니라 로컬 state 변경이라
+          // useUnsavedChangesGuard의 링크/popstate 가로채기로는 잡히지 않는다. 여기서 직접 확인한다.
+          if (activeTab === 'mapping' && tab !== 'mapping' && mappingDirty) {
+            const confirmed = window.confirm(
+              '저장하지 않은 매핑 변경사항이 있습니다. 이동하면 편집 내용이 사라집니다. 이동하시겠습니까?',
+            );
+            if (!confirmed) return;
+            // 이탈 확정 → 가드 해제. 실제 draft 소실은 DatasetMappingTab의 unmount로 일어난다.
+            setMappingDirty(false);
+          }
           // 탭 전환 시 URL ?tab= 파라미터도 동기화 (뒤로 가기·북마크·링크 공유 지원)
           setActiveTab(tab);
           setSearchParams((prev) => {
@@ -474,7 +491,7 @@ export default function DatasetDetailPage() {
         )}
         {activeTab === 'mapping' && (
           <div className="mt-6">
-            <DatasetMappingTab dataset={dataset} datasetId={datasetId} />
+            <DatasetMappingTab dataset={dataset} datasetId={datasetId} onDirtyChange={setMappingDirty} />
           </div>
         )}
         {activeTab === 'history' && (
@@ -500,6 +517,9 @@ export default function DatasetDetailPage() {
         onOpenChange={setCloneDialogOpen}
         dataset={dataset}
       />
+
+      {/* 매핑 탭 미저장 변경 이탈 가드 — 사이드바 링크 클릭/뒤로가기 등 라우트 이탈 시 확인 (#502) */}
+      {unsavedChangesDialog}
     </div>
   );
 }

@@ -708,6 +708,77 @@ test.describe('데이터셋 매핑 탭', () => {
     await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 0개');
     await expect(page.getByTestId('mapping-dirty')).toBeVisible();
   });
+  // 회귀(#502): DatasetMappingTab은 다른 탭으로 전환되면 완전히 unmount되어 로컬 dirty
+  // 상태를 잃는다. 부모(DatasetDetailPage)가 onDirtyChange로 dirty를 전달받아 탭 전환을
+  // 가로채지 않으면, 미저장 편집(특히 삭제)이 경고 없이 서버 상태로 조용히 되돌아간다.
+  test.describe('#502 매핑 탭 미저장 변경 — 탭 전환 가드', () => {
+    test('미저장 변경이 있으면 다른 탭 전환 시 확인을 요구하고, 취소하면 편집이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      // 관계 매핑을 삭제해 dirty 상태를 만든다(이슈 재현 시나리오와 동일).
+      await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+      await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
+      await expect(page.getByTestId('mapping-dirty')).toBeVisible();
+      await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 0개');
+
+      // 확인 다이얼로그에서 취소 → 매핑 탭에 남고 삭제한 관계는 여전히 지워진 채로 보존된다.
+      page.once('dialog', (dialog) => {
+        expect(dialog.message()).toContain('저장하지 않은 매핑 변경사항이 있습니다');
+        void dialog.dismiss();
+      });
+      await page.getByRole('tab', { name: '필드' }).click();
+      await expect(page.getByTestId('mapping-tab')).toBeVisible();
+      await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 0개');
+      await expect(page.getByTestId('mapping-dirty')).toBeVisible();
+    });
+
+    test('미저장 변경이 있을 때 탭 전환을 확인하면 편집 내용이 소실된 채 다른 탭으로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+      await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
+      await expect(page.getByTestId('mapping-dirty')).toBeVisible();
+
+      page.once('dialog', (dialog) => void dialog.accept());
+      await page.getByRole('tab', { name: '필드' }).click();
+
+      // 매핑 탭은 unmount되고 필드 탭이 보인다 — 확인은 "이탈 허용"이지 "저장"이 아니므로
+      // 편집 내용은 여전히 소실되지만, 최소한 사용자가 인지한 상태로 이탈해야 한다.
+      await expect(page.getByTestId('mapping-tab')).toHaveCount(0);
+      await expect(page.getByText('필드 목록')).toBeVisible();
+
+      // 다시 매핑 탭으로 돌아오면 서버 저장본(활성 관계 1건)으로 재시드된다.
+      await page.getByRole('tab', { name: '매핑' }).click();
+      await expect(page.getByTestId('mapping-summary')).toHaveText('엔티티 2개 · 관계 1개');
+      await expect(page.getByTestId('mapping-dirty')).toBeHidden();
+    });
+
+    test('미저장 변경이 없으면 탭 전환 시 확인 없이 즉시 이동한다', async ({ authenticatedPage: page }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      let dialogShown = false;
+      page.on('dialog', (dialog) => {
+        dialogShown = true;
+        void dialog.dismiss();
+      });
+
+      await page.getByRole('tab', { name: '필드' }).click();
+      await expect(page.getByTestId('mapping-tab')).toHaveCount(0);
+      await expect(page.getByText('필드 목록')).toBeVisible();
+      expect(dialogShown).toBe(false);
+    });
+  });
+
   /**
    * #328 회귀: 다이얼로그를 닫으면 포커스가 트리거로 복귀해야 한다(WCAG SC 2.4.3).
    *

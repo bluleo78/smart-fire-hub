@@ -36,6 +36,12 @@ import { RelationMappingTable } from '../components/RelationMappingTable';
 interface DatasetMappingTabProps {
   dataset: DatasetDetailResponse;
   datasetId: number;
+  /**
+   * dirty 상태를 부모(DatasetDetailPage)에 보고한다.
+   * 이 탭은 다른 탭으로 전환되면 완전히 unmount되므로, 로컬 dirty 상태만으로는
+   * 탭 전환·라우트 이탈 가드가 불가능하다(#502) — 부모가 이 값을 받아 이탈을 가로챈다.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -46,7 +52,7 @@ interface DatasetMappingTabProps {
  *  3) 바인딩 + 매핑 있음 → draft/active 배지와 함께 편집
  * 편집은 전부 로컬 draft(안정 ID 모델)에서 하고, 저장 시에만 인덱스 기반 spec으로 직렬화한다.
  */
-export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps) {
+export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: DatasetMappingTabProps) {
   const { data: binding, isLoading: bindingLoading } = useBinding(datasetId);
   const ontologyId = binding?.ontologyId ?? null;
   const { data: ontology } = useOntologyById(ontologyId);
@@ -118,6 +124,18 @@ export function DatasetMappingTab({ dataset, datasetId }: DatasetMappingTabProps
     setDraft(mapping ? toDraft(mapping.spec) : emptyDraft());
     setDirty(false);
   }, [mapping, mappingLoading]);
+
+  // dirty 변화를 부모로 실시간 보고한다 — 부모는 이 값으로 탭 전환·라우트 이탈을 가로챈다(#502).
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onDirtyChange는 부모의 setState라 항상 안정적 참조
+  }, [dirty]);
+
+  // unmount 시(다른 탭으로 전환 등)에도 false로 정리해 부모 쪽 가드가 남지 않게 한다.
+  useEffect(() => {
+    return () => onDirtyChange?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 최초 마운트 시점의 onDirtyChange로 충분(부모 setState는 안정적)
+  }, []);
 
   const [relationDialogOpen, setRelationDialogOpen] = useState(false);
   const [editingRelation, setEditingRelation] = useState<DraftRelation | null>(null);
