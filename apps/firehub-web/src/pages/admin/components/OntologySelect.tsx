@@ -44,6 +44,13 @@ export default function OntologySelect({ ontologies, value, onChange, onManage }
   const active = groups.find((g) => g.status === 'active')?.items ?? [];
   const others = groups.filter((g) => g.status !== 'active').flatMap((g) => g.items);
 
+  // 닫힌 SelectTrigger에 표시할 현재 선택 온톨로지(#504). Radix SelectValue는 children이 없으면
+  // 매칭되는 SelectItem의 children(아래 renderItem의 max-w-[280px] 래퍼)을 그대로 재사용하는데,
+  // 그 래퍼는 드롭다운 목록 폭(280px) 기준이라 트리거 폭(220px)에서는 잘리지 않고, SelectValue
+  // 자신도 트리거의 flex item이라 min-w-0 없이는 줄어들지 않아 도메인명이 넘친다(#409는 펼쳐진
+  // 목록만 고쳤다). 트리거 전용 children으로 교체해 별도로 truncate를 강제한다.
+  const selected = [...active, ...others].find((o) => String(o.id) === String(value));
+
   const renderItem = (o: OntologySummary) => {
     const variant = STATUS_BADGE_VARIANT[o.status];
     return (
@@ -73,7 +80,19 @@ export default function OntologySelect({ ontologies, value, onChange, onManage }
       }}
     >
       <SelectTrigger className="h-8 w-[220px]" aria-label="온톨로지 선택">
-        <SelectValue placeholder="온톨로지 선택" />
+        {/* Radix SelectValue는 className/style prop을 받아도 렌더링에 반영하지 않는다(내부에서
+            구조 분해로 버림) — 그래서 폭 제약은 children 쪽에서 직접 만든다. renderItem이 쓰는
+            max-w-[280px] 래퍼 대신 단순 truncate span을 쓰면, 이 span에는 title(#504)이 있어 잘린
+            전체 이름을 hover로 볼 수 있고, block+truncate가 부모(SelectValue, select.tsx가 이미
+            overflow-hidden을 강제해 flex item의 자동 최소폭이 0이 되는 요소)의 실제 렌더 폭 안에서
+            말줄임된다. */}
+        <SelectValue placeholder="온톨로지 선택">
+          {selected && (
+            <span className="block truncate" title={selected.domain}>
+              {selected.domain}
+            </span>
+          )}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>

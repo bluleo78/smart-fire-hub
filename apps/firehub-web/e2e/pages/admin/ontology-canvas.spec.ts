@@ -1312,6 +1312,70 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
     expect(height).toBeLessThan(30);
   });
 
+  // 회귀 방지(#504) — #409는 "펼쳐진 드롭다운 옵션"만 truncate 처리했고, 옵션을 실제로 골라
+  // "닫힌 SelectTrigger(현재 선택값)"로 표시되는 경로는 그대로 남아 있었다. SelectValue는 기본적으로
+  // 매칭되는 SelectItem의 children(드롭다운 폭 280px 기준 래퍼)을 그대로 재사용하는데, 그 래퍼는
+  // overflow 제약이 없어 트리거 폭(220px)보다 넓은 233px까지 스스로 커진 뒤에야 ellipsis를 적용한다
+  // (원본 결함 — 실측: title span의 렌더 폭이 233px, 트리거 오른쪽 경계를 26px 넘어선다). 그래서
+  // scrollWidth>clientWidth·한 줄 높이 유지만으로는 회귀를 못 잡는다(원본 결함도 이 조건을 만족한다 —
+  // 실측 확인됨). 실제 결함의 증거는 "title이 붙은 span이 트리거 박스 오른쪽 경계를 넘는가"이므로
+  // 두 bounding box를 직접 비교한다.
+  test('도메인명이 매우 긴 온톨로지를 선택하면 닫힌 트리거에서도 한 줄로 truncate 된다(회귀, #504)', async ({
+    authenticatedPage: page,
+  }) => {
+    const longDomain = '가나다라마바사아자차'.repeat(50);
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/ontologies',
+      createOntologySummaries([
+        {
+          id: MAPPING_ONTOLOGY_ID,
+          domain: '화재조사 보고서',
+          schemaVersion: 1,
+          status: 'active',
+          entityCount: 6,
+          datasetCount: 3,
+          updatedAt: '2026-04-12T09:00:00Z',
+          isDefault: true,
+        },
+        {
+          id: 99,
+          domain: longDomain,
+          schemaVersion: 1,
+          status: 'draft',
+          entityCount: 0,
+          datasetCount: 0,
+          updatedAt: '2026-08-01T09:00:00Z',
+          isDefault: false,
+        },
+      ]),
+    );
+    await mockApi(page, 'GET', '/api/v1/ontology/99', createOntologySchema({ domain: longDomain, entities: [], relations: [] }));
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: longDomain }).click();
+
+    const trigger = page.getByRole('combobox', { name: '온톨로지 선택' });
+    // 트리거 자체는 옵션과 달리 별도의 children(전용 span)으로 렌더링된다 — title이 붙은 그 span이
+    // truncate 대상이다.
+    const valueSpan = trigger.locator('span[title]');
+    await expect(valueSpan).toHaveAttribute('title', longDomain);
+
+    // 결정적 증거: title span의 오른쪽 경계가 트리거(SelectTrigger) 박스의 오른쪽 경계를 넘지 않아야
+    // 한다. 원본 결함에서는 이 span이 233px로 렌더돼 트리거 오른쪽 경계를 넘어섰다(실측 26px) — 이게
+    // 바로 이슈가 말하는 "옆 버튼과 겹침"의 실체다. scrollWidth/clientWidth 비교만으로는 이 결함을
+    // 못 잡는다(원본 결함도 그 span 자신 안에서는 ellipsis가 걸려 조건을 만족해버린다).
+    const triggerBox = await trigger.boundingBox();
+    const spanBox = await valueSpan.boundingBox();
+    expect(triggerBox).not.toBeNull();
+    expect(spanBox).not.toBeNull();
+    expect(spanBox!.x + spanBox!.width).toBeLessThanOrEqual(triggerBox!.x + triggerBox!.width);
+  });
+
   // (리뷰 I-1(a)) 이 테스트는 가드 ①(편집 모드) 자체를 단독으로 증명하지 못한다 — 읽기 모드에서는
   // "수정 모드" 토글이 꺼질 때 modelSelected도 함께 비워지고 읽기 모드 노드 tap은 드릴다운이라
   // 애초에 캔버스 선택이 생기지 않으므로, 가드 ①을 지워도 핸들러의 `if (!sel) return`이 선택 없음을
