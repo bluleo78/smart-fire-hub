@@ -510,6 +510,43 @@ test.describe('데이터셋 매핑 탭', () => {
     });
   });
 
+  test('이미 존재하는 것과 완전히 동일한 (주어-관계-목적어) 트리플은 추가를 막고 인라인 에러를 보여준다 (#501)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({
+      spec: {
+        entities: [
+          { entityType: 'Incident', nameColumn: 'incident_name', properties: [] },
+          { entityType: 'Building', nameColumn: 'building_name', properties: [] },
+        ],
+        relations: [{ subjectRef: 0, relation: 'OCCURRED_AT', objectRef: 1 }],
+      },
+    }));
+    await page.goto(MAPPING_URL);
+
+    // 이미 Incident-OCCURRED_AT->Building 관계가 1개 있는 상태에서 완전히 동일한 조합을 다시 추가 시도.
+    await page.getByRole('button', { name: '관계 매핑 추가' }).click();
+    const dialog = page.getByTestId('relation-mapping-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByTestId('relation-subject-select').click();
+    await page.getByRole('option', { name: 'Incident (incident_name)' }).click();
+    await dialog.getByTestId('relation-object-select').click();
+    await page.getByRole('option', { name: 'Building (building_name)' }).click();
+    await dialog.getByTestId('relation-type-select').click();
+    await page.getByRole('option', { name: 'OCCURRED_AT' }).click();
+
+    await dialog.getByRole('button', { name: '확인' }).click();
+
+    // 다이얼로그는 닫히지 않고, 인라인 에러가 뜨고, 관계는 여전히 1개다.
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('이미 동일한 관계 매핑이 있습니다.')).toBeVisible();
+    await expect(dialog.getByTestId('relation-type-select')).toBeFocused();
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByText('엔티티 2개 · 관계 1개')).toBeVisible();
+  });
+
   test('활성화하면 상태 배지가 활성으로 바뀐다', async ({ authenticatedPage: page }) => {
     await setupMappingMocks(page);
     await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'draft' }));

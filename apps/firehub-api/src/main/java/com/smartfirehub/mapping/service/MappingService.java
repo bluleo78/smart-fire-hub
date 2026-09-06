@@ -117,6 +117,11 @@ public class MappingService {
     }
 
     List<MappingSpec.RelationMapping> relations = spec.relations() == null ? List.of() : spec.relations();
+    // 클라이언트 다이얼로그가 중복 검사를 우회(구버전 캐시·직접 API 호출 등)해도 서버가 최종 방어선이
+    // 되도록 (subjectRef, relation, objectRef) 완전 동일 트리플 중복을 막는다(#501). 클라이언트는
+    // 안정 ID(subjectId/objectId) 기준으로 검사하지만 서버는 저장 시점 인덱스(subjectRef/objectRef)
+    // 기준이라 표현이 다를 뿐 같은 트리플이면 여기서도 동일하게 걸린다.
+    Set<String> seenTriples = new HashSet<>();
     for (MappingSpec.RelationMapping rm : relations) {
       if (rm.subjectRef() < 0 || rm.subjectRef() >= entities.size()
           || rm.objectRef() < 0 || rm.objectRef() >= entities.size()) {
@@ -129,6 +134,11 @@ public class MappingService {
       if (!allowed) {
         throw new IllegalArgumentException(
             "허용되지 않은 트리플: " + subjectType + "-" + rm.relation() + "->" + objectType);
+      }
+      String tripleKey = rm.subjectRef() + "|" + rm.relation() + "|" + rm.objectRef();
+      if (!seenTriples.add(tripleKey)) {
+        throw new IllegalArgumentException(
+            "중복된 관계 매핑: " + subjectType + "-" + rm.relation() + "->" + objectType + "가 이미 있습니다.");
       }
     }
     return ontologyId;

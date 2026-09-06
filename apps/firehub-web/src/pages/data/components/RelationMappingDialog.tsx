@@ -19,6 +19,11 @@ interface RelationMappingDialogProps {
   entities: DraftEntity[];
   /** null이면 추가, 값이 있으면 수정. */
   initial: DraftRelation | null;
+  /**
+   * 현재 draft의 전체 관계 목록. 제출 시 (subjectId, objectId, relation) 완전 동일 트리플이
+   * 이미 있는지 검사하는 데 쓴다(#501) — 구분 불가능한 중복 행이 그대로 저장되는 것을 막는다.
+   */
+  relations: DraftRelation[];
   onSubmit: (data: RelationMappingFormData) => void;
 }
 
@@ -35,6 +40,7 @@ export function RelationMappingDialog({
   ontology,
   entities,
   initial,
+  relations,
   onSubmit,
 }: RelationMappingDialogProps) {
   const form = useForm<RelationMappingFormData>({
@@ -75,6 +81,20 @@ export function RelationMappingDialog({
   };
 
   const submit = (data: RelationMappingFormData) => {
+    // 완전 동일 트리플(주어·목적어·관계) 중복 추가를 여기서 막는다(#501). 수정 모드에서는
+    // 자기 자신(initial)을 제외해야 원래 값 그대로 "수정 확인"을 눌러도 중복으로 오탐하지 않는다.
+    const isDuplicate = relations.some(
+      (r) =>
+        r.id !== initial?.id &&
+        r.subjectId === data.subjectId &&
+        r.objectId === data.objectId &&
+        r.relation === data.relation,
+    );
+    if (isDuplicate) {
+      form.setError('relation', { type: 'duplicate', message: '이미 동일한 관계 매핑이 있습니다.' });
+      document.getElementById('relation-type')?.focus();
+      return;
+    }
     onSubmit(data);
     onOpenChange(false);
   };

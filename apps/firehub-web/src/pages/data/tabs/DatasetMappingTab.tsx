@@ -330,6 +330,7 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
           ontology={ontology}
           entities={draft.entities}
           initial={editingRelation}
+          relations={draft.relations}
           onSubmit={handleRelationSubmit}
         />
       )}

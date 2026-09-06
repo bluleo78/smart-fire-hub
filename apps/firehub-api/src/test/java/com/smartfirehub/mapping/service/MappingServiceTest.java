@@ -221,6 +221,38 @@ class MappingServiceTest {
     assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
   }
 
+  // --- 관계 트리플 완전 중복 conformance (#501) ---
+
+  @Test
+  void save_동일트리플_중복관계매핑은_400() {
+    MappingSpec bad = new MappingSpec(
+        List.of(new MappingSpec.EntityMapping("Incident", "id", List.of()),
+            new MappingSpec.EntityMapping("Building", "bld", List.of())),
+        List.of(
+            new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1),
+            new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1))); // 완전 동일 트리플 2회
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Incident")
+        .hasMessageContaining("OCCURRED_AT")
+        .hasMessageContaining("Building");
+    verify(mappingRepository, never()).upsert(anyLong(), anyLong(), anyString(), anyString(), any());
+  }
+
+  @Test
+  void activate_동일트리플_중복관계매핑은_400이고_상태전환없음() {
+    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(1L,
+        "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]},"
+            + "{\"entityType\":\"Building\",\"nameColumn\":\"bld\",\"properties\":[]}],"
+            + "\"relations\":[{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1},"
+            + "{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1}]}",
+        "draft")));
+    assertThatThrownBy(() -> service.activate(DS, 44L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("OCCURRED_AT");
+    verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());
+  }
+
   @Test
   void save_relation_ref_범위밖이면_400() {
     MappingSpec bad = new MappingSpec(
