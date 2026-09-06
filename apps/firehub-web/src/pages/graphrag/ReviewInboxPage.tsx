@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
@@ -60,6 +61,14 @@ function isAlreadyProcessedConflict(err: unknown): boolean {
     && typeof err.response.data?.message === 'string'
     && err.response.data.message.startsWith('이미 처리된 항목입니다')
   );
+}
+
+/** URL의 `type` 쿼리 파라미터가 유효한 ReviewItemType인지 검증한다(#495). 낯선/오염된 값은 '전체'로 폴백. */
+const REVIEW_ITEM_TYPES: ReviewItemType[] = [
+  'synonym_merge', 'property_normalization', 'entity_extraction', 'relation_extraction',
+];
+function parseFilterParam(value: string | null): ReviewItemType | undefined {
+  return REVIEW_ITEM_TYPES.find((t) => t === value);
 }
 
 /** 확인 다이얼로그가 제어하는 대상 — 어떤 행을, 어떤 조치로, (속성이면) 어떤 정정값으로 확정할지. */
@@ -166,7 +175,22 @@ function buildConfirmCopy(target: ConfirmTarget): {
 // AI가 수행한 불확실한 작업(동의어 병합·속성 정규화)을 사람이 원문 근거와 함께 검수·판단하는 인박스.
 export default function ReviewInboxPage() {
   // 탭 필터 — undefined면 전체, 아니면 해당 item_type만.
-  const [filter, setFilter] = useState<ReviewItemType | undefined>(undefined);
+  // 로컬 useState로만 관리하면 라우트 이동(언마운트) 후 뒤로가기·새로고침 시 초기값(전체)으로
+  // 조용히 리셋된다(#495). URL 쿼리 파라미터(`?type=`)에 반영해 브라우저 히스토리/새로고침에서도
+  // 유지되게 한다 — 데이터셋 목록(#94)에서 이미 쓰인 것과 동일한 패턴.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filter = parseFilterParam(searchParams.get('type'));
+  const setFilter = (next: ReviewItemType | undefined) => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next) params.set('type', next);
+        else params.delete('type');
+        return params;
+      },
+      { replace: true },
+    );
+  };
   const {
     data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage,
   } = useReviewItemsPending(filter);

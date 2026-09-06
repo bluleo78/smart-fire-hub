@@ -57,6 +57,65 @@ test.describe('AI 검수 인박스', () => {
     });
   });
 
+  // #495 — 탭 필터가 로컬 state로만 있으면 라우트 이동 후 뒤로가기/새로고침 시 조용히 '전체'로
+  // 리셋된다. URL 쿼리 파라미터(`?type=`)에 반영해 히스토리·새로고침에서도 유지되는지 검증한다.
+  test.describe('탭 필터 URL 반영 (#495)', () => {
+    test('탭 클릭 시 API가 itemType으로 재호출되고 URL에 type 쿼리 파라미터가 반영된다', async ({ authenticatedPage: page }) => {
+      const requestedItemTypes: (string | null)[] = [];
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const params = new URL(route.request().url()).searchParams;
+        requestedItemTypes.push(params.get('itemType'));
+        const body = params.get('itemType') === 'property_normalization'
+          ? [createPropertyReviewItem()] : [createSynonymReviewItem(), createPropertyReviewItem()];
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await expect(page.getByRole('tab', { name: '전체' })).toHaveAttribute('aria-selected', 'true');
+      expect(new URL(page.url()).searchParams.get('type')).toBeNull();
+
+      await page.getByRole('tab', { name: '속성' }).click();
+      await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
+      await expect.poll(() => new URL(page.url()).searchParams.get('type')).toBe('property_normalization');
+      expect(requestedItemTypes).toContain('property_normalization');
+    });
+
+    test('속성 탭 선택 후 다른 페이지로 이동했다가 뒤로가기하면 속성 탭이 그대로 선택되어 있다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
+
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('tab', { name: '속성' }).click();
+      await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
+
+      await page.goto('/knowledge-graph/explore');
+      await page.goBack();
+
+      await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tab', { name: '전체' })).toHaveAttribute('aria-selected', 'false');
+    });
+
+    test('속성 탭 선택 후 새로고침해도 필터가 유지된다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
+
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('tab', { name: '속성' }).click();
+      await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
+
+      await page.reload();
+
+      await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
+    });
+
+    test('알 수 없는 type 쿼리 파라미터로 직접 진입하면 전체 탭으로 폴백한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
+
+      await page.goto('/knowledge-graph/review?type=not_a_real_type');
+
+      await expect(page.getByRole('tab', { name: '전체' })).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
   test('동의어 승인 시 approve API를 호출하고 목록에서 사라진다', async ({ authenticatedPage: page }) => {
     let approveCalled = false;
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
