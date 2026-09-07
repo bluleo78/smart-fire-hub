@@ -33,8 +33,11 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   },
 ];
 
-const UNKNOWN_NO_MESSAGE: ClassifiedError = { type: 'unknown', icon: '⚪', label: '알 수 없는 오류', guide: '관리자에게 문의해주세요.' };
-const UNKNOWN_FALLBACK: ClassifiedError = { type: 'unknown', icon: '⚪', label: '기타 오류', guide: '관리자에게 문의해주세요.' };
+// 미분류 폴백은 흰색(⚪) 대신 검은색(⚫)을 사용한다 (#525).
+// destructive 카드(연한 빨강 배경)에서 흰색 원은 시각적으로 거의 안 보이고,
+// "심각도가 낮다"는 오인을 주는 역설적 신호였다.
+const UNKNOWN_NO_MESSAGE: ClassifiedError = { type: 'unknown', icon: '⚫', label: '알 수 없는 오류', guide: '관리자에게 문의해주세요.' };
+const UNKNOWN_FALLBACK: ClassifiedError = { type: 'unknown', icon: '⚫', label: '기타 오류', guide: '관리자에게 문의해주세요.' };
 
 export function classifyError(errorMessage: string | null | undefined): ClassifiedError {
   if (!errorMessage) return UNKNOWN_NO_MESSAGE;

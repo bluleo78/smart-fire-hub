@@ -49,4 +49,9 @@ describe('classifyError', () => {
     expect(result.icon).toBeTruthy();
     expect(result.guide).toBeTruthy();
   });
+
+  it('미분류 폴백 아이콘은 흰색(⚪)이 아니다 (#525 — destructive 카드 배경에서 안 보임)', () => {
+    expect(classifyError(null).icon).not.toBe('⚪');
+    expect(classifyError('Something weird happened').icon).not.toBe('⚪');
+  });
 });
