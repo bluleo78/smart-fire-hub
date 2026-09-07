@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { useCreatePipeline, useUpdatePipeline } from '@/hooks/queries/usePipelines';
+import { handleApiError } from '@/lib/api-error';
 import type { PipelineStepRequest } from '@/types/pipeline';
 
 import type { EditorAction,PipelineEditorState } from './pipelineEditorReducer';
@@ -66,8 +67,9 @@ export function usePipelineSave({
         toast.success('파이프라인이 저장되었습니다.');
       }
       return true;
-    } catch {
-      toast.error('파이프라인 저장에 실패했습니다.');
+    } catch (error) {
+      // 백엔드 검증 실패(SQL 가드, 중복 이름 등) 시 구체적 원인 메시지를 그대로 노출한다
+      handleApiError(error, '파이프라인 저장에 실패했습니다.');
       return false;
     }
   }, [state, validate, createMutation, updateMutation, navigate, dispatch]);

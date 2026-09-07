@@ -168,6 +168,48 @@ test.describe('usePipelineValidation — 스텝 수준 유효성 검사', () => 
   });
 
   /**
+   * 이슈 #519: 백엔드 SQL 가드 검증 실패(400) 시 usePipelineSave의 catch 블록이
+   * 에러 객체를 버리고 항상 동일한 일반 문구만 표시하던 회귀 방지 테스트.
+   * handleApiError()로 백엔드 ErrorResponse.message가 그대로 토스트에 노출되어야 한다.
+   */
+  test('저장 실패(400) 시 백엔드가 반환한 구체적 오류 메시지가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+
+    // 백엔드 SQL 가드 검증 실패 응답을 모킹 — 스키마 없는 테이블 참조 오류
+    const guardMessage =
+      '테이블 참조에 스키마가 없습니다: \'some_table\'. data."some_table" 형식으로 명시하세요.';
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { message: guardMessage, status: 400 },
+      { status: 400 },
+    );
+
+    await page.goto('/pipelines/new');
+
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    await nameInput.fill('SQL가드테스트');
+
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('#step-name').fill('스키마없는스텝');
+
+    const cmEditor = page.locator('.cm-content').first();
+    await expect(cmEditor).toBeVisible({ timeout: 5000 });
+    await cmEditor.click();
+    await page.keyboard.type('SELECT * FROM some_table LIMIT 10;');
+
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // 백엔드가 반환한 구체적 메시지가 그대로 토스트에 노출되어야 한다 (일반 문구 아님)
+    await expect(page.getByText(guardMessage)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('파이프라인 저장에 실패했습니다.')).not.toBeVisible();
+  });
+
+  /**
    * 스텝 scriptType 변경 (SQL → PYTHON) 후 저장 가능 여부 확인
    * scriptType 필드 업데이트 경로 커버.
    */
