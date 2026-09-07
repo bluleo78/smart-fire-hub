@@ -42,6 +42,8 @@ export default function UserDetailPage() {
   const [isTogglingActive, setIsTogglingActive] = useState(false);
   // 비활성화 확인 다이얼로그 표시 상태 — 활성→비활성 방향일 때만 열린다
   const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
+  // 역할 전체 해제 확인 다이얼로그 표시 상태 — "역할 저장" 시점에 선택된 역할이 0개일 때만 열린다 (#512)
+  const [isClearRolesDialogOpen, setIsClearRolesDialogOpen] = useState(false);
   // 접근성: 활성 상태 스위치의 라벨↔컨트롤 연결용 id (#432). 조기 return 이 아래에 있으므로 훅 구간에서 호출.
   const activeSwitchId = useId();
 
@@ -72,6 +74,19 @@ export default function UserDetailPage() {
     setSelectedRoleIds(prev =>
       checked ? [...prev, roleId] : prev.filter(id => id !== roleId)
     );
+  };
+
+  /**
+   * "역할 저장" 버튼 클릭 핸들러 — 선택된 역할이 0개(전체 해제)면 확인 다이얼로그를 먼저 띄우고,
+   * 그 외에는 바로 저장을 진행한다. 역할 0개는 로그인 후 접근 가능한 기능이 없어질 수 있는
+   * 활성 상태 비활성화와 동등하거나 더 위험한 변경이므로 동일한 확인 절차를 둔다 (#512).
+   */
+  const handleSaveRolesClick = () => {
+    if (selectedRoleIds.length === 0) {
+      setIsClearRolesDialogOpen(true);
+      return;
+    }
+    void handleSaveRoles();
   };
 
   const handleSaveRoles = async () => {
@@ -232,6 +247,30 @@ export default function UserDetailPage() {
 
       <Separator />
 
+      {/* 역할 전체 해제 확인 AlertDialog — "역할 저장" 시점에 선택된 역할이 0개일 때만 표시된다 (#512) */}
+      <AlertDialog open={isClearRolesDialogOpen} onOpenChange={setIsClearRolesDialogOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>역할 전체 해제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 사용자의 모든 역할을 해제하면 로그인 후 접근 가능한 기능이 없을 수 있습니다. 계속하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setIsClearRolesDialogOpen(false);
+                void handleSaveRoles();
+              }}
+            >
+              역할 해제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Card>
         <CardHeader>
           <CardTitle>역할 할당</CardTitle>
@@ -263,7 +302,7 @@ export default function UserDetailPage() {
             );
             })}
           </div>
-          <Button onClick={handleSaveRoles} disabled={isSavingRoles}>
+          <Button onClick={handleSaveRolesClick} disabled={isSavingRoles}>
             {isSavingRoles ? '저장 중...' : '역할 저장'}
           </Button>
         </CardContent>

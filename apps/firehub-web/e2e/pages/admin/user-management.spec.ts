@@ -360,7 +360,7 @@ test.describe('사용자 관리 페이지', () => {
       page,
       'PUT',
       '/api/v1/users/1/roles',
-      { id: 1, roles: [] },
+      { id: 1, roles: [{ id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true }] },
       { capture: true },
     );
     // 저장 후 사용자 재조회 모킹
@@ -368,17 +368,64 @@ test.describe('사용자 관리 페이지', () => {
 
     await page.goto('/admin/users/1');
 
-    // 역할 할당 섹션에서 USER 체크박스 토글 (현재 체크 상태 → 해제)
+    // 역할 할당 섹션에서 USER 체크박스 해제 + ADMIN 체크박스 선택 (선택된 역할이 0개가 되지 않도록 함)
+    // — 역할이 남아있는 변경은 확인 다이얼로그 없이 바로 저장되어야 한다 (#512)
     const userRoleCheckbox = page.getByRole('checkbox', { name: /USER/ });
+    const adminRoleCheckbox = page.getByRole('checkbox', { name: /ADMIN/ });
     await expect(userRoleCheckbox).toBeVisible();
     await userRoleCheckbox.click();
+    await adminRoleCheckbox.click();
 
-    // 역할 저장 버튼 클릭 → PUT /api/v1/users/1/roles 호출
+    // 역할 저장 버튼 클릭 → 확인 다이얼로그 없이 바로 PUT /api/v1/users/1/roles 호출
     await page.getByRole('button', { name: '역할 저장' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
 
     // API payload 검증 — roleIds 배열이 전달되어야 한다
     const req = await saveCapture.waitForRequest();
     expect(req.payload).toHaveProperty('roleIds');
     expect(Array.isArray((req.payload as { roleIds: number[] }).roleIds)).toBe(true);
+  });
+
+  // #512: 역할을 전부 해제하고 저장을 시도하면 확인 다이얼로그 없이 즉시 반영되면 안 된다
+  test('선택된 역할이 0개가 되면 저장 전 확인 다이얼로그가 표시된다 (#512)', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+
+    // 역할이 실제로 호출되면 실패해야 하므로 캡처만 하고, 다이얼로그가 뜨는 동안 호출되지 않았는지 확인한다
+    const saveCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/users/1/roles',
+      { id: 1, roles: [] },
+      { capture: true },
+    );
+
+    await page.goto('/admin/users/1');
+
+    // setupUserDetailMocks(1)은 기본 역할로 USER 1개만 부여 — 이를 해제하면 선택된 역할이 0개가 된다
+    const userRoleCheckbox = page.getByRole('checkbox', { name: /USER/ });
+    await expect(userRoleCheckbox).toBeChecked();
+    await userRoleCheckbox.click();
+    await expect(userRoleCheckbox).not.toBeChecked();
+
+    // 역할 저장 클릭 — API가 즉시 호출되지 않고 확인 다이얼로그가 먼저 떠야 한다
+    await page.getByRole('button', { name: '역할 저장' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(
+      page.getByText('이 사용자의 모든 역할을 해제하면 로그인 후 접근 가능한 기능이 없을 수 있습니다. 계속하시겠습니까?'),
+    ).toBeVisible();
+    expect(saveCapture.requests).toHaveLength(0);
+
+    // 취소 시 API가 호출되지 않아야 한다
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    expect(saveCapture.requests).toHaveLength(0);
+
+    // 다시 저장 시도 후 확인을 누르면 그때 PUT이 호출되어야 한다
+    await page.getByRole('button', { name: '역할 저장' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: '역할 해제' }).click();
+
+    const req = await saveCapture.waitForRequest();
+    expect((req.payload as { roleIds: number[] }).roleIds).toEqual([]);
   });
 });
