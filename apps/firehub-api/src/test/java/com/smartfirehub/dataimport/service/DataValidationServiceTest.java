@@ -190,6 +190,23 @@ class DataValidationServiceTest {
         .hasMessageContaining("날짜시간 형식이 아닙니다");
   }
 
+  // #516 — TIMESTAMP 컬럼에 시간 없이 날짜만(yyyy-MM-dd) 있는 값도 자정 시각으로 관대하게 허용해야 한다.
+  @Test
+  void convertValue_timestamp_dateOnlyValue_fallsBackToStartOfDay() throws Exception {
+    Object result = service.convertValue("2026-01-01", "TIMESTAMP");
+    assertThat(result)
+        .isInstanceOf(LocalDateTime.class)
+        .isEqualTo(LocalDateTime.of(2026, 1, 1, 0, 0, 0));
+  }
+
+  @Test
+  void convertValue_timestamp_dateOnlySlashFormat_fallsBackToStartOfDay() throws Exception {
+    Object result = service.convertValue("2026/01/01", "TIMESTAMP");
+    assertThat(result)
+        .isInstanceOf(LocalDateTime.class)
+        .isEqualTo(LocalDateTime.of(2026, 1, 1, 0, 0, 0));
+  }
+
   // -----------------------------------------------------------------------
   // convertValue — null / empty
   // -----------------------------------------------------------------------

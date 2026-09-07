@@ -179,11 +179,23 @@ public class DataValidationService {
           } catch (DateTimeParseException ignored) {
           }
         }
+        // 시간부까지 요구하는 TIMESTAMP_FORMATTERS로 실패하면, DATE_FORMATTERS(날짜만)로 재시도해
+        // 자정 시각(00:00:00)을 붙인다. CSV/Excel 내보내기에서 TIMESTAMP 컬럼에 날짜만 채워 넣는
+        // 경우가 흔한데, DATE 컬럼보다 더 엄격하게 거부하는 것은 실사용과 어긋난다(#516).
+        if (timestamp == null) {
+          for (DateTimeFormatter formatter : DATE_FORMATTERS) {
+            try {
+              timestamp = LocalDate.parse(value, formatter).atStartOfDay();
+              break;
+            } catch (DateTimeParseException ignored) {
+            }
+          }
+        }
         if (timestamp == null) {
           throw new Exception(
               "날짜시간 형식이 아닙니다: "
                   + value
-                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO 형식)");
+                  + " (허용 형식: yyyy-MM-dd HH:mm:ss, yyyyMMddHHmmss, ISO 형식, yyyy-MM-dd 등 날짜만 있는 형식)");
         }
         yield timestamp;
       }
