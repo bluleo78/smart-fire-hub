@@ -1013,7 +1013,7 @@ class PipelineAsyncRunnerTest {
             null,
             null,
             List.of(),
-            List.of(),
+            List.of("step1"), // {{#1}} 참조가 실제 선행 스텝(step1)의 의존성 체인에 포함돼야 하므로 명시 (#531)
             1,
             "REPLACE",
             null,
@@ -1112,6 +1112,72 @@ class PipelineAsyncRunnerTest {
             isNull(),
             isNull(),
             contains("자기 자신을 참조"),
+            isNull(),
+            any());
+  }
+
+  @Test
+  void executeAsync_resolveStepReferences_nonAncestorStep_stepFails() {
+    // given: s2(stepOrder=1, s1에만 의존)가 아직 실행되지 않은 후행 스텝 s3({{#3}})을 참조한다.
+    // "스텝 삽입"으로 DAG가 비선형이 되어 s2가 s3보다 먼저 실행되는 상황을 재현한다 (#531).
+    Long pipelineId = 34L;
+    Long userId = 1L;
+    Long executionId = 134L;
+    Long step1Id = 270L;
+    Long step2Id = 271L;
+    Long step3Id = 272L;
+    Long ds1Id = 80L;
+    Long ds3Id = 81L;
+    Long stepExec2Id = 372L;
+
+    PipelineStepResponse step1 =
+        stepResponseWithOutput(
+            step1Id, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", ds1Id, List.of());
+    PipelineStepResponse step2 =
+        new PipelineStepResponse(
+            step2Id,
+            "s2",
+            null,
+            "SQL",
+            "SELECT * FROM {{#3}}",
+            null,
+            null,
+            List.of(),
+            List.of("s1"), // s1에만 의존 — s3는 조상이 아니다
+            1,
+            "REPLACE",
+            null,
+            null,
+            null,
+            null);
+    PipelineStepResponse step3 =
+        stepResponseWithOutput(
+            step3Id, "s3", "SQL", "INSERT INTO data.\"t\" VALUES (3)", ds3Id, List.of("s1"));
+
+    Map<Long, List<Long>> depMap =
+        Map.of(step1Id, List.of(), step2Id, List.of(), step3Id, List.of());
+    Map<Long, Long> stepExecMap = Map.of(step1Id, 370L, step2Id, stepExec2Id, step3Id, 371L);
+
+    when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
+    when(datasetRepository.findTableNameById(ds1Id)).thenReturn(Optional.of("tbl1"));
+    when(datasetRepository.findTableNameById(ds3Id)).thenReturn(Optional.of("tbl3"));
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (1)")).thenReturn("ok");
+    when(sqlExecutor.execute("INSERT INTO data.\"t\" VALUES (3)")).thenReturn("ok");
+    when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2, step3));
+
+    // when: step1 → step2 → step3 순서로 실행 (step2가 아직 산출물 없는 step3을 참조)
+    runner.executeAsync(
+        pipelineId, executionId, List.of(step1, step2, step3), depMap, stepExecMap, userId, false);
+
+    // then: step2는 "선행 스텝(의존성 체인)이 아닙니다" 오류로 FAILED
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExec2Id),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("선행 스텝(의존성 체인)이 아닙니다"),
             isNull(),
             any());
   }

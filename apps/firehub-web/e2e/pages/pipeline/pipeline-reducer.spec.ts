@@ -181,4 +181,54 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
       await expect(page.getByRole('tab', { name: '개요' })).toBeVisible();
     }
   });
+
+  /**
+   * "스텝 참조"({{#N}}) 버튼 목록이 실행 순서상 먼저 실행되는(조상) 스텝만 노출하는지 검증한다 (#531).
+   *
+   * A → D → B → C 체인에서 D는 A에만 의존한다("스텝 삽입"으로 A-B 사이에 끼워넣은 상황을 재현).
+   * API 응답 steps 배열 순서를 [A, D, B, C]로 주어 스텝 번호가 A=1, D=2, B=3, C=4가 되게 한다.
+   * D를 선택했을 때 아직 산출물이 없는 후행 스텝 B({{#3}})·C({{#4}})는 참조 후보로 보이면 안 되고,
+   * 조상 스텝인 A({{#1}})만 보여야 한다.
+   */
+  test('스텝 참조 버튼이 조상 스텝만 노출하고 아직 실행되지 않은 후행 스텝은 제외한다', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail = createPipelineDetail({
+      id: 1,
+      steps: [
+        createStep({ id: 1, name: 'A', stepOrder: 0, dependsOnStepNames: [] }),
+        createStep({ id: 2, name: 'D', stepOrder: 1, dependsOnStepNames: ['A'] }),
+        createStep({ id: 3, name: 'B', stepOrder: 2, dependsOnStepNames: ['D'] }),
+        createStep({ id: 4, name: 'C', stepOrder: 3, dependsOnStepNames: ['B'] }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [],
+      page: 0,
+      size: 1000,
+      totalElements: 0,
+      totalPages: 0,
+    });
+
+    await page.goto('/pipelines/1');
+    await expect(page.getByRole('tab', { name: '개요' })).toBeVisible({ timeout: 10000 });
+
+    // 캔버스에서 "D" 스텝 노드를 선택
+    const stepDNode = page.locator('.react-flow__node', { hasText: 'D' });
+    await expect(stepDNode).toBeVisible({ timeout: 10000 });
+    await stepDNode.click();
+
+    // 스텝 설정 패널의 "스텝 참조" 영역 — 조상 스텝(A={{#1}})만 노출되어야 한다
+    await expect(page.getByText('스텝 참조:')).toBeVisible();
+    await expect(page.getByRole('button', { name: /\{\{#1\}\} A/ })).toBeVisible();
+
+    // 아직 실행되지 않은 후행 스텝(B={{#3}}, C={{#4}})은 참조 후보로 노출되면 안 된다
+    await expect(page.getByRole('button', { name: /\{\{#3\}\}/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /\{\{#4\}\}/ })).toHaveCount(0);
+  });
 });

@@ -122,12 +122,28 @@ export default function StepConfigPanel({
     );
   }, [state.steps, step]);
 
-  // 현재 선택된 스텝을 제외한 나머지 스텝들 — 스크립트 내 스텝 참조 UI에서 사용
+  // 현재 스텝의 실제 선행(조상) 스텝만 — 스크립트 내 "스텝 참조" UI에서 사용.
+  // 배열상 나머지 전부(자신 제외)가 아니라 dependsOnTempIds 체인을 재귀적으로 따라가
+  // 실행 순서상 먼저 실행되는 스텝만 후보로 노출한다. 그렇지 않으면 "스텝 삽입"으로 생긴
+  // 비선형 DAG에서 아직 산출물이 없는 후행 스텝을 {{#N}}으로 참조하는 설정이 저장까지는
+  // 통과했다가 실행 시점에만 실패하게 된다 (#531).
   const otherSteps = useMemo(() => {
     if (!step) return [];
+    const stepByTempId = new Map(state.steps.map((s) => [s.tempId, s]));
+
+    const ancestorTempIds = new Set<string>();
+    const stack = [...step.dependsOnTempIds];
+    while (stack.length > 0) {
+      const tempId = stack.pop();
+      if (tempId === undefined || ancestorTempIds.has(tempId)) continue;
+      ancestorTempIds.add(tempId);
+      const depStep = stepByTempId.get(tempId);
+      if (depStep) stack.push(...depStep.dependsOnTempIds);
+    }
+
     return state.steps
       .map((s, i) => ({ step: s, number: i + 1 }))
-      .filter(({ step: s }) => s.tempId !== step.tempId);
+      .filter(({ step: s }) => ancestorTempIds.has(s.tempId));
   }, [state.steps, step]);
 
   if (!step) {

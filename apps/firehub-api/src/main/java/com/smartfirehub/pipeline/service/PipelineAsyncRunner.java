@@ -24,15 +24,19 @@ import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -366,7 +370,7 @@ public class PipelineAsyncRunner {
       String executionLog;
       if ("SQL".equals(step.scriptType())) {
         String sql = step.scriptContent().trim();
-        sql = resolveStepReferences(sql, pipelineId, step.stepOrder());
+        sql = resolveStepReferences(sql, pipelineId, step);
         // 실행 직전 재검증 — 저장 이후 정책 변경/우회 방지. probe/wrappedSql 결합은 이 검증 통과 후이므로
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
         sqlValidator.validate(sql);
@@ -939,10 +943,10 @@ public class PipelineAsyncRunner {
    *
    * @param sql 원본 SQL 문자열
    * @param pipelineId 파이프라인 ID
-   * @param currentStepIndex 현재 스텝의 0-based 인덱스 (자기 참조 방지)
+   * @param currentStep 현재 실행 중인 스텝 (자기 참조 방지 + 의존성 체인 검증에 사용)
    * @return 참조가 치환된 SQL 문자열
    */
-  private String resolveStepReferences(String sql, Long pipelineId, int currentStepIndex) {
+  private String resolveStepReferences(String sql, Long pipelineId, PipelineStepResponse currentStep) {
     Pattern pattern = Pattern.compile("\\{\\{#(\\d+)\\}\\}");
     Matcher matcher = pattern.matcher(sql);
     if (!matcher.find()) {
@@ -950,6 +954,11 @@ public class PipelineAsyncRunner {
     }
 
     List<PipelineStepResponse> allSteps = stepRepository.findByPipelineId(pipelineId);
+
+    // 현재 스텝의 실제 선행(조상) 스텝 이름 집합 — dependsOnStepNames 체인을 재귀적으로 따라 수집한다.
+    // {{#N}}의 N은 단순 배열 인덱스(step_order)일 뿐이라, "스텝 삽입"으로 DAG가 비선형이 되면
+    // 인덱스 범위 검사만으로는 아직 실행되지 않은(산출물 없는) 후행 스텝까지 참조가 허용된다 (#531).
+    Set<String> ancestorStepNames = collectAncestorStepNames(currentStep, allSteps);
 
     matcher.reset();
     StringBuffer result = new StringBuffer();
@@ -962,11 +971,21 @@ public class PipelineAsyncRunner {
             "{{#" + stepNumber + "}} 참조 실패: 스텝 번호 " + stepNumber + "이 존재하지 않습니다");
       }
 
-      if (stepIndex == currentStepIndex) {
+      if (stepIndex == currentStep.stepOrder()) {
         throw new ScriptExecutionException("{{#" + stepNumber + "}} 참조 실패: 자기 자신을 참조할 수 없습니다");
       }
 
       PipelineStepResponse refStep = allSteps.get(stepIndex);
+
+      if (!ancestorStepNames.contains(refStep.name())) {
+        throw new ScriptExecutionException(
+            "{{#"
+                + stepNumber
+                + "}} 참조 실패: 스텝 '"
+                + refStep.name()
+                + "'은(는) 현재 스텝의 선행 스텝(의존성 체인)이 아닙니다. 실행 순서상 먼저 실행되는 스텝만 참조할 수 있습니다");
+      }
+
       Long datasetId = refStep.outputDatasetId();
 
       if (datasetId == null) {
@@ -998,6 +1017,44 @@ public class PipelineAsyncRunner {
     }
     matcher.appendTail(result);
     return result.toString();
+  }
+
+  /**
+   * 현재 스텝의 실제 선행(조상) 스텝 이름 집합을 dependsOnStepNames 체인을 따라 재귀적으로 수집한다.
+   *
+   * <p>{{#N}} 스텝 참조가 배열 인덱스만으로 임의의 스텝을 가리키지 못하도록, 실제 DAG 의존성 체인에 포함된
+   * 스텝만 참조 가능하도록 검증하는 데 사용한다 (#531). 순환 참조가 있더라도 방문 집합으로 무한루프를 방지한다.
+   *
+   * @param currentStep 현재 실행 중인 스텝
+   * @param allSteps 파이프라인의 전체 스텝 목록
+   * @return 현재 스텝의 직접·간접 선행 스텝 이름 집합
+   */
+  private Set<String> collectAncestorStepNames(
+      PipelineStepResponse currentStep, List<PipelineStepResponse> allSteps) {
+    Map<String, PipelineStepResponse> stepByName = new HashMap<>();
+    for (PipelineStepResponse s : allSteps) {
+      stepByName.put(s.name(), s);
+    }
+
+    Set<String> visited = new HashSet<>();
+    Deque<String> stack = new ArrayDeque<>();
+    if (currentStep.dependsOnStepNames() != null) {
+      stack.addAll(currentStep.dependsOnStepNames());
+    }
+
+    while (!stack.isEmpty()) {
+      String name = stack.pop();
+      if (name == null || visited.contains(name)) {
+        continue;
+      }
+      visited.add(name);
+      PipelineStepResponse depStep = stepByName.get(name);
+      if (depStep != null && depStep.dependsOnStepNames() != null) {
+        stack.addAll(depStep.dependsOnStepNames());
+      }
+    }
+
+    return visited;
   }
 
   /**
