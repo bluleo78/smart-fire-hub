@@ -125,6 +125,18 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     assertThat(response.error()).contains("SELECT");
   }
 
+  // #511: readOnly 검사는 MCP AI 도구 호출과 웹 UI 애드혹 쿼리 실행이 동일 플래그를 공유해 호출
+  // 맥락을 구분할 수 없으므로, 오류 메시지가 "AI 도구" 특정 문구 없이 컨텍스트 중립적이어야 한다.
+  @Test
+  void execute_deleteStatement_readOnlyTrue_errorMessageIsCallerNeutral() {
+    AnalyticsQueryResponse response =
+        executionService.execute("DELETE FROM data.exec_test WHERE name = 'Bob'", 100, true);
+
+    assertThat(response.error()).isNotNull();
+    assertThat(response.error()).doesNotContain("AI 도구");
+    assertThat(response.error()).doesNotContain("웹 UI를 사용하세요");
+  }
+
   // =========================================================================
   // DDL blocking
   // =========================================================================

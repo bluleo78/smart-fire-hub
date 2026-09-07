@@ -75,7 +75,8 @@ public class AnalyticsQueryExecutionService {
    *
    * @param sql raw SQL from user
    * @param maxRows maximum rows to return (1–10000)
-   * @param readOnly if true, only SELECT/WITH is allowed (used by MCP tools)
+   * @param readOnly if true, only SELECT/WITH is allowed (used by MCP tools and Web UI ad-hoc
+   *     query — same flag, shared by both callers, so its error message must stay caller-neutral)
    */
   @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
@@ -89,7 +90,10 @@ public class AnalyticsQueryExecutionService {
     }
 
     if (readOnly && !"SELECT".equals(queryType)) {
-      return errorResponse("AI 도구에서는 SELECT 쿼리만 실행할 수 있습니다. 데이터 수정은 웹 UI를 사용하세요.");
+      // #511: 이 readOnly 검사는 MCP AI 도구 호출과 웹 UI 애드혹 쿼리 실행이 동일 엔드포인트/플래그를
+      // 공유하기 때문에 호출 맥락(AI vs 웹 UI)을 구분할 수 없다 — 메시지를 "AI 도구" 특정 문구가 아닌
+      // 컨텍스트 중립적인 문구로 유지해야 웹 UI 사용자에게 혼란을 주지 않는다.
+      return errorResponse("SELECT 쿼리만 실행할 수 있습니다. 데이터 수정은 데이터셋 상세의 '데이터' 탭을 이용하세요.");
     }
 
     String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
