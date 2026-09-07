@@ -260,4 +260,38 @@ test.describe('프로필 페이지', () => {
     // 폼이 닫히지 않아야 한다 (API 호출 안 됨)
     await expect(page.locator('#current-password')).toBeVisible();
   });
+
+  /**
+   * 회귀 테스트 (이슈 #521): 새 비밀번호가 8자 이상이지만 대/소문자+숫자 복잡도를 만족하지 않으면
+   * 클라이언트 Zod 검증에서 즉시 차단되어야 한다. 이전에는 changePasswordSchema에 min(8)만 있어
+   * 서버까지 요청이 도달했고, 서버가 반환한 영문 에러 메시지가 화면에 그대로 노출되는 UX 결함이 있었다.
+   * 이 테스트는 API가 호출되지 않는지(=클라이언트에서 차단됨) 확인하여 회귀를 방지한다.
+   */
+  test('새 비밀번호가 복잡도 규칙(대/소문자+숫자)을 만족하지 않으면 API 호출 없이 한국어 에러가 표시된다 (이슈 #521)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+
+    let passwordApiCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me/password',
+      (route) => {
+        passwordApiCalled = true;
+        return route.fallback();
+      },
+    );
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#current-password').fill('currentpass');
+    // 8자 이상이지만 소문자+숫자만 포함 — 서버의 복잡도 규칙을 위반하는 값
+    await page.locator('#new-password').fill('newpass123');
+    await page.locator('#confirm-password').fill('newpass123');
+
+    await page.getByRole('button', { name: '비밀번호 변경' }).click();
+
+    // 한국어 복잡도 에러 메시지가 표시되어야 한다 (영문 서버 메시지가 아님)
+    await expect(page.getByText('대문자, 소문자, 숫자를 모두 포함해야 합니다').first()).toBeVisible({
+      timeout: 5000,
+    });
+    // 클라이언트에서 차단되어 서버 API가 호출되지 않아야 한다
+    expect(passwordApiCalled).toBe(false);
+  });
 });

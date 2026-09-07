@@ -8,7 +8,14 @@ export const updateProfileSchema = z.object({
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, '현재 비밀번호를 입력하세요'),
-  newPassword: z.string().min(8, '새 비밀번호는 8자 이상이어야 합니다'),
+  // 백엔드 ChangePasswordRequest.newPassword의 @Pattern 규칙과 동기화 (#521) — 대문자/소문자/숫자 각 1자 이상 필요
+  newPassword: z
+    .string()
+    .min(8, '새 비밀번호는 8자 이상이어야 합니다')
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/,
+      '대문자, 소문자, 숫자를 모두 포함해야 합니다',
+    ),
   confirmPassword: z.string().min(1, '비밀번호 확인을 입력하세요'),
 }).refine(data => data.newPassword === data.confirmPassword, {
   message: '비밀번호가 일치하지 않습니다',
