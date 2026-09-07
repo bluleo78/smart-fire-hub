@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dataset.dto.CategoryResponse;
+import com.smartfirehub.dataset.exception.CategoryInUseException;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
@@ -69,7 +70,9 @@ public class DatasetCategoryService {
         dsl.fetchExists(dsl.selectOne().from(DATASET).where(DS_CATEGORY_ID.eq(id)));
 
     if (hasDatasets) {
-      throw new IllegalArgumentException("Cannot delete category with existing datasets");
+      // 다른 "사용 중이라 삭제 불가" 케이스(DatasetInUseException)와 동일하게 한국어 메시지 +
+      // 409 Conflict로 응답한다 (#518 — 영어 원문 노출 및 상태 코드 불일치 수정)
+      throw new CategoryInUseException("이 카테고리를 사용 중인 데이터셋이 있어 삭제할 수 없습니다.");
     }
 
     categoryRepository.deleteById(id);

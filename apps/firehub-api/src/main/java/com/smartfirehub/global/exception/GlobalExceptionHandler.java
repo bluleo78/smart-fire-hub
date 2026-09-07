@@ -285,6 +285,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
+  /** 카테고리에 연결된 데이터셋이 남아있어 삭제 불가한 경우 409 반환 (#518) */
+  @ExceptionHandler(com.smartfirehub.dataset.exception.CategoryInUseException.class)
+  public ResponseEntity<ErrorResponse> handleCategoryInUse(
+      com.smartfirehub.dataset.exception.CategoryInUseException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
   @ExceptionHandler(InvalidTableNameException.class)
   public ResponseEntity<ErrorResponse> handleInvalidTableName(
       InvalidTableNameException ex, HttpServletRequest request) {

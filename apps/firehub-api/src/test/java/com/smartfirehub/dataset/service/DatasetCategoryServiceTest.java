@@ -1,10 +1,14 @@
 package com.smartfirehub.dataset.service;
 
 import static com.smartfirehub.jooq.Tables.DATASET_CATEGORY;
+import static com.smartfirehub.jooq.Tables.USER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.dto.CategoryResponse;
+import com.smartfirehub.dataset.dto.CreateDatasetRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.exception.CategoryInUseException;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -20,12 +24,25 @@ import org.springframework.transaction.annotation.Transactional;
 class DatasetCategoryServiceTest extends IntegrationTestBase {
 
   @Autowired private DatasetCategoryService categoryService;
+  @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+
+  private Long testUserId;
 
   /** 각 테스트 전 기존 카테고리 데이터를 초기화하여 격리된 환경을 보장한다. */
   @BeforeEach
   void setUp() {
     dsl.deleteFrom(DATASET_CATEGORY).execute();
+
+    testUserId =
+        dsl.insertInto(USER)
+            .set(USER.USERNAME, "cattestuser")
+            .set(USER.PASSWORD, "password")
+            .set(USER.NAME, "Cat Test User")
+            .set(USER.EMAIL, "cattest@example.com")
+            .returning(USER.ID)
+            .fetchOne()
+            .getId();
   }
 
   // =========================================================================
@@ -192,5 +209,37 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> categoryService.deleteCategory(999999L))
         .isInstanceOf(CategoryNotFoundException.class)
         .hasMessageContaining("999999");
+  }
+
+  /**
+   * 카테고리에 데이터셋이 연결된 상태로 삭제를 시도하면 CategoryInUseException(한국어 메시지)을 던지고,
+   * 카테고리가 실제로 삭제되지 않아야 한다 (#518 — 영어 원문 노출 회귀 방지).
+   */
+  @Test
+  void deleteCategory_withExistingDataset_throwsCategoryInUseExceptionWithKoreanMessage() {
+    // Given: 카테고리를 참조하는 데이터셋 생성
+    CategoryResponse category = categoryService.createCategory("In Use Category", "설명");
+    List<DatasetColumnRequest> columns =
+        List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, false, true, "Name column"));
+    CreateDatasetRequest request =
+        new CreateDatasetRequest(
+            "Category Ref Dataset",
+            "category_ref_dataset",
+            "설명",
+            category.id(),
+            "TABLE",
+            "SOURCE",
+            columns,
+            null);
+    datasetService.createDataset(request, testUserId);
+
+    // When/Then: 삭제 시 한국어 메시지의 CategoryInUseException 발생
+    assertThatThrownBy(() -> categoryService.deleteCategory(category.id()))
+        .isInstanceOf(CategoryInUseException.class)
+        .hasMessage("이 카테고리를 사용 중인 데이터셋이 있어 삭제할 수 없습니다.");
+
+    // Then: 카테고리는 삭제되지 않고 그대로 남아있어야 한다
+    CategoryResponse stillExists = categoryService.getCategoryById(category.id());
+    assertThat(stillExists.id()).isEqualTo(category.id());
   }
 }
