@@ -117,6 +117,7 @@ export function createExecutionDetail(overrides?: Partial<ExecutionDetailRespons
     startedAt: '2024-01-01T00:00:00Z',
     completedAt: '2024-01-01T00:01:00Z',
     createdAt: '2024-01-01T00:00:00Z',
+    errorMessage: null,
     ...overrides,
   };
 }

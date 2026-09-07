@@ -101,6 +101,12 @@ export interface ExecutionDetailResponse {
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  /**
+   * 스텝 실행 레코드가 하나도 생성되기 전에 발생한 최상위 예외 메시지 (#517).
+   * 스텝 레벨 오류가 아닌 파이프라인 실행 자체의 실패 원인(토폴로지 정렬 실패, DB 오류 등)이며,
+   * 정상 완료되었거나 스텝 레벨에서 실패한 경우 null이다.
+   */
+  errorMessage: string | null;
 }
 
 export interface StepExecutionResponse {

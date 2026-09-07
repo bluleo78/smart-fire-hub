@@ -238,4 +238,45 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     // 기술적 원문은 그대로 표시되어야 한다 (개발자 디버깅용, 숨기지 않음)
     await expect(page.getByText(technicalErrorMsg)).toBeVisible();
   });
+
+  test('스텝 실행 레코드가 없는 실행에서 DAG 노드를 클릭하면 "실행되지 않음" 빈 상태와 execution 레벨 오류가 표시된다 (이슈 #517)', async ({ authenticatedPage: page }) => {
+    // 스텝 실행 레코드가 하나도 생성되기 전에 최상위 예외로 실패한 케이스를 재현한다.
+    // (예: 토폴로지 정렬 실패 등 — pipeline_execution.error_message에만 원인이 남는다)
+    await setupPipelineEditorMocks(page, 1);
+
+    const execErrorMsg = 'Topological sort failed: circular dependency detected';
+    const detail = createExecutionDetail({
+      id: 1,
+      pipelineId: 1,
+      status: 'FAILED',
+      stepExecutions: [], // 스텝 현황: 완료 0/0
+      startedAt: '2024-01-01T00:00:00Z',
+      completedAt: '2024-01-01T00:00:01Z',
+      errorMessage: execErrorMsg,
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+
+    const rows = page.getByRole('row');
+    await rows.nth(1).click();
+
+    // ExecutionSummary가 먼저 보이고, execution 레벨 오류도 요약 화면에 노출된다
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/완료 0\/0/)).toBeVisible();
+    await expect(page.getByText(execErrorMsg)).toBeVisible();
+
+    // DAG 노드(스텝) 클릭 — 해당 스텝의 실행 레코드는 없다(stepExecutions: [])
+    const stepNode = page.locator('.react-flow__node').first();
+    await stepNode.click();
+
+    // 헤더는 "스텝: {name}"으로 바뀌지만, 본문은 더 이상 ExecutionSummary가 아니라
+    // "실행되지 않음" 빈 상태 + execution 레벨 오류를 보여줘야 한다 (수정 전에는 요약이 반복 표시됨)
+    await expect(page.getByText(/^스텝: /)).toBeVisible();
+    await expect(page.getByText('이 스텝은 실행되지 않았습니다')).toBeVisible();
+    await expect(page.getByText(execErrorMsg)).toBeVisible();
+    // ExecutionSummary 전용 안내 문구는 더 이상 보이지 않아야 한다
+    await expect(page.getByText(/DAG에서 스텝을 클릭/)).toHaveCount(0);
+  });
 });

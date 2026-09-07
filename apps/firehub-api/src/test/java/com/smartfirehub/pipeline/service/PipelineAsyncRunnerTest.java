@@ -186,8 +186,9 @@ class PipelineAsyncRunnerTest {
     // when
     runner.executeAsync(pipelineId, executionId, List.of(), Map.of(), Map.of(), userId, false);
 
-    // then: 실패 상태로 갱신 및 실패 이벤트 발행
-    verify(executionRepository).updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any());
+    // then: 실패 상태로 갱신 및 실패 이벤트 발행 — 예외 메시지도 함께 저장돼야 한다(#517)
+    verify(executionRepository)
+        .updateExecutionStatus(eq(executionId), eq("FAILED"), any(), any(), eq("DB error"));
     ArgumentCaptor<PipelineCompletedEvent> captor =
         ArgumentCaptor.forClass(PipelineCompletedEvent.class);
     verify(applicationEventPublisher).publishEvent(captor.capture());

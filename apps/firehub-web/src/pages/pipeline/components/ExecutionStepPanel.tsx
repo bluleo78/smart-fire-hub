@@ -109,6 +109,50 @@ function StepDetails({
   );
 }
 
+/**
+ * 파이프라인 실행 레벨 오류 메시지 표시 영역.
+ *
+ * 스텝 실행 레코드가 하나도 생성되기 전에 발생한 최상위 예외(토폴로지 정렬 실패, DB 오류 등)는
+ * 스텝별 errorMessage에는 남지 않고 execution.errorMessage에만 남는다(#517). 이 값이 있으면
+ * "스텝 실행 전 실패"임을 명확히 보여준다.
+ */
+function ExecutionErrorMessage({ errorMessage }: { errorMessage: string }) {
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2">
+        <p className="text-muted-foreground text-xs font-medium">오류 상세</p>
+        <p className="text-xs text-muted-foreground">
+          스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다. 아래 오류 정보를 참고하세요.
+        </p>
+        <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
+          {errorMessage}
+        </pre>
+      </div>
+    </>
+  );
+}
+
+/**
+ * 헤더에는 선택한 스텝명이 표시되지만 실제로는 해당 스텝의 실행 레코드가 존재하지 않는 경우
+ * (예: 스텝 실행 전 파이프라인 전체가 실패)를 위한 빈 상태 컴포넌트(#517).
+ * 기존에는 이 경우도 ExecutionSummary가 그대로 렌더링되어 "스텝 상세를 보고 있다"는 착각을 줬다.
+ */
+function StepNotExecuted({ execution }: { execution: ExecutionDetailResponse }) {
+  return (
+    <div className="flex-1 min-h-0">
+      <ScrollArea className="h-full">
+        <div className="p-4 space-y-3 text-sm">
+          <p className="text-muted-foreground text-xs">
+            이 스텝은 실행되지 않았습니다. 스텝이 실행되기 전 파이프라인 실행이 중단됐을 수 있습니다.
+          </p>
+          {execution.errorMessage && <ExecutionErrorMessage errorMessage={execution.errorMessage} />}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse }) {
   const total = execution.stepExecutions.length;
   const completed = execution.stepExecutions.filter(s => s.status === 'COMPLETED').length;
@@ -142,6 +186,8 @@ function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse })
             <span className="text-muted-foreground w-16 shrink-0">소요</span>
             <span>{formatDuration(execution.startedAt, execution.completedAt)}</span>
           </div>
+
+          {execution.errorMessage && <ExecutionErrorMessage errorMessage={execution.errorMessage} />}
 
           <Separator />
 
@@ -195,7 +241,11 @@ export function ExecutionStepPanel({
   selectedStepName,
   onClose,
 }: ExecutionStepPanelProps) {
-  const step = execution.stepExecutions.find(se => se.stepName === selectedStepName) ?? null;
+  // 스텝을 선택하지 않은 경우(null)와, 선택했지만 해당 스텝의 실행 레코드가 아예 없는 경우
+  // (undefined — 스텝 실행 전 파이프라인이 실패한 경우 등)를 명확히 구분한다(#517).
+  // 이전에는 둘 다 "요약 화면"으로 뭉뚱그려져, 헤더는 "스텝: {name}"인데 본문은 전체 요약이
+  // 반복 표시되는 모순된 UX였다.
+  const step = execution.stepExecutions.find(se => se.stepName === selectedStepName);
 
   return (
     <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
@@ -210,10 +260,12 @@ export function ExecutionStepPanel({
         )}
       </div>
 
-      {step === null ? (
+      {selectedStepName === null ? (
         <ExecutionSummary execution={execution} />
-      ) : (
+      ) : step ? (
         <StepDetails step={step} />
+      ) : (
+        <StepNotExecuted execution={execution} />
       )}
     </div>
   );

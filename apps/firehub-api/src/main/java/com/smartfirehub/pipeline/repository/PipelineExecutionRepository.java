@@ -44,6 +44,8 @@ public class PipelineExecutionRepository {
       field(name("pipeline_execution", "triggered_by"), String.class);
   private static final Field<Long> PE_TRIGGER_ID =
       field(name("pipeline_execution", "trigger_id"), Long.class);
+  private static final Field<String> PE_ERROR_MESSAGE =
+      field(name("pipeline_execution", "error_message"), String.class);
 
   private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
   private static final Field<Long> PT_ID = field(name("pipeline_trigger", "id"), Long.class);
@@ -104,6 +106,19 @@ public class PipelineExecutionRepository {
 
   public void updateExecutionStatus(
       Long executionId, String status, LocalDateTime startedAt, LocalDateTime completedAt) {
+    updateExecutionStatus(executionId, status, startedAt, completedAt, null);
+  }
+
+  /**
+   * 파이프라인 실행 상태를 갱신한다. {@code errorMessage}가 주어지면 스텝 실행 레코드 생성 전에 발생한 최상위 예외의 메시지를 함께
+   * 저장한다(#517) — 기존에는 FAILED 상태만 기록되고 원인이 완전히 유실됐다.
+   */
+  public void updateExecutionStatus(
+      Long executionId,
+      String status,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt,
+      String errorMessage) {
     var query = dsl.update(PIPELINE_EXECUTION).set(PE_STATUS, status);
 
     if (startedAt != null) {
@@ -112,6 +127,10 @@ public class PipelineExecutionRepository {
 
     if (completedAt != null) {
       query = query.set(PE_COMPLETED_AT, completedAt);
+    }
+
+    if (errorMessage != null) {
+      query = query.set(PE_ERROR_MESSAGE, errorMessage);
     }
 
     query.where(PE_ID.eq(executionId)).execute();
@@ -203,6 +222,7 @@ public class PipelineExecutionRepository {
                 PE_STARTED_AT,
                 PE_COMPLETED_AT,
                 PE_CREATED_AT,
+                PE_ERROR_MESSAGE,
                 P_NAME,
                 U_NAME)
             .from(PIPELINE_EXECUTION)
@@ -232,7 +252,8 @@ public class PipelineExecutionRepository {
             stepExecutions,
             exec.get(PE_STARTED_AT),
             exec.get(PE_COMPLETED_AT),
-            exec.get(PE_CREATED_AT)));
+            exec.get(PE_CREATED_AT),
+            exec.get(PE_ERROR_MESSAGE)));
   }
 
   public List<StepExecutionResponse> findStepExecutionsByExecutionId(Long executionId) {

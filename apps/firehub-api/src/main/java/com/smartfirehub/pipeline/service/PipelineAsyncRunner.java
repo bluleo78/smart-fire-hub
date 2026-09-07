@@ -228,8 +228,11 @@ public class PipelineAsyncRunner {
 
     } catch (Exception e) {
       log.error("Pipeline execution {} failed with exception", executionId, e);
+      // 스텝 실행 레코드가 하나도 생성되기 전에 던져진 예외(토폴로지 정렬 실패, DB 오류 등)는
+      // 스텝 레벨 error_message로 남길 곳이 없어 원인이 완전히 유실됐다(#517).
+      // 최상위 예외 메시지를 execution 레벨 error_message로 보존한다.
       executionRepository.updateExecutionStatus(
-          executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC));
+          executionId, "FAILED", null, LocalDateTime.now(ZoneOffset.UTC), e.getMessage());
 
       // 실패 이벤트 발행
       applicationEventPublisher.publishEvent(
