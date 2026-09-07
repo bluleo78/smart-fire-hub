@@ -69,7 +69,7 @@ class PipelineControllerTest {
   void getPipelines_withPermission_returnsPageResponse() throws Exception {
     PipelineResponse pipeline =
         new PipelineResponse(
-            1L, "ETL Daily", "Daily ETL run", true, "testuser", 3, LocalDateTime.now());
+            1L, "ETL Daily", "Daily ETL run", true, "testuser", 3, 2, LocalDateTime.now());
     PageResponse<PipelineResponse> page = new PageResponse<>(List.of(pipeline), 0, 20, 1, 1);
 
     when(pipelineService.getPipelines(anyInt(), anyInt())).thenReturn(page);

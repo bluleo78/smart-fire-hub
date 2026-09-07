@@ -46,9 +46,21 @@ public class PipelineRepository {
   private static final Field<Long> PS_PIPELINE_ID =
       field(name("pipeline_step", "pipeline_id"), Long.class);
 
+  private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
+  private static final Field<Long> PT_PIPELINE_ID =
+      field(name("pipeline_trigger", "pipeline_id"), Long.class);
+  private static final Field<Boolean> PT_IS_ENABLED =
+      field(name("pipeline_trigger", "is_enabled"), Boolean.class);
+
   public List<PipelineResponse> findAll(int page, int size) {
     Field<Integer> stepCountField =
         selectCount().from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(P_ID)).asField("step_count");
+    // 활성 트리거 개수: stepCountField와 동일한 상관 서브쿼리 패턴. is_enabled=true인 트리거만 카운트.
+    Field<Integer> triggerCountField =
+        selectCount()
+            .from(PIPELINE_TRIGGER)
+            .where(PT_PIPELINE_ID.eq(P_ID), PT_IS_ENABLED.isTrue())
+            .asField("trigger_count");
 
     return dsl.select(
             P_ID,
@@ -58,6 +70,7 @@ public class PipelineRepository {
             P_CREATED_BY,
             P_CREATED_AT,
             stepCountField,
+            triggerCountField,
             U_NAME)
         .from(PIPELINE)
         .leftJoin(USER_TABLE)
@@ -74,6 +87,7 @@ public class PipelineRepository {
                     r.get(P_IS_ACTIVE),
                     r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(P_CREATED_BY)),
                     r.get(stepCountField),
+                    r.get(triggerCountField),
                     r.get(P_CREATED_AT)));
   }
 
@@ -84,6 +98,11 @@ public class PipelineRepository {
   public Optional<PipelineResponse> findById(Long id) {
     Field<Integer> stepCountField =
         selectCount().from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(P_ID)).asField("step_count");
+    Field<Integer> triggerCountField =
+        selectCount()
+            .from(PIPELINE_TRIGGER)
+            .where(PT_PIPELINE_ID.eq(P_ID), PT_IS_ENABLED.isTrue())
+            .asField("trigger_count");
 
     return dsl.select(
             P_ID,
@@ -93,6 +112,7 @@ public class PipelineRepository {
             P_CREATED_BY,
             P_CREATED_AT,
             stepCountField,
+            triggerCountField,
             U_NAME)
         .from(PIPELINE)
         .leftJoin(USER_TABLE)
@@ -107,6 +127,7 @@ public class PipelineRepository {
                     r.get(P_IS_ACTIVE),
                     r.get(U_NAME) != null ? r.get(U_NAME) : String.valueOf(r.get(P_CREATED_BY)),
                     r.get(stepCountField),
+                    r.get(triggerCountField),
                     r.get(P_CREATED_AT)));
   }
 
@@ -133,6 +154,7 @@ public class PipelineRepository {
         record.get(P_DESCRIPTION),
         record.get(P_IS_ACTIVE),
         createdByName,
+        0,
         0,
         record.get(P_CREATED_AT));
   }

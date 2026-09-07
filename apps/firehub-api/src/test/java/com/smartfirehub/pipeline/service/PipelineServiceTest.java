@@ -249,6 +249,61 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(response.totalElements()).isGreaterThanOrEqualTo(2);
   }
 
+  // #510 회귀 방지: 목록 조회 응답의 triggerCount가 실제 활성 트리거 개수를 반영하는지 검증한다.
+  // 비활성(is_enabled=false) 트리거는 카운트에서 제외되어야 한다.
+  @Test
+  void getPipelines_reflectsActiveTriggerCount() {
+    // Given: 트리거가 없는 파이프라인, 활성 2개 + 비활성 1개를 가진 파이프라인
+    PipelineDetailResponse noTriggerPipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("No Trigger Pipeline", "no triggers", List.of()),
+            testUserId);
+    PipelineDetailResponse withTriggerPipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("With Trigger Pipeline", "has triggers", List.of()),
+            testUserId);
+
+    dsl.insertInto(PIPELINE_TRIGGER)
+        .set(PIPELINE_TRIGGER.PIPELINE_ID, withTriggerPipeline.id())
+        .set(PIPELINE_TRIGGER.TRIGGER_TYPE, "WEBHOOK")
+        .set(PIPELINE_TRIGGER.NAME, "활성 웹훅 1")
+        .set(PIPELINE_TRIGGER.IS_ENABLED, true)
+        .set(PIPELINE_TRIGGER.CREATED_BY, testUserId)
+        .execute();
+    dsl.insertInto(PIPELINE_TRIGGER)
+        .set(PIPELINE_TRIGGER.PIPELINE_ID, withTriggerPipeline.id())
+        .set(PIPELINE_TRIGGER.TRIGGER_TYPE, "SCHEDULE")
+        .set(PIPELINE_TRIGGER.NAME, "활성 스케줄")
+        .set(PIPELINE_TRIGGER.IS_ENABLED, true)
+        .set(PIPELINE_TRIGGER.CREATED_BY, testUserId)
+        .execute();
+    dsl.insertInto(PIPELINE_TRIGGER)
+        .set(PIPELINE_TRIGGER.PIPELINE_ID, withTriggerPipeline.id())
+        .set(PIPELINE_TRIGGER.TRIGGER_TYPE, "WEBHOOK")
+        .set(PIPELINE_TRIGGER.NAME, "비활성 웹훅")
+        .set(PIPELINE_TRIGGER.IS_ENABLED, false)
+        .set(PIPELINE_TRIGGER.CREATED_BY, testUserId)
+        .execute();
+
+    // When
+    PageResponse<PipelineResponse> response = pipelineService.getPipelines(0, 50);
+
+    // Then
+    PipelineResponse noTriggerResult =
+        response.content().stream()
+            .filter(p -> p.id().equals(noTriggerPipeline.id()))
+            .findFirst()
+            .orElseThrow();
+    PipelineResponse withTriggerResult =
+        response.content().stream()
+            .filter(p -> p.id().equals(withTriggerPipeline.id()))
+            .findFirst()
+            .orElseThrow();
+
+    assertThat(noTriggerResult.triggerCount()).isZero();
+    assertThat(withTriggerResult.triggerCount()).isEqualTo(2);
+  }
+
   @Test
   void getPipelineById_returnsDetailWithSteps() {
     // Given
