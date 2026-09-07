@@ -29,54 +29,64 @@ class RefreshTokenCleanupServiceTest extends IntegrationTestBase {
 
   @Test
   void cleanupExpiredTokens_deletesExpiredTokens() {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    var user =
+        authService.signup(
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     TokenResponse loginResult =
         authService.login(new LoginRequest("test@example.com", "Password123"));
 
     // Manually expire the token
     dsl.update(REFRESH_TOKEN)
         .set(REFRESH_TOKEN.EXPIRES_AT, LocalDateTime.now().minusDays(1))
+        .where(REFRESH_TOKEN.USER_ID.eq(user.id()))
         .execute();
 
-    int before = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int before =
+        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN).where(REFRESH_TOKEN.USER_ID.eq(user.id())));
     assertThat(before).isGreaterThan(0);
 
     cleanupService.cleanupExpiredTokens();
 
-    int after = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int after =
+        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN).where(REFRESH_TOKEN.USER_ID.eq(user.id())));
     assertThat(after).isEqualTo(0);
   }
 
   @Test
   void cleanupExpiredTokens_deletesOldRevokedTokens() {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    var user =
+        authService.signup(
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     authService.login(new LoginRequest("test@example.com", "Password123"));
 
     // Revoke all tokens and backdate created_at
     dsl.update(REFRESH_TOKEN)
         .set(REFRESH_TOKEN.REVOKED, true)
         .set(REFRESH_TOKEN.CREATED_AT, LocalDateTime.now().minusDays(8))
+        .where(REFRESH_TOKEN.USER_ID.eq(user.id()))
         .execute();
 
     cleanupService.cleanupExpiredTokens();
 
-    int after = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int after =
+        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN).where(REFRESH_TOKEN.USER_ID.eq(user.id())));
     assertThat(after).isEqualTo(0);
   }
 
   @Test
   void cleanupExpiredTokens_keepsValidTokens() {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    var user =
+        authService.signup(
+            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
     authService.login(new LoginRequest("test@example.com", "Password123"));
 
-    int before = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int before =
+        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN).where(REFRESH_TOKEN.USER_ID.eq(user.id())));
 
     cleanupService.cleanupExpiredTokens();
 
-    int after = dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN));
+    int after =
+        dsl.fetchCount(dsl.selectFrom(REFRESH_TOKEN).where(REFRESH_TOKEN.USER_ID.eq(user.id())));
     assertThat(after).isEqualTo(before);
   }
 }
