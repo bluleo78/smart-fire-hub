@@ -67,7 +67,11 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
                       variant="ghost"
                       size="icon"
                       className="h-5 w-5 shrink-0 opacity-50 hover:opacity-100"
-                      aria-label={`${session.title || `대화 #${session.id}`} 삭제`}
+                      // 접근성 이름 중복 낭독 방지 (#514): menuitem이 하위 콘텐츠(제목 span +
+                      // 이 버튼의 aria-label)를 이어붙여 accessible name을 계산하므로,
+                      // 버튼 라벨을 짧게 고정한다. 삭제 대상은 DeleteConfirmDialog가
+                      // itemName으로 다시 보여주므로 정보 손실 없음.
+                      aria-label="대화 삭제"
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>

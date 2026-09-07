@@ -235,6 +235,29 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     await expect(page.getByRole('button', { name: '취소' })).toBeVisible({ timeout: 3000 });
   });
 
+  test('삭제 버튼의 accessible name이 대화 제목을 중복 낭독하지 않는다 (#514)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openPanelWithSessions(page);
+
+    // 드롭다운 열기
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
+    await trigger.click();
+
+    // menuitem 자체의 accessible name은 "제목 span" + "삭제 버튼 aria-label"을
+    // 이어붙여 계산되므로, 삭제 버튼 라벨이 "대화 삭제"로 짧게 고정되어 있으면
+    // 제목이 한 번만 나타나야 한다.
+    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
+    await expect(menuItem1).toBeVisible({ timeout: 3000 });
+    const accessibleName = await menuItem1.evaluate((el) => el.getAttribute('aria-label') ?? el.textContent ?? '');
+    const titleOccurrences = accessibleName.split('이전 대화 1').length - 1;
+    expect(titleOccurrences).toBeLessThanOrEqual(1);
+
+    // 삭제 버튼 자체의 accessible name도 제목을 포함하지 않고 짧게 고정되어야 함
+    const deleteBtn = menuItem1.getByRole('button', { name: /삭제/ });
+    await expect(deleteBtn).toHaveAccessibleName('대화 삭제');
+  });
+
   test('확인 다이얼로그에서 취소 클릭 시 API가 호출되지 않는다 (#15)', async ({
     authenticatedPage: page,
   }) => {
