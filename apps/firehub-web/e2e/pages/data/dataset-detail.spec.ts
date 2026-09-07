@@ -354,6 +354,49 @@ test.describe('데이터셋 상세 페이지', () => {
     expect(req.payload).toMatchObject({ tagName: '신규태그' });
   });
 
+  test('태그 입력창에 길이 제한(maxLength)이 걸려있다 (#530)', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    await page.locator('button[title="태그 추가"]').click();
+
+    // 백엔드 dataset_tag.tag_name 컬럼 제약(VARCHAR(50))과 동일하게
+    // 클라이언트 입력창도 50자로 제한되어야 한다
+    const tagInput = page.getByPlaceholder(/태그 입력|새 태그/);
+    await expect(tagInput).toHaveAttribute('maxlength', '50');
+
+    // 50자를 초과하는 값을 fill해도 maxLength에 의해 잘려서 반영된다
+    await tagInput.fill('가'.repeat(100));
+    await expect(tagInput).toHaveValue('가'.repeat(50));
+  });
+
+  test('태그 추가 실패 시 백엔드 검증 메시지를 토스트로 노출한다 (#530)', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+
+    // 백엔드 400 응답 — 길이 초과 등 검증 오류 메시지
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/tags',
+      { message: '태그 이름은 50자를 초과할 수 없습니다.' },
+      { status: 400 },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+    await page.locator('button[title="태그 추가"]').click();
+
+    const tagInput = page.getByPlaceholder(/태그 입력|새 태그/);
+    await tagInput.fill('신규태그');
+    await tagInput.press('Enter');
+
+    // 고정 문구가 아니라 백엔드 ErrorResponse.message가 그대로 노출되어야 한다
+    await expect(page.getByText('태그 이름은 50자를 초과할 수 없습니다.')).toBeVisible();
+    await expect(page.getByText('태그 추가에 실패했습니다.')).not.toBeVisible();
+  });
+
   test('기존 태그 X 버튼 클릭 — DELETE 호출 검증', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
 

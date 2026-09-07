@@ -33,6 +33,7 @@ import {
 import { useAuth } from '../../hooks/useAuth';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
+import { handleApiError } from '../../lib/api-error';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
 import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
 import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
@@ -43,6 +44,10 @@ import { DatasetInfoTab } from './tabs/DatasetInfoTab';
 import { DatasetMappingTab } from './tabs/DatasetMappingTab';
 import { DatasetMapTab } from './tabs/DatasetMapTab';
 import { DatasetObjectsTab } from './tabs/DatasetObjectsTab';
+
+// 백엔드 dataset_tag.tag_name 컬럼 제약(VARCHAR(50))과 동일한 길이 제한.
+// 클라이언트에서 사전에 제한하여 불필요한 400 요청/토스트 혼란을 방지한다 (#530)
+const TAG_NAME_MAX_LENGTH = 50;
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
@@ -157,8 +162,9 @@ export default function DatasetDetailPage() {
       setTagInput('');
       setTagInputOpen(false);
       toast.success(`태그 "${tag}" 추가`);
-    } catch {
-      toast.error('태그 추가에 실패했습니다.');
+    } catch (error) {
+      // 백엔드 검증 오류(예: 길이 초과) 메시지를 우선 노출한다
+      handleApiError(error, '태그 추가에 실패했습니다.');
     }
   };
 
@@ -385,6 +391,7 @@ export default function DatasetDetailPage() {
                       if (e.key === 'Escape') setTagInputOpen(false);
                     }}
                     className="h-8 text-sm"
+                    maxLength={TAG_NAME_MAX_LENGTH}
                     autoFocus
                   />
                   {filteredTagSuggestions.length > 0 && (
@@ -403,8 +410,9 @@ export default function DatasetDetailPage() {
                               setTagInput('');
                               setTagInputOpen(false);
                               toast.success(`태그 "${suggestion}" 추가`);
-                            } catch {
-                              toast.error('태그 추가에 실패했습니다.');
+                            } catch (error) {
+                              // 백엔드 검증 오류(예: 길이 초과) 메시지를 우선 노출한다
+                              handleApiError(error, '태그 추가에 실패했습니다.');
                             }
                           }}
                         >
