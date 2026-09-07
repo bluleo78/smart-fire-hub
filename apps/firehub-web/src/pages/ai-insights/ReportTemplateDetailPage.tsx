@@ -426,14 +426,22 @@ export default function ReportTemplateDetailPage() {
       {!isNew && !isEditing && template && (
         <div className="space-y-1">
           <div className="text-sm text-muted-foreground flex gap-4">
-            {template.description && <span>{template.description}</span>}
-            <span>생성: {new Date(template.createdAt).toLocaleDateString('ko-KR')}</span>
-            <span>수정: {new Date(template.updatedAt).toLocaleDateString('ko-KR')}</span>
+            {/* 긴 설명이 헤더를 무한정 늘리지 않도록 2줄로 제한하고, title로 전체 텍스트를 확인할 수 있게 한다 */}
+            {template.description && (
+              <span className="line-clamp-2 min-w-0 flex-1" title={template.description}>
+                {template.description}
+              </span>
+            )}
+            <span className="shrink-0">생성: {new Date(template.createdAt).toLocaleDateString('ko-KR')}</span>
+            <span className="shrink-0">수정: {new Date(template.updatedAt).toLocaleDateString('ko-KR')}</span>
           </div>
           {template.style && (
             <div className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">스타일: </span>
-              {template.style}
+              {/* 줄바꿈 없는 긴 텍스트가 뷰포트 밖으로 잘려 사라지지 않도록 줄바꿈 허용 + 2줄 제한 */}
+              <span className="line-clamp-2 break-words" title={template.style}>
+                {template.style}
+              </span>
             </div>
           )}
         </div>

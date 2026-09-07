@@ -144,4 +144,37 @@ test.describe('리포트 목록', () => {
       'page',
     );
   });
+
+  test('설명/스타일이 아주 길어도 헤더가 line-clamp로 제한되고 넘치지 않는다 (#513)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 회귀 방지: description/style에 오버플로우 처리(line-clamp)가 없으면
+    // 헤더가 무한정 늘어나거나(설명) 줄바꿈 없이 잘려 사라진다(스타일)
+    const LONG_TEXT = '설명'.repeat(200);
+    const LONG_STYLE = 'A'.repeat(300);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/templates/7',
+      createTemplate({ id: 7, name: '긴 텍스트 양식', description: LONG_TEXT, style: LONG_STYLE }),
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates/7');
+
+    const description = page.getByText(LONG_TEXT);
+    const style = page.getByText(LONG_STYLE);
+    await expect(description).toBeVisible();
+    await expect(style).toBeVisible();
+
+    // line-clamp-2가 적용되면 실제 렌더 높이가 2줄 분량으로 제한된다 (문자열 전체 높이보다 훨씬 작음)
+    const descriptionBox = await description.boundingBox();
+    const styleBox = await style.boundingBox();
+    expect(descriptionBox?.height ?? 0).toBeLessThan(60);
+    expect(styleBox?.height ?? 0).toBeLessThan(60);
+
+    // title 속성으로 전체 텍스트를 확인할 수 있어야 한다
+    await expect(description).toHaveAttribute('title', LONG_TEXT);
+    await expect(style).toHaveAttribute('title', LONG_STYLE);
+  });
 });
