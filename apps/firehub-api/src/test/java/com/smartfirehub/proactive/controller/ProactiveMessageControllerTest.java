@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.controller;
 
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doNothing;
@@ -65,7 +66,7 @@ class ProactiveMessageControllerTest {
   @Test
   void getMessages_returnsList() throws Exception {
     mockAuth("proactive:read");
-    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt()))
+    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt(), anyBoolean()))
         .thenReturn(List.of(sampleMessage()));
 
     mockMvc
@@ -78,7 +79,8 @@ class ProactiveMessageControllerTest {
   @Test
   void getMessages_withCustomLimitAndOffset_returnsList() throws Exception {
     mockAuth("proactive:read");
-    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt())).thenReturn(List.of());
+    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt(), anyBoolean()))
+        .thenReturn(List.of());
 
     mockMvc
         .perform(
@@ -87,6 +89,22 @@ class ProactiveMessageControllerTest {
                 .param("offset", "10")
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
+  }
+
+  @Test
+  void getMessages_withUnreadOnly_passesFlagToRepository() throws Exception {
+    // #520: unreadOnly=true 파라미터가 리포지토리 호출에 그대로 전달되는지 검증
+    mockAuth("proactive:read");
+    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt(), org.mockito.ArgumentMatchers.eq(true)))
+        .thenReturn(List.of(sampleMessage()));
+
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/messages")
+                .param("unreadOnly", "true")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].id").value(1));
   }
 
   @Test

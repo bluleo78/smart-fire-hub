@@ -150,7 +150,7 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
 
     repository.markAsRead(id, userId);
 
-    List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0);
+    List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0, false);
     ProactiveMessageResponse msg =
         all.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
     assertThat(msg.read()).isTrue();
@@ -202,11 +202,11 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
     repository.create(userId, null, "Third", Map.of(), "REPORT");
 
     // limit=2, offset=0 → 2개 반환
-    List<ProactiveMessageResponse> page1 = repository.findByUserId(userId, 2, 0);
+    List<ProactiveMessageResponse> page1 = repository.findByUserId(userId, 2, 0, false);
     assertThat(page1).hasSize(2);
 
     // limit=2, offset=2 → 나머지 1개
-    List<ProactiveMessageResponse> page2 = repository.findByUserId(userId, 2, 2);
+    List<ProactiveMessageResponse> page2 = repository.findByUserId(userId, 2, 2, false);
     assertThat(page2).hasSize(1);
   }
 
@@ -217,7 +217,7 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
 
     repository.markAsRead(id2, userId);
 
-    List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0);
+    List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0, false);
     assertThat(all).hasSize(2);
 
     // 읽은 것과 안 읽은 것 모두 포함
@@ -230,11 +230,38 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
     Map<String, Object> content = Map.of("summary", "test summary", "count", 42);
     Long id = repository.create(userId, null, "Rich Content", content, "REPORT");
 
-    List<ProactiveMessageResponse> messages = repository.findByUserId(userId, 10, 0);
+    List<ProactiveMessageResponse> messages = repository.findByUserId(userId, 10, 0, false);
     ProactiveMessageResponse msg =
         messages.stream().filter(m -> m.id().equals(id)).findFirst().orElseThrow();
 
     assertThat(msg.content()).containsKey("summary");
     assertThat(msg.content().get("summary")).isEqualTo("test summary");
+  }
+
+  // -----------------------------------------------------------------------
+  // findByUserId — unreadOnly 필터 (#520)
+  // -----------------------------------------------------------------------
+
+  @Test
+  void findByUserId_unreadOnlyTrue_excludesReadMessages() {
+    Long unreadId = repository.create(userId, null, "Unread Msg", Map.of(), "REPORT");
+    Long readId = repository.create(userId, null, "Read Msg", Map.of(), "REPORT");
+    repository.markAsRead(readId, userId);
+
+    List<ProactiveMessageResponse> unreadOnly = repository.findByUserId(userId, 10, 0, true);
+
+    assertThat(unreadOnly).extracting(ProactiveMessageResponse::id).containsExactly(unreadId);
+  }
+
+  @Test
+  void findByUserId_unreadOnlyFalse_includesAllMessages() {
+    Long unreadId = repository.create(userId, null, "Unread Msg", Map.of(), "REPORT");
+    Long readId = repository.create(userId, null, "Read Msg", Map.of(), "REPORT");
+    repository.markAsRead(readId, userId);
+
+    List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0, false);
+
+    assertThat(all).extracting(ProactiveMessageResponse::id)
+        .containsExactlyInAnyOrder(unreadId, readId);
   }
 }

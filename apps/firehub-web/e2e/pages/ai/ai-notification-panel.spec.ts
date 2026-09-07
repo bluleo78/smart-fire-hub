@@ -180,4 +180,69 @@ test.describe('AI 인사이트 알림 패널', () => {
       page.getByText('AI 스마트 작업이 완료되면 여기에 표시됩니다'),
     ).toBeVisible();
   });
+
+  // #520: 안 읽음 필터 탭 — API 파라미터 전달 + 목록 갱신 전체 파이프라인 검증
+  test.describe('안 읽음 필터 탭 (#520)', () => {
+    // "안 읽음" 탭 선택 시 서버로 unreadOnly=true 요청, "전체" 탭에서는 파라미터 없이 전체 요청
+    test('안 읽음 탭 클릭 시 unreadOnly=true 파라미터로 API가 재호출되고 안 읽은 알림만 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      const capturedRequests: URLSearchParams[] = [];
+
+      // unreadOnly 쿼리 파라미터에 따라 다른 응답을 주는 동적 라우트
+      await page.route('**/api/v1/proactive/messages*', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const url = new URL(route.request().url());
+        capturedRequests.push(url.searchParams);
+        const unreadOnly = url.searchParams.get('unreadOnly') === 'true';
+        const body = unreadOnly ? messages.filter((m) => !m.read) : messages;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+
+      await page.getByRole('button', { name: bellSelector }).first().click();
+
+      // 초기 진입 = "전체" 탭 → 두 메시지 모두 표시
+      await expect(page.getByText('데이터 품질 이상 감지')).toBeVisible();
+      await expect(page.getByText('주간 데이터 요약 리포트')).toBeVisible();
+
+      // "안 읽음" 탭 클릭
+      await page.getByRole('tab', { name: /안 읽음/ }).click();
+
+      // 안 읽은 메시지만 남고, 읽은 메시지는 사라진다
+      await expect(page.getByText('데이터 품질 이상 감지')).toBeVisible();
+      await expect(page.getByText('주간 데이터 요약 리포트')).not.toBeVisible();
+
+      // 마지막 요청이 실제로 unreadOnly=true 를 담고 있었는지 검증
+      const lastParams = capturedRequests[capturedRequests.length - 1];
+      expect(lastParams.get('unreadOnly')).toBe('true');
+
+      // 다시 "전체" 탭 클릭 → 전체 목록으로 복귀
+      await page.getByRole('tab', { name: '전체' }).click();
+      await expect(page.getByText('주간 데이터 요약 리포트')).toBeVisible();
+    });
+
+    test('안 읽음 탭에서 안 읽은 알림이 없으면 전용 빈 상태 문구가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 모두 읽음 처리된 메시지만 존재하는 상황
+      const allReadMessages = messages.map((m) => ({ ...m, read: true }));
+
+      await page.route('**/api/v1/proactive/messages*', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const url = new URL(route.request().url());
+        const unreadOnly = url.searchParams.get('unreadOnly') === 'true';
+        const body = unreadOnly ? [] : allReadMessages;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+
+      await page.getByRole('button', { name: bellSelector }).first().click();
+      await expect(page.getByText('주간 데이터 요약 리포트')).toBeVisible();
+
+      await page.getByRole('tab', { name: /안 읽음/ }).click();
+
+      // 안 읽음 전용 EmptyState 문구
+      await expect(page.getByText('안 읽은 알림이 없습니다')).toBeVisible();
+      await expect(page.getByText('모든 알림을 확인했습니다')).toBeVisible();
+    });
+  });
 });

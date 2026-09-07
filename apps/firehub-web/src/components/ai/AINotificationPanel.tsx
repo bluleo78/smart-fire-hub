@@ -28,7 +28,7 @@ const REMARK_PLUGINS = [remarkGfm];
 /** 알림 목록 한 페이지 크기 — "더 보기" 1회당 이만큼 더 불러온다 (#351) */
 const PAGE_SIZE = 50;
 
-function EmptyState() {
+function EmptyState({ unreadOnly = false }: { unreadOnly?: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
       <div
@@ -37,8 +37,15 @@ function EmptyState() {
       >
         <Bell className="h-5 w-5" style={{ color: 'var(--primary)', opacity: 0.5 }} />
       </div>
-      <p className="text-sm font-medium text-foreground mb-1">새 알림이 없습니다</p>
-      <p className="text-xs text-muted-foreground">AI 스마트 작업이 완료되면 여기에 표시됩니다</p>
+      {/* #520: 안 읽음 필터가 켜져 있을 때는 "전체 알림 없음"과 다른 문구로 안내한다 */}
+      <p className="text-sm font-medium text-foreground mb-1">
+        {unreadOnly ? '안 읽은 알림이 없습니다' : '새 알림이 없습니다'}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        {unreadOnly
+          ? '모든 알림을 확인했습니다'
+          : 'AI 스마트 작업이 완료되면 여기에 표시됩니다'}
+      </p>
     </div>
   );
 }
@@ -255,7 +262,21 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
   // 미읽음이 50건을 넘으면 나머지에 도달할 UI 경로가 아예 없었다.
   const [limit, setLimit] = useState(PAGE_SIZE);
 
-  const { data: messages = [], isLoading, isFetching } = useProactiveMessages({ limit });
+  // #520: 전체/안 읽음 필터. 안 읽은 알림이 수백 건 쌓여도 "더 보기"로 전체를
+  // 스크롤하지 않고 unreadOnly 서버 필터로 바로 골라볼 수 있도록 한다.
+  const [filter, setFilter] = useState<'all' | 'unread'>('all');
+
+  // 필터를 바꾸면 이전 필터 기준으로 늘려둔 limit을 이어쓰지 않고 첫 페이지로 되돌린다.
+  const handleFilterChange = (next: 'all' | 'unread') => {
+    setFilter(next);
+    setLimit(PAGE_SIZE);
+  };
+
+  const {
+    data: messages = [],
+    isLoading,
+    isFetching,
+  } = useProactiveMessages({ limit, unreadOnly: filter === 'unread' });
   const markAsRead = useMarkAsRead();
   const markAllAsRead = useMarkAllAsRead();
 
@@ -378,6 +399,41 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
             </div>
           </div>
 
+          {/* #520: 전체/안 읽음 필터 탭 — 안 읽은 알림만 골라볼 방법이 없던 문제 해소 */}
+          <div
+            className="flex items-center gap-1 px-3 py-1.5 border-b border-border/40 shrink-0"
+            role="tablist"
+            aria-label="알림 필터"
+          >
+            {(
+              [
+                { key: 'all', label: '전체' },
+                { key: 'unread', label: '안 읽음' },
+              ] as const
+            ).map((tab) => {
+              const isActive = filter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => handleFilterChange(tab.key)}
+                  className="rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  style={{
+                    background: isActive
+                      ? 'color-mix(in oklch, var(--primary) 15%, transparent)'
+                      : 'transparent',
+                    color: isActive ? 'var(--primary)' : 'var(--muted-foreground)',
+                  }}
+                >
+                  {tab.label}
+                  {tab.key === 'unread' && unreadCount > 0 && ` (${unreadCount})`}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Notification list */}
           <div
             className="flex-1 overflow-y-auto"
@@ -390,7 +446,7 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               </div>
             ) : messages.length === 0 ? (
-              <EmptyState />
+              <EmptyState unreadOnly={filter === 'unread'} />
             ) : (
               <div className="divide-y divide-border/30" role="list">
                 {messages.map((msg) => (

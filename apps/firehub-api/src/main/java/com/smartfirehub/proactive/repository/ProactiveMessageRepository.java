@@ -130,7 +130,19 @@ public class ProactiveMessageRepository {
         .execute();
   }
 
-  public List<ProactiveMessageResponse> findByUserId(Long userId, int limit, int offset) {
+  /**
+   * 알림 목록 조회 (#520).
+   *
+   * <p>{@code unreadOnly=true} 이면 안 읽은 알림만 조회한다 — 안 읽은 알림이 많이 쌓였을 때
+   * "더 보기"로 전체를 스크롤하지 않고도 안 읽은 것만 골라볼 수 있도록 서버 사이드 필터링을
+   * 지원한다. 기존 페이지네이션(limit/offset)과 함께 적용된다.
+   */
+  public List<ProactiveMessageResponse> findByUserId(
+      Long userId, int limit, int offset, boolean unreadOnly) {
+    var condition = PM_USER_ID.eq(userId);
+    if (unreadOnly) {
+      condition = condition.and(PM_READ.isFalse());
+    }
     return dsl.select(
             PM_ID,
             PM_USER_ID,
@@ -148,7 +160,7 @@ public class ProactiveMessageRepository {
         .on(PM_EXECUTION_ID.eq(PJE_ID))
         .leftJoin(PROACTIVE_JOB)
         .on(PJE_JOB_ID.eq(PJ_ID))
-        .where(PM_USER_ID.eq(userId))
+        .where(condition)
         .orderBy(PM_ID.desc())
         .limit(limit)
         .offset(offset)

@@ -201,7 +201,8 @@ export const proactiveApi = {
     client.get<RecipientResponse[]>('/proactive/jobs/recipients', { params: { search } }),
 
   // Messages (3 methods)
-  getMessages: (params?: { limit?: number; offset?: number }) =>
+  // #520: unreadOnly=true 로 서버 사이드에서 안 읽은 알림만 필터링해서 받을 수 있다.
+  getMessages: (params?: { limit?: number; offset?: number; unreadOnly?: boolean }) =>
     client.get<ProactiveMessage[]>('/proactive/messages', { params }),
   getUnreadCount: () =>
     client.get<{ count: number }>('/proactive/messages/unread-count'),

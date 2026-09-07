@@ -182,7 +182,11 @@ export function useAnomalyEvents(jobId: number) {
  * 서로 다른 limit을 쓰는 호출자가 생기면 같은 캐시를 덮어써 잘못된 페이지를 보게 된다.
  * 무효화(`markAsRead` 등)는 prefix `['proactive','messages']`로 걸리므로 여전히 전부 갱신된다.
  */
-export function useProactiveMessages(params?: { limit?: number; offset?: number }) {
+export function useProactiveMessages(params?: {
+  limit?: number;
+  offset?: number;
+  unreadOnly?: boolean;
+}) {
   return useQuery({
     queryKey: [...KEYS.messages, params ?? null] as const,
     queryFn: () => proactiveApi.getMessages(params).then((r) => r.data),

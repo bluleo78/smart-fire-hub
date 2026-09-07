@@ -22,9 +22,11 @@ public class ProactiveMessageController {
   public ResponseEntity<List<ProactiveMessageResponse>> getMessages(
       @RequestParam(defaultValue = "20") int limit,
       @RequestParam(defaultValue = "0") int offset,
+      // #520: 안 읽은 알림만 골라볼 수 있도록 서버 사이드 필터 파라미터를 추가한다.
+      @RequestParam(name = "unreadOnly", defaultValue = "false") boolean unreadOnly,
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
-    return ResponseEntity.ok(messageRepository.findByUserId(userId, limit, offset));
+    return ResponseEntity.ok(messageRepository.findByUserId(userId, limit, offset, unreadOnly));
   }
 
   @GetMapping("/unread-count")
