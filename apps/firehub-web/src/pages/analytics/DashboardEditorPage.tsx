@@ -87,8 +87,16 @@ function GridArea({
     <div ref={gridRef}>
       <ResponsiveGridLayout
         width={width}
-        breakpoints={{ lg: 1200, md: 996, sm: 768 }}
-        cols={{ lg: 12, md: 8, sm: 4 }}
+        // 대시보드 레이아웃은 항상 "lg" 브레이크포인트(12컬럼) 기준으로만 저장/복원한다
+        // (handleSaveEdit이 localLayouts.lg만 서버에 반영).
+        // 과거에는 md/sm 브레이크포인트도 함께 선언했는데, 편집 영역의 실제 컨테이너 폭이
+        // sidebar/padding 때문에 lg 임계값(1200px)보다 좁은 경우가 흔해 react-grid-layout이
+        // 내부적으로 "md" 브레이크포인트를 활성화했다. 이 상태에서 위젯을 리사이즈하면
+        // onLayoutChange가 allLayouts.md만 갱신하고 allLayouts.lg는 기존 값 그대로 남아,
+        // "완료" 클릭 시 리사이즈 이전 값이 그대로 저장되는 버그가 있었다(#529).
+        // 임계값을 0으로 두어 컨테이너 폭과 무관하게 항상 "lg"만 활성화되도록 고정한다.
+        breakpoints={{ lg: 0 }}
+        cols={{ lg: 12 }}
         rowHeight={80}
         dragConfig={{ enabled: isEditing, bounded: false, handle: '.drag-handle' }}
         resizeConfig={{ enabled: isEditing, handles: ['se'] }}

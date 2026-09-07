@@ -399,4 +399,58 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     // autoRefreshSeconds 분기 — "30초" 뱃지
     await expect(page.getByText(/30초/)).toBeVisible();
   });
+
+  test('위젯 리사이즈 후 "완료" 클릭 시 변경된 width가 서버에 반영된다 (#529 회귀 방지)', async ({
+    authenticatedPage: page,
+  }) => {
+    // #529: react-grid-layout의 ResponsiveGridLayout이 내부적으로 활성화한 브레이크포인트가
+    // 편집 영역의 실제 컨테이너 폭 때문에 "lg"가 아닌 "md"가 되어, 리사이즈로 갱신된 값이
+    // allLayouts.md 에만 반영되고 handleSaveEdit이 읽는 allLayouts.lg 는 그대로 남는 버그가 있었다.
+    // GridArea가 항상 단일 "lg" 브레이크포인트만 사용하도록 고정한 수정이 회귀하지 않는지 검증한다.
+    await setupDashboardEditorMocks(page, 1);
+
+    const putCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/dashboards/1/widgets/1',
+      {},
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText('테스트 차트')).toBeVisible();
+
+    // 편집 모드 진입
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 리사이즈 핸들(우측 하단)을 드래그하여 위젯 폭을 줄인다
+    const handle = page.locator('.react-resizable-handle-se').first();
+    await expect(handle).toBeVisible({ timeout: 5000 });
+    const box = await handle.boundingBox();
+    if (!box) throw new Error('리사이즈 핸들의 bounding box를 가져오지 못했습니다.');
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    // 여러 단계로 나누어 점진적으로 이동해야 react-resizable이 드래그로 인식한다.
+    // 한 번에 크게 이동하면(특히 워커 병렬 실행으로 CPU 경합이 있을 때) 중간 mousemove
+    // 이벤트가 유실되어 리사이즈가 시작되지 않는 경우가 있어(flaky), 여러 지점을 거치고
+    // 매 이동마다 소폭 대기하여 안정적으로 리사이즈가 인식되도록 한다.
+    for (let offset = 30; offset <= 300; offset += 30) {
+      await page.mouse.move(startX - offset, startY, { steps: 3 });
+      await page.waitForTimeout(30);
+    }
+    await page.waitForTimeout(100);
+    await page.mouse.up();
+
+    // "완료" 클릭 → handleSaveEdit이 서버에 PUT 요청
+    await page.getByRole('button', { name: '완료' }).click();
+
+    // 서버로 전송된 payload의 width가 원본(6)과 달라야 한다 — 리사이즈가 실제로 반영됨
+    const captured = await putCapture.waitForRequest();
+    const payload = captured.payload as { width: number; height: number };
+    expect(payload.width).not.toBe(6);
+    expect(payload.width).toBeLessThan(6);
+  });
 });
