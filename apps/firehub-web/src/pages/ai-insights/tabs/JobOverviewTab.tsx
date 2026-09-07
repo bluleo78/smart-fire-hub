@@ -129,7 +129,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
     setPreviewOpen(true);
 
     // Auto-fill form fields
-    setValue('prompt', businessQuestion.trim());
+    // shouldValidate: true — 모드 전환 시 prompt를 비워 폼을 invalid 상태로 만들어두므로(#523),
+    // 템플릿 생성으로 prompt가 채워진 뒤에는 즉시 재검증해 "생성" 버튼이 다시 활성화되도록 한다.
+    setValue('prompt', businessQuestion.trim(), { shouldValidate: true });
     if (!watch('name')) {
       // Generate a name from the question (first 30 chars)
       const autoName = businessQuestion.trim().slice(0, 30) + (businessQuestion.trim().length > 30 ? '...' : '');
@@ -297,7 +299,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           <RadioGroup
             aria-labelledby={`${baseId}-creation-mode-label`}
             value={creationMode}
-            onValueChange={(v) => setCreationMode(v as CreationMode)}
+            onValueChange={(v) => {
+              setCreationMode(v as CreationMode);
+              // 모드 전환 시 이전 모드에서 입력된 prompt를 초기화한다.
+              // prompt textarea는 조건부 렌더링으로만 숨겨질 뿐 RHF 상태(unregister 안 됨)에는
+              // 값이 그대로 남아있어, 초기화하지 않으면 "목표 기반" 모드에서 비즈니스 질문/템플릿
+              // 생성 없이도 이전 "직접 설정" 모드의 stale한 prompt가 그대로 제출되는 문제가 있었다 (#523).
+              setValue('prompt', '', { shouldValidate: true });
+              markDirty();
+            }}
             className="flex gap-4"
           >
             <div className="flex items-center gap-2">

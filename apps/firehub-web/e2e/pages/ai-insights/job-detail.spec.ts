@@ -130,6 +130,53 @@ test.describe('스마트 작업 상세 페이지', () => {
     }
   });
 
+  test('새 작업 폼 — "직접 설정" → "목표 기반" 전환 시 이전 프롬프트가 초기화되고, 템플릿 생성 전에는 생성 버튼이 비활성화된다 (#523)', async ({ authenticatedPage: page }) => {
+    // 새 작업 페이지 API 모킹
+    await setupNewJobMocks(page);
+
+    // 생성 API 요청 페이로드를 캡처해 실제 제출값을 검증한다
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 99, name: '이번 달 매출 하락 원인 분석' }),
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs/new');
+
+    // 1. "직접 설정" 모드에서 프롬프트를 입력한다 (stale 값이 될 텍스트)
+    await page.locator('#job-name').fill('테스트 작업');
+    await page.locator('#job-prompt').fill('테스트 프롬프트 내용 재현용입니다');
+
+    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    await expect(createBtn).toBeEnabled();
+
+    // 2. "목표 기반" 모드로 전환 — 이전 프롬프트 입력란은 숨겨지고 비즈니스 질문 UI가 나타난다
+    await page.locator('#mode-goal').click();
+    await expect(page.getByLabel('비즈니스 질문')).toBeVisible();
+    await expect(page.locator('#job-prompt')).toHaveCount(0);
+
+    // 3. 비즈니스 질문을 비워둔 채(템플릿 자동 생성 클릭 안 함) — stale prompt가 여전히 폼에
+    //    남아 생성 버튼이 활성화되는 것이 이슈 #523의 근본 원인이었다.
+    //    수정 후에는 모드 전환 시 prompt가 초기화되어 생성 버튼이 비활성화되어야 한다.
+    await expect(createBtn).toBeDisabled();
+
+    // 4. 비즈니스 질문 입력 후 "템플릿 자동 생성"을 클릭하면 prompt가 채워지며
+    //    생성 버튼이 다시 활성화되어야 한다.
+    await page.getByLabel('비즈니스 질문').fill('이번 달 매출 하락 원인 분석');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await expect(createBtn).toBeEnabled();
+
+    // 5. 실제 제출된 payload의 prompt가 목표 기반 모드의 비즈니스 질문이며,
+    //    "직접 설정" 모드에서 입력했던 stale 텍스트가 아님을 검증한다.
+    await createBtn.click();
+    const req = await createCapture.waitForRequest();
+    const payload = req.payload as { prompt: string };
+    expect(payload.prompt).toBe('이번 달 매출 하락 원인 분석');
+    expect(payload.prompt).not.toContain('테스트 프롬프트 내용 재현용입니다');
+  });
+
   test('목록으로 버튼 클릭 시 작업 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupJobDetailMocks(page, 1);
     // 목록 페이지로 돌아갈 때 필요한 API 모킹
