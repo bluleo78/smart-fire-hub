@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import type { Dashboard } from '../../src/types/analytics';
 import {
   createChart,
   createChartListItem,
@@ -124,9 +125,14 @@ export async function setupDashboardListMocks(page: Page, count = 3) {
  * 대시보드 에디터 페이지 API 모킹
  * - 대시보드 상세, 대시보드 데이터(위젯 배치), 차트 목록을 모킹한다.
  * @param dashboardId - 모킹할 대시보드 ID (기본값: 1)
+ * @param dashboardOverrides - 대시보드 상세 응답에 덮어쓸 필드 (예: isShared)
  */
-export async function setupDashboardEditorMocks(page: Page, dashboardId = 1) {
-  const dashboard = createDashboard({ id: dashboardId });
+export async function setupDashboardEditorMocks(
+  page: Page,
+  dashboardId = 1,
+  dashboardOverrides?: Partial<Dashboard>,
+) {
+  const dashboard = createDashboard({ id: dashboardId, ...dashboardOverrides });
   await mockApi(page, 'GET', `/api/v1/analytics/dashboards/${dashboardId}`, dashboard);
   // 대시보드 배치 데이터 — 위젯별 차트 렌더링에 사용
   await mockApi(page, 'GET', `/api/v1/analytics/dashboards/${dashboardId}/data`, {

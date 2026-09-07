@@ -493,12 +493,21 @@ export default function DashboardEditorPage() {
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* 공유 (#99) — 현재 URL을 클립보드에 복사하여 협업 시 빠른 링크 공유 지원.
-              clipboard API 미지원 환경에서는 텍스트 영역 fallback. */}
+          {/* 공유 (#99, #522) — 현재 URL을 클립보드에 복사하여 협업 시 빠른 링크 공유 지원.
+              clipboard API 미지원 환경에서는 텍스트 영역 fallback.
+              단, 백엔드(AnalyticsDashboardRepository.findById)는 소유자이거나
+              isShared=true인 경우만 조회를 허용하므로, 비공개 대시보드에서는
+              링크를 복사해도 받는 사람이 열 수 없다 — 이를 사용자에게 명확히 안내한다. */}
           <Button
             variant="outline"
             size="sm"
             onClick={async () => {
+              if (!dashboard.isShared) {
+                toast.error(
+                  '이 대시보드는 비공개입니다. 다른 사용자와 공유하려면 목록에서 "공개 대시보드"를 먼저 켜세요.',
+                );
+                return;
+              }
               const url = window.location.href;
               try {
                 await navigator.clipboard.writeText(url);
@@ -508,7 +517,7 @@ export default function DashboardEditorPage() {
                 toast.error(`복사 실패. URL: ${url}`);
               }
             }}
-            title="공유 링크 복사"
+            title={dashboard.isShared ? '공유 링크 복사' : '비공개 대시보드 (공유 링크 복사 불가)'}
             className="h-8"
             aria-label="공유 링크 복사"
           >
