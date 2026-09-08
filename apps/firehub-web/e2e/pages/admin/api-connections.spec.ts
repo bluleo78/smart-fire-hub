@@ -378,6 +378,98 @@ test.describe('API 연결 페이지', () => {
     });
   });
 
+  /**
+   * 이슈 #551 회귀 방지 — API 연결 상세 페이지 미저장 변경 이탈 가드.
+   * useUnsavedChangesGuard(#86 도입) 가 이 페이지에도 적용되어야 사이드바 이동 시
+   * 경고 없이 입력값이 사라지는 것을 방지한다.
+   */
+  test.describe('이슈 #551 — 미저장 변경 가드', () => {
+    test('설명 필드 dirty 상태에서 사이드바 메뉴 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupApiConnectionDetailMocks(page, 1);
+      await page.goto('/admin/api-connections/1');
+      await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+      // dirty 상태 만들기 — 설명 필드만 수정 (저장 버튼은 누르지 않음)
+      const descInput = page.getByPlaceholder('설명 (선택)');
+      await descInput.fill('PE-TEST-unsaved-change-probe');
+
+      // 사이드바 "사용자 관리" 링크 클릭
+      await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      // URL은 그대로 상세 페이지 유지 (즉시 이동되지 않아야 함)
+      expect(new URL(page.url()).pathname).toBe('/admin/api-connections/1');
+    });
+
+    test('이탈 다이얼로그에서 취소 클릭 시 페이지에 머무르고 입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupApiConnectionDetailMocks(page, 1);
+      await page.goto('/admin/api-connections/1');
+
+      const descInput = page.getByPlaceholder('설명 (선택)');
+      await descInput.fill('PE-TEST-unsaved-change-probe');
+
+      await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '취소' }).click();
+
+      // 다이얼로그 닫힘 + 페이지 잔류 + 입력값 보존
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      expect(new URL(page.url()).pathname).toBe('/admin/api-connections/1');
+      await expect(descInput).toHaveValue('PE-TEST-unsaved-change-probe');
+    });
+
+    test('이탈 다이얼로그에서 이탈 클릭 시 목적지 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupApiConnectionDetailMocks(page, 1);
+      await page.goto('/admin/api-connections/1');
+
+      const descInput = page.getByPlaceholder('설명 (선택)');
+      await descInput.fill('PE-TEST-unsaved-change-probe');
+
+      await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+
+    test('저장 성공 후에는 사이드바 이동 시 이탈 다이얼로그가 표시되지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupApiConnectionDetailMocks(page, 1);
+      await mockApi(
+        page,
+        'PUT',
+        '/api/v1/api-connections/1',
+        { id: 1, name: '공공 데이터 API', authType: 'API_KEY' },
+      );
+
+      await page.goto('/admin/api-connections/1');
+
+      const descInput = page.getByPlaceholder('설명 (선택)');
+      await descInput.fill('저장된 설명');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 저장 성공 토스트 확인 후 dirty 해제 여부 검증
+      await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+
+      await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+
+      // dirty 가 해제되었으므로 가드 없이 바로 이동해야 한다
+      await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+  });
+
   test('헬스체크 경로 비우고 저장 → PUT payload 에 빈 문자열 전달 (#115)', async ({
     authenticatedPage: page,
   }) => {

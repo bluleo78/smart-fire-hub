@@ -34,6 +34,7 @@ import {
   useTestApiConnection,
   useUpdateApiConnection,
 } from '../../hooks/queries/useApiConnections';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type { TestConnectionResponse } from '../../types/api-connection';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 
@@ -68,6 +69,15 @@ export default function ApiConnectionDetailPage() {
   const [apiKey, setApiKey] = useState('');
   const [token, setToken] = useState('');
 
+  // 서버에서 로드된 기본 정보 초기값 스냅샷 — 이탈 가드용 dirty 비교 기준 (#551)
+  // render 중 비교에 사용하므로 ref가 아닌 state로 관리한다 (react-hooks/refs 룰).
+  const [initialInfo, setInitialInfo] = useState<{
+    name: string;
+    description: string;
+    baseUrl: string;
+    healthCheckPath: string;
+  } | null>(null);
+
   /** 404 등 오류 응답 시 목록으로 리다이렉트 — UserDetailPage와 동일 패턴 */
   useEffect(() => {
     if (!isError) return;
@@ -78,17 +88,39 @@ export default function ApiConnectionDetailPage() {
   /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 라우트/리패치 변경 시에만 발생. */
   useEffect(() => {
     if (!connection) return;
-    setName(connection.name);
-    setDescription(connection.description ?? '');
-    setBaseUrl(connection.baseUrl);
-    setHealthCheckPath(connection.healthCheckPath ?? '');
+    const initialName = connection.name;
+    const initialDescription = connection.description ?? '';
+    const initialBaseUrl = connection.baseUrl;
+    const initialHealthCheckPath = connection.healthCheckPath ?? '';
+    setName(initialName);
+    setDescription(initialDescription);
+    setBaseUrl(initialBaseUrl);
+    setHealthCheckPath(initialHealthCheckPath);
     setAuthType(connection.authType);
     const mc = connection.maskedAuthConfig;
     setPlacement(mc.placement ?? 'header');
     setHeaderName(mc.headerName ?? '');
     setParamName(mc.paramName ?? '');
+    // dirty 비교 기준 스냅샷 갱신 (#551) — 저장 없이 사이드바 이동 시 유실 경고용
+    setInitialInfo({
+      name: initialName,
+      description: initialDescription,
+      baseUrl: initialBaseUrl,
+      healthCheckPath: initialHealthCheckPath,
+    });
   }, [connection]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // 기본 정보 폼이 로드된 초기값과 달라졌는지 여부 (#551)
+  const isInfoDirty =
+    initialInfo !== null &&
+    (name !== initialInfo.name ||
+      description !== initialInfo.description ||
+      baseUrl !== initialInfo.baseUrl ||
+      healthCheckPath !== initialInfo.healthCheckPath);
+  // 인증 정보 편집 모드에서 새 키/토큰을 입력 중인 경우도 미저장 변경으로 간주 (#551)
+  const isAuthDirty = isEditingAuth && (apiKey.trim() !== '' || token.trim() !== '');
+  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(isInfoDirty || isAuthDirty);
 
   /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
   const handleSaveInfo = async () => {
@@ -114,6 +146,9 @@ export default function ApiConnectionDetailPage() {
         },
       });
       toast.success('연결 정보가 업데이트되었습니다.');
+      // 저장 성공 시 dirty 기준 스냅샷을 현재 입력값으로 갱신 (#551)
+      // trim() 전 원본 상태값을 그대로 기준으로 삼아야 이후 dirty 비교가 실제 입력창 값과 어긋나지 않는다.
+      setInitialInfo({ name, description, baseUrl, healthCheckPath });
     } catch (error) {
       handleApiError(error, '연결 정보 업데이트에 실패했습니다.');
     }
@@ -237,6 +272,8 @@ export default function ApiConnectionDetailPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      {/* 미저장 변경사항 이탈 가드 다이얼로그 (#551) */}
+      {unsavedChangesDialog}
       <div className="flex items-center gap-4">
         {/* API 연결 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102) */}
         <Button variant="ghost" size="icon" onClick={() => navigate('/admin/api-connections')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
