@@ -1,3 +1,4 @@
+import { createApiConnection } from '../../factories/admin.factory';
 import {
   setupAdminAuth,
   setupApiConnectionDetailMocks,
@@ -677,6 +678,75 @@ test.describe('API 연결 페이지', () => {
     await page.waitForTimeout(300);
 
     expect(called).toBe(true);
+  });
+
+  test('전체 갱신 완료 시 Job 진행 상태를 추적해 상태 배지가 자동 갱신된다 (#548)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이슈 #548 회귀 테스트:
+    // 백엔드 refreshAllAsync는 jobId만 반환하는 비동기 Job이라, 트리거 응답 직후 1회
+    // invalidate만으로는 실제 헬스체크 완료 결과가 반영되지 않는다. useApiConnectionsRefreshJob이
+    // jobId를 추적하다가 COMPLETED 시점에 목록을 다시 불러오는지 검증한다.
+    let listCallCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        listCallCount += 1;
+        // 첫 호출(페이지 진입) = 갱신 전 확인 시각, 두 번째 호출(Job 완료 후 invalidate) = 갱신된 확인 시각
+        const checkedAt = listCallCount === 1 ? '2026-04-15T10:00:00Z' : '2026-04-15T10:05:00Z';
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            createApiConnection({ id: 1, name: '공공 데이터 API', lastStatus: 'UP', lastCheckedAt: checkedAt }),
+          ]),
+        });
+      },
+    );
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
+    await mockApi(page, 'POST', '/api/v1/api-connections/refresh-all', { jobId: 'job-548' });
+
+    // Job 진행 SSE 스트림 — 완료 이벤트를 즉시 반환하도록 모킹 (REST 폴백 없이 SSE 한 줄로 종결)
+    await page.route(
+      (url) => url.pathname === '/api/v1/jobs/job-548/progress',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: 'data: {"jobId":"job-548","jobType":"API_CONNECTION_REFRESH","stage":"COMPLETED","progress":100}\n\n',
+        }),
+    );
+
+    await page.goto('/admin/api-connections');
+    await expect(page.getByRole('heading', { name: 'API 연결 관리' })).toBeVisible();
+
+    const statusBadge = page
+      .getByRole('row')
+      .filter({ hasText: '공공 데이터 API' })
+      .getByText('정상', { exact: true });
+
+    // 갱신 전: 초기 확인 시각이 title(tooltip)로 노출된다.
+    // Node(테스트 러너)의 ICU 로캘 포맷이 브라우저와 다를 수 있어(오후 vs PM) 값 자체를
+    // 하드코딩하지 않고, "갱신 전후 title이 실제로 달라지는지"를 핵심으로 검증한다.
+    const beforeTitle = await statusBadge.getAttribute('title');
+    expect(beforeTitle).toContain('2026. 4. 15.');
+    expect(beforeTitle).toContain('7:00:00 확인');
+
+    await page.getByRole('button', { name: '전체 갱신' }).click();
+
+    // Job COMPLETED → 목록이 재조회되어 확인 시각 title이 갱신돼야 한다
+    await expect
+      .poll(() => statusBadge.getAttribute('title'))
+      .not.toBe(beforeTitle);
+    const afterTitle = await statusBadge.getAttribute('title');
+    expect(afterTitle).toContain('7:05:00 확인');
+
+    // 완료 토스트도 노출되어야 한다
+    await expect(page.getByText('전체 연결 상태 갱신이 완료되었습니다.')).toBeVisible();
+
+    // 목록이 두 번(진입 시 + Job 완료 후 invalidate) 호출되었는지 확인
+    expect(listCallCount).toBeGreaterThanOrEqual(2);
   });
 
   test('상세 페이지에서 지금 확인 버튼 클릭 시 test API가 호출된다', async ({

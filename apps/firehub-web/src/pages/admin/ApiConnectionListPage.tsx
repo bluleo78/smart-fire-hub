@@ -1,5 +1,5 @@
 import { CheckCircle2, Plus, Trash2, XCircle } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -41,6 +41,7 @@ import {
 } from '../../components/ui/table';
 import {
   useApiConnections,
+  useApiConnectionsRefreshJob,
   useCreateApiConnection,
   useDeleteApiConnection,
   useRefreshAllApiConnections,
@@ -54,6 +55,23 @@ export default function ApiConnectionListPage() {
   const createMutation = useCreateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const refreshAllMutation = useRefreshAllApiConnections();
+  // (#548) 전체 갱신은 백엔드에서 비동기 Job으로 실행된다 — 트리거 응답의 jobId를
+  // useApiConnectionsRefreshJob으로 추적해 완료/실패 시점에 목록을 다시 반영한다.
+  const [refreshJobId, setRefreshJobId] = useState<string | null>(null);
+  const refreshJobProgress = useApiConnectionsRefreshJob(refreshJobId);
+  const isRefreshJobActive = refreshJobId !== null && refreshJobProgress?.stage !== 'COMPLETED' && refreshJobProgress?.stage !== 'FAILED';
+
+  // Job이 종료(완료/실패)되면 추적을 멈추고 결과를 토스트로 알린다.
+  useEffect(() => {
+    if (!refreshJobId || !refreshJobProgress) return;
+    if (refreshJobProgress.stage === 'COMPLETED') {
+      toast.success('전체 연결 상태 갱신이 완료되었습니다.');
+      setRefreshJobId(null);
+    } else if (refreshJobProgress.stage === 'FAILED') {
+      toast.error(refreshJobProgress.errorMessage || '전체 갱신 중 오류가 발생했습니다.');
+      setRefreshJobId(null);
+    }
+  }, [refreshJobId, refreshJobProgress]);
 
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
   // 다이얼로그가 여러 번 열리거나 다른 폼과 공존해도 id 가 겹치지 않도록 useId() 로 만든다.
@@ -211,7 +229,9 @@ export default function ApiConnectionListPage() {
 
   const handleRefreshAll = async () => {
     try {
-      await refreshAllMutation.mutateAsync();
+      const { jobId } = await refreshAllMutation.mutateAsync();
+      // (#548) 트리거 직후엔 헬스체크가 아직 끝나지 않았으므로 jobId를 저장해 추적을 시작한다.
+      setRefreshJobId(jobId);
       toast.success('전체 연결 상태 갱신을 시작했습니다.');
     } catch (error) {
       handleApiError(error, '전체 갱신에 실패했습니다.');
@@ -227,9 +247,9 @@ export default function ApiConnectionListPage() {
           <Button
             variant="outline"
             onClick={handleRefreshAll}
-            disabled={refreshAllMutation.isPending}
+            disabled={refreshAllMutation.isPending || isRefreshJobActive}
           >
-            {refreshAllMutation.isPending ? '갱신 중...' : '전체 갱신'}
+            {refreshAllMutation.isPending || isRefreshJobActive ? '갱신 중...' : '전체 갱신'}
           </Button>
 
           <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
