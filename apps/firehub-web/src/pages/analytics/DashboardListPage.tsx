@@ -7,7 +7,7 @@ import {
   Share2,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -74,9 +74,14 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   const [isShared, setIsShared] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState('');
   const createDashboard = useCreateDashboard();
+  // isPending은 mutateAsync 호출 후 리렌더를 거쳐야 반영되는 비동기 상태라,
+  // 같은 틱에 도착하는 빠른 연속 클릭(더블클릭)을 막지 못한다.
+  // 클릭 즉시 동기적으로 세팅되는 ref 플래그로 재진입을 차단한다.
+  const submittingRef = useRef(false);
 
   const handleSubmit = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     const req: CreateDashboardRequest = {
       name: name.trim(),
       description: description.trim() || undefined,
@@ -94,6 +99,8 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
       setAutoRefresh('');
     } catch (error) {
       handleApiError(error, '대시보드 생성에 실패했습니다.');
+    } finally {
+      submittingRef.current = false;
     }
   };
 
@@ -169,6 +176,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
     dashboard?.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '',
   );
   const updateDashboard = useUpdateDashboard();
+  // isPending 비동기 반영 지연으로 인한 중복 제출 방지용 동기 가드 (CreateDashboardDialog와 동일 패턴, #546)
+  const submittingRef = useRef(false);
 
   // dashboard prop 변경 시 폼 필드 초기화 (render-time 조정 패턴)
   const [prevDashboard, setPrevDashboard] = useState(dashboard);
@@ -181,7 +190,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   }
 
   const handleSubmit = async () => {
-    if (!dashboard || !name.trim()) return;
+    if (!dashboard || !name.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     try {
       await updateDashboard.mutateAsync({
         id: dashboard.id,
@@ -196,6 +206,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
       onClose();
     } catch (error) {
       handleApiError(error, '대시보드 수정에 실패했습니다.');
+    } finally {
+      submittingRef.current = false;
     }
   };
 

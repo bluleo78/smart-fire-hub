@@ -93,6 +93,43 @@ test.describe('대시보드 목록 페이지', () => {
     expect(captured.payload).toMatchObject({ name: '테스트 대시보드' });
   });
 
+  test('생성 버튼을 빠르게 두 번 클릭해도 POST가 한 번만 호출된다 (#546)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 1);
+    await page.goto('/analytics/dashboards');
+
+    // 응답을 약간 지연시켜 isPending 리렌더가 반영되기 전에
+    // 두 번째 클릭이 도착할 수 있는 레이스 윈도우를 넓힌다.
+    let postCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/dashboards' && url.search === '',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.continue();
+        postCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createDashboard({ id: 10, name: '더블클릭 대시보드' })),
+        });
+      },
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10', createDashboard({ id: 10, name: '더블클릭 대시보드' }));
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10/data', { dashboardId: 10, widgets: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+
+    await page.getByRole('button', { name: '새 대시보드' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByLabel('이름 *').fill('더블클릭 대시보드');
+
+    // "생성" 버튼을 빠르게 두 번 클릭 (더블클릭 시뮬레이션)
+    const createButton = page.getByRole('dialog').getByRole('button', { name: '생성' });
+    await createButton.dblclick();
+
+    // 다이얼로그가 닫힐 때까지(=요청 완료) 대기 후 POST 호출 횟수 검증
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
+    expect(postCount).toBe(1);
+  });
+
   test('대시보드 생성 다이얼로그에 이름 입력 필드가 있다', async ({ authenticatedPage: page }) => {
     await setupDashboardListMocks(page, 1);
     await page.goto('/analytics/dashboards');
