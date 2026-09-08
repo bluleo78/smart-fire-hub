@@ -167,8 +167,19 @@ export function registerDatasetTools(
         id: z.number().describe('삭제할 데이터셋 ID'),
       },
       async (args: { id: number }) => {
+        // dataset-manager rules.md의 "실행 후 요약" 절이 삭제된 객체 이름·시각을
+        // 응답에 반드시 포함하도록 요구하지만, 삭제 후에는 이름을 다시 조회할 수 없으므로
+        // 삭제 직전에 이름을 확보해 둔다 (#571).
+        const dataset = (await apiClient.getDataset(args.id)) as { name?: string } | undefined;
         await apiClient.deleteDataset(args.id);
-        return jsonResult({ success: true, datasetId: args.id });
+        // 백엔드 DELETE 응답은 본문이 없어(204) 삭제 시각을 제공하지 않는다.
+        // ai-agent 서버가 삭제 요청을 처리 완료한 시각을 서버 타임스탬프로 기록해 반환한다.
+        return jsonResult({
+          success: true,
+          datasetId: args.id,
+          datasetName: dataset?.name ?? null,
+          deletedAt: new Date().toISOString(),
+        });
       },
     ),
 

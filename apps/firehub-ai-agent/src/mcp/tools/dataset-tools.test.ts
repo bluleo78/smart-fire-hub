@@ -41,18 +41,46 @@ describe('Dataset MCP Tools', () => {
   });
 
   describe('delete_dataset', () => {
-    it('calls apiClient.deleteDataset with the provided id', async () => {
+    it('calls apiClient.deleteDataset with the provided id and includes name/deletedAt (#571)', async () => {
+      // #571: rules.md가 삭제 요약에 이름·시각을 반드시 포함하도록 요구하므로,
+      // 삭제 전 조회한 이름과 서버 처리 시각(ISO 8601)이 응답에 담겨야 한다.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-09T04:41:00.000Z'));
+
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 42,
+        name: '테스트화재신고',
+      });
       (client.deleteDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
 
       const result = await invokeTool(server, 'delete_dataset', { id: 42 });
 
       // 올바른 id로 API 클라이언트가 호출되었는지 확인
+      expect(client.getDataset).toHaveBeenCalledWith(42);
       expect(client.deleteDataset).toHaveBeenCalledWith(42);
       expect(result.isError).toBeFalsy();
 
-      // 응답은 success + 삭제된 datasetId 를 포함해야 한다
+      // 응답은 success + 삭제된 datasetId + datasetName + deletedAt(ISO 8601) 을 포함해야 한다
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toEqual({ success: true, datasetId: 42 });
+      expect(parsed).toEqual({
+        success: true,
+        datasetId: 42,
+        datasetName: '테스트화재신고',
+        deletedAt: '2026-09-09T04:41:00.000Z',
+      });
+
+      vi.useRealTimers();
+    });
+
+    it('falls back to datasetName: null when the dataset lookup has no name', async () => {
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 7 });
+      (client.deleteDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+
+      const result = await invokeTool(server, 'delete_dataset', { id: 7 });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.datasetName).toBeNull();
+      expect(typeof parsed.deletedAt).toBe('string');
     });
 
     it('returns isError on API failure', async () => {
