@@ -53,11 +53,20 @@ export default function DatasetDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const datasetId = Number(id);
+  const parsedDatasetId = Number(id);
+  // id가 'abc'처럼 숫자로 변환 불가능한 경우 — Number()가 NaN을 반환하면
+  // useDataset의 enabled:!!id(!!NaN===false)가 항상 false가 되어 쿼리 자체가
+  // 실행되지 않고 isLoading/isError가 영구히 false로 남아 무한 로딩 스켈레톤에
+  // 갇힌다 (#543). #545(스마트 작업 상세)와 동일한 원인 클래스라 같은 방식으로 분리한다.
+  const isInvalidId = !Number.isFinite(parsedDatasetId);
+  const datasetId = isInvalidId ? 0 : parsedDatasetId;
 
   // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
   // dataset을 먼저 선언하여 하위 탭 타입 판별(isDocument)·useEffect 의존성에 활용한다.
-  const { data: dataset, isLoading, isError } = useDataset(datasetId);
+  const { data: dataset, isLoading, isError: isFetchError } = useDataset(datasetId);
+  // 비숫자 ID(NaN)는 쿼리가 아예 실행되지 않아 isFetchError가 true가 되지 않으므로
+  // isInvalidId를 합류시켜 기존 404 처리(리다이렉트) 로직을 그대로 재사용한다 (#543).
+  const isError = isFetchError || isInvalidId;
 
   // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
