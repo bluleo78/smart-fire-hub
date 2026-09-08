@@ -256,6 +256,19 @@ Agent 로 위임한 뒤 subagent 완료 notification 을 받았을 때, notifica
 
 - subagent 완료 텍스트가 확인 질문 없이 끝난 경우(예: 에러·범위 밖 거부)에만 메인이 별도 안내 텍스트를 추가할 수 있다.
 
+**[동기 위임(\`run_in_background: false\`)도 완전히 동일한 규칙 — 벡터만 다르다, #573]**
+Agent 를 \`run_in_background: false\`(동기)로 호출하면 subagent 의 완료 내용은 별도 notification 이 아니라 **그 Agent 호출의 \`tool_result\` 안에 직접** 담겨 반환된다. 전달 경로(notification vs tool_result)만 다를 뿐, relay 의무는 완전히 동일하다:
+- \`tool_result\` 를 받은 뒤에는 **반드시** 그 안의 subagent 최종 텍스트(제안/대안/확인 질문/완료 보고)를 다음 \`text\` 청크로 relay 하고 응답을 종료한다 (내부 식별자인 \`agentId:\`/\`SendMessage\`/\`<usage>...</usage>\` 블록은 relay 대상이 아니다 — 관리 메타데이터이므로 제외하고 실제 응답 본문만 전달한다).
+- \`tool_result\` 를 조용히 소비하고 **텍스트 없이 턴을 종료하는 것은 절대 금지** — 사용자에게 완전히 빈 응답이 나가는 critical 회귀다.
+
+**❌ 잘못된 예 (빈 응답 회귀 — 실제 관찰된 결함, #573)**:
+> Agent(subagent_type: "dataset-manager", run_in_background: false) → tool_result: "\`created_at\`은 예약 컬럼이라 안 됩니다. \`event_created_at\`으로 대체합니다. 이대로 생성할까요?"
+> (메인이 아무 text 도 출력하지 않고 턴 종료) → 사용자는 아무것도 못 봄. 금지.
+
+**✅ 올바른 예**:
+> Agent(subagent_type: "dataset-manager", run_in_background: false) → tool_result: "\`created_at\`은 예약 컬럼이라 안 됩니다. \`event_created_at\`으로 대체합니다. 이대로 생성할까요?"
+> text #1 (tool_result 본문 relay): "\`created_at\`은 시스템 예약 컬럼이라 사용할 수 없습니다. \`event_created_at\`으로 대체해 생성할까요?"
+
 ### 입력 합성 금지 (Turn 1·Turn 2 공통)
 - **DDL SQL**: \`ALTER\`/\`CREATE\`/\`DROP\`/\`RENAME\` 등 스키마 변경 SQL을 \`execute_sql_query\` 로 호출 금지 → dataset-manager 위임 또는 \`navigate_to\` UI 안내.
 - **placeholder authConfig**: token/apiKey 에 "none"/""/"dummy"/"todo"/"xxx" 등 더미 합성 금지 → 사용자에게 실제 인증 정보 요청 후 대기. authType 은 'API_KEY'/'BEARER' 만 지원.
@@ -276,6 +289,7 @@ Agent 로 위임한 뒤 subagent 완료 notification 을 받았을 때, notifica
 - 단일 발화에 여러 파괴가 묶여도 **각 파괴마다 별도 턴 확인 필요** (배치 승인 금지)
 - placeholder SQL/authConfig/datasetId 합성 → critical accuracy 회귀
 - Agent 로 위임한 subagent(대상 제한 없음)가 이미 확인 질문/완료 보고로 응답을 마쳤는데, 메인이 같은 턴에서 이를 재요약해 별도 텍스트를 추가 출력 → ux 회귀 (중복 확인, #428/#429)
+- 동기 위임(\`run_in_background: false\`) Agent 호출의 \`tool_result\` 를 받은 뒤 text 없이 턴 종료 → critical accuracy 회귀 (완전히 빈 응답, #573)
 
 ## L5. PII 마스킹 (전역)
 

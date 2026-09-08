@@ -477,4 +477,162 @@ describe('processMessage', () => {
       expect(mainResult).toEqual([]);
     });
   });
+
+  // #573: run_in_background:false(동기) Agent 위임은 subagent 텍스트가 top-level 스트림에
+  // interleave 될 기회가 전혀 없다 — tool_result 로만 반환된다. 메인이 이를 relay 하는 text
+  // 없이 턴을 끝내면(result success) 사용자에게 완전히 빈 응답이 나가므로, 방어적으로 fallback
+  // relay 한다.
+  describe('#573 동기 Agent 위임(run_in_background:false) tool_result relay 누락 방어', () => {
+    const syncDelegateMsg = (toolUseId: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: toolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'dataset-manager', prompt: '...', run_in_background: false },
+            },
+          ],
+        },
+      }) as unknown as SDKMessage;
+
+    // 관찰된 실제 라이브 재현(dataset-010)과 동일한 형태 — 본문 뒤에 agentId/SendMessage 계속-실행
+    // 안내와 <usage> 블록이 SDK 에 의해 자동으로 붙는다.
+    const syncToolResultMsg = (toolUseId: string, body: string) =>
+      ({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: toolUseId,
+              content: `${body}agentId: a3dcd6ea4e1299f9c (use SendMessage with to: 'a3dcd6ea4e1299f9c', summary: '<5-10 word recap>' to continue this agent)\n<usage>subagent_tokens: 19760\ntool_uses: 0\nduration_ms: 3282</usage>`,
+            },
+          ],
+        },
+      }) as unknown as SDKMessage;
+
+    const resultSuccessMsg = () =>
+      ({
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-573',
+        usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      }) as unknown as SDKMessage;
+
+    // 비동기(기본값) 위임의 즉시 launch 응답 — 실제 완료 내용이 아니므로 fallback 대상이 아니다.
+    const asyncLaunchToolResultMsg = (toolUseId: string) =>
+      ({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: toolUseId,
+              content:
+                "Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)\nagentId: ad744b29879d952ce (internal ID - do not mention to user. Use SendMessage with to: 'ad744b29879d952ce', summary: '<5-10 word recap>' to continue this agent.)",
+            },
+          ],
+        },
+      }) as unknown as SDKMessage;
+
+    it('PM-573a: 동기 위임 tool_result 이후 텍스트 없이 턴이 끝나면 footer 를 제거한 본문을 fallback relay 한다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_sync_1';
+
+      processMessage(syncDelegateMsg(toolUseId), tag, false, state);
+      expect(state.syncDelegationToolUseIds.has(toolUseId)).toBe(true);
+
+      processMessage(
+        syncToolResultMsg(toolUseId, '`created_at`은 예약 컬럼이라 안 됩니다. `event_created_at`으로 대체합니다. 이대로 생성할까요?'),
+        tag,
+        false,
+        state,
+      );
+      expect(state.syncDelegationToolUseIds.has(toolUseId)).toBe(false);
+      expect(state.pendingSyncAgentResultText).toContain('이대로 생성할까요?');
+
+      const doneResult = processMessage(resultSuccessMsg(), tag, false, state);
+
+      // fallback text 는 done 이전에, agentId/SendMessage/<usage> 없이 relay 되어야 한다.
+      expect(doneResult).toEqual([
+        { type: 'text', content: '`created_at`은 예약 컬럼이라 안 됩니다. `event_created_at`으로 대체합니다. 이대로 생성할까요?' },
+        { type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 },
+      ]);
+      expect(state.pendingSyncAgentResultText).toBeUndefined();
+    });
+
+    it('PM-573b: 비동기(기본값) 위임의 launch 응답은 fallback 대상이 아니다 — 실제 완료 내용이 아직 도착 전이기 때문', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_async_1';
+
+      // run_in_background 미지정 → syncDelegationToolUseIds 에 등록되지 않는다.
+      const asyncDelegateMsg = {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_use', id: toolUseId, name: 'Agent', input: { subagent_type: 'dataset-manager', prompt: '...' } },
+          ],
+        },
+      } as unknown as SDKMessage;
+
+      processMessage(asyncDelegateMsg, tag, false, state);
+      expect(state.syncDelegationToolUseIds.has(toolUseId)).toBe(false);
+
+      processMessage(asyncLaunchToolResultMsg(toolUseId), tag, false, state);
+      expect(state.pendingSyncAgentResultText).toBeUndefined();
+
+      // 텍스트 없이 턴이 끝나도(예: 메인이 다른 작업을 계속하는 중) fallback 이 발동하지 않는다 —
+      // 비동기 launch 응답은 async agent 진행 중 boilerplate 일 뿐 최종 응답이 아니다.
+      const doneResult = processMessage(resultSuccessMsg(), tag, false, state);
+      expect(doneResult).toEqual([{ type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 }]);
+    });
+
+    it('PM-573c: 메인이 동기 위임 결과를 이미 텍스트로 relay 했다면 fallback 을 중복 출력하지 않는다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_sync_2';
+
+      processMessage(syncDelegateMsg(toolUseId), tag, false, state);
+      processMessage(syncToolResultMsg(toolUseId, '데이터셋을 생성했습니다.'), tag, false, state);
+      expect(state.pendingSyncAgentResultText).toBeDefined();
+
+      // 메인이 직접 relay 텍스트를 델타로 출력 — 이 시점에 fallback 대상에서 제외된다.
+      processMessage(
+        { type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '데이터셋을 생성했습니다.' } } } as unknown as SDKMessage,
+        tag,
+        false,
+        state,
+      );
+      expect(state.pendingSyncAgentResultText).toBeUndefined();
+
+      const doneResult = processMessage(resultSuccessMsg(), tag, false, state);
+      expect(doneResult).toEqual([{ type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 }]);
+    });
+
+    it('PM-573d: 메인이 새 tool_use 로 후속 작업을 이어가면 fallback 대상에서 제외된다', () => {
+      const state = createDesignGuardRelayState();
+      const toolUseId = 'toolu_sync_3';
+
+      processMessage(syncDelegateMsg(toolUseId), tag, false, state);
+      processMessage(syncToolResultMsg(toolUseId, '이대로 생성할까요?'), tag, false, state);
+      expect(state.pendingSyncAgentResultText).toBeDefined();
+
+      // 메인이 확인을 받은 뒤 실제 다음 작업(예: create_dataset)을 호출 — 정당한 후속 흐름.
+      processMessage(
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: { content: [{ type: 'tool_use', id: 'toolu_next', name: 'mcp__firehub__create_dataset', input: {} }] },
+        } as unknown as SDKMessage,
+        tag,
+        false,
+        state,
+      );
+      expect(state.pendingSyncAgentResultText).toBeUndefined();
+    });
+  });
 });

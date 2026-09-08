@@ -30,6 +30,15 @@ import { totalInputTokens as sumInputTokens } from './token-usage.js';
 // 결과를 보고해야 하는데 억제되면 그 보고가 사라짐 — 기능 손실이지 단순 UX 문제가 아니다).
 // 그래서 메인(parent_tool_use_id=null)이 새 tool_use 를 발행하는 순간 억제를 해제한다 — 새 도구
 // 호출은 메인이 재서술이 아니라 실제로 다음 작업을 하고 있다는 구조적 증거이기 때문이다.
+//
+// #573: 위 가드는 "subagent 가 같은 top-level 스트림에 interleave 된다"는 전제(async 위임 기본값)
+// 에서만 작동한다. 메인이 `Agent(..., run_in_background: false)`로 **동기** 위임하면 SDK 는
+// subagent 의 내부 assistant 메시지를 top-level 스트림에 전혀 interleave 하지 않고, 최종 응답을
+// 단일 tool_result 문자열로만 반환한다 — 즉 subagent 자신의 텍스트가 `text` 이벤트로 노출될
+// 구조적 기회 자체가 없다. 이 경우 relay 책임은 전적으로 메인(LLM)의 사후 발화에 달려 있는데,
+// 시스템 프롬프트 준수가 실패하면(관찰된 회귀) 사용자는 완전히 빈 응답을 받는다. 방어적으로,
+// 동기 위임 tool_result 를 기록해두고 텍스트 없이 턴이 끝나면(`result` 성공) 그 내용을 강제로
+// relay 한다 — 문구 매칭이 아니라 위임 시점의 `run_in_background: false` 구조적 신호로 판별한다.
 
 /**
  * processMessage 호출 간 유지되는 상태 — 한 HTTP 요청(executeAgent 1회 호출)의 수명과 일치한다.
@@ -41,10 +50,31 @@ export interface DesignGuardRelayState {
   /** 위 위임 중 하나라도 텍스트로 완료됐으면 true(문구 내용 불문) — 이후 메인이 새 tool_use 를
    *  발행하기 전까지 메인(parent_tool_use_id=null)의 text 이벤트를 억제한다 */
   suppressMainText: boolean;
+  /** #573: `run_in_background: false` 로 위임된 Agent tool_use id 집합 — 이 id 의 tool_result 는
+   *  subagent 내부 상태가 아니라 subagent 의 최종 응답 자체이므로 fallback relay 대상 후보다 */
+  syncDelegationToolUseIds: Set<string>;
+  /** #573: 동기 위임 tool_result 중 아직 메인이 텍스트로 relay 하지 않은 내용(footer 제거 전 원문).
+   *  이후 메인이 텍스트를 내거나 새 tool_use 를 발행하면 정리되고, 텍스트 없이 턴이 끝나면
+   *  `result` 처리 시 이 내용을 강제로 text 이벤트로 relay 한다 */
+  pendingSyncAgentResultText?: string;
 }
 
 export function createDesignGuardRelayState(): DesignGuardRelayState {
-  return { pendingGuardToolUseIds: new Set(), suppressMainText: false };
+  return {
+    pendingGuardToolUseIds: new Set(),
+    suppressMainText: false,
+    syncDelegationToolUseIds: new Set(),
+  };
+}
+
+// #573: Agent tool_result 끝에 SDK 가 자동으로 붙이는 내부 계속-실행 안내(agentId/SendMessage)와
+// 사용량 블록(<usage>...</usage>)을 제거한다. 이 텍스트가 사용자에게 그대로 노출되면 내부
+// 식별자(agentId) 유출이 되어 system-prompt.ts 의 PII/내부 식별자 마스킹 규칙을 위반한다.
+function stripAgentResultFooter(text: string): string {
+  return text
+    .replace(/agentId:\s*\S+\s*\(use SendMessage[^)]*\)/g, '')
+    .replace(/<usage>[\s\S]*?<\/usage>/g, '')
+    .trim();
 }
 
 export function processMessage(
@@ -111,6 +141,11 @@ export function processMessage(
             if (!hasStreamedText && !isSuppressedMainText) {
               events.push({ type: 'text', content: block.text });
             }
+            // #573: 메인이 텍스트로 응답을 이어갔다면(스트리밍 여부 무관) 동기 위임 fallback 은
+            // 더 이상 필요 없다 — relay 가 이미 정상적으로 일어난 것이므로 중복 방지를 위해 지운다.
+            if (!parentToolUseId) {
+              relayState.pendingSyncAgentResultText = undefined;
+            }
           } else if (block.type === 'tool_use' && 'name' in block) {
             const input = 'input' in block ? block.input : {};
             console.log(`${tag()} ◀ Tool call: ${block.name}(${truncate(JSON.stringify(input))})`);
@@ -122,6 +157,12 @@ export function processMessage(
               relayState.suppressMainText = false;
               console.log(`${tag()} 🔊 메인 새 tool_use 발행 — 재요약 억제 해제(#429)`);
             }
+            // #573: 메인이 새 tool_use 를 발행했다는 것은 이전 동기 위임 결과에 대한 실제 후속
+            // 작업(예: 확인 후 실제 도구 호출)이 진행 중이라는 구조적 증거다 — fallback relay 대상에서
+            // 제외한다(강제 relay 가 후속 작업과 순서/내용이 어긋나는 것을 방지).
+            if (!parentToolUseId) {
+              relayState.pendingSyncAgentResultText = undefined;
+            }
             // #428/#429: 메인이 Agent 로 위임하는 순간(subagent_type 불문) 을 기록해, 해당
             // subagent 의 완료 텍스트를 이후 parent_tool_use_id 로 식별할 수 있게 한다.
             if (
@@ -130,7 +171,13 @@ export function processMessage(
               'id' in block &&
               typeof (input as { subagent_type?: unknown })?.subagent_type === 'string'
             ) {
-              relayState.pendingGuardToolUseIds.add(String((block as { id: string }).id));
+              const toolUseId = String((block as { id: string }).id);
+              relayState.pendingGuardToolUseIds.add(toolUseId);
+              // #573: run_in_background:false(동기 위임)만 별도로 표시해둔다 — 이 id 의 tool_result
+              // 는 subagent 가 interleave 로 노출할 기회가 전혀 없었던 최종 응답 원문이다.
+              if ((input as { run_in_background?: unknown })?.run_in_background === false) {
+                relayState.syncDelegationToolUseIds.add(toolUseId);
+              }
             }
             events.push({
               type: 'tool_use',
@@ -174,6 +221,14 @@ export function processMessage(
               result: resultStr,
               isError,
             });
+            // #573: 이 tool_result 가 동기(run_in_background:false) Agent 위임의 결과라면, subagent
+            // 는 자신의 텍스트를 interleave 로 노출할 기회가 없었으므로 이 문자열 자체가 relay 되어야
+            // 할 최종 응답이다. 메인이 이후 텍스트로 이어가거나 새 tool_use 를 내면 지워지고, 텍스트
+            // 없이 턴이 끝나면(`result` 처리) 강제로 relay 된다.
+            if (!parentToolUseId && !isError && resultStr && relayState.syncDelegationToolUseIds.has(toolId)) {
+              relayState.syncDelegationToolUseIds.delete(toolId);
+              relayState.pendingSyncAgentResultText = resultStr;
+            }
           } else {
             const blockType =
               typeof block === 'object' && block !== null && 'type' in block
@@ -218,6 +273,16 @@ export function processMessage(
         }
       }
       if (msg.subtype === 'success') {
+        // #573: 동기 위임 tool_result 를 아무도 relay 하지 않은 채 턴이 끝나는 경우 — 시스템
+        // 프롬프트 준수가 실패해도 사용자에게 완전히 빈 응답이 나가지 않도록 방어적으로 relay 한다.
+        if (relayState.pendingSyncAgentResultText) {
+          const relayText = stripAgentResultFooter(relayState.pendingSyncAgentResultText);
+          relayState.pendingSyncAgentResultText = undefined;
+          if (relayText) {
+            console.warn(`${tag()} ⚠️ 동기 Agent 위임 결과가 텍스트 없이 턴 종료 — fallback relay 적용(#573): ${truncate(relayText)}`);
+            events.push({ type: 'text', content: relayText });
+          }
+        }
         console.log(`${tag()} ✓ Session completed: ${msg.session_id}`);
         events.push({
           type: 'done',
@@ -258,6 +323,11 @@ export function processMessage(
               type: 'text',
               content: delta.text,
             });
+          }
+          // #573: 메인의 실제 텍스트 델타가 나가면(억제 여부 무관 — 억제는 중복 방지 목적이지
+          // 무응답 방지 목적이 아니다) 동기 위임 fallback 은 더 이상 필요 없다.
+          if (!parentToolUseId) {
+            relayState.pendingSyncAgentResultText = undefined;
           }
         }
       } else if (event.type === 'message_delta') {
