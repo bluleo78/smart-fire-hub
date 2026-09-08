@@ -17,7 +17,7 @@ import {
   Save,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { exportsApi } from '../../api/exports';
@@ -386,8 +386,14 @@ function SaveDialog({
 
 export default function QueryEditorPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
+
+  // 이슈 #569: 쿼리 목록에서 "실행" 클릭 시 navigate(..., { state: { executionResult } })로
+  // 전달된 실행 결과. 있으면 편집기 진입 시 재실행 없이 바로 결과 패널을 렌더링한다.
+  const navigationExecutionResult =
+    (location.state as { executionResult?: AnalyticsQueryResult } | null)?.executionResult ?? null;
 
   const queryId = id ? parseInt(id, 10) : null;
   const isNew = !queryId;
@@ -398,7 +404,7 @@ export default function QueryEditorPage() {
     : '';
 
   const [sql, setSql] = useState(initialSql);
-  const [result, setResult] = useState<AnalyticsQueryResult | null>(null);
+  const [result, setResult] = useState<AnalyticsQueryResult | null>(navigationExecutionResult);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   // 저장 다이얼로그 내 인라인 오류 메시지 상태 (이슈 #195)
   const [saveError, setSaveError] = useState<string | null>(null);

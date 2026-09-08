@@ -1,4 +1,8 @@
-import { createSavedQueryListItem } from '../../factories/analytics.factory';
+import {
+  createQueryResult,
+  createSavedQuery,
+  createSavedQueryListItem,
+} from '../../factories/analytics.factory';
 import { setupQueryListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -286,5 +290,60 @@ test.describe('쿼리 목록 페이지', () => {
 
     // "수정일" 헤더 컬럼이 여전히 뷰포트 내에 있는지 확인 (레이아웃 깨짐 회귀 방지)
     await expect(page.getByRole('columnheader', { name: '수정일' })).toBeVisible();
+  });
+
+  test('행의 "실행" 버튼 클릭 시 편집기로 이동해 결과가 재실행 없이 즉시 표시된다 (#569)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 회귀 시나리오: 목록에서 실행 버튼을 누르면 executeSavedQuery API 호출로 결과를 받아오지만
+    // 그 결과를 버리고 편집기로 이동만 했었다 (편집기는 결과 패널 없이 SQL만 표시).
+    // 수정 후에는 navigate(..., { state: { executionResult } })로 결과를 넘겨
+    // 편집기가 재실행 없이 즉시 결과 패널을 렌더링해야 한다.
+    await setupQueryListMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+
+    const executionResult = createQueryResult({
+      columns: ['region', 'count'],
+      rows: [{ region: '서울', count: 42 }],
+      executionTimeMs: 7,
+      totalRows: 1,
+    });
+
+    // POST executeSavedQuery 호출 횟수를 추적 — 편집기 진입 후 재실행되면 안 되므로 1회만 호출되어야 한다.
+    let executeCallCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/1/execute',
+      (route) => {
+        executeCallCount += 1;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(executionResult),
+        });
+      },
+    );
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByText('저장 쿼리 1')).toBeVisible();
+
+    // 행에 hover 해야 아이콘 버튼이 나타난다 (opacity-0 group-hover:opacity-100)
+    const row = page.getByRole('row').filter({ hasText: '저장 쿼리 1' });
+    await row.hover();
+    await row.getByLabel('실행').click();
+
+    // 실행 완료 토스트 + 편집기로 이동 확인
+    await expect(page.getByText('쿼리 "저장 쿼리 1" 실행 완료')).toBeVisible();
+    await expect(page).toHaveURL('/analytics/queries/1');
+
+    // 결과 패널이 재실행 버튼 클릭 없이 바로 표시되는지 확인 (행수/소요시간/데이터 그리드)
+    await expect(page.getByText('결과')).toBeVisible();
+    await expect(page.getByText('1행')).toBeVisible();
+    await expect(page.getByText('7ms')).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'region' })).toBeVisible();
+    await expect(page.getByText('서울')).toBeVisible();
+
+    // 목록에서 executeSavedQuery가 정확히 1회만 호출되었는지 (편집기가 자동 재실행하지 않음을 검증)
+    expect(executeCallCount).toBe(1);
   });
 });

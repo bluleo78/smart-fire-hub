@@ -87,9 +87,12 @@ export default function QueryListPage() {
   const handleRun = async (e: React.MouseEvent, id: number, name: string) => {
     e.stopPropagation();
     try {
-      await executeSavedQuery.mutateAsync(id);
+      // 이슈 #569: 목록에서 실행한 결과(rows/columns/소요시간)를 버리지 않고
+      // navigate의 location.state로 편집기에 전달한다.
+      // QueryEditorPage는 이 state가 있으면 재실행 없이 결과 패널을 바로 렌더링한다.
+      const executionResult = await executeSavedQuery.mutateAsync(id);
       toast.success(`쿼리 "${name}" 실행 완료`);
-      navigate(`/analytics/queries/${id}`);
+      navigate(`/analytics/queries/${id}`, { state: { executionResult } });
     } catch (error) {
       handleApiError(error, '쿼리 실행에 실패했습니다.');
     }
