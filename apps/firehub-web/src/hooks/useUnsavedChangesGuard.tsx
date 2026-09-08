@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
+import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-changes-guard-registry';
 
 /**
  * useUnsavedChangesGuard
@@ -20,7 +21,12 @@ import {
  *   대신 다음 두 가지로 가드를 구현한다:
  *   1. document 레벨 click capture 핸들러로 `<a>` 클릭(사이드바·메뉴 등 SPA 링크)을 가로채
  *      AlertDialog 노출 후 사용자 결정에 따라 navigate 호출.
- *   2. `popstate`(브라우저 뒤로/앞으로) 가로채기 — history.pushState로 현재 URL 재고정 후 다이얼로그 노출.
+ *   2. `popstate`(브라우저 뒤로/앞으로) 가로채기 — `unsaved-changes-guard-registry`의 전역
+ *      인터셉터에 현재 페이지를 등록해두면, 해당 인터셉터가 라우터보다 먼저 popstate를 받아
+ *      dirty일 때 라우터로 전파되지 않도록 막고 URL을 원복한 뒤 다이얼로그를 띄운다.
+ *      (이슈 #562: 페이지 훅 안에서 직접 `window.addEventListener('popstate', ...)`로 가로채면
+ *      등록 순서상 항상 `BrowserRouter`의 리스너보다 나중이라 라우터가 먼저 페이지를 언마운트해버려
+ *      가로채기가 원천적으로 불가능했다 — 그래서 앱 부팅 시점에 설치되는 전역 리스너로 옮겼다.)
  *   3. `beforeunload`로 브라우저 수준 새로고침/탭 닫기 가드.
  * - 이슈 #86: 관리자 설정 페이지(이메일 탭 등)에서 dirty 상태 이탈 시 가드 부재로 입력값 유실.
  *
@@ -90,21 +96,30 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
     return () => document.removeEventListener('click', handler, true);
   }, [location.pathname, location.search, location.hash]);
 
-  // (2) popstate 가로채기 — 브라우저 뒤로/앞으로 시 현재 URL을 다시 push해 위치를 고정한 뒤 dialog
+  // (2) popstate 가로채기 — `unsaved-changes-guard-registry`의 전역 인터셉터(main.tsx에서 1회
+  // 설치, 라우터보다 먼저 등록됨)에 현재 페이지를 "활성 가드"로 등록해둔다. 실제 popstate 처리는
+  // 그 인터셉터가 담당하며, dirty일 때 라우터로의 전파를 막고(stopImmediatePropagation) URL을
+  // 원복한 뒤 `onIntercepted`로 이 다이얼로그를 연다. `location`은 렌더 시점 스냅샷이라 ref로
+  // 감싸 popstate 발생 시점의 최신 경로를 참조한다.
+  const locationRef = useRef(location);
   useEffect(() => {
-    const onPop = () => {
-      if (!isDirtyRef.current) return;
-      // 현재 URL로 다시 push해 위치를 원복
-      const here = location.pathname + location.search + location.hash;
-      window.history.pushState(null, '', here);
-      // pendingTo는 popstate에서는 알 수 없으므로 사용자가 다시 시도해야 한다.
-      // 단, 다이얼로그는 한 번 표시해 사용자에게 dirty 상태임을 알린다.
-      setPendingTo(null);
-      setOpen(true);
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, [location.hash, location.pathname, location.search]);
+    locationRef.current = location;
+  }, [location]);
+
+  useEffect(() => {
+    const unregister = registerActiveGuard({
+      isDirty: () => isDirtyRef.current,
+      restorePath: () =>
+        locationRef.current.pathname + locationRef.current.search + locationRef.current.hash,
+      onIntercepted: () => {
+        // pendingTo는 popstate에서는 알 수 없으므로 확정 시 history.back()을 재실행해야 한다
+        // (handleConfirm 참고). 단, 다이얼로그는 즉시 표시해 사용자에게 dirty 상태임을 알린다.
+        setPendingTo(null);
+        setOpen(true);
+      },
+    });
+    return unregister;
+  }, []);
 
   // (3) 브라우저 탭 닫기·새로고침 가드
   useEffect(() => {
@@ -127,6 +142,14 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
     if (to) {
       // 다이얼로그 닫힘 → 다음 tick에 navigate 호출 (애니메이션 충돌 방지)
       setTimeout(() => navigate(to), 0);
+    } else {
+      // pendingTo가 없는 경우 = popstate(뒤로/앞으로) 가로채기로 열린 다이얼로그.
+      // 인터셉터가 이번 이동을 막아둔 상태이므로, 사용자가 "이탈"을 확정하면
+      // 다음 popstate 1회는 가드를 우회하도록 표시한 뒤 실제 뒤로가기를 재실행한다.
+      setTimeout(() => {
+        bypassNextPopstateGuard();
+        window.history.back();
+      }, 0);
     }
   }, [navigate, pendingTo]);
 

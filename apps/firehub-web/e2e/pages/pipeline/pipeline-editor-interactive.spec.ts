@@ -7,7 +7,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+import { setupPipelineEditorMocks, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 에디터 — 상호작용', () => {
   /** 신규 파이프라인 에디터는 /pipelines/new 로 진입한다. 데이터셋 목록만 있으면 된다. */
@@ -518,6 +518,106 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
 
       await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/$/);
+    });
+  });
+
+  /**
+   * 회귀 테스트: #562 — 브라우저 뒤로가기(popstate) 시 useUnsavedChangesGuard가 무력화되던 버그.
+   *
+   * 근본원인: `BrowserRouter`(react-router-dom)가 앱 부팅 시점에 자기 자신의 popstate 리스너를
+   * 등록해두고 절대 해제하지 않는데, 훅이 페이지 컴포넌트의 useEffect 안에서 등록한 popstate
+   * 리스너는 항상 그보다 나중에 등록된다. 그 결과 뒤로가기 시 라우터가 먼저 반응해 페이지를
+   * 언마운트해버리고, 같은 이벤트 디스패치 도중 정리(cleanup)로 리스너가 제거되어 훅의 popstate
+   * 핸들러는 아예 호출되지 못한 채 스킵됐다(DOM 스펙상 디스패치 도중 제거된 리스너는 스킵됨).
+   * 증상: 확인 다이얼로그 없이 이탈, 주소창(pushState 복원)과 실제 렌더 화면이 어긋남, 입력값 유실.
+   *
+   * 수정: 라우터보다 먼저 등록되고 앱 생명주기 내내 유지되는 전역 popstate 인터셉터
+   * (`unsaved-changes-guard-registry.ts`, main.tsx에서 부팅 시 1회 설치)로 옮겨, dirty일 때
+   * `stopImmediatePropagation()`으로 라우터가 이 이벤트를 아예 보지 못하게 막은 뒤 URL을
+   * 원복하고 다이얼로그를 띄운다.
+   */
+  test.describe('이슈 #562 — 브라우저 뒤로가기(popstate) 미저장 변경 가드', () => {
+    test('dirty 상태에서 뒤로가기 시 이탈 다이얼로그가 표시되고 URL·입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewEditorMocks(page);
+      // 뒤로가기 대상이 될 이전 페이지(목록)로 먼저 진입한 뒤, SPA 이동으로 /pipelines/new에
+      // 진입해야 실제 브라우저 히스토리 스택이 쌓여 popstate가 의미 있게 재현된다.
+      await setupPipelineMocks(page, 1);
+      await page.goto('/pipelines');
+      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await expect(page).toHaveURL(/\/pipelines\/new$/);
+
+      // 파이프라인 이름 입력 → dirty 상태 생성
+      await page.getByPlaceholder('파이프라인 이름').fill('뒤로가기 회귀 테스트');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 브라우저 뒤로가기 실행
+      await page.goBack();
+
+      // (1) 확인 다이얼로그가 표시된다
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+      // (2) 주소창과 실제 렌더 화면이 어긋나지 않는다 — 여전히 /pipelines/new
+      expect(new URL(page.url()).pathname).toBe('/pipelines/new');
+      // (3) 입력했던 값이 경고 없이 유실되지 않는다
+      await expect(page.getByPlaceholder('파이프라인 이름')).toHaveValue('뒤로가기 회귀 테스트');
+    });
+
+    test('뒤로가기 이탈 다이얼로그에서 취소 시 입력값이 보존된 채 같은 페이지에 머무른다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewEditorMocks(page);
+      await setupPipelineMocks(page, 1);
+      await page.goto('/pipelines');
+      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await expect(page).toHaveURL(/\/pipelines\/new$/);
+
+      await page.getByPlaceholder('파이프라인 이름').fill('취소 테스트');
+      await page.goBack();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '취소' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+      expect(new URL(page.url()).pathname).toBe('/pipelines/new');
+      await expect(page.getByPlaceholder('파이프라인 이름')).toHaveValue('취소 테스트');
+    });
+
+    test('뒤로가기 이탈 다이얼로그에서 이탈 확정 시 실제로 이전 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewEditorMocks(page);
+      await setupPipelineMocks(page, 1);
+      await page.goto('/pipelines');
+      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await expect(page).toHaveURL(/\/pipelines\/new$/);
+
+      await page.getByPlaceholder('파이프라인 이름').fill('이탈 테스트');
+      await page.goBack();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      // 실제로 이전 페이지(목록)로 이동해야 한다 — 확정 버튼이 무동작이어선 안 된다
+      await expect(page).toHaveURL(/\/pipelines$/);
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    });
+
+    test('dirty 상태가 아니면 뒤로가기 시 다이얼로그 없이 정상적으로 이전 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewEditorMocks(page);
+      await setupPipelineMocks(page, 1);
+      await page.goto('/pipelines');
+      await page.getByRole('link', { name: '파이프라인 추가' }).click();
+      await expect(page).toHaveURL(/\/pipelines\/new$/);
+
+      // 입력 없이(clean) 뒤로가기
+      await page.goBack();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/pipelines$/);
     });
   });
 });
