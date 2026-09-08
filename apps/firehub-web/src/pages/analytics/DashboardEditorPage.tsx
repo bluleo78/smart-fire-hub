@@ -46,7 +46,7 @@ import {
 import { Skeleton } from '../../components/ui/skeleton';
 import {
   useAddWidget,
-  useCharts,
+  useChartsInfinite,
   useDashboard,
   useDashboardData,
   useRemoveWidget,
@@ -146,8 +146,20 @@ interface AddWidgetDialogProps {
 function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDialogProps) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<number | null>(null);
-  const { data: chartsData, isLoading } = useCharts({ search: search || undefined, size: 20, page: 0 });
-  const charts = chartsData?.content ?? [];
+  // #537: 단일 페이지(useCharts) 대신 무한스크롤 훅을 사용해 20건 초과 차트도
+  // 검색 없이 "더 보기"로 접근 가능하게 한다.
+  const {
+    data: chartsData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useChartsInfinite({ search: search || undefined, size: 20 });
+  const charts = useMemo(
+    () => chartsData?.pages.flatMap((p) => p.content) ?? [],
+    [chartsData],
+  );
+  const totalElements = chartsData?.pages[0]?.totalElements ?? 0;
 
   const handleConfirm = () => {
     if (selected !== null) {
@@ -180,25 +192,43 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
                 차트가 없습니다.
               </p>
             ) : (
-              charts.map((chart: ChartListItem) => (
-                <button
-                  key={chart.id}
-                  className={`w-full text-left px-3 py-2 rounded-sm text-sm transition-colors ${
-                    selected === chart.id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'hover:bg-accent hover:text-accent-foreground'
-                  }`}
-                  onClick={() => setSelected(chart.id)}
-                >
-                  <div className="font-medium">{chart.name}</div>
-                  {chart.description && (
-                    <div className="text-xs opacity-70 truncate">{chart.description}</div>
-                  )}
-                  <div className="text-xs opacity-60">{chart.savedQueryName}</div>
-                </button>
-              ))
+              <>
+                {charts.map((chart: ChartListItem) => (
+                  <button
+                    key={chart.id}
+                    className={`w-full text-left px-3 py-2 rounded-sm text-sm transition-colors ${
+                      selected === chart.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                    onClick={() => setSelected(chart.id)}
+                  >
+                    <div className="font-medium">{chart.name}</div>
+                    {chart.description && (
+                      <div className="text-xs opacity-70 truncate">{chart.description}</div>
+                    )}
+                    <div className="text-xs opacity-60">{chart.savedQueryName}</div>
+                  </button>
+                ))}
+                {hasNextPage && (
+                  <button
+                    type="button"
+                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                    className="mx-auto block rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  >
+                    {isFetchingNextPage ? '불러오는 중…' : '더 보기'}
+                  </button>
+                )}
+              </>
             )}
           </div>
+          {!isLoading && totalElements > 0 && (
+            <p className="text-xs text-muted-foreground">
+              전체 {totalElements}건 중 {charts.length}건 표시
+              {hasNextPage && ' — 검색으로 나머지를 바로 찾을 수 있습니다'}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -370,6 +370,66 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     expect(postCalled).toBe(false);
   });
 
+  test('차트 추가 다이얼로그 — 차트가 20개를 초과하면 "더 보기"로 나머지 차트를 불러올 수 있다 (#537)', async ({
+    authenticatedPage: page,
+  }) => {
+    // #537: page가 항상 0으로 고정되어 20건 초과 차트는 검색 없이 접근 불가했던 버그의 회귀 방지.
+    // 총 25건 중 1페이지(20건) + 2페이지(5건, 21번째 차트 포함)로 나누어 모킹한다.
+    const dashboard = createDashboard({ id: 1, widgets: [] });
+    const page1Charts = Array.from({ length: 20 }, (_, i) =>
+      createChartListItem({ id: i + 1, name: `차트 ${i + 1}`, chartType: 'BAR' }),
+    );
+    const targetChart = createChartListItem({ id: 21, name: '스물한번째 차트', chartType: 'BAR' });
+    const page2Charts = [targetChart, ...Array.from({ length: 4 }, (_, i) =>
+      createChartListItem({ id: 22 + i, name: `차트 ${22 + i}`, chartType: 'BAR' }),
+    )];
+
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', { dashboardId: 1, widgets: [] });
+
+    await page.route('**/api/v1/analytics/charts*', (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const url = new URL(route.request().url());
+      const pageParam = Number(url.searchParams.get('page') ?? '0');
+      const body =
+        pageParam === 0
+          ? { content: page1Charts, page: 0, size: 20, totalElements: 25, totalPages: 2 }
+          : { content: page2Charts, page: 1, size: 20, totalElements: 25, totalPages: 2 };
+      return route.fulfill({ status: 200, body: JSON.stringify(body) });
+    });
+
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/dashboards/1/widgets',
+      createWidget({ id: 100, chartId: 21, chartName: '스물한번째 차트' }),
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards/1');
+    await page.getByRole('button', { name: '편집 모드' }).click();
+    await page.getByRole('button', { name: '차트 추가' }).click();
+    await expect(page.getByRole('dialog').getByText('차트 추가')).toBeVisible();
+
+    // 1페이지 20건만 로드된 상태 — 21번째 차트는 아직 목록에 없어야 한다
+    // (버튼의 접근성 이름은 설명/저장쿼리명까지 포함해 연결되므로, 차트명 div 텍스트로 정확히 매칭한다)
+    await expect(page.getByRole('dialog').getByText('차트 1', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog').getByText('스물한번째 차트', { exact: true })).not.toBeVisible();
+    // 전체 건수 대비 로드 건수 안내 문구 확인
+    await expect(page.getByText('전체 25건 중 20건 표시')).toBeVisible();
+
+    // "더 보기" 클릭 → 다음 페이지 fetch
+    await page.getByRole('dialog').getByRole('button', { name: '더 보기' }).click();
+
+    // 21번째 차트가 이제 목록에 나타나고 선택/추가 가능해야 한다
+    await expect(page.getByRole('dialog').getByText('스물한번째 차트', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: /스물한번째 차트/ }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '추가', exact: true }).click();
+
+    const captured = await addCapture.waitForRequest();
+    expect((captured.payload as { chartId: number }).chartId).toBe(21);
+  });
+
   test('대시보드가 공유 상태일 때 "공유" 뱃지와 autoRefresh 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
     const dashboard = createDashboard({
       id: 2,

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery,useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { analyticsApi } from '../../api/analytics';
 import type {
@@ -127,6 +127,27 @@ export function useCharts(params: {
   return useQuery({
     queryKey: ['analytics', 'charts', params],
     queryFn: () => analyticsApi.listCharts(params).then((r) => r.data),
+  });
+}
+
+/**
+ * 차트 목록 무한스크롤 조회 (#537) — 페이지 기반 누적 fetch.
+ * "차트 추가" 다이얼로그 등 전체 차트가 20개(기본 size)를 초과할 수 있는 화면에서,
+ * 검색 없이도 "더 보기"로 나머지 차트에 접근할 수 있도록 useCharts(단일 페이지)와 별도로 제공한다.
+ */
+export function useChartsInfinite(params: {
+  search?: string;
+  savedQueryId?: number;
+  sharedOnly?: boolean;
+  size?: number;
+}) {
+  return useInfiniteQuery({
+    queryKey: ['analytics', 'charts', 'infinite', params],
+    queryFn: ({ pageParam }) =>
+      analyticsApi.listCharts({ ...params, page: pageParam }).then((r) => r.data),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) =>
+      lastPage.page < lastPage.totalPages - 1 ? lastPage.page + 1 : undefined,
   });
 }
 
