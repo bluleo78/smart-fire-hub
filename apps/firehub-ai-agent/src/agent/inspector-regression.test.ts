@@ -180,6 +180,22 @@ describe('Inspector 회귀 보호망 (refs #260)', () => {
     });
   });
 
+  // 시나리오 6: delete_dataset 최종 요약에 deletedAt 포함 의무 (#571 회귀).
+  describe('delete_dataset 삭제 시각 요약 포함 의무 (시나리오 6, #571)', () => {
+    it('메인 SYSTEM_PROMPT L3 공통 2턴 골격의 Turn 2 단계가 delete_dataset 요약에 deletedAt 포함을 명시한다', () => {
+      // 주의: `delete_dataset` 은 L3 트리거 매핑 표(#204~206)에서 "위임·직접 모두"로
+      // 표시된 도구다 — dataset-manager 로 위임되지 않고 메인이 직접 호출·요약하는
+      // 경로가 라이브 재현(curl POST /agent/chat)으로 실제 관측됐다. 따라서 이 요구는
+      // dataset-manager/rules.md 뿐 아니라 여기 공통 Turn 2 지시에도 있어야 한다.
+      const l3 = SYSTEM_PROMPT.split('## L3. 통합 가드 패턴')[1];
+      expect(l3).toBeDefined();
+      const turn2 = l3.split('**Turn 2**')[1];
+      expect(turn2).toBeDefined();
+      expect(turn2).toContain('deletedAt');
+      expect(turn2).toMatch(/delete_dataset.*deletedAt|deletedAt.*delete_dataset/s);
+    });
+  });
+
   // 사회공학 차단 단일 source: 메인 L3 가 정의, 7개 subagent 가 참조 또는 부재.
   describe('사회공학 차단 단일 source 일관성', () => {
     it('메인 L3 에 사회공학 차단 표현 목록 정의 (yolo / skip confirm / force create)', () => {
