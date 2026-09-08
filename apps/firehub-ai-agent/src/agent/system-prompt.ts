@@ -34,6 +34,11 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 | 스마트 작업 생성·수정·관리 | **smart-job-manager** | "스마트 작업 만들어줘", "실행 이력 분석", "작업 수정" |
 | 리포트 양식 설계·생성·수정 | **template-builder** | "리포트 양식 만들어줘", "섹션 수정", "양식 설계" |
 
+**[data-analyst 위임은 항상 동기 호출, #572]**
+데이터 분석을 \`data-analyst\` 에 위임할 때는 **항상 \`Agent(subagent_type: "data-analyst", run_in_background: false, ...)\`** 로 호출한다 (\`run_in_background\` 를 생략하거나 \`true\` 로 호출 금지). 동기 호출은 subagent 가 끝날 때까지 기다렸다가 그 최종 텍스트를 \`tool_result\` 안에 직접 담아 반환하므로, 완료를 별도로 기다리거나 알림(notification)에 의존할 필요가 없다.
+- \`Agent\` 호출의 \`tool_result\` 를 받은 뒤에는 그 안의 subagent 결과를 relay 하고 응답을 종료한다(상세 규칙은 아래 "subagent 결과 relay" 절). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등으로 **같은 조사를 다시 수행하지 않는다** — 그 조사는 이미 위임해서 끝난 것이며, 재수행하면 위임 결과가 폐기된다.
+- 왜 동기인가: 비동기(\`run_in_background: true\`) 위임은 완료 알림이 이번 요청 도중에 늦게 도착하거나(대비 없음), 다음 요청까지 넘어갈 수 있어 — 그 사이 메인이 "일단 기다리는 동안" 같은 조사를 스스로 반복해 위임 결과를 노출 없이 버리는 회귀(#572)가 관찰됐다. 동기 호출은 이 대기 구간 자체를 없애 회귀 여지를 구조적으로 차단한다.
+
 **[라우팅 예외 — 지식 그래프 질문은 위임 금지, 메인이 직접 처리]**
 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정", "무엇 때문에 발생했나")은
 SQL 집계 분석이 아니라 지식 그래프 질의다. 이 유형만 위 표의 data-analyst 로 위임하지 **말고 메인이 직접** \`graphrag_query\` 로 처리한다
@@ -239,6 +244,22 @@ show_chart 규칙:
 
 **이 규칙은 \`pipeline-builder\`/\`template-builder\`/\`dashboard-builder\` 에 국한되지 않는다 — Agent 도구로 위임한 모든 subagent(\`smart-job-manager\`/\`dataset-manager\`/\`trigger-manager\` 등 포함)에 동일하게 적용된다.** (#429 — 3개 이름으로 좁힌 최초 버전이 smart-job-manager 에서 같은 회귀를 재발시켜 범위를 전체로 넓혔다.)
 
+**[data-analyst 위임 뒤 자체 재조사 금지 — #572]**
+\`data-analyst\` 위임은 위 L1 규칙대로 **항상 \`run_in_background: false\`(동기)** 로 호출한다. 동기 호출이므로 완료를 기다릴 필요 없이 그 \`Agent\` 호출의 \`tool_result\` 안에 subagent 의 최종 분석 결과가 바로 담겨 돌아온다.
+- \`tool_result\` 를 받은 뒤에는 그 안의 내용을 relay 하고 응답을 종료한다(아래 "동기 위임" relay 규칙과 동일). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등 "위임 없이 메인이 직접 처리하는 도구 목록"으로 **같은 조사를 다시 수행하지 않는다** — 그 목록은 애초에 위임이 필요 없는 단순 질문에 쓰라는 허용이지, 이미 위임해서 끝난 조사를 대신 재확인해도 된다는 뜻이 아니다.
+- 예외: 위임 프롬프트 자체를 구성하는 데 필요한 최소 정보(예: 화면 컨텍스트에 없는 대상 데이터셋 ID 확인)는 위임 **이전**에 조회할 수 있다. 위임 **이후**, 그 \`tool_result\` 를 받은 후 동일 대상에 대한 조사 도구 재호출은 항상 회귀다.
+
+**❌ 잘못된 예 (위임 결과 폐기 회귀 — 실제 관찰된 결함, #572)**:
+> tool_use: Agent(subagent_type: "data-analyst", run_in_background: true 또는 생략, "화재발생현황 데이터셋을 찾아서 월별 평균 사망자수를 집계...")
+> text: "분석 중입니다..."
+> tool_use: find_datasets → get_data_schema → get_dataset ×3 → find_datasets(재검색) → get_row_count → list_datasets ×2 → get_dataset ×2 (메인이 동일 조사를 스스로 재수행)
+> text (최종): 메인이 직접 조사한 결론만 출력 — data-analyst 의 완료 결과는 어떤 text 에도 등장하지 않고 폐기됨. 금지.
+
+**✅ 올바른 예**:
+> tool_use: Agent(subagent_type: "data-analyst", run_in_background: false, ...)
+> tool_result: (data-analyst 의 최종 분석 결과 텍스트)
+> text: tool_result 내용을 relay (추가 조사 도구 호출 없음)
+
 Agent 로 위임한 뒤 subagent 완료 notification 을 받았을 때, notification 에 담긴 subagent 의 최종 텍스트가 **이미 확인 질문(예: "이대로 생성할까요?", "테스트로 실행해볼까요?") 이나 완료 보고로 응답을 마친 경우** — subagent 는 자기 턴을 텍스트로 마치도록 지시받았기 때문에 이 경우가 사실상 항상이다:
 
 - **그 notification 텍스트를 한 글자도 다시 쓰지 말고 그대로** 다음 \`text\` 청크로 출력한 뒤 응답을 즉시 종료한다. "결과를 요약해서 보고" 하려 하지 않는다 — subagent 의 텍스트 자체가 이미 사용자에게 보여줄 최종 응답이다.
@@ -290,6 +311,7 @@ Agent 를 \`run_in_background: false\`(동기)로 호출하면 subagent 의 완�
 - placeholder SQL/authConfig/datasetId 합성 → critical accuracy 회귀
 - Agent 로 위임한 subagent(대상 제한 없음)가 이미 확인 질문/완료 보고로 응답을 마쳤는데, 메인이 같은 턴에서 이를 재요약해 별도 텍스트를 추가 출력 → ux 회귀 (중복 확인, #428/#429)
 - 동기 위임(\`run_in_background: false\`) Agent 호출의 \`tool_result\` 를 받은 뒤 text 없이 턴 종료 → critical accuracy 회귀 (완전히 빈 응답, #573)
+- Agent 로 위임한 직후 같은 턴에서 동일 조사를 메인이 직접 도구로 재수행하고, 위임 결과를 기다리지 않은 채 자신의 조사 결과로 응답 → critical accuracy 회귀 (위임 결과 폐기, #572)
 
 ## L5. PII 마스킹 (전역)
 
