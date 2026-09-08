@@ -260,6 +260,36 @@ test.describe('역할 관리 페이지', () => {
     await expect(page.getByText('역할 정보를 불러오는데 실패했습니다.').first()).toBeVisible({ timeout: 5000 });
   });
 
+  test('생성 실패 후 이름을 수정하면 서버 중복 에러 메시지가 지워진다 (#558)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+
+    // 중복 이름 제출 시 409 에러를 반환하도록 모킹
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      { message: '이미 존재하는 역할 이름입니다: ADMIN' },
+      { status: 409 },
+    );
+
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '역할 추가' }).click();
+
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.fill('ADMIN');
+    await page.getByRole('button', { name: '생성' }).click();
+
+    // 서버 에러 메시지가 표시된다
+    const errorMessage = page.getByText('이미 존재하는 역할 이름입니다: ADMIN');
+    await expect(errorMessage).toBeVisible();
+
+    // 제출하지 않은 채 이름만 다른 값으로 고치면 stale 서버 에러가 즉시 사라져야 한다
+    await nameInput.fill('EXPLORER_TEST_ROLE_1');
+    await expect(errorMessage).not.toBeVisible();
+  });
+
   test('커스텀 역할 삭제 버튼에 aria-label이 부여된다 (접근성 회귀)', async ({ authenticatedPage: page }) => {
     // 역할 목록 모킹
     await setupRoleListMocks(page);

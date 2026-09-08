@@ -67,6 +67,13 @@ export default function RoleListPage() {
     fetchRoles();
   }, [fetchRoles]);
 
+  // 역할 이름 입력값이 바뀌면 이전 서버 중복 에러를 지운다.
+  // (제출 시에만 초기화하면, 값만 고치고 아직 제출 전인 상태에서 stale 에러가 남는 문제가 있었다 - #558)
+  const nameValue = form.watch('name');
+  useEffect(() => {
+    setCreateError('');
+  }, [nameValue]);
+
   const onCreateSubmit = async (data: CreateRoleFormData) => {
     try {
       setCreateError('');
