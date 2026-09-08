@@ -240,6 +240,12 @@ public class ChannelSettingsService {
       throw new IllegalArgumentException("CHAT 채널은 항상 활성 상태이며 테스트 발송이 필요하지 않습니다.");
     }
 
+    // 채널 비활성화 가드 (#538) — 프론트가 disabled 처리해도 API를 직접 호출하면 우회 가능하므로
+    // 서버에서도 사용자가 명시적으로 끈 채널로는 테스트 발송이 되지 않도록 재검증한다.
+    if (!preferenceRepo.isEnabled(userId, channelType)) {
+      return new ChannelTestResult(false, "채널이 비활성화되어 있습니다. 먼저 활성화하세요.");
+    }
+
     // OAuth 채널은 binding 미연결 시 즉시 실패 응답 (Channel.deliver()까지 가지 않고 사용자에게 명확한 안내)
     Optional<UserChannelBinding> binding = bindingRepo.findActive(userId, channelType);
     if (channelType == ChannelType.KAKAO || channelType == ChannelType.SLACK) {

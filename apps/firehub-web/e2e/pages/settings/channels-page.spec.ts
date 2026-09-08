@@ -311,6 +311,34 @@ test.describe('채널 설정 페이지', () => {
     await expect(page.getByText('이메일 테스트 발송 성공')).toBeVisible();
   });
 
+  /**
+   * 회귀 테스트: 채널을 비활성화하면 "테스트 발송" 버튼도 함께 비활성화되어야 한다 (#538)
+   * - 채널이 연결(connected)되어 있어도 사용자가 활성화 토글을 끈 상태(enabled: false)라면
+   *   "테스트 발송" 버튼이 클릭 가능해서는 안 된다 (비활성 채널로 실제 발송되는 사고 방지).
+   */
+  test('SLACK 연결됨 + 비활성화(enabled: false) — "테스트 발송" 버튼은 disabled + 안내 툴팁 (#538)', async ({
+    authenticatedPage: page,
+  }) => {
+    // SLACK: connected=true, needsReauth=false, enabled=false — 연결은 되어 있으나 사용자가 끈 상태
+    const disabledButConnectedSlack: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'SLACK'
+        ? { ...s, connected: true, needsReauth: false, enabled: false }
+        : s,
+    );
+    await mockApi(page, 'GET', '/api/v1/channels/settings', disabledButConnectedSlack);
+
+    await page.goto('/settings/channels');
+
+    const slackCard = page.locator('[data-slot="card"]', { hasText: 'Slack' }).first();
+    const testButton = slackCard.getByRole('button', { name: '테스트 발송' });
+    await expect(testButton).toBeVisible();
+    await expect(testButton).toBeDisabled();
+
+    // hover 시 안내 툴팁 표시 확인 (disabled 버튼 자체는 pointer-events가 막히므로 wrapper에 hover)
+    await testButton.hover({ force: true });
+    await expect(page.getByText('채널을 먼저 활성화하세요.')).toBeVisible();
+  });
+
   test('EMAIL 테스트 발송 — 백엔드 success=false → 실패 토스트 표시 (#85)', async ({
     authenticatedPage: page,
   }) => {

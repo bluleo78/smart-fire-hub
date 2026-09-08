@@ -309,17 +309,30 @@ export function ChannelCard({ setting }: ChannelCardProps) {
             {/*
               테스트 발송 버튼 — EMAIL/KAKAO/SLACK 공통 (이슈 #85)
               /admin/settings 이메일 탭과 동일한 패턴 — 채널 연결 상태를 사용자가 사전에 검증할 수 있도록 한다.
-              미연결 또는 재인증 필요 상태에서는 disabled (백엔드 호출해도 실패할 것이 자명).
+              미연결, 재인증 필요, 또는 사용자가 채널을 비활성화한 상태에서는 disabled (#538 — 비활성 채널로도
+              실제 발송이 되던 문제 수정: enabled 조건 추가).
             */}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleTestSend}
-              disabled={!connected || needsReauth || testSend.isPending}
-            >
-              <Send className="h-3.5 w-3.5" />
-              {testSend.isPending ? '발송 중...' : '테스트 발송'}
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  {/* disabled 버튼은 pointer-events가 막혀 Tooltip이 안 뜨므로 span으로 감싼다 */}
+                  <span className="inline-block">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleTestSend}
+                      disabled={!connected || !enabled || needsReauth || testSend.isPending}
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      {testSend.isPending ? '발송 중...' : '테스트 발송'}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {connected && !enabled && (
+                  <TooltipContent>채널을 먼저 활성화하세요.</TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
           </div>
         )}
 
