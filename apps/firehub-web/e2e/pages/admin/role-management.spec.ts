@@ -290,6 +290,53 @@ test.describe('역할 관리 페이지', () => {
     await expect(errorMessage).not.toBeVisible();
   });
 
+  // #567: 권한을 전부 해제하고 저장을 시도하면 확인 다이얼로그 없이 즉시 반영되면 안 된다 (#512와 동일 패턴)
+  test('선택된 권한이 0개가 되면 저장 전 확인 다이얼로그가 표시된다 (#567)', async ({ authenticatedPage: page }) => {
+    await setupRoleDetailMocks(page, 3, false);
+
+    // 권한 API가 실제로 호출되면 실패해야 하므로 캡처만 하고, 다이얼로그가 뜨는 동안 호출되지 않았는지 확인한다
+    const saveCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3/permissions',
+      { id: 3, name: 'EDITOR', permissions: [] },
+      { capture: true },
+    );
+
+    await page.goto('/admin/roles/3');
+
+    // setupRoleDetailMocks(3, false)는 createRoleDetail 기본값으로 DATASET_READ, DATASET_WRITE 2개 권한을 부여 — 둘 다 해제하면 선택된 권한이 0개가 된다
+    const readCheckbox = page.getByRole('checkbox', { name: /DATASET_READ/ });
+    const writeCheckbox = page.getByRole('checkbox', { name: /DATASET_WRITE/ });
+    await expect(readCheckbox).toBeChecked();
+    await expect(writeCheckbox).toBeChecked();
+    await readCheckbox.click();
+    await writeCheckbox.click();
+    await expect(readCheckbox).not.toBeChecked();
+    await expect(writeCheckbox).not.toBeChecked();
+
+    // 권한 저장 클릭 — API가 즉시 호출되지 않고 확인 다이얼로그가 먼저 떠야 한다
+    await page.getByRole('button', { name: '권한 저장' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(
+      page.getByText('이 역할의 모든 권한을 해제하면 이 역할을 사용 중인 모든 사용자가 해당 권한을 즉시 잃습니다. 계속하시겠습니까?'),
+    ).toBeVisible();
+    expect(saveCapture.requests).toHaveLength(0);
+
+    // 취소 시 API가 호출되지 않아야 한다
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    expect(saveCapture.requests).toHaveLength(0);
+
+    // 다시 저장 시도 후 확인을 누르면 그때 PUT이 호출되어야 한다
+    await page.getByRole('button', { name: '권한 저장' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: '권한 해제' }).click();
+
+    const req = await saveCapture.waitForRequest();
+    expect((req.payload as { permissionIds: number[] }).permissionIds).toEqual([]);
+  });
+
   test('커스텀 역할 삭제 버튼에 aria-label이 부여된다 (접근성 회귀)', async ({ authenticatedPage: page }) => {
     // 역할 목록 모킹
     await setupRoleListMocks(page);

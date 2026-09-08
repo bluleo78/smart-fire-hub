@@ -8,6 +8,16 @@ import { toast } from 'sonner';
 
 import { permissionsApi } from '../../api/permissions';
 import { rolesApi } from '../../api/roles';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -32,6 +42,9 @@ export default function RoleDetailPage() {
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
   const [roleError, setRoleError] = useState('');
+  // 권한 전체 해제 확인 다이얼로그 표시 상태 — "권한 저장" 시점에 선택된 권한이 0개일 때만 열린다 (#567)
+  // 사용자 상세(#512)의 "역할 전체 해제"와 동일한 위험 패턴: 이 역할을 사용 중인 모든 사용자가 즉시 권한을 전부 잃는다.
+  const [isClearPermissionsDialogOpen, setIsClearPermissionsDialogOpen] = useState(false);
 
   const form = useForm<UpdateRoleFormData>({
     resolver: zodResolver(updateRoleSchema),
@@ -107,6 +120,19 @@ export default function RoleDetailPage() {
     } finally {
       setIsSavingRole(false);
     }
+  };
+
+  /**
+   * "권한 저장" 버튼 클릭 핸들러 — 선택된 권한이 0개(전체 해제)면 확인 다이얼로그를 먼저 띄우고,
+   * 그 외에는 바로 저장을 진행한다. 이 역할을 사용 중인 모든 사용자가 즉시 권한을 전부 잃는
+   * 파급력 큰 작업이므로 #512(사용자의 역할 전체 해제)와 동일한 확인 절차를 둔다 (#567).
+   */
+  const handleSavePermissionsClick = () => {
+    if (selectedPermissionIds.length === 0) {
+      setIsClearPermissionsDialogOpen(true);
+      return;
+    }
+    void handleSavePermissions();
   };
 
   const handleSavePermissions = async () => {
@@ -196,6 +222,30 @@ export default function RoleDetailPage() {
 
       <Separator />
 
+      {/* 권한 전체 해제 확인 AlertDialog — "권한 저장" 시점에 선택된 권한이 0개일 때만 표시된다 (#567) */}
+      <AlertDialog open={isClearPermissionsDialogOpen} onOpenChange={setIsClearPermissionsDialogOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>권한 전체 해제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 역할의 모든 권한을 해제하면 이 역할을 사용 중인 모든 사용자가 해당 권한을 즉시 잃습니다. 계속하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setIsClearPermissionsDialogOpen(false);
+                void handleSavePermissions();
+              }}
+            >
+              권한 해제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Card>
         <CardHeader>
           <CardTitle>권한 할당</CardTitle>
@@ -227,7 +277,7 @@ export default function RoleDetailPage() {
           {allPermissions.length === 0 && (
             <p className="text-sm text-muted-foreground">등록된 권한이 없습니다.</p>
           )}
-          <Button onClick={handleSavePermissions} disabled={isSavingPermissions || role.isSystem}>
+          <Button onClick={handleSavePermissionsClick} disabled={isSavingPermissions || role.isSystem}>
             {isSavingPermissions ? '저장 중...' : '권한 저장'}
           </Button>
         </CardContent>
