@@ -438,4 +438,86 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     // 편집 모드 종료: "수정" 버튼이 바로 보여야 한다
     await expect(page.getByRole('button', { name: '수정' })).toBeVisible();
   });
+
+  /**
+   * 회귀 테스트: #550 — 편집 중(dirty) 사이드바 SPA 링크 클릭 시 확인 없이 변경사항이 유실되는 버그.
+   *
+   * 수정 전: PipelineEditorPage가 자체 beforeunload 핸들러만 등록해 브라우저 새로고침/닫기만
+   * 막았고, React Router의 SPA 내부 네비게이션(사이드바 <a> 클릭)은 전혀 가로채지 않았다.
+   * 수정 후: useUnsavedChangesGuard(state.isDirty)를 연결해 이슈 #86과 동일한 패턴(document
+   * click capture + popstate 가로채기)으로 SPA 이동도 확인 다이얼로그 뒤로 미룬다.
+   */
+  test.describe('이슈 #550 — 미저장 변경 SPA 이동 가드', () => {
+    test('스텝 추가로 dirty 상태에서 사이드바 링크 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupPipelineEditorMocks(page, 1);
+      await page.goto('/pipelines/1');
+
+      // 편집 모드 진입 → 스텝 추가로 dirty 상태 생성
+      await page.getByRole('button', { name: '수정' }).click();
+      await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+      // 사이드바 "홈" 링크 클릭 (nav 영역으로 한정 — 다른 위치의 동명 텍스트와 구분)
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      // 확인 다이얼로그가 뜨고, URL은 즉시 이동하지 않아야 한다
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+      expect(new URL(page.url()).pathname).toBe('/pipelines/1');
+    });
+
+    test('이탈 다이얼로그에서 취소 클릭 시 편집 화면에 머무르고 추가한 스텝이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupPipelineEditorMocks(page, 1);
+      await page.goto('/pipelines/1');
+
+      await page.getByRole('button', { name: '수정' }).click();
+      await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+
+      // 페이지 유지 + 편집 모드/추가한 스텝 그대로 보존 (저장 버튼이 계속 활성)
+      expect(new URL(page.url()).pathname).toBe('/pipelines/1');
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    });
+
+    test('이탈 다이얼로그에서 이탈 클릭 시 변경사항을 버리고 다른 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupPipelineEditorMocks(page, 1);
+      await page.goto('/pipelines/1');
+
+      await page.getByRole('button', { name: '수정' }).click();
+      await page.getByRole('button', { name: '스텝 추가', exact: true }).click();
+      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/$/);
+    });
+
+    test('dirty 상태가 아니면 사이드바 링크 클릭 시 다이얼로그 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupPipelineEditorMocks(page, 1);
+      await page.goto('/pipelines/1');
+
+      // 편집 모드에 진입하지 않은 채(clean) 사이드바 이동
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/$/);
+    });
+  });
 });

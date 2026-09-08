@@ -28,6 +28,7 @@ import {
 import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDatasets } from '@/hooks/queries/useDatasets';
 import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
@@ -113,14 +114,10 @@ export default function PipelineEditorPage() {
     }
   }, [pipelineData, loadFromApi]);
 
-  // Warn on browser/tab close or refresh
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (state.isDirty) e.preventDefault();
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [state.isDirty]);
+  // 미저장 변경사항(dirty) 이탈 가드 (#550) — 브라우저 새로고침/닫기(beforeunload)뿐 아니라
+  // 사이드바 SPA 링크 클릭·뒤로가기(popstate)도 가로채 확인 다이얼로그를 띄운다.
+  // 기존엔 beforeunload만 등록해 SPA 내부 이동 시 dirty 상태가 무경고로 유실됐다(이슈 #86과 동일 결함).
+  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(state.isDirty);
 
   const handleSave = async () => {
     const ok = await save();
@@ -236,6 +233,9 @@ export default function PipelineEditorPage() {
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">
       <h1 className="sr-only">{headingText}</h1>
+
+      {/* 미저장 변경사항 이탈 가드 다이얼로그 (#550) — 사이드바 링크 클릭/뒤로가기/새로고침 가로채기 */}
+      {unsavedChangesDialog}
 
       {/* 미저장 변경사항 취소 확인 다이얼로그 (#132) — isDirty 상태에서 취소 버튼 클릭 시 표시 */}
       <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
