@@ -109,6 +109,39 @@ test.describe('리포트 양식 목록 페이지', () => {
     expect(maxHeight).toBe(minHeight);
   });
 
+  test('검색어로 커스텀 템플릿 목록을 필터링한다 (#547)', async ({ authenticatedPage: page }) => {
+    // 이름이 겹치는 케이스를 포함해 커스텀 템플릿 3개를 모킹한다.
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [
+      createTemplate({ id: 1, name: '기본 리포트 템플릿', builtin: true }),
+      createTemplate({ id: 2, name: '일간 요약 리포트', builtin: false }),
+      createTemplate({ id: 3, name: '일간 요약 리포트 (사본)', builtin: false }),
+      createTemplate({ id: 4, name: '주간 통계 리포트', builtin: false }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/templates');
+
+    // 초기 상태: 커스텀 템플릿 3개 모두 노출
+    await expect(page.getByText('일간 요약 리포트', { exact: true })).toBeVisible();
+    await expect(page.getByText('일간 요약 리포트 (사본)')).toBeVisible();
+    await expect(page.getByText('주간 통계 리포트')).toBeVisible();
+
+    // 검색어 입력 → "주간"과 일치하는 항목만 남고 나머지는 사라짐
+    const searchInput = page.getByPlaceholder('템플릿 이름으로 검색...');
+    await searchInput.fill('주간');
+
+    await expect(page.getByText('주간 통계 리포트')).toBeVisible();
+    await expect(page.getByText('일간 요약 리포트', { exact: true })).not.toBeVisible();
+    await expect(page.getByText('일간 요약 리포트 (사본)')).not.toBeVisible();
+
+    // 기본 템플릿 섹션은 검색과 무관하게 항상 노출되어야 함
+    await expect(page.getByText('기본 리포트 템플릿', { exact: true })).toBeVisible();
+
+    // 일치하는 항목이 없는 검색어 → 빈 결과 메시지 노출
+    await searchInput.fill('존재하지않는템플릿');
+    await expect(page.getByText('검색 결과 없음')).toBeVisible();
+  });
+
   test('커스텀 템플릿 카드 클릭 시 템플릿 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 커스텀 템플릿 포함 목록 모킹
     await mockApi(page, 'GET', '/api/v1/proactive/templates', [
