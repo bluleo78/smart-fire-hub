@@ -473,6 +473,90 @@ test.describe('리포트 템플릿 상세 페이지', () => {
   });
 
   /**
+   * 회귀 테스트 — 이슈 #552
+   * 이슈 #58의 가드는 beforeunload(탭 닫기)와 페이지 내 "뒤로가기"/"취소" 버튼 onClick만 커버해,
+   * 사이드바 메뉴 클릭 같은 React Router SPA 내부 네비게이션은 무경고로 통과시켰다.
+   * 공용 useUnsavedChangesGuard(document click capture)를 배선해 사이드바 링크 클릭도 가로채는지 검증한다.
+   */
+  test.describe('이슈 #552 — 사이드바 SPA 네비게이션 이탈 가드', () => {
+    test('이름 입력 후 사이드바 "쿼리" 링크 클릭 시 이탈 확인 다이얼로그가 표시되고 URL이 유지된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await expect(page.getByRole('heading', { name: '새 템플릿' })).toBeVisible();
+
+      // 이름 입력 → isDirty=true 트리거 (뒤로가기 버튼은 건드리지 않는다 — SPA 링크 클릭만으로 재현)
+      await page.locator('#tpl-name').fill('PE-TEST-template');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 사이드바 "쿼리" 링크 클릭 — useUnsavedChangesGuard의 document click capture가 가로채야 한다
+      await page.getByRole('navigation').getByRole('link', { name: '쿼리' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      // 가로챘으므로 URL은 그대로 템플릿 작성 화면에 머문다.
+      expect(new URL(page.url()).pathname).toBe('/ai-insights/templates/new');
+    });
+
+    test('이탈 다이얼로그에서 취소하면 사이드바 이동이 취소되고 입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await page.locator('#tpl-name').fill('PE-TEST-template');
+
+      await page.getByRole('navigation').getByRole('link', { name: '쿼리' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+      expect(new URL(page.url()).pathname).toBe('/ai-insights/templates/new');
+      await expect(page.locator('#tpl-name')).toHaveValue('PE-TEST-template');
+    });
+
+    test('이탈 다이얼로그에서 이탈을 확정하면 사이드바가 가리키는 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await page.locator('#tpl-name').fill('PE-TEST-template');
+
+      await page.getByRole('navigation').getByRole('link', { name: '쿼리' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/analytics\/queries$/);
+    });
+
+    test('변경 사항이 없으면 사이드바 링크 클릭 시 다이얼로그 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // dirty가 아닐 때는 가드가 개입하지 않아야 한다는 대비군(contrast) 테스트.
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto('/ai-insights/templates/new');
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      await page.getByRole('navigation').getByRole('link', { name: '쿼리' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/analytics\/queries$/);
+    });
+  });
+
+  /**
    * 회귀 테스트 — 이슈 #200
    * 편집 모드에서 이름 필드를 비우면 저장 버튼이 비활성화되어야 하며,
    * 이름을 다시 입력하면 활성화되어야 한다.
