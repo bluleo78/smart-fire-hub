@@ -230,6 +230,48 @@ test.describe('감사 로그 페이지', () => {
   });
 
   /**
+   * 이슈 #541: 날짜 범위가 역전(시작일 > 종료일)되면 "감사 로그가 없습니다"와
+   * 구분되는 안내를 노출하고, API 호출은 보류해야 한다.
+   */
+  test('날짜 범위가 역전되면 API 호출을 보류하고 전용 안내를 표시한다 (#541)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+    await page.goto('/admin/audit-logs');
+    await page.waitForTimeout(200);
+
+    // 종료일을 먼저 이른 날짜로 설정 (이 시점엔 시작일이 비어있어 유효한 조회 — 정상적으로 API 호출됨)
+    await page.getByLabel('종료 날짜').fill('2026-09-01');
+    await page.waitForTimeout(300);
+
+    // 역전 직전 요청 카운트 기록 — 역전 이후에는 추가 호출이 없어야 함
+    const requestsBeforeInvert = capture.requests.length;
+
+    // 시작일을 종료일보다 늦은 날짜로 설정하여 역전 상태를 만든다
+    await page.getByLabel('시작 날짜').fill('2026-09-08');
+    await page.waitForTimeout(300);
+
+    // 인라인 경고 메시지 노출 확인 — "감사 로그가 없습니다"와 구분되는 문구
+    await expect(page.getByRole('alert')).toContainText('날짜 범위가 올바르지 않습니다');
+    // 테이블에도 전용 빈 상태 메시지가 노출된다 (일반 "감사 로그가 없습니다"가 아님)
+    await expect(page.getByText('날짜 범위가 올바르지 않아 조회할 수 없습니다.')).toBeVisible();
+    await expect(page.getByText('감사 로그가 없습니다.')).toHaveCount(0);
+
+    // 역전 상태에서는 API가 추가 호출되지 않아야 한다 (요청 보류)
+    expect(capture.requests.length).toBe(requestsBeforeInvert);
+
+    // 시작일을 다시 종료일 이전으로 되돌리면 경고가 사라지고 정상 조회로 복귀한다
+    await page.getByLabel('시작 날짜').fill('2026-08-01');
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page.getByText('날짜 범위가 올바르지 않아 조회할 수 없습니다.')).toHaveCount(0);
+  });
+
+  /**
    * 행 클릭 상세 보기 테스트
    * - 테이블 행 클릭 시 다이얼로그가 열리는지 확인
    * - 다이얼로그에 description 전문이 표시되는지 검증 (truncate 해소)

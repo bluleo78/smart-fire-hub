@@ -15,9 +15,13 @@ export function useAuditLogs(params: {
   endDate?: string;
   page?: number;
   size?: number;
+  /** 쿼리 활성화 여부 (기본 true) — 날짜 범위 역전 등 유효하지 않은 필터 조합일 때 false로 API 호출을 보류한다 (#541) */
+  enabled?: boolean;
 }) {
+  const { enabled = true, ...queryParams } = params;
   return useQuery({
-    queryKey: ['auditLogs', params],
-    queryFn: () => auditLogsApi.getAuditLogs(params).then(r => r.data),
+    queryKey: ['auditLogs', queryParams],
+    queryFn: () => auditLogsApi.getAuditLogs(queryParams).then(r => r.data),
+    enabled,
   });
 }

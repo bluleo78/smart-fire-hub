@@ -272,6 +272,14 @@ export default function AuditLogListPage() {
     setPage(0);
   };
 
+  /**
+   * 날짜 범위 역전 검사 (#541)
+   * - date input은 세그먼트(연/월/일) 단위로 개별 편집이 가능해 브라우저의 min/max 네이티브 제약이
+   *   편집 도중 우회될 수 있다. 시작일 > 종료일인 상태가 실제로 만들어질 수 있으므로 렌더 시점에
+   *   직접 검사해, 역전된 경우 API 호출을 보류하고 "결과 없음"과 구분되는 안내를 노출한다.
+   */
+  const isDateRangeInverted = Boolean(startDate && endDate && startDate > endDate);
+
   const { data: logs, isLoading, isError } = useAuditLogs({
     search: debouncedSearch || undefined,
     // userId 필터 (#89): "all"/'' → undefined, 숫자 문자열은 number 변환
@@ -284,6 +292,8 @@ export default function AuditLogListPage() {
     endDate: endDate ? toIsoDateTime(endDate, true) : undefined,
     page,
     size: pageSize,
+    // 날짜 범위가 역전된 상태에서는 무의미한 조회이므로 API 호출 자체를 보류한다
+    enabled: !isDateRangeInverted,
   });
 
   /**
@@ -405,6 +415,17 @@ export default function AuditLogListPage() {
         </div>
       </div>
 
+      {/*
+        날짜 범위 역전 인라인 경고 (#541)
+        - date input의 min/max 속성은 달력 UI에서만 강제되고 세그먼트 타이핑 편집으로는 우회될 수 있어,
+          "감사 로그가 없습니다"라는 일반 빈 상태와 구분되는 명시적 안내가 필요하다.
+      */}
+      {isDateRangeInverted && (
+        <p role="alert" className="text-sm text-destructive">
+          날짜 범위가 올바르지 않습니다. 시작일은 종료일 이전이어야 합니다.
+        </p>
+      )}
+
       <div className="rounded-md border">
         <Table aria-label="감사 로그">
           <TableHeader>
@@ -419,7 +440,10 @@ export default function AuditLogListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isDateRangeInverted ? (
+              // 날짜 범위 역전 상태 — "결과 없음"과 구분되는 전용 메시지 (#541)
+              <TableEmptyRow colSpan={7} message="날짜 범위가 올바르지 않아 조회할 수 없습니다." />
+            ) : isLoading ? (
               <TableSkeletonRows columns={7} rows={5} />
             ) : isError ? (
               <TableRow>
