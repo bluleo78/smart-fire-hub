@@ -536,6 +536,11 @@ export default function ReportTemplateDetailPage() {
                     if (tree.selectedKey) {
                       markDirty();
                       tree.updateSection(tree.selectedKey, patch);
+                      // Key 필드가 변경되면 selectedKey도 새 값으로 따라가야
+                      // selectedSection의 find(key === selectedKey)가 계속 대상을 찾을 수 있다 (#535)
+                      if (patch.key && patch.key !== tree.selectedKey) {
+                        tree.setSelectedKey(patch.key);
+                      }
                     }
                   }}
                 />

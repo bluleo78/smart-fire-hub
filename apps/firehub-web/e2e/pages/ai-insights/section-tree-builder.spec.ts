@@ -216,6 +216,33 @@ test.describe('리포트 템플릿 섹션 트리 빌더', () => {
     await expect(page.getByText('새 text 섹션').first()).toBeVisible();
   });
 
+  test('Key 필드 값을 변경해도 편집 패널의 선택이 유지된다 (#535)', async ({ authenticatedPage: page }) => {
+    await setupEditableTemplate(page);
+
+    await page.goto('/ai-insights/templates/10');
+    await expect(page.getByRole('heading', { name: '섹션 트리 편집 템플릿' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+
+    // 트리에서 "요약 섹션" 클릭 → selectedKey = 'summary'
+    await page.getByText('요약 섹션', { exact: true }).first().click();
+    await expect(page.getByText(/key:\s*summary/)).toBeVisible();
+
+    // Key 입력란 값을 완전히 새로운 유니크 값으로 변경한다 —
+    // useSectionTree의 selectedKey가 patch.key를 따라가지 않으면
+    // find(key === selectedKey)가 실패해 편집 패널이 사라진다 (#535 회귀 가드)
+    const keyInput = page.locator('input[value="summary"]').first();
+    await expect(keyInput).toBeVisible();
+    await keyInput.fill('my_unique_key_123');
+
+    // 패널이 "섹션을 선택하세요" 빈 상태로 돌아가지 않고, 새 key로 계속 편집 가능해야 한다
+    await expect(page.getByText('섹션을 선택하세요')).toHaveCount(0);
+    await expect(page.getByText(/key:\s*my_unique_key_123/)).toBeVisible();
+
+    // Label 필드도 여전히 편집 가능함을 확인 — 선택 컨텍스트가 완전히 살아있는지 검증
+    const labelInput = page.locator('input[value="요약 섹션"]').first();
+    await expect(labelInput).toBeVisible();
+  });
+
   test('저장 시 편집한 sections 가 PUT payload 에 반영된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     const { updateCapture } = await setupEditableTemplate(page);
 
