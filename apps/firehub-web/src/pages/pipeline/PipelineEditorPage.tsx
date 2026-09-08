@@ -54,7 +54,15 @@ function formatDuration(startedAt: string | null, completedAt: string | null): s
 
 export default function PipelineEditorPage() {
   const { id, execId } = useParams<{ id: string; execId: string }>();
-  const pipelineId = id ? Number(id) : undefined;
+  // id가 'abc'처럼 숫자로 변환 불가능한 경우 — Number()가 NaN을 반환하면
+  // NaN은 falsy라서 pipelineId가 있는 것으로 쓰이는 모든 조건(isEditing, headingText,
+  // `{pipelineId && (...)}` 등)이 "신규 생성"으로 잘못 분류되고, `NaN && expr`는
+  // false가 아니라 NaN 자체를 반환해 React가 리터럴 "NaN" 텍스트를 그대로 렌더링한다
+  // (#544). #543/#545와 동일 원인 클래스라 같은 isInvalidId 플래그로 분리한다.
+  const hasIdParam = id !== undefined;
+  const parsedPipelineId = id ? Number(id) : undefined;
+  const isInvalidId = hasIdParam && !Number.isFinite(parsedPipelineId);
+  const pipelineId = isInvalidId ? undefined : parsedPipelineId;
   const executionId = execId ? Number(execId) : undefined;
 
   const navigate = useNavigate();
@@ -205,8 +213,10 @@ export default function PipelineEditorPage() {
     );
   }
 
-  // 기존 파이프라인 ID가 있으나 에러(404 등)인 경우: 존재하지 않는 페이지 안내
-  if (pipelineId && pipelineError) {
+  // 기존 파이프라인 ID가 있으나 에러(404 등)이거나, 애초에 숫자로 변환 불가능한 ID(#544)인 경우:
+  // 존재하지 않는 페이지 안내. isInvalidId는 pipelineId를 undefined로 정규화시켜 usePipeline
+  // 쿼리 자체가 실행되지 않으므로(enabled:!!id), pipelineError만으로는 잡히지 않아 별도로 합류시킨다.
+  if (hasIdParam && (pipelineError || isInvalidId)) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20">
         <GitBranch className="h-12 w-12 text-muted-foreground" />

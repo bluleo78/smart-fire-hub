@@ -243,6 +243,41 @@ test.describe('파이프라인 에디터 페이지', () => {
     await expect(page).toHaveURL('/pipelines');
   });
 
+  /**
+   * 회귀 테스트 — 이슈 #544
+   * `/pipelines/abc`처럼 숫자로 변환 불가능한 ID 접근 시:
+   * - Number('abc')=NaN이 pipelineId로 그대로 쓰이면 NaN이 falsy라서 "새 파이프라인 생성"
+   *   모드로 조용히 오분류되고, 상세 조회 API도 호출되지 않아야 한다(비숫자 ID는 조회 시도 X).
+   * - `{pipelineId && (...)}`에서 NaN && expr가 NaN 자체를 반환해 화면에 리터럴 "NaN" 텍스트가
+   *   렌더링되는 문제도 함께 방지되어야 한다.
+   * #543/#545와 동일 원인 클래스(Number(id)→NaN + enabled:!!id)의 수정.
+   */
+  test('비숫자 ID(/pipelines/abc) 접근 시 신규 생성 폼 대신 찾을 수 없음 안내가 표시되고 NaN 텍스트가 노출되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 핵심 검증: 비숫자 ID이므로 상세 조회 API가 아예 호출되지 않아야 한다
+    let pipelineDetailRequested = false;
+    await page.route('**/api/v1/pipelines/abc', () => {
+      pipelineDetailRequested = true;
+    });
+    await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+
+    await page.goto('/pipelines/abc');
+
+    // 에러 안내 메시지가 표시되어야 한다 (신규 생성 폼 X)
+    await expect(page.getByText('파이프라인을 찾을 수 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '목록으로' })).toBeVisible();
+
+    // 신규 생성 폼(breadcrumb "새 파이프라인", 저장 버튼)이 표시되지 않아야 한다 (회귀 방지)
+    await expect(page.getByText('새 파이프라인')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: '저장' })).not.toBeVisible();
+
+    // 화면에 리터럴 "NaN" 텍스트가 노출되지 않아야 한다 (회귀 방지)
+    await expect(page.getByText('NaN', { exact: true })).not.toBeVisible();
+
+    expect(pipelineDetailRequested).toBe(false);
+  });
+
   // 회귀 테스트: WCAG 2.4.6 (Headings and Labels) — 페이지 진입 시 h1 헤딩 존재 보장 (issue #63)
   test('신규 생성 페이지에 "새 파이프라인" h1 헤딩이 존재한다', async ({ authenticatedPage: page }) => {
     // 신규 생성은 ID 없이 진입하므로 datasets/pipelines 목록만 모킹
