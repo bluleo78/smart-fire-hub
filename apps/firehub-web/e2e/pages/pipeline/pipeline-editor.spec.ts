@@ -68,6 +68,44 @@ test.describe('파이프라인 에디터 페이지', () => {
     await expect(firstRow.getByText('1m 0s')).toBeVisible();
   });
 
+  test('실행중인(RUNNING) 실행의 소요시간이 KST 파싱 오류 없이 표시된다 (#533)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 회귀 테스트: startedAt이 타임존 표기 없는 UTC 문자열(서버 계약)이고 completedAt이 없는
+    // "실행중" 상태에서, new Date(startedAt)로 직접 파싱하면 브라우저가 KST로 오인해
+    // Date.now()와 9시간(540분) 오차가 발생했다. parseUtcDate를 거치면 정상적으로 짧은
+    // 경과시간(수 초)이 표시되어야 한다.
+    const detail = createPipelineDetail({ id: 1 });
+
+    // 고정된 브라우저 시각: 2024-01-01T00:00:05Z (KST로는 09:00:05)
+    // setFixedTime은 install({ time })과 달리 실시간으로 흐르지 않고 완전히 고정되므로
+    // 병렬 실행 등으로 테스트가 느려져도 경과시간이 항상 정확히 5초로 유지된다(비결정성 방지).
+    await page.clock.setFixedTime(new Date('2024-01-01T00:00:05Z'));
+
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', [
+      // startedAt은 타임존 표기 없는 UTC 문자열(백엔드 실측 계약과 동일), completedAt=null(RUNNING)
+      createExecution({ id: 1, pipelineId: 1, status: 'RUNNING', startedAt: '2024-01-01T00:00:00', completedAt: null }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [],
+      page: 0,
+      size: 1000,
+      totalElements: 0,
+      totalPages: 0,
+    });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    const firstRow = page.getByRole('row').nth(1);
+    // 버그가 있었다면 '540m 0s'(9시간)가 표시됨. 수정 후에는 5초 경과로 '5s'가 표시되어야 한다.
+    await expect(firstRow.getByText('5s')).toBeVisible();
+    await expect(firstRow.getByText(/540m/)).not.toBeVisible();
+  });
+
   test('실행 이력이 없을 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
     // 실행 이력 없는 에디터 API 모킹
     const detail = createPipelineDetail({ id: 1 });

@@ -28,7 +28,7 @@ import {
 import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDatasets } from '@/hooks/queries/useDatasets';
 import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
-import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
+import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
 import { EditorHeader } from './components/EditorHeader';
@@ -40,8 +40,10 @@ import { usePipelineEditor } from './hooks/usePipelineEditor';
 
 function formatDuration(startedAt: string | null, completedAt: string | null): string {
   if (!startedAt) return '-';
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  // 서버가 타임존 없는 UTC 문자열을 내려주므로 반드시 parseUtcDate를 거쳐야 한다.
+  // new Date()로 직접 파싱하면 KST 브라우저에서 9시간 오차가 발생한다 (#349, #533).
+  const start = parseUtcDate(startedAt).getTime();
+  const end = completedAt ? parseUtcDate(completedAt).getTime() : Date.now();
   const totalSeconds = Math.floor((end - start) / 1000);
   if (totalSeconds < 0) return '-';
   const minutes = Math.floor(totalSeconds / 60);
