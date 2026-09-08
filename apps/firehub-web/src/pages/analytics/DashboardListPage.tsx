@@ -181,13 +181,19 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   const submittingRef = useRef(false);
 
   // dashboard prop 변경 시 폼 필드 초기화 (render-time 조정 패턴)
+  // 취소 후 재오픈 시 부모가 동일 참조의 dashboard 객체를 다시 넘기므로
+  // (null -> 객체 전환에서만) truthy 변경만 감지하면 리셋이 스킵된다(#553).
+  // 닫힐 때(dashboard가 null이 됨) prevDashboard도 null로 되돌려 두면
+  // 다음에 같은 참조로 다시 열려도 "null -> 객체" 전환으로 인식되어 리셋이 항상 일어난다.
   const [prevDashboard, setPrevDashboard] = useState(dashboard);
-  if (prevDashboard !== dashboard && dashboard) {
+  if (dashboard && prevDashboard !== dashboard) {
     setPrevDashboard(dashboard);
     setName(dashboard.name);
     setDescription(dashboard.description ?? '');
     setIsShared(dashboard.isShared);
     setAutoRefresh(dashboard.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '');
+  } else if (!dashboard && prevDashboard) {
+    setPrevDashboard(null);
   }
 
   const handleSubmit = async () => {

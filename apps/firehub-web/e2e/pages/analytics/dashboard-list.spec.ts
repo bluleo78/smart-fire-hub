@@ -314,4 +314,45 @@ test.describe('대시보드 목록 페이지', () => {
     await page.waitForTimeout(300);
     expect(tabCalls.some((v) => v === 'true')).toBe(true);
   });
+
+  test('설정 다이얼로그를 취소 후 다시 열면 저장된 값이 표시된다 (#553)', async ({ authenticatedPage: page }) => {
+    // 부모(DashboardListPage)가 "설정" 클릭 시 목록에 이미 있던 동일 참조의
+    // dashboard 객체를 다시 넘기므로, EditDashboardDialog가 이를 "변경 없음"으로
+    // 오인해 취소 직전 미저장 입력값을 리셋하지 않던 회귀(#553)를 검증한다.
+    const dashboard = createDashboardListItem({ id: 1, name: '원본 이름', description: '원본 설명' });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    // 취소 흐름에서는 저장 API가 절대 호출되지 않아야 하므로 호출 여부를 감시한다.
+    const putCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/dashboards/1',
+      { ...dashboard },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await expect(page.getByText('원본 이름')).toBeVisible();
+
+    // 1) 설정 다이얼로그를 열고 이름/설명을 변경한 뒤 취소
+    await page.getByRole('row', { name: /원본 이름/ }).getByLabel('설정').click();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
+    const nameInput = page.getByLabel('이름 *');
+    const descInput = page.getByLabel('설명');
+    await expect(nameInput).toHaveValue('원본 이름');
+    await expect(descInput).toHaveValue('원본 설명');
+
+    await nameInput.fill('DIRTY_UNSAVED_NAME');
+    await descInput.fill('DIRTY_UNSAVED_DESC');
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).not.toBeVisible();
+
+    // 2) 같은 대시보드의 설정을 다시 열면 원본 값이 그대로 보여야 한다 (미저장 값이 남으면 회귀)
+    await page.getByRole('row', { name: /원본 이름/ }).getByLabel('설정').click();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
+    await expect(page.getByLabel('이름 *')).toHaveValue('원본 이름');
+    await expect(page.getByLabel('설명')).toHaveValue('원본 설명');
+
+    // 취소만 반복했으므로 저장 API는 한 번도 호출되지 않아야 한다
+    expect(putCapture.requests.length).toBe(0);
+  });
 });
