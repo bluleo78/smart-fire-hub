@@ -143,6 +143,37 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
     await expect(page.getByText('첫 번째 스텝을 추가하세요')).toBeVisible();
   });
 
+  test('캔버스 노드 우상단 X 버튼 클릭 시 확인 다이얼로그 없이 즉시 삭제되지 않는다 (#536)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+
+    await page.goto('/pipelines/new');
+
+    // 스텝 추가 → ADD_STEP dispatch
+    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
+
+    // 노드 우상단 X 버튼(aria-label="스텝 삭제") 클릭 — 패널을 열지 않고 노드에서 직접 클릭
+    await page.getByRole('button', { name: '스텝 삭제' }).first().click();
+
+    // 즉시 삭제되지 않고 확인 다이얼로그가 떠야 한다
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('정말 이 스텝을 삭제하시겠습니까?')).toBeVisible();
+    await expect(page.getByText('첫 번째 스텝을 추가하세요')).not.toBeVisible();
+
+    // 취소 클릭 시 스텝이 그대로 남아 있어야 한다
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+    // 다시 X 버튼 클릭 → 확인 다이얼로그에서 "삭제" 클릭 시에만 실제로 삭제된다
+    await page.getByRole('button', { name: '스텝 삭제' }).first().click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByText('첫 번째 스텝을 추가하세요')).toBeVisible();
+  });
+
   test('스텝 선택 후 스텝 타입 변경 — UPDATE_STEP type dispatch', async ({
     authenticatedPage: page,
   }) => {

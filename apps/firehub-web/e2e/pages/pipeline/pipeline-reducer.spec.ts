@@ -126,10 +126,13 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     // 스텝 이름 입력
     await page.locator('#step-name').fill('삭제할 스텝');
 
-    // 스텝 삭제 버튼 클릭 → REMOVE_STEP dispatch
+    // 스텝 삭제 버튼 클릭 → 확인 다이얼로그 표시 (#536, 실수 삭제 방지)
     const deleteBtn = page.getByRole('button', { name: /삭제|제거|스텝 삭제/ }).first();
     if ((await deleteBtn.count()) > 0) {
       await deleteBtn.click();
+      // 확인 다이얼로그에서 "삭제" 클릭 → REMOVE_STEP dispatch
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await page.getByRole('button', { name: '삭제' }).click();
       // 스텝 패널이 닫혀야 한다 (selectedStepId → null)
       await expect(page.locator('#step-name')).not.toBeVisible({ timeout: 5000 });
     }
