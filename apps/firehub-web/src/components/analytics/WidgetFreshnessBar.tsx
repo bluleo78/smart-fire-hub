@@ -20,12 +20,13 @@ export function WidgetFreshnessBar({
 }: WidgetFreshnessBarProps) {
   const [now, setNow] = useState(() => Date.now());
 
-  // Only tick when auto-refresh is active; otherwise compute once on mount
+  // 경과 시간("방금", "N초 전" 등) 표시는 자동 갱신 여부와 무관하게 항상 흘러야 하므로,
+  // refreshSeconds(자동 갱신 주기) 유무와 관계없이 10초 간격으로 now를 갱신한다.
+  // (refreshSeconds는 isStale 판정에만 사용된다)
   useEffect(() => {
-    if (!refreshSeconds || refreshSeconds <= 0) return;
     const timer = setInterval(() => setNow(Date.now()), 10_000);
     return () => clearInterval(timer);
-  }, [refreshSeconds]);
+  }, []);
 
   const elapsed = dataUpdatedAt > 0 ? now - dataUpdatedAt : null;
   const timeAgoText = elapsed !== null ? formatElapsedTime(elapsed) : null;
