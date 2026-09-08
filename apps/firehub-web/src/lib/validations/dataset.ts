@@ -16,7 +16,7 @@ export const datasetColumnSchema = z.object({
   isNullable: z.boolean(),
   isIndexed: z.boolean(),
   isPrimaryKey: z.boolean(),
-  description: z.string().max(255).optional().or(z.literal('')),
+  description: z.string().max(255, '설명은 255자 이하여야 합니다').optional().or(z.literal('')),
 }).refine(
   (data) => data.dataType !== 'VARCHAR' || (data.maxLength != null && data.maxLength > 0),
   { message: 'VARCHAR 타입은 길이를 입력해야 합니다', path: ['maxLength'] }
@@ -66,7 +66,7 @@ export const updateColumnSchema = z.object({
   isNullable: z.boolean(),
   isIndexed: z.boolean(),
   isPrimaryKey: z.boolean().optional(),
-  description: z.string().max(255).optional().or(z.literal('')),
+  description: z.string().max(255, '설명은 255자 이하여야 합니다').optional().or(z.literal('')),
 }).refine(
   (data) => data.dataType !== 'VARCHAR' || (data.maxLength != null && data.maxLength > 0),
   { message: 'VARCHAR 타입은 길이를 입력해야 합니다', path: ['maxLength'] }

@@ -371,6 +371,48 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByLabel('필드명 *')).toHaveValue('name');
   });
 
+  // 설명 255자 초과 시 zod 검증에서 막히고, 에러 메시지가 화면에 표시되어야 한다 (#557)
+  // — 수정 전에는 handleSubmit 이 조용히 막히기만 하고 아무 피드백도 없었다.
+  test('컬럼 편집 — 설명 255자 초과 시 에러 메시지가 표시되고 PUT 요청이 발생하지 않는다 (#557)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/5/columns/2',
+      { id: 2, columnName: 'name', displayName: '이름', dataType: 'VARCHAR',
+        maxLength: 100, isNullable: true, isIndexed: false, isPrimaryKey: false,
+        description: null, columnOrder: 1 },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    const nameRow = page.getByRole('row').filter({ hasText: 'name' }).first();
+    await nameRow.getByRole('button', { name: '컬럼 편집' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+
+    // maxLength HTML 속성으로 300자 입력 시도해도 255자에서 잘리므로,
+    // fill 로 HTML 제약을 우회해 zod 레벨 검증이 실제로 동작하는지 확인한다.
+    const descriptionInput = page.getByRole('dialog').getByLabel('설명');
+    await descriptionInput.evaluate((el: HTMLInputElement) => el.removeAttribute('maxlength'));
+    await descriptionInput.fill('x'.repeat(300));
+
+    await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
+
+    // 에러 메시지가 표시된다
+    await expect(page.getByText('설명은 255자 이하여야 합니다')).toBeVisible({ timeout: 5000 });
+
+    // 다이얼로그는 닫히지 않고, PUT 요청도 발생하지 않는다
+    await expect(page.getByRole('dialog')).toBeVisible();
+    expect(updateCapture.requests).toHaveLength(0);
+  });
+
   // ColumnDialog 에서 PK 토글은 제거되었다 — PK 변경은 PrimaryKeysDialog 로 일원화 (#117)
   test('컬럼 편집 다이얼로그에는 기본 키(PK) 체크박스가 노출되지 않는다 (#117)', async ({
     authenticatedPage: page,

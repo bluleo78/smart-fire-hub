@@ -241,9 +241,15 @@ export function ColumnDialog({
             <Label htmlFor="description">설명</Label>
             <Input
               id="description"
+              maxLength={255}
               {...form.register('description')}
               placeholder="필드 설명"
             />
+            {form.formState.errors.description && (
+              <p className="text-sm text-destructive">
+                {form.formState.errors.description.message}
+              </p>
+            )}
           </div>
 
           <div className="flex gap-2">
