@@ -151,4 +151,52 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     await expect(page.getByText(/수신자의 카카오 알림톡 연동 상태는/)).toBeVisible();
     await expect(page.getByText(/수신자의 Slack 연동 상태는/)).toBeVisible();
   });
+
+  // 회귀 테스트 (#554): 이메일 채널은 CHAT/KAKAO/SLACK과 달리 안내 문구가 조건부로
+  // 바뀌지 않고 항상 "본인에게만 전달됩니다"로 고정 노출되던 결함
+  test('이메일 채널은 외부 이메일이 이미 지정된 경우 "N명에게 전달됩니다" 문구를 보여준다 (#554)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [
+          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+          { type: 'EMAIL', recipientUserIds: [], recipientEmails: ['test@example.com'] },
+        ],
+      },
+    });
+
+    // 배지는 이미 정확히 1건을 보여주지만, 안내 문구는 기존 결함으로 고정 문구였다
+    await expect(page.getByPlaceholder('이메일 입력 후 Enter')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('group', { name: '외부 이메일' }).getByText('test@example.com')).toBeVisible();
+
+    // CHAT 채널도 동일 문구를 쓰므로 이메일 채널 카드로 범위를 좁혀 검증한다
+    const emailSection = page
+      .locator('div.rounded-lg.border')
+      .filter({ has: page.getByRole('checkbox', { name: '이메일' }) });
+
+    // 수정 후: 외부 이메일 1건이 반영되어 "1명에게 전달됩니다"로 표시되어야 한다
+    await expect(emailSection.getByText('1명에게 전달됩니다')).toBeVisible();
+    await expect(emailSection.getByText('수신자를 지정하지 않으면 본인에게만 전달됩니다')).not.toBeVisible();
+  });
+
+  test('이메일 채널은 수신자가 없으면 기존과 동일하게 "본인에게만 전달됩니다" 문구를 보여준다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [
+          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+          { type: 'EMAIL', recipientUserIds: [], recipientEmails: [] },
+        ],
+      },
+    });
+
+    await expect(page.getByPlaceholder('이메일 입력 후 Enter')).toBeVisible({ timeout: 5000 });
+
+    const emailSection = page
+      .locator('div.rounded-lg.border')
+      .filter({ has: page.getByRole('checkbox', { name: '이메일' }) });
+    await expect(emailSection.getByText('수신자를 지정하지 않으면 본인에게만 전달됩니다')).toBeVisible();
+  });
 });

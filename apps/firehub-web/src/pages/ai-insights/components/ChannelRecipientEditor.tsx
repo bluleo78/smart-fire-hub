@@ -171,7 +171,9 @@ export default function ChannelRecipientEditor({
         {enabled && channel && (
           <div className="mt-3 space-y-3">
             <p className="text-xs text-muted-foreground">
-              수신자를 지정하지 않으면 본인에게만 전달됩니다
+              {channel.recipientUserIds.length + channel.recipientEmails.length === 0
+                ? '수신자를 지정하지 않으면 본인에게만 전달됩니다'
+                : `${channel.recipientUserIds.length + channel.recipientEmails.length}명에게 전달됩니다`}
             </p>
 
             {/* UserCombobox / EmailTagInput 은 id prop 을 받지 않는 복합 위젯이라
