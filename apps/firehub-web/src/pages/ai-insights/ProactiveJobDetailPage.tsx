@@ -105,7 +105,13 @@ export default function ProactiveJobDetailPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isNew = !id || id === 'new';
-  const jobId = isNew ? 0 : Number(id);
+  const parsedId = isNew ? 0 : Number(id);
+  // id가 'abc'처럼 숫자로 변환 불가능한 경우 — Number()가 NaN을 반환하면
+  // useProactiveJob의 enabled:!!id가 항상 false가 되어 쿼리 자체가 실행되지 않고
+  // isLoading/isError가 영구히 false로 남아 유령 상세 화면이 렌더링된다 (#545).
+  // 이런 경우를 별도 플래그로 구분해 아래 에러 뷰 조건에 합류시킨다.
+  const isInvalidId = !isNew && !Number.isFinite(parsedId);
+  const jobId = isInvalidId ? 0 : parsedId;
 
   // ReportBuilderWidget 저장 버튼에서 전달된 프리필 데이터 (이슈 #213)
   const prefill = isNew ? (location.state as ReportPrefillState | null) : null;
@@ -298,7 +304,9 @@ export default function ProactiveJobDetailPage() {
   }
 
   // 존재하지 않는 작업 ID 접근 시 에러 상태 처리 (#47)
-  if (!isNew && isError) {
+  // NaN 등 비숫자 ID는 쿼리가 아예 실행되지 않아 isError가 true가 되지 않으므로
+  // isInvalidId를 함께 확인한다 (#545)
+  if (!isNew && (isError || isInvalidId)) {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
