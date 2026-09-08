@@ -24,12 +24,16 @@ export default function ReportViewerPage() {
 
   const jobIdNum = Number(jobId);
   const executionIdNum = Number(executionId);
+  // 경로 파라미터가 숫자가 아닌 경우(잘못된 URL 직접 접근, 손상된 링크 등) — 별도 에러 상태로 분기한다.
+  // "리포트가 없습니다" 빈 상태는 정상적으로 리포트가 없는 경우를 위한 것이라, NaN을 그대로 흘려보내면
+  // 헤더에 "리포트 #NaN", 링크에 "/ai-insights/jobs/NaN"처럼 깨진 UI가 노출된다.
+  const isInvalidParams = isNaN(jobIdNum) || isNaN(executionIdNum);
 
   // HTML 리포트 조회
   const { data: htmlResponse, isLoading, isError } = useQuery({
     queryKey: ['execution-html', jobIdNum, executionIdNum],
     queryFn: () => proactiveApi.getExecutionHtml(jobIdNum, executionIdNum),
-    enabled: !isNaN(jobIdNum) && !isNaN(executionIdNum),
+    enabled: !isInvalidParams,
   });
 
   const rawHtml = htmlResponse?.data ?? null;
@@ -58,7 +62,7 @@ export default function ReportViewerPage() {
           </Button>
           <div className="h-5 w-px bg-border" />
           <h1 className="text-sm font-semibold text-foreground">
-            리포트 #{executionIdNum}
+            {isInvalidParams ? '리포트' : `리포트 #${executionIdNum}`}
           </h1>
         </div>
 
@@ -91,16 +95,27 @@ export default function ReportViewerPage() {
         </div>
       </div>
 
-      {/* 본문 영역 — 상태에 따라 로딩/에러/빈 상태/리포트를 렌더링 */}
+      {/* 본문 영역 — 상태에 따라 잘못된 요청/로딩/에러/빈 상태/리포트를 렌더링 */}
       <div className="flex-1 overflow-hidden">
-        {isLoading && (
+        {isInvalidParams && (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
+            <p className="text-sm">잘못된 요청입니다.</p>
+            {/* jobId/executionId가 유효하지 않으므로 "작업 상세 보기" 같은 깨진 링크는 노출하지 않는다 */}
+            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4" />
+              돌아가기
+            </Button>
+          </div>
+        )}
+
+        {!isInvalidParams && isLoading && (
           <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
             <span className="text-sm">리포트를 불러오는 중...</span>
           </div>
         )}
 
-        {isError && !isLoading && (
+        {!isInvalidParams && isError && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
@@ -110,7 +125,7 @@ export default function ReportViewerPage() {
           </div>
         )}
 
-        {!isLoading && !isError && !rawHtml && (
+        {!isInvalidParams && !isLoading && !isError && !rawHtml && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트가 없습니다.</p>
             <Button variant="outline" size="sm" asChild>
