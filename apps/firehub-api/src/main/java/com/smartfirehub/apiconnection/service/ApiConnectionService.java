@@ -59,6 +59,9 @@ public class ApiConnectionService {
   /** WebClient는 프로젝트 관행에 따라 빌더를 직접 생성한다 (별도 Bean 없음). */
   private final WebClient webClient = WebClient.builder().build();
 
+  /** 헬스체크 HTTP 호출 타임아웃(초). 메시지 문구("응답 시간 초과 (N초)")와 값이 어긋나지 않도록 한 곳에서 관리한다. */
+  private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 5;
+
   // ── 공개 API ────────────────────────────────────────────────────────────────
 
   @Transactional
@@ -181,7 +184,7 @@ public class ApiConnectionService {
               .headers(h -> buildAuthHeaders(conn.authType(), rawConfig).forEach(h::set))
               .retrieve()
               .toEntity(String.class)
-              .block(Duration.ofSeconds(5));
+              .block(Duration.ofSeconds(HEALTH_CHECK_TIMEOUT_SECONDS));
 
       long latency = System.currentTimeMillis() - start;
       Integer status = resp != null ? resp.getStatusCode().value() : null;
@@ -212,7 +215,7 @@ public class ApiConnectionService {
 
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
-      String msg = e.getMessage();
+      String msg = toUserFacingErrorMessage(e);
       repository.updateHealthStatus(id, "DOWN", latency, msg);
       return new TestConnectionResponse(false, null, latency, msg, url, null, Map.of(), null);
     }
@@ -240,7 +243,7 @@ public class ApiConnectionService {
               .headers(h -> buildAuthHeaders(request.authType(), rawConfig).forEach(h::set))
               .retrieve()
               .toEntity(String.class)
-              .block(Duration.ofSeconds(5));
+              .block(Duration.ofSeconds(HEALTH_CHECK_TIMEOUT_SECONDS));
 
       long latency = System.currentTimeMillis() - start;
       Integer status = resp != null ? resp.getStatusCode().value() : null;
@@ -266,9 +269,44 @@ public class ApiConnectionService {
           false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
-      String msg = e.getMessage();
+      String msg = toUserFacingErrorMessage(e);
       return new TestConnectionResponse(false, null, latency, msg, url, null, Map.of(), null);
     }
+  }
+
+  /**
+   * (#532) 헬스체크 catch-all 예외를 감사 로그·UI에 노출 가능한 메시지로 변환한다.
+   *
+   * <p>Reactor의 {@code Mono#block(Duration)}은 타임아웃 시 "Timeout on blocking read for 5000000000
+   * NANOSECONDS" 같은 저수준 구현 디테일을 담은 {@link IllegalStateException}을 던진다. 관리자가 나노초 단위를 초로
+   * 환산해야만 의미를 파악할 수 있으므로, 타임아웃으로 판별되면 사람이 읽을 수 있는 고정 문구로 치환한다. 그 외
+   * 예외는 원래 메시지를 그대로 사용하되, 메시지가 없는 경우(getMessage()==null) 클래스 simple name으로 대체한다.
+   */
+  private static String toUserFacingErrorMessage(Exception e) {
+    if (isTimeoutException(e)) {
+      return "응답 시간 초과 (" + HEALTH_CHECK_TIMEOUT_SECONDS + "초)";
+    }
+    return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+  }
+
+  /**
+   * 예외가 {@code .block(Duration.ofSeconds(5))} 타임아웃으로 인한 것인지 판별한다. Reactor-core는 전용 예외
+   * 타입 대신 {@link IllegalStateException}에 "Timeout on blocking read" 접두 메시지를 담아 던지므로 메시지
+   * 패턴으로 판별한다. Netty의 {@code ReadTimeoutException}은 클래스명 기준으로 판별하되, WebClient가 이를
+   * {@code WebClientRequestException}으로 감싸 던지는 경우가 있어 원인 체인(getCause)까지 한 단계 확인한다.
+   */
+  private static boolean isTimeoutException(Exception e) {
+    for (Throwable t = e; t != null; t = t.getCause()) {
+      String msg = t.getMessage();
+      if (msg != null && msg.startsWith("Timeout on blocking read")) {
+        return true;
+      }
+      if (t.getClass().getSimpleName().contains("TimeoutException")) {
+        return true;
+      }
+      if (t == t.getCause()) break; // 자기참조 순환 방지
+    }
+    return false;
   }
 
   /** 응답 본문을 최대 4KB로 잘라 반환 (UI 노출용). null/빈값은 그대로 반환. */

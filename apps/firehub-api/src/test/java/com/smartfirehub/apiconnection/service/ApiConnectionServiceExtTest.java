@@ -6,6 +6,10 @@ import static org.jooq.impl.DSL.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
+
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
@@ -18,7 +22,9 @@ import java.util.Map;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +46,20 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Autowired private TransactionTemplate tx;
 
   @MockitoBean private SsrfProtectionService ssrfProtectionService;
+
+  /** (#532) 헬스체크 타임아웃 재현용 WireMock — 5초 초과 지연 응답을 흉내낸다. */
+  static WireMockServer wireMock;
+
+  @BeforeAll
+  static void startWireMock() {
+    wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
+    wireMock.start();
+  }
+
+  @AfterAll
+  static void stopWireMock() {
+    wireMock.stop();
+  }
 
   private Long testUserId;
 
@@ -341,6 +361,39 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     // 연결 불가이지만 예외 없이 응답 반환 검증
     TestConnectionResponse result = apiConnectionService.testConnection(created.id());
     assertThat(result.ok()).isFalse();
+  }
+
+  // ── testConnection(): 5초 초과 지연 응답 → 사람이 읽을 수 있는 타임아웃 메시지 (#532) ────────
+
+  @Test
+  void testConnection_timeout_returnsHumanReadableMessage() {
+    // WireMock이 5초(.block 타임아웃)보다 긴 지연으로 응답 → Reactor가
+    // "Timeout on blocking read for 5000000000 NANOSECONDS" 를 던지는데,
+    // 이 원시 메시지가 그대로 errorMessage/감사 로그에 노출되면 안 된다.
+    wireMock.stubFor(
+        get(urlEqualTo("/health")).willReturn(aResponse().withFixedDelay(6000).withStatus(200)));
+
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "Timeout Test Conn",
+                null,
+                "BEARER",
+                Map.of("token", "test-token"),
+                "http://localhost:" + wireMock.port(),
+                "/health"),
+            testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id());
+
+    assertThat(result.ok()).isFalse();
+    assertThat(result.errorMessage()).isEqualTo("응답 시간 초과 (5초)");
+    assertThat(result.errorMessage()).doesNotContain("NANOSECONDS");
+
+    // 감사 로그/상세 페이지가 실제로 읽는 것은 DB에 저장된 lastErrorMessage다 —
+    // DTO 반환값만 확인하면 repository.updateHealthStatus 경로가 안 고쳐진 회귀를 못 잡는다.
+    assertThat(apiConnectionService.getById(created.id()).lastErrorMessage())
+        .isEqualTo("응답 시간 초과 (5초)");
   }
 
   // ── refreshAllAsync(): jobId 반환 및 비동기 실행 시작 ─────────────────────────
