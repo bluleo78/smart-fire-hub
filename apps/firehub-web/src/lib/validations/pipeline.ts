@@ -51,7 +51,9 @@ export const editorStepSchema = z.object({
 }).refine(
   (data) => {
     if (data.scriptType === 'API_CALL' || data.scriptType === 'AI_CLASSIFY') {
-      return true; // apiConfig/aiConfig validated in UI component
+      // apiConfig/aiConfig 숫자 필드(재시도 횟수/타임아웃 등)는
+      // ApiCallStepConfig.tsx의 onChange 클램핑으로 저장 시점에 이미 범위 강제됨 (#560)
+      return true;
     }
     return !!data.scriptContent;
   },

@@ -97,6 +97,22 @@ function getConfig<T>(apiConfig: Record<string, unknown>, key: string, defaultVa
   return (apiConfig[key] as T) ?? defaultValue;
 }
 
+/**
+ * 숫자 입력을 [min, max] 범위의 정수로 강제한다 (#560).
+ * 재시도 횟수·타임아웃 등은 음수/0/비정상적으로 큰 값이 저장되면
+ * 파이프라인 실행 시 예측 불가능한 동작(무한 대기, 즉시 실패 등)을 유발하므로
+ * 입력 즉시 클램핑해 무의미한 값이 아예 저장되지 않도록 한다.
+ */
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+// API 호출 스텝 고급 설정의 허용 범위 (#560)
+const MAX_RETRIES_RANGE = { min: 0, max: 10 } as const;
+const TIMEOUT_MS_RANGE = { min: 1000, max: 300_000 } as const; // 1초 ~ 5분
+const MAX_DURATION_MS_RANGE = { min: 1000, max: 86_400_000 } as const; // 1초 ~ 24시간
+
 function recordToKvPairs(obj: Record<string, string>): KvPair[] {
   return Object.entries(obj).map(([key, value]) => ({ key, value }));
 }
@@ -820,10 +836,17 @@ export default function ApiCallStepConfig({
               id={`${baseId}-max-retries`}
               className="h-7 text-xs"
               type="number"
+              min={MAX_RETRIES_RANGE.min}
+              max={MAX_RETRIES_RANGE.max}
               value={retry.maxRetries}
               disabled={readOnly}
-              onChange={(e) => handleRetryChange({ maxRetries: Number(e.target.value) })}
+              onChange={(e) =>
+                handleRetryChange({
+                  maxRetries: clampInt(Number(e.target.value), MAX_RETRIES_RANGE.min, MAX_RETRIES_RANGE.max),
+                })
+              }
             />
+            <p className="text-[11px] text-muted-foreground">{MAX_RETRIES_RANGE.min}~{MAX_RETRIES_RANGE.max}회</p>
           </div>
           <div className="space-y-1">
             <Label htmlFor={`${baseId}-timeout-ms`} className="text-xs">요청 타임아웃 (ms)</Label>
@@ -831,10 +854,15 @@ export default function ApiCallStepConfig({
               id={`${baseId}-timeout-ms`}
               className="h-7 text-xs"
               type="number"
+              min={TIMEOUT_MS_RANGE.min}
+              max={TIMEOUT_MS_RANGE.max}
               value={timeoutMs}
               disabled={readOnly}
-              onChange={(e) => update('timeoutMs', Number(e.target.value))}
+              onChange={(e) =>
+                update('timeoutMs', clampInt(Number(e.target.value), TIMEOUT_MS_RANGE.min, TIMEOUT_MS_RANGE.max))
+              }
             />
+            <p className="text-[11px] text-muted-foreground">{TIMEOUT_MS_RANGE.min}~{TIMEOUT_MS_RANGE.max}ms</p>
           </div>
           <div className="space-y-1 col-span-2">
             <Label htmlFor={`${baseId}-max-duration-ms`} className="text-xs">최대 실행 시간 (ms)</Label>
@@ -842,10 +870,18 @@ export default function ApiCallStepConfig({
               id={`${baseId}-max-duration-ms`}
               className="h-7 text-xs"
               type="number"
+              min={MAX_DURATION_MS_RANGE.min}
+              max={MAX_DURATION_MS_RANGE.max}
               value={maxDurationMs}
               disabled={readOnly}
-              onChange={(e) => update('maxDurationMs', Number(e.target.value))}
+              onChange={(e) =>
+                update(
+                  'maxDurationMs',
+                  clampInt(Number(e.target.value), MAX_DURATION_MS_RANGE.min, MAX_DURATION_MS_RANGE.max),
+                )
+              }
             />
+            <p className="text-[11px] text-muted-foreground">{MAX_DURATION_MS_RANGE.min}~{MAX_DURATION_MS_RANGE.max}ms</p>
           </div>
         </div>
       </Section>

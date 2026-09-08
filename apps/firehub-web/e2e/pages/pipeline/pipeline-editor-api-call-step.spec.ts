@@ -424,4 +424,65 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     await expect(page.locator('input[placeholder="Content-Type"]')).toHaveValue('X-Custom-Key', { timeout: 5000 });
     await expect(page.locator('input[placeholder="application/json"]')).toHaveValue('my-value');
   });
+
+  /**
+   * TC-9 (회귀): #560 — 고급 설정 재시도 횟수/타임아웃/최대 실행 시간에
+   * 음수·0 등 무의미한 값을 입력해도 즉시 허용 범위로 클램핑되어
+   * 잘못된 값이 저장되지 않아야 한다.
+   */
+  test('고급 설정의 재시도 횟수/타임아웃/최대 실행 시간에 범위를 벗어난 값을 입력하면 클램핑된다 (#560)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 100, name: '클램핑 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await addAndOpenApiCallStep(page);
+
+    // inline 모드에서 URL 입력 (저장 조건 충족용)
+    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://example.com/api');
+
+    // "고급 설정" 섹션 펼치기
+    await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+
+    const maxRetriesInput = page.getByLabel('재시도 횟수');
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    const maxDurationInput = page.getByLabel('최대 실행 시간 (ms)');
+
+    await expect(maxRetriesInput).toBeVisible({ timeout: 5000 });
+
+    // 음수 재시도 횟수 → 최소값(0)으로 클램핑
+    await maxRetriesInput.fill('-10');
+    await maxRetriesInput.blur();
+    await expect(maxRetriesInput).toHaveValue('0');
+
+    // 0 타임아웃 → 최소값(1000ms)으로 클램핑
+    await timeoutInput.fill('0');
+    await timeoutInput.blur();
+    await expect(timeoutInput).toHaveValue('1000');
+
+    // 과도하게 큰 최대 실행 시간 → 최대값(86400000ms)으로 클램핑
+    await maxDurationInput.fill('999999999');
+    await maxDurationInput.blur();
+    await expect(maxDurationInput).toHaveValue('86400000');
+
+    // 스텝/파이프라인 이름 입력 후 저장
+    await page.locator('#step-name').fill('API 호출 스텝');
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('클램핑 테스트');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    // 저장 payload에 클램핑된 값이 그대로 전송되는지 검증 — 음수/0/과대값이 저장되지 않아야 한다
+    const req = await capture.waitForRequest();
+    const payload = req.payload as {
+      steps: Array<{ apiConfig?: { retry?: { maxRetries?: number }; timeoutMs?: number; maxDurationMs?: number } }>;
+    };
+    const apiConfig = payload.steps[0].apiConfig;
+    expect(apiConfig?.retry?.maxRetries).toBe(0);
+    expect(apiConfig?.timeoutMs).toBe(1000);
+    expect(apiConfig?.maxDurationMs).toBe(86_400_000);
+  });
 });
