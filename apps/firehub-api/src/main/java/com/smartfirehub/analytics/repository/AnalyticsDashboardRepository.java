@@ -187,6 +187,11 @@ public class AnalyticsDashboardRepository {
     if (req.isShared() != null) update = update.set(D_IS_SHARED, req.isShared());
     if (req.autoRefreshSeconds() != null) {
       update = update.set(D_AUTO_REFRESH_SECONDS, req.autoRefreshSeconds());
+    } else if (Boolean.TRUE.equals(req.clearAutoRefresh())) {
+      // 프론트가 자동 새로고침 값을 지워 "수동"으로 되돌리려는 명시적 요청(#568).
+      // autoRefreshSeconds만으로는 "미제공"과 "null로 지움"을 구분할 수 없어
+      // clearAutoRefresh 플래그로 의도를 명확히 전달받는다.
+      update = update.set(D_AUTO_REFRESH_SECONDS, (Integer) null);
     }
 
     update.where(D_ID.eq(id)).execute();

@@ -290,6 +290,63 @@ test.describe('대시보드 목록 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '30초' })).toBeVisible();
   });
 
+  test('자동 새로고침 값을 지우고 저장하면 clearAutoRefresh 플래그와 함께 전송된다 (#568)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이전에는 autoRefreshSeconds: null만 보내 백엔드가 "미제공"으로 오인,
+    // 값이 그대로 남던 회귀(#568)를 검증한다. 프론트는 clearAutoRefresh: true를 함께 보내야 한다.
+    const dashboard = createDashboardListItem({ id: 1, name: '갱신 대시보드', autoRefreshSeconds: 30 });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    const putCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/dashboards/1',
+      { ...dashboard, autoRefreshSeconds: null },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('row', { name: /갱신 대시보드/ }).getByLabel('설정').click();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
+
+    const refreshInput = page.getByLabel('자동 새로고침 (초)');
+    await expect(refreshInput).toHaveValue('30');
+    await refreshInput.fill('');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).not.toBeVisible();
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ autoRefreshSeconds: null, clearAutoRefresh: true });
+  });
+
+  test('자동 새로고침에 소수점 값을 입력하면 저장이 거부되고 에러 토스트가 표시된다 (#568)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이전에는 parseInt(autoRefresh, 10)가 "5.5"를 소리 없이 "5"로 잘라 저장했다.
+    // 이제는 정수가 아니면 저장을 막고 에러를 알려야 한다.
+    const dashboard = createDashboardListItem({ id: 1, name: '소수점 대시보드', autoRefreshSeconds: null });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    const putCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/analytics/dashboards/1',
+      { ...dashboard, autoRefreshSeconds: 5 },
+      { capture: true },
+    );
+
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('row', { name: /소수점 대시보드/ }).getByLabel('설정').click();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
+
+    await page.getByLabel('자동 새로고침 (초)').fill('5.5');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    // 에러 토스트가 표시되고 다이얼로그는 닫히지 않으며, 저장 API는 호출되지 않아야 한다
+    await expect(page.getByText('자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
+    expect(putCapture.requests.length).toBe(0);
+  });
+
   test('공유됨 탭 전환 시 sharedOnly 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
     const tabCalls: string[] = [];
     await page.route(

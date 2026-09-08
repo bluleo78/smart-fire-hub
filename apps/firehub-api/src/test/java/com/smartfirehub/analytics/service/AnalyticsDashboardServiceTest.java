@@ -88,7 +88,7 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     // When: share the dashboard
     dashboardService.update(
         dashboard.id(),
-        new UpdateDashboardRequest("Test Dashboard", "desc", true, null),
+        new UpdateDashboardRequest("Test Dashboard", "desc", true, null, null),
         ownerUserId);
 
     // Then: contained charts should be auto-shared
@@ -130,15 +130,55 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
 
     // Share dashboard (auto-shares chart)
     dashboardService.update(
-        dashboard.id(), new UpdateDashboardRequest(null, null, true, null), ownerUserId);
+        dashboard.id(), new UpdateDashboardRequest(null, null, true, null, null), ownerUserId);
     assertThat(chartService.getById(chart.id(), ownerUserId).isShared()).isTrue();
 
     // When: unshare the dashboard
     dashboardService.update(
-        dashboard.id(), new UpdateDashboardRequest(null, null, false, null), ownerUserId);
+        dashboard.id(), new UpdateDashboardRequest(null, null, false, null, null), ownerUserId);
 
     // Then: chart should still be shared (not auto-unshared)
     var stillSharedChart = chartService.getById(chart.id(), ownerUserId);
     assertThat(stillSharedChart.isShared()).isTrue();
+  }
+
+  @Test
+  void updateDashboard_withClearAutoRefreshFlag_setsColumnToNull() {
+    // Given: 자동 새로고침이 30초로 설정된 대시보드
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("Refresh Dashboard", null, false, 30), ownerUserId);
+    assertThat(dashboard.autoRefreshSeconds()).isEqualTo(30);
+
+    // When: autoRefreshSeconds=null + clearAutoRefresh=true로 "수동"으로 되돌리기 요청 (#568)
+    DashboardResponse updated =
+        dashboardService.update(
+            dashboard.id(),
+            new UpdateDashboardRequest("Refresh Dashboard", null, false, null, true),
+            ownerUserId);
+
+    // Then: 이전 값이 남지 않고 실제로 null(수동)로 초기화되어야 한다
+    assertThat(updated.autoRefreshSeconds()).isNull();
+    DashboardResponse reloaded = dashboardService.getById(dashboard.id(), ownerUserId);
+    assertThat(reloaded.autoRefreshSeconds()).isNull();
+  }
+
+  @Test
+  void updateDashboard_withNullAutoRefreshAndNoClearFlag_keepsExistingValue() {
+    // Given: 자동 새로고침이 30초로 설정된 대시보드
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("Refresh Dashboard 2", null, false, 30), ownerUserId);
+
+    // When: autoRefreshSeconds만 null이고 clearAutoRefresh 플래그가 없는 부분 업데이트
+    // (다른 필드만 바꾸는 기존 partial-update 경로와 동일 — 값이 "미제공"으로 해석돼야 한다)
+    dashboardService.update(
+        dashboard.id(),
+        new UpdateDashboardRequest(null, null, true, null, null),
+        ownerUserId);
+
+    // Then: autoRefreshSeconds는 그대로 유지되어야 한다
+    DashboardResponse reloaded = dashboardService.getById(dashboard.id(), ownerUserId);
+    assertThat(reloaded.autoRefreshSeconds()).isEqualTo(30);
   }
 }

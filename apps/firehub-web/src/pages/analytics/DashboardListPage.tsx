@@ -50,6 +50,22 @@ import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import type { CreateDashboardRequest, DashboardListItem } from '../../types/analytics';
 
+/**
+ * "자동 새로고침 (초)" 입력 문자열을 검증한다.
+ * 빈 문자열은 "수동"(null)으로 취급하고, 정수가 아니거나 5 미만이면 에러를 반환한다.
+ * 기존 parseInt(autoRefresh, 10)는 "5.5" 같은 소수점 입력을 조용히 "5"로 잘라
+ * 사용자에게 알림 없이 다른 값이 저장되는 문제가 있었다(#568).
+ */
+function parseAutoRefreshInput(raw: string): { value: number | null } | { error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { value: null };
+  const num = Number(trimmed);
+  if (Number.isNaN(num) || !Number.isInteger(num) || num < 5) {
+    return { error: '자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.' };
+  }
+  return { value: num };
+}
+
 function getRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -82,12 +98,17 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
 
   const handleSubmit = async () => {
     if (!name.trim() || submittingRef.current) return;
+    const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
+    if ('error' in parsedAutoRefresh) {
+      toast.error(parsedAutoRefresh.error);
+      return;
+    }
     submittingRef.current = true;
     const req: CreateDashboardRequest = {
       name: name.trim(),
       description: description.trim() || undefined,
       isShared,
-      autoRefreshSeconds: autoRefresh ? parseInt(autoRefresh, 10) : null,
+      autoRefreshSeconds: parsedAutoRefresh.value,
     };
     try {
       const result = await createDashboard.mutateAsync(req);
@@ -142,6 +163,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               value={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.value)}
               min={5}
+              step={1}
             />
           </div>
           <div className="flex items-center gap-2">
@@ -198,6 +220,11 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
 
   const handleSubmit = async () => {
     if (!dashboard || !name.trim() || submittingRef.current) return;
+    const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
+    if ('error' in parsedAutoRefresh) {
+      toast.error(parsedAutoRefresh.error);
+      return;
+    }
     submittingRef.current = true;
     try {
       await updateDashboard.mutateAsync({
@@ -206,7 +233,10 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
           name: name.trim(),
           description: description.trim() || undefined,
           isShared,
-          autoRefreshSeconds: autoRefresh ? parseInt(autoRefresh, 10) : null,
+          autoRefreshSeconds: parsedAutoRefresh.value,
+          // 값을 지워 "수동"으로 되돌리는 요청임을 명시. 백엔드는 autoRefreshSeconds가 null이어도
+          // 이 플래그가 없으면 "미제공(변경 없음)"으로 해석해 기존 값을 유지한다(#568).
+          clearAutoRefresh: parsedAutoRefresh.value === null,
         },
       });
       toast.success(`대시보드 "${name}"${iGa(name)} 수정되었습니다.`);
@@ -255,6 +285,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
               value={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.value)}
               min={5}
+              step={1}
             />
           </div>
           <div className="flex items-center gap-2">

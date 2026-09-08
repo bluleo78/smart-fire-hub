@@ -133,7 +133,7 @@ class AnalyticsDashboardControllerTest {
 
   @Test
   void updateDashboard_withPermission_returnsUpdated() throws Exception {
-    UpdateDashboardRequest request = new UpdateDashboardRequest("수정된 대시보드", null, null, null);
+    UpdateDashboardRequest request = new UpdateDashboardRequest("수정된 대시보드", null, null, null, null);
     when(dashboardService.update(anyLong(), any(UpdateDashboardRequest.class), anyLong()))
         .thenReturn(sampleDashboard());
 

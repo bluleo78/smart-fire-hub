@@ -236,6 +236,8 @@ export interface UpdateDashboardRequest {
   description?: string;
   isShared?: boolean;
   autoRefreshSeconds?: number | null;
+  /** autoRefreshSeconds가 null일 때 "값 미제공"이 아니라 "명시적으로 지움(수동 전환)"임을 알리는 플래그 (#568) */
+  clearAutoRefresh?: boolean;
 }
 
 export interface AddWidgetRequest {
