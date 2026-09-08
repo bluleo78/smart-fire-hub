@@ -179,6 +179,24 @@ public class UserRepository {
         .fetch(this::mapToUserResponse);
   }
 
+  /**
+   * 주어진 ID들에 해당하는 사용자를 현재 테넌트 멤버로 한정하여 조회한다 (#555).
+   *
+   * <p>알림 수신자 등 이미 ID로 저장된 값을 이름/이메일로 되살릴 때(하이드레이션) 사용 —
+   * {@link #findAllPaginated}는 검색어 기반이라 검색을 거치지 않은 기존 선택값은 찾지 못한다.
+   */
+  public List<UserResponse> findByIds(long tenantId, List<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    Condition condition = memberOfTenant(tenantId).and(USER.ID.in(ids));
+    return dsl.select(
+            USER.ID, USER.USERNAME, USER.EMAIL, USER.NAME, USER.IS_ACTIVE, USER.CREATED_AT)
+        .from(USER)
+        .where(condition)
+        .fetch(this::mapToUserResponse);
+  }
+
   /** {@link #findAllPaginated} 의 총건수. 같은 테넌트 술어를 반드시 함께 적용해야 페이지가 맞는다. */
   public long countAll(long tenantId, String search) {
     Condition condition = memberOfTenant(tenantId);

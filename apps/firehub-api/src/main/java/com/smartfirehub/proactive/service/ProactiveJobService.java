@@ -265,8 +265,20 @@ public class ProactiveJobService {
    * 노출한다.
    */
   @Transactional(readOnly = true)
-  public List<RecipientResponse> searchRecipients(String search) {
+  /**
+   * 알림 수신자 검색/조회.
+   *
+   * <p>{@code userIds}가 주어지면 검색어를 무시하고 해당 ID들의 사용자 정보를 그대로 반환한다
+   * (#555) — 저장된 채널 수신자를 편집 화면 재오픈 시 이름/이메일로 복원하는 용도. 검색 없이
+   * 벌크 조회이므로 20건 제한을 두지 않는다.
+   */
+  public List<RecipientResponse> searchRecipients(String search, List<Long> userIds) {
     long tenantId = TenantContext.require("알림 수신자 검색");
+    if (userIds != null && !userIds.isEmpty()) {
+      return userRepository.findByIds(tenantId, userIds).stream()
+          .map(u -> new RecipientResponse(u.id(), u.name(), u.email()))
+          .toList();
+    }
     return userRepository.findAllPaginated(tenantId, search, 0, 20).stream()
         .map(u -> new RecipientResponse(u.id(), u.name(), u.email()))
         .toList();

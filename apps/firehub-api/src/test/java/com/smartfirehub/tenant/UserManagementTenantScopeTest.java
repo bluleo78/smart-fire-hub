@@ -142,9 +142,9 @@ class UserManagementTenantScopeTest extends IntegrationTestBase {
     // 무관하다 — 같은 미스코프 조회를 재사용하다 노출됐던 경로다. 호출부가 하나 더 늘 때
     // 테넌트 인자를 빠뜨리면 여기서 잡힌다.
     var inA =
-        TenantContext.runScopedGet(tenantA, () -> proactiveJobService.searchRecipients(prefix));
+        TenantContext.runScopedGet(tenantA, () -> proactiveJobService.searchRecipients(prefix, null));
     var inB =
-        TenantContext.runScopedGet(tenantB, () -> proactiveJobService.searchRecipients(prefix));
+        TenantContext.runScopedGet(tenantB, () -> proactiveJobService.searchRecipients(prefix, null));
 
     assertThat(inA.stream().map(RecipientResponse::userId))
         .as("자기 테넌트 후보는 보여야 한다 — 없으면 '모두 0건' 버그가 통과한다")

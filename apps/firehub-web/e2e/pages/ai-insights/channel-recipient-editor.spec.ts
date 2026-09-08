@@ -199,4 +199,35 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
       .filter({ has: page.getByRole('checkbox', { name: '이메일' }) });
     await expect(emailSection.getByText('수신자를 지정하지 않으면 본인에게만 전달됩니다')).toBeVisible();
   });
+
+  // 회귀 테스트 (#555): 저장된 SLACK 채널 수신자가 검색을 거치지 않고 마운트된 selectedUserIds라서
+  // UserCombobox 내부 캐시(userCache)에 없어, 배지 카운트는 맞는데 이름 칩이 빈 채로 보이던 결함.
+  test('SLACK 채널 수신자를 저장 후 재오픈하면 이름 칩이 하이드레이션된다 (#555)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/recipients', [
+      { userId: 42, name: 'DongHee', email: 'donghee@example.com' },
+    ]);
+
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [
+          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+          { type: 'SLACK', recipientUserIds: [42], recipientEmails: [] },
+        ],
+      },
+    });
+
+    const slackSection = page
+      .locator('div.rounded-lg.border')
+      .filter({ has: page.getByRole('checkbox', { name: /slack/i }) });
+
+    // 배지 카운트는 기존에도 정상 — 회귀 전에도 통과하던 부분
+    await expect(slackSection.getByText('1명에게 전달됩니다')).toBeVisible({ timeout: 5000 });
+
+    // 수정 전: 검색을 하지 않았으므로 콤보박스는 placeholder만 보이고 이름 칩이 없었다.
+    // 수정 후: 마운트 시 하이드레이션되어 "DongHee" 칩이 곧바로 렌더링되어야 한다.
+    await expect(slackSection.getByText('DongHee')).toBeVisible({ timeout: 5000 });
+    await expect(slackSection.getByText('사용자 검색 (이름 또는 이메일)')).not.toBeVisible();
+  });
 });

@@ -199,6 +199,13 @@ export const proactiveApi = {
     client.get<ProactiveJobExecution>(`/proactive/jobs/${jobId}/executions/${executionId}`),
   searchRecipients: (search?: string) =>
     client.get<RecipientResponse[]>('/proactive/jobs/recipients', { params: { search } }),
+  /**
+   * ID로 수신자 정보를 벌크 조회한다 (#555).
+   * UserCombobox가 이미 저장된 selectedUserIds를 마운트 시 이름/이메일로 되살릴 때 사용 —
+   * 로컬 검색 캐시(userCache)는 검색을 거쳐야만 채워지므로 검색 없이 직접 조회가 필요하다.
+   */
+  getRecipientsByIds: (userIds: number[]) =>
+    client.get<RecipientResponse[]>('/proactive/jobs/recipients', { params: { userIds } }),
 
   // Messages (3 methods)
   // #520: unreadOnly=true 로 서버 사이드에서 안 읽은 알림만 필터링해서 받을 수 있다.

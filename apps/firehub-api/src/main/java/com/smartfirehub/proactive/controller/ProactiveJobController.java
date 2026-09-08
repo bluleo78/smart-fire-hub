@@ -217,10 +217,18 @@ public class ProactiveJobController {
     return ResponseEntity.ok(proactiveJobService.getAnomalyEvents(id, limit));
   }
 
+  /**
+   * 알림 수신자 검색/조회.
+   *
+   * <p>{@code userIds}가 주어지면 검색어와 무관하게 해당 ID들의 사용자 정보를 그대로 반환한다
+   * (#555) — UserCombobox가 이미 저장된 {@code selectedUserIds}를 마운트 시점에 하이드레이션할 때
+   * 사용. {@code userIds}가 없으면 기존처럼 {@code search} 기반 검색 결과를 반환한다.
+   */
   @GetMapping("/recipients")
   @RequirePermission("proactive:read")
   public ResponseEntity<List<RecipientResponse>> searchRecipients(
-      @RequestParam(required = false, defaultValue = "") String search) {
-    return ResponseEntity.ok(proactiveJobService.searchRecipients(search));
+      @RequestParam(required = false, defaultValue = "") String search,
+      @RequestParam(required = false) List<Long> userIds) {
+    return ResponseEntity.ok(proactiveJobService.searchRecipients(search, userIds));
   }
 }

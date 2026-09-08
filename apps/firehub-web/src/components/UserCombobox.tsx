@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { RecipientResponse } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
@@ -13,7 +13,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useRecipientSearch } from '@/hooks/queries/useProactiveMessages';
+import { useRecipientsByIds,useRecipientSearch } from '@/hooks/queries/useProactiveMessages';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +49,25 @@ export default function UserCombobox({
       return next;
     });
   }, [users]);
+
+  // 마운트 시(또는 selectedUserIds 변경 시) 캐시에 없는 ID를 하이드레이션한다 (#555).
+  // 저장된 selectedUserIds는 검색을 거치지 않고 복원되므로, userCache(검색 결과로만 채워짐)에는
+  // 없는 상태로 마운트된다 — 이 상태에서는 배지가 빈 채로 렌더링되어 수신자가 사라진 것처럼 보인다.
+  const missingIds = useMemo(
+    () => selectedUserIds.filter((id) => !userCache.has(id)),
+    [selectedUserIds, userCache],
+  );
+  const { data: hydratedUsers } = useRecipientsByIds(missingIds);
+
+  useEffect(() => {
+    if (!hydratedUsers || hydratedUsers.length === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUserCache((prev) => {
+      const next = new Map(prev);
+      for (const u of hydratedUsers) next.set(u.userId, u);
+      return next;
+    });
+  }, [hydratedUsers]);
 
   const handleToggle = useCallback((userId: number) => {
     if (selectedUserIds.includes(userId)) {

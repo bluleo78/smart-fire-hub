@@ -16,6 +16,7 @@ const KEYS = {
   job: (id: number) => ['proactive', 'jobs', id] as const,
   executions: (jobId: number) => ['proactive', 'executions', jobId] as const,
   recipients: (search: string) => ['proactive', 'recipients', search] as const,
+  recipientsByIds: (userIds: number[]) => ['proactive', 'recipients', 'byIds', userIds] as const,
   messages: ['proactive', 'messages'] as const,
   unreadCount: ['proactive', 'unread-count'] as const,
   templates: ['proactive', 'templates'] as const,
@@ -161,6 +162,20 @@ export function useRecipientSearch(search: string) {
     queryKey: KEYS.recipients(search),
     queryFn: () => proactiveApi.searchRecipients(search).then((r) => r.data),
     enabled: search.length > 0,
+  });
+}
+
+/**
+ * ID로 수신자 정보를 벌크 조회한다 (#555).
+ *
+ * UserCombobox가 마운트 시 이미 채워진 selectedUserIds를 이름/이메일로 하이드레이션할 때 사용 —
+ * 검색 결과로만 채워지는 로컬 캐시(userCache)와 달리 검색 없이 ID만으로 조회한다.
+ */
+export function useRecipientsByIds(userIds: number[]) {
+  return useQuery({
+    queryKey: KEYS.recipientsByIds(userIds),
+    queryFn: () => proactiveApi.getRecipientsByIds(userIds).then((r) => r.data),
+    enabled: userIds.length > 0,
   });
 }
 

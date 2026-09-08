@@ -379,7 +379,7 @@ class ProactiveJobControllerTest {
   @Test
   void searchRecipients_returnsList() throws Exception {
     mockAuth("proactive:read");
-    when(proactiveJobService.searchRecipients(""))
+    when(proactiveJobService.searchRecipients("", null))
         .thenReturn(List.of(new RecipientResponse(1L, "Alice", "alice@example.com")));
 
     mockMvc
@@ -387,5 +387,25 @@ class ProactiveJobControllerTest {
             get("/api/v1/proactive/jobs/recipients").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].email").value("alice@example.com"));
+  }
+
+  // 회귀 테스트 (#555): userIds로 조회하면 검색어 없이도 해당 ID들의 수신자 정보를 그대로 반환한다 —
+  // UserCombobox가 저장된 selectedUserIds를 마운트 시 하이드레이션할 때 쓰는 경로.
+  @Test
+  void searchRecipients_withUserIds_returnsThoseUsersIgnoringSearch() throws Exception {
+    mockAuth("proactive:read");
+    when(proactiveJobService.searchRecipients("", List.of(1L, 2L)))
+        .thenReturn(
+            List.of(
+                new RecipientResponse(1L, "Alice", "alice@example.com"),
+                new RecipientResponse(2L, "Bob", "bob@example.com")));
+
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/jobs/recipients?userIds=1&userIds=2")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].email").value("alice@example.com"))
+        .andExpect(jsonPath("$[1].email").value("bob@example.com"));
   }
 }
