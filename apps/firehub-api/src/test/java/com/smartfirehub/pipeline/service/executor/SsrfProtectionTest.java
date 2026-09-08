@@ -1,7 +1,9 @@
 package com.smartfirehub.pipeline.service.executor;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -42,6 +44,21 @@ class SsrfProtectionTest {
   @Test
   void validateUrl_invalidUrl_blocked() {
     assertThrows(SsrfException.class, () -> service.validateUrl("not-a-url"));
+  }
+
+  /**
+   * #561: 스킴이 없는 URL 문자열은 URI.getScheme()이 null을 반환하는데, 이 값이 예외 메시지에
+   * 문자열 연결로 그대로 삽입되면 "URL scheme not allowed: null. ..." 처럼 null 리터럴이
+   * 사용자에게 노출된다. 스킴 부재 케이스는 별도 메시지로 처리해야 하며 "null" 문자열을
+   * 포함해서는 안 된다.
+   */
+  @Test
+  void validateUrl_missingScheme_blockedWithoutNullLiteral() {
+    SsrfException ex =
+        assertThrows(SsrfException.class, () -> service.validateUrl("not-a-valid-url"));
+    assertFalse(
+        ex.getMessage().contains("null"), "예외 메시지에 'null' 리터럴이 노출되면 안 됨: " + ex.getMessage());
+    assertTrue(ex.getMessage().contains("스킴"), "스킴 부재를 안내하는 메시지여야 함: " + ex.getMessage());
   }
 
   // --- validateResolvedAddress: IP range checks ---

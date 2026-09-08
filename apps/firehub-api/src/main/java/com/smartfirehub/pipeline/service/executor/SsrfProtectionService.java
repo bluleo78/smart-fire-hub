@@ -30,8 +30,14 @@ public class SsrfProtectionService {
       throw new SsrfException("Invalid URL: " + url, e);
     }
 
+    // 스킴이 아예 없는 경우(getScheme()==null)와 스킴은 있으나 허용되지 않는 경우를 구분한다.
+    // 구분하지 않으면 "URL scheme not allowed: null. ..." 처럼 null 리터럴이
+    // 사용자에게 그대로 노출되어 원인을 이해하기 어렵다 (#561).
     String scheme = uri.getScheme();
-    if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+    if (scheme == null) {
+      throw new SsrfException("URL에 스킴(http:// 또는 https://)이 없습니다: " + url);
+    }
+    if (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https")) {
       throw new SsrfException(
           "URL scheme not allowed: " + scheme + ". Only http and https are permitted.");
     }
