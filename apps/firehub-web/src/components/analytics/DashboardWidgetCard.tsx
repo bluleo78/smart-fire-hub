@@ -19,6 +19,7 @@ interface DashboardWidgetCardProps {
   autoRefreshSeconds?: number | null;
   dataUpdatedAt?: number;
   isFetching?: boolean;
+  isError?: boolean;
   onRefresh?: () => void;
 }
 
@@ -105,6 +106,7 @@ export function DashboardWidgetCard({
   autoRefreshSeconds,
   dataUpdatedAt,
   isFetching,
+  isError,
   onRefresh,
 }: DashboardWidgetCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -112,6 +114,7 @@ export function DashboardWidgetCard({
 
   const effectiveDataUpdatedAt = dataUpdatedAt ?? 0;
   const effectiveIsFetching = isFetching ?? false;
+  const effectiveIsError = isError ?? false;
   const effectiveOnRefresh = onRefresh ?? (() => undefined);
 
   return (
@@ -149,6 +152,7 @@ export function DashboardWidgetCard({
       <WidgetFreshnessBar
         dataUpdatedAt={effectiveDataUpdatedAt}
         isFetching={effectiveIsFetching}
+        isError={effectiveIsError}
         refreshSeconds={autoRefreshSeconds ?? undefined}
         onRefresh={effectiveOnRefresh}
       />

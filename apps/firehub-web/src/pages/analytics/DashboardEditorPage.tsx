@@ -66,6 +66,7 @@ interface GridAreaProps {
   autoRefreshSeconds?: number | null;
   dataUpdatedAt?: number;
   isFetching?: boolean;
+  isError?: boolean;
   onRefresh?: () => void;
 }
 
@@ -79,6 +80,7 @@ function GridArea({
   autoRefreshSeconds,
   dataUpdatedAt,
   isFetching,
+  isError,
   onRefresh,
 }: GridAreaProps) {
   const { width, containerRef: gridRef } = useContainerWidth({ initialWidth: 1280 });
@@ -114,6 +116,7 @@ function GridArea({
               autoRefreshSeconds={autoRefreshSeconds}
               dataUpdatedAt={dataUpdatedAt}
               isFetching={isFetching}
+              isError={isError}
               onRefresh={onRefresh}
             />
           </div>
@@ -250,13 +253,36 @@ export default function DashboardEditorPage() {
   const navigate = useNavigate();
 
   const queryClient = useQueryClient();
-  const { data: dashboard, isLoading, refetch } = useDashboard(dashboardId);
+  const {
+    data: dashboard,
+    isLoading,
+    isError: isDashboardError,
+    error: dashboardError,
+    refetch,
+  } = useDashboard(dashboardId);
   const {
     data: dashboardData,
     dataUpdatedAt: dashboardDataUpdatedAt,
     isFetching: dashboardDataFetching,
+    isError: isDashboardDataError,
+    error: dashboardDataError,
     refetch: refetchDashboardData,
   } = useDashboardData(dashboardId ?? undefined);
+
+  // 새로고침(또는 최초 로드) 실패를 1회성 토스트로 알린다.
+  // placeholderData가 이전 데이터를 유지하기 때문에 화면상 아무 변화가 없어 실패가
+  // 완전히 조용해지는 문제(#566)를 막기 위해, error 객체 참조가 바뀔 때만(=새 실패 발생 시) 알린다.
+  useEffect(() => {
+    if (isDashboardError && dashboardError) {
+      handleApiError(dashboardError, '대시보드 정보를 불러오지 못했습니다.');
+    }
+  }, [isDashboardError, dashboardError]);
+
+  useEffect(() => {
+    if (isDashboardDataError && dashboardDataError) {
+      handleApiError(dashboardDataError, '위젯 데이터를 불러오지 못했습니다.');
+    }
+  }, [isDashboardDataError, dashboardDataError]);
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
@@ -670,6 +696,7 @@ export default function DashboardEditorPage() {
             autoRefreshSeconds={dashboard.autoRefreshSeconds}
             dataUpdatedAt={dashboardDataUpdatedAt}
             isFetching={dashboardDataFetching}
+            isError={isDashboardDataError}
             onRefresh={() => void refetchDashboardData()}
           />
         )}

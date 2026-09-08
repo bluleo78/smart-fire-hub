@@ -513,4 +513,35 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     expect(payload.width).not.toBe(6);
     expect(payload.width).toBeLessThan(6);
   });
+
+  test('위젯 새로고침 실패(500) 시 토스트와 위젯 에러 배지로 알린다 (#566)', async ({ authenticatedPage: page }) => {
+    // 정상 로드 후, 이후 analytics API 요청을 강제로 500 실패시켜 새로고침 실패를 재현한다
+    // (이슈 #566 재현 스크립트와 동일한 시나리오: placeholderData가 이전 데이터를 유지해
+    //  아무 신호도 없이 실패가 묻히던 문제)
+    await setupDashboardEditorMocks(page, 1);
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText('테스트 차트')).toBeVisible();
+
+    await page.route('**/api/v1/analytics/**', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: '{"message":"forced failure"}',
+      }),
+    );
+
+    // 위젯 카드의 개별 "새로고침" 버튼 클릭 (헤더의 새로고침 버튼과 title이 같으므로 last() 사용)
+    await page.locator('button[title="새로고침"]').last().click();
+
+    // (a) 실패를 알리는 1회성 토스트가 떠야 한다 — handleApiError가 백엔드 ErrorResponse.message를
+    //     우선 추출하므로(위젯 데이터 fallback 문구가 아니라) 모킹된 메시지 그대로 노출된다
+    await expect(page.getByText('forced failure')).toBeVisible({ timeout: 5000 });
+
+    // (b) 위젯 카드에 에러 배지가 표시되어야 한다 — 이전 차트가 그대로 보이더라도
+    //     새로고침이 실패했다는 사실은 화면에서 바로 확인할 수 있어야 한다
+    await expect(page.getByText('새로고침 실패')).toBeVisible();
+
+    // 이전 데이터(placeholderData)는 여전히 표시된다 — 깜빡임 방지 의도는 유지
+    await expect(page.getByText('테스트 차트')).toBeVisible();
+  });
 });

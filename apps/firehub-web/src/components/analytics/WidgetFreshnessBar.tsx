@@ -1,4 +1,4 @@
-import { Circle, RefreshCw } from 'lucide-react';
+import { AlertCircle, Circle, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { formatElapsedTime } from '../../lib/formatters';
@@ -8,6 +8,7 @@ import { Button } from '../ui/button';
 interface WidgetFreshnessBarProps {
   dataUpdatedAt: number;       // TanStack Query's dataUpdatedAt (timestamp ms)
   isFetching: boolean;
+  isError?: boolean;           // 마지막 새로고침(refetch)이 실패했는지 (#566)
   refreshSeconds?: number;     // dashboard autoRefreshSeconds
   onRefresh: () => void;       // manual refresh callback
 }
@@ -15,6 +16,7 @@ interface WidgetFreshnessBarProps {
 export function WidgetFreshnessBar({
   dataUpdatedAt,
   isFetching,
+  isError,
   refreshSeconds,
   onRefresh,
 }: WidgetFreshnessBarProps) {
@@ -46,6 +48,17 @@ export function WidgetFreshnessBar({
           >
             <RefreshCw className="h-2.5 w-2.5 animate-spin motion-reduce:animate-none" />
             갱신 중...
+          </Badge>
+        ) : isError ? (
+          // 새로고침 API 요청이 실패한 경우 — placeholderData로 이전 데이터가 그대로
+          // 보이더라도 실패 사실만은 눈에 띄게 노출한다(#566). 클릭 시 재시도.
+          <Badge
+            variant="secondary"
+            className="text-[10px] px-1.5 py-0 h-4 gap-1 bg-destructive/10 text-destructive border-destructive/20"
+            title="새로고침 실패 · 다시 시도하려면 새로고침 버튼을 누르세요"
+          >
+            <AlertCircle className="h-2.5 w-2.5" />
+            새로고침 실패
           </Badge>
         ) : refreshSeconds && refreshSeconds > 0 ? (
           isStale ? (
