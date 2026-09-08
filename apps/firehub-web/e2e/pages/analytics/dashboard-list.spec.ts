@@ -355,4 +355,33 @@ test.describe('대시보드 목록 페이지', () => {
     // 취소만 반복했으므로 저장 API는 한 번도 호출되지 않아야 한다
     expect(putCapture.requests.length).toBe(0);
   });
+
+  test('이름이 매우 긴 대시보드도 테이블 레이아웃이 깨지지 않는다 (#563)', async ({ authenticatedPage: page }) => {
+    // 회귀 방지: 이름 span에 truncate가 없으면 긴 이름이 테이블 전체 폭을
+    // 뷰포트 밖으로 밀어내 상태/생성자/작업 버튼 컬럼이 가려진다.
+    const longName = '가'.repeat(500);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/dashboards',
+      createPageResponse([createDashboardListItem({ id: 99, name: longName })]),
+    );
+
+    await page.goto('/analytics/dashboards');
+    const dataRow = page.getByRole('row').nth(1);
+    await expect(dataRow).toBeVisible();
+
+    // 이름 span은 잘려 보이되 title 속성으로 전체 이름을 노출해야 한다
+    const nameSpan = dataRow.locator('span[title]').first();
+    await expect(nameSpan).toHaveAttribute('title', longName);
+    await expect(nameSpan).toHaveClass(/truncate/);
+
+    // 테이블 전체 폭이 뷰포트를 벗어나지 않아야 하며,
+    // 같은 행의 "삭제" 작업 버튼(가장 우측 컬럼)이 화면 밖으로 밀려나지 않고 보여야 한다
+    const table = page.getByRole('table');
+    const viewportWidth = page.viewportSize()?.width ?? 1280;
+    const tableBox = await table.boundingBox();
+    expect(tableBox?.width ?? 0).toBeLessThanOrEqual(viewportWidth);
+    await expect(dataRow.getByLabel('삭제')).toBeVisible();
+  });
 });

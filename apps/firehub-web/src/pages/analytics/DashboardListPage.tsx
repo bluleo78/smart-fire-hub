@@ -371,9 +371,12 @@ export default function DashboardListPage() {
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
                       <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div>
+                      {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span>{dashboard.name}</span>
+                          <span className="block truncate max-w-xs" title={dashboard.name}>
+                            {dashboard.name}
+                          </span>
                           {dashboard.isShared && (
                             <Badge variant="secondary" className="text-xs gap-1 py-0">
                               <Share2 className="h-2.5 w-2.5" />
